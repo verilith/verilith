@@ -41,7 +41,7 @@ jobs:
       arm: ${{ steps.plan.outputs.arm }}
       fuzz: ${{ steps.plan.outputs.fuzz }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: plan
@@ -84,7 +84,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/verus
 
   verify:
@@ -98,7 +98,7 @@ jobs:
       matrix:
         crate: ${{ fromJSON(needs.plan.outputs.verify) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/verus
       - name: Verify
         # focus: the crates this one depends on are compiled, not verified
@@ -117,7 +117,7 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/verus
 
   verify-macos:
@@ -136,7 +136,7 @@ jobs:
       matrix:
         crate: ${{ fromJSON(needs.plan.outputs.verify) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/verus
       - name: Verify
         run: VERUS_CMD=focus scripts/verify.sh ${{ matrix.crate }}
@@ -157,7 +157,7 @@ jobs:
       matrix:
         crate: ${{ fromJSON(needs.plan.outputs.test) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Tests
         run: crates/${{ matrix.crate }}/ci.sh
       - name: mbedTLS's test suites (x509)
@@ -182,7 +182,7 @@ jobs:
       matrix:
         crate: ${{ fromJSON(needs.plan.outputs.arm) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Tests
         run: crates/${{ matrix.crate }}/ci.sh
 
@@ -197,7 +197,7 @@ jobs:
       matrix:
         crate: ${{ fromJSON(needs.plan.outputs.fuzz) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fuzz
         run: crates/${{ matrix.crate }}/ci.sh fuzz
 

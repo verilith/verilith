@@ -17,7 +17,7 @@ runs:
       run: rustup toolchain install "${{ steps.v.outputs.toolchain }}" --profile minimal -c rustc-dev,llvm-tools
     - name: Cache Verus
       id: cache
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/verus-bin
         key: verus-${{ runner.os }}-${{ runner.arch }}-${{ steps.v.outputs.commit }}-${{ steps.v.outputs.toolchain }}
