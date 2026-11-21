@@ -1386,12 +1386,12 @@ pub fn append_bits<const K: u8>(v: &mut Vec<u32>, w: usize, m: u64, base: u32) -
         assert(cnt == all.len());
     }
     if verilith_simd::neon::has_neon() {
-        // From the reversed mask: four, then two at a time while any are
+        // From the reversed mask: six, then two at a time while any are
         // left. Writes past the last bit are scratch.
         let mut rv = rev64(m);
         let ghost mut gm = m;
         if cnt > 0 {
-            let (p1, rv1, Ghost(q1), Ghost(gm1)) = put_rev(v, w, m, base, p, rv, Ghost(gm), _n, Ghost(v0), Ghost(all), Ghost(q), 4);
+            let (p1, rv1, Ghost(q1), Ghost(gm1)) = put_rev(v, w, m, base, p, rv, Ghost(gm), _n, Ghost(v0), Ghost(all), Ghost(q), 6);
             p = p1;
             rv = rv1;
             proof {

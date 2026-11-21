@@ -611,11 +611,33 @@ which were measured together.
   | gsoc-2018 | 343.8 | 351.8 | 303.4 |
   | mesh | 113.6 | 101.5 | 105.0 |
 
-  Five files are 4% to 11% faster and gsoc-2018 (long strings, few
-  structural bytes) is 2% slower, for a reason not yet found. Cycles fell 8.0% on citm_catalog, 4.1% on
-  twitter and 9.7% on canada with instruction counts within 3% either
-  way: the gain is in how much of the work overlaps, not in doing less.
-  simdjson's stage 1 is still 11% to 14% faster on four of the files.
+  Cycles fell 8.0% on citm_catalog, 4.1% on twitter and 9.7% on canada
+  with instruction counts within 3% either way: the gain is in how much
+  of the work overlaps, not in doing less. (The gsoc-2018 figure in the
+  "before" column did not reproduce: rebuilt clean, "before" is 343 and
+  "after" 324.)
+* **The ASCII test for free.** The control-character mask is made with a
+  compare that also marks the bytes from 0x80 up. Where that mask has no
+  bit outside whitespace the block is ASCII and the mask is exactly its
+  control characters, so the UTF-8 check's ASCII test needs no vector
+  work of its own, and one branch covers 128 bytes. Otherwise an
+  out-of-line function finds the high bytes, runs the UTF-8 check on both
+  blocks and takes the high bytes out of the error masks. Index writes
+  became six at first, then two at a time. Stage 1 alone, microseconds:
+
+  | file | before | after | simdjson stage 1 |
+  |---|---:|---:|---:|
+  | twitter | 79.0 | 82.1 | 69.8 |
+  | citm_catalog | 183.7 | 168.2 | 163.5 |
+  | canada | 268.2 | 238.7 | 317.4 |
+  | github_events | 6.79 | 6.38 | 5.9 |
+  | gsoc-2018 | 324.4 | 299.2 | 303.4 |
+  | mesh | 101.4 | 96.0 | 105.0 |
+
+  Five files are 5% to 11% faster. twitter, where a third of the
+  128-byte turns hold non-ASCII text and take the out-of-line path, is 4%
+  slower. simdjson's stage 1 is now level on gsoc-2018, 3% faster on
+  citm_catalog, 8% on github_events and 15% on twitter.
 * Converting each number to its `f64` bits during the parse, as simdjson
   does, was proven and measured too, and was slower on this CPU (0.76 to
   0.78 on canada.json) although it ran fewer instructions, so the

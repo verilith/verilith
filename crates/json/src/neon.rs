@@ -289,16 +289,70 @@ fn op16(v: uint8x16_t, ot: uint8x16_t) -> (r: uint8x16_t)
     r
 }
 
-/// 0xFF where the byte is a control character.
+/// A control character or a byte from 0x80 up.
+pub open spec fn lowb(c: u8) -> bool {
+    c < 0x20 || c >= 0x80
+}
+
+/// 0xFF where the byte is a control character or from 0x80 up: below
+/// 0x20 as a signed number.
 #[inline(always)]
-fn ctrl16(v: uint8x16_t) -> (r: uint8x16_t)
+fn low16(v: uint8x16_t) -> (r: uint8x16_t)
     requires
         neon(),
     ensures
         is_mask(n8(r)),
-        forall|k: int| 0 <= k < 16 ==> (#[trigger] n8(r)[k] == 0xFF) == (n8(v)[k] < 0x20),
+        forall|k: int| 0 <= k < 16 ==> (#[trigger] n8(r)[k] == 0xFF) == lowb(n8(v)[k]),
 {
-    vcleq_u8(v, vdupq_n_u8(0x1F))
+    let x = veorq_u8(v, vdupq_n_u8(0x80));
+    let r = vcleq_u8(x, vdupq_n_u8(0x9F));
+    proof {
+        assert forall|k: int| 0 <= k < 16 implies (#[trigger] n8(r)[k] == 0xFF) == lowb(n8(v)[k]) by {
+            let c = n8(v)[k];
+            assert(n8(x)[k] == c ^ 0x80);
+            assert(((c ^ 0x80u8) <= 0x9Fu8) == (c < 0x20u8 || c >= 0x80u8)) by (bit_vector);
+        }
+    }
+    r
+}
+
+/// 0xFF where the byte is from 0x80 up.
+#[inline(always)]
+fn high16(v: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        is_mask(n8(r)),
+        forall|k: int| 0 <= k < 16 ==> (#[trigger] n8(r)[k] == 0xFF) == (n8(v)[k] >= 0x80),
+{
+    vcleq_u8(vdupq_n_u8(0x80), v)
+}
+
+/// The bytes of `s[i..i + 64]` from 0x80 up, as a mask.
+#[inline(always)]
+pub fn high_mask64(
+    v0: uint8x16_t,
+    v1: uint8x16_t,
+    v2: uint8x16_t,
+    v3: uint8x16_t,
+    Ghost(s): Ghost<Seq<u8>>,
+    Ghost(i): Ghost<int>,
+) -> (m: u64)
+    requires
+        neon(),
+        holds64(s, i, v0, v1, v2, v3),
+    ensures
+        forall|k: u64| k < 64 ==> #[trigger] bit64(m, k) == (s[i + k] >= 0x80),
+{
+    let c0 = high16(v0);
+    let c1 = high16(v1);
+    let c2 = high16(v2);
+    let c3 = high16(v3);
+    let m = movemask64(c0, c1, c2, c3);
+    proof {
+        lemma_mask4(s, i, v0, v1, v2, v3, c0, c1, c2, c3, m, |x: u8| x >= 0x80);
+    }
+    m
 }
 
 /// The bytes of `s[i..i + 64]` equal to `c`, as a mask. The classes come
@@ -362,9 +416,12 @@ pub fn ws_mask64(
     m
 }
 
-/// The operators and the control characters of `s[i..i + 64]`, as masks.
+/// The operators of `s[i..i + 64]`, and its control characters together
+/// with its bytes from 0x80 up, as masks. Where the second mask has no
+/// bit outside whitespace the block is ASCII and the mask is its control
+/// characters, so the ASCII test of the UTF-8 check costs no vector work.
 #[inline(always)]
-pub fn op_ctrl_mask64(
+pub fn op_low_mask64(
     v0: uint8x16_t,
     v1: uint8x16_t,
     v2: uint8x16_t,
@@ -377,7 +434,7 @@ pub fn op_ctrl_mask64(
         holds64(s, i, v0, v1, v2, v3),
     ensures
         forall|k: u64| k < 64 ==> #[trigger] bit64(r.0, k) == is_op(s[i + k]),
-        forall|k: u64| k < 64 ==> #[trigger] bit64(r.1, k) == (s[i + k] < 0x20),
+        forall|k: u64| k < 64 ==> #[trigger] bit64(r.1, k) == lowb(s[i + k]),
 {
     let ot = vld1q_u8_at(OP_TABLE.as_slice(), 0);
     proof {
@@ -388,66 +445,24 @@ pub fn op_ctrl_mask64(
     let c2 = op16(v2, ot);
     let c3 = op16(v3, ot);
     let op1 = movemask64(c0, c1, c2, c3);
-    let d0 = ctrl16(v0);
-    let d1 = ctrl16(v1);
-    let d2 = ctrl16(v2);
-    let d3 = ctrl16(v3);
-    let ctrl = movemask64(d0, d1, d2, d3);
-    let op = op1 & !ctrl;
+    let d0 = low16(v0);
+    let d1 = low16(v1);
+    let d2 = low16(v2);
+    let d3 = low16(v3);
+    let low = movemask64(d0, d1, d2, d3);
+    let op = op1 & !low;
     proof {
         lemma_mask4(s, i, v0, v1, v2, v3, c0, c1, c2, c3, op1, |x: u8| op_raw(x));
-        lemma_mask4(s, i, v0, v1, v2, v3, d0, d1, d2, d3, ctrl, |x: u8| x < 0x20);
+        lemma_mask4(s, i, v0, v1, v2, v3, d0, d1, d2, d3, low, |x: u8| lowb(x));
         assert forall|k: u64| k < 64 implies #[trigger] bit64(op, k) == is_op(s[i + k]) by {
             assert(bit64(op1, k) == op_raw(s[i + k]));
-            assert(bit64(ctrl, k) == (s[i + k] < 0x20));
-            crate::index::lemma_bit_ops(op1, !ctrl, k);
-            crate::index::lemma_bit_ops(ctrl, ctrl, k);
+            assert(bit64(low, k) == lowb(s[i + k]));
+            crate::index::lemma_bit_ops(op1, !low, k);
+            crate::index::lemma_bit_ops(low, low, k);
             lemma_tables_nibble(s[i + k]);
         }
     }
-    (op, ctrl)
-}
-
-/// Whether `s[i..i + 64]`, already loaded, is all ASCII.
-#[inline(always)]
-pub fn ascii4(
-    v0: uint8x16_t,
-    v1: uint8x16_t,
-    v2: uint8x16_t,
-    v3: uint8x16_t,
-    Ghost(s): Ghost<Seq<u8>>,
-    Ghost(i): Ghost<int>,
-) -> (r: bool)
-    requires
-        neon(),
-        holds64(s, i, v0, v1, v2, v3),
-    ensures
-        r ==> crate::utf8::ascii_span(s, i, i + 64),
-{
-    let o = vorrq_u8(vorrq_u8(v0, v1), vorrq_u8(v2, v3));
-    let r = vmaxvq_u8(o) < 0x80;
-    proof {
-        if r {
-            assert forall|t: int| i <= t < i + 64 implies #[trigger] s[t] < 0x80 by {
-                let l = (t - i) % 16;
-                let (x0, x1, x2, x3) = (n8(v0)[l], n8(v1)[l], n8(v2)[l], n8(v3)[l]);
-                assert(n8(o)[l] == ((x0 | x1) | (x2 | x3)));
-                assert(n8(o)[l] < 0x80);
-                assert(((x0 | x1) | (x2 | x3)) < 0x80u8 ==> x0 < 0x80u8 && x1 < 0x80u8 && x2 < 0x80u8 && x3 < 0x80u8)
-                    by (bit_vector);
-                if t < i + 16 {
-                    assert(x0 == s[t]);
-                } else if t < i + 32 {
-                    assert(x1 == s[t]);
-                } else if t < i + 48 {
-                    assert(x2 == s[t]);
-                } else {
-                    assert(x3 == s[t]);
-                }
-            }
-        }
-    }
-    r
+    (op, low)
 }
 
 /// Whether `s[j - 3 .. j + 64]` is all ASCII, in five loads.

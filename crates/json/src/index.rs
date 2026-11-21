@@ -237,6 +237,19 @@ pub open spec fn block_classes(m: Masks, s: Seq<u8>, base: int) -> bool {
         }
 }
 
+/// The same without the control characters, which the NEON loop finds
+/// another way.
+pub open spec fn classes4(m: Masks, s: Seq<u8>, base: int) -> bool {
+    forall|k: u64|
+        k < 64 ==> {
+            let c = #[trigger] byte(s, base + k);
+            &&& bit64(m.quote, k) == (c == 0x22)
+            &&& bit64(m.backslash, k) == (c == 0x5C)
+            &&& bit64(m.ws, k) == is_ws(c)
+            &&& bit64(m.op, k) == is_op(c)
+        }
+}
+
 /// The branch-free escape scan (as in simdjson): it satisfies the
 /// fixpoint `e == ((b & !e) << 1) | c`, which says bit by bit that a byte
 /// is escaped exactly when it follows a backslash that is not itself
@@ -423,7 +436,7 @@ proof fn lemma_block_bits(
         k < 64,
         prev <= 1,
         (prev == 1) == (base > st && scalar(s, st, base - 1)),
-        block_classes(m, s, base),
+        classes4(m, s, base),
         forall|j: u64| j < 64 ==> #[trigger] bit64(e, j) == esc(s, st, base + j),
         forall|j: u64| j < 64 ==> #[trigger] bit64(r, j) == instr(s, st, base + j),
         u == m.quote & !e,
@@ -438,7 +451,7 @@ proof fn lemma_block_bits(
         bit64(u, k) == uq(s, st, base + k),
         bit64(scalar_m, k) == scalar(s, st, base + k),
         bit64(st_m, k) == structural(s, st, base + k),
-        bit64(bad_m, k) == bad(s, st, base + k),
+        bit64(bad_m, k) == (bit64(m.ctrl, k) && inside(s, st, base + k)),
     decreases k,
 {
     let c = byte(s, base + k);
@@ -446,7 +459,6 @@ proof fn lemma_block_bits(
     assert(bit64(m.backslash, k) == (c == 0x5C));
     assert(bit64(m.ws, k) == is_ws(c));
     assert(bit64(m.op, k) == is_op(c));
-    assert(bit64(m.ctrl, k) == (c < 0x20));
     assert(bit64(e, k) == esc(s, st, base + k));
     assert(bit64(r, k) == instr(s, st, base + k));
     lemma_bit_ops(m.quote, !e, k);
@@ -623,8 +635,9 @@ pub open spec fn stage1_inv(g: Seq<u8>, gst: int, base: int, idx: Seq<u32>, t: S
     &&& (t.err == 0) == clean(g, gst, base)
 }
 
-/// The part of stage 1's state that the bit logic carries.
-pub open spec fn logic_inv(g: Seq<u8>, gst: int, base: int, t: Stage1) -> bool {
+/// The part of stage 1's state that the bit logic carries, but for the
+/// error word.
+pub open spec fn core_inv(g: Seq<u8>, gst: int, base: int, t: Stage1) -> bool {
     &&& 0 <= gst <= base
     &&& g.len() + 64 <= u32::MAX
     &&& t.carry_esc <= 1
@@ -633,14 +646,54 @@ pub open spec fn logic_inv(g: Seq<u8>, gst: int, base: int, t: Stage1) -> bool {
     &&& (t.in_str == 0xFFFF_FFFF_FFFF_FFFFu64) == instr(g, gst, base - 1)
     &&& t.prev <= 1
     &&& (t.prev == 1) == (base > gst && scalar(g, gst, base - 1))
+}
+
+/// The part of stage 1's state that the bit logic carries.
+pub open spec fn logic_inv(g: Seq<u8>, gst: int, base: int, t: Stage1) -> bool {
+    &&& core_inv(g, gst, base, t)
     &&& (t.err == 0) == clean(g, gst, base)
+}
+
+/// A mask of the control characters inside strings of a block is zero
+/// exactly when there are none.
+proof fn lemma_bad_mask(g: Seq<u8>, gst: int, base: int, m: u64)
+    requires
+        forall|k: u64| k < 64 ==> #[trigger] bit64(m, k) == bad(g, gst, base + k),
+    ensures
+        (m == 0) == (forall|i: int| base <= i < base + 64 ==> !#[trigger] bad(g, gst, i)),
+{
+    if m == 0 {
+        assert forall|i: int| base <= i < base + 64 implies !#[trigger] bad(g, gst, i) by {
+            let k = (i - base) as u64;
+            lemma_bit_consts(k);
+            assert(bit64(m, k) == bad(g, gst, base + k));
+        }
+    } else {
+        vstd::std_specs::bits::axiom_u64_trailing_zeros(m);
+        let k = vstd::std_specs::bits::u64_trailing_zeros(m) as u64;
+        assert(bit64(m, k));
+        assert(bad(g, gst, base + k));
+    }
+}
+
+/// The error word after the bytes `[a, b)`.
+proof fn lemma_err_range(g: Seq<u8>, gst: int, a: int, b: int, err0: u64, e: u64)
+    requires
+        gst <= a <= b,
+        (err0 == 0) == clean(g, gst, a),
+        (e == 0) == (forall|i: int| a <= i < b ==> !#[trigger] bad(g, gst, i)),
+    ensures
+        ((err0 | e) == 0) == clean(g, gst, b),
+{
+    lemma_or_zero(err0, e);
 }
 
 /// The bit logic of the block at `base`, from its classes `m`, escape
 /// mask `e` (with carry out `c2`) and string mask `p`: the structural
-/// bits and the state carried on. Writes nothing.
+/// bits, the bits of `m.ctrl` inside strings, and the state carried on.
+/// Writes nothing and leaves the error word alone.
 #[inline(always)]
-fn block_logic(
+fn block_core(
     m: Masks,
     e: u64,
     c2: u64,
@@ -649,25 +702,26 @@ fn block_logic(
     t: Stage1,
     Ghost(g): Ghost<Seq<u8>>,
     Ghost(gst): Ghost<int>,
-) -> (o: (u64, Stage1))
+) -> (o: (u64, u64, Stage1))
     requires
-        logic_inv(g, gst, base as int, t),
+        core_inv(g, gst, base as int, t),
         base < g.len(),
-        block_classes(m, g, base as int),
+        classes4(m, g, base as int),
         forall|k: u64| k < 64 ==> #[trigger] bit64(e, k) == esc(g, gst, base + k),
         c2 <= 1,
         (c2 == 1) == esc(g, gst, base + 64),
         p ^ (p << 1u64) == m.quote & !e,
     ensures
         forall|k: u64| k < 64 ==> #[trigger] bit64(o.0, k) == structural(g, gst, base + k),
-        logic_inv(g, gst, base + 64, o.1),
-        o.1.w == t.w,
-        o.1.pend == t.pend,
-        o.1.pbase == t.pbase,
+        forall|k: u64| k < 64 ==> #[trigger] bit64(o.1, k) == (bit64(m.ctrl, k) && inside(g, gst, base + k)),
+        core_inv(g, gst, base + 64, o.2),
+        o.2.err == t.err,
+        o.2.w == t.w,
+        o.2.pend == t.pend,
+        o.2.pbase == t.pbase,
 {
     let in_str = t.in_str;
     let prev = t.prev;
-    let mut err = t.err;
     let u = m.quote & !e;
     proof {
         assert forall|k: u64| k < 64 implies #[trigger] bit64(u, k) == uq(g, gst, base + k) by {
@@ -694,7 +748,7 @@ fn block_logic(
     proof {
         assert forall|k: u64| k < 64 implies {
             &&& #[trigger] bit64(st_m, k) == structural(g, gst, base + k)
-            &&& bit64(bad_m, k) == bad(g, gst, base + k)
+            &&& bit64(bad_m, k) == (bit64(m.ctrl, k) && inside(g, gst, base + k))
             &&& bit64(scalar_m, k) == scalar(g, gst, base + k)
         } by {
             lemma_block_bits(
@@ -717,27 +771,13 @@ fn block_logic(
             );
         }
     }
-    let ghost err0 = err;
-    err = err | bad_m;
     proof {
-        lemma_or_zero(err0, bad_m);
-        if err == 0 {
-            assert forall|i: int| gst <= i < base + 64 implies !#[trigger] bad(g, gst, i) by {
-                if i >= base {
-                    let k = (i - base) as u64;
-                    lemma_bit_consts(k);
-                    assert(!bit64(bad_m, k));
-                    assert(bit64(st_m, k) == structural(g, gst, base + k));
-                    assert(bit64(bad_m, k) == bad(g, gst, base + k));
-                }
-            }
-        } else if err0 == 0 {
-            vstd::std_specs::bits::axiom_u64_trailing_zeros(bad_m);
-            let k = vstd::std_specs::bits::u64_trailing_zeros(bad_m) as u64;
-            assert(bit64(bad_m, k));
-            assert(bit64(st_m, k) == structural(g, gst, base + k));
-            assert(bit64(bad_m, k) == bad(g, gst, base + k));
-            assert(bad(g, gst, base + k));
+        assert forall|k: u64| k < 64 implies #[trigger] bit64(bad_m, k) == (bit64(m.ctrl, k) && inside(
+            g,
+            gst,
+            base + k,
+        )) by {
+            lemma_block_bits(g, gst, base as int, m, e, u, r, strs_m, inside_m, scalar_m, prev, starts_m, escs_m, st_m, bad_m, k);
         }
         lemma_spread(r);
         lemma_bit_shl1(scalar_m, 0, 63);
@@ -746,13 +786,57 @@ fn block_logic(
         assert(bit64(st_m, 63) == structural(g, gst, base + 63));
         assert(bit64(scalar_m, 63) == scalar(g, gst, base + 63));
     }
-    (st_m, Stage1 { w: t.w, carry_esc: c2, in_str: 0u64.wrapping_sub(r >> 63u64), prev: scalar_m >> 63u64, err, pend: t.pend, pbase: t.pbase })
+    (st_m, bad_m, Stage1 { w: t.w, carry_esc: c2, in_str: 0u64.wrapping_sub(r >> 63u64), prev: scalar_m >> 63u64, err: t.err, pend: t.pend, pbase: t.pbase })
+}
+
+/// `block_core`, with the control characters inside strings added to the
+/// error word.
+#[inline(always)]
+fn block_logic(
+    m: Masks,
+    e: u64,
+    c2: u64,
+    p: u64,
+    base: usize,
+    t: Stage1,
+    Ghost(g): Ghost<Seq<u8>>,
+    Ghost(gst): Ghost<int>,
+) -> (o: (u64, Stage1))
+    requires
+        logic_inv(g, gst, base as int, t),
+        base < g.len(),
+        block_classes(m, g, base as int),
+        forall|k: u64| k < 64 ==> #[trigger] bit64(e, k) == esc(g, gst, base + k),
+        c2 <= 1,
+        (c2 == 1) == esc(g, gst, base + 64),
+        p ^ (p << 1u64) == m.quote & !e,
+    ensures
+        forall|k: u64| k < 64 ==> #[trigger] bit64(o.0, k) == structural(g, gst, base + k),
+        logic_inv(g, gst, base + 64, o.1),
+        o.1.w == t.w,
+        o.1.pend == t.pend,
+        o.1.pbase == t.pbase,
+{
+    let (st_m, bad_m, t2) = block_core(m, e, c2, p, base, t, Ghost(g), Ghost(gst));
+    proof {
+        assert forall|k: u64| k < 64 implies #[trigger] bit64(bad_m, k) == bad(g, gst, base + k) by {
+            assert(bit64(m.ctrl, k) == (byte(g, base + k) < 0x20));
+        }
+        lemma_bad_mask(g, gst, base as int, bad_m);
+        lemma_err_range(g, gst, base as int, base + 64, t2.err, bad_m);
+    }
+    (st_m, Stage1 { w: t2.w, carry_esc: t2.carry_esc, in_str: t2.in_str, prev: t2.prev, err: t2.err | bad_m, pend: t2.pend, pbase: t2.pbase })
 }
 
 /// The block at `base`, held in four NEON vectors. Each class mask is
 /// made where the bit logic first needs it (the backslashes for the
 /// escapes, then the quotes for the strings, then the rest), so that the
 /// vector work of one overlaps the scalar work of the one before.
+///
+/// The control characters come in one mask with the bytes from 0x80 up.
+/// Returned with the structural bits and the state are that mask inside
+/// strings, and that mask outside whitespace: where the latter is zero
+/// the block is ASCII and the former is its errors.
 #[inline(always)]
 fn block_neon(
     v0: verilith_simd::neon::uint8x16_t,
@@ -763,18 +847,17 @@ fn block_neon(
     t: Stage1,
     Ghost(g): Ghost<Seq<u8>>,
     Ghost(gst): Ghost<int>,
-) -> (o: (u64, Stage1))
+) -> (o: (u64, Stage1, u64, u64))
     requires
         kernel_cpu(NEON),
         verilith_simd::neon::neon(),
         crate::neon::holds64(g, base as int, v0, v1, v2, v3),
-        logic_inv(g, gst, base as int, t),
+        core_inv(g, gst, base as int, t),
     ensures
         forall|k: u64| k < 64 ==> #[trigger] bit64(o.0, k) == structural(g, gst, base + k),
-        logic_inv(g, gst, base + 64, o.1),
-        o.1.w == t.w,
-        o.1.pend == t.pend,
-        o.1.pbase == t.pbase,
+        core_inv(g, gst, base + 64, o.1),
+        o.1.err == t.err,
+        low_masks(g, gst, base as int, o.2, o.3),
 {
     let ghost b = base as int;
     let backslash = crate::neon::eq_mask64(v0, v1, v2, v3, 0x5C, Ghost(g), Ghost(b));
@@ -787,8 +870,8 @@ fn block_neon(
     let quote = crate::neon::eq_mask64(v0, v1, v2, v3, 0x22, Ghost(g), Ghost(b));
     let p = prefix_xor_clmul::<NEON>(quote & !e);
     let ws = crate::neon::ws_mask64(v0, v1, v2, v3, Ghost(g), Ghost(b));
-    let (op, ctrl) = crate::neon::op_ctrl_mask64(v0, v1, v2, v3, Ghost(g), Ghost(b));
-    let m = Masks { quote, backslash, ws, op, ctrl };
+    let (op, low) = crate::neon::op_low_mask64(v0, v1, v2, v3, Ghost(g), Ghost(b));
+    let m = Masks { quote, backslash, ws, op, ctrl: low };
     proof {
         assert forall|k: u64| k < 64 implies {
             let c = #[trigger] byte(g, base + k);
@@ -796,12 +879,154 @@ fn block_neon(
             &&& bit64(m.backslash, k) == (c == 0x5C)
             &&& bit64(m.ws, k) == is_ws(c)
             &&& bit64(m.op, k) == is_op(c)
-            &&& bit64(m.ctrl, k) == (c < 0x20)
         } by {
             assert(byte(g, base + k) == g[b + k]);
         }
     }
-    block_logic(m, e, c2, p, base, t, Ghost(g), Ghost(gst))
+    let (st_m, ea, t2) = block_core(m, e, c2, p, base, t, Ghost(g), Ghost(gst));
+    let ra = low & !ws;
+    proof {
+        assert forall|k: u64| k < 64 implies {
+            &&& #[trigger] bit64(ea, k) == (crate::neon::lowb(g[b + k]) && inside(g, gst, b + k))
+            &&& bit64(ra, k) == (crate::neon::lowb(g[b + k]) && !is_ws(g[b + k]))
+        } by {
+            assert(bit64(ea, k) == (bit64(m.ctrl, k) && inside(g, gst, base + k)));
+            assert(bit64(low, k) == crate::neon::lowb(g[b + k]));
+            assert(bit64(ws, k) == is_ws(g[b + k]));
+            lemma_bit_ops(low, !ws, k);
+            lemma_bit_ops(ws, ws, k);
+        }
+    }
+    (st_m, t2, ea, ra)
+}
+
+/// What `block_neon` says of the control characters and high bytes of the
+/// block at `b`.
+pub open spec fn low_masks(g: Seq<u8>, gst: int, b: int, ea: u64, ra: u64) -> bool {
+    forall|k: u64|
+        k < 64 ==> {
+            &&& #[trigger] bit64(ea, k) == (crate::neon::lowb(g[b + k]) && inside(g, gst, b + k))
+            &&& bit64(ra, k) == (crate::neon::lowb(g[b + k]) && !is_ws(g[b + k]))
+        }
+}
+
+/// With nothing low outside whitespace, the block is ASCII and `ea` is
+/// its errors.
+proof fn lemma_low_ascii(g: Seq<u8>, gst: int, b: int, ea: u64, ra: u64)
+    requires
+        0 <= b,
+        b + 64 <= g.len(),
+        low_masks(g, gst, b, ea, ra),
+        ra == 0,
+    ensures
+        crate::utf8::ascii_span(g, b, b + 64),
+        (ea == 0) == (forall|i: int| b <= i < b + 64 ==> !#[trigger] bad(g, gst, i)),
+{
+    assert forall|k: u64| k < 64 implies g[b + k] < 0x80 && #[trigger] bit64(ea, k) == bad(g, gst, b + k) by {
+        lemma_bit_consts(k);
+        assert(bit64(ea, k) == (crate::neon::lowb(g[b + k]) && inside(g, gst, b + k)));
+        assert(!bit64(ra, k));
+        assert(byte(g, b + k) == g[b + k]);
+    }
+    assert forall|t: int| b <= t < b + 64 implies #[trigger] g[t] < 0x80 by {
+        let k = (t - b) as u64;
+        assert(bit64(ea, k) == bad(g, gst, b + k));
+    }
+    lemma_bad_mask(g, gst, b, ea);
+}
+
+/// The two blocks at `b` when one may hold bytes from 0x80 up, or follows
+/// one that ends with them: finds those bytes, runs the UTF-8 check on
+/// both blocks, and takes them out of the error masks. Out of line, as
+/// its vector work would crowd the loop's registers. Returns the errors
+/// of the two blocks and the UTF-8 check's new `ok` and `pa`.
+#[cold]
+#[inline(never)]
+fn rare_pair(
+    s: &[u8],
+    st: usize,
+    b: usize,
+    uj: usize,
+    ok: bool,
+    pa: bool,
+    ea: u64,
+    eb: u64,
+    Ghost(ra): Ghost<u64>,
+    Ghost(rb): Ghost<u64>,
+) -> (r: (u64, bool, bool))
+    requires
+        verilith_simd::neon::neon(),
+        crate::utf8::u8_state(s@, st as int, uj as int, ok),
+        st <= b,
+        b + 128 <= s@.len(),
+        (uj == st + 3 && b == st) || (uj == b && st + 3 <= b),
+        pa ==> crate::utf8::ascii_span(s@, uj - 3, b as int),
+        low_masks(s@, st as int, b as int, ea, ra),
+        low_masks(s@, st as int, b + 64, eb, rb),
+    ensures
+        crate::utf8::u8_state(s@, st as int, b + 128, r.1),
+        r.2 ==> crate::utf8::ascii_span(s@, b + 125, b + 128),
+        (r.0 == 0) == (forall|i: int| b <= i < b + 128 ==> !#[trigger] bad(s@, st as int, i)),
+{
+    let _n = s.len();
+    let ghost g = s@;
+    let ghost gst = st as int;
+    let va = crate::neon::load64(s, b);
+    let na = crate::neon::high_mask64(va.0, va.1, va.2, va.3, Ghost(g), Ghost(b as int));
+    let vb = crate::neon::load64(s, b + 64);
+    let nb = crate::neon::high_mask64(vb.0, vb.1, vb.2, vb.3, Ghost(g), Ghost(b + 64));
+    proof {
+        lemma_high_zero(g, b as int, na);
+        lemma_high_zero(g, b + 64, nb);
+    }
+    let ua = crate::utf8::utf8_block_neon(s, st, b, uj, ok, pa, na == 0);
+    let ub = crate::utf8::utf8_block_neon(s, st, b + 64, b + 64, ua.0, ua.1, nb == 0);
+    let xa = ea & !na;
+    let xb = eb & !nb;
+    proof {
+        lemma_low_bad(g, gst, b as int, ea, ra, na, xa);
+        lemma_low_bad(g, gst, b + 64, eb, rb, nb, xb);
+        lemma_bad_mask(g, gst, b as int, xa);
+        lemma_bad_mask(g, gst, b + 64, xb);
+        lemma_or_zero(xa, xb);
+    }
+    (xa | xb, ub.0, ub.1)
+}
+
+/// No high byte in the mask, none in the block.
+proof fn lemma_high_zero(g: Seq<u8>, b: int, na: u64)
+    requires
+        forall|k: u64| k < 64 ==> #[trigger] bit64(na, k) == (g[b + k] >= 0x80),
+    ensures
+        na == 0 ==> crate::utf8::ascii_span(g, b, b + 64),
+{
+    if na == 0 {
+        assert forall|t: int| b <= t < b + 64 implies #[trigger] g[t] < 0x80 by {
+            let k = (t - b) as u64;
+            lemma_bit_consts(k);
+            assert(bit64(na, k) == (g[b + k] >= 0x80));
+        }
+    }
+}
+
+/// The low bytes inside strings, less the high ones, are the errors.
+proof fn lemma_low_bad(g: Seq<u8>, gst: int, b: int, ea: u64, ra: u64, na: u64, xa: u64)
+    requires
+        0 <= b,
+        b + 64 <= g.len(),
+        low_masks(g, gst, b, ea, ra),
+        forall|k: u64| k < 64 ==> #[trigger] bit64(na, k) == (g[b + k] >= 0x80),
+        xa == ea & !na,
+    ensures
+        forall|k: u64| k < 64 ==> #[trigger] bit64(xa, k) == bad(g, gst, b + k),
+{
+    assert forall|k: u64| k < 64 implies #[trigger] bit64(xa, k) == bad(g, gst, b + k) by {
+        assert(bit64(ea, k) == (crate::neon::lowb(g[b + k]) && inside(g, gst, b + k)));
+        assert(bit64(na, k) == (g[b + k] >= 0x80));
+        lemma_bit_ops(ea, !na, k);
+        lemma_bit_ops(na, na, k);
+        assert(byte(g, b + k) == g[b + k]);
+    }
 }
 
 /// Processes the block at `base`, whose classes are `m`.
@@ -960,6 +1185,7 @@ fn stage1_neon(s: &[u8], st: usize, idx: &mut Vec<u32>, uj0: usize, uok0: bool) 
     let mut qb: u64 = 0;
     let mut qbase: usize = st;
     let mut pa = true;
+    let mut err: u64 = 0;
     proof {
         crate::simd::lemma_zero_upto(st + 64, 64);
         assert(idx@.subrange(0, 0) + bits_upto(0, st as int, 64) + bits_upto(0, st + 64, 64) =~= positions(
@@ -979,7 +1205,8 @@ fn stage1_neon(s: &[u8], st: usize, idx: &mut Vec<u32>, uj0: usize, uok0: bool) 
             st <= base <= n,
             idx@.len() == len0,
             len0 >= g.len() - gst + 64,
-            logic_inv(g, gst, base as int, t),
+            core_inv(g, gst, base as int, t),
+            (err == 0) == clean(g, gst, base as int),
             st <= qbase,
             qbase + 128 <= base || (qa == 0 && qb == 0 && qbase == base),
             w <= qbase - gst,
@@ -991,13 +1218,9 @@ fn stage1_neon(s: &[u8], st: usize, idx: &mut Vec<u32>, uj0: usize, uok0: bool) 
         decreases n - base,
     {
         let va = crate::neon::load64(s, base);
-        let ha = crate::neon::ascii4(va.0, va.1, va.2, va.3, Ghost(g), Ghost(base as int));
-        let ua = crate::utf8::utf8_block_neon(s, st, base, uj, uok, pa, ha);
-        let (sa, t1) = block_neon(va.0, va.1, va.2, va.3, base, t, Ghost(g), Ghost(gst));
+        let (sa, t1, ea, ra) = block_neon(va.0, va.1, va.2, va.3, base, t, Ghost(g), Ghost(gst));
         let vb = crate::neon::load64(s, base + 64);
-        let hb = crate::neon::ascii4(vb.0, vb.1, vb.2, vb.3, Ghost(g), Ghost(base + 64));
-        let ub = crate::utf8::utf8_block_neon(s, st, base + 64, base + 64, ua.0, ua.1, hb);
-        let (sb, t2) = block_neon(vb.0, vb.1, vb.2, vb.3, base + 64, t1, Ghost(g), Ghost(gst));
+        let (sb, t2, eb, rb) = block_neon(vb.0, vb.1, vb.2, vb.3, base + 64, t1, Ghost(g), Ghost(gst));
         let ghost i0 = idx@;
         let ghost la = bits_upto(qa, qbase as int, 64);
         let ghost lb = bits_upto(qb, qbase + 64, 64);
@@ -1023,14 +1246,33 @@ fn stage1_neon(s: &[u8], st: usize, idx: &mut Vec<u32>, uj0: usize, uok0: bool) 
                 ));
             }
         }
+        // The blocks are ASCII, as the bytes before them, far more often
+        // than not: one test for both, and the rest is out of line.
+        let (e2, uok2, pa2) = if (ra | rb) == 0 && pa {
+            proof {
+                lemma_or_zero(ra, rb);
+                lemma_low_ascii(g, gst, base as int, ea, ra);
+                lemma_low_ascii(g, gst, base + 64, eb, rb);
+                lemma_or_zero(ea, eb);
+            }
+            let ua = crate::utf8::utf8_block_neon(s, st, base, uj, uok, pa, true);
+            let ub = crate::utf8::utf8_block_neon(s, st, base + 64, base + 64, ua.0, ua.1, true);
+            (ea | eb, ub.0, ub.1)
+        } else {
+            rare_pair(s, st, base, uj, uok, pa, ea, eb, Ghost(ra), Ghost(rb))
+        };
+        proof {
+            lemma_err_range(g, gst, base as int, base + 128, err, e2);
+        }
+        err = err | e2;
         w = w2;
         qa = sa;
         qb = sb;
         qbase = base;
         t = t2;
         uj = base + 128;
-        uok = ub.0;
-        pa = ub.1;
+        uok = uok2;
+        pa = pa2;
         base = base + 128;
         proof {
             lemma_bits_len(sa, qbase as int, 64);
@@ -1053,7 +1295,7 @@ fn stage1_neon(s: &[u8], st: usize, idx: &mut Vec<u32>, uj0: usize, uok0: bool) 
             assert(idx@.subrange(0, w1 as int) =~= idx@.subrange(0, w as int) + idx@.subrange(w as int, w1 as int));
         }
     }
-    t = Stage1 { w: w1, carry_esc: t.carry_esc, in_str: t.in_str, prev: t.prev, err: t.err, pend: qb, pbase: pb as u32 };
+    t = Stage1 { w: w1, carry_esc: t.carry_esc, in_str: t.in_str, prev: t.prev, err, pend: qb, pbase: pb as u32 };
     (t, base, uj, uok)
 }
 
