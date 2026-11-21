@@ -7589,6 +7589,17 @@ proof fn lemma_unpack64_bytes(a: Seq<u8>, b: Seq<u8>, r: Seq<u8>, hi: bool)
         assert(byte32(u32s(a)[sn], e) == a[4 * sn + e]);
         assert(byte32(u32s(b)[sn], e) == b[4 * sn + e]);
         assert(n == 0 || n == 1 || n == 2 || n == 3);
+        assert(m == 4 * n + e);
+        assert(4 * sn + e == unpack_at(m, 8, hi));
+        if n == 0 {
+            assert(u32s(r)[0] == u32s(a)[2 * k]);
+        } else if n == 1 {
+            assert(u32s(r)[1] == u32s(a)[2 * k + 1]);
+        } else if n == 2 {
+            assert(u32s(r)[2] == u32s(b)[2 * k]);
+        } else {
+            assert(u32s(r)[3] == u32s(b)[2 * k + 1]);
+        }
     }
 }
 
