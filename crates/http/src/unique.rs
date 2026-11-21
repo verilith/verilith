@@ -209,6 +209,8 @@ proof fn lemma_crlf(b: Seq<u8>, i: int)
 }
 
 /// A field line vhttp accepts reads as the same field under every choice.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(50)]
 proof fn lemma_header_line(b: Seq<u8>, i: int, c: Recipient)
     requires
         0 <= i <= b.len(),

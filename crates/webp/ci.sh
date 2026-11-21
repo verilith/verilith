@@ -10,7 +10,7 @@ LIBWEBP_TAG=v1.6.0
 libwebp() {
   export LIBWEBP_SRC=$W/libwebp LIBWEBP_BUILD=$W/lwbuild
   [ -f "$LIBWEBP_BUILD/cwebp" ] && return
-  [ -d "$LIBWEBP_SRC" ] || git clone -q --depth 1 --branch "$LIBWEBP_TAG" https://chromium.googlesource.com/webm/libwebp "$LIBWEBP_SRC"
+  [ -d "$LIBWEBP_SRC" ] || git clone -q --depth 1 --branch "$LIBWEBP_TAG" https://github.com/webmproject/libwebp "$LIBWEBP_SRC"
   cmake -S "$LIBWEBP_SRC" -B "$LIBWEBP_BUILD" -DCMAKE_BUILD_TYPE=Release -DWEBP_BUILD_CWEBP=ON -DWEBP_BUILD_DWEBP=ON > /dev/null
   cmake --build "$LIBWEBP_BUILD" -j"$(nproc)" > /dev/null
 }
