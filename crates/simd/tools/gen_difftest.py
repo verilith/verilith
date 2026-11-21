@@ -218,13 +218,13 @@ out = ["""//! Differential test of every trusted intrinsic specification.
 //!
 //! For each intrinsic in `src/x86.rs`, random and edge-biased inputs are run
 //! through the CPU and through the verified reference implementation of the
-//! intrinsic's specification (`vsimd::refs`); any difference fails the test.
+//! intrinsic's specification (`verilith_simd::refs`); any difference fails the test.
 //! `VSIMD_ITERS` sets the number of random inputs per intrinsic (default
 //! 1,000,000; immediate-operand variants run a sixteenth of that each).
 #![cfg(target_arch = "x86_64")]
 #![allow(unused_unsafe, non_snake_case)]
 use core::arch::x86_64::*;
-use vsimd::refs::*;
+use verilith_simd::refs::*;
 
 fn iters() -> usize {
     std::env::var("VSIMD_ITERS").ok().and_then(|s| s.parse().ok()).unwrap_or(1_000_000)
@@ -262,7 +262,7 @@ impl Rng {
     }
 }
 
-// The views, as `vsimd::lanes` defines them: bytes in memory order, wider
+// The views, as `verilith_simd::lanes` defines them: bytes in memory order, wider
 // lanes little-endian.
 fn bytes128(v: __m128i) -> Vec<u8> { let b: [u8; 16] = unsafe { core::mem::transmute(v) }; b.to_vec() }
 fn bytes256(v: __m256i) -> Vec<u8> { let b: [u8; 32] = unsafe { core::mem::transmute(v) }; b.to_vec() }

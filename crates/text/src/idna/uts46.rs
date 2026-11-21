@@ -788,6 +788,8 @@ proof fn lemma_flags_final(cs: Seq<u32>, o: Options, ls: Seq<Seq<u32>>, conv: Se
     reveal(bad_upto);
 }
 
+#[verifier::spinoff_prover]
+#[verifier::rlimit(50)]
 proof fn lemma_at_ends_push(out0: Seq<u32>, mid: Seq<u32>, u: Seq<u32>, e0: Seq<usize>, conv: Seq<Seq<u32>>, i: int)
     requires
         at_ends(out0, e0, conv, i),
