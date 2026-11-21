@@ -506,6 +506,8 @@ fn half(y1: uint8x16_t, c: uint8x16_t, d: uint8x16_t, Ghost(ys): Ghost<Seq<int>>
 
 /// Sixteen pixels from `x` of the three rows, to red, green, blue at
 /// `out[p..p + 48]`.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(40)]
 #[inline(always)]
 pub fn ycc16(yr: &[u8], cbr: &[u8], crr: &[u8], x: usize, out: &mut [u8], p: usize)
     requires

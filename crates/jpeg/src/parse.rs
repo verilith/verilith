@@ -1193,6 +1193,8 @@ pub fn dac_x(data: &[u8], p: usize, n: isize) -> (r: bool)
 
 /// One marker segment at `p`. Returns the position after it, or `None` at
 /// EOI.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(40)]
 pub fn step_x(data: &[u8], st: &mut DecX, p: usize) -> (r: Result<Option<usize>, Error>)
     requires
         len_ok(data@),

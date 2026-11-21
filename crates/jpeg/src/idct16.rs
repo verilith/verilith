@@ -2007,6 +2007,8 @@ pub open spec fn trc16(v: uint8x16_t, w0: uint8x16_t, w1: uint8x16_t, w2: uint8x
 }
 
 /// Eight vectors of eight 16-bit lanes, transposed.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(40)]
 #[inline(always)]
 fn tr8(w0: uint8x16_t, w1: uint8x16_t, w2: uint8x16_t, w3: uint8x16_t, w4: uint8x16_t, w5: uint8x16_t, w6: uint8x16_t, w7: uint8x16_t) -> (x: (uint8x16_t, uint8x16_t, uint8x16_t, uint8x16_t, uint8x16_t, uint8x16_t, uint8x16_t, uint8x16_t))
     requires

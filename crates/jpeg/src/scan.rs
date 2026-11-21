@@ -867,6 +867,8 @@ pub open spec fn block_ss(d: Seq<u8>, f: Frame, t: Tables, s: Scan, st: SS, i: i
     }
 }
 
+#[verifier::spinoff_prover]
+#[verifier::rlimit(40)]
 #[inline(always)]
 fn block_x(
     data: &[u8],
@@ -1891,6 +1893,8 @@ fn flush_row(co: &mut Coefs, f: &FrameX, g: &Geom)
 /// Decodes the scan whose entropy-coded data starts at `p`. Returns a
 /// position from which the next marker is the one after the scan, or
 /// `None` if the file is to be rejected.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(40)]
 pub fn scan_x(data: &[u8], f: &FrameX, g: &Geom, t: &Tabs, s: &ScanX, co: &mut Coefs, p: usize) -> (r: Option<usize>)
     requires
         len_ok(data@),
