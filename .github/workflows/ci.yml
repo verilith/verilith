@@ -148,7 +148,9 @@ jobs:
     name: Test ${{ matrix.crate }}
     needs: plan
     if: needs.plan.outputs.test != '[]'
-    runs-on: ubuntu-latest
+    # A fixed image: the tests compare against the system's libraries (text
+    # against ICU 74), so the image's versions are part of the test.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
