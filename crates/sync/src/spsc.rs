@@ -1449,8 +1449,11 @@ proof fn lemma_pop_frame<T>(
     } by {
         if p < h0 + c.cap {
             assert(old_cells.dom().contains(p));
+            assert(cells[p] == old_cells[p]);
         } else {
             assert(f.dom().contains(p));
+            assert(cells.dom().contains(p));
+            assert(cells[p].value() == f[p]);
         }
     }
 }
