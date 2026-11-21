@@ -1,0 +1,44 @@
+[package]
+name = "vhttp-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+verilith-http = { path = ".." }
+httparse = "1"
+
+[[bin]]
+name = "request"
+path = "fuzz_targets/request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "capi"
+path = "fuzz_targets/capi.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chunked"
+path = "fuzz_targets/chunked.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "httparse_api"
+path = "fuzz_targets/httparse_api.rs"
+test = false
+doc = false
+bench = false
+
+# Its own project, outside the verilith workspace.
+[workspace]

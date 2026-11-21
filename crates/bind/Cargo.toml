@@ -1,0 +1,33 @@
+[package]
+name = "verilith-bind"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "One native library and C ABI for the Verilith parsers, with C++, Python and Node.js bindings on top"
+publish = false
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[features]
+default = ["url", "json", "text"]
+url = ["dep:verilith-url"]
+json = ["dep:verilith-json"]
+text = ["dep:verilith-text"]
+# vhttp's llhttp drop-in: llhttp's own api.c and http.c (from vhttp's
+# compat/llhttp) are compiled in, so the library is all of llhttp's ABI.
+http = ["dep:verilith-http", "verilith-http/llhttp-abi"]
+# vdns's c-ares parser and writer under c-ares's names. They call c-ares's
+# record setters and getters, so a program that links with this feature
+# must also link c-ares, patched as vdns/cares/README.md says.
+dns = ["dep:verilith-dns", "verilith-dns/cares", "verilith-dns/ares-abi"]
+
+[dependencies]
+verilith-url = { path = "../url", version = "0.1.0", optional = true }
+verilith-json = { path = "../json", version = "0.1.0", optional = true }
+verilith-text = { path = "../text", version = "0.1.0", optional = true }
+verilith-http = { path = "../http", version = "0.1.0", optional = true }
+verilith-dns = { path = "../dns", version = "0.1.0", optional = true }
+
+[build-dependencies]
+cc = "1"

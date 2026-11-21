@@ -1,0 +1,47 @@
+[package]
+name = "verilith-json"
+version = "0.1.0"
+edition = "2021"
+description = "A fast JSON parser, proven correct with Verus: exactly RFC 8259, no panics, bounded recursion. Includes serde support and a cJSON-compatible C ABI."
+license = "MIT"
+repository = "https://github.com/verilith/verilith"
+readme = "README.md"
+keywords = ["json", "parser", "verified", "simd", "serde"]
+categories = ["parser-implementations", "encoding"]
+rust-version = "1.89"
+exclude = ["/fuzz", "/target", "/examples/*.json", "/.github"]
+
+[lib]
+crate-type = ["rlib", "staticlib", "cdylib"]
+
+[dependencies]
+verilith-core = { path = "../core", version = "0.1.0" }
+verilith-simd = { path = "../simd", version = "0.1.0" }
+vstd = { workspace = true, features = ["std"] }
+serde = { version = "1", optional = true }
+# Shortest round-trip float formatting (what serde_json uses). Its output is
+# checked against the verified number grammar before it is written.
+zmij = "1"
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+# float_roundtrip: serde_json is otherwise off by an ulp on some inputs.
+serde_json = { version = "1", features = ["float_roundtrip"] }
+
+[features]
+# The cJSON-compatible C ABI (`include/cJSON.h`).
+cjson = []
+# The native C API (`include/vjson.h`): the Rust API's zero-copy views.
+capi = []
+# `from_slice`/`from_str` and `to_vec`/`to_string` for serde types.
+serde = ["dep:serde"]
+
+[[example]]
+name = "serde_speed"
+required-features = ["serde"]
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(prof)'] }

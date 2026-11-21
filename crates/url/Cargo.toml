@@ -1,0 +1,32 @@
+[package]
+name = "verilith-url"
+version = "0.1.0"
+license = "MIT"
+description = "A formally verified (Verus) WHATWG URL parser"
+edition = "2021"
+exclude = ["bench/"]
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[features]
+# Export the C API under ada's own symbol names (ada_parse, ada_get_href, ...).
+ada-abi = []
+
+[dependencies]
+verilith-core = { path = "../core", version = "0.1.0" }
+verilith-simd = { path = "../simd", version = "0.1.0" }
+vstd = { workspace = true, features = ["std"] }
+verilith-text = { path = "../text", version = "0.1.0" }
+
+[dev-dependencies]
+serde_json = "1"
+url = "2"
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(verus_only)',
+] }

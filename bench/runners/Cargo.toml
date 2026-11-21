@@ -1,0 +1,13 @@
+# Rust runners: our libraries through their Rust APIs, where the comparison
+# is not a C ABI swap. Dependencies are the crates of this checkout. A
+# workspace of its own, so the runners keep their own profile and lockfile.
+[workspace]
+members = ["vbrun", "vdns-run", "vhttp-run", "vjson-run", "vpng-run", "vx509-run"]
+# Its own project: Verdict pins an older toolchain and its own vstd.
+exclude = ["verdict-run"]
+resolver = "2"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+debug = "line-tables-only"

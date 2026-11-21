@@ -1,0 +1,40 @@
+name: Verus
+description: >-
+  Puts cargo-verus and z3 on PATH: the Verus commit in scripts/verus-version,
+  built from source (there is no release build for it) and cached.
+runs:
+  using: composite
+  steps:
+    - name: Verus version
+      id: v
+      shell: bash
+      run: |
+        . scripts/verus-version
+        echo "commit=$VERUS_COMMIT" >> "$GITHUB_OUTPUT"
+        echo "toolchain=$VERUS_TOOLCHAIN" >> "$GITHUB_OUTPUT"
+    - name: Rust toolchain for Verus
+      shell: bash
+      run: rustup toolchain install "${{ steps.v.outputs.toolchain }}" --profile minimal -c rustc-dev,llvm-tools
+    - name: Cache Verus
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/verus-bin
+        key: verus-${{ runner.os }}-${{ runner.arch }}-${{ steps.v.outputs.commit }}-${{ steps.v.outputs.toolchain }}
+    - name: Build Verus
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        git clone -q https://github.com/verus-lang/verus ~/verus
+        cd ~/verus && git checkout -q "${{ steps.v.outputs.commit }}"
+        cd source
+        ./tools/get-z3.sh
+        source ../tools/activate
+        vargo build --release
+        cp -r target-verus/release ~/verus-bin
+        cp z3 ~/verus-bin/z3
+    - name: PATH
+      shell: bash
+      run: |
+        echo "$HOME/verus-bin" >> "$GITHUB_PATH"
+        echo "VERUS_Z3_PATH=$HOME/verus-bin/z3" >> "$GITHUB_ENV"

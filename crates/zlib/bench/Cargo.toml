@@ -1,0 +1,16 @@
+[package]
+name = "vzlib-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+verilith-zlib = { path = ".." }
+libz-ng-sys = "1"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+debug = 1
+
+[workspace]

@@ -1,0 +1,15 @@
+[package]
+name = "verilith-bind-python"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Python bindings for the Verilith parsers"
+publish = false
+
+[lib]
+name = "vbind_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+verilith-bind = { path = ".." }
+pyo3 = { version = "0.25", features = ["extension-module", "abi3-py39"] }

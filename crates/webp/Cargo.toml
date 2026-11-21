@@ -1,0 +1,26 @@
+[package]
+name = "verilith-webp"
+version = "0.1.0"
+license = "MIT"
+description = "A formally verified (Verus) WebP lossless (VP8L) decoder"
+edition = "2021"
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[features]
+# Export the C API under libwebp's own symbol names.
+webp-abi = []
+
+[dependencies]
+verilith-core = { path = "../core", version = "0.1.0" }
+vstd = { workspace = true, features = ["std"] }
+verilith-simd = { path = "../simd", version = "0.1.0" }
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(verus_only)',
+] }

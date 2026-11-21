@@ -1,0 +1,4 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <turbojpeg.h>
+int main(int argc,char**argv){for(int a=1;a<argc;a++){FILE*f=fopen(argv[a],"rb");if(!f)continue;fseek(f,0,SEEK_END);long n=ftell(f);fseek(f,0,SEEK_SET);unsigned char*buf=malloc(n);if(fread(buf,1,n,f)!=(size_t)n)return 1;fclose(f);tjhandle h=tj3Init(TJINIT_DECOMPRESS);if(tj3DecompressHeader(h,buf,n)<0){printf("%s hdr\n",argv[a]);tj3Destroy(h);free(buf);continue;}int w=tj3Get(h,TJPARAM_JPEGWIDTH),ht=tj3Get(h,TJPARAM_JPEGHEIGHT);if((long)w*ht>40000000){printf("%s big\n",argv[a]);tj3Destroy(h);free(buf);continue;}unsigned char*o=calloc((size_t)w*ht*3,1);int rc=tj3Decompress8(h,buf,n,o,0,TJPF_RGB);unsigned long long x=1469598103934665603ULL;for(long i=0;i<(long)w*ht*3;i++){x^=o[i];x*=1099511628211ULL;}printf("%s %d %dx%d %llx\n",argv[a],rc,w,ht,x);free(o);free(buf);tj3Destroy(h);}return 0;}

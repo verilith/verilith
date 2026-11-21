@@ -1,0 +1,33 @@
+[package]
+name = "verilith-snappy"
+version = "0.1.0"
+license = "MIT"
+description = "A formally verified (Verus) Snappy compressor and decompressor with the snappy-c API"
+edition = "2021"
+repository = "https://github.com/verilith/verilith"
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[features]
+# Export the C API under snappy-c's own names (snappy_*).
+snappy-abi = []
+
+[dependencies]
+verilith-core = { path = "../core", version = "0.1.0" }
+vstd = { workspace = true, features = ["std"] }
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+# Verus erases ghost code during a normal `cargo build`; ghost-only imports
+# are guarded by `verus_only`, which Verus turns on during verification.
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(verus_only)',
+] }
+
+[dev-dependencies]
+# The framing format has no reference in libsnappy; the tests compare
+# with this independent implementation of it.
+snap = "1.1"

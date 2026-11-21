@@ -1,0 +1,28 @@
+[package]
+name = "verilith-brotli"
+version = "0.1.0"
+license = "MIT"
+description = "A formally verified (Verus) Brotli (RFC 7932) decompressor with google/brotli's decoder C API"
+edition = "2021"
+repository = "https://github.com/verilith/verilith"
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[features]
+# Export the C API under google/brotli's own symbol names (BrotliDecoder*).
+brotli-abi = []
+
+[dependencies]
+verilith-core = { path = "../core", version = "0.1.0" }
+vstd = { workspace = true, features = ["std"] }
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+# Verus erases ghost code during a normal `cargo build`; ghost-only imports
+# are guarded by `verus_only`, which Verus turns on during verification.
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(verus_only)',
+] }

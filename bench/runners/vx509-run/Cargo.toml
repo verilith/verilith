@@ -1,0 +1,9 @@
+[package]
+name = "vx509-run"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+vbrun = { path = "../vbrun" }
+verilith-x509 = { path = "../../../crates/x509" }

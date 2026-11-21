@@ -1,0 +1,22 @@
+[package]
+name = "vsync-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+verilith-sync = { path = ".." }
+rtrb = "=0.3.2"
+crossbeam-queue = "=0.3.12"
+crossbeam-channel = "=0.5.15"
+crossbeam-utils = "=0.8.21"
+parking_lot = "=0.12.4"
+core_affinity = "=0.8.3"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+debug = 1
+
+# Its own project, outside the verilith workspace.
+[workspace]

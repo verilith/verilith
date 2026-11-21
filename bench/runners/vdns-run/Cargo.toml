@@ -1,0 +1,9 @@
+[package]
+name = "vdns-run"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+vbrun = { path = "../vbrun" }
+verilith-dns = { path = "../../../crates/dns" }

@@ -1,0 +1,27 @@
+[package]
+name = "verilith-regex"
+version = "0.1.0"
+edition = "2021"
+description = "A linear-time regular expression engine (RE2 syntax and semantics) formally verified with Verus"
+license = "MIT AND BSD-3-Clause"
+repository = "https://github.com/verilith/verilith"
+exclude = ["compat/", "scripts/", "tools/", "bench/"]
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+vstd = { workspace = true, features = ["std"] }
+verilith-text = { path = "../text", version = "0.1.0" }
+verilith-simd = { path = "../simd", version = "0.1.0" }
+verilith-core = { path = "../core", version = "0.1.0" }
+
+[features]
+# Export the C API under cre2's names (cre2_new, cre2_match, ...) as well as vregex_*.
+cre2-abi = []
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(verus_only)'] }

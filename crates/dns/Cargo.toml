@@ -1,0 +1,50 @@
+[package]
+name = "verilith-dns"
+version = "0.1.0"
+license = "MIT"
+description = "A formally verified (Verus) DNS message parser and serializer, and a drop-in parser for c-ares"
+edition = "2021"
+repository = "https://github.com/verilith/verilith"
+readme = "README.md"
+keywords = ["dns", "parser", "verified", "verus", "c-ares"]
+categories = ["network-programming", "parser-implementations", "encoding"]
+exclude = ["fuzz/", "bench/", ".github/"]
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[features]
+default = ["std"]
+# Without `std` the crate is `no_std` and needs only `alloc` (a global
+# allocator), for embedded resolvers.
+std = ["vstd/std", "verilith-core/std"]
+# `cares::vdns_ares_dns_parse`, which builds c-ares's own records and so
+# needs a c-ares library at link time.
+cares = []
+# Export the C shims under c-ares's own symbol names.
+ares-abi = []
+# The native C API (include/vdns.h): the Rust API with C types.
+capi = ["std"]
+
+[dependencies]
+verilith-core = { path = "../core", version = "0.1.0", default-features = false }
+vstd = { workspace = true, features = ["alloc"] }
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+# Verus supports ghost code, code that is used for proofs but erased during compilation.
+# This means that ghost items that are imported via `use` will not exist during a normal
+# `cargo build`, leading to compilation errors. These errors can be prevented by guarding the
+# use statements with the feature flag `verus_only`, which Verus turns on during
+# verification.
+#
+# WARNING: this flag should only be used on import statements and setting config attributes,
+# see the documentation (https://verus-lang.github.io/verus/guide/erasure.html) for more details.
+#
+# This lint suppression prevents cargo from complaining about the
+# `verus_only` feature flag being undeclared.
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(verus_only)',
+] }

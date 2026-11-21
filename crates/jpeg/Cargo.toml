@@ -1,0 +1,25 @@
+[package]
+name = "verilith-jpeg"
+version = "0.1.0"
+license = "MIT"
+description = "A formally verified (Verus) JPEG decoder: baseline and progressive Huffman"
+edition = "2021"
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[features]
+# Export the C API under TurboJPEG's own symbol names.
+turbojpeg-abi = []
+
+[dependencies]
+vstd = { workspace = true, features = ["std"] }
+verilith-simd = { path = "../simd", version = "0.1.0" }
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(verus_only)',
+] }

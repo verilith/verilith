@@ -1,0 +1,47 @@
+[package]
+name = "vjson-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+verilith-json = { path = "..", features = ["cjson", "serde"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+
+[build-dependencies]
+cc = "1"
+
+[[bin]]
+name = "parse"
+path = "fuzz_targets/parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cjson_parse"
+path = "fuzz_targets/cjson_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cjson_ops"
+path = "fuzz_targets/cjson_ops.rs"
+test = false
+doc = false
+bench = false
+
+# Keep this crate out of any parent workspace.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "ondemand"
+path = "fuzz_targets/ondemand.rs"
+test = false
+doc = false

@@ -1,0 +1,37 @@
+[package]
+name = "verilith-http"
+version = "0.1.0"
+edition = "2021"
+description = "A fast HTTP/1.1 parser formally verified with Verus"
+license = "MIT"
+repository = "https://github.com/verilith/verilith"
+exclude = ["compat/", "scripts/", ".github/", "fuzz/", "bench/"]
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+verilith-core = { path = "../core", version = "0.1.0" }
+verilith-simd = { path = "../simd", version = "0.1.0" }
+vstd = { workspace = true, features = ["std"] }
+
+[features]
+# The native C API (include/vhttp.h): the Rust API with C types.
+capi = []
+# Export the C API under picohttpparser's own symbol names.
+phr-abi = []
+# Export llhttp's internal parser symbols, to link with llhttp's api.c and
+# http.c in place of its generated llhttp.c (see compat/llhttp).
+llhttp-abi = []
+# With llhttp-abi: parsers with lenient flags set run on llhttp's own
+# generated parser, linked from compat/llhttp/src/lenient.c.
+llhttp-lenient = ["llhttp-abi"]
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(verus_only)'] }
+
+[dev-dependencies]
+httparse = "1"
