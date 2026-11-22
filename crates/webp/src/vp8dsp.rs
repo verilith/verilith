@@ -7590,16 +7590,33 @@ proof fn lemma_unpack64_bytes(a: Seq<u8>, b: Seq<u8>, r: Seq<u8>, hi: bool)
         assert(byte32(u32s(b)[sn], e) == b[4 * sn + e]);
         assert(n == 0 || n == 1 || n == 2 || n == 3);
         assert(m == 4 * n + e);
-        assert(4 * sn + e == unpack_at(m, 8, hi));
+        assert(0 <= e < 4);
+        assert(m / 16 == 0);
+        // `unpack_at(m, 8, hi)` is `8 * k + (m / 16) * 8 + m % 8`: lane by lane.
         if n == 0 {
+            assert(m == e);
+            assert(m % 8 == e);
+            assert(sn == 2 * k);
             assert(u32s(r)[0] == u32s(a)[2 * k]);
         } else if n == 1 {
+            assert(m == 4 + e);
+            assert(m % 8 == 4 + e);
+            assert(sn == 2 * k + 1);
             assert(u32s(r)[1] == u32s(a)[2 * k + 1]);
         } else if n == 2 {
+            assert(m == 8 + e);
+            assert(m % 8 == e);
+            assert(sn == 2 * k);
             assert(u32s(r)[2] == u32s(b)[2 * k]);
         } else {
+            assert(m == 12 + e);
+            assert(m % 8 == 4 + e);
+            assert(sn == 2 * k + 1);
             assert(u32s(r)[3] == u32s(b)[2 * k + 1]);
         }
+        assert(4 * sn + e == 8 * k + m % 8);
+        assert(unpack_at(m, 8, hi) == 8 * k + (m / 16) * 8 + m % 8);
+        assert(4 * sn + e == unpack_at(m, 8, hi));
     }
 }
 

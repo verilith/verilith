@@ -654,6 +654,8 @@ proof fn lemma_rdist(x: u8, lo: u8, hi: u8)
 /// counted from `q + sh`, or `16 - sh` if there is none. The second and
 /// third ranges are tested only if `two` and `three` say they differ
 /// from the first.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(50)]
 #[inline(always)]
 fn rng_from<const NEON: bool>(s: &[u8], q: usize, sh: u32, r: (u8, u8, u8, u8, u8, u8), two: bool, three: bool) -> (d:
     u32)
