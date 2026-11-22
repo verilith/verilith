@@ -4,7 +4,7 @@ A verified JPEG decoder in Rust, proven with
 [Verus](https://github.com/verus-lang/verus). It decodes baseline, extended
 sequential and progressive Huffman JPEG files (8 bits per sample, greyscale or
 three components) to 8-bit grey or RGB, and gives the same pixels as
-libjpeg-turbo 3.1.2 does with its default settings. It can be linked in place
+libjpeg-turbo 3.2.1 does with its default settings. It can be linked in place
 of libjpeg-turbo's decode path through the TurboJPEG C API. It decodes only;
 there is no encoder.
 
@@ -57,12 +57,12 @@ approximately.
 
 ### Departures from libjpeg-turbo
 
-verilith-jpeg is checked against libjpeg-turbo 3.1.2 decoding with its defaults
+verilith-jpeg is checked against libjpeg-turbo 3.2.1 decoding with its defaults
 (accurate integer DCT, fancy upsampling, block smoothing on). Where both
 decode a file the output is byte-identical; the differential tests and the
 fuzzer check this.
 
-| area | libjpeg-turbo 3.1.2 | verilith-jpeg |
+| area | libjpeg-turbo 3.2.1 | verilith-jpeg |
 | --- | --- | --- |
 | Damaged entropy-coded data, truncated files, missing or misplaced restart markers | a warning, then a best-effort image | the same image, byte for byte; no warning is reported |
 | Progressive files that end before every coefficient has arrived | block smoothing estimates the missing AC coefficients | no smoothing: the coefficients that arrived are used as they are. Complete progressive files are identical. |
@@ -78,7 +78,7 @@ a grey or RGB buffer out.
 
 `src/tj.rs` is the TurboJPEG decode API, exported as `vjpeg_tj*` and, with
 `--features turbojpeg-abi`, under TurboJPEG's own names, so a program built
-against `turbojpeg.h` links with `libverilith_jpeg.a` unchanged: `tj3Init`,
+against `turbojpeg.h` links with `libverilith_jpeg.a` unchanged: `tj3Init`, `tj3InitVersion`,
 `tj3Destroy`, `tj3DecompressHeader`, `tj3Decompress8`, `tj3Set`, `tj3Get`,
 `tj3GetErrorStr`, `tj3GetErrorCode`, `tj3Alloc`, `tj3Free`,
 `tj3GetScalingFactors`, `tj3SetScalingFactor`, and the older
@@ -161,7 +161,10 @@ branch-free loops over slices that the compiler vectorizes on every target.
   from the Kodak photographs in baseline, progressive, 4:4:4, 4:2:2, 4:2:0
   and grey): all identical. 900 damaged files (truncations, flipped bits,
   bad restart markers), against libjpeg-turbo's C code: 496 identical, 404
-  rejected by both, none different.
+  rejected by both, none different. Those runs were against libjpeg-turbo
+  3.1.2. Against 3.2.1: 560 files (the Kodak files and libjpeg-turbo's
+  test images, and 480 made with `cjpeg` at fifteen sampling settings,
+  among them 4:1:0 and 2:4) are all identical.
 - `make -C difftest tjcheck FILES="..."` runs the same TurboJPEG calls
   against `libturbojpeg.a` and against verilith-jpeg in every pixel format, top-down
   and bottom-up, through both the v3 and the older API: the same on those

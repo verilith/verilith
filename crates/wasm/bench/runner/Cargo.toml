@@ -6,8 +6,8 @@ publish = false
 
 [dependencies]
 verilith-wasm = { path = "../.." }
-wasmtime = { version = "=33.0.0", default-features = false, features = ["cranelift", "runtime"] }
-wasmi = "=0.40.0"
+wasmtime = { version = "=51.0.0", default-features = false, features = ["cranelift", "runtime"] }
+wasmi = "=2.0.2"
 
 [profile.release]
 codegen-units = 1

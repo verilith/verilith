@@ -1,6 +1,6 @@
 //! NormalizationTest.txt (Unicode 18.0) and differential tests against the
 //! unicode-normalization and icu_normalizer crates.
-use rand::{Rng, SeedableRng};
+use rand::{Rng, RngExt, SeedableRng};
 use std::collections::HashSet;
 use verilith_text::unicode::{nfc, nfd, nfkc, nfkd, normalize, normalize_reference, Form};
 
@@ -66,13 +66,13 @@ fn conformance_reference() {
 }
 
 fn random_text(rng: &mut impl Rng, pool: &[char]) -> String {
-    let n = rng.gen_range(0..24);
+    let n = rng.random_range(0..24);
     (0..n)
-        .map(|_| match rng.gen_range(0..10) {
-            0..=5 => pool[rng.gen_range(0..pool.len())],
-            6 => rng.gen_range(b'a'..=b'z') as char,
+        .map(|_| match rng.random_range(0..10) {
+            0..=5 => pool[rng.random_range(0..pool.len())],
+            6 => rng.random_range(b'a'..=b'z') as char,
             _ => loop {
-                if let Some(c) = char::from_u32(rng.gen_range(0..0x30000)) {
+                if let Some(c) = char::from_u32(rng.random_range(0..0x30000)) {
                     break c;
                 }
             },

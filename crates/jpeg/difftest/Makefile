@@ -1,5 +1,5 @@
 # Differential testing against libjpeg-turbo. LIBJPEG_SRC is a libjpeg-turbo
-# checkout (3.1.2 is the version vjpeg is compared with), LIBJPEG_BUILD its
+# checkout (3.2.1 is the version vjpeg is compared with), LIBJPEG_BUILD its
 # CMake build directory (libjpeg.a, jconfig.h).
 LIBJPEG_SRC ?= $(HOME)/ext/libjpeg-turbo
 LIBJPEG_BUILD ?= $(HOME)/ext/ljtbuild

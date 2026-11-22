@@ -6,11 +6,11 @@ publish = false
 
 [dependencies]
 verilith-sync = { path = ".." }
-rtrb = "=0.3.2"
-crossbeam-queue = "=0.3.12"
-crossbeam-channel = "=0.5.15"
-crossbeam-utils = "=0.8.21"
-parking_lot = "=0.12.4"
+rtrb = "=0.4.1"
+crossbeam-queue = "=0.3.14"
+crossbeam-channel = "=0.5.17"
+crossbeam-utils = "=0.8.23"
+parking_lot = "=0.13.0"
 core_affinity = "=0.8.3"
 
 [profile.release]

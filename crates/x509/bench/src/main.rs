@@ -59,7 +59,7 @@ fn main() {
         bench("x509-cert Certificate::from_der", cert, || {
             use der::Decode;
             let c = x509_cert::Certificate::from_der(b).unwrap();
-            c.tbs_certificate.serial_number.as_bytes().len()
+            c.tbs_certificate().serial_number().as_bytes().len()
         });
         bench("webpki EndEntityCert::try_from", cert, || {
             let d = rustls_pki_types::CertificateDer::from(b);
