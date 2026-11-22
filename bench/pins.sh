@@ -60,4 +60,4 @@ source-serif https://github.com/adobe-fonts/source-serif                    80d3
 SILESIA_FILES="dickens samba sao x-ray xml"
 
 # Node.js for benchmark/compare.js.
-: "${NODE_VERSION:=v22.23.5}"
+: "${NODE_VERSION:=v26.13.1}"
