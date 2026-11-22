@@ -1,3 +1,4 @@
+#![allow(unsafe_op_in_unsafe_fn)]
 mod proto;
 use domain::base::ToName;
 use hickory_proto::op::{Message, MessageType, OpCode, Query};
@@ -7,7 +8,7 @@ use std::os::raw::{c_char, c_int, c_long, c_uchar, c_void};
 use std::str::FromStr;
 use std::time::Instant;
 
-extern "C" {
+unsafe extern "C" {
     fn ares_dns_parse(buf: *const c_uchar, len: usize, flags: u32, rec: *mut *mut c_void) -> c_int;
     fn ares_dns_record_destroy(rec: *mut c_void);
     fn ares_expand_name(enc: *const c_uchar, abuf: *const c_uchar, alen: c_int, s: *mut *mut c_char, enclen: *mut c_long) -> c_int;
@@ -187,7 +188,7 @@ fn main() {
         });
     }
 }
-extern "C" { #[link_name = "free"] fn libc_free(p: *mut c_void); }
+unsafe extern "C" { #[link_name = "free"] fn libc_free(p: *mut c_void); }
 
 // glibc's libresolv (ns_initparse / ns_parserr / dn_expand).
 #[repr(C)]
@@ -195,7 +196,7 @@ struct NsMsg { msg: *const u8, eom: *const u8, id: u16, flags: u16, counts: [u16
 #[repr(C)]
 struct NsRr { name: [c_char; 1025], typ: u16, class: u16, ttl: u32, rdlength: u16, rdata: *const u8 }
 #[link(name = "resolv")]
-extern "C" {
+unsafe extern "C" {
     fn ns_initparse(msg: *const u8, len: c_int, handle: *mut NsMsg) -> c_int;
     fn ns_parserr(handle: *mut NsMsg, sect: c_int, rrnum: c_int, rr: *mut NsRr) -> c_int;
     fn dn_expand(msg: *const u8, eom: *const u8, src: *const u8, dst: *mut c_char, len: c_int) -> c_int;

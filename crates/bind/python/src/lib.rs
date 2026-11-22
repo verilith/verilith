@@ -5,7 +5,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyString};
 use verilith_bind::verilith_json::{self, Type, Value};
-use verilith_bind::vurl;
+use verilith_bind::verilith_url;
 
 /// A URL parsed by the WHATWG URL Standard.
 #[pyclass(module = "vbind")]
@@ -148,7 +148,7 @@ impl URL {
     }
 }
 
-fn to_py(py: Python<'_>, v: Value<'_>) -> PyResult<PyObject> {
+fn to_py(py: Python<'_>, v: Value<'_>) -> PyResult<Py<PyAny>> {
     Ok(match v.kind() {
         Type::Null => py.None(),
         Type::Bool => v.as_bool().unwrap_or(false).into_pyobject(py)?.to_owned().into_any().unbind(),
@@ -184,13 +184,13 @@ fn to_py(py: Python<'_>, v: Value<'_>) -> PyResult<PyObject> {
 /// Parses a JSON text (str, bytes or bytearray) into Python objects, as
 /// `json.loads` does. Raises ValueError on invalid JSON.
 #[pyfunction]
-fn loads(py: Python<'_>, s: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+fn loads(py: Python<'_>, s: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let text;
     let owned;
-    let bytes: &[u8] = if let Ok(st) = s.downcast::<PyString>() {
+    let bytes: &[u8] = if let Ok(st) = s.cast::<PyString>() {
         text = st.to_cow()?;
         text.as_bytes()
-    } else if let Ok(b) = s.downcast::<PyBytes>() {
+    } else if let Ok(b) = s.cast::<PyBytes>() {
         b.as_bytes()
     } else {
         owned = s.extract::<Vec<u8>>()?;

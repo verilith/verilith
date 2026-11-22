@@ -49,7 +49,7 @@ fn fixtures_extract() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
-extern "C" {
+unsafe extern "C" {
     fn dlopen(name: *const c_char, flags: c_int) -> *mut c_void;
     fn dlsym(h: *mut c_void, name: *const c_char) -> *mut c_void;
 }

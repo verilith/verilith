@@ -11,7 +11,7 @@ struct PhrHeader {
     value_len: usize,
 }
 
-extern "C" {
+unsafe extern "C" {
     fn phr_parse_request(
         buf: *const c_char, len: usize, method: *mut *const c_char, method_len: *mut usize,
         path: *mut *const c_char, path_len: *mut usize, minor: *mut c_int,

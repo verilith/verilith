@@ -1,13 +1,13 @@
 [package]
 name = "dnsbench"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 verilith-dns = { path = "..", features = ["cares"] }
 hickory-proto = "0.26"
 domain = "0.12"
-simple-dns = "0.12"
+simple-dns = "0.13"
 dns-parser = "0.8"
 
 [profile.release]

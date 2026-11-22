@@ -5,7 +5,7 @@
 use std::os::raw::{c_char, c_int, c_void};
 pub use verilith_json::ffi::cJSON;
 
-extern "C" {
+unsafe extern "C" {
     fn up_cJSON_Parse(a0: *const c_char) -> *mut cJSON;
     fn up_cJSON_ParseWithLength(a0: *const c_char, a1: usize) -> *mut cJSON;
     fn up_cJSON_Print(a0: *const cJSON) -> *mut c_char;

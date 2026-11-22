@@ -1,6 +1,7 @@
 //! The native C API (`src/native.rs`) against the Rust API it wraps: both
 //! must describe every certificate the same way, and reject the same ones.
 #![cfg(feature = "capi")]
+#![allow(unsafe_op_in_unsafe_fn)]
 use std::fmt::Write;
 use verilith_x509::native::*;
 use verilith_x509::GeneralName;

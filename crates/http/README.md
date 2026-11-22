@@ -187,16 +187,19 @@ keep-alive rules) and `llhttp.c` (the generated parser). With
 `--features llhttp-abi`, `libverilith_http.a` exports the two functions `llhttp.c`
 defines, `llhttp__internal_init` and `llhttp__internal_execute`, so
 llhttp's own `api.c` and `http.c` (copied in `compat/llhttp`, from llhttp
-9.4.3) link against it unchanged. Callers keep llhttp's header, struct
+9.4.4) link against it unchanged. Callers keep llhttp's header, struct
 layout, callbacks, pausing and error codes.
 
 For Node.js, `compat/llhttp/node.sh NODE_DIR` points a Node checkout's
 llhttp build at `libverilith_http.a` (built with `--features llhttp-lenient`);
-then build Node as usual. Node.js v24.22.1 built this way (with verilith-hpack in
+then build Node as usual. Node.js v26.13.1 built this way (with verilith-hpack in
 nghttp2 and verilith-http in undici too, via verilith-hpack's `compat/node/node.sh`)
-passes 5557 of the 5558 tests in its default suite (`tools/test.py
-default`); the one failure, `test-fs-rmSync-special-char-additional-error`,
-fails the same way on any build run as root. Several llhttp behaviours go
+passes 7,245 of the 7,248 tests in its default suite (`tools/test.py
+default`); the three failures (`test-fs-rmSync-special-char-additional-error`,
+which fails on any build run as root, and two TLS tests that need system
+certificates) fail the same way on the official binary. Node 26 links a
+Rust library of its own, so both scripts build ours without LTO for it.
+v24.22.1 passed 5557 of 5558. Several llhttp behaviours go
 beyond the HTTP/1.x grammar the machines verify, and the drop-in maps them
 onto it:
 
@@ -441,9 +444,9 @@ The proofs cover the verified core. The adapters around it are tested:
   httparse, and httparse-API tests that drive `verilith_http::httparse` the way
   hyper does.
 - `./scripts/test-c.sh`: picohttpparser's own `test.c` against verilith-http's C
-  API under ASan and UBSan. 240 of its 289 checks pass; each of the 49
+  API under ASan and UBSan. 246 of its 295 checks pass; each of the 49
   others is a deliberate difference listed below.
-- `compat/llhttp/test`: the differential test against llhttp 9.4.3
+- `compat/llhttp/test`: the differential test against llhttp 9.4.4
   described [above](#from-nodejs-or-anything-else-that-uses-llhttp), and
   Node.js's own HTTP tests.
 - `./scripts/fuzz.sh [seconds]`: cargo-fuzz under ASan on four targets,

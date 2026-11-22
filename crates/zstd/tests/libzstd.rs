@@ -1,10 +1,11 @@
 //! Differential tests against the system's libzstd, loaded at run time
 //! with `dlopen` (nothing is built or linked from C). Skipped, with a
 //! message, when libzstd.so.1 is not installed.
+#![allow(unsafe_op_in_unsafe_fn)]
 use std::ffi::{c_char, c_int, c_void, CString};
 use verilith_zstd::frame::{decompress_exec, Error};
 
-extern "C" {
+unsafe extern "C" {
     fn dlopen(name: *const c_char, flags: c_int) -> *mut c_void;
     fn dlsym(h: *mut c_void, name: *const c_char) -> *mut c_void;
 }

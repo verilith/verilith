@@ -86,40 +86,40 @@ so under the table (`note` in `harness/suites.py`).
 
 | comparison | API | ours | original | what one call does | inputs |
 | --- | --- | --- | --- | --- | --- |
-| zlib-inflate | drop-in | verilith-zlib (zlib ABI) | zlib 1.3.2 | `inflate` a whole stream | 5 Silesia files + 4 KiB and 64 KiB pieces |
-| zlib-deflate | drop-in | verilith-zlib (zlib ABI) | zlib 1.3.2 | `deflate` at levels 1, 6, 9 | same |
-| brotli-decode | drop-in | verilith-brotli (brotli decoder ABI) | brotli 1.2.0 | `BrotliDecoderDecompress`, and `BrotliDecoderDecompressStream` fed 1 KiB at a time | the same files, compressed by brotli at quality 5 and 11 |
-| lz4-decompress, lz4-compress | drop-in | verilith-lz4 (lz4 ABI) | lz4 1.10.0 | `LZ4_decompress_safe`, `LZ4_compress_default` of a whole file as one block | 5 Silesia files + 4 KiB and 64 KiB pieces |
-| lz4-frame-decompress, lz4-frame-compress | drop-in | verilith-lz4 (lz4 ABI) | lz4 1.10.0 | `LZ4F_decompress`, `LZ4F_compressFrame` of a whole file as one frame | same |
-| snappy-uncompress, snappy-validate, snappy-compress | drop-in | verilith-snappy (snappy-c ABI) | snappy 1.2.2 | `snappy_uncompress`, `snappy_validate_compressed_buffer`, `snappy_compress` | same |
-| archive-read | drop-in | verilith-archive (libarchive read ABI) | libarchive 3.8.9 (with zlib 1.3.2) | open from memory, then `read/`: every header and all data (`archive_read_data_block`); `list/`: every header, data skipped | tar, zip (deflate and stored) and tar.gz of the 5 Silesia files and of 2000 files of 4 KiB, made by libarchive's bsdtar |
+| zlib-inflate | drop-in | verilith-zlib (zlib ABI) | zlib 1.4 | `inflate` a whole stream | 5 Silesia files + 4 KiB and 64 KiB pieces |
+| zlib-deflate | drop-in | verilith-zlib (zlib ABI) | zlib 1.4 | `deflate` at levels 1, 6, 9 | same |
+| brotli-decode | drop-in | verilith-brotli (brotli decoder ABI) | brotli 1.2.1 | `BrotliDecoderDecompress`, and `BrotliDecoderDecompressStream` fed 1 KiB at a time | the same files, compressed by brotli at quality 5 and 11 |
+| lz4-decompress, lz4-compress | drop-in | verilith-lz4 (lz4 ABI) | lz4 1.11.1 | `LZ4_decompress_safe`, `LZ4_compress_default` of a whole file as one block | 5 Silesia files + 4 KiB and 64 KiB pieces |
+| lz4-frame-decompress, lz4-frame-compress | drop-in | verilith-lz4 (lz4 ABI) | lz4 1.11.1 | `LZ4F_decompress`, `LZ4F_compressFrame` of a whole file as one frame | same |
+| snappy-uncompress, snappy-validate, snappy-compress | drop-in | verilith-snappy (snappy-c ABI) | snappy 1.3.1 | `snappy_uncompress`, `snappy_validate_compressed_buffer`, `snappy_compress` | same |
+| archive-read | drop-in | verilith-archive (libarchive read ABI) | libarchive 3.8.11 (with zlib 1.4) | open from memory, then `read/`: every header and all data (`archive_read_data_block`); `list/`: every header, data skipped | tar, zip (deflate and stored) and tar.gz of the 5 Silesia files and of 2000 files of 4 KiB, made by libarchive's bsdtar |
 | dns-parse | drop-in | c-ares + verilith-dns patch | c-ares | `ares_dns_parse` + destroy | 4 responses (data/dns) |
 | dns-write | drop-in | c-ares + verilith-dns patch | c-ares | `ares_dns_write` | same |
 | dns-read | drop-in | c-ares + verilith-dns patch | c-ares | `ares_dns_parse`, read every question and record down to each RDATA field, destroy | same |
 | dns-native | native | verilith-dns (`Message::parse_into`, `records`, `data`) | c-ares | the dns-read task | same |
-| http-llhttp | drop-in | verilith-http under llhttp's api.c | llhttp 9.4.3 | parse a message with Node's callbacks | 6 messages (data/http) |
-| http-llhttp-native | native | verilith-http (`parse_request`/`parse_response`, `ChunkedDecoder`) | llhttp 9.4.3 | the http-llhttp task: target or reason, every header, the body | same |
+| http-llhttp | drop-in | verilith-http under llhttp's api.c | llhttp 9.4.4 | parse a message with Node's callbacks | 6 messages (data/http) |
+| http-llhttp-native | native | verilith-http (`parse_request`/`parse_response`, `ChunkedDecoder`) | llhttp 9.4.4 | the http-llhttp task: target or reason, every header, the body | same |
 | http-pico | drop-in | verilith-http (phr ABI) | picohttpparser | `phr_parse_request`/`_response` | same |
 | http-pico-native | native | verilith-http (`parse_request`/`parse_response`) | picohttpparser | the http-pico task: a head into a reused header array | same |
-| url-ada | drop-in | verilith-url (ada C ABI) | ada 3.4.4 | parse every URL, read href | ada's URL dataset (100k URLs) and its first 1k |
+| url-ada | drop-in | verilith-url (ada C ABI) | ada 4.1.1 | parse every URL, read href | ada's URL dataset (100k URLs) and its first 1k |
 | json-cjson-parse | drop-in | verilith-json (cJSON ABI) | cJSON 1.7.19 | parse, visit every value, delete | simdjson's examples |
 | json-cjson-native | native | verilith-json (`Parser`) | cJSON 1.7.19 | the json-cjson-parse task | same |
 | json-cjson-print | drop-in | verilith-json (cJSON ABI) | cJSON 1.7.19 | `cJSON_PrintUnformatted` | same |
-| json-simdjson | native | verilith-json (`Parser`) | simdjson 5.1.1 (DOM) | parse, read every value | same |
-| x509-mbedtls | drop-in | mbedTLS + verilith-x509 patch | mbedTLS 3.6.4 | `mbedtls_x509_crt_parse_der` + free | verilith-x509's 3 certificates, Mozilla's roots |
-| x509-mbedtls-read | drop-in | mbedTLS + verilith-x509 patch | mbedTLS 3.6.4 | `mbedtls_x509_crt_parse_der_nocopy`, read serial, names, validity, key usage, CA flag, DNS names and EKUs, free | same |
-| x509-mbedtls-native | native | verilith-x509 (`verilith_x509::parse` and its accessors) | mbedTLS 3.6.4 | the x509-mbedtls-read task | same |
+| json-simdjson | native | verilith-json (`Parser`) | simdjson 5.2.0 (DOM) | parse, read every value | same |
+| x509-mbedtls | drop-in | mbedTLS + verilith-x509 patch | mbedTLS 4.3.0 | `mbedtls_x509_crt_parse_der` + free | verilith-x509's 3 certificates, Mozilla's roots |
+| x509-mbedtls-read | drop-in | mbedTLS + verilith-x509 patch | mbedTLS 4.3.0 | `mbedtls_x509_crt_parse_der_nocopy`, read serial, names, validity, key usage, CA flag, DNS names and EKUs, free | same |
+| x509-mbedtls-native | native | verilith-x509 (`verilith_x509::parse` and its accessors) | mbedTLS 4.3.0 | the x509-mbedtls-read task | same |
 | x509-verdict | native | verilith-x509 (`verilith_x509::parse`) | Verdict ([secure-foundations/verdict](https://github.com/secure-foundations/verdict), 2025-11-18) | parse the whole certificate from memory, Rust to Rust, both verified in Verus | same |
 | png-libpng | native | verilith-png (Rust API) | libpng 1.6.59 | decode to RGBA8 | the 24 Kodak photos |
 | webp-lossless | drop-in | verilith-webp (libwebp ABI) | libwebp 1.6.0 | `WebPDecodeRGBAInto` | the Kodak photos, lossless WebP |
 | webp-lossy | drop-in | verilith-webp (libwebp ABI) | libwebp 1.6.0 | `WebPDecodeRGBAInto` | the Kodak photos, lossy WebP at quality 75 |
-| jpeg-baseline | drop-in | verilith-jpeg (TurboJPEG ABI) | libjpeg-turbo 3.1.2 | `tj3Decompress8` to RGB | the Kodak photos, baseline JPEG, 4:2:0 at quality 75 |
-| jpeg-progressive | drop-in | verilith-jpeg (TurboJPEG ABI) | libjpeg-turbo 3.1.2 | `tj3Decompress8` to RGB | the same as progressive JPEG |
-| jpeg-444 | drop-in | verilith-jpeg (TurboJPEG ABI) | libjpeg-turbo 3.1.2 | `tj3Decompress8` to RGB | the Kodak photos, baseline JPEG, 4:4:4 at quality 90 |
+| jpeg-baseline | drop-in | verilith-jpeg (TurboJPEG ABI) | libjpeg-turbo 3.2.1 | `tj3Decompress8` to RGB | the Kodak photos, baseline JPEG, 4:2:0 at quality 75 |
+| jpeg-progressive | drop-in | verilith-jpeg (TurboJPEG ABI) | libjpeg-turbo 3.2.1 | `tj3Decompress8` to RGB | the same as progressive JPEG |
+| jpeg-444 | drop-in | verilith-jpeg (TurboJPEG ABI) | libjpeg-turbo 3.2.1 | `tj3Decompress8` to RGB | the Kodak photos, baseline JPEG, 4:4:4 at quality 90 |
 | font-sanitize | drop-in | verilith-font (OTS's C++ API) | OTS ([khaledhosny/ots](https://github.com/khaledhosny/ots), 2026-11) | `ots::OTSContext::Process` into a memory stream | Source Serif 4 Regular as OTF, TTF, WOFF and WOFF2 |
 | regex-re2 | drop-in | verilith-regex (cre2 C ABI) | RE2 2025-11-05 under cre2 | find every match of a pattern, with its groups (`cre2_match` in a loop) | 12 patterns over 64 KiB and 1 MiB of dickens and 1k URLs |
-| xml-expat-read | native | verilith-xml (`parse`, `Element::attrs`, `children`) | expat 2.7.3 (SAX) | parse, visit every element, attribute (normalized value) and run of character data | 6 of Silesia's XML files and the 7 files of roxmltree's benchmarks |
-| xml-expat-check | native | verilith-xml (`check`) | expat 2.7.3 (no handlers) | decide whether the document is well-formed | same |
+| xml-expat-read | native | verilith-xml (`parse`, `Element::attrs`, `children`) | expat 2.10.0 (SAX) | parse, visit every element, attribute (normalized value) and run of character data | 6 of Silesia's XML files and the 7 files of roxmltree's benchmarks |
+| xml-expat-check | native | verilith-xml (`check`) | expat 2.10.0 (no handlers) | decide whether the document is well-formed | same |
 | xml-libxml2-read | native | verilith-xml (`parse`, `Element::attrs`, `children`) | libxml2 2.15.4 (SAX2) | the xml-expat-read task | same |
 | xml-libxml2-check | native | verilith-xml (`check`) | libxml2 2.15.4 (SAX2, no content handlers) | the xml-expat-check task | same |
 
@@ -160,7 +160,7 @@ exact commit of everything used.
 
 ### Node.js
 
-`scripts/node.sh` builds Node.js 22.23.4 twice from the same source with
+`scripts/node.sh` builds Node.js 26.13.1 twice from the same source with
 the same flags: *official* (as shipped) and *hardened*, with verilith-http in place
 of llhttp, verilith-url and verilith-json (via verilith-bind) in place of ada and simdjson, verilith-zlib in
 place of zlib, and c-ares with verilith-dns. Both builds use the same c-ares commit,

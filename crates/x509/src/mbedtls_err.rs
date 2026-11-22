@@ -1,7 +1,7 @@
 //! mbedTLS-compatible error codes for certificates vx509 rejects.
 //!
 //! The verdict is always vx509's. When it rejects, this walker retraces the
-//! certificate the way mbedTLS 3.6's `x509_crt_parse_der_core` does, so the
+//! certificate the way mbedTLS 4.3's `x509_crt_parse_der_core` does, so the
 //! drop-in returns the error code mbedTLS would have returned. It is
 //! unverified safe Rust that only computes a number: every index is
 //! checked, and its result never turns a rejection into an acceptance.
@@ -194,7 +194,7 @@ impl<'a> Cur<'a> {
 }
 
 fn add(high: i32, low: i32) -> i32 {
-    high + low
+    if low != 0 { low } else { high }
 }
 
 fn get_name(c: &mut Cur, end: usize) -> R<()> {
@@ -340,15 +340,17 @@ fn extension_value(c: &mut Cur, end: usize, ty: u8) -> R<()> {
     match ty {
         19 => {
             let len = c.get_tag(end, 0x30).map_err(ext)?;
-            let _ = len;
             if c.p == end {
                 return Ok(());
             }
+            // mbedTLS 3.6.7: the SEQUENCE must fill the extension value.
+            if end - c.p != len {
+                return Err(X509_INVALID_EXTENSIONS);
+            }
+            // A missing cA leaves the first element to the INTEGER parser
+            // below (before 3.6.7 an INTEGER here was read as cA).
             match c.get_bool(end) {
-                Ok(_) => {}
-                Err(ASN1_UNEXPECTED_TAG) => {
-                    c.get_int(end).map_err(ext)?;
-                }
+                Ok(_) | Err(ASN1_UNEXPECTED_TAG) => {}
                 Err(e) => return Err(ext(e)),
             }
             if c.p == end {
@@ -522,7 +524,7 @@ fn extensions(c: &mut Cur, end: usize) -> R<()> {
     Ok(())
 }
 
-/// The error mbedTLS 3.6 returns for `buf`, which vx509 rejected.
+/// The error mbedTLS 4.3 returns for `buf`, which vx509 rejected.
 pub fn diagnose(buf: &[u8]) -> Diag {
     let mut d = Diag { code: X509_INVALID_FORMAT, stage: Stage::Early, sig_oid: (0, 0), sig_params: (0, 0, 0), spki: (0, 0) };
     if let Err(code) = walk(buf, &mut d) {

@@ -115,23 +115,40 @@ build_json() {
   rust_runner vjson-run json-vjson
 }
 
+# mbedtls_python: a Python 3 that has jsonschema and jinja2, which mbedTLS 4's
+# build scripts (tf-psa-crypto's generate_driver_wrappers.py) import. The
+# system one if it has them, else a virtualenv under $BUILD made once.
+mbedtls_python() {
+  if python3 -c 'import jsonschema, jinja2' 2>/dev/null; then command -v python3; return; fi
+  local venv=$BUILD/mbedtls-python
+  if ! "$venv/bin/python3" -c 'import jsonschema, jinja2' 2>/dev/null; then
+    python3 -m venv "$venv" >&2 && "$venv/bin/python3" -m pip install -q jsonschema jinja2 >&2 \
+      || { echo "could not make a Python with jsonschema and jinja2 for mbedTLS" >&2; return 1; }
+  fi
+  echo "$venv/bin/python3"
+}
+
 build_x509() {
   local src; src=$(orig mbedtls)
-  local cmk="-DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DUSE_SHARED_MBEDTLS_LIBRARY=OFF -DGEN_FILES=OFF"
+  local py; py=$(mbedtls_python)
+  local cmk="-DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DUSE_SHARED_MBEDTLS_LIBRARY=OFF -DPython3_EXECUTABLE=$py -DMBEDTLS_PYTHON_EXECUTABLE=$py"
   cmake_build "$src" "$BUILD/mbedtls" $cmk
   local psrc=$BUILD/mbedtls-vx509-src
   rm -rf "$psrc"; cp -R "$src" "$psrc"; rm -rf "$psrc/.git"
   (cd "$psrc" && patch -p1 -s < "$(ours vx509)/mbedtls/mbedtls-use-vx509.patch")
   local lib; lib=$(rust_lib vx509 mbedtls)
   cmake_build "$psrc" "$BUILD/mbedtls-vx509" $cmk -DMBEDTLS_VX509_DIR="$(ours vx509)" -DMBEDTLS_VX509_LIB="$lib"
-  cc_runner x509-mbedtls -I"$src/include" "$S/x509/x509.c" \
-    "$BUILD/mbedtls/library/libmbedx509.a" "$BUILD/mbedtls/library/libmbedcrypto.a"
+  # mbedTLS 4 keeps its crypto, and the headers x509_crt.h includes, in the
+  # TF-PSA-Crypto submodule.
+  local inc="-I$src/include -I$src/tf-psa-crypto/include -I$src/tf-psa-crypto/drivers/builtin/include"
+  cc_runner x509-mbedtls $inc "$S/x509/x509.c" \
+    "$BUILD/mbedtls/library/libmbedx509.a" "$BUILD/mbedtls/library/libtfpsacrypto.a"
   if [ "$OS" = Darwin ]; then
-    cc_runner x509-vx509 -I"$src/include" "$S/x509/x509.c" \
-      "$BUILD/mbedtls-vx509/library/libmbedx509.a" "$BUILD/mbedtls-vx509/library/libmbedcrypto.a" "$lib" $RUST_LIBS
+    cc_runner x509-vx509 $inc "$S/x509/x509.c" \
+      "$BUILD/mbedtls-vx509/library/libmbedx509.a" "$BUILD/mbedtls-vx509/library/libtfpsacrypto.a" "$lib" $RUST_LIBS
   else
-    cc_runner x509-vx509 -I"$src/include" "$S/x509/x509.c" -Wl,--start-group \
-      "$BUILD/mbedtls-vx509/library/libmbedx509.a" "$BUILD/mbedtls-vx509/library/libmbedcrypto.a" "$lib" \
+    cc_runner x509-vx509 $inc "$S/x509/x509.c" -Wl,--start-group \
+      "$BUILD/mbedtls-vx509/library/libmbedx509.a" "$BUILD/mbedtls-vx509/library/libtfpsacrypto.a" "$lib" \
       -Wl,--end-group $RUST_LIBS
   fi
   rust_runner vx509-run x509n-vx509

@@ -100,7 +100,7 @@ fn run(wasm: &[u8], seed: &mut u64) -> Result<usize, Option<String>> {
     let wm = wasmi::Module::new(&engine, wasm).map_err(|e| Some(format!("wasmi rejected: {e}")))?;
     let mut store = wasmi::Store::new(&engine, ());
     let linker = wasmi::Linker::<()>::new(&engine);
-    let wi = linker.instantiate(&mut store, &wm).and_then(|p| p.start(&mut store).map_err(Into::into));
+    let wi = linker.instantiate_and_start(&mut store, &wm);
     let vi = v::Instance::new(vm, &v::Linker::new());
     let (wi, mut vi) = match (wi, vi) {
         (Ok(w), Ok(v)) => (w, v),
@@ -142,8 +142,8 @@ fn run(wasm: &[u8], seed: &mut u64) -> Result<usize, Option<String>> {
                 let vals: Vec<Val> = params.iter().zip(&args).map(|(t, &x)| match t {
                     ValType::I32 => Val::I32(x as i32),
                     ValType::I64 => Val::I64(x as i64),
-                    ValType::F32 => Val::F32(wasmi::core::F32::from_bits(x as u32)),
-                    ValType::F64 => Val::F64(wasmi::core::F64::from_bits(x)),
+                    ValType::F32 => Val::F32(wasmi::F32::from_bits(x as u32)),
+                    ValType::F64 => Val::F64(wasmi::F64::from_bits(x)),
                 }).collect();
                 let mut out = vec![Val::I32(0); results.len()];
                 match f.call(&mut store, &vals, &mut out) {
@@ -155,7 +155,7 @@ fn run(wasm: &[u8], seed: &mut u64) -> Result<usize, Option<String>> {
                         _ => 0,
                     }).collect()),
                     Err(e) => match e.as_trap_code() {
-                        Some(wasmi::core::TrapCode::StackOverflow) => Out::Exhausted,
+                        Some(wasmi::TrapCode::StackOverflow) => Out::Exhausted,
                         _ => Out::Trap,
                     },
                 }

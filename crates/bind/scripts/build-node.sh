@@ -13,13 +13,13 @@
 # rejects some messages llhttp's lenient modes accept; see README.md).
 #
 #   scripts/build-node.sh [node version] [test selectors...]
-#   scripts/build-node.sh v22.23.4 parallel/test-url* wpt/test-url.js
+#   scripts/build-node.sh v26.13.1 parallel/test-url* wpt/test-url.js
 #
 # The source and build live in $WORK (default target/node). Building Node
-# takes about an hour on four cores.
+# takes two to three hours on four cores.
 set -e
 here=$(cd "$(dirname "$0")/.." && pwd)
-version=${1:-v22.23.4}
+version=${1:-v26.13.1}
 [ $# -gt 0 ] && shift
 work=${WORK:-$here/target/node}
 src=$work/node-$version

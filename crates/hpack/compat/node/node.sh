@@ -9,16 +9,21 @@
 #
 #   compat/node/node.sh NODE_DIR [VHTTP_DIR]
 #
-# NODE_DIR is a Node.js checkout (tested with v24.22.1: nghttp2 1.70.0,
-# llhttp 9.4.3, undici 7.30.1). VHTTP_DIR is a vhttp checkout, needed only
+# NODE_DIR is a Node.js checkout (tested with v26.13.1: nghttp2 1.70.0,
+# llhttp 9.4.4, undici 8.12.4; and v24.22.1). VHTTP_DIR is a vhttp checkout, needed only
 # for fetch() (its compat/undici/build.sh makes the wasm; that needs clang,
 # wasm-ld and the wasm32-unknown-unknown Rust target); without it, fetch()
 # keeps undici's llhttp.wasm. Then build Node as usual:
 #   ./configure --ninja && ninja -C out/Release node
 #
 # The Rust side is one static library (compat/node: vhpack and vhttp
-# together), since two Rust static libraries cannot be linked into one
-# binary. Originals are kept as *.orig.
+# together), built with fat LTO, which makes it one object carrying its own
+# copy of the Rust standard library. Two such libraries cannot be linked
+# into one binary. Node 26 links a Rust library of its own (deps/crates), so
+# for a checkout that has one, this library goes through
+# scripts/rust-prelink.sh, which leaves only its C API global. (Building it
+# without LTO instead links on Linux but not with macOS's ld64.) Originals
+# are kept as *.orig.
 set -euo pipefail
 node=$(cd "$1" && pwd)
 here=$(cd "$(dirname "$0")" && pwd)
@@ -26,6 +31,10 @@ root=$(cd "$here/../.." && pwd)
 
 cargo build --release -q --manifest-path "$here/Cargo.toml"
 lib="$here/target/release/libvnode.a"
+if [ -d "$node/deps/crates" ]; then
+    "$root/../../scripts/rust-prelink.sh" "$lib" "$here/target/release/libvnode-prelinked.a"
+    lib="$here/target/release/libvnode-prelinked.a"
+fi
 
 # nghttp2: the inflater on vhpack.
 python3 "$root/compat/nghttp2/patch.py" "$node/deps/nghttp2/lib"

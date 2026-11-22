@@ -28,6 +28,7 @@
 //!
 //! The parser keeps all of its state in the caller's `llhttp_t`, which
 //! has no destructor, so nothing is ever allocated.
+#![allow(unsafe_op_in_unsafe_fn)]
 use crate::chunked::{step_exec, CState};
 use crate::framing::FieldsExec;
 use crate::llcore::*;
@@ -127,7 +128,7 @@ pub fn forget(p: *const c_void) {
 
 type Hook = unsafe extern "C" fn(*mut LlhttpT, *const u8, *const u8) -> c_int;
 
-extern "C" {
+unsafe extern "C" {
     fn llhttp__on_message_begin(s: *mut LlhttpT, p: *const u8, e: *const u8) -> c_int;
     fn llhttp__on_reset(s: *mut LlhttpT, p: *const u8, e: *const u8) -> c_int;
     fn llhttp__on_method(s: *mut LlhttpT, p: *const u8, e: *const u8) -> c_int;
@@ -1696,14 +1697,14 @@ unsafe fn lean(p: &mut LlhttpT, d: &[u8]) -> Option<c_int> {
 }
 
 #[cfg(feature = "llhttp-lenient")]
-extern "C" {
+unsafe extern "C" {
     fn vhttp_lenient_start(s: *mut LlhttpT);
     fn vhttp_lenient_execute(s: *mut LlhttpT, p: *const c_char, endp: *const c_char) -> c_int;
 }
 
 /// `llhttp__internal_init`: the start of the first message.
-#[cfg_attr(feature = "llhttp-abi", export_name = "llhttp__internal_init")]
-#[cfg_attr(not(feature = "llhttp-abi"), no_mangle)]
+#[cfg_attr(feature = "llhttp-abi", unsafe(export_name = "llhttp__internal_init"))]
+#[cfg_attr(not(feature = "llhttp-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vhttp_llhttp_internal_init(s: *mut LlhttpT) -> c_int {
     (*s).set_words([0, 0, 0]);
     core::ptr::write_bytes(s, 0, 1);
@@ -1711,8 +1712,8 @@ pub unsafe extern "C" fn vhttp_llhttp_internal_init(s: *mut LlhttpT) -> c_int {
 }
 
 /// `llhttp__internal_execute`: parses `p..endp`.
-#[cfg_attr(feature = "llhttp-abi", export_name = "llhttp__internal_execute")]
-#[cfg_attr(not(feature = "llhttp-abi"), no_mangle)]
+#[cfg_attr(feature = "llhttp-abi", unsafe(export_name = "llhttp__internal_execute"))]
+#[cfg_attr(not(feature = "llhttp-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vhttp_llhttp_internal_execute(
     s: *mut LlhttpT,
     p: *const c_char,

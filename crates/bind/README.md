@@ -44,10 +44,11 @@ feature and a dependency here, not a new library.
 | `build.rs` | Compiles llhttp's `api.c` and `http.c` for the `http` feature | 19 |
 | `src/json.rs` | C API over verilith-json documents (`vbind_json_*`): the verified parser's token tape, plus string, number and raw-text accessors | 320 |
 | `include/vbind.h` | The C header for both | 180 |
-| `include/ada.h` | ada 2.9's C++ API over verilith-url | 550 |
+| `include/ada.h` | ada 4.0's C++ API over verilith-url | 890 |
+| `include/ada_url_pattern.h` | ada 4.0's URLPattern, copied from ada by `scripts/vendor-ada-url-pattern.py` | 7,660 |
 | `include/simdjson.h` | simdjson's On-Demand C++ API over verilith-json | 830 |
-| `include/vtext_utf.h` | verilith-text's transcoding and base64 C API (a copy of verilith-text's) | 70 |
-| `include/simdutf.h` | simdutf 6.4's C++ API over verilith-text | 300 |
+| `include/vtext_utf.h` | verilith-text's transcoding and base64 C API (a copy of verilith-text's) | 90 |
+| `include/simdutf.h` | simdutf 7.7's C++ API over verilith-text | 470 |
 | `python/` | PyO3 module: `vbind.URL`, `vbind.loads` | 210 |
 | `node/` | Node-API addon (napi-rs): `URL`, `parseJSON` | 190 |
 
@@ -57,28 +58,47 @@ The library repos are untouched: verilith-bind depends on them as sibling checko
 ## C++: ada, simdjson and simdutf drop-ins
 
 `include/ada.h`, `include/simdjson.h` and `include/simdutf.h` replace the
-single-header ada, simdjson and simdutf for the API surface Node.js 22 uses:
+single-header ada, simdjson and simdutf for the API surface Node.js 26 uses
+(ada 4.0.0, simdjson 5.0.3 and simdutf 7.7.0, the versions Node 26.13.1
+bundles):
 
 * **ada**: `ada::parse<url_aggregator>` and `parse<url>` (with or without a
   base), every getter and setter, `get_components`, `type`, `can_parse`,
   `href_from_file`, `ada::idna::to_ascii/to_unicode`,
   `ada::unicode::percent_decode`, and the public fields of `ada::url`.
+* **ada's URLPattern**: `ada::url_pattern`, `ada::parse_url_pattern` and
+  the types around them, which Node's `URLPattern` class is built on. This
+  is ada's own code (`include/ada_url_pattern.h`, about 4,500 lines of ada
+  and the `tl::expected` it uses): the pattern syntax has no verified
+  parser here yet, so the header keeps ada's pattern compiler and matcher
+  unchanged and puts verilith-url under it. Every URL a pattern parses or
+  canonicalizes goes through `ada::parse` and the setters above.
+  `scripts/vendor-ada-url-pattern.py` writes the header from an ada
+  release, and `tests/cpp/run.sh` checks that it still does.
 * **simdjson**: `ondemand::parser::iterate`, `document`, `value`, `object`,
   `array`, `field`, `raw_json_string`, `simdjson_result` chaining, `pad`,
   `padded_string(_view)`, and every `error_code` with simdjson's messages.
 * **simdutf**: `validate_utf8(_with_errors)`, `validate_ascii(_with_errors)`,
-  the length functions, UTF-8/UTF-16(LE)/Latin-1 conversions including
-  `convert_latin1_to_utf8_safe` and `convert_utf8_to_latin1_with_errors`,
-  and base64 (`binary_to_base64`, `base64_to_binary(_safe)` for `char` and
-  `char16_t`, `maximal_binary_length_from_base64`), with `result`,
-  `error_code`, `base64_options` and `SIMDUTF_VERSION` "6.4.2". Only the
-  `loose` last-chunk mode is supported, which is all Node uses.
-  `tests/cpp/run.sh` runs every one of these through real simdutf 6.4.2
-  and verilith-bind on 50,000 seeded cases (1.4 million calls): all results match
-  except 255 safe base64 decodes into a buffer smaller than the maximal
-  length, where simdutf fails on valid input with whitespace after the
-  padding and verilith-text decodes it (Node falls back to its own decoder on any
-  failure, so both give the same bytes in Node).
+  `validate_utf16(le)(_with_errors)`, `to_well_formed_utf16`, `find`, the
+  length functions (with `utf8_length_from_utf16_with_replacement`),
+  UTF-8/UTF-16(LE)/UTF-32/Latin-1 conversions including
+  `convert_latin1_to_utf8_safe` and the `_with_errors` forms, and base64:
+  `binary_to_base64`, `base64_to_binary(_safe)` for `char` and `char16_t`
+  with all three last-chunk modes (`loose`, `strict`,
+  `stop_before_partial`) and `decode_up_to_bad_char`, the `atomic_`
+  variants V8 uses for shared buffers, and
+  `maximal_binary_length_from_base64`, with `result`, `full_result`,
+  `error_code`, `base64_options` and `SIMDUTF_VERSION` "7.7.0". Decoding
+  valid base64 in the `loose` mode, which is what `Buffer` and `atob` use,
+  runs on verilith-text's verified decoder. The strict and partial modes
+  and the positions reported for invalid input (what
+  `Uint8Array.fromBase64` needs) and the UTF-16 helpers are unverified
+  code in verilith-text's C API; see its README.
+  `tests/cpp/run.sh` runs every one of these through real simdutf 7.7.0
+  and verilith-bind on 50,000 seeded cases (3.6 million calls): all
+  results match except 42 invalid base64 texts with a misplaced `=`, where
+  both fail after writing the same bytes but simdutf's block decoder
+  reports the error one step later than its own scalar decoder does.
 
 Link with `-lverilith_bind -lpthread -ldl -lm`.
 
@@ -91,7 +111,7 @@ to Node's bundled `deps/cares` and defines `CARES_WITH_VDNS` there
 (`VBIND_DNS=0` skips this):
 
 ```sh
-scripts/build-node.sh v22.23.4 parallel sequential es-module
+scripts/build-node.sh v26.13.1 parallel sequential es-module
 ```
 
 runs, in effect,
@@ -104,85 +124,89 @@ runs, in effect,
                                  --shared-http-parser-libname=verilith-bind ...
 ```
 
-The resulting binary has no ada, simdjson or simdutf code in it (`nm` finds
-the `vurl_*`, `vbind_json_*` and `vtext_*` symbols and no `ada::`,
-`simdjson::` or `simdutf::` ones). Node's own llhttp is not built or linked
-(`llhttp__internal_execute` sits among verilith-http's Rust symbols), and
-`ares_dns_parse` and `ares_expand_name` are verilith-dns's: c-ares's own record
-parser is compiled out. `process.versions.simdutf` still reads
-6.4.2, the API version the header implements.
+The resulting binary has no ada, simdjson or simdutf parsing code in it:
+`nm` finds the `vurl_*`, `vbind_json_*` and `vtext_*` symbols, and the only
+`ada::` and `simdjson::` symbols are the headers' own inline wrappers and
+ada's URLPattern code copied into `ada_url_pattern.h`. Node's own llhttp is
+not built or linked (`llhttp__internal_execute` sits among verilith-http's
+Rust symbols), and `ares_dns_parse` and `ares_expand_name` are
+verilith-dns's: c-ares's own record parser is compiled out.
+`process.versions` still reads ada 4.0.0, simdjson 5.0.3 and simdutf
+7.7.0, the API versions the headers implement. Node 26 has Rust code of
+its own (`deps/crates`, a static library); it links next to
+`libverilith_bind.a` without clashing when both are built by the same
+`rustc`.
 
-**Node's tests** (v22.23.4, suites `parallel sequential es-module wpt
-module-hooks message sea sqlite`, 4,284 tests), run on this build and on
-the official v22.23.4 binary:
+**Node's tests** (v26.13.1, suites `parallel sequential es-module wpt
+module-hooks message sea sqlite`), run on this build (ada, simdjson,
+simdutf, llhttp and the c-ares parser all swapped) and on the official
+v26.13.1 binary:
 
-| | pass | fail |
-|---|---|---|
-| Official binary | 4,281 | 3 |
-| Built with verilith-bind (ada, simdjson) | 4,281 | 3 |
-| Built with verilith-bind (ada, simdjson, simdutf) | 4,281 | 3 |
-| Built with verilith-bind (ada, simdjson, simdutf, llhttp, c-ares parser) | 4,274 | 10 |
+| | tests | pass | fail |
+|---|---|---|---|
+| Official binary | 6,833 | 6,828 | 5 |
+| Built with verilith-bind | 6,769 | 6,760 | 9 |
 
-Two failures are common to both (an inspector network test and a sqlite
-extension test that need things the sandbox lacks). The official binary
-also fails `test-process-config`, because its config differs from this
-source tree's. Swapping in verilith-text for simdutf changed no result: all of Node's Buffer,
-base64, `atob`, TextDecoder and string-decoder tests pass. The verilith-bind build
-fails one test the official binary passes,
-`test-whatwg-url-custom-parsing`, for the same reason as the WPT
-differences below.
+The build runs 64 fewer tests because Node skips `wpt/test-url` when ada is
+a shared library (see below). Four failures are common to both: two
+`test-tls-get-ca-certificates-worker-*` tests and a sqlite extension test
+that need things the sandbox lacks, and
+`test-fs-rmSync-special-char-additional-error`, which fails on any build
+run as root. The official binary also fails `test-process-config`, because
+its config differs from this source tree's.
 
-Swapping in verilith-dns for c-ares's parser also changed no result: every
-`test-dns*` and `test-c-ares` test passes. Swapping in verilith-http for llhttp
-adds seven failures, all messages verilith-http rejects on purpose and lists in
-its README: `--insecure-http-parser` leniency
+Every URL, URLPattern, Buffer, base64, `atob`, `Uint8Array.fromBase64`,
+TextDecoder, string-decoder, DNS and c-ares test passes, and so does
+`test-whatwg-url-custom-parsing`, which the Node 22 build failed. The five
+failures the official binary does not have are all llhttp's lenient modes,
+which verilith-http does not implement (it rejects those messages on purpose
+and lists them in its README): `--insecure-http-parser`
 (`test-http-insecure-parser`, `test-http-insecure-parser-per-stream`,
 `test-https-insecure-parse-per-stream`), obs-fold
-(`test-http-multi-line-headers`), HTTP/0.9 (`test-http-response-no-headers`,
-`test-https-foafssl`), and `Transfer-Encoding: chunkedchunked` rejected
-before the request reaches the application
-(`test-http-transfer-encoding-repeated-chunked`). Build with `VBIND_HTTP=0`
-to keep Node's llhttp.
+(`test-http-multi-line-headers`) and Node 26's `httpValidation: 'relaxed'`
+(`test-http-header-value-relaxed`). Build with `VBIND_HTTP=0` to keep
+Node's llhttp. The three other HTTP failures the Node 22 build had
+(HTTP/0.9 responses and `Transfer-Encoding: chunkedchunked`) pass now.
 
 `wpt/test-url` is skipped by Node whenever ada is a shared library ("Different
-versions of Ada affect the WPT tests"). Forced to run, 24 of its 30 files
-pass, and the failures are all differences between verilith-url and the URL
-Standard as of Node 22's WPT snapshot:
-
-* **ASCII `xn--` labels are not validated.** verilith-url's model treats an
-  all-ASCII domain as already ASCII and never runs UTS #46 on it, so
-  labels such as `xn--pokxncvks` or `xn--` that are not valid Punycode are
-  accepted. This accounts for 593 of the 644 `IdnaTestV2` failures, 21 of
-  33 in `toascii`, and the `test-whatwg-url-custom-parsing` failure. Newer
-  WPT data in verilith-url's own tests accepts some of these, so this needs checking
-  against the current Standard in verilith-url itself.
-* **Unicode version.** 51 `IdnaTestV2` and 12 `toascii` cases differ in
-  which code points UTS #46 maps or disallows (verilith-url uses the `idna` crate's
-  tables, Node's WPT copy expects Unicode 15.1).
-* **Newer spec behaviour** that Node 22's snapshot predates: `^` is
-  percent-encoded in paths, and trailing spaces in opaque paths are kept as
-  `%20` (13 cases across `url-constructor`, `url-setters` and
-  `urlsearchparams-delete`).
+versions of Ada affect the WPT tests"). Forced to run, 64 of its 65 files
+pass. The one failure is a single `IdnaTestV2` case (2 of its 2,671
+subtests), `𾢬。ܩ。쯙5`: U+3E8AC is unassigned in Unicode 17, which Node 26's
+WPT copy and ICU use, and is a Small Seal character in Unicode 18, which
+verilith-text's UTS #46 tables follow. The ASCII `xn--` and Unicode 15.1
+differences the Node 22 build had are gone, since Node 26's WPT data and ada
+4 follow the current Standard there too.
 
 ### Differential tests
 
-`tests/cpp/run.sh` compiles the same programs against the real ada 2.9.2
-and simdjson 4.5.0 (fetched from their releases) and against these
+`tests/cpp/run.sh` compiles the same programs against the real ada 4.0.0
+and simdjson 5.0.3 (fetched from their releases) and against these
 headers, then compares the output:
 
 * **JSON**: every valid JSON file gives identical results through three
   access patterns (lookups by name, an in-order pass with `raw_json()`, and a
-  full tree walk), on all of Node's test fixtures and verilith-json's corpus. The
-  only differences are on invalid JSON: simdjson validates lazily and can
-  read the first fields of a document that is broken further on; verilith-json
-  checks the whole text first, so `iterate()` fails. Node treats both as an
-  invalid file.
-* **URL**: on WPT's `urltestdata.json` with every setter applied, the
-  differences are the spec-version ones above, plus setter **return
-  values**: ada returns `true` from a setter that the Standard says to
-  ignore (for example a non-numeric port), verilith-url returns `false`. The URL is
-  unchanged either way, and Node only uses the return value to decide
-  whether to refresh a URL that did not change.
+  full tree walk), on Node 26's test fixtures, `deps/npm` and
+  verilith-json's corpus (539 files, 1,623 reads, 1,581 identical; pass the
+  files as arguments, or set `JSON_DIR`). The 42 differences are all on
+  invalid JSON: simdjson validates lazily and can read the first fields of
+  a document that is broken further on; verilith-json checks the whole text
+  first, so `iterate()` fails. Node treats both as an invalid file.
+* **URL**: on WPT's `urltestdata.json` with every setter applied (896
+  URLs), the URLs themselves agree. The differences are in three places Node
+  does not depend on: `get_components()` offsets (ada 4.0.0 reports
+  `host_end` one byte short when there is a port, and `username_end` 0 on
+  opaque URLs; Node 26 no longer calls it); setter **return values**, where
+  ada returns `true` from a setter that the Standard says to ignore (for
+  example a non-numeric port) and verilith-url returns `false`, with the URL
+  unchanged either way; and the host and pathname setters on `file:` URLs
+  with a Windows drive letter, which ada built from its release refuses and
+  verilith-url applies. Official Node 26 applies them too
+  (`u.pathname = "x"` on `file:///c:/foo/bar.html` gives `file:///x` in
+  both).
+* **URLPattern**: every case in WPT's `urlpatterntestdata.json` (361) gives
+  the same pattern strings, match results and groups through real ada and
+  through `ada_url_pattern.h` over verilith-url.
+* **simdutf**: see above.
 
 ### Speed in Node
 
@@ -236,4 +260,7 @@ loading.
 
 Everything in this repository. The trusted additions are the C ABI glue
 (`src/json.rs`), the three headers, and the two language modules: about
-2,300 lines that convert types and never make a parsing decision.
+3,200 lines that convert types and never make a parsing decision. Two
+further pieces do make decisions and are not verified: ada's URLPattern
+code in `ada_url_pattern.h` (ada's own, unchanged), and the parts of
+verilith-text's C API listed under simdutf above.

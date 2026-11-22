@@ -3,7 +3,7 @@ name = "verilith-x509"
 version = "0.1.0"
 license = "MIT"
 description = "A formally verified (Verus) DER and X.509 certificate parser"
-edition = "2021"
+edition = "2024"
 repository = "https://github.com/verilith/verilith"
 readme = "README.md"
 keywords = ["x509", "der", "asn1", "verified", "verus"]
@@ -28,11 +28,11 @@ vstd = { workspace = true }
 
 [dev-dependencies]
 x509-parser = "0.18"
-x509-cert = { version = "0.2", default-features = false }
-der = "0.7"
+x509-cert = { version = "0.3", default-features = false }
+der = "0.8"
 rustls-webpki = { version = "0.103", default-features = false }
 rustls-pki-types = "1"
-rcgen = "0.13"
+rcgen = "0.14"
 openssl = "0.10"
 
 [package.metadata.verus]

@@ -3,6 +3,7 @@
 //! Run with `CARES_LIB_DIR=/path/to/c-ares/build/lib cargo test --release
 //! --test differential_rdata -- --nocapture`.
 #![cfg(have_cares)]
+#![allow(unsafe_op_in_unsafe_fn)]
 mod common;
 use common::packets::*;
 use common::*;
@@ -16,7 +17,7 @@ use verilith_dns::{parse, Name, Section};
 type rr_t = c_void;
 
 #[link(name = "cares", kind = "static")]
-extern "C" {
+unsafe extern "C" {
     fn ares_dns_parse(buf: *const c_uchar, len: usize, flags: c_uint, rec: *mut *mut c_void) -> c_int;
     fn ares_dns_record_destroy(rec: *mut c_void);
     fn ares_dns_record_rr_cnt(rec: *const c_void, sect: c_int) -> usize;

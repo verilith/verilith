@@ -14,7 +14,7 @@ to the spec's. It reads UTF-8, UTF-16, ISO-8859-1 and US-ASCII through
 verified decoders.
 
 On thirteen documents it checks one 3.1 to 18.6 times as fast as expat
-2.7.3 (geometric mean 5.7x) and 2.4 to 17 times as fast as libxml2 2.15.4
+2.10.0 (geometric mean 5.7x) and 2.4 to 17 times as fast as libxml2 2.15.4
 (4.2x), and parses and reads one through its API 1.2 to 14 times as fast
 as expat (2.2x) and 1.1 to 9 times as fast as libxml2's SAX2 interface
 (1.8x), measured with the repository's benchmark harness (see
@@ -245,7 +245,7 @@ case found by fuzzing:
   written in James Clark's canonical form is the expected output, byte for
   byte (`tests/canonical.rs`): references and entities expanded, attribute
   values normalized, defaults supplied, line ends normalized.
-* **Differential testing against expat 2.7.3** (`fuzz/`, expat built from
+* **Differential testing against expat 2.10.0** (`fuzz/`, expat built from
   source): the verdict on each document, and when both accept it, the
   canonical form of what each reads (expat's SAX events against
   verilith-xml's API), on the suite's files, Silesia's XML and the Rust
@@ -276,12 +276,18 @@ Measured with the repository's [vbench](../../bench) harness
 (`bench/run.sh --only xml`) on a cloud VM (Intel Xeon @ 2.10GHz, 4 cores,
 x86-64 with AVX-512; Linux; gcc 13.3 at `-O3` and rustc 1.97 with fat LTO,
 neither with `-march` or `-C target-cpu`), 2026-11-22: 31 interleaved pairs
-per case, expat 2.7.3 and libxml2 2.15.4 built from source by the harness
+per case, expat 2.10.0 and libxml2 2.15.4 built from source by the harness
 with the same flags. Speedup is the other parser's time over
 verilith-xml's, with its 95% confidence interval. The inputs are six of
 Silesia's XML files and the seven files of roxmltree's benchmarks, pinned by
 commit and SHA-256. Every comparison is native: verilith-xml has neither C
 ABI, so its own API is measured against each library's.
+
+On an Apple M3 Pro (macOS, Apple clang, the root README's run of the same
+day) the gaps are smaller: checking is 1.14x to 6.69x expat (geometric mean
+2.23x) and 0.92x to 6.85x libxml2 (1.72x), reading 0.80x to 2.17x expat
+(1.35x) and 0.69x to 2.03x libxml2 (1.14x). The slowest reading case
+against both is w3c5.xml, the closest case on the VM too.
 
 **Checking** whether a document is well-formed: expat's `XML_Parse` with no
 handlers; libxml2's `xmlCtxtReadMemory` on a reused context, with its SAX2

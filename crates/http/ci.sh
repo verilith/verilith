@@ -10,7 +10,7 @@ test() {
   # The native C API, and picohttpparser's test suite on the phr ABI.
   scripts/test-c.sh
   # The llhttp drop-in agrees with llhttp (differential test).
-  [ -d "$W/llhttp" ] || git clone -q --depth 1 --branch release/v9.4.3 https://github.com/nodejs/llhttp "$W/llhttp"
+  [ -d "$W/llhttp" ] || git clone -q --depth 1 --branch release/v9.4.4 https://github.com/nodejs/llhttp "$W/llhttp"
   LLHTTP="$W/llhttp" OUT="$W/lt" compat/llhttp/test/build.sh
   for seed in 1 2 3; do python3 compat/llhttp/test/diff.py "$W/lt" 3000 $seed; done
   # The httparse drop-in crate builds.

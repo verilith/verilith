@@ -1,16 +1,20 @@
 /*
- * ada.h: ada's C++ API (2.9), over vurl.
+ * ada.h: ada's C++ API (4.0), over vurl.
  *
  * A header-only stand-in for https://github.com/ada-url/ada's single-header
  * ada.h, covering what Node.js uses: ada::parse into ada::url_aggregator or
  * ada::url, the getters and setters, url_components, can_parse,
- * href_from_file, ada::idna and ada::unicode::percent_decode. Parsing and
- * the setters run in vurl (its verified parser); this file only adapts the
- * types. Link with -lverilith_bind.
+ * href_from_file, ada::idna, ada::unicode::percent_decode and URLPattern
+ * (ada::url_pattern, ada::parse_url_pattern). Parsing and the setters run in
+ * vurl (its verified parser); this file only adapts the types. URLPattern is
+ * ada's own pattern code, in ada_url_pattern.h, with this file's ada::parse
+ * under it. Needs C++20, as ada does. Link with -lverilith_bind.
  */
 #ifndef ADA_H
 #define ADA_H
 
+#include <array>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -22,12 +26,22 @@
 
 #include "vbind.h"
 
-#define ADA_VERSION "2.9.2"
+#define ADA_VERSION "4.0.0"
+#define ADA_INCLUDE_URL_PATTERN 1
 #define ada_lifetime_bound
+#define ada_warn_unused
+#define ada_log(...)
+#define ADA_ASSERT_TRUE(COND)
+
+/* tl::expected is defined in ada_url_pattern.h. */
+namespace tl {
+template <class E>
+class unexpected;
+}  // namespace tl
 
 namespace ada {
 
-enum { ADA_VERSION_MAJOR = 2, ADA_VERSION_MINOR = 9, ADA_VERSION_REVISION = 2 };
+enum { ADA_VERSION_MAJOR = 4, ADA_VERSION_MINOR = 0, ADA_VERSION_REVISION = 0 };
 
 enum class errors : uint8_t { type_error };
 
@@ -36,9 +50,14 @@ enum class errors : uint8_t { type_error };
 template <class T>
 class result {
  public:
-  result(T&& v) : v_(std::move(v)) {}  // NOLINT
-  result(const T& v) : v_(v) {}        // NOLINT
-  result(errors e) : e_(e) {}          // NOLINT
+  template <class U = T>
+    requires(std::constructible_from<T, U &&> &&
+             !std::same_as<std::remove_cvref_t<U>, result> &&
+             !std::same_as<std::remove_cvref_t<U>, errors>)
+  result(U&& v) : v_(std::in_place, std::forward<U>(v)) {}  // NOLINT
+  result(errors e) : e_(e) {}  // NOLINT
+  template <class E>
+  result(const tl::unexpected<E>& e) : e_(e.value()) {}  // NOLINT
   result() : e_(errors::type_error) {}
 
   bool has_value() const noexcept { return v_.has_value(); }
@@ -667,6 +686,17 @@ inline bool can_parse(std::string_view input,
 
 namespace idna {
 inline std::string to_ascii(std::string_view input) {
+  /* As in ada 4 and the URL Standard's "domain to ASCII": an ASCII domain
+   * is lowercased, whatever its "xn--" labels hold. vurl's URL parser
+   * treats an ASCII host the same way. */
+  if (input.size() > 16384) return {};  /* ada's limit */
+  bool ascii = true;
+  for (char c : input) ascii = ascii && uint8_t(c) < 0x80;
+  if (ascii) {
+    std::string out(input);
+    for (char& c : out) if (c >= 'A' && c <= 'Z') c = char(c + 32);
+    return out;
+  }
   return detail::take(vurl_idna_to_ascii(input.data(), input.size()));
 }
 inline std::string to_unicode(std::string_view input) {
@@ -725,6 +755,133 @@ inline std::string href_from_file(std::string_view path) {
   return u ? std::string(u->get_href()) : std::string("file:///");
 }
 
+
+/* What ada's URLPattern code (ada_url_pattern.h) uses from the rest of ada:
+ * character classes and the percent-encode sets of the URL Standard. None of
+ * it parses a URL. */
+[[noreturn]] inline void unreachable() { __builtin_unreachable(); }
+
+namespace scheme {
+inline type get_scheme_type(std::string_view scheme) noexcept {
+  if (scheme == "http") return HTTP;
+  if (scheme == "https") return HTTPS;
+  if (scheme == "ws") return WS;
+  if (scheme == "wss") return WSS;
+  if (scheme == "ftp") return FTP;
+  if (scheme == "file") return FILE;
+  return NOT_SPECIAL;
+}
+inline bool is_special(std::string_view scheme) {
+  return get_scheme_type(scheme) != NOT_SPECIAL;
+}
+inline uint16_t get_special_port(std::string_view scheme) noexcept {
+  return get_special_port(get_scheme_type(scheme));
+}
+}  // namespace scheme
+
+namespace character_sets {
+/* One bit per byte value, as in ada. C0 controls and everything above '~'
+ * are in every set. */
+constexpr std::array<uint8_t, 32> make_set(std::string_view extra) {
+  std::array<uint8_t, 32> set{};
+  for (unsigned c = 0; c < 256; c++) {
+    bool in = c <= 0x1f || c > 0x7e ||
+              extra.find(char(c)) != std::string_view::npos;
+    if (in) set[c >> 3] |= uint8_t(1 << (c & 7));
+  }
+  return set;
+}
+constexpr bool bit_at(const uint8_t set[], uint8_t c) {
+  return (set[c >> 3] >> (c & 7)) & 1;
+}
+inline constexpr std::array<uint8_t, 32> fragment_set = make_set(" \"<>`");
+inline constexpr std::array<uint8_t, 32> query_set = make_set(" \"#<>");
+inline constexpr std::array<uint8_t, 32> userinfo_set =
+    make_set(" \"#<>?^`{}/:;=@[\\]|");
+inline constexpr const uint8_t* FRAGMENT_PERCENT_ENCODE = fragment_set.data();
+inline constexpr const uint8_t* QUERY_PERCENT_ENCODE = query_set.data();
+inline constexpr const uint8_t* USERINFO_PERCENT_ENCODE = userinfo_set.data();
+}  // namespace character_sets
+
+namespace unicode {
+constexpr bool is_ascii_digit(char c) noexcept { return c >= '0' && c <= '9'; }
+constexpr bool is_ascii_hex_digit(char c) noexcept {
+  return is_ascii_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+constexpr bool is_ascii(char32_t c) noexcept { return c < 0x80; }
+/* Lowercases A-Z in place; true when every byte is ASCII. */
+constexpr bool to_lower_ascii(char* input, size_t length) noexcept {
+  bool ascii = true;
+  for (size_t i = 0; i < length; i++) {
+    if (uint8_t(input[i]) >= 0x80) ascii = false;
+    if (input[i] >= 'A' && input[i] <= 'Z') input[i] = char(input[i] + 32);
+  }
+  return ascii;
+}
+inline size_t percent_encode_index(std::string_view input,
+                                   const uint8_t character_set[]) {
+  size_t i = 0;
+  while (i < input.size() &&
+         !character_sets::bit_at(character_set, uint8_t(input[i])))
+    i++;
+  return i;
+}
+inline std::string percent_encode(std::string_view input,
+                                  const uint8_t character_set[],
+                                  size_t index = 0) {
+  static const char hex[] = "0123456789ABCDEF";
+  std::string out(input.substr(0, index));
+  for (size_t i = index; i < input.size(); i++) {
+    uint8_t c = uint8_t(input[i]);
+    if (character_sets::bit_at(character_set, c)) {
+      out += '%';
+      out += hex[c >> 4];
+      out += hex[c & 15];
+    } else {
+      out += char(c);
+    }
+  }
+  return out;
+}
+}  // namespace unicode
+
+namespace idna {
+inline bool is_ascii(std::string_view view) {
+  for (char c : view) if (uint8_t(c) >= 0x80) return false;
+  return true;
+}
+}  // namespace idna
+
+namespace helpers {
+inline void remove_ascii_tab_or_newline(std::string& input) {
+  std::erase_if(input, [](char c) { return c == '\t' || c == '\n' || c == '\r'; });
+}
+}  // namespace helpers
+
+namespace checkers {
+/* ada's quick test for a host that the URL parser would read as an IPv4
+ * address: its last label is a decimal number or 0x and hex digits. The
+ * input has no upper-case letters. */
+inline bool is_ipv4(std::string_view view) noexcept {
+  if (view.ends_with('.')) view.remove_suffix(1);
+  if (view.empty()) return false;
+  size_t last_dot = view.rfind('.');
+  if (last_dot != std::string_view::npos) view.remove_prefix(last_dot + 1);
+  if (view.empty()) return false;
+  auto all = [](std::string_view v, bool hex) {
+    for (char c : v) {
+      if (!(unicode::is_ascii_digit(c) || (hex && c >= 'a' && c <= 'f')))
+        return false;
+    }
+    return true;
+  };
+  if (all(view, false)) return true;
+  return view.starts_with("0x") && all(view.substr(2), true);
+}
+}  // namespace checkers
+
 }  // namespace ada
+
+#include "ada_url_pattern.h"
 
 #endif  // ADA_H

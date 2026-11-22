@@ -7,7 +7,7 @@
 //! feature also under TurboJPEG's own name, so that a program written for
 //! `turbojpeg.h` links against this library unchanged.
 //!
-//! What is here: `tj3Init`, `tj3Destroy`, `tj3Set`, `tj3Get`,
+//! What is here: `tj3Init`, `tj3InitVersion`, `tj3Destroy`, `tj3Set`, `tj3Get`,
 //! `tj3DecompressHeader`, `tj3Decompress8`, `tj3GetErrorStr`,
 //! `tj3GetErrorCode`, `tj3Alloc`, `tj3Free`, `tj3GetScalingFactors`,
 //! `tj3SetScalingFactor`, and the older `tjInitDecompress`,
@@ -22,12 +22,13 @@
 //! - a damaged file that libjpeg-turbo decodes with a warning decodes here
 //!   with no warning, so `TJPARAM_STOPONWARNING` has nothing to stop on;
 //! - `TJPARAM_FASTUPSAMPLE` and `TJPARAM_FASTDCT` are accepted and ignored.
+#![allow(unsafe_op_in_unsafe_fn)]
 use crate::decode::{decode, decode_to, read_header, Header, Picture};
 use crate::types::Error;
 use core::ffi::{c_char, c_int, c_ulong, c_void};
 use std::cell::RefCell;
 
-extern "C" {
+unsafe extern "C" {
     fn malloc(n: usize) -> *mut c_void;
     fn free(p: *mut c_void);
 }
@@ -36,6 +37,10 @@ const ERR_LEN: usize = 200;
 
 const TJINIT_DECOMPRESS: c_int = 1;
 const TJINIT_TRANSFORM: c_int = 2;
+const TJ_NUMINIT: c_int = 3;
+/// `TURBOJPEG_VERSION_NUMBER` of 3.1 (what 3.2's own `tj3Init` passes) and of 3.2.
+const API_3_1: c_int = 3_001_000;
+const API_3_2: c_int = 3_002_000;
 
 const TJSAMP_444: c_int = 0;
 const TJSAMP_422: c_int = 1;
@@ -44,6 +49,8 @@ const TJSAMP_GRAY: c_int = 3;
 const TJSAMP_440: c_int = 4;
 const TJSAMP_411: c_int = 5;
 const TJSAMP_441: c_int = 6;
+const TJSAMP_410: c_int = 7;
+const TJSAMP_24: c_int = 8;
 const TJSAMP_UNKNOWN: c_int = -1;
 
 const TJPF_GRAY: c_int = 6;
@@ -110,6 +117,8 @@ static UNITY: [ScalingFactor; 1] = [ScalingFactor { num: 1, denom: 1 }];
 /// What a `tjhandle` points to.
 pub struct Handle {
     init: c_int,
+    /// The `turbojpeg.h` the caller was compiled with (`tj3InitVersion`).
+    api_version: c_int,
     err: [u8; ERR_LEN],
     stop_on_warning: c_int,
     bottom_up: c_int,
@@ -169,7 +178,7 @@ fn error_text(e: Error) -> &'static str {
     }
 }
 
-fn subsamp_of(h: &Header) -> c_int {
+fn subsamp_of(h: &Header, api_version: c_int) -> c_int {
     if h.nc == 1 {
         return TJSAMP_GRAY;
     }
@@ -192,6 +201,9 @@ fn subsamp_of(h: &Header) -> c_int {
         (1, 2) => TJSAMP_440,
         (4, 1) => TJSAMP_411,
         (1, 4) => TJSAMP_441,
+        // TurboJPEG 3.2 names these two, for callers compiled against it.
+        (4, 2) if api_version >= API_3_2 => TJSAMP_410,
+        (2, 4) if api_version >= API_3_2 => TJSAMP_24,
         _ => TJSAMP_UNKNOWN,
     }
 }
@@ -214,7 +226,7 @@ unsafe fn header(h: *mut Handle, func: &str, buf: *const u8, len: usize) -> c_in
     match read_header(input(buf, len)) {
         Ok(hd) => {
             let this = &mut *h;
-            this.subsamp = subsamp_of(&hd);
+            this.subsamp = subsamp_of(&hd, this.api_version);
             this.jpeg_width = hd.w as c_int;
             this.jpeg_height = hd.h as c_int;
             this.precision = 8;
@@ -324,10 +336,27 @@ unsafe fn decompress(
     0
 }
 
-/// `tj3Init`. Only decompression is here: `TJINIT_COMPRESS` gives null. A
-/// `TJINIT_TRANSFORM` handle can decompress, as TurboJPEG's can.
-#[no_mangle]
+/// `tj3Init`, as a caller compiled against TurboJPEG 3.1 or earlier calls
+/// it. Since 3.2 `turbojpeg.h` defines `tj3Init` as `tj3InitVersion` with
+/// its own version number.
+#[unsafe(no_mangle)]
 pub extern "C" fn vjpeg_tj3Init(init_type: c_int) -> *mut Handle {
+    vjpeg_tj3InitVersion(init_type, API_3_1)
+}
+
+/// `tj3InitVersion` (TurboJPEG 3.2). Only decompression is here:
+/// `TJINIT_COMPRESS` gives null. A `TJINIT_TRANSFORM` handle can decompress,
+/// as TurboJPEG's can. `api_version` is the `TURBOJPEG_VERSION_NUMBER` of
+/// the caller's header: from 3.2 on, 4:1:0 and 2:4 images are reported as
+/// `TJSAMP_410` and `TJSAMP_24`, which earlier headers do not have.
+#[unsafe(no_mangle)]
+pub extern "C" fn vjpeg_tj3InitVersion(init_type: c_int, api_version: c_int) -> *mut Handle {
+    if !(0..TJ_NUMINIT).contains(&init_type) || !(1_000_000..=999_999_999).contains(&api_version) {
+        unsafe {
+            fail(core::ptr::null_mut(), "tj3Init", "Invalid argument");
+        }
+        return core::ptr::null_mut();
+    }
     if init_type != TJINIT_DECOMPRESS && init_type != TJINIT_TRANSFORM {
         unsafe {
             fail(core::ptr::null_mut(), "tj3Init", "Only decompression is supported");
@@ -336,6 +365,7 @@ pub extern "C" fn vjpeg_tj3Init(init_type: c_int) -> *mut Handle {
     }
     Box::into_raw(Box::new(Handle {
         init: init_type,
+        api_version,
         err: no_error(),
         stop_on_warning: 0,
         bottom_up: 0,
@@ -359,7 +389,7 @@ pub extern "C" fn vjpeg_tj3Init(init_type: c_int) -> *mut Handle {
 ///
 /// # Safety
 /// `h` must be null or a handle from `tj3Init` not yet destroyed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjpeg_tj3Destroy(h: *mut Handle) {
     if !h.is_null() {
         drop(Box::from_raw(h));
@@ -371,7 +401,7 @@ pub unsafe extern "C" fn vjpeg_tj3Destroy(h: *mut Handle) {
 ///
 /// # Safety
 /// `h` must be null or a live handle.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjpeg_tj3GetErrorStr(h: *mut Handle) -> *mut c_char {
     if h.is_null() {
         LAST.with(|l| l.as_ptr() as *mut c_char)
@@ -384,7 +414,7 @@ pub unsafe extern "C" fn vjpeg_tj3GetErrorStr(h: *mut Handle) -> *mut c_char {
 ///
 /// # Safety
 /// `h` must be null or a live handle.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjpeg_tj3GetErrorCode(_h: *mut Handle) -> c_int {
     TJERR_FATAL
 }
@@ -393,7 +423,7 @@ pub unsafe extern "C" fn vjpeg_tj3GetErrorCode(_h: *mut Handle) -> c_int {
 ///
 /// # Safety
 /// `h` must be null or a live handle.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjpeg_tj3Set(h: *mut Handle, param: c_int, value: c_int) -> c_int {
     const F: &str = "tj3Set";
     if h.is_null() {
@@ -429,7 +459,7 @@ pub unsafe extern "C" fn vjpeg_tj3Set(h: *mut Handle, param: c_int, value: c_int
 ///
 /// # Safety
 /// `h` must be null or a live handle.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjpeg_tj3Get(h: *mut Handle, param: c_int) -> c_int {
     if h.is_null() {
         return -1;
@@ -457,7 +487,7 @@ pub unsafe extern "C" fn vjpeg_tj3Get(h: *mut Handle, param: c_int) -> c_int {
 }
 
 /// `tj3Alloc`: C's `malloc`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vjpeg_tj3Alloc(bytes: usize) -> *mut c_void {
     unsafe { malloc(bytes) }
 }
@@ -466,7 +496,7 @@ pub extern "C" fn vjpeg_tj3Alloc(bytes: usize) -> *mut c_void {
 ///
 /// # Safety
 /// `p` must be null or a buffer from `tj3Alloc`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjpeg_tj3Free(p: *mut c_void) {
     free(p)
 }
@@ -475,7 +505,7 @@ pub unsafe extern "C" fn vjpeg_tj3Free(p: *mut c_void) {
 ///
 /// # Safety
 /// `h` must be null or a live handle, and `buf` point to `len` bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjpeg_tj3DecompressHeader(h: *mut Handle, buf: *const u8, len: usize) -> c_int {
     header(h, "tj3DecompressHeader", buf, len)
 }
@@ -484,7 +514,7 @@ pub unsafe extern "C" fn vjpeg_tj3DecompressHeader(h: *mut Handle, buf: *const u
 ///
 /// # Safety
 /// `n` must be null or point to a writable `int`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjpeg_tj3GetScalingFactors(n: *mut c_int) -> *const ScalingFactor {
     if n.is_null() {
         fail(core::ptr::null_mut(), "tj3GetScalingFactors", "Invalid argument");
@@ -498,7 +528,7 @@ pub unsafe extern "C" fn vjpeg_tj3GetScalingFactors(n: *mut c_int) -> *const Sca
 ///
 /// # Safety
 /// `h` must be null or a live handle.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjpeg_tj3SetScalingFactor(h: *mut Handle, f: ScalingFactor) -> c_int {
     if h.is_null() {
         return fail(h, "tj3SetScalingFactor", "Invalid handle");
@@ -515,7 +545,7 @@ pub unsafe extern "C" fn vjpeg_tj3SetScalingFactor(h: *mut Handle, f: ScalingFac
 /// `h` must be null or a live handle, `buf` point to `len` bytes, and `dst`
 /// to a buffer of `pitch` bytes (or the image's width in pixels, if `pitch`
 /// is 0) times the image's height.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjpeg_tj3Decompress8(
     h: *mut Handle,
     buf: *const u8,
@@ -528,7 +558,7 @@ pub unsafe extern "C" fn vjpeg_tj3Decompress8(
 }
 
 /// `tjInitDecompress`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vjpeg_tjInitDecompress() -> *mut Handle {
     vjpeg_tj3Init(TJINIT_DECOMPRESS)
 }
@@ -537,7 +567,7 @@ pub extern "C" fn vjpeg_tjInitDecompress() -> *mut Handle {
 ///
 /// # Safety
 /// As `tj3Destroy`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjpeg_tjDestroy(h: *mut Handle) -> c_int {
     if h.is_null() {
         return fail(h, "tjDestroy", "Invalid handle");
@@ -547,7 +577,7 @@ pub unsafe extern "C" fn vjpeg_tjDestroy(h: *mut Handle) -> c_int {
 }
 
 /// `tjGetErrorStr`: the last error on this thread.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vjpeg_tjGetErrorStr() -> *mut c_char {
     LAST.with(|l| l.as_ptr() as *mut c_char)
 }
@@ -556,7 +586,7 @@ pub extern "C" fn vjpeg_tjGetErrorStr() -> *mut c_char {
 ///
 /// # Safety
 /// As `tj3GetErrorStr`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjpeg_tjGetErrorStr2(h: *mut Handle) -> *mut c_char {
     vjpeg_tj3GetErrorStr(h)
 }
@@ -565,13 +595,13 @@ pub unsafe extern "C" fn vjpeg_tjGetErrorStr2(h: *mut Handle) -> *mut c_char {
 ///
 /// # Safety
 /// As `tj3GetErrorCode`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjpeg_tjGetErrorCode(h: *mut Handle) -> c_int {
     vjpeg_tj3GetErrorCode(h)
 }
 
 /// `tjAlloc`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vjpeg_tjAlloc(bytes: c_int) -> *mut u8 {
     if bytes < 0 {
         return core::ptr::null_mut();
@@ -583,7 +613,7 @@ pub extern "C" fn vjpeg_tjAlloc(bytes: c_int) -> *mut u8 {
 ///
 /// # Safety
 /// As `tj3Free`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjpeg_tjFree(p: *mut u8) {
     vjpeg_tj3Free(p as *mut c_void)
 }
@@ -592,7 +622,7 @@ pub unsafe extern "C" fn vjpeg_tjFree(p: *mut u8) {
 ///
 /// # Safety
 /// As `tj3GetScalingFactors`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjpeg_tjGetScalingFactors(n: *mut c_int) -> *const ScalingFactor {
     vjpeg_tj3GetScalingFactors(n)
 }
@@ -602,7 +632,7 @@ pub unsafe extern "C" fn vjpeg_tjGetScalingFactors(n: *mut c_int) -> *const Scal
 /// # Safety
 /// `h` must be null or a live handle, `buf` point to `len` bytes, and the
 /// four outputs be null or writable.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjpeg_tjDecompressHeader3(
     h: *mut Handle,
     buf: *const u8,
@@ -637,7 +667,7 @@ pub unsafe extern "C" fn vjpeg_tjDecompressHeader3(
 ///
 /// # Safety
 /// As `tjDecompressHeader3`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjpeg_tjDecompressHeader2(
     h: *mut Handle,
     buf: *mut u8,
@@ -654,7 +684,7 @@ pub unsafe extern "C" fn vjpeg_tjDecompressHeader2(
 ///
 /// # Safety
 /// As `tjDecompressHeader3`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjpeg_tjDecompressHeader(
     h: *mut Handle,
     buf: *mut u8,
@@ -672,7 +702,7 @@ pub unsafe extern "C" fn vjpeg_tjDecompressHeader(
 ///
 /// # Safety
 /// As `tj3Decompress8`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjpeg_tjDecompress2(
     h: *mut Handle,
     buf: *const u8,
@@ -699,51 +729,55 @@ pub unsafe extern "C" fn vjpeg_tjDecompress2(
 mod abi {
     use super::*;
 
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub extern "C" fn tj3Init(init_type: c_int) -> *mut Handle {
         vjpeg_tj3Init(init_type)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
+    pub extern "C" fn tj3InitVersion(init_type: c_int, api_version: c_int) -> *mut Handle {
+        vjpeg_tj3InitVersion(init_type, api_version)
+    }
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn tj3Destroy(h: *mut Handle) {
         vjpeg_tj3Destroy(h)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn tj3GetErrorStr(h: *mut Handle) -> *mut c_char {
         vjpeg_tj3GetErrorStr(h)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn tj3GetErrorCode(h: *mut Handle) -> c_int {
         vjpeg_tj3GetErrorCode(h)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn tj3Set(h: *mut Handle, param: c_int, value: c_int) -> c_int {
         vjpeg_tj3Set(h, param, value)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn tj3Get(h: *mut Handle, param: c_int) -> c_int {
         vjpeg_tj3Get(h, param)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub extern "C" fn tj3Alloc(bytes: usize) -> *mut c_void {
         vjpeg_tj3Alloc(bytes)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn tj3Free(p: *mut c_void) {
         vjpeg_tj3Free(p)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn tj3DecompressHeader(h: *mut Handle, buf: *const u8, len: usize) -> c_int {
         vjpeg_tj3DecompressHeader(h, buf, len)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn tj3GetScalingFactors(n: *mut c_int) -> *const ScalingFactor {
         vjpeg_tj3GetScalingFactors(n)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn tj3SetScalingFactor(h: *mut Handle, f: ScalingFactor) -> c_int {
         vjpeg_tj3SetScalingFactor(h, f)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn tj3Decompress8(
         h: *mut Handle,
         buf: *const u8,
@@ -754,39 +788,39 @@ mod abi {
     ) -> c_int {
         vjpeg_tj3Decompress8(h, buf, len, dst, pitch, pf)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub extern "C" fn tjInitDecompress() -> *mut Handle {
         vjpeg_tjInitDecompress()
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn tjDestroy(h: *mut Handle) -> c_int {
         vjpeg_tjDestroy(h)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub extern "C" fn tjGetErrorStr() -> *mut c_char {
         vjpeg_tjGetErrorStr()
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn tjGetErrorStr2(h: *mut Handle) -> *mut c_char {
         vjpeg_tjGetErrorStr2(h)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn tjGetErrorCode(h: *mut Handle) -> c_int {
         vjpeg_tjGetErrorCode(h)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub extern "C" fn tjAlloc(bytes: c_int) -> *mut u8 {
         vjpeg_tjAlloc(bytes)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn tjFree(p: *mut u8) {
         vjpeg_tjFree(p)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn tjGetScalingFactors(n: *mut c_int) -> *const ScalingFactor {
         vjpeg_tjGetScalingFactors(n)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn tjDecompressHeader3(
         h: *mut Handle,
         buf: *const u8,
@@ -798,7 +832,7 @@ mod abi {
     ) -> c_int {
         vjpeg_tjDecompressHeader3(h, buf, len, width, height, subsamp, colorspace)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn tjDecompressHeader2(
         h: *mut Handle,
         buf: *mut u8,
@@ -809,7 +843,7 @@ mod abi {
     ) -> c_int {
         vjpeg_tjDecompressHeader2(h, buf, len, width, height, subsamp)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn tjDecompressHeader(
         h: *mut Handle,
         buf: *mut u8,
@@ -819,7 +853,7 @@ mod abi {
     ) -> c_int {
         vjpeg_tjDecompressHeader(h, buf, len, width, height)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn tjDecompress2(
         h: *mut Handle,
         buf: *const u8,

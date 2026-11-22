@@ -4,6 +4,7 @@
 //! JavaScript call. `wasm32-unknown-unknown` has no libc, so `malloc` sits
 //! on Rust's allocator (dlmalloc there), with the block size kept in an
 //! 8-byte header.
+#![allow(unsafe_op_in_unsafe_fn)]
 pub use verilith_http;
 
 use std::alloc::{alloc, dealloc, Layout};
@@ -12,7 +13,7 @@ use std::ffi::c_void;
 const HEADER: usize = 8;
 
 /// `malloc(n)`: 8-byte aligned, or null.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn malloc(n: usize) -> *mut c_void {
     let Some(total) = n.checked_add(HEADER) else { return std::ptr::null_mut() };
     let Ok(layout) = Layout::from_size_align(total, HEADER) else { return std::ptr::null_mut() };
@@ -25,7 +26,7 @@ pub unsafe extern "C" fn malloc(n: usize) -> *mut c_void {
 }
 
 /// `free(p)`, for a pointer from `malloc`, or null.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn free(p: *mut c_void) {
     if p.is_null() {
         return;
@@ -39,7 +40,7 @@ pub unsafe extern "C" fn free(p: *mut c_void) {
 }
 
 /// llhttp's `api.c` calls `abort()` on an impossible enum value.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn abort() -> ! {
     std::process::abort()
 }

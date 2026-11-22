@@ -1,13 +1,13 @@
 [package]
 name = "vwasm-diff"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 publish = false
 
 [dependencies]
 verilith-wasm = { path = ".." }
-wasmi = "=0.40.0"
-wasm-smith = "=0.240.0"
+wasmi = "=2.0.2"
+wasm-smith = "=0.263.0"
 arbitrary = "1"
 
 [profile.release]

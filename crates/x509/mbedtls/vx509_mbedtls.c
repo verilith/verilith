@@ -439,7 +439,7 @@ static int vx509_one_ext(const vx509_rebase *rb, mbedtls_x509_crt *crt, const vx
             }
             break;
         }
-        case MBEDTLS_OID_X509_EXT_CERTIFICATE_POLICIES: {
+        case MBEDTLS_X509_EXT_CERTIFICATE_POLICIES: {
             int other = 0;
             /* mbedTLS only enforces anyPolicy. */
             if ((ret = vx509_ext_seq(rb, d, decoded, items, 32, 2,
@@ -498,32 +498,12 @@ static int vx509_exts(const vx509_rebase *rb, mbedtls_x509_crt *crt, vx509_span 
     return 0;
 }
 
-#if defined(MBEDTLS_RSA_C)
-#include "rsa_internal.h"
-#endif
-
 /* mbedtls_pk_parse_subpubkey() on the SubjectPublicKeyInfo vx509 has
- * checked. For an RSA key it skips straight to the key parser, which is
- * what mbedtls_pk_parse_subpubkey() would reach after the checks vx509 has
- * made; anything else, or any failure, goes through
- * mbedtls_pk_parse_subpubkey() itself so the result and error are mbedTLS's. */
+ * checked, so the key, and the error for one mbedTLS does not support, are
+ * mbedTLS's. */
 static int vx509_pk(const vx509_rebase *rb, const vx509_crt *v, mbedtls_pk_context *pk)
 {
     unsigned char *p = vx509_at(rb, v->pk_raw);
-#if defined(MBEDTLS_RSA_C)
-    static const unsigned char rsa[] = MBEDTLS_OID_PKCS1_RSA;
-    if (v->pk_oid.len == sizeof(rsa) - 1 && memcmp(v->pk_oid.p, rsa, v->pk_oid.len) == 0 &&
-        (v->pk_params_tag == 0 || v->pk_params_tag == MBEDTLS_ASN1_NULL) &&
-        v->pk_params.len == 0) {
-        if (mbedtls_pk_setup(pk, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA)) == 0 &&
-            mbedtls_rsa_parse_pubkey(mbedtls_pk_rsa(*pk), vx509_at(rb, v->pk_key),
-                                     v->pk_key.len) == 0) {
-            return 0;
-        }
-        mbedtls_pk_free(pk);
-        mbedtls_pk_init(pk);
-    }
-#endif
     return mbedtls_pk_parse_subpubkey(&p, p + v->pk_raw.len, pk);
 }
 
@@ -558,7 +538,7 @@ static int vx509_crt_parse_der_core(mbedtls_x509_crt *crt,
             vx509_buf(&rb, &oid, MBEDTLS_ASN1_OID, err.sig_oid);
             vx509_buf(&rb, &sig_params, err.sig_params_tag, err.sig_params);
             if ((ret = mbedtls_x509_get_sig_alg(&oid, &sig_params, &crt->sig_md,
-                                                &crt->sig_pk, &crt->sig_opts)) != 0) {
+                                                &crt->sig_pk)) != 0) {
                 mbedtls_x509_crt_free(crt);
                 return ret;
             }
@@ -597,8 +577,7 @@ static int vx509_crt_parse_der_core(mbedtls_x509_crt *crt,
     vx509_buf(&rb, &sig_params, v.sig_params_tag, v.sig_params);
 
     if ((ret = mbedtls_x509_get_sig_alg(&crt->sig_oid, &sig_params,
-                                        &crt->sig_md, &crt->sig_pk,
-                                        &crt->sig_opts)) != 0) {
+                                        &crt->sig_md, &crt->sig_pk)) != 0) {
         goto fail;
     }
 

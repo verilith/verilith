@@ -14,6 +14,7 @@
 //! is an error is worked out here, by rerunning the processing with single
 //! checks turned on, and is best effort.
 #![allow(clippy::missing_safety_doc, non_camel_case_types)]
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use crate::idna::{self, Options};
 use crate::unicode::{self, Form};
@@ -84,12 +85,12 @@ pub struct UIDNAInfo {
 
 macro_rules! export {
     ($vtext:ident, $icu:literal, fn($($a:ident: $t:ty),*) -> $r:ty $body:block) => {
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $vtext($($a: $t),*) -> $r $body
 
         const _: () = {
             #[cfg(feature = "icu-abi")]
-            #[export_name = $icu]
+            #[unsafe(export_name = $icu)]
             unsafe extern "C" fn icu($($a: $t),*) -> $r {
                 $vtext($($a),*)
             }

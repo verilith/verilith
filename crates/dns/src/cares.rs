@@ -19,6 +19,7 @@
 //! `ares_dns_parse`, to be linked into a c-ares built without its own (see
 //! `cares/README.md`). Without it, it is `vdns_ares_dns_parse` and needs a
 //! c-ares library to link against.
+#![allow(unsafe_op_in_unsafe_fn)]
 use alloc::vec::Vec;
 use crate::message::Section;
 use crate::name::Name;
@@ -35,7 +36,7 @@ const ARES_EBADRESP: c_int = 10;
 
 const RAW_RR: c_int = 65536;
 
-extern "C" {
+unsafe extern "C" {
     fn ares_dns_record_create(rec: *mut *mut Rec, id: c_ushort, flags: c_ushort, opcode: c_int, rcode: c_int)
         -> c_int;
     fn ares_dns_record_destroy(rec: *mut Rec);
@@ -544,8 +545,8 @@ unsafe fn fill_record(m: &crate::Message, b: &[u8], rec: *mut Rec, flags: c_uint
 /// # Safety
 /// `buf` must point to `buf_len` readable bytes and `dnsrec` must be valid
 /// for writes, as with c-ares.
-#[cfg_attr(feature = "ares-abi", export_name = "ares_dns_parse")]
-#[cfg_attr(not(feature = "ares-abi"), no_mangle)]
+#[cfg_attr(feature = "ares-abi", unsafe(export_name = "ares_dns_parse"))]
+#[cfg_attr(not(feature = "ares-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vdns_ares_dns_parse(
     buf: *const c_uchar,
     buf_len: usize,
@@ -568,7 +569,7 @@ pub unsafe extern "C" fn vdns_ares_dns_parse(
 
 const ARES_EBADQUERY: c_int = 7;
 
-extern "C" {
+unsafe extern "C" {
     fn ares_dns_record_get_id(rec: *const Rec) -> c_ushort;
     fn ares_dns_record_get_flags(rec: *const Rec) -> c_ushort;
     fn ares_dns_record_get_opcode(rec: *const Rec) -> c_int;
@@ -918,7 +919,7 @@ fn check_err(st: c_int) -> Result<(), c_int> {
 }
 
 #[cfg(feature = "ares-abi")]
-extern "C" {
+unsafe extern "C" {
     fn ares_buf_append(buf: *mut c_void, data: *const c_uchar, len: usize) -> c_int;
 }
 
@@ -928,7 +929,7 @@ extern "C" {
 /// # Safety
 /// `dnsrec` must be a valid `ares_dns_record_t` and `buf` an `ares_buf_t`.
 #[cfg(feature = "ares-abi")]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vdns_ares_dns_write_buf(dnsrec: *const c_void, ttl_decrement: c_uint, buf: *mut c_void) -> c_int {
     if dnsrec.is_null() || buf.is_null() {
         return ARES_EFORMERR;
