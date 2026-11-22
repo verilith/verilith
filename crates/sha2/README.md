@@ -9,9 +9,10 @@ CPU's SHA instructions where there are any, and it builds a static
 library behind OpenSSL's `SHA224_*`, `SHA256_*`, `SHA384_*` and
 `SHA512_*` C API.
 
-`cargo verus verify` (or `scripts/verify.sh`) checks 138 functions and
-lemmas with no errors and no `assume`. The two `external_body` functions
-in this crate are the CPU dispatch for the two compression functions.
+`cargo verus verify` (or `scripts/verify.sh`) checks 154 functions and
+lemmas with no errors and no `assume`. What is assumed instead is listed
+under [Trusted base](#trusted-base): the CPU dispatch, the SHA instruction
+kernels, the AVX2 message schedules, and two byte stores.
 
 ```rust
 let d: [u8; 32] = verilith_sha2::sha256(b"abc");
@@ -36,6 +37,8 @@ let d: [u8; 48] = verilith_sha2::sha384(b"abc");
 | Ch and Maj in their one-operation-shorter forms are Ch and Maj | `ch`, `maj` in each (bit-vector proofs) |
 | Whatever the sizes of the pieces given to `update`, `finalize` returns the hash of all of them in order: padding (§5.1.1, §5.1.2), the bit length modulo 2^64 or 2^128, one or two final blocks | `Sha256`, `Sha224` against `spec::sha256`, `spec::sha224`; `Sha512`, `Sha384`, `Sha512_224`, `Sha512_256` against `spec512::sha512`, `sha384`, `sha512_224`, `sha512_256` |
 | The 128-bit byte count of the SHA-512 family, kept as two 64-bit halves, is the message length modulo 2^128 | `hash512::Engine512::add_count` |
+| The rounds that take K_t + W_t precomputed, as a vectorized schedule gives it, are the rounds (addition modulo 2^n is associative) | `compress_block_kw` in each |
+| The pipelined kernels: each pair of blocks is compressed while the next pair's schedule is computed between its round groups, and the loop over pairs computes H(n) | `pair_kw` and `compress_blocks_pipe` in each, given the AVX2 schedule's contract |
 | The one-shot functions | `sha256`, `sha224`, `sha512`, `sha384`, `sha512_224`, `sha512_256` against the same |
 
 ## Layout
@@ -60,6 +63,9 @@ let d: [u8; 48] = verilith_sha2::sha384(b"abc");
   OpenSSL's 216-byte `SHA512_CTX`.
 - `src/cpu.rs`: the kernel dispatch and the SHA-NI and ARMv8 kernels
   (trusted, below).
+- `src/avx2.rs`: the AVX2 message schedules, two blocks at once, whole or
+  a few words at a time for the pipelined kernels (trusted, below).
+- `src/store.rs`: big-endian stores of a word (trusted, below).
 - `src/capi.rs`: the C API (an unverified adapter).
 
 ## Trusted base
@@ -83,6 +89,21 @@ What the proofs here assume rather than prove:
   assumed. On x86-64 with BMI2 they run compiled a second time with BMI2
   enabled: the same verified code with other instruction selection, as
   verilith-core does for Adler-32 with AVX2, and tested the same way.
+  `pair_avx2` and `pair256_avx2` are in the same position: each is the
+  verified `pair_kw` compiled with AVX2 and out of line, trusted only to
+  be that function.
+- `src/avx2.rs`, eight `external_body` functions (`schedule512x2`,
+  `sched_start`, `sched_steps2` and the three SHA-256 ones, and the opaque
+  `Sched512`/`Sched256`): that they compute K_t + W_t as
+  `spec512::schedule` and `spec::schedule` define them, which is what
+  their `ensures` say. The rounds that use them are verified. They are
+  tested against FIPS 180-4's schedule written out directly
+  (`tests/kernels.rs`), and the kernels built on them against the
+  portable ones at every length up to 20 blocks. Each step passes its
+  result through an empty `asm!`, which only keeps LLVM from moving it.
+- `src/store.rs`: `put_u32_be` and `put_u64_be`, one line each
+  (`to_be_bytes` copied into place), whose `ensures` are the bytes
+  written. LLVM does not merge the verified form's byte stores.
 - From [verilith-core](../core): `prims::copy_in` (trusted, one
   `copy_nonoverlapping`). `prims::get` is verified there.
 - vstd's specifications of `slice_subrange`, `wrapping_add` and
@@ -138,39 +159,52 @@ Departures from OpenSSL:
 
 `cargo run --release --example speed` compares against RustCrypto's
 `sha2` 0.10 and the system OpenSSL (3.0, through `SHA256()` and
-`SHA512()`). On an x86-64 cloud VM with SHA-NI, in MB/s, best of 15
-(numbers on a shared VM move by 10 to 20% from run to run; compare
-within a column):
+`SHA512()`). On an x86-64 cloud VM (with SHA-NI, AVX2 and BMI2), in MB/s,
+medians of 25 rounds that alternate the three. A shared VM moves by 5 to
+10% from run to run, so compare within a row.
 
-| SHA-256, bytes | verilith-sha2 | portable kernel alone | RustCrypto sha2 | OpenSSL |
-| ---: | ---: | ---: | ---: | ---: |
-| 64 | 654 | 339 | 795 | 193 |
-| 1024 | 1708 | 334 | 1735 | 1217 |
-| 8192 | 1845 | 343 | 1855 | 1793 |
-| 1 MiB | 1947 | 348 | 1917 | 1895 |
+| SHA-256, bytes | verilith-sha2 | RustCrypto sha2 | OpenSSL |
+| ---: | ---: | ---: | ---: |
+| 16 | 303 | 255 | 52 |
+| 64 | 802 | 791 | 184 |
+| 1024 | 1728 | 1732 | 1205 |
+| 8192 | 1850 | 1836 | 1729 |
+| 1 MiB | 1856 | 1858 | 1851 |
 
 | SHA-512, bytes | verilith-sha2 | RustCrypto sha2 | OpenSSL |
 | ---: | ---: | ---: | ---: |
-| 128 | 266 | 323 | 210 |
-| 1024 | 532 | 649 | 601 |
-| 8192 | 613 | 710 | 780 |
-| 1 MiB | 634 | 715 | 842 |
+| 16 | 71 | 69 | 34 |
+| 128 | 309 | 311 | 208 |
+| 1024 | 647 | 626 | 600 |
+| 8192 | 771 | 701 | 782 |
+| 1 MiB | 800 | 685 | 825 |
 
-SHA-256 runs at the speed of the SHA instructions from 1 KiB up. Below
-that, verilith-sha2 spends more per call than RustCrypto (about 20 ns at
-64 bytes), which is not yet tuned. SHA-512 has no instruction kernel on
-x86-64 here: the verified portable kernel (with BMI2) runs at 0.89 of
-RustCrypto's speed and 0.75 of OpenSSL's on large inputs. Both of those
-compute the message schedule with AVX2. On AArch64 with the SHA-512
-instructions (Apple M1 and later) the ARMv8.2 kernel runs instead.
+SHA-256 without SHA-NI (Haswell to Comet Lake, Skylake and Cascade Lake
+Xeons), 1 MiB, measured on the same machine with OpenSSL told not to use
+SHA-NI (`OPENSSL_ia32cap`) and RustCrypto's portable code: verilith-sha2
+492, RustCrypto 380, OpenSSL 523.
+
+What the speed rests on:
+
+- The eight-round groups are called with constant t, so that once inlined
+  every index into the schedule window and into K is a constant.
+- On x86-64 with AVX2, the message schedule of two blocks at a time is
+  computed with AVX2 while the verified rounds of the previous two run,
+  between their round groups, as OpenSSL does: the vector work takes the
+  ports the rounds' dependency chains leave idle. The rounds alone, over
+  a ready schedule, run at OpenSSL's speed, and the pipelined kernels
+  within a few percent of them.
+- Short messages pay no kernel call for zero blocks and no clearing for
+  the padding: the buffer is kept zero past its bytes.
 
 ## Not yet
 
 - HMAC.
-- An AVX2 message schedule for SHA-512 on x86-64, which is what
-  RustCrypto and OpenSSL are faster with, and a kernel for x86-64's own
-  SHA-512 instructions (Arrow Lake, Lunar Lake). There was no CPU with
-  them to test on.
+- A kernel for x86-64's own SHA-512 instructions (Arrow Lake, Lunar
+  Lake). There was no CPU with them to test on.
+- Verifying the AVX2 schedules too, against verilith-simd's
+  specifications of the intrinsics; that needs 64-bit lane shifts added
+  there.
 - `no_std`: the crate needs `std` for run-time CPU detection.
 - RustCrypto's `digest` traits, for a drop-in `sha2` replacement.
 - A [vbench](../../bench) suite against OpenSSL through the drop-in C API.
