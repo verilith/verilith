@@ -62,10 +62,14 @@ fn pi(out: &mut Vec<u8>, t: &str, d: &str) {
     out.extend_from_slice(b"?>");
 }
 
+/// How long the harness lets an attribute value grow by entity expansion
+/// (the parser sets no limit): a "billion laughs" value is not read.
+pub const MAX_VALUE: usize = 1 << 24;
+
 fn element(out: &mut Vec<u8>, e: Element) {
     out.push(b'<');
     out.extend_from_slice(e.name().as_bytes());
-    let mut attrs = e.attributes();
+    let mut attrs = e.try_attributes(MAX_VALUE).unwrap_or_default();
     attrs.sort_by(|a, b| a.name.cmp(b.name));
     for a in attrs {
         out.push(b' ');

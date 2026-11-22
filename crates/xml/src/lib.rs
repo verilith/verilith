@@ -21,6 +21,7 @@ pub mod decode;
 pub mod doc;
 pub mod dtd;
 pub mod enc;
+pub mod fix;
 pub mod index;
 pub mod ent;
 pub mod lanes;
@@ -34,7 +35,7 @@ pub mod uniq;
 #[cfg(not(verus_keep_ghost))]
 mod api;
 #[cfg(not(verus_keep_ghost))]
-pub use api::{parse, Attribute, Attrs, Child, Children, Document, Element, Error, ErrorKind, MAX_VALUE};
+pub use api::{parse, Attribute, Attrs, Child, Children, Document, Element, Error, ErrorKind};
 
 /// Whether `s` is a well-formed XML document, with its tape in `tape`: the
 /// verified check alone, with no tables built for reading.

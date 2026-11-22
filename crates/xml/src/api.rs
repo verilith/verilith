@@ -10,7 +10,6 @@
 use crate::decode::{ex_att_norm, ex_eol};
 use crate::dtd::DtdOut;
 use crate::lex::{ex_find_ent, XEnv};
-use crate::spec::ENT_DEPTH;
 use crate::tape::{Kind, Tape, Tok};
 use std::borrow::Cow;
 use std::cell::OnceCell;
@@ -78,10 +77,6 @@ fn bad_char_at(s: &[u8]) -> usize {
     }
     i
 }
-
-/// How large a normalized attribute value may grow by entity expansion
-/// before reading it fails (`Element::try_attribute`).
-pub const MAX_VALUE: usize = 1 << 24;
 
 /// An attribute definition from the internal subset that applies.
 #[derive(Clone, Copy, Debug)]
@@ -368,7 +363,8 @@ impl<'a> Document<'a> {
 
     /// The normalized value (§3.3.3) of the raw attribute value
     /// `src[a..b]`, collapsed for a declared type other than CDATA.
-    fn value(&self, src: Src, a: usize, b: usize, plain: bool, ty: u8) -> Result<Cow<'_, [u8]>, ()> {
+    /// `Err` if it would grow past `limit` bytes by entity expansion.
+    fn value(&self, src: Src, a: usize, b: usize, plain: bool, ty: u8, limit: usize) -> Result<Cow<'_, [u8]>, ()> {
         let v: Cow<'_, [u8]> = if plain {
             Cow::Borrowed(self.span(src, a, b))
         } else {
@@ -381,9 +377,9 @@ impl<'a> Document<'a> {
                 src == Src::Doc,
                 &env,
                 &self.dtd.rts,
-                ENT_DEPTH,
+                self.dtd.ents.len(),
                 &mut out,
-                MAX_VALUE,
+                limit,
             );
             if r != 0 {
                 return Err(());
@@ -484,14 +480,17 @@ impl<'d> Element<'d> {
     }
 
     /// The attributes: those in the start tag, in order, then the DTD's
-    /// defaults for the ones not given.
+    /// defaults for the ones not given. Values are their whole normalized
+    /// value, however long entity references make it: a "billion laughs"
+    /// value is gigabytes. For untrusted input, `try_attributes` with a
+    /// limit.
     pub fn attributes(&self) -> Vec<Attribute<'d>> {
-        self.try_attributes().unwrap_or_default()
+        self.try_attributes(usize::MAX).unwrap_or_default()
     }
 
     /// `attributes`, or `Err` if a value's entity expansion grows past
-    /// `MAX_VALUE` bytes.
-    pub fn try_attributes(&self) -> Result<Vec<Attribute<'d>>, ()> {
+    /// `limit` bytes.
+    pub fn try_attributes(&self, limit: usize) -> Result<Vec<Attribute<'d>>, ()> {
         let doc = self.doc;
         let toks = doc.toks(self.src);
         let elem = self.name_bytes();
@@ -501,7 +500,7 @@ impl<'d> Element<'d> {
             let (n, v) = (toks[i], toks[i + 1]);
             let name = doc.span(self.src, n.a, n.b);
             let ty = doc.def_for(elem, name).map_or(1, |d| d.ty);
-            let value = doc.value(self.src, v.a, v.b, v.f != 0, ty)?;
+            let value = doc.value(self.src, v.a, v.b, v.f != 0, ty, limit)?;
             out.push(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: false });
             i += 2;
         }
@@ -516,7 +515,7 @@ impl<'d> Element<'d> {
             if given.contains(name) {
                 continue;
             }
-            let value = doc.value(Src::Doc, d.value.0, d.value.1, false, d.ty)?;
+            let value = doc.value(Src::Doc, d.value.0, d.value.1, false, d.ty, limit)?;
             out.push(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: true });
         }
         Ok(out)
@@ -539,8 +538,7 @@ impl<'d> Element<'d> {
     }
 
     /// The attributes, without allocating: those in the start tag, then
-    /// the DTD's defaults (as `attributes`). A value whose expansion would
-    /// pass `MAX_VALUE` bytes is empty here; `try_attributes` reports it.
+    /// the DTD's defaults (as `attributes`), whole values, however long.
     pub fn attrs(&self) -> Attrs<'d> {
         Attrs { e: *self, i: self.idx as usize + 1, d: 0 }
     }
@@ -589,7 +587,7 @@ impl<'d> Iterator for Attrs<'d> {
             self.i += 2;
             let name = doc.span(self.e.src, n.a, n.b);
             let ty = if doc.defs.is_empty() { 1 } else { doc.def_for(self.e.name_bytes(), name).map_or(1, |d| d.ty) };
-            let value = doc.value(self.e.src, v.a, v.b, v.f != 0, ty).unwrap_or(Cow::Borrowed(&[]));
+            let value = doc.value(self.e.src, v.a, v.b, v.f != 0, ty, usize::MAX).unwrap_or(Cow::Borrowed(&[]));
             return Some(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: false });
         }
         let text = doc.text();
@@ -610,7 +608,7 @@ impl<'d> Iterator for Attrs<'d> {
             if given {
                 continue;
             }
-            let value = doc.value(Src::Doc, d.value.0, d.value.1, false, d.ty).unwrap_or(Cow::Borrowed(&[]));
+            let value = doc.value(Src::Doc, d.value.0, d.value.1, false, d.ty, usize::MAX).unwrap_or(Cow::Borrowed(&[]));
             return Some(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: true });
         }
         None

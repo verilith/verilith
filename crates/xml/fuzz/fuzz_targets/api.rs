@@ -10,7 +10,7 @@ fuzz_target!(|data: &[u8]| {
         let _ = doc.notations();
         let _ = doc.doctype_name();
         for e in doc.root().elements() {
-            let _ = e.try_attributes();
+            let _ = e.try_attributes(vxml_fuzz::MAX_VALUE);
             let _ = e.text();
         }
     }

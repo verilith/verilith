@@ -85,16 +85,92 @@ fn billion_laughs_parses_without_expanding() {
     let t = Instant::now();
     let doc = parse(s.as_bytes()).unwrap();
     assert!(t.elapsed().as_millis() < 1000);
-    // Reading the attribute would be 3 GB: it is refused past MAX_VALUE.
-    assert!(doc.root().try_attributes().is_err());
+    // Reading the attribute is 3 GB: with a limit, it is refused.
+    assert!(doc.root().try_attributes(1 << 24).is_err());
     // The children are produced lazily; taking a few costs little.
     assert_eq!(doc.root().children().take(5).count(), 5);
+}
+
+#[test]
+fn attribute_values_have_no_length_limit() {
+    // Ten levels of four references: 4^10 copies of "lol", 3 MiB, read whole.
+    let mut s = String::from("<!DOCTYPE lolz [<!ENTITY lol0 'lol'>");
+    for i in 1..=10 {
+        s.push_str(&format!("<!ENTITY lol{i} '{}'>", format!("&lol{};", i - 1).repeat(4)));
+    }
+    s.push_str("]><lolz a='&lol10;'/>");
+    let doc = parse(s.as_bytes()).unwrap();
+    let want = 3 << 20;
+    assert_eq!(doc.root().attribute("a").map(|v| v.len()), Some(want));
+    assert_eq!(doc.root().attrs().next().map(|a| a.value.len()), Some(want));
+    assert!(doc.root().try_attributes(want).is_ok());
+    assert!(doc.root().try_attributes(want / 2).is_err());
 }
 
 #[test]
 fn reference_cycles_are_rejected() {
     assert!(parse(b"<!DOCTYPE a [<!ENTITY x '&y;'><!ENTITY y '&x;'>]><a>&x;</a>").is_err());
     assert!(parse(b"<!DOCTYPE a [<!ENTITY x '&y;'><!ENTITY y '&x;'>]><a/>").is_ok());
+}
+
+/// `<!DOCTYPE a [<!ENTITY e0 'x'><!ENTITY e1 '&e0;'>...]>` with `n`
+/// entities, each referring to the one before, declared in the order
+/// `order` gives, then `body`.
+fn chain(n: usize, last_first: bool, body: &str) -> String {
+    let mut s = String::from("<!DOCTYPE a [");
+    let decl = |i: usize| {
+        if i == 0 { "<!ENTITY e0 'x'>".to_string() } else { format!("<!ENTITY e{i} '&e{};'>", i - 1) }
+    };
+    if last_first {
+        for i in (0..n).rev() {
+            s.push_str(&decl(i));
+        }
+    } else {
+        for i in 0..n {
+            s.push_str(&decl(i));
+        }
+    }
+    s.push_str("]>");
+    s.push_str(body);
+    s
+}
+
+#[test]
+fn entity_nesting_has_no_limit() {
+    // XML 1.0 sets no depth: 65 deep was rejected before, as libxml2 does
+    // past 40.
+    for n in [64, 65, 1000] {
+        let top = n - 1;
+        let s = chain(n, false, &format!("<a>&e{top};</a>"));
+        let doc = parse(s.as_bytes()).unwrap();
+        assert_eq!(doc.root().text(), "x");
+        let s = chain(n, true, &format!("<a v='&e{top};'/>"));
+        let doc = parse(s.as_bytes()).unwrap();
+        assert_eq!(doc.root().attribute("v").as_deref(), Some("x"));
+    }
+    // A cycle is still recursion, however long, and an entity that is not
+    // referred to may be in one.
+    let mut s = chain(1000, false, "<a>&e999;</a>");
+    s = s.replacen("<!ENTITY e0 'x'>", "<!ENTITY e0 '&e999;'>", 1);
+    assert!(parse(s.as_bytes()).is_err());
+    assert!(parse(s.replace("<a>&e999;</a>", "<a/>").as_bytes()).is_ok());
+}
+
+#[test]
+fn long_entity_chains_are_linear() {
+    // A chain declared from its end, the worst order for checking level
+    // by level: 100 000 entities, each referring to the next.
+    let n = 100_000;
+    let top = n - 1;
+    for body in [format!("<a>&e{top};</a>"), format!("<a v='&e{top};'/>")] {
+        let s = chain(n, true, &body);
+        let t = Instant::now();
+        let doc = parse(s.as_bytes()).unwrap();
+        let ms = t.elapsed().as_millis();
+        assert!(ms < 2000, "{ms} ms for a chain of {n}");
+        // Reading it expands all 100 000 levels without recursion.
+        assert_eq!(doc.root().text() + &doc.root().attribute("v").unwrap_or_default(), "x");
+    }
 }
 
 #[test]

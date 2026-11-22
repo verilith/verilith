@@ -7,6 +7,7 @@ use crate::lex::*;
 use crate::spec::*;
 #[cfg(verus_keep_ghost)]
 use verilith_core::utf8::utf8_encode;
+use vstd::arithmetic::power::*;
 use vstd::prelude::*;
 
 verus! {
@@ -175,11 +176,163 @@ fn ex_copy(r: &[u8], a: usize, b: usize, out: &mut Vec<u8>)
     }
 }
 
+/// `o`, and then `rest`: `None` if either is.
+pub open spec fn then(o: Option<Seq<u8>>, rest: Option<Seq<u8>>) -> Option<Seq<u8>> {
+    match o {
+        Some(x) => pre(x, rest),
+        None => None,
+    }
+}
+
+proof fn lemma_then_assoc(a: Option<Seq<u8>>, b: Option<Seq<u8>>, c: Option<Seq<u8>>)
+    ensures
+        then(then(a, b), c) == then(a, then(b, c)),
+{
+    if let (Some(x), Some(y), Some(z)) = (a, b, c) {
+        assert((x + y) + z =~= x + (y + z));
+    }
+}
+
+proof fn lemma_pre_pre(p: Seq<u8>, q: Seq<u8>, o: Option<Seq<u8>>)
+    ensures
+        pre(p, pre(q, o)) == pre(p + q, o),
+{
+    if let Some(x) = o {
+        assert(p + (q + x) =~= (p + q) + x);
+    }
+}
+
+/// A frame of the decoder: the text (`usize::MAX` for the value itself,
+/// otherwise the internal entity whose replacement text it is), the
+/// position in it, its end, whether its line ends are normalized, and the
+/// depth left.
+pub type Frame = (usize, usize, usize, bool, usize);
+
+pub open spec fn fbuf(r: Seq<u8>, rts: Seq<Vec<u8>>, src: usize) -> Seq<u8> {
+    if src == usize::MAX {
+        r
+    } else {
+        rts[src as int]@
+    }
+}
+
+/// What the frames still have to produce, the top one first.
+pub open spec fn frames_norm(doc: Seq<u8>, r: Seq<u8>, rts: Seq<Vec<u8>>, env: Env, fr: Seq<Frame>) -> Option<Seq<u8>>
+    decreases fr.len(),
+{
+    if fr.len() == 0 {
+        Some(Seq::empty())
+    } else {
+        let f = fr.last();
+        then(
+            att_norm(doc, fbuf(r, rts, f.0), f.1 as int, f.2 as int, f.3, env, f.4 as nat),
+            frames_norm(doc, r, rts, env, fr.drop_last()),
+        )
+    }
+}
+
+/// The termination measure: each frame weighs what is left of it, one
+/// more, in units of `b` to the power of its depth. A frame pushed for a
+/// reference is one level shallower than the frame it is in, so it weighs
+/// less than the reference it replaces.
+pub open spec fn fweight(f: Frame, b: int) -> int {
+    (f.2 - f.1 + 1) * pow(b, f.4 as nat)
+}
+
+pub open spec fn fmeas(fr: Seq<Frame>, b: int) -> int
+    decreases fr.len(),
+{
+    if fr.len() == 0 {
+        0
+    } else {
+        fmeas(fr.drop_last(), b) + fweight(fr.last(), b)
+    }
+}
+
+pub open spec fn frames_ok(r: Seq<u8>, rts: Seq<Vec<u8>>, ents: Seq<XEnt>, fr: Seq<Frame>) -> bool {
+    forall|k: int|
+        #![trigger fr[k]]
+        0 <= k < fr.len() ==> fr[k].1 <= fr[k].2 <= fbuf(r, rts, fr[k].0).len() && (fr[k].0 == usize::MAX || (fr[k].0
+            < ents.len() && ents[fr[k].0 as int].kind == 0))
+}
+
+proof fn lemma_fmeas_nonneg(fr: Seq<Frame>, b: int)
+    requires
+        b > 0,
+        forall|k: int| 0 <= k < fr.len() ==> (#[trigger] fr[k]).1 <= fr[k].2,
+    ensures
+        fmeas(fr, b) >= 0,
+    decreases fr.len(),
+{
+    if fr.len() > 0 {
+        let f = fr.last();
+        assert(fr[fr.len() - 1] == f);
+        lemma_fmeas_nonneg(fr.drop_last(), b);
+        lemma_pow_positive(b, f.4 as nat);
+        assert(fweight(f, b) >= 0) by (nonlinear_arith)
+            requires
+                f.2 - f.1 + 1 >= 1,
+                pow(b, f.4 as nat) > 0,
+                fweight(f, b) == (f.2 - f.1 + 1) * pow(b, f.4 as nat),
+        ;
+    }
+}
+
+/// The top frame moving forward lowers the measure by its unit at least.
+proof fn lemma_fmeas_step(fr: Seq<Frame>, f: Frame, b: int)
+    requires
+        fr.len() > 0,
+        b > 0,
+        f.0 == fr.last().0 && f.4 == fr.last().4 && f.2 == fr.last().2,
+        fr.last().1 < f.1,
+    ensures
+        fmeas(fr.update(fr.len() - 1, f), b) + pow(b, f.4 as nat) <= fmeas(fr, b),
+{
+    let g = fr.last();
+    let fr2 = fr.update(fr.len() - 1, f);
+    assert(fr2.drop_last() =~= fr.drop_last());
+    assert(fr2.last() == f);
+    lemma_pow_positive(b, f.4 as nat);
+    let p = pow(b, f.4 as nat);
+    assert((f.2 - f.1 + 1) * p + p <= (g.2 - g.1 + 1) * p) by (nonlinear_arith)
+        requires
+            p > 0,
+            f.1 > g.1,
+            f.2 == g.2,
+    ;
+}
+
+/// Pushing a frame one level shallower, of fewer than `b - 1` bytes, adds
+/// less than the unit of the frame below it.
+proof fn lemma_fmeas_push(fr: Seq<Frame>, g: Frame, b: int, d: nat)
+    requires
+        b > 0,
+        g.4 + 1 == d,
+        g.1 <= g.2,
+        g.2 - g.1 + 1 < b,
+    ensures
+        fmeas(fr.push(g), b) < fmeas(fr, b) + pow(b, d),
+{
+    assert(fr.push(g).drop_last() =~= fr);
+    lemma_pow_positive(b, g.4 as nat);
+    let p = pow(b, g.4 as nat);
+    lemma_pow_adds(b, 1, g.4 as nat);
+    lemma_pow1(b);
+    assert(1 + g.4 as nat == d);
+    assert(pow(b, d) == b * p);
+    assert((g.2 - g.1 + 1) * p < b * p) by (nonlinear_arith)
+        requires
+            p > 0,
+            g.2 - g.1 + 1 < b,
+    ;
+}
+
 /// `att_norm(doc, r, i, end, eol, env, d)` appended to `out`: 0 when it
 /// is the value, 1 when there is none, 2 when `out` would pass `limit`
-/// bytes (expansion stopped).
+/// bytes (expansion stopped). Entity references are expanded with an
+/// explicit stack of frames, so the depth of nesting costs no call stack.
 #[verifier::spinoff_prover]
-#[verifier::rlimit(300)]
+#[verifier::rlimit(800)]
 pub fn ex_att_norm(
     r: &[u8],
     i: usize,
@@ -201,87 +354,155 @@ pub fn ex_att_norm(
             final(out)@,
         ),
         res == 1 ==> att_norm(env.doc@, r@, i as int, end as int, eol, env_view(env), d as nat) is None,
-    decreases d,
 {
     let ghost doc = env.doc@;
     let ghost ev = env_view(env);
     let ghost whole = att_norm(doc, r@, i as int, end as int, eol, ev, d as nat);
-    let mut j = i;
+    // Every text is shorter than `b - 1`.
+    let ghost b: int = (if r@.len() > doc.len() { r@.len() + 2 } else { doc.len() + 2 }) as int;
+    let mut fr: Vec<Frame> = Vec::new();
+    fr.push((usize::MAX, i, end, eol, d));
     proof {
-        match att_norm(doc, r@, i as int, end as int, eol, ev, d as nat) {
-            Some(v) => assert(old(out)@ + v =~= out@ + v),
+        lemma_lim_all(env);
+        assert(fr@.drop_last() =~= Seq::<Frame>::empty());
+        assert(frames_norm(doc, r@, rts@, ev, Seq::<Frame>::empty()) == Some(Seq::<u8>::empty()));
+        assert(fr@.last() == (usize::MAX, i, end, eol, d));
+        assert(fbuf(r@, rts@, usize::MAX) == r@);
+        assert(frames_norm(doc, r@, rts@, ev, fr@) == then(whole, Some(Seq::empty())));
+        match whole {
+            Some(v) => {
+                assert(v + Seq::<u8>::empty() =~= v);
+                assert(old(out)@ + v =~= out@ + v);
+            },
             None => {},
         }
-        lemma_lim_all(env);
+        lemma_fmeas_nonneg(fr@, b);
     }
-    while j < end
+    loop
         invariant
-            i <= j <= end <= r@.len() <= isize::MAX,
+            i <= end <= r@.len() <= isize::MAX,
             env_wf(env),
             doc == env.doc@,
             ev == env_view(env),
             doc.len() <= isize::MAX,
+            b == (if r@.len() > doc.len() { r@.len() + 2 } else { doc.len() + 2 }) as int,
             rts_ok(doc, env.ents@, rts@),
             lim_view(env, env.ents@.len() as int) == ev,
             whole == att_norm(doc, r@, i as int, end as int, eol, ev, d as nat),
-            pre(old(out)@, whole) == pre(out@, att_norm(doc, r@, j as int, end as int, eol, ev, d as nat)),
-        decreases end - j,
+            frames_ok(r@, rts@, env.ents@, fr@),
+            pre(old(out)@, whole) == pre(out@, frames_norm(doc, r@, rts@, ev, fr@)),
+            fmeas(fr@, b) >= 0,
+        decreases fmeas(fr@, b),
     {
+        let len = fr.len();
+        if len == 0 {
+            proof {
+                assert(out@ + Seq::<u8>::empty() =~= out@);
+            }
+            return 0;
+        }
+        let top = len - 1;
+        let (src, j, e_end, e_eol, e_d) = fr[top];
+        let ghost f = fr@[top as int];
+        let ghost rest = frames_norm(doc, r@, rts@, ev, fr@.drop_last());
+        let buf: &[u8] = if src == usize::MAX {
+            r
+        } else {
+            rts[src].as_slice()
+        };
+        proof {
+            assert(f == fr@.last());
+            assert(buf@ == fbuf(r@, rts@, src));
+            assert(fr@[top as int].1 <= fr@[top as int].2 <= fbuf(r@, rts@, fr@[top as int].0).len());
+            if src != usize::MAX {
+                assert(rts@[src as int]@.len() <= doc.len());
+            }
+            assert(buf@.len() + 2 <= b);
+            assert(frames_norm(doc, r@, rts@, ev, fr@) == then(
+                att_norm(doc, buf@, j as int, e_end as int, e_eol, ev, e_d as nat),
+                rest,
+            ));
+            lemma_pow_positive(b, e_d as nat);
+        }
+        if j >= e_end {
+            let ghost fr0 = fr@;
+            fr.pop();
+            proof {
+                assert(fr@ == fr0.drop_last());
+                assert(att_norm(doc, buf@, j as int, e_end as int, e_eol, ev, e_d as nat) == Some(Seq::<u8>::empty()));
+                match rest {
+                    Some(x) => assert(Seq::<u8>::empty() + x =~= x),
+                    None => {},
+                }
+                assert(fweight(f, b) >= pow(b, e_d as nat)) by (nonlinear_arith)
+                    requires
+                        f.2 - f.1 + 1 >= 1,
+                        pow(b, f.4 as nat) > 0,
+                        fweight(f, b) == (f.2 - f.1 + 1) * pow(b, f.4 as nat),
+                        f.4 == e_d,
+                ;
+                assert forall|k: int| 0 <= k < fr@.len() implies #[trigger] fr@[k].1 <= fr@[k].2 by {
+                    assert(fr@[k] == fr0[k]);
+                }
+                assert(frames_ok(r@, rts@, env.ents@, fr@)) by {
+                    assert forall|k: int| 0 <= k < fr@.len() implies #[trigger] fr@[k] == fr0[k] by {}
+                }
+                lemma_fmeas_nonneg(fr@, b);
+            }
+            continue;
+        }
         if out.len() > limit {
             return 2;
         }
-        let c = get(r, j);
+        let ghost here = att_norm(doc, buf@, j as int, e_end as int, e_eol, ev, e_d as nat);
+        let c = get(buf, j);
+        let ghost ob = out@;
+        // The next position in this frame, and what it appended; or a frame
+        // to push for an entity reference.
+        let mut next: usize = j + 1;
+        let mut push: Option<usize> = None;
+        let ghost mut emitted: Seq<u8> = Seq::empty();
         if c == 0x26 {
-            if ex_byte_is(r, j + 1, 0x23) {
-                match ex_charref(r, j) {
+            if ex_byte_is(buf, j + 1, 0x23) {
+                match ex_charref(buf, j) {
                     Some((v, e)) => {
-                        if e > end {
+                        if e > e_end {
                             return 1;
                         }
-                        proof {
-                            let rest = att_norm(doc, r@, e as int, end as int, eol, ev, d as nat);
-                            match rest {
-                                Some(x) => assert(out@ + (utf8_encode(v) + x) =~= (out@ + utf8_encode(v)) + x),
-                                None => {},
-                            }
-                        }
                         push_utf8(out, v);
-                        j = e;
+                        next = e;
+                        proof {
+                            emitted = utf8_encode(v);
+                            assert(here == pre(emitted, att_norm(doc, buf@, next as int, e_end as int, e_eol, ev, e_d as nat)));
+                        }
                     },
                     None => {
                         return 1;
                     },
                 }
             } else {
-                let n = ex_name_end(r, j + 1);
-                if !(n > j + 1 && ex_byte_is(r, n, 0x3B) && n + 1 <= end) {
+                let n = ex_name_end(buf, j + 1);
+                if !(n > j + 1 && ex_byte_is(buf, n, 0x3B) && n + 1 <= e_end) {
                     return 1;
                 }
-                match ex_predef(r, j + 1, n) {
+                match ex_predef(buf, j + 1, n) {
                     Some(v) => {
-                        proof {
-                            let rest = att_norm(doc, r@, n + 1, end as int, eol, ev, d as nat);
-                            match rest {
-                                Some(x) => assert(out@ + (utf8_encode(v) + x) =~= (out@ + utf8_encode(v)) + x),
-                                None => {},
-                            }
-                        }
                         push_utf8(out, v);
-                        j = n + 1;
+                        next = n + 1;
+                        proof {
+                            emitted = utf8_encode(v);
+                            assert(here == pre(emitted, att_norm(doc, buf@, next as int, e_end as int, e_eol, ev, e_d as nat)));
+                        }
                     },
                     None => {
-                        match ex_find_ent(env, env.ents.len(), r, j + 1, n) {
+                        match ex_find_ent(env, env.ents.len(), buf, j + 1, n) {
                             None => {
-                                let ghost before = out@;
-                                ex_copy(r, j, n + 1, out);
+                                ex_copy(buf, j, n + 1, out);
+                                next = n + 1;
                                 proof {
-                                    let rest = att_norm(doc, r@, n + 1, end as int, eol, ev, d as nat);
-                                    match rest {
-                                        Some(x) => assert(before + (r@.subrange(j as int, n + 1) + x) =~= out@ + x),
-                                        None => {},
-                                    }
+                                    emitted = buf@.subrange(j as int, n + 1);
+                                    assert(here == pre(emitted, att_norm(doc, buf@, next as int, e_end as int, e_eol, ev, e_d as nat)));
                                 }
-                                j = n + 1;
                             },
                             Some(q) => {
                                 let e = env.ents[q];
@@ -291,71 +512,110 @@ pub fn ex_att_norm(
                                 if e.kind != 0 {
                                     return 1;
                                 }
-                                if d == 0 {
+                                if e_d == 0 {
                                     return 1;
                                 }
-                                let t = rts[q].as_slice();
                                 proof {
-                                    assert(rts@[q as int]@.len() <= doc.len());
+                                    assert(rts@[q as int]@ == repl(doc, e.va as int, e.vb as int));
                                 }
-                                let ghost o = out@;
-                                let ghost inner = att_norm(doc, t@, 0, t@.len() as int, false, ev, (d - 1) as nat);
-                                let res = ex_att_norm(t, 0, t.len(), false, env, rts, d - 1, out, limit);
-                                if res != 0 {
-                                    return res;
-                                }
+                                push = Some(q);
+                                next = n + 1;
                                 proof {
-                                    let x = inner->Some_0;
-                                    assert(out@ == o + x);
-                                    let rest = att_norm(doc, r@, n + 1, end as int, eol, ev, d as nat);
-                                    match rest {
-                                        Some(y) => assert(o + (x + y) =~= (o + x) + y),
-                                        None => {},
-                                    }
+                                    assert(here == then(
+                                        att_norm(doc, repl(doc, e.va as int, e.vb as int), 0, repl(doc, e.va as int, e.vb as int).len() as int, false, ev, (e_d - 1) as nat),
+                                        att_norm(doc, buf@, next as int, e_end as int, e_eol, ev, e_d as nat),
+                                    ));
                                 }
-                                j = n + 1;
                             },
                         }
                     },
                 }
             }
-        } else if c == 0x0D && eol {
-            let k = if j + 1 < end && get(r, j + 1) == 0x0A { j + 2 } else { j + 1 };
-            proof {
-                let rest = att_norm(doc, r@, k as int, end as int, eol, ev, d as nat);
-                match rest {
-                    Some(x) => assert(out@ + (seq![0x20u8] + x) =~= out@.push(0x20u8) + x),
-                    None => {},
-                }
-            }
+        } else if c == 0x0D && e_eol {
+            next = if j + 1 < e_end && get(buf, j + 1) == 0x0A { j + 2 } else { j + 1 };
             out.push(0x20);
-            j = k;
+            proof {
+                emitted = seq![0x20u8];
+                assert(here == pre(emitted, att_norm(doc, buf@, next as int, e_end as int, e_eol, ev, e_d as nat)));
+            }
         } else if ex_is_ws(c) {
-            proof {
-                let rest = att_norm(doc, r@, j + 1, end as int, eol, ev, d as nat);
-                match rest {
-                    Some(x) => assert(out@ + (seq![0x20u8] + x) =~= out@.push(0x20u8) + x),
-                    None => {},
-                }
-            }
             out.push(0x20);
-            j = j + 1;
-        } else {
             proof {
-                let rest = att_norm(doc, r@, j + 1, end as int, eol, ev, d as nat);
-                match rest {
-                    Some(x) => assert(out@ + (seq![c] + x) =~= out@.push(c) + x),
-                    None => {},
+                emitted = seq![0x20u8];
+                assert(here == pre(emitted, att_norm(doc, buf@, next as int, e_end as int, e_eol, ev, e_d as nat)));
+            }
+        } else {
+            out.push(c);
+            proof {
+                emitted = seq![c];
+                assert(here == pre(emitted, att_norm(doc, buf@, next as int, e_end as int, e_eol, ev, e_d as nat)));
+            }
+        }
+        proof {
+            assert(out@ =~= ob + emitted);
+        }
+        let ghost fr0 = fr@;
+        let ghost o0 = out@;
+        fr.set(top, (src, next, e_end, e_eol, e_d));
+        let ghost f2: Frame = (src, next, e_end, e_eol, e_d);
+        let ghost after = att_norm(doc, buf@, next as int, e_end as int, e_eol, ev, e_d as nat);
+        proof {
+            assert(fr@ == fr0.update(top as int, f2));
+            assert(fr@.drop_last() =~= fr0.drop_last());
+            assert(fr@.last() == f2);
+            assert(frames_norm(doc, r@, rts@, ev, fr@) == then(after, rest));
+            lemma_fmeas_step(fr0, f2, b);
+            assert forall|k: int| 0 <= k < fr@.len() implies (#[trigger] fr@[k]).1 <= fr@[k].2 && (fr@[k] == fr0[k]
+                || k == top) by {}
+            assert(frames_ok(r@, rts@, env.ents@, fr@)) by {
+                assert forall|k: int| 0 <= k < fr@.len() implies fr@[k].1 <= fr@[k].2 <= fbuf(r@, rts@, #[trigger] fr@[k].0).len() && (fr@[k].0
+                    == usize::MAX || (fr@[k].0 < env.ents@.len() && env.ents@[fr@[k].0 as int].kind == 0)) by {
+                    if k != top {
+                        assert(fr@[k] == fr0[k]);
+                    }
                 }
             }
-            out.push(c);
-            j = j + 1;
+        }
+        match push {
+            None => {
+                proof {
+                    // `here` is what was emitted, then `after`.
+                    assert(here == pre(emitted, after));
+                    lemma_then_assoc(Some(emitted), after, rest);
+                    lemma_pre_pre(ob, emitted, then(after, rest));
+                    lemma_fmeas_nonneg(fr@, b);
+                }
+            },
+            Some(q) => {
+                let t = rts[q].as_slice();
+                let ghost fr1 = fr@;
+                fr.push((q, 0, t.len(), false, e_d - 1));
+                proof {
+                    let g: Frame = (q, 0, t@.len() as usize, false, (e_d - 1) as usize);
+                    assert(fr@ == fr1.push(g));
+                    assert(fr@.drop_last() =~= fr1);
+                    assert(fbuf(r@, rts@, q) == t@);
+                    assert(t@.len() <= doc.len());
+                    let inner = att_norm(doc, t@, 0, t@.len() as int, false, ev, (e_d - 1) as nat);
+                    assert(frames_norm(doc, r@, rts@, ev, fr@) == then(inner, then(after, rest)));
+                    assert(here == then(inner, after));
+                    lemma_then_assoc(inner, after, rest);
+                    assert(emitted == Seq::<u8>::empty());
+                    assert(out@ =~= ob);
+                    lemma_fmeas_push(fr1, g, b, e_d as nat);
+                    assert(frames_ok(r@, rts@, env.ents@, fr@)) by {
+                        assert forall|k: int| 0 <= k < fr@.len() implies fr@[k].1 <= fr@[k].2 <= fbuf(r@, rts@, #[trigger] fr@[k].0).len() && (fr@[k].0
+                            == usize::MAX || (fr@[k].0 < env.ents@.len() && env.ents@[fr@[k].0 as int].kind == 0)) by {
+                            if k < fr1.len() {
+                                assert(fr@[k] == fr1[k]);
+                            }
+                        }
+                    }
+                    lemma_fmeas_nonneg(fr@, b);
+                }
+            },
         }
     }
-    proof {
-        assert(out@ + Seq::<u8>::empty() =~= out@);
-    }
-    0
 }
 
 } // verus!

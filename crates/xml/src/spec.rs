@@ -174,8 +174,8 @@ pub open spec fn dtd_init(sa: bool) -> DtdSt {
 /// "Entity Declared" applies, and which entities may be referred to where.
 pub open spec fn env_of(s: Seq<u8>, st: DtdSt, ext: bool) -> Env {
     let wfc = (!ext && !st.pe_seen) || st.sa;
-    let oka = oka_seq(s, st.ents, wfc, ENT_DEPTH as nat);
-    Env { ents: st.ents, wfc, oka, okc: okc_seq(s, st.ents, wfc, oka, ENT_DEPTH as nat) }
+    let oka = oka_seq(s, st.ents, wfc, st.ents.len());
+    Env { ents: st.ents, wfc, oka, okc: okc_seq(s, st.ents, wfc, oka, st.ents.len()) }
 }
 
 // ---------------------------------------------------------------------------
@@ -1750,12 +1750,6 @@ pub open spec fn ent_content(r: Seq<u8>, i: int, stack: Seq<Open>, tape: Seq<XTo
     }
 }
 
-/// How deep references to internal entities may nest, counting through
-/// their replacement texts. A reference cycle nests without end, so this
-/// bound is also what rejects recursion (WFC: No Recursion). libxml2's
-/// default bound is 40.
-pub const ENT_DEPTH: usize = 64;
-
 /// Entity `k` may be referred to in an attribute value, given which
 /// entities may be (`prev`) at one level less.
 pub open spec fn ent_oka(s: Seq<u8>, ents: Seq<Ent>, wfc: bool, prev: Seq<bool>, k: int) -> bool {
@@ -1770,6 +1764,11 @@ pub open spec fn ent_oka(s: Seq<u8>, ents: Seq<Ent>, wfc: bool, prev: Seq<bool>,
 }
 
 /// `ent_oka` for each entity, with references nesting at most `d` deep.
+/// `env_of` takes `d` to be the number of entities: a chain of references
+/// longer than that names some entity twice, which is recursion (WFC: No
+/// Recursion), so no entity is allowed at a greater depth that is not at
+/// that one (`ent::lemma_oka_settled` proves it). Nesting has no other
+/// limit.
 pub open spec fn oka_seq(s: Seq<u8>, ents: Seq<Ent>, wfc: bool, d: nat) -> Seq<bool>
     decreases d,
 {
@@ -1798,7 +1797,9 @@ pub open spec fn ent_okc(s: Seq<u8>, ents: Seq<Ent>, wfc: bool, oka: Seq<bool>, 
     }
 }
 
-/// `ent_okc` for each entity, with references nesting at most `d` deep.
+/// `ent_okc` for each entity, with references nesting at most `d` deep;
+/// like `oka_seq`, settled at the number of entities
+/// (`ent::lemma_okc_settled`).
 pub open spec fn okc_seq(s: Seq<u8>, ents: Seq<Ent>, wfc: bool, oka: Seq<bool>, d: nat) -> Seq<bool>
     decreases d,
 {
