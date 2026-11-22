@@ -191,26 +191,42 @@ UTF-8 normalization is the faster option, as the Rust table below shows.
 ### The simdutf API
 
 `include/vtext_utf.h` declares simdutf's validation, length, conversion and
-base64 functions, the ones Node.js calls, under a `vtext_` prefix
+base64 functions, the ones Node.js and V8 call, under a `vtext_` prefix
 (`vtext_validate_utf8_with_errors`, `vtext_convert_utf8_to_utf16`,
 `vtext_base64_to_binary_safe`, and so on). A `simdutf::result` comes back as
 its error code, with the count written through a pointer. verilith-bind's
-`include/simdutf.h` wraps them in simdutf's C++ signatures, so Node builds
-against verilith-text with `--shared-simdutf` and no patch.
+`include/simdutf.h` wraps them in simdutf 7.7's C++ signatures, so Node 26
+builds against verilith-text with `--shared-simdutf` and no patch.
 
-The glue in `src/capi_utf.rs` is not verified. It makes slices of the
+The glue in `src/capi_utf.rs` is not verified. Most of it makes slices of the
 caller's buffers, sized by the verified counts, calls the verified
 functions, and reproduces simdutf's error reports: the position and kind of
 the first UTF-8 error (`utf8_error`, transliterated from simdutf's scalar
-code) and of the first non-Latin-1 character. verilith-bind's `tests/cpp/run.sh`
-diffs every one of these functions against simdutf 6.4.2 on 50,000 seeded
-cases (1.4 million calls). The only differences are safe base64 decodes into
-a buffer smaller than simdutf's maximal length, where simdutf's chunked path
-fails on some valid inputs with whitespace after the padding and verilith-text
-decodes them correctly.
+code) and of the first non-Latin-1 character. Three parts of it do work of
+their own, with no proof behind them:
 
-Two simdutf features are not there: `last_chunk_handling_options` other
-than `loose`, and the `accept_garbage` options. Node uses neither.
+* **Base64 outside the forgiving decoder.** A `loose` decode of valid text
+  into a buffer that holds it is the verified decoder's, and that is every
+  decode Node's `Buffer` and `atob` make. The `strict` and
+  `stop_before_partial` last-chunk modes of `Uint8Array.fromBase64`,
+  decoding the bytes before an invalid character (which V8 asks for), and
+  decoding into a buffer that is too small (`setFromBase64` on a short
+  array) go through `b64_details`, a transliteration of simdutf's scalar
+  decoder.
+* **UTF-16 well-formedness**: `validate_utf16`, `to_well_formed_utf16` and
+  `utf8_length_from_utf16_with_replacement`, loops that look for unpaired
+  surrogates.
+* **`convert_utf32_to_utf8`**, which Node's CommonJS lexer calls one code
+  point at a time; it is Rust's `char::encode_utf8`.
+
+verilith-bind's `tests/cpp/run.sh` diffs every one of these functions against
+simdutf 7.7.0 on 50,000 seeded cases (3.6 million calls). The only
+differences are 42 base64 texts that both sides reject, with a `=` in the
+wrong place: simdutf's chunked path calls that `BASE64_INPUT_REMAINDER`
+where its own one-pass decoder, and verilith-text, call it
+`INVALID_BASE64_CHARACTER`. The bytes written before the error are the same.
+
+simdutf's `accept_garbage` options are not there. Node does not use them.
 
 **CPU support.** The kernels are AVX2 on x86-64 and NEON on AArch64
 (Apple Silicon, Graviton). The NEON kernels (`src/utf/neon.rs` and the

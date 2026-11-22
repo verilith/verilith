@@ -30,8 +30,10 @@ members = [
     "crates/bind/python",
 ]
 # The benchmark harness, and each crate's bench/, fuzz/ and compat/
-# projects, are separate Cargo projects with their own lockfiles.
-exclude = ["bench"]
+# projects, are separate Cargo projects with their own lockfiles. So is the
+# Node.js source crates/bind/scripts/build-node.sh unpacks under a target/
+# directory: Node builds its own Rust crates there (deps/crates).
+exclude = ["bench", "target", "crates/bind/target"]
 
 [workspace.dependencies]
 # The one Verus release every crate is verified with. The verifier itself is

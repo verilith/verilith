@@ -26,7 +26,7 @@
 
 #include "vbind.h"
 
-#define SIMDJSON_VERSION "4.5.0"
+#define SIMDJSON_VERSION "5.0.3"
 #define simdjson_warn_unused [[nodiscard]]
 
 namespace simdjson {

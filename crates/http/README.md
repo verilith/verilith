@@ -192,11 +192,14 @@ layout, callbacks, pausing and error codes.
 
 For Node.js, `compat/llhttp/node.sh NODE_DIR` points a Node checkout's
 llhttp build at `libverilith_http.a` (built with `--features llhttp-lenient`);
-then build Node as usual. Node.js v24.22.1 built this way (with verilith-hpack in
+then build Node as usual. Node.js v26.13.1 built this way (with verilith-hpack in
 nghttp2 and verilith-http in undici too, via verilith-hpack's `compat/node/node.sh`)
-passes 5557 of the 5558 tests in its default suite (`tools/test.py
-default`); the one failure, `test-fs-rmSync-special-char-additional-error`,
-fails the same way on any build run as root. Several llhttp behaviours go
+passes 7,245 of the 7,248 tests in its default suite (`tools/test.py
+default`); the three failures (`test-fs-rmSync-special-char-additional-error`,
+which fails on any build run as root, and two TLS tests that need system
+certificates) fail the same way on the official binary. Node 26 links a
+Rust library of its own, so both scripts build ours without LTO for it.
+v24.22.1 passed 5557 of 5558. Several llhttp behaviours go
 beyond the HTTP/1.x grammar the machines verify, and the drop-in maps them
 onto it:
 

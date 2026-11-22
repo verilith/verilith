@@ -160,7 +160,7 @@ exact commit of everything used.
 
 ### Node.js
 
-`scripts/node.sh` builds Node.js 22.23.5 twice from the same source with
+`scripts/node.sh` builds Node.js 26.13.1 twice from the same source with
 the same flags: *official* (as shipped) and *hardened*, with verilith-http in place
 of llhttp, verilith-url and verilith-json (via verilith-bind) in place of ada and simdjson, verilith-zlib in
 place of zlib, and c-ares with verilith-dns. Both builds use the same c-ares commit,

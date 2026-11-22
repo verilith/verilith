@@ -64,4 +64,4 @@ roxmltree   https://github.com/RazrFalcon/roxmltree                         6c9f
 SILESIA_FILES="dickens samba sao x-ray xml"
 
 # Node.js for benchmark/compare.js.
-: "${NODE_VERSION:=v22.23.5}"
+: "${NODE_VERSION:=v26.13.1}"
