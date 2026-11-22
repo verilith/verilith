@@ -8,6 +8,8 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 status=0
 for c in "$@"; do
+  # Cargo prints no count for a crate it verified before and finds unchanged.
+  rm -rf "${CARGO_TARGET_DIR:-target}"/verus-partial/debug/.fingerprint/verilith-"$c"-*
   cargo_line=$(VERUS_CMD=focus scripts/verify.sh "$c")
   echo "cargo: $cargo_line"
   buck_line=$(scripts/prove.sh "$c") || { echo "FAIL $c: Buck2 did not verify it"; status=1; continue; }

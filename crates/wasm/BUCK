@@ -14,6 +14,5 @@ verus_library(
     features = [],
     vstd = "//third-party:vstd-alloc-std",
     deps = [],
-    parts = 4,
     visibility = ["PUBLIC"],
 )

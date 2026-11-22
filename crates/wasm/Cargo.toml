@@ -14,11 +14,6 @@ vstd = { workspace = true, features = ["std"] }
 [package.metadata.verus]
 verify = true
 
-# Buck2 verifies this crate as several parts, each its own CI job
-# (see BUILDING.md).
-[package.metadata.verilith]
-verify-parts = 4
-
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
   'cfg(verus_only)',

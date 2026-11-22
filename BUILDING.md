@@ -107,7 +107,10 @@ The modules are spread over the parts by source size. Each part is its own
 CI job, so a crate that takes 20 minutes takes about 5 of wall time. Splitting
 does not change what any single proof sees: Verus builds the same query for
 a function whether or not other modules are verified in the same run. A
-crate whose proofs all sit in one module gains nothing.
+crate whose time is in one module gains nothing: brotli is verified in 2
+parts (16 minutes became 11), but wasm is not split, because 43 of its 44
+minutes are a single proof, `run::execute`, and only rewriting that proof
+as several smaller ones would shorten it.
 
 ## How CI skips proofs that already passed
 

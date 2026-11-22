@@ -113,7 +113,7 @@ what keeps it from passing a proof it did not check.
 One workflow, `.github/workflows/ci.yml`.
 
 **Proofs** run through Buck2, one job per crate, or per part for the crates
-verified in parts (wasm, brotli). A proof that has already passed with
+verified in parts (brotli). A proof that has already passed with
 exactly the same inputs is not checked again (`scripts/proof-plan.py`), so
 a change to one crate checks that crate and the crates that depend on it,
 and a second push to a pull request checks only what the push changed.
