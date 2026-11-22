@@ -318,32 +318,21 @@ fn rounds64(r: &mut Regs, w: &mut [u32; 16], Ghost(v0): Ghost<Vars>, Ghost(m): G
         final(r).vars() == spec::rounds(v0, m, 64),
 {
     assert(r.vars() == spec::rounds(v0, m, 0));
-    // Rounds 0 to 15: W_t is M_t.
-    let mut t: usize = 0;
-    while t < 16
-        invariant
-            t % 8 == 0,
-            t <= 16,
-            forall|i: int| 0 <= i < 16 ==> w@[i] == #[trigger] spec::schedule(m, i),
-            r.vars() == spec::rounds(v0, m, t as nat),
-        decreases 16 - t,
-    {
-        rounds8(r, w, t, Ghost(v0), Ghost(m));
-        t = t + 8;
+    // Unrolled with constant t, so that every index into the window and
+    // into K is a constant once inlined.
+    rounds8(r, w, 0, Ghost(v0), Ghost(m));
+    rounds8(r, w, 8, Ghost(v0), Ghost(m));
+    assert(window(w@, m, 0, 16)) by {
+        assert forall|k: int| 0 <= k < 16 implies w@[k % 16] == #[trigger] spec::schedule(m, k) by {
+            assert(k % 16 == k);
+        }
     }
-
-    // Rounds 16 to 63, each computing W_t first.
-    while t < 64
-        invariant
-            t % 8 == 0,
-            16 <= t <= 64,
-            window(w@, m, t - 16, t as int),
-            r.vars() == spec::rounds(v0, m, t as nat),
-        decreases 64 - t,
-    {
-        rounds8_sched(r, w, t, Ghost(v0), Ghost(m));
-        t = t + 8;
-    }
+    rounds8_sched(r, w, 16, Ghost(v0), Ghost(m));
+    rounds8_sched(r, w, 24, Ghost(v0), Ghost(m));
+    rounds8_sched(r, w, 32, Ghost(v0), Ghost(m));
+    rounds8_sched(r, w, 40, Ghost(v0), Ghost(m));
+    rounds8_sched(r, w, 48, Ghost(v0), Ghost(m));
+    rounds8_sched(r, w, 56, Ghost(v0), Ghost(m));
 }
 
 /// The word at byte `i`, most significant byte first. LLVM turns the four

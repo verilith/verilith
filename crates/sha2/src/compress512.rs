@@ -313,32 +313,23 @@ fn rounds80(r: &mut Regs, w: &mut [u64; 16], Ghost(v0): Ghost<Vars>, Ghost(m): G
         final(r).vars() == spec::rounds(v0, m, 80),
 {
     assert(r.vars() == spec::rounds(v0, m, 0));
-    // Rounds 0 to 15: W_t is M_t.
-    let mut t: usize = 0;
-    while t < 16
-        invariant
-            t % 8 == 0,
-            t <= 16,
-            forall|i: int| 0 <= i < 16 ==> w@[i] == #[trigger] spec::schedule(m, i),
-            r.vars() == spec::rounds(v0, m, t as nat),
-        decreases 16 - t,
-    {
-        rounds8(r, w, t, Ghost(v0), Ghost(m));
-        t = t + 8;
+    // Unrolled with constant t, so that every index into the window and
+    // into K is a constant once inlined.
+    rounds8(r, w, 0, Ghost(v0), Ghost(m));
+    rounds8(r, w, 8, Ghost(v0), Ghost(m));
+    assert(window(w@, m, 0, 16)) by {
+        assert forall|k: int| 0 <= k < 16 implies w@[k % 16] == #[trigger] spec::schedule(m, k) by {
+            assert(k % 16 == k);
+        }
     }
-
-    // Rounds 16 to 79, each computing W_t first.
-    while t < 80
-        invariant
-            t % 8 == 0,
-            16 <= t <= 80,
-            window(w@, m, t - 16, t as int),
-            r.vars() == spec::rounds(v0, m, t as nat),
-        decreases 80 - t,
-    {
-        rounds8_sched(r, w, t, Ghost(v0), Ghost(m));
-        t = t + 8;
-    }
+    rounds8_sched(r, w, 16, Ghost(v0), Ghost(m));
+    rounds8_sched(r, w, 24, Ghost(v0), Ghost(m));
+    rounds8_sched(r, w, 32, Ghost(v0), Ghost(m));
+    rounds8_sched(r, w, 40, Ghost(v0), Ghost(m));
+    rounds8_sched(r, w, 48, Ghost(v0), Ghost(m));
+    rounds8_sched(r, w, 56, Ghost(v0), Ghost(m));
+    rounds8_sched(r, w, 64, Ghost(v0), Ghost(m));
+    rounds8_sched(r, w, 72, Ghost(v0), Ghost(m));
 }
 
 /// The word at byte `i`, most significant byte first. LLVM turns the eight
@@ -445,6 +436,197 @@ pub fn compress_blocks(st: &mut [u64; 8], p: &[u8])
     {
         compress_block(st, p, 128 * i);
         i = i + 1;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rounds over a precomputed schedule
+// ---------------------------------------------------------------------------
+
+/// Addition modulo 2^64 is associative.
+proof fn lemma_add_assoc(x: u64, y: u64, z: u64)
+    ensures
+        spec::add(spec::add(x, y), z) == spec::add(x, spec::add(y, z)),
+{
+    let m = 0x1_0000_0000_0000_0000int;
+    vstd::arithmetic::div_mod::lemma_add_mod_noop(x as int + y as int, z as int, m);
+    vstd::arithmetic::div_mod::lemma_add_mod_noop(x as int, y as int + z as int, m);
+    vstd::arithmetic::div_mod::lemma_small_mod(x as nat, m as nat);
+    vstd::arithmetic::div_mod::lemma_small_mod(z as nat, m as nat);
+}
+
+/// [`round`] with K_t + W_t given as one word `kw`.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn round_kw(
+    a: u64,
+    b: u64,
+    c: u64,
+    d: &mut u64,
+    e: u64,
+    f: u64,
+    g: u64,
+    h: &mut u64,
+    Ghost(k): Ghost<u64>,
+    Ghost(w): Ghost<u64>,
+    kw: u64,
+)
+    requires
+        kw == spec::add(k, w),
+    ensures
+        spec::round(Vars { a, b, c, d: *old(d), e, f, g, h: *old(h) }, k, w) == (Vars {
+            a: *final(h),
+            b: a,
+            c: b,
+            d: c,
+            e: *final(d),
+            f: e,
+            g: f,
+            h: g,
+        }),
+{
+    let x = add(add(*h, big_sigma1(e)), ch(e, f, g));
+    proof {
+        lemma_add_assoc(x, k, w);
+    }
+    let t1 = add(x, kw);
+    let t2 = add(big_sigma0(a), maj(a, b, c));
+    *d = add(*d, t1);
+    *h = add(t1, t2);
+}
+
+/// `wk` is K_t + W_t for the block words `m`, for every t.
+pub open spec fn kw_schedule(wk: Seq<u64>, m: Seq<u64>) -> bool {
+    forall|i: int| 0 <= i < 80 ==> wk[i] == #[trigger] spec::add(K[i], spec::schedule(m, i))
+}
+
+/// Rounds t to t + 7 from a precomputed schedule.
+#[verifier::spinoff_prover]
+#[inline(always)]
+fn rounds8_kw(r: &mut Regs, wk: &[u64; 80], t: usize, Ghost(v0): Ghost<Vars>, Ghost(m): Ghost<Seq<u64>>)
+    requires
+        t % 8 == 0,
+        t + 8 <= 80,
+        kw_schedule(wk@, m),
+        old(r).vars() == spec::rounds(v0, m, t as nat),
+    ensures
+        final(r).vars() == spec::rounds(v0, m, (t + 8) as nat),
+{
+    let (mut a, mut b, mut c, mut d) = (r.a, r.b, r.c, r.d);
+    let (mut e, mut f, mut g, mut h) = (r.e, r.f, r.g, r.h);
+    assert(Vars { a, b, c, d, e, f, g, h } == spec::rounds(v0, m, t as nat));
+    // GENERATED KW (tools/gen_rounds.py)
+    round_kw(a, b, c, &mut d, e, f, g, &mut h, Ghost(K[(t) as int]), Ghost(spec::schedule(m, (t) as int)), wk[t]);
+    proof { lemma_round(v0, m, (t) as nat); }
+    assert(Vars { a: h, b: a, c: b, d: c, e: d, f: e, g: f, h: g } == spec::rounds(v0, m, (t + 1) as nat));
+    round_kw(h, a, b, &mut c, d, e, f, &mut g, Ghost(K[(t + 1) as int]), Ghost(spec::schedule(m, (t + 1) as int)), wk[t + 1]);
+    proof { lemma_round(v0, m, (t + 1) as nat); }
+    assert(Vars { a: g, b: h, c: a, d: b, e: c, f: d, g: e, h: f } == spec::rounds(v0, m, (t + 2) as nat));
+    round_kw(g, h, a, &mut b, c, d, e, &mut f, Ghost(K[(t + 2) as int]), Ghost(spec::schedule(m, (t + 2) as int)), wk[t + 2]);
+    proof { lemma_round(v0, m, (t + 2) as nat); }
+    assert(Vars { a: f, b: g, c: h, d: a, e: b, f: c, g: d, h: e } == spec::rounds(v0, m, (t + 3) as nat));
+    round_kw(f, g, h, &mut a, b, c, d, &mut e, Ghost(K[(t + 3) as int]), Ghost(spec::schedule(m, (t + 3) as int)), wk[t + 3]);
+    proof { lemma_round(v0, m, (t + 3) as nat); }
+    assert(Vars { a: e, b: f, c: g, d: h, e: a, f: b, g: c, h: d } == spec::rounds(v0, m, (t + 4) as nat));
+    round_kw(e, f, g, &mut h, a, b, c, &mut d, Ghost(K[(t + 4) as int]), Ghost(spec::schedule(m, (t + 4) as int)), wk[t + 4]);
+    proof { lemma_round(v0, m, (t + 4) as nat); }
+    assert(Vars { a: d, b: e, c: f, d: g, e: h, f: a, g: b, h: c } == spec::rounds(v0, m, (t + 5) as nat));
+    round_kw(d, e, f, &mut g, h, a, b, &mut c, Ghost(K[(t + 5) as int]), Ghost(spec::schedule(m, (t + 5) as int)), wk[t + 5]);
+    proof { lemma_round(v0, m, (t + 5) as nat); }
+    assert(Vars { a: c, b: d, c: e, d: f, e: g, f: h, g: a, h: b } == spec::rounds(v0, m, (t + 6) as nat));
+    round_kw(c, d, e, &mut f, g, h, a, &mut b, Ghost(K[(t + 6) as int]), Ghost(spec::schedule(m, (t + 6) as int)), wk[t + 6]);
+    proof { lemma_round(v0, m, (t + 6) as nat); }
+    assert(Vars { a: b, b: c, c: d, d: e, e: f, f: g, g: h, h: a } == spec::rounds(v0, m, (t + 7) as nat));
+    round_kw(b, c, d, &mut e, f, g, h, &mut a, Ghost(K[(t + 7) as int]), Ghost(spec::schedule(m, (t + 7) as int)), wk[t + 7]);
+    proof { lemma_round(v0, m, (t + 7) as nat); }
+    assert(Vars { a: a, b: b, c: c, d: d, e: e, f: f, g: g, h: h } == spec::rounds(v0, m, (t + 8) as nat));
+    // END GENERATED KW
+    *r = Regs { a, b, c, d, e, f, g, h };
+}
+
+/// The 80 rounds over a precomputed schedule for block words `m`.
+#[verifier::spinoff_prover]
+#[inline(always)]
+fn rounds80_kw(r: &mut Regs, wk: &[u64; 80], Ghost(v0): Ghost<Vars>, Ghost(m): Ghost<Seq<u64>>)
+    requires
+        kw_schedule(wk@, m),
+        old(r).vars() == v0,
+    ensures
+        final(r).vars() == spec::rounds(v0, m, 80),
+{
+    assert(r.vars() == spec::rounds(v0, m, 0));
+    rounds8_kw(r, wk, 0, Ghost(v0), Ghost(m));
+    rounds8_kw(r, wk, 8, Ghost(v0), Ghost(m));
+    rounds8_kw(r, wk, 16, Ghost(v0), Ghost(m));
+    rounds8_kw(r, wk, 24, Ghost(v0), Ghost(m));
+    rounds8_kw(r, wk, 32, Ghost(v0), Ghost(m));
+    rounds8_kw(r, wk, 40, Ghost(v0), Ghost(m));
+    rounds8_kw(r, wk, 48, Ghost(v0), Ghost(m));
+    rounds8_kw(r, wk, 56, Ghost(v0), Ghost(m));
+    rounds8_kw(r, wk, 64, Ghost(v0), Ghost(m));
+    rounds8_kw(r, wk, 72, Ghost(v0), Ghost(m));
+}
+
+/// H(i) from H(i-1) = `st` and a block whose K_t + W_t are `wk`.
+#[verifier::spinoff_prover]
+#[inline(always)]
+pub fn compress_block_kw(st: &mut [u64; 8], wk: &[u64; 80], Ghost(blk): Ghost<Seq<u8>>)
+    requires
+        kw_schedule(wk@, spec::words(blk)),
+    ensures
+        final(st)@ == spec::compress(old(st)@, blk),
+{
+    let ghost m = spec::words(blk);
+    let ghost h0 = st@;
+    let ghost v0 = spec::init(h0);
+    let mut r = Regs { a: st[0], b: st[1], c: st[2], d: st[3], e: st[4], f: st[5], g: st[6], h: st[7] };
+    rounds80_kw(&mut r, wk, Ghost(v0), Ghost(m));
+    st[0] = add(r.a, st[0]);
+    st[1] = add(r.b, st[1]);
+    st[2] = add(r.c, st[2]);
+    st[3] = add(r.d, st[3]);
+    st[4] = add(r.e, st[4]);
+    st[5] = add(r.f, st[5]);
+    st[6] = add(r.g, st[6]);
+    st[7] = add(r.h, st[7]);
+    proof {
+        reveal(spec::compress);
+        assert(st@ =~= spec::compress(h0, blk));
+    }
+}
+
+/// H(n) from H(0) = `st` over the whole blocks of `p`, two blocks' schedules
+/// at a time from the AVX2 kernel (`crate::avx2::schedule512x2`), and a last
+/// odd block by the scalar rounds. To be called only where the CPU has AVX2.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+pub fn compress_blocks_x2(st: &mut [u64; 8], p: &[u8])
+    ensures
+        final(st)@ == spec::hash_blocks(old(st)@, p@, (p@.len() / 128) as nat),
+{
+    let ghost h0 = st@;
+    let n = p.len() / 128;
+    let mut w0 = [0u64; 80];
+    let mut w1 = [0u64; 80];
+    let mut i: usize = 0;
+    while i + 2 <= n
+        invariant
+            n == p@.len() / 128,
+            p@.len() <= usize::MAX,
+            i <= n,
+            st@ == spec::hash_blocks(h0, p@, i as nat),
+        decreases n - i,
+    {
+        crate::avx2::schedule512x2(p, 128 * i, 128 * (i + 1), &mut w0, &mut w1);
+        compress_block_kw(st, &w0, Ghost(spec::block(p@, i as int)));
+        assert(st@ == spec::hash_blocks(h0, p@, (i + 1) as nat));
+        compress_block_kw(st, &w1, Ghost(spec::block(p@, (i + 1) as int)));
+        assert(st@ == spec::hash_blocks(h0, p@, (i + 2) as nat));
+        i = i + 2;
+    }
+    if i < n {
+        compress_block(st, p, 128 * i);
+        assert(st@ == spec::hash_blocks(h0, p@, (i + 1) as nat));
     }
 }
 

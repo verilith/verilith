@@ -17,8 +17,10 @@
 //! [`compress512_blocks`] does the same for the SHA-512 family: with the
 //! ARMv8.2 SHA-512 instructions (`sha512h`, `sha512h2`, `sha512su0`,
 //! `sha512su1`; Apple M1 and later, Neoverse V1 and later) where the CPU
-//! has them, and with the verified portable kernel (with BMI2 where there
-//! is BMI2) everywhere else. x86-64
+//! has them. On x86-64 with AVX2 the message schedule is computed for two
+//! blocks at once with AVX2 (`crate::avx2`, trusted) and the rounds are
+//! the verified ones; elsewhere the verified portable kernel runs (with
+//! BMI2 where there is BMI2). x86-64
 //! has SHA-512 instructions only on its newest CPUs (Arrow Lake, Lunar
 //! Lake), and no kernel for them is written yet.
 //!
@@ -92,6 +94,11 @@ pub fn compress512_blocks(st: &mut [u64; 8], p: &[u8])
     }
     #[cfg(target_arch = "x86_64")]
     {
+        if x86_has!("avx2") && x86_has!("bmi2") {
+            // SAFETY: the CPU has AVX2 and BMI2.
+            unsafe { bmi2::compress512_blocks_avx2(st, p) };
+            return;
+        }
         if x86_has!("bmi2") {
             // SAFETY: the CPU has BMI2.
             unsafe { bmi2::compress512_blocks(st, p) };
@@ -114,6 +121,9 @@ pub fn kernel512() -> &'static str {
     }
     #[cfg(target_arch = "x86_64")]
     {
+        if x86_has!("avx2") && x86_has!("bmi2") {
+            return "avx2 schedule";
+        }
         if x86_has!("bmi2") {
             return "portable (bmi2)";
         }
@@ -158,6 +168,13 @@ pub(crate) mod bmi2 {
     #[target_feature(enable = "bmi2")]
     pub unsafe fn compress512_blocks(st: &mut [u64; 8], p: &[u8]) {
         crate::compress512::compress_blocks(st, p)
+    }
+
+    /// The verified rounds over the AVX2 schedule (`crate::avx2`), which
+    /// needs AVX2 enabled for its intrinsics to be inlined.
+    #[target_feature(enable = "avx2,bmi2")]
+    pub unsafe fn compress512_blocks_avx2(st: &mut [u64; 8], p: &[u8]) {
+        crate::compress512::compress_blocks_x2(st, p)
     }
 }
 
