@@ -1,0 +1,8 @@
+# The Buck2 release CI and scripts/install-buck2.sh use, and the checksum
+# of its download for each platform. The prelude (Buck2's standard rules)
+# ships inside the binary, so this pins both. Sourced by scripts.
+BUCK2_RELEASE=2026-11-15
+BUCK2_SHA256_x86_64_unknown_linux_musl=0279c16e7229a484cb0e67d678ac3c6d1661648c89124917f2ae0d92472413ea
+BUCK2_SHA256_aarch64_unknown_linux_musl=dd4fb864b4bed7cc250214e8e9562741dfdc6cf1bbda62ca39463a6181c2fbe2
+BUCK2_SHA256_aarch64_apple_darwin=3464db0c4514fb3ff7a3f37050c737bd5dd100a2e210886530e95ac767d3a109
+BUCK2_SHA256_x86_64_apple_darwin=bc04716a5414e35f0db4d2d275a35c009e69b9001c2f886ad352d613a2ec6e70

@@ -604,6 +604,18 @@ pub struct Scratch {
     /// passes left out since. Only a choice of when to try.
     pub dq: u8,
     pub dt: u8,
+    /// The stored list with no thread, as `quick` last found it (a hint).
+    pub qe: usize,
+    /// The row `quick` keeps its thread on.
+    pub qr: Vec<usize>,
+    /// How badly `quick` has done lately, whether it is sitting out for
+    /// that, and the turns it has sat out since its last try.
+    pub qq: u8,
+    pub qoff: bool,
+    pub qd: u8,
+    /// For each last byte and class of the next, the list of a start that
+    /// takes no new start, as `quick` last found it (hints).
+    pub qt: Vec<u32>,
 }
 
 impl Scratch {
@@ -668,6 +680,12 @@ impl Scratch {
             tb: Vec::new(),
             dq: 0,
             dt: 0,
+            qe: usize::MAX,
+            qr: Vec::new(),
+            qq: 0,
+            qoff: false,
+            qd: 0,
+            qt: Vec::new(),
         }
     }
 }
@@ -778,7 +796,7 @@ pub open spec fn dfa_cost(np: int) -> int {
 /// Loop iterations per byte of text, at most, for a program of `np`
 /// instructions and `ns` capture slots.
 pub open spec fn step_cost(np: int, ns: int) -> int {
-    pike_cost(np, ns) + dfa_cost(np) + memo_cost(np, ns) + 2
+    pike_cost(np, ns) + dfa_cost(np) + memo_cost(np, ns) + 2 + 34 * quick_cost(np, ns)
 }
 
 /// The Pike VM's and the DFA's iterations together are within the bound.
@@ -797,6 +815,28 @@ proof fn lemma_total(x: int, d: int, k: int, h: int, sc: int, dc: int)
             0 <= dc,
     ;
     assert(k * (sc + dc) == k * sc + k * dc) by (nonlinear_arith);
+}
+
+/// The iterations of `quick` over a whole search are within its share.
+proof fn lemma_qtot(q: int, w: int, k: int, d: int)
+    requires
+        0 <= q <= w * k,
+        w <= 4 * d + 67,
+        0 <= k,
+        0 <= d,
+    ensures
+        q <= (d + 2) * (34 * k),
+{
+    assert(w * k <= (4 * d + 67) * k) by (nonlinear_arith)
+        requires
+            w <= 4 * d + 67,
+            0 <= k,
+    ;
+    assert((4 * d + 67) * k <= (d + 2) * (34 * k)) by (nonlinear_arith)
+        requires
+            0 <= k,
+            0 <= d,
+    ;
 }
 
 /// What `run` reports: the end of the match and its capture slots.
@@ -908,7 +948,7 @@ fn dfa_skip(prog: &Prog, s: &[u8], p: usize, sc: &mut Scratch, nst: &mut NeedSt)
 
 /// The leftmost match starting at or after `from`, by priority: where it
 /// ends, with its capture slots in `out`.
-#[verifier::rlimit(200)]
+#[verifier::rlimit(300)]
 #[verifier::spinoff_prover]
 pub fn run(prog: &Prog, s: &[u8], from: usize, sc: &mut Scratch, out: &mut Vec<usize>) -> (r: (
     Option<usize>,
@@ -945,6 +985,11 @@ pub fn run(prog: &Prog, s: &[u8], from: usize, sc: &mut Scratch, out: &mut Vec<u
     let ghost mut dsteps: int = 0;
     let ghost mut msteps: int = 0;
     let mut hz = from;
+    let mut qw: usize = 0;
+    let mut qz = from;
+    let ghost mut qsteps: int = 0;
+    let ghost qk = quick_cost(np, prog.nslots as int);
+    let ghost qc = 34 * qk;
     let ghost qq = kn + 2 * np + 2 * prog.nslots as int + 3;
     let ghost mut steps: int = 0;
     proof {
@@ -1003,6 +1048,12 @@ pub fn run(prog: &Prog, s: &[u8], from: usize, sc: &mut Scratch, out: &mut Vec<u
             0 <= dcost,
             from <= hz <= n + 1,
             dsteps <= (hz - from) * dcost,
+            qk == quick_cost(np, ns as int),
+            qc == 34 * qk,
+            0 <= qk,
+            qw > 0 ==> n <= usize::MAX / 8,
+            qw <= 4 * (n - from) + 67,
+            0 <= qsteps <= qw * qk,
             mcost == memo_step(np, ns as int),
             from <= dh <= n,
             0 <= drys <= dh - from,
@@ -1107,6 +1158,100 @@ pub fn run(prog: &Prog, s: &[u8], from: usize, sc: &mut Scratch, out: &mut Vec<u
                 dsteps = dsteps + dc@;
             }
         }
+        let mut qgo = false;
+        if !matched && sc.a.pcs.len() == 0 && p >= qz {
+            if sc.qoff {
+                if sc.qd < 63 {
+                    sc.qd = sc.qd + 1;
+                } else {
+                    sc.qd = 0;
+                    qgo = true;
+                }
+            } else {
+                qgo = true;
+            }
+            qgo = qgo && p < n && n <= usize::MAX / 8 && qw <= 4 * (p - from) + 64;
+        }
+        if qgo {
+            // A start on its own, by the stored steps alone.
+            let ghost pq = p;
+            proof {
+                lemma_fr_empty(sp, s@, sc.a.v(ns), p as int);
+            }
+            let ghost qw0 = qw;
+            proof {
+                lemma_mul_le(ph - from, pq - from, mcost);
+                assert(msteps <= (pq - from) * mcost);
+            }
+            let qr = quick(prog, s, p, &mut sc.memo, sc.qe, &mut sc.qt, &mut sc.qr, out, Ghost(ans));
+            sc.qe = qr.3;
+            qw = qw + (qr.2 - p) + 3;
+            proof {
+                assert(qw * qk == qw0 * qk + (qr.2 - pq + 3) * qk) by (nonlinear_arith)
+                    requires
+                        qw == qw0 + (qr.2 - pq) + 3,
+                ;
+                qsteps = qsteps + qr.5@;
+            }
+            if qr.0 == 1 {
+                sc.qq = if sc.qq >= 8 {
+                    sc.qq - 8
+                } else {
+                    0
+                };
+            } else {
+                // What it read is read again by the lists, and so are the
+                // starts inside it.
+                let w = qr.2 - p;
+                qz = qr.2 + 1;
+                if hz < qz {
+                    proof {
+                        lemma_mul_le(hz - from, qz - from, dcost);
+                    }
+                    hz = qz;
+                }
+                sc.qq = if w >= 100 || sc.qq as usize + w + 1 >= 128 {
+                    128
+                } else {
+                    sc.qq + w as u8 + 1
+                };
+            }
+            if sc.qq >= 64 {
+                sc.qoff = true;
+            } else if sc.qq <= 16 {
+                sc.qoff = false;
+            }
+            if qr.0 == 1 {
+                proof {
+                    lemma_mul_add(scost, p - from, 1);
+                    lemma_mul_le(p - from + 1, n - from + 1, scost);
+                    lemma_mul_add(scost, n - from + 1, 1);
+                    lemma_mul_le(p - from, n + 1 - from, mcost);
+                    lemma_mul_le(hz - from, n + 1 - from, dcost);
+                    lemma_qtot(qsteps, qw as int, qk, n - from);
+                    lemma_total(steps, dsteps, n - from + 2, n + 1 - from, scost, dcost);
+                    lemma_total(steps + dsteps, msteps, n - from + 2, n + 1 - from, scost + dcost, mcost);
+                    lemma_total(steps + dsteps + msteps, drys, n - from + 2, n - from, scost + dcost + mcost, 1);
+                    lemma_total(steps + dsteps + msteps + drys, nsteps, n - from + 2, n - from + 1, scost + dcost + mcost + 1, 2);
+                    lemma_total(steps + dsteps + msteps + drys + nsteps, qsteps, n - from + 2, n - from + 2, scost + dcost + mcost + 1 + 2, qc);
+                }
+                return (Some(qr.1), Ghost(steps + dsteps + msteps + drys + nsteps + qsteps));
+            }
+            if qr.0 == 2 {
+                p = p + 1;
+                let (g, bc) = bump(&mut sc.mark, sc.gen);
+                sc.gen = g;
+                proof {
+                    seen = Set::<int>::empty();
+                    lemma_inv_empty(sp, s@, p as int, sc.a.v(ns));
+                    lemma_fr_empty(sp, s@, sc.a.v(ns), p as int);
+                    lemma_mul_add(scost, pq - from, 1);
+                    lemma_mul_le(pq - from, p - from, mcost);
+                    steps = steps + bc@;
+                }
+                continue;
+            }
+        }
         let ghost steps0 = steps;
         let ghost mut c1: int = 1;
         proof {
@@ -1186,12 +1331,14 @@ pub fn run(prog: &Prog, s: &[u8], from: usize, sc: &mut Scratch, out: &mut Vec<u
             proof {
                 assert(steps0 + c1 <= (n - from + 2) * scost);
                 lemma_mul_le(hz - from, n + 1 - from, dcost);
+                lemma_qtot(qsteps, qw as int, qk, n - from);
                 lemma_total(steps0 + c1, dsteps, n - from + 2, n + 1 - from, scost, dcost);
                     lemma_total(steps0 + c1 + dsteps, msteps, n - from + 2, n + 1 - from, scost + dcost, mcost);
                     lemma_total(steps0 + c1 + dsteps + msteps, drys, n - from + 2, n - from, scost + dcost + mcost, 1);
                     lemma_total(steps0 + c1 + dsteps + msteps + drys, nsteps, n - from + 2, n - from + 1, scost + dcost + mcost + 1, 2);
+                    lemma_total(steps0 + c1 + dsteps + msteps + drys + nsteps, qsteps, n - from + 2, n - from + 2, scost + dcost + mcost + 1 + 2, qc);
             }
-            return (Some(mend), Ghost(steps0 + c1 + dsteps + msteps + drys + nsteps));
+            return (Some(mend), Ghost(steps0 + c1 + dsteps + msteps + drys + nsteps + qsteps));
         }
         let (cp, l) = if p < n {
             decode(s, p)
@@ -1381,22 +1528,26 @@ pub fn run(prog: &Prog, s: &[u8], from: usize, sc: &mut Scratch, out: &mut Vec<u
                 proof {
                     assert(steps0 + c1 + bc@ + c2 <= (n - from + 2) * scost);
                     lemma_mul_le(hz - from, n + 1 - from, dcost);
+                    lemma_qtot(qsteps, qw as int, qk, n - from);
                     lemma_total(steps0 + c1 + bc@ + c2, dsteps, n - from + 2, n + 1 - from, scost, dcost);
                     lemma_total(steps0 + c1 + bc@ + c2 + dsteps, msteps, n - from + 2, n + 1 - from, scost + dcost, mcost);
                     lemma_total(steps0 + c1 + bc@ + c2 + dsteps + msteps, drys, n - from + 2, n - from, scost + dcost + mcost, 1);
                     lemma_total(steps0 + c1 + bc@ + c2 + dsteps + msteps + drys, nsteps, n - from + 2, n - from + 1, scost + dcost + mcost + 1, 2);
+                    lemma_total(steps0 + c1 + bc@ + c2 + dsteps + msteps + drys + nsteps, qsteps, n - from + 2, n - from + 2, scost + dcost + mcost + 1 + 2, qc);
                 }
-                return (Some(mend), Ghost(steps0 + c1 + bc@ + c2 + dsteps + msteps + drys + nsteps));
+                return (Some(mend), Ghost(steps0 + c1 + bc@ + c2 + dsteps + msteps + drys + nsteps + qsteps));
             } else {
                 proof {
                     assert(steps0 + c1 + bc@ + c2 <= (n - from + 2) * scost);
                     lemma_mul_le(hz - from, n + 1 - from, dcost);
+                    lemma_qtot(qsteps, qw as int, qk, n - from);
                     lemma_total(steps0 + c1 + bc@ + c2, dsteps, n - from + 2, n + 1 - from, scost, dcost);
                     lemma_total(steps0 + c1 + bc@ + c2 + dsteps, msteps, n - from + 2, n + 1 - from, scost + dcost, mcost);
                     lemma_total(steps0 + c1 + bc@ + c2 + dsteps + msteps, drys, n - from + 2, n - from, scost + dcost + mcost, 1);
                     lemma_total(steps0 + c1 + bc@ + c2 + dsteps + msteps + drys, nsteps, n - from + 2, n - from + 1, scost + dcost + mcost + 1, 2);
+                    lemma_total(steps0 + c1 + bc@ + c2 + dsteps + msteps + drys + nsteps, qsteps, n - from + 2, n - from + 2, scost + dcost + mcost + 1 + 2, qc);
                 }
-                return (None, Ghost(steps0 + c1 + bc@ + c2 + dsteps + msteps + drys + nsteps));
+                return (None, Ghost(steps0 + c1 + bc@ + c2 + dsteps + msteps + drys + nsteps + qsteps));
             }
         }
         // Starts strictly inside a multi-byte character can only match empty.

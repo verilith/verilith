@@ -1,20 +1,34 @@
 name: CI
 
-# Verifies and tests the crates a change touches: a crate whose files
-# changed, and every crate that depends on it. A change to the workspace
-# itself (root Cargo.toml, Cargo.lock, scripts/, .github/) runs everything.
+# Proofs. Buck2 knows what each crate's proofs are built from (BUILDING.md).
+# Every proof whose inputs have not passed before is checked, each crate (or
+# part of a large crate) in its own job; one that has passed with exactly
+# these inputs is not checked again (scripts/proof-plan.py).
 #
-# What runs for a crate lives with the crate: scripts/verify.sh (Verus) and
-# ci.sh (tests, C API checks, comparisons with the original library).
+# Tests. The crates a change touches are tested: a crate whose files changed,
+# and every crate that depends on it. A change to the workspace itself (root
+# Cargo.toml, Cargo.lock, scripts/, .github/) tests everything. What runs
+# for a crate is its ci.sh (tests, C API checks, comparisons with the
+# original library).
+#
+# Once a week, and on request, every proof is checked again from nothing,
+# and each crate's count of verified proofs under Buck2 is compared with the
+# count `cargo verus` gives, so that a proof Buck2 stopped checking shows up.
 on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: "17 5 * * 1"
   workflow_dispatch:
     inputs:
       crates:
         description: "Crates to run, space separated (directories under crates/), or 'all'"
         default: all
+      fresh:
+        description: Check every proof again, and compare Buck2 with cargo verus
+        type: boolean
+        default: false
       arm:
         description: Also verify on Arm
         type: boolean
@@ -28,15 +42,25 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+defaults:
+  run:
+    # -o pipefail, which the default shell leaves out.
+    shell: bash
+
 permissions:
   contents: read
+  # proof-plan.py lists the cache entries that record passed proofs.
+  actions: read
 
 jobs:
   plan:
     name: Which crates
     runs-on: ubuntu-latest
     outputs:
+      proofs: ${{ steps.proofs.outputs.run }}
+      fresh: ${{ steps.proofs.outputs.fresh }}
       verify: ${{ steps.plan.outputs.verify }}
+      all-verified: ${{ steps.plan.outputs.all_verified }}
       test: ${{ steps.plan.outputs.test }}
       arm: ${{ steps.plan.outputs.arm }}
       fuzz: ${{ steps.plan.outputs.fuzz }}
@@ -74,13 +98,33 @@ jobs:
           import json, sys
           print(json.dumps([c for c in json.load(sys.stdin)["test"] if "\nfuzz() {" in open(f"crates/{c}/ci.sh").read()]))')
           echo "fuzz=$fuzz" >> "$GITHUB_OUTPUT"
+          echo "all_verified=$(python3 scripts/affected.py all | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['verify']))")" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/buck2
+      - name: The Buck2 files match the Cargo ones
+        run: python3 scripts/buckify.py --check
+      - id: proofs
+        name: Which proofs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EVENT: ${{ github.event_name }}
+          FRESH: ${{ inputs.fresh }}
+          CRATES: ${{ inputs.crates }}
+        run: |
+          fresh=false
+          if [ "$EVENT" = schedule ] || [ "$FRESH" = true ]; then fresh=true; fi
+          args=(--platform "Linux-X64" --crates "${CRATES:-all}")
+          if [ "$fresh" = true ]; then args+=(--all); fi
+          plan=$(python3 scripts/proof-plan.py "${args[@]}" --summary "$GITHUB_STEP_SUMMARY")
+          echo "run=$(echo "$plan" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['run']))")" >> "$GITHUB_OUTPUT"
+          echo "fresh=$fresh" >> "$GITHUB_OUTPUT"
 
   # Builds Verus once and caches it, so the verify jobs below start from the
   # cache instead of each building it.
   verus:
     name: Verus
     needs: plan
-    if: needs.plan.outputs.verify != '[]'
+    if: needs.plan.outputs.proofs != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -88,22 +132,48 @@ jobs:
       - uses: ./.github/actions/verus
 
   verify:
-    name: Verify ${{ matrix.crate }}
+    name: Verify ${{ matrix.proof.name }}
     needs: [plan, verus]
-    if: needs.plan.outputs.verify != '[]'
+    if: needs.plan.outputs.proofs != '[]'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        crate: ${{ fromJSON(needs.plan.outputs.verify) }}
+        proof: ${{ fromJSON(needs.plan.outputs.proofs) }}
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/verus
+      - uses: ./.github/actions/buck2
       - name: Verify
-        # focus: the crates this one depends on are compiled, not verified
-        # again. Each has its own job whenever it changes.
-        run: VERUS_CMD=focus scripts/verify.sh ${{ matrix.crate }}
+        # The crates this one depends on are compiled, not verified again:
+        # each is its own proof, with its own job whenever it changes.
+        run: PROVE_OUT="$RUNNER_TEMP/proved" scripts/prove.sh '${{ matrix.proof.target }}'
+      - name: Record that it passed
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/proved
+          key: ${{ matrix.proof.key }}
+
+  # The guard on the Buck2 rules themselves: Verus through Cargo, the way the
+  # Verus project supports, must count exactly as many verified proofs in
+  # each crate as Buck2 does over all of the crate's parts.
+  crosscheck:
+    name: Buck2 against Cargo, ${{ matrix.crate }}
+    needs: [plan, verus]
+    if: needs.plan.outputs.fresh == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: ${{ fromJSON(needs.plan.outputs.all-verified) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/verus
+      - uses: ./.github/actions/buck2
+      - name: Compare
+        run: scripts/crosscheck.sh ${{ matrix.crate }}
       - name: Log
         if: failure()
         run: cat target/verify/${{ matrix.crate }}.log
@@ -207,7 +277,7 @@ jobs:
   done:
     name: CI
     if: always()
-    needs: [plan, verus, verify, verus-arm, verify-arm, test, test-arm]
+    needs: [plan, verus, verify, crosscheck, verus-arm, verify-arm, test, test-arm]
     runs-on: ubuntu-latest
     steps:
       - name: Every job passed or was skipped

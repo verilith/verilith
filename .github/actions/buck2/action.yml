@@ -1,0 +1,12 @@
+name: Buck2
+description: >-
+  Puts buck2 on PATH: the release pinned in scripts/buck2-version, checked
+  against its checksum.
+runs:
+  using: composite
+  steps:
+    - name: Install Buck2
+      shell: bash
+      run: |
+        scripts/install-buck2.sh "$HOME/buck2-bin"
+        echo "$HOME/buck2-bin" >> "$GITHUB_PATH"
