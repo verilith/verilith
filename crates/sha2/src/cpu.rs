@@ -108,6 +108,40 @@ pub fn compress512_blocks(st: &mut [u64; 8], p: &[u8])
     crate::compress512::compress_blocks(st, p)
 }
 
+/// [`crate::compress512::pair_kw`], compiled with AVX2 and BMI2 and out of
+/// line, so that the pipelined loop calls one copy of it. Trusted only to
+/// be that function: its contract is the verified function's.
+#[cfg(target_arch = "x86_64")]
+#[verifier::external_body]
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+pub fn pair_avx2(
+    st: &mut [u64; 8],
+    cur0: &[u64; 80],
+    cur1: &[u64; 80],
+    b0: Ghost<Seq<u8>>,
+    b1: Ghost<Seq<u8>>,
+    p: &[u8],
+    o0: usize,
+    o1: usize,
+    nxt0: &mut [u64; 80],
+    nxt1: &mut [u64; 80],
+)
+    requires
+        crate::compress512::kw_schedule(cur0@, crate::spec512::words(b0@)),
+        crate::compress512::kw_schedule(cur1@, crate::spec512::words(b1@)),
+        o0 + 128 <= p@.len(),
+        o1 + 128 <= p@.len(),
+    ensures
+        final(st)@ == crate::spec512::compress(crate::spec512::compress(old(st)@, b0@), b1@),
+        crate::compress512::kw_schedule(final(nxt0)@, crate::spec512::words(p@.subrange(o0 as int, o0 + 128))),
+        crate::compress512::kw_schedule(final(nxt1)@, crate::spec512::words(p@.subrange(o1 as int, o1 + 128))),
+{
+    // SAFETY: only reached from `compress512_blocks_avx2`, which runs where
+    // the CPU has AVX2 and BMI2.
+    unsafe { bmi2::pair_avx2(st, cur0, cur1, b0, b1, p, o0, o1, nxt0, nxt1) }
+}
+
 } // verus!
 
 /// Which kernel [`compress512_blocks`] runs on this CPU: `"armv8-sha512"`
@@ -174,7 +208,26 @@ pub(crate) mod bmi2 {
     /// needs AVX2 enabled for its intrinsics to be inlined.
     #[target_feature(enable = "avx2,bmi2")]
     pub unsafe fn compress512_blocks_avx2(st: &mut [u64; 8], p: &[u8]) {
-        crate::compress512::compress_blocks_x2(st, p)
+        crate::compress512::compress_blocks_pipe(st, p)
+    }
+
+    /// One pair of the pipelined loop (see `cpu::pair_avx2`).
+    #[target_feature(enable = "avx2,bmi2")]
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    pub unsafe fn pair_avx2(
+        st: &mut [u64; 8],
+        cur0: &[u64; 80],
+        cur1: &[u64; 80],
+        b0: vstd::prelude::Ghost<vstd::prelude::Seq<u8>>,
+        b1: vstd::prelude::Ghost<vstd::prelude::Seq<u8>>,
+        p: &[u8],
+        o0: usize,
+        o1: usize,
+        nxt0: &mut [u64; 80],
+        nxt1: &mut [u64; 80],
+    ) {
+        crate::compress512::pair_kw(st, cur0, cur1, b0, b1, p, o0, o1, nxt0, nxt1)
     }
 }
 

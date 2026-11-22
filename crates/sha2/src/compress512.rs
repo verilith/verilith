@@ -634,4 +634,273 @@ pub fn compress_blocks_x2(st: &mut [u64; 8], p: &[u8])
     }
 }
 
+// ---------------------------------------------------------------------------
+// Pipelined: the next pair's schedule between this pair's rounds
+// ---------------------------------------------------------------------------
+
+/// Rounds t to t + 7 from the precomputed schedule `wk`, and, if `step`,
+/// steps `s` and `s + 1` of another schedule.
+#[cfg(target_arch = "x86_64")]
+#[verifier::spinoff_prover]
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn group_kw_step(
+    r: &mut Regs,
+    wk: &[u64; 80],
+    t: usize,
+    Ghost(v0): Ghost<Vars>,
+    Ghost(m): Ghost<Seq<u64>>,
+    sc: &mut crate::avx2::Sched512,
+    s: usize,
+    step: bool,
+    w0: &mut [u64; 80],
+    w1: &mut [u64; 80],
+    Ghost(m0): Ghost<Seq<u64>>,
+    Ghost(m1): Ghost<Seq<u64>>,
+)
+    requires
+        t % 8 == 0,
+        t + 8 <= 80,
+        kw_schedule(wk@, m),
+        old(r).vars() == spec::rounds(v0, m, t as nat),
+        step ==> 8 <= s && s + 2 <= 40,
+        crate::avx2::sched_at(*old(sc), m0, m1, s as int),
+        crate::avx2::kw_upto(old(w0)@, m0, 2 * s),
+        crate::avx2::kw_upto(old(w1)@, m1, 2 * s),
+    ensures
+        final(r).vars() == spec::rounds(v0, m, (t + 8) as nat),
+        step ==> crate::avx2::sched_at(*final(sc), m0, m1, s + 2),
+        step ==> crate::avx2::kw_upto(final(w0)@, m0, 2 * s + 4),
+        step ==> crate::avx2::kw_upto(final(w1)@, m1, 2 * s + 4),
+        !step ==> *final(sc) == *old(sc) && final(w0)@ == old(w0)@ && final(w1)@ == old(w1)@,
+{
+    rounds8_kw(r, wk, t, Ghost(v0), Ghost(m));
+    if step {
+        crate::avx2::sched_steps2(sc, s, w0, w1, Ghost(m0), Ghost(m1));
+    }
+}
+
+/// The 80 rounds from the precomputed schedule `wk`, with `k` pairs of
+/// steps of another schedule (from step `s0`) between the round groups.
+#[cfg(target_arch = "x86_64")]
+#[verifier::spinoff_prover]
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn rounds80_kw_steps(
+    r: &mut Regs,
+    wk: &[u64; 80],
+    Ghost(v0): Ghost<Vars>,
+    Ghost(m): Ghost<Seq<u64>>,
+    sc: &mut crate::avx2::Sched512,
+    s0: usize,
+    k: usize,
+    w0: &mut [u64; 80],
+    w1: &mut [u64; 80],
+    Ghost(m0): Ghost<Seq<u64>>,
+    Ghost(m1): Ghost<Seq<u64>>,
+)
+    requires
+        kw_schedule(wk@, m),
+        old(r).vars() == v0,
+        k <= 10,
+        8 <= s0,
+        s0 + 2 * k <= 40,
+        crate::avx2::sched_at(*old(sc), m0, m1, s0 as int),
+        crate::avx2::kw_upto(old(w0)@, m0, 2 * s0),
+        crate::avx2::kw_upto(old(w1)@, m1, 2 * s0),
+    ensures
+        final(r).vars() == spec::rounds(v0, m, 80),
+        crate::avx2::sched_at(*final(sc), m0, m1, s0 + 2 * k),
+        crate::avx2::kw_upto(final(w0)@, m0, 2 * (s0 + 2 * k)),
+        crate::avx2::kw_upto(final(w1)@, m1, 2 * (s0 + 2 * k)),
+{
+    assert(r.vars() == spec::rounds(v0, m, 0));
+    let sg = if 0 < k { s0 + 0 } else { s0 + 2 * k };
+    group_kw_step(r, wk, 0, Ghost(v0), Ghost(m), sc, sg, 0 < k, w0, w1, Ghost(m0), Ghost(m1));
+    let sg = if 1 < k { s0 + 2 } else { s0 + 2 * k };
+    group_kw_step(r, wk, 8, Ghost(v0), Ghost(m), sc, sg, 1 < k, w0, w1, Ghost(m0), Ghost(m1));
+    let sg = if 2 < k { s0 + 4 } else { s0 + 2 * k };
+    group_kw_step(r, wk, 16, Ghost(v0), Ghost(m), sc, sg, 2 < k, w0, w1, Ghost(m0), Ghost(m1));
+    let sg = if 3 < k { s0 + 6 } else { s0 + 2 * k };
+    group_kw_step(r, wk, 24, Ghost(v0), Ghost(m), sc, sg, 3 < k, w0, w1, Ghost(m0), Ghost(m1));
+    let sg = if 4 < k { s0 + 8 } else { s0 + 2 * k };
+    group_kw_step(r, wk, 32, Ghost(v0), Ghost(m), sc, sg, 4 < k, w0, w1, Ghost(m0), Ghost(m1));
+    let sg = if 5 < k { s0 + 10 } else { s0 + 2 * k };
+    group_kw_step(r, wk, 40, Ghost(v0), Ghost(m), sc, sg, 5 < k, w0, w1, Ghost(m0), Ghost(m1));
+    let sg = if 6 < k { s0 + 12 } else { s0 + 2 * k };
+    group_kw_step(r, wk, 48, Ghost(v0), Ghost(m), sc, sg, 6 < k, w0, w1, Ghost(m0), Ghost(m1));
+    let sg = if 7 < k { s0 + 14 } else { s0 + 2 * k };
+    group_kw_step(r, wk, 56, Ghost(v0), Ghost(m), sc, sg, 7 < k, w0, w1, Ghost(m0), Ghost(m1));
+    let sg = if 8 < k { s0 + 16 } else { s0 + 2 * k };
+    group_kw_step(r, wk, 64, Ghost(v0), Ghost(m), sc, sg, 8 < k, w0, w1, Ghost(m0), Ghost(m1));
+    let sg = if 9 < k { s0 + 18 } else { s0 + 2 * k };
+    group_kw_step(r, wk, 72, Ghost(v0), Ghost(m), sc, sg, 9 < k, w0, w1, Ghost(m0), Ghost(m1));
+}
+
+/// One block's rounds from its precomputed schedule `wk`, with `k` pairs of
+/// steps of another schedule (from step `s0`) between the round groups.
+#[cfg(target_arch = "x86_64")]
+#[verifier::spinoff_prover]
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn block_with_steps(
+    st: &mut [u64; 8],
+    wk: &[u64; 80],
+    Ghost(blk): Ghost<Seq<u8>>,
+    sc: &mut crate::avx2::Sched512,
+    s0: usize,
+    k: usize,
+    w0: &mut [u64; 80],
+    w1: &mut [u64; 80],
+    Ghost(m0): Ghost<Seq<u64>>,
+    Ghost(m1): Ghost<Seq<u64>>,
+)
+    requires
+        kw_schedule(wk@, spec::words(blk)),
+        k <= 10,
+        8 <= s0,
+        s0 + 2 * k <= 40,
+        crate::avx2::sched_at(*old(sc), m0, m1, s0 as int),
+        crate::avx2::kw_upto(old(w0)@, m0, 2 * s0),
+        crate::avx2::kw_upto(old(w1)@, m1, 2 * s0),
+    ensures
+        final(st)@ == spec::compress(old(st)@, blk),
+        crate::avx2::sched_at(*final(sc), m0, m1, s0 + 2 * k),
+        crate::avx2::kw_upto(final(w0)@, m0, 2 * (s0 + 2 * k)),
+        crate::avx2::kw_upto(final(w1)@, m1, 2 * (s0 + 2 * k)),
+{
+    let ghost m = spec::words(blk);
+    let ghost h0 = st@;
+    let ghost v0 = spec::init(h0);
+    let mut r = Regs { a: st[0], b: st[1], c: st[2], d: st[3], e: st[4], f: st[5], g: st[6], h: st[7] };
+    rounds80_kw_steps(&mut r, wk, Ghost(v0), Ghost(m), sc, s0, k, w0, w1, Ghost(m0), Ghost(m1));
+    st[0] = add(r.a, st[0]);
+    st[1] = add(r.b, st[1]);
+    st[2] = add(r.c, st[2]);
+    st[3] = add(r.d, st[3]);
+    st[4] = add(r.e, st[4]);
+    st[5] = add(r.f, st[5]);
+    st[6] = add(r.g, st[6]);
+    st[7] = add(r.h, st[7]);
+    proof {
+        reveal(spec::compress);
+        assert(st@ =~= spec::compress(h0, blk));
+    }
+}
+
+/// `kw_upto` over all 80 words is `kw_schedule`.
+proof fn lemma_kw_all(wk: Seq<u64>, m: Seq<u64>)
+    requires
+        crate::avx2::kw_upto(wk, m, 80),
+    ensures
+        kw_schedule(wk, m),
+{
+}
+
+/// The rounds of blocks `b0` and `b1` from their schedules, and the whole
+/// schedule of the blocks at `o0` and `o1` of `p`, interleaved with them:
+/// 10 pairs of steps during the first block, 6 during the second.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+pub fn pair_kw(
+    st: &mut [u64; 8],
+    cur0: &[u64; 80],
+    cur1: &[u64; 80],
+    Ghost(b0): Ghost<Seq<u8>>,
+    Ghost(b1): Ghost<Seq<u8>>,
+    p: &[u8],
+    o0: usize,
+    o1: usize,
+    nxt0: &mut [u64; 80],
+    nxt1: &mut [u64; 80],
+)
+    requires
+        kw_schedule(cur0@, spec::words(b0)),
+        kw_schedule(cur1@, spec::words(b1)),
+        o0 + 128 <= p@.len(),
+        o1 + 128 <= p@.len(),
+    ensures
+        final(st)@ == spec::compress(spec::compress(old(st)@, b0), b1),
+        kw_schedule(final(nxt0)@, spec::words(p@.subrange(o0 as int, o0 + 128))),
+        kw_schedule(final(nxt1)@, spec::words(p@.subrange(o1 as int, o1 + 128))),
+{
+    let ghost m0 = spec::words(p@.subrange(o0 as int, o0 + 128));
+    let ghost m1 = spec::words(p@.subrange(o1 as int, o1 + 128));
+    let mut sc = crate::avx2::sched_start(p, o0, o1, nxt0, nxt1);
+    block_with_steps(st, cur0, Ghost(b0), &mut sc, 8, 10, nxt0, nxt1, Ghost(m0), Ghost(m1));
+    block_with_steps(st, cur1, Ghost(b1), &mut sc, 28, 6, nxt0, nxt1, Ghost(m0), Ghost(m1));
+    proof {
+        lemma_kw_all(nxt0@, m0);
+        lemma_kw_all(nxt1@, m1);
+    }
+}
+
+/// H(n) from H(0) = `st` over the whole blocks of `p`, pipelined: each pair
+/// of blocks is compressed (by `cpu::pair_avx2`, which is [`pair_kw`]
+/// compiled with AVX2) while the next pair's schedule is computed. To be
+/// called only where the CPU has AVX2.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+pub fn compress_blocks_pipe(st: &mut [u64; 8], p: &[u8])
+    ensures
+        final(st)@ == spec::hash_blocks(old(st)@, p@, (p@.len() / 128) as nat),
+{
+    let n = p.len() / 128;
+    if n < 4 {
+        compress_blocks_x2(st, p);
+        return;
+    }
+    let ghost h0 = st@;
+    let mut a0 = [0u64; 80];
+    let mut a1 = [0u64; 80];
+    let mut c0 = [0u64; 80];
+    let mut c1 = [0u64; 80];
+    crate::avx2::schedule512x2(p, 0, 128, &mut a0, &mut a1);
+    let mut i: usize = 0;
+    let mut in_a = true;
+    // Blocks i and i + 1 are scheduled, in a0/a1 or c0/c1.
+    while i + 4 <= n
+        invariant
+            n == p@.len() / 128,
+            p@.len() <= usize::MAX,
+            i + 2 <= n,
+            st@ == spec::hash_blocks(h0, p@, i as nat),
+            in_a ==> kw_schedule(a0@, spec::words(spec::block(p@, i as int))),
+            in_a ==> kw_schedule(a1@, spec::words(spec::block(p@, i + 1))),
+            !in_a ==> kw_schedule(c0@, spec::words(spec::block(p@, i as int))),
+            !in_a ==> kw_schedule(c1@, spec::words(spec::block(p@, i + 1))),
+        decreases n - i,
+    {
+        let ghost b0 = spec::block(p@, i as int);
+        let ghost b1 = spec::block(p@, i + 1);
+        if in_a {
+            crate::cpu::pair_avx2(st, &a0, &a1, Ghost(b0), Ghost(b1), p, 128 * (i + 2), 128 * (i + 3), &mut c0, &mut c1);
+        } else {
+            crate::cpu::pair_avx2(st, &c0, &c1, Ghost(b0), Ghost(b1), p, 128 * (i + 2), 128 * (i + 3), &mut a0, &mut a1);
+        }
+        assert(spec::hash_blocks(h0, p@, (i + 1) as nat) == spec::compress(spec::hash_blocks(h0, p@, i as nat), b0));
+        assert(st@ == spec::hash_blocks(h0, p@, (i + 2) as nat));
+        in_a = !in_a;
+        i = i + 2;
+    }
+    // The last scheduled pair.
+    let ghost b0 = spec::block(p@, i as int);
+    let ghost b1 = spec::block(p@, i + 1);
+    if in_a {
+        compress_block_kw(st, &a0, Ghost(b0));
+        compress_block_kw(st, &a1, Ghost(b1));
+    } else {
+        compress_block_kw(st, &c0, Ghost(b0));
+        compress_block_kw(st, &c1, Ghost(b1));
+    }
+    assert(spec::hash_blocks(h0, p@, (i + 1) as nat) == spec::compress(spec::hash_blocks(h0, p@, i as nat), b0));
+    assert(st@ == spec::hash_blocks(h0, p@, (i + 2) as nat));
+    i = i + 2;
+    if i < n {
+        compress_block(st, p, 128 * i);
+        assert(st@ == spec::hash_blocks(h0, p@, (i + 1) as nat));
+    }
+}
+
 } // verus!

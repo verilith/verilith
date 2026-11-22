@@ -1,6 +1,14 @@
 //! The SHA-512 message schedule with AVX2, two blocks at once (part of the
 //! trusted base).
 //!
+//! Two forms. [`schedule512x2`] computes a pair's whole schedule. The
+//! pipelined form, [`sched_start`] and [`sched_steps2`], computes it a few
+//! words at a time, so that the verified rounds of one pair can run with
+//! the next pair's schedule interleaved: the vector work then fills the
+//! ports the rounds' dependency chains leave idle, as in OpenSSL. Its
+//! state, [`Sched512`], is opaque to the proofs; what they rely on is each
+//! function's `ensures` about the words written.
+//!
 //! [`schedule512x2`] computes K_t + W_t for t = 0..80 for two blocks, as
 //! OpenSSL's `sha512_block_data_order_avx2` does: a 256-bit vector holds
 //! W_t and W_{t+1} of the first block in its low half and of the second
@@ -34,6 +42,74 @@ pub fn schedule512x2(p: &[u8], o0: usize, o1: usize, w0: &mut [u64; 80], w1: &mu
     // SAFETY: both blocks are inside `p` (checked above); the caller has
     // checked that the CPU has AVX2.
     unsafe { imp::schedule512x2(p.as_ptr().add(o0), p.as_ptr().add(o1), w0, w1) }
+}
+
+/// A pair's schedule part way: the last 16 words of each block, in
+/// vectors. Opaque to the proofs.
+#[verifier::external_body]
+pub struct Sched512 {
+    x: [core::arch::x86_64::__m256i; 8],
+}
+
+/// `st` holds the schedule of block words `m0` and `m1` up to step `s`
+/// (words `2s - 16` to `2s`).
+pub uninterp spec fn sched_at(st: Sched512, m0: Seq<u64>, m1: Seq<u64>, s: int) -> bool;
+
+/// `wk[i]` is K_i + W_i of block words `m`, for every `i < n`.
+pub open spec fn kw_upto(wk: Seq<u64>, m: Seq<u64>, n: int) -> bool {
+    forall|i: int| 0 <= i < n ==> wk[i] == #[trigger] spec::add(K[i], spec::schedule(m, i))
+}
+
+/// Starts the schedule of the blocks at `o0` and `o1`: their first 16 words.
+#[verifier::external_body]
+#[inline(always)]
+pub fn sched_start(p: &[u8], o0: usize, o1: usize, w0: &mut [u64; 80], w1: &mut [u64; 80]) -> (r: Sched512)
+    requires
+        o0 + 128 <= p@.len(),
+        o1 + 128 <= p@.len(),
+    ensures
+        sched_at(
+            r,
+            spec::words(p@.subrange(o0 as int, o0 + 128)),
+            spec::words(p@.subrange(o1 as int, o1 + 128)),
+            8,
+        ),
+        kw_upto(final(w0)@, spec::words(p@.subrange(o0 as int, o0 + 128)), 16),
+        kw_upto(final(w1)@, spec::words(p@.subrange(o1 as int, o1 + 128)), 16),
+{
+    assert!(o0 + 128 <= p.len() && o1 + 128 <= p.len());
+    // SAFETY: both blocks are inside `p`; the caller has checked AVX2.
+    unsafe { Sched512 { x: imp::start(p.as_ptr().add(o0), p.as_ptr().add(o1), w0, w1) } }
+}
+
+/// Steps `s` and `s + 1`: words `2s` to `2s + 4` of both blocks.
+#[verifier::external_body]
+#[inline(always)]
+pub fn sched_steps2(
+    st: &mut Sched512,
+    s: usize,
+    w0: &mut [u64; 80],
+    w1: &mut [u64; 80],
+    Ghost(m0): Ghost<Seq<u64>>,
+    Ghost(m1): Ghost<Seq<u64>>,
+)
+    requires
+        8 <= s,
+        s + 2 <= 40,
+        sched_at(*old(st), m0, m1, s as int),
+        kw_upto(old(w0)@, m0, 2 * s),
+        kw_upto(old(w1)@, m1, 2 * s),
+    ensures
+        sched_at(*final(st), m0, m1, s + 2),
+        kw_upto(final(w0)@, m0, 2 * s + 4),
+        kw_upto(final(w1)@, m1, 2 * s + 4),
+{
+    assert!((8..=38).contains(&s));
+    // SAFETY: the caller has checked AVX2.
+    unsafe {
+        imp::step(&mut st.x, s, w0, w1);
+        imp::step(&mut st.x, s + 1, w0, w1);
+    }
 }
 
 } // verus!
@@ -79,6 +155,47 @@ mod imp {
         let kw = _mm256_add_epi64(x, _mm256_loadu_si256(KK.as_ptr().add(4 * s) as *const __m256i));
         _mm_storeu_si128(w0.as_mut_ptr().add(2 * s) as *mut __m128i, _mm256_castsi256_si128(kw));
         _mm_storeu_si128(w1.as_mut_ptr().add(2 * s) as *mut __m128i, _mm256_extracti128_si256::<1>(kw));
+    }
+
+    #[inline(always)]
+    unsafe fn bswap() -> __m256i {
+        _mm256_setr_epi8(
+            7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8, //
+            7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8,
+        )
+    }
+
+    /// The first 16 words of both blocks, stored and returned as vectors.
+    #[inline(always)]
+    pub unsafe fn start(b0: *const u8, b1: *const u8, w0: &mut [u64; 80], w1: &mut [u64; 80]) -> [__m256i; 8] {
+        let mut x = [_mm256_setzero_si256(); 8];
+        for (s, v) in x.iter_mut().enumerate() {
+            let lo = _mm_loadu_si128(b0.add(16 * s) as *const __m128i);
+            let hi = _mm_loadu_si128(b1.add(16 * s) as *const __m128i);
+            *v = _mm256_shuffle_epi8(_mm256_set_m128i(hi, lo), bswap());
+            store(*v, s, w0, w1);
+        }
+        x
+    }
+
+    /// Step `s` (8 <= s < 40): W_{2s} and W_{2s+1} of both blocks, over
+    /// the window `x`, in which `x[s % 8]` is W_{2s-16}, W_{2s-15}.
+    #[target_feature(enable = "avx2")]
+    #[inline]
+    pub unsafe fn step(x: &mut [__m256i; 8], s: usize, w0: &mut [u64; 80], w1: &mut [u64; 80]) {
+        let w15 = _mm256_alignr_epi8::<8>(x[(s + 1) % 8], x[s % 8]);
+        let w7 = _mm256_alignr_epi8::<8>(x[(s + 5) % 8], x[(s + 4) % 8]);
+        let mut v = _mm256_add_epi64(
+            _mm256_add_epi64(sigma1(x[(s + 7) % 8]), w7),
+            _mm256_add_epi64(sigma0(w15), x[s % 8]),
+        );
+        // An empty asm that the step's result passes through, and that is
+        // ordered with memory: it keeps each step between the round groups
+        // it was placed between. Without it LLVM hoists every step to the
+        // top of the pair, and the interleaving is lost.
+        core::arch::asm!("/* {0} */", inout(ymm_reg) v, options(nostack, preserves_flags));
+        x[s % 8] = v;
+        store(v, s, w0, w1);
     }
 
     /// `b0` and `b1` each point at 128 readable bytes; the CPU has AVX2.
