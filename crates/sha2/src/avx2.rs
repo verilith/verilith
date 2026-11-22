@@ -24,9 +24,6 @@ use crate::spec512 as spec;
 
 verus! {
 
-#[cfg(verus_only)]
-use crate::spec512::K;
-
 /// K_t + W_t for the 128-byte blocks at `o0` and `o1` of `p`.
 #[verifier::external_body]
 #[inline(always)]
@@ -55,11 +52,6 @@ pub struct Sched512 {
 /// (words `2s - 16` to `2s`).
 pub uninterp spec fn sched_at(st: Sched512, m0: Seq<u64>, m1: Seq<u64>, s: int) -> bool;
 
-/// `wk[i]` is K_i + W_i of block words `m`, for every `i < n`.
-pub open spec fn kw_upto(wk: Seq<u64>, m: Seq<u64>, n: int) -> bool {
-    forall|i: int| 0 <= i < n ==> wk[i] == #[trigger] spec::add(K[i], spec::schedule(m, i))
-}
-
 /// Starts the schedule of the blocks at `o0` and `o1`: their first 16 words.
 #[verifier::external_body]
 #[inline(always)]
@@ -74,8 +66,8 @@ pub fn sched_start(p: &[u8], o0: usize, o1: usize, w0: &mut [u64; 80], w1: &mut 
             spec::words(p@.subrange(o1 as int, o1 + 128)),
             8,
         ),
-        kw_upto(final(w0)@, spec::words(p@.subrange(o0 as int, o0 + 128)), 16),
-        kw_upto(final(w1)@, spec::words(p@.subrange(o1 as int, o1 + 128)), 16),
+        crate::compress512::kw_upto(final(w0)@, spec::words(p@.subrange(o0 as int, o0 + 128)), 16),
+        crate::compress512::kw_upto(final(w1)@, spec::words(p@.subrange(o1 as int, o1 + 128)), 16),
 {
     assert!(o0 + 128 <= p.len() && o1 + 128 <= p.len());
     // SAFETY: both blocks are inside `p`; the caller has checked AVX2.
@@ -97,12 +89,12 @@ pub fn sched_steps2(
         8 <= s,
         s + 2 <= 40,
         sched_at(*old(st), m0, m1, s as int),
-        kw_upto(old(w0)@, m0, 2 * s),
-        kw_upto(old(w1)@, m1, 2 * s),
+        crate::compress512::kw_upto(old(w0)@, m0, 2 * s),
+        crate::compress512::kw_upto(old(w1)@, m1, 2 * s),
     ensures
         sched_at(*final(st), m0, m1, s + 2),
-        kw_upto(final(w0)@, m0, 2 * s + 4),
-        kw_upto(final(w1)@, m1, 2 * s + 4),
+        crate::compress512::kw_upto(final(w0)@, m0, 2 * s + 4),
+        crate::compress512::kw_upto(final(w1)@, m1, 2 * s + 4),
 {
     assert!((8..=38).contains(&s));
     // SAFETY: the caller has checked AVX2.
@@ -126,12 +118,6 @@ pub struct Sched256 {
 /// `s` (words `4s - 16` to `4s`).
 pub uninterp spec fn sched256_at(st: Sched256, m0: Seq<u32>, m1: Seq<u32>, s: int) -> bool;
 
-/// `wk[i]` is K_i + W_i of SHA-256 block words `m`, for every `i < n`.
-pub open spec fn kw256_upto(wk: Seq<u32>, m: Seq<u32>, n: int) -> bool {
-    forall|i: int|
-        0 <= i < n ==> wk[i] == #[trigger] crate::spec::add(crate::spec::K[i], crate::spec::schedule(m, i))
-}
-
 /// The whole SHA-256 schedule of the 64-byte blocks at `o0` and `o1`.
 #[verifier::external_body]
 #[inline(always)]
@@ -140,8 +126,8 @@ pub fn schedule256x2(p: &[u8], o0: usize, o1: usize, w0: &mut [u32; 64], w1: &mu
         o0 + 64 <= p@.len(),
         o1 + 64 <= p@.len(),
     ensures
-        kw256_upto(final(w0)@, crate::spec::words(p@.subrange(o0 as int, o0 + 64)), 64),
-        kw256_upto(final(w1)@, crate::spec::words(p@.subrange(o1 as int, o1 + 64)), 64),
+        crate::compress::kw256_upto(final(w0)@, crate::spec::words(p@.subrange(o0 as int, o0 + 64)), 64),
+        crate::compress::kw256_upto(final(w1)@, crate::spec::words(p@.subrange(o1 as int, o1 + 64)), 64),
 {
     assert!(o0 + 64 <= p.len() && o1 + 64 <= p.len());
     // SAFETY: both blocks are inside `p`; the caller has checked AVX2.
@@ -162,8 +148,8 @@ pub fn sched256_start(p: &[u8], o0: usize, o1: usize, w0: &mut [u32; 64], w1: &m
             crate::spec::words(p@.subrange(o1 as int, o1 + 64)),
             4,
         ),
-        kw256_upto(final(w0)@, crate::spec::words(p@.subrange(o0 as int, o0 + 64)), 16),
-        kw256_upto(final(w1)@, crate::spec::words(p@.subrange(o1 as int, o1 + 64)), 16),
+        crate::compress::kw256_upto(final(w0)@, crate::spec::words(p@.subrange(o0 as int, o0 + 64)), 16),
+        crate::compress::kw256_upto(final(w1)@, crate::spec::words(p@.subrange(o1 as int, o1 + 64)), 16),
 {
     assert!(o0 + 64 <= p.len() && o1 + 64 <= p.len());
     // SAFETY: both blocks are inside `p`; the caller has checked AVX2.
@@ -184,12 +170,12 @@ pub fn sched256_step(
     requires
         4 <= s < 16,
         sched256_at(*old(st), m0, m1, s as int),
-        kw256_upto(old(w0)@, m0, 4 * s),
-        kw256_upto(old(w1)@, m1, 4 * s),
+        crate::compress::kw256_upto(old(w0)@, m0, 4 * s),
+        crate::compress::kw256_upto(old(w1)@, m1, 4 * s),
     ensures
         sched256_at(*final(st), m0, m1, s + 1),
-        kw256_upto(final(w0)@, m0, 4 * s + 4),
-        kw256_upto(final(w1)@, m1, 4 * s + 4),
+        crate::compress::kw256_upto(final(w0)@, m0, 4 * s + 4),
+        crate::compress::kw256_upto(final(w1)@, m1, 4 * s + 4),
 {
     assert!((4..16).contains(&s));
     // SAFETY: the caller has checked AVX2.
