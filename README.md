@@ -126,7 +126,7 @@ Each library is measured against the one it replaces by the harness in
   original through its own best API. This is the speed after porting the
   calling code.
 
-The table is one run of `bench/run.sh --skip-node` at commit `b0c1452` on
+The table is one run of `bench/run.sh` at commit `bcfd98c` (2026-11-22) on
 an Apple M3 Pro laptop (macOS, Apple clang, both sides built from source
 with the same compiler and flags). Speedup is the original's time divided
 by ours, as the geometric mean over the comparison's cases, so above 1.00x
@@ -134,42 +134,46 @@ ours is faster and below it the original is.
 
 | Comparison | Kind | Original | Speedup |
 |---|---|---|---:|
-| zlib-inflate | drop-in | zlib 1.3.2 | 2.089x |
-| zlib-deflate (levels 1, 6, 9) | drop-in | zlib 1.3.2 | 1.548x |
-| brotli-decode | drop-in | brotli 1.2.0 | 0.952x |
-| lz4-decompress | drop-in | lz4 1.10.0 | 0.907x |
-| lz4-compress | drop-in | lz4 1.10.0 | 0.961x |
-| lz4-frame-decompress | drop-in | lz4 1.10.0 | 0.936x |
-| lz4-frame-compress | drop-in | lz4 1.10.0 | 0.941x |
-| snappy-uncompress | drop-in | snappy 1.2.2 | 0.928x |
-| snappy-validate | drop-in | snappy 1.2.2 | 0.974x |
-| snappy-compress | drop-in | snappy 1.2.2 | 0.914x |
-| archive-read | drop-in | libarchive 3.8.9 | 4.366x |
-| dns-parse | drop-in | c-ares | 1.231x |
-| dns-write | drop-in | c-ares | 1.158x |
-| dns-read | drop-in | c-ares | 1.22x |
-| dns-native | native | c-ares | 14.44x |
-| http-llhttp | drop-in | llhttp 9.4.3 | 1.170x |
-| http-llhttp-native | native | llhttp 9.4.3 | 2.07x |
-| http-pico | drop-in | picohttpparser | 1.353x |
-| http-pico-native | native | picohttpparser | 1.49x |
-| url-ada | drop-in | ada 3.4.4 | 1.545x |
-| json-cjson-parse | drop-in | cJSON 1.7.19 | 1.316x |
-| json-cjson-print | drop-in | cJSON 1.7.19 | 1.547x |
-| json-cjson-native | native | cJSON 1.7.19 | 6.47x |
-| json-simdjson | native | simdjson 5.1.1 (DOM) | 1.066x |
-| x509-mbedtls | drop-in | mbedTLS 3.6.4 | 1.001x |
-| x509-mbedtls-read | drop-in | mbedTLS 3.6.4 | 0.98x |
-| x509-mbedtls-native | native | mbedTLS 3.6.4 | 3.16x |
-| x509-verdict | native | Verdict | 32.679x |
-| png-libpng | native | libpng 1.6.59 | 1.407x |
-| webp-lossless | drop-in | libwebp 1.6.0 | 1.104x |
-| webp-lossy | drop-in | libwebp 1.6.0 | 0.970x |
-| jpeg-baseline | drop-in | libjpeg-turbo 3.1.2 | 0.956x |
-| jpeg-progressive | drop-in | libjpeg-turbo 3.1.2 | 0.953x |
-| jpeg-444 | drop-in | libjpeg-turbo 3.1.2 | 0.946x |
-| font-sanitize | drop-in | OTS | 1.183x |
-| regex-re2 | drop-in | RE2 2025-11-05 | 5.308x |
+| zlib-inflate | drop-in | zlib 1.4 | 2.00x |
+| zlib-deflate (levels 1, 6, 9) | drop-in | zlib 1.4 | 1.53x |
+| brotli-decode | drop-in | brotli 1.2.1 | 0.95x |
+| lz4-decompress | drop-in | lz4 1.11.1 | 1.10x |
+| lz4-compress | drop-in | lz4 1.11.1 | 0.97x |
+| lz4-frame-decompress | drop-in | lz4 1.11.1 | 1.09x |
+| lz4-frame-compress | drop-in | lz4 1.11.1 | 0.94x |
+| snappy-uncompress | drop-in | snappy 1.3.1 | 0.93x |
+| snappy-validate | drop-in | snappy 1.3.1 | 0.97x |
+| snappy-compress | drop-in | snappy 1.3.1 | 0.91x |
+| archive-read | drop-in | libarchive 3.8.11 | 4.06x |
+| dns-parse | drop-in | c-ares | 1.25x |
+| dns-write | drop-in | c-ares | 1.17x |
+| dns-read | drop-in | c-ares | 1.23x |
+| dns-native | native | c-ares | 14.33x |
+| http-llhttp | drop-in | llhttp 9.4.4 | 1.17x |
+| http-llhttp-native | native | llhttp 9.4.4 | 2.05x |
+| http-pico | drop-in | picohttpparser | 1.33x |
+| http-pico-native | native | picohttpparser | 1.48x |
+| url-ada | drop-in | ada 4.1.1 | 0.82x |
+| json-cjson-parse | drop-in | cJSON 1.7.19 | 1.31x |
+| json-cjson-print | drop-in | cJSON 1.7.19 | 1.56x |
+| json-cjson-native | native | cJSON 1.7.19 | 6.66x |
+| json-simdjson | native | simdjson 5.2.0 (DOM) | 1.07x |
+| xml-expat-read | native | expat 2.10.0 | 1.35x |
+| xml-expat-check | native | expat 2.10.0 | 2.23x |
+| xml-libxml2-read | native | libxml2 2.15.4 | 1.14x |
+| xml-libxml2-check | native | libxml2 2.15.4 | 1.72x |
+| x509-mbedtls | drop-in | mbedTLS 4.3.0 | 1.02x |
+| x509-mbedtls-read | drop-in | mbedTLS 4.3.0 | 1.01x |
+| x509-mbedtls-native | native | mbedTLS 4.3.0 | 4.43x |
+| x509-verdict | native | Verdict | 32.15x |
+| png-libpng | native | libpng 1.6.59 | 1.41x |
+| webp-lossless | drop-in | libwebp 1.6.0 | 1.08x |
+| webp-lossy | drop-in | libwebp 1.6.0 | 0.98x |
+| jpeg-baseline | drop-in | libjpeg-turbo 3.2.1 | 0.91x |
+| jpeg-progressive | drop-in | libjpeg-turbo 3.2.1 | 0.95x |
+| jpeg-444 | drop-in | libjpeg-turbo 3.2.1 | 0.97x |
+| font-sanitize | drop-in | OTS | 1.19x |
+| regex-re2 | drop-in | RE2 2025-11-05 | 5.70x |
 
 How to read it:
 
@@ -183,8 +187,21 @@ How to read it:
   bound for that reason.
 - **archive-read** does not compare equal work: verilith-archive checks the
   whole archive when it is opened, where libarchive streams.
-- **The code has moved since.** `main` is past `b0c1452`; the regex matcher
-  in particular has changed.
+- **url-ada is now below 1.00x.** The previous run measured 1.55x against
+  ada 3.4.4; against ada 4.1.1 vurl is slower: it runs 28 to 32% more
+  instructions per URL, with the same results on both sides. The
+  [crate's own measurement](crates/url#speed) against ada 4.0.0 on x86
+  shows the same direction (0.92x).
+- **x509 rows come from a second run** of `bench/run.sh --only x509` on
+  the same machine, after a fix to the bench script's mbedTLS 4 build (a
+  missing Python module); the library code is the same.
+- **Inside Node.js.** Node 26.13.1 built with verilith-http, -url, -json,
+  -dns and -zlib in place of llhttp, ada, simdjson, c-ares and zlib runs
+  Node's own URL, HTTP-parser and zlib benchmarks at 0.50x to 1.64x of the
+  official build. The HTTP parser is 1.02x to 1.03x and inflate 1.01x;
+  `URL.canParse` on long, `ws:` and dotted URLs (0.50x to 0.60x) and
+  `deflate` (0.83x) are the slowest cases. Every row is in the run's
+  `report.md` ([Node.js](bench#nodejs)).
 
 **How it is measured.** For each case both libraries run as long-lived
 processes. After a warm-up, the harness takes 31 timed samples of each,

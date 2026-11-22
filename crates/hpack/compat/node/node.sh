@@ -20,20 +20,21 @@
 # together), built with fat LTO, which makes it one object carrying its own
 # copy of the Rust standard library. Two such libraries cannot be linked
 # into one binary. Node 26 links a Rust library of its own (deps/crates), so
-# for a checkout that has one, this library is built without LTO: then each
-# std symbol is an archive member the linker takes once, from whichever
-# library comes first (both must be built by the same rustc). Originals are
-# kept as *.orig.
+# for a checkout that has one, this library goes through
+# scripts/rust-prelink.sh, which leaves only its C API global. (Building it
+# without LTO instead links on Linux but not with macOS's ld64.) Originals
+# are kept as *.orig.
 set -euo pipefail
 node=$(cd "$1" && pwd)
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 
-if [ -d "$node/deps/crates" ]; then
-    export CARGO_PROFILE_RELEASE_LTO=off CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
-fi
 cargo build --release -q --manifest-path "$here/Cargo.toml"
 lib="$here/target/release/libvnode.a"
+if [ -d "$node/deps/crates" ]; then
+    "$root/../../scripts/rust-prelink.sh" "$lib" "$here/target/release/libvnode-prelinked.a"
+    lib="$here/target/release/libvnode-prelinked.a"
+fi
 
 # nghttp2: the inflater on vhpack.
 python3 "$root/compat/nghttp2/patch.py" "$node/deps/nghttp2/lib"
