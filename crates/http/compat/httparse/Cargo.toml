@@ -1,0 +1,19 @@
+[package]
+name = "httparse"
+# A version hyper and other httparse users accept, so this crate can stand
+# in for httparse through `[patch.crates-io]`.
+version = "1.10.1"
+edition = "2021"
+description = "The httparse API on vhttp, the formally verified HTTP/1.1 parser"
+license = "MIT"
+publish = false
+
+[dependencies]
+verilith-http = { path = "../.." }
+
+[features]
+default = ["std"]
+std = []
+
+# Its own project, outside the verilith workspace.
+[workspace]

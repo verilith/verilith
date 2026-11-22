@@ -1,0 +1,216 @@
+name: CI
+
+# Verifies and tests the crates a change touches: a crate whose files
+# changed, and every crate that depends on it. A change to the workspace
+# itself (root Cargo.toml, Cargo.lock, scripts/, .github/) runs everything.
+#
+# What runs for a crate lives with the crate: scripts/verify.sh (Verus) and
+# ci.sh (tests, C API checks, comparisons with the original library).
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      crates:
+        description: "Crates to run, space separated (directories under crates/), or 'all'"
+        default: all
+      macos:
+        description: Also verify on macOS (Apple Silicon)
+        type: boolean
+        default: true
+      fuzz:
+        description: Also run the fuzzers
+        type: boolean
+        default: false
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Which crates
+    runs-on: ubuntu-latest
+    outputs:
+      verify: ${{ steps.plan.outputs.verify }}
+      test: ${{ steps.plan.outputs.test }}
+      arm: ${{ steps.plan.outputs.arm }}
+      fuzz: ${{ steps.plan.outputs.fuzz }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BASE: ${{ github.event.before }}
+          CRATES: ${{ inputs.crates }}
+        run: |
+          case "$EVENT" in
+            pull_request) base=$(git merge-base "$PR_BASE" HEAD) ;;
+            push) base=$PUSH_BASE ;;
+            *) base=all ;;
+          esac
+          # A first push, or a base that is not in the clone: run everything.
+          if [ "$base" != all ] && ! git cat-file -e "$base^{commit}" 2>/dev/null; then base=all; fi
+          plan=$(python3 scripts/affected.py "$base")
+          if [ "$EVENT" = workflow_dispatch ] && [ "${CRATES:-all}" != all ]; then
+            plan=$(echo "$plan" | python3 -c '
+          import json, sys
+          want = set(sys.argv[1].split())
+          print(json.dumps({k: [c for c in v if c in want] for k, v in json.load(sys.stdin).items()}))' "$CRATES")
+          fi
+          echo "$plan"
+          for k in verify test arm; do
+            echo "$k=$(echo "$plan" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['$k']))")" >> "$GITHUB_OUTPUT"
+          done
+          # Crates whose ci.sh has a fuzz mode.
+          fuzz=$(echo "$plan" | python3 -c '
+          import json, sys
+          print(json.dumps([c for c in json.load(sys.stdin)["test"] if "\nfuzz() {" in open(f"crates/{c}/ci.sh").read()]))')
+          echo "fuzz=$fuzz" >> "$GITHUB_OUTPUT"
+
+  # Builds Verus once and caches it, so the verify jobs below start from the
+  # cache instead of each building it.
+  verus:
+    name: Verus
+    needs: plan
+    if: needs.plan.outputs.verify != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/verus
+
+  verify:
+    name: Verify ${{ matrix.crate }}
+    needs: [plan, verus]
+    if: needs.plan.outputs.verify != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: ${{ fromJSON(needs.plan.outputs.verify) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/verus
+      - name: Verify
+        # focus: the crates this one depends on are compiled, not verified
+        # again. Each has its own job whenever it changes.
+        run: VERUS_CMD=focus scripts/verify.sh ${{ matrix.crate }}
+      - name: Log
+        if: failure()
+        run: cat target/verify/${{ matrix.crate }}.log
+
+  verus-macos:
+    name: Verus (macOS)
+    needs: plan
+    if: >-
+      needs.plan.outputs.verify != '[]' &&
+      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.macos))
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/verus
+
+  verify-macos:
+    # Apple Silicon: the non-x86 paths (the SIMD crate's x86 emulation specs,
+    # the NEON kernels) are verified here. Not on pull requests: macOS
+    # minutes cost ten times Linux ones.
+    name: Verify ${{ matrix.crate }} (macOS)
+    needs: [plan, verus-macos]
+    if: >-
+      needs.plan.outputs.verify != '[]' &&
+      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.macos))
+    runs-on: macos-14
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: ${{ fromJSON(needs.plan.outputs.verify) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/verus
+      - name: Verify
+        run: VERUS_CMD=focus scripts/verify.sh ${{ matrix.crate }}
+      - name: Log
+        if: failure()
+        run: cat target/verify/${{ matrix.crate }}.log
+
+  test:
+    name: Test ${{ matrix.crate }}
+    needs: plan
+    if: needs.plan.outputs.test != '[]'
+    # A fixed image: the tests compare against the system's libraries (text
+    # against ICU 74), so the image's versions are part of the test.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: ${{ fromJSON(needs.plan.outputs.test) }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tests
+        run: crates/${{ matrix.crate }}/ci.sh
+      - name: mbedTLS's test suites (x509)
+        if: matrix.crate == 'x509'
+        run: crates/x509/ci.sh mbedtls
+      - name: Tests under Miri (sync)
+        if: matrix.crate == 'sync'
+        run: crates/sync/ci.sh miri
+      - name: Compare with wasmi (wasm)
+        if: matrix.crate == 'wasm'
+        run: crates/wasm/ci.sh differential
+
+  test-arm:
+    # The portable (non-x86) paths build and pass their tests on Arm.
+    name: Test ${{ matrix.crate }} (Arm)
+    needs: plan
+    if: needs.plan.outputs.arm != '[]'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: ${{ fromJSON(needs.plan.outputs.arm) }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tests
+        run: crates/${{ matrix.crate }}/ci.sh
+
+  fuzz:
+    name: Fuzz ${{ matrix.crate }}
+    needs: plan
+    if: github.event_name == 'workflow_dispatch' && inputs.fuzz && needs.plan.outputs.fuzz != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: ${{ fromJSON(needs.plan.outputs.fuzz) }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Fuzz
+        run: crates/${{ matrix.crate }}/ci.sh fuzz
+
+  # One check to require in branch protection, whatever the matrix was.
+  done:
+    name: CI
+    if: always()
+    needs: [plan, verus, verify, test, test-arm]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          case " $RESULTS " in *" failure "*|*" cancelled "*) exit 1 ;; esac

@@ -1,0 +1,9 @@
+target/
+.verus-solver-log/
+*.smt2
+Cargo.lock.bak
+__pycache__/
+# Only the workspace's lockfile is kept. The separate projects under
+# bench/ and each crate's bench/, fuzz/ and compat/ resolve their own.
+Cargo.lock
+!/Cargo.lock

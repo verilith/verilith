@@ -1,0 +1,31 @@
+# pattern TAB text
+a(b*)c	xabbbcx
+(a*)*	b
+(a*)+	b
+(a|ab)(c|bcd)(d*)	abcd
+(?i)straSSe	STRASSE
+\b\w+\b	  h\xc3\xa9llo w\xc3\xb6rld
+(a?(()|b))*	ab
+(|a)*	a
+(|a)+	a
+x*	\xc3\xa9
+\B	a\xc3\xa9
+(a+)(b+)?	aab
+[^a-c]{2,3}?	xyzw
+(?i)k	\xe2\x84\xaa
+a**	a
+a{,2}	a{,2}
+\Qa.b\E+	a.bbb
+(?P<n>a)(?<m>b)	ab
+[[:^alpha:][:digit:]]+	ab12!
+\pN+	x\xd9\xa3\xd9\xa4
+(?U)a+	aaa
+(?U)a+?	aaa
+(a|b)*?c	abac
+$^	
+(?m)^b$	a\nb\nc
+\x{10FFFF}	\xf4\x8f\xbf\xbf
+\101\x41	AA
+a{1001}	a
+(a{10}){101}	a
+((a{10}){10}){10}	a

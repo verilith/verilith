@@ -1,0 +1,22 @@
+[package]
+name = "vnode"
+version = "0.1.0"
+edition = "2021"
+description = "vhpack and vhttp in one static library for Node.js (two Rust static libraries cannot be linked into one binary)"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+path = "src/lib.rs"
+
+[dependencies]
+verilith-hpack = { path = "../.." }
+verilith-http = { path = "../../../http", features = ["llhttp-lenient"] }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+[workspace]

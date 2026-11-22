@@ -1,0 +1,15 @@
+[package]
+name = "vzstd-bench"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[dependencies]
+verilith-zstd = { path = ".." }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+debug = true
+
+[workspace]

@@ -1,0 +1,22 @@
+[package]
+name = "vhttp-undici"
+version = "0.1.0"
+edition = "2021"
+description = "vhttp as undici's llhttp.wasm: the Rust half (the parser and malloc/free)"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+path = "src/lib.rs"
+
+[dependencies]
+verilith-http = { path = "../..", features = ["llhttp-abi"] }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+opt-level = 3
+
+[workspace]

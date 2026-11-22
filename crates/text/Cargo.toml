@@ -1,0 +1,40 @@
+[package]
+name = "verilith-text"
+version = "0.1.0"
+license = "MIT AND Unicode-3.0"
+description = "Formally verified (Verus) text encodings and Unicode: base64, hex, percent-encoding, Unicode normalization and IDNA (UTS #46)"
+edition = "2021"
+repository = "https://github.com/verilith/verilith"
+keywords = ["verified", "verus", "base64", "unicode", "idna"]
+categories = ["encoding", "text-processing"]
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[features]
+# Export the C API under ICU's own names as well as vtext_*.
+icu-abi = []
+
+[dependencies]
+vstd = { workspace = true, features = ["std"] }
+verilith-core = { path = "../core", version = "0.1.0" }
+verilith-simd = { path = "../simd", version = "0.1.0" }
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(verus_only)',
+] }
+
+[dev-dependencies]
+base64 = "0.22"
+hex = "0.4"
+percent-encoding = "2"
+rand = "0.8"
+unicode-normalization = "=0.1.26"
+icu_normalizer = "2.1"
+idna = "1"
+serde_json = "1"
+

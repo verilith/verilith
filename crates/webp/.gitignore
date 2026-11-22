@@ -1,0 +1,5 @@
+/difftest/diff
+/difftest/fuzz_diff
+/difftest/bench
+/difftest/cve_demo
+/difftest/cve_demo_asan

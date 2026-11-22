@@ -1,0 +1,21 @@
+[package]
+name = "verilith-png"
+version = "0.1.0"
+license = "MIT"
+description = "A formally verified (Verus) PNG decoder"
+edition = "2021"
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+vstd = { workspace = true, features = ["std"] }
+verilith-zlib = { path = "../zlib", version = "0.1.0" }
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(verus_only)',
+] }

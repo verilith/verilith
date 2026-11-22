@@ -1,0 +1,4 @@
+# The Verus build every crate is verified with. vstd in the workspace
+# Cargo.toml is the crates.io release cut from this commit. Sourced by CI.
+VERUS_COMMIT=8bf68ee741df833ea5d0fe6a2255126fdea87e47
+VERUS_TOOLCHAIN=1.99.1

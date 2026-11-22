@@ -1,0 +1,42 @@
+[package]
+name = "vdns-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+verilith-dns = { path = "..", features = ["cares"] }
+
+[[bin]]
+name = "parse"
+path = "fuzz_targets/parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "expand_name"
+path = "fuzz_targets/expand_name.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ares_dns_parse"
+path = "fuzz_targets/ares_dns_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ares_dns_write"
+path = "fuzz_targets/ares_dns_write.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

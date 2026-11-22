@@ -1,0 +1,18 @@
+X509 CRT (TBS, valid v3Ext in v3 CRT)
+X509 CRT ASN1 (empty Signature)
+X509 CRT ASN1 (dummy 24-bit Signature)
+X509 CRT ASN1 (well-formed)
+X509 CRT ASN1 (GeneralizedTime in notBefore, UTCTime in notAfter)
+X509 CRT ASN1 (UTCTime in notBefore, GeneralizedTime in notAfter)
+X509 CRT ASN1 (Name with X520 CN)
+X509 CRT ASN1 (Name with X520 C)
+X509 CRT ASN1 (Name with X520 L)
+X509 CRT ASN1 (Name with X520 ST)
+X509 CRT ASN1 (Name with X520 O)
+X509 CRT ASN1 (Name with X520 OU)
+X509 CRT ASN1 (Name with unknown X520 part)
+X509 CRT ASN1 (Name with PKCS9 email)
+X509 CRT ASN1 (Name with unknown PKCS9 part)
+X509 CRT ASN1 (Unsupported critical policy recognized by callback)
+X509 CRT ASN1 (Unsupported non critical policy recognized by callb
+X509 CRT ASN1 (Unsupported non critical policy not recognized by c

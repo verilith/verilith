@@ -1,0 +1,19 @@
+[package]
+name = "verilith-simd"
+version = "0.1.0"
+license = "MIT"
+description = "Verus specifications for x86 SIMD intrinsics (SSE2..AVX2, some AVX-512), differentially tested against the CPU"
+edition = "2021"
+
+[dependencies]
+vstd = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(verus_only)',
+] }

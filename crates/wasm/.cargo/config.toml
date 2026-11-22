@@ -1,0 +1,10 @@
+# Lets LLVM copy the interpreter's dispatch (the jump through the op-code
+# table) into the end of every operation's handler, so each handler has
+# its own indirect branch to predict. Without it every operation shares
+# one jump, and the bench kernels run 5 to 30% slower. A crate that
+# depends on vwasm needs the same flags in its own config to get this.
+# The second flag stops LLVM merging those copies back together again: the
+# handlers of taken branches all end the same way, and merging them leaves
+# them sharing one jump.
+[build]
+rustflags = ["-C", "llvm-args=-tail-dup-size=20", "-C", "llvm-args=-enable-tail-merge=false"]

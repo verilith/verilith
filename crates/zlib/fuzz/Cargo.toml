@@ -1,0 +1,44 @@
+[package]
+name = "vzlib-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+verilith-zlib = { path = ".." }
+
+[[bin]]
+name = "stream_vs_zlib"
+path = "fuzz_targets/stream_vs_zlib.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "c_abi_bytes"
+path = "fuzz_targets/c_abi_bytes.rs"
+test = false
+doc = false
+
+[workspace]
+
+[[bin]]
+name = "c_abi_state"
+path = "fuzz_targets/c_abi_state.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "compress_vs_zlib"
+path = "fuzz_targets/compress_vs_zlib.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "c_deflate"
+path = "fuzz_targets/c_deflate.rs"
+test = false
+doc = false

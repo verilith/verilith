@@ -1,0 +1,26 @@
+[package]
+name = "verilith-hpack"
+version = "0.1.0"
+edition = "2021"
+description = "An HPACK (RFC 7541) header decoder formally verified with Verus, with nghttp2's inflater API"
+license = "MIT"
+repository = "https://github.com/verilith/verilith"
+exclude = ["compat/", "scripts/", "tools/", "bench/"]
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+verilith-core = { path = "../core", version = "0.1.0" }
+vstd = { workspace = true, features = ["std"] }
+
+[features]
+# Export nghttp2's inflater functions (nghttp2_hd_inflate_*) for
+# compat/nghttp2's patched nghttp2_hd.c.
+nghttp2-abi = []
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(verus_only)'] }

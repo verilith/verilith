@@ -1,0 +1,6 @@
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/Cargo.lock
+bench/target/
+bench/Cargo.lock

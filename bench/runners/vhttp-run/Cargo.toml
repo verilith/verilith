@@ -1,0 +1,9 @@
+[package]
+name = "vhttp-run"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+vbrun = { path = "../vbrun" }
+verilith-http = { path = "../../../crates/http" }

@@ -1,0 +1,23 @@
+[package]
+name = "vpng-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+verilith-png = { path = ".." }
+verilith-zlib = { path = "../../zlib" }
+png = "0.18"
+zune-png = "0.5"
+zune-core = "0.5"
+fdeflate = "0.3"
+
+[build-dependencies]
+cc = "1"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+
+# Its own project, outside the verilith workspace.
+[workspace]

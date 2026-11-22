@@ -1,0 +1,28 @@
+[package]
+name = "verilith-sync"
+version = "0.1.0"
+license = "MIT"
+description = "Formally verified (Verus) concurrency primitives: SPSC and MPMC queues, channels, and locks, as drop-ins for rtrb, crossbeam and parking_lot"
+edition = "2021"
+repository = "https://github.com/verilith/verilith"
+readme = "README.md"
+keywords = ["queue", "channel", "mutex", "verified", "verus"]
+categories = ["concurrency", "data-structures"]
+exclude = ["bench/", ".github/"]
+
+[dependencies]
+vstd = { workspace = true, features = ["std"] }
+# The logically-atomic `try_open_atomic_update!` macro expands to paths in these crates.
+verus_builtin_macros = { workspace = true }
+verus_builtin = { workspace = true }
+verus_state_machines_macros = { workspace = true }
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+# Ghost-only imports are guarded by `verus_only`, which Verus turns on
+# during verification.
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(verus_only)',
+] }

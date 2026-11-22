@@ -1,0 +1,313 @@
+//! CRC-32C, proven to compute `spec::crc32c`.
+//!
+//! [`crc_update`] is the portable verified kernel (a table lookup per
+//! byte). [`crc32c`] uses the CPU's own CRC-32C instruction where there
+//! is one (see [`cpu`], which is part of the trusted base).
+use crate::spec::*;
+use vstd::prelude::*;
+
+verus! {
+
+/// `T[x]` is the register update for byte `x` from a zero register.
+/// `lemma_entries` checks every entry against the spec.
+pub const T: [u32; 256] = [
+    0x00000000, 0xf26b8303, 0xe13b70f7, 0x1350f3f4, 0xc79a971f, 0x35f1141c, 0x26a1e7e8, 0xd4ca64eb,
+    0x8ad958cf, 0x78b2dbcc, 0x6be22838, 0x9989ab3b, 0x4d43cfd0, 0xbf284cd3, 0xac78bf27, 0x5e133c24,
+    0x105ec76f, 0xe235446c, 0xf165b798, 0x030e349b, 0xd7c45070, 0x25afd373, 0x36ff2087, 0xc494a384,
+    0x9a879fa0, 0x68ec1ca3, 0x7bbcef57, 0x89d76c54, 0x5d1d08bf, 0xaf768bbc, 0xbc267848, 0x4e4dfb4b,
+    0x20bd8ede, 0xd2d60ddd, 0xc186fe29, 0x33ed7d2a, 0xe72719c1, 0x154c9ac2, 0x061c6936, 0xf477ea35,
+    0xaa64d611, 0x580f5512, 0x4b5fa6e6, 0xb93425e5, 0x6dfe410e, 0x9f95c20d, 0x8cc531f9, 0x7eaeb2fa,
+    0x30e349b1, 0xc288cab2, 0xd1d83946, 0x23b3ba45, 0xf779deae, 0x05125dad, 0x1642ae59, 0xe4292d5a,
+    0xba3a117e, 0x4851927d, 0x5b016189, 0xa96ae28a, 0x7da08661, 0x8fcb0562, 0x9c9bf696, 0x6ef07595,
+    0x417b1dbc, 0xb3109ebf, 0xa0406d4b, 0x522bee48, 0x86e18aa3, 0x748a09a0, 0x67dafa54, 0x95b17957,
+    0xcba24573, 0x39c9c670, 0x2a993584, 0xd8f2b687, 0x0c38d26c, 0xfe53516f, 0xed03a29b, 0x1f682198,
+    0x5125dad3, 0xa34e59d0, 0xb01eaa24, 0x42752927, 0x96bf4dcc, 0x64d4cecf, 0x77843d3b, 0x85efbe38,
+    0xdbfc821c, 0x2997011f, 0x3ac7f2eb, 0xc8ac71e8, 0x1c661503, 0xee0d9600, 0xfd5d65f4, 0x0f36e6f7,
+    0x61c69362, 0x93ad1061, 0x80fde395, 0x72966096, 0xa65c047d, 0x5437877e, 0x4767748a, 0xb50cf789,
+    0xeb1fcbad, 0x197448ae, 0x0a24bb5a, 0xf84f3859, 0x2c855cb2, 0xdeeedfb1, 0xcdbe2c45, 0x3fd5af46,
+    0x7198540d, 0x83f3d70e, 0x90a324fa, 0x62c8a7f9, 0xb602c312, 0x44694011, 0x5739b3e5, 0xa55230e6,
+    0xfb410cc2, 0x092a8fc1, 0x1a7a7c35, 0xe811ff36, 0x3cdb9bdd, 0xceb018de, 0xdde0eb2a, 0x2f8b6829,
+    0x82f63b78, 0x709db87b, 0x63cd4b8f, 0x91a6c88c, 0x456cac67, 0xb7072f64, 0xa457dc90, 0x563c5f93,
+    0x082f63b7, 0xfa44e0b4, 0xe9141340, 0x1b7f9043, 0xcfb5f4a8, 0x3dde77ab, 0x2e8e845f, 0xdce5075c,
+    0x92a8fc17, 0x60c37f14, 0x73938ce0, 0x81f80fe3, 0x55326b08, 0xa759e80b, 0xb4091bff, 0x466298fc,
+    0x1871a4d8, 0xea1a27db, 0xf94ad42f, 0x0b21572c, 0xdfeb33c7, 0x2d80b0c4, 0x3ed04330, 0xccbbc033,
+    0xa24bb5a6, 0x502036a5, 0x4370c551, 0xb11b4652, 0x65d122b9, 0x97baa1ba, 0x84ea524e, 0x7681d14d,
+    0x2892ed69, 0xdaf96e6a, 0xc9a99d9e, 0x3bc21e9d, 0xef087a76, 0x1d63f975, 0x0e330a81, 0xfc588982,
+    0xb21572c9, 0x407ef1ca, 0x532e023e, 0xa145813d, 0x758fe5d6, 0x87e466d5, 0x94b49521, 0x66df1622,
+    0x38cc2a06, 0xcaa7a905, 0xd9f75af1, 0x2b9cd9f2, 0xff56bd19, 0x0d3d3e1a, 0x1e6dcdee, 0xec064eed,
+    0xc38d26c4, 0x31e6a5c7, 0x22b65633, 0xd0ddd530, 0x0417b1db, 0xf67c32d8, 0xe52cc12c, 0x1747422f,
+    0x49547e0b, 0xbb3ffd08, 0xa86f0efc, 0x5a048dff, 0x8ecee914, 0x7ca56a17, 0x6ff599e3, 0x9d9e1ae0,
+    0xd3d3e1ab, 0x21b862a8, 0x32e8915c, 0xc083125f, 0x144976b4, 0xe622f5b7, 0xf5720643, 0x07198540,
+    0x590ab964, 0xab613a67, 0xb831c993, 0x4a5a4a90, 0x9e902e7b, 0x6cfbad78, 0x7fab5e8c, 0x8dc0dd8f,
+    0xe330a81a, 0x115b2b19, 0x020bd8ed, 0xf0605bee, 0x24aa3f05, 0xd6c1bc06, 0xc5914ff2, 0x37faccf1,
+    0x69e9f0d5, 0x9b8273d6, 0x88d28022, 0x7ab90321, 0xae7367ca, 0x5c18e4c9, 0x4f48173d, 0xbd23943e,
+    0xf36e6f75, 0x0105ec76, 0x12551f82, 0xe03e9c81, 0x34f4f86a, 0xc69f7b69, 0xd5cf889d, 0x27a40b9e,
+    0x79b737ba, 0x8bdcb4b9, 0x988c474d, 0x6ae7c44e, 0xbe2da0a5, 0x4c4623a6, 0x5f16d052, 0xad7d5351,
+];
+
+/// Entries `lo..hi` of `T` are 8 steps from their index.
+pub open spec fn first_ok(lo: int, hi: int) -> bool
+    decreases hi - lo,
+{
+    if hi - lo <= 0 {
+        true
+    } else if hi - lo == 1 {
+        T[lo] == crc_steps(lo as u32, 8)
+    } else {
+        let mid = lo + (hi - lo) / 2;
+        first_ok(lo, mid) && first_ok(mid, hi)
+    }
+}
+
+proof fn lemma_first_ok(lo: int, hi: int, i: int)
+    requires
+        first_ok(lo, hi),
+        lo <= i < hi,
+    ensures
+        T[i] == crc_steps(i as u32, 8),
+    decreases hi - lo,
+{
+    if hi - lo > 1 {
+        let mid = lo + (hi - lo) / 2;
+        if i < mid {
+            lemma_first_ok(lo, mid, i);
+        } else {
+            lemma_first_ok(mid, hi, i);
+        }
+    }
+}
+
+/// Every entry is right (checked by evaluation).
+pub proof fn lemma_entries()
+    ensures
+        forall|x: int| 0 <= x < 256 ==> #[trigger] T[x] == crc_steps(x as u32, 8),
+{
+    assert(first_ok(0, 256)) by (compute_only);
+    assert forall|x: int| 0 <= x < 256 implies #[trigger] T[x] == crc_steps(x as u32, 8) by {
+        lemma_first_ok(0, 256, x);
+    }
+}
+
+/// The CRC update is linear (over GF(2)): a step of an XOR is the XOR of
+/// the steps.
+proof fn lemma_step_xor(a: u32, b: u32)
+    ensures
+        crc_step(a ^ b) == crc_step(a) ^ crc_step(b),
+{
+    assert((if (a ^ b) & 1 == 1 {
+        ((a ^ b) >> 1u32) ^ 0x82f63b78u32
+    } else {
+        (a ^ b) >> 1u32
+    }) == (if a & 1 == 1 {
+        (a >> 1u32) ^ 0x82f63b78u32
+    } else {
+        a >> 1u32
+    }) ^ (if b & 1 == 1 {
+        (b >> 1u32) ^ 0x82f63b78u32
+    } else {
+        b >> 1u32
+    })) by (bit_vector);
+}
+
+proof fn lemma_steps_xor(a: u32, b: u32, n: nat)
+    ensures
+        crc_steps(a ^ b, n) == crc_steps(a, n) ^ crc_steps(b, n),
+    decreases n,
+{
+    if n > 0 {
+        lemma_step_xor(a, b);
+        lemma_steps_xor(crc_step(a), crc_step(b), (n - 1) as nat);
+    }
+}
+
+/// Steps on a register whose low `n` bits are zero just shift it.
+proof fn lemma_steps_even(y: u32, n: nat)
+    requires
+        n < 32,
+        y & ((1u32 << n as u32) - 1) as u32 == 0,
+    ensures
+        crc_steps(y, n) == y >> n as u32,
+    decreases n,
+{
+    if n == 0 {
+        assert(y >> 0u32 == y) by (bit_vector);
+    } else {
+        let nu = n as u32;
+        assert(y & 1 == 0 && (y >> 1u32) & ((1u32 << (nu - 1) as u32) - 1) as u32 == 0 && (y >> 1u32) >> (nu
+            - 1) as u32 == y >> nu) by (bit_vector)
+            requires
+                0 < nu < 32,
+                y & ((1u32 << nu) - 1) as u32 == 0,
+        ;
+        lemma_steps_even(y >> 1u32, (n - 1) as nat);
+    }
+}
+
+/// A byte's update is a shift and a table entry.
+proof fn lemma_crc_byte(c: u32, x: u8)
+    ensures
+        crc_byte(c, x) == (c >> 8u32) ^ T[((c ^ x as u32) & 0xff) as int],
+{
+    lemma_entries();
+    let y = c ^ x as u32;
+    let z = y & 0xff;
+    let hi = y & 0xffff_ff00u32;
+    assert(y == z ^ hi && hi & ((1u32 << 8u32) - 1) as u32 == 0 && hi >> 8u32 == c >> 8u32 && z < 256 && (z as int) as u32
+        == z) by (bit_vector)
+        requires
+            y == c ^ x as u32,
+            z == y & 0xff,
+            hi == y & 0xffff_ff00u32,
+            x < 256,
+    ;
+    lemma_steps_xor(z, hi, 8);
+    lemma_steps_even(hi, 8);
+    assert(T[z as int] == crc_steps(z, 8));
+    let u = c >> 8u32;
+    let v = T[z as int];
+    assert(v ^ u == u ^ v) by (bit_vector);
+}
+
+/// The CRC register after `d`, starting from `c`.
+pub open spec fn crc_from(c: u32, d: Seq<u8>) -> u32
+    decreases d.len(),
+{
+    if d.len() == 0 {
+        c
+    } else {
+        crc_byte(crc_from(c, d.drop_last()), d.last())
+    }
+}
+
+pub proof fn lemma_crc_from(d: Seq<u8>)
+    ensures
+        crc_from(0xffff_ffff, d) == crc_reg(d),
+    decreases d.len(),
+{
+    if d.len() > 0 {
+        lemma_crc_from(d.drop_last());
+    }
+}
+
+/// Continues a CRC-32C register over `d`, a byte at a time.
+pub fn crc_update(reg: u32, d: &[u8]) -> (r: u32)
+    ensures
+        r == crc_from(reg, d@),
+{
+    let mut c = reg;
+    let n = d.len();
+    let mut i: usize = 0;
+    proof {
+        assert(d@.subrange(0, 0) =~= Seq::<u8>::empty());
+    }
+    while i < n
+        invariant
+            n == d@.len(),
+            i <= n,
+            c == crc_from(reg, d@.subrange(0, i as int)),
+        decreases n - i,
+    {
+        let x = d[i];
+        proof {
+            assert(d@.subrange(0, i + 1).drop_last() =~= d@.subrange(0, i as int));
+            assert(d@.subrange(0, i + 1).last() == d@[i as int]);
+            lemma_crc_byte(c, x);
+            assert(((c ^ x as u32) & 0xff) < 256) by (bit_vector);
+        }
+        c = (c >> 8) ^ T[((c ^ x as u32) & 0xff) as usize];
+        i = i + 1;
+    }
+    proof {
+        assert(d@.subrange(0, n as int) =~= d@);
+    }
+    c
+}
+
+/// The CRC-32C of `d`.
+pub fn crc32c(d: &[u8]) -> (r: u32)
+    ensures
+        r == crate::spec::crc32c(d@),
+{
+    proof {
+        lemma_crc_from(d@);
+    }
+    !cpu::crc_update(0xffff_ffff, d)
+}
+
+/// A checksum as the framing format stores it.
+pub fn masked(crc: u32) -> (r: u32)
+    ensures
+        r as nat == mask(crc),
+{
+    ((crc >> 15) | (crc << 17)).wrapping_add(0xa282ead8)
+}
+
+} // verus!
+
+/// The CPU's CRC-32C instruction (part of the trusted base): SSE4.2's
+/// `crc32` on x86-64, the CRC extension's `crc32c` on AArch64. Both
+/// compute this CRC on the raw register, eight bytes at a time. Not
+/// verified: tested against the verified [`crc_update`], which is also
+/// what runs on CPUs without the instruction.
+pub mod cpu {
+    #[cfg(verus_only)]
+    use super::crc_from;
+    use vstd::prelude::*;
+
+    verus! {
+
+    #[verifier::external_body]
+    pub fn crc_update(reg: u32, d: &[u8]) -> (r: u32)
+        ensures
+            r == crc_from(reg, d@),
+    {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if std::is_x86_feature_detected!("sse4.2") {
+                // SAFETY: the CPU supports SSE4.2.
+                return unsafe { sse42(reg, d) };
+            }
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            if std::arch::is_aarch64_feature_detected!("crc") {
+                // SAFETY: the CPU has the CRC32 instructions.
+                return unsafe { arm(reg, d) };
+            }
+        }
+        super::crc_update(reg, d)
+    }
+
+    } // verus!
+
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "sse4.2")]
+    unsafe fn sse42(reg: u32, d: &[u8]) -> u32 {
+        use core::arch::x86_64::{_mm_crc32_u64, _mm_crc32_u8};
+        let mut r = reg as u64;
+        let mut words = d.chunks_exact(8);
+        for c in &mut words {
+            r = _mm_crc32_u64(r, u64::from_le_bytes(c.try_into().unwrap()));
+        }
+        let mut r = r as u32;
+        for &b in words.remainder() {
+            r = _mm_crc32_u8(r, b);
+        }
+        r
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[target_feature(enable = "crc")]
+    unsafe fn arm(reg: u32, d: &[u8]) -> u32 {
+        use core::arch::aarch64::{__crc32cb, __crc32cd};
+        let mut r = reg;
+        let mut words = d.chunks_exact(8);
+        for c in &mut words {
+            r = __crc32cd(r, u64::from_le_bytes(c.try_into().unwrap()));
+        }
+        for &b in words.remainder() {
+            r = __crc32cb(r, b);
+        }
+        r
+    }
+}

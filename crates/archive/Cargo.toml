@@ -1,0 +1,30 @@
+[package]
+name = "verilith-archive"
+version = "0.1.0"
+license = "MIT"
+description = "Formally verified (Verus) zip and tar readers with proven extraction safety, behind libarchive's read API"
+edition = "2021"
+repository = "https://github.com/verilith/verilith"
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[features]
+# Export the C shim under libarchive's own symbol names.
+libarchive-abi = []
+
+[dependencies]
+verilith-core = { path = "../core", version = "0.1.0" }
+verilith-zlib = { path = "../zlib", version = "0.1.0" }
+verilith-zstd = { path = "../zstd", version = "0.1.0" }
+vstd = { workspace = true, features = ["std"] }
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+# Verus erases ghost code during a normal `cargo build`; ghost-only imports
+# are guarded by `verus_only`, which Verus turns on during verification.
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(verus_only)',
+] }

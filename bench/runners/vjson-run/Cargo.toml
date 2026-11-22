@@ -1,0 +1,9 @@
+[package]
+name = "vjson-run"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+vbrun = { path = "../vbrun" }
+verilith-json = { path = "../../../crates/json" }

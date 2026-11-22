@@ -1,0 +1,22 @@
+[package]
+name = "vtext-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+verilith-text = { path = ".." }
+base64 = "0.22"
+base64-simd = "0.8"
+hex = "0.4"
+faster-hex = "0.10"
+percent-encoding = "2"
+unicode-normalization = "=0.1.26"
+icu_normalizer = "2.1"
+idna = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+[workspace]

@@ -1,0 +1,187 @@
+# verilith-simd
+
+Verus specifications for the x86 SIMD intrinsics in `core::arch` (SSE2,
+SSSE3, SSE4.1, AVX2, and the AVX-512 and carry-less multiply instructions
+a JSON parser needs) and for AArch64 NEON, so that vectorised Rust can be
+proven correct with [Verus](https://github.com/verus-lang/verus).
+
+Code written against verilith-simd builds on every target. `verilith_simd::arch` is
+`core::arch::x86_64` on x86-64 and a portable emulation (`src/emu.rs`)
+elsewhere, where `has_avx2()` is false so the AVX2 paths never run. The NEON
+wrappers in `verilith_simd::neon` call `core::arch::aarch64` on AArch64 and an
+emulation (`src/emu_neon.rs`) elsewhere, so NEON kernels are verified on an
+x86 machine like any other code and selected at run time with `has_neon()`.
+
+A vector is modelled as its sequence of bytes (`b128`, `b256`), with
+little-endian views as 16-, 32- and 64-bit lanes (`u16s`, `u32s`, `u64s`) and
+signed readings (`s8`, `s16`, `s32`). Each intrinsic gets an
+`assume_specification` stating its result as a function on those sequences,
+for example
+
+```rust
+pub assume_specification[ _mm256_add_epi8 ](a: __m256i, b: __m256i) -> (r: __m256i)
+    requires avx2(),
+    ensures b256(r) == add8(b256(a), b256(b));
+```
+
+The lane functions (`add8`, `shuffle8_lanes`, `mulhi_s16`, `sad8`, ...) are
+ordinary Verus spec functions in `src/ops.rs`, so a proof about a kernel is a
+proof about sequences of integers.
+
+verilith-simd is shared by the Verilith libraries (verilith-webp first; verilith-json,
+verilith-zlib and verilith-url next). It covers only the intrinsics their kernels use, and
+grows as they need more.
+
+## Trusted base
+
+These are assumed, not proven. A library that uses verilith-simd should list them in
+its own trusted base.
+
+- `src/x86.rs`: the `assume_specification`s, one per intrinsic (about 118,
+  each at 128 and, where AVX2 has it, 256 bits). Generated from the table in
+  `tools/gen_x86.py`.
+- `src/safe.rs`: one safe wrapper per specified intrinsic, generated from
+  the same table, with the same `requires` and `ensures` as its
+  `assume_specification` and a body that is the single `unsafe` call to the
+  intrinsic. `verilith_simd::arch` exports these on x86-64 in place of the raw
+  intrinsics, so verified code can call them without `#[target_feature]`,
+  which Verus rejects on verified code (verus-lang/verus#3362).
+- `src/x86_emu.rs` (off x86-64 only): the same specifications, generated
+  from the same table, stated of the portable emulation in `src/emu.rs`,
+  which is what `verilith_simd::arch` is on other targets. This lets code that
+  names x86 intrinsics (AVX2 kernels behind `has_avx2`) verify on AArch64.
+  At run time those kernels are unreachable there (`has_avx2` is false), so
+  the AArch64 build trusts these specs only for code that never runs;
+  `tests/emu.rs` checks every emulated function against the CPU on x86-64.
+- `src/ops.rs`: the lane semantics those specifications refer to. If an
+  `ops.rs` function does not match what the CPU does, every proof that uses
+  it is about the wrong thing.
+- `src/mem.rs`: unaligned loads and stores between vectors and slices (of
+  `u8`, `u16`, `i16` and `u32`), and the 8-byte load and store of a
+  vector's low half (`_mm_loadl_epi64`, `_mm_storel_epi64`) and the
+  4-byte store of its low 32 bits (`_mm_storeu_si32`), each with a bounds
+  `requires`.
+- `src/cpu.rs`: run-time feature detection (`has_avx2()` and friends ensure
+  the matching feature predicate), `compiled_with_ssse3()` (true only in a
+  build whose target has SSSE3, with no run-time check), and the axiom that
+  AVX2 implies SSE4.1 and SSE4.1 implies SSSE3.
+- `src/lanes.rs`: the byte model of `__m128i`/`__m256i` (an uninterpreted
+  `b128`/`b256` of length 16/32).
+- `src/avx512.rs` (x86-64 only): safe wrappers, with specifications, for 17
+  AVX-512 intrinsics (F, BW and VBMI2: bitwise ops, `shuffle_epi8`,
+  `subs_epu8`, `srli_epi16`, `add_epi32`, the byte compares and `test` into
+  a mask register, `maskz_compress_epi8`, broadcasts, extracts and
+  `cvtepu8_epi32`), a 64-byte load and a 16-dword store, and the byte model
+  `b512` of `__m512i`. There is no portable emulation of these, so code that
+  uses them is x86-64 only. Each requires `avx512f()`, `avx512bw()` or
+  `avx512vbmi2()`, which `has_avx512bw()` and `has_avx512vbmi2()` ensure,
+  with the axiom that VBMI2 implies BW, BW implies F and F implies AVX2.
+- `src/scalar.rs`: `popcnt64`, specified as the number of set bits.
+- `src/neon.rs`: the NEON wrappers' specifications (84: loads and
+  stores on `u8`, `u16`, `i16` and `u32` slices, bitwise ops, add,
+  saturating subtract, compare, `ushr`, `tbl`, `ext`, `zip1`/`zip2` at 8,
+  16, 32 and 64 bits, `uzp1`, `umaxv`, `addp`, reading the low 64
+  bits, signed 16-bit `dup`, add, subtract, `sshr` and `sqdmulh`, and for
+  pixel work `urhadd`, byte subtract, `uqsub` on 16-bit lanes, the widening
+  shifts `ushll`/`ushll2`, the saturating narrowing shifts
+  `sqshrun`/`sqshrun2` and `uqshrn`/`uqshrn2`, and, for the VP8 loop
+  filter, `umax`, `uabd`, `cmhs` as less-or-equal, `uqadd`, `bic`, the
+  signed saturating `sqadd` and `sqsub`, `sshr` on bytes, the signed
+  narrowing `sqshrn`/`sqshrn2`, and an 8-byte load (`ldr d`, the high
+  half zero) and store (`str d`), and, for VP8 4x4 intra prediction, a
+  vector from two 64-bit halves (`vcombine_u64`) and a 4-byte store of
+  one 32-bit lane (`st1 v.s[N]`), and, for turning decimal digits into an
+  integer, `mul` on 8-, 16- and 32-bit lanes, the widening pairwise sums
+  `uaddlp` at the same three widths, and reading the high 64 bits, and, for
+  the JPEG inverse DCT, `abs` and `umax` on 16-bit lanes, the widening
+  signed multiplies `smull`/`smull2`, 32-bit add and subtract, the rounding
+  shift `srshr` and `shl` on 32-bit lanes, and `uzp2` on 16-bit lanes, the three-way interleaved store `st3`, and,
+  for that transform on 16-bit rows, the widening multiplies and
+  multiply-accumulates by one lane of a constant vector
+  (`smull`/`smull2`/`smlal`/`smlal2` by element), the rounding narrowing
+  shift `rshrn`/`rshrn2`, `uqadd` on 16-bit lanes and the sum of the 16-bit
+  lanes `uaddlv`), the byte
+  model `n8` of `uint8x16_t`, and `has_neon()`.
+- `src/emu.rs` and `src/emu_neon.rs` are not verified either, but proofs do
+  not depend on them: they are what runs off x86-64 and off AArch64.
+  `tests/emu.rs` checks `emu.rs` against the CPU on x86-64.
+
+Everything else is verified, including `src/neon_mask.rs` (`movemask64` and
+`movemask16`: x86's `pmovmskb` for NEON, proven bit for bit), `src/lanes.rs`'s view lemmas, `src/patterns.rs`
+(lemmas that evaluate common shuffles), `src/mask.rs` (a `movemask` result
+bit by bit, which is how a proof reads an AVX-512 mask register), and
+`src/refs.rs`.
+
+## How the specifications are checked
+
+A specification that is wrong would make proofs unsound, so each one is
+tested against the CPU in two steps.
+
+1. `src/refs.rs` gives, for every lane function in `ops.rs`, a plain scalar
+   Rust implementation, and Verus proves each one computes exactly its spec.
+2. `tests/difftest.rs` runs every intrinsic on random inputs (one million per
+   intrinsic; one sixteenth of that per immediate for the immediate-operand
+   forms, with every immediate covered for `shuffle_epi32` and
+   `permute2x128`) and checks the result is byte-for-byte the verified
+   reference's. There are 1,270 tests. A planted bug in the average spec was
+   caught on the first input.
+3. `tests/ext.rs` does the same, by hand, for what the generator does not
+   cover: every function in `src/avx512.rs` (the raw intrinsic against the
+   reference, and the wrapper against the raw intrinsic), `popcnt64`,
+   `packs_epi32`, `setr_epi16`, `testz_si256`, `broadcastsi128_si256` and
+   `clmulepi64_si128` (specified for immediate 0 only: the low quadwords,
+   and the low half of the product). It also runs `adds_epi8` and
+   `subs_epi8` on every pair of bytes and `packs_epi16` on every 16-bit
+   value (the saturation bounds and lane order, exhaustively), and checks
+   that the 8-byte load and store and the 4-byte store in `src/mem.rs` touch only their bytes. The AVX-512 tests need a CPU with
+   AVX-512BW and VBMI2 and are skipped, with a message, on one without.
+
+`tests/neon.rs` does the same for the NEON wrappers against
+`src/refs_neon.rs` and `src/refs.rs`: 200,000 random inputs each, every
+immediate, the narrowing shifts on every 16-bit value, and the loop
+filter's byte operations on every pair of bytes. On an x86 machine it can run under qemu:
+`cargo test --release --test neon --target aarch64-unknown-linux-gnu` with
+`aarch64-linux-gnu-gcc` as the linker and `qemu-aarch64` as the runner.
+
+So the chain is: CPU == reference (tested on random inputs), reference ==
+spec (proven). Testing is not proof; a spec could still be wrong on inputs
+the random search never hit, which is why the lane functions are kept simple.
+
+## Using it
+
+```toml
+[dependencies]
+verilith-simd = { git = "https://github.com/verilith/verilith/tree/main/crates/simd" }
+```
+
+```rust
+use verilith_simd::{cpu::*, lanes::*, ops::*};
+verus! {
+broadcast use {verilith_simd::lanes::group_lanes, verilith_simd::cpu::group_cpu};
+
+#[target_feature(enable = "avx2")]
+fn kernel(...) requires avx2(), ... { ... }
+
+fn entry(...) {
+    if has_avx2() { unsafe { kernel(...) } } else { scalar(...) }
+}
+}
+```
+
+Intrinsics need a `#[target_feature]` context even for SSE2, and
+`#[inline(always)]` cannot be combined with `#[target_feature]`.
+
+## Building
+
+```
+cargo verus verify                          # the proofs (278 functions)
+cargo test --release                        # the differential tests (~1 min)
+VSIMD_ITERS=10000 cargo test --release      # a quick run
+python3 tools/gen_x86.py src/x86.rs src/safe.rs src/x86_emu.rs  # regenerate the specifications, safe wrappers and emulation specs
+python3 tools/gen_refs.py src/refs.rs       # regenerate the references
+python3 tools/gen_difftest.py tests/difftest.rs
+```
+
+Verus commit `8bf68ee741df833ea5d0fe6a2255126fdea87e47` (toolchain 1.99.1),
+vstd `=0.0.0-2026-11-01-0251`. The differential tests need an x86-64 CPU
+with AVX2; the AVX-512 ones in `tests/ext.rs` need AVX-512BW and VBMI2.
