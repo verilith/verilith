@@ -25,7 +25,9 @@ buck2 build '//crates/wasm:wasm[part2]'   # one part of a crate verified in part
 
 A second run does nothing: Buck2 sees that no input changed. Change a file
 in `crates/core/src` and the crates that depend on core are checked again;
-change a test or a README and nothing is.
+change a test or a README and nothing is. Buck2 keeps this knowledge in its
+background process, so after `buck2 kill` or a reboot it verifies again
+(see "A shared cache" below).
 
 ## What is where
 
@@ -132,7 +134,7 @@ ignores the entries.
 - **A shared cache.** Buck2 can share results between CI and developers'
   machines through a remote cache. That needs a cache service; until there
   is one, CI uses the cache entries described above, and a fresh checkout
-  verifies from nothing.
+  or a restarted Buck2 verifies from nothing.
 - **macOS.** Verification on Apple Silicon still goes through `cargo
   verus`. The rules should work there as they are, but no proof has been
   checked through them on a Mac.
