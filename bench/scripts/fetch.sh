@@ -8,7 +8,8 @@ echo "$ORIGINALS" | while read -r name url ref; do
   [ -n "$name" ] || continue
   say "fetch $name @ $ref"
   git_get "$SRC/$name" "$url" "$ref"
-  if [ "$name" = mbedtls ]; then git -C "$SRC/$name" submodule update -q --init --depth 1; fi
+  # mbedTLS 4 keeps its crypto in the TF-PSA-Crypto submodule, which has submodules of its own.
+  if [ "$name" = mbedtls ]; then git -C "$SRC/$name" submodule update -q --init --recursive --depth 1; fi
   # Verdict needs only its Verus fork (for vstd), not libcrux.
   if [ "$name" = verdict ]; then git -C "$SRC/$name" submodule update -q --init --depth 1 deps/verus; fi
 done

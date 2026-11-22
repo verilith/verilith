@@ -5,6 +5,8 @@ fn main() {
     println!("cargo::rerun-if-env-changed=MBEDTLS_LIB_DIR");
     let Ok(dir) = std::env::var("MBEDTLS_LIB_DIR") else { return };
     println!("cargo::rustc-link-search=native={dir}");
+    // mbedTLS 4's crypto library, TF-PSA-Crypto, is built in its own directory.
+    println!("cargo::rustc-link-search=native={dir}/../tf-psa-crypto/core");
     println!("cargo::rustc-link-lib=static=mbedx509");
-    println!("cargo::rustc-link-lib=static=mbedcrypto");
+    println!("cargo::rustc-link-lib=static=tfpsacrypto");
 }

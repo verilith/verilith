@@ -117,21 +117,24 @@ build_json() {
 
 build_x509() {
   local src; src=$(orig mbedtls)
-  local cmk="-DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DUSE_SHARED_MBEDTLS_LIBRARY=OFF -DGEN_FILES=OFF"
+  local cmk="-DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DUSE_SHARED_MBEDTLS_LIBRARY=OFF"
   cmake_build "$src" "$BUILD/mbedtls" $cmk
   local psrc=$BUILD/mbedtls-vx509-src
   rm -rf "$psrc"; cp -R "$src" "$psrc"; rm -rf "$psrc/.git"
   (cd "$psrc" && patch -p1 -s < "$(ours vx509)/mbedtls/mbedtls-use-vx509.patch")
   local lib; lib=$(rust_lib vx509 mbedtls)
   cmake_build "$psrc" "$BUILD/mbedtls-vx509" $cmk -DMBEDTLS_VX509_DIR="$(ours vx509)" -DMBEDTLS_VX509_LIB="$lib"
-  cc_runner x509-mbedtls -I"$src/include" "$S/x509/x509.c" \
-    "$BUILD/mbedtls/library/libmbedx509.a" "$BUILD/mbedtls/library/libmbedcrypto.a"
+  # mbedTLS 4 keeps its crypto, and the headers x509_crt.h includes, in the
+  # TF-PSA-Crypto submodule.
+  local inc="-I$src/include -I$src/tf-psa-crypto/include -I$src/tf-psa-crypto/drivers/builtin/include"
+  cc_runner x509-mbedtls $inc "$S/x509/x509.c" \
+    "$BUILD/mbedtls/library/libmbedx509.a" "$BUILD/mbedtls/library/libtfpsacrypto.a"
   if [ "$OS" = Darwin ]; then
-    cc_runner x509-vx509 -I"$src/include" "$S/x509/x509.c" \
-      "$BUILD/mbedtls-vx509/library/libmbedx509.a" "$BUILD/mbedtls-vx509/library/libmbedcrypto.a" "$lib" $RUST_LIBS
+    cc_runner x509-vx509 $inc "$S/x509/x509.c" \
+      "$BUILD/mbedtls-vx509/library/libmbedx509.a" "$BUILD/mbedtls-vx509/library/libtfpsacrypto.a" "$lib" $RUST_LIBS
   else
-    cc_runner x509-vx509 -I"$src/include" "$S/x509/x509.c" -Wl,--start-group \
-      "$BUILD/mbedtls-vx509/library/libmbedx509.a" "$BUILD/mbedtls-vx509/library/libmbedcrypto.a" "$lib" \
+    cc_runner x509-vx509 $inc "$S/x509/x509.c" -Wl,--start-group \
+      "$BUILD/mbedtls-vx509/library/libmbedx509.a" "$BUILD/mbedtls-vx509/library/libtfpsacrypto.a" "$lib" \
       -Wl,--end-group $RUST_LIBS
   fi
   rust_runner vx509-run x509n-vx509

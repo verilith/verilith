@@ -13,7 +13,7 @@ picohttpparser  https://github.com/h2o/picohttpparser      dd573d8fa9264c646a400
 ada             https://github.com/ada-url/ada             v4.1.1
 simdjson        https://github.com/simdjson/simdjson       v5.2.0
 cjson           https://github.com/DaveGamble/cJSON        v1.7.19
-mbedtls         https://github.com/Mbed-TLS/mbedtls        v3.6.8
+mbedtls         https://github.com/Mbed-TLS/mbedtls        v4.3.0
 libpng          https://github.com/pnggroup/libpng         v1.6.59
 libwebp         https://github.com/webmproject/libwebp     v1.6.0
 brotli          https://github.com/google/brotli           v1.2.1
@@ -31,7 +31,7 @@ cre2            https://github.com/marcomaggi/cre2         f9ad1ced3f5358557b32d
 # Notes on the choices:
 # - c-ares: the commit vdns's c-ares patch was made and tested against
 #   (cares/README.md in vdns); the latest release, v1.34.9, predates it.
-# - llhttp 9.4.4 and mbedTLS 3.6.8: the versions vhttp's and vx509's
+# - llhttp 9.4.4 and mbedTLS 4.3.0: the versions vhttp's and vx509's
 #   drop-ins were tested against.
 # - libjpeg-turbo: the newest 3.1 release. 3.2 changes the TurboJPEG ABI
 #   (tj3Init became a macro for tj3InitVersion, and two subsampling
