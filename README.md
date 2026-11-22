@@ -192,9 +192,9 @@ How to read it:
   instructions per URL, with the same results on both sides. The
   [crate's own measurement](crates/url#speed) against ada 4.0.0 on x86
   shows the same direction (0.92x).
-- **x509 rows come from a second run** of `bench/run.sh --only x509` at
-  the same commit on the same machine, after the first run's mbedTLS 4
-  build failed on a missing Python module.
+- **x509 rows come from a second run** of `bench/run.sh --only x509` on
+  the same machine, after a fix to the bench script's mbedTLS 4 build (a
+  missing Python module); the library code is the same.
 - **Inside Node.js.** Node 26.13.1 built with verilith-http, -url, -json,
   -dns and -zlib in place of llhttp, ada, simdjson, c-ares and zlib runs
   Node's own URL, HTTP-parser and zlib benchmarks at 0.50x to 1.64x of the
