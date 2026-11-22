@@ -58,7 +58,11 @@ directory, without Cargo in between:
 2. **The crates it depends on** are compiled (`:name[export]`), not
    verified: each is verified by its own target.
 3. **The crate** is verified with its default features (`:name[partK]`),
-   and a last step checks the parts add up (`:name`).
+   and a last step checks the parts add up (`:name`). A crate whose
+   `scripts/verify.sh` passes `--features` is verified with those as well:
+   it names them in `[package.metadata.verilith] verify-features`, and
+   `buckify.py` fails if the two disagree. json is the one such crate
+   (`cjson`).
 
 The crate names, the sources and their paths, the features and the Verus
 build are the same as under Cargo. That matters because proofs here are

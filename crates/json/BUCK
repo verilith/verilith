@@ -11,7 +11,7 @@ verus_library(
     edition = "2021",
     crate_root = "src/lib.rs",
     srcs = glob(["src/**"]),
-    features = [],
+    features = ["cjson"],
     vstd = "//third-party:vstd-alloc-std",
     deps = [
         "//crates/core:core",

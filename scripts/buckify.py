@@ -6,17 +6,20 @@ them into crates/<name>/BUCK for every crate with proofs
 ([package.metadata.verus] verify = true) and third-party/BUCK for what those
 need from crates.io, so that Buck2 verifies each crate as `cargo verus focus`
 does in its directory: default features, the same vstd features, the same
-dependencies.
+dependencies. (A crate whose scripts/verify.sh passes --features is verified
+with those too; see verify-features below.)
 
     scripts/buckify.py           rewrite the files
     scripts/buckify.py --check   fail if a file is out of date, or a BUCK
                                  file exists for a crate that should not
                                  have one (CI runs this)
 
-A crate is verified in several parts when its Cargo.toml says so:
+Two things a crate's Cargo.toml can say about how it is verified:
 
     [package.metadata.verilith]
-    verify-parts = 4
+    verify-parts = 4               # verify it as 4 parts (BUILDING.md)
+    verify-features = ["cjson"]    # verify it with these features on top of
+                                   # the default ones
 
 Anything this script does not know how to reproduce exactly is an error, not
 a guess. Standard library only; needs cargo.
@@ -88,6 +91,29 @@ def enabled(pkg, start):
             on.add(f)
             todo += table[f]
     return on, deps_on, dep_feats
+
+
+def verilith_meta(pkg):
+    return (pkg.get("metadata") or {}).get("verilith") or {}
+
+
+def verify_features(pkg):
+    """The features a crate is verified with: its defaults, plus any it names
+    in [package.metadata.verilith] verify-features. The crate's own
+    scripts/verify.sh (the cargo verus way) must ask for the same ones."""
+    extra = list(verilith_meta(pkg).get("verify-features", []))
+    script = os.path.join(os.path.dirname(pkg["manifest_path"]), "scripts", "verify.sh")
+    in_script = []
+    if os.path.exists(script):
+        text = open(script, encoding="utf-8").read()
+        if "--no-default-features" in text or "--all-features" in text:
+            die(f"{script}: buckify.py has not been taught --no-default-features or --all-features")
+        for m in re.finditer(r"--features[ =]+(\"[^\"]*\"|'[^']*'|\S+)", text):
+            in_script += re.split(r"[ ,]+", m.group(1).strip("\"'"))
+    if sorted(set(in_script)) != sorted(set(extra)):
+        die(f"{pkg['name']}: scripts/verify.sh verifies with features {sorted(set(in_script))} but "
+            f"[package.metadata.verilith] verify-features is {sorted(set(extra))}")
+    return enabled(pkg, (["default"] if "default" in pkg["features"] else []) + extra)
 
 
 def default_features(pkg):
@@ -170,7 +196,7 @@ def generate():
         parts = d.split(os.sep)
         if len(parts) != 2 or parts[0] != "crates":
             die(f"{name}: a verified crate outside crates/")
-        on, deps_on, dep_feats = default_features(pkg)
+        on, deps_on, dep_feats = verify_features(pkg)
         lib = lib_target(pkg)
         src_root = os.path.relpath(lib["src_path"], os.path.join(ROOT, d))
         if src_root != os.path.join("src", "lib.rs"):
@@ -210,7 +236,8 @@ def generate():
         info[name] = {
             "pkg": pkg, "dir": d, "short": parts[1], "features": on, "vstd": vstd_feats,
             "deps": deps, "externs": externs, "crate": lib["name"].replace("-", "_"),
-            "parts": int(((pkg.get("metadata") or {}).get("verilith") or {}).get("verify-parts", 1)),
+            "defaults": default_features(pkg)[0],
+            "parts": int(verilith_meta(pkg).get("verify-parts", 1)),
         }
 
     # Cargo builds one vstd, and one copy of each dependency, for the crate
@@ -227,7 +254,7 @@ def generate():
     for name, i in sorted(info.items()):
         vstd = set(i["vstd"])
         for dep, want in closure(name).items():
-            have = info[dep]["features"]
+            have = info[dep]["features"]  # what Buck2 compiles dep with
             if want - have:
                 die(f"{name} turns on {sorted(want - have)} of {dep}, which {dep} does not "
                     "have by default. Buck2 would verify against a different crate than Cargo.")

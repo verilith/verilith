@@ -22,8 +22,8 @@ hold" is checked here, and every check fails closed:
     split by module, and the list of modules is Verus's own (list_modules).
     Each module goes to exactly one part, each part names its modules to
     Verus one by one (a module Verus does not know is an error), the crate
-    root goes with part 1, and `seal` re-checks that the parts cover the
-    list.
+    root goes with part 1 (unless Verus has nothing in it), and `seal`
+    re-checks that the parts cover the list.
 """
 import argparse
 import json
@@ -145,14 +145,17 @@ def crate_env(a):
     return env
 
 
-def run_verus(a, extra):
+def run_verus(a, extra, capture=False):
     """Runs Verus with --output-json. Returns (exit code, parsed JSON or None,
     seconds). Diagnostics go to stderr as they come."""
     cmd = [find_verus()] + crate_args(a) + ["--output-json"] + extra
     start = time.time()
-    p = subprocess.run(cmd, env=crate_env(a), stdout=subprocess.PIPE, text=True)
+    p = subprocess.run(cmd, env=crate_env(a), stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE if capture else None, text=True)
     secs = time.time() - start
     out = p.stdout
+    if capture:
+        run_verus.stderr = p.stderr
     # The JSON object is the last thing on stdout; anything before it is not ours.
     doc = None
     at = out.find("{")
@@ -169,6 +172,7 @@ def run_verus(a, extra):
 
 
 PROBE = "no_such_module_"
+NO_ROOT = "Some modules were not found in the krate modules"
 
 
 def list_modules(a):
@@ -295,7 +299,23 @@ def cmd_verify(a):
         extra += ["--num-threads", str(a.threads)]
     extra += ["--time-expanded"]
     extra += a.verus_arg
-    code, doc, secs = run_verus(a, extra)
+    root = "verified"
+    if "--verify-root" in extra:
+        # A crate root with nothing for Verus in it is not a module to Verus,
+        # and asking for it is an internal error (the module names, which
+        # Verus checks first, are not). Then, and only then, the part is run
+        # without the root, and the result says the crate has none.
+        code, doc, secs = run_verus(a, extra, capture=True)
+        err = run_verus.stderr
+        if doc is None and code != 0 and NO_ROOT in err and \
+                not re.search(r"^error", err.split(NO_ROOT)[0], re.M):
+            root = "none"
+            extra.remove("--verify-root")
+            code, doc, secs = run_verus(a, extra)
+        else:
+            sys.stderr.write(err)
+    else:
+        code, doc, secs = run_verus(a, extra)
     label = a.crate if a.parts == 1 else f"{a.crate} part {a.part + 1}/{a.parts}"
     if doc is None:
         die(f"{label}: Verus printed no result (exit {code})")
@@ -320,7 +340,7 @@ def cmd_verify(a):
         by_module[m["module"]] = by_module.get(m["module"], 0) + m["time"]
     json.dump({
         "crate": a.crate, "part": a.part, "parts": a.parts, "modules": mine,
-        "root": a.parts == 1 or a.part == 0,
+        "root": root if (a.parts == 1 or a.part == 0) else None,
         "verified": verified, "errors": errors, "entire_crate": whole,
         "verus": doc.get("verus"), "seconds": round(secs, 1),
         "module_ms": dict(sorted(by_module.items())),
@@ -345,8 +365,9 @@ def cmd_seal(a):
         seen = [m for r in results for m in r["modules"]]
         if sorted(seen) != sorted(plan["modules"]):
             die(f"{crate}: the parts cover {sorted(seen)}, the crate has {sorted(plan['modules'])}")
-        if sum(1 for r in results if r["root"]) != 1:
-            die(f"{crate}: the crate root must be in exactly one part")
+        if [r["part"] for r in results if r["root"] in ("verified", "none")] != [0] or \
+                any(r["root"] for r in results if r["part"] != 0):
+            die(f"{crate}: the crate root must be in part 1 and no other")
     total = sum(r["verified"] for r in results)
     if total == 0 and not a.allow_empty:
         die(f"{crate}: 0 proofs verified")
