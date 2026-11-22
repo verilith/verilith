@@ -7,11 +7,15 @@
 cd "$(dirname "$0")/.."
 V=${CARGO_TARGET_DIR:-$PWD/../../target}/release/examples/vpngcat
 R=difftest/refpng
+# The reference runs under a 2 GB address-space limit: libpng allocates what
+# a corrupt header asks for (14 GB for one mutant), which takes a CI runner
+# down. A reference that hits the limit prints nothing and counts as ERR.
+ref() { (ulimit -v 2097152; exec "$R" "$@"); }
 same=0; both_err=0; mismatch=0; vpng_only=0; libpng_only=0
 for f in "$@"; do
   for fmt in rgba8 native; do
     a=$($V "$f" $fmt 2>/dev/null | md5sum); ah=$($V "$f" $fmt 2>/dev/null | head -c 40 | head -1)
-    b=$($R "$f" $fmt 2>/dev/null | md5sum); bh=$($R "$f" $fmt 2>/dev/null | head -c 40 | head -1)
+    b=$(ref "$f" $fmt 2>/dev/null | md5sum); bh=$(ref "$f" $fmt 2>/dev/null | head -c 40 | head -1)
     # No output at all means the reference itself failed (e.g. out of memory).
     [[ -z "$bh" ]] && bh=ERR
     if [[ "$ah" == ERR* && "$bh" == ERR* ]]; then
