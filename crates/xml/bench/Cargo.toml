@@ -1,0 +1,22 @@
+[package]
+name = "vxml-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# A separate project: the comparison parsers are not dependencies of the
+# library. Against expat and libxml2, the C parsers verilith-xml replaces,
+# the measurement is vbench's (bench/ at the repository root).
+[workspace]
+
+[dependencies]
+verilith-xml = { path = ".." }
+roxmltree = "0.21"
+quick-xml = "0.38"
+xml-rs = "1"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+panic = "abort"
+debug = "line-tables-only"
