@@ -17,7 +17,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Crates whose tests also run on an Arm runner (the non-x86 code paths).
-ARM = {"json"}
+ARM = {"json", "sha2"}
 # Paths that affect every crate.
 GLOBAL = ("Cargo.toml", "Cargo.lock", "scripts/", ".github/")
 
