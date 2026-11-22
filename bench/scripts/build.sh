@@ -115,9 +115,23 @@ build_json() {
   rust_runner vjson-run json-vjson
 }
 
+# mbedtls_python: a Python 3 that has jsonschema and jinja2, which mbedTLS 4's
+# build scripts (tf-psa-crypto's generate_driver_wrappers.py) import. The
+# system one if it has them, else a virtualenv under $BUILD made once.
+mbedtls_python() {
+  if python3 -c 'import jsonschema, jinja2' 2>/dev/null; then command -v python3; return; fi
+  local venv=$BUILD/mbedtls-python
+  if ! "$venv/bin/python3" -c 'import jsonschema, jinja2' 2>/dev/null; then
+    python3 -m venv "$venv" >&2 && "$venv/bin/python3" -m pip install -q jsonschema jinja2 >&2 \
+      || { echo "could not make a Python with jsonschema and jinja2 for mbedTLS" >&2; return 1; }
+  fi
+  echo "$venv/bin/python3"
+}
+
 build_x509() {
   local src; src=$(orig mbedtls)
-  local cmk="-DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DUSE_SHARED_MBEDTLS_LIBRARY=OFF"
+  local py; py=$(mbedtls_python)
+  local cmk="-DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DUSE_SHARED_MBEDTLS_LIBRARY=OFF -DPython3_EXECUTABLE=$py -DMBEDTLS_PYTHON_EXECUTABLE=$py"
   cmake_build "$src" "$BUILD/mbedtls" $cmk
   local psrc=$BUILD/mbedtls-vx509-src
   rm -rf "$psrc"; cp -R "$src" "$psrc"; rm -rf "$psrc/.git"

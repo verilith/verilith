@@ -45,7 +45,7 @@ for k in c-ares c-ares-vdns; do
   cp "$BUILD/$k/lib/libcares.a" "$NW/$k/lib/"
 done
 lib=$("$ROOT/scripts/build.sh" --print-lib vdns cares,ares-abi); [ -f "$lib" ] || die "could not build vdns (cares,ares-abi)"
-cp "$lib" "$NW/c-ares-vdns/lib/"
+cp "$lib" "$NW/c-ares-vdns/lib/libvdns.a"   # the name --shared-cares-libname links
 
 has() { case " $NODE_SWAPS " in *" $1 "*) return 0 ;; esac; return 1; }
 ninja=""
