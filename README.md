@@ -5,7 +5,7 @@ libraries, written in Rust and proven with [Verus](https://github.com/verus-lang
 
 Each library is its own crate, verified and versioned on its own, and most
 also build a static library behind the C API of the library they replace
-(zlib, cJSON, llhttp, c-ares, libpng and so on), so existing C and C++
+(zlib, cJSON, llhttp, c-ares, libpng, OpenSSL's SHA-256 and so on), so existing C and C++
 callers can relink without changing code.
 
 | Crate | What it is |
@@ -23,6 +23,7 @@ callers can relink without changing code.
 | [`verilith-lz4`](crates/lz4) | A formally verified (Verus) LZ4 compressor and decompressor (block and frame formats) with liblz4's C API |
 | [`verilith-png`](crates/png) | A formally verified (Verus) PNG decoder |
 | [`verilith-regex`](crates/regex) | A linear-time regular expression engine (RE2 syntax and semantics) formally verified with Verus |
+| [`verilith-sha2`](crates/sha2) | Formally verified (Verus) SHA-224 and SHA-256 (FIPS 180-4), with SHA-NI and ARMv8 kernels, behind OpenSSL's `SHA256_*` C API |
 | [`verilith-simd`](crates/simd) | Verus specifications for x86 SIMD intrinsics (SSE2..AVX2, some AVX-512), differentially tested against the CPU |
 | [`verilith-snappy`](crates/snappy) | A formally verified (Verus) Snappy compressor and decompressor with the snappy-c API |
 | [`verilith-sync`](crates/sync) | Formally verified (Verus) concurrency primitives: SPSC and MPMC queues, channels, and locks, as drop-ins for rtrb, crossbeam and parking_lot |

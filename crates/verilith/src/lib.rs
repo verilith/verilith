@@ -48,6 +48,9 @@ pub use verilith_png as png;
 /// `verilith-regex`: regular expressions.
 #[cfg(feature = "regex")]
 pub use verilith_regex as regex;
+/// `verilith-sha2`: SHA-224 and SHA-256.
+#[cfg(feature = "sha2")]
+pub use verilith_sha2 as sha2;
 /// `verilith-simd`: verified SIMD kernels.
 #[cfg(feature = "simd")]
 pub use verilith_simd as simd;

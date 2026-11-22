@@ -1,0 +1,34 @@
+[package]
+name = "verilith-sha2"
+version = "0.1.0"
+license = "MIT"
+description = "Formally verified (Verus) SHA-224 and SHA-256 (FIPS 180-4), with SHA-NI and ARMv8 kernels and OpenSSL's SHA256 C API"
+edition = "2021"
+repository = "https://github.com/verilith/verilith"
+keywords = ["verified", "verus", "sha256", "sha2", "hash"]
+categories = ["cryptography", "no-std"]
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[features]
+# Export the C API under OpenSSL's own names (SHA256_Init and the rest).
+openssl-abi = []
+
+[dependencies]
+verilith-core = { path = "../core", version = "0.1.0" }
+vstd = { workspace = true, features = ["std"] }
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+# Verus erases ghost code during a normal `cargo build`; ghost-only imports
+# are guarded by `verus_only`, which Verus turns on during verification.
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(verus_only)',
+] }
+
+[dev-dependencies]
+# An independent implementation (RustCrypto's) to compare with.
+sha2 = "0.10"
