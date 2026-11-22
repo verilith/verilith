@@ -52,7 +52,7 @@ pub use x509::{AlgId, Atv, GeneralName, Name, Spki};
 #[cfg(all(any(feature = "mbedtls", feature = "capi"), not(feature = "std"), not(test)))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
-    extern "C" {
+    unsafe extern "C" {
         fn abort() -> !;
     }
     unsafe { abort() }

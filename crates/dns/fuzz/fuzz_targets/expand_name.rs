@@ -4,7 +4,7 @@ use libfuzzer_sys::fuzz_target;
 use std::os::raw::{c_char, c_long};
 use verilith_dns::capi::vdns_expand_name;
 
-extern "C" {
+unsafe extern "C" {
     fn ares_free_string(s: *mut std::os::raw::c_void);
 }
 

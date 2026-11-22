@@ -5,6 +5,7 @@
 //!
 //! Symbols are exported as `vsnappy_*`, or under snappy's own names with
 //! the `snappy-abi` feature.
+#![allow(unsafe_op_in_unsafe_fn)]
 use crate::compress::{compress_into, max_compressed_length};
 use crate::decode::{decompress_into, uncompressed_length, validate, Error};
 use core::ffi::{c_char, c_int};
@@ -15,8 +16,8 @@ pub const SNAPPY_BUFFER_TOO_SMALL: c_int = 2;
 
 macro_rules! export {
     ($vs:literal, $snappy:literal, fn $name:ident($($a:ident: $t:ty),* $(,)?) -> $r:ty $body:block) => {
-        #[cfg_attr(feature = "snappy-abi", export_name = $snappy)]
-        #[cfg_attr(not(feature = "snappy-abi"), export_name = $vs)]
+        #[cfg_attr(feature = "snappy-abi", unsafe(export_name = $snappy))]
+        #[cfg_attr(not(feature = "snappy-abi"), unsafe(export_name = $vs))]
         /// # Safety
         /// As the snappy function of the same name: pointers must be
         /// valid for the sizes given with them.

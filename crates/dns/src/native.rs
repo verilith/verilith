@@ -10,6 +10,7 @@
 //! the result into C structs. All wire-format handling is in verified code.
 #![allow(non_camel_case_types)]
 #![allow(clippy::missing_safety_doc)]
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use crate::error::{ErrorKind, Part};
 use crate::message::{Message, Section};
@@ -59,14 +60,14 @@ pub struct vdns_error {
 }
 
 /// A new, empty message. Free it with `vdns_message_free`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vdns_message_new() -> *mut vdns_message {
     Box::into_raw(Box::new(vdns_message(Message::new(0, 0))))
 }
 
 /// # Safety
 /// `m` is null or came from `vdns_message_new` and was not freed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vdns_message_free(m: *mut vdns_message) {
     if !m.is_null() {
         drop(Box::from_raw(m));
@@ -79,7 +80,7 @@ pub unsafe extern "C" fn vdns_message_free(m: *mut vdns_message) {
 /// # Safety
 /// `m` is a live message no other thread is using, `wire` points to `len`
 /// readable bytes, and `err` is null or valid for writes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vdns_parse(m: *mut vdns_message, wire: *const u8, len: usize, err: *mut vdns_error) -> c_int {
     if !err.is_null() {
         err.write(vdns_error { code: 0, part: 0, index: 0, offset: 0 });
@@ -129,7 +130,7 @@ unsafe fn reject(b: &[u8], err: *mut vdns_error) -> c_int {
 /// # Safety
 /// For the functions below: `m` is null or a live message, and out
 /// pointers are null or valid for writes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vdns_id(m: *const vdns_message) -> u16 {
     if m.is_null() {
         return 0;
@@ -138,7 +139,7 @@ pub unsafe extern "C" fn vdns_id(m: *const vdns_message) -> u16 {
 }
 
 /// The 16 bits after the ID: QR, opcode, AA, TC, RD, RA, Z and RCODE.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vdns_flags(m: *const vdns_message) -> u16 {
     if m.is_null() {
         return 0;
@@ -146,7 +147,7 @@ pub unsafe extern "C" fn vdns_flags(m: *const vdns_message) -> u16 {
     (*m).0.flags()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vdns_question_count(m: *const vdns_message) -> usize {
     if m.is_null() {
         return 0;
@@ -165,7 +166,7 @@ fn section(s: c_int) -> Option<Section> {
 
 /// The number of records in a section (`VDNS_ANSWER`, `VDNS_AUTHORITY` or
 /// `VDNS_ADDITIONAL`).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vdns_record_count(m: *const vdns_message, s: c_int) -> usize {
     match section(s) {
         Some(s) if !m.is_null() => (*m).0.record_count(s),
@@ -175,7 +176,7 @@ pub unsafe extern "C" fn vdns_record_count(m: *const vdns_message, s: c_int) -> 
 
 /// The `i`th question. The name points into `m`: it is valid until `m` is
 /// parsed into again or freed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vdns_get_question(m: *const vdns_message, i: usize, out: *mut vdns_question) -> bool {
     if m.is_null() {
         return false;
@@ -192,7 +193,7 @@ pub unsafe extern "C" fn vdns_get_question(m: *const vdns_message, i: usize, out
 }
 
 /// The `i`th record of a section. The name and RDATA point into `m`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vdns_get_record(m: *const vdns_message, s: c_int, i: usize, out: *mut vdns_record) -> bool {
     let Some(s) = section(s) else { return false };
     if m.is_null() {
@@ -235,7 +236,7 @@ unsafe fn put_text(text: &[u8], buf: *mut c_char, cap: usize) -> usize {
 /// # Safety
 /// `name` points to `name_len` readable bytes and `buf` to `cap` writable
 /// ones.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vdns_name_text(name: *const u8, name_len: usize, buf: *mut c_char, cap: usize) -> usize {
     if name.is_null() && name_len != 0 {
         return 0;
@@ -256,7 +257,7 @@ pub unsafe extern "C" fn vdns_name_text(name: *const u8, name_len: usize, buf: *
 /// # Safety
 /// `name` points to `name_len` readable bytes, `out` to `cap` writable
 /// ones, and `len` is null or valid for writes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vdns_write_query(
     id: u16,
     flags: u16,

@@ -9,7 +9,7 @@ use std::os::raw::{c_char, c_int};
 #[repr(C, align(16))]
 struct Crt([u8; 4096]);
 
-extern "C" {
+unsafe extern "C" {
     fn mbedtls_x509_crt_init(crt: *mut Crt);
     fn mbedtls_x509_crt_free(crt: *mut Crt);
     fn mbedtls_x509_crt_parse_der(crt: *mut Crt, buf: *const u8, len: usize) -> c_int;

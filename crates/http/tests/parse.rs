@@ -147,7 +147,7 @@ impl Rng {
 }
 
 /// A request built from plausible and hostile pieces.
-fn gen(r: &mut Rng) -> Vec<u8> {
+fn gen_msg(r: &mut Rng) -> Vec<u8> {
     let mut m = Vec::new();
     if r.below(16) == 0 {
         m.extend_from_slice(r.pick(&[b"\r\n", b"\n", b"\r\n\r\n"]));
@@ -182,7 +182,7 @@ fn differential_httparse() {
     let (mut both, mut only_httparse, mut only_vhttp) = (0, 0, 0);
     let mut hs = Vec::new();
     for _ in 0..300_000 {
-        let m = gen(&mut r);
+        let m = gen_msg(&mut r);
         let ours = verilith_http::parse::request_at(&m, 100, &mut hs).0;
         let mut theirs_h = [httparse::EMPTY_HEADER; 100];
         let mut theirs = httparse::Request::new(&mut theirs_h);
@@ -225,7 +225,7 @@ fn httparse_api_matches_httparse() {
     let mut r = Rng(0x0123_4567_89ab_cdef);
     let (mut both, mut only_httparse, mut same_err, mut both_err) = (0, 0, 0, 0);
     for _ in 0..300_000 {
-        let m = gen(&mut r);
+        let m = gen_msg(&mut r);
         let mut ours_h = [v::EMPTY_HEADER; 100];
         let mut ours = v::Request::new(&mut ours_h);
         let o = ours.parse(&m);

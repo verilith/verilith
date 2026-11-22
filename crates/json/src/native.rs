@@ -10,6 +10,7 @@
 //! name in `value.rs`. All syntax decisions are made by the verified parser.
 #![allow(non_camel_case_types)]
 #![allow(clippy::missing_safety_doc)]
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use crate::error::ErrorKind;
 use crate::value::{Elements, Members, Parser, Value, View};
@@ -87,14 +88,14 @@ fn code(k: ErrorKind) -> (c_int, u8) {
 }
 
 /// A new parser. Free it with `vjson_parser_free`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vjson_parser_new() -> *mut vjson_parser {
     Box::into_raw(Box::new(vjson_parser { view: EMPTY, parser: Parser::new(), spill: Mutex::new(Vec::new()) }))
 }
 
 /// # Safety
 /// `p` is null or came from `vjson_parser_new` and was not freed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjson_parser_free(p: *mut vjson_parser) {
     if !p.is_null() {
         drop(Box::from_raw(p));
@@ -107,7 +108,7 @@ pub unsafe extern "C" fn vjson_parser_free(p: *mut vjson_parser) {
 /// `p` is a live parser no other thread is using, `json` points to `len`
 /// readable bytes that stay unchanged while the document's values are in
 /// use, and `root` and `err` are null or valid for writes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjson_parse(
     p: *mut vjson_parser,
     json: *const c_char,
@@ -153,7 +154,7 @@ pub unsafe extern "C" fn vjson_parse(
 }
 
 /// A short description of an error code.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vjson_error_message(code: c_int) -> *const c_char {
     let s: &'static [u8] = match code {
         0 => b"no error\0",
@@ -238,7 +239,7 @@ unsafe fn spill(doc: *const c_void, v: Vec<u8>) -> (*const u8, usize) {
 /// For every function below: a `vjson_value` or `vjson_iter` came from this
 /// API, its parser is live and has not parsed again since, and out
 /// pointers are null or valid for writes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjson_type(v: vjson_value) -> c_int {
     match val(v) {
         None => VJSON_INVALID,
@@ -246,12 +247,12 @@ pub unsafe extern "C" fn vjson_type(v: vjson_value) -> c_int {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjson_is_null(v: vjson_value) -> bool {
     val(v).is_some_and(|x| x.is_null())
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjson_get_bool(v: vjson_value, out: *mut bool) -> bool {
     match val(v).and_then(|x| x.as_bool()) {
         Some(b) => {
@@ -264,7 +265,7 @@ pub unsafe extern "C" fn vjson_get_bool(v: vjson_value, out: *mut bool) -> bool 
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjson_get_double(v: vjson_value, out: *mut f64) -> bool {
     match val(v).and_then(|x| x.as_f64()) {
         Some(d) => {
@@ -277,7 +278,7 @@ pub unsafe extern "C" fn vjson_get_double(v: vjson_value, out: *mut f64) -> bool
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjson_get_int64(v: vjson_value, out: *mut i64) -> bool {
     match val(v).and_then(|x| x.as_i64()) {
         Some(i) => {
@@ -291,7 +292,7 @@ pub unsafe extern "C" fn vjson_get_int64(v: vjson_value, out: *mut i64) -> bool 
 }
 
 /// A number's source text (not NUL-terminated).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjson_get_number_text(v: vjson_value, s: *mut *const c_char, len: *mut usize) -> bool {
     match val(v).and_then(|x| x.as_number_str()) {
         Some(t) => {
@@ -303,7 +304,7 @@ pub unsafe extern "C" fn vjson_get_number_text(v: vjson_value, s: *mut *const c_
 }
 
 /// A string's decoded UTF-8 bytes (not NUL-terminated; it may contain NUL).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjson_get_string(v: vjson_value, s: *mut *const c_char, len: *mut usize) -> bool {
     match val(v).and_then(|x| x.as_bytes()) {
         Some(b) => {
@@ -316,7 +317,7 @@ pub unsafe extern "C" fn vjson_get_string(v: vjson_value, s: *mut *const c_char,
 
 /// The number of elements of an array or members of an object. This walks
 /// the container.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjson_length(v: vjson_value, out: *mut usize) -> bool {
     match val(v).and_then(|x| x.len()) {
         Some(n) => {
@@ -330,7 +331,7 @@ pub unsafe extern "C" fn vjson_length(v: vjson_value, out: *mut usize) -> bool {
 }
 
 /// Starts iterating over an array.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjson_array_iter(v: vjson_value, it: *mut vjson_iter) -> bool {
     match val(v).and_then(|x| x.elements()) {
         Some(e) if !it.is_null() => {
@@ -343,7 +344,7 @@ pub unsafe extern "C" fn vjson_array_iter(v: vjson_value, it: *mut vjson_iter) -
 
 /// The next element: its type, or 0 (`VJSON_INVALID`) at the end of the
 /// array.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjson_array_next(it: *mut vjson_iter, out: *mut vjson_value) -> c_int {
     if it.is_null() {
         return 0;
@@ -363,7 +364,7 @@ pub unsafe extern "C" fn vjson_array_next(it: *mut vjson_iter, out: *mut vjson_v
 }
 
 /// Starts iterating over an object.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjson_object_iter(v: vjson_value, it: *mut vjson_iter) -> bool {
     match val(v).and_then(|x| x.members()) {
         Some(m) if !it.is_null() => {
@@ -377,7 +378,7 @@ pub unsafe extern "C" fn vjson_object_iter(v: vjson_value, it: *mut vjson_iter) 
 /// The next member, in document order (duplicates included): its value's
 /// type, or 0 at the end of the object. The key is decoded UTF-8, not
 /// NUL-terminated.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjson_object_next(
     it: *mut vjson_iter,
     key: *mut *const c_char,
@@ -405,7 +406,7 @@ pub unsafe extern "C" fn vjson_object_next(
 }
 
 /// The first member of an object named `key`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjson_object_get(
     v: vjson_value,
     key: *const c_char,
@@ -429,7 +430,7 @@ pub unsafe extern "C" fn vjson_object_get(
 }
 
 /// The `index`th element of an array. This walks the array.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjson_array_at(v: vjson_value, index: usize, out: *mut vjson_value) -> bool {
     match val(v).and_then(|x| x.at(index)) {
         Some(x) => {

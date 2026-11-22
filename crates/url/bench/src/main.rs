@@ -7,7 +7,7 @@ use std::ffi::CString;
 use std::hint::black_box;
 use std::time::Instant;
 
-extern "C" {
+unsafe extern "C" {
     fn ada_loop(p: *const *const u8, l: *const usize, n: usize, ok: *mut usize) -> usize;
     fn curl_loop(p: *const *const i8, n: usize, ok: *mut usize, get: i32) -> usize;
 }

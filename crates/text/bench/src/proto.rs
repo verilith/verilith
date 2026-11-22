@@ -1,3 +1,4 @@
+#![allow(unsafe_op_in_unsafe_fn)]
 // Unverified prototypes of the AVX2 kernels, to check the design's speed.
 use core::arch::x86_64::*;
 

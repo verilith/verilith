@@ -7,7 +7,7 @@ use verilith_zstd::capi::*;
 mod lz;
 use lz::{open_libzstd, sample, Rng, Zstd};
 
-extern "C" {
+unsafe extern "C" {
     fn dlopen(name: *const c_char, flags: c_int) -> *mut c_void;
     fn dlsym(h: *mut c_void, name: *const c_char) -> *mut c_void;
 }

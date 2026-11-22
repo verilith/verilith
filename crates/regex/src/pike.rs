@@ -351,9 +351,9 @@ pub open spec fn sv(st: Seq<Frame>) -> Seq<F> {
     Seq::new(st.len(), |k: int| fv(st[k]))
 }
 
-/// `seen` is the set of instructions marked with generation `gen`.
-pub open spec fn marks(mark: Seq<u64>, gen: u64, seen: Set<int>) -> bool {
-    forall|pc: int| #[trigger] seen.contains(pc) <==> (0 <= pc < mark.len() && mark[pc] == gen)
+/// `seen` is the set of instructions marked with generation `gen_no`.
+pub open spec fn marks(mark: Seq<u64>, gen_no: u64, seen: Set<int>) -> bool {
+    forall|pc: int| #[trigger] seen.contains(pc) <==> (0 <= pc < mark.len() && mark[pc] == gen_no)
 }
 
 pub proof fn lemma_seen_len(seen: Set<int>, n: int)
@@ -375,7 +375,7 @@ pub fn add(
     p: usize,
     pc0: u32,
     mark: &mut Vec<u64>,
-    gen: u64,
+    gen_no: u64,
     stack: &mut Vec<Frame>,
     cur: &mut Vec<usize>,
     list: &mut List,
@@ -390,7 +390,7 @@ pub fn add(
         old(cur)@.len() == prog.nslots,
         old(list).wf(prog.nslots as nat),
         old(stack)@.len() == 0,
-        marks(old(mark)@, gen, seen),
+        marks(old(mark)@, gen_no, seen),
     ensures
         ({
             let e = ecd(prog.sp(), s@, p as int, pc0 as int, capv(old(cur)@), seen);
@@ -402,11 +402,11 @@ pub fn add(
         r.1@ <= (prog.nslots + 3) * (r.0@.len() - seen.len()) + 1,
         final(list).pcs@.len() - old(list).pcs@.len() <= r.0@.len() - seen.len(),
         final(list).wf(prog.nslots as nat),
-        marks(final(mark)@, gen, r.0@),
+        marks(final(mark)@, gen_no, r.0@),
         final(mark)@.len() == old(mark)@.len(),
         final(cur)@.len() == old(cur)@.len(),
         final(stack)@.len() == 0,
-        forall|k: int| 0 <= k < old(mark)@.len() ==> final(mark)@[k] == old(mark)@[k] || final(mark)@[k] == gen,
+        forall|k: int| 0 <= k < old(mark)@.len() ==> final(mark)@[k] == old(mark)@[k] || final(mark)@[k] == gen_no,
 {
     let ghost sp = prog.sp();
     let ghost ns = prog.nslots as nat;
@@ -434,7 +434,7 @@ pub fn add(
             mark@.len() == n,
             cur@.len() == ns,
             list.wf(ns),
-            marks(mark@, gen, sn),
+            marks(mark@, gen_no, sn),
             sn.len() <= n,
             kk == ns + 3,
             kd == kk * (sn.len() - seen.len()),
@@ -442,7 +442,7 @@ pub fn add(
             cost + stack@.len() <= kd + 1,
             stack@.len() <= sn.len() - seen.len() + 1,
             list.pcs@.len() - l0n <= sn.len() - seen.len(),
-            forall|k: int| 0 <= k < n ==> mark@[k] == old(mark)@[k] || mark@[k] == gen,
+            forall|k: int| 0 <= k < n ==> mark@[k] == old(mark)@[k] || mark@[k] == gen_no,
             forall|k: int|
                 0 <= k < stack@.len() ==> match #[trigger] stack@[k] {
                     Frame::Explore(pc) => pc < n,
@@ -476,7 +476,7 @@ pub fn add(
                 proof {
                     lemma_wk_ex(sp, s@, p as int, rest, pc as int, c, sn);
                 }
-                if mark[pc as usize] == gen {
+                if mark[pc as usize] == gen_no {
                     assert(sn.contains(pc as int));
                     assert(lv + Seq::<T>::empty() =~= lv);
                     let ghost w2 = wk(sp, s@, p as int, rest, c, sn);
@@ -484,7 +484,7 @@ pub fn add(
                 } else {
                     assert(!sn.contains(pc as int));
                     let ghost sn0 = sn;
-                    mark[pc as usize] = gen;
+                    mark[pc as usize] = gen_no;
                     proof {
                         sn = sn0.insert(pc as int);
                         vstd::set::lemma_set_insert_len(sn0, pc as int);
@@ -588,7 +588,7 @@ pub fn add(
 /// The matcher's working memory, sized for one program.
 pub struct Scratch {
     pub mark: Vec<u64>,
-    pub gen: u64,
+    pub gen_no: u64,
     pub tmark: Vec<u64>,
     pub tgen: u64,
     pub stack: Vec<Frame>,
@@ -622,7 +622,7 @@ impl Scratch {
     pub open spec fn wf(&self, prog: &Prog) -> bool {
         &&& self.mark@.len() == prog.insts@.len()
         &&& self.tmark@.len() == prog.insts@.len()
-        &&& forall|k: int| 0 <= k < self.mark@.len() ==> #[trigger] self.mark@[k] <= self.gen
+        &&& forall|k: int| 0 <= k < self.mark@.len() ==> #[trigger] self.mark@[k] <= self.gen_no
         &&& forall|k: int| 0 <= k < self.tmark@.len() ==> #[trigger] self.tmark@[k] <= self.tgen
         &&& self.stack@.len() == 0
         &&& self.cur@.len() == prog.nslots
@@ -666,7 +666,7 @@ impl Scratch {
         }
         Scratch {
             mark: mark,
-            gen: 0,
+            gen_no: 0,
             tmark: tmark,
             tgen: 0,
             stack: Vec::new(),
@@ -691,15 +691,15 @@ impl Scratch {
 }
 
 /// A generation no mark carries.
-pub fn bump(mark: &mut Vec<u64>, gen: u64) -> (r: (u64, Ghost<nat>))
+pub fn bump(mark: &mut Vec<u64>, gen_no: u64) -> (r: (u64, Ghost<nat>))
     requires
-        forall|k: int| 0 <= k < old(mark)@.len() ==> #[trigger] old(mark)@[k] <= gen,
+        forall|k: int| 0 <= k < old(mark)@.len() ==> #[trigger] old(mark)@[k] <= gen_no,
     ensures
         final(mark)@.len() == old(mark)@.len(),
         forall|k: int| 0 <= k < final(mark)@.len() ==> #[trigger] final(mark)@[k] < r.0,
         r.1@ <= old(mark)@.len(),
 {
-    if gen == u64::MAX {
+    if gen_no == u64::MAX {
         let n = mark.len();
         let mut i = 0;
         while i < n
@@ -714,7 +714,7 @@ pub fn bump(mark: &mut Vec<u64>, gen: u64) -> (r: (u64, Ghost<nat>))
         }
         (1, Ghost(n as nat))
     } else {
-        (gen + 1, Ghost(0))
+        (gen_no + 1, Ghost(0))
     }
 }
 
@@ -861,7 +861,7 @@ fn skip_ahead(prog: &Prog, s: &[u8], p: usize, sc: &mut Scratch) -> (r: (usize, 
         final(sc).wf(prog),
         final(sc).a == old(sc).a,
         final(sc).b == old(sc).b,
-        marks(final(sc).mark@, final(sc).gen, Set::<int>::empty()),
+        marks(final(sc).mark@, final(sc).gen_no, Set::<int>::empty()),
         p < r.0 <= s@.len(),
         r.1@ <= 3 * (r.0 - p) + prog.insts@.len(),
         search_p(prog.sp(), s@, prog.start as int, p as int, prog.nslots as nat) == search_p(
@@ -877,8 +877,8 @@ fn skip_ahead(prog: &Prog, s: &[u8], p: usize, sc: &mut Scratch) -> (r: (usize, 
     let ghost st = prog.start as int;
     let ghost ns = prog.nslots as nat;
     let (q, kc) = skip_run(prog, s, p);
-    let (g, bc) = bump(&mut sc.mark, sc.gen);
-    sc.gen = g;
+    let (g, bc) = bump(&mut sc.mark, sc.gen_no);
+    sc.gen_no = g;
     (q, Ghost(kc@ + bc@))
 }
 
@@ -912,8 +912,8 @@ fn dfa_skip(prog: &Prog, s: &[u8], p: usize, sc: &mut Scratch, nst: &mut NeedSt)
         },
         final(sc).a == old(sc).a,
         final(sc).b == old(sc).b,
-        r.0 > p ==> marks(final(sc).mark@, final(sc).gen, Set::<int>::empty()),
-        r.0 == p ==> final(sc).mark == old(sc).mark && final(sc).gen == old(sc).gen,
+        r.0 > p ==> marks(final(sc).mark@, final(sc).gen_no, Set::<int>::empty()),
+        r.0 == p ==> final(sc).mark == old(sc).mark && final(sc).gen_no == old(sc).gen_no,
         p <= r.0 <= r.1 <= s@.len(),
         r.2@ <= (r.1 - p + 1) * dfa_cost(prog.insts@.len() as int),
         search_p(prog.sp(), s@, prog.start as int, p as int, prog.nslots as nat) == search_p(
@@ -938,8 +938,8 @@ fn dfa_skip(prog: &Prog, s: &[u8], p: usize, sc: &mut Scratch, nst: &mut NeedSt)
         ;
     }
     if q > p {
-        let (g, bc) = bump(&mut sc.mark, sc.gen);
-        sc.gen = g;
+        let (g, bc) = bump(&mut sc.mark, sc.gen_no);
+        sc.gen_no = g;
         (q, e, Ghost(dc@ + bc@), nc)
     } else {
         (q, e, dc, nc)
@@ -1016,8 +1016,8 @@ pub fn run(prog: &Prog, s: &[u8], from: usize, sc: &mut Scratch, out: &mut Vec<u
     let mut p = from;
     sc.a.clear(Ghost(ns));
     sc.b.clear(Ghost(ns));
-    let (g, bc0) = bump(&mut sc.mark, sc.gen);
-    sc.gen = g;
+    let (g, bc0) = bump(&mut sc.mark, sc.gen_no);
+    sc.gen_no = g;
     let ghost mut seen = Set::<int>::empty();
     proof {
         steps = bc0@ as int;
@@ -1074,7 +1074,7 @@ pub fn run(prog: &Prog, s: &[u8], from: usize, sc: &mut Scratch, out: &mut Vec<u
             sc.wf(prog),
             sc.a.wf(ns),
             out@.len() == ns,
-            marks(sc.mark@, sc.gen, seen),
+            marks(sc.mark@, sc.gen_no, seen),
             inv_list(sp, s@, p as int, seen, sc.a.v(ns)),
             ans == or(
                 fr(sp, s@, sc.a.v(ns), p as int),
@@ -1239,8 +1239,8 @@ pub fn run(prog: &Prog, s: &[u8], from: usize, sc: &mut Scratch, out: &mut Vec<u
             }
             if qr.0 == 2 {
                 p = p + 1;
-                let (g, bc) = bump(&mut sc.mark, sc.gen);
-                sc.gen = g;
+                let (g, bc) = bump(&mut sc.mark, sc.gen_no);
+                sc.gen_no = g;
                 proof {
                     seen = Set::<int>::empty();
                     lemma_inv_empty(sp, s@, p as int, sc.a.v(ns));
@@ -1266,7 +1266,7 @@ pub fn run(prog: &Prog, s: &[u8], from: usize, sc: &mut Scratch, out: &mut Vec<u
             proof {
                 lemma_add_ecd(sp, s@, p as int, st, unset(ns), seen, l0);
             }
-            let gs = add(prog, s, p, start, &mut sc.mark, sc.gen, &mut sc.stack, &mut sc.cur, &mut sc.a, Ghost(seen));
+            let gs = add(prog, s, p, start, &mut sc.mark, sc.gen_no, &mut sc.stack, &mut sc.cur, &mut sc.a, Ghost(seen));
             proof {
                 lemma_seen_len(gs.0@, np);
                 lemma_mul_le(gs.0@.len() - seen.len(), np, kk);
@@ -1346,8 +1346,8 @@ pub fn run(prog: &Prog, s: &[u8], from: usize, sc: &mut Scratch, out: &mut Vec<u
             (INVALID, 1)
         };
         let ghost p2 = p + l;
-        let (g, bc) = bump(&mut sc.mark, sc.gen);
-        sc.gen = g;
+        let (g, bc) = bump(&mut sc.mark, sc.gen_no);
+        sc.gen_no = g;
         let ghost mut seen2 = Set::<int>::empty();
         let ghost mut c2: int = 0;
         let ghost mut wi: int = 0;
@@ -1399,7 +1399,7 @@ pub fn run(prog: &Prog, s: &[u8], from: usize, sc: &mut Scratch, out: &mut Vec<u
                 c2 <= wi + ks + (if cut { ww } else { 0 }),
                 sc.b.pcs@.len() <= seen2.len(),
                 out@.len() == ns,
-                marks(sc.mark@, sc.gen, seen2),
+                marks(sc.mark@, sc.gen_no, seen2),
                 inv_list(sp, s@, p2, seen2, sc.b.v(ns)),
                 p >= n ==> sc.b.v(ns).len() == 0,
                 ans == or(
@@ -1470,7 +1470,7 @@ pub fn run(prog: &Prog, s: &[u8], from: usize, sc: &mut Scratch, out: &mut Vec<u
                                 p + l,
                                 next,
                                 &mut sc.mark,
-                                sc.gen,
+                                sc.gen_no,
                                 &mut sc.stack,
                                 &mut sc.cur,
                                 &mut sc.b,
@@ -1584,7 +1584,7 @@ pub fn run(prog: &Prog, s: &[u8], from: usize, sc: &mut Scratch, out: &mut Vec<u
                 sc.a.wf(ns),
                 sc.b.wf(ns),
                 out@.len() == ns,
-                marks(sc.mark@, sc.gen, seen2),
+                marks(sc.mark@, sc.gen_no, seen2),
                 inv_list(sp, s@, p2, seen2, sc.b.v(ns)),
                 ans == or(
                     fr(sp, s@, sc.b.v(ns), p2),

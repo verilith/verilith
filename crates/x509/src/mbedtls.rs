@@ -6,6 +6,7 @@
 //! DER readers) and do not check contents again. The adapter is unverified
 //! glue that copies these spans into `mbedtls_x509_crt`; see
 //! mbedtls/README.md.
+#![allow(unsafe_op_in_unsafe_fn)]
 use crate::der::*;
 use crate::ext::*;
 use crate::x509::{Atv, AtvSink};
@@ -264,7 +265,7 @@ fn off(outer: &[u8], inner: &[u8]) -> usize {
 ///
 /// # Safety
 /// `buf` must point to `len` readable bytes; `out` and `err` must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_parse_crt(buf: *const u8, len: usize, out: *mut VCrt, err: *mut VErr) -> i32 {
     let b = if buf.is_null() { &[][..] } else { slice::from_raw_parts(buf, len) };
     let first = match read_tlv(b) {
@@ -376,7 +377,7 @@ pub struct VAtv {
 ///
 /// # Safety
 /// The spans must come from `vx509_parse_crt` or earlier calls.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_name_next(rdns: *mut VSpan, set: *mut VSpan, out: *mut VAtv) -> i32 {
     let mut s = (*set).get();
     if s.is_empty() {
@@ -399,7 +400,7 @@ pub unsafe extern "C" fn vx509_name_next(rdns: *mut VSpan, set: *mut VSpan, out:
 ///
 /// # Safety
 /// `rdns` must come from `vx509_parse_crt`; `out` must hold `cap` entries.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_name_atvs(rdns: VSpan, out: *mut VAtv, cap: usize) -> usize {
     let mut r = rdns.get();
     let mut n = 0;
@@ -430,7 +431,7 @@ pub struct VExt {
 ///
 /// # Safety
 /// `rest` must come from `vx509_parse_crt` or earlier calls.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_ext_next(rest: *mut VSpan, out: *mut VExt) -> i32 {
     let Some((c, r)) = read_expect((*rest).get(), 0x30) else { return 0 };
     let Some((oid, x)) = read_expect(c, 0x06) else { return 0 };
@@ -450,7 +451,7 @@ pub unsafe extern "C" fn vx509_ext_next(rest: *mut VSpan, out: *mut VExt) -> i32
 ///
 /// # Safety
 /// `list` must come from `vx509_parse_crt`; `out` must hold `cap` entries.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_ext_all(list: VSpan, out: *mut VExt, cap: usize) -> usize {
     let mut rest = list;
     let mut n = 0;
@@ -468,7 +469,7 @@ pub unsafe extern "C" fn vx509_ext_all(list: VSpan, out: *mut VExt, cap: usize) 
 ///
 /// # Safety
 /// Pointers must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_basic_constraints(v: VSpan, ca: *mut i32, has_len: *mut i32, path_len: *mut u64) -> i32 {
     let Some(b) = read_basic_constraints(v.get()) else { return -1 };
     *ca = b.ca as i32;
@@ -481,7 +482,7 @@ pub unsafe extern "C" fn vx509_basic_constraints(v: VSpan, ca: *mut i32, has_len
 ///
 /// # Safety
 /// Pointers must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_bit_string(v: VSpan, bits: *mut VSpan) -> i32 {
     let Some(c) = read_only(v.get(), 0x03) else { return -1 };
     let Some(b) = read_bit_string(c) else { return -1 };
@@ -494,7 +495,7 @@ pub unsafe extern "C" fn vx509_bit_string(v: VSpan, bits: *mut VSpan) -> i32 {
 ///
 /// # Safety
 /// Pointers must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_ext_list(v: VSpan, kind: i32, list: *mut VSpan) -> i32 {
     let _ = kind;
     match read_only(v.get(), 0x30) {
@@ -523,7 +524,7 @@ fn list_step(r: &[u8], kind: i32) -> Option<(i32, &[u8], &[u8])> {
 ///
 /// # Safety
 /// Pointers must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[inline]
 pub unsafe extern "C" fn vx509_list_next(rest: *mut VSpan, kind: i32, tag: *mut i32, out: *mut VSpan) -> i32 {
     let r = (*rest).get();
@@ -549,7 +550,7 @@ pub struct VItem {
 ///
 /// # Safety
 /// `list` must come from `vx509_parse_crt`; `out` must hold `cap` entries.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_list_all(list: VSpan, kind: i32, out: *mut VItem, cap: usize) -> usize {
     let mut rest = list;
     let mut n = 0;
@@ -568,7 +569,7 @@ pub unsafe extern "C" fn vx509_list_all(list: VSpan, kind: i32, out: *mut VItem,
 ///
 /// # Safety
 /// Pointers must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_subject_key_id(v: VSpan, out: *mut VSpan) -> i32 {
     match read_only(v.get(), 0x04) {
         Some(k) => {
@@ -584,7 +585,7 @@ pub unsafe extern "C" fn vx509_subject_key_id(v: VSpan, out: *mut VSpan) -> i32 
 ///
 /// # Safety
 /// Pointers must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_authority_key_id(v: VSpan, key_id: *mut VSpan, issuer: *mut VSpan, serial: *mut VSpan) -> i32 {
     let Some(a) = read_authority_key_id(v.get()) else { return -1 };
     *key_id = a.key_id.map(VSpan::of).unwrap_or(VSpan::EMPTY);

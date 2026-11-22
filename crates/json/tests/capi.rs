@@ -1,6 +1,7 @@
 //! The native C API (`src/native.rs`) against the Rust API it wraps: both
 //! must describe every document the same way.
 #![cfg(feature = "capi")]
+#![allow(unsafe_op_in_unsafe_fn)]
 use std::ffi::{c_char, CStr};
 use verilith_json::native::*;
 

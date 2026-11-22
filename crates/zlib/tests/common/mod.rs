@@ -1,5 +1,6 @@
 //! Reference zlib (the system libz) through its C API, and test inputs.
 #![allow(dead_code)]
+#![allow(unsafe_op_in_unsafe_fn)]
 use std::os::raw::{c_char, c_int, c_uint, c_ulong, c_void};
 
 #[repr(C)]
@@ -21,7 +22,7 @@ pub struct ZStream {
 }
 
 #[link(name = "z")]
-extern "C" {
+unsafe extern "C" {
     fn zlibVersion() -> *const c_char;
     fn deflateInit2_(s: *mut ZStream, level: c_int, method: c_int, wbits: c_int, mem: c_int, strategy: c_int, ver: *const c_char, size: c_int) -> c_int;
     fn deflate(s: *mut ZStream, flush: c_int) -> c_int;

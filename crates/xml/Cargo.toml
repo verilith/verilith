@@ -1,7 +1,7 @@
 [package]
 name = "verilith-xml"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "A fast XML 1.0 parser formally verified with Verus: exactly the well-formedness rules, no panics, no recursion, entity expansion without copies"
 license = "MIT"
 repository = "https://github.com/verilith/verilith"

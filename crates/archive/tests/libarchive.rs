@@ -2,12 +2,13 @@
 //! with `dlopen` (nothing is built or linked from C), through the same C
 //! API on both sides. Skipped, with a message, when libarchive is not
 //! installed.
+#![allow(unsafe_op_in_unsafe_fn)]
 mod common;
 use common::*;
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use verilith_archive::capi;
 
-extern "C" {
+unsafe extern "C" {
     fn dlopen(name: *const c_char, flags: c_int) -> *mut c_void;
     fn dlsym(h: *mut c_void, name: *const c_char) -> *mut c_void;
     fn setlocale(category: c_int, locale: *const c_char) -> *mut c_char;

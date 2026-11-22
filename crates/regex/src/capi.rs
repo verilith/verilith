@@ -9,6 +9,7 @@
 //! calls the verified `Regex::new` and `Regex::search_with`, and copies
 //! the results out.
 #![allow(clippy::missing_safety_doc)]
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use crate::pike::{Scratch, NONE};
 use crate::{Error, Regex};
@@ -134,13 +135,13 @@ fn search(re: &Regex, pool: &Pool, text: &[u8], from: usize, found: impl FnOnce(
 // ---------------------------------------------------------------------------
 
 /// Compiles `pattern[..len]`. Never null; check `vregex_error`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vregex_new(pattern: *const c_char, len: usize) -> *mut Handle {
     let pat = bytes(pattern, len);
     Box::into_raw(compile(pat, pat.to_vec()))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vregex_free(re: *mut Handle) {
     if !re.is_null() {
         drop(Box::from_raw(re));
@@ -148,20 +149,20 @@ pub unsafe extern "C" fn vregex_free(re: *mut Handle) {
 }
 
 /// `VREGEX_OK`, or why the pattern did not compile.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vregex_error(re: *const Handle) -> c_int {
     (*re).err
 }
 
 /// For `VREGEX_SYNTAX`: the byte offset in the pattern where it went wrong.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vregex_error_offset(re: *const Handle) -> usize {
     (*re).err_at
 }
 
 /// Number of groups, counting group 0 (the whole match). 0 if the pattern
 /// did not compile.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vregex_groups(re: *const Handle) -> usize {
     match &(*re).re {
         Some(r) => r.groups(),
@@ -170,7 +171,7 @@ pub unsafe extern "C" fn vregex_groups(re: *const Handle) -> usize {
 }
 
 /// The number of the group called `name[..len]`, or -1.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vregex_group_index(re: *const Handle, name: *const c_char, len: usize) -> c_int {
     let name = bytes(name, len);
     if let Some(r) = &(*re).re {
@@ -186,7 +187,7 @@ pub unsafe extern "C" fn vregex_group_index(re: *const Handle, name: *const c_ch
 /// Searches `text[..len]` from byte `from` for the leftmost match. Returns
 /// 1 and fills `slots[..nslots]` (start and end of group 0, then of group
 /// 1, ...; `SIZE_MAX` for a group that took no part), or returns 0.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vregex_search(
     re: *const Handle,
     text: *const c_char,
@@ -272,8 +273,8 @@ impl Options {
 macro_rules! cre2 {
     ($(#[$m:meta])* fn $name:ident = $cname:literal ($($a:ident : $t:ty),*) $(-> $r:ty)? $body:block) => {
         $(#[$m])*
-        #[cfg_attr(feature = "cre2-abi", export_name = $cname)]
-        #[cfg_attr(not(feature = "cre2-abi"), export_name = concat!("vregex_", $cname))]
+        #[cfg_attr(feature = "cre2-abi", unsafe(export_name = $cname))]
+        #[cfg_attr(not(feature = "cre2-abi"), unsafe(export_name = concat!("vregex_", $cname)))]
         pub unsafe extern "C" fn $name($($a: $t),*) $(-> $r)? $body
     };
 }

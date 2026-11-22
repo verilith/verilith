@@ -6,6 +6,7 @@
 //! all syntax decisions are made by the verified parser.
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![allow(clippy::missing_safety_doc)]
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use crate::number::parse_f64;
 use crate::parser::{ex_decode, parse_with, Kind, NumVal, Sink, Tok};
@@ -45,7 +46,7 @@ pub struct cJSON_Hooks {
     pub free_fn: Option<unsafe extern "C" fn(*mut c_void)>,
 }
 
-extern "C" {
+unsafe extern "C" {
     fn malloc(size: usize) -> *mut c_void;
     fn free(p: *mut c_void);
     fn strlen(s: *const c_char) -> usize;
@@ -79,7 +80,7 @@ unsafe fn hook_free(p: *mut c_void) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_InitHooks(hooks: *mut cJSON_Hooks) {
     if hooks.is_null() {
         MALLOC_FN.store(ptr::null_mut(), Ordering::Relaxed);
@@ -97,12 +98,12 @@ pub unsafe extern "C" fn cJSON_InitHooks(hooks: *mut cJSON_Hooks) {
     );
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_malloc(size: usize) -> *mut c_void {
     hook_malloc(size)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_free(object: *mut c_void) {
     if !object.is_null() {
         hook_free(object)
@@ -116,7 +117,7 @@ pub unsafe extern "C" fn cJSON_free(object: *mut c_void) {
 static ERROR_JSON: AtomicPtr<c_char> = AtomicPtr::new(ptr::null_mut());
 static ERROR_POS: AtomicUsize = AtomicUsize::new(0);
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_GetErrorPtr() -> *const c_char {
     let j = ERROR_JSON.load(Ordering::Relaxed);
     if j.is_null() {
@@ -480,12 +481,12 @@ unsafe fn parse_impl(
     root
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_Parse(value: *const c_char) -> *mut cJSON {
     cJSON_ParseWithOpts(value, ptr::null_mut(), 0)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_ParseWithLength(
     value: *const c_char,
     buffer_length: usize,
@@ -493,7 +494,7 @@ pub unsafe extern "C" fn cJSON_ParseWithLength(
     cJSON_ParseWithLengthOpts(value, buffer_length, ptr::null_mut(), 0)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_ParseWithOpts(
     value: *const c_char,
     return_parse_end: *mut *const c_char,
@@ -510,7 +511,7 @@ pub unsafe extern "C" fn cJSON_ParseWithOpts(
     )
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_ParseWithLengthOpts(
     value: *const c_char,
     buffer_length: usize,
@@ -535,7 +536,7 @@ pub unsafe extern "C" fn cJSON_ParseWithLengthOpts(
 // Deleting
 // ---------------------------------------------------------------------------
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_Delete(item: *mut cJSON) {
     // Iterative over siblings, recursive over children; depth is bounded by
     // the parser's nesting limit for trees this library built.
@@ -560,7 +561,7 @@ pub unsafe extern "C" fn cJSON_Delete(item: *mut cJSON) {
 // Reading
 // ---------------------------------------------------------------------------
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_GetArraySize(array: *const cJSON) -> c_int {
     if array.is_null() {
         return 0;
@@ -574,7 +575,7 @@ pub unsafe extern "C" fn cJSON_GetArraySize(array: *const cJSON) -> c_int {
     n as c_int
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_GetArrayItem(array: *const cJSON, index: c_int) -> *mut cJSON {
     if array.is_null() || index < 0 {
         return ptr::null_mut();
@@ -638,7 +639,7 @@ unsafe fn get_object_item(
     ptr::null_mut()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_GetObjectItem(
     object: *const cJSON,
     string: *const c_char,
@@ -646,7 +647,7 @@ pub unsafe extern "C" fn cJSON_GetObjectItem(
     get_object_item(object, string, false)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_GetObjectItemCaseSensitive(
     object: *const cJSON,
     string: *const c_char,
@@ -654,12 +655,12 @@ pub unsafe extern "C" fn cJSON_GetObjectItemCaseSensitive(
     get_object_item(object, string, true)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_HasObjectItem(object: *const cJSON, string: *const c_char) -> c_int {
     (!cJSON_GetObjectItem(object, string).is_null()) as c_int
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_GetStringValue(item: *const cJSON) -> *mut c_char {
     if cJSON_IsString(item) == 0 {
         return ptr::null_mut();
@@ -667,7 +668,7 @@ pub unsafe extern "C" fn cJSON_GetStringValue(item: *const cJSON) -> *mut c_char
     (*item).valuestring
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_GetNumberValue(item: *const cJSON) -> c_double {
     if cJSON_IsNumber(item) == 0 {
         return f64::NAN;
@@ -677,7 +678,7 @@ pub unsafe extern "C" fn cJSON_GetNumberValue(item: *const cJSON) -> c_double {
 
 macro_rules! type_predicate {
     ($name:ident, $mask:expr) => {
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $name(item: *const cJSON) -> c_int {
             if item.is_null() {
                 return 0;
@@ -697,7 +698,7 @@ type_predicate!(cJSON_IsArray, cJSON_Array);
 type_predicate!(cJSON_IsObject, cJSON_Object);
 type_predicate!(cJSON_IsRaw, cJSON_Raw);
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_IsBool(item: *const cJSON) -> c_int {
     if item.is_null() {
         return 0;
@@ -707,7 +708,7 @@ pub unsafe extern "C" fn cJSON_IsBool(item: *const cJSON) -> c_int {
 
 static VERSION: &[u8] = b"1.7.19\0";
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn cJSON_Version() -> *const c_char {
     VERSION.as_ptr() as *const c_char
 }
@@ -721,7 +722,7 @@ fn compare_double(a: f64, b: f64) -> bool {
     (a - b).abs() <= max * f64::EPSILON
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_Compare(
     a: *const cJSON,
     b: *const cJSON,
@@ -790,7 +791,7 @@ unsafe fn compare(a: *const cJSON, b: *const cJSON, case_sensitive: bool) -> boo
 // Printing
 // ---------------------------------------------------------------------------
 
-extern "C" {
+unsafe extern "C" {
     fn snprintf(buf: *mut c_char, n: usize, fmt: *const c_char, ...) -> c_int;
     fn strtod(s: *const c_char, end: *mut *mut c_char) -> c_double;
 }
@@ -929,17 +930,17 @@ unsafe fn print_to_malloc(item: *const cJSON, format: bool) -> *mut c_char {
     copy_cstr(&out)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_Print(item: *const cJSON) -> *mut c_char {
     print_to_malloc(item, true)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_PrintUnformatted(item: *const cJSON) -> *mut c_char {
     print_to_malloc(item, false)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_PrintBuffered(
     item: *const cJSON,
     prebuffer: c_int,
@@ -951,7 +952,7 @@ pub unsafe extern "C" fn cJSON_PrintBuffered(
     print_to_malloc(item, fmt != 0)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_PrintPreallocated(
     item: *mut cJSON,
     buffer: *mut c_char,
@@ -984,7 +985,7 @@ unsafe fn strdup_hook(s: *const c_char) -> *mut c_char {
     copy_cstr(core::slice::from_raw_parts(s as *const u8, strlen(s)))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_SetNumberHelper(object: *mut cJSON, number: c_double) -> c_double {
     if object.is_null() {
         return f64::NAN;
@@ -994,7 +995,7 @@ pub unsafe extern "C" fn cJSON_SetNumberHelper(object: *mut cJSON, number: c_dou
     number
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_SetValuestring(object: *mut cJSON, valuestring: *const c_char) -> *mut c_char {
     if object.is_null() || (*object).type_ & cJSON_String == 0 || (*object).type_ & cJSON_IsReference != 0 {
         return ptr::null_mut();
@@ -1077,22 +1078,22 @@ unsafe fn add_item_to_object(object: *mut cJSON, string: *const c_char, item: *m
     add_item_to_array(object, item)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_AddItemToArray(array: *mut cJSON, item: *mut cJSON) -> c_int {
     add_item_to_array(array, item) as c_int
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_AddItemToObject(object: *mut cJSON, string: *const c_char, item: *mut cJSON) -> c_int {
     add_item_to_object(object, string, item, false) as c_int
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_AddItemToObjectCS(object: *mut cJSON, string: *const c_char, item: *mut cJSON) -> c_int {
     add_item_to_object(object, string, item, true) as c_int
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_AddItemReferenceToArray(array: *mut cJSON, item: *mut cJSON) -> c_int {
     if array.is_null() {
         return 0;
@@ -1100,7 +1101,7 @@ pub unsafe extern "C" fn cJSON_AddItemReferenceToArray(array: *mut cJSON, item: 
     add_item_to_array(array, create_reference(item)) as c_int
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_AddItemReferenceToObject(object: *mut cJSON, string: *const c_char, item: *mut cJSON) -> c_int {
     if object.is_null() || string.is_null() {
         return 0;
@@ -1117,52 +1118,52 @@ unsafe fn add_new(object: *mut cJSON, name: *const c_char, item: *mut cJSON) -> 
     ptr::null_mut()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_AddNullToObject(object: *mut cJSON, name: *const c_char) -> *mut cJSON {
     add_new(object, name, cJSON_CreateNull())
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_AddTrueToObject(object: *mut cJSON, name: *const c_char) -> *mut cJSON {
     add_new(object, name, cJSON_CreateTrue())
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_AddFalseToObject(object: *mut cJSON, name: *const c_char) -> *mut cJSON {
     add_new(object, name, cJSON_CreateFalse())
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_AddBoolToObject(object: *mut cJSON, name: *const c_char, boolean: c_int) -> *mut cJSON {
     add_new(object, name, cJSON_CreateBool(boolean))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_AddNumberToObject(object: *mut cJSON, name: *const c_char, number: c_double) -> *mut cJSON {
     add_new(object, name, cJSON_CreateNumber(number))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_AddStringToObject(object: *mut cJSON, name: *const c_char, string: *const c_char) -> *mut cJSON {
     add_new(object, name, cJSON_CreateString(string))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_AddRawToObject(object: *mut cJSON, name: *const c_char, raw: *const c_char) -> *mut cJSON {
     add_new(object, name, cJSON_CreateRaw(raw))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_AddObjectToObject(object: *mut cJSON, name: *const c_char) -> *mut cJSON {
     add_new(object, name, cJSON_CreateObject())
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_AddArrayToObject(object: *mut cJSON, name: *const c_char) -> *mut cJSON {
     add_new(object, name, cJSON_CreateArray())
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_DetachItemViaPointer(parent: *mut cJSON, item: *mut cJSON) -> *mut cJSON {
     if parent.is_null() || item.is_null() || (item != (*parent).child && (*item).prev.is_null()) {
         return ptr::null_mut();
@@ -1183,7 +1184,7 @@ pub unsafe extern "C" fn cJSON_DetachItemViaPointer(parent: *mut cJSON, item: *m
     item
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_DetachItemFromArray(array: *mut cJSON, which: c_int) -> *mut cJSON {
     if which < 0 {
         return ptr::null_mut();
@@ -1191,32 +1192,32 @@ pub unsafe extern "C" fn cJSON_DetachItemFromArray(array: *mut cJSON, which: c_i
     cJSON_DetachItemViaPointer(array, cJSON_GetArrayItem(array, which))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_DeleteItemFromArray(array: *mut cJSON, which: c_int) {
     cJSON_Delete(cJSON_DetachItemFromArray(array, which))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_DetachItemFromObject(object: *mut cJSON, string: *const c_char) -> *mut cJSON {
     cJSON_DetachItemViaPointer(object, cJSON_GetObjectItem(object, string))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_DetachItemFromObjectCaseSensitive(object: *mut cJSON, string: *const c_char) -> *mut cJSON {
     cJSON_DetachItemViaPointer(object, cJSON_GetObjectItemCaseSensitive(object, string))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_DeleteItemFromObject(object: *mut cJSON, string: *const c_char) {
     cJSON_Delete(cJSON_DetachItemFromObject(object, string))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_DeleteItemFromObjectCaseSensitive(object: *mut cJSON, string: *const c_char) {
     cJSON_Delete(cJSON_DetachItemFromObjectCaseSensitive(object, string))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_InsertItemInArray(array: *mut cJSON, which: c_int, newitem: *mut cJSON) -> c_int {
     if which < 0 || newitem.is_null() {
         return 0;
@@ -1239,7 +1240,7 @@ pub unsafe extern "C" fn cJSON_InsertItemInArray(array: *mut cJSON, which: c_int
     1
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_ReplaceItemViaPointer(parent: *mut cJSON, item: *mut cJSON, replacement: *mut cJSON) -> c_int {
     if parent.is_null() || (*parent).child.is_null() || replacement.is_null() || item.is_null() {
         return 0;
@@ -1271,7 +1272,7 @@ pub unsafe extern "C" fn cJSON_ReplaceItemViaPointer(parent: *mut cJSON, item: *
     1
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_ReplaceItemInArray(array: *mut cJSON, which: c_int, newitem: *mut cJSON) -> c_int {
     if which < 0 {
         return 0;
@@ -1294,12 +1295,12 @@ unsafe fn replace_item_in_object(object: *mut cJSON, string: *const c_char, repl
     cJSON_ReplaceItemViaPointer(object, get_object_item(object, string, case_sensitive), replacement)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_ReplaceItemInObject(object: *mut cJSON, string: *const c_char, newitem: *mut cJSON) -> c_int {
     replace_item_in_object(object, string, newitem, false)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_ReplaceItemInObjectCaseSensitive(object: *mut cJSON, string: *const c_char, newitem: *mut cJSON) -> c_int {
     replace_item_in_object(object, string, newitem, true)
 }
@@ -1312,27 +1313,27 @@ unsafe fn create_typed(type_: c_int) -> *mut cJSON {
     item
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_CreateNull() -> *mut cJSON {
     create_typed(cJSON_NULL)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_CreateTrue() -> *mut cJSON {
     create_typed(cJSON_True)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_CreateFalse() -> *mut cJSON {
     create_typed(cJSON_False)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_CreateBool(boolean: c_int) -> *mut cJSON {
     create_typed(if boolean != 0 { cJSON_True } else { cJSON_False })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_CreateNumber(num: c_double) -> *mut cJSON {
     let item = create_typed(cJSON_Number);
     if !item.is_null() {
@@ -1355,17 +1356,17 @@ unsafe fn create_with_string(type_: c_int, s: *const c_char) -> *mut cJSON {
     item
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_CreateString(string: *const c_char) -> *mut cJSON {
     create_with_string(cJSON_String, string)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_CreateRaw(raw: *const c_char) -> *mut cJSON {
     create_with_string(cJSON_Raw, raw)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_CreateStringReference(string: *const c_char) -> *mut cJSON {
     let item = create_typed(cJSON_String | cJSON_IsReference);
     if !item.is_null() {
@@ -1374,7 +1375,7 @@ pub unsafe extern "C" fn cJSON_CreateStringReference(string: *const c_char) -> *
     item
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_CreateObjectReference(child: *const cJSON) -> *mut cJSON {
     let item = create_typed(cJSON_Object | cJSON_IsReference);
     if !item.is_null() {
@@ -1383,7 +1384,7 @@ pub unsafe extern "C" fn cJSON_CreateObjectReference(child: *const cJSON) -> *mu
     item
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_CreateArrayReference(child: *const cJSON) -> *mut cJSON {
     let item = create_typed(cJSON_Array | cJSON_IsReference);
     if !item.is_null() {
@@ -1392,12 +1393,12 @@ pub unsafe extern "C" fn cJSON_CreateArrayReference(child: *const cJSON) -> *mut
     item
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_CreateArray() -> *mut cJSON {
     create_typed(cJSON_Array)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_CreateObject() -> *mut cJSON {
     create_typed(cJSON_Object)
 }
@@ -1419,7 +1420,7 @@ unsafe fn create_array_of(count: c_int, make: impl Fn(usize) -> *mut cJSON) -> *
     a
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_CreateIntArray(numbers: *const c_int, count: c_int) -> *mut cJSON {
     if count < 0 || numbers.is_null() {
         return ptr::null_mut();
@@ -1427,7 +1428,7 @@ pub unsafe extern "C" fn cJSON_CreateIntArray(numbers: *const c_int, count: c_in
     create_array_of(count, |i| cJSON_CreateNumber(*numbers.add(i) as c_double))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_CreateFloatArray(numbers: *const f32, count: c_int) -> *mut cJSON {
     if count < 0 || numbers.is_null() {
         return ptr::null_mut();
@@ -1435,7 +1436,7 @@ pub unsafe extern "C" fn cJSON_CreateFloatArray(numbers: *const f32, count: c_in
     create_array_of(count, |i| cJSON_CreateNumber(*numbers.add(i) as c_double))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_CreateDoubleArray(numbers: *const c_double, count: c_int) -> *mut cJSON {
     if count < 0 || numbers.is_null() {
         return ptr::null_mut();
@@ -1443,7 +1444,7 @@ pub unsafe extern "C" fn cJSON_CreateDoubleArray(numbers: *const c_double, count
     create_array_of(count, |i| cJSON_CreateNumber(*numbers.add(i)))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_CreateStringArray(strings: *const *const c_char, count: c_int) -> *mut cJSON {
     if count < 0 || strings.is_null() {
         return ptr::null_mut();
@@ -1451,7 +1452,7 @@ pub unsafe extern "C" fn cJSON_CreateStringArray(strings: *const *const c_char, 
     create_array_of(count, |i| cJSON_CreateString(*strings.add(i)))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_Duplicate(item: *const cJSON, recurse: c_int) -> *mut cJSON {
     duplicate(item, 0, recurse != 0)
 }
@@ -1504,7 +1505,7 @@ unsafe fn duplicate(item: *const cJSON, depth: usize, recurse: bool) -> *mut cJS
 /// Removes whitespace and `//` and `/* */` comments in place, as cJSON
 /// does. Strings are copied as they are. The work is the verified
 /// `minify::minify_in_place`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cJSON_Minify(json: *mut c_char) {
     if json.is_null() {
         return;

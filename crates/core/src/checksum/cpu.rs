@@ -15,6 +15,7 @@
 //!   its eight bytes (`lanes::crc_word`).
 //! - On AArch64, `adler32_update` is the portable code, which the compiler
 //!   vectorizes with NEON (part of the AArch64 baseline).
+#![allow(unsafe_op_in_unsafe_fn)]
 #[cfg(verus_only)]
 use crate::checksum::{adler_from, crc_from};
 use vstd::prelude::*;

@@ -3,6 +3,7 @@
 //! trees must print the same and compare equal. The printed text must parse
 //! back to an equal tree, and a duplicate must compare equal.
 #![no_main]
+#![allow(unsafe_op_in_unsafe_fn)]
 use libfuzzer_sys::fuzz_target;
 use std::ffi::CStr;
 use std::os::raw::c_char;

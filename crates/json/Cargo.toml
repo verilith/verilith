@@ -1,7 +1,7 @@
 [package]
 name = "verilith-json"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "A fast JSON parser, proven correct with Verus: exactly RFC 8259, no panics, bounded recursion. Includes serde support and a cJSON-compatible C ABI."
 license = "MIT"
 repository = "https://github.com/verilith/verilith"

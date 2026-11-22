@@ -25,6 +25,7 @@
 //! - With `NEEDS_MORE_OUTPUT` a byte the decoder has read part of is left in
 //!   the input (google/brotli keeps those bits itself).
 #![allow(non_snake_case)]
+#![allow(unsafe_op_in_unsafe_fn)]
 use crate::stream::{Result as R, Stream};
 use std::os::raw::{c_char, c_int, c_void};
 
@@ -57,8 +58,8 @@ pub struct State {
 
 /// # Safety
 /// As google/brotli's `BrotliDecoderCreateInstance`.
-#[cfg_attr(feature = "brotli-abi", export_name = "BrotliDecoderCreateInstance")]
-#[cfg_attr(not(feature = "brotli-abi"), no_mangle)]
+#[cfg_attr(feature = "brotli-abi", unsafe(export_name = "BrotliDecoderCreateInstance"))]
+#[cfg_attr(not(feature = "brotli-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vbrotli_BrotliDecoderCreateInstance(
     _alloc: *const c_void,
     _free: *const c_void,
@@ -69,8 +70,8 @@ pub unsafe extern "C" fn vbrotli_BrotliDecoderCreateInstance(
 
 /// # Safety
 /// `state` is null or came from `BrotliDecoderCreateInstance`.
-#[cfg_attr(feature = "brotli-abi", export_name = "BrotliDecoderDestroyInstance")]
-#[cfg_attr(not(feature = "brotli-abi"), no_mangle)]
+#[cfg_attr(feature = "brotli-abi", unsafe(export_name = "BrotliDecoderDestroyInstance"))]
+#[cfg_attr(not(feature = "brotli-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vbrotli_BrotliDecoderDestroyInstance(state: *mut State) {
     if !state.is_null() {
         drop(Box::from_raw(state));
@@ -79,8 +80,8 @@ pub unsafe extern "C" fn vbrotli_BrotliDecoderDestroyInstance(state: *mut State)
 
 /// # Safety
 /// As google/brotli's `BrotliDecoderSetParameter`.
-#[cfg_attr(feature = "brotli-abi", export_name = "BrotliDecoderSetParameter")]
-#[cfg_attr(not(feature = "brotli-abi"), no_mangle)]
+#[cfg_attr(feature = "brotli-abi", unsafe(export_name = "BrotliDecoderSetParameter"))]
+#[cfg_attr(not(feature = "brotli-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vbrotli_BrotliDecoderSetParameter(state: *mut State, param: c_int, value: u32) -> c_int {
     if state.is_null() || (*state).used {
         return BROTLI_FALSE;
@@ -101,8 +102,8 @@ pub unsafe extern "C" fn vbrotli_BrotliDecoderSetParameter(state: *mut State, pa
 
 /// # Safety
 /// As google/brotli's `BrotliDecoderDecompressStream`.
-#[cfg_attr(feature = "brotli-abi", export_name = "BrotliDecoderDecompressStream")]
-#[cfg_attr(not(feature = "brotli-abi"), no_mangle)]
+#[cfg_attr(feature = "brotli-abi", unsafe(export_name = "BrotliDecoderDecompressStream"))]
+#[cfg_attr(not(feature = "brotli-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vbrotli_BrotliDecoderDecompressStream(
     state: *mut State,
     available_in: *mut usize,
@@ -165,8 +166,8 @@ pub unsafe extern "C" fn vbrotli_BrotliDecoderDecompressStream(
 
 /// # Safety
 /// As google/brotli's `BrotliDecoderDecompress`.
-#[cfg_attr(feature = "brotli-abi", export_name = "BrotliDecoderDecompress")]
-#[cfg_attr(not(feature = "brotli-abi"), no_mangle)]
+#[cfg_attr(feature = "brotli-abi", unsafe(export_name = "BrotliDecoderDecompress"))]
+#[cfg_attr(not(feature = "brotli-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vbrotli_BrotliDecoderDecompress(
     encoded_size: usize,
     encoded_buffer: *const u8,
@@ -194,8 +195,8 @@ pub unsafe extern "C" fn vbrotli_BrotliDecoderDecompress(
 
 /// # Safety
 /// `state` came from `BrotliDecoderCreateInstance`.
-#[cfg_attr(feature = "brotli-abi", export_name = "BrotliDecoderHasMoreOutput")]
-#[cfg_attr(not(feature = "brotli-abi"), no_mangle)]
+#[cfg_attr(feature = "brotli-abi", unsafe(export_name = "BrotliDecoderHasMoreOutput"))]
+#[cfg_attr(not(feature = "brotli-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vbrotli_BrotliDecoderHasMoreOutput(state: *const State) -> c_int {
     if state.is_null() || (*state).code < 0 {
         return BROTLI_FALSE;
@@ -209,8 +210,8 @@ pub unsafe extern "C" fn vbrotli_BrotliDecoderHasMoreOutput(state: *const State)
 
 /// # Safety
 /// As google/brotli's `BrotliDecoderTakeOutput`.
-#[cfg_attr(feature = "brotli-abi", export_name = "BrotliDecoderTakeOutput")]
-#[cfg_attr(not(feature = "brotli-abi"), no_mangle)]
+#[cfg_attr(feature = "brotli-abi", unsafe(export_name = "BrotliDecoderTakeOutput"))]
+#[cfg_attr(not(feature = "brotli-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vbrotli_BrotliDecoderTakeOutput(state: *mut State, size: *mut usize) -> *const u8 {
     if size.is_null() {
         return std::ptr::null();
@@ -231,8 +232,8 @@ pub unsafe extern "C" fn vbrotli_BrotliDecoderTakeOutput(state: *mut State, size
 
 /// # Safety
 /// `state` came from `BrotliDecoderCreateInstance`.
-#[cfg_attr(feature = "brotli-abi", export_name = "BrotliDecoderIsUsed")]
-#[cfg_attr(not(feature = "brotli-abi"), no_mangle)]
+#[cfg_attr(feature = "brotli-abi", unsafe(export_name = "BrotliDecoderIsUsed"))]
+#[cfg_attr(not(feature = "brotli-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vbrotli_BrotliDecoderIsUsed(state: *const State) -> c_int {
     if !state.is_null() && (*state).used {
         BROTLI_TRUE
@@ -243,8 +244,8 @@ pub unsafe extern "C" fn vbrotli_BrotliDecoderIsUsed(state: *const State) -> c_i
 
 /// # Safety
 /// `state` came from `BrotliDecoderCreateInstance`.
-#[cfg_attr(feature = "brotli-abi", export_name = "BrotliDecoderIsFinished")]
-#[cfg_attr(not(feature = "brotli-abi"), no_mangle)]
+#[cfg_attr(feature = "brotli-abi", unsafe(export_name = "BrotliDecoderIsFinished"))]
+#[cfg_attr(not(feature = "brotli-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vbrotli_BrotliDecoderIsFinished(state: *const State) -> c_int {
     if !state.is_null() && (*state).code >= 0 && (*state).stream.is_finished() {
         BROTLI_TRUE
@@ -255,8 +256,8 @@ pub unsafe extern "C" fn vbrotli_BrotliDecoderIsFinished(state: *const State) ->
 
 /// # Safety
 /// `state` came from `BrotliDecoderCreateInstance`.
-#[cfg_attr(feature = "brotli-abi", export_name = "BrotliDecoderGetErrorCode")]
-#[cfg_attr(not(feature = "brotli-abi"), no_mangle)]
+#[cfg_attr(feature = "brotli-abi", unsafe(export_name = "BrotliDecoderGetErrorCode"))]
+#[cfg_attr(not(feature = "brotli-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vbrotli_BrotliDecoderGetErrorCode(state: *const State) -> c_int {
     if state.is_null() {
         return ERROR_INVALID_ARGUMENTS;
@@ -270,8 +271,8 @@ macro_rules! cstr {
     };
 }
 
-#[cfg_attr(feature = "brotli-abi", export_name = "BrotliDecoderErrorString")]
-#[cfg_attr(not(feature = "brotli-abi"), no_mangle)]
+#[cfg_attr(feature = "brotli-abi", unsafe(export_name = "BrotliDecoderErrorString"))]
+#[cfg_attr(not(feature = "brotli-abi"), unsafe(no_mangle))]
 pub extern "C" fn vbrotli_BrotliDecoderErrorString(c: c_int) -> *const c_char {
     match c {
         0 => cstr!("_NO_ERROR"),
@@ -309,8 +310,8 @@ pub extern "C" fn vbrotli_BrotliDecoderErrorString(c: c_int) -> *const c_char {
     }
 }
 
-#[cfg_attr(feature = "brotli-abi", export_name = "BrotliDecoderVersion")]
-#[cfg_attr(not(feature = "brotli-abi"), no_mangle)]
+#[cfg_attr(feature = "brotli-abi", unsafe(export_name = "BrotliDecoderVersion"))]
+#[cfg_attr(not(feature = "brotli-abi"), unsafe(no_mangle))]
 pub extern "C" fn vbrotli_BrotliDecoderVersion() -> u32 {
     VERSION
 }
@@ -319,8 +320,8 @@ pub extern "C" fn vbrotli_BrotliDecoderVersion() -> u32 {
 ///
 /// # Safety
 /// Any arguments.
-#[cfg_attr(feature = "brotli-abi", export_name = "BrotliDecoderAttachDictionary")]
-#[cfg_attr(not(feature = "brotli-abi"), no_mangle)]
+#[cfg_attr(feature = "brotli-abi", unsafe(export_name = "BrotliDecoderAttachDictionary"))]
+#[cfg_attr(not(feature = "brotli-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vbrotli_BrotliDecoderAttachDictionary(
     _state: *mut State,
     _type: c_int,

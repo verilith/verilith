@@ -6,6 +6,7 @@
 //! `--reuse` decodes one-shot into a vector kept between rounds.
 //! `--stream` goes through the C API's streaming decoder with 128 KiB
 //! input and output pieces, as `vzstd-bench` does.
+#![allow(unsafe_op_in_unsafe_fn)]
 use std::ffi::c_void;
 use std::time::Instant;
 use verilith_zstd::capi::{InBuffer, OutBuffer};

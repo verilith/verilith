@@ -3,6 +3,7 @@
 //! A thin adapter, not verified: pointer and length checks, presentation
 //! formatting (`Name::write_presentation`) and `malloc`. All wire-format
 //! handling happens in the verified `parse::read_name_into`.
+#![allow(unsafe_op_in_unsafe_fn)]
 use alloc::vec::Vec;
 use crate::name::Name;
 use crate::parse::read_name_into;
@@ -11,7 +12,7 @@ use core::ffi::{c_char, c_int, c_long, c_uchar};
 // Inside c-ares, strings come from its allocator, so that
 // `ares_free_string` (and any `ares_library_init_mem` hooks) apply.
 #[cfg(feature = "cares")]
-extern "C" {
+unsafe extern "C" {
     fn ares_malloc(size: usize) -> *mut core::ffi::c_void;
 }
 
@@ -21,7 +22,7 @@ unsafe fn alloc(n: usize) -> *mut core::ffi::c_void {
 }
 
 #[cfg(not(feature = "cares"))]
-extern "C" {
+unsafe extern "C" {
     fn malloc(size: usize) -> *mut core::ffi::c_void;
 }
 
@@ -40,8 +41,8 @@ pub const ARES_ENOMEM: c_int = 15;
 /// # Safety
 /// `abuf` must point to `alen` readable bytes, and `s` and `enclen` must be
 /// valid for writes (`s` may be null), as with c-ares.
-#[cfg_attr(feature = "ares-abi", export_name = "ares_expand_name")]
-#[cfg_attr(not(feature = "ares-abi"), no_mangle)]
+#[cfg_attr(feature = "ares-abi", unsafe(export_name = "ares_expand_name"))]
+#[cfg_attr(not(feature = "ares-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vdns_expand_name(
     encoded: *const c_uchar,
     abuf: *const c_uchar,

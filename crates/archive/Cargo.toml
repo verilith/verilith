@@ -3,7 +3,7 @@ name = "verilith-archive"
 version = "0.1.0"
 license = "MIT"
 description = "Formally verified (Verus) zip and tar readers with proven extraction safety, behind libarchive's read API"
-edition = "2021"
+edition = "2024"
 repository = "https://github.com/verilith/verilith"
 
 [lib]

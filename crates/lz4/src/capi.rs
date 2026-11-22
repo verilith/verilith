@@ -10,6 +10,7 @@
 //!
 //! Symbols are exported as `vlz4_*`, or under liblz4's own names with the
 //! `lz4-abi` feature.
+#![allow(unsafe_op_in_unsafe_fn)]
 use crate::block::decode_block;
 use crate::compress::{compress_bound, compress_into, MAX_INPUT};
 use crate::fcompress::{compress_into as frame_compress, Prefs};
@@ -18,8 +19,8 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 
 macro_rules! export {
     ($vz:literal, $lz:literal, fn $name:ident($($a:ident: $t:ty),* $(,)?) -> $r:ty $body:block) => {
-        #[cfg_attr(feature = "lz4-abi", export_name = $lz)]
-        #[cfg_attr(not(feature = "lz4-abi"), export_name = $vz)]
+        #[cfg_attr(feature = "lz4-abi", unsafe(export_name = $lz))]
+        #[cfg_attr(not(feature = "lz4-abi"), unsafe(export_name = $vz))]
         /// # Safety
         /// As the liblz4 function of the same name: pointers must be valid
         /// for the sizes given with them.

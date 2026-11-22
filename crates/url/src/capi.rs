@@ -5,6 +5,7 @@
 //! glue outside the proof: it calls the verified parser and the setters and
 //! hands out pointers into the URL's href.
 #![allow(clippy::missing_safety_doc)]
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use crate::searchparams::UrlSearchParams;
 use crate::url::Url;
@@ -210,8 +211,8 @@ fn utf8(b: &[u8]) -> std::borrow::Cow<'_, str> {
 
 macro_rules! export {
     ($(fn $name:ident($($a:ident: $t:ty),*) $(-> $r:ty)? $body:block)*) => {$(
-        #[cfg_attr(feature = "ada-abi", export_name = concat!("ada_", stringify!($name)))]
-        #[cfg_attr(not(feature = "ada-abi"), export_name = concat!("vurl_", stringify!($name)))]
+        #[cfg_attr(feature = "ada-abi", unsafe(export_name = concat!("ada_", stringify!($name))))]
+        #[cfg_attr(not(feature = "ada-abi"), unsafe(export_name = concat!("vurl_", stringify!($name))))]
         pub unsafe extern "C" fn $name($($a: $t),*) $(-> $r)? $body
     )*};
 }

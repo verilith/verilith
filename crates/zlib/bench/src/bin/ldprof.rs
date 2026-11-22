@@ -1,6 +1,6 @@
 // Compresses FILE at LEVEL once with libdeflate (for profiling).
 use std::ffi::c_void;
-extern "C" {
+unsafe extern "C" {
     fn libdeflate_alloc_compressor(level: i32) -> *mut c_void;
     fn libdeflate_deflate_compress(c: *mut c_void, i: *const u8, n: usize, o: *mut u8, on: usize) -> usize;
 }

@@ -10,6 +10,7 @@
 //! This module is not verified. It is compiled on x86-64 too, where
 //! `tests/emu.rs` compares every function with the CPU instruction.
 #![allow(non_camel_case_types, clippy::missing_safety_doc, clippy::needless_range_loop)]
+#![allow(unsafe_op_in_unsafe_fn)]
 
 /// A 128-bit vector: its bytes in memory order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
