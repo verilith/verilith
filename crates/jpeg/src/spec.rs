@@ -3,7 +3,7 @@
 //! This file is the one to audit. It is written from ITU-T T.81 (the JPEG
 //! standard) for the marker syntax, the Huffman codes and the coefficient
 //! decoding procedures of baseline, extended sequential and progressive
-//! scans, and from libjpeg-turbo 3.1.2 for everything T.81 leaves open or
+//! scans, and from libjpeg-turbo 3.2.1 for everything T.81 leaves open or
 //! does not fix to the bit: what to do with damaged files, the integer
 //! inverse DCT (`jidctint.c`), chroma upsampling (`jdsample.c`) and the
 //! YCbCr to RGB conversion (`jdcolor.c`). Each part names its source.

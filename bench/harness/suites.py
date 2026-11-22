@@ -122,12 +122,12 @@ COMPARISONS = [
          ours=("vbrotli", ["brotli-vbrotli"]), rival=("brotli 1.2.1", ["brotli-brotli"])),
     # The TurboJPEG API: vjpeg (turbojpeg-abi) in place of libjpeg-turbo.
     dict(id="jpeg-baseline", suite="jpeg", data="jpeg", same_output=True, api="drop-in",
-         ours=("vjpeg", ["jpeg-vjpeg"]), rival=("libjpeg-turbo 3.1.4.1", ["jpeg-turbo"])),
+         ours=("vjpeg", ["jpeg-vjpeg"]), rival=("libjpeg-turbo 3.2.1", ["jpeg-turbo"])),
     # The same driver and libraries on progressive files, and on 4:4:4.
     dict(id="jpeg-progressive", suite="jpeg", data="jpeg-prog", same_output=True, api="drop-in",
-         ours=("vjpeg", ["jpeg-vjpeg"]), rival=("libjpeg-turbo 3.1.4.1", ["jpeg-turbo"])),
+         ours=("vjpeg", ["jpeg-vjpeg"]), rival=("libjpeg-turbo 3.2.1", ["jpeg-turbo"])),
     dict(id="jpeg-444", suite="jpeg", data="jpeg-444", same_output=True, api="drop-in",
-         ours=("vjpeg", ["jpeg-vjpeg"]), rival=("libjpeg-turbo 3.1.4.1", ["jpeg-turbo"])),
+         ours=("vjpeg", ["jpeg-vjpeg"]), rival=("libjpeg-turbo 3.2.1", ["jpeg-turbo"])),
     # OTS's API: vfont's headers and C ABI in place of OTS. Each writes its
     # own serialization, so the sizes of the sanitized fonts differ slightly.
     dict(id="font-sanitize", suite="font", data="font", same_output=False, api="drop-in", check="sanitized bytes",

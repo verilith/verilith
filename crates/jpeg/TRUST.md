@@ -18,7 +18,7 @@ It has two kinds of source, and each definition names its own:
   the DECODE, RECEIVE and EXTEND procedures (Annex C, F.2.2), and the
   coefficient decoding of baseline and of the four progressive scan types
   (F.2, G.1.2, G.2).
-- **libjpeg-turbo 3.1.2** for everything T.81 leaves open or does not fix to
+- **libjpeg-turbo 3.2.1** for everything T.81 leaves open or does not fix to
   the bit. These are the parts most worth reading against the C source:
   - what a decoder sees past the end of the input (`byte`: the bytes of an
     EOI marker, as `fill_mem_input_buffer` supplies), and zero bits once a
