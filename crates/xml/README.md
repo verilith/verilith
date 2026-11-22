@@ -286,9 +286,8 @@ ABI, so its own API is measured against each library's.
 On an Apple M3 Pro (macOS, Apple clang, the root README's run of the same
 day) the gaps are smaller: checking is 1.14x to 6.69x expat (geometric mean
 2.23x) and 0.92x to 6.85x libxml2 (1.72x), reading 0.80x to 2.17x expat
-(1.35x) and 0.69x to 2.03x libxml2 (1.14x). w3c5.xml, the closest case
-here too, is the one where both read faster than verilith-xml on that
-machine.
+(1.35x) and 0.69x to 2.03x libxml2 (1.14x). The slowest reading case
+against both is w3c5.xml, the closest case on the VM too.
 
 **Checking** whether a document is well-formed: expat's `XML_Parse` with no
 handlers; libxml2's `xmlCtxtReadMemory` on a reused context, with its SAX2
