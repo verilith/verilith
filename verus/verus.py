@@ -307,7 +307,8 @@ def cmd_verify(a):
         # without the root, and the result says the crate has none.
         code, doc, secs = run_verus(a, extra, capture=True)
         err = run_verus.stderr
-        if doc is None and code != 0 and NO_ROOT in err and \
+        nothing = doc is None or not doc.get("verification-results", {}).get("verified")
+        if nothing and code != 0 and NO_ROOT in err and \
                 not re.search(r"^error", err.split(NO_ROOT)[0], re.M):
             root = "none"
             extra.remove("--verify-root")
