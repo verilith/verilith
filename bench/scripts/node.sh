@@ -30,7 +30,7 @@ NW=$WORK/node
 # at link time, so from Node 26 ours go through rust-prelink.sh, which
 # keeps only their C and C++ API global.
 rust_lib_for_node() {
-  if [ "$(echo "${V#v}" | cut -d. -f1)" -ge 26 ]; then "$ROOT/scripts/rust-prelink.sh" "$1" "$2"; else cp "$1" "$2"; fi
+  if [ "$(echo "${V#v}" | cut -d. -f1)" -ge 26 ]; then "$ROOT/../scripts/rust-prelink.sh" "$1" "$2"; else cp "$1" "$2"; fi
 }
 : "${NODE_SWAPS:=llhttp ada simdjson cares zlib}"
 : "${NODE_RUNS:=30}"
