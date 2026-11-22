@@ -113,9 +113,9 @@ so under the table (`note` in `harness/suites.py`).
 | png-libpng | native | verilith-png (Rust API) | libpng 1.6.59 | decode to RGBA8 | the 24 Kodak photos |
 | webp-lossless | drop-in | verilith-webp (libwebp ABI) | libwebp 1.6.0 | `WebPDecodeRGBAInto` | the Kodak photos, lossless WebP |
 | webp-lossy | drop-in | verilith-webp (libwebp ABI) | libwebp 1.6.0 | `WebPDecodeRGBAInto` | the Kodak photos, lossy WebP at quality 75 |
-| jpeg-baseline | drop-in | verilith-jpeg (TurboJPEG ABI) | libjpeg-turbo 3.1.4.1 | `tj3Decompress8` to RGB | the Kodak photos, baseline JPEG, 4:2:0 at quality 75 |
-| jpeg-progressive | drop-in | verilith-jpeg (TurboJPEG ABI) | libjpeg-turbo 3.1.4.1 | `tj3Decompress8` to RGB | the same as progressive JPEG |
-| jpeg-444 | drop-in | verilith-jpeg (TurboJPEG ABI) | libjpeg-turbo 3.1.4.1 | `tj3Decompress8` to RGB | the Kodak photos, baseline JPEG, 4:4:4 at quality 90 |
+| jpeg-baseline | drop-in | verilith-jpeg (TurboJPEG ABI) | libjpeg-turbo 3.2.1 | `tj3Decompress8` to RGB | the Kodak photos, baseline JPEG, 4:2:0 at quality 75 |
+| jpeg-progressive | drop-in | verilith-jpeg (TurboJPEG ABI) | libjpeg-turbo 3.2.1 | `tj3Decompress8` to RGB | the same as progressive JPEG |
+| jpeg-444 | drop-in | verilith-jpeg (TurboJPEG ABI) | libjpeg-turbo 3.2.1 | `tj3Decompress8` to RGB | the Kodak photos, baseline JPEG, 4:4:4 at quality 90 |
 | font-sanitize | drop-in | verilith-font (OTS's C++ API) | OTS ([khaledhosny/ots](https://github.com/khaledhosny/ots), 2026-11) | `ots::OTSContext::Process` into a memory stream | Source Serif 4 Regular as OTF, TTF, WOFF and WOFF2 |
 | regex-re2 | drop-in | verilith-regex (cre2 C ABI) | RE2 2025-11-05 under cre2 | find every match of a pattern, with its groups (`cre2_match` in a loop) | 12 patterns over 64 KiB and 1 MiB of dickens and 1k URLs |
 

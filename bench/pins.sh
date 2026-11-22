@@ -17,7 +17,7 @@ mbedtls         https://github.com/Mbed-TLS/mbedtls        v3.6.8
 libpng          https://github.com/pnggroup/libpng         v1.6.59
 libwebp         https://github.com/webmproject/libwebp     v1.6.0
 brotli          https://github.com/google/brotli           v1.2.1
-libjpeg-turbo   https://github.com/libjpeg-turbo/libjpeg-turbo 3.1.4.1
+libjpeg-turbo   https://github.com/libjpeg-turbo/libjpeg-turbo 3.2.1
 lz4             https://github.com/lz4/lz4                 v1.11.1
 snappy          https://github.com/google/snappy           1.3.1
 libarchive      https://github.com/libarchive/libarchive   v3.8.11
@@ -33,9 +33,6 @@ cre2            https://github.com/marcomaggi/cre2         f9ad1ced3f5358557b32d
 #   (cares/README.md in vdns); the latest release, v1.34.9, predates it.
 # - llhttp 9.4.4 and mbedTLS 3.6.8: the versions vhttp's and vx509's
 #   drop-ins were tested against.
-# - libjpeg-turbo: the newest 3.1 release. 3.2 changes the TurboJPEG ABI
-#   (tj3Init became a macro for tj3InitVersion, and two subsampling
-#   constants were added), which vjpeg's drop-in does not export yet.
 # - Verdict: the verified X.509 parser vx509 is compared with on native APIs
 #   (USENIX Security 2025), at main of 2025-11-18. Built from its Verus
 #   submodule's vstd without running Verus, with the toolchain it pins (1.86).
