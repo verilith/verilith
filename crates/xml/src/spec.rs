@@ -120,11 +120,10 @@ pub struct Ent {
 }
 
 /// The internal subset so far: the general entities processed, in order;
-/// the names of the parameter entities declared; whether a parameter
-/// entity reference was seen; and whether the document is standalone.
+/// whether a parameter entity reference was seen; and whether the document
+/// is standalone.
 pub struct DtdSt {
     pub ents: Seq<Ent>,
-    pub pes: Seq<Seq<u8>>,
     pub pe_seen: bool,
     pub sa: bool,
 }
@@ -167,15 +166,15 @@ pub open spec fn no_dtd() -> Env {
 }
 
 pub open spec fn dtd_init(sa: bool) -> DtdSt {
-    DtdSt { ents: Seq::empty(), pes: Seq::empty(), pe_seen: false, sa }
+    DtdSt { ents: Seq::empty(), pe_seen: false, sa }
 }
 
 /// The environment after the internal subset `st`: the entities, whether
 /// "Entity Declared" applies, and which entities may be referred to where.
 pub open spec fn env_of(s: Seq<u8>, st: DtdSt, ext: bool) -> Env {
     let wfc = (!ext && !st.pe_seen) || st.sa;
-    let oka = oka_seq(s, st.ents, wfc, ENT_DEPTH as nat);
-    Env { ents: st.ents, wfc, oka, okc: okc_seq(s, st.ents, wfc, oka, ENT_DEPTH as nat) }
+    let oka = oka_seq(s, st.ents, wfc, st.ents.len());
+    Env { ents: st.ents, wfc, oka, okc: okc_seq(s, st.ents, wfc, oka, st.ents.len()) }
 }
 
 // ---------------------------------------------------------------------------
@@ -1247,7 +1246,7 @@ pub open spec fn entity_decl(s: Seq<u8>, j: int, tape: Seq<XTok>, st: DtdSt) -> 
                 Some((t, e, _)) => {
                     let f = ws_end(s, e);
                     if byte_is(s, f, 0x3E) {
-                        Some((t, DtdSt { ents: st.ents, pes: st.pes.push(s.subrange(b, n)), pe_seen: st.pe_seen, sa: st.sa }, f + 1))
+                        Some((t, st, f + 1))
                     } else {
                         None
                     }
@@ -1266,7 +1265,7 @@ pub open spec fn entity_decl(s: Seq<u8>, j: int, tape: Seq<XTok>, st: DtdSt) -> 
                     let f = ws_end(s, e);
                     if byte_is(s, f, 0x3E) {
                         let st2 = if !st.pe_seen || st.sa {
-                            DtdSt { ents: st.ents.push(Ent { name: s.subrange(a, n), kind }), pes: st.pes, pe_seen: st.pe_seen, sa: st.sa }
+                            DtdSt { ents: st.ents.push(Ent { name: s.subrange(a, n), kind }), pe_seen: st.pe_seen, sa: st.sa }
                         } else {
                             st
                         };
@@ -1329,16 +1328,17 @@ pub open spec fn notation_decl(s: Seq<u8>, j: int, tape: Seq<XTok>) -> Option<(S
 }
 
 /// PEReference ::= '%' Name ';'   [69], between declarations (DeclSep
-/// [28a]), at `j`. It is not read. In a standalone document the
-/// parameter entity must have been declared (WFC: Entity Declared).
+/// [28a]), at `j`. It is not read (§4.4.8: parameter entities need only
+/// be included if validating). The parameter entity need not have been
+/// declared, even in a standalone document: [69] carries the VC "Entity
+/// Declared", not the WFC, which [68] carries (the W3C suite's ibm69n05,
+/// after erratum E29 of the second edition, is an error, not a fatal one).
 pub open spec fn pe_ref(s: Seq<u8>, j: int, tape: Seq<XTok>, st: DtdSt) -> Option<(Seq<XTok>, DtdSt, int)> {
     let n = name_end(s, j + 1);
     if n == j + 1 || !byte_is(s, n, 0x3B) {
         None
-    } else if st.sa && !st.pes.contains(s.subrange(j + 1, n)) {
-        None
     } else {
-        Some((tape.push(XTok::PERef { start: j + 1, end: n }), DtdSt { ents: st.ents, pes: st.pes, pe_seen: true, sa: st.sa }, n + 1))
+        Some((tape.push(XTok::PERef { start: j + 1, end: n }), DtdSt { ents: st.ents, pe_seen: true, sa: st.sa }, n + 1))
     }
 }
 
@@ -1750,12 +1750,6 @@ pub open spec fn ent_content(r: Seq<u8>, i: int, stack: Seq<Open>, tape: Seq<XTo
     }
 }
 
-/// How deep references to internal entities may nest, counting through
-/// their replacement texts. A reference cycle nests without end, so this
-/// bound is also what rejects recursion (WFC: No Recursion). libxml2's
-/// default bound is 40.
-pub const ENT_DEPTH: usize = 64;
-
 /// Entity `k` may be referred to in an attribute value, given which
 /// entities may be (`prev`) at one level less.
 pub open spec fn ent_oka(s: Seq<u8>, ents: Seq<Ent>, wfc: bool, prev: Seq<bool>, k: int) -> bool {
@@ -1770,6 +1764,11 @@ pub open spec fn ent_oka(s: Seq<u8>, ents: Seq<Ent>, wfc: bool, prev: Seq<bool>,
 }
 
 /// `ent_oka` for each entity, with references nesting at most `d` deep.
+/// `env_of` takes `d` to be the number of entities: a chain of references
+/// longer than that names some entity twice, which is recursion (WFC: No
+/// Recursion), so no entity is allowed at a greater depth that is not at
+/// that one (`ent::lemma_oka_settled` proves it). Nesting has no other
+/// limit.
 pub open spec fn oka_seq(s: Seq<u8>, ents: Seq<Ent>, wfc: bool, d: nat) -> Seq<bool>
     decreases d,
 {
@@ -1798,7 +1797,9 @@ pub open spec fn ent_okc(s: Seq<u8>, ents: Seq<Ent>, wfc: bool, oka: Seq<bool>, 
     }
 }
 
-/// `ent_okc` for each entity, with references nesting at most `d` deep.
+/// `ent_okc` for each entity, with references nesting at most `d` deep;
+/// like `oka_seq`, settled at the number of entities
+/// (`ent::lemma_okc_settled`).
 pub open spec fn okc_seq(s: Seq<u8>, ents: Seq<Ent>, wfc: bool, oka: Seq<bool>, d: nat) -> Seq<bool>
     decreases d,
 {
@@ -1869,10 +1870,9 @@ pub open spec fn prolog(s: Seq<u8>, enc: Enc) -> Option<(Seq<XTok>, int, Env)> {
 
 /// document ::= prolog element Misc*   [1], in UTF-8 (with an optional
 /// byte order mark), every character a `Char` [2], read from a document in
-/// the encoding `enc`. The whole input must be the document. Inputs of
-/// 4 GiB or more are rejected, so that positions fit in 32 bits.
+/// the encoding `enc`. The whole input must be the document.
 pub open spec fn document(s: Seq<u8>, enc: Enc) -> Option<Seq<XTok>> {
-    if s.len() >= 0xFFFF_FFFF || !doc_chars(s) {
+    if !doc_chars(s) {
         None
     } else {
         match prolog(s, enc) {
@@ -2010,18 +2010,14 @@ pub open spec fn decode_input(b: Seq<u8>) -> Option<Seq<u8>> {
 }
 
 /// An XML document in any encoding read here: the text in UTF-8, and its
-/// tape. Inputs of 4 GiB or more are rejected.
+/// tape.
 pub open spec fn parse(b: Seq<u8>) -> Option<(Seq<u8>, Seq<XTok>)> {
-    if b.len() >= 0xFFFF_FFFF {
-        None
-    } else {
     match decode_input(b) {
         None => None,
         Some(u) => match document(u, input_enc(b)) {
             None => None,
             Some(t) => Some((u, t)),
         },
-    }
     }
 }
 

@@ -44,9 +44,9 @@ pub enum Kind {
 pub struct Tok {
     pub kind: Kind,
     pub f: u8,
-    pub a: u32,
-    pub b: u32,
-    pub c: u32,
+    pub a: usize,
+    pub b: usize,
+    pub c: usize,
 }
 
 impl View for Tok {
@@ -86,6 +86,18 @@ impl View for Tok {
     }
 }
 
+/// A slice of bytes is at most `isize::MAX` long: Rust allows no object
+/// larger than that (the Reference, "Slice layout"; `slice::from_raw_parts`).
+/// Trusted: its body is empty, and Verus assumes its `ensures`.
+#[verifier::external_body]
+#[inline(always)]
+pub fn slice_len_bound(s: &[u8])
+    ensures
+        s@.len() <= isize::MAX,
+{
+    let _ = s;
+}
+
 /// The kind is `Attr`.
 #[inline(always)]
 pub fn is_attr(k: Kind) -> (r: bool)
@@ -114,8 +126,8 @@ pub fn is_att_default(k: Kind) -> (r: bool)
 #[inline(always)]
 pub fn tok(kind: Kind, a: usize, b: usize, f: u8) -> (t: Tok)
     requires
-        a <= u32::MAX,
-        b <= u32::MAX,
+        a <= isize::MAX,
+        b <= isize::MAX,
     ensures
         t.kind == kind,
         t.a == a,
@@ -123,7 +135,7 @@ pub fn tok(kind: Kind, a: usize, b: usize, f: u8) -> (t: Tok)
         t.f == f,
         t.c == 0,
 {
-    Tok { kind, f, a: a as u32, b: b as u32, c: 0 }
+    Tok { kind, f, a, b, c: 0 }
 }
 
 pub struct Tape {
@@ -202,7 +214,7 @@ impl Tape {
     #[inline(always)]
     pub fn close(&mut self, k: usize)
         requires
-            k < old(self)@.len() <= u32::MAX,
+            k < old(self)@.len() <= isize::MAX,
             old(self)@[k as int] is STag,
         ensures
             final(self)@ == close_at(old(self)@, k as int),
@@ -210,7 +222,7 @@ impl Tape {
         let n = self.toks.len();
         let t = self.toks[k];
         let ghost old_v = self@;
-        self.toks.set(k, Tok { kind: t.kind, f: t.f, a: t.a, b: t.b, c: (n - 1) as u32 });
+        self.toks.set(k, Tok { kind: t.kind, f: t.f, a: t.a, b: t.b, c: n - 1 });
         proof {
             assert(t@ == old_v[k as int]);
             assert(t.kind == Kind::STag);

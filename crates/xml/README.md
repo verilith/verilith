@@ -48,7 +48,7 @@ assert_eq!(book.elements().next().unwrap().text(), "Verified & fast");
    well-formed UTF-8 and that every character is a `Char`, sixteen ASCII
    bytes at a time.
 3. **The document** (`src/lex.rs`, `src/dtd.rs`, `src/content.rs`,
-   `src/doc.rs`). One pass writes a *tape*: a 16-byte token per item, in
+   `src/doc.rs`). One pass writes a *tape*: a 32-byte token per item, in
    document order, with byte ranges into the text for every name, value
    and run of text, so nothing is copied. Elements are a loop with an
    explicit stack of the open elements, not a recursion. A start tag's
@@ -60,9 +60,11 @@ assert_eq!(book.elements().next().unwrap().text(), "Verified & fast");
 4. **Entities** (`src/ent.rs`). After the internal subset, the
    replacement text of each internal entity is computed once, and the
    parser works out which entities may be referred to in content and in
-   attribute values: a fixed point over the entities, reached in at most
-   64 passes. The document's references are then checked against it as
-   they are met.
+   attribute values: the least fixed point of "its replacement text is
+   right, and so is every entity it refers to", computed with a worklist
+   (`src/fix.rs`) in time linear in the entities and their references.
+   The document's references are then checked against it as they are
+   met.
 
 The API (`src/api.rs`) reads the tape: `Document::root`, and
 `Element::name`, `attrs` (an iterator) and `attributes`, `attribute`,
@@ -82,7 +84,7 @@ Everything in `src/spec.rs`, `src/chars.rs`, `src/lex.rs`, `src/dtd.rs`,
 `src/content.rs`, `src/doc.rs`, `src/ent.rs`, `src/enc.rs`, `src/decode.rs`,
 `src/uniq.rs`, `src/index.rs`, `src/scan.rs`, `src/lanes.rs` and
 `src/tape.rs` is checked by Verus (`./scripts/verify.sh`, which runs
-`cargo verus verify`: 302 verified, 0 errors, in under a minute on x86-64;
+`cargo verus verify`: 358 verified, 0 errors, in a few minutes on x86-64;
 fewer for an AArch64 target, which has no SSE2 code. The SSE2 wrappers are
 verified in verilith-simd). The trusted base is listed under
 [What is not proven](#what-is-not-proven).
@@ -112,22 +114,29 @@ verified in verilith-simd). The trusted base is listed under
 * **Panic freedom and termination.** No index is out of bounds and no
   arithmetic overflows or underflows anywhere in the verified code; every
   loop and recursive call has a measure Verus checks.
-* **No recursion in the parser.** Content is a loop over items with an
-  explicit stack, in the spec and in the code, so there is no nesting
-  limit and stack use does not grow with the input. The one recursive
-  function is the attribute-value decoder, which recurses into an
-  entity's replacement text at most 64 deep (`ENT_DEPTH`).
+* **No recursion.** Content is a loop over items with an explicit stack,
+  in the spec and in the code, so there is no nesting limit and stack use
+  does not grow with the input. The attribute-value decoder, which follows
+  references into replacement texts, keeps an explicit stack of frames
+  too, so a chain of references 100 000 deep reads like a short one.
 * **Memory.** The tape has at most one token per input byte (`ex_document`
   ensures `tape.len() <= s.len()`), and an entity's replacement text is
   no longer than its literal value (`ex_repl`).
-* **Entities in linear time.** Which entities may be referred to where is
-  a fixed point (`oka_seq`, `okc_seq`): an entity may be referred to in
-  content if its replacement text parses as content whose own references
-  may be, at one level less; a reference cycle never gets there, which is
-  how the spec says No Recursion. The code applies the spec's step at most
-  `ENT_DEPTH` times, stopping early at a fixed point, and each step is one
-  pass over the replacement texts, so even a crafted document costs at
-  most 64 passes over its entities.
+* **Entities, with no limit on nesting, in linear time.** Which entities
+  may be referred to where is a fixed point (`oka_seq`, `okc_seq`): an
+  entity may be referred to in content if its replacement text parses as
+  content whose own references may be, at one level less; a reference
+  cycle never gets there, which is how the spec says No Recursion. The
+  spec takes as many levels as there are entities, and
+  `lemma_oka_settled` and `lemma_okc_settled` prove that more levels
+  allow nothing more (a longer chain names some entity twice), so the
+  depth of nesting has no limit. The code does not go level by level,
+  which would be quadratic on a long chain: `lemma_oka_hlev` and
+  `lemma_okc_hlev` prove each table is the least fixed point of Horn
+  clauses (each entity's own verdict, and the entities it refers to,
+  from one pass over the replacement texts), and `fix::ex_hfix` is proven
+  to compute that fixed point with a worklist, in time linear in the
+  entities and their references.
 * **Entity lookup in constant time.** A reference finds its entity
   through an index of the entities by name (`src/index.rs`): a table of
   chains, seeded at random, that holds only the first declaration of each
@@ -181,9 +190,11 @@ verified in verilith-simd). The trusted base is listed under
   `_mm_cmpeq_epi8`, `_mm_or_si128`, `_mm_min_epu8`, `_mm_movemask_epi8`),
   tested there against the CPU. The wrappers proven from them are
   verilith-simd's `sse2` module, shared with verilith-json; vstd's specifications of `Vec` and
-  slices; `uniq::seed`, the one `external_body` function in the crate,
+  slices; the two `external_body` functions in the crate: `uniq::seed`,
   which reads random words for the hashes (any value gives the same
-  result); Verus, Z3 and the Rust compiler.
+  result), and `tape::slice_len_bound`, which states that a slice is at
+  most `isize::MAX` bytes long, as Rust guarantees of every object, so
+  that positions cannot overflow; Verus, Z3 and the Rust compiler.
 * **Other targets.** The scanners use SSE2 on x86-64. Elsewhere they skip
   nothing and the scalar loops do the work (verified the same); there are
   no NEON kernels yet, so AArch64 runs slower than the numbers below.
@@ -202,12 +213,11 @@ them:
 | Encodings | UTF-8 and UTF-16 required, others optional (§4.3.3) | UTF-8, UTF-16 (with its byte order mark, which §4.3.3 requires), ISO-8859-1, US-ASCII; the declaration must name the encoding the document is in |
 | `version="1.1"` and other `1.x` | may be read as 1.0 (§2.8) | read as 1.0 |
 | Names | the Fifth Edition's characters | the Fifth Edition's characters |
-| Entity references nesting more than 64 deep (through replacement texts) | limits allowed | rejected (libxml2's default limit is 40) |
+| Entity references nested through replacement texts | no limit | no limit (libxml2 rejects past 40 by default); a cycle is recursion, rejected where it is referred to |
 | A reference cycle among entities that are not referred to | not an error | not an error |
 | Element nesting | | no limit |
-| Expanding a "billion laughs" entity | | parsing is linear; an attribute value is refused past 16 MiB (`MAX_VALUE`, `try_attributes`); content expands lazily as it is read |
+| Expanding a "billion laughs" entity | | parsing is linear; content expands lazily as it is read; an attribute value is read whole, which for the classic document is 3 GB (`try_attributes(limit)` refuses a value past `limit` bytes, for untrusted input) |
 | Namespaces | a separate Recommendation | not processed: a name with a colon is a name |
-| Inputs of 4 GiB or more | | rejected, so that positions fit in 32 bits |
 
 ## Differences from expat
 
@@ -224,10 +234,8 @@ case found by fuzzing:
 * **Byte order marks.** expat accepts a UTF-8 BOM before
   `encoding="ISO-8859-1"` (the W3C suite's hst-lhs-007 is not
   well-formed), and UTF-16 without a BOM.
-* **The internal subset.** expat does not check that a parameter entity
-  is declared before a reference to it in a standalone document (the
-  suite's ibm69n05), stops checking declarations after a parameter
-  entity reference it does not read (a `<` in an attribute default there
+* **The internal subset.** expat stops checking declarations after a
+  parameter entity reference it does not read (a `<` in an attribute default there
   is still not well-formed), and decides whether an attribute default's
   entity must be declared before it has seen the rest of the internal
   subset, where a later parameter entity reference lifts the constraint.
@@ -241,7 +249,11 @@ case found by fuzzing:
   Of the 932 not-wf documents, 872 are rejected; the other 60 have their
   error in an external entity or the external subset, or (one,
   not-sa-002) in a parameter entity, none of which are read, and are
-  accepted. The 21 `error` tests allow either verdict. 0 failures.
+  accepted. Of the 21 `error` tests (an error, not a fatal one: the
+  document is well-formed), 15 are accepted, and the 6 in EUC-JP,
+  ISO-2022-JP and Shift_JIS are rejected, as encodings this processor
+  does not read (§4.3.3); `tests/xmlconf.rs` fails if any other is
+  rejected. 0 failures.
 * **Canonical outputs.** The suite's 262 output tests that need no
   external entity: each document read through `verilith_xml::parse` and
   written in James Clark's canonical form is the expected output, byte for
@@ -264,13 +276,23 @@ case found by fuzzing:
   test in `tests/parse.rs`), and a second ten minutes, 13.3 million
   inputs, found nothing more. Neither found a crash.
 * **API tests** (`tests/parse.rs`): a "billion laughs" document parses in
-  well under a second and refuses the 3 GB attribute value; a million
+  well under a second, and with a limit refuses the 3 GB attribute value;
+  a 3 MiB value is read whole; chains of references 65, 1000 and 100 000
+  deep parse and expand, in content and in attribute values, the longest
+  in milliseconds; a cycle 1000 long is rejected; a million
   nested elements parse and walk; a tag of 50 000 attributes is checked in
   milliseconds and a duplicate among them is found; 20 000 entities and
   100 000 references to them parse in milliseconds; UTF-16 and
   ISO-8859-1; error positions.
 
 ## Performance
+
+The figures below were measured before positions widened from 32 to 64
+bits (tokens from 16 to 32 bytes) and before the limits on entity nesting
+and input size went. On the same thirteen files, `bench/` (best of 15,
+two sittings each, the same cloud VM, 2026-11-22) puts the build after
+those changes at 1.03x the build before them for checking (0.97x to
+1.09x per file) and 1.02x for reading (0.96x to 1.07x).
 
 ### Against expat and libxml2 (vbench)
 
@@ -447,6 +469,7 @@ src/dtd.rs       the XML declaration and the document type declaration
 src/content.rs   start tags, the content loop, replacement text as content
 src/doc.rs       the prolog, attribute defaults, the document
 src/ent.rs       replacement text, and which entities may be referred to where
+src/fix.rs       the least fixed point of Horn clauses, with a worklist
 src/enc.rs       encodings: choosing, UTF-16 and ISO-8859-1 decoders, parse
 src/decode.rs    line-end and attribute-value normalization
 src/uniq.rs      Unique Att Spec in linear time

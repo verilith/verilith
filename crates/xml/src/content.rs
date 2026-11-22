@@ -20,7 +20,7 @@ pub open spec fn attr_spans_ok(s: Seq<u8>, t: Seq<XTok>, first: int) -> bool {
 /// `attrs` from `i`: the end, and whether the tag was empty.
 fn ex_attrs(s: &[u8], i: usize, tape: &mut Tape, env: &XEnv) -> (r: Option<(usize, bool)>)
     requires
-        i <= s@.len() < u32::MAX,
+        i <= s@.len() <= isize::MAX,
         old(tape)@.len() + 1 <= i,
         env_wf(env),
     ensures
@@ -38,7 +38,7 @@ fn ex_attrs(s: &[u8], i: usize, tape: &mut Tape, env: &XEnv) -> (r: Option<(usiz
     }
     loop
         invariant
-            i <= j0 <= s@.len() < u32::MAX,
+            i <= j0 <= s@.len() <= isize::MAX,
             tape@.len() + 1 <= j0,
             env_wf(env),
             lit_empty_end() == seq![0x2Fu8, 0x3E],
@@ -96,7 +96,7 @@ fn ex_attrs(s: &[u8], i: usize, tape: &mut Tape, env: &XEnv) -> (r: Option<(usiz
 /// pair of names.
 fn ex_attrs_distinct(s: &[u8], tape: &Tape, first: usize) -> (r: bool)
     requires
-        first <= tape@.len() < u32::MAX,
+        first <= tape@.len() <= isize::MAX,
         attr_spans_ok(s@, tape@, first as int),
     ensures
         r == attrs_distinct(s@, tape@, first as int),
@@ -180,7 +180,7 @@ fn ex_attrs_distinct(s: &[u8], tape: &Tape, first: usize) -> (r: bool)
 /// the end of the element type's name.
 fn ex_stag(s: &[u8], i: usize, tape: &mut Tape, env: &XEnv) -> (r: Option<(usize, bool, usize)>)
     requires
-        i < s@.len() < u32::MAX,
+        i < s@.len() <= isize::MAX,
         old(tape)@.len() <= i,
         env_wf(env),
     ensures
@@ -216,19 +216,19 @@ fn ex_stag(s: &[u8], i: usize, tape: &mut Tape, env: &XEnv) -> (r: Option<(usize
     }
 }
 
-pub open spec fn stack_view(st: Seq<(u32, u32, u32)>) -> Seq<Open> {
-    st.map_values(|x: (u32, u32, u32)| (x.0 as int, x.1 as int, x.2 as int))
+pub open spec fn stack_view(st: Seq<(usize, usize, usize)>) -> Seq<Open> {
+    st.map_values(|x: (usize, usize, usize)| (x.0 as int, x.1 as int, x.2 as int))
 }
 
 /// The open elements' names lie in the input and their start tags are
 /// start tags in the tape.
-pub open spec fn stack_ok(s: Seq<u8>, st: Seq<(u32, u32, u32)>, t: Seq<XTok>) -> bool {
+pub open spec fn stack_ok(s: Seq<u8>, st: Seq<(usize, usize, usize)>, t: Seq<XTok>) -> bool {
     forall|q: int|
         #![trigger st[q]]
         0 <= q < st.len() ==> st[q].0 <= st[q].1 <= s.len() && (st[q].2 as int) < t.len() && t[st[q].2 as int] is STag
 }
 
-proof fn lemma_stack_grow(s: Seq<u8>, st: Seq<(u32, u32, u32)>, t: Seq<XTok>, t2: Seq<XTok>)
+proof fn lemma_stack_grow(s: Seq<u8>, st: Seq<(usize, usize, usize)>, t: Seq<XTok>, t2: Seq<XTok>)
     requires
         stack_ok(s, st, t),
         t.len() <= t2.len(),
@@ -245,9 +245,9 @@ proof fn lemma_stack_grow(s: Seq<u8>, st: Seq<(u32, u32, u32)>, t: Seq<XTok>, t2
 /// One `item` at `j` with the open elements `stack`: the end.
 #[verifier::spinoff_prover]
 #[verifier::rlimit(120)]
-pub fn ex_item(s: &[u8], j: usize, stack: &mut Vec<(u32, u32, u32)>, tape: &mut Tape, env: &XEnv) -> (r: Option<usize>)
+pub fn ex_item(s: &[u8], j: usize, stack: &mut Vec<(usize, usize, usize)>, tape: &mut Tape, env: &XEnv) -> (r: Option<usize>)
     requires
-        j < s@.len() < u32::MAX,
+        j < s@.len() <= isize::MAX,
         old(tape)@.len() <= j,
         env_wf(env),
         stack_ok(s@, old(stack)@, old(tape)@),
@@ -360,7 +360,7 @@ pub fn ex_item(s: &[u8], j: usize, stack: &mut Vec<(u32, u32, u32)>, tape: &mut 
                         }
                     } else {
                         let ghost st_old = stack@;
-                        stack.push((j as u32 + 1, nm as u32, k0 as u32));
+                        stack.push((j + 1, nm, k0));
                         proof {
                             assert(stack_view(stack@) =~= sv.push(((j + 1) as int, nm as int, k0 as int)));
                             assert forall|q: int| 0 <= q < stack@.len() implies #[trigger] stack@[q].0 <= stack@[q].1
@@ -402,11 +402,11 @@ pub fn ex_item(s: &[u8], j: usize, stack: &mut Vec<(u32, u32, u32)>, tape: &mut 
 
 /// `content` from `i` with the open elements `stack`: the position after
 /// the end tag of the outermost.
-fn ex_content(s: &[u8], i: usize, stack: &mut Vec<(u32, u32, u32)>, tape: &mut Tape, env: &XEnv) -> (r: Option<
+fn ex_content(s: &[u8], i: usize, stack: &mut Vec<(usize, usize, usize)>, tape: &mut Tape, env: &XEnv) -> (r: Option<
     usize,
 >)
     requires
-        i <= s@.len() < u32::MAX,
+        i <= s@.len() <= isize::MAX,
         old(tape)@.len() <= i,
         env_wf(env),
         stack_ok(s@, old(stack)@, old(tape)@),
@@ -421,7 +421,7 @@ fn ex_content(s: &[u8], i: usize, stack: &mut Vec<(u32, u32, u32)>, tape: &mut T
     loop
         invariant
             i <= j <= n,
-            n == s@.len() < u32::MAX,
+            n == s@.len() <= isize::MAX,
             tape@.len() <= j,
             env_wf(env),
             stack_ok(s@, stack@, tape@),
@@ -456,7 +456,7 @@ fn ex_content(s: &[u8], i: usize, stack: &mut Vec<(u32, u32, u32)>, tape: &mut T
 /// content, into `tape`.
 pub fn ex_ent_content(r: &[u8], tape: &mut Tape, env: &XEnv) -> (ok: bool)
     requires
-        r@.len() < u32::MAX,
+        r@.len() <= isize::MAX,
         env_wf(env),
     ensures
         match ent_content(r@, 0, Seq::empty(), Seq::empty(), env_view(env)) {
@@ -466,7 +466,7 @@ pub fn ex_ent_content(r: &[u8], tape: &mut Tape, env: &XEnv) -> (ok: bool)
 {
     let n = r.len();
     let mut j: usize = 0;
-    let mut stack: Vec<(u32, u32, u32)> = Vec::new();
+    let mut stack: Vec<(usize, usize, usize)> = Vec::new();
     tape.clear();
     proof {
         assert(stack_view(stack@) =~= Seq::<Open>::empty());
@@ -474,7 +474,7 @@ pub fn ex_ent_content(r: &[u8], tape: &mut Tape, env: &XEnv) -> (ok: bool)
     loop
         invariant
             j <= n,
-            n == r@.len() < u32::MAX,
+            n == r@.len() <= isize::MAX,
             tape@.len() <= j,
             env_wf(env),
             stack_ok(r@, stack@, tape@),
@@ -505,7 +505,7 @@ pub fn ex_ent_content(r: &[u8], tape: &mut Tape, env: &XEnv) -> (ok: bool)
 /// `element` at `i`.
 pub fn ex_element(s: &[u8], i: usize, tape: &mut Tape, env: &XEnv) -> (r: Option<usize>)
     requires
-        i <= s@.len() < u32::MAX,
+        i <= s@.len() <= isize::MAX,
         old(tape)@.len() <= i,
         env_wf(env),
     ensures
@@ -526,8 +526,8 @@ pub fn ex_element(s: &[u8], i: usize, tape: &mut Tape, env: &XEnv) -> (r: Option
                 tape.close(k0);
                 Some(e)
             } else {
-                let mut stack: Vec<(u32, u32, u32)> = Vec::new();
-                stack.push((i as u32 + 1, nm as u32, k0 as u32));
+                let mut stack: Vec<(usize, usize, usize)> = Vec::new();
+                stack.push((i + 1, nm, k0));
                 proof {
                     assert(stack_view(stack@) =~= seq![((i + 1) as int, nm as int, k0 as int)]);
                 }

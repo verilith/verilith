@@ -20,23 +20,23 @@ verus! {
 // ---------------------------------------------------------------------------
 
 /// The name a span stands for.
-pub open spec fn nm(s: Seq<u8>, x: (u32, u32)) -> Seq<u8> {
+pub open spec fn nm(s: Seq<u8>, x: (usize, usize)) -> Seq<u8> {
     s.subrange(x.0 as int, x.1 as int)
 }
 
 /// The spans are inside `s`.
-pub open spec fn spans_ok(s: Seq<u8>, ns: Seq<(u32, u32)>) -> bool {
+pub open spec fn spans_ok(s: Seq<u8>, ns: Seq<(usize, usize)>) -> bool {
     forall|p: int| 0 <= p < ns.len() ==> (#[trigger] ns[p]).0 <= ns[p].1 <= s.len()
 }
 
 /// No two spans name the same.
-pub open spec fn distinct(s: Seq<u8>, ns: Seq<(u32, u32)>) -> bool {
+pub open spec fn distinct(s: Seq<u8>, ns: Seq<(usize, usize)>) -> bool {
     forall|p: int, q: int| 0 <= p < q < ns.len() ==> nm(s, #[trigger] ns[p]) != nm(s, #[trigger] ns[q])
 }
 
 /// `ns` lists the spans of the `Attr` tokens of `t[first..k]`, in order;
 /// `ix` is where each is.
-pub open spec fn listed(t: Seq<XTok>, first: int, k: int, ix: Seq<int>, ns: Seq<(u32, u32)>) -> bool {
+pub open spec fn listed(t: Seq<XTok>, first: int, k: int, ix: Seq<int>, ns: Seq<(usize, usize)>) -> bool {
     &&& ix.len() == ns.len()
     &&& forall|p: int|
         0 <= p < ix.len() ==> first <= #[trigger] ix[p] < k && t[ix[p]] is Attr && t[ix[p]]->Attr_start == ns[p].0 as int
@@ -46,14 +46,14 @@ pub open spec fn listed(t: Seq<XTok>, first: int, k: int, ix: Seq<int>, ns: Seq<
 }
 
 /// The spans of the attributes from `first` on.
-fn ex_list(tape: &Tape, first: usize) -> (r: (Vec<(u32, u32)>, Ghost<Seq<int>>))
+fn ex_list(tape: &Tape, first: usize) -> (r: (Vec<(usize, usize)>, Ghost<Seq<int>>))
     requires
         first <= tape@.len(),
     ensures
         listed(tape@, first as int, tape@.len() as int, r.1@, r.0@),
 {
     let ghost t = tape@;
-    let mut ns: Vec<(u32, u32)> = Vec::new();
+    let mut ns: Vec<(usize, usize)> = Vec::new();
     let ghost mut ix: Seq<int> = Seq::empty();
     let n = tape.len();
     let mut k = first;
@@ -98,7 +98,7 @@ fn ex_list(tape: &Tape, first: usize) -> (r: (Vec<(u32, u32)>, Ghost<Seq<int>>))
 }
 
 /// The tape's attributes are distinct exactly when the listed names are.
-proof fn lemma_listed_distinct(s: Seq<u8>, t: Seq<XTok>, first: int, ix: Seq<int>, ns: Seq<(u32, u32)>)
+proof fn lemma_listed_distinct(s: Seq<u8>, t: Seq<XTok>, first: int, ix: Seq<int>, ns: Seq<(usize, usize)>)
     requires
         listed(t, first, t.len() as int, ix, ns),
     ensures
@@ -191,7 +191,7 @@ pub fn ex_hash(s: &[u8], a: usize, b: usize, seed: u64, mul: u64) -> (h: u64)
 
 /// One chain, linked from `h` through `next` (each entry one more than a
 /// name's index, 0 for the end), of names before `k`.
-pub open spec fn chain_links(k: int, ch: Seq<int>, h: u32, next: Seq<u32>) -> bool {
+pub open spec fn chain_links(k: int, ch: Seq<int>, h: usize, next: Seq<usize>) -> bool {
     &&& h as int == if ch.len() == 0 {
         0
     } else {
@@ -211,14 +211,14 @@ pub open spec fn chain_links(k: int, ch: Seq<int>, h: u32, next: Seq<u32>) -> bo
 #[verifier::opaque]
 pub open spec fn chains_ok(
     s: Seq<u8>,
-    ns: Seq<(u32, u32)>,
+    ns: Seq<(usize, usize)>,
     sd: u64,
     mul: u64,
     m: int,
     k: int,
     chains: Seq<Seq<int>>,
-    head: Seq<u32>,
-    next: Seq<u32>,
+    head: Seq<usize>,
+    next: Seq<usize>,
 ) -> bool {
     &&& chains.len() == m && head.len() == m && next.len() == ns.len()
     &&& forall|b: int| 0 <= b < m ==> chain_links(k, #[trigger] chains[b], head[b], next)
@@ -227,7 +227,7 @@ pub open spec fn chains_ok(
     &&& forall|j: int| 0 <= j < k ==> #[trigger] chains[bkt(sd, mul, m, nm(s, ns[j]))].contains(j)
 }
 
-proof fn lemma_chains_init(s: Seq<u8>, ns: Seq<(u32, u32)>, sd: u64, mul: u64, m: int, head: Seq<u32>, next: Seq<u32>)
+proof fn lemma_chains_init(s: Seq<u8>, ns: Seq<(usize, usize)>, sd: u64, mul: u64, m: int, head: Seq<usize>, next: Seq<usize>)
     requires
         m > 0,
         head.len() == m,
@@ -243,14 +243,14 @@ proof fn lemma_chains_init(s: Seq<u8>, ns: Seq<(u32, u32)>, sd: u64, mul: u64, m
 /// bucket.
 proof fn lemma_chain_of(
     s: Seq<u8>,
-    ns: Seq<(u32, u32)>,
+    ns: Seq<(usize, usize)>,
     sd: u64,
     mul: u64,
     m: int,
     k: int,
     chains: Seq<Seq<int>>,
-    head: Seq<u32>,
-    next: Seq<u32>,
+    head: Seq<usize>,
+    next: Seq<usize>,
     b: int,
 )
     requires
@@ -266,19 +266,19 @@ proof fn lemma_chain_of(
 /// Inserting name `k` at the head of its bucket's chain.
 proof fn lemma_chains_insert(
     s: Seq<u8>,
-    ns: Seq<(u32, u32)>,
+    ns: Seq<(usize, usize)>,
     sd: u64,
     mul: u64,
     m: int,
     k: int,
     chains: Seq<Seq<int>>,
-    head: Seq<u32>,
-    next: Seq<u32>,
+    head: Seq<usize>,
+    next: Seq<usize>,
     b: int,
 )
     requires
         chains_ok(s, ns, sd, mul, m, k, chains, head, next),
-        0 <= k < ns.len() < u32::MAX,
+        0 <= k < ns.len() <= isize::MAX,
         b == bkt(sd, mul, m, nm(s, ns[k])),
         0 <= b < m,
     ensures
@@ -290,13 +290,13 @@ proof fn lemma_chains_insert(
             m,
             k + 1,
             chains.update(b, seq![k] + chains[b]),
-            head.update(b, (k + 1) as u32),
+            head.update(b, (k + 1) as usize),
             next.update(k, head[b]),
         ),
 {
     reveal(chains_ok);
     let c2 = chains.update(b, seq![k] + chains[b]);
-    let h2 = head.update(b, (k + 1) as u32);
+    let h2 = head.update(b, (k + 1) as usize);
     let n2 = next.update(k, head[b]);
     assert forall|b2: int| 0 <= b2 < m implies chain_links(k + 1, #[trigger] c2[b2], h2[b2], n2) by {
         let ch = chains[b2];
@@ -368,9 +368,9 @@ proof fn lemma_chains_insert(
 }
 
 /// Whether the chain `ch` from `h` holds a name like the `k`th.
-fn chain_has(s: &[u8], ns: &Vec<(u32, u32)>, k: usize, h: u32, next: &Vec<u32>, Ghost(ch): Ghost<Seq<int>>) -> (r: bool)
+fn chain_has(s: &[u8], ns: &Vec<(usize, usize)>, k: usize, h: usize, next: &Vec<usize>, Ghost(ch): Ghost<Seq<int>>) -> (r: bool)
     requires
-        k < ns@.len() < u32::MAX,
+        k < ns@.len() <= isize::MAX,
         next@.len() == ns@.len(),
         spans_ok(s@, ns@),
         chain_links(k as int, ch, h, next@),
@@ -383,7 +383,7 @@ fn chain_has(s: &[u8], ns: &Vec<(u32, u32)>, k: usize, h: u32, next: &Vec<u32>, 
     while cur != 0
         invariant
             0 <= p <= ch.len(),
-            k < ns@.len() < u32::MAX,
+            k < ns@.len() <= isize::MAX,
             next@.len() == ns@.len(),
             spans_ok(s@, ns@),
             chain_links(k as int, ch, h, next@),
@@ -431,9 +431,9 @@ fn chain_has(s: &[u8], ns: &Vec<(u32, u32)>, k: usize, h: u32, next: &Vec<u32>, 
 }
 
 /// `distinct(s, ns)`, with a hash table.
-fn ex_distinct_names(s: &[u8], ns: &Vec<(u32, u32)>) -> (r: bool)
+fn ex_distinct_names(s: &[u8], ns: &Vec<(usize, usize)>) -> (r: bool)
     requires
-        ns@.len() < u32::MAX,
+        ns@.len() <= isize::MAX,
         spans_ok(s@, ns@),
     ensures
         r == distinct(s@, ns@),
@@ -441,7 +441,7 @@ fn ex_distinct_names(s: &[u8], ns: &Vec<(u32, u32)>) -> (r: bool)
     let n = ns.len();
     let m: usize = n + 1;
     let (sd, mul) = seed();
-    let mut head: Vec<u32> = Vec::new();
+    let mut head: Vec<usize> = Vec::new();
     while head.len() < m
         invariant
             head@.len() <= m,
@@ -450,7 +450,7 @@ fn ex_distinct_names(s: &[u8], ns: &Vec<(u32, u32)>) -> (r: bool)
     {
         head.push(0);
     }
-    let mut next: Vec<u32> = Vec::new();
+    let mut next: Vec<usize> = Vec::new();
     while next.len() < n
         invariant
             next@.len() <= n,
@@ -466,7 +466,7 @@ fn ex_distinct_names(s: &[u8], ns: &Vec<(u32, u32)>) -> (r: bool)
     while k < n
         invariant
             k <= n,
-            n == ns@.len() < u32::MAX,
+            n == ns@.len() <= isize::MAX,
             m == n + 1,
             head@.len() == m,
             next@.len() == n,
@@ -513,7 +513,7 @@ fn ex_distinct_names(s: &[u8], ns: &Vec<(u32, u32)>) -> (r: bool)
         }
         let old_head = head[b];
         next.set(k, old_head);
-        head.set(b, (k + 1) as u32);
+        head.set(b, (k + 1) as usize);
         proof {
             chains = chains.update(b as int, seq![k as int] + chains[b as int]);
         }
@@ -552,7 +552,7 @@ proof fn lemma_increasing_len(ix: Seq<int>, lo: int, hi: int)
 /// hash table: `attrs_distinct`.
 pub fn ex_distinct_hashed(s: &[u8], tape: &Tape, first: usize) -> (r: bool)
     requires
-        first <= tape@.len() < u32::MAX,
+        first <= tape@.len() <= isize::MAX,
         forall|m: int|
             #![trigger tape@[m]]
             first <= m < tape@.len() && tape@[m] is Attr ==> 0 <= tape@[m]->Attr_start <= tape@[m]->Attr_end <= s@.len(),

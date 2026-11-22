@@ -10,7 +10,6 @@
 use crate::decode::{ex_att_norm, ex_eol};
 use crate::dtd::DtdOut;
 use crate::lex::{ex_find_ent, XEnv};
-use crate::spec::ENT_DEPTH;
 use crate::tape::{Kind, Tape, Tok};
 use std::borrow::Cow;
 use std::cell::OnceCell;
@@ -26,8 +25,6 @@ pub enum ErrorKind {
     Encoding,
     /// The text is not a well-formed XML document.
     Syntax,
-    /// The input is 4 GiB or more.
-    TooLarge,
 }
 
 /// A rejected document: why, and where. `offset` is a byte offset into
@@ -46,7 +43,6 @@ impl fmt::Display for Error {
         let what = match self.kind {
             ErrorKind::Encoding => "not text in a known encoding, or a character XML does not allow",
             ErrorKind::Syntax => "not well-formed",
-            ErrorKind::TooLarge => "input of 4 GiB or more",
         };
         write!(f, "{what} at line {} column {} (byte {})", self.line, self.column, self.offset)
     }
@@ -82,17 +78,13 @@ fn bad_char_at(s: &[u8]) -> usize {
     i
 }
 
-/// How large a normalized attribute value may grow by entity expansion
-/// before reading it fails (`Element::try_attribute`).
-pub const MAX_VALUE: usize = 1 << 24;
-
 /// An attribute definition from the internal subset that applies.
 #[derive(Clone, Copy, Debug)]
 struct AttDef {
-    name: (u32, u32),
+    name: (usize, usize),
     ty: u8,
     kind: u8,
-    value: (u32, u32),
+    value: (usize, usize),
 }
 
 /// A parsed document.
@@ -106,7 +98,7 @@ pub struct Document<'a> {
     /// `defs` by (element type, attribute name), and by element type.
     def_index: HashMap<Box<[u8]>, HashMap<Box<[u8]>, usize>>,
     defs_of: HashMap<Box<[u8]>, Vec<usize>>,
-    root: u32,
+    root: usize,
 }
 
 impl fmt::Debug for Document<'_> {
@@ -126,9 +118,6 @@ pub fn parse(input: &[u8]) -> Result<Document<'_>, Error> {
 }
 
 fn diagnose(input: &[u8], tape: &Tape) -> Error {
-    if input.len() >= 0xFFFF_FFFF {
-        return error_at(ErrorKind::TooLarge, input, 0);
-    }
     let enc = crate::enc::ex_input_enc(input);
     let decoded = match crate::enc::ex_decode_input(input, enc) {
         None => return error_at(ErrorKind::Encoding, input, 0),
@@ -168,7 +157,7 @@ fn cow_utf8(c: Cow<'_, [u8]>) -> Cow<'_, str> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Src {
     Doc,
-    Ent(u32),
+    Ent(usize),
 }
 
 impl<'a> Document<'a> {
@@ -185,7 +174,7 @@ impl<'a> Document<'a> {
             defs_of: HashMap::new(),
             root: 0,
         };
-        d.root = d.tape.toks.iter().position(|t| t.kind == Kind::STag).unwrap_or(0) as u32;
+        d.root = d.tape.toks.iter().position(|t| t.kind == Kind::STag).unwrap_or(0) as usize;
         d.att_defs();
         d
     }
@@ -297,7 +286,7 @@ impl<'a> Document<'a> {
         }
     }
 
-    fn span(&self, src: Src, a: u32, b: u32) -> &[u8] {
+    fn span(&self, src: Src, a: usize, b: usize) -> &[u8] {
         &self.buf(src)[a as usize..b as usize]
     }
 
@@ -329,7 +318,7 @@ impl<'a> Document<'a> {
 
     /// The entity a reference names, if it was declared: its index, and
     /// whether it is internal.
-    fn entity(&self, src: Src, a: u32, b: u32) -> Option<(usize, bool)> {
+    fn entity(&self, src: Src, a: usize, b: usize) -> Option<(usize, bool)> {
         let env = self.env();
         let buf = self.buf(src);
         let j = ex_find_ent(&env, self.dtd.ents.len(), buf, a as usize, b as usize)?;
@@ -374,7 +363,8 @@ impl<'a> Document<'a> {
 
     /// The normalized value (§3.3.3) of the raw attribute value
     /// `src[a..b]`, collapsed for a declared type other than CDATA.
-    fn value(&self, src: Src, a: u32, b: u32, plain: bool, ty: u8) -> Result<Cow<'_, [u8]>, ()> {
+    /// `Err` if it would grow past `limit` bytes by entity expansion.
+    fn value(&self, src: Src, a: usize, b: usize, plain: bool, ty: u8, limit: usize) -> Result<Cow<'_, [u8]>, ()> {
         let v: Cow<'_, [u8]> = if plain {
             Cow::Borrowed(self.span(src, a, b))
         } else {
@@ -387,9 +377,9 @@ impl<'a> Document<'a> {
                 src == Src::Doc,
                 &env,
                 &self.dtd.rts,
-                ENT_DEPTH,
+                self.dtd.ents.len(),
                 &mut out,
-                MAX_VALUE,
+                limit,
             );
             if r != 0 {
                 return Err(());
@@ -436,7 +426,7 @@ impl<'a> Document<'a> {
 pub struct Element<'d> {
     doc: &'d Document<'d>,
     src: Src,
-    idx: u32,
+    idx: usize,
 }
 
 /// An attribute, with its normalized value.
@@ -490,14 +480,17 @@ impl<'d> Element<'d> {
     }
 
     /// The attributes: those in the start tag, in order, then the DTD's
-    /// defaults for the ones not given.
+    /// defaults for the ones not given. Values are their whole normalized
+    /// value, however long entity references make it: a "billion laughs"
+    /// value is gigabytes. For untrusted input, `try_attributes` with a
+    /// limit.
     pub fn attributes(&self) -> Vec<Attribute<'d>> {
-        self.try_attributes().unwrap_or_default()
+        self.try_attributes(usize::MAX).unwrap_or_default()
     }
 
     /// `attributes`, or `Err` if a value's entity expansion grows past
-    /// `MAX_VALUE` bytes.
-    pub fn try_attributes(&self) -> Result<Vec<Attribute<'d>>, ()> {
+    /// `limit` bytes.
+    pub fn try_attributes(&self, limit: usize) -> Result<Vec<Attribute<'d>>, ()> {
         let doc = self.doc;
         let toks = doc.toks(self.src);
         let elem = self.name_bytes();
@@ -507,7 +500,7 @@ impl<'d> Element<'d> {
             let (n, v) = (toks[i], toks[i + 1]);
             let name = doc.span(self.src, n.a, n.b);
             let ty = doc.def_for(elem, name).map_or(1, |d| d.ty);
-            let value = doc.value(self.src, v.a, v.b, v.f != 0, ty)?;
+            let value = doc.value(self.src, v.a, v.b, v.f != 0, ty, limit)?;
             out.push(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: false });
             i += 2;
         }
@@ -522,7 +515,7 @@ impl<'d> Element<'d> {
             if given.contains(name) {
                 continue;
             }
-            let value = doc.value(Src::Doc, d.value.0, d.value.1, false, d.ty)?;
+            let value = doc.value(Src::Doc, d.value.0, d.value.1, false, d.ty, limit)?;
             out.push(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: true });
         }
         Ok(out)
@@ -541,12 +534,11 @@ impl<'d> Element<'d> {
         while i < close && matches!(toks[i].kind, Kind::Attr | Kind::AttVal) {
             i += 1;
         }
-        Children { doc: self.doc, cur: (self.src, i as u32, close as u32), outer: Vec::new() }
+        Children { doc: self.doc, cur: (self.src, i as usize, close as usize), outer: Vec::new() }
     }
 
     /// The attributes, without allocating: those in the start tag, then
-    /// the DTD's defaults (as `attributes`). A value whose expansion would
-    /// pass `MAX_VALUE` bytes is empty here; `try_attributes` reports it.
+    /// the DTD's defaults (as `attributes`), whole values, however long.
     pub fn attrs(&self) -> Attrs<'d> {
         Attrs { e: *self, i: self.idx as usize + 1, d: 0 }
     }
@@ -595,7 +587,7 @@ impl<'d> Iterator for Attrs<'d> {
             self.i += 2;
             let name = doc.span(self.e.src, n.a, n.b);
             let ty = if doc.defs.is_empty() { 1 } else { doc.def_for(self.e.name_bytes(), name).map_or(1, |d| d.ty) };
-            let value = doc.value(self.e.src, v.a, v.b, v.f != 0, ty).unwrap_or(Cow::Borrowed(&[]));
+            let value = doc.value(self.e.src, v.a, v.b, v.f != 0, ty, usize::MAX).unwrap_or(Cow::Borrowed(&[]));
             return Some(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: false });
         }
         let text = doc.text();
@@ -616,7 +608,7 @@ impl<'d> Iterator for Attrs<'d> {
             if given {
                 continue;
             }
-            let value = doc.value(Src::Doc, d.value.0, d.value.1, false, d.ty).unwrap_or(Cow::Borrowed(&[]));
+            let value = doc.value(Src::Doc, d.value.0, d.value.1, false, d.ty, usize::MAX).unwrap_or(Cow::Borrowed(&[]));
             return Some(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: true });
         }
         None
@@ -627,8 +619,8 @@ impl<'d> Iterator for Attrs<'d> {
 /// being read, and those of the entities being expanded around it.
 pub struct Children<'d> {
     doc: &'d Document<'d>,
-    cur: (Src, u32, u32),
-    outer: Vec<(Src, u32, u32)>,
+    cur: (Src, usize, usize),
+    outer: Vec<(Src, usize, usize)>,
 }
 
 impl<'d> Iterator for Children<'d> {
@@ -665,7 +657,7 @@ impl<'d> Iterator for Children<'d> {
                         Child::CData(v)
                     }
                 }
-                Kind::CharRef => Child::Text(Cow::Owned(char::from_u32(t.b).map(String::from).unwrap_or_default())),
+                Kind::CharRef => Child::Text(Cow::Owned(char::from_u32(t.b as u32).map(String::from).unwrap_or_default())),
                 Kind::Comment => Child::Comment(doc.text_of(src, t)),
                 Kind::PI => {
                     let d = toks[i as usize + 1];
@@ -676,7 +668,7 @@ impl<'d> Iterator for Children<'d> {
                     Some((k, true)) => {
                         let n = doc.ent_tape(k).map_or(0, |t| t.toks.len());
                         self.outer.push(self.cur);
-                        self.cur = (Src::Ent(k as u32), 0, n as u32);
+                        self.cur = (Src::Ent(k as usize), 0, n as usize);
                         continue;
                     }
                     _ => Child::Unexpanded(utf8(doc.span(src, t.a, t.b))),
