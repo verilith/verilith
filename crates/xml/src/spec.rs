@@ -1869,10 +1869,9 @@ pub open spec fn prolog(s: Seq<u8>, enc: Enc) -> Option<(Seq<XTok>, int, Env)> {
 
 /// document ::= prolog element Misc*   [1], in UTF-8 (with an optional
 /// byte order mark), every character a `Char` [2], read from a document in
-/// the encoding `enc`. The whole input must be the document. Inputs of
-/// 4 GiB or more are rejected, so that positions fit in 32 bits.
+/// the encoding `enc`. The whole input must be the document.
 pub open spec fn document(s: Seq<u8>, enc: Enc) -> Option<Seq<XTok>> {
-    if s.len() >= 0xFFFF_FFFF || !doc_chars(s) {
+    if !doc_chars(s) {
         None
     } else {
         match prolog(s, enc) {
@@ -2010,18 +2009,14 @@ pub open spec fn decode_input(b: Seq<u8>) -> Option<Seq<u8>> {
 }
 
 /// An XML document in any encoding read here: the text in UTF-8, and its
-/// tape. Inputs of 4 GiB or more are rejected.
+/// tape.
 pub open spec fn parse(b: Seq<u8>) -> Option<(Seq<u8>, Seq<XTok>)> {
-    if b.len() >= 0xFFFF_FFFF {
-        None
-    } else {
     match decode_input(b) {
         None => None,
         Some(u) => match document(u, input_enc(b)) {
             None => None,
             Some(t) => Some((u, t)),
         },
-    }
     }
 }
 

@@ -192,9 +192,9 @@ pub fn ex_att_norm(
     limit: usize,
 ) -> (res: u8)
     requires
-        i <= end <= r@.len() < u32::MAX,
+        i <= end <= r@.len() <= isize::MAX,
         env_wf(env),
-        env.doc@.len() < u32::MAX,
+        env.doc@.len() <= isize::MAX,
         rts_ok(env.doc@, env.ents@, rts@),
     ensures
         res == 0 ==> pre(old(out)@, att_norm(env.doc@, r@, i as int, end as int, eol, env_view(env), d as nat)) == Some(
@@ -216,11 +216,11 @@ pub fn ex_att_norm(
     }
     while j < end
         invariant
-            i <= j <= end <= r@.len() < u32::MAX,
+            i <= j <= end <= r@.len() <= isize::MAX,
             env_wf(env),
             doc == env.doc@,
             ev == env_view(env),
-            doc.len() < u32::MAX,
+            doc.len() <= isize::MAX,
             rts_ok(doc, env.ents@, rts@),
             lim_view(env, env.ents@.len() as int) == ev,
             whole == att_norm(doc, r@, i as int, end as int, eol, ev, d as nat),

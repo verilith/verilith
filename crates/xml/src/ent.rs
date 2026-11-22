@@ -54,7 +54,7 @@ pub proof fn lemma_charref_len(s: Seq<u8>, a: int)
 /// `repl(s, a, b)`.
 pub fn ex_repl(s: &[u8], a: usize, b: usize) -> (r: Vec<u8>)
     requires
-        a <= b <= s@.len() < u32::MAX,
+        a <= b <= s@.len() <= isize::MAX,
     ensures
         r@ == repl(s@, a as int, b as int),
         r@.len() <= b - a,
@@ -66,7 +66,7 @@ pub fn ex_repl(s: &[u8], a: usize, b: usize) -> (r: Vec<u8>)
     }
     while i < b
         invariant
-            a <= i <= b <= s@.len() < u32::MAX,
+            a <= i <= b <= s@.len() <= isize::MAX,
             out@ + repl(s@, i as int, b as int) == repl(s@, a as int, b as int),
             out@.len() <= i - a,
         decreases b - i,
@@ -127,7 +127,7 @@ pub fn ex_repl(s: &[u8], a: usize, b: usize) -> (r: Vec<u8>)
 /// `att_text(r, 0, env)`.
 pub fn ex_att_text(r: &[u8], env: &XEnv) -> (ok: bool)
     requires
-        r@.len() < u32::MAX,
+        r@.len() <= isize::MAX,
         env_wf(env),
     ensures
         ok == att_text(r@, 0, env_view(env)),
@@ -140,7 +140,7 @@ pub fn ex_att_text(r: &[u8], env: &XEnv) -> (ok: bool)
     while i < n
         invariant
             i <= n,
-            n == r@.len() < u32::MAX,
+            n == r@.len() <= isize::MAX,
             env_wf(env),
             lim_view(env, env.ents@.len() as int) == env_view(env),
             att_text(r@, i as int, env_view(env)) == att_text(r@, 0, env_view(env)),
@@ -237,7 +237,7 @@ pub open spec fn rts_ok(doc: Seq<u8>, ents: Seq<XEnt>, rts: Seq<Vec<u8>>) -> boo
 /// the others).
 pub fn ex_rts(doc: &[u8], ents: &[XEnt]) -> (r: Vec<Vec<u8>>)
     requires
-        doc@.len() < u32::MAX,
+        doc@.len() <= isize::MAX,
         ents_wf(doc@, ents@),
     ensures
         rts_ok(doc@, ents@, r@),
@@ -247,7 +247,7 @@ pub fn ex_rts(doc: &[u8], ents: &[XEnt]) -> (r: Vec<Vec<u8>>)
     while k < ents.len()
         invariant
             k <= ents@.len(),
-            doc@.len() < u32::MAX,
+            doc@.len() <= isize::MAX,
             ents_wf(doc@, ents@),
             out@.len() == k,
             forall|q: int|
@@ -279,7 +279,7 @@ pub fn ex_ent_flags(doc: &[u8], ents: &[XEnt], wfc: bool, rts: &Vec<Vec<u8>>, id
     Vec<bool>,
 ))
     requires
-        doc@.len() < u32::MAX,
+        doc@.len() <= isize::MAX,
         ents_wf(doc@, ents@),
         rts_ok(doc@, ents@, rts@),
         crate::index::indexes(idx, doc@, ents@),
@@ -309,7 +309,7 @@ pub fn ex_ent_flags(doc: &[u8], ents: &[XEnt], wfc: bool, rts: &Vec<Vec<u8>>, id
             d <= ENT_DEPTH,
             n == ents@.len(),
             es == ents_view(doc@, ents@),
-            doc@.len() < u32::MAX,
+            doc@.len() <= isize::MAX,
             ents_wf(doc@, ents@),
             rts_ok(doc@, ents@, rts@),
             none@ == Seq::<bool>::empty(),
@@ -328,7 +328,7 @@ pub fn ex_ent_flags(doc: &[u8], ents: &[XEnt], wfc: bool, rts: &Vec<Vec<u8>>, id
                     k <= n,
                     n == ents@.len(),
                     es == ents_view(doc@, ents@),
-                    doc@.len() < u32::MAX,
+                    doc@.len() <= isize::MAX,
                     env_wf(&env),
                     env.doc@ == doc@,
                     env.ents@ == ents@,
@@ -385,7 +385,7 @@ pub fn ex_ent_flags(doc: &[u8], ents: &[XEnt], wfc: bool, rts: &Vec<Vec<u8>>, id
             d <= ENT_DEPTH,
             n == ents@.len(),
             es == ents_view(doc@, ents@),
-            doc@.len() < u32::MAX,
+            doc@.len() <= isize::MAX,
             ents_wf(doc@, ents@),
             rts_ok(doc@, ents@, rts@),
             crate::index::indexes(idx, doc@, ents@),
@@ -403,7 +403,7 @@ pub fn ex_ent_flags(doc: &[u8], ents: &[XEnt], wfc: bool, rts: &Vec<Vec<u8>>, id
                     k <= n,
                     n == ents@.len(),
                     es == ents_view(doc@, ents@),
-                    doc@.len() < u32::MAX,
+                    doc@.len() <= isize::MAX,
                     env_wf(&env),
                     env_view(&env) == (Env { ents: es, wfc, oka: oka@, okc: prev@ }),
                     rts_ok(doc@, ents@, rts@),

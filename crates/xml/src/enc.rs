@@ -17,7 +17,7 @@ verus! {
 /// `declared_enc`.
 pub fn ex_declared_enc(b: &[u8]) -> (r: Option<(usize, usize)>)
     requires
-        b@.len() < u32::MAX,
+        b@.len() <= isize::MAX,
     ensures
         match declared_enc(b@) {
             Some((x, y)) => r matches Some((p, q)) && p == x && q == y && x <= y <= b@.len(),
@@ -65,7 +65,7 @@ pub fn ex_declared_enc(b: &[u8]) -> (r: Option<(usize, usize)>)
 /// `input_enc`.
 pub fn ex_input_enc(b: &[u8]) -> (r: Enc)
     requires
-        b@.len() < u32::MAX,
+        b@.len() <= isize::MAX,
     ensures
         r == input_enc(b@),
 {
@@ -245,7 +245,7 @@ pub fn ex_latin1_dec(b: &[u8]) -> (r: Vec<u8>)
 /// `decode_input`: `Some(None)` when the input is already the text.
 pub fn ex_decode_input(b: &[u8], enc: Enc) -> (r: Option<Option<Vec<u8>>>)
     requires
-        b@.len() < u32::MAX,
+        b@.len() <= isize::MAX,
         enc == input_enc(b@),
     ensures
         match decode_input(b@) {
@@ -311,9 +311,7 @@ pub fn ex_parse(b: &[u8], tape: &mut Tape) -> (r: Option<(Option<Vec<u8>>, DtdOu
             None => out_wf(b@, &d) && final(tape)@.len() <= b@.len(),
         },
 {
-    if b.len() >= 0xFFFF_FFFF {
-        return None;
-    }
+    slice_len_bound(b);
     let enc = ex_input_enc(b);
     match ex_decode_input(b, enc) {
         None => None,

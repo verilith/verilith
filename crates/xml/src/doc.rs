@@ -14,7 +14,7 @@ verus! {
 /// entities declared before it.
 fn ex_defaults_ok(s: &[u8], tape: &Tape, env: &XEnv) -> (r: bool)
     requires
-        s@.len() < u32::MAX,
+        s@.len() <= isize::MAX,
         env_wf(env),
     ensures
         r == defaults_ok(s@, tape@, env_view(env)),
@@ -25,7 +25,7 @@ fn ex_defaults_ok(s: &[u8], tape: &Tape, env: &XEnv) -> (r: bool)
         invariant
             k <= n,
             n == tape@.len(),
-            s@.len() < u32::MAX,
+            s@.len() <= isize::MAX,
             env_wf(env),
             forall|m: int|
                 0 <= m < k ==> match #[trigger] tape@[m] {
@@ -71,7 +71,7 @@ fn ex_defaults_ok(s: &[u8], tape: &Tape, env: &XEnv) -> (r: bool)
 /// standalone declaration.
 fn ex_decl_head(s: &[u8], tape: &mut Tape, enc: Enc) -> (r: Option<(usize, u8)>)
     requires
-        s@.len() < u32::MAX,
+        s@.len() <= isize::MAX,
         old(tape)@.len() == 0,
     ensures
         match decl_head(s@, enc) {
@@ -109,7 +109,7 @@ fn ex_decl_head(s: &[u8], tape: &mut Tape, enc: Enc) -> (r: Option<(usize, u8)>)
 /// `doctype_opt` at `p`.
 fn ex_doctype_opt(s: &[u8], p: usize, tape: &mut Tape, sd: u8) -> (r: Option<(usize, DtdOut)>)
     requires
-        p <= s@.len() < u32::MAX,
+        p <= s@.len() <= isize::MAX,
         old(tape)@.len() <= p,
     ensures
         match doctype_opt(s@, p as int, old(tape)@, sd as int) {
@@ -141,7 +141,7 @@ fn ex_doctype_opt(s: &[u8], p: usize, tape: &mut Tape, sd: u8) -> (r: Option<(us
 #[verifier::rlimit(60)]
 pub fn ex_prolog(s: &[u8], tape: &mut Tape, enc: Enc) -> (r: Option<(usize, DtdOut)>)
     requires
-        s@.len() < u32::MAX,
+        s@.len() <= isize::MAX,
         old(tape)@.len() == 0,
     ensures
         match prolog(s@, enc) {
@@ -195,9 +195,7 @@ pub fn ex_document(s: &[u8], tape: &mut Tape, enc: Enc) -> (r: Option<DtdOut>)
         },
         r matches Some(d) ==> final(tape)@.len() <= s@.len() && out_wf(s@, &d),
 {
-    if s.len() >= 0xFFFF_FFFF {
-        return None;
-    }
+    slice_len_bound(s);
     if !ex_doc_chars(s) {
         return None;
     }

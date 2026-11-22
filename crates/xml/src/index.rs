@@ -14,12 +14,12 @@ use vstd::prelude::*;
 verus! {
 
 /// The entity names, as spans into the document.
-pub open spec fn spans(es: Seq<XEnt>) -> Seq<(u32, u32)> {
+pub open spec fn spans(es: Seq<XEnt>) -> Seq<(usize, usize)> {
     es.map_values(|e: XEnt| (e.a, e.b))
 }
 
 /// No earlier name is the same.
-pub open spec fn first_occ(s: Seq<u8>, ns: Seq<(u32, u32)>, j: int) -> bool {
+pub open spec fn first_occ(s: Seq<u8>, ns: Seq<(usize, usize)>, j: int) -> bool {
     forall|k: int| 0 <= k < j ==> nm(s, #[trigger] ns[k]) != nm(s, ns[j])
 }
 
@@ -28,14 +28,14 @@ pub open spec fn first_occ(s: Seq<u8>, ns: Seq<(u32, u32)>, j: int) -> bool {
 #[verifier::opaque]
 pub open spec fn index_ok(
     s: Seq<u8>,
-    ns: Seq<(u32, u32)>,
+    ns: Seq<(usize, usize)>,
     sd: u64,
     mul: u64,
     m: int,
     k: int,
     chains: Seq<Seq<int>>,
-    head: Seq<u32>,
-    next: Seq<u32>,
+    head: Seq<usize>,
+    next: Seq<usize>,
 ) -> bool {
     &&& m > 0 && chains.len() == m && head.len() == m && next.len() == ns.len() && 0 <= k <= ns.len()
     &&& forall|b: int| 0 <= b < m ==> chain_links(k, #[trigger] chains[b], head[b], next)
@@ -48,8 +48,8 @@ pub open spec fn index_ok(
 
 /// The index of the entities of a document.
 pub struct NameIndex {
-    pub head: Vec<u32>,
-    pub next: Vec<u32>,
+    pub head: Vec<usize>,
+    pub next: Vec<usize>,
     pub sd: u64,
     pub mul: u64,
     pub chains: Ghost<Seq<Seq<int>>>,
@@ -58,7 +58,7 @@ pub struct NameIndex {
 /// The index is the index of the names of `es` in `s`.
 pub open spec fn indexes(x: &NameIndex, s: Seq<u8>, es: Seq<XEnt>) -> bool {
     index_ok(s, spans(es), x.sd, x.mul, x.head@.len() as int, es.len() as int, x.chains@, x.head@, x.next@)
-        && es.len() < u32::MAX
+        && es.len() <= isize::MAX
 }
 
 /// `find_ent` is the first entity of the name.
@@ -144,8 +144,8 @@ proof fn lemma_absent(
     mul: u64,
     m: int,
     chains: Seq<Seq<int>>,
-    head: Seq<u32>,
-    next: Seq<u32>,
+    head: Seq<usize>,
+    next: Seq<usize>,
     q: Seq<u8>,
     lim: int,
 )
@@ -177,7 +177,7 @@ proof fn lemma_absent(
 }
 
 /// Every name has a first occurrence at or before it.
-proof fn lemma_first_exists(s: Seq<u8>, ns: Seq<(u32, u32)>, i: int)
+proof fn lemma_first_exists(s: Seq<u8>, ns: Seq<(usize, usize)>, i: int)
     requires
         0 <= i < ns.len(),
     ensures
@@ -197,8 +197,8 @@ fn ex_chain_find(
     q: &[u8],
     a: usize,
     b: usize,
-    h: u32,
-    next: &Vec<u32>,
+    h: usize,
+    next: &Vec<usize>,
     Ghost(k): Ghost<int>,
     Ghost(ch): Ghost<Seq<int>>,
 ) -> (r: Option<usize>)
@@ -269,7 +269,7 @@ impl NameIndex {
     /// The index of the names of `ns`.
     pub fn build(s: &[u8], ns: &[XEnt]) -> (r: NameIndex)
         requires
-            ns@.len() < u32::MAX,
+            ns@.len() <= isize::MAX,
             forall|p: int| 0 <= p < ns@.len() ==> (#[trigger] ns@[p]).a <= ns@[p].b <= s@.len(),
         ensures
             indexes(&r, s@, ns@),
@@ -277,7 +277,7 @@ impl NameIndex {
         let n = ns.len();
         let m: usize = n + 1;
         let (sd, mul) = seed();
-        let mut head: Vec<u32> = Vec::new();
+        let mut head: Vec<usize> = Vec::new();
         while head.len() < m
             invariant
                 head@.len() <= m,
@@ -286,7 +286,7 @@ impl NameIndex {
         {
             head.push(0);
         }
-        let mut next: Vec<u32> = Vec::new();
+        let mut next: Vec<usize> = Vec::new();
         while next.len() < n
             invariant
                 next@.len() <= n,
@@ -303,7 +303,7 @@ impl NameIndex {
         while k < n
             invariant
                 k <= n,
-                n == ns@.len() < u32::MAX,
+                n == ns@.len() <= isize::MAX,
                 m == n + 1,
                 sp == spans(ns@),
                 head@.len() == m,
@@ -342,7 +342,7 @@ impl NameIndex {
                 }
                 let old_head = head[b];
                 next.set(k, old_head);
-                head.set(b, (k + 1) as u32);
+                head.set(b, (k + 1) as usize);
                 proof {
                     chains = chains.update(b as int, seq![k as int] + chains[b as int]);
                 }
@@ -413,14 +413,14 @@ impl NameIndex {
 /// A name that is not the first of its name changes nothing.
 proof fn lemma_index_skip(
     s: Seq<u8>,
-    ns: Seq<(u32, u32)>,
+    ns: Seq<(usize, usize)>,
     sd: u64,
     mul: u64,
     m: int,
     k: int,
     chains: Seq<Seq<int>>,
-    head: Seq<u32>,
-    next: Seq<u32>,
+    head: Seq<usize>,
+    next: Seq<usize>,
 )
     requires
         index_ok(s, ns, sd, mul, m, k, chains, head, next),
@@ -438,19 +438,19 @@ proof fn lemma_index_skip(
 /// Inserting the first occurrence `k` at the head of its bucket's chain.
 proof fn lemma_index_insert(
     s: Seq<u8>,
-    ns: Seq<(u32, u32)>,
+    ns: Seq<(usize, usize)>,
     sd: u64,
     mul: u64,
     m: int,
     k: int,
     chains: Seq<Seq<int>>,
-    head: Seq<u32>,
-    next: Seq<u32>,
+    head: Seq<usize>,
+    next: Seq<usize>,
     b: int,
 )
     requires
         index_ok(s, ns, sd, mul, m, k, chains, head, next),
-        0 <= k < ns.len() < u32::MAX,
+        0 <= k < ns.len() <= isize::MAX,
         first_occ(s, ns, k),
         b == bkt(sd, mul, m, nm(s, ns[k])),
         0 <= b < m,
@@ -463,13 +463,13 @@ proof fn lemma_index_insert(
             m,
             k + 1,
             chains.update(b, seq![k] + chains[b]),
-            head.update(b, (k + 1) as u32),
+            head.update(b, (k + 1) as usize),
             next.update(k, head[b]),
         ),
 {
     reveal(index_ok);
     let c2 = chains.update(b, seq![k] + chains[b]);
-    let h2 = head.update(b, (k + 1) as u32);
+    let h2 = head.update(b, (k + 1) as usize);
     let n2 = next.update(k, head[b]);
     assert forall|b2: int| 0 <= b2 < m implies chain_links(k + 1, #[trigger] c2[b2], h2[b2], n2) by {
         let ch = chains[b2];

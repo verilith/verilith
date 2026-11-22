@@ -16,7 +16,7 @@ verus! {
 /// the spans of the parameter entities' names, and two flags.
 pub struct XDtd {
     pub ents: Vec<XEnt>,
-    pub pes: Vec<(u32, u32)>,
+    pub pes: Vec<(usize, usize)>,
     pub pe_seen: bool,
     pub sa: bool,
 }
@@ -82,7 +82,7 @@ impl DtdOut {
 /// The environment after the internal subset (`env_of`).
 fn ex_finish(s: &[u8], d: XDtd, ext: bool) -> (r: DtdOut)
     requires
-        s@.len() < u32::MAX,
+        s@.len() <= isize::MAX,
         d.ents@.len() <= s@.len(),
         dtd_wf(s@, &d),
     ensures
@@ -96,8 +96,8 @@ fn ex_finish(s: &[u8], d: XDtd, ext: bool) -> (r: DtdOut)
     DtdOut { ents: d.ents, wfc, oka, okc, rts, idx }
 }
 
-pub open spec fn pes_view(s: Seq<u8>, p: Seq<(u32, u32)>) -> Seq<Seq<u8>> {
-    p.map_values(|x: (u32, u32)| s.subrange(x.0 as int, x.1 as int))
+pub open spec fn pes_view(s: Seq<u8>, p: Seq<(usize, usize)>) -> Seq<Seq<u8>> {
+    p.map_values(|x: (usize, usize)| s.subrange(x.0 as int, x.1 as int))
 }
 
 pub open spec fn dtd_view(s: Seq<u8>, d: &XDtd) -> DtdSt {
@@ -138,7 +138,7 @@ fn ex_digits_end(s: &[u8], i: usize) -> (r: usize)
 /// `version_info` from `i`.
 pub fn ex_version_info(s: &[u8], i: usize) -> (r: Option<(usize, usize, usize)>)
     requires
-        i <= s@.len() < u32::MAX,
+        i <= s@.len() <= isize::MAX,
     ensures
         match version_info(s@, i as int) {
             Some((e, a, b)) => r matches Some((x, y, z)) && x == e && y == a && z == b && i < a <= b < e <= s@.len(),
@@ -249,7 +249,7 @@ pub fn ex_enc_name_ok(s: &[u8], a: usize, b: usize, enc: Enc) -> (r: bool)
 /// `enc_span` at `j`.
 pub fn ex_enc_span(s: &[u8], j: usize) -> (r: Option<(usize, usize, usize)>)
     requires
-        j + 8 <= s@.len() < u32::MAX,
+        j + 8 <= s@.len() <= isize::MAX,
     ensures
         match enc_span(s@, j as int) {
             Some((e, a, b)) => r matches Some((x, y, z)) && x == e && y == a && z == b && j < a <= b < e <= s@.len(),
@@ -289,7 +289,7 @@ pub fn ex_enc_span(s: &[u8], j: usize) -> (r: Option<(usize, usize, usize)>)
 /// `encoding_decl` at `j`.
 fn ex_encoding_decl(s: &[u8], j: usize, enc: Enc) -> (r: Option<(usize, usize, usize)>)
     requires
-        j + 8 <= s@.len() < u32::MAX,
+        j + 8 <= s@.len() <= isize::MAX,
     ensures
         match encoding_decl(s@, j as int, enc) {
             Some((e, a, b)) => r matches Some((x, y, z)) && x == e && y == a && z == b && j < a <= b < e <= s@.len(),
@@ -309,7 +309,7 @@ fn ex_encoding_decl(s: &[u8], j: usize, enc: Enc) -> (r: Option<(usize, usize, u
 /// `sd_decl` at `j`.
 fn ex_sd_decl(s: &[u8], j: usize) -> (r: Option<(usize, u8)>)
     requires
-        j + 10 <= s@.len() < u32::MAX,
+        j + 10 <= s@.len() <= isize::MAX,
     ensures
         match sd_decl(s@, j as int) {
             Some((e, v)) => r matches Some((x, y)) && x == e && y == v && j < e <= s@.len(),
@@ -342,7 +342,7 @@ fn ex_sd_decl(s: &[u8], j: usize) -> (r: Option<(usize, u8)>)
 /// declaration.
 pub fn ex_xmldecl(s: &[u8], i: usize, tape: &mut Tape, enc: Enc) -> (r: Option<(usize, u8)>)
     requires
-        i + 5 <= s@.len() < u32::MAX,
+        i + 5 <= s@.len() <= isize::MAX,
         old(tape)@.len() == 0,
     ensures
         match xmldecl(s@, i as int, enc) {
@@ -411,7 +411,7 @@ pub fn ex_xmldecl(s: &[u8], i: usize, tape: &mut Tape, enc: Enc) -> (r: Option<(
 /// `external_id` at `k`.
 pub fn ex_external_id(s: &[u8], k: usize, tape: &mut Tape) -> (r: Option<usize>)
     requires
-        k <= s@.len() < u32::MAX,
+        k <= s@.len() <= isize::MAX,
         old(tape)@.len() <= k,
     ensures
         match external_id(s@, k as int, old(tape)@) {
@@ -481,7 +481,7 @@ fn ex_quant_end(s: &[u8], i: usize) -> (r: usize)
 /// its open groups in a vector.
 fn ex_cmodel(s: &[u8], b: usize) -> (r: Option<usize>)
     requires
-        b <= s@.len() < u32::MAX,
+        b <= s@.len() <= isize::MAX,
     ensures
         same(r, cmodel(s@, b as int, Seq::empty(), false)),
         r matches Some(e) ==> b < e <= s@.len(),
@@ -493,7 +493,7 @@ fn ex_cmodel(s: &[u8], b: usize) -> (r: Option<usize>)
     loop
         invariant
             b <= i <= n,
-            n == s@.len() < u32::MAX,
+            n == s@.len() <= isize::MAX,
             cmodel(s@, i as int, st@, after) == cmodel(s@, b as int, Seq::empty(), false),
             i == b ==> st@.len() == 0 && !after,
         decreases n - i,
@@ -547,7 +547,7 @@ fn ex_cmodel(s: &[u8], b: usize) -> (r: Option<usize>)
 /// `mixed` from `i`.
 fn ex_mixed(s: &[u8], i: usize) -> (r: Option<usize>)
     requires
-        i <= s@.len() < u32::MAX,
+        i <= s@.len() <= isize::MAX,
     ensures
         same(r, mixed(s@, i as int, false)),
         r matches Some(e) ==> i < e <= s@.len(),
@@ -556,7 +556,7 @@ fn ex_mixed(s: &[u8], i: usize) -> (r: Option<usize>)
     let mut names = false;
     loop
         invariant
-            i <= j <= s@.len() < u32::MAX,
+            i <= j <= s@.len() <= isize::MAX,
             mixed(s@, j as int, names) == mixed(s@, i as int, false),
         decreases s@.len() - j,
     {
@@ -586,7 +586,7 @@ fn ex_mixed(s: &[u8], i: usize) -> (r: Option<usize>)
 /// `contentspec` at `b`.
 fn ex_contentspec(s: &[u8], b: usize) -> (r: Option<usize>)
     requires
-        b <= s@.len() < u32::MAX,
+        b <= s@.len() <= isize::MAX,
     ensures
         same(r, contentspec(s@, b as int)),
         r matches Some(e) ==> b < e <= s@.len(),
@@ -613,7 +613,7 @@ fn ex_contentspec(s: &[u8], b: usize) -> (r: Option<usize>)
 /// `element_decl` at `j`.
 fn ex_element_decl(s: &[u8], j: usize, tape: &mut Tape) -> (r: Option<usize>)
     requires
-        j + 9 <= s@.len() < u32::MAX,
+        j + 9 <= s@.len() <= isize::MAX,
         old(tape)@.len() <= j,
     ensures
         match element_decl(s@, j as int, old(tape)@) {
@@ -645,7 +645,7 @@ fn ex_element_decl(s: &[u8], j: usize, tape: &mut Tape) -> (r: Option<usize>)
 /// `alt_list` from `i`.
 fn ex_alt_list(s: &[u8], i: usize, nm: bool) -> (r: Option<usize>)
     requires
-        i <= s@.len() < u32::MAX,
+        i <= s@.len() <= isize::MAX,
     ensures
         same(r, alt_list(s@, i as int, nm)),
         r matches Some(e) ==> i < e <= s@.len(),
@@ -653,7 +653,7 @@ fn ex_alt_list(s: &[u8], i: usize, nm: bool) -> (r: Option<usize>)
     let mut j = i;
     loop
         invariant
-            i <= j <= s@.len() < u32::MAX,
+            i <= j <= s@.len() <= isize::MAX,
             alt_list(s@, j as int, nm) == alt_list(s@, i as int, nm),
         decreases s@.len() - j,
     {
@@ -680,7 +680,7 @@ fn ex_alt_list(s: &[u8], i: usize, nm: bool) -> (r: Option<usize>)
 /// `att_type` at `k`.
 fn ex_att_type(s: &[u8], k: usize) -> (r: Option<(usize, u8)>)
     requires
-        k <= s@.len() < u32::MAX,
+        k <= s@.len() <= isize::MAX,
     ensures
         match att_type(s@, k as int) {
             Some((e, ty)) => r matches Some((x, y)) && x == e && y == ty && k < e <= s@.len(),
@@ -729,7 +729,7 @@ fn ex_att_type(s: &[u8], k: usize) -> (r: Option<(usize, u8)>)
 /// `default_decl` at `m`.
 fn ex_default_decl(s: &[u8], m: usize) -> (r: Option<(usize, u8, usize, usize)>)
     requires
-        m <= s@.len() < u32::MAX,
+        m <= s@.len() <= isize::MAX,
     ensures
         match default_decl(s@, m as int) {
             Some((e, kind, va, vb)) => r matches Some((x, y, z, w)) && x == e && y == kind && z == va && w == vb
@@ -768,9 +768,9 @@ fn ex_default_decl(s: &[u8], m: usize) -> (r: Option<(usize, u8, usize, usize)>)
 /// `att_defs` from `i`.
 fn ex_att_defs(s: &[u8], i: usize, tape: &mut Tape, nents: usize) -> (r: Option<usize>)
     requires
-        i <= s@.len() < u32::MAX,
+        i <= s@.len() <= isize::MAX,
         old(tape)@.len() <= i,
-        nents <= u32::MAX,
+        nents <= isize::MAX,
     ensures
         match att_defs(s@, i as int, old(tape)@, nents as int) {
             Some((t, e)) => r matches Some(x) && x == e && final(tape)@ == t && i < e <= s@.len() && t.len() <= e,
@@ -781,10 +781,10 @@ fn ex_att_defs(s: &[u8], i: usize, tape: &mut Tape, nents: usize) -> (r: Option<
     let mut j0 = i;
     loop
         invariant
-            i <= j0 <= s@.len() < u32::MAX,
+            i <= j0 <= s@.len() <= isize::MAX,
             tape@.len() <= j0,
             old(tape)@.len() <= tape@.len(),
-            nents <= u32::MAX,
+            nents <= isize::MAX,
             att_defs(s@, j0 as int, tape@, nents as int) == att_defs(s@, i as int, old(tape)@, nents as int),
         decreases s@.len() - j0,
     {
@@ -816,7 +816,7 @@ fn ex_att_defs(s: &[u8], i: usize, tape: &mut Tape, nents: usize) -> (r: Option<
             },
             Some((d, kind, va, vb)) => {
                 tape.push(tok(Kind::AttDef, j, n, ty));
-                tape.push(Tok { kind: Kind::AttDefault, f: kind, a: va as u32, b: vb as u32, c: nents as u32 });
+                tape.push(Tok { kind: Kind::AttDefault, f: kind, a: va, b: vb, c: nents });
                 j0 = d;
             },
         }
@@ -826,9 +826,9 @@ fn ex_att_defs(s: &[u8], i: usize, tape: &mut Tape, nents: usize) -> (r: Option<
 /// `attlist_decl` at `j`.
 fn ex_attlist_decl(s: &[u8], j: usize, tape: &mut Tape, nents: usize) -> (r: Option<usize>)
     requires
-        j + 9 <= s@.len() < u32::MAX,
+        j + 9 <= s@.len() <= isize::MAX,
         old(tape)@.len() <= j,
-        nents <= u32::MAX,
+        nents <= isize::MAX,
     ensures
         match attlist_decl(s@, j as int, old(tape)@, nents as int) {
             Some((t, e)) => r matches Some(x) && x == e && final(tape)@ == t && j < e <= s@.len() && t.len() <= e,
@@ -848,13 +848,13 @@ fn ex_attlist_decl(s: &[u8], j: usize, tape: &mut Tape, nents: usize) -> (r: Opt
 /// `ent_def` at `c`: the end and the entity's kind and value span.
 fn ex_ent_def(s: &[u8], c: usize, tape: &mut Tape, ge: bool) -> (r: Option<(usize, u8, usize, usize)>)
     requires
-        c <= s@.len() < u32::MAX,
+        c <= s@.len() <= isize::MAX,
         old(tape)@.len() <= c,
     ensures
         match ent_def(s@, c as int, old(tape)@, ge) {
             Some((t, e, kind)) => r matches Some((x, k, va, vb)) && x == e && final(tape)@ == t && c < e <= s@.len()
                 && t.len() <= e && k <= 2 && va <= vb <= s@.len() && kind == kind_view(
-                XEnt { a: 0, b: 0, kind: k, va: va as u32, vb: vb as u32 },
+                XEnt { a: 0, b: 0, kind: k, va, vb },
             ),
             None => r is None,
         },
@@ -895,7 +895,7 @@ fn ex_ent_def(s: &[u8], c: usize, tape: &mut Tape, ge: bool) -> (r: Option<(usiz
 /// `entity_decl` at `j`.
 fn ex_entity_decl(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<usize>)
     requires
-        j + 8 <= s@.len() < u32::MAX,
+        j + 8 <= s@.len() <= isize::MAX,
         old(tape)@.len() <= j,
         dtd_wf(s@, old(d)),
         old(d).ents@.len() <= old(tape)@.len(),
@@ -925,7 +925,7 @@ fn ex_entity_decl(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Opti
                 let f = ex_ws_end(s, e);
                 if ex_byte_is(s, f, 0x3E) {
                     let ghost old_p = d.pes@;
-                    d.pes.push((b as u32, n as u32));
+                    d.pes.push((b, n));
                     proof {
                         assert(pes_view(s@, d.pes@) =~= pes_view(s@, old_p).push(s@.subrange(b as int, n as int)));
                     }
@@ -948,12 +948,12 @@ fn ex_entity_decl(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Opti
                 let f = ex_ws_end(s, e);
                 if ex_byte_is(s, f, 0x3E) {
                     if !d.pe_seen || d.sa {
-                        let x = XEnt { a: a as u32, b: n as u32, kind, va: va as u32, vb: vb as u32 };
+                        let x = XEnt { a, b: n, kind, va, vb };
                         let ghost old_e = d.ents@;
                         d.ents.push(x);
                         proof {
                             assert(ents_view(s@, d.ents@) =~= ents_view(s@, old_e).push(ent_view(s@, x)));
-                            assert(kind_view(x) == kind_view(XEnt { a: 0, b: 0, kind, va: va as u32, vb: vb as u32 }));
+                            assert(kind_view(x) == kind_view(XEnt { a: 0, b: 0, kind, va, vb }));
                         }
                     }
                     Some(f + 1)
@@ -968,7 +968,7 @@ fn ex_entity_decl(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Opti
 /// `notation_decl` at `j`.
 fn ex_notation_decl(s: &[u8], j: usize, tape: &mut Tape) -> (r: Option<usize>)
     requires
-        j + 10 <= s@.len() < u32::MAX,
+        j + 10 <= s@.len() <= isize::MAX,
         old(tape)@.len() <= j,
     ensures
         match notation_decl(s@, j as int, old(tape)@) {
@@ -1073,7 +1073,7 @@ fn ex_pes_contains(s: &[u8], d: &XDtd, a: usize, b: usize) -> (r: bool)
 /// `pe_ref` at `j`.
 fn ex_pe_ref(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<usize>)
     requires
-        j < s@.len() < u32::MAX,
+        j < s@.len() <= isize::MAX,
         old(tape)@.len() <= j,
         dtd_wf(s@, old(d)),
         old(d).ents@.len() <= old(tape)@.len(),
@@ -1102,7 +1102,7 @@ fn ex_pe_ref(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<us
 #[verifier::rlimit(60)]
 fn ex_decl(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<usize>)
     requires
-        j < s@.len() < u32::MAX,
+        j < s@.len() <= isize::MAX,
         old(tape)@.len() <= j,
         dtd_wf(s@, old(d)),
         old(d).ents@.len() <= old(tape)@.len(),
@@ -1145,7 +1145,7 @@ fn ex_decl(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<usiz
 /// `int_subset` from `i`: the position of the closing `]`.
 fn ex_int_subset(s: &[u8], i: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<usize>)
     requires
-        i <= s@.len() < u32::MAX,
+        i <= s@.len() <= isize::MAX,
         old(tape)@.len() <= i,
         dtd_wf(s@, old(d)),
         old(d).ents@.len() <= old(tape)@.len(),
@@ -1160,7 +1160,7 @@ fn ex_int_subset(s: &[u8], i: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Optio
     let mut j0 = i;
     loop
         invariant
-            i <= j0 <= s@.len() < u32::MAX,
+            i <= j0 <= s@.len() <= isize::MAX,
             tape@.len() <= j0,
             dtd_wf(s@, d),
             d.ents@.len() <= tape@.len(),
@@ -1196,7 +1196,7 @@ fn ex_int_subset(s: &[u8], i: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Optio
 #[verifier::rlimit(60)]
 pub fn ex_doctype(s: &[u8], i: usize, tape: &mut Tape, sa: bool) -> (r: Option<(usize, DtdOut)>)
     requires
-        i + 9 <= s@.len() < u32::MAX,
+        i + 9 <= s@.len() <= isize::MAX,
         old(tape)@.len() <= i,
     ensures
         match doctype(s@, i as int, old(tape)@, sa) {
