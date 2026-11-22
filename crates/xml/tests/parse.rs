@@ -259,6 +259,18 @@ fn many_entities_and_references() {
 }
 
 #[test]
+fn undeclared_parameter_entities_are_not_fatal() {
+    // [69] PEReference carries the VC "Entity Declared", not the WFC: a
+    // reference to a parameter entity declared later, or not at all, is
+    // well-formed even in a standalone document (the W3C suite's
+    // ibm69n05, an `error` test). Declarations after it are processed.
+    let d = b"<?xml version='1.0' standalone='yes'?><!DOCTYPE a [%p;<!ENTITY % p 'x'><!ENTITY e 'v'>%q;]><a>&e;</a>";
+    let doc = parse(d).unwrap();
+    assert!(!doc.has_unread_declarations());
+    assert_eq!(doc.root().text(), "v");
+}
+
+#[test]
 fn entity_declared_depends_on_the_whole_subset() {
     // A parameter entity reference anywhere in the internal subset lifts
     // "Entity Declared", also for an attribute default before it (expat

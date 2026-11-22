@@ -54,6 +54,20 @@ fn cases(root: &Path) -> Vec<Case> {
 /// a choice the Recommendation leaves to a non-validating processor.
 const EXPECTED: &[(&str, &str)] = &[];
 
+/// The `error` tests that are rejected: an error is not a fatal error, so
+/// the document is well-formed and every other `error` test must be
+/// accepted. These are in encodings this processor does not read, which
+/// §4.3.3 makes a fatal error ("an encoding that it is unable to
+/// process"); only UTF-8 and UTF-16 are required.
+const REJECTED_ERRORS: &[&str] = &[
+    "pr-xml-euc-jp",
+    "pr-xml-iso-2022-jp",
+    "pr-xml-shift_jis",
+    "weekly-euc-jp",
+    "weekly-iso-2022-jp",
+    "weekly-shift_jis",
+];
+
 #[test]
 fn xmlconf() {
     let Some(root) = std::env::var("XMLCONF").ok().filter(|r| !r.is_empty()) else {
@@ -74,7 +88,8 @@ fn xmlconf() {
         let want = match c.ty.as_str() {
             "not-wf" => Some(false),
             "valid" | "invalid" => Some(true),
-            _ => None, // "error": either is allowed
+            // "error": well-formed, so accepted, but for the encodings.
+            _ => Some(!REJECTED_ERRORS.contains(&c.id.as_str())),
         };
         let Some(want) = want else { continue };
         if ok == want {

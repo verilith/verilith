@@ -12,11 +12,10 @@ use vstd::prelude::*;
 
 verus! {
 
-/// The internal subset so far (see `DtdSt`): processed general entities,
-/// the spans of the parameter entities' names, and two flags.
+/// The internal subset so far (see `DtdSt`): processed general entities
+/// and two flags.
 pub struct XDtd {
     pub ents: Vec<XEnt>,
-    pub pes: Vec<(usize, usize)>,
     pub pe_seen: bool,
     pub sa: bool,
 }
@@ -96,17 +95,12 @@ fn ex_finish(s: &[u8], d: XDtd, ext: bool) -> (r: DtdOut)
     DtdOut { ents: d.ents, wfc, oka, okc, rts, idx }
 }
 
-pub open spec fn pes_view(s: Seq<u8>, p: Seq<(usize, usize)>) -> Seq<Seq<u8>> {
-    p.map_values(|x: (usize, usize)| s.subrange(x.0 as int, x.1 as int))
-}
-
 pub open spec fn dtd_view(s: Seq<u8>, d: &XDtd) -> DtdSt {
-    DtdSt { ents: ents_view(s, d.ents@), pes: pes_view(s, d.pes@), pe_seen: d.pe_seen, sa: d.sa }
+    DtdSt { ents: ents_view(s, d.ents@), pe_seen: d.pe_seen, sa: d.sa }
 }
 
 pub open spec fn dtd_wf(s: Seq<u8>, d: &XDtd) -> bool {
     &&& ents_wf(s, d.ents@)
-    &&& forall|k: int| #![trigger d.pes@[k]] 0 <= k < d.pes@.len() ==> d.pes@[k].0 <= d.pes@[k].1 <= s.len()
 }
 
 // ---------------------------------------------------------------------------
@@ -924,11 +918,6 @@ fn ex_entity_decl(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Opti
             Some((e, _, _, _)) => {
                 let f = ex_ws_end(s, e);
                 if ex_byte_is(s, f, 0x3E) {
-                    let ghost old_p = d.pes@;
-                    d.pes.push((b, n));
-                    proof {
-                        assert(pes_view(s@, d.pes@) =~= pes_view(s@, old_p).push(s@.subrange(b as int, n as int)));
-                    }
                     Some(f + 1)
                 } else {
                     None
@@ -1030,46 +1019,6 @@ fn ex_notation_decl(s: &[u8], j: usize, tape: &mut Tape) -> (r: Option<usize>)
     }
 }
 
-/// Whether the parameter entity named `s[a..b]` was declared.
-fn ex_pes_contains(s: &[u8], d: &XDtd, a: usize, b: usize) -> (r: bool)
-    requires
-        a <= b <= s@.len(),
-        dtd_wf(s@, d),
-    ensures
-        r == dtd_view(s@, d).pes.contains(s@.subrange(a as int, b as int)),
-{
-    let ghost ps = dtd_view(s@, d).pes;
-    let ghost name = s@.subrange(a as int, b as int);
-    let m = d.pes.len();
-    let mut k: usize = 0;
-    while k < m
-        invariant
-            k <= m,
-            m == d.pes@.len(),
-            ps == dtd_view(s@, d).pes,
-            ps.len() == m,
-            a <= b <= s@.len(),
-            dtd_wf(s@, d),
-            name == s@.subrange(a as int, b as int),
-            forall|q: int| 0 <= q < k ==> ps[q] != name,
-        decreases m - k,
-    {
-        let (x, y) = d.pes[k];
-        proof {
-            assert(ps[k as int] == s@.subrange(x as int, y as int));
-            assert(d.pes@[k as int].0 <= d.pes@[k as int].1 <= s@.len());
-        }
-        if ex_bytes_eq(s, x as usize, y as usize, s, a, b) {
-            proof {
-                assert(ps[k as int] == name);
-            }
-            return true;
-        }
-        k = k + 1;
-    }
-    false
-}
-
 /// `pe_ref` at `j`.
 fn ex_pe_ref(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<usize>)
     requires
@@ -1087,9 +1036,6 @@ fn ex_pe_ref(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<us
 {
     let n = ex_name_end(s, j + 1);
     if n == j + 1 || !ex_byte_is(s, n, 0x3B) {
-        return None;
-    }
-    if d.sa && !ex_pes_contains(s, d, j + 1, n) {
         return None;
     }
     tape.push(tok(Kind::PERef, j + 1, n, 0));
@@ -1226,10 +1172,9 @@ pub fn ex_doctype(s: &[u8], i: usize, tape: &mut Tape, sa: bool) -> (r: Option<(
         (n, false)
     };
     let m = ex_ws_end(s, e);
-    let mut d = XDtd { ents: Vec::new(), pes: Vec::new(), pe_seen: false, sa };
+    let mut d = XDtd { ents: Vec::new(), pe_seen: false, sa };
     proof {
         assert(ents_view(s@, d.ents@) =~= Seq::<Ent>::empty());
-        assert(pes_view(s@, d.pes@) =~= Seq::<Seq<u8>>::empty());
         assert(dtd_view(s@, &d) == dtd_init(sa));
     }
     if ex_byte_is(s, m, 0x5B) {

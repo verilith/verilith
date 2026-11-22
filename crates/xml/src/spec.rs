@@ -120,11 +120,10 @@ pub struct Ent {
 }
 
 /// The internal subset so far: the general entities processed, in order;
-/// the names of the parameter entities declared; whether a parameter
-/// entity reference was seen; and whether the document is standalone.
+/// whether a parameter entity reference was seen; and whether the document
+/// is standalone.
 pub struct DtdSt {
     pub ents: Seq<Ent>,
-    pub pes: Seq<Seq<u8>>,
     pub pe_seen: bool,
     pub sa: bool,
 }
@@ -167,7 +166,7 @@ pub open spec fn no_dtd() -> Env {
 }
 
 pub open spec fn dtd_init(sa: bool) -> DtdSt {
-    DtdSt { ents: Seq::empty(), pes: Seq::empty(), pe_seen: false, sa }
+    DtdSt { ents: Seq::empty(), pe_seen: false, sa }
 }
 
 /// The environment after the internal subset `st`: the entities, whether
@@ -1247,7 +1246,7 @@ pub open spec fn entity_decl(s: Seq<u8>, j: int, tape: Seq<XTok>, st: DtdSt) -> 
                 Some((t, e, _)) => {
                     let f = ws_end(s, e);
                     if byte_is(s, f, 0x3E) {
-                        Some((t, DtdSt { ents: st.ents, pes: st.pes.push(s.subrange(b, n)), pe_seen: st.pe_seen, sa: st.sa }, f + 1))
+                        Some((t, st, f + 1))
                     } else {
                         None
                     }
@@ -1266,7 +1265,7 @@ pub open spec fn entity_decl(s: Seq<u8>, j: int, tape: Seq<XTok>, st: DtdSt) -> 
                     let f = ws_end(s, e);
                     if byte_is(s, f, 0x3E) {
                         let st2 = if !st.pe_seen || st.sa {
-                            DtdSt { ents: st.ents.push(Ent { name: s.subrange(a, n), kind }), pes: st.pes, pe_seen: st.pe_seen, sa: st.sa }
+                            DtdSt { ents: st.ents.push(Ent { name: s.subrange(a, n), kind }), pe_seen: st.pe_seen, sa: st.sa }
                         } else {
                             st
                         };
@@ -1329,16 +1328,17 @@ pub open spec fn notation_decl(s: Seq<u8>, j: int, tape: Seq<XTok>) -> Option<(S
 }
 
 /// PEReference ::= '%' Name ';'   [69], between declarations (DeclSep
-/// [28a]), at `j`. It is not read. In a standalone document the
-/// parameter entity must have been declared (WFC: Entity Declared).
+/// [28a]), at `j`. It is not read (§4.4.8: parameter entities need only
+/// be included if validating). The parameter entity need not have been
+/// declared, even in a standalone document: [69] carries the VC "Entity
+/// Declared", not the WFC, which [68] carries (the W3C suite's ibm69n05,
+/// after erratum E29 of the second edition, is an error, not a fatal one).
 pub open spec fn pe_ref(s: Seq<u8>, j: int, tape: Seq<XTok>, st: DtdSt) -> Option<(Seq<XTok>, DtdSt, int)> {
     let n = name_end(s, j + 1);
     if n == j + 1 || !byte_is(s, n, 0x3B) {
         None
-    } else if st.sa && !st.pes.contains(s.subrange(j + 1, n)) {
-        None
     } else {
-        Some((tape.push(XTok::PERef { start: j + 1, end: n }), DtdSt { ents: st.ents, pes: st.pes, pe_seen: true, sa: st.sa }, n + 1))
+        Some((tape.push(XTok::PERef { start: j + 1, end: n }), DtdSt { ents: st.ents, pe_seen: true, sa: st.sa }, n + 1))
     }
 }
 

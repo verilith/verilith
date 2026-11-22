@@ -84,7 +84,7 @@ Everything in `src/spec.rs`, `src/chars.rs`, `src/lex.rs`, `src/dtd.rs`,
 `src/content.rs`, `src/doc.rs`, `src/ent.rs`, `src/enc.rs`, `src/decode.rs`,
 `src/uniq.rs`, `src/index.rs`, `src/scan.rs`, `src/lanes.rs` and
 `src/tape.rs` is checked by Verus (`./scripts/verify.sh`, which runs
-`cargo verus verify`: 360 verified, 0 errors, in a few minutes on x86-64;
+`cargo verus verify`: 358 verified, 0 errors, in a few minutes on x86-64;
 fewer for an AArch64 target, which has no SSE2 code. The SSE2 wrappers are
 verified in verilith-simd). The trusted base is listed under
 [What is not proven](#what-is-not-proven).
@@ -234,10 +234,8 @@ case found by fuzzing:
 * **Byte order marks.** expat accepts a UTF-8 BOM before
   `encoding="ISO-8859-1"` (the W3C suite's hst-lhs-007 is not
   well-formed), and UTF-16 without a BOM.
-* **The internal subset.** expat does not check that a parameter entity
-  is declared before a reference to it in a standalone document (the
-  suite's ibm69n05), stops checking declarations after a parameter
-  entity reference it does not read (a `<` in an attribute default there
+* **The internal subset.** expat stops checking declarations after a
+  parameter entity reference it does not read (a `<` in an attribute default there
   is still not well-formed), and decides whether an attribute default's
   entity must be declared before it has seen the rest of the internal
   subset, where a later parameter entity reference lifts the constraint.
@@ -251,7 +249,11 @@ case found by fuzzing:
   Of the 932 not-wf documents, 872 are rejected; the other 60 have their
   error in an external entity or the external subset, or (one,
   not-sa-002) in a parameter entity, none of which are read, and are
-  accepted. The 21 `error` tests allow either verdict. 0 failures.
+  accepted. Of the 21 `error` tests (an error, not a fatal one: the
+  document is well-formed), 15 are accepted, and the 6 in EUC-JP,
+  ISO-2022-JP and Shift_JIS are rejected, as encodings this processor
+  does not read (§4.3.3); `tests/xmlconf.rs` fails if any other is
+  rejected. 0 failures.
 * **Canonical outputs.** The suite's 262 output tests that need no
   external entity: each document read through `verilith_xml::parse` and
   written in James Clark's canonical form is the expected output, byte for

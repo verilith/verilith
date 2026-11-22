@@ -150,8 +150,6 @@ pub fn compare(data: &[u8]) -> Option<Diff> {
 /// * a byte order mark that disagrees with the declared encoding (the W3C
 ///   suite's hst-lhs-007 and -008 are not well-formed).
 /// * UTF-16 without a byte order mark, which §4.3.3 requires.
-/// * a parameter entity referenced before it is declared, in a standalone
-///   document (WFC: Entity Declared; the suite's ibm69n05).
 /// * the declarations after a parameter entity reference that is not read,
 ///   which expat stops processing and also stops checking (a `<` in an
 ///   attribute default there is still not well-formed).
@@ -184,11 +182,10 @@ pub fn unexplained(data: &[u8]) -> Option<Diff> {
                 || (bom16 && declared.as_deref().map_or(false, |n| n != b"UTF-16"));
             let utf16_text = bom16 || (e.kind == verilith_xml::ErrorKind::Encoding && data.contains(&0));
             let at = |lit: &[u8]| data.get(e.offset..).map_or(false, |r| r.starts_with(lit));
-            let pe_first = at(b"%");
             let after_pe = (at(b"<!ATTLIST") || at(b"<!ENTITY"))
                 && data[..e.offset].windows(1).any(|w| w == b"%")
                 && !data.windows(16).any(|w| w == b"standalone=\"yes\"" || w == b"standalone='yes'");
-            if bad_version || bom_conflict || utf16_text || pe_first || after_pe {
+            if bad_version || bom_conflict || utf16_text || after_pe {
                 None
             } else {
                 Some(Diff::OnlyExpat)
