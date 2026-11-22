@@ -103,7 +103,7 @@ verilith_hpack for its inflater when built with `-DNGHTTP2_VHPACK` and linked wi
 `#ifndef NGHTTP2_VHPACK` and adds replacements that call verilith-hpack
 (`nghttp2_hd_vhpack.inc`). Everything else in nghttp2, including the
 deflater and the session code that calls the inflater, is unchanged.
-Tested with nghttp2 1.70.0 (the version in Node.js v24.22.1).
+Tested with nghttp2 1.70.0 (the version in Node.js v24.22.1 and v26.13.1).
 
 ### Node.js
 
@@ -119,10 +119,12 @@ compat/node/node.sh ~/node ~/vhttp
 cd ~/node && ./configure --ninja && ninja -C out/Release node
 ```
 
-Node.js v24.22.1 built this way passes 5557 of the 5558 tests in its
-default suite (`python3 tools/test.py default`), all of the HTTP/2 tests
-among them. The one failure, `test-fs-rmSync-special-char-additional-error`,
-fails the same way on any build run as root. (Run the suite with proxy
+Node.js v26.13.1 built this way passes 7,245 of the 7,248 tests in its
+default suite (`python3 tools/test.py default`), all 319 HTTP/2 tests
+among them. The three failures fail the same way on the official v26.13.1
+binary: `test-fs-rmSync-special-char-additional-error` fails on any build
+run as root, and the two `test-tls-get-ca-certificates-worker-*` tests need
+system certificates the sandbox lacks. (v24.22.1 passed 5557 of 5558.) (Run the suite with proxy
 environment variables such as `HTTPS_PROXY` unset: `test/client-proxy`
 reads them.) Parsers with llhttp's lenient flags set
 (`--insecure-http-parser`) stay on llhttp's own generated parser; see
