@@ -26,7 +26,7 @@ test() {
   local x
   x=$(suite)
   XMLCONF=$x cargo test --profile "$P"
-  # libexpat 2.7.3 against verilith-xml: the same verdict and the same
+  # libexpat 2.10.0 against verilith-xml: the same verdict and the same
   # canonical form on every suite file and 100 mutations of each, apart
   # from what fuzz/src/lib.rs lists as expat's.
   scripts/fetch-expat.sh > /dev/null

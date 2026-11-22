@@ -15,6 +15,7 @@
 //! member's data is checked (length and CRC-32) before any of it is handed
 //! out, and `archive_read_extract` refuses every member of an archive that
 //! the planner rejects.
+#![allow(unsafe_op_in_unsafe_fn)]
 use crate::api::{Archive, Filter, OpenError};
 use crate::plan::{Item, Rejected};
 use crate::reader::Format;
@@ -158,8 +159,8 @@ macro_rules! capi {
     ($name:literal, $vname:literal, fn $f:ident($($arg:ident: $ty:ty),*) -> $ret:ty $body:block) => {
         /// # Safety
         /// As for the libarchive function of the same name.
-        #[cfg_attr(feature = "libarchive-abi", export_name = $name)]
-        #[cfg_attr(not(feature = "libarchive-abi"), export_name = $vname)]
+        #[cfg_attr(feature = "libarchive-abi", unsafe(export_name = $name))]
+        #[cfg_attr(not(feature = "libarchive-abi"), unsafe(export_name = $vname))]
         pub unsafe extern "C" fn $f($($arg: $ty),*) -> $ret $body
     };
 }

@@ -27,7 +27,7 @@ woff2           https://github.com/google/woff2            7b67e12355fe7da148db5
 re2             https://github.com/google/re2              2025-11-05
 abseil-cpp      https://github.com/abseil/abseil-cpp       20260817.0
 cre2            https://github.com/marcomaggi/cre2         f9ad1ced3f5358557b32d623babf317d6e4aa31d
-expat           https://github.com/libexpat/libexpat       2120251ef8e5fd5f398063b6508be27796689bd9
+expat           https://github.com/libexpat/libexpat       a70841d9ffa64ddde29ab824ed6305035ebe4c47
 libxml2         https://github.com/GNOME/libxml2           v2.15.4
 "
 # Notes on the choices:
@@ -43,7 +43,7 @@ libxml2         https://github.com/GNOME/libxml2           v2.15.4
 # - RE2 is reached through cre2, its C wrapper (one file, built here from
 #   its master of 2024), since vregex's drop-in API is cre2's. Abseil is
 #   what RE2 needs.
-# - expat: R_2_7_3, the release vxml's differential fuzzing runs against
+# - expat: R_2_10_0, the release vxml's differential fuzzing runs against
 #   (crates/xml/scripts/fetch-expat.sh pins the same commit).
 # - libxml2: the latest release, from GNOME's GitHub mirror of
 #   gitlab.gnome.org/GNOME/libxml2.

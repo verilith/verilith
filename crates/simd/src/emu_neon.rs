@@ -7,6 +7,7 @@
 //! `tests/neon.rs` compares the real instructions with the verified
 //! references on AArch64.
 #![allow(non_camel_case_types, clippy::missing_safety_doc)]
+#![allow(unsafe_op_in_unsafe_fn)]
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C, align(16))]

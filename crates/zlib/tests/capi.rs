@@ -1,4 +1,5 @@
 //! The C ABI, called the way C programs call zlib and libdeflate.
+#![allow(unsafe_op_in_unsafe_fn)]
 mod common;
 use common::{compress, text, Rng};
 use std::os::raw::{c_int, c_uint, c_ulong};

@@ -5,6 +5,7 @@
 //! the verified [`crate::sanitize_index`], and passes the output buffer to
 //! the caller. `include/opentype-sanitiser.h` builds OTS's C++ interface
 //! (`ots::OTSContext::Process`) on these two functions.
+#![allow(unsafe_op_in_unsafe_fn)]
 use std::os::raw::c_int;
 
 /// Sanitizes the `len` bytes at `input`. `index` picks the font in a
@@ -18,7 +19,7 @@ use std::os::raw::c_int;
 /// # Safety
 /// `input` must point to `len` readable bytes (it may be null if `len` is
 /// 0), and `out` and `out_len` must be valid for writes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vfont_sanitize(
     input: *const u8,
     len: usize,
@@ -52,7 +53,7 @@ pub unsafe extern "C" fn vfont_sanitize(
 /// # Safety
 /// `ptr` and `len` must come from one successful [`vfont_sanitize`] call,
 /// and the buffer must not have been freed already.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vfont_free(ptr: *mut u8, len: usize) {
     if !ptr.is_null() {
         drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len)));

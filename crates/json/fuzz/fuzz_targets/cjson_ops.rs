@@ -3,6 +3,7 @@
 //! checks that every call gives the same result. Build with ASan (the
 //! cargo-fuzz default) to also catch memory errors in either.
 #![no_main]
+#![allow(unsafe_op_in_unsafe_fn)]
 use libfuzzer_sys::fuzz_target;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};

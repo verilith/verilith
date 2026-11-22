@@ -36,7 +36,7 @@ impl<'a> Name<'a> {
     }
 
     /// Every attribute of every RDN, in order.
-    pub fn attributes(&self) -> impl Iterator<Item = Atv<'a>> + 'a {
+    pub fn attributes(&self) -> impl Iterator<Item = Atv<'a>> + 'a + use<'a> {
         self.rdns().flat_map(|r| r.attributes())
     }
 }
@@ -186,7 +186,7 @@ impl<'a> Certificate<'a> {
     }
 
     /// DNS names in the subjectAltName extension.
-    pub fn dns_names(&self) -> impl Iterator<Item = &'a [u8]> + 'a {
+    pub fn dns_names(&self) -> impl Iterator<Item = &'a [u8]> + 'a + use<'a> {
         self.subject_alt_names().into_iter().flatten().filter_map(|g| match g {
             GeneralName::Dns(d) => Some(d),
             _ => None,

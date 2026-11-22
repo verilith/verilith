@@ -1,7 +1,7 @@
 [package]
 name = "verilith-bind"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 license = "MIT"
 description = "One native library and C ABI for the Verilith parsers, with C++, Python and Node.js bindings on top"
 publish = false

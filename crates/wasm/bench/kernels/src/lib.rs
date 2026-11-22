@@ -12,13 +12,13 @@ static mut WORDS: [u32; N / 4] = [0; N / 4];
 static mut MAT: [f64; 3 * 256 * 256] = [0.0; 3 * 256 * 256];
 
 /// Calls: naive recursive Fibonacci.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn fib(n: i64) -> i64 {
     if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
 }
 
 /// Loops and byte memory: primes below `n` (at most 4M), `reps` times.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn sieve(n: u32, reps: u32) -> u32 {
     let n = (n as usize).min(N);
     let buf = unsafe { &mut *core::ptr::addr_of_mut!(BUF) };
@@ -43,7 +43,7 @@ pub extern "C" fn sieve(n: u32, reps: u32) -> u32 {
 }
 
 /// Floating point: `n`x`n` matrix product (n at most 256), `reps` times.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn matmul(n: u32, reps: u32) -> f64 {
     let n = (n as usize).min(256);
     let m = unsafe { &mut *core::ptr::addr_of_mut!(MAT) };
@@ -77,7 +77,7 @@ fn lcg(x: &mut u32) -> u32 {
 }
 
 /// Integer compares and swaps: sorts `n` (at most 1M) pseudo-random words, `reps` times.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn sort(n: u32, reps: u32) -> u32 {
     let n = (n as usize).min(N / 4);
     let w = unsafe { &mut *core::ptr::addr_of_mut!(WORDS) };
@@ -94,7 +94,7 @@ pub extern "C" fn sort(n: u32, reps: u32) -> u32 {
 }
 
 /// Table lookups and shifts: CRC-32 of a 4 MiB buffer, `reps` times.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn crc32(reps: u32) -> u32 {
     let mut table = [0u32; 256];
     for i in 0..256u32 {
@@ -121,7 +121,7 @@ pub extern "C" fn crc32(reps: u32) -> u32 {
 }
 
 /// 32-bit arithmetic: SHA-256 of a 4 MiB buffer, `reps` times.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn sha256(reps: u32) -> u32 {
     const K: [u32; 64] = [
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,

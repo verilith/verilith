@@ -31,6 +31,7 @@
 //!   DEFLATE: the stream ends at its last block and the trailer is not
 //!   checked.
 #![allow(non_snake_case)]
+#![allow(unsafe_op_in_unsafe_fn)]
 use crate::stream::{Progress, Stream, Wrapper};
 use crate::wrap::{Decompressor, Error, Format};
 use crate::glue::{Pending, SyncSearch};
@@ -281,8 +282,8 @@ impl State {
     }
 }
 
-#[cfg_attr(feature = "zlib-abi", export_name = "zlibVersion")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "zlibVersion"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub extern "C" fn vz_zlibVersion() -> *const c_char {
     VERSION.as_ptr() as *const c_char
 }
@@ -315,8 +316,8 @@ unsafe fn init(strm: *mut ZStream, state: *mut State) {
 
 /// # Safety
 /// As zlib's `inflateInit2_`: `strm` must point to a `z_stream`.
-#[cfg_attr(feature = "zlib-abi", export_name = "inflateInit2_")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "inflateInit2_"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_inflateInit2_(strm: *mut ZStream, window_bits: c_int, version: *const c_char, stream_size: c_int) -> c_int {
     if !version_ok(version, stream_size) {
         return Z_VERSION_ERROR;
@@ -334,8 +335,8 @@ pub unsafe extern "C" fn vz_inflateInit2_(strm: *mut ZStream, window_bits: c_int
 
 /// # Safety
 /// As zlib's `inflateInit_`.
-#[cfg_attr(feature = "zlib-abi", export_name = "inflateInit_")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "inflateInit_"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_inflateInit_(strm: *mut ZStream, version: *const c_char, stream_size: c_int) -> c_int {
     vz_inflateInit2_(strm, 15, version, stream_size)
 }
@@ -351,8 +352,8 @@ unsafe fn state<'a>(strm: *mut ZStream) -> Option<&'a mut State> {
 /// # Safety
 /// As zlib's `inflate`: `next_in` and `next_out` must be valid for
 /// `avail_in` and `avail_out` bytes.
-#[cfg_attr(feature = "zlib-abi", export_name = "inflate")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "inflate"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_inflate(strm: *mut ZStream, flush: c_int) -> c_int {
     let state = match state(strm) {
         Some(st) => st,
@@ -415,8 +416,8 @@ pub unsafe extern "C" fn vz_inflate(strm: *mut ZStream, flush: c_int) -> c_int {
 
 /// # Safety
 /// As zlib's `inflateEnd`.
-#[cfg_attr(feature = "zlib-abi", export_name = "inflateEnd")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "inflateEnd"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_inflateEnd(strm: *mut ZStream) -> c_int {
     if strm.is_null() || (*strm).state.is_null() {
         return Z_STREAM_ERROR;
@@ -444,8 +445,8 @@ unsafe fn reset(strm: *mut ZStream, w: Wrapper) -> c_int {
 
 /// # Safety
 /// As zlib's `inflateReset2`.
-#[cfg_attr(feature = "zlib-abi", export_name = "inflateReset2")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "inflateReset2"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_inflateReset2(strm: *mut ZStream, window_bits: c_int) -> c_int {
     match wrapper_for(window_bits) {
         Some(w) => reset(strm, w),
@@ -455,8 +456,8 @@ pub unsafe extern "C" fn vz_inflateReset2(strm: *mut ZStream, window_bits: c_int
 
 /// # Safety
 /// As zlib's `inflateReset`: keeps the wrapper chosen at initialization.
-#[cfg_attr(feature = "zlib-abi", export_name = "inflateReset")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "inflateReset"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_inflateReset(strm: *mut ZStream) -> c_int {
     match state(strm) {
         Some(st) => reset(strm, st.wrapper),
@@ -466,8 +467,8 @@ pub unsafe extern "C" fn vz_inflateReset(strm: *mut ZStream) -> c_int {
 
 /// # Safety
 /// As zlib's `inflateResetKeep` (the same as `inflateReset` here).
-#[cfg_attr(feature = "zlib-abi", export_name = "inflateResetKeep")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "inflateResetKeep"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_inflateResetKeep(strm: *mut ZStream) -> c_int {
     vz_inflateReset(strm)
 }
@@ -476,8 +477,8 @@ pub unsafe extern "C" fn vz_inflateResetKeep(strm: *mut ZStream) -> c_int {
 /// As zlib's `inflateSetDictionary`: `dictionary` must be valid for
 /// `dict_length` bytes. For a zlib stream, call it after `inflate`
 /// returns `Z_NEED_DICT`; for a raw stream, before the first `inflate`.
-#[cfg_attr(feature = "zlib-abi", export_name = "inflateSetDictionary")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "inflateSetDictionary"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_inflateSetDictionary(strm: *mut ZStream, dictionary: *const u8, dict_length: c_uint) -> c_int {
     let state = match state(strm) {
         Some(st) => st,
@@ -497,8 +498,8 @@ pub unsafe extern "C" fn vz_inflateSetDictionary(strm: *mut ZStream, dictionary:
 /// # Safety
 /// As zlib's `inflateGetDictionary`: `dictionary`, if not null, must have
 /// room for 32768 bytes.
-#[cfg_attr(feature = "zlib-abi", export_name = "inflateGetDictionary")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "inflateGetDictionary"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_inflateGetDictionary(strm: *mut ZStream, dictionary: *mut u8, dict_length: *mut c_uint) -> c_int {
     let state = match state(strm) {
         Some(st) => st,
@@ -517,8 +518,8 @@ pub unsafe extern "C" fn vz_inflateGetDictionary(strm: *mut ZStream, dictionary:
 /// # Safety
 /// As zlib's `inflateGetHeader`: `head` and the buffers it points to must
 /// stay valid until the header has been read.
-#[cfg_attr(feature = "zlib-abi", export_name = "inflateGetHeader")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "inflateGetHeader"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_inflateGetHeader(strm: *mut ZStream, head: *mut GzHeader) -> c_int {
     let state = match state(strm) {
         Some(st) => st,
@@ -539,8 +540,8 @@ pub unsafe extern "C" fn vz_inflateGetHeader(strm: *mut ZStream, head: *mut GzHe
 /// # Safety
 /// As zlib's `inflateSync`: skips input to the next `00 00 FF FF` flush
 /// marker, then decodes what follows as raw DEFLATE.
-#[cfg_attr(feature = "zlib-abi", export_name = "inflateSync")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "inflateSync"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_inflateSync(strm: *mut ZStream) -> c_int {
     let state = match state(strm) {
         Some(st) => st,
@@ -570,8 +571,8 @@ pub unsafe extern "C" fn vz_inflateSync(strm: *mut ZStream) -> c_int {
 
 /// # Safety
 /// As zlib's `inflateSyncPoint`. Always 0 here: no point is reported.
-#[cfg_attr(feature = "zlib-abi", export_name = "inflateSyncPoint")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "inflateSyncPoint"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_inflateSyncPoint(strm: *mut ZStream) -> c_int {
     match state(strm) {
         Some(_) => 0,
@@ -582,8 +583,8 @@ pub unsafe extern "C" fn vz_inflateSyncPoint(strm: *mut ZStream) -> c_int {
 /// # Safety
 /// As zlib's `inflateCopy`: `source` must be initialized, `dest` must
 /// point to a `z_stream`.
-#[cfg_attr(feature = "zlib-abi", export_name = "inflateCopy")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "inflateCopy"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_inflateCopy(dest: *mut ZStream, source: *mut ZStream) -> c_int {
     let state = match state(source) {
         Some(st) => st,
@@ -600,24 +601,24 @@ pub unsafe extern "C" fn vz_inflateCopy(dest: *mut ZStream, source: *mut ZStream
 
 /// # Safety
 /// As zlib's `inflatePrime`. Not supported: always `Z_STREAM_ERROR`.
-#[cfg_attr(feature = "zlib-abi", export_name = "inflatePrime")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "inflatePrime"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_inflatePrime(_strm: *mut ZStream, _bits: c_int, _value: c_int) -> c_int {
     Z_STREAM_ERROR
 }
 
 /// # Safety
 /// As zlib's `inflateMark`. Always -65536: the position is not reported.
-#[cfg_attr(feature = "zlib-abi", export_name = "inflateMark")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "inflateMark"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_inflateMark(_strm: *mut ZStream) -> c_long {
     -65536
 }
 
 /// # Safety
 /// As zlib's `inflateValidate`. Checksums are always checked here.
-#[cfg_attr(feature = "zlib-abi", export_name = "inflateValidate")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "inflateValidate"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_inflateValidate(strm: *mut ZStream, _check: c_int) -> c_int {
     match state(strm) {
         Some(_) => Z_OK,
@@ -628,8 +629,8 @@ pub unsafe extern "C" fn vz_inflateValidate(strm: *mut ZStream, _check: c_int) -
 /// # Safety
 /// As zlib's `inflateUndermine`, which zlib builds without by default:
 /// distances beyond the output are always errors.
-#[cfg_attr(feature = "zlib-abi", export_name = "inflateUndermine")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "inflateUndermine"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_inflateUndermine(strm: *mut ZStream, _subvert: c_int) -> c_int {
     match state(strm) {
         Some(_) => Z_DATA_ERROR,
@@ -644,8 +645,8 @@ pub type OutFunc = unsafe extern "C" fn(*mut c_void, *mut u8, c_uint) -> c_int;
 /// # Safety
 /// As zlib's `inflateBackInit_`. The `window` is not used: the stream has
 /// its own.
-#[cfg_attr(feature = "zlib-abi", export_name = "inflateBackInit_")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "inflateBackInit_"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_inflateBackInit_(
     strm: *mut ZStream,
     window_bits: c_int,
@@ -667,8 +668,8 @@ pub unsafe extern "C" fn vz_inflateBackInit_(
 /// As zlib's `inflateBack`: decodes a raw DEFLATE stream, taking input
 /// from `in_fn` (after any already at `next_in`) and giving output to
 /// `out_fn`.
-#[cfg_attr(feature = "zlib-abi", export_name = "inflateBack")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "inflateBack"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_inflateBack(
     strm: *mut ZStream,
     in_fn: Option<InFunc>,
@@ -734,16 +735,16 @@ pub unsafe extern "C" fn vz_inflateBack(
 
 /// # Safety
 /// As zlib's `inflateBackEnd`.
-#[cfg_attr(feature = "zlib-abi", export_name = "inflateBackEnd")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "inflateBackEnd"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_inflateBackEnd(strm: *mut ZStream) -> c_int {
     vz_inflateEnd(strm)
 }
 
 /// # Safety
 /// As zlib's `uncompress2`.
-#[cfg_attr(feature = "zlib-abi", export_name = "uncompress2")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "uncompress2"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_uncompress2(dest: *mut u8, dest_len: *mut c_ulong, source: *const u8, source_len: *mut c_ulong) -> c_int {
     if dest_len.is_null() || source_len.is_null() || (source.is_null() && *source_len != 0) || (dest.is_null() && *dest_len != 0) {
         return Z_STREAM_ERROR;
@@ -772,8 +773,8 @@ pub unsafe extern "C" fn vz_uncompress2(dest: *mut u8, dest_len: *mut c_ulong, s
 
 /// # Safety
 /// As zlib's `uncompress`.
-#[cfg_attr(feature = "zlib-abi", export_name = "uncompress")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "uncompress"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_uncompress(dest: *mut u8, dest_len: *mut c_ulong, source: *const u8, source_len: c_ulong) -> c_int {
     let mut n = source_len;
     vz_uncompress2(dest, dest_len, source, &mut n)
@@ -785,8 +786,8 @@ pub unsafe extern "C" fn vz_uncompress(dest: *mut u8, dest_len: *mut c_ulong, so
 
 /// # Safety
 /// As zlib's `adler32_z`: `buf` must be valid for `len` bytes, or null.
-#[cfg_attr(feature = "zlib-abi", export_name = "adler32_z")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "adler32_z"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_adler32_z(adler: c_ulong, buf: *const u8, len: usize) -> c_ulong {
     if buf.is_null() {
         return 1;
@@ -798,16 +799,16 @@ pub unsafe extern "C" fn vz_adler32_z(adler: c_ulong, buf: *const u8, len: usize
 
 /// # Safety
 /// As zlib's `adler32`: `buf` must be valid for `len` bytes, or null.
-#[cfg_attr(feature = "zlib-abi", export_name = "adler32")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "adler32"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_adler32(adler: c_ulong, buf: *const u8, len: c_uint) -> c_ulong {
     vz_adler32_z(adler, buf, len as usize)
 }
 
 /// # Safety
 /// As zlib's `crc32_z`: `buf` must be valid for `len` bytes, or null.
-#[cfg_attr(feature = "zlib-abi", export_name = "crc32_z")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "crc32_z"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_crc32_z(crc: c_ulong, buf: *const u8, len: usize) -> c_ulong {
     if buf.is_null() {
         return 0;
@@ -818,8 +819,8 @@ pub unsafe extern "C" fn vz_crc32_z(crc: c_ulong, buf: *const u8, len: usize) ->
 
 /// # Safety
 /// As zlib's `crc32`: `buf` must be valid for `len` bytes, or null.
-#[cfg_attr(feature = "zlib-abi", export_name = "crc32")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "crc32"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_crc32(crc: c_ulong, buf: *const u8, len: c_uint) -> c_ulong {
     vz_crc32_z(crc, buf, len as usize)
 }
@@ -833,14 +834,14 @@ fn adler32_combine(adler1: c_ulong, adler2: c_ulong, len2: i64) -> c_ulong {
     crate::glue::adler32_combine(adler1 as u32, adler2 as u32, len2 as u64) as c_ulong
 }
 
-#[cfg_attr(feature = "zlib-abi", export_name = "adler32_combine")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "adler32_combine"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub extern "C" fn vz_adler32_combine(adler1: c_ulong, adler2: c_ulong, len2: c_long) -> c_ulong {
     adler32_combine(adler1, adler2, len2 as i64)
 }
 
-#[cfg_attr(feature = "zlib-abi", export_name = "adler32_combine64")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "adler32_combine64"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub extern "C" fn vz_adler32_combine64(adler1: c_ulong, adler2: c_ulong, len2: i64) -> c_ulong {
     adler32_combine(adler1, adler2, len2)
 }
@@ -885,32 +886,32 @@ fn crc32_combine_gen(len2: i64) -> u32 {
     x2nmodp(len2.max(0) as u64, 3)
 }
 
-#[cfg_attr(feature = "zlib-abi", export_name = "crc32_combine_gen64")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "crc32_combine_gen64"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub extern "C" fn vz_crc32_combine_gen64(len2: i64) -> c_ulong {
     crc32_combine_gen(len2) as c_ulong
 }
 
-#[cfg_attr(feature = "zlib-abi", export_name = "crc32_combine_gen")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "crc32_combine_gen"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub extern "C" fn vz_crc32_combine_gen(len2: c_long) -> c_ulong {
     crc32_combine_gen(len2 as i64) as c_ulong
 }
 
-#[cfg_attr(feature = "zlib-abi", export_name = "crc32_combine_op")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "crc32_combine_op"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub extern "C" fn vz_crc32_combine_op(crc1: c_ulong, crc2: c_ulong, op: c_ulong) -> c_ulong {
     (multmodp(op as u32, crc1 as u32) ^ (crc2 as u32)) as c_ulong
 }
 
-#[cfg_attr(feature = "zlib-abi", export_name = "crc32_combine64")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "crc32_combine64"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub extern "C" fn vz_crc32_combine64(crc1: c_ulong, crc2: c_ulong, len2: i64) -> c_ulong {
     vz_crc32_combine_op(crc1, crc2, crc32_combine_gen(len2) as c_ulong)
 }
 
-#[cfg_attr(feature = "zlib-abi", export_name = "crc32_combine")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "crc32_combine"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub extern "C" fn vz_crc32_combine(crc1: c_ulong, crc2: c_ulong, len2: c_long) -> c_ulong {
     vz_crc32_combine64(crc1, crc2, len2 as i64)
 }
@@ -931,8 +932,8 @@ static CRC_TABLE: [u32; 256] = {
     t
 };
 
-#[cfg_attr(feature = "zlib-abi", export_name = "get_crc_table")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "get_crc_table"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub extern "C" fn vz_get_crc_table() -> *const u32 {
     CRC_TABLE.as_ptr()
 }
@@ -941,8 +942,8 @@ pub extern "C" fn vz_get_crc_table() -> *const u32 {
 // Miscellany
 // ---------------------------------------------------------------------------
 
-#[cfg_attr(feature = "zlib-abi", export_name = "zError")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "zError"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub extern "C" fn vz_zError(err: c_int) -> *const c_char {
     let m: &[u8] = match err {
         Z_STREAM_END => b"stream end\0",
@@ -959,8 +960,8 @@ pub extern "C" fn vz_zError(err: c_int) -> *const c_char {
 }
 
 /// As zlib's `zlibCompileFlags`: the type sizes (bits 0 to 7).
-#[cfg_attr(feature = "zlib-abi", export_name = "zlibCompileFlags")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "zlibCompileFlags"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub extern "C" fn vz_zlibCompileFlags() -> c_ulong {
     fn code(n: usize) -> c_ulong {
         match n {
@@ -985,24 +986,24 @@ pub const LIBDEFLATE_BAD_DATA: c_int = 1;
 pub const LIBDEFLATE_SHORT_OUTPUT: c_int = 2;
 pub const LIBDEFLATE_INSUFFICIENT_SPACE: c_int = 3;
 
-#[cfg_attr(feature = "libdeflate-abi", export_name = "libdeflate_alloc_decompressor")]
-#[cfg_attr(not(feature = "libdeflate-abi"), no_mangle)]
+#[cfg_attr(feature = "libdeflate-abi", unsafe(export_name = "libdeflate_alloc_decompressor"))]
+#[cfg_attr(not(feature = "libdeflate-abi"), unsafe(no_mangle))]
 pub extern "C" fn vzlib_alloc_decompressor() -> *mut Decompressor {
     Box::into_raw(Box::new(Decompressor::new()))
 }
 
 /// # Safety
 /// `options` is ignored (custom allocators are not supported).
-#[cfg_attr(feature = "libdeflate-abi", export_name = "libdeflate_alloc_decompressor_ex")]
-#[cfg_attr(not(feature = "libdeflate-abi"), no_mangle)]
+#[cfg_attr(feature = "libdeflate-abi", unsafe(export_name = "libdeflate_alloc_decompressor_ex"))]
+#[cfg_attr(not(feature = "libdeflate-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vzlib_alloc_decompressor_ex(_options: *const c_void) -> *mut Decompressor {
     vzlib_alloc_decompressor()
 }
 
 /// # Safety
 /// `d` must come from `vzlib_alloc_decompressor`, or be null.
-#[cfg_attr(feature = "libdeflate-abi", export_name = "libdeflate_free_decompressor")]
-#[cfg_attr(not(feature = "libdeflate-abi"), no_mangle)]
+#[cfg_attr(feature = "libdeflate-abi", unsafe(export_name = "libdeflate_free_decompressor"))]
+#[cfg_attr(not(feature = "libdeflate-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vzlib_free_decompressor(d: *mut Decompressor) {
     if !d.is_null() {
         drop(Box::from_raw(d));
@@ -1047,16 +1048,16 @@ macro_rules! ld_fns {
     ($fmt:expr, $name:ident, $abi:literal, $name_ex:ident, $abi_ex:literal) => {
         /// # Safety
         /// As the libdeflate function of the same name.
-        #[cfg_attr(feature = "libdeflate-abi", export_name = $abi)]
-        #[cfg_attr(not(feature = "libdeflate-abi"), no_mangle)]
+        #[cfg_attr(feature = "libdeflate-abi", unsafe(export_name = $abi))]
+        #[cfg_attr(not(feature = "libdeflate-abi"), unsafe(no_mangle))]
         pub unsafe extern "C" fn $name(d: *mut Decompressor, i: *const u8, n: usize, o: *mut u8, avail: usize, actual_out: *mut usize) -> c_int {
             ld_decompress($fmt, d, i, n, o, avail, std::ptr::null_mut(), actual_out)
         }
 
         /// # Safety
         /// As the libdeflate function of the same name.
-        #[cfg_attr(feature = "libdeflate-abi", export_name = $abi_ex)]
-        #[cfg_attr(not(feature = "libdeflate-abi"), no_mangle)]
+        #[cfg_attr(feature = "libdeflate-abi", unsafe(export_name = $abi_ex))]
+        #[cfg_attr(not(feature = "libdeflate-abi"), unsafe(no_mangle))]
         pub unsafe extern "C" fn $name_ex(
             d: *mut Decompressor,
             i: *const u8,
@@ -1171,8 +1172,8 @@ fn level_of(level: c_int) -> Option<u32> {
 
 /// # Safety
 /// As zlib's `deflateInit2_`.
-#[cfg_attr(feature = "zlib-abi", export_name = "deflateInit2_")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "deflateInit2_"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_deflateInit2_(
     strm: *mut ZStream,
     level: c_int,
@@ -1214,8 +1215,8 @@ pub unsafe extern "C" fn vz_deflateInit2_(
 
 /// # Safety
 /// As zlib's `deflateInit_`.
-#[cfg_attr(feature = "zlib-abi", export_name = "deflateInit_")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "deflateInit_"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_deflateInit_(strm: *mut ZStream, level: c_int, version: *const c_char, stream_size: c_int) -> c_int {
     vz_deflateInit2_(strm, level, Z_DEFLATED, 15, 8, 0, version, stream_size)
 }
@@ -1233,8 +1234,8 @@ unsafe fn d_drain(s: &mut ZStream, st: &mut DState) {
 
 /// # Safety
 /// As zlib's `deflate`.
-#[cfg_attr(feature = "zlib-abi", export_name = "deflate")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "deflate"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_deflate(strm: *mut ZStream, flush: c_int) -> c_int {
     let st = match dstate(strm) {
         Some(st) => st,
@@ -1321,8 +1322,8 @@ pub unsafe extern "C" fn vz_deflate(strm: *mut ZStream, flush: c_int) -> c_int {
 
 /// # Safety
 /// As zlib's `deflateEnd`.
-#[cfg_attr(feature = "zlib-abi", export_name = "deflateEnd")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "deflateEnd"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_deflateEnd(strm: *mut ZStream) -> c_int {
     if strm.is_null() || (*strm).state.is_null() {
         return Z_STREAM_ERROR;
@@ -1342,8 +1343,8 @@ pub unsafe extern "C" fn vz_deflateEnd(strm: *mut ZStream) -> c_int {
 
 /// # Safety
 /// As zlib's `deflateReset`.
-#[cfg_attr(feature = "zlib-abi", export_name = "deflateReset")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "deflateReset"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_deflateReset(strm: *mut ZStream) -> c_int {
     let st = match dstate(strm) {
         Some(st) => st,
@@ -1360,16 +1361,16 @@ pub unsafe extern "C" fn vz_deflateReset(strm: *mut ZStream) -> c_int {
 
 /// # Safety
 /// As zlib's `deflateResetKeep`.
-#[cfg_attr(feature = "zlib-abi", export_name = "deflateResetKeep")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "deflateResetKeep"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_deflateResetKeep(strm: *mut ZStream) -> c_int {
     vz_deflateReset(strm)
 }
 
 /// # Safety
 /// As zlib's `deflateParams`. The strategy is accepted and not used.
-#[cfg_attr(feature = "zlib-abi", export_name = "deflateParams")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "deflateParams"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_deflateParams(strm: *mut ZStream, level: c_int, strategy: c_int) -> c_int {
     let st = match dstate(strm) {
         Some(st) => st,
@@ -1397,8 +1398,8 @@ pub unsafe extern "C" fn vz_deflateParams(strm: *mut ZStream, level: c_int, stra
 
 /// # Safety
 /// As zlib's `deflateTune`; the parameters are accepted and not used.
-#[cfg_attr(feature = "zlib-abi", export_name = "deflateTune")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "deflateTune"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_deflateTune(strm: *mut ZStream, _good: c_int, _lazy: c_int, _nice: c_int, _chain: c_int) -> c_int {
     match dstate(strm) {
         Some(_) => Z_OK,
@@ -1413,23 +1414,23 @@ fn bound(n: u64) -> u64 {
 
 /// # Safety
 /// As zlib's `deflateBound`.
-#[cfg_attr(feature = "zlib-abi", export_name = "deflateBound")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "deflateBound"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_deflateBound(_strm: *mut ZStream, source_len: c_ulong) -> c_ulong {
     bound(source_len as u64) as c_ulong
 }
 
 /// As zlib's `compressBound`.
-#[cfg_attr(feature = "zlib-abi", export_name = "compressBound")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "compressBound"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub extern "C" fn vz_compressBound(source_len: c_ulong) -> c_ulong {
     bound(source_len as u64) as c_ulong
 }
 
 /// # Safety
 /// As zlib's `deflatePending`.
-#[cfg_attr(feature = "zlib-abi", export_name = "deflatePending")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "deflatePending"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_deflatePending(strm: *mut ZStream, pending: *mut c_uint, bits: *mut c_int) -> c_int {
     let st = match dstate(strm) {
         Some(st) => st,
@@ -1447,8 +1448,8 @@ pub unsafe extern "C" fn vz_deflatePending(strm: *mut ZStream, pending: *mut c_u
 
 /// # Safety
 /// As zlib's `deflateCopy`.
-#[cfg_attr(feature = "zlib-abi", export_name = "deflateCopy")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "deflateCopy"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_deflateCopy(dest: *mut ZStream, source: *mut ZStream) -> c_int {
     let st = match dstate(source) {
         Some(st) => st,
@@ -1470,8 +1471,8 @@ pub unsafe extern "C" fn vz_deflateCopy(dest: *mut ZStream, source: *mut ZStream
 /// Gzip streams, and raw streams that have already taken input, get
 /// `Z_STREAM_ERROR` (zlib allows the latter). Calling it twice keeps the
 /// second dictionary; an empty one means none, as in zlib.
-#[cfg_attr(feature = "zlib-abi", export_name = "deflateSetDictionary")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "deflateSetDictionary"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_deflateSetDictionary(strm: *mut ZStream, dictionary: *const u8, dict_length: c_uint) -> c_int {
     let st = match dstate(strm) {
         Some(st) => st,
@@ -1495,24 +1496,24 @@ pub unsafe extern "C" fn vz_deflateSetDictionary(strm: *mut ZStream, dictionary:
 /// # Safety
 /// As zlib's `deflateSetHeader`; custom gzip headers are not supported
 /// (`Z_STREAM_ERROR`). The header written has no name, time or extra field.
-#[cfg_attr(feature = "zlib-abi", export_name = "deflateSetHeader")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "deflateSetHeader"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_deflateSetHeader(_strm: *mut ZStream, _head: *mut GzHeader) -> c_int {
     Z_STREAM_ERROR
 }
 
 /// # Safety
 /// As zlib's `deflatePrime`; not supported (`Z_STREAM_ERROR`).
-#[cfg_attr(feature = "zlib-abi", export_name = "deflatePrime")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "deflatePrime"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_deflatePrime(_strm: *mut ZStream, _bits: c_int, _value: c_int) -> c_int {
     Z_STREAM_ERROR
 }
 
 /// # Safety
 /// As zlib's `compress2`.
-#[cfg_attr(feature = "zlib-abi", export_name = "compress2")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "compress2"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_compress2(dest: *mut u8, dest_len: *mut c_ulong, source: *const u8, source_len: c_ulong, level: c_int) -> c_int {
     if dest_len.is_null() || (source.is_null() && source_len != 0) || (dest.is_null() && *dest_len != 0) {
         return Z_STREAM_ERROR;
@@ -1546,7 +1547,7 @@ pub unsafe extern "C" fn vz_compress2(dest: *mut u8, dest_len: *mut c_ulong, sou
 /// when compression first runs. Inputs under 512 KiB, level 0 and streams
 /// with a preset dictionary are compressed on the calling thread whatever
 /// this says. Returns the number of threads now allowed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vzlib_set_threads(n: c_int) -> c_int {
     crate::par::set_threads(n.max(0) as usize);
     crate::par::threads().min(c_int::MAX as usize) as c_int
@@ -1554,8 +1555,8 @@ pub extern "C" fn vzlib_set_threads(n: c_int) -> c_int {
 
 /// # Safety
 /// As zlib's `compress`.
-#[cfg_attr(feature = "zlib-abi", export_name = "compress")]
-#[cfg_attr(not(feature = "zlib-abi"), no_mangle)]
+#[cfg_attr(feature = "zlib-abi", unsafe(export_name = "compress"))]
+#[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vz_compress(dest: *mut u8, dest_len: *mut c_ulong, source: *const u8, source_len: c_ulong) -> c_int {
     vz_compress2(dest, dest_len, source, source_len, Z_DEFAULT_COMPRESSION)
 }

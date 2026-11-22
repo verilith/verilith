@@ -9,6 +9,7 @@
 //! instance (an imported memory is a fresh one with the import's limits).
 //! A host function cannot call back into the instance that called it.
 #![allow(non_camel_case_types, clippy::missing_safety_doc)]
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use std::cell::RefCell;
 use std::ffi::c_void;
@@ -56,24 +57,24 @@ unsafe fn vec_slice<'a, T>(v: *const wasm_vec_t<T>) -> &'a [T] {
 
 macro_rules! plain_vec {
     ($t:ty, $new_empty:ident, $new_uninit:ident, $new:ident, $copy:ident, $delete:ident) => {
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $new_empty(out: *mut wasm_vec_t<$t>) {
             vec_new(out, Vec::new());
         }
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $new_uninit(out: *mut wasm_vec_t<$t>, n: usize) {
             vec_new(out, vec![<$t>::default(); n]);
         }
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $new(out: *mut wasm_vec_t<$t>, n: usize, data: *const $t) {
             let v = if n == 0 { Vec::new() } else { std::slice::from_raw_parts(data, n).to_vec() };
             vec_new(out, v);
         }
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $copy(out: *mut wasm_vec_t<$t>, src: *const wasm_vec_t<$t>) {
             vec_new(out, vec_slice(src).to_vec());
         }
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $delete(v: *mut wasm_vec_t<$t>) {
             drop(vec_take(v));
         }
@@ -86,20 +87,20 @@ plain_vec!(u8, wasm_byte_vec_new_empty, wasm_byte_vec_new_uninitialized, wasm_by
 /// Vectors of owned pointers: deleting the vector deletes the elements.
 macro_rules! ptr_vec {
     ($t:ty, $new_empty:ident, $new_uninit:ident, $new:ident, $delete:ident, $elem_delete:ident) => {
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $new_empty(out: *mut wasm_vec_t<*mut $t>) {
             vec_new(out, Vec::new());
         }
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $new_uninit(out: *mut wasm_vec_t<*mut $t>, n: usize) {
             vec_new(out, vec![std::ptr::null_mut(); n]);
         }
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $new(out: *mut wasm_vec_t<*mut $t>, n: usize, data: *const *mut $t) {
             let v = if n == 0 { Vec::new() } else { std::slice::from_raw_parts(data, n).to_vec() };
             vec_new(out, v);
         }
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $delete(v: *mut wasm_vec_t<*mut $t>) {
             for p in vec_take(v) {
                 $elem_delete(p);
@@ -116,42 +117,42 @@ pub struct wasm_engine_t;
 pub struct wasm_store_t;
 pub struct wasm_config_t;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn wasm_config_new() -> *mut wasm_config_t {
     Box::into_raw(Box::new(wasm_config_t))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_config_delete(c: *mut wasm_config_t) {
     if !c.is_null() {
         drop(Box::from_raw(c));
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn wasm_engine_new() -> *mut wasm_engine_t {
     Box::into_raw(Box::new(wasm_engine_t))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_engine_new_with_config(c: *mut wasm_config_t) -> *mut wasm_engine_t {
     wasm_config_delete(c);
     wasm_engine_new()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_engine_delete(e: *mut wasm_engine_t) {
     if !e.is_null() {
         drop(Box::from_raw(e));
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn wasm_store_new(_: *mut wasm_engine_t) -> *mut wasm_store_t {
     Box::into_raw(Box::new(wasm_store_t))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_store_delete(s: *mut wasm_store_t) {
     if !s.is_null() {
         drop(Box::from_raw(s));
@@ -168,22 +169,22 @@ pub struct wasm_valtype_t {
 
 pub type wasm_valtype_vec_t = wasm_vec_t<*mut wasm_valtype_t>;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn wasm_valtype_new(kind: u8) -> *mut wasm_valtype_t {
     Box::into_raw(Box::new(wasm_valtype_t { kind }))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_valtype_kind(t: *const wasm_valtype_t) -> u8 {
     (*t).kind
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_valtype_copy(t: *const wasm_valtype_t) -> *mut wasm_valtype_t {
     wasm_valtype_new((*t).kind)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_valtype_delete(t: *mut wasm_valtype_t) {
     if !t.is_null() {
         drop(Box::from_raw(t));
@@ -193,7 +194,7 @@ pub unsafe extern "C" fn wasm_valtype_delete(t: *mut wasm_valtype_t) {
 ptr_vec!(wasm_valtype_t, wasm_valtype_vec_new_empty, wasm_valtype_vec_new_uninitialized, wasm_valtype_vec_new,
     wasm_valtype_vec_delete, wasm_valtype_delete);
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_valtype_vec_copy(out: *mut wasm_valtype_vec_t, src: *const wasm_valtype_vec_t) {
     let v = vec_slice(src).iter().map(|&t| wasm_valtype_copy(t)).collect();
     vec_new(out, v);
@@ -237,7 +238,7 @@ unsafe fn types(v: *const wasm_valtype_vec_t) -> Option<Vec<ValType>> {
     vec_slice(v).iter().map(|&t| type_of((*t).kind)).collect()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_functype_new(params: *mut wasm_valtype_vec_t, results: *mut wasm_valtype_vec_t)
     -> *mut wasm_functype_t
 {
@@ -252,17 +253,17 @@ pub unsafe extern "C" fn wasm_functype_new(params: *mut wasm_valtype_vec_t, resu
     Box::into_raw(f)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_functype_params(f: *const wasm_functype_t) -> *const wasm_valtype_vec_t {
     &(*f).params
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_functype_results(f: *const wasm_functype_t) -> *const wasm_valtype_vec_t {
     &(*f).results
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_functype_copy(f: *const wasm_functype_t) -> *mut wasm_functype_t {
     let mut g = Box::new(wasm_functype_t {
         params: wasm_vec_t { size: 0, data: std::ptr::null_mut() },
@@ -273,7 +274,7 @@ pub unsafe extern "C" fn wasm_functype_copy(f: *const wasm_functype_t) -> *mut w
     Box::into_raw(g)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_functype_delete(f: *mut wasm_functype_t) {
     if f.is_null() {
         return;
@@ -315,12 +316,12 @@ pub type wasm_val_vec_t = wasm_vec_t<wasm_val_t>;
 plain_vec!(wasm_val_t, wasm_val_vec_new_empty, wasm_val_vec_new_uninitialized, wasm_val_vec_new,
     wasm_val_vec_copy, wasm_val_vec_delete);
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_val_copy(out: *mut wasm_val_t, v: *const wasm_val_t) {
     *out = *v;
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn wasm_val_delete(_: *mut wasm_val_t) {}
 
 fn to_c(v: Val) -> wasm_val_t {
@@ -371,31 +372,31 @@ fn trap_message(t: Trap) -> &'static str {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_trap_new(_: *mut wasm_store_t, msg: *const wasm_byte_vec_t) -> *mut wasm_trap_t {
     let b = vec_slice(msg);
     let b = b.strip_suffix(&[0]).unwrap_or(b);
     trap(String::from_utf8_lossy(b).into_owned())
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_trap_message(t: *const wasm_trap_t, out: *mut wasm_byte_vec_t) {
     let mut v = (*t).message.as_bytes().to_vec();
     v.push(0);
     vec_new(out, v);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn wasm_trap_origin(_: *const wasm_trap_t) -> *mut wasm_frame_t {
     std::ptr::null_mut()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_trap_trace(_: *const wasm_trap_t, out: *mut wasm_vec_t<*mut wasm_frame_t>) {
     vec_new(out, Vec::new());
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_trap_delete(t: *mut wasm_trap_t) {
     if !t.is_null() {
         drop(Box::from_raw(t));
@@ -411,7 +412,7 @@ pub struct wasm_module_t {
     imports: Vec<(Vec<u8>, Vec<u8>, ImportDesc)>,
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_module_new(_: *mut wasm_store_t, binary: *const wasm_byte_vec_t) -> *mut wasm_module_t {
     let bytes = vec_slice(binary).to_vec();
     match Module::new(&bytes) {
@@ -423,12 +424,12 @@ pub unsafe extern "C" fn wasm_module_new(_: *mut wasm_store_t, binary: *const wa
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_module_validate(_: *mut wasm_store_t, binary: *const wasm_byte_vec_t) -> bool {
     Module::new(vec_slice(binary)).is_ok()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_module_delete(m: *mut wasm_module_t) {
     if !m.is_null() {
         drop(Box::from_raw(m));
@@ -478,7 +479,7 @@ pub type wasm_memory_t = wasm_extern_t;
 pub type wasm_global_t = wasm_extern_t;
 pub type wasm_extern_vec_t = wasm_vec_t<*mut wasm_extern_t>;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_extern_delete(e: *mut wasm_extern_t) {
     if !e.is_null() {
         drop(Box::from_raw(e));
@@ -488,7 +489,7 @@ pub unsafe extern "C" fn wasm_extern_delete(e: *mut wasm_extern_t) {
 ptr_vec!(wasm_extern_t, wasm_extern_vec_new_empty, wasm_extern_vec_new_uninitialized, wasm_extern_vec_new,
     wasm_extern_vec_delete, wasm_extern_delete);
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_extern_kind(e: *const wasm_extern_t) -> u8 {
     match (*e).ext {
         Ext::HostFunc { .. } | Ext::Func { .. } => 0,
@@ -497,32 +498,32 @@ pub unsafe extern "C" fn wasm_extern_kind(e: *const wasm_extern_t) -> u8 {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_extern_as_func(e: *mut wasm_extern_t) -> *mut wasm_func_t {
     if e.is_null() || wasm_extern_kind(e) != 0 { std::ptr::null_mut() } else { e }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_extern_as_memory(e: *mut wasm_extern_t) -> *mut wasm_memory_t {
     if e.is_null() || wasm_extern_kind(e) != 3 { std::ptr::null_mut() } else { e }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_extern_as_global(e: *mut wasm_extern_t) -> *mut wasm_global_t {
     if e.is_null() || wasm_extern_kind(e) != 1 { std::ptr::null_mut() } else { e }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn wasm_func_as_extern(f: *mut wasm_func_t) -> *mut wasm_extern_t {
     f
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn wasm_memory_as_extern(m: *mut wasm_memory_t) -> *mut wasm_extern_t {
     m
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn wasm_global_as_extern(g: *mut wasm_global_t) -> *mut wasm_extern_t {
     g
 }
@@ -534,19 +535,19 @@ unsafe fn host_func(t: *const wasm_functype_t, host: Host) -> *mut wasm_func_t {
     Box::into_raw(Box::new(wasm_extern_t { ext: Ext::HostFunc { params, results, host } }))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_func_new(_: *mut wasm_store_t, t: *const wasm_functype_t, cb: Callback) -> *mut wasm_func_t {
     host_func(t, Host::Plain(cb))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_func_new_with_env(_: *mut wasm_store_t, t: *const wasm_functype_t, cb: CallbackEnv,
     env: *mut c_void, finalizer: Option<unsafe extern "C" fn(*mut c_void)>) -> *mut wasm_func_t
 {
     host_func(t, Host::WithEnv(cb, Rc::new(Env { env, finalizer })))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_func_delete(f: *mut wasm_func_t) {
     wasm_extern_delete(f)
 }
@@ -561,18 +562,18 @@ unsafe fn func_sig(f: *const wasm_func_t) -> (&'static [ValType], &'static [ValT
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_func_type(f: *const wasm_func_t) -> *mut wasm_functype_t {
     let (p, r) = func_sig(f);
     functype(p, r)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_func_param_arity(f: *const wasm_func_t) -> usize {
     func_sig(f).0.len()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_func_result_arity(f: *const wasm_func_t) -> usize {
     func_sig(f).1.len()
 }
@@ -600,7 +601,7 @@ unsafe fn call_host(host: &Host, args: &[Val], results: &mut [Val]) -> Result<()
     Ok(())
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_func_call(f: *const wasm_func_t, args: *const wasm_val_vec_t,
     results: *mut wasm_val_vec_t) -> *mut wasm_trap_t
 {
@@ -646,7 +647,7 @@ fn to_val(t: ValType, x: u64) -> Val {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_memory_data(m: *mut wasm_memory_t) -> *mut u8 {
     match &(*m).ext {
         Ext::Memory { inst, .. } => match inst.try_borrow_mut() {
@@ -657,7 +658,7 @@ pub unsafe extern "C" fn wasm_memory_data(m: *mut wasm_memory_t) -> *mut u8 {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_memory_data_size(m: *const wasm_memory_t) -> usize {
     match &(*m).ext {
         Ext::Memory { inst, .. } => inst.try_borrow().map(|i| i.memory().len()).unwrap_or(0),
@@ -665,17 +666,17 @@ pub unsafe extern "C" fn wasm_memory_data_size(m: *const wasm_memory_t) -> usize
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_memory_size(m: *const wasm_memory_t) -> u32 {
     (wasm_memory_data_size(m) / 65536) as u32
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_memory_delete(m: *mut wasm_memory_t) {
     wasm_extern_delete(m)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_global_get(g: *const wasm_global_t, out: *mut wasm_val_t) {
     if let Ext::Global { inst, name, .. } = &(*g).ext {
         if let Some(v) = inst.try_borrow().ok().and_then(|i| i.global(name)) {
@@ -684,7 +685,7 @@ pub unsafe extern "C" fn wasm_global_get(g: *const wasm_global_t, out: *mut wasm
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_global_delete(g: *mut wasm_global_t) {
     wasm_extern_delete(g)
 }
@@ -697,7 +698,7 @@ pub struct wasm_instance_t {
     inst: Rc<RefCell<Instance>>,
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_instance_new(_: *mut wasm_store_t, m: *const wasm_module_t,
     imports: *const wasm_extern_vec_t, trap_out: *mut *mut wasm_trap_t) -> *mut wasm_instance_t
 {
@@ -761,14 +762,14 @@ pub unsafe extern "C" fn wasm_instance_new(_: *mut wasm_store_t, m: *const wasm_
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_instance_delete(i: *mut wasm_instance_t) {
     if !i.is_null() {
         drop(Box::from_raw(i));
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_instance_exports(i: *const wasm_instance_t, out: *mut wasm_extern_vec_t) {
     let inst = &(*i).inst;
     let exports = inst.borrow().exports();
@@ -788,34 +789,34 @@ pub unsafe extern "C" fn wasm_instance_exports(i: *const wasm_instance_t, out: *
 // Frames (traps carry no trace, so these only exist to link)
 // ---------------------------------------------------------------------------
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_frame_delete(f: *mut wasm_frame_t) {
     if !f.is_null() {
         drop(Box::from_raw(f));
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn wasm_frame_copy(_: *const wasm_frame_t) -> *mut wasm_frame_t {
     Box::into_raw(Box::new(wasm_frame_t))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn wasm_frame_instance(_: *const wasm_frame_t) -> *mut wasm_instance_t {
     std::ptr::null_mut()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn wasm_frame_func_index(_: *const wasm_frame_t) -> u32 {
     0
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn wasm_frame_func_offset(_: *const wasm_frame_t) -> usize {
     0
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn wasm_frame_module_offset(_: *const wasm_frame_t) -> usize {
     0
 }

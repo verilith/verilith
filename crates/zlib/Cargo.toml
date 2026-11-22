@@ -3,7 +3,7 @@ name = "verilith-zlib"
 version = "0.1.0"
 license = "MIT"
 description = "A formally verified (Verus) DEFLATE, zlib and gzip decompressor"
-edition = "2021"
+edition = "2024"
 
 [lib]
 crate-type = ["rlib", "staticlib"]

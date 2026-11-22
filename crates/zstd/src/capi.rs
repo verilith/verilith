@@ -12,6 +12,7 @@
 //! that libzstd's compressor can be linked alongside; `zstd-abi-common`
 //! adds the functions libzstd keeps in `common/` (`ZSTD_isError`,
 //! `ZSTD_getErrorName`, ...), for builds with no libzstd at all.
+#![allow(unsafe_op_in_unsafe_fn)]
 use crate::frame::*;
 use crate::stream::{Fail, Stream};
 use core::ffi::{c_char, c_int, c_uint, c_ulonglong, c_void};
@@ -320,8 +321,8 @@ pub struct OutBuffer {
 macro_rules! export {
     ($zstd:literal, $vz:literal, $(#[$m:meta])* fn $name:ident($($a:ident: $t:ty),*) -> $r:ty $body:block) => {
         $(#[$m])*
-        #[cfg_attr(feature = "zstd-abi", export_name = $zstd)]
-        #[cfg_attr(not(feature = "zstd-abi"), export_name = $vz)]
+        #[cfg_attr(feature = "zstd-abi", unsafe(export_name = $zstd))]
+        #[cfg_attr(not(feature = "zstd-abi"), unsafe(export_name = $vz))]
         pub unsafe extern "C" fn $name($($a: $t),*) -> $r $body
     };
 }
@@ -329,8 +330,8 @@ macro_rules! export {
 macro_rules! export_common {
     ($zstd:literal, $vz:literal, $(#[$m:meta])* fn $name:ident($($a:ident: $t:ty),*) -> $r:ty $body:block) => {
         $(#[$m])*
-        #[cfg_attr(feature = "zstd-abi-common", export_name = $zstd)]
-        #[cfg_attr(not(feature = "zstd-abi-common"), export_name = $vz)]
+        #[cfg_attr(feature = "zstd-abi-common", unsafe(export_name = $zstd))]
+        #[cfg_attr(not(feature = "zstd-abi-common"), unsafe(export_name = $vz))]
         pub unsafe extern "C" fn $name($($a: $t),*) -> $r $body
     };
 }

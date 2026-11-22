@@ -3,7 +3,7 @@ name = "verilith-font"
 version = "0.1.0"
 license = "MIT"
 description = "A formally verified (Verus) OpenType font sanitizer"
-edition = "2021"
+edition = "2024"
 repository = "https://github.com/verilith/verilith"
 readme = "README.md"
 

@@ -7,6 +7,7 @@
 //! pointers into slices at the C boundary. The C functions are exported as
 //! `vwebp_*`; with the `webp-abi` feature also under libwebp's names, so
 //! vwebp can replace libwebp's decoder at link time.
+#![allow(unsafe_op_in_unsafe_fn)]
 use crate::container::{header_exec, pad_exec, parse_headers_exec, webp_decode_exec, ParsedX};
 use crate::lossy::{decode_lossy, decode_lossy_planes, lossy_layout, LossyPlanes};
 use crate::vp8yuv::{planes_to_argb, planes_to_bytes};
@@ -291,7 +292,7 @@ pub fn decode_to(data: &[u8], mode: Mode) -> Result<(Vec<u8>, usize, usize), Err
 // The C API
 // ---------------------------------------------------------------------------
 
-extern "C" {
+unsafe extern "C" {
     fn malloc(size: usize) -> *mut c_void;
     fn calloc(n: usize, size: usize) -> *mut c_void;
     fn free(p: *mut c_void);
@@ -453,22 +454,22 @@ macro_rules! simple_decoders {
     ($(($v:ident, $vi:ident, $w:ident, $wi:ident, $mode:expr)),*) => {
         $(
             /// libwebp's simple decoding function for this layout.
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn $v(data: *const u8, size: usize, w: *mut c_int, h: *mut c_int) -> *mut u8 {
                 decode_malloc(data, size, w, h, $mode)
             }
             /// libwebp's decoding function into a caller's buffer.
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn $vi(data: *const u8, size: usize, out: *mut u8, out_size: usize, stride: c_int) -> *mut u8 {
                 decode_into(data, size, out, out_size, stride, $mode)
             }
             #[cfg(feature = "webp-abi")]
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn $w(data: *const u8, size: usize, w: *mut c_int, h: *mut c_int) -> *mut u8 {
                 $v(data, size, w, h)
             }
             #[cfg(feature = "webp-abi")]
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn $wi(data: *const u8, size: usize, out: *mut u8, out_size: usize, stride: c_int) -> *mut u8 {
                 $vi(data, size, out, out_size, stride)
             }
@@ -485,13 +486,13 @@ simple_decoders!(
 );
 
 /// `WebPGetDecoderVersion`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vwebp_GetDecoderVersion() -> c_int {
     LIBWEBP_VERSION
 }
 
 /// `WebPGetInfo`: 1 with the size of a lossless image, else 0.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vwebp_GetInfo(data: *const u8, size: usize, w: *mut c_int, h: *mut c_int) -> c_int {
     let Some(d) = input(data, size) else { return 0 };
     match get_features(d) {
@@ -509,7 +510,7 @@ pub unsafe extern "C" fn vwebp_GetInfo(data: *const u8, size: usize, w: *mut c_i
 }
 
 /// `WebPGetFeaturesInternal`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vwebp_GetFeaturesInternal(
     data: *const u8,
     size: usize,
@@ -534,7 +535,7 @@ pub unsafe extern "C" fn vwebp_GetFeaturesInternal(
 }
 
 /// `WebPInitDecBufferInternal`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vwebp_InitDecBufferInternal(buffer: *mut WebPDecBuffer, version: c_int) -> c_int {
     if (version >> 8) != (WEBP_DECODER_ABI_VERSION >> 8) || buffer.is_null() {
         return 0;
@@ -544,7 +545,7 @@ pub unsafe extern "C" fn vwebp_InitDecBufferInternal(buffer: *mut WebPDecBuffer,
 }
 
 /// `WebPFreeDecBuffer`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vwebp_FreeDecBuffer(buffer: *mut WebPDecBuffer) {
     if buffer.is_null() {
         return;
@@ -556,7 +557,7 @@ pub unsafe extern "C" fn vwebp_FreeDecBuffer(buffer: *mut WebPDecBuffer) {
 }
 
 /// `WebPInitDecoderConfigInternal`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vwebp_InitDecoderConfigInternal(config: *mut WebPDecoderConfig, version: c_int) -> c_int {
     if (version >> 8) != (WEBP_DECODER_ABI_VERSION >> 8) || config.is_null() {
         return 0;
@@ -575,7 +576,7 @@ fn status_of(e: Error) -> VP8StatusCode {
 
 /// `WebPDecode`: RGB output layouts and vertical flipping; cropping,
 /// scaling and YUV output give `VP8_STATUS_UNSUPPORTED_FEATURE`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vwebp_Decode(data: *const u8, size: usize, config: *mut WebPDecoderConfig) -> VP8StatusCode {
     if config.is_null() {
         return VP8_STATUS_INVALID_PARAM;
@@ -632,19 +633,19 @@ pub unsafe extern "C" fn vwebp_Decode(data: *const u8, size: usize, config: *mut
 }
 
 /// `WebPMalloc`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vwebp_Malloc(size: usize) -> *mut c_void {
     malloc(size)
 }
 
 /// `WebPFree`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vwebp_Free(p: *mut c_void) {
     free(p)
 }
 
 /// `WebPDecodeYUV`: lossless images have no YUV form here; always null.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vwebp_DecodeYUV(
     _data: *const u8,
     _size: usize,
@@ -662,15 +663,15 @@ pub unsafe extern "C" fn vwebp_DecodeYUV(
 mod abi {
     use super::*;
 
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub extern "C" fn WebPGetDecoderVersion() -> c_int {
         vwebp_GetDecoderVersion()
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn WebPGetInfo(data: *const u8, size: usize, w: *mut c_int, h: *mut c_int) -> c_int {
         vwebp_GetInfo(data, size, w, h)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn WebPGetFeaturesInternal(
         data: *const u8,
         size: usize,
@@ -679,31 +680,31 @@ mod abi {
     ) -> VP8StatusCode {
         vwebp_GetFeaturesInternal(data, size, features, version)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn WebPInitDecBufferInternal(buffer: *mut WebPDecBuffer, version: c_int) -> c_int {
         vwebp_InitDecBufferInternal(buffer, version)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn WebPFreeDecBuffer(buffer: *mut WebPDecBuffer) {
         vwebp_FreeDecBuffer(buffer)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn WebPInitDecoderConfigInternal(config: *mut WebPDecoderConfig, version: c_int) -> c_int {
         vwebp_InitDecoderConfigInternal(config, version)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn WebPDecode(data: *const u8, size: usize, config: *mut WebPDecoderConfig) -> VP8StatusCode {
         vwebp_Decode(data, size, config)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn WebPMalloc(size: usize) -> *mut c_void {
         vwebp_Malloc(size)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn WebPFree(p: *mut c_void) {
         vwebp_Free(p)
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn WebPDecodeYUV(
         data: *const u8,
         size: usize,

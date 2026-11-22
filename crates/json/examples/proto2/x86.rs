@@ -7,6 +7,7 @@
 //! matches `verilith_json::parser::parse_document` and prints throughput. Build with
 //! `RUSTFLAGS="-C target-cpu=native"`; `P512=1` uses AVX-512 for stage 1.
 //! x86_64 with AVX2 only.
+#![allow(unsafe_op_in_unsafe_fn)]
 use std::arch::x86_64::*;
 use std::time::Instant;
 use verilith_json::parser::{ex_escape_end, Kind, Tok};

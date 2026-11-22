@@ -552,7 +552,7 @@ impl<'d> Element<'d> {
     }
 
     /// The child elements.
-    pub fn elements(&self) -> impl Iterator<Item = Element<'d>> {
+    pub fn elements(&self) -> impl Iterator<Item = Element<'d>> + use<'d> {
         self.children().filter_map(|c| match c {
             Child::Element(e) => Some(e),
             _ => None,

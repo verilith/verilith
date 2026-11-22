@@ -13,6 +13,7 @@
 //! - requests and responses whose framing is ambiguous (the request
 //!   smuggling shapes) are rejected with -1, as is a request with a
 //!   missing or repeated Host.
+#![allow(unsafe_op_in_unsafe_fn)]
 use crate::chunked::CState;
 use crate::framing::{request_body_exec, request_body_fx, response_body_exec, response_body_fx};
 use crate::parse::{headers_at, request_at, request_fx, request_resume, response_at, response_fx, Header, Out};
@@ -68,8 +69,8 @@ unsafe fn export_headers(buf: *const c_char, hs: &[Header], out: *mut phr_header
 /// As for picohttpparser: `buf` must point to `len` readable bytes, the out
 /// pointers must be valid for writes, and `headers` must have room for
 /// `*num_headers` entries.
-#[cfg_attr(feature = "phr-abi", export_name = "phr_parse_request")]
-#[cfg_attr(not(feature = "phr-abi"), no_mangle)]
+#[cfg_attr(feature = "phr-abi", unsafe(export_name = "phr_parse_request"))]
+#[cfg_attr(not(feature = "phr-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vhttp_phr_parse_request(
     buf: *const c_char,
     len: usize,
@@ -121,8 +122,8 @@ pub unsafe extern "C" fn vhttp_phr_parse_request(
 ///
 /// # Safety
 /// As for `vhttp_phr_parse_request`.
-#[cfg_attr(feature = "phr-abi", export_name = "phr_parse_response")]
-#[cfg_attr(not(feature = "phr-abi"), no_mangle)]
+#[cfg_attr(feature = "phr-abi", unsafe(export_name = "phr_parse_response"))]
+#[cfg_attr(not(feature = "phr-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vhttp_phr_parse_response(
     buf: *const c_char,
     len: usize,
@@ -168,8 +169,8 @@ pub unsafe extern "C" fn vhttp_phr_parse_response(
 ///
 /// # Safety
 /// As for `vhttp_phr_parse_request`.
-#[cfg_attr(feature = "phr-abi", export_name = "phr_parse_headers")]
-#[cfg_attr(not(feature = "phr-abi"), no_mangle)]
+#[cfg_attr(feature = "phr-abi", unsafe(export_name = "phr_parse_headers"))]
+#[cfg_attr(not(feature = "phr-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vhttp_phr_parse_headers(
     buf: *const c_char,
     len: usize,
@@ -256,8 +257,8 @@ pub(crate) fn unpack(tag: c_char, n: usize) -> Option<CState> {
 /// # Safety
 /// `decoder` must be valid (zero-filled before the first call), and `buf`
 /// must point to `*bufsz` writable bytes.
-#[cfg_attr(feature = "phr-abi", export_name = "phr_decode_chunked")]
-#[cfg_attr(not(feature = "phr-abi"), no_mangle)]
+#[cfg_attr(feature = "phr-abi", unsafe(export_name = "phr_decode_chunked"))]
+#[cfg_attr(not(feature = "phr-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vhttp_phr_decode_chunked(
     decoder: *mut phr_chunked_decoder,
     buf: *mut c_char,
@@ -302,8 +303,8 @@ pub unsafe extern "C" fn vhttp_phr_decode_chunked(
 ///
 /// # Safety
 /// `decoder` must be valid.
-#[cfg_attr(feature = "phr-abi", export_name = "phr_decode_chunked_is_in_data")]
-#[cfg_attr(not(feature = "phr-abi"), no_mangle)]
+#[cfg_attr(feature = "phr-abi", unsafe(export_name = "phr_decode_chunked_is_in_data"))]
+#[cfg_attr(not(feature = "phr-abi"), unsafe(no_mangle))]
 pub unsafe extern "C" fn vhttp_phr_decode_chunked_is_in_data(decoder: *mut phr_chunked_decoder) -> c_int {
     ((*decoder)._state == 13) as c_int
 }

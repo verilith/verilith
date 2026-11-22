@@ -1,6 +1,7 @@
 //! The C API (unverified, thin wrappers): what compat/nghttp2's inflater
 //! calls. Every decision is made by `Decoder::feed`, `change_settings` and
 //! `end_block`; this file only moves pointers and lengths.
+#![allow(unsafe_op_in_unsafe_fn)]
 use crate::decoder::{Decoder, Feed};
 use core::ffi::c_int;
 
@@ -10,7 +11,7 @@ pub const VHPACK_FIELD: c_int = 2;
 pub const VHPACK_BAD: c_int = -1;
 
 /// A new decoder (initial state: 4096-byte table), or null.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vhpack_new() -> *mut Decoder {
     match Decoder::new() {
         Some(d) => Box::into_raw(Box::new(d)),
@@ -20,7 +21,7 @@ pub extern "C" fn vhpack_new() -> *mut Decoder {
 
 /// # Safety
 /// `d` is from `vhpack_new` (or null) and not used again.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vhpack_free(d: *mut Decoder) {
     if !d.is_null() {
         drop(Box::from_raw(d));
@@ -55,7 +56,7 @@ pub struct VhpackField {
 /// # Safety
 /// `d` is a live decoder, `in_` points to `inlen` readable bytes (or
 /// `inlen` is 0), and `f` is writable.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vhpack_feed(d: *mut Decoder, in_: *const u8, inlen: usize, fin: c_int, f: *mut VhpackField) -> c_int {
     let d = &mut *d;
     let f = &mut *f;
@@ -103,7 +104,7 @@ pub unsafe extern "C" fn vhpack_feed(d: *mut Decoder, in_: *const u8, inlen: usi
 ///
 /// # Safety
 /// `d` is a live decoder.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vhpack_change_settings(d: *mut Decoder, n: u32) -> c_int {
     if (*d).change_settings(n) { 0 } else { -1 }
 }
@@ -112,7 +113,7 @@ pub unsafe extern "C" fn vhpack_change_settings(d: *mut Decoder, n: u32) -> c_in
 ///
 /// # Safety
 /// `d` is a live decoder.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vhpack_end_block(d: *mut Decoder) {
     (*d).end_block()
 }
@@ -121,7 +122,7 @@ pub unsafe extern "C" fn vhpack_end_block(d: *mut Decoder) {
 ///
 /// # Safety
 /// `d` is a live decoder.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vhpack_table_len(d: *const Decoder) -> usize {
     (*d).table.ents.len()
 }
@@ -130,14 +131,14 @@ pub unsafe extern "C" fn vhpack_table_len(d: *const Decoder) -> usize {
 ///
 /// # Safety
 /// `d` is a live decoder.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vhpack_table_size(d: *const Decoder) -> usize {
     (*d).table.size as usize
 }
 
 /// # Safety
 /// `d` is a live decoder.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vhpack_table_max(d: *const Decoder) -> usize {
     (*d).table.max as usize
 }
@@ -147,7 +148,7 @@ pub unsafe extern "C" fn vhpack_table_max(d: *const Decoder) -> usize {
 ///
 /// # Safety
 /// `d` is a live decoder and the out-pointers are writable.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vhpack_table_entry(
     d: *const Decoder,
     i: usize,

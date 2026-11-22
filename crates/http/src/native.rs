@@ -9,6 +9,7 @@
 //! the result into C structs. All parsing happens in the verified code.
 #![allow(non_camel_case_types)]
 #![allow(clippy::missing_safety_doc)]
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use crate::api::{self, Chunked, ChunkedDecoder, Error, Status};
 use crate::capi::{pack, unpack};
@@ -124,7 +125,7 @@ unsafe fn export(hs: &[Header], out: *mut vhttp_header, num: *mut usize) {
 /// `buf` points to `len` readable bytes, `num_headers` is valid and
 /// `headers` has room for `*num_headers` entries, and `out` is null or
 /// valid for writes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vhttp_parse_request(
     buf: *const c_char,
     len: usize,
@@ -171,7 +172,7 @@ pub unsafe extern "C" fn vhttp_parse_request(
 ///
 /// # Safety
 /// As for `vhttp_parse_request`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vhttp_parse_response(
     buf: *const c_char,
     len: usize,
@@ -215,7 +216,7 @@ pub unsafe extern "C" fn vhttp_parse_response(
 }
 
 /// A static, NUL-terminated description of a result code.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vhttp_error_message(code: c_int) -> *const c_char {
     let s: &'static [u8] = match code {
         0 => b"no error\0",
@@ -241,7 +242,7 @@ pub extern "C" fn vhttp_error_message(code: c_int) -> *const c_char {
 
 /// Whether a code is one of the framing errors: the head is well formed
 /// but its framing is ambiguous (the request smuggling shapes).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vhttp_error_is_framing(code: c_int) -> bool {
     (-13..=-9).contains(&code)
 }
@@ -266,7 +267,7 @@ pub struct vhttp_chunked {
 /// # Safety
 /// `d` is a valid decoder, `buf` points to `len` writable bytes, and
 /// `out_len` and `rest` are null or valid for writes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vhttp_chunked_decode(
     d: *mut vhttp_chunked,
     buf: *mut c_char,
@@ -303,7 +304,7 @@ pub unsafe extern "C" fn vhttp_chunked_decode(
 ///
 /// # Safety
 /// `d` is null or a valid decoder.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vhttp_chunked_in_data(d: *const vhttp_chunked) -> bool {
     !d.is_null() && unpack((*d).state as c_char, (*d).n).is_some_and(|s| ChunkedDecoder::from_state(s, false).in_data())
 }
