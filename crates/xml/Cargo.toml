@@ -1,0 +1,30 @@
+[package]
+name = "verilith-xml"
+version = "0.1.0"
+edition = "2021"
+description = "A fast XML 1.0 parser formally verified with Verus: exactly the well-formedness rules, no panics, no recursion, entity expansion without copies"
+license = "MIT"
+repository = "https://github.com/verilith/verilith"
+readme = "README.md"
+keywords = ["xml", "parser", "verified", "simd", "verus"]
+categories = ["parser-implementations", "encoding"]
+rust-version = "1.89"
+exclude = ["/fuzz", "/target", "/bench"]
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+verilith-core = { path = "../core", version = "0.1.0" }
+verilith-simd = { path = "../simd", version = "0.1.0" }
+vstd = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+# Reference parser for differential tests.
+roxmltree = "0.21"
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(verus_only)'] }

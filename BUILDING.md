@@ -135,6 +135,7 @@ ignores the entries.
   machines through a remote cache. That needs a cache service; until there
   is one, CI uses the cache entries described above, and a fresh checkout
   or a restarted Buck2 verifies from nothing.
-- **macOS.** Verification on Apple Silicon still goes through `cargo
-  verus`. The rules should work there as they are, but no proof has been
-  checked through them on a Mac.
+- **Arm.** The Arm verification jobs in CI (Linux Arm runners) and
+  verification on Apple Silicon still go through `cargo verus`. The rules
+  should work there as they are, but no proof has been checked through
+  them on Arm or on a Mac.
