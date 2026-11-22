@@ -1,11 +1,12 @@
 //! Decompression throughput of vzstd against libzstd, loaded with dlopen.
 //! Usage: vzstd-bench [--rounds N] FILE.zst...
 //! libzstd is found via VZSTD_LIBZSTD, else the usual names.
+#![allow(unsafe_op_in_unsafe_fn)]
 use std::ffi::{c_char, c_int, c_void, CString};
 use std::time::Instant;
 use verilith_zstd::capi::{InBuffer, OutBuffer};
 
-extern "C" {
+unsafe extern "C" {
     fn dlopen(name: *const c_char, flags: c_int) -> *mut c_void;
     fn dlsym(h: *mut c_void, name: *const c_char) -> *mut c_void;
 }

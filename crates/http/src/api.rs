@@ -137,7 +137,7 @@ impl<'b> Request<'b> {
     }
     /// The (name, value) pairs of `headers`, which must be the vector this
     /// request was parsed into.
-    pub fn headers<'h>(&self, headers: &'h [Header]) -> impl Iterator<Item = (&'b [u8], &'b [u8])> + 'h
+    pub fn headers<'h>(&self, headers: &'h [Header]) -> impl Iterator<Item = (&'b [u8], &'b [u8])> + 'h + use<'b, 'h>
     where
         'b: 'h,
     {
@@ -165,7 +165,7 @@ impl<'b> Response<'b> {
     pub fn reason(&self) -> &'b [u8] {
         self.line.reason.of(self.buf)
     }
-    pub fn headers<'h>(&self, headers: &'h [Header]) -> impl Iterator<Item = (&'b [u8], &'b [u8])> + 'h
+    pub fn headers<'h>(&self, headers: &'h [Header]) -> impl Iterator<Item = (&'b [u8], &'b [u8])> + 'h + use<'b, 'h>
     where
         'b: 'h,
     {

@@ -27,6 +27,7 @@
 //!   `to_well_formed_utf16`, `utf8_length_from_utf16_with_replacement`) and
 //!   `convert_utf32_to_utf8`, which are short loops over code units.
 #![allow(clippy::missing_safety_doc)]
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use crate::base64::forgiving::{decode_forgiving, max_len_exec};
 use crate::base64::scalar::{dec_tab, enc_len, encode_into};
@@ -163,12 +164,12 @@ pub fn utf8_error(d: &[u8]) -> (i32, usize) {
 // Validation and sizes
 // ---------------------------------------------------------------------------
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_validate_utf8(p: *const c_char, n: usize) -> bool {
     utf8_valid(bytes(p, n))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_validate_utf8_with_errors(p: *const c_char, n: usize, count: *mut usize) -> i32 {
     let s = bytes(p, n);
     if utf8_valid(s) {
@@ -180,12 +181,12 @@ pub unsafe extern "C" fn vtext_validate_utf8_with_errors(p: *const c_char, n: us
     e
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_validate_ascii(p: *const c_char, n: usize) -> bool {
     conv::ascii_prefix(bytes(p, n)) == n
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_validate_ascii_with_errors(p: *const c_char, n: usize, count: *mut usize) -> i32 {
     let k = conv::ascii_prefix(bytes(p, n));
     put(count, k);
@@ -196,22 +197,22 @@ pub unsafe extern "C" fn vtext_validate_ascii_with_errors(p: *const c_char, n: u
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_utf8_length_from_latin1(p: *const c_char, n: usize) -> usize {
     conv::count_latin1_utf8(bytes(p, n))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_utf16_length_from_utf8(p: *const c_char, n: usize) -> usize {
     conv::count_utf8(bytes(p, n), false)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_latin1_length_from_utf8(p: *const c_char, n: usize) -> usize {
     conv::count_utf8(bytes(p, n), true)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_utf8_length_from_utf16(p: *const u16, n: usize) -> usize {
     conv::count_utf16(units(p, n))
 }
@@ -244,12 +245,12 @@ fn utf16_error(s: &[u16]) -> Option<usize> {
     None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_validate_utf16(p: *const u16, n: usize) -> bool {
     utf16_error(units(p, n)).is_none()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_validate_utf16_with_errors(p: *const u16, n: usize, count: *mut usize) -> i32 {
     match utf16_error(units(p, n)) {
         None => {
@@ -265,7 +266,7 @@ pub unsafe extern "C" fn vtext_validate_utf16_with_errors(p: *const u16, n: usiz
 
 /// Copies `n` units to `out` with every unpaired surrogate replaced by
 /// U+FFFD. `out` may be the input itself, so this works on pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_to_well_formed_utf16(p: *const u16, n: usize, out: *mut u16) {
     let mut i = 0;
     while i < n {
@@ -288,7 +289,7 @@ pub unsafe extern "C" fn vtext_to_well_formed_utf16(p: *const u16, n: usize, out
 /// The UTF-8 length of the text with unpaired surrogates read as U+FFFD,
 /// through `count`. Returns SURROGATE when the text has any surrogate,
 /// paired or not, as simdutf does.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_utf8_length_from_utf16_with_replacement(
     p: *const u16,
     n: usize,
@@ -327,7 +328,7 @@ pub unsafe extern "C" fn vtext_utf8_length_from_utf16_with_replacement(
 
 /// UTF-32 to UTF-8; 0 if a unit is not a scalar value. `out` holds four
 /// bytes per unit.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_convert_utf32_to_utf8(p: *const u32, n: usize, out: *mut c_char) -> usize {
     let mut w = 0;
     for i in 0..n {
@@ -344,14 +345,14 @@ pub unsafe extern "C" fn vtext_convert_utf32_to_utf8(p: *const u32, n: usize, ou
 // Conversions
 // ---------------------------------------------------------------------------
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_convert_latin1_to_utf8(p: *const c_char, n: usize, out: *mut c_char) -> usize {
     let s = bytes(p, n);
     let m = conv::count_latin1_utf8(s);
     conv::latin1_to_utf8(s, bytes_mut(out, m))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_convert_latin1_to_utf8_safe(
     p: *const c_char,
     n: usize,
@@ -361,20 +362,20 @@ pub unsafe extern "C" fn vtext_convert_latin1_to_utf8_safe(
     conv::latin1_to_utf8_safe(bytes(p, n), bytes_mut(out, cap)).1
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_convert_latin1_to_utf16(p: *const c_char, n: usize, out: *mut u16) -> usize {
     conv::latin1_to_utf16(bytes(p, n), units_mut(out, n));
     n
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_convert_utf8_to_utf16(p: *const c_char, n: usize, out: *mut u16) -> usize {
     let s = bytes(p, n);
     let m = conv::count_utf8(s, false);
     conv::utf8_to_utf16(s, units_mut(out, m)).unwrap_or(0)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_convert_utf8_to_utf16_with_errors(
     p: *const c_char,
     n: usize,
@@ -396,14 +397,14 @@ pub unsafe extern "C" fn vtext_convert_utf8_to_utf16_with_errors(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_convert_utf16_to_utf8(p: *const u16, n: usize, out: *mut c_char) -> usize {
     let s = units(p, n);
     let m = conv::count_utf16(s);
     conv::utf16_to_utf8(s, bytes_mut(out, m)).unwrap_or(0)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_convert_utf16_to_latin1(p: *const u16, n: usize, out: *mut c_char) -> usize {
     if conv::utf16_to_latin1(units(p, n), bytes_mut(out, n)) {
         n
@@ -412,7 +413,7 @@ pub unsafe extern "C" fn vtext_convert_utf16_to_latin1(p: *const u16, n: usize, 
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_convert_utf8_to_latin1_with_errors(
     p: *const c_char,
     n: usize,
@@ -479,13 +480,13 @@ fn config(options: u64) -> Config {
     Config { url, pad }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vtext_base64_length_from_binary(n: usize, options: u64) -> usize {
     assert!(n <= usize::MAX / 2);
     enc_len(n, config(options).pad)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_binary_to_base64(p: *const c_char, n: usize, out: *mut c_char, options: u64) -> usize {
     let cfg = config(options);
     let m = enc_len(n, cfg.pad);
@@ -493,7 +494,7 @@ pub unsafe extern "C" fn vtext_binary_to_base64(p: *const c_char, n: usize, out:
     m
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_maximal_binary_length_from_base64(p: *const c_char, n: usize) -> usize {
     max_len_exec(bytes(p, n))
 }
@@ -504,7 +505,7 @@ fn narrow(s: &[u16]) -> Vec<u8> {
     s.iter().map(|&u| if u > 0xFF { 0xFF } else { u as u8 }).collect()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_maximal_binary_length_from_base64_utf16(p: *const u16, n: usize) -> usize {
     let s = units(p, n);
     // As for bytes: the decoded size of what precedes the `=` it ends with.
@@ -689,7 +690,7 @@ unsafe fn b64_decode(s: &[u8], out: *mut c_char, options: u64, last: u64, count:
 }
 
 /// `last` is a simdutf::last_chunk_handling_options value.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_base64_to_binary(
     p: *const c_char,
     n: usize,
@@ -701,7 +702,7 @@ pub unsafe extern "C" fn vtext_base64_to_binary(
     b64_decode(bytes(p, n), out, options, last, count)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_base64_to_binary_utf16(
     p: *const u16,
     n: usize,
@@ -742,7 +743,7 @@ unsafe fn b64_decode_safe(
 
 /// `count` receives the number of input units read, on success too.
 /// `up_to_bad_char` is simdutf's `decode_up_to_bad_char`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_base64_to_binary_safe(
     p: *const c_char,
     n: usize,
@@ -756,7 +757,7 @@ pub unsafe extern "C" fn vtext_base64_to_binary_safe(
     b64_decode_safe(bytes(p, n), out, outlen, options, last, up_to_bad_char, count)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vtext_base64_to_binary_safe_utf16(
     p: *const u16,
     n: usize,

@@ -1,7 +1,7 @@
 [package]
 name = "vxml-bench"
 version = "0.0.0"
-edition = "2021"
+edition = "2024"
 publish = false
 
 # A separate project: the comparison parsers are not dependencies of the

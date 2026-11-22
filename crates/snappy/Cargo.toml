@@ -3,7 +3,7 @@ name = "verilith-snappy"
 version = "0.1.0"
 license = "MIT"
 description = "A formally verified (Verus) Snappy compressor and decompressor with the snappy-c API"
-edition = "2021"
+edition = "2024"
 repository = "https://github.com/verilith/verilith"
 
 [lib]

@@ -3,7 +3,7 @@
 //! same C code (`harness/counters.c`) as the C runners.
 use std::io::{BufRead, Write};
 
-extern "C" {
+unsafe extern "C" {
     fn vb_counters_init() -> i32;
     fn vb_now_ns() -> u64;
     fn vb_counters_read(ins: *mut i64, cyc: *mut i64);

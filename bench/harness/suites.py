@@ -74,10 +74,10 @@ COMPARISONS = [
          note="expat calls back for each item as it parses; vxml parses the whole document into a tape, then "
               "the walk reads it through the API, which normalizes attribute values that need it and supplies "
               "DTD defaults. Both check the whole document.",
-         ours=("vxml (Rust API)", ["xml-vxml", "read"]), rival=("expat 2.7.3", ["xml-expat", "read"])),
+         ours=("vxml (Rust API)", ["xml-vxml", "read"]), rival=("expat 2.10.0", ["xml-expat", "read"])),
     dict(id="xml-expat-check", suite="xml", data="xml", same_output=True, api="native",
          task="decide whether a document is well-formed (expat with no handlers; vxml's verified check into a reused tape)",
-         ours=("vxml (Rust API)", ["xml-vxml", "check"]), rival=("expat 2.7.3", ["xml-expat", "check"])),
+         ours=("vxml (Rust API)", ["xml-vxml", "check"]), rival=("expat 2.10.0", ["xml-expat", "check"])),
     # The same two jobs against libxml2's SAX2 API, with the same check values.
     dict(id="xml-libxml2-read", suite="xml", data="xml", same_output=False, check="check value", api="native",
          task="parse a document, visit every element, attribute (normalized value) and run of character data",

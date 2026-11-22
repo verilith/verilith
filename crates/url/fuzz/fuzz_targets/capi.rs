@@ -2,6 +2,7 @@
 //! calls on a few URL and URLSearchParams handles, reading every string it
 //! hands out, so ASan sees any bad pointer, length or double free.
 #![no_main]
+#![allow(unsafe_op_in_unsafe_fn)]
 use libfuzzer_sys::fuzz_target;
 use verilith_url::capi::*;
 

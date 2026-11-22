@@ -47,7 +47,7 @@ struct ZngStream {
     reserved: c_ulong,
 }
 
-extern "C" {
+unsafe extern "C" {
     fn zlibVersion() -> *const c_char;
     fn inflateInit2_(s: *mut ZStream, wbits: c_int, ver: *const c_char, size: c_int) -> c_int;
     fn inflateReset2(s: *mut ZStream, wbits: c_int) -> c_int;

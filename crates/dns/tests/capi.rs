@@ -2,6 +2,7 @@
 //! same verdict and the same questions and records for every packet.
 #![cfg(feature = "capi")]
 #![allow(dead_code)]
+#![allow(unsafe_op_in_unsafe_fn)]
 mod common;
 use common::packets::*;
 use common::*;

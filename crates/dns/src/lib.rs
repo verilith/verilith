@@ -55,7 +55,7 @@ mod c_runtime {
     use core::alloc::{GlobalAlloc, Layout};
     use core::ffi::c_void;
 
-    extern "C" {
+    unsafe extern "C" {
         fn abort() -> !;
         fn ares_malloc(size: usize) -> *mut c_void;
         fn ares_realloc(p: *mut c_void, size: usize) -> *mut c_void;
@@ -79,16 +79,16 @@ mod c_runtime {
             if l.align() > MAX_ALIGN {
                 return core::ptr::null_mut();
             }
-            ares_malloc(l.size()) as *mut u8
+            unsafe { ares_malloc(l.size()) as *mut u8 }
         }
         unsafe fn dealloc(&self, p: *mut u8, _: Layout) {
-            ares_free(p as *mut c_void)
+            unsafe { ares_free(p as *mut c_void) }
         }
         unsafe fn realloc(&self, p: *mut u8, l: Layout, new_size: usize) -> *mut u8 {
             if l.align() > MAX_ALIGN {
                 return core::ptr::null_mut();
             }
-            ares_realloc(p as *mut c_void, new_size) as *mut u8
+            unsafe { ares_realloc(p as *mut c_void, new_size) as *mut u8 }
         }
     }
 

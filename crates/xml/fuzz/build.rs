@@ -21,7 +21,13 @@ fn main() {
         b.flag("-fsanitize=address");
     }
     b
-        .files(["xmlparse.c", "xmltok.c", "xmlrole.c"].iter().map(|f| lib.join(f)))
+        // 2.10 moved the string helpers and the entropy sources out of
+        // xmlparse.c; the config above uses getrandom and /dev/urandom.
+        .files(
+            ["xmlparse.c", "xmltok.c", "xmlrole.c", "xcs.c", "random_getrandom.c", "random_dev_urandom.c"]
+                .iter()
+                .map(|f| lib.join(f)),
+        )
         .file(root.join("src/expat_canon.c"))
         .include(&out)
         .include(&lib)

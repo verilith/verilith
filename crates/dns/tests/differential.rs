@@ -9,7 +9,7 @@ use std::os::raw::{c_char, c_int, c_long, c_uchar};
 use verilith_dns::capi::vdns_expand_name;
 
 #[link(name = "cares", kind = "static")]
-extern "C" {
+unsafe extern "C" {
     fn ares_expand_name(
         encoded: *const c_uchar,
         abuf: *const c_uchar,

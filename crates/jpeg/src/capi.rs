@@ -1,5 +1,6 @@
 //! The C API. This file is not verified: it is glue between C pointers
 //! and the verified decoder.
+#![allow(unsafe_op_in_unsafe_fn)]
 use crate::decode::{decode, Picture};
 use crate::types::Error;
 
@@ -12,7 +13,7 @@ use crate::types::Error;
 /// # Safety
 /// `data` must point to `len` readable bytes, and `w`, `h` and `nc` to
 /// writable `u32`s.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjpeg_decode(data: *const u8, len: usize, w: *mut u32, h: *mut u32, nc: *mut u32) -> *mut u8 {
     let input: &[u8] = if len == 0 { &[] } else { core::slice::from_raw_parts(data, len) };
     match decode(input) {
@@ -38,7 +39,7 @@ pub unsafe extern "C" fn vjpeg_decode(data: *const u8, len: usize, w: *mut u32, 
 ///
 /// # Safety
 /// `p` must come from `vjpeg_decode` and `len` be its `w * h * nc`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vjpeg_free(p: *mut u8, len: usize) {
     if !p.is_null() {
         drop(Box::from_raw(core::ptr::slice_from_raw_parts_mut(p, len)));

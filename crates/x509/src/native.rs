@@ -12,6 +12,7 @@
 //! is made by the verified parser.
 #![allow(non_camel_case_types)]
 #![allow(clippy::missing_safety_doc)]
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use crate::api::OidDisplay;
 use crate::cert::{Certificate, Tbs};
@@ -139,7 +140,7 @@ fn kind_code(k: ErrorKind) -> c_int {
 /// # Safety
 /// `der` points to `len` readable bytes; `out` and `err_offset` are null
 /// or valid for writes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_cert_parse(
     der: *const u8,
     len: usize,
@@ -198,7 +199,7 @@ unsafe fn reject(b: &[u8], err_offset: *mut usize) -> c_int {
 ///
 /// # Safety
 /// `t` is null or points to a `vx509_time`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_time_unix(t: *const vx509_time) -> i64 {
     if t.is_null() {
         return 0;
@@ -237,7 +238,7 @@ macro_rules! step {
 ///
 /// The next RelativeDistinguishedName of a Name (`cert.issuer`,
 /// `cert.subject`, or a directoryName).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_rdn_next(name: *mut vx509_span, rdn: *mut vx509_span) -> bool {
     step!(name, |raw| RdnIter::new(&Name { raw }), rdn, |r: Rdn| span(r.raw))
 }
@@ -249,7 +250,7 @@ pub struct vx509_atv {
 }
 
 /// The next attribute of an RDN.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_atv_next(rdn: *mut vx509_span, out: *mut vx509_atv) -> bool {
     step!(rdn, |raw| AtvIter::new(&Rdn { raw }), out, |a: crate::x509::Atv| vx509_atv {
         oid: span(a.oid),
@@ -270,7 +271,7 @@ fn ext(e: crate::ext::Extension) -> vx509_ext {
 }
 
 /// The next extension of `cert.extensions`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_ext_next(exts: *mut vx509_span, out: *mut vx509_ext) -> bool {
     step!(exts, ExtensionIter::new, out, ext)
 }
@@ -311,25 +312,25 @@ fn general_name(g: GeneralName) -> vx509_general_name {
 
 /// The next name of a GeneralNames list (from `vx509_get_subject_alt_names`,
 /// `vx509_get_issuer_alt_names`, or an authority key identifier's issuer).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_general_name_next(names: *mut vx509_span, out: *mut vx509_general_name) -> bool {
     step!(names, GeneralNameIter::new, out, general_name)
 }
 
 /// The next base name of a name constraints subtree list.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_subtree_next(subtrees: *mut vx509_span, out: *mut vx509_general_name) -> bool {
     step!(subtrees, SubtreeIter::new, out, general_name)
 }
 
 /// The next OID of an extended key usage list.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_oid_next(oids: *mut vx509_span, oid: *mut vx509_span) -> bool {
     step!(oids, OidIter::new, oid, span)
 }
 
 /// The next policy identifier of a certificate policies list.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_policy_next(policies: *mut vx509_span, oid: *mut vx509_span) -> bool {
     step!(policies, PolicyIter::new, oid, span)
 }
@@ -376,7 +377,7 @@ unsafe fn put<T>(v: Option<T>, out: *mut T) -> bool {
 }
 
 /// The extension with this OID (contents octets), if present.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_ext_find(
     cert: *const vx509_cert,
     oid: *const u8,
@@ -397,7 +398,7 @@ pub struct vx509_basic_constraints {
     pub has_path_len: bool,
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_get_basic_constraints(cert: *const vx509_cert, out: *mut vx509_basic_constraints) -> bool {
     let b = with_exts(cert).and_then(|c| c.basic_constraints());
     put(
@@ -411,36 +412,36 @@ pub unsafe extern "C" fn vx509_get_basic_constraints(cert: *const vx509_cert, ou
 }
 
 /// The key usage bits (`VX509_KU_*`).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_get_key_usage(cert: *const vx509_cert, bits: *mut u16) -> bool {
     put(with_exts(cert).and_then(|c| c.key_usage()), bits)
 }
 
 /// The extended key usage OIDs, for `vx509_oid_next`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_get_ext_key_usage(cert: *const vx509_cert, oids: *mut vx509_span) -> bool {
     put(with_exts(cert).and_then(|c| c.ext_key_usage()).map(|i| span(i.rest)), oids)
 }
 
 /// The certificate policies, for `vx509_policy_next`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_get_certificate_policies(cert: *const vx509_cert, policies: *mut vx509_span) -> bool {
     put(with_exts(cert).and_then(|c| c.certificate_policies()).map(|i| span(i.rest)), policies)
 }
 
 /// The subject alternative names, for `vx509_general_name_next`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_get_subject_alt_names(cert: *const vx509_cert, names: *mut vx509_span) -> bool {
     put(with_exts(cert).and_then(|c| c.subject_alt_names()).map(|i| span(i.rest)), names)
 }
 
 /// The issuer alternative names, for `vx509_general_name_next`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_get_issuer_alt_names(cert: *const vx509_cert, names: *mut vx509_span) -> bool {
     put(with_exts(cert).and_then(|c| c.issuer_alt_names()).map(|i| span(i.rest)), names)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_get_subject_key_id(cert: *const vx509_cert, id: *mut vx509_span) -> bool {
     put(with_exts(cert).and_then(|c| c.subject_key_id()).map(span), id)
 }
@@ -454,7 +455,7 @@ pub struct vx509_authority_key_id {
     pub serial: vx509_span,
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_get_authority_key_id(cert: *const vx509_cert, out: *mut vx509_authority_key_id) -> bool {
     let a = with_exts(cert).and_then(|c| c.authority_key_id());
     put(a.map(|a| vx509_authority_key_id { key_id: opt(a.key_id), issuer: opt(a.issuer), serial: opt(a.serial) }), out)
@@ -468,7 +469,7 @@ pub struct vx509_name_constraints {
     pub excluded: vx509_span,
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_get_name_constraints(cert: *const vx509_cert, out: *mut vx509_name_constraints) -> bool {
     let n = with_exts(cert).and_then(|c| c.name_constraints());
     put(n.map(|n| vx509_name_constraints { permitted: opt(n.permitted), excluded: opt(n.excluded) }), out)
@@ -501,7 +502,7 @@ impl Write for Buf {
 /// # Safety
 /// `oid` points to `oid_len` readable bytes and `buf` to `cap` writable
 /// ones.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vx509_oid_text(oid: *const u8, oid_len: usize, buf: *mut c_char, cap: usize) -> usize {
     if oid.is_null() && oid_len != 0 {
         return 0;

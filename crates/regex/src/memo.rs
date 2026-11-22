@@ -841,7 +841,7 @@ pub fn sadd(
     pc0: u32,
     src: u32,
     mark: &mut Vec<u64>,
-    gen: u64,
+    gen_no: u64,
     stack: &mut Vec<SFrame>,
     acts: &mut Vec<Act>,
     fuel: &mut u64, it: &mut Ghost<int>,
@@ -853,19 +853,19 @@ pub fn sadd(
         pc0 < prog.insts@.len(),
         old(mark)@.len() == prog.insts@.len(),
         old(stack)@.len() == 0,
-        marks(old(mark)@, gen, seen),
+        marks(old(mark)@, gen_no, seen),
         forall|v: int| seen.contains(v) ==> 0 <= v < prog.insts@.len(),
     ensures
         final(mark)@.len() == old(mark)@.len(),
         final(stack)@.len() == 0,
         *final(fuel) <= *old(fuel),
         0 <= final(it)@ - old(it)@ <= *old(fuel) - *final(fuel),
-        forall|k: int| 0 <= k < old(mark)@.len() ==> final(mark)@[k] == old(mark)@[k] || final(mark)@[k] == gen,
+        forall|k: int| 0 <= k < old(mark)@.len() ==> final(mark)@[k] == old(mark)@[k] || final(mark)@[k] == gen_no,
         r.0 ==> ({
             let e = secd(prog.sp(), b, la as int, pc0 as int, 0, seen);
             &&& avs(final(acts)@) == avs(old(acts)@) + tag(e.0, srcv(src))
             &&& r.1@ == e.1
-            &&& marks(final(mark)@, gen, r.1@)
+            &&& marks(final(mark)@, gen_no, r.1@)
             &&& forall|v: int| r.1@.contains(v) ==> 0 <= v < prog.insts@.len()
         }),
 {
@@ -896,9 +896,9 @@ pub fn sadd(
             si == srcv(src),
             mark@.len() == n,
             old(mark)@.len() == n,
-            marks(mark@, gen, sn),
+            marks(mark@, gen_no, sn),
             forall|v: int| sn.contains(v) ==> 0 <= v < n,
-            forall|k: int| 0 <= k < n ==> mark@[k] == old(mark)@[k] || mark@[k] == gen,
+            forall|k: int| 0 <= k < n ==> mark@[k] == old(mark)@[k] || mark@[k] == gen_no,
             forall|k: int|
                 0 <= k < stack@.len() ==> match #[trigger] stack@[k] {
                     SFrame::Explore(pc) => pc < n,
@@ -937,14 +937,14 @@ pub fn sadd(
                 proof {
                     lemma_swk_ex(sp, b, lai, rest, pc as int, m, sn);
                 }
-                if mark[pc as usize] == gen {
+                if mark[pc as usize] == gen_no {
                     assert(sn.contains(pc as int));
                     let ghost w2 = swk(sp, b, lai, rest, m, sn);
                     assert(Seq::<SE>::empty() + w2.0 =~= w2.0);
                 } else {
                     assert(!sn.contains(pc as int));
                     let ghost sn0 = sn;
-                    mark.set(pc as usize, gen);
+                    mark.set(pc as usize, gen_no);
                     proof {
                         sn = sn0.insert(pc as int);
                         assert(fwd_at(sp, pc as int));
@@ -1112,7 +1112,7 @@ pub fn sbuild(
     b: u8,
     la: u8,
     mark: &mut Vec<u64>,
-    gen: u64,
+    gen_no: u64,
     stack: &mut Vec<SFrame>,
     acts: &mut Vec<Act>,
     fuel: &mut u64, it: &mut Ghost<int>,
@@ -1124,13 +1124,13 @@ pub fn sbuild(
         old(mark)@.len() == prog.insts@.len(),
         old(stack)@.len() == 0,
         old(acts)@.len() == 0,
-        marks(old(mark)@, gen, Set::<int>::empty()),
+        marks(old(mark)@, gen_no, Set::<int>::empty()),
     ensures
         final(mark)@.len() == old(mark)@.len(),
         final(stack)@.len() == 0,
         *final(fuel) <= *old(fuel),
         0 <= final(it)@ - old(it)@ <= *old(fuel) - *final(fuel),
-        forall|k: int| 0 <= k < old(mark)@.len() ==> final(mark)@[k] == old(mark)@[k] || final(mark)@[k] == gen,
+        forall|k: int| 0 <= k < old(mark)@.len() ==> final(mark)@[k] == old(mark)@[k] || final(mark)@[k] == gen_no,
         r.0 ==> ({
             let f = sfull(prog.sp(), prog.start as int, b, la as int, pcsv(pcs@), matched);
             &&& avs(final(acts)@) == f.0
@@ -1163,9 +1163,9 @@ pub fn sbuild(
             mark@.len() == np,
             old(mark)@.len() == np,
             stack@.len() == 0,
-            marks(mark@, gen, seen),
+            marks(mark@, gen_no, seen),
             forall|v: int| seen.contains(v) ==> 0 <= v < np,
-            forall|j: int| 0 <= j < np ==> mark@[j] == old(mark)@[j] || mark@[j] == gen,
+            forall|j: int| 0 <= j < np ==> mark@[j] == old(mark)@[j] || mark@[j] == gen_no,
             *fuel <= *old(fuel),
             0 <= it@ - old(it)@ <= *old(fuel) - *fuel,
             cut == NOCUT ==> goal == sstep(sp, b, lai, pv, k as int, avs(acts@), seen),
@@ -1196,7 +1196,7 @@ pub fn sbuild(
                     if inc {
                         assert(fwd_at(sp, pc as int));
                         let ghost a0 = avs(acts@);
-                        let (ok, gs) = sadd(prog, b, la, next, k as u32, mark, gen, stack, acts, fuel, it, Ghost(seen));
+                        let (ok, gs) = sadd(prog, b, la, next, k as u32, mark, gen_no, stack, acts, fuel, it, Ghost(seen));
                         if !ok {
                             return (false, NOCUT);
                         }
@@ -1214,7 +1214,7 @@ pub fn sbuild(
         }
     }
     if !matched && cut == NOCUT {
-        let (ok, gs) = sadd(prog, b, la, prog.start as u32, NOSRC, mark, gen, stack, acts, fuel, it, Ghost(seen));
+        let (ok, gs) = sadd(prog, b, la, prog.start as u32, NOSRC, mark, gen_no, stack, acts, fuel, it, Ghost(seen));
         if !ok {
             return (false, NOCUT);
         }
@@ -1341,7 +1341,7 @@ pub struct Memo {
     pub ents: Vec<Ent>,
     pub nacts: usize,
     pub mark: Vec<u64>,
-    pub gen: u64,
+    pub gen_no: u64,
     pub stack: Vec<SFrame>,
 }
 
@@ -1389,7 +1389,7 @@ pub open spec fn slot_ok(p: Seq<SInst>, st: int, states: Seq<MState>, ents: Seq<
 impl Memo {
     pub open spec fn wf(&self, prog: &Prog) -> bool {
         &&& self.mark@.len() == prog.insts@.len()
-        &&& forall|k: int| 0 <= k < self.mark@.len() ==> #[trigger] self.mark@[k] <= self.gen
+        &&& forall|k: int| 0 <= k < self.mark@.len() ==> #[trigger] self.mark@[k] <= self.gen_no
         &&& self.stack@.len() == 0
         &&& (self.on ==> prog.nslots <= 64)
         &&& self.states@.len() <= MEMO_STATES
@@ -1466,7 +1466,7 @@ impl Memo {
             ents: Vec::new(),
             nacts: 0,
             mark: mark,
-            gen: 0,
+            gen_no: 0,
             stack: Vec::new(),
         }
     }
@@ -1601,7 +1601,7 @@ fn add_state(prog: &Prog, memo: &mut Memo, pcs: Vec<u32>, matched: bool, fuel: &
             memo.on == old(memo).on,
             memo.nacts == old(memo).nacts,
             memo.mark == old(memo).mark,
-            memo.gen == old(memo).gen,
+            memo.gen_no == old(memo).gen_no,
             memo.stack == old(memo).stack,
         decreases 512 - k,
     {
@@ -1951,11 +1951,11 @@ fn build_ent(prog: &Prog, memo: &mut Memo, sid: usize, la: u8, b: u8, fuel: &mut
         return MNO;
     }
     *fuel -= np as u64;
-    let (g, bc) = bump(&mut memo.mark, memo.gen);
+    let (g, bc) = bump(&mut memo.mark, memo.gen_no);
     proof {
         *it.borrow_mut() = it@ + bc@;
     }
-    memo.gen = g;
+    memo.gen_no = g;
     let matched = memo.states[sid].matched;
     let mut acts: Vec<Act> = Vec::new();
     let ghost pcs0 = memo.states@[sid as int].pcs@;

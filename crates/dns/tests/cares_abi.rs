@@ -15,7 +15,7 @@ use verilith_dns::cares::vdns_ares_dns_parse;
 use verilith_dns::Section;
 
 #[link(name = "cares", kind = "static")]
-extern "C" {
+unsafe extern "C" {
     fn ares_dns_parse(buf: *const c_uchar, len: usize, flags: c_uint, rec: *mut *mut c_void) -> c_int;
     fn ares_dns_write(rec: *const c_void, buf: *mut *mut c_uchar, len: *mut usize) -> c_int;
     fn ares_dns_record_destroy(rec: *mut c_void);

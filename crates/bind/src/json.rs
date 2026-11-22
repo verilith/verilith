@@ -5,6 +5,7 @@
 //! tokens, decoded strings and raw spans it hands out stay valid until the
 //! next parse into it or until it is freed. The input is borrowed, not
 //! copied, and must outlive the parse's results.
+#![allow(unsafe_op_in_unsafe_fn)]
 use core::ptr;
 use verilith_json::parser::{ex_decode, Kind};
 use verilith_json::{ErrorKind, Parser};
@@ -132,7 +133,7 @@ fn is_blank(s: &[u8]) -> bool {
     s.iter().all(|c| matches!(c, b' ' | b'\t' | b'\n' | b'\r'))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vbind_json_doc_new() -> *mut Doc {
     Box::into_raw(Box::new(Doc {
         parser: Parser::lazy(),
@@ -144,7 +145,7 @@ pub extern "C" fn vbind_json_doc_new() -> *mut Doc {
     }))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vbind_json_doc_free(d: *mut Doc) {
     if !d.is_null() {
         drop(Box::from_raw(d));
@@ -154,7 +155,7 @@ pub unsafe extern "C" fn vbind_json_doc_free(d: *mut Doc) {
 /// Parses `input` with the verified parser into `d`, replacing what `d`
 /// held. Returns `OK` or one of the `E_*` codes, with the error's byte
 /// offset in `*err_offset`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vbind_json_doc_parse(d: *mut Doc, input: *const u8, length: usize, err_offset: *mut usize) -> i32 {
     let Some(d) = doc(d) else { return E_UNEXPECTED_END };
     d.toks.clear();
@@ -188,7 +189,7 @@ pub unsafe extern "C" fn vbind_json_doc_parse(d: *mut Doc, input: *const u8, len
 }
 
 /// The tokens of the last successful parse.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vbind_json_doc_tokens(d: *const Doc, n: *mut usize) -> *const Tok {
     match d.as_ref() {
         Some(d) => {
@@ -203,7 +204,7 @@ pub unsafe extern "C" fn vbind_json_doc_tokens(d: *const Doc, n: *mut usize) -> 
 }
 
 /// The decoded bytes of string or key token `i`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vbind_json_doc_string(d: *mut Doc, i: usize, p: *mut *const u8, n: *mut usize) -> i32 {
     let Some(d) = doc(d) else { return GET_WRONG_TYPE };
     let Some(t) = d.tok(i) else { return GET_WRONG_TYPE };
@@ -228,7 +229,7 @@ pub unsafe extern "C" fn vbind_json_doc_string(d: *mut Doc, i: usize, p: *mut *c
 /// The source text of value `i`: a whole array or object, a string with
 /// its quotes, a number or a literal, followed (as in simdjson) by any
 /// whitespace up to the next token.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vbind_json_doc_raw(d: *mut Doc, i: usize, p: *mut *const u8, n: *mut usize) -> i32 {
     let Some(d) = doc(d) else { return GET_WRONG_TYPE };
     let Some(t) = d.tok(i) else { return GET_WRONG_TYPE };
@@ -262,7 +263,7 @@ fn is_integer(lex: &[u8]) -> bool {
 }
 
 /// Number token `i` as the nearest `f64`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vbind_json_doc_f64(d: *mut Doc, i: usize, v: *mut f64) -> i32 {
     let Some(d) = doc(d) else { return GET_WRONG_TYPE };
     match number(d, i) {
@@ -275,7 +276,7 @@ pub unsafe extern "C" fn vbind_json_doc_f64(d: *mut Doc, i: usize, v: *mut f64) 
 }
 
 /// Number token `i` as an `i64`, if it is an integer that fits.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vbind_json_doc_i64(d: *mut Doc, i: usize, v: *mut i64) -> i32 {
     let Some(d) = doc(d) else { return GET_WRONG_TYPE };
     match number(d, i) {
@@ -292,7 +293,7 @@ pub unsafe extern "C" fn vbind_json_doc_i64(d: *mut Doc, i: usize, v: *mut i64) 
 }
 
 /// Number token `i` as a `u64`, if it is a non-negative integer that fits.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vbind_json_doc_u64(d: *mut Doc, i: usize, v: *mut u64) -> i32 {
     let Some(d) = doc(d) else { return GET_WRONG_TYPE };
     match number(d, i) {

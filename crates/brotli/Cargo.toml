@@ -3,7 +3,7 @@ name = "verilith-brotli"
 version = "0.1.0"
 license = "MIT"
 description = "A formally verified (Verus) Brotli (RFC 7932) decompressor with google/brotli's decoder C API"
-edition = "2021"
+edition = "2024"
 repository = "https://github.com/verilith/verilith"
 
 [lib]

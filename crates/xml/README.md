@@ -245,7 +245,7 @@ case found by fuzzing:
   written in James Clark's canonical form is the expected output, byte for
   byte (`tests/canonical.rs`): references and entities expanded, attribute
   values normalized, defaults supplied, line ends normalized.
-* **Differential testing against expat 2.7.3** (`fuzz/`, expat built from
+* **Differential testing against expat 2.10.0** (`fuzz/`, expat built from
   source): the verdict on each document, and when both accept it, the
   canonical form of what each reads (expat's SAX events against
   verilith-xml's API), on the suite's files, Silesia's XML and the Rust
@@ -276,7 +276,7 @@ Measured with the repository's [vbench](../../bench) harness
 (`bench/run.sh --only xml`) on a cloud VM (Intel Xeon @ 2.10GHz, 4 cores,
 x86-64 with AVX-512; Linux; gcc 13.3 at `-O3` and rustc 1.97 with fat LTO,
 neither with `-march` or `-C target-cpu`), 2026-11-22: 31 interleaved pairs
-per case, expat 2.7.3 and libxml2 2.15.4 built from source by the harness
+per case, expat 2.10.0 and libxml2 2.15.4 built from source by the harness
 with the same flags. Speedup is the other parser's time over
 verilith-xml's, with its 95% confidence interval. The inputs are six of
 Silesia's XML files and the seven files of roxmltree's benchmarks, pinned by

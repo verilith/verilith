@@ -4,7 +4,7 @@
 //! DECODER: vpng, libpng, spng, png, zune
 use std::time::Instant;
 
-extern "C" {
+unsafe extern "C" {
     fn libpng_decode(data: *const u8, len: usize, rgba: i32, out: *mut *mut u8) -> usize;
     fn spng_decode(data: *const u8, len: usize, rgba: i32, out: *mut *mut u8) -> usize;
     fn free(p: *mut u8);

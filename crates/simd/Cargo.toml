@@ -3,7 +3,7 @@ name = "verilith-simd"
 version = "0.1.0"
 license = "MIT"
 description = "Verus specifications for x86 SIMD intrinsics (SSE2..AVX2, some AVX-512), differentially tested against the CPU"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 vstd = { workspace = true, features = ["std"] }

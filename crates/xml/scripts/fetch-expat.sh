@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 UP=${UPSTREAM:-$PWD/target/upstream}
-EXPAT_REV=2120251ef8e5fd5f398063b6508be27796689bd9   # R_2_7_3
+EXPAT_REV=a70841d9ffa64ddde29ab824ed6305035ebe4c47   # R_2_10_0
 d=$UP/libexpat
 if [ ! -d "$d/.git" ]; then
   git init -q "$d"

@@ -1,7 +1,8 @@
 #![allow(dead_code)]
+#![allow(unsafe_op_in_unsafe_fn)]
 use std::ffi::{c_char, c_int, c_void, CString};
 
-extern "C" {
+unsafe extern "C" {
     fn dlopen(name: *const c_char, flags: c_int) -> *mut c_void;
     fn dlsym(h: *mut c_void, name: *const c_char) -> *mut c_void;
 }

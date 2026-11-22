@@ -3,7 +3,7 @@
 //! elements, attributes with the DTD's defaults, character data, PIs).
 use verilith_xml::{Child, Document, Element};
 
-extern "C" {
+unsafe extern "C" {
     fn expat_canon(p: *const u8, n: usize, out: *mut *mut u8, outn: *mut usize, code: *mut i32) -> i32;
     fn expat_error(code: i32) -> *const std::os::raw::c_char;
     fn free(p: *mut u8);

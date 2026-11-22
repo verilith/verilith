@@ -4,10 +4,11 @@
 //! writer succeeds too, c-ares reads the two messages as the same record
 //! (SVCB and HTTPS aside, whose keys vdns sorts as RFC 9460 §2.2 requires).
 #![no_main]
+#![allow(unsafe_op_in_unsafe_fn)]
 use libfuzzer_sys::fuzz_target;
 use std::os::raw::{c_int, c_uchar, c_uint, c_void};
 
-extern "C" {
+unsafe extern "C" {
     fn ares_dns_parse(buf: *const c_uchar, len: usize, flags: c_uint, rec: *mut *mut c_void) -> c_int;
     fn ares_dns_write(rec: *const c_void, buf: *mut *mut c_uchar, len: *mut usize) -> c_int;
     fn ares_dns_record_destroy(rec: *mut c_void);

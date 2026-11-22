@@ -1,6 +1,6 @@
 //! Times inflating one PNG's image data with vzlib, fdeflate and zlib.
 use std::time::Instant;
-extern "C" {
+unsafe extern "C" {
     fn uncompress(dst: *mut u8, dlen: *mut u64, src: *const u8, slen: u64) -> i32;
 }
 fn main() {
