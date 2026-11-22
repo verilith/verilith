@@ -23,5 +23,6 @@ pub mod huf;
 pub mod seq;
 pub mod cpu;
 pub mod frame;
+pub mod dict;
 pub mod stream;
 pub mod capi;

@@ -7,12 +7,18 @@
 //! caller's buffers. This file only maps the C API onto those and their
 //! results onto libzstd's error codes.
 //!
+//! With a dictionary (`ZSTD_decompress_usingDict`, `..._usingDDict`,
+//! `ZSTD_DCtx_loadDictionary`, `refPrefix`, `refDDict`), one-shot calls run
+//! the proven `dict::DictDecoder::decompress`; streaming collects each
+//! frame whole and decodes it the same way.
+//!
 //! Symbols are exported as `vzstd_*`, or under libzstd's names with the
 //! `zstd-abi` feature. `zstd-abi` exports only the decompression side, so
 //! that libzstd's compressor can be linked alongside; `zstd-abi-common`
 //! adds the functions libzstd keeps in `common/` (`ZSTD_isError`,
 //! `ZSTD_getErrorName`, ...), for builds with no libzstd at all.
 #![allow(unsafe_op_in_unsafe_fn)]
+use crate::dict::{DictDecoder, DICT_LIMIT, DICT_MAX};
 use crate::frame::*;
 use crate::stream::{Fail, Stream};
 use core::ffi::{c_char, c_int, c_uint, c_ulonglong, c_void};
@@ -28,9 +34,11 @@ pub const ERR_FRAME_PARAMETER_UNSUPPORTED: usize = 14;
 pub const ERR_WINDOW_TOO_LARGE: usize = 16;
 pub const ERR_CORRUPTION: usize = 20;
 pub const ERR_CHECKSUM: usize = 22;
+pub const ERR_DICTIONARY_CORRUPTED: usize = 30;
 pub const ERR_DICTIONARY_WRONG: usize = 32;
 pub const ERR_PARAMETER_UNSUPPORTED: usize = 40;
 pub const ERR_PARAMETER_OUT_OF_BOUND: usize = 42;
+pub const ERR_STAGE_WRONG: usize = 60;
 pub const ERR_MEMORY: usize = 64;
 pub const ERR_DST_SIZE_TOO_SMALL: usize = 70;
 pub const ERR_SRC_SIZE_WRONG: usize = 72;
@@ -62,7 +70,9 @@ fn error_name(code: usize) -> &'static [u8] {
         ERR_WINDOW_TOO_LARGE => b"Frame requires too much memory for decoding\0",
         ERR_CORRUPTION => b"Data corruption detected\0",
         ERR_CHECKSUM => b"Restored data doesn't match checksum\0",
+        ERR_DICTIONARY_CORRUPTED => b"Dictionary is corrupted\0",
         ERR_DICTIONARY_WRONG => b"Dictionary mismatch\0",
+        ERR_STAGE_WRONG => b"Operation not authorized at current processing stage\0",
         ERR_PARAMETER_UNSUPPORTED => b"Unsupported parameter\0",
         ERR_PARAMETER_OUT_OF_BOUND => b"Parameter is out of bound\0",
         ERR_MEMORY => b"Allocation error : not enough memory\0",
@@ -257,24 +267,255 @@ fn decompress_into(dst: *mut c_void, cap: usize, src: &[u8]) -> usize {
     }
 }
 
+/// Why the proven decoder rejected `b` with a dictionary whose ID is `id`:
+/// a frame that names another dictionary, a layout error, or corruption.
+fn classify_dict(b: &[u8], dd: DictDecoder) -> (DictDecoder, usize) {
+    let id = dd.id() as u64;
+    let mut i = 0;
+    while i < b.len() {
+        let rest = &b[i..];
+        if !(rest.len() >= 4 && is_skippable(le32(rest, 0))) {
+            match read_header(rest) {
+                Err(e) => return (dd, e),
+                Ok(h) if h.dict_id != 0 && h.dict_id != id => return (dd, ERR_DICTIONARY_WRONG),
+                Ok(_) => {},
+            }
+        }
+        match frame_size(rest) {
+            Ok(n) => i += n,
+            Err(e) => return (dd, e),
+        }
+    }
+    // One frame with a checksum: is it only the checksum?
+    if let (Ok(h), Ok(n)) = (read_header(b), frame_size(b)) {
+        if h.checksum && n == b.len() {
+            let mut g = b[..b.len() - 4].to_vec();
+            g[4] &= !0x04;
+            let (dd, r) = dd.decompress(&g, DICT_LIMIT);
+            return (dd, if r.is_ok() { ERR_CHECKSUM } else { ERR_CORRUPTION });
+        }
+    }
+    (dd, ERR_CORRUPTION)
+}
+
+/// One-shot decompression of all frames of `src` into `dst`, with the
+/// dictionary `dd` for every frame.
+fn decompress_into_dict(dst: *mut c_void, cap: usize, src: &[u8], dd: DictDecoder) -> (DictDecoder, usize) {
+    if src.is_empty() {
+        return (dd, err(ERR_SRC_SIZE_WRONG));
+    }
+    let (dd, r) = dd.decompress(src, cap.min(DICT_LIMIT));
+    match r {
+        Ok(v) => {
+            if !v.is_empty() {
+                if dst.is_null() {
+                    return (dd, err(ERR_DST_BUFFER_NULL));
+                }
+                unsafe { core::ptr::copy_nonoverlapping(v.as_ptr(), dst as *mut u8, v.len()) };
+            }
+            (dd, v.len())
+        },
+        Err(Error::TooLarge) => (dd, err(ERR_DST_SIZE_TOO_SMALL)),
+        Err(Error::Corrupt) => {
+            let (dd, e) = classify_dict(src, dd);
+            (dd, err(e))
+        },
+    }
+}
+
+/// A dictionary from the caller's bytes, as `ZSTD_dct_auto` reads it.
+unsafe fn load(dict: *const c_void, n: usize) -> Result<Option<DictDecoder>, usize> {
+    if n == 0 || dict.is_null() {
+        return Ok(None);
+    }
+    if n >= DICT_MAX {
+        return Err(ERR_MEMORY);
+    }
+    match DictDecoder::load(slice(dict, n)) {
+        Some(d) => Ok(Some(d)),
+        None => Err(ERR_DICTIONARY_CORRUPTED),
+    }
+}
+
+/// `ZSTD_DDict`: a loaded dictionary, read-only once made. Each context
+/// that uses it keeps its own copy (`DictDecoder` keeps a buffer it writes
+/// to), made once and recognised again by `serial`.
+pub struct DDictH {
+    serial: u64,
+    d: DictDecoder,
+}
+
+static SERIAL: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
+
 // ---------------------------------------------------------------------------
 // Streaming
 // ---------------------------------------------------------------------------
+
+/// Streaming with a dictionary: the frame is collected whole, then
+/// decoded by the proven one-shot decoder, then handed out.
+#[derive(Default)]
+struct Collect {
+    active: bool,
+    /// The dictionary for this frame, taken from `DCtx::dict` (and put back
+    /// at the frame's end) or the prefix, used once.
+    dd: Option<DictDecoder>,
+    from_prefix: bool,
+    buf: Vec<u8>,
+    out: Vec<u8>,
+    decoded: bool,
+    given: usize,
+}
 
 /// `ZSTD_DCtx`, also used as `ZSTD_DStream`: the proven streaming decoder
 /// (`stream::Stream`) and the window limit set through the parameters.
 pub struct DCtx {
     s: Stream,
     wlog_max: u32,
+    /// The dictionary for every frame (`ZSTD_DCtx_loadDictionary`,
+    /// `ZSTD_DCtx_refDDict`).
+    dict: Option<DictDecoder>,
+    /// A prefix for the next decompression only (`ZSTD_DCtx_refPrefix`).
+    prefix: Option<DictDecoder>,
+    /// The copy of the last `ZSTD_DDict` used with this context, by serial.
+    cache: Option<(u64, DictDecoder)>,
+    /// No frame is under way in streaming.
+    at_start: bool,
+    col: Collect,
+    /// Streaming with a dictionary failed with this code; it stays failed
+    /// until reset, as the proven stream does.
+    failed: Option<usize>,
 }
 
 impl DCtx {
     fn new() -> DCtx {
-        DCtx { s: Stream::new((1 << WINDOWLOG_DEFAULT) + 1), wlog_max: WINDOWLOG_DEFAULT }
+        DCtx {
+            s: Stream::new((1 << WINDOWLOG_DEFAULT) + 1),
+            wlog_max: WINDOWLOG_DEFAULT,
+            dict: None,
+            prefix: None,
+            cache: None,
+            at_start: true,
+            col: Collect::default(),
+            failed: None,
+        }
     }
 
     fn reset_session(&mut self) {
         self.s.reset();
+        self.end_collect();
+        self.at_start = true;
+        self.failed = None;
+    }
+
+    /// The context's copy of `h`.
+    fn ddict(&mut self, h: &DDictH) -> DictDecoder {
+        match self.cache.take() {
+            Some((serial, d)) if serial == h.serial => d,
+            _ => h.d.copy(),
+        }
+    }
+
+    /// The end of a collected frame: the dictionary goes back, unless it was
+    /// a prefix.
+    fn end_collect(&mut self) {
+        let dd = self.col.dd.take();
+        if !self.col.from_prefix && self.col.active && self.dict.is_none() {
+            self.dict = dd;
+        }
+        self.col.active = false;
+        self.col.from_prefix = false;
+        self.col.buf.clear();
+        self.col.out.clear();
+        self.col.decoded = false;
+        self.col.given = 0;
+    }
+
+    /// Streaming with a dictionary (`Collect`).
+    fn stream_collect(&mut self, out: &mut [u8], opos: &mut usize, inp: &[u8], ipos: &mut usize) -> usize {
+        if let Some(e) = self.failed {
+            return err(e);
+        }
+        if !self.col.active {
+            self.col.active = true;
+            self.at_start = false;
+            match self.prefix.take() {
+                Some(p) => {
+                    self.col.dd = Some(p);
+                    self.col.from_prefix = true;
+                },
+                None => {
+                    self.col.dd = self.dict.take();
+                    self.col.from_prefix = false;
+                },
+            }
+        }
+        loop {
+            if self.col.decoded {
+                let give = (out.len() - *opos).min(self.col.out.len() - self.col.given);
+                out[*opos..*opos + give].copy_from_slice(&self.col.out[self.col.given..self.col.given + give]);
+                *opos += give;
+                self.col.given += give;
+                if self.col.given == self.col.out.len() {
+                    self.end_collect();
+                    self.at_start = true;
+                    return 0;
+                }
+                return self.col.out.len() - self.col.given;
+            }
+            let have = self.col.buf.len();
+            self.col.buf.extend_from_slice(&inp[*ipos..]);
+            match frame_size(&self.col.buf) {
+                Ok(n) => {
+                    *ipos += n - have;
+                    self.col.buf.truncate(n);
+                },
+                Err(ERR_SRC_SIZE_WRONG) => {
+                    *ipos = inp.len();
+                    if let Ok(h) = read_header(&self.col.buf) {
+                        if h.window > self.s.max_window {
+                            return self.fail(ERR_WINDOW_TOO_LARGE);
+                        }
+                    }
+                    return 1;
+                },
+                Err(e) => {
+                    *ipos += self.col.buf.len() - have;
+                    return self.fail(e);
+                },
+            }
+            if let Ok(h) = read_header(&self.col.buf) {
+                if h.window > self.s.max_window {
+                    return self.fail(ERR_WINDOW_TOO_LARGE);
+                }
+            }
+            let dd = self.col.dd.take().unwrap_or_else(|| DictDecoder::raw(&[]));
+            let buf = core::mem::take(&mut self.col.buf);
+            let (dd, r) = dd.decompress(&buf, DICT_LIMIT);
+            self.col.buf = buf;
+            match r {
+                Ok(v) => {
+                    self.col.dd = Some(dd);
+                    self.col.out = v;
+                    self.col.decoded = true;
+                    self.col.given = 0;
+                },
+                Err(Error::TooLarge) => {
+                    self.col.dd = Some(dd);
+                    return self.fail(ERR_MEMORY);
+                },
+                Err(Error::Corrupt) => {
+                    let (dd, e) = classify_dict(&self.col.buf, dd);
+                    self.col.dd = Some(dd);
+                    return self.fail(e);
+                },
+            }
+        }
+    }
+
+    fn fail(&mut self, e: usize) -> usize {
+        self.end_collect();
+        self.failed = Some(e);
+        err(e)
     }
 
     fn set_max_window(&mut self, w: u64) {
@@ -284,6 +525,15 @@ impl DCtx {
     /// The streaming step: 0 at the end of a frame (all output handed
     /// out), an error code, or a hint of the input still wanted.
     fn stream(&mut self, out: &mut [u8], opos: &mut usize, inp: &[u8], ipos: &mut usize) -> usize {
+        if self.failed.is_some() || self.col.active || (self.at_start && (self.prefix.is_some() || self.dict.is_some())) {
+            return self.stream_collect(out, opos, inp, ipos);
+        }
+        let r = self.stream_plain(out, opos, inp, ipos);
+        self.at_start = r == 0;
+        r
+    }
+
+    fn stream_plain(&mut self, out: &mut [u8], opos: &mut usize, inp: &[u8], ipos: &mut usize) -> usize {
         match self.s.stream(out, opos, inp, ipos) {
             Ok(n) => n,
             Err(f) => err(match f {
@@ -347,8 +597,22 @@ export! {"ZSTD_decompress", "vzstd_decompress",
 export! {"ZSTD_decompressDCtx", "vzstd_decompressDCtx",
     /// # Safety
     /// As `ZSTD_decompress`; `dctx` must come from `ZSTD_createDCtx`.
-    fn zstd_decompress_dctx(_dctx: *mut DCtx, dst: *mut c_void, cap: usize, src: *const c_void, n: usize) -> usize {
-        decompress_into(dst, cap, slice(src, n))
+    fn zstd_decompress_dctx(dctx: *mut DCtx, dst: *mut c_void, cap: usize, src: *const c_void, n: usize) -> usize {
+        let Some(d) = dctx.as_mut() else {
+            return decompress_into(dst, cap, slice(src, n));
+        };
+        // A prefix is used for this call only; a loaded dictionary stays.
+        if let Some(p) = d.prefix.take() {
+            return decompress_into_dict(dst, cap, slice(src, n), p).1;
+        }
+        match d.dict.take() {
+            Some(dd) => {
+                let (dd, r) = decompress_into_dict(dst, cap, slice(src, n), dd);
+                d.dict = Some(dd);
+                r
+            },
+            None => decompress_into(dst, cap, slice(src, n)),
+        }
     }
 }
 
@@ -533,6 +797,8 @@ export! {"ZSTD_DCtx_reset", "vzstd_DCtx_reset",
             RESET_SESSION => d.reset_session(),
             RESET_PARAMETERS | RESET_BOTH => {
                 d.reset_session();
+                d.dict = None;
+                d.prefix = None;
                 d.wlog_max = WINDOWLOG_DEFAULT;
                 d.set_max_window((1 << WINDOWLOG_DEFAULT) + 1);
             },
@@ -625,18 +891,186 @@ export! {"ZSTD_DCtx_setMaxWindowSize", "vzstd_DCtx_setMaxWindowSize",
 
 export! {"ZSTD_DCtx_loadDictionary", "vzstd_DCtx_loadDictionary",
     /// # Safety
-    /// `dctx` must be a live context; `dict` valid for `n` bytes.
-    /// Dictionaries are not supported: only an empty one is accepted.
-    fn zstd_dctx_load_dictionary(_dctx: *mut DCtx, _dict: *const c_void, n: usize) -> usize {
-        if n == 0 { 0 } else { err(ERR_DICTIONARY_WRONG) }
+    /// `dctx` must be a live context; `dict` valid for `n` bytes. The
+    /// dictionary is copied: it is used for every frame until it is
+    /// replaced or the parameters are reset. An empty one clears it.
+    fn zstd_dctx_load_dictionary(dctx: *mut DCtx, dict: *const c_void, n: usize) -> usize {
+        let d = &mut *dctx;
+        if !d.at_start {
+            return err(ERR_STAGE_WRONG);
+        }
+        d.prefix = None;
+        match load(dict, n) {
+            Ok(dd) => {
+                d.dict = dd;
+                0
+            },
+            Err(e) => {
+                d.dict = None;
+                err(e)
+            },
+        }
+    }
+}
+
+export! {"ZSTD_DCtx_loadDictionary_byReference", "vzstd_DCtx_loadDictionary_byReference",
+    /// # Safety
+    /// As `ZSTD_DCtx_loadDictionary` (which this is: the content is
+    /// copied all the same).
+    fn zstd_dctx_load_dictionary_by_reference(dctx: *mut DCtx, dict: *const c_void, n: usize) -> usize {
+        zstd_dctx_load_dictionary(dctx, dict, n)
     }
 }
 
 export! {"ZSTD_DCtx_refPrefix", "vzstd_DCtx_refPrefix",
     /// # Safety
-    /// As `ZSTD_DCtx_loadDictionary`; not supported either.
-    fn zstd_dctx_ref_prefix(_dctx: *mut DCtx, _dict: *const c_void, n: usize) -> usize {
-        if n == 0 { 0 } else { err(ERR_DICTIONARY_WRONG) }
+    /// `dctx` must be a live context; `prefix` valid for `n` bytes. The
+    /// prefix is raw content, for the next decompression only.
+    fn zstd_dctx_ref_prefix(dctx: *mut DCtx, prefix: *const c_void, n: usize) -> usize {
+        let d = &mut *dctx;
+        if !d.at_start {
+            return err(ERR_STAGE_WRONG);
+        }
+        d.dict = None;
+        if n == 0 || prefix.is_null() {
+            d.prefix = None;
+            return 0;
+        }
+        if n >= DICT_MAX {
+            return err(ERR_MEMORY);
+        }
+        d.prefix = Some(DictDecoder::raw(slice(prefix, n)));
+        0
+    }
+}
+
+export! {"ZSTD_DCtx_refDDict", "vzstd_DCtx_refDDict",
+    /// # Safety
+    /// `dctx` must be a live context; `ddict` null or from
+    /// `ZSTD_createDDict`. The context keeps its own copy.
+    fn zstd_dctx_ref_ddict(dctx: *mut DCtx, ddict: *const DDictH) -> usize {
+        let d = &mut *dctx;
+        if !d.at_start {
+            return err(ERR_STAGE_WRONG);
+        }
+        d.prefix = None;
+        d.dict = ddict.as_ref().map(|h| h.d.copy());
+        0
+    }
+}
+
+export! {"ZSTD_decompress_usingDict", "vzstd_decompress_usingDict",
+    /// # Safety
+    /// As `ZSTD_decompressDCtx`; `dict` valid for `dict_size` bytes.
+    fn zstd_decompress_using_dict(dctx: *mut DCtx, dst: *mut c_void, cap: usize, src: *const c_void, n: usize, dict: *const c_void, dict_size: usize) -> usize {
+        let _ = dctx;
+        match load(dict, dict_size) {
+            Ok(Some(dd)) => decompress_into_dict(dst, cap, slice(src, n), dd).1,
+            Ok(None) => decompress_into(dst, cap, slice(src, n)),
+            Err(e) => err(e),
+        }
+    }
+}
+
+export! {"ZSTD_createDDict", "vzstd_createDDict",
+    /// # Safety
+    /// `dict` valid for `n` bytes. Null if the dictionary is corrupted.
+    fn zstd_create_ddict(dict: *const c_void, n: usize) -> *mut DDictH {
+        let d = match load(dict, n) {
+            Ok(Some(d)) => d,
+            Ok(None) => DictDecoder::raw(&[]),
+            Err(_) => return core::ptr::null_mut(),
+        };
+        let serial = SERIAL.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        Box::into_raw(Box::new(DDictH { serial, d }))
+    }
+}
+
+export! {"ZSTD_createDDict_byReference", "vzstd_createDDict_byReference",
+    /// # Safety
+    /// As `ZSTD_createDDict` (the content is copied all the same).
+    fn zstd_create_ddict_by_reference(dict: *const c_void, n: usize) -> *mut DDictH {
+        zstd_create_ddict(dict, n)
+    }
+}
+
+export! {"ZSTD_freeDDict", "vzstd_freeDDict",
+    /// # Safety
+    /// `ddict` from `ZSTD_createDDict` (or null), once.
+    fn zstd_free_ddict(ddict: *mut DDictH) -> usize {
+        if !ddict.is_null() {
+            drop(Box::from_raw(ddict));
+        }
+        0
+    }
+}
+
+export! {"ZSTD_sizeof_DDict", "vzstd_sizeof_DDict",
+    /// # Safety
+    /// `ddict` from `ZSTD_createDDict` (or null).
+    fn zstd_sizeof_ddict(ddict: *const DDictH) -> usize {
+        match ddict.as_ref() {
+            Some(h) => core::mem::size_of::<DDictH>() + h.d.content_len(),
+            None => 0,
+        }
+    }
+}
+
+export! {"ZSTD_getDictID_fromDDict", "vzstd_getDictID_fromDDict",
+    /// # Safety
+    /// `ddict` from `ZSTD_createDDict` (or null).
+    fn zstd_get_dict_id_from_ddict(ddict: *const DDictH) -> c_uint {
+        match ddict.as_ref() {
+            Some(h) => h.d.id(),
+            None => 0,
+        }
+    }
+}
+
+export! {"ZSTD_getDictID_fromDict", "vzstd_getDictID_fromDict",
+    /// # Safety
+    /// `dict` valid for `n` bytes.
+    fn zstd_get_dict_id_from_dict(dict: *const c_void, n: usize) -> c_uint {
+        let b = slice(dict, n);
+        if b.len() < 8 || le32(b, 0) != 0xEC30_A437 { 0 } else { le32(b, 4) }
+    }
+}
+
+export! {"ZSTD_decompress_usingDDict", "vzstd_decompress_usingDDict",
+    /// # Safety
+    /// As `ZSTD_decompressDCtx`; `ddict` null or from `ZSTD_createDDict`.
+    fn zstd_decompress_using_ddict(dctx: *mut DCtx, dst: *mut c_void, cap: usize, src: *const c_void, n: usize, ddict: *const DDictH) -> usize {
+        let Some(h) = ddict.as_ref() else {
+            return decompress_into(dst, cap, slice(src, n));
+        };
+        let Some(d) = dctx.as_mut() else {
+            return decompress_into_dict(dst, cap, slice(src, n), h.d.copy()).1;
+        };
+        let dd = d.ddict(h);
+        let (dd, r) = decompress_into_dict(dst, cap, slice(src, n), dd);
+        d.cache = Some((h.serial, dd));
+        r
+    }
+}
+
+export! {"ZSTD_initDStream_usingDict", "vzstd_initDStream_usingDict",
+    /// # Safety
+    /// `dctx` must be a live context; `dict` valid for `n` bytes.
+    fn zstd_init_dstream_using_dict(dctx: *mut DCtx, dict: *const c_void, n: usize) -> usize {
+        (*dctx).reset_session();
+        let r = zstd_dctx_load_dictionary(dctx, dict, n);
+        if is_error(r) { r } else { zstd_dstream_in_size() }
+    }
+}
+
+export! {"ZSTD_initDStream_usingDDict", "vzstd_initDStream_usingDDict",
+    /// # Safety
+    /// `dctx` must be a live context; `ddict` null or from
+    /// `ZSTD_createDDict`.
+    fn zstd_init_dstream_using_ddict(dctx: *mut DCtx, ddict: *const DDictH) -> usize {
+        (*dctx).reset_session();
+        let r = zstd_dctx_ref_ddict(dctx, ddict);
+        if is_error(r) { r } else { zstd_dstream_in_size() }
     }
 }
 

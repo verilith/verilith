@@ -5,7 +5,7 @@ A verified Zstandard (RFC 8878) decompressor in Rust, proven with
 C API. It is meant to replace libzstd's decoder in hardened builds (Node.js
 first), alongside libzstd's compressor.
 
-`cargo verus verify` (or `scripts/verify.sh`) checks 280 functions and
+`cargo verus verify` (or `scripts/verify.sh`) checks 273 functions and
 lemmas with no errors and no `assume`; the only `external_body` functions
 in this crate are the seven small copy primitives in
 `src/prims.rs` and the three CPU-feature wrappers in `src/cpu.rs`.
@@ -25,6 +25,8 @@ in this crate are the seven small copy primitives in
 | Streaming, input and output in pieces of any size: a frame end (0) is returned only when the input taken is a whole frame and the output handed out is its content, whatever input follows; before that, all output handed out is the start of the frame's content; the loop terminates | `stream::Stream::stream` against `spec::frame` (`frame_ok`), `Stream::lemma_emitted_prefix` |
 | Streaming keeps only the last window of output, and that gives the same output (a match reaches back at most one window) | `stream::lemma_compressed_block_shift`, `lemma_block_step_shift` |
 | Streaming memory: the output kept is at most two windows and three blocks, and a unit being collected at most one block | `stream::Stream::inv` (`mem_ok`, `need`) |
+| Dictionaries, loaded: a formatted dictionary (magic number, ID, Huffman table, offset, match length and literals length FSE tables, three repeat offsets, content) is accepted exactly when the spec accepts it, with the spec's tables and offsets; anything shorter than 8 bytes or without the magic number is raw content | `dict::load_dict` against `spec::dict_load`, `dict::raw_dict_exec` against `spec::raw_dict` |
+| Decompression with a dictionary, one-shot: `Ok(v)` exactly when every frame is valid with the dictionary's content as the history before it and its tables and repeat offsets as the starting state, and no frame names another dictionary; the same `Err` cases as without one. The decoder keeps the dictionary's content between calls (a type invariant), so a call copies only the frames' content | `dict::DictDecoder::decompress` against `spec::decompress_d` |
 
 The output limit is checked as the output grows, so a decompression bomb
 stops at the limit, not after.
@@ -62,7 +64,12 @@ What the proofs assume rather than prove:
   logic lives there.
 - `src/capi.rs`: an unverified adapter for the C API. One-shot calls run
   `decompress_exec` and copy the result out; streaming calls run the
-  proven `stream::Stream::stream` on the caller's buffers. It also maps
+  proven `stream::Stream::stream` on the caller's buffers. With a
+  dictionary, one-shot calls run `dict::DictDecoder::decompress`, and
+  streaming collects each frame (by the sizes in its block headers, which
+  the proven decoder reads again) and decodes it the same way. Which
+  dictionary applies to which frame (a loaded one for every frame, a
+  prefix for the next call or frame only) is the adapter's. It also maps
   rejections to libzstd's error codes and handles the parameters. It is
   tested against libzstd's own decoders.
 - Verus, Z3 and the Rust compiler.
@@ -78,8 +85,11 @@ libzstd in a few corners. Every valid stream that libzstd's encoder produces
 decodes the same. [DEPARTURES.md](DEPARTURES.md) lists the cases. In short:
 matches may not reach beyond the window, block sizes are limited to the
 window in one-shot decoding too, Huffman and sequence bitstreams must be
-consumed exactly, reserved bits must be zero, and dictionaries and legacy
-(pre-v0.8) frames are not supported.
+consumed exactly, reserved bits must be zero, and legacy (pre-v0.8)
+frames are not supported. With a dictionary, matches reach the window
+plus the dictionary's content throughout the frame (libzstd's one-shot
+rule; the RFC drops the dictionary once the output passes the window),
+and streaming collects each frame whole before decoding it.
 
 ## Layout
 
@@ -94,6 +104,7 @@ consumed exactly, reserved bits must be zero, and dictionaries and legacy
 - `src/seq.rs`: the sequences section and compressed blocks.
 - `src/frame.rs`: frame headers, blocks, frames and `decompress_exec`.
 - `src/stream.rs`: streaming decompression, input and output in pieces.
+- `src/dict.rs`: dictionaries, loaded, and decompression with one.
 - `src/capi.rs`: the C API (unverified adapter, above).
 
 ## C API
@@ -105,10 +116,15 @@ consumed exactly, reserved bits must be zero, and dictionaries and legacy
 `ZSTD_freeDStream`, `ZSTD_initDStream`, `ZSTD_DCtx_reset`,
 `ZSTD_DCtx_setParameter` / `ZSTD_DCtx_getParameter` (`ZSTD_d_windowLogMax`,
 `ZSTD_d_format` = `ZSTD_f_zstd1` only), `ZSTD_dParam_getBounds`,
-`ZSTD_DCtx_setMaxWindowSize`, `ZSTD_DCtx_loadDictionary` and
-`ZSTD_DCtx_refPrefix` (empty dictionaries only), `ZSTD_decompressStream`,
+`ZSTD_DCtx_setMaxWindowSize`, `ZSTD_decompressStream`,
 `ZSTD_decompressStream_simpleArgs`, `ZSTD_DStreamInSize`,
-`ZSTD_DStreamOutSize`, `ZSTD_sizeof_DCtx`; and from libzstd's `common/`:
+`ZSTD_DStreamOutSize`, `ZSTD_sizeof_DCtx`; with a dictionary,
+`ZSTD_decompress_usingDict`, `ZSTD_DCtx_loadDictionary`,
+`ZSTD_DCtx_loadDictionary_byReference`, `ZSTD_DCtx_refPrefix`,
+`ZSTD_createDDict`, `ZSTD_createDDict_byReference`, `ZSTD_freeDDict`,
+`ZSTD_sizeof_DDict`, `ZSTD_decompress_usingDDict`, `ZSTD_DCtx_refDDict`,
+`ZSTD_getDictID_fromDict`, `ZSTD_getDictID_fromDDict`,
+`ZSTD_initDStream_usingDict`, `ZSTD_initDStream_usingDDict`; and from libzstd's `common/`:
 `ZSTD_isError`, `ZSTD_getErrorCode`, `ZSTD_getErrorName`,
 `ZSTD_getErrorString`, `ZSTD_versionNumber`, `ZSTD_versionString`.
 
@@ -136,6 +152,16 @@ libzstd's depends on how far its decoder got (`DEPARTURES.md`).
   and output pieces (same output, same frame ends, same verdict), one-shot
   results with small and large destinations, content sizes and frame
   sizes.
+- `tests/dict.rs`: dictionaries trained by libzstd (`ZDICT_trainFromBuffer`,
+  1 KiB to 110 KiB) and raw-content prefixes (1 byte to 300 KiB), with
+  frames libzstd compressed at levels -3 to 19: the proven decoder and
+  every C entry point that takes a dictionary (one-shot, DDict, loaded,
+  prefix, streaming in random pieces) give libzstd's output; a frame
+  naming another dictionary fails with `dictionary_wrong`; 3000 damaged
+  dictionaries are loaded exactly when libzstd loads them; and of 4000
+  corrupted frames, none is accepted that libzstd rejects (90 are
+  accepted by libzstd only: 85 are departures, 81 of them Huffman literal
+  streams not consumed exactly, and 5 are empty input, below).
 - `tests/stress.rs` (`--ignored`): the fuzz target's checks on random and
   mutated inputs; `fuzz/` has the same as a cargo-fuzz target for runs
   under AddressSanitizer.

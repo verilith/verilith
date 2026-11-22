@@ -1158,6 +1158,8 @@ proof fn lemma_frame_done(g: Seq<u8>, h: Header, j: int, st: FrameState)
         }
         lemma_header_ext(x, y);
         assert(blocks(b, 4 + h.size, h.window, initial_state()) == Some((j, st)));
+        assert(st.out.subrange(0, st.out.len() as int) =~= st.out);
+        assert(h.window + no_dict().st.out.len() == h.window);
         if h.checksum {
             assert(b.subrange(j, j + 4) =~= g.subrange(j, j + 4)) by {
                 assert forall|t: int| 0 <= t < 4 implies #[trigger] b.subrange(j, j + 4)[t] == g.subrange(j, j + 4)[t] by {
@@ -1645,7 +1647,7 @@ impl Stream {
         let ghost gst = self.gst@;
         let ghost strim = FrameState { out: self.dec.out@, ..gst };
         let ghost pre = gst.out.subrange(0, self.dropped as int);
-        let (res, _, last) = block_exec(src, 0, self.window, &mut self.dec, olimit, Ghost(strim));
+        let (res, _, last) = block_exec(src, 0, self.window, self.window, &mut self.dec, olimit, Ghost(strim));
         match res {
             Step::Done => {},
             Step::Limit => {
