@@ -247,10 +247,11 @@ proof fn lemma_cb_grows(b: Seq<u8>, window: nat, bmax: nat, st: FrameState)
     }
 }
 
-/// `blocks` only appends.
-proof fn lemma_blocks_grows(b: Seq<u8>, i: int, window: nat, st: FrameState)
+/// `blocks_r` only appends.
+pub proof fn lemma_blocks_grows(b: Seq<u8>, i: int, window: nat, reach: nat, st: FrameState)
     ensures
-        blocks(b, i, window, st) is Some ==> blocks(b, i, window, st).unwrap().1.out.len() >= st.out.len(),
+        blocks_r(b, i, window, reach, st) is Some ==> blocks_r(b, i, window, reach, st).unwrap().1.out.len()
+            >= st.out.len(),
     decreases b.len() - i,
 {
     if i >= 0 && i + 3 <= b.len() {
@@ -259,21 +260,29 @@ proof fn lemma_blocks_grows(b: Seq<u8>, i: int, window: nat, st: FrameState)
         let c = i + 3;
         let bmax = min(window as int, BLOCK_MAX as int) as nat;
         if c + size <= b.len() {
-            lemma_cb_grows(b.subrange(c, c + size), window, bmax, st);
-            if let Some(st2) = compressed_block(b.subrange(c, c + size), window, bmax, st) {
-                lemma_blocks_grows(b, c + size, window, st2);
+            lemma_cb_grows(b.subrange(c, c + size), reach, bmax, st);
+            if let Some(st2) = compressed_block(b.subrange(c, c + size), reach, bmax, st) {
+                lemma_blocks_grows(b, c + size, window, reach, st2);
             }
-            lemma_blocks_grows(b, c + size, window, FrameState { out: st.out + b.subrange(c, c + size), ..st });
+            lemma_blocks_grows(b, c + size, window, reach, FrameState { out: st.out + b.subrange(c, c + size), ..st });
         }
         if c + 1 <= b.len() {
-            lemma_blocks_grows(b, c + 1, window, FrameState { out: st.out + Seq::new(size, |k: int| b[c]), ..st });
+            lemma_blocks_grows(b, c + 1, window, reach, FrameState { out: st.out + Seq::new(size, |k: int| b[c]), ..st });
         }
     }
 }
 
 /// One raw, RLE or compressed block at `i`. Returns the position after it.
 #[verifier::rlimit(30)]
-pub fn block_exec(b: &[u8], i: usize, window: u64, d: &mut FrameDec, olimit: usize, Ghost(st): Ghost<FrameState>) -> (r: (
+pub fn block_exec(
+    b: &[u8],
+    i: usize,
+    window: u64,
+    reach: u64,
+    d: &mut FrameDec,
+    olimit: usize,
+    Ghost(st): Ghost<FrameState>,
+) -> (r: (
     Step,
     usize,
     bool,
@@ -309,7 +318,7 @@ pub fn block_exec(b: &[u8], i: usize, window: u64, d: &mut FrameDec, olimit: usi
                 if c + size > b@.len() {
                     None
                 } else {
-                    match compressed_block(b@.subrange(c as int, c + size), window as nat, bmax, st) {
+                    match compressed_block(b@.subrange(c as int, c + size), reach as nat, bmax, st) {
                         None => None,
                         Some(st2) => Some((c + size, st2)),
                     }
@@ -402,7 +411,7 @@ pub fn block_exec(b: &[u8], i: usize, window: u64, d: &mut FrameDec, olimit: usi
         if size > b.len() - c {
             return (Step::Bad, 0, last);
         }
-        let res = compressed_block_exec(slice_subrange(b, c, c + size), window, bmax, d, olimit, Ghost(st));
+        let res = compressed_block_exec(slice_subrange(b, c, c + size), reach, bmax, d, olimit, Ghost(st));
         (res, c + size, last)
     } else {
         (Step::Bad, 0, last)
@@ -412,10 +421,11 @@ pub fn block_exec(b: &[u8], i: usize, window: u64, d: &mut FrameDec, olimit: usi
 /// The blocks of a frame from `i` on (`blocks`).
 /// With `hashing`, each block's output is fed to `hash` as it is made,
 /// while it is still in cache.
-fn blocks_exec(
+pub fn blocks_exec(
     b: &[u8],
     i0: usize,
     window: u64,
+    reach: u64,
     d: &mut FrameDec,
     olimit: usize,
     hash: &mut Xxh64,
@@ -428,9 +438,10 @@ fn blocks_exec(
         dec_is(old(d), st),
         old(d).out@.len() <= olimit <= 0x1_0000_0000_0000,
         hashing ==> old(hash).is(st.out),
+        hashing ==> reach == window,
     ensures
-        hashing && r.0 is Done ==> final(hash).is(blocks(b@, i0 as int, window as nat, st).unwrap().1.out),
-        match blocks(b@, i0 as int, window as nat, st) {
+        hashing && r.0 is Done ==> final(hash).is(blocks_r(b@, i0 as int, window as nat, reach as nat, st).unwrap().1.out),
+        match blocks_r(b@, i0 as int, window as nat, reach as nat, st) {
             None => !(r.0 is Done),
             Some((j, st2)) => match r.0 {
                 Step::Done => {
@@ -445,7 +456,7 @@ fn blocks_exec(
             },
         },
 {
-    let ghost full = blocks(b@, i0 as int, window as nat, st);
+    let ghost full = blocks_r(b@, i0 as int, window as nat, reach as nat, st);
     let ghost pre = d.out@.subrange(0, d.fstart as int);
     let ghost fs = d.fstart;
     let ghost mut cur = st;
@@ -460,9 +471,10 @@ fn blocks_exec(
             pre == old(d).out@.subrange(0, fs as int),
             d.out@.subrange(0, fs as int) == pre,
             d.out@.len() <= olimit <= 0x1_0000_0000_0000,
-            full == blocks(b@, i0 as int, window as nat, st),
-            blocks(b@, i as int, window as nat, cur) == full,
+            full == blocks_r(b@, i0 as int, window as nat, reach as nat, st),
+            blocks_r(b@, i as int, window as nat, reach as nat, cur) == full,
             hashing ==> hash.is(cur.out),
+            hashing ==> reach == window,
         decreases b@.len() - i,
     {
         if i + 3 > b.len() {
@@ -470,7 +482,7 @@ fn blocks_exec(
         }
         let ghost prev = cur;
         let before = d.out.len();
-        let (res, j, last) = block_exec(b, i, window, d, olimit, Ghost(cur));
+        let (res, j, last) = block_exec(b, i, window, reach, d, olimit, Ghost(cur));
         match res {
             Step::Done => {},
             _ => {
@@ -478,12 +490,12 @@ fn blocks_exec(
                     let bh = le(b@, i as int, 3);
                     let size = bh / 8;
                     let c = i + 3;
-                    lemma_blocks_grows(b@, c + size, window as nat, FrameState { out: prev.out + b@.subrange(c as int, c + size), ..prev });
-                    lemma_blocks_grows(b@, c + 1, window as nat, FrameState { out: prev.out + Seq::new(size, |k: int| b@[c as int]), ..prev });
+                    lemma_blocks_grows(b@, c + size, window as nat, reach as nat, FrameState { out: prev.out + b@.subrange(c as int, c + size), ..prev });
+                    lemma_blocks_grows(b@, c + 1, window as nat, reach as nat, FrameState { out: prev.out + Seq::new(size, |k: int| b@[c as int]), ..prev });
                     let bmax = min(window as int, BLOCK_MAX as int) as nat;
                     if c + size <= b@.len() {
-                        if let Some(st2) = compressed_block(b@.subrange(c as int, c + size), window as nat, bmax, prev) {
-                            lemma_blocks_grows(b@, c + size, window as nat, st2);
+                        if let Some(st2) = compressed_block(b@.subrange(c as int, c + size), reach as nat, bmax, prev) {
+                            lemma_blocks_grows(b@, c + size, window as nat, reach as nat, st2);
                         }
                     }
                 }
@@ -500,13 +512,13 @@ fn blocks_exec(
             } else if (bh / 2) % 4 == 1 {
                 FrameState { out: prev.out + Seq::new(size, |k: int| b@[c as int]), ..prev }
             } else {
-                compressed_block(b@.subrange(c as int, c + size), window as nat, bmax, prev).unwrap()
+                compressed_block(b@.subrange(c as int, c + size), reach as nat, bmax, prev).unwrap()
             };
         }
         if hashing {
             proof {
-                crate::stream::lemma_block_step_prefix(b@, i as int, window as nat, prev);
-                assert(crate::stream::block_step(b@, i as int, window as nat, prev).unwrap().1 == cur);
+                crate::stream::lemma_block_step_prefix(b@, i as int, window as nat, reach as nat, prev);
+                assert(crate::stream::block_step(b@, i as int, window as nat, reach as nat, prev).unwrap().1 == cur);
                 assert(before == fs + prev.out.len());
             }
             let new = slice_subrange(d.out.as_slice(), before, d.out.len());
@@ -590,7 +602,7 @@ fn frame_exec(b: &[u8], i: usize, d: &mut FrameDec, olimit: usize) -> (r: (Step,
         None => {},
     }
     let mut hash = Xxh64::new();
-    let (res, j) = blocks_exec(b, i + 4 + h.size, h.window, d, olimit, &mut hash, h.checksum, Ghost(initial_state()));
+    let (res, j) = blocks_exec(b, i + 4 + h.size, h.window, h.window, d, olimit, &mut hash, h.checksum, Ghost(initial_state()));
     match res {
         Step::Done => {},
         _ => {
@@ -602,6 +614,9 @@ fn frame_exec(b: &[u8], i: usize, d: &mut FrameDec, olimit: usize) -> (r: (Step,
     proof {
         assert(o0.subrange(0, o0.len() as int) =~= o0);
         assert(d.out@ =~= o0 + fout(d.out@, fstart as int));
+        let fo = fout(d.out@, fstart as int);
+        assert(fo.subrange(0, fo.len() as int) =~= fo);
+        assert(h.window + no_dict().st.out.len() == h.window);
     }
     match h.fcs {
         Some(f) => {
@@ -631,7 +646,7 @@ fn frame_exec(b: &[u8], i: usize, d: &mut FrameDec, olimit: usize) -> (r: (Step,
 }
 
 /// Is the 4-byte number at `i` a skippable frame's magic?
-fn is_skippable(m: u64) -> (r: bool)
+pub fn is_skippable(m: u64) -> (r: bool)
     ensures
         r == skippable(m as nat),
 {

@@ -1251,8 +1251,11 @@ pub open spec fn frame_header(b: Seq<u8>) -> Option<Header> {
 }
 
 /// The blocks of a frame from `i` on, until the last block. Returns the
-/// position after the last block and the final state.
-pub open spec fn blocks(b: Seq<u8>, i: int, window: nat, st: FrameState) -> Option<(int, FrameState)>
+/// position after the last block and the final state. `window` is the
+/// frame's `Window_Size`, which bounds the blocks; `reach` bounds the
+/// offsets: the window, and with a dictionary the window plus its content
+/// (`frame_d`).
+pub open spec fn blocks_r(b: Seq<u8>, i: int, window: nat, reach: nat, st: FrameState) -> Option<(int, FrameState)>
     decreases b.len() - i,
 {
     if i < 0 || i + 3 > b.len() {
@@ -1283,7 +1286,7 @@ pub open spec fn blocks(b: Seq<u8>, i: int, window: nat, st: FrameState) -> Opti
                 if c + size > b.len() {
                     None
                 } else {
-                    match compressed_block(b.subrange(c, c + size), window, bmax, st) {
+                    match compressed_block(b.subrange(c, c + size), reach, bmax, st) {
                         None => None,
                         Some(st2) => Some((c + size, st2)),
                     }
@@ -1296,26 +1299,145 @@ pub open spec fn blocks(b: Seq<u8>, i: int, window: nat, st: FrameState) -> Opti
                 Some((j, st2)) => if last {
                     Some((j, st2))
                 } else {
-                    blocks(b, j, window, st2)
+                    blocks_r(b, j, window, reach, st2)
                 },
             }
         }
     }
 }
 
-/// One Zstandard frame at `i` (after its magic number is checked).
-/// Returns the position after it and its content. Frames that name a
-/// dictionary are rejected: no dictionary is loaded.
-pub open spec fn frame(b: Seq<u8>, i: int) -> Option<(int, Seq<u8>)> {
+/// The blocks of a frame with no dictionary: offsets reach back at most
+/// the window.
+pub open spec fn blocks(b: Seq<u8>, i: int, window: nat, st: FrameState) -> Option<(int, FrameState)> {
+    blocks_r(b, i, window, window, st)
+}
+
+// ---------------------------------------------------------------------------
+// Dictionaries (§5)
+// ---------------------------------------------------------------------------
+
+pub spec const DICT_MAGIC: nat = 0xEC30A437;
+
+/// A dictionary, loaded: its ID (0 for a raw-content dictionary), and the
+/// state a frame decoded with it starts from. `st.out` is the dictionary's
+/// content, the history in front of the frame's output.
+pub struct Dict {
+    pub id: nat,
+    pub st: FrameState,
+}
+
+/// No dictionary: an empty raw-content one.
+pub open spec fn no_dict() -> Dict {
+    Dict { id: 0, st: initial_state() }
+}
+
+/// A raw-content dictionary (§5: "any content", and what
+/// `ZSTD_DCtx_refPrefix` gives): history only, with the default repeat
+/// offsets and no entropy tables.
+pub open spec fn raw_dict(d: Seq<u8>) -> Dict {
+    Dict { id: 0, st: FrameState { out: d, ..initial_state() } }
+}
+
+/// The entropy tables of a formatted dictionary at the start of `b`: a
+/// Huffman tree description as in a literals section, then FSE table
+/// descriptions for offsets, match lengths and literals lengths, in that
+/// order, each as in a sequences section's FSE_Compressed mode. Returns
+/// the code, the tables and the bytes used.
+pub open spec fn dict_entropy(b: Seq<u8>) -> Option<(HufCode, SeqTables, int)> {
+    match huf_desc(b) {
+        None => None,
+        Some((c, a0)) => match seq_table(b.subrange(a0, b.len() as int), 1, 2, None) {
+            None => None,
+            Some((of, u1)) => {
+                let a1 = a0 + u1;
+                match seq_table(b.subrange(a1, b.len() as int), 2, 2, None) {
+                    None => None,
+                    Some((ml, u2)) => {
+                        let a2 = a1 + u2;
+                        match seq_table(b.subrange(a2, b.len() as int), 0, 2, None) {
+                            None => None,
+                            Some((ll, u3)) => Some((c, SeqTables { ll: ll, of: of, ml: ml }, a2 + u3)),
+                        }
+                    },
+                }
+            },
+        },
+    }
+}
+
+/// A dictionary as `ZSTD_DCtx_loadDictionary` and
+/// `ZSTD_decompress_usingDict` read it (§5, and libzstd's
+/// `ZSTD_dct_auto`): fewer than 8 bytes, or not starting with the magic
+/// number, is raw content. Otherwise the magic number, the ID, the entropy
+/// tables, then three repeat offsets (4 bytes each, little-endian), each
+/// nonzero and at most the content's size, and the content, which is the
+/// rest. A formatted dictionary of exactly 8 bytes is rejected, as in
+/// libzstd. `None`: the dictionary is corrupted (libzstd's
+/// `dictionary_corrupted`).
+pub open spec fn dict_load(d: Seq<u8>) -> Option<Dict> {
+    if d.len() < 8 || le(d, 0, 4) != DICT_MAGIC {
+        Some(raw_dict(d))
+    } else if d.len() == 8 {
+        None
+    } else {
+        let id = le(d, 4, 4);
+        match dict_entropy(d.subrange(8, d.len() as int)) {
+            None => None,
+            Some((c, t, u)) => {
+                let a = 8 + u;
+                if a + 12 > d.len() {
+                    None
+                } else {
+                    let csize = (d.len() - (a + 12)) as nat;
+                    let r1 = le(d, a, 4);
+                    let r2 = le(d, a + 4, 4);
+                    let r3 = le(d, a + 8, 4);
+                    if r1 == 0 || r1 > csize || r2 == 0 || r2 > csize || r3 == 0 || r3 > csize {
+                        None
+                    } else {
+                        Some(
+                            Dict {
+                                id: id,
+                                st: FrameState {
+                                    out: d.subrange(a + 12, d.len() as int),
+                                    reps: Reps { r1: r1, r2: r2, r3: r3 },
+                                    huf: Some(c),
+                                    seqt: Some(t),
+                                },
+                            },
+                        )
+                    }
+                }
+            },
+        }
+    }
+}
+
+/// One Zstandard frame at `i` (after its magic number is checked),
+/// decoded with the dictionary `d` (`no_dict()` for none). Returns the
+/// position after it and its content.
+///
+/// A frame that names a dictionary (a nonzero `Dictionary_ID`) must name
+/// `d`'s ID (libzstd's `dictionary_wrong` otherwise); a frame that names
+/// none may use any dictionary. The content follows the dictionary's, so
+/// matches can reach into it, and the frame starts from the dictionary's
+/// repeat offsets and entropy tables. The RFC lets offsets reach past the
+/// window into the dictionary until the frame's output passes the window;
+/// here they reach the window plus the dictionary's content size
+/// throughout, which accepts every frame the RFC does (and a few more,
+/// which libzstd's one-shot decoder also accepts, with the same content).
+/// The content size and checksum cover the frame's own content only.
+pub open spec fn frame_d(b: Seq<u8>, i: int, d: Dict) -> Option<(int, Seq<u8>)> {
     match frame_header(b.subrange(i + 4, b.len() as int)) {
         None => None,
-        Some(h) => if h.dict_id != 0 {
+        Some(h) => if h.dict_id != 0 && h.dict_id != d.id {
             None
         } else {
-            match blocks(b, i + 4 + h.size, h.window, initial_state()) {
+            let dl = d.st.out.len();
+            match blocks_r(b, i + 4 + h.size, h.window, h.window + dl, d.st) {
                 None => None,
                 Some((j, st)) => {
-                    let out = st.out;
+                    let out = st.out.subrange(dl as int, st.out.len() as int);
                     if h.fcs is Some && h.fcs.unwrap() != out.len() {
                         None
                     } else if h.checksum {
@@ -1333,6 +1455,12 @@ pub open spec fn frame(b: Seq<u8>, i: int) -> Option<(int, Seq<u8>)> {
     }
 }
 
+/// One Zstandard frame at `i`, with no dictionary: a frame that names one
+/// is rejected.
+pub open spec fn frame(b: Seq<u8>, i: int) -> Option<(int, Seq<u8>)> {
+    frame_d(b, i, no_dict())
+}
+
 /// Is the 4-byte number a skippable frame's magic (0x184D2A50..5F)?
 pub open spec fn skippable(m: nat) -> bool {
     m / 16 == 0x184D2A5
@@ -1342,8 +1470,10 @@ pub open spec fn skippable(m: nat) -> bool {
 /// Zstandard frames and skippable frames, one after another. Fewer than 5
 /// bytes left over is an error (libzstd's rule), as is anything that is
 /// not a frame.
+/// Every Zstandard frame is decoded with the dictionary `d`, as libzstd
+/// does.
 #[verifier::rlimit(100)]
-pub open spec fn frames(b: Seq<u8>, i: int, out: Seq<u8>) -> Option<Seq<u8>>
+pub open spec fn frames_d(b: Seq<u8>, i: int, out: Seq<u8>, d: Dict) -> Option<Seq<u8>>
     decreases b.len() - i,
 {
     if i < 0 || i > b.len() {
@@ -1362,27 +1492,37 @@ pub open spec fn frames(b: Seq<u8>, i: int, out: Seq<u8>) -> Option<Seq<u8>>
                 if size + 8 >= 0x1_0000_0000 || i + 8 + size > b.len() {
                     None
                 } else {
-                    frames(b, i + 8 + size, out)
+                    frames_d(b, i + 8 + size, out, d)
                 }
             }
         } else if m != MAGIC {
             None
         } else {
-            match frame(b, i) {
+            match frame_d(b, i, d) {
                 None => None,
                 Some((j, o)) => if j <= i || j > b.len() {
                     None
                 } else {
-                    frames(b, j, out + o)
+                    frames_d(b, j, out + o, d)
                 },
             }
         }
     }
 }
 
+/// The frames from `i` on with no dictionary.
+pub open spec fn frames(b: Seq<u8>, i: int, out: Seq<u8>) -> Option<Seq<u8>> {
+    frames_d(b, i, out, no_dict())
+}
+
 /// The decompression of `b`, or `None` if it is not valid.
 pub open spec fn decompress(b: Seq<u8>) -> Option<Seq<u8>> {
     frames(b, 0, Seq::empty())
+}
+
+/// The decompression of `b` with the dictionary `d`.
+pub open spec fn decompress_d(b: Seq<u8>, d: Dict) -> Option<Seq<u8>> {
+    frames_d(b, 0, Seq::empty(), d)
 }
 
 } // verus!

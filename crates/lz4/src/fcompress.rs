@@ -159,7 +159,7 @@ proof fn lemma_le_seq_split(x: nat)
 /// the content `out`.
 pub open spec fn breach(p: Seq<u8>, h: Header, out: Seq<u8>) -> bool {
     forall|s: Seq<u8>| #[trigger]
-        extends(p, s) ==> blocks(s, h.end, h, Seq::empty()) == blocks(s, p.len() as int, h, out)
+        extends(p, s) ==> blocks(s, h.end, h, Seq::empty(), Seq::empty()) == blocks(s, p.len() as int, h, Seq::empty(), out)
 }
 
 /// A block as the compressor writes it.
@@ -196,10 +196,10 @@ proof fn lemma_block_at(s: Seq<u8>, i: int, h: Header, out: Seq<u8>, data: Seq<u
         s.subrange(i, i + enc_block(data, raw, h.bsum).len()) == enc_block(data, raw, h.bsum),
         0 < data.len() <= h.bmax,
         h.bmax <= 0x40_0000,
-        block_data(data, raw, h.indep, out) == Some(out2),
+        block_data(data, raw, h.indep, Seq::empty(), out) == Some(out2),
         out2.len() - out.len() <= h.bmax,
     ensures
-        blocks(s, i, h, out) == blocks(s, i + enc_block(data, raw, h.bsum).len(), h, out2),
+        blocks(s, i, h, Seq::empty(), out) == blocks(s, i + enc_block(data, raw, h.bsum).len(), h, Seq::empty(), out2),
 {
     hide(block_data);
     let e = enc_block(data, raw, h.bsum);
@@ -251,17 +251,18 @@ proof fn lemma_breach_step(p: Seq<u8>, h: Header, out: Seq<u8>, data: Seq<u8>, r
         breach(p, h, out),
         0 < data.len() <= h.bmax,
         h.bmax <= 0x40_0000,
-        block_data(data, raw, h.indep, out) == Some(out2),
+        block_data(data, raw, h.indep, Seq::empty(), out) == Some(out2),
         out2.len() - out.len() <= h.bmax,
     ensures
         breach(p + enc_block(data, raw, h.bsum), h, out2),
 {
     let e = enc_block(data, raw, h.bsum);
     let p2 = p + e;
-    assert forall|s: Seq<u8>| #[trigger] extends(p2, s) implies blocks(s, h.end, h, Seq::empty()) == blocks(
+    assert forall|s: Seq<u8>| #[trigger] extends(p2, s) implies blocks(s, h.end, h, Seq::empty(), Seq::empty()) == blocks(
         s,
         p2.len() as int,
         h,
+        Seq::empty(),
         out2,
     ) by {
         let i = p.len() as int;
@@ -602,13 +603,14 @@ proof fn lemma_block_ok(data: Seq<u8>, input: Seq<u8>, lo: int, st: int, en: int
         lo == st || (lo == 0 && !indep),
         block_strict(data, input.subrange(lo, st), (en - st) as nat) == Some(input.subrange(lo, en)),
     ensures
-        block_data(data, false, indep, input.subrange(0, st)) == Some(input.subrange(0, en)),
+        block_data(data, false, indep, Seq::empty(), input.subrange(0, st)) == Some(input.subrange(0, en)),
 {
     let out0 = input.subrange(0, st);
     let out2 = input.subrange(0, en);
     let chunk = input.subrange(st, en);
     let hist = input.subrange(lo, st);
     let size = (en - st) as nat;
+    lemma_block_data_nodict(data, false, indep, out0);
     assert(out0 + chunk =~= out2);
     if lo == st {
         assert(hist =~= Seq::<u8>::empty());
@@ -685,7 +687,7 @@ fn put_block(
             &&& d <= e2 <= final(dst)@.len()
             &&& final(dst)@.subrange(0, e2 as int) == old(dst)@.subrange(0, d as int) + enc_block(data@, raw@, bsum)
             &&& 0 < data@.len() <= en - st
-            &&& block_data(data@, raw@, indep, input@.subrange(0, st as int)) == Some(input@.subrange(0, en as int))
+            &&& block_data(data@, raw@, indep, Seq::empty(), input@.subrange(0, st as int)) == Some(input@.subrange(0, en as int))
         },
 {
     let dn = dst.len();
@@ -902,7 +904,7 @@ proof fn lemma_end_blocks(p: Seq<u8>, h: Header, input: Seq<u8>, s: Seq<u8>)
             Seq::empty()
         },
     ensures
-        blocks(s, h.end, h, Seq::empty()) == Some((input, (p.len() + 4) as int)),
+        blocks(s, h.end, h, Seq::empty(), Seq::empty()) == Some((input, (p.len() + 4) as int)),
         h.csum ==> s.len() == p.len() + 8 && le(s, (p.len() + 4) as int, 4) == xxh32(input),
         !h.csum ==> s.len() == p.len() + 4,
 {
@@ -916,7 +918,7 @@ proof fn lemma_end_blocks(p: Seq<u8>, h: Header, input: Seq<u8>, s: Seq<u8>)
     assert(s.subrange(i, i + 4) =~= le_seq(0, 4));
     lemma_fits32(0);
     lemma_le_seq(s, i, 0, 4);
-    assert(blocks(s, i, h, input) == Some((input, j)));
+    assert(blocks(s, i, h, Seq::empty(), input) == Some((input, j)));
     if h.csum {
         assert(s.subrange(j, j + 4) =~= le_seq(c, 4));
         lemma_fits32(c);

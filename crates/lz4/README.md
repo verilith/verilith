@@ -22,6 +22,7 @@ Everything assumed is listed in [TRUST.md](TRUST.md).
 | XXH32 | `verilith_xxhash::xxh32_exec` against `spec::xxh32` (both from [verilith-xxhash](../xxhash)) |
 | Frame decoding into a buffer the caller already has (what `LZ4F_decompress` uses when a whole frame and enough room are given): `Some` only for a valid frame, with the spec's content, nothing allocated | `frame::decode_frame_into` against `spec::frame` |
 | Frame decoding: `Ok` exactly when the input is one or more valid frames (and skippable frames), with the spec's content: header, header checksum, block sizes, stored and compressed blocks, linked blocks reaching into earlier ones, block checksums, content size, content checksum | `frame::decompress` against `spec::frames`, `frame::decode_frame` against `spec::frame` |
+| Frame decoding with a dictionary (`LZ4F_decompress_usingDict`): the dictionary's last 64 KiB come before every block, linked or independent, as history its matches may reach into; the content, sizes and checksums are the spec's | `frame::decode_frame_dict` against `spec::frame_dict` |
 | Frame compression round-trips, for every choice of block size, linked or independent blocks, and checksums | `fcompress::compress` against `spec::frame` |
 
 The compressor uses a real match finder: liblz4's hash of four bytes (five
@@ -45,9 +46,9 @@ Not yet proven: bounds on work.
 is rejected (liblz4 lets it through and copies whatever the buffer held);
 the decoder does not enforce the end-of-block rules, which depend on the
 size of the caller's buffer; `LZ4F_decompress` collects a whole frame
-before decoding it unless it is given one in a single call; and the high-compression levels, dictionaries on
-frames, the legacy frame format and the streaming compression API are not
-here.
+before decoding it unless it is given one in a single call; and the
+high-compression levels, the legacy frame format and the streaming
+compression API are not here.
 
 ## Layout
 
@@ -77,7 +78,7 @@ From `lz4frame.h`: `LZ4F_isError`, `LZ4F_getErrorName`,
 `LZ4F_compressFrameBound`, `LZ4F_compressFrame`,
 `LZ4F_createDecompressionContext`, `LZ4F_freeDecompressionContext`,
 `LZ4F_resetDecompressionContext`, `LZ4F_headerSize`, `LZ4F_getFrameInfo`,
-`LZ4F_decompress`.
+`LZ4F_decompress`, `LZ4F_decompress_usingDict`.
 
 They are exported as `vlz4_*` and `vlz4f_*` (for example
 `vlz4_compress_default`, `vlz4f_decompress`). With the `lz4-abi` feature
