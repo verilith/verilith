@@ -501,6 +501,12 @@ pub open spec fn kw_schedule(wk: Seq<u32>, m: Seq<u32>) -> bool {
     forall|i: int| 0 <= i < 64 ==> wk[i] == #[trigger] spec::add(K[i], spec::schedule(m, i))
 }
 
+/// `wk[i]` is K_i + W_i of SHA-256 block words `m`, for every `i < n`
+/// (the pipelined AVX2 schedule's contract, in `avx2.rs`).
+pub open spec fn kw256_upto(wk: Seq<u32>, m: Seq<u32>, n: int) -> bool {
+    forall|i: int| 0 <= i < n ==> wk[i] == #[trigger] spec::add(K[i], spec::schedule(m, i))
+}
+
 /// Rounds t to t + 7 from a precomputed schedule.
 #[verifier::spinoff_prover]
 #[inline(always)]
@@ -664,13 +670,13 @@ fn group_kw_step(
         old(r).vars() == spec::rounds(v0, m, t as nat),
         step ==> 4 <= s && s + 1 <= 16,
         crate::avx2::sched256_at(*old(sc), m0, m1, s as int),
-        crate::avx2::kw256_upto(old(w0)@, m0, 4 * s),
-        crate::avx2::kw256_upto(old(w1)@, m1, 4 * s),
+        kw256_upto(old(w0)@, m0, 4 * s),
+        kw256_upto(old(w1)@, m1, 4 * s),
     ensures
         final(r).vars() == spec::rounds(v0, m, (t + 8) as nat),
         step ==> crate::avx2::sched256_at(*final(sc), m0, m1, s + 1),
-        step ==> crate::avx2::kw256_upto(final(w0)@, m0, 4 * s + 4),
-        step ==> crate::avx2::kw256_upto(final(w1)@, m1, 4 * s + 4),
+        step ==> kw256_upto(final(w0)@, m0, 4 * s + 4),
+        step ==> kw256_upto(final(w1)@, m1, 4 * s + 4),
         !step ==> *final(sc) == *old(sc) && final(w0)@ == old(w0)@ && final(w1)@ == old(w1)@,
 {
     rounds8_kw(r, wk, t, Ghost(v0), Ghost(m));
@@ -705,13 +711,13 @@ fn rounds64_kw_steps(
         4 <= s0,
         s0 + k <= 16,
         crate::avx2::sched256_at(*old(sc), m0, m1, s0 as int),
-        crate::avx2::kw256_upto(old(w0)@, m0, 4 * s0),
-        crate::avx2::kw256_upto(old(w1)@, m1, 4 * s0),
+        kw256_upto(old(w0)@, m0, 4 * s0),
+        kw256_upto(old(w1)@, m1, 4 * s0),
     ensures
         final(r).vars() == spec::rounds(v0, m, 64),
         crate::avx2::sched256_at(*final(sc), m0, m1, s0 + k),
-        crate::avx2::kw256_upto(final(w0)@, m0, 4 * (s0 + k)),
-        crate::avx2::kw256_upto(final(w1)@, m1, 4 * (s0 + k)),
+        kw256_upto(final(w0)@, m0, 4 * (s0 + k)),
+        kw256_upto(final(w1)@, m1, 4 * (s0 + k)),
 {
     assert(r.vars() == spec::rounds(v0, m, 0));
     let sg = if 0 < k { s0 + 0 } else { s0 + k };
@@ -756,13 +762,13 @@ fn block_with_steps(
         4 <= s0,
         s0 + k <= 16,
         crate::avx2::sched256_at(*old(sc), m0, m1, s0 as int),
-        crate::avx2::kw256_upto(old(w0)@, m0, 4 * s0),
-        crate::avx2::kw256_upto(old(w1)@, m1, 4 * s0),
+        kw256_upto(old(w0)@, m0, 4 * s0),
+        kw256_upto(old(w1)@, m1, 4 * s0),
     ensures
         final(st)@ == spec::compress(old(st)@, blk),
         crate::avx2::sched256_at(*final(sc), m0, m1, s0 + k),
-        crate::avx2::kw256_upto(final(w0)@, m0, 4 * (s0 + k)),
-        crate::avx2::kw256_upto(final(w1)@, m1, 4 * (s0 + k)),
+        kw256_upto(final(w0)@, m0, 4 * (s0 + k)),
+        kw256_upto(final(w1)@, m1, 4 * (s0 + k)),
 {
     let ghost m = spec::words(blk);
     let ghost h0 = st@;
@@ -786,7 +792,7 @@ fn block_with_steps(
 /// `kw256_upto` over all 64 words is `kw_schedule`.
 proof fn lemma_kw_all(wk: Seq<u32>, m: Seq<u32>)
     requires
-        crate::avx2::kw256_upto(wk, m, 64),
+        kw256_upto(wk, m, 64),
     ensures
         kw_schedule(wk, m),
 {

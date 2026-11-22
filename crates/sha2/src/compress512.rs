@@ -500,6 +500,12 @@ pub open spec fn kw_schedule(wk: Seq<u64>, m: Seq<u64>) -> bool {
     forall|i: int| 0 <= i < 80 ==> wk[i] == #[trigger] spec::add(K[i], spec::schedule(m, i))
 }
 
+/// `wk[i]` is K_i + W_i of block words `m`, for every `i < n` (the
+/// pipelined AVX2 schedule's contract, in `avx2.rs`).
+pub open spec fn kw_upto(wk: Seq<u64>, m: Seq<u64>, n: int) -> bool {
+    forall|i: int| 0 <= i < n ==> wk[i] == #[trigger] spec::add(K[i], spec::schedule(m, i))
+}
+
 /// Rounds t to t + 7 from a precomputed schedule.
 #[verifier::spinoff_prover]
 #[inline(always)]
@@ -665,13 +671,13 @@ fn group_kw_step(
         old(r).vars() == spec::rounds(v0, m, t as nat),
         step ==> 8 <= s && s + 2 <= 40,
         crate::avx2::sched_at(*old(sc), m0, m1, s as int),
-        crate::avx2::kw_upto(old(w0)@, m0, 2 * s),
-        crate::avx2::kw_upto(old(w1)@, m1, 2 * s),
+        kw_upto(old(w0)@, m0, 2 * s),
+        kw_upto(old(w1)@, m1, 2 * s),
     ensures
         final(r).vars() == spec::rounds(v0, m, (t + 8) as nat),
         step ==> crate::avx2::sched_at(*final(sc), m0, m1, s + 2),
-        step ==> crate::avx2::kw_upto(final(w0)@, m0, 2 * s + 4),
-        step ==> crate::avx2::kw_upto(final(w1)@, m1, 2 * s + 4),
+        step ==> kw_upto(final(w0)@, m0, 2 * s + 4),
+        step ==> kw_upto(final(w1)@, m1, 2 * s + 4),
         !step ==> *final(sc) == *old(sc) && final(w0)@ == old(w0)@ && final(w1)@ == old(w1)@,
 {
     rounds8_kw(r, wk, t, Ghost(v0), Ghost(m));
@@ -706,13 +712,13 @@ fn rounds80_kw_steps(
         8 <= s0,
         s0 + 2 * k <= 40,
         crate::avx2::sched_at(*old(sc), m0, m1, s0 as int),
-        crate::avx2::kw_upto(old(w0)@, m0, 2 * s0),
-        crate::avx2::kw_upto(old(w1)@, m1, 2 * s0),
+        kw_upto(old(w0)@, m0, 2 * s0),
+        kw_upto(old(w1)@, m1, 2 * s0),
     ensures
         final(r).vars() == spec::rounds(v0, m, 80),
         crate::avx2::sched_at(*final(sc), m0, m1, s0 + 2 * k),
-        crate::avx2::kw_upto(final(w0)@, m0, 2 * (s0 + 2 * k)),
-        crate::avx2::kw_upto(final(w1)@, m1, 2 * (s0 + 2 * k)),
+        kw_upto(final(w0)@, m0, 2 * (s0 + 2 * k)),
+        kw_upto(final(w1)@, m1, 2 * (s0 + 2 * k)),
 {
     assert(r.vars() == spec::rounds(v0, m, 0));
     let sg = if 0 < k { s0 + 0 } else { s0 + 2 * k };
@@ -761,13 +767,13 @@ fn block_with_steps(
         8 <= s0,
         s0 + 2 * k <= 40,
         crate::avx2::sched_at(*old(sc), m0, m1, s0 as int),
-        crate::avx2::kw_upto(old(w0)@, m0, 2 * s0),
-        crate::avx2::kw_upto(old(w1)@, m1, 2 * s0),
+        kw_upto(old(w0)@, m0, 2 * s0),
+        kw_upto(old(w1)@, m1, 2 * s0),
     ensures
         final(st)@ == spec::compress(old(st)@, blk),
         crate::avx2::sched_at(*final(sc), m0, m1, s0 + 2 * k),
-        crate::avx2::kw_upto(final(w0)@, m0, 2 * (s0 + 2 * k)),
-        crate::avx2::kw_upto(final(w1)@, m1, 2 * (s0 + 2 * k)),
+        kw_upto(final(w0)@, m0, 2 * (s0 + 2 * k)),
+        kw_upto(final(w1)@, m1, 2 * (s0 + 2 * k)),
 {
     let ghost m = spec::words(blk);
     let ghost h0 = st@;
@@ -791,7 +797,7 @@ fn block_with_steps(
 /// `kw_upto` over all 80 words is `kw_schedule`.
 proof fn lemma_kw_all(wk: Seq<u64>, m: Seq<u64>)
     requires
-        crate::avx2::kw_upto(wk, m, 80),
+        kw_upto(wk, m, 80),
     ensures
         kw_schedule(wk, m),
 {
