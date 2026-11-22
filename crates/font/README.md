@@ -318,4 +318,4 @@ checks locally before merging.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](../../LICENSE).
