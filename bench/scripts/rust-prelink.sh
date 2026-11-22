@@ -20,16 +20,26 @@ if [ "$(uname)" = Darwin ]; then pre=_; else pre=; fi
 # The API: global symbols defined by our own crates' objects (verilith_*)
 # and by any C or C++ compiled into the library (members that are not a
 # Rust codegen unit), less Rust-mangled names (v0 _R..., legacy
-# _ZN...17h<hash>E), the runtime's (rust_*, __*) and LLVM's anon.* names.
+# _ZN...17h<hash>E), the runtime's (rust_*, __*), compiler_builtins' C
+# atomics (atomic_*, __aarch64_*) and LLVM's anon.* names.
 # DW.ref.rust_eh_personality (ELF only) stays global: it is a weak, hidden
 # COMDAT that the other Rust library's objects refer to as well.
 mine=()
 for m in "$tmp"/x/*; do
   case $(basename "$m") in verilith_*) mine+=("$m") ;; *.rcgu.o) ;; *) mine+=("$m") ;; esac
 done
-nm -g --defined-only "${mine[@]}" 2>/dev/null | awk 'NF>=3 {print $3}' | sort -u \
-  | grep -Ev "^${pre}(_R|rust_|__|anon\.)" | grep -Ev "^${pre}_ZN.*17h[0-9a-f]{16}E$" > "$tmp/keep" || true
-[ -s "$tmp/keep" ] || { echo "rust-prelink.sh: no API symbols found in $1" >&2; exit 1; }
+# Apple's nm (llvm-nm) reads the LLVM bitcode that fat LTO leaves in the
+# Mach-O object and fails on bitcode from a newer LLVM than its own;
+# --no-llvm-bc makes it read the object's symbol table. Errors are not
+# hidden: a silent failure here would hide the whole API.
+nmflags=(-g --defined-only); [ "$(uname)" = Darwin ] && nmflags+=(--no-llvm-bc)
+api() { nm "${nmflags[@]}" "$@" | awk 'NF>=3 {print $3}' | sort -u \
+  | grep -Ev "^${pre}(_R|rust_|__|_aarch64_|atomic_|anon\.)" | grep -Ev "^${pre}_ZN.*17h[0-9a-f]{16}E$" || true; }
+api "${mine[@]}" > "$tmp/keep"
+# The guard: our own crates' objects must export something.
+ours=("$tmp"/x/verilith_*)
+[ -e "${ours[0]}" ] && [ -n "$(api "${ours[@]}")" ] \
+  || { echo "rust-prelink.sh: found no API symbols in the verilith_* objects of $1" >&2; exit 1; }
 if [ "$(uname)" = Darwin ]; then
   # In -r mode ld64 makes the unlisted symbols private extern, then static.
   ld -r -o "$tmp/all.o" -exported_symbols_list "$tmp/keep" "$tmp"/x/*
