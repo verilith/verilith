@@ -178,7 +178,8 @@ Everything in `src/spec.rs`, `src/chars.rs`, `src/lex.rs`, `src/dtd.rs`,
 * **The trusted base:** verilith-simd's specifications of the six SSE2
   instructions the scanners use (`_mm_loadu_si128`, `_mm_set1_epi8`,
   `_mm_cmpeq_epi8`, `_mm_or_si128`, `_mm_min_epu8`, `_mm_movemask_epi8`),
-  tested there against the CPU; vstd's specifications of `Vec` and
+  tested there against the CPU. The wrappers proven from them are
+  verilith-simd's `sse2` module, shared with verilith-json; vstd's specifications of `Vec` and
   slices; `uniq::seed`, the one `external_body` function in the crate,
   which reads random words for the hashes (any value gives the same
   result); Verus, Z3 and the Rust compiler.

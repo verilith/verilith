@@ -67,6 +67,11 @@ its own trusted base.
   AVX2 implies SSE4.1 and SSE4.1 implies SSSE3.
 - `src/lanes.rs`: the byte model of `__m128i`/`__m256i` (an uninterpreted
   `b128`/`b256` of length 16/32).
+- `src/sse2.rs`: verified wrappers over the SSE2 instructions byte scanners
+  use (`load16`, `splat16`, `eq16`, `or16`, `min16`, `movemask16`, on x86-64
+  only), each with a contract on the 16 bytes `b16` and the mask bits
+  `bit` proven from the specifications here, and `first_set16`. Shared by
+  verilith-json and verilith-xml.
 - `src/avx512.rs` (x86-64 only): safe wrappers, with specifications, for 17
   AVX-512 intrinsics (F, BW and VBMI2: bitwise ops, `shuffle_epi8`,
   `subs_epu8`, `srli_epi16`, `add_epi32`, the byte compares and `test` into
@@ -109,8 +114,8 @@ its own trusted base.
 Everything else is verified, including `src/neon_mask.rs` (`movemask64` and
 `movemask16`: x86's `pmovmskb` for NEON, proven bit for bit), `src/lanes.rs`'s view lemmas, `src/patterns.rs`
 (lemmas that evaluate common shuffles), `src/mask.rs` (a `movemask` result
-bit by bit, which is how a proof reads an AVX-512 mask register), and
-`src/refs.rs`.
+bit by bit, which is how a proof reads an AVX-512 mask register),
+`src/sse2.rs` and `src/refs.rs`.
 
 ## How the specifications are checked
 

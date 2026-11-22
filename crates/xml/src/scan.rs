@@ -48,13 +48,6 @@ verus! {
 
 use verilith_simd::arch::__m128i;
 
-#[verifier::bit_vector]
-proof fn lemma_top_or(a: u8, b: u8)
-    ensures
-        ((a | b) >= 0x80u8) == (a >= 0x80u8 || b >= 0x80u8),
-{
-}
-
 /// The skip given by a mask whose bit `k` says whether `s[i + k]` stops.
 #[inline(always)]
 #[allow(unused_variables)]

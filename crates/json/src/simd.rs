@@ -264,14 +264,6 @@ proof fn lemma_fold_brackets(c: u8)
 {
 }
 
-/// The top bit of an OR is the OR of the top bits.
-#[verifier::bit_vector]
-proof fn lemma_top_or(a: u8, b: u8)
-    ensures
-        ((a | b) >= 0x80u8) == (a >= 0x80u8 || b >= 0x80u8),
-{
-}
-
 /// Two 32-bit movemasks side by side.
 #[verifier::bit_vector]
 proof fn lemma_join(lo: u32, hi: u32, k: u64)
@@ -2150,43 +2142,6 @@ pub fn digit_run_acc16(s: &[u8], i: usize) -> (r: (usize, u64))
 } // verus!
 
 verus! {
-
-#[verifier::bit_vector]
-proof fn lemma_guard_bit(m: u32, k: u32)
-    requires
-        m < 0x10000,
-    ensures
-        k < 16 ==> (((m | 0x10000u32) >> k) & 1u32 == 1u32) == ((m >> k) & 1u32 == 1u32),
-        ((m | 0x10000u32) >> 16u32) & 1u32 == 1u32,
-        m | 0x10000u32 != 0,
-{
-}
-
-/// The index of the lowest set bit of a 16-bit class mask, or 16 if none.
-/// Every lower bit is clear.
-#[inline(always)]
-pub fn first_set16(m: u32) -> (r: usize)
-    requires
-        m < 0x10000,
-    ensures
-        r <= 16,
-        forall|k: u32| k < r ==> !#[trigger] bit(m, k),
-        r < 16 ==> bit(m, r as u32),
-{
-    let g = m | 0x10000u32;
-    let tz = g.trailing_zeros();
-    proof {
-        vstd::std_specs::bits::axiom_u32_trailing_zeros(g);
-        lemma_guard_bit(m, tz);
-        assert forall|k: u32| k < tz implies !#[trigger] bit(m, k) by {
-            lemma_guard_bit(m, k);
-        }
-        if tz > 16 {
-            assert((g >> 16u32) & 1u32 == 0u32);
-        }
-    }
-    tz as usize
-}
 
 /// Number of plain string bytes at `s[i..]`, up to 16. When fewer than 16,
 /// the byte after them is not plain.
