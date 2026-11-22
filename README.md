@@ -32,6 +32,7 @@ callers can relink without changing code.
 | [`verilith-wasm`](crates/wasm) | A formally verified (Verus) WebAssembly validator and sandboxed interpreter |
 | [`verilith-webp`](crates/webp) | A formally verified (Verus) WebP lossless (VP8L) decoder |
 | [`verilith-x509`](crates/x509) | A formally verified (Verus) DER and X.509 certificate parser |
+| [`verilith-xml`](crates/xml) | A fast XML 1.0 parser formally verified with Verus: exactly the well-formedness rules, no panics, no recursion |
 | [`verilith-zlib`](crates/zlib) | A formally verified (Verus) DEFLATE, zlib and gzip decompressor |
 | [`verilith-zstd`](crates/zstd) | A formally verified (Verus) Zstandard (RFC 8878) decompressor with libzstd's C API |
 
@@ -81,7 +82,7 @@ the one `scripts/profile <name>` prints:
 |---|---|---|
 | `release` | 1 codegen unit, thin LTO | every crate not listed below |
 | `release-fat` | 1 codegen unit, fat LTO | text, url, x509 |
-| `release-abort` | 1 codegen unit, fat LTO, `panic = "abort"` | json, http, hpack, regex, bind |
+| `release-abort` | 1 codegen unit, fat LTO, `panic = "abort"` | json, http, hpack, regex, bind, xml |
 
 So the drop-in JSON library is built with
 `cargo build --profile release-abort --features cjson` and lands in
