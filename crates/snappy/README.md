@@ -6,7 +6,7 @@ google/snappy's C API (`snappy-c.h`), and the framing format with its
 CRC-32C checksums. It is meant as a drop-in replacement for libsnappy
 where memory safety and correct output have to be certain.
 
-`cargo verus verify` (or `scripts/verify.sh`) checks 87 functions and
+`cargo verus verify` (or `scripts/verify.sh`) checks 110 functions and
 lemmas with no errors, no `assume` and no `external_body` in this crate.
 CRC-32C is verilith-core's. Everything assumed is listed in
 [TRUST.md](TRUST.md).

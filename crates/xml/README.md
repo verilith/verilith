@@ -82,8 +82,9 @@ Everything in `src/spec.rs`, `src/chars.rs`, `src/lex.rs`, `src/dtd.rs`,
 `src/content.rs`, `src/doc.rs`, `src/ent.rs`, `src/enc.rs`, `src/decode.rs`,
 `src/uniq.rs`, `src/index.rs`, `src/scan.rs`, `src/lanes.rs` and
 `src/tape.rs` is checked by Verus (`./scripts/verify.sh`, which runs
-`cargo verus verify`: 315 verified, 0 errors, in under a minute on x86-64;
-285 for an AArch64 target, which has no SSE2 code). The trusted base is listed under
+`cargo verus verify`: 302 verified, 0 errors, in under a minute on x86-64;
+fewer for an AArch64 target, which has no SSE2 code. The SSE2 wrappers are
+verified in verilith-simd). The trusted base is listed under
 [What is not proven](#what-is-not-proven).
 
 * **Conformance.** `src/spec.rs` states XML 1.0 (Fifth Edition)
