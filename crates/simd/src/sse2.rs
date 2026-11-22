@@ -81,7 +81,7 @@ pub proof fn lemma_top_or(a: u8, b: u8)
 #[cfg(target_arch = "x86_64")]
 verus! {
 
-broadcast use verilith_simd::lanes::group_lanes;
+broadcast use crate::lanes::group_lanes;
 
 /// The 16 bytes of a 128-bit register.
 pub open spec fn b16(v: __m128i) -> Seq<u8> {
