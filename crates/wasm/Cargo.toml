@@ -20,5 +20,5 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 ] }
 
 [dev-dependencies]
-wast = "=240.0.0"
-wat = "=1.240.0"
+wast = "=263.0.0"
+wat = "=1.263.0"

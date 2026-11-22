@@ -141,19 +141,20 @@ fn idna_test_v2_url() {
 }
 
 fn random_domain(rng: &mut impl rand::Rng) -> String {
+    use rand::RngExt;
     const PIECES: &[&str] = &[
         "a", "b", "z", "A", "Q", "0", "9", "-", ".", ".", "xn--", "XN--", "xn--a", "xn--ls8h", "xn--fa-hia", "xn--0ca24w",
         "ß", "ẞ", "ς", "\u{200C}", "\u{200D}", "\u{094D}", "\u{0915}", "\u{0628}", "\u{0644}", "\u{064B}", "\u{05D0}",
         "\u{0660}", "\u{06F0}", "\u{0308}", "\u{0301}", "à", "ü", "。", "．", "｡", "\u{00AD}", "_", "%", " ", "ｶ", "①",
         "\u{FB01}", "\u{1F600}", "\u{E0100}", "\u{FFFD}", "\u{0640}", "\u{0627}", "1", "\u{0BCD}", "\u{0B95}",
     ];
-    let n = rng.gen_range(0..10);
+    let n = rng.random_range(0..10);
     let mut s = String::new();
     for _ in 0..n {
-        match rng.gen_range(0..10) {
-            0 => s.push(rng.gen::<char>()),
-            1 => s.push(char::from_u32(rng.gen_range(0x80..0x3000)).unwrap_or('a')),
-            _ => s.push_str(PIECES[rng.gen_range(0..PIECES.len())]),
+        match rng.random_range(0..10) {
+            0 => s.push(rng.random::<char>()),
+            1 => s.push(char::from_u32(rng.random_range(0x80..0x3000)).unwrap_or('a')),
+            _ => s.push_str(PIECES[rng.random_range(0..PIECES.len())]),
         }
     }
     s

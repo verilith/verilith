@@ -63,12 +63,11 @@ fn wasmtime_run(bytes: &[u8], func: &str, args: &[i64]) -> String {
 
 fn wasmi_run(bytes: &[u8], func: &str, args: &[i64]) -> String {
     use wasmi::*;
-    use wasmi::core::ValType;
     let engine = Engine::default();
     let module = Module::new(&engine, bytes).unwrap();
     let mut store = Store::new(&engine, ());
     let linker = Linker::<()>::new(&engine);
-    let inst = linker.instantiate(&mut store, &module).unwrap().start(&mut store).unwrap();
+    let inst = linker.instantiate_and_start(&mut store, &module).unwrap();
     let f = inst.get_func(&store, func).unwrap();
     let ty = f.ty(&store);
     let vals: Vec<Val> = ty.params().iter().zip(args).map(|(t, &x)| match t {
