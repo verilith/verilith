@@ -1,4 +1,4 @@
-// Runs every simdutf function Node uses over a seeded corpus and prints the
+// Runs every simdutf function Node and V8 use over a seeded corpus and prints the
 // results, one line per call. Built once against real simdutf and once
 // against include/simdutf.h (vtext); run.sh diffs the two outputs.
 //
@@ -29,6 +29,14 @@ static uint64_t hash(const void *p, size_t n) {
 static void line(const char *what, size_t c, long a, long b = 0,
                  uint64_t h = 0) {
   printf("%zu %s %ld %ld %016llx\n", c, what, a, b, (unsigned long long)h);
+}
+
+// A decode for Uint8Array.fromBase64: the error, the units read, and the
+// bytes written.
+static void from64(const std::string &what, size_t c, simdutf::result d,
+                   const char *out, size_t len) {
+  printf("%zu %s %d %zu %zu:%016llx\n", c, what.c_str(), int(d.error), d.count,
+         len, (unsigned long long)hash(out, len));
 }
 
 // UTF-8 text: mostly valid characters of every length, sometimes damaged.
@@ -145,11 +153,41 @@ int main(int argc, char **argv) {
       auto e = simdutf::convert_utf8_to_latin1_with_errors(u8.data(), u8.size(), o1.data());
       line("convert_utf8_to_latin1_with_errors", c, e.error,
            e.count, e.error ? 0 : hash(o1.data(), e.count));
+      w = simdutf::convert_valid_utf8_to_utf16(u8.data(), u8.size(), o.data());
+      line("convert_valid_utf8_to_utf16", c, m, w, hash(o.data(), 2 * w));
     } else {
       // Invalid input: simdutf's converters return 0 (the output is unspecified).
       std::vector<char16_t> o(2 * u8.size() + 2);
       line("convert_utf8_to_utf16/bad", c,
            simdutf::convert_utf8_to_utf16(u8.data(), u8.size(), o.data()));
+    }
+
+    {
+      // Valid or not: the error and its position, and the text if valid.
+      std::vector<char16_t> o(2 * u8.size() + 2);
+      auto e = simdutf::convert_utf8_to_utf16_with_errors(u8.data(), u8.size(), o.data());
+      line("convert_utf8_to_utf16_with_errors", c, e.error, e.count,
+           e.error ? 0 : hash(o.data(), 2 * e.count));
+      // Not NUL: simdutf 7.7.0's find returns a position inside the text
+      // for a NUL that is not there.
+      char want = char(1 + rnd() % 0x7F);
+      line("find", c, simdutf::find(u8.data(), u8.data() + u8.size(), want) - u8.data());
+    }
+    {
+      // UTF-32, one unit at a time as merve calls it, then a run.
+      std::vector<char32_t> u32(n % 50);
+      for (auto &u : u32) {
+        uint32_t k = rnd() % 16;
+        u = k < 6 ? rnd() % 0x80 : k < 10 ? rnd() % 0x800 : k < 14 ? rnd() % 0x10000
+            : k < 15 ? rnd() % 0x110000 : char32_t(rnd());
+      }
+      std::vector<char> o(4 * u32.size() + 4);
+      for (size_t i = 0; i < u32.size() && i < 4; i++) {
+        size_t w = simdutf::convert_utf32_to_utf8(&u32[i], 1, o.data());
+        line("convert_utf32_to_utf8/1", c, w, 0, hash(o.data(), w));
+      }
+      size_t w = simdutf::convert_utf32_to_utf8(u32.data(), u32.size(), o.data());
+      line("convert_utf32_to_utf8", c, w, 0, hash(o.data(), w));
     }
 
     // ASCII and Latin-1.
@@ -187,15 +225,34 @@ int main(int argc, char **argv) {
       size_t m2 = simdutf::utf8_length_from_utf16le(u16.data(), u16.size());
       std::vector<char> o(3 * u16.size() + 1);
       size_t w = simdutf::convert_utf16_to_utf8(u16.data(), u16.size(), o.data());
-      line("convert_utf16_to_utf8", c, m, w, hash(o.data(), w));
+      // The length of ill-formed text is unspecified (simdutf's own kernels
+      // disagree about an unpaired surrogate), so it is printed for
+      // well-formed text only.
+      bool ok16 = simdutf::validate_utf16(u16.data(), u16.size());
+      line("convert_utf16_to_utf8", c, ok16 ? m : 0, w, hash(o.data(), w));
       w = simdutf::convert_utf16le_to_utf8(u16.data(), u16.size(), o.data());
-      line("convert_utf16le_to_utf8", c, m2, w, hash(o.data(), w));
+      line("convert_utf16le_to_utf8", c, ok16 ? m2 : 0, w, hash(o.data(), w));
       std::vector<char> o1(u16.size() + 1);
       std::u16string narrow = u16;
       if (rnd() % 2)
         for (auto &u : narrow) u &= 0xFF;
       w = simdutf::convert_utf16_to_latin1(narrow.data(), narrow.size(), o1.data());
       line("convert_utf16_to_latin1", c, w, 0, hash(o1.data(), w));
+
+      // Well-formedness: texts with unpaired surrogates, more of them here.
+      std::u16string t = u16;
+      for (size_t i = 0, k = rnd() % 4; i < k && !t.empty(); i++)
+        t[rnd() % t.size()] = char16_t(0xD800 + rnd() % 0x800);
+      line("validate_utf16", c, simdutf::validate_utf16(t.data(), t.size()));
+      auto e = simdutf::validate_utf16_with_errors(t.data(), t.size());
+      line("validate_utf16_with_errors", c, e.error, e.count);
+      e = simdutf::utf8_length_from_utf16_with_replacement(t.data(), t.size());
+      line("utf8_length_from_utf16_with_replacement", c, e.error, e.count);
+      std::u16string fixed(t.size(), 0);
+      simdutf::to_well_formed_utf16(t.data(), t.size(), fixed.data());
+      line("to_well_formed_utf16", c, 0, 0, hash(fixed.data(), 2 * fixed.size()));
+      simdutf::to_well_formed_utf16(t.data(), t.size(), t.data());
+      line("to_well_formed_utf16/in-place", c, t == fixed);
     }
 
     // Base64.
@@ -237,6 +294,44 @@ int main(int argc, char **argv) {
       outlen = cap;
       d = simdutf::base64_to_binary_safe(s16.data(), s16.size(), os.data(), outlen, opt);
       safe("base64_to_binary_safe/16", c, d, cap >= ml16, os.data(), outlen, full16);
+
+      // Uint8Array.fromBase64 and setFromBase64 as V8 calls them: each
+      // last-chunk mode, decoding up to a bad character, into a buffer of
+      // the maximal length; then into a smaller one, as setFromBase64 does
+      // for a short array. Everything is compared: the error, the number of
+      // units read, and the bytes written.
+      static const simdutf::last_chunk_handling_options modes[] = {
+          simdutf::loose, simdutf::strict, simdutf::stop_before_partial};
+      static const char *names[] = {"loose", "strict", "partial"};
+      for (int k = 0; k < 3; k++) {
+        std::string what = std::string("from_base64/") + names[k];
+        std::vector<char> ob(ml + 1);
+        size_t len = ml;
+        d = simdutf::base64_to_binary_safe(s.data(), s.size(), ob.data(), len, opt, modes[k], true);
+        from64(what, c, d, ob.data(), len);
+        std::vector<char> ob16(ml16 + 1);
+        len = ml16;
+        d = simdutf::base64_to_binary_safe(s16.data(), s16.size(), ob16.data(), len, opt, modes[k], true);
+        from64(what + "/16", c, d, ob16.data(), len);
+        len = ml16;
+        d = simdutf::atomic_base64_to_binary_safe(s16.data(), s16.size(), ob16.data(), len, opt, modes[k], true);
+        from64(what + "/16/atomic", c, d, ob16.data(), len);
+        auto plain = simdutf::base64_to_binary(s.data(), s.size(), ob.data(), opt, modes[k]);
+        line((what + "/plain").c_str(), c, plain.error, plain.error ? 0 : plain.count,
+             plain.error ? 0 : hash(ob.data(), plain.count));
+        if (ml > 0) {
+          size_t small = rnd() % ml;
+          std::vector<char> osm(small + 1);
+          len = small;
+          d = simdutf::base64_to_binary_safe(s.data(), s.size(), osm.data(), len, opt, modes[k], true);
+          from64(what + "/short", c, d, osm.data(), len);
+        }
+      }
+      {
+        std::string out(m, 0);
+        size_t wa = simdutf::atomic_binary_to_base64(bin.data(), bin.size(), out.data(), opt);
+        line("atomic_binary_to_base64", c, wa, 0, hash(out.data(), wa));
+      }
     }
   }
   return 0;
