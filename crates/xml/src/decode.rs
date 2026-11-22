@@ -330,7 +330,8 @@ proof fn lemma_fmeas_push(fr: Seq<Frame>, g: Frame, b: int, d: nat)
 /// `att_norm(doc, r, i, end, eol, env, d)` appended to `out`: 0 when it
 /// is the value, 1 when there is none, 2 when `out` would pass `limit`
 /// bytes (expansion stopped). Entity references are expanded with an
-/// explicit stack of frames, so the depth of nesting costs no call stack.
+/// explicit stack of frames, so the depth of nesting costs no call stack:
+/// the frame being read is in locals, and `fr` holds those below it.
 #[verifier::spinoff_prover]
 #[verifier::rlimit(800)]
 pub fn ex_att_norm(
@@ -361,14 +362,20 @@ pub fn ex_att_norm(
     // Every text is shorter than `b - 1`.
     let ghost b: int = (if r@.len() > doc.len() { r@.len() + 2 } else { doc.len() + 2 }) as int;
     let mut fr: Vec<Frame> = Vec::new();
-    fr.push((usize::MAX, i, end, eol, d));
+    let mut src: usize = usize::MAX;
+    let mut buf: &[u8] = r;
+    let mut j = i;
+    let mut e_end = end;
+    let mut e_eol = eol;
+    let mut e_d = d;
     proof {
         lemma_lim_all(env);
-        assert(fr@.drop_last() =~= Seq::<Frame>::empty());
+        let full = fr@.push((src, j, e_end, e_eol, e_d));
+        assert(full.drop_last() =~= Seq::<Frame>::empty());
         assert(frames_norm(doc, r@, rts@, ev, Seq::<Frame>::empty()) == Some(Seq::<u8>::empty()));
-        assert(fr@.last() == (usize::MAX, i, end, eol, d));
+        assert(full.last() == (usize::MAX, i, end, eol, d));
         assert(fbuf(r@, rts@, usize::MAX) == r@);
-        assert(frames_norm(doc, r@, rts@, ev, fr@) == then(whole, Some(Seq::empty())));
+        assert(frames_norm(doc, r@, rts@, ev, full) == then(whole, Some(Seq::empty())));
         match whole {
             Some(v) => {
                 assert(v + Seq::<u8>::empty() =~= v);
@@ -376,7 +383,13 @@ pub fn ex_att_norm(
             },
             None => {},
         }
-        lemma_fmeas_nonneg(fr@, b);
+        assert forall|k: int| 0 <= k < full.len() implies (#[trigger] full[k]).1 <= full[k].2 by {
+            assert(full[k] == full.last());
+        }
+        lemma_fmeas_nonneg(full, b);
+        assert(frames_ok(r@, rts@, env.ents@, full)) by {
+            assert forall|k: int| 0 <= k < full.len() implies #[trigger] full[k] == full.last() by {}
+        }
     }
     loop
         invariant
@@ -389,46 +402,33 @@ pub fn ex_att_norm(
             rts_ok(doc, env.ents@, rts@),
             lim_view(env, env.ents@.len() as int) == ev,
             whole == att_norm(doc, r@, i as int, end as int, eol, ev, d as nat),
-            frames_ok(r@, rts@, env.ents@, fr@),
-            pre(old(out)@, whole) == pre(out@, frames_norm(doc, r@, rts@, ev, fr@)),
-            fmeas(fr@, b) >= 0,
-        decreases fmeas(fr@, b),
+            buf@ == fbuf(r@, rts@, src),
+            frames_ok(r@, rts@, env.ents@, fr@.push((src, j, e_end, e_eol, e_d))),
+            pre(old(out)@, whole) == pre(out@, frames_norm(doc, r@, rts@, ev, fr@.push((src, j, e_end, e_eol, e_d)))),
+            fmeas(fr@.push((src, j, e_end, e_eol, e_d)), b) >= 0,
+        decreases fmeas(fr@.push((src, j, e_end, e_eol, e_d)), b),
     {
-        let len = fr.len();
-        if len == 0 {
-            proof {
-                assert(out@ + Seq::<u8>::empty() =~= out@);
-            }
-            return 0;
-        }
-        let top = len - 1;
-        let (src, j, e_end, e_eol, e_d) = fr[top];
-        let ghost f = fr@[top as int];
-        let ghost rest = frames_norm(doc, r@, rts@, ev, fr@.drop_last());
-        let buf: &[u8] = if src == usize::MAX {
-            r
-        } else {
-            rts[src].as_slice()
-        };
+        let ghost f: Frame = (src, j, e_end, e_eol, e_d);
+        let ghost full = fr@.push(f);
+        let ghost rest = frames_norm(doc, r@, rts@, ev, fr@);
         proof {
-            assert(f == fr@.last());
-            assert(buf@ == fbuf(r@, rts@, src));
-            assert(fr@[top as int].1 <= fr@[top as int].2 <= fbuf(r@, rts@, fr@[top as int].0).len());
+            assert(full.drop_last() =~= fr@);
+            assert(full.last() == f);
+            assert(full[full.len() - 1] == f);
+            assert(j <= e_end <= buf@.len());
             if src != usize::MAX {
                 assert(rts@[src as int]@.len() <= doc.len());
             }
             assert(buf@.len() + 2 <= b);
-            assert(frames_norm(doc, r@, rts@, ev, fr@) == then(
+            assert(frames_norm(doc, r@, rts@, ev, full) == then(
                 att_norm(doc, buf@, j as int, e_end as int, e_eol, ev, e_d as nat),
                 rest,
             ));
             lemma_pow_positive(b, e_d as nat);
+            assert forall|k: int| 0 <= k < fr@.len() implies #[trigger] fr@[k] == full[k] by {}
         }
         if j >= e_end {
-            let ghost fr0 = fr@;
-            fr.pop();
             proof {
-                assert(fr@ == fr0.drop_last());
                 assert(att_norm(doc, buf@, j as int, e_end as int, e_eol, ev, e_d as nat) == Some(Seq::<u8>::empty()));
                 match rest {
                     Some(x) => assert(Seq::<u8>::empty() + x =~= x),
@@ -441,15 +441,45 @@ pub fn ex_att_norm(
                         fweight(f, b) == (f.2 - f.1 + 1) * pow(b, f.4 as nat),
                         f.4 == e_d,
                 ;
-                assert forall|k: int| 0 <= k < fr@.len() implies #[trigger] fr@[k].1 <= fr@[k].2 by {
-                    assert(fr@[k] == fr0[k]);
-                }
-                assert(frames_ok(r@, rts@, env.ents@, fr@)) by {
-                    assert forall|k: int| 0 <= k < fr@.len() implies #[trigger] fr@[k] == fr0[k] by {}
-                }
-                lemma_fmeas_nonneg(fr@, b);
             }
-            continue;
+            let ghost fr0 = fr@;
+            match fr.pop() {
+                None => {
+                    proof {
+                        assert(fr0 =~= Seq::<Frame>::empty());
+                        assert(out@ + Seq::<u8>::empty() =~= out@);
+                    }
+                    return 0;
+                },
+                Some(g) => {
+                    proof {
+                        assert(fr0 == fr@.push(g));
+                        assert(fr0[fr0.len() - 1] == g);
+                        assert(full[fr0.len() - 1] == g);
+                        assert forall|k: int| 0 <= k < fr0.len() implies (#[trigger] fr0[k]).1 <= fr0[k].2 by {
+                            assert(fr0[k] == full[k]);
+                        }
+                        lemma_fmeas_nonneg(fr0, b);
+                        assert(frames_ok(r@, rts@, env.ents@, fr0)) by {
+                            assert forall|k: int| 0 <= k < fr0.len() implies #[trigger] fr0[k] == full[k] by {}
+                        }
+                    }
+                    src = g.0;
+                    j = g.1;
+                    e_end = g.2;
+                    e_eol = g.3;
+                    e_d = g.4;
+                    buf = if src == usize::MAX {
+                        r
+                    } else {
+                        rts[src].as_slice()
+                    };
+                    proof {
+                        assert(fr@.push((src, j, e_end, e_eol, e_d)) == fr0);
+                    }
+                    continue;
+                },
+            }
         }
         if out.len() > limit {
             return 2;
@@ -457,8 +487,8 @@ pub fn ex_att_norm(
         let ghost here = att_norm(doc, buf@, j as int, e_end as int, e_eol, ev, e_d as nat);
         let c = get(buf, j);
         let ghost ob = out@;
-        // The next position in this frame, and what it appended; or a frame
-        // to push for an entity reference.
+        // The next position in this frame, and what it appended; or the
+        // entity whose frame to push for a reference.
         let mut next: usize = j + 1;
         let mut push: Option<usize> = None;
         let ghost mut emitted: Seq<u8> = Seq::empty();
@@ -554,64 +584,79 @@ pub fn ex_att_norm(
         proof {
             assert(out@ =~= ob + emitted);
         }
-        let ghost fr0 = fr@;
-        let ghost o0 = out@;
-        fr.set(top, (src, next, e_end, e_eol, e_d));
         let ghost f2: Frame = (src, next, e_end, e_eol, e_d);
         let ghost after = att_norm(doc, buf@, next as int, e_end as int, e_eol, ev, e_d as nat);
         proof {
-            assert(fr@ == fr0.update(top as int, f2));
-            assert(fr@.drop_last() =~= fr0.drop_last());
-            assert(fr@.last() == f2);
-            assert(frames_norm(doc, r@, rts@, ev, fr@) == then(after, rest));
-            lemma_fmeas_step(fr0, f2, b);
-            assert forall|k: int| 0 <= k < fr@.len() implies (#[trigger] fr@[k]).1 <= fr@[k].2 && (fr@[k] == fr0[k]
-                || k == top) by {}
-            assert(frames_ok(r@, rts@, env.ents@, fr@)) by {
-                assert forall|k: int| 0 <= k < fr@.len() implies fr@[k].1 <= fr@[k].2 <= fbuf(r@, rts@, #[trigger] fr@[k].0).len() && (fr@[k].0
-                    == usize::MAX || (fr@[k].0 < env.ents@.len() && env.ents@[fr@[k].0 as int].kind == 0)) by {
-                    if k != top {
-                        assert(fr@[k] == fr0[k]);
+            let full2 = fr@.push(f2);
+            assert(full2 =~= full.update(full.len() - 1, f2));
+            assert(full2.drop_last() =~= fr@);
+            assert(full2.last() == f2);
+            assert(frames_norm(doc, r@, rts@, ev, full2) == then(after, rest));
+            lemma_fmeas_step(full, f2, b);
+            assert(frames_ok(r@, rts@, env.ents@, full2)) by {
+                assert forall|k: int| 0 <= k < full2.len() implies fr@.push(f2)[k].1 <= full2[k].2 <= fbuf(r@, rts@, #[trigger] full2[k].0).len() && (full2[k].0
+                    == usize::MAX || (full2[k].0 < env.ents@.len() && env.ents@[full2[k].0 as int].kind == 0)) by {
+                    if k < fr@.len() {
+                        assert(full2[k] == full[k]);
                     }
                 }
             }
         }
         match push {
             None => {
+                j = next;
                 proof {
-                    // `here` is what was emitted, then `after`.
+                    let full2 = fr@.push(f2);
                     assert(here == pre(emitted, after));
                     lemma_then_assoc(Some(emitted), after, rest);
                     lemma_pre_pre(ob, emitted, then(after, rest));
-                    lemma_fmeas_nonneg(fr@, b);
+                    assert forall|k: int| 0 <= k < full2.len() implies (#[trigger] full2[k]).1 <= full2[k].2 by {
+                        if k < fr@.len() {
+                            assert(full2[k] == full[k]);
+                        }
+                    }
+                    lemma_fmeas_nonneg(full2, b);
                 }
             },
             Some(q) => {
+                let ghost fr1 = fr@.push(f2);
+                fr.push((src, next, e_end, e_eol, e_d));
                 let t = rts[q].as_slice();
-                let ghost fr1 = fr@;
-                fr.push((q, 0, t.len(), false, e_d - 1));
+                src = q;
+                buf = t;
+                j = 0;
+                e_end = t.len();
+                e_eol = false;
+                e_d = e_d - 1;
                 proof {
-                    let g: Frame = (q, 0, t@.len() as usize, false, (e_d - 1) as usize);
-                    assert(fr@ == fr1.push(g));
-                    assert(fr@.drop_last() =~= fr1);
+                    let g: Frame = (q, 0, t@.len() as usize, false, e_d);
+                    let full3 = fr@.push(g);
+                    assert(fr@ == fr1);
+                    assert(full3.drop_last() =~= fr1);
+                    assert(full3.last() == g);
                     assert(fbuf(r@, rts@, q) == t@);
                     assert(t@.len() <= doc.len());
-                    let inner = att_norm(doc, t@, 0, t@.len() as int, false, ev, (e_d - 1) as nat);
-                    assert(frames_norm(doc, r@, rts@, ev, fr@) == then(inner, then(after, rest)));
+                    let inner = att_norm(doc, t@, 0, t@.len() as int, false, ev, e_d as nat);
+                    assert(frames_norm(doc, r@, rts@, ev, full3) == then(inner, then(after, rest)));
                     assert(here == then(inner, after));
                     lemma_then_assoc(inner, after, rest);
                     assert(emitted == Seq::<u8>::empty());
                     assert(out@ =~= ob);
-                    lemma_fmeas_push(fr1, g, b, e_d as nat);
-                    assert(frames_ok(r@, rts@, env.ents@, fr@)) by {
-                        assert forall|k: int| 0 <= k < fr@.len() implies fr@[k].1 <= fr@[k].2 <= fbuf(r@, rts@, #[trigger] fr@[k].0).len() && (fr@[k].0
-                            == usize::MAX || (fr@[k].0 < env.ents@.len() && env.ents@[fr@[k].0 as int].kind == 0)) by {
+                    lemma_fmeas_push(fr1, g, b, (e_d + 1) as nat);
+                    assert(frames_ok(r@, rts@, env.ents@, full3)) by {
+                        assert forall|k: int| 0 <= k < full3.len() implies full3[k].1 <= full3[k].2 <= fbuf(r@, rts@, #[trigger] full3[k].0).len() && (full3[k].0
+                            == usize::MAX || (full3[k].0 < env.ents@.len() && env.ents@[full3[k].0 as int].kind == 0)) by {
                             if k < fr1.len() {
-                                assert(fr@[k] == fr1[k]);
+                                assert(full3[k] == fr1[k]);
                             }
                         }
                     }
-                    lemma_fmeas_nonneg(fr@, b);
+                    assert forall|k: int| 0 <= k < full3.len() implies (#[trigger] full3[k]).1 <= full3[k].2 by {
+                        if k < fr1.len() {
+                            assert(full3[k] == fr1[k]);
+                        }
+                    }
+                    lemma_fmeas_nonneg(full3, b);
                 }
             },
         }
