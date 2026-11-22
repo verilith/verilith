@@ -81,15 +81,18 @@ parser over the bytes of the pattern.
   `(text.len() - from + 2) * step_cost(P, S)` with
 
   ```
-  step_cost(P, S) = pike_cost(P, S) + dfa_cost(P) + memo_cost(P, S) + 2
+  step_cost(P, S) = pike_cost(P, S) + dfa_cost(P) + memo_cost(P, S) + 2 + 34 * quick_cost(P, S)
   pike_cost(P, S) = 5 * (S + 3) * P + (S + 67) * P + (S + 67) + 7 * P + 7 * S + 12
   dfa_cost(P)     = 331 * P + 302
   memo_cost(P, S) = 2 * P * S + 805 * P + 2 * S + 4101
+  quick_cost(P, S) = 400 * P + S + 2050
   ```
 
   The DFA's part and the stored steps' part are the worst case in which
   every byte needs a new transition or step computed. Each reads a byte
-  at most once per search.
+  at most once per search. The last part is for a start tried on its
+  own (below): such tries read at most `4 * (n - from) + 67` bytes in a
+  search between them, counted as they go.
   Computing a stored step runs on a budget of `400 * P + 2048`
   iterations, checked as it goes; a step that would need more is left to
   the Pike VM.
@@ -114,7 +117,7 @@ parser over the bytes of the pattern.
 | lazy DFA | `dfa.rs` | no match starts anywhere the DFA passed with an empty state; at most 256 states |
 | stored steps | `memo.rs` | a stored step, replayed, leaves the threads and their capture slots exactly as the matcher's own step would; at most 256 thread lists |
 
-`scripts/verify.sh` runs Verus on all of it: 549 items verified, no
+`scripts/verify.sh` runs Verus on all of it: 565 items verified, no
 `assume`, no `admit`.
 
 ## Supported syntax
@@ -283,6 +286,15 @@ speeds up the VM itself:
   thread sets, and a run of such steps costs one read of a small table
   per byte (`urun`). Lists are written out only for a step whose threads
   come from two or more threads.
+  When the search for a start stops at a byte with no thread alive, that
+  start is first tried on its own (`quick`): its threads are followed
+  through the stored steps of lists that take no new start, as one row,
+  with no thread list built at all. If it reaches a match and no thread
+  is left, that match is the answer; if every thread dies first, the
+  search goes on from the next byte; if two threads must be kept apart,
+  the try is dropped and the lists take over from the same byte. A try
+  that is dropped has read bytes for nothing, so the search keeps score
+  and mostly stops trying on patterns and texts where it does not pay.
 
 RE2 works differently once a match is near: after its DFA it finds the
 exact bounds of the match with a second, reverse DFA and computes groups
