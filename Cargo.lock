@@ -1307,6 +1307,7 @@ dependencies = [
  "verilith-webp",
  "verilith-x509",
  "verilith-xml",
+ "verilith-xxhash",
  "verilith-zlib",
  "verilith-zstd",
 ]
@@ -1426,6 +1427,7 @@ name = "verilith-lz4"
 version = "0.1.0"
 dependencies = [
  "verilith-core",
+ "verilith-xxhash",
  "vstd",
 ]
 
@@ -1554,6 +1556,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "verilith-xxhash"
+version = "0.1.0"
+dependencies = [
+ "verilith-core",
+ "vstd",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "verilith-zlib"
 version = "0.1.0"
 dependencies = [
@@ -1566,6 +1577,7 @@ name = "verilith-zstd"
 version = "0.1.0"
 dependencies = [
  "verilith-core",
+ "verilith-xxhash",
  "vstd",
 ]
 
@@ -1808,6 +1820,12 @@ dependencies = [
  "thiserror",
  "time",
 ]
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40de123dbb523ebcc00d61ec01840ad192578afc378d859f3429caa38308fad5"
 
 [[package]]
 name = "yasna"

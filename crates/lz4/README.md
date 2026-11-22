@@ -14,12 +14,12 @@ Everything assumed is listed in [TRUST.md](TRUST.md).
 
 | property | where it is stated |
 | --- | --- |
-| Memory safety: no out-of-bounds read or write, no overflow, no panic | every function in `block`, `compress`, `xxh`, `frame`, `fcompress` (Verus checks all indexing and arithmetic, and the bounds each raw copy needs) |
+| Memory safety: no out-of-bounds read or write, no overflow, no panic | every function in `block`, `compress`, `frame`, `fcompress` (Verus checks all indexing and arithmetic, and the bounds each raw copy needs) |
 | Termination of every loop | every function (`decreases`) |
 | Block decoding: `Some(n)` exactly when the block is valid and fits, with the spec's output in `out[start..n]`; nothing before `start` is touched; `None` only when the spec rejects the block or its output does not fit | `block::decode_block` against `spec::block` |
 | The decoder's wild copies: literals and matches are copied 16 or 24 bytes at a time past their end when there is room, and matches of any offset (overlapping ones too) give what a byte-by-byte copy gives | `verilith_core::lz::copy_match`, `copy_match24`, `copy_lits` against `verilith_core::lz::lz_copy` |
 | Block compression round-trips: what `compress_block` writes decodes, by the spec, to the input, whatever the hash table held; and it follows the end-of-block rules liblz4's decoder insists on | `compress::compress_block` against `spec::block_strict` |
-| XXH32 | `xxh::xxh32_exec` against `spec::xxh32` |
+| XXH32 | `verilith_xxhash::xxh32_exec` against `spec::xxh32` (both from [verilith-xxhash](../xxhash)) |
 | Frame decoding into a buffer the caller already has (what `LZ4F_decompress` uses when a whole frame and enough room are given): `Some` only for a valid frame, with the spec's content, nothing allocated | `frame::decode_frame_into` against `spec::frame` |
 | Frame decoding: `Ok` exactly when the input is one or more valid frames (and skippable frames), with the spec's content: header, header checksum, block sizes, stored and compressed blocks, linked blocks reaching into earlier ones, block checksums, content size, content checksum | `frame::decompress` against `spec::frames`, `frame::decode_frame` against `spec::frame` |
 | Frame compression round-trips, for every choice of block size, linked or independent blocks, and checksums | `fcompress::compress` against `spec::frame` |
@@ -52,10 +52,10 @@ here.
 ## Layout
 
 - `src/spec.rs`: the formats as total functions over `Seq<u8>`: sequences
-  and blocks, XXH32, frame headers, blocks, frames, skippable frames.
+  and blocks, frame headers, blocks, frames, skippable frames. XXH32 is
+  verilith-xxhash's `spec::xxh32`.
 - `src/block.rs`: the block decoder.
 - `src/compress.rs`: the block compressor.
-- `src/xxh.rs`: XXH32.
 - `src/frame.rs`: the frame decoder.
 - `src/fcompress.rs`: the frame compressor.
 - `src/capi.rs`: the C API (an unverified adapter, see TRUST.md).

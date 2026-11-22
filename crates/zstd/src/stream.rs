@@ -5,7 +5,7 @@
 use crate::spec::*;
 use crate::frame::*;
 use crate::seq::*;
-use crate::xxh::*;
+use verilith_xxhash::Xxh64;
 use crate::prims::copy_into;
 use vstd::slice::slice_subrange;
 #[cfg(verus_only)]

@@ -13,6 +13,9 @@ verus_library(
     srcs = glob(["src/**"]),
     features = [],
     vstd = "//third-party:vstd-alloc-std",
-    deps = ["//crates/core:core"],
+    deps = [
+        "//crates/core:core",
+        "//crates/xxhash:xxhash",
+    ],
     visibility = ["PUBLIC"],
 )

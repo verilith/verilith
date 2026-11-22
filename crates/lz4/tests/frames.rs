@@ -6,7 +6,7 @@ use verilith_lz4::frame::{decompress, Error};
 
 #[test]
 fn xxh32_vectors() {
-    use verilith_lz4::xxh::xxh32_exec;
+    use verilith_xxhash::xxh32_exec;
     assert_eq!(xxh32_exec(b""), 0x02CC5D05);
     assert_eq!(xxh32_exec(b"a"), 0x550D7456);
     assert_eq!(xxh32_exec(b"abc"), 0x32D153FF);

@@ -154,33 +154,15 @@ pub open spec fn block_strict(s: Seq<u8>, hist: Seq<u8>, size: nat) -> Option<Se
 }
 
 // ---------------------------------------------------------------------------
-// XXH32 (the frame format's checksums; xxhash_spec.md)
+// XXH32 (the frame format's checksums), from verilith-xxhash
 // ---------------------------------------------------------------------------
 
-#[verifier::opaque]
-pub open spec fn add32(a: u32, b: u32) -> u32 {
-    vstd::wrapping::u32_specs::wrapping_add(a, b)
-}
+#[cfg(verus_only)]
+pub use verilith_xxhash::spec::xxh32;
 
-#[verifier::opaque]
-pub open spec fn mul32(a: u32, b: u32) -> u32 {
-    vstd::wrapping::u32_specs::wrapping_mul(a, b)
-}
-
-#[verifier::opaque]
-pub open spec fn rotl32(x: u32, r: u32) -> u32 {
-    (x << r) | (x >> (32 - r) as u32)
-}
-
-pub spec const Q1: u32 = 0x9E3779B1;
-
-pub spec const Q2: u32 = 0x85EBCA77;
-
-pub spec const Q3: u32 = 0xC2B2AE3D;
-
-pub spec const Q4: u32 = 0x27D4EB2F;
-
-pub spec const Q5: u32 = 0x165667B1;
+// ---------------------------------------------------------------------------
+// Little-endian numbers
+// ---------------------------------------------------------------------------
 
 /// The `n` bytes at `i` as a little-endian number.
 pub open spec fn le(b: Seq<u8>, i: int, n: nat) -> nat
@@ -195,63 +177,6 @@ pub open spec fn le(b: Seq<u8>, i: int, n: nat) -> nat
 
 pub open spec fn le32(b: Seq<u8>, i: int) -> u32 {
     le(b, i, 4) as u32
-}
-
-#[verifier::opaque]
-pub open spec fn xx_round(acc: u32, lane: u32) -> u32 {
-    mul32(rotl32(add32(acc, mul32(lane, Q2)), 13), Q1)
-}
-
-/// The four accumulators after the 16-byte stripes starting at `i`.
-pub open spec fn xx_stripes(b: Seq<u8>, i: int, v: (u32, u32, u32, u32)) -> (u32, u32, u32, u32)
-    decreases b.len() - i,
-{
-    if i < 0 || i + 16 > b.len() {
-        v
-    } else {
-        xx_stripes(
-            b,
-            i + 16,
-            (
-                xx_round(v.0, le32(b, i)),
-                xx_round(v.1, le32(b, i + 4)),
-                xx_round(v.2, le32(b, i + 8)),
-                xx_round(v.3, le32(b, i + 12)),
-            ),
-        )
-    }
-}
-
-/// The last `b.len() - i` (fewer than 16) bytes.
-pub open spec fn xx_tail(b: Seq<u8>, i: int, h: u32) -> u32
-    decreases b.len() - i,
-{
-    if i < 0 || i >= b.len() {
-        h
-    } else if i + 4 <= b.len() {
-        xx_tail(b, i + 4, mul32(rotl32(add32(h, mul32(le32(b, i), Q3)), 17), Q4))
-    } else {
-        xx_tail(b, i + 1, mul32(rotl32(add32(h, mul32(b[i] as u32, Q5)), 11), Q1))
-    }
-}
-
-pub open spec fn xx_avalanche(h: u32) -> u32 {
-    let h1 = mul32(h ^ (h >> 15), Q2);
-    let h2 = mul32(h1 ^ (h1 >> 13), Q3);
-    h2 ^ (h2 >> 16)
-}
-
-/// XXH32 of `b` with seed 0.
-pub open spec fn xxh32(b: Seq<u8>) -> u32 {
-    let n = b.len();
-    let full = (n / 16 * 16) as int;
-    let h0 = if n >= 16 {
-        let v = xx_stripes(b, 0, (add32(Q1, Q2), Q2, 0, (0x1_0000_0000 - Q1) as u32));
-        add32(add32(add32(rotl32(v.0, 1), rotl32(v.1, 7)), rotl32(v.2, 12)), rotl32(v.3, 18))
-    } else {
-        Q5
-    };
-    xx_avalanche(xx_tail(b, full, add32(h0, (n % 0x1_0000_0000) as u32)))
 }
 
 // ---------------------------------------------------------------------------

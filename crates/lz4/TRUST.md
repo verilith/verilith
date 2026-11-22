@@ -14,7 +14,8 @@ against the format documents:
   a block ends with literals. `block_strict` adds the end-of-block rules
   (the last 5 bytes are literals, the last match starts at least 12
   bytes before the end), which the compressor is proven to follow.
-- `xxh32`: XXH32 (xxhash_spec.md), with seed 0.
+- `xxh32`: XXH32 (xxhash_spec.md), with seed 0. It is
+  [verilith-xxhash](../xxhash)'s specification, `src/spec.rs` there, re-exported.
 - `header`, `blocks`, `frame`, `skippable`, `frames`: the frame format
   (lz4_Frame_format.md), version 1.
 

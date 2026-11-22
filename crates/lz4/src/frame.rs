@@ -6,14 +6,42 @@ use crate::block::decode_block;
 #[cfg(verus_only)]
 use crate::block::lemma_seqs_len;
 use crate::spec::*;
+use verilith_core::lz::load32;
 #[cfg(verus_only)]
-use crate::xxh::lemma_le_is;
-use crate::xxh::{word, xxh32_exec};
+use verilith_core::prims::le_bytes;
 use verilith_core::prims::{copy_in, get, load_u64_le};
+use verilith_xxhash::xxh32_exec;
 use vstd::prelude::*;
 use vstd::slice::slice_subrange;
 
 verus! {
+
+/// The spec's `le` is vcore's `le_bytes`.
+pub proof fn lemma_le_is(b: Seq<u8>, i: int, n: nat)
+    ensures
+        le(b, i, n) == le_bytes(b, i, n),
+    decreases n,
+{
+    if n > 0 {
+        lemma_le_is(b, i + 1, (n - 1) as nat);
+    }
+}
+
+/// The four bytes at `i`, little-endian.
+#[inline(always)]
+pub fn word(b: &[u8], i: usize) -> (r: u32)
+    requires
+        i + 4 <= b@.len(),
+    ensures
+        r == le32(b@, i as int),
+        r == le(b@, i as int, 4),
+{
+    let r = load32(b, i);
+    proof {
+        lemma_le_is(b@, i as int, 4);
+    }
+    r
+}
 
 /// Why decompression failed.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]

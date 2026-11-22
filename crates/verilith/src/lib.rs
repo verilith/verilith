@@ -78,6 +78,9 @@ pub use verilith_x509 as x509;
 /// `verilith-xml`: XML 1.0 parser.
 #[cfg(feature = "xml")]
 pub use verilith_xml as xml;
+/// `verilith-xxhash`: XXH32 and XXH64.
+#[cfg(feature = "xxhash")]
+pub use verilith_xxhash as xxhash;
 /// `verilith-zlib`: zlib, gzip and DEFLATE.
 #[cfg(feature = "zlib")]
 pub use verilith_zlib as zlib;

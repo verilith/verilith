@@ -103,6 +103,7 @@ not proofs.
 | [`verilith-webp`](crates/webp) | A formally verified (Verus) WebP lossless (VP8L) decoder | [proven](crates/webp#what-is-proven), [trusted](crates/webp#trusted-base) |
 | [`verilith-x509`](crates/x509) | A formally verified (Verus) DER and X.509 certificate parser | [proven](crates/x509#what-is-proven) |
 | [`verilith-xml`](crates/xml) | A fast XML 1.0 parser formally verified with Verus: exactly the well-formedness rules, no panics, no recursion | [proven](crates/xml#what-is-proven), [trusted](crates/xml#what-is-not-proven) |
+| [`verilith-xxhash`](crates/xxhash) | Formally verified (Verus) XXH32 and XXH64, the checksums of the LZ4 and Zstandard frame formats | [proven](crates/xxhash#what-is-proven), [trusted](crates/xxhash#trusted-base) |
 | [`verilith-zlib`](crates/zlib) | A formally verified (Verus) DEFLATE, zlib and gzip decompressor | [proven](crates/zlib#what-is-proven), [trusted](crates/zlib#trusted-base) |
 | [`verilith-zstd`](crates/zstd) | A formally verified (Verus) Zstandard (RFC 8878) decompressor with libzstd's C API | [proven](crates/zstd#what-is-proven), [trusted](crates/zstd#trusted-base) |
 

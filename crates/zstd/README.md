@@ -14,14 +14,14 @@ in this crate are the seven small copy primitives in
 
 | property | where it is stated |
 | --- | --- |
-| Memory safety: no out-of-bounds access, no overflow, no panics | every function in `bits`, `fse`, `huf`, `seq`, `xxh`, `frame` (Verus checks all indexing and arithmetic) |
+| Memory safety: no out-of-bounds access, no overflow, no panics | every function in `bits`, `fse`, `huf`, `seq`, `frame` (Verus checks all indexing and arithmetic) |
 | Termination of every loop | every function (`decreases`) |
 | Correctness, one-shot: `Ok(v)` exactly when the input is valid, with the spec's output; `Err(Corrupt)` only when the spec rejects the input; `Err(TooLarge)` only when the spec rejects it or its output is longer than the limit | `frame::decompress_exec` against `spec::decompress` |
 | Correctness, one block: a raw, RLE or compressed block decodes to the spec's output and decoder state (repeat offsets, Huffman table, FSE tables) | `frame::block_exec`, `seq::compressed_block_exec` against `spec::blocks`, `spec::compressed_block` |
 | Literals sections, Huffman tree descriptions (direct and FSE-compressed weights), 1- and 4-stream Huffman decoding | `huf::lit_section_exec` against `spec::lit_section` |
 | FSE table descriptions and tables (spread, low-probability symbols, state rows), predefined and repeat modes | `fse::read_ncount`, `fse::build_table`, `seq::seq_table_exec` |
 | Sequences: decoding, repeat offsets, execution with overlapping matches | `seq::seq_run_exec` against `spec::seq_run` |
-| XXH64 (the content checksum), one-shot and fed in pieces | `xxh::xxh64_exec`, `xxh::Xxh64::update`/`digest` against `spec::xxh64` |
+| XXH64 (the content checksum), one-shot and fed in pieces | `verilith_xxhash::Xxh64::update`/`digest` against `spec::xxh64` (both from [verilith-xxhash](../xxhash)) |
 | Streaming, input and output in pieces of any size: a frame end (0) is returned only when the input taken is a whole frame and the output handed out is its content, whatever input follows; before that, all output handed out is the start of the frame's content; the loop terminates | `stream::Stream::stream` against `spec::frame` (`frame_ok`), `Stream::lemma_emitted_prefix` |
 | Streaming keeps only the last window of output, and that gives the same output (a match reaches back at most one window) | `stream::lemma_compressed_block_shift`, `lemma_block_step_shift` |
 | Streaming memory: the output kept is at most two windows and three blocks, and a unit being collected at most one block | `stream::Stream::inv` (`mem_ok`, `need`) |
@@ -85,14 +85,13 @@ consumed exactly, reserved bits must be zero, and dictionaries and legacy
 
 - `src/spec.rs`: the format as total functions over `Seq<u8>`: FSE and
   Huffman descriptions and tables, literals, sequences, blocks, frames,
-  skippable frames and XXH64.
+  skippable frames. XXH64 is verilith-xxhash's `spec::xxh64`.
 - `src/bits.rs`: the backward bit reader (8-byte loads, zero-filled below
   the start of the stream) and the bit arithmetic.
 - `src/fse.rs`: FSE table descriptions and table construction.
 - `src/huf.rs`: Huffman tree descriptions, the decoding table, Huffman
   streams and the literals section.
 - `src/seq.rs`: the sequences section and compressed blocks.
-- `src/xxh.rs`: XXH64, one-shot and streaming.
 - `src/frame.rs`: frame headers, blocks, frames and `decompress_exec`.
 - `src/stream.rs`: streaming decompression, input and output in pieces.
 - `src/capi.rs`: the C API (unverified adapter, above).

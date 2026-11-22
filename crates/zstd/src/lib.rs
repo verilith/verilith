@@ -22,7 +22,6 @@ pub mod fse;
 pub mod huf;
 pub mod seq;
 pub mod cpu;
-pub mod xxh;
 pub mod frame;
 pub mod stream;
 pub mod capi;

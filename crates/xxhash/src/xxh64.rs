@@ -1,7 +1,7 @@
 //! XXH64 with seed 0, proven equal to `spec::xxh64`.
-use crate::spec::*;
 #[cfg(verus_only)]
-use verilith_core::prims::le_bytes;
+use crate::bytes::lemma_le_is;
+use crate::spec::*;
 use verilith_core::prims::load_u64_le;
 use vstd::prelude::*;
 use vstd::slice::slice_subrange;
@@ -17,17 +17,6 @@ const XP3: u64 = 0x165667B19E3779F9;
 const XP4: u64 = 0x85EBCA77C2B2AE63;
 
 const XP5: u64 = 0x27D4EB2F165667C5;
-
-/// The spec's `le` is vcore's `le_bytes`.
-pub proof fn lemma_le_is(b: Seq<u8>, i: int, n: nat)
-    ensures
-        le(b, i, n) == le_bytes(b, i, n),
-    decreases n,
-{
-    if n > 0 {
-        lemma_le_is(b, i + 1, (n - 1) as nat);
-    }
-}
 
 #[inline(always)]
 fn rotl(x: u64, r: u64) -> (y: u64)
@@ -59,10 +48,10 @@ fn word(b: &[u8], i: usize) -> (r: u64)
 #[inline(always)]
 fn round(acc: u64, lane: u64) -> (r: u64)
     ensures
-        r == xx_round(acc, lane),
+        r == round64(acc, lane),
 {
     proof {
-        reveal(xx_round);
+        reveal(round64);
         reveal(add64);
         reveal(mul64);
     }
@@ -72,10 +61,10 @@ fn round(acc: u64, lane: u64) -> (r: u64)
 #[inline(always)]
 fn merge(h: u64, v: u64) -> (r: u64)
     ensures
-        r == xx_merge(h, v),
+        r == merge64(h, v),
 {
     proof {
-        reveal(xx_merge);
+        reveal(merge64);
         reveal(add64);
         reveal(mul64);
     }
@@ -102,28 +91,28 @@ fn mul(a: u64, b: u64) -> (r: u64)
     a.wrapping_mul(b)
 }
 
-/// The accumulators after all whole stripes (`xx_stripes`).
+/// The accumulators after all whole stripes (`stripes64`).
 fn stripes(b: &[u8]) -> (r: (u64, u64, u64, u64))
     ensures
-        r == xx_stripes(b@, 0, (add64(P1, P2), P2, 0u64, (0x1_0000_0000_0000_0000 - P1) as u64)),
+        r == stripes64(b@, 0, (add64(PRIME64_1, PRIME64_2), PRIME64_2, 0u64, (0x1_0000_0000_0000_0000 - PRIME64_1) as u64)),
 {
     let n = b.len();
-    let ghost v0 = (add64(P1, P2), P2, 0u64, (0x1_0000_0000_0000_0000 - P1) as u64);
-    let ghost goal = xx_stripes(b@, 0, v0);
+    let ghost v0 = (add64(PRIME64_1, PRIME64_2), PRIME64_2, 0u64, (0x1_0000_0000_0000_0000 - PRIME64_1) as u64);
+    let ghost goal = stripes64(b@, 0, v0);
     let mut v1 = add(XP1, XP2);
     let mut v2 = XP2;
     let mut v3 = 0u64;
     let mut v4 = 0u64.wrapping_sub(XP1);
     let mut i: usize = 0;
     proof {
-        assert(v4 == (0x1_0000_0000_0000_0000 - P1) as u64);
+        assert(v4 == (0x1_0000_0000_0000_0000 - PRIME64_1) as u64);
     }
     while n - i >= 32
         invariant
             n == b@.len(),
             i <= n,
-            goal == xx_stripes(b@, 0, v0),
-            xx_stripes(b@, i as int, (v1, v2, v3, v4)) == goal,
+            goal == stripes64(b@, 0, v0),
+            stripes64(b@, i as int, (v1, v2, v3, v4)) == goal,
         decreases n - i,
     {
         v1 = round(v1, word(b, i));
@@ -135,23 +124,23 @@ fn stripes(b: &[u8]) -> (r: (u64, u64, u64, u64))
     (v1, v2, v3, v4)
 }
 
-/// The tail from `i0` on (`xx_tail`).
+/// The tail from `i0` on (`tail64`).
 fn tail(b: &[u8], i0: usize, h0: u64) -> (r: u64)
     requires
         i0 <= b@.len(),
     ensures
-        r == xx_tail(b@, i0 as int, h0),
+        r == tail64(b@, i0 as int, h0),
 {
     let n = b.len();
     let mut h = h0;
     let mut i = i0;
-    let ghost goal = xx_tail(b@, i0 as int, h0);
+    let ghost goal = tail64(b@, i0 as int, h0);
     while i < n
         invariant
             n == b@.len(),
             i <= n,
-            goal == xx_tail(b@, i0 as int, h0),
-            xx_tail(b@, i as int, h) == goal,
+            goal == tail64(b@, i0 as int, h0),
+            tail64(b@, i as int, h) == goal,
         decreases n - i,
     {
         if n - i >= 8 {
@@ -198,15 +187,15 @@ pub fn xxh64_exec(b: &[u8]) -> (r: u64)
 // ---------------------------------------------------------------------------
 
 pub open spec fn xx_v0() -> (u64, u64, u64, u64) {
-    (add64(P1, P2), P2, 0u64, (0x1_0000_0000_0000_0000 - P1) as u64)
+    (add64(PRIME64_1, PRIME64_2), PRIME64_2, 0u64, (0x1_0000_0000_0000_0000 - PRIME64_1) as u64)
 }
 
 pub open spec fn xx_step4(b: Seq<u8>, i: int, v: (u64, u64, u64, u64)) -> (u64, u64, u64, u64) {
     (
-        xx_round(v.0, le64(b, i)),
-        xx_round(v.1, le64(b, i + 8)),
-        xx_round(v.2, le64(b, i + 16)),
-        xx_round(v.3, le64(b, i + 24)),
+        round64(v.0, le64(b, i)),
+        round64(v.1, le64(b, i + 8)),
+        round64(v.2, le64(b, i + 16)),
+        round64(v.3, le64(b, i + 24)),
     )
 }
 
@@ -226,7 +215,7 @@ proof fn lemma_xx_split(b: Seq<u8>, i: int, j: int, v: (u64, u64, u64, u64))
         0 <= i <= j <= b.len(),
         (j - i) % 32 == 0,
     ensures
-        xx_stripes(b, i, v) == xx_stripes(b, j, xx_to(b, i, j, v)),
+        stripes64(b, i, v) == stripes64(b, j, xx_to(b, i, j, v)),
     decreases j - i,
 {
     if i < j {
@@ -300,21 +289,21 @@ proof fn lemma_tail_shift(b: Seq<u8>, d: int, c: Seq<u8>, k: int, h: u64)
         c == b.subrange(d, b.len() as int),
         d <= b.len(),
     ensures
-        xx_tail(b, d + k, h) == xx_tail(c, k, h),
+        tail64(b, d + k, h) == tail64(c, k, h),
     decreases c.len() - k,
 {
     if k < c.len() {
         if k + 8 <= c.len() {
             assert(b.subrange(d + k, d + k + 8) =~= c.subrange(k, k + 8));
             lemma_le_same(b, c, d + k, k, 8);
-            lemma_tail_shift(b, d, c, k + 8, add64(mul64(rotl64(h ^ xx_round(0, le64(c, k)), 27), P1), P4));
+            lemma_tail_shift(b, d, c, k + 8, add64(mul64(rotl64(h ^ round64(0, le64(c, k)), 27), PRIME64_1), PRIME64_4));
         } else if k + 4 <= c.len() {
             assert(b.subrange(d + k, d + k + 4) =~= c.subrange(k, k + 4));
             lemma_le_same(b, c, d + k, k, 4);
-            lemma_tail_shift(b, d, c, k + 4, add64(mul64(rotl64(h ^ mul64(le(c, k, 4) as u64, P1), 23), P2), P3));
+            lemma_tail_shift(b, d, c, k + 4, add64(mul64(rotl64(h ^ mul64(le(c, k, 4) as u64, PRIME64_1), 23), PRIME64_2), PRIME64_3));
         } else {
             assert(b[d + k] == c[k]);
-            lemma_tail_shift(b, d, c, k + 1, mul64(rotl64(h ^ mul64(c[k] as u64, P5), 11), P1));
+            lemma_tail_shift(b, d, c, k + 1, mul64(rotl64(h ^ mul64(c[k] as u64, PRIME64_5), 11), PRIME64_1));
         }
     }
 }
