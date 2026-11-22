@@ -64,6 +64,37 @@ fn bmi2_build_matches_portable() {
 }
 
 #[test]
+fn avx2_kernels_match_portable() {
+    let Some((k256, k512)) = cpu::avx2_kernels() else {
+        eprintln!("no AVX2: skipped");
+        return;
+    };
+    let mut r = Rng(9);
+    let data = r.bytes(128 * 20 + 127);
+    for start in 0..3 {
+        let mut a0 = [0u32; 8];
+        let mut c0 = [0u64; 8];
+        for w in a0.iter_mut() {
+            *w = r.next() as u32;
+        }
+        for w in c0.iter_mut() {
+            *w = r.next();
+        }
+        for end in start..data.len() {
+            let p = &data[start..end];
+            let (mut a, mut b) = (a0, a0);
+            k256(&mut a, p);
+            compress::compress_blocks(&mut b, p);
+            assert_eq!(a, b, "sha-256 start {start} len {}", p.len());
+            let (mut c, mut d) = (c0, c0);
+            k512(&mut c, p);
+            verilith_sha2::compress512::compress_blocks(&mut d, p);
+            assert_eq!(c, d, "sha-512 start {start} len {}", p.len());
+        }
+    }
+}
+
+#[test]
 fn every_length_against_rustcrypto() {
     let mut r = Rng(1);
     let data = r.bytes(4200);
@@ -110,5 +141,41 @@ fn random_pieces_against_rustcrypto() {
         }
         assert_eq!(a.finalize()[..], x.finalize()[..]);
         assert_eq!(b.finalize()[..], y.finalize()[..]);
+    }
+}
+
+/// K_t + W_t for a 64-byte block, straight from FIPS 180-4 §6.2.2 step 1.
+fn reference_kw256(b: &[u8]) -> [u32; 64] {
+    let mut w = [0u32; 64];
+    for t in 0..16 {
+        w[t] = u32::from_be_bytes(b[4 * t..4 * t + 4].try_into().unwrap());
+    }
+    for t in 16..64 {
+        let s0 = w[t - 15].rotate_right(7) ^ w[t - 15].rotate_right(18) ^ (w[t - 15] >> 3);
+        let s1 = w[t - 2].rotate_right(17) ^ w[t - 2].rotate_right(19) ^ (w[t - 2] >> 10);
+        w[t] = s1.wrapping_add(w[t - 7]).wrapping_add(s0).wrapping_add(w[t - 16]);
+    }
+    let mut kw = [0u32; 64];
+    for t in 0..64 {
+        kw[t] = w[t].wrapping_add(verilith_sha2::spec::K[t]);
+    }
+    kw
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn avx2_schedule256_matches_reference() {
+    if !std::is_x86_feature_detected!("avx2") {
+        eprintln!("no AVX2: skipped");
+        return;
+    }
+    let mut r = Rng(11);
+    for _ in 0..500 {
+        let p = r.bytes(192);
+        let (o0, o1) = (r.below(65), r.below(65) + 64);
+        let (mut w0, mut w1) = ([0u32; 64], [0u32; 64]);
+        verilith_sha2::avx2::schedule256x2(&p, o0, o1, &mut w0, &mut w1);
+        assert_eq!(w0, reference_kw256(&p[o0..o0 + 64]));
+        assert_eq!(w1, reference_kw256(&p[o1..o1 + 64]));
     }
 }

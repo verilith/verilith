@@ -10,6 +10,10 @@
 //! - on AArch64 with the SHA2 extension (every Apple Silicon CPU, and most
 //!   ARMv8 server and phone cores), with `sha256h`, `sha256h2`,
 //!   `sha256su0` and `sha256su1`;
+//! - on x86-64 with AVX2 (and no SHA-NI), the verified rounds with the
+//!   message schedule computed for two blocks at once with AVX2 and
+//!   pipelined into the rounds (`crate::avx2`, trusted), as for SHA-512
+//!   below;
 //! - otherwise with the verified portable kernel, compiled with BMI2 where
 //!   the CPU has it (as verilith-core does for Adler-32 with AVX2: the same
 //!   verified code, other instruction selection).
@@ -66,6 +70,11 @@ pub fn compress_blocks(st: &mut [u32; 8], p: &[u8])
     }
     #[cfg(target_arch = "x86_64")]
     {
+        if x86_has!("avx2") && x86_has!("bmi2") {
+            // SAFETY: the CPU has AVX2 and BMI2.
+            unsafe { bmi2::compress_blocks_avx2(st, p) };
+            return;
+        }
         if x86_has!("bmi2") {
             // SAFETY: the CPU has BMI2.
             unsafe { bmi2::compress_blocks(st, p) };
@@ -106,6 +115,39 @@ pub fn compress512_blocks(st: &mut [u64; 8], p: &[u8])
         }
     }
     crate::compress512::compress_blocks(st, p)
+}
+
+/// [`crate::compress::pair_kw`], compiled with AVX2 and BMI2 and out of
+/// line (see [`pair_avx2`]).
+#[cfg(target_arch = "x86_64")]
+#[verifier::external_body]
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+pub fn pair256_avx2(
+    st: &mut [u32; 8],
+    cur0: &[u32; 64],
+    cur1: &[u32; 64],
+    b0: Ghost<Seq<u8>>,
+    b1: Ghost<Seq<u8>>,
+    p: &[u8],
+    o0: usize,
+    o1: usize,
+    nxt0: &mut [u32; 64],
+    nxt1: &mut [u32; 64],
+)
+    requires
+        crate::compress::kw_schedule(cur0@, crate::spec::words(b0@)),
+        crate::compress::kw_schedule(cur1@, crate::spec::words(b1@)),
+        o0 + 64 <= p@.len(),
+        o1 + 64 <= p@.len(),
+    ensures
+        final(st)@ == crate::spec::compress(crate::spec::compress(old(st)@, b0@), b1@),
+        crate::compress::kw_schedule(final(nxt0)@, crate::spec::words(p@.subrange(o0 as int, o0 + 64))),
+        crate::compress::kw_schedule(final(nxt1)@, crate::spec::words(p@.subrange(o1 as int, o1 + 64))),
+{
+    // SAFETY: only reached from `compress_blocks_avx2`, which runs where
+    // the CPU has AVX2 and BMI2.
+    unsafe { bmi2::pair256_avx2(st, cur0, cur1, b0, b1, p, o0, o1, nxt0, nxt1) }
 }
 
 /// [`crate::compress512::pair_kw`], compiled with AVX2 and BMI2 and out of
@@ -182,6 +224,9 @@ pub fn kernel() -> &'static str {
     }
     #[cfg(target_arch = "x86_64")]
     {
+        if x86_has!("avx2") && x86_has!("bmi2") {
+            return "avx2 schedule";
+        }
         if x86_has!("bmi2") {
             return "portable (bmi2)";
         }
@@ -206,6 +251,31 @@ pub(crate) mod bmi2 {
 
     /// The verified rounds over the AVX2 schedule (`crate::avx2`), which
     /// needs AVX2 enabled for its intrinsics to be inlined.
+    /// SHA-256's pipelined kernel, for CPUs with AVX2 and no SHA-NI.
+    #[target_feature(enable = "avx2,bmi2")]
+    pub unsafe fn compress_blocks_avx2(st: &mut [u32; 8], p: &[u8]) {
+        crate::compress::compress_blocks_pipe(st, p)
+    }
+
+    /// One pair of SHA-256's pipelined loop (see `cpu::pair256_avx2`).
+    #[target_feature(enable = "avx2,bmi2")]
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    pub unsafe fn pair256_avx2(
+        st: &mut [u32; 8],
+        cur0: &[u32; 64],
+        cur1: &[u32; 64],
+        b0: vstd::prelude::Ghost<vstd::prelude::Seq<u8>>,
+        b1: vstd::prelude::Ghost<vstd::prelude::Seq<u8>>,
+        p: &[u8],
+        o0: usize,
+        o1: usize,
+        nxt0: &mut [u32; 64],
+        nxt1: &mut [u32; 64],
+    ) {
+        crate::compress::pair_kw(st, cur0, cur1, b0, b1, p, o0, o1, nxt0, nxt1)
+    }
+
     #[target_feature(enable = "avx2,bmi2")]
     pub unsafe fn compress512_blocks_avx2(st: &mut [u64; 8], p: &[u8]) {
         crate::compress512::compress_blocks_pipe(st, p)
@@ -415,6 +485,24 @@ pub fn bmi2_kernels() -> Option<(Kernel256, Kernel512)> {
             return Some((
                 |st, p| unsafe { bmi2::compress_blocks(st, p) },
                 |st, p| unsafe { bmi2::compress512_blocks(st, p) },
+            ));
+        }
+    }
+    None
+}
+
+/// For the tests: the AVX2 kernels (the pipelined schedule), if the CPU has
+/// AVX2 and BMI2. On a CPU with SHA-NI, `compress_blocks` never runs the
+/// SHA-256 one.
+#[doc(hidden)]
+pub fn avx2_kernels() -> Option<(Kernel256, Kernel512)> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if x86_has!("avx2") && x86_has!("bmi2") {
+            // SAFETY: only returned when the CPU has AVX2 and BMI2.
+            return Some((
+                |st, p| unsafe { bmi2::compress_blocks_avx2(st, p) },
+                |st, p| unsafe { bmi2::compress512_blocks_avx2(st, p) },
             ));
         }
     }

@@ -112,6 +112,90 @@ pub fn sched_steps2(
     }
 }
 
+// ---------------------------------------------------------------------------
+// SHA-256: the same, with four 32-bit words of each block per step
+// ---------------------------------------------------------------------------
+
+/// A SHA-256 pair's schedule part way: its last 16 words, in vectors.
+#[verifier::external_body]
+pub struct Sched256 {
+    x: [core::arch::x86_64::__m256i; 4],
+}
+
+/// `st` holds the schedule of SHA-256 block words `m0` and `m1` up to step
+/// `s` (words `4s - 16` to `4s`).
+pub uninterp spec fn sched256_at(st: Sched256, m0: Seq<u32>, m1: Seq<u32>, s: int) -> bool;
+
+/// `wk[i]` is K_i + W_i of SHA-256 block words `m`, for every `i < n`.
+pub open spec fn kw256_upto(wk: Seq<u32>, m: Seq<u32>, n: int) -> bool {
+    forall|i: int|
+        0 <= i < n ==> wk[i] == #[trigger] crate::spec::add(crate::spec::K[i], crate::spec::schedule(m, i))
+}
+
+/// The whole SHA-256 schedule of the 64-byte blocks at `o0` and `o1`.
+#[verifier::external_body]
+#[inline(always)]
+pub fn schedule256x2(p: &[u8], o0: usize, o1: usize, w0: &mut [u32; 64], w1: &mut [u32; 64])
+    requires
+        o0 + 64 <= p@.len(),
+        o1 + 64 <= p@.len(),
+    ensures
+        kw256_upto(final(w0)@, crate::spec::words(p@.subrange(o0 as int, o0 + 64)), 64),
+        kw256_upto(final(w1)@, crate::spec::words(p@.subrange(o1 as int, o1 + 64)), 64),
+{
+    assert!(o0 + 64 <= p.len() && o1 + 64 <= p.len());
+    // SAFETY: both blocks are inside `p`; the caller has checked AVX2.
+    unsafe { imp::schedule256x2(p.as_ptr().add(o0), p.as_ptr().add(o1), w0, w1) }
+}
+
+/// Starts the SHA-256 schedule of the blocks at `o0` and `o1`.
+#[verifier::external_body]
+#[inline(always)]
+pub fn sched256_start(p: &[u8], o0: usize, o1: usize, w0: &mut [u32; 64], w1: &mut [u32; 64]) -> (r: Sched256)
+    requires
+        o0 + 64 <= p@.len(),
+        o1 + 64 <= p@.len(),
+    ensures
+        sched256_at(
+            r,
+            crate::spec::words(p@.subrange(o0 as int, o0 + 64)),
+            crate::spec::words(p@.subrange(o1 as int, o1 + 64)),
+            4,
+        ),
+        kw256_upto(final(w0)@, crate::spec::words(p@.subrange(o0 as int, o0 + 64)), 16),
+        kw256_upto(final(w1)@, crate::spec::words(p@.subrange(o1 as int, o1 + 64)), 16),
+{
+    assert!(o0 + 64 <= p.len() && o1 + 64 <= p.len());
+    // SAFETY: both blocks are inside `p`; the caller has checked AVX2.
+    unsafe { Sched256 { x: imp::start256(p.as_ptr().add(o0), p.as_ptr().add(o1), w0, w1) } }
+}
+
+/// Step `s`: words `4s` to `4s + 4` of both blocks.
+#[verifier::external_body]
+#[inline(always)]
+pub fn sched256_step(
+    st: &mut Sched256,
+    s: usize,
+    w0: &mut [u32; 64],
+    w1: &mut [u32; 64],
+    Ghost(m0): Ghost<Seq<u32>>,
+    Ghost(m1): Ghost<Seq<u32>>,
+)
+    requires
+        4 <= s < 16,
+        sched256_at(*old(st), m0, m1, s as int),
+        kw256_upto(old(w0)@, m0, 4 * s),
+        kw256_upto(old(w1)@, m1, 4 * s),
+    ensures
+        sched256_at(*final(st), m0, m1, s + 1),
+        kw256_upto(final(w0)@, m0, 4 * s + 4),
+        kw256_upto(final(w1)@, m1, 4 * s + 4),
+{
+    assert!((4..16).contains(&s));
+    // SAFETY: the caller has checked AVX2.
+    unsafe { imp::step256(&mut st.x, s, w0, w1) }
+}
+
 } // verus!
 
 mod imp {
@@ -241,5 +325,100 @@ mod imp {
         }
         steps!(8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
                32 33 34 35 36 37 38 39);
+    }
+
+    /// SHA-256's K_{4s..4s+4} at 8s, once for each half of a vector.
+    static KK256: [u32; 128] = {
+        let k = crate::spec::K;
+        let mut kk = [0u32; 128];
+        let mut s = 0;
+        while s < 16 {
+            let mut j = 0;
+            while j < 4 {
+                kk[8 * s + j] = k[4 * s + j];
+                kk[8 * s + 4 + j] = k[4 * s + j];
+                j += 1;
+            }
+            s += 1;
+        }
+        kk
+    };
+
+    macro_rules! rotr32 {
+        ($x:expr, $n:literal) => {
+            _mm256_or_si256(_mm256_srli_epi32::<$n>($x), _mm256_slli_epi32::<{ 32 - $n }>($x))
+        };
+    }
+
+    #[inline(always)]
+    unsafe fn sigma0_256(x: __m256i) -> __m256i {
+        _mm256_xor_si256(_mm256_xor_si256(rotr32!(x, 7), rotr32!(x, 18)), _mm256_srli_epi32::<3>(x))
+    }
+
+    #[inline(always)]
+    unsafe fn sigma1_256(x: __m256i) -> __m256i {
+        _mm256_xor_si256(_mm256_xor_si256(rotr32!(x, 17), rotr32!(x, 19)), _mm256_srli_epi32::<10>(x))
+    }
+
+    /// Stores K + W for words 4s to 4s + 4 of both blocks.
+    #[inline(always)]
+    unsafe fn store256(x: __m256i, s: usize, w0: &mut [u32; 64], w1: &mut [u32; 64]) {
+        let kw = _mm256_add_epi32(x, _mm256_loadu_si256(KK256.as_ptr().add(8 * s) as *const __m256i));
+        _mm_storeu_si128(w0.as_mut_ptr().add(4 * s) as *mut __m128i, _mm256_castsi256_si128(kw));
+        _mm_storeu_si128(w1.as_mut_ptr().add(4 * s) as *mut __m128i, _mm256_extracti128_si256::<1>(kw));
+    }
+
+    /// The first 16 words of both SHA-256 blocks.
+    #[inline(always)]
+    pub unsafe fn start256(b0: *const u8, b1: *const u8, w0: &mut [u32; 64], w1: &mut [u32; 64]) -> [__m256i; 4] {
+        // Big-endian 32-bit words from little-endian lanes.
+        let bswap = _mm256_setr_epi8(
+            3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12, //
+            3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12,
+        );
+        let mut x = [_mm256_setzero_si256(); 4];
+        for (s, v) in x.iter_mut().enumerate() {
+            let lo = _mm_loadu_si128(b0.add(16 * s) as *const __m128i);
+            let hi = _mm_loadu_si128(b1.add(16 * s) as *const __m128i);
+            *v = _mm256_shuffle_epi8(_mm256_set_m128i(hi, lo), bswap);
+            store256(*v, s, w0, w1);
+        }
+        x
+    }
+
+    /// Step `s` (4 <= s < 16): W_{4s..4s+4} of both blocks over the window
+    /// `x`, in which `x[s % 4]` is W_{4s-16..4s-12}. W_{4s+2} and W_{4s+3}
+    /// need σ1 of W_{4s} and W_{4s+1}, so the low two words come first.
+    #[target_feature(enable = "avx2")]
+    #[inline]
+    pub unsafe fn step256(x: &mut [__m256i; 4], s: usize, w0: &mut [u32; 64], w1: &mut [u32; 64]) {
+        let x0 = x[s % 4];
+        let x2 = x[(s + 2) % 4];
+        let x3 = x[(s + 3) % 4];
+        let w15 = _mm256_alignr_epi8::<4>(x[(s + 1) % 4], x0);
+        let w7 = _mm256_alignr_epi8::<4>(x3, x2);
+        let t = _mm256_add_epi32(_mm256_add_epi32(x0, sigma0_256(w15)), w7);
+        let lo = _mm256_setr_epi32(-1, -1, 0, 0, -1, -1, 0, 0);
+        // σ1(W_{4s-2}), σ1(W_{4s-1}) into lanes 0 and 1.
+        let s1 = sigma1_256(_mm256_shuffle_epi32::<0b11_10_11_10>(x3));
+        let v = _mm256_add_epi32(t, _mm256_and_si256(s1, lo));
+        // σ1(W_{4s}), σ1(W_{4s+1}) into lanes 2 and 3.
+        let s1 = sigma1_256(_mm256_shuffle_epi32::<0b01_00_01_00>(v));
+        let mut v = _mm256_add_epi32(v, _mm256_andnot_si256(lo, s1));
+        // Keeps each step where it is placed (see `step`).
+        core::arch::asm!("/* {0} */", inout(ymm_reg) v, options(nostack, preserves_flags));
+        x[s % 4] = v;
+        store256(v, s, w0, w1);
+    }
+
+    /// The whole SHA-256 schedule of two blocks. Not inlined (see
+    /// `schedule512x2`).
+    #[target_feature(enable = "avx2")]
+    #[inline(never)]
+    pub unsafe fn schedule256x2(b0: *const u8, b1: *const u8, w0: &mut [u32; 64], w1: &mut [u32; 64]) {
+        let mut x = start256(b0, b1, w0, w1);
+        for s in 4..16 {
+            step256(&mut x, s, w0, w1);
+        }
     }
 }
