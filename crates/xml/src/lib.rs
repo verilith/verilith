@@ -1,0 +1,43 @@
+//! verilith-xml: an XML 1.0 parser formally verified with Verus.
+//!
+//! * [`parse`], [`Document`], [`Element`], [`Child`]: the Rust API,
+//!   borrowed views of the verified tape.
+//! * `spec`    - XML 1.0 (Fifth Edition) well-formedness as Verus spec
+//!   functions, from the input bytes to the tape.
+//! * `chars`   - `Char` and `Name` characters, verified.
+//! * `lex`, `dtd`, `content`, `doc` - the parser, proven equal to the
+//!   spec on every input.
+//! * `ent`     - internal entities: replacement text and the fixed point of
+//!   which may be referred to where.
+//! * `enc`     - choosing the encoding, and verified UTF-16 and ISO-8859-1
+//!   decoders.
+//! * `decode`  - verified line-end and attribute-value normalization.
+//! * `scan`, `lanes` - the SSE2 scanners, verified over verilith-simd.
+//! * `tape`    - the tokens the parser writes.
+#![cfg_attr(not(verus_keep_ghost), allow(unused_imports))]
+pub mod chars;
+pub mod content;
+pub mod decode;
+pub mod doc;
+pub mod dtd;
+pub mod enc;
+pub mod index;
+pub mod ent;
+pub mod lanes;
+pub mod lex;
+pub mod scan;
+pub mod spec;
+pub mod tape;
+pub mod uniq;
+
+// Not compiled when verifying: ordinary Rust over the verified modules.
+#[cfg(not(verus_keep_ghost))]
+mod api;
+#[cfg(not(verus_keep_ghost))]
+pub use api::{parse, Attribute, Attrs, Child, Children, Document, Element, Error, ErrorKind, MAX_VALUE};
+
+/// Whether `s` is a well-formed XML document, with its tape in `tape`: the
+/// verified check alone, with no tables built for reading.
+pub fn check(s: &[u8], tape: &mut tape::Tape) -> bool {
+    enc::ex_parse(s, tape).is_some()
+}

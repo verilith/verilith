@@ -356,10 +356,30 @@ build_regex() {
   $CC $objs "$lib" $RUST_LIBS -o "$BIN/regex-vregex"
 }
 
+# XML: expat's and libxml2's SAX APIs against verilith-xml's own API
+# (native: vxml has neither ABI yet).
+build_xml() {
+  local src; src=$(orig expat)/expat
+  cmake_build "$src" "$BUILD/expat" -DEXPAT_BUILD_TOOLS=OFF -DEXPAT_BUILD_EXAMPLES=OFF -DEXPAT_BUILD_TESTS=OFF \
+    -DEXPAT_BUILD_DOCS=OFF -DEXPAT_SHARED_LIBS=OFF
+  local a; a=$(find "$BUILD/expat" -name 'libexpat*.a' | head -1)
+  cc_runner xml-expat -I"$src/lib" "$S/xml/expat.c" "$a"
+  # libxml2 as it builds by default, less its programs, tests and iconv (its
+  # own UTF-8, UTF-16, ISO-8859-x and ASCII decoders remain).
+  local x; x=$(orig libxml2)
+  cmake_build "$x" "$BUILD/libxml2" -DLIBXML2_WITH_PROGRAMS=OFF -DLIBXML2_WITH_TESTS=OFF \
+    -DLIBXML2_WITH_PYTHON=OFF -DLIBXML2_WITH_ICONV=OFF -DLIBXML2_WITH_ZLIB=OFF
+  local l; l=$(find "$BUILD/libxml2" -name 'libxml2*.a' | head -1)
+  local sys="-lm"
+  [ "$OS" = Darwin ] || sys="$sys -lpthread"
+  cc_runner xml-libxml2 -I"$x/include" -I"$BUILD/libxml2" "$S/xml/libxml2.c" "$l" $sys
+  rust_runner vxml-run xml-vxml
+}
+
 # --print-lib REPO FEATURES: build one of our staticlibs and print its path.
 if [ "${1:-}" = --print-lib ]; then rust_lib "$2" "${3:-}"; exit; fi
 
-ALL="zlib dns http url json x509 x509n png webp brotli jpeg regex archive lz4 snappy font"
+ALL="zlib dns http url json x509 x509n png webp brotli jpeg regex archive lz4 snappy font xml"
 want=${*:-$ALL}
 failed=""
 for s in $want; do
