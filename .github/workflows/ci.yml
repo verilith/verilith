@@ -15,8 +15,8 @@ on:
       crates:
         description: "Crates to run, space separated (directories under crates/), or 'all'"
         default: all
-      macos:
-        description: Also verify on macOS (Apple Silicon)
+      arm:
+        description: Also verify on Arm
         type: boolean
         default: true
       fuzz:
@@ -108,28 +108,30 @@ jobs:
         if: failure()
         run: cat target/verify/${{ matrix.crate }}.log
 
-  verus-macos:
-    name: Verus (macOS)
+  verus-arm:
+    name: Verus (Arm)
     needs: plan
     if: >-
       needs.plan.outputs.verify != '[]' &&
-      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.macos))
-    runs-on: macos-15
+      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.arm))
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/verus
 
-  verify-macos:
-    # Apple Silicon: the non-x86 paths (the SIMD crate's x86 emulation specs,
-    # the NEON kernels) are verified here. Not on pull requests: macOS
-    # minutes cost ten times Linux ones.
-    name: Verify ${{ matrix.crate }} (macOS)
-    needs: [plan, verus-macos]
+  verify-arm:
+    # AArch64: the non-x86 paths (the SIMD crate's x86 emulation specs, the
+    # NEON kernels) exist only in an Arm build, so they are verified here,
+    # on a Linux Arm runner. Not on pull requests: it would double the
+    # verification time of every one. A proof can also behave differently
+    # on macOS itself; that is checked by hand on a Mac, not here.
+    name: Verify ${{ matrix.crate }} (Arm)
+    needs: [plan, verus-arm]
     if: >-
       needs.plan.outputs.verify != '[]' &&
-      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.macos))
-    runs-on: macos-15
+      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.arm))
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
     strategy:
       fail-fast: false
@@ -205,7 +207,7 @@ jobs:
   done:
     name: CI
     if: always()
-    needs: [plan, verus, verify, test, test-arm]
+    needs: [plan, verus, verify, verus-arm, verify-arm, test, test-arm]
     runs-on: ubuntu-latest
     steps:
       - name: Every job passed or was skipped
