@@ -13,6 +13,9 @@ set -euo pipefail
 in=$(cd "$(dirname "$1")" && pwd)/$(basename "$1"); out=$2
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 mkdir "$tmp/x"; (cd "$tmp/x" && ar x "$in")
+# BSD ar (macOS) extracts the symbol table as a member, __.SYMDEF or
+# "__.SYMDEF SORTED", unreadable (mode 0); it is not an object.
+rm -f "$tmp"/x/__.SYMDEF*
 if [ "$(uname)" = Darwin ]; then pre=_; else pre=; fi
 # The API: global symbols defined by our own crates' objects (verilith_*)
 # and by any C or C++ compiled into the library (members that are not a
