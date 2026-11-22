@@ -1,8 +1,8 @@
 diff --git a/library/CMakeLists.txt b/library/CMakeLists.txt
-index b2c21fa..6a346c0 100644
+index 5436a96..918d488 100644
 --- a/library/CMakeLists.txt
 +++ b/library/CMakeLists.txt
-@@ -353,6 +353,19 @@ endforeach(target)
+@@ -258,6 +258,19 @@ endforeach(target)
  
  set(lib_target "${MBEDTLS_TARGET_PREFIX}lib")
  
@@ -19,14 +19,14 @@ index b2c21fa..6a346c0 100644
 +    endforeach()
 +endif()
 +
- add_custom_target(${lib_target} DEPENDS ${mbedcrypto_target} ${mbedx509_target} ${mbedtls_target})
+ add_custom_target(${lib_target} DEPENDS ${mbedx509_target} ${mbedtls_target})
  if(USE_STATIC_MBEDTLS_LIBRARY AND USE_SHARED_MBEDTLS_LIBRARY)
-     add_dependencies(${lib_target} ${mbedcrypto_static_target} ${mbedx509_static_target} ${mbedtls_static_target})
+     add_dependencies(${lib_target} ${mbedx509_static_target} ${mbedtls_static_target})
 diff --git a/library/x509_crt.c b/library/x509_crt.c
-index 53cdcf0..4c5b738 100644
+index e660365..0791a69 100644
 --- a/library/x509_crt.c
 +++ b/library/x509_crt.c
-@@ -1306,6 +1306,13 @@ static int x509_crt_parse_der_core(mbedtls_x509_crt *crt,
+@@ -1321,6 +1321,13 @@ static int x509_crt_parse_der_core(mbedtls_x509_crt *crt,
      return 0;
  }
  

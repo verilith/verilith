@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include "mbedtls/x509_crt.h"
+#include "psa/crypto.h"
 
 static double now(void)
 {
@@ -31,6 +32,11 @@ int main(int argc, char **argv)
 {
     const char *label = argc > 1 ? argv[1] : "mbedTLS";
     const char *certs[] = { "leaf", "root-rsa", "root-ecdsa" };
+    /* mbedTLS 4 decodes public keys through PSA, which must be started first. */
+    if (psa_crypto_init() != PSA_SUCCESS) {
+        fprintf(stderr, "psa_crypto_init failed\n");
+        return 1;
+    }
     for (int k = 0; k < 3; k++) {
         char path[512];
         snprintf(path, sizeof path, "%s/%s.der", DATA_DIR, certs[k]);

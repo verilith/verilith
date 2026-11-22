@@ -19,10 +19,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-/* key_usage and ca_istrue are private fields in 3.x; this is mbedTLS's own
- * switch for reading them. */
+/* key_usage and ca_istrue are private fields since 3.0; this is mbedTLS's
+ * own switch for reading them. */
 #define MBEDTLS_ALLOW_PRIVATE_ACCESS
 #include "mbedtls/x509_crt.h"
+#include "psa/crypto.h"
 #include "runner.h"
 
 struct item { size_t n; unsigned char **buf; size_t *len; };
@@ -100,6 +101,9 @@ int main(int argc, char **argv)
 {
     const char *mode = argc > 1 ? argv[1] : "parse";
     vb_fn fn = strcmp(mode, "read") ? do_parse : do_read;
+    /* mbedTLS 4 decodes public keys through PSA, which must be started
+     * before the first certificate is parsed. */
+    if (psa_crypto_init() != PSA_SUCCESS) abort();
     const char *dir = vb_data_dir();
     char **names;
     size_t n = vb_list_dir(dir, &names);

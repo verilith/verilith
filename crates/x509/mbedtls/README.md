@@ -6,7 +6,10 @@ This directory makes verilith-x509 the certificate decoder behind mbedTLS's
 `mbedtls_x509_crt` struct are unchanged, so applications relink and nothing
 else.
 
-Tested against mbedTLS 3.6.8.
+Tested against mbedTLS 4.3.0. mbedTLS 4 is not source compatible with 3.6
+(the crypto moved to the TF-PSA-Crypto submodule, and an error is no longer
+a high-level code plus a low-level one), so this directory no longer builds
+against 3.6.
 
 ## Build
 
@@ -15,7 +18,7 @@ Tested against mbedTLS 3.6.8.
 cd verilith/crates/x509
 cargo build --profile release-fat --features mbedtls
 
-# 2. mbedTLS with the 20-line patch.
+# 2. mbedTLS (cloned with --recurse-submodules) with the 20-line patch.
 cd ../../../mbedtls
 git apply ../verilith/crates/x509/mbedtls/mbedtls-use-vx509.patch
 cmake -B build-vx -DMBEDTLS_VX509_DIR=$PWD/../verilith/crates/x509 \
@@ -25,6 +28,10 @@ cd build-vx && ctest
 ```
 
 Without `-DMBEDTLS_VX509_DIR` the patched tree builds stock mbedTLS.
+
+As with stock mbedTLS 4, an application calls `psa_crypto_init()` before it
+parses a certificate: mbedTLS decodes the public key through PSA, and
+returns `PSA_ERROR_BAD_STATE` otherwise.
 
 `run-tests.sh <mbedtls checkout>` does all of this and checks that the only
 failures are the ones listed in `expected-x509parse-failures.txt` (with test
@@ -38,12 +45,12 @@ names cut where mbedTLS's runner cuts them).
 | Picking out each field the adapter copies: every Name attribute (and whether it continues a multi-valued RDN), every extension's OID, criticality and value, and the decoded contents of BasicConstraints, KeyUsage, EKU, SAN, IAN, SKI, AKI and certificatePolicies | verilith-x509, verified. As it checks the certificate, the parser hands each attribute and each extension to a sink (`AtvSink`, `ExtSink`), and is proven to hand over exactly the spec's attributes and extensions, in order, each extension with what its value decodes to (`parse_rec`'s postcondition, `ext_log_ok`). The adapter's sinks (`src/mbedtls.rs`, unverified) store them as pointer and length pairs for the C code: up to 10 extensions and 8 attributes per Name. Beyond that the adapter falls back to walking the spans itself. |
 | Copying those slices into `mbedtls_x509_crt` (name lists, sequences, bit masks) | `vx509_mbedtls.c`, C, and the C ABI in `src/mbedtls.rs`, which turns slices into pointer and length pairs and frames list items (the entries of ExtKeyUsage, SubjectAltName and certificatePolicies, up to 24 per certificate in one go) inside values the verified parser accepted. |
 | Public key decoding (`mbedtls_pk_parse_subpubkey`), signature algorithm table (`mbedtls_x509_get_sig_alg`), per-SAN-entry policy (`mbedtls_x509_parse_subject_alt_name`), extension and policy callbacks | mbedTLS, unchanged, called on spans verilith-x509 already validated. |
-| Error codes when a certificate is rejected | `src/mbedtls_err.rs`, unverified safe Rust that reproduces mbedTLS's error for the input. It runs only after the verified parser has said no, so it can change *which* error is returned but never *whether* a certificate is accepted. |
+| Error codes when a certificate is rejected | `src/mbedtls_err.rs`, unverified safe Rust that reproduces mbedTLS's error for the input (mbedTLS 4 reports the low-level ASN.1 code when there is one, the X.509 code otherwise). It runs only after the verified parser has said no, so it can change *which* error is returned but never *whether* a certificate is accepted. |
 
-## Test results (mbedTLS 3.6.8, `ctest` in `build-vx`)
+## Test results (mbedTLS 4.3.0, `ctest` in `build-vx`)
 
-Every suite passes except `x509parse`, at 870 of 888. `x509write` (80),
-`pkcs7` (821), `ssl` (999) and `debug` (36) all pass, and so does every
+Every suite passes except `x509parse`, at 885 of 903. `x509write` (99),
+`pkcs7` (818), `ssl` (994) and `debug` (31) all pass, and so does every
 error-code test in `x509parse`.
 
 The 18 remaining cases are certificates mbedTLS accepts and verilith-x509 rejects on

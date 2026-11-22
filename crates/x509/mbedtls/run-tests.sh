@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds mbedTLS ($1, a v3.6.8 checkout with submodules) with the vx509 patch
+# Builds mbedTLS ($1, a v4.3.0 checkout with submodules, fetched recursively) with the vx509 patch
 # and runs its test suites. Every suite must pass, except that x509parse must
 # fail on exactly the cases in expected-x509parse-failures.txt (see README.md).
 set -e
