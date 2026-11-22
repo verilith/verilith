@@ -49,7 +49,9 @@ verilith-json = "0.1"                                          # or one library 
 crates/<name>/     one library: src/, tests/, its own README, scripts/, ci.sh
 crates/verilith/   the umbrella crate
 bench/             the benchmark harness: each library against the one it replaces
-scripts/           verify.sh, profile, affected.py (what CI runs)
+scripts/           verify.sh, prove.sh, profile, and what CI runs
+verus/             the Buck2 rules that run Verus (see BUILDING.md)
+third-party/       what the proofs need from crates.io, for Buck2 (generated)
 IMPORT.md          the repositories and commits this one was assembled from
 ```
 
@@ -89,22 +91,42 @@ So the drop-in JSON library is built with
 
 Every crate is verified with one Verus version: the commit in
 `scripts/verus-version`, whose `vstd` release is pinned in the workspace
-`Cargo.toml`. Build Verus from that commit, put `cargo-verus` on `PATH`,
-then:
+`Cargo.toml`. Build Verus from that commit and put its directory on `PATH`.
+There are two ways to run it, and they check the same proofs:
 
 ```sh
-scripts/verify.sh            # every crate, dependencies first
+scripts/verify.sh            # with cargo verus: every crate, dependencies first
 scripts/verify.sh json png   # some
+
+scripts/prove.sh             # with Buck2: every crate
+scripts/prove.sh json png    # some
 ```
 
-It fails unless each crate reports 0 errors.
+Both fail unless each crate reports 0 errors. `cargo verus` is the way the
+Verus project supports. Buck2 knows exactly which files each proof is built
+from, so it skips what has not changed and can check a large crate in
+parts; CI uses it. [BUILDING.md](BUILDING.md) explains the Buck2 setup and
+what keeps it from passing a proof it did not check.
 
 ## CI
 
-One workflow verifies and tests only the crates a change touches: a crate
-whose files changed, plus every crate that depends on it
-(`scripts/affected.py`). A change to the workspace files runs everything.
-What runs for a crate is that crate's `scripts/verify.sh` and `ci.sh`.
+One workflow, `.github/workflows/ci.yml`.
+
+**Proofs** run through Buck2, one job per crate, or per part for the crates
+verified in parts (brotli). A proof that has already passed with
+exactly the same inputs is not checked again (`scripts/proof-plan.py`), so
+a change to one crate checks that crate and the crates that depend on it,
+and a second push to a pull request checks only what the push changed.
+Pushes to main also verify on Apple Silicon, with `cargo verus`.
+
+**Tests** run for the crates a change touches: a crate whose files changed,
+plus every crate that depends on it (`scripts/affected.py`). A change to
+the workspace files runs everything. What runs for a crate is its `ci.sh`.
+
+**Once a week**, and on request (run the workflow with "fresh"), every proof
+is checked again from nothing and each crate's count of verified proofs
+under Buck2 is compared with the count from `cargo verus`
+(`scripts/crosscheck.sh`).
 
 ## License
 
