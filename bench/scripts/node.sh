@@ -23,6 +23,15 @@ mkdir -p "$OUT/node"
 OUT=$(cd "$OUT/node" && pwd)
 V=$NODE_VERSION
 NW=$WORK/node
+
+# rust_lib_for_node IN.a OUT.a: copies one of our Rust staticlibs for the
+# hardened Node. Node 26 and later link a Rust library of their own
+# (deps/crates); beside it, two copies of the Rust standard library clash
+# at link time, so from Node 26 ours go through rust-prelink.sh, which
+# keeps only their C and C++ API global.
+rust_lib_for_node() {
+  if [ "$(echo "${V#v}" | cut -d. -f1)" -ge 26 ]; then "$ROOT/scripts/rust-prelink.sh" "$1" "$2"; else cp "$1" "$2"; fi
+}
 : "${NODE_SWAPS:=llhttp ada simdjson cares zlib}"
 : "${NODE_RUNS:=30}"
 : "${NODE_BENCHES:=url/whatwg-url-parse.js:withBase=false url/whatwg-url-canParse.js url/whatwg-url-validity.js url/whatwg-url-get-prop.js url/whatwg-url-idna.js http/bench-parser.js zlib/inflate.js zlib/deflate.js}"
@@ -45,7 +54,7 @@ for k in c-ares c-ares-vdns; do
   cp "$BUILD/$k/lib/libcares.a" "$NW/$k/lib/"
 done
 lib=$("$ROOT/scripts/build.sh" --print-lib vdns cares,ares-abi); [ -f "$lib" ] || die "could not build vdns (cares,ares-abi)"
-cp "$lib" "$NW/c-ares-vdns/lib/libvdns.a"   # the name --shared-cares-libname links
+rust_lib_for_node "$lib" "$NW/c-ares-vdns/lib/libvdns.a"   # the name --shared-cares-libname links
 
 has() { case " $NODE_SWAPS " in *" $1 "*) return 0 ;; esac; return 1; }
 ninja=""
@@ -92,7 +101,7 @@ if has ada || has simdjson; then
   if [ -f "$vb/Cargo.toml" ]; then
     say "build vbind (vurl + vjson behind ada's and simdjson's C++ API)"
     cargo build -q --profile "$(ours_profile vbind)" -p verilith-bind --manifest-path "$vb/Cargo.toml" --target-dir "$WORK/target/vbind"
-    mkdir -p "$NW/vbind/lib"; cp "$WORK/target/vbind/$(ours_profile vbind)/libverilith_bind.a" "$NW/vbind/lib/libvbind.a"
+    mkdir -p "$NW/vbind/lib"; rust_lib_for_node "$WORK/target/vbind/$(ours_profile vbind)/libverilith_bind.a" "$NW/vbind/lib/libvbind.a"
     if has ada; then hard="$hard --shared-ada --shared-ada-includes=$vb/include --shared-ada-libpath=$NW/vbind/lib --shared-ada-libname=vbind"; fi
     if has simdjson; then hard="$hard --shared-simdjson --shared-simdjson-includes=$vb/include --shared-simdjson-libpath=$NW/vbind/lib --shared-simdjson-libname=vbind"; fi
   else
@@ -103,7 +112,7 @@ fi
 if has zlib; then
   lib=$("$ROOT/scripts/build.sh" --print-lib vzlib zlib-abi); [ -f "$lib" ] || die "could not build vzlib (zlib-abi)"
   mkdir -p "$NW/vzlib/lib" "$NW/vzlib/include"
-  cp "$lib" "$NW/vzlib/lib/libvzlib.a"
+  rust_lib_for_node "$lib" "$NW/vzlib/lib/libvzlib.a"
   cp "$(orig zlib)/zlib.h" "$(orig zlib)/zconf.h" "$NW/vzlib/include/"
   hard="$hard --shared-zlib --shared-zlib-includes=$NW/vzlib/include --shared-zlib-libpath=$NW/vzlib/lib --shared-zlib-libname=vzlib"
 fi
