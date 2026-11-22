@@ -1,8 +1,8 @@
 //! XXH32 with seed 0, proven equal to `spec::xxh32`.
+#[cfg(verus_only)]
+use crate::bytes::lemma_le_is;
 use crate::spec::*;
 use verilith_core::lz::load32;
-#[cfg(verus_only)]
-use verilith_core::prims::le_bytes;
 use verilith_core::prims::get;
 use vstd::prelude::*;
 
@@ -17,17 +17,6 @@ const XQ3: u32 = 0xC2B2AE3D;
 const XQ4: u32 = 0x27D4EB2F;
 
 const XQ5: u32 = 0x165667B1;
-
-/// The spec's `le` is vcore's `le_bytes`.
-pub proof fn lemma_le_is(b: Seq<u8>, i: int, n: nat)
-    ensures
-        le(b, i, n) == le_bytes(b, i, n),
-    decreases n,
-{
-    if n > 0 {
-        lemma_le_is(b, i + 1, (n - 1) as nat);
-    }
-}
 
 #[inline(always)]
 fn rotl(x: u32, r: u32) -> (y: u32)
@@ -44,7 +33,7 @@ fn rotl(x: u32, r: u32) -> (y: u32)
 
 /// The four bytes at `i`, little-endian.
 #[inline(always)]
-pub fn word(b: &[u8], i: usize) -> (r: u32)
+fn word(b: &[u8], i: usize) -> (r: u32)
     requires
         i + 4 <= b@.len(),
     ensures
@@ -83,36 +72,36 @@ fn mul(a: u32, b: u32) -> (r: u32)
 #[inline(always)]
 fn round(acc: u32, lane: u32) -> (r: u32)
     ensures
-        r == xx_round(acc, lane),
+        r == round32(acc, lane),
 {
     proof {
-        reveal(xx_round);
+        reveal(round32);
     }
     mul(rotl(add(acc, mul(lane, XQ2)), 13), XQ1)
 }
 
-/// The accumulators after all whole stripes (`xx_stripes`).
+/// The accumulators after all whole stripes (`stripes32`).
 fn stripes(b: &[u8]) -> (r: (u32, u32, u32, u32))
     ensures
-        r == xx_stripes(b@, 0, (add32(Q1, Q2), Q2, 0u32, (0x1_0000_0000 - Q1) as u32)),
+        r == stripes32(b@, 0, (add32(PRIME32_1, PRIME32_2), PRIME32_2, 0u32, (0x1_0000_0000 - PRIME32_1) as u32)),
 {
     let n = b.len();
-    let ghost v0 = (add32(Q1, Q2), Q2, 0u32, (0x1_0000_0000 - Q1) as u32);
-    let ghost goal = xx_stripes(b@, 0, v0);
+    let ghost v0 = (add32(PRIME32_1, PRIME32_2), PRIME32_2, 0u32, (0x1_0000_0000 - PRIME32_1) as u32);
+    let ghost goal = stripes32(b@, 0, v0);
     let mut v1 = add(XQ1, XQ2);
     let mut v2 = XQ2;
     let mut v3 = 0u32;
     let mut v4 = 0u32.wrapping_sub(XQ1);
     let mut i: usize = 0;
     proof {
-        assert(v4 == (0x1_0000_0000 - Q1) as u32);
+        assert(v4 == (0x1_0000_0000 - PRIME32_1) as u32);
     }
     while n - i >= 16
         invariant
             n == b@.len(),
             i <= n,
-            goal == xx_stripes(b@, 0, v0),
-            xx_stripes(b@, i as int, (v1, v2, v3, v4)) == goal,
+            goal == stripes32(b@, 0, v0),
+            stripes32(b@, i as int, (v1, v2, v3, v4)) == goal,
         decreases n - i,
     {
         v1 = round(v1, word(b, i));
@@ -124,23 +113,23 @@ fn stripes(b: &[u8]) -> (r: (u32, u32, u32, u32))
     (v1, v2, v3, v4)
 }
 
-/// The tail from `i0` on (`xx_tail`).
+/// The tail from `i0` on (`tail32`).
 fn tail(b: &[u8], i0: usize, h0: u32) -> (r: u32)
     requires
         i0 <= b@.len(),
     ensures
-        r == xx_tail(b@, i0 as int, h0),
+        r == tail32(b@, i0 as int, h0),
 {
     let n = b.len();
     let mut h = h0;
     let mut i = i0;
-    let ghost goal = xx_tail(b@, i0 as int, h0);
+    let ghost goal = tail32(b@, i0 as int, h0);
     while i < n
         invariant
             n == b@.len(),
             i <= n,
-            goal == xx_tail(b@, i0 as int, h0),
-            xx_tail(b@, i as int, h) == goal,
+            goal == tail32(b@, i0 as int, h0),
+            tail32(b@, i as int, h) == goal,
         decreases n - i,
     {
         if n - i >= 4 {

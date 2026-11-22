@@ -1156,105 +1156,11 @@ pub open spec fn compressed_block(b: Seq<u8>, window: nat, bmax: nat, st: FrameS
 }
 
 // ---------------------------------------------------------------------------
-// XXH64 (the content checksum, §3.1.1)
+// XXH64 (the content checksum, §3.1.1), from verilith-xxhash
 // ---------------------------------------------------------------------------
 
-#[verifier::opaque]
-pub open spec fn add64(a: u64, b: u64) -> u64 {
-    vstd::wrapping::u64_specs::wrapping_add(a, b)
-}
-
-#[verifier::opaque]
-pub open spec fn mul64(a: u64, b: u64) -> u64 {
-    vstd::wrapping::u64_specs::wrapping_mul(a, b)
-}
-
-#[verifier::opaque]
-pub open spec fn rotl64(x: u64, r: u64) -> u64 {
-    (x << r) | (x >> (64 - r) as u64)
-}
-
-pub spec const P1: u64 = 0x9E3779B185EBCA87;
-
-pub spec const P2: u64 = 0xC2B2AE3D27D4EB4F;
-
-pub spec const P3: u64 = 0x165667B19E3779F9;
-
-pub spec const P4: u64 = 0x85EBCA77C2B2AE63;
-
-pub spec const P5: u64 = 0x27D4EB2F165667C5;
-
-pub open spec fn le64(b: Seq<u8>, i: int) -> u64 {
-    le(b, i, 8) as u64
-}
-
-#[verifier::opaque]
-pub open spec fn xx_round(acc: u64, lane: u64) -> u64 {
-    mul64(rotl64(add64(acc, mul64(lane, P2)), 31), P1)
-}
-
-#[verifier::opaque]
-pub open spec fn xx_merge(h: u64, v: u64) -> u64 {
-    add64(mul64(h ^ xx_round(0, v), P1), P4)
-}
-
-/// The four accumulators after the 32-byte stripes starting at `i`.
-pub open spec fn xx_stripes(b: Seq<u8>, i: int, v: (u64, u64, u64, u64)) -> (u64, u64, u64, u64)
-    decreases b.len() - i,
-{
-    if i < 0 || i + 32 > b.len() {
-        v
-    } else {
-        xx_stripes(
-            b,
-            i + 32,
-            (
-                xx_round(v.0, le64(b, i)),
-                xx_round(v.1, le64(b, i + 8)),
-                xx_round(v.2, le64(b, i + 16)),
-                xx_round(v.3, le64(b, i + 24)),
-            ),
-        )
-    }
-}
-
-/// The last `b.len() - i` (fewer than 32) bytes.
-pub open spec fn xx_tail(b: Seq<u8>, i: int, h: u64) -> u64
-    decreases b.len() - i,
-{
-    if i < 0 || i >= b.len() {
-        h
-    } else if i + 8 <= b.len() {
-        xx_tail(b, i + 8, add64(mul64(rotl64(h ^ xx_round(0, le64(b, i)), 27), P1), P4))
-    } else if i + 4 <= b.len() {
-        xx_tail(b, i + 4, add64(mul64(rotl64(h ^ mul64(le(b, i, 4) as u64, P1), 23), P2), P3))
-    } else {
-        xx_tail(b, i + 1, mul64(rotl64(h ^ mul64(b[i] as u64, P5), 11), P1))
-    }
-}
-
-pub open spec fn xx_avalanche(h: u64) -> u64 {
-    let h1 = mul64(h ^ (h >> 33), P2);
-    let h2 = mul64(h1 ^ (h1 >> 29), P3);
-    h2 ^ (h2 >> 32)
-}
-
-/// XXH64 of `b` with seed 0.
-pub open spec fn xxh64(b: Seq<u8>) -> u64 {
-    let n = b.len();
-    let full = (n / 32 * 32) as int;
-    let h0 = if n >= 32 {
-        let v = xx_stripes(b, 0, (add64(P1, P2), P2, 0, (0x1_0000_0000_0000_0000 - P1) as u64));
-        let h = add64(
-            add64(add64(rotl64(v.0, 1), rotl64(v.1, 7)), rotl64(v.2, 12)),
-            rotl64(v.3, 18),
-        );
-        xx_merge(xx_merge(xx_merge(xx_merge(h, v.0), v.1), v.2), v.3)
-    } else {
-        P5
-    };
-    xx_avalanche(xx_tail(b, full, add64(h0, (n % 0x1_0000_0000_0000_0000) as u64)))
-}
+#[cfg(verus_only)]
+pub use verilith_xxhash::spec::xxh64;
 
 // ---------------------------------------------------------------------------
 // Frames (§3.1.1)

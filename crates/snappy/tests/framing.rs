@@ -18,21 +18,6 @@ fn snap_decode(c: &[u8]) -> Option<Vec<u8>> {
 }
 
 #[test]
-fn crc32c_vectors() {
-    assert_eq!(verilith_snappy::crc::crc32c(b""), 0);
-    assert_eq!(verilith_snappy::crc::crc32c(b"123456789"), 0xe3069283);
-    assert_eq!(verilith_snappy::crc::crc32c(&[0u8; 32]), 0x8a9136aa);
-    assert_eq!(verilith_snappy::crc::crc32c(&[0xffu8; 32]), 0x62a8ab43);
-    // The CPU's instruction against the verified table code.
-    let mut rng = Rng(0x2545f4914f6cdd1d);
-    for round in 0..3000 {
-        let d = sample(&mut rng, round % 300, 0);
-        let reg = rng.next() as u32;
-        assert_eq!(verilith_snappy::crc::cpu::crc_update(reg, &d), verilith_snappy::crc::crc_update(reg, &d), "round {round}");
-    }
-}
-
-#[test]
 fn round_trip_both_ways() {
     let mut rng = Rng(0x94d049bb133111eb);
     for size in sizes() {

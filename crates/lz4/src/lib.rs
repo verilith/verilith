@@ -20,7 +20,6 @@ global size_of usize == 8;
 
 pub mod block;
 pub mod compress;
-pub mod xxh;
 pub mod frame;
 pub mod fcompress;
 pub mod capi;

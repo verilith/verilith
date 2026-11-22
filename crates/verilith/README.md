@@ -39,5 +39,6 @@ shortest dependency list, depend on that crate directly.
 | `wasm` | `verilith::wasm` | [`verilith-wasm`](../wasm) | WebAssembly interpreter |
 | `webp` | `verilith::webp` | [`verilith-webp`](../webp) | WebP decoder |
 | `x509` | `verilith::x509` | [`verilith-x509`](../x509) | X.509 certificate parser |
+| `xxhash` | `verilith::xxhash` | [`verilith-xxhash`](../xxhash) | XXH32 and XXH64 |
 | `zlib` | `verilith::zlib` | [`verilith-zlib`](../zlib) | zlib, gzip and DEFLATE |
 | `zstd` | `verilith::zstd` | [`verilith-zstd`](../zstd) | Zstandard decoder |

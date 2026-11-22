@@ -14,6 +14,8 @@
 //!   wrappers with specifications.
 //! - `scalar` (trusted): `popcnt`.
 //! - `mask`: `movemask`, bit by bit.
+//! - `sse2`: proven wrappers over the SSE2 instructions byte scanners use
+//!   (16-byte loads, compares, `pmovmskb`) and their 16-bit masks.
 //! - `cpu` (trusted): CPU-feature predicates and run-time detection.
 //! - `neon` (trusted): wrappers over the AArch64 NEON intrinsics, with
 //!   specs in terms of `ops`; off AArch64 they call `emu_neon`.
@@ -61,6 +63,7 @@ pub mod mem;
 #[cfg(target_arch = "x86_64")]
 pub mod avx512;
 pub mod mask;
+pub mod sse2;
 pub mod scalar;
 pub mod refs;
 pub mod refs_neon;

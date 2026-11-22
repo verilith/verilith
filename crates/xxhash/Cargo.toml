@@ -1,0 +1,27 @@
+[package]
+name = "verilith-xxhash"
+version = "0.1.0"
+license = "MIT"
+description = "Formally verified (Verus) XXH32 and XXH64, the checksums of the LZ4 and Zstandard frame formats"
+edition = "2024"
+repository = "https://github.com/verilith/verilith"
+keywords = ["verified", "verus", "xxhash", "checksum", "hash"]
+categories = ["algorithms"]
+
+[dependencies]
+verilith-core = { path = "../core", version = "0.1.0" }
+vstd = { workspace = true, features = ["std"] }
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+# Verus erases ghost code during a normal `cargo build`; ghost-only imports
+# are guarded by `verus_only`, which Verus turns on during verification.
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(verus_only)',
+] }
+
+[dev-dependencies]
+# An independent implementation to compare with.
+xxhash-rust = { version = "0.8", features = ["xxh32", "xxh64"] }

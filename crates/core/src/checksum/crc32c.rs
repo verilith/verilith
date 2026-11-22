@@ -1,9 +1,10 @@
 //! CRC-32C, proven to compute `spec::crc32c`.
 //!
-//! [`crc_update`] is the portable verified kernel (a table lookup per
+//! [`crc32c_update`] is the portable verified kernel (a table lookup per
 //! byte). [`crc32c`] uses the CPU's own CRC-32C instruction where there
-//! is one (see [`cpu`], which is part of the trusted base).
-use crate::spec::*;
+//! is one (`checksum::cpu::crc32c_update`, part of the trusted base).
+#[cfg(verus_only)]
+use super::spec::{crc32c_byte, crc32c_reg, crc32c_step, crc32c_steps};
 use vstd::prelude::*;
 
 verus! {
@@ -52,7 +53,7 @@ pub open spec fn first_ok(lo: int, hi: int) -> bool
     if hi - lo <= 0 {
         true
     } else if hi - lo == 1 {
-        T[lo] == crc_steps(lo as u32, 8)
+        T[lo] == crc32c_steps(lo as u32, 8)
     } else {
         let mid = lo + (hi - lo) / 2;
         first_ok(lo, mid) && first_ok(mid, hi)
@@ -64,7 +65,7 @@ proof fn lemma_first_ok(lo: int, hi: int, i: int)
         first_ok(lo, hi),
         lo <= i < hi,
     ensures
-        T[i] == crc_steps(i as u32, 8),
+        T[i] == crc32c_steps(i as u32, 8),
     decreases hi - lo,
 {
     if hi - lo > 1 {
@@ -80,10 +81,10 @@ proof fn lemma_first_ok(lo: int, hi: int, i: int)
 /// Every entry is right (checked by evaluation).
 pub proof fn lemma_entries()
     ensures
-        forall|x: int| 0 <= x < 256 ==> #[trigger] T[x] == crc_steps(x as u32, 8),
+        forall|x: int| 0 <= x < 256 ==> #[trigger] T[x] == crc32c_steps(x as u32, 8),
 {
     assert(first_ok(0, 256)) by (compute_only);
-    assert forall|x: int| 0 <= x < 256 implies #[trigger] T[x] == crc_steps(x as u32, 8) by {
+    assert forall|x: int| 0 <= x < 256 implies #[trigger] T[x] == crc32c_steps(x as u32, 8) by {
         lemma_first_ok(0, 256, x);
     }
 }
@@ -92,7 +93,7 @@ pub proof fn lemma_entries()
 /// the steps.
 proof fn lemma_step_xor(a: u32, b: u32)
     ensures
-        crc_step(a ^ b) == crc_step(a) ^ crc_step(b),
+        crc32c_step(a ^ b) == crc32c_step(a) ^ crc32c_step(b),
 {
     assert((if (a ^ b) & 1 == 1 {
         ((a ^ b) >> 1u32) ^ 0x82f63b78u32
@@ -111,12 +112,12 @@ proof fn lemma_step_xor(a: u32, b: u32)
 
 proof fn lemma_steps_xor(a: u32, b: u32, n: nat)
     ensures
-        crc_steps(a ^ b, n) == crc_steps(a, n) ^ crc_steps(b, n),
+        crc32c_steps(a ^ b, n) == crc32c_steps(a, n) ^ crc32c_steps(b, n),
     decreases n,
 {
     if n > 0 {
         lemma_step_xor(a, b);
-        lemma_steps_xor(crc_step(a), crc_step(b), (n - 1) as nat);
+        lemma_steps_xor(crc32c_step(a), crc32c_step(b), (n - 1) as nat);
     }
 }
 
@@ -126,7 +127,7 @@ proof fn lemma_steps_even(y: u32, n: nat)
         n < 32,
         y & ((1u32 << n as u32) - 1) as u32 == 0,
     ensures
-        crc_steps(y, n) == y >> n as u32,
+        crc32c_steps(y, n) == y >> n as u32,
     decreases n,
 {
     if n == 0 {
@@ -144,9 +145,9 @@ proof fn lemma_steps_even(y: u32, n: nat)
 }
 
 /// A byte's update is a shift and a table entry.
-proof fn lemma_crc_byte(c: u32, x: u8)
+proof fn lemma_crc32c_byte(c: u32, x: u8)
     ensures
-        crc_byte(c, x) == (c >> 8u32) ^ T[((c ^ x as u32) & 0xff) as int],
+        crc32c_byte(c, x) == (c >> 8u32) ^ T[((c ^ x as u32) & 0xff) as int],
 {
     lemma_entries();
     let y = c ^ x as u32;
@@ -162,37 +163,37 @@ proof fn lemma_crc_byte(c: u32, x: u8)
     ;
     lemma_steps_xor(z, hi, 8);
     lemma_steps_even(hi, 8);
-    assert(T[z as int] == crc_steps(z, 8));
+    assert(T[z as int] == crc32c_steps(z, 8));
     let u = c >> 8u32;
     let v = T[z as int];
     assert(v ^ u == u ^ v) by (bit_vector);
 }
 
 /// The CRC register after `d`, starting from `c`.
-pub open spec fn crc_from(c: u32, d: Seq<u8>) -> u32
+pub open spec fn crc32c_from(c: u32, d: Seq<u8>) -> u32
     decreases d.len(),
 {
     if d.len() == 0 {
         c
     } else {
-        crc_byte(crc_from(c, d.drop_last()), d.last())
+        crc32c_byte(crc32c_from(c, d.drop_last()), d.last())
     }
 }
 
-pub proof fn lemma_crc_from(d: Seq<u8>)
+pub proof fn lemma_crc32c_from(d: Seq<u8>)
     ensures
-        crc_from(0xffff_ffff, d) == crc_reg(d),
+        crc32c_from(0xffff_ffff, d) == crc32c_reg(d),
     decreases d.len(),
 {
     if d.len() > 0 {
-        lemma_crc_from(d.drop_last());
+        lemma_crc32c_from(d.drop_last());
     }
 }
 
 /// Continues a CRC-32C register over `d`, a byte at a time.
-pub fn crc_update(reg: u32, d: &[u8]) -> (r: u32)
+pub fn crc32c_update(reg: u32, d: &[u8]) -> (r: u32)
     ensures
-        r == crc_from(reg, d@),
+        r == crc32c_from(reg, d@),
 {
     let mut c = reg;
     let n = d.len();
@@ -204,14 +205,14 @@ pub fn crc_update(reg: u32, d: &[u8]) -> (r: u32)
         invariant
             n == d@.len(),
             i <= n,
-            c == crc_from(reg, d@.subrange(0, i as int)),
+            c == crc32c_from(reg, d@.subrange(0, i as int)),
         decreases n - i,
     {
         let x = d[i];
         proof {
             assert(d@.subrange(0, i + 1).drop_last() =~= d@.subrange(0, i as int));
             assert(d@.subrange(0, i + 1).last() == d@[i as int]);
-            lemma_crc_byte(c, x);
+            lemma_crc32c_byte(c, x);
             assert(((c ^ x as u32) & 0xff) < 256) by (bit_vector);
         }
         c = (c >> 8) ^ T[((c ^ x as u32) & 0xff) as usize];
@@ -226,88 +227,12 @@ pub fn crc_update(reg: u32, d: &[u8]) -> (r: u32)
 /// The CRC-32C of `d`.
 pub fn crc32c(d: &[u8]) -> (r: u32)
     ensures
-        r == crate::spec::crc32c(d@),
+        r == super::spec::crc32c(d@),
 {
     proof {
-        lemma_crc_from(d@);
+        lemma_crc32c_from(d@);
     }
-    !cpu::crc_update(0xffff_ffff, d)
-}
-
-/// A checksum as the framing format stores it.
-pub fn masked(crc: u32) -> (r: u32)
-    ensures
-        r as nat == mask(crc),
-{
-    ((crc >> 15) | (crc << 17)).wrapping_add(0xa282ead8)
+    !super::cpu::crc32c_update(0xffff_ffff, d)
 }
 
 } // verus!
-
-/// The CPU's CRC-32C instruction (part of the trusted base): SSE4.2's
-/// `crc32` on x86-64, the CRC extension's `crc32c` on AArch64. Both
-/// compute this CRC on the raw register, eight bytes at a time. Not
-/// verified: tested against the verified [`crc_update`], which is also
-/// what runs on CPUs without the instruction.
-pub mod cpu {
-    #[cfg(verus_only)]
-    use super::crc_from;
-    use vstd::prelude::*;
-
-    verus! {
-
-    #[verifier::external_body]
-    pub fn crc_update(reg: u32, d: &[u8]) -> (r: u32)
-        ensures
-            r == crc_from(reg, d@),
-    {
-        #[cfg(target_arch = "x86_64")]
-        {
-            if std::is_x86_feature_detected!("sse4.2") {
-                // SAFETY: the CPU supports SSE4.2.
-                return unsafe { sse42(reg, d) };
-            }
-        }
-        #[cfg(target_arch = "aarch64")]
-        {
-            if std::arch::is_aarch64_feature_detected!("crc") {
-                // SAFETY: the CPU has the CRC32 instructions.
-                return unsafe { arm(reg, d) };
-            }
-        }
-        super::crc_update(reg, d)
-    }
-
-    } // verus!
-
-    #[cfg(target_arch = "x86_64")]
-    #[target_feature(enable = "sse4.2")]
-    unsafe fn sse42(reg: u32, d: &[u8]) -> u32 {
-        use core::arch::x86_64::{_mm_crc32_u64, _mm_crc32_u8};
-        let mut r = reg as u64;
-        let mut words = d.chunks_exact(8);
-        for c in &mut words {
-            r = _mm_crc32_u64(r, u64::from_le_bytes(c.try_into().unwrap()));
-        }
-        let mut r = r as u32;
-        for &b in words.remainder() {
-            r = _mm_crc32_u8(r, b);
-        }
-        r
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    #[target_feature(enable = "crc")]
-    unsafe fn arm(reg: u32, d: &[u8]) -> u32 {
-        use core::arch::aarch64::{__crc32cb, __crc32cd};
-        let mut r = reg;
-        let mut words = d.chunks_exact(8);
-        for c in &mut words {
-            r = __crc32cd(r, u64::from_le_bytes(c.try_into().unwrap()));
-        }
-        for &b in words.remainder() {
-            r = __crc32cb(r, b);
-        }
-        r
-    }
-}

@@ -20,6 +20,5 @@ global size_of usize == 8;
 
 pub mod decode;
 pub mod compress;
-pub mod crc;
 pub mod frame;
 pub mod capi;

@@ -14,6 +14,9 @@
 use crate::spec::*;
 use vstd::prelude::*;
 
+// The 16-byte SSE2 wrappers and `bit`, shared with verilith-xml.
+pub use verilith_simd::sse2::*;
+
 #[cfg(target_arch = "x86_64")]
 use verilith_simd::arch::*;
 #[cfg(target_arch = "x86_64")]
@@ -39,11 +42,6 @@ verus! {
 /// Bit `k` of a 64-bit mask.
 pub open spec fn bit64(m: u64, k: u64) -> bool {
     (m >> k) & 1u64 == 1u64
-}
-
-/// Bit `k` of a 32-bit mask.
-pub open spec fn bit(m: u32, k: u32) -> bool {
-    (m >> k) & 1u32 == 1u32
 }
 
 /// The positions `base + k` of the set bits `k < j` of `m`, in order.
@@ -327,11 +325,6 @@ broadcast use {verilith_simd::lanes::group_lanes, verilith_simd::avx512::axiom_b
 // The register types and their lane views are vsimd's. The names below
 // are this crate's older ones for them.
 
-/// The 16 bytes of a 128-bit register.
-pub open spec fn b16(v: __m128i) -> Seq<u8> {
-    b128(v)
-}
-
 /// The 32 bytes of a 256-bit register.
 pub open spec fn b32(v: __m256i) -> Seq<u8> {
     b256(v)
@@ -345,19 +338,6 @@ pub open spec fn b64(v: __m512i) -> Seq<u8> {
 /// The 16 dwords of a 512-bit register.
 pub open spec fn d16(v: __m512i) -> Seq<u32> {
     u32x16(v)
-}
-
-/// A byte as the `i8` an intrinsic takes.
-#[inline(always)]
-pub fn i8_of(c: u8) -> (r: i8)
-    ensures
-        vo::u8_of_i8(r) == c,
-{
-    if c < 128 {
-        c as i8
-    } else {
-        (c as i16 - 256) as i8
-    }
 }
 
 #[inline(always)]
@@ -385,18 +365,6 @@ fn i64_of(c: u64) -> (r: i64)
 }
 
 #[inline(always)]
-fn u32_from(x: i32) -> (r: u32)
-    ensures
-        r == vo::u32_of_i32(x),
-{
-    if x >= 0 {
-        x as u32
-    } else {
-        (x as i64 + 0x1_0000_0000) as u32
-    }
-}
-
-#[inline(always)]
 fn u64_from(x: i64) -> (r: u64)
     ensures
         r == vo::u64_of_i64(x),
@@ -406,18 +374,6 @@ fn u64_from(x: i64) -> (r: u64)
     } else {
         (x as i128 + 0x1_0000_0000_0000_0000) as u64
     }
-}
-
-proof fn lemma_bit_u32(r: u32, k: u32)
-    requires
-        k < 32,
-    ensures
-        bit(r, k) == vm::bit64(r as u64, k as int),
-{
-    assert(((r >> k) & 1u32 == 1u32) == (((r as u64) >> (k as u64)) & 1u64 == 1u64)) by (bit_vector)
-        requires
-            k < 32,
-    ;
 }
 
 proof fn lemma_wrapping_sub8(a: u8, b: u8)
@@ -506,60 +462,6 @@ pub fn append16_spare(v: &mut Vec<u8>, a: __m128i, n: usize)
     }
 }
 
-/// `movdqu`: `s[i..i + 16]`.
-#[inline(always)]
-pub fn load16(s: &[u8], i: usize) -> (r: __m128i)
-    requires
-        i + 16 <= s@.len(),
-    ensures
-        b16(r) == s@.subrange(i as int, i + 16),
-{
-    let r = load128_u8(s, i);
-    proof {
-        assert(b16(r) =~= s@.subrange(i as int, i + 16));
-    }
-    r
-}
-
-/// Every lane is `c`.
-#[inline(always)]
-pub fn splat16(c: u8) -> (r: __m128i)
-    ensures
-        b16(r) == Seq::new(16, |k: int| c),
-{
-    let r = _mm_set1_epi8(i8_of(c));
-    proof {
-        assert(b16(r) =~= Seq::new(16, |k: int| c));
-    }
-    r
-}
-
-/// `pcmpeqb`: `0xFF` where the lanes are equal, else 0.
-#[inline(always)]
-pub fn eq16(a: __m128i, b: __m128i) -> (r: __m128i)
-    ensures
-        b16(r) == Seq::new(16, |k: int| if b16(a)[k] == b16(b)[k] { 0xFFu8 } else { 0u8 }),
-{
-    let r = _mm_cmpeq_epi8(a, b);
-    proof {
-        assert(b16(r) =~= Seq::new(16, |k: int| if b16(a)[k] == b16(b)[k] { 0xFFu8 } else { 0u8 }));
-    }
-    r
-}
-
-/// `por`.
-#[inline(always)]
-pub fn or16(a: __m128i, b: __m128i) -> (r: __m128i)
-    ensures
-        b16(r) == Seq::new(16, |k: int| b16(a)[k] | b16(b)[k]),
-{
-    let r = _mm_or_si128(a, b);
-    proof {
-        assert(b16(r) =~= Seq::new(16, |k: int| b16(a)[k] | b16(b)[k]));
-    }
-    r
-}
-
 /// `pmaxub`: unsigned maximum.
 #[inline(always)]
 pub fn max16(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -569,19 +471,6 @@ pub fn max16(a: __m128i, b: __m128i) -> (r: __m128i)
     let r = _mm_max_epu8(a, b);
     proof {
         assert(b16(r) =~= Seq::new(16, |k: int| if b16(a)[k] >= b16(b)[k] { b16(a)[k] } else { b16(b)[k] }));
-    }
-    r
-}
-
-/// `pminub`: unsigned minimum.
-#[inline(always)]
-pub fn min16(a: __m128i, b: __m128i) -> (r: __m128i)
-    ensures
-        b16(r) == Seq::new(16, |k: int| if b16(a)[k] <= b16(b)[k] { b16(a)[k] } else { b16(b)[k] }),
-{
-    let r = _mm_min_epu8(a, b);
-    proof {
-        assert(b16(r) =~= Seq::new(16, |k: int| if b16(a)[k] <= b16(b)[k] { b16(a)[k] } else { b16(b)[k] }));
     }
     r
 }
@@ -598,29 +487,6 @@ pub fn sub16(a: __m128i, b: __m128i) -> (r: __m128i)
             lemma_wrapping_sub8(b16(a)[k], b16(b)[k]);
         }
         assert(b16(r) =~= Seq::new(16, |k: int| b16(a)[k].wrapping_sub(b16(b)[k])));
-    }
-    r
-}
-
-/// `pmovmskb`: bit `k` is the top bit of lane `k`.
-#[inline(always)]
-pub fn movemask16(a: __m128i) -> (r: u32)
-    ensures
-        r < 0x10000,
-        forall|k: u32| k < 16 ==> #[trigger] bit(r, k) == (b16(a)[k as int] >= 0x80),
-{
-    let m = _mm_movemask_epi8(a);
-    proof {
-        vm::lemma_movemask_bound(b128(a));
-        lemma2_to64();
-    }
-    let r = u32_from(m);
-    proof {
-        vm::lemma_movemask_bits(b128(a), r as u64);
-        assert forall|k: u32| k < 16 implies #[trigger] bit(r, k) == (b16(a)[k as int] >= 0x80) by {
-            assert(vm::bit64(r as u64, k as int) == (b128(a)[k as int] >= 128));
-            lemma_bit_u32(r, k);
-        }
     }
     r
 }

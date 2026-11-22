@@ -2,7 +2,7 @@
 name = "verilith-core"
 version = "0.1.0"
 license = "MIT"
-description = "Formally verified (Verus) building blocks shared by the Verilith libraries: trusted memory primitives, byte and bit readers, canonical Huffman tables, UTF-8 validation, CRC-32 and Adler-32"
+description = "Formally verified (Verus) building blocks shared by the Verilith libraries: trusted memory primitives, byte and bit readers, canonical Huffman tables, UTF-8 validation, CRC-32, CRC-32C and Adler-32"
 edition = "2024"
 repository = "https://github.com/verilith/verilith"
 keywords = ["verified", "verus", "huffman", "crc32", "utf8"]

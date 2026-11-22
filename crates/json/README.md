@@ -976,7 +976,8 @@ src/parser.rs    verified one-pass parser and the Sink trait
 src/index.rs     verified stage 1: the structural index
 src/stage2.rs    verified stage 2: parsing through the index
 src/ondemand.rs  verified on-demand cursor and the Reader over it
-src/lanes.rs     single-instruction SIMD wrappers, verified over verilith-simd; the trusted Vec-capacity model
+src/lanes.rs     single-instruction SIMD wrappers, verified over verilith-simd (the 16-byte SSE2 ones are
+                 verilith_simd::sse2, shared with verilith-xml); the trusted Vec-capacity model
 src/simd.rs      verified classification and bit-mask kernels built from them
 src/utf8.rs      verified SIMD UTF-8 validation (the UTF-8 spec, its local
                  condition and the scalar validator are in verilith_core::utf8)

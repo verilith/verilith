@@ -15,6 +15,7 @@ lz4-abi = []
 
 [dependencies]
 verilith-core = { path = "../core", version = "0.1.0" }
+verilith-xxhash = { path = "../xxhash", version = "0.1.0" }
 vstd = { workspace = true, features = ["std"] }
 
 [package.metadata.verus]

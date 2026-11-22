@@ -25,6 +25,7 @@ members = [
     "crates/webp",
     "crates/x509",
     "crates/xml",
+    "crates/xxhash",
     "crates/zlib",
     "crates/zstd",
     "crates/bind/node",

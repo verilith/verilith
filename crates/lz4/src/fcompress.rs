@@ -7,7 +7,7 @@ use crate::compress::{compress_block, compress_small, BIG_SIZE};
 use crate::compress::{extends, lemma_seqs_pre, lemma_strict_block};
 use crate::frame::*;
 use crate::spec::*;
-use crate::xxh::xxh32_exec;
+use verilith_xxhash::xxh32_exec;
 use verilith_core::prims::{copy_in, extend, set};
 use vstd::prelude::*;
 use vstd::slice::slice_subrange;

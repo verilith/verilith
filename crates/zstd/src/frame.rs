@@ -4,7 +4,7 @@
 use crate::spec::*;
 use crate::bits::*;
 use crate::seq::*;
-use crate::xxh::*;
+use verilith_xxhash::Xxh64;
 #[cfg(verus_only)]
 use verilith_core::prims::le_bytes;
 #[cfg(verus_only)]
