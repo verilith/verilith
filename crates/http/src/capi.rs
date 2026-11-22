@@ -147,6 +147,10 @@ pub unsafe extern "C" fn vhttp_phr_parse_response(
                 {
                     return -1;
                 }
+                // picohttpparser rejects a status code outside 100..=599.
+                if !(100..=599).contains(&line.status) {
+                    return -1;
+                }
                 *minor_version = line.minor as c_int;
                 *status = line.status as c_int;
                 *msg = buf.add(line.reason.start);

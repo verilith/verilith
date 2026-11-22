@@ -187,7 +187,7 @@ keep-alive rules) and `llhttp.c` (the generated parser). With
 `--features llhttp-abi`, `libverilith_http.a` exports the two functions `llhttp.c`
 defines, `llhttp__internal_init` and `llhttp__internal_execute`, so
 llhttp's own `api.c` and `http.c` (copied in `compat/llhttp`, from llhttp
-9.4.3) link against it unchanged. Callers keep llhttp's header, struct
+9.4.4) link against it unchanged. Callers keep llhttp's header, struct
 layout, callbacks, pausing and error codes.
 
 For Node.js, `compat/llhttp/node.sh NODE_DIR` points a Node checkout's
@@ -441,9 +441,9 @@ The proofs cover the verified core. The adapters around it are tested:
   httparse, and httparse-API tests that drive `verilith_http::httparse` the way
   hyper does.
 - `./scripts/test-c.sh`: picohttpparser's own `test.c` against verilith-http's C
-  API under ASan and UBSan. 240 of its 289 checks pass; each of the 49
+  API under ASan and UBSan. 246 of its 295 checks pass; each of the 49
   others is a deliberate difference listed below.
-- `compat/llhttp/test`: the differential test against llhttp 9.4.3
+- `compat/llhttp/test`: the differential test against llhttp 9.4.4
   described [above](#from-nodejs-or-anything-else-that-uses-llhttp), and
   Node.js's own HTTP tests.
 - `./scripts/fuzz.sh [seconds]`: cargo-fuzz under ASan on four targets,

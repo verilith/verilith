@@ -8,7 +8,7 @@ certificate if and only if the spec does, and returns exactly the fields
 the spec says. Verus also proves that it never reads out of bounds and
 never overflows.
 
-It is a drop-in for mbedTLS: with a 20-line patch, mbedTLS 3.6.4 decodes
+It is a drop-in for mbedTLS: with a 20-line patch, mbedTLS 3.6.8 decodes
 every certificate it reads (`mbedtls_x509_crt_parse_der`, and so
 `mbedtls_x509_crt_parse`, PEM files, the TLS handshake and PKCS#7) with
 verilith-x509 and passes its own test suites, except for 18 synthetic test
@@ -256,7 +256,7 @@ mbedTLS's test data, ten minutes per target ran 32.7M inputs of `parse` and
 - **test**: the bare-metal `no_std` build, the CVE tests and the
   differentials on the fetched corpus, the native C API's tests, and
   `cargo publish --dry-run`;
-- **mbedtls**: mbedTLS 3.6.4's test suites with the patch, which must pass
+- **mbedtls**: mbedTLS 3.6.8's test suites with the patch, which must pass
   except for the 18 documented x509parse cases;
 - **fuzz**: five minutes per fuzz target under AddressSanitizer.
 

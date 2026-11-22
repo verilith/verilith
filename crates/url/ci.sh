@@ -5,7 +5,7 @@
 # Runs anywhere; with CI set it also installs the system packages it needs.
 . "$(dirname "$0")/../../scripts/ci-lib.sh"
 
-ADA_COMMIT=62daadd7348d76f870330d0f36162b1a74d99700
+ADA_COMMIT=75f282df6bdc87dcb8c1e0b25065915cbe1b4a28 # v4.1.1
 URL_DATASET_COMMIT=ef7065196980ab7956bacc60b4bda663939f659c
 
 test() {
