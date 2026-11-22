@@ -1938,6 +1938,8 @@ fn build_ent(prog: &Prog, memo: &mut Memo, sid: usize, la: u8, b: u8, fuel: &mut
         0 <= final(it)@ - old(it)@ <= *old(fuel) - *final(fuel),
         final(memo).states@.len() >= old(memo).states@.len(),
         forall|k: int| 0 <= k < old(memo).states@.len() ==> final(memo).states@[k] == old(memo).states@[k],
+        final(memo).ents@.len() >= old(memo).ents@.len(),
+        forall|k: int| 0 <= k < old(memo).ents@.len() ==> final(memo).ents@[k] == old(memo).ents@[k],
         slot_ok(prog.sp(), prog.start as int, final(memo).states@, final(memo).ents@, sid as int, la as int, b as int, r),
         r != MUNK,
 {
@@ -2659,6 +2661,7 @@ pub open spec fn uok(
 /// masks and nothing is written. Gives the list, the position, the last
 /// step, and, if a match was passed, the thread of the latest one and
 /// where it ends. One loop iteration per byte.
+#[inline(always)]
 fn urun(
     prog: &Prog,
     s: &[u8],
@@ -3668,6 +3671,534 @@ pub fn fast_run(
     // The steps made, the one that stopped, writing the list out, and
     // the slots of the match.
     (p, matched, mend, Ghost(mv), Ghost(cost + extra + xtra + 1 + fc@ + ns + drys), hz)
+}
+
+/// Iterations `quick` makes for each byte it passes, at most.
+pub open spec fn quick_cost(np: int, ns: int) -> int {
+    memo_fuel(np) + ns + 2
+}
+
+/// The start of `quick`: the stored step from the empty list at the byte
+/// before `p0`, and the list of its threads that takes no new start.
+/// Gives whether it has them, the number of the empty list, the step and
+/// the list.
+fn quick_start(
+    prog: &Prog,
+    s: &[u8],
+    p0: usize,
+    memo: &mut Memo,
+    e0: usize,
+    tw: &mut Vec<u32>,
+    Ghost(ans): Ghost<Option<M>>,
+) -> (r: (bool, usize, usize, usize, Ghost<int>))
+    requires
+        prog.wf(),
+        old(memo).wf(prog),
+        p0 < s@.len() < usize::MAX,
+        ans == search_p(prog.sp(), s@, prog.start as int, p0 as int, prog.nslots as nat),
+    ensures
+        final(memo).wf(prog),
+        0 <= r.4@ <= 2 * memo_fuel(prog.insts@.len() as int),
+        r.0 ==> {
+            &&& final(memo).on
+            &&& prog.insts@.len() < 0x1000_0000
+            &&& r.2 < final(memo).ents@.len()
+            &&& r.3 < final(memo).states@.len()
+            &&& final(memo).states@[r.3 as int].matched
+            &&& final(memo).ents@[r.2 as int].acts@.len() == final(memo).states@[r.3 as int].pcs@.len()
+            &&& ans == or(
+                fr(
+                    prog.sp(),
+                    s@,
+                    thl(
+                        Seq::<usize>::empty(),
+                        useq(final(memo).ents@[r.2 as int].acts@, NOROW, p0),
+                        final(memo).states@[r.3 as int].pcs@,
+                        prog.nslots as nat,
+                    ),
+                    p0 as int,
+                ),
+                search_p(prog.sp(), s@, prog.start as int, p0 + 1, prog.nslots as nat),
+            )
+        },
+{
+    let n = s.len();
+    let ns = prog.nslots;
+    let np = prog.insts.len();
+    let ghost sp = prog.sp();
+    let ghost st = prog.start as int;
+    let ghost nsn = ns as nat;
+    let ghost mf = memo_fuel(np as int);
+    let ghost dm0 = M { end: -1, caps: seq![] };
+    proof {
+    }
+    if !memo.on || p0 == 0 || s[p0 - 1] >= 0x80 || np >= 0x1000_0000 {
+        return (false, e0, 0, 0, Ghost(0));
+    }
+    let full: u64 = 400 * (np as u64) + 2048;
+    let mut fuel: u64 = full;
+    let mut it: Ghost<int> = Ghost(0);
+    let mut e = e0;
+    if !(e < memo.states.len() && memo.states[e].pcs.len() == 0 && !memo.states[e].matched) {
+        let v: Vec<u32> = Vec::new();
+        let f = find_state(&memo.states, &v, false, &mut fuel, &mut it);
+        if f < memo.states.len() {
+            e = f;
+        } else {
+            let x = add_state(prog, memo, v, false, &mut fuel, &mut it);
+            if x == MNO {
+                return (false, e0, 0, 0, Ghost(it@));
+            }
+            e = x as usize;
+        }
+        if !(e < memo.states.len() && memo.states[e].pcs.len() == 0 && !memo.states[e].matched) {
+            return (false, e0, 0, 0, Ghost(it@));
+        }
+    }
+    let c = s[p0 - 1];
+    let la = laq(&memo.lat, s, p0);
+    let ti = (e * 4 + la as usize) * 128 + c as usize;
+    assert(ti == tidx(e as int, la as int, c as int));
+    assert(ti < memo.states@.len() * 512) by (nonlinear_arith)
+        requires
+            ti == (e * 4 + la) * 128 + c,
+            e < memo.states@.len(),
+            la < 4,
+            c < 128,
+    ;
+    let mut t = memo.trans[ti];
+    let ghost mut bcost: int = 0;
+    if t == MUNK {
+        let mut fuel2: u64 = full;
+        let mut it2: Ghost<int> = Ghost(0);
+        t = build_ent(prog, memo, e, la, c, &mut fuel2, &mut it2);
+        proof {
+            bcost = it2@;
+        }
+        set_trans(prog, memo, e, la, c, t);
+    }
+    if t == MNO {
+        return (false, e, 0, 0, Ghost(it@ + bcost));
+    }
+    assert(slot_ok(sp, st, memo.states@, memo.ents@, e as int, la as int, c as int, memo.trans@[tidx(
+        e as int,
+        la as int,
+        c as int,
+    )]));
+    if memo.ents[t as usize].us != NOSRC || memo.ents[t as usize].cut != NOCUT {
+        return (false, e, 0, 0, Ghost(it@ + bcost));
+    }
+    let s0 = memo.ents[t as usize].next as usize;
+    // The same threads as a list that takes no new start.
+    let key = la as usize * 128 + c as usize;
+    if tw.len() != 512 {
+        tw.clear();
+        let mut k: usize = 0;
+        while k < 512
+            invariant
+                k <= 512,
+                tw@.len() == k,
+            decreases 512 - k,
+        {
+            tw.push(MNO);
+            k += 1;
+        }
+        return (false, e, 0, 0, Ghost(it@ + bcost));
+    }
+    let mut sid = tw[key] as usize;
+    let mut okt = sid < memo.states.len() && memo.states[sid].matched;
+    if okt {
+        okt = eq_pcs(&memo.states[sid].pcs, &memo.states[s0].pcs, &mut fuel, &mut it);
+    }
+    if !okt {
+        let f = find_state(&memo.states, &memo.states[s0].pcs, true, &mut fuel, &mut it);
+        if f < memo.states.len() {
+            sid = f;
+        } else {
+            let (ok, v) = copy_pcs(&memo.states[s0].pcs, &mut fuel, &mut it);
+            if !ok {
+                return (false, e, 0, 0, Ghost(it@ + bcost));
+            }
+            let x = add_state(prog, memo, v, true, &mut fuel, &mut it);
+            if x == MNO {
+                return (false, e, 0, 0, Ghost(it@ + bcost));
+            }
+            sid = x as usize;
+        }
+        tw.set(key, sid as u32);
+    }
+    assert(sid < memo.states@.len() && memo.states@[sid as int].matched && memo.states@[sid as int].pcs@
+        == memo.states@[s0 as int].pcs@);
+    let ghost tg0 = useq(memo.ents@[t as int].acts@, NOROW, p0);
+    let ghost al0 = thl(Seq::<usize>::empty(), tg0, memo.states@[sid as int].pcs@, nsn);
+    proof {
+        lemma_slots_ok(prog);
+        let dl = Seq::<T>::empty();
+        let en = memo.ents@[t as int];
+        let pcs0 = memo.states@[e as int].pcs@;
+        let f = sfull(sp, st, c, la as int, pcsv(pcs0), false);
+        let nx = memo.states@[s0 as int];
+        assert(ent_ok(sp, st, memo.states@, e as int, la as int, c, en));
+        crate::pike::lemma_fr_empty(sp, s@, dl, p0 - 1);
+        assert(pcs_of(dl) =~= pcsv(pcs0));
+        assert(caps_ok(dl, nsn));
+        lemma_sfull(sp, s@, st, nsn, p0 - 1, dl, false);
+        lemma_cfull(sp, s@, st, nsn, p0 - 1, dl, false, dm0, ans);
+        assert(cutv(en.cut) is None);
+        assert(us_ok(en.acts@, en.us));
+        assert(pcsv(nx.pcs@).len() == apcs(f.0).len());
+        assert(en.acts@.len() == avs(en.acts@).len());
+        assert(en.acts@.len() == nx.pcs@.len());
+        assert(srcs_ok(avs(en.acts@), 0)) by {
+            assert forall|k: int| 0 <= k < avs(en.acts@).len() implies -1 <= (#[trigger] avs(en.acts@)[k]).src < 0 by {
+                assert(avs(en.acts@)[k] == av(en.acts@[k]));
+            }
+        }
+        lemma_uni(
+            en.acts@,
+            NOSRC,
+            NOROW,
+            Seq::<usize>::empty(),
+            Seq::<usize>::empty(),
+            Seq::<Th>::empty(),
+            0,
+            nsn,
+            p0,
+        );
+        let want = isa(f.0, dl, nsn, p0 as int);
+        assert(al0.len() == want.len());
+        assert forall|kk: int| 0 <= kk < al0.len() implies al0[kk] == want[kk] by {
+            assert(f.0[kk] == av(en.acts@[kk]));
+            assert(pcsv(nx.pcs@)[kk] == apcs(f.0)[kk]);
+            assert(th_ok(tg0[kk], 0));
+        }
+        assert(al0 =~= want);
+        assert(ans == or(fr(sp, s@, al0, p0 as int), search_p(sp, s@, st, p0 + 1, nsn)));
+        assert(mf + bcost <= 2 * mf);
+    }
+    (true, e, t as usize, sid, Ghost(it@ + bcost))
+}
+
+/// One start tried on its own, with no thread list. The stored step
+/// from the empty list at the byte before `p0` gives the threads of a
+/// start at `p0`; they are followed through the stored steps of lists
+/// that take no new start, for as long as every step's threads come from
+/// one thread, which is kept as one row of `ar`. Gives 1 and the end of
+/// the match, its slots in `out`, when that start matches and no thread
+/// is left: the answer of the whole search. Gives 2 when every thread
+/// of that start dies without a match: the search goes on from the next
+/// byte. Gives 0 when the stored steps cannot say, and nothing is
+/// concluded. Also gives how far it
+/// read. `e0` and `tw` are hints from earlier calls, checked here: the
+/// number of the empty list, and for each last byte and class of the
+/// next the list of a start that takes no new start.
+pub fn quick(
+    prog: &Prog,
+    s: &[u8],
+    p0: usize,
+    memo: &mut Memo,
+    e0: usize,
+    tw: &mut Vec<u32>,
+    ar: &mut Vec<usize>,
+    out: &mut Vec<usize>,
+    Ghost(ans): Ghost<Option<M>>,
+) -> (r: (u8, usize, usize, usize, Ghost<M>, Ghost<int>))
+    requires
+        prog.wf(),
+        old(memo).wf(prog),
+        p0 < s@.len() < usize::MAX,
+        old(out)@.len() == prog.nslots,
+        ans == search_p(prog.sp(), s@, prog.start as int, p0 as int, prog.nslots as nat),
+    ensures
+        final(memo).wf(prog),
+        final(out)@.len() == prog.nslots,
+        p0 <= r.2 <= s@.len(),
+        r.0 == 1 ==> ans == Some(r.4@) && r.4@.end == r.1 && capv(final(out)@) == r.4@.caps,
+        r.0 == 2 ==> ans == search_p(prog.sp(), s@, prog.start as int, p0 + 1, prog.nslots as nat),
+        0 <= r.5@ <= (r.2 - p0 + 3) * quick_cost(prog.insts@.len() as int, prog.nslots as int),
+{
+    let n = s.len();
+    let ns = prog.nslots;
+    let np = prog.insts.len();
+    let ghost sp = prog.sp();
+    let ghost st = prog.start as int;
+    let ghost nsn = ns as nat;
+    let ghost mf = memo_fuel(np as int);
+    let ghost qk = quick_cost(np as int, ns as int);
+    let ghost dm0 = M { end: -1, caps: seq![] };
+    let ghost dm1 = M { end: -2, caps: seq![] };
+    proof {
+        assert(3 * qk == (0 + 3) * qk) by (nonlinear_arith);
+    }
+    let qs = quick_start(prog, s, p0, memo, e0, tw, Ghost(ans));
+    let e = qs.1;
+    let ghost bcost = qs.4@;
+    let it: Ghost<int> = Ghost(0);
+    if !qs.0 {
+        return (0, p0, p0, e, Ghost(dm0), Ghost(bcost));
+    }
+    let t = qs.2;
+    let mut sid = qs.3;
+    let full: u64 = 400 * (np as u64) + 2048;
+    ar.clear();
+    let ghost tg0 = useq(memo.ents@[t as int].acts@, NOROW, p0);
+    let ghost al0 = thl(ar@, tg0, memo.states@[sid as int].pcs@, nsn);
+    // What the run below is about: this start alone, with a stand-in
+    // `dm` for what follows it. `dm` is not what this start gives, and a
+    // match found below ends at 0 or later, so is not `dm` either.
+    let ghost dm = if fr(sp, s@, al0, p0 as int) == Some(dm0) {
+        dm1
+    } else {
+        dm0
+    };
+    let ghost an = or(fr(sp, s@, al0, p0 as int), Some(dm));
+    proof {
+        lemma_slots_ok(prog);
+        assert(ar@ =~= Seq::<usize>::empty());
+        assert(ans == or(fr(sp, s@, al0, p0 as int), search_p(sp, s@, st, p0 + 1, nsn)));
+        assert(2 * mf <= 3 * qk);
+    }
+    let lim: usize = 4 * np + 64;
+    let mut p = p0;
+    let mut ux: u32 = NOROW;
+    let mut ue: usize = t;
+    let mut nrows: usize = 0;
+    let mut found = false;
+    let mut mt = Th { row: NOROW, mask: 0, pos: 0 };
+    let mut mend: usize = 0;
+    let ghost mut mv = dm;
+    let ghost mut cost: int = 0;
+    let mut done = false;
+    let mut dead = false;
+    proof {
+        assert(0 * qk == 0) by (nonlinear_arith);
+    }
+    loop
+        invariant_except_break
+            !done,
+            !dead,
+        invariant
+            prog.wf(),
+            memo.wf(prog),
+            memo.on,
+            n == s@.len(),
+            n < usize::MAX,
+            ns == prog.nslots,
+            ns <= 64,
+            np == prog.insts@.len(),
+            np < 0x1000_0000,
+            lim == 4 * np + 64,
+            sp == prog.sp(),
+            st == prog.start,
+            nsn == ns,
+            mf == memo_fuel(np as int),
+            qk == mf + ns + 2,
+            full == 400 * np + 2048,
+            slots_ok(sp, ns as int),
+            p0 <= p <= n,
+            out@.len() == ns,
+            uok(prog, s@, memo, ar@, sid as int, p as int, ux, ue as int, nrows as int, true, mv, an),
+            !found ==> mv == dm,
+            found ==> mv.end == mend && th_ok(mt, nrows as int) && mv.caps == thv(ar@, mt, nsn),
+            0 <= cost <= (p - p0) * qk,
+        ensures
+            done ==> found && memo.ents@[ue as int].acts@.len() == 0,
+            dead ==> !found && memo.ents@[ue as int].acts@.len() == 0,
+            !(done && dead),
+        decreases n - p,
+    {
+        proof {
+            assert((p - p0 + 1) * qk == (p - p0) * qk + qk) by (nonlinear_arith);
+        }
+        if memo.ents[ue].acts.len() == 0 {
+            if found {
+                done = true;
+            } else {
+                dead = true;
+            }
+            break;
+        }
+        if p >= n || nrows >= lim {
+            break;
+        }
+        let c = s[p];
+        if c >= 0x80 {
+            break;
+        }
+        let la = laq(&memo.lat, s, p + 1);
+        let ti = (sid * 4 + la as usize) * 128 + c as usize;
+        assert(ti == tidx(sid as int, la as int, c as int));
+        let mut t = memo.trans[ti];
+        if t == MNO {
+            break;
+        }
+        let ghost pcs0 = memo.states@[sid as int].pcs@;
+        let ghost mut bc: int = 0;
+        let ghost stu = memo.states@[sid as int];
+        let ghost enu = memo.ents@[ue as int];
+        if t == MUNK {
+            let mut fuel2: u64 = full;
+            let mut it2: Ghost<int> = Ghost(0);
+            t = build_ent(prog, memo, sid, la, c, &mut fuel2, &mut it2);
+            proof {
+                bc = it2@;
+            }
+            set_trans(prog, memo, sid, la, c, t);
+            assert(memo.states@[sid as int] == stu);
+            assert(memo.ents@[ue as int] == enu);
+            if t == MNO {
+                break;
+            }
+        }
+        assert(slot_ok(sp, st, memo.states@, memo.ents@, sid as int, la as int, c as int, memo.trans@[tidx(
+            sid as int,
+            la as int,
+            c as int,
+        )]));
+        let ghost tg0 = useq(memo.ents@[ue as int].acts@, ux, p);
+        let ghost al = thl(ar@, tg0, pcs0, nsn);
+        let ghost en = memo.ents@[t as int];
+        let ghost f = sfull(sp, st, c, la as int, pcsv(pcs0), true);
+        proof {
+            assert(ent_ok(sp, st, memo.states@, sid as int, la as int, c, en));
+            assert(pcs_of(al) =~= pcsv(pcs0));
+            assert(caps_ok(al, nsn));
+            lemma_sfull(sp, s@, st, nsn, p as int, al, true);
+            lemma_cfull(sp, s@, st, nsn, p as int, al, true, mv, an);
+            lemma_sfull_src(sp, st, c, la as int, pcsv(pcs0), true);
+        }
+        let cut = memo.ents[t as usize].cut;
+        let next = memo.ents[t as usize].next;
+        let us = memo.ents[t as usize].us;
+        if us == UMIX {
+            break;
+        }
+        if cut != NOCUT {
+            mt = uth(&memo.ents[ue].acts, cut as usize, ux, p);
+            assert(mt == tg0[cut as int]);
+            found = true;
+            mend = p;
+            proof {
+                mv = M { end: p as int, caps: al[cut as int].caps };
+            }
+        }
+        let ghost ar0 = ar@;
+        let ghost nr0 = nrows as int;
+        let ghost nx = memo.states@[next as int];
+        let ghost mut ac: int = 0;
+        proof {
+            assert(pcsv(nx.pcs@).len() == apcs(f.0).len());
+            assert(en.acts@.len() == avs(en.acts@).len());
+            assert(en.acts@.len() == nx.pcs@.len());
+            assert(us_ok(en.acts@, en.us));
+        }
+        let mut base: u32 = NOROW;
+        let tl = memo.ents[ue].acts.len();
+        assert(tl == tg0.len());
+        let ln = memo.ents[t as usize].acts.len();
+        if ln > 0 && us != NOSRC && (us as usize) < tl {
+            let t0 = uth(&memo.ents[ue].acts, us as usize, ux, p);
+            assert(t0 == tg0[us as int]);
+            assert(th_ok(t0, nr0));
+            let (b2, nr2, uc) = uni_row(ar, t0, nrows, ns);
+            base = b2;
+            nrows = nr2;
+            proof {
+                ac = uc@;
+            }
+        }
+        ux = base;
+        ue = t as usize;
+        proof {
+            let tg = useq(en.acts@, base, (p + 1) as usize);
+            assert(srcs_ok(avs(en.acts@), tg0.len() as int));
+            lemma_uni(
+                en.acts@,
+                if ln == 0 {
+                    NOSRC
+                } else {
+                    us
+                },
+                base,
+                ar0,
+                ar@,
+                tg0,
+                nrows as int,
+                nsn,
+                (p + 1) as usize,
+            );
+            let l2 = thl(ar@, tg, nx.pcs@, nsn);
+            let want = isa(f.0, al, nsn, p + 1);
+            assert(l2.len() == want.len());
+            assert forall|kk: int| 0 <= kk < l2.len() implies l2[kk] == want[kk] by {
+                assert(f.0[kk] == av(en.acts@[kk]));
+                assert(pcsv(nx.pcs@)[kk] == apcs(f.0)[kk]);
+                assert(th_ok(tg[kk], nrows as int));
+                if en.acts@[kk].src != NOSRC {
+                    assert(al[en.acts@[kk].src as int].caps == thv(ar0, tg0[en.acts@[kk].src as int], nsn));
+                }
+            }
+            assert(l2 =~= want);
+            if found {
+                assert(nr0 * ns as int <= nrows as int * ns as int) by (nonlinear_arith)
+                    requires
+                        nr0 <= nrows,
+                        ns >= 0,
+                ;
+                lemma_thv_frame(ar0, ar@, mt, nr0, nsn);
+            }
+            cost = cost + bc + ac + 1;
+        }
+        sid = next as usize;
+        p += 1;
+        if p >= n {
+            continue;
+        }
+        let ghost pa = p;
+        let r = urun(prog, s, memo, ar, sid, p, ux, ue, true, Ghost(nrows as int), Ghost(mv), Ghost(an));
+        sid = r.0;
+        p = r.1;
+        ue = r.2;
+        if r.3 {
+            found = true;
+            mt = r.4;
+            mend = r.5;
+        }
+        proof {
+            mv = r.6@;
+            assert((p - p0) * qk == (pa - p0) * qk + (p - pa) * qk) by (nonlinear_arith);
+            assert((p - pa) <= (p - pa) * qk) by (nonlinear_arith)
+                requires
+                    p - pa >= 0,
+                    qk >= 1,
+            ;
+            cost = cost + (p - pa);
+        }
+    }
+    proof {
+        assert((p - p0 + 3) * qk == (p - p0) * qk + 3 * qk) by (nonlinear_arith);
+    }
+    if done {
+        load_th(ar, mt, out, ns, Ghost(nrows as int));
+        proof {
+            let l = thl(ar@, useq(memo.ents@[ue as int].acts@, ux, p), memo.states@[sid as int].pcs@, nsn);
+            crate::pike::lemma_fr_empty(sp, s@, l, p as int);
+            assert(an == Some(mv));
+            assert(mv != dm);
+            assert(fr(sp, s@, al0, p0 as int) == Some(mv));
+        }
+        return (1, mend, p, e, Ghost(mv), Ghost(it@ + bcost + cost + ns));
+    }
+    if dead {
+        proof {
+            let l = thl(ar@, useq(memo.ents@[ue as int].acts@, ux, p), memo.states@[sid as int].pcs@, nsn);
+            crate::pike::lemma_fr_empty(sp, s@, l, p as int);
+            assert(an == Some(dm));
+            assert(fr(sp, s@, al0, p0 as int) is None);
+        }
+        return (2, p0, p, e, Ghost(dm), Ghost(it@ + bcost + cost));
+    }
+    (0, p0, p, e, Ghost(dm), Ghost(it@ + bcost + cost))
 }
 
 } // verus!
