@@ -127,8 +127,10 @@ say "check that the hardened build has our code in it"
   nm "$HRD" > "$OUT/hardened.nm" 2>/dev/null || true
   # Count rather than grep -q: with pipefail, grep -q closing the pipe early makes the check fail.
   check() { n=$(grep -c "$2" "$OUT/hardened.nm" || true); if [ "${n:-0}" -gt 0 ]; then echo "$1: yes ($n $2 symbols)"; else echo "$1: NO ($2 missing)"; fi; }
-  for pair in llhttp:vhttp ada:vurl simdjson:vjson cares:vdns zlib:vzlib; do
-    if has "${pair%%:*}"; then check "${pair#*:} in place of ${pair%%:*}" "${pair#*:}"; fi
+  # ORIGINAL:OURS[:SYMBOL]; vjson's C API is vbind_json_*, no symbol names vjson.
+  for pair in llhttp:vhttp ada:vurl simdjson:vjson:vbind_json cares:vdns zlib:vzlib; do
+    IFS=: read -r orig ours sym <<< "$pair"
+    if has "$orig"; then check "$ours in place of $orig" "${sym:-$ours}"; fi
   done
   for b in "$OFF" "$HRD"; do
     "$b" -e '
