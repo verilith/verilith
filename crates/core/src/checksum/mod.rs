@@ -1,14 +1,16 @@
-//! Adler-32 (RFC 1950) and CRC-32 (RFC 1952), proven to compute
-//! `spec::adler32` and `spec::crc32`.
+//! Adler-32 (RFC 1950), CRC-32 (RFC 1952) and CRC-32C (RFC 3720), proven
+//! to compute `spec::adler32`, `spec::crc32` and `spec::crc32c`.
 //!
-//! [`adler32`] and [`crc32`] pick the fastest kernel this CPU has (see
-//! [`cpu`]); [`adler32_update`] and [`crc32_update`] are the portable
-//! verified kernels.
+//! [`adler32`], [`crc32`] and [`crc32c()`] pick the fastest kernel this CPU
+//! has (see [`cpu`]); [`adler32_update`], [`crc32_update`] and
+//! [`crc32c_update`] are the portable verified kernels.
 pub mod cpu;
+pub mod crc32c;
 pub mod lanes;
 pub mod spec;
 mod tables;
 
+pub use crc32c::{crc32c, crc32c_update};
 use tables::*;
 use vstd::prelude::*;
 

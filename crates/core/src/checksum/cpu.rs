@@ -13,9 +13,15 @@
 //!   `checksum::lanes::crc32_update`, which *is* verified, down to one
 //!   assumption: that the `crc32x` instruction computes this CRC-32 over
 //!   its eight bytes (`lanes::crc_word`).
+//! - `crc32c_update` uses the CPU's CRC-32C instruction: SSE4.2's `crc32`
+//!   on x86-64, the CRC extension's `crc32c` on AArch64, eight bytes at a
+//!   time. Not verified: tested against the verified table-driven
+//!   `checksum::crc32c_update`, which is also what runs on other CPUs.
 //! - On AArch64, `adler32_update` is the portable code, which the compiler
 //!   vectorizes with NEON (part of the AArch64 baseline).
 #![allow(unsafe_op_in_unsafe_fn)]
+#[cfg(verus_only)]
+use crate::checksum::crc32c::crc32c_from;
 #[cfg(verus_only)]
 use crate::checksum::{adler_from, crc_from};
 use vstd::prelude::*;
@@ -73,7 +79,60 @@ pub fn crc32_update(reg: u32, d: &[u8]) -> (r: u32)
     super::crc32_update(reg, d)
 }
 
+#[verifier::external_body]
+pub fn crc32c_update(reg: u32, d: &[u8]) -> (r: u32)
+    ensures
+        r == crc32c_from(reg, d@),
+{
+    #[cfg(target_arch = "x86_64")]
+    {
+        if x86_has!("sse4.2") {
+            // SAFETY: the CPU supports SSE4.2.
+            return unsafe { crc32c_sse42(reg, d) };
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        if arm_has!("crc") {
+            // SAFETY: the CPU has the CRC32 instructions.
+            return unsafe { crc32c_arm(reg, d) };
+        }
+    }
+    super::crc32c_update(reg, d)
+}
+
 } // verus!
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse4.2")]
+unsafe fn crc32c_sse42(reg: u32, d: &[u8]) -> u32 {
+    use core::arch::x86_64::{_mm_crc32_u64, _mm_crc32_u8};
+    let mut r = reg as u64;
+    let mut words = d.chunks_exact(8);
+    for c in &mut words {
+        r = _mm_crc32_u64(r, u64::from_le_bytes(c.try_into().unwrap()));
+    }
+    let mut r = r as u32;
+    for &b in words.remainder() {
+        r = _mm_crc32_u8(r, b);
+    }
+    r
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "crc")]
+unsafe fn crc32c_arm(reg: u32, d: &[u8]) -> u32 {
+    use core::arch::aarch64::{__crc32cb, __crc32cd};
+    let mut r = reg;
+    let mut words = d.chunks_exact(8);
+    for c in &mut words {
+        r = __crc32cd(r, u64::from_le_bytes(c.try_into().unwrap()));
+    }
+    for &b in words.remainder() {
+        r = __crc32cb(r, b);
+    }
+    r
+}
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]

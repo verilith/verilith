@@ -1,6 +1,6 @@
-//! Adler-32 (RFC 1950 §8.2) and CRC-32 (RFC 1952 §8, ISO 3309) as pure
-//! functions over `Seq<u8>`: the trusted specification the exec code in
-//! `checksum` is proven to compute.
+//! Adler-32 (RFC 1950 §8.2), CRC-32 (RFC 1952 §8, ISO 3309) and CRC-32C
+//! (RFC 3720 §12.1 and appendix B.4) as pure functions over `Seq<u8>`: the
+//! trusted specification the exec code in `checksum` is proven to compute.
 use vstd::prelude::*;
 
 verus! {
@@ -75,6 +75,56 @@ pub open spec fn crc_reg(d: Seq<u8>) -> u32
 /// CRC-32 as gzip uses it: the final register, complemented.
 pub open spec fn crc32(d: Seq<u8>) -> u32 {
     !crc_reg(d)
+}
+
+// ---------------------------------------------------------------------------
+// CRC-32C (Castagnoli): the same register update as CRC-32, with another
+// polynomial. iSCSI, SCTP, ext4, Btrfs and Snappy's framing format use it.
+// ---------------------------------------------------------------------------
+
+/// CRC-32C's polynomial (Castagnoli, RFC 3720 appendix B.4), bit
+/// reversed.
+pub spec const CRC32C_POLY: u32 = 0x82f63b78;
+
+/// One bit of the CRC-32C register update.
+pub open spec fn crc32c_step(c: u32) -> u32 {
+    if c & 1 == 1 {
+        (c >> 1u32) ^ CRC32C_POLY
+    } else {
+        c >> 1u32
+    }
+}
+
+/// `n` bit steps.
+pub open spec fn crc32c_steps(c: u32, n: nat) -> u32
+    decreases n,
+{
+    if n == 0 {
+        c
+    } else {
+        crc32c_steps(crc32c_step(c), (n - 1) as nat)
+    }
+}
+
+/// The CRC-32C register after one more byte.
+pub open spec fn crc32c_byte(c: u32, x: u8) -> u32 {
+    crc32c_steps(c ^ (x as u32), 8)
+}
+
+/// The CRC-32C register after `d`, starting from all ones.
+pub open spec fn crc32c_reg(d: Seq<u8>) -> u32
+    decreases d.len(),
+{
+    if d.len() == 0 {
+        0xffff_ffff
+    } else {
+        crc32c_byte(crc32c_reg(d.drop_last()), d.last())
+    }
+}
+
+/// CRC-32C: the final register, complemented.
+pub open spec fn crc32c(d: Seq<u8>) -> u32 {
+    !crc32c_reg(d)
 }
 
 } // verus!

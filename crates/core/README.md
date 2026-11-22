@@ -26,7 +26,7 @@ once, and the libraries import it.
 | `utf8` | well-formed UTF-8 (Unicode Table 3-7), the three-byte local condition SIMD validators check, its proof, and a verified scalar validator | verilith-json |
 | `num` | decimal digits: `is_digit`, `digits_end`, `dec_value`, `decimal`; `parse_u64_dec` (checked) and `push_decimal` | verilith-json, verilith-url, verilith-dns |
 | `binary64` | IEEE 754 binary64 as a model in spec integers (in the style of Coq's Flocq): what each bit pattern is worth as an exact rational, round to nearest, ties to even (`rne`), proofs that rounding depends only on the value and that exact products and quotients of equal values are equal, that `u64 as f64` is exact below `2^53`, and `P10`, the exact doubles `10^0..=10^22`; `mul`, `div` and `from_u64` on bit patterns | verilith-json |
-| `checksum` | Adler-32 and CRC-32 (slicing-by-16), proven against the RFC definitions in `checksum::spec`; `checksum::cpu` picks AVX2/PCLMULQDQ kernels, and on AArch64 the verified three-lane `crc32x` kernel in `checksum::lanes` | verilith-zlib |
+| `checksum` | Adler-32 and CRC-32 (slicing-by-16), and CRC-32C (`checksum::crc32c`, a table per byte), proven against the RFC definitions in `checksum::spec`; `checksum::cpu` picks AVX2/PCLMULQDQ kernels, on AArch64 the verified three-lane `crc32x` kernel in `checksum::lanes`, and for CRC-32C the SSE4.2 or AArch64 CRC-32C instruction | verilith-zlib, verilith-snappy |
 
 verilith-webp and verilith-brotli share the table builder in `htable`. verilith-zlib keeps its own:
 it builds a different layout (DEFLATE's flagged length/distance entries) on
@@ -73,7 +73,13 @@ What the proofs here assume rather than prove:
 - `src/checksum/cpu.rs`: CPU dispatch. Adler-32 reruns the verified
   kernel compiled with AVX2; the PCLMULQDQ CRC-32 is unverified and tested
   against the verified table-driven one (`tests/basic.rs`, every length up
-  to 5000).
+  to 5000). `crc32c_update` runs the CPU's CRC-32C instruction (SSE4.2's
+  `crc32` on x86-64, `crc32cb`/`crc32cd` on AArch64) eight bytes at a
+  time: trusted is that the instruction computes this CRC on the raw
+  register, as it is defined to, and the eight-line loops around it.
+  `tests/crc32c.rs` compares it with the verified table kernel at every
+  length up to 300 and at eight alignments, and the table kernel with a
+  bit-at-a-time reference.
 - `src/checksum/lanes.rs`, the one `external_body` function `crc_word`:
   on AArch64, that the `crc32x` instruction computes this CRC-32 over its
   eight bytes. The three-lane CRC-32 around it, the tables that combine
@@ -91,7 +97,7 @@ What the proofs here assume rather than prove:
   including what rounding means for the values the callers care about, is
   proven from the model.
 - The specs: `checksum/spec.rs`, the format and rounding definitions at
-  the top of `binary64.rs` (Adler-32, CRC-32), and the spec functions
+  the top of `binary64.rs` (Adler-32, CRC-32, CRC-32C), and the spec functions
   at the top of `bits.rs`, `huffman.rs`, `utf8.rs`, `num.rs` and
   `bytes.rs`.
 - Verus, Z3 and the Rust compiler.

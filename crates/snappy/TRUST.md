@@ -15,9 +15,10 @@ against the format documents:
   three kinds of copy. An offset of 0, or one that reaches before the
   start of the output, is invalid, and the elements must produce exactly
   the length the preamble gives.
-- `crc_step` to `crc32c`: CRC-32C bit by bit, with the Castagnoli
-  polynomial (RFC 3720 appendix B.4), and `mask`, the framing format's
-  rotation and constant.
+- `crc32c`: CRC-32C bit by bit, with the Castagnoli polynomial (RFC 3720
+  appendix B.4). It is verilith-core's `checksum::spec::crc32c`,
+  re-exported.
+- `mask`: the framing format's rotation and constant.
 - `chunks`, `stream`: the framing format (framing_format.txt). One
   choice the document does not make: a stream of no bytes at all holds
   nothing, which is what the Go and Rust implementations read and write.
@@ -30,14 +31,11 @@ crate.
 
 ## The CPU's CRC-32C instruction
 
-`crc::cpu::crc_update` (in `src/crc.rs`) is the one `external_body`
-function here. On x86-64 with SSE4.2 it uses the `crc32` instruction, on
-AArch64 with the CRC extension `crc32cb`/`crc32cd`, eight bytes at a
-time; otherwise it calls the verified table code. Trusted is that the
-instruction computes this CRC on the raw register (it is defined to) and
-that the eight-line loops around it are right. `tests/framing.rs` checks
-it against the verified `crc_update` on 3000 inputs of every length up to
-300 with random starting registers.
+CRC-32C is computed by verilith-core's `checksum::crc32c`, which uses the
+CPU's CRC-32C instruction where there is one:
+`checksum::cpu::crc32c_update`, an `external_body` function in
+verilith-core's [trusted base](../core#trusted-base). verilith-snappy
+has no `external_body` function of its own.
 
 ## verilith-core's trusted primitives
 

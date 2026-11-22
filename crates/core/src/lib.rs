@@ -20,7 +20,7 @@
 //! - [`num`]: decimal digits and numbers.
 //! - [`binary64`]: IEEE 754 doubles as a model in spec integers, round to
 //!   nearest even, and the hardware `*`, `/` and `u64 as f64` (trusted).
-//! - [`checksum`]: Adler-32 and CRC-32.
+//! - [`checksum`]: Adler-32, CRC-32 and CRC-32C.
 extern crate alloc;
 
 pub mod binary64;

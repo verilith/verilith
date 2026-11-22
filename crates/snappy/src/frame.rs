@@ -3,15 +3,23 @@
 #[cfg(verus_only)]
 use crate::compress::extends;
 use crate::compress::compress_into;
-use crate::crc::{crc32c as crc_exec, masked};
 #[cfg(verus_only)]
 use crate::decode::lemma_elems_len;
 use crate::decode::{decompress_into, read_le, Error};
 use crate::spec::*;
+use verilith_core::checksum::crc32c as crc_exec;
 use vstd::prelude::*;
 use vstd::slice::slice_subrange;
 
 verus! {
+
+/// A checksum as the framing format stores it.
+pub fn masked(crc: u32) -> (r: u32)
+    ensures
+        r as nat == mask(crc),
+{
+    ((crc >> 15) | (crc << 17)).wrapping_add(0xa282ead8)
+}
 
 /// Why decoding a stream failed.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]

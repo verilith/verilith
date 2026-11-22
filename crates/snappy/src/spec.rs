@@ -139,50 +139,9 @@ pub open spec fn decompress(s: Seq<u8>) -> Option<Seq<u8>> {
 // The framing format (framing_format.txt)
 // ---------------------------------------------------------------------------
 
-/// CRC-32C's polynomial (Castagnoli, RFC 3720 appendix B.4), bit
-/// reversed.
-pub spec const CRC32C_POLY: u32 = 0x82f63b78;
-
-/// One bit of the CRC register update.
-pub open spec fn crc_step(c: u32) -> u32 {
-    if c & 1 == 1 {
-        (c >> 1u32) ^ CRC32C_POLY
-    } else {
-        c >> 1u32
-    }
-}
-
-/// `n` bit steps.
-pub open spec fn crc_steps(c: u32, n: nat) -> u32
-    decreases n,
-{
-    if n == 0 {
-        c
-    } else {
-        crc_steps(crc_step(c), (n - 1) as nat)
-    }
-}
-
-/// The CRC register after one more byte.
-pub open spec fn crc_byte(c: u32, x: u8) -> u32 {
-    crc_steps(c ^ (x as u32), 8)
-}
-
-/// The CRC register after `d`, starting from all ones.
-pub open spec fn crc_reg(d: Seq<u8>) -> u32
-    decreases d.len(),
-{
-    if d.len() == 0 {
-        0xffff_ffff
-    } else {
-        crc_byte(crc_reg(d.drop_last()), d.last())
-    }
-}
-
-/// CRC-32C: the final register, complemented.
-pub open spec fn crc32c(d: Seq<u8>) -> u32 {
-    !crc_reg(d)
-}
+/// CRC-32C (RFC 3720), from verilith-core's `checksum::spec`.
+#[cfg(verus_only)]
+pub use verilith_core::checksum::spec::crc32c;
 
 /// How the framing format stores a checksum: rotated right by 15 bits,
 /// plus a constant (modulo 2^32).
