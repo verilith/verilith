@@ -7,6 +7,7 @@
 //! OpenSSL's 216-byte `SHA512_CTX` (a `u128` would align it to 16).
 use crate::cpu;
 use crate::spec512 as spec;
+use crate::store::put_u64_be;
 use verilith_core::prims::copy_in;
 use vstd::prelude::*;
 use vstd::slice::slice_subrange;
@@ -143,6 +144,8 @@ impl Engine512 {
         &&& full % 128 == 0
         &&& self.h@ == spec::hash_blocks(self.iv@, d, (full / 128) as nat)
         &&& self.buf@.subrange(0, self.n as int) == d.subrange(full, d.len() as int)
+        // Zero past the buffered bytes, so that padding needs no clearing.
+        &&& forall|i: int| self.n <= i < 128 ==> #[trigger] self.buf@[i] == 0
         &&& self.hi as int * m64() + self.lo as int == d.len() as int % m128()
     }
 
@@ -222,8 +225,9 @@ impl Engine512 {
             proof {
                 lemma_absorb(iv, h0, a, self.buf@, Seq::empty());
                 assert(a + self.buf@ + Seq::<u8>::empty() =~= d1);
-                assert(self.buf@.subrange(0, 0) =~= d1.subrange(d1.len() as int, d1.len() as int));
             }
+            self.buf = [0u8; 128];
+            assert(self.buf@.subrange(0, 0) =~= d1.subrange(d1.len() as int, d1.len() as int));
             self.n = 0;
         } else {
             proof {
@@ -257,14 +261,18 @@ impl Engine512 {
         let ghost h0 = self.h@;
         let ghost rest = d@.subrange((i + whole) as int, len as int);
         let ghost d1 = d0 + d@.subrange(i as int, len as int);
-        cpu::compress512_blocks(&mut self.h, q);
+        if whole > 0 {
+            cpu::compress512_blocks(&mut self.h, q);
+        }
         proof {
             assert(whole % 128 == 0);
             lemma_absorb(iv, h0, d0, q@, rest);
             assert(d0 + q@ + rest =~= d1);
         }
         let tail = len - i - whole;
-        copy_in(&mut self.buf, 0, d, i + whole, tail);
+        if tail > 0 {
+            copy_in(&mut self.buf, 0, d, i + whole, tail);
+        }
         proof {
             assert(self.buf@.subrange(0, tail as int) =~= d1.subrange(d1.len() - tail, d1.len() as int));
         }
@@ -336,18 +344,8 @@ impl Engine512 {
         let mut st = self.h;
         let mut b = self.buf;
         b[n] = 0x80;
-        let mut j = n + 1;
-        while j < 128
-            invariant
-                n < j <= 128,
-                forall|i: int| 0 <= i < n ==> #[trigger] b@[i] == self.buf@[i],
-                b@[n as int] == 0x80,
-                forall|i: int| n < i < j ==> b@[i] == 0,
-            decreases 128 - j,
-        {
-            b[j] = 0;
-            j = j + 1;
-        }
+        assert(forall|i: int| n < i < 128 ==> b@[i] == 0);
+        assert(forall|i: int| 0 <= i < n ==> #[trigger] b@[i] == self.buf@[i]);
         let bits = self.count().wrapping_mul(8);
         let bits_hi = (bits / 0x1_0000_0000_0000_0000) as u64;
         let bits_lo = (bits % 0x1_0000_0000_0000_0000) as u64;
@@ -373,16 +371,7 @@ impl Engine512 {
             let ghost h0 = st@;
             cpu::compress512_blocks(&mut st, &b);
             let ghost h1 = st@;
-            let mut j = 0;
-            while j < 112
-                invariant
-                    j <= 112,
-                    forall|i: int| 0 <= i < j ==> b@[i] == 0,
-                decreases 112 - j,
-            {
-                b[j] = 0;
-                j = j + 1;
-            }
+            b = [0u8; 128];
             put_len(&mut b, bits_hi, bits_lo);
             proof {
                 assert forall|i: int| 0 <= i < 128 implies #[trigger] b@[i] == rest[128 + i] by {
@@ -457,29 +446,22 @@ fn put_len(b: &mut [u8; 128], hi: u64, lo: u64)
         forall|i: int|
             0 <= i < 16 ==> #[trigger] final(b)@[112 + i] == (crate::spec::be64(hi) + crate::spec::be64(lo))[i],
 {
-    b[112] = ((hi >> 56) & 0xff) as u8;
-    b[113] = ((hi >> 48) & 0xff) as u8;
-    b[114] = ((hi >> 40) & 0xff) as u8;
-    b[115] = ((hi >> 32) & 0xff) as u8;
-    b[116] = ((hi >> 24) & 0xff) as u8;
-    b[117] = ((hi >> 16) & 0xff) as u8;
-    b[118] = ((hi >> 8) & 0xff) as u8;
-    b[119] = (hi & 0xff) as u8;
-    b[120] = ((lo >> 56) & 0xff) as u8;
-    b[121] = ((lo >> 48) & 0xff) as u8;
-    b[122] = ((lo >> 40) & 0xff) as u8;
-    b[123] = ((lo >> 32) & 0xff) as u8;
-    b[124] = ((lo >> 24) & 0xff) as u8;
-    b[125] = ((lo >> 16) & 0xff) as u8;
-    b[126] = ((lo >> 8) & 0xff) as u8;
-    b[127] = (lo & 0xff) as u8;
+    put_u64_be(b, 112, hi);
+    let ghost b1 = b@;
+    put_u64_be(b, 120, lo);
     proof {
-        assert(hi >> 0u64 == hi) by (bit_vector);
-        assert(lo >> 0u64 == lo) by (bit_vector);
+        assert forall|i: int| 0 <= i < 16 implies #[trigger] b@[112 + i] == (crate::spec::be64(hi) + crate::spec::be64(lo))[i] by {
+            if i < 8 {
+                assert(b1[112 + i] == crate::spec::be64(hi)[i]);
+            } else {
+                assert(b@[120 + (i - 8)] == crate::spec::be64(lo)[i - 8]);
+            }
+        }
     }
 }
 
-/// The first `nb` bytes of `spec512::digest_bytes(h)`.
+/// The first `nb` bytes of `spec512::digest_bytes(h)`: all eight words,
+/// most significant byte first, then the prefix.
 #[inline(always)]
 fn put_digest(out: &mut [u8], h: &[u64; 8], nb: usize)
     requires
@@ -488,19 +470,27 @@ fn put_digest(out: &mut [u8], h: &[u64; 8], nb: usize)
     ensures
         final(out)@ == spec::digest_bytes(h@).subrange(0, nb as int),
 {
-    let mut k: usize = 0;
-    while k < nb
+    let mut t = [0u8; 64];
+    let mut i: usize = 0;
+    while i < 8
         invariant
-            nb <= 64,
-            k <= nb,
-            out@.len() == nb,
-            forall|i: int| 0 <= i < k ==> out@[i] == #[trigger] spec::digest_bytes(h@)[i],
-        decreases nb - k,
+            i <= 8,
+            forall|k: int| 0 <= k < 8 * i ==> t@[k] == #[trigger] spec::digest_bytes(h@)[k],
+        decreases 8 - i,
     {
-        let s = (56 - 8 * (k % 8)) as u64;
-        out[k] = ((h[k / 8] >> s) & 0xff) as u8;
-        k = k + 1;
+        put_u64_be(&mut t, 8 * i, h[i]);
+        proof {
+            assert forall|k: int| 0 <= k < 8 * (i + 1) implies t@[k] == #[trigger] spec::digest_bytes(h@)[k] by {
+                if k >= 8 * i {
+                    let q = k - 8 * i;
+                    assert(t@[8 * i + q] == crate::spec::be64(h@[i as int])[q]);
+                    assert(k / 8 == i as int && k % 8 == q);
+                }
+            }
+        }
+        i = i + 1;
     }
+    copy_in(out, 0, &t, 0, nb);
     assert(out@ =~= spec::digest_bytes(h@).subrange(0, nb as int));
 }
 

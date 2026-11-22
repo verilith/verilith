@@ -22,6 +22,7 @@ pub mod compress512;
 pub mod cpu;
 #[cfg(target_arch = "x86_64")]
 pub mod avx2;
+mod store;
 pub mod hash;
 pub mod hash512;
 #[allow(non_camel_case_types)]

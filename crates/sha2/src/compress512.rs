@@ -606,23 +606,27 @@ pub fn compress_blocks_x2(st: &mut [u64; 8], p: &[u8])
 {
     let ghost h0 = st@;
     let n = p.len() / 128;
-    let mut w0 = [0u64; 80];
-    let mut w1 = [0u64; 80];
     let mut i: usize = 0;
-    while i + 2 <= n
-        invariant
-            n == p@.len() / 128,
-            p@.len() <= usize::MAX,
-            i <= n,
-            st@ == spec::hash_blocks(h0, p@, i as nat),
-        decreases n - i,
-    {
-        crate::avx2::schedule512x2(p, 128 * i, 128 * (i + 1), &mut w0, &mut w1);
-        compress_block_kw(st, &w0, Ghost(spec::block(p@, i as int)));
-        assert(st@ == spec::hash_blocks(h0, p@, (i + 1) as nat));
-        compress_block_kw(st, &w1, Ghost(spec::block(p@, (i + 1) as int)));
-        assert(st@ == spec::hash_blocks(h0, p@, (i + 2) as nat));
-        i = i + 2;
+    if n >= 2 {
+        let mut w0 = [0u64; 80];
+        let mut w1 = [0u64; 80];
+        while i + 2 <= n
+            invariant
+                n == p@.len() / 128,
+                p@.len() <= usize::MAX,
+                i <= n,
+                st@ == spec::hash_blocks(h0, p@, i as nat),
+            decreases n - i,
+        {
+            crate::avx2::schedule512x2(p, 128 * i, 128 * (i + 1), &mut w0, &mut w1);
+            compress_block_kw(st, &w0, Ghost(spec::block(p@, i as int)));
+            assert(st@ == spec::hash_blocks(h0, p@, (i + 1) as nat));
+            compress_block_kw(st, &w1, Ghost(spec::block(p@, (i + 1) as int)));
+            assert(st@ == spec::hash_blocks(h0, p@, (i + 2) as nat));
+            i = i + 2;
+        }
+    } else {
+        assert(st@ == spec::hash_blocks(h0, p@, 0));
     }
     if i < n {
         compress_block(st, p, 128 * i);

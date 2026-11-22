@@ -7,6 +7,7 @@
 //! the caller's slice to the compression function without being copied.
 use crate::cpu;
 use crate::spec;
+use crate::store::{put_u32_be, put_u64_be};
 use verilith_core::prims::copy_in;
 use vstd::prelude::*;
 use vstd::slice::slice_subrange;
@@ -131,6 +132,8 @@ impl Engine {
         &&& full % 64 == 0
         &&& self.h@ == spec::hash_blocks(self.iv@, d, (full / 64) as nat)
         &&& self.buf@.subrange(0, self.n as int) == d.subrange(full, d.len() as int)
+        // Zero past the buffered bytes, so that padding needs no clearing.
+        &&& forall|i: int| self.n <= i < 64 ==> #[trigger] self.buf@[i] == 0
         &&& self.len as int == d.len() % 0x1_0000_0000_0000_0000
     }
 
@@ -180,8 +183,9 @@ impl Engine {
             proof {
                 lemma_absorb(iv, h0, a, self.buf@, Seq::empty());
                 assert(a + self.buf@ + Seq::<u8>::empty() =~= d1);
-                assert(self.buf@.subrange(0, 0) =~= d1.subrange(d1.len() as int, d1.len() as int));
             }
+            self.buf = [0u8; 64];
+            assert(self.buf@.subrange(0, 0) =~= d1.subrange(d1.len() as int, d1.len() as int));
             self.n = 0;
         } else {
             proof {
@@ -218,14 +222,18 @@ impl Engine {
         let ghost h0 = self.h@;
         let ghost rest = d@.subrange((i + whole) as int, len as int);
         let ghost d1 = d0 + d@.subrange(i as int, len as int);
-        cpu::compress_blocks(&mut self.h, q);
+        if whole > 0 {
+            cpu::compress_blocks(&mut self.h, q);
+        }
         proof {
             assert(whole % 64 == 0);
             lemma_absorb(iv, h0, d0, q@, rest);
             assert(d0 + q@ + rest =~= d1);
         }
         let tail = len - i - whole;
-        copy_in(&mut self.buf, 0, d, i + whole, tail);
+        if tail > 0 {
+            copy_in(&mut self.buf, 0, d, i + whole, tail);
+        }
         proof {
             assert(self.buf@.subrange(0, tail as int) =~= d1.subrange(d1.len() - tail, d1.len() as int));
             lemma_count(self.len, d0.len(), (len - i) as u64);
@@ -298,18 +306,8 @@ impl Engine {
         let mut st = self.h;
         let mut b = self.buf;
         b[n] = 0x80;
-        let mut j = n + 1;
-        while j < 64
-            invariant
-                n < j <= 64,
-                forall|i: int| 0 <= i < n ==> #[trigger] b@[i] == self.buf@[i],
-                b@[n as int] == 0x80,
-                forall|i: int| n < i < j ==> b@[i] == 0,
-            decreases 64 - j,
-        {
-            b[j] = 0;
-            j = j + 1;
-        }
+        assert(forall|i: int| n < i < 64 ==> b@[i] == 0);
+        assert(forall|i: int| 0 <= i < n ==> #[trigger] b@[i] == self.buf@[i]);
         let bits = self.len.wrapping_mul(8);
         proof {
             vstd::arithmetic::div_mod::lemma_mul_mod_noop_left(d.len() as int, 8, 0x1_0000_0000_0000_0000int);
@@ -332,16 +330,7 @@ impl Engine {
             let ghost h0 = st@;
             cpu::compress_blocks(&mut st, &b);
             let ghost h1 = st@;
-            let mut j = 0;
-            while j < 56
-                invariant
-                    j <= 56,
-                    forall|i: int| 0 <= i < j ==> b@[i] == 0,
-                decreases 56 - j,
-            {
-                b[j] = 0;
-                j = j + 1;
-            }
+            b = [0u8; 64];
             put_be64(&mut b, bits);
             proof {
                 assert forall|i: int| 0 <= i < 64 implies #[trigger] b@[i] == rest[64 + i] by {
@@ -417,17 +406,7 @@ fn put_be64(b: &mut [u8; 64], x: u64)
         forall|i: int| 0 <= i < 56 ==> final(b)@[i] == old(b)@[i],
         forall|i: int| 0 <= i < 8 ==> #[trigger] final(b)@[56 + i] == spec::be64(x)[i],
 {
-    b[56] = ((x >> 56) & 0xff) as u8;
-    b[57] = ((x >> 48) & 0xff) as u8;
-    b[58] = ((x >> 40) & 0xff) as u8;
-    b[59] = ((x >> 32) & 0xff) as u8;
-    b[60] = ((x >> 24) & 0xff) as u8;
-    b[61] = ((x >> 16) & 0xff) as u8;
-    b[62] = ((x >> 8) & 0xff) as u8;
-    b[63] = (x & 0xff) as u8;
-    proof {
-        assert(x >> 0u64 == x) by (bit_vector);
-    }
+    put_u64_be(b, 56, x);
 }
 
 /// The first `4 * nw` bytes of `spec::digest_bytes(h)`.
@@ -448,16 +427,13 @@ fn put_digest(out: &mut [u8], h: &[u32; 8], nw: usize)
             forall|k: int| 0 <= k < 4 * i ==> out@[k] == #[trigger] spec::digest_bytes(h@)[k],
         decreases nw - i,
     {
-        let x = h[i];
-        out[4 * i] = ((x >> 24) & 0xff) as u8;
-        out[4 * i + 1] = ((x >> 16) & 0xff) as u8;
-        out[4 * i + 2] = ((x >> 8) & 0xff) as u8;
-        out[4 * i + 3] = (x & 0xff) as u8;
+        put_u32_be(out, 4 * i, h[i]);
         proof {
-            assert(x >> 0u32 == x) by (bit_vector);
             assert forall|k: int| 0 <= k < 4 * (i + 1) implies out@[k] == #[trigger] spec::digest_bytes(h@)[k] by {
                 if k >= 4 * i {
-                    assert(k / 4 == i as int);
+                    let q = k - 4 * i;
+                    assert(out@[4 * i + q] == ((h@[i as int] >> ((24 - 8 * q) as u32)) & 0xff) as u8);
+                    assert(k / 4 == i as int && k % 4 == q);
                 }
             }
         }
