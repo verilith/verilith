@@ -3,10 +3,10 @@
 //! without a reviver). Parsing is vurl's and vjson's; this module only
 //! converts types.
 use napi::bindgen_prelude::*;
-use napi::{Env, JsUnknown};
+use napi::{Env, JsValue, Unknown};
 use napi_derive::napi;
 use verilith_bind::verilith_json::{self, Type, Value};
-use verilith_bind::vurl;
+use verilith_bind::verilith_url;
 
 fn parse_with_base(input: &str, base: Option<&str>) -> Option<verilith_url::Url> {
     match base {
@@ -134,33 +134,33 @@ impl Url {
     }
 }
 
-fn to_js(env: &Env, v: Value<'_>) -> Result<JsUnknown> {
+fn to_js<'env>(env: &'env Env, v: Value<'_>) -> Result<Unknown<'env>> {
     Ok(match v.kind() {
-        Type::Null => env.get_null()?.into_unknown(),
-        Type::Bool => env.get_boolean(v.as_bool().unwrap_or(false))?.into_unknown(),
-        Type::Number => env.create_double(v.as_f64().unwrap_or(0.0))?.into_unknown(),
-        Type::String => env.create_string(&v.as_str().unwrap_or_default())?.into_unknown(),
+        Type::Null => Null.into_unknown(env)?,
+        Type::Bool => v.as_bool().unwrap_or(false).into_unknown(env)?,
+        Type::Number => env.create_double(v.as_f64().unwrap_or(0.0))?.to_unknown(),
+        Type::String => env.create_string(v.as_str().unwrap_or_default())?.to_unknown(),
         Type::Array => {
-            let mut a = env.create_array_with_length(v.len().unwrap_or(0))?;
+            let mut a = env.create_array(v.len().unwrap_or(0) as u32)?;
             for (i, e) in v.elements().into_iter().flatten().enumerate() {
-                a.set_element(i as u32, to_js(env, e)?)?;
+                a.set(i as u32, to_js(env, e)?)?;
             }
-            a.into_unknown()
+            a.to_unknown()
         }
         Type::Object => {
-            let mut o = env.create_object()?;
+            let mut o = Object::new(env)?;
             for (k, e) in v.members().into_iter().flatten() {
                 let name = k.as_str().unwrap_or_default();
                 let val = to_js(env, e)?;
                 if name == "__proto__" {
                     // Define it as an own property, as JSON.parse does;
                     // assigning would call the prototype setter.
-                    o.define_properties(&[napi::Property::new(&name)?.with_value(&val)])?;
+                    o.define_properties(&[napi::Property::new().with_utf8_name(&name)?.with_value(&val)])?;
                 } else {
                     o.set_property(env.create_string(&name)?, val)?;
                 }
             }
-            o.into_unknown()
+            o.to_unknown()
         }
     })
 }
@@ -168,13 +168,13 @@ fn to_js(env: &Env, v: Value<'_>) -> Result<JsUnknown> {
 /// Parses a JSON text (a string or a Buffer) with the verified parser.
 /// Throws a SyntaxError on invalid JSON.
 #[napi(js_name = "parseJSON")]
-pub fn parse_json(env: Env, text: Either<String, Buffer>) -> Result<JsUnknown> {
+pub fn parse_json(env: &Env, text: Either<String, Buffer>) -> Result<Unknown<'_>> {
     let bytes: &[u8] = match &text {
         Either::A(s) => s.as_bytes(),
         Either::B(b) => b,
     };
     match verilith_json::parse(bytes) {
-        Ok(doc) => to_js(&env, doc.root()),
+        Ok(doc) => to_js(env, doc.root()),
         Err(e) => {
             env.throw_syntax_error(&e.to_string(), None::<String>);
             Err(Error::new(Status::PendingException, e.to_string()))

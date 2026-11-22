@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Verifies crates with Verus and fails unless each reports 0 errors.
 #   scripts/verify.sh [CRATE...]     (default: every verified crate)
-# CRATE is a directory under crates/. Needs cargo-verus on PATH, built from
-# the commit in scripts/verus-version, and z3 (VERUS_Z3_PATH, or next to
+# CRATE is a directory under crates/. Needs cargo-verus on PATH, the release
+# in scripts/verus-version (scripts/install-verus.sh), and z3 (VERUS_Z3_PATH, or next to
 # the verus binary). VERUS_CMD=focus skips re-verifying a crate's
 # dependencies (they are still compiled).
 set -uo pipefail

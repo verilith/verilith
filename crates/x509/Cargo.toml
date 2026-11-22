@@ -28,11 +28,11 @@ vstd = { workspace = true }
 
 [dev-dependencies]
 x509-parser = "0.18"
-x509-cert = { version = "0.2", default-features = false }
-der = "0.7"
+x509-cert = { version = "0.3", default-features = false }
+der = "0.8"
 rustls-webpki = { version = "0.103", default-features = false }
 rustls-pki-types = "1"
-rcgen = "0.13"
+rcgen = "0.14"
 openssl = "0.10"
 
 [package.metadata.verus]

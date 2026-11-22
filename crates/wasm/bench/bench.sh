@@ -3,21 +3,21 @@
 # prints a Markdown table of the best of $RUNS wall-clock times (whole
 # process: decode, validate/compile, instantiate, run).
 #
-# Pinned engines: wasmi 0.40.0 and Wasmtime 33.0.0 (Cranelift) through
-# runner/, wasm3 v0.5.0, WAMR WAMR-2.2.0 (fast interpreter, no JIT/AOT).
+# Pinned engines: wasmi 2.0.2 and Wasmtime 51.0.0 (Cranelift) through
+# runner/, wasm3 v0.9.0, WAMR WAMR-2.4.6 (fast interpreter, no JIT/AOT).
 set -e
 cd "$(dirname "$0")"
 RUNS=${RUNS:-3}
 ENGINES=${ENGINES:-/tmp/vwasm-engines}
 mkdir -p "$ENGINES"
 if [ ! -x "$ENGINES/wasm3/build/wasm3" ]; then
-    git clone -q --depth 1 --branch v0.5.0 https://github.com/wasm3/wasm3.git "$ENGINES/wasm3"
+    git clone -q --depth 1 --branch v0.9.0 https://github.com/wasm3/wasm3.git "$ENGINES/wasm3"
     (cd "$ENGINES/wasm3" && mkdir -p build && cd build &&
         cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_WASI=simple .. >/dev/null && make -j8 >/dev/null)
 fi
 IWASM="$ENGINES/wasm-micro-runtime/product-mini/platforms/linux/build/iwasm"
 if [ ! -x "$IWASM" ]; then
-    git clone -q --depth 1 --branch WAMR-2.2.0 https://github.com/bytecodealliance/wasm-micro-runtime.git \
+    git clone -q --depth 1 --branch WAMR-2.4.6 https://github.com/bytecodealliance/wasm-micro-runtime.git \
         "$ENGINES/wasm-micro-runtime"
     (cd "$ENGINES/wasm-micro-runtime/product-mini/platforms/linux" && mkdir -p build && cd build &&
         cmake -DCMAKE_BUILD_TYPE=Release -DWAMR_BUILD_FAST_INTERP=1 -DWAMR_BUILD_JIT=0 -DWAMR_BUILD_AOT=0 \

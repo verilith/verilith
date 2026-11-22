@@ -8,9 +8,9 @@
 # listed in KNOWN below (file test.c, by line):
 #  - obsolete line folding is rejected (92-102, 199-209);
 #  - more than one space between request-line or status-line parts is
-#    rejected (157, 260);
+#    rejected (157, 266);
 #  - a bare LF line ending is rejected (234-235) and so are bare LFs in
-#    chunked trailers (chunked-consume-trailer 316-361 and 345);
+#    chunked trailers (chunked-consume-trailer 322-367 and 351);
 #  - on a partial result, the out-parameters are left untouched instead of
 #    holding what was parsed so far (107-119, 221-242).
 set -euo pipefail
@@ -18,7 +18,7 @@ cd "$(dirname "$0")/.."
 ROOT=$PWD
 T=${CARGO_TARGET_DIR:-$PWD/../../target}
 UP=$ROOT/target/upstream
-PICO_REV=465a7ff09fbd3432fe56c673451f5460154d1f07
+PICO_REV=dd573d8fa9264c646a400e96ce9f07dea6f156e4
 PICOTEST_REV=70b9797596d81896cba49e5918fd5b1edf57269b
 
 fetch() { # url dir rev
@@ -52,8 +52,8 @@ $CC -fsanitize=address,undefined -g -I include -o "$OUT/pico_test" \
 "$OUT/pico_test" > "$OUT/pico_test.log" 2>&1 || true
 
 KNOWN="92 93 95 96 97 98 99 100 101 102 107 111 113 117 119 157
-199 200 201 203 204 205 206 207 208 209 221 223 226 228 231 233 234 235 240 241 242 260
-316 317 318 323 345 353 355 356 361"
+199 200 201 203 204 205 206 207 208 209 221 223 226 228 231 233 234 235 240 241 242 266
+322 323 324 329 351 359 361 362 367"
 status=0
 fails=$(grep -E '^ *not ok [0-9]+ - .*test\.c [0-9]+$' "$OUT/pico_test.log" | sed -E 's/.*test\.c ([0-9]+)$/\1/' | sort -un || true)
 for line in $fails; do

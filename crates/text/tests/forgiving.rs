@@ -3,7 +3,7 @@
 use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig};
 use base64::engine::DecodePaddingMode;
 use base64::Engine;
-use rand::{Rng, SeedableRng};
+use rand::{Rng, RngExt, SeedableRng};
 use verilith_text::base64::forgiving::{decode_forgiving, max_len_exec, B64Error};
 
 fn engine(url: bool) -> GeneralPurpose {
@@ -34,26 +34,26 @@ fn reference(url: bool, s: &[u8]) -> Option<Vec<u8>> {
 }
 
 fn sample(r: &mut impl Rng, url: bool) -> Vec<u8> {
-    let bin: Vec<u8> = (0..r.gen_range(0..120)).map(|_| r.gen()).collect();
-    let pad = r.gen_bool(0.5);
+    let bin: Vec<u8> = (0..r.random_range(0..120)).map(|_| r.random()).collect();
+    let pad = r.random_bool(0.5);
     let alpha = if url { &base64::alphabet::URL_SAFE } else { &base64::alphabet::STANDARD };
     let e = GeneralPurpose::new(alpha, GeneralPurposeConfig::new().with_encode_padding(pad));
     let mut s = e.encode(&bin).into_bytes();
     const NOISE: &[u8] = b"AZaz09+/-_= \t\n\r\x0c=.\xff\x00";
-    for _ in 0..r.gen_range(0..4) {
-        match r.gen_range(0..5) {
+    for _ in 0..r.random_range(0..4) {
+        match r.random_range(0..5) {
             0 if !s.is_empty() => {
-                let i = r.gen_range(0..s.len());
-                s[i] = NOISE[r.gen_range(0..NOISE.len())];
+                let i = r.random_range(0..s.len());
+                s[i] = NOISE[r.random_range(0..NOISE.len())];
             }
             1 => {
-                let i = r.gen_range(0..=s.len());
-                s.insert(i, b" \t\n\r\x0c"[r.gen_range(0..5)]);
+                let i = r.random_range(0..=s.len());
+                s.insert(i, b" \t\n\r\x0c"[r.random_range(0..5)]);
             }
             2 if !s.is_empty() => {
-                s.truncate(r.gen_range(0..s.len()));
+                s.truncate(r.random_range(0..s.len()));
             }
-            3 => s.extend_from_slice(&b"==  "[..r.gen_range(0..4)]),
+            3 => s.extend_from_slice(&b"==  "[..r.random_range(0..4)]),
             _ => {}
         }
     }

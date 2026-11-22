@@ -1,5 +1,5 @@
 //! Punycode against RFC 3492's sample strings and the `idna` crate.
-use rand::{Rng, SeedableRng};
+use rand::{Rng, RngExt, SeedableRng};
 use verilith_text::idna::punycode::{decode_str, encode_str};
 
 const RFC_SAMPLES: &[(&str, &str)] = &[
@@ -20,15 +20,15 @@ fn rfc_samples() {
 }
 
 fn random_label(rng: &mut impl Rng) -> String {
-    let len = rng.gen_range(0..20);
+    let len = rng.random_range(0..20);
     (0..len)
-        .map(|_| match rng.gen_range(0..6) {
-            0 => rng.gen_range(b'a'..=b'z') as char,
-            1 => b"-0123456789AZ"[rng.gen_range(0..13)] as char,
-            2 => char::from_u32(rng.gen_range(0x80..0x800)).unwrap(),
-            3 => char::from_u32(rng.gen_range(0x3000..0xA000)).unwrap(),
-            4 => rng.gen::<char>(),
-            _ => char::from_u32(rng.gen_range(0xE0..0x180)).unwrap(),
+        .map(|_| match rng.random_range(0..6) {
+            0 => rng.random_range(b'a'..=b'z') as char,
+            1 => b"-0123456789AZ"[rng.random_range(0..13)] as char,
+            2 => char::from_u32(rng.random_range(0x80..0x800)).unwrap(),
+            3 => char::from_u32(rng.random_range(0x3000..0xA000)).unwrap(),
+            4 => rng.random::<char>(),
+            _ => char::from_u32(rng.random_range(0xE0..0x180)).unwrap(),
         })
         .collect()
 }
@@ -45,15 +45,15 @@ fn differential() {
             assert_eq!(decode_str(p).as_deref(), Some(u.as_str()), "round trip {u:?}");
         }
         // Arbitrary ASCII, to exercise decoding failures.
-        let a: String = (0..rng.gen_range(0..16))
-            .map(|_| b"abcxyz019-AZ.\x7f"[rng.gen_range(0..14)] as char)
+        let a: String = (0..rng.random_range(0..16))
+            .map(|_| b"abcxyz019-AZ.\x7f"[rng.random_range(0..14)] as char)
             .collect();
         assert_eq!(decode_str(&a), idna::punycode::decode_to_string(&a), "decode {a:?}");
         // And mutations of valid encodings.
         if let Some(mut p) = ours {
             if !p.is_empty() {
-                let k = rng.gen_range(0..p.len());
-                let c = b"a9z0-B"[rng.gen_range(0..6)];
+                let k = rng.random_range(0..p.len());
+                let c = b"a9z0-B"[rng.random_range(0..6)];
                 // SAFETY: replacing one ASCII byte keeps UTF-8.
                 unsafe { p.as_bytes_mut()[k] = c };
                 assert_eq!(decode_str(&p), idna::punycode::decode_to_string(&p), "decode {p:?}");

@@ -6,7 +6,7 @@ This directory makes verilith-x509 the certificate decoder behind mbedTLS's
 `mbedtls_x509_crt` struct are unchanged, so applications relink and nothing
 else.
 
-Tested against mbedTLS 3.6.4.
+Tested against mbedTLS 3.6.8.
 
 ## Build
 
@@ -40,10 +40,10 @@ names cut where mbedTLS's runner cuts them).
 | Public key decoding (`mbedtls_pk_parse_subpubkey`), signature algorithm table (`mbedtls_x509_get_sig_alg`), per-SAN-entry policy (`mbedtls_x509_parse_subject_alt_name`), extension and policy callbacks | mbedTLS, unchanged, called on spans verilith-x509 already validated. |
 | Error codes when a certificate is rejected | `src/mbedtls_err.rs`, unverified safe Rust that reproduces mbedTLS's error for the input. It runs only after the verified parser has said no, so it can change *which* error is returned but never *whether* a certificate is accepted. |
 
-## Test results (mbedTLS 3.6.4, `ctest` in `build-vx`)
+## Test results (mbedTLS 3.6.8, `ctest` in `build-vx`)
 
-Every suite passes except `x509parse`, at 854 of 872. `x509write` (80),
-`pkcs7` (814), `ssl` (886) and `debug` (25) all pass, and so does every
+Every suite passes except `x509parse`, at 870 of 888. `x509write` (80),
+`pkcs7` (821), `ssl` (999) and `debug` (36) all pass, and so does every
 error-code test in `x509parse`.
 
 The 18 remaining cases are certificates mbedTLS accepts and verilith-x509 rejects on
