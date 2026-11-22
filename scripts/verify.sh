@@ -8,7 +8,7 @@
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 # Dependencies first.
-all="core simd sync text zlib zstd brotli lz4 snappy json dns url http hpack x509 png webp jpeg font archive regex wasm"
+all="core simd sync text zlib zstd brotli lz4 snappy json dns url http hpack x509 png webp jpeg font archive regex wasm xml"
 [ $# -gt 0 ] && crates="$*" || crates=$all
 log=${VERIFY_LOG_DIR:-$root/target/verify}
 mkdir -p "$log"

@@ -23,6 +23,7 @@ members = [
     "crates/wasm",
     "crates/webp",
     "crates/x509",
+    "crates/xml",
     "crates/zlib",
     "crates/zstd",
     "crates/bind/node",

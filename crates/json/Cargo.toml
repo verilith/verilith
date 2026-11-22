@@ -43,5 +43,10 @@ required-features = ["serde"]
 [package.metadata.verus]
 verify = true
 
+# The proofs are checked with the cJSON layer compiled in, by
+# scripts/verify.sh and by Buck2 alike (see BUILDING.md).
+[package.metadata.verilith]
+verify-features = ["cjson"]
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(prof)'] }

@@ -68,6 +68,30 @@ COMPARISONS = [
     # ada's C API: vurl (ada-abi) in place of ada.
     dict(id="url-ada", suite="url", data="url", same_output=True, api="drop-in",
          ours=("vurl", ["url-vurl"]), rival=("ada 4.1.1", ["url-ada"])),
+    # Native APIs: verilith-xml's Rust API against expat's SAX API.
+    dict(id="xml-expat-read", suite="xml", data="xml", same_output=True, api="native",
+         task="parse a document, visit every element, attribute (normalized value) and run of character data",
+         note="expat calls back for each item as it parses; vxml parses the whole document into a tape, then "
+              "the walk reads it through the API, which normalizes attribute values that need it and supplies "
+              "DTD defaults. Both check the whole document.",
+         ours=("vxml (Rust API)", ["xml-vxml", "read"]), rival=("expat 2.7.3", ["xml-expat", "read"])),
+    dict(id="xml-expat-check", suite="xml", data="xml", same_output=True, api="native",
+         task="decide whether a document is well-formed (expat with no handlers; vxml's verified check into a reused tape)",
+         ours=("vxml (Rust API)", ["xml-vxml", "check"]), rival=("expat 2.7.3", ["xml-expat", "check"])),
+    # The same two jobs against libxml2's SAX2 API, with the same check values.
+    dict(id="xml-libxml2-read", suite="xml", data="xml", same_output=False, check="check value", api="native",
+         task="parse a document, visit every element, attribute (normalized value) and run of character data",
+         note="libxml2 runs its default SAX2 handlers for the DTD, which keep the declarations in a document "
+              "object, with entities substituted and defaults added (the deprecated SAX1 callbacks do not "
+              "receive defaults), and reuses one parser context. SAX2 also processes namespaces, which vxml does "
+              "not. The check values are the same on every file but attributes.xml, where libxml2's attribute "
+              "values are 691 bytes longer: it keeps a CR LF in an entity's literal value as two characters, so "
+              "a reference to it in an attribute value gives two spaces, where XML 1.0 (2.11, 3.3.3), expat and "
+              "vxml give one.",
+         ours=("vxml (Rust API)", ["xml-vxml", "read"]), rival=("libxml2 2.15.4", ["xml-libxml2", "read"])),
+    dict(id="xml-libxml2-check", suite="xml", data="xml", same_output=True, api="native",
+         task="decide whether a document is well-formed (libxml2 with its SAX2 handlers for the DTD and none for content; vxml's verified check into a reused tape)",
+         ours=("vxml (Rust API)", ["xml-vxml", "check"]), rival=("libxml2 2.15.4", ["xml-libxml2", "check"])),
     # cJSON's API: vjson (cjson feature) in place of cJSON.
     dict(id="json-cjson-parse", suite="json", data="json", same_output=True, api="drop-in", pair="json-cjson",
          task="parse a document, read every value (numbers as doubles, string and key lengths), free it",

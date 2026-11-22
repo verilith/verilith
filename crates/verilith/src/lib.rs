@@ -72,6 +72,9 @@ pub use verilith_webp as webp;
 /// `verilith-x509`: X.509 certificate parser.
 #[cfg(feature = "x509")]
 pub use verilith_x509 as x509;
+/// `verilith-xml`: XML 1.0 parser.
+#[cfg(feature = "xml")]
+pub use verilith_xml as xml;
 /// `verilith-zlib`: zlib, gzip and DEFLATE.
 #[cfg(feature = "zlib")]
 pub use verilith_zlib as zlib;
