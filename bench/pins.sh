@@ -13,7 +13,7 @@ picohttpparser  https://github.com/h2o/picohttpparser      dd573d8fa9264c646a400
 ada             https://github.com/ada-url/ada             v4.1.1
 simdjson        https://github.com/simdjson/simdjson       v5.2.0
 cjson           https://github.com/DaveGamble/cJSON        v1.7.19
-mbedtls         https://github.com/Mbed-TLS/mbedtls        v3.6.8
+mbedtls         https://github.com/Mbed-TLS/mbedtls        v4.3.0
 libpng          https://github.com/pnggroup/libpng         v1.6.59
 libwebp         https://github.com/webmproject/libwebp     v1.6.0
 brotli          https://github.com/google/brotli           v1.2.1
@@ -33,7 +33,7 @@ libxml2         https://github.com/GNOME/libxml2           v2.15.4
 # Notes on the choices:
 # - c-ares: the commit vdns's c-ares patch was made and tested against
 #   (cares/README.md in vdns); the latest release, v1.34.9, predates it.
-# - llhttp 9.4.4 and mbedTLS 3.6.8: the versions vhttp's and vx509's
+# - llhttp 9.4.4 and mbedTLS 4.3.0: the versions vhttp's and vx509's
 #   drop-ins were tested against.
 # - Verdict: the verified X.509 parser vx509 is compared with on native APIs
 #   (USENIX Security 2025), at main of 2025-11-18. Built from its Verus

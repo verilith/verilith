@@ -6,7 +6,7 @@
 # Runs anywhere; with CI set it also installs the system packages it needs.
 . "$(dirname "$0")/../../scripts/ci-lib.sh"
 
-MBEDTLS_TAG=v3.6.8
+MBEDTLS_TAG=v4.3.0
 
 test() {
   # no_std, no alloc, on a bare-metal target.
@@ -41,7 +41,7 @@ fuzz() {
     -DCMAKE_C_COMPILER_WORKS=1 -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF \
     -DCMAKE_C_FLAGS="-fsanitize=address,fuzzer-no-link -g" \
     -DMBEDTLS_VX509_DIR="$PWD" -DMBEDTLS_VX509_LIB="$T/$P/libverilith_x509.a"
-  cmake --build "$W/mbedtls-asan/build-asan" -j --target mbedx509 mbedcrypto
+  cmake --build "$W/mbedtls-asan/build-asan" -j --target mbedx509 tfpsacrypto
   export MBEDTLS_LIB_DIR=$W/mbedtls-asan/build-asan/library
   cd fuzz
   for t in parse mbedtls; do

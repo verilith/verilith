@@ -106,9 +106,9 @@ so under the table (`note` in `harness/suites.py`).
 | json-cjson-native | native | verilith-json (`Parser`) | cJSON 1.7.19 | the json-cjson-parse task | same |
 | json-cjson-print | drop-in | verilith-json (cJSON ABI) | cJSON 1.7.19 | `cJSON_PrintUnformatted` | same |
 | json-simdjson | native | verilith-json (`Parser`) | simdjson 5.2.0 (DOM) | parse, read every value | same |
-| x509-mbedtls | drop-in | mbedTLS + verilith-x509 patch | mbedTLS 3.6.8 | `mbedtls_x509_crt_parse_der` + free | verilith-x509's 3 certificates, Mozilla's roots |
-| x509-mbedtls-read | drop-in | mbedTLS + verilith-x509 patch | mbedTLS 3.6.8 | `mbedtls_x509_crt_parse_der_nocopy`, read serial, names, validity, key usage, CA flag, DNS names and EKUs, free | same |
-| x509-mbedtls-native | native | verilith-x509 (`verilith_x509::parse` and its accessors) | mbedTLS 3.6.8 | the x509-mbedtls-read task | same |
+| x509-mbedtls | drop-in | mbedTLS + verilith-x509 patch | mbedTLS 4.3.0 | `mbedtls_x509_crt_parse_der` + free | verilith-x509's 3 certificates, Mozilla's roots |
+| x509-mbedtls-read | drop-in | mbedTLS + verilith-x509 patch | mbedTLS 4.3.0 | `mbedtls_x509_crt_parse_der_nocopy`, read serial, names, validity, key usage, CA flag, DNS names and EKUs, free | same |
+| x509-mbedtls-native | native | verilith-x509 (`verilith_x509::parse` and its accessors) | mbedTLS 4.3.0 | the x509-mbedtls-read task | same |
 | x509-verdict | native | verilith-x509 (`verilith_x509::parse`) | Verdict ([secure-foundations/verdict](https://github.com/secure-foundations/verdict), 2025-11-18) | parse the whole certificate from memory, Rust to Rust, both verified in Verus | same |
 | png-libpng | native | verilith-png (Rust API) | libpng 1.6.59 | decode to RGBA8 | the 24 Kodak photos |
 | webp-lossless | drop-in | verilith-webp (libwebp ABI) | libwebp 1.6.0 | `WebPDecodeRGBAInto` | the Kodak photos, lossless WebP |

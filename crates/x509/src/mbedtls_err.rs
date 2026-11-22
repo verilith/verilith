@@ -1,7 +1,7 @@
 //! mbedTLS-compatible error codes for certificates vx509 rejects.
 //!
 //! The verdict is always vx509's. When it rejects, this walker retraces the
-//! certificate the way mbedTLS 3.6's `x509_crt_parse_der_core` does, so the
+//! certificate the way mbedTLS 4.3's `x509_crt_parse_der_core` does, so the
 //! drop-in returns the error code mbedTLS would have returned. It is
 //! unverified safe Rust that only computes a number: every index is
 //! checked, and its result never turns a rejection into an acceptance.
@@ -194,7 +194,7 @@ impl<'a> Cur<'a> {
 }
 
 fn add(high: i32, low: i32) -> i32 {
-    high + low
+    if low != 0 { low } else { high }
 }
 
 fn get_name(c: &mut Cur, end: usize) -> R<()> {
@@ -524,7 +524,7 @@ fn extensions(c: &mut Cur, end: usize) -> R<()> {
     Ok(())
 }
 
-/// The error mbedTLS 3.6 returns for `buf`, which vx509 rejected.
+/// The error mbedTLS 4.3 returns for `buf`, which vx509 rejected.
 pub fn diagnose(buf: &[u8]) -> Diag {
     let mut d = Diag { code: X509_INVALID_FORMAT, stage: Stage::Early, sig_oid: (0, 0), sig_params: (0, 0, 0), spki: (0, 0) };
     if let Err(code) = walk(buf, &mut d) {

@@ -10,6 +10,7 @@ use std::os::raw::{c_char, c_int};
 struct Crt([u8; 4096]);
 
 extern "C" {
+    fn psa_crypto_init() -> c_int;
     fn mbedtls_x509_crt_init(crt: *mut Crt);
     fn mbedtls_x509_crt_free(crt: *mut Crt);
     fn mbedtls_x509_crt_parse_der(crt: *mut Crt, buf: *const u8, len: usize) -> c_int;
@@ -21,6 +22,9 @@ fuzz_target!(|b: &[u8]| {
     // mbedTLS reads the first TLV and ignores what follows.
     let first = verilith_x509::der::read_tlv(b).map(|(_, r)| &b[..b.len() - r.len()]).unwrap_or(b);
     let verified = verilith_x509::parse(first).is_some();
+    // mbedTLS 4 decodes public keys through PSA: without this every parse
+    // fails and the target checks nothing.
+    assert_eq!(unsafe { psa_crypto_init() }, 0);
     for copy in [true, false] {
         // An exact-size heap copy, so ASan sees any read past the end.
         let input = b.to_vec().into_boxed_slice();
