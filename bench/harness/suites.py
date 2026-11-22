@@ -109,12 +109,12 @@ COMPARISONS = [
          ours=("vjson (Rust API)", ["json-vjson"]), rival=("simdjson 5.2.0", ["json-simdjson"])),
     # mbedTLS's certificate API: mbedTLS with vx509's patch in place of stock.
     dict(id="x509-mbedtls", suite="x509", data="x509", same_output=True, api="drop-in",
-         ours=("mbedTLS + vx509", ["x509-vx509"]), rival=("mbedTLS 3.6.8", ["x509-mbedtls"])),
+         ours=("mbedTLS + vx509", ["x509-vx509"]), rival=("mbedTLS 4.3.0", ["x509-mbedtls"])),
     # Parse without copying and read the fields a TLS client reads, the task
     # of the native comparison below.
     dict(id="x509-mbedtls-read", suite="x509", data="x509", same_output=True, api="drop-in", pair="x509-mbedtls",
          task="parse a certificate in place; read serial, issuer, subject, validity, key usage, CA flag, DNS names, EKUs; free it",
-         ours=("mbedTLS + vx509", ["x509-vx509", "read"]), rival=("mbedTLS 3.6.8", ["x509-mbedtls", "read"])),
+         ours=("mbedTLS + vx509", ["x509-vx509", "read"]), rival=("mbedTLS 4.3.0", ["x509-mbedtls", "read"])),
     dict(id="x509-mbedtls-native", suite="x509", data="x509", same_output=True, api="native", pair="x509-mbedtls",
          task="parse a certificate in place; read serial, issuer, subject, validity, key usage, CA flag, DNS names, EKUs; free it",
          note="The two sides do not do the same amount of work, and the difference favours vx509: "
@@ -122,7 +122,7 @@ COMPARISONS = [
               "(for RSA, two big-number reads and checks) and allocates the name and extension lists, none "
               "of which its API lets a caller skip. vx509 checks the SubjectPublicKeyInfo structure and "
               "returns the key bytes without decoding them. Read this column as an upper bound.",
-         ours=("vx509 (Rust API)", ["x509n-vx509", "read"]), rival=("mbedTLS 3.6.8", ["x509-mbedtls", "read"])),
+         ours=("vx509 (Rust API)", ["x509n-vx509", "read"]), rival=("mbedTLS 4.3.0", ["x509-mbedtls", "read"])),
     # Native APIs, same work: vx509::parse against Verdict's parse_x509_der,
     # both verified in Verus. Each parses and checks the whole certificate.
     dict(id="x509-verdict", suite="x509n", data="x509", same_output=True, api="native",
