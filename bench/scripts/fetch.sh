@@ -40,6 +40,19 @@ for d in lz4 snappy; do
   for f in $SILESIA_FILES dickens-4k dickens-64k; do cp "$DATA/zlib/$f" "$DATA/$d/$f"; done
 done
 
+# XML: six of the XML files in Silesia's xml (a tar of 20): plays, tagged
+# corpora, statistics, a W3C page. Then the seven files of roxmltree's
+# benchmarks: SVG drawings, a property list, a large data file, and files
+# dense with attributes, with entity and character references, and with
+# CDATA.
+mkdir -p "$DATA/xml"
+if [ ! -f "$DATA/xml/play1.xml" ]; then
+  tar -xf "$DATA/zlib/xml" -C "$DATA/xml" play1.xml stats1.xml tal1.xml tpc.xml w3c5.xml elts.xml
+fi
+for f in attributes.xml cdata.xml gigantic.svg huge.xml large.plist medium.svg text.xml; do
+  cp "$D/roxmltree/benches/$f" "$DATA/xml/"
+done
+
 # JSON: simdjson's standard examples (simdjson-data).
 mkdir -p "$DATA/json"
 for f in twitter citm_catalog canada github_events gsoc-2018 mesh; do

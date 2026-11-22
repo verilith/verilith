@@ -1,0 +1,8 @@
+load("@root//verus:defs.bzl", "verus_toolchain")
+
+verus_toolchain(
+    name = "verus",
+    driver = "root//verus:verus.py",
+    pin = "root//scripts:verus-version",
+    visibility = ["PUBLIC"],
+)

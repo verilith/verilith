@@ -1,0 +1,31 @@
+# Buck2 builds the verification graph: which crate's proofs depend on which
+# sources. See BUILDING.md. Cargo still builds and tests the crates.
+[cells]
+  root = .
+  prelude = prelude
+  toolchains = toolchains
+  none = none
+
+[cell_aliases]
+  config = prelude
+  ovr_config = prelude
+  fbcode = none
+  fbsource = none
+  fbcode_macros = none
+  buck = none
+
+# The prelude that ships inside the buck2 binary, so that the buck2 version
+# in scripts/buck2-version pins both.
+[external_cells]
+  prelude = bundled
+
+[parser]
+  target_platform_detector_spec = target:root//...->prelude//platforms:default \
+    target:prelude//...->prelude//platforms:default \
+    target:toolchains//...->prelude//platforms:default
+
+[build]
+  execution_platforms = prelude//platforms:default
+
+[project]
+  ignore = .git, target, bench, crates/*/bench, crates/*/fuzz, crates/*/compat, crates/*/target

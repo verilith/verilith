@@ -33,7 +33,12 @@ pinned versions and build or read them locally. None of it is in this
 repository. `bench/pins.sh` has the full list with versions: the original
 libraries we compare against (zlib, c-ares, llhttp, picohttpparser, ada,
 simdjson, cJSON, mbedTLS, libpng, libwebp, brotli, libjpeg-turbo, lz4,
-snappy, libarchive, Verdict, OTS, woff2, RE2, Abseil, cre2), Node.js, and
-the data sets (the Silesia corpus, ada's URL data set, the Kodak image
-suite, certifi's root certificates, simdjson's example files and Source
-Serif).
+snappy, libarchive, Verdict, OTS, woff2, RE2, Abseil, cre2, expat,
+libxml2), Node.js, and the data sets (the Silesia corpus, ada's URL data
+set, the Kodak image suite, certifi's root certificates, simdjson's
+example files, Source Serif and roxmltree's benchmark files). The XML
+tests also download the W3C XML Conformance Test Suite
+(`crates/xml/ci.sh`).
+
+`third-party/` is not third-party code: it holds a generated Buck2 file
+that names the crates.io packages the proofs build against.

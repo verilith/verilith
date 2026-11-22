@@ -27,6 +27,8 @@ woff2           https://github.com/google/woff2            7b67e12355fe7da148db5
 re2             https://github.com/google/re2              2025-11-05
 abseil-cpp      https://github.com/abseil/abseil-cpp       20250814.1
 cre2            https://github.com/marcomaggi/cre2         f9ad1ced3f5358557b32d623babf317d6e4aa31d
+expat           https://github.com/libexpat/libexpat       2120251ef8e5fd5f398063b6508be27796689bd9
+libxml2         https://github.com/GNOME/libxml2           v2.15.4
 "
 # Notes on the choices:
 # - c-ares: the commit vdns's c-ares patch was made and tested against
@@ -41,6 +43,10 @@ cre2            https://github.com/marcomaggi/cre2         f9ad1ced3f5358557b32d
 # - RE2 is reached through cre2, its C wrapper (one file, built here from
 #   its master of 2024), since vregex's drop-in API is cre2's. Abseil is
 #   what RE2 needs.
+# - expat: R_2_7_3, the release vxml's differential fuzzing runs against
+#   (crates/xml/scripts/fetch-expat.sh pins the same commit).
+# - libxml2: the latest release, from GNOME's GitHub mirror of
+#   gitlab.gnome.org/GNOME/libxml2.
 
 # Input data: "name url commit". Each file used is also pinned by SHA-256 in
 # data/SHA256SUMS, checked by fetch.sh.
@@ -51,6 +57,7 @@ kodak       https://github.com/MohamedBakrAli/Kodak-Lossless-True-Color-Image-Su
 certifi     https://github.com/certifi/python-certifi                       2026.10.23
 simdjson-data https://github.com/simdjson/simdjson-data                    4197c425e857f0ec38e89822fdd0bd9ea21f4daf
 source-serif https://github.com/adobe-fonts/source-serif                    80d3f8894c09c937bebfa9011247d2e1c79fd6f4
+roxmltree   https://github.com/RazrFalcon/roxmltree                         6c9f2f6082e6164baafc34fcffb0d212478c5a09
 "
 # Silesia files used (5 of 12; the others, mozilla above all, add an hour of
 # level-9 compression without changing the picture).

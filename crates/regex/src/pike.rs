@@ -948,9 +948,8 @@ fn dfa_skip(prog: &Prog, s: &[u8], p: usize, sc: &mut Scratch, nst: &mut NeedSt)
 
 /// The leftmost match starting at or after `from`, by priority: where it
 /// ends, with its capture slots in `out`.
-#[verifier::rlimit(60)]
-#[verifier::spinoff_prover]
 #[verifier::rlimit(300)]
+#[verifier::spinoff_prover]
 pub fn run(prog: &Prog, s: &[u8], from: usize, sc: &mut Scratch, out: &mut Vec<usize>) -> (r: (
     Option<usize>,
     Ghost<int>,

@@ -101,6 +101,7 @@ not proofs.
 | [`verilith-wasm`](crates/wasm) | A formally verified (Verus) WebAssembly validator and sandboxed interpreter | [proven](crates/wasm#what-is-proven), [trusted](crates/wasm#trusted-base) |
 | [`verilith-webp`](crates/webp) | A formally verified (Verus) WebP lossless (VP8L) decoder | [proven](crates/webp#what-is-proven), [trusted](crates/webp#trusted-base) |
 | [`verilith-x509`](crates/x509) | A formally verified (Verus) DER and X.509 certificate parser | [proven](crates/x509#what-is-proven) |
+| [`verilith-xml`](crates/xml) | A fast XML 1.0 parser formally verified with Verus: exactly the well-formedness rules, no panics, no recursion | [proven](crates/xml#what-is-proven), [trusted](crates/xml#what-is-not-proven) |
 | [`verilith-zlib`](crates/zlib) | A formally verified (Verus) DEFLATE, zlib and gzip decompressor | [proven](crates/zlib#what-is-proven), [trusted](crates/zlib#trusted-base) |
 | [`verilith-zstd`](crates/zstd) | A formally verified (Verus) Zstandard (RFC 8878) decompressor with libzstd's C API | [proven](crates/zstd#what-is-proven), [trusted](crates/zstd#trusted-base) |
 
@@ -205,7 +206,9 @@ it yourself.
 crates/<name>/     one library: src/, tests/, its own README, scripts/, ci.sh
 crates/verilith/   the umbrella crate
 bench/             the benchmark harness: each library against the one it replaces
-scripts/           verify.sh, profile, affected.py (what CI runs)
+scripts/           verify.sh, prove.sh, profile, and what CI runs
+verus/             the Buck2 rules that run Verus (see BUILDING.md)
+third-party/       what the proofs need from crates.io, for Buck2 (generated)
 IMPORT.md          the repositories and commits this one was assembled from
 THIRD-PARTY.md     what comes from other projects, and under which licence
 SECURITY.md        how to report a vulnerability
@@ -237,7 +240,7 @@ the one `scripts/profile <name>` prints:
 |---|---|---|
 | `release` | 1 codegen unit, thin LTO | every crate not listed below |
 | `release-fat` | 1 codegen unit, fat LTO | text, url, x509 |
-| `release-abort` | 1 codegen unit, fat LTO, `panic = "abort"` | json, http, hpack, regex, bind |
+| `release-abort` | 1 codegen unit, fat LTO, `panic = "abort"` | json, http, hpack, regex, bind, xml |
 
 So the drop-in JSON library is built with
 `cargo build --profile release-abort --features cjson` and lands in
@@ -247,22 +250,42 @@ So the drop-in JSON library is built with
 
 Every crate is verified with one Verus version: the commit in
 `scripts/verus-version`, whose `vstd` release is pinned in the workspace
-`Cargo.toml`. Build Verus from that commit, put `cargo-verus` on `PATH`,
-then:
+`Cargo.toml`. Build Verus from that commit and put its directory on `PATH`.
+There are two ways to run it, and they check the same proofs:
 
 ```sh
-scripts/verify.sh            # every crate, dependencies first
+scripts/verify.sh            # with cargo verus: every crate, dependencies first
 scripts/verify.sh json png   # some
+
+scripts/prove.sh             # with Buck2: every crate
+scripts/prove.sh json png    # some
 ```
 
-It fails unless each crate reports 0 errors.
+Both fail unless each crate reports 0 errors. `cargo verus` is the way the
+Verus project supports. Buck2 knows exactly which files each proof is built
+from, so it skips what has not changed and can check a large crate in
+parts; CI uses it. [BUILDING.md](BUILDING.md) explains the Buck2 setup and
+what keeps it from passing a proof it did not check.
 
 ## CI
 
-One workflow verifies and tests only the crates a change touches: a crate
-whose files changed, plus every crate that depends on it
-(`scripts/affected.py`). A change to the workspace files runs everything.
-What runs for a crate is that crate's `scripts/verify.sh` and `ci.sh`.
+One workflow, `.github/workflows/ci.yml`.
+
+**Proofs** run through Buck2, one job per crate, or per part for the crates
+verified in parts (brotli). A proof that has already passed with
+exactly the same inputs is not checked again (`scripts/proof-plan.py`), so
+a change to one crate checks that crate and the crates that depend on it,
+and a second push to a pull request checks only what the push changed.
+Pushes to main also verify on Apple Silicon, with `cargo verus`.
+
+**Tests** run for the crates a change touches: a crate whose files changed,
+plus every crate that depends on it (`scripts/affected.py`). A change to
+the workspace files runs everything. What runs for a crate is its `ci.sh`.
+
+**Once a week**, and on request (run the workflow with "fresh"), every proof
+is checked again from nothing and each crate's count of verified proofs
+under Buck2 is compared with the count from `cargo verus`
+(`scripts/crosscheck.sh`).
 
 ## Security
 
