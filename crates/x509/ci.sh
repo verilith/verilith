@@ -6,7 +6,7 @@
 # Runs anywhere; with CI set it also installs the system packages it needs.
 . "$(dirname "$0")/../../scripts/ci-lib.sh"
 
-MBEDTLS_TAG=v3.6.4
+MBEDTLS_TAG=v3.6.8
 
 test() {
   # no_std, no alloc, on a bare-metal target.

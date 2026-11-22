@@ -7,8 +7,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p ext
-[ -d ext/picohttpparser ] || { git clone -q https://github.com/h2o/picohttpparser ext/picohttpparser && git -C ext/picohttpparser checkout -q 465a7ff09fbd3432fe56c673451f5460154d1f07; }
-[ -d ext/llhttp ] || git clone -q --depth 1 --branch release/v9.4.3 https://github.com/nodejs/llhttp ext/llhttp
+[ -d ext/picohttpparser ] || { git clone -q https://github.com/h2o/picohttpparser ext/picohttpparser && git -C ext/picohttpparser checkout -q dd573d8fa9264c646a400e96ce9f07dea6f156e4; }
+[ -d ext/llhttp ] || git clone -q --depth 1 --branch release/v9.4.4 https://github.com/nodejs/llhttp ext/llhttp
 RUSTFLAGS="-C target-cpu=native" cargo build --release -q
 PARSERS=("vhttp (head + framing)" "vhttp (head only)" "vhttp::httparse" "httparse" "picohttpparser" "llhttp")
 for _ in 1 2 3 4 5; do
