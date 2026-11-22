@@ -166,9 +166,9 @@ pub fn read_header(src: &[u8], i: usize) -> (r: Option<Hdr>)
 }
 
 /// The content only grows from block to block.
-pub proof fn lemma_blocks_len(s: Seq<u8>, i: int, h: Header, out: Seq<u8>)
+pub proof fn lemma_blocks_len(s: Seq<u8>, i: int, h: Header, d: Seq<u8>, out: Seq<u8>)
     ensures
-        blocks(s, i, h, out) matches Some((o, j)) ==> o.len() >= out.len() && i < j <= s.len(),
+        blocks(s, i, h, d, out) matches Some((o, j)) ==> o.len() >= out.len() && i < j <= s.len(),
     decreases s.len() - i,
 {
     if 0 <= i && i + 4 <= s.len() {
@@ -183,21 +183,131 @@ pub proof fn lemma_blocks_len(s: Seq<u8>, i: int, h: Header, out: Seq<u8>)
         });
         if size != 0 && size <= h.bmax && e <= s.len() {
             let data = s.subrange(j, j + size);
-            let r = block_data(data, raw, h.indep, out);
-            lemma_seqs_len(data, 0, out, None);
+            let r = block_data(data, raw, h.indep, d, out);
+            lemma_block_data_len(data, raw, h.indep, d, out);
             match r {
                 None => {},
                 Some(out2) => {
-                    lemma_blocks_len(s, e, h, out2);
+                    lemma_blocks_len(s, e, h, d, out2);
                 },
             }
         }
     }
 }
 
+/// A block's data only adds to the content.
+pub proof fn lemma_block_data_len(data: Seq<u8>, raw: bool, indep: bool, d: Seq<u8>, out: Seq<u8>)
+    ensures
+        block_data(data, raw, indep, d, out) matches Some(o) ==> o.len() >= out.len(),
+{
+    lemma_seqs_len(data, 0, d, None);
+    lemma_seqs_len(data, 0, d + out, None);
+}
+
+/// With no dictionary, a block is decoded after the earlier content
+/// (linked) or on its own (independent).
+pub proof fn lemma_block_data_nodict(data: Seq<u8>, raw: bool, indep: bool, out: Seq<u8>)
+    ensures
+        block_data(data, raw, indep, Seq::empty(), out) == if raw {
+            Some(out + data)
+        } else if indep {
+            match block(data, Seq::empty()) {
+                Some(b) => Some(out + b),
+                None => None,
+            }
+        } else {
+            block(data, out)
+        },
+{
+    assert(Seq::<u8>::empty() + out =~= out);
+    if let Some(b) = block(data, Seq::empty()) {
+        assert(b.subrange(0, b.len() as int) =~= b);
+    }
+    if let Some(b) = block(data, out) {
+        assert(b.subrange(0, b.len() as int) =~= b);
+    }
+}
+
+/// An independent block decoded after the dictionary `dict`, which is
+/// `scratch[..dl]`: it is decoded there, then copied to `out` at `op`.
+fn decode_indep(
+    data: &[u8],
+    bmax: usize,
+    out: &mut Vec<u8>,
+    base: usize,
+    op: usize,
+    scratch: &mut Vec<u8>,
+    dl: usize,
+    Ghost(dict): Ghost<Seq<u8>>,
+) -> (r: Result<usize, ()>)
+    requires
+        base <= op <= old(out)@.len(),
+        op <= MAX_OUT,
+        0 < dl <= 0x1_0000,
+        bmax <= 0x40_0000,
+        dl <= old(scratch)@.len(),
+        dict.len() == dl,
+        old(scratch)@.subrange(0, dl as int) == dict,
+    ensures
+        final(out)@.len() >= old(out)@.len(),
+        final(out)@.subrange(0, op as int) == old(out)@.subrange(0, op as int),
+        dl <= final(scratch)@.len(),
+        final(scratch)@.subrange(0, dl as int) == dict,
+        match r {
+            Ok(op2) => op <= op2 <= final(out)@.len() && op2 - op <= bmax && block_data(
+                data@,
+                false,
+                true,
+                dict,
+                old(out)@.subrange(base as int, op as int),
+            ) == Some(final(out)@.subrange(base as int, op2 as int)),
+            Err(_) => match block_data(data@, false, true, dict, old(out)@.subrange(base as int, op as int)) {
+                Some(o) => o.len() - (op - base) > bmax,
+                None => true,
+            },
+        },
+{
+    let ghost before = out@;
+    let ghost cur = out@.subrange(base as int, op as int);
+    let ghost s0 = scratch@;
+    if scratch.len() < dl + bmax {
+        scratch.resize(dl + bmax, 0);
+    }
+    proof {
+        assert(scratch@.subrange(0, dl as int) =~= s0.subrange(0, dl as int));
+        lemma_seqs_len(data@, 0, dict, None);
+    }
+    let r = decode_block(data, scratch.as_mut_slice(), 0, dl);
+    match r {
+        None => Err(()),
+        Some(e) => {
+            let m = e - dl;
+            if m > bmax {
+                return Err(());
+            }
+            if out.len() < op + m {
+                out.resize(op + m, 0);
+            }
+            let ghost mid = out@;
+            copy_in(out.as_mut_slice(), op, scratch.as_slice(), dl, m);
+            proof {
+                let b = scratch@.subrange(0, e as int);
+                assert(b.subrange(dl as int, b.len() as int) =~= scratch@.subrange(dl as int, e as int));
+                assert(mid.subrange(0, op as int) =~= before.subrange(0, op as int));
+                assert(out@.subrange(base as int, op + m) =~= cur + scratch@.subrange(dl as int, e as int));
+                assert(out@.subrange(0, op as int) =~= before.subrange(0, op as int));
+            }
+            Ok(op + m)
+        },
+    }
+}
+
 /// One block's data, `src[j..j + size]`, decoded or copied to `out` at
-/// `op` (`spec::block_data`); the frame's content starts at `base`. `out`
-/// is lengthened if it has to be. Gives the content's new end.
+/// `op` (`spec::block_data`). The frame's content starts at `base`, and
+/// the dictionary is `out[hb..base]` (empty when `hb == base`); `scratch`
+/// starts with a copy of it, for independent blocks, which need it right
+/// before their own output. `out` is lengthened if it has to be. Gives the
+/// content's new end.
 fn decode_one(
     src: &[u8],
     j: usize,
@@ -206,28 +316,37 @@ fn decode_one(
     indep: bool,
     bmax: usize,
     out: &mut Vec<u8>,
+    hb: usize,
     base: usize,
     op: usize,
+    scratch: &mut Vec<u8>,
 ) -> (r: Result<usize, ()>)
     requires
         j + size <= src@.len(),
-        base <= op <= old(out)@.len(),
+        hb <= base <= op <= old(out)@.len(),
         op <= MAX_OUT,
+        base - hb <= 0x1_0000,
         0 < size <= bmax <= 0x40_0000,
+        base - hb <= old(scratch)@.len(),
+        old(scratch)@.subrange(0, base - hb) == old(out)@.subrange(hb as int, base as int),
     ensures
         final(out)@.len() >= old(out)@.len(),
         final(out)@.subrange(0, base as int) == old(out)@.subrange(0, base as int),
+        base - hb <= final(scratch)@.len(),
+        final(scratch)@.subrange(0, base - hb) == old(scratch)@.subrange(0, base - hb),
         match r {
             Ok(op2) => op <= op2 <= final(out)@.len() && op2 - op <= bmax && block_data(
                 src@.subrange(j as int, j + size),
                 raw,
                 indep,
+                old(out)@.subrange(hb as int, base as int),
                 old(out)@.subrange(base as int, op as int),
             ) == Some(final(out)@.subrange(base as int, op2 as int)),
             Err(_) => match block_data(
                 src@.subrange(j as int, j + size),
                 raw,
                 indep,
+                old(out)@.subrange(hb as int, base as int),
                 old(out)@.subrange(base as int, op as int),
             ) {
                 Some(o) => o.len() - (op - base) > bmax,
@@ -237,7 +356,9 @@ fn decode_one(
 {
     let ghost before = out@;
     let ghost cur = out@.subrange(base as int, op as int);
+    let ghost dict = out@.subrange(hb as int, base as int);
     let n = src.len();
+    let dl = base - hb;
     let data = slice_subrange(src, j, j + size);
     if raw {
         if out.len() < op + size {
@@ -251,6 +372,14 @@ fn decode_one(
             assert(out@.subrange(0, base as int) =~= before.subrange(0, base as int));
         }
         Ok(op + size)
+    } else if indep && dl > 0 {
+        let ghost b4 = out@;
+        let r = decode_indep(data, bmax, out, base, op, scratch, dl, Ghost(dict));
+        proof {
+            assert(out@.subrange(0, base as int) =~= out@.subrange(0, op as int).subrange(0, base as int));
+            assert(b4.subrange(0, base as int) =~= b4.subrange(0, op as int).subrange(0, base as int));
+        }
+        r
     } else {
         if out.len() < op + bmax {
             out.resize(op + bmax, 0);
@@ -259,14 +388,18 @@ fn decode_one(
         let lo = if indep {
             op
         } else {
-            base
+            hb
         };
         proof {
             assert(mid.subrange(0, op as int) =~= before.subrange(0, op as int));
             assert(mid.subrange(lo as int, op as int) =~= before.subrange(lo as int, op as int));
             if indep {
                 assert(mid.subrange(lo as int, op as int) =~= Seq::<u8>::empty());
+                assert(dict =~= Seq::<u8>::empty());
+            } else {
+                assert(mid.subrange(lo as int, op as int) =~= dict + cur);
             }
+            lemma_seqs_len(data@, 0, mid.subrange(lo as int, op as int), None);
         }
         match decode_block(data, out.as_mut_slice(), lo, op) {
             None => Err(()),
@@ -275,12 +408,15 @@ fn decode_one(
                     assert(out@.subrange(0, base as int) =~= out@.subrange(0, op as int).subrange(0, base as int));
                     assert(mid.subrange(0, base as int) =~= mid.subrange(0, op as int).subrange(0, base as int));
                     assert(mid.subrange(0, base as int) =~= before.subrange(0, base as int));
+                    let b = out@.subrange(lo as int, op2 as int);
                     if indep {
-                        let b = out@.subrange(op as int, op2 as int);
                         assert forall|x: int| base <= x < op implies out@[x] == mid[x] by {
                             assert(out@.subrange(0, op as int)[x] == mid.subrange(0, op as int)[x]);
                         }
+                        assert(b.subrange(0, b.len() as int) =~= b);
                         assert(out@.subrange(base as int, op2 as int) =~= cur + b);
+                    } else {
+                        assert(b.subrange(dl as int, b.len() as int) =~= out@.subrange(base as int, op2 as int));
                     }
                 }
                 if op2 - op > bmax {
@@ -294,32 +430,62 @@ fn decode_one(
 }
 
 /// Decodes the blocks of a frame from `i`, appending the content to
-/// `out`, up to the end mark (`spec::blocks`). Gives the index after the
-/// end mark. `out` may be longer than `limit` by one block before
+/// `out`, up to the end mark (`spec::blocks`), with the dictionary
+/// `out[hb..]` (`scratch` starts with a copy of it). Gives the index after
+/// the end mark. `out` may be longer than `limit` by one block before
 /// `TooLarge` is returned; on an error it is left with its old contents
 /// and some of the frame's.
-fn decode_blocks(src: &[u8], i0: usize, h: &Hdr, out: &mut Vec<u8>, limit: usize) -> (r: Result<usize, Error>)
+fn decode_blocks(
+    src: &[u8],
+    i0: usize,
+    h: &Hdr,
+    out: &mut Vec<u8>,
+    hb: usize,
+    scratch: &mut Vec<u8>,
+    limit: usize,
+) -> (r: Result<usize, Error>)
     requires
         i0 <= src@.len(),
         0x1_0000 <= h.bmax <= 0x40_0000,
         limit <= MAX_OUT,
         old(out)@.len() <= limit,
+        hb <= old(out)@.len(),
+        old(out)@.len() - hb <= 0x1_0000,
+        old(out)@.len() - hb <= old(scratch)@.len(),
+        old(scratch)@.subrange(0, old(out)@.len() - hb) == old(out)@.subrange(hb as int, old(out)@.len() as int),
     ensures
         final(out)@.len() >= old(out)@.len(),
         final(out)@.subrange(0, old(out)@.len() as int) == old(out)@,
         match r {
-            Ok(j) => blocks(src@, i0 as int, h@, Seq::empty()) == Some(
-                (final(out)@.subrange(old(out)@.len() as int, final(out)@.len() as int), j as int),
-            ) && i0 < j <= src@.len() && final(out)@.len() <= limit,
-            Err(Error::Corrupt) => blocks(src@, i0 as int, h@, Seq::empty()).is_none(),
-            Err(Error::TooLarge) => blocks(src@, i0 as int, h@, Seq::empty()) matches Some((c, _j)) ==> old(out)@.len()
-                + c.len() > limit,
+            Ok(j) => blocks(
+                src@,
+                i0 as int,
+                h@,
+                old(out)@.subrange(hb as int, old(out)@.len() as int),
+                Seq::empty(),
+            ) == Some((final(out)@.subrange(old(out)@.len() as int, final(out)@.len() as int), j as int)) && i0 < j
+                <= src@.len() && final(out)@.len() <= limit,
+            Err(Error::Corrupt) => blocks(
+                src@,
+                i0 as int,
+                h@,
+                old(out)@.subrange(hb as int, old(out)@.len() as int),
+                Seq::empty(),
+            ).is_none(),
+            Err(Error::TooLarge) => blocks(
+                src@,
+                i0 as int,
+                h@,
+                old(out)@.subrange(hb as int, old(out)@.len() as int),
+                Seq::empty(),
+            ) matches Some((c, _j)) ==> old(out)@.len() + c.len() > limit,
         },
 {
     let n = src.len();
     let base = out.len();
     let bmax = h.bmax;
-    let ghost goal = blocks(src@, i0 as int, h@, Seq::empty());
+    let ghost dict = out@.subrange(hb as int, base as int);
+    let ghost goal = blocks(src@, i0 as int, h@, dict, Seq::empty());
     let mut i = i0;
     // The content so far is `out[base..op]`; `out` is kept longer, so that
     // a block always has room to decode into.
@@ -333,13 +499,17 @@ fn decode_blocks(src: &[u8], i0: usize, h: &Hdr, out: &mut Vec<u8>, limit: usize
             n == src@.len(),
             i0 <= i <= n,
             base == old(out)@.len(),
-            base <= op <= out@.len(),
+            hb <= base <= op <= out@.len(),
+            base - hb <= 0x1_0000,
+            base - hb <= scratch@.len(),
+            scratch@.subrange(0, base - hb) == dict,
+            dict == old(out)@.subrange(hb as int, base as int),
             op <= limit,
             limit <= MAX_OUT,
             bmax == h.bmax,
             0x1_0000 <= bmax <= 0x40_0000,
-            goal == blocks(src@, i0 as int, h@, Seq::empty()),
-            blocks(src@, i as int, h@, out@.subrange(base as int, op as int)) == goal,
+            goal == blocks(src@, i0 as int, h@, dict, Seq::empty()),
+            blocks(src@, i as int, h@, dict, out@.subrange(base as int, op as int)) == goal,
             out@.subrange(0, base as int) == old(out)@,
         decreases n - i,
     {
@@ -360,7 +530,7 @@ fn decode_blocks(src: &[u8], i0: usize, h: &Hdr, out: &mut Vec<u8>, limit: usize
             proof {
                 assert(out@.subrange(base as int, op as int) =~= cur);
                 assert(out@.subrange(0, base as int) =~= before.subrange(0, base as int));
-                lemma_blocks_len(src@, i0 as int, h@, Seq::empty());
+                lemma_blocks_len(src@, i0 as int, h@, dict, Seq::empty());
             }
             return Ok(j);
         }
@@ -379,7 +549,17 @@ fn decode_blocks(src: &[u8], i0: usize, h: &Hdr, out: &mut Vec<u8>, limit: usize
             }
         }
         let e = j + size + extra;
-        let op2 = match decode_one(src, j, size, raw, h.indep, bmax, out, base, op) {
+        proof {
+            assert(out@.subrange(hb as int, base as int) =~= out@.subrange(0, base as int).subrange(
+                hb as int,
+                base as int,
+            ));
+            assert(old(out)@.subrange(hb as int, base as int) =~= old(out)@.subrange(0, base as int).subrange(
+                hb as int,
+                base as int,
+            ));
+        }
+        let op2 = match decode_one(src, j, size, raw, h.indep, bmax, out, hb, base, op, scratch) {
             Err(_) => {
                 return Err(Error::Corrupt);
             },
@@ -387,7 +567,7 @@ fn decode_blocks(src: &[u8], i0: usize, h: &Hdr, out: &mut Vec<u8>, limit: usize
         };
         if op2 > limit {
             proof {
-                lemma_blocks_len(src@, e as int, h@, out@.subrange(base as int, op2 as int));
+                lemma_blocks_len(src@, e as int, h@, dict, out@.subrange(base as int, op2 as int));
             }
             return Err(Error::TooLarge);
         }
@@ -396,23 +576,36 @@ fn decode_blocks(src: &[u8], i0: usize, h: &Hdr, out: &mut Vec<u8>, limit: usize
     }
 }
 
-/// Decodes the frame at `i`, appending its content to `out`
-/// (`spec::frame`). Gives the index after the frame. On an error `out`
-/// is left with its old contents and some of the frame's.
-pub fn decode_frame(src: &[u8], i: usize, out: &mut Vec<u8>, limit: usize) -> (r: Result<usize, Error>)
+/// Decodes the frame at `i`, appending its content to `out`, with the
+/// dictionary `out[hb..]`, the window of `d` (`spec::frame_dict`).
+fn decode_frame_in(
+    src: &[u8],
+    i: usize,
+    out: &mut Vec<u8>,
+    hb: usize,
+    scratch: &mut Vec<u8>,
+    limit: usize,
+    Ghost(d): Ghost<Seq<u8>>,
+) -> (r: Result<usize, Error>)
     requires
         i <= src@.len(),
         limit <= MAX_OUT,
         old(out)@.len() <= limit,
+        hb <= old(out)@.len(),
+        old(out)@.len() - hb <= 0x1_0000,
+        old(out)@.len() - hb <= old(scratch)@.len(),
+        old(scratch)@.subrange(0, old(out)@.len() - hb) == old(out)@.subrange(hb as int, old(out)@.len() as int),
+        dict_window(d) == old(out)@.subrange(hb as int, old(out)@.len() as int),
     ensures
         final(out)@.len() >= old(out)@.len(),
         final(out)@.subrange(0, old(out)@.len() as int) == old(out)@,
         match r {
-            Ok(j) => frame(src@, i as int) == Some(
+            Ok(j) => frame_dict(src@, i as int, d) == Some(
                 (final(out)@.subrange(old(out)@.len() as int, final(out)@.len() as int), j as int),
             ) && i < j <= src@.len() && final(out)@.len() <= limit,
-            Err(Error::Corrupt) => frame(src@, i as int).is_none(),
-            Err(Error::TooLarge) => frame(src@, i as int) matches Some((c, _j)) ==> old(out)@.len() + c.len() > limit,
+            Err(Error::Corrupt) => frame_dict(src@, i as int, d).is_none(),
+            Err(Error::TooLarge) => frame_dict(src@, i as int, d) matches Some((c, _j)) ==> old(out)@.len() + c.len()
+                > limit,
         },
 {
     let n = src.len();
@@ -423,7 +616,7 @@ pub fn decode_frame(src: &[u8], i: usize, out: &mut Vec<u8>, limit: usize) -> (r
         },
         Some(h) => h,
     };
-    let j = match decode_blocks(src, h.end, &h, out, limit) {
+    let j = match decode_blocks(src, h.end, &h, out, hb, scratch, limit) {
         Err(e) => {
             return Err(e);
         },
@@ -448,6 +641,111 @@ pub fn decode_frame(src: &[u8], i: usize, out: &mut Vec<u8>, limit: usize) -> (r
         Ok(j + 4)
     } else {
         Ok(j)
+    }
+}
+
+/// Decodes the frame at `i`, appending its content to `out`
+/// (`spec::frame`). Gives the index after the frame. On an error `out`
+/// is left with its old contents and some of the frame's.
+pub fn decode_frame(src: &[u8], i: usize, out: &mut Vec<u8>, limit: usize) -> (r: Result<usize, Error>)
+    requires
+        i <= src@.len(),
+        limit <= MAX_OUT,
+        old(out)@.len() <= limit,
+    ensures
+        final(out)@.len() >= old(out)@.len(),
+        final(out)@.subrange(0, old(out)@.len() as int) == old(out)@,
+        match r {
+            Ok(j) => frame(src@, i as int) == Some(
+                (final(out)@.subrange(old(out)@.len() as int, final(out)@.len() as int), j as int),
+            ) && i < j <= src@.len() && final(out)@.len() <= limit,
+            Err(Error::Corrupt) => frame(src@, i as int).is_none(),
+            Err(Error::TooLarge) => frame(src@, i as int) matches Some((c, _j)) ==> old(out)@.len() + c.len() > limit,
+        },
+{
+    let base = out.len();
+    let mut scratch: Vec<u8> = Vec::new();
+    proof {
+        assert(scratch@.subrange(0, 0) =~= out@.subrange(base as int, base as int));
+        assert(dict_window(Seq::empty()) =~= out@.subrange(base as int, base as int));
+    }
+    decode_frame_in(src, i, out, base, &mut scratch, limit, Ghost(Seq::empty()))
+}
+
+/// The most a frame decoded with a dictionary may produce: room is kept
+/// below `MAX_OUT` for the dictionary's window.
+pub const MAX_DICT_OUT: usize = MAX_OUT - 0x1_0000;
+
+/// Decodes the frame at `i` with the dictionary `dict`, appending its
+/// content to `out` (`spec::frame_dict`), as `LZ4F_decompress_usingDict`
+/// does. Only the last 64 KiB of `dict` are used. Gives the index after
+/// the frame. On an error `out` is left as it was, or, with an empty
+/// dictionary, as `decode_frame` leaves it.
+pub fn decode_frame_dict(src: &[u8], i: usize, dict: &[u8], out: &mut Vec<u8>, limit: usize) -> (r: Result<
+    usize,
+    Error,
+>)
+    requires
+        i <= src@.len(),
+        limit <= MAX_DICT_OUT,
+        old(out)@.len() <= limit,
+    ensures
+        final(out)@.len() >= old(out)@.len(),
+        final(out)@.subrange(0, old(out)@.len() as int) == old(out)@,
+        match r {
+            Ok(j) => frame_dict(src@, i as int, dict@) == Some(
+                (final(out)@.subrange(old(out)@.len() as int, final(out)@.len() as int), j as int),
+            ) && i < j <= src@.len() && final(out)@.len() <= limit,
+            Err(Error::Corrupt) => frame_dict(src@, i as int, dict@).is_none(),
+            Err(Error::TooLarge) => frame_dict(src@, i as int, dict@) matches Some((c, _j)) ==> old(out)@.len()
+                + c.len() > limit,
+        },
+{
+    let dn = dict.len();
+    if dn == 0 {
+        proof {
+            assert(dict@ =~= Seq::<u8>::empty());
+        }
+        return decode_frame(src, i, out, limit);
+    }
+    let dl = if dn > 0x1_0000 {
+        0x1_0000
+    } else {
+        dn
+    };
+    let ds = dn - dl;
+    // The window, then the content after it.
+    let mut w: Vec<u8> = Vec::new();
+    w.resize(dl, 0);
+    copy_in(w.as_mut_slice(), 0, dict, ds, dl);
+    let mut scratch: Vec<u8> = Vec::new();
+    scratch.resize(dl, 0);
+    copy_in(scratch.as_mut_slice(), 0, dict, ds, dl);
+    let room = limit - out.len();
+    proof {
+        assert(w@ =~= dict@.subrange(ds as int, dn as int));
+        assert(scratch@ =~= dict@.subrange(ds as int, dn as int));
+        assert(dict_window(dict@) =~= w@.subrange(0, dl as int));
+        assert(scratch@.subrange(0, dl as int) =~= w@.subrange(0, dl as int));
+    }
+    let ghost w0 = w@;
+    let r = decode_frame_in(src, i, &mut w, 0, &mut scratch, dl + room, Ghost(dict@));
+    match r {
+        Err(e) => Err(e),
+        Ok(j) => {
+            let m = w.len() - dl;
+            let ol = out.len();
+            let ghost before = out@;
+            out.resize(ol + m, 0);
+            let ghost mid = out@;
+            copy_in(out.as_mut_slice(), ol, w.as_slice(), dl, m);
+            proof {
+                assert(mid.subrange(0, ol as int) =~= before);
+                assert(out@.subrange(0, ol as int) =~= before);
+                assert(out@.subrange(ol as int, out@.len() as int) =~= w@.subrange(dl as int, w@.len() as int));
+            }
+            Ok(j)
+        },
     }
 }
 
@@ -479,11 +777,15 @@ fn decode_one_into(
             src@.subrange(j as int, j + size),
             raw,
             indep,
+            Seq::empty(),
             old(out)@.subrange(base as int, op as int),
         ) == Some(final(out)@.subrange(base as int, op2 as int)),
 {
     let ghost before = out@;
     let ghost cur = out@.subrange(base as int, op as int);
+    proof {
+        lemma_block_data_nodict(src@.subrange(j as int, j + size), raw, indep, cur);
+    }
     let len = out.len();
     let n = src.len();
     let data = slice_subrange(src, j, j + size);
@@ -557,7 +859,10 @@ pub fn decode_frame_into(src: &[u8], i: usize, out: &mut [u8], base: usize) -> (
         Some(h) => h,
     };
     let bmax = h.bmax;
-    let ghost goal = blocks(src@, h.end as int, h@, Seq::empty());
+    let ghost goal = blocks(src@, h.end as int, h@, Seq::empty(), Seq::empty());
+    proof {
+        assert(dict_window(Seq::<u8>::empty()) =~= Seq::<u8>::empty());
+    }
     let mut k = h.end;
     let mut op = base;
     proof {
@@ -573,8 +878,8 @@ pub fn decode_frame_into(src: &[u8], i: usize, out: &mut [u8], base: usize) -> (
             base <= op <= out@.len(),
             bmax == h.bmax,
             0x1_0000 <= bmax <= 0x40_0000,
-            goal == blocks(src@, h.end as int, h@, Seq::empty()),
-            !done ==> blocks(src@, k as int, h@, out@.subrange(base as int, op as int)) == goal,
+            goal == blocks(src@, h.end as int, h@, Seq::empty(), Seq::empty()),
+            !done ==> blocks(src@, k as int, h@, Seq::empty(), out@.subrange(base as int, op as int)) == goal,
             done ==> h.end < j <= n && goal == Some((out@.subrange(base as int, op as int), j as int)),
             out@.subrange(0, base as int) == old(out)@.subrange(0, base as int),
         decreases (if done { 0int } else { 1int }), n - k,

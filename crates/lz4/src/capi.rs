@@ -14,7 +14,7 @@
 use crate::block::decode_block;
 use crate::compress::{compress_bound, compress_into, MAX_INPUT};
 use crate::fcompress::{compress_into as frame_compress, Prefs};
-use crate::frame::{decode_frame, decode_frame_into, read_header, Error, Hdr, MAX_OUT};
+use crate::frame::{decode_frame, decode_frame_dict, decode_frame_into, read_header, Error, Hdr, MAX_DICT_OUT, MAX_OUT};
 use core::ffi::{c_char, c_int, c_uint, c_void};
 
 macro_rules! export {
@@ -336,11 +336,14 @@ pub struct Dctx {
     /// The decoded content, and how much of it has been handed out.
     out: Vec<u8>,
     given: usize,
+    /// The dictionary for this frame (its last 64 KiB), from
+    /// `LZ4F_decompress_usingDict`; empty for none.
+    dict: Vec<u8>,
 }
 
 impl Dctx {
     fn new() -> Dctx {
-        Dctx { stage: Stage::Magic, buf: Vec::new(), want: 4, hdr: None, out: Vec::new(), given: 0 }
+        Dctx { stage: Stage::Magic, buf: Vec::new(), want: 4, hdr: None, out: Vec::new(), given: 0, dict: Vec::new() }
     }
 
     /// Back to the start of a frame. The buffers keep their memory, so a
@@ -352,6 +355,25 @@ impl Dctx {
         self.hdr = None;
         self.out.clear();
         self.given = 0;
+        self.dict.clear();
+    }
+
+    /// No block of the current frame has been collected yet, so a
+    /// dictionary can still be given for it (liblz4: up to `dstage_init`).
+    fn before_blocks(&self) -> bool {
+        match self.hdr {
+            None => self.stage != Stage::Output,
+            Some(h) => self.buf.len() <= h.end,
+        }
+    }
+
+    /// The proven frame decoder, with this frame's dictionary if it has one.
+    fn decode_into_out(&mut self, src: &[u8]) -> Result<usize, Error> {
+        if self.dict.is_empty() {
+            decode_frame(src, 0, &mut self.out, MAX_OUT)
+        } else {
+            decode_frame_dict(src, 0, &self.dict, &mut self.out, MAX_DICT_OUT)
+        }
     }
 
     /// The length of the frame at the start of `src`, if all of it is
@@ -489,7 +511,10 @@ impl Dctx {
             // A skippable frame has no content.
             return Ok(());
         }
-        match decode_frame(&self.buf, 0, &mut self.out, MAX_OUT) {
+        let buf = core::mem::take(&mut self.buf);
+        let r = self.decode_into_out(&buf);
+        self.buf = buf;
+        match r {
             Ok(end) if end == self.buf.len() => Ok(()),
             Ok(_) => Err(ERR_GENERIC),
             Err(Error::Corrupt) => Err(ERR_DECOMPRESSION_FAILED),
@@ -609,6 +634,32 @@ export!("vlz4f_decompress", "LZ4F_decompress", fn f_decompress(d: *mut Dctx, dst
     let (Some(d), false, false) = (d.as_mut(), dst_size.is_null(), src_size.is_null()) else {
         return err(ERR_PARAMETER_NULL);
     };
+    decompress_frame(d, dst, dst_size, src, src_size)
+});
+
+export!("vlz4f_decompress_usingDict", "LZ4F_decompress_usingDict", fn f_decompress_using_dict(d: *mut Dctx, dst: *mut c_void, dst_size: *mut usize, src: *const c_void, src_size: *mut usize, dict: *const c_void, dict_size: usize, _options: *const c_void) -> usize {
+    let (Some(d), false, false) = (d.as_mut(), dst_size.is_null(), src_size.is_null()) else {
+        return err(ERR_PARAMETER_NULL);
+    };
+    // As liblz4: the dictionary is taken until the frame's first block,
+    // and kept until the frame ends. Only its last 64 KiB can be reached,
+    // so that much is copied, and the caller's memory is not held.
+    if d.before_blocks() {
+        d.dict.clear();
+        if !dict.is_null() && dict_size > 0 {
+            let whole = input(dict as *const c_char, dict_size);
+            let hist = &whole[whole.len().saturating_sub(65536)..];
+            if d.dict.try_reserve_exact(hist.len()).is_err() {
+                return err(ERR_ALLOCATION_FAILED);
+            }
+            d.dict.extend_from_slice(hist);
+        }
+    }
+    decompress_frame(d, dst, dst_size, src, src_size)
+});
+
+/// `LZ4F_decompress`, with whatever dictionary the context holds.
+unsafe fn decompress_frame(d: &mut Dctx, dst: *mut c_void, dst_size: *mut usize, src: *const c_void, src_size: *mut usize) -> usize {
     let s = input(src as *const c_char, *src_size);
     let o = output(dst as *mut c_char, *dst_size);
     *src_size = 0;
@@ -618,19 +669,23 @@ export!("vlz4f_decompress", "LZ4F_decompress", fn f_decompress(d: *mut Dctx, dst
     let mut pre = 0;
     if d.stage == Stage::Magic && d.buf.is_empty() {
         if let Some(end) = Dctx::whole_frame(s) {
-            // Straight into the caller's buffer if the content fits.
-            if let Some((e, n)) = decode_frame_into(&s[..end], 0, o, 0) {
-                if e == end {
-                    *src_size = end;
-                    *dst_size = n;
-                    return 0;
+            // Straight into the caller's buffer if the content fits (with
+            // no dictionary: the dictionary has to come right before it).
+            if d.dict.is_empty() {
+                if let Some((e, n)) = decode_frame_into(&s[..end], 0, o, 0) {
+                    if e == end {
+                        *src_size = end;
+                        *dst_size = n;
+                        d.reset();
+                        return 0;
+                    }
                 }
             }
             // Not valid, or no room: the decoder with its own buffer says
             // which, and hands the content out in pieces.
             d.out.clear();
             d.given = 0;
-            let e = match decode_frame(&s[..end], 0, &mut d.out, MAX_OUT) {
+            let e = match d.decode_into_out(&s[..end]) {
                 Ok(e) if e == end => 0,
                 Ok(_) => ERR_GENERIC,
                 Err(Error::Corrupt) => ERR_DECOMPRESSION_FAILED,
@@ -668,4 +723,4 @@ export!("vlz4f_decompress", "LZ4F_decompress", fn f_decompress(d: *mut Dctx, dst
         // More content is waiting for room.
         d.out.len() - d.given
     }
-});
+}

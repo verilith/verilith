@@ -18,6 +18,14 @@ against the format documents:
   [verilith-xxhash](../xxhash)'s specification, `src/spec.rs` there, re-exported.
 - `header`, `blocks`, `frame`, `skippable`, `frames`: the frame format
   (lz4_Frame_format.md), version 1.
+- `dict_window`, `block_data`, `frame_dict`: frames decoded with a
+  dictionary, as liblz4 decodes them (the frame format document says
+  only that the dictionary comes before the content): its last 64 KiB
+  are the history before every block, independent blocks included; with
+  linked blocks the earlier content follows it. The checksums and the
+  content size cover the content only, and the frame's dictionary ID is
+  not checked against the dictionary. `frame` is `frame_dict` with no
+  dictionary.
 
 Where the spec is stricter or looser than liblz4, it says so, and
 [DEPARTURES.md](DEPARTURES.md) lists the cases. One guard in `frames`
@@ -67,6 +75,11 @@ more than that:
 - `LZ4_decompress_safe_usingDict` copies the dictionary's last 64 KiB and
   the output into one buffer, decodes there with the proven decoder, and
   copies the result out.
+- `LZ4F_decompress_usingDict` copies the dictionary's last 64 KiB into
+  the context when it is given before the frame's first block, and
+  decodes the frame with the proven `frame::decode_frame_dict`. Which
+  call's dictionary applies to which frame is the adapter's choice
+  (liblz4's rule: until the first block, dropped at the frame's end).
 
 `tests/capi.rs` runs all of it against liblz4.
 

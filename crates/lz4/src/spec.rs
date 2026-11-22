@@ -269,18 +269,34 @@ pub open spec fn header(s: Seq<u8>, i: int) -> Option<Header> {
     }
 }
 
+/// The part of a dictionary that matches can reach: its last 64 KiB (an
+/// offset is at most 65,535), as liblz4 keeps.
+pub open spec fn dict_window(d: Seq<u8>) -> Seq<u8> {
+    if d.len() > 0x1_0000 {
+        d.subrange(d.len() - 0x1_0000, d.len() as int)
+    } else {
+        d
+    }
+}
+
 /// The content `out` with one more block's data: stored as it is, or
-/// compressed, with or without the earlier content as history.
-pub open spec fn block_data(data: Seq<u8>, raw: bool, indep: bool, out: Seq<u8>) -> Option<Seq<u8>> {
+/// compressed. The history a compressed block's matches may reach into
+/// is the dictionary `d` (empty for none), then, with linked blocks, the
+/// earlier content. A frame's dictionary comes before every block,
+/// independent ones too.
+pub open spec fn block_data(data: Seq<u8>, raw: bool, indep: bool, d: Seq<u8>, out: Seq<u8>) -> Option<Seq<u8>> {
     if raw {
         Some(out + data)
     } else if indep {
-        match block(data, Seq::empty()) {
-            Some(b) => Some(out + b),
+        match block(data, d) {
+            Some(b) => Some(out + b.subrange(d.len() as int, b.len() as int)),
             None => None,
         }
     } else {
-        block(data, out)
+        match block(data, d + out) {
+            Some(b) => Some(b.subrange(d.len() as int, b.len() as int)),
+            None => None,
+        }
     }
 }
 
@@ -292,8 +308,9 @@ pub open spec fn block_data(data: Seq<u8>, raw: bool, indep: bool, out: Seq<u8>)
 /// uncompressed, the data, and its XXH32 if the frame has block
 /// checksums. A size of zero is the end mark. Neither the data nor what
 /// it decodes to may be larger than the frame's block maximum size. With
-/// linked blocks, matches may reach into the earlier content.
-pub open spec fn blocks(s: Seq<u8>, i: int, h: Header, out: Seq<u8>) -> Option<(Seq<u8>, int)>
+/// linked blocks, matches may reach into the earlier content. `d` is the
+/// dictionary (`block_data`).
+pub open spec fn blocks(s: Seq<u8>, i: int, h: Header, d: Seq<u8>, out: Seq<u8>) -> Option<(Seq<u8>, int)>
     decreases s.len() - i,
 {
     if i < 0 || i + 4 > s.len() {
@@ -315,25 +332,30 @@ pub open spec fn blocks(s: Seq<u8>, i: int, h: Header, out: Seq<u8>) -> Option<(
         } else if h.bsum && le(s, j + size, 4) != xxh32(s.subrange(j, j + size)) {
             None
         } else {
-            match block_data(s.subrange(j, j + size), raw, h.indep, out) {
+            match block_data(s.subrange(j, j + size), raw, h.indep, d, out) {
                 None => None,
                 Some(out2) => if out2.len() - out.len() > h.bmax {
                     None
                 } else {
-                    blocks(s, e, h, out2)
+                    blocks(s, e, h, d, out2)
                 },
             }
         }
     }
 }
 
-/// The frame at `i`: its content and the index after it. The content
-/// must have the size the header gives, if it gives one, and the
-/// checksum the frame ends with, if it has one.
-pub open spec fn frame(s: Seq<u8>, i: int) -> Option<(Seq<u8>, int)> {
+/// The frame at `i`, decoded with the dictionary `d` (empty for none):
+/// its content and the index after it. The content must have the size
+/// the header gives, if it gives one, and the checksum the frame ends
+/// with, if it has one; neither covers the dictionary.
+///
+/// The header's dictionary ID is not checked against `d`: as with liblz4,
+/// choosing the dictionary is the caller's part. A dictionary given for
+/// a frame that has no ID is used all the same.
+pub open spec fn frame_dict(s: Seq<u8>, i: int, d: Seq<u8>) -> Option<(Seq<u8>, int)> {
     match header(s, i) {
         None => None,
-        Some(h) => match blocks(s, h.end, h, Seq::empty()) {
+        Some(h) => match blocks(s, h.end, h, dict_window(d), Seq::empty()) {
             None => None,
             Some((content, j)) => {
                 if h.csize matches Some(c) && c != content.len() {
@@ -350,6 +372,11 @@ pub open spec fn frame(s: Seq<u8>, i: int) -> Option<(Seq<u8>, int)> {
             },
         },
     }
+}
+
+/// The frame at `i` with no dictionary.
+pub open spec fn frame(s: Seq<u8>, i: int) -> Option<(Seq<u8>, int)> {
+    frame_dict(s, i, Seq::empty())
 }
 
 /// The skippable frame at `i` (magic numbers 0x184D2A50 to 0x184D2A5F,
