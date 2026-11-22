@@ -1,14 +1,17 @@
 # verilith-sha2
 
-SHA-224 and SHA-256 (FIPS 180-4) in Rust, proven with
-[Verus](https://github.com/verus-lang/verus): the hash functions behind
-TLS, X.509 signatures, Git's SHA-256 object format and most content
-addressing. It uses the CPU's SHA instructions where there are any, and
-it builds a static library behind OpenSSL's `SHA256_*` C API.
+SHA-2 (FIPS 180-4) in Rust, proven with
+[Verus](https://github.com/verus-lang/verus): SHA-224 and SHA-256, and
+the 64-bit family SHA-384, SHA-512, SHA-512/224 and SHA-512/256. These
+are the hash functions behind TLS, X.509 signatures, Ed25519 (SHA-512),
+Git's SHA-256 object format and most content addressing. It uses the
+CPU's SHA instructions where there are any, and it builds a static
+library behind OpenSSL's `SHA224_*`, `SHA256_*`, `SHA384_*` and
+`SHA512_*` C API.
 
-`cargo verus verify` (or `scripts/verify.sh`) checks 59 functions and
-lemmas with no errors and no `assume`. The one `external_body` function
-in this crate is the CPU dispatch for the compression function.
+`cargo verus verify` (or `scripts/verify.sh`) checks 138 functions and
+lemmas with no errors and no `assume`. The two `external_body` functions
+in this crate are the CPU dispatch for the two compression functions.
 
 ```rust
 let d: [u8; 32] = verilith_sha2::sha256(b"abc");
@@ -17,6 +20,9 @@ let mut h = verilith_sha2::Sha256::new();
 h.update(b"ab");
 h.update(b"c");
 assert_eq!(h.finalize(), d);
+
+let d: [u8; 64] = verilith_sha2::sha512(b"abc");
+let d: [u8; 48] = verilith_sha2::sha384(b"abc");
 ```
 
 ## What is proven
@@ -25,11 +31,12 @@ assert_eq!(h.finalize(), d);
 | --- | --- |
 | Memory safety: no out-of-bounds read or write, no overflow, no panic | every function in `compress` and `hash` (Verus checks all indexing and arithmetic) |
 | Termination of every loop | every function (`decreases`) |
-| The compression function computes FIPS 180-4 §6.2.2 steps 1 to 4 on a block | `compress::compress_block` against `spec::compress` |
-| Over many blocks, it computes H(n) from H(0) | `compress::compress_blocks` against `spec::hash_blocks` |
-| Ch and Maj in their one-operation-shorter forms are Ch and Maj | `compress::ch`, `compress::maj` (bit-vector proofs) |
-| Whatever the sizes of the pieces given to `update`, `finalize` returns the hash of all of them in order: padding (§5.1.1), the bit length modulo 2^64, one or two final blocks | `Sha256::finalize` against `spec::sha256`, `Sha224::finalize` against `spec::sha224` |
-| The one-shot functions | `sha256` and `sha224` against the same |
+| The compression functions compute FIPS 180-4 §6.2.2 (SHA-256) and §6.4.2 (SHA-512) steps 1 to 4 on a block | `compress::compress_block` against `spec::compress`, `compress512::compress_block` against `spec512::compress` |
+| Over many blocks, they compute H(n) from H(0) | `compress_blocks` in each, against `hash_blocks` |
+| Ch and Maj in their one-operation-shorter forms are Ch and Maj | `ch`, `maj` in each (bit-vector proofs) |
+| Whatever the sizes of the pieces given to `update`, `finalize` returns the hash of all of them in order: padding (§5.1.1, §5.1.2), the bit length modulo 2^64 or 2^128, one or two final blocks | `Sha256`, `Sha224` against `spec::sha256`, `spec::sha224`; `Sha512`, `Sha384`, `Sha512_224`, `Sha512_256` against `spec512::sha512`, `sha384`, `sha512_224`, `sha512_256` |
+| The 128-bit byte count of the SHA-512 family, kept as two 64-bit halves, is the message length modulo 2^128 | `hash512::Engine512::add_count` |
+| The one-shot functions | `sha256`, `sha224`, `sha512`, `sha384`, `sha512_224`, `sha512_256` against the same |
 
 ## Layout
 
@@ -46,6 +53,11 @@ assert_eq!(h.finalize(), d);
 - `src/hash.rs`: the streaming hashers. Whole blocks of an `update` are
   compressed straight from the caller's slice, and only the last partial
   block is buffered.
+- `src/spec512.rs`, `src/compress512.rs`, `src/hash512.rs`: the same for
+  the 64-bit family, with 128-byte blocks, 80 rounds and a 128-bit
+  length. The rounds are the same generated text over 64-bit words. The
+  byte count is two 64-bit halves rather than a `u128`, so the hasher fits
+  OpenSSL's 216-byte `SHA512_CTX`.
 - `src/cpu.rs`: the kernel dispatch and the SHA-NI and ARMv8 kernels
   (trusted, below).
 - `src/capi.rs`: the C API (an unverified adapter).
@@ -54,17 +66,23 @@ assert_eq!(h.finalize(), d);
 
 What the proofs here assume rather than prove:
 
-- `src/spec.rs`: the specification. Its constants (K, and both H(0)) are
-  also derived again from their definitions, the fractional parts of cube
-  and square roots of primes, by `tests/vectors.rs` with exact integer
-  roots.
-- `src/cpu.rs`, the one `external_body` function `compress_blocks`: that
-  the SHA-NI kernel (x86-64) and the ARMv8 SHA2 kernel (AArch64) compute
-  what the verified portable kernel computes. They are tested against it
-  (`tests/kernels.rs`: every length up to 40 blocks, from random states)
-  and against RustCrypto's `sha2` and OpenSSL. CI runs the ARMv8 kernel
-  on an Arm runner and under qemu. Without those instructions the verified
-  kernel runs, with nothing assumed.
+- `src/spec.rs` and `src/spec512.rs`: the specification. The constants
+  are also derived again from their definitions by `tests/vectors.rs` and
+  `tests/vectors512.rs`: K and the SHA-224, SHA-256, SHA-384 and SHA-512
+  H(0) come from the fractional parts of cube and square roots of primes,
+  computed with exact integer roots, and the SHA-512/224 and SHA-512/256
+  H(0) come from running FIPS 180-4's IV generation function (§5.3.6).
+- `src/cpu.rs`, the two `external_body` functions `compress_blocks` and
+  `compress512_blocks`: that the SHA-NI kernel (x86-64), the ARMv8 SHA2
+  kernel and the ARMv8.2 SHA512 kernel (AArch64) compute what the
+  verified portable kernels compute. They are tested against them
+  (`tests/kernels.rs`, `tests/kernels512.rs`: every length up to 40 and
+  24 blocks, from random states) and against RustCrypto's `sha2` and
+  OpenSSL. CI runs the ARMv8 kernels on an Arm runner and under qemu.
+  Without those instructions the verified kernels run, with nothing
+  assumed. On x86-64 with BMI2 they run compiled a second time with BMI2
+  enabled: the same verified code with other instruction selection, as
+  verilith-core does for Adler-32 with AVX2, and tested the same way.
 - From [verilith-core](../core): `prims::copy_in` (trusted, one
   `copy_nonoverlapping`). `prims::get` is verified there.
 - vstd's specifications of `slice_subrange`, `wrapping_add` and
@@ -76,17 +94,20 @@ What the proofs here assume rather than prove:
 ## C API
 
 `SHA256_Init`, `SHA256_Update`, `SHA256_Final`, `SHA256`, and the same
-four for SHA-224, with OpenSSL's signatures and return values. They are
-exported as `vsha2_SHA256_Init` and so on. With the `openssl-abi`
+four for SHA-224, SHA-384 and SHA-512, with OpenSSL's signatures and
+return values. They are exported as `vsha2_SHA256_Init` and so on. With the `openssl-abi`
 feature they take OpenSSL's own names, so the static library can be
 linked ahead of libcrypto for these functions.
 
 Departures from OpenSSL:
 
-- `SHA256_CTX` has OpenSSL's size (112 bytes) and alignment, so callers'
-  stack allocations are unchanged, but not its fields. Code that reads
-  `h`, `Nl`, `Nh` or `num` directly gets other values.
-- `SHA256_Transform` (one block, no padding) is not provided.
+- `SHA256_CTX` and `SHA512_CTX` have OpenSSL's sizes (112 and 216 bytes)
+  and alignments, so callers' stack allocations are unchanged, but not
+  its fields. Code that reads `h`, `Nl`, `Nh` or `num` directly gets
+  other values.
+- `SHA256_Transform` and `SHA512_Transform` (one block, no padding) are
+  not provided. Neither are SHA-512/224 and SHA-512/256 in C, which
+  OpenSSL offers only through its EVP interface.
 - `_Update` and `_Final` return 0, and do nothing, for a context whose
   buffered-byte count is out of range: one that `_Init` did not set up.
   OpenSSL's behaviour there is undefined.
@@ -107,32 +128,53 @@ Departures from OpenSSL:
   (`libcrypto.so.3`, or `VSHA2_LIBCRYPTO`) loaded with `dlopen`. That
   covers one-shot and streamed, every length up to 600 and some longer,
   in six patterns of pieces, plus the C API's edge cases.
+- `tests/vectors512.rs`, `tests/kernels512.rs`, `tests/openssl512.rs`:
+  the same for the 64-bit family. They cover FIPS 180-2's SHA-384 and
+  SHA-512 examples and NIST's SHA-512/t examples, every length up to
+  2200 for all four hashes against RustCrypto, and SHA-384 and SHA-512
+  through the C API against libcrypto.
 
 ## Performance
 
 `cargo run --release --example speed` compares against RustCrypto's
-`sha2` 0.10 and the system OpenSSL (3.0, through `SHA256()`). On an x86-64
-cloud VM with SHA-NI, in MB/s, best of 15:
+`sha2` 0.10 and the system OpenSSL (3.0, through `SHA256()` and
+`SHA512()`). On an x86-64 cloud VM with SHA-NI, in MB/s, best of 15
+(numbers on a shared VM move by 10 to 20% from run to run; compare
+within a column):
 
-| bytes | verilith-sha2 | portable kernel alone | RustCrypto sha2 | OpenSSL |
+| SHA-256, bytes | verilith-sha2 | portable kernel alone | RustCrypto sha2 | OpenSSL |
 | ---: | ---: | ---: | ---: | ---: |
-| 64 | 483 | 242 | 592 | 139 |
-| 1024 | 1299 | 242 | 1287 | 889 |
-| 8192 | 1396 | 248 | 1385 | 1305 |
-| 1 MiB | 1397 | 245 | 1407 | 1408 |
+| 64 | 654 | 339 | 795 | 193 |
+| 1024 | 1708 | 334 | 1735 | 1217 |
+| 8192 | 1845 | 343 | 1855 | 1793 |
+| 1 MiB | 1947 | 348 | 1917 | 1895 |
 
-From 1 KiB up, the three run at the speed of the SHA instructions. Below
-that, verilith-sha2 spends more per call than RustCrypto (about 25 ns at
-64 bytes), which is not yet tuned. The verified portable kernel is what
-runs on CPUs without SHA instructions.
+| SHA-512, bytes | verilith-sha2 | RustCrypto sha2 | OpenSSL |
+| ---: | ---: | ---: | ---: |
+| 128 | 266 | 323 | 210 |
+| 1024 | 532 | 649 | 601 |
+| 8192 | 613 | 710 | 780 |
+| 1 MiB | 634 | 715 | 842 |
+
+SHA-256 runs at the speed of the SHA instructions from 1 KiB up. Below
+that, verilith-sha2 spends more per call than RustCrypto (about 20 ns at
+64 bytes), which is not yet tuned. SHA-512 has no instruction kernel on
+x86-64 here: the verified portable kernel (with BMI2) runs at 0.89 of
+RustCrypto's speed and 0.75 of OpenSSL's on large inputs. Both of those
+compute the message schedule with AVX2. On AArch64 with the SHA-512
+instructions (Apple M1 and later) the ARMv8.2 kernel runs instead.
 
 ## Not yet
 
-- SHA-384 and SHA-512 (the 64-bit family), and HMAC.
+- HMAC.
+- An AVX2 message schedule for SHA-512 on x86-64, which is what
+  RustCrypto and OpenSSL are faster with, and a kernel for x86-64's own
+  SHA-512 instructions (Arrow Lake, Lunar Lake). There was no CPU with
+  them to test on.
 - `no_std`: the crate needs `std` for run-time CPU detection.
 - RustCrypto's `digest` traits, for a drop-in `sha2` replacement.
 - A [vbench](../../bench) suite against OpenSSL through the drop-in C API.
-- Verifying the SHA-NI and ARMv8 kernels, against specifications of the
+- Verifying the SHA-NI and ARMv8 kernels against specifications of the
   instructions in [verilith-simd](../simd), as verilith-core does for
   AArch64's `crc32x`.
 - A proof that the portable kernel's time does not depend on the data. It

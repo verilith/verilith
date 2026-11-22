@@ -30,7 +30,7 @@ shortest dependency list, depend on that crate directly.
 | `lz4` | `verilith::lz4` | [`verilith-lz4`](../lz4) | LZ4 |
 | `png` | `verilith::png` | [`verilith-png`](../png) | PNG decoder |
 | `regex` | `verilith::regex` | [`verilith-regex`](../regex) | regular expressions |
-| `sha2` | `verilith::sha2` | [`verilith-sha2`](../sha2) | SHA-224 and SHA-256 |
+| `sha2` | `verilith::sha2` | [`verilith-sha2`](../sha2) | SHA-2: SHA-224 to SHA-512 |
 | `simd` | `verilith::simd` | [`verilith-simd`](../simd) | verified SIMD kernels |
 | `snappy` | `verilith::snappy` | [`verilith-snappy`](../snappy) | Snappy |
 | `sync` | `verilith::sync` | [`verilith-sync`](../sync) | queues, channels and locks |

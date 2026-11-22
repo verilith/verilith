@@ -103,37 +103,71 @@ fn round(a: u32, b: u32, c: u32, d: &mut u32, e: u32, f: u32, g: u32, h: &mut u3
     *h = add(t1, t2);
 }
 
-/// The window holds W_{i-16}..W_{i-1} at their indices modulo 16; this
-/// writes W_i over W_{i-16}.
+/// The window holds W_{i-16}..W_{i-1} at their indices modulo 16.
+pub open spec fn window(w: Seq<u32>, m: Seq<u32>, lo: int, hi: int) -> bool {
+    forall|k: int| lo <= k < hi ==> w[k % 16] == #[trigger] spec::schedule(m, k)
+}
+
+/// W_i from the window: the schedule's definition, unfolded once.
+proof fn lemma_sched_value(w: Seq<u32>, m: Seq<u32>, i: int)
+    requires
+        16 <= i,
+        window(w, m, i - 16, i),
+    ensures
+        spec::add(
+            spec::add(spec::add(spec::small_sigma1(w[(i - 2) % 16]), w[(i - 7) % 16]), spec::small_sigma0(w[(i - 15) % 16])),
+            w[i % 16],
+        ) == spec::schedule(m, i),
+{
+    // Equal arguments, equal results: nothing inside these is needed.
+    hide(spec::add);
+    hide(spec::small_sigma0);
+    hide(spec::small_sigma1);
+    assert(w[(i - 2) % 16] == spec::schedule(m, i - 2));
+    assert(w[(i - 7) % 16] == spec::schedule(m, i - 7));
+    assert(w[(i - 15) % 16] == spec::schedule(m, i - 15));
+    assert(w[(i - 16) % 16] == spec::schedule(m, i - 16));
+    assert((i - 16) % 16 == i % 16);
+}
+
+/// Writing W_i over W_{i-16} moves the window on by one.
+proof fn lemma_sched_window(w: Seq<u32>, v: Seq<u32>, m: Seq<u32>, i: int)
+    requires
+        16 <= i,
+        w.len() == 16,
+        window(w, m, i - 16, i),
+        v == w.update(i % 16, spec::schedule(m, i)),
+    ensures
+        window(v, m, i - 15, i + 1),
+{
+    assert forall|k: int| i - 15 <= k < i + 1 implies v[k % 16] == #[trigger] spec::schedule(m, k) by {
+        if k < i {
+            lemma_mod16(k, i);
+        }
+    }
+}
+
+/// This writes W_i over W_{i-16}.
 #[verifier::spinoff_prover]
 #[inline(always)]
 fn sched(w: &mut [u32; 16], i: usize, Ghost(m): Ghost<Seq<u32>>)
     requires
         16 <= i < 64,
-        forall|k: int| i - 16 <= k < i ==> old(w)@[k % 16] == #[trigger] spec::schedule(m, k),
+        window(old(w)@, m, i - 16, i as int),
     ensures
-        forall|k: int| i - 15 <= k <= i ==> final(w)@[k % 16] == #[trigger] spec::schedule(m, k),
+        window(final(w)@, m, i - 15, i + 1),
 {
     let x = add(
         add(add(small_sigma1(w[(i - 2) % 16]), w[(i - 7) % 16]), small_sigma0(w[(i - 15) % 16])),
         w[i % 16],
     );
     proof {
-        let ii = i as int;
-        assert(old(w)@[(ii - 2) % 16] == spec::schedule(m, ii - 2));
-        assert(old(w)@[(ii - 7) % 16] == spec::schedule(m, ii - 7));
-        assert(old(w)@[(ii - 15) % 16] == spec::schedule(m, ii - 15));
-        assert(old(w)@[(ii - 16) % 16] == spec::schedule(m, ii - 16));
-        assert((ii - 16) % 16 == ii % 16);
-        assert(x == spec::schedule(m, ii));
+        lemma_sched_value(w@, m, i as int);
     }
+    let ghost w0 = w@;
     w[i % 16] = x;
     proof {
-        assert forall|k: int| i - 15 <= k <= i implies final(w)@[k % 16] == #[trigger] spec::schedule(m, k) by {
-            if k < i {
-                lemma_mod16(k, i as int);
-            }
-        }
+        lemma_sched_window(w0, w@, m, i as int);
     }
 }
 
@@ -226,10 +260,10 @@ fn rounds8_sched(r: &mut Regs, w: &mut [u32; 16], t: usize, Ghost(v0): Ghost<Var
         t % 8 == 0,
         16 <= t,
         t + 8 <= 64,
-        forall|k: int| t - 16 <= k < t ==> old(w)@[k % 16] == #[trigger] spec::schedule(m, k),
+        window(old(w)@, m, t - 16, t as int),
         old(r).vars() == spec::rounds(v0, m, t as nat),
     ensures
-        forall|k: int| t - 8 <= k < t + 8 ==> final(w)@[k % 16] == #[trigger] spec::schedule(m, k),
+        window(final(w)@, m, t - 8, t + 8),
         final(r).vars() == spec::rounds(v0, m, (t + 8) as nat),
 {
     let (mut a, mut b, mut c, mut d) = (r.a, r.b, r.c, r.d);
@@ -303,7 +337,7 @@ fn rounds64(r: &mut Regs, w: &mut [u32; 16], Ghost(v0): Ghost<Vars>, Ghost(m): G
         invariant
             t % 8 == 0,
             16 <= t <= 64,
-            forall|k: int| t - 16 <= k < t ==> w@[k % 16] == #[trigger] spec::schedule(m, k),
+            window(w@, m, t - 16, t as int),
             r.vars() == spec::rounds(v0, m, t as nat),
         decreases 64 - t,
     {
@@ -358,6 +392,7 @@ fn load_block(p: &[u8], off: usize) -> (w: [u32; 16])
 
 /// H(i) from H(i-1) = `st` and the 64-byte block at `off`.
 #[verifier::spinoff_prover]
+#[inline(always)]
 pub fn compress_block(st: &mut [u32; 8], p: &[u8], off: usize)
     requires
         off + 64 <= p@.len(),
@@ -395,6 +430,7 @@ pub fn compress_block(st: &mut [u32; 8], p: &[u8], off: usize)
 
 /// H(n) from H(0) = `st` over the `n = p.len() / 64` whole blocks of `p`;
 /// bytes after the last whole block are not read.
+#[inline(always)]
 pub fn compress_blocks(st: &mut [u32; 8], p: &[u8])
     ensures
         final(st)@ == spec::hash_blocks(old(st)@, p@, (p@.len() / 64) as nat),

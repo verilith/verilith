@@ -43,6 +43,27 @@ fn cpu_kernel_matches_portable() {
 }
 
 #[test]
+fn bmi2_build_matches_portable() {
+    let Some((k256, k512)) = cpu::bmi2_kernels() else {
+        eprintln!("no BMI2: skipped");
+        return;
+    };
+    let mut r = Rng(7);
+    let data = r.bytes(128 * 12 + 127);
+    let (mut a, mut b) = (verilith_sha2::spec::IV256, verilith_sha2::spec::IV256);
+    let (mut c, mut d) = (verilith_sha2::spec512::IV512, verilith_sha2::spec512::IV512);
+    for end in 0..data.len() {
+        let p = &data[..end];
+        k256(&mut a, p);
+        compress::compress_blocks(&mut b, p);
+        assert_eq!(a, b, "sha-256 len {end}");
+        k512(&mut c, p);
+        verilith_sha2::compress512::compress_blocks(&mut d, p);
+        assert_eq!(c, d, "sha-512 len {end}");
+    }
+}
+
+#[test]
 fn every_length_against_rustcrypto() {
     let mut r = Rng(1);
     let data = r.bytes(4200);
