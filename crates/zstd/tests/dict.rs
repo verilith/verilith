@@ -509,3 +509,168 @@ fn limits_and_errors() {
         capi::zstd_free_dctx(d);
     }
 }
+
+type CLoadDict = unsafe extern "C" fn(*mut c_void, *const u8, usize) -> usize;
+type DStream = unsafe extern "C" fn(*mut c_void, *mut OutBuffer, *mut InBuffer) -> usize;
+
+/// libzstd's streaming decoder with a loaded dictionary, fed as `stream`
+/// feeds ours (the same pieces for the same seed).
+fn their_stream(h: &Lib2, src: &[u8], dict: &[u8], r: &mut Rng) -> Result<(Vec<u8>, Vec<usize>), i32> {
+    unsafe {
+        let d = (h.create_dstream)();
+        (h.dload)(d, dict.as_ptr(), dict.len());
+        let mut out = Vec::new();
+        let mut ends = Vec::new();
+        let mut buf = vec![0u8; 1 << 17];
+        let mut pos = 0;
+        let mut idle = 0;
+        let res = loop {
+            let big = if r.below(4) == 0 { 1 << 17 } else { 300 };
+            let n = (1 + r.below(big) as usize).min(src.len() - pos);
+            let big = if r.below(4) == 0 { 1 << 17 } else { 300 };
+            let osz = 1 + r.below(big) as usize;
+            let mut i = InBuffer { src: src[pos..].as_ptr() as *const c_void, size: n, pos: 0 };
+            let mut o = OutBuffer { dst: buf.as_mut_ptr() as *mut c_void, size: osz, pos: 0 };
+            let ret = (h.dstream)(d, &mut o, &mut i);
+            if (h.is_error)(ret) != 0 {
+                break Err((h.error_code)(ret));
+            }
+            out.extend_from_slice(&buf[..o.pos]);
+            pos += i.pos;
+            if ret == 0 {
+                ends.push(pos);
+                if pos == src.len() {
+                    break Ok((out, ends));
+                }
+            }
+            if i.pos == 0 && o.pos == 0 {
+                idle += 1;
+                if idle > 3 {
+                    break Ok((out, ends));
+                }
+            } else {
+                idle = 0;
+            }
+        };
+        (h.free_dstream)(d);
+        res
+    }
+}
+
+struct Lib2 {
+    cload: CLoadDict,
+    create_dstream: Create,
+    free_dstream: unsafe extern "C" fn(*mut c_void) -> usize,
+    dload: CLoadDict,
+    dstream: DStream,
+    is_error: IsError,
+    error_code: ErrorCode,
+}
+
+fn lib2() -> Lib2 {
+    unsafe {
+        let h = dlopen(CString::new(std::env::var("VZSTD_LIBZSTD").unwrap_or("libzstd.so.1".into())).unwrap().as_ptr(), 2);
+        let sym = |n: &str| {
+            let p = dlsym(h, CString::new(n).unwrap().as_ptr());
+            assert!(!p.is_null(), "{n}");
+            p
+        };
+        Lib2 {
+            cload: std::mem::transmute(sym("ZSTD_CCtx_loadDictionary")),
+            create_dstream: std::mem::transmute(sym("ZSTD_createDStream")),
+            free_dstream: std::mem::transmute(sym("ZSTD_freeDStream")),
+            dload: std::mem::transmute(sym("ZSTD_DCtx_loadDictionary")),
+            dstream: std::mem::transmute(sym("ZSTD_decompressStream")),
+            is_error: std::mem::transmute(sym("ZSTD_isError")),
+            error_code: std::mem::transmute(sym("ZSTD_getErrorCode")),
+        }
+    }
+}
+
+impl Lib {
+    /// With a loaded dictionary, a window log and a checksum, by
+    /// `ZSTD_compress2` (frames larger than the window, unlike
+    /// `ZSTD_compress_usingDict` on a small input).
+    fn compress_window(&self, l2: &Lib2, src: &[u8], dict: &[u8], level: i32, wlog: i32, checksum: bool) -> Vec<u8> {
+        unsafe {
+            (self.creset)(self.cctx, 3);
+            (self.set_param)(self.cctx, 100, level);
+            (self.set_param)(self.cctx, 101, wlog);
+            (self.set_param)(self.cctx, 201, checksum as c_int);
+            (l2.cload)(self.cctx, dict.as_ptr(), dict.len());
+            let mut dst = vec![0u8; (self.bound)(src.len())];
+            let n = (self.compress2)(self.cctx, dst.as_mut_ptr(), dst.len(), src.as_ptr(), src.len());
+            assert_eq!((self.is_error)(n), 0);
+            dst.truncate(n);
+            (self.creset)(self.cctx, 3);
+            dst
+        }
+    }
+}
+
+/// Streaming with a dictionary, through the proven stream, against
+/// libzstd's streaming decoder: long frames with small windows (so the
+/// stream trims its output while the dictionary is still reachable), frames
+/// one after another, and corrupted frames.
+#[test]
+fn streaming_with_a_dictionary_matches_libzstd() {
+    let Some(l) = lib() else { return };
+    let l2 = lib2();
+    let mut r = Rng(0x5DEECE66D);
+    let w = words(&mut r);
+    let dict = train(&l, &mut r, &w, 3000, 112_640);
+    let ours_ctx = unsafe { capi::zstd_create_dctx() };
+    unsafe {
+        assert_eq!(code(capi::zstd_dctx_load_dictionary(ours_ctx, dict.as_ptr() as *const c_void, dict.len())), Ok(0));
+    }
+    let (mut both_ok, mut both_err, mut only_lib, mut long) = (0, 0, 0, 0);
+    for round in 0..300 {
+        let n = if round % 10 == 0 { 3_000_000 } else { 1 + r.below(200_000) as usize };
+        let mut src = Vec::new();
+        while src.len() < n {
+            src.extend_from_slice(&message(&mut r, &w));
+        }
+        let wlog = 10 + r.below(8) as i32;
+        let level = [1, 3, 9, 19][r.below(4) as usize];
+        let one = l.compress_window(&l2, &src, &dict, level, wlog, r.below(2) == 0);
+        let mut c = [one.clone(), one.clone()].concat();
+        let corrupt = round % 3 == 2;
+        if corrupt {
+            for _ in 0..1 + r.below(3) {
+                let i = r.below(c.len() as u64) as usize;
+                match r.below(3) {
+                    0 => c[i] ^= 1 << r.below(8),
+                    1 => c[i] = r.next() as u8,
+                    _ => c.truncate(i.max(1)),
+                }
+            }
+        }
+        let seed = r.next();
+        unsafe { capi::zstd_dctx_reset(ours_ctx, 1) };
+        let a = stream(ours_ctx, &c, &mut Rng(seed));
+        let b = their_stream(&l2, &c, &dict, &mut Rng(seed));
+        match (&a, &b) {
+            (Ok(x), Ok(y)) => {
+                assert_eq!(x.0.len(), y.0.len(), "round {round}");
+                assert!(x.0 == y.0, "round {round}: outputs differ");
+                assert_eq!(x.1, y.1, "round {round}: frame ends");
+                if !corrupt {
+                    assert_eq!(x.0, [src.clone(), src.clone()].concat());
+                    assert_eq!(x.1, vec![one.len(), c.len()]);
+                }
+                both_ok += 1;
+            },
+            (Err(_), Err(_)) => both_err += 1,
+            (Err(e), Ok(_)) => {
+                assert!(corrupt, "round {round}: a valid stream fails ({e})");
+                only_lib += 1;
+            },
+            (Ok(_), Err(e)) => panic!("round {round}: we accept, libzstd rejects ({e})"),
+        }
+        if n > 1_000_000 {
+            long += 1;
+        }
+    }
+    unsafe { capi::zstd_free_dctx(ours_ctx) };
+    eprintln!("streams: both ok {both_ok}, both err {both_err}, only libzstd ok {only_lib}; {long} of 3 MB");
+}

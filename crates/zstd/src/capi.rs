@@ -9,8 +9,8 @@
 //!
 //! With a dictionary (`ZSTD_decompress_usingDict`, `..._usingDDict`,
 //! `ZSTD_DCtx_loadDictionary`, `refPrefix`, `refDDict`), one-shot calls run
-//! the proven `dict::DictDecoder::decompress`; streaming collects each
-//! frame whole and decodes it the same way.
+//! the proven `dict::DictDecoder::decompress`, and streaming hands the
+//! dictionary to the proven stream (`stream::Stream::set_dict`).
 //!
 //! Symbols are exported as `vzstd_*`, or under libzstd's names with the
 //! `zstd-abi` feature. `zstd-abi` exports only the decompression side, so
@@ -351,23 +351,6 @@ static SERIAL: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::ne
 // Streaming
 // ---------------------------------------------------------------------------
 
-/// Streaming with a dictionary: the frame is collected whole, then
-/// decoded by the proven one-shot decoder, then handed out.
-#[derive(Default)]
-struct Collect {
-    active: bool,
-    /// The dictionary for this frame, taken from `DCtx::dict` (and put back
-    /// at the frame's end) or the prefix, used once.
-    dd: Option<DictDecoder>,
-    from_prefix: bool,
-    buf: Vec<u8>,
-    out: Vec<u8>,
-    decoded: bool,
-    given: usize,
-}
-
-/// `ZSTD_DCtx`, also used as `ZSTD_DStream`: the proven streaming decoder
-/// (`stream::Stream`) and the window limit set through the parameters.
 pub struct DCtx {
     s: Stream,
     wlog_max: u32,
@@ -376,14 +359,15 @@ pub struct DCtx {
     dict: Option<DictDecoder>,
     /// A prefix for the next decompression only (`ZSTD_DCtx_refPrefix`).
     prefix: Option<DictDecoder>,
+    /// Bumped whenever `dict` or `prefix` is set, so the stream can tell
+    /// whether the dictionary it holds is still the one asked for.
+    generation: u64,
+    /// The generation of the dictionary the stream holds (0: none).
+    installed: u64,
     /// The copy of the last `ZSTD_DDict` used with this context, by serial.
     cache: Option<(u64, DictDecoder)>,
     /// No frame is under way in streaming.
     at_start: bool,
-    col: Collect,
-    /// Streaming with a dictionary failed with this code; it stays failed
-    /// until reset, as the proven stream does.
-    failed: Option<usize>,
 }
 
 impl DCtx {
@@ -393,18 +377,21 @@ impl DCtx {
             wlog_max: WINDOWLOG_DEFAULT,
             dict: None,
             prefix: None,
+            generation: 0,
+            installed: 0,
             cache: None,
             at_start: true,
-            col: Collect::default(),
-            failed: None,
         }
     }
 
     fn reset_session(&mut self) {
         self.s.reset();
-        self.end_collect();
         self.at_start = true;
-        self.failed = None;
+    }
+
+    /// The dictionary or prefix asked for has changed.
+    fn changed(&mut self) {
+        self.generation += 1;
     }
 
     /// The context's copy of `h`.
@@ -415,118 +402,31 @@ impl DCtx {
         }
     }
 
-    /// The end of a collected frame: the dictionary goes back, unless it was
-    /// a prefix.
-    fn end_collect(&mut self) {
-        let dd = self.col.dd.take();
-        if !self.col.from_prefix && self.col.active && self.dict.is_none() {
-            self.dict = dd;
-        }
-        self.col.active = false;
-        self.col.from_prefix = false;
-        self.col.buf.clear();
-        self.col.out.clear();
-        self.col.decoded = false;
-        self.col.given = 0;
-    }
-
-    /// Streaming with a dictionary (`Collect`).
-    fn stream_collect(&mut self, out: &mut [u8], opos: &mut usize, inp: &[u8], ipos: &mut usize) -> usize {
-        if let Some(e) = self.failed {
-            return err(e);
-        }
-        if !self.col.active {
-            self.col.active = true;
-            self.at_start = false;
-            match self.prefix.take() {
-                Some(p) => {
-                    self.col.dd = Some(p);
-                    self.col.from_prefix = true;
-                },
-                None => {
-                    self.col.dd = self.dict.take();
-                    self.col.from_prefix = false;
-                },
-            }
-        }
-        loop {
-            if self.col.decoded {
-                let give = (out.len() - *opos).min(self.col.out.len() - self.col.given);
-                out[*opos..*opos + give].copy_from_slice(&self.col.out[self.col.given..self.col.given + give]);
-                *opos += give;
-                self.col.given += give;
-                if self.col.given == self.col.out.len() {
-                    self.end_collect();
-                    self.at_start = true;
-                    return 0;
-                }
-                return self.col.out.len() - self.col.given;
-            }
-            let have = self.col.buf.len();
-            self.col.buf.extend_from_slice(&inp[*ipos..]);
-            match frame_size(&self.col.buf) {
-                Ok(n) => {
-                    *ipos += n - have;
-                    self.col.buf.truncate(n);
-                },
-                Err(ERR_SRC_SIZE_WRONG) => {
-                    *ipos = inp.len();
-                    if let Ok(h) = read_header(&self.col.buf) {
-                        if h.window > self.s.max_window {
-                            return self.fail(ERR_WINDOW_TOO_LARGE);
-                        }
-                    }
-                    return 1;
-                },
-                Err(e) => {
-                    *ipos += self.col.buf.len() - have;
-                    return self.fail(e);
-                },
-            }
-            if let Ok(h) = read_header(&self.col.buf) {
-                if h.window > self.s.max_window {
-                    return self.fail(ERR_WINDOW_TOO_LARGE);
-                }
-            }
-            let dd = self.col.dd.take().unwrap_or_else(|| DictDecoder::raw(&[]));
-            let buf = core::mem::take(&mut self.col.buf);
-            let (dd, r) = dd.decompress(&buf, DICT_LIMIT);
-            self.col.buf = buf;
-            match r {
-                Ok(v) => {
-                    self.col.dd = Some(dd);
-                    self.col.out = v;
-                    self.col.decoded = true;
-                    self.col.given = 0;
-                },
-                Err(Error::TooLarge) => {
-                    self.col.dd = Some(dd);
-                    return self.fail(ERR_MEMORY);
-                },
-                Err(Error::Corrupt) => {
-                    let (dd, e) = classify_dict(&self.col.buf, dd);
-                    self.col.dd = Some(dd);
-                    return self.fail(e);
-                },
-            }
-        }
-    }
-
-    fn fail(&mut self, e: usize) -> usize {
-        self.end_collect();
-        self.failed = Some(e);
-        err(e)
-    }
-
     fn set_max_window(&mut self, w: u64) {
         self.s.max_window = w;
     }
 
     /// The streaming step: 0 at the end of a frame (all output handed
-    /// out), an error code, or a hint of the input still wanted.
+    /// out), an error code, or a hint of the input still wanted. At the
+    /// start of a frame the proven stream is given the dictionary for it:
+    /// a prefix (used for this frame only), the loaded dictionary, or none.
     fn stream(&mut self, out: &mut [u8], opos: &mut usize, inp: &[u8], ipos: &mut usize) -> usize {
-        if self.failed.is_some() || self.col.active || (self.at_start && (self.prefix.is_some() || self.dict.is_some())) {
-            return self.stream_collect(out, opos, inp, ipos);
+        if self.at_start {
+            if let Some(p) = self.prefix.take() {
+                self.s.set_dict(&p);
+                // A prefix is used once: the next frame gets the dictionary
+                // again (or none), so it is not the generation held.
+                self.installed = u64::MAX;
+            } else {
+                let want = if self.dict.is_some() { self.generation } else { 0 };
+                if want != self.installed {
+                    match &self.dict {
+                        Some(d) => self.s.set_dict(d),
+                        None => self.s.clear_dict(),
+                    }
+                    self.installed = want;
+                }
+            }
         }
         let r = self.stream_plain(out, opos, inp, ipos);
         self.at_start = r == 0;
@@ -799,6 +699,7 @@ export! {"ZSTD_DCtx_reset", "vzstd_DCtx_reset",
                 d.reset_session();
                 d.dict = None;
                 d.prefix = None;
+                d.changed();
                 d.wlog_max = WINDOWLOG_DEFAULT;
                 d.set_max_window((1 << WINDOWLOG_DEFAULT) + 1);
             },
@@ -900,6 +801,7 @@ export! {"ZSTD_DCtx_loadDictionary", "vzstd_DCtx_loadDictionary",
             return err(ERR_STAGE_WRONG);
         }
         d.prefix = None;
+        d.changed();
         match load(dict, n) {
             Ok(dd) => {
                 d.dict = dd;
@@ -932,6 +834,7 @@ export! {"ZSTD_DCtx_refPrefix", "vzstd_DCtx_refPrefix",
             return err(ERR_STAGE_WRONG);
         }
         d.dict = None;
+        d.changed();
         if n == 0 || prefix.is_null() {
             d.prefix = None;
             return 0;
@@ -954,6 +857,7 @@ export! {"ZSTD_DCtx_refDDict", "vzstd_DCtx_refDDict",
             return err(ERR_STAGE_WRONG);
         }
         d.prefix = None;
+        d.changed();
         d.dict = ddict.as_ref().map(|h| h.d.copy());
         0
     }

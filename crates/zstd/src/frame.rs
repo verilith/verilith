@@ -517,9 +517,8 @@ pub fn blocks_exec(
         }
         if hashing {
             proof {
-                assert(reach as nat == window as nat);
-                crate::stream::lemma_block_step_prefix(b@, i as int, window as nat, prev);
-                assert(crate::stream::block_step(b@, i as int, window as nat, prev).unwrap().1 == cur);
+                crate::stream::lemma_block_step_prefix(b@, i as int, window as nat, reach as nat, prev);
+                assert(crate::stream::block_step(b@, i as int, window as nat, reach as nat, prev).unwrap().1 == cur);
                 assert(before == fs + prev.out.len());
             }
             let new = slice_subrange(d.out.as_slice(), before, d.out.len());

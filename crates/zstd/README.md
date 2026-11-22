@@ -5,7 +5,7 @@ A verified Zstandard (RFC 8878) decompressor in Rust, proven with
 C API. It is meant to replace libzstd's decoder in hardened builds (Node.js
 first), alongside libzstd's compressor.
 
-`cargo verus verify` (or `scripts/verify.sh`) checks 273 functions and
+`cargo verus verify` (or `scripts/verify.sh`) checks 276 functions and
 lemmas with no errors and no `assume`; the only `external_body` functions
 in this crate are the seven small copy primitives in
 `src/prims.rs` and the three CPU-feature wrappers in `src/cpu.rs`.
@@ -22,9 +22,9 @@ in this crate are the seven small copy primitives in
 | FSE table descriptions and tables (spread, low-probability symbols, state rows), predefined and repeat modes | `fse::read_ncount`, `fse::build_table`, `seq::seq_table_exec` |
 | Sequences: decoding, repeat offsets, execution with overlapping matches | `seq::seq_run_exec` against `spec::seq_run` |
 | XXH64 (the content checksum), one-shot and fed in pieces | `verilith_xxhash::Xxh64::update`/`digest` against `spec::xxh64` (both from [verilith-xxhash](../xxhash)) |
-| Streaming, input and output in pieces of any size: a frame end (0) is returned only when the input taken is a whole frame and the output handed out is its content, whatever input follows; before that, all output handed out is the start of the frame's content; the loop terminates | `stream::Stream::stream` against `spec::frame` (`frame_ok`), `Stream::lemma_emitted_prefix` |
-| Streaming keeps only the last window of output, and that gives the same output (a match reaches back at most one window) | `stream::lemma_compressed_block_shift`, `lemma_block_step_shift` |
-| Streaming memory: the output kept is at most two windows and three blocks, and a unit being collected at most one block | `stream::Stream::inv` (`mem_ok`, `need`) |
+| Streaming, input and output in pieces of any size, with or without a dictionary: a frame end (0) is returned only when the input taken is a whole frame and the output handed out is its content, whatever input follows; before that, all output handed out is the start of the frame's content; the loop terminates | `stream::Stream::stream` against `spec::frame_d` with the stream's dictionary (`frame_ok`), `Stream::lemma_emitted_prefix` |
+| Streaming keeps only the last window of output (with a dictionary, the last window plus the dictionary's size of dictionary and output), and that gives the same output (a match reaches back no further) | `stream::lemma_compressed_block_shift`, `lemma_block_step_shift` |
+| Streaming memory: the output kept is at most two windows (each with the dictionary's size added) and three blocks, and a unit being collected at most one block | `stream::Stream::inv` (`mem_ok`, `need`) |
 | Dictionaries, loaded: a formatted dictionary (magic number, ID, Huffman table, offset, match length and literals length FSE tables, three repeat offsets, content) is accepted exactly when the spec accepts it, with the spec's tables and offsets; anything shorter than 8 bytes or without the magic number is raw content | `dict::load_dict` against `spec::dict_load`, `dict::raw_dict_exec` against `spec::raw_dict` |
 | Decompression with a dictionary, one-shot: `Ok(v)` exactly when every frame is valid with the dictionary's content as the history before it and its tables and repeat offsets as the starting state, and no frame names another dictionary; the same `Err` cases as without one. The decoder keeps the dictionary's content between calls (a type invariant), so a call copies only the frames' content | `dict::DictDecoder::decompress` against `spec::decompress_d` |
 
@@ -66,8 +66,8 @@ What the proofs assume rather than prove:
   `decompress_exec` and copy the result out; streaming calls run the
   proven `stream::Stream::stream` on the caller's buffers. With a
   dictionary, one-shot calls run `dict::DictDecoder::decompress`, and
-  streaming collects each frame (by the sizes in its block headers, which
-  the proven decoder reads again) and decodes it the same way. Which
+  streaming gives the dictionary to the proven stream at a frame's start
+  (`stream::Stream::set_dict`). Which
   dictionary applies to which frame (a loaded one for every frame, a
   prefix for the next call or frame only) is the adapter's. It also maps
   rejections to libzstd's error codes and handles the parameters. It is
@@ -89,7 +89,7 @@ consumed exactly, reserved bits must be zero, and legacy (pre-v0.8)
 frames are not supported. With a dictionary, matches reach the window
 plus the dictionary's content throughout the frame (libzstd's one-shot
 rule; the RFC drops the dictionary once the output passes the window),
-and streaming collects each frame whole before decoding it.
+so streaming keeps the window plus the dictionary's size.
 
 ## Layout
 
@@ -158,7 +158,10 @@ libzstd's depends on how far its decoder got (`DEPARTURES.md`).
   every C entry point that takes a dictionary (one-shot, DDict, loaded,
   prefix, streaming in random pieces) give libzstd's output; a frame
   naming another dictionary fails with `dictionary_wrong`; 3000 damaged
-  dictionaries are loaded exactly when libzstd loads them; and of 4000
+  dictionaries are loaded exactly when libzstd loads them; 300 streams
+  (pairs of frames, 30 of them 3 MB, window logs 10 to 17, a third of them
+  corrupted) through the proven stream give libzstd's streaming output
+  and frame ends, and none is accepted that libzstd rejects; and of 4000
   corrupted frames, none is accepted that libzstd rejects (90 are
   accepted by libzstd only: 85 are departures, 81 of them Huffman literal
   streams not consumed exactly, and 5 are empty input, below).

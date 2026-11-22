@@ -119,7 +119,7 @@ fn copy_seqt(t: &SeqTabs) -> (r: SeqTabs)
     }
 }
 
-fn copy_huf_opt(t: &Option<HufTab>) -> (r: Option<HufTab>)
+pub fn copy_huf_opt(t: &Option<HufTab>) -> (r: Option<HufTab>)
     ensures
         forall|c: Option<HufCode>| huf_opt_is(*t, c) ==> huf_opt_is(r, c),
 {
@@ -129,7 +129,7 @@ fn copy_huf_opt(t: &Option<HufTab>) -> (r: Option<HufTab>)
     }
 }
 
-fn copy_seqt_opt(t: &Option<SeqTabs>) -> (r: Option<SeqTabs>)
+pub fn copy_seqt_opt(t: &Option<SeqTabs>) -> (r: Option<SeqTabs>)
     ensures
         forall|s: Option<SeqTables>| seqt_opt_is(*t, s) ==> seqt_opt_is(r, s),
 {
@@ -546,6 +546,27 @@ impl DictDecoder {
             seqt: copy_seqt_opt(&self.dict.seqt),
         };
         DictDecoder::new(dd, Ghost(self.g@))
+    }
+
+    /// A copy of the loaded dictionary, for a decoder that keeps its own
+    /// buffer (`stream::Stream::set_dict`).
+    pub fn ddict(&self) -> (r: DDict)
+        ensures
+            r.is(self@),
+    {
+        proof {
+            use_type_invariant(self);
+            reveal(DDict::is);
+        }
+        DDict {
+            id: self.dict.id,
+            content: copy_vec(&self.dict.content),
+            r1: self.dict.r1,
+            r2: self.dict.r2,
+            r3: self.dict.r3,
+            huf: copy_huf_opt(&self.dict.huf),
+            seqt: copy_seqt_opt(&self.dict.seqt),
+        }
     }
 
     /// The size of the dictionary's content.
