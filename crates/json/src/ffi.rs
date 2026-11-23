@@ -207,7 +207,7 @@ impl Builder {
 
     /// Copies a string token's decoded bytes into a new NUL-terminated buffer.
     unsafe fn string_copy(&mut self, t: &Tok) -> *mut c_char {
-        let (a, b) = (t.a as usize, t.b as usize);
+        let (a, b) = (t.start(), t.end());
         let input = core::slice::from_raw_parts(self.input, self.input_len);
         if b < a || b > input.len() {
             return ptr::null_mut();
@@ -272,7 +272,7 @@ impl Builder {
             Kind::True => (*item).type_ = cJSON_True,
             Kind::False => (*item).type_ = cJSON_False,
             Kind::Num => {
-                let d = match self.input().get(t.a as usize..t.b as usize) {
+                let d = match self.input().get(t.start()..t.end()) {
                     Some(lex) => parse_f64(lex),
                     None => {
                         self.failed = true;
