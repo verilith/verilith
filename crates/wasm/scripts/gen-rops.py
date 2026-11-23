@@ -403,9 +403,9 @@ def varm(code, f, op):
         vstep('P_' + code, f, op, 'true'); arm('P_' + code, val('P_' + code))
     if code in AGEN:
         vstep('A_' + code, f, op, 'false'); arm('A_' + code, val('A_' + code))
-# The compare-and-branch codes share one arm, which charges the fuel once
-# and then dispatches again (`s_brcmp`): one exit for running out of fuel
-# instead of one per code keeps `execute`'s proof within its limit.
+# The branch codes share one arm, which charges the fuel once and then
+# dispatches again (`s_branch`): one exit for running out of fuel instead
+# of one per code keeps `execute`'s proof within its limit.
 BR = []
 def barm(code, f, op):
     bstep(code, f, op); BR.append(code)
@@ -424,11 +424,14 @@ for o in BRCMP:
     barm(f'BrIfRI_{o}', 'r_brif_ri', instr(o))
     if f'BrIfRR_{o}' in AGEN: barm(f'A_BrIfRR_{o}', 'r_brif_rr', instr(o))
     if f'BrIfRI_{o}' in AGEN: barm(f'A_BrIfRI_{o}', 'r_brif_ri', instr(o))
-S.append(f"""#[inline(always)]
-pub fn s_brcmp<'a>({GP}    rpc: usize, stack: &Vec<u64>, fp: usize, st: &Store, r: &ROp,
+HAND_BR = ['BrIf', 'A_BrIf', 'BrIfZ', 'A_BrIfZ', 'Br', 'BrIfRRG', 'BrIfRIG']
+S.append(f"""/// Every branch code (see `execute`, which runs them all in one arm).
+#[inline(always)]
+pub fn s_branch<'a>({GP}    rpc: usize, stack: &Vec<u64>, fp: usize, st: &Store, code: &Code, r: &ROp,
     rops: &'a [ROp], cur: Cur<'a>, acc: u64) -> (res: (usize, Cur<'a>, Ghost<GS>))
     requires
         rinv(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st),
+        *code == codes[d as int],
         *r == codes[d as int].rops@[rpc as int],
         rops@ == codes[d as int].rops@, cur.seq() == rops@, cur.idx() == rpc as int,
         acc_ok(codes, d, rpc, acc, stack@, fp),
@@ -437,13 +440,25 @@ pub fn s_brcmp<'a>({GP}    rpc: usize, stack: &Vec<u64>, fp: usize, st: &Store, 
         res.1.idx() == res.0 as int, res.1.seq() == rops@,
         acc_ok(codes, d, res.0, acc, stack@, fp),
 {{
+    proof {{ lemma_rpc(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st); lemma_pre_hand(); }}
     match r.op {{
+        OpCode::BrIf | OpCode::A_BrIf => r_brif({GA}, rpc, stack, fp, st, r, false, rops, cur, acc),
+        OpCode::BrIfZ | OpCode::A_BrIfZ => r_brif({GA}, rpc, stack, fp, st, r, true, rops, cur, acc),
+        OpCode::Br => r_br({GA}, rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRRG => {{
+            let op = r_instr({GA}, Ghost(rpc), stack, fp, st, code, r);
+            r_brif_rr({GA}, rpc, op, stack, fp, st, r, rops, cur, acc)
+        }},
+        OpCode::BrIfRIG => {{
+            let op = r_instr({GA}, Ghost(rpc), stack, fp, st, code, r);
+            r_brif_ri({GA}, rpc, op, stack, fp, st, r, rops, cur, acc)
+        }},
 """ + ''.join(f"        OpCode::{c} => s_{c}({GA}, rpc, stack, fp, st, r, rops, cur, acc),\n" for c in BR) + """        _ => (rpc, cur, Ghost(g)),
     }
 }
 """)
-A('            ' + ' | '.join(f'OpCode::{c}' for c in BR) + ' => { ' + CHARGE
-  + f'let (rpc2, cur2, g2) = s_brcmp({G}, rpc, stack, fp, st, r, rops, cur, acc); rpc = rpc2; cur = cur2; proof {{ g = g2@; }} }},')
+A('            ' + ' | '.join(f'OpCode::{c}' for c in HAND_BR + BR) + ' => { ' + CHARGE
+  + f'let (rpc2, cur2, g2) = s_branch({G}, rpc, stack, fp, st, code, r, rops, cur, acc); rpc = rpc2; cur = cur2; proof {{ g = g2@; }} }},')
 open('src/rsteps.rs','w').write(SH + '\n'.join(S) + '\n} // verus!\n')
 src = open('src/run.rs').read()
 b = src.index('            // BEGIN GENERATED ARMS\n') + len('            // BEGIN GENERATED ARMS\n')

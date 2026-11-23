@@ -2060,46 +2060,6 @@ pub fn execute<H: Host>(m: &Module, codes: &Vec<Code>, Ghost(cs): Ghost<Seq<Func
                 cur = cur_next(cur);
                 proof { g = g2@; }
             },
-            OpCode::BrIf => {
-                if fl == 0 { proof { lemma_out_of_fuel(m, cs, codes@, c0, g, stack@, calls@, d, rpc, fp, st); } return (Err(Trap::Exhausted), Ghost(g.hs), Ghost(g.n), 0); } fl = fl - 1;
-                let (rpc2, cur2, g2) = r_brif(Ghost(m), Ghost(cs), Ghost(codes@), Ghost(calls@), Ghost(c0), Ghost(g),
-                    Ghost(d), rpc, stack, fp, st, r, false, rops, cur, acc);
-                rpc = rpc2;
-                cur = cur2;
-                proof { g = g2@; }
-            },
-            OpCode::A_BrIf => {
-                if fl == 0 { proof { lemma_out_of_fuel(m, cs, codes@, c0, g, stack@, calls@, d, rpc, fp, st); } return (Err(Trap::Exhausted), Ghost(g.hs), Ghost(g.n), 0); } fl = fl - 1;
-                let (rpc2, cur2, g2) = r_brif(Ghost(m), Ghost(cs), Ghost(codes@), Ghost(calls@), Ghost(c0), Ghost(g),
-                    Ghost(d), rpc, stack, fp, st, r, false, rops, cur, acc);
-                rpc = rpc2;
-                cur = cur2;
-                proof { g = g2@; }
-            },
-            OpCode::BrIfZ => {
-                if fl == 0 { proof { lemma_out_of_fuel(m, cs, codes@, c0, g, stack@, calls@, d, rpc, fp, st); } return (Err(Trap::Exhausted), Ghost(g.hs), Ghost(g.n), 0); } fl = fl - 1;
-                let (rpc2, cur2, g2) = r_brif(Ghost(m), Ghost(cs), Ghost(codes@), Ghost(calls@), Ghost(c0), Ghost(g),
-                    Ghost(d), rpc, stack, fp, st, r, true, rops, cur, acc);
-                rpc = rpc2;
-                cur = cur2;
-                proof { g = g2@; }
-            },
-            OpCode::A_BrIfZ => {
-                if fl == 0 { proof { lemma_out_of_fuel(m, cs, codes@, c0, g, stack@, calls@, d, rpc, fp, st); } return (Err(Trap::Exhausted), Ghost(g.hs), Ghost(g.n), 0); } fl = fl - 1;
-                let (rpc2, cur2, g2) = r_brif(Ghost(m), Ghost(cs), Ghost(codes@), Ghost(calls@), Ghost(c0), Ghost(g),
-                    Ghost(d), rpc, stack, fp, st, r, true, rops, cur, acc);
-                rpc = rpc2;
-                cur = cur2;
-                proof { g = g2@; }
-            },
-            OpCode::Br => {
-                if fl == 0 { proof { lemma_out_of_fuel(m, cs, codes@, c0, g, stack@, calls@, d, rpc, fp, st); } return (Err(Trap::Exhausted), Ghost(g.hs), Ghost(g.n), 0); } fl = fl - 1;
-                let (rpc2, cur2, g2) = r_br(Ghost(m), Ghost(cs), Ghost(codes@), Ghost(calls@), Ghost(c0), Ghost(g),
-                    Ghost(d), rpc, stack, fp, st, r, rops, cur, acc);
-                rpc = rpc2;
-                cur = cur2;
-                proof { g = g2@; }
-            },
             OpCode::UnG => {
                 let op = r_instr(Ghost(m), Ghost(cs), Ghost(codes@), Ghost(calls@), Ghost(c0), Ghost(g), Ghost(d),
                     Ghost(rpc), stack, fp, st, code, r);
@@ -2159,26 +2119,6 @@ pub fn execute<H: Host>(m: &Module, codes: &Vec<Code>, Ghost(cs): Ghost<Seq<Func
                     Ok(g2) => { proof { lemma_rpost_ok(m, cs, codes@, c0, g, stack@, l0, calls@, d, rpc, fp, st, g2, acc); } rpc = rpc + 1; cur = cur_next(cur); proof { g = g2@; } },
                     Err((t, n2)) => { proof { lemma_rpost_err(m, cs, codes@, c0, g, stack@, l0, calls@, d, rpc, fp, st, t, n2, acc); } return (Err(t), Ghost(g.hs), n2, fl) }
                 }
-            },
-            OpCode::BrIfRRG => {
-                if fl == 0 { proof { lemma_out_of_fuel(m, cs, codes@, c0, g, stack@, calls@, d, rpc, fp, st); } return (Err(Trap::Exhausted), Ghost(g.hs), Ghost(g.n), 0); } fl = fl - 1;
-                let op = r_instr(Ghost(m), Ghost(cs), Ghost(codes@), Ghost(calls@), Ghost(c0), Ghost(g), Ghost(d),
-                    Ghost(rpc), stack, fp, st, code, r);
-                let (rpc2, cur2, g2) = r_brif_rr(Ghost(m), Ghost(cs), Ghost(codes@), Ghost(calls@), Ghost(c0), Ghost(g),
-                    Ghost(d), rpc, op, stack, fp, st, r, rops, cur, acc);
-                rpc = rpc2;
-                cur = cur2;
-                proof { g = g2@; }
-            },
-            OpCode::BrIfRIG => {
-                if fl == 0 { proof { lemma_out_of_fuel(m, cs, codes@, c0, g, stack@, calls@, d, rpc, fp, st); } return (Err(Trap::Exhausted), Ghost(g.hs), Ghost(g.n), 0); } fl = fl - 1;
-                let op = r_instr(Ghost(m), Ghost(cs), Ghost(codes@), Ghost(calls@), Ghost(c0), Ghost(g), Ghost(d),
-                    Ghost(rpc), stack, fp, st, code, r);
-                let (rpc2, cur2, g2) = r_brif_ri(Ghost(m), Ghost(cs), Ghost(codes@), Ghost(calls@), Ghost(c0), Ghost(g),
-                    Ghost(d), rpc, op, stack, fp, st, r, rops, cur, acc);
-                rpc = rpc2;
-                cur = cur2;
-                proof { g = g2@; }
             },
             OpCode::Op => {
                 if fl == 0 { proof { lemma_out_of_fuel(m, cs, codes@, c0, g, stack@, calls@, d, rpc, fp, st); } return (Err(Trap::Exhausted), Ghost(g.hs), Ghost(g.n), 0); } fl = fl - 1;
@@ -2514,7 +2454,7 @@ pub fn execute<H: Host>(m: &Module, codes: &Vec<Code>, Ghost(cs): Ghost<Seq<Func
             OpCode::P_StoreRR_I64Store32 => { let ghost l0 = stack@.len(); match s_P_StoreRR_I64Store32(Ghost(m), Ghost(cs), Ghost(codes@), Ghost(calls@), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, &mut acc) { Ok(g2) => { proof { lemma_rpost_ok(m, cs, codes@, c0, g, stack@, l0, calls@, d, rpc, fp, st, g2, acc); } rpc = rpc + 1; cur = cur_next(cur); proof { g = g2@; } }, Err((t, n2)) => { proof { lemma_rpost_err(m, cs, codes@, c0, g, stack@, l0, calls@, d, rpc, fp, st, t, n2, acc); } return (Err(t), Ghost(g.hs), n2, fl) } } },
             OpCode::StoreRI_I64Store32 => { let ghost l0 = stack@.len(); match s_StoreRI_I64Store32(Ghost(m), Ghost(cs), Ghost(codes@), Ghost(calls@), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, &mut acc) { Ok(g2) => { proof { lemma_rpost_ok(m, cs, codes@, c0, g, stack@, l0, calls@, d, rpc, fp, st, g2, acc); } rpc = rpc + 1; cur = cur_next(cur); proof { g = g2@; } }, Err((t, n2)) => { proof { lemma_rpost_err(m, cs, codes@, c0, g, stack@, l0, calls@, d, rpc, fp, st, t, n2, acc); } return (Err(t), Ghost(g.hs), n2, fl) } } },
             OpCode::P_StoreRI_I64Store32 => { let ghost l0 = stack@.len(); match s_P_StoreRI_I64Store32(Ghost(m), Ghost(cs), Ghost(codes@), Ghost(calls@), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, &mut acc) { Ok(g2) => { proof { lemma_rpost_ok(m, cs, codes@, c0, g, stack@, l0, calls@, d, rpc, fp, st, g2, acc); } rpc = rpc + 1; cur = cur_next(cur); proof { g = g2@; } }, Err((t, n2)) => { proof { lemma_rpost_err(m, cs, codes@, c0, g, stack@, l0, calls@, d, rpc, fp, st, t, n2, acc); } return (Err(t), Ghost(g.hs), n2, fl) } } },
-            OpCode::BrIfRR_I32Eq | OpCode::BrIfRI_I32Eq | OpCode::A_BrIfRR_I32Eq | OpCode::A_BrIfRI_I32Eq | OpCode::BrIfRR_I32Ne | OpCode::BrIfRI_I32Ne | OpCode::A_BrIfRR_I32Ne | OpCode::A_BrIfRI_I32Ne | OpCode::BrIfRR_I32LtS | OpCode::BrIfRI_I32LtS | OpCode::A_BrIfRR_I32LtS | OpCode::A_BrIfRI_I32LtS | OpCode::BrIfRR_I32LtU | OpCode::BrIfRI_I32LtU | OpCode::A_BrIfRR_I32LtU | OpCode::A_BrIfRI_I32LtU | OpCode::BrIfRR_I32GtS | OpCode::BrIfRI_I32GtS | OpCode::BrIfRR_I32GtU | OpCode::BrIfRI_I32GtU | OpCode::BrIfRR_I32LeS | OpCode::BrIfRI_I32LeS | OpCode::BrIfRR_I32LeU | OpCode::BrIfRI_I32LeU | OpCode::BrIfRR_I32GeS | OpCode::BrIfRI_I32GeS | OpCode::A_BrIfRR_I32GeS | OpCode::BrIfRR_I32GeU | OpCode::BrIfRI_I32GeU | OpCode::A_BrIfRR_I32GeU | OpCode::BrIfRR_I64Eq | OpCode::BrIfRI_I64Eq | OpCode::BrIfRR_I64Ne | OpCode::BrIfRI_I64Ne | OpCode::BrIfRR_I64LtS | OpCode::BrIfRI_I64LtS | OpCode::BrIfRR_I64LtU | OpCode::BrIfRI_I64LtU | OpCode::BrIfRR_I64GtS | OpCode::BrIfRI_I64GtS | OpCode::BrIfRR_I64GtU | OpCode::BrIfRI_I64GtU | OpCode::BrIfRR_I64LeS | OpCode::BrIfRI_I64LeS | OpCode::BrIfRR_I64LeU | OpCode::BrIfRI_I64LeU | OpCode::BrIfRR_I64GeS | OpCode::BrIfRI_I64GeS | OpCode::BrIfRR_I64GeU | OpCode::BrIfRI_I64GeU => { if fl == 0 { proof { lemma_out_of_fuel(m, cs, codes@, c0, g, stack@, calls@, d, rpc, fp, st); } return (Err(Trap::Exhausted), Ghost(g.hs), Ghost(g.n), 0); } fl = fl - 1; let (rpc2, cur2, g2) = s_brcmp(Ghost(m), Ghost(cs), Ghost(codes@), Ghost(calls@), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc); rpc = rpc2; cur = cur2; proof { g = g2@; } },
+            OpCode::BrIf | OpCode::A_BrIf | OpCode::BrIfZ | OpCode::A_BrIfZ | OpCode::Br | OpCode::BrIfRRG | OpCode::BrIfRIG | OpCode::BrIfRR_I32Eq | OpCode::BrIfRI_I32Eq | OpCode::A_BrIfRR_I32Eq | OpCode::A_BrIfRI_I32Eq | OpCode::BrIfRR_I32Ne | OpCode::BrIfRI_I32Ne | OpCode::A_BrIfRR_I32Ne | OpCode::A_BrIfRI_I32Ne | OpCode::BrIfRR_I32LtS | OpCode::BrIfRI_I32LtS | OpCode::A_BrIfRR_I32LtS | OpCode::A_BrIfRI_I32LtS | OpCode::BrIfRR_I32LtU | OpCode::BrIfRI_I32LtU | OpCode::A_BrIfRR_I32LtU | OpCode::A_BrIfRI_I32LtU | OpCode::BrIfRR_I32GtS | OpCode::BrIfRI_I32GtS | OpCode::BrIfRR_I32GtU | OpCode::BrIfRI_I32GtU | OpCode::BrIfRR_I32LeS | OpCode::BrIfRI_I32LeS | OpCode::BrIfRR_I32LeU | OpCode::BrIfRI_I32LeU | OpCode::BrIfRR_I32GeS | OpCode::BrIfRI_I32GeS | OpCode::A_BrIfRR_I32GeS | OpCode::BrIfRR_I32GeU | OpCode::BrIfRI_I32GeU | OpCode::A_BrIfRR_I32GeU | OpCode::BrIfRR_I64Eq | OpCode::BrIfRI_I64Eq | OpCode::BrIfRR_I64Ne | OpCode::BrIfRI_I64Ne | OpCode::BrIfRR_I64LtS | OpCode::BrIfRI_I64LtS | OpCode::BrIfRR_I64LtU | OpCode::BrIfRI_I64LtU | OpCode::BrIfRR_I64GtS | OpCode::BrIfRI_I64GtS | OpCode::BrIfRR_I64GtU | OpCode::BrIfRI_I64GtU | OpCode::BrIfRR_I64LeS | OpCode::BrIfRI_I64LeS | OpCode::BrIfRR_I64LeU | OpCode::BrIfRI_I64LeU | OpCode::BrIfRR_I64GeS | OpCode::BrIfRI_I64GeS | OpCode::BrIfRR_I64GeU | OpCode::BrIfRI_I64GeU => { if fl == 0 { proof { lemma_out_of_fuel(m, cs, codes@, c0, g, stack@, calls@, d, rpc, fp, st); } return (Err(Trap::Exhausted), Ghost(g.hs), Ghost(g.n), 0); } fl = fl - 1; let (rpc2, cur2, g2) = s_branch(Ghost(m), Ghost(cs), Ghost(codes@), Ghost(calls@), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, code, r, rops, cur, acc); rpc = rpc2; cur = cur2; proof { g = g2@; } },
             // END GENERATED ARMS
         }
     }

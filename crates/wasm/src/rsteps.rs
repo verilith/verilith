@@ -5090,13 +5090,15 @@ pub fn s_BrIfRI_I64GeU<'a>(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCe
     r_brif_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, Instr::I64GeU, stack, fp, st, r, rops, cur, acc)
 }
 
+/// Every branch code (see `execute`, which runs them all in one arm).
 #[inline(always)]
-pub fn s_brcmp<'a>(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<Seq<Code>>,
+pub fn s_branch<'a>(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<Seq<Code>>,
     Ghost(calls): Ghost<Seq<CallFrame>>, Ghost(c0): Ghost<Config>, Ghost(g): Ghost<GS>, Ghost(d): Ghost<usize>,
-    rpc: usize, stack: &Vec<u64>, fp: usize, st: &Store, r: &ROp,
+    rpc: usize, stack: &Vec<u64>, fp: usize, st: &Store, code: &Code, r: &ROp,
     rops: &'a [ROp], cur: Cur<'a>, acc: u64) -> (res: (usize, Cur<'a>, Ghost<GS>))
     requires
         rinv(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st),
+        *code == codes[d as int],
         *r == codes[d as int].rops@[rpc as int],
         rops@ == codes[d as int].rops@, cur.seq() == rops@, cur.idx() == rpc as int,
         acc_ok(codes, d, rpc, acc, stack@, fp),
@@ -5105,7 +5107,19 @@ pub fn s_brcmp<'a>(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Gh
         res.1.idx() == res.0 as int, res.1.seq() == rops@,
         acc_ok(codes, d, res.0, acc, stack@, fp),
 {
+    proof { lemma_rpc(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st); lemma_pre_hand(); }
     match r.op {
+        OpCode::BrIf | OpCode::A_BrIf => r_brif(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, false, rops, cur, acc),
+        OpCode::BrIfZ | OpCode::A_BrIfZ => r_brif(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, true, rops, cur, acc),
+        OpCode::Br => r_br(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRRG => {
+            let op = r_instr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, code, r);
+            r_brif_rr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, op, stack, fp, st, r, rops, cur, acc)
+        },
+        OpCode::BrIfRIG => {
+            let op = r_instr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, code, r);
+            r_brif_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, op, stack, fp, st, r, rops, cur, acc)
+        },
         OpCode::BrIfRR_I32Eq => s_BrIfRR_I32Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
         OpCode::BrIfRI_I32Eq => s_BrIfRI_I32Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
         OpCode::A_BrIfRR_I32Eq => s_A_BrIfRR_I32Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
