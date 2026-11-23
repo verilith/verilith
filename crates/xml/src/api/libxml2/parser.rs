@@ -14,6 +14,7 @@ use super::*;
 use super::scan::{plain_char, plain_run};
 use crate::api::{Document, Src};
 use crate::push::{Stream, R_ERR, R_LIMIT, R_OK, R_WHOLE};
+use crate::reader::Reader;
 use crate::tape::{Kind, Tok};
 use std::borrow::Cow;
 
@@ -5178,7 +5179,7 @@ fn count_lines(s: &mut State, text: &[u8], off: usize) -> (c_int, c_int) {
 /// What the push parser keeps between chunks: the verified push parser,
 /// the document over its window, and where the walk over it is.
 struct Push {
-    stream: Box<Stream>,
+    stream: Box<Reader>,
     /// Over the stream's window (dropped before the window moves).
     doc: Option<Box<Document<'static>>>,
     /// The declarations are final, and `doc` has them.
@@ -5194,6 +5195,47 @@ struct Push {
     pend_end: usize,
     /// The diagnosis of an error is kept as long as the input points at it.
     diag: Vec<u8>,
+    /// UTF-16 input, converted to UTF-8 as it comes, as `parse_document`
+    /// converts it whole.
+    u16: Option<U16>,
+}
+
+/// UTF-16 input converted as it comes: little-endian or not, the byte
+/// order mark's bytes still to skip, the bytes not converted yet, and the
+/// text held until the XML declaration (whose encoding is rewritten, as
+/// `rewrite_decl_encoding` does) has been seen whole.
+struct U16 {
+    le: bool,
+    skip: usize,
+    pend: Vec<u8>,
+    hold: Option<Vec<u8>>,
+}
+
+impl U16 {
+    /// The text of the next chunk (`Err` if the input is not UTF-16), and,
+    /// once the declaration has been read, the encoding it declares.
+    fn convert(&mut self, mut data: &[u8], last: bool) -> Result<(Vec<u8>, Option<Option<Vec<u8>>>), ()> {
+        let k = self.skip.min(data.len());
+        self.skip -= k;
+        data = &data[k..];
+        self.pend.extend_from_slice(data);
+        let mut out = Vec::new();
+        let (i, ok) = crate::reader::utf16_prefix(&self.pend, self.le, &mut out);
+        if !ok || (last && i < self.pend.len()) {
+            return Err(());
+        }
+        self.pend.drain(..i);
+        let Some(h) = self.hold.as_mut() else { return Ok((out, None)) };
+        h.extend_from_slice(&out);
+        let decided = if h.starts_with(b"<?xml") { h.windows(2).any(|w| w == b"?>") } else { !b"<?xml".starts_with(h) };
+        if !decided && !last {
+            return Ok((Vec::new(), None));
+        }
+        let h = self.hold.take().unwrap();
+        let decl_end = if h.starts_with(b"<?xml") { h.windows(2).position(|w| w == b"?>") } else { None };
+        let declared = decl_end.and_then(|e| decl_attr(&h[..e], b"encoding"));
+        Ok((rewrite_decl_encoding(h), Some(declared)))
+    }
 }
 
 /// `Push::phase`: before startDocument, in the prolog, in the root
@@ -5252,7 +5294,7 @@ unsafe fn push_feed(c: *mut ParserCtxt, data: &[u8], terminate: bool) {
             // Not UTF-8, or a declaration read whole: nothing has been
             // reported; the document is read at the last chunk.
             drop(old);
-            s.raw = p.stream.window().to_vec();
+            s.raw = p.stream.whole_input().to_vec();
             s.push = None;
             if terminate {
                 push_whole(c);
@@ -5268,7 +5310,7 @@ unsafe fn push_feed(c: *mut ParserCtxt, data: &[u8], terminate: bool) {
         let d = p.stream.base() - base0;
         s.at.0 = s.at.0.saturating_sub(d);
         p.pend_end = p.pend_end.saturating_sub(d);
-        let st_ref: &'static Stream = &*(p.stream.as_ref() as *const Stream);
+        let st_ref: &'static Stream = &*(&**p.stream as *const Stream);
         let mut doc = match old {
             Some(doc) if p.sdtd => doc,
             _ => {
@@ -5426,7 +5468,16 @@ pub unsafe extern "C" fn xmlParseChunk(ctxt: *mut ParserCtxt, chunk: *const c_ch
             for (k, b) in s.raw.iter().chain(bytes.iter()).take(4).enumerate() {
                 head[k] = *b;
             }
-            if can_stream(ctxt) && head != [0x3C, 0, 0x3F, 0] && head != [0, 0x3C, 0, 0x3F] {
+            // UTF-16 (as xmlDetectEncoding knows it) is converted here, as
+            // `parse_document` converts it.
+            let u16 = match head {
+                [0xFF, 0xFE, _, _] => Some((true, 2)),
+                [0xFE, 0xFF, _, _] => Some((false, 2)),
+                [0x3C, 0, 0x3F, 0] => Some((true, 0)),
+                [0, 0x3C, 0, 0x3F] => Some((false, 0)),
+                _ => None,
+            };
+            if can_stream(ctxt) {
                 initialize_late(ctxt);
                 if !(*ctxt).sax.is_null() {
                     if let Some(f) = (*(*ctxt).sax).setDocumentLocator {
@@ -5434,8 +5485,9 @@ pub unsafe extern "C" fn xmlParseChunk(ctxt: *mut ParserCtxt, chunk: *const c_ch
                     }
                 }
                 st(ctxt).at = (0, 1, 1);
+                st(ctxt).declared = None;
                 s.push = Some(Box::new(Push {
-                    stream: Box::new(Stream::new()),
+                    stream: Box::new(Reader::new()),
                     doc: None,
                     sdtd: false,
                     phase: PP_START,
@@ -5447,6 +5499,7 @@ pub unsafe extern "C" fn xmlParseChunk(ctxt: *mut ParserCtxt, chunk: *const c_ch
                     pend_cdata: false,
                     pend_end: 0,
                     diag: Vec::new(),
+                    u16: u16.map(|(le, skip)| U16 { le, skip, pend: Vec::new(), hold: Some(Vec::new()) }),
                 }));
             }
         }
@@ -5460,6 +5513,28 @@ pub unsafe extern "C" fn xmlParseChunk(ctxt: *mut ParserCtxt, chunk: *const c_ch
                     fatal(ctxt, ERR_DOCUMENT_EMPTY, b"Document is empty\n", None);
                     finish_document(ctxt);
                     return (*ctxt).errNo;
+                }
+            }
+            let p = s.push.as_mut().unwrap();
+            if let Some(u) = p.u16.as_mut() {
+                match u.convert(&data, terminate != 0) {
+                    Ok((text, declared)) => {
+                        if let Some(d) = declared {
+                            st(ctxt).declared = d;
+                        }
+                        data = text;
+                    }
+                    Err(()) => {
+                        // Not UTF-16 (an odd byte at the end, a lone
+                        // surrogate): as `parse_document` reports it.
+                        p.phase = PP_DONE;
+                        (*ctxt).instate = IS_EOF;
+                        if (*ctxt).wellFormed != 0 {
+                            fatal(ctxt, ERR_INVALID_ENCODING, b"Invalid bytes in character encoding\n", None);
+                        }
+                        (*ctxt).valid = 0;
+                        return (*ctxt).errNo;
+                    }
                 }
             }
             push_feed(ctxt, &data, terminate != 0);

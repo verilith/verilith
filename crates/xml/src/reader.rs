@@ -206,11 +206,11 @@ fn dec16(b: &[u8], le: bool, out: &mut Vec<u8>, Ghost(seen): Ghost<Seq<u8>>, Gho
                 ext(seen, s) ==> utf16_dec(s, dpos, le) == cat(out@, utf16_dec(s, dpos + i, le)),
         decreases n - i,
     {
-        let q = Ghost(dpos + i);
+        let ghost q: int = dpos + i;
         if n - i < 2 {
             proof {
                 assert(seen.len() == dpos + n);
-                lemma_u16_short(seen, q@, le);
+                lemma_u16_short(seen, q, le);
             }
             return (i, true);
         }
@@ -218,15 +218,15 @@ fn dec16(b: &[u8], le: bool, out: &mut Vec<u8>, Ghost(seen): Ghost<Seq<u8>>, Gho
         let x1 = get(b, i + 1) as u32;
         let u: u32 = if le { x0 + x1 * 256 } else { x0 * 256 + x1 };
         proof {
-            assert(b@[i as int] == seen[q@]);
-            assert(b@[i + 1] == seen[q@ + 1]);
-            assert(u == unit16(seen, q@, le));
+            assert(b@[i as int] == seen[q]);
+            assert(b@[i + 1] == seen[q + 1]);
+            assert(u == unit16(seen, q, le));
         }
         if 0xD800 <= u && u <= 0xDBFF {
             if n - i < 4 {
                 proof {
                     assert(seen.len() == dpos + n);
-                    lemma_u16_short(seen, q@, le);
+                    lemma_u16_short(seen, q, le);
                 }
                 return (i, true);
             }
@@ -234,14 +234,14 @@ fn dec16(b: &[u8], le: bool, out: &mut Vec<u8>, Ghost(seen): Ghost<Seq<u8>>, Gho
             let y1 = get(b, i + 3) as u32;
             let w: u32 = if le { y0 + y1 * 256 } else { y0 * 256 + y1 };
             proof {
-                assert(b@[i + 2] == seen[q@ + 2]);
-                assert(b@[i + 3] == seen[q@ + 3]);
-                assert(w == unit16(seen, q@ + 2, le));
+                assert(b@[i + 2] == seen[q + 2]);
+                assert(b@[i + 3] == seen[q + 3]);
+                assert(w == unit16(seen, q + 2, le));
             }
             if !(0xDC00 <= w && w <= 0xDFFF) {
                 proof {
                     assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies utf16_dec(s, dpos, le) is None by {
-                        lemma_u16_bad(seen, s, q@, le);
+                        lemma_u16_bad(seen, s, q, le);
                     }
                 }
                 return (i, false);
@@ -254,7 +254,7 @@ fn dec16(b: &[u8], le: bool, out: &mut Vec<u8>, Ghost(seen): Ghost<Seq<u8>>, Gho
                     out@,
                     utf16_dec(s, dpos + i + 4, le),
                 ) by {
-                    lemma_u16_pair(seen, s, q@, le);
+                    lemma_u16_pair(seen, s, q, le);
                     lemma_cat_assoc(o0, utf8_encode(c), utf16_dec(s, dpos + i + 4, le));
                 }
             }
@@ -262,7 +262,7 @@ fn dec16(b: &[u8], le: bool, out: &mut Vec<u8>, Ghost(seen): Ghost<Seq<u8>>, Gho
         } else if 0xDC00 <= u && u <= 0xDFFF {
             proof {
                 assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies utf16_dec(s, dpos, le) is None by {
-                    lemma_u16_bad(seen, s, q@, le);
+                    lemma_u16_bad(seen, s, q, le);
                 }
             }
             return (i, false);
@@ -274,7 +274,7 @@ fn dec16(b: &[u8], le: bool, out: &mut Vec<u8>, Ghost(seen): Ghost<Seq<u8>>, Gho
                     out@,
                     utf16_dec(s, dpos + i + 2, le),
                 ) by {
-                    lemma_u16_one(seen, s, q@, le);
+                    lemma_u16_one(seen, s, q, le);
                     lemma_cat_assoc(o0, utf8_encode(u), utf16_dec(s, dpos + i + 2, le));
                 }
             }
@@ -282,6 +282,26 @@ fn dec16(b: &[u8], le: bool, out: &mut Vec<u8>, Ghost(seen): Ghost<Seq<u8>>, Gho
         }
     }
     (i, true)
+}
+
+/// UTF-16 at the start of `b`, decoded as far as `b` decides it: appended
+/// to `out` (empty), with how many bytes that took, and whether `b` can
+/// begin UTF-16 (`utf16_dec`) at all. For readers that convert UTF-16
+/// themselves (libxml2's).
+pub fn utf16_prefix(b: &[u8], le: bool, out: &mut Vec<u8>) -> (r: (usize, bool))
+    requires
+        old(out)@ == Seq::<u8>::empty(),
+    ensures
+        r.0 <= b@.len(),
+        r.1 ==> forall|s: Seq<u8>| #[trigger] ext(b@, s) ==> utf16_dec(s, 0, le) == cat(final(out)@, utf16_dec(s, r.0 as int, le)),
+        r.1 ==> b@.len() - r.0 <= 3,
+        r.1 && r.0 < b@.len() ==> utf16_dec(b@, r.0 as int, le) is None,
+        !r.1 ==> forall|s: Seq<u8>| #[trigger] ext(b@, s) ==> utf16_dec(s, 0, le) is None,
+{
+    proof {
+        assert(b@.subrange(0, b@.len() as int) =~= b@);
+    }
+    dec16(b, le, out, Ghost(b@), Ghost(0))
 }
 
 /// ISO-8859-1: every byte decodes alone.
@@ -876,3 +896,65 @@ impl Reader {
 }
 
 } // verus!
+
+// ---------------------------------------------------------------------------
+// For the readers of the stream (the C ABIs): plain Rust, which decides
+// nothing about the document.
+// ---------------------------------------------------------------------------
+
+impl Reader {
+    /// The input, kept to be read whole (after `R_WHOLE`).
+    pub fn whole_input(&self) -> &[u8] {
+        &self.head
+    }
+
+    /// The text is decoded from another encoding.
+    pub fn decoding(&self) -> bool {
+        self.kind == K_DEC
+    }
+
+    /// Where in the input the stream has read to (`Stream::progress`, in
+    /// the text): the input's bytes that decode to the text before it.
+    pub fn raw_progress(&self) -> usize {
+        match self.kind {
+            K_RAW => self.st.progress(),
+            K_DEC => {
+                let w = self.st.window();
+                let from = self.st.progress().saturating_sub(self.st.base()).min(w.len());
+                // The input bytes of the text not read yet: each character
+                // is one byte, or two or four of UTF-16.
+                let mut n = 0usize;
+                for &c in &w[from..] {
+                    if c & 0xC0 != 0x80 {
+                        n += match self.dk {
+                            D16LE | D16BE if c >= 0xF0 => 4,
+                            D16LE | D16BE => 2,
+                            _ => 1,
+                        };
+                    }
+                }
+                self.done_in.saturating_sub(n)
+            }
+            _ => 0,
+        }
+    }
+}
+
+impl Default for Reader {
+    fn default() -> Reader {
+        Reader::new()
+    }
+}
+
+impl std::ops::Deref for Reader {
+    type Target = Stream;
+    fn deref(&self) -> &Stream {
+        &self.st
+    }
+}
+
+impl std::ops::DerefMut for Reader {
+    fn deref_mut(&mut self) -> &mut Stream {
+        &mut self.st
+    }
+}

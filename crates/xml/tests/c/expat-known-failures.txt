@@ -166,7 +166,6 @@ runtests	test_skipped_parameter_entity	external-dtd
 runtests	test_subordinate_xdecl_abort	incremental
 runtests	test_subordinate_xdecl_suspend	incremental
 runtests	test_suspend_resume_parameter_entity	incremental
-runtests	test_trailing_rsqb	incremental
 runtests	test_unknown_encoding_bad_ignore	encoding
 runtests	test_user_parameters	default-handler
 runtests	test_utf16	utf16-without-bom

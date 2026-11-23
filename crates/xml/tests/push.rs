@@ -1,11 +1,13 @@
-//! The push parser (`push::Stream`) against the whole-document parse: fed
-//! any way the input can be cut into chunks, it must reach the same verdict
-//! and emit the same items, and keep only a bounded window of the input.
+//! The push parser (`reader::Reader`, over `push::Stream`) against the
+//! whole-document parse: fed any way the input can be cut into chunks, it
+//! must reach the same verdict and emit the same items, and keep only a
+//! bounded window of the input, in every encoding it reads.
 //!
 //! The documents: the ones here, and with `XMLCONF` set (`ci.sh` sets it)
 //! every file of the W3C XML Conformance Test Suite.
 use std::path::Path;
-use verilith_xml::push::{Stream, R_ERR, R_LIMIT, R_MORE, R_OK, R_WHOLE};
+use verilith_xml::push::{R_ERR, R_LIMIT, R_MORE, R_OK, R_WHOLE};
+use verilith_xml::reader::Reader;
 use verilith_xml::stream::{P_FIRST, P_LAST};
 use verilith_xml::tape::{Kind, Tape, Tok};
 
@@ -52,7 +54,7 @@ fn whole_events(text: &[u8], tape: &Tape) -> Vec<Ev> {
 /// Pushes `doc` in the chunks `cut` gives; the verdict, the events, and the
 /// largest window the stream kept.
 fn pushed(doc: &[u8], cut: &mut dyn FnMut() -> usize) -> (u8, Vec<Ev>, usize) {
-    let mut st = Stream::new();
+    let mut st = Reader::new();
     let mut out: Vec<Ev> = Vec::new();
     let mut in_cdata = false;
     let mut at = 0;
@@ -111,10 +113,12 @@ fn check(name: &str, doc: &[u8]) -> bool {
     let mut accepted = false;
     let mut tape = Tape::new();
     let whole = verilith_xml::enc::ex_parse(doc, &mut tape);
-    // The stream reads UTF-8 as it comes; it hands anything else back,
-    // before it has emitted anything.
-    let utf8 = matches!(&whole, Some((None, _))) || whole.is_none();
-    let expect = whole.as_ref().map(|_| whole_events(doc, &tape));
+    // The items are in the text: the input, or the input decoded.
+    let text: Vec<u8> = match &whole {
+        Some((Some(v), _)) => v.clone(),
+        _ => doc.to_vec(),
+    };
+    let expect = whole.as_ref().map(|_| whole_events(&text, &tape));
     let mut sizes: Vec<Box<dyn FnMut() -> usize>> = vec![
         Box::new(|| 1),
         Box::new(|| 2),
@@ -132,8 +136,11 @@ fn check(name: &str, doc: &[u8]) -> bool {
         let (r, evs, _) = pushed(doc, cut.as_mut());
         match r {
             R_WHOLE => {
+                // Only a document whose encoding is not known from its
+                // first bytes and declaration is handed back, before
+                // anything is emitted; that is not a document read here.
                 assert!(evs.is_empty(), "{name} (cut {k}): events before the input was handed back");
-                assert!(!utf8 || whole.is_none(), "{name} (cut {k}): a UTF-8 document handed back");
+                assert!(whole.is_none(), "{name} (cut {k}): a document read here handed back");
             }
             R_OK => {
                 assert!(whole.is_some(), "{name} (cut {k}): accepted, rejected whole");
@@ -173,12 +180,55 @@ const DOCS: &[&str] = &[
 #[test]
 fn chunks_agree_with_the_whole_parse() {
     let n = DOCS.iter().filter(|d| check(d, d.as_bytes())).count();
-    assert_eq!(n, 11, "documents read as they came and accepted");
+    assert_eq!(n, 12, "documents read as they came and accepted");
     // A cut inside every multi-byte character, and a byte that is not
     // UTF-8 at the end of a chunk.
-    check("bad utf-8", b"<a>\xe2\x82</a>");
-    check("latin-1 bytes", b"<a>\xe9</a>");
-    check("utf-16", b"\xff\xfe<\0a\0/\0>\0");
+    assert!(!check("bad utf-8", b"<a>\xe2\x82</a>"));
+    assert!(!check("latin-1 bytes", b"<a>\xe9</a>"));
+}
+
+/// `s` in UTF-16, after a byte order mark.
+fn utf16(s: &str, le: bool) -> Vec<u8> {
+    let mut v = if le { vec![0xFF, 0xFE] } else { vec![0xFE, 0xFF] };
+    for u in s.encode_utf16() {
+        let b = if le { u.to_le_bytes() } else { u.to_be_bytes() };
+        v.extend_from_slice(&b);
+    }
+    v
+}
+
+#[test]
+fn other_encodings_as_they_come() {
+    let doc = "<?xml version='1.0' encoding='UTF-16'?>\n<a b='\u{e9}'>t\u{10000}\u{FFFD}<![CDATA[\u{4e2d}]]>&#x41;</a>";
+    for le in [true, false] {
+        assert!(check("utf-16", &utf16(doc, le)));
+        assert!(check("utf-16, no declaration", &utf16("<a>\u{1F600}</a>", le)));
+        // Cut short: an odd byte, half of a pair.
+        let mut v = utf16("<a/>", le);
+        v.push(b' ');
+        assert!(!check("utf-16, an odd byte", &v));
+        let mut v = utf16("<a/>", le);
+        v.extend_from_slice(if le { &[0x3D, 0xD8] } else { &[0xD8, 0x3D] });
+        assert!(!check("utf-16, half a pair at the end", &v));
+        let v = utf16("<a>\u{1F600}</a>", le);
+        let mut w = v.clone();
+        // The low half of the pair turned into a letter.
+        let k = 2 + 2 * 3 + 2;
+        w[k..k + 2].copy_from_slice(if le { &[0x41, 0] } else { &[0, 0x41] });
+        assert!(!check("utf-16, a lone surrogate", &w));
+        // Declared as another encoding.
+        assert!(!check("utf-16, declared UTF-8", &utf16("<?xml version='1.0' encoding='UTF-8'?><a/>", le)));
+    }
+    let l1 = b"<?xml version='1.0' encoding='iso-8859-1'?>\n<a b='\xe9\xff'>\xe9\x80\xa0<![CDATA[\xfe]]></a>\n";
+    assert!(check("iso-8859-1", l1));
+    let asc = b"<?xml version=\"1.0\" encoding=\"US-ASCII\"?><a b='x'>text</a>";
+    assert!(check("us-ascii", asc));
+    assert!(!check("us-ascii, a byte above 0x7F", b"<?xml version='1.0' encoding='US-ASCII'?><a>\xe9</a>"));
+    assert!(!check("us-ascii, one at the end", b"<?xml version='1.0' encoding='US-ASCII'?><a/>\x80"));
+    // An encoding not read here, and a byte order mark alone.
+    assert!(!check("koi8-r", b"<?xml version='1.0' encoding='KOI8-R'?><a/>"));
+    assert!(!check("a byte order mark alone", b"\xff\xfe"));
+    assert!(!check("half a byte order mark", b"\xfe"));
 }
 
 #[test]
@@ -189,11 +239,15 @@ fn the_window_stays_small() {
         doc.extend_from_slice(format!("<item n='{i}'>text &e; <![CDATA[cd]]><!--c--></item>\n").as_bytes());
     }
     doc.extend_from_slice(b"</r>");
-    for chunk in [1, 100, 4096] {
-        let mut c = || chunk;
-        let (r, _, max) = pushed(&doc, &mut c);
-        assert_eq!(r, R_OK);
-        assert!(max < 200 + chunk, "chunks of {chunk}: a window of {max} bytes");
+    // And the same in UTF-16, decoded as it comes.
+    let doc16 = utf16(std::str::from_utf8(&doc).unwrap(), true);
+    for d in [&doc, &doc16] {
+        for chunk in [1, 100, 4096] {
+            let mut c = || chunk;
+            let (r, _, max) = pushed(d, &mut c);
+            assert_eq!(r, R_OK);
+            assert!(max < 200 + chunk, "chunks of {chunk}: a window of {max} bytes");
+        }
     }
 }
 

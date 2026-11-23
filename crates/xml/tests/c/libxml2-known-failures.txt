@@ -2,27 +2,6 @@
 # tests that fail, as scripts/test-libxml2.sh lists them (suite, a tab, the
 # test), by reason. CI fails if another test fails or a listed one passes.
 
-# The push parser reads a document in UTF-8 as it comes; one in another
-# encoding (ISO-8859-1, US-ASCII, UTF-16) it reads whole when the last chunk
-# comes, so no SAX call comes before then. These tests push a byte at a time
-# and count the calls each byte gives.
-XML push boundary tests	./test/att8
-XML push boundary tests	./test/comment3.xml
-XML push boundary tests	./test/comment4.xml
-XML push boundary tests	./test/comment5.xml
-XML push boundary tests	./test/isolat1
-XML push boundary tests	./test/isolat2
-XML push boundary tests	./test/isolat3
-XML push boundary tests	./test/nsclean.xml
-XML push boundary tests	./test/slashdot16.xml
-XML push boundary tests	./test/text-4-byte-UTF-16-BE-offset.xml
-XML push boundary tests	./test/text-4-byte-UTF-16-BE.xml
-XML push boundary tests	./test/text-4-byte-UTF-16-LE-offset.xml
-XML push boundary tests	./test/text-4-byte-UTF-16-LE.xml
-XML push boundary tests	./test/utf16bebom.xml
-XML push boundary tests	./test/utf16bom.xml
-XML push boundary tests	./test/utf16lebom.xml
-
 # Parameter entity references in the internal subset are not expanded (as
 # the verified parser does not read them), so the declarations they hold are
 # missing (ent7: an element type; xml2: a general entity).

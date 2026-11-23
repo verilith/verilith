@@ -22,6 +22,7 @@
 use super::{Attribute, Document, Element, Src};
 use crate::decode::ex_eol;
 use crate::push::{Stream, R_ERR, R_LIMIT, R_MORE, R_OK, R_WHOLE};
+use crate::reader::Reader;
 use crate::tape::{Kind, Tok};
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -304,7 +305,7 @@ pub struct Parser {
     /// The push parser, from the first chunk that is not the last: the
     /// document's text is then its window (`doc` is over it, and dropped
     /// before it), which begins at `sbase` in the input.
-    stream: Option<Box<Stream>>,
+    stream: Option<Box<Reader>>,
     sbase: usize,
     /// The stream's verdict on what it was fed (`R_MORE`, ...).
     sverdict: u8,
@@ -1707,7 +1708,7 @@ impl Parser {
                     // A stream's declarations are in its prolog.
                     let (toks, text): (&[Tok], &[u8]) = match self.stream.as_ref() {
                         Some(st) => {
-                            let st: &'static Stream = unsafe { &*(st.as_ref() as *const Stream) };
+                            let st: &'static Stream = unsafe { &*(&st.st as *const Stream) };
                             (st.prolog_toks(), st.prolog())
                         }
                         None => (doc.toks(Src::Doc), doc.text()),
@@ -2458,7 +2459,7 @@ impl Parser {
     /// The next chunk, to the push parser; then the walk over what it read.
     fn stream_chunk(&mut self, is_final: bool) -> c_int {
         if self.stream.is_none() {
-            self.stream = Some(Box::new(Stream::new()));
+            self.stream = Some(Box::new(Reader::new()));
             self.sbase = 0;
             self.sdtd = false;
             self.phase = Phase::Prolog(0);
@@ -2490,7 +2491,7 @@ impl Parser {
             // Not UTF-8, or a declaration this parser reads whole: nothing
             // has been reported; the document is read at the last chunk.
             drop(old);
-            self.input = st.window().to_vec();
+            self.input = st.whole_input().to_vec();
             self.stream = None;
             self.whole = true;
             self.phase = Phase::Prolog(0);
@@ -2514,7 +2515,7 @@ impl Parser {
             _ => {
                 // Before the declarations are final, the document is made
                 // again with what the prolog has so far.
-                let st: &'static Stream = unsafe { &*(st.as_ref() as *const Stream) };
+                let st: &'static Stream = unsafe { &*(&st.st as *const Stream) };
                 self.sdtd = st.dtd_read();
                 Box::new(Document::chunk(st.dtd(), st.prolog(), st.prolog_toks(), st.standalone()))
             }
@@ -2715,7 +2716,7 @@ impl Parser {
         // Read to: the stream's progress; all of it otherwise (it is held
         // in `input`).
         let to = match self.stream.as_ref() {
-            Some(st) => st.progress().saturating_sub(self.eb.abs0),
+            Some(st) => st.raw_progress().saturating_sub(self.eb.abs0),
             None => self.eb.end,
         };
         self.eb.ptr = to.clamp(self.eb.ptr, self.eb.end);
