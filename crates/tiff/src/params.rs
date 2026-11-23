@@ -367,6 +367,44 @@ fn colours_exec(ph: u32, spp: u32, bps: u32, m: Option<u32>, inks: u32) -> (r: b
     }
 }
 
+/// SMinSampleValue or SMaxSampleValue (`spec::sample_values_ok`).
+fn sample_values_exec(b: &[u8], le: bool, o: usize, n: usize, tag: u16, spp: u32) -> (r: bool)
+    requires
+        ifd_ok(b@, o as nat, n as nat),
+    ensures
+        r == sample_values_ok(b@, le, o as nat, n as nat, tag as nat, spp as nat),
+{
+    let l = b.len();
+    let i = match find_exec(b, le, o, n, tag) {
+        None => return true,
+        Some(i) => i,
+    };
+    let e = o + 2 + 12 * i;
+    let ty = u16_exec(b, le, e + 2);
+    let cnt = u32_exec(b, le, e + 4);
+    let ts: u64 = if ty == 1 || ty == 6 {
+        1
+    } else if ty == 3 || ty == 8 {
+        2
+    } else if ty == 4 || ty == 9 || ty == 11 {
+        4
+    } else if ty == 5 || ty == 10 || ty == 12 {
+        8
+    } else {
+        0
+    };
+    if cnt != spp || ts == 0 {
+        return false;
+    }
+    proof {
+        assert(cnt as int * ts as int <= 0xffff_ffff * 8) by (nonlinear_arith)
+            requires cnt as int <= 0xffff_ffff, ts as int <= 8;
+    }
+    let size = cnt as u64 * ts;
+    let pos: u64 = if size <= 4 { e as u64 + 8 } else { u32_exec(b, le, e + 8) as u64 };
+    pos + size <= l as u64
+}
+
 /// `spec::extras`.
 #[verifier::loop_isolation(false)]
 fn extras_exec(b: &[u8], le: bool, o: usize, n: usize, spp: u32, bps: u32, photometric: u32) -> (r: Option<u32>)
@@ -448,15 +486,8 @@ fn extras_exec(b: &[u8], le: bool, o: usize, n: usize, spp: u32, bps: u32, photo
         }
     }
     let blen = b.len();
-    if let Some(i) = find_exec(b, le, o, n, 340) {
-        if u32_exec(b, le, o + 2 + 12 * i + 4) != spp {
-            return None;
-        }
-    }
-    if let Some(i) = find_exec(b, le, o, n, 341) {
-        if u32_exec(b, le, o + 2 + 12 * i + 4) != spp {
-            return None;
-        }
+    if !sample_values_exec(b, le, o, n, 340, spp) || !sample_values_exec(b, le, o, n, 341, spp) {
+        return None;
     }
     Some(fmt)
 }

@@ -616,3 +616,32 @@ fn huge_declared_sizes() {
     let f = gray(0xFFFF_FFFF, 0xFFFF_FFFF, 1, 1, &[vec![0; 4]]);
     assert!(matches!(decode(&f, 1 << 30).err(), Some(Error::TooLarge) | Some(Error::Invalid)));
 }
+
+/// SMinSampleValue and SMaxSampleValue hold one number per sample, of any
+/// numeric type (§19); libtiff rejects a file where they hold none.
+#[test]
+fn sample_value_types() {
+    let d = bytes(16, 7);
+    let with = |tag: u16, ty: u16| {
+        strips(W::new(true))
+            .long(256, &[4])
+            .long(257, &[4])
+            .short(258, &[8])
+            .short(259, &[1])
+            .short(262, &[1])
+            .short(277, &[1])
+            .long(278, &[4])
+            .typed(tag, ty, &[200])
+            .build(273, 279, &[d.clone()])
+    };
+    for tag in [340, 341] {
+        // SHORT, LONG, SSHORT, SLONG, FLOAT.
+        for ty in [3, 4, 8, 9, 11] {
+            assert_eq!(ok(&with(tag, ty)).pixels, d, "tag {tag} type {ty}");
+        }
+        // ASCII, UNDEFINED, IFD, and types TIFF 6.0 does not define.
+        for ty in [0, 2, 7, 13, 14, 16, 999] {
+            err(&with(tag, ty));
+        }
+    }
+}

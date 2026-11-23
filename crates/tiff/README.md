@@ -134,7 +134,11 @@ boundary" asks it of writers, and ASCII strings "will often begin on an odd
 byte"); compressed data after a strip's last row, end code or the end of its
 zlib stream is not read; the Predictor is
 read only for LZW and Deflate ("Currently this field is used only with
-LZW").
+LZW"); SMinSampleValue and SMaxSampleValue, which may be of "the field type
+that best matches the sample data" (§19), must be of a numeric type (not
+ASCII, UNDEFINED or a type TIFF 6.0 does not define) with their values
+inside the file, so a file where they are not is `Invalid`, as libtiff
+rejects it.
 
 ## C API
 
