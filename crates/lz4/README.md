@@ -6,7 +6,7 @@ frame format (with its xxHash32 checksums), behind liblz4's C API. It is
 meant as a drop-in replacement for liblz4 where memory safety and
 correct output have to be certain.
 
-`cargo verus verify` (or `scripts/verify.sh`) checks 111 functions and
+`cargo verus verify` (or `scripts/verify.sh`) checks 135 functions and
 lemmas with no errors, no `assume` and no `external_body` in this crate.
 Everything assumed is listed in [TRUST.md](https://github.com/verilith/verilith/blob/main/crates/lz4/TRUST.md).
 
@@ -43,6 +43,9 @@ fn main() -> Result<(), verilith_lz4::Error> {
 | Frame decoding: `Ok` exactly when the input is one or more valid frames (and skippable frames), with the spec's content: header, header checksum, block sizes, stored and compressed blocks, linked blocks reaching into earlier ones, block checksums, content size, content checksum | `frame::decompress` against `spec::frames`, `frame::decode_frame` against `spec::frame` |
 | Frame decoding with a dictionary (`LZ4F_decompress_usingDict`): the dictionary's last 64 KiB come before every block, linked or independent, as history its matches may reach into; the content, sizes and checksums are the spec's | `frame::decode_frame_dict` against `spec::frame_dict` |
 | Frame compression round-trips, for every choice of block size, linked or independent blocks, and checksums | `fcompress::compress` against `spec::frame` |
+| Linear work, block decoding: at most `block_work(n, m) = 151n + m + 400` steps for an `n`-byte block that writes `m` bytes (or, if it fails, has `m` bytes of room) | `block::decode_block_counted` ensures (`decode_block` is the same code without the count) |
+| Linear work, frame decoding into a buffer: at most `frame_work(n, m) = 153n + 2m + 1000` steps, both checksums included | `frame::decode_frame_into_counted` ensures |
+| A block can decode to at most 255 bytes for each of its bytes, so the frame decoder makes no more room than that for one | `block::lemma_seqs_max`, used by `frame::decode_one` |
 
 The compressor uses a real match finder: liblz4's hash of four bytes (five
 on inputs of 64 KiB and more), a 16 KiB table, its skip acceleration and
@@ -57,7 +60,14 @@ what lets the compressor write sequences without testing for room. The
 frame compressor (`fcompress::compress_into`) writes straight into the
 caller's buffer and is proven to produce a frame that decodes to the input.
 
-Not yet proven: bounds on work.
+A step of the work bounds is a loop turn or a byte copied (wide copies
+count what they write past the end, and a checksum one step a byte). The
+counters are ghost state, erased at compile time.
+
+Not yet proven: bounds on the compressors' work, and on the frame
+decoder's that appends to a `Vec` (`frame::decompress`). Its room for a
+block is limited the same way, so a run of tiny frames no longer zeroes
+4 MiB each.
 
 ## Departures from liblz4
 
