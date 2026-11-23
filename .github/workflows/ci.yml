@@ -301,7 +301,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: bytecodealliance/actions/wasmtime/setup@v1
         with:
-          version: "38.0.0"
+          version: "v38.0.0"
       - name: Build and test
         run: scripts/wasm32.sh
 
