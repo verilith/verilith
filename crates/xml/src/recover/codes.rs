@@ -1,5 +1,9 @@
 //! libxml2 2.15.4's `xmlParserErrors` (xmlerror.h). Generated; do not edit.
 #![allow(dead_code)]
+use vstd::prelude::*;
+
+verus! {
+
 pub const ERR_OK: i32 = 0;
 pub const ERR_INTERNAL_ERROR: i32 = 1;
 pub const ERR_NO_MEMORY: i32 = 2;
@@ -743,3 +747,5 @@ pub const I18N_EXCESS_HANDLER: i32 = 6002;
 pub const I18N_CONV_FAILED: i32 = 6003;
 pub const I18N_NO_OUTPUT: i32 = 6004;
 pub const BUF_OVERFLOW: i32 = 7000;
+
+} // verus!

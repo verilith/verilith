@@ -4,6 +4,10 @@ use super::codes::*;
 use super::names::*;
 use super::refs::*;
 use super::*;
+use vstd::prelude::*;
+
+verus! {
+
 
 /// `xmlAttributeType` and `xmlAttributeDefault`.
 pub const ATTRIBUTE_ID: i32 = 2;
@@ -37,29 +41,75 @@ pub const OCUR_PLUS: i32 = 4;
 // Verified (`crate::lenient`).
 pub use crate::lenient::{grow_capacity, prefix_n, split_qname3};
 
+/// Whether `v` holds the byte `b`.
+pub fn has_byte(v: &[u8], b: u8) -> bool {
+    let mut k: usize = 0;
+    while k < v.len()
+        decreases v@.len() - k,
+    {
+        if v[k] == b {
+            return true;
+        }
+        k = k + 1;
+    }
+    false
+}
+
+/// Whether `v` holds the name `n`.
+pub fn has_name(v: &Vec<Vec<u8>>, n: &[u8]) -> bool {
+    let mut k: usize = 0;
+    while k < v.len()
+        decreases v@.len() - k,
+    {
+        if crate::lenient::bytes_eq(v[k].as_slice(), n) {
+            return true;
+        }
+        k = k + 1;
+    }
+    false
+}
+
+/// The validity error of a conditional section across entities.
+pub fn condsec_bound() -> &'static [u8] {
+    b"All markup of the conditional section is not in the same entity\n"
+}
+
 /// `xmlAttrNormalizeSpace`, in place.
 pub fn attr_normalize_space(v: &mut Vec<u8>) {
-    *v = crate::lenient::attr_normalize_space(v);
+    let r = crate::lenient::attr_normalize_space(v);
+    *v = r;
 }
 
 impl<S: Sink> Parser<S> {
     /// `xmlParseSystemLiteral`.
-    pub fn parse_system_literal(&mut self) -> Option<Vec<u8>> {
+    pub fn parse_system_literal(&mut self) -> Option<Vec<u8>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
-        let stop = match self.cur() {
-            b'"' => b'"',
-            b'\'' => b'\'',
-            _ => {
-                self.fatal(ERR_LITERAL_NOT_STARTED, None);
-                return None;
-            }
-        };
+        let q = self.cur();
+        if q != b'"' && q != b'\'' {
+            self.fatal(ERR_LITERAL_NOT_STARTED, None);
+            return None;
+        }
+        let stop = q;
         self.next();
         let mut buf: Vec<u8> = Vec::new();
         let mut size = PARSER_BUFFER_SIZE;
-        let (mut c, mut l) = self.current_char_recover();
-        while is_char(c) && c != stop as u32 {
-            if buf.len() + 5 >= size {
+        let c0 = self.current_char_recover();
+        let mut c = c0.0;
+        let mut l = c0.1;
+        while is_char(c) && c != stop as u32
+            invariant
+                self.advances(old(self)),
+            decreases self.fuel,
+        {
+            if !self.step() {
+                return None;
+            }
+            if buf.len().saturating_add(5) >= size {
                 match grow_capacity(size, max) {
                     None => {
                         self.fatal(ERR_NAME_TOO_LONG, Some(b"SystemLiteral"));
@@ -70,7 +120,9 @@ impl<S: Sink> Parser<S> {
             }
             push_char(&mut buf, c);
             self.nextl(l);
-            (c, l) = self.current_char_recover();
+            let r = self.current_char_recover();
+            c = r.0;
+            l = r.1;
         }
         if !is_char(c) {
             self.fatal(ERR_LITERAL_NOT_FINISHED, None);
@@ -81,22 +133,32 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParsePubidLiteral`.
-    pub fn parse_pubid_literal(&mut self) -> Option<Vec<u8>> {
+    pub fn parse_pubid_literal(&mut self) -> Option<Vec<u8>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
-        let stop = match self.cur() {
-            b'"' => b'"',
-            b'\'' => b'\'',
-            _ => {
-                self.fatal(ERR_LITERAL_NOT_STARTED, None);
-                return None;
-            }
-        };
+        let q = self.cur();
+        if q != b'"' && q != b'\'' {
+            self.fatal(ERR_LITERAL_NOT_STARTED, None);
+            return None;
+        }
+        let stop = q;
         self.next();
         let mut buf: Vec<u8> = Vec::new();
         let mut size = PARSER_BUFFER_SIZE;
         let mut c = self.cur();
-        while is_pubid_char(c) && c != stop && !self.stopped() {
-            if buf.len() + 1 >= size {
+        while is_pubid_char(c) && c != stop && !self.stopped()
+            invariant
+                self.advances(old(self)),
+            decreases self.fuel,
+        {
+            if !self.step() {
+                return None;
+            }
+            if buf.len().saturating_add(1) >= size {
                 match grow_capacity(size, max) {
                     None => {
                         self.fatal(ERR_NAME_TOO_LONG, Some(b"Public ID"));
@@ -118,7 +180,12 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseExternalID`: (system ID, public ID).
-    pub fn parse_external_id(&mut self, strict: bool) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
+    pub fn parse_external_id(&mut self, strict: bool) -> (Option<Vec<u8>>, Option<Vec<u8>>)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let mut uri = None;
         let mut public = None;
         if self.cmp(b"SYSTEM") {
@@ -160,40 +227,58 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseCommentComplex`.
-    fn parse_comment_complex(&mut self, mut buf: Vec<u8>, mut size: usize) {
+    fn parse_comment_complex(&mut self, buf: Vec<u8>, size: usize)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
+        let mut buf = buf;
+        let mut size = size;
         let max = self.max_length(MAX_TEXT_LENGTH);
-        let (mut q, mut ql) = self.current_char_recover();
+        let c0 = self.current_char_recover();
+        let mut q = c0.0;
         if q == 0 {
             self.fatal_str(ERR_COMMENT_NOT_FINISHED, b"Comment not terminated\n", None);
             return;
         }
         if !is_char(q) {
-            let m = cat(&[b"xmlParseComment: invalid xmlChar value ", &itoa(q as i64), b"\n"]);
+            let m = cat(&[b"xmlParseComment: invalid xmlChar value ", itoa(q as i64).as_slice(), b"\n"]);
             self.fatal_int(ERR_INVALID_CHAR, &m, q as i32);
             return;
         }
-        self.nextl(ql);
-        let (mut r, mut rl) = self.current_char_recover();
+        self.nextl(c0.1);
+        let c1 = self.current_char_recover();
+        let mut r = c1.0;
         if r == 0 {
             self.fatal_str(ERR_COMMENT_NOT_FINISHED, b"Comment not terminated\n", None);
             return;
         }
         if !is_char(r) {
-            let m = cat(&[b"xmlParseComment: invalid xmlChar value ", &itoa(r as i64), b"\n"]);
+            let m = cat(&[b"xmlParseComment: invalid xmlChar value ", itoa(r as i64).as_slice(), b"\n"]);
             self.fatal_int(ERR_INVALID_CHAR, &m, r as i32);
             return;
         }
-        self.nextl(rl);
-        let (mut cur, mut l) = self.current_char_recover();
+        self.nextl(c1.1);
+        let c2 = self.current_char_recover();
+        let mut cur = c2.0;
+        let mut l = c2.1;
         if cur == 0 {
             self.fatal_str(ERR_COMMENT_NOT_FINISHED, b"Comment not terminated\n", None);
             return;
         }
-        while is_char(cur) && (cur != b'>' as u32 || r != b'-' as u32 || q != b'-' as u32) {
-            if r == b'-' as u32 && q == b'-' as u32 {
+        while is_char(cur) && (cur != 0x3E || r != 0x2D || q != 0x2D)
+            invariant
+                self.advances(old(self)),
+            decreases self.fuel,
+        {
+            if !self.step() {
+                return;
+            }
+            if r == 0x2D && q == 0x2D {
                 self.fatal(ERR_HYPHEN_IN_COMMENT, None);
             }
-            if buf.len() + 5 >= size {
+            if buf.len().saturating_add(5) >= size {
                 match grow_capacity(size, max) {
                     None => {
                         self.fatal_str(ERR_COMMENT_NOT_FINISHED, b"Comment too big found", None);
@@ -204,18 +289,17 @@ impl<S: Sink> Parser<S> {
             }
             push_char(&mut buf, q);
             q = r;
-            ql = rl;
             r = cur;
-            rl = l;
             self.nextl(l);
-            (cur, l) = self.current_char_recover();
+            let c = self.current_char_recover();
+            cur = c.0;
+            l = c.1;
         }
-        let _ = (ql, rl);
         if cur == 0 {
             let m = cat(&[b"Comment not terminated \n<!--", prefix_n(&buf, 50), b"\n"]);
-            self.fatal_str(ERR_COMMENT_NOT_FINISHED, &m, Some(&buf));
+            self.fatal_str(ERR_COMMENT_NOT_FINISHED, &m, Some(buf.as_slice()));
         } else if !is_char(cur) {
-            let m = cat(&[b"xmlParseComment: invalid xmlChar value ", &itoa(cur as i64), b"\n"]);
+            let m = cat(&[b"xmlParseComment: invalid xmlChar value ", itoa(cur as i64).as_slice(), b"\n"]);
             self.fatal_int(ERR_INVALID_CHAR, &m, cur as i32);
         } else {
             self.next();
@@ -227,7 +311,12 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseComment`.
-    pub fn parse_comment(&mut self) {
+    pub fn parse_comment(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let max = self.max_length(MAX_TEXT_LENGTH);
         if self.cur() != b'<' || self.nxt(1) != b'!' {
             return;
@@ -238,84 +327,119 @@ impl<S: Sink> Parser<S> {
         }
         self.skip(2);
         self.grow();
-        let mut buf: Option<Vec<u8>> = None;
+        // `buf` is libxml2's buffer once it is allocated (`has_buf`).
+        let mut buf: Vec<u8> = Vec::new();
+        let mut has_buf = false;
         let mut size: usize = PARSER_BUFFER_SIZE;
         let mut p = self.inp().cur;
-        let b = |s: &Self, k: usize| at(&s.inp().buf, k);
-        loop {
+        loop
+            invariant
+                self.advances(old(self)),
+                p >= self.top().cur,
+            decreases self.fuel,
+        {
             if !self.step() {
                 return;
             }
-            if b(self, p) == 0x0A {
-                while b(self, p) == 0x0A {
-                    let i = self.inp_mut();
-                    i.line = i.line.saturating_add(1);
-                    i.col = 1;
-                    p += 1;
+            let ghost f1 = self.fuel;
+            {
+                let ghost b0 = self.top().buf@;
+                let _bl = self.inp().buf.len();
+                if self.bat(p) == 0x0A {
+                    while self.bat(p) == 0x0A
+                        invariant
+                            self.advances(old(self)),
+                            self.fuel == f1,
+                            self.top().buf@ == b0,
+                            _bl == b0.len(),
+                            self.top().cur <= p <= b0.len(),
+                        decreases b0.len() - p,
+                    {
+                        self.line_inc();
+                        p = p + 1;
+                    }
                 }
             }
             // get_more:
-            loop {
+            loop
+                invariant
+                    self.advances(old(self)),
+                    self.fuel <= f1,
+                    p >= self.top().cur,
+                decreases self.fuel,
+            {
+                if !self.step() {
+                    return;
+                }
+                let ghost f2 = self.fuel;
+                let ghost b0 = self.top().buf@;
+                let _bl = self.inp().buf.len();
                 let mut ccol = self.inp().col;
-                loop {
-                    let c = b(self, p);
-                    if (c > b'-' && c <= 0x7F) || (c >= 0x20 && c < b'-') || c == 0x09 {
-                        p += 1;
-                        ccol = ccol.saturating_add(1);
+                loop
+                    invariant
+                        self.advances(old(self)),
+                        self.fuel == f2,
+                        self.top().buf@ == b0,
+                        _bl == b0.len(),
+                        p >= self.top().cur,
+                    decreases b0.len() - p,
+                {
+                    let c = self.bat(p);
+                    if (c > 0x2D && c <= 0x7F) || (c >= 0x20 && c < 0x2D) || c == 0x09 {
+                        p = p + 1;
+                        ccol = sat_add_i32(ccol, 1);
                     } else {
                         break;
                     }
                 }
-                self.inp_mut().col = ccol;
-                if b(self, p) == 0x0A {
-                    while b(self, p) == 0x0A {
-                        let i = self.inp_mut();
-                        i.line = i.line.saturating_add(1);
-                        i.col = 1;
-                        p += 1;
+                let line = self.inp().line;
+                self.set_pos(line, ccol);
+                if self.bat(p) == 0x0A {
+                    while self.bat(p) == 0x0A
+                        invariant
+                            self.advances(old(self)),
+                            self.fuel == f2,
+                            self.top().buf@ == b0,
+                            _bl == b0.len(),
+                            self.top().cur <= p <= b0.len(),
+                        decreases b0.len() - p,
+                    {
+                        self.line_inc();
+                        p = p + 1;
                     }
                     continue;
                 }
                 let start = self.inp().cur;
                 let nbchar = p - start;
                 if nbchar > 0 {
-                    let len = buf.as_ref().map_or(0, |v| v.len());
-                    if nbchar > max - len {
+                    let len = buf.len();
+                    if nbchar > max.saturating_sub(len) {
                         self.fatal_str(ERR_COMMENT_NOT_FINISHED, b"Comment too big found", None);
                         return;
                     }
-                    match buf.as_mut() {
-                        None => {
-                            size = if b(self, p) == b'-' && b(self, p + 1) == b'-' { nbchar + 1 } else { PARSER_BUFFER_SIZE + nbchar };
-                            buf = Some(self.slice(start, p));
+                    if !has_buf {
+                        size = if self.bat(p) == 0x2D && crate::lenient::at_off(&self.inp().buf, p, 1) == 0x2D { nbchar.saturating_add(1) } else { PARSER_BUFFER_SIZE.saturating_add(nbchar) };
+                        buf = self.slice(start, p);
+                        has_buf = true;
+                    } else {
+                        if buf.len().saturating_add(nbchar).saturating_add(1) >= size {
+                            size = size.saturating_add(buf.len()).saturating_add(nbchar).saturating_add(PARSER_BUFFER_SIZE);
                         }
-                        Some(v) => {
-                            if v.len() + nbchar + 1 >= size {
-                                size += v.len() + nbchar + PARSER_BUFFER_SIZE;
-                            }
-                            let t = &self.inputs[self.inputs.len() - 1].buf;
-                            let to = if p < t.len() { p } else { t.len() };
-                            if start < to {
-                                v.extend_from_slice(&t[start..to]);
-                            }
-                        }
+                        let t = self.slice(start, p);
+                        buf.extend_from_slice(&t);
                     }
                 }
-                self.inp_mut().cur = p;
-                if b(self, p) == 0x0A {
-                    p += 1;
-                    let i = self.inp_mut();
-                    i.line = i.line.saturating_add(1);
-                    i.col = 1;
+                self.set_cur(p);
+                if self.bat(p) == 0x0A {
+                    p = p + 1;
+                    self.line_inc();
                 }
-                if b(self, p) == 0x0D {
-                    p += 1;
-                    if b(self, p) == 0x0A {
-                        self.inp_mut().cur = p;
-                        p += 1;
-                        let i = self.inp_mut();
-                        i.line = i.line.saturating_add(1);
-                        i.col = 1;
+                if self.bat(p) == 0x0D {
+                    p = p + 1;
+                    if self.bat(p) == 0x0A {
+                        self.set_cur(p);
+                        p = p + 1;
+                        self.line_inc();
                         continue;
                     }
                     // `in--`: p is reloaded from cur below.
@@ -323,84 +447,97 @@ impl<S: Sink> Parser<S> {
                 self.shrink();
                 self.grow();
                 p = self.inp().cur;
-                if b(self, p) == b'-' {
-                    if b(self, p + 1) == b'-' {
-                        if b(self, p + 2) == b'>' {
+                let _bl = self.inp().buf.len();
+                if self.bat(p) == 0x2D {
+                    if crate::lenient::at_off(&self.inp().buf, p, 1) == 0x2D {
+                        if crate::lenient::at_off(&self.inp().buf, p, 2) == 0x3E {
                             self.skip(3);
                             if self.sax_on() {
                                 self.sync();
-                                match buf.as_ref() {
-                                    Some(v) => {
-                                        let v = v.clone();
-                                        self.sink.comment(&v);
-                                    }
-                                    None => self.sink.comment(b""),
+                                if has_buf {
+                                    self.sink.comment(&buf);
+                                } else {
+                                    self.sink.comment(b"");
                                 }
                             }
                             return;
                         }
-                        match buf.as_ref() {
-                            Some(v) => {
-                                let v = v.clone();
-                                let m = cat(&[b"Double hyphen within comment: <!--", prefix_n(&v, 50), b"\n"]);
-                                self.fatal_str(ERR_HYPHEN_IN_COMMENT, &m, Some(&v));
-                            }
-                            None => self.fatal_str(ERR_HYPHEN_IN_COMMENT, b"Double hyphen within comment\n", None),
+                        if has_buf {
+                            let m = cat(&[b"Double hyphen within comment: <!--", prefix_n(&buf, 50), b"\n"]);
+                            self.fatal_str(ERR_HYPHEN_IN_COMMENT, &m, Some(buf.as_slice()));
+                        } else {
+                            self.fatal_str(ERR_HYPHEN_IN_COMMENT, b"Double hyphen within comment\n", None);
                         }
-                        p += 1;
-                        let i = self.inp_mut();
-                        i.col = i.col.saturating_add(1);
+                        p = p + 1;
+                        self.col_inc();
                     }
-                    p += 1;
-                    let i = self.inp_mut();
-                    i.col = i.col.saturating_add(1);
+                    p = p + 1;
+                    self.col_inc();
                     continue;
                 }
                 break;
             }
-            let c = b(self, p);
-            if !((0x20..=0x7F).contains(&c) || c == 0x09 || c == 0x0A) {
+            let c = self.bat(p);
+            if !((0x20 <= c && c <= 0x7F) || c == 0x09 || c == 0x0A) {
                 break;
             }
         }
-        let v = match buf {
-            Some(v) => v,
-            None => {
-                size = PARSER_BUFFER_SIZE;
-                Vec::new()
-            }
-        };
-        self.parse_comment_complex(v, size);
+        if !has_buf {
+            size = PARSER_BUFFER_SIZE;
+        }
+        self.parse_comment_complex(buf, size);
     }
 
     /// `xmlParsePITarget`.
-    pub fn parse_pi_target(&mut self) -> Option<Vec<u8>> {
+    pub fn parse_pi_target(&mut self) -> Option<Vec<u8>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let name = self.parse_name();
-        if let Some(n) = name.as_ref() {
-            if n.len() >= 3 && (n[0] == b'x' || n[0] == b'X') && (n[1] == b'm' || n[1] == b'M') && (n[2] == b'l' || n[2] == b'L') {
-                if n.as_slice() == b"xml" {
-                    self.fatal_msg(ERR_RESERVED_XML_NAME, b"XML declaration allowed only at the start of the document\n");
-                    return name;
-                } else if n.len() == 3 {
-                    self.fatal(ERR_RESERVED_XML_NAME, None);
-                    return name;
+        match &name {
+            None => {}
+            Some(n) => {
+                if n.len() >= 3 && (n[0] == b'x' || n[0] == b'X') && (n[1] == b'm' || n[1] == b'M') && (n[2] == b'l' || n[2] == b'L') {
+                    if crate::lenient::bytes_eq(n, b"xml") {
+                        self.fatal_msg(ERR_RESERVED_XML_NAME, b"XML declaration allowed only at the start of the document\n");
+                        return name;
+                    } else if n.len() == 3 {
+                        self.fatal(ERR_RESERVED_XML_NAME, None);
+                        return name;
+                    }
+                    if crate::lenient::bytes_eq(n, b"xml-stylesheet") || crate::lenient::bytes_eq(n, b"xml-model") {
+                        return name;
+                    }
+                    self.warning(ERR_RESERVED_XML_NAME, b"xmlParsePITarget: invalid name prefix 'xml'\n", None, None);
                 }
-                if n.as_slice() == b"xml-stylesheet" || n.as_slice() == b"xml-model" {
-                    return name;
+                let mut colon = false;
+                let mut k: usize = 0;
+                while k < n.len()
+                    decreases n@.len() - k,
+                {
+                    if n[k] == b':' {
+                        colon = true;
+                    }
+                    k = k + 1;
                 }
-                self.warning(ERR_RESERVED_XML_NAME, b"xmlParsePITarget: invalid name prefix 'xml'\n", None, None);
-            }
-            if n.contains(&b':') {
-                let n = n.clone();
-                let m = cat(&[b"colons are forbidden from PI names '", &n, b"'\n"]);
-                self.ns_err(NS_ERR_COLON, &m, Some(&n), None, None);
+                if colon {
+                    let m = cat(&[b"colons are forbidden from PI names '", n.as_slice(), b"'\n"]);
+                    self.ns_err(NS_ERR_COLON, &m, Some(n.as_slice()), None, None);
+                }
             }
         }
         name
     }
 
     /// `xmlParsePI`.
-    pub fn parse_pi(&mut self) {
+    pub fn parse_pi(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let max = self.max_length(MAX_TEXT_LENGTH);
         if self.cur() != b'<' || self.nxt(1) != b'?' {
             return;
@@ -424,16 +561,25 @@ impl<S: Sink> Parser<S> {
         let mut buf: Vec<u8> = Vec::new();
         let mut size = PARSER_BUFFER_SIZE;
         if self.skip_blanks() == 0 {
-            let m = cat(&[b"ParsePI: PI ", &target, b" space expected\n"]);
-            self.fatal_str(ERR_SPACE_REQUIRED, &m, Some(&target));
+            let m = cat(&[b"ParsePI: PI ", target.as_slice(), b" space expected\n"]);
+            self.fatal_str(ERR_SPACE_REQUIRED, &m, Some(target.as_slice()));
         }
-        let (mut c, mut l) = self.current_char_recover();
-        while is_char(c) && (c != b'?' as u32 || self.nxt(1) != b'>') {
-            if buf.len() + 5 >= size {
+        let c0 = self.current_char_recover();
+        let mut c = c0.0;
+        let mut l = c0.1;
+        while is_char(c) && (c != 0x3F || self.nxt(1) != b'>')
+            invariant
+                self.advances(old(self)),
+            decreases self.fuel,
+        {
+            if !self.step() {
+                return;
+            }
+            if buf.len().saturating_add(5) >= size {
                 match grow_capacity(size, max) {
                     None => {
-                        let m = cat(&[b"PI ", &target, b" too big found"]);
-                        self.fatal_str(ERR_PI_NOT_FINISHED, &m, Some(&target));
+                        let m = cat(&[b"PI ", target.as_slice(), b" too big found"]);
+                        self.fatal_str(ERR_PI_NOT_FINISHED, &m, Some(target.as_slice()));
                         return;
                     }
                     Some(n) => size = n,
@@ -441,22 +587,29 @@ impl<S: Sink> Parser<S> {
             }
             push_char(&mut buf, c);
             self.nextl(l);
-            (c, l) = self.current_char_recover();
+            let r = self.current_char_recover();
+            c = r.0;
+            l = r.1;
         }
-        if c != b'?' as u32 {
-            let m = cat(&[b"ParsePI: PI ", &target, b" never end ...\n"]);
-            self.fatal_str(ERR_PI_NOT_FINISHED, &m, Some(&target));
+        if c != 0x3F {
+            let m = cat(&[b"ParsePI: PI ", target.as_slice(), b" never end ...\n"]);
+            self.fatal_str(ERR_PI_NOT_FINISHED, &m, Some(target.as_slice()));
         } else {
             self.skip(2);
             if self.sax_on() {
                 self.sync();
-                self.sink.processing_instruction(&target, Some(&buf));
+                self.sink.processing_instruction(&target, Some(buf.as_slice()));
             }
         }
     }
 
     /// `xmlParseNotationDecl`.
-    pub fn parse_notation_decl(&mut self) {
+    pub fn parse_notation_decl(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         if self.cur() != b'<' || self.nxt(1) != b'!' {
             return;
         }
@@ -477,9 +630,9 @@ impl<S: Sink> Parser<S> {
             }
             Some(n) => n,
         };
-        if name.contains(&b':') {
-            let m = cat(&[b"colons are forbidden from notation names '", &name, b"'\n"]);
-            self.ns_err(NS_ERR_COLON, &m, Some(&name), None, None);
+        if has_byte(&name, b':') {
+            let m = cat(&[b"colons are forbidden from notation names '", name.as_slice(), b"'\n"]);
+            self.ns_err(NS_ERR_COLON, &m, Some(name.as_slice()), None, None);
         }
         if self.skip_blanks_pe() == 0 {
             self.fatal_msg(ERR_SPACE_REQUIRED, b"Space required after the NOTATION name'\n");
@@ -494,7 +647,7 @@ impl<S: Sink> Parser<S> {
             self.next();
             if self.sax_on() {
                 self.sync();
-                self.sink.notation_decl(&name, public.as_deref(), system.as_deref());
+                self.sink.notation_decl(&name, opt_slice(&public), opt_slice(&system));
             }
         } else {
             self.fatal(ERR_NOTATION_NOT_FINISHED, None);
@@ -502,7 +655,12 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseEntityDecl`.
-    pub fn parse_entity_decl(&mut self) {
+    pub fn parse_entity_decl(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         if self.cur() != b'<' || self.nxt(1) != b'!' {
             return;
         }
@@ -531,9 +689,9 @@ impl<S: Sink> Parser<S> {
             }
             Some(n) => n,
         };
-        if name.contains(&b':') {
-            let m = cat(&[b"colons are forbidden from entities names '", &name, b"'\n"]);
-            self.ns_err(NS_ERR_COLON, &m, Some(&name), None, None);
+        if has_byte(&name, b':') {
+            let m = cat(&[b"colons are forbidden from entities names '", name.as_slice(), b"'\n"]);
+            self.ns_err(NS_ERR_COLON, &m, Some(name.as_slice()), None, None);
         }
         if self.skip_blanks_pe() == 0 {
             self.fatal_msg(ERR_SPACE_REQUIRED, b"Space required after the entity name\n");
@@ -542,24 +700,30 @@ impl<S: Sink> Parser<S> {
             if self.cur() == b'"' || self.cur() == b'\'' {
                 let (value, o) = self.parse_entity_value();
                 orig = o;
-                if let Some(v) = value.as_ref() {
-                    if self.sax_on() {
-                        self.sync();
-                        self.sink.entity_decl(&name, INTERNAL_PARAMETER_ENTITY, None, None, Some(v));
+                match &value {
+                    Some(v) => {
+                        if self.sax_on() {
+                            self.sync();
+                            self.sink.entity_decl(&name, INTERNAL_PARAMETER_ENTITY, None, None, Some(v.as_slice()));
+                        }
                     }
+                    None => {}
                 }
             } else {
                 let (uri, literal) = self.parse_external_id(true);
                 if uri.is_none() && literal.is_none() {
                     self.fatal(ERR_VALUE_REQUIRED, None);
                 }
-                if let Some(u) = uri.as_ref() {
-                    if u.contains(&b'#') {
-                        self.fatal(ERR_URI_FRAGMENT, None);
-                    } else if self.sax_on() {
-                        self.sync();
-                        self.sink.entity_decl(&name, EXTERNAL_PARAMETER_ENTITY, literal.as_deref(), Some(u), None);
+                match &uri {
+                    Some(u) => {
+                        if has_byte(u, b'#') {
+                            self.fatal(ERR_URI_FRAGMENT, None);
+                        } else if self.sax_on() {
+                            self.sync();
+                            self.sink.entity_decl(&name, EXTERNAL_PARAMETER_ENTITY, opt_slice(&literal), Some(u.as_slice()), None);
+                        }
                     }
+                    None => {}
                 }
             }
         } else {
@@ -568,18 +732,21 @@ impl<S: Sink> Parser<S> {
                 orig = o;
                 if self.sax_on() {
                     self.sync();
-                    self.sink.entity_decl(&name, INTERNAL_GENERAL_ENTITY, None, None, value.as_deref());
+                    self.sink.entity_decl(&name, INTERNAL_GENERAL_ENTITY, None, None, opt_slice(&value));
                 }
-                self.sink.compat_entity_decl(&name, INTERNAL_GENERAL_ENTITY, None, None, value.as_deref());
+                self.sink.compat_entity_decl(&name, INTERNAL_GENERAL_ENTITY, None, None, opt_slice(&value));
             } else {
                 let (uri, literal) = self.parse_external_id(true);
                 if uri.is_none() && literal.is_none() {
                     self.fatal(ERR_VALUE_REQUIRED, None);
                 }
-                if let Some(u) = uri.as_ref() {
-                    if u.contains(&b'#') {
-                        self.fatal(ERR_URI_FRAGMENT, None);
+                match &uri {
+                    Some(u) => {
+                        if has_byte(u, b'#') {
+                            self.fatal(ERR_URI_FRAGMENT, None);
+                        }
                     }
+                    None => {}
                 }
                 if self.cur() != b'>' && self.skip_blanks_pe() == 0 {
                     self.fatal_msg(ERR_SPACE_REQUIRED, b"Space required before 'NDATA'\n");
@@ -592,36 +759,42 @@ impl<S: Sink> Parser<S> {
                     let ndata = self.parse_name();
                     if self.sax_on() && self.sink.has_unparsed_entity_decl() {
                         self.sync();
-                        self.sink.unparsed_entity_decl(&name, literal.as_deref(), uri.as_deref(), ndata.as_deref());
+                        self.sink.unparsed_entity_decl(&name, opt_slice(&literal), opt_slice(&uri), opt_slice(&ndata));
                     }
                 } else {
                     if self.sax_on() {
                         self.sync();
-                        self.sink.entity_decl(&name, EXTERNAL_GENERAL_PARSED_ENTITY, literal.as_deref(), uri.as_deref(), None);
+                        self.sink.entity_decl(&name, EXTERNAL_GENERAL_PARSED_ENTITY, opt_slice(&literal), opt_slice(&uri), None);
                     }
                     if self.replace_entities {
-                        self.sink.compat_entity_decl(&name, EXTERNAL_GENERAL_PARSED_ENTITY, literal.as_deref(), uri.as_deref(), None);
+                        self.sink.compat_entity_decl(&name, EXTERNAL_GENERAL_PARSED_ENTITY, opt_slice(&literal), opt_slice(&uri), None);
                     }
                 }
             }
         }
         self.skip_blanks_pe();
         if self.cur() != b'>' {
-            let m = cat(&[b"xmlParseEntityDecl: entity ", &name, b" not terminated\n"]);
-            self.fatal_str(ERR_ENTITY_NOT_FINISHED, &m, Some(&name));
+            let m = cat(&[b"xmlParseEntityDecl: entity ", name.as_slice(), b" not terminated\n"]);
+            self.fatal_str(ERR_ENTITY_NOT_FINISHED, &m, Some(name.as_slice()));
         } else {
             if self.sink.validate() && self.inputs.len() > old_nr {
                 self.validity_error(ERR_ENTITY_BOUNDARY, b"Entity declaration doesn't start and stop in the same entity\n", None, None);
             }
             self.next();
         }
-        if let Some(o) = orig {
-            self.sink.entity_orig(is_param, &name, &o);
+        match orig {
+            Some(o) => self.sink.entity_orig(is_param, &name, &o),
+            None => {}
         }
     }
 
     /// `xmlParseDefaultDecl`: the default kind and value.
-    pub fn parse_default_decl(&mut self) -> (i32, Option<Vec<u8>>) {
+    pub fn parse_default_decl(&mut self) -> (i32, Option<Vec<u8>>)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         if self.cmp(b"#REQUIRED") {
             self.skip(9);
             return (ATTRIBUTE_REQUIRED, None);
@@ -647,13 +820,22 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseNotationType`.
-    pub fn parse_notation_type(&mut self) -> Option<Vec<Vec<u8>>> {
+    pub fn parse_notation_type(&mut self) -> Option<Vec<Vec<u8>>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         if self.cur() != b'(' {
             self.fatal(ERR_NOTATION_NOT_STARTED, None);
             return None;
         }
         let mut ret: Vec<Vec<u8>> = Vec::new();
-        loop {
+        loop
+            invariant
+                self.evolves(old(self)),
+            decreases self.fuel,
+        {
             if !self.step() {
                 return None;
             }
@@ -667,9 +849,9 @@ impl<S: Sink> Parser<S> {
                 Some(n) => n,
             };
             let mut dup = false;
-            if self.sink.validate() && ret.contains(&name) {
-                let m = cat(&[b"standalone: attribute notation value token ", &name, b" duplicated\n"]);
-                self.validity_error(DTD_DUP_TOKEN, &m, Some(&name), None);
+            if self.sink.validate() && has_name(&ret, &name) {
+                let m = cat(&[b"standalone: attribute notation value token ", name.as_slice(), b" duplicated\n"]);
+                self.validity_error(DTD_DUP_TOKEN, &m, Some(name.as_slice()), None);
                 dup = true;
             }
             if !dup {
@@ -689,13 +871,22 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseEnumerationType`.
-    pub fn parse_enumeration_type(&mut self) -> Option<Vec<Vec<u8>>> {
+    pub fn parse_enumeration_type(&mut self) -> Option<Vec<Vec<u8>>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         if self.cur() != b'(' {
             self.fatal(ERR_ATTLIST_NOT_STARTED, None);
             return None;
         }
         let mut ret: Vec<Vec<u8>> = Vec::new();
-        loop {
+        loop
+            invariant
+                self.evolves(old(self)),
+            decreases self.fuel,
+        {
             if !self.step() {
                 return None;
             }
@@ -704,14 +895,14 @@ impl<S: Sink> Parser<S> {
             let name = match self.parse_nmtoken() {
                 None => {
                     self.fatal(ERR_NMTOKEN_REQUIRED, None);
-                    return if ret.is_empty() { None } else { Some(ret) };
+                    return if ret.len() == 0 { None } else { Some(ret) };
                 }
                 Some(n) => n,
             };
             let mut dup = false;
-            if self.sink.validate() && ret.contains(&name) {
-                let m = cat(&[b"standalone: attribute enumeration value token ", &name, b" duplicated\n"]);
-                self.validity_error(DTD_DUP_TOKEN, &m, Some(&name), None);
+            if self.sink.validate() && has_name(&ret, &name) {
+                let m = cat(&[b"standalone: attribute enumeration value token ", name.as_slice(), b" duplicated\n"]);
+                self.validity_error(DTD_DUP_TOKEN, &m, Some(name.as_slice()), None);
                 dup = true;
             }
             if !dup {
@@ -724,14 +915,19 @@ impl<S: Sink> Parser<S> {
         }
         if self.cur() != b')' {
             self.fatal(ERR_ATTLIST_NOT_FINISHED, None);
-            return if ret.is_empty() { None } else { Some(ret) };
+            return if ret.len() == 0 { None } else { Some(ret) };
         }
         self.next();
-        if ret.is_empty() { None } else { Some(ret) }
+        if ret.len() == 0 { None } else { Some(ret) }
     }
 
     /// `xmlParseEnumeratedType`.
-    pub fn parse_enumerated_type(&mut self) -> (i32, Option<Vec<Vec<u8>>>) {
+    pub fn parse_enumerated_type(&mut self) -> (i32, Option<Vec<Vec<u8>>>)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         if self.cmp(b"NOTATION") {
             self.skip(8);
             if self.skip_blanks_pe() == 0 {
@@ -739,7 +935,11 @@ impl<S: Sink> Parser<S> {
                 return (0, None);
             }
             let t = self.parse_notation_type();
-            if t.as_ref().is_none_or(|v| v.is_empty()) {
+            let empty = match &t {
+                None => true,
+                Some(v) => v.len() == 0,
+            };
+            if empty {
                 return (0, None);
             }
             return (ATTRIBUTE_NOTATION, t);
@@ -752,7 +952,12 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseAttributeType`.
-    pub fn parse_attribute_type(&mut self) -> (i32, Option<Vec<Vec<u8>>>) {
+    pub fn parse_attribute_type(&mut self) -> (i32, Option<Vec<Vec<u8>>>)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         if self.cmp(b"CDATA") {
             self.skip(5);
             (ATTRIBUTE_CDATA, None)
@@ -783,7 +988,12 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseAttributeListDecl`.
-    pub fn parse_attribute_list_decl(&mut self) {
+    pub fn parse_attribute_list_decl(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         if self.cur() != b'<' || self.nxt(1) != b'!' {
             return;
         }
@@ -805,7 +1015,11 @@ impl<S: Sink> Parser<S> {
         };
         self.skip_blanks_pe();
         self.grow();
-        while self.cur() != b'>' && !self.stopped() {
+        while self.cur() != b'>' && !self.stopped()
+            invariant
+                self.evolves(old(self)),
+            decreases self.fuel,
+        {
             if !self.step() {
                 return;
             }
@@ -831,15 +1045,20 @@ impl<S: Sink> Parser<S> {
                 self.fatal_msg(ERR_SPACE_REQUIRED, b"Space required after the attribute type\n");
                 break;
             }
-            let (def, mut default) = self.parse_default_decl();
+            let (def, default) = self.parse_default_decl();
             if def <= 0 {
                 break;
             }
-            if atype != ATTRIBUTE_CDATA {
-                if let Some(v) = default.as_mut() {
-                    attr_normalize_space(v);
+            let default = match default {
+                Some(v) => {
+                    let mut v = v;
+                    if atype != ATTRIBUTE_CDATA {
+                        attr_normalize_space(&mut v);
+                    }
+                    Some(v)
                 }
-            }
+                None => None,
+            };
             self.grow();
             if self.cur() != b'>' && self.skip_blanks_pe() == 0 {
                 self.fatal_msg(ERR_SPACE_REQUIRED, b"Space required after the attribute default value\n");
@@ -847,12 +1066,12 @@ impl<S: Sink> Parser<S> {
             }
             if self.sax_on() {
                 self.sync();
-                self.sink.attribute_decl(&elem, &attr, atype, def, default.as_deref(), tree);
+                self.sink.attribute_decl(&elem, &attr, atype, def, opt_slice(&default), tree);
             }
             if self.sax2 && def != ATTRIBUTE_IMPLIED && def != ATTRIBUTE_REQUIRED {
-                if let Some(v) = default.as_ref() {
-                    let v = v.clone();
-                    self.add_def_attrs(&elem, &attr, &v);
+                match &default {
+                    Some(v) => self.add_def_attrs(&elem, &attr, v),
+                    None => {}
                 }
             }
             if self.sax2 {
@@ -869,64 +1088,116 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlAddDefAttrs`.
-    pub fn add_def_attrs(&mut self, fullname: &[u8], fullattr: &[u8], value: &[u8]) {
+    pub fn add_def_attrs(&mut self, fullname: &[u8], fullattr: &[u8], value: &[u8])
+        requires
+            old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).inputs == old(self).inputs,
+            final(self).fuel == old(self).fuel,
+    {
         if self.special_lookup(fullname, fullattr).is_some() {
             return;
         }
         let (eprefix, ename) = match split_qname3(fullname) {
-            None => (None, fullname.to_vec()),
-            Some((p, l)) => (Some(p.to_vec()), l.to_vec()),
+            None => (None, crate::lenient::vec_of(fullname)),
+            Some((p, l)) => (Some(crate::lenient::vec_of(p)), crate::lenient::vec_of(l)),
         };
         let (aprefix, aname) = match split_qname3(fullattr) {
-            None => (None, fullattr.to_vec()),
-            Some((p, l)) => (Some(p.to_vec()), l.to_vec()),
+            None => (None, crate::lenient::vec_of(fullattr)),
+            Some((p, l)) => (Some(crate::lenient::vec_of(p)), crate::lenient::vec_of(l)),
         };
         let mut expanded = aname.len() as u64;
-        if let Some(p) = aprefix.as_ref() {
-            expanded += p.len() as u64;
+        match &aprefix {
+            Some(p) => expanded = expanded.saturating_add(p.len() as u64),
+            None => {}
         }
-        expanded += value.len() as u64;
+        expanded = expanded.saturating_add(value.len() as u64);
         let external = self.external();
-        let d = DefAttr { prefix: aprefix, name: aname, value: value.to_vec(), external, expanded_size: expanded };
-        let key = (ename, eprefix);
-        let mut k = 0;
-        while k < self.atts_default.len() {
-            if self.atts_default[k].0 == key {
+        let d = DefAttr { prefix: aprefix, name: aname, value: crate::lenient::vec_of(value), external, expanded_size: expanded };
+        let mut k: usize = 0;
+        while k < self.atts_default.len()
+            invariant
+                self.wf(),
+                self.inputs == old(self).inputs,
+                self.fuel == old(self).fuel,
+            decreases self.atts_default@.len() - k,
+        {
+            if crate::lenient::bytes_eq(self.atts_default[k].0.0.as_slice(), ename.as_slice()) && crate::lenient::opt_eq(opt_slice(&self.atts_default[k].0.1), opt_slice(&eprefix)) {
                 self.atts_default[k].1.push(d);
                 return;
             }
-            k += 1;
+            k = k + 1;
         }
-        self.atts_default.push((key, vec![d]));
+        let mut v: Vec<DefAttr> = Vec::new();
+        v.push(d);
+        self.atts_default.push(((ename, eprefix), v));
     }
 
     pub fn special_lookup(&self, elem: &[u8], attr: &[u8]) -> Option<i32> {
-        let mut k = 0;
-        while k < self.atts_special.len() {
+        let mut k: usize = 0;
+        while k < self.atts_special.len()
+            decreases self.atts_special@.len() - k,
+        {
             let e = &self.atts_special[k];
-            if e.0 .0 == elem && e.0 .1 == attr {
+            if crate::lenient::bytes_eq(e.0.0.as_slice(), elem) && crate::lenient::bytes_eq(e.0.1.as_slice(), attr) {
                 return Some(e.1);
             }
-            k += 1;
+            k = k + 1;
         }
         None
     }
 
     /// `xmlAddSpecialAttr` (`xmlHashAdd2`: the first declaration stays).
-    pub fn add_special_attr(&mut self, elem: &[u8], attr: &[u8], atype: i32) {
+    pub fn add_special_attr(&mut self, elem: &[u8], attr: &[u8], atype: i32)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).inputs == old(self).inputs,
+            final(self).fuel == old(self).fuel,
+    {
         let t = if self.external() { atype | SPECIAL_EXTERNAL } else { atype };
         if self.special_lookup(elem, attr).is_none() {
-            self.atts_special.push(((elem.to_vec(), attr.to_vec()), t));
+            self.atts_special.push(((crate::lenient::vec_of(elem), crate::lenient::vec_of(attr)), t));
         }
     }
 
     /// `xmlCleanSpecialAttr`.
-    pub fn clean_special_attr(&mut self) {
-        self.atts_special.retain(|e| e.1 != ATTRIBUTE_CDATA);
+    pub fn clean_special_attr(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).inputs == old(self).inputs,
+            final(self).fuel == old(self).fuel,
+    {
+        let mut all: Vec<((Vec<u8>, Vec<u8>), i32)> = Vec::new();
+        std::mem::swap(&mut all, &mut self.atts_special);
+        let mut k: usize = 0;
+        while k < all.len()
+            invariant
+                self.wf(),
+                self.inputs == old(self).inputs,
+                self.fuel == old(self).fuel,
+            decreases all@.len() - k,
+        {
+            if all[k].1 != ATTRIBUTE_CDATA {
+                let e = ((all[k].0.0.clone(), all[k].0.1.clone()), all[k].1);
+                self.atts_special.push(e);
+            }
+            k = k + 1;
+        }
     }
 
     /// `xmlPopPE`.
-    pub fn pop_pe(&mut self) {
+    pub fn pop_pe(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+            final(self).inputs@.len() <= old(self).inputs@.len(),
+    {
         let ent = match self.inp().entity {
             None => return,
             Some(e) => e,
@@ -934,11 +1205,17 @@ impl<S: Sink> Parser<S> {
         let info = self.sink.ent_info(ent);
         self.sink.ent_set_flags(ent, info.flags & !ENT_EXPANDING);
         if info.flags & ENT_CHECKED == 0 {
-            loop {
-                {
-                    let i = self.inp_mut();
-                    i.cur = i.buf.len();
+            loop
+                invariant
+                    self.evolves(old(self)),
+                    self.inputs@.len() == old(self).inputs@.len(),
+                decreases self.fuel,
+            {
+                if !self.step() {
+                    break;
                 }
+                let n = self.inp().buf.len();
+                self.set_cur(n);
                 self.shrink();
                 if self.grow_now() <= 0 {
                     break;
@@ -963,14 +1240,23 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlSkipBlankCharsPE` (`SKIP_BLANKS_PE`).
-    pub fn skip_blanks_pe(&mut self) -> usize {
+    pub fn skip_blanks_pe(&mut self) -> usize
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         let mut res: usize = 0;
         let mut in_param = self.in_pe();
         let mut expand = self.external();
         if !in_param && !expand {
             return self.skip_blanks();
         }
-        while !self.stopped() {
+        while !self.stopped()
+            invariant
+                self.evolves(old(self)),
+            decreases self.fuel,
+        {
             if !self.step() {
                 break;
             }
@@ -1003,13 +1289,22 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlSkipBlankCharsPEBalanced`.
-    fn skip_blanks_pe_balanced(&mut self, open_nr: usize) {
+    fn skip_blanks_pe_balanced(&mut self, open_nr: usize)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         self.skip_blanks();
         self.grow();
         if !self.external() && !self.in_pe() {
             return;
         }
-        while !self.stopped() {
+        while !self.stopped()
+            invariant
+                self.evolves(old(self)),
+            decreases self.fuel,
+        {
             if !self.step() {
                 break;
             }
@@ -1032,14 +1327,28 @@ impl<S: Sink> Parser<S> {
         }
     }
 
-    fn content_boundary(&mut self, open_nr: usize) {
+    fn content_boundary(&mut self, open_nr: usize)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         if self.sink.validate() && self.inputs.len() > open_nr {
             self.validity_error(ERR_ENTITY_BOUNDARY, b"Element content declaration doesn't start and stop in the same entity\n", None, None);
         }
     }
 
     /// `xmlParseElementMixedContentDecl`.
-    pub fn parse_mixed_content_decl(&mut self, m: &mut ContentModel, open_nr: usize) -> Option<usize> {
+    pub fn parse_mixed_content_decl(&mut self, m: &mut ContentModel, open_nr: usize) -> (r: Option<usize>)
+        requires
+            old(self).wf(),
+            old(m).ok(),
+        ensures
+            final(self).evolves(old(self)),
+            final(m).ok(),
+            final(m).nodes@.len() >= old(m).nodes@.len(),
+            r matches Some(k) ==> k < final(m).nodes@.len(),
+    {
         self.grow();
         if !self.cmp(b"#PCDATA") {
             self.fatal(ERR_PCDATA_REQUIRED, None);
@@ -1052,7 +1361,7 @@ impl<S: Sink> Parser<S> {
             self.next();
             let r = m.add(CONTENT_PCDATA, None);
             if self.cur() == b'*' {
-                m.nodes[r].ocur = OCUR_MULT;
+                m.set_ocur(r, OCUR_MULT);
                 self.next();
             }
             return Some(r);
@@ -1065,28 +1374,42 @@ impl<S: Sink> Parser<S> {
             cur = Some(r);
         }
         let mut elem: Option<Vec<u8>> = None;
-        while self.cur() == b'|' && !self.stopped() {
+        while self.cur() == b'|' && !self.stopped()
+            invariant
+                self.evolves(old(self)),
+                m.ok(),
+                m.nodes@.len() >= old(m).nodes@.len(),
+                ret matches Some(k) ==> k < m.nodes@.len(),
+                cur matches Some(k) ==> k < m.nodes@.len(),
+            decreases self.fuel,
+        {
             if !self.step() {
                 return None;
             }
             self.next();
             let n = m.add(CONTENT_OR, None);
-            match elem.take() {
+            let mut taken: Option<Vec<u8>> = None;
+            std::mem::swap(&mut taken, &mut elem);
+            match taken {
                 None => {
-                    m.nodes[n].c1 = cur;
-                    if let Some(c) = cur {
-                        m.nodes[c].parent = Some(n);
+                    m.set_c1(n, cur);
+                    match cur {
+                        Some(c) => m.set_parent(c, Some(n)),
+                        None => {}
                     }
                     ret = Some(n);
                     cur = Some(n);
                 }
                 Some(e) => {
-                    let c = cur.unwrap_or(n);
-                    m.nodes[c].c2 = Some(n);
-                    m.nodes[n].parent = Some(c);
+                    let c = match cur {
+                        Some(c) => c,
+                        None => n,
+                    };
+                    m.set_c2(c, Some(n));
+                    m.set_parent(n, Some(c));
                     let leaf = m.add(CONTENT_ELEMENT, Some(e));
-                    m.nodes[n].c1 = Some(leaf);
-                    m.nodes[leaf].parent = Some(n);
+                    m.set_c1(n, Some(leaf));
+                    m.set_parent(leaf, Some(n));
                     cur = Some(n);
                 }
             }
@@ -1099,15 +1422,20 @@ impl<S: Sink> Parser<S> {
             self.skip_blanks_pe_balanced(open_nr);
         }
         if self.cur() == b')' && self.nxt(1) == b'*' {
-            if let Some(e) = elem {
-                if let Some(c) = cur {
-                    let leaf = m.add(CONTENT_ELEMENT, Some(e));
-                    m.nodes[c].c2 = Some(leaf);
-                    m.nodes[leaf].parent = Some(c);
-                }
+            match elem {
+                Some(e) => match cur {
+                    Some(c) => {
+                        let leaf = m.add(CONTENT_ELEMENT, Some(e));
+                        m.set_c2(c, Some(leaf));
+                        m.set_parent(leaf, Some(c));
+                    }
+                    None => {}
+                },
+                None => {}
             }
-            if let Some(r) = ret {
-                m.nodes[r].ocur = OCUR_MULT;
+            match ret {
+                Some(r) => m.set_ocur(r, OCUR_MULT),
+                None => {}
             }
             self.content_boundary(open_nr);
             self.skip(2);
@@ -1118,24 +1446,47 @@ impl<S: Sink> Parser<S> {
         ret
     }
 
-    fn content_ocur(&mut self, m: &mut ContentModel, n: usize) {
-        let o = match self.cur() {
-            b'?' => OCUR_OPT,
-            b'*' => OCUR_MULT,
-            b'+' => OCUR_PLUS,
-            _ => OCUR_ONCE,
+    fn content_ocur(&mut self, m: &mut ContentModel, n: usize)
+        requires
+            old(self).wf(),
+            old(m).ok(),
+            n < old(m).nodes@.len(),
+        ensures
+            final(self).evolves(old(self)),
+            final(m).ok(),
+            final(m).nodes@.len() == old(m).nodes@.len(),
+    {
+        let c = self.cur();
+        let o = if c == b'?' {
+            OCUR_OPT
+        } else if c == b'*' {
+            OCUR_MULT
+        } else if c == b'+' {
+            OCUR_PLUS
+        } else {
+            OCUR_ONCE
         };
-        m.nodes[n].ocur = o;
+        m.set_ocur(n, o);
         if o != OCUR_ONCE {
             self.next();
         }
     }
 
     /// `xmlParseElementChildrenContentDeclPriv`.
-    pub fn parse_children_content_decl(&mut self, m: &mut ContentModel, open_nr: usize, depth: i32) -> Option<usize> {
+    pub fn parse_children_content_decl(&mut self, m: &mut ContentModel, open_nr: usize, depth: i32) -> (r: Option<usize>)
+        requires
+            old(self).wf(),
+            old(m).ok(),
+        ensures
+            final(self).evolves(old(self)),
+            final(m).ok(),
+            final(m).nodes@.len() >= old(m).nodes@.len(),
+            r matches Some(k) ==> k < final(m).nodes@.len(),
+        decreases 2049 - depth,
+    {
         let max_depth = if self.options & PARSE_HUGE != 0 { 2048 } else { 256 };
         if depth > max_depth {
-            let msg = cat(&[b"xmlParseElementChildrenContentDecl : depth ", &itoa(depth as i64), b" too deep, use XML_PARSE_HUGE\n"]);
+            let msg = cat(&[b"xmlParseElementChildrenContentDecl : depth ", itoa(depth as i64).as_slice(), b" too deep, use XML_PARSE_HUGE\n"]);
             self.fatal_int(ERR_RESOURCE_LIMIT, &msg, depth);
             return None;
         }
@@ -1147,7 +1498,10 @@ impl<S: Sink> Parser<S> {
         if self.cur() == b'(' {
             let nr = self.inputs.len();
             self.next();
-            ret = self.parse_children_content_decl(m, nr, depth + 1)?;
+            ret = match self.parse_children_content_decl(m, nr, depth + 1) {
+                None => return None,
+                Some(r) => r,
+            };
             cur = ret;
         } else {
             let elem = match self.parse_name() {
@@ -1163,7 +1517,18 @@ impl<S: Sink> Parser<S> {
             self.content_ocur(m, cur);
             self.grow();
         }
-        while !self.stopped() {
+        while !self.stopped()
+            invariant
+                self.evolves(old(self)),
+                m.ok(),
+                m.nodes@.len() >= old(m).nodes@.len(),
+                ret < m.nodes@.len(),
+                cur < m.nodes@.len(),
+                last matches Some(k) ==> k < m.nodes@.len(),
+                depth <= max_depth,
+                max_depth <= 2048,
+            decreases self.fuel,
+        {
             if !self.step() {
                 return None;
             }
@@ -1176,7 +1541,9 @@ impl<S: Sink> Parser<S> {
                 if typ == 0 {
                     typ = c;
                 } else if typ != c {
-                    let msg = cat(&[b"xmlParseElementChildrenContentDecl : '", &[typ], b"' expected\n"]);
+                    let mut tv: Vec<u8> = Vec::new();
+                    tv.push(typ);
+                    let msg = cat(&[b"xmlParseElementChildrenContentDecl : '", tv.as_slice(), b"' expected\n"]);
                     self.fatal_int(ERR_SEPARATOR_REQUIRED, &msg, typ as i32);
                     return None;
                 }
@@ -1184,16 +1551,16 @@ impl<S: Sink> Parser<S> {
                 let op = m.add(if c == b',' { CONTENT_SEQ } else { CONTENT_OR }, None);
                 match last {
                     None => {
-                        m.nodes[op].c1 = Some(ret);
-                        m.nodes[ret].parent = Some(op);
+                        m.set_c1(op, Some(ret));
+                        m.set_parent(ret, Some(op));
                         ret = op;
                         cur = op;
                     }
                     Some(l) => {
-                        m.nodes[cur].c2 = Some(op);
-                        m.nodes[op].parent = Some(cur);
-                        m.nodes[op].c1 = Some(l);
-                        m.nodes[l].parent = Some(op);
+                        m.set_c2(cur, Some(op));
+                        m.set_parent(op, Some(cur));
+                        m.set_c1(op, Some(l));
+                        m.set_parent(l, Some(op));
                         cur = op;
                     }
                 }
@@ -1205,7 +1572,10 @@ impl<S: Sink> Parser<S> {
             if self.cur() == b'(' {
                 let nr = self.inputs.len();
                 self.next();
-                last = Some(self.parse_children_content_decl(m, nr, depth + 1)?);
+                last = match self.parse_children_content_decl(m, nr, depth + 1) {
+                    None => return None,
+                    Some(l) => Some(l),
+                };
             } else {
                 let elem = match self.parse_name() {
                     None => {
@@ -1219,57 +1589,110 @@ impl<S: Sink> Parser<S> {
                 last = Some(l);
             }
         }
-        if let Some(l) = last {
-            m.nodes[cur].c2 = Some(l);
-            m.nodes[l].parent = Some(cur);
+        match last {
+            Some(l) => {
+                m.set_c2(cur, Some(l));
+                m.set_parent(l, Some(cur));
+            }
+            None => {}
         }
         self.content_boundary(open_nr);
         self.next();
-        match self.cur() {
-            b'?' => {
-                let o = m.nodes[ret].ocur;
-                m.nodes[ret].ocur = if o == OCUR_PLUS || o == OCUR_MULT { OCUR_MULT } else { OCUR_OPT };
-                self.next();
-            }
-            b'*' => {
-                m.nodes[ret].ocur = OCUR_MULT;
-                let mut c = Some(ret);
-                while let Some(ci) = c {
-                    if m.nodes[ci].ctype != CONTENT_OR {
-                        break;
-                    }
-                    m.once_if_opt(m.nodes[ci].c1, false);
-                    m.once_if_opt(m.nodes[ci].c2, false);
-                    c = m.nodes[ci].c2;
+        let c = self.cur();
+        if c == b'?' {
+            let o = m.nodes[ret].ocur;
+            m.set_ocur(ret, if o == OCUR_PLUS || o == OCUR_MULT { OCUR_MULT } else { OCUR_OPT });
+            self.next();
+        } else if c == b'*' {
+            m.set_ocur(ret, OCUR_MULT);
+            let mut c = Some(ret);
+            // The c2 chain of a model is shorter than the model.
+            let mut left = m.nodes.len();
+            while left > 0
+                invariant
+                    m.ok(),
+                    m.nodes@.len() >= old(m).nodes@.len(),
+                    ret < m.nodes@.len(),
+                    c matches Some(k) ==> k < m.nodes@.len(),
+                decreases left,
+            {
+                left = left - 1;
+                let ci = match c {
+                    None => break,
+                    Some(ci) => ci,
+                };
+                if m.nodes[ci].ctype != CONTENT_OR {
+                    break;
                 }
-                self.next();
-            }
-            b'+' => {
-                let o = m.nodes[ret].ocur;
-                m.nodes[ret].ocur = if o == OCUR_OPT || o == OCUR_MULT { OCUR_MULT } else { OCUR_PLUS };
-                // libxml2 walks from `cur` here, not from `ret`.
-                let mut found = false;
-                let mut c = Some(cur);
-                while let Some(ci) = c {
-                    if m.nodes[ci].ctype != CONTENT_OR {
-                        break;
-                    }
-                    found |= m.once_if_opt(m.nodes[ci].c1, true);
-                    found |= m.once_if_opt(m.nodes[ci].c2, true);
-                    c = m.nodes[ci].c2;
+                let c1 = m.nodes[ci].c1;
+                let c2 = m.nodes[ci].c2;
+                proof {
+                    assert(node_ok(m.nodes@[ci as int], m.nodes@.len()));
                 }
-                if found {
-                    m.nodes[ret].ocur = OCUR_MULT;
+                m.once_if_opt(c1, false);
+                m.once_if_opt(c2, false);
+                proof {
+                    assert(node_ok(m.nodes@[ci as int], m.nodes@.len()));
                 }
-                self.next();
+                c = m.nodes[ci].c2;
             }
-            _ => {}
+            self.next();
+        } else if c == b'+' {
+            let o = m.nodes[ret].ocur;
+            m.set_ocur(ret, if o == OCUR_OPT || o == OCUR_MULT { OCUR_MULT } else { OCUR_PLUS });
+            // libxml2 walks from `cur` here, not from `ret`.
+            let mut found = false;
+            let mut c = Some(cur);
+            let mut left = m.nodes.len();
+            while left > 0
+                invariant
+                    m.ok(),
+                    m.nodes@.len() >= old(m).nodes@.len(),
+                    ret < m.nodes@.len(),
+                    c matches Some(k) ==> k < m.nodes@.len(),
+                decreases left,
+            {
+                left = left - 1;
+                let ci = match c {
+                    None => break,
+                    Some(ci) => ci,
+                };
+                if m.nodes[ci].ctype != CONTENT_OR {
+                    break;
+                }
+                let c1 = m.nodes[ci].c1;
+                let c2 = m.nodes[ci].c2;
+                proof {
+                    assert(node_ok(m.nodes@[ci as int], m.nodes@.len()));
+                }
+                if m.once_if_opt(c1, true) {
+                    found = true;
+                }
+                if m.once_if_opt(c2, true) {
+                    found = true;
+                }
+                proof {
+                    assert(node_ok(m.nodes@[ci as int], m.nodes@.len()));
+                }
+                c = m.nodes[ci].c2;
+            }
+            if found {
+                m.set_ocur(ret, OCUR_MULT);
+            }
+            self.next();
         }
         Some(ret)
     }
 
     /// `xmlParseElementContentDecl`.
-    pub fn parse_element_content_decl(&mut self, name: &[u8], m: &mut ContentModel) -> i32 {
+    pub fn parse_element_content_decl(&mut self, name: &[u8], m: &mut ContentModel) -> i32
+        requires
+            old(self).wf(),
+            old(m).ok(),
+        ensures
+            final(self).evolves(old(self)),
+            final(m).ok(),
+    {
         let open_nr = self.inputs.len();
         if self.cur() != b'(' {
             let msg = cat(&[b"xmlParseElementContentDecl : ", name, b" '(' expected\n"]);
@@ -1294,7 +1717,12 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseElementDecl`.
-    pub fn parse_element_decl(&mut self) -> i32 {
+    pub fn parse_element_decl(&mut self) -> i32
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         if self.cur() != b'<' || self.nxt(1) != b'!' {
             return -1;
         }
@@ -1318,7 +1746,7 @@ impl<S: Sink> Parser<S> {
         if self.skip_blanks_pe() == 0 {
             self.fatal_msg(ERR_SPACE_REQUIRED, b"Space required after the element name\n");
         }
-        let mut model = ContentModel::default();
+        let mut model = ContentModel { nodes: Vec::new(), root: None };
         let ret;
         if self.cmp(b"EMPTY") {
             self.skip(5);
@@ -1352,16 +1780,25 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseConditionalSections`.
-    pub fn parse_conditional_sections(&mut self) {
+    pub fn parse_conditional_sections(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         let mut depth: usize = 0;
         let mut fresh_pe = false;
         let old_nr = self.inputs.len();
         let mut decl_nr = self.inputs.len();
-        let bound = b"All markup of the conditional section is not in the same entity\n";
-        while !self.stopped() {
+        while !self.stopped()
+            invariant
+                self.evolves(old(self)),
+            decreases self.fuel,
+        {
             if !self.step() {
                 return;
             }
+            let ghost f1 = self.fuel;
             if self.at_end() {
                 if self.inputs.len() <= old_nr {
                     self.fatal(ERR_EXT_SUBSET_NOT_FINISHED, None);
@@ -1381,10 +1818,10 @@ impl<S: Sink> Parser<S> {
                         return;
                     }
                     if self.sink.validate() && self.inputs.len() > decl_nr {
-                        self.validity_error(ERR_ENTITY_BOUNDARY, bound, None, None);
+                        self.validity_error(ERR_ENTITY_BOUNDARY, condsec_bound(), None, None);
                     }
                     self.next();
-                    depth += 1;
+                    depth = depth.saturating_add(1);
                 } else if self.cmp(b"IGNORE") {
                     let mut ignore_depth: usize = 0;
                     self.skip(6);
@@ -1394,29 +1831,37 @@ impl<S: Sink> Parser<S> {
                         return;
                     }
                     if self.sink.validate() && self.inputs.len() > decl_nr {
-                        self.validity_error(ERR_ENTITY_BOUNDARY, bound, None, None);
+                        self.validity_error(ERR_ENTITY_BOUNDARY, condsec_bound(), None, None);
                     }
                     self.next();
-                    while !self.stopped() {
+                    while !self.stopped()
+                        invariant
+                            self.evolves(old(self)),
+                            self.fuel <= f1,
+                        decreases self.fuel,
+                    {
+                        if !self.step() {
+                            return;
+                        }
                         if self.cur() == 0 {
                             self.fatal(ERR_CONDSEC_NOT_FINISHED, None);
                             return;
                         }
                         if self.cur() == b'<' && self.nxt(1) == b'!' && self.nxt(2) == b'[' {
                             self.skip(3);
-                            ignore_depth += 1;
+                            ignore_depth = ignore_depth.saturating_add(1);
                         } else if self.cur() == b']' && self.nxt(1) == b']' && self.nxt(2) == b'>' {
                             self.skip(3);
                             if ignore_depth == 0 {
                                 break;
                             }
-                            ignore_depth -= 1;
+                            ignore_depth = ignore_depth - 1;
                         } else {
                             self.next();
                         }
                     }
                     if self.sink.validate() && self.inputs.len() > decl_nr {
-                        self.validity_error(ERR_ENTITY_BOUNDARY, bound, None, None);
+                        self.validity_error(ERR_ENTITY_BOUNDARY, condsec_bound(), None, None);
                     }
                 } else {
                     self.fatal(ERR_CONDSEC_INVALID_KEYWORD, None);
@@ -1427,9 +1872,9 @@ impl<S: Sink> Parser<S> {
                     self.fatal_msg(ERR_CONDSEC_INVALID, b"Parameter entity must match extSubsetDecl\n");
                     return;
                 }
-                depth -= 1;
+                depth = depth - 1;
                 if self.sink.validate() && self.inputs.len() > decl_nr {
-                    self.validity_error(ERR_ENTITY_BOUNDARY, bound, None, None);
+                    self.validity_error(ERR_ENTITY_BOUNDARY, condsec_bound(), None, None);
                 }
                 self.skip(3);
             } else if self.cur() == b'<' && (self.nxt(1) == b'!' || self.nxt(1) == b'?') {
@@ -1455,30 +1900,36 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseMarkupDecl`.
-    pub fn parse_markup_decl(&mut self) {
+    pub fn parse_markup_decl(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         self.grow();
         if self.cur() != b'<' {
             return;
         }
         if self.nxt(1) == b'!' {
-            match self.nxt(2) {
-                b'E' => {
-                    if self.nxt(3) == b'L' {
-                        self.parse_element_decl();
-                    } else if self.nxt(3) == b'N' {
-                        self.parse_entity_decl();
-                    } else {
-                        self.skip(2);
-                    }
-                }
-                b'A' => self.parse_attribute_list_decl(),
-                b'N' => self.parse_notation_decl(),
-                b'-' => self.parse_comment(),
-                _ => {
-                    let code = if self.sink.in_subset() == 2 { ERR_EXT_SUBSET_NOT_FINISHED } else { ERR_INT_SUBSET_NOT_FINISHED };
-                    self.fatal(code, None);
+            let c = self.nxt(2);
+            if c == b'E' {
+                if self.nxt(3) == b'L' {
+                    self.parse_element_decl();
+                } else if self.nxt(3) == b'N' {
+                    self.parse_entity_decl();
+                } else {
                     self.skip(2);
                 }
+            } else if c == b'A' {
+                self.parse_attribute_list_decl();
+            } else if c == b'N' {
+                self.parse_notation_decl();
+            } else if c == b'-' {
+                self.parse_comment();
+            } else {
+                let code = if self.sink.in_subset() == 2 { ERR_EXT_SUBSET_NOT_FINISHED } else { ERR_INT_SUBSET_NOT_FINISHED };
+                self.fatal(code, None);
+                self.skip(2);
             }
         } else if self.nxt(1) == b'?' {
             self.parse_pi();
@@ -1486,7 +1937,13 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseTextDecl`.
-    pub fn parse_text_decl(&mut self) {
+    pub fn parse_text_decl(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+            final(self).inputs@.len() == old(self).inputs@.len(),
+    {
         if self.cmp(b"<?xml") && blank(self.nxt(5)) {
             self.skip(5);
         } else {
@@ -1497,7 +1954,7 @@ impl<S: Sink> Parser<S> {
             self.fatal_msg(ERR_SPACE_REQUIRED, b"Space needed after '<?xml'\n");
         }
         let version = match self.parse_version_info() {
-            None => b"1.0".to_vec(),
+            None => crate::lenient::vec_of(b"1.0"),
             Some(v) => {
                 if self.skip_blanks() == 0 {
                     self.fatal_msg(ERR_SPACE_REQUIRED, b"Space needed here\n");
@@ -1505,7 +1962,10 @@ impl<S: Sink> Parser<S> {
                 v
             }
         };
-        self.inp_mut().version = Some(version);
+        {
+            let i = self.inp_mut();
+            i.version = Some(version);
+        }
         self.parse_encoding_decl();
         self.skip_blanks();
         if self.cur() == b'?' && self.nxt(1) == b'>' {
@@ -1515,7 +1975,16 @@ impl<S: Sink> Parser<S> {
             self.next();
         } else {
             self.fatal(ERR_XMLDECL_NOT_FINISHED, None);
-            while !self.stopped() {
+            let ghost n0 = self.inputs@.len();
+            while !self.stopped()
+                invariant
+                    self.evolves(old(self)),
+                    self.inputs@.len() == n0,
+                decreases self.fuel,
+            {
+                if !self.step() {
+                    break;
+                }
                 let c = self.cur();
                 if c == 0 {
                     break;
@@ -1529,7 +1998,12 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseDocTypeDecl`.
-    pub fn parse_doctype_decl(&mut self) {
+    pub fn parse_doctype_decl(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         self.skip(9);
         if self.skip_blanks() == 0 {
             self.fatal_msg(ERR_SPACE_REQUIRED, b"Space required after 'DOCTYPE'\n");
@@ -1546,11 +2020,11 @@ impl<S: Sink> Parser<S> {
         }
         self.ext_sub_uri = uri.clone();
         self.ext_sub_system = public.clone();
-        self.sink.set_int_subset(name.as_deref(), public.as_deref(), uri.as_deref());
+        self.sink.set_int_subset(opt_slice(&name), opt_slice(&public), opt_slice(&uri));
         self.skip_blanks();
         if self.sax_on() {
             self.sync();
-            self.sink.internal_subset(name.as_deref(), public.as_deref(), uri.as_deref());
+            self.sink.internal_subset(opt_slice(&name), opt_slice(&public), opt_slice(&uri));
         }
         if self.cur() != b'[' && self.cur() != b'>' {
             self.fatal(ERR_DOCTYPE_NOT_FINISHED, None);
@@ -1558,12 +2032,21 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseInternalSubset`.
-    pub fn parse_internal_subset(&mut self) {
+    pub fn parse_internal_subset(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         if self.cur() == b'[' {
             let old_nr = self.inputs.len();
             self.next();
             self.skip_blanks();
-            loop {
+            loop
+                invariant
+                    self.evolves(old(self)),
+                decreases self.fuel,
+            {
                 if !self.step() {
                     return;
                 }
@@ -1587,9 +2070,7 @@ impl<S: Sink> Parser<S> {
                     self.parse_pe_ref_internal(true);
                 } else {
                     self.fatal(ERR_INT_SUBSET_NOT_FINISHED, None);
-                    while self.inputs.len() > old_nr {
-                        self.pop_pe();
-                    }
+                    self.pop_pes_to(old_nr);
                     return;
                 }
                 self.skip_blanks();
@@ -1603,31 +2084,193 @@ impl<S: Sink> Parser<S> {
         }
         self.next();
     }
+
+    /// Pops parameter entities until `nr` inputs are left.
+    pub fn pop_pes_to(&mut self, nr: usize)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
+        while self.inputs.len() > nr
+            invariant
+                self.evolves(old(self)),
+            decreases self.inputs@.len(),
+        {
+            let n = self.inputs.len();
+            self.pop_pe();
+            // Every input above the subset's is an entity's, so each
+            // pop takes one.
+            if self.inputs.len() >= n {
+                break;
+            }
+        }
+    }
+}
+
+/// A content node's links are to one of `len` nodes.
+pub open spec fn node_ok(n: ContentNode, len: nat) -> bool {
+    &&& n.c1 matches Some(k) ==> k < len
+    &&& n.c2 matches Some(k) ==> k < len
+    &&& n.parent matches Some(k) ==> k < len
 }
 
 impl ContentModel {
-    pub fn add(&mut self, ctype: i32, name: Option<Vec<u8>>) -> usize {
+    /// Every link of the model is to one of its nodes.
+    pub open spec fn ok(&self) -> bool {
+        &&& self.root matches Some(r) ==> r < self.nodes@.len()
+        &&& forall|i: int| 0 <= i < self.nodes@.len() ==> #[trigger] node_ok(self.nodes@[i], self.nodes@.len())
+    }
+
+    pub open spec fn link_ok(&self, o: Option<usize>) -> bool {
+        o matches Some(k) ==> k < self.nodes@.len()
+    }
+
+    pub fn add(&mut self, ctype: i32, name: Option<Vec<u8>>) -> (r: usize)
+        requires
+            old(self).ok(),
+        ensures
+            final(self).ok(),
+            final(self).nodes@.len() == old(self).nodes@.len() + 1,
+            r == old(self).nodes@.len(),
+    {
         // xmlNewDocElementContent splits a QName: prefix and local name.
         let (prefix, local) = match name {
             None => (None, None),
             Some(n) => match split_qname3(&n) {
-                Some((p, l)) => (Some(p.to_vec()), Some(l.to_vec())),
+                Some((p, l)) => (Some(crate::lenient::vec_of(p)), Some(crate::lenient::vec_of(l))),
                 None => (None, Some(n)),
             },
         };
+        let ghost old_nodes = self.nodes@;
         self.nodes.push(ContentNode { ctype, ocur: OCUR_ONCE, name: local, prefix, c1: None, c2: None, parent: None });
+        proof {
+            assert forall|i: int| 0 <= i < self.nodes@.len() implies #[trigger] node_ok(self.nodes@[i], self.nodes@.len()) by {
+                if i < old_nodes.len() {
+                    assert(self.nodes@[i] == old_nodes[i]);
+                    assert(node_ok(old_nodes[i], old_nodes.len()));
+                }
+            }
+        }
         self.nodes.len() - 1
     }
 
-    /// Makes an optional or repeated particle once; whether it was.
-    fn once_if_opt(&mut self, n: Option<usize>, _plus: bool) -> bool {
-        if let Some(i) = n {
-            let o = self.nodes[i].ocur;
-            if o == OCUR_OPT || o == OCUR_MULT {
-                self.nodes[i].ocur = OCUR_ONCE;
-                return true;
+    /// Sets a node's occurrence.
+    pub fn set_ocur(&mut self, n: usize, o: i32)
+        requires
+            old(self).ok(),
+            n < old(self).nodes@.len(),
+        ensures
+            final(self).ok(),
+            final(self).nodes@.len() == old(self).nodes@.len(),
+    {
+        let ghost old_nodes = self.nodes@;
+        self.nodes[n].ocur = o;
+        proof {
+            assert forall|i: int| 0 <= i < self.nodes@.len() implies #[trigger] node_ok(self.nodes@[i], self.nodes@.len()) by {
+                if i != n {
+                    assert(self.nodes@[i] == old_nodes[i]);
+                    assert(node_ok(old_nodes[i], old_nodes.len()));
+                } else {
+                    assert(node_ok(old_nodes[i], old_nodes.len()));
+                }
             }
+        }
+    }
+
+    /// Sets a node's first child.
+    pub fn set_c1(&mut self, n: usize, c: Option<usize>)
+        requires
+            old(self).ok(),
+            n < old(self).nodes@.len(),
+            old(self).link_ok(c),
+        ensures
+            final(self).ok(),
+            final(self).nodes@.len() == old(self).nodes@.len(),
+    {
+        let ghost old_nodes = self.nodes@;
+        self.nodes[n].c1 = c;
+        proof {
+            assert forall|i: int| 0 <= i < self.nodes@.len() implies #[trigger] node_ok(self.nodes@[i], self.nodes@.len()) by {
+                if i != n {
+                    assert(self.nodes@[i] == old_nodes[i]);
+                    assert(node_ok(old_nodes[i], old_nodes.len()));
+                } else {
+                    assert(node_ok(old_nodes[i], old_nodes.len()));
+                }
+            }
+        }
+    }
+
+    /// Sets a node's second child.
+    pub fn set_c2(&mut self, n: usize, c: Option<usize>)
+        requires
+            old(self).ok(),
+            n < old(self).nodes@.len(),
+            old(self).link_ok(c),
+        ensures
+            final(self).ok(),
+            final(self).nodes@.len() == old(self).nodes@.len(),
+    {
+        let ghost old_nodes = self.nodes@;
+        self.nodes[n].c2 = c;
+        proof {
+            assert forall|i: int| 0 <= i < self.nodes@.len() implies #[trigger] node_ok(self.nodes@[i], self.nodes@.len()) by {
+                if i != n {
+                    assert(self.nodes@[i] == old_nodes[i]);
+                    assert(node_ok(old_nodes[i], old_nodes.len()));
+                } else {
+                    assert(node_ok(old_nodes[i], old_nodes.len()));
+                }
+            }
+        }
+    }
+
+    /// Sets a node's parent.
+    pub fn set_parent(&mut self, n: usize, c: Option<usize>)
+        requires
+            old(self).ok(),
+            n < old(self).nodes@.len(),
+            old(self).link_ok(c),
+        ensures
+            final(self).ok(),
+            final(self).nodes@.len() == old(self).nodes@.len(),
+    {
+        let ghost old_nodes = self.nodes@;
+        self.nodes[n].parent = c;
+        proof {
+            assert forall|i: int| 0 <= i < self.nodes@.len() implies #[trigger] node_ok(self.nodes@[i], self.nodes@.len()) by {
+                if i != n {
+                    assert(self.nodes@[i] == old_nodes[i]);
+                    assert(node_ok(old_nodes[i], old_nodes.len()));
+                } else {
+                    assert(node_ok(old_nodes[i], old_nodes.len()));
+                }
+            }
+        }
+    }
+
+    /// Makes an optional or repeated particle once; whether it was.
+    fn once_if_opt(&mut self, n: Option<usize>, _plus: bool) -> bool
+        requires
+            old(self).ok(),
+            old(self).link_ok(n),
+        ensures
+            final(self).ok(),
+            final(self).nodes@.len() == old(self).nodes@.len(),
+    {
+        match n {
+            Some(i) => {
+                let o = self.nodes[i].ocur;
+                if o == OCUR_OPT || o == OCUR_MULT {
+                    self.set_ocur(i, OCUR_ONCE);
+                    return true;
+                }
+            }
+            None => {}
         }
         false
     }
 }
+
+} // verus!

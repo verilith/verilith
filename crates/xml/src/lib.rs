@@ -38,6 +38,10 @@ pub mod ent;
 pub mod lanes;
 #[doc(hidden)]
 pub mod lenient;
+/// The recovering parser (libxml2's parser.c), run only on documents the
+/// verified parser rejected.
+#[doc(hidden)]
+pub mod recover;
 #[doc(hidden)]
 pub mod lex;
 #[doc(hidden)]
@@ -51,8 +55,6 @@ pub mod uniq;
 // Not compiled when verifying: ordinary Rust over the verified modules.
 #[cfg(not(verus_keep_ghost))]
 mod api;
-#[cfg(not(verus_keep_ghost))]
-pub mod recover;
 #[cfg(not(verus_keep_ghost))]
 pub use api::{parse, Attribute, Attrs, Child, Children, Document, Element, Error, ErrorKind};
 

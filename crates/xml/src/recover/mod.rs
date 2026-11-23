@@ -30,9 +30,15 @@ mod dtd;
 pub mod refs;
 mod content;
 mod doc;
+pub mod codes;
+use codes::*;
 pub use doc::parse;
 
 pub use enc::{lookup_encoding, Enc};
+use vstd::prelude::*;
+
+verus! {
+
 
 // --- constants (parser.h, parserInternals.h, parser.c) -------------------------
 
@@ -102,8 +108,6 @@ pub const FROM_NAMESPACE: i32 = 3;
 pub const FROM_DTD: i32 = 4;
 pub const FROM_IO: i32 = 8;
 
-pub mod codes;
-use codes::*;
 
 // --- what the parser reports to -------------------------------------------------
 
@@ -172,7 +176,7 @@ pub struct NsAttr<'a> {
 }
 
 /// An element content model (`xmlElementContent`), as an arena.
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct ContentModel {
     pub nodes: Vec<ContentNode>,
     pub root: Option<usize>,
@@ -180,7 +184,7 @@ pub struct ContentModel {
 
 /// `xmlElementContentType`: PCDATA 1, ELEMENT 2, SEQ 3, OR 4;
 /// `xmlElementContentOccur`: ONCE 1, OPT 2, MULT 3, PLUS 4.
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct ContentNode {
     pub ctype: i32,
     pub ocur: i32,
@@ -366,7 +370,12 @@ pub struct Input {
 }
 
 impl Input {
-    pub fn from_bytes(b: Vec<u8>) -> Input {
+    pub fn from_bytes(b: Vec<u8>) -> (r: Input)
+        ensures
+            r.buf@ == b@,
+            r.cur == 0,
+            r.src is None,
+    {
         Input { buf: b, base: 0, cur: 0, line: 1, col: 1, flags: 0, consumed: 0, entity: None, etype: 0, src: None, version: None, filename: None }
     }
 }
@@ -377,29 +386,189 @@ pub use crate::lenient::{at, blank, push_char, string_char, utf8_char};
 pub use crate::lenient::is_xml_char as is_char;
 pub use crate::lenient::eq_ci;
 
+/// `xmlNextChar`'s check of the sequence `c c1 c2 c3` (lead byte `c` at
+/// least 0x80, `avail` bytes there): its length, 0 when it is not UTF-8.
+pub fn next_len(c: u8, c1: u8, c2: u8, c3: u8, avail: usize) -> (r: usize)
+    ensures
+        r <= 4,
+{
+    if avail < 2 || (c1 & 0xC0) != 0x80 {
+        return 0;
+    }
+    if c < 0xE0 {
+        if c < 0xC2 {
+            return 0;
+        }
+        return 2;
+    }
+    let val: u32 = ((c as u32) << 8) | c1 as u32;
+    if avail < 3 || (c2 & 0xC0) != 0x80 {
+        return 0;
+    }
+    if c < 0xF0 {
+        if val < 0xE0A0 || (0xEDA0 <= val && val < 0xEE00) {
+            return 0;
+        }
+        return 3;
+    }
+    if avail < 4 || (c3 & 0xC0) != 0x80 {
+        return 0;
+    }
+    if !(0xF090 <= val && val < 0xF490) {
+        return 0;
+    }
+    4
+}
+
+/// `xmlCurrentChar`'s decoding of the sequence `c b1 b2 b3` (lead byte
+/// at least 0x80) with `avail` bytes there: the character and its length;
+/// `Err(false)` when it is cut off, `Err(true)` when it is not UTF-8.
+pub fn cur_char_dec(c: u32, b1: u32, b2: u32, b3: u32, avail: usize) -> (r: Result<(u32, usize), bool>)
+    ensures
+        r matches Ok((_, l)) ==> 2 <= l <= 4,
+{
+    if avail < 2 {
+        return Err(false);
+    }
+    if b1 & 0xC0 != 0x80 {
+        return Err(true);
+    }
+    if c < 0xE0 {
+        if c < 0xC2 {
+            return Err(true);
+        }
+        return Ok((((c & 0x1F) << 6) | (b1 & 0x3F), 2));
+    }
+    if avail < 3 {
+        return Err(false);
+    }
+    if b2 & 0xC0 != 0x80 {
+        return Err(true);
+    }
+    if c < 0xF0 {
+        let v = ((c & 0xF) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F);
+        if v < 0x800 || (0xD800 <= v && v < 0xE000) {
+            return Err(true);
+        }
+        return Ok((v, 3));
+    }
+    if avail < 4 {
+        return Err(false);
+    }
+    if b3 & 0xC0 != 0x80 {
+        return Err(true);
+    }
+    let v = ((c & 0x0F) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F);
+    if !(0x10000 <= v && v < 0x110000) {
+        return Err(true);
+    }
+    Ok((v, 4))
+}
+
+/// `a + b`, saturated (the line and column counters).
+#[inline]
+pub fn sat_add_i32(a: i32, b: i32) -> (r: i32)
+    ensures
+        r as int == if a + b > i32::MAX { i32::MAX as int } else if a + b < i32::MIN { i32::MIN as int } else { a + b },
+{
+    let s = a as i64 + b as i64;
+    if s > i32::MAX as i64 {
+        i32::MAX
+    } else if s < i32::MIN as i64 {
+        i32::MIN
+    } else {
+        s as i32
+    }
+}
+
+/// `o.as_deref()`.
+pub fn opt_slice(o: &Option<Vec<u8>>) -> (r: Option<&[u8]>)
+    ensures
+        match o {
+            Some(v) => r matches Some(x) && x@ == v@,
+            None => r is None,
+        },
+{
+    match o {
+        Some(v) => Some(v.as_slice()),
+        None => None,
+    }
+}
+
 /// Decimal digits of `v`.
-pub fn itoa(v: i64) -> Vec<u8> {
-    let mut out = Vec::new();
+pub fn itoa(v: i64) -> (r: Vec<u8>)
+    ensures
+        r@.len() >= 1,
+{
+    let mut digits: Vec<u8> = Vec::new();
     let neg = v < 0;
-    let mut u: u64 = if neg { (v as i128).unsigned_abs() as u64 } else { v as u64 };
+    let mut u: u64 = if neg {
+        if v == i64::MIN { 0x8000_0000_0000_0000u64 } else { (-v) as u64 }
+    } else {
+        v as u64
+    };
     if u == 0 {
-        out.push(b'0');
+        digits.push(0x30);
     }
-    while u > 0 {
-        out.push(b'0' + (u % 10) as u8);
-        u /= 10;
+    while u > 0
+        invariant
+            digits@.len() >= 1 || u > 0,
+        decreases u,
+    {
+        digits.push(0x30 + (u % 10) as u8);
+        u = u / 10;
     }
+    let mut out: Vec<u8> = Vec::new();
     if neg {
-        out.push(b'-');
+        out.push(0x2D);
     }
-    out.reverse();
+    let mut k = digits.len();
+    while k > 0
+        invariant
+            k <= digits@.len(),
+            digits@.len() >= 1,
+            out@.len() + k == digits@.len() + (if neg { 1int } else { 0int }),
+        decreases k,
+    {
+        k = k - 1;
+        out.push(digits[k]);
+    }
     out
 }
 
-pub fn cat(parts: &[&[u8]]) -> Vec<u8> {
-    let mut v = Vec::new();
-    for p in parts {
-        v.extend_from_slice(p);
+/// The parts, one after the other.
+pub open spec fn concat(parts: Seq<&[u8]>) -> Seq<u8>
+    decreases parts.len(),
+{
+    if parts.len() == 0 {
+        Seq::empty()
+    } else {
+        concat(parts.drop_last()) + parts.last()@
+    }
+}
+
+pub fn cat(parts: &[&[u8]]) -> (r: Vec<u8>)
+    ensures
+        r@ == concat(parts@),
+{
+    let mut v: Vec<u8> = Vec::new();
+    let mut k: usize = 0;
+    while k < parts.len()
+        invariant
+            k <= parts@.len(),
+            v@ == concat(parts@.subrange(0, k as int)),
+        decreases parts@.len() - k,
+    {
+        let ghost before = v@;
+        v.extend_from_slice(parts[k]);
+        proof {
+            let s = parts@.subrange(0, k + 1);
+            assert(s.drop_last() =~= parts@.subrange(0, k as int));
+        }
+        k = k + 1;
+    }
+    proof {
+        assert(parts@.subrange(0, parts@.len() as int) =~= parts@);
     }
     v
 }
@@ -408,7 +577,6 @@ pub fn cat(parts: &[&[u8]]) -> Vec<u8> {
 // --- the parser ------------------------------------------------------------------------
 
 /// A default attribute (`xmlDefAttr`).
-#[derive(Clone)]
 pub struct DefAttr {
     pub prefix: Option<Vec<u8>>,
     pub name: Vec<u8>,
@@ -455,7 +623,6 @@ pub struct Parser<S: Sink> {
 }
 
 /// `ctxt->nameTab[i]` and `ctxt->pushTab[i]`.
-#[derive(Clone)]
 pub struct NameEntry {
     pub name: Vec<u8>,
     pub prefix: Option<Vec<u8>>,
@@ -465,13 +632,110 @@ pub struct NameEntry {
 }
 
 impl<S: Sink> Parser<S> {
-    pub fn new(sink: S, doc: Input) -> Parser<S> {
+    /// What every method keeps: there is a current input.
+    pub open spec fn wf(&self) -> bool {
+        self.inputs@.len() >= 1
+    }
+
+    /// What every method that changes the parser ensures: it still holds
+    /// together, and it has not gained fuel (which bounds all its loops
+    /// and recursion).
+    pub open spec fn evolves(&self, old: &Self) -> bool {
+        self.wf() && self.fuel <= old.fuel
+    }
+
+    /// The parser's own state is as it was: all but the sink, the inputs
+    /// and the fuel.
+    pub open spec fn keeps(&self, old: &Self) -> bool {
+        self.options == old.options
+            && self.replace_entities == old.replace_entities
+            && self.keep_blanks == old.keep_blanks
+            && self.sax2 == old.sax2
+            && self.html == old.html
+            && self.max_ampl == old.max_ampl
+            && self.input_id == old.input_id
+            && self.names == old.names
+            && self.spaces == old.spaces
+            && self.space_nr == old.space_nr
+            && self.maxatts == old.maxatts
+            && self.nsdb == old.nsdb
+            && self.atts_default == old.atts_default
+            && self.atts_special == old.atts_special
+            && self.int_sub_name == old.int_sub_name
+            && self.ext_sub_system == old.ext_sub_system
+            && self.ext_sub_uri == old.ext_sub_uri
+            && self.version == old.version
+            && self.encoding == old.encoding
+            && self.depth == old.depth
+            && self.instate_eof == old.instate_eof
+    }
+
+    /// Only the sink and the inputs changed (reading).
+    pub open spec fn reads(&self, old: &Self) -> bool {
+        self.keeps(old) && self.fuel == old.fuel
+    }
+
+    /// Reading that keeps the input stack's shape: the same inputs, and
+    /// only the current one moved.
+    pub open spec fn moves(&self, old: &Self) -> bool {
+        self.reads(old) && self.inputs@.len() == old.inputs@.len() && self.inputs@.len() >= 1
+            && self.inputs@.drop_last() == old.inputs@.drop_last()
+    }
+
+    /// Reading on in the current input, using fuel.
+    pub open spec fn advances(&self, old: &Self) -> bool {
+        self.keeps(old) && self.fuel <= old.fuel && self.inputs@.len() == old.inputs@.len() && self.inputs@.len() >= 1
+            && self.inputs@.drop_last() == old.inputs@.drop_last()
+    }
+
+    /// Only the sink changed (a report, a SAX call).
+    pub open spec fn only_sink(&self, old: &Self) -> bool {
+        self.inputs == old.inputs
+            && self.options == old.options
+            && self.replace_entities == old.replace_entities
+            && self.keep_blanks == old.keep_blanks
+            && self.sax2 == old.sax2
+            && self.html == old.html
+            && self.max_ampl == old.max_ampl
+            && self.input_id == old.input_id
+            && self.names == old.names
+            && self.spaces == old.spaces
+            && self.space_nr == old.space_nr
+            && self.maxatts == old.maxatts
+            && self.nsdb == old.nsdb
+            && self.atts_default == old.atts_default
+            && self.atts_special == old.atts_special
+            && self.int_sub_name == old.int_sub_name
+            && self.ext_sub_system == old.ext_sub_system
+            && self.ext_sub_uri == old.ext_sub_uri
+            && self.version == old.version
+            && self.encoding == old.encoding
+            && self.depth == old.depth
+            && self.instate_eof == old.instate_eof
+            && self.fuel == old.fuel
+    }
+
+    /// The current input.
+    pub open spec fn top(&self) -> Input {
+        self.inputs@.last()
+    }
+
+    pub fn new(sink: S, doc: Input) -> (r: Parser<S>)
+        ensures
+            r.wf(),
+    {
         let options = sink.options();
         let replace_entities = sink.replace_entities();
         let keep_blanks = sink.keep_blanks();
         let sax2 = sink.sax2();
         let html = sink.html();
         let max_ampl = sink.max_ampl();
+        let total = (doc.buf.len() as u64).saturating_add(match &doc.src {
+            Some(s) => s.raw.len() as u64,
+            None => 0,
+        });
+        let mut spaces: Vec<i32> = Vec::new();
+        spaces.push(-1);
         let mut p = Parser {
             sink,
             inputs: Vec::new(),
@@ -483,7 +747,7 @@ impl<S: Sink> Parser<S> {
             max_ampl,
             input_id: 1,
             names: Vec::new(),
-            spaces: vec![-1],
+            spaces,
             space_nr: 0,
             maxatts: 0,
             nsdb: nsdb::NsDb::new(0),
@@ -496,12 +760,11 @@ impl<S: Sink> Parser<S> {
             encoding: None,
             depth: 0,
             instate_eof: false,
-            fuel: 0,
+            // Every step consumes input or is one of a bounded number
+            // around it; entity expansion is bounded by the amplification
+            // limit.
+            fuel: total.saturating_mul(64).saturating_add(1 << 24),
         };
-        let total = (doc.buf.len() as u64).saturating_add(doc.src.as_ref().map_or(0, |s| s.raw.len() as u64));
-        // Every step consumes input or is one of a bounded number around
-        // it; entity expansion is bounded by the amplification limit.
-        p.fuel = total.saturating_mul(64).saturating_add(1 << 24);
         p.inputs.push(doc);
         p
     }
@@ -509,51 +772,92 @@ impl<S: Sink> Parser<S> {
     // --- the current input ---
 
     #[inline]
-    pub fn inp(&self) -> &Input {
+    pub fn inp(&self) -> (r: &Input)
+        requires
+            self.wf(),
+        ensures
+            *r == self.top(),
+    {
         let n = self.inputs.len();
         &self.inputs[n - 1]
     }
 
-    #[inline]
-    pub fn inp_mut(&mut self) -> &mut Input {
+    /// The current input, to change: only it changes.
+    pub fn inp_mut(&mut self) -> (r: &mut Input)
+        requires
+            old(self).wf(),
+        ensures
+            *r == old(self).top(),
+            final(self).inputs@ == old(self).inputs@.update(old(self).inputs@.len() - 1, *final(r)),
+            final(self).moves(old(self)),
+            final(self).sink == old(self).sink,
+    {
         let n = self.inputs.len();
+        proof {
+            assert forall|x: Input| #[trigger] self.inputs@.update(n - 1, x).drop_last() =~= self.inputs@.drop_last() by {}
+        }
         &mut self.inputs[n - 1]
     }
 
     /// `CUR`, `RAW`.
     #[inline]
-    pub fn cur(&self) -> u8 {
+    pub fn cur(&self) -> (r: u8)
+        requires
+            self.wf(),
+        ensures
+            r == crate::lenient::at_spec(self.top().buf@, self.top().cur as int),
+    {
         let i = self.inp();
         at(&i.buf, i.cur)
     }
 
     /// `NXT(k)`.
     #[inline]
-    pub fn nxt(&self, k: usize) -> u8 {
+    pub fn nxt(&self, k: usize) -> u8
+        requires
+            self.wf(),
+    {
         let i = self.inp();
         at(&i.buf, i.cur.saturating_add(k))
     }
 
     /// `CMPn(CUR_PTR, ...)`.
-    pub fn cmp(&self, s: &[u8]) -> bool {
+    pub fn cmp(&self, s: &[u8]) -> bool
+        requires
+            self.wf(),
+    {
         let i = self.inp();
-        let mut k = 0;
-        while k < s.len() {
-            if at(&i.buf, i.cur + k) != s[k] {
+        let mut k: usize = 0;
+        while k < s.len()
+            invariant
+                k <= s@.len(),
+            decreases s@.len() - k,
+        {
+            if crate::lenient::at_off(&i.buf, i.cur, k) != s[k] {
                 return false;
             }
-            k += 1;
+            k = k + 1;
         }
         true
     }
 
     /// `ctxt->input->end - ctxt->input->cur`.
-    pub fn avail(&self) -> usize {
+    pub fn avail(&self) -> (r: usize)
+        requires
+            self.wf(),
+        ensures
+            r as int == if self.top().cur <= self.top().buf@.len() { self.top().buf@.len() - self.top().cur } else { 0 },
+    {
         let i = self.inp();
         i.buf.len().saturating_sub(i.cur)
     }
 
-    pub fn at_end(&self) -> bool {
+    pub fn at_end(&self) -> (r: bool)
+        requires
+            self.wf(),
+        ensures
+            r == (self.top().cur >= self.top().buf@.len()),
+    {
         let i = self.inp();
         i.cur >= i.buf.len()
     }
@@ -569,7 +873,15 @@ impl<S: Sink> Parser<S> {
 
     /// One step of a loop; false when the bound on the parser's work is
     /// reached (the parser then stops, as on a resource limit).
-    pub fn step(&mut self) -> bool {
+    pub fn step(&mut self) -> (r: bool)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+            final(self).keeps(old(self)),
+            final(self).inputs == old(self).inputs,
+            r ==> final(self).fuel < old(self).fuel,
+    {
         if self.fuel == 0 {
             if !self.stopped() {
                 self.fatal_msg(ERR_RESOURCE_LIMIT, b"Parser step limit exceeded\n");
@@ -577,17 +889,29 @@ impl<S: Sink> Parser<S> {
             }
             return false;
         }
-        self.fuel -= 1;
+        self.fuel = self.fuel - 1;
         true
     }
 
-    pub fn in_pe(&self) -> bool {
+    pub fn in_pe(&self) -> bool
+        requires
+            self.wf(),
+    {
         let i = self.inp();
         i.entity.is_some() && (i.etype == INTERNAL_PARAMETER_ENTITY || i.etype == EXTERNAL_PARAMETER_ENTITY)
     }
 
-    pub fn external(&self) -> bool {
+    pub fn external(&self) -> bool
+        requires
+            self.wf(),
+    {
         self.sink.in_subset() == 2 || (self.inp().entity.is_some() && self.inp().etype == EXTERNAL_PARAMETER_ENTITY)
+    }
+
+    /// `ctxt->inputNr`.
+    pub fn input_nr(&self) -> i32 {
+        let n = self.inputs.len();
+        if n > i32::MAX as usize { i32::MAX } else { n as i32 }
     }
 
     pub fn max_length(&self, normal: usize) -> usize {
@@ -595,87 +919,164 @@ impl<S: Sink> Parser<S> {
     }
 
     /// Tells the sink where the inputs are.
-    pub fn sync(&mut self) {
-        let mut views: Vec<InputView<'_>> = Vec::with_capacity(self.inputs.len());
-        for i in self.inputs.iter() {
+    pub fn sync(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
+        let n = self.inputs.len();
+        let mut views: Vec<InputView<'_>> = Vec::with_capacity(n);
+        let mut k: usize = 0;
+        while k < n
+            invariant
+                n == self.inputs@.len(),
+                k <= n,
+            decreases n - k,
+        {
+            let i = &self.inputs[k];
             views.push(InputView {
-                buf: &i.buf,
+                buf: i.buf.as_slice(),
                 base: i.base,
                 cur: i.cur,
                 line: i.line,
                 col: i.col,
                 entity: i.entity,
-                encoder: i.src.as_ref().is_some_and(|s| s.enc.is_some()),
+                encoder: match &i.src {
+                    Some(s) => s.enc.is_some(),
+                    None => false,
+                },
                 flags: i.flags,
-                filename: i.filename.as_deref(),
+                filename: opt_slice(&i.filename),
             });
+            k = k + 1;
         }
-        self.sink.sync(&views);
+        self.sink.sync(views.as_slice());
     }
 
     // --- errors (parser.c's wrappers of xmlCtxtErr) ---
 
-    pub fn report(&mut self, domain: i32, code: i32, level: i32, s1: Option<&[u8]>, s2: Option<&[u8]>, s3: Option<&[u8]>, int1: i32, msg: Option<&[u8]>) {
+    pub fn report(&mut self, domain: i32, code: i32, level: i32, s1: Option<&[u8]>, s2: Option<&[u8]>, s3: Option<&[u8]>, int1: i32, msg: Option<&[u8]>)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         self.sync();
         let r = Report { domain, code, level, s1, s2, s3, int1, msg };
         self.sink.report(&r);
     }
 
     /// `xmlFatalErr`.
-    pub fn fatal(&mut self, code: i32, info: Option<&[u8]>) {
+    pub fn fatal(&mut self, code: i32, info: Option<&[u8]>)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         let level = if self.html && code == ERR_UNSUPPORTED_ENCODING { LEVEL_ERROR } else { LEVEL_FATAL };
         self.report(FROM_PARSER, code, level, info, None, None, 0, None);
     }
 
     /// `xmlFatalErrMsg`.
-    pub fn fatal_msg(&mut self, code: i32, msg: &[u8]) {
+    pub fn fatal_msg(&mut self, code: i32, msg: &[u8])
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         self.report(FROM_PARSER, code, LEVEL_FATAL, None, None, None, 0, Some(msg));
     }
 
     /// `xmlFatalErrMsgStr`: `msg` already holds `val`.
-    pub fn fatal_str(&mut self, code: i32, msg: &[u8], val: Option<&[u8]>) {
+    pub fn fatal_str(&mut self, code: i32, msg: &[u8], val: Option<&[u8]>)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         self.report(FROM_PARSER, code, LEVEL_FATAL, val, None, None, 0, Some(msg));
     }
 
     /// `xmlFatalErrMsgInt`.
-    pub fn fatal_int(&mut self, code: i32, msg: &[u8], val: i32) {
+    pub fn fatal_int(&mut self, code: i32, msg: &[u8], val: i32)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         self.report(FROM_PARSER, code, LEVEL_FATAL, None, None, None, val, Some(msg));
     }
 
     /// `xmlFatalErrMsgStrIntStr`.
-    pub fn fatal_sis(&mut self, code: i32, msg: &[u8], s1: Option<&[u8]>, val: i32, s2: Option<&[u8]>) {
+    pub fn fatal_sis(&mut self, code: i32, msg: &[u8], s1: Option<&[u8]>, val: i32, s2: Option<&[u8]>)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         self.report(FROM_PARSER, code, LEVEL_FATAL, s1, s2, None, val, Some(msg));
     }
 
     /// `xmlErrMsgStr`.
-    pub fn err_str(&mut self, code: i32, msg: &[u8], val: Option<&[u8]>) {
+    pub fn err_str(&mut self, code: i32, msg: &[u8], val: Option<&[u8]>)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         self.report(FROM_PARSER, code, LEVEL_ERROR, val, None, None, 0, Some(msg));
     }
 
     /// `xmlWarningMsg`.
-    pub fn warning(&mut self, code: i32, msg: &[u8], s1: Option<&[u8]>, s2: Option<&[u8]>) {
+    pub fn warning(&mut self, code: i32, msg: &[u8], s1: Option<&[u8]>, s2: Option<&[u8]>)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         self.report(FROM_PARSER, code, LEVEL_WARNING, s1, s2, None, 0, Some(msg));
     }
 
     /// `xmlValidityError`.
-    pub fn validity_error(&mut self, code: i32, msg: &[u8], s1: Option<&[u8]>, s2: Option<&[u8]>) {
+    pub fn validity_error(&mut self, code: i32, msg: &[u8], s1: Option<&[u8]>, s2: Option<&[u8]>)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         self.sink.set_valid(false);
         self.report(FROM_DTD, code, LEVEL_ERROR, s1, s2, None, 0, Some(msg));
     }
 
     /// `xmlNsErr`.
-    pub fn ns_err(&mut self, code: i32, msg: &[u8], s1: Option<&[u8]>, s2: Option<&[u8]>, s3: Option<&[u8]>) {
+    pub fn ns_err(&mut self, code: i32, msg: &[u8], s1: Option<&[u8]>, s2: Option<&[u8]>, s3: Option<&[u8]>)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         self.sink.set_ns_well_formed(false);
         self.report(FROM_NAMESPACE, code, LEVEL_ERROR, s1, s2, s3, 0, Some(msg));
     }
 
     /// `xmlNsWarn`.
-    pub fn ns_warn(&mut self, code: i32, msg: &[u8], s1: Option<&[u8]>, s2: Option<&[u8]>, s3: Option<&[u8]>) {
+    pub fn ns_warn(&mut self, code: i32, msg: &[u8], s1: Option<&[u8]>, s2: Option<&[u8]>, s3: Option<&[u8]>)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         self.report(FROM_NAMESPACE, code, LEVEL_WARNING, s1, s2, s3, 0, Some(msg));
     }
 
     /// `xmlErrAttributeDup`.
-    pub fn err_attribute_dup(&mut self, prefix: Option<&[u8]>, local: &[u8]) {
+    pub fn err_attribute_dup(&mut self, prefix: Option<&[u8]>, local: &[u8])
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         match prefix {
             None => {
                 let m = cat(&[b"Attribute ", local, b" redefined\n"]);
@@ -689,7 +1090,12 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlCtxtErrIO` (no URI).
-    pub fn err_io(&mut self, code: i32) {
+    pub fn err_io(&mut self, code: i32)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         let level = if code == IO_ENOENT || code == IO_UNKNOWN {
             if self.sink.validate() { LEVEL_ERROR } else { LEVEL_WARNING }
         } else if code == IO_NETWORK_ATTEMPT {
@@ -702,15 +1108,23 @@ impl<S: Sink> Parser<S> {
 
     /// `xmlParserEntityCheck`: whether expanding `extra` more bytes goes
     /// over the amplification limit (and reports it).
-    pub fn entity_check(&mut self, extra: u64) -> bool {
+    pub fn entity_check(&mut self, extra: u64) -> bool
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         let (ent, consumed) = {
             let i = self.inp();
-            (i.entity, i.consumed.saturating_add(i.cur.saturating_sub(0) as u64))
+            (i.entity, i.consumed.saturating_add(i.cur as u64))
         };
-        if let Some(e) = ent {
-            if self.sink.ent_info(e).flags & ENT_CHECKED != 0 {
-                return false;
-            }
+        match ent {
+            Some(e) => {
+                if self.sink.ent_info(e).flags & ENT_CHECKED != 0 {
+                    return false;
+                }
+            },
+            None => {},
         }
         let consumed = consumed.saturating_add(self.sink.sizeentities());
         let size = match ent {
@@ -718,12 +1132,12 @@ impl<S: Sink> Parser<S> {
                 let v = self.sink.ent_info(e).expanded_size.saturating_add(extra).saturating_add(ENT_FIXED_COST);
                 self.sink.ent_set_expanded_size(e, v);
                 v
-            }
+            },
             None => {
                 let v = self.sink.sizeentcopy().saturating_add(extra).saturating_add(ENT_FIXED_COST);
                 self.sink.set_sizeentcopy(v);
                 v
-            }
+            },
         };
         if self.max_ampl > 0 && size > PARSER_ALLOWED_EXPANSION && (size == u64::MAX || size / self.max_ampl as u64 > consumed) {
             self.fatal_msg(ERR_RESOURCE_LIMIT, b"Maximum entity amplification factor exceeded, see xmlCtxtSetMaxAmplification.\n");
@@ -735,20 +1149,25 @@ impl<S: Sink> Parser<S> {
     // --- reading (parserInternals.c and parser.c's macros) ---
 
     /// `xmlParserGrow`.
-    pub fn grow_now(&mut self) -> i32 {
+    pub fn grow_now(&mut self) -> i32
+        requires
+            old(self).wf(),
+        ensures
+            final(self).moves(old(self)),
+            final(self).top().cur == old(self).top().cur,
+    {
         let huge = self.options & PARSE_HUGE != 0;
         let n = self.inputs.len();
-        let input = &mut self.inputs[n - 1];
-        let cur_end = input.buf.len().saturating_sub(input.cur);
-        let cur_base = input.cur.saturating_sub(input.base);
-        let src = match input.src.as_mut() {
+        let cur_end = self.inputs[n - 1].buf.len().saturating_sub(self.inputs[n - 1].cur);
+        let cur_base = self.inputs[n - 1].cur.saturating_sub(self.inputs[n - 1].base);
+        let (mode, has_enc, error) = match &self.inputs[n - 1].src {
             None => return 0,
-            Some(s) => s,
+            Some(s) => (s.mode, s.enc.is_some(), s.error),
         };
-        if src.enc.is_none() && src.mode == Mode::Memory {
+        if !has_enc && mode == Mode::Memory {
             return 0;
         }
-        if src.error != 0 {
+        if error != 0 {
             return -1;
         }
         let max = if huge { MAX_HUGE_LENGTH } else { MAX_LOOKUP_LIMIT };
@@ -759,9 +1178,15 @@ impl<S: Sink> Parser<S> {
         if cur_end >= INPUT_CHUNK {
             return 0;
         }
-        let ret = enc::buffer_grow(&mut input.buf, src, INPUT_CHUNK);
+        let input = self.inp_mut();
+        let (ret, code) = match &mut input.src {
+            Some(src) => {
+                let r = enc::buffer_grow(&mut input.buf, src, INPUT_CHUNK);
+                (r, src.error)
+            },
+            None => (0, 0),
+        };
         if ret < 0 {
-            let code = src.error;
             self.err_io(code);
         }
         ret
@@ -769,16 +1194,28 @@ impl<S: Sink> Parser<S> {
 
     /// `GROW`.
     #[inline]
-    pub fn grow(&mut self) {
+    pub fn grow(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).moves(old(self)),
+            final(self).top().cur == old(self).top().cur,
+    {
         if self.avail() < INPUT_CHUNK {
             self.grow_now();
         }
     }
 
     /// `SHRINK` (`xmlParserShrink`).
-    pub fn shrink(&mut self) {
+    pub fn shrink(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).moves(old(self)),
+            final(self).top().cur == old(self).top().cur,
+    {
         let input = self.inp_mut();
-        if input.src.is_none() && input.entity.is_none() && input.buf.is_empty() {
+        if input.src.is_none() && input.entity.is_none() && input.buf.len() == 0 {
             return;
         }
         let used = input.cur.saturating_sub(input.base);
@@ -788,11 +1225,16 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `SKIP(n)`: ASCII only, on the line.
-    pub fn skip(&mut self, n: usize) {
+    pub fn skip(&mut self, n: usize)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).moves(old(self)),
+    {
         {
             let i = self.inp_mut();
             i.cur = i.cur.saturating_add(n);
-            i.col = i.col.saturating_add(n as i32);
+            i.col = sat_add_i32(i.col, n as i32);
         }
         if self.cur() == 0 {
             self.grow_now();
@@ -800,10 +1242,15 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `NEXT1`.
-    pub fn next1(&mut self) {
+    pub fn next1(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).moves(old(self)),
+    {
         {
             let i = self.inp_mut();
-            i.col = i.col.saturating_add(1);
+            i.col = sat_add_i32(i.col, 1);
             i.cur = i.cur.saturating_add(1);
         }
         if self.cur() == 0 {
@@ -812,30 +1259,47 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `NEXTL(l)`.
-    pub fn nextl(&mut self, l: usize) {
+    pub fn nextl(&mut self, l: usize)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).moves(old(self)),
+            final(self).top().buf == old(self).top().buf,
+            final(self).top().cur as int == if old(self).top().cur as int + l as int > usize::MAX as int { usize::MAX as int } else { old(self).top().cur as int + l as int },
+    {
         let i = self.inp_mut();
-        if at(&i.buf, i.cur) == b'\n' {
-            i.line = i.line.saturating_add(1);
+        if at(&i.buf, i.cur) == 0x0A {
+            i.line = sat_add_i32(i.line, 1);
             i.col = 1;
         } else {
-            i.col = i.col.saturating_add(1);
+            i.col = sat_add_i32(i.col, 1);
         }
         i.cur = i.cur.saturating_add(l);
     }
 
     /// `SKIPL(n)`.
-    pub fn skipl(&mut self, n: usize) {
-        let mut k = 0;
-        while k < n {
+    pub fn skipl(&mut self, n: usize)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).moves(old(self)),
+    {
+        let mut k: usize = 0;
+        while k < n
+            invariant
+                self.wf(),
+                self.moves(old(self)),
+            decreases n - k,
+        {
             let i = self.inp_mut();
-            if at(&i.buf, i.cur) == b'\n' {
-                i.line = i.line.saturating_add(1);
+            if at(&i.buf, i.cur) == 0x0A {
+                i.line = sat_add_i32(i.line, 1);
                 i.col = 1;
             } else {
-                i.col = i.col.saturating_add(1);
+                i.col = sat_add_i32(i.col, 1);
             }
             i.cur = i.cur.saturating_add(1);
-            k += 1;
+            k = k + 1;
         }
         if self.cur() == 0 {
             self.grow_now();
@@ -843,7 +1307,12 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlNextChar` (`NEXT`).
-    pub fn next(&mut self) {
+    pub fn next(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).moves(old(self)),
+    {
         let mut avail = self.avail();
         if avail < INPUT_CHUNK {
             self.grow_now();
@@ -856,65 +1325,46 @@ impl<S: Sink> Parser<S> {
         let p = i.cur;
         let c = at(&i.buf, p);
         if c < 0x80 {
-            if c == b'\n' {
-                i.cur += 1;
-                i.line = i.line.saturating_add(1);
+            if c == 0x0A {
+                i.cur = i.cur.saturating_add(1);
+                i.line = sat_add_i32(i.line, 1);
                 i.col = 1;
-            } else if c == b'\r' {
-                i.cur += if at(&i.buf, p + 1) == b'\n' { 2 } else { 1 };
-                i.line = i.line.saturating_add(1);
+            } else if c == 0x0D {
+                let step: usize = if crate::lenient::at_off(&i.buf, p, 1) == 0x0A { 2 } else { 1 };
+                i.cur = i.cur.saturating_add(step);
+                i.line = sat_add_i32(i.line, 1);
                 i.col = 1;
             } else {
-                i.cur += 1;
-                i.col = i.col.saturating_add(1);
+                i.cur = i.cur.saturating_add(1);
+                i.col = sat_add_i32(i.col, 1);
             }
             return;
         }
-        i.col = i.col.saturating_add(1);
-        let c1 = at(&i.buf, p + 1);
-        let ok = 'chk: {
-            if avail < 2 || (c1 & 0xC0) != 0x80 {
-                break 'chk 0;
-            }
-            if c < 0xE0 {
-                if c < 0xC2 {
-                    break 'chk 0;
-                }
-                break 'chk 2;
-            }
-            let val = ((c as u32) << 8) | c1 as u32;
-            if avail < 3 || (at(&i.buf, p + 2) & 0xC0) != 0x80 {
-                break 'chk 0;
-            }
-            if c < 0xF0 {
-                if val < 0xE0A0 || (0xEDA0..0xEE00).contains(&val) {
-                    break 'chk 0;
-                }
-                break 'chk 3;
-            }
-            if avail < 4 || (at(&i.buf, p + 3) & 0xC0) != 0x80 {
-                break 'chk 0;
-            }
-            if !(0xF090..0xF490).contains(&val) {
-                break 'chk 0;
-            }
-            4
-        };
+        i.col = sat_add_i32(i.col, 1);
+        let ok = next_len(c, crate::lenient::at_off(&i.buf, p, 1), crate::lenient::at_off(&i.buf, p, 2), crate::lenient::at_off(&i.buf, p, 3), avail);
         if ok > 0 {
-            i.cur += ok;
+            i.cur = i.cur.saturating_add(ok);
             return;
         }
-        if i.flags & INPUT_ENCODING_ERROR == 0 {
+        let flagged = i.flags & INPUT_ENCODING_ERROR != 0;
+        if !flagged {
             self.err_io(ERR_INVALID_ENCODING);
-            self.inp_mut().flags |= INPUT_ENCODING_ERROR;
+            let i = self.inp_mut();
+            i.flags = i.flags | INPUT_ENCODING_ERROR;
         }
         let i = self.inp_mut();
-        i.cur += 1;
+        i.cur = i.cur.saturating_add(1);
     }
 
     /// `xmlCurrentChar` (`CUR_CHAR`): the character and its length. On
     /// CR LF it moves past the CR, as libxml2 does.
-    pub fn current_char(&mut self) -> (u32, usize) {
+    pub fn current_char(&mut self) -> (r: (u32, usize))
+        requires
+            old(self).wf(),
+        ensures
+            final(self).moves(old(self)),
+            r.1 <= 4,
+    {
         let mut avail = self.avail();
         if avail < INPUT_CHUNK {
             self.grow_now();
@@ -928,8 +1378,8 @@ impl<S: Sink> Parser<S> {
             if c < 0x20 {
                 if c == 0x0D {
                     let i = self.inp_mut();
-                    if at(&i.buf, p + 1) == b'\n' {
-                        i.cur += 1;
+                    if crate::lenient::at_off(&i.buf, p, 1) == 0x0A {
+                        i.cur = i.cur.saturating_add(1);
                     }
                     return (0x0A, 1);
                 }
@@ -943,47 +1393,9 @@ impl<S: Sink> Parser<S> {
             }
             return (c, 1);
         }
-        let b = |k: usize| -> u32 {
+        let r = {
             let i = self.inp();
-            at(&i.buf, p + k) as u32
-        };
-        let r: Result<(u32, usize), bool> = 'dec: {
-            if avail < 2 {
-                break 'dec Err(false);
-            }
-            if b(1) & 0xC0 != 0x80 {
-                break 'dec Err(true);
-            }
-            if c < 0xE0 {
-                if c < 0xC2 {
-                    break 'dec Err(true);
-                }
-                break 'dec Ok((((c & 0x1F) << 6) | (b(1) & 0x3F), 2));
-            }
-            if avail < 3 {
-                break 'dec Err(false);
-            }
-            if b(2) & 0xC0 != 0x80 {
-                break 'dec Err(true);
-            }
-            if c < 0xF0 {
-                let v = ((c & 0xF) << 12) | ((b(1) & 0x3F) << 6) | (b(2) & 0x3F);
-                if v < 0x800 || (0xD800..0xE000).contains(&v) {
-                    break 'dec Err(true);
-                }
-                break 'dec Ok((v, 3));
-            }
-            if avail < 4 {
-                break 'dec Err(false);
-            }
-            if b(3) & 0xC0 != 0x80 {
-                break 'dec Err(true);
-            }
-            let v = ((c & 0x0F) << 18) | ((b(1) & 0x3F) << 12) | ((b(2) & 0x3F) << 6) | (b(3) & 0x3F);
-            if !(0x10000..0x110000).contains(&v) {
-                break 'dec Err(true);
-            }
-            Ok((v, 4))
+            cur_char_dec(c, crate::lenient::at_off(&i.buf, p, 1) as u32, crate::lenient::at_off(&i.buf, p, 2) as u32, crate::lenient::at_off(&i.buf, p, 3) as u32, avail)
         };
         match r {
             Ok(x) => x,
@@ -991,24 +1403,39 @@ impl<S: Sink> Parser<S> {
             Err(true) => {
                 if self.inp().flags & INPUT_ENCODING_ERROR == 0 {
                     self.err_io(ERR_INVALID_ENCODING);
-                    self.inp_mut().flags |= INPUT_ENCODING_ERROR;
+                    let i = self.inp_mut();
+                    i.flags = i.flags | INPUT_ENCODING_ERROR;
                 }
                 (INVALID_CHAR, 1)
-            }
+            },
         }
     }
 
     /// `xmlCurrentCharRecover`.
-    pub fn current_char_recover(&mut self) -> (u32, usize) {
+    pub fn current_char_recover(&mut self) -> (r: (u32, usize))
+        requires
+            old(self).wf(),
+        ensures
+            final(self).moves(old(self)),
+            r.1 <= 4,
+    {
         let (c, l) = self.current_char();
         if c == INVALID_CHAR { (0xFFFD, l) } else { (c, l) }
     }
 
     /// `xmlUTF8MultibyteLen` at the current position.
-    pub fn utf8_multibyte_len(&mut self, p: usize, err_msg: &[u8]) -> usize {
+    pub fn utf8_multibyte_len(&mut self, p: usize, err_msg: &[u8]) -> (r: usize)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).moves(old(self)),
+            final(self).top().cur == old(self).top().cur,
+            final(self).top().buf == old(self).top().buf,
+            r <= 4,
+    {
         let (c, c1, c2, c3) = {
             let i = self.inp();
-            (at(&i.buf, p), at(&i.buf, p + 1), at(&i.buf, p + 2), at(&i.buf, p + 3))
+            (at(&i.buf, p), crate::lenient::at_off(&i.buf, p, 1), crate::lenient::at_off(&i.buf, p, 2), crate::lenient::at_off(&i.buf, p, 3))
         };
         let r = crate::lenient::multibyte_len(c, c1, c2, c3);
         if r == 33 {
@@ -1018,29 +1445,42 @@ impl<S: Sink> Parser<S> {
         if r == 0 {
             if self.inp().flags & INPUT_ENCODING_ERROR == 0 {
                 self.err_io(ERR_INVALID_ENCODING);
-                self.inp_mut().flags |= INPUT_ENCODING_ERROR;
+                let i = self.inp_mut();
+                i.flags = i.flags | INPUT_ENCODING_ERROR;
             }
         }
-        r
+        if r > 4 { 4 } else { r }
     }
 
     /// `xmlSkipBlankChars` (`SKIP_BLANKS`).
-    pub fn skip_blanks(&mut self) -> usize {
+    pub fn skip_blanks(&mut self) -> usize
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let mut res: usize = 0;
-        loop {
+        loop
+            invariant
+                self.advances(old(self)),
+            decreases self.fuel,
+        {
             let c = self.cur();
             if !blank(c) {
                 break;
             }
+            if !self.step() {
+                break;
+            }
             {
                 let i = self.inp_mut();
-                if c == b'\n' {
-                    i.line = i.line.saturating_add(1);
+                if c == 0x0A {
+                    i.line = sat_add_i32(i.line, 1);
                     i.col = 1;
                 } else {
-                    i.col = i.col.saturating_add(1);
+                    i.col = sat_add_i32(i.col, 1);
                 }
-                i.cur += 1;
+                i.cur = i.cur.saturating_add(1);
             }
             res = res.saturating_add(1);
             if self.cur() == 0 {
@@ -1054,20 +1494,38 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlCtxtPushInput`.
-    pub fn push_input(&mut self, input: Input) -> i32 {
-        let max = if self.options & PARSE_HUGE != 0 { 40 } else { 20 };
+    pub fn push_input(&mut self, input: Input) -> (r: i32)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).fuel == old(self).fuel,
+            final(self).names == old(self).names,
+            r >= 0 ==> final(self).inputs@ == old(self).inputs@.push(input) && r == old(self).inputs@.len(),
+            r < 0 ==> final(self).inputs@ == old(self).inputs@,
+    {
+        let max: usize = if self.options & PARSE_HUGE != 0 { 40 } else { 20 };
         if self.inputs.len() >= max {
             self.fatal_msg(ERR_RESOURCE_LIMIT, b"Maximum entity nesting depth exceeded");
             return -1;
         }
         self.inputs.push(input);
-        self.input_id = self.input_id.saturating_add(1);
+        self.input_id = sat_add_i32(self.input_id, 1);
         self.sync();
         (self.inputs.len() - 1) as i32
     }
 
     /// `xmlCtxtPopInput` and free.
-    pub fn pop_input(&mut self) {
+    pub fn pop_input(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).fuel == old(self).fuel,
+            final(self).names == old(self).names,
+            old(self).inputs@.len() > 1 ==> final(self).inputs@ == old(self).inputs@.drop_last(),
+            old(self).inputs@.len() <= 1 ==> final(self).inputs@ == old(self).inputs@,
+    {
         if self.inputs.len() > 1 {
             self.inputs.pop();
             self.sync();
@@ -1075,14 +1533,22 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlNewEntityInputStream`.
-    pub fn entity_input(&mut self, e: Ent) -> Option<Input> {
+    pub fn entity_input(&mut self, e: Ent) -> Option<Input>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         let info = self.sink.ent_info(e);
         let mut input = if info.has_content {
             Input::from_bytes(self.sink.ent_content(e))
         } else if info.has_uri {
             // A failure is reported where the reference ends.
             self.sync();
-            let l = self.sink.load_entity(e)?;
+            let l = match self.sink.load_entity(e) {
+                Some(l) => l,
+                None => return None,
+            };
             let mut i = Input::from_bytes(Vec::new());
             i.src = Some(Source { raw: l.bytes, delivered: 0, pos: 0, mode: if l.stream { Mode::Stream } else { Mode::Memory }, enc: None, error: 0, eof: false });
             i.filename = l.filename;
@@ -1097,7 +1563,12 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlHaltParser`.
-    pub fn halt(&mut self) {
+    pub fn halt(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         self.sink.halt();
     }
 }
@@ -1114,23 +1585,36 @@ pub struct SBuf {
 }
 
 impl SBuf {
-    pub fn new(max: usize) -> SBuf {
+    pub fn new(max: usize) -> (r: SBuf)
+        ensures
+            r.mem@.len() == 0,
+            r.max == max,
+    {
         SBuf { mem: Vec::new(), alloc: false, max, code: codes::ERR_OK }
     }
 
-    fn limit(&mut self) {
+    fn limit(&mut self)
+        ensures
+            final(self).mem == old(self).mem,
+            final(self).max == old(self).max,
+    {
         if self.code == codes::ERR_OK {
             self.code = codes::ERR_RESOURCE_LIMIT;
         }
     }
 
     /// `xmlSBufAddString`.
-    pub fn add(&mut self, s: &[u8]) {
-        if self.max - self.mem.len() < s.len() {
+    pub fn add(&mut self, s: &[u8])
+        ensures
+            final(self).max == old(self).max,
+            final(self).mem@.len() <= old(self).mem@.len() + s@.len(),
+            old(self).mem@.len() <= old(self).max ==> final(self).mem@.len() <= final(self).max,
+    {
+        if self.max.saturating_sub(self.mem.len()) < s.len() {
             self.limit();
             return;
         }
-        if s.len() >= (u32::MAX as usize) / 2 - self.mem.len() {
+        if s.len() >= ((u32::MAX as usize) / 2).saturating_sub(self.mem.len()) {
             self.limit();
             return;
         }
@@ -1139,8 +1623,13 @@ impl SBuf {
     }
 
     /// `xmlSBufAddChar`.
-    pub fn add_char(&mut self, c: u32) {
-        if self.max - self.mem.len() < 4 {
+    pub fn add_char(&mut self, c: u32)
+        ensures
+            final(self).max == old(self).max,
+            final(self).mem@.len() <= old(self).mem@.len() + 4,
+            old(self).mem@.len() <= old(self).max ==> final(self).mem@.len() <= final(self).max,
+    {
+        if self.max.saturating_sub(self.mem.len()) < 4 {
             self.limit();
             return;
         }
@@ -1149,14 +1638,23 @@ impl SBuf {
     }
 
     /// `xmlSBufAddReplChar`.
-    pub fn add_repl(&mut self) {
+    pub fn add_repl(&mut self)
+        ensures
+            final(self).max == old(self).max,
+            old(self).mem@.len() <= old(self).max ==> final(self).mem@.len() <= final(self).max,
+    {
         self.add(b"\xEF\xBF\xBD");
     }
 }
 
 impl<S: Sink> Parser<S> {
     /// `xmlSBufReportError`.
-    pub fn sbuf_report(&mut self, b: &SBuf, msg: &[u8]) {
+    pub fn sbuf_report(&mut self, b: &SBuf, msg: &[u8])
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         if b.code == codes::ERR_NO_MEMORY {
             self.sink.mem_error();
         } else {
@@ -1165,7 +1663,12 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlSBufFinish`.
-    pub fn sbuf_finish(&mut self, b: SBuf, msg: &[u8]) -> Option<Vec<u8>> {
+    pub fn sbuf_finish(&mut self, b: SBuf, msg: &[u8]) -> Option<Vec<u8>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         if b.code == codes::ERR_OK {
             return Some(b.mem);
         }
@@ -1174,9 +1677,16 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlSBufCleanup`.
-    pub fn sbuf_cleanup(&mut self, b: SBuf, msg: &[u8]) {
+    pub fn sbuf_cleanup(&mut self, b: SBuf, msg: &[u8])
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         if b.code != codes::ERR_OK {
             self.sbuf_report(&b, msg);
         }
     }
 }
+
+} // verus!
