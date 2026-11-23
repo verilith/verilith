@@ -7,6 +7,7 @@ keywords = ["webp", "decoder", "image", "verified", "verus"]
 categories = ["multimedia::images", "parser-implementations"]
 description = "A formally verified (Verus) WebP decoder: lossless (VP8L) proven correct, lossy (VP8) proven safe, with libwebp's decoding C API"
 edition = "2024"
+rust-version = "1.89"
 
 [lib]
 crate-type = ["rlib", "staticlib"]

@@ -334,8 +334,9 @@ the workspace files runs everything. What runs for a crate is its `ci.sh`.
 
 **Packages and docs** are checked as crates.io and docs.rs will see them
 (`scripts/package.sh`): every published crate is built from its own
-`cargo package` tarball, with plain rustc and no Verus, and the
-documentation is built with broken links as errors.
+`cargo package` tarball, with plain rustc and no Verus; the workspace is
+checked with its minimum Rust version (1.89); and the documentation is
+built with broken links as errors.
 
 **Once a week**, and on request (run the workflow with "fresh"), every proof
 is checked again from nothing and each crate's count of verified proofs

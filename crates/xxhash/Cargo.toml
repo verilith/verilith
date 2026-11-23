@@ -4,6 +4,7 @@ version = "0.1.0"
 license = "MIT OR Apache-2.0"
 description = "Formally verified (Verus) XXH32 and XXH64, the checksums of the LZ4 and Zstandard frame formats"
 edition = "2024"
+rust-version = "1.89"
 repository = "https://github.com/verilith/verilith"
 keywords = ["verified", "verus", "xxhash", "checksum", "hash"]
 categories = ["algorithms"]
