@@ -322,9 +322,11 @@ One workflow, `.github/workflows/ci.yml`.
 verified in parts (brotli). A proof that has already passed with
 exactly the same inputs is not checked again (`scripts/proof-plan.py`), so
 a change to one crate checks that crate and the crates that depend on it,
-and a second push to a pull request checks only what the push changed.
+and a second push to a pull request checks only what the push changed. A
+pull request checks only the proofs it changes; main checks the rest.
 Pushes to main also verify on Linux AArch64, with `cargo verus`, which checks
-the NEON paths that an x86 build leaves out.
+the NEON paths that an x86 build leaves out, skipping the crates whose inputs
+already passed there.
 
 **Tests** run for the crates a change touches: a crate whose files changed,
 plus every crate that depends on it (`scripts/affected.py`). A change to
