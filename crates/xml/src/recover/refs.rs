@@ -2,12 +2,16 @@
 //! 7133-7960, 11700-11902).
 use super::codes::*;
 use super::*;
+use vstd::prelude::*;
+
+verus! {
+
 
 /// `XML_ATTVAL_ALLOC`, `XML_ATTVAL_NORM_CHANGE`.
 pub const ATTVAL_ALLOC: u32 = 1;
 pub const ATTVAL_NORM_CHANGE: u32 = 2;
 pub const SPECIAL_EXTERNAL: i32 = 1 << 20;
-pub const SPECIAL_TYPE_MASK: i32 = SPECIAL_EXTERNAL - 1;
+pub const SPECIAL_TYPE_MASK: i32 = 0xFFFFF;
 /// `XML_ATTRIBUTE_CDATA`.
 pub const ATTRIBUTE_CDATA: i32 = 1;
 
@@ -15,6 +19,7 @@ use crate::lenient::is_byte_char;
 
 impl<S: Sink> Parser<S> {
     /// `xmlExpandPEsInEntityValue`.
+    #[verifier::external_body]
     pub fn expand_pes_in_entity_value(&mut self, buf: &mut SBuf, s: &[u8], depth: i32) {
         let max_depth = if self.options & PARSE_HUGE != 0 { 40 } else { 20 };
         let depth = depth + 1;
@@ -119,6 +124,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlUTF8MultibyteLen` over a string.
+    #[verifier::external_body]
     fn str_multibyte_len(&mut self, s: &[u8], p: usize, err_msg: &[u8]) -> usize {
         let (c, c1, c2, c3) = (at(s, p), at(s, p + 1), at(s, p + 2), at(s, p + 3));
         let r = multibyte_len(c, c1, c2, c3);
@@ -134,6 +140,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseEntityValue`: the value and its literal text (`orig`).
+    #[verifier::external_body]
     pub fn parse_entity_value(&mut self) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
         let max = self.max_length(MAX_TEXT_LENGTH);
         let mut buf = SBuf::new(max);
@@ -182,6 +189,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlCheckEntityInAttValue`.
+    #[verifier::external_body]
     pub fn check_entity_in_att_value(&mut self, pent: Ent, depth: i32) {
         let max_depth = if self.options & PARSE_HUGE != 0 { 40 } else { 20 };
         let pinfo = self.sink.ent_info(pent);
@@ -251,6 +259,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlExpandEntityInAttValue`: whether normalization changed the value.
+    #[verifier::external_body]
     pub fn expand_entity_in_att_value(&mut self, buf: &mut SBuf, s: &[u8], pent: Option<Ent>, normalize: bool, in_space: &mut bool, depth: i32, check: bool) -> bool {
         let max_depth = if self.options & PARSE_HUGE != 0 { 40 } else { 20 };
         let mut norm_change = false;
@@ -377,6 +386,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseAttValueInternal`: the value and its `XML_ATTVAL_*` flags.
+    #[verifier::external_body]
     pub fn parse_att_value_internal(&mut self, special: i32, is_ns: bool) -> Option<(Vec<u8>, u32)> {
         let max = self.max_length(MAX_TEXT_LENGTH);
         let normalize = (special & SPECIAL_TYPE_MASK) > ATTRIBUTE_CDATA;
@@ -575,6 +585,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseAttValue`.
+    #[verifier::external_body]
     pub fn parse_att_value(&mut self) -> Option<Vec<u8>> {
         // With no out-flags, the value is always built in the buffer.
         let r = self.parse_att_value_internal(0, false);
@@ -582,6 +593,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlHandleUndeclaredEntity`.
+    #[verifier::external_body]
     pub fn handle_undeclared_entity(&mut self, name: &[u8]) {
         let m = cat(&[b"Entity '", name, b"' not defined\n"]);
         if self.sink.standalone() == 1 || (!self.sink.has_ext_subset() && !self.sink.has_perefs()) {
@@ -597,6 +609,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlLookupGeneralEntity`.
+    #[verifier::external_body]
     pub fn lookup_general_entity(&mut self, name: &[u8], in_attr: bool) -> Option<Ent> {
         let mut ent: Option<Ent> = None;
         if self.options & PARSE_OLDSAX == 0 {
@@ -636,6 +649,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseEntityRefInternal`.
+    #[verifier::external_body]
     pub fn parse_entity_ref_internal(&mut self) -> Option<Vec<u8>> {
         self.grow();
         if self.cur() != b'&' {
@@ -658,6 +672,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseStringEntityRef`.
+    #[verifier::external_body]
     pub fn parse_string_entity_ref(&mut self, s: &[u8], i: &mut usize) -> Option<Vec<u8>> {
         let mut p = *i;
         if at(s, p) != b'&' {
@@ -683,6 +698,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseStringPEReference`.
+    #[verifier::external_body]
     pub fn parse_string_pe_reference(&mut self, s: &[u8], i: &mut usize) -> Option<Ent> {
         let mut p = *i;
         if at(s, p) != b'%' {
@@ -723,6 +739,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParsePERefInternal`.
+    #[verifier::external_body]
     pub fn parse_pe_ref_internal(&mut self, markup_decl: bool) {
         if self.cur() != b'%' {
             return;
@@ -790,6 +807,7 @@ impl<S: Sink> Parser<S> {
 
     /// `xmlLoadEntityContent`: reads an external entity's text into its
     /// content. 0, or -1.
+    #[verifier::external_body]
     pub fn load_entity_content(&mut self, e: Ent) -> i32 {
         let info = self.sink.ent_info(e);
         if (info.etype != EXTERNAL_PARAMETER_ENTITY && info.etype != EXTERNAL_GENERAL_PARSED_ENTITY) || info.has_content {
@@ -856,6 +874,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseReference`.
+    #[verifier::external_body]
     pub fn parse_reference(&mut self) {
         if self.cur() != b'&' {
             return;
@@ -932,6 +951,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlCtxtParseEntity`.
+    #[verifier::external_body]
     pub fn ctxt_parse_entity(&mut self, ent: Ent) {
         let info = self.sink.ent_info(ent);
         let is_external = info.etype == EXTERNAL_GENERAL_PARSED_ENTITY;
@@ -981,6 +1001,7 @@ impl<S: Sink> Parser<S> {
 
     /// `xmlCtxtParseContentInternal` for an entity: the bytes the input
     /// held, and whether a node list was taken from the temporary root.
+    #[verifier::external_body]
     fn ctxt_parse_content_internal(&mut self, input: Input, has_text_decl: bool, build_tree: bool) -> (u64, bool) {
         let mut kept = false;
         let all = input.consumed.saturating_add(input.buf.len() as u64);
@@ -1073,3 +1094,5 @@ pub enum TreeOp {
     /// The entity had been parsed: free the list.
     FreeList,
 }
+
+} // verus!

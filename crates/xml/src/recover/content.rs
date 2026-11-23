@@ -3,9 +3,19 @@
 use super::codes::*;
 use super::refs::*;
 use super::*;
+use vstd::prelude::*;
 
-pub const XML_NS: &[u8] = b"http://www.w3.org/XML/1998/namespace";
-pub const XMLNS_NS: &[u8] = b"http://www.w3.org/2000/xmlns/";
+verus! {
+
+
+/// The `xml` prefix's namespace name.
+pub fn xml_ns() -> &'static [u8] {
+    b"http://www.w3.org/XML/1998/namespace"
+}
+/// The `xmlns` prefix's namespace name.
+pub fn xmlns_ns() -> &'static [u8] {
+    b"http://www.w3.org/2000/xmlns/"
+}
 pub const MAX_ATTRS: usize = 100_000_000;
 pub const MAX_ITEMS: usize = 1_000_000_000;
 
@@ -31,16 +41,19 @@ impl<S: Sink> Parser<S> {
     // --- the name and space stacks ---
 
     /// `nameNsPush`.
+    #[verifier::external_body]
     pub fn name_ns_push(&mut self, name: Vec<u8>, prefix: Option<Vec<u8>>, uri: Option<Vec<u8>>, line: i32, ns_nr: usize) {
         self.names.push(NameEntry { name, prefix, uri, line, ns_nr });
     }
 
     /// `namePop`.
+    #[verifier::external_body]
     pub fn name_pop(&mut self) {
         self.names.pop();
     }
 
     /// `ctxt->name`.
+    #[verifier::external_body]
     pub fn cur_name(&self) -> Vec<u8> {
         match self.names.last() {
             Some(n) => n.name.clone(),
@@ -49,6 +62,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `spacePush`.
+    #[verifier::external_body]
     pub fn space_push(&mut self, v: i32) {
         if self.space_nr < self.spaces.len() {
             self.spaces[self.space_nr] = v;
@@ -59,6 +73,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `spacePop`.
+    #[verifier::external_body]
     pub fn space_pop(&mut self) {
         if self.space_nr == 0 {
             return;
@@ -70,16 +85,19 @@ impl<S: Sink> Parser<S> {
         }
     }
 
+    #[verifier::external_body]
     fn space_slot(&self) -> usize {
         if self.space_nr > 0 { self.space_nr - 1 } else { 0 }
     }
 
     /// `*ctxt->space`.
+    #[verifier::external_body]
     pub fn space(&self) -> i32 {
         let k = self.space_slot();
         if k < self.spaces.len() { self.spaces[k] } else { -1 }
     }
 
+    #[verifier::external_body]
     pub fn set_space(&mut self, v: i32) {
         let k = self.space_slot();
         if k < self.spaces.len() {
@@ -92,6 +110,7 @@ impl<S: Sink> Parser<S> {
     // --- character data ---
 
     /// `areBlanks`.
+    #[verifier::external_body]
     fn are_blanks(&mut self, s: &[u8], blank_chars: bool) -> bool {
         let sp = self.space();
         if sp == 1 || sp == -2 {
@@ -111,6 +130,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlCharacters`.
+    #[verifier::external_body]
     pub fn characters(&mut self, s: &[u8], is_blank: bool) {
         if !self.sax_on() {
             return;
@@ -131,6 +151,7 @@ impl<S: Sink> Parser<S> {
         }
     }
 
+    #[verifier::external_body]
     fn chars_from_input(&mut self, in_: usize, is_blank: bool) {
         while in_ > self.inp().cur {
             let start = self.inp().cur;
@@ -145,6 +166,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseCharDataInternal`.
+    #[verifier::external_body]
     pub fn parse_char_data_internal(&mut self, partial: bool) {
         let mut line = self.inp().line;
         let mut col = self.inp().col;
@@ -258,6 +280,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseCharDataComplex`.
+    #[verifier::external_body]
     fn parse_char_data_complex(&mut self, partial: bool) {
         let mut buf: Vec<u8> = Vec::with_capacity(PARSER_BIG_BUFFER_SIZE + 5);
         let (mut cur, mut l) = self.current_char_recover();
@@ -309,6 +332,7 @@ impl<S: Sink> Parser<S> {
 
     // --- SAX1 tags ---
 
+    #[verifier::external_body]
     fn xml_space_value(&mut self, val: &[u8]) {
         if val == b"default" {
             self.set_space(0);
@@ -320,6 +344,7 @@ impl<S: Sink> Parser<S> {
         }
     }
 
+    #[verifier::external_body]
     fn lang_value(&mut self, val: &[u8]) {
         if !check_language_id(val) {
             let m = cat(&[b"Malformed value for xml:lang : ", val, b"\n"]);
@@ -328,6 +353,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseAttribute` (SAX1): the name, and the value when it parsed.
+    #[verifier::external_body]
     fn parse_attribute(&mut self) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
         self.grow();
         let name = match self.parse_name() {
@@ -358,6 +384,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseStartTag` (SAX1).
+    #[verifier::external_body]
     fn parse_start_tag(&mut self) -> Option<Vec<u8>> {
         if self.cur() != b'<' {
             return None;
@@ -427,6 +454,7 @@ impl<S: Sink> Parser<S> {
         Some(name)
     }
 
+    #[verifier::external_body]
     fn tag_mismatch(&mut self, line: i32, got: Option<Vec<u8>>) {
         let name = got.unwrap_or_else(|| b"unparsable".to_vec());
         let open = self.cur_name();
@@ -435,6 +463,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseEndTag1`.
+    #[verifier::external_body]
     fn parse_end_tag1(&mut self, line: i32) {
         self.grow();
         if self.cur() != b'<' || self.nxt(1) != b'/' {
@@ -465,6 +494,7 @@ impl<S: Sink> Parser<S> {
     // --- SAX2 tags ---
 
     /// `xmlParseQNameHashed`: (local name, prefix).
+    #[verifier::external_body]
     fn parse_qname(&mut self) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
         self.grow();
         let start = self.inp().cur;
@@ -494,6 +524,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseQNameAndCompare`.
+    #[verifier::external_body]
     fn parse_qname_and_compare(&mut self, name: &[u8], prefix: &[u8]) -> Result<(), Option<Vec<u8>>> {
         self.grow();
         let mut in_ = self.inp().cur;
@@ -532,6 +563,7 @@ impl<S: Sink> Parser<S> {
 
     /// `xmlParseAttribute2`: None when no name parsed, else the name,
     /// prefix and (when it parsed) the value.
+    #[verifier::external_body]
     fn parse_attribute2(&mut self, pref: Option<&[u8]>, elem: &[u8]) -> Option<(Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>)> {
         self.grow();
         let (name, prefix) = self.parse_qname();
@@ -583,6 +615,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlCtxtGrowAttrs`, on the count only.
+    #[verifier::external_body]
     fn grow_attrs(&mut self) -> bool {
         match grow_capacity_min(self.maxatts / 5, 10, MAX_ATTRS) {
             None => {
@@ -596,14 +629,16 @@ impl<S: Sink> Parser<S> {
         }
     }
 
+    #[verifier::external_body]
     fn ns_uri_of(&self, ns: NsIdx) -> Option<Vec<u8>> {
         match ns {
             NsIdx::Empty => None,
-            NsIdx::Xml => Some(XML_NS.to_vec()),
+            NsIdx::Xml => Some(xml_ns().to_vec()),
             NsIdx::At(i) => Some(self.nsdb.tab[i].uri.clone()),
         }
     }
 
+    #[verifier::external_body]
     fn check_ns_uri(&mut self, uri: &[u8], attname: Option<&[u8]>, pedantic_only: bool) {
         let (valid, has_scheme) = self.sink.uri_check(uri);
         match attname {
@@ -630,6 +665,7 @@ impl<S: Sink> Parser<S> {
 
     /// `xmlParseStartTag2`: the local name, prefix, URI and the number of
     /// namespaces pushed.
+    #[verifier::external_body]
     fn parse_start_tag2(&mut self) -> Option<(Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>, usize)> {
         if self.cur() != b'<' {
             return None;
@@ -667,11 +703,11 @@ impl<S: Sink> Parser<S> {
                     let mut push = true;
                     if !uri.is_empty() {
                         self.check_ns_uri(&uri, None, false);
-                        if uri.as_slice() == XML_NS {
+                        if uri.as_slice() == xml_ns() {
                             // attname is "xmlns" here, never "xml".
                             self.ns_err(NS_ERR_XML_NAMESPACE, b"xml namespace URI cannot be the default namespace\n", None, None, None);
                             push = false;
-                        } else if uri.as_slice() == XMLNS_NS {
+                        } else if uri.as_slice() == xmlns_ns() {
                             self.ns_err(NS_ERR_XML_NAMESPACE, b"reuse of the xmlns namespace name is forbidden\n", None, None, None);
                             push = false;
                         }
@@ -682,17 +718,17 @@ impl<S: Sink> Parser<S> {
                 } else if aprefix.as_deref() == Some(b"xmlns") {
                     let uri = v;
                     let push = if attname.as_slice() == b"xml" {
-                        if uri.as_slice() != XML_NS {
+                        if uri.as_slice() != xml_ns() {
                             self.ns_err(NS_ERR_XML_NAMESPACE, b"xml namespace prefix mapped to wrong URI\n", None, None, None);
                         }
                         false
-                    } else if uri.as_slice() == XML_NS {
+                    } else if uri.as_slice() == xml_ns() {
                         self.ns_err(NS_ERR_XML_NAMESPACE, b"xml namespace URI mapped to wrong prefix\n", None, None, None);
                         false
                     } else if attname.as_slice() == b"xmlns" {
                         self.ns_err(NS_ERR_XML_NAMESPACE, b"redefinition of the xmlns prefix is forbidden\n", None, None, None);
                         false
-                    } else if uri.as_slice() == XMLNS_NS {
+                    } else if uri.as_slice() == xmlns_ns() {
                         self.ns_err(NS_ERR_XML_NAMESPACE, b"reuse of the xmlns namespace name is forbidden\n", None, None, None);
                         false
                     } else if uri.is_empty() {
@@ -943,6 +979,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseEndTag2` for the element on top of the name stack.
+    #[verifier::external_body]
     fn parse_end_tag2(&mut self) {
         let tag = match self.names.last() {
             Some(t) => t.clone(),
@@ -979,6 +1016,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseCDSect`.
+    #[verifier::external_body]
     pub fn parse_cdsect(&mut self) {
         let max = if self.options & PARSE_HUGE != 0 { MAX_HUGE_LENGTH } else { MAX_TEXT_LENGTH };
         if self.cur() != b'<' || self.nxt(1) != b'!' || self.nxt(2) != b'[' {
@@ -1043,6 +1081,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseContentInternal`.
+    #[verifier::external_body]
     pub fn parse_content_internal(&mut self) {
         let old_name_nr = self.names.len();
         let old_space_nr = self.space_nr;
@@ -1095,6 +1134,7 @@ impl<S: Sink> Parser<S> {
         }
     }
 
+    #[verifier::external_body]
     fn premature_end(&mut self) {
         let t = match self.names.last() {
             Some(t) => t.clone(),
@@ -1105,6 +1145,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseElement`.
+    #[verifier::external_body]
     pub fn parse_element(&mut self) {
         if self.parse_element_start() != 0 {
             return;
@@ -1121,6 +1162,7 @@ impl<S: Sink> Parser<S> {
 
     /// `xmlParseElementStart`: 0 when content follows, 1 for an empty
     /// element, -1 on error.
+    #[verifier::external_body]
     pub fn parse_element_start(&mut self) -> i32 {
         let max_depth: usize = if self.options & PARSE_HUGE != 0 { 2048 } else { 256 };
         if self.names.len() > max_depth {
@@ -1186,6 +1228,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseElementEnd`.
+    #[verifier::external_body]
     pub fn parse_element_end(&mut self) {
         if self.names.is_empty() {
             if self.cur() == b'<' && self.nxt(1) == b'/' {
@@ -1202,3 +1245,4 @@ impl<S: Sink> Parser<S> {
     }
 }
 
+} // verus!

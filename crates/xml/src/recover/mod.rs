@@ -30,9 +30,15 @@ mod dtd;
 pub mod refs;
 mod content;
 mod doc;
+pub mod codes;
+use codes::*;
 pub use doc::parse;
 
 pub use enc::{lookup_encoding, Enc};
+use vstd::prelude::*;
+
+verus! {
+
 
 // --- constants (parser.h, parserInternals.h, parser.c) -------------------------
 
@@ -102,8 +108,6 @@ pub const FROM_NAMESPACE: i32 = 3;
 pub const FROM_DTD: i32 = 4;
 pub const FROM_IO: i32 = 8;
 
-pub mod codes;
-use codes::*;
 
 // --- what the parser reports to -------------------------------------------------
 
@@ -366,6 +370,7 @@ pub struct Input {
 }
 
 impl Input {
+    #[verifier::external_body]
     pub fn from_bytes(b: Vec<u8>) -> Input {
         Input { buf: b, base: 0, cur: 0, line: 1, col: 1, flags: 0, consumed: 0, entity: None, etype: 0, src: None, version: None, filename: None }
     }
@@ -378,6 +383,7 @@ pub use crate::lenient::is_xml_char as is_char;
 pub use crate::lenient::eq_ci;
 
 /// Decimal digits of `v`.
+#[verifier::external_body]
 pub fn itoa(v: i64) -> Vec<u8> {
     let mut out = Vec::new();
     let neg = v < 0;
@@ -396,6 +402,7 @@ pub fn itoa(v: i64) -> Vec<u8> {
     out
 }
 
+#[verifier::external_body]
 pub fn cat(parts: &[&[u8]]) -> Vec<u8> {
     let mut v = Vec::new();
     for p in parts {
@@ -465,6 +472,7 @@ pub struct NameEntry {
 }
 
 impl<S: Sink> Parser<S> {
+    #[verifier::external_body]
     pub fn new(sink: S, doc: Input) -> Parser<S> {
         let options = sink.options();
         let replace_entities = sink.replace_entities();
@@ -509,12 +517,14 @@ impl<S: Sink> Parser<S> {
     // --- the current input ---
 
     #[inline]
+    #[verifier::external_body]
     pub fn inp(&self) -> &Input {
         let n = self.inputs.len();
         &self.inputs[n - 1]
     }
 
     #[inline]
+    #[verifier::external_body]
     pub fn inp_mut(&mut self) -> &mut Input {
         let n = self.inputs.len();
         &mut self.inputs[n - 1]
@@ -522,6 +532,7 @@ impl<S: Sink> Parser<S> {
 
     /// `CUR`, `RAW`.
     #[inline]
+    #[verifier::external_body]
     pub fn cur(&self) -> u8 {
         let i = self.inp();
         at(&i.buf, i.cur)
@@ -529,12 +540,14 @@ impl<S: Sink> Parser<S> {
 
     /// `NXT(k)`.
     #[inline]
+    #[verifier::external_body]
     pub fn nxt(&self, k: usize) -> u8 {
         let i = self.inp();
         at(&i.buf, i.cur.saturating_add(k))
     }
 
     /// `CMPn(CUR_PTR, ...)`.
+    #[verifier::external_body]
     pub fn cmp(&self, s: &[u8]) -> bool {
         let i = self.inp();
         let mut k = 0;
@@ -548,27 +561,32 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `ctxt->input->end - ctxt->input->cur`.
+    #[verifier::external_body]
     pub fn avail(&self) -> usize {
         let i = self.inp();
         i.buf.len().saturating_sub(i.cur)
     }
 
+    #[verifier::external_body]
     pub fn at_end(&self) -> bool {
         let i = self.inp();
         i.cur >= i.buf.len()
     }
 
+    #[verifier::external_body]
     pub fn stopped(&self) -> bool {
         self.sink.disable_sax() > 1
     }
 
     /// `!ctxt->disableSAX`.
+    #[verifier::external_body]
     pub fn sax_on(&self) -> bool {
         self.sink.disable_sax() == 0
     }
 
     /// One step of a loop; false when the bound on the parser's work is
     /// reached (the parser then stops, as on a resource limit).
+    #[verifier::external_body]
     pub fn step(&mut self) -> bool {
         if self.fuel == 0 {
             if !self.stopped() {
@@ -581,20 +599,24 @@ impl<S: Sink> Parser<S> {
         true
     }
 
+    #[verifier::external_body]
     pub fn in_pe(&self) -> bool {
         let i = self.inp();
         i.entity.is_some() && (i.etype == INTERNAL_PARAMETER_ENTITY || i.etype == EXTERNAL_PARAMETER_ENTITY)
     }
 
+    #[verifier::external_body]
     pub fn external(&self) -> bool {
         self.sink.in_subset() == 2 || (self.inp().entity.is_some() && self.inp().etype == EXTERNAL_PARAMETER_ENTITY)
     }
 
+    #[verifier::external_body]
     pub fn max_length(&self, normal: usize) -> usize {
         if self.options & PARSE_HUGE != 0 { MAX_HUGE_LENGTH } else { normal }
     }
 
     /// Tells the sink where the inputs are.
+    #[verifier::external_body]
     pub fn sync(&mut self) {
         let mut views: Vec<InputView<'_>> = Vec::with_capacity(self.inputs.len());
         for i in self.inputs.iter() {
@@ -615,6 +637,7 @@ impl<S: Sink> Parser<S> {
 
     // --- errors (parser.c's wrappers of xmlCtxtErr) ---
 
+    #[verifier::external_body]
     pub fn report(&mut self, domain: i32, code: i32, level: i32, s1: Option<&[u8]>, s2: Option<&[u8]>, s3: Option<&[u8]>, int1: i32, msg: Option<&[u8]>) {
         self.sync();
         let r = Report { domain, code, level, s1, s2, s3, int1, msg };
@@ -622,59 +645,70 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlFatalErr`.
+    #[verifier::external_body]
     pub fn fatal(&mut self, code: i32, info: Option<&[u8]>) {
         let level = if self.html && code == ERR_UNSUPPORTED_ENCODING { LEVEL_ERROR } else { LEVEL_FATAL };
         self.report(FROM_PARSER, code, level, info, None, None, 0, None);
     }
 
     /// `xmlFatalErrMsg`.
+    #[verifier::external_body]
     pub fn fatal_msg(&mut self, code: i32, msg: &[u8]) {
         self.report(FROM_PARSER, code, LEVEL_FATAL, None, None, None, 0, Some(msg));
     }
 
     /// `xmlFatalErrMsgStr`: `msg` already holds `val`.
+    #[verifier::external_body]
     pub fn fatal_str(&mut self, code: i32, msg: &[u8], val: Option<&[u8]>) {
         self.report(FROM_PARSER, code, LEVEL_FATAL, val, None, None, 0, Some(msg));
     }
 
     /// `xmlFatalErrMsgInt`.
+    #[verifier::external_body]
     pub fn fatal_int(&mut self, code: i32, msg: &[u8], val: i32) {
         self.report(FROM_PARSER, code, LEVEL_FATAL, None, None, None, val, Some(msg));
     }
 
     /// `xmlFatalErrMsgStrIntStr`.
+    #[verifier::external_body]
     pub fn fatal_sis(&mut self, code: i32, msg: &[u8], s1: Option<&[u8]>, val: i32, s2: Option<&[u8]>) {
         self.report(FROM_PARSER, code, LEVEL_FATAL, s1, s2, None, val, Some(msg));
     }
 
     /// `xmlErrMsgStr`.
+    #[verifier::external_body]
     pub fn err_str(&mut self, code: i32, msg: &[u8], val: Option<&[u8]>) {
         self.report(FROM_PARSER, code, LEVEL_ERROR, val, None, None, 0, Some(msg));
     }
 
     /// `xmlWarningMsg`.
+    #[verifier::external_body]
     pub fn warning(&mut self, code: i32, msg: &[u8], s1: Option<&[u8]>, s2: Option<&[u8]>) {
         self.report(FROM_PARSER, code, LEVEL_WARNING, s1, s2, None, 0, Some(msg));
     }
 
     /// `xmlValidityError`.
+    #[verifier::external_body]
     pub fn validity_error(&mut self, code: i32, msg: &[u8], s1: Option<&[u8]>, s2: Option<&[u8]>) {
         self.sink.set_valid(false);
         self.report(FROM_DTD, code, LEVEL_ERROR, s1, s2, None, 0, Some(msg));
     }
 
     /// `xmlNsErr`.
+    #[verifier::external_body]
     pub fn ns_err(&mut self, code: i32, msg: &[u8], s1: Option<&[u8]>, s2: Option<&[u8]>, s3: Option<&[u8]>) {
         self.sink.set_ns_well_formed(false);
         self.report(FROM_NAMESPACE, code, LEVEL_ERROR, s1, s2, s3, 0, Some(msg));
     }
 
     /// `xmlNsWarn`.
+    #[verifier::external_body]
     pub fn ns_warn(&mut self, code: i32, msg: &[u8], s1: Option<&[u8]>, s2: Option<&[u8]>, s3: Option<&[u8]>) {
         self.report(FROM_NAMESPACE, code, LEVEL_WARNING, s1, s2, s3, 0, Some(msg));
     }
 
     /// `xmlErrAttributeDup`.
+    #[verifier::external_body]
     pub fn err_attribute_dup(&mut self, prefix: Option<&[u8]>, local: &[u8]) {
         match prefix {
             None => {
@@ -689,6 +723,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlCtxtErrIO` (no URI).
+    #[verifier::external_body]
     pub fn err_io(&mut self, code: i32) {
         let level = if code == IO_ENOENT || code == IO_UNKNOWN {
             if self.sink.validate() { LEVEL_ERROR } else { LEVEL_WARNING }
@@ -702,6 +737,7 @@ impl<S: Sink> Parser<S> {
 
     /// `xmlParserEntityCheck`: whether expanding `extra` more bytes goes
     /// over the amplification limit (and reports it).
+    #[verifier::external_body]
     pub fn entity_check(&mut self, extra: u64) -> bool {
         let (ent, consumed) = {
             let i = self.inp();
@@ -735,6 +771,7 @@ impl<S: Sink> Parser<S> {
     // --- reading (parserInternals.c and parser.c's macros) ---
 
     /// `xmlParserGrow`.
+    #[verifier::external_body]
     pub fn grow_now(&mut self) -> i32 {
         let huge = self.options & PARSE_HUGE != 0;
         let n = self.inputs.len();
@@ -769,6 +806,7 @@ impl<S: Sink> Parser<S> {
 
     /// `GROW`.
     #[inline]
+    #[verifier::external_body]
     pub fn grow(&mut self) {
         if self.avail() < INPUT_CHUNK {
             self.grow_now();
@@ -776,6 +814,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `SHRINK` (`xmlParserShrink`).
+    #[verifier::external_body]
     pub fn shrink(&mut self) {
         let input = self.inp_mut();
         if input.src.is_none() && input.entity.is_none() && input.buf.is_empty() {
@@ -788,6 +827,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `SKIP(n)`: ASCII only, on the line.
+    #[verifier::external_body]
     pub fn skip(&mut self, n: usize) {
         {
             let i = self.inp_mut();
@@ -800,6 +840,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `NEXT1`.
+    #[verifier::external_body]
     pub fn next1(&mut self) {
         {
             let i = self.inp_mut();
@@ -812,6 +853,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `NEXTL(l)`.
+    #[verifier::external_body]
     pub fn nextl(&mut self, l: usize) {
         let i = self.inp_mut();
         if at(&i.buf, i.cur) == b'\n' {
@@ -824,6 +866,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `SKIPL(n)`.
+    #[verifier::external_body]
     pub fn skipl(&mut self, n: usize) {
         let mut k = 0;
         while k < n {
@@ -843,6 +886,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlNextChar` (`NEXT`).
+    #[verifier::external_body]
     pub fn next(&mut self) {
         let mut avail = self.avail();
         if avail < INPUT_CHUNK {
@@ -914,6 +958,7 @@ impl<S: Sink> Parser<S> {
 
     /// `xmlCurrentChar` (`CUR_CHAR`): the character and its length. On
     /// CR LF it moves past the CR, as libxml2 does.
+    #[verifier::external_body]
     pub fn current_char(&mut self) -> (u32, usize) {
         let mut avail = self.avail();
         if avail < INPUT_CHUNK {
@@ -999,12 +1044,14 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlCurrentCharRecover`.
+    #[verifier::external_body]
     pub fn current_char_recover(&mut self) -> (u32, usize) {
         let (c, l) = self.current_char();
         if c == INVALID_CHAR { (0xFFFD, l) } else { (c, l) }
     }
 
     /// `xmlUTF8MultibyteLen` at the current position.
+    #[verifier::external_body]
     pub fn utf8_multibyte_len(&mut self, p: usize, err_msg: &[u8]) -> usize {
         let (c, c1, c2, c3) = {
             let i = self.inp();
@@ -1025,6 +1072,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlSkipBlankChars` (`SKIP_BLANKS`).
+    #[verifier::external_body]
     pub fn skip_blanks(&mut self) -> usize {
         let mut res: usize = 0;
         loop {
@@ -1054,6 +1102,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlCtxtPushInput`.
+    #[verifier::external_body]
     pub fn push_input(&mut self, input: Input) -> i32 {
         let max = if self.options & PARSE_HUGE != 0 { 40 } else { 20 };
         if self.inputs.len() >= max {
@@ -1067,6 +1116,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlCtxtPopInput` and free.
+    #[verifier::external_body]
     pub fn pop_input(&mut self) {
         if self.inputs.len() > 1 {
             self.inputs.pop();
@@ -1075,6 +1125,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlNewEntityInputStream`.
+    #[verifier::external_body]
     pub fn entity_input(&mut self, e: Ent) -> Option<Input> {
         let info = self.sink.ent_info(e);
         let mut input = if info.has_content {
@@ -1097,6 +1148,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlHaltParser`.
+    #[verifier::external_body]
     pub fn halt(&mut self) {
         self.sink.halt();
     }
@@ -1114,10 +1166,12 @@ pub struct SBuf {
 }
 
 impl SBuf {
+    #[verifier::external_body]
     pub fn new(max: usize) -> SBuf {
         SBuf { mem: Vec::new(), alloc: false, max, code: codes::ERR_OK }
     }
 
+    #[verifier::external_body]
     fn limit(&mut self) {
         if self.code == codes::ERR_OK {
             self.code = codes::ERR_RESOURCE_LIMIT;
@@ -1125,6 +1179,7 @@ impl SBuf {
     }
 
     /// `xmlSBufAddString`.
+    #[verifier::external_body]
     pub fn add(&mut self, s: &[u8]) {
         if self.max - self.mem.len() < s.len() {
             self.limit();
@@ -1139,6 +1194,7 @@ impl SBuf {
     }
 
     /// `xmlSBufAddChar`.
+    #[verifier::external_body]
     pub fn add_char(&mut self, c: u32) {
         if self.max - self.mem.len() < 4 {
             self.limit();
@@ -1149,6 +1205,7 @@ impl SBuf {
     }
 
     /// `xmlSBufAddReplChar`.
+    #[verifier::external_body]
     pub fn add_repl(&mut self) {
         self.add(b"\xEF\xBF\xBD");
     }
@@ -1156,6 +1213,7 @@ impl SBuf {
 
 impl<S: Sink> Parser<S> {
     /// `xmlSBufReportError`.
+    #[verifier::external_body]
     pub fn sbuf_report(&mut self, b: &SBuf, msg: &[u8]) {
         if b.code == codes::ERR_NO_MEMORY {
             self.sink.mem_error();
@@ -1165,6 +1223,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlSBufFinish`.
+    #[verifier::external_body]
     pub fn sbuf_finish(&mut self, b: SBuf, msg: &[u8]) -> Option<Vec<u8>> {
         if b.code == codes::ERR_OK {
             return Some(b.mem);
@@ -1174,9 +1233,12 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlSBufCleanup`.
+    #[verifier::external_body]
     pub fn sbuf_cleanup(&mut self, b: SBuf, msg: &[u8]) {
         if b.code != codes::ERR_OK {
             self.sbuf_report(&b, msg);
         }
     }
 }
+
+} // verus!

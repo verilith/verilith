@@ -6,6 +6,10 @@ use super::codes::*;
 use super::tables::*;
 use super::*;
 use crate::lenient::{chunk_ascii, chunk_latin1, chunk_utf16, put, CHUNK_OK, CHUNK_SPACE};
+use vstd::prelude::*;
+
+verus! {
+
 
 /// A built-in input decoder (`defaultHandlers` with an input function).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -19,12 +23,13 @@ pub enum Enc {
 }
 
 /// `xmlParseCharEncodingInternal`: the `xmlCharEncoding` of a name, or -1.
+#[verifier::external_body]
 fn encoding_id(name: &[u8]) -> i32 {
     let mut lo = 0usize;
-    let mut hi = ENC_NAMES.len();
+    let mut hi = ENC_NAMES_LEN;
     while lo < hi {
         let mid = lo + (hi - lo) / 2;
-        let (n, id) = ENC_NAMES[mid];
+        let (n, id) = enc_name(mid);
         match cmp_ci(name, n) {
             0 => return id as i32,
             d if d < 0 => hi = mid,
@@ -38,6 +43,7 @@ use crate::lenient::cmp_ci;
 
 /// The decoder of a default handler, by `xmlCharEncoding`: `Ok(None)` for
 /// UTF-8 (no decoder), `Err` for a handler with no input function.
+#[verifier::external_body]
 fn handler_of(id: i32) -> Result<Option<Enc>, i32> {
     match id {
         1 => Ok(None),
@@ -61,6 +67,7 @@ fn handler_of(id: i32) -> Result<Option<Enc>, i32> {
 }
 
 /// `xmlCreateCharEncodingHandler(name, XML_ENC_INPUT)`.
+#[verifier::external_body]
 pub fn lookup_encoding(name: &[u8], html: bool) -> Result<Option<Enc>, i32> {
     let mut id = encoding_id(name);
     if id == 1 {
@@ -80,6 +87,7 @@ pub fn lookup_encoding(name: &[u8], html: bool) -> Result<Option<Enc>, i32> {
 }
 
 /// `xmlLookupCharEncodingHandler`.
+#[verifier::external_body]
 pub fn lookup_id(id: i32) -> Result<Option<Enc>, i32> {
     if id <= 0 || id >= 32 {
         return Err(ERR_UNSUPPORTED_ENCODING);
@@ -100,6 +108,7 @@ enum Res {
 
 /// One decoder call (`xmlEncInputChunk`): converts `inp` into at most
 /// `room` bytes of `out`; returns the bytes read and the result.
+#[verifier::external_body]
 fn chunk(e: Enc, inp: &[u8], out: &mut Vec<u8>, mut room: usize, flush: bool) -> (usize, Res) {
     let mut i = 0usize;
     let n = inp.len();
@@ -146,6 +155,7 @@ fn chunk(e: Enc, inp: &[u8], out: &mut Vec<u8>, mut room: usize, flush: bool) ->
 
 /// `xmlCharEncInput`: converts what was read, up to `max_out` bytes of
 /// output. Returns the bytes produced, or the error code.
+#[verifier::external_body]
 pub fn char_enc_input(buf: &mut Vec<u8>, src: &mut Source, max_out: usize, flush: bool) -> Result<usize, i32> {
     let e = match src.enc {
         Some(e) => e,
@@ -168,6 +178,7 @@ pub fn char_enc_input(buf: &mut Vec<u8>, src: &mut Source, max_out: usize, flush
 }
 
 /// `xmlParserInputBufferGrow(buf, len)`.
+#[verifier::external_body]
 pub fn buffer_grow(buf: &mut Vec<u8>, src: &mut Source, len: usize) -> i32 {
     if src.error != 0 {
         return -1;
@@ -203,6 +214,7 @@ pub fn buffer_grow(buf: &mut Vec<u8>, src: &mut Source, len: usize) -> i32 {
 
 /// Sets up a fresh input over its source: a memory buffer without a
 /// decoder is all there from the start.
+#[verifier::external_body]
 pub fn init_buffer(i: &mut Input) {
     if let Some(src) = i.src.as_mut() {
         if src.mode == Mode::Memory && src.enc.is_none() {
@@ -216,6 +228,7 @@ pub fn init_buffer(i: &mut Input) {
 
 impl<S: Sink> Parser<S> {
     /// `xmlInputSetEncodingHandler` on the current input; the error code.
+    #[verifier::external_body]
     pub fn set_encoding_handler(&mut self, h: Option<Enc>) -> i32 {
         let input = self.inp_mut();
         input.flags |= INPUT_HAS_ENCODING;
@@ -272,6 +285,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlSwitchEncoding` with a detected encoding.
+    #[verifier::external_body]
     pub fn switch_encoding(&mut self, id: i32) {
         match lookup_id(id) {
             Err(code) => self.fatal(code, None),
@@ -286,6 +300,7 @@ impl<S: Sink> Parser<S> {
 
     /// `xmlSwitchInputEncodingName`, for an encoding given before parsing
     /// (`xmlCtxtReadMemory`'s `encoding`).
+    #[verifier::external_body]
     pub fn switch_encoding_name(&mut self, name: &[u8]) -> i32 {
         match lookup_encoding(name, false) {
             Err(code) => {
@@ -309,6 +324,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlDetectEncoding`.
+    #[verifier::external_body]
     pub fn detect_encoding(&mut self) {
         if self.grow_now() < 0 {
             return;
@@ -350,6 +366,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlSetDeclaredEncoding`.
+    #[verifier::external_body]
     pub fn set_declared_encoding(&mut self, encoding: Vec<u8>) {
         let mut encoding = Some(encoding);
         let flags = self.inp().flags;
@@ -396,6 +413,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParserCheckEOF`.
+    #[verifier::external_body]
     pub fn check_eof(&mut self, code: i32) {
         if self.sink.err_no() != ERR_OK {
             return;
@@ -423,3 +441,5 @@ impl<S: Sink> Parser<S> {
         }
     }
 }
+
+} // verus!

@@ -2,7 +2,12 @@
 use super::codes::*;
 use super::tables::*;
 use super::*;
+use vstd::prelude::*;
 
+verus! {
+
+
+#[verifier::external_body]
 fn in_ranges(c: u32, r: &[(u32, u32)]) -> bool {
     let mut lo = 0usize;
     let mut hi = r.len();
@@ -20,6 +25,7 @@ fn in_ranges(c: u32, r: &[(u32, u32)]) -> bool {
 }
 
 /// `IS_LETTER` (XML 1.0 4th edition, chvalid.h).
+#[verifier::external_body]
 pub fn is_letter(c: u32) -> bool {
     let base = if c < 0x100 {
         (0x41..=0x5A).contains(&c) || (0x61..=0x7A).contains(&c) || (0xC0..=0xD6).contains(&c) || (0xD8..=0xF6).contains(&c) || c >= 0xF8
@@ -30,14 +36,17 @@ pub fn is_letter(c: u32) -> bool {
     base || ideo
 }
 
+#[verifier::external_body]
 pub fn is_digit(c: u32) -> bool {
     if c < 0x100 { (0x30..=0x39).contains(&c) } else { in_ranges(c, &DIGIT) }
 }
 
+#[verifier::external_body]
 pub fn is_combining(c: u32) -> bool {
     c >= 0x100 && in_ranges(c, &COMBINING)
 }
 
+#[verifier::external_body]
 pub fn is_extender(c: u32) -> bool {
     if c < 0x100 { c == 0xB7 } else { in_ranges(c, &EXTENDER) }
 }
@@ -46,6 +55,7 @@ pub use crate::lenient::is_pubid_char;
 use crate::lenient::{name_char_new, name_start_new};
 
 /// `xmlIsNameStartChar`.
+#[verifier::external_body]
 pub fn is_name_start(c: u32, old10: bool) -> bool {
     if !old10 {
         name_start_new(c)
@@ -55,6 +65,7 @@ pub fn is_name_start(c: u32, old10: bool) -> bool {
 }
 
 /// `xmlIsNameChar`.
+#[verifier::external_body]
 pub fn is_name_char(c: u32, old10: bool) -> bool {
     if !old10 {
         name_char_new(c)
@@ -72,6 +83,7 @@ const SCAN_OLD10: u32 = 4;
 
 /// `xmlScanName`: the end of the name at `i` in `s`, `None` when it is
 /// longer than `max`.
+#[verifier::external_body]
 pub fn scan_name(s: &[u8], i: usize, max: usize, mut flags: u32) -> Option<usize> {
     let stop: u32 = if flags & SCAN_NC != 0 { b':' as u32 } else { 0 };
     let old10 = flags & SCAN_OLD10 != 0;
@@ -108,20 +120,24 @@ pub fn scan_name(s: &[u8], i: usize, max: usize, mut flags: u32) -> Option<usize
     Some(p)
 }
 
+#[verifier::external_body]
 fn ascii_name_start(c: u8) -> bool {
     c.is_ascii_lowercase() || c.is_ascii_uppercase() || c == b'_' || c == b':'
 }
 
+#[verifier::external_body]
 fn ascii_name_char(c: u8) -> bool {
     c.is_ascii_lowercase() || c.is_ascii_uppercase() || c.is_ascii_digit() || c == b'_' || c == b'-' || c == b':' || c == b'.'
 }
 
 impl<S: Sink> Parser<S> {
+    #[verifier::external_body]
     fn old10(&self) -> bool {
         self.options & PARSE_OLD10 != 0
     }
 
     /// `xmlParseCharRef`: the character, 0 on error.
+    #[verifier::external_body]
     pub fn parse_char_ref(&mut self) -> u32 {
         let mut val: u32 = 0;
         let mut count: u32 = 0;
@@ -205,6 +221,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseStringCharRef` over `s` at `*i`.
+    #[verifier::external_body]
     pub fn parse_string_char_ref(&mut self, s: &[u8], i: &mut usize) -> u32 {
         let mut p = *i;
         let mut val: u32 = 0;
@@ -269,12 +286,14 @@ impl<S: Sink> Parser<S> {
     }
 
     /// The bytes `from..to` of the current input.
+    #[verifier::external_body]
     pub fn slice(&self, from: usize, to: usize) -> Vec<u8> {
         let b = &self.inp().buf;
         let to = if to < b.len() { to } else { b.len() };
         if from < to { b[from..to].to_vec() } else { Vec::new() }
     }
 
+    #[verifier::external_body]
     fn parse_name_complex(&mut self) -> Option<Vec<u8>> {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
         let old10 = self.old10();
@@ -308,6 +327,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseName`.
+    #[verifier::external_body]
     pub fn parse_name(&mut self) -> Option<Vec<u8>> {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
         self.grow();
@@ -335,6 +355,7 @@ impl<S: Sink> Parser<S> {
         self.parse_name_complex()
     }
 
+    #[verifier::external_body]
     fn parse_ncname_complex(&mut self) -> Option<Vec<u8>> {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
         let old10 = self.old10();
@@ -357,6 +378,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseNCName`.
+    #[verifier::external_body]
     pub fn parse_ncname(&mut self) -> Option<Vec<u8>> {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
         let start = self.inp().cur;
@@ -395,6 +417,7 @@ impl<S: Sink> Parser<S> {
 
     /// `xmlParseNameAndCompare`: `Ok(())` when the name is `other`, else
     /// the name read (or `None`).
+    #[verifier::external_body]
     pub fn parse_name_and_compare(&mut self, other: &[u8]) -> Result<(), Option<Vec<u8>>> {
         self.grow();
         let start = self.inp().cur;
@@ -419,6 +442,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseStringName` over `s` at `*i`.
+    #[verifier::external_body]
     pub fn parse_string_name(&mut self, s: &[u8], i: &mut usize) -> Option<Vec<u8>> {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
         let flags = if self.old10() { SCAN_OLD10 } else { 0 };
@@ -439,6 +463,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseNmtoken`.
+    #[verifier::external_body]
     pub fn parse_nmtoken(&mut self) -> Option<Vec<u8>> {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
         let old10 = self.old10();
@@ -478,3 +503,5 @@ impl<S: Sink> Parser<S> {
         Some(buf)
     }
 }
+
+} // verus!

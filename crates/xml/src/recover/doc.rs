@@ -3,9 +3,14 @@
 use super::codes::*;
 use super::content::grow_capacity_min;
 use super::*;
+use vstd::prelude::*;
+
+verus! {
+
 
 impl<S: Sink> Parser<S> {
     /// `xmlParseVersionNum`.
+    #[verifier::external_body]
     pub fn parse_version_num(&mut self) -> Option<Vec<u8>> {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
         let mut size: usize = 10;
@@ -44,6 +49,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseVersionInfo`.
+    #[verifier::external_body]
     pub fn parse_version_info(&mut self) -> Option<Vec<u8>> {
         let mut version = None;
         if self.cmp(b"version") {
@@ -72,6 +78,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseEncName`.
+    #[verifier::external_body]
     pub fn parse_enc_name(&mut self) -> Option<Vec<u8>> {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
         let mut size: usize = 10;
@@ -104,6 +111,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseEncodingDecl`.
+    #[verifier::external_body]
     pub fn parse_encoding_decl(&mut self) {
         self.skip_blanks();
         if !self.cmp(b"encoding") {
@@ -137,6 +145,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseSDDecl`.
+    #[verifier::external_body]
     pub fn parse_sd_decl(&mut self) -> i32 {
         let mut standalone = -2;
         self.skip_blanks();
@@ -174,6 +183,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseXMLDecl`.
+    #[verifier::external_body]
     pub fn parse_xml_decl(&mut self) {
         self.sink.set_standalone(-2);
         self.skip(5);
@@ -242,6 +252,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseMisc`.
+    #[verifier::external_body]
     pub fn parse_misc(&mut self) {
         while !self.stopped() {
             if !self.step() {
@@ -260,6 +271,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseExternalSubset`.
+    #[verifier::external_body]
     pub fn parse_external_subset(&mut self) {
         self.detect_encoding();
         if self.cmp(b"<?xml") {
@@ -300,6 +312,7 @@ impl<S: Sink> Parser<S> {
 
     /// `xmlSAX2ExternalSubset`: the sink loads the subset (or declines),
     /// the parser reads it on an input stack of its own.
+    #[verifier::external_body]
     fn external_subset(&mut self) {
         let name = self.int_sub_name.clone();
         let public = self.ext_sub_system.clone();
@@ -338,6 +351,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseDocument`.
+    #[verifier::external_body]
     pub fn parse_document(&mut self) -> i32 {
         self.grow();
         self.detect_encoding();
@@ -398,6 +412,7 @@ impl<S: Sink> Parser<S> {
 /// Parses a document read from `raw` (`Memory`: a whole buffer; `Stream`:
 /// a file or descriptor read in chunks), reporting to `sink`; `forced` is
 /// an encoding the caller gave (`xmlSwitchEncodingName` before parsing).
+#[verifier::external_body]
 pub fn parse<S: Sink>(sink: S, raw: Vec<u8>, mode: Mode, filename: Option<Vec<u8>>, forced: Option<&[u8]>) -> S {
     let mut input = Input::from_bytes(Vec::new());
     input.src = Some(Source { raw, delivered: 0, pos: 0, mode, enc: None, error: 0, eof: false });
@@ -412,3 +427,5 @@ pub fn parse<S: Sink>(sink: S, raw: Vec<u8>, mode: Mode, filename: Option<Vec<u8
     p.sync();
     p.sink
 }
+
+} // verus!

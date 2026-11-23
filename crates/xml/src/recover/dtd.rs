@@ -4,6 +4,10 @@ use super::codes::*;
 use super::names::*;
 use super::refs::*;
 use super::*;
+use vstd::prelude::*;
+
+verus! {
+
 
 /// `xmlAttributeType` and `xmlAttributeDefault`.
 pub const ATTRIBUTE_ID: i32 = 2;
@@ -38,12 +42,14 @@ pub const OCUR_PLUS: i32 = 4;
 pub use crate::lenient::{grow_capacity, prefix_n, split_qname3};
 
 /// `xmlAttrNormalizeSpace`, in place.
+#[verifier::external_body]
 pub fn attr_normalize_space(v: &mut Vec<u8>) {
     *v = crate::lenient::attr_normalize_space(v);
 }
 
 impl<S: Sink> Parser<S> {
     /// `xmlParseSystemLiteral`.
+    #[verifier::external_body]
     pub fn parse_system_literal(&mut self) -> Option<Vec<u8>> {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
         let stop = match self.cur() {
@@ -81,6 +87,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParsePubidLiteral`.
+    #[verifier::external_body]
     pub fn parse_pubid_literal(&mut self) -> Option<Vec<u8>> {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
         let stop = match self.cur() {
@@ -118,6 +125,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseExternalID`: (system ID, public ID).
+    #[verifier::external_body]
     pub fn parse_external_id(&mut self, strict: bool) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
         let mut uri = None;
         let mut public = None;
@@ -160,6 +168,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseCommentComplex`.
+    #[verifier::external_body]
     fn parse_comment_complex(&mut self, mut buf: Vec<u8>, mut size: usize) {
         let max = self.max_length(MAX_TEXT_LENGTH);
         let (mut q, mut ql) = self.current_char_recover();
@@ -227,6 +236,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseComment`.
+    #[verifier::external_body]
     pub fn parse_comment(&mut self) {
         let max = self.max_length(MAX_TEXT_LENGTH);
         if self.cur() != b'<' || self.nxt(1) != b'!' {
@@ -374,6 +384,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParsePITarget`.
+    #[verifier::external_body]
     pub fn parse_pi_target(&mut self) -> Option<Vec<u8>> {
         let name = self.parse_name();
         if let Some(n) = name.as_ref() {
@@ -400,6 +411,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParsePI`.
+    #[verifier::external_body]
     pub fn parse_pi(&mut self) {
         let max = self.max_length(MAX_TEXT_LENGTH);
         if self.cur() != b'<' || self.nxt(1) != b'?' {
@@ -456,6 +468,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseNotationDecl`.
+    #[verifier::external_body]
     pub fn parse_notation_decl(&mut self) {
         if self.cur() != b'<' || self.nxt(1) != b'!' {
             return;
@@ -502,6 +515,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseEntityDecl`.
+    #[verifier::external_body]
     pub fn parse_entity_decl(&mut self) {
         if self.cur() != b'<' || self.nxt(1) != b'!' {
             return;
@@ -621,6 +635,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseDefaultDecl`: the default kind and value.
+    #[verifier::external_body]
     pub fn parse_default_decl(&mut self) -> (i32, Option<Vec<u8>>) {
         if self.cmp(b"#REQUIRED") {
             self.skip(9);
@@ -647,6 +662,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseNotationType`.
+    #[verifier::external_body]
     pub fn parse_notation_type(&mut self) -> Option<Vec<Vec<u8>>> {
         if self.cur() != b'(' {
             self.fatal(ERR_NOTATION_NOT_STARTED, None);
@@ -689,6 +705,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseEnumerationType`.
+    #[verifier::external_body]
     pub fn parse_enumeration_type(&mut self) -> Option<Vec<Vec<u8>>> {
         if self.cur() != b'(' {
             self.fatal(ERR_ATTLIST_NOT_STARTED, None);
@@ -731,6 +748,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseEnumeratedType`.
+    #[verifier::external_body]
     pub fn parse_enumerated_type(&mut self) -> (i32, Option<Vec<Vec<u8>>>) {
         if self.cmp(b"NOTATION") {
             self.skip(8);
@@ -752,6 +770,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseAttributeType`.
+    #[verifier::external_body]
     pub fn parse_attribute_type(&mut self) -> (i32, Option<Vec<Vec<u8>>>) {
         if self.cmp(b"CDATA") {
             self.skip(5);
@@ -783,6 +802,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseAttributeListDecl`.
+    #[verifier::external_body]
     pub fn parse_attribute_list_decl(&mut self) {
         if self.cur() != b'<' || self.nxt(1) != b'!' {
             return;
@@ -869,6 +889,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlAddDefAttrs`.
+    #[verifier::external_body]
     pub fn add_def_attrs(&mut self, fullname: &[u8], fullattr: &[u8], value: &[u8]) {
         if self.special_lookup(fullname, fullattr).is_some() {
             return;
@@ -900,6 +921,7 @@ impl<S: Sink> Parser<S> {
         self.atts_default.push((key, vec![d]));
     }
 
+    #[verifier::external_body]
     pub fn special_lookup(&self, elem: &[u8], attr: &[u8]) -> Option<i32> {
         let mut k = 0;
         while k < self.atts_special.len() {
@@ -913,6 +935,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlAddSpecialAttr` (`xmlHashAdd2`: the first declaration stays).
+    #[verifier::external_body]
     pub fn add_special_attr(&mut self, elem: &[u8], attr: &[u8], atype: i32) {
         let t = if self.external() { atype | SPECIAL_EXTERNAL } else { atype };
         if self.special_lookup(elem, attr).is_none() {
@@ -921,11 +944,13 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlCleanSpecialAttr`.
+    #[verifier::external_body]
     pub fn clean_special_attr(&mut self) {
         self.atts_special.retain(|e| e.1 != ATTRIBUTE_CDATA);
     }
 
     /// `xmlPopPE`.
+    #[verifier::external_body]
     pub fn pop_pe(&mut self) {
         let ent = match self.inp().entity {
             None => return,
@@ -963,6 +988,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlSkipBlankCharsPE` (`SKIP_BLANKS_PE`).
+    #[verifier::external_body]
     pub fn skip_blanks_pe(&mut self) -> usize {
         let mut res: usize = 0;
         let mut in_param = self.in_pe();
@@ -1003,6 +1029,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlSkipBlankCharsPEBalanced`.
+    #[verifier::external_body]
     fn skip_blanks_pe_balanced(&mut self, open_nr: usize) {
         self.skip_blanks();
         self.grow();
@@ -1032,6 +1059,7 @@ impl<S: Sink> Parser<S> {
         }
     }
 
+    #[verifier::external_body]
     fn content_boundary(&mut self, open_nr: usize) {
         if self.sink.validate() && self.inputs.len() > open_nr {
             self.validity_error(ERR_ENTITY_BOUNDARY, b"Element content declaration doesn't start and stop in the same entity\n", None, None);
@@ -1039,6 +1067,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseElementMixedContentDecl`.
+    #[verifier::external_body]
     pub fn parse_mixed_content_decl(&mut self, m: &mut ContentModel, open_nr: usize) -> Option<usize> {
         self.grow();
         if !self.cmp(b"#PCDATA") {
@@ -1118,6 +1147,7 @@ impl<S: Sink> Parser<S> {
         ret
     }
 
+    #[verifier::external_body]
     fn content_ocur(&mut self, m: &mut ContentModel, n: usize) {
         let o = match self.cur() {
             b'?' => OCUR_OPT,
@@ -1132,6 +1162,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseElementChildrenContentDeclPriv`.
+    #[verifier::external_body]
     pub fn parse_children_content_decl(&mut self, m: &mut ContentModel, open_nr: usize, depth: i32) -> Option<usize> {
         let max_depth = if self.options & PARSE_HUGE != 0 { 2048 } else { 256 };
         if depth > max_depth {
@@ -1269,6 +1300,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseElementContentDecl`.
+    #[verifier::external_body]
     pub fn parse_element_content_decl(&mut self, name: &[u8], m: &mut ContentModel) -> i32 {
         let open_nr = self.inputs.len();
         if self.cur() != b'(' {
@@ -1294,6 +1326,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseElementDecl`.
+    #[verifier::external_body]
     pub fn parse_element_decl(&mut self) -> i32 {
         if self.cur() != b'<' || self.nxt(1) != b'!' {
             return -1;
@@ -1352,6 +1385,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseConditionalSections`.
+    #[verifier::external_body]
     pub fn parse_conditional_sections(&mut self) {
         let mut depth: usize = 0;
         let mut fresh_pe = false;
@@ -1455,6 +1489,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseMarkupDecl`.
+    #[verifier::external_body]
     pub fn parse_markup_decl(&mut self) {
         self.grow();
         if self.cur() != b'<' {
@@ -1486,6 +1521,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseTextDecl`.
+    #[verifier::external_body]
     pub fn parse_text_decl(&mut self) {
         if self.cmp(b"<?xml") && blank(self.nxt(5)) {
             self.skip(5);
@@ -1529,6 +1565,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseDocTypeDecl`.
+    #[verifier::external_body]
     pub fn parse_doctype_decl(&mut self) {
         self.skip(9);
         if self.skip_blanks() == 0 {
@@ -1558,6 +1595,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseInternalSubset`.
+    #[verifier::external_body]
     pub fn parse_internal_subset(&mut self) {
         if self.cur() == b'[' {
             let old_nr = self.inputs.len();
@@ -1606,6 +1644,7 @@ impl<S: Sink> Parser<S> {
 }
 
 impl ContentModel {
+    #[verifier::external_body]
     pub fn add(&mut self, ctype: i32, name: Option<Vec<u8>>) -> usize {
         // xmlNewDocElementContent splits a QName: prefix and local name.
         let (prefix, local) = match name {
@@ -1620,6 +1659,7 @@ impl ContentModel {
     }
 
     /// Makes an optional or repeated particle once; whether it was.
+    #[verifier::external_body]
     fn once_if_opt(&mut self, n: Option<usize>, _plus: bool) -> bool {
         if let Some(i) = n {
             let o = self.nodes[i].ocur;
@@ -1631,3 +1671,5 @@ impl ContentModel {
         false
     }
 }
+
+} // verus!

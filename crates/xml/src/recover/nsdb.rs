@@ -6,6 +6,10 @@
 //! prefix (bindings are pushed and popped in stack order), which is what a
 //! lookup here finds; the hash only makes that fast.
 use super::*;
+use vstd::prelude::*;
+
+verus! {
+
 
 pub const NONE: usize = usize::MAX;
 
@@ -23,12 +27,14 @@ pub struct NsDb {
 }
 
 impl NsDb {
+    #[verifier::external_body]
     pub fn new(_seed: u32) -> NsDb {
         NsDb { tab: Vec::new(), element_id: 0, min: 0 }
     }
 
     /// `xmlParserNsLookup`: the index of the binding of `prefix` in effect,
     /// `NONE` if none (the minimum is not applied).
+    #[verifier::external_body]
     pub fn lookup(&self, prefix: Option<&[u8]>) -> usize {
         let mut i = self.tab.len();
         while i > 0 {
@@ -41,6 +47,7 @@ impl NsDb {
     }
 
     /// `xmlParserNsStartElement`.
+    #[verifier::external_body]
     pub fn start_element(&mut self) -> bool {
         if self.element_id == u32::MAX {
             return false;
@@ -52,6 +59,7 @@ impl NsDb {
 
 impl<S: Sink> Parser<S> {
     /// `xmlParserNsLookupUri`: the URI bound to `prefix` and visible, not "".
+    #[verifier::external_body]
     pub fn ns_lookup_uri(&self, prefix: Option<&[u8]>) -> Option<Vec<u8>> {
         if prefix == Some(b"xml") {
             return Some(b"http://www.w3.org/XML/1998/namespace".to_vec());
@@ -68,6 +76,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParserNsPush`: 1 pushed, 0 not (a duplicate or redundant), -1.
+    #[verifier::external_body]
     pub fn ns_push(&mut self, prefix: Option<&[u8]>, uri: &[u8], def_attr: bool) -> i32 {
         if prefix == Some(b"xml") {
             return 0;
@@ -94,6 +103,7 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParserNsPop`.
+    #[verifier::external_body]
     pub fn ns_pop(&mut self, nr: usize) -> usize {
         let n = if nr < self.nsdb.tab.len() { nr } else { self.nsdb.tab.len() };
         let keep = self.nsdb.tab.len() - n;
@@ -104,8 +114,11 @@ impl<S: Sink> Parser<S> {
         n
     }
 
+    #[verifier::external_body]
     pub fn set_ns_min(&mut self, min: usize) {
         self.nsdb.min = min;
         self.sink.ns_min(min);
     }
 }
+
+} // verus!
