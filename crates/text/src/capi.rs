@@ -524,7 +524,10 @@ unsafe fn idna_utf8(
     }
     // An ASCII name that passes every check is only lowercased, which
     // `to_ascii_fast` proves for both ToASCII and ToUnicode.
-    if idna::uts46::ascii_checked(s, idna_options((*idna).options, to_ascii), Ghost::assume_new())
+    // `ascii_checked` requires UTF-8 (the ghost scalars `s` encodes), which
+    // bytes from C need not be; ASCII is, and only ASCII can pass it.
+    if s.is_ascii()
+        && idna::uts46::ascii_checked(s, idna_options((*idna).options, to_ascii), Ghost::assume_new())
         && (to_ascii || !has_empty_label(core::str::from_utf8_unchecked(s)))
     {
         if !fill_info(info, 0, false) {

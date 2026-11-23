@@ -170,13 +170,17 @@ Native output:
 | logo_rgba8 | 2.3 | 4.3 | 4.4 | **2.1** | 2.3 |
 | text_gray8 | **0.4** | 1.0 | 1.1 | 0.4 | 0.5 |
 
-verilith-png is 1.6 to 2.8 times as fast as libpng and libspng on every
+On these images verilith-png is 1.6 to 2.8 times as fast as libpng and libspng on every
 photograph, interlaced ones included, and level with them on the screenshot.
 Against the Rust `png` crate it is faster on the RGB photos to RGBA at
 every compression level (interlaced too), the palette and level-1 photos,
 grey to RGBA and the fractal, and 2 to 15% behind on the rest. Interlaced images used to be the slowest
 of the five decoders; 8- and 16-bit ones are now deinterlaced row by row
 and converted by the non-interlaced paths.
+
+On the repository's benchmark (`png-libpng`: the 24 Kodak photos decoded
+to RGBA8, Apple M3 Pro, 2026-11-22) it is 1.41x libpng as a geometric mean;
+see the [benchmark table](../../README.md#benchmarks).
 
 Where the remaining time goes, on the RGB photo in native format: about
 two thirds is decompression (verilith-zlib 31 ms against 26 ms for fdeflate, which
@@ -200,15 +204,18 @@ cargo build --release --example vpngcat     # vpngcat FILE [rgba8|native]
 The proofs are checked with Verus at commit `8bf68ee7` (vstd
 `0.0.0-2026-11-01-0251`) and Rust 1.99.1.
 
-```rust
-use verilith_png::top::{decode, PixelFormat};
-match decode(&bytes, PixelFormat::Rgba8, 1 << 30) {
-    Ok((header, rgba)) => { /* header.width x header.height, 4 bytes per pixel */ }
-    Err(e) => { /* Invalid, TooLarge or OutOfMemory */ }
+```rust,no_run
+use verilith_png::{decode, PixelFormat};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = std::fs::read("image.png")?;
+    let (header, rgba) = decode(&bytes, PixelFormat::Rgba8, 1 << 30)?; // Invalid, TooLarge or OutOfMemory
+    println!("{} x {}, {} bytes of RGBA", header.width, header.height, rgba.len());
+    Ok(())
 }
 ```
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/png/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/png/LICENSE-MIT), at your option.

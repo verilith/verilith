@@ -24,8 +24,14 @@ use vstd::prelude::*;
 
 verus! {
 
+global size_of usize == 8;
+
 /// Nesting limit, identical to cJSON's `CJSON_NESTING_LIMIT`.
 pub const MAX_DEPTH: usize = 1000;
+
+/// The largest input, 2^48 - 1 bytes (256 TiB): more than a 64-bit address
+/// space can hold today, so in effect no limit. Token positions are 48 bits.
+pub const MAX_INPUT: usize = 0xFFFF_FFFF_FFFF;
 
 pub enum STok {
     Null,
@@ -543,7 +549,7 @@ pub open spec fn bom_end(s: Seq<u8>) -> int {
 /// whitespace may follow the value. Without it, any bytes may follow (this is
 /// what cJSON_Parse does); the caller decides what to do with them.
 ///
-/// Inputs of 4 GiB or more are rejected, so that positions fit in 32 bits.
+/// Inputs over `MAX_INPUT` are rejected, so that positions fit in 48 bits.
 /// A byte that could continue a number in a lenient reader (strtod).
 pub open spec fn num_cont(c: u8) -> bool {
     is_digit(c) || c == 0x2E || c == 0x45 || c == 0x65 || c == 0x2B || c == 0x2D
@@ -558,7 +564,7 @@ pub open spec fn cut_number(s: Seq<u8>, require_end: bool, k: int) -> bool {
 }
 
 pub open spec fn document(s: Seq<u8>, require_end: bool) -> Option<(Seq<STok>, int)> {
-    if s.len() > u32::MAX {
+    if s.len() > MAX_INPUT {
         None
     } else {
     match value(s, skip_ws(s, bom_end(s)), MAX_DEPTH as nat, Seq::empty()) {

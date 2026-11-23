@@ -5,7 +5,7 @@
 //! sequences of elements, members and string characters are parsed by loops.
 //!
 //! The parser does not allocate per value: strings and numbers are recorded
-//! as byte ranges of the input in a flat tape of 12-byte tokens, and string
+//! as byte ranges of the input in a flat tape of 16-byte tokens, and string
 //! bodies, whitespace and digit runs are scanned 16 bytes at a time (see
 //! `simd.rs`).
 use crate::spec::*;
@@ -45,17 +45,96 @@ pub enum Kind {
 pub struct Tok {
     pub kind: Kind,
     pub escaped: bool,
-    pub a: u32,
-    pub b: u32,
     /// `NO`, or a tag saying the parser stored this token's value in
     /// `Tape::aux` (at the token's index): for `Num`, `x - 0x8000` is the
     /// power of ten `q` and the slot holds the significand (see `NumVal`);
     /// for an escaped `Str` or `Key`, the slot holds the range of the
-    /// decoded string in `Tape::strs` (start in the low half). It fills
-    /// padding, so the token stays 12 bytes. It lets readers skip
-    /// rescanning the input, and is not part of the spec: the view below
-    /// ignores it.
+    /// decoded string in `Tape::strs` (start in the low half). It lets
+    /// readers skip rescanning the input, and is not part of the spec: the
+    /// view below ignores it.
     pub x: u16,
+    /// `a` and `b` are 48 bits each, which covers any input a 64-bit
+    /// address space can hold: the low 32 bits here, the high 16 in `ah`
+    /// and `bh`. The token is 16 bytes. Read them with `start` and `end`.
+    pub ah: u16,
+    pub a: u32,
+    pub b: u32,
+    pub bh: u16,
+}
+
+/// A 48-bit position from its low 32 and high 16 bits.
+pub open spec fn wide(lo: u32, hi: u16) -> int {
+    lo as int + hi as int * 0x1_0000_0000
+}
+
+/// `t` with `a` set to `v`.
+pub open spec fn set_a(t: Tok, v: int) -> Tok {
+    Tok { kind: t.kind, escaped: t.escaped, x: t.x, ah: (v / 0x1_0000_0000) as u16, a: (v % 0x1_0000_0000) as u32, b: t.b, bh: t.bh }
+}
+
+pub proof fn lemma_wide(v: int)
+    requires
+        0 <= v <= MAX_INPUT,
+    ensures
+        wide((v % 0x1_0000_0000) as u32, (v / 0x1_0000_0000) as u16) == v,
+{
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(v, 0x1_0000_0000);
+}
+
+impl Tok {
+    pub open spec fn sa(&self) -> int {
+        wide(self.a, self.ah)
+    }
+
+    pub open spec fn sb(&self) -> int {
+        wide(self.b, self.bh)
+    }
+
+    #[inline(always)]
+    pub fn new(kind: Kind, escaped: bool, a: usize, b: usize, x: u16) -> (t: Tok)
+        requires
+            a <= MAX_INPUT,
+            b <= MAX_INPUT,
+        ensures
+            t.kind == kind,
+            t.escaped == escaped,
+            t.x == x,
+            t.sa() == a,
+            t.sb() == b,
+    {
+        proof {
+            lemma_wide(a as int);
+            lemma_wide(b as int);
+        }
+        Tok {
+            kind,
+            escaped,
+            x,
+            ah: (a / 0x1_0000_0000) as u16,
+            a: (a % 0x1_0000_0000) as u32,
+            b: (b % 0x1_0000_0000) as u32,
+            bh: (b / 0x1_0000_0000) as u16,
+        }
+    }
+
+    /// `a` (a byte position, or for a container start the index of its end
+    /// token).
+    #[inline(always)]
+    pub fn start(&self) -> (r: usize)
+        ensures
+            r == self.sa(),
+    {
+        self.a as usize + self.ah as usize * 0x1_0000_0000
+    }
+
+    /// `b`.
+    #[inline(always)]
+    pub fn end(&self) -> (r: usize)
+        ensures
+            r == self.sb(),
+    {
+        self.b as usize + self.bh as usize * 0x1_0000_0000
+    }
 }
 
 /// `Tok::x` when there is no payload.
@@ -80,12 +159,12 @@ impl View for Tok {
             Kind::Null => STok::Null,
             Kind::True => STok::True,
             Kind::False => STok::False,
-            Kind::Num => STok::Num { start: self.a as int, end: self.b as int },
-            Kind::Str => STok::Str { start: self.a as int, end: self.b as int, escaped: self.escaped },
-            Kind::Key => STok::Key { start: self.a as int, end: self.b as int, escaped: self.escaped },
-            Kind::ArrStart => STok::ArrStart { end: self.a as int },
+            Kind::Num => STok::Num { start: self.sa(), end: self.sb() },
+            Kind::Str => STok::Str { start: self.sa(), end: self.sb(), escaped: self.escaped },
+            Kind::Key => STok::Key { start: self.sa(), end: self.sb(), escaped: self.escaped },
+            Kind::ArrStart => STok::ArrStart { end: self.sa() },
             Kind::ArrEnd => STok::ArrEnd,
-            Kind::ObjStart => STok::ObjStart { end: self.a as int },
+            Kind::ObjStart => STok::ObjStart { end: self.sa() },
             Kind::ObjEnd => STok::ObjEnd,
         }
     }
@@ -96,11 +175,11 @@ pub fn tok(kind: Kind) -> (t: Tok)
     ensures
         t.kind == kind,
         t.x == NO,
-        t.a == 0,
-        t.b == 0,
+        t.sa() == 0,
+        t.sb() == 0,
         !t.escaped,
 {
-    Tok { kind, escaped: false, a: 0, b: 0, x: NO }
+    Tok { kind, escaped: false, x: NO, ah: 0, a: 0, b: 0, bh: 0 }
 }
 
 pub struct Tape {
@@ -174,21 +253,32 @@ impl Tape {
             idx < old(self)@.len(),
             old(self).toks@[idx as int].kind == Kind::ArrStart || old(self).toks@[idx as int].kind
                 == Kind::ObjStart,
+            end <= MAX_INPUT,
         ensures
             spare(final(self).toks) == spare(old(self).toks),
-            final(self).toks@ == old(self).toks@.update(idx as int, Tok {
-                kind: old(self).toks@[idx as int].kind,
-                escaped: old(self).toks@[idx as int].escaped,
-                a: end as u32,
-                b: old(self).toks@[idx as int].b,
-                x: old(self).toks@[idx as int].x,
-            }),
+            final(self).toks@ == old(self).toks@.update(idx as int, set_a(old(self).toks@[idx as int], end as int)),
+            final(self).toks@[idx as int].sa() == end,
             final(self).aux == old(self).aux,
             final(self).strs == old(self).strs,
     {
         let t = self.toks[idx];
         let ghost tv = t@;
-        set_spare(&mut self.toks, idx, Tok { kind: t.kind, escaped: t.escaped, a: end as u32, b: t.b, x: t.x });
+        proof {
+            lemma_wide(end as int);
+        }
+        set_spare(
+            &mut self.toks,
+            idx,
+            Tok {
+                kind: t.kind,
+                escaped: t.escaped,
+                x: t.x,
+                ah: (end / 0x1_0000_0000) as u16,
+                a: (end % 0x1_0000_0000) as u32,
+                b: t.b,
+                bh: t.bh,
+            },
+        );
     }
 
     /// Records a failure at `pos`.
@@ -255,7 +345,7 @@ pub trait Sink {
             t.x == NO,
             t.kind == Kind::Num,
             old(self).inv(s@),
-            ok ==> number_value(s@, t.a as int) == (n.neg, n.w as int, n.q as int),
+            ok ==> number_value(s@, t.sa()) == (n.neg, n.w as int, n.q as int),
         ensures
             final(self).hist() == old(self).hist().push(t@),
             final(self).room() == old(self).room() - 1,
@@ -267,10 +357,10 @@ pub trait Sink {
     fn push_str_fast(&mut self, t: Tok, s: &[u8])
         requires
             old(self).room() > 0,
-            t.a <= t.b <= s@.len(),
+            t.sa() <= t.sb() <= s@.len(),
             t.x == NO,
             t.kind == Kind::Str || t.kind == Kind::Key,
-            t.escaped ==> old(self).ready(s@, t.a as int, t.b as int),
+            t.escaped ==> old(self).ready(s@, t.sa(), t.sb()),
             !t.escaped ==> old(self).inv(s@),
         ensures
             final(self).hist() == old(self).hist().push(t@),
@@ -332,7 +422,7 @@ pub trait Sink {
         requires
             idx < old(self).hist().len(),
             old(self).hist()[idx as int] is ArrStart || old(self).hist()[idx as int] is ObjStart,
-            old(self).hist().len() <= u32::MAX + 1,
+            old(self).hist().len() <= MAX_INPUT + 1,
         ensures
             final(self).hist() == close_at(old(self).hist(), idx as int),
             final(self).room() == old(self).room(),
@@ -418,11 +508,11 @@ pub open spec fn slot_ok(tape: Tape, s: Seq<u8>, k: int) -> bool {
     let t = tape.toks@[k];
     &&& k < tape.aux@.len()
     &&& match t.kind {
-        Kind::Num => number_value(s, t.a as int) == (tag_neg(t.x), tape.aux@[k] as int, tag_q(t.x)),
+        Kind::Num => number_value(s, t.sa()) == (tag_neg(t.x), tape.aux@[k] as int, tag_q(t.x)),
         Kind::Str | Kind::Key => t.escaped && {
             let r = tape.aux@[k];
             &&& lo32(r) <= hi32(r) <= tape.strs@.len()
-            &&& tape.strs@.subrange(lo32(r), hi32(r)) == decode(s, t.a as int, t.b as int)
+            &&& tape.strs@.subrange(lo32(r), hi32(r)) == decode(s, t.sa(), t.sb())
         },
         _ => false,
     }
@@ -2247,7 +2337,7 @@ proof fn lemma_truncate_back(a: Seq<u8>, b: Seq<u8>, c: Seq<u8>)
 pub fn ex_value<S: Sink>(s: &[u8], i: usize, depth: usize, tape: &mut S) -> (r: Option<usize>)
     requires
         i <= s@.len(),
-        s@.len() <= u32::MAX,
+        s@.len() <= MAX_INPUT,
         old(tape).inv(s@),
         old(tape).hist().len() <= i,
     ensures
@@ -2267,7 +2357,7 @@ pub fn ex_value<S: Sink>(s: &[u8], i: usize, depth: usize, tape: &mut S) -> (r: 
     if c == 0x22 {
         match ex_string(s, i) {
             Some((n, esc)) => {
-                tape.push(Tok { kind: Kind::Str, escaped: esc, a: (i + 1) as u32, b: (n - 1) as u32, x: NO });
+                tape.push(Tok::new(Kind::Str, esc, (i + 1), (n - 1), NO));
                 Some(n)
             },
             None => {
@@ -2328,7 +2418,7 @@ pub fn ex_value<S: Sink>(s: &[u8], i: usize, depth: usize, tape: &mut S) -> (r: 
     } else {
         match ex_number_end(s, i) {
             Some(e) => {
-                tape.push(Tok { kind: Kind::Num, escaped: false, a: i as u32, b: e as u32, x: NO });
+                tape.push(Tok::new(Kind::Num, false, i, e, NO));
                 Some(e)
             },
             None => {
@@ -2380,7 +2470,7 @@ pub proof fn lemma_container_prefix(s: Seq<u8>, i: int, depth: nat, t0: Seq<STok
 fn ex_array<S: Sink>(s: &[u8], i: usize, depth: usize, tape: &mut S) -> (r: Option<usize>)
     requires
         i <= s@.len(),
-        s@.len() <= u32::MAX,
+        s@.len() <= MAX_INPUT,
         old(tape).inv(s@),
         old(tape).hist().len() <= i,
     ensures
@@ -2404,7 +2494,7 @@ fn ex_array<S: Sink>(s: &[u8], i: usize, depth: usize, tape: &mut S) -> (r: Opti
 fn ex_elements<S: Sink>(s: &[u8], i0: usize, depth: usize, tape: &mut S) -> (r: Option<usize>)
     requires
         i0 <= s@.len(),
-        s@.len() <= u32::MAX,
+        s@.len() <= MAX_INPUT,
         old(tape).inv(s@),
         old(tape).hist().len() <= i0,
     ensures
@@ -2424,7 +2514,7 @@ fn ex_elements<S: Sink>(s: &[u8], i0: usize, depth: usize, tape: &mut S) -> (r: 
     loop
         invariant
             i0 <= i <= s@.len(),
-            s@.len() <= u32::MAX,
+            s@.len() <= MAX_INPUT,
             depth > 0,
             t0 == old(tape).hist(),
             tape.inv(s@),
@@ -2473,7 +2563,7 @@ fn ex_elements<S: Sink>(s: &[u8], i0: usize, depth: usize, tape: &mut S) -> (r: 
 fn ex_object<S: Sink>(s: &[u8], i: usize, depth: usize, tape: &mut S) -> (r: Option<usize>)
     requires
         i <= s@.len(),
-        s@.len() <= u32::MAX,
+        s@.len() <= MAX_INPUT,
         old(tape).inv(s@),
         old(tape).hist().len() <= i,
     ensures
@@ -2497,7 +2587,7 @@ fn ex_object<S: Sink>(s: &[u8], i: usize, depth: usize, tape: &mut S) -> (r: Opt
 fn ex_members<S: Sink>(s: &[u8], i0: usize, depth: usize, tape: &mut S) -> (r: Option<usize>)
     requires
         i0 <= s@.len(),
-        s@.len() <= u32::MAX,
+        s@.len() <= MAX_INPUT,
         old(tape).inv(s@),
         old(tape).hist().len() <= i0,
     ensures
@@ -2517,7 +2607,7 @@ fn ex_members<S: Sink>(s: &[u8], i0: usize, depth: usize, tape: &mut S) -> (r: O
     loop
         invariant
             i0 <= i <= s@.len(),
-            s@.len() <= u32::MAX,
+            s@.len() <= MAX_INPUT,
             depth > 0,
             t0 == old(tape).hist(),
             tape.inv(s@),
@@ -2540,7 +2630,7 @@ fn ex_members<S: Sink>(s: &[u8], i0: usize, depth: usize, tape: &mut S) -> (r: O
             return None;
         }
         let vstart = ex_skip_ws(s, c + 1);
-        tape.push(Tok { kind: Kind::Key, escaped: esc, a: (j + 1) as u32, b: (k - 1) as u32, x: NO });
+        tape.push(Tok::new(Kind::Key, esc, j + 1, k - 1, NO));
         let m = match ex_value(s, vstart, depth - 1, tape) {
             Some(m) => m,
             None => return None,
@@ -2548,7 +2638,7 @@ fn ex_members<S: Sink>(s: &[u8], i0: usize, depth: usize, tape: &mut S) -> (r: O
         let ghost tm = tape.hist();
         proof {
             crate::lemmas::lemma_value_size(s@, vstart as int, (depth - 1) as nat, tb.push(
-                Tok { kind: Kind::Key, escaped: esc, a: (j + 1) as u32, b: (k - 1) as u32, x: NO }@,
+                STok::Key { start: j + 1, end: k - 1, escaped: esc },
             ));
         }
         let m2 = ex_skip_ws(s, m);
@@ -2618,7 +2708,7 @@ pub fn parse_with<S: Sink>(s: &[u8], require_end: bool, tape: &mut S) -> (r: Res
             None => r is Err,
         },
 {
-    if s.len() > u32::MAX as usize {
+    if s.len() > MAX_INPUT {
         return Err(0);
     }
     let start = if ex_has_lit(s, 0, &[0xEF, 0xBB, 0xBF]) { 3 } else { 0 };

@@ -133,3 +133,15 @@ pub fn stored_in_place(b: &[u8], e: &Entry, limit: usize) -> (r: bool)
 }
 
 } // verus!
+
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Error::Unsupported => "the member is encrypted or uses an unsupported compression method",
+            Error::TooLarge => "the member is larger than the limit",
+            Error::BadData => "the member's data does not match what the archive declares",
+        })
+    }
+}
+
+impl std::error::Error for Error {}

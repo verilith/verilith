@@ -1207,7 +1207,7 @@ pub fn ex2_value<S: Sink, const N: u8>(
     if N != 0 && c == 0x22 {
         match tape.scan_str(s, idx, k, Ghost(st)) {
             Some((k2, n, esc)) => {
-                tape.push_str_fast(Tok { kind: Kind::Str, escaped: esc, a: (j + 1) as u32, b: (n - 1) as u32, x: NO }, s);
+                tape.push_str_fast(Tok::new(Kind::Str, esc, (j + 1), (n - 1), NO), s);
                 Some((k2, n))
             },
             None => None,
@@ -1293,7 +1293,7 @@ pub fn ex2_value<S: Sink, const N: u8>(
             if tape.eager() {
                 match (if N != 0 || verilith_simd::neon::has_neon() { ex_number_scan_k(s, j) } else { ex_number_scan(s, j) }) {
                     Some((e, v, ok)) => {
-                        tape.push_num_fast(Tok { kind: Kind::Num, escaped: false, a: j as u32, b: e as u32, x: NO }, s, v, ok);
+                        tape.push_num_fast(Tok::new(Kind::Num, false, j, e, NO), s, v, ok);
                         e
                     },
                     None => return None,
@@ -1301,7 +1301,7 @@ pub fn ex2_value<S: Sink, const N: u8>(
             } else {
                 match ex_number_end(s, j) {
                     Some(e) => {
-                        tape.push_fast(Tok { kind: Kind::Num, escaped: false, a: j as u32, b: e as u32, x: NO });
+                        tape.push_fast(Tok::new(Kind::Num, false, j, e, NO));
                         e
                     },
                     None => return None,
@@ -1368,7 +1368,7 @@ fn ex2_empty_array<S: Sink>(
                 assert(byte(g, q as int) == g[q as int]);
             }
             let t = tape.count();
-            tape.push_fast(Tok { kind: Kind::ArrStart, escaped: false, a: (t as u32).wrapping_add(1), b: 0, x: NO });
+            tape.push_fast(Tok::new(Kind::ArrStart, false, t + 1, 0, NO));
             tape.push_fast(tok(Kind::ArrEnd));
             assert(tape.hist() =~= close_at(old(tape).hist().push(STok::ArrStart { end: 0 }).push(STok::ArrEnd), t as int));
             return true;
@@ -1897,7 +1897,7 @@ fn ex2_member<S: Sink>(
     if get8(s, cpos) != 0x3A {
         return None;
     }
-    tape.push_str_fast(Tok { kind: Kind::Key, escaped: esc, a: (j + 1) as u32, b: (n - 1) as u32, x: NO }, s);
+    tape.push_str_fast(Tok::new(Kind::Key, esc, (j + 1), (n - 1), NO), s);
     let ghost tkey = tape.hist();
     proof {
         crate::lemmas::lemma_skip_ws_bounds(g, cpos + 1);

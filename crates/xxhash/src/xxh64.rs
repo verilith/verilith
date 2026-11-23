@@ -1,4 +1,5 @@
-//! XXH64 with seed 0, proven equal to `spec::xxh64`.
+//! XXH64, proven equal to `spec::xxh64_seed` (and with seed 0, to
+//! `spec::xxh64`).
 #[cfg(verus_only)]
 use crate::bytes::lemma_le_is;
 use crate::spec::*;
@@ -91,22 +92,15 @@ fn mul(a: u64, b: u64) -> (r: u64)
     a.wrapping_mul(b)
 }
 
-/// The accumulators after all whole stripes (`stripes64`).
-fn stripes(b: &[u8]) -> (r: (u64, u64, u64, u64))
+/// The accumulators after all whole stripes (`stripes64`), from `v0`.
+fn stripes(b: &[u8], v0: (u64, u64, u64, u64)) -> (r: (u64, u64, u64, u64))
     ensures
-        r == stripes64(b@, 0, (add64(PRIME64_1, PRIME64_2), PRIME64_2, 0u64, (0x1_0000_0000_0000_0000 - PRIME64_1) as u64)),
+        r == stripes64(b@, 0, v0),
 {
     let n = b.len();
-    let ghost v0 = (add64(PRIME64_1, PRIME64_2), PRIME64_2, 0u64, (0x1_0000_0000_0000_0000 - PRIME64_1) as u64);
     let ghost goal = stripes64(b@, 0, v0);
-    let mut v1 = add(XP1, XP2);
-    let mut v2 = XP2;
-    let mut v3 = 0u64;
-    let mut v4 = 0u64.wrapping_sub(XP1);
+    let (mut v1, mut v2, mut v3, mut v4) = v0;
     let mut i: usize = 0;
-    proof {
-        assert(v4 == (0x1_0000_0000_0000_0000 - PRIME64_1) as u64);
-    }
     while n - i >= 32
         invariant
             n == b@.len(),
@@ -122,6 +116,18 @@ fn stripes(b: &[u8]) -> (r: (u64, u64, u64, u64))
         i = i + 32;
     }
     (v1, v2, v3, v4)
+}
+
+/// The accumulators before the first stripe (`init64`).
+#[inline(always)]
+fn init(seed: u64) -> (r: (u64, u64, u64, u64))
+    ensures
+        r == init64(seed),
+{
+    proof {
+        assert(0u64.wrapping_sub(XP1) == (0x1_0000_0000_0000_0000 - PRIME64_1) as u64);
+    }
+    (add(add(seed, XP1), XP2), add(seed, XP2), seed, add(seed, 0u64.wrapping_sub(XP1)))
 }
 
 /// The tail from `i0` on (`tail64`).
@@ -161,19 +167,30 @@ fn tail(b: &[u8], i0: usize, h0: u64) -> (r: u64)
     h
 }
 
-/// XXH64 of `b` with seed 0 (`xxh64`).
-pub fn xxh64_exec(b: &[u8]) -> (r: u64)
+/// Seed 0 is the unseeded XXH64 of the specification.
+pub proof fn lemma_xxh64_seed0(b: Seq<u8>)
     ensures
-        r == xxh64(b@),
+        xxh64_seed(b, 0) == xxh64(b),
+{
+    reveal(add64);
+    assert(init64(0) == (add64(PRIME64_1, PRIME64_2), PRIME64_2, 0u64, (0x1_0000_0000_0000_0000 - PRIME64_1) as u64));
+    assert(add64(0, PRIME64_5) == PRIME64_5);
+}
+
+/// XXH64 of `b` with `seed` (`spec::xxh64_seed`).
+#[inline]
+pub fn xxh64_with_seed(b: &[u8], seed: u64) -> (r: u64)
+    ensures
+        r == xxh64_seed(b@, seed),
 {
     let n = b.len();
     let full = n / 32 * 32;
     let h0 = if n >= 32 {
-        let (v1, v2, v3, v4) = stripes(b);
+        let (v1, v2, v3, v4) = stripes(b, init(seed));
         let h = add(add(add(rotl(v1, 1), rotl(v2, 7)), rotl(v3, 12)), rotl(v4, 18));
         merge(merge(merge(merge(h, v1), v2), v3), v4)
     } else {
-        XP5
+        add(seed, XP5)
     };
     let h = tail(b, full, add(h0, n as u64));
     let h1 = mul(h ^ (h >> 33), XP2);
@@ -181,14 +198,23 @@ pub fn xxh64_exec(b: &[u8]) -> (r: u64)
     h2 ^ (h2 >> 32)
 }
 
+/// XXH64 of `b` with seed 0 (`xxh64`).
+#[inline]
+pub fn xxh64_exec(b: &[u8]) -> (r: u64)
+    ensures
+        r == xxh64(b@),
+{
+    proof {
+        lemma_xxh64_seed0(b@);
+    }
+    xxh64_with_seed(b, 0)
+}
+
 
 // ---------------------------------------------------------------------------
 // Streaming
 // ---------------------------------------------------------------------------
 
-pub open spec fn xx_v0() -> (u64, u64, u64, u64) {
-    (add64(PRIME64_1, PRIME64_2), PRIME64_2, 0u64, (0x1_0000_0000_0000_0000 - PRIME64_1) as u64)
-}
 
 pub open spec fn xx_step4(b: Seq<u8>, i: int, v: (u64, u64, u64, u64)) -> (u64, u64, u64, u64) {
     (
@@ -313,24 +339,40 @@ pub struct Xxh64 {
     pub v: (u64, u64, u64, u64),
     pub done: u64,
     pub buf: Vec<u8>,
+    pub seed: u64,
 }
 
 impl Xxh64 {
-    /// The state after hashing `all`.
+    /// The state after hashing `all`, with seed 0.
     pub open spec fn is(&self, all: Seq<u8>) -> bool {
+        &&& self.seed == 0
+        &&& self.is_seeded(all)
+    }
+
+    /// The state after hashing `all`, with `self.seed`.
+    pub open spec fn is_seeded(&self, all: Seq<u8>) -> bool {
         &&& self.done as int % 32 == 0
         &&& self.done <= all.len()
         &&& all.len() < 0x1_0000_0000_0000_0000
         &&& self.buf@ == all.subrange(self.done as int, all.len() as int)
         &&& self.buf@.len() < 32
-        &&& self.v == xx_to(all, 0, self.done as int, xx_v0())
+        &&& self.v == xx_to(all, 0, self.done as int, init64(self.seed))
     }
 
+    /// Seed 0.
     pub fn new() -> (r: Xxh64)
         ensures
             r.is(Seq::empty()),
     {
-        let r = Xxh64 { v: (add(XP1, XP2), XP2, 0, 0u64.wrapping_sub(XP1)), done: 0, buf: Vec::new() };
+        Xxh64::with_seed(0)
+    }
+
+    pub fn with_seed(seed: u64) -> (r: Xxh64)
+        ensures
+            r.is_seeded(Seq::empty()),
+            r.seed == seed,
+    {
+        let r = Xxh64 { v: init(seed), done: 0, buf: Vec::new(), seed };
         proof {
             assert(r.buf@ =~= Seq::<u8>::empty().subrange(0, 0));
         }
@@ -346,14 +388,15 @@ impl Xxh64 {
             old(self).done as int + s@.len() <= all2.len(),
             all2.len() < 0x1_0000_0000_0000_0000,
             s@ == all2.subrange(old(self).done as int, old(self).done + s@.len()),
-            old(self).v == xx_to(all2, 0, old(self).done as int, xx_v0()),
+            old(self).v == xx_to(all2, 0, old(self).done as int, init64(old(self).seed)),
         ensures
             r <= s@.len(),
             s@.len() - r < 32,
             r % 32 == 0,
             final(self).done == old(self).done + r,
             final(self).buf == old(self).buf,
-            final(self).v == xx_to(all2, 0, final(self).done as int, xx_v0()),
+            final(self).seed == old(self).seed,
+            final(self).v == xx_to(all2, 0, final(self).done as int, init64(old(self).seed)),
     {
         let n = s.len();
         let mut i: usize = 0;
@@ -369,12 +412,13 @@ impl Xxh64 {
                 s@ == all2.subrange(d0, d0 + n),
                 self.done as int == d0 + i,
                 self.buf == old(self).buf,
+                self.seed == old(self).seed,
                 all2.len() < 0x1_0000_0000_0000_0000,
-                self.v == xx_to(all2, 0, d0 + i, xx_v0()),
+                self.v == xx_to(all2, 0, d0 + i, init64(self.seed)),
             decreases n - i,
         {
             proof {
-                lemma_xx_to_snoc(all2, 0, d0 + i, xx_v0());
+                lemma_xx_to_snoc(all2, 0, d0 + i, init64(self.seed));
                 assert(all2.subrange(d0 + i, d0 + i + 8) =~= s@.subrange(i as int, i + 8));
                 assert(all2.subrange(d0 + i + 8, d0 + i + 16) =~= s@.subrange(i + 8, i + 16));
                 assert(all2.subrange(d0 + i + 16, d0 + i + 24) =~= s@.subrange(i + 16, i + 24));
@@ -399,15 +443,16 @@ impl Xxh64 {
     /// Hashes `data` after what came before, without copying it.
     pub fn update(&mut self, data: &[u8], Ghost(all): Ghost<Seq<u8>>)
         requires
-            old(self).is(all),
+            old(self).is_seeded(all),
             all.len() + data@.len() < 0x1_0000_0000_0000_0000,
         ensures
-            final(self).is(all + data@),
+            final(self).is_seeded(all + data@),
+            final(self).seed == old(self).seed,
     {
         let ghost all2 = all + data@;
         proof {
             assert(all.subrange(0, self.done as int) =~= all2.subrange(0, self.done as int));
-            lemma_xx_to_ext(all, all2, 0, self.done as int, xx_v0());
+            lemma_xx_to_ext(all, all2, 0, self.done as int, init64(self.seed));
         }
         let mut k: usize = 0;
         if self.buf.len() > 0 {
@@ -453,12 +498,14 @@ impl Xxh64 {
         }
     }
 
-    /// The hash of everything given (`xxh64`).
+    /// The hash of everything given (`xxh64_seed`, and `xxh64` for
+    /// seed 0).
     pub fn digest(&self, Ghost(all): Ghost<Seq<u8>>) -> (r: u64)
         requires
-            self.is(all),
+            self.is_seeded(all),
         ensures
-            r == xxh64(all),
+            r == xxh64_seed(all, self.seed),
+            self.seed == 0 ==> r == xxh64(all),
     {
         let n = self.done + self.buf.len() as u64;
         proof {
@@ -469,7 +516,8 @@ impl Xxh64 {
                     0 <= all.len() - d < 32,
                     d >= 0,
             ;
-            lemma_xx_split(all, 0, d, xx_v0());
+            lemma_xx_split(all, 0, d, init64(self.seed));
+            lemma_xxh64_seed0(all);
             lemma_tail_shift(all, d, self.buf@, 0, 0);
         }
         let h0 = if n >= 32 {
@@ -477,7 +525,7 @@ impl Xxh64 {
             let h = add(add(add(rotl(v1, 1), rotl(v2, 7)), rotl(v3, 12)), rotl(v4, 18));
             merge(merge(merge(merge(h, v1), v2), v3), v4)
         } else {
-            XP5
+            add(self.seed, XP5)
         };
         let h1 = add(h0, n);
         proof {
@@ -490,4 +538,90 @@ impl Xxh64 {
     }
 }
 
+/// XXH64 of input that comes in pieces, with no ghost arguments: it
+/// keeps what it has hashed as ghost state of its own. Also a
+/// [`std::hash::Hasher`].
+pub struct XxHash64 {
+    st: Xxh64,
+    seen: Ghost<Seq<u8>>,
+}
+
+impl XxHash64 {
+    /// The bytes hashed so far.
+    pub closed spec fn hashed(&self) -> Seq<u8> {
+        self.seen@
+    }
+
+    /// The seed.
+    pub closed spec fn seed(&self) -> u64 {
+        self.st.seed
+    }
+
+    pub closed spec fn wf(&self) -> bool {
+        self.st.is_seeded(self.seen@)
+    }
+
+    /// A hasher with `seed` that has hashed nothing.
+    pub fn with_seed(seed: u64) -> (r: XxHash64)
+        ensures
+            r.wf(),
+            r.hashed() == Seq::<u8>::empty(),
+            r.seed() == seed,
+    {
+        XxHash64 { st: Xxh64::with_seed(seed), seen: Ghost(Seq::empty()) }
+    }
+
+    /// Seed 0.
+    pub fn new() -> (r: XxHash64)
+        ensures
+            r.wf(),
+            r.hashed() == Seq::<u8>::empty(),
+            r.seed() == 0,
+    {
+        XxHash64::with_seed(0)
+    }
+
+    /// Hashes `data` after what came before.
+    pub fn update(&mut self, data: &[u8])
+        requires
+            old(self).wf(),
+            old(self).hashed().len() + data@.len() < 0x1_0000_0000_0000_0000,
+        ensures
+            final(self).wf(),
+            final(self).hashed() == old(self).hashed() + data@,
+            final(self).seed() == old(self).seed(),
+    {
+        self.st.update(data, Ghost(self.seen@));
+        self.seen = Ghost(self.seen@ + data@);
+    }
+
+    /// XXH64 of everything given so far, with the seed.
+    pub fn digest(&self) -> (r: u64)
+        requires
+            self.wf(),
+        ensures
+            r == xxh64_seed(self.hashed(), self.seed()),
+    {
+        self.st.digest(Ghost(self.seen@))
+    }
+}
+
 } // verus!
+
+impl Default for XxHash64 {
+    fn default() -> Self {
+        XxHash64::new()
+    }
+}
+
+/// Outside Verus the hasher's contract is not checked: `write` relies on
+/// fewer than 2^64 bytes being hashed in all, which no program reaches.
+impl std::hash::Hasher for XxHash64 {
+    fn write(&mut self, bytes: &[u8]) {
+        self.update(bytes)
+    }
+
+    fn finish(&self) -> u64 {
+        self.digest()
+    }
+}

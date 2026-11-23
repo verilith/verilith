@@ -414,3 +414,14 @@ pub fn frame_encode(input: &[u8]) -> (v: Vec<u8>)
 }
 
 } // verus!
+
+impl core::fmt::Display for FrameError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            FrameError::Corrupt => "corrupt Snappy framed data",
+            FrameError::TooLarge => "the output would be larger than the limit",
+        })
+    }
+}
+
+impl std::error::Error for FrameError {}

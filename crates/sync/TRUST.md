@@ -225,12 +225,13 @@ its functions is exempt from Verus's termination check, so each `push`,
 `pop`, `push_slice` and `pop_into` returns after a bounded number of its
 own steps whatever the other side does, which is wait-freedom. The same
 holds for `try_lock`, `try_read`, `try_write`, every unlock and
-`downgrade`. CI checks that `exec_allows_no_decreases_clause`, which turns
-the termination check off, appears only on eleven looping functions: the
-nine the models cover, `ArrayQueue::{push, pop, len}`,
-`Mutex::{lock, lock_slow}`, `RwLock::{read, write, read_slow, write_slow}`
-and the channel's `Chan::slow`, plus `Chan::add_handle` (see "The
-channel", item 6).
+`downgrade`. `exec_allows_no_decreases_clause`, which turns the
+termination check off, appears on eleven looping functions:
+`ArrayQueue::{push, pop, len}`, `Mutex::{lock, lock_slow}`,
+`RwLock::{read, write, read_slow, write_slow}`, the channel's `Chan::slow`
+and `Chan::add_handle` (see "The channel", item 6). The repository's
+[trust ledger](../../TRUST-LEDGER.md), which CI keeps up to date, lists
+them by name, so a twelfth would show up in review.
 
 ### Why the models match the code
 

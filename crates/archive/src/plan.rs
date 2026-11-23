@@ -1162,3 +1162,26 @@ pub fn plan(b: &[u8], es: &Vec<Entry>) -> (r: Result<Vec<Item>, Rejected>)
 }
 
 } // verus!
+
+impl core::fmt::Display for Why {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Why::Path => "the path is empty, absolute, has a `..` component, a NUL or a backslash",
+            Why::Duplicate => "two members have the same path",
+            Why::ThroughSymlink => "the path passes through a symbolic link of the archive",
+            Why::SymlinkTarget => "the symbolic link points outside the root or through another link",
+            Why::HardlinkTarget => "the hard link does not point to an earlier regular file",
+            Why::Internal => "internal error",
+        })
+    }
+}
+
+impl std::error::Error for Why {}
+
+impl core::fmt::Display for Rejected {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "member {} refused: {}", self.entry, self.why)
+    }
+}
+
+impl std::error::Error for Rejected {}

@@ -87,7 +87,7 @@ reason (see the main README). Most of them are malformed NS, CNAME, SOA,
 PTR, MX, SIG, SRV or NAPTR RDATA, which c-ares keeps when a caller asks
 for raw RDATA and verilith-dns always drops (RFC 9267 §5).
 
-The same file checks the vdns-backed `ares_dns_write` against c-ares's own
+The same file checks the verilith-dns-backed `ares_dns_write` against c-ares's own
 on 141,236 records built by c-ares's parser (see the main README), and the
 `ares_dns_write` fuzz target does the same under AddressSanitizer.
 

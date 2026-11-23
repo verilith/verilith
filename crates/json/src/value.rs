@@ -251,7 +251,7 @@ impl<'d> Value<'d> {
     fn next_idx(&self) -> usize {
         let t = self.tok();
         match t.kind {
-            Kind::ArrStart | Kind::ObjStart => t.a as usize + 1,
+            Kind::ArrStart | Kind::ObjStart => t.start() + 1,
             _ => self.idx + 1,
         }
     }
@@ -309,7 +309,7 @@ impl<'d> Value<'d> {
                 }
             }
         }
-        Some(crate::number::parse_f64_at(self.v.src, t.a as usize, t.b as usize))
+        Some(crate::number::parse_f64_at(self.v.src, t.start(), t.end()))
     }
 
     /// A number with no fraction or exponent that fits in `i64`.
@@ -471,14 +471,14 @@ impl<'d> Iterator for Members<'d> {
 /// The input bytes of a number token or of a string token's raw body.
 #[inline(always)]
 fn lexeme<'d>(v: &View<'d>, t: &Tok) -> &'d [u8] {
-    debug_assert!(t.a <= t.b && t.b as usize <= v.src.len());
+    debug_assert!(t.start() <= t.end() && t.end() <= v.src.len());
     // SAFETY: every tape a `Document` holds was returned by a parser that
     // is verified to return only tapes accepted by `document`, and every
     // such tape lies within the input (`lemmas::in_bounds`, proved in
     // `lemmas::lemma_document_in_bounds` and stated in the parsers'
     // `ensures`): `t.a <= t.b <= src.len()` for every number, string and
     // key token. `t` is one of the tape's tokens and `v.src` that input.
-    unsafe { v.src.get_unchecked(t.a as usize..t.b as usize) }
+    unsafe { v.src.get_unchecked(t.start()..t.end()) }
 }
 
 #[inline(always)]
@@ -501,7 +501,7 @@ fn escaped_bytes<'d>(v: &View<'d>, idx: usize, t: &Tok) -> Cow<'d, [u8]> {
             }
         }
     }
-    let (a, b) = (t.a as usize, t.b as usize);
+    let (a, b) = (t.start(), t.end());
     let mut out = Vec::with_capacity(b - a);
     ex_decode(src, a, b, &mut out);
     Cow::Owned(out)

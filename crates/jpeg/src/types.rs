@@ -151,3 +151,14 @@ impl View for ScanX {
 }
 
 } // verus!
+
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Error::Invalid => "not a JPEG this decoder supports",
+            Error::OutOfMemory => "out of memory",
+        })
+    }
+}
+
+impl std::error::Error for Error {}

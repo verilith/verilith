@@ -367,3 +367,15 @@ pub fn parse_exec(b: &[u8], limit: usize) -> (r: Result<(PngX, Vec<u8>), Error>)
 }
 
 } // verus!
+
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Error::Invalid => "not a valid PNG file",
+            Error::TooLarge => "the image needs more memory than the limit",
+            Error::OutOfMemory => "out of memory",
+        })
+    }
+}
+
+impl std::error::Error for Error {}

@@ -1158,3 +1158,15 @@ pub fn compress_into(input: &[u8], dst: &mut [u8]) -> (r: Option<usize>)
 }
 
 } // verus!
+
+/// Compresses `input`. `None` only if `input` is 4 GiB or longer, which the
+/// format cannot hold. Plain Rust over the verified `compress_into`.
+pub fn compress(input: &[u8]) -> Option<Vec<u8>> {
+    if input.len() > 0xffff_ffff {
+        return None;
+    }
+    let mut out = vec![0u8; max_compressed_length(input.len())];
+    let n = compress_into(input, &mut out)?;
+    out.truncate(n);
+    Some(out)
+}
