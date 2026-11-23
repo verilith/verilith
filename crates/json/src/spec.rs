@@ -24,14 +24,25 @@ use vstd::prelude::*;
 
 verus! {
 
+// The proofs are checked once per pointer width.
+#[cfg(target_pointer_width = "64")]
 global size_of usize == 8;
+
+#[cfg(target_pointer_width = "32")]
+global size_of usize == 4;
 
 /// Nesting limit, identical to cJSON's `CJSON_NESTING_LIMIT`.
 pub const MAX_DEPTH: usize = 1000;
 
 /// The largest input, 2^48 - 1 bytes (256 TiB): more than a 64-bit address
 /// space can hold today, so in effect no limit. Token positions are 48 bits.
+#[cfg(target_pointer_width = "64")]
 pub const MAX_INPUT: usize = 0xFFFF_FFFF_FFFF;
+
+/// The largest input: on 32-bit targets, the largest slice there is
+/// (`isize::MAX` bytes), so no limit at all.
+#[cfg(target_pointer_width = "32")]
+pub const MAX_INPUT: usize = 0x7FFF_FFFF;
 
 pub enum STok {
     Null,

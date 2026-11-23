@@ -131,7 +131,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 - `crates/json/src/error.rs`: plain Rust
 - `crates/json/src/ffi.rs`: external_body: `input`, `push`, `push_fast`, `eager`, `push_num_fast`, `push_str_fast`, `reserve`, `count`, `close`, `fail`; 2 assume_new
-- `crates/json/src/index.rs`: external_body: `index_avx512`, `index_avx2`
+- `crates/json/src/index.rs`: external_body: `fill_avx512`, `fill_avx2`
 - `crates/json/src/lanes.rs`: external_body: `opaque64`, `append16_spare_neon`, `len_spare`, `reserve_spare`, `reserve_spare_plus`, `push_spare`, `append4_spare`, `append_slice_spare`, `truncate_spare`, `set_spare`, `append16_spare`
 - `crates/json/src/lib.rs`: plain Rust
 - `crates/json/src/native.rs`: plain Rust

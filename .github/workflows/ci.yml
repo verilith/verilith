@@ -326,7 +326,7 @@ jobs:
   wasm32:
     # WebAssembly: what builds for wasm32-unknown-unknown, what refuses to
     # (the crates proven for 64-bit targets only), and the tests of text,
-    # url and regex on wasm32-wasip1 under wasmtime.
+    # url, regex and json on wasm32-wasip1 under wasmtime.
     name: wasm32
     needs: plan
     if: needs.plan.outputs.test != '[]'
