@@ -31,7 +31,7 @@ oid = ["digest011?/oid", "digest010?/oid"]
 [dependencies]
 verilith-core = { path = "../core", version = "0.1.0", default-features = false }
 vstd = { workspace = true }
-verilith-simd = { path = "../simd", version = "0.1.0", default-features = false }
+verilith-simd = { path = "../simd", version = "0.1.1", default-features = false }
 digest011 = { package = "digest", version = "0.11.2", default-features = false, features = ["mac"], optional = true }
 digest010 = { package = "digest", version = "0.10.7", default-features = false, features = ["mac"], optional = true }
 
