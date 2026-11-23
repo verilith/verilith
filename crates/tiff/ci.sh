@@ -14,6 +14,9 @@ test() {
   VTIFFCAT=$T/$P/examples/vtiffcat difftest/compare.sh "$W"/corpus/*.tif
   # Mutation fuzzing against libtiff.
   VTIFFCAT=$T/$P/examples/vtiffcat fuzz/run.sh "$W/mutants" 2000 "${GITHUB_RUN_NUMBER:-1}" $(ls "$W"/corpus/*.tif | grep -v big_)
+  # The libtiff C API, through programs written for libtiff.
+  cargo build --profile "$P" --features tiff-abi
+  PROFILE=$P VTIFFCAT=$T/$P/examples/vtiffcat difftest/abi.sh "$W"/corpus/*.tif "$W"/mutants/*.tif
 }
 
 "${1:-test}"

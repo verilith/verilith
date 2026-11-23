@@ -10,3 +10,5 @@ pub mod chunk;
 pub mod predict;
 pub mod place;
 pub mod decode;
+#[cfg(not(verus_only))]
+pub mod capi;

@@ -1515,6 +1515,7 @@ dependencies = [
 name = "verilith-tiff"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "verilith-core",
  "verilith-zlib",
  "vstd",

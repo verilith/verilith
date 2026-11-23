@@ -8,7 +8,13 @@ PackBits, LZW or Deflate, with horizontal differencing undone. Multi-byte
 samples come out little-endian whatever the file's byte order. It decodes
 only, and it does not convert colours: a palette, CMYK or floating-point
 image comes out as its samples, with the photometric interpretation and
-sample format to say what they are. It has no C API yet.
+sample format to say what they are.
+
+It also has libtiff's reading API for C (`src/capi.rs` and
+`capi/tiffshim.c`): built with the `tiff-abi` feature,
+`libverilith_tiff.a` replaces libtiff at link time for programs that read
+TIFF files through libtiff 4's `tiffio.h`, `TIFFReadRGBAImage` included.
+See [C API](#c-api).
 
 The IFD reader, the image parameters, each of the four compression
 schemes, the byte swap, the predictor, and where each strip or tile lands
@@ -52,6 +58,15 @@ What the proofs assume rather than prove:
   `alloc_u32`).
 - Verus, Z3 and the Rust compiler.
 
+- `src/capi.rs` and `capi/tiffshim.c`: libtiff's C API. Unverified glue:
+  it calls the verified decoder for every strip and tile, and does what
+  libtiff does around it (the fields `TIFFGetField` reports, the size
+  functions, scanlines, and `tif_getimage.c`'s conversion to RGBA) in
+  ordinary Rust. `tiffshim.c` holds the variadic functions
+  (`TIFFGetField`, `TIFFSetField`, `TIFFError`, ...), which stable Rust
+  cannot define. Its pointer arithmetic over the caller's buffers is as
+  trusted as the caller's.
+
 Everything else in `src/` is verified. `examples/` (a command-line decoder
 for the tests and a timer), `difftest/`, `fuzz/` and `bench/` are
 unverified tools.
@@ -93,6 +108,95 @@ two entries with the same tag the first is used, and entries need not be
 sorted; SampleFormat, ExtraSamples, SMinSampleValue and SMaxSampleValue are
 checked as libtiff checks them; a palette image of fewer than 8 bits needs
 a ColorMap of 3 × 2^bits values, after BitsPerSample in the IFD.
+
+## C API
+
+`src/capi.rs` has the reading half of libtiff 4.5's API, with its types,
+return values and memory rules:
+
+- opening and closing: `TIFFOpen`, `TIFFClientOpen`, `TIFFFdOpen` (Unix),
+  `TIFFClose`, `TIFFCleanup`, `TIFFFileName`, `TIFFFileno`,
+  `TIFFClientdata`, `TIFFGetMode`, `TIFFGetVersion`, `TIFFIsTiled`,
+  `TIFFIsBigEndian`, `TIFFIsByteSwapped`, `TIFFIsMSB2LSB`,
+  `TIFFIsUpSampled`, `TIFFIsBigTIFF`, `TIFFIsCODECConfigured`;
+- fields: `TIFFGetField`, `TIFFGetFieldDefaulted` and their `V` forms, for
+  the baseline and extension tags libtiff knows (the strip and tile
+  offsets and byte counts as `uint64_t` arrays, as libtiff 4 gives them),
+  the text tags, and the ICC profile, XMP, IPTC and Photoshop blobs;
+- sizes: `TIFFScanlineSize`, `TIFFRasterScanlineSize`, `TIFFStripSize`,
+  `TIFFVStripSize`, `TIFFRawStripSize`, `TIFFTileSize`, `TIFFVTileSize`,
+  `TIFFTileRowSize` (each also as `...64`), `TIFFNumberOfStrips`,
+  `TIFFNumberOfTiles`, `TIFFComputeStrip`, `TIFFComputeTile`,
+  `TIFFCheckTile`;
+- data: `TIFFReadEncodedStrip`, `TIFFReadEncodedTile`, `TIFFReadTile`,
+  `TIFFReadScanline`, `TIFFReadRawStrip`, `TIFFReadRawTile`;
+- RGBA: `TIFFRGBAImageOK`, `TIFFReadRGBAImage`,
+  `TIFFReadRGBAImageOriented`, `TIFFReadRGBAStrip(Ext)` and
+  `TIFFReadRGBATile(Ext)`, for greyscale, RGB, palette and CMYK images,
+  with or without alpha, converted as `tif_getimage.c` converts them;
+- directories (`TIFFCurrentDirectory`, `TIFFSetDirectory`,
+  `TIFFReadDirectory`, `TIFFNumberOfDirectories`, ...), errors and
+  warnings (`TIFFError`, `TIFFWarning`, their `Ext` forms and their
+  handlers), `_TIFFmalloc` and the other memory functions, and the
+  `TIFFSwab*` and `TIFFReverseBits` helpers.
+
+They are exported as `vtiff_*`, and with the `tiff-abi` feature also
+under libtiff's names:
+
+```sh
+cargo build --release -p verilith-tiff --features tiff-abi
+cc prog.c target/release/libverilith_tiff.a -lpthread -lm -ldl   # instead of -ltiff
+```
+
+Every strip and tile is decoded by the verified decoder (`decode::chunk_exec`).
+Around it the C API does what libtiff does, so that a program sees what it
+would see with libtiff: `TIFFGetField` reports what libtiff reports
+(defaults, the fields libtiff fills in, the values it refuses), an
+uncompressed image in one strip is presented as strips of about 8 KB as
+libtiff presents it (except in mode `c`), and the RGBA functions do
+`tif_getimage.c`'s conversions, rounding included.
+
+Where the C API differs from libtiff, besides the departures above:
+
+- It reads. `TIFFOpen` in any mode but `r` fails, as does `TIFFSetField`
+  on a tag (codec options are accepted and ignored). Only the first image
+  is read: `TIFFReadDirectory` returns 0.
+- The file is read in full when it is opened, and checked then: a file the
+  decoder rejects (JPEG compression, YCbCr, BigTIFF, ...) fails at
+  `TIFFOpen`, where libtiff fails at the first read, or reads it.
+- When libtiff replaces a file's StripByteCounts with its own estimate
+  ("Wrong StripByteCounts field, ignoring and calculating"),
+  `TIFFGetField` reports the byte counts in the file, which are the ones
+  the decoder uses.
+- `TIFFReadScanline` on PackBits data gives the rows of the strip as the
+  whole strip decodes. libtiff decodes a strip one scanline at a time and
+  cuts a run that crosses into the next scanline short ("Discarding ...
+  bytes to avoid buffer overflow"), so the rows after it differ.
+- `TIFFReadRGBAImage` and `TIFFReadRGBATile` on a tiled greyscale image
+  that is 16-bit or has extra samples, and whose width is not a multiple
+  of the tile width, give the image. libtiff's `put16bitbwtile`,
+  `putgreytile` and `putagreytile` do not scale the skew from one tile row
+  to the next by the size of a pixel, so libtiff reads the rows of the
+  right-hand tiles from the wrong place.
+- YCbCr, CIELab and LogLuv images are not converted to RGBA
+  (`TIFFRGBAImageOK` says so), and the wording of error messages differs.
+- The rest of libtiff's API (writing, `TIFFPrintDirectory`, the
+  `TIFFField` functions, EXIF and custom directories) is not provided.
+
+`difftest/abi.sh` checks it with programs written for libtiff, compiled
+against libtiff's `tiffio.h`: `difftest/reftiff.c` (`TIFFOpen`,
+`TIFFGetField`, `TIFFReadEncodedStrip` and `TIFFReadEncodedTile`) linked
+with verilith-tiff prints what `examples/vtiffcat.rs` prints, for every
+file; and `difftest/api.c` (`TIFFGetField` and `TIFFGetFieldDefaulted` on
+every baseline tag, the size functions, every scanline or tile, and every
+RGBA function), linked once with verilith-tiff and once with libtiff, prints
+the same for every file both decode to the same samples, but for the last
+three differences above, which it tells apart by libtiff's warnings and
+counts. On the 429 corpus files and 8,000 mutants: `reftiff.c` printed what
+the Rust API prints on all 8,429; `api.c` printed the same as with libtiff
+on 2,164 files, and differed on 132 only by those three (38 edge tiles, 93
+PackBits scanlines, 1 StripByteCounts estimate). On the 38 edge-tile files
+the RGBA verilith-tiff gives was checked against the decoded samples.
 
 ## Design
 
@@ -139,6 +243,7 @@ strips or tiles one at a time:
   table, none different. The first runs found the rules libtiff applies to
   SampleFormat, ExtraSamples, SMin/SMaxSampleValue and ColorMap that the
   spec had missed, and they are in it now.
+- `difftest/abi.sh FILES...` checks the C API (see [C API](#c-api)).
 
 ## Performance
 

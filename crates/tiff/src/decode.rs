@@ -275,7 +275,7 @@ fn post_exec(v: &mut Vec<u8>, p: &ParamsX, rows: u64, crb: u128, Ghost(b): Ghost
 }
 
 /// Strip or tile `k`, decoded (`spec::chunk`).
-fn chunk_exec(b: &[u8], p: &ParamsX, k: u32, limit: usize, off: &mut [u32], len: &mut [u32]) -> (r: Result<Vec<u8>, Error>)
+pub fn chunk_exec(b: &[u8], p: &ParamsX, k: u32, limit: usize, off: &mut [u32], len: &mut [u32]) -> (r: Result<Vec<u8>, Error>)
     requires
         p.view(b@).wf(),
         p.ok(b@),
