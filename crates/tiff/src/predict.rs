@@ -118,6 +118,7 @@ pub proof fn lemma_le_val_sub(d: Seq<u8>, a: int, b: int, i: int, k: nat)
 }
 
 /// The `k` bytes at `i` as a little-endian number (`spec::le_val`).
+#[inline(always)]
 fn read_le(v: &[u8], i: usize, k: usize) -> (r: u64)
     requires
         1 <= k <= 4,
@@ -125,6 +126,19 @@ fn read_le(v: &[u8], i: usize, k: usize) -> (r: u64)
     ensures
         r as nat == le_val(v@, i as int, k as nat),
 {
+    let l0 = v.len();
+    if k == 1 {
+        proof {
+            reveal_with_fuel(le_val, 2);
+        }
+        return get(v, i) as u64;
+    }
+    if k == 2 {
+        proof {
+            reveal_with_fuel(le_val, 3);
+        }
+        return get(v, i) as u64 + 256 * get(v, i + 1) as u64;
+    }
     let l = v.len();
     let mut acc: u64 = 0;
     let mut j: usize = k;
@@ -152,6 +166,7 @@ fn read_le(v: &[u8], i: usize, k: usize) -> (r: u64)
 }
 
 /// Writes the `k` bytes of `x` at `i`, least significant first.
+#[inline(always)]
 fn write_le(v: &mut [u8], i: usize, k: usize, x: u64)
     requires
         1 <= k <= 4,
@@ -164,6 +179,36 @@ fn write_le(v: &mut [u8], i: usize, k: usize, x: u64)
             old(v)@[j]
         },
 {
+    let l0 = v.len();
+    if k == 1 {
+        proof {
+            lemma2_to64();
+            assert(x as u8 == (x % 256) as u8) by (bit_vector);
+            assert(x as nat / pow2(0) == x as nat);
+        }
+        set(v, i, x as u8);
+        return;
+    }
+    if k == 2 {
+        proof {
+            lemma2_to64();
+            assert(x as u8 == (x % 256) as u8) by (bit_vector);
+            assert(x as nat / pow2(0) == x as nat);
+            lemma_u64_shr_is_div(x, 8);
+            let y = x >> 8u64;
+            assert(y as u8 == (y % 256) as u8) by (bit_vector);
+        }
+        set(v, i, x as u8);
+        set(v, i + 1, (x >> 8u64) as u8);
+        proof {
+            assert(forall|j: int| 0 <= j < v@.len() ==> #[trigger] v@[j] == if i <= j < i + k {
+                byte_of(x as nat, (j - i) as nat)
+            } else {
+                old(v)@[j]
+            });
+        }
+        return;
+    }
     let ghost o = v@;
     let l = v.len();
     let mut j: usize = 0;
@@ -301,7 +346,17 @@ pub fn unpredict_exec(v: &mut [u8], rb: usize, k: usize, stride: usize)
                     lemma2_to64();
                     assert(pow2(32) == 0x1_0000_0000);
                 }
-                let x = (prev + cur) % modulus;
+                let sum = prev + cur;
+                let x = if sum >= modulus { sum - modulus } else { sum };
+                proof {
+                    lemma_le_val_bound(v@, at as int, k as nat);
+                    lemma_le_val_bound(v@, pt as int, k as nat);
+                    if sum >= modulus {
+                        lemma_fundamental_div_mod_converse(sum as int, modulus as int, 1, (sum - modulus) as int);
+                    } else {
+                        lemma_small_mod(sum as nat, modulus as nat);
+                    }
+                }
                 write_le(v, at, k, x);
             } else {
                 // The first pixel of the row is stored as it is.

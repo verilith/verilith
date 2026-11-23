@@ -16,6 +16,7 @@ pub struct ParamsX {
     pub spp: u32,
     pub compression: u32,
     pub photometric: Option<u32>,
+    pub sample_format: u32,
     pub planar: u32,
     pub predictor: u32,
     pub tiled: bool,
@@ -39,6 +40,7 @@ impl ParamsX {
                 Some(x) => Some(x as nat),
                 None => None,
             },
+            sample_format: self.sample_format as nat,
             planar: self.planar as nat,
             predictor: self.predictor as nat,
             tiled: self.tiled,
@@ -312,6 +314,10 @@ fn params2_exec(
         Ok(x) => x,
         Err(()) => return None,
     };
+    let fmt = match extras_exec(b, le, o, n, spp, bps, photometric) {
+        Some(f) => f,
+        None => return None,
+    };
     let none = Field { ty: 1, count: 0, pos: 0 };
     let base = ParamsX {
         le,
@@ -321,6 +327,7 @@ fn params2_exec(
         spp,
         compression: comp,
         photometric,
+        sample_format: fmt,
         planar,
         predictor,
         tiled: false,
@@ -335,6 +342,145 @@ fn params2_exec(
         assert(base.view(bb).offsets =~= Seq::<nat>::empty());
     }
     layout_exec(b, le, o, n, base, twf, thf)
+}
+
+/// The first value of a per-sample field, if its count is 1 or at least
+/// `spp` and its first `spp` values are equal.
+fn per_sample_exec(b: &[u8], le: bool, f: Field, spp: u32) -> (r: Option<u32>)
+    requires
+        f.ok(b@),
+    ensures
+        ({
+            let v = f.values(b@, le);
+            if v.len() == 0 || (v.len() != 1 && (v.len() < spp || exists|k: int| 0 <= k < spp && #[trigger] v[k] != v[0])) {
+                r is None
+            } else {
+                r == Some(v[0] as u32) && v[0] <= u32::MAX
+            }
+        }),
+{
+    let ghost v = f.values(b@, le);
+    if f.count == 0 {
+        return None;
+    }
+    let v0 = value_exec(b, le, f, 0);
+    if f.count != 1 {
+        if f.count < spp {
+            return None;
+        }
+        let mut k: u32 = 0;
+        while k < spp
+            invariant
+                f.ok(b@),
+                v == f.values(b@, le),
+                spp <= f.count,
+                f.count != 1,
+                k <= spp,
+                v0 == v[0],
+                forall|j: int| 0 <= j < k ==> #[trigger] v[j] == v[0],
+            decreases spp - k,
+        {
+            if value_exec(b, le, f, k) != v0 {
+                assert(v[k as int] != v[0]);
+                return None;
+            }
+            k = k + 1;
+        }
+        assert(!exists|j: int| 0 <= j < spp && #[trigger] v[j] != v[0]);
+    }
+    Some(v0)
+}
+
+/// `spec::extras`.
+#[verifier::loop_isolation(false)]
+fn extras_exec(b: &[u8], le: bool, o: usize, n: usize, spp: u32, bps: u32, photometric: Option<u32>) -> (r: Option<u32>)
+    requires
+        ifd_ok(b@, o as nat, n as nat),
+        1 <= bps <= 32,
+    ensures
+        match extras(b@, le, o as nat, n as nat, spp as nat, bps as nat, match photometric {
+            Some(x) => Some(x as nat),
+            None => None,
+        }) {
+            Some(f) => r == Some(f as u32),
+            None => r is None,
+        },
+{
+    let sf = match field_exec(b, le, o, n, 339) {
+        Ok(x) => x,
+        Err(()) => return None,
+    };
+    let es = match field_exec(b, le, o, n, 338) {
+        Ok(x) => x,
+        Err(()) => return None,
+    };
+    let fmt = match sf {
+        None => 1,
+        Some(f) => match per_sample_exec(b, le, f, spp) {
+            Some(x) => x,
+            None => return None,
+        },
+    };
+    if !(1 <= fmt && fmt <= 4) {
+        return None;
+    }
+    if let Some(f) = es {
+        let ghost v = f.values(b@, le);
+        if f.count > spp {
+            return None;
+        }
+        let mut k: u32 = 0;
+        while k < f.count
+            invariant
+                f.ok(b@),
+                v == f.values(b@, le),
+                k <= f.count,
+                forall|j: int| 0 <= j < k ==> (#[trigger] v[j] <= 2 || v[j] == 999),
+            decreases f.count - k,
+        {
+            let x = value_exec(b, le, f, k);
+            if !(x <= 2 || x == 999) {
+                assert(!(v[k as int] <= 2 || v[k as int] == 999));
+                return None;
+            }
+            k = k + 1;
+        }
+    }
+    let blen = b.len();
+    if let Some(i) = find_exec(b, le, o, n, 340) {
+        if u32_exec(b, le, o + 2 + 12 * i + 4) != spp {
+            return None;
+        }
+    }
+    if let Some(i) = find_exec(b, le, o, n, 341) {
+        if u32_exec(b, le, o + 2 + 12 * i + 4) != spp {
+            return None;
+        }
+    }
+    if photometric == Some(6u32) {
+        return None;
+    }
+    if photometric == Some(3u32) && bps < 8 {
+        proof {
+            verilith_core::bits::lemma_mask(bps as u64);
+            vstd::arithmetic::power2::lemma_pow2_strictly_increases(bps as nat, 8);
+            vstd::arithmetic::power2::lemma2_to64();
+        }
+        let need = 3 * (1u64 << bps as u64);
+        match field_exec(b, le, o, n, 320) {
+            Ok(Some(f)) => if f.count as u64 != need {
+                return None;
+            },
+            _ => return None,
+        }
+        match (find_exec(b, le, o, n, 320), find_exec(b, le, o, n, 258)) {
+            (Some(ic), Some(ib)) => if ib >= ic {
+                return None;
+            },
+            _ => return None,
+        }
+    }
+    Some(fmt)
 }
 
 /// Where the strips or tiles are (`spec::layout`).

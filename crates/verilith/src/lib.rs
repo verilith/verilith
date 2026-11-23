@@ -66,6 +66,9 @@ pub use verilith_sync as sync;
 /// `verilith-text`: UTF-8/16, base64, Unicode and IDNA.
 #[cfg(feature = "text")]
 pub use verilith_text as text;
+/// `verilith-tiff`: TIFF decoder.
+#[cfg(feature = "tiff")]
+pub use verilith_tiff as tiff;
 /// `verilith-url`: WHATWG URL parser.
 #[cfg(feature = "url")]
 pub use verilith_url as url;

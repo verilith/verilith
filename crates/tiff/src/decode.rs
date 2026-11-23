@@ -30,6 +30,8 @@ pub struct Tiff {
     pub samples_per_pixel: u32,
     pub compression: u32,
     pub photometric: Option<u32>,
+    /// 1 unsigned, 2 signed, 3 floating point, 4 undefined.
+    pub sample_format: u32,
     /// 1: the samples of a pixel are together; 2: one plane per sample.
     pub planar: u32,
     /// Each plane in turn (one, or one per sample if `planar` is 2), each
@@ -53,6 +55,7 @@ impl Tiff {
                 Some(x) => Some(x as nat),
                 None => None,
             },
+            sample_format: self.sample_format as nat,
             planar: self.planar as nat,
             pixels: self.pixels@,
         }
@@ -736,6 +739,7 @@ pub fn decode(b: &[u8], limit: usize) -> (r: Result<Tiff, Error>)
         samples_per_pixel: p.spp,
         compression: p.compression,
         photometric: p.photometric,
+        sample_format: p.sample_format,
         planar: p.planar,
         pixels: out,
     };

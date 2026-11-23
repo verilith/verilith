@@ -370,9 +370,9 @@ fn cve_2018_11490_full_table() {
 }
 
 #[test]
-fn cve_2005_2974_huge_image() {
-    // giflib did not check sizes before allocating. Here a 65535 x 65535
-    // image from a few bytes: more pixels than giflib allows (INT_MAX).
+fn huge_image() {
+    // A 65535 x 65535 image from a few bytes: more pixels than giflib
+    // allows (INT_MAX).
     let data = encode(&[0], 2, true, true);
     invalid(&file(&[image(65535, 65535, 0, 2, &data)]));
     // Within giflib's bound but past the caller's memory limit.
@@ -381,9 +381,9 @@ fn cve_2005_2974_huge_image() {
 }
 
 #[test]
-fn cve_2016_3977_image_outside_screen() {
-    // gif2rgb wrote rows of images that did not fit the screen. The
-    // decoder does not clip: the image is returned with its position.
+fn image_outside_screen() {
+    // Programs that paint images onto the screen have overflowed on these.
+    // The decoder does not clip: the image is returned with its position.
     let data = encode(&[1, 2, 3, 0], 2, true, true);
     let mut img = image(2, 2, 0, 2, &data);
     img[1..5].copy_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);

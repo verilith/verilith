@@ -36,6 +36,7 @@ shortest dependency list, depend on that crate directly.
 | `snappy` | `verilith::snappy` | [`verilith-snappy`](../snappy) | Snappy |
 | `sync` | `verilith::sync` | [`verilith-sync`](../sync) | queues, channels and locks |
 | `text` | `verilith::text` | [`verilith-text`](../text) | UTF-8/16, base64, Unicode and IDNA |
+| `tiff` | `verilith::tiff` | [`verilith-tiff`](../tiff) | TIFF decoder |
 | `url` | `verilith::url` | [`verilith-url`](../url) | WHATWG URL parser |
 | `wasm` | `verilith::wasm` | [`verilith-wasm`](../wasm) | WebAssembly interpreter |
 | `webp` | `verilith::webp` | [`verilith-webp`](../webp) | WebP decoder |

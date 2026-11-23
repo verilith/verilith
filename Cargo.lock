@@ -1303,6 +1303,7 @@ dependencies = [
  "verilith-snappy",
  "verilith-sync",
  "verilith-text",
+ "verilith-tiff",
  "verilith-url",
  "verilith-wasm",
  "verilith-webp",

@@ -13,9 +13,8 @@ the graphic control extension are proven against a specification of the
 format. `cargo verus verify` checks 37 functions with no errors.
 
 giflib's security history is mostly memory-safety bugs in exactly these
-places: the LZW table (CVE-2018-11490, a write past `Suffix` as the table
-fills), image sizes (CVE-2019-15133, a division by a zero height;
-CVE-2005-2974 and CVE-2005-3350, allocations from unchecked sizes), and the
+places: the LZW table (CVE-2018-11490, a write past the table as it
+fills), image sizes (CVE-2019-15133, a division by a zero height), and the
 2026 integer overflows in pixel counts. In verilith-gif that class of bug
 is ruled out for every input by the proofs.
 

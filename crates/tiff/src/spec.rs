@@ -165,6 +165,19 @@ pub spec const ROWS_PER_STRIP: nat = 278;
 pub spec const STRIP_BYTE_COUNTS: nat = 279;
 pub spec const PLANAR_CONFIG: nat = 284;
 pub spec const PREDICTOR: nat = 317;
+pub spec const COLORMAP: nat = 320;
+pub spec const EXTRA_SAMPLES: nat = 338;
+pub spec const SAMPLE_FORMAT: nat = 339;
+pub spec const SMIN_SAMPLE_VALUE: nat = 340;
+pub spec const SMAX_SAMPLE_VALUE: nat = 341;
+
+/// A field that, if present, has `spp` values (whatever its type).
+pub open spec fn count_is(b: Seq<u8>, le: bool, o: nat, n: nat, tag: nat, spp: nat) -> bool {
+    match find(b, le, o, n, tag, 0) {
+        None => true,
+        Some(i) => u32_at(b, le, entry_pos(o, i) + 4) == spp,
+    }
+}
 pub spec const TILE_WIDTH: nat = 322;
 pub spec const TILE_LENGTH: nat = 323;
 pub spec const TILE_OFFSETS: nat = 324;
@@ -226,6 +239,8 @@ pub struct Params {
     pub spp: nat,
     pub compression: nat,
     pub photometric: Option<nat>,
+    /// 1 unsigned, 2 signed, 3 floating point, 4 undefined.
+    pub sample_format: nat,
     /// 1 (samples of a pixel together) or 2 (one plane per sample).
     pub planar: nat,
     /// 2 for horizontal differencing, else 1.
@@ -395,7 +410,9 @@ pub open spec fn params2(
             field(b, le, o, n, TILE_WIDTH),
             field(b, le, o, n, TILE_LENGTH),
         ) {
-            (Some(photometric), Some(twf), Some(thf)) => {
+            (Some(photometric), Some(twf), Some(thf)) => match extras(b, le, o, n, spp, bps, photometric) {
+                None => None,
+                Some(fmt) => {
                 let base = Params {
                     le,
                     width: wv[0],
@@ -404,6 +421,7 @@ pub open spec fn params2(
                     spp,
                     compression: comp,
                     photometric,
+                    sample_format: fmt,
                     planar,
                     predictor,
                     tiled: false,
@@ -414,9 +432,53 @@ pub open spec fn params2(
                     counts: Seq::empty(),
                 };
                 layout(b, le, o, n, base, twf, thf)
-            },
+            }},
             _ => None,
         }
+    }
+}
+
+/// The checks on fields that do not change the samples, as libtiff makes
+/// them, and the sample format. libtiff: SampleFormat (§19) is read like
+/// BitsPerSample and must be 1 to 6, and the complex formats (5, 6) are not
+/// read here (libtiff byte-swaps them differently); ExtraSamples (§18)
+/// must have at most one value per sample, each 0, 1, 2 or 999 (a known
+/// Corel Draw value); a palette image (§5) of fewer than 8 bits must have a
+/// ColorMap of 3 x 2^bits values; SMinSampleValue and SMaxSampleValue
+/// must have one value per sample. YCbCr images (§21) are not read here.
+pub open spec fn extras(b: Seq<u8>, le: bool, o: nat, n: nat, spp: nat, bps: nat, photometric: Option<nat>) -> Option<nat> {
+    match (field(b, le, o, n, SAMPLE_FORMAT), field(b, le, o, n, EXTRA_SAMPLES)) {
+        (Some(sf), Some(es)) => {
+            let fmt = match sf {
+                None => Some(1nat),
+                Some(v) => if v.len() == 0 || (v.len() != 1 && (v.len() < spp || exists|k: int|
+                    0 <= k < spp && #[trigger] v[k] != v[0])) {
+                    None
+                } else {
+                    Some(v[0])
+                },
+            };
+            let es_ok = match es {
+                None => true,
+                Some(v) => v.len() <= spp && forall|k: int| 0 <= k < v.len() ==> (#[trigger] v[k] <= 2 || v[k] == 999),
+            };
+            // libtiff: a ColorMap before the BitsPerSample entry (in an
+            // unsorted IFD), or with no BitsPerSample entry, is ignored.
+            let cm_ok = match (field(b, le, o, n, COLORMAP), find(b, le, o, n, COLORMAP, 0), find(b, le, o, n, BITS_PER_SAMPLE, 0)) {
+                (Some(Some(v)), Some(ic), Some(ib)) => v.len() == 3 * pow2(bps) && ib < ic,
+                _ => false,
+            };
+            match fmt {
+                Some(f) => if 1 <= f <= 4 && es_ok && count_is(b, le, o, n, SMIN_SAMPLE_VALUE, spp)
+                    && count_is(b, le, o, n, SMAX_SAMPLE_VALUE, spp) && photometric != Some(6nat) && !(photometric == Some(3nat) && bps < 8 && !cm_ok) {
+                    Some(f)
+                } else {
+                    None
+                },
+                None => None,
+            }
+        },
+        _ => None,
     }
 }
 
@@ -787,6 +849,7 @@ pub struct Image {
     pub samples_per_pixel: nat,
     pub compression: nat,
     pub photometric: Option<nat>,
+    pub sample_format: nat,
     pub planar: nat,
     /// The output: each plane in turn (one, or one per sample if `planar`
     /// is 2), each `height` rows of `ceil(width * samples * bits / 8)`
@@ -817,6 +880,7 @@ pub open spec fn decode(b: Seq<u8>) -> Option<Image> {
                             samples_per_pixel: p.spp,
                             compression: p.compression,
                             photometric: p.photometric,
+                            sample_format: p.sample_format,
                             planar: p.planar,
                             pixels: Seq::new(p.image_size(), |i: int| pixel(p, cs, i)),
                         },
