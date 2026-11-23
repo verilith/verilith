@@ -491,6 +491,12 @@ pub fn maybe_mask16(w: &[u8], kind: u8) -> (m: u32)
         m < 0x10000,
         forall|j: u32| j < 16 ==> (((m >> j) & 1) == 1) == maybe(kind, #[trigger] w@[j as int]),
 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if kind == K_FRAG || kind == K_QUERY {
+            return crate::simd::maybe_mask16_sse(w, kind);
+        }
+    }
     if (kind == K_FRAG || kind == K_QUERY) && verilith_simd::neon::has_neon() {
         return crate::simd::maybe_mask16_neon(w, kind);
     }
