@@ -249,16 +249,19 @@ mbedTLS's test data, ten minutes per target ran 32.7M inputs of `parse` and
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` is a manual workflow (automatic runs are off; start it from the Actions tab). It runs:
+CI is the workflow at the repository root, `.github/workflows/ci.yml`. On
+every pull request and push to `main` that touches this crate or a crate it
+depends on, it runs:
 
-- **verify**: builds Verus from source at the pinned commit (cached) and
-  checks every proof;
-- **test**: the bare-metal `no_std` build, the CVE tests and the
-  differentials on the fetched corpus, the native C API's tests, and
-  `cargo publish --dry-run`;
-- **mbedtls**: mbedTLS 4.3.0's test suites with the patch, which must pass
-  except for the 18 documented x509parse cases;
-- **fuzz**: five minutes per fuzz target under AddressSanitizer.
+- **verify**: checks every proof with the Verus build pinned in
+  `scripts/verus-version` (built from source and cached), through Buck2;
+- **test**: `ci.sh`: the bare-metal `no_std` build, the CVE tests and the
+  differentials on the fetched corpus, and the native C API's tests;
+- **mbedtls**: `ci.sh mbedtls`, mbedTLS 4.3.0's test suites with the patch,
+  which must pass except for the 18 documented x509parse cases.
+
+A manual run of the workflow with "fuzz" also runs `ci.sh fuzz`: five
+minutes per fuzz target under AddressSanitizer.
 
 ## Verifying
 
@@ -277,3 +280,8 @@ cargo verus verify
 3. Report upstream that mbedTLS accepts a `[2]`-tagged serial number and an
    explicit v1 version.
 4. CRLs and CSRs, which mbedTLS still parses itself.
+
+## License
+
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.

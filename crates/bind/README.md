@@ -264,3 +264,8 @@ Everything in this repository. The trusted additions are the C ABI glue
 further pieces do make decisions and are not verified: ada's URLPattern
 code in `ada_url_pattern.h` (ada's own, unchanged), and the parts of
 verilith-text's C API listed under simdutf above.
+
+## License
+
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.

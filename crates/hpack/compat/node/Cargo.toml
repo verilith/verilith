@@ -3,7 +3,7 @@ name = "vnode"
 version = "0.1.0"
 edition = "2024"
 description = "vhpack and vhttp in one static library for Node.js (two Rust static libraries cannot be linked into one binary)"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 publish = false
 
 [lib]

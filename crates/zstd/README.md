@@ -287,3 +287,8 @@ mozilla.3 is at 779M instructions against libzstd's 642M. The Huffman
 loop is close to what its dependency chain allows (a shift, a table
 load and a shift per symbol, four streams interleaved), so what remains
 is the sequence loop and table building.
+
+## License
+
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.

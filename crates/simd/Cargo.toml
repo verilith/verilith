@@ -1,7 +1,8 @@
 [package]
 name = "verilith-simd"
 version = "0.1.0"
-license = "MIT"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/verilith/verilith"
 description = "Verus specifications for x86 SIMD intrinsics (SSE2..AVX2, some AVX-512), differentially tested against the CPU"
 edition = "2024"
 

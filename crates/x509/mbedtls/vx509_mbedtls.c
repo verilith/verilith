@@ -11,7 +11,7 @@
  * table). The SubjectPublicKeyInfo is still decoded by mbedTLS's key parser,
  * on the SPKI TLV vx509 has checked.
  *
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: MIT OR Apache-2.0
  */
 
 typedef struct { const unsigned char *p; size_t len; } vx509_span;

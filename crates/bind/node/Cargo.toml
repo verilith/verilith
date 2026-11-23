@@ -2,7 +2,7 @@
 name = "verilith-bind-node"
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 description = "Node.js (Node-API) bindings for the Verilith parsers"
 publish = false
 

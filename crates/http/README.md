@@ -251,7 +251,7 @@ the body to be skipped, the rest of the stream is not read as a body.
 streams of pipelined, chunked, upgraded and corrupted messages, each fed
 whole, one byte per call, in random pieces, and with a callback pausing
 the parser. Whenever verilith-http accepts a stream, llhttp reports the same
-callbacks in the same order with the same data. The CI workflow runs it (manual runs only; automatic runs are off).
+callbacks in the same order with the same data. CI runs it.
 
 ### From `fetch()` (undici)
 
@@ -452,7 +452,7 @@ The proofs cover the verified core. The adapters around it are tested:
 - `./scripts/fuzz.sh [seconds]`: cargo-fuzz under ASan on four targets,
   the Rust API, the C API, the chunked decoder (checked against
   byte-at-a-time decoding) and the httparse API (checked against
-  httparse). The CI workflow runs each for 60 seconds (manual runs only).
+  httparse). A manual run of the CI workflow with "fuzz" runs each.
 
 ## Differences from picohttpparser
 
@@ -556,6 +556,10 @@ bench/run.sh                     # benchmarks
 
 The crate builds with stable Rust and depends only on `vstd` from
 crates.io (pinned to an exact version), whose proof code is erased in a
-normal build. Verification needs the Verus build pinned in
-`.github/workflows/ci.yml`; CI builds it from source, verifies, runs the
-tests, builds the httparse crate, runs `cargo package`, and fuzzes.
+normal build. Verification needs the Verus build pinned in `scripts/verus-version` at
+the repository root. CI (`.github/workflows/ci.yml` at the repository root) verifies the proofs and runs `ci.sh` on every pull request and push to `main` that touches this crate or a crate it depends on.
+
+## License
+
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.

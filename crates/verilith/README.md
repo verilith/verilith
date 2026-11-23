@@ -42,3 +42,8 @@ shortest dependency list, depend on that crate directly.
 | `xxhash` | `verilith::xxhash` | [`verilith-xxhash`](../xxhash) | XXH32 and XXH64 |
 | `zlib` | `verilith::zlib` | [`verilith-zlib`](../zlib) | zlib, gzip and DEFLATE |
 | `zstd` | `verilith::zstd` | [`verilith-zstd`](../zstd) | Zstandard decoder |
+
+## License
+
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.

@@ -1,6 +1,7 @@
 # Third-party material
 
-Verilith's own code is under the MIT licence in [LICENSE](LICENSE). The
+Verilith's own code is under the MIT licence ([LICENSE-MIT](LICENSE-MIT)) or
+the Apache License 2.0 ([LICENSE-APACHE](LICENSE-APACHE)), at your option. The
 files below come from other projects and stay under those projects'
 licences. Nothing here is linked into a crate's verified code except the
 generated tables and the Brotli dictionary, as noted.

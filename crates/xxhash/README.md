@@ -71,3 +71,8 @@ assert_eq!(h.digest(Ghost::assume_new()), 0x44BC2CF5AD770999);
 cargo test --release
 ./ci.sh
 ```
+
+## License
+
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.

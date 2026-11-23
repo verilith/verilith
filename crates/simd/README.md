@@ -190,3 +190,8 @@ python3 tools/gen_difftest.py tests/difftest.rs
 Verus commit `8bf68ee741df833ea5d0fe6a2255126fdea87e47` (toolchain 1.99.1),
 vstd `=0.0.0-2026-11-01-0251`. The differential tests need an x86-64 CPU
 with AVX2; the AVX-512 ones in `tests/ext.rs` need AVX-512BW and VBMI2.
+
+## License
+
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.

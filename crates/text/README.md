@@ -378,6 +378,9 @@ the UCD files that the tests read into `tests/data`.
 
 ## License
 
-MIT. The Unicode Character Database files in `tests/data` and the tables
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.
+
+The Unicode Character Database files in `tests/data` and the tables
 generated from them (`src/unicode/tables.rs`) are under the Unicode License
 v3; see [LICENSE-UNICODE](LICENSE-UNICODE).

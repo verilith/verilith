@@ -5,13 +5,16 @@ answer as seriously as a crash.
 
 ## Reporting a vulnerability
 
-Please report privately, not in a public issue or pull request:
+Please report privately, not in a public issue or pull request, in one of
+two ways:
 
-1. Open the repository's **Security** tab and choose **Report a
-   vulnerability** ([direct link](https://github.com/verilith/verilith/security/advisories/new)).
-2. Say which crate and commit, what input or sequence of calls triggers the
-   problem, and what you saw against what you expected. A file or a short
-   program that reproduces it is the most useful thing you can send.
+- Open the repository's **Security** tab and choose **Report a
+  vulnerability** ([direct link](https://github.com/verilith/verilith/security/advisories/new)).
+- Email **security@verilith.sh**.
+
+Say which crate and commit, what input or sequence of calls triggers the
+problem, and what you saw against what you expected. A file or a short
+program that reproduces it is the most useful thing you can send.
 
 We aim to acknowledge a report within a week and to keep you informed
 while we work on it. Once a fix is released we publish an advisory and

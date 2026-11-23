@@ -1001,3 +1001,12 @@ tests/parse.rs   Rust tests, including JSONTestSuite
 tests/ondemand.rs  the on-demand reader against the tape parser
 tests/c/         C harnesses and the upstream-test shim
 ```
+
+## License
+
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.
+
+`include/cJSON.h` and the tree-building functions in `src/ffi.rs`, which
+are ported from cJSON 1.7.19, are under cJSON's MIT license, whose notice
+is at the top of `include/cJSON.h`.
