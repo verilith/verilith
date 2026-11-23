@@ -25,6 +25,10 @@ pub enum ErrorKind {
     Encoding,
     /// The text is not a well-formed XML document.
     Syntax,
+    /// The text is over 2^48 - 1 bytes (256 TiB) as UTF-8: more than
+    /// token positions hold (`tape::MAX_POS`), and more than any address
+    /// space gives a process today.
+    TooLarge,
 }
 
 /// A rejected document: why, and where. `offset` is a byte offset into
@@ -43,6 +47,7 @@ impl fmt::Display for Error {
         let what = match self.kind {
             ErrorKind::Encoding => "not text in a known encoding, or a character XML does not allow",
             ErrorKind::Syntax => "not well-formed",
+            ErrorKind::TooLarge => "longer than 2^48 - 1 bytes",
         };
         write!(f, "{what} at line {} column {} (byte {})", self.line, self.column, self.offset)
     }
@@ -124,6 +129,9 @@ fn diagnose(input: &[u8], tape: &Tape) -> Error {
         Some(d) => d,
     };
     let text: &[u8] = decoded.as_deref().unwrap_or(input);
+    if text.len() as u64 > crate::tape::MAX_POS {
+        return error_at(ErrorKind::TooLarge, text, 0);
+    }
     if !crate::chars::ex_doc_chars(text) {
         return error_at(ErrorKind::Encoding, text, bad_char_at(text));
     }
@@ -207,7 +215,7 @@ impl<'a> Document<'a> {
     /// The name in the document type declaration, if there is one.
     pub fn doctype_name(&self) -> Option<&str> {
         let t = self.tape.toks.iter().find(|t| t.kind == Kind::Doctype)?;
-        Some(utf8(&self.text()[t.a as usize..t.b as usize]))
+        Some(utf8(&self.text()[t.a() as usize..t.b() as usize]))
     }
 
     /// The processing instructions outside the root element, before it
@@ -215,13 +223,13 @@ impl<'a> Document<'a> {
     /// as (target, data).
     pub fn outer_pis(&self) -> (Vec<(&str, Cow<'_, str>)>, Vec<(&str, Cow<'_, str>)>) {
         let toks = &self.tape.toks;
-        let close = toks[self.root as usize].c as usize;
+        let close = toks[self.root as usize].c() as usize;
         let mut before = Vec::new();
         let mut after = Vec::new();
         for (i, t) in toks.iter().enumerate() {
             if t.kind == Kind::PI && (i < self.root as usize || i > close) {
                 let d = toks[i + 1];
-                let p = (utf8(self.span(Src::Doc, t.a, t.b)), self.text_of(Src::Doc, d));
+                let p = (utf8(self.span(Src::Doc, t.a() as usize, t.b() as usize)), self.text_of(Src::Doc, d));
                 if i < self.root as usize {
                     before.push(p)
                 } else {
@@ -235,10 +243,10 @@ impl<'a> Document<'a> {
     /// The text of a token's span, line ends normalized where it is in
     /// the document itself (an entity's replacement text already is).
     fn text_of(&self, src: Src, t: Tok) -> Cow<'_, str> {
-        let raw = self.span(src, t.a, t.b);
+        let raw = self.span(src, t.a() as usize, t.b() as usize);
         if src == Src::Doc && raw.contains(&b'\r') {
             let mut out = Vec::with_capacity(raw.len());
-            ex_eol(self.buf(src), t.a as usize, t.b as usize, &mut out);
+            ex_eol(self.buf(src), t.a() as usize, t.b() as usize, &mut out);
             cow_utf8(Cow::Owned(out))
         } else {
             Cow::Borrowed(utf8(raw))
@@ -258,12 +266,12 @@ impl<'a> Document<'a> {
             let mut s = None;
             for u in &toks[i + 1..] {
                 match u.kind {
-                    Kind::PubId => p = Some(utf8(self.span(Src::Doc, u.a, u.b))),
-                    Kind::SysId => s = Some(utf8(self.span(Src::Doc, u.a, u.b))),
+                    Kind::PubId => p = Some(utf8(self.span(Src::Doc, u.a() as usize, u.b() as usize))),
+                    Kind::SysId => s = Some(utf8(self.span(Src::Doc, u.a() as usize, u.b() as usize))),
                     _ => break,
                 }
             }
-            out.push((utf8(self.span(Src::Doc, t.a, t.b)), p, s));
+            out.push((utf8(self.span(Src::Doc, t.a() as usize, t.b() as usize)), p, s));
         }
         out
     }
@@ -340,15 +348,15 @@ impl<'a> Document<'a> {
             let t = toks[i];
             match t.kind {
                 Kind::PERef if !standalone => skip = true,
-                Kind::AttlistDecl => elem = (t.a, t.b),
+                Kind::AttlistDecl => elem = (t.a() as usize, t.b() as usize),
                 Kind::AttDef if !skip => {
                     let d = toks[i + 1];
                     let e: Box<[u8]> = text[elem.0 as usize..elem.1 as usize].into();
-                    let n: Box<[u8]> = text[t.a as usize..t.b as usize].into();
+                    let n: Box<[u8]> = text[t.a() as usize..t.b() as usize].into();
                     let by_name = self.def_index.entry(e.clone()).or_default();
                     if !by_name.contains_key(&n) {
                         let k = self.defs.len();
-                        self.defs.push(AttDef { name: (t.a, t.b), ty: t.f, kind: d.f, value: (d.a, d.b) });
+                        self.defs.push(AttDef { name: (t.a() as usize, t.b() as usize), ty: t.f, kind: d.f, value: (d.a() as usize, d.b() as usize) });
                         by_name.insert(n, k);
                         self.defs_of.entry(e).or_default().push(k);
                     }
@@ -470,13 +478,13 @@ impl<'d> Element<'d> {
     /// The element type's name.
     pub fn name(&self) -> &'d str {
         let t = self.tok();
-        utf8(self.doc.span(self.src, t.a, t.b))
+        utf8(self.doc.span(self.src, t.a() as usize, t.b() as usize))
     }
 
     /// The name, as bytes.
     pub fn name_bytes(&self) -> &'d [u8] {
         let t = self.tok();
-        self.doc.span(self.src, t.a, t.b)
+        self.doc.span(self.src, t.a() as usize, t.b() as usize)
     }
 
     /// The attributes: those in the start tag, in order, then the DTD's
@@ -498,9 +506,9 @@ impl<'d> Element<'d> {
         let mut i = self.idx as usize + 1;
         while i + 1 < toks.len() && toks[i].kind == Kind::Attr {
             let (n, v) = (toks[i], toks[i + 1]);
-            let name = doc.span(self.src, n.a, n.b);
+            let name = doc.span(self.src, n.a() as usize, n.b() as usize);
             let ty = doc.def_for(elem, name).map_or(1, |d| d.ty);
-            let value = doc.value(self.src, v.a, v.b, v.f != 0, ty, limit)?;
+            let value = doc.value(self.src, v.a() as usize, v.b() as usize, v.f != 0, ty, limit)?;
             out.push(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: false });
             i += 2;
         }
@@ -529,7 +537,7 @@ impl<'d> Element<'d> {
     /// The children, entity references expanded.
     pub fn children(&self) -> Children<'d> {
         let toks = self.doc.toks(self.src);
-        let close = toks[self.idx as usize].c as usize;
+        let close = toks[self.idx as usize].c() as usize;
         let mut i = self.idx as usize + 1;
         while i < close && matches!(toks[i].kind, Kind::Attr | Kind::AttVal) {
             i += 1;
@@ -585,9 +593,9 @@ impl<'d> Iterator for Attrs<'d> {
         if self.i + 1 < toks.len() && toks[self.i].kind == Kind::Attr {
             let (n, v) = (toks[self.i], toks[self.i + 1]);
             self.i += 2;
-            let name = doc.span(self.e.src, n.a, n.b);
+            let name = doc.span(self.e.src, n.a() as usize, n.b() as usize);
             let ty = if doc.defs.is_empty() { 1 } else { doc.def_for(self.e.name_bytes(), name).map_or(1, |d| d.ty) };
-            let value = doc.value(self.e.src, v.a, v.b, v.f != 0, ty, usize::MAX).unwrap_or(Cow::Borrowed(&[]));
+            let value = doc.value(self.e.src, v.a() as usize, v.b() as usize, v.f != 0, ty, usize::MAX).unwrap_or(Cow::Borrowed(&[]));
             return Some(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: false });
         }
         let text = doc.text();
@@ -604,7 +612,7 @@ impl<'d> Iterator for Attrs<'d> {
             let given = toks[self.e.idx as usize + 1..]
                 .chunks(2)
                 .take_while(|p| p[0].kind == Kind::Attr)
-                .any(|p| doc.span(self.e.src, p[0].a, p[0].b) == name);
+                .any(|p| doc.span(self.e.src, p[0].a() as usize, p[0].b() as usize) == name);
             if given {
                 continue;
             }
@@ -639,16 +647,16 @@ impl<'d> Iterator for Children<'d> {
             self.cur.1 = i + 1;
             return Some(match t.kind {
                 Kind::STag => {
-                    self.cur.1 = t.c + 1;
+                    self.cur.1 = t.c() as usize + 1;
                     Child::Element(Element { doc, src, idx: i })
                 }
                 Kind::Text | Kind::CData => {
                     let v: Cow<'d, [u8]> = if src == Src::Doc && t.f != 0 {
-                        let mut out = Vec::with_capacity((t.b - t.a) as usize);
-                        ex_eol(doc.buf(src), t.a as usize, t.b as usize, &mut out);
+                        let mut out = Vec::with_capacity(t.b() as usize - t.a() as usize);
+                        ex_eol(doc.buf(src), t.a() as usize, t.b() as usize, &mut out);
                         Cow::Owned(out)
                     } else {
-                        Cow::Borrowed(doc.span(src, t.a, t.b))
+                        Cow::Borrowed(doc.span(src, t.a() as usize, t.b() as usize))
                     };
                     let v = cow_utf8(v);
                     if t.kind == Kind::Text {
@@ -657,21 +665,21 @@ impl<'d> Iterator for Children<'d> {
                         Child::CData(v)
                     }
                 }
-                Kind::CharRef => Child::Text(Cow::Owned(char::from_u32(t.b as u32).map(String::from).unwrap_or_default())),
+                Kind::CharRef => Child::Text(Cow::Owned(char::from_u32(t.b() as u32).map(String::from).unwrap_or_default())),
                 Kind::Comment => Child::Comment(doc.text_of(src, t)),
                 Kind::PI => {
                     let d = toks[i as usize + 1];
                     self.cur.1 = i + 2;
-                    Child::PI(utf8(doc.span(src, t.a, t.b)), doc.text_of(src, d))
+                    Child::PI(utf8(doc.span(src, t.a() as usize, t.b() as usize)), doc.text_of(src, d))
                 }
-                Kind::EntRef => match doc.entity(src, t.a, t.b) {
+                Kind::EntRef => match doc.entity(src, t.a() as usize, t.b() as usize) {
                     Some((k, true)) => {
                         let n = doc.ent_tape(k).map_or(0, |t| t.toks.len());
                         self.outer.push(self.cur);
                         self.cur = (Src::Ent(k as usize), 0, n as usize);
                         continue;
                     }
-                    _ => Child::Unexpanded(utf8(doc.span(src, t.a, t.b))),
+                    _ => Child::Unexpanded(utf8(doc.span(src, t.a() as usize, t.b() as usize))),
                 },
                 _ => continue,
             });

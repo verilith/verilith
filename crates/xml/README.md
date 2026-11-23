@@ -52,9 +52,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
    well-formed UTF-8 and that every character is a `Char`, sixteen ASCII
    bytes at a time.
 3. **The document** (`src/lex.rs`, `src/dtd.rs`, `src/content.rs`,
-   `src/doc.rs`). One pass writes a *tape*: a 32-byte token per item, in
+   `src/doc.rs`). One pass writes a *tape*: a 20-byte token per item, in
    document order, with byte ranges into the text for every name, value
-   and run of text, so nothing is copied. Elements are a loop with an
+   and run of text, so nothing is copied. Positions are 48 bits, split
+   into a low `u32` and a high `u16`, the layout verilith-json's tape
+   uses, so a token is 20 bytes where three `usize` would make it 32. Elements are a loop with an
    explicit stack of the open elements, not a recursion. A start tag's
    token holds the index of the token that closes it, so a reader skips
    an element in one step. Character data, attribute values, comments,
@@ -220,6 +222,7 @@ them:
 | Entity references nested through replacement texts | no limit | no limit (libxml2 rejects past 40 by default); a cycle is recursion, rejected where it is referred to |
 | A reference cycle among entities that are not referred to | not an error | not an error |
 | Element nesting | | no limit |
+| Document size | | up to 2^48 - 1 bytes (256 TiB) as UTF-8, more than any address space gives a process today; token positions are 48 bits, and a longer text is refused (`ErrorKind::TooLarge`) |
 | Expanding a "billion laughs" entity | | parsing is linear; content expands lazily as it is read; an attribute value is read whole, which for the classic document is 3 GB (`try_attributes(limit)` refuses a value past `limit` bytes, for untrusted input) |
 | Namespaces | a separate Recommendation | not processed: a name with a colon is a name |
 

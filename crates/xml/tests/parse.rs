@@ -282,3 +282,10 @@ fn entity_declared_depends_on_the_whole_subset() {
     // Without the parameter entity reference, it applies.
     assert!(parse(b"<!DOCTYPE doc [<!ATTLIST doc a CDATA \"&foo;\">]><doc/>").is_err());
 }
+
+#[test]
+fn token_is_20_bytes() {
+    // 48-bit positions: 20 bytes on every target (`tape::Tok`).
+    assert_eq!(std::mem::size_of::<verilith_xml::tape::Tok>(), 20);
+    assert_eq!(std::mem::align_of::<verilith_xml::tape::Tok>(), 4);
+}

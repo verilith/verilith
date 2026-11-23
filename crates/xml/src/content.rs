@@ -21,6 +21,7 @@ pub open spec fn attr_spans_ok(s: Seq<u8>, t: Seq<XTok>, first: int) -> bool {
 fn ex_attrs(s: &[u8], i: usize, tape: &mut Tape, env: &XEnv) -> (r: Option<(usize, bool)>)
     requires
         i <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() + 1 <= i,
         env_wf(env),
     ensures
@@ -39,6 +40,7 @@ fn ex_attrs(s: &[u8], i: usize, tape: &mut Tape, env: &XEnv) -> (r: Option<(usiz
     loop
         invariant
             i <= j0 <= s@.len() <= isize::MAX,
+            s@.len() <= MAX_POS,
             tape@.len() + 1 <= j0,
             env_wf(env),
             lit_empty_end() == seq![0x2Fu8, 0x3E],
@@ -97,10 +99,12 @@ fn ex_attrs(s: &[u8], i: usize, tape: &mut Tape, env: &XEnv) -> (r: Option<(usiz
 fn ex_attrs_distinct(s: &[u8], tape: &Tape, first: usize) -> (r: bool)
     requires
         first <= tape@.len() <= isize::MAX,
+        tape@.len() <= MAX_POS,
         attr_spans_ok(s@, tape@, first as int),
     ensures
         r == attrs_distinct(s@, tape@, first as int),
 {
+    slice_len_bound(s);
     let n = tape.len();
     if n - first > 16 {
         return crate::uniq::ex_distinct_hashed(s, tape, first);
@@ -111,6 +115,7 @@ fn ex_attrs_distinct(s: &[u8], tape: &Tape, first: usize) -> (r: bool)
             first <= k <= n,
             n == tape@.len(),
             attr_spans_ok(s@, tape@, first as int),
+            s@.len() <= isize::MAX,
             forall|j: int, k2: int|
                 first <= j < k2 < k && #[trigger] tape@[j] is Attr && #[trigger] tape@[k2] is Attr ==> s@.subrange(
                     tape@[j]->Attr_start,
@@ -123,6 +128,7 @@ fn ex_attrs_distinct(s: &[u8], tape: &Tape, first: usize) -> (r: bool)
             assert(tape@[k as int] == tk@);
         }
         if is_attr(tk.kind) {
+            let kl = tk.low_len();
             let mut j = first;
             while j < k
                 invariant
@@ -130,12 +136,14 @@ fn ex_attrs_distinct(s: &[u8], tape: &Tape, first: usize) -> (r: bool)
                     n == tape@.len(),
                     tape@[k as int] == tk@,
                     tk.kind == Kind::Attr,
+                    kl == low_len(tk),
                     attr_spans_ok(s@, tape@, first as int),
+                    s@.len() <= isize::MAX,
                     forall|j2: int|
                         first <= j2 < j && #[trigger] tape@[j2] is Attr ==> s@.subrange(
                             tape@[j2]->Attr_start,
                             tape@[j2]->Attr_end,
-                        ) != s@.subrange(tk.a as int, tk.b as int),
+                        ) != s@.subrange(tk.sa(), tk.sb()),
                 decreases k - j,
             {
                 let tj = tape.toks[j];
@@ -146,8 +154,19 @@ fn ex_attrs_distinct(s: &[u8], tape: &Tape, first: usize) -> (r: bool)
                     proof {
                         assert(tape@[k as int] is Attr);
                         assert(tape@[j as int] is Attr);
+                        assert(0 <= tape@[j as int]->Attr_start <= tape@[j as int]->Attr_end <= s@.len());
+                        assert(0 <= tape@[k as int]->Attr_start <= tape@[k as int]->Attr_end <= s@.len());
                     }
-                    if ex_bytes_eq(s, tj.a as usize, tj.b as usize, s, tk.a as usize, tk.b as usize) {
+                    // Names whose lengths differ in their low 32 bits differ:
+                    // a cheap test before reading the 48-bit positions.
+                    if tj.low_len() != kl {
+                        proof {
+                            if tj.sb() - tj.sa() == tk.sb() - tk.sa() {
+                                lemma_low_len(tj, tk);
+                            }
+                            assert(s@.subrange(tj.sa(), tj.sb()).len() != s@.subrange(tk.sa(), tk.sb()).len());
+                        }
+                    } else if ex_bytes_eq(s, tj.a() as usize, tj.b() as usize, s, tk.a() as usize, tk.b() as usize) {
                         proof {
                             assert(tape@[j as int] is Attr && tape@[k as int] is Attr);
                         }
@@ -181,6 +200,7 @@ fn ex_attrs_distinct(s: &[u8], tape: &Tape, first: usize) -> (r: bool)
 fn ex_stag(s: &[u8], i: usize, tape: &mut Tape, env: &XEnv) -> (r: Option<(usize, bool, usize)>)
     requires
         i < s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() <= i,
         env_wf(env),
     ensures
@@ -248,6 +268,7 @@ proof fn lemma_stack_grow(s: Seq<u8>, st: Seq<(usize, usize, usize)>, t: Seq<XTo
 pub fn ex_item(s: &[u8], j: usize, stack: &mut Vec<(usize, usize, usize)>, tape: &mut Tape, env: &XEnv) -> (r: Option<usize>)
     requires
         j < s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() <= j,
         env_wf(env),
         stack_ok(s@, old(stack)@, old(tape)@),
@@ -407,6 +428,7 @@ fn ex_content(s: &[u8], i: usize, stack: &mut Vec<(usize, usize, usize)>, tape: 
 >)
     requires
         i <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() <= i,
         env_wf(env),
         stack_ok(s@, old(stack)@, old(tape)@),
@@ -422,6 +444,7 @@ fn ex_content(s: &[u8], i: usize, stack: &mut Vec<(usize, usize, usize)>, tape: 
         invariant
             i <= j <= n,
             n == s@.len() <= isize::MAX,
+            s@.len() <= MAX_POS,
             tape@.len() <= j,
             env_wf(env),
             stack_ok(s@, stack@, tape@),
@@ -457,6 +480,7 @@ fn ex_content(s: &[u8], i: usize, stack: &mut Vec<(usize, usize, usize)>, tape: 
 pub fn ex_ent_content(r: &[u8], tape: &mut Tape, env: &XEnv) -> (ok: bool)
     requires
         r@.len() <= isize::MAX,
+        r@.len() <= MAX_POS,
         env_wf(env),
     ensures
         match ent_content(r@, 0, Seq::empty(), Seq::empty(), env_view(env)) {
@@ -475,6 +499,7 @@ pub fn ex_ent_content(r: &[u8], tape: &mut Tape, env: &XEnv) -> (ok: bool)
         invariant
             j <= n,
             n == r@.len() <= isize::MAX,
+            r@.len() <= MAX_POS,
             tape@.len() <= j,
             env_wf(env),
             stack_ok(r@, stack@, tape@),
@@ -506,6 +531,7 @@ pub fn ex_ent_content(r: &[u8], tape: &mut Tape, env: &XEnv) -> (ok: bool)
 pub fn ex_element(s: &[u8], i: usize, tape: &mut Tape, env: &XEnv) -> (r: Option<usize>)
     requires
         i <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() <= i,
         env_wf(env),
     ensures
