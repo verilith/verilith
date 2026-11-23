@@ -66,7 +66,13 @@ that verilith-url itself produced:
   time in a `u64`, with each lane's formula proven exact by Verus's
   bit-vector solver, in `swar.rs`), fast paths for an
   `http://` or `https://` prefix and for plain paths, and writes `href` and
-  the component offsets in a single pass.
+  the component offsets in a single pass. The commonest shape,
+  `http(s)://host/path?query#fragment` with a plain lowercase host, no
+  credentials, no port and nothing to percent-encode, skips the state
+  machine altogether (`parse::parse_simple`, the idea behind ada 4's
+  `try_parse_simple_absolute`): the proof shows that the machine would
+  have reached the same record, so the fast path is not trusted, only
+  shortcut.
 - **Setters.** Each of the Standard's setters (protocol, username,
   password, host, hostname, port, pathname, search, hash) is proven to
   leave exactly the record that the Standard's setter leaves
@@ -101,7 +107,7 @@ that verilith-url itself produced:
   moves. The theorem is
 
   ```
-  steps(parse(input, base)) <= parse_cost(n, m) = 3n + 32 + 20 * 128 * (n + m + 2) + 128n
+  steps(parse(input, base)) <= parse_cost(n, m) = 19n + 160 + 20 * 128 * (n + m + 2) + 128n
   ```
 
   where `n = input.len()` and `m` is the length of the base URL's href.
@@ -113,6 +119,8 @@ that verilith-url itself produced:
   start of the host. Bytes written to `href` are counted in the potential,
   so the `..` segment, which shortens `href`, is paid for by the earlier
   writes it undoes.
+  The `16n + 128` term pays for a failed attempt at the simple fast path
+  before the state machine runs.
 
   The meter runs through every state handler in `parse.rs`, the host
   parser in `host.rs`, the percent-encoding and byte-class scans in
@@ -120,7 +128,7 @@ that verilith-url itself produced:
   iteration, not a machine instruction: the bound also assumes `Vec::push`
   is amortized O(1) and that the IDNA call is linear (see below).
 
-`cargo verus focus` reports 529 verified, 0 errors. The crates it builds on,
+`cargo verus focus` reports 567 verified, 0 errors. The crates it builds on,
 [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core) and
 [verilith-text](https://github.com/verilith/verilith/tree/main/crates/text), are verified
 as their own crates in this repository. CI (`.github/workflows/ci.yml` at the repository root) verifies the proofs and runs `ci.sh` on every pull request and push to `main` that touches this crate or a crate it depends on.
@@ -236,6 +244,15 @@ runs on two different cores agreed within 1%:
 There verilith-url takes 0.75x ada's time. So verilith-url is within 10% of ada on one
 machine and ahead of it on another; neither result should be read as a
 general ranking.
+
+With the simple-URL fast path, on a 4-vCPU cloud x86 VM with the same
+harness and ada 4.1.1, verilith-url went from 64.3 to 50.4 ns/URL while
+ada measured 61.3 to 61.7 ns/URL: 0.82x ada's time, down from 1.04x.
+Through the C API (`bench/run.sh --only url` at the repository root, the
+drop-in for ada's `ada_c.h`), `ada_free` now keeps the handle's box and a
+small href buffer on the thread for the next `ada_parse`, and the parse
+result is written into the box in place; that took the C API from 1,475
+to 875 instructions per URL on the 1k set (ada: 1,028).
 
 The harness in `bench/` is a small Rust crate that links ada and libcurl
 through a C++ shim. It expects ada and the dataset to be cloned under

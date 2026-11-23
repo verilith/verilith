@@ -732,6 +732,7 @@ fn with_host(u: &Url, hb: &[u8], kind: HostKind, port: Option<u16>, Ghost(h): Gh
 }
 
 /// The href of a URL with a host, around the host.
+#[verifier::rlimit(30)]
 proof fn lemma_host_split(url: UrlRecord, h: Host)
     requires
         url.host is Some,
