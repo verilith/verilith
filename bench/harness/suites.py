@@ -68,18 +68,32 @@ COMPARISONS = [
     # ada's C API: verilith-url (ada-abi) in place of ada.
     dict(id="url-ada", suite="url", data="url", same_output=True, api="drop-in",
          ours=("verilith-url", ["url-vurl"]), rival=("ada 4.1.1", ["url-ada"])),
+    # expat's API: verilith-xml (expat-abi) in place of libexpat, the same driver.
+    dict(id="xml-expat-dropin-read", suite="xml", data="xml", same_output=True, api="drop-in", pair="xml-expat-read",
+         task="parse a document, visit every element, attribute (normalized value) and run of character data",
+         ours=("verilith-xml", ["xml-expat-vxml", "read"]), rival=("expat 2.10.0", ["xml-expat", "read"])),
+    dict(id="xml-expat-dropin-check", suite="xml", data="xml", same_output=True, api="drop-in", pair="xml-expat-check",
+         task="decide whether a document is well-formed (`XML_Parse` with no handlers)",
+         ours=("verilith-xml", ["xml-expat-vxml", "check"]), rival=("expat 2.10.0", ["xml-expat", "check"])),
     # Native APIs: verilith-xml's Rust API against expat's SAX API.
-    dict(id="xml-expat-read", suite="xml", data="xml", same_output=True, api="native",
+    dict(id="xml-expat-read", suite="xml", data="xml", same_output=True, api="native", pair="xml-expat-read",
          task="parse a document, visit every element, attribute (normalized value) and run of character data",
          note="expat calls back for each item as it parses; verilith-xml parses the whole document into a tape, then "
               "the walk reads it through the API, which normalizes attribute values that need it and supplies "
               "DTD defaults. Both check the whole document.",
          ours=("verilith-xml (Rust API)", ["xml-vxml", "read"]), rival=("expat 2.10.0", ["xml-expat", "read"])),
-    dict(id="xml-expat-check", suite="xml", data="xml", same_output=True, api="native",
+    dict(id="xml-expat-check", suite="xml", data="xml", same_output=True, api="native", pair="xml-expat-check",
          task="decide whether a document is well-formed (expat with no handlers; verilith-xml's verified check into a reused tape)",
          ours=("verilith-xml (Rust API)", ["xml-vxml", "check"]), rival=("expat 2.10.0", ["xml-expat", "check"])),
+    # libxml2's API: verilith-xml (libxml2-abi) in place of libxml2, the same driver.
+    dict(id="xml-libxml2-dropin-read", suite="xml", data="xml", same_output=True, api="drop-in", pair="xml-libxml2-read",
+         task="parse a document, visit every element, attribute (normalized value) and run of character data",
+         ours=("verilith-xml", ["xml-libxml2-vxml", "read"]), rival=("libxml2 2.15.4", ["xml-libxml2", "read"])),
+    dict(id="xml-libxml2-dropin-check", suite="xml", data="xml", same_output=True, api="drop-in", pair="xml-libxml2-check",
+         task="decide whether a document is well-formed (libxml2's SAX2 handlers for the DTD, none for content)",
+         ours=("verilith-xml", ["xml-libxml2-vxml", "check"]), rival=("libxml2 2.15.4", ["xml-libxml2", "check"])),
     # The same two jobs against libxml2's SAX2 API, with the same check values.
-    dict(id="xml-libxml2-read", suite="xml", data="xml", same_output=False, check="check value", api="native",
+    dict(id="xml-libxml2-read", suite="xml", data="xml", same_output=False, check="check value", api="native", pair="xml-libxml2-read",
          task="parse a document, visit every element, attribute (normalized value) and run of character data",
          note="libxml2 runs its default SAX2 handlers for the DTD, which keep the declarations in a document "
               "object, with entities substituted and defaults added (the deprecated SAX1 callbacks do not "
@@ -89,7 +103,7 @@ COMPARISONS = [
               "a reference to it in an attribute value gives two spaces, where XML 1.0 (2.11, 3.3.3), expat and "
               "verilith-xml give one.",
          ours=("verilith-xml (Rust API)", ["xml-vxml", "read"]), rival=("libxml2 2.15.4", ["xml-libxml2", "read"])),
-    dict(id="xml-libxml2-check", suite="xml", data="xml", same_output=True, api="native",
+    dict(id="xml-libxml2-check", suite="xml", data="xml", same_output=True, api="native", pair="xml-libxml2-check",
          task="decide whether a document is well-formed (libxml2 with its SAX2 handlers for the DTD and none for content; verilith-xml's verified check into a reused tape)",
          ours=("verilith-xml (Rust API)", ["xml-vxml", "check"]), rival=("libxml2 2.15.4", ["xml-libxml2", "check"])),
     # cJSON's API: verilith-json (cjson feature) in place of cJSON.

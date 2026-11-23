@@ -110,16 +110,17 @@ impl Tok {
             kind,
             escaped,
             x,
-            ah: (a / 0x1_0000_0000) as u16,
-            a: (a % 0x1_0000_0000) as u32,
-            b: (b % 0x1_0000_0000) as u32,
-            bh: (b / 0x1_0000_0000) as u16,
+            ah: ((a as u64) / 0x1_0000_0000) as u16,
+            a: ((a as u64) % 0x1_0000_0000) as u32,
+            b: ((b as u64) % 0x1_0000_0000) as u32,
+            bh: ((b as u64) / 0x1_0000_0000) as u16,
         }
     }
 
     /// `a` (a byte position, or for a container start the index of its end
     /// token).
     #[inline(always)]
+    #[cfg(target_pointer_width = "64")]
     pub fn start(&self) -> (r: usize)
         ensures
             r == self.sa(),
@@ -127,13 +128,34 @@ impl Tok {
         self.a as usize + self.ah as usize * 0x1_0000_0000
     }
 
+    /// On 32-bit targets inputs are under 4 GiB, so the high bits are 0.
+    #[inline(always)]
+    #[cfg(target_pointer_width = "32")]
+    pub fn start(&self) -> (r: usize)
+        ensures
+            self.ah == 0 ==> r == self.sa(),
+    {
+        self.a as usize
+    }
+
     /// `b`.
     #[inline(always)]
+    #[cfg(target_pointer_width = "64")]
     pub fn end(&self) -> (r: usize)
         ensures
             r == self.sb(),
     {
         self.b as usize + self.bh as usize * 0x1_0000_0000
+    }
+
+    /// On 32-bit targets inputs are under 4 GiB, so the high bits are 0.
+    #[inline(always)]
+    #[cfg(target_pointer_width = "32")]
+    pub fn end(&self) -> (r: usize)
+        ensures
+            self.bh == 0 ==> r == self.sb(),
+    {
+        self.b as usize
     }
 }
 
@@ -273,8 +295,8 @@ impl Tape {
                 kind: t.kind,
                 escaped: t.escaped,
                 x: t.x,
-                ah: (end / 0x1_0000_0000) as u16,
-                a: (end % 0x1_0000_0000) as u32,
+                ah: ((end as u64) / 0x1_0000_0000) as u16,
+                a: ((end as u64) % 0x1_0000_0000) as u32,
                 b: t.b,
                 bh: t.bh,
             },
@@ -371,29 +393,20 @@ pub trait Sink {
     /// Stage 2's scan of the string whose opening quote is index entry `k`
     /// (`ex2_string`). An eager sink also decodes an escaped body here, in
     /// the same pass, for the `push_str_fast` that follows.
-    fn scan_str(&mut self, s: &[u8], idx: &[u32], k: usize, Ghost(st): Ghost<int>) -> (r: Option<
+    fn scan_str(&mut self, w: &mut crate::index::Win, k: usize, j: usize, Ghost(st): Ghost<int>) -> (r: Option<
         (usize, usize, bool),
     >)
         requires
-            crate::stage2::indexed(s@, st, idx@),
-            k < idx@.len(),
-            (idx@[k as int] as int) < s@.len(),
-            s@[idx@[k as int] as int] == 0x22,
-            crate::stage2::out(s@, st, idx@[k as int] as int),
+            crate::stage2::str_pre(old(w), st, k as int, j as int),
             old(self).room() > 0,
-            old(self).inv(s@),
+            old(self).inv(old(w).s@),
         ensures
+            crate::stage2::str_post(old(w), final(w), st, k as int, j as int, r),
             r matches Some((_, n, esc)) ==> if esc {
-                final(self).ready(s@, idx@[k as int] + 1, n - 1)
+                final(self).ready(old(w).s@, j + 1, n - 1)
             } else {
-                final(self).inv(s@)
+                final(self).inv(old(w).s@)
             },
-            match string(s@, idx@[k as int] as int) {
-                Some((n, esc)) => r == Some((crate::stage2::cnt(s@, st, n) as usize, n as usize, esc))
-                    && crate::stage2::out(s@, st, n) && crate::stage2::bnd(s@, st, n) && n <= s@.len(),
-                None => r is None,
-            },
-            r matches Some((k2, _, _)) ==> k2 > k,
             final(self).hist() == old(self).hist(),
             final(self).room() == old(self).room(),
     ;
@@ -620,10 +633,10 @@ impl Sink for Tape {
     }
 
     #[inline(always)]
-    fn scan_str(&mut self, s: &[u8], idx: &[u32], k: usize, Ghost(st): Ghost<int>) -> (r: Option<
+    fn scan_str(&mut self, w: &mut crate::index::Win, k: usize, j: usize, Ghost(st): Ghost<int>) -> (r: Option<
         (usize, usize, bool),
     >) {
-        crate::stage2::ex2_string(s, idx, k, Ghost(st))
+        crate::stage2::ex2_string(w, k, j, Ghost(st))
     }
 
     #[inline(always)]
@@ -773,12 +786,13 @@ impl Sink for EagerTape {
     }
 
     #[inline(always)]
-    fn scan_str(&mut self, s: &[u8], idx: &[u32], k: usize, Ghost(st): Ghost<int>) -> (r: Option<
+    fn scan_str(&mut self, w: &mut crate::index::Win, k: usize, j: usize, Ghost(st): Ghost<int>) -> (r: Option<
         (usize, usize, bool),
     >) {
         let ghost t0 = self.tape;
+        let ghost sg = w.s@;
         let start = self.tape.strs.len();
-        let r = crate::stage2::ex2_string_dec(s, idx, k, Ghost(st), &mut self.tape.strs);
+        let r = crate::stage2::ex2_string_dec(w, k, j, Ghost(st), &mut self.tape.strs);
         let ghost t1 = self.tape;
         if let Some((_, _, true)) = r {
             let end = self.tape.strs.len();
@@ -791,15 +805,15 @@ impl Sink for EagerTape {
         }
         proof {
             if let Some((_, n, esc)) = r {
-                let a = idx@[k as int] + 1;
+                let a = j + 1;
                 let b = n - 1;
                 if esc {
-                    crate::lemmas::lemma_string_body_advances(s@, a, false);
-                    crate::lemmas::lemma_decode_len(s@, a, b);
-                    assert(self.tape.strs@ == t0.strs@ + decode(s@, a, b));
+                    crate::lemmas::lemma_string_body_advances(sg, a, false);
+                    crate::lemmas::lemma_decode_len(sg, a, b);
+                    assert(self.tape.strs@ == t0.strs@ + decode(sg, a, b));
                     assert forall|j: int| 0 <= j < self.tape.toks@.len() && (#[trigger] self.tape.toks@[j]).x
-                        != NO implies slot_ok(self.tape, s@, j) by {
-                        assert(slot_ok(t0, s@, j));
+                        != NO implies slot_ok(self.tape, sg, j) by {
+                        assert(slot_ok(t0, sg, j));
                         assert(self.tape.aux@[j] == t0.aux@[j]);
                         let r0 = t0.aux@[j];
                         if t0.toks@[j].kind == Kind::Str || t0.toks@[j].kind == Kind::Key {
@@ -808,7 +822,7 @@ impl Sink for EagerTape {
                     }
                     if self.tape.strs@.len() <= u32::MAX {
                         let i = self.tape.toks@.len() as int;
-                        assert(self.tape.strs@.subrange(start as int, self.tape.strs@.len() as int) =~= decode(s@, a, b));
+                        assert(self.tape.strs@.subrange(start as int, self.tape.strs@.len() as int) =~= decode(sg, a, b));
                     }
                 } else {
                     assert(self.tape.strs@ == t0.strs@);

@@ -133,11 +133,11 @@ verilith-json = { git = "https://github.com/verilith/verilith" }                
 | macOS on Apple Silicon | every crate | no (proofs and benchmarks are run by hand) |
 | Windows x86-64 | every crate (`cargo check`) | no |
 | Big-endian (s390x) | every crate (`cargo check`) | no |
-| 32-bit, including wasm32 | brotli, core, dns, hpack, http, jpeg, json, sha2, simd, webp, x509, xml, zlib | no |
+| 32-bit, including wasm32 | bind, brotli, core, dns, hpack, http, jpeg, json, regex, sha2, simd, text, url, webp, x509, xml, zlib | every one of them builds for wasm32-unknown-unknown; text, url, regex and json are also proven as wasm32 builds them and pass their tests under wasmtime; xml's 32-bit layout is proven |
 
-The proofs of archive, font, lz4, png, regex, snappy, sync, text, url, wasm,
-xxhash and zstd assume a 64-bit `usize`, so those crates refuse to compile
-for a 32-bit target rather than run unproven code there. The proofs do
+The proofs of archive, font, lz4, png, snappy, sync, wasm, xxhash and zstd
+assume a 64-bit `usize`, so those crates refuse to compile for a
+32-bit target rather than run unproven code there. The proofs do
 not depend on byte order, but no big-endian machine runs the tests yet, so
 a byte-order slip in unverified glue there would not be caught.
 
@@ -180,7 +180,7 @@ ours is faster and below it the original is.
 | http-llhttp-native | native | llhttp 9.4.4 | 2.05x |
 | http-pico | drop-in | picohttpparser | 1.33x |
 | http-pico-native | native | picohttpparser | 1.48x |
-| url-ada | drop-in | ada 4.1.1 | 0.82x |
+| url-ada | drop-in | ada 4.1.1 | 2.02x |
 | json-cjson-parse | drop-in | cJSON 1.7.19 | 1.31x |
 | json-cjson-print | drop-in | cJSON 1.7.19 | 1.56x |
 | json-cjson-native | native | cJSON 1.7.19 | 6.66x |
@@ -214,11 +214,13 @@ How to read it:
   bound for that reason.
 - **archive-read** does not compare equal work: verilith-archive checks the
   whole archive when it is opened, where libarchive streams.
-- **url-ada is now below 1.00x.** The previous run measured 1.55x against
-  ada 3.4.4; against ada 4.1.1 verilith-url is slower: it runs 28 to 32% more
-  instructions per URL, with the same results on both sides. The
-  [crate's own measurement](crates/url#speed) against ada 4.0.0 on x86
-  shows the same direction (0.92x).
+- **url-ada comes from a later run** of `bench/run.sh --only url` on the
+  same machine at commit `15f10cd` (2026-11-23), after the URL crate's speed
+  work. It is the median of three runs, which agreed within about 2%:
+  verilith-url is 2.38x faster on the 1k-URL case and 1.72x on the full
+  100k dataset, running about half of ada's instructions with the same
+  results on both sides. The run at `bcfd98c` measured 0.82x. The
+  [crate's own measurements](crates/url#speed) have the details.
 - **x509 rows come from a second run** of `bench/run.sh --only x509` on
   the same machine, after a fix to the bench script's mbedTLS 4 build (a
   missing Python module); the library code is the same.
@@ -320,9 +322,11 @@ One workflow, `.github/workflows/ci.yml`.
 verified in parts (brotli). A proof that has already passed with
 exactly the same inputs is not checked again (`scripts/proof-plan.py`), so
 a change to one crate checks that crate and the crates that depend on it,
-and a second push to a pull request checks only what the push changed.
+and a second push to a pull request checks only what the push changed. A
+pull request checks only the proofs it changes; main checks the rest.
 Pushes to main also verify on Linux AArch64, with `cargo verus`, which checks
-the NEON paths that an x86 build leaves out.
+the NEON paths that an x86 build leaves out, skipping the crates whose inputs
+already passed there.
 
 **Tests** run for the crates a change touches: a crate whose files changed,
 plus every crate that depends on it (`scripts/affected.py`). A change to

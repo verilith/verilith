@@ -23,6 +23,17 @@ vstd = { workspace = true, features = ["std"] }
 # Reference parser for differential tests.
 roxmltree = "0.21"
 
+[features]
+# expat's C ABI (libexpat 2.10.0's expat.h): XML_ParserCreate, XML_Parse, ...
+expat-abi = []
+# libxml2's C ABI (libxml2 2.15.4's parser.h, tree.h, xmlsave.h, ...): xmlReadMemory,
+# xmlParseChunk, SAX2, the tree and its serializer.
+libxml2-abi = []
+# The 32-bit token layout (16 bytes, u32 positions) on a 64-bit host, for
+# scripts/verify-narrow.sh and the tests; 32-bit targets always use it. On a
+# 64-bit host it refuses texts past 4 GiB.
+narrow-tokens = []
+
 [package.metadata.verus]
 verify = true
 

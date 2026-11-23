@@ -485,6 +485,7 @@ fn eager_numbers_match_std() {
     }
 }
 
+#[cfg(target_pointer_width = "64")]
 #[test]
 fn wide_positions() {
     // Token positions are 48 bits, so inputs past 4 GiB fit.
@@ -495,4 +496,16 @@ fn wide_positions() {
         assert_eq!((t.start(), t.end()), (a, b));
     }
     assert!(verilith_json::spec::MAX_INPUT > u32::MAX as usize);
+}
+
+#[cfg(target_pointer_width = "32")]
+#[test]
+fn narrow_positions() {
+    // On 32-bit targets a position is one u32 and any slice fits.
+    use verilith_json::parser::{Kind, Tok, NO};
+    assert_eq!(verilith_json::spec::MAX_INPUT, isize::MAX as usize);
+    for (a, b) in [(0, 0), (5, 9), (0x7FFF_0000, verilith_json::spec::MAX_INPUT)] {
+        let t = Tok::new(Kind::Str, true, a, b, NO);
+        assert_eq!((t.start(), t.end()), (a, b));
+    }
 }

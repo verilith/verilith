@@ -300,9 +300,13 @@ verus! {
 pub fn ex_parse(b: &[u8], tape: &mut Tape) -> (r: Option<(Option<Vec<u8>>, DtdOut)>)
     ensures
         match parse(b@) {
-            Some((u, t)) => r matches Some((x, d)) && final(tape)@ == t && match x {
-                Some(v) => v@ == u,
-                None => u == b@,
+            Some((u, t)) => if u.len() <= MAX_POS {
+                r matches Some((x, d)) && final(tape)@ == t && match x {
+                    Some(v) => v@ == u,
+                    None => u == b@,
+                }
+            } else {
+                r is None
             },
             None => r is None,
         },
