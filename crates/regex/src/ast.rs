@@ -16,8 +16,6 @@ pub const MAX_PROG: usize = 0x100_0000;
 /// `max_mem` of 8 MiB comes to at 32 bytes an instruction.
 pub const DEFAULT_MAX_PROG: usize = 0x4_0000;
 
-pub const MAX_HEIGHT: usize = 4096;
-
 pub const THRU: usize = usize::MAX;
 
 pub enum Node {
@@ -44,8 +42,6 @@ pub struct Ast {
     pub en: usize,
     /// The same for the no-progress copy.
     pub ez: usize,
-    /// Height of the tree.
-    pub h: usize,
     /// The largest product of nested `{n,m}` counts.
     pub rep: usize,
 }
@@ -258,15 +254,15 @@ impl Ast {
         }
     }
 
-    fn mk(node: Node, ln: usize, lz: usize, en: usize, ez: usize, h: usize, rep: usize) -> (r: Option<Ast>)
+    fn mk(node: Node, ln: usize, lz: usize, en: usize, ez: usize, rep: usize) -> (r: Option<Ast>)
         ensures
             r matches Some(a) ==> a.node == node && a.ln == ln && a.lz == lz && a.en == en && a.ez == ez && ln
                 <= MAX_PROG && lz <= MAX_PROG && a.rep == rep,
     {
-        if ln > MAX_PROG || lz > MAX_PROG || h > MAX_HEIGHT {
+        if ln > MAX_PROG || lz > MAX_PROG {
             None
         } else {
-            Some(Ast { node: node, ln: ln, lz: lz, en: en, ez: ez, h: h, rep: rep })
+            Some(Ast { node: node, ln: ln, lz: lz, en: en, ez: ez, rep: rep })
         }
     }
 
@@ -276,7 +272,7 @@ impl Ast {
             a.rep == 1,
             a.node == Node::Empty,
     {
-        Ast { node: Node::Empty, ln: 0, lz: 0, en: THRU, ez: THRU, h: 0, rep: 1 }
+        Ast { node: Node::Empty, ln: 0, lz: 0, en: THRU, ez: THRU, rep: 1 }
     }
 
     pub fn chr(cls: usize) -> (a: Ast)
@@ -285,7 +281,7 @@ impl Ast {
             a.rep == 1,
             a.node == Node::Char(cls),
     {
-        Ast { node: Node::Char(cls), ln: 1, lz: 1, en: 0, ez: 0, h: 0, rep: 1 }
+        Ast { node: Node::Char(cls), ln: 1, lz: 1, en: 0, ez: 0, rep: 1 }
     }
 
     pub fn look(k: Look) -> (a: Ast)
@@ -294,7 +290,7 @@ impl Ast {
             a.rep == 1,
             a.node == Node::Look(k),
     {
-        Ast { node: Node::Look(k), ln: 1, lz: 1, en: 0, ez: 0, h: 0, rep: 1 }
+        Ast { node: Node::Look(k), ln: 1, lz: 1, en: 0, ez: 0, rep: 1 }
     }
 
     pub fn group(k: usize, x: Ast) -> (r: Option<Ast>)
@@ -303,11 +299,8 @@ impl Ast {
         ensures
             r matches Some(a) ==> a.wf() && a.rep == x.rep && a.node == Node::Group(k, Box::new(x)),
     {
-        if x.h >= MAX_HEIGHT {
-            return None;
-        }
-        let (ln, lz, h, x_rep) = (x.ln + 2, x.lz + 2, x.h + 1, x.rep);
-        let r = Ast::mk(Node::Group(k, Box::new(x)), ln, lz, 0, 0, h, x_rep);
+        let (ln, lz, x_rep) = (x.ln + 2, x.lz + 2, x.rep);
+        let r = Ast::mk(Node::Group(k, Box::new(x)), ln, lz, 0, 0, x_rep);
         proof {
             if r is Some {
                 let a = r->0;
@@ -338,12 +331,8 @@ impl Ast {
         ensures
             r matches Some(a) ==> a.wf() && a.rep == (if x.rep > y.rep { x.rep } else { y.rep }) && a.node == Node::Cat(Box::new(x), Box::new(y)),
     {
-        if x.h >= MAX_HEIGHT || y.h >= MAX_HEIGHT {
-            return None;
-        }
         let ln = x.ln + y.ln;
         let lz = x.lz + y.lz;
-        let h = max(x.h, y.h) + 1;
         let rep = max(x.rep, y.rep);
         proof {
             assert forall|cl: Seq<Class>| true implies {
@@ -372,7 +361,7 @@ impl Ast {
         };
         let ghost w = x.re(Seq::empty());
         let ghost w2 = y.re(Seq::empty());
-        let r = Ast::mk(Node::Cat(Box::new(x), Box::new(y)), ln, lz, en, ez, h, rep);
+        let r = Ast::mk(Node::Cat(Box::new(x), Box::new(y)), ln, lz, en, ez, rep);
         proof {
             if r is Some {
                 let a = r->0;
@@ -406,14 +395,10 @@ impl Ast {
         ensures
             r matches Some(a) ==> a.wf() && a.rep == (if x.rep > y.rep { x.rep } else { y.rep }) && a.node == Node::Alt(Box::new(x), Box::new(y)),
     {
-        if x.h >= MAX_HEIGHT || y.h >= MAX_HEIGHT {
-            return None;
-        }
         let ln = x.ln + y.ln + 1;
         let lz = x.lz + y.lz + 1;
-        let h = max(x.h, y.h) + 1;
         let rep = max(x.rep, y.rep);
-        let r = Ast::mk(Node::Alt(Box::new(x), Box::new(y)), ln, lz, 0, 0, h, rep);
+        let r = Ast::mk(Node::Alt(Box::new(x), Box::new(y)), ln, lz, 0, 0, rep);
         proof {
             if r is Some {
                 let a = r->0;
@@ -446,11 +431,8 @@ impl Ast {
         ensures
             r matches Some(a) ==> a.wf() && a.rep == x.rep && a.node == Node::Opt(Box::new(x), greedy),
     {
-        if x.h >= MAX_HEIGHT {
-            return None;
-        }
-        let (ln, lz, h, x_rep) = (x.ln + 1, x.lz + 1, x.h + 1, x.rep);
-        let r = Ast::mk(Node::Opt(Box::new(x), greedy), ln, lz, 0, 0, h, x_rep);
+        let (ln, lz, x_rep) = (x.ln + 1, x.lz + 1, x.rep);
+        let r = Ast::mk(Node::Opt(Box::new(x), greedy), ln, lz, 0, 0, x_rep);
         proof {
             if r is Some {
                 let a = r->0;
@@ -480,11 +462,8 @@ impl Ast {
         ensures
             r matches Some(a) ==> a.wf() && a.rep == x.rep && a.node == Node::Plus(Box::new(x), greedy),
     {
-        if x.h >= MAX_HEIGHT {
-            return None;
-        }
         let ln = x.ln + 1 + 2 * x.lz;
-        let (lz, h, x_rep) = (x.lz, x.h + 1, x.rep);
+        let (lz, x_rep) = (x.lz, x.rep);
         proof {
             assert forall|cl: Seq<Class>| true implies (ezo(#[trigger] x.re(cl)) matches Some(k) ==> k < x.lz) by {
                 lemma_ent(x.re(cl), 0, 0);
@@ -497,7 +476,7 @@ impl Ast {
             THRU
         };
         let ez = x.ez;
-        let r = Ast::mk(Node::Plus(Box::new(x), greedy), ln, lz, en, ez, h, x_rep);
+        let r = Ast::mk(Node::Plus(Box::new(x), greedy), ln, lz, en, ez, x_rep);
         proof {
             if r is Some {
                 let a = r->0;
@@ -680,7 +659,7 @@ impl Ast {
         ensures
             r == (Ast { node: node, ..*self }),
     {
-        Ast { node: node, ln: self.ln, lz: self.lz, en: self.en, ez: self.ez, h: self.h, rep: self.rep }
+        Ast { node: node, ln: self.ln, lz: self.lz, en: self.en, ez: self.ez, rep: self.rep }
     }
 }
 

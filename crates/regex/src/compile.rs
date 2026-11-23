@@ -419,10 +419,10 @@ fn expand_n<'a>(
     }
 }
 
-/// The no-progress copy of `x`, or what it is made of, as in [`expand`].
+/// [`expand_z`] for a leaf or a group.
 #[verifier::rlimit(200)]
 #[verifier::spinoff_prover]
-fn expand_z<'a>(
+fn expand_z_leaf<'a>(
     x: &'a Ast,
     b: usize,
     e0: usize,
@@ -436,6 +436,7 @@ fn expand_z<'a>(
     Ghost(ng): Ghost<int>,
 )
     requires
+        x.node is Empty || x.node is Char || x.node is Look || x.node is Group,
         nc <= LIM,
         ng <= LIM,
         fail <= LIM,
@@ -498,6 +499,51 @@ fn expand_z<'a>(
             }
             ts.push(t1);
             assert(pv(out@, cl) + flat(ts@, cl, f) =~= o0 + code + rest);
+        },
+        _ => {},
+    }
+}
+
+/// The no-progress copy of `x`, or what it is made of, as in [`expand`].
+#[verifier::rlimit(200)]
+#[verifier::spinoff_prover]
+fn expand_z<'a>(
+    x: &'a Ast,
+    b: usize,
+    e0: usize,
+    nb: usize,
+    ne: usize,
+    fail: usize,
+    out: &mut Vec<Inst>,
+    ts: &mut Vec<Task<'a>>,
+    Ghost(cl): Ghost<Seq<Class>>,
+    Ghost(nc): Ghost<int>,
+    Ghost(ng): Ghost<int>,
+)
+    requires
+        nc <= LIM,
+        ng <= LIM,
+        fail <= LIM,
+        task_ok(Task::Z(x, b, e0, nb, ne), old(out)@.len() as int, nc, ng),
+        tasks_ok(old(ts)@, old(out)@.len() + tlen(Task::Z(x, b, e0, nb, ne)), nc, ng),
+    ensures
+        pv(final(out)@, cl) + flat(final(ts)@, cl, fail as int) == pv(old(out)@, cl) + tcode(Task::Z(x, b, e0, nb, ne), cl, fail as int)
+            + flat(old(ts)@, cl, fail as int),
+        tasks_ok(final(ts)@, final(out)@.len() as int, nc, ng),
+        wsum(final(ts)@, cl) < tw(Task::Z(x, b, e0, nb, ne), cl) + wsum(old(ts)@, cl),
+{
+    let ghost o0 = pv(out@, cl);
+    let ghost f = fail as int;
+    let ghost rest = flat(ts@, cl, f);
+    let ghost r = x.re(cl);
+    let ghost code = code_z(r, b as int, e0 as int, nb as int, ne as int, f);
+    proof {
+        lemma_len(r, b as int, e0 as int, nb as int, ne as int, f);
+        x.lemma_wf(cl);
+    }
+    match &x.node {
+        Node::Empty | Node::Char(_) | Node::Look(_) | Node::Group(_, _) => {
+            expand_z_leaf(x, b, e0, nb, ne, fail, out, ts, Ghost(cl), Ghost(nc), Ghost(ng));
         },
         Node::Cat(p, q) => {
             proof {
