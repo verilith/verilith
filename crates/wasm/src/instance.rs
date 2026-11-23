@@ -38,8 +38,8 @@ pub fn check_store(m: &Module, st: &Store) -> (r: bool)
     ensures r ==> store_ok(m, store_view(st)) && store_wf(st),
 {
     if st.globals.len() != m.global_types.len() || st.tables.len() != m.tables.len()
-        || st.dropped.len() != m.datas.len() || st.mem_max > 65536
-        || st.mem.len() > st.mem_max as usize * PAGE as usize || st.mem.len() % PAGE as usize != 0 {
+        || st.dropped.len() != m.datas.len() || st.mem_max > crate::interp::MAX_PAGES
+        || st.mem.len() as u64 > st.mem_max as u64 * PAGE || st.mem.len() % PAGE as usize != 0 {
         return false;
     }
     let nf = m.func_types.len();

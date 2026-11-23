@@ -577,6 +577,7 @@ fn push_val(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(cod
 /// `memory.size`, `memory.grow`, `memory.fill`, `memory.copy`,
 /// `memory.init` and `data.drop`.
 #[inline(always)]
+#[verifier::spinoff_prover]
 pub fn do_mem(m: &Module, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<Seq<Code>>,
     stack: &mut Vec<u64>, Ghost(calls): Ghost<Seq<CallFrame>>, fp: usize, sp: usize, st: &mut Store, i: Instr,
     Ghost(c): Ghost<Config>) -> (r: Result<usize, Trap>)
@@ -904,6 +905,7 @@ pub fn do_branch(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghos
             let kk = lo(sget(stack, sp - 1));
             proof { lemma_peek(s1, base as int, sp as int, 0); }
             let j = if kk < len - 1 { kk } else { len - 1 };
+            let _ = code.table.len();
             let t = vget(&code.table, vget(&code.side, pc).pc as usize + j as usize);
             let ghost k = m.br_table@[start + j] as nat;
             proof {

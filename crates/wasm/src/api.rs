@@ -256,7 +256,16 @@ impl Instance {
         };
         let mem_limits = mem_limits.or_else(|| m.mems.get(m.n_imported_mems as usize).copied());
         let (mem, mem_max) = match mem_limits {
-            Some(l) => (vec![0u8; l.min as usize * 65536], l.max.unwrap_or(65536)),
+            Some(l) => {
+                // A 32-bit host has room for fewer pages (MAX_PAGES).
+                #[cfg(target_pointer_width = "32")]
+                if l.min > crate::interp::MAX_PAGES {
+                    return Err(Error::Instantiate("memory too large for a 32-bit host".into()));
+                }
+                #[cfg(target_pointer_width = "32")]
+                let l = ast::Limits { max: Some(l.max.unwrap_or(65536).min(crate::interp::MAX_PAGES)), ..l };
+                (vec![0u8; l.min as usize * 65536], l.max.unwrap_or(65536))
+            },
             None => (Vec::new(), 0),
         };
         table_limits.extend_from_slice(&m.tables[m.n_imported_tables as usize..]);
@@ -283,7 +292,8 @@ impl Instance {
         for (i, d) in m.datas.iter().enumerate() {
             if let DataMode::Active { offset } = &d.mode {
                 let off = eval(offset, &st.globals) as usize;
-                if off + d.bytes.len() > st.mem.len() {
+                // In u64: on a 32-bit host the sum can wrap.
+                if off as u64 + d.bytes.len() as u64 > st.mem.len() as u64 {
                     return Err(Error::Instantiate("out of bounds memory access".into()));
                 }
                 st.mem[off..off + d.bytes.len()].copy_from_slice(&d.bytes);

@@ -325,10 +325,9 @@ jobs:
         run: crates/${{ matrix.crate }}/ci.sh
 
   wasm32:
-    # WebAssembly: what builds for wasm32-unknown-unknown, what refuses to
-    # (the crates proven for 64-bit targets only), and the tests of text,
-    # url, regex, json, xxhash, snappy, lz4, zstd, archive, png and font on
-    # wasm32-wasip1 under wasmtime.
+    # WebAssembly: every crate builds for wasm32-unknown-unknown, and the
+    # tests of text, url, regex, json, xxhash, snappy, lz4, zstd, archive,
+    # png, font and wasm pass on wasm32-wasip1 under wasmtime.
     name: wasm32
     needs: plan
     if: needs.plan.outputs.test != '[]'
