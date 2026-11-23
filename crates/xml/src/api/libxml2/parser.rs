@@ -43,6 +43,9 @@ const INPUT_STATIC: c_int = 1 << 1;
 /// This library's: `base` holds the raw bytes, from `xmlMalloc`, and the
 /// text the walk reads is kept by the context.
 const INPUT_OWNED: c_int = 1 << 30;
+/// This library's: the input was read from a file or descriptor, which
+/// libxml2 reads in chunks.
+pub const INPUT_STREAM: c_int = 1 << 29;
 
 #[repr(C)]
 pub struct ValidCtxt {
@@ -328,6 +331,23 @@ fn ns_bound(s: &State, prefix: &[u8]) -> bool {
     (s.min_ns..s.ns.len()).rev().any(|i| !s.ns[i].prefix.is_null() && unsafe { cbytes(s.ns[i].prefix) } == prefix)
 }
 
+/// The recovering parser's namespace pushes, mirrored for SAX2.
+pub unsafe fn ns_mirror_push(ctxt: *mut ParserCtxt, prefix: *const XChar, uri: *const XChar) {
+    unsafe { st(ctxt).ns.push(NsBinding { prefix, uri, sax: null_mut() }) }
+}
+
+pub unsafe fn ns_mirror_pop(ctxt: *mut ParserCtxt, n: usize) {
+    unsafe {
+        let s = st(ctxt);
+        let k = s.ns.len().saturating_sub(n);
+        s.ns.truncate(k);
+    }
+}
+
+pub unsafe fn ns_mirror_min(ctxt: *mut ParserCtxt, min: usize) {
+    unsafe { st(ctxt).min_ns = min }
+}
+
 // --- the node stack ---------------------------------------------------------------------
 
 /// `nodePush`, with libxml2's depth limit.
@@ -335,7 +355,7 @@ pub unsafe fn node_push(ctxt: *mut ParserCtxt, n: *mut Node) -> c_int {
     unsafe {
         let max = if (*ctxt).options & PARSE_HUGE != 0 { 2048 } else { 256 };
         if (*ctxt).nodeNr >= max {
-            let msg = format!("Excessive depth in document: {} use XML_PARSE_HUGE option\n", (*ctxt).nodeNr);
+            let msg = format!("Excessive depth in document: {}, use XML_PARSE_HUGE option\n", (*ctxt).nodeNr);
             ctx_err(ctxt, null_mut(), FROM_PARSER, ERR_RESOURCE_LIMIT, ERR_FATAL, None, None, None, (*ctxt).nodeNr, msg.as_bytes());
             return -1;
         }
@@ -662,7 +682,7 @@ pub fn message_for(code: c_int) -> &'static CStr {
 
 // --- the walk ----------------------------------------------------------------------
 
-const SAX_COMPAT: &[u8] = b"SAX compatibility mode document";
+pub const SAX_COMPAT: &[u8] = b"SAX compatibility mode document";
 
 /// The handler, if SAX events are to be made.
 unsafe fn handler<'a>(ctxt: *mut ParserCtxt) -> Option<&'a SaxHandler> {
@@ -777,6 +797,10 @@ fn qname(name: &[u8]) -> (Option<&[u8]>, &[u8]) {
 
 /// Whether `s` parses as a URI reference (`xmlParseURISafe`), and whether
 /// it has a scheme.
+pub fn parser_uri_check(s: &[u8]) -> (bool, bool) {
+    uri_check(s)
+}
+
 fn uri_check(s: &[u8]) -> (bool, bool) {
     let mut ok = true;
     let mut i = 0;
@@ -2914,6 +2938,10 @@ pub unsafe extern "C" fn xmlCtxtNewInputFromString(
 }
 
 /// The file at `path` (a path, or a file: URI).
+pub fn read_resource(path: &[u8]) -> std::io::Result<Vec<u8>> {
+    read_path(path)
+}
+
 fn read_path(path: &[u8]) -> std::io::Result<Vec<u8>> {
     use std::os::unix::ffi::OsStrExt;
     let p = if let Some(r) = path.strip_prefix(b"file://localhost") {
@@ -2946,6 +2974,9 @@ unsafe fn file_input(ctxt: *mut ParserCtxt, filename: *const c_char, encoding: *
         match read {
             Ok(data) => {
                 let i = new_input(Some(name), data.as_ptr(), data.len(), false);
+                if !i.is_null() {
+                    (*i).flags |= INPUT_STREAM;
+                }
                 set_input_encoding(i, encoding);
                 i
             }
@@ -3011,6 +3042,9 @@ pub unsafe extern "C" fn xmlCtxtNewInputFromFd(ctxt: *mut ParserCtxt, url: *cons
         match read_fd(fd) {
             Some(data) => {
                 let i = new_input(copt(url as *const XChar), data.as_ptr(), data.len(), false);
+                if !i.is_null() {
+                    (*i).flags |= INPUT_STREAM;
+                }
                 set_input_encoding(i, encoding);
                 i
             }
@@ -3642,6 +3676,22 @@ unsafe fn parse_document(ctxt: *mut ParserCtxt) -> c_int {
                 let _ = rc;
             }
             Err(e) => {
+                if !st(c).pushed {
+                    // libxml2's parser.c, recovering, reads the document
+                    // from its first byte and makes every SAX call and
+                    // report it makes; the verdict stays the verified one.
+                    let stream = (*input).flags & INPUT_STREAM != 0;
+                    let forced = if (*c).options & PARSE_IGNORE_ENC == 0 { copt((*input).encoding).map(|v| v.to_vec()) } else { None };
+                    super::recover::recover_document(c, raw.to_vec(), stream, forced.as_deref());
+                    if (*c).wellFormed != 0 {
+                        report_rejection(c, bytes, &e);
+                    }
+                    (*input).base = rb;
+                    (*input).cur = re;
+                    (*input).end = re;
+                    (*c).valid = 0;
+                    return -1;
+                }
                 malformed(c, bytes, &e);
                 (*input).base = rb;
                 (*input).cur = re;
@@ -3696,6 +3746,16 @@ unsafe fn malformed(c: *mut ParserCtxt, bytes: &[u8], e: &crate::api::Error) {
                 f((*c).userData);
             }
         }
+        report_rejection(c, bytes, e);
+    }
+}
+
+/// The verified parser's rejection, as one fatal error at the place it was
+/// found.
+unsafe fn report_rejection(c: *mut ParserCtxt, bytes: &[u8], e: &crate::api::Error) {
+    unsafe {
+        let text = bytes;
+        let off = e.offset.min(text.len());
         let input = (*c).input;
         if !input.is_null() && e.kind == crate::api::ErrorKind::Syntax {
             (*input).base = text.as_ptr();

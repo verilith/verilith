@@ -48,11 +48,11 @@ not occur in any crate's `src/` (the script fails if one appears).
 | wasm | 35 |  |  |  |  | 1 | 4 |
 | webp | 10 |  |  |  |  |  | 3 |
 | x509 |  |  |  |  |  |  | 6 |
-| xml | 2 |  |  |  |  |  | 10 |
+| xml | 2 |  |  |  |  |  | 21 |
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  | 2 |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **482** | **30** | **266** | **5** | **22** | **12** | **99** |
+| **total** | **482** | **30** | **266** | **5** | **22** | **12** | **110** |
 
 ## Items
 
@@ -281,9 +281,20 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/xml/src/api/libxml2/io.rs`: plain Rust
 - `crates/xml/src/api/libxml2/mod.rs`: plain Rust
 - `crates/xml/src/api/libxml2/parser.rs`: plain Rust
+- `crates/xml/src/api/libxml2/recover.rs`: plain Rust
 - `crates/xml/src/api/libxml2/save.rs`: plain Rust
 - `crates/xml/src/api/libxml2/sax2.rs`: plain Rust
 - `crates/xml/src/api/libxml2/tree.rs`: plain Rust
+- `crates/xml/src/recover/codes.rs`: plain Rust
+- `crates/xml/src/recover/content.rs`: plain Rust
+- `crates/xml/src/recover/doc.rs`: plain Rust
+- `crates/xml/src/recover/dtd.rs`: plain Rust
+- `crates/xml/src/recover/enc.rs`: plain Rust
+- `crates/xml/src/recover/mod.rs`: plain Rust
+- `crates/xml/src/recover/names.rs`: plain Rust
+- `crates/xml/src/recover/nsdb.rs`: plain Rust
+- `crates/xml/src/recover/refs.rs`: plain Rust
+- `crates/xml/src/recover/tables.rs`: plain Rust
 
 ### zlib
 
