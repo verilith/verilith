@@ -672,6 +672,15 @@ pub const SBLOCK_MAX: usize = 131072;
 /// Most output a frame may have when streamed.
 pub const SLIMIT: u64 = 0x1_0000_0000_0000;
 
+/// The largest window the streaming decoder takes: 1 TiB on 64-bit
+/// targets, and on 32-bit ones 256 MiB, so that it, a dictionary and two
+/// blocks fit the buffer it keeps.
+#[cfg(target_pointer_width = "64")]
+pub const SWINDOW_MAX: u64 = 0x100_0000_0000;
+
+#[cfg(target_pointer_width = "32")]
+pub const SWINDOW_MAX: u64 = 0x1000_0000;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Stage {
     /// Collecting a frame's first 5 bytes (or a skippable frame's 8).
@@ -706,7 +715,9 @@ pub enum Fail {
     /// A block, content size or checksum the spec rejects.
     Corrupt,
     Checksum,
-    /// More output than `SLIMIT`.
+    /// More output than `SLIMIT` (or, on 32-bit targets, more buffered
+    /// than the decoder's limit, which a window within `SWINDOW_MAX` does
+    /// not reach).
     Limit,
 }
 
@@ -804,7 +815,7 @@ impl Stream {
         &&& frame_header(g.subrange(4, 4 + h.size)) == Some(h)
         &&& (h.dict_id == 0 || h.dict_id == self.gdict@.id)
         &&& self.window as nat == h.window
-        &&& self.window <= 0x100_0000_0000
+        &&& self.window <= SWINDOW_MAX
         &&& self.reach as nat == h.window + self.dl()
         &&& match self.fcs {
             None => h.fcs is None,
@@ -853,7 +864,7 @@ impl Stream {
     pub open spec fn inv(&self) -> bool {
         &&& self.dict.is(self.gdict@)
         &&& self.dlen as nat == self.dl()
-        &&& self.dlen < 0x1_0000_0000
+        &&& self.dlen < crate::dict::DICT_MAX
         &&& self.stage_inv()
     }
 
@@ -966,7 +977,7 @@ impl Stream {
         requires
             old(self).dict.is(old(self).gdict@),
             old(self).dlen as nat == old(self).dl(),
-            old(self).dlen < 0x1_0000_0000,
+            old(self).dlen < crate::dict::DICT_MAX,
         ensures
             final(self).inv(),
             final(self).stage == Stage::Magic,
@@ -1029,7 +1040,7 @@ impl Stream {
         requires
             old(self).dict.is(old(self).gdict@),
             old(self).dlen as nat == old(self).dl(),
-            old(self).dlen < 0x1_0000_0000,
+            old(self).dlen < crate::dict::DICT_MAX,
         ensures
             final(self).inv(),
             final(self).stage == Stage::Failed,
@@ -1181,7 +1192,7 @@ impl Stream {
     fn trim(&mut self)
         requires
             old(self).dec_inv(),
-            old(self).reach <= 0x100_0000_0000 + 0x1_0000_0000,
+            old(self).reach <= SWINDOW_MAX + crate::dict::DICT_MAX,
         ensures
             final(self).dec_inv(),
             final(self).dict == old(self).dict,
@@ -1555,7 +1566,7 @@ impl Stream {
         if h.dict_id != 0 && h.dict_id != self.dict.id as u64 {
             return Some(self.failed(Fail::Dict));
         }
-        if h.window > self.max_window || h.window > 0x100_0000_0000 {
+        if h.window > self.max_window || h.window > SWINDOW_MAX {
             return Some(self.failed(Fail::Window));
         }
         self.window = h.window;
@@ -1734,6 +1745,12 @@ impl Stream {
         self.trim();
         let before = self.dec.out.len();
         if self.dropped > SLIMIT - (2 * SBLOCK_MAX) as u64 || before as u64 > SLIMIT - (2 * SBLOCK_MAX) as u64 - self.dropped {
+            return Some(self.failed(Fail::Limit));
+        }
+        // On 32-bit targets the buffer also stays below the decoder's limit.
+        // Trimmed, it holds at most two windows, a dictionary and a block.
+        #[cfg(target_pointer_width = "32")]
+        if before > MAX_LIMIT - 2 * SBLOCK_MAX {
             return Some(self.failed(Fail::Limit));
         }
         let olimit = before + 2 * SBLOCK_MAX;

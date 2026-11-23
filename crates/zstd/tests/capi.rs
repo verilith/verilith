@@ -7,9 +7,22 @@ use verilith_zstd::capi::*;
 mod lz;
 use lz::{open_libzstd, sample, Rng, Zstd};
 
+#[cfg(unix)]
 unsafe extern "C" {
     fn dlopen(name: *const c_char, flags: c_int) -> *mut c_void;
     fn dlsym(h: *mut c_void, name: *const c_char) -> *mut c_void;
+}
+
+// No dynamic loading on wasm32-wasip1: the reference library is never
+// found there, and the tests that compare with it skip.
+#[cfg(not(unix))]
+unsafe fn dlopen(_name: *const c_char, _flags: c_int) -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+#[cfg(not(unix))]
+unsafe fn dlsym(_h: *mut c_void, _name: *const c_char) -> *mut c_void {
+    std::ptr::null_mut()
 }
 
 type Stream = unsafe extern "C" fn(*mut c_void, *mut OutBuffer, *mut InBuffer) -> usize;

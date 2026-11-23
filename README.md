@@ -133,11 +133,11 @@ verilith-json = { git = "https://github.com/verilith/verilith" }                
 | macOS on Apple Silicon | every crate | no (proofs and benchmarks are run by hand) |
 | Windows x86-64 | every crate (`cargo check`) | no |
 | Big-endian (s390x) | every crate (`cargo check`) | no |
-| 32-bit, including wasm32 | bind, brotli, core, dns, hpack, http, jpeg, json, lz4, regex, sha2, simd, snappy, text, url, webp, x509, xml, xxhash, zlib | every one of them builds for wasm32-unknown-unknown; text, url, regex, json, xxhash, snappy and lz4 are also proven as wasm32 builds them and pass their tests under wasmtime; xml's 32-bit layout is proven |
+| 32-bit, including wasm32 | archive, bind, brotli, core, dns, hpack, http, jpeg, json, lz4, regex, sha2, simd, snappy, text, url, webp, x509, xml, xxhash, zlib, zstd | every one of them builds for wasm32-unknown-unknown; text, url, regex, json, xxhash, snappy, lz4, zstd and archive are also proven as wasm32 builds them and pass their tests under wasmtime; xml's 32-bit layout is proven |
 
-The proofs of archive, font, png, sync, wasm and zstd assume a 64-bit
-`usize`, so those crates refuse to compile for a 32-bit target rather
-than run unproven code there. The proofs do
+The proofs of font, png, sync and wasm assume a 64-bit `usize`, so
+those crates refuse to compile for a 32-bit target rather than run
+unproven code there. The proofs do
 not depend on byte order, but no big-endian machine runs the tests yet, so
 a byte-order slip in unverified glue there would not be caught.
 

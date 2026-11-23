@@ -6,7 +6,7 @@ frame format (with its xxHash32 checksums), behind liblz4's C API. It is
 meant as a drop-in replacement for liblz4 where memory safety and
 correct output have to be certain.
 
-`cargo verus verify` (or `scripts/verify.sh`) checks 132 functions and
+`cargo verus verify` (or `scripts/verify.sh`) checks 131 functions and
 lemmas with no errors, no `assume` and no `external_body` in this crate.
 Everything assumed is listed in [TRUST.md](https://github.com/verilith/verilith/blob/main/crates/lz4/TRUST.md).
 

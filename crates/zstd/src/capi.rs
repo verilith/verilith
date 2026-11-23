@@ -20,6 +20,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 use crate::dict::{DictDecoder, DICT_LIMIT, DICT_MAX};
 use crate::frame::*;
+use crate::seq::MAX_LIMIT;
 use crate::stream::{Fail, Stream};
 use core::ffi::{c_char, c_int, c_uint, c_ulonglong, c_void};
 use vstd::prelude::Ghost;
@@ -92,7 +93,7 @@ const BLOCK_MAX: usize = 131072;
 pub const CONTENTSIZE_UNKNOWN: u64 = u64::MAX;
 pub const CONTENTSIZE_ERROR: u64 = u64::MAX - 1;
 /// Matches the limit `decompress_exec` and `block_exec` are proven for.
-const LIMIT: usize = 1 << 48;
+const LIMIT: usize = MAX_LIMIT;
 /// libzstd's default `ZSTD_d_windowLogMax`.
 const WINDOWLOG_DEFAULT: u32 = 27;
 const WINDOWLOG_MAX: u32 = 31;

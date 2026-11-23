@@ -18,10 +18,17 @@ verus! {
 
 /// No dictionary is this large or larger (the loaders' inputs, and so the
 /// content, are shorter).
+#[cfg(target_pointer_width = "64")]
 pub const DICT_MAX: usize = 0x1_0000_0000;
 
+
+/// No dictionary is this large or larger: on 32-bit targets, 128 MiB
+/// (`bits::BITS_MAX`; zstd's own dictionaries are a few hundred KiB).
+#[cfg(target_pointer_width = "32")]
+pub const DICT_MAX: usize = 0x0800_0000;
+
 /// The most a call of `DictDecoder::decompress` may be asked to produce.
-pub const DICT_LIMIT: usize = 0x1_0000_0000_0000 - DICT_MAX;
+pub const DICT_LIMIT: usize = MAX_LIMIT - DICT_MAX;
 
 /// A loaded dictionary (`ZSTD_DDict`): its ID, content, repeat offsets
 /// and entropy tables.
@@ -259,11 +266,11 @@ pub fn load_dict(d: &[u8]) -> (r: Option<DDict>)
 // Decompressing
 // ---------------------------------------------------------------------------
 
-/// A window this large comes only from a single-segment frame, whose
+/// A window above 4 GiB comes only from a single-segment frame, whose
 /// window is its content size.
 proof fn lemma_big_window(bb: Seq<u8>)
     ensures
-        frame_header(bb) matches Some(h) ==> (h.window > 0x1_0000_0000_0000 ==> h.fcs == Some(h.window)),
+        frame_header(bb) matches Some(h) ==> (h.window > 0x1_0000_0000 ==> h.fcs == Some(h.window)),
 {
     if let Some(h) = frame_header(bb) {
         let fhd = bb[0];
@@ -358,11 +365,11 @@ fn frame_d_exec(b: &[u8], i: usize, dict: &DDict, d: &mut FrameDec, olimit: usiz
     usize,
 ))
     requires
-        b@.len() < 0x1_0000_0000_0000,
+        b@.len() < MAX_LIMIT,
         i + 4 <= b@.len(),
         dict.is(g),
         old(d).out@ == g.st.out,
-        g.st.out.len() <= olimit <= 0x1_0000_0000_0000,
+        g.st.out.len() <= olimit <= MAX_LIMIT,
     ensures
         match frame_d(b@, i as int, g) {
             None => !(r.0 is Done),
@@ -390,10 +397,22 @@ fn frame_d_exec(b: &[u8], i: usize, dict: &DDict, d: &mut FrameDec, olimit: usiz
         return (Step::Bad, 0);
     }
     let dl = dict.content.len();
-    if h.window > 0x1_0000_0000_0000 {
+    // A window above the limit means output above it only when the window
+    // is the content size. On 64-bit targets every such window is
+    // (`lemma_big_window`); on 32-bit ones that is checked.
+    proof {
+        lemma_big_window(b@.subrange(i + 4, b@.len() as int));
+    }
+    #[cfg(target_pointer_width = "64")]
+    let big = h.window > MAX_LIMIT as u64;
+    #[cfg(target_pointer_width = "32")]
+    let big = h.window > MAX_LIMIT as u64 && match h.fcs {
+        Some(f) => f == h.window,
+        None => false,
+    };
+    if big {
         proof {
             let sb = b@.subrange(i + 4, b@.len() as int);
-            lemma_big_window(sb);
             let sh = frame_header(sb).unwrap();
             assert(sh.fcs == Some(sh.window));
             if let Some((j, o)) = frame_d(b@, i as int, g) {
@@ -598,7 +617,7 @@ impl DictDecoder {
     /// bytes. Gives the decoder back with the result.
     pub fn decompress(self, b: &[u8], limit: usize) -> (r: (DictDecoder, Result<Vec<u8>, Error>))
         requires
-            b@.len() < 0x1_0000_0000_0000,
+            b@.len() < MAX_LIMIT,
             limit <= DICT_LIMIT,
         ensures
             r.0@ == self@,
@@ -625,7 +644,7 @@ fn decompress_with(dict: DDict, work: Vec<u8>, b: &[u8], limit: usize, Ghost(gd)
     Result<Vec<u8>, Error>,
 ))
     requires
-        b@.len() < 0x1_0000_0000_0000,
+        b@.len() < MAX_LIMIT,
         limit <= DICT_LIMIT,
         dict.is(gd),
         work@ == gd.st.out,
@@ -643,7 +662,7 @@ fn decompress_with(dict: DDict, work: Vec<u8>, b: &[u8], limit: usize, Ghost(gd)
     let mut i: usize = 0;
     loop
         invariant
-            b@.len() < 0x1_0000_0000_0000,
+            b@.len() < MAX_LIMIT,
             limit <= DICT_LIMIT,
             dict.is(gd),
             d.out@ == gd.st.out,
@@ -679,7 +698,7 @@ fn next_frame(
     Ghost(gd): Ghost<Dict>,
 ) -> (r: Result<usize, Error>)
     requires
-        b@.len() < 0x1_0000_0000_0000,
+        b@.len() < MAX_LIMIT,
         i < b@.len(),
         limit <= DICT_LIMIT,
         dict.is(gd),

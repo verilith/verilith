@@ -18,7 +18,11 @@ gzip), [verilith-zstd](https://github.com/verilith/verilith/tree/main/crates/zst
 ## What is proven
 
 Everything below is checked by Verus on every build of the proofs
-(`scripts/verify.sh`: 135 verified, 0 errors). [TRUST.md](https://github.com/verilith/verilith/blob/main/crates/archive/TRUST.md) lists
+(`scripts/verify.sh`: 136 verified, 0 errors), once per pointer width:
+CI also runs Verus compiling for `wasm32-unknown-unknown`, where `usize`
+is 32 bits (`scripts/verify-narrow.sh`), so the crate builds for wasm32
+and is proven as built there, and its tests pass on `wasm32-wasip1` under
+wasmtime. There, archives are below 2 GiB. [TRUST.md](https://github.com/verilith/verilith/blob/main/crates/archive/TRUST.md) lists
 what the proofs assume.
 
 **No panics, no out-of-bounds reads, no overflow** in the parsers, the
