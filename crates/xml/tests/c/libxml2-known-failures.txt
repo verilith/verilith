@@ -23,11 +23,6 @@ XML push boundary tests	./test/utf16bebom.xml
 XML push boundary tests	./test/utf16bom.xml
 XML push boundary tests	./test/utf16lebom.xml
 
-# Malformed documents: libxml2 recovers and reports every error it meets;
-# here the verified parser rejects the document and one error is reported,
-# worked out from where it stopped (the code, message and position match
-# libxml2's on the common cases).
-
 # Parameter entity references in the internal subset are not expanded (as
 # the verified parser does not read them), so the declarations they hold are
 # missing (ent7: an element type; xml2: a general entity).
