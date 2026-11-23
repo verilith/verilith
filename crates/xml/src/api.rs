@@ -16,6 +16,9 @@ use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+#[cfg(feature = "expat-abi")]
+mod expat;
+
 /// Why a document was rejected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorKind {

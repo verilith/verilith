@@ -48,11 +48,11 @@ not occur in any crate's `src/` (the script fails if one appears).
 | wasm | 35 |  |  |  |  | 1 | 4 |
 | webp | 10 |  |  |  |  |  | 3 |
 | x509 |  |  |  |  |  |  | 6 |
-| xml | 2 |  |  |  |  |  | 2 |
+| xml | 2 |  |  |  |  |  | 3 |
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  | 2 |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **482** | **30** | **266** | **5** | **22** | **12** | **91** |
+| **total** | **482** | **30** | **266** | **5** | **22** | **12** | **92** |
 
 ## Items
 
@@ -276,6 +276,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/xml/src/lib.rs`: plain Rust
 - `crates/xml/src/tape.rs`: external_body: `slice_len_bound`
 - `crates/xml/src/uniq.rs`: external_body: `seed`
+- `crates/xml/src/api/expat.rs`: plain Rust
 
 ### zlib
 

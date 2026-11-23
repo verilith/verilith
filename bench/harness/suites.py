@@ -68,14 +68,21 @@ COMPARISONS = [
     # ada's C API: verilith-url (ada-abi) in place of ada.
     dict(id="url-ada", suite="url", data="url", same_output=True, api="drop-in",
          ours=("verilith-url", ["url-vurl"]), rival=("ada 4.1.1", ["url-ada"])),
+    # expat's API: verilith-xml (expat-abi) in place of libexpat, the same driver.
+    dict(id="xml-expat-dropin-read", suite="xml", data="xml", same_output=True, api="drop-in", pair="xml-expat-read",
+         task="parse a document, visit every element, attribute (normalized value) and run of character data",
+         ours=("verilith-xml", ["xml-expat-vxml", "read"]), rival=("expat 2.10.0", ["xml-expat", "read"])),
+    dict(id="xml-expat-dropin-check", suite="xml", data="xml", same_output=True, api="drop-in", pair="xml-expat-check",
+         task="decide whether a document is well-formed (`XML_Parse` with no handlers)",
+         ours=("verilith-xml", ["xml-expat-vxml", "check"]), rival=("expat 2.10.0", ["xml-expat", "check"])),
     # Native APIs: verilith-xml's Rust API against expat's SAX API.
-    dict(id="xml-expat-read", suite="xml", data="xml", same_output=True, api="native",
+    dict(id="xml-expat-read", suite="xml", data="xml", same_output=True, api="native", pair="xml-expat-read",
          task="parse a document, visit every element, attribute (normalized value) and run of character data",
          note="expat calls back for each item as it parses; verilith-xml parses the whole document into a tape, then "
               "the walk reads it through the API, which normalizes attribute values that need it and supplies "
               "DTD defaults. Both check the whole document.",
          ours=("verilith-xml (Rust API)", ["xml-vxml", "read"]), rival=("expat 2.10.0", ["xml-expat", "read"])),
-    dict(id="xml-expat-check", suite="xml", data="xml", same_output=True, api="native",
+    dict(id="xml-expat-check", suite="xml", data="xml", same_output=True, api="native", pair="xml-expat-check",
          task="decide whether a document is well-formed (expat with no handlers; verilith-xml's verified check into a reused tape)",
          ours=("verilith-xml (Rust API)", ["xml-vxml", "check"]), rival=("expat 2.10.0", ["xml-expat", "check"])),
     # The same two jobs against libxml2's SAX2 API, with the same check values.
