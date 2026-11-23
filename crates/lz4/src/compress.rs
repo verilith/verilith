@@ -699,9 +699,7 @@ proof fn lemma_low32(s: Seq<u8>, i: int, w: u64)
     ensures
         (w & 0xffff_ffff) as nat == le_bytes(s, i, 4),
 {
-    // Fuel 5 unfolds the 8-byte load down to the upper 4-byte one and no
-    // further, which keeps this well inside the resource limit.
-    reveal_with_fuel(le_bytes, 5);
+    reveal_with_fuel(le_bytes, 9);
     let a = le_bytes(s, i, 4);
     let b = le_bytes(s, i + 4, 4);
     assert(le_bytes(s, i, 8) == a + 0x1_0000_0000 * b);
