@@ -219,6 +219,8 @@ And where the C API differs from libtiff otherwise:
   (`TIFFRGBAImageOK` says so), and the wording of error messages differs.
 - The rest of libtiff's API (writing, `TIFFPrintDirectory`, the
   `TIFFField` functions, EXIF and custom directories) is not provided.
+- It is not built for WebAssembly, which has no C library for
+  `capi/tiffshim.c`; the decoder is.
 
 `difftest/abi.sh` checks it with programs written for libtiff, compiled
 against libtiff's `tiffio.h`: `difftest/reftiff.c` (`TIFFOpen`,

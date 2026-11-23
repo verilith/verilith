@@ -4,7 +4,9 @@
 #   fuzz/run.sh OUT N SEED FILES...
 # A mutant that both decode to different results, or that only verilith-gif
 # accepts, fails the run, except one with an extension that has no data
-# sub-blocks, which giflib misreads (fuzz/emptyext.py). Mutants that only
+# sub-blocks, which giflib misreads (fuzz/emptyext.py): it reads on past the
+# extension's terminator, and then rejects the file or decodes the rest
+# differently. Mutants that only
 # giflib accepts are counted: the README lists why giflib accepts files the
 # specification rejects.
 set -uo pipefail
@@ -25,7 +27,7 @@ for f in "$out"/*.gif; do
   elif [ "$a" = invalid ]; then
     onlyref=$((onlyref + 1))
     [ -n "${KEEP:-}" ] && cp "$f" "$KEEP/"
-  elif [ "$b" = invalid ] && python3 "$here/emptyext.py" "$f"; then
+  elif python3 "$here/emptyext.py" "$f"; then
     emptyext=$((emptyext + 1))
   else
     bad=$((bad + 1))

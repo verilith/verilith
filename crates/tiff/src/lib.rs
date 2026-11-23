@@ -10,5 +10,7 @@ pub mod chunk;
 pub mod predict;
 pub mod place;
 pub mod decode;
-#[cfg(not(verus_only))]
+// libtiff's C API (not on WebAssembly, which has no C library for its
+// variadic half, capi/tiffshim.c).
+#[cfg(all(not(verus_only), not(target_family = "wasm")))]
 pub mod capi;
