@@ -18,6 +18,7 @@ brotli = ["dep:verilith-brotli"]
 core = ["dep:verilith-core"]
 dns = ["dep:verilith-dns"]
 font = ["dep:verilith-font"]
+gif = ["dep:verilith-gif"]
 hpack = ["dep:verilith-hpack"]
 http = ["dep:verilith-http"]
 jpeg = ["dep:verilith-jpeg"]
@@ -30,6 +31,7 @@ simd = ["dep:verilith-simd"]
 snappy = ["dep:verilith-snappy"]
 sync = ["dep:verilith-sync"]
 text = ["dep:verilith-text"]
+tiff = ["dep:verilith-tiff"]
 url = ["dep:verilith-url"]
 wasm = ["dep:verilith-wasm"]
 webp = ["dep:verilith-webp"]
@@ -45,6 +47,7 @@ verilith-brotli = { path = "../brotli", version = "0.1.0", optional = true }
 verilith-core = { path = "../core", version = "0.1.0", optional = true }
 verilith-dns = { path = "../dns", version = "0.1.0", optional = true }
 verilith-font = { path = "../font", version = "0.1.0", optional = true }
+verilith-gif = { path = "../gif", version = "0.1.0", optional = true }
 verilith-hpack = { path = "../hpack", version = "0.1.0", optional = true }
 verilith-http = { path = "../http", version = "0.1.0", optional = true }
 verilith-jpeg = { path = "../jpeg", version = "0.1.0", optional = true }
@@ -57,6 +60,7 @@ verilith-simd = { path = "../simd", version = "0.1.0", optional = true }
 verilith-snappy = { path = "../snappy", version = "0.1.0", optional = true }
 verilith-sync = { path = "../sync", version = "0.1.0", optional = true }
 verilith-text = { path = "../text", version = "0.1.0", optional = true }
+verilith-tiff = { path = "../tiff", version = "0.1.0", optional = true }
 verilith-url = { path = "../url", version = "0.1.0", optional = true }
 verilith-wasm = { path = "../wasm", version = "0.1.0", optional = true }
 verilith-webp = { path = "../webp", version = "0.1.0", optional = true }

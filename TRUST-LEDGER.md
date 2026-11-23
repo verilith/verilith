@@ -31,6 +31,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | core | 84 | 5 |  |  |  |  | 1 |
 | dns |  |  |  |  |  |  | 6 |
 | font |  |  |  |  |  |  | 1 |
+| gif | 1 |  |  |  |  |  | 2 |
 | hpack | 2 |  |  |  |  |  | 3 |
 | http | 6 |  |  |  |  |  | 7 |
 | jpeg | 2 |  |  |  |  |  | 3 |
@@ -43,6 +44,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | snappy |  |  |  |  |  |  | 1 |
 | sync | 41 | 11 |  | 1 | 4 | 11 | 3 |
 | text | 18 | 13 |  |  | 13 |  | 9 |
+| tiff | 1 |  |  |  |  |  | 2 |
 | url | 1 |  |  |  |  |  | 5 |
 | verilith |  |  |  |  |  |  | 1 |
 | wasm | 35 |  |  |  |  | 1 | 4 |
@@ -52,7 +54,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  | 2 |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **629** | **35** | **266** | **5** | **22** | **12** | **100** |
+| **total** | **631** | **35** | **266** | **5** | **22** | **12** | **104** |
 
 ## Items
 
@@ -102,6 +104,12 @@ not occur in any crate's `src/` (the script fails if one appears).
 ### font
 
 - `crates/font/src/capi.rs`: plain Rust
+
+### gif
+
+- `crates/gif/src/capi.rs`: plain Rust
+- `crates/gif/src/lib.rs`: plain Rust
+- `crates/gif/src/prims.rs`: external_body: `alloc_zeroed`
 
 ### hpack
 
@@ -225,6 +233,12 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/text/src/utf/conv.rs`: external_body: `ascii_prefix_avx2`, `latin1_to_utf8_avx2`, `latin1_to_utf8_safe_avx2`, `latin1_to_utf16_avx2`, `utf16_to_latin1_avx2`, `utf8_to_utf16_avx2`, `utf8_to_latin1_avx2`, `utf16_to_utf8_avx2`, `count_latin1_utf8_avx2`, `count_utf8_avx2`, `count_utf16_avx2`
 - `crates/text/src/utf/mod.rs`: plain Rust
 - `crates/text/src/utf/valid8.rs`: external_body: `utf8_avx2`
+
+### tiff
+
+- `crates/tiff/src/capi.rs`: plain Rust
+- `crates/tiff/src/lib.rs`: plain Rust
+- `crates/tiff/src/prims.rs`: external_body: `alloc_zeroed`
 
 ### url
 
