@@ -245,7 +245,7 @@ fn check_known(s: &[u8]) -> (b: bool)
 }
 
 /// Decides `wf_font`: `true` exactly when `s` is a well-formed font.
-/// ([`fits`] holds of every slice Rust makes; on a 32-bit target the
+/// (`fits` holds of every slice Rust makes; on a 32-bit target the
 /// proofs need it said.)
 pub fn check_font(s: &[u8]) -> (b: bool)
     ensures

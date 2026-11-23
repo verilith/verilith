@@ -8,7 +8,7 @@ use vstd::prelude::*;
 
 verus! {
 
-/// The longest table [`small`](crate::lay::small) allows: the 32-bit
+/// The longest table `lay::small` allows: the 32-bit
 /// lengths of a font directory on a 64-bit target. On a 32-bit one, half
 /// the address space, which leaves room for the offset sums of the table
 /// checks; no slice there is longer (Rust caps them at `isize::MAX` bytes).
