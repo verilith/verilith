@@ -201,11 +201,41 @@ pub spec const SMIN_SAMPLE_VALUE: nat = 340;
 pub spec const SMAX_SAMPLE_VALUE: nat = 341;
 pub spec const NUMBER_OF_INKS: nat = 334;
 
-/// A field that, if present, has `spp` values (whatever its type).
-pub open spec fn count_is(b: Seq<u8>, le: bool, o: nat, n: nat, tag: nat, spp: nat) -> bool {
+/// Bytes per value of TIFF 6.0's numeric field types (§2): BYTE and SBYTE
+/// 1, SHORT and SSHORT 2, LONG, SLONG and FLOAT 4, RATIONAL, SRATIONAL and
+/// DOUBLE 8; 0 for ASCII and UNDEFINED, which hold no numbers, and for the
+/// types TIFF 6.0 does not define.
+pub open spec fn numeric_size(ty: nat) -> nat {
+    if ty == 1 || ty == 6 {
+        1
+    } else if ty == 3 || ty == 8 {
+        2
+    } else if ty == 4 || ty == 9 || ty == 11 {
+        4
+    } else if ty == 5 || ty == 10 || ty == 12 {
+        8
+    } else {
+        0
+    }
+}
+
+/// A field of sample values (SMinSampleValue, SMaxSampleValue) that, if
+/// present, has `spp` values of a numeric type ("the field type that best
+/// matches the sample data", §19), inside the file. choice: ASCII,
+/// UNDEFINED and the types TIFF 6.0 does not define match no sample data,
+/// so a field of one of them breaks the rule rather than being skipped (as
+/// libtiff, which rejects such a file).
+pub open spec fn sample_values_ok(b: Seq<u8>, le: bool, o: nat, n: nat, tag: nat, spp: nat) -> bool {
     match find(b, le, o, n, tag, 0) {
         None => true,
-        Some(i) => u32_at(b, le, entry_pos(o, i) + 4) == spp,
+        Some(i) => {
+            let e = entry_pos(o, i);
+            let ty = u16_at(b, le, e + 2);
+            let cnt = u32_at(b, le, e + 4);
+            let size = cnt * numeric_size(ty);
+            let pos = if size <= 4 { e + 8 } else { u32_at(b, le, e + 8) as int };
+            cnt == spp && numeric_size(ty) > 0 && pos + size <= b.len()
+        },
     }
 }
 pub spec const TILE_WIDTH: nat = 322;
@@ -514,7 +544,8 @@ pub open spec fn colours_ok(ph: nat, spp: nat, bps: nat, m: Option<nat>, inks: n
 /// - ColorMap, for a palette image: "ColorMap must be included in all
 ///   palette-color images", with N = 3 * (2**BitsPerSample) (§5, §8).
 /// - SMinSampleValue and SMaxSampleValue (§19): N = SamplesPerPixel, of any
-///   type ("the field type that best matches the sample data").
+///   numeric type ("the field type that best matches the sample data"),
+///   inside the file (`sample_values_ok`).
 pub open spec fn extras(b: Seq<u8>, le: bool, o: nat, n: nat, spp: nat, bps: nat, photometric: nat) -> Option<nat> {
     let inks = if photometric == 5 { scalar(b, le, o, n, NUMBER_OF_INKS, 4) } else { Some(4nat) };
     match (field(b, le, o, n, SAMPLE_FORMAT), field(b, le, o, n, EXTRA_SAMPLES), inks) {
@@ -541,8 +572,8 @@ pub open spec fn extras(b: Seq<u8>, le: bool, o: nat, n: nat, spp: nat, bps: nat
             };
             match fmt {
                 Some(f) => if 1 <= f <= 4 && es_ok && colours_ok(photometric, spp, bps, m, inks)
-                    && (photometric != 3 || cm_ok) && count_is(b, le, o, n, SMIN_SAMPLE_VALUE, spp)
-                    && count_is(b, le, o, n, SMAX_SAMPLE_VALUE, spp) {
+                    && (photometric != 3 || cm_ok) && sample_values_ok(b, le, o, n, SMIN_SAMPLE_VALUE, spp)
+                    && sample_values_ok(b, le, o, n, SMAX_SAMPLE_VALUE, spp) {
                     Some(f)
                 } else {
                     None

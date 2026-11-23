@@ -14,6 +14,9 @@ import sys
 import zlib
 
 SIZES = {1: 1, 3: 2, 4: 4}
+# TIFF 6.0's numeric field types and their sizes (§2): not ASCII (2) or
+# UNDEFINED (7).
+NUMERIC = {1: 1, 3: 2, 4: 4, 5: 8, 6: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8}
 
 
 def check(d):
@@ -149,6 +152,13 @@ def check(d):
     for t in (340, 341):
         if t in E and E[t][1][2] != spp:
             return "§19: SMinSampleValue and SMaxSampleValue need one value per sample"
+        if t in E:
+            i, (_, ty, c, v) = E[t]
+            if ty not in NUMERIC:
+                return "§19: SMinSampleValue and SMaxSampleValue hold numbers"
+            s = NUMERIC[ty] * c
+            if (o + 2 + 12 * i + 8 if s <= 4 else v) + s > len(d):
+                return "§2: values outside the file"
     planes = spp if planar == 2 else 1
     sc = 1 if planar == 2 else spp
     if present(322) or present(323):

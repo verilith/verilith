@@ -18,6 +18,8 @@ and exits 1. Standard library only.
   colormap8    libtiff took a ColorMap as 8-bit ("white is represented by
                65535").
   skipped      a field of a type TIFF says to skip, which libtiff converts.
+  cielab       a CIELab image, which verilith-tiff does not convert to RGBA
+               (the RGBA functions fail) and libtiff does.
 """
 import struct
 import sys
@@ -74,6 +76,10 @@ tw = dval("tilewidth")
 grey = ph in (0, 1)
 if tiled and grey and tw > 0 and width % tw != 0 and (bps == 16 or (bps == 8 and spp > 1)):
     reasons.add("edge")
+    allowed.add("rgba")
+rgba_lines = [l for l in ours if l.split()[:1] == ["rgba"]]
+if ph == 8 and rgba_lines and all("error" in l.split() for l in rgba_lines):
+    reasons.add("cielab")
     allowed.add("rgba")
 if extra and extra[0] == 0 and spp > 3:
     reasons.add("unspecified")
