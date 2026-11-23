@@ -15,6 +15,7 @@ verus! {
 fn ex_defaults_ok(s: &[u8], tape: &Tape, env: &XEnv) -> (r: bool)
     requires
         s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         env_wf(env),
     ensures
         r == defaults_ok(s@, tape@, env_view(env)),
@@ -26,6 +27,7 @@ fn ex_defaults_ok(s: &[u8], tape: &Tape, env: &XEnv) -> (r: bool)
             k <= n,
             n == tape@.len(),
             s@.len() <= isize::MAX,
+            s@.len() <= MAX_POS,
             env_wf(env),
             forall|m: int|
                 0 <= m < k ==> match #[trigger] tape@[m] {
@@ -52,12 +54,11 @@ fn ex_defaults_ok(s: &[u8], tape: &Tape, env: &XEnv) -> (r: bool)
             assert(tape@[k as int] == t@);
         }
         if is_att_default(t.kind) && t.f >= 3 {
-            let a = t.a as usize;
-            let b = t.b as usize;
-            let lim = t.c as usize;
-            if !(a <= b && b < s.len() && lim <= env.ents.len()) {
+            let (a, b, lim) = (t.a48(), t.b48(), t.c48());
+            if !(a <= b && b < s.len() as u64 && lim <= env.ents.len() as u64) {
                 return false;
             }
+            let (a, b, lim) = (a as usize, b as usize, lim as usize);
             if ex_att_chars(s, a, get(s, b), Some(env), lim).is_none() {
                 return false;
             }
@@ -72,6 +73,7 @@ fn ex_defaults_ok(s: &[u8], tape: &Tape, env: &XEnv) -> (r: bool)
 fn ex_decl_head(s: &[u8], tape: &mut Tape, enc: Enc) -> (r: Option<(usize, u8)>)
     requires
         s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() == 0,
     ensures
         match decl_head(s@, enc) {
@@ -110,6 +112,7 @@ fn ex_decl_head(s: &[u8], tape: &mut Tape, enc: Enc) -> (r: Option<(usize, u8)>)
 fn ex_doctype_opt(s: &[u8], p: usize, tape: &mut Tape, sd: u8) -> (r: Option<(usize, DtdOut)>)
     requires
         p <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() <= p,
     ensures
         match doctype_opt(s@, p as int, old(tape)@, sd as int) {
@@ -142,6 +145,7 @@ fn ex_doctype_opt(s: &[u8], p: usize, tape: &mut Tape, sd: u8) -> (r: Option<(us
 pub fn ex_prolog(s: &[u8], tape: &mut Tape, enc: Enc) -> (r: Option<(usize, DtdOut)>)
     requires
         s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() == 0,
     ensures
         match prolog(s@, enc) {
@@ -189,13 +193,18 @@ pub fn ex_prolog(s: &[u8], tape: &mut Tape, enc: Enc) -> (r: Option<(usize, DtdO
 /// `tape` and what its DTD declares in the result.
 pub fn ex_document(s: &[u8], tape: &mut Tape, enc: Enc) -> (r: Option<DtdOut>)
     ensures
-        match document(s@, enc) {
+        s@.len() <= MAX_POS ==> match document(s@, enc) {
             Some(t) => r is Some && final(tape)@ == t,
             None => r is None,
         },
+        s@.len() > MAX_POS ==> r is None,
         r matches Some(d) ==> final(tape)@.len() <= s@.len() && out_wf(s@, &d),
 {
     slice_len_bound(s);
+    // Token positions are 48 bits (`Tok`).
+    if s.len() as u64 > MAX_POS {
+        return None;
+    }
     if !ex_doc_chars(s) {
         return None;
     }

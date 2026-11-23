@@ -1483,10 +1483,10 @@ impl<'d> Walk<'d> {
         unsafe {
             let c = self.ctxt;
             if src == Src::Doc {
-                self.at(t.b + 3);
+                self.at(t.b() + 3);
             }
             if let Some(f) = handler(c).and_then(|h| h.comment) {
-                let v = nul(&eol(&self.buf(src)[t.a..t.b]));
+                let v = nul(&eol(&self.buf(src)[t.a()..t.b()]));
                 f((*c).userData, v.as_ptr());
             }
         }
@@ -1497,14 +1497,14 @@ impl<'d> Walk<'d> {
             let c = self.ctxt;
             let buf = self.buf(src);
             if src == Src::Doc {
-                self.at(d.b + 2);
+                self.at(d.b() + 2);
             }
-            let target = dict(c, &buf[t.a..t.b]);
+            let target = dict(c, &buf[t.a()..t.b()]);
             if let Some(f) = handler(c).and_then(|h| h.processingInstruction) {
-                if buf[t.b..].starts_with(b"?>") {
+                if buf[t.b()..].starts_with(b"?>") {
                     f((*c).userData, target, null());
                 } else {
-                    let v = nul(&eol(&buf[d.a..d.b]));
+                    let v = nul(&eol(&buf[d.a()..d.b()]));
                     f((*c).userData, target, v.as_ptr());
                 }
             }
@@ -1523,7 +1523,7 @@ impl<'d> Walk<'d> {
             if toks.first().is_some_and(|t| t.kind == Kind::XmlDecl) {
                 let t = toks[0];
                 (*c).standalone = -2;
-                let version = &text[t.a..t.b];
+                let version = &text[t.a()..t.b()];
                 xfree((*c).version as *mut c_void);
                 (*c).version = xstrdup(version);
                 if version != b"1.0" {
@@ -1539,7 +1539,7 @@ impl<'d> Walk<'d> {
                     let e = toks[1];
                     xfree((*c).encoding as *mut c_void);
                     let declared = st(c).declared.clone();
-                    (*c).encoding = xstrdup(declared.as_deref().unwrap_or(&text[e.a..e.b]));
+                    (*c).encoding = xstrdup(declared.as_deref().unwrap_or(&text[e.a()..e.b()]));
                     i = 2;
                 }
                 (*c).standalone = match t.f {
@@ -1584,19 +1584,19 @@ impl<'d> Walk<'d> {
             let text = self.text;
             let t = toks[i];
             (*c).inSubset = 1;
-            let name = dict(c, &text[t.a..t.b]);
+            let name = dict(c, &text[t.a()..t.b()]);
             (*c).intSubName = name;
             let mut j = i + 1;
             let (mut pubid, mut sysid) = (None, None);
-            let mut last = t.b;
+            let mut last = t.b();
             while j < toks.len() && matches!(toks[j].kind, Kind::PubId | Kind::SysId) {
                 let u = toks[j];
                 if u.kind == Kind::PubId {
-                    pubid = Some(&text[u.a..u.b]);
+                    pubid = Some(&text[u.a()..u.b()]);
                 } else {
-                    sysid = Some(&text[u.a..u.b]);
+                    sysid = Some(&text[u.a()..u.b()]);
                 }
-                last = u.b + 1;
+                last = u.b() + 1;
                 j += 1;
             }
             if pubid.is_some() || sysid.is_some() {
@@ -1615,7 +1615,7 @@ impl<'d> Walk<'d> {
             }
             // The end of the declaration: '>' after the subset.
             if j < toks.len() {
-                let next = toks.get(j + 1).map_or(text.len(), |n| n.a);
+                let next = toks.get(j + 1).map_or(text.len(), |n| n.a());
                 let gt = text[..next].iter().rposition(|&ch| ch == b'>').map_or(next, |g| g + 1);
                 self.at(gt);
             }
@@ -1643,17 +1643,17 @@ impl<'d> Walk<'d> {
                     return i + 2;
                 }
                 Kind::ElementDecl => {
-                    let end = text[t.b..].iter().position(|&ch| ch == b'>').map_or(text.len(), |e| t.b + e);
+                    let end = text[t.b()..].iter().position(|&ch| ch == b'>').map_or(text.len(), |e| t.b() + e);
                     self.at(end + 1);
-                    let name = dict(c, &text[t.a..t.b]);
-                    let (ty, content) = content_spec((*c).myDoc, &text[t.b..end]);
+                    let name = dict(c, &text[t.a()..t.b()]);
+                    let (ty, content) = content_spec((*c).myDoc, &text[t.b()..end]);
                     if let Some(f) = handler(c).and_then(|h| h.elementDecl) {
                         f((*c).userData, name, ty, content);
                     }
                     xmlFreeDocElementContent((*c).myDoc, content);
                 }
                 Kind::AttlistDecl => {
-                    let elem = &text[t.a..t.b];
+                    let elem = &text[t.a()..t.b()];
                     let mut j = i + 1;
                     while j + 1 < toks.len() && toks[j].kind == Kind::AttDef {
                         self.att_def(elem, toks[j], toks[j + 1]);
@@ -1667,7 +1667,7 @@ impl<'d> Walk<'d> {
                     let (mut pubid, mut sysid) = (None, None);
                     while j < toks.len() && matches!(toks[j].kind, Kind::PubId | Kind::SysId) {
                         let u = toks[j];
-                        let v = nul(&text[u.a..u.b]);
+                        let v = nul(&text[u.a()..u.b()]);
                         if u.kind == Kind::PubId {
                             pubid = Some(v);
                         } else {
@@ -1675,16 +1675,16 @@ impl<'d> Walk<'d> {
                         }
                         j += 1;
                     }
-                    self.at(toks[j - 1].b + 1);
-                    let name = dict(c, &text[t.a..t.b]);
+                    self.at(toks[j - 1].b() + 1);
+                    let name = dict(c, &text[t.a()..t.b()]);
                     if let Some(f) = handler(c).and_then(|h| h.notationDecl) {
                         f((*c).userData, name, pubid.as_ref().map_or(null(), |v| v.as_ptr()), sysid.as_ref().map_or(null(), |v| v.as_ptr()));
                     }
                     return j;
                 }
                 Kind::PERef => {
-                    self.at(t.b + 1);
-                    let name = &text[t.a..t.b];
+                    self.at(t.b() + 1);
+                    let name = &text[t.a()..t.b()];
                     (*c).hasPErefs = 1;
                     let n = dict(c, name);
                     let mut ent = null_mut();
@@ -1710,8 +1710,8 @@ impl<'d> Walk<'d> {
         unsafe {
             let c = self.ctxt;
             let text = self.text;
-            self.at(if d.f >= 3 { d.b + 1 } else { d.b });
-            let name = &text[t.a..t.b];
+            self.at(if d.f >= 3 { d.b() + 1 } else { d.b() });
+            let name = &text[t.a()..t.b()];
             let ty = match t.f {
                 9 => ATTRIBUTE_NOTATION,
                 10 => ATTRIBUTE_ENUMERATION,
@@ -1724,15 +1724,15 @@ impl<'d> Walk<'d> {
                 _ => ATTRIBUTE_NONE,
             };
             let tree = if ty == ATTRIBUTE_ENUMERATION || ty == ATTRIBUTE_NOTATION {
-                let from = t.b;
-                let to = if d.f >= 3 { d.a } else { d.a.max(from) };
+                let from = t.b();
+                let to = if d.f >= 3 { d.a() } else { d.a().max(from) };
                 enumeration(&text[from..to])
             } else {
                 null_mut()
             };
             let mut value: Option<Vec<u8>> = None;
             if d.f >= 3 {
-                let raw = &text[d.a..d.b];
+                let raw = &text[d.a()..d.b()];
                 let mut v = match self.att_value(raw, false, false) {
                     Val::In(s) => s.to_vec(),
                     Val::Made(v) => v,
@@ -1775,7 +1775,7 @@ impl<'d> Walk<'d> {
             let (mut value, mut pubid, mut sysid, mut ndata) = (None, None, None, None);
             while j < toks.len() {
                 let u = toks[j];
-                let s = &text[u.a..u.b];
+                let s = &text[u.a()..u.b()];
                 match u.kind {
                     Kind::EntityValue => value = Some(s),
                     Kind::PubId => pubid = Some(nul(s)),
@@ -1786,9 +1786,9 @@ impl<'d> Walk<'d> {
                 j += 1;
             }
             let last = toks[j - 1];
-            let end = text[last.b..].iter().position(|&ch| ch == b'>').map_or(text.len(), |e| last.b + e + 1);
+            let end = text[last.b()..].iter().position(|&ch| ch == b'>').map_or(text.len(), |e| last.b() + e + 1);
             self.at(end);
-            let name_b = &text[t.a..t.b];
+            let name_b = &text[t.a()..t.b()];
             let name = dict(c, name_b);
             if name_b.contains(&b':') {
                 let msg = cat(&[b"colons are forbidden from entities names '", name_b, b"'\n"]);
@@ -2070,7 +2070,7 @@ impl<'d> Walk<'d> {
                         let (o, next) = self.start_tag(src, i);
                         match o {
                             Some(o) => {
-                                open.push((o, t.c));
+                                open.push((o, t.c()));
                                 i = next;
                             }
                             None => {
@@ -2098,11 +2098,11 @@ impl<'d> Walk<'d> {
                     }
                     Kind::Text => {
                         // Runs of character data up to the next '<' or '&'.
-                        let a = t.a;
-                        let mut b = t.b;
-                        while i + 1 < end && toks[i + 1].kind == Kind::Text && toks[i + 1].a == b {
+                        let a = t.a();
+                        let mut b = t.b();
+                        while i + 1 < end && toks[i + 1].kind == Kind::Text && toks[i + 1].a() == b {
                             i += 1;
-                            b = toks[i].b;
+                            b = toks[i].b();
                         }
                         if src == Src::Doc {
                             self.at(b);
@@ -2112,11 +2112,11 @@ impl<'d> Walk<'d> {
                     }
                     Kind::CData => {
                         if src == Src::Doc {
-                            self.at(t.b + 3);
+                            self.at(t.b() + 3);
                         }
                         if let Some(h) = handler(c) {
                             // A copy with a NUL after it, as xmlParseCDSect passes.
-                            let v = nul(&eol(&buf[t.a..t.b]));
+                            let v = nul(&eol(&buf[t.a()..t.b()]));
                             let n = (v.len() - 1) as c_int;
                             if h.cdataBlock.is_some() && (*c).options & PARSE_NOCDATA == 0 {
                                 (h.cdataBlock.unwrap())((*c).userData, v.as_ptr(), n);
@@ -2126,18 +2126,18 @@ impl<'d> Walk<'d> {
                         }
                     }
                     Kind::CharRef => {
-                        let semi = buf[t.a..].iter().position(|&ch| ch == b';').map_or(t.a, |e| t.a + e + 1);
+                        let semi = buf[t.a()..].iter().position(|&ch| ch == b';').map_or(t.a(), |e| t.a() + e + 1);
                         if src == Src::Doc {
                             self.at(semi);
                         }
-                        let v = utf8_of(t.b as u32);
-                        if buf.get(t.a + 1) == Some(&b'#') {
+                        let v = utf8_of(t.b() as u32);
+                        if buf.get(t.a() + 1) == Some(&b'#') {
                             if let Some(f) = handler(c).and_then(|h| h.characters) {
                                 f((*c).userData, v.as_ptr(), v.len() as c_int);
                             }
                         } else {
                             // A predefined entity.
-                            self.predefined(&buf[t.a + 1..semi - 1], &v);
+                            self.predefined(&buf[t.a() + 1..semi - 1], &v);
                         }
                     }
                     Kind::Comment => self.comment(src, t),
@@ -2147,7 +2147,7 @@ impl<'d> Walk<'d> {
                     }
                     Kind::EntRef => {
                         if src == Src::Doc {
-                            self.at(t.b + 1);
+                            self.at(t.b() + 1);
                         }
                         self.reference(src, t);
                     }
@@ -2181,7 +2181,7 @@ impl<'d> Walk<'d> {
     unsafe fn reference(&mut self, src: Src, t: Tok) {
         unsafe {
             let c = self.ctxt;
-            let name = &self.buf(src)[t.a..t.b];
+            let name = &self.buf(src)[t.a()..t.b()];
             let ent = self.lookup(name);
             if ent.is_null() {
                 if (*c).replaceEntities == 0 {
@@ -2403,7 +2403,7 @@ impl<'d> Walk<'d> {
             let toks = self.toks(src);
             let buf = self.buf(src);
             let t = toks[i];
-            let qn = &buf[t.a..t.b];
+            let qn = &buf[t.a()..t.b()];
             let max = if (*c).options & PARSE_HUGE != 0 { 2048 } else { 256 };
             let depth = st(c).ns_counts.len();
             if depth > max {
@@ -2419,7 +2419,7 @@ impl<'d> Walk<'d> {
                 j += 2;
             }
             let tag_end = {
-                let from = atts.last().map_or(t.b, |(_, v)| v.b + 1);
+                let from = atts.last().map_or(t.b(), |(_, v)| v.b() + 1);
                 buf[from..].iter().position(|&ch| ch == b'>' || ch == b'/').map_or(from, |e| from + e)
             };
             let sp = *st(c).spaces.last().unwrap_or(&-1);
@@ -2430,7 +2430,7 @@ impl<'d> Walk<'d> {
             let (prefix_b, local_b) = qname(qn);
             if prefix_b.is_none() && qn.contains(&b':') {
                 if src == Src::Doc {
-                    self.at(t.b);
+                    self.at(t.b());
                 }
                 let msg = cat(&[b"Failed to parse QName '", qn, b"'\n"]);
                 ns_err(c, NS_ERR_QNAME, &msg, Some(qn), None, None);
@@ -2446,11 +2446,11 @@ impl<'d> Walk<'d> {
                 self.at(tag_end);
             }
             for (n, v) in &atts {
-                let aq = &buf[n.a..n.b];
+                let aq = &buf[n.a()..n.b()];
                 let (ap, al) = qname(aq);
                 if ap.is_none() && aq.contains(&b':') {
                     if src == Src::Doc {
-                        self.at(n.b);
+                        self.at(n.b());
                     }
                     let msg = cat(&[b"Failed to parse QName '", aq, b"'\n"]);
                     ns_err(c, NS_ERR_QNAME, &msg, Some(aq), None, None);
@@ -2458,7 +2458,7 @@ impl<'d> Walk<'d> {
                         self.at(tag_end);
                     }
                 }
-                let raw = &buf[v.a..v.b];
+                let raw = &buf[v.a()..v.b()];
                 let is_ns = (ap.is_none() && al == b"xmlns") || ap == Some(b"xmlns");
                 let normalize = elem_types && self.dtd.types.get(&(qn.to_vec(), aq.to_vec())).is_some_and(|&ty| ty > ATTRIBUTE_CDATA);
                 let val = self.att_value(raw, normalize, is_ns);
@@ -2722,8 +2722,8 @@ impl<'d> Walk<'d> {
             let mut vals: Vec<Vec<u8>> = Vec::new();
             let mut names: Vec<&[u8]> = Vec::new();
             for (n, v) in atts {
-                let an = &buf[n.a..n.b];
-                let raw = &buf[v.a..v.b];
+                let an = &buf[n.a()..n.b()];
+                let raw = &buf[v.a()..v.b()];
                 let val = match self.att_value(raw, false, false) {
                     Val::In(s) => nul(s),
                     Val::Made(m) => nul(&m),
@@ -3617,7 +3617,7 @@ unsafe fn parse_document(ctxt: *mut ParserCtxt) -> c_int {
                 let toks = doc.toks(Src::Doc);
                 let root = w.prolog();
                 if root < toks.len() && toks[root].kind == Kind::STag {
-                    let close = toks[root].c;
+                    let close = toks[root].c();
                     w.content(Src::Doc, root, close + 1);
                     let mut i = close + 1;
                     while i < toks.len() {
@@ -4486,7 +4486,7 @@ unsafe fn parse_content(ctxt: *mut ParserCtxt, data: &[u8], node: *mut Node) -> 
         let mut w = Walk::new(c, &d);
         let toks = d.toks(Src::Doc);
         let Some(root) = toks.iter().position(|t| t.kind == Kind::STag) else { return null_mut() };
-        let close = toks[root].c;
+        let close = toks[root].c();
         // The namespaces in scope at the node.
         let mut cur = node;
         let mut pushed = 0;
