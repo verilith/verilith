@@ -302,7 +302,19 @@ pub unsafe fn handle(p: *mut Png, info: *mut Info, ty: u32, d: &[u8]) -> R<()> {
         super::read::crc_check(p, false)?;
         return chunk_benign(p, m);
     }
-    if super::read::crc_check(p, false)? || info.is_null() {
+    // The text chunks count against the chunk cache before libpng reads
+    // them.
+    let text = matches!(&ty.to_be_bytes(), b"tEXt" | b"zTXt" | b"iTXt");
+    if text && !cache_ok(p)? {
+        super::read::crc_check(p, false)?;
+        return Ok(());
+    }
+    if super::read::crc_check(p, false)? {
+        // A bad CRC: libpng still reports what it checks before reading
+        // the data (or, for iCCP, before checking the CRC).
+        return bad_crc_checks(p, ty, d);
+    }
+    if info.is_null() {
         return Ok(());
     }
     let ok = handle_one(p, info, ty, d)?;
@@ -310,6 +322,39 @@ pub unsafe fn handle(p: *mut Png, info: *mut Info, ty: u32, d: &[u8]) -> R<()> {
         (*p).seen |= bit;
     }
     Ok(())
+}
+
+/// The warnings libpng gives for a chunk whose CRC is bad.
+unsafe fn bad_crc_checks(p: *mut Png, ty: u32, d: &[u8]) -> R<()> {
+    let ct = (*p).color_type;
+    let n = d.len();
+    let m = match &ty.to_be_bytes() {
+        b"sBIT" => {
+            let want = if ct == CT_PALETTE { 3 } else { (*p).channels as usize };
+            (n != want).then_some("bad length")
+        }
+        b"bKGD" => {
+            if ct == CT_PALETTE && (*p).mode & HAVE_PLTE == 0 {
+                Some("out of place")
+            } else {
+                let want = if ct == CT_PALETTE { 1 } else if ct & COLOR_MASK_COLOR != 0 { 6 } else { 2 };
+                (n != want).then_some("invalid")
+            }
+        }
+        b"hIST" => (n % 2 != 0 || n / 2 != (*p).num_palette as usize || n / 2 > 256).then_some("invalid"),
+        b"iCCP" => {
+            // libpng checks the profile and reports what is wrong with it
+            // before the CRC; a good profile is then dropped.
+            let mut scratch = Info::new();
+            let _ = handle_one(p, &mut scratch, ty, d)?;
+            None
+        }
+        _ => None,
+    };
+    match m {
+        Some(m) => chunk_benign(p, m),
+        None => Ok(()),
+    }
 }
 
 /// The handlers. `Ok(true)`: stored.
@@ -460,17 +505,11 @@ unsafe fn handle_one(p: *mut Png, info: *mut Info, ty: u32, d: &[u8]) -> R<bool>
             (*info).free_me |= FREE_EXIF;
         }
         b"tEXt" => {
-            if !cache_ok(p)? {
-                return Ok(false);
-            }
             let k = d.iter().position(|&c| c == 0).unwrap_or(d.len());
             let text = if k < d.len() { &d[k + 1..] } else { &d[d.len()..] };
             (*info).add_text(-1, &d[..k], text, None, None);
         }
         b"zTXt" => {
-            if !cache_ok(p)? {
-                return Ok(false);
-            }
             let k = d.iter().position(|&c| c == 0).unwrap_or(d.len());
             let err = if !(1..=79).contains(&k) {
                 Some("bad keyword")
@@ -493,9 +532,6 @@ unsafe fn handle_one(p: *mut Png, info: *mut Info, ty: u32, d: &[u8]) -> R<bool>
             }
         }
         b"iTXt" => {
-            if !cache_ok(p)? {
-                return Ok(false);
-            }
             let k = d.iter().position(|&c| c == 0).unwrap_or(d.len());
             let err = if !(1..=79).contains(&k) {
                 Some("bad keyword")
@@ -540,7 +576,11 @@ unsafe fn handle_one(p: *mut Png, info: *mut Info, ty: u32, d: &[u8]) -> R<bool>
         }
         b"iCCP" => {
             let k = d.iter().take(80).position(|&c| c == 0).unwrap_or(80.min(d.len()));
-            let err = if !(1..=79).contains(&k) {
+            // libpng reads up to 81 bytes for the keyword and wants a
+            // minimal zlib stream after them.
+            let err = if d.len() - d.len().min(81) < 11 {
+                Some("too short")
+            } else if !(1..=79).contains(&k) {
                 Some("bad keyword")
             } else if k + 1 >= d.len() || d[k + 1] != 0 {
                 Some("bad compression method")
@@ -1326,7 +1366,13 @@ api! {
             let u = &*unknowns.add(k);
             let data: &[u8] = if u.data.is_null() || u.size == 0 { &[] } else { core::slice::from_raw_parts(u.data, u.size) };
             let name = u32::from_be_bytes([u.name[0], u.name[1], u.name[2], u.name[3]]);
-            let loc = u.location & (HAVE_IHDR | HAVE_PLTE | AFTER_IDAT) as u8;
+            let loc = match super::read::location_of(u.location as u32) {
+                Some(l) => l,
+                None => {
+                    fail(p, "invalid location in png_set_unknown_chunks");
+                    raise(p)
+                }
+            };
             (*info).add_unknown(name, data, loc);
         }
     }

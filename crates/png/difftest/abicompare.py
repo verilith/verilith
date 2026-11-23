@@ -106,7 +106,7 @@ def departure(c, x, y):
     i = next((k for k in range(min(len(xl), len(yl))) if xl[k] != yl[k]), None)
     if i is not None:
         stop = yl[i] == "ERR IDAT: <image data error>" or (c[1] == "prog" and yl[i] == "done=0")
-        went_on = re.match(r"W (IDAT: |Extra compress|Truncated compressed)|ERR |user \d+ \d+$", xl[i]) or (
+        went_on = re.match(r"W |ERR |user \d+ \d+$", xl[i]) or (
             c[1] == "prog" and yl[i] != "done=0")
         if stop and went_on:
             return True
@@ -132,7 +132,7 @@ def departure(c, x, y):
         strip = lambda t: [l for l in t.splitlines()
                            if not re.match(r"hash |W (IDAT: |Extra compress|Truncated compressed)|user \d+ \d+|ERR (IDAT: |bad adaptive)|stage ", l)
                            and l != "done=0"]
-        if strip(x) == strip(y):
+        if strip(norm(x)) == strip(norm(y)):
             return True
     return False
 

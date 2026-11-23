@@ -482,16 +482,17 @@ unsafe fn unknown_handling(p: *mut Png, name: u32) -> c_int {
     HANDLE_CHUNK_AS_DEFAULT
 }
 
-/// libpng's `check_location`: one of IHDR, PLTE and IDAT-after bits.
-pub fn location_of(loc: u32, mode: u32) -> u8 {
+/// libpng's `check_location` for a read struct: the top-most of the IHDR,
+/// PLTE and IDAT-after bits; `None` (an error in libpng) if none is set.
+pub fn location_of(loc: u32) -> Option<u8> {
     let mut l = loc & (HAVE_IHDR | HAVE_PLTE | AFTER_IDAT);
     if l == 0 {
-        l = mode & (HAVE_IHDR | HAVE_PLTE | AFTER_IDAT);
+        return None;
     }
     while l != l & l.wrapping_neg() {
         l &= !(l & l.wrapping_neg());
     }
-    l as u8
+    Some(l as u8)
 }
 
 /// `png_handle_unknown`.
@@ -569,7 +570,11 @@ unsafe fn handle_unknown(p: *mut Png, info: *mut Info, keep: c_int) -> R<()> {
         if store && !info.is_null() {
             let u = (*p).unknown_chunk;
             let d: &[u8] = if u.data.is_null() { &[] } else { core::slice::from_raw_parts(u.data, u.size) };
-            (*info).add_unknown(name, d, location_of(u.location as u32, (*p).mode));
+            let loc = match location_of(u.location as u32) {
+                Some(l) => l,
+                None => return Err(fail(p, "invalid location in png_set_unknown_chunks")),
+            };
+            (*info).add_unknown(name, d, loc);
             handled = true;
         }
     }
