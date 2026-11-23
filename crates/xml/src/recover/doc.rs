@@ -333,7 +333,7 @@ impl<S: Sink> Parser<S> {
         input.filename = l.filename;
         enc::init_buffer(&mut input);
         self.inputs.push(input);
-        self.input_id = self.input_id.saturating_add(1);
+        self.input_id = sat_add_i32(self.input_id, 1);
         self.sync();
         self.parse_external_subset();
         while self.inputs.len() > 1 {

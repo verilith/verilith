@@ -171,7 +171,7 @@ impl<S: Sink> Parser<S> {
             }
             if self.cur() == b';' {
                 let i = self.inp_mut();
-                i.col = i.col.saturating_add(1);
+                i.col = sat_add_i32(i.col, 1);
                 i.cur += 1;
             }
         } else if self.cur() == b'&' && self.nxt(1) == b'#' {
@@ -200,7 +200,7 @@ impl<S: Sink> Parser<S> {
             }
             if self.cur() == b';' {
                 let i = self.inp_mut();
-                i.col = i.col.saturating_add(1);
+                i.col = sat_add_i32(i.col, 1);
                 i.cur += 1;
             }
         } else {
@@ -348,7 +348,7 @@ impl<S: Sink> Parser<S> {
                 let r = self.slice(start, p);
                 let i = self.inp_mut();
                 i.cur = p;
-                i.col = i.col.saturating_add(count as i32);
+                i.col = sat_add_i32(i.col, count as i32);
                 return Some(r);
             }
         }
@@ -407,7 +407,7 @@ impl<S: Sink> Parser<S> {
                     let r = self.slice(start, p);
                     let i = self.inp_mut();
                     i.cur = p;
-                    i.col = i.col.saturating_add(count as i32);
+                    i.col = sat_add_i32(i.col, count as i32);
                     return Some(r);
                 }
             }
@@ -430,7 +430,7 @@ impl<S: Sink> Parser<S> {
         let c = at(&self.inp().buf, p);
         if k == other.len() && (c == b'>' || blank(c)) {
             let i = self.inp_mut();
-            i.col = i.col.saturating_add((p - start) as i32);
+            i.col = sat_add_i32(i.col, (p - start) as i32);
             i.cur = p;
             return Ok(());
         }

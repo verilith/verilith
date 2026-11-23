@@ -5,7 +5,8 @@
 use super::codes::*;
 use super::tables::*;
 use super::*;
-use crate::lenient::{chunk_ascii, chunk_latin1, chunk_utf16, put, CHUNK_OK, CHUNK_SPACE};
+use crate::lenient::{chunk_ascii, chunk_latin1, chunk_utf16, put, CHUNK_INPUT, CHUNK_OK, CHUNK_SPACE};
+use vstd::slice::slice_subrange;
 use vstd::prelude::*;
 
 verus! {
@@ -23,17 +24,23 @@ pub enum Enc {
 }
 
 /// `xmlParseCharEncodingInternal`: the `xmlCharEncoding` of a name, or -1.
-#[verifier::external_body]
 fn encoding_id(name: &[u8]) -> i32 {
     let mut lo = 0usize;
     let mut hi = ENC_NAMES_LEN;
-    while lo < hi {
+    while lo < hi
+        invariant
+            hi <= ENC_NAMES_LEN,
+        decreases hi - lo,
+    {
         let mid = lo + (hi - lo) / 2;
         let (n, id) = enc_name(mid);
-        match cmp_ci(name, n) {
-            0 => return id as i32,
-            d if d < 0 => hi = mid,
-            _ => lo = mid + 1,
+        let d = cmp_ci(name, n);
+        if d == 0 {
+            return id as i32;
+        } else if d < 0 {
+            hi = mid;
+        } else {
+            lo = mid + 1;
         }
     }
     -1
@@ -43,8 +50,10 @@ use crate::lenient::cmp_ci;
 
 /// The decoder of a default handler, by `xmlCharEncoding`: `Ok(None)` for
 /// UTF-8 (no decoder), `Err` for a handler with no input function.
-#[verifier::external_body]
-fn handler_of(id: i32) -> Result<Option<Enc>, i32> {
+fn handler_of(id: i32) -> (r: Result<Option<Enc>, i32>)
+    ensures
+        r matches Ok(Some(Enc::Table(t))) ==> t < 15,
+{
     match id {
         1 => Ok(None),
         2 => Ok(Some(Enc::Utf16Le)),
@@ -54,12 +63,14 @@ fn handler_of(id: i32) -> Result<Option<Enc>, i32> {
         // "UTF-16" decodes as little-endian.
         23 => Ok(Some(Enc::Utf16Le)),
         _ => {
-            let mut k = 0;
-            while k < EIGHT_BIT_IDS.len() {
+            let mut k: usize = 0;
+            while k < 15
+                decreases 15 - k,
+            {
                 if EIGHT_BIT_IDS[k] as i32 == id {
                     return Ok(Some(Enc::Table(k as u8)));
                 }
-                k += 1;
+                k = k + 1;
             }
             Err(ERR_UNSUPPORTED_ENCODING)
         }
@@ -67,19 +78,21 @@ fn handler_of(id: i32) -> Result<Option<Enc>, i32> {
 }
 
 /// `xmlCreateCharEncodingHandler(name, XML_ENC_INPUT)`.
-#[verifier::external_body]
-pub fn lookup_encoding(name: &[u8], html: bool) -> Result<Option<Enc>, i32> {
+pub fn lookup_encoding(name: &[u8], html: bool) -> (r: Result<Option<Enc>, i32>)
+    ensures
+        r matches Ok(Some(Enc::Table(t))) ==> t < 15,
+{
     let mut id = encoding_id(name);
     if id == 1 {
         return Ok(None);
     }
     if id > 0 && id < 32 {
         if html {
-            id = match id {
-                22 | 10 => 31,
-                9 | 23 => 2,
-                x => x,
-            };
+            if id == 22 || id == 10 {
+                id = 31;
+            } else if id == 9 || id == 23 {
+                id = 2;
+            }
         }
         return handler_of(id);
     }
@@ -87,8 +100,10 @@ pub fn lookup_encoding(name: &[u8], html: bool) -> Result<Option<Enc>, i32> {
 }
 
 /// `xmlLookupCharEncodingHandler`.
-#[verifier::external_body]
-pub fn lookup_id(id: i32) -> Result<Option<Enc>, i32> {
+pub fn lookup_id(id: i32) -> (r: Result<Option<Enc>, i32>)
+    ensures
+        r matches Ok(Some(Enc::Table(t))) ==> t < 15,
+{
     if id <= 0 || id >= 32 {
         return Err(ERR_UNSUPPORTED_ENCODING);
     }
@@ -98,88 +113,104 @@ pub fn lookup_id(id: i32) -> Result<Option<Enc>, i32> {
     handler_of(id)
 }
 
-/// `xmlCharEncError`.
-#[derive(PartialEq, Eq)]
-enum Res {
-    Success,
-    Space,
-    Input,
-}
 
 /// One decoder call (`xmlEncInputChunk`): converts `inp` into at most
 /// `room` bytes of `out`; returns the bytes read and the result.
-#[verifier::external_body]
-fn chunk(e: Enc, inp: &[u8], out: &mut Vec<u8>, mut room: usize, flush: bool) -> (usize, Res) {
-    let mut i = 0usize;
+fn chunk(e: Enc, inp: &[u8], out: &mut Vec<u8>, room: usize, flush: bool) -> (r: (usize, u8))
+    ensures
+        r.0 <= inp@.len(),
+        r.1 <= CHUNK_INPUT,
+{
     let n = inp.len();
-    let mut res = Res::Success;
-    match e {
+    let (i, mut res) = match e {
         // Verified (`crate::lenient`): each writes the spec's decoding of
         // what it reads.
-        Enc::Utf16Le | Enc::Utf16Be | Enc::Latin1 | Enc::Ascii => {
-            let (k, r) = match e {
-                Enc::Utf16Le => chunk_utf16(true, inp, out, room),
-                Enc::Utf16Be => chunk_utf16(false, inp, out, room),
-                Enc::Latin1 => chunk_latin1(inp, out, room),
-                _ => chunk_ascii(inp, out, room),
-            };
-            i = k;
-            res = match r {
-                CHUNK_OK => Res::Success,
-                CHUNK_SPACE => Res::Space,
-                _ => Res::Input,
-            };
-        }
-        Enc::Table(t) => {
-            let table = &EIGHT_BIT[(t as usize) % EIGHT_BIT.len()];
-            while i < n {
-                let b = inp[i];
-                let c = if b < 0x80 { b as u32 } else { table[(b - 0x80) as usize] as u32 };
-                if c == 0 && b >= 0x80 {
-                    res = Res::Input;
-                    break;
-                }
-                if !put(out, c, &mut room) {
-                    res = Res::Space;
-                    break;
-                }
-                i += 1;
-            }
-        }
-    }
-    if flush && res == Res::Success && i != n {
-        res = Res::Input;
+        Enc::Utf16Le => chunk_utf16(true, inp, out, room),
+        Enc::Utf16Be => chunk_utf16(false, inp, out, room),
+        Enc::Latin1 => chunk_latin1(inp, out, room),
+        Enc::Ascii => chunk_ascii(inp, out, room),
+        Enc::Table(t) => chunk_table(t, inp, out, room),
+    };
+    if flush && res == CHUNK_OK && i != n {
+        res = CHUNK_INPUT;
     }
     (i, res)
 }
 
+/// An 8-bit character set (`ISO-8859-x` and the like) to UTF-8: the
+/// table gives the code point of each byte from 0x80, 0 for none.
+fn chunk_table(t: u8, inp: &[u8], out: &mut Vec<u8>, room: usize) -> (r: (usize, u8))
+    ensures
+        r.0 <= inp@.len(),
+        r.1 <= CHUNK_INPUT,
+{
+    let tk = (t as usize) % 15;
+    let n = inp.len();
+    let mut i: usize = 0;
+    let mut left = room;
+    while i < n
+        invariant
+            i <= n == inp@.len(),
+            tk < 15,
+        decreases n - i,
+    {
+        let b = inp[i];
+        let c: u32 = if b < 0x80 { b as u32 } else { EIGHT_BIT[tk][(b - 0x80) as usize] as u32 };
+        if c == 0 && b >= 0x80 {
+            return (i, CHUNK_INPUT);
+        }
+        if !put(out, c, &mut left) {
+            return (i, CHUNK_SPACE);
+        }
+        i = i + 1;
+    }
+    (i, CHUNK_OK)
+}
+
 /// `xmlCharEncInput`: converts what was read, up to `max_out` bytes of
 /// output. Returns the bytes produced, or the error code.
-#[verifier::external_body]
-pub fn char_enc_input(buf: &mut Vec<u8>, src: &mut Source, max_out: usize, flush: bool) -> Result<usize, i32> {
+pub fn char_enc_input(buf: &mut Vec<u8>, src: &mut Source, max_out: usize, flush: bool) -> (r: Result<usize, i32>)
+    ensures
+        final(src).raw == old(src).raw,
+        final(src).mode == old(src).mode,
+        final(src).enc == old(src).enc,
+        final(src).delivered == old(src).delivered,
+        final(src).pos <= final(src).raw@.len(),
+        old(src).pos <= old(src).raw@.len() ==> final(src).pos >= old(src).pos || final(src).pos == old(src).delivered,
+{
     let e = match src.enc {
         Some(e) => e,
-        None => return Ok(0),
+        None => {
+            if src.pos > src.raw.len() {
+                src.pos = src.raw.len();
+            }
+            return Ok(0);
+        }
     };
-    let start = if src.pos < src.delivered { src.pos } else { src.delivered };
-    let avail = src.delivered - start;
-    if avail == 0 && !flush {
+    let rl = src.raw.len();
+    let end = if src.delivered <= rl { src.delivered } else { rl };
+    let start = if src.pos < end { src.pos } else { end };
+    if end - start == 0 && !flush {
+        src.pos = start;
         return Ok(0);
     }
     let before = buf.len();
-    let end = if src.delivered <= src.raw.len() { src.delivered } else { src.raw.len() };
-    let (used, res) = chunk(e, &src.raw[start..end], buf, max_out, flush);
+    let (used, res) = chunk(e, slice_subrange(src.raw.as_slice(), start, end), buf, max_out, flush);
     src.pos = start + used;
-    if res == Res::Input {
+    if res == CHUNK_INPUT {
         src.error = ERR_INVALID_ENCODING;
         return Err(ERR_INVALID_ENCODING);
     }
-    Ok(buf.len() - before)
+    Ok(buf.len().saturating_sub(before))
 }
 
 /// `xmlParserInputBufferGrow(buf, len)`.
-#[verifier::external_body]
-pub fn buffer_grow(buf: &mut Vec<u8>, src: &mut Source, len: usize) -> i32 {
+pub fn buffer_grow(buf: &mut Vec<u8>, src: &mut Source, len: usize) -> (r: i32)
+    ensures
+        final(src).raw == old(src).raw,
+        final(src).mode == old(src).mode,
+        final(src).enc == old(src).enc,
+{
     if src.error != 0 {
         return -1;
     }
@@ -191,13 +222,13 @@ pub fn buffer_grow(buf: &mut Vec<u8>, src: &mut Source, len: usize) -> i32 {
         if n == 0 {
             src.eof = true;
         }
-        src.delivered += n;
-        res = n as i32;
+        src.delivered = src.delivered + n;
+        res = if n > i32::MAX as usize { i32::MAX } else { n as i32 };
         if src.enc.is_none() {
             let from = src.pos;
             let to = src.delivered;
             if from < to && to <= src.raw.len() {
-                buf.extend_from_slice(&src.raw[from..to]);
+                buf.extend_from_slice(slice_subrange(src.raw.as_slice(), from, to));
             }
             src.pos = to;
         }
@@ -214,15 +245,22 @@ pub fn buffer_grow(buf: &mut Vec<u8>, src: &mut Source, len: usize) -> i32 {
 
 /// Sets up a fresh input over its source: a memory buffer without a
 /// decoder is all there from the start.
-#[verifier::external_body]
 pub fn init_buffer(i: &mut Input) {
-    if let Some(src) = i.src.as_mut() {
-        if src.mode == Mode::Memory && src.enc.is_none() {
-            src.delivered = src.raw.len();
-            i.buf = core::mem::take(&mut src.raw);
-            src.pos = 0;
-            src.delivered = 0;
+    let take = match &i.src {
+        Some(src) => src.mode == Mode::Memory && src.enc.is_none(),
+        None => false,
+    };
+    if take {
+        let mut raw: Vec<u8> = Vec::new();
+        match &mut i.src {
+            Some(src) => {
+                std::mem::swap(&mut raw, &mut src.raw);
+                src.pos = 0;
+                src.delivered = 0;
+            },
+            None => {},
         }
+        i.buf = raw;
     }
 }
 

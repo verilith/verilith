@@ -259,7 +259,7 @@ impl<S: Sink> Parser<S> {
             if b(self, p) == 0x0A {
                 while b(self, p) == 0x0A {
                     let i = self.inp_mut();
-                    i.line = i.line.saturating_add(1);
+                    i.line = sat_add_i32(i.line, 1);
                     i.col = 1;
                     p += 1;
                 }
@@ -271,7 +271,7 @@ impl<S: Sink> Parser<S> {
                     let c = b(self, p);
                     if (c > b'-' && c <= 0x7F) || (c >= 0x20 && c < b'-') || c == 0x09 {
                         p += 1;
-                        ccol = ccol.saturating_add(1);
+                        ccol = sat_add_i32(ccol, 1);
                     } else {
                         break;
                     }
@@ -280,7 +280,7 @@ impl<S: Sink> Parser<S> {
                 if b(self, p) == 0x0A {
                     while b(self, p) == 0x0A {
                         let i = self.inp_mut();
-                        i.line = i.line.saturating_add(1);
+                        i.line = sat_add_i32(i.line, 1);
                         i.col = 1;
                         p += 1;
                     }
@@ -315,7 +315,7 @@ impl<S: Sink> Parser<S> {
                 if b(self, p) == 0x0A {
                     p += 1;
                     let i = self.inp_mut();
-                    i.line = i.line.saturating_add(1);
+                    i.line = sat_add_i32(i.line, 1);
                     i.col = 1;
                 }
                 if b(self, p) == 0x0D {
@@ -324,7 +324,7 @@ impl<S: Sink> Parser<S> {
                         self.inp_mut().cur = p;
                         p += 1;
                         let i = self.inp_mut();
-                        i.line = i.line.saturating_add(1);
+                        i.line = sat_add_i32(i.line, 1);
                         i.col = 1;
                         continue;
                     }
@@ -359,11 +359,11 @@ impl<S: Sink> Parser<S> {
                         }
                         p += 1;
                         let i = self.inp_mut();
-                        i.col = i.col.saturating_add(1);
+                        i.col = sat_add_i32(i.col, 1);
                     }
                     p += 1;
                     let i = self.inp_mut();
-                    i.col = i.col.saturating_add(1);
+                    i.col = sat_add_i32(i.col, 1);
                     continue;
                 }
                 break;

@@ -183,12 +183,12 @@ impl<S: Sink> Parser<S> {
                 while b(self, in_) == 0x20 {
                     in_ += 1;
                     let i = self.inp_mut();
-                    i.col = i.col.saturating_add(1);
+                    i.col = sat_add_i32(i.col, 1);
                 }
                 if b(self, in_) == 0x0A {
                     while b(self, in_) == 0x0A {
                         let i = self.inp_mut();
-                        i.line = i.line.saturating_add(1);
+                        i.line = sat_add_i32(i.line, 1);
                         i.col = 1;
                         in_ += 1;
                     }
@@ -205,13 +205,13 @@ impl<S: Sink> Parser<S> {
                 let mut ccol = self.inp().col;
                 while test_char_data(b(self, in_)) {
                     in_ += 1;
-                    ccol = ccol.saturating_add(1);
+                    ccol = sat_add_i32(ccol, 1);
                 }
                 self.inp_mut().col = ccol;
                 if b(self, in_) == 0x0A {
                     while b(self, in_) == 0x0A {
                         let i = self.inp_mut();
-                        i.line = i.line.saturating_add(1);
+                        i.line = sat_add_i32(i.line, 1);
                         i.col = 1;
                         in_ += 1;
                     }
@@ -234,7 +234,7 @@ impl<S: Sink> Parser<S> {
                     }
                     in_ += 1;
                     let i = self.inp_mut();
-                    i.col = i.col.saturating_add(1);
+                    i.col = sat_add_i32(i.col, 1);
                     continue;
                 }
                 break;
@@ -251,7 +251,7 @@ impl<S: Sink> Parser<S> {
                 self.inp_mut().cur = in_;
                 in_ += 1;
                 let i = self.inp_mut();
-                i.line = i.line.saturating_add(1);
+                i.line = sat_add_i32(i.line, 1);
                 i.col = 1;
                 let c = b(self, in_);
                 if (0x20..=0x7F).contains(&c) || c == 0x09 || c == 0x0A {
@@ -543,7 +543,7 @@ impl<S: Sink> Parser<S> {
             }
             if k == name.len() && (b(self, in_) == b'>' || blank(b(self, in_))) {
                 let i = self.inp_mut();
-                i.col = i.col.saturating_add((in_ - i.cur) as i32);
+                i.col = sat_add_i32(i.col, (in_ - i.cur) as i32);
                 i.cur = in_;
                 return Ok(());
             }
