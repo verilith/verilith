@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // Verus specifications for x86 (SSE2 to AVX2) and AArch64 NEON SIMD
 // intrinsics.

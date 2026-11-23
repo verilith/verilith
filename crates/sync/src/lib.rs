@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // A normal build erases ghost code, so a variable, import, field or value
 // used only by proofs looks unused there, and the `verus!` syntax leaves

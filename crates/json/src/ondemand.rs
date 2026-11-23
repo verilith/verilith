@@ -756,7 +756,9 @@ proof fn lemma_sv_members(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STo
 /// A position between two tokens of `s`, reading the structural index
 /// through the window `w`.
 pub struct Cursor<'a> {
+    /// The document.
     pub s: &'a [u8],
+    /// The window onto the structural index.
     pub w: Win<'a>,
     /// The next unread index entry.
     pub k: usize,

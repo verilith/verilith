@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // A linear-time regular expression engine with RE2's syntax.
 // A normal build erases ghost code, so a variable, import, field or value

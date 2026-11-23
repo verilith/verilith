@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // A formally verified DEFLATE (RFC 1951), zlib (RFC 1950) and gzip
 // (RFC 1952) decompressor and compressor.

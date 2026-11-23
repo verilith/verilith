@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // A formally verified WHATWG URL parser.
 // A normal build erases ghost code, so a variable, import, field or value

@@ -25,6 +25,7 @@ proof fn lemma_first<T>(all: Seq<T>, x: T, tail: Seq<T>)
 /// A RelativeDistinguishedName, borrowed: the contents of its SET.
 #[derive(Clone, Copy)]
 pub struct Rdn<'a> {
+    /// The contents of the SET.
     pub raw: &'a [u8],
 }
 
@@ -38,7 +39,9 @@ impl<'a> View for Rdn<'a> {
 
 /// The RDNs of a Name, in order.
 pub struct RdnIter<'a> {
+    /// The bytes not yet read.
     pub rest: &'a [u8],
+    /// The RDNs not yet returned.
     pub remaining: Ghost<Seq<SpecRdn>>,
 }
 
@@ -47,6 +50,7 @@ impl<'a> RdnIter<'a> {
         parse_rdns(self.rest@) == Some(self.remaining@)
     }
 
+    /// The RDNs of `n`.
     pub fn new(n: &Name<'a>) -> (r: Self)
         requires
             n.wf(),
@@ -57,6 +61,7 @@ impl<'a> RdnIter<'a> {
         RdnIter { rest: n.raw, remaining: Ghost(n@) }
     }
 
+    /// The next RDN.
     pub fn next(&mut self) -> (r: Option<Rdn<'a>>)
         requires
             old(self).inv(),
@@ -93,7 +98,9 @@ impl<'a> RdnIter<'a> {
 
 /// The attributes of an RDN, in order.
 pub struct AtvIter<'a> {
+    /// The bytes not yet read.
     pub rest: &'a [u8],
+    /// The attributes not yet returned.
     pub remaining: Ghost<Seq<SpecAtv>>,
 }
 
@@ -102,6 +109,7 @@ impl<'a> AtvIter<'a> {
         parse_atvs(self.rest@) == Some(self.remaining@)
     }
 
+    /// The attributes of `n`.
     pub fn new(n: &Rdn<'a>) -> (r: Self)
         requires
             parse_rdn(n.raw@) is Some,
@@ -112,6 +120,7 @@ impl<'a> AtvIter<'a> {
         AtvIter { rest: n.raw, remaining: Ghost(n@) }
     }
 
+    /// The next attribute.
     pub fn next(&mut self) -> (r: Option<Atv<'a>>)
         requires
             old(self).inv(),
@@ -155,7 +164,9 @@ impl<'a> AtvIter<'a> {
 
 /// The entries of GeneralNames, in order.
 pub struct GeneralNameIter<'a> {
+    /// The bytes not yet read.
     pub rest: &'a [u8],
+    /// The names not yet returned.
     pub remaining: Ghost<Seq<SpecGeneralName>>,
 }
 
@@ -175,6 +186,7 @@ impl<'a> GeneralNameIter<'a> {
         GeneralNameIter { rest: l, remaining: Ghost(parse_general_names(l@).unwrap()) }
     }
 
+    /// The next name.
     pub fn next(&mut self) -> (r: Option<GeneralName<'a>>)
         requires
             old(self).inv(),
@@ -218,7 +230,9 @@ impl<'a> GeneralNameIter<'a> {
 
 /// The bases of GeneralSubtrees (name constraints), in order.
 pub struct SubtreeIter<'a> {
+    /// The bytes not yet read.
     pub rest: &'a [u8],
+    /// The bases not yet returned.
     pub remaining: Ghost<Seq<SpecGeneralName>>,
 }
 
@@ -227,6 +241,7 @@ impl<'a> SubtreeIter<'a> {
         parse_subtrees(self.rest@) == Some(self.remaining@)
     }
 
+    /// The bases in the contents `l` of a GeneralSubtrees.
     pub fn new(l: &'a [u8]) -> (r: Self)
         requires
             parse_subtrees(l@) is Some,
@@ -237,6 +252,7 @@ impl<'a> SubtreeIter<'a> {
         SubtreeIter { rest: l, remaining: Ghost(parse_subtrees(l@).unwrap()) }
     }
 
+    /// The next base.
     pub fn next(&mut self) -> (r: Option<GeneralName<'a>>)
         requires
             old(self).inv(),
@@ -289,7 +305,9 @@ impl<'a> SubtreeIter<'a> {
 
 /// A list of OIDs (ExtendedKeyUsage), in order.
 pub struct OidIter<'a> {
+    /// The bytes not yet read.
     pub rest: &'a [u8],
+    /// The OIDs not yet returned.
     pub remaining: Ghost<Seq<Seq<u8>>>,
 }
 
@@ -298,6 +316,7 @@ impl<'a> OidIter<'a> {
         parse_oids(self.rest@) == Some(self.remaining@)
     }
 
+    /// The OIDs in the contents `l` of a SEQUENCE OF OID.
     pub fn new(l: &'a [u8]) -> (r: Self)
         requires
             parse_oids(l@) is Some,
@@ -308,6 +327,7 @@ impl<'a> OidIter<'a> {
         OidIter { rest: l, remaining: Ghost(parse_oids(l@).unwrap()) }
     }
 
+    /// The next OID's contents.
     pub fn next(&mut self) -> (r: Option<&'a [u8]>)
         requires
             old(self).inv(),
@@ -342,7 +362,9 @@ impl<'a> OidIter<'a> {
 
 /// The extensions of a certificate, in order.
 pub struct ExtensionIter<'a> {
+    /// The bytes not yet read.
     pub rest: &'a [u8],
+    /// The extensions not yet returned.
     pub remaining: Ghost<Seq<SpecExtension>>,
 }
 
@@ -351,6 +373,7 @@ impl<'a> ExtensionIter<'a> {
         parse_extensions(self.rest@) == Some(self.remaining@)
     }
 
+    /// The extensions in the contents `l` of an Extensions SEQUENCE.
     pub fn new(l: &'a [u8]) -> (r: Self)
         requires
             parse_extensions(l@) is Some,
@@ -361,6 +384,7 @@ impl<'a> ExtensionIter<'a> {
         ExtensionIter { rest: l, remaining: Ghost(parse_extensions(l@).unwrap()) }
     }
 
+    /// The next extension.
     pub fn next(&mut self) -> (r: Option<Extension<'a>>)
         requires
             old(self).inv(),
@@ -406,7 +430,9 @@ impl<'a> ExtensionIter<'a> {
 
 /// The policy OIDs of certificatePolicies, in order.
 pub struct PolicyIter<'a> {
+    /// The bytes not yet read.
     pub rest: &'a [u8],
+    /// The policy OIDs not yet returned.
     pub remaining: Ghost<Seq<Seq<u8>>>,
 }
 
@@ -415,6 +441,7 @@ impl<'a> PolicyIter<'a> {
         parse_policies(self.rest@) == Some(self.remaining@)
     }
 
+    /// The policy OIDs in the contents `l` of certificatePolicies.
     pub fn new(l: &'a [u8]) -> (r: Self)
         requires
             parse_policies(l@) is Some,
@@ -425,6 +452,7 @@ impl<'a> PolicyIter<'a> {
         PolicyIter { rest: l, remaining: Ghost(parse_policies(l@).unwrap()) }
     }
 
+    /// The next policy OID's contents.
     pub fn next(&mut self) -> (r: Option<&'a [u8]>)
         requires
             old(self).inv(),

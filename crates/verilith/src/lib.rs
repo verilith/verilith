@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // Verilith: formally verified (Verus) drop-in replacements for foundational
 // libraries.

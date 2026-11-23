@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // verilith-xml: an XML 1.0 parser formally verified with Verus.
 //

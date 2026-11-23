@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // A formally verified PNG decoder.
 // A normal build erases ghost code, so a variable, import, field or value
