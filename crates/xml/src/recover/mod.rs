@@ -1202,6 +1202,8 @@ impl<S: Sink> Parser<S> {
         let mut input = if info.has_content {
             Input::from_bytes(self.sink.ent_content(e))
         } else if info.has_uri {
+            // A failure is reported where the reference ends.
+            self.sync();
             let l = self.sink.load_entity(e)?;
             let mut i = Input::from_bytes(Vec::new());
             i.src = Some(Source { raw: l.bytes, delivered: 0, pos: 0, mode: if l.stream { Mode::Stream } else { Mode::Memory }, enc: None, error: 0, eof: false });

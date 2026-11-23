@@ -4170,6 +4170,24 @@ unsafe fn parse_document(ctxt: *mut ParserCtxt) -> c_int {
             return -1;
         }
         match crate::api::parse(bytes) {
+            Ok(doc) if !st(c).pushed && beyond_document(c, &doc) && probe_finds_errors(c, raw) => {
+                // The document entity is well-formed (the verified verdict),
+                // but libxml2 reads more than it: the internal subset's
+                // parameter entities, or external entities it substitutes.
+                // An error or warning there is libxml2's to report, so the
+                // parse is libxml2's (the recovering parser) from the start.
+                let stream = (*input).flags & INPUT_STREAM != 0;
+                let forced = if (*c).options & PARSE_IGNORE_ENC == 0 { copt((*input).encoding).map(|v| v.to_vec()) } else { None };
+                super::recover::recover_document(c, raw.to_vec(), stream, forced.as_deref());
+                (*input).base = rb;
+                (*input).cur = re;
+                (*input).end = re;
+                if (*c).wellFormed == 0 {
+                    (*c).valid = 0;
+                    return -1;
+                }
+                return 0;
+            }
             Ok(doc) => {
                 let text = doc.text();
                 (*input).base = text.as_ptr();
@@ -4232,6 +4250,91 @@ unsafe fn parse_document(ctxt: *mut ParserCtxt) -> c_int {
             return -1;
         }
         0
+    }
+}
+
+/// Whether libxml2 reads text the verified parser does not, for this
+/// document: a parameter entity reference in the internal subset (which a
+/// processor need not include, §4.4.8, but libxml2 does), or an external
+/// parsed entity that libxml2 loads when it substitutes entities (§4.4.3,
+/// included if validating).
+unsafe fn beyond_document(c: *mut ParserCtxt, doc: &Document) -> bool {
+    unsafe {
+        let toks = doc.toks(Src::Doc);
+        let loads = (*c).options & PARSE_NO_XXE == 0 && ((*c).replaceEntities != 0 || (*c).validate != 0);
+        let mut i = 0;
+        while i < toks.len() {
+            match toks[i].kind {
+                Kind::PERef => return true,
+                Kind::EntityDecl if loads && toks[i].f == 0 => {
+                    let mut j = i + 1;
+                    let (mut sys, mut ndata) = (false, false);
+                    while j < toks.len() && matches!(toks[j].kind, Kind::PubId | Kind::SysId | Kind::NData | Kind::EntityValue) {
+                        sys |= toks[j].kind == Kind::SysId;
+                        ndata |= toks[j].kind == Kind::NData;
+                        j += 1;
+                    }
+                    if sys && !ndata {
+                        return true;
+                    }
+                    i = j;
+                    continue;
+                }
+                Kind::STag => return false,
+                _ => {}
+            }
+            i += 1;
+        }
+        false
+    }
+}
+
+unsafe extern "C" fn quiet(_: *mut c_void, _: *const XmlError) {}
+
+/// libxml2's reading of the whole document, on a context of its own with
+/// the same options, input name and resource loader, its reports dropped:
+/// whether it reports anything.
+unsafe fn probe_finds_errors(c: *mut ParserCtxt, raw: &[u8]) -> bool {
+    unsafe {
+        let p = xmlNewParserCtxt();
+        if p.is_null() {
+            return false;
+        }
+        xmlCtxtUseOptions(p, (*c).options);
+        (*p).replaceEntities = (*c).replaceEntities;
+        (*p).validate = (*c).validate;
+        (*p).errorHandler = Some(quiet);
+        (*p).resourceLoader = (*c).resourceLoader;
+        (*p).resourceCtxt = (*c).resourceCtxt;
+        let src = (*c).input;
+        let input: *mut ParserInput = xnew();
+        if input.is_null() {
+            xmlFreeParserCtxt(p);
+            return false;
+        }
+        (*input).filename = (*src).filename;
+        (*input).flags = (*src).flags & INPUT_STREAM;
+        (*input).line = 1;
+        (*input).col = 1;
+        xmlCtxtPushInput(p, input);
+        let stream = (*src).flags & INPUT_STREAM != 0;
+        let forced = if (*c).options & PARSE_IGNORE_ENC == 0 { copt((*src).encoding).map(|v| v.to_vec()) } else { None };
+        super::recover::recover_document(p, raw.to_vec(), stream, forced.as_deref());
+        let found = (*p).wellFormed == 0 || (*p).nbErrors > 0 || (*p).nbWarnings > 0;
+        // The name is the caller's: the input is taken off before the
+        // context is freed.
+        while (*p).inputNr > 0 {
+            let i = xmlCtxtPopInput(p);
+            if i == input {
+                xfree(input as *mut c_void);
+            }
+        }
+        if !(*p).myDoc.is_null() {
+            xmlFreeDoc((*p).myDoc);
+            (*p).myDoc = null_mut();
+        }
+        xmlFreeParserCtxt(p);
+        found
     }
 }
 
