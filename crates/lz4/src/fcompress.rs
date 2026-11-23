@@ -2,7 +2,7 @@
 //! decodes back to the input: a header, the input cut into blocks of the
 //! chosen maximum size (each compressed, or stored when that is not
 //! smaller), the end mark, and the checksums asked for.
-use crate::compress::{compress_block, compress_small, BIG_SIZE};
+use crate::compress::{compress_block_counted, compress_small_counted, BIG_SIZE, HASH_SIZE};
 #[cfg(verus_only)]
 use crate::compress::{extends, lemma_seqs_pre, lemma_strict_block};
 use crate::frame::*;
@@ -295,6 +295,7 @@ fn write_header(v: &mut Vec<u8>, id: u8, indep: bool, bsum: bool, csize: bool, c
             None
         },
         h@.bmax == block_max(id as nat),
+        final(v)@.len() <= 15,
 {
     push_le32(v, 0x184D2204);
     proof {
@@ -420,10 +421,27 @@ proof fn lemma_header_ext(p: Seq<u8>, s: Seq<u8>)
 }
 
 /// Compresses `input` as one frame.
+#[inline(always)]
 pub fn compress(input: &[u8], prefs: &Prefs) -> (v: Vec<u8>)
     ensures
         frame(v@, 0) == Some((input@, v@.len() as int)),
         frames(v@, 0) == Some(input@),
+{
+    compress_counted(input, prefs).0
+}
+
+/// A bound on the frame compressors' steps (each loop turn, each byte
+/// compared, copied, cleared or summed).
+pub open spec fn frame_work(n: nat) -> nat {
+    24 * n + 20000
+}
+
+/// `compress`, with its steps counted.
+pub fn compress_counted(input: &[u8], prefs: &Prefs) -> (res: (Vec<u8>, Ghost<nat>))
+    ensures
+        frame(res.0@, 0) == Some((input@, res.0@.len() as int)),
+        frames(res.0@, 0) == Some(input@),
+        res.1@ <= frame_work(input@.len()),
 {
     let n = input.len();
     let id: u8 = if prefs.block_id < 4 {
@@ -453,7 +471,15 @@ pub fn compress(input: &[u8], prefs: &Prefs) -> (v: Vec<u8>)
     let Ghost(h) = write_header(&mut v, id, prefs.indep, prefs.bsum, prefs.csize, prefs.csum, n);
     let ghost hp = v@;
     let mut table = [0u32;BIG_SIZE];
-    let mut scratch: Vec<u8> = vec![0u8; bmax];
+    // Room for a block compressed with no checks, but no more than the
+    // input needs: a short input does not clear a 4 MiB buffer.
+    let sc: usize = if n < bmax && n + n / 255 + 16 < bmax {
+        n + n / 255 + 16
+    } else {
+        bmax
+    };
+    let mut scratch: Vec<u8> = vec![0u8; sc];
+    let ghost mut work: nat = (hp.len() + BIG_SIZE + sc) as nat;
     let mut st: usize = 0;
     proof {
         assert(input@.subrange(0, 0) =~= Seq::<u8>::empty());
@@ -464,7 +490,10 @@ pub fn compress(input: &[u8], prefs: &Prefs) -> (v: Vec<u8>)
         invariant
             n == input@.len(),
             st <= n,
-            scratch@.len() == bmax,
+            scratch@.len() == sc,
+            sc <= 2 * n + 16,
+            st < n ==> work <= 2 * n + 4127 + 21 * st,
+            work <= 2 * n + 4127 + 21 * st + 12357,
             forall|x: int| 0 <= x < BIG_SIZE ==> (#[trigger] table@[x]) <= st,
             bmax == h.bmax,
             0x1_0000 <= bmax <= 0x40_0000,
@@ -485,7 +514,10 @@ pub fn compress(input: &[u8], prefs: &Prefs) -> (v: Vec<u8>)
         let ghost out2 = input@.subrange(0, en as int);
         let ghost chunk = input@.subrange(st as int, en as int);
         let size = en - st;
-        let (lo, r) = block(input, st, en, scratch.as_mut_slice(), 0, &mut table, accel, prefs.indep);
+        let (lo, r, Ghost(w)) = block(input, st, en, scratch.as_mut_slice(), 0, &mut table, accel, prefs.indep);
+        proof {
+            work = (work + 1 + w) as nat;
+        }
         let stored = match r {
             Some(m) => m >= size,
             None => true,
@@ -494,6 +526,12 @@ pub fn compress(input: &[u8], prefs: &Prefs) -> (v: Vec<u8>)
             push_le32(&mut v, (size + 0x8000_0000) as u32);
             let data = slice_subrange(input, st, en);
             extend(&mut v, data);
+            proof {
+                work = (work + 4 + size) as nat;
+                if prefs.bsum {
+                    work = (work + 4 + size) as nat;
+                }
+            }
             if prefs.bsum {
                 push_le32(&mut v, xxh32_exec(data));
             }
@@ -508,6 +546,12 @@ pub fn compress(input: &[u8], prefs: &Prefs) -> (v: Vec<u8>)
             push_le32(&mut v, m as u32);
             let data = slice_subrange(scratch.as_slice(), 0, m);
             extend(&mut v, data);
+            proof {
+                work = (work + 4 + m) as nat;
+                if prefs.bsum {
+                    work = (work + 4 + m) as nat;
+                }
+            }
             if prefs.bsum {
                 push_le32(&mut v, xxh32_exec(data));
             }
@@ -527,6 +571,12 @@ pub fn compress(input: &[u8], prefs: &Prefs) -> (v: Vec<u8>)
     let ghost p = v@;
     push_le32(&mut v, 0);
     let ghost mid = v@;
+    proof {
+        work = (work + 4) as nat;
+        if prefs.csum {
+            work = (work + n + 4) as nat;
+        }
+    }
     if prefs.csum {
         push_le32(&mut v, xxh32_exec(input));
     }
@@ -539,7 +589,13 @@ pub fn compress(input: &[u8], prefs: &Prefs) -> (v: Vec<u8>)
         });
         lemma_frame_end(hp, p, h, input@, v@);
     }
-    v
+    (v, Ghost(work))
+}
+
+/// A bound on `block`'s steps (each loop turn, each byte compared or
+/// copied, each table entry cleared).
+pub open spec fn block_work(size: nat) -> nat {
+    18 * size + BIG_SIZE as nat + HASH_SIZE as nat + 60
 }
 
 /// Compresses the block `input[st..en]` of a frame into `dst` from `base`
@@ -556,7 +612,7 @@ fn block(
     table: &mut [u32; BIG_SIZE],
     accel: usize,
     indep: bool,
-) -> (r: (usize, Option<usize>))
+) -> (r: (usize, Option<usize>, Ghost<nat>))
     requires
         st <= en <= input@.len(),
         en - st <= 0x40_0000,
@@ -573,10 +629,12 @@ fn block(
             input@.subrange(r.0 as int, st as int),
             (en - st) as nat,
         ) == Some(input@.subrange(r.0 as int, en as int)),
+        r.2@ <= block_work((en - st) as nat),
 {
     if indep || en > 0xf000_0000 {
         if en - st <= 65536 {
-            (st, compress_small(input, st, st, en, dst, base, accel))
+            let (c, w) = compress_small_counted(input, st, st, en, dst, base, accel);
+            (st, c, w)
         } else {
             let mut i: usize = 0;
             while i < BIG_SIZE
@@ -588,10 +646,12 @@ fn block(
                 table[i] = 0;
                 i = i + 1;
             }
-            (st, compress_block(input, st, st, en, dst, base, table, accel))
+            let (c, Ghost(w)) = compress_block_counted(input, st, st, en, dst, base, table, accel);
+            (st, c, Ghost((BIG_SIZE + w) as nat))
         }
     } else {
-        (0, compress_block(input, 0, st, en, dst, base, table, accel))
+        let (c, w) = compress_block_counted(input, 0, st, en, dst, base, table, accel);
+        (0, c, w)
     }
 }
 
@@ -673,7 +733,7 @@ fn put_block(
     accel: usize,
     indep: bool,
     bsum: bool,
-) -> (r: Option<(usize, Ghost<Seq<u8>>, Ghost<bool>)>)
+) -> (res: (Option<(usize, Ghost<Seq<u8>>, Ghost<bool>)>, Ghost<nat>))
     requires
         st < en <= input@.len(),
         en - st <= 0x40_0000,
@@ -683,12 +743,14 @@ fn put_block(
     ensures
         final(dst)@.len() == old(dst)@.len(),
         forall|x: int| 0 <= x < BIG_SIZE ==> (#[trigger] final(table)@[x]) <= en,
-        r matches Some((e2, data, raw)) ==> {
+        res.0 matches Some((e2, data, raw)) ==> {
             &&& d <= e2 <= final(dst)@.len()
             &&& final(dst)@.subrange(0, e2 as int) == old(dst)@.subrange(0, d as int) + enc_block(data@, raw@, bsum)
             &&& 0 < data@.len() <= en - st
             &&& block_data(data@, raw@, indep, Seq::empty(), input@.subrange(0, st as int)) == Some(input@.subrange(0, en as int))
         },
+        // The block's, then each byte written or summed.
+        res.1@ <= block_work((en - st) as nat) + 2 * (en - st) + 8,
 {
     let dn = dst.len();
     let ghost p = dst@.subrange(0, d as int);
@@ -697,11 +759,12 @@ fn put_block(
     let ghost chunk = input@.subrange(st as int, en as int);
     let size = en - st;
     if dn - d < 4 {
-        return None;
+        return (None, Ghost(0));
     }
     let base = d + 4;
     let ghost s0 = dst@;
-    let (lo, r) = block(input, st, en, dst, base, table, accel, indep);
+    let (lo, r, Ghost(w0)) = block(input, st, en, dst, base, table, accel, indep);
+    let ghost mut work: nat = (w0 + 4) as nat;
     let ghost s1 = dst@;
     proof {
         assert forall|x: int| 0 <= x < base implies s1[x] == s0[x] by {
@@ -729,7 +792,10 @@ fn put_block(
         }
     } else {
         if dn - base < size {
-            return None;
+            return (None, Ghost(work));
+        }
+        proof {
+            work = (work + size) as nat;
         }
         put_le32(dst, d, (size + 0x8000_0000) as u32);
         copy_in(dst, base, input, st, size);
@@ -745,7 +811,10 @@ fn put_block(
     let ghost s3 = dst@;
     if bsum {
         if dn - e2 < 4 {
-            return None;
+            return (None, Ghost(work));
+        }
+        proof {
+            work = (work + (e2 - base) + 4) as nat;
         }
         let c = xxh32_exec(slice_subrange(dst, base, e2));
         put_le32(dst, e2, c);
@@ -758,18 +827,31 @@ fn put_block(
     proof {
         assert(dst@.subrange(0, e2 as int) =~= p + enc_block(data, !fits, bsum));
     }
-    Some((e2, Ghost(data), Ghost(!fits)))
+    (Some((e2, Ghost(data), Ghost(!fits))), Ghost(work))
 }
 
 /// Compresses `input` as one frame into `dst`, each block written
 /// straight to its place. `Some(m)`: `dst[..m]` is the frame. `None`:
 /// `dst` is too small.
+#[inline(always)]
 pub fn compress_into(input: &[u8], dst: &mut [u8], prefs: &Prefs) -> (r: Option<usize>)
     ensures
         final(dst)@.len() == old(dst)@.len(),
         r matches Some(m) ==> m <= final(dst)@.len() && frame(final(dst)@.subrange(0, m as int), 0) == Some(
             (input@, m as int),
         ) && frames(final(dst)@.subrange(0, m as int), 0) == Some(input@),
+{
+    compress_into_counted(input, dst, prefs).0
+}
+
+/// `compress_into`, with its steps counted.
+pub fn compress_into_counted(input: &[u8], dst: &mut [u8], prefs: &Prefs) -> (res: (Option<usize>, Ghost<nat>))
+    ensures
+        final(dst)@.len() == old(dst)@.len(),
+        res.0 matches Some(m) ==> m <= final(dst)@.len() && frame(final(dst)@.subrange(0, m as int), 0) == Some(
+            (input@, m as int),
+        ) && frames(final(dst)@.subrange(0, m as int), 0) == Some(input@),
+        res.1@ <= frame_work(input@.len()),
 {
     let n = input.len();
     let dn = dst.len();
@@ -801,11 +883,12 @@ pub fn compress_into(input: &[u8], dst: &mut [u8], prefs: &Prefs) -> (r: Option<
     let ghost hp = hv@;
     let hl = hv.len();
     if hl > dn {
-        return None;
+        return (None, Ghost(0));
     }
     copy_in(dst, 0, hv.as_slice(), 0, hl);
     let mut d: usize = hl;
     let mut table = [0u32;BIG_SIZE];
+    let ghost mut work: nat = (hl + BIG_SIZE) as nat;
     let mut st: usize = 0;
     proof {
         assert(dst@.subrange(0, d as int) =~= hp);
@@ -826,6 +909,8 @@ pub fn compress_into(input: &[u8], dst: &mut [u8], prefs: &Prefs) -> (r: Option<
             h.indep == prefs.indep,
             h.bsum == prefs.bsum,
             forall|x: int| 0 <= x < BIG_SIZE ==> (#[trigger] table@[x]) <= st,
+            st < n ==> work <= 4111 + 21 * st,
+            work <= 4111 + 21 * st + 12357,
             extends(hp, dst@.subrange(0, d as int)),
             breach(dst@.subrange(0, d as int), h, input@.subrange(0, st as int)),
         decreases n - st,
@@ -838,9 +923,13 @@ pub fn compress_into(input: &[u8], dst: &mut [u8], prefs: &Prefs) -> (r: Option<
         let ghost p = dst@.subrange(0, d as int);
         let ghost out0 = input@.subrange(0, st as int);
         let ghost out2 = input@.subrange(0, en as int);
-        let e2 = match put_block(input, st, en, dst, d, &mut table, accel, prefs.indep, prefs.bsum) {
+        let (pb, Ghost(w)) = put_block(input, st, en, dst, d, &mut table, accel, prefs.indep, prefs.bsum);
+        proof {
+            work = (work + 1 + w) as nat;
+        }
+        let e2 = match pb {
             None => {
-                return None;
+                return (None, Ghost(work));
             },
             Some((e2, data, raw)) => {
                 proof {
@@ -860,7 +949,10 @@ pub fn compress_into(input: &[u8], dst: &mut [u8], prefs: &Prefs) -> (r: Option<
     }
     let ghost p = dst@.subrange(0, d as int);
     if dn - d < 4 {
-        return None;
+        return (None, Ghost(work));
+    }
+    proof {
+        work = (work + 4) as nat;
     }
     put_le32(dst, d, 0);
     let ghost s4 = dst@;
@@ -871,7 +963,10 @@ pub fn compress_into(input: &[u8], dst: &mut [u8], prefs: &Prefs) -> (r: Option<
     d = d + 4;
     if prefs.csum {
         if dn - d < 4 {
-            return None;
+            return (None, Ghost(work));
+        }
+        proof {
+            work = (work + n + 4) as nat;
         }
         let c = xxh32_exec(input);
         put_le32(dst, d, c);
@@ -891,7 +986,7 @@ pub fn compress_into(input: &[u8], dst: &mut [u8], prefs: &Prefs) -> (r: Option<
         });
         lemma_frame_end(hp, p, h, input@, s);
     }
-    Some(d)
+    (Some(d), Ghost(work))
 }
 
 /// The end mark, and the content checksum after it.

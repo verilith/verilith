@@ -243,13 +243,14 @@ fn decode_indep(
     scratch: &mut Vec<u8>,
     dl: usize,
     Ghost(dict): Ghost<Seq<u8>>,
-) -> (r: Result<usize, ()>)
+) -> (res: (Result<usize, ()>, Ghost<nat>))
     requires
         base <= op <= old(out)@.len(),
         op <= MAX_OUT,
         0 < dl <= 0x1_0000,
         bmax <= 0x40_0000,
-        dl <= old(scratch)@.len(),
+        dl <= old(scratch)@.len() <= dl + bmax,
+        old(out)@.len() <= op + bmax,
         dict.len() == dl,
         old(scratch)@.subrange(0, dl as int) == dict,
     ensures
@@ -257,7 +258,13 @@ fn decode_indep(
         final(out)@.subrange(0, op as int) == old(out)@.subrange(0, op as int),
         dl <= final(scratch)@.len(),
         final(scratch)@.subrange(0, dl as int) == dict,
-        match r {
+        final(scratch)@.len() <= dl + bmax,
+        final(out)@.len() <= op + bmax,
+        final(out)@.len() <= old(out)@.len() + 255 * data@.len(),
+        // Each byte cleared, decoded or copied; a block that does not
+        // decode may also take the room it was given.
+        res.1@ <= 1200 * data@.len() + 400 + if res.0 is Err { 0x40_0000int } else { 0 },
+        match res.0 {
             Ok(op2) => op <= op2 <= final(out)@.len() && op2 - op <= bmax && block_data(
                 data@,
                 false,
@@ -274,20 +281,45 @@ fn decode_indep(
     let ghost before = out@;
     let ghost cur = out@.subrange(base as int, op as int);
     let ghost s0 = scratch@;
-    if scratch.len() < dl + bmax {
-        scratch.resize(dl + bmax, 0);
+    // Room for what the block can decode to: at most 255 bytes for each
+    // of its bytes, and never more than a block.
+    let size = data.len();
+    let room = if size <= bmax / 255 {
+        255 * size
+    } else {
+        bmax
+    };
+    if scratch.len() < dl + room {
+        scratch.resize(dl + room, 0);
     }
+    let ghost mut work: nat = room as nat;
     proof {
         assert(scratch@.subrange(0, dl as int) =~= s0.subrange(0, dl as int));
         lemma_seqs_len(data@, 0, dict, None);
     }
-    let r = decode_block(data, scratch.as_mut_slice(), 0, dl);
+    let ghost s1 = scratch@;
+    let (r, Ghost(w)) = decode_block_counted(data, scratch.as_mut_slice(), 0, dl);
+    proof {
+        work = (work + w) as nat;
+    }
     match r {
-        None => Err(()),
+        None => {
+            proof {
+                lemma_seqs_max(data@, 0, s1.subrange(0, dl as int), None);
+            }
+            (Err(()), Ghost(work))
+        },
         Some(e) => {
             let m = e - dl;
+            proof {
+                lemma_seqs_max(data@, 0, s1.subrange(0, dl as int), None);
+                assert(s1.subrange(0, dl as int) =~= s0.subrange(0, dl as int));
+            }
             if m > bmax {
-                return Err(());
+                return (Err(()), Ghost(work));
+            }
+            proof {
+                work = (work + 2 * m) as nat;
             }
             if out.len() < op + m {
                 out.resize(op + m, 0);
@@ -301,7 +333,7 @@ fn decode_indep(
                 assert(out@.subrange(base as int, op + m) =~= cur + scratch@.subrange(dl as int, e as int));
                 assert(out@.subrange(0, op as int) =~= before.subrange(0, op as int));
             }
-            Ok(op + m)
+            (Ok(op + m), Ghost(work))
         },
     }
 }
@@ -324,21 +356,26 @@ fn decode_one(
     base: usize,
     op: usize,
     scratch: &mut Vec<u8>,
-) -> (r: Result<usize, ()>)
+) -> (res: (Result<usize, ()>, Ghost<nat>))
     requires
         j + size <= src@.len(),
         hb <= base <= op <= old(out)@.len(),
         op <= MAX_OUT,
         base - hb <= 0x1_0000,
         0 < size <= bmax <= 0x40_0000,
-        base - hb <= old(scratch)@.len(),
+        base - hb <= old(scratch)@.len() <= base - hb + bmax,
+        old(out)@.len() <= op + bmax,
         old(scratch)@.subrange(0, base - hb) == old(out)@.subrange(hb as int, base as int),
     ensures
         final(out)@.len() >= old(out)@.len(),
         final(out)@.subrange(0, base as int) == old(out)@.subrange(0, base as int),
         base - hb <= final(scratch)@.len(),
         final(scratch)@.subrange(0, base - hb) == old(scratch)@.subrange(0, base - hb),
-        match r {
+        final(scratch)@.len() <= base - hb + bmax,
+        final(out)@.len() <= op + bmax,
+        final(out)@.len() <= old(out)@.len() + 255 * size,
+        res.1@ <= 1200 * size + 400 + if res.0 is Err { 0x40_0000int } else { 0 },
+        match res.0 {
             Ok(op2) => op <= op2 <= final(out)@.len() && op2 - op <= bmax && block_data(
                 src@.subrange(j as int, j + size),
                 raw,
@@ -370,12 +407,13 @@ fn decode_one(
         }
         let ghost mid = out@;
         copy_in(out.as_mut_slice(), op, src, j, size);
+        let ghost work: nat = (2 * size) as nat;
         proof {
             assert(mid.subrange(0, op as int) =~= before.subrange(0, op as int));
             assert(out@.subrange(base as int, op + size) =~= cur + data@);
             assert(out@.subrange(0, base as int) =~= before.subrange(0, base as int));
         }
-        Ok(op + size)
+        (Ok(op + size), Ghost(work))
     } else if indep && dl > 0 {
         let ghost b4 = out@;
         let r = decode_indep(data, bmax, out, base, op, scratch, dl, Ghost(dict));
@@ -398,6 +436,7 @@ fn decode_one(
             out.resize(op + room, 0);
         }
         let ghost mid = out@;
+        let ghost mut work: nat = room as nat;
         let lo = if indep {
             op
         } else {
@@ -414,15 +453,20 @@ fn decode_one(
             }
             lemma_seqs_len(data@, 0, mid.subrange(lo as int, op as int), None);
         }
-        match decode_block(data, out.as_mut_slice(), lo, op) {
+        let (db, Ghost(w)) = decode_block_counted(data, out.as_mut_slice(), lo, op);
+        proof {
+            work = (work + w) as nat;
+        }
+        match db {
             None => {
                 proof {
                     lemma_seqs_max(data@, 0, mid.subrange(lo as int, op as int), None);
                 }
-                Err(())
+                (Err(()), Ghost(work))
             },
             Some(op2) => {
                 proof {
+                    lemma_seqs_max(data@, 0, mid.subrange(lo as int, op as int), None);
                     assert(out@.subrange(0, base as int) =~= out@.subrange(0, op as int).subrange(0, base as int));
                     assert(mid.subrange(0, base as int) =~= mid.subrange(0, op as int).subrange(0, base as int));
                     assert(mid.subrange(0, base as int) =~= before.subrange(0, base as int));
@@ -438,9 +482,9 @@ fn decode_one(
                     }
                 }
                 if op2 - op > bmax {
-                    Err(())
+                    (Err(()), Ghost(work))
                 } else {
-                    Ok(op2)
+                    (Ok(op2), Ghost(work))
                 }
             },
         }
@@ -461,7 +505,7 @@ fn decode_blocks(
     hb: usize,
     scratch: &mut Vec<u8>,
     limit: usize,
-) -> (r: Result<usize, Error>)
+) -> (res: (Result<usize, Error>, Ghost<nat>))
     requires
         i0 <= src@.len(),
         0x1_0000 <= h.bmax <= 0x40_0000,
@@ -469,12 +513,18 @@ fn decode_blocks(
         old(out)@.len() <= limit,
         hb <= old(out)@.len(),
         old(out)@.len() - hb <= 0x1_0000,
-        old(out)@.len() - hb <= old(scratch)@.len(),
+        old(out)@.len() - hb <= old(scratch)@.len() <= old(out)@.len() - hb + h.bmax,
         old(scratch)@.subrange(0, old(out)@.len() - hb) == old(out)@.subrange(hb as int, old(out)@.len() as int),
     ensures
         final(out)@.len() >= old(out)@.len(),
         final(out)@.subrange(0, old(out)@.len() as int) == old(out)@,
-        match r {
+        final(out)@.len() <= old(out)@.len() + 255 * (src@.len() - i0),
+        res.0 matches Ok(j) ==> final(out)@.len() <= old(out)@.len() + 255 * (j - i0),
+        // Steps: a bounded number for each byte of the blocks, and for a
+        // block that does not decode the room it was given.
+        res.0 matches Ok(j) ==> res.1@ <= 1202 * (j - i0),
+        res.1@ <= 1202 * (src@.len() - i0) + 0x40_0000 + 405,
+        match res.0 {
             Ok(j) => blocks(
                 src@,
                 i0 as int,
@@ -508,6 +558,7 @@ fn decode_blocks(
     // The content so far is `out[base..op]`; `out` is kept longer, so that
     // a block always has room to decode into.
     let mut op = base;
+    let ghost mut work: nat = 0;
     proof {
         assert(out@.subrange(base as int, op as int) =~= Seq::empty());
         assert(out@.subrange(0, base as int) =~= old(out)@);
@@ -529,10 +580,17 @@ fn decode_blocks(
             goal == blocks(src@, i0 as int, h@, dict, Seq::empty()),
             blocks(src@, i as int, h@, dict, out@.subrange(base as int, op as int)) == goal,
             out@.subrange(0, base as int) == old(out)@,
+            scratch@.len() <= base - hb + bmax,
+            out@.len() <= op + bmax,
+            out@.len() <= base + 255 * (i - i0),
+            work <= 1202 * (i - i0),
         decreases n - i,
     {
+        proof {
+            work = work + 1;
+        }
         if n - i < 4 {
-            return Err(Error::Corrupt);
+            return (Err(Error::Corrupt), Ghost(work));
         }
         let ghost cur = out@.subrange(base as int, op as int);
         let w = word(src, i) as usize;
@@ -550,7 +608,7 @@ fn decode_blocks(
                 assert(out@.subrange(0, base as int) =~= before.subrange(0, base as int));
                 lemma_blocks_len(src@, i0 as int, h@, dict, Seq::empty());
             }
-            return Ok(j);
+            return (Ok(j), Ghost(work));
         }
         let extra: usize = if h.bsum {
             4
@@ -558,12 +616,15 @@ fn decode_blocks(
             0
         };
         if size > bmax || size + extra > n - j {
-            return Err(Error::Corrupt);
+            return (Err(Error::Corrupt), Ghost(work));
         }
         let data = slice_subrange(src, j, j + size);
         if h.bsum {
+            proof {
+                work = (work + size) as nat;
+            }
             if word(src, j + size) != xxh32_exec(data) {
-                return Err(Error::Corrupt);
+                return (Err(Error::Corrupt), Ghost(work));
             }
         }
         let e = j + size + extra;
@@ -577,9 +638,13 @@ fn decode_blocks(
                 base as int,
             ));
         }
-        let op2 = match decode_one(src, j, size, raw, h.indep, bmax, out, hb, base, op, scratch) {
+        let (one, Ghost(w)) = decode_one(src, j, size, raw, h.indep, bmax, out, hb, base, op, scratch);
+        proof {
+            work = (work + w) as nat;
+        }
+        let op2 = match one {
             Err(_) => {
-                return Err(Error::Corrupt);
+                return (Err(Error::Corrupt), Ghost(work));
             },
             Ok(m) => m,
         };
@@ -587,7 +652,7 @@ fn decode_blocks(
             proof {
                 lemma_blocks_len(src@, e as int, h@, dict, out@.subrange(base as int, op2 as int));
             }
-            return Err(Error::TooLarge);
+            return (Err(Error::TooLarge), Ghost(work));
         }
         i = e;
         op = op2;
@@ -604,20 +669,25 @@ fn decode_frame_in(
     scratch: &mut Vec<u8>,
     limit: usize,
     Ghost(d): Ghost<Seq<u8>>,
-) -> (r: Result<usize, Error>)
+) -> (res: (Result<usize, Error>, Ghost<nat>))
     requires
         i <= src@.len(),
         limit <= MAX_OUT,
         old(out)@.len() <= limit,
         hb <= old(out)@.len(),
         old(out)@.len() - hb <= 0x1_0000,
-        old(out)@.len() - hb <= old(scratch)@.len(),
+        old(scratch)@.len() == old(out)@.len() - hb,
         old(scratch)@.subrange(0, old(out)@.len() - hb) == old(out)@.subrange(hb as int, old(out)@.len() as int),
         dict_window(d) == old(out)@.subrange(hb as int, old(out)@.len() as int),
     ensures
         final(out)@.len() >= old(out)@.len(),
         final(out)@.subrange(0, old(out)@.len() as int) == old(out)@,
-        match r {
+        final(out)@.len() <= old(out)@.len() + 255 * (src@.len() - i),
+        res.0 matches Ok(j) ==> final(out)@.len() <= old(out)@.len() + 255 * (j - i),
+        // The header, the blocks, and the content's checksum.
+        res.0 matches Ok(j) ==> res.1@ + 8000 <= 1202 * (j - i) + (final(out)@.len() - old(out)@.len()),
+        res.1@ <= 1202 * (src@.len() - i) + 0x40_0000 + 421 + (final(out)@.len() - old(out)@.len()),
+        match res.0 {
             Ok(j) => frame_dict(src@, i as int, d) == Some(
                 (final(out)@.subrange(old(out)@.len() as int, final(out)@.len() as int), j as int),
             ) && i < j <= src@.len() && final(out)@.len() <= limit,
@@ -628,43 +698,53 @@ fn decode_frame_in(
 {
     let n = src.len();
     let base = out.len();
+    // The header, and its checksum of at most 14 bytes.
+    let ghost mut work: nat = 16;
     let h = match read_header(src, i) {
         None => {
-            return Err(Error::Corrupt);
+            return (Err(Error::Corrupt), Ghost(work));
         },
         Some(h) => h,
     };
-    let j = match decode_blocks(src, h.end, &h, out, hb, scratch, limit) {
+    let (blk, Ghost(w)) = decode_blocks(src, h.end, &h, out, hb, scratch, limit);
+    proof {
+        work = (work + w) as nat;
+    }
+    let j = match blk {
         Err(e) => {
-            return Err(e);
+            return (Err(e), Ghost(work));
         },
         Ok(j) => j,
     };
     match h.csize {
         Some(c) => {
             if c != (out.len() - base) as u64 {
-                return Err(Error::Corrupt);
+                return (Err(Error::Corrupt), Ghost(work));
             }
         },
         None => {},
     }
     if h.csum {
         if n - j < 4 {
-            return Err(Error::Corrupt);
+            return (Err(Error::Corrupt), Ghost(work));
+        }
+        proof {
+            work = (work + (out@.len() - base)) as nat;
         }
         let x = xxh32_exec(slice_subrange(out.as_slice(), base, out.len()));
         if word(src, j) != x {
-            return Err(Error::Corrupt);
+            return (Err(Error::Corrupt), Ghost(work));
         }
-        Ok(j + 4)
+        (Ok(j + 4), Ghost(work))
     } else {
-        Ok(j)
+        (Ok(j), Ghost(work))
     }
 }
 
 /// Decodes the frame at `i`, appending its content to `out`
 /// (`spec::frame`). Gives the index after the frame. On an error `out`
 /// is left with its old contents and some of the frame's.
+#[inline(always)]
 pub fn decode_frame(src: &[u8], i: usize, out: &mut Vec<u8>, limit: usize) -> (r: Result<usize, Error>)
     requires
         i <= src@.len(),
@@ -680,6 +760,30 @@ pub fn decode_frame(src: &[u8], i: usize, out: &mut Vec<u8>, limit: usize) -> (r
             Err(Error::Corrupt) => frame(src@, i as int).is_none(),
             Err(Error::TooLarge) => frame(src@, i as int) matches Some((c, _j)) ==> old(out)@.len() + c.len() > limit,
         },
+{
+    decode_frame_counted(src, i, out, limit).0
+}
+
+/// `decode_frame`, with its steps counted.
+pub fn decode_frame_counted(src: &[u8], i: usize, out: &mut Vec<u8>, limit: usize) -> (res: (Result<usize, Error>, Ghost<nat>))
+    requires
+        i <= src@.len(),
+        limit <= MAX_OUT,
+        old(out)@.len() <= limit,
+    ensures
+        final(out)@.len() >= old(out)@.len(),
+        final(out)@.subrange(0, old(out)@.len() as int) == old(out)@,
+        match res.0 {
+            Ok(j) => frame(src@, i as int) == Some(
+                (final(out)@.subrange(old(out)@.len() as int, final(out)@.len() as int), j as int),
+            ) && i < j <= src@.len() && final(out)@.len() <= limit,
+            Err(Error::Corrupt) => frame(src@, i as int).is_none(),
+            Err(Error::TooLarge) => frame(src@, i as int) matches Some((c, _j)) ==> old(out)@.len() + c.len() > limit,
+        },
+        res.0 matches Ok(j) ==> final(out)@.len() <= old(out)@.len() + 255 * (j - i),
+        final(out)@.len() <= old(out)@.len() + 255 * (src@.len() - i),
+        res.0 matches Ok(j) ==> res.1@ + 8000 <= 1202 * (j - i) + (final(out)@.len() - old(out)@.len()),
+        res.1@ <= 1202 * (src@.len() - i) + 0x40_0000 + 421 + (final(out)@.len() - old(out)@.len()),
 {
     let base = out.len();
     let mut scratch: Vec<u8> = Vec::new();
@@ -699,6 +803,7 @@ pub const MAX_DICT_OUT: usize = MAX_OUT - 0x1_0000;
 /// does. Only the last 64 KiB of `dict` are used. Gives the index after
 /// the frame. On an error `out` is left as it was, or, with an empty
 /// dictionary, as `decode_frame` leaves it.
+#[inline(always)]
 pub fn decode_frame_dict(src: &[u8], i: usize, dict: &[u8], out: &mut Vec<u8>, limit: usize) -> (r: Result<
     usize,
     Error,
@@ -719,12 +824,37 @@ pub fn decode_frame_dict(src: &[u8], i: usize, dict: &[u8], out: &mut Vec<u8>, l
                 + c.len() > limit,
         },
 {
+    decode_frame_dict_counted(src, i, dict, out, limit).0
+}
+
+/// `decode_frame_dict`, with its steps counted.
+pub fn decode_frame_dict_counted(src: &[u8], i: usize, dict: &[u8], out: &mut Vec<u8>, limit: usize) -> (res: (Result<usize, Error>, Ghost<nat>))
+    requires
+        i <= src@.len(),
+        limit <= MAX_DICT_OUT,
+        old(out)@.len() <= limit,
+    ensures
+        final(out)@.len() >= old(out)@.len(),
+        final(out)@.subrange(0, old(out)@.len() as int) == old(out)@,
+        match res.0 {
+            Ok(j) => frame_dict(src@, i as int, dict@) == Some(
+                (final(out)@.subrange(old(out)@.len() as int, final(out)@.len() as int), j as int),
+            ) && i < j <= src@.len() && final(out)@.len() <= limit,
+            Err(Error::Corrupt) => frame_dict(src@, i as int, dict@).is_none(),
+            Err(Error::TooLarge) => frame_dict(src@, i as int, dict@) matches Some((c, _j)) ==> old(out)@.len()
+                + c.len() > limit,
+        },
+        // As `decode_frame`'s, with the dictionary's window copied twice
+        // and the content copied out.
+        res.1@ <= 1970 * (src@.len() - i) + 0x40_0000 + 421 + 4 * 0x1_0000,
+{
     let dn = dict.len();
     if dn == 0 {
         proof {
             assert(dict@ =~= Seq::<u8>::empty());
         }
-        return decode_frame(src, i, out, limit);
+        let (fr, Ghost(w)) = decode_frame_counted(src, i, out, limit);
+        return (fr, Ghost(w));
     }
     let dl = if dn > 0x1_0000 {
         0x1_0000
@@ -747,9 +877,10 @@ pub fn decode_frame_dict(src: &[u8], i: usize, dict: &[u8], out: &mut Vec<u8>, l
         assert(scratch@.subrange(0, dl as int) =~= w@.subrange(0, dl as int));
     }
     let ghost w0 = w@;
-    let r = decode_frame_in(src, i, &mut w, 0, &mut scratch, dl + room, Ghost(dict@));
+    let (r, Ghost(wk)) = decode_frame_in(src, i, &mut w, 0, &mut scratch, dl + room, Ghost(dict@));
+    let ghost mut work: nat = (wk + 4 * dl) as nat;
     match r {
-        Err(e) => Err(e),
+        Err(e) => (Err(e), Ghost(work)),
         Ok(j) => {
             let m = w.len() - dl;
             let ol = out.len();
@@ -762,7 +893,10 @@ pub fn decode_frame_dict(src: &[u8], i: usize, dict: &[u8], out: &mut Vec<u8>, l
                 assert(out@.subrange(0, ol as int) =~= before);
                 assert(out@.subrange(ol as int, out@.len() as int) =~= w@.subrange(dl as int, w@.len() as int));
             }
-            Ok(j)
+            proof {
+                work = (work + 2 * m) as nat;
+            }
+            (Ok(j), Ghost(work))
         },
     }
 }
@@ -1040,6 +1174,7 @@ pub open spec fn prepend(a: Seq<u8>, r: Option<Seq<u8>>) -> Option<Seq<u8>> {
 /// - `Err(TooLarge)`: `src` is not valid, or its content is longer than
 ///   `limit` (or `MAX_OUT`). At most `limit` plus one block (4 MiB) of
 ///   memory is used for output before this is returned.
+#[inline(always)]
 pub fn decompress(src: &[u8], limit: usize) -> (r: Result<Vec<u8>, Error>)
     ensures
         match r {
@@ -1047,6 +1182,27 @@ pub fn decompress(src: &[u8], limit: usize) -> (r: Result<Vec<u8>, Error>)
             Err(Error::Corrupt) => frames(src@, 0).is_none(),
             Err(Error::TooLarge) => frames(src@, 0) matches Some(c) ==> c.len() > limit || c.len() > MAX_OUT,
         },
+{
+    decompress_counted(src, limit).0
+}
+
+/// A bound on `decompress`'s steps: linear in the input, with the room
+/// a block that does not decode was given.
+pub open spec fn decompress_work(n: nat) -> nat {
+    1457 * n + 0x40_0000 + 422
+}
+
+/// `decompress`, with its steps counted (each loop turn, and each byte
+/// decoded, copied, cleared or summed).
+pub fn decompress_counted(src: &[u8], limit: usize) -> (res: (Result<Vec<u8>, Error>, Ghost<nat>))
+    ensures
+        match res.0 {
+            Ok(v) => frames(src@, 0) == Some(v@) && v@.len() <= limit,
+            Err(Error::Corrupt) => frames(src@, 0).is_none(),
+            Err(Error::TooLarge) => frames(src@, 0) matches Some(c) ==> c.len() > limit || c.len() > MAX_OUT,
+        },
+        res.1@ <= decompress_work(src@.len()),
+        res.0 matches Ok(v) ==> res.1@ <= 1202 * src@.len() + v@.len(),
 {
     let n = src.len();
     let lim = if limit > MAX_OUT {
@@ -1056,6 +1212,7 @@ pub fn decompress(src: &[u8], limit: usize) -> (r: Result<Vec<u8>, Error>)
     };
     let mut out: Vec<u8> = Vec::new();
     let mut i: usize = 0;
+    let ghost mut work: nat = 0;
     proof {
         assert(prepend(out@, frames(src@, 0)) =~= frames(src@, 0)) by {
             if frames(src@, 0).is_some() {
@@ -1073,19 +1230,28 @@ pub fn decompress(src: &[u8], limit: usize) -> (r: Result<Vec<u8>, Error>)
             limit <= MAX_OUT ==> lim == limit,
             out@.len() <= lim,
             frames(src@, 0) == prepend(out@, frames(src@, i as int)),
+            out@.len() <= 255 * i,
+            work <= 1202 * i + out@.len(),
         decreases n - i,
     {
+        proof {
+            work = work + 1;
+        }
         if n - i >= 8 && word(src, i) / 16 == 0x184D2A5 {
             let size = word(src, i + 4) as usize;
             if size > n - i - 8 {
-                return Err(Error::Corrupt);
+                return (Err(Error::Corrupt), Ghost(work));
             }
             i = i + 8 + size;
         } else {
             let ghost before = out@;
-            match decode_frame(src, i, &mut out, lim) {
+            let (fr, Ghost(w)) = decode_frame_counted(src, i, &mut out, lim);
+            proof {
+                work = (work + w) as nat;
+            }
+            match fr {
                 Err(Error::Corrupt) => {
-                    return Err(Error::Corrupt);
+                    return (Err(Error::Corrupt), Ghost(work));
                 },
                 Err(Error::TooLarge) => {
                     proof {
@@ -1095,7 +1261,7 @@ pub fn decompress(src: &[u8], limit: usize) -> (r: Result<Vec<u8>, Error>)
                             assert(frames(src@, 0).unwrap() == before + (c + r));
                         }
                     }
-                    return Err(Error::TooLarge);
+                    return (Err(Error::TooLarge), Ghost(work));
                 },
                 Ok(j) => {
                     proof {
@@ -1114,7 +1280,7 @@ pub fn decompress(src: &[u8], limit: usize) -> (r: Result<Vec<u8>, Error>)
     proof {
         assert(out@ + Seq::<u8>::empty() =~= out@);
     }
-    Ok(out)
+    (Ok(out), Ghost(work))
 }
 
 } // verus!

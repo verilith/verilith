@@ -440,7 +440,7 @@ fn emit_match(
     len: usize,
     Ghost(i0): Ghost<int>,
     Ghost(n): Ghost<nat>,
-) -> (r: Option<usize>)
+) -> (res: (Option<usize>, Ghost<nat>))
     requires
         d <= old(dst)@.len(),
         1 <= off <= 65535,
@@ -451,22 +451,25 @@ fn emit_match(
         reach(old(dst)@.subrange(0, d as int), i0, input@.subrange(0, ip as int), n),
     ensures
         final(dst)@.len() == old(dst)@.len(),
-        r matches Some(d2) ==> d2 <= final(dst)@.len() && reach(
+        res.0 matches Some(d2) ==> d2 <= final(dst)@.len() && reach(
             final(dst)@.subrange(0, d2 as int),
             i0,
             input@.subrange(0, ip + len),
             n,
         ),
-        r matches Some(d2) ==> d <= d2 && final(dst)@.subrange(0, d as int) == old(dst)@.subrange(0, d as int),
+        res.0 matches Some(d2) ==> d <= d2 && final(dst)@.subrange(0, d as int) == old(dst)@.subrange(0, d as int),
         // At most 3 bytes for each 4 to 64: never more than 7/6 a byte per
         // byte matched, less 10/6.
-        r matches Some(d2) ==> 6 * (d2 - d) + 10 <= 7 * len,
-        6 * (old(dst)@.len() - d) >= 7 * len + 8 ==> r.is_some(),
+        res.0 matches Some(d2) ==> 6 * (d2 - d) + 10 <= 7 * len,
+        6 * (old(dst)@.len() - d) >= 7 * len + 8 ==> res.0.is_some(),
+        // One step for each element written.
+        res.1@ <= len,
 {
     let ghost ok = 6 * (dst@.len() - d) >= 7 * len + 8;
     if len <= 64 {
-        return emit_copy_at(dst, d, input, ip, off, len, Ghost(i0), Ghost(n), Ghost((ip + len) as int));
+        return (emit_copy_at(dst, d, input, ip, off, len, Ghost(i0), Ghost(n), Ghost((ip + len) as int)), Ghost(1));
     }
+    let ghost mut work: nat = 0;
     let ilen = input.len();
     let d00 = d;
     let mut dc = d;
@@ -492,11 +495,13 @@ fn emit_match(
             6 * (dc - d00) <= 7 * (at - ip),
             ok == (6 * (old(dst)@.len() - d00) >= 7 * len + 8),
             ok ==> 6 * (dst@.len() - dc) >= 7 * rem + 8,
+            32 * work <= at - ip,
         decreases rem,
     {
+        proof { work = work + 2; }
         match emit_copy_at(dst, dc, input, at, off, 64, Ghost(i0), Ghost(n), Ghost(hi)) {
             None => {
-                return None;
+                return (None, Ghost(work));
             },
             Some(d2) => {
                 proof {
@@ -511,9 +516,10 @@ fn emit_match(
     let ghost b1 = dst@;
     let d1 = dc;
     if rem > 64 {
+        proof { work = work + 1; }
         match emit_copy_at(dst, dc, input, at, off, 60, Ghost(i0), Ghost(n), Ghost(hi)) {
             None => {
-                return None;
+                return (None, Ghost(work));
             },
             Some(d2) => {
                 dc = d2;
@@ -523,6 +529,7 @@ fn emit_match(
         rem = rem - 60;
     }
     let ghost b2 = dst@;
+    proof { work = work + 1; }
     let r = emit_copy_at(dst, dc, input, at, off, rem, Ghost(i0), Ghost(n), Ghost(hi));
     proof {
         assert(b2.subrange(0, d00 as int) =~= b2.subrange(0, d1 as int).subrange(0, d00 as int));
@@ -532,7 +539,7 @@ fn emit_match(
             assert(b2.subrange(0, d00 as int) =~= b2.subrange(0, dc as int).subrange(0, d00 as int));
         }
     }
-    r
+    (r, Ghost(work))
 }
 
 /// Writes the literal `input[a..b]`, if it is not empty.
@@ -845,7 +852,7 @@ fn compress_fragment<const N: usize>(
     shift: u32,
     Ghost(i0): Ghost<int>,
     Ghost(n): Ghost<nat>,
-) -> (r: Option<usize>)
+) -> (res: (Option<usize>, Ghost<nat>))
     requires
         shift < 32,
         (0xffff_ffffu32 >> shift) < N,
@@ -855,15 +862,15 @@ fn compress_fragment<const N: usize>(
         reach(old(dst)@.subrange(0, d0 as int), i0, input@.subrange(0, fs as int), n),
     ensures
         final(dst)@.len() == old(dst)@.len(),
-        r matches Some(d2) ==> d2 <= final(dst)@.len() && reach(
+        res.0 matches Some(d2) ==> d2 <= final(dst)@.len() && reach(
             final(dst)@.subrange(0, d2 as int),
             i0,
             input@.subrange(0, fe as int),
             n,
         ),
-        r matches Some(d2) ==> d0 <= d2 && final(dst)@.subrange(0, d0 as int) == old(dst)@.subrange(0, d0 as int),
+        res.0 matches Some(d2) ==> d0 <= d2 && final(dst)@.subrange(0, d0 as int) == old(dst)@.subrange(0, d0 as int),
         // Room enough on the way in is room enough throughout.
-        slack(old(dst)@.len() - d0, input@.len() - fs) >= 152 ==> (r matches Some(d2) && slack(
+        slack(old(dst)@.len() - d0, input@.len() - fs) >= 152 ==> (res.0 matches Some(d2) && slack(
             final(dst)@.len() - d2,
             input@.len() - fe,
         ) >= if fe - fs >= 17 {
@@ -871,8 +878,11 @@ fn compress_fragment<const N: usize>(
         } else {
             147int
         }),
+        // Clearing the table, and then a few steps for each byte.
+        res.1@ <= N + 8 * (fe - fs) + 5,
 {
     let ghost ok = slack(dst@.len() - d0, input@.len() - fs) >= 152;
+    let ghost mut work: nat = 0;
     let mut anchor = fs;
     let mut d = d0;
     if fe - fs >= 17 {
@@ -883,6 +893,9 @@ fn compress_fragment<const N: usize>(
         // entry is then a position before the one being looked at, and
         // only its four bytes need comparing.
         let mut table = [0u16;N];
+        proof {
+            work = N as nat;
+        }
         let frag = slice_subrange(input, fs, fe);
         let lim = ip_limit - fs;
         let flen = fe - fs;
@@ -895,6 +908,7 @@ fn compress_fragment<const N: usize>(
                 fs < ip <= ip_limit,
                 anchor < ip,
                 forall|h: int| 0 <= h < N ==> fs + (#[trigger] table@[h]) < ip,
+                work <= N + 4 * (anchor - fs) + 3,
             invariant
                 shift < 32,
                 (0xffff_ffffu32 >> shift) < N,
@@ -914,8 +928,12 @@ fn compress_fragment<const N: usize>(
                 ok ==> slack(dst@.len() - d, input@.len() - anchor) >= 152,
             ensures
                 ok ==> slack(dst@.len() - d, input@.len() - anchor) >= 157 || anchor + 17 <= fe,
+                work <= N + 7 * flen + 3,
             decreases fe - anchor,
         {
+            proof {
+                work = work + 1;
+            }
             // Look for four bytes seen before, stepping faster the longer
             // nothing is found. Positions are counted from the fragment's
             // start, which is what the table holds.
@@ -929,7 +947,11 @@ fn compress_fragment<const N: usize>(
                     !found,
                     q <= lim,
                     forall|h: int| 0 <= h < N ==> (#[trigger] table@[h]) < q,
+                    work + (q - (anchor - fs)) <= N + 4 * q + 1,
                 invariant
+                    fs <= anchor,
+                    anchor - fs < q0,
+                    q <= 2 * lim + 32,
                     shift < 32,
                     (0xffff_ffffu32 >> shift) < N,
                     frag@ == input@.subrange(fs as int, fe as int),
@@ -942,8 +964,12 @@ fn compress_fragment<const N: usize>(
                     forall|h: int| 0 <= h < N ==> (#[trigger] table@[h]) <= q,
                 ensures
                     found ==> q <= lim && c < q && le_bytes(frag@, c as int, 4) == le_bytes(frag@, q as int, 4),
+                    work + (q - (anchor - fs)) <= N + 4 * q + 2,
                 decreases lim + 1 - q,
             {
+                proof {
+                    work = work + 1;
+                }
                 let x = load32(frag, q);
                 let h = hash4(x, shift, Ghost(N));
                 let e = table[h] as usize;
@@ -970,9 +996,12 @@ fn compress_fragment<const N: usize>(
             // What was passed over is a literal, and it is not empty.
             let ghost g1 = dst@;
             let ghost a1 = anchor;
+            proof {
+                work = (work + (fs + q - anchor) + 1) as nat;
+            }
             match emit_lit_at(dst, d, input, anchor, fs + q, Ghost(i0), Ghost(n)) {
                 None => {
-                    return None;
+                    return (None, Ghost(work));
                 },
                 Some(d2) => {
                     proof {
@@ -1009,6 +1038,7 @@ fn compress_fragment<const N: usize>(
                     reach(dst@.subrange(0, d as int), i0, input@.subrange(0, anchor as int), n),
                     ok == (slack(old(dst)@.len() - d0, input@.len() - fs) >= 152),
                     ok ==> slack(dst@.len() - d, input@.len() - anchor) >= 147,
+                    work <= N + 4 * q + 3,
                 ensures
                     !done ==> q < lim,
                     ok ==> slack(dst@.len() - d, input@.len() - anchor) >= 157,
@@ -1024,6 +1054,11 @@ fn compress_fragment<const N: usize>(
                     }
                 }
                 let (more, nx) = eq_len8(frag, c + 4, q + 4, flen - (q + 4));
+                // One step for the turn, and for `eq_len`'s, at most one
+                // for each byte compared and two more.
+                proof {
+                    work = (work + 1 + more + 2) as nat;
+                }
                 proof {
                     assert forall|j: int| 0 <= j < more implies #[trigger] input@[cand + 4 + j] == input@[at + 4 + j] by {
                         assert(frag@[c + 4 + j] == frag@[q + 4 + j]);
@@ -1044,9 +1079,13 @@ fn compress_fragment<const N: usize>(
                     }
                 }
                 let ghost g2 = dst@;
-                match emit_match(dst, d, input, at, off, len, Ghost(i0), Ghost(n)) {
+                let (em, Ghost(w)) = emit_match(dst, d, input, at, off, len, Ghost(i0), Ghost(n));
+                proof {
+                    work = (work + w) as nat;
+                }
+                match em {
                     None => {
-                        return None;
+                        return (None, Ghost(work));
                     },
                     Some(d2) => {
                         proof {
@@ -1090,6 +1129,9 @@ fn compress_fragment<const N: usize>(
         }
     }
     let ghost g3 = dst@;
+    proof {
+        work = (work + (fe - anchor) + 1) as nat;
+    }
     let r = emit_lit_at(dst, d, input, anchor, fe, Ghost(i0), Ghost(n));
     proof {
         if r.is_some() {
@@ -1097,7 +1139,7 @@ fn compress_fragment<const N: usize>(
             assert(g3.subrange(0, d0 as int) =~= g3.subrange(0, d as int).subrange(0, d0 as int));
         }
     }
-    r
+    (r, Ghost(work))
 }
 
 /// google/snappy's `MaxCompressedLength`, as a spec.
@@ -1120,6 +1162,7 @@ pub fn max_compressed_length(n: usize) -> (r: usize)
 /// `input`. `None`: `dst` may be too small (`max_compressed_length` is
 /// always enough), or `input` is 4 GiB or longer, which the format cannot
 /// hold.
+#[inline(always)]
 pub fn compress_into(input: &[u8], dst: &mut [u8]) -> (r: Option<usize>)
     ensures
         final(dst)@.len() == old(dst)@.len(),
@@ -1127,10 +1170,30 @@ pub fn compress_into(input: &[u8], dst: &mut [u8]) -> (r: Option<usize>)
         // `max_compressed_length` is always enough.
         input@.len() <= 0xffff_ffff && old(dst)@.len() >= max_len(input@.len()) ==> r is Some,
 {
+    compress_into_counted(input, dst).0
+}
+
+/// A bound on `compress_into`'s steps: nine for each input byte, and one
+/// table to clear.
+pub open spec fn compress_work(n: nat) -> nat {
+    9 * n + 16400
+}
+
+/// `compress_into`, with its steps counted (each loop turn, each byte
+/// copied or compared, and each table entry cleared).
+pub fn compress_into_counted(input: &[u8], dst: &mut [u8]) -> (res: (Option<usize>, Ghost<nat>))
+    ensures
+        final(dst)@.len() == old(dst)@.len(),
+        res.0 matches Some(m) ==> m <= final(dst)@.len() && decompress(final(dst)@.subrange(0, m as int)) == Some(input@),
+        // `max_compressed_length` is always enough.
+        input@.len() <= 0xffff_ffff && old(dst)@.len() >= max_len(input@.len()) ==> res.0 is Some,
+        res.1@ <= compress_work(input@.len()),
+{
     let n = input.len();
     if n > 0xffff_ffff || dst.len() < 5 {
-        return None;
+        return (None, Ghost(0));
     }
+    let ghost mut work: nat = 0;
     // The preamble.
     let mut d: usize = 0;
     let mut v = n;
@@ -1147,8 +1210,12 @@ pub fn compress_into(input: &[u8], dst: &mut [u8]) -> (r: Option<usize>)
             d == 3 ==> v < 0x800,
             d == 4 ==> v < 0x10,
             dst@.subrange(0, d as int) + enc_varint(v as nat) == goal,
+            work == d,
         decreases v,
     {
+        proof {
+            work = work + 1;
+        }
         let ghost before = dst@;
         set(dst, d, (v % 128 + 128) as u8);
         proof {
@@ -1193,6 +1260,10 @@ pub fn compress_into(input: &[u8], dst: &mut [u8]) -> (r: Option<usize>)
             reach(dst@.subrange(0, d as int), i0 as int, input@.subrange(0, fs as int), n as nat),
             big == (dst@.len() >= max_len(n as nat)),
             big ==> slack(dst@.len() - d, n - fs) >= 152 || (fs == n && slack(dst@.len() - d, n - fs) >= 147),
+            // A fragment before the last is 64 KiB, which pays for its
+            // table; the last may not.
+            fs < n ==> work <= 9 * fs + 6,
+            work <= 9 * fs + 16396,
         decreases n - fs,
     {
         let fe = if n - fs > FRAGMENT {
@@ -1202,16 +1273,20 @@ pub fn compress_into(input: &[u8], dst: &mut [u8]) -> (r: Option<usize>)
         };
         let ghost before = dst@;
         assert(0xffff_ffffu32 >> 22 < 1024 && 0xffff_ffffu32 >> 20 < 4096 && 0xffff_ffffu32 >> 18 < 16384) by (bit_vector);
-        let r = if n <= 1024 {
+        let (r, Ghost(w)) = if n <= 1024 {
             compress_fragment::<1024>(input, fs, fe, dst, d, 22, Ghost(i0 as int), Ghost(n as nat))
         } else if n <= 4096 {
             compress_fragment::<4096>(input, fs, fe, dst, d, 20, Ghost(i0 as int), Ghost(n as nat))
         } else {
             compress_fragment::<HASH_SIZE>(input, fs, fe, dst, d, 18, Ghost(i0 as int), Ghost(n as nat))
         };
+        proof {
+            assert(w <= 16384 + 8 * (fe - fs) + 5);
+            work = (work + 1 + w) as nat;
+        }
         match r {
             None => {
-                return None;
+                return (None, Ghost(work));
             },
             Some(d2) => {
                 proof {
@@ -1232,7 +1307,7 @@ pub fn compress_into(input: &[u8], dst: &mut [u8]) -> (r: Option<usize>)
         assert(s.subrange(0, i0 as int) =~= goal);
         lemma_varint(s, 0, 0, n as nat);
     }
-    Some(d)
+    (Some(d), Ghost(work))
 }
 
 } // verus!
