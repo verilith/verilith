@@ -8,14 +8,16 @@ for the still-image decode path of
 [libwebp](https://chromium.googlesource.com/webm/libwebp/), not for libwebp as
 a whole, and its output is byte-identical with libwebp 1.6.0's.
 
-The two formats are proven to different depths. The lossless decoder is
-proven correct against a specification of the format, in linear time. The
-lossy decoder is proven memory-safe, overflow-free, panic-free and
-terminating. Its first stages, the boolean entropy decoder, the frame header, the intra
-prediction modes and the coefficients of a macroblock, are also proven
-against a specification written from RFC 6386; the
-rest of its agreement with libwebp is tested (differential tests and
-fuzzing), not yet proven.
+Both formats are proven correct against a specification. The lossless
+decoder is proven correct in linear time. The lossy decoder is proven
+memory-safe, overflow-free, panic-free and terminating, and its output is
+proven to be the specification's: every stage from the boolean entropy
+decoder through the frame header, intra modes, coefficients, inverse
+transforms, prediction, loop filter and RGB conversion to the alpha plane.
+That theorem is for frames that satisfy `vp8_plain`, which every ordinary
+encoder's output does ([below](#what-is-proven)). Beyond it, agreement with
+libwebp is tested (differential tests and fuzzing), and the lossy decoder
+has no proven work bound.
 
 For lossless, the bit reader, the Huffman table builder, the color cache, the
 backward references, the four image transforms, the container parser and the
