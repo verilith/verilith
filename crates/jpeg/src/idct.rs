@@ -1087,7 +1087,7 @@ pub fn idct_into(out: &mut Vec<u8>, a: &Vec<i16>, o: usize, q: &[u16; 64], rl: &
                 old(out)[j]
             },
 {
-    if cfg!(target_arch = "aarch64") && verilith_simd::neon::has_neon() {
+    if verilith_simd::neon::has_neon() {
         let r = crate::idct16::idct16_neon(a.as_slice(), o, q, kt, out.as_mut_slice(), row0, col0, stride);
         if r.0 == 0 {
             return r.1;

@@ -14,14 +14,18 @@ x86 machine like any other code and selected at run time with `has_neon()`.
 
 On WebAssembly built with SIMD128 (`-C target-feature=+simd128`),
 `has_neon()` is true too and the NEON kernels run on WebAssembly vectors:
-the 30 wrappers they use there forward to `src/wasm_neon.rs`, which proves
+every wrapper forwards there to `src/wasm_neon.rs`, which proves
 each wrapper's own contract from specifications of the SIMD128
 instructions (`src/wasm.rs`), stated from the WebAssembly spec rather than
 from NEON. Where the two differ the proof works around it: `i8x16.shr_u`
 takes its count modulo 8, so NEON's `ushr #8` (0) is a splat of zero;
 `swizzle` and `tbl` are proven to agree on indices of 16 and more; the
-horizontal maxima, byte multiply, `uaddlp` on 32-bit lanes, `addp` and
-`shrn #4` are built from several instructions and proven.
+horizontal maxima, byte multiply, `uaddlp` on 32-bit lanes, `addp`,
+`shrn #4`, `sqdmulh` (`q15mulr` rounds, so it is a widening multiply,
+shift and saturating narrow), the rounding shifts, multiply-accumulate by
+lane, `uaddlv` and `st3` are built from several instructions and proven.
+So the JSON, UTF-8, URL, HTTP, regex, JPEG and WebP kernels all run, and
+are proven, on SIMD128.
 `tools/check_wasm_neon.py` checks that each contract proven there is
 word for word the wrapper's and that the wrapper forwards to it.
 
@@ -125,7 +129,11 @@ its own trusted base.
   `le_u`, `max_u`, `shr_u`, `swizzle`, `extract_lane`, the `i8x16.shuffle`
   permutations used (each with its indices in the `ensures`), 16-bit
   `shr_u`, `max_u`, `mul`, 32-bit `mul`, the pairwise widening adds, the
-  64-bit widening `extend_low`/`extend_high`, `add` and `extract_lane`).
+  64-bit widening `extend_low`/`extend_high`, `add` and `extract_lane`;
+  for JPEG and WebP the saturating and plain adds and subtracts, `avgr_u`,
+  `andnot`, the shifts, `abs`, the narrows and extends, `extmul`, lane
+  loads and stores, and the shuffles behind `zip`, `uzp`, `ext`, `dup` and
+  `st3`).
   Its bodies off WebAssembly are plain Rust that only lets the verified
   code build. `tests/neon.rs`, run on `wasm32-wasip1` with SIMD128
   (`scripts/wasm32.sh` at the root), checks the NEON contracts built on

@@ -758,7 +758,7 @@ fn interleave2(e: &[u8], o: &[u8], s: &mut [u8], off: usize, n: usize)
     }
     let ghost s0 = s@;
     let mut m: usize = 0;
-    if cfg!(target_arch = "aarch64") && has_neon() {
+    if has_neon() {
         while n - m >= 16
             invariant
                 neon(),
@@ -1282,7 +1282,7 @@ fn upsample_chroma_pair(
     let ghost st0 = st@;
     let ghost sb0 = sb@;
     // On NEON, straight into the lines (the first and last pixels follow).
-    let fast = np >= 16 && (cfg!(target_arch = "aarch64") && has_neon());
+    let fast = np >= 16 && has_neon();
     if fast {
         upsample_pair_neon(c, a, b, st, sb, len);
     }
@@ -2541,7 +2541,7 @@ fn pack4(c0: &[u8], c1: &[u8], c2: &[u8], c3: &[u8], ob: &mut [u8], oo: usize, l
     }
     let ghost s0 = ob@;
     let mut j: usize = 0;
-    if cfg!(target_arch = "aarch64") && has_neon() {
+    if has_neon() {
         while len - j >= 16
             invariant
                 neon(),
@@ -2985,7 +2985,7 @@ fn yuv_pack4(
     if has_avx2() {
         // SAFETY: the CPU has AVX2.
         j = unsafe { yuv_pack4_avx2(ys, yo, su, sv, sa, ob, oo, len, kind) };
-    } else if cfg!(target_arch = "aarch64") && has_neon() {
+    } else if has_neon() {
         j = yuv_pack4_neon(ys, yo, su, sv, sa, ob, oo, len, kind);
     }
     while j < len
@@ -3252,7 +3252,7 @@ fn upsample_line(
         assert(out@.len() == out.len());
     }
     // With AVX2 or NEON, the four-byte layouts in one pass.
-    if kind >= 1 && kind <= 3 && (has_avx2() || (cfg!(target_arch = "aarch64") && has_neon())) {
+    if kind >= 1 && kind <= 3 && (has_avx2() || has_neon()) {
         yuv_pack4(ys, yo, su, sv, sa, ob, oo, len, kind);
         proof {
             lemma_line_packed4(kind as int, out0, ob0, ob@, oo as int, len as int, ys@, yo as int, u0, v0, sa@);
@@ -3263,7 +3263,7 @@ fn upsample_line(
     // vectorize at full width (`su` and `sv` take red and blue, `sg` green).
     // On x86, sixteen at a time as `ConvertYUV444ToRGB_SSE2` does them.
     let mut j: usize = 0;
-    if !(cfg!(target_arch = "aarch64") && has_neon()) {
+    if !has_neon() {
         // SAFETY: SSE2 is part of x86-64 (and emulated elsewhere).
         j = unsafe { yuv_to_rgb_sse2(ys, yo, su, sv, sg, len) };
     }

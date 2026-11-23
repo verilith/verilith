@@ -65,7 +65,7 @@ done
 # The same with SIMD128, plus the NEON wrappers against their references.
 # (Its own target directory: RUSTFLAGS would otherwise rebuild the above.)
 python3 crates/simd/tools/check_wasm_neon.py
-for c in simd http $TESTED; do
+for c in simd http jpeg webp $TESTED; do
   echo "== test $c on wasm32-wasip1 with simd128"
   RUSTFLAGS="-C target-feature=+simd128" CARGO_TARGET_DIR=target/wasm-simd128 \
     cargo test --release --target wasm32-wasip1 -p "verilith-$c" --lib --tests
