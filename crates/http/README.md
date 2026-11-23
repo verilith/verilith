@@ -106,28 +106,38 @@ switches). Two more client tests fail with stock httparse too.
 ### From Rust
 
 ```rust
-use verilith_http::{parse_request, Body, ChunkedDecoder, Chunked, Status};
+use verilith_http::{parse_request, Body, Chunked, ChunkedDecoder, Status};
 
-let mut headers = Vec::new(); // reuse across requests: no allocation once warm
-match parse_request(&buf, &mut headers)? {
-    Status::Partial => { /* read more, call again */ }
-    Status::Complete(req) => {
-        println!("{:?} {:?} HTTP/1.{}", req.method(), req.target(), req.minor_version());
-        for (name, value) in req.headers(&headers) { /* ... */ }
-        match req.body {
-            Body::Empty => {}
-            Body::Length(n) => { /* the next n bytes after req.head_len */ }
-            Body::Chunked => {
-                let mut dec = ChunkedDecoder::new();
-                // Decodes in place, across as many reads as it takes.
-                match dec.decode(&mut body_bytes)? {
-                    Chunked::More { out } => { /* body_bytes[..out] is body */ }
-                    Chunked::Done { out, rest } => { /* then `rest` bytes of the next message */ }
-                }
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let buf = b"POST /upload HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+    let mut headers = Vec::new(); // reuse across requests: no allocation once warm
+    match parse_request(buf, &mut headers)? {
+        Status::Partial => { /* read more, call again */ }
+        Status::Complete(req) => {
+            println!("{:?} {:?} HTTP/1.{}", req.method(), req.target(), req.minor_version());
+            for (name, value) in req.headers(&headers) {
+                println!("{:?}: {:?}", name, value);
             }
-            Body::Close => unreachable!(), // only for responses
+            match req.body {
+                Body::Empty => {}
+                Body::Length(n) => { /* the next n bytes after req.head_len */ }
+                Body::Chunked => {
+                    let mut body = buf[req.head_len..].to_vec();
+                    let mut dec = ChunkedDecoder::new();
+                    // Decodes in place, across as many reads as it takes.
+                    match dec.decode(&mut body)? {
+                        Chunked::More { out } => { /* body[..out] is body so far */ }
+                        Chunked::Done { out, rest } => {
+                            assert_eq!(&body[..out], b"hello");
+                            assert_eq!(rest, 0); // bytes of the next message
+                        }
+                    }
+                }
+                Body::Close => unreachable!(), // only for responses
+            }
         }
     }
+    Ok(())
 }
 ```
 
@@ -561,5 +571,5 @@ the repository root. CI (`.github/workflows/ci.yml` at the repository root) veri
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/http/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/http/LICENSE-MIT), at your option.

@@ -1,25 +1,47 @@
-//! A linear-time regular expression engine with RE2's syntax.
+#![doc = include_str!("../README.md")]
+// A linear-time regular expression engine with RE2's syntax.
 #![cfg_attr(not(verus_keep_ghost), allow(unused_variables, unused_imports, dead_code))]
+#[doc(hidden)]
 pub mod ast;
+#[doc(hidden)]
 pub mod capi;
+#[doc(hidden)]
 pub mod class;
+#[doc(hidden)]
 pub mod compile;
+#[doc(hidden)]
 pub mod cproof;
+#[doc(hidden)]
 pub mod data;
+#[doc(hidden)]
 pub mod find;
+#[doc(hidden)]
 pub mod lanes;
+#[doc(hidden)]
 pub mod dfa;
+#[doc(hidden)]
 pub mod lists;
+#[doc(hidden)]
 pub mod memo;
+#[doc(hidden)]
 pub mod need;
+#[doc(hidden)]
 pub mod parse;
+#[doc(hidden)]
 pub mod pike;
+#[doc(hidden)]
 pub mod prog;
+#[doc(hidden)]
 pub mod sem;
+#[doc(hidden)]
 pub mod skip;
+#[doc(hidden)]
 pub mod spec;
+#[doc(hidden)]
 pub mod syntax;
+#[doc(hidden)]
 pub mod tables;
+#[doc(hidden)]
 pub mod vmspec;
 
 pub use parse::Error;
@@ -63,8 +85,25 @@ impl Regex {
                 Err(e) => e is TooBig || syntax::parse(pattern@) is None,
             },
     {
-        let p = parse::parse(pattern)?;
-        if p.classes.len() > LIM {
+        Regex::with_limit(pattern, ast::DEFAULT_MAX_PROG)
+    }
+
+    /// Compiles `pattern` as [`Regex::new`] does, refusing it with
+    /// `TooBig` if its program would be longer than `max_insts`
+    /// instructions (at most 2^24 are ever allowed, as in RE2). The
+    /// program takes about 32 bytes an instruction.
+    pub fn with_limit(pattern: &[u8], max_insts: usize) -> (r: Result<Regex, Error>)
+        ensures
+            match r {
+                Ok(x) => x.inv() && x.prog.nslots % 2 == 0 && x.prog.insts@.len() <= max_insts
+                    && syntax::parse(pattern@) == Some(
+                    Pat { re: x.re@, ngroups: (x.prog.nslots / 2) as nat, names: names_v(x.names@) },
+                ),
+                Err(e) => e is TooBig || syntax::parse(pattern@) is None,
+            },
+    {
+        let p = parse::parse(pattern, max_insts)?;
+        if p.classes.len() > LIM || p.ngroups > LIM || max_insts < 2 || p.ast.ln > max_insts - 2 {
             return Err(Error::TooBig);
         }
         let ghost re = p.ast.re(p.classes@);
@@ -184,5 +223,20 @@ impl Regex {
             return None;
         }
         self.captures_counted(text, from).0
+    }
+
+    /// Whether the pattern matches anywhere in `text`.
+    pub fn is_match(&self, text: &[u8]) -> bool {
+        self.find(text).is_some()
+    }
+
+    /// The start and end of the leftmost match in `text`.
+    pub fn find(&self, text: &[u8]) -> Option<(usize, usize)> {
+        self.find_at(text, 0)
+    }
+
+    /// The start and end of the leftmost match at or after `from`.
+    pub fn find_at(&self, text: &[u8], from: usize) -> Option<(usize, usize)> {
+        self.captures_at(text, from).map(|m| (m[0], m[1]))
     }
 }

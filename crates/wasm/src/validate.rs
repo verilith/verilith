@@ -572,3 +572,11 @@ fn func(m: &Module, t: &FuncType, f: &Func) -> R<FuncCert> {
     }
     Ok(FuncCert { h, lab, labels, max_height: max_height as u32 })
 }
+
+impl core::fmt::Display for ValidateError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "invalid module: {}", self.0)
+    }
+}
+
+impl std::error::Error for ValidateError {}

@@ -31,6 +31,21 @@ quality 5. On a 4-core Xeon Linux VM, which is noisy (95% intervals about
 +/-0.05), the geometric mean was 0.83x before the side-by-side tables
 (below) and has not been re-measured since.
 
+## Using it from Rust
+
+```rust
+fn main() -> Result<(), verilith_brotli::Error> {
+    // A Brotli stream holding "hello" in one uncompressed meta-block.
+    let input = [0x40, 0x00, 0x10, b'h', b'e', b'l', b'l', b'o', 0x03];
+    let out = verilith_brotli::decompress(&input, 1 << 30)?; // up to the limit
+    assert_eq!(out, b"hello");
+    Ok(())
+}
+```
+
+`Stream` decompresses in pieces, into an output buffer of any size:
+`decompress` is a loop over it.
+
 ## What is proven
 
 The format is written as a small-step machine in `src/spec.rs`
@@ -147,8 +162,8 @@ CI (`.github/workflows/ci.yml` at the repository root) verifies the proofs and r
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/brotli/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/brotli/LICENSE-MIT), at your option.
 
 `tests/data` and `src/dictionary.bin` come from google/brotli and are
-under its MIT license, whose notice is in [LICENSE-brotli](LICENSE-brotli).
+under its MIT license, whose notice is in [LICENSE-brotli](https://github.com/verilith/verilith/blob/main/crates/brotli/LICENSE-brotli).

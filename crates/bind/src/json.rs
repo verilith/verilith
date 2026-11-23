@@ -164,14 +164,22 @@ pub unsafe extern "C" fn vbind_json_doc_parse(d: *mut Doc, input: *const u8, len
     d.src = input;
     d.len = if input.is_null() { 0 } else { length };
     let s: &[u8] = if input.is_null() { &[] } else { core::slice::from_raw_parts(input, length) };
+    // This ABI's tokens (and the simdjson.h shim built on it) hold 32-bit
+    // positions, like simdjson's own: past that the positions would not fit.
+    if s.len() > u32::MAX as usize {
+        out(err_offset, 0);
+        d.src = ptr::null();
+        d.len = 0;
+        return E_TOO_LARGE;
+    }
     match d.parser.parse(s) {
         Ok(document) => {
             d.toks.extend(document.tape().iter().map(|t| Tok {
                 kind: t.kind as u8,
                 escaped: t.escaped as u8,
                 pad: 0,
-                a: t.a,
-                b: t.b,
+                a: t.start() as u32,
+                b: t.end() as u32,
             }));
             OK
         }

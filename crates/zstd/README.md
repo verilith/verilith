@@ -10,6 +10,22 @@ lemmas with no errors and no `assume`; the only `external_body` functions
 in this crate are the seven small copy primitives in
 `src/prims.rs` and the three CPU-feature wrappers in `src/cpu.rs`.
 
+## Using it from Rust
+
+```rust
+fn main() -> Result<(), verilith_zstd::Error> {
+    // A Zstandard frame holding "hello" in one raw block.
+    let frame = [0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x05, 0x29, 0x00, 0x00, b'h', b'e', b'l', b'l', b'o'];
+    let out = verilith_zstd::decompress(&frame, 1 << 30)?; // every frame, up to the limit
+    assert_eq!(out, b"hello");
+    Ok(())
+}
+```
+
+`DictDecoder` decompresses with a dictionary, `Stream` decompresses in
+pieces, and with the feature `zstd-abi` the static library exports
+libzstd's decompression API.
+
 ## What is proven
 
 | property | where it is stated |
@@ -21,7 +37,7 @@ in this crate are the seven small copy primitives in
 | Literals sections, Huffman tree descriptions (direct and FSE-compressed weights), 1- and 4-stream Huffman decoding | `huf::lit_section_exec` against `spec::lit_section` |
 | FSE table descriptions and tables (spread, low-probability symbols, state rows), predefined and repeat modes | `fse::read_ncount`, `fse::build_table`, `seq::seq_table_exec` |
 | Sequences: decoding, repeat offsets, execution with overlapping matches | `seq::seq_run_exec` against `spec::seq_run` |
-| XXH64 (the content checksum), one-shot and fed in pieces | `verilith_xxhash::Xxh64::update`/`digest` against `spec::xxh64` (both from [verilith-xxhash](../xxhash)) |
+| XXH64 (the content checksum), one-shot and fed in pieces | `verilith_xxhash::Xxh64::update`/`digest` against `spec::xxh64` (both from [verilith-xxhash](https://github.com/verilith/verilith/tree/main/crates/xxhash)) |
 | Streaming, input and output in pieces of any size, with or without a dictionary: a frame end (0) is returned only when the input taken is a whole frame and the output handed out is its content, whatever input follows; before that, all output handed out is the start of the frame's content; the loop terminates | `stream::Stream::stream` against `spec::frame_d` with the stream's dictionary (`frame_ok`), `Stream::lemma_emitted_prefix` |
 | Streaming keeps only the last window of output (with a dictionary, the last window plus the dictionary's size of dictionary and output), and that gives the same output (a match reaches back no further) | `stream::lemma_compressed_block_shift`, `lemma_block_step_shift` |
 | Streaming memory: the output kept is at most two windows (each with the dictionary's size added) and three blocks, and a unit being collected at most one block | `stream::Stream::inv` (`mem_ok`, `need`) |
@@ -37,7 +53,7 @@ What the proofs assume rather than prove:
 
 - `src/spec.rs`: the specification. Review it against RFC 8878. Where it
   departs from the RFC or from libzstd, it says so, and
-  [DEPARTURES.md](DEPARTURES.md) lists every case.
+  [DEPARTURES.md](https://github.com/verilith/verilith/blob/main/crates/zstd/DEPARTURES.md) lists every case.
 - [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core)'s trusted
   primitives: `load_u64_le` (an unaligned load whose `requires` is the
   bounds check, proven at each call site) and `tail::Tail`, the vector
@@ -82,7 +98,7 @@ streaming tests check against libzstd that it accepts what it should.
 
 verilith-zstd accepts only what the spec accepts, and the spec is stricter than
 libzstd in a few corners. Every valid stream that libzstd's encoder produces
-decodes the same. [DEPARTURES.md](DEPARTURES.md) lists the cases. In short:
+decodes the same. [DEPARTURES.md](https://github.com/verilith/verilith/blob/main/crates/zstd/DEPARTURES.md) lists the cases. In short:
 matches may not reach beyond the window, block sizes are limited to the
 window in one-shot decoding too, Huffman and sequence bitstreams must be
 consumed exactly, reserved bits must be zero, and legacy (pre-v0.8)
@@ -290,5 +306,5 @@ is the sequence loop and table building.
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/zstd/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/zstd/LICENSE-MIT), at your option.

@@ -33,7 +33,8 @@ pub enum ErrorKind {
     TrailingData,
     /// The input is not well-formed UTF-8.
     InvalidUtf8,
-    /// The input is 4 GiB or larger.
+    /// The input is over 2^48 - 1 bytes (256 TiB), more than a 64-bit
+    /// address space holds today.
     TooLarge,
 }
 
@@ -63,7 +64,7 @@ impl fmt::Display for ErrorKind {
             ErrorKind::TooDeep => write!(f, "nesting deeper than {}", crate::spec::MAX_DEPTH),
             ErrorKind::TrailingData => write!(f, "data after the JSON value"),
             ErrorKind::InvalidUtf8 => write!(f, "invalid UTF-8"),
-            ErrorKind::TooLarge => write!(f, "input of 4 GiB or more"),
+            ErrorKind::TooLarge => write!(f, "input of 256 TiB or more"),
         }
     }
 }
@@ -295,7 +296,7 @@ fn explain(s: &[u8], sc: &Scan, p: usize) -> Fail {
 /// Explains a failure that the one-pass parser reported at `p` (its
 /// `Err(p)`). `require_end` is the mode it ran in.
 pub(crate) fn diagnose(s: &[u8], require_end: bool, p: usize) -> Error {
-    if s.len() > u32::MAX as usize {
+    if s.len() > crate::spec::MAX_INPUT {
         return at(s, (0, ErrorKind::TooLarge));
     }
     let start = if s.starts_with(&[0xEF, 0xBB, 0xBF]) { 3 } else { 0 };
