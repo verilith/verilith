@@ -2119,3 +2119,99 @@ impl Stream {
 }
 
 } // verus!
+
+// ---------------------------------------------------------------------------
+// For the readers of the stream (the C ABIs): plain Rust, which decides
+// nothing about the document.
+// ---------------------------------------------------------------------------
+
+impl Stream {
+    /// Where, in the window, the next chunk keeps it from: no event of
+    /// the stream starts before it.
+    pub fn keep(&self) -> usize {
+        if self.phase != PH_BODY {
+            return 0;
+        }
+        let mut k = self.w.pos.min(self.w.cpos);
+        if self.w.mode != M_ITEM {
+            k = k.min(self.w.tem);
+        }
+        k
+    }
+
+    /// The tokens the last chunk emitted, at positions in `window()`.
+    pub fn take_out(&mut self) -> Tape {
+        std::mem::replace(&mut self.w.out, Tape::new())
+    }
+
+    /// The input from `base()`.
+    pub fn window(&self) -> &[u8] {
+        &self.w.buf
+    }
+
+    pub fn base(&self) -> usize {
+        self.w.base
+    }
+
+    pub fn phase(&self) -> u8 {
+        self.phase
+    }
+
+    /// Past the document type declaration: `dtd` and `prolog` are final.
+    pub fn dtd_read(&self) -> bool {
+        self.phase == PH_M2 || self.phase == PH_BODY || (self.phase >= PH_FAILED && self.phase != PH_WHOLE)
+    }
+
+    /// The declarations, and the text their positions are in.
+    pub fn dtd(&self) -> &DtdOut {
+        &self.dtd
+    }
+
+    pub fn prolog(&self) -> &[u8] {
+        &self.pro
+    }
+
+    /// The prolog's tokens (at positions in the input, which is all kept
+    /// before the root element).
+    pub fn prolog_toks(&self) -> &[Tok] {
+        &self.ptape.toks
+    }
+
+    /// The XML declaration says `standalone="yes"`.
+    pub fn standalone(&self) -> bool {
+        self.sd == 1
+    }
+
+    /// For telling why the document failed (the verdict is `feed`'s): a
+    /// document that reads as this one does from where the parser stands,
+    /// with the prolog and the open elements' start tags before it; how
+    /// long that prefix is; and where in the window the rest begins.
+    pub fn diagnosis(&self) -> (Vec<u8>, usize, usize) {
+        // Nothing dropped yet: the window is the input, whole.
+        if self.w.base == 0 {
+            return (self.w.buf.clone(), 0, 0);
+        }
+        let mut t = self.pro.clone();
+        let mut from = self.w.pos;
+        if self.w.ends.is_empty() {
+            t.extend_from_slice(b"<_/>");
+        } else {
+            let mut a = 0;
+            for &e in &self.w.ends {
+                t.push(b'<');
+                t.extend_from_slice(&self.w.names[a..e]);
+                t.push(b'>');
+                a = e;
+            }
+            if self.w.mode != M_ITEM {
+                from = self.w.tem.min(self.w.pos);
+                if self.w.mode == M_CDATA {
+                    t.extend_from_slice(b"<![CDATA[");
+                }
+            }
+        }
+        let n = t.len();
+        t.extend_from_slice(&self.w.buf[from.min(self.w.buf.len())..]);
+        (t, n, from)
+    }
+}

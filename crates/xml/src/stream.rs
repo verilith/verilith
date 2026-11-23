@@ -17,7 +17,6 @@ use crate::stable_pro::*;
 use crate::stream_spec::*;
 use crate::tape::*;
 use verilith_core::prims::get;
-use verilith_core::utf8::utf8_len;
 use vstd::prelude::*;
 
 verus! {
@@ -757,7 +756,9 @@ fn step_etag(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
         w.gt@ = close_at(gt.push(XTok::ETag), gst.last().2);
     }
     win_pop_name(w);
-    w.out.push(tok(Kind::ETag, 0, 0, 0));
+    // The end tag's span, `<` to after `>` (an empty-element tag's has
+    // none).
+    w.out.push(tok(Kind::ETag, j, e + 1, 0));
     w.pos = e + 1;
     S_ON
 }

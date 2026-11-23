@@ -21,6 +21,7 @@
 //!   offered to the handler but its declarations are not read.
 use super::{Attribute, Document, Element, Src};
 use crate::decode::ex_eol;
+use crate::push::{Stream, R_ERR, R_LIMIT, R_MORE, R_OK, R_WHOLE};
 use crate::tape::{Kind, Tok};
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -294,6 +295,19 @@ pub struct Parser {
     buffer_granted: Option<usize>,
     doc: Option<Box<Document<'static>>>,
     owned_text: Option<Box<[u8]>>,
+    /// The push parser, from the first chunk that is not the last: the
+    /// document's text is then its window (`doc` is over it, and dropped
+    /// before it), which begins at `sbase` in the input.
+    stream: Option<Box<Stream>>,
+    sbase: usize,
+    /// The stream's verdict on what it was fed (`R_MORE`, ...).
+    sverdict: u8,
+    /// `doc` has the stream's declarations, which are final.
+    sdtd: bool,
+    /// The stream handed the document back: it is read whole.
+    whole: bool,
+    /// The walk's place in the chunk's tokens.
+    ci: usize,
     /// Offset of what callers see in the document's text (an external
     /// entity's content begins after the wrapper's prefix).
     origin: usize,
@@ -304,11 +318,12 @@ pub struct Parser {
     ev: (usize, usize),
     /// Where the error is, in the text, once there is one.
     err_at: usize,
-    /// Line counting from `line_at` (an offset) where there is `line`, and
+    /// Line counting from `line_at` (an offset in the input) where there
+    /// is `line`, and `col`, the column there.
     /// the offset of the start of that line.
     line_at: usize,
     line: usize,
-    line_start: usize,
+    col: usize,
     // The walk.
     phase: Phase,
     frames: Vec<Frame>,
@@ -360,6 +375,12 @@ impl Parser {
             buffer_granted: None,
             doc: None,
             owned_text: None,
+            stream: None,
+            sbase: 0,
+            sverdict: 0,
+            sdtd: false,
+            whole: false,
+            ci: 0,
             origin: 0,
             parsing: P_INITIALIZED,
             final_buffer: false,
@@ -368,7 +389,7 @@ impl Parser {
             err_at: 0,
             line_at: 0,
             line: 1,
-            line_start: 0,
+            col: 0,
             phase: Phase::Prolog(0),
             frames: Vec::new(),
             ns_stack: Vec::new(),
@@ -442,30 +463,40 @@ impl Parser {
     fn line_col(&mut self, off: usize) -> (usize, usize) {
         let origin = self.origin;
         let off = off.max(origin);
-        if off < self.line_at {
-            self.line_at = origin;
+        let sbase = self.sbase;
+        if sbase + off < self.line_at {
+            self.line_at = sbase + origin;
             self.line = 1;
-            self.line_start = origin;
+            self.col = 0;
         }
-        let (mut line, mut ls) = (self.line, self.line_start);
+        // A carriage return the window ends with may be the first half of
+        // a line end the next chunk finishes: counted, not kept.
+        let open = self.stream.is_some() && !self.final_buffer;
+        let (mut line, mut col) = (self.line, self.col);
+        let mut keep = None;
         {
             let t = self.text();
             let end = off.min(t.len());
-            let from = self.line_at.min(end);
-            for (k, &c) in t[from..end].iter().enumerate() {
+            let from = (self.line_at - sbase).min(end);
+            for k in from..end {
+                let c = t[k];
+                if open && c == b'\r' && k + 1 == t.len() {
+                    keep = Some((k, line, col));
+                }
                 // A line ends at LF, CR LF, or CR alone (2.11).
-                if c == b'\n' || (c == b'\r' && t.get(from + k + 1) != Some(&b'\n')) {
+                if c == b'\n' || (c == b'\r' && t.get(k + 1) != Some(&b'\n')) {
                     line += 1;
-                    ls = from + k + 1;
+                    col = 0;
+                } else if c & 0xC0 != 0x80 {
+                    // Columns count characters, as expat's do for UTF-8.
+                    col += 1;
                 }
             }
+            let (k, l, c) = keep.unwrap_or((end, line, col));
+            self.line_at = sbase + k;
+            self.line = l;
+            self.col = c;
         }
-        self.line_at = off;
-        self.line = line;
-        self.line_start = ls;
-        // Columns count characters, as expat's do for UTF-8 input.
-        let t = self.text();
-        let col = t[ls.min(t.len())..off.min(t.len())].iter().filter(|&&c| c & 0xC0 != 0x80).count();
         (line, col)
     }
 
@@ -509,12 +540,12 @@ impl Parser {
                 self.doc = Some(Box::new(d));
                 self.origin = prefix_len;
                 self.line_at = prefix_len;
-                self.line_start = prefix_len;
+                self.col = 0;
             }
             Err(e) => {
                 self.origin = prefix_len;
                 self.line_at = prefix_len;
-                self.line_start = prefix_len;
+                self.col = 0;
                 let (code, at) = classify(slice, &e);
                 self.err_at = at.max(prefix_len);
                 if self.ext.is_some() && e.offset >= slice.len().saturating_sub(WRAP_END.len()) && code == E_TAG_MISMATCH {
@@ -578,6 +609,9 @@ impl Parser {
         }
     }
 }
+
+/// `step`: the chunk's tokens are all read.
+const NEED_MORE: c_int = -1;
 
 const WRAP_NAME: &str = "vxml-external-entity";
 const WRAP_END: &[u8] = b"</vxml-external-entity>";
@@ -1023,9 +1057,13 @@ impl Parser {
                 self.parsing = P_FINISHED;
                 return STATUS_OK;
             }
-            if let Err(code) = self.step() {
-                self.err_at = self.ev.0;
-                return self.fail(code);
+            match self.step() {
+                Ok(()) => {}
+                Err(NEED_MORE) => return self.chunk_read(),
+                Err(code) => {
+                    self.err_at = self.ev.0;
+                    return self.fail(code);
+                }
             }
         }
     }
@@ -1033,6 +1071,20 @@ impl Parser {
     fn step(&mut self) -> Result<(), c_int> {
         let doc = self.doc();
         match self.phase {
+            Phase::Prolog(i) if self.stream.is_some() => {
+                let toks = doc.toks(Src::Doc);
+                if i >= toks.len() {
+                    return Err(NEED_MORE);
+                }
+                if toks[i].kind == Kind::STag {
+                    self.phase = Phase::Content;
+                    self.ci = i;
+                    self.frames = vec![Frame { src: Src::Doc, i, end: usize::MAX, kind: FrameKind::Top }];
+                    return Ok(());
+                }
+                self.phase = Phase::Prolog(i + 1);
+                self.prolog_tok(doc, toks, i)
+            }
             Phase::Prolog(i) => {
                 let toks = doc.toks(Src::Doc);
                 if i >= doc.root {
@@ -1047,6 +1099,9 @@ impl Parser {
             Phase::Epilog(i) => {
                 let toks = doc.toks(Src::Doc);
                 if i >= toks.len() {
+                    if self.stream.is_some() && self.sverdict != R_OK {
+                        return Err(NEED_MORE);
+                    }
                     self.phase = Phase::Done;
                     return Ok(());
                 }
@@ -1246,8 +1301,7 @@ impl Parser {
             }
             Kind::PERef => {
                 self.set_ev(t.a().saturating_sub(1), t.b() + 1);
-                let standalone = toks.first().map_or(false, |x| x.kind == Kind::XmlDecl && x.f == 1);
-                if !standalone {
+                if !doc.standalone() {
                     self.dtd_skip = true;
                 }
                 if let Some(f) = self.h.skipped {
@@ -1265,7 +1319,7 @@ impl Parser {
     fn doctype_end(&mut self, doc: &'static Document<'static>) -> Result<(), c_int> {
         // The external subset: offered to the handler, not read.
         let want_ext = self.param_parsing != 0 || self.foreign_dtd;
-        let standalone = doc.toks(Src::Doc).first().map_or(false, |x| x.kind == Kind::XmlDecl && x.f == 1);
+        let standalone = doc.standalone();
         if want_ext && !(self.param_parsing == 1 && standalone) {
             let ext = self.doctype_ext.take();
             if let (Some(f), Some((sys, pubid))) = (self.h.ext_ref, ext) {
@@ -1409,9 +1463,16 @@ impl Parser {
 
     fn content_step(&mut self, doc: &'static Document<'static>) -> Result<(), c_int> {
         let here = self.here();
+        if self.stream.is_some() && self.frames.last().is_some_and(|f| f.src == Src::Doc) {
+            return self.stream_step(doc, here);
+        }
         let fr = match self.frames.last_mut() {
             Some(f) => f,
             None => {
+                if self.stream.is_some() {
+                    self.phase = Phase::Epilog(self.ci);
+                    return Ok(());
+                }
                 let close = doc.toks(Src::Doc)[doc.root].c();
                 self.phase = if self.ext.is_some() { Phase::Done } else { Phase::Epilog(close + 1) };
                 return Ok(());
@@ -1421,7 +1482,7 @@ impl Parser {
         if i >= end {
             let f = self.frames.pop().unwrap();
             match f.kind {
-                FrameKind::Elem { name_at, nb, stag, empty } => self.end_element(doc, name_at, nb, stag, empty),
+                FrameKind::Elem { name_at, nb, stag, empty } => self.end_element(doc, name_at, nb, stag, empty, None),
                 FrameKind::Entity => self.ent_depth -= 1,
                 FrameKind::Top => {}
             }
@@ -1429,15 +1490,67 @@ impl Parser {
         }
         let toks = doc.toks(src);
         let t = toks[i];
-        fr.i = i + 1;
+        fr.i = match t.kind {
+            Kind::STag => t.c() + 1,
+            Kind::PI => i + 2,
+            _ => i + 1,
+        };
+        self.content_tok(doc, src, toks, i, here)
+    }
+
+    /// `content_step` in the stream's chunk: an end tag closes the element
+    /// (the tokens have no links to them).
+    fn stream_step(&mut self, doc: &'static Document<'static>, here: bool) -> Result<(), c_int> {
+        let toks = doc.toks(Src::Doc);
+        let i = self.ci;
+        if i >= toks.len() {
+            return Err(NEED_MORE);
+        }
+        let t = toks[i];
+        match t.kind {
+            Kind::ETag => {
+                self.ci = i + 1;
+                if let Some(f) = self.frames.pop() {
+                    if let FrameKind::Elem { name_at, nb, stag, empty } = f.kind {
+                        let span = if t.b() > 0 { Some((t.a(), t.b())) } else { None };
+                        self.end_element(doc, name_at, nb, stag, empty, span);
+                    }
+                }
+                if self.frames.len() == 1 && matches!(self.frames[0].kind, FrameKind::Top) {
+                    self.frames.clear();
+                    self.phase = Phase::Epilog(self.ci);
+                }
+                Ok(())
+            }
+            Kind::STag => {
+                let mut k = i + 1;
+                while k + 1 < toks.len() && toks[k].kind == Kind::Attr {
+                    k += 2;
+                }
+                self.ci = k;
+                self.start_element(doc, Src::Doc, i, here)
+            }
+            Kind::PI => {
+                self.ci = i + 2;
+                self.content_tok(doc, Src::Doc, toks, i, here)
+            }
+            _ => {
+                self.ci = i + 1;
+                self.content_tok(doc, Src::Doc, toks, i, here)
+            }
+        }
+    }
+
+    /// One item of content: the token at `i` of `src`'s.
+    fn content_tok(&mut self, doc: &'static Document<'static>, src: Src, toks: &'static [Tok], i: usize, here: bool) -> Result<(), c_int> {
+        let t = toks[i];
         match t.kind {
             Kind::STag => {
-                fr.i = t.c() + 1;
                 self.start_element(doc, src, i, here)?;
             }
             Kind::Text | Kind::CData => {
                 let raw = &doc.buf(src)[t.a()..t.b()];
-                let v: Cow<[u8]> = if src == Src::Doc && t.f != 0 {
+                let v: Cow<[u8]> = if src == Src::Doc && t.f & 1 != 0 {
                     let mut out = Vec::with_capacity(t.b() - t.a());
                     ex_eol(doc.buf(src), t.a(), t.b(), &mut out);
                     Cow::Owned(out)
@@ -1445,16 +1558,18 @@ impl Parser {
                     Cow::Borrowed(raw)
                 };
                 let cdata = t.kind == Kind::CData;
+                // A CDATA section from the stream comes in pieces: the first
+                // and the last say so.
+                let whole = self.stream.is_none() || src != Src::Doc;
+                let first = cdata && (whole || t.f & 2 != 0);
+                let last = cdata && (whole || t.f & 4 != 0);
                 if here {
-                    if cdata {
-                        self.set_ev(t.a() - 9, t.b() + 3);
-                        self.last_end = t.b() + 3;
-                    } else {
-                        self.set_ev(t.a(), t.b());
-                        self.last_end = t.b();
-                    }
+                    let a = if first { t.a() - 9 } else { t.a() };
+                    let b = if last { t.b() + 3 } else { t.b() };
+                    self.set_ev(a, b);
+                    self.last_end = b;
                 }
-                if cdata {
+                if first {
                     if let Some(f) = self.h.start_cdata {
                         let arg = self.arg();
                         unsafe { f(arg) };
@@ -1469,7 +1584,7 @@ impl Parser {
                 } else if self.h.default.is_some() {
                     self.report_default_bytes(&v);
                 }
-                if cdata {
+                if last {
                     if let Some(f) = self.h.end_cdata {
                         let arg = self.arg();
                         unsafe { f(arg) };
@@ -1495,7 +1610,6 @@ impl Parser {
             }
             Kind::Comment => self.comment(doc, src, t, here),
             Kind::PI => {
-                self.frames.last_mut().unwrap().i = i + 2;
                 self.pi(doc, src, t, toks[i + 1], here);
             }
             Kind::EntRef => self.entity_ref(doc, src, t, here)?,
@@ -1784,8 +1898,11 @@ impl Parser {
         Ok(out)
     }
 
-    fn end_element(&mut self, doc: &'static Document<'static>, name_at: usize, nb: usize, stag: usize, empty: bool) {
-        if self.here() && empty {
+    fn end_element(&mut self, doc: &'static Document<'static>, name_at: usize, nb: usize, stag: usize, empty: bool, span: Option<(usize, usize)>) {
+        if let (true, Some((a, b))) = (self.here(), span) {
+            self.set_ev(a, b);
+            self.last_end = b;
+        } else if self.here() && empty {
             self.set_ev(self.last_end, self.last_end);
         } else if self.here() {
             let text = doc.text();
@@ -2157,13 +2274,20 @@ pub unsafe extern "C" fn XML_ExternalEntityParserCreate(
     }
     // The wrapper: the parent's internal subset, then a start tag.
     let mut prefix = Vec::new();
-    if let Some(d) = pp.doc.as_ref() {
-        let toks = d.toks(Src::Doc);
-        let text = d.text();
-        if toks.first().map_or(false, |t| t.kind == Kind::XmlDecl && t.f == 1) {
+    let parts = match (pp.stream.as_ref(), pp.doc.as_ref()) {
+        (Some(st), _) => {
+            let toks = st.prolog_toks();
+            let n = toks.iter().position(|t| t.kind == Kind::DoctypeEnd).map_or(0, |k| k + 1);
+            Some((st.standalone(), &toks[..n], st.prolog()))
+        }
+        (None, Some(d)) => Some((d.standalone(), d.toks(Src::Doc), d.text())),
+        _ => None,
+    };
+    if let Some((standalone, toks, text)) = parts {
+        if standalone {
             prefix.extend_from_slice(b"<?xml version=\"1.0\" standalone=\"yes\"?>");
         }
-        if let Some((sub, has_ext)) = internal_subset(d) {
+        if let Some((sub, has_ext)) = internal_subset_in(toks, text) {
             prefix.extend_from_slice(b"<!DOCTYPE ");
             prefix.extend_from_slice(WRAP_NAME.as_bytes());
             if has_ext {
@@ -2188,8 +2312,12 @@ pub unsafe extern "C" fn XML_ExternalEntityParserCreate(
 /// document type declaration has an external identifier; `None` without a
 /// document type declaration.
 fn internal_subset(d: &Document) -> Option<(Option<(usize, usize)>, bool)> {
-    let toks = d.toks(Src::Doc);
-    let text = d.text();
+    internal_subset_in(d.toks(Src::Doc), d.text())
+}
+
+/// `internal_subset` over the prolog's tokens and text (a stream's prolog
+/// ends with the document type declaration).
+fn internal_subset_in(toks: &[Tok], text: &[u8]) -> Option<(Option<(usize, usize)>, bool)> {
     let di = toks.iter().position(|t| t.kind == Kind::Doctype)?;
     let mut last = toks[di].b();
     let mut j = di + 1;
@@ -2208,12 +2336,14 @@ fn internal_subset(d: &Document) -> Option<(Option<(usize, usize)>, bool)> {
     }
     let start = k + 1;
     let e = toks.iter().position(|t| t.kind == Kind::DoctypeEnd)?;
-    let next = toks.get(e + 1)?;
-    let m = match next.kind {
-        Kind::STag => next.a() - 1,
-        Kind::Comment => next.a() - 4,
-        Kind::PI => next.a() - 2,
-        _ => return Some((None, has_ext)),
+    let m = match toks.get(e + 1) {
+        Some(next) => match next.kind {
+            Kind::STag => next.a() - 1,
+            Kind::Comment => next.a() - 4,
+            Kind::PI => next.a() - 2,
+            _ => return Some((None, has_ext)),
+        },
+        None => text.len(),
     };
     let mut q = m;
     while q > start && is_ws(text[q - 1]) {
@@ -2246,6 +2376,10 @@ impl Parser {
         self.parsing = P_PARSING;
         self.input.extend_from_slice(s);
         self.buffer_granted = None;
+        // Read as it comes, from the first chunk that is not the last.
+        if self.stream.is_some() || (!is_final && self.can_stream()) {
+            return self.stream_chunk(is_final);
+        }
         if !is_final {
             return STATUS_OK;
         }
@@ -2255,6 +2389,119 @@ impl Parser {
             return STATUS_OK;
         }
         self.finish()
+    }
+}
+
+impl Parser {
+    /// The push parser reads this document: UTF-8 by its first bytes and
+    /// what the caller says (the stream hands any other back, whole).
+    fn can_stream(&self) -> bool {
+        !self.whole && self.ext.is_none() && self.encoding.as_deref().is_none_or(|e| e.eq_ignore_ascii_case(b"UTF-8"))
+    }
+
+    /// The next chunk, to the push parser; then the walk over what it read.
+    fn stream_chunk(&mut self, is_final: bool) -> c_int {
+        if self.stream.is_none() {
+            self.stream = Some(Box::new(Stream::new()));
+            self.sbase = 0;
+            self.sdtd = false;
+            self.phase = Phase::Prolog(0);
+        }
+        if is_final {
+            self.final_buffer = true;
+        }
+        // Lines are counted up to where the window is kept from, which no
+        // event comes before.
+        if self.doc.is_some() {
+            let keep = self.stream.as_ref().unwrap().keep();
+            self.line_col(keep);
+        }
+        let data = std::mem::take(&mut self.input);
+        // `doc` points into the window, which the chunk moves.
+        let old = self.doc.take();
+        let st = self.stream.as_mut().unwrap();
+        let base0 = st.base();
+        let r = st.feed(&data, is_final);
+        self.input = data;
+        self.input.clear();
+        let st = self.stream.as_mut().unwrap();
+        if r == R_WHOLE {
+            // Not UTF-8, or a declaration this parser reads whole: nothing
+            // has been reported; the document is read at the last chunk.
+            drop(old);
+            self.input = st.window().to_vec();
+            self.stream = None;
+            self.whole = true;
+            self.phase = Phase::Prolog(0);
+            if !is_final {
+                return STATUS_OK;
+            }
+            return self.finish();
+        }
+        if r == R_LIMIT {
+            drop(old);
+            return self.fail(E_NO_MEMORY);
+        }
+        // Positions in the window move with it.
+        let d = st.base() - base0;
+        self.sbase = st.base();
+        for x in [&mut self.ev.0, &mut self.ev.1, &mut self.last_end, &mut self.err_at] {
+            *x = x.saturating_sub(d);
+        }
+        let mut doc = match old {
+            Some(doc) if self.sdtd => doc,
+            _ => {
+                // Before the declarations are final, the document is made
+                // again with what the prolog has so far.
+                let st: &'static Stream = unsafe { &*(st.as_ref() as *const Stream) };
+                self.sdtd = st.dtd_read();
+                Box::new(Document::chunk(st.dtd(), st.prolog(), st.prolog_toks(), st.standalone()))
+            }
+        };
+        let st = self.stream.as_mut().unwrap();
+        let tape = st.take_out();
+        let w: &'static [u8] = unsafe { std::slice::from_raw_parts(st.window().as_ptr(), st.window().len()) };
+        doc.set_chunk(w, tape);
+        self.doc = Some(doc);
+        self.sverdict = r;
+        self.ci = 0;
+        match self.phase {
+            Phase::Prolog(_) => self.phase = Phase::Prolog(0),
+            Phase::Epilog(_) => self.phase = Phase::Epilog(0),
+            _ => {}
+        }
+        self.walk()
+    }
+
+    /// The walk has read the chunk: the stream's verdict.
+    fn chunk_read(&mut self) -> c_int {
+        match self.sverdict {
+            R_MORE => STATUS_OK,
+            R_OK => {
+                // The walk ends where the document does.
+                self.phase = Phase::Done;
+                STATUS_OK
+            }
+            _ => {
+                let (code, at) = self.stream_error();
+                self.err_at = at;
+                self.fail(code)
+            }
+        }
+    }
+
+    /// Why the stream failed, and where in the window.
+    fn stream_error(&self) -> (c_int, usize) {
+        let st = self.stream.as_ref().unwrap();
+        let (t, n, from) = st.diagnosis();
+        match super::parse(&t) {
+            // The verified verdict is the stream's.
+            Ok(_) => (E_SYNTAX, from),
+            Err(e) => {
+                let (code, at) = classify(&t, &e);
+                (code, if at >= n { from + (at - n) } else { from })
+            }
+        }
     }
 }
 
@@ -2455,7 +2702,7 @@ pub unsafe extern "C" fn XML_GetCurrentByteIndex(p: *mut Parser) -> c_long {
     if p.doc.is_none() && p.error == E_NONE {
         return -1;
     }
-    (p.position() - p.origin.min(p.position())) as c_long
+    (p.sbase + p.position() - p.origin.min(p.position())) as c_long
 }
 
 #[unsafe(no_mangle)]
