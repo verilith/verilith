@@ -76,6 +76,7 @@ verus! {
 
 /// A compiled pattern.
 pub struct Regex {
+    /// The compiled program the matchers run.
     pub prog: prog::Prog,
     /// Group names: (name, group number).
     pub names: Vec<(Vec<u8>, usize)>,
