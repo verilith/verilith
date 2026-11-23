@@ -32,9 +32,10 @@ pub enum ErrorKind {
     Encoding,
     /// The text is not a well-formed XML document.
     Syntax,
-    /// The text is over 2^48 - 1 bytes (256 TiB) as UTF-8: more than
-    /// token positions hold (`tape::MAX_POS`), and more than any address
-    /// space gives a process today.
+    /// The text is longer than token positions hold (`tape::MAX_POS`):
+    /// over 2^48 - 1 bytes (256 TiB) as UTF-8 on a 64-bit target, more
+    /// than any address space gives a process today. (A 32-bit target's
+    /// limit, 2^32 - 1, is past the largest slice it can have.)
     TooLarge,
 }
 
@@ -54,7 +55,7 @@ impl fmt::Display for Error {
         let what = match self.kind {
             ErrorKind::Encoding => "not text in a known encoding, or a character XML does not allow",
             ErrorKind::Syntax => "not well-formed",
-            ErrorKind::TooLarge => "longer than 2^48 - 1 bytes",
+            ErrorKind::TooLarge => "longer than token positions hold",
         };
         write!(f, "{what} at line {} column {} (byte {})", self.line, self.column, self.offset)
     }

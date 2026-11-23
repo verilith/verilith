@@ -284,8 +284,10 @@ fn entity_declared_depends_on_the_whole_subset() {
 }
 
 #[test]
-fn token_is_20_bytes() {
-    // 48-bit positions: 20 bytes on every target (`tape::Tok`).
-    assert_eq!(std::mem::size_of::<verilith_xml::tape::Tok>(), 20);
+fn token_size() {
+    // `tape::Tok`: 48-bit positions on a 64-bit target, 32-bit ones on a
+    // 32-bit target (or with `narrow-tokens`).
+    let narrow = cfg!(any(not(target_pointer_width = "64"), feature = "narrow-tokens"));
+    assert_eq!(std::mem::size_of::<verilith_xml::tape::Tok>(), if narrow { 16 } else { 20 });
     assert_eq!(std::mem::align_of::<verilith_xml::tape::Tok>(), 4);
 }

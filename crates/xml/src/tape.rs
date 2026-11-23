@@ -1,5 +1,5 @@
-//! The tape the parser writes: one 20-byte `Tok` per item, viewed as the
-//! spec's `XTok`.
+//! The tape the parser writes: one `Tok` per item (20 bytes on a 64-bit
+//! target, 16 on a 32-bit one), viewed as the spec's `XTok`.
 use crate::spec::*;
 use vstd::prelude::*;
 
@@ -36,43 +36,83 @@ pub enum Kind {
     EntRef,
 }
 
+// The layout is chosen per target. On a 64-bit target positions are 48
+// bits: a low `u32` and a high `u16` (`Hi`), so a token is 20 bytes where
+// three `usize` made it 32. On a 32-bit target (wasm32) no slice reaches
+// 2^31 bytes, so the low `u32` is the whole position, `Hi` is the empty
+// `Z`, and a token is 16 bytes. The feature `narrow-tokens` picks the
+// 32-bit layout on a 64-bit host, so that `scripts/verify-narrow.sh` and
+// the tests check it there; the rest of the crate is the same text for
+// both.
+
 /// The largest position a token holds: 2^48 - 1 (256 TiB), more than any
 /// address space gives a process today (x86-64 gives 2^47 bytes, AArch64
 /// at most 2^52 in all, which no machine fills with one document). A
 /// document longer than this is refused (`ErrorKind::TooLarge`) instead of
 /// stored wrong.
+#[cfg(not(any(not(target_pointer_width = "64"), feature = "narrow-tokens")))]
 pub const MAX_POS: u64 = 0xFFFF_FFFF_FFFF;
+
+/// The largest position a token holds: 2^32 - 1, more than a 32-bit
+/// target's slices can be (at most 2^31 - 1 bytes), so on such a target
+/// nothing is refused. (Under `narrow-tokens` on a 64-bit host, a text
+/// past 4 GiB is refused: that build is for checking the layout.)
+#[cfg(any(not(target_pointer_width = "64"), feature = "narrow-tokens"))]
+pub const MAX_POS: u64 = 0xFFFF_FFFF;
+
+/// The high 16 bits of a position.
+#[cfg(not(any(not(target_pointer_width = "64"), feature = "narrow-tokens")))]
+pub type Hi = u16;
+
+/// No high bits: the 32-bit layout.
+#[cfg(any(not(target_pointer_width = "64"), feature = "narrow-tokens"))]
+pub type Hi = Z;
+
+/// Nothing, in no bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Z;
+
+/// The value of the high part.
+#[cfg(not(any(not(target_pointer_width = "64"), feature = "narrow-tokens")))]
+pub open spec fn hv(h: Hi) -> int {
+    h as int
+}
+
+#[cfg(any(not(target_pointer_width = "64"), feature = "narrow-tokens"))]
+pub open spec fn hv(h: Hi) -> int {
+    0
+}
 
 /// One item. `a..b` is the item's span (see `XTok`); `f` is its flag or
 /// small code (`sd`, `ty`, `kind`, `pe`, `plain`, `cr`); `c` is a start
 /// tag's link to its end, or an attribute default's entity count. A
 /// character reference keeps its position in `a` and its character in `b`.
 ///
-/// `a`, `b` and `c` are 48 bits each: the low 32 bits in `al`, `bl`, `cl`,
-/// the high 16 in `ah`, `bh`, `ch`. That makes the token 20 bytes (4-byte
-/// aligned) where three `usize` made it 32 on a 64-bit machine. Read them
-/// with `a()`, `b()` and `c()` (`a48()`, `b48()` and `c48()` in verified
-/// code).
+/// `a`, `b` and `c` are each a low `u32` (`al`, `bl`, `cl`) and a high part
+/// (`ah`, `bh`, `ch`, of type `Hi`): 20 bytes in all on a 64-bit target,
+/// 16 on a 32-bit one. Read them with `a()`, `b()` and `c()` (`a48()`,
+/// `b48()` and `c48()` in verified code).
 #[derive(Clone, Copy, Debug)]
 pub struct Tok {
     pub kind: Kind,
     pub f: u8,
-    pub ah: u16,
+    pub ah: Hi,
     pub al: u32,
     pub bl: u32,
-    pub bh: u16,
-    pub ch: u16,
+    pub bh: Hi,
+    pub ch: Hi,
     pub cl: u32,
 }
 
-/// A 48-bit number from its low 32 and high 16 bits.
-pub open spec fn wide(lo: u32, hi: u16) -> int {
-    lo as int + hi as int * 0x1_0000_0000
+/// A position from its low 32 bits and its high part.
+pub open spec fn wide(lo: u32, hi: Hi) -> int {
+    lo as int + hv(hi) * 0x1_0000_0000
 }
 
 /// The low and high parts of `v`, which `wide` puts back together.
+#[cfg(not(any(not(target_pointer_width = "64"), feature = "narrow-tokens")))]
 #[inline(always)]
-pub fn split(v: u64) -> (r: (u32, u16))
+pub fn split(v: u64) -> (r: (u32, Hi))
     requires
         v <= MAX_POS,
     ensures
@@ -89,9 +129,21 @@ pub fn split(v: u64) -> (r: (u32, u16))
     (lo, hi)
 }
 
-/// `wide(lo, hi)` as a `u64`.
+#[cfg(any(not(target_pointer_width = "64"), feature = "narrow-tokens"))]
 #[inline(always)]
-pub fn join(lo: u32, hi: u16) -> (r: u64)
+pub fn split(v: u64) -> (r: (u32, Hi))
+    requires
+        v <= MAX_POS,
+    ensures
+        wide(r.0, r.1) == v,
+{
+    (v as u32, Z)
+}
+
+/// `wide(lo, hi)` as a `u64`.
+#[cfg(not(any(not(target_pointer_width = "64"), feature = "narrow-tokens")))]
+#[inline(always)]
+pub fn join(lo: u32, hi: Hi) -> (r: u64)
     ensures
         r == wide(lo, hi),
         r <= MAX_POS,
@@ -102,6 +154,16 @@ pub fn join(lo: u32, hi: u16) -> (r: u64)
             r == (lo as u64) | ((hi as u64) << 32u64),
     ;
     r
+}
+
+#[cfg(any(not(target_pointer_width = "64"), feature = "narrow-tokens"))]
+#[inline(always)]
+pub fn join(lo: u32, hi: Hi) -> (r: u64)
+    ensures
+        r == wide(lo, hi),
+        r <= MAX_POS,
+{
+    lo as u64
 }
 
 /// The low 32 bits of `t`'s span length, `b - a`.
@@ -124,17 +186,17 @@ pub proof fn lemma_low_len(t: Tok, u: Tok)
 {
     let d = t.bl as int - t.al as int;
     let e = u.bl as int - u.al as int;
-    let k = (u.bh as int - u.ah as int) - (t.bh as int - t.ah as int);
+    let k = (hv(u.bh) - hv(u.ah)) - (hv(t.bh) - hv(t.ah));
     assert(d - e == k * 0x1_0000_0000) by (nonlinear_arith)
         requires
             t.sb() - t.sa() == u.sb() - u.sa(),
-            t.sb() == t.bl as int + t.bh as int * 0x1_0000_0000,
-            t.sa() == t.al as int + t.ah as int * 0x1_0000_0000,
-            u.sb() == u.bl as int + u.bh as int * 0x1_0000_0000,
-            u.sa() == u.al as int + u.ah as int * 0x1_0000_0000,
+            t.sb() == t.bl as int + hv(t.bh) * 0x1_0000_0000,
+            t.sa() == t.al as int + hv(t.ah) * 0x1_0000_0000,
+            u.sb() == u.bl as int + hv(u.bh) * 0x1_0000_0000,
+            u.sa() == u.al as int + hv(u.ah) * 0x1_0000_0000,
             d == t.bl as int - t.al as int,
             e == u.bl as int - u.al as int,
-            k == (u.bh as int - u.ah as int) - (t.bh as int - t.ah as int),
+            k == (hv(u.bh) - hv(u.ah)) - (hv(t.bh) - hv(t.ah)),
     ;
     assert(-1 <= k <= 1) by (nonlinear_arith)
         requires
