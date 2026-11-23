@@ -2130,7 +2130,6 @@ impl Inflater {
 
     /// Copies as much of the pending match as fits, one byte at a time.
     /// Returns true if the match is complete.
-    #[verifier::spinoff_prover]
     fn flush_copy(&mut self, Ghost(b): Ghost<Seq<u8>>, out: &mut [u8]) -> (done: bool)
         requires
             old(self).inv(b),

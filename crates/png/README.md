@@ -270,8 +270,8 @@ cargo build --release --example vpngcat     # vpngcat FILE [rgba8|native]
 ./scripts/verify.sh                         # needs cargo-verus and z3 on PATH
 ```
 
-The proofs are checked with Verus at commit `1ce6a59b` (vstd
-`0.0.0-2026-11-22-0344`) and Rust 1.100.0.
+The proofs are checked with Verus at commit `8bf68ee7` (vstd
+`0.0.0-2026-11-01-0251`) and Rust 1.99.1.
 
 ```rust,no_run
 use verilith_png::{decode, PixelFormat};
