@@ -105,7 +105,7 @@ pub open spec fn structural(s: Seq<u8>, st: int, i: int) -> bool {
 
 /// A control character inside a string, which RFC 8259 forbids.
 pub open spec fn bad(s: Seq<u8>, st: int, i: int) -> bool {
-    byte(s, i) < 0x20 && inside(s, st, i)
+    byte(s, i) < 0x20 && inside(s, st, i) && !esc(s, st, i)
 }
 
 /// The structural positions in `[a, b)`, in order.
@@ -175,11 +175,6 @@ pub proof fn lemma_positions_split(s: Seq<u8>, st: int, a: int, b: int, c: int)
     } else {
         assert(positions(s, st, a, b) + positions(s, st, b, c) =~= positions(s, st, a, b));
     }
-}
-
-/// No control character inside a string in `[st, b)`.
-pub open spec fn clean(s: Seq<u8>, st: int, b: int) -> bool {
-    forall|i: int| st <= i < b ==> !#[trigger] bad(s, st, i)
 }
 
 // ---------------------------------------------------------------------------
@@ -643,20 +638,11 @@ proof fn lemma_positions_past_end(s: Seq<u8>, st: int, w0: int, b: int)
         st <= w0 <= s.len() <= b,
     ensures
         rpos(s, st, w0, b) == rpos(s, st, w0, s.len() as int),
-        clean(s, st, b) == clean(s, st, s.len() as int),
     decreases b,
 {
     if b > s.len() {
         lemma_positions_past_end(s, st, w0, b - 1);
         lemma_past_end(s, st, b - 1);
-        if clean(s, st, b - 1) {
-            assert forall|i: int| st <= i < b implies !#[trigger] bad(s, st, i) by {
-                if i == b - 1 {
-                } else {
-                    assert(!bad(s, st, i));
-                }
-            }
-        }
     }
 }
 
@@ -671,8 +657,6 @@ pub struct Stage1 {
     pub in_str: u64,
     /// Whether the byte before the next block is part of a scalar.
     pub prev: u64,
-    /// Nonzero once a control character inside a string was seen.
-    pub err: u64,
     /// The structural bits of the last block, not yet written, which
     /// starts at `pbase` bytes into the window.
     pub pend: u64,
@@ -697,11 +681,9 @@ pub open spec fn stage1_inv(g: Seq<u8>, gst: int, w0: int, lim: int, base: int, 
     &&& (t.in_str == 0xFFFF_FFFF_FFFF_FFFFu64) == instr(g, gst, base - 1)
     &&& t.prev <= 1
     &&& (t.prev == 1) == (base > gst && scalar(g, gst, base - 1))
-    &&& (t.err == 0) == clean(g, gst, base)
 }
 
-/// The part of stage 1's state that the bit logic carries, but for the
-/// error word.
+/// The part of stage 1's state that the bit logic carries.
 pub open spec fn core_inv(g: Seq<u8>, gst: int, base: int, t: Stage1) -> bool {
     &&& 0 <= gst <= base
     &&& t.carry_esc <= 1
@@ -712,50 +694,16 @@ pub open spec fn core_inv(g: Seq<u8>, gst: int, base: int, t: Stage1) -> bool {
     &&& (t.prev == 1) == (base > gst && scalar(g, gst, base - 1))
 }
 
-/// The part of stage 1's state that the bit logic carries.
+/// The same, as the one-block step states it.
 pub open spec fn logic_inv(g: Seq<u8>, gst: int, base: int, t: Stage1) -> bool {
-    &&& core_inv(g, gst, base, t)
-    &&& (t.err == 0) == clean(g, gst, base)
+    core_inv(g, gst, base, t)
 }
 
-/// A mask of the control characters inside strings of a block is zero
-/// exactly when there are none.
-proof fn lemma_bad_mask(g: Seq<u8>, gst: int, base: int, m: u64)
-    requires
-        forall|k: u64| k < 64 ==> #[trigger] bit64(m, k) == bad(g, gst, base + k),
-    ensures
-        (m == 0) == (forall|i: int| base <= i < base + 64 ==> !#[trigger] bad(g, gst, i)),
-{
-    if m == 0 {
-        assert forall|i: int| base <= i < base + 64 implies !#[trigger] bad(g, gst, i) by {
-            let k = (i - base) as u64;
-            lemma_bit_consts(k);
-            assert(bit64(m, k) == bad(g, gst, base + k));
-        }
-    } else {
-        vstd::std_specs::bits::axiom_u64_trailing_zeros(m);
-        let k = vstd::std_specs::bits::u64_trailing_zeros(m) as u64;
-        assert(bit64(m, k));
-        assert(bad(g, gst, base + k));
-    }
-}
-
-/// The error word after the bytes `[a, b)`.
-proof fn lemma_err_range(g: Seq<u8>, gst: int, a: int, b: int, err0: u64, e: u64)
-    requires
-        gst <= a <= b,
-        (err0 == 0) == clean(g, gst, a),
-        (e == 0) == (forall|i: int| a <= i < b ==> !#[trigger] bad(g, gst, i)),
-    ensures
-        ((err0 | e) == 0) == clean(g, gst, b),
-{
-    lemma_or_zero(err0, e);
-}
 
 /// The bit logic of the block at `base`, from its classes `m`, escape
 /// mask `e` (with carry out `c2`) and string mask `p`: the structural
 /// bits, the bits of `m.ctrl` inside strings, and the state carried on.
-/// Writes nothing and leaves the error word alone.
+/// Writes nothing.
 #[inline(always)]
 fn block_core(
     m: Masks,
@@ -766,7 +714,7 @@ fn block_core(
     t: Stage1,
     Ghost(g): Ghost<Seq<u8>>,
     Ghost(gst): Ghost<int>,
-) -> (o: (u64, u64, Stage1))
+) -> (o: (u64, u64, u64, Stage1))
     requires
         core_inv(g, gst, base as int, t),
         base < g.len(),
@@ -777,12 +725,17 @@ fn block_core(
         p ^ (p << 1u64) == m.quote & !e,
     ensures
         forall|k: u64| k < 64 ==> #[trigger] bit64(o.0, k) == sbase(g, gst, base + k),
-        forall|k: u64| k < 64 ==> #[trigger] bit64(o.1, k) == (bit64(m.ctrl, k) && inside(g, gst, base + k)),
-        core_inv(g, gst, base + 64, o.2),
-        o.2.err == t.err,
-        o.2.w == t.w,
-        o.2.pend == t.pend,
-        o.2.pbase == t.pbase,
+        forall|k: u64| k < 64 ==> #[trigger] bit64(o.1, k) == (sbase(g, gst, base + k) || (bit64(m.ctrl, k)
+            && inside(g, gst, base + k) && !esc(g, gst, base + k))),
+        forall|k: u64| k < 64 ==> #[trigger] bit64(o.2, k) == (bit64(m.ctrl, k) && inside(g, gst, base + k) && !esc(
+            g,
+            gst,
+            base + k,
+        )),
+        core_inv(g, gst, base + 64, o.3),
+        o.3.w == t.w,
+        o.3.pend == t.pend,
+        o.3.pbase == t.pbase,
 {
     let in_str = t.in_str;
     let prev = t.prev;
@@ -850,11 +803,40 @@ fn block_core(
         assert(bit64(st_m, 63) == sbase(g, gst, base + 63));
         assert(bit64(scalar_m, 63) == scalar(g, gst, base + 63));
     }
-    (st_m, bad_m, Stage1 { w: t.w, carry_esc: c2, in_str: 0u64.wrapping_sub(r >> 63u64), prev: scalar_m >> 63u64, err: t.err, pend: t.pend, pbase: t.pbase })
+    // The control characters inside strings are entries too: folded into
+    // the escapes' term, which has the same `inside & !e`.
+    let all_m = (m.op & !strs_m) | u | starts_m | ((m.backslash | m.ctrl) & inside_m & !e);
+    let bad_e = bad_m & !e;
+    proof {
+        let a = m.op & !strs_m;
+        let b = m.backslash;
+        let c = m.ctrl;
+        assert(all_m == st_m | bad_e) by (bit_vector)
+            requires
+                all_m == (a | u | starts_m | ((b | c) & inside_m & !e)),
+                st_m == (a | u | starts_m | (b & inside_m & !e)),
+                bad_e == (c & inside_m) & !e,
+                bad_m == c & inside_m,
+                escs_m == b & inside_m & !e,
+        ;
+        assert forall|k: u64| k < 64 implies #[trigger] bit64(bad_e, k) == (bit64(m.ctrl, k) && inside(g, gst, base + k)
+            && !esc(g, gst, base + k)) by {
+            lemma_block_bits(g, gst, base as int, m, e, u, r, strs_m, inside_m, scalar_m, prev, starts_m, escs_m, st_m, bad_m, k);
+            assert(bit64(e, k) == esc(g, gst, base + k));
+            lemma_bit_ops(bad_m, !e, k);
+            lemma_bit_ops(e, e, k);
+        }
+        assert forall|k: u64| k < 64 implies #[trigger] bit64(all_m, k) == (sbase(g, gst, base + k) || (bit64(m.ctrl, k)
+            && inside(g, gst, base + k) && !esc(g, gst, base + k))) by {
+            lemma_block_bits(g, gst, base as int, m, e, u, r, strs_m, inside_m, scalar_m, prev, starts_m, escs_m, st_m, bad_m, k);
+            assert(bit64(bad_e, k) == (bit64(m.ctrl, k) && inside(g, gst, base + k) && !esc(g, gst, base + k)));
+            lemma_bit_ops(st_m, bad_e, k);
+        }
+    }
+    (st_m, all_m, bad_e, Stage1 { w: t.w, carry_esc: c2, in_str: 0u64.wrapping_sub(r >> 63u64), prev: scalar_m >> 63u64, pend: t.pend, pbase: t.pbase })
 }
 
-/// `block_core`, with the control characters inside strings added to the
-/// error word.
+/// `block_core`, with its structural bits proved to be `structural`'s.
 #[inline(always)]
 fn block_logic(
     m: Masks,
@@ -881,23 +863,13 @@ fn block_logic(
         o.1.pend == t.pend,
         o.1.pbase == t.pbase,
 {
-    let (sb_m, bad_m, t2) = block_core(m, e, c2, p, base, t, Ghost(g), Ghost(gst));
-    proof {
-        assert forall|k: u64| k < 64 implies #[trigger] bit64(bad_m, k) == bad(g, gst, base + k) by {
-            assert(bit64(m.ctrl, k) == (byte(g, base + k) < 0x20));
-        }
-        lemma_bad_mask(g, gst, base as int, bad_m);
-        lemma_err_range(g, gst, base as int, base + 64, t2.err, bad_m);
-    }
-    let st_m = sb_m | bad_m;
+    let (_sb_m, st_m, _bad_m, t2) = block_core(m, e, c2, p, base, t, Ghost(g), Ghost(gst));
     proof {
         assert forall|k: u64| k < 64 implies #[trigger] bit64(st_m, k) == structural(g, gst, base + k) by {
-            lemma_bit_ops(sb_m, bad_m, k);
-            assert(bit64(sb_m, k) == sbase(g, gst, base + k));
-            assert(bit64(bad_m, k) == bad(g, gst, base + k));
+            assert(bit64(m.ctrl, k) == (byte(g, base + k) < 0x20));
         }
     }
-    (st_m, Stage1 { w: t2.w, carry_esc: t2.carry_esc, in_str: t2.in_str, prev: t2.prev, err: t2.err | bad_m, pend: t2.pend, pbase: t2.pbase })
+    (st_m, Stage1 { w: t2.w, carry_esc: t2.carry_esc, in_str: t2.in_str, prev: t2.prev, pend: t2.pend, pbase: t2.pbase })
 }
 
 /// The block at `base`, held in four NEON vectors. Each class mask is
@@ -928,7 +900,6 @@ fn block_neon(
     ensures
         forall|k: u64| k < 64 ==> #[trigger] bit64(o.0, k) == sbase(g, gst, base + k),
         core_inv(g, gst, base + 64, o.1),
-        o.1.err == t.err,
         low_masks(g, gst, base as int, o.2, o.3),
 {
     let ghost b = base as int;
@@ -955,14 +926,14 @@ fn block_neon(
             assert(byte(g, base + k) == g[b + k]);
         }
     }
-    let (st_m, ea, t2) = block_core(m, e, c2, p, base, t, Ghost(g), Ghost(gst));
+    let (st_m, _all_m, ea, t2) = block_core(m, e, c2, p, base, t, Ghost(g), Ghost(gst));
     let ra = low & !ws;
     proof {
         assert forall|k: u64| k < 64 implies {
-            &&& #[trigger] bit64(ea, k) == (crate::neon::lowb(g[b + k]) && inside(g, gst, b + k))
+            &&& #[trigger] bit64(ea, k) == (crate::neon::lowb(g[b + k]) && inside(g, gst, b + k) && !esc(g, gst, b + k))
             &&& bit64(ra, k) == (crate::neon::lowb(g[b + k]) && !is_ws(g[b + k]))
         } by {
-            assert(bit64(ea, k) == (bit64(m.ctrl, k) && inside(g, gst, base + k)));
+            assert(bit64(ea, k) == (bit64(m.ctrl, k) && inside(g, gst, base + k) && !esc(g, gst, base + k)));
             assert(bit64(low, k) == crate::neon::lowb(g[b + k]));
             assert(bit64(ws, k) == is_ws(g[b + k]));
             lemma_bit_ops(low, !ws, k);
@@ -977,7 +948,7 @@ fn block_neon(
 pub open spec fn low_masks(g: Seq<u8>, gst: int, b: int, ea: u64, ra: u64) -> bool {
     forall|k: u64|
         k < 64 ==> {
-            &&& #[trigger] bit64(ea, k) == (crate::neon::lowb(g[b + k]) && inside(g, gst, b + k))
+            &&& #[trigger] bit64(ea, k) == (crate::neon::lowb(g[b + k]) && inside(g, gst, b + k) && !esc(g, gst, b + k))
             &&& bit64(ra, k) == (crate::neon::lowb(g[b + k]) && !is_ws(g[b + k]))
         }
 }
@@ -996,7 +967,7 @@ proof fn lemma_low_ascii(g: Seq<u8>, gst: int, b: int, ea: u64, ra: u64)
 {
     assert forall|k: u64| k < 64 implies g[b + k] < 0x80 && #[trigger] bit64(ea, k) == bad(g, gst, b + k) by {
         lemma_bit_consts(k);
-        assert(bit64(ea, k) == (crate::neon::lowb(g[b + k]) && inside(g, gst, b + k)));
+        assert(bit64(ea, k) == (crate::neon::lowb(g[b + k]) && inside(g, gst, b + k) && !esc(g, gst, b + k)));
         assert(!bit64(ra, k));
         assert(byte(g, b + k) == g[b + k]);
     }
@@ -1022,39 +993,6 @@ proof fn lemma_struct_mask(g: Seq<u8>, gst: int, b: int, sm: u64, bm: u64)
     }
 }
 
-/// Two blocks' error masks are zero exactly when the 128 bytes have no
-/// control character inside a string.
-proof fn lemma_bad_pair(g: Seq<u8>, gst: int, b: int, xa: u64, xb: u64)
-    requires
-        forall|k: u64| k < 64 ==> #[trigger] bit64(xa, k) == bad(g, gst, b + k),
-        forall|k: u64| k < 64 ==> #[trigger] bit64(xb, k) == bad(g, gst, b + 64 + k),
-    ensures
-        ((xa | xb) == 0) == (forall|i: int| b <= i < b + 128 ==> !#[trigger] bad(g, gst, i)),
-{
-    lemma_bad_mask(g, gst, b, xa);
-    assert forall|k: u64| k < 64 implies #[trigger] bit64(xb, k) == bad(g, gst, (b + 64) + k) by {
-        assert(bit64(xb, k) == bad(g, gst, b + 64 + k));
-    }
-    lemma_bad_mask(g, gst, b + 64, xb);
-    lemma_or_zero(xa, xb);
-    if (xa | xb) == 0 {
-        assert forall|i: int| b <= i < b + 128 implies !#[trigger] bad(g, gst, i) by {
-            if i < b + 64 {
-                assert(!bad(g, gst, i));
-            } else {
-                assert(!bad(g, gst, i));
-            }
-        }
-    } else {
-        if xa != 0 {
-            let i = choose|i: int| b <= i < b + 64 && #[trigger] bad(g, gst, i);
-            assert(bad(g, gst, i));
-        } else {
-            let i = choose|i: int| b + 64 <= i < b + 128 && #[trigger] bad(g, gst, i);
-            assert(bad(g, gst, i));
-        }
-    }
-}
 
 /// The two blocks at `b` when one may hold bytes from 0x80 up, or follows
 /// one that ends with them: finds those bytes, runs the UTF-8 check on
@@ -1143,7 +1081,7 @@ proof fn lemma_low_bad(g: Seq<u8>, gst: int, b: int, ea: u64, ra: u64, na: u64, 
         forall|k: u64| k < 64 ==> #[trigger] bit64(xa, k) == bad(g, gst, b + k),
 {
     assert forall|k: u64| k < 64 implies #[trigger] bit64(xa, k) == bad(g, gst, b + k) by {
-        assert(bit64(ea, k) == (crate::neon::lowb(g[b + k]) && inside(g, gst, b + k)));
+        assert(bit64(ea, k) == (crate::neon::lowb(g[b + k]) && inside(g, gst, b + k) && !esc(g, gst, b + k)));
         assert(bit64(na, k) == (g[b + k] >= 0x80));
         lemma_bit_ops(ea, !na, k);
         lemma_bit_ops(na, na, k);
@@ -1192,7 +1130,7 @@ fn stage1_block<const K: u8>(
         ));
         assert(idx@.subrange(0, w as int) == ib.subrange(0, w as int));
     }
-    Stage1 { w: w2, carry_esc: t2.carry_esc, in_str: t2.in_str, prev: t2.prev, err: t2.err, pend: st_m, pbase: (base - w0) as u32 }
+    Stage1 { w: w2, carry_esc: t2.carry_esc, in_str: t2.in_str, prev: t2.prev, pend: st_m, pbase: (base - w0) as u32 }
 }
 
 /// The classes of the last, partial block at `base`, padded with spaces.
@@ -1320,7 +1258,6 @@ fn stage1_neon(
     let mut qb: u64 = 0;
     let mut qbase: usize = w0;
     let mut pa = pa0;
-    let mut err: u64 = t0.err;
     proof {
         crate::simd::lemma_zero_upto(0, 64);
         crate::simd::lemma_zero_upto(64, 64);
@@ -1344,7 +1281,6 @@ fn stage1_neon(
             idx@.len() == len0,
             len0 >= lim - w0 + 64,
             core_inv(g, gst, base as int, t),
-            (err == 0) == clean(g, gst, base as int),
             w0 <= qbase,
             qbase + 128 <= base || (qa == 0 && qb == 0 && qbase == base),
             w <= qbase - w0,
@@ -1400,8 +1336,6 @@ fn stage1_neon(
             rare_pair(s, st, base, uj, uok, pa, ea, eb, Ghost(ra), Ghost(rb))
         };
         proof {
-            lemma_bad_pair(g, gst, base as int, xa, xb);
-            lemma_err_range(g, gst, base as int, base + 128, err, xa | xb);
             lemma_struct_mask(g, gst, base as int, sa, xa);
             assert forall|k: u64| k < 64 implies #[trigger] bit64(xb, k) == bad(g, gst, (base + 64) + k) by {
                 assert(bit64(xb, k) == bad(g, gst, base + 64 + k));
@@ -1410,7 +1344,6 @@ fn stage1_neon(
             lemma_positions_block(g, gst, w0 as int, base as int, sa | xa, 64);
             lemma_positions_block(g, gst, w0 as int, base + 64, sb | xb, 64);
         }
-        err = err | (xa | xb);
         w = w2;
         qa = sa | xa;
         qb = sb | xb;
@@ -1444,7 +1377,7 @@ fn stage1_neon(
             crate::simd::lemma_zero_upto(pb as int, 64);
         }
     }
-    t = Stage1 { w: w1, carry_esc: t.carry_esc, in_str: t.in_str, prev: t.prev, err, pend: qb, pbase: pb as u32 };
+    t = Stage1 { w: w1, carry_esc: t.carry_esc, in_str: t.in_str, prev: t.prev, pend: qb, pbase: pb as u32 };
     (t, base, uj, uok, pa)
 }
 
@@ -1473,7 +1406,6 @@ pub open spec fn filled(K: u8, g: Seq<u8>, gst: int, w0: int, lim: int, idx: Seq
     &&& crate::utf8::u8_state(g, gst, r.2 as int, r.3)
     &&& lim < g.len() ==> fresh(g, gst, lim, r.1) && u8_at(K, g, gst, lim, r.2 as int, r.3, r.4)
     &&& lim == g.len() ==> {
-        &&& (r.1.err == 0) == clean(g, gst, lim)
         &&& (r.1.in_str == 0 || r.1.in_str == 0xFFFF_FFFF_FFFF_FFFFu64)
         &&& (r.1.in_str != 0) == instr(g, gst, lim - 1)
     }
@@ -1633,7 +1565,7 @@ pub fn fill_k<const K: u8>(
         lemma_bits_len(t.pend, t.pbase as int, 64);
         crate::simd::lemma_zero_upto(0, 64);
     }
-    let r = (w, Stage1 { w: 0, carry_esc: t.carry_esc, in_str: t.in_str, prev: t.prev, err: t.err, pend: 0, pbase: 0 }, uj, uok, pa);
+    let r = (w, Stage1 { w: 0, carry_esc: t.carry_esc, in_str: t.in_str, prev: t.prev, pend: 0, pbase: 0 }, uj, uok, pa);
     proof {
         assert(r.0 <= idx@.len());
         assert(idx@.subrange(0, r.0 as int) == rpos(g, gst, w0 as int, glim));
@@ -1652,9 +1584,9 @@ pub fn fill_k<const K: u8>(
 
 /// Lists the structural positions of `s[st..]`, as offsets from `st`, at
 /// the start of `idx` and returns how many there are: the whole input as
-/// one window. Also returns whether the input passes stage 1's checks (no
-/// control character inside a string, and every string closed) and
-/// whether it is UTF-8.
+/// one window. Also returns whether every string is closed (control
+/// characters inside strings are structural, so stage 2 rejects them)
+/// and whether the input is UTF-8.
 #[inline(always)]
 pub fn structural_index<const K: u8>(s: &[u8], st: usize, idx: &mut Vec<u32>) -> (r: (usize, bool, bool))
     requires
@@ -1665,19 +1597,16 @@ pub fn structural_index<const K: u8>(s: &[u8], st: usize, idx: &mut Vec<u32>) ->
     ensures
         r.0 <= final(idx)@.len(),
         final(idx)@.subrange(0, r.0 as int) == rpos(s@, st as int, st as int, s@.len() as int),
-        r.1 == (clean(s@, st as int, s@.len() as int) && !instr(s@, st as int, s@.len() - 1)),
+        r.1 == !instr(s@, st as int, s@.len() - 1),
         r.2 == utf8_from(s@, st as int),
 {
     proof {
         lemma_kernel_utf8(K);
     }
     let (uj, uok) = crate::utf8::utf8_start(s, st);
-    let t = Stage1 { w: 0, carry_esc: 0, in_str: 0, prev: 0, err: 0, pend: 0, pbase: 0 };
-    proof {
-        assert(clean(s@, st as int, st as int));
-    }
+    let t = Stage1 { w: 0, carry_esc: 0, in_str: 0, prev: 0, pend: 0, pbase: 0 };
     let r = fill_k::<K>(s, st, idx, st, s.len(), t, uj, uok, true);
-    (r.0, r.1.err == 0 && r.1.in_str == 0, crate::utf8::utf8_finish::<K>(s, st, r.2, r.3))
+    (r.0, r.1.in_str == 0, crate::utf8::utf8_finish::<K>(s, st, r.2, r.3))
 }
 
 } // verus!
@@ -2088,12 +2017,11 @@ impl<'a> Win<'a> {
             r.kend == 0,
     {
         let (uj, uok) = crate::utf8::utf8_start(s, st);
-        let t = Stage1 { w: 0, carry_esc: 0, in_str: 0, prev: 0, err: 0, pend: 0, pbase: 0 };
+        let t = Stage1 { w: 0, carry_esc: 0, in_str: 0, prev: 0, pend: 0, pbase: 0 };
         proof {
             assert(rpos(s@, st as int, st as int, st as int) =~= Seq::<u32>::empty());
             assert(buf@.subrange(0, 0) =~= Seq::<u32>::empty());
             assert(positions(s@, st as int, st as int, st as int) =~= Seq::<int>::empty());
-            assert(clean(s@, st as int, st as int));
             assert(crate::utf8::ascii_span(s@, st as int, st as int));
         }
         Win { s, st, buf, w0: st, wend: st, kbase: 0, kend: 0, t, uj, uok, pa: true, utf8: false, kind, win, done: false }
@@ -2188,10 +2116,9 @@ impl<'a> Win<'a> {
             assert(rpos(g, st, st, st) =~= Seq::<u32>::empty());
             assert(self.buf@.subrange(0, 0) =~= Seq::<u32>::empty());
             assert(positions(g, st, st, st) =~= Seq::<int>::empty());
-            assert(clean(g, st, st));
             assert(crate::utf8::ascii_span(g, st, st));
         }
-        self.t = Stage1 { w: 0, carry_esc: 0, in_str: 0, prev: 0, err: 0, pend: 0, pbase: 0 };
+        self.t = Stage1 { w: 0, carry_esc: 0, in_str: 0, prev: 0, pend: 0, pbase: 0 };
         self.w0 = self.st;
         self.wend = self.st;
         self.kbase = 0;
@@ -2202,8 +2129,34 @@ impl<'a> Win<'a> {
         self.done = false;
     }
 
+    /// `at` for a reader that never goes back: `k` is not behind the
+    /// window, so the fast path is one comparison.
+    #[inline(always)]
+    pub fn at_fwd(&mut self, k: usize) -> (r: Option<usize>)
+        requires
+            old(self).inv(),
+            old(self).kbase <= k,
+        ensures
+            final(self).inv(),
+            final(self).same(old(self)),
+            final(self).kbase <= k,
+            old(self).kbase <= k < old(self).kend ==> *final(self) == *old(self) && r is Some,
+            r matches Some(q) ==> k < final(self).all().len() && q == final(self).all()[k as int]
+                && q < final(self).wend && k < final(self).kend,
+            r is None ==> final(self).done && k >= final(self).all().len(),
+    {
+        if k < self.kend {
+            proof {
+                lemma_win_entry(self, k as int);
+            }
+            Some(self.w0 + get32(self.buf.as_slice(), k - self.kbase) as usize)
+        } else {
+            self.refill(k)
+        }
+    }
+
     #[inline(never)]
-    fn refill(&mut self, k: usize) -> (r: Option<usize>)
+    pub fn refill(&mut self, k: usize) -> (r: Option<usize>)
         requires
             old(self).inv(),
         ensures
@@ -2253,7 +2206,7 @@ impl<'a> Win<'a> {
 
 /// The structural index of `s[st..]` as one window, for inputs short
 /// enough: the positions as offsets from `st`, with whether the input
-/// passes stage 1's checks and whether it is UTF-8.
+/// closes every string and whether it is UTF-8.
 pub fn index(s: &[u8], st: usize, idx: &mut Vec<u32>) -> (r: (usize, bool, bool))
     requires
         st <= s@.len(),
@@ -2261,18 +2214,17 @@ pub fn index(s: &[u8], st: usize, idx: &mut Vec<u32>) -> (r: (usize, bool, bool)
     ensures
         r.0 <= final(idx)@.len(),
         final(idx)@.subrange(0, r.0 as int) == rpos(s@, st as int, st as int, s@.len() as int),
-        r.1 == (clean(s@, st as int, s@.len() as int) && !instr(s@, st as int, s@.len() - 1)),
+        r.1 == !instr(s@, st as int, s@.len() - 1),
         r.2 == utf8_from(s@, st as int),
 {
     let (uj, uok) = crate::utf8::utf8_start(s, st);
     let kind = best_kind();
-    let t = Stage1 { w: 0, carry_esc: 0, in_str: 0, prev: 0, err: 0, pend: 0, pbase: 0 };
+    let t = Stage1 { w: 0, carry_esc: 0, in_str: 0, prev: 0, pend: 0, pbase: 0 };
     proof {
-        assert(clean(s@, st as int, st as int));
         assert(crate::utf8::ascii_span(s@, st as int, st as int));
     }
     let r = fill_kind(kind, s, st, idx, st, s.len(), t, uj, uok, true);
-    (r.0, r.1.err == 0 && r.1.in_str == 0, r.5)
+    (r.0, r.1.in_str == 0, r.5)
 }
 
 } // verus!

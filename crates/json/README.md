@@ -59,8 +59,7 @@ files (see [Performance](#performance)).
    is a window: it covers 64 KiB of input at a time, in a buffer of the
    same fixed size whatever the input's length, and stage 1 resumes where
    it stopped when stage 2 reads past the window's end. It finds string interiors with a
-   carry-less multiply (prefix XOR) over the unescaped quotes, and it checks
-   in the same pass that no control character appears inside a string. It
+   carry-less multiply (prefix XOR) over the unescaped quotes. It
    uses AVX-512 (with VBMI2 compress) or AVX2 when the CPU has them, NEON
    on AArch64 (Apple Silicon and other ARM64 CPUs; `src/neon.rs`), and a
    scalar kernel otherwise. On NEON the prefix XOR is the scalar shift
@@ -214,9 +213,10 @@ the tests check.
 Everything in `src/spec.rs`, `src/parser.rs`, `src/index.rs`,
 `src/stage2.rs`, `src/ondemand.rs`, `src/utf8.rs`, `src/write.rs`, `src/simd.rs`, `src/float.rs`
 and `src/lemmas.rs` is checked by Verus (`./scripts/verify.sh`, which runs `cargo verus verify`,
-802 items, 0 errors). The proofs are checked once per pointer width:
-also for `wasm32-unknown-unknown` at a 32-bit `usize` (716 items, without
-the x86 and Arm kernels, which that build does not have).
+805 items, 0 errors). The proofs are checked once per pointer width:
+also for `wasm32-unknown-unknown` at a 32-bit `usize`
+(`./scripts/verify-narrow.sh`, 719 items, without the x86 and Arm
+kernels, which that build does not have).
 The trusted base is listed under [What is not proven](#what-is-not-proven).
 
 * **Conformance.** `src/spec.rs` states the RFC 8259 grammar as Verus spec

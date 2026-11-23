@@ -1091,6 +1091,10 @@ impl<'a> Cursor<'a> {
                 lemma_cnt_bound(self.s@, self.st@, n);
             }
         }
+        // The scan reads forward from entry `k`: the window must not be past it.
+        if self.w.kbase > self.k {
+            let _ = self.w.at(self.k);
+        }
         match ex2_string_dec(&mut self.w, self.k, j, Ghost(self.st@), dst) {
             Some((k2, e, esc)) => {
                 self.k = k2;
@@ -1306,6 +1310,8 @@ impl<'a> Cursor<'a> {
                 let mut j: usize = 0;
                 let i0 = k - self.w.kbase;
                 let w0 = self.w.w0;
+                let src = self.s;
+                let bs = self.w.buf.as_slice();
                 proof {
                     lemma_win_entry(&self.w, k as int);
                     lemma_win_entry(&self.w, k + 7);
@@ -1322,6 +1328,8 @@ impl<'a> Cursor<'a> {
                         k + 8 <= self.w.kend,
                         i0 == k - self.w.kbase,
                         w0 == self.w.w0,
+                        src@ == g,
+                        bs@ == self.w.buf@,
                         k + 8 <= idx.len(),
                         0 <= j <= 8,
                         o == opens(g, idx, k as int, j as int),
@@ -1333,7 +1341,7 @@ impl<'a> Cursor<'a> {
                     proof {
                         lemma_win_entry(&self.w, k + j);
                     }
-                    let b = get8(self.s, w0 + get32(self.w.buf.as_slice(), i0 + j) as usize) & 0xDF;
+                    let b = get8(src, w0 + get32(bs, i0 + j) as usize) & 0xDF;
                     proof {
                         let b0 = g[idx[k + j]];
                         assert(byte(g, idx[k + j]) == b0);

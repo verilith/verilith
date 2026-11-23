@@ -37,13 +37,16 @@ pub open spec fn win_at(w: &Win, s: Seq<u8>, st: int, k: int) -> bool {
     &&& w.kbase <= k
 }
 
-/// Entry `k` of the index through `at`, with room on the tape kept for a
-/// token per entry left in the window, counted from `k0`.
+/// Entry `k` of the index through the window, with room on the tape kept
+/// for a token per entry left in the window, counted from `k0`. Stage 2
+/// reads forward only, so the fast path is one comparison; the tape is
+/// topped up only when the window moves.
 #[inline(always)]
 pub fn at2<S: Sink>(w: &mut Win, k: usize, tape: &mut S, Ghost(k0): Ghost<int>) -> (r: Option<usize>)
     requires
         old(w).inv(),
         old(w).s@.len() <= MAX_INPUT,
+        old(w).kbase <= k,
         k <= k0 + 2,
         old(tape).room() >= old(w).kend - k0,
     ensures
@@ -58,9 +61,39 @@ pub fn at2<S: Sink>(w: &mut Win, k: usize, tape: &mut S, Ghost(k0): Ghost<int>) 
         final(tape).hist() == old(tape).hist(),
         forall|g: Seq<u8>| old(tape).inv(g) ==> #[trigger] final(tape).inv(g),
 {
-    let kend0 = w.kend;
-    let r = w.at(k);
-    keep_room(w, tape, kend0, Ghost(k0));
+    if k < w.kend {
+        proof {
+            lemma_win_entry(w, k as int);
+        }
+        Some(w.w0 + get32(w.buf.as_slice(), k - w.kbase) as usize)
+    } else {
+        at2_slow(w, k, tape, Ghost(k0))
+    }
+}
+
+/// `at2` past the window: moves it on and tops up the tape.
+#[inline(never)]
+fn at2_slow<S: Sink>(w: &mut Win, k: usize, tape: &mut S, Ghost(k0): Ghost<int>) -> (r: Option<usize>)
+    requires
+        old(w).inv(),
+        old(w).s@.len() <= MAX_INPUT,
+        old(w).kbase <= k,
+        old(w).kend <= k,
+        k <= k0 + 2,
+        old(tape).room() >= old(w).kend - k0,
+    ensures
+        final(w).inv(),
+        final(w).same(old(w)),
+        final(w).kbase <= k,
+        r matches Some(q) ==> k < final(w).all().len() && q == final(w).all()[k as int]
+            && q < final(w).wend && k < final(w).kend,
+        r is None ==> final(w).done && k >= final(w).all().len(),
+        final(tape).room() >= final(w).kend - k0,
+        final(tape).hist() == old(tape).hist(),
+        forall|g: Seq<u8>| old(tape).inv(g) ==> #[trigger] final(tape).inv(g),
+{
+    let r = w.refill(k);
+    tape.reserve(w.kend - w.kbase + 2);
     r
 }
 
@@ -596,6 +629,7 @@ pub proof fn lemma_string_step(s: Seq<u8>, st: int, i: int, lo: int)
 /// quote of a string, at `j`.
 pub open spec fn str_pre(w: &Win, st: int, k: int, j: int) -> bool {
     &&& w.inv()
+    &&& w.kbase <= k + 1
     &&& w.s@.len() <= isize::MAX
     &&& w.st == st
     &&& k < ix(w.s@, st).len()
@@ -740,6 +774,7 @@ pub fn ex2_string(cx: &mut Ctx, k: usize, j: usize, Ghost(st): Ghost<int>) -> (r
             g.len() <= isize::MAX,
             cx.st == st,
             cx.same(old(cx)),
+            cx.kbase <= kk,
             st <= j < i <= g.len(),
             j + 1 <= lo <= i,
             kk as int == cnt(g, st, lo),
@@ -749,7 +784,7 @@ pub fn ex2_string(cx: &mut Ctx, k: usize, j: usize, Ghost(st): Ghost<int>) -> (r
             string(g, j as int) == string_body(g, i as int, escf),
         decreases ix(g, st).len() - kk,
     {
-        let r = cx.at(kk);
+        let r = cx.at_fwd(kk);
         proof {
             lemma_string_next(cx, st, i as int, lo, kk as int, escf, r);
         }
@@ -987,6 +1022,7 @@ fn ex2_string_esc(cx: &mut Ctx, k: usize, j: usize, Ghost(st): Ghost<int>, dst: 
             g.len() <= isize::MAX,
             cx.st == st,
             cx.same(old(cx)),
+            cx.kbase <= kk,
             st <= j < i <= g.len(),
             j + 1 <= lo <= i,
             kk as int == cnt(g, st, lo),
@@ -998,7 +1034,7 @@ fn ex2_string_esc(cx: &mut Ctx, k: usize, j: usize, Ghost(st): Ghost<int>, dst: 
             escf ==> spare(*dst) >= (g.len() - i) + 16 && dec_inv(g, j as int, i as int, o, dst@),
         decreases ix(g, st).len() - kk,
     {
-        let r = cx.at(kk);
+        let r = cx.at_fwd(kk);
         proof {
             lemma_string_next(cx, st, i as int, lo, kk as int, escf, r);
         }
@@ -1081,7 +1117,7 @@ pub fn ex2_string_dec(cx: &mut Ctx, k: usize, j: usize, Ghost(st): Ghost<int>, d
     }
     let _m = s.len();
     // The body's first entry: the closing quote unless there is an escape.
-    let r = cx.at(k + 1);
+    let r = cx.at_fwd(k + 1);
     proof {
         lemma_string_next(cx, st, j + 1, j + 1, k + 1, false, r);
     }
@@ -1285,6 +1321,7 @@ pub fn ex2_value<S: Sink, const N: u8>(
     tape: &mut S,
     Ghost(st): Ghost<int>,
     Ghost(p): Ghost<int>,
+    jh: usize,
 ) -> (r: Option<(usize, usize)>)
     requires
         win_at(old(cx), old(cx).s@, st, k as int),
@@ -1296,12 +1333,13 @@ pub fn ex2_value<S: Sink, const N: u8>(
         old(tape).inv(old(cx).s@),
         old(tape).hist().len() <= p,
         N == 0 ==> k < old(cx).kend && k < ix(old(cx).s@, st).len() && (old(cx).s@[ix(old(cx).s@, st)[k as int]] == 0x2D
-            || is_digit(old(cx).s@[ix(old(cx).s@, st)[k as int]])),
+            || is_digit(old(cx).s@[ix(old(cx).s@, st)[k as int]])) && jh == ix(old(cx).s@, st)[k as int],
     ensures
         final(cx).inv(),
         final(cx).same(old(cx)),
         r is Some ==> final(tape).inv(old(cx).s@),
-        r matches Some((k2, _)) ==> final(tape).room() >= final(cx).kend - k2 && final(cx).kbase <= k2,
+        r matches Some((k2, _)) ==> final(tape).room() >= final(cx).kend - k2 && final(cx).kbase <= k2
+            && k2 <= final(cx).all().len(),
         match value(old(cx).s@, skip_ws(old(cx).s@, p), depth as nat, old(tape).hist()) {
             Some((t, e)) => if bnd(old(cx).s@, st, e) {
                 r == Some((cnt(old(cx).s@, st, e) as usize, e as usize)) && final(tape).hist() == t && out(
@@ -1314,7 +1352,7 @@ pub fn ex2_value<S: Sink, const N: u8>(
             },
             None => r is None,
         },
-    decreases depth, old(cx).s@.len() - p, 3nat,
+    decreases depth, old(cx).s@.len() - p, 4nat,
 {
     let s = cx.s;
     let ghost g = s@;
@@ -1325,9 +1363,14 @@ pub fn ex2_value<S: Sink, const N: u8>(
             lemma_at(g, st, skip_ws(g, p));
         }
     }
-    let j = match at2(cx, k, tape, Ghost(k as int)) {
-        Some(j) => j,
-        None => return None,
+    // In an array of numbers the caller has read the entry already.
+    let j = if N == 0 {
+        jh
+    } else {
+        match at2(cx, k, tape, Ghost(k as int)) {
+            Some(j) => j,
+            None => return None,
+        }
     };
     proof {
         let jj = skip_ws(g, p);
@@ -1343,6 +1386,9 @@ pub fn ex2_value<S: Sink, const N: u8>(
             Some((k2, n, esc)) => {
                 tape.push_str_fast(Tok::new(Kind::Str, esc, (j + 1), (n - 1), NO), s);
                 keep_room(cx, tape, kend0, Ghost(k2 as int));
+                proof {
+                    lemma_prefix(g, st, cx.wend as int, g.len() as int);
+                }
                 Some((k2, n))
             },
             None => None,
@@ -1357,6 +1403,9 @@ pub fn ex2_value<S: Sink, const N: u8>(
         // without the call.
         if c == 0x5B && depth > 0 {
             if let Some(e) = ex2_empty_array(cx, k + 1, depth, tape, Ghost(st), j) {
+                proof {
+                    lemma_prefix(g, st, e as int, g.len() as int);
+                }
                 return Some((k + 2, e));
             }
         }
@@ -1382,7 +1431,7 @@ pub fn ex2_value<S: Sink, const N: u8>(
                 None => None,
             };
         }
-        ex2_container(cx, k + 1, depth, tape, Ghost(st), j)
+        unpack2(ex2_container(cx, k + 1, depth, tape, Ghost(st), j))
     } else {
         let e = if N != 0 && c == 0x74 {
             if !ex_has4(s, j, 0x74, 0x72, 0x75, 0x65) {
@@ -1450,6 +1499,9 @@ pub fn ex2_value<S: Sink, const N: u8>(
                 assert(byte(g, e as int) == g[e as int]);
             }
             return None;
+        }
+        proof {
+            assert(k < cx.all().len());
         }
         Some((k + 1, e))
     }
@@ -1522,12 +1574,104 @@ pub open spec fn moved<S: Sink>(o: &Win, w: &Win, tape: &S, r: Option<(usize, us
     &&& w.inv()
     &&& w.same(o)
     &&& r is Some ==> tape.inv(o.s@)
-    &&& r matches Some((k2, _)) ==> tape.room() >= w.kend - k2 && w.kbase <= k2
+    &&& r matches Some((k2, _)) ==> tape.room() >= w.kend - k2 && w.kbase <= k2 && k2 <= w.all().len()
+}
+
+/// A result packed in two words, so that it comes back in registers:
+/// `usize::MAX` in the first for `None`.
+pub open spec fn unpack(r: (usize, usize)) -> Option<(usize, usize)> {
+    if r.0 == usize::MAX {
+        None
+    } else {
+        Some(r)
+    }
+}
+
+#[inline(always)]
+pub fn unpack2(r: (usize, usize)) -> (o: Option<(usize, usize)>)
+    ensures
+        o == unpack(r),
+{
+    if r.0 == usize::MAX {
+        None
+    } else {
+        Some(r)
+    }
+}
+
+/// `ex2_container_in` out of line, its result packed (see `unpack`).
+#[inline(never)]
+fn ex2_container<S: Sink>(
+    cx: &mut Ctx,
+    k: usize,
+    depth: usize,
+    tape: &mut S,
+    Ghost(st): Ghost<int>,
+    j: usize,
+) -> (r: (usize, usize))
+    requires
+        win_at(old(cx), old(cx).s@, st, k as int),
+        st <= j < old(cx).s@.len(),
+        cnt(old(cx).s@, st, j as int + 1) == k,
+        k >= 1,
+        k - 1 < old(cx).kend,
+        old(cx).s@[j as int] == 0x5B || old(cx).s@[j as int] == 0x7B,
+        out(old(cx).s@, st, j as int + 1),
+        bnd(old(cx).s@, st, j as int + 1),
+        old(tape).room() >= old(cx).kend - (k - 1),
+        old(tape).inv(old(cx).s@),
+        old(tape).hist().len() <= j,
+    ensures
+        moved(old(cx), final(cx), final(tape), unpack(r)),
+        match value(old(cx).s@, j as int, depth as nat, old(tape).hist()) {
+            Some((t, e)) => unpack(r) == Some((cnt(old(cx).s@, st, e) as usize, e as usize)) && final(tape).hist() == t
+                && out(old(cx).s@, st, e) && bnd(old(cx).s@, st, e) && e <= old(cx).s@.len(),
+            None => unpack(r) is None,
+        },
+    decreases depth, old(cx).s@.len() - j, 3nat,
+{
+    match ex2_container_in(cx, k, depth, tape, Ghost(st), j) {
+        Some(x) => {
+            proof {
+                lemma_positions_len(cx.s@, st, st, cx.s@.len() as int);
+            }
+            x
+        },
+        None => (usize::MAX, 0),
+    }
+}
+
+/// `ex2_elements_in` out of line, its result packed (see `unpack`).
+#[inline(never)]
+fn ex2_elements<S: Sink>(
+    cx: &mut Ctx,
+    k0: usize,
+    depth: usize,
+    tape: &mut S,
+    Ghost(st): Ghost<int>,
+    Ghost(i0): Ghost<int>,
+) -> (r: (usize, usize))
+    requires
+        cont_pre(old(cx), old(tape), st, k0 as int, i0),
+    ensures
+        moved(old(cx), final(cx), final(tape), unpack(r)),
+        cont_post(old(cx).s@, st, elements(old(cx).s@, i0, depth as nat, old(tape).hist()), final(tape).hist(), unpack(r)),
+    decreases depth, old(cx).s@.len() - i0, 1nat,
+{
+    match ex2_elements_in(cx, k0, depth, tape, Ghost(st), Ghost(i0)) {
+        Some(x) => {
+            proof {
+                lemma_positions_len(cx.s@, st, st, cx.s@.len() as int);
+            }
+            x
+        },
+        None => (usize::MAX, 0),
+    }
 }
 
 /// An array or object at `j`, which is index entry `k - 1`.
-#[inline(never)]
-fn ex2_container<S: Sink>(
+#[inline(always)]
+fn ex2_container_in<S: Sink>(
     cx: &mut Ctx,
     k: usize,
     depth: usize,
@@ -1620,7 +1764,7 @@ fn ex2_array<S: Sink>(
     ensures
         moved(old(cx), final(cx), final(tape), r),
         cont_post(old(cx).s@, st, array(old(cx).s@, i, depth as nat, old(tape).hist()), final(tape).hist(), r),
-    decreases depth, old(cx).s@.len() - i, 1nat,
+    decreases depth, old(cx).s@.len() - i, 2nat,
 {
     let s = cx.s;
     let ghost g = s@;
@@ -1633,7 +1777,7 @@ fn ex2_array<S: Sink>(
             return Some((k + 1, q + 1));
         }
     }
-    ex2_elements(cx, k, depth, tape, Ghost(st), Ghost(i))
+    unpack2(ex2_elements(cx, k, depth, tape, Ghost(st), Ghost(i)))
 }
 
 /// `ex2_array` in line: elements that are numbers are parsed here; at the
@@ -1653,23 +1797,23 @@ fn ex2_array_inl<S: Sink>(
     ensures
         moved(old(cx), final(cx), final(tape), r),
         cont_post(old(cx).s@, st, array(old(cx).s@, i0, depth as nat, old(tape).hist()), final(tape).hist(), r),
-    decreases depth, old(cx).s@.len() - i0, 1nat,
+    decreases depth, old(cx).s@.len() - i0, 2nat,
 {
     let s = cx.s;
     let ghost g = s@;
     proof {
         lemma_close(g, st, i0);
     }
-    let c0 = match at2(cx, k, tape, Ghost(k as int)) {
+    let (c0, j0) = match at2(cx, k, tape, Ghost(k as int)) {
         Some(q) => {
             let c = get8(s, q);
             if c == 0x5D {
                 tape.push_fast(tok(Kind::ArrEnd));
                 return Some((k + 1, q + 1));
             }
-            c
+            (c, q)
         },
-        None => return ex2_elements(cx, k, depth, tape, Ghost(st), Ghost(i0)),
+        None => return unpack2(ex2_elements(cx, k, depth, tape, Ghost(st), Ghost(i0))),
     };
     if depth == 0 {
         return None;
@@ -1679,6 +1823,7 @@ fn ex2_array_inl<S: Sink>(
     let ghost mut i = i0;
     let mut k = k;
     let mut c0 = c0;
+    let mut j0 = j0;
     loop
         invariant
             array(g, i0, depth as nat, t0) == elements(g, i0, depth as nat, t0),
@@ -1702,13 +1847,14 @@ fn ex2_array_inl<S: Sink>(
             k < cx.kend,
             k < ix(g, st).len(),
             c0 == g[ix(g, st)[k as int]],
+            j0 == ix(g, st)[k as int],
         decreases g.len() - i,
     {
         if !(c0 == 0x2D || ex_is_digit(c0)) {
-            return ex2_elements(cx, k, depth, tape, Ghost(st), Ghost(i));
+            return unpack2(ex2_elements(cx, k, depth, tape, Ghost(st), Ghost(i)));
         }
         let ghost tb = tape.hist();
-        let (k1, e) = match ex2_value::<S, 0>(cx, k, depth - 1, tape, Ghost(st), Ghost(i)) {
+        let (k1, e) = match ex2_value::<S, 0>(cx, k, depth - 1, tape, Ghost(st), Ghost(i), j0) {
             Some(x) => x,
             None => {
                 proof {
@@ -1747,16 +1893,19 @@ fn ex2_array_inl<S: Sink>(
             lemma_close(g, st, i);
         }
         k = k1 + 1;
-        c0 = match at2(cx, k, tape, Ghost(k as int)) {
-            Some(q) => get8(s, q),
-            None => return ex2_elements(cx, k, depth, tape, Ghost(st), Ghost(i)),
-        };
+        match at2(cx, k, tape, Ghost(k as int)) {
+            Some(q) => {
+                c0 = get8(s, q);
+                j0 = q;
+            },
+            None => return unpack2(ex2_elements(cx, k, depth, tape, Ghost(st), Ghost(i))),
+        }
     }
 }
 
 #[allow(unused_variables)]
-#[inline(never)]
-fn ex2_elements<S: Sink>(
+#[inline(always)]
+fn ex2_elements_in<S: Sink>(
     cx: &mut Ctx,
     k0: usize,
     depth: usize,
@@ -1801,7 +1950,7 @@ fn ex2_elements<S: Sink>(
         decreases g.len() - i,
     {
         let ghost tb = tape.hist();
-        let (k1, e) = match ex2_value::<S, 1>(cx, k, depth - 1, tape, Ghost(st), Ghost(i)) {
+        let (k1, e) = match ex2_value::<S, 1>(cx, k, depth - 1, tape, Ghost(st), Ghost(i), 0) {
             Some(x) => x,
             None => {
                 proof {
@@ -1921,6 +2070,8 @@ proof fn lemma_member_size(s: Seq<u8>, i: int, depth: nat, tape: Seq<STok>)
     }
 }
 
+#[verifier::spinoff_prover]
+#[verifier::rlimit(40)]
 #[inline(always)]
 fn ex2_member<S: Sink>(
     cx: &mut Ctx,
@@ -2001,7 +2152,7 @@ fn ex2_member<S: Sink>(
         crate::lemmas::lemma_skip_ws_bounds(g, cpos + 1);
         crate::lemmas::lemma_value_advances(g, skip_ws(g, cpos + 1), (depth - 1) as nat, tkey);
     }
-    ex2_value::<S, 1>(cx, k1 + 1, depth - 1, tape, Ghost(st), Ghost(cpos + 1))
+    ex2_value::<S, 1>(cx, k1 + 1, depth - 1, tape, Ghost(st), Ghost(cpos + 1), 0)
 }
 
 #[allow(unused_variables)]
@@ -2157,7 +2308,7 @@ pub fn parse2_win<S: Sink>(s: &[u8], tape: &mut S, cx: &mut Win, start: usize) -
         crate::lemmas::lemma_value_advances(g, skip_ws(g, st), MAX_DEPTH as nat, Seq::empty());
     }
     tape.reserve(2);
-    let (k, e) = match ex2_value::<S, 1>(cx, 0, MAX_DEPTH, tape, Ghost(st), Ghost(st)) {
+    let (k, e) = match ex2_value::<S, 1>(cx, 0, MAX_DEPTH, tape, Ghost(st), Ghost(st), 0) {
         Some(x) => x,
         None => {
             proof {
