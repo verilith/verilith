@@ -29,6 +29,8 @@
 // - `refs`: verified scalar implementations of every `ops` function, which
 //   `tests/difftest.rs` compares with the CPU.
 #![cfg_attr(not(verus_only), allow(unused_imports))]
+#![cfg_attr(not(feature = "std"), no_std)]
+extern crate alloc;
 pub mod lanes;
 pub mod ops;
 pub mod cpu;

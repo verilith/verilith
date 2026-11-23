@@ -8,8 +8,15 @@ categories = ["hardware-support"]
 description = "Verus specifications for x86 SIMD intrinsics (SSE2..AVX2, some AVX-512), differentially tested against the CPU"
 edition = "2024"
 
+[features]
+default = ["std"]
+# Without `std` the crate is `no_std` and needs only `alloc`; CPU features
+# are then the ones the target is compiled for (`-C target-feature=...`),
+# not detected at run time.
+std = ["vstd/std"]
+
 [dependencies]
-vstd = { workspace = true, features = ["std"] }
+vstd = { workspace = true, features = ["alloc"] }
 
 [dev-dependencies]
 

@@ -134,7 +134,14 @@ mod raw {
 
     #[inline]
     pub fn has() -> bool {
-        std::arch::is_aarch64_feature_detected!("dotprod")
+        #[cfg(feature = "std")]
+        {
+            std::arch::is_aarch64_feature_detected!("dotprod")
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            cfg!(target_feature = "dotprod")
+        }
     }
 
     #[inline(always)]

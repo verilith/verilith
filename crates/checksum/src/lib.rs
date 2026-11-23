@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(not(verus_only), allow(unused_variables, unused_imports))]
+#![cfg_attr(not(feature = "std"), no_std)]
 // Adler-32 (RFC 1950), CRC-32 (RFC 1952) and CRC-32C (RFC 3720), proven
 // to compute `spec::adler32`, `spec::crc32` and `spec::crc32c`.
 //

@@ -16,7 +16,12 @@ use crate::dot::{add32, dot4};
 use core::arch::x86_64::*;
 use vstd::prelude::*;
 
+// Run-time detection needs `std`; a `no_std` build uses only the features
+// the target is compiled for.
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
 macro_rules! x86_has { ($f:tt) => { std::is_x86_feature_detected!($f) }; }
+#[cfg(all(target_arch = "x86_64", not(feature = "std")))]
+macro_rules! x86_has { ($f:tt) => { cfg!(target_feature = $f) }; }
 
 verus! {
 

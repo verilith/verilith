@@ -12,6 +12,8 @@ use crate::lanes::*;
 use crate::ops::*;
 #[cfg(verus_only)]
 use vstd::arithmetic::div_mod::*;
+#[allow(unused_imports)]
+use alloc::vec::Vec;
 use vstd::prelude::*;
 
 verus! {

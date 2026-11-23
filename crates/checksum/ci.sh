@@ -6,6 +6,11 @@
 
 test() {
   cargo test --profile "$P"
+  # Without std: a bare-metal build, and the tests with the vector kernels
+  # chosen at compile time instead of detected.
+  rustup target add thumbv7em-none-eabihf > /dev/null
+  cargo build --profile "$P" --no-default-features --target thumbv7em-none-eabihf
+  RUSTFLAGS="-C target-cpu=native" CARGO_TARGET_DIR="$T/nostd" cargo test --profile "$P" --no-default-features
   # The crc32x and udot kernels, on emulated AArch64.
   if [ -n "${CI:-}" ]; then
     apt qemu-user gcc-aarch64-linux-gnu

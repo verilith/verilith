@@ -2,6 +2,8 @@
 //! oracle for `tests/neon.rs` (with `crate::refs` for the shared ones).
 use crate::lanes::*;
 use crate::ops::*;
+#[allow(unused_imports)]
+use alloc::vec::Vec;
 use vstd::prelude::*;
 
 verus! {
