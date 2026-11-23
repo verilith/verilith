@@ -14,6 +14,20 @@ and colour conversion are proven against a specification of the format,
 down to the value of every output byte. `cargo verus verify` checks 523
 functions with no errors.
 
+## Using it from Rust
+
+```rust,no_run
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let data = std::fs::read("photo.jpg")?;
+    let header = verilith_jpeg::read_header(&data)?; // size and components, no decoding
+    println!("{} x {}, progressive: {}", header.w, header.h, header.prog);
+    let pic = verilith_jpeg::decode(&data)?;
+    // pic.nc bytes per pixel (1 gray, 3 RGB), row by row.
+    assert_eq!(pic.px.len(), pic.w as usize * pic.h as usize * pic.nc as usize);
+    Ok(())
+}
+```
+
 ## What is proven
 
 | property | where it is stated |
@@ -31,7 +45,7 @@ functions with no errors.
 `read_header` (used by the TurboJPEG header calls) is verified for memory
 safety and termination only; it reuses the verified segment parser.
 
-[TRUST.md](TRUST.md) lists everything the proofs assume rather than prove.
+[TRUST.md](https://github.com/verilith/verilith/blob/main/crates/jpeg/TRUST.md) lists everything the proofs assume rather than prove.
 In short: the specification (`src/spec.rs`), two allocation primitives, the
 specifications of 35 NEON intrinsics in
 [verilith-simd](https://github.com/verilith/verilith/tree/main/crates/simd) (AArch64 only), the
@@ -233,5 +247,5 @@ The proofs are checked with Verus `0.2026.11.02.8bf68ee` (vstd
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/jpeg/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/jpeg/LICENSE-MIT), at your option.

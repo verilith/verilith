@@ -200,15 +200,18 @@ cargo build --release --example vpngcat     # vpngcat FILE [rgba8|native]
 The proofs are checked with Verus at commit `8bf68ee7` (vstd
 `0.0.0-2026-11-01-0251`) and Rust 1.99.1.
 
-```rust
-use verilith_png::top::{decode, PixelFormat};
-match decode(&bytes, PixelFormat::Rgba8, 1 << 30) {
-    Ok((header, rgba)) => { /* header.width x header.height, 4 bytes per pixel */ }
-    Err(e) => { /* Invalid, TooLarge or OutOfMemory */ }
+```rust,no_run
+use verilith_png::{decode, PixelFormat};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = std::fs::read("image.png")?;
+    let (header, rgba) = decode(&bytes, PixelFormat::Rgba8, 1 << 30)?; // Invalid, TooLarge or OutOfMemory
+    println!("{} x {}, {} bytes of RGBA", header.width, header.height, rgba.len());
+    Ok(())
 }
 ```
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/png/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/png/LICENSE-MIT), at your option.

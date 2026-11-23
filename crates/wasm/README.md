@@ -96,17 +96,31 @@ instantiation (`src/api.rs`, which builds the initial store that
 ## Using it
 
 ```rust
-use verilith_wasm::api::{Instance, Linker, Module, Val};
-use verilith_wasm::ast::ValType;
+use verilith_wasm::{Instance, Linker, Module, Val, ValType};
 
-let module = Module::new(&wasm_bytes)?;               // decode + validate
-let mut linker = Linker::new();
-linker.func("env", "log", &[ValType::I32], &[], |args, _results, memory| {
-    println!("{:?} ({} bytes of memory)", args[0], memory.len());
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // (module (import "env" "log" (func (param i32)))
+    //   (func (export "run") (param i32) (result i32)
+    //     (call 0 (local.get 0)) (i32.add (local.get 0) (i32.const 1))))
+    let wasm_bytes = [
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // magic, version
+        0x01, 0x0a, 0x02, 0x60, 0x01, 0x7f, 0x00, 0x60, 0x01, 0x7f, 0x01, 0x7f, // types
+        0x02, 0x0b, 0x01, 0x03, b'e', b'n', b'v', 0x03, b'l', b'o', b'g', 0x00, 0x00, // import
+        0x03, 0x02, 0x01, 0x01, // functions
+        0x07, 0x07, 0x01, 0x03, b'r', b'u', b'n', 0x00, 0x01, // export
+        0x0a, 0x0d, 0x01, 0x0b, 0x00, 0x20, 0x00, 0x10, 0x00, 0x20, 0x00, 0x41, 0x01, 0x6a, 0x0b, // code
+    ];
+    let module = Module::new(&wasm_bytes)?; // decode + validate
+    let mut linker = Linker::new();
+    linker.func("env", "log", &[ValType::I32], &[], |args, _results, memory| {
+        println!("{:?} ({} bytes of memory)", args[0], memory.len());
+        Ok(())
+    });
+    let mut instance = Instance::new(module, &linker)?; // check, compile, instantiate
+    let r = instance.call("run", &[Val::I32(7)])?;
+    assert_eq!(r, [Val::I32(8)]);
     Ok(())
-});
-let mut instance = Instance::new(module, &linker)?;    // check, compile, instantiate
-let r = instance.call("run", &[Val::I32(7)])?;
+}
 ```
 
 Host functions get the arguments, a buffer for their results and the
@@ -285,8 +299,8 @@ branches that carry values, memory and table instructions) runs as before.
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/wasm/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/wasm/LICENSE-MIT), at your option.
 
 `include/wasm.h` and `examples/c/` are from WebAssembly/wasm-c-api,
-under the Apache License 2.0 in [LICENSE-wasm-c-api](LICENSE-wasm-c-api).
+under the Apache License 2.0 in [LICENSE-wasm-c-api](https://github.com/verilith/verilith/blob/main/crates/wasm/LICENSE-wasm-c-api).

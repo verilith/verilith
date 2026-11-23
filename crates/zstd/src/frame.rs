@@ -786,3 +786,14 @@ proof fn lemma_frames_grows(b: Seq<u8>, i: int, out: Seq<u8>)
 }
 
 } // verus!
+
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Error::Corrupt => "corrupt Zstandard data",
+            Error::TooLarge => "the output would be larger than the limit",
+        })
+    }
+}
+
+impl std::error::Error for Error {}

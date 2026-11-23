@@ -44,7 +44,7 @@ same job and not identical output.
 
 ## What is proven
 
-```rust
+```rust,ignore
 pub fn sanitize(input: &[u8]) -> (r: Option<Vec<u8>>)
     ensures r matches Some(out) ==> spec::wf_font(out@)
 ```
@@ -142,7 +142,7 @@ well formed directly, so that the second pass can go, is future work.
   instructions inside glyphs are copied as bytes (their lengths are
   bounded by `maxp`). OTS does the same. A rasterizer that executes
   hinting programs must defend itself.
-- That the specification is the right one. See [TRUST.md](TRUST.md).
+- That the specification is the right one. See [TRUST.md](https://github.com/verilith/verilith/blob/main/crates/font/TRUST.md).
 
 ## Which tables are kept
 
@@ -221,10 +221,14 @@ Where verilith-font accepts more, or acts differently:
 
 Rust:
 
-```rust
-match verilith_font::sanitize(&bytes) {
-    Some(font) => use_font(&font),
-    None => fall_back(),
+```rust,no_run
+fn main() -> std::io::Result<()> {
+    let bytes = std::fs::read("font.woff2")?;
+    match verilith_font::sanitize(&bytes) {
+        Some(font) => std::fs::write("font.ttf", font)?, // rebuilt, and proven well-formed
+        None => eprintln!("refused"),
+    }
+    Ok(())
 }
 ```
 
@@ -316,5 +320,5 @@ in `Cargo.toml`. CI (`.github/workflows/ci.yml` at the repository root) verifies
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/font/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/font/LICENSE-MIT), at your option.

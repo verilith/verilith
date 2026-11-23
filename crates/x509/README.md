@@ -3,7 +3,7 @@
 A DER and X.509 certificate parser in Rust, formally verified with
 [Verus](https://github.com/verus-lang/verus). The parser is proven to compute
 exactly a specification of DER (X.690) and the RFC 5280 certificate profile,
-written as pure functions in [`src/spec.rs`](src/spec.rs): it accepts a
+written as pure functions in [`src/spec.rs`](https://github.com/verilith/verilith/blob/main/crates/x509/src/spec.rs): it accepts a
 certificate if and only if the spec does, and returns exactly the fields
 the spec says. Verus also proves that it never reads out of bounds and
 never overflows.
@@ -13,7 +13,7 @@ every certificate it reads (`mbedtls_x509_crt_parse_der`, and so
 `mbedtls_x509_crt_parse`, PEM files, the TLS handshake and PKCS#7) with
 verilith-x509 and passes its own test suites, except for 18 synthetic test
 certificates that break DER and RFC 5280 (see
-[mbedtls/README.md](mbedtls/README.md)).
+[mbedtls/README.md](https://github.com/verilith/verilith/blob/main/crates/x509/mbedtls/README.md)).
 
 It is `no_std`, never allocates and never copies: a parsed certificate is a
 set of slices of the input. It builds for bare-metal targets such as
@@ -23,7 +23,7 @@ It is fast: 8 to 12 times faster than x509-parser and x509-cert, the other
 Rust parsers that decode a whole certificate (see Performance).
 
 Every place where it reads X.690 or RFC 5280 strictly or loosely is listed
-in [DEPARTURES.md](DEPARTURES.md), and [CVES.md](CVES.md) maps fourteen
+in [DEPARTURES.md](https://github.com/verilith/verilith/blob/main/crates/x509/DEPARTURES.md), and [CVES.md](https://github.com/verilith/verilith/blob/main/crates/x509/CVES.md) maps fourteen
 certificate parsing CVEs in OpenSSL, NSS, Windows CryptoAPI and PolarSSL
 to the proven property that rules out each bug class.
 
@@ -59,22 +59,28 @@ the key pays for decoding it on our side too.
 
 ## Usage
 
-```rust
-let cert = verilith_x509::parse(&der).ok_or("malformed")?;
-// Or, to learn why a certificate was rejected:
-// let cert = verilith_x509::try_parse(&der)?;   // Err says what, at which offset
+```rust,no_run
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let der = std::fs::read("cert.der")?;
+    let cert = verilith_x509::parse(&der).ok_or("malformed")?;
+    // Or, to learn why a certificate was rejected:
+    let cert2 = verilith_x509::try_parse(&der)?; // Err says what, at which offset
+    assert_eq!(cert.tbs_der, cert2.tbs_der);
 
-for atv in cert.subject().attributes() {
-    println!("{} = {:?}", verilith_x509::OidDisplay(atv.oid), atv.value_str());
+    for atv in cert.subject().attributes() {
+        println!("{} = {:?}", verilith_x509::OidDisplay(atv.oid), atv.value_str());
+    }
+    for dns in cert.dns_names() {
+        println!("DNS: {}", String::from_utf8_lossy(dns));
+    }
+    if let Some(bc) = cert.basic_constraints() {
+        println!("CA: {}, path length: {:?}", bc.ca, bc.path_len);
+    }
+    let signed = cert.tbs_der; // the exact bytes the signature covers
+    let signature = cert.signature;
+    println!("{} signed bytes, {} signature bytes", signed.len(), signature.len());
+    Ok(())
 }
-for dns in cert.dns_names() {
-    println!("DNS: {}", String::from_utf8_lossy(dns));
-}
-if let Some(bc) = cert.basic_constraints() {
-    println!("CA: {}, path length: {:?}", bc.ca, bc.path_len);
-}
-let signed = cert.tbs_der;      // the exact bytes the signature covers
-let signature = cert.signature;
 ```
 
 ### From C
@@ -214,7 +220,7 @@ cryptography.io, in `bench/data/`.
 - `tests/differential.rs`: against OpenSSL, x509-parser, x509-cert and
   webpki on about 31,000 certificates from x509-limbo, pyca/cryptography's
   vectors and the system trust store, with 0 disagreements on decoded
-  fields (see [corpus/README.md](corpus/README.md)).
+  fields (see [corpus/README.md](https://github.com/verilith/verilith/blob/main/crates/x509/corpus/README.md)).
 - `tests/capi.rs` (`cargo test --features capi`): the native C API against
   the Rust API, field by field, on the corpus and on every truncation and
   single-byte change of four certificates. `scripts/test-c.sh` runs
@@ -283,5 +289,5 @@ cargo verus verify
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/x509/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/x509/LICENSE-MIT), at your option.
