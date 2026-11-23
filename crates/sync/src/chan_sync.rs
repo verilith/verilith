@@ -454,7 +454,7 @@ impl<T> Chan<T> {
             final(tok).value().timed == old(tok).value().timed,
             tok_at(*final(gtok), self.k().s, if r is Some { Ph::GNotify } else { Ph::Idle }),
     {
-        let Tracked(credit) = vstd::invariant::create_open_invariant_credit();
+        let tracked credit = vstd::invariant::create_open_invariant_credit();
         let ghost mut flag = false;
         let ghost pc = Pc::Take { gone };
         let r = self.queue.pop() atomically |update| {
@@ -494,7 +494,7 @@ impl<T> Chan<T> {
             final(tok).value().timed == old(tok).value().timed,
             tok_at(*final(gtok), self.k().r, if r is Ok { Ph::GNotify } else { Ph::Idle }),
     {
-        let Tracked(credit) = vstd::invariant::create_open_invariant_credit();
+        let tracked credit = vstd::invariant::create_open_invariant_credit();
         let ghost mut flag = false;
         let ghost pc = Pc::Take { gone };
         let r = self.queue.push(value) atomically |update| {
@@ -624,7 +624,7 @@ impl<T> Chan<T> {
             tok_at(*final(tok), self.k().dir(d), abs(next_spec(Pc::Ready2, cfg, flag, false), tk, 0)),
             final(tok).value().timed == old(tok).value().timed,
     {
-        let Tracked(credit) = vstd::invariant::create_open_invariant_credit();
+        let tracked credit = vstd::invariant::create_open_invariant_credit();
         let nothing = if d {
             self.queue.confirm_empty() atomically |update| {
                 open_atomic_invariant!(credit => self.inv.borrow() => g => {

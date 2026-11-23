@@ -6,16 +6,16 @@ load("@root//verus:defs.bzl", "rustc_library", "verus_vstd")
 # vstd, from the crates.io release Cargo.lock pins, once for each set of
 # features the verified crates ask for.
 http_archive(
-    name = "vstd-0.0.0-2026-11-01-0251.crate",
-    urls = ["https://static.crates.io/crates/vstd/vstd-0.0.0-2026-11-01-0251.crate"],
-    sha256 = "7cfcc2fc379ffbcda31111f1a7da2a34d00bd984407cfa85d1edcf64da38dbd2",
-    strip_prefix = "vstd-0.0.0-2026-11-01-0251",
+    name = "vstd-0.0.0-2026-11-22-0344.crate",
+    urls = ["https://static.crates.io/crates/vstd/vstd-0.0.0-2026-11-22-0344.crate"],
+    sha256 = "66760ffdbcefb8a21dd2fb99d72c4bad27b4bd3217bcab50f36dc9f6b7dbe330",
+    strip_prefix = "vstd-0.0.0-2026-11-22-0344",
     type = "tar.gz",
 )
 
 verus_vstd(
     name = "vstd-alloc-std",
-    archive = ":vstd-0.0.0-2026-11-01-0251.crate",
+    archive = ":vstd-0.0.0-2026-11-22-0344.crate",
     edition = "2021",
     features = [
         "alloc",
@@ -26,7 +26,7 @@ verus_vstd(
 
 verus_vstd(
     name = "vstd-bare",
-    archive = ":vstd-0.0.0-2026-11-01-0251.crate",
+    archive = ":vstd-0.0.0-2026-11-22-0344.crate",
     edition = "2021",
     features = [],
     visibility = ["PUBLIC"],

@@ -244,8 +244,8 @@ cargo build --release --example djpeg            # djpeg FILE > out.ppm
 ./scripts/verify.sh                              # needs cargo-verus and z3 on PATH
 ```
 
-The proofs are checked with Verus `0.2026.11.02.8bf68ee` (vstd
-`0.0.0-2026-11-01-0251`).
+The proofs are checked with Verus `0.2026.11.22.1ce6a59` (vstd
+`0.0.0-2026-11-22-0344`).
 
 ## License
 
