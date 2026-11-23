@@ -146,6 +146,91 @@ pub proof fn lemma_parse_utf8(s: Seq<u8>)
 }
 
 // ---------------------------------------------------------------------------
+// Text in UTF-8 from a document in another encoding
+// ---------------------------------------------------------------------------
+
+/// The encoding the text `u` (in UTF-8) says it was in: the one its XML
+/// declaration names, if it is one read here; otherwise UTF-8.
+pub open spec fn self_enc(u: Seq<u8>) -> Enc {
+    match declared_enc(u) {
+        Some((x, y)) => if ci_eq(u, x, y, lit_latin1()) {
+            Enc::Latin1
+        } else if ci_eq(u, x, y, lit_ascii()) {
+            Enc::Ascii
+        } else if ci_eq(u, x, y, lit_utf16()) {
+            Enc::Utf16
+        } else {
+            Enc::Utf8
+        },
+        None => Enc::Utf8,
+    }
+}
+
+/// The text `u` read as the document it is, in the encoding it says it
+/// was in (`document(u, e)`, for whichever `e` its declaration allows).
+pub open spec fn docx(u: Seq<u8>) -> Option<Seq<XTok>> {
+    document(u, self_enc(u))
+}
+
+/// On every input that begins with `seen`, the text is read in `e` as it
+/// says it was (and, for `e` UTF-8, the input is in UTF-8).
+pub open spec fn enc_ok(seen: Seq<u8>, e: Enc) -> bool {
+    forall|s: Seq<u8>| #[trigger] ext(seen, s) ==> (e == Enc::Utf8 ==> input_enc(s) == Enc::Utf8) && document(s, e) == docx(s)
+}
+
+/// A head the declaration allows in `e` is the head in the encoding the
+/// text says it was in.
+pub proof fn lemma_docx(u: Seq<u8>, e: Enc)
+    requires
+        decl_head(u, e) is Some,
+    ensures
+        decl_head(u, self_enc(u)) == decl_head(u, e),
+        document(u, e) == docx(u),
+{
+    hide(document);
+    hide(after_m1);
+    hide(doc_chars);
+    hide(version_info);
+    hide(ws_end);
+    hide(sd_decl);
+    hide(enc_span);
+    let p0 = bom_end(u);
+    if has_lit(u, p0, lit_xmldecl()) && 0 <= p0 + 5 < u.len() && is_ws(u[p0 + 5]) {
+        let (v, _, _) = version_info(u, p0 + 5).unwrap();
+        let j = ws_end(u, v);
+        if j > v && has_lit(u, j, lit_encoding()) {
+            let (_, a, b) = enc_span(u, j).unwrap();
+            assert(enc_name_ok(u, a, b, e));
+            assert(declared_enc(u) == Some((a, b)));
+            assert(lit_utf8().len() == 5);
+            assert(lit_utf16().len() == 6);
+            assert(lit_latin1().len() == 10);
+            assert(lit_ascii().len() == 8);
+            assert(self_enc(u) == e);
+        } else {
+            assert(xmldecl(u, p0, e) == xmldecl(u, p0, self_enc(u)));
+        }
+    }
+    assert(decl_head(u, self_enc(u)) == decl_head(u, e));
+    reveal(document);
+    lemma_document(u, e);
+    lemma_document(u, self_enc(u));
+}
+
+/// `enc_ok` holds on: for anything that begins with more.
+pub proof fn lemma_enc_ok_ext(a: Seq<u8>, b: Seq<u8>, e: Enc)
+    requires
+        enc_ok(a, e),
+        ext(a, b),
+    ensures
+        enc_ok(b, e),
+{
+    assert forall|s: Seq<u8>| #[trigger] ext(b, s) implies (e == Enc::Utf8 ==> input_enc(s) == Enc::Utf8) && document(s, e) == docx(s) by {
+        lemma_ext_trans(a, b, s);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // One step of Misc, and where it stops
 // ---------------------------------------------------------------------------
 
@@ -783,6 +868,41 @@ pub proof fn lemma_head_utf8(x: Seq<u8>, y: Seq<u8>, hi: int)
         assert(declared_enc(x) is None);
         assert(declared_enc(y) is None);
     }
+}
+
+/// The window has decided the head, in the encoding `e`: the head is what
+/// it is in the window, and the text is read in the encoding it says it
+/// was in.
+#[verifier::spinoff_prover]
+pub proof fn lemma_head_enc(x: Seq<u8>, y: Seq<u8>, hi: int, e: Enc)
+    requires
+        ag(x, y, hi),
+        hi >= 3 || (hi >= 1 && x[0] != 0xEF),
+        decl_decided(x, bom_end(x), hi),
+        has_decl(x, bom_end(x)) ==> (xmldecl(x, bom_end(x), e) matches Some((_, f, _)) && f <= hi),
+        decl_head(x, e) is Some,
+    ensures
+        decl_head(y, e) == decl_head(x, e),
+        document(y, e) == docx(y),
+{
+    hide(xmldecl);
+    lemma_bom_end_eq(x, y, hi);
+    let p0 = bom_end(x);
+    assert(lit_xmldecl() =~= seq![0x3Cu8, 0x3F, 0x78, 0x6D, 0x6C]);
+    if p0 + 6 <= hi {
+        lemma_lit_eq(x, y, hi, p0, lit_xmldecl());
+        lemma_byte_eq(x, y, hi, p0 + 5);
+    } else {
+        let k = choose|k: int| 0 <= k < 5 && p0 + k < hi && #[trigger] x[p0 + k] != lit_xmldecl()[k];
+        lemma_not_lit_at(x, y, hi, p0, lit_xmldecl(), k);
+    }
+    assert(has_decl(y, p0) == has_decl(x, p0));
+    if has_decl(x, p0) {
+        lemma_xmldecl_eq(x, y, hi, p0, e);
+    }
+    assert(decl_head(y, e) == decl_head(x, e));
+    reveal(xmldecl);
+    lemma_docx(y, e);
 }
 
 // ---------------------------------------------------------------------------

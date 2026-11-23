@@ -53,6 +53,10 @@ pub struct Stream {
     pub genv: Ghost<Env>,
     /// How far the document type declaration has been scanned for its end.
     pub dscan: DScan,
+    /// The encoding the input was in: UTF-8, when the input is the text
+    /// (`Stream::new`); another, when the text is the input decoded
+    /// (`Stream::decoded`), whose declaration must name it.
+    pub enc: Enc,
 }
 
 /// A scan of the document type declaration for where it may end, as the
@@ -184,7 +188,7 @@ impl Stream {
     }
 
     pub open spec fn utf8(&self) -> bool {
-        forall|s: Seq<u8>| #[trigger] ext(self.seen(), s) ==> input_enc(s) == Enc::Utf8
+        enc_ok(self.seen(), self.enc)
     }
 
     pub open spec fn pro_ok(&self) -> bool {
@@ -208,7 +212,7 @@ impl Stream {
 
     pub open spec fn m1_goal(&self) -> bool {
         forall|s: Seq<u8>|
-            #[trigger] ext(self.seen(), s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(self.seen(), s) ==> docx(s) == (if doc_chars(s) {
                 after_m1(s, self.w.pos as int, self.ptape@, self.sd as int)
             } else {
                 None
@@ -217,7 +221,7 @@ impl Stream {
 
     pub open spec fn m2_goal(&self) -> bool {
         forall|s: Seq<u8>|
-            #[trigger] ext(self.seen(), s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(self.seen(), s) ==> docx(s) == (if doc_chars(s) {
                 after_m2(s, self.w.pos as int, self.ptape@, self.genv@)
             } else {
                 None
@@ -240,16 +244,28 @@ impl Stream {
     }
 
     /// The same input, kept the same way.
+    /// The verdict `r` (`R_OK`, `R_ERR`) on the input seen (`last`: all
+    /// of it): on the text, on the input it is (when that is the text), and
+    /// the text is read in the encoding it says it was in.
+    pub open spec fn verdict(&self, r: u8, last: bool) -> bool {
+        &&& r == R_OK ==> last && docx(self.seen()) is Some && enc_ok(self.seen(), self.enc) && (self.enc == Enc::Utf8
+            ==> parse(self.seen()) is Some)
+        &&& r == R_ERR ==> fails(self.seen(), last) && enc_ok(self.seen(), self.enc) && (self.enc == Enc::Utf8
+            ==> fails_parse(self.seen(), last))
+    }
+
     pub open spec fn same_input(&self, o: &Stream) -> bool {
         self.w.seen == o.w.seen && self.w.buf == o.w.buf && self.w.base == o.w.base && self.w.cpos == o.w.cpos
     }
 }
 
-/// A new parser, before any input.
-pub fn stream_new() -> (r: Stream)
+/// A new parser, before any input, for input in UTF-8 (`Enc::Utf8`: the
+/// input is the text), or for the text of input in `enc`, decoded.
+pub fn stream_new(enc: Enc) -> (r: Stream)
     ensures
         r.inv(),
         r.phase == PH_HEAD,
+        r.enc == enc,
         r.seen() == Seq::<u8>::empty(),
 {
     let pro: Vec<u8> = Vec::new();
@@ -280,6 +296,7 @@ pub fn stream_new() -> (r: Stream)
         dtd,
         genv: Ghost(no_dtd()),
         dscan: DScan { at: 0, mode: D_HEAD, q: 0 },
+        enc,
     };
     proof {
         assert(r.w.buf@ =~= r.w.seen@.subrange(0, 0));
@@ -289,22 +306,23 @@ pub fn stream_new() -> (r: Stream)
 }
 
 #[verifier::spinoff_prover]
-proof fn lemma_head_goal(b: Seq<u8>, seen: Seq<u8>, n: int, p0: int)
+proof fn lemma_head_goal(b: Seq<u8>, seen: Seq<u8>, n: int, p0: int, e: Enc)
     requires
         b == seen.subrange(0, seen.len() as int),
         n == b.len(),
         n >= 1,
-        b[0] != 0xFE && b[0] != 0xFF,
+        e == Enc::Utf8 ==> b[0] != 0xFE && b[0] != 0xFF,
         n >= 3 || b[0] != 0xEF,
         p0 == bom_end(b),
         decl_decided(b, p0, n),
-        has_decl(b, p0) ==> (xmldecl(b, p0, Enc::Utf8) matches Some((_, e, _)) && e <= n),
-        decl_head(b, Enc::Utf8) is Some,
+        has_decl(b, p0) ==> (xmldecl(b, p0, e) matches Some((_, f, _)) && f <= n),
+        decl_head(b, e) is Some,
     ensures
+        enc_ok(seen, e),
         ({
-            let (t0, p1, sd) = decl_head(b, Enc::Utf8).unwrap();
+            let (t0, p1, sd) = decl_head(b, e).unwrap();
             forall|s: Seq<u8>|
-                #[trigger] ext(seen, s) ==> input_enc(s) == Enc::Utf8 && document(s, Enc::Utf8) == (if doc_chars(s) {
+                #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                     after_m1(s, p1, t0, sd)
                 } else {
                     None
@@ -317,18 +335,21 @@ proof fn lemma_head_goal(b: Seq<u8>, seen: Seq<u8>, n: int, p0: int)
     hide(document);
     hide(input_enc);
     assert(b =~= seen);
-    let (t0, p1, sd) = decl_head(b, Enc::Utf8).unwrap();
-    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies input_enc(s) == Enc::Utf8 && document(s, Enc::Utf8) == (
-    if doc_chars(s) {
+    let (t0, p1, sd) = decl_head(b, e).unwrap();
+    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies (e == Enc::Utf8 ==> input_enc(s) == Enc::Utf8) && document(s, e)
+        == docx(s) && docx(s) == (if doc_chars(s) {
         after_m1(s, p1, t0, sd)
     } else {
         None
     }) by {
         lemma_window(b, seen, 0, s);
         assert(seen.subrange(0, seen.len() as int) =~= seen);
-        lemma_head_utf8(b, s, n);
+        if e == Enc::Utf8 {
+            lemma_head_utf8(b, s, n);
+        }
+        lemma_head_enc(b, s, n, e);
         reveal(document);
-        lemma_document(s, Enc::Utf8);
+        lemma_document(s, e);
     }
 }
 
@@ -389,6 +410,7 @@ fn head_step(st: &mut Stream) -> (r: u8)
         old(st).inv(),
         old(st).phase == PH_HEAD,
     ensures
+        final(st).enc == old(st).enc,
         final(st).inv(),
         final(st).same_input(old(st)),
         r == S_ON ==> final(st).phase == PH_M1,
@@ -409,12 +431,19 @@ fn head_step(st: &mut Stream) -> (r: u8)
         return S_WAIT;
     }
     let b0 = get(st.w.buf.as_slice(), 0);
-    if b0 == 0xFE || b0 == 0xFF {
+    let raw = match st.enc {
+        Enc::Utf8 => true,
+        _ => false,
+    };
+    if raw && (b0 == 0xFE || b0 == 0xFF) {
         st.phase = PH_WHOLE;
         return S_FAIL;
     }
     if b0 == 0xEF && n < 3 {
         return S_WAIT;
+    }
+    proof {
+        assert(st.enc == Enc::Utf8 ==> st.w.buf@[0] != 0xFE && st.w.buf@[0] != 0xFF);
     }
     let p0: usize = if n >= 3 && b0 == 0xEF && get(st.w.buf.as_slice(), 1) == 0xBB && get(st.w.buf.as_slice(), 2)
         == 0xBF {
@@ -449,18 +478,18 @@ fn head_step(st: &mut Stream) -> (r: u8)
     }
     if hd {
         let mut t0 = Tape::new();
-        match ex_xmldecl(st.w.buf.as_slice(), p0, &mut t0, Enc::Utf8) {
+        match ex_xmldecl(st.w.buf.as_slice(), p0, &mut t0, st.enc) {
             Some((e, sd)) => {
                 proof {
-                    lemma_xmldecl_end(st.w.buf@, p0 as int, Enc::Utf8);
-                    lemma_head_goal(st.w.buf@, st.w.seen@, n as int, p0 as int);
+                    lemma_xmldecl_end(st.w.buf@, p0 as int, st.enc);
+                    lemma_head_goal(st.w.buf@, st.w.seen@, n as int, p0 as int, st.enc);
                 }
                 st.ptape = t0;
                 st.w.pos = e;
                 st.sd = sd;
                 st.phase = PH_M1;
                 proof {
-                    assert(decl_head(st.w.buf@, Enc::Utf8) == Some((st.ptape@, e as int, sd as int)));
+                    assert(decl_head(st.w.buf@, st.enc) == Some((st.ptape@, e as int, sd as int)));
                     assert(st.pre());
                     assert(st.utf8());
                     assert(st.m1_goal());
@@ -479,8 +508,8 @@ fn head_step(st: &mut Stream) -> (r: u8)
         }
     } else {
         proof {
-            lemma_head_goal(st.w.buf@, st.w.seen@, n as int, p0 as int);
-            assert(decl_head(st.w.buf@, Enc::Utf8) == Some((Seq::<XTok>::empty(), p0 as int, 0int)));
+            lemma_head_goal(st.w.buf@, st.w.seen@, n as int, p0 as int, st.enc);
+            assert(decl_head(st.w.buf@, st.enc) == Some((Seq::<XTok>::empty(), p0 as int, 0int)));
             assert(no_dflt(Seq::<XTok>::empty()));
         }
         st.w.pos = p0;
@@ -681,23 +710,23 @@ proof fn lemma_misc_move(seen: Seq<u8>, p: int, t: Seq<XTok>, p2: int, t2: Seq<X
         forall|s: Seq<u8>| #[trigger] ext(seen, s) ==> misc(s, p, t) == misc(s, p2, t2),
     ensures
         (forall|s: Seq<u8>|
-            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                 after_m1(s, p, t, sd)
             } else {
                 None
             })) ==> (forall|s: Seq<u8>|
-            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                 after_m1(s, p2, t2, sd)
             } else {
                 None
             })),
         (forall|s: Seq<u8>|
-            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                 after_m2(s, p, t, env)
             } else {
                 None
             })) ==> (forall|s: Seq<u8>|
-            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                 after_m2(s, p2, t2, env)
             } else {
                 None
@@ -717,6 +746,7 @@ fn misc_step(st: &mut Stream) -> (r: u8)
         old(st).inv(),
         old(st).phase == PH_M1 || old(st).phase == PH_M2,
     ensures
+        final(st).enc == old(st).enc,
         final(st).inv(),
         final(st).same_input(old(st)),
         final(st).phase == old(st).phase,
@@ -937,14 +967,14 @@ proof fn lemma_m1_none(seen: Seq<u8>, p: int, t: Seq<XTok>, sd: int)
         forall|s: Seq<u8>| #[trigger] ext(seen, s) ==> misc(s, p, t) == Some((t, p)),
         forall|s: Seq<u8>| #[trigger] ext(seen, s) ==> !has_lit(s, p, lit_doctype()),
         forall|s: Seq<u8>|
-            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                 after_m1(s, p, t, sd)
             } else {
                 None
             }),
     ensures
         forall|s: Seq<u8>|
-            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                 after_m2(s, p, t, no_dtd())
             } else {
                 None
@@ -954,7 +984,7 @@ proof fn lemma_m1_none(seen: Seq<u8>, p: int, t: Seq<XTok>, sd: int)
     hide(doc_chars);
     hide(after_m2);
     hide(misc);
-    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies docx(s) == (if doc_chars(s) {
         after_m2(s, p, t, no_dtd())
     } else {
         None
@@ -971,7 +1001,7 @@ proof fn lemma_m1_doctype(seen: Seq<u8>, p: int, t: Seq<XTok>, sd: int)
         has_lit(seen, p, lit_doctype()),
         doctype(seen, p, t, sd == 1) matches Some((_, e, _)) && e <= seen.len(),
         forall|s: Seq<u8>|
-            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                 after_m1(s, p, t, sd)
             } else {
                 None
@@ -980,7 +1010,7 @@ proof fn lemma_m1_doctype(seen: Seq<u8>, p: int, t: Seq<XTok>, sd: int)
         ({
             let (u, e, env) = doctype(seen, p, t, sd == 1).unwrap();
             forall|s: Seq<u8>|
-                #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+                #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                     after_m2(s, e, u, env)
                 } else {
                     None
@@ -993,7 +1023,7 @@ proof fn lemma_m1_doctype(seen: Seq<u8>, p: int, t: Seq<XTok>, sd: int)
     hide(misc);
     hide(doctype);
     let (u, e, env) = doctype(seen, p, t, sd == 1).unwrap();
-    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies docx(s) == (if doc_chars(s) {
         after_m2(s, e, u, env)
     } else {
         None
@@ -1049,6 +1079,7 @@ fn m1_decide(st: &mut Stream) -> (r: u8)
                 (old(st).ptape@, old(st).w.pos as int),
             ),
     ensures
+        final(st).enc == old(st).enc,
         final(st).inv(),
         final(st).same_input(old(st)),
         final(st).pmark == old(st).pmark,
@@ -1080,7 +1111,7 @@ fn m1_decide(st: &mut Stream) -> (r: u8)
         assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies misc(s, p as int, t) == Some((t, p as int)) by {
             assert(ext(old(st).seen(), s));
         }
-        assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+        assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies docx(s) == (if doc_chars(s) {
             after_m1(s, p as int, t, sd)
         } else {
             None
@@ -1202,7 +1233,7 @@ proof fn lemma_root_goal(seen: Seq<u8>, pro: Seq<u8>, p: int, t: Seq<XTok>, env:
         defaults_ok(pro, t, env),
         forall|s: Seq<u8>| #[trigger] ext(seen, s) ==> misc(s, p, t) == Some((t, p)),
         forall|s: Seq<u8>|
-            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                 after_m2(s, p, t, env)
             } else {
                 None
@@ -1214,7 +1245,7 @@ proof fn lemma_root_goal(seen: Seq<u8>, pro: Seq<u8>, p: int, t: Seq<XTok>, env:
             &&& e > p
             &&& sx.len() == 0 || sx == Seq::<Open>::empty().push((p + 1, name_end(seen, p + 1), 0int))
             &&& forall|s: Seq<u8>|
-                #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+                #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                     after_content(
                         s,
                         e,
@@ -1241,7 +1272,7 @@ proof fn lemma_root_goal(seen: Seq<u8>, pro: Seq<u8>, p: int, t: Seq<XTok>, env:
     assert(!is_etag(seen, p));
     assert(item_reach(seen, p, e) == e);
     lemma_item_mv(seen, seen, 0, seen.len() as int, 0, p, Seq::empty(), Seq::empty(), Seq::empty(), Seq::empty(), env);
-    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies docx(s) == (if doc_chars(s) {
         after_content(
             s,
             e,
@@ -1272,7 +1303,7 @@ proof fn lemma_root_fails(seen: Seq<u8>, pro: Seq<u8>, p: int, t: Seq<XTok>, env
         seen[p] != 0x3C || (ext(pro, seen) && dflt_ok(pro, t, pro.len() as int) && !defaults_ok(pro, t, env)),
         forall|s: Seq<u8>| #[trigger] ext(seen, s) ==> misc(s, p, t) == Some((t, p)),
         forall|s: Seq<u8>|
-            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                 after_m2(s, p, t, env)
             } else {
                 None
@@ -1285,7 +1316,7 @@ proof fn lemma_root_fails(seen: Seq<u8>, pro: Seq<u8>, p: int, t: Seq<XTok>, env
     hide(after_root);
     hide(misc);
     hide(defaults_ok);
-    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) && (false ==> s == seen) implies document(s, Enc::Utf8) is None by {
+    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) && (false ==> s == seen) implies docx(s) is None by {
         lemma_m2_stop(s, p, t, env);
         if seen[p] != 0x3C {
             lemma_ext_byte(seen, s, p);
@@ -1302,6 +1333,7 @@ proof fn lemma_root_fails(seen: Seq<u8>, pro: Seq<u8>, p: int, t: Seq<XTok>, env
 /// Emits the prolog's tokens not yet emitted.
 fn flush_pro(st: &mut Stream)
     ensures
+        final(st).enc == old(st).enc,
         final(st).w.buf == old(st).w.buf,
         final(st).w.seen == old(st).w.seen,
         final(st).w.base == old(st).w.base,
@@ -1378,6 +1410,7 @@ fn m2_root(st: &mut Stream) -> (r: u8)
                 (old(st).ptape@, old(st).w.pos as int),
             ),
     ensures
+        final(st).enc == old(st).enc,
         final(st).inv(),
         final(st).same_input(old(st)),
         r == S_ON || r == S_WAIT || r == S_FAIL,
@@ -1409,7 +1442,7 @@ fn m2_root(st: &mut Stream) -> (r: u8)
         assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies misc(s, p as int, t) == Some((t, p as int)) by {
             assert(ext(old(st).seen(), s));
         }
-        assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+        assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies docx(s) == (if doc_chars(s) {
             after_m2(s, p as int, t, envv)
         } else {
             None
@@ -1572,11 +1605,12 @@ fn pro_finish(st: &mut Stream) -> (r: bool)
         old(st).phase == PH_M1 || old(st).phase == PH_M2,
         old(st).w.cpos == old(st).w.buf@.len(),
     ensures
+        final(st).enc == old(st).enc,
         final(st).w == old(st).w,
         final(st).pmark == old(st).pmark,
         final(st).phase == old(st).phase,
-        r == document(old(st).seen(), Enc::Utf8) is Some,
-        r ==> final(st).ptape@ == document(old(st).seen(), Enc::Utf8).unwrap(),
+        r == docx(old(st).seen()) is Some,
+        r ==> final(st).ptape@ == docx(old(st).seen()).unwrap(),
 {
     hide(document);
     hide(doc_chars);
@@ -1597,13 +1631,13 @@ fn pro_finish(st: &mut Stream) -> (r: bool)
     if st.phase == PH_M1 {
         proof {
             assert(old(st).m1_goal());
-            assert(document(seen, Enc::Utf8) == after_m1(seen, st.w.pos as int, t, st.sd as int));
+            assert(docx(seen) == after_m1(seen, st.w.pos as int, t, st.sd as int));
         }
         m1_finish(st.w.buf.as_slice(), st.w.pos, &mut st.ptape, st.sd)
     } else {
         proof {
             assert(old(st).m2_goal());
-            assert(document(seen, Enc::Utf8) == after_m2(seen, st.w.pos as int, t, st.genv@));
+            assert(docx(seen) == after_m2(seen, st.w.pos as int, t, st.genv@));
         }
         let env = st.dtd.env(st.pro.as_slice());
         m2_finish(st.w.buf.as_slice(), st.w.pos, &mut st.ptape, &env)
@@ -1699,7 +1733,7 @@ proof fn lemma_win_fed(a: &Win, b: &Win, d: Seq<u8>, env: Env)
         }
     }
     if a.goal(env) {
-        assert forall|s: Seq<u8>| #[trigger] ext(sb, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+        assert forall|s: Seq<u8>| #[trigger] ext(sb, s) implies docx(s) == (if doc_chars(s) {
             after_content(s, b.at(), b.gst@, b.gt@, env)
         } else {
             None
@@ -1708,7 +1742,7 @@ proof fn lemma_win_fed(a: &Win, b: &Win, d: Seq<u8>, env: Env)
         }
     }
     if fails(sa, false) {
-        assert forall|s: Seq<u8>| #[trigger] ext(sb, s) && (false ==> s == sb) implies document(s, Enc::Utf8) is None by {
+        assert forall|s: Seq<u8>| #[trigger] ext(sb, s) && (false ==> s == sb) implies docx(s) is None by {
             lemma_ext_trans(sa, sb, s);
         }
     }
@@ -1818,6 +1852,7 @@ proof fn lemma_stream_fed(a: &Stream, b: &Stream, d: Seq<u8>)
         b.pro == a.pro,
         b.dtd == a.dtd,
         b.genv == a.genv,
+        b.enc == a.enc,
     ensures
         b.inv(),
 {
@@ -1834,12 +1869,10 @@ proof fn lemma_stream_fed(a: &Stream, b: &Stream, d: Seq<u8>)
         assert(sb.subrange(0, sa.len() as int) =~= sa);
     }
     if a.phase == PH_M1 || a.phase == PH_M2 || a.phase == PH_BODY {
-        assert forall|s: Seq<u8>| #[trigger] ext(sb, s) implies input_enc(s) == Enc::Utf8 by {
-            lemma_ext_trans(sa, sb, s);
-        }
+        lemma_enc_ok_ext(sa, sb, a.enc);
     }
     if a.phase == PH_M1 {
-        assert forall|s: Seq<u8>| #[trigger] ext(sb, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+        assert forall|s: Seq<u8>| #[trigger] ext(sb, s) implies docx(s) == (if doc_chars(s) {
             after_m1(s, b.w.pos as int, b.ptape@, b.sd as int)
         } else {
             None
@@ -1848,7 +1881,7 @@ proof fn lemma_stream_fed(a: &Stream, b: &Stream, d: Seq<u8>)
         }
     }
     if a.phase == PH_M2 {
-        assert forall|s: Seq<u8>| #[trigger] ext(sb, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+        assert forall|s: Seq<u8>| #[trigger] ext(sb, s) implies docx(s) == (if doc_chars(s) {
             after_m2(s, b.w.pos as int, b.ptape@, b.genv@)
         } else {
             None
@@ -1877,34 +1910,38 @@ proof fn lemma_fails_parse(st: &Stream, last: bool)
         st.utf8(),
         fails(st.seen(), last),
     ensures
-        fails_parse(st.seen(), last),
+        st.enc == Enc::Utf8 ==> fails_parse(st.seen(), last),
 {
     hide(document);
     hide(input_enc);
-    assert forall|s: Seq<u8>| #[trigger] ext(st.seen(), s) && (last ==> s == st.seen()) implies parse(s) is None by {
-        lemma_parse_utf8(s);
+    if st.enc == Enc::Utf8 {
+        assert forall|s: Seq<u8>| #[trigger] ext(st.seen(), s) && (last ==> s == st.seen()) implies parse(s) is None by {
+            lemma_parse_utf8(s);
+        }
     }
 }
 
 proof fn lemma_fails_any(seen: Seq<u8>, last: bool)
     requires
-        fails_parse(seen, false),
+        fails(seen, false),
     ensures
-        fails_parse(seen, last),
+        fails(seen, last),
 {
 }
 
 proof fn lemma_parse_ok(st: &Stream)
     requires
         st.utf8(),
-        document(st.seen(), Enc::Utf8) is Some,
+        docx(st.seen()) is Some,
     ensures
-        parse(st.seen()) is Some,
+        st.enc == Enc::Utf8 ==> parse(st.seen()) is Some,
 {
     hide(document);
     hide(input_enc);
     lemma_ext_refl(st.seen());
-    lemma_parse_utf8(st.seen());
+    if st.enc == Enc::Utf8 {
+        lemma_parse_utf8(st.seen());
+    }
 }
 
 /// The characters fail: so does the document.
@@ -1922,10 +1959,7 @@ proof fn lemma_chars_fail(st: &Stream, last: bool)
     hide(after_m1);
     hide(after_m2);
     hide(after_content);
-    assert forall|s: Seq<u8>| #[trigger] ext(st.seen(), s) && (last ==> s == st.seen()) implies document(
-        s,
-        Enc::Utf8,
-    ) is None by {
+    assert forall|s: Seq<u8>| #[trigger] ext(st.seen(), s) && (last ==> s == st.seen()) implies docx(s) is None by {
         if st.phase == PH_M1 {
             assert(st.m1_goal());
         } else if st.phase == PH_M2 {
@@ -1941,9 +1975,22 @@ impl Stream {
     pub fn new() -> (r: Stream)
         ensures
             r.inv(),
+            r.enc == Enc::Utf8,
             r.seen() == Seq::<u8>::empty(),
     {
-        stream_new()
+        stream_new(Enc::Utf8)
+    }
+
+    /// A new parser for the text (in UTF-8) of a document in `enc`: its
+    /// XML declaration, if any, must name `enc`.
+    pub fn decoded(enc: Enc) -> (r: Stream)
+        ensures
+            r.inv(),
+            r.phase == PH_HEAD,
+            r.enc == enc,
+            r.seen() == Seq::<u8>::empty(),
+    {
+        stream_new(enc)
     }
 
     /// Feeds the next chunk (`last`: the last one). Before the root
@@ -1964,14 +2011,15 @@ impl Stream {
                 == old(self).seen(),
             r != R_LIMIT && !(old(self).phase == PH_FAILED || old(self).phase == PH_DONE) ==> final(self).seen()
                 == old(self).seen() + data@,
-            r == R_OK ==> last && parse(final(self).seen()) is Some,
-            r == R_ERR && !(old(self).phase == PH_FAILED || old(self).phase == PH_DONE) ==> fails_parse(
-                final(self).seen(),
-                last,
-            ),
+            final(self).enc == old(self).enc,
+            r == R_OK ==> final(self).verdict(r, last),
+            r == R_ERR && !(old(self).phase == PH_FAILED || old(self).phase == PH_DONE) ==> final(self).verdict(r, last),
             r == R_MORE ==> !last,
             r == R_WHOLE ==> final(self).phase == PH_WHOLE && final(self).w.base == 0 && final(self).w.buf@
                 == final(self).seen(),
+            r == R_WHOLE ==> old(self).phase == PH_HEAD || old(self).phase == PH_WHOLE,
+            old(self).phase != PH_HEAD && old(self).phase != PH_WHOLE ==> final(self).phase != PH_HEAD
+                && final(self).phase != PH_WHOLE,
     {
         hide(document);
         hide(doc_chars);
@@ -2077,10 +2125,12 @@ impl Stream {
                 invariant
                     self.inv(),
                     self.seen() == seen1,
+                    self.enc == old(self).enc,
                     last ==> self.w.cpos == self.w.buf@.len(),
                 ensures
                     self.inv(),
                     self.seen() == seen1,
+                    self.enc == old(self).enc,
                     last ==> self.w.cpos == self.w.buf@.len(),
                     wait ==> self.phase == PH_M1,
                     !wait ==> self.phase == PH_M2,
@@ -2141,10 +2191,12 @@ impl Stream {
                 invariant
                     self.inv(),
                     self.seen() == seen1,
+                    self.enc == old(self).enc,
                     last ==> self.w.cpos == self.w.buf@.len(),
                 ensures
                     self.inv(),
                     self.seen() == seen1,
+                    self.enc == old(self).enc,
                     last ==> self.w.cpos == self.w.buf@.len(),
                     wait ==> self.phase == PH_M2,
                     fail ==> self.phase == PH_FAILED,
@@ -2172,8 +2224,8 @@ impl Stream {
             }
             if fail {
                 proof {
-                    lemma_fails_parse(self, false);
                     lemma_fails_any(self.seen(), last);
+                    lemma_fails_parse(self, last);
                 }
                 return R_ERR;
             }
@@ -2226,9 +2278,10 @@ impl Stream {
         ensures
             final(self).inv(),
             final(self).seen() == old(self).seen(),
+            final(self).enc == old(self).enc,
+            final(self).phase != PH_HEAD && final(self).phase != PH_WHOLE,
             r == R_MORE || r == R_OK || r == R_ERR,
-            r == R_OK ==> last && parse(final(self).seen()) is Some,
-            r == R_ERR ==> fails_parse(final(self).seen(), last),
+            final(self).verdict(r, last),
             r == R_MORE ==> !last,
     {
         hide(document);
@@ -2261,11 +2314,12 @@ impl Stream {
             }
             R_OK
         } else {
+            self.phase = PH_DONE;
             proof {
                 lemma_ext_refl(self.seen());
-                lemma_parse_utf8(self.seen());
+                assert(fails(self.seen(), true));
+                lemma_fails_parse(self, true);
             }
-            self.phase = PH_DONE;
             R_ERR
         }
     }

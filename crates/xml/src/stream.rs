@@ -251,7 +251,7 @@ impl Win {
 
     pub open spec fn goal(&self, env: Env) -> bool {
         forall|s: Seq<u8>|
-            #[trigger] ext(self.seen@, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(self.seen@, s) ==> docx(s) == (if doc_chars(s) {
                 after_content(s, self.at(), self.gst@, self.gt@, env)
             } else {
                 None
@@ -291,7 +291,7 @@ impl Win {
 /// The document fails, on every input that begins with `seen` (at the
 /// end, on `seen`).
 pub open spec fn fails(seen: Seq<u8>, last: bool) -> bool {
-    forall|s: Seq<u8>| #[trigger] ext(seen, s) && (last ==> s == seen) ==> document(s, Enc::Utf8) is None
+    forall|s: Seq<u8>| #[trigger] ext(seen, s) && (last ==> s == seen) ==> docx(s) is None
 }
 
 pub proof fn lemma_ext_refl(s: Seq<u8>)
@@ -373,7 +373,7 @@ proof fn lemma_step_item_goal(b: Seq<u8>, seen: Seq<u8>, base: int, j: int, gst:
         !is_etag(b, j),
         item(b, j, Seq::empty(), Seq::empty(), envv) matches Some((_, _, e)) && item_reach(b, j, e) <= b.len(),
         forall|s: Seq<u8>|
-            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                 after_content(s, base + j, gst, gt, envv)
             } else {
                 None
@@ -384,7 +384,7 @@ proof fn lemma_step_item_goal(b: Seq<u8>, seen: Seq<u8>, base: int, j: int, gst:
             let gst2 = stack_mv(Seq::empty(), sx, gst, -base, gt.len() as int);
             let gt2 = gt + mv(added(Seq::empty(), u), -base, gt.len() as int);
             forall|s: Seq<u8>|
-                #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+                #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                     after_content(s, base + e, gst2, gt2, envv)
                 } else {
                     None
@@ -398,7 +398,7 @@ proof fn lemma_step_item_goal(b: Seq<u8>, seen: Seq<u8>, base: int, j: int, gst:
     let (sx, u, e) = item(b, j, Seq::empty(), Seq::empty(), envv).unwrap();
     let gst2 = stack_mv(Seq::empty(), sx, gst, -base, gt.len() as int);
     let gt2 = gt + mv(added(Seq::empty(), u), -base, gt.len() as int);
-    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies docx(s) == (if doc_chars(s) {
         after_content(s, base + e, gst2, gt2, envv)
     } else {
         None
@@ -582,14 +582,14 @@ proof fn lemma_step_etag_goal(
         0 <= gst.last().0 <= gst.last().1 <= seen.len(),
         b.subrange(j + 2, name_end(b, j + 2)) == seen.subrange(gst.last().0, gst.last().1),
         forall|s: Seq<u8>|
-            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                 after_content(s, base + j, gst, gt, envv)
             } else {
                 None
             }),
     ensures
         forall|s: Seq<u8>|
-            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                 after_content(s, base + e + 1, gst.drop_last(), close_at(gt.push(XTok::ETag), gst.last().2), envv)
             } else {
                 None
@@ -601,7 +601,7 @@ proof fn lemma_step_etag_goal(
     hide(item);
     lemma_name_end(b, j + 2);
     lemma_ws_end_ge(b, name_end(b, j + 2));
-    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies docx(s) == (if doc_chars(s) {
         after_content(s, base + e + 1, gst.drop_last(), close_at(gt.push(XTok::ETag), gst.last().2), envv)
     } else {
         None
@@ -641,7 +641,7 @@ proof fn lemma_etag_fail(
                 < b.len() && b[e] != 0x3E))) || (last && (n == b.len() || b[n] >= 0x80 || e == b.len()))
         }),
         forall|s: Seq<u8>|
-            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                 after_content(s, base + j, gst, gt, envv)
             } else {
                 None
@@ -657,7 +657,7 @@ proof fn lemma_etag_fail(
     lemma_name_end(b, j + 2);
     let e = ws_end(b, n);
     lemma_ws_end_ge(b, n);
-    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) && (last ==> s == seen) implies document(s, Enc::Utf8) is None by {
+    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) && (last ==> s == seen) implies docx(s) is None by {
         lemma_window(b, seen, base, s);
         lemma_ext_span(seen, s, gst.last().0, gst.last().1);
         if n < b.len() && b[n] < 0x80 && (b.subrange(j + 2, n) != seen.subrange(gst.last().0, gst.last().1) || (e
@@ -856,10 +856,7 @@ fn step_item(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
                     } else {
                         lemma_content_past(seen, base + j, gst, gt, envv);
                     }
-                    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) && (last ==> s == seen) implies document(
-                        s,
-                        Enc::Utf8,
-                    ) is None by {}
+                    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) && (last ==> s == seen) implies docx(s) is None by {}
                 }
                 return S_FAIL;
             }
@@ -966,14 +963,14 @@ proof fn lemma_text_commit(
         cr == has_cr(seen, ts, base + m),
         forall|s: Seq<u8>| #[trigger] ext(seen, s) ==> text_end(s, ts) == text_end(s, base + m),
         forall|s: Seq<u8>|
-            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                 after_content(s, ts, gst, gt, envv)
             } else {
                 None
             }),
     ensures
         forall|s: Seq<u8>|
-            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                 after_content(s, base + m, gst, gt.push(XTok::Text { start: ts, end: base + m, cr: cr }), envv)
             } else {
                 None
@@ -985,7 +982,7 @@ proof fn lemma_text_commit(
     let k = base + m;
     assert(b[m] == seen[k]);
     assert(ts < k);
-    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies docx(s) == (if doc_chars(s) {
         after_content(s, k, gst, gt.push(XTok::Text { start: ts, end: k, cr: cr }), envv)
     } else {
         None
@@ -1022,7 +1019,7 @@ proof fn lemma_text_cdend_fail(
         gst.len() > 0,
         forall|s: Seq<u8>| #[trigger] ext(seen, s) ==> text_end(s, ts) == text_end(s, base + m),
         forall|s: Seq<u8>|
-            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                 after_content(s, ts, gst, gt, envv)
             } else {
                 None
@@ -1033,7 +1030,7 @@ proof fn lemma_text_cdend_fail(
     hide(document);
     hide(doc_chars);
     hide(after_content);
-    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) && (last ==> s == seen) implies document(s, Enc::Utf8) is None by {
+    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) && (last ==> s == seen) implies docx(s) is None by {
         lemma_window(b, seen, base, s);
         lemma_text_cdend(b, s, 0, b.len() as int, -base, m);
         lemma_ext_byte(seen, s, ts);
@@ -1063,7 +1060,7 @@ proof fn lemma_text_last_fail(
         gst.len() > 0,
         forall|s: Seq<u8>| #[trigger] ext(seen, s) ==> text_end(s, ts) == text_end(s, base + m),
         forall|s: Seq<u8>|
-            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                 after_content(s, ts, gst, gt, envv)
             } else {
                 None
@@ -1273,7 +1270,7 @@ fn step_cdata(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
             let ghost k = base + m;
             let ghost t2 = gt.push(XTok::CData { start: ts + 9, end: k, cr: cr });
             proof {
-                assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+                assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies docx(s) == (if doc_chars(s) {
                     after_content(s, k + 3, gst, t2, envv)
                 } else {
                     None
@@ -1329,10 +1326,7 @@ fn step_cdata(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
             lemma_ext_refl(seen);
             lemma_cdata_fail(seen, ts, gst, gt, envv);
             lemma_content_fail(seen, ts, gst, gt, envv);
-            assert forall|s: Seq<u8>| #[trigger] ext(seen, s) && (last ==> s == seen) implies document(
-                s,
-                Enc::Utf8,
-            ) is None by {}
+            assert forall|s: Seq<u8>| #[trigger] ext(seen, s) && (last ==> s == seen) implies docx(s) is None by {}
         }
         // The section's text up to the end is reported, then the error.
         if n > w.tem || w.tfirst {
@@ -1369,7 +1363,7 @@ proof fn lemma_epilog_item_goal(b: Seq<u8>, seen: Seq<u8>, base: int, j: int, gt
         has_lit(b, j, lit_comment()) || has_lit(b, j, lit_pi()),
         item(b, j, Seq::empty(), Seq::empty(), envv) matches Some((_, _, e)) && j < e <= b.len(),
         forall|s: Seq<u8>|
-            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                 after_content(s, base + j, Seq::empty(), gt, envv)
             } else {
                 None
@@ -1379,7 +1373,7 @@ proof fn lemma_epilog_item_goal(b: Seq<u8>, seen: Seq<u8>, base: int, j: int, gt
             let (sx, u, e) = item(b, j, Seq::empty(), Seq::empty(), envv).unwrap();
             let gt2 = gt + mv(added(Seq::empty(), u), -base, gt.len() as int);
             sx.len() == 0 && forall|s: Seq<u8>|
-                #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+                #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                     after_content(s, base + e, Seq::empty(), gt2, envv)
                 } else {
                     None
@@ -1398,7 +1392,7 @@ proof fn lemma_epilog_item_goal(b: Seq<u8>, seen: Seq<u8>, base: int, j: int, gt
     assert(!is_etag(b, j));
     lemma_fin_item(b, j, Seq::empty(), envv);
     assert(item_reach(b, j, e) <= b.len());
-    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies docx(s) == (if doc_chars(s) {
         after_content(s, base + e, Seq::empty(), gt2, envv)
     } else {
         None
@@ -1433,7 +1427,7 @@ proof fn lemma_epilog_stop(b: Seq<u8>, seen: Seq<u8>, base: int, j: int, gt: Seq
             stop || (last && short)
         }),
         forall|s: Seq<u8>|
-            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+            #[trigger] ext(seen, s) ==> docx(s) == (if doc_chars(s) {
                 after_content(s, base + j, Seq::empty(), gt, envv)
             } else {
                 None
@@ -1450,7 +1444,7 @@ proof fn lemma_epilog_stop(b: Seq<u8>, seen: Seq<u8>, base: int, j: int, gt: Seq
     let x = b[j];
     let stop = b[j] != 0x3C || (n - j >= 2 && b[j + 1] != 0x3F && b[j + 1] != 0x21) || (n - j >= 4 && b[j + 1]
         == 0x21 && (b[j + 2] != 0x2D || b[j + 3] != 0x2D));
-    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) && (last ==> s == seen) implies document(s, Enc::Utf8) is None by {
+    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) && (last ==> s == seen) implies docx(s) is None by {
         lemma_window(b, seen, base, s);
         let k = base + j;
         assert(b[j] == s[k]);
@@ -1497,7 +1491,7 @@ fn step_epilog(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
         r == S_WAIT ==> !last && final(w).inv(env_view(env)),
         r == S_ON || r == S_WAIT || r == S_FAIL || r == S_DONE,
         r == S_FAIL ==> fails(final(w).seen@, last),
-        r == S_DONE ==> last && document(final(w).seen@, Enc::Utf8) == Some(final(w).gt@),
+        r == S_DONE ==> last && docx(final(w).seen@) == Some(final(w).gt@),
 {
     hide(document);
     hide(doc_chars);
@@ -1532,7 +1526,7 @@ fn step_epilog(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
     let x = get(w.buf.as_slice(), j);
     if x == 0x20 || x == 0x09 || x == 0x0A || x == 0x0D {
         proof {
-            assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+            assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies docx(s) == (if doc_chars(s) {
                 after_content(s, base + j + 1, Seq::empty(), gt, envv)
             } else {
                 None
@@ -1614,10 +1608,7 @@ fn step_epilog(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
                     }
                     lemma_fin_item_fail(seen, base + j, gt, envv);
                     lemma_content_done(seen, base + j, gt, envv);
-                    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) && (last ==> s == seen) implies document(
-                        s,
-                        Enc::Utf8,
-                    ) is None by {}
+                    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) && (last ==> s == seen) implies docx(s) is None by {}
                 }
                 return S_FAIL;
             }
@@ -1705,7 +1696,7 @@ pub fn content_run(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
         r == S_WAIT || r == S_FAIL || r == S_DONE,
         r == S_WAIT ==> !last && final(w).inv(env_view(env)),
         r == S_FAIL ==> fails(final(w).seen@, last),
-        r == S_DONE ==> last && document(final(w).seen@, Enc::Utf8) == Some(final(w).gt@),
+        r == S_DONE ==> last && docx(final(w).seen@) == Some(final(w).gt@),
 {
     hide(document);
     hide(doc_chars);
@@ -1739,10 +1730,7 @@ pub fn content_run(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
                         lemma_ext_refl(seen);
                         lemma_window_exact(w.buf@, seen, w.base as int);
                         lemma_content_fail(seen, w.base + j, w.gst@, w.gt@, envv);
-                        assert forall|s: Seq<u8>| #[trigger] ext(seen, s) && (last ==> s == seen) implies document(
-                            s,
-                            Enc::Utf8,
-                        ) is None by {}
+                        assert forall|s: Seq<u8>| #[trigger] ext(seen, s) && (last ==> s == seen) implies docx(s) is None by {}
                     }
                     S_FAIL
                 } else {
