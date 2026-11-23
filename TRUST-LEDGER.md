@@ -28,7 +28,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | archive | 2 |  |  |  |  |  | 3 |
 | bind |  |  |  |  |  |  | 2 |
 | brotli | 2 |  |  |  | 1 |  | 4 |
-| core | 27 |  |  |  |  |  | 1 |
+| core | 84 | 5 |  |  |  |  | 1 |
 | dns |  |  |  |  |  |  | 6 |
 | font |  |  |  |  |  |  | 1 |
 | hpack | 2 |  |  |  |  |  | 3 |
@@ -36,7 +36,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | jpeg | 2 |  |  |  |  |  | 3 |
 | json | 31 |  |  |  | 2 |  | 7 |
 | lz4 |  |  |  |  |  |  | 1 |
-| png | 2 |  |  |  |  |  | 8 |
+| png | 2 |  |  |  |  |  | 7 |
 | regex | 7 |  |  |  |  |  | 2 |
 | sha2 | 14 |  |  |  |  |  | 2 |
 | simd | 266 | 6 | 266 | 4 |  |  | 3 |
@@ -48,11 +48,11 @@ not occur in any crate's `src/` (the script fails if one appears).
 | wasm | 35 |  |  |  |  | 1 | 4 |
 | webp | 10 |  |  |  |  |  | 3 |
 | x509 |  |  |  |  |  |  | 6 |
-| xml | 2 |  |  |  |  |  | 10 |
+| xml | 2 |  |  |  |  |  | 12 |
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  | 2 |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **482** | **30** | **266** | **5** | **22** | **12** | **99** |
+| **total** | **539** | **35** | **266** | **5** | **22** | **12** | **100** |
 
 ## Items
 
@@ -84,8 +84,11 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/core/src/lib.rs`: plain Rust
 - `crates/core/src/prims.rs`: external_body: `load_u64_le`, `copy8`, `copy16`, `move8`, `copy16_in`, `pick`, `copy16_pick`, `fill8`, `copy_in`, `copy_to_front`, `copy_within`, `alloc_u32`
 - `crates/core/src/tail.rs`: external_body: `view`, `take`, `put_back`, `len`, `append_from`, `append_from32`, `append_within`, `append_within32`
-- `crates/core/src/checksum/cpu.rs`: external_body: `adler32_update`, `crc32_update`, `crc32c_update`
+- `crates/core/src/checksum/cpu.rs`: external_body: `adler32_vnni`, `adler32_avx2`, `crc32_vpclmul`, `crc32_vpclmul256`, `crc32_pclmul`, `has_arm_crc`, `crc32_arm`, `crc32c_update`
 - `crates/core/src/checksum/lanes.rs`: external_body: `crc_word`
+- `crates/core/src/checksum/vclmul.rs`: external_body: `has_pclmul`, `has_vpclmul`, `has_vpclmul256`, `xv`, `xv`, `xv`, `x_load`, `x_set`, `x_get`, `x_xor`, `x_fold`, `x_clmul_lo`, `x_shr64`, `x_shr32`, `x_and`, `x_low64`, `y_load`, `y_reg`, `y_splat`, `y_xor`, `y_fold`, `y_block`, `z_load`, `z_reg`, `z_splat`, `z_xor`, `z_fold`, `z_block`; axioms: `axiom_vpclmul_pclmul`, `axiom_zl_len`, `axiom_yl_len`
+- `crates/core/src/checksum/vdot.rs`: external_body: `has_vnni512`, `has_avx2`, `zb`, `zb`, `zb`, `zb`, `zb_load`, `zd_zero`, `zd_add`, `zd_dot`, `zd_store`, `yb_load`, `yd_zero`, `yd_add`, `yd_dot`, `yd_store`; axioms: `axiom_lens`
+- `crates/core/src/checksum/vudot.rs`: external_body: `has_dotprod`, `nb`, `nb`, `nb_load`, `nd_zero`, `nd_add`, `nd_dot`, `nd_store`; axioms: `axiom_nlens`
 
 ### dns
 
@@ -130,7 +133,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 - `crates/json/src/error.rs`: plain Rust
 - `crates/json/src/ffi.rs`: external_body: `input`, `push`, `push_fast`, `eager`, `push_num_fast`, `push_str_fast`, `reserve`, `count`, `close`, `fail`; 2 assume_new
-- `crates/json/src/index.rs`: external_body: `index_avx512`, `index_avx2`
+- `crates/json/src/index.rs`: external_body: `fill_avx512`, `fill_avx2`
 - `crates/json/src/lanes.rs`: external_body: `opaque64`, `append16_spare_neon`, `len_spare`, `reserve_spare`, `reserve_spare_plus`, `push_spare`, `append4_spare`, `append_slice_spare`, `truncate_spare`, `set_spare`, `append16_spare`
 - `crates/json/src/lib.rs`: plain Rust
 - `crates/json/src/native.rs`: plain Rust
@@ -147,7 +150,6 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### png
 
-- `crates/png/src/lib.rs`: plain Rust
 - `crates/png/src/prims.rs`: external_body: `copy`, `alloc_zeroed`
 - `crates/png/src/libpng/err.rs`: plain Rust
 - `crates/png/src/libpng/info.rs`: plain Rust
@@ -281,8 +283,10 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/xml/src/api/libxml2/io.rs`: plain Rust
 - `crates/xml/src/api/libxml2/mod.rs`: plain Rust
 - `crates/xml/src/api/libxml2/parser.rs`: plain Rust
+- `crates/xml/src/api/libxml2/recover.rs`: plain Rust
 - `crates/xml/src/api/libxml2/save.rs`: plain Rust
 - `crates/xml/src/api/libxml2/sax2.rs`: plain Rust
+- `crates/xml/src/api/libxml2/scan.rs`: plain Rust
 - `crates/xml/src/api/libxml2/tree.rs`: plain Rust
 
 ### zlib

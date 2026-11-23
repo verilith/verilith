@@ -2370,15 +2370,10 @@ pub unsafe extern "C" fn XML_ExternalEntityParserCreate(
     Box::into_raw(c)
 }
 
-/// The document's internal subset (its span in the text), and whether the
-/// document type declaration has an external identifier; `None` without a
-/// document type declaration.
-fn internal_subset(d: &Document) -> Option<(Option<(usize, usize)>, bool)> {
-    internal_subset_in(d.toks(Src::Doc), d.text())
-}
-
-/// `internal_subset` over the prolog's tokens and text (a stream's prolog
-/// ends with the document type declaration).
+/// The internal subset in the prolog's tokens and text (its span in the
+/// text), and whether the document type declaration has an external
+/// identifier; `None` without a document type declaration. (A stream's
+/// prolog ends with the document type declaration.)
 fn internal_subset_in(toks: &[Tok], text: &[u8]) -> Option<(Option<(usize, usize)>, bool)> {
     let di = toks.iter().position(|t| t.kind == Kind::Doctype)?;
     let mut last = toks[di].b();

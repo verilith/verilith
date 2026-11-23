@@ -37,6 +37,12 @@ pub mod ent;
 #[doc(hidden)]
 pub mod lanes;
 #[doc(hidden)]
+pub mod lenient;
+/// The recovering parser (libxml2's parser.c), run only on documents the
+/// verified parser rejected.
+#[doc(hidden)]
+pub mod recover;
+#[doc(hidden)]
 pub mod lex;
 #[doc(hidden)]
 pub mod scan;

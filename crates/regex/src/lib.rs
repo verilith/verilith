@@ -54,6 +54,20 @@ use crate::spec::*;
 use crate::syntax::Pat;
 use vstd::prelude::*;
 
+// The proofs are checked once for each pointer width the crate supports:
+// 64-bit on the host, and 32-bit (wasm32) with `--target
+// wasm32-unknown-unknown`. A fixed width keeps the matcher's cost bounds,
+// which mention usize::MAX, within the solver's reach.
+#[cfg(target_pointer_width = "64")]
+verus! {
+global size_of usize == 8;
+}
+
+#[cfg(target_pointer_width = "32")]
+verus! {
+global size_of usize == 4;
+}
+
 verus! {
 
 /// A compiled pattern.

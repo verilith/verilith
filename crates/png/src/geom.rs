@@ -6,8 +6,6 @@ use vstd::prelude::*;
 
 verus! {
 
-global size_of usize == 8;
-
 /// A header that `spec::parse_ihdr` accepts.
 pub open spec fn hdr_ok(h: Ihdr) -> bool {
     &&& 1 <= h.w <= MAX_LEN

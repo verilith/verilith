@@ -48,13 +48,13 @@ pub open spec fn delta(c: u8) -> int {
 
 /// Walking the index from entry `k` at nesting depth `d`: the entry after
 /// the bracket that brings the depth to 0.
-pub open spec fn close_k(s: Seq<u8>, idx: Seq<u32>, k: int, d: int) -> Option<int>
+pub open spec fn close_k(s: Seq<u8>, idx: Seq<int>, k: int, d: int) -> Option<int>
     decreases idx.len() - k,
 {
     if k < 0 || k >= idx.len() {
         None
     } else {
-        let d2 = d + delta(byte(s, idx[k] as int));
+        let d2 = d + delta(byte(s, idx[k]));
         if d2 == 0 {
             Some(k + 1)
         } else {
@@ -64,13 +64,13 @@ pub open spec fn close_k(s: Seq<u8>, idx: Seq<u32>, k: int, d: int) -> Option<in
 }
 
 /// Opening brackets among the `m` index entries from `k`.
-pub open spec fn opens(s: Seq<u8>, idx: Seq<u32>, k: int, m: int) -> int
+pub open spec fn opens(s: Seq<u8>, idx: Seq<int>, k: int, m: int) -> int
     decreases m,
 {
     if m <= 0 {
         0
     } else {
-        opens(s, idx, k, m - 1) + if delta(byte(s, idx[k + m - 1] as int)) == 1 {
+        opens(s, idx, k, m - 1) + if delta(byte(s, idx[k + m - 1])) == 1 {
             1int
         } else {
             0
@@ -79,13 +79,13 @@ pub open spec fn opens(s: Seq<u8>, idx: Seq<u32>, k: int, m: int) -> int
 }
 
 /// Closing brackets among the `m` index entries from `k`.
-pub open spec fn closes(s: Seq<u8>, idx: Seq<u32>, k: int, m: int) -> int
+pub open spec fn closes(s: Seq<u8>, idx: Seq<int>, k: int, m: int) -> int
     decreases m,
 {
     if m <= 0 {
         0
     } else {
-        closes(s, idx, k, m - 1) + if delta(byte(s, idx[k + m - 1] as int)) == -1 {
+        closes(s, idx, k, m - 1) + if delta(byte(s, idx[k + m - 1])) == -1 {
             1int
         } else {
             0
@@ -95,7 +95,7 @@ pub open spec fn closes(s: Seq<u8>, idx: Seq<u32>, k: int, m: int) -> int
 
 /// A run of entries with fewer closing brackets than the depth cannot
 /// bring the depth to 0: the walk passes over it.
-pub proof fn lemma_block(s: Seq<u8>, idx: Seq<u32>, k: int, d: int, m: int)
+pub proof fn lemma_block(s: Seq<u8>, idx: Seq<int>, k: int, d: int, m: int)
     requires
         0 <= k,
         0 <= m,
@@ -110,7 +110,7 @@ pub proof fn lemma_block(s: Seq<u8>, idx: Seq<u32>, k: int, d: int, m: int)
     if m > 0 {
         lemma_block(s, idx, k, d, m - 1);
         let d1 = d + opens(s, idx, k, m - 1) - closes(s, idx, k, m - 1);
-        let dl = delta(byte(s, idx[k + m - 1] as int));
+        let dl = delta(byte(s, idx[k + m - 1]));
         assert(d1 + dl != 0);
         assert(close_k(s, idx, k + m - 1, d1) == close_k(s, idx, k + m, d1 + dl));
     }
@@ -118,23 +118,27 @@ pub proof fn lemma_block(s: Seq<u8>, idx: Seq<u32>, k: int, d: int, m: int)
 
 /// Where `skip` takes a cursor at `p`: the index entry and the position
 /// after the value, or `None` if it does not move.
-pub open spec fn skip_to(s: Seq<u8>, st: int, idx: Seq<u32>, p: int) -> Option<(int, int)> {
+pub open spec fn skip_to(s: Seq<u8>, st: int, idx: Seq<int>, p: int) -> Option<(int, int)> {
     let j = skip_ws(s, p);
     let k = cnt(s, st, p);
     if j >= s.len() {
         None
     } else if s[j] == 0x22 {
         let q = quote_from(s, st, j + 1);
-        Some((cnt(s, st, q + 1), q + 1))
+        if q >= s.len() {
+            None
+        } else {
+            Some((cnt(s, st, q + 1), q + 1))
+        }
     } else if s[j] == 0x5B || s[j] == 0x7B {
         match close_k(s, idx, k + 1, 1) {
-            Some(k1) => Some((k1, idx[k1 - 1] as int + 1)),
+            Some(k1) => Some((k1, idx[k1 - 1] + 1)),
             None => None,
         }
     } else if s[j] == 0x2C || s[j] == 0x3A || s[j] == 0x5D || s[j] == 0x7D {
         None
     } else {
-        let q = if k + 1 < idx.len() { idx[k + 1] as int } else { s.len() as int };
+        let q = if k + 1 < idx.len() { idx[k + 1] } else { s.len() as int };
         if byte(s, q - 1) == 0x5C {
             None
         } else {
@@ -180,7 +184,7 @@ proof fn lemma_quote_from(s: Seq<u8>, st: int, a: int, b: int)
 /// tokens, provided the byte before it is not a backslash.
 pub proof fn lemma_after_scalar(s: Seq<u8>, st: int, j: int, q: int)
     requires
-        indexed(s, st, positions(s, st, st, s.len() as int)),
+        0 <= st <= s.len(),
         st <= j < s.len(),
         structural(s, st, j),
         !instr(s, st, j - 1),
@@ -190,7 +194,7 @@ pub proof fn lemma_after_scalar(s: Seq<u8>, st: int, j: int, q: int)
             s,
             st,
             j,
-        ) + 1] as int,
+        ) + 1],
         cnt(s, st, j) + 1 >= cnt(s, st, s.len() as int) ==> q == s.len(),
     ensures
         j < q <= s.len(),
@@ -265,13 +269,13 @@ proof fn lemma_between(s: Seq<u8>, st: int, a: int, q: int)
 // ---------------------------------------------------------------------------
 
 /// The whole structural index of `s`.
-pub open spec fn full(s: Seq<u8>, st: int) -> Seq<u32> {
+pub open spec fn full(s: Seq<u8>, st: int) -> Seq<int> {
     positions(s, st, st, s.len() as int)
 }
 
 /// Index entries `a..b` leave the bracket walk as it was, at any depth:
 /// they open and close nothing, or as much as they open.
-pub open spec fn transparent(s: Seq<u8>, idx: Seq<u32>, a: int, b: int) -> bool {
+pub open spec fn transparent(s: Seq<u8>, idx: Seq<int>, a: int, b: int) -> bool {
     forall|d: int| d >= 1 ==> #[trigger] close_k(s, idx, a, d) == close_k(s, idx, b, d)
 }
 
@@ -284,7 +288,7 @@ pub open spec fn skipped(s: Seq<u8>, st: int, p: int, e: int) -> bool {
     }
 }
 
-proof fn lemma_trans(s: Seq<u8>, idx: Seq<u32>, a: int, b: int, c: int)
+proof fn lemma_trans(s: Seq<u8>, idx: Seq<int>, a: int, b: int, c: int)
     requires
         transparent(s, idx, a, b),
         transparent(s, idx, b, c),
@@ -302,7 +306,6 @@ proof fn lemma_trans(s: Seq<u8>, idx: Seq<u32>, a: int, b: int, c: int)
 proof fn lemma_flat(s: Seq<u8>, st: int, a: int, b: int)
     requires
         0 <= st <= a <= b <= s.len(),
-        s.len() <= u32::MAX,
         forall|m: int| a <= m < b && #[trigger] structural(s, st, m) ==> delta(byte(s, m)) == 0,
     ensures
         cnt(s, st, a) <= cnt(s, st, b),
@@ -323,7 +326,7 @@ proof fn lemma_flat(s: Seq<u8>, st: int, a: int, b: int)
                 d,
             ) by {
                 assert(close_k(s, idx, cnt(s, st, a), d) == close_k(s, idx, k, d));
-                assert(idx[k] as int == b - 1);
+                assert(idx[k] == b - 1);
                 assert(delta(byte(s, b - 1)) == 0);
                 assert(close_k(s, idx, k, d) == close_k(s, idx, k + 1, d));
             }
@@ -366,7 +369,7 @@ proof fn lemma_body_quote(s: Seq<u8>, st: int, i: int, e: bool)
 /// A string the grammar accepts, at the structural position `j`.
 proof fn lemma_sv_string(s: Seq<u8>, st: int, j: int)
     requires
-        indexed(s, st, full(s, st)),
+        0 <= st <= s.len(),
         st <= j < s.len(),
         out(s, st, j),
         !esc(s, st, j),
@@ -403,7 +406,7 @@ proof fn lemma_sv_string(s: Seq<u8>, st: int, j: int)
             assert(instr(s, st, m));
             assert(instr(s, st, m - 1));
             assert(strs(s, st, m));
-            assert(escape_start(s, st, m));
+            assert(byte(s, m) == 0x5C || byte(s, m) < 0x20);
         }
     }
     lemma_flat(s, st, j, n);
@@ -414,7 +417,7 @@ proof fn lemma_sv_string(s: Seq<u8>, st: int, j: int)
 /// A number or literal the grammar accepts in `[j, e)`.
 proof fn lemma_sv_scalar(s: Seq<u8>, st: int, p: int, e: int)
     requires
-        indexed(s, st, full(s, st)),
+        0 <= st <= s.len(),
         st <= p <= s.len(),
         out(s, st, p),
         bnd(s, st, p),
@@ -446,7 +449,7 @@ proof fn lemma_sv_scalar(s: Seq<u8>, st: int, p: int, e: int)
     crate::lemmas::lemma_skip_ws_bounds(s, e);
     let q = skip_ws(s, e);
     let k = cnt(s, st, p);
-    assert(q == if k + 1 < idx.len() { idx[k + 1] as int } else { s.len() as int });
+    assert(q == if k + 1 < idx.len() { idx[k + 1] } else { s.len() as int });
     if q > e {
         lemma_ws_run(s, e, q - 1);
     } else {
@@ -506,7 +509,7 @@ pub open spec fn body_ok(s: Seq<u8>, st: int, p: int, n: int, close: u8) -> bool
 /// at `e` with the matching bracket.
 proof fn lemma_sv_wrap(s: Seq<u8>, st: int, p: int, e: int, close: u8)
     requires
-        indexed(s, st, full(s, st)),
+        0 <= st <= s.len(),
         st <= p <= s.len(),
         out(s, st, p),
         bnd(s, st, p),
@@ -530,8 +533,8 @@ proof fn lemma_sv_wrap(s: Seq<u8>, st: int, p: int, e: int, close: u8)
     let kc = cnt(s, st, e - 1);
     assert(byte(s, e - 1) == close);
     assert(!scalar(s, st, e - 1));
-    assert(idx[kp] as int == i);
-    assert(idx[kc] as int == e - 1);
+    assert(idx[kp] == i);
+    assert(idx[kc] == e - 1);
     assert forall|d: int| d >= 1 implies #[trigger] close_k(s, idx, kp, d) == close_k(s, idx, kc + 1, d) by {
         assert(close_k(s, idx, kp, d) == close_k(s, idx, kp + 1, d + 1));
         assert(close_k(s, idx, kp + 1, d + 1) == close_k(s, idx, kc, d + 1));
@@ -547,7 +550,7 @@ proof fn lemma_sv_wrap(s: Seq<u8>, st: int, p: int, e: int, close: u8)
 #[verifier::rlimit(300)]
 pub proof fn lemma_skip_value(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
     requires
-        indexed(s, st, full(s, st)),
+        0 <= st <= s.len(),
         st <= p <= s.len(),
         out(s, st, p),
         bnd(s, st, p),
@@ -608,7 +611,7 @@ pub proof fn lemma_skip_value(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq
 
 proof fn lemma_sv_array(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
     requires
-        indexed(s, st, full(s, st)),
+        0 <= st <= s.len(),
         st <= p <= s.len(),
         out(s, st, p),
         bnd(s, st, p),
@@ -630,7 +633,7 @@ proof fn lemma_sv_array(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>
 
 proof fn lemma_sv_elements(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
     requires
-        indexed(s, st, full(s, st)),
+        0 <= st <= s.len(),
         st <= p <= s.len(),
         out(s, st, p),
         bnd(s, st, p),
@@ -667,7 +670,6 @@ proof fn lemma_sv_elements(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<ST
 proof fn lemma_step(s: Seq<u8>, st: int, q: int)
     requires
         0 <= st <= q < s.len(),
-        s.len() <= u32::MAX,
         structural(s, st, q),
         delta(s[q]) == 0,
     ensures
@@ -681,7 +683,7 @@ proof fn lemma_step(s: Seq<u8>, st: int, q: int)
 
 proof fn lemma_sv_object(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
     requires
-        indexed(s, st, full(s, st)),
+        0 <= st <= s.len(),
         st <= p <= s.len(),
         out(s, st, p),
         bnd(s, st, p),
@@ -703,7 +705,7 @@ proof fn lemma_sv_object(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok
 
 proof fn lemma_sv_members(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
     requires
-        indexed(s, st, full(s, st)),
+        0 <= st <= s.len(),
         st <= p <= s.len(),
         out(s, st, p),
         bnd(s, st, p),
@@ -751,12 +753,15 @@ proof fn lemma_sv_members(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STo
     }
 }
 
-/// A position between two tokens of `s`, with the structural index `idx`.
+/// A position between two tokens of `s`, reading the structural index
+/// through the window `w`.
 pub struct Cursor<'a> {
     pub s: &'a [u8],
-    pub idx: &'a [u32],
+    pub w: Win<'a>,
     /// The next unread index entry.
     pub k: usize,
+    /// Where entry `k` is: the next token, or the end of the input.
+    pub j: usize,
     /// Where the index starts (after a byte order mark).
     pub st: Ghost<int>,
     /// The position in `s`: just after the last token read.
@@ -764,14 +769,24 @@ pub struct Cursor<'a> {
 }
 
 impl<'a> Cursor<'a> {
+    /// The whole index.
+    pub open spec fn idx(&self) -> Seq<int> {
+        full(self.s@, self.st@)
+    }
+
     /// The cursor is between tokens, outside any string, and `k` is the
-    /// index entry of the next token.
+    /// index entry of the next token, which is at `j`.
     pub open spec fn wf(&self) -> bool {
-        &&& indexed(self.s@, self.st@, self.idx@)
+        &&& self.w.inv()
+        &&& self.w.s == self.s
+        &&& self.w.st == self.st@
         &&& self.st@ <= self.p@ <= self.s@.len()
+        &&& self.s@.len() <= isize::MAX
+        &&& self.idx().len() <= self.s@.len()
         &&& out(self.s@, self.st@, self.p@)
         &&& bnd(self.s@, self.st@, self.p@)
         &&& self.k == cnt(self.s@, self.st@, self.p@)
+        &&& self.j == if self.k < self.idx().len() { self.idx()[self.k as int] } else { self.s@.len() as int }
     }
 
     /// Where the next token starts, or the end of the input.
@@ -791,9 +806,17 @@ impl<'a> Cursor<'a> {
     /// The same input and index, at position `p`.
     pub open spec fn moved(&self, old: &Self, p: int) -> bool {
         &&& self.s == old.s
-        &&& self.idx == old.idx
         &&& self.st == old.st
         &&& self.p@ == p
+    }
+
+    /// The same place (the window may have moved).
+    pub open spec fn same(&self, old: &Self) -> bool {
+        &&& self.s == old.s
+        &&& self.st == old.st
+        &&& self.p == old.p
+        &&& self.k == old.k
+        &&& self.j == old.j
     }
 
     /// The cursor's entry is within the index.
@@ -801,24 +824,74 @@ impl<'a> Cursor<'a> {
         requires
             self.wf(),
         ensures
-            self.k <= self.idx@.len(),
+            self.k <= self.idx().len(),
     {
         lemma_cnt_bound(self.s@, self.st@, self.s@.len() as int);
         lemma_prefix(self.s@, self.st@, self.p@, self.s@.len() as int);
     }
 
-    /// A cursor at the start of the input.
-    pub fn new(s: &'a [u8], idx: &'a [u32], Ghost(st): Ghost<int>) -> (r: Self)
+    /// The next token is at `j`.
+    pub proof fn lemma_tok(&self)
         requires
-            indexed(s@, st, idx@),
+            self.wf(),
+        ensures
+            self.j == self.tok(),
+            self.tok() < self.s@.len() <==> self.k < self.idx().len(),
+            self.tok() <= self.s@.len(),
+    {
+        lemma_close(self.s@, self.st@, self.p@);
+    }
+
+    /// Reads entry `k` into `j`, once `k` and `p` have moved.
+    #[inline(always)]
+    fn fetch(&mut self)
+        requires
+            old(self).w.inv(),
+            old(self).w.s == old(self).s,
+            old(self).w.st == old(self).st@,
+            old(self).st@ <= old(self).p@ <= old(self).s@.len(),
+            old(self).s@.len() <= isize::MAX,
+            old(self).idx().len() <= old(self).s@.len(),
+            out(old(self).s@, old(self).st@, old(self).p@),
+            bnd(old(self).s@, old(self).st@, old(self).p@),
+            old(self).k == cnt(old(self).s@, old(self).st@, old(self).p@),
+        ensures
+            final(self).wf(),
+            final(self).moved(old(self), old(self).p@),
+            final(self).k == old(self).k,
+    {
+        self.j = match self.w.at(self.k) {
+            Some(q) => q,
+            None => self.s.len(),
+        };
+    }
+
+    /// A cursor at the start of the input.
+    pub fn new(s: &'a [u8], w: Win<'a>, Ghost(st): Ghost<int>) -> (r: Self)
+        requires
+            w.inv(),
+            s@.len() <= isize::MAX,
+            w.s == s,
+            w.st == st,
         ensures
             r.wf(),
             r.s == s,
-            r.idx == idx,
             r.st@ == st,
             r.p@ == st,
     {
-        Cursor { s, idx, k: 0, st: Ghost(st), p: Ghost(st) }
+        let _n = s.len();
+        let mut c = Cursor { s, w, k: 0, j: 0, st: Ghost(st), p: Ghost(st) };
+        proof {
+            assert(positions(s@, st, st, st) =~= Seq::<int>::empty());
+            lemma_positions_len(s@, st, st, s@.len() as int);
+        }
+        c.fetch();
+        c
+    }
+
+    /// Gives back the window's buffer.
+    pub fn into_buf(self) -> Vec<u32> {
+        self.w.into_buf()
     }
 
     /// The first byte of the next token (0 at the end of the input).
@@ -828,14 +901,15 @@ impl<'a> Cursor<'a> {
             self.wf(),
         ensures
             c == self.next(),
-            self.tok() < self.s@.len() <==> self.k < self.idx@.len(),
-            self.tok() < self.s@.len() ==> self.idx@[self.k as int] as int == self.tok(),
+            self.tok() < self.s@.len() <==> self.k < self.idx().len(),
+            self.tok() < self.s@.len() ==> self.idx()[self.k as int] == self.tok(),
+            self.j == self.tok(),
     {
         proof {
-            lemma_close(self.s@, self.st@, self.p@);
+            self.lemma_tok();
         }
-        if self.k < self.idx.len() {
-            get8(self.s, get32(self.idx, self.k) as usize)
+        if self.j < self.s.len() {
+            get8(self.s, self.j)
         } else {
             0
         }
@@ -850,10 +924,9 @@ impl<'a> Cursor<'a> {
             r == (self.tok() == self.s@.len()),
     {
         proof {
-            lemma_close(self.s@, self.st@, self.p@);
-            crate::lemmas::lemma_skip_ws_bounds(self.s@, self.p@);
+            self.lemma_tok();
         }
-        self.k >= self.idx.len()
+        self.j >= self.s.len()
     }
 
     /// Steps over the operator `c` if it is the next token.
@@ -873,10 +946,9 @@ impl<'a> Cursor<'a> {
             lemma_close(self.s@, self.st@, self.p@);
         }
         if self.peek() == c {
-            let _n = self.idx.len();
-            assert(self.k < _n);
             self.k = self.k + 1;
             self.p = Ghost(skip_ws(self.s@, self.p@) + 1);
+            self.fetch();
             true
         } else {
             false
@@ -906,11 +978,12 @@ impl<'a> Cursor<'a> {
         proof {
             lemma_close(g, st, self.p@);
             lemma_skip(g, st, self.p@);
+            self.lemma_tok();
         }
-        if self.k >= self.idx.len() {
+        if self.j >= self.s.len() {
             return false;
         }
-        let j = get32(self.idx, self.k) as usize;
+        let j = self.j;
         if !ex_has_lit(self.s, j, lit) {
             return false;
         }
@@ -929,6 +1002,7 @@ impl<'a> Cursor<'a> {
         }
         self.k = self.k + 1;
         self.p = Ghost(e as int);
+        self.fetch();
         true
     }
 
@@ -953,11 +1027,12 @@ impl<'a> Cursor<'a> {
         proof {
             lemma_close(g, st, self.p@);
             lemma_skip(g, st, self.p@);
+            self.lemma_tok();
         }
-        if self.k >= self.idx.len() {
+        if self.j >= self.s.len() {
             return None;
         }
-        let j = get32(self.idx, self.k) as usize;
+        let j = self.j;
         proof {
             lemma_number_lexeme(g, j as int);
         }
@@ -974,6 +1049,7 @@ impl<'a> Cursor<'a> {
                 }
                 self.k = self.k + 1;
                 self.p = Ghost(e as int);
+                self.fetch();
                 Some((j, e, v, ok))
             },
             None => None,
@@ -999,7 +1075,7 @@ impl<'a> Cursor<'a> {
                 } else {
                     old(dst)@
                 },
-                None => r is None && *final(self) == *old(self),
+                None => r is None && final(self).same(old(self)),
             },
     {
         proof {
@@ -1008,34 +1084,22 @@ impl<'a> Cursor<'a> {
         if self.peek() != 0x22 {
             return None;
         }
-        let j = get32(self.idx, self.k) as usize;
+        let j = self.j;
         proof {
             crate::lemmas::lemma_string_body_advances(self.s@, j + 1, false);
             if let Some((n, _)) = string(self.s@, j as int) {
                 lemma_cnt_bound(self.s@, self.st@, n);
             }
         }
-        // A string whose closing quote is the next index entry has no
-        // escapes: the scan that does not decode ends at once. (It is the
-        // scan that says so; if it found escapes after all, the decoding
-        // scan below would still be right.)
-        let n = self.idx.len();
-        proof {
-            if self.k + 1 < n {
-                lemma_entry(self.s@, self.st@, self.s@.len() as int, self.k + 1);
-            }
+        // The scan reads forward from entry `k`: the window must not be past it.
+        if self.w.kbase > self.k {
+            let _ = self.w.at(self.k);
         }
-        if self.k + 1 < n && get8(self.s, get32(self.idx, self.k + 1) as usize) == 0x22 {
-            if let Some((k2, e, false)) = ex2_string(self.s, self.idx, self.k, Ghost(self.st@)) {
-                self.k = k2;
-                self.p = Ghost(e as int);
-                return Some((j + 1, e - 1, false));
-            }
-        }
-        match ex2_string_dec(self.s, self.idx, self.k, Ghost(self.st@), dst) {
+        match ex2_string_dec(&mut self.w, self.k, j, Ghost(self.st@), dst) {
             Some((k2, e, esc)) => {
                 self.k = k2;
                 self.p = Ghost(e as int);
+                self.fetch();
                 Some((j + 1, e - 1, esc))
             },
             None => None,
@@ -1046,7 +1110,8 @@ impl<'a> Cursor<'a> {
     /// its closing quote, a container up to its matching bracket, anything
     /// else as one scalar. False (and the cursor stays) if there is no
     /// value to pass over: at an operator other than an opening bracket,
-    /// at the end of the input, or when the brackets do not match up.
+    /// at the end of the input, or when the brackets or quotes do not
+    /// match up.
     #[inline(always)]
     pub fn skip(&mut self) -> (r: bool)
         requires
@@ -1055,25 +1120,24 @@ impl<'a> Cursor<'a> {
             final(self).wf(),
             final(self).k >= old(self).k,
             final(self).s == old(self).s,
-            final(self).idx == old(self).idx,
             final(self).st == old(self).st,
-            match skip_to(old(self).s@, old(self).st@, old(self).idx@, old(self).p@) {
+            match skip_to(old(self).s@, old(self).st@, old(self).idx(), old(self).p@) {
                 Some((k1, p1)) => r && final(self).k == k1 && final(self).p@ == p1,
-                None => !r && *final(self) == *old(self),
+                None => !r && final(self).same(old(self)),
             },
     {
         let ghost g = self.s@;
         let ghost st = self.st@;
         let ghost p0 = self.p@;
-        let n = self.idx.len();
         proof {
             lemma_close(g, st, p0);
             lemma_skip(g, st, p0);
+            self.lemma_tok();
         }
-        if self.k >= n {
+        if self.j >= self.s.len() {
             return false;
         }
-        let j = get32(self.idx, self.k) as usize;
+        let j = self.j;
         let c = get8(self.s, j);
         proof {
             assert(byte(g, j as int) == g[j as int]);
@@ -1084,13 +1148,17 @@ impl<'a> Cursor<'a> {
             proof {
                 assert(uq(g, st, j as int));
                 assert(instr(g, st, j as int));
+                lemma_at(g, st, j as int);
             }
             loop
                 invariant
                     g == self.s@,
                     st == self.st@,
-                    n == self.idx@.len(),
-                    indexed(g, st, self.idx@),
+                    self.w.inv(),
+                    self.w.s == self.s,
+                    self.w.st == st,
+                    g.len() <= isize::MAX,
+                    full(g, st).len() <= g.len(),
                     st <= j < lo <= g.len(),
                     j == skip_ws(g, p0),
                     g[j as int] == 0x22,
@@ -1098,16 +1166,25 @@ impl<'a> Cursor<'a> {
                     k == cnt(g, st, lo),
                     instr(g, st, lo - 1),
                     quote_from(g, st, j + 1) == quote_from(g, st, lo),
-                    *self == *old(self),
+                    self.same(old(self)),
+                    old(self).wf(),
                     k > self.k,
                 decreases g.len() - lo,
             {
-                proof {
-                    lemma_string_step(g, st, lo, lo);
-                }
-                let q = get32(self.idx, k) as usize;
+                let q = match self.w.at(k) {
+                    Some(q) => q,
+                    None => {
+                        proof {
+                            lemma_none_after(g, st, lo);
+                            lemma_no_quote(g, st, lo, g.len() as int);
+                            assert(quote_from(g, st, g.len() as int) == g.len());
+                        }
+                        return false;
+                    },
+                };
                 let d = get8(self.s, q);
                 proof {
+                    lemma_next(g, st, lo, lo);
                     assert(byte(g, q as int) == g[q as int]);
                     lemma_no_quote(g, st, lo, q as int);
                 }
@@ -1120,17 +1197,21 @@ impl<'a> Cursor<'a> {
                     }
                     self.k = k + 1;
                     self.p = Ghost(q + 1);
+                    self.fetch();
                     return true;
                 }
                 proof {
                     assert(!uq(g, st, q as int));
                     assert(instr(g, st, q as int));
-                    assert(d == 0x5C);
+                    assert(quote_from(g, st, q as int) == quote_from(g, st, q + 1));
                     lo = q + 1;
                 }
                 k = k + 1;
             }
         } else if c == 0x5B || c == 0x7B {
+            proof {
+                self.lemma_bound();
+            }
             self.walk(self.k + 1)
         } else if c == 0x2C || c == 0x3A || c == 0x5D || c == 0x7D {
             false
@@ -1138,13 +1219,9 @@ impl<'a> Cursor<'a> {
             // One scalar. The cursor moves to the next index entry; the
             // byte before it must not be a backslash, which would leave
             // that entry escaped.
-            let q = if self.k + 1 < n {
-                proof {
-                    lemma_entry(g, st, g.len() as int, self.k + 1);
-                }
-                get32(self.idx, self.k + 1) as usize
-            } else {
-                self.s.len()
+            let q = match self.w.at(self.k + 1) {
+                Some(q) => q,
+                None => self.s.len(),
             };
             proof {
                 lemma_after_scalar(g, st, j as int, q as int);
@@ -1157,6 +1234,7 @@ impl<'a> Cursor<'a> {
             }
             self.k = self.k + 1;
             self.p = Ghost(q as int);
+            self.fetch();
             true
         }
     }
@@ -1167,82 +1245,106 @@ impl<'a> Cursor<'a> {
     fn walk(&mut self, from: usize) -> (r: bool)
         requires
             old(self).wf(),
-            old(self).k <= from <= old(self).idx@.len(),
+            old(self).k <= from <= old(self).idx().len(),
         ensures
             final(self).wf(),
             final(self).k >= old(self).k,
             final(self).s == old(self).s,
-            final(self).idx == old(self).idx,
             final(self).st == old(self).st,
-            match close_k(old(self).s@, old(self).idx@, from as int, 1) {
-                Some(k1) => r && final(self).k == k1 && final(self).p@ == old(self).idx@[k1 - 1] as int + 1,
-                None => !r && *final(self) == *old(self),
+            match close_k(old(self).s@, old(self).idx(), from as int, 1) {
+                Some(k1) => r && final(self).k == k1 && final(self).p@ == old(self).idx()[k1 - 1] + 1,
+                None => !r && final(self).same(old(self)),
             },
     {
         let ghost g = self.s@;
         let ghost st = self.st@;
         let ghost k0 = from as int;
-        let n = self.idx.len();
+        let ghost idx = full(g, st);
         let mut k = from;
         let mut d: usize = 0;
-        // Eight entries at a time where that is enough: if they hold no
-        // more closing brackets than the depth below the start, the depth
-        // cannot reach 0 among them. Otherwise eight single steps, and
-        // back to blocks.
-        while k < n
+        // Eight entries at a time where the window holds them: if they
+        // hold no more closing brackets than the depth below the start,
+        // the depth cannot reach 0 among them. Otherwise eight single
+        // steps, and back to blocks.
+        loop
             invariant
                 g == self.s@,
                 st == self.st@,
-                n == self.idx@.len(),
-                indexed(g, st, self.idx@),
-                0 <= k0 <= k <= n,
+                idx == full(g, st),
+                self.w.inv(),
+                self.w.s == self.s,
+                self.w.st == st,
+                0 <= k0 <= k,
+                k <= idx.len(),
+                idx.len() <= g.len() <= isize::MAX,
                 0 <= d <= k - k0,
-                close_k(g, self.idx@, k0, 1) == close_k(g, self.idx@, k as int, d + 1),
-                *self == *old(self),
+                close_k(g, idx, k0, 1) == close_k(g, idx, k as int, d + 1),
+                self.same(old(self)),
+                old(self).wf(),
                 g == old(self).s@,
-                self.idx@ == old(self).idx@,
                 k0 == from,
                 self.k <= k0,
-            decreases n - k,
+            decreases idx.len() - k,
         {
             let ghost ks = k;
-            while n - k >= 8
+            while self.w.kbase <= k && k <= self.w.kend && 8 <= self.w.kend - k
                 invariant
                     ks <= k,
+                    k <= idx.len(),
+                    idx.len() <= g.len() <= isize::MAX,
                     g == self.s@,
                     st == self.st@,
-                    n == self.idx@.len(),
-                    indexed(g, st, self.idx@),
-                    0 <= k0 <= k <= n,
+                    idx == full(g, st),
+                    self.w.inv(),
+                    self.w.s == self.s,
+                    self.w.st == st,
+                    0 <= k0 <= k,
                     0 <= d <= k - k0,
-                    close_k(g, self.idx@, k0, 1) == close_k(g, self.idx@, k as int, d + 1),
-                    *self == *old(self),
-                decreases n - k,
+                    close_k(g, idx, k0, 1) == close_k(g, idx, k as int, d + 1),
+                    self.same(old(self)),
+                    old(self).wf(),
+                decreases self.w.kend - k,
             {
                 let mut o: usize = 0;
                 let mut c: usize = 0;
                 let mut j: usize = 0;
+                let i0 = k - self.w.kbase;
+                let w0 = self.w.w0;
+                let src = self.s;
+                let bs = self.w.buf.as_slice();
+                proof {
+                    lemma_win_entry(&self.w, k as int);
+                    lemma_win_entry(&self.w, k + 7);
+                }
                 while j < 8
                     invariant
                         g == self.s@,
                         st == self.st@,
-                        n == self.idx@.len(),
-                        indexed(g, st, self.idx@),
-                        k + 8 <= n,
+                        idx == full(g, st),
+                        self.w.inv(),
+                        self.w.s == self.s,
+                        self.w.st == st,
+                        self.w.kbase <= k,
+                        k + 8 <= self.w.kend,
+                        i0 == k - self.w.kbase,
+                        w0 == self.w.w0,
+                        src@ == g,
+                        bs@ == self.w.buf@,
+                        k + 8 <= idx.len(),
                         0 <= j <= 8,
-                        o == opens(g, self.idx@, k as int, j as int),
-                        c == closes(g, self.idx@, k as int, j as int),
+                        o == opens(g, idx, k as int, j as int),
+                        c == closes(g, idx, k as int, j as int),
                         o <= j,
                         c <= j,
                     decreases 8 - j,
                 {
                     proof {
-                        lemma_entry(g, st, g.len() as int, k + j);
+                        lemma_win_entry(&self.w, k + j);
                     }
-                    let b = get8(self.s, get32(self.idx, k + j) as usize) & 0xDF;
+                    let b = get8(src, w0 + get32(bs, i0 + j) as usize) & 0xDF;
                     proof {
-                        let b0 = g[self.idx@[k + j] as int];
-                        assert(byte(g, self.idx@[k + j] as int) == b0);
+                        let b0 = g[idx[k + j]];
+                        assert(byte(g, idx[k + j]) == b0);
                         assert((b0 & 0xDF == 0x5B) == (b0 == 0x5B || b0 == 0x7B)) by (bit_vector);
                         assert((b0 & 0xDF == 0x5D) == (b0 == 0x5D || b0 == 0x7D)) by (bit_vector);
                     }
@@ -1254,43 +1356,52 @@ impl<'a> Cursor<'a> {
                     break;
                 }
                 proof {
-                    lemma_block(g, self.idx@, k as int, d + 1, 8);
+                    lemma_block(g, idx, k as int, d + 1, 8);
                 }
                 d = d + o - c;
                 k = k + 8;
             }
-            let stop = if n - k < 16 { n } else { k + 8 };
-            assert(stop > ks);
+            let ghost kb = k;
+            let stop = k + 8;
             while k < stop
                 invariant
                     g == self.s@,
                     st == self.st@,
-                    n == self.idx@.len(),
-                    indexed(g, st, self.idx@),
-                    0 <= k0 <= k <= n,
+                    idx == full(g, st),
+                    self.w.inv(),
+                    self.w.s == self.s,
+                    self.w.st == st,
+                    0 <= k0 <= k,
                     0 <= d <= k - k0,
-                    close_k(g, self.idx@, k0, 1) == close_k(g, self.idx@, k as int, d + 1),
-                    *self == *old(self),
+                    close_k(g, idx, k0, 1) == close_k(g, idx, k as int, d + 1),
+                    self.same(old(self)),
+                    old(self).wf(),
                     g == old(self).s@,
-                    self.idx@ == old(self).idx@,
                     k0 == from,
                     self.k <= k0,
-                    stop <= n,
                     k <= stop,
-                    ks < stop,
+                    stop == kb + 8,
+                    ks <= kb <= k,
+                    k <= idx.len(),
+                    idx.len() <= g.len() <= isize::MAX,
                 decreases stop - k,
             {
-                proof {
-                    lemma_entry(g, st, g.len() as int, k as int);
-                }
-                let q = get32(self.idx, k) as usize;
+                let q = match self.w.at(k) {
+                    Some(q) => q,
+                    None => {
+                        proof {
+                            assert(close_k(g, idx, k as int, d + 1) is None);
+                        }
+                        return false;
+                    },
+                };
                 let b = get8(self.s, q);
                 proof {
                     assert(byte(g, q as int) == g[q as int]);
-                    assert(close_k(g, self.idx@, k as int, d + 1) == if d + 1 + delta(b) == 0 {
+                    assert(close_k(g, idx, k as int, d + 1) == if d + 1 + delta(b) == 0 {
                         Some(k + 1)
                     } else {
-                        close_k(g, self.idx@, k + 1, d + 1 + delta(b))
+                        close_k(g, idx, k + 1, d + 1 + delta(b))
                     });
                 }
                 k = k + 1;
@@ -1300,8 +1411,8 @@ impl<'a> Cursor<'a> {
                     if d == 0 {
                         proof {
                             assert(delta(b) == -1);
-                            assert(close_k(g, self.idx@, k0, 1) == Some(k as int));
-                            assert(close_k(old(self).s@, old(self).idx@, from as int, 1) == Some(k as int));
+                            assert(close_k(g, idx, k0, 1) == Some(k as int));
+                            lemma_entry(g, st, g.len() as int, k - 1);
                             lemma_at(g, st, q as int);
                             assert(!strs(g, st, q as int));
                             assert(!scalar(g, st, q as int));
@@ -1311,19 +1422,13 @@ impl<'a> Cursor<'a> {
                         }
                         self.k = k;
                         self.p = Ghost(q + 1);
-                        assert(self.wf());
-                        assert(self.idx@ == old(self).idx@);
-                        assert(old(self).idx@[k - 1] as int == q);
-                        assert(close_k(old(self).s@, old(self).idx@, from as int, 1) == Some(k as int));
+                        self.fetch();
                         return true;
                     }
                     d = d - 1;
                 }
             }
-            assert(k > ks);
         }
-        assert(close_k(g, self.idx@, k as int, d + 1) is None);
-        false
     }
 
     /// Leaves the container the cursor is in: moves past the bracket that
@@ -1337,16 +1442,14 @@ impl<'a> Cursor<'a> {
             final(self).wf(),
             final(self).k >= old(self).k,
             final(self).s == old(self).s,
-            final(self).idx == old(self).idx,
             final(self).st == old(self).st,
-            match close_k(old(self).s@, old(self).idx@, old(self).k as int, 1) {
-                Some(k1) => r && final(self).k == k1 && final(self).p@ == old(self).idx@[k1 - 1] as int + 1,
-                None => !r && *final(self) == *old(self),
+            match close_k(old(self).s@, old(self).idx(), old(self).k as int, 1) {
+                Some(k1) => r && final(self).k == k1 && final(self).p@ == old(self).idx()[k1 - 1] + 1,
+                None => !r && final(self).same(old(self)),
             },
     {
         proof {
-            lemma_cnt_bound(self.s@, self.st@, self.s@.len() as int);
-            lemma_prefix(self.s@, self.st@, self.p@, self.s@.len() as int);
+            self.lemma_bound();
         }
         self.walk(self.k)
     }
@@ -1360,40 +1463,30 @@ impl<'a> Cursor<'a> {
             r == self.tok(),
     {
         proof {
-            lemma_close(self.s@, self.st@, self.p@);
+            self.lemma_tok();
         }
-        if self.k < self.idx.len() {
-            get32(self.idx, self.k) as usize
-        } else {
-            self.s.len()
-        }
+        self.j
     }
 }
 
-/// Stage 1 for the on-demand reader. Returns the number of index entries
-/// and where the index starts, or `None` if stage 1 already rejects the
-/// input: invalid UTF-8, an unterminated string, a control character in a
-/// string, or 4 GiB or more.
-pub fn index_for(s: &[u8], idx: &mut Vec<u32>) -> (r: Option<(usize, Ghost<int>)>)
+/// Where the index of `s` starts, after a byte order mark, if `s` is
+/// UTF-8; the on-demand reader rejects other input at once. (The rest of
+/// stage 1's checks need no pass of their own: a control character inside
+/// a string is in the index, and a string left open runs out of index;
+/// the reader rejects either when it reaches it.)
+pub fn index_start(s: &[u8]) -> (r: Option<usize>)
     ensures
-        r matches Some((n, st)) ==> n <= final(idx)@.len() && indexed(
-            s@,
-            st@,
-            final(idx)@.subrange(0, n as int),
-        ),
+        r matches Some(st) ==> st == bom_end(s@) && utf8_from(s@, st as int),
+        r is None ==> !utf8_from(s@, bom_end(s@)),
 {
-    if s.len() > (u32::MAX - 64) as usize {
-        return None;
-    }
     let start: usize = if ex_has_lit(s, 0, &[0xEF, 0xBB, 0xBF]) { 3 } else { 0 };
     proof {
         assert([0xEFu8, 0xBB, 0xBF]@ == seq![0xEFu8, 0xBB, 0xBF]);
     }
-    let (n, ok, utf8) = crate::index::index(s, start, idx);
-    if !ok || !utf8 {
+    if !crate::utf8::utf8_valid(s, start) {
         return None;
     }
-    Some((n, Ghost(start as int)))
+    Some(start)
 }
 
 /// Why a `Reader` call failed: the token it was asked for is not what is
@@ -1417,6 +1510,9 @@ pub struct Reader<'a> {
     c: Cursor<'a>,
     state: u8,
     scratch: Vec<u8>,
+    /// Where the index window's buffer goes back to when the reader is
+    /// dropped.
+    home: &'a mut Vec<u32>,
 }
 
 impl<'a> Reader<'a> {
@@ -1426,7 +1522,7 @@ impl<'a> Reader<'a> {
 
     /// Index entries not yet read.
     pub closed spec fn left(&self) -> int {
-        self.c.idx@.len() - self.c.k
+        self.c.idx().len() - self.c.k
     }
 
     /// The input.
@@ -1434,17 +1530,38 @@ impl<'a> Reader<'a> {
         self.c.s@
     }
 
-    /// Runs stage 1 over `s` into `idx` and stands at the document's
-    /// value. `None` if stage 1 rejects the input (see `index_for`).
+    /// Stands at the document's value in `s`, indexing it a window at a
+    /// time into `idx`'s buffer, which is given back when the reader is
+    /// dropped. `None` if `s` is not UTF-8 (see `index_start`).
     pub fn new(s: &'a [u8], idx: &'a mut Vec<u32>) -> (r: Option<Self>)
         ensures
             r matches Some(rd) ==> rd.inv(),
+            r is None && s@.len() <= isize::MAX ==> !utf8_from(s@, bom_end(s@)),
     {
-        match index_for(s, idx) {
-            Some((n, st)) => {
-                let v: &'a Vec<u32> = idx;
-                let ix = slice_prefix(v.as_slice(), n);
-                Some(Reader { c: Cursor::new(s, ix, st), state: VALUE, scratch: Vec::new() })
+        Self::with_window(s, idx, WINDOW)
+    }
+
+    /// `new` with index windows of `win` bytes, a multiple of 128 from 128
+    /// up to 2^30 (for tests; `None` otherwise).
+    pub fn with_window(s: &'a [u8], idx: &'a mut Vec<u32>, win: usize) -> (r: Option<Self>)
+        ensures
+            r matches Some(rd) ==> rd.inv(),
+            r is None && 128 <= win <= 0x4000_0000 && win % 128 == 0 && s@.len() <= isize::MAX ==> !utf8_from(
+                s@,
+                bom_end(s@),
+            ),
+    {
+        // No slice is longer than `isize::MAX` bytes; the proofs need it
+        // said.
+        if win < 128 || win > 0x4000_0000 || win % 128 != 0 || s.len() > isize::MAX as usize {
+            return None;
+        }
+        match index_start(s) {
+            Some(st) => {
+                let mut buf = Vec::new();
+                std::mem::swap(idx, &mut buf);
+                let w = Win::new(s, st, win, buf);
+                Some(Reader { c: Cursor::new(s, w, Ghost(st as int)), state: VALUE, scratch: Vec::new(), home: idx })
             },
             None => None,
         }
@@ -1876,6 +1993,12 @@ impl<'a> Reader<'a> {
     /// The input.
     pub fn source(&self) -> &'a [u8] {
         self.c.s
+    }
+}
+
+impl Drop for Reader<'_> {
+    fn drop(&mut self) {
+        std::mem::swap(self.home, &mut self.c.w.buf);
     }
 }
 

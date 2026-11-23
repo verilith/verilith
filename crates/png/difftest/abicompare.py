@@ -80,7 +80,8 @@ def departure(c, x, y):
         # say why.
         t = re.sub(r"^W (iTXt|zTXt|iCCP): (bad compressed data|truncated|incorrect data check|"
                    r"invalid [a-z /]+(\(libpng\))?|incorrect header check|unknown compression method|"
-                   r"invalid code -- missing end-of-block|too many length or distance symbols)$",
+                   r"invalid code -- missing end-of-block|too many length or distance symbols|"
+                   r"missing LZ dictionary|damaged LZ stream|unexpected end of LZ stream|unexpected zlib return( code)?)$",
                    r"W \1: <compressed data error>", t, flags=re.M)
         t = re.sub(r"ERR IDAT: .*", "ERR IDAT: <image data error>", t)
         # libpng's errors in the image data that carry no chunk name.
@@ -98,6 +99,10 @@ def departure(c, x, y):
             t = re.sub(r"^(W IDAT: .*|W (Truncated compressed|Extra compress(ed|ion)) data in IDAT|user \d+ \d+)\n", "", t, flags=re.M)
         return t
     if norm(x) == norm(y):
+        return True
+    # libpng took longer than the time limit (a huge image, read row by
+    # row): there is nothing to compare.
+    if x == "timeout\n":
         return True
     # vpng stops at damaged image data, or (progressive) waits for the
     # rest of it, where libpng warns, or gives the rows before the damage,
