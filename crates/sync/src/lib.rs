@@ -4,16 +4,24 @@ pub mod array_queue;
 // where verified functions take extra ghost arguments.
 #[cfg(not(verus_only))]
 pub mod channel;
+#[doc(hidden)]
 pub mod chan_core;
+#[doc(hidden)]
 pub mod chan_model;
+#[doc(hidden)]
 pub mod chan_sync;
+#[doc(hidden)]
 pub mod mono;
 pub mod mutex;
+#[doc(hidden)]
 pub mod parking;
+#[doc(hidden)]
 pub mod progress;
+#[doc(hidden)]
 pub mod ra;
 pub mod rwlock;
 pub mod spsc;
+#[doc(hidden)]
 pub mod util;
 
 #[cfg(not(target_pointer_width = "64"))]

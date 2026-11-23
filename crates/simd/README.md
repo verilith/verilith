@@ -18,7 +18,7 @@ signed readings (`s8`, `s16`, `s32`). Each intrinsic gets an
 `assume_specification` stating its result as a function on those sequences,
 for example
 
-```rust
+```rust,ignore
 pub assume_specification[ _mm256_add_epi8 ](a: __m256i, b: __m256i) -> (r: __m256i)
     requires avx2(),
     ensures b256(r) == add8(b256(a), b256(b));
@@ -156,10 +156,10 @@ the random search never hit, which is why the lane functions are kept simple.
 
 ```toml
 [dependencies]
-verilith-simd = { git = "https://github.com/verilith/verilith/tree/main/crates/simd" }
+verilith-simd = { git = "https://github.com/verilith/verilith" }
 ```
 
-```rust
+```rust,ignore
 use verilith_simd::{cpu::*, lanes::*, ops::*};
 verus! {
 broadcast use {verilith_simd::lanes::group_lanes, verilith_simd::cpu::group_cpu};
@@ -178,7 +178,7 @@ Intrinsics need a `#[target_feature]` context even for SSE2, and
 
 ## Building
 
-```
+```text
 cargo verus verify                          # the proofs (278 functions)
 cargo test --release                        # the differential tests (~1 min)
 VSIMD_ITERS=10000 cargo test --release      # a quick run
@@ -193,5 +193,5 @@ with AVX2; the AVX-512 ones in `tests/ext.rs` need AVX-512BW and VBMI2.
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/simd/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/simd/LICENSE-MIT), at your option.

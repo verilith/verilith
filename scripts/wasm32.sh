@@ -6,11 +6,7 @@
 # wasmtime (on PATH).
 #   scripts/wasm32.sh             the builds and the tests
 #   scripts/wasm32.sh build       the build checks only
-#   scripts/wasm32.sh verify C..  Verus on crate C (default text url regex)
-#                                 compiled for wasm32-unknown-unknown, so
-#                                 that the proofs cover the code a wasm32
-#                                 build has (no x86 or Arm paths) at a
-#                                 32-bit usize. Needs cargo-verus on PATH.
+#   (Verus for wasm32: each crate's scripts/verify-narrow.sh.)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -18,29 +14,6 @@ cd "$(dirname "$0")/.."
 WIDE="archive font json lz4 png snappy sync wasm xxhash zstd"
 # Tested on wasm32-wasip1.
 TESTED="text url regex"
-
-if [ "${1:-}" = verify ]; then
-  shift
-  . scripts/verus-version
-  rustup target add --toolchain "$VERUS_TOOLCHAIN" wasm32-unknown-unknown > /dev/null 2>&1
-  log=${VERIFY_LOG_DIR:-$PWD/target/verify}
-  mkdir -p "$log"
-  status=0
-  for c in ${*:-$TESTED}; do
-    # The crates it depends on are compiled, not verified again: each has
-    # its own run.
-    (cd "crates/$c" && cargo verus focus --target wasm32-unknown-unknown) > "$log/$c-wasm32.log" 2>&1 || true
-    line=$(grep -E "verification results:: [0-9]+ verified, [0-9]+ errors" "$log/$c-wasm32.log" | tail -1)
-    if echo "$line" | grep -qE ", 0 errors"; then
-      echo "ok   $c (wasm32): ${line#*:: }"
-    else
-      echo "FAIL $c (wasm32): ${line:-no result line}"
-      grep -E "^error" -A6 "$log/$c-wasm32.log" | head -40
-      status=1
-    fi
-  done
-  exit $status
-fi
 
 rustup target add wasm32-unknown-unknown wasm32-wasip1 > /dev/null
 

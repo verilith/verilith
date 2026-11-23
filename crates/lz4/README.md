@@ -8,7 +8,26 @@ correct output have to be certain.
 
 `cargo verus verify` (or `scripts/verify.sh`) checks 111 functions and
 lemmas with no errors, no `assume` and no `external_body` in this crate.
-Everything assumed is listed in [TRUST.md](TRUST.md).
+Everything assumed is listed in [TRUST.md](https://github.com/verilith/verilith/blob/main/crates/lz4/TRUST.md).
+
+## Using it from Rust
+
+```rust
+use verilith_lz4::{compress, decompress, Prefs};
+
+fn main() -> Result<(), verilith_lz4::Error> {
+    let data = b"hello hello hello hello hello hello".repeat(100);
+    // A frame with independent 64 KiB blocks and a content checksum.
+    let prefs = Prefs { block_id: 4, indep: true, bsum: false, csum: true, csize: true, accel: 1 };
+    let frame = compress(&data, &prefs);
+    assert_eq!(decompress(&frame, 1 << 30)?, data); // up to the limit
+    Ok(())
+}
+```
+
+`compress_block` and `decompress_block` work on single LZ4 blocks
+(liblz4's `LZ4_compress_default` and `LZ4_decompress_safe`), with
+`compress_bound` for the room a block needs.
 
 ## What is proven
 
@@ -19,7 +38,7 @@ Everything assumed is listed in [TRUST.md](TRUST.md).
 | Block decoding: `Some(n)` exactly when the block is valid and fits, with the spec's output in `out[start..n]`; nothing before `start` is touched; `None` only when the spec rejects the block or its output does not fit | `block::decode_block` against `spec::block` |
 | The decoder's wild copies: literals and matches are copied 16 or 24 bytes at a time past their end when there is room, and matches of any offset (overlapping ones too) give what a byte-by-byte copy gives | `verilith_core::lz::copy_match`, `copy_match24`, `copy_lits` against `verilith_core::lz::lz_copy` |
 | Block compression round-trips: what `compress_block` writes decodes, by the spec, to the input, whatever the hash table held; and it follows the end-of-block rules liblz4's decoder insists on | `compress::compress_block` against `spec::block_strict` |
-| XXH32 | `verilith_xxhash::xxh32_exec` against `spec::xxh32` (both from [verilith-xxhash](../xxhash)) |
+| XXH32 | `verilith_xxhash::xxh32_exec` against `spec::xxh32` (both from [verilith-xxhash](https://github.com/verilith/verilith/tree/main/crates/xxhash)) |
 | Frame decoding into a buffer the caller already has (what `LZ4F_decompress` uses when a whole frame and enough room are given): `Some` only for a valid frame, with the spec's content, nothing allocated | `frame::decode_frame_into` against `spec::frame` |
 | Frame decoding: `Ok` exactly when the input is one or more valid frames (and skippable frames), with the spec's content: header, header checksum, block sizes, stored and compressed blocks, linked blocks reaching into earlier ones, block checksums, content size, content checksum | `frame::decompress` against `spec::frames`, `frame::decode_frame` against `spec::frame` |
 | Frame decoding with a dictionary (`LZ4F_decompress_usingDict`): the dictionary's last 64 KiB come before every block, linked or independent, as history its matches may reach into; the content, sizes and checksums are the spec's | `frame::decode_frame_dict` against `spec::frame_dict` |
@@ -42,7 +61,7 @@ Not yet proven: bounds on work.
 
 ## Departures from liblz4
 
-[DEPARTURES.md](DEPARTURES.md) lists every case. In short: an offset of 0
+[DEPARTURES.md](https://github.com/verilith/verilith/blob/main/crates/lz4/DEPARTURES.md) lists every case. In short: an offset of 0
 is rejected (liblz4 lets it through and copies whatever the buffer held);
 the decoder does not enforce the end-of-block rules, which depend on the
 size of the caller's buffer; `LZ4F_decompress` collects a whole frame
@@ -107,19 +126,19 @@ liblz4's place.
 ## Performance
 
 [vbench](https://github.com/verilith/verilith/tree/main/bench) has the
-comparison (`lz4-*`): one C driver linked with liblz4 1.10.0 and with
+comparison (`lz4-*`): one C driver linked with liblz4 1.11.1 and with
 verilith-lz4, both built with the same flags, over five Silesia files and 4 KiB
-and 64 KiB pieces. On an Apple Silicon Mac (M3 Pro), geometric means of
-verilith-lz4's speed against liblz4's (with the range over the cases): block
-compression 0.97 (0.93 to 1.01, compressed sizes within a few bytes),
-frame compression 0.94 (0.85 to 1.00), block decompression 0.91 (0.86 to
-0.96), frame decompression 0.93 (0.89 to 0.96). The widest gap left is
-frame compression of a 4 KiB input.
+and 64 KiB pieces. On an Apple Silicon Mac (M3 Pro, the run in the
+[repository's benchmark table](../../README.md#benchmarks), 2026-11-22),
+geometric means of liblz4's time over verilith-lz4's: block decompression
+1.10x, frame decompression 1.09x, block compression 0.97x (compressed
+sizes within a few bytes) and frame compression 0.94x. The widest gap
+left is frame compression of a 4 KiB input.
 
 `cargo run --release --example bench -- FILES` is a quicker check
 against the system liblz4.
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/lz4/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/lz4/LICENSE-MIT), at your option.

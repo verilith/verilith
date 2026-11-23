@@ -9,7 +9,26 @@ where memory safety and correct output have to be certain.
 `cargo verus verify` (or `scripts/verify.sh`) checks 110 functions and
 lemmas with no errors, no `assume` and no `external_body` in this crate.
 CRC-32C is verilith-core's. Everything assumed is listed in
-[TRUST.md](TRUST.md).
+[TRUST.md](https://github.com/verilith/verilith/blob/main/crates/snappy/TRUST.md).
+
+## Using it from Rust
+
+```rust
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let data = b"hello hello hello hello hello hello".repeat(100);
+    let c = verilith_snappy::compress(&data).ok_or("4 GiB or more")?;
+    assert_eq!(verilith_snappy::uncompressed_length(&c), Some(data.len()));
+    assert_eq!(verilith_snappy::decompress(&c, 1 << 30)?, data); // up to the limit
+
+    // The framing format (`.sz` files and streams), with CRC-32C checksums.
+    let f = verilith_snappy::frame_encode(&data);
+    assert_eq!(verilith_snappy::frame_decode(&f, 1 << 30)?, data);
+    Ok(())
+}
+```
+
+`compress_into` and `decompress_into` write into a buffer of the caller's,
+sized with `max_compressed_length` and `uncompressed_length`.
 
 ## What is proven
 
@@ -21,7 +40,7 @@ CRC-32C is verilith-core's. Everything assumed is listed in
 | The wild copies: literals and matches are copied 16 bytes at a time past their end when there is room, and matches of any offset (overlapping ones too) give what a byte-by-byte copy gives | `verilith_core::lz::copy_match`, `copy_lits` against `verilith_core::lz::lz_copy` |
 | Validation without decompressing gives the decompressor's verdict | `decode::validate` against `spec::decompress` |
 | Compression round-trips: what `compress_into` writes decompresses, by the spec, to the input, whatever the hash table held | `compress::compress_into` against `spec::decompress` |
-| CRC-32C, by table | `verilith_core::checksum::crc32c_update` against `checksum::spec::crc32c_reg`, in [verilith-core](../core) (every table entry is checked against the bit-by-bit definition) |
+| CRC-32C, by table | `verilith_core::checksum::crc32c_update` against `checksum::spec::crc32c_reg`, in [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core) (every table entry is checked against the bit-by-bit definition) |
 | Framing format decoding: `Ok` exactly when the stream is valid, with the spec's content: stream identifier, compressed and uncompressed chunks, masked checksums, the 64 KiB chunk limit, padding and skippable chunks, reserved chunks refused | `frame::frame_decode` against `spec::stream` |
 | Framing format encoding round-trips | `frame::frame_encode` against `spec::stream` |
 
@@ -39,7 +58,7 @@ that is too small rather than overrunning it); and bounds on work.
 
 On the raw format there are none that the tests can find: on 100,000
 corrupted inputs verilith-snappy and libsnappy 1.1.10 give the same verdict, the
-same status code and the same bytes. [DEPARTURES.md](DEPARTURES.md) has
+same status code and the same bytes. [DEPARTURES.md](https://github.com/verilith/verilith/blob/main/crates/snappy/DEPARTURES.md) has
 the few things that are not provided.
 
 ## Layout
@@ -89,12 +108,13 @@ The framing format is in the Rust API only (`frame::frame_encode`,
 ## Performance
 
 [vbench](https://github.com/verilith/verilith/tree/main/bench) has the
-comparison (`snappy-*`): one C driver linked with libsnappy 1.2.2 and
+comparison (`snappy-*`): one C driver linked with libsnappy 1.3.1 and
 with verilith-snappy, both built with the same flags, over five Silesia files
-and 4 KiB and 64 KiB pieces. On an Apple Silicon Mac (M3 Pro), geometric
-means of verilith-snappy's speed against libsnappy's (with the range over the
-cases): uncompress 0.93 (0.85 to 0.96), validate 0.97 (0.94 to 0.98),
-compress 0.92 (0.86 to 1.18, the compressed size within 1.5%).
+and 4 KiB and 64 KiB pieces. On an Apple Silicon Mac (M3 Pro, the run in
+the [repository's benchmark table](../../README.md#benchmarks),
+2026-11-22), geometric means of libsnappy's time over verilith-snappy's:
+uncompress 0.93x, validate 0.97x, compress 0.91x (the compressed size
+within 1.5%).
 
 What the speed rests on:
 
@@ -105,7 +125,7 @@ What the speed rests on:
   comes from a conditional move between the two places it can be, and the element's 32 bytes are
   copied once, from the input or from earlier output, with the source
   chosen the same way. The two choices are verilith-core's `pick` and
-  `copy16_pick`, which are trusted (see [TRUST.md](TRUST.md)); the loop
+  `copy16_pick`, which are trusted (see [TRUST.md](https://github.com/verilith/verilith/blob/main/crates/snappy/TRUST.md)); the loop
   around them is verified.
 - `validate` walks the tags with the same loop, without the copies.
 - The compressor clears a table sized to the input for each fragment, as
@@ -123,5 +143,5 @@ against the system libsnappy.
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/snappy/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/snappy/LICENSE-MIT), at your option.

@@ -1878,3 +1878,11 @@ impl<'a> Reader<'a> {
         self.c.s
     }
 }
+
+impl core::fmt::Display for Mismatch {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("the JSON at the cursor is not what was asked for")
+    }
+}
+
+impl std::error::Error for Mismatch {}

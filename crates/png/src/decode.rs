@@ -190,10 +190,25 @@ fn to_vec(b: &[u8], s: usize, l: usize) -> (r: Result<Vec<u8>, Error>)
     Ok(v)
 }
 
+/// What the image data held beyond the image, which the spec ignores;
+/// the libpng API reports it as libpng does. Nothing is proved about it.
+pub struct Tail {
+    /// The zlib stream decompresses to more than the image needs.
+    pub more: bool,
+    /// Bytes of image data the zlib stream used.
+    pub used: usize,
+}
+
+impl Tail {
+    pub fn new() -> Self {
+        Tail { more: false, used: 0 }
+    }
+}
+
 /// Decompresses the image data, which must be a zlib stream giving at
-/// least `rs` bytes, and returns the first `rs`.
+/// least `rs` bytes, and returns the first `rs`. Sets `tail`.
 #[verifier::spinoff_prover]
-pub fn inflate_exec(idat: &[u8], rs: u128, limit: usize) -> (r: Result<Vec<u8>, Error>)
+pub fn inflate_exec(idat: &[u8], rs: u128, limit: usize, tail: &mut Tail) -> (r: Result<Vec<u8>, Error>)
     ensures
         match r {
             Ok(v) => v@.len() == rs && rs < limit && (zlib(idat@) matches Some((o, _)) && o.len() >= rs
@@ -225,10 +240,12 @@ pub fn inflate_exec(idat: &[u8], rs: u128, limit: usize) -> (r: Result<Vec<u8>, 
         reveal(zlib);
     }
     match res {
-        Ok((_, m)) => {
+        Ok((used, m)) => {
             if m < n {
                 return Err(Error::Invalid);
             }
+            tail.more = m > n;
+            tail.used = used;
             raw.truncate(n);
             proof {
                 assert(raw@ =~= raw@.subrange(0, n as int));
@@ -240,10 +257,12 @@ pub fn inflate_exec(idat: &[u8], rs: u128, limit: usize) -> (r: Result<Vec<u8>, 
             // to check the stream, and keep the first `n` bytes.
             let mut d2 = Decompressor::new();
             match d2.decompress_vec(ZFormat::Zlib, idat, limit) {
-                Ok((mut v, _)) => {
+                Ok((mut v, used)) => {
                     if v.len() < n {
                         return Err(Error::Invalid);
                     }
+                    tail.more = v.len() > n;
+                    tail.used = used;
                     v.truncate(n);
                     proof {
                         assert(v@ =~= v@.subrange(0, n as int));
@@ -301,10 +320,10 @@ pub proof fn lemma_parse(b: Seq<u8>, h: Ihdr, st: Walk, raw: Seq<u8>)
 }
 
 /// Parses the file and decompresses its image data (`spec::parse`).
-/// `limit` bounds the decompressed data's size.
+/// `limit` bounds the decompressed data's size. Sets `tail`.
 #[verifier::spinoff_prover]
 #[verifier::rlimit(30)]
-pub fn parse_exec(b: &[u8], limit: usize) -> (r: Result<(PngX, Vec<u8>), Error>)
+pub fn parse_exec(b: &[u8], limit: usize, tail: &mut Tail) -> (r: Result<(PngX, Vec<u8>), Error>)
     ensures
         match r {
             Ok((p, raw)) => p.wf() && raw@.len() == raw_size(p.hdr.view()) && parse(b@) == Some(Png { raw: raw@, ..p.view() }),
@@ -325,7 +344,7 @@ pub fn parse_exec(b: &[u8], limit: usize) -> (r: Result<(PngX, Vec<u8>), Error>)
         Err(e) => return Err(e),
     };
     let rs = raw_size_exec(&h);
-    let raw = match inflate_exec(idat.as_slice(), rs, limit) {
+    let raw = match inflate_exec(idat.as_slice(), rs, limit, tail) {
         Ok(v) => v,
         Err(e) => return Err(e),
     };
@@ -367,3 +386,15 @@ pub fn parse_exec(b: &[u8], limit: usize) -> (r: Result<(PngX, Vec<u8>), Error>)
 }
 
 } // verus!
+
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Error::Invalid => "not a valid PNG file",
+            Error::TooLarge => "the image needs more memory than the limit",
+            Error::OutOfMemory => "out of memory",
+        })
+    }
+}
+
+impl std::error::Error for Error {}

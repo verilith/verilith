@@ -19,6 +19,34 @@ APIs follow the crates they replace: `unicode-normalization` and
 `icu_normalizer`, `idna`, `base64`, `hex` and `percent-encoding`. The
 transcoding C API follows simdutf.
 
+## Using it from Rust
+
+```rust
+use verilith_text::{base64, hex, idna, percent, unicode};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Unicode normalization, as unicode-normalization or icu_normalizer.
+    assert_eq!(unicode::nfc("e\u{301}"), "\u{e9}");
+    assert!(unicode::is_nfd("e\u{301}"));
+
+    // IDNA, as the idna crate.
+    assert_eq!(idna::domain_to_ascii("bücher.example")?, "xn--bcher-kva.example");
+    assert_eq!(idna::domain_to_unicode("xn--bcher-kva.example").0, "bücher.example");
+
+    // base64, hex and percent-encoding, as the crates of the same names.
+    assert_eq!(base64::STANDARD.encode(b"hello"), "aGVsbG8=");
+    assert_eq!(base64::STANDARD.decode("aGVsbG8=")?, b"hello");
+    assert_eq!(hex::encode(b"hi"), "6869");
+    assert_eq!(hex::decode("6869")?, b"hi");
+    assert_eq!(percent::percent_encode(b"a b\n", percent::CONTROLS).to_string(), "a b%0A");
+    assert_eq!(percent::percent_decode_str("a%20b").decode_utf8()?, "a b");
+    Ok(())
+}
+```
+
+The transcoding functions (`utf8_to_utf16` and the rest) are a C API with
+simdutf's names, `include/vtext_utf.h`.
+
 ## What is proven
 
 **Normalization** (`src/unicode`). `spec.rs` transliterates UAX #15:
@@ -378,7 +406,8 @@ Cloudflare Workers). There the counters accept inputs shorter than
 `MAX_LEN`, 2^29 bytes or units, and the SIMD paths give way to the scalar
 ones. CI runs Verus compiling for that target too, so that the code a
 wasm32 build has is checked as compiled there, and runs the tests on
-`wasm32-wasip1` under wasmtime (`scripts/wasm32.sh` at the root).
+`wasm32-wasip1` under wasmtime (`scripts/verify-narrow.sh` here, `scripts/wasm32.sh` at the
+root).
 
 To regenerate the tables after a Unicode update, run
 `tools/gen_unicode.py UCD_DIR` and `tools/gen_idna.py UCD_DIR`. Then copy
@@ -386,9 +415,9 @@ the UCD files that the tests read into `tests/data`.
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/text/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/text/LICENSE-MIT), at your option.
 
 The Unicode Character Database files in `tests/data` and the tables
 generated from them (`src/unicode/tables.rs`) are under the Unicode License
-v3; see [LICENSE-UNICODE](LICENSE-UNICODE).
+v3; see [LICENSE-UNICODE](https://github.com/verilith/verilith/blob/main/crates/text/LICENSE-UNICODE).

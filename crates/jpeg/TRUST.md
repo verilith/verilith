@@ -70,8 +70,8 @@ Nothing else in `src/` uses `external_body`, `assume` or `admit`.
 
 `src/idct_neon.rs`, `src/idct16.rs` and `src/color_neon.rs` are verified, but
 they call 46 NEON intrinsics through
-[verilith-simd](https://github.com/verilith/verilith/tree/main/crates/simd) (pinned by commit in
-`Cargo.toml`), and each of those is an `external_body` wrapper there: Verus
+[verilith-simd](https://github.com/verilith/verilith/tree/main/crates/simd) (a path dependency in
+this repository), and each of those is an `external_body` wrapper there: Verus
 takes on faith that the instruction computes what verilith-simd's specification
 says. The specifications are lane-by-lane functions in verilith-simd's `src/ops.rs`;
 verilith-simd tests each instruction against a verified implementation of its

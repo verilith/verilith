@@ -333,7 +333,11 @@ capi!("archive_read_data_block", "varchive_read_data_block", fn read_data_block(
 
 capi!("archive_read_data_skip", "varchive_read_data_skip", fn read_data_skip(a: *mut CArchive) -> c_int {
     let Some(a) = a.as_mut() else { return ARCHIVE_FATAL };
-    a.data = None;
+    // As libarchive: the rest of the member is gone, so a later
+    // `archive_read_data` returns 0 and `archive_read_data_block` EOF.
+    a.data = Some((core::ptr::NonNull::dangling().as_ptr(), 0));
+    a.own = Vec::new();
+    a.pos = 0;
     ARCHIVE_OK
 });
 

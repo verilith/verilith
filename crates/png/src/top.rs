@@ -40,7 +40,20 @@ pub fn decode(b: &[u8], fmt: PixelFormat, limit: usize) -> (r: Result<(Header, V
             Err(_) => true,
         },
 {
-    let (png, mut buf) = match parse_exec(b, limit) {
+    let mut tail = Tail::new();
+    decode_tail(b, fmt, limit, &mut tail)
+}
+
+/// `decode`, also saying what the image data held beyond the image.
+pub fn decode_tail(b: &[u8], fmt: PixelFormat, limit: usize, tail: &mut Tail) -> (r: Result<(Header, Vec<u8>), Error>)
+    ensures
+        match r {
+            Ok((h, px)) => crate::spec::decode(b@, fview(fmt)) == Some((h.view(), px@)),
+            Err(Error::Invalid) => crate::spec::decode(b@, fview(fmt)) is None,
+            Err(_) => true,
+        },
+{
+    let (png, mut buf) = match parse_exec(b, limit, tail) {
         Ok(p) => p,
         Err(e) => return Err(e),
     };

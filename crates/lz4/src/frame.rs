@@ -1038,3 +1038,14 @@ pub fn decompress(src: &[u8], limit: usize) -> (r: Result<Vec<u8>, Error>)
 }
 
 } // verus!
+
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Error::Corrupt => "corrupt LZ4 data",
+            Error::TooLarge => "the output would be larger than the limit",
+        })
+    }
+}
+
+impl std::error::Error for Error {}
