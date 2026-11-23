@@ -1,6 +1,7 @@
-/* PNG suite, libpng side: decode a PNG held in memory to 8-bit RGBA, as
- * vpng's benchmark does (vpng/bench/cshim.c). vpng has no libpng C ABI yet,
- * so its side is the Rust runner runners/vpng-run, doing the same work.
+/* PNG suite: decode a PNG held in memory to 8-bit RGBA through libpng's
+ * API. Linked against libpng (png-libpng) and against vpng's libpng API
+ * (png-vpng-abi, the drop-in comparison); the native comparison's vpng side
+ * is the Rust runner runners/vpng-run, doing the same work.
  *
  * Cases rgba8/FILE for every *.png in $VBENCH_DATA. check = output size
  * plus a strided sum of the pixels (the same function on both sides). */

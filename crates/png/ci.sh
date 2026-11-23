@@ -20,6 +20,20 @@ test() {
   # Mutation fuzzing against libpng.
   seeds=$(ls "$W"/libpng/contrib/pngsuite/*.png "$W"/libpng/contrib/testpngs/*.png | grep -v '/x[^/]*$')
   fuzz/run.sh "$W/mutants" 2000 "${GITHUB_RUN_NUMBER:-1}" $seeds
+  # The libpng API against libpng built with the same configuration
+  # (include/vpng.dfa), on the same files and the mutants; then libpng's own
+  # read tests against the libpng API.
+  if [ ! -f "$W/libpng/build-vpng/libpng16.a" ]; then
+    cmake -S "$W/libpng" -B "$W/libpng/build-vpng" -DCMAKE_BUILD_TYPE=Release -DPNG_SHARED=OFF -DPNG_TESTS=OFF \
+      -DDFA_XTRA="$PWD/include/vpng.dfa" > /dev/null
+    cmake --build "$W/libpng/build-vpng" -j"$(nproc)" > /dev/null
+  fi
+  export LIBPNG_DIR=$W/libpng LIBPNG_BUILD=$W/libpng/build-vpng
+  difftest/abibuild.sh
+  t=$W/libpng/contrib/testpngs
+  difftest/abicompare.py "$W"/libpng/contrib/pngsuite/*.png "$t"/*.png "$t"/crashers/*.png "$t"/badpal/*.png
+  difftest/abicompare.py --light "$W"/mutants/*.png
+  difftest/upstream.sh
 }
 
 "${1:-test}"

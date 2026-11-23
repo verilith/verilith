@@ -36,7 +36,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | jpeg | 2 |  |  |  |  |  | 3 |
 | json | 31 |  |  |  | 2 |  | 7 |
 | lz4 |  |  |  |  |  |  | 1 |
-| png | 2 |  |  |  |  |  | 1 |
+| png | 2 |  |  |  |  |  | 8 |
 | regex | 7 |  |  |  |  |  | 2 |
 | sha2 | 14 |  |  |  |  |  | 2 |
 | simd | 266 | 6 | 266 | 4 |  |  | 3 |
@@ -48,11 +48,11 @@ not occur in any crate's `src/` (the script fails if one appears).
 | wasm | 35 |  |  |  |  | 1 | 4 |
 | webp | 10 |  |  |  |  |  | 3 |
 | x509 |  |  |  |  |  |  | 6 |
-| xml | 2 |  |  |  |  |  | 2 |
+| xml | 2 |  |  |  |  |  | 10 |
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  | 2 |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **482** | **30** | **266** | **5** | **22** | **12** | **84** |
+| **total** | **482** | **30** | **266** | **5** | **22** | **12** | **99** |
 
 ## Items
 
@@ -149,6 +149,13 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 - `crates/png/src/lib.rs`: plain Rust
 - `crates/png/src/prims.rs`: external_body: `copy`, `alloc_zeroed`
+- `crates/png/src/libpng/err.rs`: plain Rust
+- `crates/png/src/libpng/info.rs`: plain Rust
+- `crates/png/src/libpng/mem.rs`: plain Rust
+- `crates/png/src/libpng/mod.rs`: plain Rust
+- `crates/png/src/libpng/read.rs`: plain Rust
+- `crates/png/src/libpng/stubs.rs`: plain Rust
+- `crates/png/src/libpng/xform.rs`: plain Rust
 
 ### regex
 
@@ -269,6 +276,14 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/xml/src/lib.rs`: plain Rust
 - `crates/xml/src/tape.rs`: external_body: `slice_len_bound`
 - `crates/xml/src/uniq.rs`: external_body: `seed`
+- `crates/xml/src/api/expat.rs`: plain Rust
+- `crates/xml/src/api/libxml2/codes.rs`: plain Rust
+- `crates/xml/src/api/libxml2/io.rs`: plain Rust
+- `crates/xml/src/api/libxml2/mod.rs`: plain Rust
+- `crates/xml/src/api/libxml2/parser.rs`: plain Rust
+- `crates/xml/src/api/libxml2/save.rs`: plain Rust
+- `crates/xml/src/api/libxml2/sax2.rs`: plain Rust
+- `crates/xml/src/api/libxml2/tree.rs`: plain Rust
 
 ### zlib
 
