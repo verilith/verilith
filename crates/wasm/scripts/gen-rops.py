@@ -387,12 +387,15 @@ G = 'Ghost(m), Ghost(cs), Ghost(codes@), Ghost(calls@), Ghost(c0), Ghost(g), Gho
 # `rpost` is opaque; the lemmas give the loop invariant (or what to return)
 # from it, so `execute`'s proof never unfolds it. `l0` is the stack's length
 # before the step, which `rpost` refers to.
-OK_ERR = ('Ok(g2) => { proof { lemma_rpost_ok(m, cs, codes@, c0, g, stack@, l0, calls@, d, rpc, fp, st, g2, acc); } rpc = rpc + 1; cur = cur_next(cur); proof { g = g2@; } }, Err((t, n2)) => { proof { lemma_rpost_err(m, cs, codes@, c0, g, stack@, l0, calls@, d, rpc, fp, st, t, n2, acc); } return (Err(t), Ghost(g.hs), n2) }')
+OK_ERR = ('Ok(g2) => { proof { lemma_rpost_ok(m, cs, codes@, c0, g, stack@, l0, calls@, d, rpc, fp, st, g2, acc); } rpc = rpc + 1; cur = cur_next(cur); proof { g = g2@; } }, Err((t, n2)) => { proof { lemma_rpost_err(m, cs, codes@, c0, g, stack@, l0, calls@, d, rpc, fp, st, t, n2, acc); } return (Err(t), Ghost(g.hs), n2, fl) }')
 def val(code):
     return ('{ let ghost l0 = stack@.len(); '
             f'match s_{code}({G}, Ghost(rpc), stack, fp, st, r, &mut acc) {{ ' + OK_ERR + ' } },')
+# Branches charge one unit of fuel (see `execute`).
+CHARGE = ('if fl == 0 { proof { lemma_out_of_fuel(m, cs, codes@, c0, g, stack@, calls@, d, rpc, fp, st); } '
+          'return (Err(Trap::Exhausted), Ghost(g.hs), Ghost(g.n), 0); } fl = fl - 1; ')
 def br(code):
-    return f'{{ let (rpc2, cur2, g2) = s_{code}({G}, rpc, stack, fp, st, r, rops, cur, acc); rpc = rpc2; cur = cur2; proof {{ g = g2@; }} }},'
+    return '{ ' + CHARGE + f'let (rpc2, cur2, g2) = s_{code}({G}, rpc, stack, fp, st, r, rops, cur, acc); rpc = rpc2; cur = cur2; proof {{ g = g2@; }} }},'
 def varm(code, f, op):
     vstep(code, f, op, 'false'); arm(code, val(code))
     if code in PGEN:

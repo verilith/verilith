@@ -145,8 +145,12 @@ impl Checked {
     }
 
     /// Runs function `func` (an index among all the module's functions)
-    /// on `args`. A wrong number of arguments traps with `Unreachable`.
-    pub fn invoke<H: Host>(self, func: u32, args: &[u64], host: &mut H) -> (r: (Checked, Result<Vec<u64>, Trap>)) {
+    /// on `args`, with `*fuel` units of fuel (see [`execute`]), and leaves
+    /// the fuel that remains in `*fuel`. A wrong number of arguments traps
+    /// with `Unreachable`.
+    pub fn invoke<H: Host>(self, func: u32, args: &[u64], host: &mut H, fuel: &mut u64)
+        -> (r: (Checked, Result<Vec<u64>, Trap>))
+    {
         proof { use_type_invariant(&self); }
         let Checked { m, cs, codes, mut st, mut stack, mut calls } = self;
         let nf = m.func_types.len();
@@ -208,7 +212,8 @@ impl Checked {
             assert(c0.frames.last() == f);
             assert(inv(&m, cs@, c0));
         }
-        let (r, _, _) = execute(&m, &codes, Ghost(cs@), &mut st, &mut stack, &mut calls, host, d, Ghost(c0));
+        let (r, _, _, left) = execute(&m, &codes, Ghost(cs@), &mut st, &mut stack, &mut calls, host, d, Ghost(c0), *fuel);
+        *fuel = left;
         (Checked { m, cs, codes, st, stack, calls }, r)
     }
 }
