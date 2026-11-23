@@ -28,7 +28,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | archive | 2 |  |  |  |  |  | 3 |
 | bind |  |  |  |  |  |  | 2 |
 | brotli | 2 |  |  |  | 1 |  | 4 |
-| core | 27 |  |  |  |  |  | 1 |
+| core | 59 | 3 |  |  |  |  | 1 |
 | dns |  |  |  |  |  |  | 6 |
 | font |  |  |  |  |  |  | 1 |
 | hpack | 2 |  |  |  |  |  | 3 |
@@ -52,7 +52,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  | 2 |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **482** | **30** | **266** | **5** | **22** | **12** | **110** |
+| **total** | **514** | **33** | **266** | **5** | **22** | **12** | **110** |
 
 ## Items
 
@@ -84,8 +84,9 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/core/src/lib.rs`: plain Rust
 - `crates/core/src/prims.rs`: external_body: `load_u64_le`, `copy8`, `copy16`, `move8`, `copy16_in`, `pick`, `copy16_pick`, `fill8`, `copy_in`, `copy_to_front`, `copy_within`, `alloc_u32`
 - `crates/core/src/tail.rs`: external_body: `view`, `take`, `put_back`, `len`, `append_from`, `append_from32`, `append_within`, `append_within32`
-- `crates/core/src/checksum/cpu.rs`: external_body: `adler32_update`, `crc32_update`, `crc32c_update`
+- `crates/core/src/checksum/cpu.rs`: external_body: `adler32_update`, `crc32_vpclmul`, `crc32_vpclmul256`, `crc32_pclmul`, `has_arm_crc`, `crc32_arm`, `crc32c_update`
 - `crates/core/src/checksum/lanes.rs`: external_body: `crc_word`
+- `crates/core/src/checksum/vclmul.rs`: external_body: `has_pclmul`, `has_vpclmul`, `has_vpclmul256`, `xv`, `xv`, `xv`, `x_load`, `x_set`, `x_get`, `x_xor`, `x_fold`, `x_clmul_lo`, `x_shr64`, `x_shr32`, `x_and`, `x_low64`, `y_load`, `y_reg`, `y_splat`, `y_xor`, `y_fold`, `y_block`, `z_load`, `z_reg`, `z_splat`, `z_xor`, `z_fold`, `z_block`; axioms: `axiom_vpclmul_pclmul`, `axiom_zl_len`, `axiom_yl_len`
 
 ### dns
 
