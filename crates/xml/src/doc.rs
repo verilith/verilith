@@ -12,7 +12,7 @@ verus! {
 
 /// `defaults_ok`: every attribute default's references, against the
 /// entities declared before it.
-fn ex_defaults_ok(s: &[u8], tape: &Tape, env: &XEnv) -> (r: bool)
+pub fn ex_defaults_ok(s: &[u8], tape: &Tape, env: &XEnv) -> (r: bool)
     requires
         s@.len() <= isize::MAX,
         s@.len() <= MAX_POS,
@@ -70,7 +70,7 @@ fn ex_defaults_ok(s: &[u8], tape: &Tape, env: &XEnv) -> (r: bool)
 
 /// `decl_head`: the position after the XML declaration, if any, and the
 /// standalone declaration.
-fn ex_decl_head(s: &[u8], tape: &mut Tape, enc: Enc) -> (r: Option<(usize, u8)>)
+pub fn ex_decl_head(s: &[u8], tape: &mut Tape, enc: Enc) -> (r: Option<(usize, u8)>)
     requires
         s@.len() <= isize::MAX,
         s@.len() <= MAX_POS,
@@ -109,7 +109,7 @@ fn ex_decl_head(s: &[u8], tape: &mut Tape, enc: Enc) -> (r: Option<(usize, u8)>)
 }
 
 /// `doctype_opt` at `p`.
-fn ex_doctype_opt(s: &[u8], p: usize, tape: &mut Tape, sd: u8) -> (r: Option<(usize, DtdOut)>)
+pub fn ex_doctype_opt(s: &[u8], p: usize, tape: &mut Tape, sd: u8) -> (r: Option<(usize, DtdOut)>)
     requires
         p <= s@.len() <= isize::MAX,
         s@.len() <= MAX_POS,

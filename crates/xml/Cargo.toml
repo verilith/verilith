@@ -26,6 +26,9 @@ roxmltree = "0.21"
 [features]
 # expat's C ABI (libexpat 2.10.0's expat.h): XML_ParserCreate, XML_Parse, ...
 expat-abi = []
+# expat's testing switches (g_reparseDeferralEnabledDefault, g_bytesScanned),
+# which libexpat's test suite links against: for scripts/test-expat.sh.
+expat-testing = ["expat-abi"]
 # libxml2's C ABI (libxml2 2.15.4's parser.h, tree.h, xmlsave.h, ...): xmlReadMemory,
 # xmlParseChunk, SAX2, the tree and its serializer.
 libxml2-abi = []

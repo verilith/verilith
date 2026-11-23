@@ -571,6 +571,20 @@ of one block at a time, with the same SWAR mode kernels and a scalar loop
 for the rest (`unpredict_swar`, `uncolor_run_swar`), rather than one pixel
 at a time with a division per pixel.
 
+### WebAssembly
+
+Built for WebAssembly with SIMD128 (`-C target-feature=+simd128`), the
+lossy decoder's NEON kernels (inverse transform, loop filters, prediction,
+upsampling and colour conversion) run on WebAssembly vectors: each NEON
+wrapper they use is proven on SIMD128 in verilith-simd
+(`src/wasm_neon.rs`), so the same proofs hold there. Under Node.js 22 on
+x86-64, a 1920x1080 lossy file decodes to RGBA in 21 ms, against 117 ms
+for the same SIMD128 build without the NEON paths (5.6x). Lossless
+decoding has no NEON kernels and is unchanged. Decoded pixels, in all
+eleven output layouts, are identical to the x86-64 and scalar
+WebAssembly builds on 56 test files (lossy, lossless and with
+alpha, sizes from 1x1).
+
 ## Building
 
 ```text
