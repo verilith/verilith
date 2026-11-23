@@ -110,9 +110,42 @@ pub fn components(u: &Url) -> AdaUrlComponents {
 }
 
 fn new_handle(url: Option<Url>) -> *mut Handle {
-    let url = url.filter(|u| u.href.len() <= max_len());
-    let comps = url.as_ref().map(components).unwrap_or_default();
-    Box::into_raw(Box::new(Handle { url, comps }))
+    // Reuse the box the last `free` on this thread kept, if any.
+    let mut bx = with_bufs(|b| b.spare.take()).unwrap_or_else(|| Box::new(Handle { url: None, comps: Default::default() }));
+    fill(&mut bx, url);
+    Box::into_raw(bx)
+}
+
+/// Puts `url` (or `None` if its href is over the length limit) in `h`.
+#[inline(always)]
+fn fill(h: &mut Handle, url: Option<Url>) {
+    h.url = url;
+    if h.url.as_ref().map_or(false, |u| u.href.len() > max_len()) {
+        h.url = None;
+    }
+    h.comps = h.url.as_ref().map(components).unwrap_or_default();
+}
+
+/// Frees a handle, keeping its box and a small href buffer on this thread
+/// for the next parse, which then allocates nothing.
+unsafe fn free_handle(p: *mut Handle) {
+    let mut bx = Box::from_raw(p);
+    let url = bx.url.take();
+    // During thread teardown the buffers may be gone; then just drop.
+    let _ = BUFS.try_with(|c| {
+        // SAFETY: as in `with_bufs`; nothing below re-enters it.
+        let b = &mut *c.get();
+        if let Some(u) = url {
+            if b.sc.href.capacity() == 0 && u.href.capacity() <= 4096 {
+                let mut v = u.href;
+                v.clear();
+                b.sc.href = v;
+            }
+        }
+        if b.spare.is_none() {
+            b.spare = Some(bx);
+        }
+    });
 }
 
 unsafe fn get<'a>(p: *mut Handle) -> Option<&'a Url> {
@@ -168,6 +201,8 @@ fn can_parse_limited(input: &[u8], base: Option<&Url>) -> bool {
 struct Bufs {
     sc: crate::host::Scratch,
     host: Vec<u8>,
+    /// A freed handle's box, kept for the next `new_handle`.
+    spare: Option<Box<Handle>>,
 }
 
 thread_local! {
@@ -176,6 +211,7 @@ thread_local! {
         core::cell::UnsafeCell::new(Bufs {
             sc: crate::host::Scratch { dec: Vec::new(), map: Vec::new(), href: Vec::new() },
             host: Vec::new(),
+            spare: None,
         })
     };
 }
@@ -275,7 +311,7 @@ export! {
 
     fn free(p: *mut Handle) {
         if !p.is_null() {
-            drop(Box::from_raw(p));
+            free_handle(p);
         }
     }
 

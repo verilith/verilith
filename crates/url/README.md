@@ -248,6 +248,11 @@ general ranking.
 With the simple-URL fast path, on a 4-vCPU cloud x86 VM with the same
 harness and ada 4.1.1, verilith-url went from 64.3 to 50.4 ns/URL while
 ada measured 61.3 to 61.7 ns/URL: 0.82x ada's time, down from 1.04x.
+Through the C API (`bench/run.sh --only url` at the repository root, the
+drop-in for ada's `ada_c.h`), `ada_free` now keeps the handle's box and a
+small href buffer on the thread for the next `ada_parse`, and the parse
+result is written into the box in place; that took the C API from 1,475
+to 875 instructions per URL on the 1k set (ada: 1,028).
 
 The harness in `bench/` is a small Rust crate that links ada and libcurl
 through a C++ shim. It expects ada and the dataset to be cloned under
