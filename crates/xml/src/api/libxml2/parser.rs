@@ -872,6 +872,11 @@ struct Walk<'d> {
     /// their bytes: each the dictionary's string and its length.
     names: Box<[(*const XChar, usize); 256]>,
     names_dict: *mut Dict,
+    /// The entities being expanded in content, innermost last: the input
+    /// pushed for each (as `xmlCtxtParseEntity` does, so that a message
+    /// shows the entity's text too), and the offset, line and column it
+    /// was last moved to.
+    ent_inputs: Vec<(*mut ParserInput, usize, c_int, c_int)>,
 }
 
 /// What a start tag needs, reused: a tag allocates nothing once these have
@@ -895,7 +900,7 @@ impl<'d> Walk<'d> {
         let (nls, ascii) = super::scan::line_index(text);
         // The input's position may be past the start (a context reused).
         let nl_k = if ctxt.is_null() || unsafe { (*ctxt).st.is_null() } { 0 } else { unsafe { nls.partition_point(|&p| p < st(ctxt).at.0) } };
-        Walk { ctxt, doc, text, dtd: DtdInfo::default(), sizes: vec![None; n], consumed: 0, scratch: Some(Box::default()), nls, ascii, nl_k, att_cache: FastMap::default(), names: Box::new([(null(), 0); 256]), names_dict: null_mut() }
+        Walk { ctxt, doc, text, dtd: DtdInfo::default(), sizes: vec![None; n], consumed: 0, scratch: Some(Box::default()), nls, ascii, nl_k, att_cache: FastMap::default(), names: Box::new([(null(), 0); 256]), names_dict: null_mut(), ent_inputs: Vec::new() }
     }
 
     /// `dict(ctxt, b)`, through the cache of names: a name the walk has
@@ -928,13 +933,47 @@ impl<'d> Walk<'d> {
         }
     }
 
+    /// The position in `src`: the document's input, or the input of the
+    /// entity being expanded.
+    #[inline(always)]
+    unsafe fn pos(&mut self, src: Src, off: usize) {
+        unsafe {
+            match src {
+                Src::Doc => self.at(off),
+                Src::Ent(k) => self.ent_at(k, off),
+            }
+        }
+    }
+
+    unsafe fn ent_at(&mut self, k: usize, off: usize) {
+        unsafe {
+            let buf = self.buf(Src::Ent(k));
+            let Some(e) = self.ent_inputs.last_mut() else { return };
+            let input = e.0;
+            let off = off.min(buf.len());
+            let (o, mut line, mut col) = if off < e.1 { (0, 1, 1) } else { (e.1, e.2, e.3) };
+            for &b in &buf[o..off] {
+                if b == b'\n' {
+                    line += 1;
+                    col = 1;
+                } else if b & 0xC0 != 0x80 {
+                    col += 1;
+                }
+            }
+            *e = (input, off, line, col);
+            (*input).cur = buf.as_ptr().add(off);
+            (*input).line = line;
+            (*input).col = col;
+        }
+    }
+
     /// Moves the input's position to `off` in the document's text.
     #[inline(always)]
     unsafe fn at(&mut self, off: usize) {
         unsafe {
             let ctxt = self.ctxt;
             let input = (*ctxt).input;
-            if input.is_null() {
+            if input.is_null() || !self.ent_inputs.is_empty() {
                 return;
             }
             let off = off.min(self.text.len());
@@ -1596,9 +1635,7 @@ impl<'d> Walk<'d> {
     unsafe fn comment(&mut self, src: Src, t: Tok) {
         unsafe {
             let c = self.ctxt;
-            if src == Src::Doc {
-                self.at(t.b() + 3);
-            }
+            self.pos(src, t.b() + 3);
             if let Some(f) = handler(c).and_then(|h| h.comment) {
                 let v = eol_z(&self.buf(src)[t.a()..t.b()]);
                 f((*c).userData, v.as_ptr());
@@ -1610,9 +1647,7 @@ impl<'d> Walk<'d> {
         unsafe {
             let c = self.ctxt;
             let buf = self.buf(src);
-            if src == Src::Doc {
-                self.at(d.b() + 2);
-            }
+            self.pos(src, d.b() + 2);
             let target = dict(c, &buf[t.a()..t.b()]);
             if let Some(f) = handler(c).and_then(|h| h.processingInstruction) {
                 if buf[t.b()..].starts_with(b"?>") {
@@ -1900,13 +1935,24 @@ impl<'d> Walk<'d> {
             }
             let last = toks[j - 1];
             let end = text[last.b()..].iter().position(|&ch| ch == b'>').map_or(text.len(), |e| last.b() + e + 1);
-            self.at(end);
             let name_b = &text[t.a()..t.b()];
             let name = dict(c, name_b);
             if super::scan::colon(name_b).is_some() {
+                self.at(t.b());
                 let msg = cat(&[b"colons are forbidden from entities names '", name_b, b"'\n"]);
                 ns_err(c, NS_ERR_COLON, &msg, Some(name_b), None, None);
             }
+            // libxml2 reports the declaration right after its last part
+            // (the closing quote, or the NDATA name); a general external
+            // entity without NDATA also skips the blanks before '>'.
+            let mut q = last.b();
+            if matches!(text.get(q), Some(b'"' | b'\'')) {
+                q += 1;
+            }
+            if !pe && value.is_none() && ndata.is_none() {
+                q = end.saturating_sub(1).max(q);
+            }
+            self.at(q);
             let p = |v: &Option<Vec<u8>>| v.as_ref().map_or(null(), |v| v.as_ptr());
             let ud = (*c).userData;
             let mut orig: Option<&[u8]> = None;
@@ -1964,6 +2010,7 @@ impl<'d> Walk<'d> {
                     (*cur).orig = xstrdup(o);
                 }
             }
+            self.at(end);
             j
         }
     }
@@ -2429,9 +2476,7 @@ impl<'d> Walk<'d> {
                         i += 1;
                         b = toks[i].b();
                     }
-                    if src == Src::Doc {
-                        self.at(b);
-                    }
+                    self.pos(src, b);
                     self.text_run(buf, a, b);
                     i += 1;
                     continue;
@@ -2488,9 +2533,7 @@ impl<'d> Walk<'d> {
                 }
                 match t.kind {
                     Kind::CData => {
-                        if src == Src::Doc {
-                            self.at(t.b() + 3);
-                        }
+                        self.pos(src, t.b() + 3);
                         if let Some(h) = handler(c).filter(|h| h.cdataBlock.is_some() || h.characters.is_some()) {
                             // A copy with a NUL after it, as xmlParseCDSect passes.
                             let v = eol_z(&buf[t.a()..t.b()]);
@@ -2504,9 +2547,7 @@ impl<'d> Walk<'d> {
                     }
                     Kind::CharRef => {
                         let semi = buf[t.a()..].iter().position(|&ch| ch == b';').map_or(t.a(), |e| t.a() + e + 1);
-                        if src == Src::Doc {
-                            self.at(semi);
-                        }
+                        self.pos(src, semi);
                         let v = utf8_of(t.b() as u32);
                         if buf.get(t.a() + 1) == Some(&b'#') {
                             if let Some(f) = handler(c).and_then(|h| h.characters) {
@@ -2523,9 +2564,7 @@ impl<'d> Walk<'d> {
                         i += 1;
                     }
                     Kind::EntRef => {
-                        if src == Src::Doc {
-                            self.at(t.b() + 1);
-                        }
+                        self.pos(src, t.b() + 1);
                         self.reference(src, t);
                     }
                     _ => {}
@@ -2690,7 +2729,27 @@ impl<'d> Walk<'d> {
             if !root.is_null() {
                 pushed = node_push(c, root) == 0;
             }
+            let buf = self.buf(Src::Ent(k));
+            let input: *mut ParserInput = xnew();
+            if !input.is_null() {
+                (*input).base = buf.as_ptr();
+                (*input).cur = buf.as_ptr();
+                (*input).end = buf.as_ptr().add(buf.len());
+                (*input).line = 1;
+                (*input).col = 1;
+                (*input).flags = INPUT_STATIC;
+                (*input).entity = ent;
+                if xmlCtxtPushInput(c, input) < 0 {
+                    xfree(input as *mut c_void);
+                } else {
+                    self.ent_inputs.push((input, 0, 1, 1));
+                }
+            }
             self.content(Src::Ent(k), 0, n);
+            if let Some((input, ..)) = self.ent_inputs.pop() {
+                xmlCtxtPopInput(c);
+                xfree(input as *mut c_void);
+            }
             let mut list = null_mut();
             if !root.is_null() && ((*c).wellFormed != 0 || ((*c).recovery != 0 && !catastrophic(&(*c).lastError))) {
                 list = (*root).children;
@@ -2802,9 +2861,7 @@ impl<'d> Walk<'d> {
             let sp = *s.spaces.last().unwrap_or(&-1);
             s.spaces.push(if sp == -2 { -1 } else { sp });
             let local = self.intern(qn);
-            if src == Src::Doc {
-                self.at(tag_end);
-            }
+            self.pos(src, tag_end);
             let s = st(c);
             s.ns_counts.push(0);
             let mut uri = null();
@@ -2850,9 +2907,7 @@ impl<'d> Walk<'d> {
                 let sp = *s.spaces.last().unwrap_or(&-1);
                 s.spaces.push(if sp == -2 { -1 } else { sp });
                 let local = self.intern(qn);
-                if src == Src::Doc {
-                    self.at(tag_end);
-                }
+                self.pos(src, tag_end);
                 let s = st(c);
                 s.ns_counts.push(0);
                 let mut uri = null();
@@ -2891,9 +2946,7 @@ impl<'d> Walk<'d> {
             }
             let (prefix_b, local_b) = qname(qn);
             if prefix_b.is_none() && super::scan::colon(qn).is_some() {
-                if src == Src::Doc {
-                    self.at(t.b());
-                }
+                self.pos(src, t.b());
                 let msg = cat(&[b"Failed to parse QName '", qn, b"'\n"]);
                 ns_err(c, NS_ERR_QNAME, &msg, Some(qn), None, None);
             }
@@ -2907,21 +2960,15 @@ impl<'d> Walk<'d> {
             // name, prefix, value; the value either in the input or made.
             let regular = &mut sc.regular;
             regular.clear();
-            if src == Src::Doc {
-                self.at(tag_end);
-            }
+            self.pos(src, tag_end);
             for (n, v) in sc.atts.iter() {
                 let aq = &buf[n.a()..n.b()];
                 let (ap, al) = qname(aq);
                 if ap.is_none() && super::scan::colon(aq).is_some() {
-                    if src == Src::Doc {
-                        self.at(n.b());
-                    }
+                    self.pos(src, n.b());
                     let msg = cat(&[b"Failed to parse QName '", aq, b"'\n"]);
                     ns_err(c, NS_ERR_QNAME, &msg, Some(aq), None, None);
-                    if src == Src::Doc {
-                        self.at(tag_end);
-                    }
+                    self.pos(src, tag_end);
                 }
                 let raw = &buf[v.a()..v.b()];
                 let is_ns = (ap.is_none() && al == b"xmlns") || ap == Some(b"xmlns");
@@ -3015,6 +3062,12 @@ impl<'d> Walk<'d> {
             };
             for DefAttr { name: dn, value: dv } in defaults {
                 let (dp, dl) = qname(dn);
+                // xmlParserEntityCheck on the default's size (its name,
+                // prefix and value), for the namespace defaults here and
+                // the others below.
+                if src == Src::Doc && (dl == b"xmlns" && dp.is_none() || dp == Some(b"xmlns")) {
+                    self.amplification((dl.len() + dp.map_or(0, |p| p.len()) + dv.len()) as u64);
+                }
                 if dp.is_none() && dl == b"xmlns" {
                     if self.ns_push(null(), dict(c, dv), true, mine) {
                         mine += 1;
@@ -3130,6 +3183,9 @@ impl<'d> Walk<'d> {
                     let msg = cat(&[b"Namespaced Attribute ", dl, b" in '", u, b"' redefined\n"]);
                     ns_err(c, NS_ERR_ATTRIBUTE_REDEFINED, &msg, Some(dl), Some(u), None);
                 }
+                if src == Src::Doc {
+                    self.amplification((dl.len() + dp.map_or(0, |p| p.len()) + dv.len()) as u64);
+                }
                 let z = nul(dv);
                 owned.push(z);
                 let z = owned.last().unwrap();
@@ -3187,9 +3243,7 @@ impl<'d> Walk<'d> {
         unsafe {
             let c = self.ctxt;
             let buf = self.buf(src);
-            if src == Src::Doc {
-                self.at(tag_end);
-            }
+            self.pos(src, tag_end);
             let name = self.intern(qn);
             let mut vals: Vec<Vec<u8>> = Vec::new();
             let mut names: Vec<&[u8]> = Vec::new();
@@ -4069,6 +4123,10 @@ unsafe fn parse_document(ctxt: *mut ParserCtxt) -> c_int {
         // encoding it declares kept for the document (libxml2 takes
         // UTF-16LE and UTF-16BE after a byte order mark, and no mark).
         st(c).declared = None;
+        // Bytes that are not UTF-16 (an odd byte at the end, a lone
+        // surrogate): a fatal error (§4.3.3), found by the recovering
+        // parser, which reports where libxml2 does.
+        let mut lossy = false;
         let converted = converted.or_else(|| {
             let (le, from) = if raw.starts_with(&[0x3C, 0, 0x3F, 0]) {
                 (true, 0)
@@ -4081,16 +4139,55 @@ unsafe fn parse_document(ctxt: *mut ParserCtxt) -> c_int {
             } else {
                 return None;
             };
-            let units = raw[from..].chunks_exact(2).map(|p| if le { u16::from_le_bytes([p[0], p[1]]) } else { u16::from_be_bytes([p[0], p[1]]) });
-            let text: String = char::decode_utf16(units).map(|r| r.unwrap_or('\u{FFFD}')).collect();
-            let body = text.into_bytes();
+            // The verified decoder (`spec::utf16_dec`): `None` for an odd
+            // byte at the end or a lone surrogate.
+            let body = match crate::enc::ex_utf16_dec(&raw[from..], le) {
+                Some(b) => b,
+                None => {
+                    lossy = true;
+                    return Some(Vec::new());
+                }
+            };
             let decl_end = if body.starts_with(b"<?xml") { body.windows(2).position(|w| w == b"?>") } else { None };
             st(c).declared = decl_end.and_then(|e| decl_attr(&body[..e], b"encoding"));
             Some(rewrite_decl_encoding(body))
         });
         let bytes: &[u8] = converted.as_deref().unwrap_or(raw);
         st(c).at = (0, 1, 1);
+        if lossy {
+            if !st(c).pushed {
+                let stream = (*input).flags & INPUT_STREAM != 0;
+                let forced = if (*c).options & PARSE_IGNORE_ENC == 0 { copt((*input).encoding).map(|v| v.to_vec()) } else { None };
+                super::recover::recover_document(c, raw.to_vec(), stream, forced.as_deref());
+            }
+            if (*c).wellFormed != 0 {
+                fatal(c, ERR_INVALID_ENCODING, b"Invalid bytes in character encoding\n", None);
+            }
+            (*input).base = rb;
+            (*input).cur = re;
+            (*input).end = re;
+            (*c).valid = 0;
+            return -1;
+        }
         match crate::api::parse(bytes) {
+            Ok(doc) if !st(c).pushed && beyond_document(c, &doc) && probe_finds_errors(c, raw) => {
+                // The document entity is well-formed (the verified verdict),
+                // but libxml2 reads more than it: the internal subset's
+                // parameter entities, or external entities it substitutes.
+                // An error or warning there is libxml2's to report, so the
+                // parse is libxml2's (the recovering parser) from the start.
+                let stream = (*input).flags & INPUT_STREAM != 0;
+                let forced = if (*c).options & PARSE_IGNORE_ENC == 0 { copt((*input).encoding).map(|v| v.to_vec()) } else { None };
+                super::recover::recover_document(c, raw.to_vec(), stream, forced.as_deref());
+                (*input).base = rb;
+                (*input).cur = re;
+                (*input).end = re;
+                if (*c).wellFormed == 0 {
+                    (*c).valid = 0;
+                    return -1;
+                }
+                return 0;
+            }
             Ok(doc) => {
                 let text = doc.text();
                 (*input).base = text.as_ptr();
@@ -4153,6 +4250,91 @@ unsafe fn parse_document(ctxt: *mut ParserCtxt) -> c_int {
             return -1;
         }
         0
+    }
+}
+
+/// Whether libxml2 reads text the verified parser does not, for this
+/// document: a parameter entity reference in the internal subset (which a
+/// processor need not include, §4.4.8, but libxml2 does), or an external
+/// parsed entity that libxml2 loads when it substitutes entities (§4.4.3,
+/// included if validating).
+unsafe fn beyond_document(c: *mut ParserCtxt, doc: &Document) -> bool {
+    unsafe {
+        let toks = doc.toks(Src::Doc);
+        let loads = (*c).options & PARSE_NO_XXE == 0 && ((*c).replaceEntities != 0 || (*c).validate != 0);
+        let mut i = 0;
+        while i < toks.len() {
+            match toks[i].kind {
+                Kind::PERef => return true,
+                Kind::EntityDecl if loads && toks[i].f == 0 => {
+                    let mut j = i + 1;
+                    let (mut sys, mut ndata) = (false, false);
+                    while j < toks.len() && matches!(toks[j].kind, Kind::PubId | Kind::SysId | Kind::NData | Kind::EntityValue) {
+                        sys |= toks[j].kind == Kind::SysId;
+                        ndata |= toks[j].kind == Kind::NData;
+                        j += 1;
+                    }
+                    if sys && !ndata {
+                        return true;
+                    }
+                    i = j;
+                    continue;
+                }
+                Kind::STag => return false,
+                _ => {}
+            }
+            i += 1;
+        }
+        false
+    }
+}
+
+unsafe extern "C" fn quiet(_: *mut c_void, _: *const XmlError) {}
+
+/// libxml2's reading of the whole document, on a context of its own with
+/// the same options, input name and resource loader, its reports dropped:
+/// whether it reports anything.
+unsafe fn probe_finds_errors(c: *mut ParserCtxt, raw: &[u8]) -> bool {
+    unsafe {
+        let p = xmlNewParserCtxt();
+        if p.is_null() {
+            return false;
+        }
+        xmlCtxtUseOptions(p, (*c).options);
+        (*p).replaceEntities = (*c).replaceEntities;
+        (*p).validate = (*c).validate;
+        (*p).errorHandler = Some(quiet);
+        (*p).resourceLoader = (*c).resourceLoader;
+        (*p).resourceCtxt = (*c).resourceCtxt;
+        let src = (*c).input;
+        let input: *mut ParserInput = xnew();
+        if input.is_null() {
+            xmlFreeParserCtxt(p);
+            return false;
+        }
+        (*input).filename = (*src).filename;
+        (*input).flags = (*src).flags & INPUT_STREAM;
+        (*input).line = 1;
+        (*input).col = 1;
+        xmlCtxtPushInput(p, input);
+        let stream = (*src).flags & INPUT_STREAM != 0;
+        let forced = if (*c).options & PARSE_IGNORE_ENC == 0 { copt((*src).encoding).map(|v| v.to_vec()) } else { None };
+        super::recover::recover_document(p, raw.to_vec(), stream, forced.as_deref());
+        let found = (*p).wellFormed == 0 || (*p).nbErrors > 0 || (*p).nbWarnings > 0;
+        // The name is the caller's: the input is taken off before the
+        // context is freed.
+        while (*p).inputNr > 0 {
+            let i = xmlCtxtPopInput(p);
+            if i == input {
+                xfree(input as *mut c_void);
+            }
+        }
+        if !(*p).myDoc.is_null() {
+            xmlFreeDoc((*p).myDoc);
+            (*p).myDoc = null_mut();
+        }
+        xmlFreeParserCtxt(p);
+        found
     }
 }
 

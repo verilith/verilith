@@ -115,23 +115,6 @@ XML push boundary tests	./test/xml2
 # here the verified parser rejects the document and one error is reported,
 # worked out from where it stopped (the code, message and position match
 # libxml2's on the common cases).
-Error cases regression tests	./test/errors/759579.xml
-Error cases regression tests	./test/errors/ent_redecl.xml
-Error cases regression tests	./test/errors/ns-ent.xml
-Error cases regression tests	./test/errors/quadratic-defattr.xml
-Error cases regression tests	./test/errors/truncated-utf16.xml
-Error cases regression tests from file descriptor	./test/errors/759579.xml
-Error cases regression tests from file descriptor	./test/errors/ent_redecl.xml
-Error cases regression tests from file descriptor	./test/errors/ns-ent.xml
-Error cases regression tests from file descriptor	./test/errors/quadratic-defattr.xml
-Error cases regression tests from file descriptor	./test/errors/truncated-utf16.xml
-Error cases regression tests with entity substitution	./test/errors/759579.xml
-Error cases regression tests with entity substitution	./test/errors/ent_redecl.xml
-Error cases regression tests with entity substitution	./test/errors/extparsedent.xml
-Error cases regression tests with entity substitution	./test/errors/ns-ent.xml
-Error cases regression tests with entity substitution	./test/errors/quadratic-defattr.xml
-Error cases regression tests with entity substitution	./test/errors/rec_ext_ent.xml
-Error cases regression tests with entity substitution	./test/errors/truncated-utf16.xml
 
 # Parameter entity references in the internal subset are not expanded (as
 # the verified parser does not read them), so the declarations they hold are

@@ -223,9 +223,9 @@ the tests check.
 Everything in `src/spec.rs`, `src/parser.rs`, `src/index.rs`,
 `src/stage2.rs`, `src/ondemand.rs`, `src/utf8.rs`, `src/write.rs`, `src/simd.rs`, `src/float.rs`
 and `src/lemmas.rs` is checked by Verus (`./scripts/verify.sh`, which runs `cargo verus verify`,
-805 items, 0 errors). The proofs are checked once per pointer width:
+807 items, 0 errors). The proofs are checked once per pointer width:
 also for `wasm32-unknown-unknown` at a 32-bit `usize`
-(`./scripts/verify-narrow.sh`, 719 items, without the x86 and Arm
+(`./scripts/verify-narrow.sh`, 721 items, without the x86 and Arm
 kernels, which that build does not have).
 The trusted base is listed under [What is not proven](#what-is-not-proven).
 

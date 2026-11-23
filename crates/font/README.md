@@ -308,6 +308,9 @@ accepts, 3 are damaged in a default language system and one has a
 
 ## Building and verifying
 
+64-bit targets only: the proofs fix `usize` at 64 bits, so a 32-bit build
+(wasm32 included) stops with a `compile_error!`.
+
 ```sh
 cargo build --release      # target/release/libverilith_font.a and the rlib
 cargo test --release

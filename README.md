@@ -133,11 +133,11 @@ verilith-json = { git = "https://github.com/verilith/verilith" }                
 | macOS on Apple Silicon | every crate | no (proofs and benchmarks are run by hand) |
 | Windows x86-64 | every crate (`cargo check`) | no |
 | Big-endian (s390x) | every crate (`cargo check`) | no |
-| 32-bit, including wasm32 | brotli, core, dns, hpack, http, jpeg, json, sha2, simd, webp, x509, xml, zlib | no |
+| 32-bit, including wasm32 | bind, brotli, core, dns, hpack, http, jpeg, json, regex, sha2, simd, text, url, webp, x509, xml, zlib | every one of them builds for wasm32-unknown-unknown; text, url, regex and json are also proven as wasm32 builds them and pass their tests under wasmtime; xml's 32-bit layout is proven |
 
-The proofs of archive, font, lz4, png, regex, snappy, sync, text, url, wasm,
-xxhash and zstd assume a 64-bit `usize`, so those crates refuse to compile
-for a 32-bit target rather than run unproven code there. The proofs do
+The proofs of archive, font, lz4, png, snappy, sync, wasm, xxhash and zstd
+assume a 64-bit `usize`, so those crates refuse to compile for a
+32-bit target rather than run unproven code there. The proofs do
 not depend on byte order, but no big-endian machine runs the tests yet, so
 a byte-order slip in unverified glue there would not be caught.
 
@@ -322,9 +322,11 @@ One workflow, `.github/workflows/ci.yml`.
 verified in parts (brotli). A proof that has already passed with
 exactly the same inputs is not checked again (`scripts/proof-plan.py`), so
 a change to one crate checks that crate and the crates that depend on it,
-and a second push to a pull request checks only what the push changed.
+and a second push to a pull request checks only what the push changed. A
+pull request checks only the proofs it changes; main checks the rest.
 Pushes to main also verify on Linux AArch64, with `cargo verus`, which checks
-the NEON paths that an x86 build leaves out.
+the NEON paths that an x86 build leaves out, skipping the crates whose inputs
+already passed there.
 
 **Tests** run for the crates a change touches: a crate whose files changed,
 plus every crate that depends on it (`scripts/affected.py`). A change to
