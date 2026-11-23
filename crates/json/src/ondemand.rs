@@ -1468,7 +1468,8 @@ impl<'a> Cursor<'a> {
 /// the reader rejects either when it reaches it.)
 pub fn index_start(s: &[u8]) -> (r: Option<usize>)
     ensures
-        r matches Some(st) ==> st <= s@.len() && utf8_from(s@, st as int),
+        r matches Some(st) ==> st == bom_end(s@) && utf8_from(s@, st as int),
+        r is None ==> !utf8_from(s@, bom_end(s@)),
 {
     let start: usize = if ex_has_lit(s, 0, &[0xEF, 0xBB, 0xBF]) { 3 } else { 0 };
     proof {
@@ -1527,6 +1528,7 @@ impl<'a> Reader<'a> {
     pub fn new(s: &'a [u8], idx: &'a mut Vec<u32>) -> (r: Option<Self>)
         ensures
             r matches Some(rd) ==> rd.inv(),
+            r is None && s@.len() <= isize::MAX ==> !utf8_from(s@, bom_end(s@)),
     {
         Self::with_window(s, idx, WINDOW)
     }
@@ -1536,6 +1538,10 @@ impl<'a> Reader<'a> {
     pub fn with_window(s: &'a [u8], idx: &'a mut Vec<u32>, win: usize) -> (r: Option<Self>)
         ensures
             r matches Some(rd) ==> rd.inv(),
+            r is None && 128 <= win <= 0x4000_0000 && win % 128 == 0 && s@.len() <= isize::MAX ==> !utf8_from(
+                s@,
+                bom_end(s@),
+            ),
     {
         // No slice is longer than `isize::MAX` bytes; the proofs need it
         // said.
