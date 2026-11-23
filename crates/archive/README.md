@@ -165,7 +165,7 @@ against verilith-archive and compares what they print for every test archive.
 - `tests/extract.rs`: extraction compared with the archives' contents.
 
 `cargo test --release` runs them (the differential tests need
-`libarchive.so.13`). GitHub Actions is manual-only (`.github/workflows`).
+`libarchive.so.13`). CI (`.github/workflows/ci.yml` at the repository root) verifies the proofs and runs `ci.sh` on every pull request and push to `main` that touches this crate or a crate it depends on.
 
 ## Speed
 
@@ -196,4 +196,5 @@ How to read it:
 
 ## License
 
-MIT.
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.

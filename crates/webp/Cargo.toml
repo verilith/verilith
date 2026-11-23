@@ -1,7 +1,10 @@
 [package]
 name = "verilith-webp"
 version = "0.1.0"
-license = "MIT"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/verilith/verilith"
+keywords = ["webp", "decoder", "image", "verified", "verus"]
+categories = ["multimedia::images", "parser-implementations"]
 description = "A formally verified (Verus) WebP lossless (VP8L) decoder"
 edition = "2024"
 

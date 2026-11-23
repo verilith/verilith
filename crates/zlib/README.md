@@ -368,3 +368,8 @@ spends about that much more CPU in total. There is no gain below two
 chunks (512 KiB), where the serial compressor runs instead, and none for
 a caller that feeds `deflate()` in pieces. What this costs in trust is
 the 25 lines of `par::run` (see "Trusted base").
+
+## License
+
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.

@@ -122,8 +122,8 @@ that verilith-url itself produced:
 
 `cargo verus focus` reports 529 verified, 0 errors. The crates it builds on,
 [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core) and
-[verilith-text](https://github.com/verilith/verilith/tree/main/crates/text), are verified in
-their own repositories. The CI workflow reruns it (manual runs only).
+[verilith-text](https://github.com/verilith/verilith/tree/main/crates/text), are verified
+as their own crates in this repository. CI (`.github/workflows/ci.yml` at the repository root) verifies the proofs and runs `ci.sh` on every pull request and push to `main` that touches this crate or a crate it depends on.
 
 ### Where the model differs from the Standard
 
@@ -254,5 +254,8 @@ place of ada needs no source changes.
 
 ## License
 
-MIT. The URL test data in `tests/data` comes from web-platform-tests
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.
+
+The URL test data in `tests/data` comes from web-platform-tests
 (BSD-3-Clause); see [LICENSE-wpt](LICENSE-wpt).

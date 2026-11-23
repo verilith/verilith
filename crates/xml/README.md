@@ -483,3 +483,8 @@ fuzz/            differential fuzzing against libexpat
 bench/           against the Rust XML parsers (expat and libxml2 are in vbench)
 scripts/         verification, fetching libexpat
 ```
+
+## License
+
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.

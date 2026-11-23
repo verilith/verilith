@@ -120,3 +120,8 @@ What the speed rests on:
 
 `cargo run --release --example bench -- FILES` is a quicker check
 against the system libsnappy.
+
+## License
+
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.

@@ -563,3 +563,8 @@ cargo verus verify                     # re-check every proof (needs Verus + Z3)
 No `target-cpu` flag is needed: the SIMD kernels are selected at run time.
 The differential tests and benchmarks need a libwebp checkout and CMake build;
 point `LIBWEBP_SRC` and `LIBWEBP_BUILD` at them (see `difftest/Makefile`).
+
+## License
+
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.

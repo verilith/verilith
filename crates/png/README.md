@@ -122,8 +122,9 @@ the spec:
   fixed; after that, no file only verilith-png accepts, and the files only libpng
   accepts are the damaged-stream departure above.
 
-The CI workflow (`.github/workflows/ci.yml`, manual runs only) reruns the proofs, the tests, the
-differential tests against libpng built from source, and 2000 fresh mutants.
+CI (`.github/workflows/ci.yml` at the repository root) reruns the proofs, the tests, the
+differential tests against libpng built from source, and 2000 fresh mutants, on every
+pull request and push to `main` that touches this crate or a crate it depends on.
 
 ## Performance
 
@@ -206,3 +207,8 @@ match decode(&bytes, PixelFormat::Rgba8, 1 << 30) {
     Err(e) => { /* Invalid, TooLarge or OutOfMemory */ }
 }
 ```
+
+## License
+
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.

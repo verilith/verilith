@@ -1,7 +1,10 @@
 [package]
 name = "verilith-wasm"
 version = "0.1.0"
-license = "MIT AND Apache-2.0"
+license = "(MIT OR Apache-2.0) AND Apache-2.0"
+repository = "https://github.com/verilith/verilith"
+keywords = ["wasm", "webassembly", "interpreter", "verified", "verus"]
+categories = ["wasm"]
 description = "A formally verified (Verus) WebAssembly validator and sandboxed interpreter"
 edition = "2024"
 

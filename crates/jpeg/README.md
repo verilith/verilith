@@ -180,7 +180,7 @@ branch-free loops over slices that the compiler vectorizes on every target.
   the NEON path is tested from an x86-64 machine: the same on all 2,295
   files above (intact and damaged).
 
-GitHub Actions is not used; the proofs and the tests above are run locally.
+CI (`.github/workflows/ci.yml` at the repository root) verifies the proofs and runs `ci.sh` on every pull request and push to `main` that touches this crate or a crate it depends on.
 
 ## Performance
 
@@ -230,3 +230,8 @@ cargo build --release --example djpeg            # djpeg FILE > out.ppm
 
 The proofs are checked with Verus `0.2026.11.02.8bf68ee` (vstd
 `0.0.0-2026-11-01-0251`).
+
+## License
+
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.

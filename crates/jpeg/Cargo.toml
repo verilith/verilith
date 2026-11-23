@@ -1,7 +1,10 @@
 [package]
 name = "verilith-jpeg"
 version = "0.1.0"
-license = "MIT"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/verilith/verilith"
+keywords = ["jpeg", "decoder", "image", "verified", "verus"]
+categories = ["multimedia::images", "parser-implementations"]
 description = "A formally verified (Verus) JPEG decoder: baseline and progressive Huffman"
 edition = "2024"
 

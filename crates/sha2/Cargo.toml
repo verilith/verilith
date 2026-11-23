@@ -1,7 +1,7 @@
 [package]
 name = "verilith-sha2"
 version = "0.1.0"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 description = "Formally verified (Verus) SHA-2 (FIPS 180-4): SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224 and SHA-512/256, with SHA-NI and ARMv8 kernels and OpenSSL's SHA C API"
 edition = "2021"
 repository = "https://github.com/verilith/verilith"

@@ -3,8 +3,10 @@ name = "verilith-hpack"
 version = "0.1.0"
 edition = "2024"
 description = "An HPACK (RFC 7541) header decoder formally verified with Verus, with nghttp2's inflater API"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 repository = "https://github.com/verilith/verilith"
+keywords = ["hpack", "http2", "verified", "verus", "nghttp2"]
+categories = ["network-programming", "web-programming", "parser-implementations"]
 exclude = ["compat/", "scripts/", "tools/", "bench/"]
 
 [lib]

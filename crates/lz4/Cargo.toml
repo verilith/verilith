@@ -1,10 +1,12 @@
 [package]
 name = "verilith-lz4"
 version = "0.1.0"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 description = "A formally verified (Verus) LZ4 compressor and decompressor (block and frame formats) with liblz4's C API"
 edition = "2024"
 repository = "https://github.com/verilith/verilith"
+keywords = ["lz4", "compression", "verified", "verus"]
+categories = ["compression"]
 
 [lib]
 crate-type = ["rlib", "staticlib"]
