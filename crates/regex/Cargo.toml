@@ -5,6 +5,8 @@ edition = "2024"
 description = "A linear-time regular expression engine (RE2 syntax and semantics) formally verified with Verus"
 license = "(MIT OR Apache-2.0) AND BSD-3-Clause"
 repository = "https://github.com/verilith/verilith"
+keywords = ["regex", "re2", "linear-time", "verified", "verus"]
+categories = ["text-processing"]
 exclude = ["compat/", "scripts/", "tools/", "bench/"]
 
 [lib]

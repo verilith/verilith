@@ -5,6 +5,8 @@ license = "MIT OR Apache-2.0"
 description = "A formally verified (Verus) OpenType font sanitizer"
 edition = "2024"
 repository = "https://github.com/verilith/verilith"
+keywords = ["opentype", "font", "sanitizer", "verified", "verus"]
+categories = ["parser-implementations", "text-processing"]
 readme = "README.md"
 
 [lib]

@@ -3,6 +3,8 @@ name = "verilith-zlib"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/verilith/verilith"
+keywords = ["zlib", "deflate", "gzip", "verified", "verus"]
+categories = ["compression"]
 description = "A formally verified (Verus) DEFLATE, zlib and gzip decompressor"
 edition = "2024"
 
