@@ -19,20 +19,69 @@ use vstd::prelude::*;
 
 verus! {
 
-/// The input and its structural index, passed to stage 2 as one pointer.
-pub struct Ctx<'a> {
-    pub s: &'a [u8],
-    pub idx: &'a [u32],
+/// Stage 2 reads the input and its structural index through the window
+/// (`Win`), which indexes the input as stage 2 goes.
+pub type Ctx<'a> = Win<'a>;
+
+/// The whole structural index of `s[st..]`.
+pub open spec fn ix(s: Seq<u8>, st: int) -> Seq<int> {
+    positions(s, st, st, s.len() as int)
 }
 
-// ---------------------------------------------------------------------------
-// Counting structural positions
-// ---------------------------------------------------------------------------
+/// Stage 2's window, before a read at entry `k`: `k` is not behind it.
+pub open spec fn win_at(w: &Win, s: Seq<u8>, st: int, k: int) -> bool {
+    &&& w.inv()
+    &&& s.len() <= MAX_INPUT
+    &&& w.s@ == s
+    &&& w.st == st
+    &&& w.kbase <= k
+}
 
-/// Number of structural positions in `[st, i)`. Stage 2 keeps the index of
-/// the next unread structural position equal to `cnt` of its spec position.
-pub open spec fn cnt(s: Seq<u8>, st: int, i: int) -> int {
-    positions(s, st, st, i).len() as int
+/// Entry `k` of the index through `at`, with room on the tape kept for a
+/// token per entry left in the window, counted from `k0`.
+#[inline(always)]
+pub fn at2<S: Sink>(w: &mut Win, k: usize, tape: &mut S, Ghost(k0): Ghost<int>) -> (r: Option<usize>)
+    requires
+        old(w).inv(),
+        old(w).s@.len() <= MAX_INPUT,
+        k <= k0 + 2,
+        old(tape).room() >= old(w).kend - k0,
+    ensures
+        final(w).inv(),
+        final(w).same(old(w)),
+        final(w).kbase <= k,
+        r matches Some(q) ==> k < final(w).all().len() && q == final(w).all()[k as int]
+            && q < final(w).wend && k < final(w).kend,
+        old(w).kbase <= k < old(w).kend ==> *final(w) == *old(w) && r is Some && final(tape).room() == old(tape).room(),
+        r is None ==> final(w).done && k >= final(w).all().len(),
+        final(tape).room() >= final(w).kend - k0,
+        final(tape).hist() == old(tape).hist(),
+        forall|g: Seq<u8>| old(tape).inv(g) ==> #[trigger] final(tape).inv(g),
+{
+    let kend0 = w.kend;
+    let r = w.at(k);
+    keep_room(w, tape, kend0, Ghost(k0));
+    r
+}
+
+/// After reads that may have moved the window on from `kend0`: room on
+/// the tape for a token per entry left, counted from `k0`.
+#[inline(always)]
+pub fn keep_room<S: Sink>(w: &Win, tape: &mut S, kend0: usize, Ghost(k0): Ghost<int>)
+    requires
+        w.inv(),
+        w.s@.len() <= MAX_INPUT,
+        w.kbase <= k0 + 2,
+        old(tape).room() >= kend0 - k0,
+    ensures
+        final(tape).room() >= w.kend - k0,
+        w.kend == kend0 ==> final(tape).room() == old(tape).room(),
+        final(tape).hist() == old(tape).hist(),
+        forall|g: Seq<u8>| old(tape).inv(g) ==> #[trigger] final(tape).inv(g),
+{
+    if w.kend != kend0 {
+        tape.reserve(w.kend - w.kbase + 2);
+    }
 }
 
 /// At most one structural position per byte.
@@ -55,12 +104,12 @@ pub proof fn lemma_cnt_step(s: Seq<u8>, st: int, i: int)
         st <= i,
     ensures
         cnt(s, st, i + 1) == cnt(s, st, i) + (if structural(s, st, i) { 1int } else { 0int }),
-        structural(s, st, i) ==> positions(s, st, st, i + 1)[cnt(s, st, i)] == i as u32,
+        structural(s, st, i) ==> positions(s, st, st, i + 1)[cnt(s, st, i)] == i,
         positions(s, st, st, i + 1).subrange(0, cnt(s, st, i)) == positions(s, st, st, i),
 {
     let p = positions(s, st, st, i);
     if structural(s, st, i) {
-        assert(p.push(i as u32).subrange(0, p.len() as int) =~= p);
+        assert(p.push(i).subrange(0, p.len() as int) =~= p);
     } else {
         assert(p.subrange(0, p.len() as int) =~= p);
     }
@@ -116,10 +165,9 @@ pub proof fn lemma_next(s: Seq<u8>, st: int, a: int, b: int)
         cnt(s, st, b) == cnt(s, st, a),
         forall|m: int| a <= m < b ==> !#[trigger] structural(s, st, m),
         cnt(s, st, a) < cnt(s, st, s.len() as int),
-        s.len() <= u32::MAX,
     ensures
         ({
-            let q = positions(s, st, st, s.len() as int)[cnt(s, st, a)] as int;
+            let q = positions(s, st, st, s.len() as int)[cnt(s, st, a)];
             &&& a <= q < s.len()
             &&& structural(s, st, q)
             &&& cnt(s, st, q) == cnt(s, st, a)
@@ -151,10 +199,9 @@ pub proof fn lemma_entry(s: Seq<u8>, st: int, b: int, k: int)
     requires
         0 <= st <= b,
         0 <= k < cnt(s, st, b),
-        b <= u32::MAX,
     ensures
         ({
-            let p = positions(s, st, st, b)[k] as int;
+            let p = positions(s, st, st, b)[k];
             &&& st <= p < b
             &&& structural(s, st, p)
             &&& cnt(s, st, p) == k
@@ -174,10 +221,9 @@ pub proof fn lemma_at(s: Seq<u8>, st: int, q: int)
         0 <= st,
         st <= q < s.len(),
         structural(s, st, q),
-        s.len() <= u32::MAX,
     ensures
         cnt(s, st, q) < cnt(s, st, s.len() as int),
-        positions(s, st, st, s.len() as int)[cnt(s, st, q)] == q as u32,
+        positions(s, st, st, s.len() as int)[cnt(s, st, q)] == q,
         cnt(s, st, q + 1) == cnt(s, st, q) + 1,
 {
     lemma_cnt_step(s, st, q);
@@ -386,15 +432,6 @@ pub proof fn lemma_number_lexeme(s: Seq<u8>, i: int)
 // Strings
 // ---------------------------------------------------------------------------
 
-/// What stage 2 may assume after stage 1 succeeded.
-pub open spec fn indexed(s: Seq<u8>, st: int, idx: Seq<u32>) -> bool {
-    &&& 0 <= st <= s.len()
-    &&& s.len() + 64 <= u32::MAX
-    &&& idx == positions(s, st, st, s.len() as int)
-    &&& clean(s, st, s.len() as int)
-    &&& !instr(s, st, s.len() - 1)
-}
-
 /// A plain stretch inside a string: no structural position means no
 /// closing quote, no escape and (stage 1 checked) no control character.
 pub proof fn lemma_plain_inside(s: Seq<u8>, st: int, i: int, q: int)
@@ -402,7 +439,6 @@ pub proof fn lemma_plain_inside(s: Seq<u8>, st: int, i: int, q: int)
         0 <= st <= i <= q <= s.len(),
         instr(s, st, i - 1),
         !esc(s, st, i),
-        clean(s, st, s.len() as int),
         forall|m: int| i <= m < q ==> !#[trigger] structural(s, st, m),
     ensures
         forall|m: int| i <= m < q ==> plain(#[trigger] s[m]),
@@ -535,13 +571,14 @@ pub proof fn lemma_close_ahead(s: Seq<u8>, st: int, i: int) -> (m: int)
 /// structural position at or after `lo`.
 pub proof fn lemma_string_step(s: Seq<u8>, st: int, i: int, lo: int)
     requires
-        indexed(s, st, positions(s, st, st, s.len() as int)),
+        0 <= st,
+        !instr(s, st, s.len() - 1),
         st <= lo <= i <= s.len(),
         instr(s, st, i - 1),
     ensures
         cnt(s, st, lo) < cnt(s, st, s.len() as int),
         ({
-            let q = positions(s, st, st, s.len() as int)[cnt(s, st, lo)] as int;
+            let q = positions(s, st, st, s.len() as int)[cnt(s, st, lo)];
             &&& lo <= q < s.len()
             &&& structural(s, st, q)
             &&& cnt(s, st, q + 1) == cnt(s, st, lo) + 1
@@ -555,38 +592,142 @@ pub proof fn lemma_string_step(s: Seq<u8>, st: int, i: int, lo: int)
     lemma_next(s, st, lo, lo);
 }
 
-/// Scans the string whose opening quote is index entry `k`. Returns the
-/// index entry after its closing quote, the position after it, and whether
-/// it has escapes.
+/// What a string scan needs: entry `k` of the index is the opening
+/// quote of a string, at `j`.
+pub open spec fn str_pre(w: &Win, st: int, k: int, j: int) -> bool {
+    &&& w.inv()
+    &&& w.s@.len() <= isize::MAX
+    &&& w.st == st
+    &&& k < ix(w.s@, st).len()
+    &&& j == ix(w.s@, st)[k]
+    &&& j < w.s@.len()
+    &&& w.s@[j] == 0x22
+    &&& out(w.s@, st, j)
+}
+
+/// What a string scan returns: the index entry after the closing quote,
+/// the position after it, and whether the body has escapes.
+pub open spec fn str_post(o: &Win, w: &Win, st: int, k: int, j: int, r: Option<(usize, usize, bool)>) -> bool {
+    &&& w.inv()
+    &&& w.same(o)
+    &&& r matches Some((k2, _, _)) ==> k2 > k && w.kbase <= k2 && k2 <= w.kend
+    &&& match string(w.s@, j) {
+        Some((n, esc)) => r == Some((cnt(w.s@, st, n) as usize, n as usize, esc)) && out(w.s@, st, n)
+            && bnd(w.s@, st, n) && n <= w.s@.len(),
+        None => r is None,
+    }
+}
+
+/// The opening quote at `j`, entry `k`: the body starts right after it.
+proof fn lemma_open_quote(g: Seq<u8>, st: int, k: int, j: int)
+    requires
+        0 <= st <= g.len(),
+        0 <= k < cnt(g, st, g.len() as int),
+        j == ix(g, st)[k],
+        j < g.len(),
+        g[j] == 0x22,
+        out(g, st, j),
+    ensures
+        st <= j,
+        cnt(g, st, j + 1) == k + 1,
+        uq(g, st, j),
+        instr(g, st, j),
+        !esc(g, st, j + 1),
+        k + 1 <= g.len(),
+{
+    lemma_positions_len(g, st, st, g.len() as int);
+    lemma_entry(g, st, g.len() as int, k);
+    lemma_at(g, st, j);
+    assert(byte(g, j) == g[j]);
+}
+
+/// With the count at `lo` already that of the whole input, nothing at or
+/// after `lo` is structural.
+pub proof fn lemma_none_after(s: Seq<u8>, st: int, lo: int)
+    requires
+        0 <= st <= lo <= s.len(),
+        cnt(s, st, lo) >= cnt(s, st, s.len() as int),
+    ensures
+        forall|m: int| lo <= m < s.len() ==> !#[trigger] structural(s, st, m),
+{
+    assert forall|m: int| lo <= m < s.len() implies !#[trigger] structural(s, st, m) by {
+        if structural(s, st, m) {
+            lemma_prefix(s, st, lo, m);
+            lemma_at(s, st, m);
+            lemma_prefix(s, st, m + 1, s.len() as int);
+        }
+    }
+}
+
+/// The next entry of the string loop, `kk == cnt(lo)`, read through the
+/// window: the first structural position at or after `lo`. When there is
+/// none, the rest of the input is plain, and the string is not closed.
+proof fn lemma_string_next(w: &Win, st: int, i: int, lo: int, kk: int, e: bool, r: Option<usize>)
+    requires
+        w.inv(),
+        w.st == st,
+        st <= lo <= i <= w.s@.len(),
+        instr(w.s@, st, i - 1),
+        !esc(w.s@, st, i),
+        kk == cnt(w.s@, st, lo),
+        r matches Some(q) ==> kk < w.all().len() && q == w.all()[kk],
+        r is None ==> kk >= w.all().len(),
+    ensures
+        r is None ==> string_body(w.s@, i, e) is None,
+        r matches Some(q) ==> {
+            &&& lo <= q < w.s@.len()
+            &&& structural(w.s@, st, q as int)
+            &&& cnt(w.s@, st, q + 1) == kk + 1
+            &&& forall|m: int| lo <= m < q ==> !#[trigger] structural(w.s@, st, m)
+        },
+{
+    let g = w.s@;
+    if let Some(q) = r {
+        lemma_next(g, st, lo, lo);
+    } else {
+        lemma_none_after(g, st, lo);
+        lemma_plain_inside(g, st, i, g.len() as int);
+        lemma_plain_run(g, i, g.len() as int, e);
+    }
+}
+
+/// A structural byte inside a string that is neither its closing quote
+/// nor an escape is a control character, which ends the string as
+/// invalid.
+proof fn lemma_string_bad(g: Seq<u8>, st: int, q: int, esc: bool)
+    requires
+        0 <= st <= q < g.len(),
+        instr(g, st, q - 1),
+        structural(g, st, q),
+        g[q] != 0x22,
+        g[q] != 0x5C,
+    ensures
+        string_body(g, q, esc) is None,
+{
+    assert(byte(g, q) == g[q]);
+    assert(!uq(g, st, q));
+    assert(instr(g, st, q));
+    assert(!sbase(g, st, q));
+    assert(bad(g, st, q));
+}
+
+/// Scans the string whose opening quote, at `j`, is index entry `k`.
+/// Returns the index entry after its closing quote, the position after
+/// it, and whether it has escapes.
 #[inline(always)]
-pub fn ex2_string(s: &[u8], idx: &[u32], k: usize, Ghost(st): Ghost<int>) -> (r: Option<
+pub fn ex2_string(cx: &mut Ctx, k: usize, j: usize, Ghost(st): Ghost<int>) -> (r: Option<
     (usize, usize, bool),
 >)
     requires
-        indexed(s@, st, idx@),
-        k < idx@.len(),
-        (idx@[k as int] as int) < s@.len(),
-        s@[idx@[k as int] as int] == 0x22,
-        out(s@, st, idx@[k as int] as int),
+        str_pre(old(cx), st, k as int, j as int),
     ensures
-        match string(s@, idx@[k as int] as int) {
-            Some((n, esc)) => r == Some((cnt(s@, st, n) as usize, n as usize, esc)) && out(s@, st, n)
-                && bnd(s@, st, n) && n <= s@.len(),
-            None => r is None,
-        },
-        r matches Some((k2, _, _)) ==> k2 > k,
+        str_post(old(cx), final(cx), st, k as int, j as int, r),
 {
+    let s = cx.s;
     let ghost g = s@;
-    let j = get32(idx, k) as usize;
     proof {
-        lemma_entry(g, st, g.len() as int, k as int);
-        lemma_at(g, st, j as int);
-        assert(byte(g, j as int) == g[j as int]);
-        assert(uq(g, st, j as int));
-        assert(instr(g, st, j as int));
-        assert(!esc(g, st, j + 1));
+        lemma_open_quote(g, st, k as int, j as int);
     }
-    let _n = idx.len();
     let mut kk = k + 1;
     let mut i = j + 1;
     let mut escf = false;
@@ -594,23 +735,28 @@ pub fn ex2_string(s: &[u8], idx: &[u32], k: usize, Ghost(st): Ghost<int>) -> (r:
     loop
         invariant
             g == s@,
-            indexed(g, st, idx@),
-            j as int == idx@[k as int] as int,
+            cx.inv(),
+            cx.s@ == g,
+            g.len() <= isize::MAX,
+            cx.st == st,
+            cx.same(old(cx)),
             st <= j < i <= g.len(),
             j + 1 <= lo <= i,
             kk as int == cnt(g, st, lo),
-            kk <= idx@.len(),
             kk > k,
-            _n == idx@.len(),
             instr(g, st, i - 1),
             !esc(g, st, i as int),
             string(g, j as int) == string_body(g, i as int, escf),
-        decreases idx@.len() - kk,
+        decreases ix(g, st).len() - kk,
     {
+        let r = cx.at(kk);
         proof {
-            lemma_string_step(g, st, i as int, lo);
+            lemma_string_next(cx, st, i as int, lo, kk as int, escf, r);
         }
-        let q = get32(idx, kk) as usize;
+        let q = match r {
+            Some(q) => q,
+            None => return None,
+        };
         if q < i {
             kk = kk + 1;
             proof {
@@ -634,8 +780,7 @@ pub fn ex2_string(s: &[u8], idx: &[u32], k: usize, Ghost(st): Ghost<int>) -> (r:
         }
         if c != 0x5C {
             proof {
-                assert(instr(g, st, q as int));
-                assert(!structural(g, st, q as int));
+                lemma_string_bad(g, st, q as int, escf);
             }
             return None;
         }
@@ -811,39 +956,24 @@ fn dec_escape_at(s: &[u8], j: usize, i: usize, q: usize, escf: bool, dst: &mut V
 /// `ex2_string_dec` once the body is known to have an escape.
 #[verifier::spinoff_prover]
 #[inline(always)]
-fn ex2_string_esc(s: &[u8], idx: &[u32], k: usize, Ghost(st): Ghost<int>, dst: &mut Vec<u8>) -> (r:
+fn ex2_string_esc(cx: &mut Ctx, k: usize, j: usize, Ghost(st): Ghost<int>, dst: &mut Vec<u8>) -> (r:
     Option<(usize, usize, bool)>)
     requires
-        indexed(s@, st, idx@),
-        k < idx@.len(),
-        (idx@[k as int] as int) < s@.len(),
-        s@[idx@[k as int] as int] == 0x22,
-        out(s@, st, idx@[k as int] as int),
+        str_pre(old(cx), st, k as int, j as int),
     ensures
-        match string(s@, idx@[k as int] as int) {
-            Some((n, esc)) => r == Some((cnt(s@, st, n) as usize, n as usize, esc)) && out(s@, st, n)
-                && bnd(s@, st, n) && n <= s@.len(),
-            None => r is None,
-        },
-        r matches Some((k2, _, _)) ==> k2 > k,
+        str_post(old(cx), final(cx), st, k as int, j as int, r),
         r matches Some((_, n, esc)) ==> if esc {
-            final(dst)@ == old(dst)@ + decode(s@, idx@[k as int] + 1, n - 1)
+            final(dst)@ == old(dst)@ + decode(old(cx).s@, j + 1, n - 1)
         } else {
             final(dst)@ == old(dst)@
         },
 {
+    let s = cx.s;
     let ghost g = s@;
     let ghost o = dst@;
-    let j = get32(idx, k) as usize;
     proof {
-        lemma_entry(g, st, g.len() as int, k as int);
-        lemma_at(g, st, j as int);
-        assert(byte(g, j as int) == g[j as int]);
-        assert(uq(g, st, j as int));
-        assert(instr(g, st, j as int));
-        assert(!esc(g, st, j + 1));
+        lemma_open_quote(g, st, k as int, j as int);
     }
-    let _n = idx.len();
     let mut kk = k + 1;
     let mut i = j + 1;
     let mut escf = false;
@@ -852,25 +982,30 @@ fn ex2_string_esc(s: &[u8], idx: &[u32], k: usize, Ghost(st): Ghost<int>, dst: &
         invariant
             g == s@,
             o == old(dst)@,
-            indexed(g, st, idx@),
-            j as int == idx@[k as int] as int,
+            cx.inv(),
+            cx.s@ == g,
+            g.len() <= isize::MAX,
+            cx.st == st,
+            cx.same(old(cx)),
             st <= j < i <= g.len(),
             j + 1 <= lo <= i,
             kk as int == cnt(g, st, lo),
-            kk <= idx@.len(),
             kk > k,
-            _n == idx@.len(),
             instr(g, st, i - 1),
             !esc(g, st, i as int),
             string(g, j as int) == string_body(g, i as int, escf),
             !escf ==> i == j + 1 && dst@ == o,
             escf ==> spare(*dst) >= (g.len() - i) + 16 && dec_inv(g, j as int, i as int, o, dst@),
-        decreases idx@.len() - kk,
+        decreases ix(g, st).len() - kk,
     {
+        let r = cx.at(kk);
         proof {
-            lemma_string_step(g, st, i as int, lo);
+            lemma_string_next(cx, st, i as int, lo, kk as int, escf, r);
         }
-        let q = get32(idx, kk) as usize;
+        let q = match r {
+            Some(q) => q,
+            None => return None,
+        };
         if q < i {
             kk = kk + 1;
             proof {
@@ -904,8 +1039,7 @@ fn ex2_string_esc(s: &[u8], idx: &[u32], k: usize, Ghost(st): Ghost<int>, dst: &
         }
         if c != 0x5C {
             proof {
-                assert(instr(g, st, q as int));
-                assert(!structural(g, st, q as int));
+                lemma_string_bad(g, st, q as int, escf);
             }
             return None;
         }
@@ -928,44 +1062,33 @@ fn ex2_string_esc(s: &[u8], idx: &[u32], k: usize, Ghost(st): Ghost<int>, dst: &
 /// the caller to slice; `dst` is untouched then.
 #[verifier::spinoff_prover]
 #[inline(always)]
-pub fn ex2_string_dec(s: &[u8], idx: &[u32], k: usize, Ghost(st): Ghost<int>, dst: &mut Vec<u8>) -> (r:
+pub fn ex2_string_dec(cx: &mut Ctx, k: usize, j: usize, Ghost(st): Ghost<int>, dst: &mut Vec<u8>) -> (r:
     Option<(usize, usize, bool)>)
     requires
-        indexed(s@, st, idx@),
-        k < idx@.len(),
-        (idx@[k as int] as int) < s@.len(),
-        s@[idx@[k as int] as int] == 0x22,
-        out(s@, st, idx@[k as int] as int),
+        str_pre(old(cx), st, k as int, j as int),
     ensures
-        match string(s@, idx@[k as int] as int) {
-            Some((n, esc)) => r == Some((cnt(s@, st, n) as usize, n as usize, esc)) && out(s@, st, n)
-                && bnd(s@, st, n) && n <= s@.len(),
-            None => r is None,
-        },
-        r matches Some((k2, _, _)) ==> k2 > k,
+        str_post(old(cx), final(cx), st, k as int, j as int, r),
         r matches Some((_, n, esc)) ==> if esc {
-            final(dst)@ == old(dst)@ + decode(s@, idx@[k as int] + 1, n - 1)
+            final(dst)@ == old(dst)@ + decode(old(cx).s@, j + 1, n - 1)
         } else {
             final(dst)@ == old(dst)@
         },
 {
+    let s = cx.s;
     let ghost g = s@;
-    let ghost j: int = idx@[k as int] as int;
     proof {
-        lemma_entry(g, st, g.len() as int, k as int);
-        lemma_at(g, st, j as int);
-        assert(byte(g, j as int) == g[j as int]);
-        assert(uq(g, st, j as int));
-        assert(instr(g, st, j as int));
-        assert(!esc(g, st, j + 1));
-        lemma_string_step(g, st, j + 1, j + 1);
-        assert(cnt(g, st, j + 1) == k + 1);
-        assert(k + 1 < idx@.len());
+        lemma_open_quote(g, st, k as int, j as int);
     }
-    let _n = idx.len();
     let _m = s.len();
     // The body's first entry: the closing quote unless there is an escape.
-    let q = get32(idx, k + 1) as usize;
+    let r = cx.at(k + 1);
+    proof {
+        lemma_string_next(cx, st, j + 1, j + 1, k + 1, false, r);
+    }
+    let q = match r {
+        Some(q) => q,
+        None => return None,
+    };
     proof {
         lemma_plain_inside(g, st, j + 1, q as int);
         lemma_plain_run(g, j + 1, q as int, false);
@@ -982,15 +1105,22 @@ pub fn ex2_string_dec(s: &[u8], idx: &[u32], k: usize, Ghost(st): Ghost<int>, ds
     }
     if c != 0x5C {
         proof {
-            assert(instr(g, st, q as int));
-            assert(!structural(g, st, q as int));
+            lemma_string_bad(g, st, q as int, false);
         }
         return None;
     }
-    let (k2, ne) = ex2_string_esc_out(s, idx, k, Ghost(st), dst);
+    let (k2, ne) = ex2_string_esc_out(cx, k, j, Ghost(st), dst);
     if k2 == 0 {
         None
     } else {
+        proof {
+            if let Some((n, esc)) = string(g, j as int) {
+                let e: int = if esc { 1 } else { 0 };
+                assert(ne == 2 * n + e);
+                assert(ne / 2 == n) by (nonlinear_arith) requires ne == 2 * n + e, 0 <= e <= 1;
+                assert((ne % 2 == 1) == esc) by (nonlinear_arith) requires ne == 2 * n + e, 0 <= e <= 1, e == 1 <==> esc;
+            }
+        }
         Some((k2, (ne / 2) as usize, ne % 2 == 1))
     }
 }
@@ -999,19 +1129,18 @@ pub fn ex2_string_dec(s: &[u8], idx: &[u32], k: usize, Ghost(st): Ghost<int>, ds
 /// packed in two words, so that it comes back in registers rather than
 /// through memory: `(0, 0)` for `None`, else `(k2, 2 * n + esc)`.
 #[inline(never)]
-fn ex2_string_esc_out(s: &[u8], idx: &[u32], k: usize, Ghost(st): Ghost<int>, dst: &mut Vec<u8>) -> (r:
+fn ex2_string_esc_out(cx: &mut Ctx, k: usize, j: usize, Ghost(st): Ghost<int>, dst: &mut Vec<u8>) -> (r:
     (usize, u64))
     requires
-        indexed(s@, st, idx@),
-        k < idx@.len(),
-        (idx@[k as int] as int) < s@.len(),
-        s@[idx@[k as int] as int] == 0x22,
-        out(s@, st, idx@[k as int] as int),
+        str_pre(old(cx), st, k as int, j as int),
     ensures
-        match string(s@, idx@[k as int] as int) {
-            Some((n, esc)) => r.0 == cnt(s@, st, n) && r.1 == 2 * n + (if esc { 1int } else { 0 })
-                && out(s@, st, n) && bnd(s@, st, n) && n <= s@.len() && r.0 > k && if esc {
-                final(dst)@ == old(dst)@ + decode(s@, idx@[k as int] + 1, n - 1)
+        final(cx).inv(),
+        final(cx).same(old(cx)),
+        r.0 != 0 ==> r.0 > k && final(cx).kbase <= r.0 && r.0 <= final(cx).kend,
+        match string(old(cx).s@, j as int) {
+            Some((n, esc)) => r.0 == cnt(old(cx).s@, st, n) && r.1 == 2 * n + (if esc { 1int } else { 0 })
+                && out(old(cx).s@, st, n) && bnd(old(cx).s@, st, n) && n <= old(cx).s@.len() && r.0 > k && if esc {
+                final(dst)@ == old(dst)@ + decode(old(cx).s@, j + 1, n - 1)
             } else {
                 final(dst)@ == old(dst)@
             },
@@ -1019,13 +1148,13 @@ fn ex2_string_esc_out(s: &[u8], idx: &[u32], k: usize, Ghost(st): Ghost<int>, ds
         },
 {
     proof {
-        lemma_entry(s@, st, s@.len() as int, k as int);
-        crate::lemmas::lemma_string_body_advances(s@, idx@[k as int] + 1, false);
-        if let Some((n, _)) = string(s@, idx@[k as int] as int) {
-            lemma_cnt_bound(s@, st, n);
+        lemma_open_quote(cx.s@, st, k as int, j as int);
+        crate::lemmas::lemma_string_body_advances(cx.s@, j + 1, false);
+        if let Some((n, _)) = string(cx.s@, j as int) {
+            lemma_cnt_bound(cx.s@, st, n);
         }
     }
-    match ex2_string_esc(s, idx, k, Ghost(st), dst) {
+    match ex2_string_esc(cx, k, j, Ghost(st), dst) {
         Some((k2, n, esc)) => (k2, 2 * (n as u64) + if esc { 1 } else { 0 }),
         None => (0, 0),
     }
@@ -1052,7 +1181,7 @@ pub proof fn lemma_not_bnd(s: Seq<u8>, st: int, e: int)
 /// a closing bracket or separator there ends a token cleanly.
 pub proof fn lemma_close(s: Seq<u8>, st: int, p: int)
     requires
-        indexed(s, st, positions(s, st, st, s.len() as int)),
+        0 <= st,
         st <= p <= s.len(),
         out(s, st, p),
         bnd(s, st, p),
@@ -1063,7 +1192,7 @@ pub proof fn lemma_close(s: Seq<u8>, st: int, p: int)
             &&& cnt(s, st, j) == cnt(s, st, p)
             &&& cnt(s, st, p) <= cnt(s, st, s.len() as int)
             &&& j < s.len() <==> cnt(s, st, p) < cnt(s, st, s.len() as int)
-            &&& j < s.len() ==> positions(s, st, st, s.len() as int)[cnt(s, st, p)] == j as u32
+            &&& j < s.len() ==> positions(s, st, st, s.len() as int)[cnt(s, st, p)] == j
                 && cnt(s, st, j + 1) == cnt(s, st, p) + 1
             &&& j < s.len() && is_op(s[j]) ==> out(s, st, j + 1) && bnd(s, st, j + 1)
         }),
@@ -1150,7 +1279,7 @@ pub fn ex_delim(c: u8) -> (r: bool)
 #[verifier::rlimit(300)]
 #[inline(always)]
 pub fn ex2_value<S: Sink, const N: u8>(
-    cx: &Ctx,
+    cx: &mut Ctx,
     k: usize,
     depth: usize,
     tape: &mut S,
@@ -1158,34 +1287,36 @@ pub fn ex2_value<S: Sink, const N: u8>(
     Ghost(p): Ghost<int>,
 ) -> (r: Option<(usize, usize)>)
     requires
-        indexed(cx.s@, st, cx.idx@),
-        st <= p <= cx.s@.len(),
-        out(cx.s@, st, p),
-        bnd(cx.s@, st, p),
-        k == cnt(cx.s@, st, p),
-        old(tape).room() >= cx.idx@.len() - k,
-        old(tape).inv(cx.s@),
+        win_at(old(cx), old(cx).s@, st, k as int),
+        st <= p <= old(cx).s@.len(),
+        out(old(cx).s@, st, p),
+        bnd(old(cx).s@, st, p),
+        k == cnt(old(cx).s@, st, p),
+        old(tape).room() >= old(cx).kend - k,
+        old(tape).inv(old(cx).s@),
         old(tape).hist().len() <= p,
-        N == 0 ==> k < cx.idx@.len() && (cx.s@[cx.idx@[k as int] as int] == 0x2D || is_digit(cx.s@[cx.idx@[k as int] as int])),
+        N == 0 ==> k < old(cx).kend && k < ix(old(cx).s@, st).len() && (old(cx).s@[ix(old(cx).s@, st)[k as int]] == 0x2D
+            || is_digit(old(cx).s@[ix(old(cx).s@, st)[k as int]])),
     ensures
-        r is Some ==> final(tape).inv(cx.s@),
-        r matches Some((k2, _)) ==> final(tape).room() >= cx.idx@.len() - k2,
-        match value(cx.s@, skip_ws(cx.s@, p), depth as nat, old(tape).hist()) {
-            Some((t, e)) => if bnd(cx.s@, st, e) {
-                r == Some((cnt(cx.s@, st, e) as usize, e as usize)) && final(tape).hist() == t && out(
-                    cx.s@,
+        final(cx).inv(),
+        final(cx).same(old(cx)),
+        r is Some ==> final(tape).inv(old(cx).s@),
+        r matches Some((k2, _)) ==> final(tape).room() >= final(cx).kend - k2 && final(cx).kbase <= k2,
+        match value(old(cx).s@, skip_ws(old(cx).s@, p), depth as nat, old(tape).hist()) {
+            Some((t, e)) => if bnd(old(cx).s@, st, e) {
+                r == Some((cnt(old(cx).s@, st, e) as usize, e as usize)) && final(tape).hist() == t && out(
+                    old(cx).s@,
                     st,
                     e,
-                ) && e <= cx.s@.len()
+                ) && e <= old(cx).s@.len()
             } else {
                 r is None
             },
             None => r is None,
         },
-    decreases depth, cx.s@.len() - p, 3nat,
+    decreases depth, old(cx).s@.len() - p, 3nat,
 {
     let s = cx.s;
-    let idx = cx.idx;
     let ghost g = s@;
     proof {
         lemma_skip(g, st, p);
@@ -1194,20 +1325,24 @@ pub fn ex2_value<S: Sink, const N: u8>(
             lemma_at(g, st, skip_ws(g, p));
         }
     }
-    if k >= idx.len() {
-        return None;
-    }
-    let j = get32(idx, k) as usize;
+    let j = match at2(cx, k, tape, Ghost(k as int)) {
+        Some(j) => j,
+        None => return None,
+    };
     proof {
         let jj = skip_ws(g, p);
         assert(j == jj);
         crate::lemmas::lemma_value_advances(g, jj, depth as nat, old(tape).hist());
+        lemma_positions_len(g, st, st, g.len() as int);
+        crate::lemmas::lemma_string_body_advances(g, j + 1, false);
     }
     let c = get8(s, j);
     if N != 0 && c == 0x22 {
-        match tape.scan_str(s, idx, k, Ghost(st)) {
+        let kend0 = cx.kend;
+        match tape.scan_str(cx, k, j, Ghost(st)) {
             Some((k2, n, esc)) => {
                 tape.push_str_fast(Tok::new(Kind::Str, esc, (j + 1), (n - 1), NO), s);
+                keep_room(cx, tape, kend0, Ghost(k2 as int));
                 Some((k2, n))
             },
             None => None,
@@ -1220,8 +1355,10 @@ pub fn ex2_value<S: Sink, const N: u8>(
         }
         // Empty arrays are common (most of citm_catalog's); finish them
         // without the call.
-        if c == 0x5B && depth > 0 && ex2_empty_array(cx, k + 1, depth, tape, Ghost(st), j) {
-            return Some((k + 2, get32(idx, k + 1) as usize + 1));
+        if c == 0x5B && depth > 0 {
+            if let Some(e) = ex2_empty_array(cx, k + 1, depth, tape, Ghost(st), j) {
+                return Some((k + 2, e));
+            }
         }
         // Arrays are parsed in line, so that an array of scalars (such as
         // a coordinate pair) costs no call.
@@ -1245,10 +1382,7 @@ pub fn ex2_value<S: Sink, const N: u8>(
                 None => None,
             };
         }
-        match ex2_container(cx, k + 1, depth, tape, Ghost(st), j) {
-            Some(k2) => Some((k2, get32(idx, k2 - 1) as usize + 1)),
-            None => None,
-        }
+        ex2_container(cx, k + 1, depth, tape, Ghost(st), j)
     } else {
         let e = if N != 0 && c == 0x74 {
             if !ex_has4(s, j, 0x74, 0x72, 0x75, 0x65) {
@@ -1321,48 +1455,53 @@ pub fn ex2_value<S: Sink, const N: u8>(
     }
 }
 
-/// `[` at `j` followed by `]`: pushes both tokens and returns true.
-/// Otherwise leaves the tape alone and returns false.
+/// `[` at `j` followed by `]`: pushes both tokens and returns the position
+/// after the `]`. Otherwise leaves the tape's tokens alone.
 // `depth` and `j` appear only in the specification.
 #[allow(unused_variables)]
 #[inline(always)]
 fn ex2_empty_array<S: Sink>(
-    cx: &Ctx,
+    cx: &mut Ctx,
     k: usize,
     depth: usize,
     tape: &mut S,
     Ghost(st): Ghost<int>,
     j: usize,
-) -> (r: bool)
+) -> (r: Option<usize>)
     requires
-        indexed(cx.s@, st, cx.idx@),
-        st <= j < cx.s@.len(),
-        cnt(cx.s@, st, j as int + 1) == k,
-        cx.s@[j as int] == 0x5B,
-        out(cx.s@, st, j as int + 1),
-        bnd(cx.s@, st, j as int + 1),
+        win_at(old(cx), old(cx).s@, st, k as int),
+        st <= j < old(cx).s@.len(),
+        cnt(old(cx).s@, st, j as int + 1) == k,
+        k >= 1,
+        k - 1 < old(cx).kend,
+        old(cx).s@[j as int] == 0x5B,
+        out(old(cx).s@, st, j as int + 1),
+        bnd(old(cx).s@, st, j as int + 1),
         depth > 0,
-        old(tape).room() >= cx.idx@.len() - (k - 1),
-        old(tape).inv(cx.s@),
+        old(tape).room() >= old(cx).kend - (k - 1),
+        old(tape).inv(old(cx).s@),
         old(tape).hist().len() <= j,
     ensures
-        r ==> final(tape).inv(cx.s@),
-        r ==> final(tape).room() >= cx.idx@.len() - (k + 1),
-        r ==> k < cx.idx@.len() && match value(cx.s@, j as int, depth as nat, old(tape).hist()) {
-            Some((t, e)) => final(tape).hist() == t && e == cx.idx@[k as int] as int + 1 && cnt(cx.s@, st, e) == k + 1
-                && out(cx.s@, st, e) && bnd(cx.s@, st, e) && e <= cx.s@.len(),
+        final(cx).inv(),
+        final(cx).same(old(cx)),
+        final(cx).kbase <= k,
+        r is Some ==> final(tape).inv(old(cx).s@),
+        r is Some ==> final(tape).room() >= final(cx).kend - (k + 1),
+        r matches Some(e) ==> match value(old(cx).s@, j as int, depth as nat, old(tape).hist()) {
+            Some((t, e2)) => final(tape).hist() == t && e2 == e && cnt(old(cx).s@, st, e2) == k + 1
+                && out(old(cx).s@, st, e2) && bnd(old(cx).s@, st, e2) && e2 <= old(cx).s@.len(),
             None => false,
         },
-        !r ==> *final(tape) == *old(tape),
+        r is None ==> final(cx).kend >= k && final(tape).hist() == old(tape).hist() && final(tape).room() >= final(cx).kend - (k - 1)
+            && forall|g: Seq<u8>| old(tape).inv(g) ==> #[trigger] final(tape).inv(g),
 {
     let s = cx.s;
-    let idx = cx.idx;
     let ghost g = s@;
     proof {
         lemma_close(g, st, j + 1);
+        lemma_prefix(g, st, j + 1, g.len() as int);
     }
-    if k < idx.len() {
-        let q = get32(idx, k) as usize;
+    if let Some(q) = at2(cx, k, tape, Ghost(k - 1)) {
         if get8(s, q) == 0x5D {
             proof {
                 assert(byte(g, q as int) == g[q as int]);
@@ -1371,46 +1510,53 @@ fn ex2_empty_array<S: Sink>(
             tape.push_fast(Tok::new(Kind::ArrStart, false, t + 1, 0, NO));
             tape.push_fast(tok(Kind::ArrEnd));
             assert(tape.hist() =~= close_at(old(tape).hist().push(STok::ArrStart { end: 0 }).push(STok::ArrEnd), t as int));
-            return true;
+            return Some(q + 1);
         }
     }
-    false
+    None
+}
+
+/// What the container functions keep, from `o` to `w`, for a result
+/// `r` of the index entry and position after what they read.
+pub open spec fn moved<S: Sink>(o: &Win, w: &Win, tape: &S, r: Option<(usize, usize)>) -> bool {
+    &&& w.inv()
+    &&& w.same(o)
+    &&& r is Some ==> tape.inv(o.s@)
+    &&& r matches Some((k2, _)) ==> tape.room() >= w.kend - k2 && w.kbase <= k2
 }
 
 /// An array or object at `j`, which is index entry `k - 1`.
 #[inline(never)]
 fn ex2_container<S: Sink>(
-    cx: &Ctx,
+    cx: &mut Ctx,
     k: usize,
     depth: usize,
     tape: &mut S,
     Ghost(st): Ghost<int>,
     j: usize,
-) -> (r: Option<usize>)
+) -> (r: Option<(usize, usize)>)
     requires
-        indexed(cx.s@, st, cx.idx@),
-        st <= j < cx.s@.len(),
-        cnt(cx.s@, st, j as int + 1) == k,
-        cx.s@[j as int] == 0x5B || cx.s@[j as int] == 0x7B,
-        out(cx.s@, st, j as int + 1),
-        bnd(cx.s@, st, j as int + 1),
-        old(tape).room() >= cx.idx@.len() - (k - 1),
-        old(tape).inv(cx.s@),
+        win_at(old(cx), old(cx).s@, st, k as int),
+        st <= j < old(cx).s@.len(),
+        cnt(old(cx).s@, st, j as int + 1) == k,
+        k >= 1,
+        k - 1 < old(cx).kend,
+        old(cx).s@[j as int] == 0x5B || old(cx).s@[j as int] == 0x7B,
+        out(old(cx).s@, st, j as int + 1),
+        bnd(old(cx).s@, st, j as int + 1),
+        old(tape).room() >= old(cx).kend - (k - 1),
+        old(tape).inv(old(cx).s@),
         old(tape).hist().len() <= j,
-        k <= cx.idx@.len(),
     ensures
-        r is Some ==> final(tape).inv(cx.s@),
-        r matches Some(k2) ==> final(tape).room() >= cx.idx@.len() - k2,
-        match value(cx.s@, j as int, depth as nat, old(tape).hist()) {
-            Some((t, e)) => r == Some(cnt(cx.s@, st, e) as usize) && final(tape).hist() == t
-                && 1 <= cnt(cx.s@, st, e) <= cx.idx@.len() && cx.idx@[cnt(cx.s@, st, e) - 1] as int + 1 == e
-                && out(cx.s@, st, e) && bnd(cx.s@, st, e) && e <= cx.s@.len(),
+        moved(old(cx), final(cx), final(tape), r),
+        match value(old(cx).s@, j as int, depth as nat, old(tape).hist()) {
+            Some((t, e)) => r == Some((cnt(old(cx).s@, st, e) as usize, e as usize)) && final(tape).hist() == t
+                && out(old(cx).s@, st, e) && bnd(old(cx).s@, st, e) && e <= old(cx).s@.len(),
             None => r is None,
         },
-    decreases depth, cx.s@.len() - j, 2nat,
+    decreases depth, old(cx).s@.len() - j, 2nat,
 {
     let s = cx.s;
-    let ghost idx = cx.idx;
     let ghost g = s@;
     if depth == 0 {
         return None;
@@ -1425,22 +1571,44 @@ fn ex2_container<S: Sink>(
         ex2_object(cx, k, depth, tape, Ghost(st), Ghost(j + 1))
     };
     match r {
-        Some((k2, _)) => {
+        Some((k2, e)) => {
             proof {
                 lemma_container_prefix(g, j as int, depth as nat, old(tape).hist(), c);
+                crate::lemmas::lemma_value_advances(g, j as int, depth as nat, old(tape).hist());
                 if let Some((_, e)) = value(g, j as int, depth as nat, old(tape).hist()) {
                     lemma_cnt_bound(g, st, e);
                 }
             }
             tape.close(t_idx);
-            Some(k2)
+            Some((k2, e))
         },
         None => None,
     }
 }
 
+/// The spec of the array and object functions, which start after the
+/// opening bracket, at `i`, index entry `k`.
+pub open spec fn cont_pre<S: Sink>(w: &Win, tape: &S, st: int, k: int, i: int) -> bool {
+    &&& win_at(w, w.s@, st, k)
+    &&& st < i <= w.s@.len()
+    &&& out(w.s@, st, i)
+    &&& bnd(w.s@, st, i)
+    &&& k == cnt(w.s@, st, i)
+    &&& tape.room() >= w.kend - k
+    &&& tape.inv(w.s@)
+    &&& tape.hist().len() <= i
+}
+
+pub open spec fn cont_post(g: Seq<u8>, st: int, spec: Option<(Seq<STok>, int)>, hist: Seq<STok>, r: Option<(usize, usize)>) -> bool {
+    match spec {
+        Some((t, e)) => r == Some((cnt(g, st, e) as usize, e as usize)) && hist == t && out(g, st, e) && bnd(g, st, e)
+            && e <= g.len(),
+        None => r is None,
+    }
+}
+
 fn ex2_array<S: Sink>(
-    cx: &Ctx,
+    cx: &mut Ctx,
     k: usize,
     depth: usize,
     tape: &mut S,
@@ -1448,49 +1616,24 @@ fn ex2_array<S: Sink>(
     Ghost(i): Ghost<int>,
 ) -> (r: Option<(usize, usize)>)
     requires
-        indexed(cx.s@, st, cx.idx@),
-        st < i <= cx.s@.len(),
-        out(cx.s@, st, i),
-        bnd(cx.s@, st, i),
-        k == cnt(cx.s@, st, i),
-        old(tape).room() >= cx.idx@.len() - k,
-        old(tape).inv(cx.s@),
-        old(tape).hist().len() <= i,
+        cont_pre(old(cx), old(tape), st, k as int, i),
     ensures
-        r is Some ==> final(tape).inv(cx.s@),
-        r matches Some((k2, _)) ==> final(tape).room() >= cx.idx@.len() - k2,
-        r matches Some((k2, e2)) ==> 1 <= k2 <= cx.idx@.len() && cx.idx@[k2 - 1] as int + 1 == e2,
-        match array(cx.s@, i, depth as nat, old(tape).hist()) {
-            Some((t, e)) => r == Some((cnt(cx.s@, st, e) as usize, e as usize)) && final(tape).hist() == t
-                && out(cx.s@, st, e) && bnd(cx.s@, st, e) && e <= cx.s@.len(),
-            None => r is None,
-        },
-    decreases depth, cx.s@.len() - i, 1nat,
+        moved(old(cx), final(cx), final(tape), r),
+        cont_post(old(cx).s@, st, array(old(cx).s@, i, depth as nat, old(tape).hist()), final(tape).hist(), r),
+    decreases depth, old(cx).s@.len() - i, 1nat,
 {
     let s = cx.s;
-    let idx = cx.idx;
     let ghost g = s@;
     proof {
         lemma_close(g, st, i);
     }
-    if k < idx.len() && get8(s, get32(idx, k) as usize) == 0x5D {
-        tape.push_fast(tok(Kind::ArrEnd));
-        return Some((k + 1, get32(idx, k) as usize + 1));
+    if let Some(q) = at2(cx, k, tape, Ghost(k as int)) {
+        if get8(s, q) == 0x5D {
+            tape.push_fast(tok(Kind::ArrEnd));
+            return Some((k + 1, q + 1));
+        }
     }
-    let ghost t0 = tape.hist();
-    match ex2_elements(cx, k, depth, tape, Ghost(st), Ghost(i)) {
-        Some(k2) => {
-            let e = get32(cx.idx, k2 - 1) as usize + 1;
-            proof {
-                if let Some((_, e0)) = elements(g, i, depth as nat, t0) {
-                    lemma_cnt_bound(g, st, e0);
-                    assert(e == e0);
-                }
-            }
-            Some((k2, e))
-        },
-        None => None,
-    }
+    ex2_elements(cx, k, depth, tape, Ghost(st), Ghost(i))
 }
 
 /// `ex2_array` in line: elements that are numbers are parsed here; at the
@@ -1498,7 +1641,7 @@ fn ex2_array<S: Sink>(
 #[allow(unused_variables)]
 #[inline(always)]
 fn ex2_array_inl<S: Sink>(
-    cx: &Ctx,
+    cx: &mut Ctx,
     k: usize,
     depth: usize,
     tape: &mut S,
@@ -1506,35 +1649,28 @@ fn ex2_array_inl<S: Sink>(
     Ghost(i0): Ghost<int>,
 ) -> (r: Option<(usize, usize)>)
     requires
-        indexed(cx.s@, st, cx.idx@),
-        st < i0 <= cx.s@.len(),
-        out(cx.s@, st, i0),
-        bnd(cx.s@, st, i0),
-        k == cnt(cx.s@, st, i0),
-        old(tape).room() >= cx.idx@.len() - k,
-        old(tape).inv(cx.s@),
-        old(tape).hist().len() <= i0,
+        cont_pre(old(cx), old(tape), st, k as int, i0),
     ensures
-        r is Some ==> final(tape).inv(cx.s@),
-        r matches Some((k2, _)) ==> final(tape).room() >= cx.idx@.len() - k2,
-        r matches Some((k2, e2)) ==> 1 <= k2 <= cx.idx@.len() && cx.idx@[k2 - 1] as int + 1 == e2,
-        match array(cx.s@, i0, depth as nat, old(tape).hist()) {
-            Some((t, e)) => r == Some((cnt(cx.s@, st, e) as usize, e as usize)) && final(tape).hist() == t
-                && out(cx.s@, st, e) && bnd(cx.s@, st, e) && e <= cx.s@.len(),
-            None => r is None,
-        },
-    decreases depth, cx.s@.len() - i0, 1nat,
+        moved(old(cx), final(cx), final(tape), r),
+        cont_post(old(cx).s@, st, array(old(cx).s@, i0, depth as nat, old(tape).hist()), final(tape).hist(), r),
+    decreases depth, old(cx).s@.len() - i0, 1nat,
 {
     let s = cx.s;
-    let idx = cx.idx;
     let ghost g = s@;
     proof {
         lemma_close(g, st, i0);
     }
-    if k < idx.len() && get8(s, get32(idx, k) as usize) == 0x5D {
-        tape.push_fast(tok(Kind::ArrEnd));
-        return Some((k + 1, get32(idx, k) as usize + 1));
-    }
+    let c0 = match at2(cx, k, tape, Ghost(k as int)) {
+        Some(q) => {
+            let c = get8(s, q);
+            if c == 0x5D {
+                tape.push_fast(tok(Kind::ArrEnd));
+                return Some((k + 1, q + 1));
+            }
+            c
+        },
+        None => return ex2_elements(cx, k, depth, tape, Ghost(st), Ghost(i0)),
+    };
     if depth == 0 {
         return None;
     }
@@ -1542,60 +1678,34 @@ fn ex2_array_inl<S: Sink>(
     assert(array(g, i0, depth as nat, t0) == elements(g, i0, depth as nat, t0));
     let ghost mut i = i0;
     let mut k = k;
+    let mut c0 = c0;
     loop
         invariant
             array(g, i0, depth as nat, t0) == elements(g, i0, depth as nat, t0),
             g == s@,
-            g == cx.s@,
-            idx@ == cx.idx@,
-            indexed(g, st, idx@),
+            cx.inv(),
+            cx.s@ == g,
+            g.len() <= MAX_INPUT,
+            cx.st == st,
+            cx.same(old(cx)),
+            cx.kbase <= k,
             st < i0 <= i <= g.len(),
             out(g, st, i),
             bnd(g, st, i),
             k == cnt(g, st, i),
             depth > 0,
-            tape.room() >= idx@.len() - k,
+            tape.room() >= cx.kend - k,
             tape.inv(g),
             tape.hist().len() <= i,
             t0 == old(tape).hist(),
             elements(g, i0, depth as nat, t0) == elements(g, i, depth as nat, tape.hist()),
+            k < cx.kend,
+            k < ix(g, st).len(),
+            c0 == g[ix(g, st)[k as int]],
         decreases g.len() - i,
     {
-        if k >= idx.len() {
-            let ghost t1 = tape.hist();
-            return match ex2_elements(cx, k, depth, tape, Ghost(st), Ghost(i)) {
-                Some(k2) => {
-                    let e = get32(cx.idx, k2 - 1) as usize + 1;
-                    proof {
-                        if let Some((_, e0)) = elements(g, i, depth as nat, t1) {
-                            lemma_cnt_bound(g, st, e0);
-                            assert(e == e0);
-                        }
-                    }
-                    Some((k2, e))
-                },
-                None => None,
-            };
-        }
-        proof {
-            lemma_entry(g, st, g.len() as int, k as int);
-        }
-        let c0 = get8(s, get32(idx, k) as usize);
         if !(c0 == 0x2D || ex_is_digit(c0)) {
-            let ghost t1 = tape.hist();
-            return match ex2_elements(cx, k, depth, tape, Ghost(st), Ghost(i)) {
-                Some(k2) => {
-                    let e = get32(cx.idx, k2 - 1) as usize + 1;
-                    proof {
-                        if let Some((_, e0)) = elements(g, i, depth as nat, t1) {
-                            lemma_cnt_bound(g, st, e0);
-                            assert(e == e0);
-                        }
-                    }
-                    Some((k2, e))
-                },
-                None => None,
-            };
+            return ex2_elements(cx, k, depth, tape, Ghost(st), Ghost(i));
         }
         let ghost tb = tape.hist();
         let (k1, e) = match ex2_value::<S, 0>(cx, k, depth - 1, tape, Ghost(st), Ghost(i)) {
@@ -1616,12 +1726,13 @@ fn ex2_array_inl<S: Sink>(
             crate::lemmas::lemma_value_advances(g, skip_ws(g, i), (depth - 1) as nat, tb);
             crate::lemmas::lemma_value_size(g, skip_ws(g, i), (depth - 1) as nat, tb);
             lemma_close(g, st, e as int);
+            lemma_cnt_bound(g, st, e as int);
         }
         let ghost tk = tape.hist();
-        if k1 >= idx.len() {
-            return None;
-        }
-        let q = get32(idx, k1) as usize;
+        let q = match at2(cx, k1, tape, Ghost(k1 as int)) {
+            Some(q) => q,
+            None => return None,
+        };
         let c = get8(s, q);
         if c == 0x5D {
             tape.push_fast(tok(Kind::ArrEnd));
@@ -1633,44 +1744,34 @@ fn ex2_array_inl<S: Sink>(
         proof {
             assert(elements(g, i, depth as nat, tb) == elements(g, q as int + 1, depth as nat, tk));
             i = q + 1;
+            lemma_close(g, st, i);
         }
         k = k1 + 1;
+        c0 = match at2(cx, k, tape, Ghost(k as int)) {
+            Some(q) => get8(s, q),
+            None => return ex2_elements(cx, k, depth, tape, Ghost(st), Ghost(i)),
+        };
     }
 }
 
 #[allow(unused_variables)]
 #[inline(never)]
 fn ex2_elements<S: Sink>(
-    cx: &Ctx,
+    cx: &mut Ctx,
     k0: usize,
     depth: usize,
     tape: &mut S,
     Ghost(st): Ghost<int>,
     Ghost(i0): Ghost<int>,
-) -> (r: Option<usize>)
+) -> (r: Option<(usize, usize)>)
     requires
-        indexed(cx.s@, st, cx.idx@),
-        st < i0 <= cx.s@.len(),
-        out(cx.s@, st, i0),
-        bnd(cx.s@, st, i0),
-        k0 == cnt(cx.s@, st, i0),
-        old(tape).room() >= cx.idx@.len() - k0,
-        old(tape).inv(cx.s@),
-        old(tape).hist().len() <= i0,
+        cont_pre(old(cx), old(tape), st, k0 as int, i0),
     ensures
-        r is Some ==> final(tape).inv(cx.s@),
-        r matches Some(k2) ==> final(tape).room() >= cx.idx@.len() - k2,
-        r matches Some(k2) ==> 1 <= k2 <= cx.idx@.len() && (cx.idx@[k2 - 1] as int) < cx.s@.len(),
-        match elements(cx.s@, i0, depth as nat, old(tape).hist()) {
-            Some((t, e)) => r == Some(cnt(cx.s@, st, e) as usize) && cx.idx@[cnt(cx.s@, st, e) - 1] as int
-                + 1 == e && final(tape).hist() == t && out(cx.s@, st, e) && bnd(cx.s@, st, e) && e
-                <= cx.s@.len(),
-            None => r is None,
-        },
-    decreases depth, cx.s@.len() - i0, 0nat,
+        moved(old(cx), final(cx), final(tape), r),
+        cont_post(old(cx).s@, st, elements(old(cx).s@, i0, depth as nat, old(tape).hist()), final(tape).hist(), r),
+    decreases depth, old(cx).s@.len() - i0, 0nat,
 {
     let s = cx.s;
-    let idx = cx.idx;
     if depth == 0 {
         return None;
     }
@@ -1681,15 +1782,18 @@ fn ex2_elements<S: Sink>(
     loop
         invariant
             g == s@,
-            g == cx.s@,
-            idx@ == cx.idx@,
-            indexed(g, st, idx@),
+            cx.inv(),
+            cx.s@ == g,
+            g.len() <= MAX_INPUT,
+            cx.st == st,
+            cx.same(old(cx)),
+            cx.kbase <= k,
             st < i0 <= i <= g.len(),
             out(g, st, i),
             bnd(g, st, i),
             k == cnt(g, st, i),
             depth > 0,
-            tape.room() >= idx@.len() - k,
+            tape.room() >= cx.kend - k,
             tape.inv(g),
             tape.hist().len() <= i,
             t0 == old(tape).hist(),
@@ -1715,16 +1819,17 @@ fn ex2_elements<S: Sink>(
             crate::lemmas::lemma_value_advances(g, skip_ws(g, i), (depth - 1) as nat, tb);
             crate::lemmas::lemma_value_size(g, skip_ws(g, i), (depth - 1) as nat, tb);
             lemma_close(g, st, e as int);
+            lemma_cnt_bound(g, st, e as int);
         }
         let ghost tk = tape.hist();
-        if k1 >= idx.len() {
-            return None;
-        }
-        let q = get32(idx, k1) as usize;
+        let q = match at2(cx, k1, tape, Ghost(k1 as int)) {
+            Some(q) => q,
+            None => return None,
+        };
         let c = get8(s, q);
         if c == 0x5D {
             tape.push_fast(tok(Kind::ArrEnd));
-            return Some(k1 + 1);
+            return Some((k1 + 1, q + 1));
         }
         if c != 0x2C {
             return None;
@@ -1738,7 +1843,7 @@ fn ex2_elements<S: Sink>(
 }
 
 fn ex2_object<S: Sink>(
-    cx: &Ctx,
+    cx: &mut Ctx,
     k: usize,
     depth: usize,
     tape: &mut S,
@@ -1746,34 +1851,22 @@ fn ex2_object<S: Sink>(
     Ghost(i): Ghost<int>,
 ) -> (r: Option<(usize, usize)>)
     requires
-        indexed(cx.s@, st, cx.idx@),
-        st < i <= cx.s@.len(),
-        out(cx.s@, st, i),
-        bnd(cx.s@, st, i),
-        k == cnt(cx.s@, st, i),
-        old(tape).room() >= cx.idx@.len() - k,
-        old(tape).inv(cx.s@),
-        old(tape).hist().len() <= i,
+        cont_pre(old(cx), old(tape), st, k as int, i),
     ensures
-        r is Some ==> final(tape).inv(cx.s@),
-        r matches Some((k2, _)) ==> final(tape).room() >= cx.idx@.len() - k2,
-        r matches Some((k2, e2)) ==> 1 <= k2 <= cx.idx@.len() && cx.idx@[k2 - 1] as int + 1 == e2,
-        match object(cx.s@, i, depth as nat, old(tape).hist()) {
-            Some((t, e)) => r == Some((cnt(cx.s@, st, e) as usize, e as usize)) && final(tape).hist() == t
-                && out(cx.s@, st, e) && bnd(cx.s@, st, e) && e <= cx.s@.len(),
-            None => r is None,
-        },
-    decreases depth, cx.s@.len() - i, 2nat,
+        moved(old(cx), final(cx), final(tape), r),
+        cont_post(old(cx).s@, st, object(old(cx).s@, i, depth as nat, old(tape).hist()), final(tape).hist(), r),
+    decreases depth, old(cx).s@.len() - i, 2nat,
 {
     let s = cx.s;
-    let idx = cx.idx;
     let ghost g = s@;
     proof {
         lemma_close(g, st, i);
     }
-    if k < idx.len() && get8(s, get32(idx, k) as usize) == 0x7D {
-        tape.push_fast(tok(Kind::ObjEnd));
-        return Some((k + 1, get32(idx, k) as usize + 1));
+    if let Some(q) = at2(cx, k, tape, Ghost(k as int)) {
+        if get8(s, q) == 0x7D {
+            tape.push_fast(tok(Kind::ObjEnd));
+            return Some((k + 1, q + 1));
+        }
     }
     ex2_members(cx, k, depth, tape, Ghost(st), Ghost(i))
 }
@@ -1830,7 +1923,7 @@ proof fn lemma_member_size(s: Seq<u8>, i: int, depth: nat, tape: Seq<STok>)
 
 #[inline(always)]
 fn ex2_member<S: Sink>(
-    cx: &Ctx,
+    cx: &mut Ctx,
     k: usize,
     depth: usize,
     tape: &mut S,
@@ -1838,23 +1931,15 @@ fn ex2_member<S: Sink>(
     Ghost(i): Ghost<int>,
 ) -> (r: Option<(usize, usize)>)
     requires
-        indexed(cx.s@, st, cx.idx@),
-        st < i <= cx.s@.len(),
-        out(cx.s@, st, i),
-        bnd(cx.s@, st, i),
-        k == cnt(cx.s@, st, i),
+        cont_pre(old(cx), old(tape), st, k as int, i),
         depth > 0,
-        old(tape).room() >= cx.idx@.len() - k,
-        old(tape).inv(cx.s@),
-        old(tape).hist().len() <= i,
     ensures
-        r is Some ==> final(tape).inv(cx.s@),
-        r matches Some((k2, _)) ==> final(tape).room() >= cx.idx@.len() - k2,
-        member(cx.s@, i, depth as nat, old(tape).hist()) matches Some((_, e)) ==> i < e <= cx.s@.len(),
-        match member(cx.s@, i, depth as nat, old(tape).hist()) {
-            Some((t, e)) => if bnd(cx.s@, st, e) {
-                r == Some((cnt(cx.s@, st, e) as usize, e as usize)) && final(tape).hist() == t && out(
-                    cx.s@,
+        moved(old(cx), final(cx), final(tape), r),
+        member(old(cx).s@, i, depth as nat, old(tape).hist()) matches Some((_, e)) ==> i < e <= old(cx).s@.len(),
+        match member(old(cx).s@, i, depth as nat, old(tape).hist()) {
+            Some((t, e)) => if bnd(old(cx).s@, st, e) {
+                r == Some((cnt(old(cx).s@, st, e) as usize, e as usize)) && final(tape).hist() == t && out(
+                    old(cx).s@,
                     st,
                     e,
                 )
@@ -1863,42 +1948,55 @@ fn ex2_member<S: Sink>(
             },
             None => r is None,
         },
-    decreases depth, cx.s@.len() - i, 0nat,
+    decreases depth, old(cx).s@.len() - i, 0nat,
 {
     let s = cx.s;
-    let idx = cx.idx;
     let ghost g = s@;
     proof {
         lemma_close(g, st, i);
         crate::lemmas::lemma_skip_ws_bounds(g, i);
     }
-    if k >= idx.len() {
-        return None;
-    }
-    let j = get32(idx, k) as usize;
+    let j = match at2(cx, k, tape, Ghost(k as int)) {
+        Some(j) => j,
+        None => return None,
+    };
     if get8(s, j) != 0x22 {
         return None;
     }
     proof {
         lemma_skip(g, st, i);
     }
-    let (k1, n, esc) = match tape.scan_str(s, idx, k, Ghost(st)) {
+    let kend0 = cx.kend;
+    let (k1, n, esc) = match tape.scan_str(cx, k, j, Ghost(st)) {
         Some(x) => x,
         None => return None,
     };
     proof {
         crate::lemmas::lemma_string_body_advances(g, j + 1, false);
         lemma_close(g, st, n as int);
+        lemma_cnt_bound(g, st, n as int);
     }
-    if k1 >= idx.len() {
-        return None;
-    }
-    let cpos = get32(idx, k1) as usize;
-    if get8(s, cpos) != 0x3A {
-        return None;
-    }
+    // The key goes on the tape before its colon is checked, while the
+    // string scan's state is still the tape's; a missing colon fails the
+    // parse anyway.
     tape.push_str_fast(Tok::new(Kind::Key, esc, (j + 1), (n - 1), NO), s);
     let ghost tkey = tape.hist();
+    keep_room(cx, tape, kend0, Ghost(k1 as int));
+    let cpos = match at2(cx, k1, tape, Ghost(k1 as int)) {
+        Some(q) => q,
+        None => return None,
+    };
+    proof {
+        assert(j == skip_ws(g, i));
+        assert(string(g, j as int) == Some((n as int, esc)));
+        assert(cpos == skip_ws(g, n as int));
+    }
+    if get8(s, cpos) != 0x3A {
+        proof {
+            assert(member(g, i, depth as nat, old(tape).hist()) is None);
+        }
+        return None;
+    }
     proof {
         crate::lemmas::lemma_skip_ws_bounds(g, cpos + 1);
         crate::lemmas::lemma_value_advances(g, skip_ws(g, cpos + 1), (depth - 1) as nat, tkey);
@@ -1910,7 +2008,7 @@ fn ex2_member<S: Sink>(
 #[verifier::spinoff_prover]
 #[verifier::rlimit(200)]
 fn ex2_members<S: Sink>(
-    cx: &Ctx,
+    cx: &mut Ctx,
     k0: usize,
     depth: usize,
     tape: &mut S,
@@ -1918,27 +2016,13 @@ fn ex2_members<S: Sink>(
     Ghost(i0): Ghost<int>,
 ) -> (r: Option<(usize, usize)>)
     requires
-        indexed(cx.s@, st, cx.idx@),
-        st < i0 <= cx.s@.len(),
-        out(cx.s@, st, i0),
-        bnd(cx.s@, st, i0),
-        k0 == cnt(cx.s@, st, i0),
-        old(tape).room() >= cx.idx@.len() - k0,
-        old(tape).inv(cx.s@),
-        old(tape).hist().len() <= i0,
+        cont_pre(old(cx), old(tape), st, k0 as int, i0),
     ensures
-        r is Some ==> final(tape).inv(cx.s@),
-        r matches Some((k2, _)) ==> final(tape).room() >= cx.idx@.len() - k2,
-        r matches Some((k2, e2)) ==> 1 <= k2 <= cx.idx@.len() && cx.idx@[k2 - 1] as int + 1 == e2,
-        match members(cx.s@, i0, depth as nat, old(tape).hist()) {
-            Some((t, e)) => r == Some((cnt(cx.s@, st, e) as usize, e as usize)) && final(tape).hist() == t
-                && out(cx.s@, st, e) && bnd(cx.s@, st, e) && e <= cx.s@.len(),
-            None => r is None,
-        },
-    decreases depth, cx.s@.len() - i0, 1nat,
+        moved(old(cx), final(cx), final(tape), r),
+        cont_post(old(cx).s@, st, members(old(cx).s@, i0, depth as nat, old(tape).hist()), final(tape).hist(), r),
+    decreases depth, old(cx).s@.len() - i0, 1nat,
 {
     let s = cx.s;
-    let idx = cx.idx;
     if depth == 0 {
         return None;
     }
@@ -1949,15 +2033,18 @@ fn ex2_members<S: Sink>(
     loop
         invariant
             g == s@,
-            g == cx.s@,
-            idx@ == cx.idx@,
-            indexed(g, st, idx@),
+            cx.inv(),
+            cx.s@ == g,
+            g.len() <= MAX_INPUT,
+            cx.st == st,
+            cx.same(old(cx)),
+            cx.kbase <= k,
             st < i0 <= i <= g.len(),
             out(g, st, i),
             bnd(g, st, i),
             k == cnt(g, st, i),
             depth > 0,
-            tape.room() >= idx@.len() - k,
+            tape.room() >= cx.kend - k,
             tape.inv(g),
             tape.hist().len() <= i,
             t0 == old(tape).hist(),
@@ -1978,13 +2065,14 @@ fn ex2_members<S: Sink>(
         };
         proof {
             lemma_close(g, st, e as int);
+            lemma_cnt_bound(g, st, e as int);
             lemma_member_size(g, i, depth as nat, tb);
         }
         let ghost tk = tape.hist();
-        if k2 >= idx.len() {
-            return None;
-        }
-        let q = get32(idx, k2) as usize;
+        let q = match at2(cx, k2, tape, Ghost(k2 as int)) {
+            Some(q) => q,
+            None => return None,
+        };
         let c = get8(s, q);
         if c == 0x7D {
             tape.push_fast(tok(Kind::ObjEnd));
@@ -2006,14 +2094,17 @@ fn ex2_members<S: Sink>(
 // ---------------------------------------------------------------------------
 
 /// Parses a complete JSON text (only whitespace may follow the value) in
-/// two passes: `index` finds the structural bytes, then the value is read
-/// through that index. Falls back to the one-pass parser when the input is
-/// too large to index or stage 1 rejects it, so the result is exactly
-/// `document(s, true)` either way. `idx` is scratch space.
-pub fn parse2_with<S: Sink>(s: &[u8], tape: &mut S, idx: &mut Vec<u32>) -> (r: Result<usize, usize>)
+/// two passes, interleaved: `Win` finds the structural bytes of the input
+/// a window at a time, and the value is read through it, so the index
+/// takes a fixed amount of memory however long the input. The result is
+/// exactly `document(s, true)`. `idx` is the window's buffer, kept for the
+/// next parse.
+pub fn parse2_with<S: Sink>(s: &[u8], tape: &mut S, idx: &mut Vec<u32>, win: usize) -> (r: Result<usize, usize>)
     requires
         old(tape).hist() == Seq::<STok>::empty(),
         old(tape).inv(s@),
+        128 <= win <= 0x4000_0000,
+        win % 128 == 0,
     ensures
         r is Ok ==> final(tape).inv(s@),
         match document(s@, true) {
@@ -2022,31 +2113,51 @@ pub fn parse2_with<S: Sink>(s: &[u8], tape: &mut S, idx: &mut Vec<u32>) -> (r: R
             None => r is Err,
         },
 {
-    if s.len() > (u32::MAX - 64) as usize {
-        return parse_with(s, true, tape);
+    if s.len() > MAX_INPUT {
+        return Err(MAX_INPUT);
     }
     let start = if ex_has_lit(s, 0, &[0xEF, 0xBB, 0xBF]) { 3 } else { 0 };
     proof {
         assert([0xEFu8, 0xBB, 0xBF]@ == seq![0xEFu8, 0xBB, 0xBF]);
     }
-    let (n, ok, utf8) = crate::index::index(s, start, idx);
-    if !ok {
-        return parse_with(s, true, tape);
-    }
-    let idx = slice_prefix(idx.as_slice(), n);
+    let mut buf = Vec::new();
+    std::mem::swap(idx, &mut buf);
+    let mut cx = Win::new(s, start, win, buf);
+    let r = parse2_win(s, tape, &mut cx, start);
+    let mut buf = cx.into_buf();
+    std::mem::swap(idx, &mut buf);
+    r
+}
+
+/// `parse2_with` on the window `cx`, fresh at the start of the text.
+pub fn parse2_win<S: Sink>(s: &[u8], tape: &mut S, cx: &mut Win, start: usize) -> (r: Result<usize, usize>)
+    requires
+        old(tape).hist() == Seq::<STok>::empty(),
+        old(tape).inv(s@),
+        old(cx).inv(),
+        old(cx).s@ == s@,
+        old(cx).st == start,
+        old(cx).kbase == 0,
+        old(cx).kend == 0,
+        start == bom_end(s@),
+        s@.len() <= MAX_INPUT,
+    ensures
+        r is Ok ==> final(tape).inv(s@),
+        match document(s@, true) {
+            Some((t, e)) => r is Ok && final(tape).hist() == t && r.unwrap() as int == e && e
+                <= s@.len(),
+            None => r is Err,
+        },
+{
     let ghost g = s@;
     let ghost st = start as int;
     proof {
-        assert(positions(g, st, st, st) =~= Seq::<u32>::empty());
-        assert(st == bom_end(g));
+        assert(positions(g, st, st, st) =~= Seq::<int>::empty());
         crate::lemmas::lemma_skip_ws_bounds(g, st);
         crate::lemmas::lemma_value_advances(g, skip_ws(g, st), MAX_DEPTH as nat, Seq::empty());
     }
-    // Every token stands for at least one index entry, so this is room
-    // enough for `push_fast`.
-    tape.reserve(n);
-    let cx = Ctx { s, idx };
-    let (k, e) = match ex2_value::<S, 1>(&cx, 0, MAX_DEPTH, tape, Ghost(st), Ghost(st)) {
+    tape.reserve(2);
+    let (k, e) = match ex2_value::<S, 1>(cx, 0, MAX_DEPTH, tape, Ghost(st), Ghost(st)) {
         Some(x) => x,
         None => {
             proof {
@@ -2059,32 +2170,40 @@ pub fn parse2_with<S: Sink>(s: &[u8], tape: &mut S, idx: &mut Vec<u32>) -> (r: R
     };
     proof {
         lemma_close(g, st, e as int);
+        lemma_cnt_bound(g, st, e as int);
     }
-    if k != idx.len() {
+    // Only whitespace may follow: the rest of the input indexes to nothing.
+    if cx.at(k).is_some() {
         return Err(e);
     }
     proof {
         assert(g.subrange(0, g.len() as int) =~= g);
     }
-    if !utf8 {
+    if !cx.utf8 {
         return Err(0);
     }
     Ok(e)
 }
 
-/// `s[..n]`.
-#[inline(always)]
-pub fn slice_prefix(s: &[u32], n: usize) -> (r: &[u32])
-    requires
-        n <= s@.len(),
-    ensures
-        r@ == s@.subrange(0, n as int),
-{
-    &s[..n]
-}
-
 /// `parse2_with` into a `Tape`, which is cleared first.
 pub fn parse2_into(s: &[u8], tape: &mut Tape, idx: &mut Vec<u32>) -> (r: Result<usize, usize>)
+    ensures
+        match document(s@, true) {
+            Some((t, e)) => r is Ok && final(tape)@ == t && r.unwrap() as int == e && e <= s@.len()
+                && crate::lemmas::in_bounds(s@.len() as int, t) && crate::lemmas::ends_value(t)
+                && t.len() <= s@.len() && crate::lemmas::links_from(t, 0),
+            None => r is Err,
+        },
+{
+    parse2_window(s, tape, idx, WINDOW)
+}
+
+/// `parse2_into` with windows of `win` bytes, a multiple of 128 (for
+/// tests; `WINDOW` otherwise).
+pub fn parse2_window(s: &[u8], tape: &mut Tape, idx: &mut Vec<u32>, win: usize) -> (r: Result<usize, usize>)
+    requires
+        128 <= win <= 0x4000_0000,
+        win % 128 == 0,
     ensures
         match document(s@, true) {
             Some((t, e)) => r is Ok && final(tape)@ == t && r.unwrap() as int == e && e <= s@.len()
@@ -2100,7 +2219,7 @@ pub fn parse2_into(s: &[u8], tape: &mut Tape, idx: &mut Vec<u32>) -> (r: Result<
     }
     tape.clear();
     assert(tape@ =~= Seq::<STok>::empty());
-    match parse2_with(s, tape, idx) {
+    match parse2_with(s, tape, idx, win) {
         Ok(k) => Ok(k),
         Err(p) => Err(if p > tape.err_pos { p } else { tape.err_pos }),
     }
@@ -2128,7 +2247,7 @@ pub fn parse2_eager_into(s: &[u8], tape: &mut EagerTape, idx: &mut Vec<u32>) -> 
     tape.tape.clear();
     assert(tape.tape@ =~= Seq::<STok>::empty());
     assert(crate::lemmas::weight(Seq::<STok>::empty()) == 0);
-    match parse2_with(s, tape, idx) {
+    match parse2_with(s, tape, idx, WINDOW) {
         Ok(k) => Ok(k),
         Err(p) => Err(if p > tape.tape.err_pos { p } else { tape.tape.err_pos }),
     }
