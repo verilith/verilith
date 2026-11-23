@@ -15,7 +15,7 @@
 // * `decode`  - verified line-end and attribute-value normalization.
 // * `scan`, `lanes` - the SSE2 scanners, verified over verilith-simd.
 // * `tape`    - the tokens the parser writes.
-#![cfg_attr(not(verus_keep_ghost), allow(unused_imports))]
+#![cfg_attr(not(verus_keep_ghost), allow(unused_imports, unused_variables))]
 #[doc(hidden)]
 pub mod chars;
 #[doc(hidden)]

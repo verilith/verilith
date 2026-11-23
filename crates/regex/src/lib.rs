@@ -1,6 +1,10 @@
 #![doc = include_str!("../README.md")]
 // A linear-time regular expression engine with RE2's syntax.
-#![cfg_attr(not(verus_keep_ghost), allow(unused_variables, unused_imports, dead_code))]
+// A normal build erases ghost code, so a variable, import, field or value
+// used only by proofs looks unused there, and the `verus!` syntax leaves
+// some redundant braces and parentheses. These lints are off in that build
+// only.
+#![cfg_attr(not(verus_keep_ghost), allow(unused_variables, unused_imports, dead_code, unused_braces, non_shorthand_field_patterns))]
 #[doc(hidden)]
 pub mod ast;
 #[doc(hidden)]

@@ -2371,7 +2371,7 @@ pub fn ex_value<S: Sink>(s: &[u8], i: usize, depth: usize, tape: &mut S) -> (r: 
     if c == 0x22 {
         match ex_string(s, i) {
             Some((n, esc)) => {
-                tape.push(Tok::new(Kind::Str, esc, (i + 1), (n - 1), NO));
+                tape.push(Tok::new(Kind::Str, esc, i + 1, n - 1, NO));
                 Some(n)
             },
             None => {

@@ -1036,7 +1036,7 @@ impl<'a> Cursor<'a> {
         proof {
             lemma_number_lexeme(g, j as int);
         }
-        match (if verilith_simd::neon::has_neon() { ex_number_scan_k(self.s, j) } else { ex_number_scan(self.s, j) }) {
+        match if verilith_simd::neon::has_neon() { ex_number_scan_k(self.s, j) } else { ex_number_scan(self.s, j) } {
             Some((e, v, ok)) => {
                 proof {
                     lemma_scalar_run(g, st, j as int, e as int);

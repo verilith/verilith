@@ -123,8 +123,8 @@ pub fn encode_into(cfg: Config, x: &[u8], out: &mut [u8])
         final(out)@ == encode(cfg, x@),
 {
     let g = if verilith_simd::cpu::has_avx2() {
-        // SAFETY: the CPU has AVX2.
-        unsafe { super::avx2::encode_bulk(cfg.url, x, out) }
+        // The CPU has AVX2.
+        super::avx2::encode_bulk(cfg.url, x, out)
     } else {
         0
     };
@@ -443,8 +443,8 @@ pub fn decode_into(cfg: Config, s: &[u8], out: &mut [u8]) -> (ok: bool)
         assert(3 * (m / 4) <= decoded_len(m as nat));
     }
     let (g, ok) = if verilith_simd::cpu::has_avx2() {
-        // SAFETY: the CPU has AVX2.
-        unsafe { super::avx2::decode_bulk(cfg.url, s, m, out) }
+        // The CPU has AVX2.
+        super::avx2::decode_bulk(cfg.url, s, m, out)
     } else {
         (0, true)
     };

@@ -204,8 +204,8 @@ pub fn encode_into(upper: bool, x: &[u8], out: &mut [u8])
         &DIGITS_LO
     };
     let mut i = if verilith_simd::cpu::has_avx2() {
-        // SAFETY: the CPU has AVX2.
-        unsafe { super::avx2::encode_bulk(upper, x, out) }
+        // The CPU has AVX2.
+        super::avx2::encode_bulk(upper, x, out)
     } else {
         0
     };
@@ -246,8 +246,8 @@ pub fn decode_into(s: &[u8], out: &mut [u8]) -> (ok: bool)
     }
     let n = s.len() / 2;
     let (mut i, ok) = if verilith_simd::cpu::has_avx2() {
-        // SAFETY: the CPU has AVX2.
-        unsafe { super::avx2::decode_bulk(s, out) }
+        // The CPU has AVX2.
+        super::avx2::decode_bulk(s, out)
     } else {
         (0, true)
     };

@@ -1,6 +1,10 @@
 #![doc = include_str!("../README.md")]
 // A formally verified WHATWG URL parser.
-#![cfg_attr(not(verus_only), allow(unused_variables, non_shorthand_field_patterns))]
+// A normal build erases ghost code, so a variable, import, field or value
+// used only by proofs looks unused there, and the `verus!` syntax leaves
+// some redundant braces and parentheses. These lints are off in that build
+// only.
+#![cfg_attr(not(verus_only), allow(unused_variables, unused_imports, unused_assignments, dead_code, non_shorthand_field_patterns))]
 #[doc(hidden)]
 pub mod encode;
 #[doc(hidden)]

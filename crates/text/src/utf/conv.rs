@@ -79,8 +79,8 @@ fn v_ascii32<const NEON: bool>(s: &[u8], i: usize) -> (r: bool)
     if NEON {
         ascii32_neon(s, i)
     } else {
-        // SAFETY: the CPU has AVX2.
-        unsafe { ascii32(s, i) }
+        // The CPU has AVX2.
+        ascii32(s, i)
     }
 }
 
@@ -95,8 +95,8 @@ fn v_ascii64<const NEON: bool>(s: &[u8], i: usize) -> (r: bool)
     if NEON {
         ascii64_neon(s, i)
     } else {
-        // SAFETY: the CPU has AVX2.
-        unsafe { ascii64(s, i) }
+        // The CPU has AVX2.
+        ascii64(s, i)
     }
 }
 
@@ -118,8 +118,8 @@ fn v_widen32<const NEON: bool>(s: &[u8], i: usize, out: &mut [u16], o: usize)
     if NEON {
         widen32_neon(s, i, out, o)
     } else {
-        // SAFETY: the CPU has AVX2.
-        unsafe { widen32(s, i, out, o) }
+        // The CPU has AVX2.
+        widen32(s, i, out, o)
     }
 }
 
@@ -142,8 +142,8 @@ fn v_narrow32<const NEON: bool>(s: &[u16], i: usize, out: &mut [u8], o: usize)
     if NEON {
         narrow32_neon(s, i, out, o)
     } else {
-        // SAFETY: the CPU has AVX2.
-        unsafe { narrow32(s, i, out, o) }
+        // The CPU has AVX2.
+        narrow32(s, i, out, o)
     }
 }
 
@@ -158,8 +158,8 @@ fn v_below32<const NEON: bool>(s: &[u16], i: usize, ascii_only: bool) -> (r: boo
     if NEON {
         below32_neon(s, i, ascii_only)
     } else {
-        // SAFETY: the CPU has AVX2.
-        unsafe { below32(s, i, ascii_only) }
+        // The CPU has AVX2.
+        below32(s, i, ascii_only)
     }
 }
 
@@ -260,8 +260,8 @@ pub fn ascii_prefix(s: &[u8]) -> (r: usize)
         r < s.len() ==> s@[r as int] >= 0x80,
 {
     if has_avx2() {
-        // SAFETY: the CPU has AVX2.
-        unsafe { ascii_prefix_avx2(s) }
+        // The CPU has AVX2.
+        ascii_prefix_avx2(s)
     } else if has_neon() {
         ascii_prefix_impl::<true>(true, s)
     } else {
@@ -397,8 +397,8 @@ pub fn latin1_to_utf8(s: &[u8], out: &mut [u8]) -> (r: usize)
         final(out)@.subrange(0, r as int) == l1to8(s@, 0),
 {
     if has_avx2() {
-        // SAFETY: the CPU has AVX2.
-        unsafe { latin1_to_utf8_avx2(s, out) }
+        // The CPU has AVX2.
+        latin1_to_utf8_avx2(s, out)
     } else if has_neon() {
         latin1_to_utf8_impl::<true>(true, s, out)
     } else {
@@ -541,8 +541,8 @@ pub fn latin1_to_utf8_safe(s: &[u8], out: &mut [u8]) -> (r: (usize, usize))
         r.0 < s.len() ==> r.1 + utf8_encode(s@[r.0 as int] as u32).len() > final(out).len(),
 {
     if has_avx2() {
-        // SAFETY: the CPU has AVX2.
-        unsafe { latin1_to_utf8_safe_avx2(s, out) }
+        // The CPU has AVX2.
+        latin1_to_utf8_safe_avx2(s, out)
     } else if has_neon() {
         latin1_to_utf8_safe_impl::<true>(true, s, out)
     } else {
@@ -632,8 +632,8 @@ pub fn latin1_to_utf16(s: &[u8], out: &mut [u16])
         forall|k: int| 0 <= k < s.len() ==> #[trigger] final(out)@[k] == s@[k] as u16,
 {
     if has_avx2() {
-        // SAFETY: the CPU has AVX2.
-        unsafe { latin1_to_utf16_avx2(s, out) }
+        // The CPU has AVX2.
+        latin1_to_utf16_avx2(s, out)
     } else if has_neon() {
         latin1_to_utf16_impl::<true>(true, s, out)
     } else {
@@ -731,8 +731,8 @@ pub fn utf16_to_latin1(s: &[u16], out: &mut [u8]) -> (r: bool)
         r ==> forall|k: int| 0 <= k < s.len() ==> #[trigger] final(out)@[k] == s@[k] as u8,
 {
     if has_avx2() {
-        // SAFETY: the CPU has AVX2.
-        unsafe { utf16_to_latin1_avx2(s, out) }
+        // The CPU has AVX2.
+        utf16_to_latin1_avx2(s, out)
     } else if has_neon() {
         utf16_to_latin1_impl::<true>(true, s, out)
     } else {
@@ -918,8 +918,8 @@ pub fn utf8_to_utf16(s: &[u8], out: &mut [u16]) -> (r: Option<usize>)
         return None;
     }
     if has_avx2() {
-        // SAFETY: the CPU has AVX2.
-        Some(unsafe { utf8_to_utf16_avx2(s, out) })
+        // The CPU has AVX2.
+        Some(utf8_to_utf16_avx2(s, out))
     } else if has_neon() {
         Some(utf8_to_utf16_impl::<true>(true, s, out))
     } else {
@@ -1062,8 +1062,8 @@ pub fn utf8_to_latin1(s: &[u8], out: &mut [u8]) -> (r: Option<usize>)
         return None;
     }
     if has_avx2() {
-        // SAFETY: the CPU has AVX2.
-        unsafe { utf8_to_latin1_avx2(s, out) }
+        // The CPU has AVX2.
+        utf8_to_latin1_avx2(s, out)
     } else if has_neon() {
         utf8_to_latin1_impl::<true>(true, s, out)
     } else {
@@ -1255,8 +1255,8 @@ pub fn utf16_to_utf8(s: &[u16], out: &mut [u8]) -> (r: Option<usize>)
         r matches Some(n) ==> n == cnt16(s@, 0) && final(out)@.subrange(0, n as int) == u16to8(s@, 0),
 {
     if has_avx2() {
-        // SAFETY: the CPU has AVX2.
-        unsafe { utf16_to_utf8_avx2(s, out) }
+        // The CPU has AVX2.
+        utf16_to_utf8_avx2(s, out)
     } else if has_neon() {
         utf16_to_utf8_impl::<true>(true, s, out)
     } else {
@@ -1345,8 +1345,8 @@ pub fn count_latin1_utf8(s: &[u8]) -> (r: usize)
         r == cnt_l1(s@, 0),
 {
     if has_avx2() {
-        // SAFETY: the CPU has AVX2.
-        unsafe { count_latin1_utf8_avx2(s) }
+        // The CPU has AVX2.
+        count_latin1_utf8_avx2(s)
     } else if has_neon() {
         count_latin1_utf8_impl::<true>(true, s)
     } else {
@@ -1433,8 +1433,8 @@ pub fn count_utf8(s: &[u8], latin1: bool) -> (r: usize)
         r == if latin1 { cnt8l1(s@, 0) } else { cnt8(s@, 0) },
 {
     if has_avx2() {
-        // SAFETY: the CPU has AVX2.
-        unsafe { count_utf8_avx2(s, latin1) }
+        // The CPU has AVX2.
+        count_utf8_avx2(s, latin1)
     } else if has_neon() {
         count_utf8_impl::<true>(true, s, latin1)
     } else {
@@ -1521,8 +1521,8 @@ pub fn count_utf16(s: &[u16]) -> (r: usize)
         r == cnt16(s@, 0),
 {
     if has_avx2() {
-        // SAFETY: the CPU has AVX2.
-        unsafe { count_utf16_avx2(s) }
+        // The CPU has AVX2.
+        count_utf16_avx2(s)
     } else if has_neon() {
         count_utf16_impl::<true>(true, s)
     } else {

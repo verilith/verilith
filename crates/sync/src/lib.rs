@@ -1,4 +1,9 @@
 #![doc = include_str!("../README.md")]
+// A normal build erases ghost code, so a variable, import, field or value
+// used only by proofs looks unused there, and the `verus!` syntax leaves
+// some redundant braces and parentheses. These lints are off in that build
+// only.
+#![cfg_attr(not(verus_only), allow(unused_variables, unused_imports, unused_assignments, dead_code, unused_braces, unused_parens))]
 pub mod array_queue;
 // Unverified glue over the verified queue; not part of the Verus build,
 // where verified functions take extra ghost arguments.

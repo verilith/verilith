@@ -887,8 +887,8 @@ pub fn utf8_valid(s: &[u8]) -> (r: bool)
         r == utf8_from(s@, 0),
 {
     if has_avx2() {
-        // SAFETY: the CPU has AVX2.
-        unsafe { utf8_avx2(s, 0) }
+        // The CPU has AVX2.
+        utf8_avx2(s, 0)
     } else if has_neon() {
         utf8_neon(s, 0)
     } else {
