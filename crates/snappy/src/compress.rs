@@ -106,6 +106,31 @@ pub open spec fn enc_copy(off: nat, len: nat) -> Seq<u8> {
     }
 }
 
+/// The bytes a literal of `len` bytes takes, tag included (none for an
+/// empty one, which is not written).
+pub open spec fn lit_cost(len: nat) -> nat {
+    if len == 0 {
+        0
+    } else if len <= 60 {
+        len + 1
+    } else if len <= 256 {
+        len + 2
+    } else {
+        len + 3
+    }
+}
+
+/// The room argument behind `max_compressed_length`, in sixths of a
+/// byte: the room left in `dst` (`room`) less 7/6 of a byte for each
+/// input byte still to be compressed (`left`). A copy of `len >= 4` bytes
+/// costs at most 3 and so raises it by at least 10; a literal lowers it
+/// by at most 5, and only one of 1 to 16 bytes does. Literals and copies
+/// alternate inside a fragment, and every fragment but the last is
+/// longer, so it never falls far below where it started.
+pub open spec fn slack(room: int, left: int) -> int {
+    6 * room - 7 * left
+}
+
 /// Decoding a literal the compressor wrote.
 proof fn lemma_lit_step(s: Seq<u8>, i: int, out: Seq<u8>, n: nat, lits: Seq<u8>)
     requires
@@ -264,6 +289,8 @@ fn emit_literal(dst: &mut [u8], d: usize, input: &[u8], a: usize, len: usize) ->
             0,
             d as int,
         ) + enc_lit(input@.subrange(a as int, a + len)),
+        r matches Some(d2) ==> d2 == d + lit_cost(len as nat),
+        old(dst)@.len() - d >= len + 3 ==> r is Some,
 {
     let ghost lits = input@.subrange(a as int, a + len);
     let ghost pre = dst@.subrange(0, d as int);
@@ -318,6 +345,8 @@ fn emit_copy(dst: &mut [u8], d: usize, off: usize, len: usize) -> (r: Option<usi
             0,
             d as int,
         ) + enc_copy(off as nat, len as nat),
+        r matches Some(d2) ==> d2 <= d + 3,
+        old(dst)@.len() - d >= 3 ==> r is Some,
 {
     if dst.len() - d < 3 {
         return None;
@@ -379,6 +408,8 @@ fn emit_copy_at(
             n,
         ),
         r matches Some(d2) ==> d <= d2 && final(dst)@.subrange(0, d as int) == old(dst)@.subrange(0, d as int),
+        r matches Some(d2) ==> d2 <= d + 3,
+        old(dst)@.len() - d >= 3 ==> r is Some,
 {
     let ghost p0 = dst@.subrange(0, d as int);
     let r = emit_copy(dst, d, off, len);
@@ -427,20 +458,25 @@ fn emit_match(
             n,
         ),
         r matches Some(d2) ==> d <= d2 && final(dst)@.subrange(0, d as int) == old(dst)@.subrange(0, d as int),
+        // At most 3 bytes for each 4 to 64: never more than 7/6 a byte per
+        // byte matched, less 10/6.
+        r matches Some(d2) ==> 6 * (d2 - d) + 10 <= 7 * len,
+        6 * (old(dst)@.len() - d) >= 7 * len + 8 ==> r.is_some(),
 {
+    let ghost ok = 6 * (dst@.len() - d) >= 7 * len + 8;
     if len <= 64 {
         return emit_copy_at(dst, d, input, ip, off, len, Ghost(i0), Ghost(n), Ghost((ip + len) as int));
     }
     let ilen = input.len();
     let d00 = d;
-    let mut d = d;
+    let mut dc = d;
     let mut at = ip;
     let mut rem = len;
     let ghost hi = ip + len;
     while rem >= 68
         invariant
             dst@.len() == old(dst)@.len(),
-            d <= dst@.len(),
+            dc <= dst@.len(),
             1 <= off <= 65535,
             off <= ip <= at,
             at + rem == hi,
@@ -448,48 +484,52 @@ fn emit_match(
             hi <= input@.len(),
             4 <= rem,
             ilen == input@.len(),
-            d00 <= d,
+            d00 <= dc,
+            d00 == d,
             dst@.subrange(0, d00 as int) == old(dst)@.subrange(0, d00 as int),
             forall|k: int| ip <= k < hi ==> #[trigger] input@[k] == input@[k - off],
-            reach(dst@.subrange(0, d as int), i0, input@.subrange(0, at as int), n),
+            reach(dst@.subrange(0, dc as int), i0, input@.subrange(0, at as int), n),
+            6 * (dc - d00) <= 7 * (at - ip),
+            ok == (6 * (old(dst)@.len() - d00) >= 7 * len + 8),
+            ok ==> 6 * (dst@.len() - dc) >= 7 * rem + 8,
         decreases rem,
     {
-        match emit_copy_at(dst, d, input, at, off, 64, Ghost(i0), Ghost(n), Ghost(hi)) {
+        match emit_copy_at(dst, dc, input, at, off, 64, Ghost(i0), Ghost(n), Ghost(hi)) {
             None => {
                 return None;
             },
             Some(d2) => {
                 proof {
-                    assert(dst@.subrange(0, d00 as int) =~= dst@.subrange(0, d as int).subrange(0, d00 as int));
+                    assert(dst@.subrange(0, d00 as int) =~= dst@.subrange(0, dc as int).subrange(0, d00 as int));
                 }
-                d = d2;
+                dc = d2;
             },
         }
         at = at + 64;
         rem = rem - 64;
     }
     let ghost b1 = dst@;
-    let d1 = d;
+    let d1 = dc;
     if rem > 64 {
-        match emit_copy_at(dst, d, input, at, off, 60, Ghost(i0), Ghost(n), Ghost(hi)) {
+        match emit_copy_at(dst, dc, input, at, off, 60, Ghost(i0), Ghost(n), Ghost(hi)) {
             None => {
                 return None;
             },
             Some(d2) => {
-                d = d2;
+                dc = d2;
             },
         }
         at = at + 60;
         rem = rem - 60;
     }
     let ghost b2 = dst@;
-    let r = emit_copy_at(dst, d, input, at, off, rem, Ghost(i0), Ghost(n), Ghost(hi));
+    let r = emit_copy_at(dst, dc, input, at, off, rem, Ghost(i0), Ghost(n), Ghost(hi));
     proof {
         assert(b2.subrange(0, d00 as int) =~= b2.subrange(0, d1 as int).subrange(0, d00 as int));
         assert(b1.subrange(0, d00 as int) =~= b1.subrange(0, d1 as int).subrange(0, d00 as int));
         if r.is_some() {
-            assert(dst@.subrange(0, d00 as int) =~= dst@.subrange(0, d as int).subrange(0, d00 as int));
-            assert(b2.subrange(0, d00 as int) =~= b2.subrange(0, d as int).subrange(0, d00 as int));
+            assert(dst@.subrange(0, d00 as int) =~= dst@.subrange(0, dc as int).subrange(0, d00 as int));
+            assert(b2.subrange(0, d00 as int) =~= b2.subrange(0, dc as int).subrange(0, d00 as int));
         }
     }
     r
@@ -520,6 +560,8 @@ fn emit_lit_at(
             n,
         ),
         r matches Some(d2) ==> d <= d2 && final(dst)@.subrange(0, d as int) == old(dst)@.subrange(0, d as int),
+        r matches Some(d2) ==> d2 == d + lit_cost((b - a) as nat),
+        old(dst)@.len() - d >= (b - a) + 3 ==> r is Some,
 {
     if a == b {
         return Some(d);
@@ -820,7 +862,17 @@ fn compress_fragment<const N: usize>(
             n,
         ),
         r matches Some(d2) ==> d0 <= d2 && final(dst)@.subrange(0, d0 as int) == old(dst)@.subrange(0, d0 as int),
+        // Room enough on the way in is room enough throughout.
+        slack(old(dst)@.len() - d0, input@.len() - fs) >= 152 ==> (r matches Some(d2) && slack(
+            final(dst)@.len() - d2,
+            input@.len() - fe,
+        ) >= if fe - fs >= 17 {
+            152int
+        } else {
+            147int
+        }),
 {
+    let ghost ok = slack(dst@.len() - d0, input@.len() - fs) >= 152;
     let mut anchor = fs;
     let mut d = d0;
     if fe - fs >= 17 {
@@ -858,6 +910,10 @@ fn compress_fragment<const N: usize>(
                 d0 <= d <= dst@.len(),
                 dst@.subrange(0, d0 as int) == old(dst)@.subrange(0, d0 as int),
                 reach(dst@.subrange(0, d as int), i0, input@.subrange(0, anchor as int), n),
+                ok == (slack(old(dst)@.len() - d0, input@.len() - fs) >= 152),
+                ok ==> slack(dst@.len() - d, input@.len() - anchor) >= 152,
+            ensures
+                ok ==> slack(dst@.len() - d, input@.len() - anchor) >= 157 || anchor + 17 <= fe,
             decreases fe - anchor,
         {
             // Look for four bytes seen before, stepping faster the longer
@@ -951,8 +1007,11 @@ fn compress_fragment<const N: usize>(
                     d0 <= d <= dst@.len(),
                     dst@.subrange(0, d0 as int) == old(dst)@.subrange(0, d0 as int),
                     reach(dst@.subrange(0, d as int), i0, input@.subrange(0, anchor as int), n),
+                    ok == (slack(old(dst)@.len() - d0, input@.len() - fs) >= 152),
+                    ok ==> slack(dst@.len() - d, input@.len() - anchor) >= 147,
                 ensures
                     !done ==> q < lim,
+                    ok ==> slack(dst@.len() - d, input@.len() - anchor) >= 157,
                 decreases flen - q,
             {
                 let at = fs + q;
@@ -1041,11 +1100,18 @@ fn compress_fragment<const N: usize>(
     r
 }
 
+/// google/snappy's `MaxCompressedLength`, as a spec.
+pub open spec fn max_len(n: nat) -> nat {
+    32 + n + n / 6
+}
+
 /// google/snappy's `MaxCompressedLength`: room that is always enough for
-/// an input of `n` bytes.
+/// an input of `n` bytes (`compress_into` proves it).
 pub fn max_compressed_length(n: usize) -> (r: usize)
     requires
         n <= 0xffff_ffff,
+    ensures
+        r == max_len(n as nat),
 {
     32 + n + n / 6
 }
@@ -1058,6 +1124,8 @@ pub fn compress_into(input: &[u8], dst: &mut [u8]) -> (r: Option<usize>)
     ensures
         final(dst)@.len() == old(dst)@.len(),
         r matches Some(m) ==> m <= final(dst)@.len() && decompress(final(dst)@.subrange(0, m as int)) == Some(input@),
+        // `max_compressed_length` is always enough.
+        input@.len() <= 0xffff_ffff && old(dst)@.len() >= max_len(input@.len()) ==> r is Some,
 {
     let n = input.len();
     if n > 0xffff_ffff || dst.len() < 5 {
@@ -1099,6 +1167,14 @@ pub fn compress_into(input: &[u8], dst: &mut [u8]) -> (r: Option<usize>)
     d = d + 1;
     let i0 = d;
     let ghost pre = dst@.subrange(0, i0 as int);
+    let ghost big = dst@.len() >= max_len(n as nat);
+    proof {
+        // At most 5 bytes of preamble, and 6 * (n / 6) >= n - 5.
+        if big {
+            assert(6 * (n as int / 6) >= n - 5) by (nonlinear_arith);
+            assert(slack(dst@.len() - d, n as int) >= 152);
+        }
+    }
     // The table is sized to the input, so that a short input does not pay
     // for clearing a long table.
     let mut fs: usize = 0;
@@ -1115,6 +1191,8 @@ pub fn compress_into(input: &[u8], dst: &mut [u8]) -> (r: Option<usize>)
             pre.len() == i0,
             dst@.subrange(0, i0 as int) == pre,
             reach(dst@.subrange(0, d as int), i0 as int, input@.subrange(0, fs as int), n as nat),
+            big == (dst@.len() >= max_len(n as nat)),
+            big ==> slack(dst@.len() - d, n - fs) >= 152 || (fs == n && slack(dst@.len() - d, n - fs) >= 147),
         decreases n - fs,
     {
         let fe = if n - fs > FRAGMENT {
