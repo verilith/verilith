@@ -690,6 +690,7 @@ proof fn lemma_load_eq(s: Seq<u8>, a: int, b: int)
 }
 
 /// The low half of an 8-byte load is the 4-byte load.
+#[verifier::rlimit(40)]
 proof fn lemma_low32(s: Seq<u8>, i: int, w: u64)
     requires
         0 <= i,

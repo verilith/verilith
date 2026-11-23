@@ -2,7 +2,11 @@
 //! (linked or independent, compressed or stored), block and content
 //! checksums, content sizes, skippable frames, and frames one after
 //! another.
-use crate::block::decode_block;
+use crate::block::{decode_block, decode_block_counted};
+#[cfg(verus_only)]
+use crate::block::block_work;
+#[cfg(verus_only)]
+use crate::block::lemma_seqs_max;
 #[cfg(verus_only)]
 use crate::block::lemma_seqs_len;
 use crate::spec::*;
@@ -381,8 +385,17 @@ fn decode_one(
         }
         r
     } else {
-        if out.len() < op + bmax {
-            out.resize(op + bmax, 0);
+        // Room for what the block can decode to: at most 255 bytes for
+        // each of its bytes, and never more than a block. A short block
+        // does not pay for zeroing a whole block's room, which a run of
+        // tiny frames would otherwise make it do for each.
+        let room = if size <= bmax / 255 {
+            255 * size
+        } else {
+            bmax
+        };
+        if out.len() < op + room {
+            out.resize(op + room, 0);
         }
         let ghost mid = out@;
         let lo = if indep {
@@ -402,7 +415,12 @@ fn decode_one(
             lemma_seqs_len(data@, 0, mid.subrange(lo as int, op as int), None);
         }
         match decode_block(data, out.as_mut_slice(), lo, op) {
-            None => Err(()),
+            None => {
+                proof {
+                    lemma_seqs_max(data@, 0, mid.subrange(lo as int, op as int), None);
+                }
+                Err(())
+            },
             Some(op2) => {
                 proof {
                     assert(out@.subrange(0, base as int) =~= out@.subrange(0, op as int).subrange(0, base as int));
@@ -765,7 +783,7 @@ fn decode_one_into(
     out: &mut [u8],
     base: usize,
     op: usize,
-) -> (r: Option<usize>)
+) -> (r: (Option<usize>, Ghost<nat>))
     requires
         j + size <= src@.len(),
         base <= op <= old(out)@.len(),
@@ -773,7 +791,9 @@ fn decode_one_into(
     ensures
         final(out)@.len() == old(out)@.len(),
         final(out)@.subrange(0, base as int) == old(out)@.subrange(0, base as int),
-        r matches Some(op2) ==> op <= op2 <= final(out)@.len() && op2 - op <= bmax && block_data(
+        r.1@ <= block_work(size as nat, (old(out)@.len() - op) as nat),
+        r.0 matches Some(op2) ==> r.1@ <= block_work(size as nat, (op2 - op) as nat),
+        r.0 matches Some(op2) ==> op <= op2 <= final(out)@.len() && op2 - op <= bmax && block_data(
             src@.subrange(j as int, j + size),
             raw,
             indep,
@@ -791,14 +811,14 @@ fn decode_one_into(
     let data = slice_subrange(src, j, j + size);
     if raw {
         if size > len - op {
-            return None;
+            return (None, Ghost(0));
         }
         copy_in(out, op, src, j, size);
         proof {
             assert(out@.subrange(base as int, op + size) =~= cur + data@);
             assert(out@.subrange(0, base as int) =~= before.subrange(0, base as int));
         }
-        Some(op + size)
+        (Some(op + size), Ghost(size as nat))
     } else {
         let lo = if indep {
             op
@@ -810,8 +830,9 @@ fn decode_one_into(
                 assert(before.subrange(lo as int, op as int) =~= Seq::<u8>::empty());
             }
         }
-        match decode_block(data, out, lo, op) {
-            None => None,
+        let (rb, Ghost(w)) = decode_block_counted(data, out, lo, op);
+        match rb {
+            None => (None, Ghost(w)),
             Some(op2) => {
                 proof {
                     assert(out@.subrange(0, base as int) =~= out@.subrange(0, op as int).subrange(0, base as int));
@@ -825,9 +846,9 @@ fn decode_one_into(
                     }
                 }
                 if op2 - op > bmax {
-                    None
+                    (None, Ghost(w))
                 } else {
-                    Some(op2)
+                    (Some(op2), Ghost(w))
                 }
             },
         }
@@ -841,24 +862,36 @@ fn decode_one_into(
 /// `Some((j, end))`: the frame is valid, ends at `j`, and its content is
 /// `out[base..end]`. `None`: the frame is not valid, or its content does
 /// not fit; `decode_frame` says which.
-pub fn decode_frame_into(src: &[u8], i: usize, out: &mut [u8], base: usize) -> (r: Option<(usize, usize)>)
+pub fn decode_frame_into_counted(src: &[u8], i: usize, out: &mut [u8], base: usize) -> (r: (
+    Option<(usize, usize)>,
+    Ghost<nat>,
+))
     requires
         i <= src@.len(),
         base <= old(out)@.len(),
     ensures
         final(out)@.len() == old(out)@.len(),
         final(out)@.subrange(0, base as int) == old(out)@.subrange(0, base as int),
-        r matches Some((j, end)) ==> base <= end <= final(out)@.len() && i < j <= src@.len() && frame(src@, i as int)
+        // Work: linear in the frame and its content (or, if it does not
+        // decode, the room given).
+        r.1@ <= frame_work((src@.len() - i) as nat, (old(out)@.len() - base) as nat),
+        r.0 matches Some((_j, end)) ==> r.1@ <= frame_work((src@.len() - i) as nat, (end - base) as nat),
+        r.0 matches Some((j, end)) ==> base <= end <= final(out)@.len() && i < j <= src@.len() && frame(src@, i as int)
             == Some((final(out)@.subrange(base as int, end as int), j as int)),
 {
     let n = src.len();
+    let ghost mut work: nat = 0;
     let h = match read_header(src, i) {
         None => {
-            return None;
+            return (None, Ghost(work));
         },
         Some(h) => h,
     };
     let bmax = h.bmax;
+    proof {
+        // The header's checksum: one step a byte.
+        work = (h.end - i) as nat;
+    }
     let ghost goal = blocks(src@, h.end as int, h@, Seq::empty(), Seq::empty());
     proof {
         assert(dict_window(Seq::<u8>::empty()) =~= Seq::<u8>::empty());
@@ -882,10 +915,15 @@ pub fn decode_frame_into(src: &[u8], i: usize, out: &mut [u8], base: usize) -> (
             !done ==> blocks(src@, k as int, h@, Seq::empty(), out@.subrange(base as int, op as int)) == goal,
             done ==> h.end < j <= n && goal == Some((out@.subrange(base as int, op as int), j as int)),
             out@.subrange(0, base as int) == old(out)@.subrange(0, base as int),
+            !done ==> work <= (h.end - i) + 152 * (k - h.end) + (op - base),
+            done ==> work <= (h.end - i) + 152 * (j - h.end) + (op - base) + 1 && k < j,
         decreases (if done { 0int } else { 1int }), n - k,
     {
+        proof {
+            work = work + 1;
+        }
         if n - k < 4 {
-            return None;
+            return (None, Ghost(work));
         }
         let w = word(src, k) as usize;
         let size = w & 0x7fff_ffff;
@@ -904,17 +942,24 @@ pub fn decode_frame_into(src: &[u8], i: usize, out: &mut [u8], base: usize) -> (
                 0
             };
             if size > bmax || size + extra > n - j2 {
-                return None;
+                return (None, Ghost(work));
             }
             let data = slice_subrange(src, j2, j2 + size);
             if h.bsum {
+                proof {
+                    work = (work + size) as nat;
+                }
                 if word(src, j2 + size) != xxh32_exec(data) {
-                    return None;
+                    return (None, Ghost(work));
                 }
             }
-            let op2 = match decode_one_into(src, j2, size, raw, h.indep, bmax, out, base, op) {
+            let (ro, Ghost(wb)) = decode_one_into(src, j2, size, raw, h.indep, bmax, out, base, op);
+            proof {
+                work = work + wb;
+            }
+            let op2 = match ro {
                 None => {
-                    return None;
+                    return (None, Ghost(work));
                 },
                 Some(m) => m,
             };
@@ -925,24 +970,59 @@ pub fn decode_frame_into(src: &[u8], i: usize, out: &mut [u8], base: usize) -> (
     match h.csize {
         Some(c) => {
             if c != (op - base) as u64 {
-                return None;
+                return (None, Ghost(work));
             }
         },
         None => {},
     }
     if h.csum {
         if n - j < 4 {
-            return None;
+            return (None, Ghost(work));
+        }
+        proof {
+            work = (work + (op - base)) as nat;
         }
         let x = xxh32_exec(slice_subrange(out, base, op));
         if word(src, j) != x {
-            return None;
+            return (None, Ghost(work));
         }
-        Some((j + 4, op))
+        (Some((j + 4, op)), Ghost(work))
     } else {
-        Some((j, op))
+        (Some((j, op)), Ghost(work))
     }
 }
+
+/// The frame decoder's work bound, for a frame of `n` bytes (or input
+/// that long) writing at most `m` bytes: steps of `block::block_work`, and
+/// one a byte for each checksum.
+pub open spec fn frame_work(n: nat, m: nat) -> nat {
+    153 * n + 2 * m + 1000
+}
+
+/// `decode_frame_into_counted` without the count.
+///
+/// Decodes the frame at `i` into `out` from `base` (`spec::frame`), for
+/// callers that already have the buffer the content goes to. Nothing is
+/// allocated, and nothing before `base` is touched.
+///
+/// `Some((j, end))`: the frame is valid, ends at `j`, and its content is
+/// `out[base..end]`. `None`: the frame is not valid, or its content does
+/// not fit; `decode_frame` says which.
+#[inline(always)]
+pub fn decode_frame_into(src: &[u8], i: usize, out: &mut [u8], base: usize) -> (r: Option<(usize, usize)>)
+    requires
+        i <= src@.len(),
+        base <= old(out)@.len(),
+    ensures
+        final(out)@.len() == old(out)@.len(),
+        final(out)@.subrange(0, base as int) == old(out)@.subrange(0, base as int),
+        r matches Some((j, end)) ==> base <= end <= final(out)@.len() && i < j <= src@.len() && frame(src@, i as int)
+            == Some((final(out)@.subrange(base as int, end as int), j as int)),
+{
+    decode_frame_into_counted(src, i, out, base).0
+}
+
+
 
 /// `a` before what `r` holds.
 pub open spec fn prepend(a: Seq<u8>, r: Option<Seq<u8>>) -> Option<Seq<u8>> {
