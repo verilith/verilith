@@ -338,13 +338,13 @@ flags (`-O3`), glibc 2.39's libresolv as shipped.
 | simple-dns 0.12 `Packet::parse` | 230 | 1756 | 6964 |
 | hickory-proto 0.26 `Message::from_vec` | 247 | 1923 | 6894 |
 | **Reading into c-ares's record** | | | |
-| vdns-backed `ares_dns_parse` | **469** | **3115** | **11721** |
+| verilith-dns-backed `ares_dns_parse` | **469** | **3115** | **11721** |
 | c-ares `ares_dns_parse` (builds the same record) | 705 | 6565 | 25005 |
 | **Writing, compressed** (the parsed message back to wire form) | | | |
 | verilith-dns `to_bytes_compressed` | **66** | **647** | **1983** |
 | simple-dns 0.12 `build_bytes_vec_compressed` | 85 | 1278 | 3073 |
 | hickory-proto 0.26 `Message::to_vec` | 306 | 3087 | 9907 |
-| vdns-backed `ares_dns_write` (from c-ares's record) | **479** | **5732** | **19910** |
+| verilith-dns-backed `ares_dns_write` (from c-ares's record) | **479** | **5732** | **19910** |
 | c-ares `ares_dns_write` (from the same record) | 910 | 7240 | 24518 |
 | **Writing, uncompressed** | | | |
 | verilith-dns `to_bytes` | 36 | 204 | 635 |
@@ -358,7 +358,7 @@ compressing serializer is 1.3 to 2 times faster than simple-dns's and 4.6 to
 bytes for every message (c-ares writes 1,226 for the large one, against
 948). In the c-ares rows, which produce or consume identical c-ares
 records, most of the time goes to c-ares's own record allocation and
-getters, which the vdns-backed versions also use; even so, reading is 1.5
+getters, which the verilith-dns-backed versions also use; even so, reading is 1.5
 to 2.1 times faster than c-ares's parser and writing 1.2 to 1.9 times
 faster than its writer.
 
@@ -422,7 +422,7 @@ HS and NONE, non-printable HINFO, NAPTR and URI strings, empty CAA values,
 TLSA data and DNSSEC signatures, digests, keys and bit maps).
 
 The c-ares adapter test runs 200k random and mutated messages, with four
-`ARES_DNS_PARSE_*_RAW` flag settings each, through the vdns-backed
+`ARES_DNS_PARSE_*_RAW` flag settings each, through the verilith-dns-backed
 `ares_dns_parse` and c-ares's own, and writes both resulting records back
 with `ares_dns_write`:
 
@@ -440,7 +440,7 @@ looseness cases above. c-ares's own test suite passes on the patched c-ares exce
 test that expects an RFC violation to be accepted
 ([cares/README.md](cares/README.md)).
 
-The same test file checks the vdns-backed `ares_dns_write` against
+The same test file checks the verilith-dns-backed `ares_dns_write` against
 c-ares's own on every record c-ares's parser builds from 100k random and
 mutated messages, with and without the raw flags: 141,236 records. Whenever
 both writers succeed, c-ares reads the two outputs as the same record,
@@ -463,8 +463,8 @@ not cover: the c-ares adapter (`src/cares.rs`) and the C ABI
 | --- | --- |
 | `parse` | Every accessor, typed RDATA, presentation format, re-serialization and `parse_into` on arbitrary input |
 | `expand_name` | `ares_expand_name` (verilith-dns's) at every offset, freeing each result with c-ares's allocator |
-| `ares_dns_parse` | The vdns-backed `ares_dns_parse` with input-chosen flags; whenever verilith-dns accepts, `ares_dns_write` of its record must equal that of c-ares's own parser |
-| `ares_dns_write` | The vdns-backed `ares_dns_write` on records c-ares's parser builds, with input-chosen flags and TTL decrement; its output must parse, and c-ares must read it as the same record as c-ares's own output |
+| `ares_dns_parse` | The verilith-dns-backed `ares_dns_parse` with input-chosen flags; whenever verilith-dns accepts, `ares_dns_write` of its record must equal that of c-ares's own parser |
+| `ares_dns_write` | The verilith-dns-backed `ares_dns_write` on records c-ares's parser builds, with input-chosen flags and TTL decrement; its output must parse, and c-ares must read it as the same record as c-ares's own output |
 
 ```sh
 cmake -S c-ares -B c-ares/build-asan -DCARES_STATIC=ON -DCARES_SHARED=OFF \

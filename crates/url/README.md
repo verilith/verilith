@@ -165,8 +165,9 @@ as their own crates in this repository. CI (`.github/workflows/ci.yml` at the re
 
 ## Testing
 
-Everything below runs in the CI workflow (`.github/workflows/ci.yml`, manual runs only),
-alongside the Verus proof check.
+Everything below runs in the CI workflow (`.github/workflows/ci.yml` at the
+repository root), alongside the Verus proof check, on every pull request and
+push to `main` that touches this crate or one it depends on.
 
 - The WPT `urltestdata.json` suite passes in full (896/896), as do
   `setters_tests.json` (278/278) and `toascii.json`: `cargo test`.

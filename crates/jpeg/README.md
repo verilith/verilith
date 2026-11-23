@@ -200,10 +200,12 @@ libjpeg-turbo's C code and 1.8 to 3 times slower than its hand-written SIMD.
 
 On an Apple Silicon Mac, measured with
 [vbench](https://github.com/verilith/verilith/tree/main/bench) against
-libjpeg-turbo 3.1.2 with NEON (geometric mean over the 24 photos, all
-outputs equal, at commit 122d22c): baseline 4:2:0 runs at about 0.87 times
-libjpeg-turbo's speed, baseline 4:4:4 at about 0.855 times and progressive
-at about 0.95 times. A profile of one baseline photo there puts entropy
+libjpeg-turbo 3.2.1 with NEON (geometric mean over the 24 photos, all
+outputs equal; the run in the [repository's benchmark
+table](../../README.md#benchmarks), 2026-11-22): baseline 4:2:0 runs at
+0.91 times libjpeg-turbo's speed, baseline 4:4:4 at 0.97 times and
+progressive at 0.95 times. At commit 122d22c, against libjpeg-turbo 3.1.2,
+they were 0.87, 0.855 and 0.95 times. A profile of one baseline photo there puts entropy
 decoding at 1.04 times libjpeg-turbo's cycles, the inverse DCT at 1.23
 times, colour conversion at 1.18 times and chroma upsampling at 1.35 times,
 1.11 times in all. Those figures do not yet include the current inverse
