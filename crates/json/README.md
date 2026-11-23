@@ -117,6 +117,9 @@ Inputs may be up to 2^48 - 1 bytes (256 TiB), more than a 64-bit address
 space holds today: token positions are 48 bits, so a token is 16 bytes.
 On 32-bit targets (wasm32 for browsers and Cloudflare Workers) any slice
 fits. The index takes the same fixed memory at any input size.
+Parsing recurses once per nesting level, so the full 1000 levels take
+about 400 KiB of stack under wasmtime; give a wasm host at least 512 KiB
+(wasmtime's default is just that, browsers give about 1 MiB).
 
 ### On-demand reading
 

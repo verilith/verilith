@@ -49,8 +49,12 @@ done
 [ "${1:-all}" = build ] && exit 0
 
 # The tests read their data by absolute path (CARGO_MANIFEST_DIR), so the
-# runner sees the whole file system.
-export CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime run --dir=/::/"
+# runner sees the whole file system. json's parser recurses once per
+# nesting level, and its tests go to the 1000 levels RFC 8259 parsers
+# commonly allow: about 400 KiB of native stack under wasmtime, close to
+# wasmtime's 512 KiB default, so the tests run with 8 MiB (browsers give
+# wasm about 1 MiB).
+export CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime run -W max-wasm-stack=8388608 --dir=/::/"
 for c in $TESTED; do
   echo "== test $c on wasm32-wasip1"
   cargo test --release --target wasm32-wasip1 -p "verilith-$c" --lib --tests
