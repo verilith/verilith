@@ -1847,9 +1847,22 @@ fn cpu_has_avx2() -> (r: bool)
     verilith_simd::cpu::has_avx2() && verilith_simd::cpu::has_pclmul() && verilith_simd::cpu::has_popcnt() && verilith_simd::cpu::has_bmi2()
 }
 
+/// Whether kernel `k` is built for this target: the x86 kernels only on
+/// x86-64.
+#[cfg(target_arch = "x86_64")]
+pub open spec fn arch_ok(k: u8) -> bool {
+    true
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+pub open spec fn arch_ok(k: u8) -> bool {
+    k != AVX2 && k != AVX512
+}
+
 /// What the CPU must have to run kernel `k` here.
 pub open spec fn kind_ok(k: u8) -> bool {
     &&& k == SCALAR || k == NEON || k == AVX2 || k == AVX512
+    &&& arch_ok(k)
     &&& kernel_cpu(k)
     &&& k == NEON ==> verilith_simd::neon::neon()
     &&& (k == AVX2 || k == AVX512) ==> popcnt() && bmi2()

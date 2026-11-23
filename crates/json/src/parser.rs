@@ -110,16 +110,17 @@ impl Tok {
             kind,
             escaped,
             x,
-            ah: (a / 0x1_0000_0000) as u16,
-            a: (a % 0x1_0000_0000) as u32,
-            b: (b % 0x1_0000_0000) as u32,
-            bh: (b / 0x1_0000_0000) as u16,
+            ah: ((a as u64) / 0x1_0000_0000) as u16,
+            a: ((a as u64) % 0x1_0000_0000) as u32,
+            b: ((b as u64) % 0x1_0000_0000) as u32,
+            bh: ((b as u64) / 0x1_0000_0000) as u16,
         }
     }
 
     /// `a` (a byte position, or for a container start the index of its end
     /// token).
     #[inline(always)]
+    #[cfg(target_pointer_width = "64")]
     pub fn start(&self) -> (r: usize)
         ensures
             r == self.sa(),
@@ -127,13 +128,34 @@ impl Tok {
         self.a as usize + self.ah as usize * 0x1_0000_0000
     }
 
+    /// On 32-bit targets inputs are under 4 GiB, so the high bits are 0.
+    #[inline(always)]
+    #[cfg(target_pointer_width = "32")]
+    pub fn start(&self) -> (r: usize)
+        ensures
+            self.ah == 0 ==> r == self.sa(),
+    {
+        self.a as usize
+    }
+
     /// `b`.
     #[inline(always)]
+    #[cfg(target_pointer_width = "64")]
     pub fn end(&self) -> (r: usize)
         ensures
             r == self.sb(),
     {
         self.b as usize + self.bh as usize * 0x1_0000_0000
+    }
+
+    /// On 32-bit targets inputs are under 4 GiB, so the high bits are 0.
+    #[inline(always)]
+    #[cfg(target_pointer_width = "32")]
+    pub fn end(&self) -> (r: usize)
+        ensures
+            self.bh == 0 ==> r == self.sb(),
+    {
+        self.b as usize
     }
 }
 
@@ -273,8 +295,8 @@ impl Tape {
                 kind: t.kind,
                 escaped: t.escaped,
                 x: t.x,
-                ah: (end / 0x1_0000_0000) as u16,
-                a: (end % 0x1_0000_0000) as u32,
+                ah: ((end as u64) / 0x1_0000_0000) as u16,
+                a: ((end as u64) % 0x1_0000_0000) as u32,
                 b: t.b,
                 bh: t.bh,
             },
