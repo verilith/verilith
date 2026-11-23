@@ -118,3 +118,8 @@ frame compression of a 4 KiB input.
 
 `cargo run --release --example bench -- FILES` is a quicker check
 against the system liblz4.
+
+## License
+
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.

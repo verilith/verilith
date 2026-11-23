@@ -313,9 +313,9 @@ scripts/verify.sh          # the proofs: needs cargo-verus on PATH
 ```
 
 The proofs need the Verus release whose `vstd` matches the version pinned
-in `Cargo.toml`. GitHub Actions is off for this repository, so run the
-checks locally before merging.
+in `Cargo.toml`. CI (`.github/workflows/ci.yml` at the repository root) verifies the proofs and runs `ci.sh` on every pull request and push to `main` that touches this crate or a crate it depends on.
 
 ## License
 
-MIT. See [LICENSE](../../LICENSE).
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.

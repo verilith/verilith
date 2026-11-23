@@ -1,7 +1,7 @@
 [package]
 name = "verilith-archive"
 version = "0.1.0"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 description = "Formally verified (Verus) zip and tar readers with proven extraction safety, behind libarchive's read API"
 edition = "2024"
 repository = "https://github.com/verilith/verilith"

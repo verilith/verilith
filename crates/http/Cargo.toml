@@ -3,7 +3,7 @@ name = "verilith-http"
 version = "0.1.0"
 edition = "2024"
 description = "A fast HTTP/1.1 parser formally verified with Verus"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 repository = "https://github.com/verilith/verilith"
 exclude = ["compat/", "scripts/", ".github/", "fuzz/", "bench/"]
 

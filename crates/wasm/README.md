@@ -285,5 +285,8 @@ branches that carry values, memory and table instructions) runs as before.
 
 ## License
 
-MIT. `include/wasm.h` and `examples/c/` are from WebAssembly/wasm-c-api,
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.
+
+`include/wasm.h` and `examples/c/` are from WebAssembly/wasm-c-api,
 under the Apache License 2.0 in [LICENSE-wasm-c-api](LICENSE-wasm-c-api).

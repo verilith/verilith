@@ -5,7 +5,7 @@ name = "httparse"
 version = "1.10.1"
 edition = "2024"
 description = "The httparse API on vhttp, the formally verified HTTP/1.1 parser"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]

@@ -351,5 +351,8 @@ its header says how to build the two programs it needs.
 
 ## Licence
 
-MIT (`LICENSE`). The Unicode tables in `src/tables.rs` are generated from
-RE2's, which is under the BSD licence in `LICENSE-re2`.
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.
+
+The Unicode tables in `src/tables.rs` are generated from RE2's, which are
+under the BSD licence in [LICENSE-re2](LICENSE-re2).

@@ -225,3 +225,8 @@ needs `cargo-verus` from Verus commit
 8bf68ee741df833ea5d0fe6a2255126fdea87e47 on `PATH` and z3 (via
 `VERUS_Z3_PATH` or next to the verus binary). From the repository root,
 `scripts/prove.sh sha2` verifies it through Buck2.
+
+## License
+
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.

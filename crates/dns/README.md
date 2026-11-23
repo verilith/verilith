@@ -480,14 +480,19 @@ five minutes of `ares_dns_write` ran 19.5M.
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` is a manual workflow (automatic runs are off; start it from the Actions tab). It runs:
+CI is the workflow at the repository root, `.github/workflows/ci.yml`. On
+every pull request and push to `main` that touches this crate or
+verilith-core, it runs:
 
-- **verify**: builds Verus from source at the pinned commit (cached between
-  runs) and checks every proof (`cargo verus verify` must report 0 errors);
-- **test**: builds c-ares at the pinned commit, runs all tests including
-  the c-ares differentials and the native C API's (`scripts/test-c.sh`), applies the patch and runs c-ares's own test
-  suite on top of verilith-dns, and checks `cargo publish --dry-run`;
-- **fuzz**: five minutes per fuzz target under AddressSanitizer.
+- **verify**: checks every proof with the Verus build pinned in
+  `scripts/verus-version` (built from source and cached), through Buck2;
+- **test**: `ci.sh`, which builds c-ares at the pinned commit, runs all
+  tests including the c-ares differentials and the native C API's
+  (`scripts/test-c.sh`), then applies the patch and runs c-ares's own test
+  suite on top of verilith-dns.
+
+A manual run of the workflow with "fuzz" also runs `ci.sh fuzz`: five
+minutes per fuzz target under AddressSanitizer.
 
 ## Verifying
 
@@ -503,3 +508,11 @@ cargo verus verify
 1. Report the c-ares behaviours found here upstream: raw RDATA written with
    stale compression pointers, SVCB keys written out of order, and names
    that c-ares parses but will not write.
+
+## License
+
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.
+
+The fuzz seeds in `fuzz/seeds` and the patch in `cares/` come from
+c-ares, under its MIT license in [LICENSE-c-ares](LICENSE-c-ares).

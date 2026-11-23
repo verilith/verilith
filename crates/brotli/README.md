@@ -141,9 +141,12 @@ tests/c/run.sh 1000                   # differential test (needs google/brotli b
 scripts/verify.sh                     # the proofs
 ```
 
-`.github/workflows/ci.yml` is a manual workflow (run it from the Actions tab); automatic runs are off, so run the checks locally before merging.
+CI (`.github/workflows/ci.yml` at the repository root) verifies the proofs and runs `ci.sh` on every pull request and push to `main` that touches this crate or a crate it depends on.
 
 ## License
 
-MIT. `tests/data` and `src/dictionary.bin` come from google/brotli (MIT);
-their copyright notice is in [LICENSE-brotli](LICENSE-brotli).
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.
+
+`tests/data` and `src/dictionary.bin` come from google/brotli and are
+under its MIT license, whose notice is in [LICENSE-brotli](LICENSE-brotli).

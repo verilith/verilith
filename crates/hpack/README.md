@@ -191,8 +191,9 @@ python3 tools/gen_tables.py NGHTTP2_DIR GO_NET_DIR src   # regenerate the tables
 ```
 
 The proofs check with Verus at the `vstd` version pinned in `Cargo.toml`.
-`.github/workflows/ci.yml` is a manual workflow (run it from the Actions tab); automatic runs are off, so run the checks by hand before merging.
+CI (`.github/workflows/ci.yml` at the repository root) verifies the proofs and runs `ci.sh` on every pull request and push to `main` that touches this crate or a crate it depends on.
 
 ## License
 
-MIT.
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option.

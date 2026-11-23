@@ -228,7 +228,6 @@ bench/             the benchmark harness: each library against the one it replac
 scripts/           verify.sh, prove.sh, profile, and what CI runs
 verus/             the Buck2 rules that run Verus (see BUILDING.md)
 third-party/       what the proofs need from crates.io, for Buck2 (generated)
-IMPORT.md          the repositories and commits this one was assembled from
 THIRD-PARTY.md     what comes from other projects, and under which licence
 SECURITY.md        how to report a vulnerability
 ```
@@ -313,8 +312,16 @@ open a public issue for one.
 
 ## License
 
-MIT, in [LICENSE](LICENSE). Some crates include test data, tables or
-headers from other projects under those projects' licences: MIT,
-BSD-3-Clause, Apache-2.0 and Unicode-3.0. [THIRD-PARTY.md](THIRD-PARTY.md)
-lists each one, and the licence text is in a `LICENSE-*` file in the crate
-that holds it.
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option. Each crate carries both
+files.
+
+Some crates include test data, tables or headers from other projects,
+under those projects' licences: MIT, BSD-3-Clause, Apache-2.0 and
+Unicode-3.0. [THIRD-PARTY.md](THIRD-PARTY.md) lists each one, and the
+licence text is in a `LICENSE-*` file in the crate that holds it.
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in this repository by you, as defined in the
+Apache-2.0 license, shall be dual licensed as above, without any additional
+terms or conditions.
