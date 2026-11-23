@@ -23,6 +23,7 @@ shortest dependency list, depend on that crate directly.
 | `core` | `verilith::core` | [`verilith-core`](../core) | shared verified building blocks (bit readers, Huffman tables, CRC-32, UTF-8) |
 | `dns` | `verilith::dns` | [`verilith-dns`](../dns) | DNS message parser and serializer |
 | `font` | `verilith::font` | [`verilith-font`](../font) | font sanitizer (OpenType, WOFF, WOFF2) |
+| `gif` | `verilith::gif` | [`verilith-gif`](../gif) | GIF decoder |
 | `hpack` | `verilith::hpack` | [`verilith-hpack`](../hpack) | HPACK header compression |
 | `http` | `verilith::http` | [`verilith-http`](../http) | HTTP/1 parser |
 | `jpeg` | `verilith::jpeg` | [`verilith-jpeg`](../jpeg) | JPEG decoder |

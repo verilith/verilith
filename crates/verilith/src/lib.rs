@@ -27,6 +27,9 @@ pub use verilith_dns as dns;
 /// `verilith-font`: font sanitizer (OpenType, WOFF, WOFF2).
 #[cfg(feature = "font")]
 pub use verilith_font as font;
+/// `verilith-gif`: GIF decoder.
+#[cfg(feature = "gif")]
+pub use verilith_gif as gif;
 /// `verilith-hpack`: HPACK header compression.
 #[cfg(feature = "hpack")]
 pub use verilith_hpack as hpack;
