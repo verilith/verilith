@@ -371,91 +371,11 @@ impl Input {
     }
 }
 
-/// A byte of `b`, 0 past its end (libxml2's buffers are NUL-terminated).
-#[inline]
-pub fn at(b: &[u8], i: usize) -> u8 {
-    if i < b.len() { b[i] } else { 0 }
-}
-
-#[inline]
-pub fn blank(c: u8) -> bool {
-    c == 0x20 || c == 0x09 || c == 0x0A || c == 0x0D
-}
-
-/// `xmlCopyCharMultiByte`, appended.
-pub fn push_char(out: &mut Vec<u8>, c: u32) {
-    if c < 0x80 {
-        out.push(c as u8);
-    } else if c < 0x800 {
-        out.push(((c >> 6) | 0xC0) as u8);
-        out.push(((c & 0x3F) | 0x80) as u8);
-    } else if c < 0x10000 {
-        out.push(((c >> 12) | 0xE0) as u8);
-        out.push((((c >> 6) & 0x3F) | 0x80) as u8);
-        out.push(((c & 0x3F) | 0x80) as u8);
-    } else if c < 0x110000 {
-        out.push(((c >> 18) | 0xF0) as u8);
-        out.push((((c >> 12) & 0x3F) | 0x80) as u8);
-        out.push((((c >> 6) & 0x3F) | 0x80) as u8);
-        out.push(((c & 0x3F) | 0x80) as u8);
-    }
-}
-
-/// `xmlStringCurrentChar` over a NUL-terminated string: the character at
-/// `i` and its length, (0, 4)-like garbage giving 0.
-pub fn string_char(s: &[u8], i: usize) -> (u32, usize) {
-    match utf8_char(s, i, 4) {
-        Some(r) => r,
-        None => (0, 4),
-    }
-}
-
-/// `xmlGetUTF8Char`: the character at `i` within `avail` bytes.
-pub fn utf8_char(s: &[u8], i: usize, avail: usize) -> Option<(u32, usize)> {
-    let c = at(s, i) as u32;
-    if avail < 1 {
-        return None;
-    }
-    if c < 0x80 {
-        return Some((c, 1));
-    }
-    if avail < 2 || (at(s, i + 1) & 0xC0) != 0x80 {
-        return None;
-    }
-    if c < 0xE0 {
-        if c < 0xC2 {
-            return None;
-        }
-        return Some((((c & 0x1F) << 6) | (at(s, i + 1) as u32 & 0x3F), 2));
-    }
-    if avail < 3 || (at(s, i + 2) & 0xC0) != 0x80 {
-        return None;
-    }
-    if c < 0xF0 {
-        let v = ((c & 0xF) << 12) | ((at(s, i + 1) as u32 & 0x3F) << 6) | (at(s, i + 2) as u32 & 0x3F);
-        if v < 0x800 || (0xD800..0xE000).contains(&v) {
-            return None;
-        }
-        return Some((v, 3));
-    }
-    if avail < 4 || (at(s, i + 3) & 0xC0) != 0x80 {
-        return None;
-    }
-    let v = ((c & 0x7) << 18) | ((at(s, i + 1) as u32 & 0x3F) << 12) | ((at(s, i + 2) as u32 & 0x3F) << 6) | (at(s, i + 3) as u32 & 0x3F);
-    if !(0x10000..0x110000).contains(&v) {
-        return None;
-    }
-    Some((v, 4))
-}
-
-/// `IS_CHAR`.
-pub fn is_char(c: u32) -> bool {
-    if c < 0x100 {
-        c == 0x9 || c == 0xA || c == 0xD || c >= 0x20
-    } else {
-        (0x100..=0xD7FF).contains(&c) || (0xE000..=0xFFFD).contains(&c) || (0x10000..=0x10FFFF).contains(&c)
-    }
-}
+// Verified (`crate::lenient`): reading past the end, UTF-8 in and out,
+// `IS_CHAR`.
+pub use crate::lenient::{at, blank, push_char, string_char, utf8_char};
+pub use crate::lenient::is_xml_char as is_char;
+pub use crate::lenient::eq_ci;
 
 /// Decimal digits of `v`.
 pub fn itoa(v: i64) -> Vec<u8> {
@@ -484,10 +404,6 @@ pub fn cat(parts: &[&[u8]]) -> Vec<u8> {
     v
 }
 
-/// `xmlStrcasecmp(a, b) == 0` over ASCII.
-pub fn eq_ci(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.to_ascii_lowercase() == y.to_ascii_lowercase())
-}
 
 // --- the parser ------------------------------------------------------------------------
 
@@ -1094,45 +1010,7 @@ impl<S: Sink> Parser<S> {
             let i = self.inp();
             (at(&i.buf, p), at(&i.buf, p + 1), at(&i.buf, p + 2), at(&i.buf, p + 3))
         };
-        let r = 'l: {
-            if c1 & 0xC0 != 0x80 {
-                break 'l 0;
-            }
-            if c < 0xE0 {
-                if c < 0xC2 {
-                    break 'l 0;
-                }
-                break 'l 2;
-            }
-            if c2 & 0xC0 != 0x80 {
-                break 'l 0;
-            }
-            if c < 0xF0 {
-                if c == 0xE0 {
-                    if c1 < 0xA0 {
-                        break 'l 0;
-                    }
-                } else if c == 0xED {
-                    if c1 >= 0xA0 {
-                        break 'l 0;
-                    }
-                } else if c == 0xEF && c1 == 0xBF && c2 >= 0xBE {
-                    break 'l 33;
-                }
-                break 'l 3;
-            }
-            if c3 & 0xC0 != 0x80 {
-                break 'l 0;
-            }
-            if c == 0xF0 {
-                if c1 < 0x90 {
-                    break 'l 0;
-                }
-            } else if c >= 0xF4 && (c > 0xF4 || c1 >= 0x90) {
-                break 'l 0;
-            }
-            4
-        };
+        let r = crate::lenient::multibyte_len(c, c1, c2, c3);
         if r == 33 {
             self.fatal_msg(ERR_INVALID_CHAR, err_msg);
             return 3;
@@ -1202,6 +1080,8 @@ impl<S: Sink> Parser<S> {
         let mut input = if info.has_content {
             Input::from_bytes(self.sink.ent_content(e))
         } else if info.has_uri {
+            // A failure is reported where the reference ends.
+            self.sync();
             let l = self.sink.load_entity(e)?;
             let mut i = Input::from_bytes(Vec::new());
             i.src = Some(Source { raw: l.bytes, delivered: 0, pos: 0, mode: if l.stream { Mode::Stream } else { Mode::Memory }, enc: None, error: 0, eof: false });

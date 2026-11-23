@@ -37,6 +37,8 @@ pub mod ent;
 #[doc(hidden)]
 pub mod lanes;
 #[doc(hidden)]
+pub mod lenient;
+#[doc(hidden)]
 pub mod lex;
 #[doc(hidden)]
 pub mod scan;

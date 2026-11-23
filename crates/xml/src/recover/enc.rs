@@ -5,6 +5,7 @@
 use super::codes::*;
 use super::tables::*;
 use super::*;
+use crate::lenient::{chunk_ascii, chunk_latin1, chunk_utf16, put, CHUNK_OK, CHUNK_SPACE};
 
 /// A built-in input decoder (`defaultHandlers` with an input function).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -25,26 +26,15 @@ fn encoding_id(name: &[u8]) -> i32 {
         let mid = lo + (hi - lo) / 2;
         let (n, id) = ENC_NAMES[mid];
         match cmp_ci(name, n) {
-            core::cmp::Ordering::Equal => return id as i32,
-            core::cmp::Ordering::Less => hi = mid,
-            core::cmp::Ordering::Greater => lo = mid + 1,
+            0 => return id as i32,
+            d if d < 0 => hi = mid,
+            _ => lo = mid + 1,
         }
     }
     -1
 }
 
-/// `xmlStrcasecmp`.
-fn cmp_ci(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
-    let mut i = 0;
-    loop {
-        let x = at(a, i).to_ascii_lowercase();
-        let y = at(b, i).to_ascii_lowercase();
-        if x != y || x == 0 {
-            return x.cmp(&y);
-        }
-        i += 1;
-    }
-}
+use crate::lenient::cmp_ci;
 
 /// The decoder of a default handler, by `xmlCharEncoding`: `Ok(None)` for
 /// UTF-8 (no decoder), `Err` for a handler with no input function.
@@ -108,17 +98,6 @@ enum Res {
     Input,
 }
 
-/// UTF-8 bytes of `c` appended, if `room` allows.
-fn put(out: &mut Vec<u8>, c: u32, room: &mut usize) -> bool {
-    let n = if c < 0x80 { 1 } else if c < 0x800 { 2 } else if c < 0x10000 { 3 } else { 4 };
-    if *room < n {
-        return false;
-    }
-    *room -= n;
-    push_char(out, c);
-    true
-}
-
 /// One decoder call (`xmlEncInputChunk`): converts `inp` into at most
 /// `room` bytes of `out`; returns the bytes read and the result.
 fn chunk(e: Enc, inp: &[u8], out: &mut Vec<u8>, mut room: usize, flush: bool) -> (usize, Res) {
@@ -126,68 +105,21 @@ fn chunk(e: Enc, inp: &[u8], out: &mut Vec<u8>, mut room: usize, flush: bool) ->
     let n = inp.len();
     let mut res = Res::Success;
     match e {
-        Enc::Utf16Le | Enc::Utf16Be => {
-            let end = n & !1usize;
-            let w = |k: usize| -> u32 {
-                if e == Enc::Utf16Le {
-                    at(inp, k) as u32 | ((at(inp, k + 1) as u32) << 8)
-                } else {
-                    ((at(inp, k) as u32) << 8) | at(inp, k + 1) as u32
-                }
+        // Verified (`crate::lenient`): each writes the spec's decoding of
+        // what it reads.
+        Enc::Utf16Le | Enc::Utf16Be | Enc::Latin1 | Enc::Ascii => {
+            let (k, r) = match e {
+                Enc::Utf16Le => chunk_utf16(true, inp, out, room),
+                Enc::Utf16Be => chunk_utf16(false, inp, out, room),
+                Enc::Latin1 => chunk_latin1(inp, out, room),
+                _ => chunk_ascii(inp, out, room),
             };
-            while i < end {
-                let c = w(i);
-                if (c & 0xF800) != 0xD800 {
-                    if !put(out, c, &mut room) {
-                        res = Res::Space;
-                        break;
-                    }
-                    i += 2;
-                } else {
-                    if (c & 0xFC00) != 0xD800 {
-                        res = Res::Input;
-                        break;
-                    }
-                    if end - i < 4 {
-                        break;
-                    }
-                    let d = w(i + 2);
-                    if (d & 0xFC00) != 0xDC00 {
-                        res = Res::Input;
-                        break;
-                    }
-                    let cp = ((c - 0xD800) << 10) + (d - 0xDC00) + 0x10000;
-                    if !put(out, cp, &mut room) {
-                        res = Res::Space;
-                        break;
-                    }
-                    i += 4;
-                }
-            }
-        }
-        Enc::Latin1 => {
-            while i < n {
-                if !put(out, inp[i] as u32, &mut room) {
-                    res = Res::Space;
-                    break;
-                }
-                i += 1;
-            }
-        }
-        Enc::Ascii => {
-            // asciiToAscii checks the space first, then the bytes.
-            let take = if room < n { room } else { n };
-            if room < n {
-                res = Res::Space;
-            }
-            while i < take {
-                if inp[i] >= 0x80 {
-                    res = Res::Input;
-                    break;
-                }
-                out.push(inp[i]);
-                i += 1;
-            }
+            i = k;
+            res = match r {
+                CHUNK_OK => Res::Success,
+                CHUNK_SPACE => Res::Space,
+                _ => Res::Input,
+            };
         }
         Enc::Table(t) => {
             let table = &EIGHT_BIT[(t as usize) % EIGHT_BIT.len()];
