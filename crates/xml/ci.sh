@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # What CI runs for this crate, besides Verus (scripts/verify.sh).
 #   ./ci.sh           the tests: the W3C XML conformance suite (verdicts and
-#                     canonical outputs), the API tests, and libexpat
-#                     against verilith-xml on the suite and mutations of it
+#                     canonical outputs), the API tests, libexpat
+#                     against verilith-xml on the suite and mutations of
+#                     it, and libexpat's tests against the expat ABI
 #   ./ci.sh fuzz      the fuzz targets, FUZZ_SECS each (default 120)
 # Runs anywhere; with CI set it also installs the system packages it needs.
 . "$(dirname "$0")/../../scripts/ci-lib.sh"
@@ -31,6 +32,9 @@ test() {
   # from what fuzz/src/lib.rs lists as expat's.
   scripts/fetch-expat.sh > /dev/null
   (cd fuzz && cargo run -q --release --example mutate -- 100 "$x")
+  # The expat ABI: libexpat's own tests (runtests, and xmlwf over the W3C
+  # suite) linked against verilith-xml, under ASan and UBSan.
+  scripts/test-expat.sh "$x"
 }
 
 fuzz() {

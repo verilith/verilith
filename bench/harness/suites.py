@@ -68,14 +68,21 @@ COMPARISONS = [
     # ada's C API: vurl (ada-abi) in place of ada.
     dict(id="url-ada", suite="url", data="url", same_output=True, api="drop-in",
          ours=("vurl", ["url-vurl"]), rival=("ada 4.1.1", ["url-ada"])),
+    # expat's API: vxml (expat-abi) in place of libexpat, the same driver.
+    dict(id="xml-expat-dropin-read", suite="xml", data="xml", same_output=True, api="drop-in", pair="xml-expat-read",
+         task="parse a document, visit every element, attribute (normalized value) and run of character data",
+         ours=("vxml", ["xml-expat-vxml", "read"]), rival=("expat 2.10.0", ["xml-expat", "read"])),
+    dict(id="xml-expat-dropin-check", suite="xml", data="xml", same_output=True, api="drop-in", pair="xml-expat-check",
+         task="decide whether a document is well-formed (`XML_Parse` with no handlers)",
+         ours=("vxml", ["xml-expat-vxml", "check"]), rival=("expat 2.10.0", ["xml-expat", "check"])),
     # Native APIs: verilith-xml's Rust API against expat's SAX API.
-    dict(id="xml-expat-read", suite="xml", data="xml", same_output=True, api="native",
+    dict(id="xml-expat-read", suite="xml", data="xml", same_output=True, api="native", pair="xml-expat-read",
          task="parse a document, visit every element, attribute (normalized value) and run of character data",
          note="expat calls back for each item as it parses; vxml parses the whole document into a tape, then "
               "the walk reads it through the API, which normalizes attribute values that need it and supplies "
               "DTD defaults. Both check the whole document.",
          ours=("vxml (Rust API)", ["xml-vxml", "read"]), rival=("expat 2.10.0", ["xml-expat", "read"])),
-    dict(id="xml-expat-check", suite="xml", data="xml", same_output=True, api="native",
+    dict(id="xml-expat-check", suite="xml", data="xml", same_output=True, api="native", pair="xml-expat-check",
          task="decide whether a document is well-formed (expat with no handlers; vxml's verified check into a reused tape)",
          ours=("vxml (Rust API)", ["xml-vxml", "check"]), rival=("expat 2.10.0", ["xml-expat", "check"])),
     # The same two jobs against libxml2's SAX2 API, with the same check values.

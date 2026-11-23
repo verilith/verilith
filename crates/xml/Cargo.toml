@@ -23,6 +23,10 @@ vstd = { workspace = true, features = ["std"] }
 # Reference parser for differential tests.
 roxmltree = "0.21"
 
+[features]
+# expat's C ABI (libexpat 2.10.0's expat.h): XML_ParserCreate, XML_Parse, ...
+expat-abi = []
+
 [package.metadata.verus]
 verify = true
 

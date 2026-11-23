@@ -118,6 +118,8 @@ so under the table (`note` in `harness/suites.py`).
 | jpeg-444 | drop-in | verilith-jpeg (TurboJPEG ABI) | libjpeg-turbo 3.2.1 | `tj3Decompress8` to RGB | the Kodak photos, baseline JPEG, 4:4:4 at quality 90 |
 | font-sanitize | drop-in | verilith-font (OTS's C++ API) | OTS ([khaledhosny/ots](https://github.com/khaledhosny/ots), 2026-11) | `ots::OTSContext::Process` into a memory stream | Source Serif 4 Regular as OTF, TTF, WOFF and WOFF2 |
 | regex-re2 | drop-in | verilith-regex (cre2 C ABI) | RE2 2025-11-05 under cre2 | find every match of a pattern, with its groups (`cre2_match` in a loop) | 12 patterns over 64 KiB and 1 MiB of dickens and 1k URLs |
+| xml-expat-dropin-read | drop-in | verilith-xml (expat ABI) | expat 2.10.0 | the xml-expat-read task, through the same SAX driver | 6 of Silesia's XML files and the 7 files of roxmltree's benchmarks |
+| xml-expat-dropin-check | drop-in | verilith-xml (expat ABI) | expat 2.10.0 | `XML_Parse` with no handlers | same |
 | xml-expat-read | native | verilith-xml (`parse`, `Element::attrs`, `children`) | expat 2.10.0 (SAX) | parse, visit every element, attribute (normalized value) and run of character data | 6 of Silesia's XML files and the 7 files of roxmltree's benchmarks |
 | xml-expat-check | native | verilith-xml (`check`) | expat 2.10.0 (no handlers) | decide whether the document is well-formed | same |
 | xml-libxml2-read | native | verilith-xml (`parse`, `Element::attrs`, `children`) | libxml2 2.15.4 (SAX2) | the xml-expat-read task | same |
@@ -127,8 +129,8 @@ In archive-read the two libraries do not do quite the same work: verilith-archiv
 parses and checks the whole archive when it is opened and checks a member's
 length and CRC-32 before it returns any of its data, where libarchive streams.
 
-Five tasks are measured both ways (against c-ares, llhttp, picohttpparser,
-cJSON and mbedTLS), and the report prints those side by side, case by case,
+Seven tasks are measured both ways (against c-ares, llhttp, picohttpparser,
+cJSON, mbedTLS, and expat's read and check), and the report prints those side by side, case by case,
 under "Drop-in and native, side by side". Three things to know when reading
 the native column:
 
@@ -142,8 +144,8 @@ the native column:
 - **picohttpparser** already has a flat API that copies nothing, so its two
   columns are close, as they should be.
 
-verilith-png has no libpng C ABI yet, nor verilith-xml an expat or libxml2 one, and
-simdjson and Verdict are compared core against core, so those five have a native number only. zlib, brotli, lz4, snappy, archives, WebP, JPEG, fonts, regex
+verilith-png has no libpng C ABI yet, nor verilith-xml a libxml2 one, and
+simdjson and Verdict are compared core against core, so those have a native number only. zlib, brotli, lz4, snappy, archives, WebP, JPEG, fonts, regex
 and URL have a drop-in number only: their own APIs do the same work as the
 originals' (verilith-url's Rust API against ada's C++ API is not measured yet).
 Native comparisons use Rust runners (`runners/`) against C/C++ runners, with

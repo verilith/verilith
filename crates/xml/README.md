@@ -22,9 +22,11 @@ as expat (2.2x) and 1.1 to 9 times as fast as libxml2's SAX2 interface
 
 **Status:** early, not yet published. What is proven and what is trusted
 is listed below; read [What is not proven](#what-is-not-proven) before
-relying on it. There is no C ABI yet: verilith-xml is not a drop-in for expat or
-libxml2, and its comparisons with them are native (see
-[Performance](#performance)).
+relying on it. With the feature `expat-abi` it is a drop-in for libexpat:
+a C program built against expat 2.10.0's `expat.h` links
+`libverilith_xml.a` in place of `libexpat.a` and runs unchanged, 1.2 to 9
+times as fast reading a document through expat's callbacks (see
+[The expat C ABI](#the-expat-c-abi)). There is no libxml2 ABI yet.
 
 ```rust
 let doc = verilith_xml::parse(br#"<?xml version="1.0"?>
@@ -179,6 +181,12 @@ verified in verilith-simd). The trusted base is listed under
   forms on millions of documents. Its tables of attribute definitions are
   hash maps, so that supplying defaults stays proportional to an element's
   own definitions.
+* **The expat ABI** (`src/api/expat.rs`, 2930 lines, feature `expat-abi`)
+  is ordinary Rust with `unsafe` at the C boundary: it calls the caller's
+  handlers with pointers into the document and into its own buffers, and
+  trusts the pointers and lengths the caller passes, as a C library does.
+  It is tested by libexpat's own tests under ASan and UBSan (see
+  [The expat C ABI](#the-expat-c-abi)).
 * **Error positions** (`Tape::err`, and the line and column in `Error`)
   are diagnostics outside the spec: the verified parser decides whether
   the document is well-formed, and records where the step that failed
@@ -239,6 +247,100 @@ case found by fuzzing:
   is still not well-formed), and decides whether an attribute default's
   entity must be declared before it has seen the rest of the internal
   subset, where a later parameter entity reference lifts the constraint.
+
+## The expat C ABI
+
+`cargo build --profile release-abort --features expat-abi` adds expat's C
+API to the library (`src/api/expat.rs`, not verified): all 83 functions
+libexpat 2.10.0 exports, with the struct layouts of its `expat.h`
+(`XML_GetUserData` reads the parser's first field, as the header's macro
+does). Build the caller against libexpat's own `expat.h` and
+`expat_external.h`, and link `libverilith_xml.a` (with `-lpthread -ldl -lm`)
+instead of `-lexpat`.
+
+The verified parser decides whether the document is well-formed and writes
+its tape; the ABI turns the tape into expat's callbacks in document order:
+the XML declaration, the document type declaration and every declaration
+in the internal subset (entities, notations, attribute lists, element
+types with their content models as `XML_Content` trees), elements with
+their attributes (defaults from the DTD after the specified ones, as
+`XML_GetSpecifiedAttributeCount` counts them; `XML_GetIdAttributeIndex`),
+character data, CDATA sections, comments, processing instructions, skipped
+entities, and the default handler (with `XML_SetDefaultHandler` an internal
+entity reference is reported instead of expanded, as expat does). Internal
+entities are expanded from the replacement text's tape, without a copy.
+`XML_ParserCreateNS` processes namespaces over the names the verified parser
+read, with expat's errors for unbound and reserved prefixes and its
+triplets. `XML_StopParser` and `XML_ResumeParser` stop and resume between
+callbacks. Line, column and byte positions are those of the item being
+reported, and of the error. An `ExternalEntityRefHandler` is called for a
+reference to an external parsed entity, and the parser it makes with
+`XML_ExternalEntityParserCreate` reads the entity as content, with the
+parent's internal subset in scope; nested references to the same entity
+are rejected as recursion. An `UnknownEncodingHandler` is called for an
+encoding the parser does not read, and its map converts the input to UTF-8
+first. The encoding passed to `XML_ParserCreate` or `XML_SetEncoding`
+(UTF-8, UTF-16, UTF-16LE, UTF-16BE, ISO-8859-1, US-ASCII) takes precedence
+over the document's declaration, as external information does (§4.3.3).
+With no handler set and no namespaces, `XML_Parse` runs the verified check
+alone and builds nothing.
+
+Where it departs from libexpat:
+
+* **The document is checked whole.** `XML_Parse` keeps the input until the
+  call with `isFinal` set, then parses it and calls the handlers. No
+  handler runs before the last buffer arrives, and an error is found then,
+  not in the call whose buffer holds it. Memory is the whole document plus
+  its tape (32 bytes per item).
+* **No handler runs for a rejected document.** expat reports the items
+  before an error; here the verdict comes first.
+* **The external DTD subset and external parameter entities are offered to
+  the `ExternalEntityRefHandler` but not read**, as verilith-xml does not
+  read them (see [How verilith-xml reads XML 1.0](#how-verilith-xml-reads-xml-10)).
+  `XML_UseForeignDTD` calls the handler and has no other effect.
+* **Error codes** are worked out from the place the verified parser
+  stopped; on the common errors they and their positions are expat's
+  (mismatched tag, junk after the root, undefined, recursive and binary
+  entity references, duplicate attributes, unclosed tokens and CDATA
+  sections, misplaced XML declarations, unknown encodings), and otherwise
+  the code is `XML_ERROR_INVALID_TOKEN`.
+* **Memory.** `XML_Memory_Handling_Suite` allocates what the caller frees
+  (`XML_MemMalloc`, content models); the parser's own memory comes from
+  Rust's allocator.
+* **The amplification limits** (`XML_SetBillionLaughsAttackProtection*`,
+  `XML_SetAllocTracker*`) are accepted and kept, and have nothing to limit:
+  content expands lazily and parsing is linear. `XML_SetHashSalt` is
+  accepted; the hash tables are seeded at random for each document.
+* **The default handler** gets the markup of the items that have no
+  handler of their own, in content and around the root; the DTD's
+  declarations and the white space of the prolog are not reported to it.
+* **What the parser accepts** is XML 1.0 Fifth Edition, where libexpat
+  differs (see [Differences from expat](#differences-from-expat)): UTF-16
+  without a byte order mark is rejected, unless the caller names the
+  encoding.
+
+**libexpat's own tests**, built from its 2.10.0 sources with ASan and UBSan
+and linked against `libverilith_xml.a` (`scripts/test-expat.sh`, run by
+`ci.sh`):
+
+* `tests/runtests`, its unit tests, each at six chunk sizes with reparse
+  deferral on and off: 236 of 443 tests pass in every mode. Of the 207 that
+  fail, 86 test failing allocators, 35 need handlers to run (or errors to be
+  found) before the final buffer, 34 feed UTF-16 without a byte order mark,
+  14 need the external subset or external parameter entities read, 9 test
+  libexpat's internals, 17 expect another error code or position, and 12
+  the default handler's view of the DTD, encoding details or expat's
+  amplification accounting.
+* `tests/xmltest.sh`: libexpat's `xmlwf` over the W3C suite, comparing
+  verdicts and canonical output with expat's expected files: 1402 of 1811
+  pass (libexpat itself passes 1803). Of the 409 that fail, 302 are names
+  the Fifth Edition allows and the suite's older tests reject, 55 have
+  their error in the external subset or an external or parameter entity,
+  44 have output that needs the external subset's declarations, and 7 fail
+  with libexpat too.
+
+`tests/c/expat-known-failures.txt` lists each failing test and its reason;
+CI fails if any other test fails, or if a listed one passes.
 
 ## Test results
 
@@ -304,8 +406,9 @@ per case, expat 2.10.0 and libxml2 2.15.4 built from source by the harness
 with the same flags. Speedup is the other parser's time over
 verilith-xml's, with its 95% confidence interval. The inputs are six of
 Silesia's XML files and the seven files of roxmltree's benchmarks, pinned by
-commit and SHA-256. Every comparison is native: verilith-xml has neither C
-ABI, so its own API is measured against each library's.
+commit and SHA-256. The comparisons below are native, verilith-xml's own API
+against each library's; the expat drop-in, the same driver linked against
+the expat ABI, follows them.
 
 On an Apple M3 Pro (macOS, Apple clang, the root README's run of the same
 day) the gaps are smaller: checking is 1.14x to 6.69x expat (geometric mean
@@ -387,6 +490,37 @@ sitting (libxml2 at 149 MB/s, 255 to 262 in the other three, which give
   1112), and entity substitution makes its check slower, so the check runs
   without it.
 
+### Drop-in for expat (vbench)
+
+`bench/run.sh --only xml-expat-dropin-read,xml-expat-dropin-check`: the
+harness's expat driver (`bench/suites/xml/expat.c`), unchanged, linked
+against libexpat and against verilith-xml's expat ABI. The same VM,
+2026-11-23, 11 interleaved pairs per case, gcc 13.3 `-O3 -march=native` and
+rustc 1.97 with fat LTO and `-C target-cpu=native`. MB/s:
+
+| file | read: vxml | read: expat | read: speedup | check: speedup |
+|---|---:|---:|---|---|
+| elts.xml | 223 | 127 | 1.62x (1.53–1.77) | 4.72x (4.30–5.19) |
+| play1.xml | 363 | 241 | 1.50x (1.48–1.55) | 3.48x (3.38–3.64) |
+| stats1.xml | 262 | 151 | 1.72x (1.50–1.77) | 4.07x (3.94–4.27) |
+| tal1.xml | 176 | 116 | 1.51x (1.46–1.54) | 3.89x (3.70–4.10) |
+| tpc.xml | 243 | 150 | 1.58x (1.51–1.68) | 4.06x (3.83–4.22) |
+| w3c5.xml | 195 | 173 | 1.15x (1.03–1.24) | 3.23x (3.11–3.33) |
+| attributes.xml | 82 | 61 | 1.28x (0.86–1.54)\* | 8.18x (7.02–8.62) |
+| cdata.xml | 514 | 438 | 1.17x (1.06–1.50) | 7.44x (7.28–7.99) |
+| gigantic.svg | 2511 | 274 | 9.22x (8.40–10.03) | 15.02x (13.34–16.19) |
+| huge.xml | 458 | 187 | 2.40x (2.37–2.54) | 6.02x (5.20–6.27) |
+| large.plist | 383 | 235 | 1.61x (1.51–1.67) | 3.78x (3.61–3.98) |
+| medium.svg | 402 | 176 | 2.26x (2.19–2.40) | 6.08x (5.76–6.35) |
+| text.xml | 163 | 74 | 2.21x (1.66–2.51) | 6.79x (6.55–7.12) |
+
+Geometric means: reading **1.85x** expat, checking **5.35x**. The starred
+interval includes 1.00. Reading through the ABI costs more than through
+the Rust API (2.12x expat in the same sitting): each element's name and
+attributes are copied out as NUL-terminated strings, as expat's callbacks
+take them. Checking with no handlers runs the verified check alone, as the
+native comparison does.
+
 ### Against the Rust XML parsers
 
 `bench/` (a separate project) times verilith-xml against the Rust XML
@@ -451,8 +585,10 @@ it first.
 
 ```sh
 cargo build --profile release-abort
+cargo build --profile release-abort --features expat-abi   # with the expat C ABI
 ./scripts/verify.sh            # needs cargo-verus on PATH (see the repository's README)
 ./ci.sh                        # the tests: fetches the W3C suite and libexpat
+scripts/test-expat.sh XMLCONF  # libexpat's tests against the expat ABI
 XMLCONF=/path/to/xmlconf cargo test --profile release-abort
 ./ci.sh fuzz                   # the libFuzzer targets (nightly, cargo-fuzz)
 ../../bench/run.sh --only xml  # vbench: against expat and libxml2, built from pinned sources
@@ -478,10 +614,12 @@ src/scan.rs      SSE2 scanners
 src/lanes.rs     SSE2 wrappers proven over verilith-simd
 src/tape.rs      the tokens
 src/api.rs       the Rust API (not verified)
+src/api/expat.rs expat's C ABI, feature expat-abi (not verified)
 tests/           the W3C suite, its output tests, API tests
+tests/c/         libexpat's test suite against the ABI: internals stub, known failures
 fuzz/            differential fuzzing against libexpat
 bench/           against the Rust XML parsers (expat and libxml2 are in vbench)
-scripts/         verification, fetching libexpat
+scripts/         verification, fetching libexpat, libexpat's tests
 ```
 
 ## License
