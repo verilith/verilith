@@ -42,6 +42,10 @@ pub mod lex;
 pub mod scan;
 #[doc(hidden)]
 pub mod spec;
+#[doc(hidden)]
+pub mod stable;
+#[doc(hidden)]
+pub mod stable_pro;
 pub mod tape;
 #[doc(hidden)]
 pub mod uniq;
