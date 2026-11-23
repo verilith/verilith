@@ -12,6 +12,7 @@ use super::sax2::*;
 use super::tree::*;
 use super::*;
 use crate::api::{Document, Src};
+use crate::push::{Stream, R_ERR, R_LIMIT, R_OK, R_WHOLE};
 use crate::tape::{Kind, Tok};
 use std::borrow::Cow;
 
@@ -231,6 +232,11 @@ pub struct State {
     pushed: bool,
     /// A filename for the push parser's input.
     push_name: Option<Vec<u8>>,
+    /// The push parser, reading the chunks as they come; `None` until the
+    /// first chunk, and for input it reads whole (not UTF-8).
+    push: Option<Box<Push>>,
+    /// The push parser has begun (its first chunk came).
+    push_begun: bool,
 }
 
 impl State {
@@ -250,6 +256,8 @@ impl State {
             terminated: false,
             pushed: false,
             push_name: None,
+            push: None,
+            push_begun: false,
         })
     }
 
@@ -266,6 +274,8 @@ impl State {
         self.copied = 0;
         self.terminated = false;
         self.pushed = false;
+        self.push = None;
+        self.push_begun = false;
     }
 }
 
@@ -2121,6 +2131,25 @@ impl<'d> Walk<'d> {
         }
     }
 
+    /// Pushed: the tokens of the epilog from `i`.
+    unsafe fn epilog_from(&mut self, mut i: usize) {
+        unsafe {
+            let toks = self.toks(Src::Doc);
+            while i < toks.len() && (*self.ctxt).disableSAX < 2 {
+                let t = toks[i];
+                match t.kind {
+                    Kind::Comment => self.comment(Src::Doc, t),
+                    Kind::PI => {
+                        self.pi(Src::Doc, t, toks[i + 1]);
+                        i += 1;
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+        }
+    }
+
     /// Pushed: the character data read so far, reported (it has ended, or
     /// grown to what libxml2 reports in one go).
     unsafe fn flush_text(&mut self) {
@@ -2161,7 +2190,7 @@ impl<'d> Walk<'d> {
 
     /// The content of `src` from token `i` to `end`, inside the elements
     /// `open` (which it leaves open where the tokens end).
-    unsafe fn content_in(&mut self, open: &mut Vec<(Open, usize)>, src: Src, mut i: usize, end: usize) {
+    unsafe fn content_in(&mut self, open: &mut Vec<(Open, usize)>, src: Src, mut i: usize, end: usize) -> usize {
         unsafe {
             let c = self.ctxt;
             let toks = self.toks(src);
@@ -2211,7 +2240,7 @@ impl<'d> Walk<'d> {
                             }
                             None => {
                                 // Too deep: stop.
-                                return;
+                                return end;
                             }
                         }
                         continue;
@@ -2235,6 +2264,10 @@ impl<'d> Walk<'d> {
                                 }
                             }
                             self.end_tag(o);
+                            if pushed && open.is_empty() {
+                                // The root element has ended.
+                                return i + 1;
+                            }
                         }
                     }
                     Kind::Text => {
@@ -2287,6 +2320,7 @@ impl<'d> Walk<'d> {
                 }
                 i += 1;
             }
+            i
         }
     }
 
@@ -3807,13 +3841,18 @@ unsafe fn finish_document(c: *mut ParserCtxt) {
 /// A document the verified parser rejected: what libxml2 would report
 /// first, as one fatal error at the place it was found.
 unsafe fn malformed(c: *mut ParserCtxt, bytes: &[u8], e: &crate::api::Error) {
+    unsafe { malformed_in(c, bytes, e, false) }
+}
+
+/// `malformed`, after startDocument if `started`.
+unsafe fn malformed_in(c: *mut ParserCtxt, bytes: &[u8], e: &crate::api::Error, started: bool) {
     unsafe {
         let text = bytes;
         let off = e.offset.min(text.len());
         // libxml2 has started the document unless the XML declaration is
         // what is wrong.
         let decl_end = if text.starts_with(b"<?xml") { text.windows(2).position(|w| w == b"?>").map_or(text.len(), |p| p + 2) } else { 0 };
-        if off >= decl_end {
+        if off >= decl_end && !started {
             if text.starts_with(b"<?xml") {
                 if let Some(v) = decl_attr(&text[..decl_end], b"version") {
                     (*c).version = xstrdup(&v);
@@ -4453,6 +4492,234 @@ pub unsafe extern "C" fn xmlCreatePushParserCtxt(sax: *const SaxHandler, user: *
     }
 }
 
+/// What the push parser keeps between chunks: the verified push parser,
+/// the document over its window, and where the walk over it is.
+struct Push {
+    stream: Box<Stream>,
+    /// Over the stream's window (dropped before the window moves).
+    doc: Option<Box<Document<'static>>>,
+    /// The declarations are final, and `doc` has them.
+    sdtd: bool,
+    phase: u8,
+    /// The open elements.
+    open: Vec<(Open, usize)>,
+    dtd: DtdInfo,
+    sizes: Vec<Option<u64>>,
+    consumed: usize,
+    pend: Vec<u8>,
+    pend_cdata: bool,
+    pend_end: usize,
+    /// The diagnosis of an error is kept as long as the input points at it.
+    diag: Vec<u8>,
+}
+
+/// `Push::phase`: before startDocument, in the prolog, in the root
+/// element, after it, at the end.
+const PP_START: u8 = 0;
+const PP_PROLOG: u8 = 1;
+const PP_CONTENT: u8 = 2;
+const PP_EPILOG: u8 = 3;
+const PP_DONE: u8 = 4;
+
+/// `ctxt->instate` values the push parser shows (parser.h).
+const IS_EOF: c_int = -1;
+const IS_START: c_int = 0;
+const IS_MISC: c_int = 1;
+const IS_DTD: c_int = 3;
+const IS_CONTENT: c_int = 7;
+const IS_CDATA: c_int = 8;
+const IS_EPILOG: c_int = 14;
+
+/// Whether the push parser can read this context's input as it comes:
+/// UTF-8 as far as anything says (the stream hands anything else back).
+unsafe fn can_stream(c: *mut ParserCtxt) -> bool {
+    unsafe {
+        let input = (*c).input;
+        if input.is_null() || (*c).html != 0 {
+            return false;
+        }
+        match copt((*input).encoding) {
+            None => true,
+            Some(e) => e.eq_ignore_ascii_case(b"UTF-8") || e.eq_ignore_ascii_case(b"UTF8"),
+        }
+    }
+}
+
+/// The next chunk to the push parser, and the SAX calls for what it read.
+unsafe fn push_feed(c: *mut ParserCtxt, data: &[u8], terminate: bool) {
+    unsafe {
+        let s = st(c);
+        let p: &mut Push = &mut *(s.push.as_mut().unwrap().as_mut() as *mut Push);
+        let input = (*c).input;
+        if p.phase == PP_DONE {
+            return;
+        }
+        // Lines are counted up to where the window will be kept from.
+        if p.doc.is_some() {
+            let keep = p.stream.keep();
+            let w = p.stream.window();
+            if keep >= s.at.0 && keep <= w.len() {
+                count_lines(s, w, keep);
+            }
+        }
+        let old = p.doc.take();
+        let base0 = p.stream.base();
+        let r = p.stream.feed(data, terminate);
+        if r == R_WHOLE {
+            // Not UTF-8, or a declaration read whole: nothing has been
+            // reported; the document is read at the last chunk.
+            drop(old);
+            s.raw = p.stream.window().to_vec();
+            s.push = None;
+            if terminate {
+                push_whole(c);
+            }
+            return;
+        }
+        if r == R_LIMIT {
+            drop(old);
+            fatal(c, ERR_NO_MEMORY, b"Memory allocation failed : pushing input\n", None);
+            (*c).disableSAX = 2;
+            return;
+        }
+        let d = p.stream.base() - base0;
+        s.at.0 = s.at.0.saturating_sub(d);
+        p.pend_end = p.pend_end.saturating_sub(d);
+        let st_ref: &'static Stream = &*(p.stream.as_ref() as *const Stream);
+        let mut doc = match old {
+            Some(doc) if p.sdtd => doc,
+            _ => {
+                p.sdtd = st_ref.dtd_read();
+                Box::new(Document::chunk(st_ref.dtd(), st_ref.prolog(), st_ref.prolog_toks(), st_ref.standalone()))
+            }
+        };
+        let tape = p.stream.take_out();
+        let win: &'static [u8] = std::slice::from_raw_parts(st_ref.window().as_ptr(), st_ref.window().len());
+        doc.set_chunk(win, tape);
+        let dref: &'static Document<'static> = &*(doc.as_ref() as *const Document<'static>);
+        p.doc = Some(doc);
+        (*input).base = win.as_ptr();
+        (*input).cur = win.as_ptr().add(s.at.0.min(win.len()));
+        (*input).end = win.as_ptr().add(win.len());
+        (*input).consumed = st_ref.base() as c_ulong;
+        // The walk, on from where it was.
+        let mut w = Walk::new(c, dref);
+        w.push = true;
+        w.pbase = st_ref.base();
+        if st_ref.dtd_read() {
+            w.dt_end = Some(st_ref.prolog().len());
+        }
+        w.dtd = std::mem::take(&mut p.dtd);
+        if p.sizes.len() == w.sizes.len() {
+            w.sizes = std::mem::take(&mut p.sizes);
+        }
+        w.consumed = p.consumed;
+        w.pend = std::mem::take(&mut p.pend);
+        w.pend_cdata = p.pend_cdata;
+        w.pend_end = p.pend_end;
+        let toks = dref.toks(Src::Doc);
+        let mut i = 0;
+        if p.phase == PP_START && (!toks.is_empty() || st_ref.phase() != crate::push::PH_HEAD) {
+            i = w.decl_start();
+            p.phase = PP_PROLOG;
+        }
+        if p.phase == PP_PROLOG {
+            i = w.prolog_from(i);
+            if i < toks.len() {
+                p.phase = PP_CONTENT;
+            }
+        }
+        if p.phase == PP_CONTENT {
+            i = w.content_in(&mut p.open, Src::Doc, i, toks.len());
+            if p.open.is_empty() && i <= toks.len() && st_ref.after_root() {
+                p.phase = PP_EPILOG;
+            }
+        }
+        if p.phase == PP_EPILOG {
+            w.epilog_from(i);
+        }
+        // Character data is reported once it has ended.
+        if !w.pend_cdata && !w.pend.is_empty() && !st_ref.in_text() {
+            w.flush_text();
+        }
+        p.dtd = std::mem::take(&mut w.dtd);
+        p.sizes = std::mem::take(&mut w.sizes);
+        p.consumed = w.consumed;
+        p.pend = std::mem::take(&mut w.pend);
+        p.pend_cdata = w.pend_cdata;
+        p.pend_end = w.pend_end;
+        drop(w);
+        // What the push parser has read is consumed: the input is at the
+        // item it has not finished (or at the character data not yet
+        // reported).
+        if p.pend.is_empty() && !p.pend_cdata {
+            let prog = st_ref.progress() - st_ref.base();
+            if prog >= s.at.0 && prog <= win.len() {
+                let (line, col) = count_lines(s, win, prog);
+                (*input).cur = win.as_ptr().add(prog);
+                (*input).line = line;
+                (*input).col = col;
+            }
+        }
+        (*c).instate = match p.phase {
+            PP_START => IS_START,
+            PP_PROLOG if st_ref.in_doctype() => IS_DTD,
+            PP_PROLOG => IS_MISC,
+            PP_CONTENT if st_ref.in_cdata() => IS_CDATA,
+            PP_CONTENT => IS_CONTENT,
+            _ => IS_EPILOG,
+        };
+        match r {
+            R_OK => {
+                p.phase = PP_DONE;
+                (*c).instate = IS_EOF;
+                (*input).cur = (*input).end;
+                finish_document(c);
+            }
+            R_ERR => push_error(c, terminate),
+            _ => {}
+        }
+    }
+}
+
+/// The push parser found the document malformed: the error, as the whole
+/// document's parse reports it.
+unsafe fn push_error(c: *mut ParserCtxt, terminate: bool) {
+    unsafe {
+        let s = st(c);
+        let p: &mut Push = &mut *(s.push.as_mut().unwrap().as_mut() as *mut Push);
+        let started = p.phase != PP_START;
+        p.phase = PP_DONE;
+        (*c).instate = IS_EOF;
+        let (t, _, _) = p.stream.diagnosis();
+        p.diag = t;
+        let t: &[u8] = &*(p.diag.as_slice() as *const [u8]);
+        match crate::api::parse(t) {
+            Ok(_) => fatal(c, ERR_DOCUMENT_END, b"Extra content at the end of the document\n", None),
+            Err(e) => malformed_in(c, t, &e, started),
+        }
+        if terminate {
+            finish_document(c);
+        }
+    }
+}
+
+/// The input the push parser hands back whole, read at the last chunk.
+unsafe fn push_whole(c: *mut ParserCtxt) {
+    unsafe {
+        let s = st(c);
+        let input = (*c).input;
+        let raw = std::mem::take(&mut s.raw);
+        (*input).base = raw.as_ptr();
+        (*input).cur = raw.as_ptr();
+        (*input).end = raw.as_ptr().add(raw.len());
+        (*input).consumed = 0;
+        parse_document(c);
+        // Keep the bytes as long as the input points at them.
+        st(c).raw = raw;
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn xmlParseChunk(ctxt: *mut ParserCtxt, chunk: *const c_char, size: c_int, terminate: c_int) -> c_int {
     unsafe {
@@ -4466,9 +4733,59 @@ pub unsafe extern "C" fn xmlParseChunk(ctxt: *mut ParserCtxt, chunk: *const c_ch
         if s.terminated {
             return (*ctxt).errNo;
         }
-        if !chunk.is_null() && size > 0 {
-            s.raw.extend_from_slice(std::slice::from_raw_parts(chunk as *const u8, size as usize));
+        let bytes: &[u8] = if !chunk.is_null() && size > 0 { std::slice::from_raw_parts(chunk as *const u8, size as usize) } else { &[] };
+        // Read as it comes, if it can be: decided on the first four bytes,
+        // as libxml2 waits for them (UTF-16 without a byte order mark is
+        // read whole, converted).
+        if !s.push_begun && (s.raw.len() + bytes.len() >= 4 || terminate != 0) {
+            s.push_begun = true;
+            let mut head = [0u8; 4];
+            for (k, b) in s.raw.iter().chain(bytes.iter()).take(4).enumerate() {
+                head[k] = *b;
+            }
+            if can_stream(ctxt) && head != [0x3C, 0, 0x3F, 0] && head != [0, 0x3C, 0, 0x3F] {
+                initialize_late(ctxt);
+                if !(*ctxt).sax.is_null() {
+                    if let Some(f) = (*(*ctxt).sax).setDocumentLocator {
+                        f((*ctxt).userData, &xmlDefaultSAXLocator as *const SaxLocator as *mut SaxLocator);
+                    }
+                }
+                st(ctxt).at = (0, 1, 1);
+                s.push = Some(Box::new(Push {
+                    stream: Box::new(Stream::new()),
+                    doc: None,
+                    sdtd: false,
+                    phase: PP_START,
+                    open: Vec::new(),
+                    dtd: DtdInfo::default(),
+                    sizes: Vec::new(),
+                    consumed: 0,
+                    pend: Vec::new(),
+                    pend_cdata: false,
+                    pend_end: 0,
+                    diag: Vec::new(),
+                }));
+            }
         }
+        if s.push.is_some() {
+            let mut data = std::mem::take(&mut s.raw);
+            data.extend_from_slice(bytes);
+            if terminate != 0 {
+                s.terminated = true;
+                let p = s.push.as_ref().unwrap();
+                if p.stream.base() + p.stream.window().len() + data.len() == 0 {
+                    fatal(ctxt, ERR_DOCUMENT_EMPTY, b"Document is empty\n", None);
+                    finish_document(ctxt);
+                    return (*ctxt).errNo;
+                }
+            }
+            push_feed(ctxt, &data, terminate != 0);
+            if terminate != 0 && (*ctxt).wellFormed == 0 && (*ctxt).errNo == ERR_OK {
+                return 1;
+            }
+            return (*ctxt).errNo;
+        }
+        s.raw.extend_from_slice(bytes);
         if terminate != 0 {
             s.terminated = true;
             let input = (*ctxt).input;
