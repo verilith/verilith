@@ -126,14 +126,14 @@ liblz4's place.
 ## Performance
 
 [vbench](https://github.com/verilith/verilith/tree/main/bench) has the
-comparison (`lz4-*`): one C driver linked with liblz4 1.10.0 and with
+comparison (`lz4-*`): one C driver linked with liblz4 1.11.1 and with
 verilith-lz4, both built with the same flags, over five Silesia files and 4 KiB
-and 64 KiB pieces. On an Apple Silicon Mac (M3 Pro), geometric means of
-verilith-lz4's speed against liblz4's (with the range over the cases): block
-compression 0.97 (0.93 to 1.01, compressed sizes within a few bytes),
-frame compression 0.94 (0.85 to 1.00), block decompression 0.91 (0.86 to
-0.96), frame decompression 0.93 (0.89 to 0.96). The widest gap left is
-frame compression of a 4 KiB input.
+and 64 KiB pieces. On an Apple Silicon Mac (M3 Pro, the run in the
+[repository's benchmark table](../../README.md#benchmarks), 2026-11-22),
+geometric means of liblz4's time over verilith-lz4's: block decompression
+1.10x, frame decompression 1.09x, block compression 0.97x (compressed
+sizes within a few bytes) and frame compression 0.94x. The widest gap
+left is frame compression of a 4 KiB input.
 
 `cargo run --release --example bench -- FILES` is a quicker check
 against the system liblz4.

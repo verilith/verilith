@@ -72,7 +72,7 @@ re-exports `verilith_http::httparse`. In your application's `Cargo.toml`:
 
 ```toml
 [patch.crates-io]
-httparse = { git = "https://github.com/verilith/verilith/tree/main/crates/http" }
+httparse = { git = "https://github.com/verilith/verilith" }   # Cargo finds crates/http/compat/httparse
 ```
 
 Every crate in the build that depends on httparse 1.x, hyper included, now
