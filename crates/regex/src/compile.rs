@@ -501,6 +501,7 @@ pub fn compile(x: &Ast, classes: Vec<Class>, ngroups: usize) -> (r: Option<Prog>
             &&& p.wf()
             &&& p.classes == classes
             &&& p.nslots == 2 * ngroups
+            &&& p.insts@.len() == x.ln + 2
             &&& compiled(p.sp(), x.re(classes@))
             &&& p.start == sem::ent_n(x.re(classes@), 0, ln(x.re(classes@)) as int)
         },

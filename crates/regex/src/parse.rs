@@ -18,8 +18,10 @@ pub const MAX_NEST: usize = 250;
 
 pub const MAX_REPEAT: usize = 1000;
 
-/// The longest pattern, in bytes.
-pub const MAX_PATTERN: usize = 0x1_0000;
+/// The longest pattern, in bytes: larger than any allocation can be, so
+/// in effect there is no limit (RE2 has none either). It only keeps the
+/// arithmetic on positions from overflowing.
+pub const MAX_PATTERN: usize = usize::MAX / 4;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Error {
