@@ -217,6 +217,22 @@ pub struct Instance {
     fuel: Option<u64>,
 }
 
+/// `n` zero bytes, or `None` if they cannot be allocated. Zeroed
+/// allocation, as `vec![0; n]` does, so the pages are not written up front.
+fn zeroed(n: usize) -> Option<Vec<u8>> {
+    if n == 0 {
+        return Some(Vec::new());
+    }
+    let layout = std::alloc::Layout::array::<u8>(n).ok()?;
+    // SAFETY: `layout` has nonzero size; a non-null result is an allocation
+    // of `n` initialized (zero) bytes from the global allocator with the
+    // layout `Vec<u8>` uses for capacity `n`.
+    unsafe {
+        let p = std::alloc::alloc_zeroed(layout);
+        if p.is_null() { None } else { Some(Vec::from_raw_parts(p, n, n)) }
+    }
+}
+
 /// Largest table we allocate.
 const MAX_TABLE: u32 = 10_000_000;
 
@@ -282,11 +298,9 @@ impl Instance {
                 if l.min > cap {
                     return Err(Error::Instantiate("memory larger than the embedder's limit".into()));
                 }
-                let mut mem = Vec::new();
-                if mem.try_reserve_exact(l.min as usize * 65536).is_err() {
+                let Some(mem) = zeroed(l.min as usize * 65536) else {
                     return Err(Error::Instantiate("cannot allocate memory".into()));
-                }
-                mem.resize(l.min as usize * 65536, 0);
+                };
                 (mem, l.max.unwrap_or(65536).min(cap))
             }
             None => (Vec::new(), 0),
