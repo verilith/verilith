@@ -108,7 +108,8 @@ invalid number or literal, nesting too deep, trailing data, invalid UTF-8)
 and its byte offset, line and column, e.g. `unexpected ']' at line 3
 column 3 (byte 11)`.
 
-Inputs must be smaller than 4 GiB, because spans are 32-bit.
+Inputs may be up to 2^48 - 1 bytes (256 TiB), more than a 64-bit address
+space holds today: token positions are 48 bits, so a token is 16 bytes.
 
 ### On-demand reading
 
@@ -472,7 +473,7 @@ spec (`document` in `src/spec.rs`), so the parser is proven to follow them:
 | Text that is not UTF-8 | not JSON (§8.1) | rejected |
 | A lone surrogate escape, e.g. `"\ud800"` | allowed by the grammar, meaning undefined (§8.2) | rejected (it cannot be decoded to UTF-8) |
 | Nesting deeper than 1000 | limits allowed (§9) | rejected |
-| Inputs of 4 GiB or more | limits allowed (§9) | rejected |
+| Inputs of 256 TiB or more | limits allowed (§9) | rejected |
 | Numbers beyond `f64` range, e.g. `1e400` | limits allowed (§9) | accepted; `as_f64` gives ±infinity |
 | Duplicate member names | should be unique, behavior unpredictable (§4) | all kept, in order; `get` returns the first |
 | `parse_prefix`: data after the value | (not a JSON text) | allowed, except a top-level number directly followed by a byte that could continue it (`01`, `1.`, `2e`), which is rejected rather than read as a shorter number |
