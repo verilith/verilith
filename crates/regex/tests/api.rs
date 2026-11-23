@@ -227,4 +227,12 @@ fn limits() {
     assert!(matches!(Regex::with_limit(b"a{1000}", 900), Err(Error::TooBig)));
     assert!(Regex::with_limit(b"a{1000}", 2000).is_ok());
     assert!(matches!(Regex::with_limit(b"abc", 3), Err(Error::TooBig)));
+    // Repetitions stop expanding at the limit, so this is refused at once
+    // rather than after building millions of nodes.
+    let wide = format!("(?:{}){{1000}}", "a".repeat(16_000));
+    let t = std::time::Instant::now();
+    assert!(matches!(Regex::new(wide.as_bytes()), Err(Error::TooBig)));
+    assert!(t.elapsed().as_secs() < 5);
+    let many = "(?:a{1000})".repeat(2_000);
+    assert!(matches!(Regex::new(many.as_bytes()), Err(Error::TooBig)));
 }
