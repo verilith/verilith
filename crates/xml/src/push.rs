@@ -1735,4 +1735,387 @@ proof fn lemma_stream_fed(a: &Stream, b: &Stream, d: Seq<u8>)
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// Feeding
+// ---------------------------------------------------------------------------
+
+/// The document fails on every input that begins with `seen` (at the end,
+/// on `seen`).
+pub open spec fn fails_parse(seen: Seq<u8>, last: bool) -> bool {
+    forall|s: Seq<u8>| #[trigger] ext(seen, s) && (last ==> s == seen) ==> parse(s) is None
+}
+
+proof fn lemma_fails_parse(st: &Stream, last: bool)
+    requires
+        st.utf8(),
+        fails(st.seen(), last),
+    ensures
+        fails_parse(st.seen(), last),
+{
+    hide(document);
+    hide(input_enc);
+    assert forall|s: Seq<u8>| #[trigger] ext(st.seen(), s) && (last ==> s == st.seen()) implies parse(s) is None by {
+        lemma_parse_utf8(s);
+    }
+}
+
+proof fn lemma_fails_any(seen: Seq<u8>, last: bool)
+    requires
+        fails_parse(seen, false),
+    ensures
+        fails_parse(seen, last),
+{
+}
+
+proof fn lemma_parse_ok(st: &Stream)
+    requires
+        st.utf8(),
+        document(st.seen(), Enc::Utf8) is Some,
+    ensures
+        parse(st.seen()) is Some,
+{
+    hide(document);
+    hide(input_enc);
+    lemma_ext_refl(st.seen());
+    lemma_parse_utf8(st.seen());
+}
+
+/// The characters fail: so does the document.
+#[verifier::spinoff_prover]
+proof fn lemma_chars_fail(st: &Stream, last: bool)
+    requires
+        st.inv(),
+        st.phase == PH_M1 || st.phase == PH_M2 || st.phase == PH_BODY,
+        forall|s: Seq<u8>|
+            #[trigger] ext(st.seen(), s) && (last ==> s == st.seen()) ==> !chars_from(s, st.w.base + st.w.cpos),
+    ensures
+        fails(st.seen(), last),
+{
+    hide(document);
+    hide(after_m1);
+    hide(after_m2);
+    hide(after_content);
+    assert forall|s: Seq<u8>| #[trigger] ext(st.seen(), s) && (last ==> s == st.seen()) implies document(
+        s,
+        Enc::Utf8,
+    ) is None by {
+        if st.phase == PH_M1 {
+            assert(st.m1_goal());
+        } else if st.phase == PH_M2 {
+            assert(st.m2_goal());
+        } else {
+            assert(st.w.goal(st.genv@));
+        }
+    }
+}
+
+impl Stream {
+    /// A new parser.
+    pub fn new() -> (r: Stream)
+        ensures
+            r.inv(),
+            r.seen() == Seq::<u8>::empty(),
+    {
+        stream_new()
+    }
+
+    /// Feeds the next chunk (`last`: the last one). Before the root
+    /// element, the prolog's tokens are emitted as each is read, and from
+    /// it on, the content's, to `w.out`, at positions in `w.buf`.
+    /// `R_MORE`: more is needed; `R_OK`, `R_ERR`: the verdict; `R_WHOLE`:
+    /// the document is to be parsed whole, from `w.buf`, once all of it is
+    /// fed; `R_LIMIT`: the window outgrew the token positions.
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(120)]
+    pub fn feed(&mut self, data: &[u8], last: bool) -> (r: u8)
+        requires
+            old(self).inv(),
+        ensures
+            final(self).inv(),
+            r <= R_LIMIT,
+            (old(self).phase == PH_FAILED || old(self).phase == PH_DONE) ==> r == R_ERR && final(self).seen()
+                == old(self).seen(),
+            r != R_LIMIT && !(old(self).phase == PH_FAILED || old(self).phase == PH_DONE) ==> final(self).seen()
+                == old(self).seen() + data@,
+            r == R_OK ==> last && parse(final(self).seen()) is Some,
+            r == R_ERR && !(old(self).phase == PH_FAILED || old(self).phase == PH_DONE) ==> fails_parse(
+                final(self).seen(),
+                last,
+            ),
+            r == R_MORE ==> !last,
+            r == R_WHOLE ==> final(self).phase == PH_WHOLE && final(self).w.base == 0 && final(self).w.buf@
+                == final(self).seen(),
+    {
+        hide(document);
+        hide(doc_chars);
+        hide(after_m1);
+        hide(after_m2);
+        hide(after_content);
+        hide(input_enc);
+        hide(parse);
+        self.w.out.clear();
+        if self.phase == PH_FAILED || self.phase == PH_DONE {
+            return R_ERR;
+        }
+        slice_len_bound(data);
+        let n0 = self.w.buf.len();
+        if data.len() as u64 > MAX_POS - n0 as u64 || self.w.base > usize::MAX - n0 || data.len() > usize::MAX - n0
+            - self.w.base {
+            self.phase = PH_DONE;
+            return R_LIMIT;
+        }
+        let ghost s0 = self.seen();
+        win_append(&mut self.w, data);
+        proof {
+            lemma_stream_fed(old(self), self, data@);
+        }
+        let ghost seen = self.seen();
+        if self.phase == PH_BODY {
+            win_compact(&mut self.w, Ghost(self.genv@));
+            proof {
+                assert(self.utf8());
+                assert(self.pro_ok());
+            }
+        }
+        if self.phase == PH_HEAD {
+            let h = head_step(self);
+            if h == S_WAIT {
+                if last {
+                    self.phase = PH_WHOLE;
+                    return R_WHOLE;
+                }
+                return R_MORE;
+            }
+            if h == S_FAIL {
+                return R_WHOLE;
+            }
+        }
+        if self.phase == PH_WHOLE {
+            proof {
+                assert(self.w.buf@ =~= self.seen());
+            }
+            return R_WHOLE;
+        }
+        // The characters, as far as the window decides them.
+        slice_len_bound(self.w.buf.as_slice());
+        proof {
+            assert(self.seen() == seen);
+            assert(self.utf8());
+        }
+        match ex_chars_scan(self.w.buf.as_slice(), self.w.cpos, last, Ghost(seen), Ghost(self.w.base as int)) {
+            Some(c2) => {
+                self.w.cpos = c2;
+                proof {
+                    assert(self.seen() == seen);
+                    assert(self.w.chars_inv());
+                    assert(self.utf8());
+                    if self.phase == PH_M1 {
+                        assert(self.m1_goal());
+                    }
+                    if self.phase == PH_M2 {
+                        assert(self.m2_goal());
+                        assert(self.pro_ok());
+                    }
+                    if self.phase == PH_BODY {
+                        assert(self.w.inv(self.genv@));
+                        assert(self.pro_ok());
+                    }
+                    assert(self.inv());
+                }
+            },
+            None => {
+                proof {
+                    lemma_chars_fail(self, last);
+                    lemma_fails_parse(self, last);
+                }
+                if last {
+                    self.phase = PH_DONE;
+                } else {
+                    self.phase = PH_FAILED;
+                    proof {
+                        assert(self.seen() == seen);
+                        assert(self.utf8());
+                    }
+                }
+                return R_ERR;
+            },
+        }
+        let ghost seen1 = self.seen();
+        if self.phase == PH_M1 {
+            let mut wait = false;
+            loop
+                invariant_except_break
+                    self.phase == PH_M1,
+                    !wait,
+                invariant
+                    self.inv(),
+                    self.seen() == seen1,
+                    last ==> self.w.cpos == self.w.buf@.len(),
+                ensures
+                    self.inv(),
+                    self.seen() == seen1,
+                    last ==> self.w.cpos == self.w.buf@.len(),
+                    wait ==> self.phase == PH_M1,
+                    !wait ==> self.phase == PH_M2,
+                decreases self.w.buf@.len() - self.w.pos,
+            {
+                let m = misc_step(self);
+                if m == S_WAIT {
+                    wait = true;
+                    break;
+                }
+                if m == S_DONE {
+                    let d = m1_decide(self);
+                    if d == S_WAIT {
+                        wait = true;
+                    }
+                    break;
+                }
+            }
+            if wait {
+                return self.prolog_wait(last);
+            }
+        }
+        if self.phase == PH_M2 {
+            let mut wait = false;
+            let mut fail = false;
+            loop
+                invariant_except_break
+                    self.phase == PH_M2,
+                    !wait,
+                    !fail,
+                invariant
+                    self.inv(),
+                    self.seen() == seen1,
+                    last ==> self.w.cpos == self.w.buf@.len(),
+                ensures
+                    self.inv(),
+                    self.seen() == seen1,
+                    last ==> self.w.cpos == self.w.buf@.len(),
+                    wait ==> self.phase == PH_M2,
+                    fail ==> self.phase == PH_FAILED,
+                    !wait && !fail ==> self.phase == PH_BODY,
+                decreases self.w.buf@.len() - self.w.pos,
+            {
+                let m = misc_step(self);
+                if m == S_WAIT {
+                    wait = true;
+                    break;
+                }
+                if m == S_DONE {
+                    let d = m2_root(self);
+                    if d == S_WAIT {
+                        wait = true;
+                    }
+                    if d == S_FAIL {
+                        fail = true;
+                    }
+                    break;
+                }
+            }
+            if wait {
+                return self.prolog_wait(last);
+            }
+            if fail {
+                proof {
+                    lemma_fails_parse(self, false);
+                    lemma_fails_any(self.seen(), last);
+                }
+                return R_ERR;
+            }
+        }
+        // The content.
+        proof {
+            assert(self.phase == PH_BODY);
+        }
+        let ghost gv = self.genv@;
+        let c = {
+            let env = self.dtd.env(self.pro.as_slice());
+            content_run(&mut self.w, &env, last)
+        };
+        if c == S_WAIT {
+            proof {
+                assert(self.utf8());
+                assert(self.pro_ok());
+            }
+            return R_MORE;
+        }
+        if c == S_FAIL {
+            proof {
+                assert(self.utf8());
+                lemma_fails_parse(self, last);
+            }
+            if last {
+                self.phase = PH_DONE;
+            } else {
+                self.phase = PH_FAILED;
+            }
+            return R_ERR;
+        }
+        proof {
+            assert(self.utf8());
+            lemma_parse_ok(self);
+        }
+        self.phase = PH_DONE;
+        R_OK
+    }
+
+    /// Before the root element, the window decides nothing more: at the
+    /// last chunk, the rest of the document whole.
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(60)]
+    fn prolog_wait(&mut self, last: bool) -> (r: u8)
+        requires
+            old(self).inv(),
+            old(self).phase == PH_M1 || old(self).phase == PH_M2,
+            last ==> old(self).w.cpos == old(self).w.buf@.len(),
+        ensures
+            final(self).inv(),
+            final(self).seen() == old(self).seen(),
+            r == R_MORE || r == R_OK || r == R_ERR,
+            r == R_OK ==> last && parse(final(self).seen()) is Some,
+            r == R_ERR ==> fails_parse(final(self).seen(), last),
+            r == R_MORE ==> !last,
+    {
+        hide(document);
+        hide(parse);
+        hide(input_enc);
+        hide(doc_chars);
+        hide(after_m1);
+        hide(after_m2);
+        let ghost seen = self.seen();
+        proof {
+            assert(self.utf8());
+        }
+        if !last {
+            flush_pro(self);
+            proof {
+                assert(self.inv());
+            }
+            return R_MORE;
+        }
+        let ok = pro_finish(self);
+        proof {
+            assert(self.seen() == seen);
+            assert(self.utf8());
+        }
+        if ok {
+            flush_pro(self);
+            self.phase = PH_DONE;
+            proof {
+                lemma_parse_ok(self);
+            }
+            R_OK
+        } else {
+            proof {
+                lemma_ext_refl(self.seen());
+                lemma_parse_utf8(self.seen());
+            }
+            self.phase = PH_DONE;
+            R_ERR
+        }
+    }
+}
+
 } // verus!
