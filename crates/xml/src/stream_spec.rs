@@ -785,4 +785,186 @@ pub proof fn lemma_head_utf8(x: Seq<u8>, y: Seq<u8>, hi: int)
     }
 }
 
+// ---------------------------------------------------------------------------
+// At the end: the window is all of what remains
+// ---------------------------------------------------------------------------
+
+/// `x` from `lo` is `y` from `lo - d`, to the end of both.
+pub open spec fn tail(x: Seq<u8>, y: Seq<u8>, lo: int, d: int) -> bool {
+    agree(x, y, lo, x.len() as int, d) && y.len() == x.len() - d
+}
+
+pub proof fn lemma_cp_at_tail(x: Seq<u8>, y: Seq<u8>, lo: int, d: int, i: int)
+    requires
+        tail(x, y, lo, d),
+        lo <= i,
+    ensures
+        cp_at(y, i - d) == cp_at(x, i),
+{
+    if i < x.len() {
+        assert(x[i] == y[i - d]);
+        if i + 1 < x.len() {
+            assert(x[i + 1] == y[i + 1 - d]);
+        }
+        if i + 2 < x.len() {
+            assert(x[i + 2] == y[i + 2 - d]);
+        }
+        if i + 3 < x.len() {
+            assert(x[i + 3] == y[i + 3 - d]);
+        }
+        assert(utf8_len(y, i - d) == utf8_len(x, i));
+        if let Some(l) = utf8_len(x, i) {
+            assert(cp_val(y, i - d, l) == cp_val(x, i, l));
+        }
+    }
+}
+
+pub proof fn lemma_name_rest_tail(x: Seq<u8>, y: Seq<u8>, lo: int, d: int, i: int)
+    requires
+        tail(x, y, lo, d),
+        lo <= i,
+    ensures
+        name_rest(y, i - d) == name_rest(x, i) - d,
+    decreases x.len() - i,
+{
+    lemma_cp_at_tail(x, y, lo, d, i);
+    lemma_cp_in_bounds(x, i);
+    if 0 <= i && i + cp_len(x, i) <= x.len() && name_char_at(x, i) {
+        lemma_name_rest_tail(x, y, lo, d, i + cp_len(x, i));
+    }
+}
+
+pub proof fn lemma_name_end_tail(x: Seq<u8>, y: Seq<u8>, lo: int, d: int, i: int)
+    requires
+        tail(x, y, lo, d),
+        lo <= i,
+    ensures
+        name_end(y, i - d) == name_end(x, i) - d,
+{
+    lemma_cp_at_tail(x, y, lo, d, i);
+    lemma_cp_in_bounds(x, i);
+    if name_start_at(x, i) {
+        lemma_name_rest_tail(x, y, lo, d, i + cp_len(x, i));
+    }
+}
+
+pub proof fn lemma_ws_end_tail(x: Seq<u8>, y: Seq<u8>, lo: int, d: int, i: int)
+    requires
+        tail(x, y, lo, d),
+        lo <= i,
+    ensures
+        ws_end(y, i - d) == ws_end(x, i) - d,
+    decreases x.len() - i,
+{
+    if 0 <= i < x.len() {
+        assert(x[i] == y[i - d]);
+        if is_ws(x[i]) {
+            lemma_ws_end_tail(x, y, lo, d, i + 1);
+        }
+    }
+}
+
+/// An end tag at the end that the window does not finish: it fails.
+pub proof fn lemma_etag_tail(x: Seq<u8>, y: Seq<u8>, lo: int, d: int, j: int, st: Seq<Open>, t: Seq<XTok>, env: Env)
+    requires
+        tail(x, y, lo, d),
+        lo <= j,
+        j + 1 < x.len(),
+        x[j] == 0x3C,
+        x[j + 1] == 0x2F,
+        st.len() > 0,
+        ({
+            let n = name_end(x, j + 2);
+            n == x.len() || ws_end(x, n) == x.len()
+        }),
+    ensures
+        item(y, j - d, st, t, env) is None,
+{
+    lemma_name_end(x, j + 2);
+    lemma_name_end_tail(x, y, lo, d, j + 2);
+    let n = name_end(x, j + 2);
+    lemma_ws_end_tail(x, y, lo, d, n);
+    lemma_ws_end_ge(x, n);
+    assert(x[j] == y[j - d]);
+    assert(x[j + 1] == y[j + 1 - d]);
+}
+
+/// Text at the end that the window does not end: it fails or runs to the
+/// end.
+pub proof fn lemma_text_tail(x: Seq<u8>, y: Seq<u8>, lo: int, d: int, m: int)
+    requires
+        tail(x, y, lo, d),
+        lo <= m <= x.len(),
+        forall|k: int| m <= k < x.len() ==> #[trigger] x[k] != 0x3C && x[k] != 0x26,
+    ensures
+        text_end(y, m - d) is None || text_end(y, m - d) == Some(y.len() as int),
+    decreases x.len() - m,
+{
+    if m < x.len() {
+        assert(x[m] == y[m - d]);
+        assert(x[m] != 0x3C && x[m] != 0x26);
+        lemma_text_tail(x, y, lo, d, m + 1);
+    }
+}
+
+/// A CDATA section at the end with no `]]>` in the window: it fails.
+pub proof fn lemma_cdata_tail(x: Seq<u8>, y: Seq<u8>, lo: int, d: int, m: int)
+    requires
+        tail(x, y, lo, d),
+        lo <= m,
+        forall|k: int| m <= k && k + 3 <= x.len() ==> !(#[trigger] x[k] == 0x5D && x[k + 1] == 0x5D && x[k + 2] == 0x3E),
+    ensures
+        cdata_end(y, m - d) is None,
+    decreases x.len() - m,
+{
+    lemma_lits_stable();
+    if m < x.len() {
+        if has_lit(y, m - d, lit_cdata_end()) {
+            assert(y.subrange(m - d, m - d + 3)[0] == y[m - d]);
+            assert(y.subrange(m - d, m - d + 3)[1] == y[m - d + 1]);
+            assert(y.subrange(m - d, m - d + 3)[2] == y[m - d + 2]);
+            assert(x[m] == y[m - d]);
+            assert(x[m + 1] == y[m + 1 - d]);
+            assert(x[m + 2] == y[m + 2 - d]);
+        }
+        lemma_cdata_tail(x, y, lo, d, m + 1);
+    }
+}
+
+/// An item that the window, which is all that remains, does not read: it
+/// fails on `y`, or it is text that runs to the end.
+pub proof fn lemma_item_flip(
+    x: Seq<u8>,
+    y: Seq<u8>,
+    lo: int,
+    d: int,
+    j: int,
+    st: Seq<Open>,
+    t: Seq<XTok>,
+    st2: Seq<Open>,
+    t2: Seq<XTok>,
+    env: Env,
+)
+    requires
+        tail(x, y, lo, d),
+        lo <= j < x.len(),
+        !is_etag(x, j),
+        item(x, j, st2, t2, env) is None,
+    ensures
+        item(y, j - d, st, t, env) matches Some((_, _, e)) ==> (e > y.len() || (e == y.len() && x[j] != 0x3C
+            && x[j] != 0x26)),
+{
+    assert(x[j] == y[j - d]);
+    if j + 1 < x.len() {
+        assert(x[j + 1] == y[j + 1 - d]);
+    }
+    assert(is_etag(y, j - d) == is_etag(x, j));
+    lemma_agree_flip(x, y, lo, x.len() as int, d);
+    if let Some((_, _, e)) = item(y, j - d, st, t, env) {
+        if item_reach(y, j - d, e) <= y.len() {
+            lemma_item_mv(y, x, lo - d, y.len() as int, -d, j - d, st, t, st2, t2, env);
+        }
+    }
+}
+
 } // verus!
