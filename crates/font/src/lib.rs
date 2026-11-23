@@ -1,26 +1,57 @@
+#![doc = include_str!("../README.md")]
 #![cfg_attr(not(verus_only), allow(unused_variables, unused_imports, unused_braces, unused_mut, unused_assignments, unused_parens))]
-//! A formally verified (Verus) OpenType font sanitizer.
-//!
-//! [`sanitize`] takes the bytes of a font and returns either a font it
-//! has rebuilt or nothing. The theorem, checked by Verus: every font it
-//! returns satisfies [`spec::wf_font`].
+// A formally verified (Verus) OpenType font sanitizer.
+//
+// [`sanitize`] takes the bytes of a font and returns either a font it
+// has rebuilt or nothing. The theorem, checked by Verus: every font it
+// returns satisfies [`spec::wf_font`].
+
+#[cfg(not(target_pointer_width = "64"))]
+compile_error!("verilith-font is proven for 64-bit targets only");
+
+// The table-size arithmetic is proven with 64-bit usize. Only where it
+// holds, so that a 32-bit build stops at the error above rather than at the
+// size check this generates.
+#[cfg(target_pointer_width = "64")]
+vstd::prelude::verus! {
+global size_of usize == 8;
+}
+
+#[doc(hidden)]
 pub mod build;
+#[doc(hidden)]
 pub mod capi;
+#[doc(hidden)]
 pub mod cff;
+#[doc(hidden)]
 pub mod cmap;
+#[doc(hidden)]
 pub mod cs;
+#[doc(hidden)]
 pub mod dir;
+#[doc(hidden)]
 pub mod font;
+#[doc(hidden)]
 pub mod glyf;
+#[doc(hidden)]
 pub mod lay;
+#[doc(hidden)]
 pub mod layout;
+#[doc(hidden)]
 pub mod graph;
+#[doc(hidden)]
 pub mod prims;
+#[doc(hidden)]
 pub mod spec;
+#[doc(hidden)]
 pub mod spec_cff;
+#[doc(hidden)]
 pub mod spec_cs;
+#[doc(hidden)]
 pub mod spec_layout;
+#[doc(hidden)]
 pub mod tables;
+#[doc(hidden)]
 pub mod woff2;
 
 use vstd::prelude::*;

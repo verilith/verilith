@@ -168,7 +168,7 @@ pub extern "C" fn vjson_error_message(code: c_int) -> *const c_char {
         8 => b"nesting too deep\0",
         9 => b"data after the JSON value\0",
         10 => b"invalid UTF-8\0",
-        11 => b"input of 4 GiB or more\0",
+        11 => b"input of 256 TiB or more\0",
         _ => b"invalid argument\0",
     };
     s.as_ptr() as *const c_char

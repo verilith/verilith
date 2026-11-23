@@ -87,10 +87,675 @@ proof fn lemma_pv_push(v: Seq<Inst>, i: Inst, cl: Seq<Class>)
     assert(pv(v.push(i), cl) =~= pv(v, cl) + seq![iv(i, cl)]);
 }
 
-/// Appends the normal copy of `x`: based at `b`, leaving to `e`. `fail` is
-/// the address of the program's `Fail`.
+/// What is left to emit, the next piece last: the normal copy of a tree
+/// (`N(x, b, e)`, as [`code_n`]), its no-progress copy (`Z(x, b, e0, nb,
+/// ne)`, as [`code_z`]), or one instruction.
+pub enum Task<'a> {
+    N(&'a Ast, usize, usize),
+    Z(&'a Ast, usize, usize, usize, usize),
+    I(Inst),
+}
+
+/// The instructions a task stands for.
+pub open spec fn tcode(t: Task, cl: Seq<Class>, f: int) -> Seq<SInst> {
+    match t {
+        Task::N(x, b, e) => code_n(x.re(cl), b as int, e as int, f),
+        Task::Z(x, b, e0, nb, ne) => code_z(x.re(cl), b as int, e0 as int, nb as int, ne as int, f),
+        Task::I(i) => seq![iv(i, cl)],
+    }
+}
+
+pub open spec fn tlen(t: Task) -> int {
+    match t {
+        Task::N(x, _, _) => x.ln as int,
+        Task::Z(x, _, _, _, _) => x.lz as int,
+        Task::I(_) => 1,
+    }
+}
+
+/// The instructions the tasks stand for, the last task's first.
+pub open spec fn flat(ts: Seq<Task>, cl: Seq<Class>, f: int) -> Seq<SInst>
+    decreases ts.len(),
+{
+    if ts.len() == 0 {
+        seq![]
+    } else {
+        tcode(ts.last(), cl, f) + flat(ts.drop_last(), cl, f)
+    }
+}
+
+/// A task can be emitted where it says it starts.
+pub open spec fn task_ok(t: Task, pos: int, nc: int, ng: int) -> bool {
+    match t {
+        Task::N(x, b, e) => b == pos && x.wf() && x.bounded(nc, ng) && b + x.ln <= LIM && e <= LIM,
+        Task::Z(x, b, e0, nb, ne) => b == pos && x.wf() && x.bounded(nc, ng) && b + x.lz <= LIM && nb + x.ln
+            <= LIM && e0 <= LIM && ne <= LIM,
+        Task::I(i) => true,
+    }
+}
+
+/// The tasks, the last first, each start where the one before ends, the
+/// first at `pos`.
+pub open spec fn tasks_ok(ts: Seq<Task>, pos: int, nc: int, ng: int) -> bool
+    decreases ts.len(),
+{
+    ts.len() == 0 || (task_ok(ts.last(), pos, nc, ng) && tasks_ok(ts.drop_last(), pos + tlen(ts.last()), nc, ng))
+}
+
+/// Termination: a task weighs more than the tasks it is replaced by.
+pub open spec fn wn(r: Re) -> nat
+    decreases r,
+{
+    match r {
+        Re::Group(_, x) => 2 + wn(*x),
+        Re::Cat(x, y) => 1 + wn(*x) + wn(*y),
+        Re::Alt(x, y) => 1 + wn(*x) + wn(*y),
+        Re::Opt(x, _) => 1 + wn(*x),
+        Re::Plus(x, _) => 2 + wn(*x) + 2 * wz(*x),
+        _ => 1,
+    }
+}
+
+pub open spec fn wz(r: Re) -> nat
+    decreases r,
+{
+    match r {
+        Re::Group(_, x) => 2 + wz(*x),
+        Re::Cat(x, y) => 1 + wz(*x) + wz(*y),
+        Re::Alt(x, y) => 1 + wz(*x) + wz(*y),
+        Re::Opt(x, _) => 1 + wz(*x),
+        Re::Plus(x, _) => 1 + wz(*x),
+        _ => 1,
+    }
+}
+
+pub open spec fn tw(t: Task, cl: Seq<Class>) -> nat {
+    match t {
+        Task::N(x, _, _) => wn(x.re(cl)),
+        Task::Z(x, _, _, _, _) => wz(x.re(cl)),
+        Task::I(_) => 1,
+    }
+}
+
+pub open spec fn wsum(ts: Seq<Task>, cl: Seq<Class>) -> nat
+    decreases ts.len(),
+{
+    if ts.len() == 0 {
+        0
+    } else {
+        tw(ts.last(), cl) + wsum(ts.drop_last(), cl)
+    }
+}
+
+proof fn lemma_push_task(ts: Seq<Task>, t: Task, cl: Seq<Class>, f: int, pos: int, nc: int, ng: int)
+    requires
+        task_ok(t, pos, nc, ng),
+        tasks_ok(ts, pos + tlen(t), nc, ng),
+    ensures
+        flat(ts.push(t), cl, f) == tcode(t, cl, f) + flat(ts, cl, f),
+        tasks_ok(ts.push(t), pos, nc, ng),
+        wsum(ts.push(t), cl) == tw(t, cl) + wsum(ts, cl),
+{
+    assert(ts.push(t).drop_last() =~= ts);
+}
+
+/// `expand_n` for `x`, which is `p+` (greedy if `g`).
 #[verifier::rlimit(200)]
 #[verifier::spinoff_prover]
+fn expand_plus<'a>(
+    x: &'a Ast,
+    p: &'a Ast,
+    g: bool,
+    b: usize,
+    e: usize,
+    fail: usize,
+    out: &mut Vec<Inst>,
+    ts: &mut Vec<Task<'a>>,
+    Ghost(cl): Ghost<Seq<Class>>,
+    Ghost(nc): Ghost<int>,
+    Ghost(ng): Ghost<int>,
+)
+    requires
+        x.node == Node::Plus(Box::new(*p), g),
+        nc <= LIM,
+        ng <= LIM,
+        fail <= LIM,
+        task_ok(Task::N(x, b, e), old(out)@.len() as int, nc, ng),
+        tasks_ok(old(ts)@, old(out)@.len() + tlen(Task::N(x, b, e)), nc, ng),
+    ensures
+        pv(final(out)@, cl) + flat(final(ts)@, cl, fail as int) == pv(old(out)@, cl) + tcode(Task::N(x, b, e), cl, fail as int)
+            + flat(old(ts)@, cl, fail as int),
+        tasks_ok(final(ts)@, final(out)@.len() as int, nc, ng),
+        wsum(final(ts)@, cl) < tw(Task::N(x, b, e), cl) + wsum(old(ts)@, cl),
+{
+    let ghost o0 = pv(out@, cl);
+    let ghost f = fail as int;
+    let ghost rest = flat(ts@, cl, f);
+    let ghost r = x.re(cl);
+    let ghost code = code_n(r, b as int, e as int, f);
+    proof {
+        lemma_len(r, b as int, e as int, 0, 0, f);
+        x.lemma_wf(cl);
+    }
+    proof {
+        p.lemma_wf(cl);
+        assert(r == Re::Plus(Box::new(p.re(cl)), g));
+    }
+    // The normal copy; the loop head; the copy later
+    // iterations start in (an empty one fails); the copy the
+    // first iteration starts in (an empty one leaves the
+    // loop).
+    let l = b + p.ln;
+    let ez = ent_z(p, l + 1, fail, Ghost(cl));
+    let i1 = split(ez, e, g, Ghost(cl));
+    let t4 = Task::Z(p, l + 1 + p.lz, e, b, l);
+    let t3 = Task::Z(p, l + 1, fail, b, l);
+    let t2 = Task::I(i1);
+    let t1 = Task::N(p, b, l);
+    proof {
+        lemma_push_task(ts@, t4, cl, f, (l + 1 + p.lz) as int, nc, ng);
+    }
+    ts.push(t4);
+    proof {
+        lemma_push_task(ts@, t3, cl, f, (l + 1) as int, nc, ng);
+    }
+    ts.push(t3);
+    proof {
+        lemma_push_task(ts@, t2, cl, f, l as int, nc, ng);
+    }
+    ts.push(t2);
+    proof {
+        lemma_push_task(ts@, t1, cl, f, b as int, nc, ng);
+    }
+    ts.push(t1);
+    assert(pv(out@, cl) + flat(ts@, cl, f) =~= o0 + code + rest);
+}
+
+/// The normal copy of `x`, or what it is made of, as in [`expand`].
+#[verifier::rlimit(200)]
+#[verifier::spinoff_prover]
+fn expand_n<'a>(
+    x: &'a Ast,
+    b: usize,
+    e: usize,
+    fail: usize,
+    out: &mut Vec<Inst>,
+    ts: &mut Vec<Task<'a>>,
+    Ghost(cl): Ghost<Seq<Class>>,
+    Ghost(nc): Ghost<int>,
+    Ghost(ng): Ghost<int>,
+)
+    requires
+        nc <= LIM,
+        ng <= LIM,
+        fail <= LIM,
+        task_ok(Task::N(x, b, e), old(out)@.len() as int, nc, ng),
+        tasks_ok(old(ts)@, old(out)@.len() + tlen(Task::N(x, b, e)), nc, ng),
+    ensures
+        pv(final(out)@, cl) + flat(final(ts)@, cl, fail as int) == pv(old(out)@, cl) + tcode(Task::N(x, b, e), cl, fail as int)
+            + flat(old(ts)@, cl, fail as int),
+        tasks_ok(final(ts)@, final(out)@.len() as int, nc, ng),
+        wsum(final(ts)@, cl) < tw(Task::N(x, b, e), cl) + wsum(old(ts)@, cl),
+{
+    let ghost o0 = pv(out@, cl);
+    let ghost f = fail as int;
+    let ghost rest = flat(ts@, cl, f);
+    let ghost r = x.re(cl);
+    let ghost code = code_n(r, b as int, e as int, f);
+    proof {
+        lemma_len(r, b as int, e as int, 0, 0, f);
+        x.lemma_wf(cl);
+    }
+    match &x.node {
+        Node::Empty => {
+            assert(o0 + code + rest =~= o0 + rest);
+        },
+        Node::Char(c) => {
+            proof {
+                lemma_pv_push(out@, Inst::Char { cls: *c as u32, next: e as u32 }, cl);
+            }
+            out.push(Inst::Char { cls: *c as u32, next: e as u32 });
+            assert(pv(out@, cl) + rest =~= o0 + code + rest);
+        },
+        Node::Look(k) => {
+            proof {
+                lemma_pv_push(out@, Inst::Look { k: *k, next: e as u32 }, cl);
+            }
+            out.push(Inst::Look { k: *k, next: e as u32 });
+            assert(pv(out@, cl) + rest =~= o0 + code + rest);
+        },
+        Node::Group(..) | Node::Cat(..) => {
+            expand_n_seq(x, b, e, fail, out, ts, Ghost(cl), Ghost(nc), Ghost(ng));
+        },
+        Node::Alt(..) | Node::Opt(..) => {
+            expand_n_alt(x, b, e, fail, out, ts, Ghost(cl), Ghost(nc), Ghost(ng));
+        },
+        Node::Plus(p, g) => {
+            expand_plus(x, &**p, *g, b, e, fail, out, ts, Ghost(cl), Ghost(nc), Ghost(ng));
+        },
+    }
+}
+
+/// [`expand_n`] for a group or a concatenation. A separate function, as is
+/// [`expand_n_alt`], so that each proof stays small enough at a 32-bit usize.
+#[verifier::rlimit(200)]
+#[verifier::spinoff_prover]
+fn expand_n_seq<'a>(
+    x: &'a Ast,
+    b: usize,
+    e: usize,
+    fail: usize,
+    out: &mut Vec<Inst>,
+    ts: &mut Vec<Task<'a>>,
+    Ghost(cl): Ghost<Seq<Class>>,
+    Ghost(nc): Ghost<int>,
+    Ghost(ng): Ghost<int>,
+)
+    requires
+        x.node is Group || x.node is Cat,
+        nc <= LIM,
+        ng <= LIM,
+        fail <= LIM,
+        task_ok(Task::N(x, b, e), old(out)@.len() as int, nc, ng),
+        tasks_ok(old(ts)@, old(out)@.len() + tlen(Task::N(x, b, e)), nc, ng),
+    ensures
+        pv(final(out)@, cl) + flat(final(ts)@, cl, fail as int) == pv(old(out)@, cl) + tcode(Task::N(x, b, e), cl, fail as int)
+            + flat(old(ts)@, cl, fail as int),
+        tasks_ok(final(ts)@, final(out)@.len() as int, nc, ng),
+        wsum(final(ts)@, cl) < tw(Task::N(x, b, e), cl) + wsum(old(ts)@, cl),
+{
+    let ghost o0 = pv(out@, cl);
+    let ghost f = fail as int;
+    let ghost rest = flat(ts@, cl, f);
+    let ghost r = x.re(cl);
+    let ghost code = code_n(r, b as int, e as int, f);
+    proof {
+        lemma_len(r, b as int, e as int, 0, 0, f);
+        x.lemma_wf(cl);
+    }
+    match &x.node {
+        Node::Group(k, p) => {
+            proof {
+                p.lemma_wf(cl);
+                assert(r == Re::Group(*k as nat, Box::new(p.re(cl))));
+            }
+            let close = b + 1 + p.ln;
+            let en = ent_n(p, b + 1, close, Ghost(cl));
+            let i1 = Inst::Save { slot: (2 * *k) as u32, next: en as u32 };
+            let i2 = Inst::Save { slot: (2 * *k + 1) as u32, next: e as u32 };
+            proof {
+                lemma_pv_push(out@, i1, cl);
+            }
+            out.push(i1);
+            let t2 = Task::I(i2);
+            let t1 = Task::N(&**p, b + 1, close);
+            proof {
+                lemma_push_task(ts@, t2, cl, f, close as int, nc, ng);
+            }
+            ts.push(t2);
+            proof {
+                lemma_push_task(ts@, t1, cl, f, (b + 1) as int, nc, ng);
+            }
+            ts.push(t1);
+            assert(pv(out@, cl) + flat(ts@, cl, f) =~= o0 + code + rest);
+        },
+        Node::Cat(p, q) => {
+            proof {
+                p.lemma_wf(cl);
+                q.lemma_wf(cl);
+                assert(r == Re::Cat(Box::new(p.re(cl)), Box::new(q.re(cl))));
+            }
+            let m = b + p.ln;
+            let en = ent_n(q, m, e, Ghost(cl));
+            let t2 = Task::N(&**q, m, e);
+            let t1 = Task::N(&**p, b, en);
+            proof {
+                lemma_push_task(ts@, t2, cl, f, m as int, nc, ng);
+            }
+            ts.push(t2);
+            proof {
+                lemma_push_task(ts@, t1, cl, f, b as int, nc, ng);
+            }
+            ts.push(t1);
+            assert(pv(out@, cl) + flat(ts@, cl, f) =~= o0 + code + rest);
+        },
+        _ => {},
+    }
+}
+
+/// [`expand_n`] for an alternation or an option.
+#[verifier::rlimit(200)]
+#[verifier::spinoff_prover]
+fn expand_n_alt<'a>(
+    x: &'a Ast,
+    b: usize,
+    e: usize,
+    fail: usize,
+    out: &mut Vec<Inst>,
+    ts: &mut Vec<Task<'a>>,
+    Ghost(cl): Ghost<Seq<Class>>,
+    Ghost(nc): Ghost<int>,
+    Ghost(ng): Ghost<int>,
+)
+    requires
+        x.node is Alt || x.node is Opt,
+        nc <= LIM,
+        ng <= LIM,
+        fail <= LIM,
+        task_ok(Task::N(x, b, e), old(out)@.len() as int, nc, ng),
+        tasks_ok(old(ts)@, old(out)@.len() + tlen(Task::N(x, b, e)), nc, ng),
+    ensures
+        pv(final(out)@, cl) + flat(final(ts)@, cl, fail as int) == pv(old(out)@, cl) + tcode(Task::N(x, b, e), cl, fail as int)
+            + flat(old(ts)@, cl, fail as int),
+        tasks_ok(final(ts)@, final(out)@.len() as int, nc, ng),
+        wsum(final(ts)@, cl) < tw(Task::N(x, b, e), cl) + wsum(old(ts)@, cl),
+{
+    let ghost o0 = pv(out@, cl);
+    let ghost f = fail as int;
+    let ghost rest = flat(ts@, cl, f);
+    let ghost r = x.re(cl);
+    let ghost code = code_n(r, b as int, e as int, f);
+    proof {
+        lemma_len(r, b as int, e as int, 0, 0, f);
+        x.lemma_wf(cl);
+    }
+    match &x.node {
+        Node::Alt(p, q) => {
+            proof {
+                p.lemma_wf(cl);
+                q.lemma_wf(cl);
+                assert(r == Re::Alt(Box::new(p.re(cl)), Box::new(q.re(cl))));
+            }
+            let m = b + 1 + p.ln;
+            let ea = ent_n(p, b + 1, e, Ghost(cl));
+            let eb = ent_n(q, m, e, Ghost(cl));
+            let i1 = Inst::Split { a: ea as u32, b: eb as u32 };
+            proof {
+                lemma_pv_push(out@, i1, cl);
+            }
+            out.push(i1);
+            let t2 = Task::N(&**q, m, e);
+            let t1 = Task::N(&**p, b + 1, e);
+            proof {
+                lemma_push_task(ts@, t2, cl, f, m as int, nc, ng);
+            }
+            ts.push(t2);
+            proof {
+                lemma_push_task(ts@, t1, cl, f, (b + 1) as int, nc, ng);
+            }
+            ts.push(t1);
+            assert(pv(out@, cl) + flat(ts@, cl, f) =~= o0 + code + rest);
+        },
+        Node::Opt(p, g) => {
+            proof {
+                p.lemma_wf(cl);
+                assert(r == Re::Opt(Box::new(p.re(cl)), *g));
+            }
+            let ea = ent_n(p, b + 1, e, Ghost(cl));
+            let i1 = split(ea, e, *g, Ghost(cl));
+            proof {
+                lemma_pv_push(out@, i1, cl);
+            }
+            out.push(i1);
+            let t1 = Task::N(&**p, b + 1, e);
+            proof {
+                lemma_push_task(ts@, t1, cl, f, (b + 1) as int, nc, ng);
+            }
+            ts.push(t1);
+            assert(pv(out@, cl) + flat(ts@, cl, f) =~= o0 + code + rest);
+        },
+        _ => {},
+    }
+}
+
+/// [`expand_z`] for a leaf or a group.
+#[verifier::rlimit(200)]
+#[verifier::spinoff_prover]
+fn expand_z_leaf<'a>(
+    x: &'a Ast,
+    b: usize,
+    e0: usize,
+    nb: usize,
+    ne: usize,
+    fail: usize,
+    out: &mut Vec<Inst>,
+    ts: &mut Vec<Task<'a>>,
+    Ghost(cl): Ghost<Seq<Class>>,
+    Ghost(nc): Ghost<int>,
+    Ghost(ng): Ghost<int>,
+)
+    requires
+        x.node is Empty || x.node is Char || x.node is Look || x.node is Group,
+        nc <= LIM,
+        ng <= LIM,
+        fail <= LIM,
+        task_ok(Task::Z(x, b, e0, nb, ne), old(out)@.len() as int, nc, ng),
+        tasks_ok(old(ts)@, old(out)@.len() + tlen(Task::Z(x, b, e0, nb, ne)), nc, ng),
+    ensures
+        pv(final(out)@, cl) + flat(final(ts)@, cl, fail as int) == pv(old(out)@, cl) + tcode(Task::Z(x, b, e0, nb, ne), cl, fail as int)
+            + flat(old(ts)@, cl, fail as int),
+        tasks_ok(final(ts)@, final(out)@.len() as int, nc, ng),
+        wsum(final(ts)@, cl) < tw(Task::Z(x, b, e0, nb, ne), cl) + wsum(old(ts)@, cl),
+{
+    let ghost o0 = pv(out@, cl);
+    let ghost f = fail as int;
+    let ghost rest = flat(ts@, cl, f);
+    let ghost r = x.re(cl);
+    let ghost code = code_z(r, b as int, e0 as int, nb as int, ne as int, f);
+    proof {
+        lemma_len(r, b as int, e0 as int, nb as int, ne as int, f);
+        x.lemma_wf(cl);
+    }
+    match &x.node {
+        Node::Empty => {
+            assert(o0 + code + rest =~= o0 + rest);
+        },
+        Node::Char(c) => {
+            proof {
+                lemma_pv_push(out@, Inst::Char { cls: *c as u32, next: ne as u32 }, cl);
+            }
+            out.push(Inst::Char { cls: *c as u32, next: ne as u32 });
+            assert(pv(out@, cl) + rest =~= o0 + code + rest);
+        },
+        Node::Look(k) => {
+            proof {
+                lemma_pv_push(out@, Inst::Look { k: *k, next: e0 as u32 }, cl);
+            }
+            out.push(Inst::Look { k: *k, next: e0 as u32 });
+            assert(pv(out@, cl) + rest =~= o0 + code + rest);
+        },
+        Node::Group(k, p) => {
+            proof {
+                p.lemma_wf(cl);
+                assert(r == Re::Group(*k as nat, Box::new(p.re(cl))));
+            }
+            let close = b + 1 + p.lz;
+            let en = ent_z(p, b + 1, close, Ghost(cl));
+            let i1 = Inst::Save { slot: (2 * *k) as u32, next: en as u32 };
+            let i2 = Inst::Save { slot: (2 * *k + 1) as u32, next: e0 as u32 };
+            proof {
+                lemma_pv_push(out@, i1, cl);
+            }
+            out.push(i1);
+            let t2 = Task::I(i2);
+            let t1 = Task::Z(&**p, b + 1, close, nb + 1, nb + 1 + p.ln);
+            proof {
+                lemma_push_task(ts@, t2, cl, f, close as int, nc, ng);
+            }
+            ts.push(t2);
+            proof {
+                lemma_push_task(ts@, t1, cl, f, (b + 1) as int, nc, ng);
+            }
+            ts.push(t1);
+            assert(pv(out@, cl) + flat(ts@, cl, f) =~= o0 + code + rest);
+        },
+        _ => {},
+    }
+}
+
+/// The no-progress copy of `x`, or what it is made of, as in [`expand`].
+#[verifier::rlimit(200)]
+#[verifier::spinoff_prover]
+fn expand_z<'a>(
+    x: &'a Ast,
+    b: usize,
+    e0: usize,
+    nb: usize,
+    ne: usize,
+    fail: usize,
+    out: &mut Vec<Inst>,
+    ts: &mut Vec<Task<'a>>,
+    Ghost(cl): Ghost<Seq<Class>>,
+    Ghost(nc): Ghost<int>,
+    Ghost(ng): Ghost<int>,
+)
+    requires
+        nc <= LIM,
+        ng <= LIM,
+        fail <= LIM,
+        task_ok(Task::Z(x, b, e0, nb, ne), old(out)@.len() as int, nc, ng),
+        tasks_ok(old(ts)@, old(out)@.len() + tlen(Task::Z(x, b, e0, nb, ne)), nc, ng),
+    ensures
+        pv(final(out)@, cl) + flat(final(ts)@, cl, fail as int) == pv(old(out)@, cl) + tcode(Task::Z(x, b, e0, nb, ne), cl, fail as int)
+            + flat(old(ts)@, cl, fail as int),
+        tasks_ok(final(ts)@, final(out)@.len() as int, nc, ng),
+        wsum(final(ts)@, cl) < tw(Task::Z(x, b, e0, nb, ne), cl) + wsum(old(ts)@, cl),
+{
+    let ghost o0 = pv(out@, cl);
+    let ghost f = fail as int;
+    let ghost rest = flat(ts@, cl, f);
+    let ghost r = x.re(cl);
+    let ghost code = code_z(r, b as int, e0 as int, nb as int, ne as int, f);
+    proof {
+        lemma_len(r, b as int, e0 as int, nb as int, ne as int, f);
+        x.lemma_wf(cl);
+    }
+    match &x.node {
+        Node::Empty | Node::Char(_) | Node::Look(_) | Node::Group(_, _) => {
+            expand_z_leaf(x, b, e0, nb, ne, fail, out, ts, Ghost(cl), Ghost(nc), Ghost(ng));
+        },
+        Node::Cat(p, q) => {
+            proof {
+                p.lemma_wf(cl);
+                q.lemma_wf(cl);
+                assert(r == Re::Cat(Box::new(p.re(cl)), Box::new(q.re(cl))));
+            }
+            let m = b + p.lz;
+            let nm = nb + p.ln;
+            let ez = ent_z(q, m, e0, Ghost(cl));
+            let en = ent_n(q, nm, ne, Ghost(cl));
+            let t2 = Task::Z(&**q, m, e0, nm, ne);
+            let t1 = Task::Z(&**p, b, ez, nb, en);
+            proof {
+                lemma_push_task(ts@, t2, cl, f, m as int, nc, ng);
+            }
+            ts.push(t2);
+            proof {
+                lemma_push_task(ts@, t1, cl, f, b as int, nc, ng);
+            }
+            ts.push(t1);
+            assert(pv(out@, cl) + flat(ts@, cl, f) =~= o0 + code + rest);
+        },
+        Node::Alt(p, q) => {
+            proof {
+                p.lemma_wf(cl);
+                q.lemma_wf(cl);
+                assert(r == Re::Alt(Box::new(p.re(cl)), Box::new(q.re(cl))));
+            }
+            let m = b + 1 + p.lz;
+            let ea = ent_z(p, b + 1, e0, Ghost(cl));
+            let eb = ent_z(q, m, e0, Ghost(cl));
+            let i1 = Inst::Split { a: ea as u32, b: eb as u32 };
+            proof {
+                lemma_pv_push(out@, i1, cl);
+            }
+            out.push(i1);
+            let t2 = Task::Z(&**q, m, e0, nb + 1 + p.ln, ne);
+            let t1 = Task::Z(&**p, b + 1, e0, nb + 1, ne);
+            proof {
+                lemma_push_task(ts@, t2, cl, f, m as int, nc, ng);
+            }
+            ts.push(t2);
+            proof {
+                lemma_push_task(ts@, t1, cl, f, (b + 1) as int, nc, ng);
+            }
+            ts.push(t1);
+            assert(pv(out@, cl) + flat(ts@, cl, f) =~= o0 + code + rest);
+        },
+        Node::Opt(p, g) => {
+            proof {
+                p.lemma_wf(cl);
+                assert(r == Re::Opt(Box::new(p.re(cl)), *g));
+            }
+            let ea = ent_z(p, b + 1, e0, Ghost(cl));
+            let i1 = split(ea, e0, *g, Ghost(cl));
+            proof {
+                lemma_pv_push(out@, i1, cl);
+            }
+            out.push(i1);
+            let t1 = Task::Z(&**p, b + 1, e0, nb + 1, ne);
+            proof {
+                lemma_push_task(ts@, t1, cl, f, (b + 1) as int, nc, ng);
+            }
+            ts.push(t1);
+            assert(pv(out@, cl) + flat(ts@, cl, f) =~= o0 + code + rest);
+        },
+        Node::Plus(p, g) => {
+            proof {
+                p.lemma_wf(cl);
+                assert(r == Re::Plus(Box::new(p.re(cl)), *g));
+            }
+            let t1 = Task::Z(&**p, b, e0, nb, nb + p.ln);
+            proof {
+                lemma_push_task(ts@, t1, cl, f, b as int, nc, ng);
+            }
+            ts.push(t1);
+            assert(pv(out@, cl) + flat(ts@, cl, f) =~= o0 + code + rest);
+        },
+    }
+}
+
+/// Appends what task `t` stands for to `out`, or puts the tasks for its
+/// parts on `ts`.
+fn expand<'a>(
+    t: Task<'a>,
+    fail: usize,
+    out: &mut Vec<Inst>,
+    ts: &mut Vec<Task<'a>>,
+    Ghost(cl): Ghost<Seq<Class>>,
+    Ghost(nc): Ghost<int>,
+    Ghost(ng): Ghost<int>,
+)
+    requires
+        nc <= LIM,
+        ng <= LIM,
+        fail <= LIM,
+        task_ok(t, old(out)@.len() as int, nc, ng),
+        tasks_ok(old(ts)@, old(out)@.len() + tlen(t), nc, ng),
+    ensures
+        pv(final(out)@, cl) + flat(final(ts)@, cl, fail as int) == pv(old(out)@, cl) + tcode(t, cl, fail as int)
+            + flat(old(ts)@, cl, fail as int),
+        tasks_ok(final(ts)@, final(out)@.len() as int, nc, ng),
+        wsum(final(ts)@, cl) < tw(t, cl) + wsum(old(ts)@, cl),
+{
+    match t {
+        Task::I(i) => {
+            let ghost o0 = pv(out@, cl);
+            let ghost rest = flat(ts@, cl, fail as int);
+            proof {
+                lemma_pv_push(out@, i, cl);
+            }
+            out.push(i);
+            assert(pv(out@, cl) + rest =~= o0 + tcode(t, cl, fail as int) + rest);
+        },
+        Task::N(x, b, e) => expand_n(x, b, e, fail, out, ts, Ghost(cl), Ghost(nc), Ghost(ng)),
+        Task::Z(x, b, e0, nb, ne) => expand_z(x, b, e0, nb, ne, fail, out, ts, Ghost(cl), Ghost(nc), Ghost(ng)),
+    }
+}
+
+/// Appends the normal copy of `x`: based at `b`, leaving to `e`. `fail` is
+/// the address of the program's `Fail`. The tree is walked with a list of
+/// tasks on the heap, not by recursion, so its depth costs no call stack.
 pub fn emit_n(
     x: &Ast,
     b: usize,
@@ -113,266 +778,44 @@ pub fn emit_n(
     ensures
         pv(final(out)@, cl) == pv(old(out)@, cl) + code_n(x.re(cl), b as int, e as int, fail as int),
         final(out)@.len() == b + x.ln,
-    decreases x,
 {
     let ghost o0 = pv(out@, cl);
-    let ghost r = x.re(cl);
-    let ghost code = code_n(r, b as int, e as int, fail as int);
+    let ghost f = fail as int;
+    let ghost goal = o0 + code_n(x.re(cl), b as int, e as int, f);
+    let mut ts: Vec<Task> = Vec::new();
+    let t0 = Task::N(x, b, e);
     proof {
-        lemma_len(r, b as int, e as int, 0, 0, fail as int);
+        x.lemma_wf(cl);
+        lemma_len(x.re(cl), b as int, e as int, 0, 0, f);
+        lemma_push_task(ts@, t0, cl, f, b as int, nc, ng);
+        assert(flat(Seq::<Task>::empty(), cl, f) =~= seq![]);
     }
-    match &x.node {
-        Node::Empty => {
-            assert(o0 + code =~= o0);
-        },
-        Node::Char(c) => {
-            proof {
-                lemma_pv_push(out@, Inst::Char { cls: *c as u32, next: e as u32 }, cl);
-            }
-            out.push(Inst::Char { cls: *c as u32, next: e as u32 });
-        },
-        Node::Look(k) => {
-            proof {
-                lemma_pv_push(out@, Inst::Look { k: *k, next: e as u32 }, cl);
-            }
-            out.push(Inst::Look { k: *k, next: e as u32 });
-        },
-        Node::Group(k, p) => {
-            proof {
-                x.lemma_wf(cl);
-                p.lemma_wf(cl);
-                assert(r == Re::Group(*k as nat, Box::new(p.re(cl))));
-            }
-            let ghost rp = p.re(cl);
-            let close = b + 1 + p.ln;
-            let en = ent_n(p, b + 1, close, Ghost(cl));
-            let i1 = Inst::Save { slot: (2 * *k) as u32, next: en as u32 };
-            let i2 = Inst::Save { slot: (2 * *k + 1) as u32, next: e as u32 };
-            proof {
-                lemma_pv_push(out@, i1, cl);
-            }
-            out.push(i1);
-            emit_n(p, b + 1, close, fail, out, Ghost(cl), Ghost(nc), Ghost(ng));
-            proof {
-                lemma_pv_push(out@, i2, cl);
-            }
-            out.push(i2);
-            assert(pv(out@, cl) =~= o0 + code);
-        },
-        Node::Cat(p, q) => {
-            proof {
-                x.lemma_wf(cl);
-                p.lemma_wf(cl);
-                q.lemma_wf(cl);
-                assert(r == Re::Cat(Box::new(p.re(cl)), Box::new(q.re(cl))));
-            }
-            let m = b + p.ln;
-            let en = ent_n(q, m, e, Ghost(cl));
-            emit_n(p, b, en, fail, out, Ghost(cl), Ghost(nc), Ghost(ng));
-            emit_n(q, m, e, fail, out, Ghost(cl), Ghost(nc), Ghost(ng));
-            assert(pv(out@, cl) =~= o0 + code);
-        },
-        Node::Alt(p, q) => {
-            proof {
-                x.lemma_wf(cl);
-                p.lemma_wf(cl);
-                q.lemma_wf(cl);
-                assert(r == Re::Alt(Box::new(p.re(cl)), Box::new(q.re(cl))));
-            }
-            let m = b + 1 + p.ln;
-            let ea = ent_n(p, b + 1, e, Ghost(cl));
-            let eb = ent_n(q, m, e, Ghost(cl));
-            let i1 = Inst::Split { a: ea as u32, b: eb as u32 };
-            proof {
-                lemma_pv_push(out@, i1, cl);
-            }
-            out.push(i1);
-            emit_n(p, b + 1, e, fail, out, Ghost(cl), Ghost(nc), Ghost(ng));
-            emit_n(q, m, e, fail, out, Ghost(cl), Ghost(nc), Ghost(ng));
-            assert(pv(out@, cl) =~= o0 + code);
-        },
-        Node::Opt(p, g) => {
-            proof {
-                x.lemma_wf(cl);
-                p.lemma_wf(cl);
-                assert(r == Re::Opt(Box::new(p.re(cl)), *g));
-            }
-            let ea = ent_n(p, b + 1, e, Ghost(cl));
-            let i1 = split(ea, e, *g, Ghost(cl));
-            proof {
-                lemma_pv_push(out@, i1, cl);
-            }
-            out.push(i1);
-            emit_n(p, b + 1, e, fail, out, Ghost(cl), Ghost(nc), Ghost(ng));
-            assert(pv(out@, cl) =~= o0 + code);
-        },
-        Node::Plus(p, g) => {
-            proof {
-                x.lemma_wf(cl);
-                p.lemma_wf(cl);
-                assert(r == Re::Plus(Box::new(p.re(cl)), *g));
-            }
-            // The normal copy; the loop head; the copy later iterations
-            // start in (an empty one fails); the copy the first iteration
-            // starts in (an empty one leaves the loop).
-            let ghost rp = p.re(cl);
-            proof {
-                lemma_len(rp, b as int, 0, 0, 0, fail as int);
-            }
-            let l = b + p.ln;
-            emit_n(p, b, l, fail, out, Ghost(cl), Ghost(nc), Ghost(ng));
-            let ez = ent_z(p, l + 1, fail, Ghost(cl));
-            let i1 = split(ez, e, *g, Ghost(cl));
-            proof {
-                lemma_pv_push(out@, i1, cl);
-            }
-            out.push(i1);
-            emit_z(p, l + 1, fail, b, l, fail, out, Ghost(cl), Ghost(nc), Ghost(ng));
-            emit_z(p, l + 1 + p.lz, e, b, l, fail, out, Ghost(cl), Ghost(nc), Ghost(ng));
-            assert(pv(out@, cl) =~= o0 + code);
-        },
+    ts.push(t0);
+    assert(pv(out@, cl) + flat(ts@, cl, f) =~= goal);
+    while ts.len() > 0
+        invariant
+            nc <= LIM,
+            ng <= LIM,
+            fail <= LIM,
+            f == fail,
+            pv(out@, cl) + flat(ts@, cl, f) == goal,
+            tasks_ok(ts@, out@.len() as int, nc, ng),
+        decreases wsum(ts@, cl),
+    {
+        let ghost ts1 = ts@;
+        let t = ts.pop().unwrap();
+        proof {
+            assert(t == ts1.last());
+            assert(ts@ == ts1.drop_last());
+        }
+        expand(t, fail, out, &mut ts, Ghost(cl), Ghost(nc), Ghost(ng));
+        assert(pv(out@, cl) + flat(ts@, cl, f) =~= goal);
     }
-}
-
-/// Appends the no-progress copy of `x`: based at `b`, leaving to `e0` if it
-/// consumed nothing. The normal copy of `x` is at `nb` and leaves to `ne`.
-#[verifier::rlimit(200)]
-#[verifier::spinoff_prover]
-pub fn emit_z(
-    x: &Ast,
-    b: usize,
-    e0: usize,
-    nb: usize,
-    ne: usize,
-    fail: usize,
-    out: &mut Vec<Inst>,
-    Ghost(cl): Ghost<Seq<Class>>,
-    Ghost(nc): Ghost<int>,
-    Ghost(ng): Ghost<int>,
-)
-    requires
-        x.wf(),
-        x.bounded(nc, ng),
-        nc <= LIM,
-        ng <= LIM,
-        old(out)@.len() == b,
-        b + x.lz <= LIM,
-        nb + x.ln <= LIM,
-        e0 <= LIM,
-        ne <= LIM,
-        fail <= LIM,
-    ensures
-        pv(final(out)@, cl) == pv(old(out)@, cl) + code_z(
-            x.re(cl),
-            b as int,
-            e0 as int,
-            nb as int,
-            ne as int,
-            fail as int,
-        ),
-        final(out)@.len() == b + x.lz,
-    decreases x,
-{
-    let ghost o0 = pv(out@, cl);
-    let ghost r = x.re(cl);
-    let ghost code = code_z(r, b as int, e0 as int, nb as int, ne as int, fail as int);
     proof {
-        lemma_len(r, b as int, e0 as int, nb as int, ne as int, fail as int);
-    }
-    match &x.node {
-        Node::Empty => {
-            assert(o0 + code =~= o0);
-        },
-        Node::Char(c) => {
-            proof {
-                lemma_pv_push(out@, Inst::Char { cls: *c as u32, next: ne as u32 }, cl);
-            }
-            out.push(Inst::Char { cls: *c as u32, next: ne as u32 });
-        },
-        Node::Look(k) => {
-            proof {
-                lemma_pv_push(out@, Inst::Look { k: *k, next: e0 as u32 }, cl);
-            }
-            out.push(Inst::Look { k: *k, next: e0 as u32 });
-        },
-        Node::Group(k, p) => {
-            proof {
-                x.lemma_wf(cl);
-                p.lemma_wf(cl);
-                assert(r == Re::Group(*k as nat, Box::new(p.re(cl))));
-            }
-            let close = b + 1 + p.lz;
-            let en = ent_z(p, b + 1, close, Ghost(cl));
-            let i1 = Inst::Save { slot: (2 * *k) as u32, next: en as u32 };
-            let i2 = Inst::Save { slot: (2 * *k + 1) as u32, next: e0 as u32 };
-            proof {
-                lemma_pv_push(out@, i1, cl);
-            }
-            out.push(i1);
-            emit_z(p, b + 1, close, nb + 1, nb + 1 + p.ln, fail, out, Ghost(cl), Ghost(nc), Ghost(ng));
-            proof {
-                lemma_pv_push(out@, i2, cl);
-            }
-            out.push(i2);
-            assert(pv(out@, cl) =~= o0 + code);
-        },
-        Node::Cat(p, q) => {
-            proof {
-                x.lemma_wf(cl);
-                p.lemma_wf(cl);
-                q.lemma_wf(cl);
-                assert(r == Re::Cat(Box::new(p.re(cl)), Box::new(q.re(cl))));
-            }
-            let m = b + p.lz;
-            let nm = nb + p.ln;
-            let ez = ent_z(q, m, e0, Ghost(cl));
-            let en = ent_n(q, nm, ne, Ghost(cl));
-            emit_z(p, b, ez, nb, en, fail, out, Ghost(cl), Ghost(nc), Ghost(ng));
-            emit_z(q, m, e0, nm, ne, fail, out, Ghost(cl), Ghost(nc), Ghost(ng));
-            assert(pv(out@, cl) =~= o0 + code);
-        },
-        Node::Alt(p, q) => {
-            proof {
-                x.lemma_wf(cl);
-                p.lemma_wf(cl);
-                q.lemma_wf(cl);
-                assert(r == Re::Alt(Box::new(p.re(cl)), Box::new(q.re(cl))));
-            }
-            let m = b + 1 + p.lz;
-            let ea = ent_z(p, b + 1, e0, Ghost(cl));
-            let eb = ent_z(q, m, e0, Ghost(cl));
-            let i1 = Inst::Split { a: ea as u32, b: eb as u32 };
-            proof {
-                lemma_pv_push(out@, i1, cl);
-            }
-            out.push(i1);
-            emit_z(p, b + 1, e0, nb + 1, ne, fail, out, Ghost(cl), Ghost(nc), Ghost(ng));
-            emit_z(q, m, e0, nb + 1 + p.ln, ne, fail, out, Ghost(cl), Ghost(nc), Ghost(ng));
-            assert(pv(out@, cl) =~= o0 + code);
-        },
-        Node::Opt(p, g) => {
-            proof {
-                x.lemma_wf(cl);
-                p.lemma_wf(cl);
-                assert(r == Re::Opt(Box::new(p.re(cl)), *g));
-            }
-            let ea = ent_z(p, b + 1, e0, Ghost(cl));
-            let i1 = split(ea, e0, *g, Ghost(cl));
-            proof {
-                lemma_pv_push(out@, i1, cl);
-            }
-            out.push(i1);
-            emit_z(p, b + 1, e0, nb + 1, ne, fail, out, Ghost(cl), Ghost(nc), Ghost(ng));
-            assert(pv(out@, cl) =~= o0 + code);
-        },
-        Node::Plus(p, g) => {
-            proof {
-                x.lemma_wf(cl);
-                p.lemma_wf(cl);
-                assert(r == Re::Plus(Box::new(p.re(cl)), *g));
-            }
-            emit_z(p, b, e0, nb, nb + p.ln, fail, out, Ghost(cl), Ghost(nc), Ghost(ng));
-        },
+        assert(flat(ts@, cl, f) =~= seq![]);
+        assert(pv(out@, cl) =~= goal);
+        lemma_len(x.re(cl), b as int, e as int, 0, 0, f);
+        assert(pv(out@, cl).len() == out@.len());
     }
 }
 
@@ -501,6 +944,7 @@ pub fn compile(x: &Ast, classes: Vec<Class>, ngroups: usize) -> (r: Option<Prog>
             &&& p.wf()
             &&& p.classes == classes
             &&& p.nslots == 2 * ngroups
+            &&& p.insts@.len() == x.ln + 2
             &&& compiled(p.sp(), x.re(classes@))
             &&& p.start == sem::ent_n(x.re(classes@), 0, ln(x.re(classes@)) as int)
         },

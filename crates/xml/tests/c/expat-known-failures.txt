@@ -1,0 +1,647 @@
+# libexpat's tests that fail against verilith-xml's expat ABI, and why
+# (scripts/test-expat.sh fails on any failure not listed here, and on any
+# listed test that passes). One per line: suite, test, reason, separated by
+# tabs. The reasons (crates/xml/README.md, "The expat C ABI", has more):
+#
+#   allocator               the parser's own memory comes from Rust's
+#                           allocator, not the XML_Memory_Handling_Suite
+#                           (which XML_MemMalloc and content models use), so
+#                           a failing allocator does not fail the parse
+#   internal                tests of libexpat's internals (its hash table,
+#                           tokenizer, accounting), stubbed in
+#                           tests/c/expat_internals.c
+#   utf16-without-bom       UTF-16 input without a byte order mark, which
+#                           XML 1.0 (4.3.3) requires; expat accepts it
+#   incremental             the document is checked whole, when the final
+#                           buffer arrives: no handler runs, and no error is
+#                           found, before then; buffer limits differ
+#   external-dtd            the external DTD subset and external parameter
+#                           entities are not read
+#   encoding                encodings: UTF-8 checks that expat makes
+#                           differently, unknown-encoding handler details
+#   default-handler         markup reported to the default handler: DTD
+#                           declarations and white space in the prolog are
+#                           not reported
+#   amplification           expat's input-amplification accounting (there
+#                           is none: expansion is lazy and parsing linear)
+#   error-code              a rejected document gets another error code or
+#                           position than expat gives it
+#   fifth-edition-names     names allowed by XML 1.0 Fifth Edition, which the
+#                           suite's older tests reject (as expat does)
+#   error-not-read          the error is in the external subset, an external
+#                           entity or a parameter entity, which are not read
+#   fails-with-libexpat-too fails the same way with libexpat 2.10.0 (the npm
+#                           package of the suite has CR LF line ends in places)
+runtests	test_abort_epilog	incremental
+runtests	test_abort_epilog_2	incremental
+runtests	test_accounting_precision	internal
+runtests	test_alloc_attribute_enum_value	allocator
+runtests	test_alloc_attribute_predefined_entity	allocator
+runtests	test_alloc_attribute_whitespace	allocator
+runtests	test_alloc_comment_in_epilog	allocator
+runtests	test_alloc_create_external_parser	allocator
+runtests	test_alloc_dtd_copy_default_atts	allocator
+runtests	test_alloc_dtd_default_handling	allocator
+runtests	test_alloc_explicit_encoding	allocator
+runtests	test_alloc_ext_entity_realloc_buffer	allocator
+runtests	test_alloc_ext_entity_set_encoding	allocator
+runtests	test_alloc_external_entity	allocator
+runtests	test_alloc_internal_entity	allocator
+runtests	test_alloc_long_attr_default_with_char_ref	allocator
+runtests	test_alloc_long_attr_value	allocator
+runtests	test_alloc_long_base	allocator
+runtests	test_alloc_long_doc_name	allocator
+runtests	test_alloc_long_entity_value	allocator
+runtests	test_alloc_long_notation	allocator
+runtests	test_alloc_long_public_id	allocator
+runtests	test_alloc_nested_entities	allocator
+runtests	test_alloc_notation	allocator
+runtests	test_alloc_parameter_entity	allocator
+runtests	test_alloc_parse_comment	allocator
+runtests	test_alloc_parse_comment_2	allocator
+runtests	test_alloc_parse_pi	allocator
+runtests	test_alloc_parse_pi_2	allocator
+runtests	test_alloc_parse_pi_3	allocator
+runtests	test_alloc_parse_public_doctype	allocator
+runtests	test_alloc_parse_public_doctype_long_name	allocator
+runtests	test_alloc_parse_xdecl	allocator
+runtests	test_alloc_parse_xdecl_2	allocator
+runtests	test_alloc_pi_in_epilog	allocator
+runtests	test_alloc_public_entity_value	allocator
+runtests	test_alloc_public_notation	allocator
+runtests	test_alloc_realloc_attribute_enum_value	allocator
+runtests	test_alloc_realloc_attributes	allocator
+runtests	test_alloc_realloc_buffer	allocator
+runtests	test_alloc_realloc_ce_extends_pe	allocator
+runtests	test_alloc_realloc_default_attribute	allocator
+runtests	test_alloc_realloc_group_choice	allocator
+runtests	test_alloc_realloc_implied_attribute	allocator
+runtests	test_alloc_realloc_long_attribute_value	allocator
+runtests	test_alloc_realloc_many_attributes	allocator
+runtests	test_alloc_realloc_nested_groups	allocator
+runtests	test_alloc_realloc_param_entity_newline	allocator
+runtests	test_alloc_realloc_subst_public_entity_value	allocator
+runtests	test_alloc_reset_after_external_entity_parser_create_fail	allocator
+runtests	test_alloc_reset_encoding	allocator
+runtests	test_alloc_run_external_parser	allocator
+runtests	test_alloc_set_base	allocator
+runtests	test_alloc_set_foreign_dtd	allocator
+runtests	test_alloc_system_notation	allocator
+runtests	test_alloc_tracker_api_float_round_trip	allocator
+runtests	test_alloc_tracker_getbuffer_unlimited	allocator
+runtests	test_alloc_tracker_maximum_amplification	allocator
+runtests	test_alloc_tracker_pointer_alignment	allocator
+runtests	test_alloc_tracker_size_recorded	allocator
+runtests	test_alloc_tracker_threshold	allocator
+runtests	test_amplification_isolated_external_parser	amplification
+runtests	test_amplification_reset_neutrality	amplification
+runtests	test_bad_attr_desc_keyword_utf16	utf16-without-bom
+runtests	test_bad_cdata	error-code
+runtests	test_bad_cdata_utf16	utf16-without-bom
+runtests	test_bad_doctype_utf16	utf16-without-bom
+runtests	test_bad_entity	error-code
+runtests	test_bad_entity_2	error-code
+runtests	test_bad_entity_3	error-code
+runtests	test_bad_entity_4	error-code
+runtests	test_bad_ignore_section	external-dtd
+runtests	test_bad_notation	error-code
+runtests	test_bad_public_doctype	error-code
+runtests	test_big_tokens_scale_linearly	incremental
+runtests	test_billions_laughs_attack_protection_api_float_round_trip	amplification
+runtests	test_bypass_heuristic_when_close_to_bufsize	incremental
+runtests	test_byte_info_at_end	error-code
+runtests	test_comment_handled_in_default	default-handler
+runtests	test_default_current	default-handler
+runtests	test_default_doctype_handler	default-handler
+runtests	test_dtd_default_handling	default-handler
+runtests	test_entity_in_utf16_be_attr	utf16-without-bom
+runtests	test_entity_in_utf16_le_attr	utf16-without-bom
+runtests	test_entity_public_utf16_be	utf16-without-bom
+runtests	test_entity_public_utf16_le	utf16-without-bom
+runtests	test_ext_entity_bad_encoding	external-dtd
+runtests	test_ext_entity_bad_encoding_2	external-dtd
+runtests	test_ext_entity_invalid_parse	external-dtd
+runtests	test_ext_entity_invalid_suspended_parse	incremental
+runtests	test_ext_entity_latin1_utf16be_bom	utf16-without-bom
+runtests	test_ext_entity_latin1_utf16be_bom2	utf16-without-bom
+runtests	test_ext_entity_latin1_utf16le_bom	utf16-without-bom
+runtests	test_ext_entity_latin1_utf16le_bom2	utf16-without-bom
+runtests	test_ext_entity_not_standalone	external-dtd
+runtests	test_ext_entity_trailing_cr	incremental
+runtests	test_ext_entity_trailing_rsqb	incremental
+runtests	test_ext_entity_utf16_be	utf16-without-bom
+runtests	test_ext_entity_utf16_le	utf16-without-bom
+runtests	test_external_bom_consumed	utf16-without-bom
+runtests	test_foreign_dtd_not_standalone	external-dtd
+runtests	test_good_cdata_utf16	utf16-without-bom
+runtests	test_good_cdata_utf16_le	utf16-without-bom
+runtests	test_hash_salt_ulong	internal
+runtests	test_hash_table	internal
+runtests	test_helper_unsigned_char_to_printable	internal
+runtests	test_ignore_section	external-dtd
+runtests	test_ignore_section_utf16	utf16-without-bom
+runtests	test_ignore_section_utf16_be	utf16-without-bom
+runtests	test_invalid_character_entity	error-code
+runtests	test_invalid_character_entity_3	error-code
+runtests	test_invalid_character_entity_4	error-code
+runtests	test_invalid_foreign_dtd	external-dtd
+runtests	test_invalid_tag_in_dtd	error-code
+runtests	test_is_cdata_comment_or_pi_start	internal
+runtests	test_is_predefined_entity_name	internal
+runtests	test_long_cdata_utf16	utf16-without-bom
+runtests	test_long_doctype	error-code
+runtests	test_long_utf8_character	encoding
+runtests	test_misc_alloc_create_parser	allocator
+runtests	test_misc_alloc_create_parser_with_encoding	allocator
+runtests	test_misc_async_entity_rejected	incremental
+runtests	test_misc_deny_internal_entity_closing_doctype_issue_317	incremental
+runtests	test_misc_low_surrogate_mozilla_bug_2053153	incremental
+runtests	test_misc_no_infinite_loop_issue_1161	incremental
+runtests	test_misc_unknown_encoding_callbacks_protected	incremental
+runtests	test_misc_unknown_encoding_release_getter_parser_free	incremental
+runtests	test_misc_unknown_encoding_release_getter_parser_reset	incremental
+runtests	test_multichar_cdata_utf16	utf16-without-bom
+runtests	test_no_indirectly_recursive_entity_refs	external-dtd
+runtests	test_nobom_utf16_le	utf16-without-bom
+runtests	test_not_utf16	utf16-without-bom
+runtests	test_ns_double_colon_doctype	error-code
+runtests	test_ns_utf16_doctype	utf16-without-bom
+runtests	test_ns_utf16_element_leafname	utf16-without-bom
+runtests	test_ns_utf16_leafname	utf16-without-bom
+runtests	test_nsalloc_less_long_namespace	allocator
+runtests	test_nsalloc_long_attr	allocator
+runtests	test_nsalloc_long_attr_prefix	allocator
+runtests	test_nsalloc_long_context	allocator
+runtests	test_nsalloc_long_default_in_ext	allocator
+runtests	test_nsalloc_long_element	allocator
+runtests	test_nsalloc_long_namespace	allocator
+runtests	test_nsalloc_long_prefix	allocator
+runtests	test_nsalloc_long_systemid_in_ext	allocator
+runtests	test_nsalloc_long_uri	allocator
+runtests	test_nsalloc_parse_buffer	allocator
+runtests	test_nsalloc_prefixed_element	allocator
+runtests	test_nsalloc_realloc_binding_uri	allocator
+runtests	test_nsalloc_realloc_long_context	allocator
+runtests	test_nsalloc_realloc_long_context_2	allocator
+runtests	test_nsalloc_realloc_long_context_3	allocator
+runtests	test_nsalloc_realloc_long_context_4	allocator
+runtests	test_nsalloc_realloc_long_context_5	allocator
+runtests	test_nsalloc_realloc_long_context_6	allocator
+runtests	test_nsalloc_realloc_long_context_7	allocator
+runtests	test_nsalloc_realloc_long_context_in_dtd	allocator
+runtests	test_nsalloc_realloc_long_ge_name	allocator
+runtests	test_nsalloc_realloc_long_prefix	allocator
+runtests	test_nsalloc_realloc_longer_prefix	allocator
+runtests	test_nsalloc_set_context_zombie	allocator
+runtests	test_nsalloc_xmlns	allocator
+runtests	test_param_entity_with_trailing_cr	incremental
+runtests	test_parse_buffer_exceeds_buffer	incremental
+runtests	test_partial_char_in_epilog	incremental
+runtests	test_pi_handled_in_default	default-handler
+runtests	test_pool_integrity_with_unfinished_attr	error-code
+runtests	test_props_getter_defaults	internal
+runtests	test_recursive_external_parameter_entity	external-dtd
+runtests	test_recursive_external_parameter_entity_2	external-dtd
+runtests	test_reparse_deferral_is_inherited	incremental
+runtests	test_repeated_stop_parser_between_char_data_calls	incremental
+runtests	test_reset_in_entity	external-dtd
+runtests	test_restart_on_error	incremental
+runtests	test_resume_entity_with_syntax_error	incremental
+runtests	test_resume_invalid_parse	incremental
+runtests	test_scan_entity_text	internal
+runtests	test_set_foreign_dtd	external-dtd
+runtests	test_set_reparse_deferral	incremental
+runtests	test_set_reparse_deferral_on_the_fly	incremental
+runtests	test_short_doctype_2	error-code
+runtests	test_short_doctype_3	error-code
+runtests	test_skipped_parameter_entity	external-dtd
+runtests	test_subordinate_xdecl_abort	incremental
+runtests	test_subordinate_xdecl_suspend	incremental
+runtests	test_suspend_epilog	incremental
+runtests	test_suspend_resume_internal_entity_issue_629	incremental
+runtests	test_suspend_resume_parameter_entity	incremental
+runtests	test_trailing_cr	incremental
+runtests	test_trailing_rsqb	incremental
+runtests	test_unfinished_epilog	incremental
+runtests	test_unknown_encoding_bad_ignore	encoding
+runtests	test_user_parameters	default-handler
+runtests	test_utf16	utf16-without-bom
+runtests	test_utf16_attribute	utf16-without-bom
+runtests	test_utf16_be_comment	utf16-without-bom
+runtests	test_utf16_be_pi	utf16-without-bom
+runtests	test_utf16_le_comment	utf16-without-bom
+runtests	test_utf16_pe	utf16-without-bom
+runtests	test_utf16_pi	utf16-without-bom
+runtests	test_utf16_second_attr	utf16-without-bom
+runtests	test_utf16_surrogate_pairs	utf16-without-bom
+runtests	test_utf8_auto_align	internal
+runtests	test_utf8_in_start_tags	encoding
+runtests	test_varying_buffer_fills	incremental
+xmltest	Expected not well-formed: ibm/not-wf/P30/ibm30n01.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P31/ibm31n01.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P61/ibm61n01.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P62/ibm62n01.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P62/ibm62n02.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P62/ibm62n03.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P62/ibm62n04.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P62/ibm62n05.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P62/ibm62n06.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P62/ibm62n07.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P62/ibm62n08.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P63/ibm63n01.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P63/ibm63n02.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P63/ibm63n03.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P63/ibm63n04.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P63/ibm63n05.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P63/ibm63n06.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P63/ibm63n07.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P64/ibm64n01.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P64/ibm64n02.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P64/ibm64n03.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P65/ibm65n01.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P65/ibm65n02.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P69/ibm69n05.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P77/ibm77n01.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P77/ibm77n03.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P77/ibm77n04.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P79/ibm79n01.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P79/ibm79n02.xml	error-not-read
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n03.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n04.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n05.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n06.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n07.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n08.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n09.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n10.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n100.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n101.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n102.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n103.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n104.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n105.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n106.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n107.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n108.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n109.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n11.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n110.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n111.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n112.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n113.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n114.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n115.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n116.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n117.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n118.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n119.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n12.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n120.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n121.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n122.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n123.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n124.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n125.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n126.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n127.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n128.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n129.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n13.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n130.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n131.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n132.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n133.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n134.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n135.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n136.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n137.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n138.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n139.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n14.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n140.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n141.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n142.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n143.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n144.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n145.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n146.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n147.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n148.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n149.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n15.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n150.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n151.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n152.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n153.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n154.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n155.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n156.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n157.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n158.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n159.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n16.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n160.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n161.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n162.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n163.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n164.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n165.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n166.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n167.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n168.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n169.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n17.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n170.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n171.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n172.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n173.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n174.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n175.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n176.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n177.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n178.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n179.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n18.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n180.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n181.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n182.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n183.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n184.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n185.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n186.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n187.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n188.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n189.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n19.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n190.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n191.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n192.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n193.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n194.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n195.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n196.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n197.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n198.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n20.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n21.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n22.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n23.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n24.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n25.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n26.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n27.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n28.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n29.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n30.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n31.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n32.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n33.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n34.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n35.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n36.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n37.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n38.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n39.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n40.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n41.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n42.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n43.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n44.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n45.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n46.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n47.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n48.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n49.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n50.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n51.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n52.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n53.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n54.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n55.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n56.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n57.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n58.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n59.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n60.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n61.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n62.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n63.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n64.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n65.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n66.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n67.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n68.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n69.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n70.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n71.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n72.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n73.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n74.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n75.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n76.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n77.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n78.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n79.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n80.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n81.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n82.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n83.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n84.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n85.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n86.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n87.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n88.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n89.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n90.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n91.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n92.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n93.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n94.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n95.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n96.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n97.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n98.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n99.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P86/ibm86n01.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P86/ibm86n02.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P86/ibm86n03.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P86/ibm86n04.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n01.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n02.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n03.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n04.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n05.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n06.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n07.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n08.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n09.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n10.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n11.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n12.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n13.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n14.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n15.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n16.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n17.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n18.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n19.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n20.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n21.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n22.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n23.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n24.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n25.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n26.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n27.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n28.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n29.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n30.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n31.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n32.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n33.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n34.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n35.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n36.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n37.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n38.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n39.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n40.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n41.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n42.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n43.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n44.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n45.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n46.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n47.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n48.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n49.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n50.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n51.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n52.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n53.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n54.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n55.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n56.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n57.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n58.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n59.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n60.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n61.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n62.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n63.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n64.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n66.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n67.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n68.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n69.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n70.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n71.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n72.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n73.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n74.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n75.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n76.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n77.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n78.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n79.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n80.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n81.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n82.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n83.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n84.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P87/ibm87n85.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P88/ibm88n03.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P88/ibm88n04.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P88/ibm88n05.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P88/ibm88n06.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P88/ibm88n08.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P88/ibm88n09.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P88/ibm88n10.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P88/ibm88n11.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P88/ibm88n12.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P88/ibm88n13.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P88/ibm88n14.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P88/ibm88n15.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P88/ibm88n16.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P89/ibm89n03.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P89/ibm89n04.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/P89/ibm89n05.xml	fifth-edition-names
+xmltest	Expected not well-formed: ibm/not-wf/misc/432gewf.xml	fails-with-libexpat-too
+xmltest	Expected not well-formed: ibm/not-wf/p28a/ibm28an01.xml	error-not-read
+xmltest	Expected not well-formed: oasis/p06fail1.xml	fails-with-libexpat-too
+xmltest	Expected not well-formed: oasis/p08fail1.xml	fails-with-libexpat-too
+xmltest	Expected not well-formed: oasis/p08fail2.xml	fails-with-libexpat-too
+xmltest	Expected not well-formed: oasis/p09fail1.xml	error-not-read
+xmltest	Expected not well-formed: oasis/p09fail2.xml	error-not-read
+xmltest	Expected not well-formed: oasis/p30fail1.xml	error-not-read
+xmltest	Expected not well-formed: oasis/p31fail1.xml	error-not-read
+xmltest	Expected not well-formed: oasis/p61fail1.xml	error-not-read
+xmltest	Expected not well-formed: oasis/p62fail1.xml	error-not-read
+xmltest	Expected not well-formed: oasis/p62fail2.xml	error-not-read
+xmltest	Expected not well-formed: oasis/p63fail1.xml	error-not-read
+xmltest	Expected not well-formed: oasis/p63fail2.xml	error-not-read
+xmltest	Expected not well-formed: oasis/p64fail1.xml	error-not-read
+xmltest	Expected not well-formed: oasis/p64fail2.xml	error-not-read
+xmltest	Expected not well-formed: sun/not-wf/cond01.xml	error-not-read
+xmltest	Expected not well-formed: sun/not-wf/cond02.xml	error-not-read
+xmltest	Expected not well-formed: sun/not-wf/decl01.xml	error-not-read
+xmltest	Expected not well-formed: sun/not-wf/dtd07.xml	error-not-read
+xmltest	Expected not well-formed: sun/not-wf/uri01.xml	fails-with-libexpat-too
+xmltest	Expected not well-formed: xmltest/not-wf/not-sa/001.xml	error-not-read
+xmltest	Expected not well-formed: xmltest/not-wf/not-sa/002.xml	error-not-read
+xmltest	Expected not well-formed: xmltest/not-wf/not-sa/003.xml	error-not-read
+xmltest	Expected not well-formed: xmltest/not-wf/not-sa/004.xml	error-not-read
+xmltest	Expected not well-formed: xmltest/not-wf/not-sa/005.xml	fails-with-libexpat-too
+xmltest	Expected not well-formed: xmltest/not-wf/not-sa/006.xml	error-not-read
+xmltest	Expected not well-formed: xmltest/not-wf/not-sa/007.xml	error-not-read
+xmltest	Expected not well-formed: xmltest/not-wf/not-sa/008.xml	error-not-read
+xmltest	Expected not well-formed: xmltest/not-wf/not-sa/009.xml	error-not-read
+xmltest	Expected not well-formed: xmltest/not-wf/not-sa/010.xml	error-not-read
+xmltest	Expected not well-formed: xmltest/not-wf/not-sa/011.xml	error-not-read
+xmltest	Expected not well-formed: xmltest/not-wf/sa/140.xml	fifth-edition-names
+xmltest	Expected not well-formed: xmltest/not-wf/sa/141.xml	fifth-edition-names
+xmltest	Output differs: ibm/invalid/P32/ibm32i01.xml	external-dtd
+xmltest	Output differs: ibm/invalid/P32/ibm32i03.xml	external-dtd
+xmltest	Output differs: ibm/valid/P02/ibm02v01.xml	fails-with-libexpat-too
+xmltest	Output differs: ibm/valid/P09/ibm09v03.xml	external-dtd
+xmltest	Output differs: ibm/valid/P09/ibm09v05.xml	external-dtd
+xmltest	Output differs: ibm/valid/P32/ibm32v01.xml	external-dtd
+xmltest	Output differs: ibm/valid/P32/ibm32v02.xml	external-dtd
+xmltest	Output differs: ibm/valid/P32/ibm32v03.xml	external-dtd
+xmltest	Output differs: ibm/valid/P32/ibm32v04.xml	external-dtd
+xmltest	Output differs: sun/valid/not-sa01.xml	external-dtd
+xmltest	Output differs: sun/valid/not-sa02.xml	external-dtd
+xmltest	Output differs: sun/valid/not-sa03.xml	external-dtd
+xmltest	Output differs: sun/valid/not-sa04.xml	external-dtd
+xmltest	Output differs: sun/valid/notation01.xml	external-dtd
+xmltest	Output differs: sun/valid/pe00.xml	external-dtd
+xmltest	Output differs: sun/valid/pe02.xml	external-dtd
+xmltest	Output differs: sun/valid/sa03.xml	external-dtd
+xmltest	Output differs: sun/valid/sa04.xml	external-dtd
+xmltest	Output differs: sun/valid/sa05.xml	external-dtd
+xmltest	Output differs: xmltest/invalid/not-sa/022.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/003.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/004.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/005.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/006.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/007.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/008.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/009.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/011.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/012.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/013.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/014.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/015.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/016.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/017.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/018.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/019.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/020.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/021.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/023.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/024.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/025.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/026.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/028.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/029.xml	external-dtd
+xmltest	Output differs: xmltest/valid/not-sa/031.xml	external-dtd

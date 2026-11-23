@@ -731,6 +731,8 @@ fn h_scheme(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): Tr
 }
 
 /// A fragment-only reference against a base with an opaque path.
+// Over the default budget at a 32-bit usize (wasm32).
+#[verifier::rlimit(30)]
 fn no_scheme_fragment(ps: &mut Parser, input: &[u8], base: Option<&Url>, bu: &Url, Tracked(cost): Tracked<&mut Meter>) -> (r: Flow)
     requires
         old(ps).inv(input@, base_rec(base)),
@@ -2486,6 +2488,7 @@ pub(crate) open spec fn base_host(base: Option<&Url>) -> Option<Host> {
 
 /// Writes "file:", and "//" and the host when there is one: the empty host,
 /// or the base's host.
+#[verifier::rlimit(30)]
 fn file_prefix(ps: &mut Parser, hb: Option<&Url>, Tracked(cost): Tracked<&mut Meter>)
     requires
         hb matches Some(bu) ==> bu.wf(),
@@ -3939,41 +3942,121 @@ proof fn lemma_run_path_fast(input: Seq<u8>, b: Option<UrlRecord>, m: Machine, p
     }
 }
 
-/// Whether some byte `w[i]` (1 <= i < 17) is one the fast path run might
-/// stop at, given the byte before it; no early exits.
+/// Bit `k` of a mask.
+pub open spec fn pbit(m: u32, k: u32) -> bool {
+    (m >> k) & 1u32 == 1u32
+}
+
+/// Bit `j` of the stop mask of a 17-byte window: the fast path run stops at
+/// `w[j + 1]` given the byte `w[j]` before it.
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
-fn any_path_stop16(w: &[u8]) -> (r: bool)
+fn path_mask16(w: &[u8]) -> (m: u32)
     requires
         w.len() == 17,
     ensures
-        !r ==> forall|i: int| 1 <= i < 17 ==> {
-            let c = #[trigger] w@[i];
-            !in_path_set(c) && c != b'\\' && !((c == b'.' || c == b'%') && w@[i - 1] == b'/')
-        },
+        m < 0x10000,
+        forall|j: u32| j < 16 ==> #[trigger] pbit(m, j) == pstop(w@[j + 1], w@[j as int]),
 {
-    let mut acc = false;
-    let mut i = 0;
+    let m = crate::simd::path_mask16_sse(w);
+    proof {
+        assert forall|j: u32| j < 16 implies #[trigger] pbit(m, j) == pstop(w@[j + 1], w@[j as int]) by {
+            assert(verilith_simd::sse2::bit(m, j) == pstop(w@[j + 1], w@[j as int]));
+        }
+    }
+    m
+}
+
+/// Bit `j` of the stop mask of a 17-byte window: the fast path run stops at
+/// `w[j + 1]` given the byte `w[j]` before it.
+#[cfg(not(target_arch = "x86_64"))]
+#[inline(always)]
+fn path_mask16(w: &[u8]) -> (m: u32)
+    requires
+        w.len() == 17,
+    ensures
+        m < 0x10000,
+        forall|j: u32| j < 16 ==> #[trigger] pbit(m, j) == pstop(w@[j + 1], w@[j as int]),
+{
+    if verilith_simd::neon::has_neon() {
+        let m = crate::simd::path_mask16_neon(w);
+        proof {
+            assert forall|j: u32| j < 16 implies #[trigger] pbit(m, j) == pstop(w@[j + 1], w@[j as int]) by {
+                assert(verilith_simd::sse2::bit(m, j) == pstop(w@[j + 1], w@[j as int]));
+            }
+        }
+        return m;
+    }
+    let mut m: u32 = 0;
+    let mut i: u32 = 0;
+    proof {
+        assert((1u32 << 0u32) == 1u32) by (bit_vector);
+    }
     while i < 16
         invariant
             i <= 16,
             w.len() == 17,
-            !acc ==> forall|q: int| 1 <= q < i + 1 ==> {
-                let c = #[trigger] w@[q];
-                !in_path_set(c) && c != b'\\' && !((c == b'.' || c == b'%') && w@[q - 1] == b'/')
-            },
+            m < (1u32 << i),
+            forall|j: u32| j < i ==> #[trigger] pbit(m, j) == pstop(w@[j + 1], w@[j as int]),
         decreases 16 - i,
     {
-        let c = w[i + 1];
-        let prev = w[i];
-        acc = acc | (c <= 0x20) | (c >= 0x7F) | (c == 0x22) | (c == 0x23) | (c == 0x3C) | (c == 0x3E)
+        let c = w[i as usize + 1];
+        let prev = w[i as usize];
+        let st = (c <= 0x20) | (c >= 0x7F) | (c == 0x22) | (c == 0x23) | (c == 0x3C) | (c == 0x3E)
             | (c == 0x3F) | (c == 0x5C) | (c == 0x5E) | (c == 0x60) | (c == 0x7B) | (c == 0x7D) | (((c
             == 0x2E) | (c == 0x25)) & (prev == 0x2F));
+        let x = st as u32;
+        proof {
+            assert(st == pstop(c, prev));
+            assert forall|j: u32| j < i + 1 implies #[trigger] pbit(m | (x << i), j) == pstop(w@[j + 1], w@[j as int]) by {
+                crate::encode::lemma_mask_bit(m, x, i, j);
+                if j < i {
+                    assert(pbit(m, j) == pstop(w@[j + 1], w@[j as int]));
+                } else {
+                    assert(j == i);
+                    assert(w@[j + 1] == c && w@[j as int] == prev);
+                    assert((x == 1) == st);
+                }
+            }
+            crate::encode::lemma_mask_bit(m, x, i, 0);
+        }
+        m = m | (x << i);
         i = i + 1;
     }
-    acc
+    proof {
+        assert((1u32 << 16u32) == 0x10000u32) by (bit_vector);
+    }
+    m
 }
 
-/// Whether the path fast run stops at byte `c` after byte `prev`.
+/// Bits of a 16-bit mask shifted down by `d`.
+proof fn lemma_shr_bit(m: u32, d: u32, i: u32)
+    requires
+        m < 0x10000,
+        d < 16,
+        i < 32,
+    ensures
+        (m >> d) < 0x10000,
+        d + i < 16 ==> (pbit(m >> d, i) == pbit(m, (d + i) as u32)),
+        d + i >= 16 ==> !pbit(m >> d, i),
+{
+    assert((m >> d) < 0x10000u32) by (bit_vector)
+        requires
+            m < 0x10000u32,
+    ;
+    assert(d + i < 16 ==> ((((m >> d) >> i) & 1u32 == 1u32) == ((m >> ((d + i) as u32)) & 1u32 == 1u32))) by (bit_vector)
+        requires
+            d < 16u32,
+            i < 32u32,
+    ;
+    assert(d + i >= 16 ==> (((m >> d) >> i) & 1u32 != 1u32)) by (bit_vector)
+        requires
+            m < 0x10000u32,
+            d < 16u32,
+            i < 32u32,
+    ;
+}
+
 pub open spec fn pstop(c: u8, prev: u8) -> bool {
     in_path_set(c) || c == b'\\' || ((c == b'.' || c == b'%') && prev == b'/')
 }
@@ -3989,35 +4072,30 @@ fn path_first16(w: &[u8], d: u32) -> (r: u32)
         forall|j: u32| d <= j < r ==> !pstop(#[trigger] w@[j + 1], w@[j as int]),
         r < 16 ==> pstop(w@[r + 1], w@[r as int]),
 {
-    // One flag byte per position: the loop vectorizes, and the flags are
-    // read back as two words whose trailing zeros give the first stop.
-    let mut f = [0u8; 16];
-    let mut i: usize = 0;
-    while i < 16
-        invariant
-            i <= 16,
-            w.len() == 17,
-            forall|j: int| 0 <= j < i ==> (#[trigger] f@[j] != 0) == pstop(w@[j + 1], w@[j]),
-        decreases 16 - i,
-    {
-        let c = w[i + 1];
-        let prev = w[i];
-        let st = (c <= 0x20) | (c >= 0x7F) | (c == 0x22) | (c == 0x23) | (c == 0x3C) | (c == 0x3E)
-            | (c == 0x3F) | (c == 0x5C) | (c == 0x5E) | (c == 0x60) | (c == 0x7B) | (c == 0x7D) | (((c
-            == 0x2E) | (c == 0x25)) & (prev == 0x2F));
-        proof {
-            assert(st == pstop(c, prev));
-        }
-        f[i] = st as u8;
-        i = i + 1;
+    // One vector compare chain and a movemask: bit `j` of `m` is the stop
+    // at `w[j + 1]`, and the lowest set bit at or above `d` is the answer.
+    let m = path_mask16(w);
+    let g = m >> d;
+    proof {
+        lemma_shr_bit(m, d, 0);
     }
-    let r = crate::swar::first_flag16(&f, d);
+    let r0 = verilith_simd::sse2::first_set16(g);
+    proof {
+        if r0 < 16 {
+            lemma_shr_bit(m, d, r0 as u32);
+            assert(verilith_simd::sse2::bit(g, r0 as u32));
+        }
+    }
+    let r = if r0 < 16 { d + r0 as u32 } else { 16 };
     proof {
         assert forall|j: u32| d <= j < r implies !pstop(#[trigger] w@[j + 1], w@[j as int]) by {
-            assert(f@[j as int] == 0);
+            let i = (j - d) as u32;
+            lemma_shr_bit(m, d, i);
+            assert(!verilith_simd::sse2::bit(g, i));
+            assert(j == (d + i) as u32);
         }
         if r < 16 {
-            assert(f@[r as int] != 0);
+            assert(pbit(m, r));
         }
     }
     r
@@ -4064,26 +4142,6 @@ fn path_fast_scan(input: &[u8], p: usize, Tracked(cost): Tracked<&mut Meter>) ->
         decreases n - k,
     {
         let w = vstd::slice::slice_subrange(t, k - 1, k + 16);
-        if any_path_stop16(w) {
-            break;
-        }
-        proof {
-            cost.n = cost.n + 1;
-        }
-        proof {
-            assert forall|j: int| p <= j < k + 16 implies fast_at(input@, j, p as int) by {
-                if j >= k {
-                    assert(input@[j] == w@[j - k + 1]);
-                    assert(input@[j - 1] == w@[j - k]);
-                }
-            }
-        }
-        k = k + 16;
-    }
-    // The block that stopped the loop, or the last 16 bytes of the input
-    // when fewer remain: vector flags find the stop instead of a byte loop.
-    if n - k >= 16 {
-        let w = vstd::slice::slice_subrange(t, k - 1, k + 16);
         let r = path_first16(w, 0);
         if r < 16 {
             proof {
@@ -4100,7 +4158,24 @@ fn path_fast_scan(input: &[u8], p: usize, Tracked(cost): Tracked<&mut Meter>) ->
             }
             return k + r as usize;
         }
-    } else if n >= 17 && k < n {
+        proof {
+            cost.n = cost.n + 1;
+        }
+        proof {
+            assert forall|j: int| p <= j < k + 16 implies fast_at(input@, j, p as int) by {
+                if j >= k {
+                    let jj = (j - k) as u32;
+                    assert(input@[j] == w@[jj + 1]);
+                    assert(input@[j - 1] == w@[jj as int]);
+                    assert(!pstop(w@[jj + 1], w@[jj as int]));
+                }
+            }
+        }
+        k = k + 16;
+    }
+    // Fewer than 16 bytes remain: the last 16 bytes of the input, from
+    // the first unchecked one.
+    if n >= 17 && k < n {
         let st = n - 16;
         let w = vstd::slice::slice_subrange(t, st - 1, n);
         let d = (k - st) as u32;
@@ -5160,7 +5235,7 @@ fn query_run(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): T
 }
 
 /// The query state at "#" or the end of the input.
-#[verifier::rlimit(30)]
+#[verifier::rlimit(60)]
 fn query_end(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): Tracked<&mut Meter>) -> (r: Flow)
     requires
         old(ps).inv(input@, base_rec(base)),
@@ -5194,10 +5269,17 @@ fn query_end(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): T
         proof {
             lemma_core_parts(url2);
             assert(ps.href@ =~= core_serialize(url2));
+            assert(ps.inv(input@, base_rec(base)));
+            assert(ps.measure_lt(old(ps)));
+            assert(run(input@, base_rec(base), None, m, k as int) == run(input@, base_rec(base), None, ps.gm@, ps.p as int));
         }
         Flow::Continue
     } else {
         ps.gm = Ghost(Machine { url, buffer: Seq::empty(), ..m });
+        proof {
+            assert(done_ok(ps, url));
+            assert(run(input@, base_rec(base), None, m, k as int) == Some(url));
+        }
         Flow::Done
     }
 }
@@ -5471,6 +5553,19 @@ fn scheme_fast(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost):
                 input@,
                 base_rec(base),
             )
+            &&& final(ps).scheme_end == 4 || final(ps).scheme_end == 5
+            &&& final(ps).gm@ == fast_authority_machine(input@, final(ps).scheme_end as int)
+            &&& (input@.subrange(0, final(ps).scheme_end as int) == s_http() || input@.subrange(
+                0,
+                final(ps).scheme_end as int,
+            ) == s_https())
+            &&& final(ps).p == final(ps).scheme_end + 3
+            &&& final(ps).p < input.len()
+            &&& final(ps).bs == final(ps).p
+            &&& final(ps).username_end == final(ps).p
+            &&& final(ps).href@ == input@.subrange(0, final(ps).p as int)
+            &&& forall|i: int| 0 <= i < final(ps).p ==> input@[i] > 0x20
+            &&& final(cost).n == old(cost).n + 8
         },
 {
     hide(run);
@@ -5523,8 +5618,695 @@ fn scheme_fast(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost):
         }
         assert(ps.inv(input@, b));
         lemma_pot_drop_n(&ps0, ps, input@, b, old(cost).n as int, cost.n as int, 9);
+        assert forall|i: int| 0 <= i < p implies input@[i] > 0x20 by {
+            if i >= se {
+                assert(i == se || i == se + 1 || i == se + 2);
+            } else if i == 4 {
+                assert(input@[4] == b's');
+            }
+        }
     }
     true
+}
+
+// ---------------------------------------------------------------------------
+// The simple absolute fast path
+//
+// Most URLs are "http://" or "https://", a lowercase domain, and a path,
+// query and fragment that need no percent-encoding: the serialization is
+// the input itself (with a "/" inserted when the path is empty). For such
+// an input the parser below scans each component once and copies the
+// input into `href` with one `memcpy`, as ada's `try_parse_simple_absolute`
+// does. It runs before the input is trimmed and cleaned of tabs and
+// newlines: every byte it accepts is above 0x20, so neither changes the
+// input. It is proven to compute the state machine's result.
+// ---------------------------------------------------------------------------
+
+/// A byte the fast path accepts in the host: one the authority and host
+/// states append to their buffer, and the domain parser keeps as it is.
+pub open spec fn simple_host_at(input: Seq<u8>, i: int) -> bool {
+    &&& host_plain(input, i, true)
+    &&& input[i] != b'@'
+    &&& !cls_has(input[i], DOMAIN_SLOW)
+}
+
+/// Where the path state starts reading: after the "/" that ends the host.
+pub open spec fn simple_p1(input: Seq<u8>, k: int) -> int {
+    if k < input.len() && input[k] == b'/' {
+        k + 1
+    } else {
+        k
+    }
+}
+
+/// What the fast path's scans establish, for the scheme `input[..se]`, the
+/// host `input[se + 3..k]`, the path ending at `j`, the query (when
+/// `input[j]` is "?") ending at `q`, and the fragment after `q`.
+pub open spec fn simple_shape(input: Seq<u8>, se: int, k: int, j: int, q: int) -> bool {
+    let n = input.len() as int;
+    let p = se + 3;
+    let p1 = simple_p1(input, k);
+    &&& se == 4 || se == 5
+    &&& input.subrange(0, se) == s_http() || input.subrange(0, se) == s_https()
+    &&& p < k <= n
+    &&& (forall|i: int| p <= i < k ==> #[trigger] simple_host_at(input, i))
+    &&& (k < n ==> input[k] == b'/' || input[k] == b'?' || input[k] == b'#')
+    &&& !ends_in_a_number(input.subrange(p, k))
+    &&& p1 <= j <= n
+    &&& (p1 == k ==> j == k)
+    &&& (forall|i: int| p1 <= i < j ==> #[trigger] fast_at(input, i, p1))
+    &&& (j < n ==> input[j] == b'?' || input[j] == b'#')
+    &&& j <= q <= n
+    &&& (if j < n && input[j] == b'?' {
+        &&& j + 1 <= q
+        &&& (forall|i: int| j + 1 <= i < q ==> !in_special_query_set(#[trigger] input[i]))
+        &&& (q < n ==> input[q] == b'#')
+    } else {
+        q == j
+    })
+    &&& (forall|i: int| q + 1 <= i < n ==> !in_fragment_set(#[trigger] input[i]))
+}
+
+/// The URL such an input parses to.
+pub open spec fn simple_url(input: Seq<u8>, se: int, k: int, j: int, q: int) -> UrlRecord {
+    let n = input.len() as int;
+    let p1 = simple_p1(input, k);
+    let url_h = UrlRecord {
+        host: Some(Host::Domain(input.subrange(se + 3, k))),
+        ..UrlRecord { scheme: input.subrange(0, se), ..new_url() }
+    };
+    let s = input.subrange(p1, j);
+    let url4 = push_segment(segs_acc(url_h, Seq::empty(), s), tail_acc(Seq::empty(), s));
+    let url5 = if j < n && input[j] == b'?' {
+        UrlRecord { query: Some(input.subrange(j + 1, q)), ..url4 }
+    } else {
+        url4
+    };
+    if q < n {
+        UrlRecord { fragment: Some(input.subrange(q + 1, n)), ..url5 }
+    } else {
+        url5
+    }
+}
+
+/// A lowercase ASCII domain without forbidden code points that does not
+/// end in a number is its own host.
+proof fn lemma_host_simple(s: Seq<u8>)
+    requires
+        s.len() > 0,
+        forall|i: int| 0 <= i < s.len() ==> !cls_has(#[trigger] s[i], DOMAIN_SLOW),
+        !ends_in_a_number(s),
+    ensures
+        host_parse(s, false) == Some(Host::Domain(s)),
+{
+    lemma_cls();
+    assert forall|i: int| 0 <= i < s.len() implies !(#[trigger] s[i] >= 0x80 || is_ascii_upper_alpha(s[i])
+        || is_forbidden_domain_code_point(s[i])) by {
+        assert(cls_has(s[i], DOMAIN_SLOW) == cls_pred(DOMAIN_SLOW, s[i]));
+    }
+    assert(no_byte(s, b'%'));
+    lemma_percent_decode_identity(s);
+    assert(s[0] != b'[');
+    assert(is_ascii(s));
+    assert(ascii_lowercase_seq(s) =~= s);
+    assert(!contains_forbidden_domain_code_point(s));
+    assert(domain_parse(s) == Some(s));
+}
+
+/// The state machine from the authority state on such an input.
+#[verifier::rlimit(100)]
+proof fn lemma_simple_run(input: Seq<u8>, b: Option<UrlRecord>, se: int, k: int, j: int, q: int)
+    requires
+        simple_shape(input, se, k, j, q),
+    ensures
+        run(input, b, None, fast_authority_machine(input, se), se + 3) == Some(simple_url(input, se, k, j, q)),
+{
+    hide(run);
+    hide(step);
+    let n = input.len() as int;
+    let p = se + 3;
+    let p1 = simple_p1(input, k);
+    let m0 = fast_authority_machine(input, se);
+    let url0 = m0.url;
+    assert(url0.scheme == input.subrange(0, se));
+    assert(is_special(url0)) by {
+        assert(is_special_scheme(input.subrange(0, se)));
+    }
+    assert(url0.scheme != s_file()) by {
+        assert(url0.scheme[0] == b'h');
+        assert(s_file()[0] == b'f');
+    }
+    // The authority state collects the host and rewinds to its start.
+    assert forall|i: int| p <= i < k implies input[i] != b'@' && !is_authority_end(input, i, is_special(m0.url))
+        && host_plain(input, i, is_special(m0.url)) by {
+        assert(simple_host_at(input, i));
+    }
+    lemma_run_authority_chars(input, b, m0, p, k);
+    let host = input.subrange(p, k);
+    let ma = Machine { buffer: m0.buffer + host, ..m0 };
+    assert(m0.buffer + host =~= host);
+    lemma_step_authority_end(input, b, ma, k);
+    let mb = Machine { buffer: Seq::empty(), state: State::Host, ..ma };
+    lemma_run_next(input, b, ma, k, mb, p - 1);
+    // The host state collects it again and parses it.
+    lemma_run_host_chars(input, b, mb, p, k);
+    let mc = Machine { buffer: mb.buffer + host, ..mb };
+    assert(mb.buffer + host =~= host);
+    assert forall|i: int| 0 <= i < host.len() implies !cls_has(#[trigger] host[i], DOMAIN_SLOW) by {
+        assert(simple_host_at(input, p + i));
+    }
+    lemma_host_simple(host);
+    lemma_step_host(input, b, mc, k);
+    let url_h = UrlRecord { host: Some(Host::Domain(host)), ..url0 };
+    let md = Machine { url: url_h, buffer: Seq::empty(), state: State::PathStart, ..mc };
+    assert(step(input, b, None, mc, k) == Step::Next(md, k - 1));
+    lemma_run_next(input, b, mc, k, md, k - 1);
+    // The path start state.
+    lemma_step_path_start(input, b, md, k);
+    let me = Machine { state: State::Path, ..md };
+    if p1 == k + 1 {
+        assert(step(input, b, None, md, k) == Step::Next(me, k));
+        lemma_run_next(input, b, md, k, me, k);
+    } else {
+        assert(step(input, b, None, md, k) == Step::Next(me, k - 1));
+        lemma_run_next(input, b, md, k, me, k - 1);
+    }
+    // The path.
+    let s = input.subrange(p1, j);
+    assert(me.buffer.len() == 0);
+    lemma_run_path_fast(input, b, me, p1, p1, j);
+    lemma_segs_acc(url_h, Seq::empty(), s);
+    let url3 = segs_acc(url_h, Seq::empty(), s);
+    let tail = tail_acc(Seq::empty(), s);
+    let mf = Machine { url: url3, buffer: tail, ..me };
+    assert(mf == Machine { url: segs_acc(me.url, me.buffer, s), buffer: tail_acc(me.buffer, s), ..me });
+    lemma_run_path_end(input, b, mf, j);
+    lemma_not_dot(tail);
+    let url4 = push_segment(url3, tail);
+    assert(url3.scheme == url0.scheme);
+    assert(path_seg_url(url3, tail, false) == url4);
+    let m2 = Machine { url: url4, buffer: Seq::empty(), ..mf };
+    let target = simple_url(input, se, k, j, q);
+    assert(url_h == UrlRecord {
+        host: Some(Host::Domain(input.subrange(se + 3, k))),
+        ..UrlRecord { scheme: input.subrange(0, se), ..new_url() }
+    });
+    if j == n {
+        assert(target == url4);
+    } else if input[j] == b'?' {
+        // The query.
+        let mq = Machine { state: State::Query, url: UrlRecord { query: Some(Seq::empty()), ..url4 }, ..m2 };
+        assert forall|i: int| j + 1 <= i < q implies input[i] != b'#' by {
+            assert(!in_special_query_set(input[i]));
+        }
+        lemma_run_query_chars(input, b, mq, j + 1, q);
+        let qs = input.subrange(j + 1, q);
+        let mq2 = Machine { buffer: mq.buffer + qs, ..mq };
+        assert(mq.buffer + qs =~= qs);
+        lemma_run_query_end(input, b, mq2, q);
+        assert forall|i: int| 0 <= i < qs.len() implies !in_encode_set(EncodeSet::SpecialQuery, #[trigger] qs[i]) by {
+            assert(!in_special_query_set(input[j + 1 + i]));
+        }
+        lemma_pe_seq_identity(qs, EncodeSet::SpecialQuery);
+        assert(Seq::<u8>::empty() + qs =~= qs);
+        let url5 = UrlRecord { query: Some(qs), ..url4 };
+        assert(UrlRecord { query: Some(mq2.url.query->0 + pe_seq(mq2.buffer, EncodeSet::SpecialQuery)), ..mq2.url } == url5);
+        if q == n {
+            assert(target == url5);
+        } else {
+            // The fragment.
+            let mr = Machine {
+                url: UrlRecord { fragment: Some(Seq::empty()), ..url5 },
+                buffer: Seq::empty(),
+                state: State::Fragment,
+                ..mq2
+            };
+            lemma_run_fragment(input, b, mr, q + 1, Seq::empty());
+            let fs = input.subrange(q + 1, n);
+            assert forall|i: int| 0 <= i < fs.len() implies !in_encode_set(EncodeSet::Fragment, #[trigger] fs[i]) by {
+                assert(!in_fragment_set(input[q + 1 + i]));
+            }
+            lemma_pe_seq_identity(fs, EncodeSet::Fragment);
+            assert(Seq::<u8>::empty() + fs =~= fs);
+            assert(target == UrlRecord { fragment: Some(fs), ..url5 });
+        }
+    } else {
+        // The fragment, after an empty query-less path.
+        assert(q == j);
+        let mr = Machine { state: State::Fragment, url: UrlRecord { fragment: Some(Seq::empty()), ..url4 }, ..m2 };
+        lemma_run_fragment(input, b, mr, j + 1, Seq::empty());
+        let fs = input.subrange(j + 1, n);
+        assert forall|i: int| 0 <= i < fs.len() implies !in_encode_set(EncodeSet::Fragment, #[trigger] fs[i]) by {
+            assert(!in_fragment_set(input[j + 1 + i]));
+        }
+        lemma_pe_seq_identity(fs, EncodeSet::Fragment);
+        assert(Seq::<u8>::empty() + fs =~= fs);
+        assert(target == UrlRecord { fragment: Some(fs), ..url4 });
+    }
+}
+
+/// The pieces of such a URL's serialization.
+#[verifier::rlimit(60)]
+proof fn lemma_simple_parts(input: Seq<u8>, se: int, k: int, j: int, q: int)
+    requires
+        simple_shape(input, se, k, j, q),
+    ensures
+        ({
+            let url = simple_url(input, se, k, j, q);
+            let n = input.len() as int;
+            let slash = k < n && input[k] == b'/';
+            &&& url.scheme == input.subrange(0, se)
+            &&& url.username.len() == 0
+            &&& url.password.len() == 0
+            &&& url.host == Some(Host::Domain(input.subrange(se + 3, k)))
+            &&& url.port is None
+            &&& url.path is List
+            &&& path_ok(url.path)
+            &&& path_serialize(url.path) == (if slash {
+                input.subrange(k, j)
+            } else {
+                seq![b'/']
+            })
+            &&& (url.query is Some) == (j < n && input[j] == b'?')
+            &&& query_serialize(url) == (if j < n && input[j] == b'?' {
+                input.subrange(j, q)
+            } else {
+                Seq::<u8>::empty()
+            })
+            &&& (url.fragment is Some) == (q < n)
+            &&& fragment_serialize(url) == (if q < n {
+                input.subrange(q, n)
+            } else {
+                Seq::<u8>::empty()
+            })
+        }),
+{
+    let n = input.len() as int;
+    let p1 = simple_p1(input, k);
+    let url_h = UrlRecord {
+        host: Some(Host::Domain(input.subrange(se + 3, k))),
+        ..UrlRecord { scheme: input.subrange(0, se), ..new_url() }
+    };
+    let s = input.subrange(p1, j);
+    assert(segments_ok(Seq::<Seq<u8>>::empty()));
+    lemma_segs_acc(url_h, Seq::empty(), s);
+    let url3 = segs_acc(url_h, Seq::empty(), s);
+    let tail = tail_acc(Seq::empty(), s);
+    let segs = url3.path->List_0;
+    lemma_segments_push(segs, tail);
+    lemma_segments_ok_push(segs, tail);
+    assert(segments_serialize(Seq::<Seq<u8>>::empty()) =~= Seq::<u8>::empty());
+    assert(segments_serialize(segs.push(tail)) =~= seq![b'/'] + s);
+    if k < n && input[k] == b'/' {
+        assert(p1 == k + 1);
+        assert(input.subrange(k, j) =~= seq![input[k]] + input.subrange(k + 1, j));
+        assert(seq![b'/'] + s =~= input.subrange(k, j));
+    } else {
+        assert(s =~= Seq::<u8>::empty());
+        assert(seq![b'/'] + s =~= seq![b'/']);
+    }
+    let url = simple_url(input, se, k, j, q);
+    if j < n && input[j] == b'?' {
+        assert(seq![b'?'] + input.subrange(j + 1, q) =~= input.subrange(j, q));
+    }
+    if q < n {
+        assert(input[q] == b'#');
+        assert(seq![b'#'] + input.subrange(q + 1, n) =~= input.subrange(q, n));
+    }
+}
+
+/// Every byte of such an input is above 0x20 (so trimming and removing
+/// tabs and newlines leave it as it is).
+proof fn lemma_simple_printable(input: Seq<u8>, se: int, k: int, j: int, q: int)
+    requires
+        simple_shape(input, se, k, j, q),
+        forall|i: int| 0 <= i < se + 3 ==> input[i] > 0x20,
+    ensures
+        forall|i: int| 0 <= i < input.len() ==> input[i] > 0x20,
+{
+    let n = input.len() as int;
+    let p1 = simple_p1(input, k);
+    lemma_cls();
+    assert forall|i: int| 0 <= i < n implies input[i] > 0x20 by {
+        if i < se + 3 {
+        } else if i < k {
+            assert(simple_host_at(input, i));
+            assert(cls_has(input[i], DOMAIN_SLOW) == cls_pred(DOMAIN_SLOW, input[i]));
+        } else if i == k {
+        } else if i >= p1 && i < j {
+            assert(fast_at(input, i, p1));
+        } else if i == j {
+        } else if i < q {
+            assert(!in_special_query_set(input[i]));
+        } else if i == q {
+        } else {
+            assert(!in_fragment_set(input[i]));
+        }
+    }
+}
+
+/// The href the fast path writes is the serialization, and its offsets
+/// are the URL's.
+#[verifier::rlimit(40)]
+proof fn lemma_simple_href(input: Seq<u8>, se: int, k: int, j: int, q: int, h0: Seq<u8>, href: Seq<u8>)
+    requires
+        simple_shape(input, se, k, j, q),
+        h0 == input.subrange(0, se + 3),
+        h0 == input.subrange(0, se) + seq![b':', b'/', b'/'],
+        href == (if k < input.len() && input[k] == b'/' {
+            h0 + input.subrange(se + 3, input.len() as int)
+        } else {
+            h0 + input.subrange(se + 3, k) + seq![b'/'] + input.subrange(k, input.len() as int)
+        }),
+    ensures
+        ({
+            let url = simple_url(input, se, k, j, q);
+            let n = input.len() as int;
+            let d: int = if k < n && input[k] == b'/' { 0 } else { 1 };
+            &&& href == core_serialize(url)
+            &&& o_username_end(url) == se + 3
+            &&& o_host_start(url) == se + 3
+            &&& o_host_end(url) == k
+            &&& o_path_start(url) == k
+            &&& o_query_start(url) == j + d
+            &&& o_fragment_start(url) == q + d
+            &&& url.port is None
+            &&& url.path is List
+            &&& path_ok(url.path)
+            &&& (url.query is Some) == (j < n && input[j] == b'?')
+            &&& (url.fragment is Some) == (q < n)
+            &&& url.scheme == input.subrange(0, se)
+            &&& url.host == Some(Host::Domain(input.subrange(se + 3, k)))
+        }),
+{
+    lemma_simple_parts(input, se, k, j, q);
+    let url = simple_url(input, se, k, j, q);
+    let n = input.len() as int;
+    let p = se + 3;
+    let host = input.subrange(p, k);
+    assert(credentials_serialize(url) =~= Seq::<u8>::empty());
+    assert(port_serialize(url) =~= Seq::<u8>::empty());
+    let auth = seq![b'/', b'/'] + host;
+    assert(authority_serialize(url) =~= auth);
+    let pre = url.scheme + seq![b':'] + authority_serialize(url);
+    assert(h0 =~= url.scheme + seq![b':', b'/', b'/']);
+    assert(pre =~= h0 + host);
+    assert(pre =~= input.subrange(0, k));
+    let tl = path_serialize(url.path) + query_serialize(url) + fragment_serialize(url);
+    if !(j < n && input[j] == b'?') {
+        assert(input.subrange(j, q) =~= Seq::<u8>::empty());
+    }
+    assert(query_serialize(url) == input.subrange(j, q));
+    if q == n {
+        assert(input.subrange(q, n) =~= Seq::<u8>::empty());
+    }
+    assert(fragment_serialize(url) == input.subrange(q, n));
+    assert(input.subrange(j, n) =~= input.subrange(j, q) + input.subrange(q, n));
+    if k < n && input[k] == b'/' {
+        assert(input.subrange(k, n) =~= input.subrange(k, j) + input.subrange(j, n));
+        assert(tl =~= input.subrange(k, n));
+        assert(href =~= input.subrange(0, k) + input.subrange(k, n));
+    } else {
+        assert(j == k);
+        assert(query_serialize(url) + fragment_serialize(url) =~= input.subrange(k, n));
+        assert(href =~= input.subrange(0, k) + seq![b'/'] + input.subrange(k, n));
+    }
+    assert(core_serialize(url) =~= pre + tl);
+}
+
+/// Finishes an "http://" or "https://" URL in the authority state (as
+/// `scheme_fast` leaves it) when it has the simple shape: scans the host,
+/// path, query and fragment, then copies the rest of the input into `href`
+/// in one go. Leaves `ps` as it was otherwise.
+#[verifier::rlimit(150)]
+fn simple_rest(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): Tracked<&mut Meter>) -> (r: bool)
+    requires
+        old(ps).inv(input@, base_rec(base)),
+        old(ps).state == State::Authority,
+        old(ps).scheme_end == 4 || old(ps).scheme_end == 5,
+        old(ps).gm@ == fast_authority_machine(input@, old(ps).scheme_end as int),
+        input@.subrange(0, old(ps).scheme_end as int) == s_http() || input@.subrange(
+            0,
+            old(ps).scheme_end as int,
+        ) == s_https(),
+        old(ps).p == old(ps).scheme_end + 3,
+        old(ps).p < input.len(),
+        old(ps).username_end == old(ps).p,
+        old(ps).href@ == input@.subrange(0, old(ps).p as int),
+        forall|i: int| 0 <= i < old(ps).p ==> input@[i] > 0x20,
+    ensures
+        !r ==> *final(ps) == *old(ps),
+        final(cost).n <= old(cost).n + 12 * input.len() + 64,
+        r ==> done_ok(final(ps), final(ps).gm@.url),
+        r ==> run(input@, base_rec(base), None, old(ps).gm@, old(ps).p as int) == Some(final(ps).gm@.url),
+        r ==> forall|i: int| 0 <= i < input.len() ==> input@[i] > 0x20,
+        r ==> final(ps).href@.len() <= input.len() + 1,
+{
+    let ghost b = base_rec(base);
+    let ghost c0 = cost.n;
+    let ghost se = ps.scheme_end as int;
+    let n = input.len();
+    let p = ps.p;
+    // The host: a run of lowercase domain bytes, up to the end, "/", "?"
+    // or "#" (a port, credentials or anything to map go the long way).
+    proof {
+        crate::swar::lemma_plain_free_masks();
+    }
+    let k = crate::swar::find_cls_plain(input, p, n, AUTHORITY_STOP | BACKSLASH | HOST_STOP | DOMAIN_SLOW, Tracked(cost));
+    if k == p || (k < n && input[k] != b'/' && input[k] != b'?' && input[k] != b'#') {
+        return false;
+    }
+    proof {
+        lemma_cls();
+        assert forall|i: int| p <= i < k implies #[trigger] simple_host_at(input@, i) by {
+            let x = CLS@[input@[i] as int];
+            lemma_and_or(x, AUTHORITY_STOP, BACKSLASH);
+            lemma_and_or(x, AUTHORITY_STOP | BACKSLASH, HOST_STOP);
+            lemma_and_or(x, AUTHORITY_STOP | BACKSLASH | HOST_STOP, DOMAIN_SLOW);
+            assert(!cls_has(input@[i], AUTHORITY_STOP | BACKSLASH | HOST_STOP | DOMAIN_SLOW));
+            assert(cls_has(input@[i], AUTHORITY_STOP) == cls_pred(AUTHORITY_STOP, input@[i]));
+            assert(cls_has(input@[i], BACKSLASH) == cls_pred(BACKSLASH, input@[i]));
+            assert(cls_has(input@[i], HOST_STOP) == cls_pred(HOST_STOP, input@[i]));
+        }
+    }
+    let ghost c1 = cost.n;
+    if ends_in_a_number_exec(vstd::slice::slice_subrange(input, p, k), Tracked(cost)) {
+        return false;
+    }
+    let ghost c2 = cost.n;
+    // The path: plain bytes, no "\" and no dot segment.
+    let slash = k < n && input[k] == b'/';
+    let p1 = if slash {
+        k + 1
+    } else {
+        k
+    };
+    let j = if slash && p1 < n {
+        path_fast_scan(input, p1, Tracked(cost))
+    } else {
+        p1
+    };
+    if j < n && input[j] != b'?' && input[j] != b'#' {
+        return false;
+    }
+    let ghost c3 = cost.n;
+    // The query and the fragment: bytes that need no encoding.
+    let has_q = j < n && input[j] == b'?';
+    let q = if has_q {
+        scan_special_query(input, j + 1, n, Tracked(cost))
+    } else {
+        j
+    };
+    if q < n && input[q] != b'#' {
+        return false;
+    }
+    let ghost c4 = cost.n;
+    if q < n {
+        let f = scan_fragment(input, q + 1, n, Tracked(cost));
+        if f < n {
+            return false;
+        }
+    }
+    let ghost c5 = cost.n;
+    proof {
+        assert(c1 == c0 + (k - p) + 1);
+        assert(c2 <= c1 + 3 * (k - p) + 1);
+        assert(c3 <= c2 + 2 * (j - p1) + 18);
+        assert(c4 <= c3 + 2 * (q - j) + 18);
+        assert(c5 <= c4 + (n - q) + 1);
+        assert(simple_shape(input@, se, k as int, j as int, q as int));
+        lemma_simple_run(input@, b, se, k as int, j as int, q as int);
+        lemma_simple_parts(input@, se, k as int, j as int, q as int);
+        lemma_simple_printable(input@, se, k as int, j as int, q as int);
+    }
+    // The serialization is the input, with a "/" for an empty path.
+    let ghost url = simple_url(input@, se, k as int, j as int, q as int);
+    let ghost h0 = ps.href@;
+    if slash {
+        append_range(&mut ps.href, input, p, n, Tracked(cost));
+    } else {
+        append_range(&mut ps.href, input, p, k, Tracked(cost));
+        ps.href.push(b'/');
+        append_range(&mut ps.href, input, k, n, Tracked(cost));
+    }
+    let d: usize = if slash {
+        0
+    } else {
+        1
+    };
+    ps.host_start = p;
+    ps.host_end = k;
+    ps.host_kind = Some(HostKind::Domain);
+    ps.port = None;
+    ps.path_start = k;
+    ps.opaque_path = false;
+    ps.query_start = if has_q {
+        Some(j + d)
+    } else {
+        None
+    };
+    ps.fragment_start = if q < n {
+        Some(q + d)
+    } else {
+        None
+    };
+    ps.gm = Ghost(Machine { url, ..ps.gm@ });
+    proof {
+        let url0 = old(ps).gm@.url;
+        assert(h0 =~= url0.scheme + seq![b':', b'/', b'/']);
+        if slash {
+            assert(ps.href@ =~= h0 + input@.subrange(p as int, n as int));
+        } else {
+            assert(ps.href@ =~= h0 + input@.subrange(p as int, k as int) + seq![b'/'] + input@.subrange(k as int, n as int));
+        }
+        lemma_simple_href(input@, se, k as int, j as int, q as int, h0, ps.href@);
+        assert(kind_of(Host::Domain(input@.subrange(p as int, k as int))) == HostKind::Domain);
+    }
+    true
+}
+
+/// The work bound of `parse_simple` for an `n`-byte input.
+pub open spec fn simple_cost(n: nat) -> int {
+    16 * (n as int) + 128
+}
+
+/// The size class of a new href buffer for `need` bytes: the next power of
+/// two from 128, so at most twice what is needed (or 128 bytes). Buffers
+/// freed by earlier URLs then fit later ones of about the same length,
+/// which `take_href` reuses.
+fn href_class(need: usize) -> (c: usize)
+    ensures
+        c >= need,
+{
+    let mut c: usize = 128;
+    while c < need && c <= usize::MAX / 2
+        invariant
+            c >= 128,
+        decreases usize::MAX - c,
+    {
+        c = c * 2;
+    }
+    if c < need {
+        need
+    } else {
+        c
+    }
+}
+
+/// The href buffer for an input that needs `need` bytes: the spare one in
+/// `sc` when it has room and is at most twice that (or 128 bytes; the URL
+/// keeps it), else a new one of `href_class(need)`.
+#[inline(always)]
+fn take_href(sc: &mut crate::host::Scratch, need: usize) -> (v: Vec<u8>)
+    ensures
+        v@.len() == 0,
+{
+    let c = crate::host::capacity(&sc.href);
+    let lim = if need <= 64 { 128 } else { need.saturating_mul(2) };
+    if c >= need && c <= lim {
+        let mut href: Vec<u8> = Vec::new();
+        core::mem::swap(&mut href, &mut sc.href);
+        href.clear();
+        href
+    } else {
+        Vec::with_capacity(href_class(need))
+    }
+}
+
+/// The fast path for an "http://" or "https://" URL already in canonical
+/// form, on the input as given (before trimming and removing tabs and
+/// newlines, which cannot change an input it accepts). `None` means it did
+/// not apply, not that the input is invalid.
+pub(crate) fn parse_simple(input: &[u8], base: Option<&Url>, sc: &mut crate::host::Scratch, Tracked(cost): Tracked<&mut Meter>) -> (r: Option<Url>)
+    requires
+        base matches Some(b) ==> b.wf(),
+    ensures
+        final(cost).n <= old(cost).n + simple_cost(input.len() as nat),
+        r matches Some(u) ==> u.wf() && run(
+            input@,
+            base_rec(base),
+            None,
+            initial_machine(State::SchemeStart, new_url()),
+            0,
+        ) == Some(u@),
+        r is Some ==> input.len() > 0 && forall|i: int| 0 <= i < input.len() ==> input@[i] > 0x20,
+{
+    let n = input.len();
+    if n < 9 || input[0] != b'h' {
+        return None;
+    }
+    let ghost b = base_rec(base);
+    // The same buffer the state machine would take, so that it can take it
+    // back when this does not apply.
+    let href = take_href(sc, n.saturating_add(8));
+    let mut ps = Parser {
+        href,
+        p: 0,
+        state: State::SchemeStart,
+        bs: 0,
+        at_sign_seen: false,
+        inside_brackets: false,
+        pts: false,
+        special: false,
+        scheme_end: 0,
+        username_end: 0,
+        host_start: 0,
+        host_end: 0,
+        port: None,
+        path_start: 0,
+        query_start: None,
+        fragment_start: None,
+        host_kind: None,
+        opaque_path: false,
+        gm: Ghost(initial_machine(State::SchemeStart, new_url())),
+    };
+    proof {
+        assert(!is_special_scheme(Seq::<u8>::empty())) by {
+            assert(Seq::<u8>::empty() != s_ftp() && Seq::<u8>::empty() != s_file());
+            assert(Seq::<u8>::empty().len() != s_http().len());
+            assert(Seq::<u8>::empty().len() != s_https().len());
+            assert(Seq::<u8>::empty().len() != s_ws().len());
+            assert(Seq::<u8>::empty().len() != s_wss().len());
+        }
+    }
+    if !scheme_fast(&mut ps, input, base, Tracked(cost)) {
+        sc.href = ps.href;
+        return None;
+    }
+    let ghost m = ps.gm@;
+    let ghost p = ps.p;
+    if !simple_rest(&mut ps, input, base, Tracked(cost)) {
+        sc.href = ps.href;
+        return None;
+    }
+    proof {
+        assert(ps.href@.len() <= n + 1);
+    }
+    if ps.host_kind.is_some() {
+        Some(finish_hosted(ps))
+    } else {
+        Some(finish(ps, Tracked(cost)))
+    }
 }
 
 /// Runs the state machine on `input` (already trimmed and without tabs and
@@ -5585,15 +6367,7 @@ pub(crate) fn run_machine_in(input: &[u8], base: Option<&Url>, sc: &mut crate::h
     let ghost target = run(input@, b, None, initial_machine(State::SchemeStart, new_url()), 0);
     // Take the spare buffer when it has room but is not much bigger than
     // needed (the URL may keep it).
-    let need = input.len().saturating_add(8);
-    let c = crate::host::capacity(&sc.href);
-    let mut href: Vec<u8> = Vec::new();
-    if c >= need && c / 2 <= need {
-        core::mem::swap(&mut href, &mut sc.href);
-        href.clear();
-    } else {
-        href = Vec::with_capacity(need);
-    }
+    let href = take_href(sc, input.len().saturating_add(8));
     let mut ps = Parser {
         href,
         p: 0,
@@ -5655,6 +6429,43 @@ pub(crate) fn run_machine_in(input: &[u8], base: Option<&Url>, sc: &mut crate::h
                 return None;
             },
         }
+    }
+}
+
+/// `finish` for a URL with a host, which never needs the "/." prefix:
+/// builds the `Url` from the parser's fields, with no copy of `href`.
+#[inline(always)]
+fn finish_hosted(ps: Parser) -> (u: Url)
+    requires
+        done_ok(&ps, ps.gm@.url),
+        ps.host_kind is Some,
+    ensures
+        u.wf(),
+        u@ == ps.gm@.url,
+{
+    let ghost url = ps.gm@.url;
+    // Only for the proof (a Vec's length fits a usize); compiled away.
+    let _n = ps.href.len();
+    proof {
+        lemma_core_parts(url);
+        assert(!needs_dot_slash(url));
+        assert(ps.href@ =~= serialize(url, false));
+    }
+    Url {
+        href: ps.href,
+        scheme_end: ps.scheme_end,
+        username_end: ps.username_end,
+        host_start: ps.host_start,
+        host_end: ps.host_end,
+        port: ps.port,
+        path_start: ps.path_start,
+        query_start: ps.query_start,
+        fragment_start: ps.fragment_start,
+        host_kind: ps.host_kind,
+        opaque_path: ps.opaque_path,
+        special: ps.special,
+        has_dot: false,
+        rec: Ghost(url),
     }
 }
 

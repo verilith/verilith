@@ -17,12 +17,15 @@ enum {
     VREGEX_OK = 0,
     VREGEX_SYNTAX = 1,      /* not a pattern: see vregex_error_offset */
     VREGEX_BAD_UTF8 = 2,    /* the pattern is not UTF-8 */
-    VREGEX_TOO_BIG = 3,     /* too long, too deep, or too large a program */
+    VREGEX_TOO_BIG = 3,     /* too large a program */
     VREGEX_UNSUPPORTED = 4  /* a cre2 option vregex does not have */
 };
 
 /* Compiles pattern[0..len). Never returns NULL: check vregex_error. */
 vregex *vregex_new(const char *pattern, size_t len);
+/* The same, with VREGEX_TOO_BIG for a program over max_insts instructions
+   (vregex_new allows 262144; nothing over 2^24 is ever allowed). */
+vregex *vregex_new_with_limit(const char *pattern, size_t len, size_t max_insts);
 void vregex_free(vregex *re);
 int vregex_error(const vregex *re);
 size_t vregex_error_offset(const vregex *re);

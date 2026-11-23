@@ -71,7 +71,7 @@ enum {
     VJSON_E_TOO_DEEP = 8, /* nesting deeper than 1000 levels */
     VJSON_E_TRAILING_DATA = 9,
     VJSON_E_INVALID_UTF8 = 10,
-    VJSON_E_TOO_LARGE = 11, /* input of 4 GiB or more */
+    VJSON_E_TOO_LARGE = 11, /* input of 256 TiB or more */
     VJSON_E_ARGUMENT = -1   /* null parser, or null input with len != 0 */
 };
 

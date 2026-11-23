@@ -381,6 +381,372 @@ pub fn tab_nl16(s: &[u8], j: usize) -> (r: bool)
     }
 }
 
+broadcast use verilith_simd::lanes::group_lanes;
+
+// ---------------------------------------------------------------------------
+// The path scan's stop mask: bit `i` is set when the fast path run stops at
+// `w[i + 1]` given the byte `w[i]` before it (`parse::pstop`).
+
+/// Two lane masks combine to a lane mask.
+proof fn lemma_or_and_m(a: u8, b: u8)
+    requires
+        a == 0 || a == 0xFF,
+        b == 0 || b == 0xFF,
+    ensures
+        (a | b) == 0 || (a | b) == 0xFF,
+        ((a | b) == 0xFF) == (a == 0xFF || b == 0xFF),
+        (a & b) == 0 || (a & b) == 0xFF,
+        ((a & b) == 0xFF) == (a == 0xFF && b == 0xFF),
+{
+    assert(((a == 0 || a == 0xFFu8) && (b == 0 || b == 0xFFu8)) ==> (((a | b) == 0 || (a | b) == 0xFFu8)
+        && (((a | b) == 0xFFu8) == (a == 0xFFu8 || b == 0xFFu8)) && ((a & b) == 0 || (a & b) == 0xFFu8)
+        && (((a & b) == 0xFFu8) == (a == 0xFFu8 && b == 0xFFu8)))) by (bit_vector);
+}
+
+#[cfg(target_arch = "x86_64")]
+pub open spec fn mx(v: __m128i) -> bool {
+    forall|k: int| 0 <= k < 16 ==> #[trigger] b128(v)[k] == 0 || b128(v)[k] == 0xFF
+}
+
+/// `0xFF` where a lane of `v` is `c`.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn eq_x(v: __m128i, c: u8) -> (r: __m128i)
+    ensures
+        mx(r),
+        forall|k: int| 0 <= k < 16 ==> (#[trigger] b128(r)[k] == 0xFF) == (b128(v)[k] == c),
+{
+    let r = _mm_cmpeq_epi8(v, _mm_set1_epi8(verilith_simd::sse2::i8_of(c)));
+    r
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn or_x(a: __m128i, b: __m128i) -> (r: __m128i)
+    requires
+        mx(a),
+        mx(b),
+    ensures
+        mx(r),
+        forall|k: int| 0 <= k < 16 ==> (#[trigger] b128(r)[k] == 0xFF) == (b128(a)[k] == 0xFF || b128(b)[k]
+            == 0xFF),
+{
+    let r = _mm_or_si128(a, b);
+    proof {
+        assert forall|k: int| 0 <= k < 16 implies (#[trigger] b128(r)[k] == 0 || b128(r)[k] == 0xFF) && ((
+        b128(r)[k] == 0xFF) == (b128(a)[k] == 0xFF || b128(b)[k] == 0xFF)) by {
+            lemma_or_and_m(b128(a)[k], b128(b)[k]);
+        }
+    }
+    r
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn and_x(a: __m128i, b: __m128i) -> (r: __m128i)
+    requires
+        mx(a),
+        mx(b),
+    ensures
+        mx(r),
+        forall|k: int| 0 <= k < 16 ==> (#[trigger] b128(r)[k] == 0xFF) == (b128(a)[k] == 0xFF && b128(b)[k]
+            == 0xFF),
+{
+    let r = _mm_and_si128(a, b);
+    proof {
+        assert forall|k: int| 0 <= k < 16 implies (#[trigger] b128(r)[k] == 0 || b128(r)[k] == 0xFF) && ((
+        b128(r)[k] == 0xFF) == (b128(a)[k] == 0xFF && b128(b)[k] == 0xFF)) by {
+            lemma_or_and_m(b128(a)[k], b128(b)[k]);
+        }
+    }
+    r
+}
+
+/// The stop mask with SSE2.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+pub fn path_mask16_sse(w: &[u8]) -> (m: u32)
+    requires
+        w.len() == 17,
+    ensures
+        m < 0x10000,
+        forall|j: u32| j < 16 ==> #[trigger] verilith_simd::sse2::bit(m, j) == crate::parse::pstop(
+            w@[j + 1],
+            w@[j as int],
+        ),
+{
+    let v = load128_u8(w, 1);
+    let pv = load128_u8(w, 0);
+    // Signed 0x21 > v: v <= 0x20 or v >= 0x80.
+    let lo = _mm_cmpgt_epi8(_mm_set1_epi8(0x21), v);
+    let a = or_x(or_x(lo, eq_x(v, 0x7F)), or_x(eq_x(v, 0x22), eq_x(v, 0x23)));
+    let b = or_x(or_x(eq_x(v, 0x3C), eq_x(v, 0x3E)), or_x(eq_x(v, 0x3F), eq_x(v, 0x5C)));
+    let c = or_x(or_x(eq_x(v, 0x5E), eq_x(v, 0x60)), or_x(eq_x(v, 0x7B), eq_x(v, 0x7D)));
+    let d = and_x(or_x(eq_x(v, 0x2E), eq_x(v, 0x25)), eq_x(pv, 0x2F));
+    let all = or_x(or_x(a, b), or_x(c, d));
+    let m = verilith_simd::sse2::movemask16(all);
+    proof {
+        assert forall|j: u32| j < 16 implies #[trigger] verilith_simd::sse2::bit(m, j) == crate::parse::pstop(
+            w@[j + 1],
+            w@[j as int],
+        ) by {
+            let k = j as int;
+            assert(b128(v)[k] == w@[k + 1]);
+            assert(b128(pv)[k] == w@[k]);
+            let x = w@[k + 1];
+            assert((b128(lo)[k] == 0xFF) == (x <= 0x20 || x >= 0x80));
+        }
+    }
+    m
+}
+
+/// `0xFF` where a lane of `v` is `c`.
+#[inline(always)]
+fn eq_n(v: uint8x16_t, c: u8) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        verilith_simd::neon_mask::is_mask(n8(r)),
+        forall|k: int| 0 <= k < 16 ==> (#[trigger] n8(r)[k] == 0xFF) == (n8(v)[k] == c),
+{
+    let r = vceqq_u8(v, vdupq_n_u8(c));
+    proof {
+        verilith_simd::neon::axiom_n8_len(r);
+    }
+    r
+}
+
+#[inline(always)]
+fn or_n(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+        verilith_simd::neon_mask::is_mask(n8(a)),
+        verilith_simd::neon_mask::is_mask(n8(b)),
+    ensures
+        verilith_simd::neon_mask::is_mask(n8(r)),
+        forall|k: int| 0 <= k < 16 ==> (#[trigger] n8(r)[k] == 0xFF) == (n8(a)[k] == 0xFF || n8(b)[k] == 0xFF),
+{
+    let r = vorrq_u8(a, b);
+    proof {
+        verilith_simd::neon::axiom_n8_len(a);
+        verilith_simd::neon::axiom_n8_len(b);
+        verilith_simd::neon::axiom_n8_len(r);
+        assert forall|k: int| 0 <= k < n8(r).len() implies (#[trigger] n8(r)[k] == 0 || n8(r)[k] == 0xFF) && ((
+        n8(r)[k] == 0xFF) == (n8(a)[k] == 0xFF || n8(b)[k] == 0xFF)) by {
+            lemma_or_and_m(n8(a)[k], n8(b)[k]);
+        }
+    }
+    r
+}
+
+#[inline(always)]
+fn and_n(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+        verilith_simd::neon_mask::is_mask(n8(a)),
+        verilith_simd::neon_mask::is_mask(n8(b)),
+    ensures
+        verilith_simd::neon_mask::is_mask(n8(r)),
+        forall|k: int| 0 <= k < 16 ==> (#[trigger] n8(r)[k] == 0xFF) == (n8(a)[k] == 0xFF && n8(b)[k] == 0xFF),
+{
+    let r = vandq_u8(a, b);
+    proof {
+        verilith_simd::neon::axiom_n8_len(a);
+        verilith_simd::neon::axiom_n8_len(b);
+        verilith_simd::neon::axiom_n8_len(r);
+        assert forall|k: int| 0 <= k < n8(r).len() implies (#[trigger] n8(r)[k] == 0 || n8(r)[k] == 0xFF) && ((
+        n8(r)[k] == 0xFF) == (n8(a)[k] == 0xFF && n8(b)[k] == 0xFF)) by {
+            lemma_or_and_m(n8(a)[k], n8(b)[k]);
+        }
+    }
+    r
+}
+
+/// `0xFF` where a lane of `x` is 0 (`z` is all zeros).
+#[inline(always)]
+fn zero_n(x: uint8x16_t, z: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+        n8(z) == splat8(0, 16),
+    ensures
+        verilith_simd::neon_mask::is_mask(n8(r)),
+        forall|k: int| 0 <= k < 16 ==> (#[trigger] n8(r)[k] == 0xFF) == (n8(x)[k] == 0),
+{
+    let r = vceqq_u8(x, z);
+    proof {
+        verilith_simd::neon::axiom_n8_len(r);
+    }
+    r
+}
+
+/// The stop mask with NEON.
+#[inline(always)]
+pub fn path_mask16_neon(w: &[u8]) -> (m: u32)
+    requires
+        neon(),
+        w.len() == 17,
+    ensures
+        m < 0x10000,
+        forall|j: u32| j < 16 ==> #[trigger] verilith_simd::sse2::bit(m, j) == crate::parse::pstop(
+            w@[j + 1],
+            w@[j as int],
+        ),
+{
+    let v = vld1q_u8_at(w, 1);
+    let pv = vld1q_u8_at(w, 0);
+    let z = vdupq_n_u8(0);
+    // Saturating v - 0x20 is 0 for v <= 0x20; 0x7F - v is 0 for v >= 0x7F.
+    let lo = zero_n(vqsubq_u8(v, vdupq_n_u8(0x20)), z);
+    let hi = zero_n(vqsubq_u8(vdupq_n_u8(0x7F), v), z);
+    let a = or_n(or_n(lo, hi), or_n(eq_n(v, 0x22), eq_n(v, 0x23)));
+    let b = or_n(or_n(eq_n(v, 0x3C), eq_n(v, 0x3E)), or_n(eq_n(v, 0x3F), eq_n(v, 0x5C)));
+    let c = or_n(or_n(eq_n(v, 0x5E), eq_n(v, 0x60)), or_n(eq_n(v, 0x7B), eq_n(v, 0x7D)));
+    let d = and_n(or_n(eq_n(v, 0x2E), eq_n(v, 0x25)), eq_n(pv, 0x2F));
+    let all = or_n(or_n(a, b), or_n(c, d));
+    let m = verilith_simd::neon_mask::movemask16(all);
+    proof {
+        assert forall|j: u32| j < 16 implies #[trigger] verilith_simd::sse2::bit(m, j) == crate::parse::pstop(
+            w@[j + 1],
+            w@[j as int],
+        ) by {
+            let k = j as int;
+            assert(n8(v)[k] == w@[k + 1]);
+            assert(n8(pv)[k] == w@[k]);
+            assert(((m >> j) & 1u32 == 1u32) == (n8(all)[k] == 0xFF));
+        }
+    }
+    m
+}
+
+// ---------------------------------------------------------------------------
+// Plain host bytes (`swar::dplain`: a-z, 0-9, '-', '.'), 16 at a time.
+
+/// `0xFF` where `s8(v[k]) > s8(c)` (`gt`) or `s8(c) > s8(v[k])` (not `gt`).
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn cmp_x(v: __m128i, c: u8, gt: bool) -> (r: __m128i)
+    ensures
+        mx(r),
+        forall|k: int| 0 <= k < 16 ==> (#[trigger] b128(r)[k] == 0xFF) == (if gt { s8(b128(v)[k]) > s8(c) } else {
+            s8(c) > s8(b128(v)[k])
+        }),
+{
+    let cv = _mm_set1_epi8(verilith_simd::sse2::i8_of(c));
+    if gt {
+        _mm_cmpgt_epi8(v, cv)
+    } else {
+        _mm_cmpgt_epi8(cv, v)
+    }
+}
+
+/// Bit `j` is set when `s[k + j]` is not a plain host byte, with SSE2.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+pub fn nonplain_mask16_sse(s: &[u8], k: usize) -> (m: u32)
+    requires
+        k + 16 <= s.len(),
+    ensures
+        m < 0x10000,
+        forall|j: u32| j < 16 ==> #[trigger] verilith_simd::sse2::bit(m, j) == !crate::swar::dplain(s@[k + j]),
+{
+    let v = load128_u8(s, k);
+    let lc = and_x(cmp_x(v, 0x60, true), cmp_x(v, 0x7B, false));
+    let dg = and_x(cmp_x(v, 0x2F, true), cmp_x(v, 0x3A, false));
+    let dd = and_x(cmp_x(v, 0x2C, true), cmp_x(v, 0x2F, false));
+    let pl = or_x(lc, or_x(dg, dd));
+    let p = verilith_simd::sse2::movemask16(pl);
+    let m = p ^ 0xFFFF;
+    proof {
+        assert forall|j: u32| j < 16 implies #[trigger] verilith_simd::sse2::bit(m, j) == !crate::swar::dplain(
+            s@[k + j],
+        ) by {
+            assert(b128(v)[j as int] == s@[k + j]);
+            assert(verilith_simd::sse2::bit(p, j) == (b128(pl)[j as int] >= 0x80));
+            assert(p < 0x10000 && j < 16 ==> (((p ^ 0xFFFFu32) >> j) & 1u32 == 1u32) == !((p >> j) & 1u32
+                == 1u32)) by (bit_vector);
+        }
+        assert(p < 0x10000 ==> (p ^ 0xFFFFu32) < 0x10000) by (bit_vector);
+    }
+    m
+}
+
+#[inline(always)]
+fn le_n(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        verilith_simd::neon_mask::is_mask(n8(r)),
+        forall|k: int| 0 <= k < 16 ==> (#[trigger] n8(r)[k] == 0xFF) == (n8(a)[k] <= n8(b)[k]),
+{
+    let r = vcleq_u8(a, b);
+    proof {
+        verilith_simd::neon::axiom_n8_len(r);
+        verilith_simd::neon::axiom_n8_len(a);
+    }
+    r
+}
+
+/// Bit `j` is set when `s[k + j]` is not a plain host byte, with NEON.
+#[inline(always)]
+pub fn nonplain_mask16_neon(s: &[u8], k: usize) -> (m: u32)
+    requires
+        neon(),
+        k + 16 <= s.len(),
+    ensures
+        m < 0x10000,
+        forall|j: u32| j < 16 ==> #[trigger] verilith_simd::sse2::bit(m, j) == !crate::swar::dplain(s@[k + j]),
+{
+    let v = vld1q_u8_at(s, k);
+    let lc = and_n(le_n(vdupq_n_u8(0x61), v), le_n(v, vdupq_n_u8(0x7A)));
+    let dg = and_n(le_n(vdupq_n_u8(0x30), v), le_n(v, vdupq_n_u8(0x39)));
+    let dd = and_n(le_n(vdupq_n_u8(0x2D), v), le_n(v, vdupq_n_u8(0x2E)));
+    let pl = or_n(lc, or_n(dg, dd));
+    let p = verilith_simd::neon_mask::movemask16(pl);
+    let m = p ^ 0xFFFF;
+    proof {
+        assert forall|j: u32| j < 16 implies #[trigger] verilith_simd::sse2::bit(m, j) == !crate::swar::dplain(
+            s@[k + j],
+        ) by {
+            assert(n8(v)[j as int] == s@[k + j]);
+            assert(((p >> j) & 1u32 == 1u32) == (n8(pl)[j as int] == 0xFF));
+            assert(p < 0x10000 && j < 16 ==> (((p ^ 0xFFFFu32) >> j) & 1u32 == 1u32) == !((p >> j) & 1u32
+                == 1u32)) by (bit_vector);
+        }
+        assert(p < 0x10000 ==> (p ^ 0xFFFFu32) < 0x10000) by (bit_vector);
+    }
+    m
+}
+
+/// `encode::maybe_mask16` with SSE2, for the query and fragment sets.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+pub fn maybe_mask16_sse(w: &[u8], kind: u8) -> (m: u32)
+    requires
+        w.len() == 16,
+        kind == K_FRAG || kind == K_QUERY,
+    ensures
+        m < 0x10000,
+        forall|j: u32| j < 16 ==> (((m >> j) & 1) == 1) == maybe(kind, #[trigger] w@[j as int]),
+{
+    let (x, y): (u8, u8) = if kind == K_FRAG { (0x60, 0x60) } else { (0x23, 0x27) };
+    let v = load128_u8(w, 0);
+    // Signed 0x21 > v: v <= 0x20 or v >= 0x80.
+    let lo = cmp_x(v, 0x21, false);
+    let a = or_x(or_x(lo, eq_x(v, 0x7F)), or_x(eq_x(v, 0x22), eq_x(v, 0x3C)));
+    let b = or_x(or_x(eq_x(v, 0x3E), eq_x(v, x)), eq_x(v, y));
+    let all = or_x(a, b);
+    let m = verilith_simd::sse2::movemask16(all);
+    proof {
+        assert forall|j: u32| j < 16 implies (((m >> j) & 1) == 1) == maybe(kind, #[trigger] w@[j as int]) by {
+            let c = w@[j as int];
+            assert(b128(v)[j as int] == c);
+            assert(verilith_simd::sse2::bit(m, j) == (b128(all)[j as int] >= 0x80));
+            lemma_maybe_lanes(kind, c);
+        }
+    }
+    m
+}
+
 } // verus!
 
 /// The SIMD scanners against byte-by-byte answers, at every offset of
@@ -393,6 +759,63 @@ mod tests {
     fn maybe_ref(kind: u8, c: u8) -> bool {
         c <= 0x20 || c >= 0x7F || c == 0x22 || c == 0x3C || c == 0x3E
             || if kind == K_FRAG { c == 0x60 } else { c == 0x23 || c == 0x27 }
+    }
+
+    fn pstop_ref(c: u8, prev: u8) -> bool {
+        c <= 0x20 || c >= 0x7F || b"\"#<>?\\^`{}".contains(&c) || ((c == b'.' || c == b'%') && prev == b'/')
+    }
+
+    fn plain_ref(c: u8) -> bool {
+        c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-' || c == b'.'
+    }
+
+    /// The path and host masks, on every byte value at every lane, with
+    /// every architecture's kernel this target can run (NEON through its
+    /// emulation off AArch64).
+    #[test]
+    fn path_and_host_masks_match_bytewise() {
+        let mut x: u64 = 0x2545_F491_4F6C_DD1D;
+        for round in 0..40000 {
+            let w: Vec<u8> = (0..17)
+                .map(|i| {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    if round < 256 && i == 1 + round % 16 {
+                        round as u8
+                    } else if x % 4 == 0 {
+                        b'/'
+                    } else {
+                        (x >> 8) as u8
+                    }
+                })
+                .collect();
+            let want: u32 = (0..16).filter(|&j| pstop_ref(w[j + 1], w[j])).fold(0, |m, j| m | 1 << j);
+            let np: u32 = (0..16).filter(|&j| !plain_ref(w[j])).fold(0, |m, j| m | 1 << j);
+            #[cfg(target_arch = "x86_64")]
+            {
+                assert_eq!(path_mask16_sse(&w), want, "sse path mask {w:?}");
+                assert_eq!(nonplain_mask16_sse(&w, 0), np, "sse host mask {w:?}");
+            }
+            assert_eq!(path_mask16_neon(&w), want, "neon path mask {w:?}");
+            assert_eq!(nonplain_mask16_neon(&w, 0), np, "neon host mask {w:?}");
+        }
+        for c in 0..=255u8 {
+            for prev in [b'/', b'a', 0x80] {
+                let mut w = [b'a'; 17];
+                w[5] = prev;
+                w[6] = c;
+                let m = path_mask16_neon(&w);
+                assert_eq!(m >> 5 & 1 == 1, pstop_ref(c, prev), "byte {c:#x} after {prev:#x}");
+                #[cfg(target_arch = "x86_64")]
+                assert_eq!(path_mask16_sse(&w), m);
+            }
+            let mut w = [b'a'; 17];
+            w[3] = c;
+            assert_eq!(nonplain_mask16_neon(&w, 0) >> 3 & 1 == 1, !plain_ref(c), "host byte {c:#x}");
+            #[cfg(target_arch = "x86_64")]
+            assert_eq!(nonplain_mask16_sse(&w, 0) >> 3 & 1 == 1, !plain_ref(c), "host byte {c:#x}");
+        }
     }
 
     #[test]

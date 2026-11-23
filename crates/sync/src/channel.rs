@@ -32,10 +32,10 @@ use std::time::{Duration, Instant};
 /// # Panics
 ///
 /// If `cap` is zero (rendezvous channels are not supported yet) or at least
-/// 2^31.
+/// 2^60 (more than can be allocated).
 pub fn bounded<T>(cap: usize) -> (Sender<T>, Receiver<T>) {
     assert!(cap > 0, "vsync does not support zero-capacity channels yet");
-    assert!(cap < 0x8000_0000, "capacity must be below 2^31");
+    assert!(cap < 0x1000_0000_0000_0000, "capacity must be below 2^60");
     let (tx, rx) = Handle::pair(cap);
     (Sender { h: tx }, Receiver { h: rx })
 }

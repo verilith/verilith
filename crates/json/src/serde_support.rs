@@ -86,7 +86,7 @@ impl<'de> Deserializer<'de, '_> {
     }
 
     fn text(&self, t: Tok) -> Result<Text<'de>, Error> {
-        let (a, b) = (t.a as usize, t.b as usize);
+        let (a, b) = (t.start(), t.end());
         // The parser has checked that the text is UTF-8, and decoding keeps
         // it so; `from_utf8` checks again.
         let bad = || Error::Message("string is not UTF-8".into());
@@ -100,14 +100,14 @@ impl<'de> Deserializer<'de, '_> {
     }
 
     fn number(&self, t: Tok) -> &'de [u8] {
-        &self.src[t.a as usize..t.b as usize]
+        &self.src[t.start()..t.end()]
     }
 
     /// The index after the value at `idx`.
     fn skip(&self) -> usize {
         let t = self.tok();
         match t.kind {
-            Kind::ArrStart | Kind::ObjStart => t.a as usize + 1,
+            Kind::ArrStart | Kind::ObjStart => t.start() + 1,
             _ => self.idx + 1,
         }
     }
@@ -176,7 +176,7 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de, '_> {
                 }
             }
             Kind::ArrStart => {
-                let end = t.a as usize;
+                let end = t.start();
                 self.idx += 1;
                 let r = v.visit_seq(Seq { d: &mut *self, end })?;
                 if self.idx != end {
@@ -186,7 +186,7 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de, '_> {
                 Ok(r)
             }
             Kind::ObjStart => {
-                let end = t.a as usize;
+                let end = t.start();
                 self.idx += 1;
                 let r = v.visit_map(Map { d: &mut *self, end })?;
                 if self.idx != end {
@@ -231,7 +231,7 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de, '_> {
             }
             // `{"Variant": value}`.
             Kind::ObjStart => {
-                let end = t.a as usize;
+                let end = t.start();
                 self.idx += 1;
                 if self.idx == end {
                     return Err(de::Error::custom("expected an enum variant, found an empty object"));

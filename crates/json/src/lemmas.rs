@@ -610,6 +610,8 @@ pub open spec fn body_len(start: int, end: int) -> int {
 }
 
 /// A `char` decodes to no more bytes than it spans.
+#[verifier::rlimit(50)]
+#[verifier::spinoff_prover]
 pub proof fn lemma_string_char_len(s: Seq<u8>, i: int)
     ensures
         string_char(s, i) matches Some((b, n)) ==> b.len() <= n - i,

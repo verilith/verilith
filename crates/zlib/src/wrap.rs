@@ -819,3 +819,16 @@ impl Decompressor {
 }
 
 } // verus!
+
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Error::BadData => "invalid compressed data",
+            Error::Truncated => "the input ends before the stream does",
+            Error::InsufficientSpace => "the output does not fit in the space allowed",
+            Error::Usage => "the call is not allowed in the current state",
+        })
+    }
+}
+
+impl std::error::Error for Error {}

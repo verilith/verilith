@@ -491,6 +491,12 @@ pub fn maybe_mask16(w: &[u8], kind: u8) -> (m: u32)
         m < 0x10000,
         forall|j: u32| j < 16 ==> (((m >> j) & 1) == 1) == maybe(kind, #[trigger] w@[j as int]),
 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if kind == K_FRAG || kind == K_QUERY {
+            return crate::simd::maybe_mask16_sse(w, kind);
+        }
+    }
     if (kind == K_FRAG || kind == K_QUERY) && verilith_simd::neon::has_neon() {
         return crate::simd::maybe_mask16_neon(w, kind);
     }
@@ -723,6 +729,72 @@ fn find_any(s: &[u8], a: usize, b: usize, set: EncodeSet, stop: u16, any: u16, T
         }
     }
     j
+}
+
+/// The first index in `a..b` whose byte is in the special-query
+/// percent-encode set (which holds "#"), or `b`: clean 16-byte blocks are
+/// skipped with one SIMD test each.
+pub fn scan_special_query(s: &[u8], a: usize, b: usize, Tracked(cost): Tracked<&mut Meter>) -> (k: usize)
+    requires
+        a <= b <= s.len(),
+    ensures
+        a <= k <= b,
+        final(cost).n <= old(cost).n + 2 * (k - a) + 18,
+        forall|j: int| a <= j < k ==> !in_special_query_set(#[trigger] s@[j]),
+        k < b ==> in_special_query_set(s@[k as int]),
+{
+    let any = SPECIAL_QUERY | HASH;
+    proof {
+        lemma_cls();
+        assert forall|c: u8| #[trigger] cls_has(c, any) implies in_encode_set(EncodeSet::SpecialQuery, c)
+            || cls_has(c, HASH) by {
+            lemma_and_or(CLS@[c as int], SPECIAL_QUERY, HASH);
+            assert(cls_has(c, SPECIAL_QUERY) == cls_pred(SPECIAL_QUERY, c));
+        }
+    }
+    let k = find_any(s, a, b, EncodeSet::SpecialQuery, HASH, any, Tracked(cost));
+    proof {
+        assert forall|j: int| a <= j < k implies !in_special_query_set(#[trigger] s@[j]) by {
+            lemma_and_or(CLS@[s@[j] as int], SPECIAL_QUERY, HASH);
+            assert(cls_has(s@[j], SPECIAL_QUERY) == cls_pred(SPECIAL_QUERY, s@[j]));
+        }
+        if k < b {
+            let c = s@[k as int];
+            lemma_and_or(CLS@[c as int], SPECIAL_QUERY, HASH);
+            assert(cls_has(c, SPECIAL_QUERY) == cls_pred(SPECIAL_QUERY, c));
+            assert(cls_has(c, HASH) == cls_pred(HASH, c));
+        }
+    }
+    k
+}
+
+/// The first index in `a..b` whose byte is in the fragment percent-encode
+/// set, or `b`: clean 16-byte blocks are skipped with one SIMD test each.
+pub fn scan_fragment(s: &[u8], a: usize, b: usize, Tracked(cost): Tracked<&mut Meter>) -> (k: usize)
+    requires
+        a <= b <= s.len(),
+    ensures
+        a <= k <= b,
+        final(cost).n <= old(cost).n + (k - a) + 1,
+        forall|j: int| a <= j < k ==> !in_fragment_set(#[trigger] s@[j]),
+        k < b ==> in_fragment_set(s@[k as int]),
+{
+    let w = skip_clean(s, a, b, K_FRAG, Tracked(cost));
+    let k = find_cls(s, w, b, FRAGMENT, Tracked(cost));
+    proof {
+        lemma_cls();
+        assert forall|j: int| a <= j < k implies !in_fragment_set(#[trigger] s@[j]) by {
+            if j >= w {
+                assert(cls_has(s@[j], FRAGMENT) == cls_pred(FRAGMENT, s@[j]));
+            } else {
+                assert(!maybe(K_FRAG, s@[j]));
+            }
+        }
+        if k < b {
+            assert(cls_has(s@[k as int], FRAGMENT) == cls_pred(FRAGMENT, s@[k as int]));
+        }
+    }
+    k
 }
 
 pub proof fn lemma_or_and(a: u16, b: u16, m: u16)

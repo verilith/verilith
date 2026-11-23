@@ -22,7 +22,7 @@ the same orderings as the crates they replace: Release stores, Acquire
 loads, AcqRel read-modify-writes (the queue's head/tail CAS and the
 read-modify-writes that confirm it full or empty are SeqCst, which the
 channel's wakeup handshake needs). Verus itself only models sequentially
-consistent atomics; [TRUST.md](TRUST.md) states the model's axioms and
+consistent atomics; [TRUST.md](https://github.com/verilith/verilith/blob/main/crates/sync/TRUST.md) states the model's axioms and
 argues they are sound.
 
 With those orderings the queues run about as fast as the originals: the
@@ -32,6 +32,9 @@ faster than parking_lot in every contended configuration measured but one
 (two threads on a mutex), and tie uncontended.
 
 ## Usage
+
+64-bit targets only: the proofs fix `usize` at 64 bits, so a 32-bit build
+(wasm32 included) stops with a `compile_error!`.
 
 ```rust
 // Instead of parking_lot::{Mutex, RwLock}:
@@ -121,7 +124,7 @@ message, on ARM or under Miri), now fixed and covered by
 
 ## Trusted computing base
 
-[TRUST.md](TRUST.md) lists everything assumed rather than proven and
+[TRUST.md](https://github.com/verilith/verilith/blob/main/crates/sync/TRUST.md) lists everything assumed rather than proven and
 argues for each item. In short:
 
 - Verus, Z3 and the Rust compiler.
@@ -254,8 +257,7 @@ differences smaller than that as ties.
   holds off new readers.
 - **crossbeam-channel**: `bounded(n)` for `n > 0` only. No `unbounded()`,
   zero-capacity rendezvous channels or `select!` yet.
-- **crossbeam-queue**: `ArrayQueue` capacity is limited to below 2^31, and
-  it has no `force_push`.
+- **crossbeam-queue**: `ArrayQueue` has no `force_push`.
 - **rtrb**: `spsc::new(cap)` returns the producer and consumer (and the
   ghost view); `push` fails with `Err(value)` and `pop` returns an
   `Option`, where rtrb has its own error types. Batches go through
@@ -279,5 +281,5 @@ library, and uses it on production queue algorithms.
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/sync/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/sync/LICENSE-MIT), at your option.

@@ -145,3 +145,15 @@ impl<'a> Archive<'a> {
         crate::plan::plan(&self.data, &self.entries)
     }
 }
+
+impl core::fmt::Display for OpenError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            OpenError::NotAnArchive => "not a zip or tar archive",
+            OpenError::BadCompression => "the outer gzip or Zstandard layer is corrupt",
+            OpenError::TooLarge => "the archive is larger than the limit",
+        })
+    }
+}
+
+impl std::error::Error for OpenError {}

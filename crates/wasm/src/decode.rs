@@ -715,3 +715,11 @@ fn simple(op: u8) -> Option<Instr> {
         _ => return None,
     })
 }
+
+impl core::fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "malformed module: {}", self.0)
+    }
+}
+
+impl std::error::Error for DecodeError {}

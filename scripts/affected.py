@@ -3,7 +3,8 @@
 
 A crate is affected when a file under its directory changed, or a crate it
 depends on (directly or not) is affected. A change to the workspace itself
-(the root Cargo.toml or Cargo.lock, scripts/, .github/) affects every crate.
+(the root Cargo.toml or Cargo.lock, scripts/, .github/) affects every crate,
+except that the files only proofs use (PROOF_ONLY) leave the tests alone.
 With no BASE, or BASE=all, every crate is affected.
 
 Prints {"verify": [...], "test": [...], "arm": [...]}: directory names under
@@ -20,6 +21,35 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ARM = {"json", "sha2"}
 # Paths that affect every crate.
 GLOBAL = ("Cargo.toml", "Cargo.lock", "scripts/", ".github/")
+# Of those, the ones only Verus and Buck2 read: no ci.sh runs or sources
+# them, so they change no test. (A file here that a test starts to use must
+# leave this list.)
+PROOF_ONLY = (
+    "scripts/BUCK", "scripts/buck2-version", "scripts/buckify.py", "scripts/crosscheck.sh",
+    "scripts/install-buck2.sh", "scripts/install-verus.sh", "scripts/proof-plan.py",
+    "scripts/prove.sh", "scripts/trust-ledger.py", "scripts/verify.sh", "scripts/verus-version",
+    ".github/actions/buck2/", ".github/actions/verus/",
+)
+
+
+def touched(files, crates, deps, global_paths):
+    """The crates `files` change, and every crate that depends on one."""
+    if any(f.startswith(global_paths) for f in files):
+        return set(crates)
+    hit = set()
+    for f in files:
+        parts = f.split("/")
+        if parts[0] == "crates" and len(parts) > 2 and parts[1] in crates:
+            hit.add(parts[1])
+    # A crate that depends on an affected crate is affected.
+    grew = True
+    while grew:
+        grew = False
+        for c, ds in deps.items():
+            if c not in hit and ds & hit:
+                hit.add(c)
+                grew = True
+    return hit
 
 
 def main():
@@ -38,34 +68,21 @@ def main():
             for c, p in crates.items()}
 
     if base == "all":
-        hit = set(crates)
+        hit = tested = set(crates)
     else:
         files = subprocess.check_output(
             ["git", "diff", "--name-only", base, "HEAD"], cwd=ROOT, text=True).split("\n")
-        hit = set()
-        for f in filter(None, files):
-            parts = f.split("/")
-            if f.startswith(GLOBAL):
-                hit = set(crates)
-                break
-            if parts[0] == "crates" and len(parts) > 2 and parts[1] in crates:
-                hit.add(parts[1])
-        # A crate that depends on an affected crate is affected.
-        grew = True
-        while grew:
-            grew = False
-            for c, ds in deps.items():
-                if c not in hit and ds & hit:
-                    hit.add(c)
-                    grew = True
+        files = list(filter(None, files))
+        hit = touched(files, crates, deps, GLOBAL)
+        tested = touched([f for f in files if not f.startswith(PROOF_ONLY)], crates, deps, GLOBAL)
 
     verified = {c for c, p in crates.items()
                 if ((p.get("metadata") or {}).get("verus") or {}).get("verify")}
     has_ci = {c for c in crates if os.path.exists(os.path.join(ROOT, "crates", c, "ci.sh"))}
     print(json.dumps({
         "verify": sorted(hit & verified),
-        "test": sorted(hit & has_ci),
-        "arm": sorted(hit & ARM),
+        "test": sorted(tested & has_ci),
+        "arm": sorted(tested & ARM),
     }))
 
 

@@ -3,17 +3,24 @@ name: CI
 # Proofs. Buck2 knows what each crate's proofs are built from (BUILDING.md).
 # Every proof whose inputs have not passed before is checked, each crate (or
 # part of a large crate) in its own job; one that has passed with exactly
-# these inputs is not checked again (scripts/proof-plan.py).
+# these inputs is not checked again (scripts/proof-plan.py). A pull request
+# checks the proofs it changes: one whose inputs are the same as on main is
+# main's to check, and main's runs check every proof main has not passed.
+# On main, the Arm jobs (`cargo verus`) skip the same way: a crate whose
+# inputs, as Cargo sees them, passed on Arm before is not checked again.
 #
 # Tests. The crates a change touches are tested: a crate whose files changed,
 # and every crate that depends on it. A change to the workspace itself (root
-# Cargo.toml, Cargo.lock, scripts/, .github/) tests everything. What runs
-# for a crate is its ci.sh (tests, C API checks, comparisons with the
-# original library).
+# Cargo.toml, Cargo.lock, scripts/, .github/) tests everything, apart from
+# the files only proofs use (scripts/affected.py). What runs for a crate is
+# its ci.sh (tests, C API checks, comparisons with the original library). On
+# main the change is everything since the last run that passed, so a run
+# that was cancelled or failed leaves nothing untested.
 #
-# Once a week, and on request, every proof is checked again from nothing,
-# and each crate's count of verified proofs under Buck2 is compared with the
-# count `cargo verus` gives, so that a proof Buck2 stopped checking shows up.
+# Once a week, and on request, every proof is checked again from nothing, on
+# x86 and on Arm, and each crate's count of verified proofs under Buck2 is
+# compared with the count `cargo verus` gives, so that a proof Buck2 stopped
+# checking shows up.
 on:
   pull_request:
   push:
@@ -59,11 +66,13 @@ jobs:
     outputs:
       proofs: ${{ steps.proofs.outputs.run }}
       fresh: ${{ steps.proofs.outputs.fresh }}
+      arm-proofs: ${{ steps.arm-proofs.outputs.run }}
       verify: ${{ steps.plan.outputs.verify }}
       all-verified: ${{ steps.plan.outputs.all_verified }}
       test: ${{ steps.plan.outputs.test }}
-      arm: ${{ steps.plan.outputs.arm }}
+      arm-tests: ${{ steps.plan.outputs.arm }}
       fuzz: ${{ steps.plan.outputs.fuzz }}
+      narrow: ${{ steps.plan.outputs.narrow }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -72,14 +81,19 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
-          PUSH_BASE: ${{ github.event.before }}
+          GITHUB_TOKEN: ${{ github.token }}
           CRATES: ${{ inputs.crates }}
         run: |
           case "$EVENT" in
             pull_request) base=$(git merge-base "$PR_BASE" HEAD) ;;
-            push) base=$PUSH_BASE ;;
+            # The last commit on main whose push run passed, not the push's
+            # own "before": runs on main queue, and GitHub cancels a queued
+            # one when the next arrives, so "before" may never have been
+            # tested.
+            push) base=$(python3 scripts/last-passed.py ci.yml "$GITHUB_REF_NAME" || echo all) ;;
             *) base=all ;;
           esac
+          echo "Changes since: $base"
           # A first push, or a base that is not in the clone: run everything.
           if [ "$base" != all ] && ! git cat-file -e "$base^{commit}" 2>/dev/null; then base=all; fi
           plan=$(python3 scripts/affected.py "$base")
@@ -98,10 +112,17 @@ jobs:
           import json, sys
           print(json.dumps([c for c in json.load(sys.stdin)["test"] if "\nfuzz() {" in open(f"crates/{c}/ci.sh").read()]))')
           echo "fuzz=$fuzz" >> "$GITHUB_OUTPUT"
+          # Crates with a second, 32-bit layout to verify (scripts/verify-narrow.sh).
+          narrow=$(echo "$plan" | python3 -c '
+          import json, os, sys
+          print(json.dumps([c for c in json.load(sys.stdin)["verify"] if os.path.exists(f"crates/{c}/scripts/verify-narrow.sh")]))')
+          echo "narrow=$narrow" >> "$GITHUB_OUTPUT"
           echo "all_verified=$(python3 scripts/affected.py all | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['verify']))")" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/buck2
       - name: The Buck2 files match the Cargo ones
         run: python3 scripts/buckify.py --check
+      - name: The trust ledger is up to date
+        run: python3 scripts/trust-ledger.py --check
       - id: proofs
         name: Which proofs
         env:
@@ -115,9 +136,27 @@ jobs:
           if [ "$EVENT" = schedule ] || [ "$FRESH" = true ]; then fresh=true; fi
           args=(--platform "Linux-X64" --crates "${CRATES:-all}")
           if [ "$fresh" = true ]; then args+=(--all); fi
+          # A pull request's checkout merges it into the tip of its base
+          # branch: that tip is the first parent.
+          if [ "$EVENT" = pull_request ]; then args+=(--base "$(git rev-parse HEAD^1)"); fi
           plan=$(python3 scripts/proof-plan.py "${args[@]}" --summary "$GITHUB_STEP_SUMMARY")
           echo "run=$(echo "$plan" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['run']))")" >> "$GITHUB_OUTPUT"
           echo "fresh=$fresh" >> "$GITHUB_OUTPUT"
+      - id: arm-proofs
+        name: Which proofs on Arm
+        if: >-
+          github.event_name == 'push' || github.event_name == 'schedule' ||
+          (github.event_name == 'workflow_dispatch' && inputs.arm)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          FRESH: ${{ steps.proofs.outputs.fresh }}
+          CRATES: ${{ inputs.crates }}
+        run: |
+          args=(--platform "Linux-ARM64" --cargo --crates "${CRATES:-all}")
+          if [ "$FRESH" = true ]; then args+=(--all); fi
+          plan=$(python3 scripts/proof-plan.py "${args[@]}" --summary "$GITHUB_STEP_SUMMARY")
+          echo "run=$(echo "$plan" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['run']))")" >> "$GITHUB_OUTPUT"
 
   # Builds Verus once and caches it, so the verify jobs below start from the
   # cache instead of each building it.
@@ -178,12 +217,32 @@ jobs:
         if: failure()
         run: cat target/verify/${{ matrix.crate }}.log
 
+  verify-narrow:
+    # The 32-bit build of a crate that supports wasm32, beside the 64-bit one
+    # the verify jobs check: xml's 32-bit tape token through its
+    # narrow-tokens feature, and text, url and regex with Verus compiling for
+    # wasm32-unknown-unknown (each crate's scripts/verify-narrow.sh).
+    name: Verify ${{ matrix.crate }} (32-bit layout)
+    needs: [plan, verus]
+    if: needs.plan.outputs.narrow != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: ${{ fromJSON(needs.plan.outputs.narrow) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/verus
+      - name: Verify
+        run: |
+          VERUS_CMD=focus crates/${{ matrix.crate }}/scripts/verify-narrow.sh 2>&1 | tee narrow.log
+          grep -qE "verification results:: [0-9]+ verified, 0 errors" narrow.log
+
   verus-arm:
     name: Verus (Arm)
     needs: plan
-    if: >-
-      needs.plan.outputs.verify != '[]' &&
-      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.arm))
+    if: needs.plan.outputs.arm-proofs != '[]' && needs.plan.outputs.arm-proofs != ''
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     steps:
@@ -195,26 +254,32 @@ jobs:
     # NEON kernels) exist only in an Arm build, so they are verified here,
     # on a Linux Arm runner. Not on pull requests: it would double the
     # verification time of every one. A proof can also behave differently
-    # on macOS itself; that is checked by hand on a Mac, not here.
-    name: Verify ${{ matrix.crate }} (Arm)
+    # on macOS itself; that is checked by hand on a Mac, not here. Each
+    # crate whose inputs have not passed on Arm before is checked, and a
+    # pass is recorded the way the x86 jobs record theirs.
+    name: Verify ${{ matrix.proof.crate }} (Arm)
     needs: [plan, verus-arm]
-    if: >-
-      needs.plan.outputs.verify != '[]' &&
-      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.arm))
+    if: needs.plan.outputs.arm-proofs != '[]' && needs.plan.outputs.arm-proofs != ''
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        crate: ${{ fromJSON(needs.plan.outputs.verify) }}
+        proof: ${{ fromJSON(needs.plan.outputs.arm-proofs) }}
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/verus
       - name: Verify
-        run: VERUS_CMD=focus scripts/verify.sh ${{ matrix.crate }}
+        run: VERUS_CMD=focus scripts/verify.sh ${{ matrix.proof.crate }}
       - name: Log
         if: failure()
-        run: cat target/verify/${{ matrix.crate }}.log
+        run: cat target/verify/${{ matrix.proof.crate }}.log
+      - name: Record that it passed
+        run: mkdir -p "$RUNNER_TEMP/proved" && touch "$RUNNER_TEMP/proved/${{ matrix.proof.crate }}"
+      - uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/proved
+          key: ${{ matrix.proof.key }}
 
   test:
     name: Test ${{ matrix.crate }}
@@ -246,17 +311,33 @@ jobs:
     # The portable (non-x86) paths build and pass their tests on Arm.
     name: Test ${{ matrix.crate }} (Arm)
     needs: plan
-    if: needs.plan.outputs.arm != '[]'
+    if: needs.plan.outputs.arm-tests != '[]'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        crate: ${{ fromJSON(needs.plan.outputs.arm) }}
+        crate: ${{ fromJSON(needs.plan.outputs.arm-tests) }}
     steps:
       - uses: actions/checkout@v7
       - name: Tests
         run: crates/${{ matrix.crate }}/ci.sh
+
+  wasm32:
+    # WebAssembly: what builds for wasm32-unknown-unknown, what refuses to
+    # (the crates proven for 64-bit targets only), and the tests of text,
+    # url, regex and json on wasm32-wasip1 under wasmtime.
+    name: wasm32
+    needs: plan
+    if: needs.plan.outputs.test != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      # The latest wasmtime release (WASI preview 1 is stable in all of them).
+      - uses: bytecodealliance/actions/wasmtime/setup@v1
+      - name: Build and test
+        run: scripts/wasm32.sh
 
   fuzz:
     name: Fuzz ${{ matrix.crate }}
@@ -277,7 +358,7 @@ jobs:
   done:
     name: CI
     if: always()
-    needs: [plan, verus, verify, crosscheck, verus-arm, verify-arm, test, test-arm]
+    needs: [plan, verus, verify, verify-narrow, crosscheck, verus-arm, verify-arm, test, test-arm, wasm32]
     runs-on: ubuntu-latest
     steps:
       - name: Every job passed or was skipped

@@ -12,7 +12,7 @@ fn main() {
         std::hint::black_box(verilith_png::decode::container_exec(&d).unwrap());
         tick(0, s);
         let s = Instant::now();
-        let (png, mut buf) = verilith_png::decode::parse_exec(&d, 1 << 34).unwrap();
+        let (png, mut buf) = verilith_png::decode::parse_exec(&d, 1 << 34, &mut verilith_png::decode::Tail::new()).unwrap();
         tick(1, s);
         let s = Instant::now();
         let off = verilith_png::passes::reconstruct(&png.hdr, &mut buf).unwrap();

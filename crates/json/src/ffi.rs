@@ -207,7 +207,7 @@ impl Builder {
 
     /// Copies a string token's decoded bytes into a new NUL-terminated buffer.
     unsafe fn string_copy(&mut self, t: &Tok) -> *mut c_char {
-        let (a, b) = (t.a as usize, t.b as usize);
+        let (a, b) = (t.start(), t.end());
         let input = core::slice::from_raw_parts(self.input, self.input_len);
         if b < a || b > input.len() {
             return ptr::null_mut();
@@ -272,7 +272,7 @@ impl Builder {
             Kind::True => (*item).type_ = cJSON_True,
             Kind::False => (*item).type_ = cJSON_False,
             Kind::Num => {
-                let d = match self.input().get(t.a as usize..t.b as usize) {
+                let d = match self.input().get(t.start()..t.end()) {
                     Some(lex) => parse_f64(lex),
                     None => {
                         self.failed = true;
@@ -387,10 +387,10 @@ impl Sink for TreeSink {
     }
 
     #[inline(always)]
-    fn scan_str(&mut self, s: &[u8], idx: &[u32], k: usize, Ghost(st): Ghost<int>) -> (r: Option<
+    fn scan_str(&mut self, w: &mut crate::index::Win, k: usize, j: usize, Ghost(st): Ghost<int>) -> (r: Option<
         (usize, usize, bool),
     >) {
-        crate::stage2::ex2_string(s, idx, k, Ghost(st))
+        crate::stage2::ex2_string(w, k, j, Ghost(st))
     }
 
     #[verifier::external_body]
