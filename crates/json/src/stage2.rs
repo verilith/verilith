@@ -71,6 +71,119 @@ pub fn at2<S: Sink>(w: &mut Win, k: usize, tape: &mut S, Ghost(k0): Ghost<int>) 
     }
 }
 
+/// Entry `k` of the index, known to be in the window. Stage 2's fast
+/// paths check once that the next few entries are in the window and then
+/// read them with this, so that the window's fields are loaded once and
+/// stay in registers across the reads.
+#[inline(always)]
+pub fn ent(w: &Win, k: usize) -> (r: usize)
+    requires
+        w.inv(),
+        w.kbase <= k < w.kend,
+    ensures
+        k < w.all().len(),
+        r == w.all()[k as int],
+        r < w.wend,
+{
+    proof {
+        lemma_win_entry(w, k as int);
+    }
+    w.w0 + get32(w.buf.as_slice(), k - w.kbase) as usize
+}
+
+/// A string at `j` (entry `k`) whose next entry, in the window, is its
+/// closing quote: no escape and no control character, which would be
+/// entries of their own. Returns the position after it, or 0 when the
+/// string is not that simple.
+#[inline(always)]
+pub fn str_quick(w: &Win, k: usize, j: usize, s: &[u8], Ghost(st): Ghost<int>) -> (r: usize)
+    requires
+        str_pre(w, st, k as int, j as int),
+        s@ == w.s@,
+        k + 1 < w.kend,
+    ensures
+        r != 0 ==> string(w.s@, j as int) == Some((r as int, false)) && cnt(w.s@, st, r as int) == k + 2
+            && out(w.s@, st, r as int) && bnd(w.s@, st, r as int) && r <= w.s@.len(),
+{
+    let ghost g = s@;
+    proof {
+        lemma_open_quote(g, st, k as int, j as int);
+    }
+    let q = ent(w, k + 1);
+    proof {
+        lemma_string_next(w, st, j + 1, j + 1, k + 1, false, Some(q));
+        lemma_plain_inside(g, st, j + 1, q as int);
+        lemma_plain_run(g, j + 1, q as int, false);
+        assert(byte(g, q as int) == g[q as int]);
+    }
+    if get8(s, q) == 0x22 {
+        proof {
+            assert(uq(g, st, q as int));
+            assert(!instr(g, st, q as int));
+            assert(!scalar(g, st, q as int));
+        }
+        q + 1
+    } else {
+        0
+    }
+}
+
+/// The string at `j` (entry `k`) onto the tape as a token of `kind`.
+#[inline(always)]
+fn ex2_str_tok<S: Sink>(cx: &mut Ctx, k: usize, j: usize, tape: &mut S, Ghost(st): Ghost<int>, s: &[u8], kind: Kind) -> (r: Option<(usize, usize)>)
+    requires
+        str_pre(old(cx), st, k as int, j as int),
+        s@ == old(cx).s@,
+        old(cx).s@.len() <= MAX_INPUT,
+        k < old(cx).kend,
+        old(tape).room() >= old(cx).kend - k,
+        old(tape).inv(old(cx).s@),
+        kind == Kind::Str || kind == Kind::Key,
+    ensures
+        moved(old(cx), final(cx), final(tape), r),
+        match string(old(cx).s@, j as int) {
+            Some((n, esc)) => r == Some((cnt(old(cx).s@, st, n) as usize, n as usize)) && out(old(cx).s@, st, n)
+                && bnd(old(cx).s@, st, n) && n <= old(cx).s@.len()
+                && final(tape).hist() == old(tape).hist().push(if kind == Kind::Str {
+                    STok::Str { start: j + 1, end: n - 1, escaped: esc }
+                } else {
+                    STok::Key { start: j + 1, end: n - 1, escaped: esc }
+                }),
+            None => r is None,
+        },
+{
+    let ghost g = s@;
+    // Most strings have no escape: their closing quote is the next entry.
+    if k + 1 < cx.kend {
+        let e = str_quick(cx, k, j, s, Ghost(st));
+        if e != 0 {
+            proof {
+                crate::lemmas::lemma_string_body_advances(g, j + 1, false);
+            }
+            tape.push_str_fast(Tok::new(kind, false, (j + 1), (e - 1), NO), s);
+            proof {
+                lemma_win_entry(cx, k + 1);
+            }
+            return Some((k + 2, e));
+        }
+    }
+    let kend0 = cx.kend;
+    match tape.scan_str(cx, k, j, Ghost(st)) {
+        Some((k2, n, esc)) => {
+            proof {
+                crate::lemmas::lemma_string_body_advances(g, j + 1, false);
+            }
+            tape.push_str_fast(Tok::new(kind, esc, (j + 1), (n - 1), NO), s);
+            keep_room(cx, tape, kend0, Ghost(k2 as int));
+            proof {
+                lemma_prefix(g, st, cx.wend as int, g.len() as int);
+            }
+            Some((k2, n))
+        },
+        None => None,
+    }
+}
+
 /// `at2` past the window: moves it on and tops up the tape.
 #[inline(never)]
 fn at2_slow<S: Sink>(w: &mut Win, k: usize, tape: &mut S, Ghost(k0): Ghost<int>) -> (r: Option<usize>)
@@ -1322,8 +1435,10 @@ pub fn ex2_value<S: Sink, const N: u8>(
     Ghost(st): Ghost<int>,
     Ghost(p): Ghost<int>,
     jh: usize,
+    s: &[u8],
 ) -> (r: Option<(usize, usize)>)
     requires
+        s@ == old(cx).s@,
         win_at(old(cx), old(cx).s@, st, k as int),
         st <= p <= old(cx).s@.len(),
         out(old(cx).s@, st, p),
@@ -1334,6 +1449,7 @@ pub fn ex2_value<S: Sink, const N: u8>(
         old(tape).hist().len() <= p,
         N == 0 ==> k < old(cx).kend && k < ix(old(cx).s@, st).len() && (old(cx).s@[ix(old(cx).s@, st)[k as int]] == 0x2D
             || is_digit(old(cx).s@[ix(old(cx).s@, st)[k as int]])) && jh == ix(old(cx).s@, st)[k as int],
+        N != 1 ==> k < old(cx).kend && k < ix(old(cx).s@, st).len() && jh == ix(old(cx).s@, st)[k as int],
     ensures
         final(cx).inv(),
         final(cx).same(old(cx)),
@@ -1354,7 +1470,6 @@ pub fn ex2_value<S: Sink, const N: u8>(
         },
     decreases depth, old(cx).s@.len() - p, 4nat,
 {
-    let s = cx.s;
     let ghost g = s@;
     proof {
         lemma_skip(g, st, p);
@@ -1364,7 +1479,7 @@ pub fn ex2_value<S: Sink, const N: u8>(
         }
     }
     // In an array of numbers the caller has read the entry already.
-    let j = if N == 0 {
+    let j = if N != 1 {
         jh
     } else {
         match at2(cx, k, tape, Ghost(k as int)) {
@@ -1374,62 +1489,68 @@ pub fn ex2_value<S: Sink, const N: u8>(
     };
     proof {
         let jj = skip_ws(g, p);
+        lemma_positions_len(g, st, st, g.len() as int);
+        if N != 1 {
+            assert(cnt(g, st, jj) == k);
+            if jj < g.len() {
+                assert(ix(g, st)[k as int] == jj);
+            } else {
+                assert(cnt(g, st, g.len() as int) == ix(g, st).len());
+            }
+        }
         assert(j == jj);
         crate::lemmas::lemma_value_advances(g, jj, depth as nat, old(tape).hist());
-        lemma_positions_len(g, st, st, g.len() as int);
         crate::lemmas::lemma_string_body_advances(g, j + 1, false);
     }
     let c = get8(s, j);
     if N != 0 && c == 0x22 {
-        let kend0 = cx.kend;
-        match tape.scan_str(cx, k, j, Ghost(st)) {
-            Some((k2, n, esc)) => {
-                tape.push_str_fast(Tok::new(Kind::Str, esc, (j + 1), (n - 1), NO), s);
-                keep_room(cx, tape, kend0, Ghost(k2 as int));
-                proof {
-                    lemma_prefix(g, st, cx.wend as int, g.len() as int);
-                }
-                Some((k2, n))
-            },
-            None => None,
-        }
+        ex2_str_tok(cx, k, j, tape, Ghost(st), s, Kind::Str)
     } else if N != 0 && (c == 0x5B || c == 0x7B) {
         proof {
             assert(byte(g, j as int) == g[j as int]);
             assert(!instr(g, st, j as int));
             assert(!scalar(g, st, j as int));
         }
-        // Empty arrays are common (most of citm_catalog's); finish them
-        // without the call.
-        if c == 0x5B && depth > 0 {
-            if let Some(e) = ex2_empty_array(cx, k + 1, depth, tape, Ghost(st), j) {
-                proof {
-                    lemma_prefix(g, st, e as int, g.len() as int);
-                }
-                return Some((k + 2, e));
-            }
-        }
         // Arrays are parsed in line, so that an array of scalars (such as
         // a coordinate pair) costs no call.
         if c == 0x5B && depth > 0 {
-            let t_idx = tape.count();
-            tape.push_fast(tok(Kind::ArrStart));
             proof {
                 lemma_close(g, st, j + 1);
+                lemma_prefix(g, st, j + 1, g.len() as int);
             }
-            return match ex2_array_inl(cx, k + 1, depth, tape, Ghost(st), Ghost(j + 1)) {
-                Some((k2, e)) => {
+            // One read of the entry after the bracket serves both the
+            // empty array, which is common (most of citm_catalog's), and
+            // the first element.
+            if let Some(q) = at2(cx, k + 1, tape, Ghost(k as int)) {
+                if get8(s, q) == 0x5D {
                     proof {
-                        lemma_container_prefix(g, j as int, depth as nat, old(tape).hist(), c);
-                        if let Some((_, e)) = value(g, j as int, depth as nat, old(tape).hist()) {
-                            lemma_cnt_bound(g, st, e);
-                        }
+                        assert(byte(g, q as int) == g[q as int]);
                     }
-                    tape.close(t_idx);
-                    Some((k2, e))
-                },
-                None => None,
-            };
+                    let t = tape.count();
+                    tape.push_fast(Tok::new(Kind::ArrStart, false, t + 1, 0, NO));
+                    tape.push_fast(tok(Kind::ArrEnd));
+                    assert(tape.hist() =~= close_at(old(tape).hist().push(STok::ArrStart { end: 0 }).push(STok::ArrEnd), t as int));
+                    proof {
+                        lemma_prefix(g, st, q + 1, g.len() as int);
+                    }
+                    return Some((k + 2, q + 1));
+                }
+                let t_idx = tape.count();
+                tape.push_fast(tok(Kind::ArrStart));
+                return match ex2_array_inl(cx, k + 1, depth, tape, Ghost(st), Ghost(j + 1), q, s) {
+                    Some((k2, e)) => {
+                        proof {
+                            lemma_container_prefix(g, j as int, depth as nat, old(tape).hist(), c);
+                            if let Some((_, e)) = value(g, j as int, depth as nat, old(tape).hist()) {
+                                lemma_cnt_bound(g, st, e);
+                            }
+                        }
+                        tape.close(t_idx);
+                        Some((k2, e))
+                    },
+                    None => None,
+                };
+            }
         }
         unpack2(ex2_container(cx, k + 1, depth, tape, Ghost(st), j))
     } else {
@@ -1510,63 +1631,6 @@ pub fn ex2_value<S: Sink, const N: u8>(
 /// `[` at `j` followed by `]`: pushes both tokens and returns the position
 /// after the `]`. Otherwise leaves the tape's tokens alone.
 // `depth` and `j` appear only in the specification.
-#[allow(unused_variables)]
-#[inline(always)]
-fn ex2_empty_array<S: Sink>(
-    cx: &mut Ctx,
-    k: usize,
-    depth: usize,
-    tape: &mut S,
-    Ghost(st): Ghost<int>,
-    j: usize,
-) -> (r: Option<usize>)
-    requires
-        win_at(old(cx), old(cx).s@, st, k as int),
-        st <= j < old(cx).s@.len(),
-        cnt(old(cx).s@, st, j as int + 1) == k,
-        k >= 1,
-        k - 1 < old(cx).kend,
-        old(cx).s@[j as int] == 0x5B,
-        out(old(cx).s@, st, j as int + 1),
-        bnd(old(cx).s@, st, j as int + 1),
-        depth > 0,
-        old(tape).room() >= old(cx).kend - (k - 1),
-        old(tape).inv(old(cx).s@),
-        old(tape).hist().len() <= j,
-    ensures
-        final(cx).inv(),
-        final(cx).same(old(cx)),
-        final(cx).kbase <= k,
-        r is Some ==> final(tape).inv(old(cx).s@),
-        r is Some ==> final(tape).room() >= final(cx).kend - (k + 1),
-        r matches Some(e) ==> match value(old(cx).s@, j as int, depth as nat, old(tape).hist()) {
-            Some((t, e2)) => final(tape).hist() == t && e2 == e && cnt(old(cx).s@, st, e2) == k + 1
-                && out(old(cx).s@, st, e2) && bnd(old(cx).s@, st, e2) && e2 <= old(cx).s@.len(),
-            None => false,
-        },
-        r is None ==> final(cx).kend >= k && final(tape).hist() == old(tape).hist() && final(tape).room() >= final(cx).kend - (k - 1)
-            && forall|g: Seq<u8>| old(tape).inv(g) ==> #[trigger] final(tape).inv(g),
-{
-    let s = cx.s;
-    let ghost g = s@;
-    proof {
-        lemma_close(g, st, j + 1);
-        lemma_prefix(g, st, j + 1, g.len() as int);
-    }
-    if let Some(q) = at2(cx, k, tape, Ghost(k - 1)) {
-        if get8(s, q) == 0x5D {
-            proof {
-                assert(byte(g, q as int) == g[q as int]);
-            }
-            let t = tape.count();
-            tape.push_fast(Tok::new(Kind::ArrStart, false, t + 1, 0, NO));
-            tape.push_fast(tok(Kind::ArrEnd));
-            assert(tape.hist() =~= close_at(old(tape).hist().push(STok::ArrStart { end: 0 }).push(STok::ArrEnd), t as int));
-            return Some(q + 1);
-        }
-    }
-    None
-}
 
 /// What the container functions keep, from `o` to `w`, for a result
 /// `r` of the index entry and position after what they read.
@@ -1630,7 +1694,8 @@ fn ex2_container<S: Sink>(
         },
     decreases depth, old(cx).s@.len() - j, 3nat,
 {
-    match ex2_container_in(cx, k, depth, tape, Ghost(st), j) {
+    let s = cx.s;
+    match ex2_container_in(cx, k, depth, tape, Ghost(st), j, s) {
         Some(x) => {
             proof {
                 lemma_positions_len(cx.s@, st, st, cx.s@.len() as int);
@@ -1658,7 +1723,8 @@ fn ex2_elements<S: Sink>(
         cont_post(old(cx).s@, st, elements(old(cx).s@, i0, depth as nat, old(tape).hist()), final(tape).hist(), unpack(r)),
     decreases depth, old(cx).s@.len() - i0, 1nat,
 {
-    match ex2_elements_in(cx, k0, depth, tape, Ghost(st), Ghost(i0)) {
+    let s = cx.s;
+    match ex2_elements_in(cx, k0, depth, tape, Ghost(st), Ghost(i0), s) {
         Some(x) => {
             proof {
                 lemma_positions_len(cx.s@, st, st, cx.s@.len() as int);
@@ -1678,8 +1744,10 @@ fn ex2_container_in<S: Sink>(
     tape: &mut S,
     Ghost(st): Ghost<int>,
     j: usize,
+    s: &[u8],
 ) -> (r: Option<(usize, usize)>)
     requires
+        s@ == old(cx).s@,
         win_at(old(cx), old(cx).s@, st, k as int),
         st <= j < old(cx).s@.len(),
         cnt(old(cx).s@, st, j as int + 1) == k,
@@ -1700,7 +1768,6 @@ fn ex2_container_in<S: Sink>(
         },
     decreases depth, old(cx).s@.len() - j, 2nat,
 {
-    let s = cx.s;
     let ghost g = s@;
     if depth == 0 {
         return None;
@@ -1709,10 +1776,10 @@ fn ex2_container_in<S: Sink>(
     let t_idx = tape.count();
     let r = if c == 0x5B {
         tape.push_fast(tok(Kind::ArrStart));
-        ex2_array(cx, k, depth, tape, Ghost(st), Ghost(j + 1))
+        ex2_array(cx, k, depth, tape, Ghost(st), Ghost(j + 1), s)
     } else {
         tape.push_fast(tok(Kind::ObjStart));
-        ex2_object(cx, k, depth, tape, Ghost(st), Ghost(j + 1))
+        ex2_object(cx, k, depth, tape, Ghost(st), Ghost(j + 1), s)
     };
     match r {
         Some((k2, e)) => {
@@ -1758,15 +1825,16 @@ fn ex2_array<S: Sink>(
     tape: &mut S,
     Ghost(st): Ghost<int>,
     Ghost(i): Ghost<int>,
+    s: &[u8],
 ) -> (r: Option<(usize, usize)>)
     requires
+        s@ == old(cx).s@,
         cont_pre(old(cx), old(tape), st, k as int, i),
     ensures
         moved(old(cx), final(cx), final(tape), r),
         cont_post(old(cx).s@, st, array(old(cx).s@, i, depth as nat, old(tape).hist()), final(tape).hist(), r),
     decreases depth, old(cx).s@.len() - i, 2nat,
 {
-    let s = cx.s;
     let ghost g = s@;
     proof {
         lemma_close(g, st, i);
@@ -1791,30 +1859,26 @@ fn ex2_array_inl<S: Sink>(
     tape: &mut S,
     Ghost(st): Ghost<int>,
     Ghost(i0): Ghost<int>,
+    j0: usize,
+    s: &[u8],
 ) -> (r: Option<(usize, usize)>)
     requires
         cont_pre(old(cx), old(tape), st, k as int, i0),
+        s@ == old(cx).s@,
+        k < old(cx).kend,
+        k < ix(old(cx).s@, st).len(),
+        j0 == ix(old(cx).s@, st)[k as int],
+        old(cx).s@[j0 as int] != 0x5D,
     ensures
         moved(old(cx), final(cx), final(tape), r),
         cont_post(old(cx).s@, st, array(old(cx).s@, i0, depth as nat, old(tape).hist()), final(tape).hist(), r),
     decreases depth, old(cx).s@.len() - i0, 2nat,
 {
-    let s = cx.s;
     let ghost g = s@;
     proof {
         lemma_close(g, st, i0);
     }
-    let (c0, j0) = match at2(cx, k, tape, Ghost(k as int)) {
-        Some(q) => {
-            let c = get8(s, q);
-            if c == 0x5D {
-                tape.push_fast(tok(Kind::ArrEnd));
-                return Some((k + 1, q + 1));
-            }
-            (c, q)
-        },
-        None => return unpack2(ex2_elements(cx, k, depth, tape, Ghost(st), Ghost(i0))),
-    };
+    let c0 = get8(s, j0);
     if depth == 0 {
         return None;
     }
@@ -1854,7 +1918,7 @@ fn ex2_array_inl<S: Sink>(
             return unpack2(ex2_elements(cx, k, depth, tape, Ghost(st), Ghost(i)));
         }
         let ghost tb = tape.hist();
-        let (k1, e) = match ex2_value::<S, 0>(cx, k, depth - 1, tape, Ghost(st), Ghost(i), j0) {
+        let (k1, e) = match ex2_value::<S, 0>(cx, k, depth - 1, tape, Ghost(st), Ghost(i), j0, s) {
             Some(x) => x,
             None => {
                 proof {
@@ -1912,15 +1976,16 @@ fn ex2_elements_in<S: Sink>(
     tape: &mut S,
     Ghost(st): Ghost<int>,
     Ghost(i0): Ghost<int>,
+    s: &[u8],
 ) -> (r: Option<(usize, usize)>)
     requires
+        s@ == old(cx).s@,
         cont_pre(old(cx), old(tape), st, k0 as int, i0),
     ensures
         moved(old(cx), final(cx), final(tape), r),
         cont_post(old(cx).s@, st, elements(old(cx).s@, i0, depth as nat, old(tape).hist()), final(tape).hist(), r),
     decreases depth, old(cx).s@.len() - i0, 0nat,
 {
-    let s = cx.s;
     if depth == 0 {
         return None;
     }
@@ -1950,7 +2015,7 @@ fn ex2_elements_in<S: Sink>(
         decreases g.len() - i,
     {
         let ghost tb = tape.hist();
-        let (k1, e) = match ex2_value::<S, 1>(cx, k, depth - 1, tape, Ghost(st), Ghost(i), 0) {
+        let (k1, e) = match ex2_value::<S, 1>(cx, k, depth - 1, tape, Ghost(st), Ghost(i), 0, s) {
             Some(x) => x,
             None => {
                 proof {
@@ -1998,15 +2063,16 @@ fn ex2_object<S: Sink>(
     tape: &mut S,
     Ghost(st): Ghost<int>,
     Ghost(i): Ghost<int>,
+    s: &[u8],
 ) -> (r: Option<(usize, usize)>)
     requires
+        s@ == old(cx).s@,
         cont_pre(old(cx), old(tape), st, k as int, i),
     ensures
         moved(old(cx), final(cx), final(tape), r),
         cont_post(old(cx).s@, st, object(old(cx).s@, i, depth as nat, old(tape).hist()), final(tape).hist(), r),
     decreases depth, old(cx).s@.len() - i, 2nat,
 {
-    let s = cx.s;
     let ghost g = s@;
     proof {
         lemma_close(g, st, i);
@@ -2017,7 +2083,7 @@ fn ex2_object<S: Sink>(
             return Some((k + 1, q + 1));
         }
     }
-    ex2_members(cx, k, depth, tape, Ghost(st), Ghost(i))
+    ex2_members(cx, k, depth, tape, Ghost(st), Ghost(i), s)
 }
 
 /// One member: name, colon and value, as `members` reads it.
@@ -2080,8 +2146,10 @@ fn ex2_member<S: Sink>(
     tape: &mut S,
     Ghost(st): Ghost<int>,
     Ghost(i): Ghost<int>,
+    s: &[u8],
 ) -> (r: Option<(usize, usize)>)
     requires
+        s@ == old(cx).s@,
         cont_pre(old(cx), old(tape), st, k as int, i),
         depth > 0,
     ensures
@@ -2101,11 +2169,51 @@ fn ex2_member<S: Sink>(
         },
     decreases depth, old(cx).s@.len() - i, 0nat,
 {
-    let s = cx.s;
     let ghost g = s@;
     proof {
         lemma_close(g, st, i);
         crate::lemmas::lemma_skip_ws_bounds(g, i);
+        lemma_skip(g, st, i);
+    }
+    // A member whose key has no escape and whose four entries (the key's
+    // quotes, the colon and the value's first) are in the window: one
+    // check, then plain reads.
+    if k < cx.kend && cx.kend - k > 4 {
+        let j = ent(cx, k);
+        if get8(s, j) != 0x22 {
+            return None;
+        }
+        let n = str_quick(cx, k, j, s, Ghost(st));
+        if n != 0 {
+            proof {
+                crate::lemmas::lemma_string_body_advances(g, j + 1, false);
+                lemma_close(g, st, n as int);
+                lemma_cnt_bound(g, st, n as int);
+            }
+            let cpos = ent(cx, k + 2);
+            proof {
+                assert(j == skip_ws(g, i));
+                assert(string(g, j as int) == Some((n as int, false)));
+                lemma_skip(g, st, n as int);
+                lemma_at(g, st, skip_ws(g, n as int));
+                assert(cpos == skip_ws(g, n as int));
+            }
+            if get8(s, cpos) != 0x3A {
+                proof {
+                    assert(member(g, i, depth as nat, old(tape).hist()) is None);
+                }
+                return None;
+            }
+            tape.push_str_fast(Tok::new(Kind::Key, false, (j + 1), (n - 1), NO), s);
+            let ghost tkey = tape.hist();
+            let jv = ent(cx, k + 3);
+            proof {
+                crate::lemmas::lemma_skip_ws_bounds(g, cpos + 1);
+                crate::lemmas::lemma_value_advances(g, skip_ws(g, cpos + 1), (depth - 1) as nat, tkey);
+                lemma_at(g, st, cpos as int);
+            }
+            return ex2_value::<S, 2>(cx, k + 3, depth - 1, tape, Ghost(st), Ghost(cpos + 1), jv, s);
+        }
     }
     let j = match at2(cx, k, tape, Ghost(k as int)) {
         Some(j) => j,
@@ -2114,11 +2222,10 @@ fn ex2_member<S: Sink>(
     if get8(s, j) != 0x22 {
         return None;
     }
-    proof {
-        lemma_skip(g, st, i);
-    }
-    let kend0 = cx.kend;
-    let (k1, n, esc) = match tape.scan_str(cx, k, j, Ghost(st)) {
+    // The key goes on the tape before its colon is checked, while the
+    // string scan's state is still the tape's; a missing colon fails the
+    // parse anyway.
+    let (k1, n) = match ex2_str_tok(cx, k, j, tape, Ghost(st), s, Kind::Key) {
         Some(x) => x,
         None => return None,
     };
@@ -2127,19 +2234,13 @@ fn ex2_member<S: Sink>(
         lemma_close(g, st, n as int);
         lemma_cnt_bound(g, st, n as int);
     }
-    // The key goes on the tape before its colon is checked, while the
-    // string scan's state is still the tape's; a missing colon fails the
-    // parse anyway.
-    tape.push_str_fast(Tok::new(Kind::Key, esc, (j + 1), (n - 1), NO), s);
     let ghost tkey = tape.hist();
-    keep_room(cx, tape, kend0, Ghost(k1 as int));
     let cpos = match at2(cx, k1, tape, Ghost(k1 as int)) {
         Some(q) => q,
         None => return None,
     };
     proof {
         assert(j == skip_ws(g, i));
-        assert(string(g, j as int) == Some((n as int, esc)));
         assert(cpos == skip_ws(g, n as int));
     }
     if get8(s, cpos) != 0x3A {
@@ -2152,7 +2253,7 @@ fn ex2_member<S: Sink>(
         crate::lemmas::lemma_skip_ws_bounds(g, cpos + 1);
         crate::lemmas::lemma_value_advances(g, skip_ws(g, cpos + 1), (depth - 1) as nat, tkey);
     }
-    ex2_value::<S, 1>(cx, k1 + 1, depth - 1, tape, Ghost(st), Ghost(cpos + 1), 0)
+    ex2_value::<S, 1>(cx, k1 + 1, depth - 1, tape, Ghost(st), Ghost(cpos + 1), 0, s)
 }
 
 #[allow(unused_variables)]
@@ -2165,15 +2266,16 @@ fn ex2_members<S: Sink>(
     tape: &mut S,
     Ghost(st): Ghost<int>,
     Ghost(i0): Ghost<int>,
+    s: &[u8],
 ) -> (r: Option<(usize, usize)>)
     requires
+        s@ == old(cx).s@,
         cont_pre(old(cx), old(tape), st, k0 as int, i0),
     ensures
         moved(old(cx), final(cx), final(tape), r),
         cont_post(old(cx).s@, st, members(old(cx).s@, i0, depth as nat, old(tape).hist()), final(tape).hist(), r),
     decreases depth, old(cx).s@.len() - i0, 1nat,
 {
-    let s = cx.s;
     if depth == 0 {
         return None;
     }
@@ -2203,7 +2305,7 @@ fn ex2_members<S: Sink>(
         decreases g.len() - i,
     {
         let ghost tb = tape.hist();
-        let (k2, e) = match ex2_member(cx, k, depth, tape, Ghost(st), Ghost(i)) {
+        let (k2, e) = match ex2_member(cx, k, depth, tape, Ghost(st), Ghost(i), s) {
             Some(x) => x,
             None => {
                 proof {
@@ -2308,7 +2410,7 @@ pub fn parse2_win<S: Sink>(s: &[u8], tape: &mut S, cx: &mut Win, start: usize) -
         crate::lemmas::lemma_value_advances(g, skip_ws(g, st), MAX_DEPTH as nat, Seq::empty());
     }
     tape.reserve(2);
-    let (k, e) = match ex2_value::<S, 1>(cx, 0, MAX_DEPTH, tape, Ghost(st), Ghost(st), 0) {
+    let (k, e) = match ex2_value::<S, 1>(cx, 0, MAX_DEPTH, tape, Ghost(st), Ghost(st), 0, s) {
         Some(x) => x,
         None => {
             proof {
