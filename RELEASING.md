@@ -11,10 +11,10 @@ cut from that release's commit. Both are pinned exactly:
 
 | | Where | Now |
 |---|---|---|
-| Verus release | `scripts/verus-version` (`VERUS_RELEASE`) | `0.2026.11.22.1ce6a59` |
-| Verus commit | `scripts/verus-version` (`VERUS_COMMIT`) | `1ce6a59bd72713cf486a7660097fe5ac57519617` |
-| Rust toolchain Verus is built with | `scripts/verus-version` (`VERUS_TOOLCHAIN`) | `1.100.0` |
-| `vstd`, `verus_builtin`, `verus_builtin_macros`, `verus_state_machines_macros` | `[workspace.dependencies]` in `Cargo.toml` | `=0.0.0-2026-11-22-0344` |
+| Verus release | `scripts/verus-version` (`VERUS_RELEASE`) | `0.2026.11.02.8bf68ee` |
+| Verus commit | `scripts/verus-version` (`VERUS_COMMIT`) | `8bf68ee741df833ea5d0fe6a2255126fdea87e47` |
+| Rust toolchain Verus is built with | `scripts/verus-version` (`VERUS_TOOLCHAIN`) | `1.99.1` |
+| `vstd`, `verus_builtin`, `verus_builtin_macros`, `verus_state_machines_macros` | `[workspace.dependencies]` in `Cargo.toml` | `=0.0.0-2026-11-01-0251` |
 
 The Rust toolchain above is only for running Verus. Building the crates
 needs Rust 1.89 or later (the `rust-version` in each `Cargo.toml`).
@@ -29,13 +29,13 @@ own `verus_builtin` crates exactly too.
 **Two verilith releases that pin different `vstd`s cannot be in one
 dependency graph.** Every `vstd` release is versioned `0.0.0-<date>`, and
 Cargo allows only one `0.0.0` of a crate in a build. A project that depends
-on `verilith-json` built against `vstd =0.0.0-2026-11-22-0344` and on
+on `verilith-json` built against `vstd =0.0.0-2026-11-01-0251` and on
 `verilith-zlib` built against `vstd =0.0.0-2026-11-15-0327` fails to
 resolve:
 
 ```
 failed to select a version for `vstd` which could resolve this conflict
-  previously selected package `vstd v0.0.0-2026-11-22-0344`
+  previously selected package `vstd v0.0.0-2026-11-01-0251`
 ```
 
 The same holds for a project that uses `vstd` itself, for its own proofs:
@@ -116,4 +116,4 @@ needed for it:
 
 | verilith | Verus release | `vstd` |
 |---|---|---|
-| unreleased (main) | `0.2026.11.22.1ce6a59` | `=0.0.0-2026-11-22-0344` |
+| unreleased (main) | `0.2026.11.02.8bf68ee` | `=0.0.0-2026-11-01-0251` |
