@@ -6,5 +6,7 @@
 # needs, plus the wasm32-unknown-unknown standard library, which this adds.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-rustup target add wasm32-unknown-unknown > /dev/null 2>&1 || true
+. ../../scripts/verus-version
+# Verus builds with its own pinned toolchain, so the target goes on that one.
+rustup target add --toolchain "$VERUS_TOOLCHAIN" wasm32-unknown-unknown
 exec cargo verus "${VERUS_CMD:-verify}" --target wasm32-unknown-unknown -- "$@"
