@@ -397,7 +397,7 @@ At 64 bytes, base64-simd is still ahead: 2.6 against 1.8 GB/s to encode, and
 ## Verifying
 
 `./scripts/verify.sh` runs `cargo verus verify`. It needs Verus at commit
-`1ce6a59bd72713cf486a7660097fe5ac57519617`, whose vstd matches the one
+`8bf68ee741df833ea5d0fe6a2255126fdea87e47`, whose vstd matches the one
 pinned in `Cargo.toml`. The proofs take about 40 seconds.
 
 The proofs fix no pointer width, so they hold on 32-bit targets as well as

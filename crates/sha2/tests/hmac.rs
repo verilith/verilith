@@ -130,9 +130,9 @@ macro_rules! against {
     };
 }
 
-against!(hmac_sha224_vs_rustcrypto, HmacSha224, hmac_sha224, SimpleHmac<sha2::Sha224>);
-against!(hmac_sha256_vs_rustcrypto, HmacSha256, hmac_sha256, SimpleHmac<sha2::Sha256>);
-against!(hmac_sha384_vs_rustcrypto, HmacSha384, hmac_sha384, SimpleHmac<sha2::Sha384>);
-against!(hmac_sha512_vs_rustcrypto, HmacSha512, hmac_sha512, SimpleHmac<sha2::Sha512>);
-against!(hmac_sha512_224_vs_rustcrypto, HmacSha512_224, hmac_sha512_224, SimpleHmac<sha2::Sha512_224>);
-against!(hmac_sha512_256_vs_rustcrypto, HmacSha512_256, hmac_sha512_256, SimpleHmac<sha2::Sha512_256>);
+against!(hmac_sha224_vs_rustcrypto, HmacSha224, hmac_sha224, SimpleHmac<sha2_011::Sha224>);
+against!(hmac_sha256_vs_rustcrypto, HmacSha256, hmac_sha256, SimpleHmac<sha2_011::Sha256>);
+against!(hmac_sha384_vs_rustcrypto, HmacSha384, hmac_sha384, SimpleHmac<sha2_011::Sha384>);
+against!(hmac_sha512_vs_rustcrypto, HmacSha512, hmac_sha512, SimpleHmac<sha2_011::Sha512>);
+against!(hmac_sha512_224_vs_rustcrypto, HmacSha512_224, hmac_sha512_224, SimpleHmac<sha2_011::Sha512_224>);
+against!(hmac_sha512_256_vs_rustcrypto, HmacSha512_256, hmac_sha512_256, SimpleHmac<sha2_011::Sha512_256>);

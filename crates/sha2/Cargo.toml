@@ -49,12 +49,13 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 
 [dev-dependencies]
 # An independent implementation (RustCrypto's) to compare with.
-sha2 = "0.11"
+sha2 = "0.10"
 # RustCrypto's HMAC, for the HMAC tests; and `hmac` 0.12 over `digest`
 # 0.10, for the `digest010` impls.
 hmac = "0.13"
 hmac012 = { package = "hmac", version = "0.12" }
-sha2_010 = { package = "sha2", version = "0.10" }
+# RustCrypto's sha2 0.11, over `digest` 0.11, for the HMAC and `digest` tests.
+sha2_011 = { package = "sha2", version = "0.11" }
 
 [[test]]
 name = "digest"

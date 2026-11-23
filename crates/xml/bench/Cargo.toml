@@ -12,7 +12,7 @@ publish = false
 [dependencies]
 verilith-xml = { path = ".." }
 roxmltree = "0.21"
-quick-xml = "0.42"
+quick-xml = "0.38"
 xml-rs = "1"
 
 [profile.release]

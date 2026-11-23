@@ -44,11 +44,11 @@ mod v011 {
             fn $name() {
                 use verilith_sha2::$ours as Ours;
                 let mut r = Rng(0x1234_5678 ^ stringify!($name).len() as u64);
-                assert_eq!(Ours::OID, sha2::$theirs::OID);
-                assert_eq!(<Ours as Digest>::output_size(), <sha2::$theirs as Digest>::output_size());
+                assert_eq!(Ours::OID, sha2_011::$theirs::OID);
+                assert_eq!(<Ours as Digest>::output_size(), <sha2_011::$theirs as Digest>::output_size());
                 for n in (0..600).chain([4096, 65537]) {
                     let d = r.bytes(n);
-                    let want = sha2::$theirs::digest(&d).to_vec();
+                    let want = sha2_011::$theirs::digest(&d).to_vec();
                     assert_eq!(generic::<Ours>(&d), want);
                     assert_eq!(Ours::digest(&d).to_vec(), want);
                     // finalize_reset leaves a fresh hasher.
@@ -66,7 +66,7 @@ mod v011 {
                     // RustCrypto's HMAC over our hasher, our HMAC through `Mac`.
                     let kl = (r.next() % 300) as usize;
                     let k = r.bytes(kl);
-                    let want = generic_mac::<SimpleHmac<sha2::$theirs>>(&k, &d);
+                    let want = generic_mac::<SimpleHmac<sha2_011::$theirs>>(&k, &d);
                     assert_eq!(generic_mac::<SimpleHmac<Ours>>(&k, &d), want);
                     assert_eq!(generic_mac::<verilith_sha2::$hm>(&k, &d), want);
                     let mut m = <verilith_sha2::$hm as KeyInit>::new_from_slice(&k).unwrap();
@@ -102,11 +102,11 @@ mod v010 {
                 let mut r = Rng(0x8765_4321 ^ stringify!($name).len() as u64);
                 for n in (0..300).chain([4096]) {
                     let d = r.bytes(n);
-                    let want = sha2_010::$theirs::digest(&d).to_vec();
+                    let want = sha2::$theirs::digest(&d).to_vec();
                     assert_eq!(<Ours as Digest>::digest(&d).to_vec(), want);
                     let kl = (r.next() % 300) as usize;
                     let k = r.bytes(kl);
-                    let mut t = <SimpleHmac<sha2_010::$theirs> as KeyInit>::new_from_slice(&k).unwrap();
+                    let mut t = <SimpleHmac<sha2::$theirs> as KeyInit>::new_from_slice(&k).unwrap();
                     Mac::update(&mut t, &d);
                     let want = t.finalize().into_bytes().to_vec();
                     let mut o = <SimpleHmac<Ours> as KeyInit>::new_from_slice(&k).unwrap();
