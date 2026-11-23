@@ -3,7 +3,9 @@
 # build for wasm32-unknown-unknown (browsers, Cloudflare Workers), and the
 # ones proven for 64-bit targets only stop with their own compile_error!.
 # text, url, regex and json also pass their tests on wasm32-wasip1, under
-# wasmtime (on PATH).
+# wasmtime (on PATH), both plain and built with SIMD128, where their NEON
+# kernels run on WebAssembly vectors (verilith-simd's `wasm_neon`); the
+# SIMD128 pass also runs verilith-simd's NEON wrapper tests there.
 #   scripts/wasm32.sh             the builds and the tests
 #   scripts/wasm32.sh build       the build checks only
 #   (Verus for wasm32: each crate's scripts/verify-narrow.sh.)
@@ -58,4 +60,13 @@ export CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime run -W max-wasm-stack=8388608
 for c in $TESTED; do
   echo "== test $c on wasm32-wasip1"
   cargo test --release --target wasm32-wasip1 -p "verilith-$c" --lib --tests
+done
+
+# The same with SIMD128, plus the NEON wrappers against their references.
+# (Its own target directory: RUSTFLAGS would otherwise rebuild the above.)
+python3 crates/simd/tools/check_wasm_neon.py
+for c in simd http $TESTED; do
+  echo "== test $c on wasm32-wasip1 with simd128"
+  RUSTFLAGS="-C target-feature=+simd128" CARGO_TARGET_DIR=target/wasm-simd128 \
+    cargo test --release --target wasm32-wasip1 -p "verilith-$c" --lib --tests
 done

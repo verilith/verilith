@@ -520,7 +520,7 @@ fn idct_pass(x: &[i16; 32], t: &mut [i16; 32], bias: i16, sh: u32)
             ),
 {
     hide(lane_1d);
-    if sh == 0 && has_neon() {
+    if sh == 0 && (cfg!(target_arch = "aarch64") && has_neon()) {
         idct_pass_neon(x, t, bias);
         return;
     }
@@ -1159,7 +1159,7 @@ fn transpose_halves(t: &[i16; 32], u: &mut [i16; 32])
         assert(ts@.len() == 32);
         assert(us@.len() == 32);
     }
-    if has_neon() {
+    if cfg!(target_arch = "aarch64") && has_neon() {
         let r0 = vld1q_s16_at(ts, 0);
         let r1 = vld1q_s16_at(ts, 8);
         let r2 = vld1q_s16_at(ts, 16);
@@ -4036,7 +4036,7 @@ fn shuffle_block(r: &mut [u8; 128], rounds: usize)
         assert(ss@.len() == 128);
         assert(rs@.len() == 128);
     }
-    if has_neon() {
+    if cfg!(target_arch = "aarch64") && has_neon() {
         let mut x = [
             vld1q_u8_at(ss, 0), vld1q_u8_at(ss, 16), vld1q_u8_at(ss, 32), vld1q_u8_at(ss, 48),
             vld1q_u8_at(ss, 64), vld1q_u8_at(ss, 80), vld1q_u8_at(ss, 96), vld1q_u8_at(ss, 112),
@@ -7661,6 +7661,45 @@ proof fn lemma_tr8(
         forall|m: int| 0 <= m < 16 ==> #[trigger] c2[m] == x[m % 8][(if hi { 8int } else { 0 }) + 4 + m / 8],
         forall|m: int| 0 <= m < 16 ==> #[trigger] c3[m] == x[m % 8][(if hi { 8int } else { 0 }) + 6 + m / 8],
 {
+    lemma_tr8_quarter(x, a0, a1, a2, a3, b0, b2, c0, false, false, hi);
+    lemma_tr8_quarter(x, a0, a1, a2, a3, b0, b2, c1, false, true, hi);
+    lemma_tr8_quarter(x, a0, a1, a2, a3, b1, b3, c2, true, false, hi);
+    lemma_tr8_quarter(x, a0, a1, a2, a3, b1, b3, c3, true, true, hi);
+}
+
+/// One of `lemma_tr8`'s four outputs: `c` is the 32-bit interleave (high
+/// when `h32`) of `p` and `q`, the 16-bit interleaves (high when `h16`) of
+/// `a0, a1` and of `a2, a3`, so it holds columns `4 h16 + 2 h32` and one
+/// more. Proved apart so each proof sees only the facts it needs.
+proof fn lemma_tr8_quarter(
+    x: Seq<Seq<u8>>,
+    a0: Seq<u8>,
+    a1: Seq<u8>,
+    a2: Seq<u8>,
+    a3: Seq<u8>,
+    p: Seq<u8>,
+    q: Seq<u8>,
+    c: Seq<u8>,
+    h16: bool,
+    h32: bool,
+    hi: bool,
+)
+    requires
+        x.len() == 8,
+        forall|k: int| 0 <= k < 8 ==> (#[trigger] x[k]).len() == 16,
+        p.len() == 16 && q.len() == 16 && c.len() == 16,
+        a0 == (if hi { unpackhi8_lanes(x[0], x[1]) } else { unpacklo8_lanes(x[0], x[1]) }),
+        a1 == (if hi { unpackhi8_lanes(x[2], x[3]) } else { unpacklo8_lanes(x[2], x[3]) }),
+        a2 == (if hi { unpackhi8_lanes(x[4], x[5]) } else { unpacklo8_lanes(x[4], x[5]) }),
+        a3 == (if hi { unpackhi8_lanes(x[6], x[7]) } else { unpacklo8_lanes(x[6], x[7]) }),
+        u16s(p) == (if h16 { unpackhi16_lanes(u16s(a0), u16s(a1)) } else { unpacklo16_lanes(u16s(a0), u16s(a1)) }),
+        u16s(q) == (if h16 { unpackhi16_lanes(u16s(a2), u16s(a3)) } else { unpacklo16_lanes(u16s(a2), u16s(a3)) }),
+        u32s(c) == (if h32 { unpackhi32_lanes(u32s(p), u32s(q)) } else { unpacklo32_lanes(u32s(p), u32s(q)) }),
+    ensures
+        forall|m: int|
+            0 <= m < 16 ==> #[trigger] c[m] == x[m % 8][(if hi { 8int } else { 0 }) + (if h16 { 4int } else { 0 }) + (
+            if h32 { 2int } else { 0 }) + m / 8],
+{
     hide(u16s);
     hide(u32s);
     hide(unpacklo8_lanes);
@@ -7673,25 +7712,11 @@ proof fn lemma_tr8(
     lemma_unpack8_bytes(x[2], x[3], a1, hi);
     lemma_unpack8_bytes(x[4], x[5], a2, hi);
     lemma_unpack8_bytes(x[6], x[7], a3, hi);
-    lemma_unpack16_bytes(a0, a1, b0, false);
-    lemma_unpack16_bytes(a0, a1, b1, true);
-    lemma_unpack16_bytes(a2, a3, b2, false);
-    lemma_unpack16_bytes(a2, a3, b3, true);
-    lemma_unpack32_bytes(b0, b2, c0, false);
-    lemma_unpack32_bytes(b0, b2, c1, true);
-    lemma_unpack32_bytes(b1, b3, c2, false);
-    lemma_unpack32_bytes(b1, b3, c3, true);
-    let o: int = if hi { 8 } else { 0 };
-    assert forall|m: int| 0 <= m < 16 implies c0[m] == x[m % 8][o + m / 8] by {
-        lemma_tr8_at(m);
-    }
-    assert forall|m: int| 0 <= m < 16 implies c1[m] == x[m % 8][o + 2 + m / 8] by {
-        lemma_tr8_at(m);
-    }
-    assert forall|m: int| 0 <= m < 16 implies c2[m] == x[m % 8][o + 4 + m / 8] by {
-        lemma_tr8_at(m);
-    }
-    assert forall|m: int| 0 <= m < 16 implies c3[m] == x[m % 8][o + 6 + m / 8] by {
+    lemma_unpack16_bytes(a0, a1, p, h16);
+    lemma_unpack16_bytes(a2, a3, q, h16);
+    lemma_unpack32_bytes(p, q, c, h32);
+    let o: int = (if hi { 8int } else { 0 }) + (if h16 { 4int } else { 0 }) + (if h32 { 2int } else { 0 });
+    assert forall|m: int| 0 <= m < 16 implies #[trigger] c[m] == x[m % 8][o + m / 8] by {
         lemma_tr8_at(m);
     }
 }
@@ -8882,7 +8907,7 @@ pub fn filter_loop(
     // A sixteen-pixel edge is filtered in registers: NEON's on AArch64,
     // SSE2's elsewhere (x86-64, where SSE2 is the baseline).
     if size == 16 {
-        if has_neon() {
+        if cfg!(target_arch = "aarch64") && has_neon() {
             filter16_vec::<uint8x16_t>(b, p, hstride, vstride, th, it, ht, inner);
         } else {
             filter16_vec::<__m128i>(b, p, hstride, vstride, th, it, ht, inner);
@@ -8952,7 +8977,7 @@ pub fn filter_loop_uv(
     let it = ithresh as u8;
     let ht = hev_thresh as u8;
     // Both planes' eight lanes as one sixteen-lane block in registers.
-    if has_neon() {
+    if cfg!(target_arch = "aarch64") && has_neon() {
         filter8uv_vec::<uint8x16_t>(bu, bv, p, hstride, vstride, th, it, ht, inner);
     } else {
         filter8uv_vec::<__m128i>(bu, bv, p, hstride, vstride, th, it, ht, inner);
