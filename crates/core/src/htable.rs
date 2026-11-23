@@ -34,6 +34,7 @@ use alloc::vec::Vec;
 
 verus! {
 
+/// The longest code length, in bits.
 pub const MAX_LEN: usize = 15;
 
 /// Largest alphabet: 256 + 24 + 2048 (11 color cache bits).
@@ -54,11 +55,17 @@ pub open spec fn ent(s: nat, l: nat) -> u32 {
 /// how many symbols have it, the first code, and where its symbols start in
 /// `sorted` (all symbols with a code, ordered by length, then value).
 pub struct HCode {
+    /// The lookup table: `1 << tbits` entries, indexed by the next `tbits` bits (bit-reversed), each the symbol and its length, or `LONG`.
     pub table: Vec<u32>,
+    /// The table's index width, at most `MAX_ROOT`.
     pub tbits: u32,
+    /// How many symbols have a code of each length.
     pub count: [u16; 16],
+    /// The first canonical code of each length.
     pub first: [u32; 16],
+    /// Where the symbols of each length start in `sorted`.
     pub offs: [u16; 16],
+    /// Every symbol with a code, ordered by code length, then by value.
     pub sorted: Vec<u16>,
 }
 

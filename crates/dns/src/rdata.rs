@@ -19,7 +19,9 @@ verus! {
 /// record's (canonical) RDATA, and is owned only when it had to be
 /// decompressed.
 pub enum NameBytes<'a> {
+    /// Borrowed from the message.
     Borrowed(&'a [u8]),
+    /// Decompressed into a new buffer.
     Owned(Vec<u8>),
 }
 
@@ -58,73 +60,232 @@ proof fn lemma_plain_is_name(b: Seq<u8>, p: int, end: int, n: SpecName, e: int)
 /// Decoded RDATA. Names are in uncompressed wire form (see `Name`); other
 /// variable-length fields borrow from the message.
 pub enum Rdata<'a> {
+    /// An IPv4 address (RFC 1035): its 4 bytes.
     A(&'a [u8]),
+    /// An IPv6 address (RFC 3596): its 16 bytes.
     Aaaa(&'a [u8]),
+    /// An authoritative name server.
     Ns(NameBytes<'a>),
+    /// The canonical name this name is an alias for.
     Cname(NameBytes<'a>),
+    /// The name a reverse-lookup name points to.
     Ptr(NameBytes<'a>),
-    Mx { preference: u16, exchange: NameBytes<'a> },
+    /// A mail exchange.
+    Mx {
+        /// Lower is preferred.
+        preference: u16,
+        /// The mail server.
+        exchange: NameBytes<'a>,
+    },
+    /// Text: the character-strings, each without its length byte.
     Txt(Vec<&'a [u8]>),
-    Hinfo { cpu: &'a [u8], os: &'a [u8] },
+    /// Host information (RFC 1035; RFC 8482 answers ANY queries with it).
+    Hinfo {
+        /// The CPU type.
+        cpu: &'a [u8],
+        /// The operating system.
+        os: &'a [u8],
+    },
+    /// The start of a zone of authority.
     Soa {
+        /// The zone's primary name server.
         mname: NameBytes<'a>,
+        /// The mailbox of the person responsible, as a name.
         rname: NameBytes<'a>,
+        /// The zone's version number.
         serial: u32,
+        /// Seconds between secondary refreshes.
         refresh: u32,
+        /// Seconds before a failed refresh is retried.
         retry: u32,
+        /// Seconds after which a secondary stops answering for the zone.
         expire: u32,
+        /// The TTL of negative answers (RFC 2308).
         minimum: u32,
     },
+    /// A signature (RFC 2535). The same fields as [`Rdata::Rrsig`].
     Sig {
+        /// The record type the signature covers.
         type_covered: u16,
+        /// The signing algorithm.
         algorithm: u8,
+        /// The number of labels in the signed owner name.
         labels: u8,
+        /// The TTL of the signed records.
         original_ttl: u32,
+        /// The end of the validity period, in seconds since 1970 (mod 2^32).
         expiration: u32,
+        /// The start of the validity period.
         inception: u32,
+        /// The key tag of the signing key.
         key_tag: u16,
+        /// The signer's name.
         signer: NameBytes<'a>,
+        /// The signature.
         signature: &'a [u8],
     },
-    Ds { key_tag: u16, algorithm: u8, digest_type: u8, digest: &'a [u8] },
-    Sshfp { algorithm: u8, fp_type: u8, fingerprint: &'a [u8] },
+    /// A delegation signer (RFC 4034): a digest of a child zone's key.
+    Ds {
+        /// The key tag of the key digested.
+        key_tag: u16,
+        /// That key's algorithm.
+        algorithm: u8,
+        /// The digest algorithm.
+        digest_type: u8,
+        /// The digest.
+        digest: &'a [u8],
+    },
+    /// An SSH host key fingerprint (RFC 4255).
+    Sshfp {
+        /// The key algorithm.
+        algorithm: u8,
+        /// The fingerprint's hash algorithm.
+        fp_type: u8,
+        /// The fingerprint.
+        fingerprint: &'a [u8],
+    },
+    /// A DNSSEC signature over a record set (RFC 4034).
     Rrsig {
+        /// The record type the signature covers.
         type_covered: u16,
+        /// The signing algorithm.
         algorithm: u8,
+        /// The number of labels in the signed owner name.
         labels: u8,
+        /// The TTL of the signed records.
         original_ttl: u32,
+        /// The end of the validity period, in seconds since 1970 (mod 2^32).
         expiration: u32,
+        /// The start of the validity period.
         inception: u32,
+        /// The key tag of the signing key.
         key_tag: u16,
+        /// The signer's name.
         signer: NameBytes<'a>,
+        /// The signature.
         signature: &'a [u8],
     },
-    Nsec { next: NameBytes<'a>, type_bitmaps: &'a [u8] },
-    Dnskey { flags: u16, protocol: u8, algorithm: u8, public_key: &'a [u8] },
-    Nsec3 {
-        hash_algorithm: u8,
-        flags: u8,
-        iterations: u16,
-        salt: &'a [u8],
-        next_hashed: &'a [u8],
+    /// Authenticated denial of existence (RFC 4034).
+    Nsec {
+        /// The next owner name in the zone.
+        next: NameBytes<'a>,
+        /// The types present at the owner name, as wire-form bitmaps.
         type_bitmaps: &'a [u8],
     },
-    Nsec3param { hash_algorithm: u8, flags: u8, iterations: u16, salt: &'a [u8] },
-    Srv { priority: u16, weight: u16, port: u16, target: NameBytes<'a> },
+    /// A DNSSEC public key (RFC 4034).
+    Dnskey {
+        /// The key flags (zone key, secure entry point).
+        flags: u16,
+        /// Always 3.
+        protocol: u8,
+        /// The key's algorithm.
+        algorithm: u8,
+        /// The public key.
+        public_key: &'a [u8],
+    },
+    /// Hashed authenticated denial of existence (RFC 5155).
+    Nsec3 {
+        /// The hash algorithm.
+        hash_algorithm: u8,
+        /// The flags (opt-out).
+        flags: u8,
+        /// Extra hash iterations.
+        iterations: u16,
+        /// The salt.
+        salt: &'a [u8],
+        /// The next hashed owner name, unencoded.
+        next_hashed: &'a [u8],
+        /// The types present at the owner name, as wire-form bitmaps.
+        type_bitmaps: &'a [u8],
+    },
+    /// The NSEC3 parameters of a zone (RFC 5155).
+    Nsec3param {
+        /// The hash algorithm.
+        hash_algorithm: u8,
+        /// The flags.
+        flags: u8,
+        /// Extra hash iterations.
+        iterations: u16,
+        /// The salt.
+        salt: &'a [u8],
+    },
+    /// A service location (RFC 2782).
+    Srv {
+        /// Lower is tried first.
+        priority: u16,
+        /// The relative weight among targets of the same priority.
+        weight: u16,
+        /// The port of the service.
+        port: u16,
+        /// The host that provides it.
+        target: NameBytes<'a>,
+    },
+    /// A naming authority pointer (RFC 3403).
     Naptr {
+        /// Lower is processed first.
         order: u16,
+        /// Lower is preferred among equal `order`.
         preference: u16,
+        /// The flags character-string.
         flags: &'a [u8],
+        /// The services character-string.
         services: &'a [u8],
+        /// The substitution expression.
         regexp: &'a [u8],
+        /// The next name to query.
         replacement: NameBytes<'a>,
     },
+    /// EDNS options (RFC 6891): (option code, option data) pairs.
     Opt(Vec<(u16, &'a [u8])>),
-    Tlsa { usage: u8, selector: u8, matching: u8, data: &'a [u8] },
-    Svcb { priority: u16, target: NameBytes<'a>, params: Vec<(u16, &'a [u8])> },
-    Https { priority: u16, target: NameBytes<'a>, params: Vec<(u16, &'a [u8])> },
-    Uri { priority: u16, weight: u16, target: &'a [u8] },
-    Caa { flags: u8, tag: &'a [u8], value: &'a [u8] },
+    /// A TLS certificate association (RFC 6698).
+    Tlsa {
+        /// The certificate usage.
+        usage: u8,
+        /// Which part of the certificate is matched.
+        selector: u8,
+        /// How it is matched (exactly or by hash).
+        matching: u8,
+        /// The certificate association data.
+        data: &'a [u8],
+    },
+    /// A service binding (RFC 9460).
+    Svcb {
+        /// 0 for alias mode, else the priority (lower first).
+        priority: u16,
+        /// The target name.
+        target: NameBytes<'a>,
+        /// The (key, value) parameters, in wire order.
+        params: Vec<(u16, &'a [u8])>,
+    },
+    /// A service binding for HTTPS (RFC 9460). The same fields as
+    /// [`Rdata::Svcb`].
+    Https {
+        /// 0 for alias mode, else the priority (lower first).
+        priority: u16,
+        /// The target name.
+        target: NameBytes<'a>,
+        /// The (key, value) parameters, in wire order.
+        params: Vec<(u16, &'a [u8])>,
+    },
+    /// A URI (RFC 7553).
+    Uri {
+        /// Lower is tried first.
+        priority: u16,
+        /// The relative weight among targets of the same priority.
+        weight: u16,
+        /// The URI.
+        target: &'a [u8],
+    },
+    /// A certification authority authorization (RFC 8659).
+    Caa {
+        /// The flags (bit 7: critical).
+        flags: u8,
+        /// The property tag, such as `issue`.
+        tag: &'a [u8],
+        /// The property value.
+        value: &'a [u8],
+    },
+    /// A type this crate does not decode: the raw RDATA.
     Unknown(&'a [u8]),
 }
 
