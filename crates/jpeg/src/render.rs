@@ -732,7 +732,7 @@ pub fn ycc_row(yr: &[u8], cbr: &[u8], crr: &[u8], w: usize, out: &mut [u8], o: u
 {
     let n = out.len();
     let mut x: usize = 0;
-    if verilith_simd::neon::has_neon() {
+    if cfg!(target_arch = "aarch64") && verilith_simd::neon::has_neon() {
         while w - x >= 16
             invariant
                 x <= w,

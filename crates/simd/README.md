@@ -12,6 +12,19 @@ wrappers in `verilith_simd::neon` call `core::arch::aarch64` on AArch64 and an
 emulation (`src/emu_neon.rs`) elsewhere, so NEON kernels are verified on an
 x86 machine like any other code and selected at run time with `has_neon()`.
 
+On WebAssembly built with SIMD128 (`-C target-feature=+simd128`),
+`has_neon()` is true too and the NEON kernels run on WebAssembly vectors:
+the 30 wrappers they use there forward to `src/wasm_neon.rs`, which proves
+each wrapper's own contract from specifications of the SIMD128
+instructions (`src/wasm.rs`), stated from the WebAssembly spec rather than
+from NEON. Where the two differ the proof works around it: `i8x16.shr_u`
+takes its count modulo 8, so NEON's `ushr #8` (0) is a splat of zero;
+`swizzle` and `tbl` are proven to agree on indices of 16 and more; the
+horizontal maxima, byte multiply, `uaddlp` on 32-bit lanes, `addp` and
+`shrn #4` are built from several instructions and proven.
+`tools/check_wasm_neon.py` checks that each contract proven there is
+word for word the wrapper's and that the wrapper forwards to it.
+
 A vector is modelled as its sequence of bytes (`b128`, `b256`), with
 little-endian views as 16-, 32- and 64-bit lanes (`u16s`, `u32s`, `u64s`) and
 signed readings (`s8`, `s16`, `s32`). Each intrinsic gets an
@@ -107,11 +120,21 @@ its own trusted base.
   shift `rshrn`/`rshrn2`, `uqadd` on 16-bit lanes and the sum of the 16-bit
   lanes `uaddlv`), the byte
   model `n8` of `uint8x16_t`, and `has_neon()`.
+- `src/wasm.rs`: the SIMD128 instructions' specifications (loads and
+  stores, `splat`, `and`/`or`/`xor`, byte `add`, `sub_sat_u`, `eq`,
+  `le_u`, `max_u`, `shr_u`, `swizzle`, `extract_lane`, the `i8x16.shuffle`
+  permutations used (each with its indices in the `ensures`), 16-bit
+  `shr_u`, `max_u`, `mul`, 32-bit `mul`, the pairwise widening adds, the
+  64-bit widening `extend_low`/`extend_high`, `add` and `extract_lane`).
+  Its bodies off WebAssembly are plain Rust that only lets the verified
+  code build. `tests/neon.rs`, run on `wasm32-wasip1` with SIMD128
+  (`scripts/wasm32.sh` at the root), checks the NEON contracts built on
+  them against the references.
 - `src/emu.rs` and `src/emu_neon.rs` are not verified either, but proofs do
   not depend on them: they are what runs off x86-64 and off AArch64.
   `tests/emu.rs` checks `emu.rs` against the CPU on x86-64.
 
-Everything else is verified, including `src/neon_mask.rs` (`movemask64` and
+Everything else is verified, including `src/wasm_neon.rs`, `src/neon_mask.rs` (`movemask64` and
 `movemask16`: x86's `pmovmskb` for NEON, proven bit for bit), `src/lanes.rs`'s view lemmas, `src/patterns.rs`
 (lemmas that evaluate common shuffles), `src/mask.rs` (a `movemask` result
 bit by bit, which is how a proof reads an AVX-512 mask register),

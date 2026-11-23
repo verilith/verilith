@@ -520,7 +520,7 @@ fn idct_pass(x: &[i16; 32], t: &mut [i16; 32], bias: i16, sh: u32)
             ),
 {
     hide(lane_1d);
-    if sh == 0 && has_neon() {
+    if sh == 0 && (cfg!(target_arch = "aarch64") && has_neon()) {
         idct_pass_neon(x, t, bias);
         return;
     }
@@ -1159,7 +1159,7 @@ fn transpose_halves(t: &[i16; 32], u: &mut [i16; 32])
         assert(ts@.len() == 32);
         assert(us@.len() == 32);
     }
-    if has_neon() {
+    if cfg!(target_arch = "aarch64") && has_neon() {
         let r0 = vld1q_s16_at(ts, 0);
         let r1 = vld1q_s16_at(ts, 8);
         let r2 = vld1q_s16_at(ts, 16);
@@ -4036,7 +4036,7 @@ fn shuffle_block(r: &mut [u8; 128], rounds: usize)
         assert(ss@.len() == 128);
         assert(rs@.len() == 128);
     }
-    if has_neon() {
+    if cfg!(target_arch = "aarch64") && has_neon() {
         let mut x = [
             vld1q_u8_at(ss, 0), vld1q_u8_at(ss, 16), vld1q_u8_at(ss, 32), vld1q_u8_at(ss, 48),
             vld1q_u8_at(ss, 64), vld1q_u8_at(ss, 80), vld1q_u8_at(ss, 96), vld1q_u8_at(ss, 112),
@@ -8882,7 +8882,7 @@ pub fn filter_loop(
     // A sixteen-pixel edge is filtered in registers: NEON's on AArch64,
     // SSE2's elsewhere (x86-64, where SSE2 is the baseline).
     if size == 16 {
-        if has_neon() {
+        if cfg!(target_arch = "aarch64") && has_neon() {
             filter16_vec::<uint8x16_t>(b, p, hstride, vstride, th, it, ht, inner);
         } else {
             filter16_vec::<__m128i>(b, p, hstride, vstride, th, it, ht, inner);
@@ -8952,7 +8952,7 @@ pub fn filter_loop_uv(
     let it = ithresh as u8;
     let ht = hev_thresh as u8;
     // Both planes' eight lanes as one sixteen-lane block in registers.
-    if has_neon() {
+    if cfg!(target_arch = "aarch64") && has_neon() {
         filter8uv_vec::<uint8x16_t>(bu, bv, p, hstride, vstride, th, it, ht, inner);
     } else {
         filter8uv_vec::<__m128i>(bu, bv, p, hstride, vstride, th, it, ht, inner);

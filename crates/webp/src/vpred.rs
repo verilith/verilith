@@ -1065,7 +1065,7 @@ fn run_mode_swar(px: &mut Vec<u32>, i0: usize, i1: usize, row: usize, w: usize, 
 {
     if m == 1 {
         let ghost src = px@;
-        if has_neon() {
+        if cfg!(target_arch = "aarch64") && has_neon() {
             run_left_neon(px, i0, i1);
         } else {
             run_left_swar(px, i0, i1);
@@ -1086,7 +1086,7 @@ fn run_mode_swar(px: &mut Vec<u32>, i0: usize, i1: usize, row: usize, w: usize, 
         run_m12(px, i0, i1, row, w);
     } else if m == 13 {
         run_m13(px, i0, i1, row, w);
-    } else if has_neon() {
+    } else if cfg!(target_arch = "aarch64") && has_neon() {
         run_vertical_neon(px, i0, i1, row, w, m);
     } else {
         run_vertical_swar(px, i0, i1, row, w, m);
