@@ -390,6 +390,10 @@ case found by fuzzing:
 * **Byte order marks.** expat accepts a UTF-8 BOM before
   `encoding="ISO-8859-1"` (the W3C suite's hst-lhs-007 is not
   well-formed), and UTF-16 without a BOM.
+* **Parameter entities.** expat does not read them by default
+  (`XML_PARAM_ENTITY_PARSING_NEVER`); `parse` expands those of the
+  internal subset, so a document whose parameter entities hold malformed
+  declarations is rejected here and accepted by expat.
 * **The internal subset.** expat stops checking declarations after a
   parameter entity reference it does not read (a `<` in an attribute default there
   is still not well-formed), and decides whether an attribute default's
