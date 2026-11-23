@@ -933,8 +933,6 @@ impl<'d> Walk<'d> {
         }
     }
 
-    /// Moves the input's position to `off` in the document's text.
-    #[inline(always)]
     /// The position in `src`: the document's input, or the input of the
     /// entity being expanded.
     #[inline(always)]
@@ -969,6 +967,8 @@ impl<'d> Walk<'d> {
         }
     }
 
+    /// Moves the input's position to `off` in the document's text.
+    #[inline(always)]
     unsafe fn at(&mut self, off: usize) {
         unsafe {
             let ctxt = self.ctxt;

@@ -34,64 +34,12 @@ pub const OCUR_OPT: i32 = 2;
 pub const OCUR_MULT: i32 = 3;
 pub const OCUR_PLUS: i32 = 4;
 
-/// `xmlGrowCapacity(cap, 1, 1, max)`: the new capacity, or `None` at the
-/// limit.
-pub fn grow_capacity(cap: usize, max: usize) -> Option<usize> {
-    if cap == 0 {
-        return Some(1);
-    }
-    if cap >= max {
-        return None;
-    }
-    let extra = cap.div_ceil(2);
-    if cap > max - extra {
-        return Some(max);
-    }
-    Some(cap + extra)
-}
-
-/// The first `n` bytes of `s` (`%.ns`).
-pub fn prefix_n(s: &[u8], n: usize) -> &[u8] {
-    if s.len() > n { &s[..n] } else { s }
-}
+// Verified (`crate::lenient`).
+pub use crate::lenient::{grow_capacity, prefix_n, split_qname3};
 
 /// `xmlAttrNormalizeSpace`, in place.
 pub fn attr_normalize_space(v: &mut Vec<u8>) {
-    let mut out = Vec::with_capacity(v.len());
-    let mut i = 0;
-    while i < v.len() && v[i] == 0x20 {
-        i += 1;
-    }
-    while i < v.len() {
-        if v[i] == 0x20 {
-            while i < v.len() && v[i] == 0x20 {
-                i += 1;
-            }
-            if i < v.len() {
-                out.push(0x20);
-            }
-        } else {
-            out.push(v[i]);
-            i += 1;
-        }
-    }
-    *v = out;
-}
-
-/// `xmlSplitQName3`: (prefix, local) when `name` is `p:l` with both
-/// non-empty.
-pub fn split_qname3(name: &[u8]) -> Option<(&[u8], &[u8])> {
-    if name.first() == Some(&b':') {
-        return None;
-    }
-    let mut i = 0;
-    while i < name.len() && name[i] != b':' {
-        i += 1;
-    }
-    if i >= name.len() || i + 1 >= name.len() {
-        return None;
-    }
-    Some((&name[..i], &name[i + 1..]))
+    *v = crate::lenient::attr_normalize_space(v);
 }
 
 impl<S: Sink> Parser<S> {

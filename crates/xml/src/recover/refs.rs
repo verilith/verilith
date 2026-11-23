@@ -11,10 +11,7 @@ pub const SPECIAL_TYPE_MASK: i32 = SPECIAL_EXTERNAL - 1;
 /// `XML_ATTRIBUTE_CDATA`.
 pub const ATTRIBUTE_CDATA: i32 = 1;
 
-/// `IS_BYTE_CHAR`.
-fn is_byte_char(c: u8) -> bool {
-    c == 0x9 || c == 0xA || c == 0xD || c >= 0x20
-}
+use crate::lenient::is_byte_char;
 
 impl<S: Sink> Parser<S> {
     /// `xmlExpandPEsInEntityValue`.
@@ -1050,47 +1047,7 @@ impl<S: Sink> Parser<S> {
     }
 }
 
-/// `xmlUTF8MultibyteLen`'s classification: the length, 0 for an encoding
-/// error, 33 for U+FFFE/U+FFFF (length 3, reported as invalid).
-pub fn multibyte_len(c: u8, c1: u8, c2: u8, c3: u8) -> usize {
-    if c1 & 0xC0 != 0x80 {
-        return 0;
-    }
-    if c < 0xE0 {
-        if c < 0xC2 {
-            return 0;
-        }
-        return 2;
-    }
-    if c2 & 0xC0 != 0x80 {
-        return 0;
-    }
-    if c < 0xF0 {
-        if c == 0xE0 {
-            if c1 < 0xA0 {
-                return 0;
-            }
-        } else if c == 0xED {
-            if c1 >= 0xA0 {
-                return 0;
-            }
-        } else if c == 0xEF && c1 == 0xBF && c2 >= 0xBE {
-            return 33;
-        }
-        return 3;
-    }
-    if c3 & 0xC0 != 0x80 {
-        return 0;
-    }
-    if c == 0xF0 {
-        if c1 < 0x90 {
-            return 0;
-        }
-    } else if c >= 0xF4 && (c > 0xF4 || c1 >= 0x90) {
-        return 0;
-    }
-    4
-}
+pub use crate::lenient::multibyte_len;
 
 /// The tree side of parsing an entity's content (`xmlCtxtParseEntity`,
 /// `xmlCtxtParseContentInternal`).
