@@ -3,7 +3,10 @@
 # as 64-bit ones, and builds for wasm32-unknown-unknown (browsers,
 # Cloudflare Workers). text, url, regex, json, xxhash, snappy, lz4, zstd,
 # archive, png, font and wasm also pass their tests on wasm32-wasip1,
-# under wasmtime (on PATH).
+# under wasmtime (on PATH). text, url, regex and json pass them built with
+# SIMD128 too, where their NEON kernels run on WebAssembly vectors
+# (verilith-simd's `wasm_neon`); the SIMD128 pass also runs
+# verilith-simd's NEON wrapper tests there.
 #   scripts/wasm32.sh             the builds and the tests
 #   scripts/wasm32.sh build       the build checks only
 #   (Verus for wasm32: each crate's scripts/verify-narrow.sh.)
@@ -16,6 +19,8 @@ cd "$(dirname "$0")/.."
 # library. sync's tests spawn threads, which wasip1 does not have, so it
 # is built only.)
 TESTED="text url regex json xxhash snappy lz4 zstd archive png font wasm"
+# Also tested with SIMD128: the crates with NEON kernels.
+SIMD_TESTED="text url regex json"
 
 rustup target add wasm32-unknown-unknown wasm32-wasip1 > /dev/null
 
@@ -48,4 +53,13 @@ export CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime run -W max-wasm-stack=8388608
 for c in $TESTED; do
   echo "== test $c on wasm32-wasip1"
   cargo test --release --target wasm32-wasip1 -p "verilith-$c" --lib --tests
+done
+
+# The same with SIMD128, plus the NEON wrappers against their references.
+# (Its own target directory: RUSTFLAGS would otherwise rebuild the above.)
+python3 crates/simd/tools/check_wasm_neon.py
+for c in simd http jpeg webp $SIMD_TESTED; do
+  echo "== test $c on wasm32-wasip1 with simd128"
+  RUSTFLAGS="-C target-feature=+simd128" CARGO_TARGET_DIR=target/wasm-simd128 \
+    cargo test --release --target wasm32-wasip1 -p "verilith-$c" --lib --tests
 done

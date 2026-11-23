@@ -2,7 +2,7 @@
 //! and reason phrases. Each finds the first byte outside its class 16 bytes
 //! at a time (SSE2 on x86-64, NEON on AArch64) and is proven to return
 //! exactly `spec::run_end`.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128")))]
 use crate::lanes::*;
 use crate::parse::{get8, scan_target, scan_token, scan_value, tchar};
 use crate::spec::*;
@@ -26,7 +26,7 @@ pub proof fn lemma_run_skip(b: Seq<u8>, p: int, q: int, k: Cls)
 
 } // verus!
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128")))]
 verus! {
 
 /// The lowest set bit of a nonzero 16-bit mask.
@@ -544,7 +544,7 @@ pub fn scan_target_fast(b: &[u8], i: usize) -> (r: (usize, Ghost<nat>))
 
 } // verus!
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128"))))]
 verus! {
 
 pub fn scan_token_fast(b: &[u8], i: usize) -> (r: (usize, Ghost<nat>))
@@ -579,7 +579,7 @@ pub fn scan_target_fast(b: &[u8], i: usize) -> (r: (usize, Ghost<nat>))
 
 } // verus!
 
-#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128"))))]
 mod tests {
     use super::*;
 

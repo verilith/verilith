@@ -1290,6 +1290,7 @@ dependencies = [
  "verilith-core",
  "verilith-dns",
  "verilith-font",
+ "verilith-gif",
  "verilith-hpack",
  "verilith-http",
  "verilith-jpeg",
@@ -1302,6 +1303,7 @@ dependencies = [
  "verilith-snappy",
  "verilith-sync",
  "verilith-text",
+ "verilith-tiff",
  "verilith-url",
  "verilith-wasm",
  "verilith-webp",
@@ -1381,6 +1383,14 @@ version = "0.1.0"
 dependencies = [
  "verilith-brotli",
  "verilith-zlib",
+ "vstd",
+]
+
+[[package]]
+name = "verilith-gif"
+version = "0.1.0"
+dependencies = [
+ "verilith-core",
  "vstd",
 ]
 
@@ -1498,6 +1508,16 @@ dependencies = [
  "unicode-normalization",
  "verilith-core",
  "verilith-simd",
+ "vstd",
+]
+
+[[package]]
+name = "verilith-tiff"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "verilith-core",
+ "verilith-zlib",
  "vstd",
 ]
 
