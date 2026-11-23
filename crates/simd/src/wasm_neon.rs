@@ -55,6 +55,7 @@ broadcast use crate::neon::group_neon;
 // Loads and stores
 // ---------------------------------------------------------------------------
 
+/// The 16 bytes at `s[i..i + 16]`.
 #[inline(always)]
 pub fn vld1q_u8_at(s: &[u8], i: usize) -> (r: uint8x16_t)
     requires
@@ -66,6 +67,7 @@ pub fn vld1q_u8_at(s: &[u8], i: usize) -> (r: uint8x16_t)
     w_load(s, i)
 }
 
+/// Stores `v` at `s[i..i + 16]`.
 #[inline(always)]
 pub fn vst1q_u8_at(s: &mut [u8], i: usize, v: uint8x16_t)
     requires
@@ -77,6 +79,7 @@ pub fn vst1q_u8_at(s: &mut [u8], i: usize, v: uint8x16_t)
     w_store(s, i, v)
 }
 
+/// The eight 16-bit values at `s[i..i + 8]`.
 #[inline(always)]
 pub fn vld1q_u16_at(s: &[u16], i: usize) -> (r: uint8x16_t)
     requires
@@ -88,6 +91,7 @@ pub fn vld1q_u16_at(s: &[u16], i: usize) -> (r: uint8x16_t)
     w_load16(s, i)
 }
 
+/// Stores `v` as eight 16-bit values at `s[i..i + 8]`.
 #[inline(always)]
 pub fn vst1q_u16_at(s: &mut [u16], i: usize, v: uint8x16_t)
     requires
@@ -99,6 +103,7 @@ pub fn vst1q_u16_at(s: &mut [u16], i: usize, v: uint8x16_t)
     w_store16(s, i, v)
 }
 
+/// The four 32-bit values at `s[i..i + 4]`.
 #[inline(always)]
 pub fn vld1q_u32_at(s: &[u32], i: usize) -> (r: uint8x16_t)
     requires
@@ -114,6 +119,12 @@ pub fn vld1q_u32_at(s: &[u32], i: usize) -> (r: uint8x16_t)
 // One instruction each
 // ---------------------------------------------------------------------------
 
+/// `vdupq_n_u8` (the NEON instruction on AArch64, `crate::emu_neon` elsewhere) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires neon()
+/// ensures  n8(r) == splat8(x, 16)
+/// ```
 #[inline(always)]
 pub fn vdupq_n_u8(x: u8) -> (r: uint8x16_t)
     requires
@@ -126,6 +137,12 @@ pub fn vdupq_n_u8(x: u8) -> (r: uint8x16_t)
     r
 }
 
+/// `vandq_u8` (the NEON instruction on AArch64, `crate::emu_neon` elsewhere) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires neon()
+/// ensures  n8(r) == and8(n8(a), n8(b))
+/// ```
 #[inline(always)]
 pub fn vandq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     requires
@@ -138,6 +155,12 @@ pub fn vandq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     r
 }
 
+/// `vorrq_u8` (the NEON instruction on AArch64, `crate::emu_neon` elsewhere) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires neon()
+/// ensures  n8(r) == or8(n8(a), n8(b))
+/// ```
 #[inline(always)]
 pub fn vorrq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     requires
@@ -150,6 +173,12 @@ pub fn vorrq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     r
 }
 
+/// `veorq_u8` (the NEON instruction on AArch64, `crate::emu_neon` elsewhere) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires neon()
+/// ensures  n8(r) == xor8(n8(a), n8(b))
+/// ```
 #[inline(always)]
 pub fn veorq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     requires
@@ -162,6 +191,12 @@ pub fn veorq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     r
 }
 
+/// `vaddq_u8` (the NEON instruction on AArch64, `crate::emu_neon` elsewhere) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires neon()
+/// ensures  n8(r) == add8(n8(a), n8(b))
+/// ```
 #[inline(always)]
 pub fn vaddq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     requires
@@ -174,6 +209,7 @@ pub fn vaddq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     r
 }
 
+/// Unsigned saturating subtraction (`uqsub`).
 #[inline(always)]
 pub fn vqsubq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     requires
@@ -186,6 +222,12 @@ pub fn vqsubq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     r
 }
 
+/// `vceqq_u8` (the NEON instruction on AArch64, `crate::emu_neon` elsewhere) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires neon()
+/// ensures  n8(r) == cmpeq8(n8(a), n8(b))
+/// ```
 #[inline(always)]
 pub fn vceqq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     requires
@@ -198,6 +240,8 @@ pub fn vceqq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     r
 }
 
+/// `a <= b` on unsigned bytes, as a byte mask (`cmhs` with the operands
+/// swapped).
 #[inline(always)]
 pub fn vcleq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     requires
@@ -223,6 +267,7 @@ pub fn vqtbl1q_u8(t: uint8x16_t, idx: uint8x16_t) -> (r: uint8x16_t)
     r
 }
 
+/// Interleaves the low halves of `a` and `b`.
 #[inline(always)]
 pub fn vzip1q_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     requires
@@ -235,6 +280,7 @@ pub fn vzip1q_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     r
 }
 
+/// Interleaves the high halves of `a` and `b`.
 #[inline(always)]
 pub fn vzip2q_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     requires
@@ -247,6 +293,7 @@ pub fn vzip2q_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     r
 }
 
+/// The even bytes of `a`, then those of `b`.
 #[inline(always)]
 pub fn vuzp1q_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     requires
@@ -259,6 +306,7 @@ pub fn vuzp1q_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     r
 }
 
+/// The low 16 bits of the products of the 16-bit lanes (`mul`).
 #[inline(always)]
 pub fn vmulq_u16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     requires
@@ -271,6 +319,7 @@ pub fn vmulq_u16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     r
 }
 
+/// The low 32 bits of the products of the 32-bit lanes (`mul`).
 #[inline(always)]
 pub fn vmulq_u32(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     requires
@@ -283,6 +332,7 @@ pub fn vmulq_u32(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     r
 }
 
+/// The sums of adjacent bytes, as eight 16-bit lanes (`uaddlp`).
 #[inline(always)]
 pub fn vpaddlq_u8(a: uint8x16_t) -> (r: uint8x16_t)
     requires
@@ -295,6 +345,7 @@ pub fn vpaddlq_u8(a: uint8x16_t) -> (r: uint8x16_t)
     r
 }
 
+/// The sums of adjacent 16-bit lanes, as four 32-bit lanes (`uaddlp`).
 #[inline(always)]
 pub fn vpaddlq_u16(a: uint8x16_t) -> (r: uint8x16_t)
     requires
@@ -307,6 +358,7 @@ pub fn vpaddlq_u16(a: uint8x16_t) -> (r: uint8x16_t)
     r
 }
 
+/// The low 64 bits, little-endian.
 #[inline(always)]
 pub fn vgetq_lane_u64_0(a: uint8x16_t) -> (r: u64)
     requires
@@ -317,6 +369,7 @@ pub fn vgetq_lane_u64_0(a: uint8x16_t) -> (r: u64)
     w_extract64::<0>(a)
 }
 
+/// The high 64 bits, little-endian.
 #[inline(always)]
 pub fn vgetq_lane_u64_1(a: uint8x16_t) -> (r: u64)
     requires
@@ -331,6 +384,7 @@ pub fn vgetq_lane_u64_1(a: uint8x16_t) -> (r: u64)
 // Shifts: the count modulo 8
 // ---------------------------------------------------------------------------
 
+/// Logical shift right of each byte by `N` (1 to 8).
 #[inline(always)]
 pub fn vshrq_n_u8<const N: i32>(a: uint8x16_t) -> (r: uint8x16_t)
     requires
@@ -458,6 +512,7 @@ fn max_round8<const K: u32>(x: uint8x16_t, Ghost(a): Ghost<Seq<u8>>) -> (y: uint
     y
 }
 
+/// The largest byte.
 #[inline(always)]
 pub fn vmaxvq_u8(a: uint8x16_t) -> (r: u8)
     requires
@@ -556,6 +611,7 @@ fn max_round16<const K: u32>(x: uint8x16_t, Ghost(a): Ghost<Seq<u16>>) -> (y: ui
     y
 }
 
+/// The largest of the eight 16-bit lanes.
 #[inline(always)]
 pub fn vmaxvq_u16(a: uint8x16_t) -> (r: u16)
     requires
