@@ -131,6 +131,7 @@ const E_JUNK_AFTER_DOC_ELEMENT: c_int = 9;
 const E_PARAM_ENTITY_REF: c_int = 10;
 const E_UNDEFINED_ENTITY: c_int = 11;
 const E_RECURSIVE_ENTITY_REF: c_int = 12;
+const E_ASYNC_ENTITY: c_int = 13;
 const E_BAD_CHAR_REF: c_int = 14;
 const E_BINARY_ENTITY_REF: c_int = 15;
 const E_ATTRIBUTE_EXTERNAL_ENTITY_REF: c_int = 16;
@@ -564,8 +565,8 @@ impl Parser {
                 let (code, at) = classify(slice, &e);
                 self.err_at = at.max(prefix_len);
                 if self.ext.is_some() && e.offset >= slice.len().saturating_sub(WRAP_END.len()) && code == E_TAG_MISMATCH {
-                    // The wrapper's end tag closed an element of the entity.
-                    return self.fail(E_TAG_MISMATCH);
+                    // The entity ended inside an element it began.
+                    return self.fail(E_ASYNC_ENTITY);
                 }
                 return self.fail(code);
             }
@@ -834,6 +835,10 @@ fn classify_code(text: &[u8], e: &super::Error, off: usize) -> c_int {
     // The verified parser points at an element's start tag when the tag is
     // wrong as a whole, or when the input ended inside the element.
     if rest.starts_with(b"<") && !rest.starts_with(b"</") && !rest.starts_with(b"<?") && !rest.starts_with(b"<!") {
+        // Not a name after '<'.
+        if rest.len() > 1 && !(rest[1].is_ascii_alphabetic() || rest[1] == b'_' || rest[1] == b':' || rest[1] >= 0x80) {
+            return E_INVALID_TOKEN;
+        }
         if duplicate_at(text, off).is_some() {
             return E_DUPLICATE_ATTRIBUTE;
         }
@@ -862,6 +867,10 @@ fn classify_code(text: &[u8], e: &super::Error, off: usize) -> c_int {
         return E_UNCLOSED_CDATA_SECTION;
     }
     if rest.starts_with(b"</") {
+        // The input ends inside the end tag.
+        if !rest.contains(&b'>') && depth.map_or(false, |d| d > 0) {
+            return E_UNCLOSED_TOKEN;
+        }
         return if depth.map_or(false, |d| d > 0) { E_TAG_MISMATCH } else { E_INVALID_TOKEN };
     }
     if depth.is_none() && !rest.starts_with(b"<") && !is_ws(rest[0]) {
@@ -884,6 +893,9 @@ fn classify_code(text: &[u8], e: &super::Error, off: usize) -> c_int {
             None => E_UNDEFINED_ENTITY,
             Some(Decl::Unparsed) => E_BINARY_ENTITY_REF,
             Some(Decl::External) if in_attribute(&text[..off]) => E_ATTRIBUTE_EXTERNAL_ENTITY_REF,
+            // An element begun in the entity's text and not ended there,
+            // or ended there and not begun.
+            Some(Decl::Internal) if internal_value(text, name).is_some_and(|v| !balanced(v)) => E_ASYNC_ENTITY,
             Some(_) => E_RECURSIVE_ENTITY_REF,
         };
     }
@@ -968,6 +980,52 @@ fn declared_kind(text: &[u8], name: &[u8]) -> Option<Decl> {
         i = p + 1;
     }
     None
+}
+
+/// The literal value of the internal general entity `name`, by a scan of
+/// the text (for error codes only).
+fn internal_value<'a>(text: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
+    let mut i = 0;
+    while let Some(p) = find(text, i, b"<!ENTITY") {
+        let mut j = p + 8;
+        while j < text.len() && is_ws(text[j]) {
+            j += 1;
+        }
+        if text[j..].starts_with(name) && text.get(j + name.len()).is_some_and(|&c| is_ws(c)) {
+            let mut k = j + name.len();
+            while k < text.len() && is_ws(text[k]) {
+                k += 1;
+            }
+            let q = *text.get(k)?;
+            if q != b'"' && q != b'\'' {
+                return None;
+            }
+            let e = text[k + 1..].iter().position(|&c| c == q)? + k + 1;
+            return Some(&text[k + 1..e]);
+        }
+        i = p + 1;
+    }
+    None
+}
+
+/// Whether the elements in `v` end where they begin.
+fn balanced(v: &[u8]) -> bool {
+    let mut depth = 0usize;
+    let mut i = 0;
+    while let Some(k) = v[i..].iter().position(|&c| c == b'<') {
+        let t = &v[i + k..];
+        let end = t.iter().position(|&c| c == b'>').map_or(t.len(), |e| e + 1);
+        if t.starts_with(b"</") {
+            if depth == 0 {
+                return false;
+            }
+            depth -= 1;
+        } else if !t.starts_with(b"<!") && !t.starts_with(b"<?") && !t[..end].ends_with(b"/>") {
+            depth += 1;
+        }
+        i += k + end.max(1);
+    }
+    depth == 0
 }
 
 /// How many elements are open at the end of `s` (`None` before the root),
@@ -1068,7 +1126,13 @@ impl Parser {
                 return STATUS_SUSPENDED;
             }
             if self.parsing == P_FINISHED {
-                return if self.error != E_NONE { STATUS_ERROR } else { STATUS_OK };
+                // Stopped by a handler: a suspended parser stopped for good
+                // is aborted, as libexpat's processors report it.
+                if self.error == E_NONE {
+                    self.error = E_ABORTED;
+                    self.err_at = self.ev.0;
+                }
+                return STATUS_ERROR;
             }
             if self.phase == Phase::Done {
                 let n = self.text().len() - if self.ext.is_some() { WRAP_END.len() } else { 0 };
