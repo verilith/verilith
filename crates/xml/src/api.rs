@@ -16,6 +16,13 @@ use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+#[cfg(feature = "expat-abi")]
+mod expat;
+#[cfg(feature = "libxml2-abi")]
+// libxml2's tables of codes and struct fields are kept whole, used or not.
+#[allow(dead_code)]
+mod libxml2;
+
 /// Why a document was rejected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorKind {

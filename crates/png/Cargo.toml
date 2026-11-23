@@ -15,6 +15,11 @@ crate-type = ["rlib", "staticlib"]
 vstd = { workspace = true, features = ["std"] }
 verilith-zlib = { path = "../zlib", version = "0.1.0" }
 
+[features]
+# Export the libpng API under libpng's own names (`png_read_info`), not
+# `vpng_read_info`, so that the static library is a drop-in libpng.
+libpng-abi = []
+
 [package.metadata.verus]
 verify = true
 

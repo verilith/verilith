@@ -36,7 +36,7 @@ top of the shared code spec and proofs here.
 
 ```toml
 [dependencies]
-verilith-core = { git = "https://github.com/verilith/verilith/tree/main/crates/core", rev = "..." }
+verilith-core = { git = "https://github.com/verilith/verilith", rev = "..." }
 vstd = "=0.0.0-2026-11-01-0251"
 ```
 
@@ -44,7 +44,7 @@ Spec functions are erased in a normal build, so import them under
 `#[cfg(verus_only)]` (or `verus_keep_ghost`), as the libraries do.
 
 Without the default `std` feature the crate is `no_std` and needs only
-`alloc` (`vcore = { ..., default-features = false }`, with vstd's
+`alloc` (`verilith-core = { ..., default-features = false }`, with vstd's
 `default-features = false, features = ["alloc"]`). The checksum kernels
 are then chosen from the target's compile-time CPU features (for example
 `-C target-feature=+avx2`) instead of being detected at run time. The
@@ -114,5 +114,5 @@ needs `cargo-verus` from Verus commit
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/core/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/core/LICENSE-MIT), at your option.

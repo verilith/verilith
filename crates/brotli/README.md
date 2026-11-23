@@ -19,15 +19,32 @@ a differential test against google/brotli on valid and corrupted streams.
 **Speed:** measured with [vbench](https://github.com/verilith/verilith/tree/main/bench)'s
 `brotli-decode` comparison (the same C driver linked with each library,
 Silesia files compressed at quality 5 and 11, one-shot and streamed, 28
-cases). On an Apple M3 Pro, verilith-brotli runs at 0.94x of google/brotli 1.2.0
-as a geometric mean (three sittings, 0.946, 0.942 and 0.939, 31 pairs per
-case): 0.98x to 0.99x on whole files at quality 5, 0.96x on whole files at
+cases). On an Apple M3 Pro, verilith-brotli runs at 0.95x of google/brotli 1.2.1
+as a geometric mean in the run in the [repository's benchmark
+table](../../README.md#benchmarks) (2026-11-22, 31 pairs per case). An
+earlier set of three sittings against 1.2.0 (0.946, 0.942 and 0.939)
+broke it down as follows: 0.98x to 0.99x on whole files at quality 5, 0.96x on whole files at
 quality 11, 0.87x to 0.92x on 64 KiB inputs and 0.83x to 0.85x on 4 KiB
 inputs, where set-up cost dominates. It is faster than google/brotli
 on sao at both qualities and on x-ray at
 quality 5. On a 4-core Xeon Linux VM, which is noisy (95% intervals about
 +/-0.05), the geometric mean was 0.83x before the side-by-side tables
 (below) and has not been re-measured since.
+
+## Using it from Rust
+
+```rust
+fn main() -> Result<(), verilith_brotli::Error> {
+    // A Brotli stream holding "hello" in one uncompressed meta-block.
+    let input = [0x40, 0x00, 0x10, b'h', b'e', b'l', b'l', b'o', 0x03];
+    let out = verilith_brotli::decompress(&input, 1 << 30)?; // up to the limit
+    assert_eq!(out, b"hello");
+    Ok(())
+}
+```
+
+`Stream` decompresses in pieces, into an output buffer of any size:
+`decompress` is a loop over it.
 
 ## What is proven
 
@@ -145,8 +162,8 @@ CI (`.github/workflows/ci.yml` at the repository root) verifies the proofs and r
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/brotli/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/brotli/LICENSE-MIT), at your option.
 
 `tests/data` and `src/dictionary.bin` come from google/brotli and are
-under its MIT license, whose notice is in [LICENSE-brotli](LICENSE-brotli).
+under its MIT license, whose notice is in [LICENSE-brotli](https://github.com/verilith/verilith/blob/main/crates/brotli/LICENSE-brotli).

@@ -1,2 +1,5 @@
 /difftest/refpng
 /bench/target
+/difftest/abitest-libpng
+/difftest/abitest-vpng
+/difftest/upstream/

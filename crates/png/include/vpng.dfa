@@ -1,0 +1,18 @@
+# verilith-png: what the libpng drop-in implements. Read only.
+option WRITE off
+option SIMPLIFIED_READ off
+option SIMPLIFIED_WRITE off
+option READ_GAMMA off
+option READ_ALPHA_MODE off
+option READ_BACKGROUND off
+option READ_RGB_TO_GRAY off
+option READ_QUANTIZE off
+option MNG_FEATURES off
+option READ_sPLT off
+option READ_pCAL off
+option READ_sCAL off
+option READ_cICP off
+option READ_cLLI off
+option READ_mDCV off
+option DISABLE_ADLER32_CHECK off
+option ARM_NEON_API off

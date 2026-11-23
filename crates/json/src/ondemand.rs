@@ -2001,3 +2001,11 @@ impl Drop for Reader<'_> {
         std::mem::swap(self.home, &mut self.c.w.buf);
     }
 }
+
+impl core::fmt::Display for Mismatch {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("the JSON at the cursor is not what was asked for")
+    }
+}
+
+impl std::error::Error for Mismatch {}

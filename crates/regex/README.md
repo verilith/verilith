@@ -26,7 +26,7 @@ The proof covers the whole path: the parser, the compiler to a program for
 an automaton, and the matcher (a Pike VM, with a lazy DFA in front of it
 that passes over text where no match can be). Nothing in that path is assumed
 or tested instead of proven; what is trusted is listed in
-[TRUST.md](TRUST.md).
+[TRUST.md](https://github.com/verilith/verilith/blob/main/crates/regex/TRUST.md).
 
 ```rust
 let re = verilith_regex::Regex::new(br"(?P<year>\d{4})-(?P<month>\d{2})").unwrap();
@@ -80,7 +80,7 @@ parser over the bytes of the pattern.
   made (as a ghost value, erased when compiled), proven to be at most
   `(text.len() - from + 2) * step_cost(P, S)` with
 
-  ```
+  ```text
   step_cost(P, S) = pike_cost(P, S) + dfa_cost(P) + memo_cost(P, S) + 2 + 34 * quick_cost(P, S)
   pike_cost(P, S) = 5 * (S + 3) * P + (S + 67) * P + (S + 67) + 7 * P + 7 * S + 12
   dfa_cost(P)     = 331 * P + 302
@@ -353,8 +353,8 @@ its header says how to build the two programs it needs.
 
 ## Licence
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/regex/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/regex/LICENSE-MIT), at your option.
 
 The Unicode tables in `src/tables.rs` are generated from RE2's, which are
-under the BSD licence in [LICENSE-re2](LICENSE-re2).
+under the BSD licence in [LICENSE-re2](https://github.com/verilith/verilith/blob/main/crates/regex/LICENSE-re2).

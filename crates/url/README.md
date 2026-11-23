@@ -15,6 +15,20 @@ crates produce the same href (562 inputs; on the other 65 the `url` crate
 departs from the Standard). On a 20,000-URL corpus the hrefs agree on
 19,997 and the accessors on all of those.
 
+```rust
+use verilith_url::compat::Url;
+
+fn main() -> Result<(), verilith_url::compat::ParseError> {
+    let base = Url::parse("https://example.com/a/b?x=1")?;
+    let u = base.join("../c?q=v%20w#top")?;
+    assert_eq!(u.as_str(), "https://example.com/c?q=v%20w#top");
+    assert_eq!(u.host_str(), Some("example.com"));
+    assert_eq!(u.port_or_known_default(), Some(443));
+    assert_eq!(u.query_pairs().next(), Some(("q".into(), "v w".into())));
+    Ok(())
+}
+```
+
 The verified parser decides whether an input is accepted. When it is
 rejected, the `ParseError` reason comes from a separate diagnostic pass in
 plain Rust: the reason is best effort, the rejection is not. It matches the
@@ -108,7 +122,7 @@ that verilith-url itself produced:
   count is not bounded by a constant, and once per byte that a bulk copy
   moves. The theorem is
 
-  ```
+  ```text
   steps(parse(input, base)) <= parse_cost(n, m) = 19n + 160 + 20 * 128 * (n + m + 2) + 128n
   ```
 
@@ -175,8 +189,9 @@ as their own crates in this repository. CI (`.github/workflows/ci.yml` at the re
 
 ## Testing
 
-Everything below runs in the CI workflow (`.github/workflows/ci.yml`, manual runs only),
-alongside the Verus proof check.
+Everything below runs in the CI workflow (`.github/workflows/ci.yml` at the
+repository root), alongside the Verus proof check, on every pull request and
+push to `main` that touches this crate or one it depends on.
 
 - The WPT `urltestdata.json` suite passes in full (896/896), as do
   `setters_tests.json` (278/278) and `toascii.json`: `cargo test`.
@@ -266,7 +281,7 @@ through a C++ shim. It expects ada and the dataset to be cloned under
 
 ## Building
 
-```
+```text
 cargo build --profile release-fat          # rlib + staticlib exporting vurl_* symbols
 cargo build --profile release-fat --features ada-abi   # export ada_* symbols instead
 cargo verus focus              # verify (needs Verus at the commit pinned in ci.yml)
@@ -277,8 +292,8 @@ place of ada needs no source changes.
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/url/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/url/LICENSE-MIT), at your option.
 
 The URL test data in `tests/data` comes from web-platform-tests
-(BSD-3-Clause); see [LICENSE-wpt](LICENSE-wpt).
+(BSD-3-Clause); see [LICENSE-wpt](https://github.com/verilith/verilith/blob/main/crates/url/LICENSE-wpt).

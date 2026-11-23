@@ -1,15 +1,16 @@
-//! Verilith: formally verified (Verus) drop-in replacements for foundational
-//! libraries.
-//!
-//! This crate holds no code of its own. Each feature re-exports one library
-//! crate under a short name, and no feature is on by default:
-//!
-//! ```toml
-//! verilith = { version = "0.1", features = ["json", "zlib"] }
-//! ```
-//!
-//! gives `verilith::json` and `verilith::zlib`. Depending on `verilith-json`
-//! directly is the same code with a shorter dependency list.
+#![doc = include_str!("../README.md")]
+// Verilith: formally verified (Verus) drop-in replacements for foundational
+// libraries.
+//
+// This crate holds no code of its own. Each feature re-exports one library
+// crate under a short name, and no feature is on by default:
+//
+// ```toml
+// verilith = { version = "0.1", features = ["json", "zlib"] }
+// ```
+//
+// gives `verilith::json` and `verilith::zlib`. Depending on `verilith-json`
+// directly is the same code with a shorter dependency list.
 #![no_std]
 
 /// `verilith-archive`: zip and tar readers behind libarchive's read API.

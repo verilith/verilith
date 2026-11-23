@@ -92,10 +92,13 @@ The one-pass parser emits tokens to a `Sink`. Two sinks exist:
 ### Rust API
 
 ```rust
-let doc = verilith_json::parse(br#"{"name": "verilith-json", "n": 2}"#)?;
-let root = doc.root();
-assert_eq!(root.get("name").unwrap().as_str().as_deref(), Some("verilith-json"));
-assert_eq!(root.get("n").unwrap().as_i64(), Some(2));
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let doc = verilith_json::parse(br#"{"name": "verilith-json", "n": 2}"#)?;
+    let root = doc.root();
+    assert_eq!(root.get("name").unwrap().as_str().as_deref(), Some("verilith-json"));
+    assert_eq!(root.get("n").unwrap().as_i64(), Some(2));
+    Ok(())
+}
 ```
 
 `Value` is a borrowed view with `kind`, `as_bool`, `as_f64`, `as_i64`,
@@ -123,14 +126,18 @@ read the values you want and pass over the rest.
 
 ```rust
 use verilith_json::ondemand::Reader;
-let src = br#"{"skipped": [1, {"x": "y"}], "id": 7, "name": "verilith-json"}"#;
-let (mut idx, mut buf) = (Vec::new(), Vec::new());
-let mut r = Reader::new(src, &mut idx).unwrap();
-r.obj_begin()?;
-assert!(r.find(b"id")?);
-assert_eq!(r.i64()?, 7);
-assert!(r.find(b"name")?);
-assert_eq!(r.str(&mut buf)?, b"verilith-json");
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let src = br#"{"skipped": [1, {"x": "y"}], "id": 7, "name": "verilith-json"}"#;
+    let (mut idx, mut buf) = (Vec::new(), Vec::new());
+    let mut r = Reader::new(src, &mut idx).unwrap();
+    r.obj_begin()?;
+    assert!(r.find(b"id")?);
+    assert_eq!(r.i64()?, 7);
+    assert!(r.find(b"name")?);
+    assert_eq!(r.str(&mut buf)?, b"verilith-json");
+    Ok(())
+}
 ```
 
 `arr_begin`/`arr_next` and `obj_begin`/`obj_next` step through containers
@@ -190,14 +197,17 @@ out. Calls out of order (a value where a member name is due, a mismatched
 close, a second top-level value) are refused rather than written.
 
 ```rust
-let mut w = verilith_json::Writer::new();
-w.begin_object()?;
-w.key("name")?;
-w.string("say \"hi\"\n")?;
-w.key("n")?;
-w.f64(2.5)?;
-w.end_object()?;
-assert_eq!(w.finish()?, br#"{"name":"say \"hi\"\n","n":2.5}"#);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut w = verilith_json::Writer::new();
+    w.begin_object()?;
+    w.key("name")?;
+    w.string("say \"hi\"\n")?;
+    w.key("n")?;
+    w.f64(2.5)?;
+    w.end_object()?;
+    assert_eq!(w.finish()?, br#"{"name":"say \"hi\"\n","n":2.5}"#);
+    Ok(())
+}
 ```
 
 ### serde
@@ -978,7 +988,7 @@ included.
 
 ## Layout
 
-```
+```text
 src/spec.rs      RFC 8259 grammar as Verus spec functions
 src/parser.rs    verified one-pass parser and the Sink trait
 src/index.rs     verified stage 1: the structural index
@@ -1012,8 +1022,8 @@ tests/c/         C harnesses and the upstream-test shim
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/json/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/json/LICENSE-MIT), at your option.
 
 `include/cJSON.h` and the tree-building functions in `src/ffi.rs`, which
 are ported from cJSON 1.7.19, are under cJSON's MIT license, whose notice
