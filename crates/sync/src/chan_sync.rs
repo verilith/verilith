@@ -457,7 +457,7 @@ impl<T> Chan<T> {
         let tracked credit = vstd::invariant::create_open_invariant_credit();
         let ghost mut flag = false;
         let ghost pc = Pc::Take { gone };
-        let r = self.queue.pop() atomically |update| {
+        let r = self.queue.pop_atomic() atomically |update| {
             open_atomic_invariant!(credit => self.inv.borrow() => g => {
                 let tracked ChanG { d: mut dm, q } = g;
                 flag = q@.len() > 0;
@@ -497,7 +497,7 @@ impl<T> Chan<T> {
         let tracked credit = vstd::invariant::create_open_invariant_credit();
         let ghost mut flag = false;
         let ghost pc = Pc::Take { gone };
-        let r = self.queue.push(value) atomically |update| {
+        let r = self.queue.push_atomic(value) atomically |update| {
             open_atomic_invariant!(credit => self.inv.borrow() => g => {
                 let tracked ChanG { d: mut dm, q } = g;
                 flag = q@.len() < self.k().cap;
@@ -626,7 +626,7 @@ impl<T> Chan<T> {
     {
         let tracked credit = vstd::invariant::create_open_invariant_credit();
         let nothing = if d {
-            self.queue.confirm_empty() atomically |update| {
+            self.queue.confirm_empty_atomic() atomically |update| {
                 open_atomic_invariant!(credit => self.inv.borrow() => g => {
                     let tracked ChanG { d: mut dm, q } = g;
                     let tracked Commit(ye): Commit<(QueueView<T>, Ghost<bool>)> = update(q);
@@ -639,7 +639,7 @@ impl<T> Chan<T> {
                 });
             }
         } else {
-            self.queue.confirm_full() atomically |update| {
+            self.queue.confirm_full_atomic() atomically |update| {
                 open_atomic_invariant!(credit => self.inv.borrow() => g => {
                     let tracked ChanG { d: mut dm, q } = g;
                     let tracked Commit(ye): Commit<(QueueView<T>, Ghost<bool>)> = update(q);
