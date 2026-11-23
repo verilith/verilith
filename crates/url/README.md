@@ -217,6 +217,23 @@ push to `main` that touches this crate or one it depends on.
 
 ## Speed
 
+The reference numbers come from an Apple M3 Pro (macOS 27.2.1, on AC
+power), running `bench/run.sh --only url` at commit 15f10cd, against ada
+4.1.1 built from source. That script parses ada's
+[url-dataset](https://github.com/ada-url/url-dataset) (ef70651: 100,031
+URLs, and separately its first 1,000), takes 31 sample pairs per case, and
+checks that both parsers produce the same output. Medians of three runs,
+which agreed within about 2%:
+
+| case | verilith-url ns/URL | ada 4.1.1 ns/URL | ada's time / verilith-url's (95% CI) | instructions, verilith-url / ada |
+|---|---:|---:|---:|---:|
+| 1k URLs | **32.2** | 76.7 | 2.38x (2.36-2.40) | 0.47 |
+| 100k URLs | **46.7** | 79.5 | 1.72x (1.70-1.72) | 0.54 |
+
+So on this machine verilith-url takes 0.42x to 0.59x ada's time. The
+older measurements below came from cloud VMs, used earlier versions of both
+parsers, and include other parsers.
+
 Parsing the 100,025 URLs of ada's
 [url-dataset](https://github.com/ada-url/url-various-datasets) (`out.txt`,
 8.7 MB) on one core of a cloud Intel Xeon vCPU (2.1 GHz nominal). `bench/run.sh` runs each
@@ -298,8 +315,16 @@ through a C++ shim. It expects ada and the dataset to be cloned under
 ```text
 cargo build --profile release-fat          # rlib + staticlib exporting vurl_* symbols
 cargo build --profile release-fat --features ada-abi   # export ada_* symbols instead
-cargo verus focus              # verify (needs Verus at the commit pinned in ci.yml)
+cargo verus focus              # verify (needs the Verus release in scripts/verus-version)
+cargo build --release --target wasm32-unknown-unknown   # WebAssembly
 ```
+
+The proofs fix no pointer width, so they cover 32-bit targets too: the crate
+builds for `wasm32-unknown-unknown` (browsers, Cloudflare Workers). CI also
+runs Verus compiling for that target, so that the code a wasm32 build has
+(no x86 or Arm paths) is checked as compiled there, and runs the tests on
+`wasm32-wasip1` under wasmtime (`scripts/verify-narrow.sh` here, `scripts/wasm32.sh` at the
+root).
 
 The C header is ada's `ada_c.h`. With `ada-abi`, linking `libverilith_url.a` in
 place of ada needs no source changes.

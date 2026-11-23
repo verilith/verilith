@@ -8,8 +8,6 @@ use vstd::prelude::*;
 
 verus! {
 
-global size_of usize == 8;
-
 #[inline(always)]
 pub fn rd8(s: &[u8], i: usize) -> (r: u8)
     requires

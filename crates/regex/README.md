@@ -346,7 +346,16 @@ cargo test --profile release-abort
 scripts/verify.sh                     # needs cargo-verus, see the script
 tests/capi/run.sh                     # C API; see the script for RE2
 scripts/check_tables.sh RE2_CHECKOUT  # the Unicode tables are RE2's
+cargo build --release --target wasm32-unknown-unknown   # WebAssembly
 ```
+
+The crate builds for `wasm32-unknown-unknown` (browsers, Cloudflare
+Workers). The proofs are checked twice, at a fixed pointer width each time:
+on the host with a 64-bit `usize`, and with Verus compiling for
+`wasm32-unknown-unknown` with a 32-bit one, which also covers the code
+without x86 or Arm paths that a wasm32 build has. CI does both, and runs the
+tests on `wasm32-wasip1` under wasmtime (`scripts/verify-narrow.sh` here, `scripts/wasm32.sh` at the
+root).
 
 `tests/diff/diff.py` compares verilith-regex with RE2 on fixed and random cases;
 its header says how to build the two programs it needs.

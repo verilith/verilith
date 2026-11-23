@@ -42,43 +42,8 @@ pub fn is_extender(c: u32) -> bool {
     if c < 0x100 { c == 0xB7 } else { in_ranges(c, &EXTENDER) }
 }
 
-/// `IS_PUBIDCHAR_CH`.
-pub fn is_pubid_char(c: u8) -> bool {
-    matches!(c, 0x20 | 0x0D | 0x0A | b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'\'' | b'(' | b')' | b'+' | b',' | b'.' | b'/' | b':' | b'=' | b'?' | b';' | b'!' | b'*' | b'#' | b'@' | b'$' | b'_' | b'%')
-}
-
-fn name_start_new(c: u32) -> bool {
-    c != 0x20
-        && c != b'>' as u32
-        && c != b'/' as u32
-        && ((b'a' as u32..=b'z' as u32).contains(&c)
-            || (b'A' as u32..=b'Z' as u32).contains(&c)
-            || c == b'_' as u32
-            || c == b':' as u32
-            || (0xC0..=0xD6).contains(&c)
-            || (0xD8..=0xF6).contains(&c)
-            || (0xF8..=0x2FF).contains(&c)
-            || (0x370..=0x37D).contains(&c)
-            || (0x37F..=0x1FFF).contains(&c)
-            || (0x200C..=0x200D).contains(&c)
-            || (0x2070..=0x218F).contains(&c)
-            || (0x2C00..=0x2FEF).contains(&c)
-            || (0x3001..=0xD7FF).contains(&c)
-            || (0xF900..=0xFDCF).contains(&c)
-            || (0xFDF0..=0xFFFD).contains(&c)
-            || (0x10000..=0xEFFFF).contains(&c))
-}
-
-fn name_char_new(c: u32) -> bool {
-    name_start_new(c)
-        || (c != 0x20
-            && ((b'0' as u32..=b'9' as u32).contains(&c)
-                || c == b'-' as u32
-                || c == b'.' as u32
-                || c == 0xB7
-                || (0x300..=0x36F).contains(&c)
-                || (0x203F..=0x2040).contains(&c)))
-}
+pub use crate::lenient::is_pubid_char;
+use crate::lenient::{name_char_new, name_start_new};
 
 /// `xmlIsNameStartChar`.
 pub fn is_name_start(c: u32, old10: bool) -> bool {
