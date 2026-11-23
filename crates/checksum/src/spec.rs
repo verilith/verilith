@@ -1,6 +1,6 @@
 //! Adler-32 (RFC 1950 §8.2), CRC-32 (RFC 1952 §8, ISO 3309) and CRC-32C
 //! (RFC 3720 §12.1 and appendix B.4) as pure functions over `Seq<u8>`: the
-//! trusted specification the exec code in `checksum` is proven to compute.
+//! trusted specification the exec code in this crate is proven to compute.
 use vstd::prelude::*;
 
 verus! {

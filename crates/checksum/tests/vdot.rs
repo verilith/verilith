@@ -1,12 +1,12 @@
-//! The trusted dot-product contracts (`checksum::vdot`) against a plain
+//! The trusted dot-product contracts (`vdot`) against a plain
 //! reference, and the Adler-32 kernels against the portable code, on
 //! random inputs. The AVX-512 checks need AVX-512 VNNI and are skipped,
 //! with a message, on a CPU without it.
 #![cfg(target_arch = "x86_64")]
 #![allow(unsafe_op_in_unsafe_fn)]
-use verilith_core::checksum::adlerv::*;
-use verilith_core::checksum::vdot::*;
-use verilith_core::checksum::{adler32_update, cpu};
+use verilith_checksum::adlerv::*;
+use verilith_simd::vdot::*;
+use verilith_checksum::{adler32_update, cpu};
 
 struct Rng(u64);
 impl Rng {

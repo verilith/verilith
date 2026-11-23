@@ -21,6 +21,12 @@
 // - `cpu` (trusted): CPU-feature predicates and run-time detection.
 // - `neon` (trusted): wrappers over the AArch64 NEON intrinsics, with
 //   specs in terms of `ops`; off AArch64 they call `emu_neon`.
+// - `clmul` (trusted, wrappers on x86-64 only): carry-less multiplication
+//   (`pclmulqdq`, `vpclmulqdq` on 256 and 512 bits) as the CRC-32 folding
+//   kernels in verilith-checksum use it, with its spec `clmul`.
+// - `dot`, `vdot` (trusted, x86-64) and `vudot` (trusted, AArch64): byte
+//   dot products (`vpdpbusd`, `vpmaddubsw`/`vpmaddwd`, `udot`) as the
+//   Adler-32 kernels in verilith-checksum use them.
 // - `refs`: verified scalar implementations of every `ops` function, which
 //   `tests/difftest.rs` compares with the CPU.
 // A normal build erases ghost code, so a variable, import, field or value
@@ -83,3 +89,8 @@ pub mod refs;
 #[cfg(feature = "alloc")]
 pub mod refs_neon;
 pub mod patterns;
+pub mod clmul;
+pub mod dot;
+#[cfg(target_arch = "x86_64")]
+pub mod vdot;
+pub mod vudot;

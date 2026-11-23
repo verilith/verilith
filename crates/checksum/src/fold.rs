@@ -27,7 +27,7 @@
 //!   blocks folded into one (`lemma_eff4`).
 //!
 //! The kernels at the end (x86-64 only) are verified against these; what
-//! they trust is `vclmul.rs`: that the instructions compute `clmul` and
+//! they trust is verilith-simd's `clmul`: that the instructions compute `clmul` and
 //! that loads read bytes in order.
 #[cfg(verus_only)]
 use super::lanes::lemma_steps_zero;
@@ -35,6 +35,8 @@ use super::lanes::lemma_steps_zero;
 use super::spec::{crc_step, crc_steps, CRC_POLY};
 #[cfg(verus_only)]
 use super::{crc_from, lemma_crc_append, lemma_steps_add, lemma_steps_xor};
+#[cfg(verus_only)]
+pub use verilith_simd::clmul::{bytes16, clmul, clmul_n, flat, fold_with, hi64, lo64};
 use vstd::prelude::*;
 
 verus! {
@@ -53,10 +55,6 @@ pub open spec fn wsteps(v: u128, n: nat) -> u128 decreases n {
     if n == 0 { v } else { wsteps(wstep(v), (n - 1) as nat) }
 }
 
-/// The sixteen bytes of `v`, least significant first.
-pub open spec fn bytes16(v: u128) -> Seq<u8> {
-    Seq::new(16, |k: int| (v >> (8 * k) as u128) as u8)
-}
 
 /// The register after the sixteen bytes of `v`, from zero.
 pub open spec fn crc16(v: u128) -> u32 {
@@ -271,23 +269,7 @@ pub proof fn lemma_crc16_zero()
 // Carry-less multiplication
 // ---------------------------------------------------------------------------
 
-/// The carry-less product of `a`'s bits `i < n` with `b` (`pclmulqdq`).
-pub open spec fn clmul_n(a: u64, b: u64, n: nat) -> u128 decreases n {
-    if n == 0 {
-        0
-    } else {
-        clmul_n(a, b, (n - 1) as nat) ^ (if (a >> (n - 1) as u64) & 1 == 1 {
-            (b as u128) << (n - 1) as u128
-        } else {
-            0
-        })
-    }
-}
 
-/// The 128-bit carry-less product of `a` and `b`.
-pub open spec fn clmul(a: u64, b: u64) -> u128 {
-    clmul_n(a, b, 64)
-}
 
 /// The low `n` bits of `a`.
 pub open spec fn low_bits(a: u64, n: nat) -> u64 {
@@ -478,9 +460,6 @@ proof fn lemma_fold_lane(a: u64, n: nat, o: nat, m: nat)
 
 
 
-/// The low and high quadwords of a block.
-pub open spec fn lo64(v: u128) -> u64 { v as u64 }
-pub open spec fn hi64(v: u128) -> u64 { (v >> 64u128) as u64 }
 
 /// A pair of fold constants as `pclmulqdq` reads them: the low quadword
 /// multiplies a block's low quadword, the high one its high quadword.
@@ -488,11 +467,6 @@ pub open spec fn fold_pair(n: nat) -> u128 {
     ((fold_k((n - 64) as nat) as u128) << 64u128) | (fold_k(n) as u128)
 }
 
-/// `lo64(a) * lo64(k) ^ hi64(a) * hi64(k)`, carry-less: `pclmulqdq` with
-/// immediates 0x00 and 0x11, XORed.
-pub open spec fn fold_with(a: u128, k: u128) -> u128 {
-    clmul(lo64(a), lo64(k)) ^ clmul(hi64(a), hi64(k))
-}
 
 /// A block's CRC effect `n` bits later, as a block.
 pub open spec fn fold(v: u128, n: nat) -> u128 {
@@ -526,10 +500,6 @@ pub proof fn lemma_fold(v: u128, n: nat)
 // Runs of blocks
 // ---------------------------------------------------------------------------
 
-/// The bytes of blocks `xs`, in order.
-pub open spec fn flat(xs: Seq<u128>) -> Seq<u8> decreases xs.len() {
-    if xs.len() == 0 { Seq::empty() } else { flat(xs.drop_last()) + bytes16(xs.last()) }
-}
 
 /// The CRC effect of blocks `xs` from register zero: each block's own
 /// register, stepped past the blocks after it.
@@ -1261,7 +1231,7 @@ pub proof fn lemma_prefix(reg: u32, d: Seq<u8>, i: int, m: int)
 #[cfg(target_arch = "x86_64")]
 verus! {
 
-use super::vclmul::*;
+use verilith_simd::clmul::*;
 
 broadcast use group_vclmul;
 

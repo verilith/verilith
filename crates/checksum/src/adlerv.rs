@@ -13,21 +13,18 @@
 //!
 //! Blocks are at most 1024 rows, which keeps every lane below 2^32
 //! (`s10`, the largest, below `1020 * 1024^2`). The kernels at the end
-//! (x86-64 only) are verified; what they trust is `vdot.rs`.
+//! (x86-64 only) are verified; what they trust is verilith-simd's `vdot` (and `vudot` on AArch64).
 #[cfg(verus_only)]
 use super::{
     adler_from, jsum, lemma_adler_append, lemma_adler_closed, lemma_lanes_bound, lemma_lanes_sum,
     lemma_sum_append, lemma_wsum_jsum, lsum, spec, sum, wsum,
 };
+#[cfg(verus_only)]
+pub use verilith_simd::dot::dot4;
 use vstd::prelude::*;
 
 verus! {
 
-/// The dot product of lane `j`'s four bytes of `x` and `w`.
-pub open spec fn dot4(x: Seq<u8>, w: Seq<u8>, j: int) -> nat {
-    (x[4 * j] as nat) * (w[4 * j] as nat) + (x[4 * j + 1] as nat) * (w[4 * j + 1] as nat) + (x[4 * j
-        + 2] as nat) * (w[4 * j + 2] as nat) + (x[4 * j + 3] as nat) * (w[4 * j + 3] as nat)
-}
 
 /// The dot product of the first `m` bytes of `x` and `w`.
 pub open spec fn dotn(x: Seq<u8>, w: Seq<u8>, m: nat) -> nat
@@ -368,7 +365,7 @@ pub fn block_sums(a: u32, b: u32, s1: &[u32], s10: &[u32], s2: &[u32], Ghost(x):
 #[cfg(target_arch = "x86_64")]
 verus! {
 
-use super::vdot::*;
+use verilith_simd::vdot::*;
 
 broadcast use group_vdot;
 
@@ -619,7 +616,7 @@ use super::super::{adler_from, lemma_adler_append, lemma_lanes_bound, lsum};
 #[cfg(verus_only)]
 use super::{desc_ok, dot4, lemma_dot4_bound, lemma_row, ones_ok, row_inv};
 use super::{block_sums, DESC64, ONES64};
-use super::super::vudot::*;
+use verilith_simd::vudot::*;
 use vstd::prelude::*;
 
 verus! {

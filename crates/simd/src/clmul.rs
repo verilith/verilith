@@ -1,29 +1,72 @@
-//! Carry-less multiplication for the CRC-32 fold (TRUSTED, x86-64 only).
+//! Carry-less multiplication (`pclmulqdq`, `vpclmulqdq`): what it
+//! computes, and wrappers over the instructions as the CRC-32 folding
+//! kernels in verilith-checksum use them (TRUSTED, x86-64 only).
 //!
-//! Each function is one intrinsic, or for `x_fold`/`z_fold` the two
-//! carry-less products and the XOR that make one fold step, with an
-//! `ensures` stating what it computes on the 128-bit blocks of a vector
-//! (`xv`, `zl`), in terms of `fold::clmul` and `fold::bytes16`. Verus takes
-//! these on trust. `tests/vclmul.rs` checks each against the verified
-//! scalar reference `fold::clmul_ref` on random inputs, on a CPU that has
-//! the instructions.
+//! The spec functions (`clmul`, `fold_with`, `bytes16`, `flat`) exist
+//! on every target. Each wrapper is one intrinsic, or for
+//! `x_fold`/`y_fold`/`z_fold` the two carry-less products and the XOR
+//! that make one fold step, with an `ensures` stating what it computes on
+//! the 128-bit blocks of a vector (`xv`, `yl`, `zl`). Verus takes these
+//! on trust. verilith-checksum's `tests/vclmul.rs` checks each against its
+//! verified scalar reference `fold::clmul_ref` on random inputs, on a CPU
+//! that has the instructions.
 //!
-//! Each requires `pclmul()` or `vpclmul()`, which `has_pclmul()` and
-//! `has_vpclmul()` ensure after run-time detection, so verified code
-//! reaches them only on a CPU that has them.
+//! Each requires `pclmul()`, `vpclmul256()` or `vpclmul()`, which
+//! `has_pclmul()`, `has_vpclmul256()` and `has_vpclmul()` ensure after
+//! run-time detection, so verified code reaches them only on a CPU that has
+//! them.
 #![allow(unused_imports, unused_unsafe)]
-#[cfg(verus_only)]
-use super::fold::{bytes16, clmul, flat, fold_with, lo64};
+#[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 use vstd::prelude::*;
 
-// Run-time detection needs `std`; a `no_std` build uses only the features
-// the target is compiled for.
-#[cfg(feature = "std")]
-macro_rules! x86_has { ($f:tt) => { std::is_x86_feature_detected!($f) }; }
-#[cfg(not(feature = "std"))]
-macro_rules! x86_has { ($f:tt) => { cfg!(target_feature = $f) }; }
+verus! {
 
+/// The carry-less product of `a`'s bits `i < n` with `b` (`pclmulqdq`).
+pub open spec fn clmul_n(a: u64, b: u64, n: nat) -> u128 decreases n {
+    if n == 0 {
+        0
+    } else {
+        clmul_n(a, b, (n - 1) as nat) ^ (if (a >> (n - 1) as u64) & 1 == 1 {
+            (b as u128) << (n - 1) as u128
+        } else {
+            0
+        })
+    }
+}
+
+/// The 128-bit carry-less product of `a` and `b`.
+pub open spec fn clmul(a: u64, b: u64) -> u128 {
+    clmul_n(a, b, 64)
+}
+
+/// The low and high quadwords of a block.
+pub open spec fn lo64(v: u128) -> u64 { v as u64 }
+
+pub open spec fn hi64(v: u128) -> u64 { (v >> 64u128) as u64 }
+
+/// `lo64(a) * lo64(k) ^ hi64(a) * hi64(k)`, carry-less: `pclmulqdq` with
+/// immediates 0x00 and 0x11, XORed.
+pub open spec fn fold_with(a: u128, k: u128) -> u128 {
+    clmul(lo64(a), lo64(k)) ^ clmul(hi64(a), hi64(k))
+}
+
+/// The sixteen bytes of `v`, least significant first.
+pub open spec fn bytes16(v: u128) -> Seq<u8> {
+    Seq::new(16, |k: int| (v >> (8 * k) as u128) as u8)
+}
+
+/// The bytes of blocks `xs`, in order.
+pub open spec fn flat(xs: Seq<u128>) -> Seq<u8> decreases xs.len() {
+    if xs.len() == 0 { Seq::empty() } else { flat(xs.drop_last()) + bytes16(xs.last()) }
+}
+
+} // verus!
+
+#[cfg(target_arch = "x86_64")]
+macro_rules! x86_has { ($f:tt) => { std::is_x86_feature_detected!($f) }; }
+
+#[cfg(target_arch = "x86_64")]
 verus! {
 
 /// The CPU running this program has PCLMULQDQ (and SSE2, the x86-64

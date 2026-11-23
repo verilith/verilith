@@ -14,7 +14,7 @@ pub use verilith_core::bits::{bit, bits, code_bits, nbits};
 #[cfg(verus_only)]
 pub use verilith_core::bytes::{be32, le16, le32};
 #[cfg(verus_only)]
-pub use verilith_core::checksum::spec::*;
+pub use verilith_checksum::spec::*;
 #[cfg(verus_only)]
 pub use verilith_core::huffman::{
     count, count_below, decode, decode_from, first_code, left, nth_with_len, no_codes, single_code,
@@ -26,7 +26,7 @@ verus! {
 
 // Bits (RFC 1951 §3.1.1), canonical Huffman codes (§3.2.2), Adler-32 and
 // CRC-32 are specified in vcore (`verilith_core::bits`, `verilith_core::huffman`,
-// `verilith_core::checksum::spec`) and re-exported above.
+// `verilith_checksum::spec`) and re-exported above.
 
 // ---------------------------------------------------------------------------
 // Canonical Huffman codes (RFC 1951 §3.2.2)

@@ -1435,7 +1435,7 @@ impl Stream {
         let chunk = vstd::slice::slice_subrange(self.window.as_slice(), self.out_read, self.out_read + n);
         copy_in(output, *op, self.window.as_slice(), self.out_read, n);
         if self.format == Format::Zlib {
-            let (a, b) = verilith_core::checksum::cpu::adler32_update(self.adler_a, self.adler_b, chunk);
+            let (a, b) = verilith_checksum::cpu::adler32_update(self.adler_a, self.adler_b, chunk);
             proof {
                 lemma_adler_closed(self.adler_a as nat, self.adler_b as nat, chunk@);
                 if self.ok@ {
@@ -1445,7 +1445,7 @@ impl Stream {
             self.adler_a = a;
             self.adler_b = b;
         } else if self.format == Format::Gzip {
-            self.crc = verilith_core::checksum::cpu::crc32_update(self.crc, chunk);
+            self.crc = verilith_checksum::cpu::crc32_update(self.crc, chunk);
             proof {
                 if self.ok@ {
                     lemma_crc_append(0xffff_ffff, d0, chunk@);
@@ -1965,7 +1965,7 @@ impl Stream {
         proof {
             assert(a@ =~= seq![x]);
         }
-        verilith_core::checksum::cpu::crc32_update(c, a.as_slice())
+        verilith_checksum::cpu::crc32_update(c, a.as_slice())
     }
 
     /// One byte of a zlib header.
@@ -2313,7 +2313,7 @@ impl Stream {
                         lemma_crc_append(0xffff_ffff, b.subrange(0, u), chunk@);
                     }
                 }
-                self.hcrc = verilith_core::checksum::cpu::crc32_update(self.hcrc, chunk);
+                self.hcrc = verilith_checksum::cpu::crc32_update(self.hcrc, chunk);
                 self.xleft = self.xleft - n;
                 i = i + n;
                 self.used = Ghost(u + n);
@@ -3205,7 +3205,7 @@ impl Stream {
             ) is None,
     {
         if self.phase == P_DICT {
-            let (a, b) = verilith_core::checksum::cpu::adler32_update(1, 0, d);
+            let (a, b) = verilith_checksum::cpu::adler32_update(1, 0, d);
             proof {
                 lemma_adler_from(d@);
                 lemma_adler_closed(1, 0, d@);

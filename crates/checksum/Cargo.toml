@@ -1,0 +1,23 @@
+[package]
+name = "verilith-checksum"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+description = "Formally verified (Verus) CRC-32, CRC-32C and Adler-32, with verified carry-less-multiply (PCLMULQDQ, VPCLMULQDQ) and dot-product (AVX-512 VNNI, AVX2, NEON udot) kernels"
+edition = "2024"
+repository = "https://github.com/verilith/verilith"
+keywords = ["verified", "verus", "crc32", "adler32", "checksum"]
+categories = ["algorithms", "encoding"]
+
+[dependencies]
+vstd = { workspace = true, features = ["std"] }
+verilith-simd = { path = "../simd", version = "0.1.0" }
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+# Verus erases ghost code during a normal `cargo build`; ghost-only imports
+# are guarded by `verus_only`, which Verus turns on during verification.
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(verus_only)',
+] }

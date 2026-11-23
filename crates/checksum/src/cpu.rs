@@ -1,39 +1,39 @@
 //! CPU-specific checksum kernels (part of the trusted base).
 //!
 //! - `adler32_update` is verified. On x86-64 it runs the verified byte
-//!   dot-product kernels in `checksum::adlerv`: `vpdpbusd` on 64-byte rows
+//!   dot-product kernels in `adlerv`: `vpdpbusd` on 64-byte rows
 //!   with AVX-512 VNNI, `vpmaddubsw`/`vpmaddwd` on 32-byte rows with AVX2.
-//!   Trusted are `vdot.rs` (the instructions' contracts) and the two
+//!   Trusted are verilith-simd's `vdot` (the instructions' contracts) and the two
 //!   trampolines below. On AArch64 with the dot-product extension (every Apple
 //!   Silicon CPU, Graviton 2 and later) it runs `adlerv::udot`, `udot`
-//!   on 64-byte rows, trusting `vudot.rs`; NEON is in the AArch64
+//!   on 64-byte rows, trusting verilith-simd's `vudot`; NEON is in the AArch64
 //!   baseline and the `udot` instruction names its extension itself, so
 //!   no trampoline is needed.
 //! - `crc32_update` is verified. On x86-64 it folds with carry-less
-//!   multiplication (`checksum::fold`): 256 bytes at a time with
+//!   multiplication (`fold`): 256 bytes at a time with
 //!   VPCLMULQDQ on 512-bit vectors when the CPU has AVX-512 and
 //!   VPCLMULQDQ, 128 bytes at a time on 256-bit vectors when it has
 //!   VPCLMULQDQ without AVX-512 (Zen 3, Alder Lake), 64 bytes at a time
-//!   with PCLMULQDQ otherwise. What that trusts is `vclmul.rs` (the
+//!   with PCLMULQDQ otherwise. What that trusts is verilith-simd's `clmul` (the
 //!   instructions' contracts) and the three trampolines below that compile the kernels with those features. On
 //!   AArch64 with the CRC extension (every Apple Silicon CPU) it runs
-//!   `checksum::lanes::crc32_update`, verified down to one assumption: that
+//!   `lanes::crc32_update`, verified down to one assumption: that
 //!   the `crc32x` instruction computes this CRC-32 over its eight bytes
 //!   (`lanes::crc_word`). Short inputs and other CPUs get the table code.
 //! - `crc32c_update` is verified. With SSE4.2 (x86-64) or the CRC
-//!   extension (AArch64) it runs `checksum::crc32c::crc32c_words`, eight
+//!   extension (AArch64) it runs `crc32c::crc32c_words`, eight
 //!   bytes per instruction, verified down to one assumption: that the
 //!   instruction computes CRC-32C over its eight bytes
 //!   (`crc32c::crc32c_word`). Trusted here is the trampoline that compiles
 //!   it with the feature enabled. Other CPUs get the table code.
 #![allow(unsafe_op_in_unsafe_fn)]
 #[cfg(verus_only)]
-use crate::checksum::crc32c::crc32c_from;
+use crate::crc32c::crc32c_from;
 #[cfg(verus_only)]
-use crate::checksum::{adler_from, crc_from};
+use crate::{adler_from, crc_from};
 use vstd::prelude::*;
 
-// Runtime CPU feature detection needs `std`; a `no_std` build uses only
+// Run-time CPU feature detection needs `std`; a `no_std` build uses only
 // the features the target is compiled for.
 #[cfg(all(feature = "std", target_arch = "aarch64"))]
 macro_rules! arm_has { ($f:tt) => { std::arch::is_aarch64_feature_detected!($f) }; }
@@ -58,16 +58,16 @@ pub fn adler32_update(a: u32, b: u32, d: &[u8]) -> (r: (u32, u32))
 {
     #[cfg(target_arch = "x86_64")]
     {
-        if d.len() >= 64 && super::vdot::has_vnni512() {
+        if d.len() >= 64 && verilith_simd::vdot::has_vnni512() {
             return adler32_vnni(a, b, d);
         }
-        if d.len() >= 32 && super::vdot::has_avx2() {
+        if d.len() >= 32 && verilith_simd::vdot::has_avx2() {
             return adler32_avx2(a, b, d);
         }
     }
     #[cfg(target_arch = "aarch64")]
     {
-        if d.len() >= 64 && super::vudot::has_dotprod() {
+        if d.len() >= 64 && verilith_simd::vudot::has_dotprod() {
             return super::adlerv::udot::adler32_udot(a, b, d);
         }
     }
@@ -81,7 +81,7 @@ pub fn adler32_update(a: u32, b: u32, d: &[u8]) -> (r: (u32, u32))
 #[verifier::external_body]
 fn adler32_vnni(a: u32, b: u32, d: &[u8]) -> (r: (u32, u32))
     requires
-        super::vdot::vnni512(),
+        verilith_simd::vdot::vnni512(),
         a < super::ADLER_MOD,
         b < super::ADLER_MOD,
     ensures
@@ -97,7 +97,7 @@ fn adler32_vnni(a: u32, b: u32, d: &[u8]) -> (r: (u32, u32))
 #[verifier::external_body]
 fn adler32_avx2(a: u32, b: u32, d: &[u8]) -> (r: (u32, u32))
     requires
-        super::vdot::avx2(),
+        verilith_simd::vdot::avx2(),
         a < super::ADLER_MOD,
         b < super::ADLER_MOD,
     ensures
@@ -118,13 +118,13 @@ pub fn crc32_update(reg: u32, d: &[u8]) -> (r: u32)
 {
     #[cfg(target_arch = "x86_64")]
     {
-        if d.len() >= VPCLMUL_MIN && super::vclmul::has_vpclmul() {
+        if d.len() >= VPCLMUL_MIN && verilith_simd::clmul::has_vpclmul() {
             return crc32_vpclmul(reg, d);
         }
-        if d.len() >= VPCLMUL256_MIN && super::vclmul::has_vpclmul256() {
+        if d.len() >= VPCLMUL256_MIN && verilith_simd::clmul::has_vpclmul256() {
             return crc32_vpclmul256(reg, d);
         }
-        if d.len() >= PCLMUL_MIN && super::vclmul::has_pclmul() {
+        if d.len() >= PCLMUL_MIN && verilith_simd::clmul::has_pclmul() {
             return crc32_pclmul(reg, d);
         }
     }
@@ -157,7 +157,7 @@ pub const PCLMUL_MIN: usize = 64;
 #[verifier::external_body]
 fn crc32_vpclmul(reg: u32, d: &[u8]) -> (r: u32)
     requires
-        super::vclmul::vpclmul(),
+        verilith_simd::clmul::vpclmul(),
         d@.len() >= 256,
     ensures
         r == crc_from(reg, d@),
@@ -173,7 +173,7 @@ fn crc32_vpclmul(reg: u32, d: &[u8]) -> (r: u32)
 #[verifier::external_body]
 fn crc32_vpclmul256(reg: u32, d: &[u8]) -> (r: u32)
     requires
-        super::vclmul::vpclmul256(),
+        verilith_simd::clmul::vpclmul256(),
         d@.len() >= 128,
     ensures
         r == crc_from(reg, d@),
@@ -188,7 +188,7 @@ fn crc32_vpclmul256(reg: u32, d: &[u8]) -> (r: u32)
 #[verifier::external_body]
 fn crc32_pclmul(reg: u32, d: &[u8]) -> (r: u32)
     requires
-        super::vclmul::pclmul(),
+        verilith_simd::clmul::pclmul(),
         d@.len() >= 64,
     ensures
         r == crc_from(reg, d@),
@@ -270,32 +270,32 @@ fn crc32c_hw(reg: u32, d: &[u8]) -> (r: u32)
 mod tf {
     #[target_feature(enable = "avx512f,avx512bw,avx512vnni")]
     pub(super) unsafe fn adler32_vnni(a: u32, b: u32, d: &[u8]) -> (u32, u32) {
-        crate::checksum::adlerv::adler32_vnni(a, b, d)
+        crate::adlerv::adler32_vnni(a, b, d)
     }
 
     #[target_feature(enable = "avx2")]
     pub(super) unsafe fn adler32_avx2(a: u32, b: u32, d: &[u8]) -> (u32, u32) {
-        crate::checksum::adlerv::adler32_avx2(a, b, d)
+        crate::adlerv::adler32_avx2(a, b, d)
     }
 
     #[target_feature(enable = "avx512f,vpclmulqdq,pclmulqdq")]
     pub(super) unsafe fn crc32_vpclmul(reg: u32, d: &[u8]) -> u32 {
-        crate::checksum::fold::crc32_vpclmul(reg, d)
+        crate::fold::crc32_vpclmul(reg, d)
     }
 
     #[target_feature(enable = "avx2,vpclmulqdq,pclmulqdq")]
     pub(super) unsafe fn crc32_vpclmul256(reg: u32, d: &[u8]) -> u32 {
-        crate::checksum::fold::crc32_vpclmul256(reg, d)
+        crate::fold::crc32_vpclmul256(reg, d)
     }
 
     #[target_feature(enable = "pclmulqdq")]
     pub(super) unsafe fn crc32_pclmul(reg: u32, d: &[u8]) -> u32 {
-        crate::checksum::fold::crc32_pclmul(reg, d)
+        crate::fold::crc32_pclmul(reg, d)
     }
 
     #[target_feature(enable = "sse4.2")]
     pub(super) unsafe fn crc32c_sse42(reg: u32, d: &[u8]) -> u32 {
-        crate::checksum::crc32c::crc32c_words(reg, d)
+        crate::crc32c::crc32c_words(reg, d)
     }
 }
 
@@ -305,13 +305,13 @@ mod arm_crc {
     /// that `lanes::crc_word` becomes one `crc32x` instruction.
     #[target_feature(enable = "crc")]
     pub unsafe fn crc32_update(reg: u32, d: &[u8]) -> u32 {
-        crate::checksum::lanes::crc32_update(reg, d)
+        crate::lanes::crc32_update(reg, d)
     }
 
     /// `crc32c::crc32c_words`, compiled with the CRC extension enabled so
     /// that `crc32c::crc32c_word` becomes one `crc32cx` instruction.
     #[target_feature(enable = "crc")]
     pub unsafe fn crc32c_words(reg: u32, d: &[u8]) -> u32 {
-        crate::checksum::crc32c::crc32c_words(reg, d)
+        crate::crc32c::crc32c_words(reg, d)
     }
 }

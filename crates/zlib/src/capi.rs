@@ -793,7 +793,7 @@ pub unsafe extern "C" fn vz_adler32_z(adler: c_ulong, buf: *const u8, len: usize
         return 1;
     }
     let d = std::slice::from_raw_parts(buf, len);
-    let (a, b) = verilith_core::checksum::cpu::adler32_update((adler & 0xffff) as u32 % 65521, ((adler >> 16) & 0xffff) as u32 % 65521, d);
+    let (a, b) = verilith_checksum::cpu::adler32_update((adler & 0xffff) as u32 % 65521, ((adler >> 16) & 0xffff) as u32 % 65521, d);
     ((b << 16) | a) as c_ulong
 }
 
@@ -814,7 +814,7 @@ pub unsafe extern "C" fn vz_crc32_z(crc: c_ulong, buf: *const u8, len: usize) ->
         return 0;
     }
     let d = std::slice::from_raw_parts(buf, len);
-    (!verilith_core::checksum::cpu::crc32_update(!(crc as u32), d)) as c_ulong
+    (!verilith_checksum::cpu::crc32_update(!(crc as u32), d)) as c_ulong
 }
 
 /// # Safety

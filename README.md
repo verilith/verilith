@@ -70,7 +70,7 @@ date, so a change to what is trusted shows up in the pull request that makes it.
   c-ares, mbedTLS, nghttp2 and llhttp. All of
   [`verilith-bind`](crates/bind#what-is-not-verified) is unverified.
 - **A few unverified fast paths**, each tested against a verified one, such
-  as the carry-less-multiply CRC-32 in `verilith-core`.
+  as the AVX2 base64 and hex kernels in `verilith-text`.
 - **A memory model, for concurrency.** The queue proofs in `verilith-sync`
   hold under a release/acquire model of atomics that the crate states and
   does not derive from the hardware.
@@ -93,7 +93,8 @@ not proofs.
 | [`verilith-archive`](crates/archive) | Formally verified (Verus) zip and tar readers with proven extraction safety, behind libarchive's read API | [proven](crates/archive#what-is-proven), [trusted](crates/archive/TRUST.md) |
 | [`verilith-bind`](crates/bind) | One native library and C ABI for the Verilith parsers, with C++, Python and Node.js bindings on top | [not verified](crates/bind#what-is-not-verified) |
 | [`verilith-brotli`](crates/brotli) | A formally verified (Verus) Brotli (RFC 7932) decompressor with google/brotli's decoder C API | [proven](crates/brotli#what-is-proven), [trusted](crates/brotli#trusted) |
-| [`verilith-core`](crates/core) | Formally verified (Verus) building blocks shared by the Verilith libraries: trusted memory primitives, byte and bit readers, canonical Huffman tables, UTF-8 validation, CRC-32, CRC-32C and Adler-32 | [trusted](crates/core#trusted-base) |
+| [`verilith-checksum`](crates/checksum) | Formally verified (Verus) CRC-32, CRC-32C and Adler-32, with verified carry-less-multiply (PCLMULQDQ, VPCLMULQDQ) and dot-product (AVX-512 VNNI, AVX2, NEON udot) kernels | [proven](crates/checksum#what-is-proven), [trusted](crates/checksum#trusted-base) |
+| [`verilith-core`](crates/core) | Formally verified (Verus) building blocks shared by the Verilith libraries: trusted memory primitives, byte and bit readers, canonical Huffman tables and UTF-8 validation | [trusted](crates/core#trusted-base) |
 | [`verilith-dns`](crates/dns) | A formally verified (Verus) DNS message parser and serializer, and a drop-in parser for c-ares | [proven](crates/dns#what-is-proven), [trusted](crates/dns#trusted-computing-base) |
 | [`verilith-font`](crates/font) | A formally verified (Verus) OpenType font sanitizer | [proven](crates/font#what-is-proven), [trusted](crates/font/TRUST.md) |
 | [`verilith-gif`](crates/gif) | A formally verified (Verus) GIF decoder: LZW, interlacing and graphic control, checked against giflib, with giflib's decoding C API | [proven](crates/gif#what-is-proven), [trusted](crates/gif#trusted-base) |
