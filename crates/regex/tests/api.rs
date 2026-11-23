@@ -215,3 +215,16 @@ fn range_scan_agrees_with_plain_search() {
         }
     }
 }
+
+#[test]
+fn limits() {
+    // Patterns may be longer than 64 KiB.
+    let long = "a".repeat(70_000);
+    assert!(Regex::new(long.as_bytes()).is_ok());
+    // The instruction limit is the caller's.
+    let big = "a{1000}".repeat(300);
+    assert!(matches!(Regex::new(big.as_bytes()), Err(Error::TooBig)));
+    assert!(matches!(Regex::with_limit(b"a{1000}", 900), Err(Error::TooBig)));
+    assert!(Regex::with_limit(b"a{1000}", 2000).is_ok());
+    assert!(matches!(Regex::with_limit(b"abc", 3), Err(Error::TooBig)));
+}

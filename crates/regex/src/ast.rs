@@ -8,7 +8,13 @@ pub use crate::spec::Look;
 
 verus! {
 
-pub const MAX_PROG: usize = 0x4_0000;
+/// The most instructions any tree may compile to, whatever limit the caller
+/// sets: RE2's ceiling too (2^24). `Regex::with_limit` takes a lower one.
+pub const MAX_PROG: usize = 0x100_0000;
+
+/// The instruction limit `Regex::new` uses: 2^18, what RE2's default
+/// `max_mem` of 8 MiB comes to at 32 bytes an instruction.
+pub const DEFAULT_MAX_PROG: usize = 0x4_0000;
 
 pub const MAX_HEIGHT: usize = 4096;
 
