@@ -110,6 +110,7 @@ so under the table (`note` in `harness/suites.py`).
 | x509-mbedtls-read | drop-in | mbedTLS + verilith-x509 patch | mbedTLS 4.3.0 | `mbedtls_x509_crt_parse_der_nocopy`, read serial, names, validity, key usage, CA flag, DNS names and EKUs, free | same |
 | x509-mbedtls-native | native | verilith-x509 (`verilith_x509::parse` and its accessors) | mbedTLS 4.3.0 | the x509-mbedtls-read task | same |
 | x509-verdict | native | verilith-x509 (`verilith_x509::parse`) | Verdict ([secure-foundations/verdict](https://github.com/secure-foundations/verdict), 2025-11-18) | parse the whole certificate from memory, Rust to Rust, both verified in Verus | same |
+| png-libpng-abi | drop-in | verilith-png (libpng ABI) | libpng 1.6.59 | `png_read_image` to RGBA8 (`png_set_expand`, `png_set_strip_16`, `png_set_gray_to_rgb`, filler) | the 24 Kodak photos |
 | png-libpng | native | verilith-png (Rust API) | libpng 1.6.59 | decode to RGBA8 | the 24 Kodak photos |
 | webp-lossless | drop-in | verilith-webp (libwebp ABI) | libwebp 1.6.0 | `WebPDecodeRGBAInto` | the Kodak photos, lossless WebP |
 | webp-lossy | drop-in | verilith-webp (libwebp ABI) | libwebp 1.6.0 | `WebPDecodeRGBAInto` | the Kodak photos, lossy WebP at quality 75 |
@@ -127,8 +128,8 @@ In archive-read the two libraries do not do quite the same work: verilith-archiv
 parses and checks the whole archive when it is opened and checks a member's
 length and CRC-32 before it returns any of its data, where libarchive streams.
 
-Five tasks are measured both ways (against c-ares, llhttp, picohttpparser,
-cJSON and mbedTLS), and the report prints those side by side, case by case,
+Six tasks are measured both ways (against c-ares, llhttp, picohttpparser,
+cJSON, mbedTLS and libpng), and the report prints those side by side, case by case,
 under "Drop-in and native, side by side". Three things to know when reading
 the native column:
 
@@ -142,8 +143,8 @@ the native column:
 - **picohttpparser** already has a flat API that copies nothing, so its two
   columns are close, as they should be.
 
-verilith-png has no libpng C ABI yet, nor verilith-xml an expat or libxml2 one, and
-simdjson and Verdict are compared core against core, so those five have a native number only. zlib, brotli, lz4, snappy, archives, WebP, JPEG, fonts, regex
+verilith-xml has no expat or libxml2 C ABI yet, and
+simdjson and Verdict are compared core against core, so those four have a native number only. zlib, brotli, lz4, snappy, archives, WebP, JPEG, fonts, regex
 and URL have a drop-in number only: their own APIs do the same work as the
 originals' (verilith-url's Rust API against ada's C++ API is not measured yet).
 Native comparisons use Rust runners (`runners/`) against C/C++ runners, with

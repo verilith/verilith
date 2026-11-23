@@ -128,8 +128,13 @@ COMPARISONS = [
     dict(id="x509-verdict", suite="x509n", data="x509", same_output=True, api="native",
          task="parse and check a whole certificate",
          ours=("vx509 (Rust API)", ["x509n-vx509"]), rival=("Verdict", ["x509n-verdict"])),
-    # Decode to RGBA8: vpng's Rust API against libpng (no libpng ABI yet).
-    dict(id="png-libpng", suite="png", data="png", same_output=True, api="native",
+    # libpng's read API, decoding to RGBA8: vpng (libpng-abi) in place of
+    # libpng, under the same driver.
+    dict(id="png-libpng-abi", suite="png", data="png", same_output=True, api="drop-in", pair="png-libpng",
+         task="decode a PNG to RGBA8",
+         ours=("vpng", ["png-vpng-abi"]), rival=("libpng 1.6.59", ["png-libpng"])),
+    # The same job through vpng's Rust API.
+    dict(id="png-libpng", suite="png", data="png", same_output=True, api="native", pair="png-libpng",
          task="decode a PNG to RGBA8",
          ours=("vpng (Rust API)", ["png-vpng"]), rival=("libpng 1.6.59", ["png-libpng"])),
     # libwebp's decode API, lossless files: vwebp (webp-abi) in place of libwebp.

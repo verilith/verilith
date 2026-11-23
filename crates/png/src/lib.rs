@@ -11,3 +11,5 @@ pub mod output;
 pub mod fast;
 pub mod deint;
 pub mod top;
+#[cfg(not(verus_only))]
+pub mod libpng;
