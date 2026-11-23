@@ -38,7 +38,7 @@ struct Att {
 }
 
 /// Whether an optional name is `lit`.
-fn opt_is(o: &Option<Vec<u8>>, lit: &[u8]) -> bool {
+pub fn opt_is(o: &Option<Vec<u8>>, lit: &[u8]) -> bool {
     match o {
         Some(v) => crate::lenient::bytes_eq(v, lit),
         None => false,
@@ -46,7 +46,7 @@ fn opt_is(o: &Option<Vec<u8>>, lit: &[u8]) -> bool {
 }
 
 /// `==` on optional names.
-fn opt_vec_eq(a: &Option<Vec<u8>>, b: &Option<Vec<u8>>) -> bool {
+pub fn opt_vec_eq(a: &Option<Vec<u8>>, b: &Option<Vec<u8>>) -> bool {
     crate::lenient::opt_eq(opt_slice(a), opt_slice(b))
 }
 
@@ -120,6 +120,7 @@ impl<S: Sink> Parser<S> {
     /// `spacePop`.
     pub fn space_pop(&mut self)
         ensures
+            final(self).space_nr == if old(self).space_nr > 0 { old(self).space_nr - 1 } else { 0 },
             final(self).inputs == old(self).inputs,
             final(self).fuel == old(self).fuel,
             final(self).sink == old(self).sink,
@@ -1556,13 +1557,22 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseContentInternal`.
-    #[verifier::external_body]
-    pub fn parse_content_internal(&mut self) {
+    pub fn parse_content_internal(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+        decreases old(self).fuel, 0int,
+    {
         let old_name_nr = self.names.len();
         let old_space_nr = self.space_nr;
         let old_node_nr = self.sink.node_nr();
         self.grow();
-        while !self.at_end() && !self.stopped() {
+        while !self.at_end() && !self.stopped()
+            invariant
+                self.evolves(old(self)),
+            decreases self.fuel,
+        {
             if !self.step() {
                 break;
             }
@@ -1593,10 +1603,21 @@ impl<S: Sink> Parser<S> {
         if self.names.len() > old_name_nr && self.at_end() && self.sink.well_formed() {
             self.premature_end();
         }
-        while self.sink.node_nr() > old_node_nr {
+        // One `nodePop` per node the content left open.
+        let mut k = self.sink.node_nr().saturating_sub(old_node_nr);
+        while k > 0 && self.sink.node_nr() > old_node_nr
+            invariant
+                self.evolves(old(self)),
+            decreases k,
+        {
             self.sink.node_pop();
+            k = k - 1;
         }
-        while self.names.len() > old_name_nr {
+        while self.names.len() > old_name_nr
+            invariant
+                self.evolves(old(self)),
+            decreases self.names@.len(),
+        {
             let n = self.names.len();
             let ns_nr = self.names[n - 1].ns_nr;
             if ns_nr != 0 {
@@ -1604,24 +1625,37 @@ impl<S: Sink> Parser<S> {
             }
             self.name_pop();
         }
-        while self.space_nr > old_space_nr {
+        while self.space_nr > old_space_nr
+            invariant
+                self.evolves(old(self)),
+            decreases self.space_nr,
+        {
             self.space_pop();
         }
     }
 
-    #[verifier::external_body]
-    fn premature_end(&mut self) {
-        let t = match self.names.last() {
-            Some(t) => t.clone(),
-            None => return,
-        };
-        let m = cat(&[b"Premature end of data in tag ", &t.name, b" line ", &itoa(t.line as i64), b"\n"]);
-        self.fatal_sis(ERR_TAG_NOT_FINISHED, &m, Some(&t.name), t.line, None);
+    fn premature_end(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
+        let nn = self.names.len();
+        if nn == 0 {
+            return;
+        }
+        let t = clone_name(&self.names[nn - 1]);
+        let m = cat(&[b"Premature end of data in tag ", t.name.as_slice(), b" line ", itoa(t.line as i64).as_slice(), b"\n"]);
+        self.fatal_sis(ERR_TAG_NOT_FINISHED, &m, Some(t.name.as_slice()), t.line, None);
     }
 
     /// `xmlParseElement`.
-    #[verifier::external_body]
-    pub fn parse_element(&mut self) {
+    pub fn parse_element(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         if self.parse_element_start() != 0 {
             return;
         }
@@ -1637,12 +1671,16 @@ impl<S: Sink> Parser<S> {
 
     /// `xmlParseElementStart`: 0 when content follows, 1 for an empty
     /// element, -1 on error.
-    #[verifier::external_body]
-    pub fn parse_element_start(&mut self) -> i32 {
+    pub fn parse_element_start(&mut self) -> i32
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         let max_depth: usize = if self.options & PARSE_HUGE != 0 { 2048 } else { 256 };
         if self.names.len() > max_depth {
             let n = self.names.len() as i64;
-            let m = cat(&[b"Excessive depth in document: ", &itoa(n), b" use XML_PARSE_HUGE option\n"]);
+            let m = cat(&[b"Excessive depth in document: ", itoa(n).as_slice(), b" use XML_PARSE_HUGE option\n"]);
             self.fatal_int(ERR_RESOURCE_LIMIT, &m, n as i32);
             return -1;
         }
@@ -1656,7 +1694,10 @@ impl<S: Sink> Parser<S> {
         let parsed = if self.sax2 {
             self.parse_start_tag2()
         } else {
-            self.parse_start_tag().map(|n| (n, None, None, 0))
+            match self.parse_start_tag() {
+                None => None,
+                Some(n) => Some((n, None, None, 0)),
+            }
         };
         let (name, prefix, uri, nb_ns) = match parsed {
             None => {
@@ -1674,7 +1715,7 @@ impl<S: Sink> Parser<S> {
             if self.sax_on() {
                 self.sync();
                 if self.sax2 {
-                    self.sink.end_element_ns(&name, prefix.as_deref(), uri.as_deref());
+                    self.sink.end_element_ns(&name, opt_slice(&prefix), opt_slice(&uri));
                 } else {
                     self.sink.end_element(&name);
                 }
@@ -1689,8 +1730,8 @@ impl<S: Sink> Parser<S> {
         if self.cur() == b'>' {
             self.next1();
         } else {
-            let m = cat(&[b"Couldn't find end of Start Tag ", &name, b" line ", &itoa(line as i64), b"\n"]);
-            self.fatal_sis(ERR_GT_REQUIRED, &m, Some(&name), line, None);
+            let m = cat(&[b"Couldn't find end of Start Tag ", name.as_slice(), b" line ", itoa(line as i64).as_slice(), b"\n"]);
+            self.fatal_sis(ERR_GT_REQUIRED, &m, Some(name.as_slice()), line, None);
             self.sink.node_pop();
             self.name_pop();
             self.space_pop();
@@ -1703,9 +1744,13 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseElementEnd`.
-    #[verifier::external_body]
-    pub fn parse_element_end(&mut self) {
-        if self.names.is_empty() {
+    pub fn parse_element_end(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
+        if self.names.len() == 0 {
             if self.cur() == b'<' && self.nxt(1) == b'/' {
                 self.skip(2);
             }

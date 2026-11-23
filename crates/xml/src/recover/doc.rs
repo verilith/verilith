@@ -294,9 +294,17 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseMisc`.
-    #[verifier::external_body]
-    pub fn parse_misc(&mut self) {
-        while !self.stopped() {
+    pub fn parse_misc(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
+        while !self.stopped()
+            invariant
+                self.advances(old(self)),
+            decreases self.fuel,
+        {
             if !self.step() {
                 break;
             }
@@ -313,17 +321,25 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseExternalSubset`.
-    #[verifier::external_body]
-    pub fn parse_external_subset(&mut self) {
+    pub fn parse_external_subset(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         self.detect_encoding();
         if self.cmp(b"<?xml") {
             self.parse_text_decl();
         }
-        self.sink.ensure_doc_for_subset(self.ext_sub_system.as_deref(), self.ext_sub_uri.as_deref());
+        self.sink.ensure_doc_for_subset(opt_slice(&self.ext_sub_system), opt_slice(&self.ext_sub_uri));
         self.sink.set_in_subset(2);
         let old_nr = self.inputs.len();
         self.skip_blanks();
-        while !self.stopped() {
+        while !self.stopped()
+            invariant
+                self.evolves(old(self)),
+            decreases self.fuel,
+        {
             if !self.step() {
                 break;
             }
@@ -341,9 +357,7 @@ impl<S: Sink> Parser<S> {
                 self.parse_pe_ref_internal(true);
             } else {
                 self.fatal(ERR_EXT_SUBSET_NOT_FINISHED, None);
-                while self.inputs.len() > old_nr {
-                    self.pop_pe();
-                }
+                self.pop_pes_to(old_nr);
                 break;
             }
             self.skip_blanks();
@@ -354,8 +368,12 @@ impl<S: Sink> Parser<S> {
 
     /// `xmlSAX2ExternalSubset`: the sink loads the subset (or declines),
     /// the parser reads it on an input stack of its own.
-    #[verifier::external_body]
-    fn external_subset(&mut self) {
+    fn external_subset(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         let name = self.int_sub_name.clone();
         let public = self.ext_sub_system.clone();
         let system = self.ext_sub_uri.clone();
@@ -363,13 +381,15 @@ impl<S: Sink> Parser<S> {
             return;
         }
         self.sync();
-        let loaded = self.sink.external_subset(name.as_deref(), public.as_deref(), system.as_deref());
+        let loaded = self.sink.external_subset(opt_slice(&name), opt_slice(&public), opt_slice(&system));
         let l = match loaded {
             None => return,
             Some(l) => l,
         };
-        let old_inputs = core::mem::take(&mut self.inputs);
-        let old_encoding = self.encoding.take();
+        let mut old_inputs: Vec<Input> = Vec::new();
+        std::mem::swap(&mut old_inputs, &mut self.inputs);
+        let mut old_encoding: Option<Vec<u8>> = None;
+        std::mem::swap(&mut old_encoding, &mut self.encoding);
         let mut input = Input::from_bytes(Vec::new());
         input.src = Some(Source { raw: l.bytes, delivered: 0, pos: 0, mode: if l.stream { Mode::Stream } else { Mode::Memory }, enc: None, error: 0, eof: false });
         input.filename = l.filename;
@@ -378,7 +398,11 @@ impl<S: Sink> Parser<S> {
         self.input_id = sat_add_i32(self.input_id, 1);
         self.sync();
         self.parse_external_subset();
-        while self.inputs.len() > 1 {
+        while self.inputs.len() > 1
+            invariant
+                self.evolves(old(self)),
+            decreases self.inputs@.len(),
+        {
             self.inputs.pop();
         }
         let consumed = {
@@ -388,13 +412,17 @@ impl<S: Sink> Parser<S> {
         self.sink.add_sizeentities(consumed);
         self.inputs = old_inputs;
         self.encoding = old_encoding.clone();
-        self.sink.set_encoding(old_encoding.as_deref());
+        self.sink.set_encoding(opt_slice(&old_encoding));
         self.sync();
     }
 
     /// `xmlParseDocument`.
-    #[verifier::external_body]
-    pub fn parse_document(&mut self) -> i32 {
+    pub fn parse_document(&mut self) -> i32
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         self.grow();
         self.detect_encoding();
         if self.cur() == 0 {
@@ -406,7 +434,7 @@ impl<S: Sink> Parser<S> {
             self.parse_xml_decl();
             self.skip_blanks();
         } else {
-            self.version = Some(b"1.0".to_vec());
+            self.version = Some(crate::lenient::vec_of(b"1.0"));
             self.sink.set_version(b"1.0");
         }
         if self.sax_on() {
@@ -454,7 +482,6 @@ impl<S: Sink> Parser<S> {
 /// Parses a document read from `raw` (`Memory`: a whole buffer; `Stream`:
 /// a file or descriptor read in chunks), reporting to `sink`; `forced` is
 /// an encoding the caller gave (`xmlSwitchEncodingName` before parsing).
-#[verifier::external_body]
 pub fn parse<S: Sink>(sink: S, raw: Vec<u8>, mode: Mode, filename: Option<Vec<u8>>, forced: Option<&[u8]>) -> S {
     let mut input = Input::from_bytes(Vec::new());
     input.src = Some(Source { raw, delivered: 0, pos: 0, mode, enc: None, error: 0, eof: false });
@@ -462,8 +489,11 @@ pub fn parse<S: Sink>(sink: S, raw: Vec<u8>, mode: Mode, filename: Option<Vec<u8
     enc::init_buffer(&mut input);
     let mut p = Parser::new(sink, input);
     p.sync();
-    if let Some(e) = forced {
-        p.switch_encoding_name(e);
+    match forced {
+        Some(e) => {
+            p.switch_encoding_name(e);
+        }
+        None => {}
     }
     p.parse_document();
     p.sync();

@@ -14,7 +14,6 @@ verus! {
 
 pub const NONE: usize = usize::MAX;
 
-#[derive(Clone)]
 pub struct NsEntry {
     pub prefix: Option<Vec<u8>>,
     pub uri: Vec<u8>,

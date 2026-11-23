@@ -176,7 +176,7 @@ pub struct NsAttr<'a> {
 }
 
 /// An element content model (`xmlElementContent`), as an arena.
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct ContentModel {
     pub nodes: Vec<ContentNode>,
     pub root: Option<usize>,
@@ -184,7 +184,7 @@ pub struct ContentModel {
 
 /// `xmlElementContentType`: PCDATA 1, ELEMENT 2, SEQ 3, OR 4;
 /// `xmlElementContentOccur`: ONCE 1, OPT 2, MULT 3, PLUS 4.
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct ContentNode {
     pub ctype: i32,
     pub ocur: i32,
@@ -577,7 +577,6 @@ pub fn cat(parts: &[&[u8]]) -> (r: Vec<u8>)
 // --- the parser ------------------------------------------------------------------------
 
 /// A default attribute (`xmlDefAttr`).
-#[derive(Clone)]
 pub struct DefAttr {
     pub prefix: Option<Vec<u8>>,
     pub name: Vec<u8>,
@@ -624,7 +623,6 @@ pub struct Parser<S: Sink> {
 }
 
 /// `ctxt->nameTab[i]` and `ctxt->pushTab[i]`.
-#[derive(Clone)]
 pub struct NameEntry {
     pub name: Vec<u8>,
     pub prefix: Option<Vec<u8>>,
