@@ -75,8 +75,9 @@ and Adobe's Technical Notes #5176 and #5177. It is about 3,100 lines in
   fewer than four bytes of padding: contour end points increase, the
   flags and coordinates are all present, a composite's component records
   are complete. Every component is a glyph that exists. No glyph contains
-  itself, directly or through other glyphs, and components nest at most
-  64 deep. `maxp` tells the truth: no glyph has more points, contours,
+  itself, directly or through other glyphs. Components may nest as deep
+  as the glyphs allow, as in OTS; they are followed with a stack on the
+  heap. `maxp` tells the truth: no glyph has more points, contours,
   instruction bytes, components or nesting than `maxp` says, counting a
   composite glyph's points and contours through all its components.
 - **Character map (`cmap`).** Encoding records are sorted and each leads
@@ -198,8 +199,7 @@ Where verilith-font accepts less:
   overlap. OTS accepts some that do not; verilith-font drops the subtable. (Both
   repair the common case of a last segment whose `idRangeOffset` is
   0xFFFF.)
-- Limits: input up to 1 GiB and 300 MiB after decompression (both OTS's),
-  composites nested 64 deep.
+- Limits: input up to 1 GiB and 300 MiB after decompression (both OTS's).
 - In CFF, a Font DICT may not hold the operators that describe the whole
   font, a font that is not CID-keyed may not have an FDArray or FDSelect,
   and charset ranges must not name string ids that do not exist.
