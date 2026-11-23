@@ -23,6 +23,9 @@ enum {
 
 /* Compiles pattern[0..len). Never returns NULL: check vregex_error. */
 vregex *vregex_new(const char *pattern, size_t len);
+/* The same, with VREGEX_TOO_BIG for a program over max_insts instructions
+   (vregex_new allows 262144; nothing over 2^24 is ever allowed). */
+vregex *vregex_new_with_limit(const char *pattern, size_t len, size_t max_insts);
 void vregex_free(vregex *re);
 int vregex_error(const vregex *re);
 size_t vregex_error_offset(const vregex *re);

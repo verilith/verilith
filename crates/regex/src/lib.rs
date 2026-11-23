@@ -63,8 +63,25 @@ impl Regex {
                 Err(e) => e is TooBig || syntax::parse(pattern@) is None,
             },
     {
+        Regex::with_limit(pattern, ast::DEFAULT_MAX_PROG)
+    }
+
+    /// Compiles `pattern` as [`Regex::new`] does, refusing it with
+    /// `TooBig` if its program would be longer than `max_insts`
+    /// instructions (at most 2^24 are ever allowed, as in RE2). The
+    /// program takes about 32 bytes an instruction.
+    pub fn with_limit(pattern: &[u8], max_insts: usize) -> (r: Result<Regex, Error>)
+        ensures
+            match r {
+                Ok(x) => x.inv() && x.prog.nslots % 2 == 0 && x.prog.insts@.len() <= max_insts
+                    && syntax::parse(pattern@) == Some(
+                    Pat { re: x.re@, ngroups: (x.prog.nslots / 2) as nat, names: names_v(x.names@) },
+                ),
+                Err(e) => e is TooBig || syntax::parse(pattern@) is None,
+            },
+    {
         let p = parse::parse(pattern)?;
-        if p.classes.len() > LIM {
+        if p.classes.len() > LIM || p.ngroups > LIM || max_insts < 2 || p.ast.ln > max_insts - 2 {
             return Err(Error::TooBig);
         }
         let ghost re = p.ast.re(p.classes@);
