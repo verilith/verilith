@@ -17,8 +17,9 @@ On thirteen documents it checks one 3.1 to 18.6 times as fast as expat
 2.10.0 (geometric mean 5.7x) and 2.4 to 17 times as fast as libxml2 2.15.4
 (4.2x), and parses and reads one through its API 1.2 to 14 times as fast
 as expat (2.2x) and 1.1 to 9 times as fast as libxml2's SAX2 interface
-(1.8x), measured with the repository's benchmark harness (see
-[Performance](#performance)).
+(1.8x), measured with the repository's benchmark harness on an x86-64
+cloud VM (see [Performance](#performance)). On an Apple M3 Pro the gaps
+are smaller: 2.23x and 1.72x checking, 1.35x and 1.14x reading.
 
 **Status:** early, not yet published. What is proven and what is trusted
 is listed below; read [What is not proven](#what-is-not-proven) before
@@ -321,7 +322,7 @@ handlers; libxml2's `xmlCtxtReadMemory` on a reused context, with its SAX2
 handlers for the DTD and none for content; `verilith_xml::check` into a
 reused tape (the verified parser alone). MB/s:
 
-| file | KB | vxml | expat | libxml2 | vs expat | vs libxml2 |
+| file | KB | verilith-xml | expat | libxml2 | vs expat | vs libxml2 |
 |---|---:|---:|---:|---:|---|---|
 | elts.xml | 110 | 966 | 192 | 300 | 5.04x (4.95–5.18) | 3.28x (3.23–3.29) |
 | play1.xml | 245 | 948 | 273 | 384 | 3.46x (3.28–3.57) | 2.42x (2.35–2.50) |
@@ -343,7 +344,7 @@ callbacks; libxml2's SAX2 callbacks, with entities substituted and DTD
 defaults added; `verilith_xml::parse` and a walk with `Element::attrs` and
 `children`. MB/s:
 
-| file | KB | vxml | expat | libxml2 | vs expat | vs libxml2 |
+| file | KB | verilith-xml | expat | libxml2 | vs expat | vs libxml2 |
 |---|---:|---:|---:|---:|---|---|
 | elts.xml | 110 | 378 | 187 | 282 | 2.02x (1.96–2.06) | 1.36x (1.34–1.38) |
 | play1.xml | 245 | 434 | 269 | 380 | 1.61x (1.60–1.61) | 1.13x (1.13–1.14) |
@@ -399,7 +400,7 @@ nodes; quick-xml 0.38 reads every event (it checks end tag names, and does
 not check characters, names or references, nor expand references); xml-rs 1
 reads every event.
 
-| file | KB | vxml check | vxml read | roxmltree | quick-xml | xml-rs |
+| file | KB | verilith-xml check | verilith-xml read | roxmltree | quick-xml | xml-rs |
 |---|---:|---:|---:|---:|---:|---:|
 | elts.xml | 110 | 1029 | 405 | 164 | 675 | 42 |
 | play1.xml | 245 | 1010 | 452 | 271 | 585 | 35 |

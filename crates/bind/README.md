@@ -13,7 +13,7 @@ the verified Rust code, so each language gets the same proven core.
 ```
         verilith-url (verified)   verilith-json (verified)   verilith-text (verified)
                     \            |            /
-                     libvbind (Rust)          one static library, one copy of std
+                     libverilith_bind (Rust)        one static library, one copy of std
                     /       |         \
  C ABI (vbind.h, vtext_utf.h)  PyO3 module   Node-API addon
             |
@@ -34,7 +34,7 @@ feature and a dependency here, not a new library.
 | `json` | yes | `vbind_json_*` over verilith-json |
 | `text` | yes | verilith-text's `vtext_*` |
 | `http` | no | llhttp's whole C API (`llhttp_*`): llhttp's own `api.c` and `http.c`, compiled by `build.rs` from verilith-http's `compat/llhttp`, over verilith-http's verified parser (`llhttp__internal_execute`) |
-| `dns` | no | `ares_dns_parse`, `ares_expand_name` and `vdns_ares_dns_write_buf`, for a c-ares patched with `vdns/cares/c-ares-use-vdns.patch`. They call c-ares's record setters and getters, so the program must also link that patched c-ares |
+| `dns` | no | `ares_dns_parse`, `ares_expand_name` and `vdns_ares_dns_write_buf`, for a c-ares patched with `crates/dns/cares/c-ares-use-vdns.patch`. They call c-ares's record setters and getters, so the program must also link that patched c-ares |
 
 ## Layout
 
@@ -117,10 +117,10 @@ scripts/build-node.sh v26.13.1 parallel sequential es-module
 runs, in effect,
 
 ```sh
-./configure --shared-ada --shared-ada-includes=vbind/include --shared-ada-libname=verilith-bind ... \
-            --shared-simdjson --shared-simdjson-includes=vbind/include --shared-simdjson-libname=verilith-bind ... \
-            --shared-simdutf --shared-simdutf-includes=vbind/include --shared-simdutf-libname=verilith-bind ... \
-            --shared-http-parser --shared-http-parser-includes=vhttp/compat/llhttp/include \
+./configure --shared-ada --shared-ada-includes=crates/bind/include --shared-ada-libname=verilith-bind ... \
+            --shared-simdjson --shared-simdjson-includes=crates/bind/include --shared-simdjson-libname=verilith-bind ... \
+            --shared-simdutf --shared-simdutf-includes=crates/bind/include --shared-simdutf-libname=verilith-bind ... \
+            --shared-http-parser --shared-http-parser-includes=crates/http/compat/llhttp/include \
                                  --shared-http-parser-libname=verilith-bind ...
 ```
 
@@ -221,10 +221,10 @@ official binary (30 runs each).
 ## Python
 
 ```python
-import verilith-bind
-u = verilith-bind.URL("../d?x", "https://example.org/a/b/c")   # ada_url's URL shape
+import vbind
+u = vbind.URL("../d?x", "https://example.org/a/b/c")   # ada_url's URL shape
 u.href, u.hostname, u.search; u.port = "8080"
-verilith-bind.URL.can_parse("/x", "http://a")
+vbind.URL.can_parse("/x", "http://a")
 vbind.loads('{"a": [1, 2.5, null]}')                   # json.loads' output types
 ```
 
@@ -235,9 +235,9 @@ including all of WPT's `urltestdata.json`.
 ## Node.js addon
 
 ```js
-const verilith-bind = require('./vbind.node');
-new verilith-bind.URL('../d', 'https://example.org/a/b/c').href;
-verilith-bind.URL.canParse('/x', 'http://a');
+const vbind = require('./vbind.node');
+new vbind.URL('../d', 'https://example.org/a/b/c').href;
+vbind.URL.canParse('/x', 'http://a');
 vbind.parseJSON('{"a":1}');   // SyntaxError on invalid JSON, like JSON.parse
 ```
 

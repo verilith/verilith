@@ -156,7 +156,7 @@ the random search never hit, which is why the lane functions are kept simple.
 
 ```toml
 [dependencies]
-verilith-simd = { git = "https://github.com/verilith/verilith/tree/main/crates/simd" }
+verilith-simd = { git = "https://github.com/verilith/verilith" }
 ```
 
 ```rust,ignore

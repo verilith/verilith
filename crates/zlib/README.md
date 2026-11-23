@@ -12,8 +12,9 @@ streaming API, both checksums and the compressor are proven against a
 specification of the RFCs. `cargo verus verify` checks the functions here
 and in [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core) (the shared
 Huffman, bit and checksum proofs), with no errors. The CI workflow
-(`.github/workflows/ci.yml`, manual runs only) reruns the proofs, the tests against the
-system zlib, and the fuzzers.
+(`.github/workflows/ci.yml` at the repository root) reruns the proofs and the tests
+against the system zlib on every pull request and push to `main` that touches this
+crate or one it depends on, and the fuzzers when a run is started by hand.
 
 ## Using it from Rust
 
@@ -195,7 +196,9 @@ the RFCs alone imply, or from zlib:
   and `deflateTune` parameters are accepted and not used; `deflate()` may
   hold up to a few hundred KiB of output internally when the caller's
   output buffer is small, and `deflateBound` is a little larger than
-  zlib's.
+  zlib's. The compressed bytes are not zlib's: they decompress to the
+  same data with any inflater, but a test that compares compressed output
+  with a file zlib wrote will see a difference.
 - `src/par.rs`: parallel compression, the scheme pigz uses. The input is
   cut into 256 KiB chunks. Each chunk becomes a piece: raw DEFLATE blocks
   from a `Deflater` whose preset dictionary is the 32 KiB before the

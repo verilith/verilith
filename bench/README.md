@@ -63,7 +63,30 @@ same machine can use the same convention: `mkdir ~/vf-bench.lock` (then write
 your pid to `~/vf-bench.lock/pid`) before
 timing, `rmdir` (or `rm -rf`) after.
 
-## What it compares
+## On a Linux server
+
+A shared cloud VM is the noisiest place to time anything: other tenants share
+the host, the CPU's frequency moves, and most VMs expose no performance
+counters. For numbers worth publishing, use a dedicated (bare-metal) x86-64
+machine, by the hour or the month, and quiet it first:
+
+```sh
+sudo scripts/linux-quiet.sh on 7     # CPU 7: boost off, governor performance,
+                                     # its hyperthread offline, interrupts elsewhere
+VBENCH_CPU=7 ./run.sh                # every runner pinned to CPU 7
+sudo scripts/linux-quiet.sh off      # put the settings back
+```
+
+`scripts/linux-quiet.sh status` shows the current settings and whether the
+machine is a VM. Booting with `isolcpus=7 nohz_full=7` (and stopping cron and
+automatic updates) removes most of what is left.
+
+What to trust from which machine: the speedups are a property of one machine
+and are reported with the machine they came from. Instruction counts per call
+barely move between runs or between machines with the same instruction set,
+so they are the number to watch for regressions, on any machine with
+counters.
+
 
 Every comparison is one of two kinds, and the report labels each number
 with its kind. They answer different questions, so neither replaces the

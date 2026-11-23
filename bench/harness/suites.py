@@ -25,159 +25,159 @@ different amounts of work.
 """
 
 COMPARISONS = [
-    # zlib's API: vzlib (feature zlib-abi) in place of zlib.
+    # zlib's API: verilith-zlib (feature zlib-abi) in place of zlib.
     dict(id="zlib-inflate", suite="zlib", data="zlib", same_output=True, api="drop-in",
-         ours=("vzlib", ["zlib-vzlib", "inflate"]), rival=("zlib 1.4", ["zlib-zlib", "inflate"])),
+         ours=("verilith-zlib", ["zlib-vzlib", "inflate"]), rival=("zlib 1.4", ["zlib-zlib", "inflate"])),
     dict(id="zlib-deflate", suite="zlib", data="zlib", same_output=False, check="compressed bytes", api="drop-in",
-         ours=("vzlib", ["zlib-vzlib", "deflate"]), rival=("zlib 1.4", ["zlib-zlib", "deflate"])),
-    # c-ares's record API: c-ares with vdns's patch in place of stock c-ares.
+         ours=("verilith-zlib", ["zlib-vzlib", "deflate"]), rival=("zlib 1.4", ["zlib-zlib", "deflate"])),
+    # c-ares's record API: c-ares with verilith-dns's patch in place of stock c-ares.
     dict(id="dns-parse", suite="dns", data="dns", same_output=True, api="drop-in",
-         ours=("c-ares + vdns", ["dns-vdns", "parse"]), rival=("c-ares", ["dns-cares", "parse"])),
+         ours=("c-ares + verilith-dns", ["dns-vdns", "parse"]), rival=("c-ares", ["dns-cares", "parse"])),
     dict(id="dns-write", suite="dns", data="dns", same_output=False, check="bytes written", api="drop-in",
-         ours=("c-ares + vdns", ["dns-vdns", "write"]), rival=("c-ares", ["dns-cares", "write"])),
+         ours=("c-ares + verilith-dns", ["dns-vdns", "write"]), rival=("c-ares", ["dns-cares", "write"])),
     # Parse and read every record, the task of the native comparison below.
     dict(id="dns-read", suite="dns", data="dns", same_output=True, api="drop-in", pair="dns-cares",
          task="parse a response, read every question and record (name, type, class, TTL, RDATA fields), free it",
-         ours=("c-ares + vdns", ["dns-vdns", "read"]), rival=("c-ares", ["dns-cares", "read"])),
+         ours=("c-ares + verilith-dns", ["dns-vdns", "read"]), rival=("c-ares", ["dns-cares", "read"])),
     dict(id="dns-native", suite="dns", data="dns", same_output=True, api="native", pair="dns-cares",
          task="parse a response, read every question and record (name, type, class, TTL, RDATA fields), free it",
-         note="vdns parses into a reused `Message` and decodes each record's RDATA when it is read; c-ares "
+         note="verilith-dns parses into a reused `Message` and decodes each record's RDATA when it is read; c-ares "
               "allocates a record tree on every parse and frees it, which is the only way its API parses. "
-              "Names come back in wire form from vdns and as text from c-ares.",
-         ours=("vdns (Rust API)", ["dns-native"]), rival=("c-ares", ["dns-cares", "read"])),
-    # llhttp's API, as Node drives it: vhttp (llhttp-abi) under llhttp's api.c.
+              "Names come back in wire form from verilith-dns and as text from c-ares.",
+         ours=("verilith-dns (Rust API)", ["dns-native"]), rival=("c-ares", ["dns-cares", "read"])),
+    # llhttp's API, as Node drives it: verilith-http (llhttp-abi) under llhttp's api.c.
     dict(id="http-llhttp", suite="http", data="http", same_output=True, api="drop-in", pair="http-llhttp",
          task="parse a whole message: target or reason, every header name and value, the body",
-         ours=("vhttp", ["http-vhttp"]), rival=("llhttp 9.4.4", ["http-llhttp"])),
+         ours=("verilith-http", ["http-vhttp"]), rival=("llhttp 9.4.4", ["http-llhttp"])),
     dict(id="http-llhttp-native", suite="http", data="http", same_output=True, api="native", pair="http-llhttp",
          task="parse a whole message: target or reason, every header name and value, the body",
          note="llhttp reports each piece through a callback as it goes and can take the message in pieces; "
-              "vhttp's API parses a complete head in one call and returns spans. vhttp's chunked decoder works "
+              "verilith-http's API parses a complete head in one call and returns spans. verilith-http's chunked decoder works "
               "in place, so resp-chunked includes a copy of the body into a scratch buffer on our side.",
-         ours=("vhttp (Rust API)", ["http-native", "llhttp"]), rival=("llhttp 9.4.4", ["http-llhttp", "read"])),
-    # picohttpparser's API: vhttp (phr-abi) in place of picohttpparser.
+         ours=("verilith-http (Rust API)", ["http-native", "llhttp"]), rival=("llhttp 9.4.4", ["http-llhttp", "read"])),
+    # picohttpparser's API: verilith-http (phr-abi) in place of picohttpparser.
     dict(id="http-pico", suite="http", data="http", same_output=True, api="drop-in", pair="http-pico",
          task="parse a message head into a reused header array",
-         ours=("vhttp", ["pico-vhttp"]), rival=("picohttpparser", ["pico-pico"])),
+         ours=("verilith-http", ["pico-vhttp"]), rival=("picohttpparser", ["pico-pico"])),
     dict(id="http-pico-native", suite="http", data="http", same_output=True, api="native", pair="http-pico",
          task="parse a message head into a reused header array",
          note="picohttpparser's API is already flat and copies nothing, so little separates the two columns. "
-              "vhttp's own call also works out the body framing (Content-Length, Transfer-Encoding), which "
+              "verilith-http's own call also works out the body framing (Content-Length, Transfer-Encoding), which "
               "picohttpparser leaves to the caller.",
-         ours=("vhttp (Rust API)", ["http-native", "pico"]), rival=("picohttpparser", ["pico-pico"])),
-    # ada's C API: vurl (ada-abi) in place of ada.
+         ours=("verilith-http (Rust API)", ["http-native", "pico"]), rival=("picohttpparser", ["pico-pico"])),
+    # ada's C API: verilith-url (ada-abi) in place of ada.
     dict(id="url-ada", suite="url", data="url", same_output=True, api="drop-in",
-         ours=("vurl", ["url-vurl"]), rival=("ada 4.1.1", ["url-ada"])),
+         ours=("verilith-url", ["url-vurl"]), rival=("ada 4.1.1", ["url-ada"])),
     # Native APIs: verilith-xml's Rust API against expat's SAX API.
     dict(id="xml-expat-read", suite="xml", data="xml", same_output=True, api="native",
          task="parse a document, visit every element, attribute (normalized value) and run of character data",
-         note="expat calls back for each item as it parses; vxml parses the whole document into a tape, then "
+         note="expat calls back for each item as it parses; verilith-xml parses the whole document into a tape, then "
               "the walk reads it through the API, which normalizes attribute values that need it and supplies "
               "DTD defaults. Both check the whole document.",
-         ours=("vxml (Rust API)", ["xml-vxml", "read"]), rival=("expat 2.10.0", ["xml-expat", "read"])),
+         ours=("verilith-xml (Rust API)", ["xml-vxml", "read"]), rival=("expat 2.10.0", ["xml-expat", "read"])),
     dict(id="xml-expat-check", suite="xml", data="xml", same_output=True, api="native",
-         task="decide whether a document is well-formed (expat with no handlers; vxml's verified check into a reused tape)",
-         ours=("vxml (Rust API)", ["xml-vxml", "check"]), rival=("expat 2.10.0", ["xml-expat", "check"])),
+         task="decide whether a document is well-formed (expat with no handlers; verilith-xml's verified check into a reused tape)",
+         ours=("verilith-xml (Rust API)", ["xml-vxml", "check"]), rival=("expat 2.10.0", ["xml-expat", "check"])),
     # The same two jobs against libxml2's SAX2 API, with the same check values.
     dict(id="xml-libxml2-read", suite="xml", data="xml", same_output=False, check="check value", api="native",
          task="parse a document, visit every element, attribute (normalized value) and run of character data",
          note="libxml2 runs its default SAX2 handlers for the DTD, which keep the declarations in a document "
               "object, with entities substituted and defaults added (the deprecated SAX1 callbacks do not "
-              "receive defaults), and reuses one parser context. SAX2 also processes namespaces, which vxml does "
+              "receive defaults), and reuses one parser context. SAX2 also processes namespaces, which verilith-xml does "
               "not. The check values are the same on every file but attributes.xml, where libxml2's attribute "
               "values are 691 bytes longer: it keeps a CR LF in an entity's literal value as two characters, so "
               "a reference to it in an attribute value gives two spaces, where XML 1.0 (2.11, 3.3.3), expat and "
-              "vxml give one.",
-         ours=("vxml (Rust API)", ["xml-vxml", "read"]), rival=("libxml2 2.15.4", ["xml-libxml2", "read"])),
+              "verilith-xml give one.",
+         ours=("verilith-xml (Rust API)", ["xml-vxml", "read"]), rival=("libxml2 2.15.4", ["xml-libxml2", "read"])),
     dict(id="xml-libxml2-check", suite="xml", data="xml", same_output=True, api="native",
-         task="decide whether a document is well-formed (libxml2 with its SAX2 handlers for the DTD and none for content; vxml's verified check into a reused tape)",
-         ours=("vxml (Rust API)", ["xml-vxml", "check"]), rival=("libxml2 2.15.4", ["xml-libxml2", "check"])),
-    # cJSON's API: vjson (cjson feature) in place of cJSON.
+         task="decide whether a document is well-formed (libxml2 with its SAX2 handlers for the DTD and none for content; verilith-xml's verified check into a reused tape)",
+         ours=("verilith-xml (Rust API)", ["xml-vxml", "check"]), rival=("libxml2 2.15.4", ["xml-libxml2", "check"])),
+    # cJSON's API: verilith-json (cjson feature) in place of cJSON.
     dict(id="json-cjson-parse", suite="json", data="json", same_output=True, api="drop-in", pair="json-cjson",
          task="parse a document, read every value (numbers as doubles, string and key lengths), free it",
-         ours=("vjson", ["cjson-vjson", "parse"]), rival=("cJSON 1.7.19", ["cjson-cjson", "parse"])),
+         ours=("verilith-json", ["cjson-vjson", "parse"]), rival=("cJSON 1.7.19", ["cjson-cjson", "parse"])),
     dict(id="json-cjson-native", suite="json", data="json", same_output=True, api="native", pair="json-cjson",
          task="parse a document, read every value (numbers as doubles, string and key lengths), free it",
-         note="vjson parses into a flat index in a reused `Parser`; cJSON allocates a node per value and frees "
+         note="verilith-json parses into a flat index in a reused `Parser`; cJSON allocates a node per value and frees "
               "the tree, which is the only way its API parses.",
-         ours=("vjson (Rust API)", ["json-vjson", "cjson-parse"]), rival=("cJSON 1.7.19", ["cjson-cjson", "parse"])),
+         ours=("verilith-json (Rust API)", ["json-vjson", "cjson-parse"]), rival=("cJSON 1.7.19", ["cjson-cjson", "parse"])),
     dict(id="json-cjson-print", suite="json", data="json", same_output=False, check="printed bytes", api="drop-in",
-         ours=("vjson", ["cjson-vjson", "print"]), rival=("cJSON 1.7.19", ["cjson-cjson", "print"])),
-    # Native APIs, same work: vjson::Parser against simdjson's DOM parser.
+         ours=("verilith-json", ["cjson-vjson", "print"]), rival=("cJSON 1.7.19", ["cjson-cjson", "print"])),
+    # Native APIs, same work: verilith-json::Parser against simdjson's DOM parser.
     dict(id="json-simdjson", suite="json", data="json", same_output=True, api="native",
          task="parse a document with a reused parser, read every value",
-         ours=("vjson (Rust API)", ["json-vjson"]), rival=("simdjson 5.2.0", ["json-simdjson"])),
-    # mbedTLS's certificate API: mbedTLS with vx509's patch in place of stock.
+         ours=("verilith-json (Rust API)", ["json-vjson"]), rival=("simdjson 5.2.0", ["json-simdjson"])),
+    # mbedTLS's certificate API: mbedTLS with verilith-x509's patch in place of stock.
     dict(id="x509-mbedtls", suite="x509", data="x509", same_output=True, api="drop-in",
-         ours=("mbedTLS + vx509", ["x509-vx509"]), rival=("mbedTLS 4.3.0", ["x509-mbedtls"])),
+         ours=("mbedTLS + verilith-x509", ["x509-vx509"]), rival=("mbedTLS 4.3.0", ["x509-mbedtls"])),
     # Parse without copying and read the fields a TLS client reads, the task
     # of the native comparison below.
     dict(id="x509-mbedtls-read", suite="x509", data="x509", same_output=True, api="drop-in", pair="x509-mbedtls",
          task="parse a certificate in place; read serial, issuer, subject, validity, key usage, CA flag, DNS names, EKUs; free it",
-         ours=("mbedTLS + vx509", ["x509-vx509", "read"]), rival=("mbedTLS 4.3.0", ["x509-mbedtls", "read"])),
+         ours=("mbedTLS + verilith-x509", ["x509-vx509", "read"]), rival=("mbedTLS 4.3.0", ["x509-mbedtls", "read"])),
     dict(id="x509-mbedtls-native", suite="x509", data="x509", same_output=True, api="native", pair="x509-mbedtls",
          task="parse a certificate in place; read serial, issuer, subject, validity, key usage, CA flag, DNS names, EKUs; free it",
-         note="The two sides do not do the same amount of work, and the difference favours vx509: "
+         note="The two sides do not do the same amount of work, and the difference favours verilith-x509: "
               "`mbedtls_x509_crt_parse_der_nocopy` also decodes the public key into a `mbedtls_pk_context` "
               "(for RSA, two big-number reads and checks) and allocates the name and extension lists, none "
-              "of which its API lets a caller skip. vx509 checks the SubjectPublicKeyInfo structure and "
+              "of which its API lets a caller skip. verilith-x509 checks the SubjectPublicKeyInfo structure and "
               "returns the key bytes without decoding them. Read this column as an upper bound.",
-         ours=("vx509 (Rust API)", ["x509n-vx509", "read"]), rival=("mbedTLS 4.3.0", ["x509-mbedtls", "read"])),
-    # Native APIs, same work: vx509::parse against Verdict's parse_x509_der,
+         ours=("verilith-x509 (Rust API)", ["x509n-vx509", "read"]), rival=("mbedTLS 4.3.0", ["x509-mbedtls", "read"])),
+    # Native APIs, same work: verilith-x509::parse against Verdict's parse_x509_der,
     # both verified in Verus. Each parses and checks the whole certificate.
     dict(id="x509-verdict", suite="x509n", data="x509", same_output=True, api="native",
          task="parse and check a whole certificate",
-         ours=("vx509 (Rust API)", ["x509n-vx509"]), rival=("Verdict", ["x509n-verdict"])),
-    # libpng's read API, decoding to RGBA8: vpng (libpng-abi) in place of
-    # libpng, under the same driver.
+         ours=("verilith-x509 (Rust API)", ["x509n-vx509"]), rival=("Verdict", ["x509n-verdict"])),
+    # libpng's read API, decoding to RGBA8: verilith-png (libpng-abi) in place
+    # of libpng, under the same driver.
     dict(id="png-libpng-abi", suite="png", data="png", same_output=True, api="drop-in", pair="png-libpng",
          task="decode a PNG to RGBA8",
-         ours=("vpng", ["png-vpng-abi"]), rival=("libpng 1.6.59", ["png-libpng"])),
-    # The same job through vpng's Rust API.
+         ours=("verilith-png", ["png-vpng-abi"]), rival=("libpng 1.6.59", ["png-libpng"])),
+    # The same job through verilith-png's Rust API.
     dict(id="png-libpng", suite="png", data="png", same_output=True, api="native", pair="png-libpng",
          task="decode a PNG to RGBA8",
-         ours=("vpng (Rust API)", ["png-vpng"]), rival=("libpng 1.6.59", ["png-libpng"])),
-    # libwebp's decode API, lossless files: vwebp (webp-abi) in place of libwebp.
+         ours=("verilith-png (Rust API)", ["png-vpng"]), rival=("libpng 1.6.59", ["png-libpng"])),
+    # libwebp's decode API, lossless files: verilith-webp (webp-abi) in place of libwebp.
     dict(id="webp-lossless", suite="webp", data="webp", same_output=True, api="drop-in",
-         ours=("vwebp", ["webp-vwebp"]), rival=("libwebp 1.6.0", ["webp-libwebp"])),
+         ours=("verilith-webp", ["webp-vwebp"]), rival=("libwebp 1.6.0", ["webp-libwebp"])),
     # The same driver and libraries on lossy (VP8) files.
     dict(id="webp-lossy", suite="webp", data="webp-lossy", same_output=True, api="drop-in",
-         ours=("vwebp", ["webp-vwebp"]), rival=("libwebp 1.6.0", ["webp-libwebp"])),
-    # libarchive's read API: varchive (libarchive-abi) in place of libarchive.
+         ours=("verilith-webp", ["webp-vwebp"]), rival=("libwebp 1.6.0", ["webp-libwebp"])),
+    # libarchive's read API: verilith-archive (libarchive-abi) in place of libarchive.
     dict(id="archive-read", suite="archive", data="archive", same_output=True, api="drop-in",
-         ours=("varchive", ["archive-varchive"]), rival=("libarchive 3.8.11", ["archive-libarchive"])),
-    # google/brotli's decoder API: vbrotli (brotli-abi) in place of libbrotlidec.
+         ours=("verilith-archive", ["archive-varchive"]), rival=("libarchive 3.8.11", ["archive-libarchive"])),
+    # google/brotli's decoder API: verilith-brotli (brotli-abi) in place of libbrotlidec.
     dict(id="brotli-decode", suite="brotli", data="brotli", same_output=True, api="drop-in",
-         ours=("vbrotli", ["brotli-vbrotli"]), rival=("brotli 1.2.1", ["brotli-brotli"])),
-    # The TurboJPEG API: vjpeg (turbojpeg-abi) in place of libjpeg-turbo.
+         ours=("verilith-brotli", ["brotli-vbrotli"]), rival=("brotli 1.2.1", ["brotli-brotli"])),
+    # The TurboJPEG API: verilith-jpeg (turbojpeg-abi) in place of libjpeg-turbo.
     dict(id="jpeg-baseline", suite="jpeg", data="jpeg", same_output=True, api="drop-in",
-         ours=("vjpeg", ["jpeg-vjpeg"]), rival=("libjpeg-turbo 3.2.1", ["jpeg-turbo"])),
+         ours=("verilith-jpeg", ["jpeg-vjpeg"]), rival=("libjpeg-turbo 3.2.1", ["jpeg-turbo"])),
     # The same driver and libraries on progressive files, and on 4:4:4.
     dict(id="jpeg-progressive", suite="jpeg", data="jpeg-prog", same_output=True, api="drop-in",
-         ours=("vjpeg", ["jpeg-vjpeg"]), rival=("libjpeg-turbo 3.2.1", ["jpeg-turbo"])),
+         ours=("verilith-jpeg", ["jpeg-vjpeg"]), rival=("libjpeg-turbo 3.2.1", ["jpeg-turbo"])),
     dict(id="jpeg-444", suite="jpeg", data="jpeg-444", same_output=True, api="drop-in",
-         ours=("vjpeg", ["jpeg-vjpeg"]), rival=("libjpeg-turbo 3.2.1", ["jpeg-turbo"])),
-    # OTS's API: vfont's headers and C ABI in place of OTS. Each writes its
+         ours=("verilith-jpeg", ["jpeg-vjpeg"]), rival=("libjpeg-turbo 3.2.1", ["jpeg-turbo"])),
+    # OTS's API: verilith-font's headers and C ABI in place of OTS. Each writes its
     # own serialization, so the sizes of the sanitized fonts differ slightly.
     dict(id="font-sanitize", suite="font", data="font", same_output=False, api="drop-in", check="sanitized bytes",
-         ours=("vfont", ["font-vfont"]), rival=("OTS (2026-11)", ["font-ots"])),
-    # liblz4's API: vlz4 (lz4-abi) in place of liblz4. Blocks, then frames.
+         ours=("verilith-font", ["font-vfont"]), rival=("OTS (2026-11)", ["font-ots"])),
+    # liblz4's API: verilith-lz4 (lz4-abi) in place of liblz4. Blocks, then frames.
     dict(id="lz4-decompress", suite="lz4", data="lz4", same_output=True, api="drop-in",
-         ours=("vlz4", ["lz4-vlz4", "decompress"]), rival=("lz4 1.11.1", ["lz4-lz4", "decompress"])),
+         ours=("verilith-lz4", ["lz4-vlz4", "decompress"]), rival=("lz4 1.11.1", ["lz4-lz4", "decompress"])),
     dict(id="lz4-compress", suite="lz4", data="lz4", same_output=False, api="drop-in", check="compressed bytes",
-         ours=("vlz4", ["lz4-vlz4", "compress"]), rival=("lz4 1.11.1", ["lz4-lz4", "compress"])),
+         ours=("verilith-lz4", ["lz4-vlz4", "compress"]), rival=("lz4 1.11.1", ["lz4-lz4", "compress"])),
     dict(id="lz4-frame-decompress", suite="lz4", data="lz4", same_output=True, api="drop-in",
-         ours=("vlz4", ["lz4-vlz4", "frame-decompress"]), rival=("lz4 1.11.1", ["lz4-lz4", "frame-decompress"])),
+         ours=("verilith-lz4", ["lz4-vlz4", "frame-decompress"]), rival=("lz4 1.11.1", ["lz4-lz4", "frame-decompress"])),
     dict(id="lz4-frame-compress", suite="lz4", data="lz4", same_output=False, api="drop-in", check="compressed bytes",
-         ours=("vlz4", ["lz4-vlz4", "frame-compress"]), rival=("lz4 1.11.1", ["lz4-lz4", "frame-compress"])),
-    # snappy's C API: vsnappy (snappy-abi) in place of libsnappy.
+         ours=("verilith-lz4", ["lz4-vlz4", "frame-compress"]), rival=("lz4 1.11.1", ["lz4-lz4", "frame-compress"])),
+    # snappy's C API: verilith-snappy (snappy-abi) in place of libsnappy.
     dict(id="snappy-uncompress", suite="snappy", data="snappy", same_output=True, api="drop-in",
-         ours=("vsnappy", ["snappy-vsnappy", "uncompress"]), rival=("snappy 1.3.1", ["snappy-snappy", "uncompress"])),
+         ours=("verilith-snappy", ["snappy-vsnappy", "uncompress"]), rival=("snappy 1.3.1", ["snappy-snappy", "uncompress"])),
     dict(id="snappy-validate", suite="snappy", data="snappy", same_output=True, api="drop-in",
-         ours=("vsnappy", ["snappy-vsnappy", "validate"]), rival=("snappy 1.3.1", ["snappy-snappy", "validate"])),
+         ours=("verilith-snappy", ["snappy-vsnappy", "validate"]), rival=("snappy 1.3.1", ["snappy-snappy", "validate"])),
     dict(id="snappy-compress", suite="snappy", data="snappy", same_output=False, api="drop-in", check="compressed bytes",
-         ours=("vsnappy", ["snappy-vsnappy", "compress"]), rival=("snappy 1.3.1", ["snappy-snappy", "compress"])),
-    # cre2's API (the C wrapper of RE2): vregex (cre2-abi) in place of cre2 + RE2.
+         ours=("verilith-snappy", ["snappy-vsnappy", "compress"]), rival=("snappy 1.3.1", ["snappy-snappy", "compress"])),
+    # cre2's API (the C wrapper of RE2): verilith-regex (cre2-abi) in place of cre2 + RE2.
     dict(id="regex-re2", suite="regex", data="regex", same_output=True, api="drop-in",
-         ours=("vregex", ["regex-vregex"]), rival=("RE2 2025-11-05", ["regex-re2"])),
+         ours=("verilith-regex", ["regex-vregex"]), rival=("RE2 2025-11-05", ["regex-re2"])),
 ]

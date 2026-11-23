@@ -102,6 +102,8 @@ jobs:
       - uses: ./.github/actions/buck2
       - name: The Buck2 files match the Cargo ones
         run: python3 scripts/buckify.py --check
+      - name: The trust ledger is up to date
+        run: python3 scripts/trust-ledger.py --check
       - id: proofs
         name: Which proofs
         env:

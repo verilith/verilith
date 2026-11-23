@@ -67,7 +67,7 @@ accept the fonts they should is a matter for the tests.
 
 - [verilith-zlib](https://github.com/verilith/verilith/tree/main/crates/zlib) (WOFF) and
   [verilith-brotli](https://github.com/verilith/verilith/tree/main/crates/brotli) (WOFF2),
-  pinned by commit in `Cargo.toml`, with their own trusted bases (their
+  path dependencies in this repository, with their own trusted bases (their
   READMEs list them, including
   [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core)'s memory
   primitives). verilith-font uses only their memory safety: what they
