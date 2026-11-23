@@ -1955,11 +1955,13 @@ proof fn lemma_out_of_fuel(m: &Module, cs: Seq<FuncCert>, codes: Seq<Code>, c0: 
 /// [`Trap::Exhausted`] when an operation that costs fuel finds none left,
 /// which [`executed`] allows at any point. Every loop iteration and every
 /// call goes through one of these, so a run with finite fuel ends; charging
-/// only there costs up to 14% on the benchmarks, where checking before
-/// every operation cost up to 65%. The compare-and-branch codes share one
-/// arm (`s_brcmp` dispatches again) so the loop has few exits. The loop has no
-/// `decreases` clause: proving one pushes the loop's proof past its
-/// resource limit.
+/// only there costs up to about 20% on the benchmarks, where checking before
+/// every operation cost up to 65%. All the branch codes share one arm,
+/// which charges and then dispatches again (`s_branch`), so the loop has
+/// two exits for running out of fuel: one per branch code made its proof
+/// exceed its resource limit, and with them merged the proof takes a
+/// fraction of the time it took before. The loop has no `decreases`
+/// clause.
 #[verifier::exec_allows_no_decreases_clause]
 #[verifier::spinoff_prover]
 // Kept below 1431: Verus multiplies by 3,000,000, and Z3 prints a resource
