@@ -57,9 +57,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
    well-formed UTF-8 and that every character is a `Char`, sixteen ASCII
    bytes at a time.
 3. **The document** (`src/lex.rs`, `src/dtd.rs`, `src/content.rs`,
-   `src/doc.rs`). One pass writes a *tape*: a 32-byte token per item, in
+   `src/doc.rs`). One pass writes a *tape*: a 20-byte token per item (16 on a 32-bit target), in
    document order, with byte ranges into the text for every name, value
-   and run of text, so nothing is copied. Elements are a loop with an
+   and run of text, so nothing is copied. The layout is chosen per target. On a 64-bit
+   target positions are 48 bits, a low `u32` and a high `u16`, so a token
+   is 20 bytes where three `usize` would make it 32. On a 32-bit target
+   (wasm32) a position is one `u32`, which covers every slice there, and a
+   token is 16 bytes. Both layouts are verified: `scripts/verify.sh`
+   checks the 64-bit one, `scripts/verify-narrow.sh` the 32-bit one. Elements are a loop with an
    explicit stack of the open elements, not a recursion. A start tag's
    token holds the index of the token that closes it, so a reader skips
    an element in one step. Character data, attribute values, comments,
@@ -237,6 +242,7 @@ them:
 | Entity references nested through replacement texts | no limit | no limit (libxml2 rejects past 40 by default); a cycle is recursion, rejected where it is referred to |
 | A reference cycle among entities that are not referred to | not an error | not an error |
 | Element nesting | | no limit |
+| Document size | | up to 2^48 - 1 bytes (256 TiB) as UTF-8 on a 64-bit target, more than any address space gives a process today (token positions are 48 bits; a longer text is refused with `ErrorKind::TooLarge`); on a 32-bit target, any slice it can hold |
 | Expanding a "billion laughs" entity | | parsing is linear; content expands lazily as it is read; an attribute value is read whole, which for the classic document is 3 GB (`try_attributes(limit)` refuses a value past `limit` bytes, for untrusted input) |
 | Namespaces | a separate Recommendation | not processed: a name with a colon is a name |
 
@@ -304,7 +310,7 @@ Where it departs from libexpat:
   call with `isFinal` set, then parses it and calls the handlers. No
   handler runs before the last buffer arrives, and an error is found then,
   not in the call whose buffer holds it. Memory is the whole document plus
-  its tape (32 bytes per item).
+  its tape (20 bytes per item on a 64-bit target).
 * **No handler runs for a rejected document.** expat reports the items
   before an error; here the verdict comes first.
 * **The external DTD subset and external parameter entities are offered to
@@ -484,6 +490,14 @@ and input size went. On the same thirteen files, `bench/` (best of 15,
 two sittings each, the same cloud VM, 2026-11-22) puts the build after
 those changes at 1.03x the build before them for checking (0.97x to
 1.09x per file) and 1.02x for reading (0.96x to 1.07x).
+
+Positions then moved to 48 bits (tokens from 32 to 20 bytes). On the same
+files and VM (2026-11-23, 12 rounds of paired runs, the median ratio per
+file), the 20-byte build is 1.015x the 32-byte one for checking (0.99x to
+1.08x per file) and 1.011x for reading (0.95x to 1.09x, cdata.xml aside:
+0.78x in time but fewer instructions and cache misses under Cachegrind).
+Cachegrind on huge.xml counts 18% fewer L1 data misses and 23% fewer
+last-level misses, and 2% more instructions (the narrower stores).
 
 ### Against expat and libxml2 (vbench)
 
