@@ -8,12 +8,19 @@
 //!
 //! What is decoded is the first image (IFD 0) of a classic TIFF file, into
 //! its samples as stored ("native"): each plane's rows, top to bottom, with
-//! multi-byte samples little-endian. The reference decoder is libtiff 4.5
-//! (`TIFFReadEncodedStrip` and `TIFFReadEncodedTile` on every strip or
-//! tile). libtiff accepts many damaged files by guessing what they meant;
-//! this specification does not guess. Where it reads a file differently
-//! from libtiff, or where TIFF leaves a choice, the choice made here is
-//! marked "libtiff:" and listed in the README.
+//! multi-byte samples little-endian.
+//!
+//! The standard is TIFF 6.0, with Deflate (Compression 8) from Adobe's
+//! TIFF technical notes. Where the standard says what a file must be, a
+//! file that is not is rejected; where it tells readers what to do, this
+//! specification does it. libtiff, the reference implementation, guesses
+//! at what many non-conforming files meant; this specification does not
+//! follow it there. Where the standard leaves a choice to the reader, the
+//! choice made here is marked "choice:" and listed in the README.
+//!
+//! `unsupported` says which files use a part of TIFF that is not decoded
+//! here (BigTIFF, CCITT and JPEG compression, YCbCr, ...); `decode`
+//! rejects them, and the decoder reports them apart from invalid files.
 use vstd::prelude::*;
 #[cfg(verus_only)]
 use vstd::arithmetic::power2::pow2;
@@ -49,8 +56,9 @@ pub open spec fn u32_at(b: Seq<u8>, le: bool, i: int) -> nat {
 // Header and image file directory (§2)
 // ---------------------------------------------------------------------------
 
-/// The byte order and the offset of the first IFD. libtiff: BigTIFF (43)
-/// is not read here.
+/// The byte order and the offset of the first IFD, which "may be at any
+/// location in the file after the header but must begin on a word
+/// boundary" (§2).
 pub open spec fn header(b: Seq<u8>) -> Option<(bool, nat)> {
     if b.len() < 8 {
         None
@@ -58,7 +66,7 @@ pub open spec fn header(b: Seq<u8>) -> Option<(bool, nat)> {
         None
     } else {
         let le = b[0] == 0x49;
-        if u16_at(b, le, 2) != 42 {
+        if u16_at(b, le, 2) != 42 || u32_at(b, le, 4) % 2 != 0 || u32_at(b, le, 4) < 8 {
             None
         } else {
             Some((le, u32_at(b, le, 4)))
@@ -66,14 +74,31 @@ pub open spec fn header(b: Seq<u8>) -> Option<(bool, nat)> {
     }
 }
 
+/// A BigTIFF header (version 43), which is not TIFF 6.0 and is not read
+/// here.
+pub open spec fn bigtiff(b: Seq<u8>) -> bool {
+    b.len() >= 4 && ((b[0] == 0x49 && b[1] == 0x49 && b[2] == 43 && b[3] == 0)
+        || (b[0] == 0x4D && b[1] == 0x4D && b[2] == 0 && b[3] == 43))
+}
+
 /// Where entry `i` of the IFD at `o` starts.
 pub open spec fn entry_pos(o: nat, i: nat) -> int {
     (o + 2 + 12 * i) as int
 }
 
+/// The tag of entry `i`.
+pub open spec fn tag_at(b: Seq<u8>, le: bool, o: nat, i: int) -> nat {
+    u16_at(b, le, entry_pos(o, i as nat))
+}
+
+/// "The entries in an IFD must be sorted in ascending order by Tag" (§2),
+/// so no tag appears twice.
+pub open spec fn sorted(b: Seq<u8>, le: bool, o: nat, n: nat) -> bool {
+    forall|i: int| 0 <= i && i + 1 < n ==> #[trigger] tag_at(b, le, o, i) < tag_at(b, le, o, i + 1)
+}
+
 /// The index of the first of the IFD's `n` entries, from `i` on, with tag
-/// `tag`. libtiff: entries need not be sorted (libtiff warns); of two with
-/// the same tag the first is used.
+/// `tag` (in a sorted IFD, the only one).
 pub open spec fn find(b: Seq<u8>, le: bool, o: nat, n: nat, tag: nat, i: nat) -> Option<nat>
     decreases n - i,
 {
@@ -110,11 +135,15 @@ pub open spec fn value(b: Seq<u8>, le: bool, ty: nat, pos: int, k: int) -> nat {
 }
 
 /// The values of the field with tag `tag` in the IFD at `o` with `n`
-/// entries: `Some(None)` if there is none, `None` if its type is not an
-/// unsigned integer type or its values are not inside the file. Values of
-/// at most 4 bytes in all are in the entry itself (§2, "Value/Offset").
-/// libtiff: libtiff also converts signed and 64-bit types where the value
-/// fits; they are rejected here.
+/// entries: `Some(None)` if there is none, `None` if its values are not
+/// inside the file. Values of at most 4 bytes in all are in the entry
+/// itself (§2, "Value/Offset"). Every field read here holds unsigned
+/// integers, and "TIFF readers should accept BYTE, SHORT, or LONG values
+/// for any unsigned integer field"; a field of any other type is skipped,
+/// as if it were absent ("Readers should skip over fields containing an
+/// unexpected field type", §2). choice: a value need not start on a word
+/// boundary ("The Value is expected to begin on a word boundary", §2, is
+/// asked of writers, and ASCII strings "will often begin on an odd byte").
 #[verifier::opaque]
 pub open spec fn field(b: Seq<u8>, le: bool, o: nat, n: nat, tag: nat) -> Option<Option<Seq<nat>>> {
     match find(b, le, o, n, tag, 0) {
@@ -124,7 +153,7 @@ pub open spec fn field(b: Seq<u8>, le: bool, o: nat, n: nat, tag: nat) -> Option
             let ty = u16_at(b, le, e + 2);
             let cnt = u32_at(b, le, e + 4);
             if ty != 1 && ty != 3 && ty != 4 {
-                None
+                Some(None)
             } else {
                 let size = cnt * type_size(ty);
                 let pos = if size <= 4 { e + 8 } else { u32_at(b, le, e + 8) as int };
@@ -170,6 +199,7 @@ pub spec const EXTRA_SAMPLES: nat = 338;
 pub spec const SAMPLE_FORMAT: nat = 339;
 pub spec const SMIN_SAMPLE_VALUE: nat = 340;
 pub spec const SMAX_SAMPLE_VALUE: nat = 341;
+pub spec const NUMBER_OF_INKS: nat = 334;
 
 /// A field that, if present, has `spp` values (whatever its type).
 pub open spec fn count_is(b: Seq<u8>, le: bool, o: nat, n: nat, tag: nat, spp: nat) -> bool {
@@ -183,33 +213,37 @@ pub spec const TILE_LENGTH: nat = 323;
 pub spec const TILE_OFFSETS: nat = 324;
 pub spec const TILE_BYTE_COUNTS: nat = 325;
 
-// Compression schemes read here.
+// Compression schemes read here: none and PackBits (§3, §9), LZW (§13),
+// Deflate (Adobe's TIFF technical notes).
 pub spec const NONE: nat = 1;
 pub spec const LZW: nat = 5;
 pub spec const DEFLATE: nat = 8;
-pub spec const DEFLATE_OLD: nat = 32946;
 pub spec const PACKBITS: nat = 32773;
 
 pub open spec fn compression_ok(c: nat) -> bool {
-    c == NONE || c == LZW || c == DEFLATE || c == DEFLATE_OLD || c == PACKBITS
+    c == NONE || c == LZW || c == DEFLATE || c == PACKBITS
 }
 
-/// Whether the scheme takes a predictor (§14). libtiff: the Predictor tag
-/// is only read for LZW and Deflate; for the others it is ignored.
+/// Whether the scheme takes a predictor: "Currently this field is used only
+/// with LZW" (§14), and Deflate since Adobe's technical notes. For the
+/// others the field has no meaning and is not read.
 pub open spec fn uses_predictor(c: nat) -> bool {
-    c == LZW || c == DEFLATE || c == DEFLATE_OLD
+    c == LZW || c == DEFLATE
 }
 
-/// BitsPerSample: one value, or one per sample, all the same, 1 to 32.
-/// libtiff: like libtiff, a single value stands for every sample, and
-/// values past the first `spp` are not looked at.
+/// Whether all of `v` equals its first value.
+pub open spec fn all_same(v: Seq<nat>) -> bool {
+    forall|k: int| 0 <= k < v.len() ==> #[trigger] v[k] == v[0]
+}
+
+/// BitsPerSample (§8): N = SamplesPerPixel ("the writer must write all
+/// three values"), default 1. Bits that differ between samples, or more
+/// than 32, are TIFF but are not read here (`unsupported`).
 pub open spec fn bits_per_sample(v: Option<Seq<nat>>, spp: nat) -> Option<nat> {
     match v {
         None => Some(1),
         Some(v) => {
-            if v.len() == 0 {
-                None
-            } else if v.len() != 1 && (v.len() < spp || exists|k: int| 0 <= k < spp && #[trigger] v[k] != v[0]) {
+            if v.len() == 0 || v.len() != spp || !all_same(v) {
                 None
             } else if 1 <= v[0] <= 32 {
                 Some(v[0])
@@ -238,7 +272,7 @@ pub struct Params {
     pub bps: nat,
     pub spp: nat,
     pub compression: nat,
-    pub photometric: Option<nat>,
+    pub photometric: nat,
     /// 1 unsigned, 2 signed, 3 floating point, 4 undefined.
     pub sample_format: nat,
     /// 1 (samples of a pixel together) or 2 (one plane per sample).
@@ -329,16 +363,17 @@ impl Params {
     }
 }
 
-/// The image's parameters from the IFD at `o` (§8 baseline fields, §13
-/// PackBits, §14 Predictor, §15 tiles, Appendix A defaults). libtiff:
-/// StripByteCounts is required here; libtiff estimates it when it is
-/// missing or looks wrong for a single uncompressed strip.
+/// The image's parameters from the IFD at `o` (§2, §8 baseline fields,
+/// §14 Predictor, §15 tiles, Appendix A defaults). The IFD's entries must
+/// be sorted. PhotometricInterpretation is required ("There is no default
+/// for PhotometricInterpretation, and it is required", §8), and so are the
+/// strip or tile offsets and byte counts (StripByteCounts: "No default").
 pub open spec fn params(b: Seq<u8>, le: bool, o: nat) -> Option<Params> {
     if o + 2 > b.len() {
         None
     } else {
         let n = u16_at(b, le, o as int);
-        if n == 0 || o + 2 + 12 * n > b.len() {
+        if n == 0 || o + 2 + 12 * n > b.len() || !sorted(b, le, o, n) {
             None
         } else {
             match (field(b, le, o, n, IMAGE_WIDTH), field(b, le, o, n, IMAGE_LENGTH)) {
@@ -392,18 +427,20 @@ pub open spec fn params2(
         || (planar != 1 && planar != 2) || rps == 0 {
         None
     } else if fill != 1 {
-        // libtiff: FillOrder 2 (bits reversed in each byte) is read by
-        // libtiff and not here.
+        // FillOrder 2 is TIFF ("Support for FillOrder=2 is not required in a
+        // Baseline TIFF compliant reader", §8) and is not read here
+        // (`unsupported`); other values are not TIFF.
         None
     } else if predictor != 1 && !(predictor == 2 && (bps == 8 || bps == 16 || bps == 32)) {
-        // libtiff: the floating-point predictor (3) is read by libtiff and
-        // not here; horizontal differencing needs 8-, 16- or 32-bit
-        // samples in both.
+        // Horizontal differencing of samples of other sizes (§14 describes
+        // 4-bit samples) and the floating-point predictor (3) of Adobe's
+        // technical notes are not read here (`unsupported`); other values
+        // are not TIFF.
         None
     } else {
         let photometric = match ph {
-            Some(v) => if v.len() == 1 { Some(Some(v[0])) } else { None },
-            None => Some(None),
+            Some(v) => if v.len() == 1 { Some(v[0]) } else { None },
+            None => None,
         };
         match (
             photometric,
@@ -438,39 +475,74 @@ pub open spec fn params2(
     }
 }
 
-/// The checks on fields that do not change the samples, as libtiff makes
-/// them, and the sample format. libtiff: SampleFormat (§19) is read like
-/// BitsPerSample and must be 1 to 6, and the complex formats (5, 6) are not
-/// read here (libtiff byte-swaps them differently); ExtraSamples (§18)
-/// must have at most one value per sample, each 0, 1, 2 or 999 (a known
-/// Corel Draw value); a palette image (§5) of fewer than 8 bits must have a
-/// ColorMap of 3 x 2^bits values; SMinSampleValue and SMaxSampleValue
-/// must have one value per sample. YCbCr images (§21) are not read here.
-pub open spec fn extras(b: Seq<u8>, le: bool, o: nat, n: nat, spp: nat, bps: nat, photometric: Option<nat>) -> Option<nat> {
-    match (field(b, le, o, n, SAMPLE_FORMAT), field(b, le, o, n, EXTRA_SAMPLES)) {
-        (Some(sf), Some(es)) => {
+/// Whether the samples have the colour components that photometric
+/// interpretation `ph` names (§3 to §6, §8, §16, §23): one for WhiteIsZero,
+/// BlackIsZero, palette and transparency mask, three for RGB, NumberOfInks
+/// (`inks`) for separated, and three or one for CIELab ("SamplesPerPixel -
+/// ExtraSamples: 3 for L*a*b*, 1 implies L* only"). Samples past those are
+/// extra samples: ExtraSamples, if present (with `m` values), has one value
+/// for each ("If SamplesPerPixel is, say, 5 then ExtraSamples will contain
+/// 2 values"); if it is absent, the reader "must skip over them gracefully"
+/// (§7). A palette image has one sample ("SamplesPerPixel must be 1"), and a
+/// transparency mask one sample of one bit. Interpretations TIFF 6.0 does
+/// not define are rejected; YCbCr (6) is not read here (`unsupported`).
+pub open spec fn colours_ok(ph: nat, spp: nat, bps: nat, m: Option<nat>, inks: nat) -> bool {
+    if ph == 8 {
+        match m {
+            None => true,
+            Some(m) => m <= spp && (spp - m == 1 || spp - m == 3),
+        }
+    } else if ph <= 5 {
+        let c: nat = if ph == 2 { 3 } else if ph == 5 { inks } else { 1 };
+        &&& c >= 1
+        &&& spp >= c
+        &&& (m matches Some(m) ==> m == spp - c)
+        &&& (ph == 3 ==> spp == 1)
+        &&& (ph == 4 ==> spp == 1 && bps == 1)
+    } else {
+        false
+    }
+}
+
+/// The fields that do not change the samples but must agree with them, and
+/// the sample format:
+/// - SampleFormat (§19): N = SamplesPerPixel, 1 to 4, default 1. Formats
+///   that differ between samples are not read here (`unsupported`).
+/// - ExtraSamples (§8): each value 0, 1 or 2, with the count `colours_ok`
+///   checks.
+/// - NumberOfInks (§16), for a separated image: default 4.
+/// - ColorMap, for a palette image: "ColorMap must be included in all
+///   palette-color images", with N = 3 * (2**BitsPerSample) (§5, §8).
+/// - SMinSampleValue and SMaxSampleValue (§19): N = SamplesPerPixel, of any
+///   type ("the field type that best matches the sample data").
+pub open spec fn extras(b: Seq<u8>, le: bool, o: nat, n: nat, spp: nat, bps: nat, photometric: nat) -> Option<nat> {
+    let inks = if photometric == 5 { scalar(b, le, o, n, NUMBER_OF_INKS, 4) } else { Some(4nat) };
+    match (field(b, le, o, n, SAMPLE_FORMAT), field(b, le, o, n, EXTRA_SAMPLES), inks) {
+        (Some(sf), Some(es), Some(inks)) => {
             let fmt = match sf {
                 None => Some(1nat),
-                Some(v) => if v.len() == 0 || (v.len() != 1 && (v.len() < spp || exists|k: int|
-                    0 <= k < spp && #[trigger] v[k] != v[0])) {
+                Some(v) => if v.len() == 0 || v.len() != spp || !all_same(v) {
                     None
                 } else {
                     Some(v[0])
                 },
             };
+            let m: Option<nat> = match es {
+                None => None,
+                Some(v) => Some(v.len()),
+            };
             let es_ok = match es {
                 None => true,
-                Some(v) => v.len() <= spp && forall|k: int| 0 <= k < v.len() ==> (#[trigger] v[k] <= 2 || v[k] == 999),
+                Some(v) => extra_values_ok(v),
             };
-            // libtiff: a ColorMap before the BitsPerSample entry (in an
-            // unsorted IFD), or with no BitsPerSample entry, is ignored.
-            let cm_ok = match (field(b, le, o, n, COLORMAP), find(b, le, o, n, COLORMAP, 0), find(b, le, o, n, BITS_PER_SAMPLE, 0)) {
-                (Some(Some(v)), Some(ic), Some(ib)) => v.len() == 3 * pow2(bps) && ib < ic,
+            let cm_ok = match field(b, le, o, n, COLORMAP) {
+                Some(Some(v)) => v.len() == 3 * pow2(bps),
                 _ => false,
             };
             match fmt {
-                Some(f) => if 1 <= f <= 4 && es_ok && count_is(b, le, o, n, SMIN_SAMPLE_VALUE, spp)
-                    && count_is(b, le, o, n, SMAX_SAMPLE_VALUE, spp) && photometric != Some(6nat) && !(photometric == Some(3nat) && bps < 8 && !cm_ok) {
+                Some(f) => if 1 <= f <= 4 && es_ok && colours_ok(photometric, spp, bps, m, inks)
+                    && (photometric != 3 || cm_ok) && count_is(b, le, o, n, SMIN_SAMPLE_VALUE, spp)
+                    && count_is(b, le, o, n, SMAX_SAMPLE_VALUE, spp) {
                     Some(f)
                 } else {
                     None
@@ -482,9 +554,30 @@ pub open spec fn extras(b: Seq<u8>, le: bool, o: nat, n: nat, spp: nat, bps: nat
     }
 }
 
+/// ExtraSamples values: "0 = Unspecified data", "1 = Associated alpha
+/// data", "2 = Unassociated alpha data" (§8).
+pub open spec fn extra_values_ok(v: Seq<nat>) -> bool {
+    forall|k: int| 0 <= k < v.len() ==> #[trigger] v[k] <= 2
+}
+
+/// Whether the IFD has a field with tag `tag` that is not skipped: an
+/// entry of type BYTE, SHORT or LONG.
+pub open spec fn present(b: Seq<u8>, le: bool, o: nat, n: nat, tag: nat) -> bool {
+    match find(b, le, o, n, tag, 0) {
+        None => false,
+        Some(i) => {
+            let ty = u16_at(b, le, entry_pos(o, i) + 2);
+            ty == 1 || ty == 3 || ty == 4
+        },
+    }
+}
+
 /// Where the strips or tiles are (§8 StripOffsets, StripByteCounts; §15
 /// TileWidth, TileLength, TileOffsets, TileByteCounts), given the other
-/// parameters in `base`.
+/// parameters in `base`. Each has exactly one value per strip or tile.
+/// "Do not use both strip-oriented and tile-oriented fields in the same
+/// TIFF file", and "TileWidth must be a multiple of 16", as must
+/// TileLength (§15).
 pub open spec fn layout(
     b: Seq<u8>,
     le: bool,
@@ -495,7 +588,9 @@ pub open spec fn layout(
     thf: Option<Seq<nat>>,
 ) -> Option<Params> {
     match (twf, thf) {
-        (None, None) => {
+        (None, None) => if present(b, le, o, n, TILE_OFFSETS) || present(b, le, o, n, TILE_BYTE_COUNTS) {
+            None
+        } else {
             match (field(b, le, o, n, STRIP_OFFSETS), field(b, le, o, n, STRIP_BYTE_COUNTS)) {
                 (Some(Some(offs)), Some(Some(cnts))) => {
                     let p = Params { offsets: offs, counts: cnts, ..base };
@@ -504,10 +599,13 @@ pub open spec fn layout(
                 _ => None,
             }
         },
-        (Some(tw), Some(th)) => {
+        (Some(tw), Some(th)) => if present(b, le, o, n, STRIP_OFFSETS) || present(b, le, o, n, STRIP_BYTE_COUNTS)
+            || present(b, le, o, n, ROWS_PER_STRIP) {
+            None
+        } else {
             match (field(b, le, o, n, TILE_OFFSETS), field(b, le, o, n, TILE_BYTE_COUNTS)) {
                 (Some(Some(offs)), Some(Some(cnts))) => {
-                    if tw.len() != 1 || th.len() != 1 || tw[0] == 0 || th[0] == 0 {
+                    if tw.len() != 1 || th.len() != 1 || tw[0] == 0 || th[0] == 0 || tw[0] % 16 != 0 || th[0] % 16 != 0 {
                         None
                     } else {
                         let p = Params {
@@ -518,10 +616,8 @@ pub open spec fn layout(
                             counts: cnts,
                             ..base
                         };
-                        // libtiff: tiles whose rows do not end
-                        // on a byte boundary are read by libtiff
-                        // and not here (TIFF requires tile widths
-                        // that are multiples of 16).
+                        // (Tile rows always end on a byte, as the
+                        // width is a multiple of 16.)
                         if (p.tw * p.sc() * p.bps) % 8 != 0 || offs.len() != p.chunks()
                             || cnts.len() != p.chunks() {
                             None
@@ -543,35 +639,39 @@ pub open spec fn layout(
 // ---------------------------------------------------------------------------
 
 /// The PackBits data `d` from `i` on, after output `out`, until `need`
-/// bytes. A run or literal that would go past `need` is cut short, and the
-/// data after the last byte needed is not read. libtiff: the same
-/// (`PackBitsDecode`): data that runs out before `need` bytes is an error.
-pub open spec fn packbits(d: Seq<u8>, i: int, out: Seq<u8>, need: nat) -> Option<Seq<u8>>
+/// bytes, in rows of `rb` bytes: "Pack each row separately. Do not
+/// compress across row boundaries" (§9), so a run or literal that goes past
+/// the end of its row is an error (and so, as `need` is whole rows, is one
+/// past `need`). Decoding stops at `need` bytes ("Loop until you get the
+/// number of unpacked bytes you are expecting"); data after that is not
+/// read. Data that runs out first is an error.
+pub open spec fn packbits(d: Seq<u8>, i: int, out: Seq<u8>, need: nat, rb: nat) -> Option<Seq<u8>>
     decreases d.len() - i,
 {
     if out.len() >= need {
         Some(out)
-    } else if i < 0 || i >= d.len() {
+    } else if i < 0 || i >= d.len() || rb == 0 {
         None
     } else if d[i] == 128 {
-        packbits(d, i + 1, out, need)
-    } else if d[i] > 128 {
-        // A run: the next byte, 257 - d[i] times.
-        let r = (257 - d[i]) as nat;
-        let r = if r <= need - out.len() { r } else { (need - out.len()) as nat };
-        if i + 1 >= d.len() {
-            None
-        } else {
-            packbits(d, i + 2, out + Seq::new(r, |k: int| d[i + 1]), need)
-        }
+        packbits(d, i + 1, out, need, rb)
     } else {
-        // A literal: the next d[i] + 1 bytes.
-        let l = d[i] as nat + 1;
-        let l = if l <= need - out.len() { l } else { (need - out.len()) as nat };
-        if i + 1 + l > d.len() {
-            None
+        let room = (rb - out.len() % rb) as nat;
+        if d[i] > 128 {
+            // A run: the next byte, 257 - d[i] times.
+            let r = (257 - d[i]) as nat;
+            if r > room || i + 1 >= d.len() {
+                None
+            } else {
+                packbits(d, i + 2, out + Seq::new(r, |k: int| d[i + 1]), need, rb)
+            }
         } else {
-            packbits(d, i + 1 + l, out + d.subrange(i + 1, i + 1 + l), need)
+            // A literal: the next d[i] + 1 bytes.
+            let l = d[i] as nat + 1;
+            if l > room || i + 1 + l > d.len() {
+                None
+            } else {
+                packbits(d, i + 1 + l, out + d.subrange(i + 1, i + 1 + l), need, rb)
+            }
         }
     }
 }
@@ -600,11 +700,11 @@ pub open spec fn mbits(d: Seq<u8>, q: int, n: nat) -> nat
 pub spec const CLEAR: nat = 256;
 pub spec const EOI: nat = 257;
 
-/// libtiff: the table may grow past 4096 entries, to 5119, when an encoder
-/// does not send a clear code once it is full; entries from 4096 on cannot
-/// be named by a 12-bit code. After that, a code other than a clear code
-/// or the end code is an error (libtiff's `CSIZE`, with `LZW_COMPAT`).
-pub spec const TABLE_MAX: nat = 5119;
+/// "We will arbitrarily limit ourselves to 12-bit codes, so that our table
+/// can have at most 4096 entries. The table should not be any larger" (§13):
+/// the encoder sends a clear code before it would add more, and a code that
+/// would add a 4097th entry is an error.
+pub spec const TABLE_MAX: nat = 4096;
 
 pub struct Lzw {
     /// The strings of the codes: 256 roots, the clear and end codes (empty),
@@ -613,8 +713,8 @@ pub struct Lzw {
     pub width: nat,
     /// The previous code, unless this is the first code after a clear code.
     pub prev: Option<nat>,
-    /// Whether a clear code has been seen: the data must start with one.
-    /// libtiff: libtiff errors on any other first code but the end code.
+    /// Whether a clear code has been seen: "each strip begins with a
+    /// ClearCode" (§13).
     pub started: bool,
     pub out: Seq<u8>,
 }
@@ -638,13 +738,14 @@ pub open spec fn next_width(n: nat, w: nat) -> nat {
     }
 }
 
-/// One code other than the clear and end codes.
-pub open spec fn lzw_code(s: Lzw, c: nat) -> Option<Lzw> {
+/// One code other than the clear and end codes, in a strip of `need`
+/// bytes: output past `need` is an error.
+pub open spec fn lzw_code(s: Lzw, c: nat, need: nat) -> Option<Lzw> {
     if !s.started {
         None
     } else {
         match s.prev {
-            None => if c < 256 {
+            None => if c < 256 && s.out.len() + 1 <= need {
                 Some(Lzw { prev: Some(c), out: s.out + seq![c as u8], ..s })
             } else {
                 None
@@ -656,7 +757,7 @@ pub open spec fn lzw_code(s: Lzw, c: nat) -> Option<Lzw> {
                 } else {
                     s.dict[p as int] + seq![s.dict[p as int][0]]
                 };
-                if n >= TABLE_MAX || !(c < n || c == n) {
+                if n >= TABLE_MAX || !(c < n || c == n) || s.out.len() + str.len() > need {
                     None
                 } else {
                     let dict = s.dict.push(s.dict[p as int] + seq![str[0]]);
@@ -675,27 +776,25 @@ pub open spec fn lzw_code(s: Lzw, c: nat) -> Option<Lzw> {
     }
 }
 
-/// Decodes `need` bytes from the codes in `d` from bit `q` on. Decoding
-/// stops once the output has `need` bytes, and a longer last string is cut
-/// to `need`. libtiff: an end code, or the end of the data, before `need`
-/// bytes is an error, as in libtiff; codes after the last byte are not
-/// read. libtiff: libtiff also reads the "old-style" LZW of libtiff before
-/// 1993 (codes least significant bit first); it is rejected here.
+/// Decodes the codes in `d` from bit `q` on, to the end code, into a strip
+/// of `need` bytes: "we will require that each strip begins with a
+/// ClearCode and ends with an EndOfInformation code" (§13). The output must
+/// be exactly `need` bytes; data after the end code is not read. The
+/// "old-style" LZW of libtiff before 1993 (codes least significant bit
+/// first) is not TIFF and is rejected.
 pub open spec fn lzw_run(d: Seq<u8>, need: nat, s: Lzw, q: int) -> Option<Seq<u8>>
     decreases 8 * d.len() - q,
 {
-    if s.out.len() >= need {
-        Some(s.out.subrange(0, need as int))
-    } else if q < 0 || q + s.width > 8 * d.len() || s.width == 0 {
+    if q < 0 || q + s.width > 8 * d.len() || s.width == 0 {
         None
     } else {
         let c = mbits(d, q, s.width);
         if c == CLEAR {
             lzw_run(d, need, Lzw { dict: init_dict(), width: 9, prev: None, started: true, out: s.out }, q + s.width)
         } else if c == EOI {
-            None
+            if s.started && s.out.len() == need { Some(s.out) } else { None }
         } else {
-            match lzw_code(s, c) {
+            match lzw_code(s, c, need) {
                 Some(s2) => lzw_run(d, need, s2, q + s.width),
                 None => None,
             }
@@ -711,27 +810,32 @@ pub open spec fn lzw(d: Seq<u8>, need: nat) -> Option<Seq<u8>> {
 // Strips and tiles
 // ---------------------------------------------------------------------------
 
-/// The first `need` bytes that the data `d` of a strip or tile decompresses
-/// to with scheme `comp`. libtiff: a Deflate stream must be valid to its
-/// end here; libtiff stops reading once it has `need` bytes.
-pub open spec fn decompress(comp: nat, d: Seq<u8>, need: nat) -> Option<Seq<u8>> {
+/// The `need` bytes, in rows of `rb`, that the data `d` of a strip or tile
+/// decompresses to with scheme `comp`. Each scheme's data must hold the
+/// strip's bytes: uncompressed, at least `need` bytes (choice: a byte count
+/// larger than the strip is allowed, and the first `need` bytes are the
+/// strip); PackBits, row by row; LZW, exactly `need` bytes to the end
+/// code; Deflate, a zlib stream (RFC 1950) that decompresses to exactly
+/// `need` bytes, since "the data in the last strip is not padded" (§3) and
+/// tiles are the tile's size (§15). Bytes after the data are not read.
+pub open spec fn decompress(comp: nat, d: Seq<u8>, need: nat, rb: nat) -> Option<Seq<u8>> {
     if comp == NONE {
         if d.len() >= need { Some(d.subrange(0, need as int)) } else { None }
     } else if comp == PACKBITS {
-        packbits(d, 0, Seq::empty(), need)
+        packbits(d, 0, Seq::empty(), need, rb)
     } else if comp == LZW {
         lzw(d, need)
     } else {
         match z::zlib_decompress(d) {
-            Some((o, _)) => if o.len() >= need { Some(o.subrange(0, need as int)) } else { None },
+            Some((o, _)) => if o.len() == need { Some(o) } else { None },
             None => None,
         }
     }
 }
 
 /// Multi-byte samples made little-endian: in a big-endian file, each
-/// sample of 16, 24 or 32 bits has its bytes reversed. libtiff: the same
-/// (`tif_postdecode`), to the host's order; here the output is always
+/// sample of 16, 24 or 32 bits has its bytes reversed. choice: TIFF stores
+/// samples in the file's byte order (§2); the output here is always
 /// little-endian.
 pub open spec fn to_le(p: Params, d: Seq<u8>) -> Seq<u8> {
     if p.le || !(p.bps == 16 || p.bps == 24 || p.bps == 32) {
@@ -794,7 +898,7 @@ pub open spec fn chunk(b: Seq<u8>, p: Params, k: nat) -> Option<Seq<u8>> {
     if off + cnt > b.len() {
         None
     } else {
-        match decompress(p.compression, b.subrange(off as int, (off + cnt) as int), p.chunk_size(k)) {
+        match decompress(p.compression, b.subrange(off as int, (off + cnt) as int), p.chunk_size(k), p.chunk_row_bytes()) {
             None => None,
             Some(d) => {
                 let d = to_le(p, d);
@@ -848,7 +952,7 @@ pub struct Image {
     pub bits_per_sample: nat,
     pub samples_per_pixel: nat,
     pub compression: nat,
-    pub photometric: Option<nat>,
+    pub photometric: nat,
     pub sample_format: nat,
     pub planar: nat,
     /// The output: each plane in turn (one, or one per sample if `planar`
@@ -859,9 +963,54 @@ pub struct Image {
     pub pixels: Seq<u8>,
 }
 
+/// The first value of a field, if it has one.
+pub open spec fn first(f: Option<Option<Seq<nat>>>) -> Option<nat> {
+    match f {
+        Some(Some(v)) => if v.len() >= 1 { Some(v[0]) } else { None },
+        _ => None,
+    }
+}
+
+/// Whether the IFD at `o` (`n` entries) asks for a part of TIFF that is not
+/// decoded here: CCITT (2, 3, 4) or JPEG (6, 7) compression, YCbCr (§21),
+/// FillOrder 2, the floating-point predictor (3), horizontal differencing
+/// on samples of other than 8, 16 or 32 bits, BitsPerSample above 32 or
+/// differing between samples, or a SampleFormat that differs between
+/// samples.
+pub open spec fn unsupported_ifd(b: Seq<u8>, le: bool, o: nat, n: nat) -> bool {
+    let comp = first(field(b, le, o, n, COMPRESSION));
+    let pred = first(field(b, le, o, n, PREDICTOR));
+    let bits = match field(b, le, o, n, BITS_PER_SAMPLE) {
+        Some(Some(v)) => if v.len() >= 1 { Some(v) } else { None },
+        Some(None) => Some(seq![1nat]),
+        None => None,
+    };
+    ||| (comp matches Some(c) && (c == 2 || c == 3 || c == 4 || c == 6 || c == 7))
+    ||| first(field(b, le, o, n, PHOTOMETRIC)) == Some(6nat)
+    ||| first(field(b, le, o, n, FILL_ORDER)) == Some(2nat)
+    ||| (bits matches Some(v) && (!all_same(v) || v[0] > 32))
+    ||| (field(b, le, o, n, SAMPLE_FORMAT) matches Some(Some(v)) && v.len() >= 1 && !all_same(v))
+    ||| (comp matches Some(c) && uses_predictor(c) && (pred == Some(3nat) || (pred == Some(2nat)
+        && (bits matches Some(v) && !(v[0] == 8 || v[0] == 16 || v[0] == 32)))))
+}
+
+/// Whether the file is TIFF that is not decoded here: BigTIFF, or an IFD
+/// that `unsupported_ifd` names.
+pub open spec fn unsupported(b: Seq<u8>) -> bool {
+    ||| bigtiff(b)
+    ||| (header(b) matches Some((le, o)) && o + 2 <= b.len() && {
+        let n = u16_at(b, le, o as int);
+        n > 0 && o + 2 + 12 * n <= b.len() && unsupported_ifd(b, le, o, n)
+    })
+}
+
 /// Decodes the first image of a TIFF file, or `None` if it is not one this
-/// specification accepts.
+/// specification accepts: a file that is not TIFF 6.0 as the standard
+/// defines it, or one that is `unsupported`.
 pub open spec fn decode(b: Seq<u8>) -> Option<Image> {
+    if unsupported(b) {
+        None
+    } else {
     match header(b) {
         None => None,
         Some((le, o)) => match params(b, le, o) {
@@ -888,6 +1037,7 @@ pub open spec fn decode(b: Seq<u8>) -> Option<Image> {
                 }
             },
         },
+    }
     }
 }
 

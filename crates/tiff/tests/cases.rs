@@ -1,7 +1,8 @@
-//! Hand-made TIFF files for the rules of `spec.rs`: both byte orders,
-//! strips and tiles, planar images, each compression scheme (with encoders
-//! here for PackBits and LZW, and stored zlib blocks for Deflate), the
-//! predictor, and the files the specification rejects.
+//! Hand-made TIFF files for the rules of `spec.rs`, which are TIFF 6.0's:
+//! both byte orders, strips and tiles, planar images, each compression
+//! scheme (with encoders here for PackBits and LZW, and stored zlib blocks
+//! for Deflate), the predictor, and the files the standard does not allow
+//! or that use parts of TIFF not read here.
 use verilith_tiff::chunk::Error;
 use verilith_tiff::decode::{decode, Tiff};
 
@@ -23,6 +24,11 @@ impl W {
     }
     fn long(mut self, tag: u16, v: &[u32]) -> W {
         self.entries.push((tag, 4, v.to_vec()));
+        self
+    }
+    /// An entry of any type whose values are 16 or 32 bits wide.
+    fn typed(mut self, tag: u16, ty: u16, v: &[u32]) -> W {
+        self.entries.push((tag, ty, v.to_vec()));
         self
     }
     fn u16b(&self, v: u16) -> [u8; 2] {
@@ -61,7 +67,7 @@ impl W {
             out.extend_from_slice(&self.u32b(vals.len() as u32));
             let mut bytes = Vec::new();
             for &v in vals {
-                if *ty == 3 { bytes.extend_from_slice(&self.u16b(v as u16)) } else { bytes.extend_from_slice(&self.u32b(v)) }
+                if *ty == 3 || *ty == 8 { bytes.extend_from_slice(&self.u16b(v as u16)) } else { bytes.extend_from_slice(&self.u32b(v)) }
             }
             if bytes.len() <= 4 {
                 bytes.resize(4, 0);
@@ -178,21 +184,35 @@ fn packbits_encode(d: &[u8]) -> Vec<u8> {
     out
 }
 
+/// PackBits, each row packed separately (§9).
+fn packbits_rows(d: &[u8], row: usize) -> Vec<u8> {
+    d.chunks(row).flat_map(packbits_encode).collect()
+}
+
 #[test]
 fn packbits() {
     let px = bytes(50 * 20, 2);
-    let chunks: Vec<Vec<u8>> = px.chunks(50 * 4).map(packbits_encode).collect();
+    let chunks: Vec<Vec<u8>> = px.chunks(50 * 4).map(|c| packbits_rows(c, 50)).collect();
     assert_eq!(ok(&gray(50, 20, 4, 32773, &chunks)).pixels, px);
-    // A no-op byte (128) is skipped; a run past the strip is cut short.
+    // A no-op byte (128) is skipped.
     let mut c = vec![128u8];
-    c.extend(packbits_encode(&px[..200]));
+    c.extend(packbits_rows(&px[..200], 50));
     let mut cs = chunks.clone();
     cs[0] = c;
     assert_eq!(ok(&gray(50, 20, 4, 32773, &cs)).pixels, px);
+    // Runs of whole rows; data after the last row is not read.
     let mut cs = chunks.clone();
-    cs[4] = vec![(257 - 128) as u8, 5, (257 - 128) as u8, 5];
+    cs[4] = vec![(257 - 50) as u8, 5, (257 - 50) as u8, 5, (257 - 50) as u8, 5, (257 - 50) as u8, 5, 0xAA];
     let t = ok(&gray(50, 20, 4, 32773, &cs));
     assert!(t.pixels[800..].iter().all(|&x| x == 5));
+    // "Do not compress across row boundaries": a run or a literal that goes
+    // past the end of its row is an error.
+    let mut cs = chunks.clone();
+    cs[4] = vec![(257 - 100) as u8, 5, (257 - 100) as u8, 5];
+    assert_eq!(err(&gray(50, 20, 4, 32773, &cs)), Error::Invalid);
+    let mut cs = chunks.clone();
+    cs[0] = packbits_encode(&px[..200]);
+    assert_eq!(err(&gray(50, 20, 4, 32773, &cs)), Error::Invalid);
     // Data that runs out.
     let mut cs = chunks.clone();
     let l2 = cs[2].len();
@@ -202,8 +222,8 @@ fn packbits() {
 
 /// An LZW encoder for TIFF: codes most significant bit first, widened one
 /// entry early, a clear code first and whenever the table reaches 4094
-/// (or, with `defer`, never: the decoder's table then grows past 4096
-/// entries, to 5119).
+/// (or, with `defer`, never: the decoder's table would then grow past the
+/// 4096 entries TIFF allows).
 fn lzw_encode(d: &[u8], defer: bool, end: bool) -> Vec<u8> {
     use std::collections::HashMap;
     let mut out = Vec::new();
@@ -282,12 +302,17 @@ fn lzw() {
         let chunks: Vec<Vec<u8>> = px.chunks((w * rps) as usize).map(|c| lzw_encode(c, false, true)).collect();
         assert_eq!(ok(&gray(w, h, rps, 5, &chunks)).pixels, px, "{w}x{h}");
     }
-    // No end code: fine. Codes after the last byte are not read.
+    // "Each strip ... ends with an EndOfInformation code": without one, the
+    // data is not TIFF. Data after the end code is not read.
     let px = bytes(64 * 64, 9);
-    let mut c = lzw_encode(&px, false, false);
-    assert_eq!(ok(&gray(64, 64, 64, 5, &[c.clone()])).pixels, px);
+    let c = lzw_encode(&px, false, false);
+    assert_eq!(err(&gray(64, 64, 64, 5, &[c])), Error::Invalid);
+    let mut c = lzw_encode(&px, false, true);
     c.extend_from_slice(&[0xFF; 30]);
     assert_eq!(ok(&gray(64, 64, 64, 5, &[c])).pixels, px);
+    // More data than the strip holds before the end code.
+    let c = lzw_encode(&px, false, true);
+    assert_eq!(err(&gray(64, 63, 64, 5, &[c])), Error::Invalid);
     // An end code before the last byte; data that runs out.
     let c = lzw_encode(&px[..4000], false, true);
     assert_eq!(err(&gray(64, 64, 64, 5, &[c])), Error::Invalid);
@@ -302,8 +327,9 @@ fn lzw() {
 
 #[test]
 fn lzw_full_table() {
-    // Noise fills the table fast; without clear codes it grows to 5119
-    // entries (libtiff's limit), and then the next code is an error.
+    // Noise fills the table fast. "The table should not be any larger"
+    // than 4096 entries: without clear codes, the code that would add the
+    // 4097th is an error (libtiff reads on, to 5119).
     let mut x = 1u64;
     let mut noise = |n: usize| -> Vec<u8> {
         (0..n)
@@ -313,9 +339,12 @@ fn lzw_full_table() {
             })
             .collect()
     };
+    let px = noise(3800);
+    let c = lzw_encode(&px, true, true);
+    assert_eq!(ok(&gray(3800, 1, 1, 5, &[c])).pixels, px);
     let px = noise(4900);
     let c = lzw_encode(&px, true, true);
-    assert_eq!(ok(&gray(4900, 1, 1, 5, &[c])).pixels, px);
+    assert_eq!(err(&gray(4900, 1, 1, 5, &[c])), Error::Invalid);
     let px = noise(20000);
     let c = lzw_encode(&px, true, true);
     assert_eq!(err(&gray(20000, 1, 1, 5, &[c])), Error::Invalid);
@@ -370,18 +399,21 @@ fn deflate_and_predictor() {
             .build(273, 279, &[data])
     };
     assert_eq!(ok(&file(8, zlib_stored(&diff))).pixels, px);
-    assert_eq!(ok(&file(32946, zlib_stored(&diff))).pixels, px);
-    // More data than the strip needs: fine, if the stream is whole.
+    // 32946 is libtiff's own code for Deflate, not TIFF's.
+    assert_eq!(err(&file(32946, zlib_stored(&diff))), Error::Invalid);
+    // More data than the strip holds ("The data in the last strip is not
+    // padded"): an error.
     let mut more = diff.clone();
     more.extend_from_slice(&[1; 50]);
-    assert_eq!(ok(&file(8, zlib_stored(&more))).pixels, px);
+    assert_eq!(err(&file(8, zlib_stored(&more))), Error::Invalid);
     // A bad checksum, or too little data.
     let mut bad = zlib_stored(&diff);
     let n = bad.len();
     bad[n - 1] ^= 1;
     assert_eq!(err(&file(8, bad)), Error::Invalid);
     assert_eq!(err(&file(8, zlib_stored(&diff[..100]))), Error::Invalid);
-    // The predictor is ignored for uncompressed data (libtiff does too).
+    // The predictor is for LZW and Deflate ("Currently this field is used
+    // only with LZW"); for uncompressed data it is ignored.
     assert_eq!(ok(&file(1, px.clone())).pixels, px);
 }
 
@@ -440,14 +472,30 @@ fn tiles() {
         .short(323, &[th])
         .build(324, 325, &tiles);
     assert_eq!(ok(&f).pixels, img);
-    // A tile width whose rows do not end on a byte: 1-bit samples, width 3.
+    // "TileWidth must be a multiple of 16", and so must TileLength.
+    let tiled = |tw: u32, th: u32, n: usize| {
+        W::new(true)
+            .short(256, &[32])
+            .short(257, &[32])
+            .short(258, &[8])
+            .short(262, &[1])
+            .short(322, &[tw])
+            .short(323, &[th])
+            .build(324, 325, &vec![vec![0u8; (tw * th) as usize]; n])
+    };
+    ok(&tiled(16, 32, 2));
+    assert_eq!(err(&tiled(8, 32, 4)), Error::Invalid);
+    assert_eq!(err(&tiled(16, 8, 8)), Error::Invalid);
+    // "Do not use both strip-oriented and tile-oriented fields".
     let f = W::new(true)
-        .short(256, &[8])
-        .short(257, &[1])
-        .short(258, &[1])
-        .short(322, &[3])
-        .short(323, &[1])
-        .build(324, 325, &[vec![0], vec![0], vec![0]]);
+        .short(256, &[32])
+        .short(257, &[32])
+        .short(258, &[8])
+        .short(262, &[1])
+        .long(278, &[32])
+        .short(322, &[16])
+        .short(323, &[32])
+        .build(324, 325, &vec![vec![0u8; 512]; 2]);
     assert_eq!(err(&f), Error::Invalid);
 }
 
@@ -474,7 +522,7 @@ fn rejected() {
     let px = bytes(16, 6);
     let good = gray(4, 4, 4, 1, &[px.clone()]);
     ok(&good);
-    // BigTIFF.
+    // BigTIFF: TIFF, not read here.
     let mut f = good.clone();
     f[2] = 43;
     assert_eq!(err(&f), Error::Unsupported);
@@ -482,19 +530,79 @@ fn rejected() {
     let mut f = good.clone();
     f[0] = b'X';
     assert_eq!(err(&f), Error::Invalid);
-    // No byte counts (libtiff estimates them).
-    let f = W::new(true).long(256, &[4]).long(257, &[4]).build(273, 999, &[px.clone()]);
+    // An IFD that does not "begin on a word boundary", or that is not
+    // "after the header".
+    let mut f = good.clone();
+    f[4] = 9;
     assert_eq!(err(&f), Error::Invalid);
-    // A width of 0; an unsupported compression; FillOrder 2.
+    let mut f = good.clone();
+    f[4] = 6;
+    assert_eq!(err(&f), Error::Invalid);
+    // No byte counts (libtiff estimates them): "No default".
+    let f = W::new(true).long(256, &[4]).long(257, &[4]).short(262, &[1]).build(273, 999, &[px.clone()]);
+    assert_eq!(err(&f), Error::Invalid);
+    // A width of 0.
     assert_eq!(err(&gray(0, 4, 4, 1, &[px.clone()])), Error::Invalid);
-    assert_eq!(err(&gray(4, 4, 4, 7, &[px.clone()])), Error::Invalid);
-    let f = W::new(true).long(256, &[4]).long(257, &[4]).short(266, &[2]).build(273, 279, &[px.clone()]);
-    assert_eq!(err(&f), Error::Invalid);
-    // YCbCr; a 4-bit palette image with no colour map.
-    let f = W::new(true).long(256, &[4]).long(257, &[4]).short(262, &[6]).build(273, 279, &[px.clone()]);
-    assert_eq!(err(&f), Error::Invalid);
+    // A compression TIFF does not define, and one it does that is not read
+    // here (JPEG).
+    assert_eq!(err(&gray(4, 4, 4, 9, &[px.clone()])), Error::Invalid);
+    assert_eq!(err(&gray(4, 4, 4, 7, &[px.clone()])), Error::Unsupported);
+    let g = |extra: W| extra.long(256, &[4]).long(257, &[4]).build(273, 279, &[px.clone()]);
+    // FillOrder 2 and YCbCr: TIFF, not read here.
+    assert_eq!(err(&g(W::new(true).short(262, &[1]).short(266, &[2]))), Error::Unsupported);
+    assert_eq!(err(&g(W::new(true).short(262, &[6]))), Error::Unsupported);
+    // Bits that differ between samples: TIFF, not read here.
+    let f = W::new(true).long(256, &[2]).long(257, &[2]).short(258, &[5, 6, 5]).short(262, &[2]).short(277, &[3])
+        .build(273, 279, &[px[..8].to_vec()]);
+    assert_eq!(err(&f), Error::Unsupported);
+    // "There is no default for PhotometricInterpretation, and it is
+    // required".
+    assert_eq!(err(&g(W::new(true))), Error::Invalid);
+    // A palette image without its ColorMap, at 4 and 8 bits.
     let f = W::new(true).long(256, &[4]).long(257, &[4]).short(258, &[4]).short(262, &[3]).build(273, 279, &[px[..8].to_vec()]);
     assert_eq!(err(&f), Error::Invalid);
+    assert_eq!(err(&g(W::new(true).short(262, &[3]))), Error::Invalid);
+    // With it, of 3 * 2**BitsPerSample values.
+    let cm: Vec<u32> = (0..768).collect();
+    ok(&g(W::new(true).short(258, &[8]).short(262, &[3]).short(320, &cm)));
+    assert_eq!(err(&g(W::new(true).short(258, &[8]).short(262, &[3]).short(320, &cm[..767]))), Error::Invalid);
+    // BitsPerSample with one value for three samples: "the writer must
+    // write all three values".
+    let rgb = |w: W| w.long(256, &[2]).long(257, &[2]).short(262, &[2]).short(277, &[3]).build(273, 279, &[px[..12].to_vec()]);
+    ok(&rgb(W::new(true).short(258, &[8, 8, 8])));
+    assert_eq!(err(&rgb(W::new(true).short(258, &[8]))), Error::Invalid);
+    // RGB needs three samples; ExtraSamples has one value per extra sample,
+    // each 0, 1 or 2.
+    let f = W::new(true).long(256, &[4]).long(257, &[2]).short(258, &[8, 8]).short(262, &[2]).short(277, &[2])
+        .build(273, 279, &[px.clone()]);
+    assert_eq!(err(&f), Error::Invalid);
+    let rgba = |es: &[u32]| {
+        W::new(true).long(256, &[2]).long(257, &[2]).short(258, &[8, 8, 8, 8]).short(262, &[2]).short(277, &[4])
+            .short(338, es).build(273, 279, &[px.clone()])
+    };
+    ok(&rgba(&[2]));
+    ok(&rgba(&[0]));
+    assert_eq!(err(&rgba(&[999])), Error::Invalid);
+    assert_eq!(err(&rgba(&[2, 0])), Error::Invalid);
+    // Without ExtraSamples, extra samples are allowed: readers "must skip
+    // over them gracefully".
+    let f = W::new(true).long(256, &[2]).long(257, &[2]).short(258, &[8, 8, 8, 8]).short(262, &[2]).short(277, &[4])
+        .build(273, 279, &[px.clone()]);
+    ok(&f);
+    // Entries out of order.
+    let mut f = good.clone();
+    let e = |i: usize| 10 + 12 * i;
+    let (a, b) = (e(0), e(1));
+    let first: Vec<u8> = f[a..a + 12].to_vec();
+    let second: Vec<u8> = f[b..b + 12].to_vec();
+    f[a..a + 12].copy_from_slice(&second);
+    f[b..b + 12].copy_from_slice(&first);
+    assert_eq!(err(&f), Error::Invalid);
+    // A field of an unexpected type is skipped: Compression as SSHORT is
+    // as if absent, so the strip is read uncompressed.
+    let f = W::new(true).long(256, &[4]).long(257, &[4]).short(258, &[8]).typed(259, 8, &[5]).short(262, &[1])
+        .build(273, 279, &[px.clone()]);
+    assert_eq!(ok(&f).pixels, px);
     // The memory limit.
     assert_eq!(decode(&good, 15).err(), Some(Error::TooLarge));
     assert!(decode(&good, 16).is_ok());

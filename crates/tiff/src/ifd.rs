@@ -60,7 +60,65 @@ pub fn header_exec(b: &[u8]) -> (r: Option<(bool, u32)>)
     if u16_exec(b, le, 2) != 42 {
         return None;
     }
-    Some((le, u32_exec(b, le, 4)))
+    let o = u32_exec(b, le, 4);
+    if o % 2 != 0 || o < 8 {
+        return None;
+    }
+    Some((le, o))
+}
+
+/// `spec::bigtiff`.
+pub fn bigtiff_exec(b: &[u8]) -> (r: bool)
+    ensures
+        r == bigtiff(b@),
+{
+    b.len() >= 4 && ((get(b, 0) == 0x49 && get(b, 1) == 0x49 && get(b, 2) == 43 && get(b, 3) == 0)
+        || (get(b, 0) == 0x4D && get(b, 1) == 0x4D && get(b, 2) == 0 && get(b, 3) == 43))
+}
+
+/// Whether the IFD's entries are in ascending order of tag
+/// (`spec::sorted`).
+pub fn sorted_exec(b: &[u8], le: bool, o: usize, n: usize) -> (r: bool)
+    requires
+        ifd_ok(b@, o as nat, n as nat),
+    ensures
+        r == sorted(b@, le, o as nat, n as nat),
+{
+    let l = b.len();
+    let mut i: usize = 0;
+    while i + 1 < n
+        invariant
+            l == b@.len(),
+            ifd_ok(b@, o as nat, n as nat),
+            i <= n,
+            forall|j: int| 0 <= j < i ==> #[trigger] tag_at(b@, le, o as nat, j) < tag_at(b@, le, o as nat, j + 1),
+        decreases n - i,
+    {
+        let e = o + 2 + 12 * i;
+        if u16_exec(b, le, e) >= u16_exec(b, le, e + 12) {
+            assert(!(tag_at(b@, le, o as nat, i as int) < tag_at(b@, le, o as nat, i + 1)));
+            return false;
+        }
+        i = i + 1;
+    }
+    true
+}
+
+/// `spec::present`.
+pub fn present_exec(b: &[u8], le: bool, o: usize, n: usize, tag: u16) -> (r: bool)
+    requires
+        ifd_ok(b@, o as nat, n as nat),
+    ensures
+        r == present(b@, le, o as nat, n as nat, tag as nat),
+{
+    let l = b.len();
+    match find_exec(b, le, o, n, tag) {
+        None => false,
+        Some(i) => {
+            let ty = u16_exec(b, le, o + 2 + 12 * i + 2);
+            ty == 1 || ty == 3 || ty == 4
+        },
+    }
 }
 
 /// An IFD inside the file: `n` entries at `o`.
@@ -153,7 +211,7 @@ pub fn field_exec(b: &[u8], le: bool, o: usize, n: usize, tag: u16) -> (r: Resul
     let ty = u16_exec(b, le, e + 2);
     let cnt = u32_exec(b, le, e + 4);
     if ty != 1 && ty != 3 && ty != 4 {
-        return Err(());
+        return Ok(None);
     }
     let ts: u64 = if ty == 1 { 1 } else if ty == 3 { 2 } else { 4 };
     let size = cnt as u64 * ts;

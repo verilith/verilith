@@ -6,9 +6,10 @@
  * TIFFReadRGBATile. Linked once with libtiff and once with verilith-tiff
  * (difftest/abi.sh), the two must print the same for files both read.
  * Last, it prints the warnings that explain a known difference (libtiff
- * cutting a PackBits run short at the end of a scanline, libtiff replacing
- * StripByteCounts with its own estimate), so that abi.sh can tell them
- * apart; verilith-tiff gives neither.
+ * replacing StripByteCounts with its own estimate, making up ExtraSamples,
+ * guessing that a ColorMap is 8-bit), so that abi.sh can tell them apart;
+ * verilith-tiff gives none of them. The file is opened in mode $API_MODE
+ * ("r" if it is not set).
  *   api FILE */
 #include <stdarg.h>
 #include <stdint.h>
@@ -17,13 +18,14 @@
 #include <string.h>
 #include <tiffio.h>
 
-static int discarded, estimated;
+static int estimated, extras, cmap8;
 
 static void quiet(const char *m, const char *f, va_list a) {
 	(void)m;
 	(void)a;
-	if (strstr(f, "Discarding")) discarded = 1;
 	if (strstr(f, "StripByteCounts")) estimated = 1;
+	if (strstr(f, "Defining non-color channels as ExtraSamples")) extras = 1;
+	if (strstr(f, "Assuming 8-bit colormap")) cmap8 = 1;
 }
 
 static uint64_t fnv(uint64_t h, const void *p, size_t n) {
@@ -52,7 +54,8 @@ static void u32tag(TIFF *t, const char *name, uint32_t tag) {
 int main(int argc, char **argv) {
 	TIFFSetErrorHandler(quiet);
 	TIFFSetWarningHandler(quiet);
-	TIFF *t = TIFFOpen(argv[argc - 1], "r");
+	const char *mode = getenv("API_MODE");
+	TIFF *t = TIFFOpen(argv[argc - 1], mode ? mode : "r");
 	if (!t) {
 		printf("open failed\n");
 		return 0;
@@ -176,7 +179,8 @@ int main(int argc, char **argv) {
 		}
 	}
 	TIFFClose(t);
-	if (discarded) printf("warning packbits run cut at a scanline\n");
 	if (estimated) printf("warning bytecounts estimated\n");
+	if (extras) printf("warning extrasamples made up\n");
+	if (cmap8) printf("warning colormap taken as 8-bit\n");
 	return 0;
 }

@@ -37,13 +37,13 @@ pub enum Error {
     OutOfMemory,
 }
 
-/// Decompresses a zlib stream, which must be valid to its end and give at
-/// least `need` bytes, and returns the first `need`.
-fn deflate_exec(d: &[u8], need: usize, limit: usize) -> (r: Result<Vec<u8>, Error>)
+/// Decompresses a zlib stream, which must be valid to its end and give
+/// exactly `need` bytes.
+fn deflate_exec(d: &[u8], need: usize) -> (r: Result<Vec<u8>, Error>)
     ensures
         match r {
-            Ok(v) => decompress(DEFLATE, d@, need as nat) == Some(v@),
-            Err(Error::Invalid) => decompress(DEFLATE, d@, need as nat) is None,
+            Ok(v) => decompress(DEFLATE, d@, need as nat, 1) == Some(v@),
+            Err(Error::Invalid) => decompress(DEFLATE, d@, need as nat, 1) is None,
             Err(Error::Unsupported) => false,
             Err(_) => true,
         },
@@ -51,6 +51,7 @@ fn deflate_exec(d: &[u8], need: usize, limit: usize) -> (r: Result<Vec<u8>, Erro
     if need >= usize::MAX {
         return Err(Error::TooLarge);
     }
+    // One byte more than the strip: a stream that fills it is too long.
     let mut raw = match alloc_zeroed(need + 1) {
         Some(v) => v,
         None => return Err(Error::OutOfMemory),
@@ -62,7 +63,7 @@ fn deflate_exec(d: &[u8], need: usize, limit: usize) -> (r: Result<Vec<u8>, Erro
     }
     match res {
         Ok((_, m)) => {
-            if m < need {
+            if m != need {
                 return Err(Error::Invalid);
             }
             raw.truncate(need);
@@ -71,42 +72,27 @@ fn deflate_exec(d: &[u8], need: usize, limit: usize) -> (r: Result<Vec<u8>, Erro
             }
             Ok(raw)
         },
-        Err(verilith_zlib::wrap::Error::InsufficientSpace) => {
-            // More data than the strip needs: decompress all of it to
-            // check the stream, and keep the first `need` bytes.
-            let mut d2 = Decompressor::new();
-            match d2.decompress_vec(ZFormat::Zlib, d, limit) {
-                Ok((mut v, _)) => {
-                    if v.len() < need {
-                        return Err(Error::Invalid);
-                    }
-                    v.truncate(need);
-                    proof {
-                        assert(v@ =~= v@.subrange(0, need as int));
-                    }
-                    Ok(v)
-                },
-                Err(verilith_zlib::wrap::Error::InsufficientSpace) => Err(Error::TooLarge),
-                Err(_) => Err(Error::Invalid),
-            }
-        },
+        // Longer than the strip.
         Err(_) => Err(Error::Invalid),
     }
 }
 
-/// The first `need` bytes the data `d` decompresses to with scheme `comp`
-/// (`spec::decompress`). `off` and `len` are scratch space for LZW.
-pub fn decompress_exec(comp: u32, d: &[u8], need: usize, limit: usize, off: &mut [u32], len: &mut [u32]) -> (r: Result<Vec<u8>, Error>)
+/// The `need` bytes, in rows of `rb`, the data `d` decompresses to with
+/// scheme `comp` (`spec::decompress`). `off` and `len` are scratch space
+/// for LZW.
+pub fn decompress_exec(comp: u32, d: &[u8], need: usize, rb: usize, off: &mut [u32], len: &mut [u32]) -> (r: Result<Vec<u8>, Error>)
     requires
         compression_ok(comp as nat),
+        rb >= 1,
+        need % rb == 0,
         old(off)@.len() == STORED,
         old(len)@.len() == STORED,
     ensures
         final(off)@.len() == STORED,
         final(len)@.len() == STORED,
         match r {
-            Ok(v) => decompress(comp as nat, d@, need as nat) == Some(v@) && v@.len() == need,
-            Err(Error::Invalid) => decompress(comp as nat, d@, need as nat) is None,
+            Ok(v) => decompress(comp as nat, d@, need as nat, rb as nat) == Some(v@) && v@.len() == need,
+            Err(Error::Invalid) => decompress(comp as nat, d@, need as nat, rb as nat) is None,
             Err(Error::Unsupported) => false,
             Err(_) => true,
         },
@@ -121,7 +107,7 @@ pub fn decompress_exec(comp: u32, d: &[u8], need: usize, limit: usize, off: &mut
             Some(v) => v,
             None => return Err(Error::OutOfMemory),
         };
-        if !packbits_exec(d, out.as_mut_slice(), need) {
+        if !packbits_exec(d, out.as_mut_slice(), need, rb) {
             return Err(Error::Invalid);
         }
         proof {
@@ -142,36 +128,9 @@ pub fn decompress_exec(comp: u32, d: &[u8], need: usize, limit: usize, off: &mut
         out.truncate(need);
         Ok(out)
     } else {
-        match deflate_exec(d, need, limit) {
+        match deflate_exec(d, need) {
             Ok(v) => Ok(v),
             Err(e) => Err(e),
-        }
-    }
-}
-
-/// What PackBits gives has `need` bytes (and so does every scheme).
-pub proof fn lemma_packbits_len(d: Seq<u8>, i: int, out: Seq<u8>, need: nat)
-    requires
-        out.len() <= need,
-    ensures
-        packbits(d, i, out, need) matches Some(o) ==> o.len() == need,
-    decreases d.len() - i,
-{
-    if out.len() < need && 0 <= i < d.len() {
-        if d[i] == 128 {
-            lemma_packbits_len(d, i + 1, out, need);
-        } else if d[i] > 128 {
-            let r = (257 - d[i]) as nat;
-            let r = if r <= need - out.len() { r } else { (need - out.len()) as nat };
-            if i + 1 < d.len() {
-                lemma_packbits_len(d, i + 2, out + Seq::new(r, |k: int| d[i + 1]), need);
-            }
-        } else {
-            let l = d[i] as nat + 1;
-            let l = if l <= need - out.len() { l } else { (need - out.len()) as nat };
-            if i + 1 + l <= d.len() {
-                lemma_packbits_len(d, i + 1 + l, out + d.subrange(i + 1, i + 1 + l), need);
-            }
         }
     }
 }

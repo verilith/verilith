@@ -11,6 +11,13 @@
 //! strings, ICC profile, ...) itself, with bounds-checked slices, and does
 //! the conversion of `TIFFReadRGBAImage` the way libtiff's
 //! `tif_getimage.c` does for the photometric interpretations it supports.
+//!
+//! Where libtiff and the TIFF 6.0 standard disagree, this follows the
+//! standard: fields are reported as the file has them (a field of a type
+//! other than BYTE, SHORT or LONG where an integer is expected is skipped,
+//! and absent fields have the standard's defaults), strips are the file's
+//! strips, extra samples are only alpha when ExtraSamples says so, and a
+//! ColorMap is always 16-bit.
 //! The variadic functions (`TIFFGetField`, `TIFFError`, ...) are in
 //! `capi/tiffshim.c`, which calls the functions here.
 //!
@@ -20,7 +27,7 @@
 #![allow(non_snake_case, non_camel_case_types, unsafe_op_in_unsafe_fn, clippy::missing_safety_doc)]
 use crate::chunk::Error;
 use crate::decode::chunk_exec;
-use crate::ifd::{field_exec, find_exec, header_exec, value_exec};
+use crate::ifd::{field_exec, header_exec, value_exec};
 use crate::params::{params_exec, ParamsX};
 use core::ffi::{c_char, c_int, c_void};
 use std::ffi::{CStr, CString};
@@ -72,12 +79,6 @@ pub struct Handle {
     row: u32,
     strip: u32,
     tile: u32,
-    /// libtiff's "strip chopping": a single uncompressed strip is shown as
-    /// strips of about 8 KiB, with this many rows each.
-    chop: Option<u32>,
-    /// The photometric interpretation as libtiff reports it (a palette image
-    /// without a usable ColorMap becomes RGB or grey).
-    photometric: Option<u32>,
 }
 
 unsafe fn handle<'a>(t: *mut c_void) -> Option<&'a mut Handle> {
@@ -128,38 +129,26 @@ impl Handle {
         None
     }
 
-    /// A 16-bit field as libtiff reads it (`TIFFReadDirEntryShort`): one
-    /// value of any integer type, in 0 to 65535.
+    /// A SHORT field with one value (N = 1), as TIFF 6.0 reads it: of type
+    /// BYTE, SHORT or LONG ("TIFF readers should accept BYTE, SHORT, or
+    /// LONG values for any unsigned integer field"), else skipped, and at
+    /// most 65535.
     fn short(&self, tag: u16) -> Option<u32> {
-        let (ty, cnt, pos) = self.entry(tag)?;
-        if cnt != 1 {
-            return None;
+        match field_exec(&self.data, self.le(), self.ifd, self.n, tag) {
+            Ok(Some(f)) if f.count == 1 => Some(value_exec(&self.data, self.le(), f, 0)).filter(|v| *v <= 0xffff),
+            _ => None,
         }
-        let b = &self.data[pos..];
-        let le = self.le();
-        let v: i128 = match ty {
-            1 => b[0] as i128,
-            6 => b[0] as i8 as i128,
-            3 | 8 => {
-                let u = if le { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) };
-                if ty == 8 { u as i16 as i128 } else { u as i128 }
-            }
-            4 | 9 => {
-                let u = if le { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) } else { u32::from_be_bytes([b[0], b[1], b[2], b[3]]) };
-                if ty == 9 { u as i32 as i128 } else { u as i128 }
-            }
-            _ => return None,
-        };
-        (0..=0xffff).contains(&v).then_some(v as u32)
     }
 
-    /// Orientation, if it is 1 to 8 (libtiff refuses other values).
+    /// Orientation: one of the eight values TIFF 6.0 defines, else not set.
     fn orientation(&self) -> Option<u32> {
         self.short(274).filter(|v| (1..=8).contains(v))
     }
 
+    /// Whether an integer field is present: an entry of type BYTE, SHORT or
+    /// LONG (fields of other types are skipped).
     fn present(&self, tag: u16) -> bool {
-        self.entry(tag).is_some()
+        matches!(self.entry(tag), Some((1 | 3 | 4, _, _)))
     }
 
     /// An unsigned integer field's first value.
@@ -170,10 +159,11 @@ impl Handle {
         }
     }
 
-    /// A RATIONAL field's first value.
+    /// A RATIONAL field with one value (fields of other types are
+    /// skipped).
     fn rational(&self, tag: u16) -> Option<f32> {
         let (ty, cnt, pos) = self.entry(tag)?;
-        if cnt < 1 {
+        if cnt != 1 || ty != 5 {
             return None;
         }
         let s = self.data.get(pos..pos + 8)?;
@@ -182,11 +172,7 @@ impl Handle {
         } else {
             (u32::from_be_bytes([s[0], s[1], s[2], s[3]]), u32::from_be_bytes([s[4], s[5], s[6], s[7]]))
         };
-        match ty {
-            5 => Some(if b == 0 { 0.0 } else { (a as f64 / b as f64) as f32 }),
-            10 => Some(if b == 0 { 0.0 } else { (a as i32 as f64 / b as i32 as f64) as f32 }),
-            _ => self.uint(tag).map(|v| v as f32),
-        }
+        Some(if b == 0 { 0.0 } else { (a as f64 / b as f64) as f32 })
     }
 
     /// An ASCII field, cut at its first NUL.
@@ -222,9 +208,9 @@ impl Handle {
         (self.p.width as u64 * self.sc() * self.p.bps as u64).div_ceil(8)
     }
 
-    /// Rows per strip, as libtiff shows them (after chopping).
+    /// Rows per strip, as the file has them.
     fn rps_eff(&self) -> u32 {
-        self.chop.unwrap_or(self.p.rps)
+        self.p.rps
     }
 
     fn rps(&self) -> u64 {
@@ -239,25 +225,9 @@ impl Handle {
         (self.p.tw as u64 * self.sc() * self.p.bps as u64).div_ceil(8)
     }
 
-    /// Strips or tiles, as libtiff shows them.
+    /// Strips or tiles in the file.
     fn chunks(&self) -> u32 {
         self.offsets.len() as u32
-    }
-
-    /// Strip or tile `k` as libtiff shows it, decoded: a chopped strip is
-    /// cut from the decoded single strip.
-    fn shown(&mut self, k: u32) -> Result<&[u8], Error> {
-        match self.chop {
-            None => self.chunk(k),
-            Some(r) => {
-                let line = self.scanline() as usize;
-                let h = self.p.height as usize;
-                let a = (k as usize * r as usize).min(h);
-                let b = ((k as usize + 1) * r as usize).min(h);
-                let v = self.chunk(0)?;
-                Ok(&v[a * line..b * line])
-            },
-        }
     }
 
     /// Strip or tile `k`, decoded by the verified decoder (the last one
@@ -337,23 +307,16 @@ unsafe fn open_bytes(name: &CStr, mode: *const c_char, data: Vec<u8>, client: th
         row: u32::MAX,
         strip: u32::MAX,
         tile: u32::MAX,
-        chop: None,
-        photometric: None,
     };
     for k in 0..h.p.offsets.count {
         h.offsets.push(value_exec(&h.data, le, h.p.offsets, k) as u64);
         h.counts.push(value_exec(&h.data, le, h.p.counts, k) as u64);
     }
-    let chopping = mode.is_null() || !CStr::from_ptr(mode).to_bytes().contains(&b'c');
-    if chopping {
-        chop(&mut h);
-    }
-    // libtiff ignores a ColorMap that comes before the BitsPerSample entry.
-    let order_ok = match (find_exec(&h.data, le, ifd, n, 258), find_exec(&h.data, le, ifd, n, 320)) {
-        (Some(ib), Some(ic)) => ib < ic,
-        _ => false,
-    };
-    if h.p.bps <= 16 && order_ok {
+    let _ = mode;
+    // The ColorMap: required for a palette image (the decoder has checked
+    // it), and reported for any image that has one of 3 * 2**BitsPerSample
+    // values.
+    if h.p.bps <= 16 {
         if let Ok(Some(f)) = field_exec(&h.data, le, ifd, n, 320) {
             let m = 1u32 << h.p.bps;
             if f.count == 3 * m {
@@ -362,30 +325,10 @@ unsafe fn open_bytes(name: &CStr, mode: *const c_char, data: Vec<u8>, client: th
             }
         }
     }
+    // ExtraSamples as the file has it: "The default is no extra samples".
     if let Ok(Some(f)) = field_exec(&h.data, le, ifd, n, 338) {
         h.extra = (0..f.count).map(|k| value_exec(&h.data, le, f, k) as u16).collect();
     }
-    // libtiff's fix-ups: samples beyond the photometric interpretation's
-    // colours become extra samples; a palette image of 8 bits or more
-    // without a ColorMap is RGB or grey.
-    let mut ph = h.p.photometric.filter(|v| *v <= 0xffff);
-    // (Without a Photometric tag libtiff's internal value is 0.)
-    {
-        let v = ph.unwrap_or(0);
-        let cc = match v {
-            0 | 1 | 3 => 1,
-            2 | 6 | 8 | 32845 | 9 | 10 => 3,
-            5 | 4 => 4,
-            _ => 0,
-        };
-        if cc > 0 && h.p.spp as usize > cc + h.extra.len() {
-            h.extra.resize(h.p.spp as usize - cc, 0);
-        }
-    }
-    if ph == Some(3) && h.cmap.is_none() && h.p.bps >= 8 {
-        ph = Some(if h.p.spp == 3 { 2 } else { 1 });
-    }
-    h.photometric = ph;
     for tag in [269u16, 270, 271, 272, 285, 305, 306, 315, 316, 33432] {
         if let Some(s) = h.ascii(tag) {
             h.strings.push((tag as u32, s));
@@ -397,47 +340,6 @@ unsafe fn open_bytes(name: &CStr, mode: *const c_char, data: Vec<u8>, client: th
         }
     }
     Box::into_raw(Box::new(h)) as *mut c_void
-}
-
-/// libtiff's `ChopUpSingleUncompressedStrip` (`STRIP_SIZE_DEFAULT` 8192).
-fn chop(h: &mut Handle) {
-    let p = &h.p;
-    if p.planar != 1 || h.offsets.len() != 1 || p.compression != 1 || p.tiled {
-        return;
-    }
-    let line = h.scanline();
-    let (stripbytes, rps) = if line > 8192 {
-        (line, 1u64)
-    } else if line > 0 {
-        let n = 8192 / line;
-        (n * line, n)
-    } else {
-        return;
-    };
-    if rps >= p.rps as u64 {
-        return;
-    }
-    let n = (p.height as u64).div_ceil(rps);
-    let size = h.data.len() as u64;
-    // libtiff compares with the byte count where it means the offset.
-    let off_bug = h.counts[0];
-    if n > 1_000_000 && (off_bug >= size || stripbytes > (size - off_bug) / (n - 1)) {
-        return;
-    }
-    let mut offset = h.offsets[0];
-    let mut left = h.counts[0];
-    let mut offs = Vec::with_capacity(n as usize);
-    let mut cnts = Vec::with_capacity(n as usize);
-    for _ in 0..n {
-        let c = stripbytes.min(left);
-        cnts.push(c);
-        offs.push(if c > 0 { offset } else { 0 });
-        offset += c;
-        left -= c;
-    }
-    h.offsets = offs;
-    h.counts = cnts;
-    h.chop = Some(rps as u32);
 }
 
 fn read_only(mode: *const c_char) -> bool {
@@ -632,7 +534,7 @@ api! {
 
     /// `TIFFIsCODECConfigured`: none, PackBits, LZW and Deflate.
     fn TIFFIsCODECConfigured / vtiff_TIFFIsCODECConfigured(c: u16) -> c_int {
-        matches!(c, 1 | 5 | 8 | 32946 | 32773) as c_int
+        matches!(c, 1 | 5 | 8 | 32773) as c_int
     }
 
     /// `TIFFCurrentRow`: the row `TIFFReadScanline` read last.
@@ -904,7 +806,7 @@ api! {
         }
         let line = h.scanline() as usize;
         let at = (row % h.rps_eff()) as usize * line;
-        match h.shown(s) {
+        match h.chunk(s) {
             Ok(v) => {
                 core::ptr::copy_nonoverlapping(v[at..at + line].as_ptr(), buf as *mut u8, line);
                 h.row = row;
@@ -1026,7 +928,7 @@ unsafe fn read_chunk(h: &mut Handle, k: u32, buf: *mut c_void, size: tmsize_t) -
         return -1;
     }
     let tiled = h.p.tiled;
-    match h.shown(k) {
+    match h.chunk(k) {
         Ok(v) => {
             let n = if size < 0 { v.len() } else { (size as usize).min(v.len()) };
             core::ptr::copy_nonoverlapping(v.as_ptr(), buf as *mut u8, n);
@@ -1091,18 +993,21 @@ pub unsafe extern "C" fn vtiff_get_field(t: *mut c_void, tag: u32, a: *mut c_voi
         257 => put32(p.height),
         258 if has || d => put16(p.bps),
         259 => put16(p.compression),
-        262 if h.photometric.is_some() => put16(h.photometric.unwrap_or(0)),
+        262 => put16(p.photometric),
         266 if has || d => put16(h.short(266).unwrap_or(1)),
         274 if h.orientation().is_some() || d => put16(h.orientation().unwrap_or(1)),
         277 if has || d => put16(p.spp),
-        278 if has || d || h.chop.is_some() => put32(h.rps_eff()),
+        278 if has || d => put32(p.rps),
         280 if has || d => put16(h.short(280).unwrap_or(0)),
         281 if has || d => put16(h.short(281).unwrap_or(if p.bps <= 16 { (1u32 << p.bps) - 1 } else { 65535 })),
-        282 | 283 | 286 | 287 if has => *(a as *mut f32) = h.rational(t16).unwrap_or(0.0),
+        282 | 283 | 286 | 287 => {
+            let Some(v) = h.rational(t16) else { return 0 };
+            *(a as *mut f32) = v;
+        },
         284 => put16(p.planar),
         296 if has || d => put16(h.short(296).unwrap_or(2)),
         317 => {
-            if !matches!(p.compression, 5 | 8 | 32946) {
+            if !matches!(p.compression, 5 | 8) {
                 if d {
                     put16(0);
                 }
@@ -1187,10 +1092,11 @@ pub unsafe extern "C" fn vtiff_set_field(t: *mut c_void, tag: u32) -> c_int {
 const EXTRASAMPLE_ASSOCALPHA: u16 = 1;
 const EXTRASAMPLE_UNASSALPHA: u16 = 2;
 
-/// What `TIFFRGBAImageBegin` works out: the alpha channel, and whether the
-/// image can be converted.
+/// What `TIFFRGBAImageBegin` works out: the alpha channel (its kind, and
+/// which sample it is), and whether the image can be converted.
 struct Rgba {
     alpha: u16,
+    ai: u64,
     photometric: u32,
 }
 
@@ -1204,14 +1110,7 @@ fn rgba_ok(h: &Handle) -> Result<u32, String> {
         return Err("Sorry, can not handle images with IEEE floating-point samples".into());
     }
     let colour = p.spp as i64 - h.extra.len() as i64;
-    let photometric = match h.photometric {
-        Some(x) => x,
-        None => match colour {
-            1 => 1,
-            3 => 2,
-            _ => return Err("Missing needed PhotometricInterpretation tag".into()),
-        },
-    };
+    let photometric = p.photometric;
     match photometric {
         0 | 1 | 3 => {
             if p.planar == 1 && p.spp != 1 && p.bps < 8 {
@@ -1251,20 +1150,18 @@ fn rgba_ok(h: &Handle) -> Result<u32, String> {
 fn rgba_begin(h: &Handle) -> Result<Rgba, String> {
     let photometric = rgba_ok(h)?;
     let p = &h.p;
-    let mut alpha = 0;
-    let mut extra = h.extra.len() as u32;
-    if let Some(&s) = h.extra.first() {
-        match s {
-            0 if p.spp > 3 => alpha = EXTRASAMPLE_ASSOCALPHA,
-            EXTRASAMPLE_ASSOCALPHA | EXTRASAMPLE_UNASSALPHA => alpha = s,
-            _ => {},
-        }
-    }
-    if extra == 0 && p.spp == 4 && photometric == 2 {
-        alpha = EXTRASAMPLE_ASSOCALPHA;
-        extra = 1;
-    }
-    let _ = extra;
+    // Alpha is the first extra sample that ExtraSamples says is alpha
+    // ("1 = Associated alpha data", "2 = Unassociated alpha data"); extra
+    // samples are "the last components" of a pixel. "0 = Unspecified data"
+    // is not alpha, and neither is a sample ExtraSamples does not describe.
+    let colours: u64 = if photometric == 2 { 3 } else { 1 };
+    let (alpha, ai) = h
+        .extra
+        .iter()
+        .enumerate()
+        .find(|(_, v)| matches!(**v, EXTRASAMPLE_ASSOCALPHA | EXTRASAMPLE_UNASSALPHA))
+        .map(|(i, v)| (*v, colours + i as u64))
+        .unwrap_or((0, 0));
     // Planar images of several samples go through libtiff's
     // `PickSeparateCase`: grey as RGB, no palette, CMYK of exactly 4.
     let separate = p.planar == 2 && p.spp > 1;
@@ -1284,7 +1181,7 @@ fn rgba_begin(h: &Handle) -> Result<Rgba, String> {
     if !ok {
         return Err("Can not handle format".into());
     }
-    Ok(Rgba { alpha, photometric })
+    Ok(Rgba { alpha, ai, photometric })
 }
 
 /// The colour of pixel (`x`, `y`), from the decoded image (all planes):
@@ -1293,6 +1190,7 @@ struct Conv<'a> {
     px: &'a [u8],
     h: &'a Handle,
     alpha: u16,
+    ai: u64,
     photometric: u32,
     cmap8: Option<[Vec<u8>; 3]>,
     grey: Vec<u8>,
@@ -1302,14 +1200,15 @@ impl<'a> Conv<'a> {
     fn new(h: &'a Handle, px: &'a [u8], r: &Rgba) -> Conv<'a> {
         let p = &h.p;
         let photometric = r.photometric;
+        // ColorMap values are 16-bit: "black is represented by 0,0,0 and
+        // white is represented by 65535, 65535, 65535" (§5).
         let cmap8 = h.cmap.as_ref().map(|m| {
-            let wide = m.iter().any(|c| c.iter().any(|&v| v >= 256));
-            let f = |c: &Vec<u16>| c.iter().map(|&v| if wide { (v >> 8) as u8 } else { v as u8 }).collect::<Vec<u8>>();
+            let f = |c: &Vec<u16>| c.iter().map(|&v| (v >> 8) as u8).collect::<Vec<u8>>();
             [f(&m[0]), f(&m[1]), f(&m[2])]
         });
         let range: u32 = if p.bps == 16 { 255 } else { (1 << p.bps) - 1 };
         let grey = (0..=range).map(|x| if photometric == 0 { ((range - x) * 255 / range) as u8 } else { (x * 255 / range) as u8 }).collect();
-        Conv { px, h, alpha: r.alpha, photometric, cmap8, grey }
+        Conv { px, h, alpha: r.alpha, ai: r.ai, photometric, cmap8, grey }
     }
 
     /// Sample `s` of pixel (`x`, `y`): its raw value (16-bit samples are
@@ -1354,9 +1253,9 @@ impl<'a> Conv<'a> {
             let c = |v: u32| if p.bps == 16 { Self::b16(v) } else { v };
             let v = c(self.sample(x, y, 0));
             return match self.alpha {
-                EXTRASAMPLE_ASSOCALPHA => pack(v, v, v, c(self.sample(x, y, 1))),
+                EXTRASAMPLE_ASSOCALPHA => pack(v, v, v, c(self.sample(x, y, self.ai))),
                 EXTRASAMPLE_UNASSALPHA => {
-                    let a = c(self.sample(x, y, 1));
+                    let a = c(self.sample(x, y, self.ai));
                     let u = Self::ua(v, a);
                     pack(u, u, u, a)
                 },
@@ -1367,8 +1266,8 @@ impl<'a> Conv<'a> {
             0 | 1 => {
                 let v = self.sample(x, y, 0);
                 let g = self.grey[if p.bps == 16 { (v >> 8) as usize } else { v as usize }] as u32;
-                if p.bps == 8 && self.alpha != 0 && p.spp == 2 {
-                    pack(g, g, g, self.sample(x, y, 1))
+                if p.bps == 8 && self.alpha != 0 {
+                    pack(g, g, g, self.sample(x, y, self.ai))
                 } else {
                     pack(g, g, g, 255)
                 }
@@ -1383,9 +1282,9 @@ impl<'a> Conv<'a> {
                 let wide = p.bps == 16;
                 let c = |v: u32| if wide { Self::b16(v) } else { v };
                 match self.alpha {
-                    EXTRASAMPLE_ASSOCALPHA if p.spp >= 4 => pack(c(r), c(g), c(b), c(self.sample(x, y, 3))),
-                    EXTRASAMPLE_UNASSALPHA if p.spp >= 4 => {
-                        let a = c(self.sample(x, y, 3));
+                    EXTRASAMPLE_ASSOCALPHA => pack(c(r), c(g), c(b), c(self.sample(x, y, self.ai))),
+                    EXTRASAMPLE_UNASSALPHA => {
+                        let a = c(self.sample(x, y, self.ai));
                         pack(Self::ua(c(r), a), Self::ua(c(g), a), Self::ua(c(b), a), a)
                     },
                     _ => pack(c(r), c(g), c(b), 255),

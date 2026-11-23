@@ -4,7 +4,8 @@
 # difftest/compare.sh does.
 #   fuzz/run.sh OUT N SEED FILES...
 # A mutant that both decode to different results, or that only verilith-tiff
-# decodes, fails the run; mutants that only libtiff decodes are counted.
+# decodes, fails the run, but for the departures compare.sh counts; mutants
+# that only libtiff decodes are counted.
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 out=$1 n=$2 seed=$3

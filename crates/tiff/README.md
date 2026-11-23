@@ -10,6 +10,12 @@ only, and it does not convert colours: a palette, CMYK or floating-point
 image comes out as its samples, with the photometric interpretation and
 sample format to say what they are.
 
+It reads TIFF as the TIFF 6.0 standard defines it. libtiff, the reference
+implementation, reads many files the standard does not allow, by guessing
+what they meant, and reads a few others differently from the standard;
+verilith-tiff follows the standard. See
+[Following TIFF 6.0](#following-tiff-60-not-libtiff).
+
 It also has libtiff's reading API for C (`src/capi.rs` and
 `capi/tiffshim.c`): built with the `tiff-abi` feature,
 `libverilith_tiff.a` replaces libtiff at link time for programs that read
@@ -18,8 +24,9 @@ See [C API](#c-api).
 
 The IFD reader, the image parameters, each of the four compression
 schemes, the byte swap, the predictor, and where each strip or tile lands
-in the output are proven against a specification of the format. `cargo
-verus focus` checks 131 functions with no errors.
+in the output are proven against a specification of the format, written
+from the standard. `cargo verus focus` checks 138 functions with no
+errors.
 
 libtiff's long CVE list is mostly memory-safety bugs in exactly these
 places: the arithmetic on strip and tile sizes and offsets, the predictor
@@ -33,11 +40,11 @@ by the proofs.
 | --- | --- |
 | Memory safety: no out-of-bounds access, no integer overflow, no panics | every function (Verus checks all indexing and arithmetic) |
 | Termination of every loop | every function (`decreases`) |
-| Correctness: the image's parameters and samples equal the specification's for every file the spec accepts; `Invalid` or `Unsupported` is returned exactly when the spec rejects the file | `decode::decode` against `spec::decode` |
+| Correctness: the image's parameters and samples equal the specification's for every file the spec accepts; `Unsupported` is returned exactly for the TIFF files that use a part of TIFF not read here, and `Invalid` for the other files the spec rejects | `decode::decode` against `spec::decode` and `spec::unsupported` |
 | The only other results are `TooLarge` (the caller's memory limit) and `OutOfMemory` (a failed allocation); the output is allocated only once its size is known to be within the limit | `decode::decode` ensures |
-| IFD entries and their values are read as the spec reads them, inline or at an offset, in either byte order | `ifd::field_exec`, `ifd::scalar_exec` against `spec::field`, `spec::scalar` |
-| The parameters are the spec's, and the checks libtiff makes on the fields that do not change the samples are made the same way | `params::params_exec` against `spec::params`, `params::extras_exec` against `spec::extras` |
-| PackBits, LZW (most significant bit first, early change, libtiff's 5119-entry table) and Deflate (through verilith-zlib) decode exactly the spec's bytes | `packbits::packbits_exec`, `lzw::lzw_exec`, `chunk::decompress_exec` |
+| IFD entries and their values are read as the spec reads them, inline or at an offset, in either byte order; the entries are in ascending order of tag; a field of a type other than BYTE, SHORT or LONG is skipped | `ifd::field_exec`, `ifd::scalar_exec`, `ifd::sorted_exec` against `spec::field`, `spec::scalar`, `spec::sorted` |
+| The parameters are the spec's, and the standard's rules on the fields that must agree with the samples (PhotometricInterpretation, ExtraSamples, ColorMap, SampleFormat, SMin/SMaxSampleValue, tiles) are checked | `params::params_exec` against `spec::params`, `params::extras_exec` against `spec::extras` |
+| PackBits (row by row), LZW (most significant bit first, early change, a 4096-entry table, to the end code) and Deflate (through verilith-zlib) decode exactly the spec's bytes | `packbits::packbits_exec`, `lzw::lzw_exec`, `chunk::decompress_exec` |
 | Byte swapping and horizontal differencing are undone as the spec says, in place | `chunk::swap_exec`, `predict::unpredict_exec` against `spec::to_le`, `spec::unpredict` |
 | Every byte of the output is written by exactly the strip or tile that the spec says it comes from, at the offset it says | `place::lemma_strip_a`/`_b`, `place::lemma_tile_a`/`_b`, `decode::place_strip`, `decode::place_tile` |
 
@@ -46,10 +53,12 @@ by the proofs.
 What the proofs assume rather than prove:
 
 - `src/spec.rs`: the specification, TIFF 6.0 as total functions over
-  `Seq<u8>`. Review it against the TIFF specification; if the spec is
-  wrong, the proofs still hold, about the wrong thing. Every place it
-  follows libtiff rather than a strict reading of the standard is marked
-  `libtiff:` in a comment.
+  `Seq<u8>`, quoting the standard (section numbers are TIFF 6.0's). Review
+  it against the standard; if the spec is wrong, the proofs still hold,
+  about the wrong thing. Where the standard leaves the reader a choice,
+  the choice is marked `choice:` in a comment. `difftest/rules.py` is a
+  second, independent reading of the standard, which the differential
+  tests check the spec against.
 - `src/prims.rs`: one `#[verifier::external_body]` primitive, a zeroed
   allocation.
 - verilith-zlib's trusted base (its specification of zlib and DEFLATE and
@@ -59,8 +68,8 @@ What the proofs assume rather than prove:
 - Verus, Z3 and the Rust compiler.
 
 - `src/capi.rs` and `capi/tiffshim.c`: libtiff's C API. Unverified glue:
-  it calls the verified decoder for every strip and tile, and does what
-  libtiff does around it (the fields `TIFFGetField` reports, the size
+  it calls the verified decoder for every strip and tile, and does around
+  it what libtiff's API does (the fields `TIFFGetField` reports, the size
   functions, scanlines, and `tif_getimage.c`'s conversion to RGBA) in
   ordinary Rust. `tiffshim.c` holds the variadic functions
   (`TIFFGetField`, `TIFFSetField`, `TIFFError`, ...), which stable Rust
@@ -71,43 +80,62 @@ Everything else in `src/` is verified. `examples/` (a command-line decoder
 for the tests and a timer), `difftest/`, `fuzz/` and `bench/` are
 unverified tools.
 
-### Departures from libtiff
+### Following TIFF 6.0, not libtiff
 
-verilith-tiff is checked against libtiff 4.5.1 as Ubuntu 24.04 ships it
-(with libdeflate), reading every strip with `TIFFReadEncodedStrip` or every
-tile with `TIFFReadEncodedTile`. Where both decode a file the samples are
-identical; the differential tests and the fuzzer check this.
+verilith-tiff reads TIFF as the TIFF 6.0 standard (Adobe, 1992) defines
+it, with Deflate (Compression 8) from Adobe's TIFF technical notes. It is
+checked against libtiff 4.5.1 as Ubuntu 24.04 ships it (with libdeflate),
+reading every strip with `TIFFReadEncodedStrip` or every tile with
+`TIFFReadEncodedTile`: where both decode a file the samples are identical,
+but for the two departures at the end of this section. Where libtiff and
+the standard disagree, verilith-tiff follows the standard.
 
-libtiff guesses at what a damaged file meant in many places; the
-specification does not. Files libtiff decodes and verilith-tiff rejects:
+Files the standard does not allow, which libtiff reads (guessing what they
+meant) and verilith-tiff rejects as `Invalid`:
 
-| area | libtiff 4.5.1 | verilith-tiff |
+| the file | TIFF 6.0 | libtiff 4.5.1 |
 | --- | --- | --- |
-| No StripByteCounts | estimated from the image size | `Invalid` |
-| Offsets or byte counts with the wrong number of values | padded or cut | `Invalid` |
-| An uncompressed single strip shorter than it should be | byte count recomputed from the file size | `Invalid` |
-| Field types other than BYTE, SHORT and LONG for the fields used (signed, 64-bit, ...) | converted where the value fits | `Invalid` |
-| A Deflate or LZW stream damaged after the last byte the strip needs | not read that far | `Invalid`: the Deflate stream must be whole (LZW, like libtiff, stops at the last byte) |
-| BigTIFF | read | `Unsupported` |
-| Compression other than none, PackBits, LZW and Deflate (CCITT, JPEG, ...) | read | `Invalid` |
-| FillOrder 2, the floating-point predictor, YCbCr images, complex sample formats | read | `Invalid` |
-| "Old-style" LZW (libtiff before 1993) | read | `Invalid` |
-| Tiles whose rows do not end on a byte | read | `Invalid` (TIFF requires tile widths that are multiples of 16) |
+| IFD entries out of order, or a tag twice | "The entries in an IFD must be sorted in ascending order by Tag" (§2) | warns, and uses the first of two |
+| The IFD at an odd offset, or inside the header | it "may be at any location in the file after the header but must begin on a word boundary" (§2) | reads it |
+| No PhotometricInterpretation | "There is no default for PhotometricInterpretation, and it is required" (§8) | guesses from the samples |
+| A value TIFF does not define: a PhotometricInterpretation, a Compression (libtiff's own 32946 for Deflate), an ExtraSamples value (Corel Draw's 999), a Predictor | the values each field lists (§8, §14, §16, §19, §23) | reads several |
+| A palette image without a ColorMap of 3 × 2^BitsPerSample values | "ColorMap must be included in all palette-color images", N = 3 * (2**BitsPerSample) (§5, §8) | from 8 bits up, reads it as grey or RGB |
+| A palette image with more than one sample; a transparency mask that is not one 1-bit sample | "SamplesPerPixel must be 1"; "SamplesPerPixel and BitsPerSample must be 1" (§8) | reads it |
+| Fewer samples than the photometric interpretation's colours, or an ExtraSamples count that does not match | "If SamplesPerPixel is, say, 5 then ExtraSamples will contain 2 values" (§8; NumberOfInks for separated images, §16; 1 or 3 for CIELab, §23) | reads it, making up ExtraSamples |
+| BitsPerSample or SampleFormat with one value for several samples | N = SamplesPerPixel, "the writer must write all three values" (§8, §19) | uses the one value for all |
+| No StripByteCounts; offsets or byte counts with the wrong number of values | StripByteCounts: "No default"; N = StripsPerImage (§8) | estimates them, pads or cuts |
+| Tiles not a multiple of 16 wide or long; strip fields in a tiled file | "TileWidth must be a multiple of 16", as must TileLength; "Do not use both strip-oriented and tile-oriented fields" (§15) | reads it |
+| A PackBits run or literal that crosses a row | "Pack each row separately. Do not compress across row boundaries" (§9) | decodes across rows, or in `TIFFReadScanline` cuts the run short |
+| An LZW strip without its end code, or with more or fewer bytes than the strip | "each strip begins with a ClearCode and ends with an EndOfInformation code" (§13) | stops at the last byte it needs |
+| An LZW table grown past 4096 entries without a clear code | "our table can have at most 4096 entries. The table should not be any larger" (§13) | grows it to 5119 |
+| A Deflate strip or tile with more or fewer bytes than it holds, or a stream damaged after them | "The data in the last strip is not padded" (§3); tiles are all the tile's size (§15) | stops once it has enough (and, through libdeflate, leaves the end of the strip unwritten when the stream is longer) |
+| An uncompressed strip shorter than the strip | each strip holds its rows (§3, §8) | recomputes the byte count from the file's size |
+| "Old-style" LZW (libtiff before 1993) | not TIFF | reads it |
 
-Files verilith-tiff decodes, or decodes differently, where libtiff does
-not:
+Files that are TIFF, but use a part of it that verilith-tiff does not read,
+are `Unsupported` (the spec's `unsupported`): BigTIFF; CCITT (2, 3, 4) and
+JPEG (6, 7) compression; YCbCr; FillOrder 2 ("Support for FillOrder=2 is
+not required in a Baseline TIFF compliant reader"); the floating-point
+predictor; horizontal differencing of samples other than 8, 16 or 32 bits;
+BitsPerSample above 32 or differing between samples; SampleFormat differing
+between samples. libtiff reads most of them.
 
-| area | libtiff 4.5.1 | verilith-tiff |
-| --- | --- | --- |
-| Uncompressed strips whose byte counts differ from what libtiff expects | "Wrong StripByteCounts field, ignoring and calculating", then fails for lack of data | the byte counts in the file are used |
-| A Deflate strip or tile that decompresses to more bytes than it needs | libdeflate stops for lack of room and libtiff accepts that, leaving the last bytes of the strip unwritten | the first bytes the strip needs, from a stream that must be whole |
+Files where libtiff does not do what the standard says, and verilith-tiff
+does:
 
-The same in both: the predictor is ignored for uncompressed and PackBits
-data; LZW stops at the last byte the strip needs, without an end code; of
-two entries with the same tag the first is used, and entries need not be
-sorted; SampleFormat, ExtraSamples, SMinSampleValue and SMaxSampleValue are
-checked as libtiff checks them; a palette image of fewer than 8 bits needs
-a ColorMap of 3 × 2^bits values, after BitsPerSample in the IFD.
+| the file | TIFF 6.0 | libtiff 4.5.1 | verilith-tiff |
+| --- | --- | --- | --- |
+| A field of a type other than BYTE, SHORT or LONG where an integer is expected (Compression as SSHORT, ...) | "TIFF readers should accept BYTE, SHORT, or LONG values for any unsigned integer field"; "Readers should skip over fields containing an unexpected field type" (§2) | converts the value where it fits, and rejects the file where it does not | skips the field, so its default applies |
+| Uncompressed strips whose byte counts differ from each other | the byte counts as written | "Wrong StripByteCounts field, ignoring and calculating", then fails for lack of data | uses the file's byte counts |
+
+Where the standard leaves the reader a choice (`choice:` in `spec.rs`): the
+output is little-endian whatever the file's byte order; values need not
+start at an even offset ("The Value is expected to begin on a word
+boundary" asks it of writers, and ASCII strings "will often begin on an odd
+byte"); an uncompressed strip's byte count may be larger than the strip;
+data after a strip's last byte or end code is not read; the Predictor is
+read only for LZW and Deflate ("Currently this field is used only with
+LZW").
 
 ## C API
 
@@ -133,7 +161,8 @@ return values and memory rules:
 - RGBA: `TIFFRGBAImageOK`, `TIFFReadRGBAImage`,
   `TIFFReadRGBAImageOriented`, `TIFFReadRGBAStrip(Ext)` and
   `TIFFReadRGBATile(Ext)`, for greyscale, RGB, palette and CMYK images,
-  with or without alpha, converted as `tif_getimage.c` converts them;
+  with or without alpha, converted as `tif_getimage.c` converts them
+  (TIFF does not define the conversion);
 - directories (`TIFFCurrentDirectory`, `TIFFSetDirectory`,
   `TIFFReadDirectory`, `TIFFNumberOfDirectories`, ...), errors and
   warnings (`TIFFError`, `TIFFWarning`, their `Ext` forms and their
@@ -148,30 +177,40 @@ cargo build --release -p verilith-tiff --features tiff-abi
 cc prog.c target/release/libverilith_tiff.a -lpthread -lm -ldl   # instead of -ltiff
 ```
 
-Every strip and tile is decoded by the verified decoder (`decode::chunk_exec`).
-Around it the C API does what libtiff does, so that a program sees what it
-would see with libtiff: `TIFFGetField` reports what libtiff reports
-(defaults, the fields libtiff fills in, the values it refuses), an
-uncompressed image in one strip is presented as strips of about 8 KB as
-libtiff presents it (except in mode `c`), and the RGBA functions do
-`tif_getimage.c`'s conversions, rounding included.
+Every strip and tile is decoded by the verified decoder
+(`decode::chunk_exec`). Around it the C API does what libtiff's API does
+where libtiff follows the standard, so that a program sees what it would see
+with libtiff on a file that is TIFF: `TIFFGetField` reports what libtiff
+reports, and the RGBA functions do `tif_getimage.c`'s conversions, rounding
+included. Where libtiff does not follow the standard, the C API does:
 
-Where the C API differs from libtiff, besides the departures above:
+- Fields are reported as the file has them. A field of a type other than
+  BYTE, SHORT or LONG where an integer is expected is skipped (libtiff
+  converts it); an absent field has the standard's default (libtiff sets
+  RowsPerStrip to ImageLength when it is absent or estimated, and makes up
+  ExtraSamples for samples the file does not describe: "The default is no
+  extra samples"); a byte count libtiff would replace with its estimate is
+  the file's.
+- The strips are the file's. libtiff's "strip chopping", which shows an
+  uncompressed image in one strip as strips of about 8 KB and reports a
+  RowsPerStrip the file does not have, is not done (libtiff does not do it
+  in mode `c` either).
+- An extra sample is alpha only if ExtraSamples says so (1, associated, or
+  2, unassociated); libtiff also takes "0 = Unspecified data" as alpha.
+  Alpha is the first extra sample marked as alpha; extra samples are "the
+  last components" of a pixel.
+- A ColorMap is 16-bit: "black is represented by 0,0,0 and white is
+  represented by 65535, 65535, 65535". libtiff takes a ColorMap whose values
+  are all below 256 as 8-bit, so a dark palette comes out bright.
+
+And where the C API differs from libtiff otherwise:
 
 - It reads. `TIFFOpen` in any mode but `r` fails, as does `TIFFSetField`
   on a tag (codec options are accepted and ignored). Only the first image
   is read: `TIFFReadDirectory` returns 0.
 - The file is read in full when it is opened, and checked then: a file the
-  decoder rejects (JPEG compression, YCbCr, BigTIFF, ...) fails at
-  `TIFFOpen`, where libtiff fails at the first read, or reads it.
-- When libtiff replaces a file's StripByteCounts with its own estimate
-  ("Wrong StripByteCounts field, ignoring and calculating"),
-  `TIFFGetField` reports the byte counts in the file, which are the ones
-  the decoder uses.
-- `TIFFReadScanline` on PackBits data gives the rows of the strip as the
-  whole strip decodes. libtiff decodes a strip one scanline at a time and
-  cuts a run that crosses into the next scanline short ("Discarding ...
-  bytes to avoid buffer overflow"), so the rows after it differ.
+  decoder rejects fails at `TIFFOpen`, where libtiff fails at the first
+  read, or reads it.
 - `TIFFReadRGBAImage` and `TIFFReadRGBATile` on a tiled greyscale image
   that is 16-bit or has extra samples, and whose width is not a multiple
   of the tile width, give the image. libtiff's `put16bitbwtile`,
@@ -189,14 +228,19 @@ against libtiff's `tiffio.h`: `difftest/reftiff.c` (`TIFFOpen`,
 with verilith-tiff prints what `examples/vtiffcat.rs` prints, for every
 file; and `difftest/api.c` (`TIFFGetField` and `TIFFGetFieldDefaulted` on
 every baseline tag, the size functions, every scanline or tile, and every
-RGBA function), linked once with verilith-tiff and once with libtiff, prints
-the same for every file both decode to the same samples, but for the last
-three differences above, which it tells apart by libtiff's warnings and
-counts. On the 429 corpus files and 8,000 mutants: `reftiff.c` printed what
-the Rust API prints on all 8,429; `api.c` printed the same as with libtiff
-on 2,164 files, and differed on 132 only by those three (38 edge tiles, 93
-PackBits scanlines, 1 StripByteCounts estimate). On the 38 edge-tile files
-the RGBA verilith-tiff gives was checked against the decoded samples.
+RGBA function), linked once with verilith-tiff and once with libtiff (in
+mode `rc`, without strip chopping), prints the same for every file both
+decode to the same samples, but where one of the differences above
+explains it (`difftest/apiclass.py` tells them apart, by libtiff's own
+warnings or by the image's layout and fields). On the 429 corpus files: `reftiff.c` printed what the Rust API prints on
+all of them; `api.c` printed the same as with libtiff on 394, and differed
+on 13 only as above (8 edge tiles, 5 ColorMaps libtiff took as 8-bit). On
+8,000 mutants: `reftiff.c` agreed on all; of the files both decode to the
+same samples, `api.c` printed the same as with libtiff on 1,036 and differed
+on 61 only as above (16 made-up ExtraSamples, 19 skipped fields, 14 edge
+tiles, 12 ColorMaps), none otherwise. On the 38 edge-tile files of an
+earlier run, the RGBA verilith-tiff gives matched libtiff's own, correct,
+RGBA of the same image stored in strips.
 
 ## Design
 
@@ -222,27 +266,37 @@ strips or tiles one at a time:
 ## Tests
 
 - `cargo test --release` runs `tests/cases.rs`: uncompressed strips (and
-  ones too short or missing), a big-endian 16-bit image, PackBits, LZW and
-  stored-block Deflate round trips, an LZW table grown past 4096 entries
-  without a clear code, the predictor at 8 and 16 bits, tiles cut at both
-  edges, a planar image, and the files the specification rejects.
+  ones too short or missing), a big-endian 16-bit image, PackBits (and
+  runs across rows), LZW (without an end code, with too much data, and a
+  table grown past 4096 entries) and stored-block Deflate (of the wrong
+  size), the predictor at 8 and 16 bits, tiles cut at both edges and tiles
+  not a multiple of 16, a planar image, a field of an unexpected type, and
+  each rule of the standard above that a file can break, `Invalid` or
+  `Unsupported`.
 - `difftest/compare.sh FILES...` decodes each file with verilith-tiff and
   with libtiff (`difftest/reftiff.c`, built by `difftest/build.sh`) and
   compares the byte order, size, samples, compression, planar
-  configuration and a hash of the decoded samples. On 429 files
-  (`difftest/gen.sh`'s ImageMagick corpus in every byte order, layout and
-  compression, and Pillow's TIFFs of every mode): 407 identical, 2
-  rejected by both, 20 decoded only by libtiff (all YCbCr), none
-  different.
+  configuration and a hash of the decoded samples. It also checks each
+  file against `difftest/rules.py`, an independent reading of TIFF 6.0
+  (written from the standard, with its own PackBits and LZW decoders): a
+  file verilith-tiff rejects must break one of the standard's rules or use
+  a part of TIFF not read here, and a file it decodes must break none. On
+  429 files (`difftest/gen.sh`'s ImageMagick corpus in every byte order,
+  layout and compression, and Pillow's TIFFs of every mode): 407
+  identical, 2 rejected by both, 20 decoded only by libtiff (all YCbCr,
+  `Unsupported`), none different.
 - `fuzz/run.sh OUT N SEED FILES...` writes `N` mutants of the seed files
   (`fuzz/mutate.py`: entry values, counts and types changed, entries
   dropped, duplicated and moved, strip data with bit flips, header bytes,
-  and random byte edits) and compares them the same way. On 21,000 mutants
-  in six runs: 5,384 decoded identically, 16,855 rejected by both, 1,261
-  decoded only by libtiff, 41 that are the two departures in the second
-  table, none different. The first runs found the rules libtiff applies to
-  SampleFormat, ExtraSamples, SMin/SMaxSampleValue and ColorMap that the
-  spec had missed, and they are in it now.
+  and random byte edits) and compares them the same way. On 8,000 mutants: 1,097 decoded identically,
+  5,589 rejected by both, 1,271 decoded only by libtiff, and 43 that are
+  the two departures at the end of [Following TIFF 6.0](#following-tiff-60-not-libtiff)
+  (42 fields of an unexpected type, 1 StripByteCounts estimate), none
+  different. Every file only libtiff decodes breaks a rule of the
+  standard by `rules.py`'s reading; most often unsorted IFD entries (458),
+  a PhotometricInterpretation TIFF does not define (168) or none at all
+  (67), PackBits across rows (55), LZW or Deflate data of the wrong size
+  (89), and offsets or byte counts missing or of the wrong number (81).
 - `difftest/abi.sh FILES...` checks the C API (see [C API](#c-api)).
 
 ## Performance

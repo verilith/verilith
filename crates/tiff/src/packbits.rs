@@ -34,17 +34,19 @@ fn fill(out: &mut [u8], pos: usize, n: usize, v: u8)
     assert(out@ =~= o.subrange(0, pos as int) + Seq::new(n as nat, |k: int| v) + o.subrange(pos + n, o.len() as int));
 }
 
-/// Decodes the PackBits data `d` into `out[..need]`. Returns whether
-/// `spec::packbits` accepts it.
-pub fn packbits_exec(d: &[u8], out: &mut [u8], need: usize) -> (r: bool)
+/// Decodes the PackBits data `d`, in rows of `rb` bytes, into
+/// `out[..need]`. Returns whether `spec::packbits` accepts it.
+pub fn packbits_exec(d: &[u8], out: &mut [u8], need: usize, rb: usize) -> (r: bool)
     requires
         need <= old(out)@.len(),
+        rb >= 1,
+        need % rb == 0,
     ensures
         final(out)@.len() == old(out)@.len(),
-        r == packbits(d@, 0, Seq::empty(), need as nat) is Some,
-        r ==> packbits(d@, 0, Seq::empty(), need as nat) == Some(final(out)@.subrange(0, need as int)),
+        r == packbits(d@, 0, Seq::empty(), need as nat, rb as nat) is Some,
+        r ==> packbits(d@, 0, Seq::empty(), need as nat, rb as nat) == Some(final(out)@.subrange(0, need as int)),
 {
-    let ghost want = packbits(d@, 0, Seq::empty(), need as nat);
+    let ghost want = packbits(d@, 0, Seq::empty(), need as nat, rb as nat);
     let mut i: usize = 0;
     let mut pos: usize = 0;
     proof {
@@ -54,26 +56,35 @@ pub fn packbits_exec(d: &[u8], out: &mut [u8], need: usize) -> (r: bool)
         invariant
             i <= d@.len(),
             pos <= need <= out@.len(),
+            rb >= 1,
+            need % rb == 0,
             out@.len() == old(out)@.len(),
-            want == packbits(d@, 0, Seq::empty(), need as nat),
-            want == packbits(d@, i as int, out@.subrange(0, pos as int), need as nat),
+            want == packbits(d@, 0, Seq::empty(), need as nat, rb as nat),
+            want == packbits(d@, i as int, out@.subrange(0, pos as int), need as nat, rb as nat),
         decreases d@.len() - i,
     {
-        if i >= d.len() {
-            assert(packbits(d@, i as int, out@.subrange(0, pos as int), need as nat) is None);
+        if i >= d.len() || rb == 0 {
+            assert(packbits(d@, i as int, out@.subrange(0, pos as int), need as nat, rb as nat) is None);
             return false;
         }
         let h = get(d, i);
         let ghost o = out@;
+        let room = rb - pos % rb;
+        proof {
+            // The end of this row is at most `need`.
+            let g = pos - pos % rb;
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(pos as int, rb as int);
+            vstd::arithmetic::div_mod::lemma_mod_multiples_basic((pos / rb) as int, rb as int);
+            vstd::arithmetic::mul::lemma_mul_is_commutative((pos / rb) as int, rb as int);
+            crate::chunk::lemma_multiples(g as int, need as int, rb as int);
+            assert(pos + room <= need);
+        }
         if h == 128 {
             i = i + 1;
         } else if h > 128 {
-            let mut r = (257 - h as usize) as usize;
-            if r > need - pos {
-                r = need - pos;
-            }
-            if d.len() - i <= 1 {
-                assert(packbits(d@, i as int, out@.subrange(0, pos as int), need as nat) is None);
+            let r = (257 - h as usize) as usize;
+            if r > room || d.len() - i <= 1 {
+                assert(packbits(d@, i as int, out@.subrange(0, pos as int), need as nat, rb as nat) is None);
                 return false;
             }
             let v = get(d, i + 1);
@@ -84,12 +95,9 @@ pub fn packbits_exec(d: &[u8], out: &mut [u8], need: usize) -> (r: bool)
             i = i + 2;
             pos = pos + r;
         } else {
-            let mut l = h as usize + 1;
-            if l > need - pos {
-                l = need - pos;
-            }
-            if d.len() - i - 1 < l {
-                assert(packbits(d@, i as int, out@.subrange(0, pos as int), need as nat) is None);
+            let l = h as usize + 1;
+            if l > room || d.len() - i - 1 < l {
+                assert(packbits(d@, i as int, out@.subrange(0, pos as int), need as nat, rb as nat) is None);
                 return false;
             }
             copy_in(out, pos, d, i + 1, l);

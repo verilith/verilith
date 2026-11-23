@@ -4,9 +4,8 @@
 //! adds is the previous code's output and the byte after it, so it is a
 //! run of output already written, and decoding a code is one LZ77 match
 //! copy. TIFF's codes are packed most significant bit first, widen one
-//! entry early, and the data must start with a clear code. Entries from
-//! 4096 on (libtiff lets the table grow to 5119) are counted but not
-//! stored: no 12-bit code can name them.
+//! entry early, and the data must start with a clear code and end with the
+//! end code. The table holds at most 4096 entries.
 use crate::spec::*;
 use verilith_core::lz::copy_match;
 #[cfg(verus_only)]
@@ -262,7 +261,7 @@ pub proof fn lemma_copy_new(a: Seq<u8>, b: Seq<u8>, pos: int, last: int)
 // ---------------------------------------------------------------------------
 
 pub struct St {
-    /// Entries in the table: `s.dict.len()`, up to 5119.
+    /// Entries in the table: `s.dict.len()`, up to 4096.
     pub n: usize,
     pub w: u64,
     pub started: bool,
@@ -279,7 +278,7 @@ impl St {
     pub open spec fn ok(self, need: nat, out: Seq<u8>, off: Seq<u32>, len: Seq<u32>) -> bool {
         let s = self.s@;
         &&& need + SLACK <= out.len() <= u32::MAX
-        &&& self.pos < need + SLACK
+        &&& self.pos <= need
         &&& s.out == out.subrange(0, self.pos as int)
         &&& self.n == s.dict.len()
         &&& self.w == s.width
@@ -348,9 +347,9 @@ fn code_first(st: &mut St, need: usize, out: &mut [u8], off: &[u32], len: &[u32]
         c != 257,
     ensures
         final(out)@.len() == old(out)@.len(),
-        ok == lzw_code(old(st).s@, c as nat) is Some,
+        ok == lzw_code(old(st).s@, c as nat, need as nat) is Some,
         ok ==> final(st).ok(need as nat, final(out)@, off@, len@)
-            && final(st).s@ == lzw_code(old(st).s@, c as nat)->Some_0,
+            && final(st).s@ == lzw_code(old(st).s@, c as nat, need as nat)->Some_0,
 {
     let ghost s = st.s@;
     if c >= 256 {
@@ -360,7 +359,7 @@ fn code_first(st: &mut St, need: usize, out: &mut [u8], off: &[u32], len: &[u32]
     let pos = st.pos;
     set(out, pos, c as u8);
     proof {
-        let s2 = lzw_code(s, c as nat)->Some_0;
+        let s2 = lzw_code(s, c as nat, need as nat)->Some_0;
         lemma_table_keep(s, o, out@, pos as int, pos + 1, off@, len@);
         assert(s2.out =~= out@.subrange(0, pos + 1));
         assert(s2.dict[c as int] =~= out@.subrange(pos as int, pos + 1));
@@ -369,7 +368,7 @@ fn code_first(st: &mut St, need: usize, out: &mut [u8], off: &[u32], len: &[u32]
     st.pos = pos + 1;
     st.prev = c;
     st.has_prev = true;
-    st.s = Ghost(lzw_code(s, c as nat)->Some_0);
+    st.s = Ghost(lzw_code(s, c as nat, need as nat)->Some_0);
     true
 }
 
@@ -380,7 +379,7 @@ fn put_string(st: &St, need: usize, out: &mut [u8], off: &[u32], len: &[u32], c:
     requires
         st.ok(need as nat, old(out)@, off@, len@),
         st.has_prev,
-        st.pos < need,
+        st.pos <= need,
         c < STORED,
         c != 256,
         c != 257,
@@ -439,7 +438,7 @@ fn code_next(st: &mut St, need: usize, out: &mut [u8], off: &mut [u32], len: &mu
         old(st).ok(need as nat, old(out)@, old(off)@, old(len)@),
         old(st).started,
         old(st).has_prev,
-        old(st).pos < need,
+        old(st).pos <= need,
         c < STORED,
         c != 256,
         c != 257,
@@ -447,13 +446,13 @@ fn code_next(st: &mut St, need: usize, out: &mut [u8], off: &mut [u32], len: &mu
         final(out)@.len() == old(out)@.len(),
         final(off)@.len() == old(off)@.len(),
         final(len)@.len() == old(len)@.len(),
-        ok == lzw_code(old(st).s@, c as nat) is Some,
+        ok == lzw_code(old(st).s@, c as nat, need as nat) is Some,
         ok ==> final(st).ok(need as nat, final(out)@, final(off)@, final(len)@)
-            && final(st).s@ == lzw_code(old(st).s@, c as nat)->Some_0,
+            && final(st).s@ == lzw_code(old(st).s@, c as nat, need as nat)->Some_0,
 {
     let ghost s = st.s@;
     let ghost o = out@;
-    if st.n >= 5119 {
+    if st.n >= 4096 {
         return false;
     }
     let start = st.pos;
@@ -462,6 +461,10 @@ fn code_next(st: &mut St, need: usize, out: &mut [u8], off: &mut [u32], len: &mu
         Some(x) => x,
         None => return false,
     };
+    if l > need - start {
+        // The string would go past the end of the strip.
+        return false;
+    }
     let pos = start + l;
     proof {
         lemma_table_keep(s, o, out@, start as int, pos as int, off@, len@);
@@ -481,7 +484,7 @@ fn code_next(st: &mut St, need: usize, out: &mut [u8], off: &mut [u32], len: &mu
     }
     st.n = n + 1;
     proof {
-        let s2 = lzw_code(s, c as nat)->Some_0;
+        let s2 = lzw_code(s, c as nat, need as nat)->Some_0;
         assert(s2.dict == s.dict.push(x));
         assert(s2.out =~= out@.subrange(0, pos as int));
         assert(s2.dict[c as int] == str);
@@ -490,13 +493,13 @@ fn code_next(st: &mut St, need: usize, out: &mut [u8], off: &mut [u32], len: &mu
     st.pos = pos;
     st.prev = c;
     st.w = grow(st.n, st.w);
-    st.s = Ghost(lzw_code(s, c as nat)->Some_0);
+    st.s = Ghost(lzw_code(s, c as nat, need as nat)->Some_0);
     true
 }
 
-/// Decodes the first `need` bytes of the LZW data `data` into
-/// `out[..need]`. Returns whether `spec::lzw` accepts the data; `out`
-/// from `need` on is scratch space, and so are `off` and `len`.
+/// Decodes the LZW data `data`, to its end code, into `out[..need]`.
+/// Returns whether `spec::lzw` accepts the data; `out` from `need` on is
+/// scratch space, and so are `off` and `len`.
 #[verifier::loop_isolation(false)]
 pub fn lzw_exec(data: &[u8], need: usize, out: &mut [u8], off: &mut [u32], len: &mut [u32]) -> (r: bool)
     requires
@@ -523,7 +526,7 @@ pub fn lzw_exec(data: &[u8], need: usize, out: &mut [u8], off: &mut [u32], len: 
         assert(s =~= lzw_start());
         assert forall|j: int| 0 <= j < 256 implies #[trigger] s.dict[j] == seq![j as u8] by {}
     }
-    while st.pos < need
+    loop
         invariant
             out@.len() == olen,
             off@.len() == STORED,
@@ -599,10 +602,20 @@ pub fn lzw_exec(data: &[u8], need: usize, out: &mut [u8], off: &mut [u32], len: 
             }
             st = st_new(true, st.pos, Ghost(st.s@.out));
         } else if c == 257 {
+            // The end code: the strip must be complete.
+            if st.started && st.pos == need {
+                proof {
+                    assert(out@.subrange(0, st.pos as int) =~= out@.subrange(0, need as int));
+                }
+                return true;
+            }
             return false;
         } else if !st.started {
             return false;
         } else if !st.has_prev {
+            if st.pos >= need {
+                return false;
+            }
             if !code_first(&mut st, need, out, off, len, c) {
                 return false;
             }
@@ -612,10 +625,6 @@ pub fn lzw_exec(data: &[u8], need: usize, out: &mut [u8], off: &mut [u32], len: 
             }
         }
     }
-    proof {
-        assert(out@.subrange(0, st.pos as int).subrange(0, need as int) =~= out@.subrange(0, need as int));
-    }
-    true
 }
 
 } // verus!
