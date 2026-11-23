@@ -146,6 +146,8 @@ so under the table (`note` in `harness/suites.py`).
 | xml-expat-dropin-check | drop-in | verilith-xml (expat ABI) | expat 2.10.0 | `XML_Parse` with no handlers | same |
 | xml-expat-read | native | verilith-xml (`parse`, `Element::attrs`, `children`) | expat 2.10.0 (SAX) | parse, visit every element, attribute (normalized value) and run of character data | 6 of Silesia's XML files and the 7 files of roxmltree's benchmarks |
 | xml-expat-check | native | verilith-xml (`check`) | expat 2.10.0 (no handlers) | decide whether the document is well-formed | same |
+| xml-libxml2-dropin-read | drop-in | verilith-xml (libxml2 ABI) | libxml2 2.15.4 | the xml-expat-read task, through the same SAX2 driver | same |
+| xml-libxml2-dropin-check | drop-in | verilith-xml (libxml2 ABI) | libxml2 2.15.4 | `xmlCtxtReadMemory` with SAX2's DTD handlers and none for content | same |
 | xml-libxml2-read | native | verilith-xml (`parse`, `Element::attrs`, `children`) | libxml2 2.15.4 (SAX2) | the xml-expat-read task | same |
 | xml-libxml2-check | native | verilith-xml (`check`) | libxml2 2.15.4 (SAX2, no content handlers) | the xml-expat-check task | same |
 
@@ -153,8 +155,8 @@ In archive-read the two libraries do not do quite the same work: verilith-archiv
 parses and checks the whole archive when it is opened and checks a member's
 length and CRC-32 before it returns any of its data, where libarchive streams.
 
-Eight tasks are measured both ways (against c-ares, llhttp, picohttpparser,
-cJSON, mbedTLS, libpng, and expat's read and check), and the report prints those side by side, case by case,
+Ten tasks are measured both ways (against c-ares, llhttp, picohttpparser,
+cJSON, mbedTLS, libpng, and expat's and libxml2's read and check), and the report prints those side by side, case by case,
 under "Drop-in and native, side by side". Three things to know when reading
 the native column:
 
@@ -168,7 +170,6 @@ the native column:
 - **picohttpparser** already has a flat API that copies nothing, so its two
   columns are close, as they should be.
 
-verilith-xml has no libxml2 C ABI yet, and
 simdjson and Verdict are compared core against core, so those have a native number only. zlib, brotli, lz4, snappy, archives, WebP, JPEG, fonts, regex
 and URL have a drop-in number only: their own APIs do the same work as the
 originals' (verilith-url's Rust API against ada's C++ API is not measured yet).

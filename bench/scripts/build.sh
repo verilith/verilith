@@ -373,8 +373,9 @@ build_regex() {
   $CC $objs "$lib" $RUST_LIBS -o "$BIN/regex-vregex"
 }
 
-# XML: expat's and libxml2's SAX APIs, drop-in (the same driver linked
-# against verilith-xml's expat ABI) and against verilith-xml's own API.
+# XML: expat's and libxml2's SAX APIs, drop-in (the same drivers linked
+# against verilith-xml's expat and libxml2 ABIs) and against verilith-xml's
+# own API.
 build_xml() {
   local src; src=$(orig expat)/expat
   cmake_build "$src" "$BUILD/expat" -DEXPAT_BUILD_TOOLS=OFF -DEXPAT_BUILD_EXAMPLES=OFF -DEXPAT_BUILD_TESTS=OFF \
@@ -392,6 +393,8 @@ build_xml() {
   local sys="-lm"
   [ "$OS" = Darwin ] || sys="$sys -lpthread"
   cc_runner xml-libxml2 -I"$x/include" -I"$BUILD/libxml2" "$S/xml/libxml2.c" "$l" $sys
+  local vl; vl=$(rust_lib vxml libxml2-abi)
+  cc_runner xml-libxml2-vxml -I"$x/include" -I"$BUILD/libxml2" "$S/xml/libxml2.c" "$vl" $RUST_LIBS
   rust_runner vxml-run xml-vxml
 }
 

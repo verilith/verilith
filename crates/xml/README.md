@@ -27,7 +27,10 @@ relying on it. With the feature `expat-abi` it is a drop-in for libexpat:
 a C program built against expat 2.10.0's `expat.h` links
 `libverilith_xml.a` in place of `libexpat.a` and runs unchanged, 1.2 to 9
 times as fast reading a document through expat's callbacks (see
-[The expat C ABI](#the-expat-c-abi)). There is no libxml2 ABI yet.
+[The expat C ABI](#the-expat-c-abi)). With `libxml2-abi` it stands in for
+the core of libxml2 (parsing, SAX, the tree, saving), passing 934 of
+libxml2's 1181 regression tests that cover those parts; through that ABI it
+is not yet faster than libxml2 (see [The libxml2 C ABI](#the-libxml2-c-abi)).
 
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -191,6 +194,12 @@ verified in verilith-simd). The trusted base is listed under
   trusts the pointers and lengths the caller passes, as a C library does.
   It is tested by libexpat's own tests under ASan and UBSan (see
   [The expat C ABI](#the-expat-c-abi)).
+* **The libxml2 ABI** (`src/api/libxml2/`, about 13 000 lines, feature
+  `libxml2-abi`) is the same kind of code: it builds libxml2's structs and
+  trees with libxml2's allocator, frees what the caller hands back, and
+  trusts every pointer the caller passes. It is tested by libxml2's own
+  regression tests under ASan and UBSan (see
+  [The libxml2 C ABI](#the-libxml2-c-abi)).
 * **Error positions** (`Tape::err`, and the line and column in `Error`)
   are diagnostics outside the spec: the verified parser decides whether
   the document is well-formed, and records where the step that failed
@@ -345,6 +354,82 @@ and linked against `libverilith_xml.a` (`scripts/test-expat.sh`, run by
 
 `tests/c/expat-known-failures.txt` lists each failing test and its reason;
 CI fails if any other test fails, or if a listed one passes.
+
+## The libxml2 C ABI
+
+`cargo build --profile release-abort --features libxml2-abi` adds the core
+of libxml2's C API to the library (`src/api/libxml2/`, not verified): 427
+functions of libxml2 2.15.4, with the struct layouts of its headers
+(`xmlParserCtxt`, `xmlSAXHandler`, `xmlDoc`, `xmlNode` and the rest; a test
+checks 18 of them field by field against the headers). Build the caller
+against libxml2's own headers, configured with threads, output, push, SAX1
+and validity flags on and the rest off, and link `libverilith_xml.a` (with
+`-lpthread -ldl -lm`) instead of `-lxml2`.
+
+What is there:
+
+* **Parsing**: `xmlCtxtReadMemory`, `xmlReadMemory`, `xmlReadFile`,
+  `xmlReadFd`, `xmlReadDoc` and their `xmlCtxt*` forms, the older
+  `xmlParseFile`, `xmlParseMemory`, `xmlSAXUserParse*`, `xmlRecover*` and
+  `xmlSAXParse*`, the push parser (`xmlCreatePushParserCtxt`,
+  `xmlParseChunk`), `xmlParseInNodeContext`, `xmlCtxtParseContent` and
+  `xmlParseBalancedChunkMemory`, with the `XML_PARSE_*` options that apply
+  (entities substituted, DTD attribute defaults, blanks removed, CDATA as
+  text, SAX1, old SAX entity reporting).
+* **SAX**: the SAX1 and SAX2 handlers, called in libxml2's order with its
+  arguments: the internal subset's declarations (entities, notations,
+  attribute lists, element types with content models), elements with
+  namespaces resolved and defaulted attributes, character data split as
+  libxml2 splits it (at references, and blanks to `ignorableWhitespace`),
+  CDATA, comments, processing instructions, entity references. `xmlSAX2*`,
+  the default handlers, build the tree.
+* **The tree**: documents, nodes, attributes, namespaces, the DTD and its
+  tables (`xmlGetDtdElementDesc`, `xmlGetDocEntity` and the like), the
+  creation, copy, unlink, free, search and content functions
+  (`xmlNodeGetContent`, `xmlGetProp`, `xmlNodeListGetString`, ...),
+  dictionaries and hash tables, and `xmlBuffer`.
+* **Saving**: `xmlDocDumpMemory`, `xmlSaveFile`, `xmlSaveToBuffer` and
+  the rest of `xmlsave.h` for XML, with formatting, to UTF-8, UTF-16,
+  ISO-8859-1 and ASCII (characters the encoding lacks as references).
+* **Errors**: `xmlCtxtGetLastError`, `xmlCtxtGetStatus`, the structured and
+  generic error handlers, libxml2's messages and its error codes.
+* **Input**: UTF-8, UTF-16 (with or without a byte order mark),
+  ISO-8859-1 and US-ASCII; files, descriptors and registered input
+  callbacks.
+
+Where it departs from libxml2:
+
+* **The document is parsed whole.** The push parser keeps the chunks until
+  the last one, then parses and calls the handlers; no SAX call comes
+  before it.
+* **One error for a malformed document.** libxml2 recovers and goes on,
+  reporting every error; here the verified parser rejects the document, and
+  the ABI reports one fatal error, worked out from where it stopped. On the
+  common errors the code, the message and the position are libxml2's.
+* **Parameter entities and external entities are not read**, as
+  verilith-xml does not read them (see
+  [How verilith-xml reads XML 1.0](#how-verilith-xml-reads-xml-10)):
+  declarations a parameter entity holds are missing, and a reference to an
+  external parsed entity is reported but not expanded, `XML_PARSE_NOENT`
+  or not. The external DTD subset is not loaded and nothing is validated.
+* **Not there**: HTML (and xmlsave's XHTML mode), XPath, XInclude, the
+  reader and writer APIs, schemas, catalogs, encoding handlers beyond the
+  four above (`xmlFindCharEncodingHandler` finds none), and URI parsing
+  (`xmlParseURI` returns NULL; `xmlBuildURI` resolves relative to a base).
+
+**libxml2's own tests.** `scripts/test-libxml2.sh` (run by `ci.sh`) builds
+libxml2 2.15.4's `runtest.c` with ASan and UBSan against
+`libverilith_xml.a` and runs the 15 suites the ABI covers: parsing from
+files, memory and descriptors, entity substitution, namespaces, error
+cases, SAX1 and SAX2 events, push, saving. Each compares the events, the
+errors and the saved tree with libxml2's expected files: 934 of 1181 tests
+pass. Of the 247 that fail, 105 push a document a byte at a time and count
+the SAX calls each byte gives, 115 are malformed documents where libxml2
+reports more than the one error, 14 need parameter entities expanded, 2
+external entities read, 3 expect character data split where libxml2's 4000
+byte file reads end, and 8 are saved as XHTML.
+`tests/c/libxml2-known-failures.txt` lists each with its reason; CI fails
+if any other test fails, or a listed one passes.
 
 ## Test results
 
@@ -525,6 +610,43 @@ attributes are copied out as NUL-terminated strings, as expat's callbacks
 take them. Checking with no handlers runs the verified check alone, as the
 native comparison does.
 
+### Drop-in for libxml2 (vbench)
+
+`bench/run.sh --only xml-libxml2-dropin-read,xml-libxml2-dropin-check`: the
+harness's libxml2 driver (`bench/suites/xml/libxml2.c`, `xmlCtxtReadMemory`
+with SAX2's DTD handlers and its own for content), unchanged, linked
+against libxml2 and against verilith-xml's libxml2 ABI. The same VM,
+2026-11-23, 11 interleaved pairs per case, gcc 13.3 `-O3 -march=native` and
+rustc 1.97 with fat LTO and `-C target-cpu=native`. MB/s:
+
+| file | read: vxml | read: libxml2 | read: speedup | check: speedup |
+|---|---:|---:|---|---|
+| elts.xml | 157 | 227 | 0.66x (0.61–1.03)\* | 0.64x (0.59–0.73) |
+| play1.xml | 200 | 343 | 0.58x (0.55–0.63) | 0.92x (0.71–1.08)\* |
+| stats1.xml | 161 | 234 | 0.69x (0.66–0.72) | 0.77x (0.58–0.98) |
+| tal1.xml | 115 | 177 | 0.63x (0.61–0.75) | 0.85x (0.69–1.33)\* |
+| tpc.xml | 146 | 250 | 0.59x (0.52–0.63) | 0.62x (0.55–0.75) |
+| w3c5.xml | 143 | 211 | 0.68x (0.59–0.74) | 0.78x (0.70–1.02)\* |
+| attributes.xml | 56 | 62 | 0.91x (0.87–0.99) | 0.65x (0.49–0.86) |
+| cdata.xml | 772 | 181 | 4.26x (4.10–4.50) | 4.31x (2.25–4.78) |
+| gigantic.svg | 407 | 320 | 1.26x (0.99–1.39)\* | 1.03x (0.88–1.47)\* |
+| huge.xml | 204 | 241 | 0.87x (0.73–1.02)\* | 1.14x (0.82–1.52)\* |
+| large.plist | 178 | 310 | 0.62x (0.52–0.92) | 0.54x (0.52–0.59) |
+| medium.svg | 217 | 297 | 0.69x (0.65–0.88) | 0.67x (0.40–0.72) |
+| text.xml | 57 | 59 | 0.94x (0.92–1.70)\* | 0.97x (0.81–1.20)\* |
+
+Geometric means: reading **0.85x** libxml2, checking
+**0.89x**; starred intervals include 1.00. The same sitting
+put verilith-xml's Rust API at 1.78x libxml2 reading and 4.05x
+checking. Through the ABI the verified parse is followed by a second pass
+over its tape that does what libxml2's callers expect of it: names
+interned in the context's dictionary, attributes copied into SAX2's
+arrays with namespaces resolved, and the input's line and column kept up
+to date for every item. Checking pays for most of that pass too: with no
+content handlers set the ABI still walks the content, to resolve
+namespaces and report libxml2's namespace errors. Only the CDATA-heavy
+document comes out ahead; making the second pass cheaper is the next step.
+
 ### Against the Rust XML parsers
 
 `bench/` (a separate project) times verilith-xml against the Rust XML
@@ -590,9 +712,11 @@ it first.
 ```sh
 cargo build --profile release-abort
 cargo build --profile release-abort --features expat-abi   # with the expat C ABI
+cargo build --profile release-abort --features libxml2-abi # with the libxml2 C ABI
 ./scripts/verify.sh            # needs cargo-verus on PATH (see the repository's README)
-./ci.sh                        # the tests: fetches the W3C suite and libexpat
+./ci.sh                        # the tests: fetches the W3C suite, libexpat and libxml2
 scripts/test-expat.sh XMLCONF  # libexpat's tests against the expat ABI
+scripts/test-libxml2.sh        # libxml2's runtest against the libxml2 ABI
 XMLCONF=/path/to/xmlconf cargo test --profile release-abort
 ./ci.sh fuzz                   # the libFuzzer targets (nightly, cargo-fuzz)
 ../../bench/run.sh --only xml  # vbench: against expat and libxml2, built from pinned sources
@@ -619,11 +743,12 @@ src/lanes.rs     SSE2 wrappers proven over verilith-simd
 src/tape.rs      the tokens
 src/api.rs       the Rust API (not verified)
 src/api/expat.rs expat's C ABI, feature expat-abi (not verified)
+src/api/libxml2/ libxml2's C ABI, feature libxml2-abi (not verified): parser, SAX2, tree, save, I/O
 tests/           the W3C suite, its output tests, API tests
-tests/c/         libexpat's test suite against the ABI: internals stub, known failures
+tests/c/         libexpat's and libxml2's tests against the ABIs: stubs, layouts, known failures
 fuzz/            differential fuzzing against libexpat
 bench/           against the Rust XML parsers (expat and libxml2 are in vbench)
-scripts/         verification, fetching libexpat, libexpat's tests
+scripts/         verification, fetching libexpat and libxml2, their tests
 ```
 
 ## License

@@ -48,11 +48,11 @@ not occur in any crate's `src/` (the script fails if one appears).
 | wasm | 35 |  |  |  |  | 1 | 4 |
 | webp | 10 |  |  |  |  |  | 3 |
 | x509 |  |  |  |  |  |  | 6 |
-| xml | 2 |  |  |  |  |  | 3 |
+| xml | 2 |  |  |  |  |  | 10 |
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  | 2 |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **482** | **30** | **266** | **5** | **22** | **12** | **92** |
+| **total** | **482** | **30** | **266** | **5** | **22** | **12** | **99** |
 
 ## Items
 
@@ -277,6 +277,13 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/xml/src/tape.rs`: external_body: `slice_len_bound`
 - `crates/xml/src/uniq.rs`: external_body: `seed`
 - `crates/xml/src/api/expat.rs`: plain Rust
+- `crates/xml/src/api/libxml2/codes.rs`: plain Rust
+- `crates/xml/src/api/libxml2/io.rs`: plain Rust
+- `crates/xml/src/api/libxml2/mod.rs`: plain Rust
+- `crates/xml/src/api/libxml2/parser.rs`: plain Rust
+- `crates/xml/src/api/libxml2/save.rs`: plain Rust
+- `crates/xml/src/api/libxml2/sax2.rs`: plain Rust
+- `crates/xml/src/api/libxml2/tree.rs`: plain Rust
 
 ### zlib
 
