@@ -257,8 +257,7 @@ differences smaller than that as ties.
   holds off new readers.
 - **crossbeam-channel**: `bounded(n)` for `n > 0` only. No `unbounded()`,
   zero-capacity rendezvous channels or `select!` yet.
-- **crossbeam-queue**: `ArrayQueue` capacity is limited to below 2^31, and
-  it has no `force_push`.
+- **crossbeam-queue**: `ArrayQueue` has no `force_push`.
 - **rtrb**: `spsc::new(cap)` returns the producer and consumer (and the
   ghost view); `push` fails with `Err(value)` and `pop` returns an
   `Option`, where rtrb has its own error types. Batches go through

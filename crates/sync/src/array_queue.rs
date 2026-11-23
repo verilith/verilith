@@ -9,7 +9,7 @@
 //! at `p`; the pop of `p` then sets it to `pk(p + cap)`.
 //!
 //! Unlike crossbeam, positions never wrap: the counters are 64 bits and the
-//! queue aborts if one would overflow (after at least 2^32 laps of the buffer). This is
+//! queue aborts if one would overflow (after at least 2^62 pushes, whatever the capacity). This is
 //! what makes the compare-and-swaps on `head` and `tail` ABA-free in the
 //! proof; crossbeam lets them wrap.
 //!
@@ -91,8 +91,8 @@ pub open spec fn pk(c: Consts, p: nat) -> nat {
 pub open spec fn consts_ok(c: Consts) -> bool {
     &&& 0 < c.cap < c.lap
     &&& c.lap == vstd::arithmetic::power2::pow2(c.shift)
-    &&& c.shift < 32
-    &&& c.lap < 0x1_0000_0000
+    &&& c.shift < 61
+    &&& c.lap < 0x2000_0000_0000_0000
     &&& c.stamp_ids.len() == c.cap
     &&& c.cells.len() == c.cap
     &&& c.stamp_mono.len() == c.cap
@@ -326,10 +326,10 @@ pub proof fn lemma_decode(c: Consts, x: u64, mask: u64, p: nat)
     lemma_div_mod(p, c.cap);
     let (a, r) = (p / c.cap, p % c.cap);
     vstd::arithmetic::power2::lemma2_to64();
-    vstd::arithmetic::power2::lemma_pow2_strictly_increases(c.shift, 32);
+    vstd::arithmetic::power2::lemma_pow2_strictly_increases(c.shift, 61);
     assert(vstd::bits::low_bits_mask(c.shift) == c.lap - 1);
     vstd::bits::lemma_u64_low_bits_mask_is_mod(x, c.shift);
-    assert(c.lap < 0x1_0000_0000);
+    assert(c.lap < 0x2000_0000_0000_0000);
     assert((x as nat) % c.lap == r) by {
         lemma_split(x as nat, c.lap, a, r);
     }
@@ -1272,11 +1272,11 @@ impl<T> ArrayQueue<T> {
     /// The smallest power of two above `cap`.
     fn lap_for(cap: u64) -> (r: (u64, Ghost<nat>))
         requires
-            0 < cap < 0x8000_0000,
+            0 < cap < 0x1000_0000_0000_0000,
         ensures
-            cap < r.0 < 0x1_0000_0000,
+            cap < r.0 < 0x2000_0000_0000_0000,
             r.0 == vstd::arithmetic::power2::pow2(r.1@),
-            r.1@ < 32,
+            r.1@ < 61,
     {
         proof {
             vstd::arithmetic::power2::lemma2_to64();
@@ -1287,7 +1287,7 @@ impl<T> ArrayQueue<T> {
             invariant
                 one_lap == vstd::arithmetic::power2::pow2(shift),
                 1 <= one_lap <= 2 * cap,
-                cap < 0x8000_0000,
+                cap < 0x1000_0000_0000_0000,
             decreases 2 * cap - one_lap,
         {
             one_lap = one_lap * 2;
@@ -1298,8 +1298,8 @@ impl<T> ArrayQueue<T> {
         }
         proof {
             vstd::arithmetic::power2::lemma2_to64();
-            if shift > 31 {
-                vstd::arithmetic::power2::lemma_pow2_strictly_increases(31, shift);
+            if shift > 61 {
+                vstd::arithmetic::power2::lemma_pow2_strictly_increases(61, shift);
             }
         }
         (one_lap, Ghost(shift))
@@ -1424,7 +1424,7 @@ impl<T> ArrayQueue<T> {
     /// (empty) contents.
     pub fn new_with_view(cap: usize) -> (r: (ArrayQueue<T>, Tracked<QueueView<T>>))
         requires
-            0 < cap < 0x8000_0000,
+            0 < cap < 0x1000_0000_0000_0000,
         ensures
             r.0.wf(),
             r.0.capacity_spec() == cap,
@@ -1634,10 +1634,10 @@ impl<T> ArrayQueue<T> {
     ///
     /// # Panics
     ///
-    /// If `cap` is zero or at least 2^31.
+    /// If `cap` is zero or at least 2^60 (more than can be allocated).
     pub fn new(cap: usize) -> ArrayQueue<T> {
         assert!(cap > 0, "capacity must be non-zero");
-        assert!(cap < 0x8000_0000, "capacity must be below 2^31");
+        assert!(cap < 0x1000_0000_0000_0000, "capacity must be below 2^60");
         Self::new_with_view(cap).0
     }
 }

@@ -75,8 +75,9 @@ and Adobe's Technical Notes #5176 and #5177. It is about 3,100 lines in
   fewer than four bytes of padding: contour end points increase, the
   flags and coordinates are all present, a composite's component records
   are complete. Every component is a glyph that exists. No glyph contains
-  itself, directly or through other glyphs, and components nest at most
-  64 deep. `maxp` tells the truth: no glyph has more points, contours,
+  itself, directly or through other glyphs. Components may nest as deep
+  as the glyphs allow, as in OTS; they are followed with a stack on the
+  heap. `maxp` tells the truth: no glyph has more points, contours,
   instruction bytes, components or nesting than `maxp` says, counting a
   composite glyph's points and contours through all its components.
 - **Character map (`cmap`).** Encoding records are sorted and each leads
@@ -96,8 +97,8 @@ and Adobe's Technical Notes #5176 and #5177. It is about 3,100 lines in
   holds more than 48 numbers, each operator finds the operands it takes,
   every subroutine call names a subroutine that exists, calls nest at
   most 10 deep, hint masks have the bytes their stems need, and the
-  program ends with `endchar`. All the charstrings of a font together
-  execute at most 2^26 operators, so a consumer's work is bounded.
+  program ends with `endchar`. Each glyph's charstring executes at most
+  2^26 operators, as in OTS, so a consumer's work is bounded.
 - **Layout (`GDEF`, `GSUB`, `GPOS`).** Every offset a shaper can follow,
   from the table header down to the last device table, leads to a
   structure that lies inside the table and is itself well formed: script,
@@ -198,9 +199,7 @@ Where verilith-font accepts less:
   overlap. OTS accepts some that do not; verilith-font drops the subtable. (Both
   repair the common case of a last segment whose `idRangeOffset` is
   0xFFFF.)
-- Limits: input up to 1 GiB, 300 MiB after decompression, 1024 `cmap`
-  encoding records, composites nested 64 deep, 2^26 charstring operators
-  per font (OTS allows that many per glyph).
+- Limits: input up to 1 GiB and 300 MiB after decompression (both OTS's).
 - In CFF, a Font DICT may not hold the operators that describe the whole
   font, a font that is not CID-keyed may not have an FDArray or FDSelect,
   and charset ranges must not name string ids that do not exist.

@@ -628,7 +628,7 @@ pub fn check_charstrings(t: &[u8], d: &DictX, g: usize, ng: u16, sm: usize) -> (
     }
     let mut cur: usize = 0;
     let mut st = CsX { stack: Vec::new(), width: false, stems: 0, hint: 0, ops: 0 };
-    let mut ops: u32 = 0;
+    let ops: u32 = 0;
     let mut i: usize = 0;
     while i < n
         invariant
@@ -670,8 +670,8 @@ pub fn check_charstrings(t: &[u8], d: &DictX, g: usize, ng: u16, sm: usize) -> (
         st.width = false;
         st.stems = 0;
         st.hint = 0;
-        st.ops = ops;
-        assert(st.v() == cs_init(ops as int));
+        st.ops = 0;
+        assert(st.v() == cs_init(0));
         let r = run_x(t, g, l, a, b, 0, &mut st);
         if r != 2 {
             proof {
@@ -680,9 +680,7 @@ pub fn check_charstrings(t: &[u8], d: &DictX, g: usize, ng: u16, sm: usize) -> (
             }
             return false;
         }
-        let ghost ops0 = ops;
-        ops = st.ops;
-        assert(cs_glyph(t@, d@, g as int, i as int, ops0 as int, sm as int) == Some(ops as int));
+        assert(cs_glyph(t@, d@, g as int, i as int, ops as int, sm as int) == Some(ops as int));
         i += 1;
     }
     true

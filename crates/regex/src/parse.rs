@@ -13,13 +13,12 @@ use vstd::slice::{slice_subrange, slice_to_vec};
 
 verus! {
 
-/// Groups may nest this deep.
-pub const MAX_NEST: usize = 250;
-
 pub const MAX_REPEAT: usize = 1000;
 
-/// The longest pattern, in bytes.
-pub const MAX_PATTERN: usize = 0x1_0000;
+/// The longest pattern, in bytes: larger than any allocation can be, so
+/// in effect there is no limit (RE2 has none either). It only keeps the
+/// arithmetic on positions from overflowing.
+pub const MAX_PATTERN: usize = usize::MAX / 4;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Error {
@@ -27,7 +26,7 @@ pub enum Error {
     BadUtf8,
     /// A syntax error at this byte offset.
     Syntax(usize),
-    /// The pattern, or the program it compiles to, is too large or too deep.
+    /// The program the pattern compiles to is too large.
     TooBig,
 }
 
@@ -45,6 +44,13 @@ pub struct Ps {
     pub classes: Vec<Class>,
     pub ngroups: usize,
     pub names: Vec<(Vec<u8>, usize)>,
+    /// The caller's instruction limit.
+    pub lim: usize,
+    /// Instructions the repetitions so far expanded to. Every one of them
+    /// ends up in the program, so past `lim` the pattern is too big: this
+    /// keeps the tree, and so the memory the parser takes, in proportion
+    /// to the pattern and the limit.
+    pub spent: usize,
 }
 
 pub open spec fn names_v(v: Seq<(Vec<u8>, usize)>) -> Seq<(Seq<u8>, nat)> {
@@ -53,7 +59,8 @@ pub open spec fn names_v(v: Seq<(Vec<u8>, usize)>) -> Seq<(Seq<u8>, nat)> {
 
 impl Ps {
     pub open spec fn ok(&self) -> bool {
-        forall|k: int| 0 <= k < self.classes@.len() ==> (#[trigger] self.classes@[k]).wf()
+        &&& forall|k: int| 0 <= k < self.classes@.len() ==> (#[trigger] self.classes@[k]).wf()
+        &&& self.spent <= self.lim <= MAX_PROG
     }
 
     pub open spec fn st(&self) -> St {
@@ -1043,6 +1050,7 @@ fn repeat(
     min: usize,
     max: Option<usize>,
     greedy: bool,
+    room: usize,
     Ghost(cl): Ghost<Seq<Class>>,
     Ghost(nc): Ghost<int>,
     Ghost(ng): Ghost<int>,
@@ -1097,6 +1105,9 @@ fn repeat(
                 proof {
                     lemma_node(acc, cl, nc, ng);
                 }
+                if acc.ln > room {
+                    return Err(Error::TooBig);
+                }
                 k += 1;
             }
             (acc, min)
@@ -1121,6 +1132,9 @@ fn repeat(
         proof {
             lemma_node(acc, cl, nc, ng);
         }
+        if acc.ln > room {
+            return Err(Error::TooBig);
+        }
         j += 1;
     }
     Ok(acc)
@@ -1134,6 +1148,7 @@ fn apply_rep(
     max: Option<usize>,
     greedy: bool,
     pos: usize,
+    room: usize,
     Ghost(cl): Ghost<Seq<Class>>,
     Ghost(nc): Ghost<int>,
     Ghost(ng): Ghost<int>,
@@ -1186,7 +1201,7 @@ fn apply_rep(
         if m >= 2 && rep > 1000 {
             return Err(Error::Syntax(pos));
         }
-        let y = repeat(&x, min, max, greedy, Ghost(cl), Ghost(nc), Ghost(ng))?;
+        let y = repeat(&x, min, max, greedy, room, Ghost(cl), Ghost(nc), Ghost(ng))?;
         Ok(y.set_rep(rep))
     }
 }
@@ -1525,308 +1540,517 @@ fn quote(pat: &[u8], pos: usize, fl: Flags, ps: &mut Ps, items: &mut Vec<Ast>) -
     }
 }
 
-/// Alternatives from `pos` up to the end of the pattern or an unmatched
-/// `)`.
-fn alt(pat: &[u8], pos: usize, fl: Flags, ps: &mut Ps, depth: usize) -> (r: Result<(Ast, usize, Flags), Error>)
-    requires
-        pat@.len() <= MAX_PATTERN,
-        pos <= pat@.len(),
-        old(ps).ok(),
-        old(ps).ngroups <= pos + 1,
-        depth <= MAX_NEST,
-    ensures
-        match r {
-            Ok((a, q, f)) => grows(old(ps), final(ps)) && good(
-                a,
-                final(ps).classes@.len() as int,
-                final(ps).ngroups as int,
-            ) && pos <= q <= pat@.len() && final(ps).ngroups <= q + 1 && sx::alts(
-                pat@,
-                pos as int,
-                fl,
-                old(ps).st(),
-                Seq::empty(),
-            ) == Some(Out { it: itv(a, final(ps).classes@), pos: q as int, fl: f, st: final(ps).st() }),
-            Err(e) => e is TooBig || sx::alts(pat@, pos as int, fl, old(ps).st(), Seq::empty()) is None,
-        },
-    decreases pat@.len() - pos, 3int,
-{
-    let n = pat.len();
-    let ghost goal = sx::alts(pat@, pos as int, fl, ps.st(), Seq::empty());
-    let ghost cl0 = ps.classes@;
-    let ghost ng0 = ps.ngroups;
-    let mut alts: Vec<Ast> = Vec::new();
-    let mut p = pos;
-    let mut f = fl;
-    assert(its(alts@, ps.classes@) =~= Seq::empty());
-    loop
-        invariant
-            n == pat@.len(),
-            n <= MAX_PATTERN,
-            pos <= p <= n,
-            depth <= MAX_NEST,
-            ps.ok(),
-            cl0 == old(ps).classes@,
-            ng0 == old(ps).ngroups,
-            goal == sx::alts(pat@, pos as int, fl, old(ps).st(), Seq::empty()),
-            ext(cl0, ps.classes@),
-            ng0 <= ps.ngroups,
-            ps.ngroups <= p + 1,
-            all_good(alts@, ps.classes@.len() as int, ps.ngroups as int),
-            goal == sx::alts(pat@, p as int, f, ps.st(), its(alts@, ps.classes@)),
-        decreases n - p,
-    {
-        let ghost c1 = ps.classes@;
-        let ghost g1 = ps.ngroups;
-        let ghost v1 = alts@;
-        let (a, q, f2) = cat(pat, p, f, ps, depth)?;
-        proof {
-            lemma_its_ext(v1, c1, ps.classes@, g1 as int, ps.ngroups as int);
-            lemma_ext_trans(cl0, c1, ps.classes@);
-        }
-        alts.push(a);
-        assert(its(alts@, ps.classes@) =~= its(v1, c1).push(itv(a, ps.classes@)));
-        if q < n && pat[q] == 0x7C {
-            p = q + 1;
-            f = f2;
+/// What the spec's `group` gives once its alternatives `r` are known.
+pub open spec fn group_k(pat: Seq<u8>, cap: bool, k: nat, r: Option<Out>) -> Option<(It, int, St)> {
+    match r {
+        None => None,
+        Some(o) => if !sx::at(pat, o.pos, 0x29) {
+            None
         } else {
-            let t = tree(alts, true, Ghost(ps.classes@), Ghost(ps.classes@.len() as int), Ghost(ps.ngroups as int))?;
-            return Ok((t, q, f2));
-        }
+            Some(
+                (
+                    if cap {
+                        It { re: Re::Group(k, Box::new(o.it.re)), rep: o.it.rep }
+                    } else {
+                        o.it
+                    },
+                    o.pos + 1,
+                    o.st,
+                ),
+            )
+        },
     }
 }
 
-/// A concatenation from `pos` up to `|`, `)` or the end.
+/// What the spec's `items` at the `(` at `p` gives once the group `g` is
+/// known.
+pub open spec fn items_k(pat: Seq<u8>, p: int, fl: Flags, acc: Seq<It>, g: Option<(It, int, St)>) -> Option<Out> {
+    match g {
+        None => None,
+        Some((it, r, st3)) => if r <= p {
+            None
+        } else {
+            sx::items(pat, r, fl, st3, acc.push(it), false)
+        },
+    }
+}
+
+/// What the spec's `alts` from `pos` after `acc` gives once its first
+/// concatenation `r` is known.
+pub open spec fn alts_k(pat: Seq<u8>, pos: int, acc: Seq<It>, r: Option<Out>) -> Option<Out> {
+    match r {
+        None => None,
+        Some(o) => {
+            let acc2 = acc.push(o.it);
+            if sx::at(pat, o.pos, 0x7C) && o.pos >= pos {
+                sx::alts(pat, o.pos + 1, o.fl, o.st, acc2)
+            } else {
+                Some(Out { it: sx::tree(acc2, true), pos: o.pos, fl: o.fl, st: o.st })
+            }
+        },
+    }
+}
+
+/// An open group, as the spec sees it: the alternatives and the
+/// concatenation around it, where they started, and the group's number.
+pub ghost struct Gf {
+    pub apos: int,
+    pub aacc: Seq<It>,
+    pub p: int,
+    pub fl: Flags,
+    pub cacc: Seq<It>,
+    pub cap: bool,
+    pub k: nat,
+}
+
+/// What the whole pattern gives once the innermost open group's
+/// alternatives `r` are known.
+pub open spec fn up(pat: Seq<u8>, fs: Seq<Gf>, r: Option<Out>) -> Option<Out>
+    decreases fs.len(),
+{
+    if fs.len() == 0 {
+        r
+    } else {
+        let f = fs.last();
+        up(pat, fs.drop_last(), alts_k(pat, f.apos, f.aacc, items_k(pat, f.p, f.fl, f.cacc, group_k(pat, f.cap, f.k, r))))
+    }
+}
+
+pub proof fn lemma_up_none(pat: Seq<u8>, fs: Seq<Gf>)
+    ensures
+        up(pat, fs, None) is None,
+    decreases fs.len(),
+{
+    if fs.len() > 0 {
+        lemma_up_none(pat, fs.drop_last());
+    }
+}
+
+/// An open group: what the parser had built around it.
+pub struct Xf {
+    pub alts: Vec<Ast>,
+    pub apos: usize,
+    pub items: Vec<Ast>,
+    pub p: usize,
+    pub fl: Flags,
+    pub cap: bool,
+    pub k: usize,
+}
+
+pub open spec fn gf(x: Xf, cl: Seq<Class>) -> Gf {
+    Gf {
+        apos: x.apos as int,
+        aacc: its(x.alts@, cl),
+        p: x.p as int,
+        fl: x.fl,
+        cacc: its(x.items@, cl),
+        cap: x.cap,
+        k: x.k as nat,
+    }
+}
+
+pub open spec fn gfs(xs: Seq<Xf>, cl: Seq<Class>) -> Seq<Gf> {
+    Seq::new(xs.len(), |i: int| gf(xs[i], cl))
+}
+
+pub open spec fn xf_good(x: Xf, nc: int, ng: int, p: int) -> bool {
+    &&& all_good(x.alts@, nc, ng)
+    &&& all_good(x.items@, nc, ng)
+    &&& x.apos <= x.p < p
+    &&& x.cap ==> x.k < ng
+}
+
+pub open spec fn xs_good(xs: Seq<Xf>, nc: int, ng: int, p: int) -> bool {
+    forall|i: int| 0 <= i < xs.len() ==> xf_good(#[trigger] xs[i], nc, ng, p)
+}
+
+pub proof fn lemma_xs_ext(xs: Seq<Xf>, c1: Seq<Class>, c2: Seq<Class>, g1: int, g2: int, p1: int, p2: int)
+    requires
+        xs_good(xs, c1.len() as int, g1, p1),
+        ext(c1, c2),
+        g1 <= g2,
+        p1 <= p2,
+    ensures
+        gfs(xs, c2) == gfs(xs, c1),
+        xs_good(xs, c2.len() as int, g2, p2),
+{
+    assert forall|i: int| 0 <= i < xs.len() implies gf(xs[i], c2) == gf(xs[i], c1) && xf_good(
+        #[trigger] xs[i],
+        c2.len() as int,
+        g2,
+        p2,
+    ) by {
+        lemma_its_ext(xs[i].alts@, c1, c2, g1, g2);
+        lemma_its_ext(xs[i].items@, c1, c2, g1, g2);
+    }
+    assert(gfs(xs, c2) =~= gfs(xs, c1));
+}
+
+/// One step of a concatenation.
+enum Step {
+    /// At the end, `|` or `)`: the concatenation is over.
+    Done,
+    /// The concatenation goes on at this position, with these flags,
+    /// after a repetition or not.
+    Next(usize, Flags, bool),
+    /// A group opens: its body starts here, with these flags, and it
+    /// captures or not.
+    Open(usize, Flags, bool),
+}
+
+/// One step of the concatenation at `p`, adding to `items`.
 #[verifier::rlimit(200)]
 #[verifier::spinoff_prover]
-fn cat(pat: &[u8], pos: usize, fl: Flags, ps: &mut Ps, depth: usize) -> (r: Result<(Ast, usize, Flags), Error>)
-    requires
-        pat@.len() <= MAX_PATTERN,
-        pos <= pat@.len(),
-        old(ps).ok(),
-        old(ps).ngroups <= pos + 1,
-        depth <= MAX_NEST,
-    ensures
-        match r {
-            Ok((a, q, f)) => grows(old(ps), final(ps)) && good(
-                a,
-                final(ps).classes@.len() as int,
-                final(ps).ngroups as int,
-            ) && pos <= q <= pat@.len() && final(ps).ngroups <= q + 1 && sx::items(
-                pat@,
-                pos as int,
-                fl,
-                old(ps).st(),
-                Seq::empty(),
-                false,
-            ) == Some(Out { it: itv(a, final(ps).classes@), pos: q as int, fl: f, st: final(ps).st() }),
-            Err(e) => e is TooBig || sx::items(pat@, pos as int, fl, old(ps).st(), Seq::empty(), false) is None,
-        },
-    decreases pat@.len() - pos, 1int,
-{
-    let n = pat.len();
-    let ghost goal = sx::items(pat@, pos as int, fl, ps.st(), Seq::empty(), false);
-    let ghost cl0 = ps.classes@;
-    let ghost ng0 = ps.ngroups;
-    let mut items: Vec<Ast> = Vec::new();
-    let mut p = pos;
-    let mut f = fl;
-    let mut after_rep = false;
-    assert(its(items@, ps.classes@) =~= Seq::empty());
-    loop
-        invariant
-            n == pat@.len(),
-            n <= MAX_PATTERN,
-            pos <= p <= n,
-            depth <= MAX_NEST,
-            ps.ok(),
-            cl0 == old(ps).classes@,
-            ng0 == old(ps).ngroups,
-            goal == sx::items(pat@, pos as int, fl, old(ps).st(), Seq::empty(), false),
-            ext(cl0, ps.classes@),
-            ng0 <= ps.ngroups,
-            ps.ngroups <= p + 1,
-            all_good(items@, ps.classes@.len() as int, ps.ngroups as int),
-            goal == sx::items(pat@, p as int, f, ps.st(), its(items@, ps.classes@), after_rep),
-        decreases n - p,
-    {
-        if p >= n || pat[p] == 0x7C || pat[p] == 0x29 {
-            let t = tree(items, false, Ghost(ps.classes@), Ghost(ps.classes@.len() as int), Ghost(ps.ngroups as int))?;
-            return Ok((t, p, f));
-        }
-        let b = pat[p];
-        let ghost c1 = ps.classes@;
-        let ghost g1 = ps.ngroups;
-        let ghost v1 = items@;
-        match rep_op(pat, p) {
-            Some((min, max, q0)) => {
-                let lazy = is_at(pat, q0, 0x3F);
-                let q = if lazy {
-                    q0 + 1
-                } else {
-                    q0
-                };
-                let greedy = f.u == lazy;
-                if after_rep || items.len() == 0 {
-                    return Err(Error::Syntax(p));
-                }
-                let x = items.pop().unwrap();
-                assert(x == v1.last());
-                assert(itv(x, c1) == its(v1, c1).last());
-                let y = apply_rep(
-                    x,
-                    b,
-                    min,
-                    max,
-                    greedy,
-                    p,
-                    Ghost(ps.classes@),
-                    Ghost(ps.classes@.len() as int),
-                    Ghost(ps.ngroups as int),
-                )?;
-                items.push(y);
-                assert(its(items@, c1) =~= its(v1, c1).drop_last().push(itv(y, c1)));
-                p = q;
-                after_rep = true;
-            },
-            None => {
-                if b == 0x28 {
-                    if is_at(pat, p + 1, 0x3F) {
-                        match named_start(pat, p) {
-                            Some(a) => {
-                                let q = find_b(pat, a, 0x3E);
-                                if q >= n || a >= q || !name_chars(pat, a, q) {
-                                    return Err(Error::Syntax(p));
-                                }
-                                let name = slice_subrange(pat, a, q);
-                                if has_name(&ps.names, name) {
-                                    return Err(Error::Syntax(p));
-                                }
-                                let ghost nm = ps.names@;
-                                let k = ps.ngroups;
-                                ps.names.push((slice_to_vec(name), k));
-                                assert(names_v(ps.names@) =~= names_v(nm).push((pat@.subrange(a as int, q as int), k as nat)));
-                                let (it, r) = group(pat, q + 1, f, ps, true, depth)?;
-                                proof {
-                                    lemma_its_ext(v1, c1, ps.classes@, g1 as int, ps.ngroups as int);
-                                    lemma_ext_trans(cl0, c1, ps.classes@);
-                                }
-                                items.push(it);
-                                assert(its(items@, ps.classes@) =~= its(v1, c1).push(itv(it, ps.classes@)));
-                                p = r;
-                                after_rep = false;
-                            },
-                            None => {
-                                match flags(pat, p + 2, f) {
-                                    None => {
-                                        return Err(Error::Syntax(p));
-                                    },
-                                    Some((nf, q, colon)) => {
-                                        if colon {
-                                            let (it, r) = group(pat, q, nf, ps, false, depth)?;
-                                            proof {
-                                                lemma_its_ext(v1, c1, ps.classes@, g1 as int, ps.ngroups as int);
-                                                lemma_ext_trans(cl0, c1, ps.classes@);
-                                            }
-                                            items.push(it);
-                                            assert(its(items@, ps.classes@) =~= its(v1, c1).push(itv(it, ps.classes@)));
-                                            p = r;
-                                        } else {
-                                            f = nf;
-                                            p = q;
-                                        }
-                                        after_rep = false;
-                                    },
-                                }
-                            },
-                        }
-                    } else {
-                        let (it, r) = group(pat, p + 1, f, ps, true, depth)?;
-                        proof {
-                            lemma_its_ext(v1, c1, ps.classes@, g1 as int, ps.ngroups as int);
-                            lemma_ext_trans(cl0, c1, ps.classes@);
-                        }
-                        items.push(it);
-                        assert(its(items@, ps.classes@) =~= its(v1, c1).push(itv(it, ps.classes@)));
-                        p = r;
-                        after_rep = false;
-                    }
-                } else if b == 0x5C && is_at(pat, p + 1, 0x51) {
-                    let r = quote(pat, p + 2, f, ps, &mut items)?;
-                    proof {
-                        lemma_ext_trans(cl0, c1, ps.classes@);
-                    }
-                    p = r;
-                    after_rep = false;
-                } else {
-                    let (it, r) = atom(pat, p, f, ps)?;
-                    proof {
-                        lemma_its_ext(v1, c1, ps.classes@, g1 as int, ps.ngroups as int);
-                        lemma_ext_trans(cl0, c1, ps.classes@);
-                    }
-                    items.push(it);
-                    assert(its(items@, ps.classes@) =~= its(v1, c1).push(It { re: it.re(ps.classes@), rep: 1 }));
-                    p = r;
-                    after_rep = false;
-                }
-            },
-        }
-    }
-}
-
-/// A group whose content starts at `body`, up to its `)`.
-fn group(pat: &[u8], body: usize, fl: Flags, ps: &mut Ps, capture: bool, depth: usize) -> (r: Result<
-    (Ast, usize),
+fn cat_step(pat: &[u8], p: usize, f: Flags, after_rep: bool, ps: &mut Ps, items: &mut Vec<Ast>) -> (r: Result<
+    Step,
     Error,
 >)
     requires
         pat@.len() <= MAX_PATTERN,
-        body <= pat@.len(),
+        p <= pat@.len(),
         old(ps).ok(),
-        old(ps).ngroups <= body,
-        depth <= MAX_NEST,
+        old(ps).ngroups <= p + 1,
+        all_good(old(items)@, old(ps).classes@.len() as int, old(ps).ngroups as int),
     ensures
         match r {
-            Ok((a, q)) => grows(old(ps), final(ps)) && good(
+            Ok(Step::Done) => (p >= pat@.len() || pat@[p as int] == 0x7C || pat@[p as int] == 0x29) && *final(ps)
+                == *old(ps) && final(items)@ == old(items)@,
+            Ok(Step::Next(q, f2, ar2)) => same(old(ps), final(ps)) && all_good(
+                final(items)@,
+                final(ps).classes@.len() as int,
+                final(ps).ngroups as int,
+            ) && p < q <= pat@.len() && sx::items(
+                pat@,
+                p as int,
+                f,
+                old(ps).st(),
+                its(old(items)@, old(ps).classes@),
+                after_rep,
+            ) == sx::items(pat@, q as int, f2, final(ps).st(), its(final(items)@, final(ps).classes@), ar2),
+            Ok(Step::Open(body, gfl, cap)) => final(ps).ok() && final(ps).classes@ == old(ps).classes@
+                && final(ps).ngroups == old(ps).ngroups && final(items)@ == old(items)@ && p < body <= pat@.len()
+                && sx::items(pat@, p as int, f, old(ps).st(), its(old(items)@, old(ps).classes@), after_rep)
+                == items_k(
+                pat@,
+                p as int,
+                f,
+                its(old(items)@, old(ps).classes@),
+                sx::group(pat@, body as int, gfl, final(ps).st(), cap),
+            ),
+            Err(e) => e is TooBig || sx::items(
+                pat@,
+                p as int,
+                f,
+                old(ps).st(),
+                its(old(items)@, old(ps).classes@),
+                after_rep,
+            ) is None,
+        },
+{
+    let n = pat.len();
+    if p >= n || pat[p] == 0x7C || pat[p] == 0x29 {
+        return Ok(Step::Done);
+    }
+    let b = pat[p];
+    let ghost c1 = ps.classes@;
+    let ghost v1 = items@;
+    match rep_op(pat, p) {
+        Some((min, max, q0)) => {
+            let lazy = is_at(pat, q0, 0x3F);
+            let q = if lazy {
+                q0 + 1
+            } else {
+                q0
+            };
+            let greedy = f.u == lazy;
+            if after_rep || items.len() == 0 {
+                return Err(Error::Syntax(p));
+            }
+            let x = items.pop().unwrap();
+            assert(x == v1.last());
+            assert(itv(x, c1) == its(v1, c1).last());
+            let y = apply_rep(
+                x,
+                b,
+                min,
+                max,
+                greedy,
+                p,
+                ps.lim - ps.spent,
+                Ghost(ps.classes@),
+                Ghost(ps.classes@.len() as int),
+                Ghost(ps.ngroups as int),
+            )?;
+            let cost = y.ln + y.lz;
+            if cost > ps.lim - ps.spent {
+                return Err(Error::TooBig);
+            }
+            ps.spent = ps.spent + cost;
+            items.push(y);
+            assert(its(items@, c1) =~= its(v1, c1).drop_last().push(itv(y, c1)));
+            Ok(Step::Next(q, f, true))
+        },
+        None => {
+            if b == 0x28 {
+                if is_at(pat, p + 1, 0x3F) {
+                    match named_start(pat, p) {
+                        Some(a) => {
+                            let q = find_b(pat, a, 0x3E);
+                            if q >= n || a >= q || !name_chars(pat, a, q) {
+                                return Err(Error::Syntax(p));
+                            }
+                            let name = slice_subrange(pat, a, q);
+                            if has_name(&ps.names, name) {
+                                return Err(Error::Syntax(p));
+                            }
+                            let ghost nm = ps.names@;
+                            let k = ps.ngroups;
+                            ps.names.push((slice_to_vec(name), k));
+                            assert(names_v(ps.names@) =~= names_v(nm).push((pat@.subrange(a as int, q as int), k as nat)));
+                            Ok(Step::Open(q + 1, f, true))
+                        },
+                        None => {
+                            match flags(pat, p + 2, f) {
+                                None => {
+                                    return Err(Error::Syntax(p));
+                                },
+                                Some((nf, q, colon)) => {
+                                    if colon {
+                                        Ok(Step::Open(q, nf, false))
+                                    } else {
+                                        Ok(Step::Next(q, nf, false))
+                                    }
+                                },
+                            }
+                        },
+                    }
+                } else {
+                    Ok(Step::Open(p + 1, f, true))
+                }
+            } else if b == 0x5C && is_at(pat, p + 1, 0x51) {
+                let r = quote(pat, p + 2, f, ps, items)?;
+                Ok(Step::Next(r, f, false))
+            } else {
+                let (it, r) = atom(pat, p, f, ps)?;
+                proof {
+                    lemma_its_ext(v1, c1, ps.classes@, ps.ngroups as int, ps.ngroups as int);
+                }
+                items.push(it);
+                assert(its(items@, ps.classes@) =~= its(v1, c1).push(It { re: it.re(ps.classes@), rep: 1 }));
+                Ok(Step::Next(r, f, false))
+            }
+        },
+    }
+}
+
+/// The alternatives of the whole pattern, up to its end or an unmatched
+/// `)`. Groups are kept on a stack of their own, not the call stack, so
+/// they may nest as deep as the pattern is long.
+#[verifier::rlimit(200)]
+#[verifier::spinoff_prover]
+fn alt(pat: &[u8], fl: Flags, ps: &mut Ps) -> (r: Result<(Ast, usize, Flags), Error>)
+    requires
+        pat@.len() <= MAX_PATTERN,
+        old(ps).ok(),
+        old(ps).ngroups <= 1,
+    ensures
+        match r {
+            Ok((a, q, f)) => grows(old(ps), final(ps)) && good(
                 a,
                 final(ps).classes@.len() as int,
                 final(ps).ngroups as int,
-            ) && body < q <= pat@.len() && final(ps).ngroups <= q + 1 && sx::group(
-                pat@,
-                body as int,
-                fl,
-                old(ps).st(),
-                capture,
-            ) == Some((itv(a, final(ps).classes@), q as int, final(ps).st())),
-            Err(e) => e is TooBig || sx::group(pat@, body as int, fl, old(ps).st(), capture) is None,
+            ) && q <= pat@.len() && final(ps).ngroups <= q + 1 && sx::alts(pat@, 0, fl, old(ps).st(), Seq::empty())
+                == Some(Out { it: itv(a, final(ps).classes@), pos: q as int, fl: f, st: final(ps).st() }),
+            Err(e) => e is TooBig || sx::alts(pat@, 0, fl, old(ps).st(), Seq::empty()) is None,
         },
-    decreases pat@.len() - body, 4int,
 {
-    if depth >= MAX_NEST {
-        return Err(Error::TooBig);
+    let n = pat.len();
+    let ghost goal = sx::alts(pat@, 0, fl, ps.st(), Seq::empty());
+    let ghost cl0 = ps.classes@;
+    let ghost ng0 = ps.ngroups;
+    let mut xs: Vec<Xf> = Vec::new();
+    let mut alts: Vec<Ast> = Vec::new();
+    let mut apos: usize = 0;
+    let mut items: Vec<Ast> = Vec::new();
+    let mut p: usize = 0;
+    let mut f = fl;
+    let mut ar = false;
+    assert(its(alts@, ps.classes@) =~= Seq::<It>::empty());
+    assert(its(items@, ps.classes@) =~= Seq::<It>::empty());
+    assert(gfs(xs@, ps.classes@) =~= Seq::<Gf>::empty());
+    loop
+        invariant
+            n == pat@.len(),
+            n <= MAX_PATTERN,
+            apos <= p <= n,
+            ps.ok(),
+            cl0 == old(ps).classes@,
+            ng0 == old(ps).ngroups,
+            goal == sx::alts(pat@, 0, fl, old(ps).st(), Seq::empty()),
+            ext(cl0, ps.classes@),
+            ng0 <= ps.ngroups,
+            ps.ngroups <= p + 1,
+            all_good(alts@, ps.classes@.len() as int, ps.ngroups as int),
+            all_good(items@, ps.classes@.len() as int, ps.ngroups as int),
+            xs_good(xs@, ps.classes@.len() as int, ps.ngroups as int, p as int),
+            goal == up(
+                pat@,
+                gfs(xs@, ps.classes@),
+                alts_k(
+                    pat@,
+                    apos as int,
+                    its(alts@, ps.classes@),
+                    sx::items(pat@, p as int, f, ps.st(), its(items@, ps.classes@), ar),
+                ),
+            ),
+        decreases n - p,
+    {
+        let ghost c1 = ps.classes@;
+        let ghost g1 = ps.ngroups;
+        let ghost st1 = ps.st();
+        let ghost gs = gfs(xs@, c1);
+        let ghost aa = its(alts@, c1);
+        let ghost ia = its(items@, c1);
+        match cat_step(pat, p, f, ar, ps, &mut items) {
+            Err(e) => {
+                proof {
+                    lemma_up_none(pat@, gs);
+                }
+                return Err(e);
+            },
+            Ok(Step::Next(q, f2, ar2)) => {
+                proof {
+                    lemma_xs_ext(xs@, c1, ps.classes@, g1 as int, ps.ngroups as int, p as int, q as int);
+                    lemma_its_ext(alts@, c1, ps.classes@, g1 as int, ps.ngroups as int);
+                    lemma_ext_trans(cl0, c1, ps.classes@);
+                }
+                p = q;
+                f = f2;
+                ar = ar2;
+            },
+            Ok(Step::Open(body, gfl, cap)) => {
+                let ghost st2 = ps.st();
+                let k = ps.ngroups;
+                if cap {
+                    ps.ngroups = k + 1;
+                }
+                proof {
+                    lemma_xs_ext(xs@, c1, ps.classes@, g1 as int, ps.ngroups as int, p as int, body as int);
+                    lemma_its_ext(alts@, c1, ps.classes@, g1 as int, ps.ngroups as int);
+                    lemma_its_ext(items@, c1, ps.classes@, g1 as int, ps.ngroups as int);
+                    assert(ps.st() == (if cap {
+                        St { ng: st2.ng + 1, names: st2.names }
+                    } else {
+                        st2
+                    }));
+                    assert(sx::group(pat@, body as int, gfl, st2, cap) == group_k(
+                        pat@,
+                        cap,
+                        k as nat,
+                        alts_k(pat@, body as int, Seq::empty(), sx::items(pat@, body as int, gfl, ps.st(), Seq::empty(), false)),
+                    ));
+                }
+                let ghost x = Xf { alts: alts, apos: apos, items: items, p: p, fl: f, cap: cap, k: k };
+                let ghost xs0 = xs@;
+                xs.push(Xf { alts: alts, apos: apos, items: items, p: p, fl: f, cap: cap, k: k });
+                proof {
+                    assert(xs@ == xs0.push(x));
+                    assert(gfs(xs@, ps.classes@) =~= gfs(xs0, ps.classes@).push(gf(x, ps.classes@)));
+                    assert(gfs(xs@, ps.classes@).drop_last() =~= gfs(xs0, ps.classes@));
+                    assert forall|i: int| 0 <= i < xs@.len() implies xf_good(
+                        #[trigger] xs@[i],
+                        ps.classes@.len() as int,
+                        ps.ngroups as int,
+                        body as int,
+                    ) by {
+                        if i < xs0.len() {
+                            assert(xs@[i] == xs0[i]);
+                        }
+                    }
+                }
+                alts = Vec::new();
+                items = Vec::new();
+                apos = body;
+                p = body;
+                f = gfl;
+                ar = false;
+                assert(its(alts@, ps.classes@) =~= Seq::<It>::empty());
+                assert(its(items@, ps.classes@) =~= Seq::<It>::empty());
+            },
+            Ok(Step::Done) => {
+                let t = tree(items, false, Ghost(ps.classes@), Ghost(ps.classes@.len() as int), Ghost(ps.ngroups as int))?;
+                let ghost o = Out { it: itv(t, c1), pos: p as int, fl: f, st: st1 };
+                assert(sx::items(pat@, p as int, f, st1, ia, ar) == Some(o));
+                alts.push(t);
+                assert(its(alts@, c1) =~= aa.push(itv(t, c1)));
+                if p < n && pat[p] == 0x7C {
+                    assert(sx::alts(pat@, p + 1, f, st1, its(alts@, c1)) == alts_k(
+                        pat@,
+                        p + 1,
+                        its(alts@, c1),
+                        sx::items(pat@, p + 1, f, st1, Seq::empty(), false),
+                    ));
+                    apos = p + 1;
+                    p = p + 1;
+                    items = Vec::new();
+                    ar = false;
+                    assert(its(items@, ps.classes@) =~= Seq::<It>::empty());
+                } else {
+                    let a = tree(alts, true, Ghost(ps.classes@), Ghost(ps.classes@.len() as int), Ghost(ps.ngroups as int))?;
+                    let ghost oa = Out { it: itv(a, c1), pos: p as int, fl: f, st: st1 };
+                    assert(goal == up(pat@, gs, Some(oa)));
+                    if xs.len() == 0 {
+                        return Ok((a, p, f));
+                    }
+                    let ghost xs0 = xs@;
+                    let x = xs.pop().unwrap();
+                    proof {
+                        assert(x == xs0.last());
+                        assert(gs.drop_last() =~= gfs(xs@, c1));
+                        assert(gs.last() == gf(x, c1));
+                        assert(xf_good(xs0[xs0.len() - 1], c1.len() as int, g1 as int, p as int));
+                        assert forall|i: int| 0 <= i < xs@.len() implies xf_good(
+                            #[trigger] xs@[i],
+                            c1.len() as int,
+                            g1 as int,
+                            p + 1,
+                        ) by {
+                            assert(xs@[i] == xs0[i]);
+                        }
+                    }
+                    if !is_at(pat, p, 0x29) {
+                        proof {
+                            lemma_up_none(pat@, gfs(xs@, c1));
+                        }
+                        return Err(Error::Syntax(p));
+                    }
+                    let Xf { alts: xa, apos: xapos, items: xi, p: xp, fl: xfl, cap, k } = x;
+                    let g = if cap {
+                        some(Ast::group(k, a))?
+                    } else {
+                        a
+                    };
+                    proof {
+                        lemma_node(g, c1, c1.len() as int, g1 as int);
+                    }
+                    alts = xa;
+                    apos = xapos;
+                    items = xi;
+                    let ghost v1 = items@;
+                    items.push(g);
+                    assert(its(items@, c1) =~= its(v1, c1).push(itv(g, c1)));
+                    p = p + 1;
+                    f = xfl;
+                    ar = false;
+                }
+            },
+        }
     }
-    let k = ps.ngroups;
-    if capture {
-        ps.ngroups = k + 1;
-    }
-    let (a, q, _) = alt(pat, body, fl, ps, depth + 1)?;
-    if !is_at(pat, q, 0x29) {
-        return Err(Error::Syntax(q));
-    }
-    let ghost a0 = a;
-    let a = if capture {
-        some(Ast::group(k, a))?
-    } else {
-        a
-    };
-    proof {
-        lemma_node(a, ps.classes@, ps.classes@.len() as int, ps.ngroups as int);
-    }
-    Ok((a, q + 1))
 }
 
-/// The pattern's tree, classes and groups.
-pub fn parse(pat: &[u8]) -> (r: Result<Parsed, Error>)
+/// The pattern's tree, classes and groups. `lim` bounds the instructions
+/// repetitions may expand to (past it the program would be too big).
+pub fn parse(pat: &[u8], lim: usize) -> (r: Result<Parsed, Error>)
     ensures
         match r {
             Ok(p) => p.ast.wf() && p.ast.bounded(p.classes@.len() as int, p.ngroups as int) && (forall|k: int|
@@ -1844,9 +2068,14 @@ pub fn parse(pat: &[u8]) -> (r: Result<Parsed, Error>)
         return Err(Error::BadUtf8);
     }
     let fl = Flags { i: false, m: false, s: false, u: false };
-    let mut ps = Ps { classes: Vec::new(), ngroups: 1, names: Vec::new() };
+    let lim = if lim > MAX_PROG {
+        MAX_PROG
+    } else {
+        lim
+    };
+    let mut ps = Ps { classes: Vec::new(), ngroups: 1, names: Vec::new(), lim: lim, spent: 0 };
     assert(names_v(ps.names@) =~= Seq::empty());
-    let (a, q, _) = alt(pat, 0, fl, &mut ps, 0)?;
+    let (a, q, _) = alt(pat, fl, &mut ps)?;
     if q < pat.len() {
         return Err(Error::Syntax(q));
     }

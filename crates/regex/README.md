@@ -145,10 +145,12 @@ Not supported, as in RE2: backreferences, lookahead and lookbehind.
 Not supported, though RE2 has them: `\C` (match one byte), Latin-1 mode,
 POSIX syntax mode and longest-match mode.
 
-Limits: a pattern is at most 64 KiB, groups nest at most 250 deep, and the
-compiled program has at most 262,144 instructions. A pattern over a limit
-is refused with `TooBig`. (RE2's limits are different: by default it
-refuses programs over about 8 MiB of memory.)
+Limits: patterns may be any length, and groups may nest to any depth. The
+compiled program has at most 262,144 instructions by default, about the
+same as RE2's default `max_mem` of 8 MiB allows; `Regex::with_limit`
+(`vregex_new_with_limit`, or `cre2_opt_set_max_mem` at 32 bytes an
+instruction) sets another limit, up to 2^24 instructions, which is RE2's
+ceiling too. A pattern over a limit is refused with `TooBig`.
 
 ## Differences from RE2
 
