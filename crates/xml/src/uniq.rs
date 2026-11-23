@@ -49,6 +49,9 @@ pub open spec fn listed(t: Seq<XTok>, first: int, k: int, ix: Seq<int>, ns: Seq<
 fn ex_list(tape: &Tape, first: usize) -> (r: (Vec<(usize, usize)>, Ghost<Seq<int>>))
     requires
         first <= tape@.len(),
+        forall|m: int|
+            #![trigger tape@[m]]
+            first <= m < tape@.len() && tape@[m] is Attr ==> 0 <= tape@[m]->Attr_start <= tape@[m]->Attr_end <= usize::MAX,
     ensures
         listed(tape@, first as int, tape@.len() as int, r.1@, r.0@),
 {
@@ -63,6 +66,9 @@ fn ex_list(tape: &Tape, first: usize) -> (r: (Vec<(usize, usize)>, Ghost<Seq<int
             n == t.len(),
             t == tape@,
             listed(t, first as int, k as int, ix, ns@),
+            forall|m: int|
+                #![trigger t[m]]
+                first <= m < t.len() && t[m] is Attr ==> 0 <= t[m]->Attr_start <= t[m]->Attr_end <= usize::MAX,
         decreases n - k,
     {
         let tk = tape.toks[k];
@@ -70,7 +76,10 @@ fn ex_list(tape: &Tape, first: usize) -> (r: (Vec<(usize, usize)>, Ghost<Seq<int
             assert(t[k as int] == tk@);
         }
         if is_attr(tk.kind) {
-            ns.push((tk.a, tk.b));
+            proof {
+                assert(0 <= t[k as int]->Attr_start <= t[k as int]->Attr_end <= usize::MAX);
+            }
+            ns.push((tk.a48() as usize, tk.b48() as usize));
             proof {
                 let ix0 = ix;
                 ix = ix.push(k as int);
@@ -559,6 +568,14 @@ pub fn ex_distinct_hashed(s: &[u8], tape: &Tape, first: usize) -> (r: bool)
     ensures
         r == attrs_distinct(s@, tape@, first as int),
 {
+    crate::tape::slice_len_bound(s);
+    proof {
+        assert forall|m: int|
+            #![trigger tape@[m]]
+            first <= m < tape@.len() && tape@[m] is Attr implies 0 <= tape@[m]->Attr_start <= tape@[m]->Attr_end
+                <= usize::MAX by {
+        }
+    }
     let (ns, Ghost(ix)) = ex_list(tape, first);
     proof {
         lemma_listed_distinct(s@, tape@, first as int, ix, ns@);

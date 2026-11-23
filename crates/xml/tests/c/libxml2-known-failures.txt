@@ -115,121 +115,23 @@ XML push boundary tests	./test/xml2
 # here the verified parser rejects the document and one error is reported,
 # worked out from where it stopped (the code, message and position match
 # libxml2's on the common cases).
-Error cases regression tests	./test/errors/754946.xml
-Error cases regression tests	./test/errors/754947.xml
-Error cases regression tests	./test/errors/758588.xml
-Error cases regression tests	./test/errors/759020.xml
-Error cases regression tests	./test/errors/759398.xml
-Error cases regression tests	./test/errors/759573-2.xml
-Error cases regression tests	./test/errors/759573.xml
 Error cases regression tests	./test/errors/759579.xml
-Error cases regression tests	./test/errors/attr1.xml
-Error cases regression tests	./test/errors/attr2.xml
-Error cases regression tests	./test/errors/attr4.xml
-Error cases regression tests	./test/errors/attr6.xml
-Error cases regression tests	./test/errors/cdata.xml
-Error cases regression tests	./test/errors/charref1.xml
-Error cases regression tests	./test/errors/comment1.xml
-Error cases regression tests	./test/errors/content1.xml
-Error cases regression tests	./test/errors/doctype1.xml
-Error cases regression tests	./test/errors/doctype2.xml
-Error cases regression tests	./test/errors/dup-xml-attr2.xml
 Error cases regression tests	./test/errors/ent_redecl.xml
-Error cases regression tests	./test/errors/invalid-start-tag-1.xml
-Error cases regression tests	./test/errors/invalid-start-tag-2.xml
-Error cases regression tests	./test/errors/issue151.xml
-Error cases regression tests	./test/errors/issue868.xml
-Error cases regression tests	./test/errors/name.xml
-Error cases regression tests	./test/errors/name2.xml
-Error cases regression tests	./test/errors/name3.xml
 Error cases regression tests	./test/errors/ns-ent.xml
 Error cases regression tests	./test/errors/quadratic-defattr.xml
-Error cases regression tests	./test/errors/rec_att_default.xml
-Error cases regression tests	./test/errors/trailing-null-1.xml
-Error cases regression tests	./test/errors/trailing-null-2.xml
 Error cases regression tests	./test/errors/truncated-utf16.xml
-Error cases regression tests	./test/errors/unclosed-element.xml
-Error cases regression tests	./test/errors/unsupported-encoding.xml
-Error cases regression tests	./test/errors/utf8-1.xml
-Error cases regression tests	./test/errors/utf8-2.xml
-Error cases regression tests (old 1.0)	./test/errors10/781205.xml
-Error cases regression tests (old 1.0)	./test/errors10/781361.xml
-Error cases regression tests from file descriptor	./test/errors/754946.xml
-Error cases regression tests from file descriptor	./test/errors/754947.xml
-Error cases regression tests from file descriptor	./test/errors/758588.xml
-Error cases regression tests from file descriptor	./test/errors/759020.xml
-Error cases regression tests from file descriptor	./test/errors/759398.xml
-Error cases regression tests from file descriptor	./test/errors/759573-2.xml
-Error cases regression tests from file descriptor	./test/errors/759573.xml
 Error cases regression tests from file descriptor	./test/errors/759579.xml
-Error cases regression tests from file descriptor	./test/errors/attr1.xml
-Error cases regression tests from file descriptor	./test/errors/attr2.xml
-Error cases regression tests from file descriptor	./test/errors/attr4.xml
-Error cases regression tests from file descriptor	./test/errors/attr6.xml
-Error cases regression tests from file descriptor	./test/errors/cdata.xml
-Error cases regression tests from file descriptor	./test/errors/charref1.xml
-Error cases regression tests from file descriptor	./test/errors/comment1.xml
-Error cases regression tests from file descriptor	./test/errors/content1.xml
-Error cases regression tests from file descriptor	./test/errors/doctype1.xml
-Error cases regression tests from file descriptor	./test/errors/doctype2.xml
-Error cases regression tests from file descriptor	./test/errors/dup-xml-attr2.xml
 Error cases regression tests from file descriptor	./test/errors/ent_redecl.xml
-Error cases regression tests from file descriptor	./test/errors/invalid-start-tag-1.xml
-Error cases regression tests from file descriptor	./test/errors/invalid-start-tag-2.xml
-Error cases regression tests from file descriptor	./test/errors/issue151.xml
-Error cases regression tests from file descriptor	./test/errors/issue868.xml
-Error cases regression tests from file descriptor	./test/errors/name.xml
-Error cases regression tests from file descriptor	./test/errors/name2.xml
-Error cases regression tests from file descriptor	./test/errors/name3.xml
 Error cases regression tests from file descriptor	./test/errors/ns-ent.xml
 Error cases regression tests from file descriptor	./test/errors/quadratic-defattr.xml
-Error cases regression tests from file descriptor	./test/errors/rec_att_default.xml
-Error cases regression tests from file descriptor	./test/errors/trailing-null-1.xml
-Error cases regression tests from file descriptor	./test/errors/trailing-null-2.xml
 Error cases regression tests from file descriptor	./test/errors/truncated-utf16.xml
-Error cases regression tests from file descriptor	./test/errors/unclosed-element.xml
-Error cases regression tests from file descriptor	./test/errors/unsupported-encoding.xml
-Error cases regression tests from file descriptor	./test/errors/utf8-1.xml
-Error cases regression tests from file descriptor	./test/errors/utf8-2.xml
-Error cases regression tests with entity substitution	./test/errors/754946.xml
-Error cases regression tests with entity substitution	./test/errors/754947.xml
-Error cases regression tests with entity substitution	./test/errors/758588.xml
-Error cases regression tests with entity substitution	./test/errors/759020.xml
-Error cases regression tests with entity substitution	./test/errors/759398.xml
-Error cases regression tests with entity substitution	./test/errors/759573-2.xml
-Error cases regression tests with entity substitution	./test/errors/759573.xml
 Error cases regression tests with entity substitution	./test/errors/759579.xml
-Error cases regression tests with entity substitution	./test/errors/attr1.xml
-Error cases regression tests with entity substitution	./test/errors/attr2.xml
-Error cases regression tests with entity substitution	./test/errors/attr4.xml
-Error cases regression tests with entity substitution	./test/errors/attr6.xml
-Error cases regression tests with entity substitution	./test/errors/cdata.xml
-Error cases regression tests with entity substitution	./test/errors/charref1.xml
-Error cases regression tests with entity substitution	./test/errors/comment1.xml
-Error cases regression tests with entity substitution	./test/errors/content1.xml
-Error cases regression tests with entity substitution	./test/errors/doctype1.xml
-Error cases regression tests with entity substitution	./test/errors/doctype2.xml
-Error cases regression tests with entity substitution	./test/errors/dup-xml-attr2.xml
 Error cases regression tests with entity substitution	./test/errors/ent_redecl.xml
 Error cases regression tests with entity substitution	./test/errors/extparsedent.xml
-Error cases regression tests with entity substitution	./test/errors/invalid-start-tag-1.xml
-Error cases regression tests with entity substitution	./test/errors/invalid-start-tag-2.xml
-Error cases regression tests with entity substitution	./test/errors/issue151.xml
-Error cases regression tests with entity substitution	./test/errors/issue868.xml
-Error cases regression tests with entity substitution	./test/errors/name.xml
-Error cases regression tests with entity substitution	./test/errors/name2.xml
-Error cases regression tests with entity substitution	./test/errors/name3.xml
 Error cases regression tests with entity substitution	./test/errors/ns-ent.xml
 Error cases regression tests with entity substitution	./test/errors/quadratic-defattr.xml
-Error cases regression tests with entity substitution	./test/errors/rec_att_default.xml
 Error cases regression tests with entity substitution	./test/errors/rec_ext_ent.xml
-Error cases regression tests with entity substitution	./test/errors/trailing-null-1.xml
-Error cases regression tests with entity substitution	./test/errors/trailing-null-2.xml
 Error cases regression tests with entity substitution	./test/errors/truncated-utf16.xml
-Error cases regression tests with entity substitution	./test/errors/unclosed-element.xml
-Error cases regression tests with entity substitution	./test/errors/unsupported-encoding.xml
-Error cases regression tests with entity substitution	./test/errors/utf8-1.xml
-Error cases regression tests with entity substitution	./test/errors/utf8-2.xml
 
 # Parameter entity references in the internal subset are not expanded (as
 # the verified parser does not read them), so the declarations they hold are

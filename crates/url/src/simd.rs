@@ -464,6 +464,7 @@ fn and_x(a: __m128i, b: __m128i) -> (r: __m128i)
 
 /// The stop mask with SSE2.
 #[cfg(target_arch = "x86_64")]
+#[inline(always)]
 pub fn path_mask16_sse(w: &[u8]) -> (m: u32)
     requires
         w.len() == 17,
@@ -579,6 +580,7 @@ fn zero_n(x: uint8x16_t, z: uint8x16_t) -> (r: uint8x16_t)
 }
 
 /// The stop mask with NEON.
+#[inline(always)]
 pub fn path_mask16_neon(w: &[u8]) -> (m: u32)
     requires
         neon(),
@@ -639,6 +641,7 @@ fn cmp_x(v: __m128i, c: u8, gt: bool) -> (r: __m128i)
 
 /// Bit `j` is set when `s[k + j]` is not a plain host byte, with SSE2.
 #[cfg(target_arch = "x86_64")]
+#[inline(always)]
 pub fn nonplain_mask16_sse(s: &[u8], k: usize) -> (m: u32)
     requires
         k + 16 <= s.len(),
@@ -684,6 +687,7 @@ fn le_n(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
 }
 
 /// Bit `j` is set when `s[k + j]` is not a plain host byte, with NEON.
+#[inline(always)]
 pub fn nonplain_mask16_neon(s: &[u8], k: usize) -> (m: u32)
     requires
         neon(),
@@ -709,6 +713,36 @@ pub fn nonplain_mask16_neon(s: &[u8], k: usize) -> (m: u32)
                 == 1u32)) by (bit_vector);
         }
         assert(p < 0x10000 ==> (p ^ 0xFFFFu32) < 0x10000) by (bit_vector);
+    }
+    m
+}
+
+/// `encode::maybe_mask16` with SSE2, for the query and fragment sets.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+pub fn maybe_mask16_sse(w: &[u8], kind: u8) -> (m: u32)
+    requires
+        w.len() == 16,
+        kind == K_FRAG || kind == K_QUERY,
+    ensures
+        m < 0x10000,
+        forall|j: u32| j < 16 ==> (((m >> j) & 1) == 1) == maybe(kind, #[trigger] w@[j as int]),
+{
+    let (x, y): (u8, u8) = if kind == K_FRAG { (0x60, 0x60) } else { (0x23, 0x27) };
+    let v = load128_u8(w, 0);
+    // Signed 0x21 > v: v <= 0x20 or v >= 0x80.
+    let lo = cmp_x(v, 0x21, false);
+    let a = or_x(or_x(lo, eq_x(v, 0x7F)), or_x(eq_x(v, 0x22), eq_x(v, 0x3C)));
+    let b = or_x(or_x(eq_x(v, 0x3E), eq_x(v, x)), eq_x(v, y));
+    let all = or_x(a, b);
+    let m = verilith_simd::sse2::movemask16(all);
+    proof {
+        assert forall|j: u32| j < 16 implies (((m >> j) & 1) == 1) == maybe(kind, #[trigger] w@[j as int]) by {
+            let c = w@[j as int];
+            assert(b128(v)[j as int] == c);
+            assert(verilith_simd::sse2::bit(m, j) == (b128(all)[j as int] >= 0x80));
+            lemma_maybe_lanes(kind, c);
+        }
     }
     m
 }

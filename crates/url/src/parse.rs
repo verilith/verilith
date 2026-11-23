@@ -5233,7 +5233,7 @@ fn query_run(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): T
 }
 
 /// The query state at "#" or the end of the input.
-#[verifier::rlimit(30)]
+#[verifier::rlimit(60)]
 fn query_end(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): Tracked<&mut Meter>) -> (r: Flow)
     requires
         old(ps).inv(input@, base_rec(base)),
@@ -5267,10 +5267,17 @@ fn query_end(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): T
         proof {
             lemma_core_parts(url2);
             assert(ps.href@ =~= core_serialize(url2));
+            assert(ps.inv(input@, base_rec(base)));
+            assert(ps.measure_lt(old(ps)));
+            assert(run(input@, base_rec(base), None, m, k as int) == run(input@, base_rec(base), None, ps.gm@, ps.p as int));
         }
         Flow::Continue
     } else {
         ps.gm = Ghost(Machine { url, buffer: Seq::empty(), ..m });
+        proof {
+            assert(done_ok(ps, url));
+            assert(run(input@, base_rec(base), None, m, k as int) == Some(url));
+        }
         Flow::Done
     }
 }
@@ -6181,6 +6188,49 @@ pub open spec fn simple_cost(n: nat) -> int {
     16 * (n as int) + 128
 }
 
+/// The size class of a new href buffer for `need` bytes: the next power of
+/// two from 128, so at most twice what is needed (or 128 bytes). Buffers
+/// freed by earlier URLs then fit later ones of about the same length,
+/// which `take_href` reuses.
+fn href_class(need: usize) -> (c: usize)
+    ensures
+        c >= need,
+{
+    let mut c: usize = 128;
+    while c < need && c <= usize::MAX / 2
+        invariant
+            c >= 128,
+        decreases usize::MAX - c,
+    {
+        c = c * 2;
+    }
+    if c < need {
+        need
+    } else {
+        c
+    }
+}
+
+/// The href buffer for an input that needs `need` bytes: the spare one in
+/// `sc` when it has room and is at most twice that (or 128 bytes; the URL
+/// keeps it), else a new one of `href_class(need)`.
+#[inline(always)]
+fn take_href(sc: &mut crate::host::Scratch, need: usize) -> (v: Vec<u8>)
+    ensures
+        v@.len() == 0,
+{
+    let c = crate::host::capacity(&sc.href);
+    let lim = if need <= 64 { 128 } else { need.saturating_mul(2) };
+    if c >= need && c <= lim {
+        let mut href: Vec<u8> = Vec::new();
+        core::mem::swap(&mut href, &mut sc.href);
+        href.clear();
+        href
+    } else {
+        Vec::with_capacity(href_class(need))
+    }
+}
+
 /// The fast path for an "http://" or "https://" URL already in canonical
 /// form, on the input as given (before trimming and removing tabs and
 /// newlines, which cannot change an input it accepts). `None` means it did
@@ -6206,15 +6256,7 @@ pub(crate) fn parse_simple(input: &[u8], base: Option<&Url>, sc: &mut crate::hos
     let ghost b = base_rec(base);
     // The same buffer the state machine would take, so that it can take it
     // back when this does not apply.
-    let need = n.saturating_add(8);
-    let c = crate::host::capacity(&sc.href);
-    let mut href: Vec<u8> = Vec::new();
-    if c >= need && c / 2 <= need {
-        core::mem::swap(&mut href, &mut sc.href);
-        href.clear();
-    } else {
-        href = Vec::with_capacity(need);
-    }
+    let href = take_href(sc, n.saturating_add(8));
     let mut ps = Parser {
         href,
         p: 0,
@@ -6258,7 +6300,11 @@ pub(crate) fn parse_simple(input: &[u8], base: Option<&Url>, sc: &mut crate::hos
     proof {
         assert(ps.href@.len() <= n + 1);
     }
-    Some(finish(ps, Tracked(cost)))
+    if ps.host_kind.is_some() {
+        Some(finish_hosted(ps))
+    } else {
+        Some(finish(ps, Tracked(cost)))
+    }
 }
 
 /// Runs the state machine on `input` (already trimmed and without tabs and
@@ -6319,15 +6365,7 @@ pub(crate) fn run_machine_in(input: &[u8], base: Option<&Url>, sc: &mut crate::h
     let ghost target = run(input@, b, None, initial_machine(State::SchemeStart, new_url()), 0);
     // Take the spare buffer when it has room but is not much bigger than
     // needed (the URL may keep it).
-    let need = input.len().saturating_add(8);
-    let c = crate::host::capacity(&sc.href);
-    let mut href: Vec<u8> = Vec::new();
-    if c >= need && c / 2 <= need {
-        core::mem::swap(&mut href, &mut sc.href);
-        href.clear();
-    } else {
-        href = Vec::with_capacity(need);
-    }
+    let href = take_href(sc, input.len().saturating_add(8));
     let mut ps = Parser {
         href,
         p: 0,
@@ -6389,6 +6427,43 @@ pub(crate) fn run_machine_in(input: &[u8], base: Option<&Url>, sc: &mut crate::h
                 return None;
             },
         }
+    }
+}
+
+/// `finish` for a URL with a host, which never needs the "/." prefix:
+/// builds the `Url` from the parser's fields, with no copy of `href`.
+#[inline(always)]
+fn finish_hosted(ps: Parser) -> (u: Url)
+    requires
+        done_ok(&ps, ps.gm@.url),
+        ps.host_kind is Some,
+    ensures
+        u.wf(),
+        u@ == ps.gm@.url,
+{
+    let ghost url = ps.gm@.url;
+    // Only for the proof (a Vec's length fits a usize); compiled away.
+    let _n = ps.href.len();
+    proof {
+        lemma_core_parts(url);
+        assert(!needs_dot_slash(url));
+        assert(ps.href@ =~= serialize(url, false));
+    }
+    Url {
+        href: ps.href,
+        scheme_end: ps.scheme_end,
+        username_end: ps.username_end,
+        host_start: ps.host_start,
+        host_end: ps.host_end,
+        port: ps.port,
+        path_start: ps.path_start,
+        query_start: ps.query_start,
+        fragment_start: ps.fragment_start,
+        host_kind: ps.host_kind,
+        opaque_path: ps.opaque_path,
+        special: ps.special,
+        has_dot: false,
+        rec: Ghost(url),
     }
 }
 
