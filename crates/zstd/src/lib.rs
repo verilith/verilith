@@ -5,7 +5,7 @@
 #![cfg_attr(not(verus_only), allow(unused_variables, unused_imports))]
 
 #[cfg(not(target_pointer_width = "64"))]
-compile_error!("vzstd is proven for 64-bit targets only");
+compile_error!("verilith-zstd is proven for 64-bit targets only");
 
 #[doc(hidden)]
 pub mod spec;

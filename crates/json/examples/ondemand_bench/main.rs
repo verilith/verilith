@@ -76,7 +76,7 @@ fn main() {
                     0 => (c.t)(pe.parse(black_box(d)).unwrap().root()),
                     1 => (c.t)(pl.parse(black_box(d)).unwrap().root()),
                     2 => (c.o)(&mut Reader::new(black_box(d), &mut idx).unwrap(), &mut buf).unwrap(),
-                    _ => verilith_json::ondemand::index_for(black_box(d), &mut idx).unwrap().0 as u64,
+                    _ => verilith_json::index::index(black_box(d), 0, &mut idx).0 as u64,
                 };
                 let e = t.elapsed().as_secs_f64();
                 black_box(r);

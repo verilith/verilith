@@ -55,9 +55,11 @@ files (see [Performance](#performance)).
 1. **Stage 1** (`src/index.rs`) reads the input 64 bytes at a time and
    writes the position of every structural byte (brackets, braces, commas,
    colons, quotes, the first byte of each number or literal, and each
-   backslash inside a string) to an index. It finds string interiors with a
-   carry-less multiply (prefix XOR) over the unescaped quotes, and it checks
-   in the same pass that no control character appears inside a string. It
+   backslash or control character inside a string) to an index. The index
+   is a window: it covers 64 KiB of input at a time, in a buffer of the
+   same fixed size whatever the input's length, and stage 1 resumes where
+   it stopped when stage 2 reads past the window's end. It finds string interiors with a
+   carry-less multiply (prefix XOR) over the unescaped quotes. It
    uses AVX-512 (with VBMI2 compress) or AVX2 when the CPU has them, NEON
    on AArch64 (Apple Silicon and other ARM64 CPUs; `src/neon.rs`), and a
    scalar kernel otherwise. On NEON the prefix XOR is the scalar shift
@@ -74,10 +76,10 @@ files (see [Performance](#performance)).
    and pairwise-add steps. Its result is proven equal to the decimal value
    of the run.
 
-If stage 1 rejects the input (an unterminated string or a control character
-in one), or the input is too large to index, the parser falls back to the
-one-pass parser in `src/parser.rs`. That parser is also used by
-`parse_prefix` and by the C API. It scans strings, whitespace and digits 16
+Stage 1 rejects nothing on its own. A control character inside a string
+is in the index, so stage 2 rejects it where it reaches it, and a string
+left open runs out of index. The one-pass parser in `src/parser.rs` is
+used by `parse_prefix` and by the C API. It scans strings, whitespace and digits 16
 bytes at a time with SSE2 (`src/simd.rs`).
 
 The one-pass parser emits tokens to a `Sink`. Two sinks exist:
@@ -113,6 +115,11 @@ column 3 (byte 11)`.
 
 Inputs may be up to 2^48 - 1 bytes (256 TiB), more than a 64-bit address
 space holds today: token positions are 48 bits, so a token is 16 bytes.
+On 32-bit targets (wasm32 for browsers and Cloudflare Workers) any slice
+fits. The index takes the same fixed memory at any input size.
+Parsing recurses once per nesting level, so the full 1000 levels take
+about 400 KiB of stack under wasmtime; give a wasm host at least 512 KiB
+(wasmtime's default is just that, browsers give about 1 MiB).
 
 ### On-demand reading
 
@@ -149,9 +156,10 @@ string, literal, key, comma, colon or bracket the reader hands back or
 steps over one at a time is exactly the grammar's token. What is passed
 over (`skip`, `leave`, an unread value before `arr_next`/`obj_next`,
 everything after the last read) is only bracket-counted, so `[1, nul]` can
-be skipped as an array. The input as a whole is still checked to be UTF-8
-with every string terminated and free of control characters, because
-stage 1 does that. Use `verilith_json::parse` when the whole text must be valid.
+be skipped as an array. `Reader::new` checks that the whole input is
+UTF-8 before the first read. A string is checked to be terminated when
+the reader reaches it, and to be free of control characters when it is
+read. Use `verilith_json::parse` when the whole text must be valid.
 
 ### C API (native)
 
@@ -218,7 +226,10 @@ the tests check.
 Everything in `src/spec.rs`, `src/parser.rs`, `src/index.rs`,
 `src/stage2.rs`, `src/ondemand.rs`, `src/utf8.rs`, `src/write.rs`, `src/simd.rs`, `src/float.rs`
 and `src/lemmas.rs` is checked by Verus (`./scripts/verify.sh`, which runs `cargo verus verify`,
-750 items, 0 errors).
+807 items, 0 errors). The proofs are checked once per pointer width:
+also for `wasm32-unknown-unknown` at a 32-bit `usize`
+(`./scripts/verify-narrow.sh`, 721 items, without the x86 and Arm
+kernels, which that build does not have).
 The trusted base is listed under [What is not proven](#what-is-not-proven).
 
 * **Conformance.** `src/spec.rs` states the RFC 8259 grammar as Verus spec
@@ -229,8 +240,9 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   what its spec function returns. The two-pass parser is proven against the
   same spec: `parse2_with` returns exactly `document(s, true)`. Stage 1 is
   proven to produce exactly the structural positions defined in
-  `src/index.rs`, and stage 2 is proven to read the spec's tokens through
-  that index. This holds for accepted and rejected
+  `src/index.rs`, window by window (each window resumes stage 1's state
+  and the UTF-8 check's where the last one stopped), and stage 2 is proven
+  to read the spec's tokens through that windowed index. This holds for accepted and rejected
   inputs, and covers the decoded string bytes (UTF-8 for `\u` escapes and
   surrogate pairs), the byte range of each number, and the end position.
 * **Numbers, from text to `f64`.** `number_value` in `src/spec.rs` says
@@ -399,10 +411,8 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   `ondemand` fuzz target read every accepted text in full through the
   reader and compare each value with the tape's, and check that partial
   reads of an accepted text end at its end. Skipped parts are not
-  validated, by design. There is also no proof that stage 1 accepts every
-  valid document (the tape parser does not need one: it falls back to the
-  one-pass parser), so `Reader::new` returning `None` is proven to be
-  safe but only tested to mean "not JSON". The scalar conversions
+  validated, by design. `Reader::new` is proven to return `None` only
+  for input that is not UTF-8. The scalar conversions
   `Reader::f64` and `i64` are the same unverified glue over the verified
   scanner and `src/float.rs` that `Value` uses.
 * **NEON specs** come from verilith-simd (`verilith_simd::neon`), on the same footing:

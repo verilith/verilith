@@ -387,10 +387,10 @@ impl Sink for TreeSink {
     }
 
     #[inline(always)]
-    fn scan_str(&mut self, s: &[u8], idx: &[u32], k: usize, Ghost(st): Ghost<int>) -> (r: Option<
+    fn scan_str(&mut self, w: &mut crate::index::Win, k: usize, j: usize, Ghost(st): Ghost<int>) -> (r: Option<
         (usize, usize, bool),
     >) {
-        crate::stage2::ex2_string(s, idx, k, Ghost(st))
+        crate::stage2::ex2_string(w, k, j, Ghost(st))
     }
 
     #[verifier::external_body]

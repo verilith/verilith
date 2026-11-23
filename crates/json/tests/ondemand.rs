@@ -193,11 +193,17 @@ fn chaos(r: &mut Reader, buf: &mut Vec<u8>, seed: &mut u64) {
 }
 
 pub fn check(data: &[u8]) {
+    check_win(data, verilith_json::index::WINDOW);
+    check_win(data, 128);
+}
+
+/// `check` with index windows of `win` bytes.
+pub fn check_win(data: &[u8], win: usize) {
     let tape = verilith_json::parse(data);
     let mut idx = Vec::new();
     let mut buf = Vec::new();
     let mut got = Vec::new();
-    let full = match Reader::new(data, &mut idx) {
+    let full = match Reader::with_window(data, &mut idx, win) {
         Some(mut r) => dump_od(&mut r, &mut buf, &mut got, DEPTH).is_ok() && r.at_end(),
         None => false,
     };
@@ -208,11 +214,11 @@ pub fn check(data: &[u8]) {
             dump_tape(doc.root(), &mut want);
             assert!(want == got, "values differ");
             let mut idx = Vec::new();
-            let mut r = Reader::new(data, &mut idx).unwrap();
+            let mut r = Reader::with_window(data, &mut idx, win).unwrap();
             assert!(r.skip().is_ok() && r.at_end(), "skip of the document");
             for s in 1..6u64 {
                 let mut idx = Vec::new();
-                let mut r = Reader::new(data, &mut idx).unwrap();
+                let mut r = Reader::with_window(data, &mut idx, win).unwrap();
                 let mut seed = s.wrapping_mul(0x9E3779B97F4A7C15) ^ data.len() as u64 | 1;
                 assert!(mixed(&mut r, &mut buf, &mut seed, DEPTH).is_ok(), "mixed read");
                 assert!(r.at_end(), "mixed read ends at the end");
@@ -222,7 +228,7 @@ pub fn check(data: &[u8]) {
     }
     for s in 1..4u64 {
         let mut idx = Vec::new();
-        if let Some(mut r) = Reader::new(data, &mut idx) {
+        if let Some(mut r) = Reader::with_window(data, &mut idx, win) {
             let mut seed = s.wrapping_mul(0xD1B54A32D192ED03) ^ data.len() as u64 | 1;
             let _ = mixed(&mut r, &mut buf, &mut seed, DEPTH);
             chaos(&mut r, &mut buf, &mut seed);
