@@ -187,8 +187,8 @@ python3 tools/gen_refs.py src/refs.rs       # regenerate the references
 python3 tools/gen_difftest.py tests/difftest.rs
 ```
 
-Verus commit `1ce6a59bd72713cf486a7660097fe5ac57519617` (toolchain 1.100.0),
-vstd `=0.0.0-2026-11-22-0344`. The differential tests need an x86-64 CPU
+Verus commit `8bf68ee741df833ea5d0fe6a2255126fdea87e47` (toolchain 1.99.1),
+vstd `=0.0.0-2026-11-01-0251`. The differential tests need an x86-64 CPU
 with AVX2; the AVX-512 ones in `tests/ext.rs` need AVX-512BW and VBMI2.
 
 ## License

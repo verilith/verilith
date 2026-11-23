@@ -159,7 +159,7 @@ would satisfy the theorem, so that it does not is checked only by tests.
 
 ## 7. The toolchain
 
-- Verus (`0.2026.11.22.1ce6a59`) and Z3: that a proof Verus accepts is a
+- Verus (`0.2026.11.02.8bf68ee`) and Z3: that a proof Verus accepts is a
   proof.
 - The Rust compiler and LLVM: that the compiled code does what the source
   says. This includes auto-vectorization: the vector code in upsampling,
