@@ -16,9 +16,7 @@
 //! where the wrappers call `crate::wasm_neon`, the same operations on
 //! SIMD128 (WebAssembly has no run-time feature detection: a module built
 //! with `simd128` needs a host that has it, as every current browser does).
-//! Only the wrappers that forward to `crate::wasm_neon` are proven there;
-//! the others run `crate::emu_neon`, so a kernel that needs any of them
-//! (the JPEG and WebP ones) checks `cfg!(target_arch = "aarch64")` too.
+//! Every wrapper forwards there, so each contract is proven on SIMD128.
 #![allow(unused_unsafe)]
 use crate::lanes::*;
 use crate::ops::*;
@@ -162,8 +160,10 @@ pub fn vst1q_u32_at(s: &mut [u32], i: usize, v: uint8x16_t)
     ensures
         final(s)@ == old(s)@.subrange(0, i as int) + u32s(n8(v)) + old(s)@.subrange(i + 4, old(s)@.len() as int),
 {
-    debug_assert!(i + 4 <= s.len());
-    unsafe { a64::vst1q_u32(s.as_mut_ptr().add(i), a64::vreinterpretq_u32_u8(v)) }
+    wasm_or!(crate::wasm_neon::vst1q_u32_at(s, i, v), {
+        debug_assert!(i + 4 <= s.len());
+        unsafe { a64::vst1q_u32(s.as_mut_ptr().add(i), a64::vreinterpretq_u32_u8(v)) }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -283,7 +283,7 @@ pub fn vextq_u8<const N: i32>(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == alignr_lanes(n8(b), n8(a), N as int),
 {
-    unsafe { a64::vextq_u8::<N>(a, b) }
+    wasm_or!(crate::wasm_neon::vextq_u8::<N>(a, b), unsafe { a64::vextq_u8::<N>(a, b) })
 }
 
 /// Interleaves the low halves of `a` and `b`.
@@ -401,7 +401,7 @@ pub fn vdupq_n_u32(x: u32) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == splat32(x, 4),
 {
-    unsafe { a64::vreinterpretq_u8_u32(a64::vdupq_n_u32(x)) }
+    wasm_or!(crate::wasm_neon::vdupq_n_u32(x), unsafe { a64::vreinterpretq_u8_u32(a64::vdupq_n_u32(x)) })
 }
 
 /// 32-bit lane 3 of `a` in each 32-bit lane.
@@ -413,7 +413,7 @@ pub fn vdupq_laneq_u32_3(a: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == splat32(u32s(n8(a))[3], 4),
 {
-    unsafe { a64::vreinterpretq_u8_u32(a64::vdupq_laneq_u32::<3>(a64::vreinterpretq_u32_u8(a))) }
+    wasm_or!(crate::wasm_neon::vdupq_laneq_u32_3(a), unsafe { a64::vreinterpretq_u8_u32(a64::vdupq_laneq_u32::<3>(a64::vreinterpretq_u32_u8(a))) })
 }
 
 /// The eight 16-bit values at `s[i..i + 8]`, as their bits.
@@ -426,8 +426,10 @@ pub fn vld1q_s16_at(s: &[i16], i: usize) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == s@.subrange(i as int, i + 8).map_values(|x: i16| x as u16),
 {
-    debug_assert!(i + 8 <= s.len());
-    unsafe { a64::vreinterpretq_u8_u16(a64::vld1q_u16(s.as_ptr().add(i) as *const u16)) }
+    wasm_or!(crate::wasm_neon::vld1q_s16_at(s, i), {
+        debug_assert!(i + 8 <= s.len());
+        unsafe { a64::vreinterpretq_u8_u16(a64::vld1q_u16(s.as_ptr().add(i) as *const u16)) }
+    })
 }
 
 /// Stores `v` as eight 16-bit values at `s[i..i + 8]`.
@@ -441,8 +443,10 @@ pub fn vst1q_s16_at(s: &mut [i16], i: usize, v: uint8x16_t)
         final(s)@ == old(s)@.subrange(0, i as int) + u16s(n8(v)).map_values(|x: u16| x as i16)
             + old(s)@.subrange(i + 8, old(s)@.len() as int),
 {
-    debug_assert!(i + 8 <= s.len());
-    unsafe { a64::vst1q_u16(s.as_mut_ptr().add(i) as *mut u16, a64::vreinterpretq_u16_u8(v)) }
+    wasm_or!(crate::wasm_neon::vst1q_s16_at(s, i, v), {
+        debug_assert!(i + 8 <= s.len());
+        unsafe { a64::vst1q_u16(s.as_mut_ptr().add(i) as *mut u16, a64::vreinterpretq_u16_u8(v)) }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -458,7 +462,7 @@ pub fn vdupq_n_s16(x: i16) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == splat16(u16_of_i16(x), 8),
 {
-    unsafe { a64::vreinterpretq_u8_u16(a64::vdupq_n_u16(x as u16)) }
+    wasm_or!(crate::wasm_neon::vdupq_n_s16(x), unsafe { a64::vreinterpretq_u8_u16(a64::vdupq_n_u16(x as u16)) })
 }
 
 /// Wrapping 16-bit addition.
@@ -470,7 +474,7 @@ pub fn vaddq_s16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == add16(u16s(n8(a)), u16s(n8(b))),
 {
-    unsafe { a64::vreinterpretq_u8_u16(a64::vaddq_u16(a64::vreinterpretq_u16_u8(a), a64::vreinterpretq_u16_u8(b))) }
+    wasm_or!(crate::wasm_neon::vaddq_s16(a, b), unsafe { a64::vreinterpretq_u8_u16(a64::vaddq_u16(a64::vreinterpretq_u16_u8(a), a64::vreinterpretq_u16_u8(b))) })
 }
 
 /// Wrapping 16-bit subtraction.
@@ -482,7 +486,7 @@ pub fn vsubq_s16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == sub16(u16s(n8(a)), u16s(n8(b))),
 {
-    unsafe { a64::vreinterpretq_u8_u16(a64::vsubq_u16(a64::vreinterpretq_u16_u8(a), a64::vreinterpretq_u16_u8(b))) }
+    wasm_or!(crate::wasm_neon::vsubq_s16(a, b), unsafe { a64::vreinterpretq_u8_u16(a64::vsubq_u16(a64::vreinterpretq_u16_u8(a), a64::vreinterpretq_u16_u8(b))) })
 }
 
 /// Arithmetic shift right of each signed 16-bit lane by `N` (1 to 15).
@@ -495,7 +499,7 @@ pub fn vshrq_n_s16<const N: i32>(a: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == srai16(u16s(n8(a)), N as int),
 {
-    unsafe { a64::vreinterpretq_u8_s16(a64::vshrq_n_s16::<N>(a64::vreinterpretq_s16_u8(a))) }
+    wasm_or!(crate::wasm_neon::vshrq_n_s16::<N>(a), unsafe { a64::vreinterpretq_u8_s16(a64::vshrq_n_s16::<N>(a64::vreinterpretq_s16_u8(a))) })
 }
 
 /// Signed saturating doubling multiply, high half (`sqdmulh`).
@@ -507,7 +511,7 @@ pub fn vqdmulhq_s16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == qdmulh_s16(u16s(n8(a)), u16s(n8(b))),
 {
-    unsafe { a64::vreinterpretq_u8_s16(a64::vqdmulhq_s16(a64::vreinterpretq_s16_u8(a), a64::vreinterpretq_s16_u8(b))) }
+    wasm_or!(crate::wasm_neon::vqdmulhq_s16(a, b), unsafe { a64::vreinterpretq_u8_s16(a64::vqdmulhq_s16(a64::vreinterpretq_s16_u8(a), a64::vreinterpretq_s16_u8(b))) })
 }
 
 /// Interleaves the low four 16-bit lanes of `a` and `b`.
@@ -519,7 +523,7 @@ pub fn vzip1q_u16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == unpacklo16_lanes(u16s(n8(a)), u16s(n8(b))),
 {
-    unsafe { a64::vreinterpretq_u8_u16(a64::vzip1q_u16(a64::vreinterpretq_u16_u8(a), a64::vreinterpretq_u16_u8(b))) }
+    wasm_or!(crate::wasm_neon::vzip1q_u16(a, b), unsafe { a64::vreinterpretq_u8_u16(a64::vzip1q_u16(a64::vreinterpretq_u16_u8(a), a64::vreinterpretq_u16_u8(b))) })
 }
 
 /// Interleaves the high four 16-bit lanes of `a` and `b`.
@@ -531,7 +535,7 @@ pub fn vzip2q_u16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == unpackhi16_lanes(u16s(n8(a)), u16s(n8(b))),
 {
-    unsafe { a64::vreinterpretq_u8_u16(a64::vzip2q_u16(a64::vreinterpretq_u16_u8(a), a64::vreinterpretq_u16_u8(b))) }
+    wasm_or!(crate::wasm_neon::vzip2q_u16(a, b), unsafe { a64::vreinterpretq_u8_u16(a64::vzip2q_u16(a64::vreinterpretq_u16_u8(a), a64::vreinterpretq_u16_u8(b))) })
 }
 
 /// Interleaves the low two 32-bit lanes of `a` and `b`.
@@ -543,7 +547,7 @@ pub fn vzip1q_u32(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == unpacklo32_lanes(u32s(n8(a)), u32s(n8(b))),
 {
-    unsafe { a64::vreinterpretq_u8_u32(a64::vzip1q_u32(a64::vreinterpretq_u32_u8(a), a64::vreinterpretq_u32_u8(b))) }
+    wasm_or!(crate::wasm_neon::vzip1q_u32(a, b), unsafe { a64::vreinterpretq_u8_u32(a64::vzip1q_u32(a64::vreinterpretq_u32_u8(a), a64::vreinterpretq_u32_u8(b))) })
 }
 
 /// Interleaves the high two 32-bit lanes of `a` and `b`.
@@ -555,7 +559,7 @@ pub fn vzip2q_u32(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == unpackhi32_lanes(u32s(n8(a)), u32s(n8(b))),
 {
-    unsafe { a64::vreinterpretq_u8_u32(a64::vzip2q_u32(a64::vreinterpretq_u32_u8(a), a64::vreinterpretq_u32_u8(b))) }
+    wasm_or!(crate::wasm_neon::vzip2q_u32(a, b), unsafe { a64::vreinterpretq_u8_u32(a64::vzip2q_u32(a64::vreinterpretq_u32_u8(a), a64::vreinterpretq_u32_u8(b))) })
 }
 
 /// The low 64 bits of `a`, then those of `b`.
@@ -567,7 +571,7 @@ pub fn vzip1q_u64(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u64s(n8(r)) == unpacklo64_lanes(u64s(n8(a)), u64s(n8(b))),
 {
-    unsafe { a64::vreinterpretq_u8_u64(a64::vzip1q_u64(a64::vreinterpretq_u64_u8(a), a64::vreinterpretq_u64_u8(b))) }
+    wasm_or!(crate::wasm_neon::vzip1q_u64(a, b), unsafe { a64::vreinterpretq_u8_u64(a64::vzip1q_u64(a64::vreinterpretq_u64_u8(a), a64::vreinterpretq_u64_u8(b))) })
 }
 
 /// The high 64 bits of `a`, then those of `b`.
@@ -579,7 +583,7 @@ pub fn vzip2q_u64(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u64s(n8(r)) == unpackhi64_lanes(u64s(n8(a)), u64s(n8(b))),
 {
-    unsafe { a64::vreinterpretq_u8_u64(a64::vzip2q_u64(a64::vreinterpretq_u64_u8(a), a64::vreinterpretq_u64_u8(b))) }
+    wasm_or!(crate::wasm_neon::vzip2q_u64(a, b), unsafe { a64::vreinterpretq_u8_u64(a64::vzip2q_u64(a64::vreinterpretq_u64_u8(a), a64::vreinterpretq_u64_u8(b))) })
 }
 
 // ---------------------------------------------------------------------------
@@ -595,7 +599,7 @@ pub fn vrhaddq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == avg_u8(n8(a), n8(b)),
 {
-    unsafe { a64::vrhaddq_u8(a, b) }
+    wasm_or!(crate::wasm_neon::vrhaddq_u8(a, b), unsafe { a64::vrhaddq_u8(a, b) })
 }
 
 /// Wrapping byte subtraction.
@@ -607,7 +611,7 @@ pub fn vsubq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == sub8(n8(a), n8(b)),
 {
-    unsafe { a64::vsubq_u8(a, b) }
+    wasm_or!(crate::wasm_neon::vsubq_u8(a, b), unsafe { a64::vsubq_u8(a, b) })
 }
 
 /// Unsigned saturating 16-bit subtraction (`uqsub`).
@@ -619,7 +623,7 @@ pub fn vqsubq_u16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == subs_u16(u16s(n8(a)), u16s(n8(b))),
 {
-    unsafe { a64::vreinterpretq_u8_u16(a64::vqsubq_u16(a64::vreinterpretq_u16_u8(a), a64::vreinterpretq_u16_u8(b))) }
+    wasm_or!(crate::wasm_neon::vqsubq_u16(a, b), unsafe { a64::vreinterpretq_u8_u16(a64::vqsubq_u16(a64::vreinterpretq_u16_u8(a), a64::vreinterpretq_u16_u8(b))) })
 }
 
 /// The low eight bytes of `a`, zero-extended to 16-bit lanes and shifted
@@ -635,7 +639,7 @@ pub fn vshll_low_n_u8<const N: i32>(a: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == slli16(u16s(unpacklo8_lanes(n8(a), splat8(0, 16))), N as int),
 {
-    unsafe { a64::vreinterpretq_u8_u16(a64::vshll_n_u8::<N>(a64::vget_low_u8(a))) }
+    wasm_or!(crate::wasm_neon::vshll_low_n_u8::<N>(a), unsafe { a64::vreinterpretq_u8_u16(a64::vshll_n_u8::<N>(a64::vget_low_u8(a))) })
 }
 
 /// The high eight bytes of `a`, zero-extended to 16-bit lanes and shifted
@@ -649,7 +653,7 @@ pub fn vshll_high_n_u8<const N: i32>(a: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == slli16(u16s(unpackhi8_lanes(n8(a), splat8(0, 16))), N as int),
 {
-    unsafe { a64::vreinterpretq_u8_u16(a64::vshll_high_n_u8::<N>(a)) }
+    wasm_or!(crate::wasm_neon::vshll_high_n_u8::<N>(a), unsafe { a64::vreinterpretq_u8_u16(a64::vshll_high_n_u8::<N>(a)) })
 }
 
 /// Each signed 16-bit lane of `a`, then of `b`, shifted right by `N` (1 to
@@ -664,9 +668,11 @@ pub fn vqshrun2_n_s16<const N: i32>(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x1
     ensures
         n8(r) == packus16_lanes(srai16(u16s(n8(a)), N as int), srai16(u16s(n8(b)), N as int)),
 {
-    unsafe {
-        a64::vqshrun_high_n_s16::<N>(a64::vqshrun_n_s16::<N>(a64::vreinterpretq_s16_u8(a)), a64::vreinterpretq_s16_u8(b))
-    }
+    wasm_or!(crate::wasm_neon::vqshrun2_n_s16::<N>(a, b), {
+        unsafe {
+            a64::vqshrun_high_n_s16::<N>(a64::vqshrun_n_s16::<N>(a64::vreinterpretq_s16_u8(a)), a64::vreinterpretq_s16_u8(b))
+        }
+    })
 }
 
 /// Each unsigned 16-bit lane of `a`, then of `b`, shifted right by `N` (1
@@ -683,9 +689,11 @@ pub fn vqshrn2_n_u16<const N: i32>(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16
     ensures
         n8(r) == packus16_lanes(srli16(u16s(n8(a)), N as int), srli16(u16s(n8(b)), N as int)),
 {
-    unsafe {
-        a64::vqshrn_high_n_u16::<N>(a64::vqshrn_n_u16::<N>(a64::vreinterpretq_u16_u8(a)), a64::vreinterpretq_u16_u8(b))
-    }
+    wasm_or!(crate::wasm_neon::vqshrn2_n_u16::<N>(a, b), {
+        unsafe {
+            a64::vqshrn_high_n_u16::<N>(a64::vqshrn_n_u16::<N>(a64::vreinterpretq_u16_u8(a)), a64::vreinterpretq_u16_u8(b))
+        }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -702,7 +710,7 @@ pub fn vmaxq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == max_u8(n8(a), n8(b)),
 {
-    unsafe { a64::vmaxq_u8(a, b) }
+    wasm_or!(crate::wasm_neon::vmaxq_u8(a, b), unsafe { a64::vmaxq_u8(a, b) })
 }
 
 /// Absolute difference of unsigned bytes (`uabd`).
@@ -714,7 +722,7 @@ pub fn vabdq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == abd_u8(n8(a), n8(b)),
 {
-    unsafe { a64::vabdq_u8(a, b) }
+    wasm_or!(crate::wasm_neon::vabdq_u8(a, b), unsafe { a64::vabdq_u8(a, b) })
 }
 
 /// `a <= b` on unsigned bytes, as a byte mask (`cmhs` with the operands
@@ -739,7 +747,7 @@ pub fn vqaddq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == adds_u8(n8(a), n8(b)),
 {
-    unsafe { a64::vqaddq_u8(a, b) }
+    wasm_or!(crate::wasm_neon::vqaddq_u8(a, b), unsafe { a64::vqaddq_u8(a, b) })
 }
 
 /// `a & !b` (`bic`: the second operand is the one complemented).
@@ -751,7 +759,7 @@ pub fn vbicq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == andnot8(n8(b), n8(a)),
 {
-    unsafe { a64::vbicq_u8(a, b) }
+    wasm_or!(crate::wasm_neon::vbicq_u8(a, b), unsafe { a64::vbicq_u8(a, b) })
 }
 
 /// Signed saturating byte addition (`sqadd`).
@@ -763,7 +771,7 @@ pub fn vqaddq_s8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == adds_s8(n8(a), n8(b)),
 {
-    unsafe { a64::vreinterpretq_u8_s8(a64::vqaddq_s8(a64::vreinterpretq_s8_u8(a), a64::vreinterpretq_s8_u8(b))) }
+    wasm_or!(crate::wasm_neon::vqaddq_s8(a, b), unsafe { a64::vreinterpretq_u8_s8(a64::vqaddq_s8(a64::vreinterpretq_s8_u8(a), a64::vreinterpretq_s8_u8(b))) })
 }
 
 /// Signed saturating byte subtraction (`sqsub`).
@@ -775,7 +783,7 @@ pub fn vqsubq_s8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == subs_s8(n8(a), n8(b)),
 {
-    unsafe { a64::vreinterpretq_u8_s8(a64::vqsubq_s8(a64::vreinterpretq_s8_u8(a), a64::vreinterpretq_s8_u8(b))) }
+    wasm_or!(crate::wasm_neon::vqsubq_s8(a, b), unsafe { a64::vreinterpretq_u8_s8(a64::vqsubq_s8(a64::vreinterpretq_s8_u8(a), a64::vreinterpretq_s8_u8(b))) })
 }
 
 /// Arithmetic shift right of each signed byte by `N` (1 to 8) (`sshr`).
@@ -788,7 +796,7 @@ pub fn vshrq_n_s8<const N: i32>(a: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == sra8(n8(a), N as int),
 {
-    unsafe { a64::vreinterpretq_u8_s8(a64::vshrq_n_s8::<N>(a64::vreinterpretq_s8_u8(a))) }
+    wasm_or!(crate::wasm_neon::vshrq_n_s8::<N>(a), unsafe { a64::vreinterpretq_u8_s8(a64::vshrq_n_s8::<N>(a64::vreinterpretq_s8_u8(a))) })
 }
 
 /// Each signed 16-bit lane of `a`, then of `b`, shifted right by `N` (1 to
@@ -803,11 +811,13 @@ pub fn vqshrn2_n_s16<const N: i32>(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16
     ensures
         n8(r) == packs16_lanes(srai16(u16s(n8(a)), N as int), srai16(u16s(n8(b)), N as int)),
 {
-    unsafe {
-        a64::vreinterpretq_u8_s8(
-            a64::vqshrn_high_n_s16::<N>(a64::vqshrn_n_s16::<N>(a64::vreinterpretq_s16_u8(a)), a64::vreinterpretq_s16_u8(b)),
-        )
-    }
+    wasm_or!(crate::wasm_neon::vqshrn2_n_s16::<N>(a, b), {
+        unsafe {
+            a64::vreinterpretq_u8_s8(
+                a64::vqshrn_high_n_s16::<N>(a64::vqshrn_n_s16::<N>(a64::vreinterpretq_s16_u8(a)), a64::vreinterpretq_s16_u8(b)),
+            )
+        }
+    })
 }
 
 /// The 8 bytes at `s[i..i + 8]` in the low half, zeros in the high half
@@ -821,8 +831,10 @@ pub fn vld1q_u8_low_at(s: &[u8], i: usize) -> (r: uint8x16_t)
     ensures
         n8(r) == s@.subrange(i as int, i + 8) + splat8(0u8, 8),
 {
-    debug_assert!(i + 8 <= s.len());
-    unsafe { a64::vcombine_u8(a64::vld1_u8(s.as_ptr().add(i)), a64::vdup_n_u8(0)) }
+    wasm_or!(crate::wasm_neon::vld1q_u8_low_at(s, i), {
+        debug_assert!(i + 8 <= s.len());
+        unsafe { a64::vcombine_u8(a64::vld1_u8(s.as_ptr().add(i)), a64::vdup_n_u8(0)) }
+    })
 }
 
 /// Stores the low 8 bytes of `v` at `s[i..i + 8]` (`str d`; `vst1_u8` of
@@ -836,8 +848,10 @@ pub fn vst1q_u8_low_at(s: &mut [u8], i: usize, v: uint8x16_t)
     ensures
         final(s)@ == old(s)@.subrange(0, i as int) + n8(v).subrange(0, 8) + old(s)@.subrange(i + 8, old(s)@.len() as int),
 {
-    debug_assert!(i + 8 <= s.len());
-    unsafe { a64::vst1_u8(s.as_mut_ptr().add(i), a64::vget_low_u8(v)) }
+    wasm_or!(crate::wasm_neon::vst1q_u8_low_at(s, i, v), {
+        debug_assert!(i + 8 <= s.len());
+        unsafe { a64::vst1_u8(s.as_mut_ptr().add(i), a64::vget_low_u8(v)) }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -856,7 +870,7 @@ pub fn vcombine_u64(lo: u64, hi: u64) -> (r: uint8x16_t)
     ensures
         u64s(n8(r)) == seq![lo, hi],
 {
-    unsafe { a64::vreinterpretq_u8_u64(a64::vcombine_u64(a64::vcreate_u64(lo), a64::vcreate_u64(hi))) }
+    wasm_or!(crate::wasm_neon::vcombine_u64(lo, hi), unsafe { a64::vreinterpretq_u8_u64(a64::vcombine_u64(a64::vcreate_u64(lo), a64::vcreate_u64(hi))) })
 }
 
 /// Stores 32-bit lane `N` of `v`, its bytes `4 * N..4 * N + 4`, at
@@ -872,8 +886,10 @@ pub fn vst1q_lane_u32_at<const N: i32>(s: &mut [u8], i: usize, v: uint8x16_t)
     ensures
         final(s)@ == old(s)@.subrange(0, i as int) + n8(v).subrange(4 * N, 4 * N + 4) + old(s)@.subrange(i + 4, old(s)@.len() as int),
 {
-    debug_assert!(i + 4 <= s.len());
-    unsafe { core::ptr::write_unaligned(s.as_mut_ptr().add(i) as *mut u32, a64::vgetq_lane_u32::<N>(a64::vreinterpretq_u32_u8(v))) }
+    wasm_or!(crate::wasm_neon::vst1q_lane_u32_at::<N>(s, i, v), {
+        debug_assert!(i + 4 <= s.len());
+        unsafe { core::ptr::write_unaligned(s.as_mut_ptr().add(i) as *mut u32, a64::vgetq_lane_u32::<N>(a64::vreinterpretq_u32_u8(v))) }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -978,7 +994,7 @@ pub fn vabsq_s16(a: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == abs16(u16s(n8(a))),
 {
-    unsafe { a64::vreinterpretq_u8_s16(a64::vabsq_s16(a64::vreinterpretq_s16_u8(a))) }
+    wasm_or!(crate::wasm_neon::vabsq_s16(a), unsafe { a64::vreinterpretq_u8_s16(a64::vabsq_s16(a64::vreinterpretq_s16_u8(a))) })
 }
 
 /// Unsigned 16-bit maximum (`umax`).
@@ -990,7 +1006,7 @@ pub fn vmaxq_u16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == max_u16(u16s(n8(a)), u16s(n8(b))),
 {
-    unsafe { a64::vreinterpretq_u8_u16(a64::vmaxq_u16(a64::vreinterpretq_u16_u8(a), a64::vreinterpretq_u16_u8(b))) }
+    wasm_or!(crate::wasm_neon::vmaxq_u16(a, b), unsafe { a64::vreinterpretq_u8_u16(a64::vmaxq_u16(a64::vreinterpretq_u16_u8(a), a64::vreinterpretq_u16_u8(b))) })
 }
 
 /// The signed products of the low four 16-bit lanes, as 32-bit lanes
@@ -1003,7 +1019,7 @@ pub fn vmull_lo_s16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == mull_lo_s16(u16s(n8(a)), u16s(n8(b))),
 {
-    unsafe { a64::vreinterpretq_u8_s32(a64::vmull_s16(a64::vget_low_s16(a64::vreinterpretq_s16_u8(a)), a64::vget_low_s16(a64::vreinterpretq_s16_u8(b)))) }
+    wasm_or!(crate::wasm_neon::vmull_lo_s16(a, b), unsafe { a64::vreinterpretq_u8_s32(a64::vmull_s16(a64::vget_low_s16(a64::vreinterpretq_s16_u8(a)), a64::vget_low_s16(a64::vreinterpretq_s16_u8(b)))) })
 }
 
 /// The signed products of the high four 16-bit lanes, as 32-bit lanes
@@ -1016,7 +1032,7 @@ pub fn vmull_hi_s16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == mull_hi_s16(u16s(n8(a)), u16s(n8(b))),
 {
-    unsafe { a64::vreinterpretq_u8_s32(a64::vmull_high_s16(a64::vreinterpretq_s16_u8(a), a64::vreinterpretq_s16_u8(b))) }
+    wasm_or!(crate::wasm_neon::vmull_hi_s16(a, b), unsafe { a64::vreinterpretq_u8_s32(a64::vmull_high_s16(a64::vreinterpretq_s16_u8(a), a64::vreinterpretq_s16_u8(b))) })
 }
 
 /// Wrapping 32-bit addition.
@@ -1028,7 +1044,7 @@ pub fn vaddq_u32(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == add32(u32s(n8(a)), u32s(n8(b))),
 {
-    unsafe { a64::vreinterpretq_u8_u32(a64::vaddq_u32(a64::vreinterpretq_u32_u8(a), a64::vreinterpretq_u32_u8(b))) }
+    wasm_or!(crate::wasm_neon::vaddq_u32(a, b), unsafe { a64::vreinterpretq_u8_u32(a64::vaddq_u32(a64::vreinterpretq_u32_u8(a), a64::vreinterpretq_u32_u8(b))) })
 }
 
 /// Wrapping 32-bit subtraction.
@@ -1040,7 +1056,7 @@ pub fn vsubq_u32(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == sub32(u32s(n8(a)), u32s(n8(b))),
 {
-    unsafe { a64::vreinterpretq_u8_u32(a64::vsubq_u32(a64::vreinterpretq_u32_u8(a), a64::vreinterpretq_u32_u8(b))) }
+    wasm_or!(crate::wasm_neon::vsubq_u32(a, b), unsafe { a64::vreinterpretq_u8_u32(a64::vsubq_u32(a64::vreinterpretq_u32_u8(a), a64::vreinterpretq_u32_u8(b))) })
 }
 
 /// Rounding arithmetic shift right of each signed 32-bit lane by `N` (1 to
@@ -1054,7 +1070,7 @@ pub fn vrshrq_n_s32<const N: i32>(a: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == rshr_s32(u32s(n8(a)), N as int),
 {
-    unsafe { a64::vreinterpretq_u8_s32(a64::vrshrq_n_s32::<N>(a64::vreinterpretq_s32_u8(a))) }
+    wasm_or!(crate::wasm_neon::vrshrq_n_s32::<N>(a), unsafe { a64::vreinterpretq_u8_s32(a64::vrshrq_n_s32::<N>(a64::vreinterpretq_s32_u8(a))) })
 }
 
 /// Shift left of each 32-bit lane by `N` (0 to 31).
@@ -1067,7 +1083,7 @@ pub fn vshlq_n_u32<const N: i32>(a: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == slli32(u32s(n8(a)), N as int),
 {
-    unsafe { a64::vreinterpretq_u8_u32(a64::vshlq_n_u32::<N>(a64::vreinterpretq_u32_u8(a))) }
+    wasm_or!(crate::wasm_neon::vshlq_n_u32::<N>(a), unsafe { a64::vreinterpretq_u8_u32(a64::vshlq_n_u32::<N>(a64::vreinterpretq_u32_u8(a))) })
 }
 
 /// The odd 16-bit lanes of `a`, then those of `b` (`uzp2`).
@@ -1079,7 +1095,7 @@ pub fn vuzp2q_u16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == uzp2_16(u16s(n8(a)), u16s(n8(b))),
 {
-    unsafe { a64::vreinterpretq_u8_u16(a64::vuzp2q_u16(a64::vreinterpretq_u16_u8(a), a64::vreinterpretq_u16_u8(b))) }
+    wasm_or!(crate::wasm_neon::vuzp2q_u16(a, b), unsafe { a64::vreinterpretq_u8_u16(a64::vuzp2q_u16(a64::vreinterpretq_u16_u8(a), a64::vreinterpretq_u16_u8(b))) })
 }
 
 /// Stores the bytes of `a`, `b` and `c` interleaved at `s[i..i + 48]`
@@ -1096,8 +1112,10 @@ pub fn vst3q_u8_at(s: &mut [u8], i: usize, a: uint8x16_t, b: uint8x16_t, c: uint
             old(s)@.len() as int,
         ),
 {
-    debug_assert!(i + 48 <= s.len());
-    unsafe { a64::vst3q_u8(s.as_mut_ptr().add(i), a64::uint8x16x3_t(a, b, c)) }
+    wasm_or!(crate::wasm_neon::vst3q_u8_at(s, i, a, b, c), {
+        debug_assert!(i + 48 <= s.len());
+        unsafe { a64::vst3q_u8(s.as_mut_ptr().add(i), a64::uint8x16x3_t(a, b, c)) }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1116,7 +1134,7 @@ pub fn vmull_lo_laneq_s16<const L: i32>(a: uint8x16_t, c: uint8x16_t) -> (r: uin
     ensures
         u32s(n8(r)) == mull_lo_lane_s16(u16s(n8(a)), u16s(n8(c)), L as int),
 {
-    unsafe { a64::vreinterpretq_u8_s32(a64::vmull_laneq_s16::<L>(a64::vget_low_s16(a64::vreinterpretq_s16_u8(a)), a64::vreinterpretq_s16_u8(c))) }
+    wasm_or!(crate::wasm_neon::vmull_lo_laneq_s16::<L>(a, c), unsafe { a64::vreinterpretq_u8_s32(a64::vmull_laneq_s16::<L>(a64::vget_low_s16(a64::vreinterpretq_s16_u8(a)), a64::vreinterpretq_s16_u8(c))) })
 }
 
 /// The signed products of the high four 16-bit lanes of `a` with lane `L`
@@ -1130,7 +1148,7 @@ pub fn vmull_hi_laneq_s16<const L: i32>(a: uint8x16_t, c: uint8x16_t) -> (r: uin
     ensures
         u32s(n8(r)) == mull_hi_lane_s16(u16s(n8(a)), u16s(n8(c)), L as int),
 {
-    unsafe { a64::vreinterpretq_u8_s32(a64::vmull_high_laneq_s16::<L>(a64::vreinterpretq_s16_u8(a), a64::vreinterpretq_s16_u8(c))) }
+    wasm_or!(crate::wasm_neon::vmull_hi_laneq_s16::<L>(a, c), unsafe { a64::vreinterpretq_u8_s32(a64::vmull_high_laneq_s16::<L>(a64::vreinterpretq_s16_u8(a), a64::vreinterpretq_s16_u8(c))) })
 }
 
 /// `acc` plus the signed products of the low four 16-bit lanes of `a` with
@@ -1145,7 +1163,7 @@ pub fn vmlal_lo_laneq_s16<const L: i32>(acc: uint8x16_t, a: uint8x16_t, c: uint8
     ensures
         u32s(n8(r)) == mlal_lo_lane_s16(u32s(n8(acc)), u16s(n8(a)), u16s(n8(c)), L as int),
 {
-    unsafe { a64::vreinterpretq_u8_s32(a64::vmlal_laneq_s16::<L>(a64::vreinterpretq_s32_u8(acc), a64::vget_low_s16(a64::vreinterpretq_s16_u8(a)), a64::vreinterpretq_s16_u8(c))) }
+    wasm_or!(crate::wasm_neon::vmlal_lo_laneq_s16::<L>(acc, a, c), unsafe { a64::vreinterpretq_u8_s32(a64::vmlal_laneq_s16::<L>(a64::vreinterpretq_s32_u8(acc), a64::vget_low_s16(a64::vreinterpretq_s16_u8(a)), a64::vreinterpretq_s16_u8(c))) })
 }
 
 /// `acc` plus the signed products of the high four 16-bit lanes of `a`
@@ -1160,7 +1178,7 @@ pub fn vmlal_hi_laneq_s16<const L: i32>(acc: uint8x16_t, a: uint8x16_t, c: uint8
     ensures
         u32s(n8(r)) == mlal_hi_lane_s16(u32s(n8(acc)), u16s(n8(a)), u16s(n8(c)), L as int),
 {
-    unsafe { a64::vreinterpretq_u8_s32(a64::vmlal_high_laneq_s16::<L>(a64::vreinterpretq_s32_u8(acc), a64::vreinterpretq_s16_u8(a), a64::vreinterpretq_s16_u8(c))) }
+    wasm_or!(crate::wasm_neon::vmlal_hi_laneq_s16::<L>(acc, a, c), unsafe { a64::vreinterpretq_u8_s32(a64::vmlal_high_laneq_s16::<L>(a64::vreinterpretq_s32_u8(acc), a64::vreinterpretq_s16_u8(a), a64::vreinterpretq_s16_u8(c))) })
 }
 
 /// Each signed 32-bit lane of `a`, then of `b`, shifted right by `N` (1 to
@@ -1175,7 +1193,7 @@ pub fn vrshrn2_n_s32<const N: i32>(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16
     ensures
         u16s(n8(r)) == rshrn_s32(u32s(n8(a)), N as int) + rshrn_s32(u32s(n8(b)), N as int),
 {
-    unsafe { a64::vreinterpretq_u8_s16(a64::vrshrn_high_n_s32::<N>(a64::vrshrn_n_s32::<N>(a64::vreinterpretq_s32_u8(a)), a64::vreinterpretq_s32_u8(b))) }
+    wasm_or!(crate::wasm_neon::vrshrn2_n_s32::<N>(a, b), unsafe { a64::vreinterpretq_u8_s16(a64::vrshrn_high_n_s32::<N>(a64::vrshrn_n_s32::<N>(a64::vreinterpretq_s32_u8(a)), a64::vreinterpretq_s32_u8(b))) })
 }
 
 /// Each signed 32-bit lane of `a` shifted right by `N` (1 to 16) with
@@ -1190,7 +1208,7 @@ pub fn vrshrn_lo_n_s32<const N: i32>(a: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == rshrn_s32(u32s(n8(a)), N as int) + splat16(0, 4),
 {
-    unsafe { a64::vreinterpretq_u8_s16(a64::vcombine_s16(a64::vrshrn_n_s32::<N>(a64::vreinterpretq_s32_u8(a)), a64::vdup_n_s16(0))) }
+    wasm_or!(crate::wasm_neon::vrshrn_lo_n_s32::<N>(a), unsafe { a64::vreinterpretq_u8_s16(a64::vcombine_s16(a64::vrshrn_n_s32::<N>(a64::vreinterpretq_s32_u8(a)), a64::vdup_n_s16(0))) })
 }
 
 /// Unsigned saturating 16-bit addition (`uqadd`).
@@ -1202,7 +1220,7 @@ pub fn vqaddq_u16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == adds_u16(u16s(n8(a)), u16s(n8(b))),
 {
-    unsafe { a64::vreinterpretq_u8_u16(a64::vqaddq_u16(a64::vreinterpretq_u16_u8(a), a64::vreinterpretq_u16_u8(b))) }
+    wasm_or!(crate::wasm_neon::vqaddq_u16(a, b), unsafe { a64::vreinterpretq_u8_u16(a64::vqaddq_u16(a64::vreinterpretq_u16_u8(a), a64::vreinterpretq_u16_u8(b))) })
 }
 
 /// The sum of the eight 16-bit lanes (`uaddlv`).
@@ -1214,7 +1232,7 @@ pub fn vaddlvq_u16(a: uint8x16_t) -> (r: u32)
     ensures
         r as int == sum_u16(u16s(n8(a))),
 {
-    unsafe { a64::vaddlvq_u16(a64::vreinterpretq_u16_u8(a)) }
+    wasm_or!(crate::wasm_neon::vaddlvq_u16(a), unsafe { a64::vaddlvq_u16(a64::vreinterpretq_u16_u8(a)) })
 }
 
 } // verus!

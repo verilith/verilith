@@ -235,6 +235,18 @@ Progressive and multi-scan files are decoded to whole-image coefficient
 arrays first, as in libjpeg-turbo. Every file still gets whole planes of
 samples before upsampling, where libjpeg-turbo keeps a few rows.
 
+### WebAssembly
+
+Built for WebAssembly with SIMD128 (`-C target-feature=+simd128`), the
+NEON inverse DCT and colour conversion run on WebAssembly vectors: each
+NEON wrapper they use is proven on SIMD128 in verilith-simd
+(`src/wasm_neon.rs`), so the same proofs hold there. Under Node.js 22 on
+x86-64, a 1920x1080 photo decodes in 8.8 ms (4:2:0) and 16.7 ms (4:4:4),
+against 13.5 ms and 29.9 ms for the same SIMD128 build without the NEON
+paths. Decoded pixels are identical to the x86-64 and scalar WebAssembly
+builds on 162 test files (sizes from 1x1, every
+subsampling, progressive, greyscale, CMYK).
+
 ## Building
 
 ```sh

@@ -4,8 +4,8 @@
 //! the wrapper of the same name in `crate::neon`, and is verified against
 //! the trusted SIMD128 instruction specifications in `crate::wasm`. On
 //! `wasm32` with `simd128`, `crate::neon`'s wrappers call these, so the
-//! NEON kernels' proofs (JSON, UTF-8, URL, HTTP, regex) hold there on the
-//! strength of the WebAssembly specification, not of NEON.
+//! NEON kernels' proofs (JSON, UTF-8, URL, HTTP, regex, JPEG, WebP) hold
+//! there on the strength of the WebAssembly specification, not of NEON.
 //!
 //! What it takes to match NEON, beyond renaming:
 //!
@@ -21,6 +21,20 @@
 //! - `vpaddlq_u32` widens the even and odd 32-bit lanes to 64 bits and adds.
 //! - `vpaddq_u8` adds the even and odd bytes; `vshrn4_u64` shifts the
 //!   16-bit lanes by 4 and takes their low bytes.
+//! - `vshrq_n_s8::<8>` is a shift by 7, the same result, since `shr_s`
+//!   would take 8 modulo 8.
+//! - `vqdmulhq_s16`: `i16x8.q15mulr_sat_s` rounds, `sqdmulh` truncates, so
+//!   it is the 32-bit products shifted by 15 and narrowed with saturation
+//!   (only -32768 squared saturates, as on NEON).
+//! - Rounding shifts (`vrshrq_n_s32`, `vrshrn`): `(x + 2^(n-1)) >> n` is
+//!   `(x >> (n - 1)) - (x >> n)`, which cannot overflow, proven for any
+//!   sign by floor division.
+//! - Multiply-accumulate by lane (`vmlal`/`vmull` by element) splats the
+//!   lane and uses `extmul_low`/`extmul_high`; `vaddlvq_u16` is a widening
+//!   pairwise add and two rotations.
+//! - `vabdq_u8` is the `or` of two saturating differences; `vbicq_u8` is
+//!   `andnot` with its operands in WebAssembly's order.
+//! - `vst3q_u8_at` interleaves with six `i8x16.shuffle`s and three stores.
 //!
 //! `tools/check_wasm_neon.py` checks that each contract here is, word for
 //! word, the one in `crate::neon`, and that each wrapper there forwards here.
@@ -374,7 +388,7 @@ proof fn lemma_shr_u8(x: u8, n: u8)
 // Horizontal maxima
 // ---------------------------------------------------------------------------
 
-pub open spec fn max_u8(x: u8, y: u8) -> u8 {
+pub open spec fn hmax8(x: u8, y: u8) -> u8 {
     if x >= y { x } else { y }
 }
 
@@ -397,7 +411,7 @@ proof fn lemma_round8(a: Seq<u8>, x: Seq<u8>, y: Seq<u8>, k: int)
         k == 1 || k == 2 || k == 4 || k == 8,
         a.len() == 16,
         round_inv8(a, x, 16, 2 * k),
-        y == Seq::new(16, |i: int| max_u8(x[i], x[(i + k) % 16])),
+        y == Seq::new(16, |i: int| hmax8(x[i], x[(i + k) % 16])),
     ensures
         round_inv8(a, y, 16, k),
 {
@@ -438,7 +452,7 @@ fn max_round8<const K: u32>(x: uint8x16_t, Ghost(a): Ghost<Seq<u8>>) -> (y: uint
     let t = w_rot8::<K>(x);
     let y = w_max_u8(x, t);
     proof {
-        assert(n8(y) =~= Seq::new(16, |i: int| max_u8(n8(x)[i], n8(x)[(i + K) % 16])));
+        assert(n8(y) =~= Seq::new(16, |i: int| hmax8(n8(x)[i], n8(x)[(i + K) % 16])));
         lemma_round8(a, n8(x), n8(y), K as int);
     }
     y
@@ -476,7 +490,7 @@ pub fn vmaxvq_u8(a: uint8x16_t) -> (r: u8)
     r
 }
 
-pub open spec fn max_u16(x: u16, y: u16) -> u16 {
+pub open spec fn hmax16(x: u16, y: u16) -> u16 {
     if x >= y { x } else { y }
 }
 
@@ -495,7 +509,7 @@ proof fn lemma_round16(a: Seq<u16>, x: Seq<u16>, y: Seq<u16>, k: int)
         k == 1 || k == 2 || k == 4,
         a.len() == 8,
         round_inv16(a, x, 8, 2 * k),
-        y == Seq::new(8, |i: int| max_u16(x[i], x[(i + k) % 8])),
+        y == Seq::new(8, |i: int| hmax16(x[i], x[(i + k) % 8])),
     ensures
         round_inv16(a, y, 8, k),
 {
@@ -536,7 +550,7 @@ fn max_round16<const K: u32>(x: uint8x16_t, Ghost(a): Ghost<Seq<u16>>) -> (y: ui
     let t = w_rot16::<K>(x);
     let y = w_max_u16(x, t);
     proof {
-        assert(u16s(n8(y)) =~= Seq::new(8, |i: int| max_u16(u16s(n8(x))[i], u16s(n8(x))[(i + K) % 8])));
+        assert(u16s(n8(y)) =~= Seq::new(8, |i: int| hmax16(u16s(n8(x))[i], u16s(n8(x))[(i + K) % 8])));
         lemma_round16(a, u16s(n8(x)), u16s(n8(y)), K as int);
     }
     y
@@ -789,6 +803,1121 @@ proof fn lemma_u64_bytes(b: Seq<u8>)
                 | ((((b4 as u32) | ((b5 as u32) << 8u32) | ((b6 as u32) << 16u32) | ((b7 as u32) << 24u32)) as u64)
                 << 32u64) ==> ((v >> 56u64) & 0xff) == b7 as u64) by (bit_vector);
         }
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// For the JPEG and WebP kernels
+// ---------------------------------------------------------------------------
+
+/// Absolute value of each signed 16-bit lane (`abs`); `-0x8000` stays
+/// `0x8000`.
+#[inline(always)]
+pub fn vabsq_s16(a: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u16s(n8(r)) == abs16(u16s(n8(a))),
+{
+    let r = w_abs16(a);
+    assert(u16s(n8(r)) =~= abs16(u16s(n8(a))));
+    r
+}
+
+/// Wrapping 16-bit addition.
+#[inline(always)]
+pub fn vaddq_s16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u16s(n8(r)) == add16(u16s(n8(a)), u16s(n8(b))),
+{
+    let r = w_add16(a, b);
+    assert(u16s(n8(r)) =~= add16(u16s(n8(a)), u16s(n8(b))));
+    r
+}
+
+/// Wrapping 32-bit addition.
+#[inline(always)]
+pub fn vaddq_u32(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u32s(n8(r)) == add32(u32s(n8(a)), u32s(n8(b))),
+{
+    let r = w_add32(a, b);
+    assert(u32s(n8(r)) =~= add32(u32s(n8(a)), u32s(n8(b))));
+    r
+}
+
+/// Wrapping 16-bit subtraction.
+#[inline(always)]
+pub fn vsubq_s16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u16s(n8(r)) == sub16(u16s(n8(a)), u16s(n8(b))),
+{
+    let r = w_sub16(a, b);
+    assert(u16s(n8(r)) =~= sub16(u16s(n8(a)), u16s(n8(b))));
+    r
+}
+
+/// Wrapping 32-bit subtraction.
+#[inline(always)]
+pub fn vsubq_u32(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u32s(n8(r)) == sub32(u32s(n8(a)), u32s(n8(b))),
+{
+    let r = w_sub32(a, b);
+    assert(u32s(n8(r)) =~= sub32(u32s(n8(a)), u32s(n8(b))));
+    r
+}
+
+/// Wrapping byte subtraction.
+#[inline(always)]
+pub fn vsubq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        n8(r) == sub8(n8(a), n8(b)),
+{
+    let r = w_sub8(a, b);
+    assert(n8(r) =~= sub8(n8(a), n8(b)));
+    r
+}
+
+/// The vector whose low 64 bits are `lo` and whose high 64 bits are `hi`,
+/// little-endian (`fmov d, x` and `mov v.d[1], x`; `vcombine_u64` of two
+/// `vcreate_u64`).
+#[inline(always)]
+pub fn vcombine_u64(lo: u64, hi: u64) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u64s(n8(r)) == seq![lo, hi],
+{
+    let r = w_make64(lo, hi);
+    assert(u64s(n8(r)) =~= seq![lo, hi]);
+    r
+}
+
+/// 32-bit lane 3 of `a` in each 32-bit lane.
+#[inline(always)]
+pub fn vdupq_laneq_u32_3(a: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u32s(n8(r)) == splat32(u32s(n8(a))[3], 4),
+{
+    let r = w_dup32_3(a, a);
+    assert(u32s(n8(r)) =~= splat32(u32s(n8(a))[3], 4));
+    r
+}
+
+/// `x` in each 32-bit lane.
+#[inline(always)]
+pub fn vdupq_n_u32(x: u32) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u32s(n8(r)) == splat32(x, 4),
+{
+    let r = w_splat32(x);
+    assert(u32s(n8(r)) =~= splat32(x, 4));
+    r
+}
+
+/// Bytes `N..N + 16` of `a` followed by `b`.
+#[inline(always)]
+pub fn vextq_u8<const N: i32>(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+        0 <= N <= 15,
+    ensures
+        n8(r) == alignr_lanes(n8(b), n8(a), N as int),
+{
+    let r = w_ext::<N>(a, b);
+    assert(n8(r) =~= alignr_lanes(n8(b), n8(a), N as int));
+    r
+}
+
+/// The eight 16-bit values at `s[i..i + 8]`, as their bits.
+#[inline(always)]
+pub fn vld1q_s16_at(s: &[i16], i: usize) -> (r: uint8x16_t)
+    requires
+        neon(),
+        i + 8 <= s@.len(),
+    ensures
+        u16s(n8(r)) == s@.subrange(i as int, i + 8).map_values(|x: i16| x as u16),
+{
+    let r = w_load_s16(s, i);
+    assert(u16s(n8(r)) =~= s@.subrange(i as int, i + 8).map_values(|x: i16| x as u16));
+    r
+}
+
+/// The 8 bytes at `s[i..i + 8]` in the low half, zeros in the high half
+/// (`ldr d`; `vcombine_u8` of `vld1_u8` and zero).
+#[inline(always)]
+pub fn vld1q_u8_low_at(s: &[u8], i: usize) -> (r: uint8x16_t)
+    requires
+        neon(),
+        i + 8 <= s@.len(),
+    ensures
+        n8(r) == s@.subrange(i as int, i + 8) + splat8(0u8, 8),
+{
+    let r = w_load64_zero(s, i);
+    assert(n8(r) =~= s@.subrange(i as int, i + 8) + splat8(0u8, 8));
+    r
+}
+
+/// Unsigned 16-bit maximum (`umax`).
+#[inline(always)]
+pub fn vmaxq_u16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u16s(n8(r)) == max_u16(u16s(n8(a)), u16s(n8(b))),
+{
+    let r = w_max_u16(a, b);
+    assert(u16s(n8(r)) =~= max_u16(u16s(n8(a)), u16s(n8(b))));
+    r
+}
+
+/// Unsigned byte maximum (`umax`).
+#[inline(always)]
+pub fn vmaxq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        n8(r) == max_u8(n8(a), n8(b)),
+{
+    let r = w_max_u8(a, b);
+    assert(n8(r) =~= max_u8(n8(a), n8(b)));
+    r
+}
+
+/// The signed products of the low four 16-bit lanes, as 32-bit lanes
+/// (`smull`; `vmull_s16` of `vget_low_s16`).
+#[inline(always)]
+pub fn vmull_lo_s16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u32s(n8(r)) == mull_lo_s16(u16s(n8(a)), u16s(n8(b))),
+{
+    let r = w_extmul_lo16(a, b);
+    assert(u32s(n8(r)) =~= mull_lo_s16(u16s(n8(a)), u16s(n8(b))));
+    r
+}
+
+/// The signed products of the high four 16-bit lanes, as 32-bit lanes
+/// (`smull2`; `vmull_high_s16`).
+#[inline(always)]
+pub fn vmull_hi_s16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u32s(n8(r)) == mull_hi_s16(u16s(n8(a)), u16s(n8(b))),
+{
+    let r = w_extmul_hi16(a, b);
+    assert(u32s(n8(r)) =~= mull_hi_s16(u16s(n8(a)), u16s(n8(b))));
+    r
+}
+
+/// Signed saturating byte addition (`sqadd`).
+#[inline(always)]
+pub fn vqaddq_s8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        n8(r) == adds_s8(n8(a), n8(b)),
+{
+    let r = w_add_sat_s8(a, b);
+    assert(n8(r) =~= adds_s8(n8(a), n8(b)));
+    r
+}
+
+/// Unsigned saturating 16-bit addition (`uqadd`).
+#[inline(always)]
+pub fn vqaddq_u16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u16s(n8(r)) == adds_u16(u16s(n8(a)), u16s(n8(b))),
+{
+    let r = w_add_sat_u16(a, b);
+    assert(u16s(n8(r)) =~= adds_u16(u16s(n8(a)), u16s(n8(b))));
+    r
+}
+
+/// Unsigned saturating byte addition (`uqadd`).
+#[inline(always)]
+pub fn vqaddq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        n8(r) == adds_u8(n8(a), n8(b)),
+{
+    let r = w_add_sat_u8(a, b);
+    assert(n8(r) =~= adds_u8(n8(a), n8(b)));
+    r
+}
+
+/// Signed saturating byte subtraction (`sqsub`).
+#[inline(always)]
+pub fn vqsubq_s8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        n8(r) == subs_s8(n8(a), n8(b)),
+{
+    let r = w_sub_sat_s8(a, b);
+    assert(n8(r) =~= subs_s8(n8(a), n8(b)));
+    r
+}
+
+/// Unsigned saturating 16-bit subtraction (`uqsub`).
+#[inline(always)]
+pub fn vqsubq_u16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u16s(n8(r)) == subs_u16(u16s(n8(a)), u16s(n8(b))),
+{
+    let r = w_sub_sat_u16(a, b);
+    assert(u16s(n8(r)) =~= subs_u16(u16s(n8(a)), u16s(n8(b))));
+    r
+}
+
+/// Unsigned rounding halving add (`urhadd`): `(a + b + 1) >> 1` per byte.
+#[inline(always)]
+pub fn vrhaddq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        n8(r) == avg_u8(n8(a), n8(b)),
+{
+    let r = w_avgr_u8(a, b);
+    assert(n8(r) =~= avg_u8(n8(a), n8(b)));
+    r
+}
+
+/// Shift left of each 32-bit lane by `N` (0 to 31).
+#[inline(always)]
+pub fn vshlq_n_u32<const N: i32>(a: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+        0 <= N <= 31,
+    ensures
+        u32s(n8(r)) == slli32(u32s(n8(a)), N as int),
+{
+    let r = w_shl32(a, N as u32);
+    assert(u32s(n8(r)) =~= slli32(u32s(n8(a)), N as int));
+    r
+}
+
+/// Arithmetic shift right of each signed 16-bit lane by `N` (1 to 15).
+#[inline(always)]
+pub fn vshrq_n_s16<const N: i32>(a: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+        1 <= N <= 15,
+    ensures
+        u16s(n8(r)) == srai16(u16s(n8(a)), N as int),
+{
+    let r = w_shr_s16(a, N as u32);
+    assert(u16s(n8(r)) =~= srai16(u16s(n8(a)), N as int));
+    r
+}
+
+/// The odd 16-bit lanes of `a`, then those of `b` (`uzp2`).
+#[inline(always)]
+pub fn vuzp2q_u16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u16s(n8(r)) == uzp2_16(u16s(n8(a)), u16s(n8(b))),
+{
+    let r = w_odd16(a, b);
+    assert(u16s(n8(r)) =~= uzp2_16(u16s(n8(a)), u16s(n8(b))));
+    r
+}
+
+/// Interleaves the low four 16-bit lanes of `a` and `b`.
+#[inline(always)]
+pub fn vzip1q_u16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u16s(n8(r)) == unpacklo16_lanes(u16s(n8(a)), u16s(n8(b))),
+{
+    let r = w_zip_lo16(a, b);
+    assert(u16s(n8(r)) =~= unpacklo16_lanes(u16s(n8(a)), u16s(n8(b))));
+    r
+}
+
+/// Interleaves the high four 16-bit lanes of `a` and `b`.
+#[inline(always)]
+pub fn vzip2q_u16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u16s(n8(r)) == unpackhi16_lanes(u16s(n8(a)), u16s(n8(b))),
+{
+    let r = w_zip_hi16(a, b);
+    assert(u16s(n8(r)) =~= unpackhi16_lanes(u16s(n8(a)), u16s(n8(b))));
+    r
+}
+
+/// Interleaves the low two 32-bit lanes of `a` and `b`.
+#[inline(always)]
+pub fn vzip1q_u32(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u32s(n8(r)) == unpacklo32_lanes(u32s(n8(a)), u32s(n8(b))),
+{
+    let r = w_zip_lo32(a, b);
+    assert(u32s(n8(r)) =~= unpacklo32_lanes(u32s(n8(a)), u32s(n8(b))));
+    r
+}
+
+/// Interleaves the high two 32-bit lanes of `a` and `b`.
+#[inline(always)]
+pub fn vzip2q_u32(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u32s(n8(r)) == unpackhi32_lanes(u32s(n8(a)), u32s(n8(b))),
+{
+    let r = w_zip_hi32(a, b);
+    assert(u32s(n8(r)) =~= unpackhi32_lanes(u32s(n8(a)), u32s(n8(b))));
+    r
+}
+
+/// The low 64 bits of `a`, then those of `b`.
+#[inline(always)]
+pub fn vzip1q_u64(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u64s(n8(r)) == unpacklo64_lanes(u64s(n8(a)), u64s(n8(b))),
+{
+    let r = w_zip_lo64(a, b);
+    assert(u64s(n8(r)) =~= unpacklo64_lanes(u64s(n8(a)), u64s(n8(b))));
+    r
+}
+
+/// The high 64 bits of `a`, then those of `b`.
+#[inline(always)]
+pub fn vzip2q_u64(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u64s(n8(r)) == unpackhi64_lanes(u64s(n8(a)), u64s(n8(b))),
+{
+    let r = w_zip_hi64(a, b);
+    assert(u64s(n8(r)) =~= unpackhi64_lanes(u64s(n8(a)), u64s(n8(b))));
+    r
+}
+
+/// Stores `v` as four 32-bit values at `s[i..i + 4]`.
+#[inline(always)]
+pub fn vst1q_u32_at(s: &mut [u32], i: usize, v: uint8x16_t)
+    requires
+        neon(),
+        i + 4 <= old(s)@.len(),
+    ensures
+        final(s)@ == old(s)@.subrange(0, i as int) + u32s(n8(v)) + old(s)@.subrange(i + 4, old(s)@.len() as int),
+{
+    w_store32(s, i, v)
+}
+
+/// Stores `v` as eight 16-bit values at `s[i..i + 8]`.
+#[inline(always)]
+pub fn vst1q_s16_at(s: &mut [i16], i: usize, v: uint8x16_t)
+    requires
+        neon(),
+        i + 8 <= old(s)@.len(),
+    ensures
+        final(s)@ == old(s)@.subrange(0, i as int) + u16s(n8(v)).map_values(|x: u16| x as i16)
+            + old(s)@.subrange(i + 8, old(s)@.len() as int),
+{
+    w_store_s16(s, i, v)
+}
+
+/// Stores the low 8 bytes of `v` at `s[i..i + 8]` (`str d`; `vst1_u8` of
+/// `vget_low_u8`).
+#[inline(always)]
+pub fn vst1q_u8_low_at(s: &mut [u8], i: usize, v: uint8x16_t)
+    requires
+        neon(),
+        i + 8 <= old(s)@.len(),
+    ensures
+        final(s)@ == old(s)@.subrange(0, i as int) + n8(v).subrange(0, 8) + old(s)@.subrange(i + 8, old(s)@.len() as int),
+{
+    w_store64_lo(s, i, v)
+}
+
+/// Stores 32-bit lane `N` of `v`, its bytes `4 * N..4 * N + 4`, at
+/// `s[i..i + 4]` (`str s` for lane 0, `st1 v.s[N]` otherwise;
+/// `vgetq_lane_u32` and an unaligned store).
+#[inline(always)]
+pub fn vst1q_lane_u32_at<const N: i32>(s: &mut [u8], i: usize, v: uint8x16_t)
+    requires
+        neon(),
+        0 <= N <= 3,
+        i + 4 <= old(s)@.len(),
+    ensures
+        final(s)@ == old(s)@.subrange(0, i as int) + n8(v).subrange(4 * N, 4 * N + 4) + old(s)@.subrange(i + 4, old(s)@.len() as int),
+{
+    w_store32_lane::<N>(s, i, v)
+}
+
+/// The signed products of the low four 16-bit lanes of `a` with lane `L`
+/// of `c`, as 32-bit lanes (`smull` by element; `vmull_laneq_s16` of
+/// `vget_low_s16`).
+#[inline(always)]
+pub fn vmull_lo_laneq_s16<const L: i32>(a: uint8x16_t, c: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+        0 <= L <= 7,
+    ensures
+        u32s(n8(r)) == mull_lo_lane_s16(u16s(n8(a)), u16s(n8(c)), L as int),
+{
+    let d = w_dup16::<L>(c);
+    let r = w_extmul_lo16(a, d);
+    assert(u32s(n8(r)) =~= mull_lo_lane_s16(u16s(n8(a)), u16s(n8(c)), L as int));
+    r
+}
+
+/// The signed products of the high four 16-bit lanes of `a` with lane `L`
+/// of `c`, as 32-bit lanes (`smull2` by element; `vmull_high_laneq_s16`).
+#[inline(always)]
+pub fn vmull_hi_laneq_s16<const L: i32>(a: uint8x16_t, c: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+        0 <= L <= 7,
+    ensures
+        u32s(n8(r)) == mull_hi_lane_s16(u16s(n8(a)), u16s(n8(c)), L as int),
+{
+    let d = w_dup16::<L>(c);
+    let r = w_extmul_hi16(a, d);
+    assert(u32s(n8(r)) =~= mull_hi_lane_s16(u16s(n8(a)), u16s(n8(c)), L as int));
+    r
+}
+
+/// `acc` plus the signed products of the low four 16-bit lanes of `a` with
+/// lane `L` of `c`, wrapping (`smlal` by element; `vmlal_laneq_s16` of
+/// `vget_low_s16`).
+#[inline(always)]
+pub fn vmlal_lo_laneq_s16<const L: i32>(acc: uint8x16_t, a: uint8x16_t, c: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+        0 <= L <= 7,
+    ensures
+        u32s(n8(r)) == mlal_lo_lane_s16(u32s(n8(acc)), u16s(n8(a)), u16s(n8(c)), L as int),
+{
+    let d = w_dup16::<L>(c);
+    let p = w_extmul_lo16(a, d);
+    let r = w_add32(acc, p);
+    proof {
+        assert forall|i: int| 0 <= i < 4 implies #[trigger] u32s(n8(r))[i] == mlal_lo_lane_s16(
+            u32s(n8(acc)),
+            u16s(n8(a)),
+            u16s(n8(c)),
+            L as int,
+        )[i] by {
+            let m = s16(u16s(n8(a))[i]) * s16(u16s(n8(c))[L as int]);
+            lemma_add_mod32(u32s(n8(acc))[i] as int, m);
+        }
+        assert(u32s(n8(r)) =~= mlal_lo_lane_s16(u32s(n8(acc)), u16s(n8(a)), u16s(n8(c)), L as int));
+    }
+    r
+}
+
+/// `acc` plus the signed products of the high four 16-bit lanes of `a`
+/// with lane `L` of `c`, wrapping (`smlal2` by element;
+/// `vmlal_high_laneq_s16`).
+#[inline(always)]
+pub fn vmlal_hi_laneq_s16<const L: i32>(acc: uint8x16_t, a: uint8x16_t, c: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+        0 <= L <= 7,
+    ensures
+        u32s(n8(r)) == mlal_hi_lane_s16(u32s(n8(acc)), u16s(n8(a)), u16s(n8(c)), L as int),
+{
+    let d = w_dup16::<L>(c);
+    let p = w_extmul_hi16(a, d);
+    let r = w_add32(acc, p);
+    proof {
+        assert forall|i: int| 0 <= i < 4 implies #[trigger] u32s(n8(r))[i] == mlal_hi_lane_s16(
+            u32s(n8(acc)),
+            u16s(n8(a)),
+            u16s(n8(c)),
+            L as int,
+        )[i] by {
+            let m = s16(u16s(n8(a))[4 + i]) * s16(u16s(n8(c))[L as int]);
+            lemma_add_mod32(u32s(n8(acc))[i] as int, m);
+        }
+        assert(u32s(n8(r)) =~= mlal_hi_lane_s16(u32s(n8(acc)), u16s(n8(a)), u16s(n8(c)), L as int));
+    }
+    r
+}
+
+/// `a & !b` (`bic`: the second operand is the one complemented).
+#[inline(always)]
+pub fn vbicq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        n8(r) == andnot8(n8(b), n8(a)),
+{
+    let r = w_andnot(a, b);
+    proof {
+        assert forall|i: int| 0 <= i < 16 implies #[trigger] n8(r)[i] == andnot8(n8(b), n8(a))[i] by {
+            let (x, y) = (n8(a)[i], n8(b)[i]);
+            assert(x & !y == !y & x) by (bit_vector);
+        }
+        assert(n8(r) =~= andnot8(n8(b), n8(a)));
+    }
+    r
+}
+
+/// Absolute difference of unsigned bytes (`uabd`).
+#[inline(always)]
+pub fn vabdq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        n8(r) == abd_u8(n8(a), n8(b)),
+{
+    let x = w_sub_sat_u8(a, b);
+    let y = w_sub_sat_u8(b, a);
+    let r = w_or(x, y);
+    proof {
+        assert forall|i: int| 0 <= i < 16 implies #[trigger] n8(r)[i] == abd_u8(n8(a), n8(b))[i] by {
+            let (p, q) = (n8(x)[i], n8(y)[i]);
+            assert(p | 0u8 == p && 0u8 | q == q) by (bit_vector);
+        }
+        assert(n8(r) =~= abd_u8(n8(a), n8(b)));
+    }
+    r
+}
+
+/// `x` in each 16-bit lane.
+#[inline(always)]
+pub fn vdupq_n_s16(x: i16) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u16s(n8(r)) == splat16(u16_of_i16(x), 8),
+{
+    // `u16_of_i16`, written out so the cast never truncates.
+    let u: u16 = if x < 0 {
+        (x as i32 + 0x1_0000) as u16
+    } else {
+        x as u16
+    };
+    let r = w_splat16(u);
+    proof {
+        assert(u16s(n8(r)) =~= splat16(u16_of_i16(x), 8));
+    }
+    r
+}
+
+/// Arithmetic shift right of each signed byte by `N` (1 to 8) (`sshr`).
+#[inline(always)]
+pub fn vshrq_n_s8<const N: i32>(a: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+        1 <= N <= 8,
+    ensures
+        n8(r) == sra8(n8(a), N as int),
+{
+    reveal_with_fuel(pow2_spec, 9);
+    // `i8x16.shr_s` by 8 is a shift by 0; NEON's `sshr #8` fills with the sign.
+    let r = w_shr_s8(a, if N == 8 { 7 } else { N as u32 });
+    proof {
+        assert forall|i: int| 0 <= i < 16 implies #[trigger] n8(r)[i] == sra8(n8(a), N as int)[i] by {
+            let v = s8(n8(a)[i]);
+            if N == 8 {
+                assert(v / 128 == v / 256) by {
+                    assert(-128 <= v < 128);
+                }
+            }
+        }
+        assert(n8(r) =~= sra8(n8(a), N as int));
+    }
+    r
+}
+
+/// The low eight bytes of `a`, zero-extended to 16-bit lanes and shifted
+/// left by `N` (0 to 8) (`ushll`; `vshll_n_u8` of `vget_low_u8`). The
+/// 16-bit view of `a`'s low bytes interleaved with zeros is those bytes
+/// zero-extended.
+#[inline(always)]
+pub fn vshll_low_n_u8<const N: i32>(a: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+        0 <= N <= 8,
+    ensures
+        u16s(n8(r)) == slli16(u16s(unpacklo8_lanes(n8(a), splat8(0, 16))), N as int),
+{
+    let e = w_extend_lo8(a);
+    let r = w_shl16(e, N as u32);
+    proof {
+        let z = unpacklo8_lanes(n8(a), splat8(0, 16));
+        assert forall|i: int| 0 <= i < 8 implies #[trigger] u16s(z)[i] == u16s(n8(e))[i] by {
+            assert(z[2 * i] == n8(a)[i] && z[2 * i + 1] == 0);
+            lemma_le16_value(n8(a)[i], 0);
+        }
+        assert(u16s(z) =~= u16s(n8(e)));
+        assert(u16s(n8(r)) =~= slli16(u16s(z), N as int));
+    }
+    r
+}
+
+/// The high eight bytes of `a`, zero-extended to 16-bit lanes and shifted
+/// left by `N` (0 to 8) (`ushll2`).
+#[inline(always)]
+pub fn vshll_high_n_u8<const N: i32>(a: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+        0 <= N <= 8,
+    ensures
+        u16s(n8(r)) == slli16(u16s(unpackhi8_lanes(n8(a), splat8(0, 16))), N as int),
+{
+    let e = w_extend_hi8(a);
+    let r = w_shl16(e, N as u32);
+    proof {
+        let z = unpackhi8_lanes(n8(a), splat8(0, 16));
+        assert forall|i: int| 0 <= i < 8 implies #[trigger] u16s(z)[i] == u16s(n8(e))[i] by {
+            assert(z[2 * i] == n8(a)[8 + i] && z[2 * i + 1] == 0);
+            lemma_le16_value(n8(a)[8 + i], 0);
+        }
+        assert(u16s(z) =~= u16s(n8(e)));
+        assert(u16s(n8(r)) =~= slli16(u16s(z), N as int));
+    }
+    r
+}
+
+/// The sum of the eight 16-bit lanes (`uaddlv`).
+#[inline(always)]
+pub fn vaddlvq_u16(a: uint8x16_t) -> (r: u32)
+    requires
+        neon(),
+    ensures
+        r as int == sum_u16(u16s(n8(a))),
+{
+    let e = w_extadd16(a);
+    let e2 = w_rot32_2(e, e);
+    let f = w_add32(e, e2);
+    let f1 = w_rot32_1(f, f);
+    let g = w_add32(f, f1);
+    let r = w_extract32_0(g);
+    proof {
+        let h = u16s(n8(a));
+        reveal_with_fuel(sum_u16, 9);
+        assert(h.drop_last().drop_last().drop_last().drop_last().drop_last().drop_last().drop_last().drop_last()
+            =~= Seq::<u16>::empty());
+        assert(sum_u16(h) == h[0] + h[1] + h[2] + h[3] + h[4] + h[5] + h[6] + h[7]);
+    }
+    r
+}
+
+/// Signed saturating doubling multiply, high half (`sqdmulh`).
+#[inline(always)]
+pub fn vqdmulhq_s16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u16s(n8(r)) == qdmulh_s16(u16s(n8(a)), u16s(n8(b))),
+{
+    let lo = w_extmul_lo16(a, b);
+    let hi = w_extmul_hi16(a, b);
+    let lo2 = w_shr_s32(lo, 15);
+    let hi2 = w_shr_s32(hi, 15);
+    let r = w_narrow_s32(lo2, hi2);
+    proof {
+        reveal_with_fuel(pow2_spec, 16);
+        assert(pow2_spec(15) == 0x8000);
+        let (x, y) = (u16s(n8(a)), u16s(n8(b)));
+        assert forall|i: int| 0 <= i < 8 implies #[trigger] u16s(n8(r))[i] == qdmulh_s16(x, y)[i] by {
+            let p = s16(x[i]) * s16(y[i]);
+            lemma_qdmulh_lane(s16(x[i]), s16(y[i]));
+            let k = if i < 4 { i } else { i - 4 };
+            let w = if i < 4 { lo } else { hi };
+            let w2 = if i < 4 { lo2 } else { hi2 };
+            assert(u32s(n8(w))[k] == (p % 0x1_0000_0000) as u32);
+            lemma_s32_small(p);
+            assert(u32s(n8(w2))[k] == ((p / 0x8000) % 0x1_0000_0000) as u32);
+            lemma_s32_small(p / 0x8000);
+        }
+        assert(u16s(n8(r)) =~= qdmulh_s16(x, y));
+    }
+    r
+}
+
+/// Rounding arithmetic shift right of each signed 32-bit lane by `N` (1 to
+/// 31) (`srshr`).
+#[inline(always)]
+pub fn vrshrq_n_s32<const N: i32>(a: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+        1 <= N <= 31,
+    ensures
+        u32s(n8(r)) == rshr_s32(u32s(n8(a)), N as int),
+{
+    let q = w_shr_s32(a, (N - 1) as u32);
+    let h = w_shr_s32(a, N as u32);
+    let r = w_sub32(q, h);
+    proof {
+        assert forall|i: int| 0 <= i < 4 implies #[trigger] u32s(n8(r))[i] == rshr_s32(u32s(n8(a)), N as int)[i] by {
+            let v = s32(u32s(n8(a))[i]);
+            lemma_rshr(v, N as nat);
+            let p = pow2_spec((N - 1) as nat) as int;
+            let qq = v / p;
+            let hh = v / pow2_spec(N as nat) as int;
+            lemma_sub_mod32(qq, hh);
+        }
+        assert(u32s(n8(r)) =~= rshr_s32(u32s(n8(a)), N as int));
+    }
+    r
+}
+
+/// Each signed 32-bit lane of `a` shifted right by `N` (1 to 16) with
+/// rounding and cut to 16 bits, in the low half; zeros in the high half
+/// (`rshrn`; `vcombine_s16` of `vrshrn_n_s32` and zero).
+#[inline(always)]
+pub fn vrshrn_lo_n_s32<const N: i32>(a: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+        1 <= N <= 16,
+    ensures
+        u16s(n8(r)) == rshrn_s32(u32s(n8(a)), N as int) + splat16(0, 4),
+{
+    let t = vrshrq_n_s32::<N>(a);
+    let z = w_splat32(0);
+    let r = w_even16(t, z);
+    proof {
+        lemma_low16(n8(t));
+        lemma_low16(n8(z));
+        assert forall|k: int| 0 <= k < 4 implies #[trigger] u16s(n8(r))[k] == rshrn_s32(u32s(n8(a)), N as int)[k] by {
+            let v = (s32(u32s(n8(a))[k]) + pow2_spec((N - 1) as nat)) / pow2_spec(N as nat) as int;
+            vstd::arithmetic::div_mod::lemma_mod_mod(v, 0x10000, 0x10000);
+        }
+        assert(u16s(n8(r)) =~= rshrn_s32(u32s(n8(a)), N as int) + splat16(0, 4));
+    }
+    r
+}
+
+/// Each signed 32-bit lane of `a`, then of `b`, shifted right by `N` (1 to
+/// 16) with rounding and cut to 16 bits (`rshrn` and `rshrn2`;
+/// `vrshrn_high_n_s32` of `vrshrn_n_s32`).
+#[inline(always)]
+pub fn vrshrn2_n_s32<const N: i32>(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+        1 <= N <= 16,
+    ensures
+        u16s(n8(r)) == rshrn_s32(u32s(n8(a)), N as int) + rshrn_s32(u32s(n8(b)), N as int),
+{
+    let ta = vrshrq_n_s32::<N>(a);
+    let tb = vrshrq_n_s32::<N>(b);
+    let r = w_even16(ta, tb);
+    proof {
+        lemma_low16(n8(ta));
+        lemma_low16(n8(tb));
+        assert forall|k: int| 0 <= k < 8 implies #[trigger] u16s(n8(r))[k] == (rshrn_s32(u32s(n8(a)), N as int)
+            + rshrn_s32(u32s(n8(b)), N as int))[k] by {
+            let s = if k < 4 { u32s(n8(a))[k] } else { u32s(n8(b))[k - 4] };
+            let v = (s32(s) + pow2_spec((N - 1) as nat)) / pow2_spec(N as nat) as int;
+            vstd::arithmetic::div_mod::lemma_mod_mod(v, 0x10000, 0x10000);
+        }
+        assert(u16s(n8(r)) =~= rshrn_s32(u32s(n8(a)), N as int) + rshrn_s32(u32s(n8(b)), N as int));
+    }
+    r
+}
+
+/// Each signed 16-bit lane of `a`, then of `b`, shifted right by `N` (1 to
+/// 8) and saturated to a signed byte (`sqshrn` and `sqshrn2`;
+/// `vqshrn_high_n_s16` of `vqshrn_n_s16`).
+#[inline(always)]
+pub fn vqshrn2_n_s16<const N: i32>(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+        1 <= N <= 8,
+    ensures
+        n8(r) == packs16_lanes(srai16(u16s(n8(a)), N as int), srai16(u16s(n8(b)), N as int)),
+{
+    let sa = w_shr_s16(a, N as u32);
+    let sb = w_shr_s16(b, N as u32);
+    let r = w_narrow_s16(sa, sb);
+    proof {
+        reveal_with_fuel(pow2_spec, 9);
+        assert(u16s(n8(sa)) =~= srai16(u16s(n8(a)), N as int));
+        assert(u16s(n8(sb)) =~= srai16(u16s(n8(b)), N as int));
+        assert(n8(r) =~= packs16_lanes(srai16(u16s(n8(a)), N as int), srai16(u16s(n8(b)), N as int)));
+    }
+    r
+}
+
+/// Each signed 16-bit lane of `a`, then of `b`, shifted right by `N` (1 to
+/// 8) and saturated to an unsigned byte (`sqshrun` and `sqshrun2`;
+/// `vqshrun_high_n_s16` of `vqshrun_n_s16`).
+#[inline(always)]
+pub fn vqshrun2_n_s16<const N: i32>(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+        1 <= N <= 8,
+    ensures
+        n8(r) == packus16_lanes(srai16(u16s(n8(a)), N as int), srai16(u16s(n8(b)), N as int)),
+{
+    let sa = w_shr_s16(a, N as u32);
+    let sb = w_shr_s16(b, N as u32);
+    let r = w_narrow_u16(sa, sb);
+    proof {
+        reveal_with_fuel(pow2_spec, 9);
+        assert(u16s(n8(sa)) =~= srai16(u16s(n8(a)), N as int));
+        assert(u16s(n8(sb)) =~= srai16(u16s(n8(b)), N as int));
+        assert(n8(r) =~= packus16_lanes(srai16(u16s(n8(a)), N as int), srai16(u16s(n8(b)), N as int)));
+    }
+    r
+}
+
+/// Each unsigned 16-bit lane of `a`, then of `b`, shifted right by `N` (1
+/// to 8) and saturated to a byte (`uqshrn` and `uqshrn2`;
+/// `vqshrn_high_n_u16` of `vqshrn_n_u16`). A lane shifted right by at least
+/// one is below 2^15, so the signed saturation of `packus16_lanes` sees it
+/// as it is.
+#[inline(always)]
+pub fn vqshrn2_n_u16<const N: i32>(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+        1 <= N <= 8,
+    ensures
+        n8(r) == packus16_lanes(srli16(u16s(n8(a)), N as int), srli16(u16s(n8(b)), N as int)),
+{
+    let sa = w_shr_u16(a, N as u32);
+    let sb = w_shr_u16(b, N as u32);
+    let r = w_narrow_u16(sa, sb);
+    proof {
+        reveal_with_fuel(pow2_spec, 9);
+        assert forall|j: int| 0 <= j < 8 implies #[trigger] u16s(n8(sa))[j] == srli16(u16s(n8(a)), N as int)[j] by {
+            lemma_shr_u16(u16s(n8(a))[j], N as u16);
+        }
+        assert forall|j: int| 0 <= j < 8 implies #[trigger] u16s(n8(sb))[j] == srli16(u16s(n8(b)), N as int)[j] by {
+            lemma_shr_u16(u16s(n8(b))[j], N as u16);
+        }
+        assert(u16s(n8(sa)) =~= srli16(u16s(n8(a)), N as int));
+        assert(u16s(n8(sb)) =~= srli16(u16s(n8(b)), N as int));
+        assert(n8(r) =~= packus16_lanes(srli16(u16s(n8(a)), N as int), srli16(u16s(n8(b)), N as int)));
+    }
+    r
+}
+
+/// Stores the bytes of `a`, `b` and `c` interleaved at `s[i..i + 48]`
+/// (`st3`): `a[0], b[0], c[0], a[1], ...`.
+#[inline(always)]
+pub fn vst3q_u8_at(s: &mut [u8], i: usize, a: uint8x16_t, b: uint8x16_t, c: uint8x16_t)
+    requires
+        neon(),
+        i + 48 <= old(s)@.len(),
+    ensures
+        final(s)@ == old(s)@.subrange(0, i as int) + interleave3(n8(a), n8(b), n8(c)) + old(s)@.subrange(
+            i + 48,
+            old(s)@.len() as int,
+        ),
+{
+    let o0 = w_st3_c0(w_st3_ab0(a, b), c);
+    let o1 = w_st3_c1(w_st3_ab1(a, b), c);
+    let o2 = w_st3_c2(w_st3_ab2(a, b), c);
+    let ghost s0 = s@;
+    let ghost x = interleave3(n8(a), n8(b), n8(c));
+    proof {
+        assert(n8(o0) =~= x.subrange(0, 16));
+        assert(n8(o1) =~= x.subrange(16, 32));
+        assert(n8(o2) =~= x.subrange(32, 48));
+    }
+    let n = s.len();
+    assert(i + 48 <= n);
+    w_store(s, i, o0);
+    w_store(s, i + 16, o1);
+    w_store(s, i + 32, o2);
+    proof {
+        assert(s@ =~= s0.subrange(0, i as int) + x + s0.subrange(i + 48, s0.len() as int));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Lemmas for the JPEG and WebP operations
+// ---------------------------------------------------------------------------
+
+proof fn lemma_pow2_pos(n: nat)
+    ensures
+        pow2_spec(n) > 0,
+    decreases n,
+{
+    if n > 0 {
+        lemma_pow2_pos((n - 1) as nat);
+    }
+}
+
+/// Adding modulo 2^32 to a lane already reduced.
+proof fn lemma_add_mod32(acc: int, m: int)
+    requires
+        0 <= acc < 0x1_0000_0000,
+    ensures
+        ((acc + ((m % 0x1_0000_0000) as u32) as int) % 0x1_0000_0000) == (acc + m) % 0x1_0000_0000,
+{
+    vstd::arithmetic::div_mod::lemma_add_mod_noop(acc, m, 0x1_0000_0000);
+    vstd::arithmetic::div_mod::lemma_small_mod(acc as nat, 0x1_0000_0000);
+}
+
+/// Subtracting two lanes reduced modulo 2^32.
+proof fn lemma_sub_mod32(x: int, y: int)
+    ensures
+        ((((x % 0x1_0000_0000) as u32) as int - ((y % 0x1_0000_0000) as u32) as int + 0x1_0000_0000)
+            % 0x1_0000_0000) == (x - y) % 0x1_0000_0000,
+{
+    vstd::arithmetic::div_mod::lemma_sub_mod_noop(x, y, 0x1_0000_0000);
+    vstd::arithmetic::div_mod::lemma_mod_add_multiples_vanish(
+        (x % 0x1_0000_0000) - (y % 0x1_0000_0000),
+        0x1_0000_0000,
+    );
+}
+
+/// A value that fits in 32 signed bits survives the trip through a lane.
+proof fn lemma_s32_small(p: int)
+    requires
+        -0x8000_0000 <= p < 0x8000_0000,
+    ensures
+        s32((p % 0x1_0000_0000) as u32) == p,
+{
+    if p >= 0 {
+        vstd::arithmetic::div_mod::lemma_small_mod(p as nat, 0x1_0000_0000);
+    } else {
+        vstd::arithmetic::div_mod::lemma_mod_add_multiples_vanish(p, 0x1_0000_0000);
+        vstd::arithmetic::div_mod::lemma_small_mod((p + 0x1_0000_0000) as nat, 0x1_0000_0000);
+    }
+}
+
+/// `sqdmulh`'s `(2 x y) >> 16` is `(x y) >> 15`, and in range.
+proof fn lemma_qdmulh_lane(x: int, y: int)
+    requires
+        -0x8000 <= x < 0x8000,
+        -0x8000 <= y < 0x8000,
+    ensures
+        -0x4000_0000 <= x * y <= 0x4000_0000,
+        (2 * x * y) / 0x10000 == (x * y) / 0x8000,
+        -0x8000 <= (x * y) / 0x8000 <= 0x8000,
+{
+    assert(-0x4000_0000 <= x * y <= 0x4000_0000) by (nonlinear_arith)
+        requires -0x8000 <= x < 0x8000, -0x8000 <= y < 0x8000;
+    assert(2 * x * y == 2 * (x * y)) by (nonlinear_arith);
+    lemma_div_double(x * y, 0x8000);
+}
+
+/// `(2 z) / (2 d) == z / d`, for any sign of `z`.
+proof fn lemma_div_double(z: int, d: int)
+    requires
+        d > 0,
+    ensures
+        (2 * z) / (2 * d) == z / d,
+{
+    let q = z / d;
+    let r = z % d;
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(z, d);
+    assert(2 * z == (2 * d) * q + 2 * r) by (nonlinear_arith) requires z == d * q + r;
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(2 * z, 2 * d, q, 2 * r);
+}
+
+/// `x / (2 d) == (x / d) / 2`, for any sign of `x` (floor division).
+proof fn lemma_div_halve(x: int, d: int)
+    requires
+        d > 0,
+    ensures
+        x / (d * 2) == (x / d) / 2,
+{
+    let q = x / d;
+    let r = x % d;
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(x, d);
+    let q2 = q / 2;
+    let t = q % 2;
+    assert(x == (d * 2) * q2 + (d * t + r)) by (nonlinear_arith)
+        requires x == d * q + r, q == 2 * q2 + t;
+    assert(0 <= d * t + r < d * 2) by (nonlinear_arith) requires 0 <= t < 2, 0 <= r < d, d > 0;
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(x, d * 2, q2, d * t + r);
+}
+
+/// Rounding shift right by `n` as two plain shifts: with `p = 2^(n-1)`,
+/// `(v + p) >> n == (v >> (n - 1)) - (v >> n)`, which cannot overflow.
+proof fn lemma_rshr(v: int, n: nat)
+    requires
+        1 <= n <= 31,
+    ensures
+        pow2_spec((n - 1) as nat) > 0,
+        pow2_spec(n) == 2 * pow2_spec((n - 1) as nat),
+        (v + pow2_spec((n - 1) as nat)) / pow2_spec(n) as int == v / pow2_spec((n - 1) as nat) as int - v
+            / pow2_spec(n) as int,
+{
+    let p = pow2_spec((n - 1) as nat) as int;
+    lemma_pow2_pos((n - 1) as nat);
+    assert(pow2_spec(n) == 2 * pow2_spec((n - 1) as nat));
+    let q = v / p;
+    let r = v % p;
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(v, p);
+    assert(v + p == (q + 1) * p + r) by (nonlinear_arith) requires v == p * q + r;
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(v + p, p, q + 1, r);
+    lemma_div_halve(v + p, p);
+    lemma_div_halve(v, p);
+    assert(p * 2 == pow2_spec(n) as int);
+    assert((q + 1) / 2 == q - q / 2);
+}
+
+/// The even 16-bit lanes are the low halves of the 32-bit lanes.
+proof fn lemma_low16(b: Seq<u8>)
+    requires
+        b.len() == 16,
+    ensures
+        forall|k: int| 0 <= k < 4 ==> #[trigger] u16s(b)[2 * k] as int == u32s(b)[k] as int % 0x10000,
+{
+    lemma_u16s_of_u32s(b);
+    assert forall|k: int| 0 <= k < 4 implies #[trigger] u16s(b)[2 * k] as int == u32s(b)[k] as int % 0x10000 by {
+        let w = u32s(b)[k];
+        assert((w & 0xffff) as u16 as int == w as int % 0x10000) by (bit_vector);
+    }
+}
+
+proof fn lemma_shr_u16(x: u16, n: u16)
+    requires
+        1 <= n <= 8,
+    ensures
+        x >> (((n as u32) % 16) as u16) == (x as nat / pow2_spec(n as nat)) as u16,
+{
+    reveal_with_fuel(pow2_spec, 9);
+    assert(((n as u32) % 16) as u16 == n);
+    if n == 1 {
+        assert(x >> 1u16 == x / 2) by (bit_vector);
+    } else if n == 2 {
+        assert(x >> 2u16 == x / 4) by (bit_vector);
+    } else if n == 3 {
+        assert(x >> 3u16 == x / 8) by (bit_vector);
+    } else if n == 4 {
+        assert(x >> 4u16 == x / 16) by (bit_vector);
+    } else if n == 5 {
+        assert(x >> 5u16 == x / 32) by (bit_vector);
+    } else if n == 6 {
+        assert(x >> 6u16 == x / 64) by (bit_vector);
+    } else if n == 7 {
+        assert(x >> 7u16 == x / 128) by (bit_vector);
+    } else {
+        assert(x >> 8u16 == x / 256) by (bit_vector);
     }
 }
 
