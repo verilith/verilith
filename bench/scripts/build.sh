@@ -175,6 +175,9 @@ png_lib() { echo "$BUILD/libpng/libpng16.a -lz -lm"; }
 build_png() {
   build_libpng
   cc_runner png-libpng $(png_inc) "$S/png/libpng.c" $(png_lib)
+  # The same driver on vpng's libpng API (no zlib: vpng has its own).
+  local lib; lib=$(rust_lib vpng libpng-abi)
+  cc_runner png-vpng-abi $(png_inc) "$S/png/libpng.c" "$lib" $RUST_LIBS
   rust_runner vpng-run png-vpng
 }
 

@@ -23,6 +23,9 @@ pub mod fast;
 pub mod deint;
 #[doc(hidden)]
 pub mod top;
+#[doc(hidden)]
+#[cfg(not(verus_only))]
+pub mod libpng;
 
 pub use chunks::Header;
 pub use decode::Error;

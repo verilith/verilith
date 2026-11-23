@@ -36,7 +36,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | jpeg | 2 |  |  |  |  |  | 3 |
 | json | 31 |  |  |  | 2 |  | 7 |
 | lz4 |  |  |  |  |  |  | 1 |
-| png | 2 |  |  |  |  |  | 1 |
+| png | 2 |  |  |  |  |  | 8 |
 | regex | 7 |  |  |  |  |  | 2 |
 | sha2 | 14 |  |  |  |  |  | 2 |
 | simd | 266 | 6 | 266 | 4 |  |  | 3 |
@@ -52,7 +52,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  | 2 |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **482** | **30** | **266** | **5** | **22** | **12** | **85** |
+| **total** | **482** | **30** | **266** | **5** | **22** | **12** | **92** |
 
 ## Items
 
@@ -149,6 +149,13 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 - `crates/png/src/lib.rs`: plain Rust
 - `crates/png/src/prims.rs`: external_body: `copy`, `alloc_zeroed`
+- `crates/png/src/libpng/err.rs`: plain Rust
+- `crates/png/src/libpng/info.rs`: plain Rust
+- `crates/png/src/libpng/mem.rs`: plain Rust
+- `crates/png/src/libpng/mod.rs`: plain Rust
+- `crates/png/src/libpng/read.rs`: plain Rust
+- `crates/png/src/libpng/stubs.rs`: plain Rust
+- `crates/png/src/libpng/xform.rs`: plain Rust
 
 ### regex
 
