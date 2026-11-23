@@ -5,16 +5,21 @@
 #
 #   allocator               the parser's own memory comes from Rust's
 #                           allocator, not the XML_Memory_Handling_Suite
-#                           (which XML_MemMalloc and content models use), so
-#                           a failing allocator does not fail the parse
+#                           (which XML_MemMalloc, content models and
+#                           XML_GetBuffer's buffer use), so a failing
+#                           allocator does not fail the parse
 #   internal                tests of libexpat's internals (its hash table,
 #                           tokenizer, accounting), stubbed in
 #                           tests/c/expat_internals.c
 #   utf16-without-bom       UTF-16 input without a byte order mark, which
 #                           XML 1.0 (4.3.3) requires; expat accepts it
-#   incremental             the document is checked whole, when the final
-#                           buffer arrives: no handler runs, and no error is
-#                           found, before then; buffer limits differ
+#   parameter-entity        a parameter entity reference in the internal
+#                           subset is reported as skipped, not expanded: the
+#                           declarations in its replacement text reach no
+#                           handler
+#   entity-error-first      an internal entity whose replacement text is not
+#                           well-formed is rejected where it is referenced,
+#                           before any of its content is reported
 #   external-dtd            the external DTD subset and external parameter
 #                           entities are not read
 #   encoding                encodings: UTF-8 checks that expat makes
@@ -86,15 +91,11 @@ runtests	test_entity_public_utf16_be	utf16-without-bom
 runtests	test_entity_public_utf16_le	utf16-without-bom
 runtests	test_ext_entity_bad_encoding	external-dtd
 runtests	test_ext_entity_bad_encoding_2	external-dtd
-runtests	test_ext_entity_invalid_parse	external-dtd
-runtests	test_ext_entity_invalid_suspended_parse	incremental
 runtests	test_ext_entity_latin1_utf16be_bom	utf16-without-bom
 runtests	test_ext_entity_latin1_utf16be_bom2	utf16-without-bom
 runtests	test_ext_entity_latin1_utf16le_bom	utf16-without-bom
 runtests	test_ext_entity_latin1_utf16le_bom2	utf16-without-bom
 runtests	test_ext_entity_not_standalone	external-dtd
-runtests	test_ext_entity_trailing_cr	incremental
-runtests	test_ext_entity_trailing_rsqb	incremental
 runtests	test_ext_entity_utf16_be	utf16-without-bom
 runtests	test_ext_entity_utf16_le	utf16-without-bom
 runtests	test_external_bom_consumed	utf16-without-bom
@@ -119,12 +120,9 @@ runtests	test_long_doctype	error-code
 runtests	test_long_utf8_character	encoding
 runtests	test_misc_alloc_create_parser	allocator
 runtests	test_misc_alloc_create_parser_with_encoding	allocator
-runtests	test_misc_deny_internal_entity_closing_doctype_issue_317	incremental
-runtests	test_misc_low_surrogate_mozilla_bug_2053153	incremental
-runtests	test_misc_no_infinite_loop_issue_1161	incremental
-runtests	test_misc_unknown_encoding_callbacks_protected	incremental
-runtests	test_misc_unknown_encoding_release_getter_parser_free	incremental
-runtests	test_misc_unknown_encoding_release_getter_parser_reset	incremental
+runtests	test_misc_deny_internal_entity_closing_doctype_issue_317	error-not-read
+runtests	test_misc_low_surrogate_mozilla_bug_2053153	utf16-without-bom
+runtests	test_misc_no_infinite_loop_issue_1161	external-dtd
 runtests	test_multichar_cdata_utf16	utf16-without-bom
 runtests	test_no_indirectly_recursive_entity_refs	external-dtd
 runtests	test_nobom_utf16_le	utf16-without-bom
@@ -146,22 +144,20 @@ runtests	test_nsalloc_realloc_long_context_in_dtd	allocator
 runtests	test_nsalloc_realloc_long_ge_name	allocator
 runtests	test_nsalloc_realloc_long_prefix	allocator
 runtests	test_nsalloc_realloc_longer_prefix	allocator
-runtests	test_param_entity_with_trailing_cr	incremental
+runtests	test_param_entity_with_trailing_cr	external-dtd
 runtests	test_pi_handled_in_default	default-handler
 runtests	test_pool_integrity_with_unfinished_attr	error-code
 runtests	test_recursive_external_parameter_entity	external-dtd
 runtests	test_recursive_external_parameter_entity_2	external-dtd
-runtests	test_reparse_deferral_is_inherited	incremental
+runtests	test_reparse_deferral_is_inherited	external-dtd
 runtests	test_reset_in_entity	external-dtd
-runtests	test_resume_entity_with_syntax_error	incremental
+runtests	test_resume_entity_with_syntax_error	entity-error-first
 runtests	test_scan_entity_text	internal
 runtests	test_set_foreign_dtd	external-dtd
 runtests	test_short_doctype_2	error-code
 runtests	test_short_doctype_3	error-code
 runtests	test_skipped_parameter_entity	external-dtd
-runtests	test_subordinate_xdecl_abort	incremental
-runtests	test_subordinate_xdecl_suspend	incremental
-runtests	test_suspend_resume_parameter_entity	incremental
+runtests	test_suspend_resume_parameter_entity	parameter-entity
 runtests	test_unknown_encoding_bad_ignore	encoding
 runtests	test_user_parameters	default-handler
 runtests	test_utf16	utf16-without-bom

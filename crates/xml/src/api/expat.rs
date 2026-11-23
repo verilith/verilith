@@ -322,9 +322,15 @@ pub struct Parser {
     whole: bool,
     /// The walk's place in the chunk's tokens.
     ci: usize,
-    /// Offset of what callers see in the document's text (an external
-    /// entity's content begins after the wrapper's prefix).
+    /// Offset in the input of what callers see (an external entity's
+    /// content begins after the wrapper's prefix).
     origin: usize,
+    /// The stream's input is not quite the caller's: `raw_pre` bytes come
+    /// before theirs (an external entity's wrapper), and the first `raw_skip` of
+    /// theirs are not in it (a byte order mark, a text declaration). The
+    /// stream's progress maps to theirs by these.
+    raw_pre: usize,
+    raw_skip: usize,
     parsing: c_int,
     final_buffer: bool,
     error: c_int,
@@ -355,6 +361,9 @@ pub struct Parser {
     /// A handler is running: the calls that would parse re-entrantly, and
     /// freeing or resetting the parser, are refused.
     walking: bool,
+    /// The unknown encoding's release callback and its data, called when the
+    /// parser is freed or reset, as expat does.
+    enc_release: Option<(unsafe extern "C" fn(*mut c_void), *mut c_void)>,
     /// How many internal entities' replacement texts are being read.
     ent_depth: usize,
     /// The names of the open elements, NUL-terminated, end to end.
@@ -399,6 +408,8 @@ impl Parser {
             whole: false,
             ci: 0,
             origin: 0,
+            raw_pre: 0,
+            raw_skip: 0,
             parsing: P_INITIALIZED,
             final_buffer: false,
             error: E_NONE,
@@ -420,6 +431,7 @@ impl Parser {
             nspecified: 0,
             id_index: -1,
             walking: false,
+            enc_release: None,
             ent_depth: 0,
             names: Vec::new(),
             att_ks: Vec::new(),
@@ -432,6 +444,7 @@ impl Parser {
     }
 
     fn reset(&mut self, enc: *const XChar) {
+        self.release_encoding();
         self.doc = None;
         self.owned_text = None;
         let (mem, ns) = (self.mem, self.ns);
@@ -477,11 +490,11 @@ impl Parser {
     /// Line (from 1) and column (from 0) of `off`, counted in the text
     /// callers see.
     fn line_col(&mut self, off: usize) -> (usize, usize) {
-        let origin = self.origin;
-        let off = off.max(origin);
         let sbase = self.sbase;
+        let origin = self.origin.max(sbase);
+        let off = off.max(origin - sbase);
         if sbase + off < self.line_at {
-            self.line_at = sbase + origin;
+            self.line_at = origin;
             self.line = 1;
             self.col = 0;
         }
@@ -563,11 +576,8 @@ impl Parser {
                 self.line_at = prefix_len;
                 self.col = 0;
                 let (code, at) = classify(slice, &e);
+                let (code, at) = if self.ext.is_some() { ext_end_error(slice, code, at) } else { (code, at) };
                 self.err_at = at.max(prefix_len);
-                if self.ext.is_some() && e.offset >= slice.len().saturating_sub(WRAP_END.len()) && code == E_TAG_MISMATCH {
-                    // The entity ended inside an element it began.
-                    return self.fail(E_ASYNC_ENTITY);
-                }
                 return self.fail(code);
             }
         }
@@ -586,15 +596,6 @@ impl Parser {
             self.frames = vec![Frame { src: Src::Doc, i, end: close, kind: FrameKind::Top }];
             self.phase = Phase::Content;
             self.last_end = prefix_len;
-            if let Some((v, e)) = self.pending_text_decl.take() {
-                if let Some(f) = self.h.xml_decl {
-                    self.s_clear();
-                    let vk = v.map(|v| self.s_push(&v));
-                    let ek = e.map(|e| self.s_push(&e));
-                    let arg = self.arg();
-                    unsafe { f(arg, self.s_opt(vk), self.s_opt(ek), -1) };
-                }
-            }
         } else {
             self.phase = Phase::Prolog(0);
         }
@@ -631,6 +632,74 @@ const NEED_MORE: c_int = -1;
 
 const WRAP_NAME: &str = "vxml-external-entity";
 const WRAP_END: &[u8] = b"</vxml-external-entity>";
+
+/// An error in an external entity's wrapped text at the wrapper's end tag
+/// is where the entity ends: an element it began is open (expat's
+/// `XML_ERROR_ASYNC_ENTITY`), or a token is unfinished, which the entity
+/// read on its own says.
+fn ext_end_error(t: &[u8], code: c_int, at: usize) -> (c_int, usize) {
+    if !t.ends_with(WRAP_END) {
+        return (code, at);
+    }
+    let end = t.len() - WRAP_END.len();
+    if code == E_TAG_MISMATCH && at >= end {
+        return (E_ASYNC_ENTITY, at);
+    }
+    // Read without the wrapper's end tag, the first error is the same
+    // unless the entity ends inside a token.
+    let body = &t[..end];
+    match super::parse(body) {
+        Err(e) => match classify(body, &e) {
+            (c, a) if matches!(c, E_UNCLOSED_TOKEN | E_PARTIAL_CHAR | E_UNCLOSED_CDATA_SECTION) => (c, a),
+            _ => (code, at),
+        },
+        Ok(_) => (code, at),
+    }
+}
+
+/// How an external entity's first bytes are read.
+enum ExtHead {
+    /// Not enough yet to tell.
+    Wait,
+    /// Read whole, at the last chunk: another encoding than UTF-8.
+    Whole,
+    /// As it comes: the text declaration, and where the content begins.
+    Stream(Option<(Option<Vec<u8>>, Option<Vec<u8>>)>, usize),
+    Fail(c_int),
+}
+
+/// The byte order mark and text declaration an external entity begins
+/// with (as `ext_content` reads them), once they are complete.
+fn ext_head(raw: &[u8], last: bool, given: Option<&[u8]>) -> ExtHead {
+    let utf8 = |n: &[u8]| n.eq_ignore_ascii_case(b"UTF-8") || n.eq_ignore_ascii_case(b"US-ASCII");
+    if given.is_some_and(|n| !utf8(n)) {
+        return ExtHead::Whole;
+    }
+    let prefix_of = |p: &[u8]| raw.len() < p.len() && p.starts_with(raw);
+    if !last && (prefix_of(&[0xEF, 0xBB, 0xBF]) || prefix_of(&[0xFE, 0xFF]) || prefix_of(&[0xFF, 0xFE])) {
+        return ExtHead::Wait;
+    }
+    if raw.starts_with(&[0xFE, 0xFF]) || raw.starts_with(&[0xFF, 0xFE]) {
+        return ExtHead::Whole;
+    }
+    let skip = if raw.starts_with(&[0xEF, 0xBB, 0xBF]) { 3 } else { 0 };
+    let s = &raw[skip..];
+    if s.len() < 6 && !last && b"<?xml"[..s.len().min(5)] == s[..s.len().min(5)] {
+        return ExtHead::Wait;
+    }
+    let has_decl = s.len() >= 6 && &s[..5] == b"<?xml" && matches!(s[5], b' ' | b'\t' | b'\n' | b'\r');
+    if !has_decl {
+        return ExtHead::Stream(None, skip);
+    }
+    let Some(end) = find(s, 0, b"?>") else {
+        return if last { ExtHead::Whole } else { ExtHead::Wait };
+    };
+    match ext_content(&s[..end + 2]) {
+        Err(c) => ExtHead::Fail(c),
+        Ok((Some((v, Some(e))), _)) if utf8(&e) => ExtHead::Stream(Some((v, Some(e))), skip + end + 2),
+        Ok(_) => ExtHead::Whole,
+    }
+}
 
 /// An external parsed entity's bytes as UTF-8 content, and its text
 /// declaration (version, encoding), if it has one.
@@ -834,6 +903,10 @@ fn classify_code(text: &[u8], e: &super::Error, off: usize) -> c_int {
     }
     // The verified parser points at an element's start tag when the tag is
     // wrong as a whole, or when the input ended inside the element.
+    if rest == b"<" {
+        // The input ends after '<'.
+        return E_UNCLOSED_TOKEN;
+    }
     if rest.starts_with(b"<") && !rest.starts_with(b"</") && !rest.starts_with(b"<?") && !rest.starts_with(b"<!") {
         // Not a name after '<'.
         if rest.len() > 1 && !(rest[1].is_ascii_alphabetic() || rest[1] == b'_' || rest[1] == b':' || rest[1] >= 0x80) {
@@ -1114,10 +1187,19 @@ impl Parser {
     /// parser.
     fn walk(&mut self) -> c_int {
         self.parsing = P_PARSING;
-        self.walking = true;
+        self.set_walking(true);
         let r = self.walk_inner();
-        self.walking = false;
+        self.set_walking(false);
         r
+    }
+
+    /// Mark whether a handler or callback may be running. The write is
+    /// volatile so that it is not moved past the foreign call, which reads
+    /// the flag through its own pointer to the parser.
+    fn set_walking(&mut self, v: bool) -> bool {
+        let w = self.walking;
+        unsafe { std::ptr::write_volatile(&mut self.walking, v) };
+        w
     }
 
     fn walk_inner(&mut self) -> c_int {
@@ -1135,7 +1217,7 @@ impl Parser {
                 return STATUS_ERROR;
             }
             if self.phase == Phase::Done {
-                let n = self.text().len() - if self.ext.is_some() { WRAP_END.len() } else { 0 };
+                let n = self.text().len().saturating_sub(if self.ext.is_some() { WRAP_END.len() } else { 0 });
                 self.ev = (n, n);
                 self.parsing = P_FINISHED;
                 return STATUS_OK;
@@ -1153,7 +1235,39 @@ impl Parser {
 
     fn step(&mut self) -> Result<(), c_int> {
         let doc = self.doc();
+        if self.phase == Phase::Content && self.pending_text_decl.is_some() {
+            // An external entity's text declaration, before its content.
+            let (v, e) = self.pending_text_decl.take().unwrap();
+            if let Some(f) = self.h.xml_decl {
+                self.s_clear();
+                let vk = v.map(|v| self.s_push(&v));
+                let ek = e.map(|e| self.s_push(&e));
+                let arg = self.arg();
+                unsafe { f(arg, self.s_opt(vk), self.s_opt(ek), -1) };
+            }
+            return Ok(());
+        }
         match self.phase {
+            Phase::Prolog(i) if self.stream.is_some() && self.ext.is_some() => {
+                // The wrapper's prolog and start tag: nothing to report.
+                let toks = doc.toks(Src::Doc);
+                if i >= toks.len() {
+                    return Err(NEED_MORE);
+                }
+                if toks[i].kind == Kind::STag {
+                    let mut k = i + 1;
+                    while k + 1 < toks.len() && toks[k].kind == Kind::Attr {
+                        k += 2;
+                    }
+                    self.ci = k;
+                    self.frames = vec![Frame { src: Src::Doc, i, end: usize::MAX, kind: FrameKind::Top }];
+                    self.phase = Phase::Content;
+                    self.last_end = self.origin.saturating_sub(self.sbase);
+                    return Ok(());
+                }
+                self.phase = Phase::Prolog(i + 1);
+                Ok(())
+            }
             Phase::Prolog(i) if self.stream.is_some() => {
                 let toks = doc.toks(Src::Doc);
                 if i >= toks.len() {
@@ -1590,7 +1704,8 @@ impl Parser {
             Some(f) => f,
             None => {
                 if self.stream.is_some() {
-                    self.phase = Phase::Epilog(self.ci);
+                    // An external entity ends with the wrapper.
+                    self.phase = if self.ext.is_some() { Phase::Done } else { Phase::Epilog(self.ci) };
                     return Ok(());
                 }
                 let close = doc.toks(Src::Doc)[doc.root].c();
@@ -1636,7 +1751,7 @@ impl Parser {
                         self.end_element(doc, name_at, nb, stag, empty, span);
                     }
                 }
-                if self.frames.len() == 1 && matches!(self.frames[0].kind, FrameKind::Top) {
+                if self.ext.is_none() && self.frames.len() == 1 && matches!(self.frames[0].kind, FrameKind::Top) {
                     self.frames.clear();
                     self.phase = Phase::Epilog(self.ci);
                 }
@@ -2215,6 +2330,16 @@ impl Parser {
     /// A document in an encoding the verified parser does not read, with
     /// an `UnknownEncodingHandler`: converted to UTF-8 through the map the
     /// handler fills in, its declaration then naming UTF-8.
+    /// Call the unknown encoding's release callback, with the parser
+    /// protected against re-entrant calls while it runs.
+    fn release_encoding(&mut self) {
+        if let Some((r, data)) = self.enc_release.take() {
+            let w = self.set_walking(true);
+            unsafe { r(data) };
+            self.set_walking(w);
+        }
+    }
+
     fn unknown_encoding(&mut self, raw: Vec<u8>) -> Result<Vec<u8>, c_int> {
         let Some(f) = self.h.unknown_enc else { return Ok(raw) };
         let name = match self.encoding.clone().or_else(|| declared_encoding(&raw)) {
@@ -2237,6 +2362,11 @@ impl Parser {
             }
             return Err(E_UNKNOWN_ENCODING);
         }
+        self.release_encoding();
+        self.enc_release = info.release.map(|r| (r, info.data));
+        // The converter runs as a handler: calls that would parse
+        // re-entrantly are refused while it runs.
+        let w = self.set_walking(true);
         let mut out = Vec::with_capacity(raw.len());
         let mut i = 0;
         let mut bad = false;
@@ -2260,9 +2390,7 @@ impl Parser {
             }
             i += len;
         }
-        if let Some(r) = info.release {
-            unsafe { r(info.data) };
-        }
+        self.set_walking(w);
         if bad {
             return Err(E_INVALID_TOKEN);
         }
@@ -2361,6 +2489,7 @@ pub unsafe extern "C" fn XML_ParserReset(p: *mut Parser, encoding: *const XChar)
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn XML_ParserFree(p: *mut Parser) {
     if !p.is_null() && !unsafe { (*p).walking } {
+        unsafe { (*p).release_encoding() };
         let mut b = unsafe { Box::from_raw(p) };
         b.doc = None;
         b.owned_text = None;
@@ -2497,6 +2626,9 @@ impl Parser {
         }
         self.parsing = P_PARSING;
         self.input.extend_from_slice(s);
+        if matches!(self.ext, Some(Ext::Entity { .. })) && !self.whole {
+            return self.ext_chunk(is_final);
+        }
         // Read as it comes.
         if self.stream.is_some() || self.can_stream() {
             return self.stream_chunk(is_final);
@@ -2518,6 +2650,44 @@ impl Parser {
     /// what the caller says (the stream hands any other back, whole).
     fn can_stream(&self) -> bool {
         !self.whole && self.ext.is_none() && self.encoding.as_deref().is_none_or(|e| e.eq_ignore_ascii_case(b"UTF-8"))
+    }
+
+    /// An external entity's next chunk: once its text declaration is read,
+    /// to the push parser in the wrapper (the parent's declarations, then a
+    /// start tag), whose end tag follows the last chunk.
+    fn ext_chunk(&mut self, is_final: bool) -> c_int {
+        if self.stream.is_none() {
+            match ext_head(&self.input, is_final, self.encoding.as_deref()) {
+                ExtHead::Wait => return STATUS_OK,
+                ExtHead::Whole => {
+                    self.whole = true;
+                    if !is_final {
+                        return STATUS_OK;
+                    }
+                    self.final_buffer = true;
+                    return self.finish();
+                }
+                ExtHead::Fail(code) => return self.fail(code),
+                ExtHead::Stream(decl, skip) => {
+                    let Some(Ext::Entity { prefix, bindings }) = &self.ext else { unreachable!() };
+                    let mut t = prefix.clone();
+                    t.extend_from_slice(&self.input[skip..]);
+                    self.origin = prefix.len();
+                    self.raw_pre = prefix.len();
+                    self.raw_skip = skip;
+                    self.line_at = prefix.len();
+                    self.line = 1;
+                    self.col = 0;
+                    self.ns_stack = bindings.clone();
+                    self.pending_text_decl = decl;
+                    self.input = t;
+                }
+            }
+        }
+        if is_final {
+            self.input.extend_from_slice(WRAP_END);
+        }
+        self.stream_chunk(is_final)
     }
 
     /// The next chunk, to the push parser; then the walk over what it read.
@@ -2551,6 +2721,11 @@ impl Parser {
         self.input = data;
         self.input.clear();
         let st = self.stream.as_mut().unwrap();
+        if r == R_WHOLE && self.ext.is_some() {
+            // The wrapper is UTF-8 and its declaration is complete.
+            drop(old);
+            return self.fail(E_SYNTAX);
+        }
         if r == R_WHOLE {
             // Not UTF-8, or a declaration this parser reads whole: nothing
             // has been reported; the document is read at the last chunk.
@@ -2634,6 +2809,7 @@ impl Parser {
             Ok(_) => (E_SYNTAX, from, false),
             Err(e) => {
                 let (code, at) = classify(&t, &e);
+                let (code, at) = if self.ext.is_some() { ext_end_error(&t, code, at) } else { (code, at) };
                 let tail = at >= n && at < t.len() && t[at..].iter().all(|&c| !is_ws(c) && !b"<>&;\"'=/?]".contains(&c));
                 (code, if at >= n { from + (at - n) } else { from }, tail)
             }
@@ -2780,7 +2956,7 @@ impl Parser {
         // Read to: the stream's progress; all of it otherwise (it is held
         // in `input`).
         let to = match self.stream.as_ref() {
-            Some(st) => st.raw_progress().saturating_sub(self.eb.abs0),
+            Some(st) => (st.raw_progress().saturating_sub(self.raw_pre) + self.raw_skip).saturating_sub(self.eb.abs0),
             None => self.eb.end,
         };
         self.eb.ptr = to.clamp(self.eb.ptr, self.eb.end);
@@ -3005,7 +3181,7 @@ pub unsafe extern "C" fn XML_GetCurrentByteIndex(p: *mut Parser) -> c_long {
     if p.doc.is_none() && p.error == E_NONE {
         return -1;
     }
-    (p.sbase + p.position() - p.origin.min(p.position())) as c_long
+    ((p.sbase + p.position()).saturating_sub(p.origin)) as c_long
 }
 
 #[unsafe(no_mangle)]
@@ -3030,14 +3206,15 @@ pub unsafe extern "C" fn XML_GetInputContext(p: *mut Parser, offset: *mut c_int,
     let Some(d) = p.doc.as_ref() else { return null() };
     let t = d.text();
     let at = p.position();
+    let origin = p.origin.saturating_sub(p.sbase).min(t.len());
     unsafe {
         if let Some(o) = offset.as_mut() {
-            *o = (at - p.origin) as c_int;
+            *o = at.saturating_sub(origin) as c_int;
         }
         if let Some(s) = size.as_mut() {
-            *s = (t.len() - p.origin) as c_int;
+            *s = (t.len() - origin) as c_int;
         }
-        t.as_ptr().add(p.origin) as *const c_char
+        t.as_ptr().add(origin) as *const c_char
     }
 }
 
