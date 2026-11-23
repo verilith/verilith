@@ -4,12 +4,14 @@ SHA-2 (FIPS 180-4) in Rust, proven with
 [Verus](https://github.com/verus-lang/verus): SHA-224 and SHA-256, and
 the 64-bit family SHA-384, SHA-512, SHA-512/224 and SHA-512/256. These
 are the hash functions behind TLS, X.509 signatures, Ed25519 (SHA-512),
-Git's SHA-256 object format and most content addressing. It uses the
-CPU's SHA instructions where there are any, and it builds a static
-library behind OpenSSL's `SHA224_*`, `SHA256_*`, `SHA384_*` and
-`SHA512_*` C API.
+Git's SHA-256 object format and most content addressing. HMAC (FIPS
+198-1, RFC 2104) over each of them is proven too. It uses the CPU's SHA
+instructions where there are any, it implements RustCrypto's `digest`
+traits (0.11 and 0.10) so it can stand in for RustCrypto's `sha2` and
+`hmac`, it works without `std`, and it builds a static library behind
+OpenSSL's `SHA224_*`, `SHA256_*`, `SHA384_*` and `SHA512_*` C API.
 
-`cargo verus verify` (or `scripts/verify.sh`) checks 154 functions and
+`cargo verus verify` (or `scripts/verify.sh`) checks 209 functions and
 lemmas with no errors and no `assume`. What is assumed instead is listed
 under [Trusted base](#trusted-base): the CPU dispatch, the SHA instruction
 kernels, the AVX2 message schedules, and two byte stores.
@@ -24,6 +26,26 @@ assert_eq!(h.finalize(), d);
 
 let d: [u8; 64] = verilith_sha2::sha512(b"abc");
 let d: [u8; 48] = verilith_sha2::sha384(b"abc");
+
+let tag: [u8; 32] = verilith_sha2::hmac_sha256(b"key", b"message");
+let mut m = verilith_sha2::HmacSha256::new(b"key");
+m.update(b"mess");
+m.update(b"age");
+assert!(m.verify(&tag));
+```
+
+With the `digest` feature, the same types through RustCrypto's traits,
+where code is written against RustCrypto's `sha2` 0.11 and `hmac` 0.13:
+
+```rust,ignore
+use verilith_sha2::digest::{Digest, KeyInit, Mac};
+
+let d = verilith_sha2::Sha256::digest(b"abc");
+let mut m = <verilith_sha2::HmacSha256 as KeyInit>::new_from_slice(b"key").unwrap();
+Mac::update(&mut m, b"message");
+m.verify_slice(&tag).unwrap();
+// RustCrypto's own HMAC over these hashers works too.
+let m = hmac::SimpleHmac::<verilith_sha2::Sha256>::new_from_slice(b"key").unwrap();
 ```
 
 ## What is proven
@@ -40,6 +62,7 @@ let d: [u8; 48] = verilith_sha2::sha384(b"abc");
 | The rounds that take K_t + W_t precomputed, as a vectorized schedule gives it, are the rounds (addition modulo 2^n is associative) | `compress_block_kw` in each |
 | The pipelined kernels: each pair of blocks is compressed while the next pair's schedule is computed between its round groups, and the loop over pairs computes H(n) | `pair_kw` and `compress_blocks_pipe` in each, given the AVX2 schedule's contract |
 | The one-shot functions | `sha256`, `sha224`, `sha512`, `sha384`, `sha512_224`, `sha512_256` against the same |
+| For any key length, and whatever the sizes of the pieces given to `update`, HMAC's `finalize` returns HMAC(K, text) of FIPS 198-1 §4: K0 from the key (hashed if longer than the block, zero-padded), then H((K0 ⊕ opad) ‖ H((K0 ⊕ ipad) ‖ text)); `reset` returns to the keyed state; `verify` is equality with that MAC | `HmacSha224`, `HmacSha256`, `HmacSha384`, `HmacSha512`, `HmacSha512_224`, `HmacSha512_256` and the one-shot `hmac_*` against `spec_hmac::hmac_*` |
 
 ## Layout
 
@@ -61,6 +84,13 @@ let d: [u8; 48] = verilith_sha2::sha384(b"abc");
   length. The rounds are the same generated text over 64-bit words. The
   byte count is two 64-bit halves rather than a `u128`, so the hasher fits
   OpenSSL's 216-byte `SHA512_CTX`.
+- `src/spec_hmac.rs`: FIPS 198-1's HMAC as spec functions, over the
+  hashes of `spec` and `spec512`.
+- `src/hmac.rs`: the MACs. Each one keeps the inner hash with K0 ⊕ ipad
+  absorbed, the outer hash with K0 ⊕ opad absorbed, and a copy of the
+  inner one for `reset`, so the key is processed once.
+- `src/digest_impls.rs`: RustCrypto's `digest` traits over the hashers
+  and MACs (an unverified adapter).
 - `src/cpu.rs`: the kernel dispatch and the SHA-NI and ARMv8 kernels
   (trusted, below).
 - `src/avx2.rs`: the AVX2 message schedules, two blocks at once, whole or
@@ -72,7 +102,9 @@ let d: [u8; 48] = verilith_sha2::sha384(b"abc");
 
 What the proofs here assume rather than prove:
 
-- `src/spec.rs` and `src/spec512.rs`: the specification. The constants
+- `src/spec.rs`, `src/spec512.rs` and `src/spec_hmac.rs`: the
+  specification. `spec_hmac` is also checked by running the MACs on
+  RFC 4231's examples (`tests/hmac.rs`). The constants
   are also derived again from their definitions by `tests/vectors.rs` and
   `tests/vectors512.rs`: K and the SHA-224, SHA-256, SHA-384 and SHA-512
   H(0) come from the fractional parts of cube and square roots of primes,
@@ -110,7 +142,54 @@ What the proofs here assume rather than prove:
   `wrapping_mul`.
 - `src/capi.rs`: the C API is not verified. It converts pointers to slices
   and stores the hasher in the caller's context.
+- `src/digest_impls.rs`: the `digest` trait impls are not verified. Each
+  method calls the verified method of the same name and copies its array
+  into the trait's output type.
+- The constant-time tag comparison in the MACs' `verify` is proven to be
+  equality; that it takes the same time for any tag of a given length is
+  by inspection (it reads every byte and ORs the differences, with no
+  early exit), not proven.
 - Verus, Z3 and the Rust compiler.
+
+## Without `std`
+
+With `default-features = false` the crate is `no_std` and needs no
+allocator. Run-time CPU detection needs `std`, so without it the kernel is
+chosen at compile time from the target's features: build with
+`-C target-feature=+sha,+sse4.1` (or `target-cpu=native`) to get the
+SHA-NI kernel, `+sha2` on AArch64. Without them the verified portable
+kernel runs. CI builds the `no_std` library for `thumbv7em-none-eabihf`.
+
+Cargo builds every crate type a library lists, and this one lists
+`staticlib` (for the C API), which needs a panic handler. So a `no_std`
+crate that depends on this one gets a link error for the staticlib, as it
+does for the other Verilith crates with C APIs; building the dependency
+alone with `cargo rustc --crate-type rlib` works. Splitting the C API into
+its own crate would remove that.
+
+## RustCrypto traits
+
+With the `digest` feature (`digest` 0.11, re-exported as
+`verilith_sha2::digest`) or `digest010` (`digest` 0.10, re-exported as
+`verilith_sha2::digest010`):
+
+- The six hashers are `Digest` (and `DynDigest` with `digest`'s `alloc`
+  feature): `Default`, `Update`, `FixedOutput`, `FixedOutputReset`,
+  `Reset`, `HashMarker`, `OutputSizeUser` and `BlockSizeUser`. With `oid`,
+  also `AssociatedOid`, as RSA and ECDSA signing need. The block size makes
+  RustCrypto's `hmac::SimpleHmac` work over them.
+- The six MACs are `Mac`: `KeyInit` (any key length through
+  `new_from_slice`), `Update`, `FixedOutput`, `FixedOutputReset`, `Reset`
+  and `MacMarker`.
+
+Not provided: the block-level API (`digest::core_api`/`block_api`), so not
+RustCrypto's `hmac::Hmac` (its block-level HMAC; `SimpleHmac` and ours
+work), and not `SerializableState` or `zeroize`.
+
+The inherent methods keep their names, so with `Digest` imported,
+`h.finalize()` on a hasher calls `Digest::finalize` (which consumes it and
+returns `Output<Self>`), and `h.update(x)` the inherent `update`, which
+takes `&[u8]` rather than `impl AsRef<[u8]>`.
 
 ## C API
 
@@ -137,7 +216,8 @@ Departures from OpenSSL:
 
 ## Tests
 
-`cargo test --release`:
+`cargo test --release` (and `--features digest,digest010,oid` for
+`tests/digest.rs`):
 
 - `tests/vectors.rs`: the examples of FIPS 180-2 (Appendix B, and Change
   Notice 1 for SHA-224), including the million a's whole and in pieces,
@@ -200,14 +280,13 @@ What the speed rests on:
 
 ## Not yet
 
-- HMAC.
 - A kernel for x86-64's own SHA-512 instructions (Arrow Lake, Lunar
   Lake). There was no CPU with them to test on.
 - Verifying the AVX2 schedules too, against verilith-simd's
   specifications of the intrinsics; that needs 64-bit lane shifts added
   there.
-- `no_std`: the crate needs `std` for run-time CPU detection.
-- RustCrypto's `digest` traits, for a drop-in `sha2` replacement.
+- RustCrypto's block-level `digest` API, which RustCrypto's `hmac::Hmac`
+  and `SerializableState` need.
 - A [vbench](https://github.com/verilith/verilith/tree/main/bench) suite against OpenSSL through the drop-in C API.
 - Verifying the SHA-NI and ARMv8 kernels against specifications of the
   instructions in [verilith-simd](https://github.com/verilith/verilith/tree/main/crates/simd), as verilith-core does for

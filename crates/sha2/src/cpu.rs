@@ -36,11 +36,16 @@ use vstd::prelude::*;
 #[cfg(verus_only)]
 use crate::spec;
 
-// Run-time CPU feature detection needs `std`, as in verilith-core.
-#[cfg(target_arch = "x86_64")]
+// Run-time CPU feature detection needs `std`; a `no_std` build uses only
+// the features the target is compiled for, as in verilith-core.
+#[cfg(all(feature = "std", target_arch = "x86_64"))]
 macro_rules! x86_has { ($f:tt) => { std::is_x86_feature_detected!($f) }; }
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(not(feature = "std"), target_arch = "x86_64"))]
+macro_rules! x86_has { ($f:tt) => { cfg!(target_feature = $f) }; }
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
 macro_rules! arm_has { ($f:tt) => { std::arch::is_aarch64_feature_detected!($f) }; }
+#[cfg(all(not(feature = "std"), target_arch = "aarch64"))]
+macro_rules! arm_has { ($f:tt) => { cfg!(target_feature = $f) }; }
 
 verus! {
 

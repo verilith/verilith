@@ -9,6 +9,11 @@ test() {
   python3 tools/gen_rounds.py --check
   cargo test --profile "$P"
   cargo test --profile "$P" --features openssl-abi --test openssl --test openssl512
+  cargo test --profile "$P" --features digest,digest010,oid --test digest
+  # no_std, on a target with no std at all (the rlib: the staticlib needs a
+  # panic handler), with the digest traits.
+  rustup target add thumbv7em-none-eabihf
+  cargo rustc --lib --crate-type rlib --no-default-features --features digest,digest010,oid --target thumbv7em-none-eabihf
   # The ARMv8 SHA2 kernel, on emulated AArch64 (on an x86 runner; the Arm
   # runner runs it natively above).
   if [ -n "${CI:-}" ] && [ "$(uname -m)" = x86_64 ]; then

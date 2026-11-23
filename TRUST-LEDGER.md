@@ -38,7 +38,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | lz4 |  |  |  |  |  |  | 1 |
 | png | 2 |  |  |  |  |  | 7 |
 | regex | 7 |  |  |  |  |  | 2 |
-| sha2 | 14 |  |  |  |  |  | 2 |
+| sha2 | 14 |  |  |  |  |  | 3 |
 | simd | 266 | 6 | 266 | 4 |  |  | 3 |
 | snappy |  |  |  |  |  |  | 1 |
 | sync | 41 | 11 |  | 1 | 4 | 11 | 3 |
@@ -52,7 +52,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  | 2 |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **539** | **35** | **266** | **5** | **22** | **12** | **100** |
+| **total** | **539** | **35** | **266** | **5** | **22** | **12** | **101** |
 
 ## Items
 
@@ -171,6 +171,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/sha2/src/avx2.rs`: external_body: `schedule512x2`, `sched_at`, `sched_start`, `sched_steps2`, `sched256_at`, `schedule256x2`, `sched256_start`, `sched256_step`
 - `crates/sha2/src/capi.rs`: plain Rust
 - `crates/sha2/src/cpu.rs`: external_body: `compress_blocks`, `compress512_blocks`, `pair256_avx2`, `pair_avx2`
+- `crates/sha2/src/digest_impls.rs`: plain Rust
 - `crates/sha2/src/lib.rs`: plain Rust
 - `crates/sha2/src/store.rs`: external_body: `put_u32_be`, `put_u64_be`
 
