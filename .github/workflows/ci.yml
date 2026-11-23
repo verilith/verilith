@@ -64,6 +64,7 @@ jobs:
       test: ${{ steps.plan.outputs.test }}
       arm: ${{ steps.plan.outputs.arm }}
       fuzz: ${{ steps.plan.outputs.fuzz }}
+      narrow: ${{ steps.plan.outputs.narrow }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -98,6 +99,11 @@ jobs:
           import json, sys
           print(json.dumps([c for c in json.load(sys.stdin)["test"] if "\nfuzz() {" in open(f"crates/{c}/ci.sh").read()]))')
           echo "fuzz=$fuzz" >> "$GITHUB_OUTPUT"
+          # Crates with a second, 32-bit layout to verify (scripts/verify-narrow.sh).
+          narrow=$(echo "$plan" | python3 -c '
+          import json, os, sys
+          print(json.dumps([c for c in json.load(sys.stdin)["verify"] if os.path.exists(f"crates/{c}/scripts/verify-narrow.sh")]))')
+          echo "narrow=$narrow" >> "$GITHUB_OUTPUT"
           echo "all_verified=$(python3 scripts/affected.py all | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['verify']))")" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/buck2
       - name: The Buck2 files match the Cargo ones
@@ -179,6 +185,28 @@ jobs:
       - name: Log
         if: failure()
         run: cat target/verify/${{ matrix.crate }}.log
+
+  verify-narrow:
+    # The 32-bit layout of a crate whose data structures are chosen per
+    # target (xml's tape token): wasm32 builds it, and Verus checks it here
+    # on the x86-64 runner through the crate's narrow-tokens feature, beside
+    # the 64-bit layout the verify jobs check.
+    name: Verify ${{ matrix.crate }} (32-bit layout)
+    needs: [plan, verus]
+    if: needs.plan.outputs.narrow != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: ${{ fromJSON(needs.plan.outputs.narrow) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/verus
+      - name: Verify
+        run: |
+          VERUS_CMD=focus crates/${{ matrix.crate }}/scripts/verify-narrow.sh 2>&1 | tee narrow.log
+          grep -qE "verification results:: [0-9]+ verified, 0 errors" narrow.log
 
   verus-arm:
     name: Verus (Arm)
@@ -279,7 +307,7 @@ jobs:
   done:
     name: CI
     if: always()
-    needs: [plan, verus, verify, crosscheck, verus-arm, verify-arm, test, test-arm]
+    needs: [plan, verus, verify, verify-narrow, crosscheck, verus-arm, verify-arm, test, test-arm]
     runs-on: ubuntu-latest
     steps:
       - name: Every job passed or was skipped

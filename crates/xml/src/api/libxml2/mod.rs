@@ -17,6 +17,7 @@
 
 pub mod codes;
 mod io;
+mod scan;
 mod parser;
 mod recover;
 mod sax2;
@@ -1596,19 +1597,173 @@ pub unsafe extern "C" fn xmlHashCopy(h: *mut Hash, copy: HashCopier) -> *mut Has
 
 // --- dictionaries (dict.h): interned strings, freed with the dictionary ------
 
+/// `xmlDict`: interned strings, NUL-terminated, in pools freed with the
+/// dictionary (so ownership is an address check), found through an
+/// open-addressing table of (hash, string) with a per-dictionary seed. A
+/// dictionary made with `xmlDictCreateSub` looks in its parent first, as
+/// libxml2's does.
 pub struct Dict {
-    strings: FastMap<Vec<u8>, *mut XChar>,
+    /// Slots: the string's hash (0 for empty), pointer and length.
+    slots: Vec<(u64, *const XChar, usize)>,
+    len: usize,
+    /// String storage: each pool is filled, then a larger one is added.
+    pools: Vec<Box<[u8]>>,
+    used: usize,
+    seed: FastState,
+    parent: *mut Dict,
     refs: usize,
+}
+
+/// `p[..b.len()] == b`, without a call for short strings.
+#[inline]
+pub(crate) unsafe fn bytes_eq(p: *const u8, b: &[u8]) -> bool {
+    unsafe {
+        let n = b.len();
+        let q = b.as_ptr();
+        if n >= 8 && n <= 16 {
+            let r8 = |x: *const u8, k: usize| std::ptr::read_unaligned(x.add(k) as *const u64);
+            r8(p, 0) == r8(q, 0) && r8(p, n - 8) == r8(q, n - 8)
+        } else if n >= 4 && n < 8 {
+            let r4 = |x: *const u8, k: usize| std::ptr::read_unaligned(x.add(k) as *const u32);
+            r4(p, 0) == r4(q, 0) && r4(p, n - 4) == r4(q, n - 4)
+        } else if n < 8 {
+            b.iter().enumerate().all(|(k, &c)| *p.add(k) == c)
+        } else {
+            std::slice::from_raw_parts(p, b.len()) == b
+        }
+    }
+}
+
+impl Dict {
+    fn new(parent: *mut Dict) -> Dict {
+        Dict { slots: vec![(0, null(), 0); 64], len: 0, pools: Vec::new(), used: 0, seed: FastState::new(), parent, refs: 1 }
+    }
+
+    #[inline]
+    fn hash(&self, b: &[u8]) -> u64 {
+        // FastHasher's mixing, with the tail read in one go.
+        let mut h = self.seed.0;
+        let n = b.len();
+        let mut i = 0;
+        while i + 8 <= n {
+            let w = unsafe { std::ptr::read_unaligned(b.as_ptr().add(i) as *const u64) };
+            h = (h ^ u64::from_le(w)).wrapping_mul(K).rotate_left(29);
+            i += 8;
+        }
+        let r = n - i;
+        let w = unsafe {
+            let p = b.as_ptr().add(i);
+            if r == 0 {
+                0
+            } else if n >= 8 {
+                // The last eight bytes, overlapping the words before.
+                std::ptr::read_unaligned(b.as_ptr().add(n - 8) as *const u64)
+            } else if r >= 4 {
+                let lo = std::ptr::read_unaligned(p as *const u32) as u64;
+                let hi = std::ptr::read_unaligned(p.add(r - 4) as *const u32) as u64;
+                lo | (hi << 32)
+            } else {
+                // 1 to 3 bytes: first, middle, last.
+                (*p as u64) | ((*p.add(r / 2) as u64) << 8) | ((*p.add(r - 1) as u64) << 16)
+            }
+        };
+        h = (h ^ w ^ ((n as u64) << 56)).wrapping_mul(K).rotate_left(29);
+        let m = (h as u128).wrapping_mul(K as u128 | 1);
+        ((m as u64) ^ ((m >> 64) as u64)) | 1
+    }
+
+    #[inline]
+    fn find(&self, b: &[u8], h: u64) -> Result<*const XChar, usize> {
+        let mask = self.slots.len() - 1;
+        // The high bits pick the slot (the low bit is always set).
+        let mut i = (h >> 32) as usize & mask;
+        loop {
+            let (sh, p, l) = self.slots[i];
+            if sh == 0 {
+                return Err(i);
+            }
+            if sh == h && l == b.len() && unsafe { bytes_eq(p, b) } {
+                return Ok(p);
+            }
+            i = (i + 1) & mask;
+        }
+    }
+
+    fn get(&self, b: &[u8]) -> Option<*const XChar> {
+        self.find(b, self.hash(b)).ok()
+    }
+
+    fn store(&mut self, b: &[u8]) -> *const XChar {
+        let need = b.len() + 1;
+        let room = self.pools.last().map_or(0, |p| p.len() - self.used);
+        if room < need {
+            let size = self.pools.last().map_or(4096, |p| (p.len() * 2).min(1 << 20)).max(need);
+            self.pools.push(vec![0u8; size].into_boxed_slice());
+            self.used = 0;
+        }
+        let pool = self.pools.last_mut().unwrap();
+        pool[self.used..self.used + b.len()].copy_from_slice(b);
+        pool[self.used + b.len()] = 0;
+        let p = pool[self.used..].as_ptr();
+        self.used += need;
+        p
+    }
+
+    fn lookup(&mut self, b: &[u8]) -> *const XChar {
+        if !self.parent.is_null() {
+            if let Some(p) = unsafe { &*self.parent }.get(b) {
+                return p;
+            }
+        }
+        let h = self.hash(b);
+        match self.find(b, h) {
+            Ok(p) => p,
+            Err(mut i) => {
+                if (self.len + 1) * 4 > self.slots.len() * 3 {
+                    self.grow();
+                    i = self.find(b, h).unwrap_err();
+                }
+                let p = self.store(b);
+                self.slots[i] = (h, p, b.len());
+                self.len += 1;
+                p
+            }
+        }
+    }
+
+    fn grow(&mut self) {
+        let old = std::mem::replace(&mut self.slots, vec![(0, null(), 0); 0]);
+        self.slots = vec![(0, null(), 0); old.len() * 2];
+        let mask = self.slots.len() - 1;
+        for e in old {
+            if e.0 != 0 {
+                let mut i = (e.0 >> 32) as usize & mask;
+                while self.slots[i].0 != 0 {
+                    i = (i + 1) & mask;
+                }
+                self.slots[i] = e;
+            }
+        }
+    }
+
+    fn owns(&self, s: *const XChar) -> bool {
+        let a = s as usize;
+        self.pools.iter().rev().any(|p| (p.as_ptr() as usize..p.as_ptr() as usize + p.len()).contains(&a))
+            || (!self.parent.is_null() && unsafe { &*self.parent }.owns(s))
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn xmlDictCreate() -> *mut Dict {
-    Box::into_raw(Box::new(Dict { strings: fast_map(), refs: 1 }))
+    Box::into_raw(Box::new(Dict::new(null_mut())))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn xmlDictCreateSub(_sub: *mut Dict) -> *mut Dict {
-    xmlDictCreate()
+pub unsafe extern "C" fn xmlDictCreateSub(sub: *mut Dict) -> *mut Dict {
+    if !sub.is_null() {
+        unsafe { (*sub).refs += 1 };
+    }
+    Box::into_raw(Box::new(Dict::new(sub)))
 }
 
 #[unsafe(no_mangle)]
@@ -1631,9 +1786,7 @@ pub unsafe extern "C" fn xmlDictFree(d: *mut Dict) {
             return;
         }
         let d = Box::from_raw(d);
-        for (_, p) in d.strings {
-            free(p as *mut c_void);
-        }
+        xmlDictFree(d.parent);
     }
 }
 
@@ -1643,20 +1796,7 @@ pub unsafe extern "C" fn xmlDictLookup(d: *mut Dict, s: *const XChar, len: c_int
         return null();
     }
     let b = if len < 0 { unsafe { cbytes(s) } } else { unsafe { std::slice::from_raw_parts(s, len as usize) } };
-    let d = unsafe { &mut *d };
-    if let Some(&p) = d.strings.get(b) {
-        return p;
-    }
-    let p = unsafe { malloc(b.len() + 1) } as *mut u8;
-    if p.is_null() {
-        return null();
-    }
-    unsafe {
-        std::ptr::copy_nonoverlapping(b.as_ptr(), p, b.len());
-        *p.add(b.len()) = 0;
-    }
-    d.strings.insert(b.to_vec(), p);
-    p
+    unsafe { &mut *d }.lookup(b)
 }
 
 #[unsafe(no_mangle)]
@@ -1665,7 +1805,13 @@ pub unsafe extern "C" fn xmlDictExists(d: *mut Dict, s: *const XChar, len: c_int
         return null();
     }
     let b = if len < 0 { unsafe { cbytes(s) } } else { unsafe { std::slice::from_raw_parts(s, len as usize) } };
-    unsafe { &*d }.strings.get(b).map_or(null(), |&p| p as *const XChar)
+    let d = unsafe { &*d };
+    if !d.parent.is_null() {
+        if let Some(p) = unsafe { &*d.parent }.get(b) {
+            return p;
+        }
+    }
+    d.get(b).unwrap_or(null())
 }
 
 #[unsafe(no_mangle)]
@@ -1684,12 +1830,16 @@ pub unsafe extern "C" fn xmlDictOwns(d: *mut Dict, s: *const XChar) -> c_int {
     if d.is_null() || s.is_null() {
         return -1;
     }
-    unsafe { &*d }.strings.values().any(|&p| p as *const XChar == s) as c_int
+    unsafe { &*d }.owns(s) as c_int
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn xmlDictSize(d: *mut Dict) -> c_int {
-    if d.is_null() { -1 } else { unsafe { &*d }.strings.len() as c_int }
+    if d.is_null() {
+        return -1;
+    }
+    let d = unsafe { &*d };
+    (d.len + if d.parent.is_null() { 0 } else { unsafe { &*d.parent }.len }) as c_int
 }
 
 #[unsafe(no_mangle)]
@@ -2102,7 +2252,8 @@ pub extern "C" fn xmlThrDefSetStructuredErrorFunc(ctx: *mut c_void, handler: Str
 
 #[unsafe(no_mangle)]
 pub extern "C" fn xmlIsCatastrophicError(level: c_int, code: c_int) -> c_int {
-    (level == LEVEL_FATAL && (code == ERR_NO_MEMORY || code == ERR_RESOURCE_LIMIT || code == ERR_INTERNAL_ERROR)) as c_int
+    // As libxml2 2.15 has it: a resource limit is not catastrophic.
+    (level == LEVEL_FATAL && (matches!(code, ERR_NO_MEMORY | ERR_INTERNAL_ERROR | 115 | 116) || (1500..=1599).contains(&code))) as c_int
 }
 
 pub const LEVEL_WARNING: c_int = ERR_WARNING;

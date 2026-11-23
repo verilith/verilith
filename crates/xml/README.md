@@ -29,8 +29,9 @@ a C program built against expat 2.10.0's `expat.h` links
 times as fast reading a document through expat's callbacks (see
 [The expat C ABI](#the-expat-c-abi)). With `libxml2-abi` it stands in for
 the core of libxml2 (parsing, SAX, the tree, saving), passing 934 of
-libxml2's 1181 regression tests that cover those parts; through that ABI it
-is not yet faster than libxml2 (see [The libxml2 C ABI](#the-libxml2-c-abi)).
+libxml2's 1181 regression tests that cover those parts, and through that ABI
+it reads documents 1.52x as fast as libxml2 and checks them 2.21x as fast
+(geometric means, see [Drop-in for libxml2](#drop-in-for-libxml2-vbench)).
 
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -57,9 +58,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
    well-formed UTF-8 and that every character is a `Char`, sixteen ASCII
    bytes at a time.
 3. **The document** (`src/lex.rs`, `src/dtd.rs`, `src/content.rs`,
-   `src/doc.rs`). One pass writes a *tape*: a 32-byte token per item, in
+   `src/doc.rs`). One pass writes a *tape*: a 20-byte token per item (16 on a 32-bit target), in
    document order, with byte ranges into the text for every name, value
-   and run of text, so nothing is copied. Elements are a loop with an
+   and run of text, so nothing is copied. The layout is chosen per target. On a 64-bit
+   target positions are 48 bits, a low `u32` and a high `u16`, so a token
+   is 20 bytes where three `usize` would make it 32. On a 32-bit target
+   (wasm32) a position is one `u32`, which covers every slice there, and a
+   token is 16 bytes. Both layouts are verified: `scripts/verify.sh`
+   checks the 64-bit one, `scripts/verify-narrow.sh` the 32-bit one. Elements are a loop with an
    explicit stack of the open elements, not a recursion. A start tag's
    token holds the index of the token that closes it, so a reader skips
    an element in one step. Character data, attribute values, comments,
@@ -237,6 +243,7 @@ them:
 | Entity references nested through replacement texts | no limit | no limit (libxml2 rejects past 40 by default); a cycle is recursion, rejected where it is referred to |
 | A reference cycle among entities that are not referred to | not an error | not an error |
 | Element nesting | | no limit |
+| Document size | | up to 2^48 - 1 bytes (256 TiB) as UTF-8 on a 64-bit target, more than any address space gives a process today (token positions are 48 bits; a longer text is refused with `ErrorKind::TooLarge`); on a 32-bit target, any slice it can hold |
 | Expanding a "billion laughs" entity | | parsing is linear; content expands lazily as it is read; an attribute value is read whole, which for the classic document is 3 GB (`try_attributes(limit)` refuses a value past `limit` bytes, for untrusted input) |
 | Namespaces | a separate Recommendation | not processed: a name with a colon is a name |
 
@@ -304,7 +311,7 @@ Where it departs from libexpat:
   call with `isFinal` set, then parses it and calls the handlers. No
   handler runs before the last buffer arrives, and an error is found then,
   not in the call whose buffer holds it. Memory is the whole document plus
-  its tape (32 bytes per item).
+  its tape (20 bytes per item on a 64-bit target).
 * **No handler runs for a rejected document.** expat reports the items
   before an error; here the verdict comes first.
 * **The external DTD subset and external parameter entities are offered to
@@ -485,6 +492,14 @@ two sittings each, the same cloud VM, 2026-11-22) puts the build after
 those changes at 1.03x the build before them for checking (0.97x to
 1.09x per file) and 1.02x for reading (0.96x to 1.07x).
 
+Positions then moved to 48 bits (tokens from 32 to 20 bytes). On the same
+files and VM (2026-11-23, 12 rounds of paired runs, the median ratio per
+file), the 20-byte build is 1.015x the 32-byte one for checking (0.99x to
+1.08x per file) and 1.011x for reading (0.95x to 1.09x, cdata.xml aside:
+0.78x in time but fewer instructions and cache misses under Cachegrind).
+Cachegrind on huge.xml counts 18% fewer L1 data misses and 23% fewer
+last-level misses, and 2% more instructions (the narrower stores).
+
 ### Against expat and libxml2 (vbench)
 
 Measured with the repository's [vbench](https://github.com/verilith/verilith/tree/main/bench) harness
@@ -616,36 +631,51 @@ native comparison does.
 harness's libxml2 driver (`bench/suites/xml/libxml2.c`, `xmlCtxtReadMemory`
 with SAX2's DTD handlers and its own for content), unchanged, linked
 against libxml2 and against verilith-xml's libxml2 ABI. The same VM,
-2026-11-23, 11 interleaved pairs per case, gcc 13.3 `-O3 -march=native` and
-rustc 1.97 with fat LTO and `-C target-cpu=native`. MB/s:
+2026-11-23, 31 interleaved pairs per case, gcc 13.3 `-O3 -march=native` and
+rustc 1.97 with fat LTO and `-C target-cpu=native`. Speedups (median of the
+pairs, 95% interval):
 
-| file | read: vxml | read: libxml2 | read: speedup | check: speedup |
-|---|---:|---:|---|---|
-| elts.xml | 157 | 227 | 0.66x (0.61–1.03)\* | 0.64x (0.59–0.73) |
-| play1.xml | 200 | 343 | 0.58x (0.55–0.63) | 0.92x (0.71–1.08)\* |
-| stats1.xml | 161 | 234 | 0.69x (0.66–0.72) | 0.77x (0.58–0.98) |
-| tal1.xml | 115 | 177 | 0.63x (0.61–0.75) | 0.85x (0.69–1.33)\* |
-| tpc.xml | 146 | 250 | 0.59x (0.52–0.63) | 0.62x (0.55–0.75) |
-| w3c5.xml | 143 | 211 | 0.68x (0.59–0.74) | 0.78x (0.70–1.02)\* |
-| attributes.xml | 56 | 62 | 0.91x (0.87–0.99) | 0.65x (0.49–0.86) |
-| cdata.xml | 772 | 181 | 4.26x (4.10–4.50) | 4.31x (2.25–4.78) |
-| gigantic.svg | 407 | 320 | 1.26x (0.99–1.39)\* | 1.03x (0.88–1.47)\* |
-| huge.xml | 204 | 241 | 0.87x (0.73–1.02)\* | 1.14x (0.82–1.52)\* |
-| large.plist | 178 | 310 | 0.62x (0.52–0.92) | 0.54x (0.52–0.59) |
-| medium.svg | 217 | 297 | 0.69x (0.65–0.88) | 0.67x (0.40–0.72) |
-| text.xml | 57 | 59 | 0.94x (0.92–1.70)\* | 0.97x (0.81–1.20)\* |
+| file | read | check |
+|---|---|---|
+| elts.xml | 1.21x (1.08–1.54) | 2.19x (1.89–3.04) |
+| play1.xml | 0.90x (0.64–1.10)\* | 1.52x (1.36–1.66) |
+| stats1.xml | 1.28x (1.20–1.33) | 1.80x (1.62–1.85) |
+| tal1.xml | 1.12x (0.90–1.16)\* | 1.72x (1.41–1.87) |
+| tpc.xml | 1.04x (0.72–1.12)\* | 1.62x (1.56–2.51) |
+| w3c5.xml | 1.21x (1.06–1.56) | 1.38x (1.21–1.87) |
+| attributes.xml | 2.46x (2.30–2.72) | 1.23x (1.11–1.38) |
+| cdata.xml | 3.75x (3.57–3.92) | 8.14x (7.71–8.51) |
+| gigantic.svg | 6.24x (5.18–6.71) | 7.16x (6.79–8.43) |
+| huge.xml | 1.12x (1.05–1.21) | 2.14x (2.06–2.21) |
+| large.plist | 1.09x (1.05–1.12) | 1.44x (1.42–1.48) |
+| medium.svg | 1.35x (0.89–1.38)\* | 1.61x (1.52–1.74) |
+| text.xml | 1.24x (0.90–1.49)\* | 3.77x (3.15–3.93) |
 
-Geometric means: reading **0.85x** libxml2, checking
-**0.89x**; starred intervals include 1.00. The same sitting
-put verilith-xml's Rust API at 1.78x libxml2 reading and 4.05x
-checking. Through the ABI the verified parse is followed by a second pass
-over its tape that does what libxml2's callers expect of it: names
-interned in the context's dictionary, attributes copied into SAX2's
-arrays with namespaces resolved, and the input's line and column kept up
-to date for every item. Checking pays for most of that pass too: with no
-content handlers set the ABI still walks the content, to resolve
-namespaces and report libxml2's namespace errors. Only the CDATA-heavy
-document comes out ahead; making the second pass cheaper is the next step.
+Geometric means: reading **1.52x** libxml2, checking **2.21x**; starred
+intervals include 1.00, and no case is measurably slower. The same sitting
+put verilith-xml's Rust API at 1.72x libxml2 reading and 4.62x checking.
+On this VM a case moves by up to a tenth from sitting to sitting (play1.xml
+read 1.02x in the sitting before).
+
+Through the ABI the verified parse is followed by a second pass over its
+tape that does what libxml2's callers expect of it: names interned in the
+context's dictionary, attributes copied into SAX2's arrays with namespaces
+resolved, character data in the pieces libxml2 makes, and the input's line
+and column kept up to date for every item. That pass is kept cheap by:
+
+* a cache of the names it has interned, in front of the dictionary;
+* line and column from an index of the text's line ends, built once;
+* plain start tags (no attributes, prefix or defaults) and plain text (no
+  CR, control characters or non-ASCII) taken on short paths, with SSE2
+  scanners (`src/api/libxml2/scan.rs`) that read past a short run within
+  the document instead of byte by byte;
+* when no handler can see the content (no content handlers, SAX2's own
+  `getEntity`, no validation, no defaulted attributes), checking skips the
+  walk where its only result would be errors that cannot occur: the
+  document has no entity references in content, no namespace errors and no
+  excessive depth, and the entities referred to in attribute values are
+  checked once each, at the place the walk would check them;
+* text and CDATA not copied or split for handlers that are not set.
 
 ### Against the Rust XML parsers
 

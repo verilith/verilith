@@ -11,6 +11,7 @@ use super::codes::*;
 use super::sax2::*;
 use super::tree::*;
 use super::*;
+use super::scan::{plain_char, plain_run};
 use crate::api::{Document, Src};
 use crate::tape::{Kind, Tok};
 use std::borrow::Cow;
@@ -720,30 +721,24 @@ fn is_blank(c: u8) -> bool {
     matches!(c, 0x20 | 0x09 | 0x0A | 0x0D)
 }
 
-/// The bytes of libxml2's fast path for character data.
-fn plain_char(c: u8) -> bool {
-    c == 0x09 || (0x20..0x80).contains(&c) && c != b'<' && c != b'&' && c != b']'
-}
 
-/// `text` with line ends normalized (CRLF and CR to LF).
-fn eol(text: &[u8]) -> Cow<'_, [u8]> {
-    if !text.contains(&b'\r') {
-        return Cow::Borrowed(text);
-    }
-    let mut out = Vec::with_capacity(text.len());
+
+/// `text` with its line ends normalized (CR LF and CR to LF), and a NUL
+/// after it.
+fn eol_z(text: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len() + 1);
     let mut i = 0;
-    while i < text.len() {
-        if text[i] == b'\r' {
-            out.push(b'\n');
-            if text.get(i + 1) == Some(&b'\n') {
-                i += 1;
-            }
-        } else {
-            out.push(text[i]);
+    while let Some(k) = text[i..].iter().position(|&c| c == b'\r') {
+        out.extend_from_slice(&text[i..i + k]);
+        out.push(b'\n');
+        i += k + 1;
+        if text.get(i) == Some(&b'\n') {
+            i += 1;
         }
-        i += 1;
     }
-    Cow::Owned(out)
+    out.extend_from_slice(&text[i..]);
+    out.push(0);
+    out
 }
 
 fn utf8_of(cp: u32) -> Vec<u8> {
@@ -789,8 +784,8 @@ fn entity_value(raw: &[u8]) -> Vec<u8> {
 
 /// A QName split as `xmlParseQNameHashed` does: (prefix, local).
 fn qname(name: &[u8]) -> (Option<&[u8]>, &[u8]) {
-    match name.iter().position(|&c| c == b':') {
-        Some(k) if k > 0 && k + 1 < name.len() && !name[k + 1..].contains(&b':') => (Some(&name[..k]), &name[k + 1..]),
+    match super::scan::colon(name) {
+        Some(k) if k > 0 && k + 1 < name.len() && super::scan::colon(&name[k + 1..]).is_none() => (Some(&name[..k]), &name[k + 1..]),
         _ => (None, name),
     }
 }
@@ -840,7 +835,8 @@ struct DefAttr {
 /// attribute (first declaration binding).
 #[derive(Default)]
 struct DtdInfo {
-    types: FastMap<(Vec<u8>, Vec<u8>), c_int>,
+    /// Attribute types by element, then attribute.
+    types: FastMap<Vec<u8>, FastMap<Vec<u8>, c_int>>,
     defaults: FastMap<Vec<u8>, Vec<DefAttr>>,
 }
 
@@ -863,6 +859,31 @@ struct Walk<'d> {
     /// Bytes the walk has passed in the document, for the amplification
     /// check.
     consumed: usize,
+    /// Scratch for start tags, kept from tag to tag.
+    scratch: Option<Box<TagScratch<'d>>>,
+    /// Where the text's line ends are, whether it is all ASCII, and how many
+    /// line ends are before the input's position.
+    nls: Vec<usize>,
+    ascii: bool,
+    nl_k: usize,
+    /// Entities' expansions in attribute values, unnormalized.
+    att_cache: FastMap<usize, (Vec<u8>, bool)>,
+    /// Names looked up in the context's dictionary, by a hash of a few of
+    /// their bytes: each the dictionary's string and its length.
+    names: Box<[(*const XChar, usize); 256]>,
+    names_dict: *mut Dict,
+}
+
+/// What a start tag needs, reused: a tag allocates nothing once these have
+/// grown to the largest tag's size.
+#[derive(Default)]
+struct TagScratch<'d> {
+    atts: Vec<(Tok, Tok)>,
+    regular: Vec<(&'d [u8], Option<&'d [u8]>, Val<'d>)>,
+    out: Vec<*const XChar>,
+    keys: Vec<(Option<*const XChar>, &'d [u8], Option<&'d [u8]>)>,
+    owned: Vec<Vec<u8>>,
+    nss: Vec<*const XChar>,
 }
 
 const ENT_VALIDATED: c_int = 4;
@@ -870,10 +891,45 @@ const ENT_VALIDATED: c_int = 4;
 impl<'d> Walk<'d> {
     fn new(ctxt: *mut ParserCtxt, doc: &'d Document<'d>) -> Walk<'d> {
         let n = doc.dtd.ents.len();
-        Walk { ctxt, doc, text: doc.text(), dtd: DtdInfo::default(), sizes: vec![None; n], consumed: 0 }
+        let text = doc.text();
+        let (nls, ascii) = super::scan::line_index(text);
+        // The input's position may be past the start (a context reused).
+        let nl_k = if ctxt.is_null() || unsafe { (*ctxt).st.is_null() } { 0 } else { unsafe { nls.partition_point(|&p| p < st(ctxt).at.0) } };
+        Walk { ctxt, doc, text, dtd: DtdInfo::default(), sizes: vec![None; n], consumed: 0, scratch: Some(Box::default()), nls, ascii, nl_k, att_cache: FastMap::default(), names: Box::new([(null(), 0); 256]), names_dict: null_mut() }
+    }
+
+    /// `dict(ctxt, b)`, through the cache of names: a name the walk has
+    /// looked up is the dictionary's string for it, which stays while the
+    /// dictionary does.
+    #[inline(always)]
+    unsafe fn intern(&mut self, b: &[u8]) -> *const XChar {
+        unsafe {
+            let c = self.ctxt;
+            let d = (*c).dict;
+            let n = b.len();
+            if d.is_null() || n == 0 {
+                return dict(c, b);
+            }
+            if d != self.names_dict {
+                self.names.fill((null(), 0));
+                self.names_dict = d;
+            }
+            let byte = |k: usize| *b.get_unchecked(k) as usize;
+            let k = (byte(0) ^ byte(n - 1) << 2 ^ byte(n / 2) << 1 ^ n << 4) & 255;
+            let (p, l) = *self.names.get_unchecked(k);
+            if l == n && super::bytes_eq(p, b) {
+                return p;
+            }
+            let p = dict(c, b);
+            if !p.is_null() {
+                self.names[k] = (p, n);
+            }
+            p
+        }
     }
 
     /// Moves the input's position to `off` in the document's text.
+    #[inline(always)]
     unsafe fn at(&mut self, off: usize) {
         unsafe {
             let ctxt = self.ctxt;
@@ -882,38 +938,46 @@ impl<'d> Walk<'d> {
                 return;
             }
             let off = off.min(self.text.len());
-            self.consumed = self.consumed.max(off);
-            let s = st(ctxt);
-            let (mut o, mut line, mut col) = s.at;
-            if off < o {
-                (o, line, col) = (0, 1, 1);
+            if off > self.consumed {
+                self.consumed = off;
             }
-            let run = &self.text[o..off];
-            if run.len() < 32 {
-                for &c in run {
-                    if c == b'\n' {
-                        line += 1;
-                        col = 1;
-                    } else {
-                        col += (c & 0xC0 != 0x80) as c_int;
-                    }
-                }
+            let s = st(ctxt);
+            let (o, mut line, mut col) = s.at;
+            if off < o {
+                (line, col) = (1, 1);
+                self.nl_k = 0;
+                self.lines_to(off, 0, &mut line, &mut col);
             } else {
-                // Long runs eight bytes at a time.
-                match count_newlines(run) {
-                    0 => col += (run.len() - count_continuations(run)) as c_int,
-                    nl => {
-                        line += nl as c_int;
-                        let last = run.iter().rposition(|&c| c == b'\n').unwrap_or(0);
-                        let tail = &run[last + 1..];
-                        col = 1 + (tail.len() - count_continuations(tail)) as c_int;
-                    }
-                }
+                self.lines_to(off, o, &mut line, &mut col);
             }
             s.at = (off, line, col);
             (*input).cur = self.text.as_ptr().add(off);
             (*input).line = line;
             (*input).col = col;
+        }
+    }
+
+    /// The line and column at `off`, from those at `o` (at most `off`).
+    #[inline(always)]
+    fn lines_to(&mut self, off: usize, o: usize, line: &mut c_int, col: &mut c_int) {
+        // Lines from the index of line ends; columns count characters.
+        let nls = &self.nls;
+        let k0 = self.nl_k;
+        let mut k = k0;
+        while k < nls.len() && nls[k] < off {
+            k += 1;
+        }
+        let start = if k > k0 {
+            *line += (k - k0) as c_int;
+            self.nl_k = k;
+            *col = 1;
+            nls[k - 1] + 1
+        } else {
+            o
+        };
+        *col += (off - start) as c_int;
+        if !self.ascii {
+            *col -= super::scan::count_continuations(&self.text[start..off]) as c_int;
         }
     }
 
@@ -1082,8 +1146,24 @@ impl<'d> Walk<'d> {
                 (*c).disableSAX = 2;
                 return;
             }
+            // An expansion without normalization does not depend on what
+            // comes before it, so it is kept, when entities are looked up
+            // by SAX2's own handler (no caller sees the lookups).
+            let cacheable = !normalize
+                && !(*c).sax.is_null()
+                && (*(*c).sax).getEntity.map(|f| f as *const () as usize) == Some(xmlSAX2GetEntity as *const () as usize);
+            if cacheable {
+                if let Some((v, sp)) = self.att_cache.get(&(pent as usize)) {
+                    out.extend_from_slice(v);
+                    *in_space = *sp;
+                    return;
+                }
+            }
+            let start = out.len();
+            let marks = ((*c).nbErrors, (*c).nbWarnings, (*c).wellFormed);
             (*pent).flags |= ENT_EXPANDING;
-            let s = cbytes((*pent).content).to_vec();
+            // The entity's content is not changed while it is expanded.
+            let s: &[u8] = cbytes((*pent).content);
             let mut i = 0;
             while i < s.len() && (*c).disableSAX < 2 {
                 let ch = s[i];
@@ -1093,13 +1173,16 @@ impl<'d> Walk<'d> {
                             out.push(b' ');
                         }
                         *in_space = true;
+                        i += 1;
                     } else {
-                        out.push(ch);
+                        // A run up to the next reference or white space.
+                        let e = s[i..].iter().position(|&b| b == b'&' || b <= 0x20).map_or(s.len(), |k| i + k);
+                        out.extend_from_slice(&s[i..e]);
                         *in_space = false;
+                        i = e;
                     }
-                    i += 1;
                 } else if s.get(i + 1) == Some(&b'#') {
-                    match char_ref(&s, i) {
+                    match char_ref(s, i) {
                         Some((v, l)) => {
                             if v == 0x20 {
                                 if !(normalize && *in_space) {
@@ -1115,10 +1198,9 @@ impl<'d> Walk<'d> {
                         None => break,
                     }
                 } else {
-                    let Some((name, l)) = ent_ref(&s, i) else { break };
-                    let name = name.to_vec();
+                    let Some((name, l)) = ent_ref(s, i) else { break };
                     i += l;
-                    let ent = self.lookup(&name);
+                    let ent = self.lookup(name);
                     if ent.is_null() {
                         continue;
                     }
@@ -1130,6 +1212,9 @@ impl<'d> Walk<'d> {
                     }
                 }
             }
+            if cacheable && out.len() > start && marks == ((*c).nbErrors, (*c).nbWarnings, (*c).wellFormed) {
+                self.att_cache.insert(pent as usize, (out[start..].to_vec(), *in_space));
+            }
             (*pent).flags &= !ENT_EXPANDING;
         }
     }
@@ -1139,6 +1224,11 @@ impl<'d> Walk<'d> {
     #[allow(unused_assignments)] // a macro resets state that its last use leaves unread
     unsafe fn att_value<'r>(&mut self, raw: &'r [u8], normalize: bool, is_ns: bool) -> Val<'r> {
         unsafe {
+            // No reference, nothing to normalize: the value as it is (what
+            // the loop below comes to for it).
+            if !normalize && super::scan::att_plain(raw) {
+                return Val::In(raw);
+            }
             let c = self.ctxt;
             let replace = (*c).replaceEntities != 0 || is_ns;
             // xmlParseAttValueInternal: runs of the input are kept as a chunk
@@ -1507,10 +1597,10 @@ impl<'d> Walk<'d> {
         unsafe {
             let c = self.ctxt;
             if src == Src::Doc {
-                self.at(t.b + 3);
+                self.at(t.b() + 3);
             }
             if let Some(f) = handler(c).and_then(|h| h.comment) {
-                let v = nul(&eol(&self.buf(src)[t.a..t.b]));
+                let v = eol_z(&self.buf(src)[t.a()..t.b()]);
                 f((*c).userData, v.as_ptr());
             }
         }
@@ -1521,14 +1611,14 @@ impl<'d> Walk<'d> {
             let c = self.ctxt;
             let buf = self.buf(src);
             if src == Src::Doc {
-                self.at(d.b + 2);
+                self.at(d.b() + 2);
             }
-            let target = dict(c, &buf[t.a..t.b]);
+            let target = dict(c, &buf[t.a()..t.b()]);
             if let Some(f) = handler(c).and_then(|h| h.processingInstruction) {
-                if buf[t.b..].starts_with(b"?>") {
+                if buf[t.b()..].starts_with(b"?>") {
                     f((*c).userData, target, null());
                 } else {
-                    let v = nul(&eol(&buf[d.a..d.b]));
+                    let v = eol_z(&buf[d.a()..d.b()]);
                     f((*c).userData, target, v.as_ptr());
                 }
             }
@@ -1547,7 +1637,7 @@ impl<'d> Walk<'d> {
             if toks.first().is_some_and(|t| t.kind == Kind::XmlDecl) {
                 let t = toks[0];
                 (*c).standalone = -2;
-                let version = &text[t.a..t.b];
+                let version = &text[t.a()..t.b()];
                 xfree((*c).version as *mut c_void);
                 (*c).version = xstrdup(version);
                 if version != b"1.0" {
@@ -1563,7 +1653,7 @@ impl<'d> Walk<'d> {
                     let e = toks[1];
                     xfree((*c).encoding as *mut c_void);
                     let declared = st(c).declared.clone();
-                    (*c).encoding = xstrdup(declared.as_deref().unwrap_or(&text[e.a..e.b]));
+                    (*c).encoding = xstrdup(declared.as_deref().unwrap_or(&text[e.a()..e.b()]));
                     i = 2;
                 }
                 (*c).standalone = match t.f {
@@ -1608,19 +1698,19 @@ impl<'d> Walk<'d> {
             let text = self.text;
             let t = toks[i];
             (*c).inSubset = 1;
-            let name = dict(c, &text[t.a..t.b]);
+            let name = dict(c, &text[t.a()..t.b()]);
             (*c).intSubName = name;
             let mut j = i + 1;
             let (mut pubid, mut sysid) = (None, None);
-            let mut last = t.b;
+            let mut last = t.b();
             while j < toks.len() && matches!(toks[j].kind, Kind::PubId | Kind::SysId) {
                 let u = toks[j];
                 if u.kind == Kind::PubId {
-                    pubid = Some(&text[u.a..u.b]);
+                    pubid = Some(&text[u.a()..u.b()]);
                 } else {
-                    sysid = Some(&text[u.a..u.b]);
+                    sysid = Some(&text[u.a()..u.b()]);
                 }
-                last = u.b + 1;
+                last = u.b() + 1;
                 j += 1;
             }
             if pubid.is_some() || sysid.is_some() {
@@ -1639,7 +1729,7 @@ impl<'d> Walk<'d> {
             }
             // The end of the declaration: '>' after the subset.
             if j < toks.len() {
-                let next = toks.get(j + 1).map_or(text.len(), |n| n.a);
+                let next = toks.get(j + 1).map_or(text.len(), |n| n.a());
                 let gt = text[..next].iter().rposition(|&ch| ch == b'>').map_or(next, |g| g + 1);
                 self.at(gt);
             }
@@ -1667,17 +1757,17 @@ impl<'d> Walk<'d> {
                     return i + 2;
                 }
                 Kind::ElementDecl => {
-                    let end = text[t.b..].iter().position(|&ch| ch == b'>').map_or(text.len(), |e| t.b + e);
+                    let end = text[t.b()..].iter().position(|&ch| ch == b'>').map_or(text.len(), |e| t.b() + e);
                     self.at(end + 1);
-                    let name = dict(c, &text[t.a..t.b]);
-                    let (ty, content) = content_spec((*c).myDoc, &text[t.b..end]);
+                    let name = dict(c, &text[t.a()..t.b()]);
+                    let (ty, content) = content_spec((*c).myDoc, &text[t.b()..end]);
                     if let Some(f) = handler(c).and_then(|h| h.elementDecl) {
                         f((*c).userData, name, ty, content);
                     }
                     xmlFreeDocElementContent((*c).myDoc, content);
                 }
                 Kind::AttlistDecl => {
-                    let elem = &text[t.a..t.b];
+                    let elem = &text[t.a()..t.b()];
                     let mut j = i + 1;
                     while j + 1 < toks.len() && toks[j].kind == Kind::AttDef {
                         self.att_def(elem, toks[j], toks[j + 1]);
@@ -1691,7 +1781,7 @@ impl<'d> Walk<'d> {
                     let (mut pubid, mut sysid) = (None, None);
                     while j < toks.len() && matches!(toks[j].kind, Kind::PubId | Kind::SysId) {
                         let u = toks[j];
-                        let v = nul(&text[u.a..u.b]);
+                        let v = nul(&text[u.a()..u.b()]);
                         if u.kind == Kind::PubId {
                             pubid = Some(v);
                         } else {
@@ -1699,16 +1789,16 @@ impl<'d> Walk<'d> {
                         }
                         j += 1;
                     }
-                    self.at(toks[j - 1].b + 1);
-                    let name = dict(c, &text[t.a..t.b]);
+                    self.at(toks[j - 1].b() + 1);
+                    let name = dict(c, &text[t.a()..t.b()]);
                     if let Some(f) = handler(c).and_then(|h| h.notationDecl) {
                         f((*c).userData, name, pubid.as_ref().map_or(null(), |v| v.as_ptr()), sysid.as_ref().map_or(null(), |v| v.as_ptr()));
                     }
                     return j;
                 }
                 Kind::PERef => {
-                    self.at(t.b + 1);
-                    let name = &text[t.a..t.b];
+                    self.at(t.b() + 1);
+                    let name = &text[t.a()..t.b()];
                     (*c).hasPErefs = 1;
                     let n = dict(c, name);
                     let mut ent = null_mut();
@@ -1734,8 +1824,8 @@ impl<'d> Walk<'d> {
         unsafe {
             let c = self.ctxt;
             let text = self.text;
-            self.at(if d.f >= 3 { d.b + 1 } else { d.b });
-            let name = &text[t.a..t.b];
+            self.at(if d.f >= 3 { d.b() + 1 } else { d.b() });
+            let name = &text[t.a()..t.b()];
             let ty = match t.f {
                 9 => ATTRIBUTE_NOTATION,
                 10 => ATTRIBUTE_ENUMERATION,
@@ -1748,15 +1838,15 @@ impl<'d> Walk<'d> {
                 _ => ATTRIBUTE_NONE,
             };
             let tree = if ty == ATTRIBUTE_ENUMERATION || ty == ATTRIBUTE_NOTATION {
-                let from = t.b;
-                let to = if d.f >= 3 { d.a } else { d.a.max(from) };
+                let from = t.b();
+                let to = if d.f >= 3 { d.a() } else { d.a().max(from) };
                 enumeration(&text[from..to])
             } else {
                 null_mut()
             };
             let mut value: Option<Vec<u8>> = None;
             if d.f >= 3 {
-                let raw = &text[d.a..d.b];
+                let raw = &text[d.a()..d.b()];
                 let mut v = match self.att_value(raw, false, false) {
                     Val::In(s) => s.to_vec(),
                     Val::Made(v) => v,
@@ -1766,7 +1856,6 @@ impl<'d> Walk<'d> {
                 }
                 value = Some(v);
             }
-            let key = (elem.to_vec(), name.to_vec());
             if (*c).sax2 != 0 {
                 if let (Some(v), true) = (&value, def != ATTRIBUTE_IMPLIED && def != ATTRIBUTE_REQUIRED) {
                     let list = self.dtd.defaults.entry(elem.to_vec()).or_default();
@@ -1775,7 +1864,7 @@ impl<'d> Walk<'d> {
                     }
                 }
             }
-            self.dtd.types.entry(key).or_insert(ty);
+            self.dtd.types.entry(elem.to_vec()).or_default().entry(name.to_vec()).or_insert(ty);
             let e = dict(c, elem);
             let n = dict(c, name);
             match handler(c).and_then(|h| h.attributeDecl) {
@@ -1799,7 +1888,7 @@ impl<'d> Walk<'d> {
             let (mut value, mut pubid, mut sysid, mut ndata) = (None, None, None, None);
             while j < toks.len() {
                 let u = toks[j];
-                let s = &text[u.a..u.b];
+                let s = &text[u.a()..u.b()];
                 match u.kind {
                     Kind::EntityValue => value = Some(s),
                     Kind::PubId => pubid = Some(nul(s)),
@@ -1810,11 +1899,11 @@ impl<'d> Walk<'d> {
                 j += 1;
             }
             let last = toks[j - 1];
-            let end = text[last.b..].iter().position(|&ch| ch == b'>').map_or(text.len(), |e| last.b + e + 1);
+            let end = text[last.b()..].iter().position(|&ch| ch == b'>').map_or(text.len(), |e| last.b() + e + 1);
             self.at(end);
-            let name_b = &text[t.a..t.b];
+            let name_b = &text[t.a()..t.b()];
             let name = dict(c, name_b);
-            if name_b.contains(&b':') {
+            if super::scan::colon(name_b).is_some() {
                 let msg = cat(&[b"colons are forbidden from entities names '", name_b, b"'\n"]);
                 ns_err(c, NS_ERR_COLON, &msg, Some(name_b), None, None);
             }
@@ -1910,11 +1999,29 @@ impl<'d> Walk<'d> {
 
     /// `xmlCharacters`, for a run of character data whose next bytes in the
     /// input are `next`.
+    #[inline(always)]
     unsafe fn characters(&mut self, s: &[u8], blank: bool, next: [u8; 2]) {
         unsafe {
             let c = self.ctxt;
             let Some(h) = handler(c) else { return };
             let check = (*c).keepBlanks == 0 || h.ignorableWhitespace.map(|f| f as usize) != h.characters.map(|f| f as usize);
+            if !check {
+                if let Some(f) = h.characters {
+                    f((*c).userData, s.as_ptr(), s.len() as c_int);
+                }
+                return;
+            }
+            self.characters_checked(s, blank, next)
+        }
+    }
+
+    /// `characters` when blank text may be ignorable.
+    #[inline(never)]
+    unsafe fn characters_checked(&mut self, s: &[u8], blank: bool, next: [u8; 2]) {
+        unsafe {
+            let c = self.ctxt;
+            let Some(h) = handler(c) else { return };
+            let check = true;
             if check && self.are_blanks(s, blank, next) {
                 if let Some(f) = h.ignorableWhitespace {
                     if (*c).keepBlanks != 0 {
@@ -1986,20 +2093,40 @@ impl<'d> Walk<'d> {
     /// Character data `s`, followed in its input by `after` (the next two
     /// bytes: '<' or '&' and what follows, or NULs at the end), cut where
     /// libxml2 cuts it (`xmlParseCharDataInternal`).
-    unsafe fn char_data(&mut self, s: &[u8], after: [u8; 2]) {
+    /// The character data `buf[a..b]`.
+    unsafe fn text_run(&mut self, buf: &[u8], a: usize, b: usize) {
         unsafe {
-            let n = s.len();
-            let get = |i: usize| -> u8 {
-                if i < n {
-                    s[i]
-                } else if i == n {
-                    after[0]
-                } else if i == n + 1 {
-                    after[1]
-                } else {
-                    0
+            // With no handler for text, and blanks kept, the pieces would
+            // go nowhere (`characters` does nothing for them).
+            let c = self.ctxt;
+            match handler(c) {
+                None => return,
+                Some(h) if h.characters.is_none() && h.ignorableWhitespace.is_none() && (*c).keepBlanks != 0 => return,
+                _ => {}
+            }
+            let after = [buf.get(b).copied().unwrap_or(0), buf.get(b + 1).copied().unwrap_or(0)];
+            // Plain ASCII text (no CR, no control characters) is one call,
+            // which is what char_data's loops come to for it: blank if it
+            // is spaces and line feeds before a tag.
+            if let (true, ws) = super::scan::text_class_in(buf, a, b) {
+                if a < b {
+                    self.characters(&buf[a..b], ws && after[0] == b'<', after);
                 }
-            };
+                return;
+            }
+            self.char_data(buf, a, b);
+        }
+    }
+
+    /// Character data `buf[a..b]`, which is followed by markup or the end
+    /// of `buf`, in the pieces libxml2's xmlParseCharDataInternal makes.
+    #[inline(never)]
+    unsafe fn char_data(&mut self, buf: &[u8], a: usize, b: usize) {
+        unsafe {
+            let s = &buf[a..b];
+            let n = s.len();
+            // A byte at `i` in the text, or after it.
+            let get = |i: usize| -> u8 { buf.get(a + i).copied().unwrap_or(0) };
             let next = |i: usize| [get(i), get(i + 1)];
             let mut cur = 0;
             let mut i = 0;
@@ -2023,9 +2150,7 @@ impl<'d> Walk<'d> {
                     return;
                 }
                 loop {
-                    while i < n && plain_char(s[i]) {
-                        i += 1;
-                    }
+                    i = super::scan::plain_run_in(buf, a + i, b) - a;
                     if i < n && s[i] == b'\n' {
                         while i < n && s[i] == b'\n' {
                             i += 1;
@@ -2080,67 +2205,295 @@ impl<'d> Walk<'d> {
         }
     }
 
+    /// Whether nothing the content walk does can be seen: no handler for
+    /// content, entities looked up by SAX2's own handler, no validation,
+    /// no node records, no defaulted attributes.
+    unsafe fn content_unseen(&self) -> bool {
+        unsafe {
+            let c = self.ctxt;
+            if (*c).validate != 0 || (*c).record_info != 0 || !self.dtd.defaults.is_empty() {
+                return false;
+            }
+            let Some(h) = handler(c) else { return (*c).sax.is_null() };
+            h.startElement.is_none()
+                && h.endElement.is_none()
+                && h.startElementNs.is_none()
+                && h.endElementNs.is_none()
+                && h.characters.is_none()
+                && h.ignorableWhitespace.is_none()
+                && h.cdataBlock.is_none()
+                && h.comment.is_none()
+                && h.processingInstruction.is_none()
+                && h.reference.is_none()
+                && h.getEntity.is_none_or(|f| f as *const () as usize == xmlSAX2GetEntity as *const () as usize)
+        }
+    }
+
+    /// The content walk when nothing it calls can be seen
+    /// (`content_unseen`): what remains are its errors. Those come from
+    /// namespaces, depth, entity references in content and the entities
+    /// referred to in attribute values; if the tape has none of the first
+    /// three, the entities are checked (once each, as the walk would) and
+    /// this returns true. Otherwise it does nothing and returns false.
+    unsafe fn content_quiet(&mut self, i: usize, end: usize) -> bool {
+        unsafe {
+            let c = self.ctxt;
+            let toks = self.toks(Src::Doc);
+            let buf = self.buf(Src::Doc);
+            let max = if (*c).options & PARSE_HUGE != 0 { 2048 } else { 256 };
+            let mut depth = st(c).ns_counts.len();
+            // Each entity referred to in an attribute value, and where the
+            // walk would be at its first use (the end of the start tag).
+            let mut refs: Vec<(&[u8], usize)> = Vec::new();
+            let mut tag = i;
+            if !st(c).ns.is_empty() {
+                return false;
+            }
+            // Namespace bindings in scope (prefix, URI; the default
+            // namespace's prefix is empty), and how many each open element
+            // added; the names of an element's namespaced attributes.
+            let mut ns: Vec<(&[u8], &[u8])> = Vec::new();
+            let mut counts: Vec<usize> = Vec::new();
+            let mut nsatts: Vec<(&[u8], &[u8])> = Vec::new();
+            fn bound<'a>(ns: &[(&'a [u8], &'a [u8])], p: &[u8]) -> Option<&'a [u8]> {
+                ns.iter().rev().find(|b| b.0 == p).map(|b| b.1).filter(|u| !u.is_empty())
+            }
+            let pedantic = (*c).pedantic != 0;
+            let mut k = i;
+            while k < end {
+                let t = toks[k];
+                match t.kind {
+                    Kind::STag => {
+                        if depth >= max {
+                            return false;
+                        }
+                        depth += 1;
+                        tag = k;
+                        // The tag's attributes, in two passes as start_tag:
+                        // namespace declarations, then the rest.
+                        let mut j = k + 1;
+                        let mut mine = 0;
+                        while j + 1 < end && toks[j].kind == Kind::Attr {
+                            let n = &buf[toks[j].a()..toks[j].b()];
+                            let v = &buf[toks[j + 1].a()..toks[j + 1].b()];
+                            j += 2;
+                            let (p, l) = qname(n);
+                            let decl = if p.is_none() && l == b"xmlns" {
+                                Some(&b""[..])
+                            } else if p == Some(b"xmlns") {
+                                Some(l)
+                            } else {
+                                None
+                            };
+                            let Some(dp) = decl else { continue };
+                            // Values that need processing, and every case
+                            // with an error or warning, take the walk.
+                            if !super::scan::att_plain(v) {
+                                return false;
+                            }
+                            if dp.is_empty() {
+                                if !v.is_empty() {
+                                    let (ok, scheme) = uri_check(v);
+                                    if !ok || !scheme || v == XML_XML_NAMESPACE || v == b"http://www.w3.org/2000/xmlns/" {
+                                        return false;
+                                    }
+                                }
+                            } else {
+                                if dp == b"xml" {
+                                    if v != XML_XML_NAMESPACE {
+                                        return false;
+                                    }
+                                    continue;
+                                }
+                                if v == XML_XML_NAMESPACE || dp == b"xmlns" || v == b"http://www.w3.org/2000/xmlns/" || v.is_empty() {
+                                    return false;
+                                }
+                                let (ok, scheme) = uri_check(v);
+                                if !ok || (pedantic && !scheme) {
+                                    return false;
+                                }
+                            }
+                            ns.push((dp, v));
+                            mine += 1;
+                        }
+                        counts.push(mine);
+                        let qn = &buf[t.a()..t.b()];
+                        let (p, _) = qname(qn);
+                        match p {
+                            None if super::scan::colon(qn).is_some() => return false,
+                            Some(p) if p != b"xml" && bound(&ns, p).is_none() => return false,
+                            _ => {}
+                        }
+                        nsatts.clear();
+                        let mut j = k + 1;
+                        while j + 1 < end && toks[j].kind == Kind::Attr {
+                            let n = &buf[toks[j].a()..toks[j].b()];
+                            let v = &buf[toks[j + 1].a()..toks[j + 1].b()];
+                            j += 2;
+                            let (p, l) = qname(n);
+                            if p.is_none() && super::scan::colon(n).is_some() {
+                                return false;
+                            }
+                            if (p.is_none() && l == b"xmlns") || p == Some(b"xmlns") {
+                                continue;
+                            }
+                            let uri = match p {
+                                None => continue,
+                                Some(b"xml") => {
+                                    if l == b"space" && v != b"default" && v != b"preserve" {
+                                        return false;
+                                    }
+                                    XML_XML_NAMESPACE
+                                }
+                                Some(p) => match bound(&ns, p) {
+                                    Some(u) => u,
+                                    None => return false,
+                                },
+                            };
+                            if nsatts.iter().any(|&(u, ln)| u == uri && ln == l) {
+                                return false;
+                            }
+                            nsatts.push((uri, l));
+                        }
+                        k += 1;
+                        continue;
+                    }
+                    Kind::ETag => {
+                        depth -= 1;
+                        let m = counts.pop().unwrap_or(0);
+                        ns.truncate(ns.len() - m);
+                    }
+                    Kind::AttVal => {
+                        let v = &buf[t.a()..t.b()];
+                        let mut k = 0;
+                        while let Some(p) = super::scan::find_amp(&v[k..]) {
+                            k += p;
+                            if v.get(k + 1) != Some(&b'#') {
+                                let Some((name, l)) = ent_ref(v, k) else { return false };
+                                if !matches!(name, b"lt" | b"gt" | b"amp" | b"apos" | b"quot") {
+                                    // An undeclared one is an error at each use.
+                                    if self.ent_index(name).is_none() {
+                                        return false;
+                                    }
+                                    if !refs.iter().any(|r| r.0 == name) {
+                                        let mut j = tag + 1;
+                                        while j + 1 < toks.len() && toks[j].kind == Kind::Attr {
+                                            j += 2;
+                                        }
+                                        let from = if j > tag + 1 { toks[j - 1].b() + 1 } else { toks[tag].b() };
+                                        let tag_end = buf[from..].iter().position(|&ch| ch == b'>' || ch == b'/').map_or(from, |e| from + e);
+                                        refs.push((name, tag_end));
+                                    }
+                                }
+                                k += l;
+                            } else {
+                                k += 1;
+                            }
+                        }
+                    }
+                    Kind::EntRef => return false,
+                    _ => {}
+                }
+                k += 1;
+            }
+            let flags = if (*c).inSubset == 0 { ENT_CHECKED | ENT_VALIDATED } else { ENT_VALIDATED };
+            for (name, at) in refs {
+                self.at(at);
+                let ent = self.lookup(name);
+                if !ent.is_null() && (*ent).etype != INTERNAL_PREDEFINED_ENTITY && (*ent).flags & flags != flags {
+                    self.check_ent_in_att(ent, 1);
+                }
+            }
+            true
+        }
+    }
+
     /// The content of `src` from token `i` to `end`, elements and all.
     unsafe fn content(&mut self, src: Src, mut i: usize, end: usize) {
         unsafe {
             let c = self.ctxt;
+            if src == Src::Doc && self.content_unseen() && self.content_quiet(i, end) {
+                return;
+            }
             let toks = self.toks(src);
             let buf = self.buf(src);
             let mut open: Vec<(Open, usize)> = Vec::new();
             while i < end && (*c).disableSAX < 2 {
                 let t = toks[i];
-                match t.kind {
-                    Kind::STag => {
-                        let (o, next) = self.start_tag(src, i);
-                        match o {
-                            Some(o) => {
-                                open.push((o, t.c));
-                                i = next;
-                            }
-                            None => {
-                                // Too deep: stop.
-                                return;
-                            }
-                        }
+                // The common kinds first, tested in turn.
+                if t.kind == Kind::Text {
+                    // Runs of character data up to the next '<' or '&'.
+                    let a = t.a();
+                    let mut b = t.b();
+                    while i + 1 < end && toks[i + 1].kind == Kind::Text && toks[i + 1].a() == b {
+                        i += 1;
+                        b = toks[i].b();
+                    }
+                    if src == Src::Doc {
+                        self.at(b);
+                    }
+                    self.text_run(buf, a, b);
+                    i += 1;
+                    continue;
+                }
+                if t.kind == Kind::STag {
+                    if let Some(o) = self.start_tag_plain(src, t) {
+                        open.push((o, t.b() - t.a()));
+                        i += 1;
                         continue;
                     }
-                    Kind::ETag => {
-                        if let Some((o, _)) = open.pop() {
-                            if src == Src::Doc {
-                                // An ETag carries no offsets: the end tag, if
-                                // the element has one (not `<a/>`), starts
-                                // where the walk is.
-                                let cur = st(c).at.0;
-                                if buf.get(cur..).is_some_and(|r| r.starts_with(b"</")) {
-                                    if let Some(g) = buf[cur..].iter().position(|&ch| ch == b'>') {
-                                        self.at(cur + g + 1);
+                    let (o, next) = self.start_tag(src, i);
+                    match o {
+                        Some(o) => {
+                            open.push((o, t.b() - t.a()));
+                            i = next;
+                        }
+                        None => {
+                            // Too deep: stop.
+                            return;
+                        }
+                    }
+                    continue;
+                }
+                if t.kind == Kind::ETag {
+                    if let Some((o, qlen)) = open.pop() {
+                        if src == Src::Doc {
+                            // An ETag carries no offsets: the walk is
+                            // where the start tag's name ended, or after
+                            // the content. The end is past `/>`, or the
+                            // end tag's `>`, as when xmlParseEndTag2
+                            // reports it.
+                            let mut p = st(c).at.0;
+                            if buf.get(p..p + 2) == Some(b"/>") {
+                                self.at(p + 2);
+                            } else {
+                                if buf.get(p) == Some(&b'>') {
+                                    p += 1;
+                                }
+                                if buf.get(p..p + 2) == Some(b"</") {
+                                    let mut q = p + 2 + qlen;
+                                    while q < buf.len() && buf[q] != b'>' {
+                                        q += 1;
+                                    }
+                                    if q < buf.len() {
+                                        self.at(q + 1);
                                     }
                                 }
                             }
-                            self.end_tag(o);
                         }
+                        self.end_tag(o);
                     }
-                    Kind::Text => {
-                        // Runs of character data up to the next '<' or '&'.
-                        let a = t.a;
-                        let mut b = t.b;
-                        while i + 1 < end && toks[i + 1].kind == Kind::Text && toks[i + 1].a == b {
-                            i += 1;
-                            b = toks[i].b;
-                        }
-                        if src == Src::Doc {
-                            self.at(b);
-                        }
-                        let after = [buf.get(b).copied().unwrap_or(0), buf.get(b + 1).copied().unwrap_or(0)];
-                        self.char_data(&buf[a..b], after);
-                    }
+                    i += 1;
+                    continue;
+                }
+                match t.kind {
                     Kind::CData => {
                         if src == Src::Doc {
-                            self.at(t.b + 3);
+                            self.at(t.b() + 3);
                         }
-                        if let Some(h) = handler(c) {
+                        if let Some(h) = handler(c).filter(|h| h.cdataBlock.is_some() || h.characters.is_some()) {
                             // A copy with a NUL after it, as xmlParseCDSect passes.
-                            let v = nul(&eol(&buf[t.a..t.b]));
+                            let v = eol_z(&buf[t.a()..t.b()]);
                             let n = (v.len() - 1) as c_int;
                             if h.cdataBlock.is_some() && (*c).options & PARSE_NOCDATA == 0 {
                                 (h.cdataBlock.unwrap())((*c).userData, v.as_ptr(), n);
@@ -2150,18 +2503,18 @@ impl<'d> Walk<'d> {
                         }
                     }
                     Kind::CharRef => {
-                        let semi = buf[t.a..].iter().position(|&ch| ch == b';').map_or(t.a, |e| t.a + e + 1);
+                        let semi = buf[t.a()..].iter().position(|&ch| ch == b';').map_or(t.a(), |e| t.a() + e + 1);
                         if src == Src::Doc {
                             self.at(semi);
                         }
-                        let v = utf8_of(t.b as u32);
-                        if buf.get(t.a + 1) == Some(&b'#') {
+                        let v = utf8_of(t.b() as u32);
+                        if buf.get(t.a() + 1) == Some(&b'#') {
                             if let Some(f) = handler(c).and_then(|h| h.characters) {
                                 f((*c).userData, v.as_ptr(), v.len() as c_int);
                             }
                         } else {
                             // A predefined entity.
-                            self.predefined(&buf[t.a + 1..semi - 1], &v);
+                            self.predefined(&buf[t.a() + 1..semi - 1], &v);
                         }
                     }
                     Kind::Comment => self.comment(src, t),
@@ -2171,7 +2524,7 @@ impl<'d> Walk<'d> {
                     }
                     Kind::EntRef => {
                         if src == Src::Doc {
-                            self.at(t.b + 1);
+                            self.at(t.b() + 1);
                         }
                         self.reference(src, t);
                     }
@@ -2205,7 +2558,7 @@ impl<'d> Walk<'d> {
     unsafe fn reference(&mut self, src: Src, t: Tok) {
         unsafe {
             let c = self.ctxt;
-            let name = &self.buf(src)[t.a..t.b];
+            let name = &self.buf(src)[t.a()..t.b()];
             let ent = self.lookup(name);
             if ent.is_null() {
                 if (*c).replaceEntities == 0 {
@@ -2421,13 +2774,63 @@ impl<'d> Walk<'d> {
     /// SAX1): its SAX call. Returns what its end tag needs and the index of
     /// the token after its attributes; `None` if the depth limit stopped
     /// the parse.
+    /// A start tag in the common case: SAX2, no attributes, no prefix, no
+    /// defaults for the element, not too deep. None, having done nothing,
+    /// for any other.
+    #[inline(always)]
+    unsafe fn start_tag_plain(&mut self, src: Src, t: Tok) -> Option<Open> {
+        unsafe {
+            let c = self.ctxt;
+            let buf = self.buf(src);
+            let (a, b) = (t.a(), t.b());
+            let qn = buf.get_unchecked(a..b);
+            // A tag with attributes has its first attribute's name after
+            // white space; one without has `>` or `/>` right after its name
+            // or after white space.
+            let tag_end = match buf.get(b) {
+                Some(b'>') | Some(b'/') => b,
+                _ => return None,
+            };
+            let s = st(c);
+            if (*c).sax2 == 0
+                || s.ns_counts.len() > if (*c).options & PARSE_HUGE != 0 { 2048 } else { 256 }
+                || super::scan::colon(qn).is_some()
+                || (!self.dtd.defaults.is_empty() && self.dtd.defaults.contains_key(qn))
+            {
+                return None;
+            }
+            let sp = *s.spaces.last().unwrap_or(&-1);
+            s.spaces.push(if sp == -2 { -1 } else { sp });
+            let local = self.intern(qn);
+            if src == Src::Doc {
+                self.at(tag_end);
+            }
+            let s = st(c);
+            s.ns_counts.push(0);
+            let mut uri = null();
+            for k in (s.min_ns..s.ns.len()).rev() {
+                if s.ns[k].prefix.is_null() {
+                    if !s.ns[k].uri.is_null() && *s.ns[k].uri != 0 {
+                        uri = s.ns[k].uri;
+                    }
+                    break;
+                }
+            }
+            if let Some(f) = handler(c).and_then(|h| h.startElementNs) {
+                f((*c).userData, local, null(), uri, 0, null_mut(), 0, 0, null_mut());
+            }
+            Some(Open { local, prefix: null(), uri, name: null(), nb_ns: 0 })
+        }
+    }
+
+    #[inline(never)]
     unsafe fn start_tag(&mut self, src: Src, i: usize) -> (Option<Open>, usize) {
         unsafe {
             let c = self.ctxt;
             let toks = self.toks(src);
             let buf = self.buf(src);
             let t = toks[i];
-            let qn = &buf[t.a..t.b];
+            let qn = &buf[t.a()..t.b()];
             let max = if (*c).options & PARSE_HUGE != 0 { 2048 } else { 256 };
             let depth = st(c).ns_counts.len();
             if depth > max {
@@ -2435,46 +2838,84 @@ impl<'d> Walk<'d> {
                 ctx_err(c, null_mut(), FROM_PARSER, ERR_RESOURCE_LIMIT, ERR_FATAL, None, None, None, depth as c_int, msg.as_bytes());
                 return (None, i + 1);
             }
+            // The common case: SAX2, no attributes, no defaults for the
+            // element, no prefix.
+            if (*c).sax2 != 0
+                && toks.get(i + 1).is_none_or(|n| n.kind != Kind::Attr)
+                && !super::scan::colon(qn).is_some()
+                && (self.dtd.defaults.is_empty() || !self.dtd.defaults.contains_key(qn))
+            {
+                let tag_end = buf[t.b()..].iter().position(|&ch| ch == b'>' || ch == b'/').map_or(t.b(), |e| t.b() + e);
+                let s = st(c);
+                let sp = *s.spaces.last().unwrap_or(&-1);
+                s.spaces.push(if sp == -2 { -1 } else { sp });
+                let local = self.intern(qn);
+                if src == Src::Doc {
+                    self.at(tag_end);
+                }
+                let s = st(c);
+                s.ns_counts.push(0);
+                let mut uri = null();
+                for k in (s.min_ns..s.ns.len()).rev() {
+                    if s.ns[k].prefix.is_null() {
+                        if !s.ns[k].uri.is_null() && *s.ns[k].uri != 0 {
+                            uri = s.ns[k].uri;
+                        }
+                        break;
+                    }
+                }
+                if let Some(f) = handler(c).and_then(|h| h.startElementNs) {
+                    f((*c).userData, local, null(), uri, 0, null_mut(), 0, 0, null_mut());
+                }
+                return (Some(Open { local, prefix: null(), uri, name: null(), nb_ns: 0 }), i + 1);
+            }
             // The attributes' tokens, and where the tag ends.
             let mut j = i + 1;
-            let mut atts: Vec<(Tok, Tok)> = Vec::new();
+            let mut sc = self.scratch.take().unwrap_or_default();
+            sc.atts.clear();
+            let atts = &mut sc.atts;
             while j + 1 < toks.len() && toks[j].kind == Kind::Attr {
                 atts.push((toks[j], toks[j + 1]));
                 j += 2;
             }
             let tag_end = {
-                let from = atts.last().map_or(t.b, |(_, v)| v.b + 1);
+                let from = atts.last().map_or(t.b(), |(_, v)| v.b() + 1);
                 buf[from..].iter().position(|&ch| ch == b'>' || ch == b'/').map_or(from, |e| from + e)
             };
             let sp = *st(c).spaces.last().unwrap_or(&-1);
             st(c).spaces.push(if sp == -2 { -1 } else { sp });
             if (*c).sax2 == 0 {
-                return (self.start_tag_sax1(src, qn, &atts, tag_end), j);
+                let r = self.start_tag_sax1(src, qn, atts, tag_end);
+                self.scratch = Some(sc);
+                return (r, j);
             }
             let (prefix_b, local_b) = qname(qn);
-            if prefix_b.is_none() && qn.contains(&b':') {
+            if prefix_b.is_none() && super::scan::colon(qn).is_some() {
                 if src == Src::Doc {
-                    self.at(t.b);
+                    self.at(t.b());
                 }
                 let msg = cat(&[b"Failed to parse QName '", qn, b"'\n"]);
                 ns_err(c, NS_ERR_QNAME, &msg, Some(qn), None, None);
             }
-            let local = dict(c, local_b);
-            let prefix = prefix_b.map_or(null(), |p| dict(c, p));
-            let elem_types = !self.dtd.types.is_empty();
+            let local = self.intern(local_b);
+            let prefix = prefix_b.map_or(null(), |p| self.intern(p));
+            // The element's attribute types (the DTD is not changed while
+            // content is walked).
+            let types: *const FastMap<Vec<u8>, c_int> = self.dtd.types.get(qn).map_or(null(), |m| m as *const _);
             let mut mine = 0usize;
             let mut nb_ns = 0usize;
             // name, prefix, value; the value either in the input or made.
-            let mut regular: Vec<(&[u8], Option<&[u8]>, Val)> = Vec::new();
+            let regular = &mut sc.regular;
+            regular.clear();
             if src == Src::Doc {
                 self.at(tag_end);
             }
-            for (n, v) in &atts {
-                let aq = &buf[n.a..n.b];
+            for (n, v) in sc.atts.iter() {
+                let aq = &buf[n.a()..n.b()];
                 let (ap, al) = qname(aq);
-                if ap.is_none() && aq.contains(&b':') {
+                if ap.is_none() && super::scan::colon(aq).is_some() {
                     if src == Src::Doc {
-                        self.at(n.b);
+                        self.at(n.b());
                     }
                     let msg = cat(&[b"Failed to parse QName '", aq, b"'\n"]);
                     ns_err(c, NS_ERR_QNAME, &msg, Some(aq), None, None);
@@ -2482,9 +2923,9 @@ impl<'d> Walk<'d> {
                         self.at(tag_end);
                     }
                 }
-                let raw = &buf[v.a..v.b];
+                let raw = &buf[v.a()..v.b()];
                 let is_ns = (ap.is_none() && al == b"xmlns") || ap == Some(b"xmlns");
-                let normalize = elem_types && self.dtd.types.get(&(qn.to_vec(), aq.to_vec())).is_some_and(|&ty| ty > ATTRIBUTE_CDATA);
+                let normalize = !types.is_null() && (*types).get(aq).is_some_and(|&ty| ty > ATTRIBUTE_CDATA);
                 let val = self.att_value(raw, normalize, is_ns);
                 let vb: &[u8] = match &val {
                     Val::In(s) => s,
@@ -2567,13 +3008,12 @@ impl<'d> Walk<'d> {
                 }
             }
             // Namespaces from defaulted attributes.
-            let defaults: Vec<(Vec<u8>, Vec<u8>)> = self
-                .dtd
-                .defaults
-                .get(qn)
-                .map(|l| l.iter().map(|d| (d.name.clone(), d.value.clone())).collect())
-                .unwrap_or_default();
-            for (dn, dv) in &defaults {
+            let defaults: &[DefAttr] = match self.dtd.defaults.get(qn) {
+                // Not changed while content is walked.
+                Some(l) => &*(l.as_slice() as *const [DefAttr]),
+                None => &[],
+            };
+            for DefAttr { name: dn, value: dv } in defaults {
                 let (dp, dl) = qname(dn);
                 if dp.is_none() && dl == b"xmlns" {
                     if self.ns_push(null(), dict(c, dv), true, mine) {
@@ -2589,11 +3029,18 @@ impl<'d> Walk<'d> {
             // Resolve the attributes' namespaces, then check that their
             // names are unique.
             let s = st(c);
-            let mut out: Vec<[*const XChar; 5]> = Vec::with_capacity(regular.len() + defaults.len());
-            let mut keys: Vec<(Option<*const XChar>, &[u8], Option<&[u8]>)> = Vec::new();
+            let out = &mut sc.out;
+            out.clear();
+            let keys = &mut sc.keys;
+            keys.clear();
             let mut dup_err = 0;
             let mut ns_errs = 0;
-            let mut owned: Vec<Vec<u8>> = Vec::new();
+            let owned = &mut sc.owned;
+            owned.clear();
+            // The verified parser has checked that no two attributes have
+            // the same name, so only prefixed ones can clash (by URI), and
+            // unprefixed ones matter only against defaults.
+            let keep_all = !defaults.is_empty();
             for (al, ap, val) in regular.iter() {
                 let uri: Option<*const XChar> = match ap {
                     None => None,
@@ -2608,7 +3055,7 @@ impl<'d> Walk<'d> {
                     },
                 };
                 let ukey = uri.map(|u| u as usize);
-                if ap.is_none() || uri.is_some() {
+                if (ap.is_none() && keep_all) || uri.is_some() {
                     if let Some((_, _, prev_p)) = keys.iter().find(|(u, n, _)| u.map(|x| x as usize) == ukey && *n == *al) {
                         if *prev_p == *ap {
                             let msg = match ap {
@@ -2639,7 +3086,7 @@ impl<'d> Walk<'d> {
                         (z.as_ptr(), z.as_ptr().add(z.len() - 1))
                     }
                 };
-                out.push([dict(c, al), ap.map_or(null(), |p| dict(c, p)), uri.unwrap_or(null()), v, ve]);
+                out.extend_from_slice(&[self.intern(al), ap.map_or(null(), |p| self.intern(p)), uri.unwrap_or(null()), v, ve]);
             }
             if dup_err == 0 && ns_errs > 1 {
                 let mut seen: Vec<(&[u8], &[u8])> = Vec::new();
@@ -2656,7 +3103,7 @@ impl<'d> Walk<'d> {
             }
             // Defaulted attributes.
             let mut nb_def = 0;
-            for (dn, dv) in &defaults {
+            for DefAttr { name: dn, value: dv } in defaults {
                 let (dp, dl) = qname(dn);
                 if (dp.is_none() && dl == b"xmlns") || dp == Some(b"xmlns") {
                     continue;
@@ -2686,7 +3133,7 @@ impl<'d> Walk<'d> {
                 let z = nul(dv);
                 owned.push(z);
                 let z = owned.last().unwrap();
-                out.push([dict(c, dl), dp.map_or(null(), |p| dict(c, p)), uri.unwrap_or(null()), z.as_ptr(), z.as_ptr().add(z.len() - 1)]);
+                out.extend_from_slice(&[dict(c, dl), dp.map_or(null(), |p| dict(c, p)), uri.unwrap_or(null()), z.as_ptr(), z.as_ptr().add(z.len() - 1)]);
                 nb_def += 1;
             }
             let s = st(c);
@@ -2712,12 +3159,13 @@ impl<'d> Walk<'d> {
             }
             if let Some(f) = handler(c).and_then(|h| h.startElementNs) {
                 let s = st(c);
-                let mut nss: Vec<*const XChar> = Vec::with_capacity(2 * nb_ns);
+                let nss = &mut sc.nss;
+                nss.clear();
                 for b in &s.ns[s.ns.len() - nb_ns..] {
                     nss.push(b.prefix);
                     nss.push(b.uri);
                 }
-                let mut flat: Vec<*const XChar> = out.iter().flatten().copied().collect();
+                let nb_att = out.len() / 5;
                 f(
                     (*c).userData,
                     local,
@@ -2725,12 +3173,12 @@ impl<'d> Walk<'d> {
                     uri,
                     nb_ns as c_int,
                     if nb_ns > 0 { nss.as_mut_ptr() } else { null_mut() },
-                    out.len() as c_int,
+                    nb_att as c_int,
                     nb_def,
-                    if flat.is_empty() { null_mut() } else { flat.as_mut_ptr() },
+                    if out.is_empty() { null_mut() } else { out.as_mut_ptr() },
                 );
             }
-            drop(owned);
+            self.scratch = Some(sc);
             (Some(Open { local, prefix, uri, name: null(), nb_ns: mine }), j)
         }
     }
@@ -2742,12 +3190,12 @@ impl<'d> Walk<'d> {
             if src == Src::Doc {
                 self.at(tag_end);
             }
-            let name = dict(c, qn);
+            let name = self.intern(qn);
             let mut vals: Vec<Vec<u8>> = Vec::new();
             let mut names: Vec<&[u8]> = Vec::new();
             for (n, v) in atts {
-                let an = &buf[n.a..n.b];
-                let raw = &buf[v.a..v.b];
+                let an = &buf[n.a()..n.b()];
+                let raw = &buf[v.a()..v.b()];
                 let val = match self.att_value(raw, false, false) {
                     Val::In(s) => nul(s),
                     Val::Made(m) => nul(&m),
@@ -2776,7 +3224,7 @@ impl<'d> Walk<'d> {
             if let Some(f) = handler(c).and_then(|h| h.startElement) {
                 let mut arr: Vec<*const XChar> = Vec::new();
                 for (n, v) in names.iter().zip(&vals) {
-                    arr.push(dict(c, n));
+                    arr.push(self.intern(n));
                     arr.push(v.as_ptr());
                 }
                 if arr.is_empty() {
@@ -3398,6 +3846,10 @@ pub unsafe extern "C" fn xmlCtxtGetStatus(ctxt: *mut ParserCtxt) -> c_int {
         if ctxt.is_null() {
             return 1 << 3;
         }
+        // As xmlCtxtGetStatus.
+        if catastrophic(&(*ctxt).lastError) {
+            return 8 | 1 | 2 | if (*ctxt).validate != 0 { 4 } else { 0 };
+        }
         let mut r = 0;
         if (*ctxt).wellFormed == 0 {
             r |= 1;
@@ -3405,11 +3857,8 @@ pub unsafe extern "C" fn xmlCtxtGetStatus(ctxt: *mut ParserCtxt) -> c_int {
         if (*ctxt).nsWellFormed == 0 {
             r |= 2;
         }
-        if (*ctxt).valid == 0 {
+        if (*ctxt).validate != 0 && (*ctxt).valid == 0 {
             r |= 4;
-        }
-        if catastrophic(&(*ctxt).lastError) {
-            r |= 8;
         }
         r
     }
@@ -3651,7 +4100,7 @@ unsafe fn parse_document(ctxt: *mut ParserCtxt) -> c_int {
                 let toks = doc.toks(Src::Doc);
                 let root = w.prolog();
                 if root < toks.len() && toks[root].kind == Kind::STag {
-                    let close = toks[root].c;
+                    let close = toks[root].c();
                     w.content(Src::Doc, root, close + 1);
                     let mut i = close + 1;
                     while i < toks.len() {
@@ -3881,30 +4330,6 @@ fn open_elements(text: &[u8], off: usize) -> Vec<(Vec<u8>, usize)> {
 }
 
 /// The line and column of `off` (columns in characters, from 1).
-/// Bytes of `b` equal to `\n`, eight at a time.
-fn count_newlines(b: &[u8]) -> usize {
-    count_where(b, |w| {
-        let x = w ^ 0x0A0A_0A0A_0A0A_0A0A;
-        // High bit of each byte set where x's byte is zero.
-        !(((x & 0x7F7F_7F7F_7F7F_7F7F).wrapping_add(0x7F7F_7F7F_7F7F_7F7F)) | x | 0x7F7F_7F7F_7F7F_7F7F)
-    }, |c| c == b'\n')
-}
-
-/// UTF-8 continuation bytes (`10xxxxxx`) in `b`, eight at a time.
-fn count_continuations(b: &[u8]) -> usize {
-    count_where(b, |w| w & !(w << 1) & 0x8080_8080_8080_8080, |c| c & 0xC0 == 0x80)
-}
-
-#[inline]
-fn count_where(b: &[u8], mask: impl Fn(u64) -> u64, one: impl Fn(u8) -> bool) -> usize {
-    let mut c = b.chunks_exact(8);
-    let mut n = 0usize;
-    for w in &mut c {
-        n += (mask(u64::from_le_bytes(w.try_into().unwrap())) & 0x8080_8080_8080_8080).count_ones() as usize;
-    }
-    n + c.remainder().iter().filter(|&&x| one(x)).count()
-}
-
 fn line_col(text: &[u8], off: usize) -> (c_int, c_int) {
     let mut line = 1;
     let mut col = 1;
@@ -4546,7 +4971,7 @@ unsafe fn parse_content(ctxt: *mut ParserCtxt, data: &[u8], node: *mut Node) -> 
         let mut w = Walk::new(c, &d);
         let toks = d.toks(Src::Doc);
         let Some(root) = toks.iter().position(|t| t.kind == Kind::STag) else { return null_mut() };
-        let close = toks[root].c;
+        let close = toks[root].c();
         // The namespaces in scope at the node.
         let mut cur = node;
         let mut pushed = 0;
@@ -4734,5 +5159,15 @@ pub unsafe extern "C" fn xmlParseBalancedChunkMemoryRecover(
             xmlFreeDoc(d);
         }
         if ret == 0 { 0 } else { -1 }
+    }
+}
+
+#[cfg(test)]
+mod eol_tests {
+    #[test]
+    fn eol_z_normalizes() {
+        for (a, b) in [(&b""[..], &b"\0"[..]), (b"a\r\nb", b"a\nb\0"), (b"\r\r\n\r", b"\n\n\n\0"), (b"x\ny\r", b"x\ny\n\0")] {
+            assert_eq!(super::eol_z(a), b);
+        }
     }
 }

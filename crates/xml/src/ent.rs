@@ -64,6 +64,7 @@ pub proof fn lemma_charref_len(s: Seq<u8>, a: int)
 pub fn ex_repl(s: &[u8], a: usize, b: usize) -> (r: Vec<u8>)
     requires
         a <= b <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
     ensures
         r@ == repl(s@, a as int, b as int),
         r@.len() <= b - a,
@@ -76,6 +77,7 @@ pub fn ex_repl(s: &[u8], a: usize, b: usize) -> (r: Vec<u8>)
     while i < b
         invariant
             a <= i <= b <= s@.len() <= isize::MAX,
+            s@.len() <= MAX_POS,
             out@ + repl(s@, i as int, b as int) == repl(s@, a as int, b as int),
             out@.len() <= i - a,
         decreases b - i,
@@ -137,6 +139,7 @@ pub fn ex_repl(s: &[u8], a: usize, b: usize) -> (r: Vec<u8>)
 pub fn ex_att_text(r: &[u8], env: &XEnv) -> (ok: bool)
     requires
         r@.len() <= isize::MAX,
+        r@.len() <= MAX_POS,
         env_wf(env),
     ensures
         ok == att_text(r@, 0, env_view(env)),
@@ -150,6 +153,7 @@ pub fn ex_att_text(r: &[u8], env: &XEnv) -> (ok: bool)
         invariant
             i <= n,
             n == r@.len() <= isize::MAX,
+            r@.len() <= MAX_POS,
             env_wf(env),
             lim_view(env, env.ents@.len() as int) == env_view(env),
             att_text(r@, i as int, env_view(env)) == att_text(r@, 0, env_view(env)),
@@ -192,6 +196,7 @@ pub open spec fn rts_ok(doc: Seq<u8>, ents: Seq<XEnt>, rts: Seq<Vec<u8>>) -> boo
 pub fn ex_rts(doc: &[u8], ents: &[XEnt]) -> (r: Vec<Vec<u8>>)
     requires
         doc@.len() <= isize::MAX,
+        doc@.len() <= MAX_POS,
         ents_wf(doc@, ents@),
     ensures
         rts_ok(doc@, ents@, r@),
@@ -202,6 +207,7 @@ pub fn ex_rts(doc: &[u8], ents: &[XEnt]) -> (r: Vec<Vec<u8>>)
         invariant
             k <= ents@.len(),
             doc@.len() <= isize::MAX,
+            doc@.len() <= MAX_POS,
             ents_wf(doc@, ents@),
             out@.len() == k,
             forall|q: int|
@@ -667,6 +673,7 @@ pub proof fn lemma_okc_settled(s: Seq<u8>, ents: Seq<Ent>, wfc: bool, oka: Seq<b
 fn ex_ref_int(r: &[u8], i: usize, env: &XEnv) -> (o: Option<usize>)
     requires
         i < r@.len() <= isize::MAX,
+        r@.len() <= MAX_POS,
         env_wf(env),
     ensures
         match ref_int(r@, i as int, env_view(env).ents) {
@@ -715,6 +722,7 @@ proof fn lemma_ix_push(v: Seq<usize>, x: usize)
 fn ex_att_scan(r: &[u8], env: &XEnv) -> (res: (bool, Vec<usize>))
     requires
         r@.len() <= isize::MAX,
+        r@.len() <= MAX_POS,
         env_wf(env),
         env.oka@ == all_ok(env.ents@.len() as int),
         env.okc@ == Seq::<bool>::empty(),
@@ -738,6 +746,7 @@ fn ex_att_scan(r: &[u8], env: &XEnv) -> (res: (bool, Vec<usize>))
         invariant
             i <= n,
             n == r@.len() <= isize::MAX,
+            r@.len() <= MAX_POS,
             env_wf(env),
             es == env_view(env).ents,
             env_view(env) == aenv(es, env.wfc, all_ok(es.len() as int)),
@@ -803,6 +812,7 @@ fn ex_att_scan(r: &[u8], env: &XEnv) -> (res: (bool, Vec<usize>))
 fn ex_content_scan(r: &[u8], tape: &mut Tape, env: &XEnv) -> (res: (bool, Vec<usize>))
     requires
         r@.len() <= isize::MAX,
+        r@.len() <= MAX_POS,
         env_wf(env),
         env.okc@ == all_ok(env.ents@.len() as int),
     ensures
@@ -829,6 +839,7 @@ fn ex_content_scan(r: &[u8], tape: &mut Tape, env: &XEnv) -> (res: (bool, Vec<us
         invariant
             j <= n,
             n == r@.len() <= isize::MAX,
+            r@.len() <= MAX_POS,
             tape@.len() <= j,
             env_wf(env),
             es == env_view(env).ents,
@@ -903,6 +914,7 @@ pub fn ex_ent_flags(doc: &[u8], ents: &[XEnt], wfc: bool, rts: &Vec<Vec<u8>>, id
 ))
     requires
         doc@.len() <= isize::MAX,
+        doc@.len() <= MAX_POS,
         ents_wf(doc@, ents@),
         rts_ok(doc@, ents@, rts@),
         crate::index::indexes(idx, doc@, ents@),
@@ -937,6 +949,7 @@ pub fn ex_ent_flags(doc: &[u8], ents: &[XEnt], wfc: bool, rts: &Vec<Vec<u8>>, id
                 n == ents@.len() == es.len(),
                 es == ents_view(doc@, ents@),
                 doc@.len() <= isize::MAX,
+                doc@.len() <= MAX_POS,
                 env_wf(&env),
                 env.doc@ == doc@ && env.ents@ == ents@ && env.wfc == wfc,
                 env.oka@ == all_ok(n as int) && env.okc@ == Seq::<bool>::empty(),
@@ -999,6 +1012,7 @@ pub fn ex_ent_flags(doc: &[u8], ents: &[XEnt], wfc: bool, rts: &Vec<Vec<u8>>, id
                 n == ents@.len() == es.len(),
                 es == ents_view(doc@, ents@),
                 doc@.len() <= isize::MAX,
+                doc@.len() <= MAX_POS,
                 env_wf(&env),
                 env.doc@ == doc@ && env.ents@ == ents@ && env.wfc == wfc,
                 env.okc@ == all_ok(n as int),
