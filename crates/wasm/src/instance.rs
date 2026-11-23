@@ -145,10 +145,11 @@ impl Checked {
     }
 
     /// Runs function `func` (an index among all the module's functions)
-    /// on `args`, with `*fuel` units of fuel (see [`execute`]), and leaves
-    /// the fuel that remains in `*fuel`. A wrong number of arguments traps
-    /// with `Unreachable`.
-    pub fn invoke<H: Host>(self, func: u32, args: &[u64], host: &mut H, fuel: &mut u64)
+    /// on `args`. If `metered`, the call has `*fuel` units of fuel (see
+    /// [`execute_metered`]) and leaves the fuel that remains in `*fuel`;
+    /// otherwise it is unlimited ([`execute`]) and `*fuel` is unchanged. A
+    /// wrong number of arguments traps with `Unreachable`.
+    pub fn invoke<H: Host>(self, func: u32, args: &[u64], host: &mut H, metered: bool, fuel: &mut u64)
         -> (r: (Checked, Result<Vec<u64>, Trap>))
     {
         proof { use_type_invariant(&self); }
@@ -212,8 +213,15 @@ impl Checked {
             assert(c0.frames.last() == f);
             assert(inv(&m, cs@, c0));
         }
-        let (r, _, _, left) = execute(&m, &codes, Ghost(cs@), &mut st, &mut stack, &mut calls, host, d, Ghost(c0), *fuel);
-        *fuel = left;
+        let r = if metered {
+            let (r, _, _, left) = execute_metered(&m, &codes, Ghost(cs@), &mut st, &mut stack, &mut calls, host, d,
+                Ghost(c0), *fuel);
+            *fuel = left;
+            r
+        } else {
+            let (r, _, _) = execute(&m, &codes, Ghost(cs@), &mut st, &mut stack, &mut calls, host, d, Ghost(c0));
+            r
+        };
         (Checked { m, cs, codes, st, stack, calls }, r)
     }
 }

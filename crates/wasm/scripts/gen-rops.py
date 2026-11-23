@@ -460,7 +460,15 @@ pub fn s_branch<'a>({GP}    rpc: usize, stack: &Vec<u64>, fp: usize, st: &Store,
 A('            ' + ' | '.join(f'OpCode::{c}' for c in HAND_BR + BR) + ' => { ' + CHARGE
   + f'let (rpc2, cur2, g2) = s_branch({G}, rpc, stack, fp, st, code, r, rops, cur, acc); rpc = rpc2; cur = cur2; proof {{ g = g2@; }} }},')
 open('src/rsteps.rs','w').write(SH + '\n'.join(S) + '\n} // verus!\n')
+# `execute` (unmetered) gets every code its own arm and returns no fuel;
+# `execute_metered` gets the arms above.
+U = [x.replace(', n2, fl) }', ', n2) }') for x in a[:-1]]
+U += [f'            OpCode::{c} => {{ let (rpc2, cur2, g2) = s_{c}({G}, rpc, stack, fp, st, r, rops, cur, acc); rpc = rpc2; cur = cur2; proof {{ g = g2@; }} }},' for c in BR]
+def splice(src, tag, arms):
+    b = src.index(f'            // BEGIN {tag}\n') + len(f'            // BEGIN {tag}\n')
+    e = src.index(f'            // END {tag}\n')
+    return src[:b] + '\n'.join(arms) + '\n' + src[e:]
 src = open('src/run.rs').read()
-b = src.index('            // BEGIN GENERATED ARMS\n') + len('            // BEGIN GENERATED ARMS\n')
-e = src.index('            // END GENERATED ARMS\n')
-open('src/run.rs','w').write(src[:b] + '\n'.join(a) + '\n' + src[e:])
+src = splice(src, 'GENERATED ARMS', U)
+src = splice(src, 'GENERATED METERED ARMS', a)
+open('src/run.rs','w').write(src)

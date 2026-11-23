@@ -351,8 +351,8 @@ impl Instance {
         }
         let slots: Vec<u64> = args.iter().map(|a| a.to_slot()).collect();
         let inner = self.inner.take().ok_or(Error::Call("instance poisoned by an earlier panic".into()))?;
-        let mut fuel = self.fuel.unwrap_or(u64::MAX);
-        let (inner, r) = inner.invoke(func, &slots, &mut self.host, &mut fuel);
+        let mut fuel = self.fuel.unwrap_or(0);
+        let (inner, r) = inner.invoke(func, &slots, &mut self.host, self.fuel.is_some(), &mut fuel);
         self.inner = Some(inner);
         if self.fuel.is_some() {
             self.fuel = Some(fuel);
