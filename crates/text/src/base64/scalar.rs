@@ -8,6 +8,12 @@ use vstd::prelude::*;
 
 verus! {
 
+/// The length of the encoding of `n` bytes.
+///
+/// ```text
+/// requires n <= usize::MAX / 2
+/// ensures  r == encoded_len(n as nat, pad)
+/// ```
 pub fn enc_len(n: usize, pad: bool) -> (r: usize)
     requires
         n <= usize::MAX / 2,
@@ -41,6 +47,11 @@ fn enc_tab(url: bool) -> (r: &'static [u8; 64])
     }
 }
 
+/// The decoding table of the alphabet: each byte's 6-bit value, or 255 for a byte outside it.
+///
+/// ```text
+/// ensures  forall|c: u8| #[trigger] r@[c as int] == dec_entry(url, c)
+/// ```
 #[inline(always)]
 pub fn dec_tab(url: bool) -> (r: &'static [u8; 256])
     ensures
@@ -203,6 +214,11 @@ pub fn pad_count_exec(s: &[u8]) -> (r: usize)
     }
 }
 
+/// The number of characters of `s` before its padding.
+///
+/// ```text
+/// ensures  r == body_len(cfg, s@)
+/// ```
 pub fn body_len_exec(cfg: Config, s: &[u8]) -> (r: usize)
     ensures
         r == body_len(cfg, s@),
@@ -214,6 +230,12 @@ pub fn body_len_exec(cfg: Config, s: &[u8]) -> (r: usize)
     }
 }
 
+/// The number of bytes `m` data characters decode to.
+///
+/// ```text
+/// ensures  r == decoded_len(m as nat)
+///          r <= m
+/// ```
 pub fn dec_len(m: usize) -> (r: usize)
     ensures
         r == decoded_len(m as nat),

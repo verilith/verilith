@@ -133,6 +133,7 @@ pub proof fn lemma_encode_decode(s: Seq<u8>)
 /// encode `b`.
 pub const DIGITS_LO: [u8; 16] = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 100, 101, 102];
 
+/// Uppercase digits: `DIGITS_UP[v]` encodes the nibble `v`.
 pub const DIGITS_UP: [u8; 16] = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 65, 66, 67, 68, 69, 70];
 
 /// `dval(c)`, with 255 for `None`.

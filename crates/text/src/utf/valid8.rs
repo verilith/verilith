@@ -35,16 +35,19 @@ broadcast use {verilith_simd::lanes::group_lanes, verilith_simd::cpu::group_cpu,
 // have its bit. Bit 7 is the pair "continuation, continuation", which is an
 // error unless a lead byte two or three back asks for it, and an error to
 // miss if one does.
+/// The first table, indexed by the high nibble of the previous byte.
 pub const T1X: [u8; 32] = [
     2, 2, 2, 2, 2, 2, 2, 2, 0x80, 0x80, 0x80, 0x80, 0x21, 0x01, 0x15, 0x49,
     2, 2, 2, 2, 2, 2, 2, 2, 0x80, 0x80, 0x80, 0x80, 0x21, 0x01, 0x15, 0x49,
 ];
 
+/// The second table, indexed by the low nibble of the previous byte.
 pub const T2X: [u8; 32] = [
     0xE7, 0xA3, 0x83, 0x83, 0x8B, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xDB, 0xCB, 0xCB,
     0xE7, 0xA3, 0x83, 0x83, 0x8B, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xDB, 0xCB, 0xCB,
 ];
 
+/// The third table, indexed by the high nibble of the current byte.
 pub const T3X: [u8; 32] = [
     1, 1, 1, 1, 1, 1, 1, 1, 0xE6, 0xAE, 0xBA, 0xBA, 1, 1, 1, 1,
     1, 1, 1, 1, 1, 1, 1, 1, 0xE6, 0xAE, 0xBA, 0xBA, 1, 1, 1, 1,
@@ -586,10 +589,13 @@ fn utf8_avx2(s: &[u8], st: usize) -> (r: bool)
 // NEON validator
 // ---------------------------------------------------------------------------
 
+/// `T1X` for one 128-bit NEON vector.
 pub const T1: [u8; 16] = [2, 2, 2, 2, 2, 2, 2, 2, 0x80, 0x80, 0x80, 0x80, 0x21, 0x01, 0x15, 0x49];
 
+/// `T2X` for one 128-bit NEON vector.
 pub const T2: [u8; 16] = [0xE7, 0xA3, 0x83, 0x83, 0x8B, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xDB, 0xCB, 0xCB];
 
+/// `T3X` for one 128-bit NEON vector.
 pub const T3: [u8; 16] = [1, 1, 1, 1, 1, 1, 1, 1, 0xE6, 0xAE, 0xBA, 0xBA, 1, 1, 1, 1];
 
 /// `ushr #4` gives the high nibble.

@@ -22,6 +22,12 @@ verus! {
 broadcast use {verilith_simd::cpu::group_cpu, verilith_simd::neon::group_neon};
 
 
+/// `b[i]`.
+///
+/// ```text
+/// requires i < b@.len()
+/// ensures  r == b@[i as int]
+/// ```
 #[inline(always)]
 pub fn get16(b: &[u16], i: usize) -> (r: u16)
     requires
@@ -33,6 +39,12 @@ pub fn get16(b: &[u16], i: usize) -> (r: u16)
     unsafe { *b.get_unchecked(i) }
 }
 
+/// Sets `b[i]` to `v`.
+///
+/// ```text
+/// requires i < old(b)@.len()
+/// ensures  final(b)@ == old(b)@.update(i as int, v)
+/// ```
 #[inline(always)]
 pub fn set16(b: &mut [u16], i: usize, v: u16)
     requires

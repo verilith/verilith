@@ -8,6 +8,7 @@
 pub mod data;
 pub mod punycode;
 pub mod spec;
+/// The UTS #46 data (generated; trusted, and checked by `tests/idna_data.rs`).
 pub mod tables;
 pub mod uts46;
 

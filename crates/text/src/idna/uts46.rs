@@ -1909,6 +1909,14 @@ pub open spec fn url_domain_to_ascii(cs: Seq<u32>, o: Options) -> Option<Seq<u8>
     }
 }
 
+/// The URL Standard's domain to ASCII (beStrict false) on the UTF-8 `s`.
+///
+/// ```text
+/// requires scalars(cs)
+///          s@ == enc(cs)
+/// ensures  r matches Some(b) ==> url_domain_to_ascii(cs, o) == Some(b@)
+///          r is None ==> url_domain_to_ascii(cs, o) is None
+/// ```
 pub fn url_domain_to_ascii_exec(s: &[u8], o: Options, Ghost(cs): Ghost<Seq<u32>>) -> (r: Option<Vec<u8>>)
     requires
         scalars(cs),
