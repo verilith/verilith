@@ -21,7 +21,6 @@ verus! {
 
 broadcast use {verilith_simd::cpu::group_cpu, verilith_simd::neon::group_neon};
 
-global size_of usize == 8;
 
 #[inline(always)]
 pub fn get16(b: &[u16], i: usize) -> (r: u16)
@@ -1270,8 +1269,9 @@ pub fn utf16_to_utf8(s: &[u16], out: &mut [u8]) -> (r: Option<usize>)
 // ---------------------------------------------------------------------------
 
 /// Inputs this long or longer are refused by the counters (their counts
-/// could overflow); no allocation can be that large.
-pub const MAX_LEN: usize = 0x2000_0000_0000_0000;
+/// could overflow): an eighth of the address space, 2^61 on 64-bit targets
+/// and 2^29 on 32-bit ones (wasm32).
+pub const MAX_LEN: usize = usize::MAX / 8 + 1;
 
 #[inline(always)]
 fn count_latin1_utf8_impl<const NEON: bool>(avx: bool, s: &[u8]) -> (r: usize)

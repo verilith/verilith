@@ -246,8 +246,15 @@ through a C++ shim. It expects ada and the dataset to be cloned under
 ```
 cargo build --profile release-fat          # rlib + staticlib exporting vurl_* symbols
 cargo build --profile release-fat --features ada-abi   # export ada_* symbols instead
-cargo verus focus              # verify (needs Verus at the commit pinned in ci.yml)
+cargo verus focus              # verify (needs the Verus release in scripts/verus-version)
+cargo build --release --target wasm32-unknown-unknown   # WebAssembly
 ```
+
+The proofs fix no pointer width, so they cover 32-bit targets too: the crate
+builds for `wasm32-unknown-unknown` (browsers, Cloudflare Workers). CI also
+runs Verus compiling for that target, so that the code a wasm32 build has
+(no x86 or Arm paths) is checked as compiled there, and runs the tests on
+`wasm32-wasip1` under wasmtime (`scripts/wasm32.sh` at the root).
 
 The C header is ada's `ada_c.h`. With `ada-abi`, linking `libverilith_url.a` in
 place of ada needs no source changes.

@@ -191,6 +191,9 @@ decoder delivers it (level with the one-shot path).
 
 ## Building
 
+64-bit targets only: the proofs fix `usize` at 64 bits, so a 32-bit build
+(wasm32 included) stops with a `compile_error!`.
+
 ```sh
 cargo build --release                       # the library
 cargo build --release --example vpngcat     # vpngcat FILE [rgba8|native]

@@ -258,6 +258,42 @@ jobs:
       - name: Tests
         run: crates/${{ matrix.crate }}/ci.sh
 
+  wasm32:
+    # WebAssembly: what builds for wasm32-unknown-unknown, what refuses to
+    # (the crates proven for 64-bit targets only), and the tests of text,
+    # url and regex on wasm32-wasip1 under wasmtime.
+    name: wasm32
+    needs: plan
+    if: needs.plan.outputs.test != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: bytecodealliance/actions/wasmtime/setup@v1
+        with:
+          version: "38.0.0"
+      - name: Build and test
+        run: scripts/wasm32.sh
+
+  verify-wasm32:
+    # Verus on the crates that support wasm32, compiled for it: the code a
+    # wasm32 build has (no x86 or Arm paths), at a 32-bit usize.
+    name: Verify ${{ matrix.crate }} (wasm32)
+    needs: [plan, verus]
+    if: needs.plan.outputs.proofs != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [text, url, regex]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/verus
+      - name: Verify
+        if: contains(fromJSON(needs.plan.outputs.verify), matrix.crate)
+        run: scripts/wasm32.sh verify ${{ matrix.crate }}
+
   fuzz:
     name: Fuzz ${{ matrix.crate }}
     needs: plan
@@ -277,7 +313,7 @@ jobs:
   done:
     name: CI
     if: always()
-    needs: [plan, verus, verify, crosscheck, verus-arm, verify-arm, test, test-arm]
+    needs: [plan, verus, verify, crosscheck, verus-arm, verify-arm, test, test-arm, wasm32, verify-wasm32]
     runs-on: ubuntu-latest
     steps:
       - name: Every job passed or was skipped

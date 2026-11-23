@@ -33,6 +33,9 @@ faster than parking_lot in every contended configuration measured but one
 
 ## Usage
 
+64-bit targets only: the proofs fix `usize` at 64 bits, so a 32-bit build
+(wasm32 included) stops with a `compile_error!`.
+
 ```rust
 // Instead of parking_lot::{Mutex, RwLock}:
 use verilith_sync::mutex::Mutex;
