@@ -16,194 +16,203 @@ use vstd::multiset::*;
 use vstd::prelude::*;
 use verus_state_machines_macros::tokenized_state_machine;
 
-tokenized_state_machine!(
-RwToks<T> {
-    fields {
-        #[sharding(constant)]
-        pub cell: CellId,
+// The state machine's generated items (its tokens, steps and lemmas) get
+// no docs from the macro.
+#[allow(missing_docs)]
+mod toks {
+    use super::*;
 
-        /// A writer holds the lock.
-        #[sharding(variable)]
-        pub exc: bool,
+    tokenized_state_machine!(
+    RwToks<T> {
+        fields {
+            #[sharding(constant)]
+            pub cell: CellId,
 
-        /// How many readers hold the lock.
-        #[sharding(variable)]
-        pub rc: nat,
+            /// A writer holds the lock.
+            #[sharding(variable)]
+            pub exc: bool,
 
-        /// The data, while no writer holds it.
-        #[sharding(storage_option)]
-        pub storage: Option<PointsTo<T>>,
+            /// How many readers hold the lock.
+            #[sharding(variable)]
+            pub rc: nat,
 
-        #[sharding(option)]
-        pub writer: Option<()>,
+            /// The data, while no writer holds it.
+            #[sharding(storage_option)]
+            pub storage: Option<PointsTo<T>>,
 
-        /// Each reader's view of the data.
-        #[sharding(multiset)]
-        pub reader: Multiset<PointsTo<T>>,
-    }
+            #[sharding(option)]
+            pub writer: Option<()>,
 
-    pub open spec fn ok(cell: CellId, p: PointsTo<T>) -> bool {
-        p.id() == cell && p.is_init()
-    }
-
-    init!{
-        initialize(cell: CellId, p: PointsTo<T>) {
-            require Self::ok(cell, p);
-            init cell = cell;
-            init exc = false;
-            init rc = 0;
-            init storage = Option::Some(p);
-            init writer = Option::None;
-            init reader = Multiset::empty();
+            /// Each reader's view of the data.
+            #[sharding(multiset)]
+            pub reader: Multiset<PointsTo<T>>,
         }
-    }
 
-    transition!{
-        acquire_read() {
-            require !pre.exc;
-            update rc = pre.rc + 1;
-            birds_eye let p = pre.storage->0;
-            add reader += {p};
-            assert Self::ok(pre.cell, p);
+        pub open spec fn ok(cell: CellId, p: PointsTo<T>) -> bool {
+            p.id() == cell && p.is_init()
         }
-    }
 
-    transition!{
-        acquire_write() {
-            require !pre.exc;
-            require pre.rc == 0;
-            update exc = true;
-            add writer += Some(());
-            birds_eye let p = pre.storage->0;
-            withdraw storage -= Some(p);
-            assert Self::ok(pre.cell, p);
-        }
-    }
-
-    transition!{
-        release_write(p: PointsTo<T>) {
-            require Self::ok(pre.cell, p);
-            remove writer -= Some(());
-            update exc = false;
-            deposit storage += Some(p);
-        }
-    }
-
-    transition!{
-        release_read(p: PointsTo<T>) {
-            remove reader -= {p};
-            assert pre.rc >= 1 by {
-                assert(pre.storage == Option::Some(p));
-            };
-            update rc = (pre.rc - 1) as nat;
-        }
-    }
-
-    transition!{
-        downgrade(p: PointsTo<T>) {
-            require Self::ok(pre.cell, p);
-            remove writer -= Some(());
-            update exc = false;
-            update rc = pre.rc + 1;
-            deposit storage += Some(p);
-            add reader += {p};
-        }
-    }
-
-    property!{
-        read_guard(p: PointsTo<T>) {
-            have reader >= {p};
-            guard storage >= Some(p);
-        }
-    }
-
-    property!{
-        reader_counted(p: PointsTo<T>) {
-            have reader >= {p};
-            assert pre.rc >= 1 by {
-                assert(pre.storage == Option::Some(p));
-            };
-        }
-    }
-
-    property!{
-        writer_alone() {
-            have writer >= Some(());
-            assert pre.rc == 0 && pre.exc;
-        }
-    }
-
-    #[invariant]
-    pub fn exc_is_writer(&self) -> bool {
-        self.exc == (self.writer is Some)
-    }
-
-    #[invariant]
-    pub fn writer_took_storage(&self) -> bool {
-        (self.writer is Some) == (self.storage is None)
-    }
-
-    #[invariant]
-    pub fn rc_counts_readers(&self) -> bool {
-        self.rc == self.reader.count(self.storage->0)
-    }
-
-    #[invariant]
-    pub fn readers_see_storage(&self) -> bool {
-        forall|p: PointsTo<T>| #[trigger] self.reader.count(p) > 0 ==> self.storage == Option::Some(p)
-    }
-
-    #[invariant]
-    pub fn storage_ok(&self) -> bool {
-        self.storage matches Option::Some(p) ==> Self::ok(self.cell, p)
-    }
-
-    #[inductive(initialize)]
-    fn initialize_inductive(post: Self, cell: CellId, p: PointsTo<T>) {
-        broadcast use group_multiset_axioms;
-    }
-
-    #[inductive(acquire_read)]
-    fn acquire_read_inductive(pre: Self, post: Self) {
-        broadcast use group_multiset_axioms;
-    }
-
-    #[inductive(acquire_write)]
-    fn acquire_write_inductive(pre: Self, post: Self) {
-        broadcast use group_multiset_axioms;
-        assert forall|p: PointsTo<T>| #[trigger] post.reader.count(p) == 0 by {
-            if post.reader.count(p) > 0 {
-                assert(pre.storage == Option::Some(p));
+        init!{
+            initialize(cell: CellId, p: PointsTo<T>) {
+                require Self::ok(cell, p);
+                init cell = cell;
+                init exc = false;
+                init rc = 0;
+                init storage = Option::Some(p);
+                init writer = Option::None;
+                init reader = Multiset::empty();
             }
         }
-    }
 
-    #[inductive(release_write)]
-    fn release_write_inductive(pre: Self, post: Self, p: PointsTo<T>) {
-        broadcast use group_multiset_axioms;
-        assert forall|q: PointsTo<T>| #[trigger] pre.reader.count(q) == 0 by {
-            if pre.reader.count(q) > 0 {
-                assert(pre.storage == Option::Some(q));
+        transition!{
+            acquire_read() {
+                require !pre.exc;
+                update rc = pre.rc + 1;
+                birds_eye let p = pre.storage->0;
+                add reader += {p};
+                assert Self::ok(pre.cell, p);
             }
         }
-    }
 
-    #[inductive(release_read)]
-    fn release_read_inductive(pre: Self, post: Self, p: PointsTo<T>) {
-        broadcast use group_multiset_axioms;
-        assert(pre.storage == Option::Some(p));
-    }
-
-    #[inductive(downgrade)]
-    fn downgrade_inductive(pre: Self, post: Self, p: PointsTo<T>) {
-        broadcast use group_multiset_axioms;
-        assert forall|q: PointsTo<T>| #[trigger] pre.reader.count(q) == 0 by {
-            if pre.reader.count(q) > 0 {
-                assert(pre.storage == Option::Some(q));
+        transition!{
+            acquire_write() {
+                require !pre.exc;
+                require pre.rc == 0;
+                update exc = true;
+                add writer += Some(());
+                birds_eye let p = pre.storage->0;
+                withdraw storage -= Some(p);
+                assert Self::ok(pre.cell, p);
             }
         }
-    }
-});
+
+        transition!{
+            release_write(p: PointsTo<T>) {
+                require Self::ok(pre.cell, p);
+                remove writer -= Some(());
+                update exc = false;
+                deposit storage += Some(p);
+            }
+        }
+
+        transition!{
+            release_read(p: PointsTo<T>) {
+                remove reader -= {p};
+                assert pre.rc >= 1 by {
+                    assert(pre.storage == Option::Some(p));
+                };
+                update rc = (pre.rc - 1) as nat;
+            }
+        }
+
+        transition!{
+            downgrade(p: PointsTo<T>) {
+                require Self::ok(pre.cell, p);
+                remove writer -= Some(());
+                update exc = false;
+                update rc = pre.rc + 1;
+                deposit storage += Some(p);
+                add reader += {p};
+            }
+        }
+
+        property!{
+            read_guard(p: PointsTo<T>) {
+                have reader >= {p};
+                guard storage >= Some(p);
+            }
+        }
+
+        property!{
+            reader_counted(p: PointsTo<T>) {
+                have reader >= {p};
+                assert pre.rc >= 1 by {
+                    assert(pre.storage == Option::Some(p));
+                };
+            }
+        }
+
+        property!{
+            writer_alone() {
+                have writer >= Some(());
+                assert pre.rc == 0 && pre.exc;
+            }
+        }
+
+        #[invariant]
+        pub fn exc_is_writer(&self) -> bool {
+            self.exc == (self.writer is Some)
+        }
+
+        #[invariant]
+        pub fn writer_took_storage(&self) -> bool {
+            (self.writer is Some) == (self.storage is None)
+        }
+
+        #[invariant]
+        pub fn rc_counts_readers(&self) -> bool {
+            self.rc == self.reader.count(self.storage->0)
+        }
+
+        #[invariant]
+        pub fn readers_see_storage(&self) -> bool {
+            forall|p: PointsTo<T>| #[trigger] self.reader.count(p) > 0 ==> self.storage == Option::Some(p)
+        }
+
+        #[invariant]
+        pub fn storage_ok(&self) -> bool {
+            self.storage matches Option::Some(p) ==> Self::ok(self.cell, p)
+        }
+
+        #[inductive(initialize)]
+        fn initialize_inductive(post: Self, cell: CellId, p: PointsTo<T>) {
+            broadcast use group_multiset_axioms;
+        }
+
+        #[inductive(acquire_read)]
+        fn acquire_read_inductive(pre: Self, post: Self) {
+            broadcast use group_multiset_axioms;
+        }
+
+        #[inductive(acquire_write)]
+        fn acquire_write_inductive(pre: Self, post: Self) {
+            broadcast use group_multiset_axioms;
+            assert forall|p: PointsTo<T>| #[trigger] post.reader.count(p) == 0 by {
+                if post.reader.count(p) > 0 {
+                    assert(pre.storage == Option::Some(p));
+                }
+            }
+        }
+
+        #[inductive(release_write)]
+        fn release_write_inductive(pre: Self, post: Self, p: PointsTo<T>) {
+            broadcast use group_multiset_axioms;
+            assert forall|q: PointsTo<T>| #[trigger] pre.reader.count(q) == 0 by {
+                if pre.reader.count(q) > 0 {
+                    assert(pre.storage == Option::Some(q));
+                }
+            }
+        }
+
+        #[inductive(release_read)]
+        fn release_read_inductive(pre: Self, post: Self, p: PointsTo<T>) {
+            broadcast use group_multiset_axioms;
+            assert(pre.storage == Option::Some(p));
+        }
+
+        #[inductive(downgrade)]
+        fn downgrade_inductive(pre: Self, post: Self, p: PointsTo<T>) {
+            broadcast use group_multiset_axioms;
+            assert forall|q: PointsTo<T>| #[trigger] pre.reader.count(q) == 0 by {
+                if pre.reader.count(q) > 0 {
+                    assert(pre.storage == Option::Some(q));
+                }
+            }
+        }
+    });
+}
+/// The ghost tokens of the lock: see the module docs.
+pub use toks::RwToks;
 
 verus! {
 
@@ -315,17 +324,25 @@ proof fn lemma_zero()
     assert(0u32 & 1 == 0 && 0u32 >> 3 == 0) by (bit_vector);
 }
 
+/// The lock's constants: the ids of its atomic and of its token instance.
 pub ghost struct RwConsts {
+    /// The id of the state atomic.
     pub state: int,
+    /// The id of the `RwToks` instance.
     pub inst: vstd::resource::Loc,
 }
 
+/// What the lock's invariant owns.
 pub tracked struct RwShared<T> {
+    /// The state atomic's permission.
     pub state: PermissionU32,
+    /// The token saying whether a writer holds the lock.
     pub exc: RwToks::exc<T>,
+    /// The token counting readers.
     pub rc: RwToks::rc<T>,
 }
 
+/// The lock's invariant (see its `inv`).
 pub struct RwPred;
 
 impl<T> InvariantPredicate<RwConsts, RwShared<T>> for RwPred {
@@ -338,6 +355,7 @@ impl<T> InvariantPredicate<RwConsts, RwShared<T>> for RwPred {
     }
 }
 
+/// A reader-writer lock, with parking_lot's `RwLock` API.
 pub struct RwLock<T> {
     state: PAtomicU32,
     data: PCell<T>,
@@ -389,6 +407,7 @@ impl<T> RwLock<T> {
         }
     }
 
+    /// A lock holding `value`, unlocked.
     pub fn new(value: T) -> (l: Self)
         ensures
             l.wf(),
@@ -883,6 +902,7 @@ impl<'a, T> RwLockReadGuard<'a, T> {
         self.lock
     }
 
+    /// The data, shared.
     pub fn get(&self) -> &T
         requires
             self.wf(),
@@ -913,6 +933,7 @@ impl<'a, T> RwLockWriteGuard<'a, T> {
         self.lock
     }
 
+    /// The data.
     pub fn get(&self) -> &T
         requires
             self.wf(),
@@ -920,6 +941,7 @@ impl<'a, T> RwLockWriteGuard<'a, T> {
         self.lock.data.borrow(Tracked(self.perm.borrow().tracked_borrow()))
     }
 
+    /// The data, mutably.
     pub fn get_mut(&mut self) -> &mut T
         requires
             old(self).wf(),
