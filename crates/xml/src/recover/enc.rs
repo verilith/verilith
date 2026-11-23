@@ -7,6 +7,7 @@ use super::tables::*;
 use super::*;
 use crate::lenient::{chunk_ascii, chunk_latin1, chunk_utf16, put, CHUNK_INPUT, CHUNK_OK, CHUNK_SPACE};
 use vstd::slice::slice_subrange;
+use crate::lenient::vec_of;
 use vstd::prelude::*;
 
 verus! {
@@ -21,6 +22,19 @@ pub enum Enc {
     Ascii,
     /// One of the 8-bit tables, by index into `EIGHT_BIT`.
     Table(u8),
+}
+
+/// `a == b`.
+pub fn enc_eq(a: Option<Enc>, b: Option<Enc>) -> (r: bool) {
+    match (a, b) {
+        (None, None) => true,
+        (Some(Enc::Utf16Le), Some(Enc::Utf16Le)) => true,
+        (Some(Enc::Utf16Be), Some(Enc::Utf16Be)) => true,
+        (Some(Enc::Latin1), Some(Enc::Latin1)) => true,
+        (Some(Enc::Ascii), Some(Enc::Ascii)) => true,
+        (Some(Enc::Table(x)), Some(Enc::Table(y))) => x == y,
+        _ => false,
+    }
 }
 
 /// `xmlParseCharEncodingInternal`: the `xmlCharEncoding` of a name, or -1.
@@ -266,65 +280,71 @@ pub fn init_buffer(i: &mut Input) {
 
 impl<S: Sink> Parser<S> {
     /// `xmlInputSetEncodingHandler` on the current input; the error code.
-    #[verifier::external_body]
-    pub fn set_encoding_handler(&mut self, h: Option<Enc>) -> i32 {
+    pub fn set_encoding_handler(&mut self, h: Option<Enc>) -> i32
+        requires
+            old(self).wf(),
+        ensures
+            final(self).moves(old(self)),
+    {
         let input = self.inp_mut();
-        input.flags |= INPUT_HAS_ENCODING;
-        let src = match input.src.as_mut() {
-            None => return ERR_ARGUMENT,
-            Some(s) => s,
-        };
-        if src.enc == h {
-            return ERR_OK;
-        }
-        if src.enc.is_some() {
-            src.enc = h;
-            return ERR_OK;
-        }
-        let h = match h {
-            None => return ERR_OK,
-            Some(h) => h,
-        };
-        // The buffer becomes the raw input, less what was read.
+        input.flags = input.flags | INPUT_HAS_ENCODING;
         let processed = input.cur;
-        let mut raw: Vec<u8> = Vec::new();
-        if processed < input.buf.len() {
-            raw.extend_from_slice(&input.buf[processed..]);
-        }
-        let delivered_extra = raw.len();
-        let rest_from = if src.pos < src.raw.len() { src.pos } else { src.raw.len() };
-        let undelivered_from = if src.delivered > rest_from { src.delivered } else { rest_from };
-        // Bytes read but not yet moved to the buffer, then the unread.
-        if rest_from < undelivered_from && undelivered_from <= src.raw.len() {
-            raw.extend_from_slice(&src.raw[rest_from..undelivered_from]);
-        }
-        let delivered = raw.len();
-        let _ = delivered_extra;
-        if undelivered_from < src.raw.len() {
-            raw.extend_from_slice(&src.raw[undelivered_from..]);
-        }
-        src.raw = raw;
-        src.pos = 0;
-        src.delivered = if src.mode == Mode::Memory { src.raw.len() } else { delivered };
-        src.enc = Some(h);
-        input.consumed = input.consumed.saturating_add(processed as u64);
-        input.buf = Vec::new();
-        input.base = 0;
-        input.cur = 0;
-        let mut code = ERR_OK;
-        let has = src.delivered > 0 || processed > 0 || true;
-        if has {
-            let r = char_enc_input(&mut input.buf, src, MINLEN, false);
-            if let Err(c) = r {
-                code = c;
-            }
-        }
+        let code = match &mut input.src {
+            None => ERR_ARGUMENT,
+            Some(src) => {
+                if enc_eq(src.enc, h) {
+                    ERR_OK
+                } else if src.enc.is_some() {
+                    src.enc = h;
+                    ERR_OK
+                } else {
+                    match h {
+                        None => ERR_OK,
+                        Some(h) => {
+                            // The buffer becomes the raw input, less what
+                            // was read: the rest of the buffer, the bytes
+                            // read but not yet moved to it, then the unread.
+                            let mut raw: Vec<u8> = Vec::new();
+                            if processed < input.buf.len() {
+                                raw.extend_from_slice(slice_subrange(input.buf.as_slice(), processed, input.buf.len()));
+                            }
+                            let rl = src.raw.len();
+                            let rest_from = if src.pos < rl { src.pos } else { rl };
+                            let undelivered_from = if src.delivered > rest_from { src.delivered } else { rest_from };
+                            if rest_from < undelivered_from && undelivered_from <= rl {
+                                raw.extend_from_slice(slice_subrange(src.raw.as_slice(), rest_from, undelivered_from));
+                            }
+                            let delivered = raw.len();
+                            if undelivered_from < rl {
+                                raw.extend_from_slice(slice_subrange(src.raw.as_slice(), undelivered_from, rl));
+                            }
+                            src.raw = raw;
+                            src.pos = 0;
+                            src.delivered = if src.mode == Mode::Memory { src.raw.len() } else { delivered };
+                            src.enc = Some(h);
+                            input.consumed = input.consumed.saturating_add(processed as u64);
+                            input.buf = Vec::new();
+                            input.base = 0;
+                            input.cur = 0;
+                            match char_enc_input(&mut input.buf, src, MINLEN, false) {
+                                Err(c) => c,
+                                Ok(_) => ERR_OK,
+                            }
+                        },
+                    }
+                }
+            },
+        };
         code
     }
 
     /// `xmlSwitchEncoding` with a detected encoding.
-    #[verifier::external_body]
-    pub fn switch_encoding(&mut self, id: i32) {
+    pub fn switch_encoding(&mut self, id: i32)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).moves(old(self)),
+    {
         match lookup_id(id) {
             Err(code) => self.fatal(code, None),
             Ok(h) => {
@@ -332,24 +352,28 @@ impl<S: Sink> Parser<S> {
                 if code != ERR_OK {
                     self.err_io(code);
                 }
-            }
+            },
         }
     }
 
     /// `xmlSwitchInputEncodingName`, for an encoding given before parsing
     /// (`xmlCtxtReadMemory`'s `encoding`).
-    #[verifier::external_body]
-    pub fn switch_encoding_name(&mut self, name: &[u8]) -> i32 {
+    pub fn switch_encoding_name(&mut self, name: &[u8]) -> i32
+        requires
+            old(self).wf(),
+        ensures
+            final(self).moves(old(self)),
+    {
         match lookup_encoding(name, false) {
             Err(code) => {
                 if code == ERR_UNSUPPORTED_ENCODING {
                     let m = cat(&[b"Unsupported encoding: ", name, b"\n"]);
-                    self.warning(ERR_UNSUPPORTED_ENCODING, &m, Some(name), None);
+                    self.warning(ERR_UNSUPPORTED_ENCODING, m.as_slice(), Some(name), None);
                 } else {
                     self.fatal(code, Some(name));
                 }
                 -1
-            }
+            },
             Ok(h) => {
                 let code = self.set_encoding_handler(h);
                 if code != ERR_OK {
@@ -357,43 +381,61 @@ impl<S: Sink> Parser<S> {
                     return -1;
                 }
                 0
-            }
+            },
         }
     }
 
     /// `xmlDetectEncoding`.
-    #[verifier::external_body]
-    pub fn detect_encoding(&mut self) {
+    pub fn detect_encoding(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).moves(old(self)),
+    {
         if self.grow_now() < 0 {
             return;
         }
         if self.avail() < 4 {
             return;
         }
-        let b = [self.nxt(0), self.nxt(1), self.nxt(2), self.nxt(3)];
+        let b0 = self.nxt(0);
+        let b1 = self.nxt(1);
+        let b2 = self.nxt(2);
+        let b3 = self.nxt(3);
         if self.inp().flags & INPUT_HAS_ENCODING != 0 {
-            if b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF {
-                self.inp_mut().cur += 3;
+            if b0 == 0xEF && b1 == 0xBB && b2 == 0xBF {
+                let i = self.inp_mut();
+                i.cur = i.cur.saturating_add(3);
             }
             return;
         }
         let html = self.html;
-        let (enc, auto, bom): (i32, u32, usize) = match b[0] {
-            0x00 if !html && b[1] == 0 && b[2] == 0 && b[3] == 0x3C => (5, INPUT_AUTO_OTHER, 0),
-            0x00 if b[1] == 0x3C && b[2] == 0 && b[3] == 0x3F => (3, INPUT_AUTO_UTF16BE, 0),
-            0x3C if b[1] == 0 && !html && b[2] == 0 && b[3] == 0 => (4, INPUT_AUTO_OTHER, 0),
-            0x3C if b[1] == 0 && b[2] == 0x3F && b[3] == 0 => (2, INPUT_AUTO_UTF16LE, 0),
-            0x4C if !html && b[1] == 0x6F && b[2] == 0xA7 && b[3] == 0x94 => (6, INPUT_AUTO_OTHER, 0),
-            0xEF if b[1] == 0xBB && b[2] == 0xBF => (1, INPUT_AUTO_UTF8, 3),
-            0xFE if b[1] == 0xFF => (3, INPUT_AUTO_UTF16BE, 2),
-            0xFF if b[1] == 0xFE => (2, INPUT_AUTO_UTF16LE, 2),
-            _ => (0, 0, 0),
+        let (enc, auto, bom): (i32, u32, usize) = if b0 == 0x00 && !html && b1 == 0 && b2 == 0 && b3 == 0x3C {
+            (5, INPUT_AUTO_OTHER, 0)
+        } else if b0 == 0x00 && b1 == 0x3C && b2 == 0 && b3 == 0x3F {
+            (3, INPUT_AUTO_UTF16BE, 0)
+        } else if b0 == 0x3C && b1 == 0 && !html && b2 == 0 && b3 == 0 {
+            (4, INPUT_AUTO_OTHER, 0)
+        } else if b0 == 0x3C && b1 == 0 && b2 == 0x3F && b3 == 0 {
+            (2, INPUT_AUTO_UTF16LE, 0)
+        } else if b0 == 0x4C && !html && b1 == 0x6F && b2 == 0xA7 && b3 == 0x94 {
+            (6, INPUT_AUTO_OTHER, 0)
+        } else if b0 == 0xEF && b1 == 0xBB && b2 == 0xBF {
+            (1, INPUT_AUTO_UTF8, 3)
+        } else if b0 == 0xFE && b1 == 0xFF {
+            (3, INPUT_AUTO_UTF16BE, 2)
+        } else if b0 == 0xFF && b1 == 0xFE {
+            (2, INPUT_AUTO_UTF16LE, 2)
+        } else {
+            (0, 0, 0)
         };
         if bom > 0 {
-            self.inp_mut().cur += bom;
+            let i = self.inp_mut();
+            i.cur = i.cur.saturating_add(bom);
         }
         if enc != 0 {
-            self.inp_mut().flags |= auto;
+            let i = self.inp_mut();
+            i.flags = i.flags | auto;
             if enc == 6 {
                 // xmlDetectEBCDIC: no EBCDIC decoder without iconv.
                 self.fatal(ERR_UNSUPPORTED_ENCODING, Some(b"detecting EBCDIC\n"));
@@ -404,55 +446,67 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlSetDeclaredEncoding`.
-    #[verifier::external_body]
-    pub fn set_declared_encoding(&mut self, encoding: Vec<u8>) {
-        let mut encoding = Some(encoding);
+    pub fn set_declared_encoding(&mut self, encoding: Vec<u8>)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+            final(self).inputs@.len() == old(self).inputs@.len(),
+    {
+        let mut encoding = encoding;
         let flags = self.inp().flags;
         if flags & INPUT_HAS_ENCODING == 0 && self.options & PARSE_IGNORE_ENC == 0 {
-            let name = encoding.clone().unwrap_or_default();
-            match lookup_encoding(&name, self.html) {
+            match lookup_encoding(encoding.as_slice(), self.html) {
                 Err(code) => {
-                    self.fatal(code, Some(&name));
+                    self.fatal(code, Some(encoding.as_slice()));
                     return;
-                }
+                },
                 Ok(h) => {
                     let code = self.set_encoding_handler(h);
                     if code != ERR_OK {
                         self.err_io(code);
                         return;
                     }
-                    self.inp_mut().flags |= INPUT_USES_ENC_DECL;
-                }
+                    let i = self.inp_mut();
+                    i.flags = i.flags | INPUT_USES_ENC_DECL;
+                },
             }
         } else if flags & INPUT_AUTO_ENCODING != 0 {
-            let (allowed, auto): (&[&[u8]], &[u8]) = match flags & INPUT_AUTO_ENCODING {
-                INPUT_AUTO_UTF8 => (&[b"UTF-8", b"UTF8"], b"UTF-8"),
-                INPUT_AUTO_UTF16LE => (&[b"UTF-16", b"UTF-16LE", b"UTF16"], b"UTF-16LE"),
-                INPUT_AUTO_UTF16BE => (&[b"UTF-16", b"UTF-16BE", b"UTF16"], b"UTF-16BE"),
-                _ => (&[], b""),
+            let a = flags & INPUT_AUTO_ENCODING;
+            let auto: &[u8] = if a == INPUT_AUTO_UTF8 {
+                b"UTF-8"
+            } else if a == INPUT_AUTO_UTF16LE {
+                b"UTF-16LE"
+            } else if a == INPUT_AUTO_UTF16BE {
+                b"UTF-16BE"
+            } else {
+                b""
             };
-            if !allowed.is_empty() {
-                let name = encoding.clone().unwrap_or_default();
-                let mut matched = false;
-                for a in allowed {
-                    if eq_ci(&name, a) {
-                        matched = true;
-                    }
-                }
+            if auto.len() > 0 {
+                let name = encoding.as_slice();
+                let matched = if a == INPUT_AUTO_UTF8 {
+                    eq_ci(name, b"UTF-8") || eq_ci(name, b"UTF8")
+                } else {
+                    eq_ci(name, b"UTF-16") || eq_ci(name, auto) || eq_ci(name, b"UTF16")
+                };
                 if !matched {
-                    let m = cat(&[b"Encoding '", &name, b"' doesn't match auto-detected '", auto, b"'\n"]);
-                    self.warning(WAR_ENCODING_MISMATCH, &m, Some(&name), Some(auto));
-                    encoding = Some(auto.to_vec());
+                    let m = cat(&[b"Encoding '", name, b"' doesn't match auto-detected '", auto, b"'\n"]);
+                    self.warning(WAR_ENCODING_MISMATCH, m.as_slice(), Some(name), Some(auto));
+                    encoding = vec_of(auto);
                 }
             }
         }
-        self.encoding = encoding.clone();
-        self.sink.set_encoding(encoding.as_deref());
+        self.encoding = Some(encoding.clone());
+        self.sink.set_encoding(Some(encoding.as_slice()));
     }
 
     /// `xmlParserCheckEOF`.
-    #[verifier::external_body]
-    pub fn check_eof(&mut self, code: i32) {
+    pub fn check_eof(&mut self, code: i32)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).moves(old(self)),
+    {
         if self.sink.err_no() != ERR_OK {
             return;
         }
@@ -461,11 +515,16 @@ impl<S: Sink> Parser<S> {
             return;
         }
         let r = {
-            let n = self.inputs.len();
-            let input = &mut self.inputs[n - 1];
-            match input.src.as_mut() {
-                Some(src) if src.enc.is_some() => Some(char_enc_input(&mut input.buf, src, 64, true)),
-                _ => None,
+            let input = self.inp_mut();
+            match &mut input.src {
+                Some(src) => {
+                    if src.enc.is_some() {
+                        Some(char_enc_input(&mut input.buf, src, 64, true))
+                    } else {
+                        None
+                    }
+                },
+                None => None,
             }
         };
         match r {
@@ -474,8 +533,8 @@ impl<S: Sink> Parser<S> {
                 if !self.at_end() {
                     self.fatal(ERR_INTERNAL_ERROR, Some(b"expected EOF"));
                 }
-            }
-            None => {}
+            },
+            None => {},
         }
     }
 }
