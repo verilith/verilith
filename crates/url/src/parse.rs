@@ -3940,41 +3940,121 @@ proof fn lemma_run_path_fast(input: Seq<u8>, b: Option<UrlRecord>, m: Machine, p
     }
 }
 
-/// Whether some byte `w[i]` (1 <= i < 17) is one the fast path run might
-/// stop at, given the byte before it; no early exits.
+/// Bit `k` of a mask.
+pub open spec fn pbit(m: u32, k: u32) -> bool {
+    (m >> k) & 1u32 == 1u32
+}
+
+/// Bit `j` of the stop mask of a 17-byte window: the fast path run stops at
+/// `w[j + 1]` given the byte `w[j]` before it.
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
-fn any_path_stop16(w: &[u8]) -> (r: bool)
+fn path_mask16(w: &[u8]) -> (m: u32)
     requires
         w.len() == 17,
     ensures
-        !r ==> forall|i: int| 1 <= i < 17 ==> {
-            let c = #[trigger] w@[i];
-            !in_path_set(c) && c != b'\\' && !((c == b'.' || c == b'%') && w@[i - 1] == b'/')
-        },
+        m < 0x10000,
+        forall|j: u32| j < 16 ==> #[trigger] pbit(m, j) == pstop(w@[j + 1], w@[j as int]),
 {
-    let mut acc = false;
-    let mut i = 0;
+    let m = crate::simd::path_mask16_sse(w);
+    proof {
+        assert forall|j: u32| j < 16 implies #[trigger] pbit(m, j) == pstop(w@[j + 1], w@[j as int]) by {
+            assert(verilith_simd::sse2::bit(m, j) == pstop(w@[j + 1], w@[j as int]));
+        }
+    }
+    m
+}
+
+/// Bit `j` of the stop mask of a 17-byte window: the fast path run stops at
+/// `w[j + 1]` given the byte `w[j]` before it.
+#[cfg(not(target_arch = "x86_64"))]
+#[inline(always)]
+fn path_mask16(w: &[u8]) -> (m: u32)
+    requires
+        w.len() == 17,
+    ensures
+        m < 0x10000,
+        forall|j: u32| j < 16 ==> #[trigger] pbit(m, j) == pstop(w@[j + 1], w@[j as int]),
+{
+    if verilith_simd::neon::has_neon() {
+        let m = crate::simd::path_mask16_neon(w);
+        proof {
+            assert forall|j: u32| j < 16 implies #[trigger] pbit(m, j) == pstop(w@[j + 1], w@[j as int]) by {
+                assert(verilith_simd::sse2::bit(m, j) == pstop(w@[j + 1], w@[j as int]));
+            }
+        }
+        return m;
+    }
+    let mut m: u32 = 0;
+    let mut i: u32 = 0;
+    proof {
+        assert((1u32 << 0u32) == 1u32) by (bit_vector);
+    }
     while i < 16
         invariant
             i <= 16,
             w.len() == 17,
-            !acc ==> forall|q: int| 1 <= q < i + 1 ==> {
-                let c = #[trigger] w@[q];
-                !in_path_set(c) && c != b'\\' && !((c == b'.' || c == b'%') && w@[q - 1] == b'/')
-            },
+            m < (1u32 << i),
+            forall|j: u32| j < i ==> #[trigger] pbit(m, j) == pstop(w@[j + 1], w@[j as int]),
         decreases 16 - i,
     {
-        let c = w[i + 1];
-        let prev = w[i];
-        acc = acc | (c <= 0x20) | (c >= 0x7F) | (c == 0x22) | (c == 0x23) | (c == 0x3C) | (c == 0x3E)
+        let c = w[i as usize + 1];
+        let prev = w[i as usize];
+        let st = (c <= 0x20) | (c >= 0x7F) | (c == 0x22) | (c == 0x23) | (c == 0x3C) | (c == 0x3E)
             | (c == 0x3F) | (c == 0x5C) | (c == 0x5E) | (c == 0x60) | (c == 0x7B) | (c == 0x7D) | (((c
             == 0x2E) | (c == 0x25)) & (prev == 0x2F));
+        let x = st as u32;
+        proof {
+            assert(st == pstop(c, prev));
+            assert forall|j: u32| j < i + 1 implies #[trigger] pbit(m | (x << i), j) == pstop(w@[j + 1], w@[j as int]) by {
+                crate::encode::lemma_mask_bit(m, x, i, j);
+                if j < i {
+                    assert(pbit(m, j) == pstop(w@[j + 1], w@[j as int]));
+                } else {
+                    assert(j == i);
+                    assert(w@[j + 1] == c && w@[j as int] == prev);
+                    assert((x == 1) == st);
+                }
+            }
+            crate::encode::lemma_mask_bit(m, x, i, 0);
+        }
+        m = m | (x << i);
         i = i + 1;
     }
-    acc
+    proof {
+        assert((1u32 << 16u32) == 0x10000u32) by (bit_vector);
+    }
+    m
 }
 
-/// Whether the path fast run stops at byte `c` after byte `prev`.
+/// Bits of a 16-bit mask shifted down by `d`.
+proof fn lemma_shr_bit(m: u32, d: u32, i: u32)
+    requires
+        m < 0x10000,
+        d < 16,
+        i < 32,
+    ensures
+        (m >> d) < 0x10000,
+        d + i < 16 ==> (pbit(m >> d, i) == pbit(m, (d + i) as u32)),
+        d + i >= 16 ==> !pbit(m >> d, i),
+{
+    assert((m >> d) < 0x10000u32) by (bit_vector)
+        requires
+            m < 0x10000u32,
+    ;
+    assert(d + i < 16 ==> ((((m >> d) >> i) & 1u32 == 1u32) == ((m >> ((d + i) as u32)) & 1u32 == 1u32))) by (bit_vector)
+        requires
+            d < 16u32,
+            i < 32u32,
+    ;
+    assert(d + i >= 16 ==> (((m >> d) >> i) & 1u32 != 1u32)) by (bit_vector)
+        requires
+            m < 0x10000u32,
+            d < 16u32,
+            i < 32u32,
+    ;
+}
+
 pub open spec fn pstop(c: u8, prev: u8) -> bool {
     in_path_set(c) || c == b'\\' || ((c == b'.' || c == b'%') && prev == b'/')
 }
@@ -3990,35 +4070,30 @@ fn path_first16(w: &[u8], d: u32) -> (r: u32)
         forall|j: u32| d <= j < r ==> !pstop(#[trigger] w@[j + 1], w@[j as int]),
         r < 16 ==> pstop(w@[r + 1], w@[r as int]),
 {
-    // One flag byte per position: the loop vectorizes, and the flags are
-    // read back as two words whose trailing zeros give the first stop.
-    let mut f = [0u8; 16];
-    let mut i: usize = 0;
-    while i < 16
-        invariant
-            i <= 16,
-            w.len() == 17,
-            forall|j: int| 0 <= j < i ==> (#[trigger] f@[j] != 0) == pstop(w@[j + 1], w@[j]),
-        decreases 16 - i,
-    {
-        let c = w[i + 1];
-        let prev = w[i];
-        let st = (c <= 0x20) | (c >= 0x7F) | (c == 0x22) | (c == 0x23) | (c == 0x3C) | (c == 0x3E)
-            | (c == 0x3F) | (c == 0x5C) | (c == 0x5E) | (c == 0x60) | (c == 0x7B) | (c == 0x7D) | (((c
-            == 0x2E) | (c == 0x25)) & (prev == 0x2F));
-        proof {
-            assert(st == pstop(c, prev));
-        }
-        f[i] = st as u8;
-        i = i + 1;
+    // One vector compare chain and a movemask: bit `j` of `m` is the stop
+    // at `w[j + 1]`, and the lowest set bit at or above `d` is the answer.
+    let m = path_mask16(w);
+    let g = m >> d;
+    proof {
+        lemma_shr_bit(m, d, 0);
     }
-    let r = crate::swar::first_flag16(&f, d);
+    let r0 = verilith_simd::sse2::first_set16(g);
+    proof {
+        if r0 < 16 {
+            lemma_shr_bit(m, d, r0 as u32);
+            assert(verilith_simd::sse2::bit(g, r0 as u32));
+        }
+    }
+    let r = if r0 < 16 { d + r0 as u32 } else { 16 };
     proof {
         assert forall|j: u32| d <= j < r implies !pstop(#[trigger] w@[j + 1], w@[j as int]) by {
-            assert(f@[j as int] == 0);
+            let i = (j - d) as u32;
+            lemma_shr_bit(m, d, i);
+            assert(!verilith_simd::sse2::bit(g, i));
+            assert(j == (d + i) as u32);
         }
         if r < 16 {
-            assert(f@[r as int] != 0);
+            assert(pbit(m, r));
         }
     }
     r
@@ -4065,26 +4140,6 @@ fn path_fast_scan(input: &[u8], p: usize, Tracked(cost): Tracked<&mut Meter>) ->
         decreases n - k,
     {
         let w = vstd::slice::slice_subrange(t, k - 1, k + 16);
-        if any_path_stop16(w) {
-            break;
-        }
-        proof {
-            cost.n = cost.n + 1;
-        }
-        proof {
-            assert forall|j: int| p <= j < k + 16 implies fast_at(input@, j, p as int) by {
-                if j >= k {
-                    assert(input@[j] == w@[j - k + 1]);
-                    assert(input@[j - 1] == w@[j - k]);
-                }
-            }
-        }
-        k = k + 16;
-    }
-    // The block that stopped the loop, or the last 16 bytes of the input
-    // when fewer remain: vector flags find the stop instead of a byte loop.
-    if n - k >= 16 {
-        let w = vstd::slice::slice_subrange(t, k - 1, k + 16);
         let r = path_first16(w, 0);
         if r < 16 {
             proof {
@@ -4101,7 +4156,24 @@ fn path_fast_scan(input: &[u8], p: usize, Tracked(cost): Tracked<&mut Meter>) ->
             }
             return k + r as usize;
         }
-    } else if n >= 17 && k < n {
+        proof {
+            cost.n = cost.n + 1;
+        }
+        proof {
+            assert forall|j: int| p <= j < k + 16 implies fast_at(input@, j, p as int) by {
+                if j >= k {
+                    let jj = (j - k) as u32;
+                    assert(input@[j] == w@[jj + 1]);
+                    assert(input@[j - 1] == w@[jj as int]);
+                    assert(!pstop(w@[jj + 1], w@[jj as int]));
+                }
+            }
+        }
+        k = k + 16;
+    }
+    // Fewer than 16 bytes remain: the last 16 bytes of the input, from
+    // the first unchecked one.
+    if n >= 17 && k < n {
         let st = n - 16;
         let w = vstd::slice::slice_subrange(t, st - 1, n);
         let d = (k - st) as u32;
