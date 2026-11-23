@@ -34,6 +34,10 @@ pub struct Loader {
     /// (its name and base URI) and ends (`None`): for reporting, as no
     /// proof rests on it.
     pub(crate) trace: Vec<(usize, Option<Vec<u8>>, Vec<u8>)>,
+    /// The parameter entities whose text is being read, outermost first,
+    /// and the one being fetched (for `open_entities`).
+    open: Vec<Vec<u8>>,
+    fetching: Vec<u8>,
 }
 
 /// The loader's answers.
@@ -54,7 +58,11 @@ impl Loader {
         if let Some((_, v)) = self.cache.iter().find(|(k, _)| *k == key) {
             return v.clone();
         }
+        let mut names = self.open.clone();
+        names.push(std::mem::take(&mut self.fetching));
+        let prev = OPEN.with(|o| o.replace(names));
         let v = (self.f)(base, sys, pubid);
+        OPEN.with(|o| o.replace(prev));
         if let Some((b, _)) = &v {
             self.count += 1;
             self.bytes += b.len();
@@ -73,7 +81,17 @@ impl Loader {
     {
         let pos = if lit { pos } else { pos + 1 };
         let name = t.get(a..b).unwrap_or(&[]).to_vec();
+        self.open.push(name.clone());
         self.trace.push((pos, Some(name), base.to_vec()));
+    }
+
+    /// Notes that the parameter entity named `t[a..b]` is fetched next.
+    #[verifier::external_body]
+    pub fn note_fetch(&mut self, t: &[u8], a: usize, b: usize)
+        ensures
+            load_model(final(self)) == load_model(old(self)),
+    {
+        self.fetching = t.get(a..b).unwrap_or(&[]).to_vec();
     }
 
     /// Notes that the text of the innermost entity ends at `pos`.
@@ -82,6 +100,7 @@ impl Loader {
         ensures
             load_model(final(self)) == load_model(old(self)),
     {
+        self.open.pop();
         self.trace.push((pos, None, Vec::new()));
     }
 }
@@ -1121,6 +1140,7 @@ fn ex_pe_ref(x: &mut XFl, c: &XCfg, ld: &mut Loader, n: usize, lit: bool, sep: b
                 ex_unread(x, c.sa, e);
                 0
             } else {
+                ld.note_fetch(x.frames[last].text.as_slice(), p + 1, n);
                 let got = ld.fetch(x.pes[k].base.as_slice(), x.pes[k].sys.as_slice(), x.pes[k].pubid.as_slice());
                 match got {
                     None => {
@@ -2285,11 +2305,23 @@ impl Loader {
     /// (relative system identifiers in it are resolved against that), or
     /// `None` to leave the entity unread.
     pub fn new(f: impl FnMut(&[u8], &[u8], &[u8]) -> Option<(Vec<u8>, Vec<u8>)> + 'static) -> Self {
-        Loader { f: Box::new(f), cache: Vec::new(), count: 0, bytes: 0, trace: Vec::new() }
+        Loader { f: Box::new(f), cache: Vec::new(), count: 0, bytes: 0, trace: Vec::new(), open: Vec::new(), fetching: Vec::new() }
     }
 
     /// A loader that reads nothing.
     pub fn none() -> Self {
         Loader::new(|_, _, _| None)
     }
+}
+
+thread_local! {
+    static OPEN: std::cell::RefCell<Vec<Vec<u8>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// While a loader's function runs: the names of the parameter entities
+/// whose text is being read, outermost first, then the one it is asked
+/// for ("" for the external subset).
+#[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
+pub(crate) fn open_entities() -> Vec<Vec<u8>> {
+    OPEN.with(|o| o.borrow().clone())
 }

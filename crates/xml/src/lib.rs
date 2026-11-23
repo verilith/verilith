@@ -15,6 +15,8 @@
 // * `decode`  - verified line-end and attribute-value normalization.
 // * `scan`, `lanes` - the SSE2 scanners, verified over verilith-simd.
 // * `tape`    - the tokens the parser writes.
+// * `pe_spec`, `pe` - the DTD read whole: parameter entities, conditional
+//   sections, the external subset (`parse_with`), verified.
 #![cfg_attr(not(verus_keep_ghost), allow(unused_imports))]
 #[doc(hidden)]
 pub mod chars;

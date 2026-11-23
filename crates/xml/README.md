@@ -32,7 +32,7 @@ a C program built against expat 2.10.0's `expat.h` links
 `libverilith_xml.a` in place of `libexpat.a` and runs unchanged, 1.2 to 9
 times as fast reading a document through expat's callbacks (see
 [The expat C ABI](#the-expat-c-abi)). With `libxml2-abi` it stands in for
-the core of libxml2 (parsing, SAX, the tree, saving), passing 1150 of
+the core of libxml2 (parsing, SAX, the tree, saving), passing 1168 of
 libxml2's 1181 regression tests that cover those parts, and through that ABI
 it reads documents 1.52x as fast as libxml2 and checks them 2.21x as fast
 (geometric means, see [Drop-in for libxml2](#drop-in-for-libxml2-vbench)).
@@ -84,6 +84,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
    (`src/fix.rs`) in time linear in the entities and their references.
    The document's references are then checked against it as they are
    met.
+5. **The DTD read whole** (`src/pe_spec.rs`, `src/pe.rs`), when the
+   internal subset refers to a parameter entity, or the caller reads the
+   external subset (`parse_with`). A state machine over the internal
+   subset, then the external subset, a character at a time, expands each
+   parameter entity reference into one text of declarations (with the
+   spaces §4.4.8 adds, and quotes escaped in an entity value, §4.4.5),
+   resolves conditional sections, skips and checks text declarations, and
+   decodes external texts. That text is checked with the same verified
+   internal-subset parser, and the content is then checked against the
+   declarations it holds.
 
 The API (`src/api.rs`) reads the tape: `Document::root`, and
 `Element::name`, `attrs` (an iterator) and `attributes`, `attribute`,
@@ -96,6 +106,26 @@ back with line ends normalized, attribute values normalized (§3.3.3, with
 the DTD's defaults and declared types), both through verified decoders
 (`src/decode.rs`). A rejected document gives an `Error` with its kind and
 its line, column and byte offset.
+
+`parse` reads no external entity. `parse_with(input, &mut loader)` also
+reads the external subset, external parameter entities and the external
+parsed entities the content refers to, through a `pe::Loader` the caller
+makes from a function from (the base URI of the entity holding the
+declaration, the system identifier, the public identifier) to the
+entity's bytes and its URI, which is asked for each entity once:
+
+```rust
+use verilith_xml::pe::Loader;
+let mut loader = Loader::new(|_base, sys, _pubid| match sys {
+    b"doc.dtd" => Some((b"<!ENTITY greeting 'hello'>".to_vec(), sys.to_vec())),
+    _ => None, // left unread
+});
+let doc = verilith_xml::parse_with(b"<!DOCTYPE d SYSTEM 'doc.dtd'><d>&greeting;</d>", &mut loader).unwrap();
+assert_eq!(doc.root().text(), "hello");
+```
+
+A DTD whose parameter entities expand past the budget for reading it is
+refused with `ErrorKind::Limit`.
 
 ### Reading a document as it arrives
 
@@ -151,9 +181,9 @@ assert_eq!(texts.concat(), b"Hello");
 Everything in `src/spec.rs`, `src/chars.rs`, `src/lex.rs`, `src/dtd.rs`,
 `src/content.rs`, `src/doc.rs`, `src/ent.rs`, `src/enc.rs`, `src/decode.rs`,
 `src/uniq.rs`, `src/index.rs`, `src/scan.rs`, `src/lanes.rs`,
-`src/tape.rs`, and of the push parser `src/stream_spec.rs`,
+`src/tape.rs`, `src/pe_spec.rs`, `src/pe.rs`, and of the push parser `src/stream_spec.rs`,
 `src/stream.rs`, `src/push.rs` and `src/reader.rs`, is checked by Verus (`./scripts/verify.sh`, which runs
-`cargo verus verify`: 1959 verified, 0 errors, in a few minutes on x86-64;
+`cargo verus verify`: 2030 verified, 0 errors, in a few minutes on x86-64;
 fewer for an AArch64 target, which has no SSE2 code. The SSE2 wrappers are
 verified in verilith-simd). The trusted base is listed under
 [What is not proven](#what-is-not-proven).
@@ -176,6 +206,25 @@ verified in verilith-simd). The trusted base is listed under
   verdict, the same decoded text, and the same tape, token for token.
   Each function under it is proven against the spec function of the same
   name.
+* **Parameter entities and the external DTD.** `pe_spec::flat` states the
+  reading of a DTD whole as a step function over a stack of entity
+  texts, and `pe::ex_flat` is proven to return what it returns: the
+  replacement of each reference (included as a parameter entity between
+  declarations and, in external text, inside them; in a literal in an
+  external entity value), conditional sections (INCLUDE and IGNORE, their
+  keywords from references too), text declarations, and the
+  well-formedness constraints PE Between Declarations, No Recursion and
+  that a literal, comment or processing instruction ends in the entity it
+  began in. After a reference that is not read in a document that is not
+  standalone, nothing more is processed (§5.1). `pe_spec::parse_x` adds
+  the document: the declarations read whole are checked by the internal
+  subset's spec, and the content against them (a standalone document's
+  content against its own declarations, WFC Entity Declared).
+  `pe::ex_parse_x` is proven to return what `parse_x` returns, for every
+  input and every loader. Reading the DTD whole is bounded: at most
+  `pe::FLAT_FUEL` (2^25) steps and a text under `tape::MAX_POS`, past
+  which the document is refused with `ErrorKind::Limit`, so parameter
+  entities cannot make a "billion laughs".
 * **Characters.** Name characters are the Fifth Edition's ranges, read
   from code points that `utf8_len` (verilith-core, Unicode Table 3-7)
   decodes. The table that classifies ASCII bytes is checked for all 256
@@ -253,7 +302,7 @@ verified in verilith-simd). The trusted base is listed under
 
 ### What is not proven
 
-* **The API** (`src/api.rs`, 690 lines, no `unsafe`) is ordinary Rust over
+* **The API** (`src/api.rs`, about 1000 lines, no `unsafe`) is ordinary Rust over
   the verified tape and decoders: navigation, the table of attribute
   definitions built from the DTD's tokens (which ones apply, defaults,
   and the collapsing of white space for declared types other than CDATA),
@@ -264,6 +313,13 @@ verified in verilith-simd). The trusted base is listed under
   forms on millions of documents. Its tables of attribute definitions are
   hash maps, so that supplying defaults stays proportional to an element's
   own definitions.
+* **The loader** (`pe::Loader`), which reads external entities for
+  `parse_with`, is trusted: its answers are taken to be a function of the
+  question (it keeps each answer, so they are), and that is all that is
+  known of them. Reading external parsed general entities in content
+  (`parse_with`) checks each entity's text with the verified content
+  parser, but finding the entities a document reaches, and refusing one
+  that refers to itself through others, is ordinary Rust in `src/api.rs`.
 * **The expat ABI** (`src/api/expat.rs`, about 3700 lines, feature `expat-abi`)
   is ordinary Rust with `unsafe` at the C boundary: it calls the caller's
   handlers with pointers into the document and into its own buffers, and
@@ -287,11 +343,13 @@ verified in verilith-simd). The trusted base is listed under
   `_mm_cmpeq_epi8`, `_mm_or_si128`, `_mm_min_epu8`, `_mm_movemask_epi8`),
   tested there against the CPU. The wrappers proven from them are
   verilith-simd's `sse2` module, shared with verilith-json; vstd's specifications of `Vec` and
-  slices; the two `external_body` functions in the crate: `uniq::seed`,
+  slices; the `external_body` items in the crate: `uniq::seed`,
   which reads random words for the hashes (any value gives the same
-  result), and `tape::slice_len_bound`, which states that a slice is at
+  result), `tape::slice_len_bound`, which states that a slice is at
   most `isize::MAX` bytes long, as Rust guarantees of every object, so
-  that positions cannot overflow; Verus, Z3 and the Rust compiler.
+  that positions cannot overflow, and `pe::Loader` (above) with its
+  `fetch` and the `note_*` methods that record, for reporting only, where
+  each parameter entity's text is in the DTD read whole; Verus, Z3 and the Rust compiler.
 * **Other targets.** The scanners use SSE2 on x86-64. Elsewhere they skip
   nothing and the scalar loops do the work (verified the same); there are
   no NEON kernels yet, so AArch64 runs slower than the numbers below.
@@ -304,8 +362,8 @@ them:
 
 | Input | XML 1.0 | verilith-xml |
 |---|---|---|
-| The external DTD subset, external entities | need not be read (§5.1) | not read; a reference to an external parsed entity in content is `Child::Unexpanded` |
-| A parameter entity reference in the internal subset | need not be read (§5.1) | not read (expat's default too); later entity and attribute-list declarations are checked but not processed, unless the document is standalone |
+| The external DTD subset, external entities | need not be read (§5.1) | not read by `parse` (a reference to an external parsed entity in content is `Child::Unexpanded`); read by `parse_with` through the caller's `pe::Loader`, and checked: decoded by byte order mark or text declaration (version 1.0 only, erratum E38), every declaration well-formed, and an external parsed entity well-formed content (at most 4096 entities and 256 MiB of them) |
+| A parameter entity reference in the internal subset | need not be read (§5.1) | read: internal parameter entities are always expanded; an external one only by `parse_with`; after one that is not read, later declarations are checked but not processed, unless the document is standalone |
 | A reference to an undeclared entity where "Entity Declared" does not apply (an unread declaration may declare it) | the processor cannot expand it | `Child::Unexpanded` in content; kept as written in an attribute value (expat drops it); `Document::has_unread_declarations` says when this can happen |
 | Encodings | UTF-8 and UTF-16 required, others optional (§4.3.3) | UTF-8, UTF-16 (with its byte order mark, which §4.3.3 requires), ISO-8859-1, US-ASCII; the declaration must name the encoding the document is in |
 | `version="1.1"` and other `1.x` | may be read as 1.0 (§2.8) | read as 1.0 |
@@ -395,10 +453,17 @@ Where it departs from libexpat:
   encoding the reader does not decode (which an `UnknownEncodingHandler`
   converts first), and an external entity in UTF-16 or ISO-8859-1. For these no handler
   runs before the last buffer, and none for a rejected document.
-* **The external DTD subset and external parameter entities are offered to
-  the `ExternalEntityRefHandler` but not read**, as verilith-xml does not
-  read them (see [How verilith-xml reads XML 1.0](#how-verilith-xml-reads-xml-10)).
-  `XML_UseForeignDTD` calls the handler and has no other effect.
+* **Parameter entities and the external DTD.** With parameter entity
+  parsing off (`XML_PARAM_ENTITY_PARSING_NEVER`, expat's default) a
+  parameter entity reference is skipped, as expat does. With it on, the
+  DTD is read whole before the document's events, as the verified
+  `parse_x` reads it: internal parameter entities expanded, and the
+  external subset and external parameter entities asked of the
+  `ExternalEntityRefHandler`, whose parser (`XML_ExternalEntityParserCreate`
+  with no context) hands what it is given to the document's parser and
+  reports the errors expat would on the entity read alone. The document is
+  then read whole, not as it arrives. `XML_UseForeignDTD` calls the
+  handler and has no other effect.
 * **Error codes** are worked out from the place the verified parser
   stopped; on the common errors they and their positions are expat's
   (mismatched tag, junk after the root, undefined, recursive and binary
@@ -425,20 +490,21 @@ and linked against `libverilith_xml.a` (`scripts/test-expat.sh`, run by
 `ci.sh`):
 
 * `tests/runtests`, its unit tests, each at six chunk sizes with reparse
-  deferral on and off: 309 of 443 tests pass in every mode. Of the 134 that
+  deferral on and off: 315 of 443 tests pass in every mode. Of the 128 that
   fail, 44 test failing allocators, 35 feed UTF-16 without a byte order
-  mark, 17 need the external subset or external parameter entities read, 8
+  mark, 15 need the external subset or external parameter entities read
+  as expat reads them (in the handler's parser), 8
   test libexpat's internals, 16 expect another error code or position, 12
   the default handler's view of the DTD, encoding details or expat's
-  amplification accounting, and 2 a parameter entity's declarations
-  reported or an entity's content reported before its error.
+  amplification accounting, one an entity's content reported before its
+  error, and one a parameter entity reference inside a declaration in the
+  internal subset, which XML 1.0 forbids and expat reads.
 * `tests/xmltest.sh`: libexpat's `xmlwf` over the W3C suite, comparing
-  verdicts and canonical output with expat's expected files: 1402 of 1811
-  pass (libexpat itself passes 1803). Of the 409 that fail, 302 are names
-  the Fifth Edition allows and the suite's older tests reject, 55 have
-  their error in the external subset or an external or parameter entity,
-  44 have output that needs the external subset's declarations, and 7 fail
-  with libexpat too.
+  verdicts and canonical output with expat's expected files: 1493 of 1811
+  pass (libexpat itself passes 1803). Of the 318 that fail, 302 are names
+  the Fifth Edition allows and the suite's older tests reject, 7 fail with
+  libexpat too, and the rest have their error or declarations in the
+  external subset or an external parameter entity as xmlwf gives it.
 
 `tests/c/expat-known-failures.txt` lists each failing test and its reason;
 CI fails if any other test fails, or if a listed one passes.
@@ -497,12 +563,17 @@ Where it departs from libxml2:
   reporting every error; here the verified parser rejects the document, and
   the ABI reports one fatal error, worked out from where it stopped. On the
   common errors the code, the message and the position are libxml2's.
-* **Parameter entities and external entities are not read**, as
-  verilith-xml does not read them (see
-  [How verilith-xml reads XML 1.0](#how-verilith-xml-reads-xml-10)):
-  declarations a parameter entity holds are missing, and a reference to an
-  external parsed entity is reported but not expanded, `XML_PARSE_NOENT`
-  or not. The external DTD subset is not loaded and nothing is validated.
+* **Parameter entities and external entities.** Parameter entities in
+  the internal subset are expanded, and their declarations reported where
+  libxml2 reports them (getParameterEntity at each reference). With
+  `XML_PARSE_DTDLOAD` (or `DTDATTR`) the external subset and external
+  parameter entities are read from the URIs they resolve to, the subset's
+  declarations going into the document's external subset; with
+  `XML_PARSE_NOENT` an external parsed entity in content is read and
+  checked (decoded, and well-formed content, by the verified parsers),
+  unless `XML_PARSE_NO_XXE`. A document with a parameter entity reference
+  is read whole by the push parser, after the prolog it has reported.
+  Nothing is validated.
 * **Not there**: HTML (and xmlsave's XHTML mode), XPath, XInclude, the
   reader and writer APIs, schemas, catalogs, encoding handlers beyond the
   four above (`xmlFindCharEncodingHandler` finds none), and URI parsing
@@ -513,12 +584,11 @@ libxml2 2.15.4's `runtest.c` with ASan and UBSan against
 `libverilith_xml.a` and runs the 15 suites the ABI covers: parsing from
 files, memory and descriptors, entity substitution, namespaces, error
 cases, SAX1 and SAX2 events, push, saving. Each compares the events, the
-errors and the saved tree with libxml2's expected files: 1150 of 1181
+errors and the saved tree with libxml2's expected files: 1168 of 1181
 tests pass, among them every push test that feeds a document a byte at a
 time and counts the SAX calls each byte gives, except those below. Of the
-31 that fail, 16 need parameter entities expanded, 2 external entities
-read, 3 expect character data split where libxml2's 4000 byte file reads
-end, and 10 are saved as XHTML.
+13 that fail, 3 expect character data split where libxml2's 4000 byte
+file reads end, and 10 are saved as XHTML.
 `tests/c/libxml2-known-failures.txt` lists each with its reason; CI fails
 if any other test fails, or a listed one passes.
 
@@ -528,10 +598,10 @@ if any other test fails, or a listed one passes.
   `xml-conformance-suite` 1.2.0, pinned by SHA-256): the 1871 tests that
   apply to XML 1.0 Fifth Edition without namespaces. All 918 valid and
   invalid (well-formed) documents are accepted, UTF-16 ones included.
-  Of the 932 not-wf documents, 872 are rejected; the other 60 have their
-  error in an external entity or the external subset, or (one,
-  not-sa-002) in a parameter entity, none of which are read, and are
-  accepted. Of the 21 `error` tests (an error, not a fatal one: the
+  Of the 932 not-wf documents, `parse` rejects 873; the other 59 have
+  their error in an external entity or the external subset, which it does
+  not read. `parse_with`, reading the suite's files, rejects all 932
+  (`tests/xmlconf.rs` runs the suite both ways). Of the 21 `error` tests (an error, not a fatal one: the
   document is well-formed), 15 are accepted, and the 6 in EUC-JP,
   ISO-2022-JP and Shift_JIS are rejected, as encodings this processor
   does not read (§4.3.3); `tests/xmlconf.rs` fails if any other is

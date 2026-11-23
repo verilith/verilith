@@ -144,6 +144,7 @@ const E_CANT_CHANGE_FEATURE_ONCE_PARSING: c_int = 26;
 const E_UNBOUND_PREFIX: c_int = 27;
 const E_UNDECLARING_PREFIX: c_int = 28;
 const E_XML_DECL: c_int = 30;
+const E_TEXT_DECL: c_int = 31;
 const E_SUSPENDED: c_int = 33;
 const E_NOT_SUSPENDED: c_int = 34;
 const E_ABORTED: c_int = 35;
@@ -393,6 +394,8 @@ pub struct Parser {
     /// loader's URI for it is its index here, after '#').
     ext_tab: Vec<(Option<Vec<u8>>, ExtRefH, Option<*mut Parser>)>,
     collect_h: Option<(Option<Vec<u8>>, ExtRefH, Option<*mut Parser>)>,
+    /// The parser made for the entity being read found it malformed.
+    collect_err: bool,
     /// A parser made for the external subset or a parameter entity while
     /// the parent reads its DTD whole: what it is given goes to the
     /// parent's `collect`.
@@ -474,6 +477,7 @@ impl Parser {
             collect: None,
             ext_tab: Vec::new(),
             collect_h: None,
+            collect_err: false,
             collect_to: None,
             ext_fail: false,
             ext_read: false,
@@ -651,11 +655,7 @@ impl Parser {
     /// entities read through the external entity reference handler.
     fn parse_dtd(&mut self, slice: &'static [u8]) -> Result<Document<'static>, super::Error> {
         if self.param_parsing == 0 {
-            let mut tape = crate::tape::Tape::new();
-            return match crate::enc::ex_parse(slice, &mut tape) {
-                Some((owned, dtd)) => Ok(Document::new(slice, owned, tape, dtd, None)),
-                None => Err(super::diagnose(slice, &tape)),
-            };
+            return plain_parse(slice);
         }
         let standalone = self.param_parsing == 1 && declares_standalone(slice);
         if self.h.ext_ref.is_none() || self.no_load || standalone {
@@ -685,6 +685,7 @@ impl Parser {
         let f = f?;
         self.collect = Some(Vec::new());
         self.collect_h = None;
+        self.collect_err = false;
         self.s_clear();
         let bk = b.map(|b| self.s_push(&b));
         let sk = self.s_push(sys);
@@ -698,6 +699,9 @@ impl Parser {
             return None;
         }
         self.ext_tab.push(h);
+        // An entity its parser rejected, which the handler let pass: as
+        // far as the document goes, empty.
+        let text = if std::mem::take(&mut self.collect_err) { Vec::new() } else { text };
         Some((text, format!("#{}", self.ext_tab.len() - 1).into_bytes()))
     }
 
@@ -723,6 +727,66 @@ impl Parser {
                 Ok((t, n))
             }
         }
+    }
+}
+
+/// An external entity of the DTD read on its own, as the external subset
+/// (its references to parameter entities declared elsewhere not read): the
+/// error expat gives it, if it is malformed or refers to an entity whose
+/// text is being read (`open`).
+fn ext_dtd_check(text: &[u8], open: &[Vec<u8>]) -> Result<(), c_int> {
+    let t = text.to_vec();
+    let mut ld = crate::pe::Loader::new(move |b: &[u8], s: &[u8], _: &[u8]| (b.is_empty() && s == b"x").then(|| (t.clone(), b"#".to_vec())));
+    if super::parse_dtd_with(b"<!DOCTYPE d SYSTEM 'x'><d/>", &mut ld).is_err() {
+        return Err(ext_dtd_code(text));
+    }
+    let mut i = 0;
+    while let Some(p) = text[i..].iter().position(|&c| c == b'%') {
+        let a = i + p + 1;
+        let e = a + text[a..].iter().take_while(|&&c| !is_ws(c) && !b"%;<>'\"&".contains(&c)).count();
+        if e > a && text.get(e) == Some(&b';') && open.iter().any(|n| !n.is_empty() && n[..] == text[a..e]) {
+            return Err(E_RECURSIVE_ENTITY_REF);
+        }
+        i = a;
+    }
+    Ok(())
+}
+
+/// The error code for a malformed external entity of the DTD.
+fn ext_dtd_code(text: &[u8]) -> c_int {
+    let t = text.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(text);
+    if let Err(e) = std::str::from_utf8(t) {
+        let at = e.valid_up_to();
+        return if e.error_len().is_none() && at < t.len() { E_PARTIAL_CHAR } else { E_INVALID_TOKEN };
+    }
+    match crate::pe::ex_ext_text(text.to_vec()) {
+        None => return E_TEXT_DECL,
+        // Not read as a text declaration, but begun as one.
+        Some((_, 0)) if t.starts_with(b"<?xml") && t.get(5).is_none_or(|&c| is_ws(c) || c == b'?') => return E_TEXT_DECL,
+        _ => {}
+    }
+    // A literal that does not end.
+    let mut q: Option<u8> = None;
+    for &c in t {
+        match q {
+            Some(x) if c == x => q = None,
+            None if c == b'"' || c == b'\'' => q = Some(c),
+            _ => {}
+        }
+    }
+    if q.is_some() {
+        return E_UNCLOSED_TOKEN;
+    }
+    E_INVALID_TOKEN
+}
+
+/// The document with parameter entities not expanded (as the stream
+/// reads it): for the error the stream's verdict is.
+fn plain_parse(t: &[u8]) -> Result<Document<'_>, super::Error> {
+    let mut tape = crate::tape::Tape::new();
+    match crate::enc::ex_parse(t, &mut tape) {
+        Some((owned, dtd)) => Ok(Document::new(t, owned, tape, dtd, None)),
+        None => Err(super::diagnose(t, &tape)),
     }
 }
 
@@ -761,7 +825,7 @@ fn ext_end_error(t: &[u8], code: c_int, at: usize) -> (c_int, usize) {
     // Read without the wrapper's end tag, the first error is the same
     // unless the entity ends inside a token.
     let body = &t[..end];
-    match super::parse(body) {
+    match plain_parse(body) {
         Err(e) => match classify(body, &e) {
             (c, a) if matches!(c, E_UNCLOSED_TOKEN | E_PARTIAL_CHAR | E_UNCLOSED_CDATA_SECTION) => (c, a),
             _ => (code, at),
@@ -2782,6 +2846,32 @@ impl Parser {
             if let Some(v) = pp.collect.as_mut() {
                 v.extend_from_slice(s);
                 pp.collect_h = Some((self.base.clone(), self.h.ext_ref, self.h.ext_ref_arg));
+                if is_final {
+                    let text = v.clone();
+                    // Its text declaration, to this parser's handler.
+                    if let (Some(f), Ok((Some((ver, enc)), _))) = (self.h.xml_decl, ext_content(&text)) {
+                        self.parsing = P_PARSING;
+                        self.s_clear();
+                        let vk = ver.map(|v| self.s_push(&v));
+                        let ek = enc.map(|e| self.s_push(&e));
+                        let arg = self.arg();
+                        unsafe { f(arg, self.s_opt(vk), self.s_opt(ek), -1) };
+                        if self.parsing != P_PARSING {
+                            pp.collect_err = true;
+                            if self.error == E_NONE {
+                                self.error = E_ABORTED;
+                            }
+                            self.parsing = P_FINISHED;
+                            return STATUS_ERROR;
+                        }
+                    }
+                    // This parser's verdict on the entity, read as the
+                    // external subset is (the parent reads it in place).
+                    if let Err(code) = ext_dtd_check(&text, &crate::pe::open_entities()) {
+                        pp.collect_err = true;
+                        return self.fail(code);
+                    }
+                }
             }
             self.parsing = if is_final { P_FINISHED } else { P_PARSING };
             return STATUS_OK;
@@ -2967,7 +3057,7 @@ impl Parser {
         if let Some(h) = &self.held {
             t.extend_from_slice(h);
         }
-        match super::parse(&t) {
+        match plain_parse(&t) {
             // The verified verdict is the stream's.
             Ok(_) => (E_SYNTAX, from, false),
             Err(e) => {
