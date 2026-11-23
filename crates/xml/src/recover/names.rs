@@ -2,11 +2,21 @@
 use super::codes::*;
 use super::tables::*;
 use super::*;
+use crate::lenient::{opt_eq, vec_of};
+use vstd::prelude::*;
+use vstd::slice::slice_subrange;
+
+verus! {
+
 
 fn in_ranges(c: u32, r: &[(u32, u32)]) -> bool {
     let mut lo = 0usize;
     let mut hi = r.len();
-    while lo < hi {
+    while lo < hi
+        invariant
+            hi <= r@.len(),
+        decreases hi - lo,
+    {
         let mid = lo + (hi - lo) / 2;
         if c < r[mid].0 {
             hi = mid;
@@ -20,25 +30,37 @@ fn in_ranges(c: u32, r: &[(u32, u32)]) -> bool {
 }
 
 /// `IS_LETTER` (XML 1.0 4th edition, chvalid.h).
-pub fn is_letter(c: u32) -> bool {
+pub fn is_letter(c: u32) -> (r: bool)
+    ensures
+        r ==> c != 0,
+{
     let base = if c < 0x100 {
-        (0x41..=0x5A).contains(&c) || (0x61..=0x7A).contains(&c) || (0xC0..=0xD6).contains(&c) || (0xD8..=0xF6).contains(&c) || c >= 0xF8
+        (0x41 <= c && c <= 0x5A) || (0x61 <= c && c <= 0x7A) || (0xC0 <= c && c <= 0xD6) || (0xD8 <= c && c <= 0xF6) || c >= 0xF8
     } else {
         in_ranges(c, &BASE_CHAR)
     };
-    let ideo = c >= 0x100 && ((0x4E00..=0x9FA5).contains(&c) || c == 0x3007 || (0x3021..=0x3029).contains(&c));
+    let ideo = c >= 0x100 && ((0x4E00 <= c && c <= 0x9FA5) || c == 0x3007 || (0x3021 <= c && c <= 0x3029));
     base || ideo
 }
 
-pub fn is_digit(c: u32) -> bool {
-    if c < 0x100 { (0x30..=0x39).contains(&c) } else { in_ranges(c, &DIGIT) }
+pub fn is_digit(c: u32) -> (r: bool)
+    ensures
+        r ==> c != 0,
+{
+    if c < 0x100 { 0x30 <= c && c <= 0x39 } else { in_ranges(c, &DIGIT) }
 }
 
-pub fn is_combining(c: u32) -> bool {
+pub fn is_combining(c: u32) -> (r: bool)
+    ensures
+        r ==> c != 0,
+{
     c >= 0x100 && in_ranges(c, &COMBINING)
 }
 
-pub fn is_extender(c: u32) -> bool {
+pub fn is_extender(c: u32) -> (r: bool)
+    ensures
+        r ==> c != 0,
+{
     if c < 0x100 { c == 0xB7 } else { in_ranges(c, &EXTENDER) }
 }
 
@@ -46,24 +68,38 @@ pub use crate::lenient::is_pubid_char;
 use crate::lenient::{name_char_new, name_start_new};
 
 /// `xmlIsNameStartChar`.
-pub fn is_name_start(c: u32, old10: bool) -> bool {
+pub fn is_name_start(c: u32, old10: bool) -> (r: bool)
+    ensures
+        r ==> c != 0,
+        !old10 ==> r == crate::chars::name_start_cp(c as int),
+{
     if !old10 {
         name_start_new(c)
     } else {
-        c != 0x20 && c != b'>' as u32 && c != b'/' as u32 && (is_letter(c) || c == b'_' as u32 || c == b':' as u32)
+        c != 0x20 && c != 0x3E && c != 0x2F && (is_letter(c) || c == 0x5F || c == 0x3A)
     }
 }
 
 /// `xmlIsNameChar`.
-pub fn is_name_char(c: u32, old10: bool) -> bool {
+pub fn is_name_char(c: u32, old10: bool) -> (r: bool)
+    ensures
+        r ==> c != 0,
+        !old10 ==> r == crate::chars::name_cp(c as int),
+{
     if !old10 {
         name_char_new(c)
     } else {
-        c != 0x20
-            && c != b'>' as u32
-            && c != b'/' as u32
-            && (is_letter(c) || is_digit(c) || c == b'.' as u32 || c == b'-' as u32 || c == b'_' as u32 || c == b':' as u32 || is_combining(c) || is_extender(c))
+        c != 0x20 && c != 0x3E && c != 0x2F && (is_letter(c) || is_digit(c) || c == 0x2E || c == 0x2D || c == 0x5F
+            || c == 0x3A || is_combining(c) || is_extender(c))
     }
+}
+
+/// An ASCII digit.
+pub fn is_digit_ch(c: u8) -> (r: bool)
+    ensures
+        r == (0x30 <= c <= 0x39),
+{
+    0x30 <= c && c <= 0x39
 }
 
 const SCAN_NC: u32 = 1;
@@ -72,14 +108,25 @@ const SCAN_OLD10: u32 = 4;
 
 /// `xmlScanName`: the end of the name at `i` in `s`, `None` when it is
 /// longer than `max`.
-pub fn scan_name(s: &[u8], i: usize, max: usize, mut flags: u32) -> Option<usize> {
-    let stop: u32 = if flags & SCAN_NC != 0 { b':' as u32 } else { 0 };
+pub fn scan_name(s: &[u8], i: usize, max: usize, flags: u32) -> (r: Option<usize>)
+    ensures
+        r matches Some(p) ==> i <= p && (p == i || p <= s@.len()),
+{
+    let mut flags = flags;
+    let stop: u32 = if flags & SCAN_NC != 0 { 0x3A } else { 0 };
     let old10 = flags & SCAN_OLD10 != 0;
     let mut p = i;
     let mut max = max;
-    loop {
+    let _n = s.len();
+    loop
+        invariant
+            _n == s@.len(),
+            i <= p,
+            p == i || p <= s@.len(),
+        decreases s@.len() + 1 - p,
+    {
         let mut c = at(s, p) as u32;
-        let len;
+        let len: usize;
         if c < 0x80 {
             if c == stop {
                 break;
@@ -91,7 +138,7 @@ pub fn scan_name(s: &[u8], i: usize, max: usize, mut flags: u32) -> Option<usize
                 Some((v, l)) => {
                     c = v;
                     len = l;
-                }
+                },
             }
         }
         let ok = if flags & SCAN_NMTOKEN != 0 { is_name_char(c, old10) } else { is_name_start(c, old10) };
@@ -101,19 +148,25 @@ pub fn scan_name(s: &[u8], i: usize, max: usize, mut flags: u32) -> Option<usize
         if len > max {
             return None;
         }
-        p += len;
-        max -= len;
-        flags |= SCAN_NMTOKEN;
+        p = p + len;
+        max = max - len;
+        flags = flags | SCAN_NMTOKEN;
     }
     Some(p)
 }
 
-fn ascii_name_start(c: u8) -> bool {
-    c.is_ascii_lowercase() || c.is_ascii_uppercase() || c == b'_' || c == b':'
+fn ascii_name_start(c: u8) -> (r: bool)
+    ensures
+        r ==> c != 0,
+{
+    (0x61 <= c && c <= 0x7A) || (0x41 <= c && c <= 0x5A) || c == 0x5F || c == 0x3A
 }
 
-fn ascii_name_char(c: u8) -> bool {
-    c.is_ascii_lowercase() || c.is_ascii_uppercase() || c.is_ascii_digit() || c == b'_' || c == b'-' || c == b':' || c == b'.'
+fn ascii_name_char(c: u8) -> (r: bool)
+    ensures
+        r ==> c != 0,
+{
+    (0x61 <= c && c <= 0x7A) || (0x41 <= c && c <= 0x5A) || (0x30 <= c && c <= 0x39) || c == 0x5F || c == 0x2D || c == 0x3A || c == 0x2E
 }
 
 impl<S: Sink> Parser<S> {
@@ -122,26 +175,40 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseCharRef`: the character, 0 on error.
-    pub fn parse_char_ref(&mut self) -> u32 {
+    pub fn parse_char_ref(&mut self) -> u32
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let mut val: u32 = 0;
         let mut count: u32 = 0;
-        if self.cur() == b'&' && self.nxt(1) == b'#' && self.nxt(2) == b'x' {
+        if self.cur() == 0x26 && self.nxt(1) == 0x23 && self.nxt(2) == 0x78 {
             self.skip(3);
             self.grow();
-            while self.cur() != b';' && !self.stopped() {
+            while self.cur() != 0x3B && !self.stopped()
+                invariant
+                    self.advances(old(self)),
+                    val <= 0x110000,
+                    count <= 22,
+                decreases self.fuel,
+            {
+                if !self.step() {
+                    break;
+                }
                 let prev = count;
-                count += 1;
+                count = count + 1;
                 if prev > 20 {
                     count = 0;
                     self.grow();
                 }
                 let c = self.cur();
-                if c.is_ascii_digit() {
-                    val = val * 16 + (c - b'0') as u32;
-                } else if (b'a'..=b'f').contains(&c) && count < 20 {
-                    val = val * 16 + (c - b'a') as u32 + 10;
-                } else if (b'A'..=b'F').contains(&c) && count < 20 {
-                    val = val * 16 + (c - b'A') as u32 + 10;
+                if is_digit_ch(c) {
+                    val = val * 16 + (c - 0x30) as u32;
+                } else if 0x61 <= c && c <= 0x66 && count < 20 {
+                    val = val * 16 + (c - 0x61) as u32 + 10;
+                } else if 0x41 <= c && c <= 0x46 && count < 20 {
+                    val = val * 16 + (c - 0x41) as u32 + 10;
                 } else {
                     self.fatal(ERR_INVALID_HEX_CHARREF, None);
                     val = 0;
@@ -151,26 +218,35 @@ impl<S: Sink> Parser<S> {
                     val = 0x110000;
                 }
                 self.next();
-                count += 1;
+                count = count + 1;
             }
-            if self.cur() == b';' {
+            if self.cur() == 0x3B {
                 let i = self.inp_mut();
-                i.col = i.col.saturating_add(1);
-                i.cur += 1;
+                i.col = sat_add_i32(i.col, 1);
+                i.cur = i.cur.saturating_add(1);
             }
-        } else if self.cur() == b'&' && self.nxt(1) == b'#' {
+        } else if self.cur() == 0x26 && self.nxt(1) == 0x23 {
             self.skip(2);
             self.grow();
-            while self.cur() != b';' {
+            while self.cur() != 0x3B
+                invariant
+                    self.advances(old(self)),
+                    val <= 0x110000,
+                    count <= 22,
+                decreases self.fuel,
+            {
+                if !self.step() {
+                    break;
+                }
                 let prev = count;
-                count += 1;
+                count = count + 1;
                 if prev > 20 {
                     count = 0;
                     self.grow();
                 }
                 let c = self.cur();
-                if c.is_ascii_digit() {
-                    val = val * 10 + (c - b'0') as u32;
+                if is_digit_ch(c) {
+                    val = val * 10 + (c - 0x30) as u32;
                 } else {
                     self.fatal(ERR_INVALID_DEC_CHARREF, None);
                     val = 0;
@@ -180,15 +256,15 @@ impl<S: Sink> Parser<S> {
                     val = 0x110000;
                 }
                 self.next();
-                count += 1;
+                count = count + 1;
             }
-            if self.cur() == b';' {
+            if self.cur() == 0x3B {
                 let i = self.inp_mut();
-                i.col = i.col.saturating_add(1);
-                i.cur += 1;
+                i.col = sat_add_i32(i.col, 1);
+                i.cur = i.cur.saturating_add(1);
             }
         } else {
-            if self.cur() == b'&' {
+            if self.cur() == 0x26 {
                 self.skip(1);
             }
             self.fatal(ERR_INVALID_CHARREF, None);
@@ -198,26 +274,44 @@ impl<S: Sink> Parser<S> {
             self.fatal_int(ERR_INVALID_CHAR, m, val as i32);
             val = 0xFFFD;
         } else if !is_char(val) {
-            let m = cat(&[b"xmlParseCharRef: invalid xmlChar value ", &itoa(val as i64), b"\n"]);
-            self.fatal_int(ERR_INVALID_CHAR, &m, val as i32);
+            let m = cat(&[b"xmlParseCharRef: invalid xmlChar value ", itoa(val as i64).as_slice(), b"\n"]);
+            self.fatal_int(ERR_INVALID_CHAR, m.as_slice(), val as i32);
         }
         val
     }
 
     /// `xmlParseStringCharRef` over `s` at `*i`.
-    pub fn parse_string_char_ref(&mut self, s: &[u8], i: &mut usize) -> u32 {
+    pub fn parse_string_char_ref(&mut self, s: &[u8], i: &mut usize) -> (r: u32)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+            *final(i) >= *old(i),
+            *final(i) == *old(i) || *final(i) <= s@.len(),
+            r != 0 ==> *final(i) > *old(i),
+    {
+        let _n = s.len();
         let mut p = *i;
         let mut val: u32 = 0;
-        if at(s, p) == b'&' && at(s, p + 1) == b'#' && at(s, p + 2) == b'x' {
-            p += 3;
+        if at(s, p) == 0x26 && crate::lenient::at_off(s, p, 1) == 0x23 && crate::lenient::at_off(s, p, 2) == 0x78 {
+            p = p + 3;
             let mut c = at(s, p);
-            while c != b';' {
-                if c.is_ascii_digit() {
-                    val = val * 16 + (c - b'0') as u32;
-                } else if (b'a'..=b'f').contains(&c) {
-                    val = val * 16 + (c - b'a') as u32 + 10;
-                } else if (b'A'..=b'F').contains(&c) {
-                    val = val * 16 + (c - b'A') as u32 + 10;
+            while c != 0x3B
+                invariant
+                    _n == s@.len(),
+                    *old(i) < p <= s@.len(),
+                    c == crate::lenient::at_spec(s@, p as int),
+                    val <= 0x110000,
+                    self.wf(),
+                    self.only_sink(old(self)),
+                decreases s@.len() - p,
+            {
+                if is_digit_ch(c) {
+                    val = val * 16 + (c - 0x30) as u32;
+                } else if 0x61 <= c && c <= 0x66 {
+                    val = val * 16 + (c - 0x61) as u32 + 10;
+                } else if 0x41 <= c && c <= 0x46 {
+                    val = val * 16 + (c - 0x41) as u32 + 10;
                 } else {
                     self.fatal(ERR_INVALID_HEX_CHARREF, None);
                     val = 0;
@@ -226,18 +320,27 @@ impl<S: Sink> Parser<S> {
                 if val > 0x110000 {
                     val = 0x110000;
                 }
-                p += 1;
+                p = p + 1;
                 c = at(s, p);
             }
-            if c == b';' {
-                p += 1;
+            if c == 0x3B {
+                p = p + 1;
             }
-        } else if at(s, p) == b'&' && at(s, p + 1) == b'#' {
-            p += 2;
+        } else if at(s, p) == 0x26 && crate::lenient::at_off(s, p, 1) == 0x23 {
+            p = p + 2;
             let mut c = at(s, p);
-            while c != b';' {
-                if c.is_ascii_digit() {
-                    val = val * 10 + (c - b'0') as u32;
+            while c != 0x3B
+                invariant
+                    _n == s@.len(),
+                    *old(i) < p <= s@.len(),
+                    c == crate::lenient::at_spec(s@, p as int),
+                    val <= 0x110000,
+                    self.wf(),
+                    self.only_sink(old(self)),
+                decreases s@.len() - p,
+            {
+                if is_digit_ch(c) {
+                    val = val * 10 + (c - 0x30) as u32;
                 } else {
                     self.fatal(ERR_INVALID_DEC_CHARREF, None);
                     val = 0;
@@ -246,11 +349,11 @@ impl<S: Sink> Parser<S> {
                 if val > 0x110000 {
                     val = 0x110000;
                 }
-                p += 1;
+                p = p + 1;
                 c = at(s, p);
             }
-            if c == b';' {
-                p += 1;
+            if c == 0x3B {
+                p = p + 1;
             }
         } else {
             self.fatal(ERR_INVALID_CHARREF, None);
@@ -262,33 +365,53 @@ impl<S: Sink> Parser<S> {
         } else if is_char(val) {
             return val;
         } else {
-            let m = cat(&[b"xmlParseStringCharRef: invalid xmlChar value ", &itoa(val as i64), b"\n"]);
-            self.fatal_int(ERR_INVALID_CHAR, &m, val as i32);
+            let m = cat(&[b"xmlParseStringCharRef: invalid xmlChar value ", itoa(val as i64).as_slice(), b"\n"]);
+            self.fatal_int(ERR_INVALID_CHAR, m.as_slice(), val as i32);
         }
         0
     }
 
     /// The bytes `from..to` of the current input.
-    pub fn slice(&self, from: usize, to: usize) -> Vec<u8> {
+    pub fn slice(&self, from: usize, to: usize) -> Vec<u8>
+        requires
+            self.wf(),
+    {
         let b = &self.inp().buf;
         let to = if to < b.len() { to } else { b.len() };
-        if from < to { b[from..to].to_vec() } else { Vec::new() }
+        if from < to { vec_of(slice_subrange(b.as_slice(), from, to)) } else { Vec::new() }
     }
 
-    fn parse_name_complex(&mut self) -> Option<Vec<u8>> {
+    fn parse_name_complex(&mut self) -> Option<Vec<u8>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
         let old10 = self.old10();
-        let (mut c, mut l) = self.current_char();
+        let r = self.current_char();
+        let (mut c, mut l) = (r.0, r.1);
         if !is_name_start(c, old10) {
             return None;
         }
         let mut len: usize = l;
         self.nextl(l);
-        (c, l) = self.current_char();
-        while is_name_char(c, old10) {
+        let r = self.current_char();
+        c = r.0;
+        l = r.1;
+        while is_name_char(c, old10)
+            invariant
+                self.advances(old(self)),
+            decreases self.fuel,
+        {
+            if !self.step() {
+                break;
+            }
             len = len.saturating_add(l);
             self.nextl(l);
-            (c, l) = self.current_char();
+            let r = self.current_char();
+            c = r.0;
+            l = r.1;
         }
         if len > max {
             self.fatal(ERR_NAME_TOO_LONG, Some(b"Name"));
@@ -299,24 +422,36 @@ impl<S: Sink> Parser<S> {
             self.fatal(ERR_INTERNAL_ERROR, Some(b"unexpected change of input buffer"));
             return None;
         }
-        let crlf = self.cur() == b'\n' && cur > 0 && at(&self.inp().buf, cur - 1) == b'\r';
+        let crlf = self.cur() == 0x0A && cur > 0 && at(&self.inp().buf, cur - 1) == 0x0D;
         if crlf {
-            Some(self.slice(cur - (len + 1), cur - 1))
+            Some(self.slice(cur.saturating_sub(len + 1), cur - 1))
         } else {
-            Some(self.slice(cur - len, cur))
+            Some(self.slice(cur.saturating_sub(len), cur))
         }
     }
 
     /// `xmlParseName`.
-    pub fn parse_name(&mut self) -> Option<Vec<u8>> {
+    pub fn parse_name(&mut self) -> Option<Vec<u8>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
         self.grow();
         let start = self.inp().cur;
+        let _n = self.inp().buf.len();
         let mut p = start;
         if ascii_name_start(at(&self.inp().buf, p)) {
-            p += 1;
-            while ascii_name_char(at(&self.inp().buf, p)) {
-                p += 1;
+            p = p + 1;
+            while ascii_name_char(at(&self.inp().buf, p))
+                invariant
+                    self.wf(),
+                    _n == self.top().buf@.len(),
+                    start < p <= _n,
+                decreases _n - p,
+            {
+                p = p + 1;
             }
             let c = at(&self.inp().buf, p);
             if c > 0 && c < 0x80 {
@@ -328,54 +463,80 @@ impl<S: Sink> Parser<S> {
                 let r = self.slice(start, p);
                 let i = self.inp_mut();
                 i.cur = p;
-                i.col = i.col.saturating_add(count as i32);
+                i.col = sat_add_i32(i.col, count as i32);
                 return Some(r);
             }
         }
         self.parse_name_complex()
     }
 
-    fn parse_ncname_complex(&mut self) -> Option<Vec<u8>> {
+    fn parse_ncname_complex(&mut self) -> Option<Vec<u8>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
         let old10 = self.old10();
         let start = self.inp().cur;
-        let (mut c, mut l) = self.current_char();
-        if c == 0x20 || c == b'>' as u32 || c == b'/' as u32 || !is_name_start(c, old10) || c == b':' as u32 {
+        let r = self.current_char();
+        let (mut c, mut l) = (r.0, r.1);
+        if c == 0x20 || c == 0x3E || c == 0x2F || !is_name_start(c, old10) || c == 0x3A {
             return None;
         }
         let mut len: usize = 0;
-        while c != 0x20 && c != b'>' as u32 && c != b'/' as u32 && is_name_char(c, old10) && c != b':' as u32 {
+        while c != 0x20 && c != 0x3E && c != 0x2F && is_name_char(c, old10) && c != 0x3A
+            invariant
+                self.advances(old(self)),
+            decreases self.fuel,
+        {
+            if !self.step() {
+                break;
+            }
             len = len.saturating_add(l);
             self.nextl(l);
-            (c, l) = self.current_char();
+            let r = self.current_char();
+            c = r.0;
+            l = r.1;
         }
         if len > max {
             self.fatal(ERR_NAME_TOO_LONG, Some(b"NCName"));
             return None;
         }
-        Some(self.slice(start, start + len))
+        Some(self.slice(start, start.saturating_add(len)))
     }
 
     /// `xmlParseNCName`.
-    pub fn parse_ncname(&mut self) -> Option<Vec<u8>> {
+    pub fn parse_ncname(&mut self) -> Option<Vec<u8>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
         let start = self.inp().cur;
         let e = self.inp().buf.len();
         let mut p = start;
-        let b = |k: usize, s: &Self| at(&s.inp().buf, k);
-        let c0 = b(p, self);
-        if (c0.is_ascii_lowercase() || c0.is_ascii_uppercase() || c0 == b'_') && p < e {
-            p += 1;
-            loop {
-                let c = b(p, self);
-                if (c.is_ascii_lowercase() || c.is_ascii_uppercase() || c.is_ascii_digit() || c == b'_' || c == b'-' || c == b'.') && p < e {
-                    p += 1;
+        let c0 = at(&self.inp().buf, p);
+        if ((0x61 <= c0 && c0 <= 0x7A) || (0x41 <= c0 && c0 <= 0x5A) || c0 == 0x5F) && p < e {
+            p = p + 1;
+            loop
+                invariant
+                    self.wf(),
+                    e == self.top().buf@.len(),
+                    start <= p <= e,
+                decreases e - p,
+            {
+                let c = at(&self.inp().buf, p);
+                if ((0x61 <= c && c <= 0x7A) || (0x41 <= c && c <= 0x5A) || (0x30 <= c && c <= 0x39) || c == 0x5F || c
+                    == 0x2D || c == 0x2E) && p < e {
+                    p = p + 1;
                 } else {
                     break;
                 }
             }
             if p < e {
-                let c = b(p, self);
+                let c = at(&self.inp().buf, p);
                 if c > 0 && c < 0x80 {
                     let count = p - start;
                     if count > max {
@@ -385,7 +546,7 @@ impl<S: Sink> Parser<S> {
                     let r = self.slice(start, p);
                     let i = self.inp_mut();
                     i.cur = p;
-                    i.col = i.col.saturating_add(count as i32);
+                    i.col = sat_add_i32(i.col, count as i32);
                     return Some(r);
                 }
             }
@@ -395,80 +556,125 @@ impl<S: Sink> Parser<S> {
 
     /// `xmlParseNameAndCompare`: `Ok(())` when the name is `other`, else
     /// the name read (or `None`).
-    pub fn parse_name_and_compare(&mut self, other: &[u8]) -> Result<(), Option<Vec<u8>>> {
+    pub fn parse_name_and_compare(&mut self, other: &[u8]) -> Result<(), Option<Vec<u8>>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         self.grow();
         let start = self.inp().cur;
+        let _n = self.inp().buf.len();
         let mut p = start;
-        let mut k = 0;
-        while at(&self.inp().buf, p) != 0 && k < other.len() && at(&self.inp().buf, p) == other[k] {
-            p += 1;
-            k += 1;
+        let mut k: usize = 0;
+        while at(&self.inp().buf, p) != 0 && k < other.len() && at(&self.inp().buf, p) == other[k]
+            invariant
+                self.wf(),
+                _n == self.top().buf@.len(),
+                start <= p,
+                p == start || p <= _n,
+                k <= other@.len(),
+            decreases other@.len() - k,
+        {
+            p = p + 1;
+            k = k + 1;
         }
         let c = at(&self.inp().buf, p);
-        if k == other.len() && (c == b'>' || blank(c)) {
+        if k == other.len() && (c == 0x3E || blank(c)) {
             let i = self.inp_mut();
-            i.col = i.col.saturating_add((p - start) as i32);
+            i.col = sat_add_i32(i.col, (p - start) as i32);
             i.cur = p;
             return Ok(());
         }
         let r = self.parse_name();
-        if r.as_deref() == Some(other) {
+        if opt_eq(opt_slice(&r), Some(other)) {
             return Ok(());
         }
         Err(r)
     }
 
     /// `xmlParseStringName` over `s` at `*i`.
-    pub fn parse_string_name(&mut self, s: &[u8], i: &mut usize) -> Option<Vec<u8>> {
+    pub fn parse_string_name(&mut self, s: &[u8], i: &mut usize) -> Option<Vec<u8>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+            *final(i) >= *old(i),
+            *final(i) == *old(i) || *final(i) <= s@.len(),
+    {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
         let flags = if self.old10() { SCAN_OLD10 } else { 0 };
         match scan_name(s, *i, max, flags) {
             None => {
                 self.fatal(ERR_NAME_TOO_LONG, Some(b"NCName"));
                 None
-            }
+            },
             Some(e) => {
                 if e == *i {
                     return None;
                 }
-                let r = s[*i..e].to_vec();
+                let r = vec_of(slice_subrange(s, *i, e));
                 *i = e;
                 Some(r)
-            }
+            },
         }
     }
 
     /// `xmlParseNmtoken`.
-    pub fn parse_nmtoken(&mut self) -> Option<Vec<u8>> {
+    pub fn parse_nmtoken(&mut self) -> Option<Vec<u8>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
         let old10 = self.old10();
         let mut buf: Vec<u8> = Vec::new();
-        let (mut c, mut l) = self.current_char();
-        while is_name_char(c, old10) {
+        let r = self.current_char();
+        let (mut c, mut l) = (r.0, r.1);
+        while is_name_char(c, old10)
+            invariant
+                self.advances(old(self)),
+            decreases self.fuel,
+        {
+            if !self.step() {
+                break;
+            }
             push_char(&mut buf, c);
             self.nextl(l);
-            (c, l) = self.current_char();
+            let r = self.current_char();
+            c = r.0;
+            l = r.1;
             if buf.len() >= MAX_NAMELEN {
                 // The growing buffer: capacity starts at twice the length
                 // and grows by half, up to the limit.
-                let mut cap: usize = buf.len() * 2;
-                while is_name_char(c, old10) {
-                    if buf.len() + 10 > cap {
+                let mut cap: usize = buf.len().saturating_mul(2);
+                while is_name_char(c, old10)
+                    invariant
+                        self.advances(old(self)),
+                    decreases self.fuel,
+                {
+                    if !self.step() {
+                        break;
+                    }
+                    if buf.len().saturating_add(10) > cap {
                         if cap >= max {
                             self.fatal(ERR_NAME_TOO_LONG, Some(b"NmToken"));
                             return None;
                         }
-                        let extra = cap.div_ceil(2);
+                        let extra = cap / 2 + cap % 2;
                         cap = if cap > max - extra { max } else { cap + extra };
                     }
                     push_char(&mut buf, c);
                     self.nextl(l);
-                    (c, l) = self.current_char();
+                    let r = self.current_char();
+                    c = r.0;
+                    l = r.1;
                 }
                 return Some(buf);
             }
         }
-        if buf.is_empty() {
+        if buf.len() == 0 {
             return None;
         }
         if buf.len() > max {
@@ -478,3 +684,5 @@ impl<S: Sink> Parser<S> {
         Some(buf)
     }
 }
+
+} // verus!

@@ -2,12 +2,9 @@
  * besides its public API, for building that suite against verilith-xml's
  * expat ABI. These are libexpat's internals (its hash table, allocator,
  * tokenizer and accounting), which verilith-xml does not have: each stub
- * fails the test that calls it. The two globals are the testing switches
- * runtests.c sets. scripts/test-expat.sh lists the tests that need them. */
+ * fails the test that calls it. scripts/test-expat.sh lists the tests that need them. */
 #include "minicheck.h"
 
-unsigned char g_reparseDeferralEnabledDefault = 1;
-unsigned int g_bytesScanned = 0;
 
 #define INTERNAL(name) \
   void *name(void) { _fail(__FILE__, __LINE__, "libexpat internal: " #name); return 0; }

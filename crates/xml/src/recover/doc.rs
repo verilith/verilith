@@ -3,15 +3,24 @@
 use super::codes::*;
 use super::content::grow_capacity_min;
 use super::*;
+use vstd::prelude::*;
+
+verus! {
+
 
 impl<S: Sink> Parser<S> {
     /// `xmlParseVersionNum`.
-    pub fn parse_version_num(&mut self) -> Option<Vec<u8>> {
+    pub fn parse_version_num(&mut self) -> Option<Vec<u8>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
         let mut size: usize = 10;
         let mut buf: Vec<u8> = Vec::new();
         let mut cur = self.cur();
-        if !cur.is_ascii_digit() {
+        if !(0x30 <= cur && cur <= 0x39) {
             return None;
         }
         buf.push(cur);
@@ -23,11 +32,15 @@ impl<S: Sink> Parser<S> {
         buf.push(cur);
         self.next();
         cur = self.cur();
-        while cur.is_ascii_digit() {
+        while 0x30 <= cur && cur <= 0x39
+            invariant
+                self.advances(old(self)),
+            decreases self.fuel,
+        {
             if !self.step() {
                 return None;
             }
-            if buf.len() + 1 >= size {
+            if buf.len().saturating_add(1) >= size {
                 match grow_capacity_min(size, 1, max) {
                     None => {
                         self.fatal(ERR_NAME_TOO_LONG, Some(b"VersionNum"));
@@ -44,7 +57,12 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseVersionInfo`.
-    pub fn parse_version_info(&mut self) -> Option<Vec<u8>> {
+    pub fn parse_version_info(&mut self) -> Option<Vec<u8>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let mut version = None;
         if self.cmp(b"version") {
             self.skip(7);
@@ -72,22 +90,32 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseEncName`.
-    pub fn parse_enc_name(&mut self) -> Option<Vec<u8>> {
+    pub fn parse_enc_name(&mut self) -> Option<Vec<u8>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
         let mut size: usize = 10;
         let mut cur = self.cur();
-        if !cur.is_ascii_alphabetic() {
+        if !((0x41 <= cur && cur <= 0x5A) || (0x61 <= cur && cur <= 0x7A)) {
             self.fatal(ERR_ENCODING_NAME, None);
             return None;
         }
-        let mut buf: Vec<u8> = vec![cur];
+        let mut buf: Vec<u8> = Vec::new();
+        buf.push(cur);
         self.next();
         cur = self.cur();
-        while cur.is_ascii_alphanumeric() || cur == b'.' || cur == b'_' || cur == b'-' {
+        while (0x41 <= cur && cur <= 0x5A) || (0x61 <= cur && cur <= 0x7A) || (0x30 <= cur && cur <= 0x39) || cur == b'.' || cur == b'_' || cur == b'-'
+            invariant
+                self.advances(old(self)),
+            decreases self.fuel,
+        {
             if !self.step() {
                 return None;
             }
-            if buf.len() + 1 >= size {
+            if buf.len().saturating_add(1) >= size {
                 match grow_capacity_min(size, 1, max) {
                     None => {
                         self.fatal(ERR_NAME_TOO_LONG, Some(b"EncName"));
@@ -104,7 +132,13 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseEncodingDecl`.
-    pub fn parse_encoding_decl(&mut self) {
+    pub fn parse_encoding_decl(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+            final(self).inputs@.len() == old(self).inputs@.len(),
+    {
         self.skip_blanks();
         if !self.cmp(b"encoding") {
             return;
@@ -131,13 +165,19 @@ impl<S: Sink> Parser<S> {
             self.fatal(ERR_STRING_NOT_STARTED, None);
             return;
         }
-        if let Some(e) = encoding {
-            self.set_declared_encoding(e);
+        match encoding {
+            Some(e) => self.set_declared_encoding(e),
+            None => {}
         }
     }
 
     /// `xmlParseSDDecl`.
-    pub fn parse_sd_decl(&mut self) -> i32 {
+    pub fn parse_sd_decl(&mut self) -> i32
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let mut standalone = -2;
         self.skip_blanks();
         if self.cmp(b"standalone") {
@@ -174,7 +214,13 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseXMLDecl`.
-    pub fn parse_xml_decl(&mut self) {
+    pub fn parse_xml_decl(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+            final(self).inputs@.len() == old(self).inputs@.len(),
+    {
         self.sink.set_standalone(-2);
         self.skip(5);
         if !blank(self.cur()) {
@@ -184,14 +230,14 @@ impl<S: Sink> Parser<S> {
         match self.parse_version_info() {
             None => self.fatal(ERR_VERSION_MISSING, None),
             Some(v) => {
-                if v.as_slice() != b"1.0" {
-                    let m = cat(&[b"Unsupported version '", &v, b"'\n"]);
+                if !crate::lenient::bytes_eq(&v, b"1.0") {
+                    let m = cat(&[b"Unsupported version '", v.as_slice(), b"'\n"]);
                     if self.options & PARSE_OLD10 != 0 {
-                        self.fatal_str(ERR_UNKNOWN_VERSION, &m, Some(&v));
+                        self.fatal_str(ERR_UNKNOWN_VERSION, &m, Some(v.as_slice()));
                     } else if at(&v, 0) == b'1' && at(&v, 1) == b'.' {
-                        self.warning(WAR_UNKNOWN_VERSION, &m, Some(&v), None);
+                        self.warning(WAR_UNKNOWN_VERSION, &m, Some(v.as_slice()), None);
                     } else {
-                        self.fatal_str(ERR_UNKNOWN_VERSION, &m, Some(&v));
+                        self.fatal_str(ERR_UNKNOWN_VERSION, &m, Some(v.as_slice()));
                     }
                 }
                 self.sink.set_version(&v);
@@ -225,7 +271,13 @@ impl<S: Sink> Parser<S> {
             self.next();
         } else {
             self.fatal(ERR_XMLDECL_NOT_FINISHED, None);
-            while !self.stopped() {
+            let ghost n0 = self.inputs@.len();
+            while !self.stopped()
+                invariant
+                    self.evolves(old(self)),
+                    self.inputs@.len() == n0,
+                decreases self.fuel,
+            {
                 if !self.step() {
                     break;
                 }
@@ -242,8 +294,17 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseMisc`.
-    pub fn parse_misc(&mut self) {
-        while !self.stopped() {
+    pub fn parse_misc(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
+        while !self.stopped()
+            invariant
+                self.advances(old(self)),
+            decreases self.fuel,
+        {
             if !self.step() {
                 break;
             }
@@ -260,16 +321,25 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseExternalSubset`.
-    pub fn parse_external_subset(&mut self) {
+    pub fn parse_external_subset(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         self.detect_encoding();
         if self.cmp(b"<?xml") {
             self.parse_text_decl();
         }
-        self.sink.ensure_doc_for_subset(self.ext_sub_system.as_deref(), self.ext_sub_uri.as_deref());
+        self.sink.ensure_doc_for_subset(opt_slice(&self.ext_sub_system), opt_slice(&self.ext_sub_uri));
         self.sink.set_in_subset(2);
         let old_nr = self.inputs.len();
         self.skip_blanks();
-        while !self.stopped() {
+        while !self.stopped()
+            invariant
+                self.evolves(old(self)),
+            decreases self.fuel,
+        {
             if !self.step() {
                 break;
             }
@@ -287,9 +357,7 @@ impl<S: Sink> Parser<S> {
                 self.parse_pe_ref_internal(true);
             } else {
                 self.fatal(ERR_EXT_SUBSET_NOT_FINISHED, None);
-                while self.inputs.len() > old_nr {
-                    self.pop_pe();
-                }
+                self.pop_pes_to(old_nr);
                 break;
             }
             self.skip_blanks();
@@ -300,7 +368,12 @@ impl<S: Sink> Parser<S> {
 
     /// `xmlSAX2ExternalSubset`: the sink loads the subset (or declines),
     /// the parser reads it on an input stack of its own.
-    fn external_subset(&mut self) {
+    fn external_subset(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         let name = self.int_sub_name.clone();
         let public = self.ext_sub_system.clone();
         let system = self.ext_sub_uri.clone();
@@ -308,22 +381,28 @@ impl<S: Sink> Parser<S> {
             return;
         }
         self.sync();
-        let loaded = self.sink.external_subset(name.as_deref(), public.as_deref(), system.as_deref());
+        let loaded = self.sink.external_subset(opt_slice(&name), opt_slice(&public), opt_slice(&system));
         let l = match loaded {
             None => return,
             Some(l) => l,
         };
-        let old_inputs = core::mem::take(&mut self.inputs);
-        let old_encoding = self.encoding.take();
+        let mut old_inputs: Vec<Input> = Vec::new();
+        std::mem::swap(&mut old_inputs, &mut self.inputs);
+        let mut old_encoding: Option<Vec<u8>> = None;
+        std::mem::swap(&mut old_encoding, &mut self.encoding);
         let mut input = Input::from_bytes(Vec::new());
         input.src = Some(Source { raw: l.bytes, delivered: 0, pos: 0, mode: if l.stream { Mode::Stream } else { Mode::Memory }, enc: None, error: 0, eof: false });
         input.filename = l.filename;
         enc::init_buffer(&mut input);
         self.inputs.push(input);
-        self.input_id = self.input_id.saturating_add(1);
+        self.input_id = sat_add_i32(self.input_id, 1);
         self.sync();
         self.parse_external_subset();
-        while self.inputs.len() > 1 {
+        while self.inputs.len() > 1
+            invariant
+                self.evolves(old(self)),
+            decreases self.inputs@.len(),
+        {
             self.inputs.pop();
         }
         let consumed = {
@@ -333,12 +412,17 @@ impl<S: Sink> Parser<S> {
         self.sink.add_sizeentities(consumed);
         self.inputs = old_inputs;
         self.encoding = old_encoding.clone();
-        self.sink.set_encoding(old_encoding.as_deref());
+        self.sink.set_encoding(opt_slice(&old_encoding));
         self.sync();
     }
 
     /// `xmlParseDocument`.
-    pub fn parse_document(&mut self) -> i32 {
+    pub fn parse_document(&mut self) -> i32
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+    {
         self.grow();
         self.detect_encoding();
         if self.cur() == 0 {
@@ -350,7 +434,7 @@ impl<S: Sink> Parser<S> {
             self.parse_xml_decl();
             self.skip_blanks();
         } else {
-            self.version = Some(b"1.0".to_vec());
+            self.version = Some(crate::lenient::vec_of(b"1.0"));
             self.sink.set_version(b"1.0");
         }
         if self.sax_on() {
@@ -405,10 +489,15 @@ pub fn parse<S: Sink>(sink: S, raw: Vec<u8>, mode: Mode, filename: Option<Vec<u8
     enc::init_buffer(&mut input);
     let mut p = Parser::new(sink, input);
     p.sync();
-    if let Some(e) = forced {
-        p.switch_encoding_name(e);
+    match forced {
+        Some(e) => {
+            p.switch_encoding_name(e);
+        }
+        None => {}
     }
     p.parse_document();
     p.sync();
     p.sink
 }
+
+} // verus!
