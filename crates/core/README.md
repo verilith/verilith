@@ -26,7 +26,7 @@ once, and the libraries import it.
 | `utf8` | well-formed UTF-8 (Unicode Table 3-7), the three-byte local condition SIMD validators check, its proof, and a verified scalar validator | verilith-json |
 | `num` | decimal digits: `is_digit`, `digits_end`, `dec_value`, `decimal`; `parse_u64_dec` (checked) and `push_decimal` | verilith-json, verilith-url, verilith-dns |
 | `binary64` | IEEE 754 binary64 as a model in spec integers (in the style of Coq's Flocq): what each bit pattern is worth as an exact rational, round to nearest, ties to even (`rne`), proofs that rounding depends only on the value and that exact products and quotients of equal values are equal, that `u64 as f64` is exact below `2^53`, and `P10`, the exact doubles `10^0..=10^22`; `mul`, `div` and `from_u64` on bit patterns | verilith-json |
-| `checksum` | Adler-32 and CRC-32 (slicing-by-16), and CRC-32C (`checksum::crc32c`, a table per byte), proven against the RFC definitions in `checksum::spec`; `checksum::cpu` picks AVX2/PCLMULQDQ kernels, on AArch64 the verified three-lane `crc32x` kernel in `checksum::lanes`, and for CRC-32C the SSE4.2 or AArch64 CRC-32C instruction | verilith-zlib, verilith-snappy |
+| `checksum` | Adler-32 and CRC-32 (slicing-by-16), and CRC-32C (`checksum::crc32c`, a table per byte), proven against the RFC definitions in `checksum::spec`; `checksum::cpu` picks the AVX2 Adler-32 build and, for CRC-32, the verified carry-less-multiply folding kernels in `checksum::fold` (VPCLMULQDQ on 512- or 256-bit vectors, or PCLMULQDQ), on AArch64 the verified three-lane `crc32x` kernel in `checksum::lanes`, and for CRC-32C the SSE4.2 or AArch64 CRC-32C instruction | verilith-zlib, verilith-snappy |
 
 verilith-webp and verilith-brotli share the table builder in `htable`. verilith-zlib keeps its own:
 it builds a different layout (DEFLATE's flagged length/distance entries) on
@@ -71,15 +71,34 @@ What the proofs here assume rather than prove:
   vector's capacity. `tests/basic.rs` compares them with `Vec` appends
   over every length and offset up to 100.
 - `src/checksum/cpu.rs`: CPU dispatch. Adler-32 reruns the verified
-  kernel compiled with AVX2; the PCLMULQDQ CRC-32 is unverified and tested
-  against the verified table-driven one (`tests/basic.rs`, every length up
-  to 5000). `crc32c_update` runs the CPU's CRC-32C instruction (SSE4.2's
+  kernel compiled with AVX2. `crc32_update` is itself verified; trusted
+  are the run-time feature checks and the one-line trampolines that
+  compile the verified CRC-32 kernels (`checksum::fold`, `checksum::lanes`)
+  with the target features their instructions need. `crc32c_update` runs the CPU's CRC-32C instruction (SSE4.2's
   `crc32` on x86-64, `crc32cb`/`crc32cd` on AArch64) eight bytes at a
   time: trusted is that the instruction computes this CRC on the raw
   register, as it is defined to, and the eight-line loops around it.
   `tests/crc32c.rs` compares it with the verified table kernel at every
   length up to 300 and at eight alignments, and the table kernel with a
   bit-at-a-time reference.
+- `src/checksum/vclmul.rs` (x86-64 only): the instructions the CRC-32
+  folding kernels use, one safe wrapper each with a contract on the
+  vector's 128-bit blocks (`xv`, `zl`, `yl`): the 16-, 32- and 64-byte
+  loads, XOR, AND, byte shifts, broadcasts, extracting a block, and the
+  carry-less products of `pclmulqdq`/`vpclmulqdq` (immediates 0x00 and
+  0x11), stated with the spec `fold::clmul`; the CPU-feature predicates
+  `pclmul()`, `vpclmul256()`, `vpclmul()` and their detection. Each is
+  one intrinsic, except `x_fold`/`y_fold`/`z_fold` (two products and an
+  XOR). `tests/vclmul.rs` checks every one against the verified reference
+  `fold::clmul_ref` (itself checked against a naive product) on random
+  inputs, and the three kernels against the table code at every length to
+  1100 and random lengths to 64 KiB. The 512-bit checks need AVX-512F
+  and VPCLMULQDQ and are skipped, with a message, on a CPU without them.
+  Everything else in `checksum::fold` is proven: that folding a block
+  with `fold_k(n) = crc_steps(POLY, n) << 1` advances its CRC effect `n`
+  bits, that runs of blocks fold onto the next run, the final reduction
+  to the 32-bit register, and the constants themselves, which the
+  compiler computes with the verified `lanes::steps_exec`.
 - `src/checksum/lanes.rs`, the one `external_body` function `crc_word`:
   on AArch64, that the `crc32x` instruction computes this CRC-32 over its
   eight bytes. The three-lane CRC-32 around it, the tables that combine
