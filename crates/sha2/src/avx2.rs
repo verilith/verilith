@@ -14,10 +14,10 @@
 //! words at a time, so that the verified rounds of one pair can run with
 //! the next pair's schedule interleaved: the vector work then fills the
 //! ports the rounds' dependency chains leave idle, as in OpenSSL. Its state
-//! is the last 16 words of each block, [`Sched512`], and [`sched_at`] says
+//! is the last 16 words of each block, [`Sched512`], and `sched_at` says
 //! which words they are.
 //!
-//! Trusted here: [`barrier`], an empty `asm!` each pipelined step's result
+//! Trusted here: `barrier`, an empty `asm!` each pipelined step's result
 //! passes through (it only keeps LLVM from moving the step), and the two
 //! whole-schedule functions' trampolines, which compile the verified body
 //! with AVX2 enabled.
@@ -489,7 +489,7 @@ pub fn sched_steps2(
     step512_pipe(st, s + 1, w0, w1, Ghost(m0), Ghost(m1));
 }
 
-/// One step of the pipelined schedule, through [`barrier`].
+/// One step of the pipelined schedule, through `barrier`.
 #[inline(always)]
 fn step512_pipe(
     st: &mut Sched512,
@@ -599,7 +599,7 @@ fn schedule512x2_body(p: &[u8], o0: usize, o1: usize, w0: &mut [u64; 80], w1: &m
 }
 
 /// K_t + W_t for t = 0..80 of the 128-byte blocks at `o0` and `o1` of `p`:
-/// [`schedule512x2_body`] compiled with AVX2 and out of line (trusted to be
+/// `schedule512x2_body` compiled with AVX2 and out of line (trusted to be
 /// that function).
 ///
 /// Not inlined, on purpose: inlined, LLVM forwards the stores to the
@@ -1220,7 +1220,7 @@ pub fn sched256_start(p: &[u8], o0: usize, o1: usize, w0: &mut [u32; 64], w1: &m
     r
 }
 
-/// Step `s`: words `4s` to `4s + 4` of both blocks, through [`barrier`].
+/// Step `s`: words `4s` to `4s + 4` of both blocks, through `barrier`.
 #[inline(always)]
 pub fn sched256_step(
     st: &mut Sched256,
@@ -1279,7 +1279,7 @@ fn schedule256x2_body(p: &[u8], o0: usize, o1: usize, w0: &mut [u32; 64], w1: &m
 }
 
 /// The whole SHA-256 schedule of the 64-byte blocks at `o0` and `o1`:
-/// [`schedule256x2_body`] compiled with AVX2 and out of line (see
+/// `schedule256x2_body` compiled with AVX2 and out of line (see
 /// [`schedule512x2`]).
 #[verifier::external_body]
 #[inline(always)]
