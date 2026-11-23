@@ -731,6 +731,8 @@ fn h_scheme(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): Tr
 }
 
 /// A fragment-only reference against a base with an opaque path.
+// Over the default budget at a 32-bit usize (wasm32).
+#[verifier::rlimit(30)]
 fn no_scheme_fragment(ps: &mut Parser, input: &[u8], base: Option<&Url>, bu: &Url, Tracked(cost): Tracked<&mut Meter>) -> (r: Flow)
     requires
         old(ps).inv(input@, base_rec(base)),

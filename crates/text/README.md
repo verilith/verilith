@@ -400,6 +400,15 @@ At 64 bytes, base64-simd is still ahead: 2.6 against 1.8 GB/s to encode, and
 `8bf68ee741df833ea5d0fe6a2255126fdea87e47`, whose vstd matches the one
 pinned in `Cargo.toml`. The proofs take about 40 seconds.
 
+The proofs fix no pointer width, so they hold on 32-bit targets as well as
+64-bit ones, and the crate builds for `wasm32-unknown-unknown` (browsers,
+Cloudflare Workers). There the counters accept inputs shorter than
+`MAX_LEN`, 2^29 bytes or units, and the SIMD paths give way to the scalar
+ones. CI runs Verus compiling for that target too, so that the code a
+wasm32 build has is checked as compiled there, and runs the tests on
+`wasm32-wasip1` under wasmtime (`scripts/verify-narrow.sh` here, `scripts/wasm32.sh` at the
+root).
+
 To regenerate the tables after a Unicode update, run
 `tools/gen_unicode.py UCD_DIR` and `tools/gen_idna.py UCD_DIR`. Then copy
 the UCD files that the tests read into `tests/data`.

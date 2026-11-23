@@ -1202,6 +1202,9 @@ fn step_ascii(s: &[u8], t: &mut Scan, Ghost(cs): Ghost<Seq<u32>>, Ghost(out): Gh
 
 /// Steps over fast characters from `t.i`, one at a time, up to the first
 /// character that is not fast or the end.
+// Without a fixed pointer width (the crate verifies for 32- and 64-bit
+// targets alike) this loop needs a little over the default budget.
+#[verifier::rlimit(30)]
 #[inline(always)]
 fn skip_fast(s: &[u8], t: &mut Scan, fast: u16, Ghost(cs): Ghost<Seq<u32>>, Ghost(out): Ghost<Seq<u8>>, compose: bool, compat: bool) -> (r: (
     u32,

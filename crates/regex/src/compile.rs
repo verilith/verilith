@@ -324,6 +324,56 @@ fn expand_n<'a>(
             out.push(Inst::Look { k: *k, next: e as u32 });
             assert(pv(out@, cl) + rest =~= o0 + code + rest);
         },
+        Node::Group(..) | Node::Cat(..) => {
+            expand_n_seq(x, b, e, fail, out, ts, Ghost(cl), Ghost(nc), Ghost(ng));
+        },
+        Node::Alt(..) | Node::Opt(..) => {
+            expand_n_alt(x, b, e, fail, out, ts, Ghost(cl), Ghost(nc), Ghost(ng));
+        },
+        Node::Plus(p, g) => {
+            expand_plus(x, &**p, *g, b, e, fail, out, ts, Ghost(cl), Ghost(nc), Ghost(ng));
+        },
+    }
+}
+
+/// [`expand_n`] for a group or a concatenation. A separate function, as is
+/// [`expand_n_alt`], so that each proof stays small enough at a 32-bit usize.
+#[verifier::rlimit(200)]
+#[verifier::spinoff_prover]
+fn expand_n_seq<'a>(
+    x: &'a Ast,
+    b: usize,
+    e: usize,
+    fail: usize,
+    out: &mut Vec<Inst>,
+    ts: &mut Vec<Task<'a>>,
+    Ghost(cl): Ghost<Seq<Class>>,
+    Ghost(nc): Ghost<int>,
+    Ghost(ng): Ghost<int>,
+)
+    requires
+        x.node is Group || x.node is Cat,
+        nc <= LIM,
+        ng <= LIM,
+        fail <= LIM,
+        task_ok(Task::N(x, b, e), old(out)@.len() as int, nc, ng),
+        tasks_ok(old(ts)@, old(out)@.len() + tlen(Task::N(x, b, e)), nc, ng),
+    ensures
+        pv(final(out)@, cl) + flat(final(ts)@, cl, fail as int) == pv(old(out)@, cl) + tcode(Task::N(x, b, e), cl, fail as int)
+            + flat(old(ts)@, cl, fail as int),
+        tasks_ok(final(ts)@, final(out)@.len() as int, nc, ng),
+        wsum(final(ts)@, cl) < tw(Task::N(x, b, e), cl) + wsum(old(ts)@, cl),
+{
+    let ghost o0 = pv(out@, cl);
+    let ghost f = fail as int;
+    let ghost rest = flat(ts@, cl, f);
+    let ghost r = x.re(cl);
+    let ghost code = code_n(r, b as int, e as int, f);
+    proof {
+        lemma_len(r, b as int, e as int, 0, 0, f);
+        x.lemma_wf(cl);
+    }
+    match &x.node {
         Node::Group(k, p) => {
             proof {
                 p.lemma_wf(cl);
@@ -369,6 +419,47 @@ fn expand_n<'a>(
             ts.push(t1);
             assert(pv(out@, cl) + flat(ts@, cl, f) =~= o0 + code + rest);
         },
+        _ => {},
+    }
+}
+
+/// [`expand_n`] for an alternation or an option.
+#[verifier::rlimit(200)]
+#[verifier::spinoff_prover]
+fn expand_n_alt<'a>(
+    x: &'a Ast,
+    b: usize,
+    e: usize,
+    fail: usize,
+    out: &mut Vec<Inst>,
+    ts: &mut Vec<Task<'a>>,
+    Ghost(cl): Ghost<Seq<Class>>,
+    Ghost(nc): Ghost<int>,
+    Ghost(ng): Ghost<int>,
+)
+    requires
+        x.node is Alt || x.node is Opt,
+        nc <= LIM,
+        ng <= LIM,
+        fail <= LIM,
+        task_ok(Task::N(x, b, e), old(out)@.len() as int, nc, ng),
+        tasks_ok(old(ts)@, old(out)@.len() + tlen(Task::N(x, b, e)), nc, ng),
+    ensures
+        pv(final(out)@, cl) + flat(final(ts)@, cl, fail as int) == pv(old(out)@, cl) + tcode(Task::N(x, b, e), cl, fail as int)
+            + flat(old(ts)@, cl, fail as int),
+        tasks_ok(final(ts)@, final(out)@.len() as int, nc, ng),
+        wsum(final(ts)@, cl) < tw(Task::N(x, b, e), cl) + wsum(old(ts)@, cl),
+{
+    let ghost o0 = pv(out@, cl);
+    let ghost f = fail as int;
+    let ghost rest = flat(ts@, cl, f);
+    let ghost r = x.re(cl);
+    let ghost code = code_n(r, b as int, e as int, f);
+    proof {
+        lemma_len(r, b as int, e as int, 0, 0, f);
+        x.lemma_wf(cl);
+    }
+    match &x.node {
         Node::Alt(p, q) => {
             proof {
                 p.lemma_wf(cl);
@@ -413,9 +504,7 @@ fn expand_n<'a>(
             ts.push(t1);
             assert(pv(out@, cl) + flat(ts@, cl, f) =~= o0 + code + rest);
         },
-        Node::Plus(p, g) => {
-            expand_plus(x, &**p, *g, b, e, fail, out, ts, Ghost(cl), Ghost(nc), Ghost(ng));
-        },
+        _ => {},
     }
 }
 

@@ -18,6 +18,10 @@
 //   `cjson` feature.
 // * `native` - the native C API (not verified), behind the `capi`
 //   feature.
+
+#[cfg(not(target_pointer_width = "64"))]
+compile_error!("verilith-json is proven for 64-bit targets only");
+
 #[doc(hidden)]
 pub mod error;
 #[doc(hidden)]
