@@ -999,6 +999,65 @@ pub fn check_language_id(lang: &[u8]) -> bool {
     }
 }
 
+/// `a == b`, byte for byte.
+pub fn bytes_eq(a: &[u8], b: &[u8]) -> (r: bool)
+    ensures
+        r == (a@ == b@),
+{
+    proof {
+        assert(a@.subrange(0, a@.len() as int) =~= a@);
+        assert(b@.subrange(0, b@.len() as int) =~= b@);
+    }
+    crate::lex::ex_bytes_eq(a, 0, a.len(), b, 0, b.len())
+}
+
+/// The bytes an optional string holds, as a spec value.
+pub open spec fn opt_view(o: Option<&[u8]>) -> Option<Seq<u8>> {
+    match o {
+        Some(x) => Some(x@),
+        None => None,
+    }
+}
+
+/// `a == b` on optional strings.
+pub fn opt_eq(a: Option<&[u8]>, b: Option<&[u8]>) -> (r: bool)
+    ensures
+        r == (opt_view(a) == opt_view(b)),
+{
+    match (a, b) {
+        (Some(x), Some(y)) => bytes_eq(x, y),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+/// `s.to_vec()`.
+pub fn vec_of(s: &[u8]) -> (r: Vec<u8>)
+    ensures
+        r@ == s@,
+{
+    let mut v: Vec<u8> = Vec::new();
+    v.extend_from_slice(s);
+    proof {
+        assert(v@ =~= s@);
+    }
+    v
+}
+
+/// `o.map(|v| v.to_vec())`.
+pub fn opt_to_vec(o: Option<&[u8]>) -> (r: Option<Vec<u8>>)
+    ensures
+        match o {
+            Some(x) => r matches Some(v) && v@ == x@,
+            None => r is None,
+        },
+{
+    match o {
+        Some(x) => Some(vec_of(x)),
+        None => None,
+    }
+}
+
 } // verus!
 
 
