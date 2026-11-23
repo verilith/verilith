@@ -7,10 +7,9 @@
 # A file that only libtiff decodes is counted (libtiff reads many files
 # that TIFF 6.0 does not allow; the README lists them). So is each
 # departure the README lists where verilith-tiff decodes a file libtiff
-# does not, or decodes it differently: libtiff second-guessing
-# StripByteCounts and then failing, and a field of an unexpected type,
-# which TIFF says to skip and libtiff converts or rejects. Anything else
-# that differs is printed and fails the run.
+# does not, or decodes it differently: a field of an unexpected type, which
+# TIFF says to skip and libtiff converts or rejects. Anything else that
+# differs is printed and fails the run.
 # Every file is also checked against difftest/rules.py, an independent
 # reading of TIFF 6.0: a file verilith-tiff rejects must break one of the
 # standard's rules (or use a part of TIFF not read here), and a file it
@@ -21,7 +20,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../.." && pwd)
 v=${VTIFFCAT:-$root/target/release/examples/vtiffcat}
 r=${REFTIFF:-$here/reftiff}
-same=0 bothbad=0 onlyref=0 counts=0 skipped=0 bad=0
+same=0 bothbad=0 onlyref=0 skipped=0 bad=0
 : > "${TMPDIR:-/tmp}/rules.$$"
 for f in "$@"; do
   a=$("$v" "$f" 2>&1)
@@ -44,8 +43,6 @@ for f in "$@"; do
     onlyref=$((onlyref + 1))
     echo "$rule" >> "${TMPDIR:-/tmp}/rules.$$"
     [ -n "${KEEP:-}" ] && cp "$f" "$KEEP/"
-  elif [ "$b" = invalid ] && [[ "$why" == "[bytecounts]"* ]]; then
-    counts=$((counts + 1))
   elif python3 "$here/skipped.py" "$f"; then
     skipped=$((skipped + 1))
   else
@@ -55,7 +52,7 @@ for f in "$@"; do
   fi
 done
 echo "identical $same, rejected by both $bothbad, only libtiff decodes $onlyref," \
-  "libtiff second-guesses StripByteCounts $counts, a field of an unexpected type skipped $skipped, wrong $bad"
+  "a field of an unexpected type skipped $skipped, wrong $bad"
 if [ -s "${TMPDIR:-/tmp}/rules.$$" ]; then
   echo "what the files only libtiff decodes break:"
   sort "${TMPDIR:-/tmp}/rules.$$" | uniq -c | sort -rn

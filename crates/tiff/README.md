@@ -87,7 +87,7 @@ it, with Deflate (Compression 8) from Adobe's TIFF technical notes. It is
 checked against libtiff 4.5.1 as Ubuntu 24.04 ships it (with libdeflate),
 reading every strip with `TIFFReadEncodedStrip` or every tile with
 `TIFFReadEncodedTile`: where both decode a file the samples are identical,
-but for the two departures at the end of this section. Where libtiff and
+but for the departure at the end of this section. Where libtiff and
 the standard disagree, verilith-tiff follows the standard.
 
 Files the standard does not allow, which libtiff reads (guessing what they
@@ -120,13 +120,12 @@ predictor; horizontal differencing of samples other than 8, 16 or 32 bits;
 BitsPerSample above 32 or differing between samples; SampleFormat differing
 between samples. libtiff reads most of them.
 
-Files where libtiff does not do what the standard says, and verilith-tiff
-does:
+Files that are TIFF, where libtiff does not do what the standard says and
+verilith-tiff does:
 
 | the file | TIFF 6.0 | libtiff 4.5.1 | verilith-tiff |
 | --- | --- | --- | --- |
 | A field of a type other than BYTE, SHORT or LONG where an integer is expected (Compression as SSHORT, ...) | "TIFF readers should accept BYTE, SHORT, or LONG values for any unsigned integer field"; "Readers should skip over fields containing an unexpected field type" (§2) | converts the value where it fits, and rejects the file where it does not | skips the field, so its default applies |
-| Uncompressed strips whose byte counts differ from each other | the byte counts as written | "Wrong StripByteCounts field, ignoring and calculating", then fails for lack of data | uses the file's byte counts |
 
 Where the standard leaves the reader a choice (`choice:` in `spec.rs`): the
 output is little-endian whatever the file's byte order; values need not
@@ -189,8 +188,7 @@ included. Where libtiff does not follow the standard, the C API does:
   converts it); an absent field has the standard's default (libtiff sets
   RowsPerStrip to ImageLength when it is absent or estimated, and makes up
   ExtraSamples for samples the file does not describe: "The default is no
-  extra samples"); a byte count libtiff would replace with its estimate is
-  the file's.
+  extra samples").
 - The strips are the file's. libtiff's "strip chopping", which shows an
   uncompressed image in one strip as strips of about 8 KB and reports a
   RowsPerStrip the file does not have, is not done (libtiff does not do it
@@ -235,10 +233,10 @@ explains it (`difftest/apiclass.py` tells them apart, by libtiff's own
 warnings or by the image's layout and fields). On the 429 corpus files: `reftiff.c` printed what the Rust API prints on
 all of them; `api.c` printed the same as with libtiff on 394, and differed
 on 13 only as above (8 edge tiles, 5 ColorMaps libtiff took as 8-bit). On
-8,000 mutants: `reftiff.c` agreed on all; of the files both decode to the
-same samples, `api.c` printed the same as with libtiff on 1,036 and differed
-on 61 only as above (16 made-up ExtraSamples, 19 skipped fields, 14 edge
-tiles, 12 ColorMaps), none otherwise. On the 38 edge-tile files of an
+19,000 mutants: `reftiff.c` agreed on all; of the files both decode to the
+same samples, `api.c` printed the same as with libtiff on 2,223 and differed
+on 133 only as above (29 made-up ExtraSamples, 39 skipped fields, 43 edge
+tiles, 23 ColorMaps), none otherwise. On the 38 edge-tile files of an
 earlier run, the RGBA verilith-tiff gives matched libtiff's own, correct,
 RGBA of the same image stored in strips.
 
@@ -288,15 +286,18 @@ strips or tiles one at a time:
 - `fuzz/run.sh OUT N SEED FILES...` writes `N` mutants of the seed files
   (`fuzz/mutate.py`: entry values, counts and types changed, entries
   dropped, duplicated and moved, strip data with bit flips, header bytes,
-  and random byte edits) and compares them the same way. On 8,000 mutants: 1,097 decoded identically,
-  5,589 rejected by both, 1,271 decoded only by libtiff, and 43 that are
-  the two departures at the end of [Following TIFF 6.0](#following-tiff-60-not-libtiff)
-  (42 fields of an unexpected type, 1 StripByteCounts estimate), none
-  different. Every file only libtiff decodes breaks a rule of the
-  standard by `rules.py`'s reading; most often unsorted IFD entries (458),
-  a PhotometricInterpretation TIFF does not define (168) or none at all
-  (67), PackBits across rows (55), LZW or Deflate data of the wrong size
-  (89), and offsets or byte counts missing or of the wrong number (81).
+  and random byte edits) and compares them the same way. On 19,000 mutants in five runs: 2,356 decoded
+  identically, 13,378 rejected by both, 3,201 decoded only by libtiff, and
+  65 that are the departure at the end of
+  [Following TIFF 6.0](#following-tiff-60-not-libtiff) (a field of an
+  unexpected type), none different. Every file only libtiff decodes breaks
+  a rule of the standard by `rules.py`'s reading, or uses a part of TIFF
+  not read here; most often unsorted IFD entries (1,196), a
+  PhotometricInterpretation TIFF does not define (256) or none at all
+  (169), an uncompressed byte count that is not the strip's size (242),
+  PackBits across rows (156), LZW or Deflate data of the wrong size (244),
+  and offsets or byte counts missing or of the wrong number (206). Every
+  file verilith-tiff decodes breaks none.
 - `difftest/abi.sh FILES...` checks the C API (see [C API](#c-api)).
 
 ## Performance
