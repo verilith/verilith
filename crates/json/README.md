@@ -110,6 +110,8 @@ column 3 (byte 11)`.
 
 Inputs may be up to 2^48 - 1 bytes (256 TiB), more than a 64-bit address
 space holds today: token positions are 48 bits, so a token is 16 bytes.
+The proofs fix `usize` at 64 bits, so the crate is for 64-bit targets only:
+a 32-bit build (wasm32 included) stops with a `compile_error!`.
 
 ### On-demand reading
 

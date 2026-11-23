@@ -15,7 +15,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # Proven with `global size_of usize == 8`: 64-bit targets only.
-WIDE="archive font lz4 png snappy sync wasm xxhash zstd"
+WIDE="archive font json lz4 png snappy sync wasm xxhash zstd"
 # Tested on wasm32-wasip1.
 TESTED="text url regex"
 
@@ -47,12 +47,14 @@ rustup target add wasm32-unknown-unknown wasm32-wasip1 > /dev/null
 narrow=()
 for d in crates/*/Cargo.toml; do
   c=$(basename "$(dirname "$d")")
-  [ "$c" = verilith ] && continue
+  # The facade, and bind (its JSON part is 64-bit only), come below.
+  case "$c" in verilith | bind) continue ;; esac
   case " $WIDE " in *" $c "*) ;; *) narrow+=("$c") ;; esac
 done
 
 echo "== build for wasm32-unknown-unknown: ${narrow[*]}"
 cargo build --release --target wasm32-unknown-unknown $(printf -- '-p verilith-%s ' "${narrow[@]}")
+cargo build --release --target wasm32-unknown-unknown -p verilith-bind --no-default-features --features url,text
 # The facade crate, with every feature that builds there.
 features=$(cargo metadata --format-version 1 --no-deps | python3 -c '
 import json, sys
