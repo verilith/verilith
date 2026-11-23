@@ -180,7 +180,7 @@ ours is faster and below it the original is.
 | http-llhttp-native | native | llhttp 9.4.4 | 2.05x |
 | http-pico | drop-in | picohttpparser | 1.33x |
 | http-pico-native | native | picohttpparser | 1.48x |
-| url-ada | drop-in | ada 4.1.1 | 0.82x |
+| url-ada | drop-in | ada 4.1.1 | 2.02x |
 | json-cjson-parse | drop-in | cJSON 1.7.19 | 1.31x |
 | json-cjson-print | drop-in | cJSON 1.7.19 | 1.56x |
 | json-cjson-native | native | cJSON 1.7.19 | 6.66x |
@@ -214,11 +214,13 @@ How to read it:
   bound for that reason.
 - **archive-read** does not compare equal work: verilith-archive checks the
   whole archive when it is opened, where libarchive streams.
-- **url-ada is now below 1.00x.** The previous run measured 1.55x against
-  ada 3.4.4; against ada 4.1.1 verilith-url is slower: it runs 28 to 32% more
-  instructions per URL, with the same results on both sides. The
-  [crate's own measurement](crates/url#speed) against ada 4.0.0 on x86
-  shows the same direction (0.92x).
+- **url-ada comes from a later run** of `bench/run.sh --only url` on the
+  same machine at commit `15f10cd` (2026-11-23), after the URL crate's speed
+  work. It is the median of three runs, which agreed within about 2%:
+  verilith-url is 2.38x faster on the 1k-URL case and 1.72x on the full
+  100k dataset, running about half of ada's instructions with the same
+  results on both sides. The run at `bcfd98c` measured 0.82x. The
+  [crate's own measurements](crates/url#speed) have the details.
 - **x509 rows come from a second run** of `bench/run.sh --only x509` on
   the same machine, after a fix to the bench script's mbedTLS 4 build (a
   missing Python module); the library code is the same.

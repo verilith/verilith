@@ -110,20 +110,26 @@ pub fn components(u: &Url) -> AdaUrlComponents {
 }
 
 fn new_handle(url: Option<Url>) -> *mut Handle {
-    // Reuse the box the last `free` on this thread kept, if any.
+    new_handle_with(|| url)
+}
+
+/// A handle for the URL `f` returns, which is written into the handle's
+/// box in place (the box the last `free` on this thread kept, if any).
+#[inline(always)]
+fn new_handle_with(f: impl FnOnce() -> Option<Url>) -> *mut Handle {
     let mut bx = with_bufs(|b| b.spare.take()).unwrap_or_else(|| Box::new(Handle { url: None, comps: Default::default() }));
-    fill(&mut bx, url);
+    fill(&mut bx, f);
     Box::into_raw(bx)
 }
 
-/// Puts `url` (or `None` if its href is over the length limit) in `h`.
+/// Puts the URL `f` returns (or `None` if its href is over the length
+/// limit) in `h`.
 #[inline(always)]
-fn fill(h: &mut Handle, url: Option<Url>) {
-    h.url = url;
+fn fill(h: &mut Handle, f: impl FnOnce() -> Option<Url>) {
+    h.url = f();
     if h.url.as_ref().map_or(false, |u| u.href.len() > max_len()) {
         h.url = None;
     }
-    h.comps = h.url.as_ref().map(components).unwrap_or_default();
 }
 
 /// Frees a handle, keeping its box and a small href buffer on this thread
@@ -136,7 +142,7 @@ unsafe fn free_handle(p: *mut Handle) {
         // SAFETY: as in `with_bufs`; nothing below re-enters it.
         let b = &mut *c.get();
         if let Some(u) = url {
-            if b.sc.href.capacity() == 0 && u.href.capacity() <= 4096 {
+            if u.href.capacity() <= 4096 {
                 let mut v = u.href;
                 v.clear();
                 b.sc.href = v;
@@ -293,7 +299,7 @@ macro_rules! setter {
 
 export! {
     fn parse(input: *const c_char, length: usize) -> *mut Handle {
-        new_handle(parse_limited(bytes(input, length), None))
+        new_handle_with(|| parse_limited(bytes(input, length), None))
     }
 
     fn parse_with_base(input: *const c_char, input_length: usize, base: *const c_char, base_length: usize) -> *mut Handle {
@@ -468,9 +474,17 @@ export! {
     }
 
     fn get_components(p: *mut Handle) -> *const AdaUrlComponents {
-        match p.as_ref() {
-            Some(h) if h.url.is_some() => &h.comps,
-            _ => core::ptr::null(),
+        // Computed here rather than at parse time, since most callers
+        // never ask; setters refresh them for pointers already handed out.
+        match p.as_mut() {
+            Some(h) => match h.url.as_ref() {
+                Some(u) => {
+                    h.comps = components(u);
+                    &h.comps
+                }
+                None => core::ptr::null(),
+            },
+            None => core::ptr::null(),
         }
     }
 

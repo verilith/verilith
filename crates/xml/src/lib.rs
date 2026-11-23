@@ -50,6 +50,8 @@ pub mod uniq;
 #[cfg(not(verus_keep_ghost))]
 mod api;
 #[cfg(not(verus_keep_ghost))]
+pub mod recover;
+#[cfg(not(verus_keep_ghost))]
 pub use api::{parse, Attribute, Attrs, Child, Children, Document, Element, Error, ErrorKind};
 
 /// Whether `s` is a well-formed XML document, with its tape in `tape`: the

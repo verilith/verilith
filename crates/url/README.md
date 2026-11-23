@@ -144,7 +144,7 @@ that verilith-url itself produced:
   iteration, not a machine instruction: the bound also assumes `Vec::push`
   is amortized O(1) and that the IDNA call is linear (see below).
 
-`cargo verus focus` reports 590 verified, 0 errors. The crates it builds on,
+`cargo verus focus` reports 595 verified, 0 errors. The crates it builds on,
 [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core) and
 [verilith-text](https://github.com/verilith/verilith/tree/main/crates/text), are verified
 as their own crates in this repository. CI (`.github/workflows/ci.yml` at the repository root) verifies the proofs and runs `ci.sh` on every pull request and push to `main` that touches this crate or a crate it depends on.
@@ -217,6 +217,23 @@ push to `main` that touches this crate or one it depends on.
 
 ## Speed
 
+The reference numbers come from an Apple M3 Pro (macOS 27.2.1, on AC
+power), running `bench/run.sh --only url` at commit 15f10cd, against ada
+4.1.1 built from source. That script parses ada's
+[url-dataset](https://github.com/ada-url/url-dataset) (ef70651: 100,031
+URLs, and separately its first 1,000), takes 31 sample pairs per case, and
+checks that both parsers produce the same output. Medians of three runs,
+which agreed within about 2%:
+
+| case | verilith-url ns/URL | ada 4.1.1 ns/URL | ada's time / verilith-url's (95% CI) | instructions, verilith-url / ada |
+|---|---:|---:|---:|---:|
+| 1k URLs | **32.2** | 76.7 | 2.38x (2.36-2.40) | 0.47 |
+| 100k URLs | **46.7** | 79.5 | 1.72x (1.70-1.72) | 0.54 |
+
+So on this machine verilith-url takes 0.42x to 0.59x ada's time. The
+older measurements below came from cloud VMs, used earlier versions of both
+parsers, and include other parsers.
+
 Parsing the 100,025 URLs of ada's
 [url-dataset](https://github.com/ada-url/url-various-datasets) (`out.txt`,
 8.7 MB) on one core of a cloud Intel Xeon vCPU (2.1 GHz nominal). `bench/run.sh` runs each
@@ -274,6 +291,20 @@ With the host and path scans moved to 16-byte vector masks (one compare
 chain per block, the first stop found with a trailing-zero count), the C
 API runs 922 instructions per URL on the full dataset against ada's 1,055,
 and on the same cloud VM takes 71 ns per URL to ada's 81.
+Four more changes took that to 707 instructions per URL (about 55 ns to
+ada's 82 on the same VM, 0.67x ada's time). First, href buffers are sized in
+power-of-two classes from 128 bytes and the freed one is always recycled
+when it fits the next URL, so a run of URLs of similar length reuses one
+buffer; a buffer is at most max(128, 2 x the URL's length) bytes. Second,
+the parse builds the `Url` directly in the C handle and skips the
+dot-slash check when a host is present, since such a URL never needs it
+(`finish_hosted`). Third, the query and fragment scans use a proven SSE2
+mask for the bytes that may need encoding. Fourth, `ada_get_components`
+computes the offsets when it is called instead of every parse doing it
+(setters still refresh them, so a pointer already handed out stays
+current). A single-pass scan over the
+whole URL was built three ways and measured; each ran 5 to 18% more
+instructions than the separate scans, so it was not kept.
 
 The harness in `bench/` is a small Rust crate that links ada and libcurl
 through a C++ shim. It expects ada and the dataset to be cloned under
