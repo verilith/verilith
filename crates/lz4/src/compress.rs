@@ -698,7 +698,9 @@ proof fn lemma_low32(s: Seq<u8>, i: int, w: u64)
     ensures
         (w & 0xffff_ffff) as nat == le_bytes(s, i, 4),
 {
-    reveal_with_fuel(le_bytes, 9);
+    // Fuel 5 unfolds the 8-byte load down to the upper 4-byte one and no
+    // further, which keeps this well inside the resource limit.
+    reveal_with_fuel(le_bytes, 5);
     let a = le_bytes(s, i, 4);
     let b = le_bytes(s, i + 4, 4);
     assert(le_bytes(s, i, 8) == a + 0x1_0000_0000 * b);
@@ -1193,7 +1195,7 @@ fn core_big(
                     break ;
                 }
                 let step = nb >> 6;
-                assert(nb >> 6 >= 1 && nb >> 6 <= nb) by (bit_vector)
+                assert(nb >> 6 >= 1 && nb >> 6 <= nb && nb >> 6 == nb / 64) by (bit_vector)
                     requires
                         nb >= 64,
                 ;

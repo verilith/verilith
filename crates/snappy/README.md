@@ -6,10 +6,19 @@ google/snappy's C API (`snappy-c.h`), and the framing format with its
 CRC-32C checksums. It is meant as a drop-in replacement for libsnappy
 where memory safety and correct output have to be certain.
 
-`cargo verus verify` (or `scripts/verify.sh`) checks 110 functions and
+`cargo verus verify` (or `scripts/verify.sh`) checks 111 functions and
 lemmas with no errors, no `assume` and no `external_body` in this crate.
 CRC-32C is verilith-core's. Everything assumed is listed in
 [TRUST.md](https://github.com/verilith/verilith/blob/main/crates/snappy/TRUST.md).
+
+The proofs are checked once per pointer width: CI also runs Verus
+compiling for `wasm32-unknown-unknown`, where `usize` is 32 bits
+(`scripts/verify-narrow.sh`), so the crate builds for wasm32 (browsers,
+Cloudflare Workers) and is proven as built there. Its tests also pass on
+`wasm32-wasip1` under wasmtime (`scripts/wasm32.sh` at the root).
+
+On a 32-bit target the largest input is the largest slice there
+(`isize::MAX` bytes), below the format's 4 GiB.
 
 ## Using it from Rust
 

@@ -238,6 +238,11 @@ fn copy_fields(src: &[u8], ip: usize, kind: usize, hi: usize) -> (r: (usize, usi
     } else {
         1 + hi
     };
+    proof {
+        // So that `t + ...` below fits a 32-bit usize too.
+        assert(w & 0xff <= 0xff) by (bit_vector);
+        assert(OFF_MASK[1] == 0xff);
+    }
     let off = t + if one {
         (hi >> 3) << 8
     } else {
@@ -1128,7 +1133,14 @@ pub fn decompress_into(src: &[u8], out: &mut [u8]) -> (r: Result<usize, Error>)
             let len = if hi < 60 {
                 hi + 1
             } else {
-                read_le(src, ip + 1, nb) + 1
+                let v = read_le(src, ip + 1, nb);
+                // A 32-bit usize cannot hold 2^32, and no literal that
+                // long fits in the input (checked again just below).
+                #[cfg(target_pointer_width = "32")]
+                if v >= slen {
+                    return Err(Error::Corrupt);
+                }
+                v + 1
             };
             let j = ip + 1 + nb;
             if len > slen - j {
@@ -1341,7 +1353,14 @@ pub fn validate(src: &[u8]) -> (r: bool)
             let len = if hi < 60 {
                 hi + 1
             } else {
-                read_le(src, ip + 1, nb) + 1
+                let v = read_le(src, ip + 1, nb);
+                // A 32-bit usize cannot hold 2^32, and no literal that
+                // long fits in the input (checked again just below).
+                #[cfg(target_pointer_width = "32")]
+                if v >= slen {
+                    return false;
+                }
+                v + 1
             };
             let j = ip + 1 + nb;
             if len > slen - j {

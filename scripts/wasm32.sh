@@ -2,8 +2,8 @@
 # WebAssembly (wasm32): the crates proven without a fixed pointer width
 # build for wasm32-unknown-unknown (browsers, Cloudflare Workers), and the
 # ones proven for 64-bit targets only stop with their own compile_error!.
-# text, url, regex and json also pass their tests on wasm32-wasip1, under
-# wasmtime (on PATH).
+# text, url, regex, json, xxhash, snappy and lz4 also pass their tests on
+# wasm32-wasip1, under wasmtime (on PATH).
 #   scripts/wasm32.sh             the builds and the tests
 #   scripts/wasm32.sh build       the build checks only
 #   (Verus for wasm32: each crate's scripts/verify-narrow.sh.)
@@ -11,9 +11,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # Proven with `global size_of usize == 8`: 64-bit targets only.
-WIDE="archive font lz4 png snappy sync wasm xxhash zstd"
-# Tested on wasm32-wasip1.
-TESTED="text url regex json"
+WIDE="archive font png sync wasm zstd"
+# Tested on wasm32-wasip1. (The tests that compare with a C library load it
+# with dlopen, which wasip1 does not have, so there they skip; each of the
+# compressors has round trips that need no library.)
+TESTED="text url regex json xxhash snappy lz4"
 
 rustup target add wasm32-unknown-unknown wasm32-wasip1 > /dev/null
 

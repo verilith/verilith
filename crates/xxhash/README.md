@@ -12,6 +12,12 @@ cryptographic hashes.
 `cargo verus verify` (or `scripts/verify.sh`) checks 70 functions and
 lemmas with no errors, no `assume` and no `external_body` in this crate.
 
+The proofs are checked once per pointer width: CI also runs Verus
+compiling for `wasm32-unknown-unknown`, where `usize` is 32 bits
+(`scripts/verify-narrow.sh`), so the crate builds for wasm32 (browsers,
+Cloudflare Workers) and is proven as built there. Its tests also pass on
+`wasm32-wasip1` under wasmtime (`scripts/wasm32.sh` at the root).
+
 ```rust
 use std::hash::Hasher;
 use verilith_xxhash::{xxh32, xxh64, XxHash64};
