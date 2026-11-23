@@ -8645,6 +8645,8 @@ fn filter16_vec<V: Lfv>(b: &mut [u8], p: usize, hstride: usize, vstride: usize, 
 /// `filter16_vec` for the same eight-pixel edge of both chroma planes:
 /// `bu`'s lanes are the low eight of the sixteen, `bv`'s the high eight.
 #[inline(always)]
+#[verifier::spinoff_prover]
+#[verifier::rlimit(30)]
 fn filter8uv_vec<V: Lfv>(
     bu: &mut [u8],
     bv: &mut [u8],
