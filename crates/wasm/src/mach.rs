@@ -408,6 +408,12 @@ pub proof fn lemma_run_concat(m: &Module, c0: Config, hs: Seq<HostResp>, n: nat,
                     assert((n + k - 1) as nat == (n - 1) as nat + k);
                 }
             },
+            Step::Grow { ok, fail } => {
+                if let HostResp::Grow(b) = hs[0] {
+                    lemma_run_concat(m, if b { ok } else { fail }, hs.drop_first(), (n - 1) as nat, c, k);
+                    assert((n + k - 1) as nat == (n - 1) as nat + k);
+                }
+            },
             _ => {},
         }
     }

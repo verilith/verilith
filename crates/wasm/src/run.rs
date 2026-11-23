@@ -574,8 +574,8 @@ fn push_val(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(cod
 }
 
 
-/// `memory.size`, `memory.grow`, `memory.fill`, `memory.copy`,
-/// `memory.init` and `data.drop`.
+/// `memory.size`, `memory.fill`, `memory.copy`, `memory.init` and
+/// `data.drop`.
 #[inline(always)]
 pub fn do_mem(m: &Module, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<Seq<Code>>,
     stack: &mut Vec<u64>, Ghost(calls): Ghost<Seq<CallFrame>>, fp: usize, sp: usize, st: &mut Store, i: Instr,
@@ -583,8 +583,7 @@ pub fn do_mem(m: &Module, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<S
     requires
         pre(m, cs, codes, c, old(stack)@, calls, fp as int, sp as int),
         cur(m, c) == i,
-        i is MemorySize || i is MemoryGrow || i is MemoryFill || i is MemoryCopy || i is MemoryInit
-            || i is DataDrop,
+        i is MemorySize || i is MemoryFill || i is MemoryCopy || i is MemoryInit || i is DataDrop,
         c.store == store_view(old(st)),
         store_wf(old(st)),
     ensures
@@ -615,39 +614,6 @@ pub fn do_mem(m: &Module, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<S
         Instr::MemorySize => {
             let pages = (st.mem.len() / 65536) as u64;
             Ok(push_val(Ghost(m), Ghost(cs), Ghost(codes), stack, Ghost(calls), fp, sp, pages, Ghost(c)))
-        },
-        Instr::MemoryGrow => {
-            let n = lo(sget(stack, sp - 1)) as u64;
-            proof { lemma_peek(s1, base, sp as int, 0); }
-            let old = (st.mem.len() / 65536) as u64;
-            let r: u64 = if old + n > st.mem_max as u64 {
-                0xffff_ffff
-            } else {
-                grow(&mut st.mem, (n * 65536) as usize);
-                proof {
-                    assert(store_view(st) == crate::sem::Store {
-                        mem: st1.mem + Seq::new(n as nat * PAGE as nat, |_i| 0u8), ..st1 });
-                    assert(st.mem@.len() == st1.mem.len() + n * 65536);
-                    assert(st.mem@.len() <= st.mem_max as nat * PAGE as nat) by (nonlinear_arith)
-                        requires
-                            st.mem@.len() == st1.mem.len() + n * 65536,
-                            st1.mem.len() % 65536 == 0,
-                            old == st1.mem.len() / 65536,
-                            old + n <= st.mem_max;
-                    assert(st.mem@.len() % 65536 == 0) by (nonlinear_arith)
-                        requires st.mem@.len() == st1.mem.len() + n * 65536, st1.mem.len() % 65536 == 0;
-                }
-                old
-            };
-            sset(stack, sp - 1, r);
-            proof {
-                lemma_set(s1, base, sp as int, 1, r);
-                let g = adv(push(popn(f, 1), r));
-                assert(stack@.subrange(0, fp as int) =~= s1.subrange(0, fp as int));
-                assert(stack@.subrange(fp as int, base) =~= s1.subrange(fp as int, base));
-                lemma_mach_top(m, s1, stack@, calls, fp as int, sp as int, c, g, sp as int);
-            }
-            Ok(sp)
         },
         Instr::DataDrop(x) => {
             vset(&mut st.dropped, x as usize, true);
@@ -708,6 +674,88 @@ pub fn do_mem(m: &Module, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<S
             Ok(sp - 3)
         },
     }
+}
+
+
+/// `memory.grow`. `None` if the request is over the maximum (an ordinary
+/// step that pushes -1); otherwise whether the allocation succeeded, which
+/// picks the outcome of the semantics' [`Step::Grow`].
+#[inline(always)]
+pub fn do_grow(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<Seq<Code>>,
+    stack: &mut Vec<u64>, Ghost(calls): Ghost<Seq<CallFrame>>, fp: usize, sp: usize, st: &mut Store,
+    Ghost(c): Ghost<Config>) -> (r: Ghost<Option<bool>>)
+    requires
+        pre(m, cs, codes, c, old(stack)@, calls, fp as int, sp as int),
+        cur(m, c) == Instr::MemoryGrow,
+        c.store == store_view(old(st)),
+        store_wf(old(st)),
+    ensures
+        final(stack)@.len() == old(stack)@.len(),
+        store_wf(final(st)),
+        match r@ {
+            None => stepped(m, c, final(stack)@, calls, fp as int, sp as int, (top(c).pc + 1) as int,
+                store_view(final(st))),
+            Some(b) => step(m, c) is Grow && ({
+                let c2 = if b { step(m, c)->ok } else { step(m, c)->fail };
+                &&& mach_ok(m, final(stack)@, calls, fp as int, sp as int, c2)
+                &&& top(c2).pc == top(c).pc + 1
+                &&& top(c2).func == top(c).func
+                &&& c2.store == store_view(final(st))
+            }),
+        },
+{
+    proof {
+        lemma_facts(m, cs, codes, c, stack@, calls, fp as int, sp as int);
+        lemma_step_instr(m, c);
+        reveal(step_instr);
+    }
+    let ghost f = top(c);
+    let ghost fc = cs[f.func as int];
+    let ghost nl = n_locals(m, f.func);
+    let ghost base = fp + nl;
+    let ghost s1 = stack@;
+    let ghost st1 = store_view(st);
+    proof {
+        assert(live(fc, (f.pc + 1) as int));
+        assert(hgt(fc, (f.pc + 1) as int) <= fc.max_height);
+    }
+    let n = lo(sget(stack, sp - 1)) as u64;
+    proof { lemma_peek(s1, base, sp as int, 0); }
+    let old = (st.mem.len() / 65536) as u64;
+    let mut res: Option<bool> = None;
+    let r: u64 = if old + n > st.mem_max as u64 {
+        0xffff_ffff
+    } else if try_grow(&mut st.mem, (n * 65536) as usize) {
+        res = Some(true);
+        proof {
+            assert(store_view(st) == crate::sem::Store {
+                mem: st1.mem + Seq::new(n as nat * PAGE as nat, |_i| 0u8), ..st1 });
+            assert(st.mem@.len() == st1.mem.len() + n * 65536);
+            assert(st.mem@.len() <= st.mem_max as nat * PAGE as nat) by (nonlinear_arith)
+                requires
+                    st.mem@.len() == st1.mem.len() + n * 65536,
+                    st1.mem.len() % 65536 == 0,
+                    old == st1.mem.len() / 65536,
+                    old + n <= st.mem_max;
+            assert(st.mem@.len() % 65536 == 0) by (nonlinear_arith)
+                requires st.mem@.len() == st1.mem.len() + n * 65536, st1.mem.len() % 65536 == 0;
+        }
+        old
+    } else {
+        res = Some(false);
+        proof { assert(store_view(st) == st1); }
+        0xffff_ffff
+    };
+    sset(stack, sp - 1, r);
+    proof {
+        lemma_set(s1, base, sp as int, 1, r);
+        let g = adv(push(popn(f, 1), r));
+        assert(stack@.subrange(0, fp as int) =~= s1.subrange(0, fp as int));
+        assert(stack@.subrange(fp as int, base) =~= s1.subrange(fp as int, base));
+        lemma_mach_top(m, s1, stack@, calls, fp as int, sp as int, c, g, sp as int);
+        assert(Config { store: c.store, ..c } == c);
+    }
+    Ghost(res)
 }
 
 
@@ -1477,7 +1525,7 @@ fn indirect(m: &Module, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<Seq
 }
 
 pub open spec fn is_local(i: Instr) -> bool {
-    !(i is Unreachable || i is Call || i is CallIndirect)
+    !(i is Unreachable || i is Call || i is CallIndirect || i is MemoryGrow)
 }
 
 /// One instruction that stays in the current frame (everything but calls
@@ -1598,7 +1646,7 @@ fn local_step(m: &Module, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<S
                 proof { lemma_advance(m, cs, c0, hs, n, c); c = step(m, c)->Next_0; n = n + 1; }
                 pc = pc + 1;
             },
-            Instr::MemorySize | Instr::MemoryGrow | Instr::MemoryFill | Instr::MemoryCopy
+            Instr::MemorySize | Instr::MemoryFill | Instr::MemoryCopy
             | Instr::MemoryInit(_) | Instr::DataDrop(_) => {
                 proof { lemma_pre(m, cs, codes, c0, hs, n, c, stack@, calls, d, pc, fp, sp, st, i); }
                 match do_mem(m, Ghost(cs), Ghost(codes), stack, Ghost(calls), fp, sp, st, i, Ghost(c)) {
@@ -1634,8 +1682,8 @@ pub enum Flow {
     Stop(Result<Vec<u64>, Trap>, Ghost<Seq<HostResp>>, Ghost<nat>),
 }
 
-/// Calls, `call_indirect` and returns (and `unreachable`), as one loop
-/// iteration of [`execute`].
+/// Calls, `call_indirect`, returns, `memory.grow` (whose outcome the run
+/// records in `hs`) and `unreachable`, as one loop iteration of [`execute`].
 #[inline(always)]
 fn special_step<H: Host>(m: &Module, Ghost(cs): Ghost<Seq<FuncCert>>, codes: &Vec<Code>, stack: &mut Vec<u64>,
     calls: &mut Vec<CallFrame>, host: &mut H, st: &mut Store, d: usize, pc: usize, fp: usize, sp: usize, i: Instr,
@@ -1772,6 +1820,27 @@ fn special_step<H: Host>(m: &Module, Ghost(cs): Ghost<Seq<FuncCert>>, codes: &Ve
                         },
                     }
                 }
+            },
+            Instr::MemoryGrow => {
+                proof { lemma_pre(m, cs, codes@, c0, hs, n, c, stack@, calls@, d, pc, fp, sp, st, i); }
+                let b = do_grow(Ghost(m), Ghost(cs), Ghost(codes@), stack, Ghost(calls@), fp, sp, st, Ghost(c));
+                proof {
+                    lemma_step(m, cs, c);
+                    match b@ {
+                        None => {
+                            lemma_advance(m, cs, c0, hs, n, c);
+                            c = step(m, c)->Next_0;
+                        },
+                        Some(ok) => {
+                            lemma_run_grow(m, c0, hs, n, c, ok);
+                            c = if ok { step(m, c)->ok } else { step(m, c)->fail };
+                            hs = hs.push(HostResp::Grow(ok));
+                        },
+                    }
+                    n = n + 1;
+                }
+                proof { assert(pc + 1 < codes@[d as int].ops@.len()); }
+                pc = pc + 1;
             },
             Instr::CallIndirect { ty, table } => {
                 proof { lemma_pre(m, cs, codes@, c0, hs, n, c, stack@, calls@, d, pc, fp, sp, st, i); }
@@ -2095,7 +2164,7 @@ pub fn execute<H: Host>(m: &Module, codes: &Vec<Code>, Ghost(cs): Ghost<Seq<Func
                     }
                 }
                 match i {
-                    Instr::Unreachable | Instr::Call(_) | Instr::CallIndirect { .. } => {
+                    Instr::Unreachable | Instr::Call(_) | Instr::CallIndirect { .. } | Instr::MemoryGrow => {
                         match special_step(m, Ghost(cs), codes, stack, calls, host, st, d, pc, fp, sp, i,
                             Ghost(c0), Ghost(g.hs), Ghost(g.n), Ghost(g.c)) {
                             Flow::Go { d: d2, pc: pc2, fp: fp2, sp: sp2, c: c2, hs: hs2, n: n2 } => {
