@@ -342,7 +342,7 @@ pub proof fn lemma_content_past(s: Seq<u8>, j: int, st: Seq<Open>, t: Seq<XTok>,
 {
 }
 
-fn push_slice(v: &mut Vec<u8>, b: &[u8], a: usize, e: usize)
+pub fn push_slice(v: &mut Vec<u8>, b: &[u8], a: usize, e: usize)
     requires
         a <= e <= b@.len(),
     ensures
@@ -412,7 +412,7 @@ proof fn lemma_step_item_goal(b: Seq<u8>, seen: Seq<u8>, base: int, j: int, gst:
 
 /// Opens an element whose name is `buf[a..e]`, `p` in the input.
 #[verifier::spinoff_prover]
-fn win_push_name(w: &mut Win, a: usize, e: usize, Ghost(p): Ghost<Open>)
+pub fn win_push_name(w: &mut Win, a: usize, e: usize, Ghost(p): Ghost<Open>)
     requires
         old(w).names_ok(),
         a <= e <= old(w).buf@.len(),

@@ -370,4 +370,1369 @@ fn head_step(st: &mut Stream) -> (r: u8)
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// Tapes
+// ---------------------------------------------------------------------------
+
+/// Appends `u`'s tokens to `t`.
+pub fn tape_append(t: &mut Tape, u: &Tape)
+    ensures
+        final(t)@ == old(t)@ + u@,
+{
+    let n = u.toks.len();
+    let mut i: usize = 0;
+    while i < n
+        invariant
+            i <= n,
+            n == u@.len(),
+            n == u.toks@.len(),
+            t@ == old(t)@ + u@.subrange(0, i as int),
+        decreases n - i,
+    {
+        let x = u.toks[i];
+        proof {
+            assert(x@ == u@[i as int]);
+        }
+        t.push(x);
+        proof {
+            assert(u@.subrange(0, i as int + 1) =~= u@.subrange(0, i as int).push(u@[i as int]));
+        }
+        i = i + 1;
+    }
+    proof {
+        assert(u@.subrange(0, n as int) =~= u@);
+    }
+}
+
+/// A copy of `u`.
+pub fn tape_copy(u: &Tape) -> (r: Tape)
+    ensures
+        r@ == u@,
+{
+    let mut t = Tape::new();
+    tape_append(&mut t, u);
+    proof {
+        assert(Seq::<XTok>::empty() + u@ =~= u@);
+    }
+    t
+}
+
+// ---------------------------------------------------------------------------
+// Misc before the root element, on every input that begins with `seen`
+// ---------------------------------------------------------------------------
+
+proof fn lemma_lit_back(seen: Seq<u8>, s: Seq<u8>, k: int, lit: Seq<u8>)
+    requires
+        ext(seen, s),
+        0 <= k,
+        k + lit.len() <= seen.len(),
+        has_lit(s, k, lit),
+    ensures
+        has_lit(seen, k, lit),
+{
+    assert(s.subrange(k, k + lit.len()) =~= seen.subrange(k, k + lit.len())) by {
+        assert forall|i: int| 0 <= i < lit.len() implies #[trigger] s.subrange(k, k + lit.len())[i] == seen.subrange(
+            k,
+            k + lit.len(),
+        )[i] by {
+            lemma_ext_byte(seen, s, k + i);
+        }
+    }
+}
+
+/// `Misc` stops at `p`: the window decides that no part of it starts
+/// there.
+proof fn lemma_misc_stops(seen: Seq<u8>, p: int, t: Seq<XTok>)
+    requires
+        0 <= p < seen.len(),
+        !is_ws(seen[p]),
+        seen[p] != 0x3C || (p + 1 < seen.len() && seen[p + 1] != 0x3F && (seen[p + 1] != 0x21 || (p + 4
+            <= seen.len() && !has_lit(seen, p, lit_comment())))),
+    ensures
+        forall|s: Seq<u8>| #[trigger] ext(seen, s) ==> misc(s, p, t) == Some((t, p)),
+{
+    lemma_lits_stable();
+    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies misc(s, p, t) == Some((t, p)) by {
+        lemma_ext_byte(seen, s, p);
+        if seen[p] == 0x3C {
+            lemma_ext_byte(seen, s, p + 1);
+        }
+        assert(!has_lit(s, p, lit_comment())) by {
+            if has_lit(s, p, lit_comment()) {
+                assert(s.subrange(p, p + 4)[0] == s[p]);
+                assert(s.subrange(p, p + 4)[1] == s[p + 1]);
+                if seen[p] == 0x3C && seen[p + 1] == 0x21 {
+                    lemma_lit_back(seen, s, p, lit_comment());
+                }
+            }
+        }
+        assert(!has_lit(s, p, lit_pi())) by {
+            if has_lit(s, p, lit_pi()) {
+                assert(s.subrange(p, p + 2)[0] == s[p]);
+                assert(s.subrange(p, p + 2)[1] == s[p + 1]);
+            }
+        }
+        lemma_misc_stop(s, p, t);
+    }
+}
+
+/// White space at `p`.
+proof fn lemma_misc_ws_all(seen: Seq<u8>, p: int, t: Seq<XTok>)
+    requires
+        0 <= p < seen.len(),
+        is_ws(seen[p]),
+    ensures
+        forall|s: Seq<u8>| #[trigger] ext(seen, s) ==> misc(s, p, t) == misc(s, p + 1, t),
+{
+    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies misc(s, p, t) == misc(s, p + 1, t) by {
+        lemma_ext_byte(seen, s, p);
+        lemma_misc_ws(s, p, t);
+    }
+}
+
+/// The comment the window has at `p`.
+proof fn lemma_misc_comment_all(seen: Seq<u8>, p: int, t: Seq<XTok>)
+    requires
+        0 <= p,
+        has_lit(seen, p, lit_comment()),
+        comment(seen, p, Seq::empty()) matches Some((_, e)) && e <= seen.len(),
+    ensures
+        ({
+            let (u, e) = comment(seen, p, Seq::empty()).unwrap();
+            &&& e >= p + 7
+            &&& no_dflt(u)
+            &&& u.len() == 1
+            &&& forall|s: Seq<u8>| #[trigger] ext(seen, s) ==> misc(s, p, t) == misc(s, e, t + u)
+        }),
+{
+    let (u, e) = comment(seen, p, Seq::empty()).unwrap();
+    lemma_ext_refl(seen);
+    lemma_window(seen, seen, 0, seen);
+    lemma_comment_pre(seen, seen, seen.len() as int, p, Seq::empty());
+    assert(added(Seq::<XTok>::empty(), u) =~= u);
+    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies misc(s, p, t) == misc(s, e, t + u) by {
+        lemma_window(seen, seen, 0, s);
+        lemma_comment_pre(seen, s, seen.len() as int, p, Seq::empty());
+        lemma_comment_tape(s, p, t);
+        lemma_ext_lit(seen, s, p, lit_comment());
+        lemma_misc_comment(s, p, t);
+    }
+}
+
+/// The processing instruction the window has at `p`.
+proof fn lemma_misc_pi_all(seen: Seq<u8>, p: int, t: Seq<XTok>)
+    requires
+        0 <= p,
+        has_lit(seen, p, lit_pi()),
+        pi(seen, p, Seq::empty()) matches Some((_, e)) && e <= seen.len(),
+    ensures
+        ({
+            let (u, e) = pi(seen, p, Seq::empty()).unwrap();
+            &&& e >= p + 4
+            &&& no_dflt(u)
+            &&& u.len() == 2
+            &&& forall|s: Seq<u8>| #[trigger] ext(seen, s) ==> misc(s, p, t) == misc(s, e, t + u)
+        }),
+{
+    let (u, e) = pi(seen, p, Seq::empty()).unwrap();
+    lemma_ext_refl(seen);
+    lemma_window(seen, seen, 0, seen);
+    lemma_pi_pre(seen, seen, seen.len() as int, p, Seq::empty());
+    assert(added(Seq::<XTok>::empty(), u) =~= u);
+    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies misc(s, p, t) == misc(s, e, t + u) by {
+        lemma_window(seen, seen, 0, s);
+        lemma_pi_pre(seen, s, seen.len() as int, p, Seq::empty());
+        lemma_pi_tape(s, p, t);
+        lemma_ext_lit(seen, s, p, lit_pi());
+        lemma_misc_pi(s, p, t);
+    }
+}
+
+/// Moving over a part of `Misc` keeps both goals.
+proof fn lemma_misc_move(seen: Seq<u8>, p: int, t: Seq<XTok>, p2: int, t2: Seq<XTok>, sd: int, env: Env)
+    requires
+        forall|s: Seq<u8>| #[trigger] ext(seen, s) ==> misc(s, p, t) == misc(s, p2, t2),
+    ensures
+        (forall|s: Seq<u8>|
+            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+                after_m1(s, p, t, sd)
+            } else {
+                None
+            })) ==> (forall|s: Seq<u8>|
+            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+                after_m1(s, p2, t2, sd)
+            } else {
+                None
+            })),
+        (forall|s: Seq<u8>|
+            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+                after_m2(s, p, t, env)
+            } else {
+                None
+            })) ==> (forall|s: Seq<u8>|
+            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+                after_m2(s, p2, t2, env)
+            } else {
+                None
+            })),
+{
+    hide(document);
+    hide(doc_chars);
+}
+
+/// One part of `Misc` before the root element: white space, a comment or
+/// a processing instruction (`S_ON`); or where `Misc` stops, which every
+/// input that begins with what was fed agrees on (`S_DONE`).
+#[verifier::spinoff_prover]
+#[verifier::rlimit(80)]
+fn misc_step(st: &mut Stream) -> (r: u8)
+    requires
+        old(st).inv(),
+        old(st).phase == PH_M1 || old(st).phase == PH_M2,
+    ensures
+        final(st).inv(),
+        final(st).same_input(old(st)),
+        final(st).phase == old(st).phase,
+        final(st).sd == old(st).sd,
+        final(st).pro == old(st).pro,
+        final(st).dtd == old(st).dtd,
+        final(st).genv == old(st).genv,
+        final(st).pmark == old(st).pmark,
+        r == S_ON || r == S_WAIT || r == S_DONE,
+        r == S_ON ==> final(st).w.pos > old(st).w.pos,
+        r != S_ON ==> final(st).w.pos == old(st).w.pos && final(st).ptape@ == old(st).ptape@,
+        r == S_DONE ==> final(st).w.pos < final(st).w.buf@.len() && (forall|s: Seq<u8>|
+            #[trigger] ext(final(st).seen(), s) ==> misc(s, final(st).w.pos as int, final(st).ptape@) == Some(
+                (final(st).ptape@, final(st).w.pos as int),
+            )),
+{
+    hide(after_m1);
+    hide(after_m2);
+    hide(misc);
+    hide(document);
+    hide(doc_chars);
+    hide(comment);
+    hide(pi);
+    proof {
+        lemma_lits();
+    }
+    slice_len_bound(st.w.buf.as_slice());
+    let n = st.w.buf.len();
+    let p = st.w.pos;
+    let ghost seen = st.w.seen@;
+    let ghost t = st.ptape@;
+    proof {
+        assert(seen.subrange(0, seen.len() as int) =~= seen);
+        assert(st.w.buf@ == seen);
+    }
+    if p == n {
+        return S_WAIT;
+    }
+    let x = get(st.w.buf.as_slice(), p);
+    if ex_is_ws(x) {
+        proof {
+            lemma_misc_ws_all(seen, p as int, t);
+        }
+        st.w.pos = p + 1;
+        proof {
+            assert(old(st).seen() == st.seen());
+            lemma_misc_move(st.seen(), p as int, t, st.w.pos as int, st.ptape@, st.sd as int, st.genv@);
+            if st.phase == PH_M1 {
+                assert(old(st).m1_goal());
+            } else {
+                assert(old(st).m2_goal());
+            }
+            assert(st.pre());
+            if st.phase == PH_M1 {
+                assert(no_dflt(st.ptape@));
+                assert(st.m1_goal());
+            } else {
+                assert(dflt_ok(st.pro@, st.ptape@, st.pro@.len() as int));
+                assert(st.m2_goal());
+            }
+        }
+        return S_ON;
+    }
+    if x != 0x3C {
+        proof {
+            lemma_misc_stops(seen, p as int, t);
+        }
+        return S_DONE;
+    }
+    if n - p < 2 {
+        return S_WAIT;
+    }
+    let y = get(st.w.buf.as_slice(), p + 1);
+    if y == 0x3F {
+        let mut tp = Tape::new();
+        match ex_pi(st.w.buf.as_slice(), p, &mut tp) {
+            Some(e) => {
+                proof {
+                    assert(st.w.buf@.subrange(p as int, p + 2) =~= lit_pi());
+                    lemma_misc_pi_all(seen, p as int, t);
+                    if st.phase == PH_M1 {
+                        lemma_no_dflt_add(t, tp@);
+                    }
+                    lemma_no_dflt_ok(st.pro@, tp@, st.pro@.len() as int);
+                    if st.phase == PH_M2 {
+                        lemma_dflt_ok_add(st.pro@, t, tp@, st.pro@.len() as int);
+                    }
+                }
+                tape_append(&mut st.ptape, &tp);
+                st.w.pos = e;
+                proof {
+                    assert(old(st).seen() == st.seen());
+                    lemma_misc_move(st.seen(), p as int, t, st.w.pos as int, st.ptape@, st.sd as int, st.genv@);
+                    if st.phase == PH_M1 {
+                        assert(old(st).m1_goal());
+                    } else {
+                        assert(old(st).m2_goal());
+                    }
+                    assert(st.pre());
+                    if st.phase == PH_M1 {
+                        assert(no_dflt(st.ptape@));
+                        assert(st.m1_goal());
+                    } else {
+                        assert(dflt_ok(st.pro@, st.ptape@, st.pro@.len() as int));
+                        assert(st.m2_goal());
+                    }
+                }
+                S_ON
+            },
+            None => S_WAIT,
+        }
+    } else if y == 0x21 {
+        if n - p < 4 {
+            return S_WAIT;
+        }
+        if ex_has_lit(st.w.buf.as_slice(), p, &L_COMMENT) {
+            let mut tp = Tape::new();
+            match ex_comment(st.w.buf.as_slice(), p, &mut tp) {
+                Some(e) => {
+                    proof {
+                        lemma_misc_comment_all(seen, p as int, t);
+                        if st.phase == PH_M1 {
+                            lemma_no_dflt_add(t, tp@);
+                        }
+                        lemma_no_dflt_ok(st.pro@, tp@, st.pro@.len() as int);
+                        if st.phase == PH_M2 {
+                            lemma_dflt_ok_add(st.pro@, t, tp@, st.pro@.len() as int);
+                        }
+                    }
+                    tape_append(&mut st.ptape, &tp);
+                    st.w.pos = e;
+                    proof {
+                        assert(old(st).seen() == st.seen());
+                        lemma_misc_move(st.seen(), p as int, t, st.w.pos as int, st.ptape@, st.sd as int, st.genv@);
+                        if st.phase == PH_M1 {
+                            assert(old(st).m1_goal());
+                        } else {
+                            assert(old(st).m2_goal());
+                        }
+                        assert(st.pre());
+                        if st.phase == PH_M1 {
+                            assert(no_dflt(st.ptape@));
+                            assert(st.m1_goal());
+                        } else {
+                            assert(dflt_ok(st.pro@, st.ptape@, st.pro@.len() as int));
+                            assert(st.m2_goal());
+                            assert(old(st).utf8());
+                            assert(old(st).seen() == st.seen());
+                            assert(st.utf8());
+                            assert(st.inv());
+                        }
+                    }
+                    S_ON
+                },
+                None => S_WAIT,
+            }
+        } else {
+            proof {
+                lemma_misc_stops(seen, p as int, t);
+            }
+            S_DONE
+        }
+    } else {
+        proof {
+            lemma_misc_stops(seen, p as int, t);
+        }
+        S_DONE
+    }
+}
+
+
+/// Whether the window decides that `lit` is not at `p`.
+fn lit_mismatch(b: &[u8], p: usize, lit: &[u8]) -> (r: bool)
+    ensures
+        r ==> exists|q: int| 0 <= q < lit@.len() && p + q < b@.len() && #[trigger] b@[p + q] != lit@[q],
+{
+    let n = b.len();
+    let l = lit.len();
+    let mut k: usize = 0;
+    while k < l && p < n && k < n - p
+        invariant
+            k <= l,
+            n == b@.len(),
+            l == lit@.len(),
+        decreases l - k,
+    {
+        if b[p + k] != lit[k] {
+            proof {
+                assert(b@[p + k as int] != lit@[k as int]);
+            }
+            return true;
+        }
+        k = k + 1;
+    }
+    false
+}
+
+proof fn lemma_no_lit_ext(seen: Seq<u8>, p: int, lit: Seq<u8>, q: int)
+    requires
+        0 <= p,
+        0 <= q < lit.len(),
+        p + q < seen.len(),
+        seen[p + q] != lit[q],
+    ensures
+        forall|s: Seq<u8>| #[trigger] ext(seen, s) ==> !has_lit(s, p, lit),
+{
+    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies !has_lit(s, p, lit) by {
+        lemma_ext_byte(seen, s, p + q);
+        if has_lit(s, p, lit) {
+            assert(s.subrange(p, p + lit.len())[q] == s[p + q]);
+        }
+    }
+}
+
+/// No document type declaration, on every input: the goal after it.
+proof fn lemma_m1_none(seen: Seq<u8>, p: int, t: Seq<XTok>, sd: int)
+    requires
+        forall|s: Seq<u8>| #[trigger] ext(seen, s) ==> misc(s, p, t) == Some((t, p)),
+        forall|s: Seq<u8>| #[trigger] ext(seen, s) ==> !has_lit(s, p, lit_doctype()),
+        forall|s: Seq<u8>|
+            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+                after_m1(s, p, t, sd)
+            } else {
+                None
+            }),
+    ensures
+        forall|s: Seq<u8>|
+            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+                after_m2(s, p, t, no_dtd())
+            } else {
+                None
+            }),
+{
+    hide(document);
+    hide(doc_chars);
+    hide(after_m2);
+    hide(misc);
+    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+        after_m2(s, p, t, no_dtd())
+    } else {
+        None
+    }) by {
+        lemma_m1_stop(s, p, t, sd);
+    }
+}
+
+/// The document type declaration the window has at `p`, on every input.
+proof fn lemma_m1_doctype(seen: Seq<u8>, p: int, t: Seq<XTok>, sd: int)
+    requires
+        0 <= p,
+        forall|s: Seq<u8>| #[trigger] ext(seen, s) ==> misc(s, p, t) == Some((t, p)),
+        has_lit(seen, p, lit_doctype()),
+        doctype(seen, p, t, sd == 1) matches Some((_, e, _)) && e <= seen.len(),
+        forall|s: Seq<u8>|
+            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+                after_m1(s, p, t, sd)
+            } else {
+                None
+            }),
+    ensures
+        ({
+            let (u, e, env) = doctype(seen, p, t, sd == 1).unwrap();
+            forall|s: Seq<u8>|
+                #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+                    after_m2(s, e, u, env)
+                } else {
+                    None
+                })
+        }),
+{
+    hide(document);
+    hide(doc_chars);
+    hide(after_m2);
+    hide(misc);
+    hide(doctype);
+    let (u, e, env) = doctype(seen, p, t, sd == 1).unwrap();
+    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+        after_m2(s, e, u, env)
+    } else {
+        None
+    }) by {
+        assert(seen.subrange(0, seen.len() as int) =~= seen);
+        lemma_window(seen, seen, 0, s);
+        lemma_doctype_eq(seen, s, seen.len() as int, p, t, sd == 1);
+        lemma_ext_lit(seen, s, p, lit_doctype());
+        lemma_m1_stop(s, p, t, sd);
+    }
+}
+
+/// The declaration's tokens and the prolog's text, kept: defaults refer
+/// to `x` before `e`.
+proof fn lemma_m1_dflt(x: Seq<u8>, pro: Seq<u8>, p: int, t: Seq<XTok>, sd: int)
+    requires
+        0 <= p,
+        no_dflt(t),
+        doctype(x, p, t, sd == 1) matches Some((_, e, _)) && e <= x.len() && pro == x.subrange(0, e),
+    ensures
+        doctype(pro, p, t, sd == 1) == doctype(x, p, t, sd == 1),
+        dflt_ok(pro, doctype(x, p, t, sd == 1).unwrap().0, pro.len() as int),
+        doctype(x, p, t, sd == 1).unwrap().1 > p + 9,
+        doctype(x, p, t, sd == 1).unwrap().0.len() >= t.len(),
+{
+    hide(doctype);
+    let (u, e, env) = doctype(x, p, t, sd == 1).unwrap();
+    assert(ag(x, x, x.len() as int));
+    lemma_doctype_eq(x, x, x.len() as int, p, t, sd == 1);
+    assert(ag(x, pro, e)) by {
+        assert forall|k: int| 0 <= k < e implies #[trigger] x[k] == pro[k - 0] by {}
+    }
+    lemma_doctype_eq(x, pro, e, p, t, sd == 1);
+    assert(ag(pro, pro, e));
+    lemma_doctype_eq(pro, pro, e, p, t, sd == 1);
+    lemma_no_dflt_ok(pro, t, e);
+    lemma_dflt_ok_add(pro, t, added(t, u), e);
+    assert(t + added(t, u) =~= u);
+}
+
+/// Where `Misc` stopped before the document type declaration: the
+/// declaration, once the window has all of it, or none, once the window
+/// decides there is none.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(80)]
+fn m1_decide(st: &mut Stream) -> (r: u8)
+    requires
+        old(st).inv(),
+        old(st).phase == PH_M1,
+        old(st).w.pos < old(st).w.buf@.len(),
+        forall|s: Seq<u8>|
+            #[trigger] ext(old(st).seen(), s) ==> misc(s, old(st).w.pos as int, old(st).ptape@) == Some(
+                (old(st).ptape@, old(st).w.pos as int),
+            ),
+    ensures
+        final(st).inv(),
+        final(st).same_input(old(st)),
+        final(st).pmark == old(st).pmark,
+        r == S_ON || r == S_WAIT,
+        r == S_ON ==> final(st).phase == PH_M2,
+        r == S_WAIT ==> final(st).phase == PH_M1 && final(st).w.pos == old(st).w.pos && final(st).ptape@ == old(
+            st,
+        ).ptape@,
+{
+    hide(after_m1);
+    hide(after_m2);
+    hide(misc);
+    hide(document);
+    hide(doc_chars);
+    hide(doctype);
+    proof {
+        lemma_lits();
+    }
+    slice_len_bound(st.w.buf.as_slice());
+    let n = st.w.buf.len();
+    let p = st.w.pos;
+    let ghost seen = st.w.seen@;
+    let ghost t = st.ptape@;
+    let ghost sd = st.sd as int;
+    proof {
+        assert(seen.subrange(0, seen.len() as int) =~= seen);
+        assert(st.w.buf@ == seen);
+        assert(old(st).m1_goal());
+        assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies misc(s, p as int, t) == Some((t, p as int)) by {
+            assert(ext(old(st).seen(), s));
+        }
+        assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+            after_m1(s, p as int, t, sd)
+        } else {
+            None
+        }) by {
+            assert(ext(old(st).seen(), s));
+        }
+    }
+    if ex_has_lit(st.w.buf.as_slice(), p, &L_DOCTYPE) {
+        let mut t1 = tape_copy(&st.ptape);
+        match ex_doctype_opt(st.w.buf.as_slice(), p, &mut t1, st.sd) {
+            Some((e, _d)) => {
+                let mut pro: Vec<u8> = Vec::new();
+                push_slice(&mut pro, st.w.buf.as_slice(), 0, e);
+                let mut t2 = tape_copy(&st.ptape);
+                proof {
+                    assert(pro@ =~= seen.subrange(0, e as int));
+                    lemma_m1_dflt(seen, pro@, p as int, t, sd);
+                    lemma_m1_doctype(seen, p as int, t, sd);
+                    assert(has_lit(pro@, p as int, lit_doctype())) by {
+                        assert(pro@.subrange(p as int, p + 9) =~= seen.subrange(p as int, p + 9));
+                    }
+                }
+                match ex_doctype_opt(pro.as_slice(), p, &mut t2, st.sd) {
+                    Some((e2, d2)) => {
+                        let ghost env = doctype(seen, p as int, t, sd == 1).unwrap().2;
+                        st.ptape = t2;
+                        st.w.pos = e2;
+                        st.pro = pro;
+                        st.dtd = d2;
+                        st.genv = Ghost(env);
+                        st.phase = PH_M2;
+                        proof {
+                            assert(e2 == e);
+                            assert(ext(st.pro@, seen)) by {
+                                assert(seen.subrange(0, st.pro@.len() as int) =~= st.pro@);
+                            }
+                            assert(st.pro_ok());
+                            assert(st.pre());
+                            assert(st.m2_goal());
+                            assert(old(st).utf8());
+                            assert(old(st).seen() == st.seen());
+                            assert(st.utf8());
+                            assert(st.inv());
+                        }
+                        S_ON
+                    },
+                    None => {
+                        proof {
+                            assert(false);
+                        }
+                        S_WAIT
+                    },
+                }
+            },
+            None => S_WAIT,
+        }
+    } else if n - p >= 9 || lit_mismatch(st.w.buf.as_slice(), p, &L_DOCTYPE) {
+        proof {
+            if n - p >= 9 {
+                assert(!(seen.subrange(p as int, p + 9) =~= lit_doctype()));
+                let q = choose|q: int| 0 <= q < 9 && #[trigger] seen.subrange(p as int, p + 9)[q] != lit_doctype()[q];
+                assert(seen.subrange(p as int, p + 9)[q] == seen[p + q]);
+                lemma_no_lit_ext(seen, p as int, lit_doctype(), q);
+            } else {
+                let q = choose|q: int| 0 <= q < 9 && p + q < seen.len() && #[trigger] seen[p + q] != lit_doctype()[q];
+                lemma_no_lit_ext(seen, p as int, lit_doctype(), q);
+            }
+            lemma_m1_none(seen, p as int, t, sd);
+            lemma_no_dflt_ok(Seq::<u8>::empty(), t, 0);
+        }
+        let pro: Vec<u8> = Vec::new();
+        let d = DtdOut::none(pro.as_slice());
+        proof {
+            assert(ents_view(pro@, d.ents@) =~= Seq::<Ent>::empty());
+            assert(d.oka@ =~= Seq::<bool>::empty());
+            assert(d.okc@ =~= Seq::<bool>::empty());
+            assert(out_view(pro@, &d) == no_dtd());
+        }
+        st.pro = pro;
+        st.dtd = d;
+        st.genv = Ghost(no_dtd());
+        st.phase = PH_M2;
+        proof {
+            assert(ext(st.pro@, seen)) by {
+                assert(seen.subrange(0, 0) =~= st.pro@);
+            }
+            assert(st.pro_ok());
+            assert(st.pre());
+            assert(st.m2_goal());
+            assert(dflt_ok(st.pro@, st.ptape@, st.pro@.len() as int));
+            assert(old(st).utf8());
+            assert(old(st).seen() == st.seen());
+            assert(st.utf8());
+            assert(st.inv());
+        }
+        S_ON
+    } else {
+        S_WAIT
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// The root element's start tag
+// ---------------------------------------------------------------------------
+
+/// The root element's start tag, which the window has: the goal in its
+/// content.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(60)]
+proof fn lemma_root_goal(seen: Seq<u8>, pro: Seq<u8>, p: int, t: Seq<XTok>, env: Env)
+    requires
+        0 <= p,
+        p + 1 < seen.len(),
+        seen[p] == 0x3C,
+        seen[p + 1] != 0x2F && seen[p + 1] != 0x21 && seen[p + 1] != 0x3F,
+        ext(pro, seen),
+        dflt_ok(pro, t, pro.len() as int),
+        defaults_ok(pro, t, env),
+        forall|s: Seq<u8>| #[trigger] ext(seen, s) ==> misc(s, p, t) == Some((t, p)),
+        forall|s: Seq<u8>|
+            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+                after_m2(s, p, t, env)
+            } else {
+                None
+            }),
+        item(seen, p, Seq::empty(), Seq::empty(), env) matches Some((_, _, e)) && e <= seen.len(),
+    ensures
+        ({
+            let (sx, u, e) = item(seen, p, Seq::empty(), Seq::empty(), env).unwrap();
+            &&& e > p
+            &&& sx.len() == 0 || sx == Seq::<Open>::empty().push((p + 1, name_end(seen, p + 1), 0int))
+            &&& forall|s: Seq<u8>|
+                #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+                    after_content(
+                        s,
+                        e,
+                        stack_mv(Seq::empty(), sx, Seq::empty(), 0, t.len() as int),
+                        t + mv(added(Seq::empty(), u), 0, t.len() as int),
+                        env,
+                    )
+                } else {
+                    None
+                })
+        }),
+{
+    hide(document);
+    hide(doc_chars);
+    hide(after_content);
+    hide(after_root);
+    hide(item);
+    hide(misc);
+    hide(defaults_ok);
+    let (sx, u, e) = item(seen, p, Seq::empty(), Seq::empty(), env).unwrap();
+    assert(seen.subrange(0, seen.len() as int) =~= seen);
+    lemma_ext_refl(seen);
+    lemma_window(seen, seen, 0, seen);
+    assert(!is_etag(seen, p));
+    assert(item_reach(seen, p, e) == e);
+    lemma_item_mv(seen, seen, 0, seen.len() as int, 0, p, Seq::empty(), Seq::empty(), Seq::empty(), Seq::empty(), env);
+    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+        after_content(
+            s,
+            e,
+            stack_mv(Seq::empty(), sx, Seq::empty(), 0, t.len() as int),
+            t + mv(added(Seq::empty(), u), 0, t.len() as int),
+            env,
+        )
+    } else {
+        None
+    }) by {
+        lemma_window(seen, seen, 0, s);
+        lemma_item_mv(seen, s, 0, seen.len() as int, 0, p, Seq::empty(), Seq::empty(), Seq::empty(), t, env);
+        lemma_ext_byte(seen, s, p);
+        lemma_ext_byte(seen, s, p + 1);
+        lemma_root_item(s, p, t, env);
+        lemma_ext_trans(pro, seen, s);
+        assert(pro.subrange(0, pro.len() as int) =~= pro);
+        lemma_window(pro, pro, 0, s);
+        lemma_defaults_ok_eq(pro, s, pro.len() as int, t, env);
+        lemma_m2_stop(s, p, t, env);
+    }
+}
+
+/// No root element at `p`, or defaults that fail: the document fails.
+proof fn lemma_root_fails(seen: Seq<u8>, pro: Seq<u8>, p: int, t: Seq<XTok>, env: Env)
+    requires
+        0 <= p < seen.len(),
+        seen[p] != 0x3C || (ext(pro, seen) && dflt_ok(pro, t, pro.len() as int) && !defaults_ok(pro, t, env)),
+        forall|s: Seq<u8>| #[trigger] ext(seen, s) ==> misc(s, p, t) == Some((t, p)),
+        forall|s: Seq<u8>|
+            #[trigger] ext(seen, s) ==> document(s, Enc::Utf8) == (if doc_chars(s) {
+                after_m2(s, p, t, env)
+            } else {
+                None
+            }),
+    ensures
+        fails(seen, false),
+{
+    hide(document);
+    hide(doc_chars);
+    hide(after_root);
+    hide(misc);
+    hide(defaults_ok);
+    assert forall|s: Seq<u8>| #[trigger] ext(seen, s) && (false ==> s == seen) implies document(s, Enc::Utf8) is None by {
+        lemma_m2_stop(s, p, t, env);
+        if seen[p] != 0x3C {
+            lemma_ext_byte(seen, s, p);
+            lemma_after_root_not_lt(s, p, t, env);
+        } else {
+            lemma_ext_trans(pro, seen, s);
+            assert(pro.subrange(0, pro.len() as int) =~= pro);
+            lemma_window(pro, pro, 0, s);
+            lemma_defaults_ok_eq(pro, s, pro.len() as int, t, env);
+        }
+    }
+}
+
+/// Emits the prolog's tokens not yet emitted.
+fn flush_pro(st: &mut Stream)
+    ensures
+        final(st).w.buf == old(st).w.buf,
+        final(st).w.seen == old(st).w.seen,
+        final(st).w.base == old(st).w.base,
+        final(st).w.pos == old(st).w.pos,
+        final(st).w.cpos == old(st).w.cpos,
+        final(st).w.mode == old(st).w.mode,
+        final(st).w.tem == old(st).w.tem,
+        final(st).w.tcr == old(st).w.tcr,
+        final(st).w.tfirst == old(st).w.tfirst,
+        final(st).w.names == old(st).w.names,
+        final(st).w.ends == old(st).w.ends,
+        final(st).w.gst == old(st).w.gst,
+        final(st).w.gt == old(st).w.gt,
+        final(st).w.gts == old(st).w.gts,
+        final(st).phase == old(st).phase,
+        final(st).ptape == old(st).ptape,
+        final(st).pmark == (if old(st).pmark <= old(st).ptape@.len() {
+            old(st).ptape@.len() as int
+        } else {
+            old(st).pmark as int
+        }),
+        final(st).sd == old(st).sd,
+        final(st).pro == old(st).pro,
+        final(st).dtd == old(st).dtd,
+        final(st).genv == old(st).genv,
+{
+    let n = st.ptape.toks.len();
+    let mut i = st.pmark;
+    while i < n
+        invariant
+            n == st.ptape.toks@.len(),
+            st.ptape == old(st).ptape,
+            st.w.buf == old(st).w.buf,
+            st.w.seen == old(st).w.seen,
+            st.w.base == old(st).w.base,
+            st.w.pos == old(st).w.pos,
+            st.w.cpos == old(st).w.cpos,
+            st.w.mode == old(st).w.mode,
+            st.w.tem == old(st).w.tem,
+            st.w.tcr == old(st).w.tcr,
+            st.w.tfirst == old(st).w.tfirst,
+            st.w.names == old(st).w.names,
+            st.w.ends == old(st).w.ends,
+            st.w.gst == old(st).w.gst,
+            st.w.gt == old(st).w.gt,
+            st.w.gts == old(st).w.gts,
+            st.phase == old(st).phase,
+            st.sd == old(st).sd,
+            st.pro == old(st).pro,
+            st.dtd == old(st).dtd,
+            st.genv == old(st).genv,
+        decreases n - i,
+    {
+        let x = st.ptape.toks[i];
+        st.w.out.push(x);
+        i = i + 1;
+    }
+    if st.pmark <= n {
+        st.pmark = n;
+    }
+}
+
+/// The root element's start tag, once the window has it (`S_ON`); a
+/// document that fails at the root (`S_FAIL`).
+#[verifier::spinoff_prover]
+#[verifier::rlimit(80)]
+fn m2_root(st: &mut Stream) -> (r: u8)
+    requires
+        old(st).inv(),
+        old(st).phase == PH_M2,
+        old(st).w.pos < old(st).w.buf@.len(),
+        forall|s: Seq<u8>|
+            #[trigger] ext(old(st).seen(), s) ==> misc(s, old(st).w.pos as int, old(st).ptape@) == Some(
+                (old(st).ptape@, old(st).w.pos as int),
+            ),
+    ensures
+        final(st).inv(),
+        final(st).same_input(old(st)),
+        r == S_ON || r == S_WAIT || r == S_FAIL,
+        r == S_ON ==> final(st).phase == PH_BODY,
+        r == S_FAIL ==> final(st).phase == PH_FAILED,
+        r == S_WAIT ==> final(st).phase == PH_M2 && final(st).w.pos == old(st).w.pos && final(st).ptape@ == old(
+            st,
+        ).ptape@ && final(st).pmark == old(st).pmark,
+{
+    hide(after_m2);
+    hide(after_content);
+    hide(misc);
+    hide(document);
+    hide(doc_chars);
+    hide(item);
+    hide(defaults_ok);
+    slice_len_bound(st.w.buf.as_slice());
+    slice_len_bound(st.pro.as_slice());
+    let n = st.w.buf.len();
+    let p = st.w.pos;
+    let ghost seen = st.w.seen@;
+    let ghost t = st.ptape@;
+    let ghost envv = st.genv@;
+    proof {
+        assert(seen.subrange(0, seen.len() as int) =~= seen);
+        assert(st.w.buf@ == seen);
+        assert(old(st).m2_goal());
+        assert(old(st).utf8());
+        assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies misc(s, p as int, t) == Some((t, p as int)) by {
+            assert(ext(old(st).seen(), s));
+        }
+        assert forall|s: Seq<u8>| #[trigger] ext(seen, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+            after_m2(s, p as int, t, envv)
+        } else {
+            None
+        }) by {
+            assert(ext(old(st).seen(), s));
+        }
+    }
+    let x = get(st.w.buf.as_slice(), p);
+    if x != 0x3C {
+        proof {
+            lemma_root_fails(seen, st.pro@, p as int, t, envv);
+        }
+        st.phase = PH_FAILED;
+        proof {
+            assert(st.seen() == seen);
+            assert(st.utf8());
+        }
+        return S_FAIL;
+    }
+    if n - p < 2 {
+        return S_WAIT;
+    }
+    let y = get(st.w.buf.as_slice(), p + 1);
+    if y == 0x2F || y == 0x21 || y == 0x3F {
+        return S_WAIT;
+    }
+    let ok = {
+        let env = st.dtd.env(st.pro.as_slice());
+        ex_defaults_ok(st.pro.as_slice(), &st.ptape, &env)
+    };
+    if !ok {
+        proof {
+            lemma_root_fails(seen, st.pro@, p as int, t, envv);
+        }
+        st.phase = PH_FAILED;
+        proof {
+            assert(st.seen() == seen);
+            assert(st.utf8());
+        }
+        return S_FAIL;
+    }
+    let mut sc: Vec<(usize, usize, usize)> = Vec::new();
+    let mut tp = Tape::new();
+    proof {
+        assert(stack_view(sc@) =~= Seq::<Open>::empty());
+    }
+    let res = {
+        let env = st.dtd.env(st.pro.as_slice());
+        ex_item(st.w.buf.as_slice(), p, &mut sc, &mut tp, &env)
+    };
+    match res {
+        Some(e) => {
+            let ghost (sx, u, _e) = item(seen, p as int, Seq::empty(), Seq::empty(), envv).unwrap();
+            let ghost gst2 = stack_mv(Seq::empty(), sx, Seq::empty(), 0, t.len() as int);
+            let ghost gt2 = t + mv(added(Seq::empty(), u), 0, t.len() as int);
+            proof {
+                lemma_root_goal(seen, st.pro@, p as int, t, envv);
+                assert(sc@.len() == sx.len());
+            }
+            flush_pro(st);
+            if sc.len() == 1 {
+                let top = sc[0];
+                proof {
+                    assert(stack_view(sc@)[0] == sx[0]);
+                    assert(top.0 == p + 1 && top.1 == name_end(seen, p + 1));
+                    assert(stack_ok(seen, sc@, tp@));
+                    assert(sc@[0] == top);
+                    assert(gst2 == Seq::<Open>::empty().push((top.0 as int, top.1 as int, t.len() as int)));
+                }
+                win_push_name(&mut st.w, top.0, top.1, Ghost((top.0 as int, top.1 as int, t.len() as int)));
+            } else {
+                proof {
+                    assert(gst2 == Seq::<Open>::empty());
+                }
+            }
+            st.w.out.toks.append(&mut tp.toks);
+            st.w.pos = e;
+            proof {
+                st.w.gst@ = gst2;
+                st.w.gt@ = gt2;
+            }
+            st.phase = PH_BODY;
+            proof {
+                assert(st.seen() == seen);
+                assert(st.utf8());
+                assert(st.pro_ok());
+                assert(st.w.goal(envv));
+                assert(st.w.inv(envv));
+            }
+            S_ON
+        },
+        None => S_WAIT,
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// The last chunk before the root element: the rest of the document, whole
+// ---------------------------------------------------------------------------
+
+/// `after_m2` on `s` from `p`.
+fn m2_finish(s: &[u8], p: usize, tape: &mut Tape, env: &XEnv) -> (r: bool)
+    requires
+        p <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
+        old(tape)@.len() <= p,
+        env_wf(env),
+    ensures
+        r == after_m2(s@, p as int, old(tape)@, env_view(env)) is Some,
+        r ==> final(tape)@ == after_m2(s@, p as int, old(tape)@, env_view(env)).unwrap(),
+{
+    let n = s.len();
+    match ex_misc(s, p, tape) {
+        None => false,
+        Some(p4) => {
+            if !ex_defaults_ok(s, tape, env) {
+                return false;
+            }
+            match ex_element(s, p4, tape, env) {
+                None => false,
+                Some(e) => match ex_misc(s, e, tape) {
+                    None => false,
+                    Some(f) => f == n,
+                },
+            }
+        },
+    }
+}
+
+/// `after_m1` on `s` from `p`.
+fn m1_finish(s: &[u8], p: usize, tape: &mut Tape, sd: u8) -> (r: bool)
+    requires
+        p <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
+        old(tape)@.len() <= p,
+    ensures
+        r == after_m1(s@, p as int, old(tape)@, sd as int) is Some,
+        r ==> final(tape)@ == after_m1(s@, p as int, old(tape)@, sd as int).unwrap(),
+{
+    hide(after_m2);
+    match ex_misc(s, p, tape) {
+        None => false,
+        Some(p2) => match ex_doctype_opt(s, p2, tape, sd) {
+            None => false,
+            Some((p3, d)) => {
+                let env = d.env(s);
+                m2_finish(s, p3, tape, &env)
+            },
+        },
+    }
+}
+
+/// The document, at the last chunk, in `M1` or `M2`: all of it is in the
+/// window.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(60)]
+fn pro_finish(st: &mut Stream) -> (r: bool)
+    requires
+        old(st).inv(),
+        old(st).phase == PH_M1 || old(st).phase == PH_M2,
+        old(st).w.cpos == old(st).w.buf@.len(),
+    ensures
+        final(st).w == old(st).w,
+        final(st).pmark == old(st).pmark,
+        final(st).phase == old(st).phase,
+        r == document(old(st).seen(), Enc::Utf8) is Some,
+        r ==> final(st).ptape@ == document(old(st).seen(), Enc::Utf8).unwrap(),
+{
+    hide(document);
+    hide(doc_chars);
+    hide(after_m2);
+    hide(after_m1);
+    slice_len_bound(st.w.buf.as_slice());
+    slice_len_bound(st.pro.as_slice());
+    let ghost seen = st.w.seen@;
+    let ghost t = st.ptape@;
+    proof {
+        assert(seen.subrange(0, seen.len() as int) =~= seen);
+        assert(st.w.buf@ == seen);
+        lemma_ext_refl(seen);
+        lemma_chars_end(seen);
+        assert(doc_chars(seen));
+        assert(t.len() <= st.w.pos);
+    }
+    if st.phase == PH_M1 {
+        proof {
+            assert(old(st).m1_goal());
+            assert(document(seen, Enc::Utf8) == after_m1(seen, st.w.pos as int, t, st.sd as int));
+        }
+        m1_finish(st.w.buf.as_slice(), st.w.pos, &mut st.ptape, st.sd)
+    } else {
+        proof {
+            assert(old(st).m2_goal());
+            assert(document(seen, Enc::Utf8) == after_m2(seen, st.w.pos as int, t, st.genv@));
+        }
+        let env = st.dtd.env(st.pro.as_slice());
+        m2_finish(st.w.buf.as_slice(), st.w.pos, &mut st.ptape, &env)
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// Taking a chunk; dropping what has been read
+// ---------------------------------------------------------------------------
+
+/// `b` is `a` with `d` fed.
+pub open spec fn fed(a: &Win, b: &Win, d: Seq<u8>) -> bool {
+    &&& b.seen@ == a.seen@ + d
+    &&& b.buf@ == a.buf@ + d
+    &&& b.base == a.base
+    &&& b.pos == a.pos
+    &&& b.cpos == a.cpos
+    &&& b.mode == a.mode
+    &&& b.tem == a.tem
+    &&& b.tcr == a.tcr
+    &&& b.names == a.names
+    &&& b.ends == a.ends
+    &&& b.gst == a.gst
+    &&& b.gt == a.gt
+    &&& b.gts == a.gts
+}
+
+proof fn lemma_fed_ext(a: Seq<u8>, d: Seq<u8>, s: Seq<u8>)
+    requires
+        ext(a + d, s),
+    ensures
+        ext(a, s),
+{
+    assert(ext(a, a + d)) by {
+        assert((a + d).subrange(0, a.len() as int) =~= a);
+    }
+    lemma_ext_trans(a, a + d, s);
+}
+
+#[verifier::spinoff_prover]
+proof fn lemma_win_fed(a: &Win, b: &Win, d: Seq<u8>, env: Env)
+    requires
+        fed(a, b, d),
+        a.win_ok(),
+        b.buf@.len() <= MAX_POS,
+    ensures
+        b.win_ok(),
+        a.names_ok() ==> b.names_ok(),
+        a.mode_ok() ==> b.mode_ok(),
+        a.chars_inv() ==> b.chars_inv(),
+        a.goal(env) ==> b.goal(env),
+        fails(a.seen@, false) ==> fails(b.seen@, false),
+{
+    hide(document);
+    hide(doc_chars);
+    hide(after_content);
+    let sa = a.seen@;
+    let sb = b.seen@;
+    assert(ext(sa, sb)) by {
+        assert(sb.subrange(0, sa.len() as int) =~= sa);
+    }
+    assert(b.buf@ =~= sb.subrange(b.base as int, sb.len() as int));
+    if a.names_ok() {
+        assert forall|q: int| 0 <= q < b.ends@.len() implies b.nstart(q) <= #[trigger] b.ends@[q] <= b.names@.len()
+            && 0 <= b.gst@[q].0 <= b.gst@[q].1 <= sb.len() && b.names@.subrange(b.nstart(q), b.ends@[q] as int)
+            == sb.subrange(b.gst@[q].0, b.gst@[q].1) by {
+            assert(a.ends@[q] == b.ends@[q]);
+            assert(sb.subrange(b.gst@[q].0, b.gst@[q].1) =~= sa.subrange(a.gst@[q].0, a.gst@[q].1));
+        }
+    }
+    if a.mode_ok() {
+        let ts = a.gts@;
+        let k = a.base + a.pos;
+        if a.mode == M_TEXT {
+            lemma_ext_byte(sa, sb, ts);
+            lemma_has_cr_ext(sa, sb, ts, k);
+            assert forall|s: Seq<u8>| #[trigger] ext(sb, s) implies text_end(s, ts) == text_end(s, k) by {
+                lemma_ext_trans(sa, sb, s);
+            }
+        }
+        if a.mode == M_CDATA {
+            lemma_ext_lit(sa, sb, ts, lit_cdata());
+            lemma_has_cr_ext(sa, sb, ts + 9, k);
+            assert forall|s: Seq<u8>| #[trigger] ext(sb, s) implies cdata_end(s, ts + 9) == cdata_end(s, k) by {
+                lemma_ext_trans(sa, sb, s);
+            }
+        }
+    }
+    if a.chars_inv() {
+        assert forall|s: Seq<u8>| #[trigger] ext(sb, s) implies doc_chars(s) == chars_from(s, b.base + b.cpos) by {
+            lemma_ext_trans(sa, sb, s);
+        }
+    }
+    if a.goal(env) {
+        assert forall|s: Seq<u8>| #[trigger] ext(sb, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+            after_content(s, b.at(), b.gst@, b.gt@, env)
+        } else {
+            None
+        }) by {
+            lemma_ext_trans(sa, sb, s);
+        }
+    }
+    if fails(sa, false) {
+        assert forall|s: Seq<u8>| #[trigger] ext(sb, s) && (false ==> s == sb) implies document(s, Enc::Utf8) is None by {
+            lemma_ext_trans(sa, sb, s);
+        }
+    }
+}
+
+/// Appends the chunk.
+fn win_append(w: &mut Win, data: &[u8])
+    requires
+        old(w).buf@.len() + data@.len() <= MAX_POS,
+    ensures
+        fed(old(w), final(w), data@),
+        final(w).out == old(w).out,
+        final(w).tfirst == old(w).tfirst,
+{
+    push_slice(&mut w.buf, data, 0, data.len());
+    proof {
+        assert(data@.subrange(0, data@.len() as int) =~= data@);
+        w.seen@ = w.seen@ + data@;
+    }
+}
+
+
+/// Drops what the window no longer needs: the bytes before where the
+/// parser stands, the characters are checked, and the text being read is
+/// emitted.
+#[verifier::spinoff_prover]
+fn win_compact(w: &mut Win, Ghost(env): Ghost<Env>)
+    requires
+        old(w).inv(env),
+        old(w).base + old(w).buf@.len() <= usize::MAX,
+    ensures
+        final(w).inv(env),
+        final(w).seen == old(w).seen,
+        final(w).at() == old(w).at(),
+        final(w).base + final(w).pos == old(w).base + old(w).pos,
+        final(w).base + final(w).cpos == old(w).base + old(w).cpos,
+        final(w).buf@.len() <= old(w).buf@.len(),
+        final(w).mode == old(w).mode,
+        final(w).out == old(w).out,
+{
+    hide(document);
+    hide(doc_chars);
+    hide(after_content);
+    let n = w.buf.len();
+    let mut k = w.pos;
+    if w.cpos < k {
+        k = w.cpos;
+    }
+    if w.mode != M_ITEM && w.tem < k {
+        k = w.tem;
+    }
+    if k == 0 {
+        return;
+    }
+    let ghost b0 = w.buf@;
+    let m = n - k;
+    let mut i: usize = 0;
+    while i < m
+        invariant
+            i <= m,
+            m + k == n,
+            n == b0.len(),
+            w.buf@.len() == n,
+            forall|j: int| 0 <= j < i ==> #[trigger] w.buf@[j] == b0[j + k],
+            forall|j: int| i <= j < n ==> #[trigger] w.buf@[j] == b0[j],
+        decreases m - i,
+    {
+        let x = w.buf[i + k];
+        w.buf.set(i, x);
+        i = i + 1;
+    }
+    w.buf.truncate(m);
+    proof {
+        assert(w.buf@ =~= b0.subrange(k as int, n as int));
+        let seen = w.seen@;
+        assert(w.buf@ =~= seen.subrange(w.base + k, seen.len() as int));
+    }
+    w.base = w.base + k;
+    w.pos = w.pos - k;
+    w.cpos = w.cpos - k;
+    if w.tem >= k {
+        w.tem = w.tem - k;
+    } else {
+        w.tem = 0;
+    }
+    proof {
+        assert(w.win_ok());
+        assert(w.mode_ok());
+        assert(w.chars_inv());
+        assert(w.goal(env));
+    }
+}
+
+/// A stream with `d` fed keeps its invariant.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(40)]
+proof fn lemma_stream_fed(a: &Stream, b: &Stream, d: Seq<u8>)
+    requires
+        a.inv(),
+        a.phase != PH_FAILED && a.phase != PH_DONE,
+        fed(&a.w, &b.w, d),
+        b.w.buf@.len() <= MAX_POS,
+        b.phase == a.phase,
+        b.ptape == a.ptape,
+        b.pmark == a.pmark,
+        b.sd == a.sd,
+        b.pro == a.pro,
+        b.dtd == a.dtd,
+        b.genv == a.genv,
+    ensures
+        b.inv(),
+{
+    hide(document);
+    hide(doc_chars);
+    hide(after_m1);
+    hide(after_m2);
+    hide(after_content);
+    hide(input_enc);
+    lemma_win_fed(&a.w, &b.w, d, a.genv@);
+    let sa = a.seen();
+    let sb = b.seen();
+    assert(ext(sa, sb)) by {
+        assert(sb.subrange(0, sa.len() as int) =~= sa);
+    }
+    if a.phase == PH_M1 || a.phase == PH_M2 || a.phase == PH_BODY {
+        assert forall|s: Seq<u8>| #[trigger] ext(sb, s) implies input_enc(s) == Enc::Utf8 by {
+            lemma_ext_trans(sa, sb, s);
+        }
+    }
+    if a.phase == PH_M1 {
+        assert forall|s: Seq<u8>| #[trigger] ext(sb, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+            after_m1(s, b.w.pos as int, b.ptape@, b.sd as int)
+        } else {
+            None
+        }) by {
+            lemma_ext_trans(sa, sb, s);
+        }
+    }
+    if a.phase == PH_M2 {
+        assert forall|s: Seq<u8>| #[trigger] ext(sb, s) implies document(s, Enc::Utf8) == (if doc_chars(s) {
+            after_m2(s, b.w.pos as int, b.ptape@, b.genv@)
+        } else {
+            None
+        }) by {
+            lemma_ext_trans(sa, sb, s);
+        }
+    }
+    if a.phase == PH_M2 || a.phase == PH_BODY {
+        lemma_ext_trans(a.pro@, sa, sb);
+    }
+}
+
 } // verus!
