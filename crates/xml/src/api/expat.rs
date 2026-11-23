@@ -292,7 +292,13 @@ pub struct Parser {
     ext: Option<Ext>,
     // Input until the final buffer, then the document over it.
     input: Vec<u8>,
-    buffer_granted: Option<usize>,
+    /// expat's own input buffer, which `XML_GetBuffer` hands out.
+    eb: EBuf,
+    /// The last fill size the application asked for, and the bytes there
+    /// were at the last parse attempt that read nothing (expat's reparse
+    /// deferral heuristic).
+    last_req: usize,
+    partial_before: usize,
     doc: Option<Box<Document<'static>>>,
     owned_text: Option<Box<[u8]>>,
     /// The push parser, from the first chunk that is not the last: the
@@ -302,6 +308,12 @@ pub struct Parser {
     sbase: usize,
     /// The stream's verdict on what it was fed (`R_MORE`, ...).
     sverdict: u8,
+    /// The stream failed in a token that the input has not finished: expat
+    /// reports that only once the token is complete or the input ends, so
+    /// what comes after it is held here until then.
+    held: Option<Vec<u8>>,
+    /// A CR at the end of the epilog read so far, not yet reported.
+    epilog_cr: bool,
     /// `doc` has the stream's declarations, which are final.
     sdtd: bool,
     /// The stream handed the document back: it is read whole.
@@ -341,7 +353,6 @@ pub struct Parser {
     /// A handler is running: the calls that would parse re-entrantly, and
     /// freeing or resetting the parser, are refused.
     walking: bool,
-    ever_buffer: bool,
     /// How many internal entities' replacement texts are being read.
     ent_depth: usize,
     /// The names of the open elements, NUL-terminated, end to end.
@@ -372,12 +383,16 @@ impl Parser {
             encoding: unsafe { opt_cstr(enc) },
             ext: None,
             input: Vec::new(),
-            buffer_granted: None,
+            eb: EBuf::new(mem),
+            last_req: 0,
+            partial_before: 0,
             doc: None,
             owned_text: None,
             stream: None,
             sbase: 0,
             sverdict: 0,
+            held: None,
+            epilog_cr: false,
             sdtd: false,
             whole: false,
             ci: 0,
@@ -403,7 +418,6 @@ impl Parser {
             nspecified: 0,
             id_index: -1,
             walking: false,
-            ever_buffer: false,
             ent_depth: 0,
             names: Vec::new(),
             att_ks: Vec::new(),
@@ -852,6 +866,10 @@ fn classify_code(text: &[u8], e: &super::Error, off: usize) -> c_int {
     if depth.is_none() && !rest.starts_with(b"<") && !is_ws(rest[0]) {
         return E_SYNTAX;
     }
+    // Markup after the root element that the input ends inside of.
+    if depth == Some(0) && rest[0] == b'<' && !rest.contains(&b'>') {
+        return E_UNCLOSED_TOKEN;
+    }
     if depth == Some(0) && !rest.starts_with(b"<!--") && !rest.starts_with(b"<?") && !is_ws(rest[0]) {
         return E_JUNK_AFTER_DOC_ELEMENT;
     }
@@ -1098,6 +1116,10 @@ impl Parser {
             Phase::Content => self.content_step(doc),
             Phase::Epilog(i) => {
                 let toks = doc.toks(Src::Doc);
+                self.epilog_space(doc, toks.get(i).copied());
+                if self.parsing != P_PARSING {
+                    return Ok(());
+                }
                 if i >= toks.len() {
                     if self.stream.is_some() && self.sverdict != R_OK {
                         return Err(NEED_MORE);
@@ -1118,6 +1140,39 @@ impl Parser {
                 Ok(())
             }
             Phase::Done => Ok(()),
+        }
+    }
+
+    /// White space in the epilog before `next` (or, at the end of what
+    /// has been read, all of it but a last CR that may begin a CR LF),
+    /// to the default handler, as expat reports it.
+    fn epilog_space(&mut self, doc: &'static Document<'static>, next: Option<Tok>) {
+        if self.ext.is_some() || self.h.default.is_none() {
+            return;
+        }
+        let text = doc.text();
+        let a = self.last_end.min(text.len());
+        let mut b = match next {
+            Some(t) if t.kind == Kind::Comment => t.a() - 4,
+            Some(t) => t.a() - 2,
+            None => text.len(),
+        };
+        b = a + text[a..b.max(a)].iter().take_while(|&&c| is_ws(c)).count();
+        // A CR that ends the input so far is reported with what follows it
+        // (the window may not keep it).
+        let hold = next.is_none() && self.stream.is_some() && !self.final_buffer && b > a && text[b - 1] == b'\r';
+        let cr = std::mem::replace(&mut self.epilog_cr, hold);
+        if b > a || cr {
+            let e = if hold { b - 1 } else { b };
+            self.set_ev(a, b);
+            self.last_end = b;
+            if cr {
+                let mut v = vec![b'\r'];
+                v.extend_from_slice(&text[a..e]);
+                self.report_default_bytes(&v);
+            } else if e > a {
+                self.report_default(a, e);
+            }
         }
     }
 
@@ -1649,8 +1704,14 @@ impl Parser {
                 }
                 if let Some(f) = self.h.ext_ref {
                     let e = &doc.dtd.ents[k];
-                    let toks = doc.toks(Src::Doc);
-                    let text = doc.text();
+                    // A stream's declarations are in its prolog.
+                    let (toks, text): (&[Tok], &[u8]) = match self.stream.as_ref() {
+                        Some(st) => {
+                            let st: &'static Stream = unsafe { &*(st.as_ref() as *const Stream) };
+                            (st.prolog_toks(), st.prolog())
+                        }
+                        None => (doc.toks(Src::Doc), doc.text()),
+                    };
                     let decl = toks.iter().position(|x| x.kind == Kind::EntityDecl && x.f == 0 && x.a() == e.a);
                     let (mut sys, mut pubid) = (None, None);
                     if let Some(d) = decl {
@@ -2258,6 +2319,7 @@ pub unsafe extern "C" fn XML_ExternalEntityParserCreate(
     c.base = pp.base.clone();
     c.base_c = pp.base_c.clone();
     c.open_ents = pp.open_ents.clone();
+    c.props.reparse = pp.props.reparse;
     if pp.handler_arg == parent as *mut c_void {
         c.arg_is_parser = true;
     }
@@ -2375,9 +2437,8 @@ impl Parser {
         }
         self.parsing = P_PARSING;
         self.input.extend_from_slice(s);
-        self.buffer_granted = None;
-        // Read as it comes, from the first chunk that is not the last.
-        if self.stream.is_some() || (!is_final && self.can_stream()) {
+        // Read as it comes.
+        if self.stream.is_some() || self.can_stream() {
             return self.stream_chunk(is_final);
         }
         if !is_final {
@@ -2409,6 +2470,11 @@ impl Parser {
         }
         if is_final {
             self.final_buffer = true;
+        }
+        if let Some(h) = self.held.as_mut() {
+            h.extend_from_slice(&self.input);
+            self.input.clear();
+            return self.chunk_read();
         }
         // Lines are counted up to where the window is kept from, which no
         // event comes before.
@@ -2483,25 +2549,185 @@ impl Parser {
                 STATUS_OK
             }
             _ => {
-                let (code, at) = self.stream_error();
+                let (code, at, tail) = self.stream_error();
+                if !self.final_buffer && tail {
+                    self.held.get_or_insert_with(Vec::new);
+                    return STATUS_OK;
+                }
                 self.err_at = at;
                 self.fail(code)
             }
         }
     }
 
-    /// Why the stream failed, and where in the window.
-    fn stream_error(&self) -> (c_int, usize) {
+    /// Why the stream failed, where in the window, and whether the error
+    /// is in a token that runs to the end of the input (which expat waits
+    /// to see the end of).
+    fn stream_error(&self) -> (c_int, usize, bool) {
         let st = self.stream.as_ref().unwrap();
-        let (t, n, from) = st.diagnosis();
+        let (mut t, n, from) = st.diagnosis();
+        if let Some(h) = &self.held {
+            t.extend_from_slice(h);
+        }
         match super::parse(&t) {
             // The verified verdict is the stream's.
-            Ok(_) => (E_SYNTAX, from),
+            Ok(_) => (E_SYNTAX, from, false),
             Err(e) => {
                 let (code, at) = classify(&t, &e);
-                (code, if at >= n { from + (at - n) } else { from })
+                let tail = at >= n && at < t.len() && t[at..].iter().all(|&c| !is_ws(c) && !b"<>&;\"'=/?]".contains(&c));
+                (code, if at >= n { from + (at - n) } else { from }, tail)
             }
         }
+    }
+}
+
+/// expat's input buffer (libexpat's `m_buffer` .. `m_bufferLim`), kept as
+/// libexpat keeps it, so that `XML_GetBuffer` and `XML_ParseBuffer` behave
+/// as there: what it allocates, when it reparses, how much it may take.
+/// `ptr` is where expat would have read to (the stream's progress), `fed`
+/// how much has been handed to the parser.
+struct EBuf {
+    buf: *mut u8,
+    size: usize,
+    ptr: usize,
+    fed: usize,
+    end: usize,
+    /// The offset in the input of `buf[0]`.
+    abs0: usize,
+    mem: MemSuite,
+}
+
+/// libexpat's `XML_CONTEXT_BYTES`, and its first buffer size.
+const CONTEXT_BYTES: usize = 1024;
+const INIT_BUFFER_SIZE: usize = 1024;
+
+impl EBuf {
+    fn new(mem: MemSuite) -> EBuf {
+        EBuf { buf: null_mut(), size: 0, ptr: 0, fed: 0, end: 0, abs0: 0, mem }
+    }
+
+    /// `XML_GetBuffer`'s room for `len` more bytes: moved down within the
+    /// buffer, or a buffer twice as large (or more), as libexpat does.
+    fn room(&mut self, len: usize) -> Result<*mut u8, c_int> {
+        if len <= self.size - self.end && !self.buf.is_null() {
+            return Ok(unsafe { self.buf.add(self.end) });
+        }
+        let mut needed = len + (self.end - self.ptr);
+        let keep = self.ptr.min(CONTEXT_BYTES);
+        needed += keep;
+        if needed > i32::MAX as usize {
+            return Err(E_NO_MEMORY);
+        }
+        let off = self.ptr - keep;
+        if !self.buf.is_null() && needed <= self.size {
+            if off > 0 {
+                unsafe { std::ptr::copy(self.buf.add(off), self.buf, self.end - off) };
+            }
+        } else {
+            let mut size = if self.size == 0 { INIT_BUFFER_SIZE } else { self.size };
+            loop {
+                size *= 2;
+                if size >= needed || size > i32::MAX as usize {
+                    break;
+                }
+            }
+            if size > i32::MAX as usize {
+                return Err(E_NO_MEMORY);
+            }
+            let nb = unsafe { (self.mem.malloc_fcn.unwrap())(size) } as *mut u8;
+            if nb.is_null() {
+                return Err(E_NO_MEMORY);
+            }
+            // Every byte is defined, whatever the application writes.
+            unsafe { std::ptr::write_bytes(nb, 0, size) };
+            if !self.buf.is_null() {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(self.buf.add(off), nb, self.end - off);
+                    (self.mem.free_fcn.unwrap())(self.buf as *mut c_void);
+                }
+            }
+            self.buf = nb;
+            self.size = size;
+        }
+        self.ptr -= off;
+        self.fed -= off;
+        self.end -= off;
+        self.abs0 += off;
+        Ok(unsafe { self.buf.add(self.end) })
+    }
+
+    /// The bytes not yet handed on.
+    fn unfed(&self) -> &'static [u8] {
+        if self.buf.is_null() {
+            return &[];
+        }
+        unsafe { std::slice::from_raw_parts(self.buf.add(self.fed), self.end - self.fed) }
+    }
+}
+
+impl Drop for EBuf {
+    fn drop(&mut self) {
+        if !self.buf.is_null() {
+            unsafe { (self.mem.free_fcn.unwrap())(self.buf as *mut c_void) };
+        }
+    }
+}
+
+/// expat's testing switches (libexpat's `XML_TESTING` build), which its
+/// test suite reads and sets.
+#[cfg(feature = "expat-testing")]
+#[unsafe(no_mangle)]
+pub static mut g_reparseDeferralEnabledDefault: u8 = 1;
+#[cfg(feature = "expat-testing")]
+#[unsafe(no_mangle)]
+pub static mut g_bytesScanned: std::ffi::c_uint = 0;
+
+fn reparse_default() -> XBool {
+    #[cfg(feature = "expat-testing")]
+    {
+        unsafe { g_reparseDeferralEnabledDefault }
+    }
+    #[cfg(not(feature = "expat-testing"))]
+    {
+        1
+    }
+}
+
+impl Parser {
+    /// A parse attempt over the buffer, as libexpat's `callProcessor`: put
+    /// off while a partial token has not grown enough (reparse deferral),
+    /// else what has come is handed to the parser.
+    fn attempt(&mut self, is_final: bool) -> c_int {
+        let have_now = self.eb.end - self.eb.ptr;
+        if self.props.reparse != 0 && !is_final {
+            let avail = (self.eb.ptr - self.eb.ptr.min(CONTEXT_BYTES)) + (self.eb.size - self.eb.end);
+            let enough = have_now >= 2 * self.partial_before || self.last_req > avail;
+            if !enough {
+                if self.parsing == P_INITIALIZED {
+                    self.parsing = P_PARSING;
+                }
+                return STATUS_OK;
+            }
+        }
+        #[cfg(feature = "expat-testing")]
+        unsafe {
+            g_bytesScanned = g_bytesScanned.wrapping_add(have_now as std::ffi::c_uint);
+        }
+        let data = self.eb.unfed();
+        self.eb.fed = self.eb.end;
+        let before = self.eb.ptr;
+        let r = self.parse_chunk(data, is_final);
+        // Read to: the stream's progress; all of it otherwise (it is held
+        // in `input`).
+        let to = match self.stream.as_ref() {
+            Some(st) => st.progress().saturating_sub(self.eb.abs0),
+            None => self.eb.end,
+        };
+        self.eb.ptr = to.clamp(self.eb.ptr, self.eb.end);
+        if r != STATUS_ERROR {
+            self.partial_before = if self.eb.ptr == before { have_now } else { 0 };
+        }
+        r
     }
 }
 
@@ -2515,8 +2741,30 @@ pub unsafe extern "C" fn XML_Parse(p: *mut Parser, s: *const c_char, len: c_int,
         p.error = E_INVALID_ARGUMENT;
         return STATUS_ERROR;
     }
-    let bytes: &[u8] = if len == 0 { &[] } else { unsafe { std::slice::from_raw_parts(s as *const u8, len as usize) } };
-    p.parse_chunk(bytes, is_final != 0)
+    match p.parsing {
+        P_SUSPENDED => {
+            p.error = E_SUSPENDED;
+            return STATUS_ERROR;
+        }
+        // After an error, expat keeps giving it.
+        P_FINISHED => {
+            if matches!(p.error, E_NONE | E_ABORTED) {
+                p.error = E_FINISHED;
+            }
+            return STATUS_ERROR;
+        }
+        _ => {}
+    }
+    p.parsing = P_PARSING;
+    // As libexpat: the bytes go into the buffer, which is then parsed.
+    let b = unsafe { XML_GetBuffer(p, len) } as *mut u8;
+    if b.is_null() {
+        return STATUS_ERROR;
+    }
+    if len > 0 {
+        unsafe { std::ptr::copy_nonoverlapping(s as *const u8, b, len as usize) };
+    }
+    unsafe { XML_ParseBuffer(p, len, is_final) }
 }
 
 #[unsafe(no_mangle)]
@@ -2534,23 +2782,21 @@ pub unsafe extern "C" fn XML_GetBuffer(p: *mut Parser, len: c_int) -> *mut c_voi
             p.error = E_SUSPENDED;
             return null_mut();
         }
-        P_FINISHED => {
+        // After an error (not a stop), expat is still parsing.
+        P_FINISHED if matches!(p.error, E_NONE | E_ABORTED) => {
             p.error = E_FINISHED;
             return null_mut();
         }
         _ => {}
     }
-    let len = len as usize;
-    // libexpat doubles its buffer from 1 KiB and fails once that would pass
-    // INT_MAX, so no request reaches above 1 GiB; this keeps the same limit
-    // on what it holds.
-    if p.input.len() + len > 1 << 30 || p.input.try_reserve(len).is_err() {
-        p.error = E_NO_MEMORY;
-        return null_mut();
+    p.last_req = len as usize;
+    match p.eb.room(len as usize) {
+        Ok(b) => b as *mut c_void,
+        Err(code) => {
+            p.error = code;
+            null_mut()
+        }
     }
-    p.buffer_granted = Some(len);
-    p.ever_buffer = true;
-    unsafe { p.input.as_mut_ptr().add(p.input.len()) as *mut c_void }
 }
 
 #[unsafe(no_mangle)]
@@ -2559,36 +2805,33 @@ pub unsafe extern "C" fn XML_ParseBuffer(p: *mut Parser, len: c_int, is_final: c
     if p.walking {
         return STATUS_ERROR;
     }
+    if len < 0 {
+        p.error = E_INVALID_ARGUMENT;
+        return STATUS_ERROR;
+    }
     match p.parsing {
         P_SUSPENDED => {
             p.error = E_SUSPENDED;
             return STATUS_ERROR;
         }
         P_FINISHED => {
-            p.error = E_FINISHED;
+            if matches!(p.error, E_NONE | E_ABORTED) {
+                p.error = E_FINISHED;
+            }
+            return STATUS_ERROR;
+        }
+        P_INITIALIZED if p.eb.buf.is_null() => {
+            p.error = E_NO_BUFFER;
             return STATUS_ERROR;
         }
         _ => {}
     }
-    if len < 0 {
+    if len as usize > p.eb.size - p.eb.end {
         p.error = E_INVALID_ARGUMENT;
         return STATUS_ERROR;
     }
-    let granted = match p.buffer_granted {
-        Some(g) => g,
-        None if len == 0 && p.ever_buffer => 0,
-        None => {
-            p.error = E_NO_BUFFER;
-            return STATUS_ERROR;
-        }
-    };
-    if len as usize > granted {
-        p.error = E_INVALID_ARGUMENT;
-        return STATUS_ERROR;
-    }
-    let n = p.input.len() + len as usize;
-    unsafe { p.input.set_len(n) };
-    p.parse_chunk(&[], is_final != 0)
+    p.eb.end += len as usize;
+    p.attempt(is_final != 0)
 }
 
 #[unsafe(no_mangle)]
@@ -2944,8 +3187,12 @@ pub unsafe extern "C" fn XML_SetHashSalt16Bytes(p: *mut Parser, entropy: *const 
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn XML_SetReparseDeferralEnabled(p: *mut Parser, enabled: XBool) -> XBool {
-    let _ = parser!(p);
-    (enabled <= 1) as XBool
+    let p = parser!(p);
+    if enabled > 1 {
+        return 0;
+    }
+    p.props.reparse = enabled;
+    1
 }
 
 #[unsafe(no_mangle)]
@@ -3105,7 +3352,7 @@ struct Props {
 
 impl Default for Props {
     fn default() -> Props {
-        Props { reparse: 1, at_amp: 100.0, at_thr: 64 * 1024 * 1024, bl_amp: 100.0, bl_thr: 8 * 1024 * 1024 }
+        Props { reparse: reparse_default(), at_amp: 100.0, at_thr: 64 * 1024 * 1024, bl_amp: 100.0, bl_thr: 8 * 1024 * 1024 }
     }
 }
 

@@ -32,43 +32,14 @@
 #                           entity or a parameter entity, which are not read
 #   fails-with-libexpat-too fails the same way with libexpat 2.10.0 (the npm
 #                           package of the suite has CR LF line ends in places)
-runtests	test_abort_epilog	incremental
-runtests	test_abort_epilog_2	incremental
 runtests	test_accounting_precision	internal
-runtests	test_alloc_attribute_enum_value	allocator
-runtests	test_alloc_attribute_predefined_entity	allocator
-runtests	test_alloc_attribute_whitespace	allocator
-runtests	test_alloc_comment_in_epilog	allocator
 runtests	test_alloc_create_external_parser	allocator
 runtests	test_alloc_dtd_copy_default_atts	allocator
 runtests	test_alloc_dtd_default_handling	allocator
 runtests	test_alloc_explicit_encoding	allocator
 runtests	test_alloc_ext_entity_realloc_buffer	allocator
-runtests	test_alloc_ext_entity_set_encoding	allocator
-runtests	test_alloc_external_entity	allocator
-runtests	test_alloc_internal_entity	allocator
-runtests	test_alloc_long_attr_default_with_char_ref	allocator
-runtests	test_alloc_long_attr_value	allocator
-runtests	test_alloc_long_base	allocator
-runtests	test_alloc_long_doc_name	allocator
-runtests	test_alloc_long_entity_value	allocator
-runtests	test_alloc_long_notation	allocator
-runtests	test_alloc_long_public_id	allocator
 runtests	test_alloc_nested_entities	allocator
-runtests	test_alloc_notation	allocator
-runtests	test_alloc_parameter_entity	allocator
-runtests	test_alloc_parse_comment	allocator
-runtests	test_alloc_parse_comment_2	allocator
-runtests	test_alloc_parse_pi	allocator
-runtests	test_alloc_parse_pi_2	allocator
-runtests	test_alloc_parse_pi_3	allocator
-runtests	test_alloc_parse_public_doctype	allocator
-runtests	test_alloc_parse_public_doctype_long_name	allocator
-runtests	test_alloc_parse_xdecl	allocator
-runtests	test_alloc_parse_xdecl_2	allocator
-runtests	test_alloc_pi_in_epilog	allocator
 runtests	test_alloc_public_entity_value	allocator
-runtests	test_alloc_public_notation	allocator
 runtests	test_alloc_realloc_attribute_enum_value	allocator
 runtests	test_alloc_realloc_attributes	allocator
 runtests	test_alloc_realloc_buffer	allocator
@@ -83,10 +54,8 @@ runtests	test_alloc_realloc_param_entity_newline	allocator
 runtests	test_alloc_realloc_subst_public_entity_value	allocator
 runtests	test_alloc_reset_after_external_entity_parser_create_fail	allocator
 runtests	test_alloc_reset_encoding	allocator
-runtests	test_alloc_run_external_parser	allocator
 runtests	test_alloc_set_base	allocator
 runtests	test_alloc_set_foreign_dtd	allocator
-runtests	test_alloc_system_notation	allocator
 runtests	test_alloc_tracker_api_float_round_trip	allocator
 runtests	test_alloc_tracker_getbuffer_unlimited	allocator
 runtests	test_alloc_tracker_maximum_amplification	allocator
@@ -106,10 +75,7 @@ runtests	test_bad_entity_4	error-code
 runtests	test_bad_ignore_section	external-dtd
 runtests	test_bad_notation	error-code
 runtests	test_bad_public_doctype	error-code
-runtests	test_big_tokens_scale_linearly	incremental
 runtests	test_billions_laughs_attack_protection_api_float_round_trip	amplification
-runtests	test_bypass_heuristic_when_close_to_bufsize	incremental
-runtests	test_byte_info_at_end	error-code
 runtests	test_comment_handled_in_default	default-handler
 runtests	test_default_current	default-handler
 runtests	test_default_doctype_handler	default-handler
@@ -168,18 +134,7 @@ runtests	test_ns_double_colon_doctype	error-code
 runtests	test_ns_utf16_doctype	utf16-without-bom
 runtests	test_ns_utf16_element_leafname	utf16-without-bom
 runtests	test_ns_utf16_leafname	utf16-without-bom
-runtests	test_nsalloc_less_long_namespace	allocator
-runtests	test_nsalloc_long_attr	allocator
-runtests	test_nsalloc_long_attr_prefix	allocator
-runtests	test_nsalloc_long_context	allocator
-runtests	test_nsalloc_long_default_in_ext	allocator
-runtests	test_nsalloc_long_element	allocator
-runtests	test_nsalloc_long_namespace	allocator
-runtests	test_nsalloc_long_prefix	allocator
-runtests	test_nsalloc_long_systemid_in_ext	allocator
-runtests	test_nsalloc_long_uri	allocator
 runtests	test_nsalloc_parse_buffer	allocator
-runtests	test_nsalloc_prefixed_element	allocator
 runtests	test_nsalloc_realloc_binding_uri	allocator
 runtests	test_nsalloc_realloc_long_context	allocator
 runtests	test_nsalloc_realloc_long_context_2	allocator
@@ -192,14 +147,9 @@ runtests	test_nsalloc_realloc_long_context_in_dtd	allocator
 runtests	test_nsalloc_realloc_long_ge_name	allocator
 runtests	test_nsalloc_realloc_long_prefix	allocator
 runtests	test_nsalloc_realloc_longer_prefix	allocator
-runtests	test_nsalloc_set_context_zombie	allocator
-runtests	test_nsalloc_xmlns	allocator
 runtests	test_param_entity_with_trailing_cr	incremental
-runtests	test_parse_buffer_exceeds_buffer	incremental
-runtests	test_partial_char_in_epilog	incremental
 runtests	test_pi_handled_in_default	default-handler
 runtests	test_pool_integrity_with_unfinished_attr	error-code
-runtests	test_props_getter_defaults	internal
 runtests	test_recursive_external_parameter_entity	external-dtd
 runtests	test_recursive_external_parameter_entity_2	external-dtd
 runtests	test_reparse_deferral_is_inherited	incremental
@@ -210,19 +160,13 @@ runtests	test_resume_entity_with_syntax_error	incremental
 runtests	test_resume_invalid_parse	incremental
 runtests	test_scan_entity_text	internal
 runtests	test_set_foreign_dtd	external-dtd
-runtests	test_set_reparse_deferral	incremental
-runtests	test_set_reparse_deferral_on_the_fly	incremental
 runtests	test_short_doctype_2	error-code
 runtests	test_short_doctype_3	error-code
 runtests	test_skipped_parameter_entity	external-dtd
 runtests	test_subordinate_xdecl_abort	incremental
 runtests	test_subordinate_xdecl_suspend	incremental
-runtests	test_suspend_epilog	incremental
-runtests	test_suspend_resume_internal_entity_issue_629	incremental
 runtests	test_suspend_resume_parameter_entity	incremental
-runtests	test_trailing_cr	incremental
 runtests	test_trailing_rsqb	incremental
-runtests	test_unfinished_epilog	incremental
 runtests	test_unknown_encoding_bad_ignore	encoding
 runtests	test_user_parameters	default-handler
 runtests	test_utf16	utf16-without-bom
@@ -236,7 +180,6 @@ runtests	test_utf16_second_attr	utf16-without-bom
 runtests	test_utf16_surrogate_pairs	utf16-without-bom
 runtests	test_utf8_auto_align	internal
 runtests	test_utf8_in_start_tags	encoding
-runtests	test_varying_buffer_fills	incremental
 xmltest	Expected not well-formed: ibm/not-wf/P30/ibm30n01.xml	error-not-read
 xmltest	Expected not well-formed: ibm/not-wf/P31/ibm31n01.xml	error-not-read
 xmltest	Expected not well-formed: ibm/not-wf/P61/ibm61n01.xml	error-not-read

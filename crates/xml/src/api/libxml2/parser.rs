@@ -839,6 +839,19 @@ struct Walk<'d> {
     /// Bytes the walk has passed in the document, for the amplification
     /// check.
     consumed: usize,
+    /// Pushed (`xmlParseChunk`): the text is the push parser's window,
+    /// which begins at `pbase` in the input.
+    push: bool,
+    pbase: usize,
+    /// Where the document type declaration ends, when the text goes on
+    /// past it.
+    dt_end: Option<usize>,
+    /// Pushed: character data (or, `pend_cdata`, a CDATA section) read and
+    /// not yet reported, as libxml2's push parser waits for its end; and
+    /// where in the text it ends.
+    pend: Vec<u8>,
+    pend_cdata: bool,
+    pend_end: usize,
 }
 
 const ENT_VALIDATED: c_int = 4;
@@ -846,7 +859,20 @@ const ENT_VALIDATED: c_int = 4;
 impl<'d> Walk<'d> {
     fn new(ctxt: *mut ParserCtxt, doc: &'d Document<'d>) -> Walk<'d> {
         let n = doc.dtd.ents.len();
-        Walk { ctxt, doc, text: doc.text(), dtd: DtdInfo::default(), sizes: vec![None; n], consumed: 0 }
+        Walk {
+            ctxt,
+            doc,
+            text: doc.text(),
+            dtd: DtdInfo::default(),
+            sizes: vec![None; n],
+            consumed: 0,
+            push: false,
+            pbase: 0,
+            dt_end: None,
+            pend: Vec::new(),
+            pend_cdata: false,
+            pend_end: 0,
+        }
     }
 
     /// Moves the input's position to `off` in the document's text.
@@ -858,13 +884,29 @@ impl<'d> Walk<'d> {
                 return;
             }
             let off = off.min(self.text.len());
-            self.consumed = self.consumed.max(off);
-            let s = st(ctxt);
+            self.consumed = self.consumed.max(self.pbase + off);
+            let (line, col) = count_lines(st(ctxt), self.text, off);
+            (*input).cur = self.text.as_ptr().add(off);
+            (*input).line = line;
+            (*input).col = col;
+        }
+    }
+
+    fn buf(&self, src: Src) -> &'d [u8] {
+        self.doc.buf(src)
+    }
+}
+
+/// The line and column at `off` in `text`, counted on from the last place
+/// asked for (`State::at`).
+fn count_lines(s: &mut State, text: &[u8], off: usize) -> (c_int, c_int) {
+    {
+        {
             let (mut o, mut line, mut col) = s.at;
             if off < o {
                 (o, line, col) = (0, 1, 1);
             }
-            let run = &self.text[o..off];
+            let run = &text[o..off];
             if run.len() < 32 {
                 for &c in run {
                     if c == b'\n' {
@@ -887,15 +929,12 @@ impl<'d> Walk<'d> {
                 }
             }
             s.at = (off, line, col);
-            (*input).cur = self.text.as_ptr().add(off);
-            (*input).line = line;
-            (*input).col = col;
+            (line, col)
         }
     }
+}
 
-    fn buf(&self, src: Src) -> &'d [u8] {
-        self.doc.buf(src)
-    }
+impl<'d> Walk<'d> {
 
     fn toks(&self, src: Src) -> &'d [Tok] {
         self.doc.toks(src)
@@ -1515,6 +1554,15 @@ impl<'d> Walk<'d> {
     /// tag, whose index this returns.
     unsafe fn prolog(&mut self) -> usize {
         unsafe {
+            let i = self.decl_start();
+            self.prolog_from(i)
+        }
+    }
+
+    /// The XML declaration, if the tokens begin with it, then
+    /// startDocument; returns the index after the declaration.
+    unsafe fn decl_start(&mut self) -> usize {
+        unsafe {
             let c = self.ctxt;
             let toks = self.toks(Src::Doc);
             let text = self.text;
@@ -1555,6 +1603,15 @@ impl<'d> Walk<'d> {
             if let Some(f) = handler(c).and_then(|h| h.startDocument) {
                 f((*c).userData);
             }
+            i
+        }
+    }
+
+    /// The prolog from token `i` up to the root element's start tag (or
+    /// the end of the tokens), whose index this returns.
+    unsafe fn prolog_from(&mut self, mut i: usize) -> usize {
+        unsafe {
+            let toks = self.toks(Src::Doc);
             while i < toks.len() {
                 let t = toks[i];
                 match t.kind {
@@ -1615,7 +1672,7 @@ impl<'d> Walk<'d> {
             }
             // The end of the declaration: '>' after the subset.
             if j < toks.len() {
-                let next = toks.get(j + 1).map_or(text.len(), |n| n.a());
+                let next = toks.get(j + 1).map_or(self.dt_end.unwrap_or(text.len()), |n| n.a());
                 let gt = text[..next].iter().rposition(|&ch| ch == b'>').map_or(next, |g| g + 1);
                 self.at(gt);
             }
@@ -2057,14 +2114,93 @@ impl<'d> Walk<'d> {
     }
 
     /// The content of `src` from token `i` to `end`, elements and all.
-    unsafe fn content(&mut self, src: Src, mut i: usize, end: usize) {
+    unsafe fn content(&mut self, src: Src, i: usize, end: usize) {
+        unsafe {
+            let mut open: Vec<(Open, usize)> = Vec::new();
+            self.content_in(&mut open, src, i, end);
+        }
+    }
+
+    /// Pushed: the character data read so far, reported (it has ended, or
+    /// grown to what libxml2 reports in one go).
+    unsafe fn flush_text(&mut self) {
+        unsafe {
+            if self.pend.is_empty() && !self.pend_cdata {
+                return;
+            }
+            let v = std::mem::take(&mut self.pend);
+            let e = self.pend_end;
+            self.at(e);
+            if self.pend_cdata {
+                self.pend_cdata = false;
+                self.cdata_block(&v);
+            } else {
+                let after = [self.text.get(e).copied().unwrap_or(0), self.text.get(e + 1).copied().unwrap_or(0)];
+                self.char_data(&v, after);
+            }
+            self.pend = v;
+            self.pend.clear();
+        }
+    }
+
+    unsafe fn cdata_block(&mut self, raw: &[u8]) {
+        unsafe {
+            let c = self.ctxt;
+            if let Some(h) = handler(c) {
+                // A copy with a NUL after it, as xmlParseCDSect passes.
+                let v = nul(&eol(raw));
+                let n = (v.len() - 1) as c_int;
+                if h.cdataBlock.is_some() && (*c).options & PARSE_NOCDATA == 0 {
+                    (h.cdataBlock.unwrap())((*c).userData, v.as_ptr(), n);
+                } else if let Some(f) = h.characters {
+                    f((*c).userData, v.as_ptr(), n);
+                }
+            }
+        }
+    }
+
+    /// The content of `src` from token `i` to `end`, inside the elements
+    /// `open` (which it leaves open where the tokens end).
+    unsafe fn content_in(&mut self, open: &mut Vec<(Open, usize)>, src: Src, mut i: usize, end: usize) {
         unsafe {
             let c = self.ctxt;
             let toks = self.toks(src);
             let buf = self.buf(src);
-            let mut open: Vec<(Open, usize)> = Vec::new();
+            let pushed = self.push && src == Src::Doc;
             while i < end && (*c).disableSAX < 2 {
                 let t = toks[i];
+                if pushed {
+                    match t.kind {
+                        // Character data and CDATA sections come in pieces:
+                        // reported when they end (or have grown to 300
+                        // bytes, for character data), as libxml2's push
+                        // parser reports them.
+                        Kind::Text => {
+                            self.pend.extend_from_slice(&buf[t.a()..t.b()]);
+                            self.pend_end = t.b();
+                            if self.pend.len() >= 300 {
+                                self.flush_text();
+                            }
+                            i += 1;
+                            continue;
+                        }
+                        Kind::CData => {
+                            if t.f & crate::stream::P_FIRST != 0 {
+                                self.flush_text();
+                                self.pend_cdata = true;
+                            }
+                            self.pend.extend_from_slice(&buf[t.a()..t.b()]);
+                            self.pend_end = t.b();
+                            if t.f & crate::stream::P_LAST != 0 {
+                                self.pend_end = t.b() + 3;
+                                self.flush_text();
+                            }
+                            i += 1;
+                            continue;
+                        }
+                        _ => self.flush_text(),
+                    }
+                }
                 match t.kind {
                     Kind::STag => {
                         let (o, next) = self.start_tag(src, i);
@@ -2082,7 +2218,12 @@ impl<'d> Walk<'d> {
                     }
                     Kind::ETag => {
                         if let Some((o, _)) = open.pop() {
-                            if src == Src::Doc {
+                            if pushed {
+                                // The end tag's span (none for `<a/>`).
+                                if t.b() > 0 {
+                                    self.at(t.b());
+                                }
+                            } else if src == Src::Doc {
                                 // An ETag carries no offsets: the end tag, if
                                 // the element has one (not `<a/>`), starts
                                 // where the walk is.
@@ -2114,16 +2255,7 @@ impl<'d> Walk<'d> {
                         if src == Src::Doc {
                             self.at(t.b() + 3);
                         }
-                        if let Some(h) = handler(c) {
-                            // A copy with a NUL after it, as xmlParseCDSect passes.
-                            let v = nul(&eol(&buf[t.a()..t.b()]));
-                            let n = (v.len() - 1) as c_int;
-                            if h.cdataBlock.is_some() && (*c).options & PARSE_NOCDATA == 0 {
-                                (h.cdataBlock.unwrap())((*c).userData, v.as_ptr(), n);
-                            } else if let Some(f) = h.characters {
-                                f((*c).userData, v.as_ptr(), n);
-                            }
-                        }
+                        self.cdata_block(&buf[t.a()..t.b()]);
                     }
                     Kind::CharRef => {
                         let semi = buf[t.a()..].iter().position(|&ch| ch == b';').map_or(t.a(), |e| t.a() + e + 1);

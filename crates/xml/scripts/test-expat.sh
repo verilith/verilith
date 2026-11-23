@@ -19,7 +19,7 @@ ROOT=$PWD
 XMLCONF=${1:?usage: scripts/test-expat.sh XMLCONF_DIR}
 E=$(scripts/fetch-expat.sh)
 P=$(../../scripts/profile xml)
-cargo build -q --profile "$P" --features expat-abi
+cargo build -q --profile "$P" --features expat-testing
 LIB=${CARGO_TARGET_DIR:-$ROOT/../../target}/$P/libverilith_xml.a
 LIBS="-lm -lpthread -ldl"
 OUT=$ROOT/target/expat-tests

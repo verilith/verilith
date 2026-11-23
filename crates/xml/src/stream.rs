@@ -1159,6 +1159,10 @@ fn step_text(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
             proof {
                 lemma_text_cdend_fail(w.buf@, seen, base, m as int, ts, gst, gt, envv, last);
             }
+            // The text before `]]>` is reported, then the error.
+            if m > w.tem {
+                win_emit(w, Kind::Text, m, 0);
+            }
             return S_FAIL;
         }
         let safe = x != 0x5D || (n - m > 1 && get(w.buf.as_slice(), m + 1) != 0x5D) || (n - m > 2 && get(
@@ -1189,6 +1193,10 @@ fn step_text(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
                 }
             }
             lemma_text_last_fail(w.buf@, seen, base, m as int, ts, gst, gt, envv);
+        }
+        // The text up to the end is reported, then the error.
+        if n > w.tem {
+            win_emit(w, Kind::Text, n, 0);
         }
         return S_FAIL;
     }
@@ -1319,6 +1327,15 @@ fn step_cdata(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
                 s,
                 Enc::Utf8,
             ) is None by {}
+        }
+        // The section's text up to the end is reported, then the error.
+        if n > w.tem || w.tfirst {
+            let f = if w.tfirst {
+                P_FIRST
+            } else {
+                0
+            };
+            win_emit(w, Kind::CData, n, f);
         }
         return S_FAIL;
     }

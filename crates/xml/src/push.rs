@@ -51,6 +51,131 @@ pub struct Stream {
     pub pro: Vec<u8>,
     pub dtd: DtdOut,
     pub genv: Ghost<Env>,
+    /// How far the document type declaration has been scanned for its end.
+    pub dscan: DScan,
+}
+
+/// A scan of the document type declaration for where it may end, as the
+/// input comes (as libxml2's `xmlParseLookupInternalSubset`): the prolog is
+/// parsed once it can be complete, not again on every chunk. The scan only
+/// times the parse; the parse decides.
+pub struct DScan {
+    pub at: usize,
+    pub mode: u8,
+    pub q: u8,
+}
+
+/// The scan's modes: in the declaration before its internal subset, in a
+/// literal there; in the subset, in a markup declaration, in a literal there,
+/// in a comment, in a processing instruction; after the subset; at the end.
+pub const D_HEAD: u8 = 0;
+pub const D_HEAD_LIT: u8 = 1;
+pub const D_SUB: u8 = 2;
+pub const D_DECL: u8 = 3;
+pub const D_DECL_LIT: u8 = 4;
+pub const D_COMMENT: u8 = 5;
+pub const D_PI: u8 = 6;
+pub const D_AFTER: u8 = 7;
+pub const D_END: u8 = 8;
+
+/// The scan of the declaration that starts at `p`, from where it was left
+/// to the end of `buf`: whether its `>` has come.
+fn dscan_step(d: &mut DScan, buf: &[u8], p: usize) -> bool
+    requires
+        p < buf@.len(),
+{
+    let n = buf.len();
+    if d.at < p || d.at > n {
+        d.at = p;
+        d.mode = D_HEAD;
+        d.q = 0;
+    }
+    while d.at < n
+        invariant
+            d.at <= n,
+            n == buf@.len(),
+        decreases n - d.at,
+    {
+        let k = d.at;
+        let c = buf[k];
+        let mut step: usize = 1;
+        if d.mode == D_HEAD {
+            if c == 0x22 || c == 0x27 {
+                d.mode = D_HEAD_LIT;
+                d.q = c;
+            } else if c == 0x5B {
+                d.mode = D_SUB;
+            } else if c == 0x3E && k > p {
+                d.at = k + 1;
+                d.mode = D_END;
+                return true;
+            }
+        } else if d.mode == D_HEAD_LIT || d.mode == D_DECL_LIT {
+            if c == d.q {
+                d.mode = if d.mode == D_HEAD_LIT {
+                    D_HEAD
+                } else {
+                    D_DECL
+                };
+            }
+        } else if d.mode == D_SUB {
+            if c == 0x5D {
+                d.mode = D_AFTER;
+            } else if c == 0x3C {
+                // A comment, a processing instruction or a declaration: the
+                // next three bytes tell.
+                if n - k < 4 {
+                    return false;
+                }
+                if buf[k + 1] == 0x21 && buf[k + 2] == 0x2D && buf[k + 3] == 0x2D {
+                    d.mode = D_COMMENT;
+                    step = 4;
+                } else if buf[k + 1] == 0x3F {
+                    d.mode = D_PI;
+                    step = 2;
+                } else {
+                    d.mode = D_DECL;
+                }
+            }
+        } else if d.mode == D_DECL {
+            if c == 0x22 || c == 0x27 {
+                d.mode = D_DECL_LIT;
+                d.q = c;
+            } else if c == 0x3E {
+                d.mode = D_SUB;
+            }
+        } else if d.mode == D_COMMENT {
+            if c == 0x2D {
+                if n - k < 3 {
+                    return false;
+                }
+                if buf[k + 1] == 0x2D && buf[k + 2] == 0x3E {
+                    d.mode = D_SUB;
+                    step = 3;
+                }
+            }
+        } else if d.mode == D_PI {
+            if c == 0x3F {
+                if n - k < 2 {
+                    return false;
+                }
+                if buf[k + 1] == 0x3E {
+                    d.mode = D_SUB;
+                    step = 2;
+                }
+            }
+        } else if d.mode == D_AFTER {
+            if c == 0x3E {
+                d.at = k + 1;
+                d.mode = D_END;
+                return true;
+            }
+        } else {
+            return true;
+        }
+        d.at = k + step;
+    }
+    d.mode == D_END
 }
 
 impl Stream {
@@ -154,6 +279,7 @@ pub fn stream_new() -> (r: Stream)
         pro,
         dtd,
         genv: Ghost(no_dtd()),
+        dscan: DScan { at: 0, mode: D_HEAD, q: 0 },
     };
     proof {
         assert(r.w.buf@ =~= r.w.seen@.subrange(0, 0));
@@ -1966,9 +2092,36 @@ impl Stream {
                     break;
                 }
                 if m == S_DONE {
+                    // A document type declaration is parsed once it may be
+                    // complete (at the last chunk, in any case).
+                    let n = self.w.buf.len();
+                    let p = self.w.pos;
+                    if !last && n - p >= 2 && self.w.buf[p + 1] == 0x21 {
+                        let ghost b = *self;
+                        let ready = dscan_step(&mut self.dscan, self.w.buf.as_slice(), p);
+                        proof {
+                            assert(self.seen() == b.seen());
+                            assert(self.utf8() == b.utf8());
+                            assert(self.m1_goal() == b.m1_goal());
+                        }
+                        if !ready {
+                            wait = true;
+                            break;
+                        }
+                    }
                     let d = m1_decide(self);
                     if d == S_WAIT {
                         wait = true;
+                        // It was not: on with the scan.
+                        if self.dscan.mode == D_END {
+                            let ghost b = *self;
+                            self.dscan.mode = D_SUB;
+                            proof {
+                                assert(self.seen() == b.seen());
+                                assert(self.utf8() == b.utf8());
+                                assert(self.m1_goal() == b.m1_goal());
+                            }
+                        }
                     }
                     break;
                 }
@@ -2128,6 +2281,12 @@ impl Stream {
 impl Stream {
     /// Where, in the window, the next chunk keeps it from: no event of
     /// the stream starts before it.
+    /// Where in the input the parser has read to: the start of the item it
+    /// has not finished.
+    pub fn progress(&self) -> usize {
+        self.w.base + self.w.pos
+    }
+
     pub fn keep(&self) -> usize {
         if self.phase != PH_BODY {
             return 0;
@@ -2155,6 +2314,26 @@ impl Stream {
 
     pub fn phase(&self) -> u8 {
         self.phase
+    }
+
+    /// In character data, which has not ended yet.
+    pub fn in_text(&self) -> bool {
+        self.phase == PH_BODY && self.w.mode == M_TEXT
+    }
+
+    /// In a CDATA section, which has not ended yet.
+    pub fn in_cdata(&self) -> bool {
+        self.phase == PH_BODY && self.w.mode == M_CDATA
+    }
+
+    /// Before the root element, in the document type declaration.
+    pub fn in_doctype(&self) -> bool {
+        self.phase == PH_M1 && self.w.buf.len() - self.w.pos >= 2 && self.w.buf[self.w.pos + 1] == b'!'
+    }
+
+    /// No element is open: past the root element.
+    pub fn after_root(&self) -> bool {
+        (self.phase == PH_BODY || self.phase == PH_DONE) && self.w.ends.is_empty()
     }
 
     /// Past the document type declaration: `dtd` and `prolog` are final.
