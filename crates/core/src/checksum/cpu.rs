@@ -1,8 +1,10 @@
 //! CPU-specific checksum kernels (part of the trusted base).
 //!
-//! - `adler32_update` runs the verified `checksum::adler32_update`, compiled
-//!   a second time with AVX2 enabled when the CPU has it. The code is the
-//!   same; only instruction selection differs.
+//! - `adler32_update` is verified. On x86-64 it runs the verified byte
+//!   dot-product kernels in `checksum::adlerv`: `vpdpbusd` on 64-byte rows
+//!   with AVX-512 VNNI, `vpmaddubsw`/`vpmaddwd` on 32-byte rows with AVX2.
+//!   Trusted are `vdot.rs` (the instructions' contracts) and the two
+//!   trampolines below.
 //! - `crc32_update` is verified. On x86-64 it folds with carry-less
 //!   multiplication (`checksum::fold`): 256 bytes at a time with
 //!   VPCLMULQDQ on 512-bit vectors when the CPU has AVX-512 and
@@ -40,7 +42,6 @@ macro_rules! arm_has { ($f:tt) => { cfg!(target_feature = $f) }; }
 
 verus! {
 
-#[verifier::external_body]
 pub fn adler32_update(a: u32, b: u32, d: &[u8]) -> (r: (u32, u32))
     requires
         a < super::ADLER_MOD,
@@ -50,12 +51,47 @@ pub fn adler32_update(a: u32, b: u32, d: &[u8]) -> (r: (u32, u32))
 {
     #[cfg(target_arch = "x86_64")]
     {
-        if x86_has!("avx2") {
-            // SAFETY: the CPU supports AVX2.
-            return unsafe { adler32_avx2(a, b, d) };
+        if d.len() >= 64 && super::vdot::has_vnni512() {
+            return adler32_vnni(a, b, d);
+        }
+        if d.len() >= 32 && super::vdot::has_avx2() {
+            return adler32_avx2(a, b, d);
         }
     }
     super::adler32_update(a, b, d)
+}
+
+/// Trusted: `adlerv::adler32_vnni` compiled with `avx512f,avx512bw,avx512vnni`
+/// enabled, through `tf::adler32_vnni`; the contract is the verified
+/// kernel's. The caller checks the CPU first.
+#[cfg(target_arch = "x86_64")]
+#[verifier::external_body]
+fn adler32_vnni(a: u32, b: u32, d: &[u8]) -> (r: (u32, u32))
+    requires
+        super::vdot::vnni512(),
+        a < super::ADLER_MOD,
+        b < super::ADLER_MOD,
+    ensures
+        (r.0 as nat, r.1 as nat) == adler_from(a as nat, b as nat, d@),
+{
+    // SAFETY: only called after `has_vnni512` returned true.
+    unsafe { tf::adler32_vnni(a, b, d) }
+}
+
+/// Trusted: `adlerv::adler32_avx2` compiled with `avx2` enabled, through
+/// `tf::adler32_avx2`; the contract is the verified kernel's.
+#[cfg(target_arch = "x86_64")]
+#[verifier::external_body]
+fn adler32_avx2(a: u32, b: u32, d: &[u8]) -> (r: (u32, u32))
+    requires
+        super::vdot::avx2(),
+        a < super::ADLER_MOD,
+        b < super::ADLER_MOD,
+    ensures
+        (r.0 as nat, r.1 as nat) == adler_from(a as nat, b as nat, d@),
+{
+    // SAFETY: only called after `has_avx2` returned true.
+    unsafe { tf::adler32_avx2(a, b, d) }
 }
 
 pub fn crc32_update(reg: u32, d: &[u8]) -> (r: u32)
@@ -219,18 +255,22 @@ unsafe fn crc32c_arm(reg: u32, d: &[u8]) -> u32 {
     r
 }
 
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-unsafe fn adler32_avx2(a: u32, b: u32, d: &[u8]) -> (u32, u32) {
-    super::adler32_update(a, b, d)
-}
-
 /// Trampolines that compile a verified kernel with the target features
 /// its instructions need. Each is one call; `#[target_feature]` only
 /// changes code generation. Verus rejects the attribute on verified code
 /// (verus-lang/verus#3362), so it lives outside `verus!`.
 #[cfg(target_arch = "x86_64")]
 mod tf {
+    #[target_feature(enable = "avx512f,avx512bw,avx512vnni")]
+    pub(super) unsafe fn adler32_vnni(a: u32, b: u32, d: &[u8]) -> (u32, u32) {
+        crate::checksum::adlerv::adler32_vnni(a, b, d)
+    }
+
+    #[target_feature(enable = "avx2")]
+    pub(super) unsafe fn adler32_avx2(a: u32, b: u32, d: &[u8]) -> (u32, u32) {
+        crate::checksum::adlerv::adler32_avx2(a, b, d)
+    }
+
     #[target_feature(enable = "avx512f,vpclmulqdq,pclmulqdq")]
     pub(super) unsafe fn crc32_vpclmul(reg: u32, d: &[u8]) -> u32 {
         crate::checksum::fold::crc32_vpclmul(reg, d)
