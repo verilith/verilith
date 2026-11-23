@@ -19,6 +19,7 @@ pub mod codes;
 mod io;
 mod scan;
 mod parser;
+mod recover;
 mod sax2;
 mod save;
 mod tree;
@@ -2081,16 +2082,24 @@ pub unsafe fn format_error(e: &XmlError, channel: unsafe extern "C" fn(*mut c_vo
     } else {
         None
     };
-    let mut context: Option<(Vec<u8>, usize)> = None;
+    // The input shown: the current one, or the one that holds it when it
+    // has no file name (an entity's text), which is shown after it.
+    let mut input: *const parser::ParserInput = null();
+    let mut cur: *const parser::ParserInput = null();
     if !ctxt.is_null() && !unsafe { (*ctxt).input }.is_null() {
-        let input = unsafe { &*(*ctxt).input };
-        if !input.filename.is_null() {
-            out.extend_from_slice(unsafe { cbytes(input.filename as *const XChar) });
-            out.extend_from_slice(format!(":{}: ", input.line).as_bytes());
-        } else if e.line != 0 && domain == ERR_FROM_PARSER {
-            out.extend_from_slice(format!("Entity: line {}: ", input.line).as_bytes());
+        unsafe {
+            input = (*ctxt).input;
+            if (*input).filename.is_null() && (*ctxt).inputNr > 1 {
+                cur = input;
+                input = *(*ctxt).inputTab.add((*ctxt).inputNr as usize - 2);
+            }
+            if !(*input).filename.is_null() {
+                out.extend_from_slice(cbytes((*input).filename as *const XChar));
+                out.extend_from_slice(format!(":{}: ", (*input).line).as_bytes());
+            } else if e.line != 0 && domain == ERR_FROM_PARSER {
+                out.extend_from_slice(format!("Entity: line {}: ", (*input).line).as_bytes());
+            }
         }
-        context = Some(parser::window(input));
     } else if !e.file.is_null() {
         out.extend_from_slice(unsafe { cbytes(e.file as *const XChar) });
         out.extend_from_slice(format!(":{}: ", e.line).as_bytes());
@@ -2113,23 +2122,63 @@ pub unsafe fn format_error(e: &XmlError, channel: unsafe extern "C" fn(*mut c_vo
     } else {
         let m = unsafe { cbytes(e.message as *const XChar) };
         out.extend_from_slice(m);
-        if m.last() != Some(&b'\n') {
+        if !m.is_empty() && m.last() != Some(&b'\n') {
             out.push(b'\n');
         }
     }
-    if let Some((line, col)) = context {
-        out.extend_from_slice(&line);
-        out.push(b'\n');
-        let mut marker: Vec<u8> = line[..col.min(line.len())].iter().map(|&c| if c == b'\t' { b'\t' } else { b' ' }).collect();
-        marker.extend(std::iter::repeat_n(b' ', col.saturating_sub(line.len())));
-        marker.push(b'^');
-        out.extend_from_slice(&marker);
-        out.push(b'\n');
+    if !ctxt.is_null() {
+        unsafe {
+            if !input.is_null() && (*input).flags & recover::INPUT_ENCODER == 0 && e.code == codes::ERR_INVALID_ENCODING && (*input).cur < (*input).end {
+                out.extend_from_slice(b"Bytes:");
+                let mut i = 0;
+                while i < 4 && (*input).cur.add(i) < (*input).end {
+                    out.extend_from_slice(format!(" 0x{:02X}", *(*input).cur.add(i)).as_bytes());
+                    i += 1;
+                }
+                out.push(b'\n');
+            }
+            print_context(input, &mut out);
+            if !cur.is_null() {
+                if !(*cur).filename.is_null() {
+                    out.extend_from_slice(cbytes((*cur).filename as *const XChar));
+                    out.extend_from_slice(format!(":{}: \n", (*cur).line).as_bytes());
+                } else if e.line != 0 && matches!(domain, 1 | 17 | 16 | 4 | 18 | 19) {
+                    out.extend_from_slice(format!("Entity: line {}: \n", (*cur).line).as_bytes());
+                }
+                print_context(cur, &mut out);
+            }
+        }
     }
     emit(channel, data, &out);
 }
 
 const ERR_FROM_PARSER: c_int = FROM_PARSER;
+
+/// `xmlParserPrintFileContextInternal`: the line around the input's
+/// position (at most 80 bytes of it) and a caret under the position.
+unsafe fn print_context(input: *const parser::ParserInput, out: &mut Vec<u8>) {
+    if input.is_null() || unsafe { (*input).cur }.is_null() {
+        return;
+    }
+    let (line, col) = parser::window(unsafe { &*input });
+    // The line is printed as a C string: up to a NUL.
+    let shown = match line.iter().position(|&c| c == 0) {
+        Some(k) => &line[..k],
+        None => &line[..],
+    };
+    out.extend_from_slice(shown);
+    out.push(b'\n');
+    let mut marker: Vec<u8> = line[..col.min(line.len())].iter().map(|&c| if c == b'\t' { b'\t' } else { b' ' }).collect();
+    marker.extend(std::iter::repeat_n(b' ', col.saturating_sub(line.len())));
+    // The caret line is a C string too.
+    if let Some(k) = marker.iter().position(|&c| c == 0) {
+        marker.truncate(k);
+    } else {
+        marker.push(b'^');
+    }
+    out.extend_from_slice(&marker);
+    out.push(b'\n');
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn xmlFormatError(e: *const XmlError, channel: GenericErrorF, data: *mut c_void) {
