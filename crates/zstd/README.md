@@ -68,9 +68,10 @@ What the proofs assume rather than prove:
   decoded into it), `drop_front` (drop output older than the window, in place),
   `put`, `put4` and `put_pairs4` (store a range, four
   Huffman symbols, or four symbol pairs at a position, leaving the rest of
-  the vector as it was), `copy_into` (copy a range into the caller's output
-  buffer) and `at` (an array read without the bounds check); each
-  `requires` is the bounds check, proven at the call site.
+  the vector as it was) and `at` (an array read without the bounds check);
+  each `requires` is the bounds check, proven at the call site. Copying a
+  range into the caller's output buffer is verilith-core's
+  `prims::copy_in`.
 - `src/cpu.rs`: `run_seqs`, `run_huf4` and `run_huf1` call the verified
   `seq_run_exec`, `huf_4streams_exec` and `huf_stream_exec`, through a copy
   compiled with BMI2 when the CPU has it (Verus rejects `#[target_feature]`

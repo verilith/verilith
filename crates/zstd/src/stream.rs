@@ -8,7 +8,7 @@ use crate::frame::*;
 use crate::seq::*;
 use crate::dict::{copy_huf_opt, copy_seqt_opt, raw_dict_exec, DDict, DictDecoder};
 use verilith_xxhash::Xxh64;
-use crate::prims::copy_into;
+use verilith_core::prims::copy_in as copy_into;
 use vstd::slice::slice_subrange;
 #[cfg(verus_only)]
 use vstd::arithmetic::power2::*;

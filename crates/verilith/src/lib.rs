@@ -19,7 +19,10 @@ pub use verilith_archive as archive;
 /// `verilith-brotli`: Brotli.
 #[cfg(feature = "brotli")]
 pub use verilith_brotli as brotli;
-/// `verilith-core`: shared verified building blocks (bit readers, Huffman tables, CRC-32, UTF-8).
+/// `verilith-checksum`: CRC-32, CRC-32C and Adler-32.
+#[cfg(feature = "checksum")]
+pub use verilith_checksum as checksum;
+/// `verilith-core`: shared verified building blocks (bit readers, Huffman tables, UTF-8).
 #[cfg(feature = "core")]
 pub use verilith_core as core;
 /// `verilith-dns`: DNS message parser and serializer.

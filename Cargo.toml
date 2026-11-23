@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/archive",
     "crates/bind",
+    "crates/checksum",
     "crates/brotli",
     "crates/core",
     "crates/dns",

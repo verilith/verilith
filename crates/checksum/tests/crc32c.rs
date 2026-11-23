@@ -1,7 +1,7 @@
 //! CRC-32C: published values, the table kernel against a bit-at-a-time
 //! reference written from the definition, and the CPU's instruction
-//! (`checksum::cpu`, unverified) against the table kernel.
-use verilith_core::checksum::{cpu, crc32c, crc32c_update};
+//! (`cpu`, unverified) against the table kernel.
+use verilith_checksum::{cpu, crc32c, crc32c_update};
 
 /// The register update one bit at a time (RFC 3720 appendix B.4).
 fn reference(mut c: u32, d: &[u8]) -> u32 {

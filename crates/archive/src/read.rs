@@ -101,7 +101,7 @@ pub fn read_entry(b: &[u8], e: &Entry, limit: usize) -> (r: Result<Vec<u8>, Erro
         assert(e.sv().end() == e.data_off + e.csize);
         assert(unpack(e.method as int, c@) == Some(v@));
     }
-    if e.has_crc && verilith_core::checksum::crc32(v.as_slice()) != e.crc {
+    if e.has_crc && verilith_checksum::crc32(v.as_slice()) != e.crc {
         return Err(Error::BadData);
     }
     Ok(v)
@@ -129,7 +129,7 @@ pub fn stored_in_place(b: &[u8], e: &Entry, limit: usize) -> (r: bool)
         assert(e.sv().end() == e.data_off + e.csize);
         assert(unpack(e.method as int, c@) == Some(c@));
     }
-    !e.has_crc || verilith_core::checksum::crc32(c) == e.crc
+    !e.has_crc || verilith_checksum::crc32(c) == e.crc
 }
 
 } // verus!

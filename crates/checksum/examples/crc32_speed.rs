@@ -1,7 +1,7 @@
-//! Times `checksum::crc32` (the kernel `cpu` picks) against the portable
+//! Times `crc32` (the kernel `cpu` picks) against the portable
 //! table kernel: `cargo run --release --example crc32_speed`.
 use std::time::Instant;
-use verilith_core::checksum::{crc32, crc32_update};
+use verilith_checksum::{crc32, crc32_update};
 
 fn best(mut f: impl FnMut() -> u32, bytes: usize) -> (f64, u32) {
     let mut best = f64::MAX;

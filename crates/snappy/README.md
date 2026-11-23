@@ -8,7 +8,7 @@ where memory safety and correct output have to be certain.
 
 `cargo verus verify` (or `scripts/verify.sh`) checks 110 functions and
 lemmas with no errors, no `assume` and no `external_body` in this crate.
-CRC-32C is verilith-core's. Everything assumed is listed in
+CRC-32C is verilith-checksum's. Everything assumed is listed in
 [TRUST.md](https://github.com/verilith/verilith/blob/main/crates/snappy/TRUST.md).
 
 ## Using it from Rust
@@ -40,7 +40,7 @@ sized with `max_compressed_length` and `uncompressed_length`.
 | The wild copies: literals and matches are copied 16 bytes at a time past their end when there is room, and matches of any offset (overlapping ones too) give what a byte-by-byte copy gives | `verilith_core::lz::copy_match`, `copy_lits` against `verilith_core::lz::lz_copy` |
 | Validation without decompressing gives the decompressor's verdict | `decode::validate` against `spec::decompress` |
 | Compression round-trips: what `compress_into` writes decompresses, by the spec, to the input, whatever the hash table held | `compress::compress_into` against `spec::decompress` |
-| CRC-32C, by table | `verilith_core::checksum::crc32c_update` against `checksum::spec::crc32c_reg`, in [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core) (every table entry is checked against the bit-by-bit definition) |
+| CRC-32C, by table | `verilith_checksum::crc32c_update` against `verilith_checksum::spec::crc32c_reg`, in [verilith-checksum](https://github.com/verilith/verilith/tree/main/crates/checksum) (every table entry is checked against the bit-by-bit definition) |
 | Framing format decoding: `Ok` exactly when the stream is valid, with the spec's content: stream identifier, compressed and uncompressed chunks, masked checksums, the 64 KiB chunk limit, padding and skippable chunks, reserved chunks refused | `frame::frame_decode` against `spec::stream` |
 | Framing format encoding round-trips | `frame::frame_encode` against `spec::stream` |
 
@@ -65,7 +65,7 @@ the few things that are not provided.
 
 - `src/spec.rs`: the formats as total functions over `Seq<u8>`: the
   varint preamble, elements, chunks and streams. CRC-32C is
-  verilith-core's `checksum::spec::crc32c`.
+  verilith-checksum's `spec::crc32c`.
 - `src/decode.rs`: the decompressor and the validator.
 - `src/compress.rs`: the compressor.
 - `src/frame.rs`: the framing format.
@@ -103,7 +103,7 @@ The framing format is in the Rust API only (`frame::frame_encode`,
 - `tests/framing.rs`: the framing format against the `snap` crate, an
   independent implementation: both ways, concatenated streams, skippable
   and reserved chunks, 30,000 corrupted streams (the same verdict).
-  CRC-32C's own tests are verilith-core's `tests/crc32c.rs`.
+  CRC-32C's own tests are verilith-checksum's `tests/crc32c.rs`.
 
 ## Performance
 

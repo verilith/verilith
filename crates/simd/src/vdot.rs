@@ -1,24 +1,22 @@
-//! Byte dot products for the Adler-32 kernels (TRUSTED, x86-64 only).
+//! Byte dot products, as verilith-checksum's Adler-32 kernels use them
+//! (TRUSTED, x86-64 only).
 //!
 //! Each function is one intrinsic, or for `yd_dot` the two (`vpmaddubsw`
 //! then `vpmaddwd` by ones) and the add that make one dot-product step,
 //! with an `ensures` stating what it computes on the vector's bytes (`zb`,
-//! `yb`) or 32-bit lanes (`zd`, `yd`), in terms of `adlerv::dot4`. Verus
-//! takes these on trust. `tests/vdot.rs` checks each against a plain
+//! `yb`) or 32-bit lanes (`zd`, `yd`), in terms of `dot::dot4`. Verus
+//! takes these on trust. verilith-checksum's `tests/vdot.rs` checks each against a plain
 //! reference on random inputs, on a CPU that has the instructions.
 //!
 //! Each requires `vnni512()` or `avx2()`, which `has_vnni512()` and
 //! `has_avx2()` ensure after run-time detection.
 #![allow(unused_imports, unused_unsafe)]
 #[cfg(verus_only)]
-use super::adlerv::dot4;
+use crate::dot::{add32, dot4};
 use core::arch::x86_64::*;
 use vstd::prelude::*;
 
-#[cfg(feature = "std")]
 macro_rules! x86_has { ($f:tt) => { std::is_x86_feature_detected!($f) }; }
-#[cfg(not(feature = "std"))]
-macro_rules! x86_has { ($f:tt) => { cfg!(target_feature = $f) }; }
 
 verus! {
 
@@ -82,10 +80,6 @@ pub broadcast group group_vdot {
     axiom_lens,
 }
 
-/// `a + b` in a 32-bit lane, wrapping.
-pub open spec fn add32(a: int, b: int) -> u32 {
-    super::vdot_add32(a, b)
-}
 
 // ---------------------------------------------------------------------------
 // 512 bits (AVX-512 VNNI)

@@ -1,4 +1,4 @@
-//! Checks the trusted SSE2 wrappers in `src/lanes.rs` against their specs,
+//! Checks the SSE2 wrappers `src/lanes.rs` re-exports from verilith-simd against their specs,
 //! on every pair of byte values per lane.
 #![cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;

@@ -293,7 +293,8 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   the table: `lemma_utf8_local` shows that a check on each byte and the
   three before it accepts exactly the well-formed texts, and
   `lemma_lookup` shows, by evaluating all 4096 cases, that the tables
-  compute that check. Stage 1 runs the validator on each 128-byte chunk
+  compute that check (both in verilith-core's `utf8`, shared with
+  verilith-text's validator). Stage 1 runs the validator on each 128-byte chunk
   as it indexes it.
 * **Panic freedom.** Verus checks that no index is out of bounds and no
   arithmetic overflows or underflows anywhere in the parser.
@@ -425,7 +426,8 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   emulation, so the NEON kernels are also tested on x86
   (`cargo test neon`) and, under qemu, on AArch64.
 * **Vec capacity.** vstd does not model a `Vec`'s capacity, so
-  `src/lanes.rs` declares it as an uninterpreted `spare` and wraps
+  verilith-core's `spare` (re-exported by `src/lanes.rs`) declares it as an
+  uninterpreted `spare` and wraps
   `reserve`, a `push` into reserved space without the capacity check, and
   element assignment with specs saying how each changes it. Stage 2
   reserves a token per index entry and proves that every push has room.
@@ -456,7 +458,7 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   verified escaper, and `cJSON_Minify` is the verified
   `minify::minify_in_place` (proven to leave exactly `spec_minify` of the
   input, in place, without reading or writing past the string's NUL).
-* **Vec capacity as a number.** `len_spare` in `src/lanes.rs` wraps
+* **Vec capacity as a number.** `len_spare` in verilith-core's `spare` wraps
   `Vec::capacity` with the spec that it is the length plus the spare
   room. `set_aux` uses it to size the side array of stored values.
 * **Reading stored values back.** `src/value.rs` reads a tagged token's
@@ -998,10 +1000,12 @@ src/index.rs     verified stage 1: the structural index
 src/stage2.rs    verified stage 2: parsing through the index
 src/ondemand.rs  verified on-demand cursor and the Reader over it
 src/lanes.rs     single-instruction SIMD wrappers, verified over verilith-simd (the 16-byte SSE2 ones are
-                 verilith_simd::sse2, shared with verilith-xml); the trusted Vec-capacity model
+                 verilith_simd::sse2, shared with verilith-xml), and two stores into a Vec's
+                 reserved space (the capacity model is verilith_core::spare)
 src/simd.rs      verified classification and bit-mask kernels built from them
 src/utf8.rs      verified SIMD UTF-8 validation (the UTF-8 spec, its local
-                 condition and the scalar validator are in verilith_core::utf8)
+                 condition, the lookup tables' proof and the scalar validator
+                 are in verilith_core::utf8)
 src/lemmas.rs    proofs about the spec
 src/value.rs     Rust API over the tape
 src/native.rs    native C API over src/value.rs (unverified, feature `capi`; include/vjson.h)

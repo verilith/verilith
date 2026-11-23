@@ -4,7 +4,7 @@
 //!   BMI2 enabled when the CPU has it.
 //!
 //! The checksum kernels (AVX2 Adler-32, PCLMULQDQ CRC-32) moved to
-//! `verilith_core::checksum::cpu`.
+//! `verilith_checksum::cpu`.
 use crate::inflate::{Inflater, Status};
 #[cfg(verus_only)]
 use crate::inflate::{body_cost, bit_cost, credit, fail_cost, header_cost, past, prefix, MODE_DONE};

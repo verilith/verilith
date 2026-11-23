@@ -2,7 +2,7 @@
 //!
 //! [`crc32c_update`] is the portable verified kernel (a table lookup per
 //! byte). [`crc32c`] uses the CPU's own CRC-32C instruction where there
-//! is one (`checksum::cpu::crc32c_update`, part of the trusted base).
+//! is one (`cpu::crc32c_update`, part of the trusted base).
 #[cfg(verus_only)]
 use super::spec::{crc32c_byte, crc32c_reg, crc32c_step, crc32c_steps};
 use vstd::prelude::*;

@@ -371,8 +371,10 @@ readings disagree.
   state machine `step` in `src/chunked.rs`, and the recipient model
   `src/rfc.rs`.
 - Verus, Z3 and the Rust compiler.
-- `src/lanes.rs`: one-instruction wrappers for six SSE2 intrinsics, each
-  with a spec restating Intel's definition (checked exhaustively by
+- The SSE2 intrinsic specs in
+  [verilith-simd](https://github.com/verilith/verilith/tree/main/crates/simd)
+  (`verilith_simd::x86`), under the proven wrappers in `verilith_simd::sse2`
+  that `src/lanes.rs` re-exports (also checked exhaustively here by
   `tests/lanes.rs`), and `verilith_core::prims::copy_within` (one `memmove`, in
   [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core)'s trusted
   primitives).
