@@ -722,12 +722,12 @@ pub fn do_grow(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(
     let n = lo(sget(stack, sp - 1)) as u64;
     proof { lemma_peek(s1, base, sp as int, 0); }
     let old = (st.mem.len() / 65536) as u64;
-    let mut res: Option<bool> = None;
+    let ghost mut res: Option<bool> = None;
     let r: u64 = if old + n > st.mem_max as u64 {
         0xffff_ffff
     } else if try_grow(&mut st.mem, (n * 65536) as usize) {
-        res = Some(true);
         proof {
+            res = Some(true);
             assert(store_view(st) == crate::sem::Store {
                 mem: st1.mem + Seq::new(n as nat * PAGE as nat, |_i| 0u8), ..st1 });
             assert(st.mem@.len() == st1.mem.len() + n * 65536);
@@ -742,8 +742,7 @@ pub fn do_grow(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(
         }
         old
     } else {
-        res = Some(false);
-        proof { assert(store_view(st) == st1); }
+        proof { res = Some(false); assert(store_view(st) == st1); }
         0xffff_ffff
     };
     sset(stack, sp - 1, r);
