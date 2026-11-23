@@ -4,6 +4,7 @@
 //! [`adler32`], [`crc32`] and [`crc32c()`] pick the fastest kernel this CPU
 //! has (see [`cpu`]); [`adler32_update`], [`crc32_update`] and
 //! [`crc32c_update`] are the portable verified kernels.
+pub mod adlerv;
 pub mod cpu;
 pub mod fold;
 pub mod crc32c;
@@ -11,6 +12,9 @@ pub mod lanes;
 pub mod spec;
 #[cfg(target_arch = "x86_64")]
 pub mod vclmul;
+#[cfg(target_arch = "x86_64")]
+pub mod vdot;
+pub mod vudot;
 mod tables;
 
 pub use crc32c::{crc32c, crc32c_update};
@@ -64,6 +68,11 @@ pub proof fn lemma_crc_from(d: Seq<u8>)
 }
 
 pub const ADLER_MOD: u32 = 65521;
+
+/// `a + b` in a 32-bit lane, wrapping (what the vector adds compute).
+pub open spec fn vdot_add32(a: int, b: int) -> u32 {
+    ((a + b) % 0x1_0000_0000) as u32
+}
 
 /// Most bytes that can be summed before the sums must be reduced: the
 /// largest `n` with `255 * n * (n + 1) / 2 + (n + 1) * (ADLER_MOD - 1)`
