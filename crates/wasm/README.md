@@ -166,9 +166,10 @@ instance.set_fuel(Some(1_000_000)); // refuel (None: unmetered)
   fuel left over carries into the next call. The start function is
   metered too. The proof covers this: stopping for lack of fuel is one of
   the outcomes `run::executed` allows, with the semantics still running
-  and the store as the interpreter left it. Charging only branches costs
-  3 to 10% on the benchmarks below; charging every operation cost up to
-  1.9 times as much.
+  and the store as the interpreter left it. Charging only branches costs 0
+  to 14% on the benchmarks below (fuel is checked even when unmetered,
+  against a limit of 2^64); checking it before every operation made them
+  up to 1.65 times slower.
 - **Memory cap.** `max_memory(bytes)` caps every instance's memory
   (rounded down to whole pages). A module whose memory starts above the
   cap fails to instantiate, and `memory.grow` past the cap returns -1, as

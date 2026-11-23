@@ -1955,8 +1955,9 @@ proof fn lemma_out_of_fuel(m: &Module, cs: Seq<FuncCert>, codes: Seq<Code>, c0: 
 /// [`Trap::Exhausted`] when an operation that costs fuel finds none left,
 /// which [`executed`] allows at any point. Every loop iteration and every
 /// call goes through one of these, so a run with finite fuel ends; charging
-/// only there keeps the cost to a few percent, where charging every
-/// operation slowed the interpreter by up to half. The loop has no
+/// only there costs up to 14% on the benchmarks, where checking before
+/// every operation cost up to 65%. The compare-and-branch codes share one
+/// arm (`s_brcmp` dispatches again) so the loop has few exits. The loop has no
 /// `decreases` clause: proving one pushes the loop's proof past its
 /// resource limit.
 #[verifier::exec_allows_no_decreases_clause]
