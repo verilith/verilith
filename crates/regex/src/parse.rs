@@ -47,6 +47,13 @@ pub struct Ps {
     pub classes: Vec<Class>,
     pub ngroups: usize,
     pub names: Vec<(Vec<u8>, usize)>,
+    /// The caller's instruction limit.
+    pub lim: usize,
+    /// Instructions the repetitions so far expanded to. Every one of them
+    /// ends up in the program, so past `lim` the pattern is too big: this
+    /// keeps the tree, and so the memory the parser takes, in proportion
+    /// to the pattern and the limit.
+    pub spent: usize,
 }
 
 pub open spec fn names_v(v: Seq<(Vec<u8>, usize)>) -> Seq<(Seq<u8>, nat)> {
@@ -55,7 +62,8 @@ pub open spec fn names_v(v: Seq<(Vec<u8>, usize)>) -> Seq<(Seq<u8>, nat)> {
 
 impl Ps {
     pub open spec fn ok(&self) -> bool {
-        forall|k: int| 0 <= k < self.classes@.len() ==> (#[trigger] self.classes@[k]).wf()
+        &&& forall|k: int| 0 <= k < self.classes@.len() ==> (#[trigger] self.classes@[k]).wf()
+        &&& self.spent <= self.lim <= MAX_PROG
     }
 
     pub open spec fn st(&self) -> St {
@@ -1045,6 +1053,7 @@ fn repeat(
     min: usize,
     max: Option<usize>,
     greedy: bool,
+    room: usize,
     Ghost(cl): Ghost<Seq<Class>>,
     Ghost(nc): Ghost<int>,
     Ghost(ng): Ghost<int>,
@@ -1099,6 +1108,9 @@ fn repeat(
                 proof {
                     lemma_node(acc, cl, nc, ng);
                 }
+                if acc.ln > room {
+                    return Err(Error::TooBig);
+                }
                 k += 1;
             }
             (acc, min)
@@ -1123,6 +1135,9 @@ fn repeat(
         proof {
             lemma_node(acc, cl, nc, ng);
         }
+        if acc.ln > room {
+            return Err(Error::TooBig);
+        }
         j += 1;
     }
     Ok(acc)
@@ -1136,6 +1151,7 @@ fn apply_rep(
     max: Option<usize>,
     greedy: bool,
     pos: usize,
+    room: usize,
     Ghost(cl): Ghost<Seq<Class>>,
     Ghost(nc): Ghost<int>,
     Ghost(ng): Ghost<int>,
@@ -1188,7 +1204,7 @@ fn apply_rep(
         if m >= 2 && rep > 1000 {
             return Err(Error::Syntax(pos));
         }
-        let y = repeat(&x, min, max, greedy, Ghost(cl), Ghost(nc), Ghost(ng))?;
+        let y = repeat(&x, min, max, greedy, room, Ghost(cl), Ghost(nc), Ghost(ng))?;
         Ok(y.set_rep(rep))
     }
 }
@@ -1682,10 +1698,16 @@ fn cat(pat: &[u8], pos: usize, fl: Flags, ps: &mut Ps, depth: usize) -> (r: Resu
                     max,
                     greedy,
                     p,
+                    ps.lim - ps.spent,
                     Ghost(ps.classes@),
                     Ghost(ps.classes@.len() as int),
                     Ghost(ps.ngroups as int),
                 )?;
+                let cost = y.ln + y.lz;
+                if cost > ps.lim - ps.spent {
+                    return Err(Error::TooBig);
+                }
+                ps.spent = ps.spent + cost;
                 items.push(y);
                 assert(its(items@, c1) =~= its(v1, c1).drop_last().push(itv(y, c1)));
                 p = q;
@@ -1827,8 +1849,9 @@ fn group(pat: &[u8], body: usize, fl: Flags, ps: &mut Ps, capture: bool, depth: 
     Ok((a, q + 1))
 }
 
-/// The pattern's tree, classes and groups.
-pub fn parse(pat: &[u8]) -> (r: Result<Parsed, Error>)
+/// The pattern's tree, classes and groups. `lim` bounds the instructions
+/// repetitions may expand to (past it the program would be too big).
+pub fn parse(pat: &[u8], lim: usize) -> (r: Result<Parsed, Error>)
     ensures
         match r {
             Ok(p) => p.ast.wf() && p.ast.bounded(p.classes@.len() as int, p.ngroups as int) && (forall|k: int|
@@ -1846,7 +1869,12 @@ pub fn parse(pat: &[u8]) -> (r: Result<Parsed, Error>)
         return Err(Error::BadUtf8);
     }
     let fl = Flags { i: false, m: false, s: false, u: false };
-    let mut ps = Ps { classes: Vec::new(), ngroups: 1, names: Vec::new() };
+    let lim = if lim > MAX_PROG {
+        MAX_PROG
+    } else {
+        lim
+    };
+    let mut ps = Ps { classes: Vec::new(), ngroups: 1, names: Vec::new(), lim: lim, spent: 0 };
     assert(names_v(ps.names@) =~= Seq::empty());
     let (a, q, _) = alt(pat, 0, fl, &mut ps, 0)?;
     if q < pat.len() {
