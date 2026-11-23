@@ -18,8 +18,9 @@ at 0.81 to 1.03 times wasmi's time and 1.04 to 1.47 times wasm3's on the
 benchmarks below (the stack interpreter it replaced took 2.5 to 3.4 times
 wasmi's, in an earlier run).
 
-**Verification status.** `cargo verus verify` checks 728 functions with
-no errors (about 8 minutes on a 4-core Linux VM). The translation to register form (`src/reg.rs`) is marked
+**Verification status.** `cargo verus verify` checks 730 functions with
+no errors (36 minutes in CI, most of it on the interpreter loop,
+`execute`). The translation to register form (`src/reg.rs`) is marked
 `external_body`: it is untrusted, and only the checker's verdict on its
 output matters.
 
@@ -165,11 +166,18 @@ instance.set_fuel(Some(1_000_000)); // refuel (None: unmetered)
   fuel left over carries into the next call. The start function is
   metered too. The proof covers this: stopping for lack of fuel is one of
   the outcomes `run::executed` allows, with the semantics still running
-  and the store as the interpreter left it. Charging only branches costs up
-  to about 20% on the benchmarks below (`matmul` and `fib`, whose loops
-  and calls are shortest; within a few percent on the rest), and fuel is
-  checked even when unmetered, against a limit of 2^64. Checking it
-  before every operation made them up to 1.65 times slower.
+  and the store as the interpreter left it.
+
+  Unmetered instances pay nothing for this: they run `run::execute`, the
+  loop without fuel, and metered ones run `run::execute_metered` (both
+  proven). Metered runs execute 8 to 35% more instructions on the
+  benchmarks below (`fib` 12%, `sieve` 35%, `matmul` 10%, `sort` 8%,
+  `crc32` 11%, `sha256` 8%; `runner vwasm-fuel` in `bench/`). That is
+  the check on each branch, call and return, and a second dispatch: the
+  metered loop sends every branch code through one arm, because with an
+  exit for running out of fuel in each branch code's own arm the loop's
+  proof exceeds its resource limit. Checking fuel before every operation
+  instead made the benchmarks up to 1.65 times slower.
 - **Memory cap.** `max_memory(bytes)` caps every instance's memory
   (rounded down to whole pages). A module whose memory starts above the
   cap fails to instantiate, and `memory.grow` past the cap returns -1, as
@@ -261,10 +269,6 @@ users get them:
 | sort 1M u32, x2 | 505 ms | 509 ms | 465 ms | 563 ms | 47 ms |
 | crc32 4 MiB, x10 | 344 ms | 502 ms | 384 ms | 459 ms | 132 ms |
 | sha256 4 MiB, x2 | 471 ms | 617 ms | 499 ms | 439 ms | 46 ms |
-
-These times predate fuel metering, which every call now pays for, by up
-to about 20% on `matmul` and `fib` and a few percent on the others
-([Resource limits](#resource-limits)).
 
 This machine is noisy (single runs of a kernel vary by 10 to 15%), so
 comparisons between two builds are made interleaved on one pinned core,

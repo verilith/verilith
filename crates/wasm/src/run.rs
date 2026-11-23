@@ -2560,10 +2560,11 @@ pub fn execute<H: Host>(m: &Module, codes: &Vec<Code>, Ghost(cs): Ghost<Seq<Func
 /// The loop is [`execute`]'s, except that all the branch codes share one
 /// arm, which charges and then dispatches again (`s_branch`): with an exit
 /// for running out of fuel in each branch code's own arm, the loop's proof
-/// exceeds its resource limit, and with them merged it takes a few minutes.
-/// The second dispatch costs metered runs some speed on branch-heavy code;
-/// unmetered runs use [`execute`], which has neither. The loop has no
-/// `decreases` clause.
+/// exceeds its resource limit (as it does with a `break` in each), and
+/// with them merged it takes a few minutes. With the check, the second
+/// dispatch costs metered runs 8 to 35% more instructions on the
+/// benchmarks; unmetered runs use [`execute`], which has neither. The loop
+/// has no `decreases` clause.
 #[verifier::exec_allows_no_decreases_clause]
 #[verifier::spinoff_prover]
 // Kept below 1431: Verus multiplies by 3,000,000, and Z3 prints a resource
