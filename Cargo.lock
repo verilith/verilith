@@ -1511,6 +1511,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "verilith-tiff"
+version = "0.1.0"
+dependencies = [
+ "verilith-core",
+ "verilith-zlib",
+ "vstd",
+]
+
+[[package]]
 name = "verilith-url"
 version = "0.1.0"
 dependencies = [

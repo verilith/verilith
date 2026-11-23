@@ -20,6 +20,7 @@ members = [
     "crates/snappy",
     "crates/sync",
     "crates/text",
+    "crates/tiff",
     "crates/url",
     "crates/verilith",
     "crates/wasm",

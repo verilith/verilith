@@ -1,0 +1,22 @@
+[package]
+name = "verilith-tiff"
+version = "0.1.0"
+license = "MIT"
+description = "A formally verified (Verus) TIFF decoder"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+vstd = { workspace = true, features = ["std"] }
+verilith-core = { path = "../core", version = "0.1.0" }
+verilith-zlib = { path = "../zlib", version = "0.1.0" }
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(verus_only)',
+] }
