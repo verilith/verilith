@@ -299,9 +299,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
+      # The latest wasmtime release (WASI preview 1 is stable in all of them).
       - uses: bytecodealliance/actions/wasmtime/setup@v1
-        with:
-          version: "v38.0.0"
       - name: Build and test
         run: scripts/wasm32.sh
 
