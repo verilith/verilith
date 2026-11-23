@@ -209,12 +209,15 @@ verus! {
 
 const WRITER: u32 = 1;
 const PARKED: u32 = 2;
+// Named for the docs. The masks below are literals, not `WRITER |
+// WRITER_WAITING` and so on, because the proofs about them need the values.
+#[allow(dead_code)]
 const WRITER_WAITING: u32 = 4;
 const ONE_READER: u32 = 8;
-/// Bits that keep new readers out.
-const BLOCKS_READ: u32 = WRITER | WRITER_WAITING;
-/// Both flag bits.
-const FLAGS: u32 = PARKED | WRITER_WAITING;
+/// Bits that keep new readers out: `WRITER | WRITER_WAITING`.
+const BLOCKS_READ: u32 = 5;
+/// Both flag bits: `PARKED | WRITER_WAITING`.
+const FLAGS: u32 = 6;
 const NOT_FLAGS: u32 = 0xffff_fff9;
 /// The largest state a reader may add itself to.
 const MAX_FOR_READ: u32 = 0xffff_fff0;
