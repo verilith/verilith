@@ -64,7 +64,9 @@ that verilith-url itself produced:
   The exec parser in `parse.rs` is proven to compute that machine's result,
   though it works differently: it uses bulk scans (some eight bytes at a
   time in a `u64`, with each lane's formula proven exact by Verus's
-  bit-vector solver, in `swar.rs`), fast paths for an
+  bit-vector solver, in `swar.rs`; hosts and paths sixteen at a time with
+  SSE2 or NEON compare chains read back as a bit mask, in `simd.rs`,
+  proven against verilith-simd's models of the instructions), fast paths for an
   `http://` or `https://` prefix and for plain paths, and writes `href` and
   the component offsets in a single pass. The commonest shape,
   `http(s)://host/path?query#fragment` with a plain lowercase host, no
@@ -128,7 +130,7 @@ that verilith-url itself produced:
   iteration, not a machine instruction: the bound also assumes `Vec::push`
   is amortized O(1) and that the IDNA call is linear (see below).
 
-`cargo verus focus` reports 567 verified, 0 errors. The crates it builds on,
+`cargo verus focus` reports 590 verified, 0 errors. The crates it builds on,
 [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core) and
 [verilith-text](https://github.com/verilith/verilith/tree/main/crates/text), are verified
 as their own crates in this repository. CI (`.github/workflows/ci.yml` at the repository root) verifies the proofs and runs `ci.sh` on every pull request and push to `main` that touches this crate or a crate it depends on.
@@ -253,6 +255,10 @@ drop-in for ada's `ada_c.h`), `ada_free` now keeps the handle's box and a
 small href buffer on the thread for the next `ada_parse`, and the parse
 result is written into the box in place; that took the C API from 1,475
 to 875 instructions per URL on the 1k set (ada: 1,028).
+With the host and path scans moved to 16-byte vector masks (one compare
+chain per block, the first stop found with a trailing-zero count), the C
+API runs 922 instructions per URL on the full dataset against ada's 1,055,
+and on the same cloud VM takes 71 ns per URL to ada's 81.
 
 The harness in `bench/` is a small Rust crate that links ada and libcurl
 through a C++ shim. It expects ada and the dataset to be cloned under
