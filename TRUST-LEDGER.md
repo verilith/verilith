@@ -27,7 +27,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 |---|---:|---:|---:|---:|---:|---:|---:|
 | archive | 2 |  |  |  |  |  | 3 |
 | bind |  |  |  |  |  |  | 2 |
-| brotli | 2 |  |  |  | 1 |  | 3 |
+| brotli | 2 |  |  |  | 1 |  | 4 |
 | core | 27 |  |  |  |  |  | 1 |
 | dns |  |  |  |  |  |  | 6 |
 | font |  |  |  |  |  |  | 1 |
@@ -52,7 +52,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  | 2 |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **482** | **30** | **266** | **5** | **22** | **12** | **83** |
+| **total** | **482** | **30** | **266** | **5** | **22** | **12** | **84** |
 
 ## Items
 
@@ -71,6 +71,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### brotli
 
+- `crates/brotli/src/api.rs`: plain Rust
 - `crates/brotli/src/capi.rs`: plain Rust
 - `crates/brotli/src/dict.rs`: external_body: `dict_bytes`
 - `crates/brotli/src/huffman.rs`: plain Rust
