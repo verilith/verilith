@@ -46,6 +46,8 @@ pub mod spec;
 pub mod stable;
 #[doc(hidden)]
 pub mod stable_pro;
+#[doc(hidden)]
+pub mod stream_spec;
 pub mod tape;
 #[doc(hidden)]
 pub mod uniq;

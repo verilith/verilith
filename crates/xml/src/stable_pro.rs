@@ -261,6 +261,13 @@ pub proof fn lemma_xmldecl_eq(x: Seq<u8>, y: Seq<u8>, hi: int, i: int, enc: Enc)
     ensures
         xmldecl(y, i, enc) == xmldecl(x, i, enc),
         xmldecl(x, i, enc).unwrap().1 > i + 5,
+        version_info(x, i + 5) matches Some((v, _, _)) && v <= xmldecl(x, i, enc).unwrap().1 && ws_end(x, v)
+            < xmldecl(x, i, enc).unwrap().1 && ws_end(x, v) >= v && ((ws_end(x, v) > v && has_lit(
+            x,
+            ws_end(x, v),
+            lit_encoding(),
+        )) ==> (enc_span(x, ws_end(x, v)) matches Some((e2, _, _)) && e2 <= xmldecl(x, i, enc).unwrap().1
+            && ws_end(x, v) + 8 <= x.len())),
 {
     lemma_lits_stable();
     assert(lit_encoding() =~= seq![0x65u8, 0x6E, 0x63, 0x6F, 0x64, 0x69, 0x6E, 0x67]);
