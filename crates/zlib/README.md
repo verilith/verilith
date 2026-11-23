@@ -15,6 +15,27 @@ Huffman, bit and checksum proofs), with no errors. The CI workflow
 (`.github/workflows/ci.yml`, manual runs only) reruns the proofs, the tests against the
 system zlib, and the fuzzers.
 
+## Using it from Rust
+
+```rust
+fn main() -> Result<(), verilith_zlib::Error> {
+    let data = b"hello hello hello hello hello hello".repeat(100);
+    let z = verilith_zlib::zlib_compress(&data, 6); // level 0 to 9
+    assert_eq!(verilith_zlib::zlib_decompress(&z)?, data);
+
+    let gz = verilith_zlib::gzip_compress(&data, 9);
+    assert_eq!(verilith_zlib::gzip_decompress(&gz)?, data);
+
+    let raw = verilith_zlib::deflate(&data, 1); // raw DEFLATE
+    assert_eq!(verilith_zlib::inflate(&raw)?, data);
+    Ok(())
+}
+```
+
+The one-shot decompressors stop at 1 GiB of output (`DEFAULT_LIMIT`);
+`Decompressor::decompress_vec` takes a limit of the caller's. `Deflater`
+compresses in pieces, and the static library exports zlib's C API.
+
 ## What is proven
 
 | property | where it is stated |
@@ -371,5 +392,5 @@ the 25 lines of `par::run` (see "Trusted base").
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/zlib/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/zlib/LICENSE-MIT), at your option.

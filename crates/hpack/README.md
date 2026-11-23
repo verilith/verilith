@@ -195,5 +195,5 @@ CI (`.github/workflows/ci.yml` at the repository root) verifies the proofs and r
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/hpack/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/hpack/LICENSE-MIT), at your option.

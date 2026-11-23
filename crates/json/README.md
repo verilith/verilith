@@ -90,10 +90,13 @@ The one-pass parser emits tokens to a `Sink`. Two sinks exist:
 ### Rust API
 
 ```rust
-let doc = verilith_json::parse(br#"{"name": "verilith-json", "n": 2}"#)?;
-let root = doc.root();
-assert_eq!(root.get("name").unwrap().as_str().as_deref(), Some("verilith-json"));
-assert_eq!(root.get("n").unwrap().as_i64(), Some(2));
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let doc = verilith_json::parse(br#"{"name": "verilith-json", "n": 2}"#)?;
+    let root = doc.root();
+    assert_eq!(root.get("name").unwrap().as_str().as_deref(), Some("verilith-json"));
+    assert_eq!(root.get("n").unwrap().as_i64(), Some(2));
+    Ok(())
+}
 ```
 
 `Value` is a borrowed view with `kind`, `as_bool`, `as_f64`, `as_i64`,
@@ -108,7 +111,8 @@ invalid number or literal, nesting too deep, trailing data, invalid UTF-8)
 and its byte offset, line and column, e.g. `unexpected ']' at line 3
 column 3 (byte 11)`.
 
-Inputs must be smaller than 4 GiB, because spans are 32-bit.
+Inputs may be up to 2^48 - 1 bytes (256 TiB), more than a 64-bit address
+space holds today: token positions are 48 bits, so a token is 16 bytes.
 
 ### On-demand reading
 
@@ -118,14 +122,18 @@ read the values you want and pass over the rest.
 
 ```rust
 use verilith_json::ondemand::Reader;
-let src = br#"{"skipped": [1, {"x": "y"}], "id": 7, "name": "verilith-json"}"#;
-let (mut idx, mut buf) = (Vec::new(), Vec::new());
-let mut r = Reader::new(src, &mut idx).unwrap();
-r.obj_begin()?;
-assert!(r.find(b"id")?);
-assert_eq!(r.i64()?, 7);
-assert!(r.find(b"name")?);
-assert_eq!(r.str(&mut buf)?, b"verilith-json");
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let src = br#"{"skipped": [1, {"x": "y"}], "id": 7, "name": "verilith-json"}"#;
+    let (mut idx, mut buf) = (Vec::new(), Vec::new());
+    let mut r = Reader::new(src, &mut idx).unwrap();
+    r.obj_begin()?;
+    assert!(r.find(b"id")?);
+    assert_eq!(r.i64()?, 7);
+    assert!(r.find(b"name")?);
+    assert_eq!(r.str(&mut buf)?, b"verilith-json");
+    Ok(())
+}
 ```
 
 `arr_begin`/`arr_next` and `obj_begin`/`obj_next` step through containers
@@ -184,14 +192,17 @@ out. Calls out of order (a value where a member name is due, a mismatched
 close, a second top-level value) are refused rather than written.
 
 ```rust
-let mut w = verilith_json::Writer::new();
-w.begin_object()?;
-w.key("name")?;
-w.string("say \"hi\"\n")?;
-w.key("n")?;
-w.f64(2.5)?;
-w.end_object()?;
-assert_eq!(w.finish()?, br#"{"name":"say \"hi\"\n","n":2.5}"#);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut w = verilith_json::Writer::new();
+    w.begin_object()?;
+    w.key("name")?;
+    w.string("say \"hi\"\n")?;
+    w.key("n")?;
+    w.f64(2.5)?;
+    w.end_object()?;
+    assert_eq!(w.finish()?, br#"{"name":"say \"hi\"\n","n":2.5}"#);
+    Ok(())
+}
 ```
 
 ### serde
@@ -472,7 +483,7 @@ spec (`document` in `src/spec.rs`), so the parser is proven to follow them:
 | Text that is not UTF-8 | not JSON (§8.1) | rejected |
 | A lone surrogate escape, e.g. `"\ud800"` | allowed by the grammar, meaning undefined (§8.2) | rejected (it cannot be decoded to UTF-8) |
 | Nesting deeper than 1000 | limits allowed (§9) | rejected |
-| Inputs of 4 GiB or more | limits allowed (§9) | rejected |
+| Inputs of 256 TiB or more | limits allowed (§9) | rejected |
 | Numbers beyond `f64` range, e.g. `1e400` | limits allowed (§9) | accepted; `as_f64` gives ±infinity |
 | Duplicate member names | should be unique, behavior unpredictable (§4) | all kept, in order; `get` returns the first |
 | `parse_prefix`: data after the value | (not a JSON text) | allowed, except a top-level number directly followed by a byte that could continue it (`01`, `1.`, `2e`), which is rejected rather than read as a shorter number |
@@ -970,7 +981,7 @@ included.
 
 ## Layout
 
-```
+```text
 src/spec.rs      RFC 8259 grammar as Verus spec functions
 src/parser.rs    verified one-pass parser and the Sink trait
 src/index.rs     verified stage 1: the structural index
@@ -1004,8 +1015,8 @@ tests/c/         C harnesses and the upstream-test shim
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/json/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/json/LICENSE-MIT), at your option.
 
 `include/cJSON.h` and the tree-building functions in `src/ffi.rs`, which
 are ported from cJSON 1.7.19, are under cJSON's MIT license, whose notice

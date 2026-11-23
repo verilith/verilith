@@ -114,5 +114,5 @@ needs `cargo-verus` from Verus commit
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/core/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/core/LICENSE-MIT), at your option.

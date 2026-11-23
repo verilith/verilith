@@ -27,12 +27,15 @@ libxml2, and its comparisons with them are native (see
 [Performance](#performance)).
 
 ```rust
-let doc = verilith_xml::parse(br#"<?xml version="1.0"?>
-<book id="b1"><title>Verified &amp; fast</title></book>"#)?;
-let book = doc.root();
-assert_eq!(book.name(), "book");
-assert_eq!(book.attribute("id").as_deref(), Some("b1"));
-assert_eq!(book.elements().next().unwrap().text(), "Verified & fast");
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let doc = verilith_xml::parse(br#"<?xml version="1.0"?>
+    <book id="b1"><title>Verified &amp; fast</title></book>"#)?;
+    let book = doc.root();
+    assert_eq!(book.name(), "book");
+    assert_eq!(book.attribute("id").as_deref(), Some("b1"));
+    assert_eq!(book.elements().next().unwrap().text(), "Verified & fast");
+    Ok(())
+}
 ```
 
 ## Design
@@ -296,7 +299,7 @@ those changes at 1.03x the build before them for checking (0.97x to
 
 ### Against expat and libxml2 (vbench)
 
-Measured with the repository's [vbench](../../bench) harness
+Measured with the repository's [vbench](https://github.com/verilith/verilith/tree/main/bench) harness
 (`bench/run.sh --only xml`) on a cloud VM (Intel Xeon @ 2.10GHz, 4 cores,
 x86-64 with AVX-512; Linux; gcc 13.3 at `-O3` and rustc 1.97 with fat LTO,
 neither with `-march` or `-C target-cpu`), 2026-11-22: 31 interleaved pairs
@@ -461,7 +464,7 @@ XMLCONF=/path/to/xmlconf cargo test --profile release-abort
 
 ## Layout
 
-```
+```text
 src/spec.rs      XML 1.0 (Fifth Edition) well-formedness as Verus spec functions
 src/chars.rs     Char and Name characters: spec, tables, verified code
 src/lex.rs       white space, literals, references, values, comments, PIs, CDATA, text, Misc
@@ -486,5 +489,5 @@ scripts/         verification, fetching libexpat
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/xml/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/xml/LICENSE-MIT), at your option.

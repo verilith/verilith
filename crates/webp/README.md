@@ -30,6 +30,23 @@ WebP lossless is where [CVE-2023-4863](#cve-2023-4863) lived — a heap overflow
 in the Huffman table builder, exploited in the wild. In verilith-webp that class of bug
 is proven impossible for every input.
 
+## Using it from Rust
+
+```rust,no_run
+use verilith_webp::Mode;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let data = std::fs::read("image.webp")?;
+    let img = verilith_webp::decode(&data)?; // lossless or lossy
+    println!("{} x {}, {} ARGB pixels", img.width, img.height, img.argb.len());
+
+    // Or bytes in the layout libwebp's WebPDecodeRGBA gives.
+    let (rgba, w, h) = verilith_webp::decode_to(&data, Mode::RGBA)?;
+    assert_eq!(rgba.len(), w * h * 4);
+    Ok(())
+}
+```
+
 ## What is proven
 
 | property | where it is stated |
@@ -341,7 +358,7 @@ cross-check.
 incomplete one). `difftest/cve_demo` decodes each with both libwebp 1.6.0 and
 verilith-webp and confirms they agree — both reject the malformed tables safely:
 
-```
+```text
 $ make -C difftest cve_demo
 $ python3 scripts/make_cve_trigger.py /tmp/cve && ./difftest/cve_demo /tmp/cve/*.webp
 file                          libwebp 1.6.0       verilith-webp (verified)    result
@@ -554,7 +571,7 @@ at a time with a division per pixel.
 
 ## Building
 
-```
+```text
 cargo build --release                 # the library and C ABI (libverilith_webp.a)
 cargo build --release --example vdwebp # a dwebp-style decoder to PAM
 cargo verus verify                     # re-check every proof (needs Verus + Z3)
@@ -566,5 +583,5 @@ point `LIBWEBP_SRC` and `LIBWEBP_BUILD` at them (see `difftest/Makefile`).
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/webp/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/webp/LICENSE-MIT), at your option.

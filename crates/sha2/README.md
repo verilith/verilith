@@ -104,7 +104,7 @@ What the proofs here assume rather than prove:
 - `src/store.rs`: `put_u32_be` and `put_u64_be`, one line each
   (`to_be_bytes` copied into place), whose `ensures` are the bytes
   written. LLVM does not merge the verified form's byte stores.
-- From [verilith-core](../core): `prims::copy_in` (trusted, one
+- From [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core): `prims::copy_in` (trusted, one
   `copy_nonoverlapping`). `prims::get` is verified there.
 - vstd's specifications of `slice_subrange`, `wrapping_add` and
   `wrapping_mul`.
@@ -207,9 +207,9 @@ What the speed rests on:
   there.
 - `no_std`: the crate needs `std` for run-time CPU detection.
 - RustCrypto's `digest` traits, for a drop-in `sha2` replacement.
-- A [vbench](../../bench) suite against OpenSSL through the drop-in C API.
+- A [vbench](https://github.com/verilith/verilith/tree/main/bench) suite against OpenSSL through the drop-in C API.
 - Verifying the SHA-NI and ARMv8 kernels against specifications of the
-  instructions in [verilith-simd](../simd), as verilith-core does for
+  instructions in [verilith-simd](https://github.com/verilith/verilith/tree/main/crates/simd), as verilith-core does for
   AArch64's `crc32x`.
 - A proof that the portable kernel's time does not depend on the data. It
   has no branch or memory index that depends on the message, but this
@@ -228,5 +228,5 @@ needs `cargo-verus` from Verus commit
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/sha2/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/sha2/LICENSE-MIT), at your option.

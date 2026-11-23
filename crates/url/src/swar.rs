@@ -226,6 +226,32 @@ pub fn skip_plain(s: &[u8], a: usize, b: usize, Tracked(cost): Tracked<&mut Mete
 {
     let t = vstd::slice::slice_subrange(s, 0, b);
     let mut k = a;
+    // Sixteen bytes at a time, with one vector compare chain per block.
+    while b - k >= 16
+        invariant
+            a <= k <= b == t.len() <= s.len(),
+            t@ == s@.subrange(0, b as int),
+            forall|j: int| a <= j < k ==> dplain(#[trigger] s@[j]),
+            cost.n == old(cost).n + (k - a),
+        decreases b - k,
+    {
+        let m = nonplain_mask16(t, k);
+        let r = verilith_simd::sse2::first_set16(m);
+        proof {
+            assert forall|j: int| a <= j < k + r implies dplain(#[trigger] s@[j]) by {
+                if j >= k {
+                    let jj = (j - k) as u32;
+                    assert(!verilith_simd::sse2::bit(m, jj));
+                    assert(t@[k + jj] == s@[j]);
+                }
+            }
+            cost.n = cost.n + r as nat;
+        }
+        if r < 16 {
+            return k + r;
+        }
+        k = k + 16;
+    }
     while b - k >= 8
         invariant
             a <= k <= b == t.len() <= s.len(),
@@ -249,6 +275,72 @@ pub fn skip_plain(s: &[u8], a: usize, b: usize, Tracked(cost): Tracked<&mut Mete
         k = k + 8;
     }
     k
+}
+
+/// Bit `j` is set when `s[k + j]` is not `dplain`.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn nonplain_mask16(s: &[u8], k: usize) -> (m: u32)
+    requires
+        k + 16 <= s.len(),
+    ensures
+        m < 0x10000,
+        forall|j: u32| j < 16 ==> #[trigger] verilith_simd::sse2::bit(m, j) == !dplain(s@[k + j]),
+{
+    crate::simd::nonplain_mask16_sse(s, k)
+}
+
+/// Bit `j` is set when `s[k + j]` is not `dplain`.
+#[cfg(not(target_arch = "x86_64"))]
+#[inline(always)]
+fn nonplain_mask16(s: &[u8], k: usize) -> (m: u32)
+    requires
+        k + 16 <= s.len(),
+    ensures
+        m < 0x10000,
+        forall|j: u32| j < 16 ==> #[trigger] verilith_simd::sse2::bit(m, j) == !dplain(s@[k + j]),
+{
+    if verilith_simd::neon::has_neon() {
+        return crate::simd::nonplain_mask16_neon(s, k);
+    }
+    let mut m: u32 = 0;
+    let mut i: u32 = 0;
+    proof {
+        assert((1u32 << 0u32) == 1u32) by (bit_vector);
+    }
+    while i < 16
+        invariant
+            i <= 16,
+            k + 16 <= s.len(),
+            m < (1u32 << i),
+            forall|j: u32| j < i ==> #[trigger] verilith_simd::sse2::bit(m, j) == !dplain(s@[k + j]),
+        decreases 16 - i,
+    {
+        let c = s[k + i as usize];
+        let np = !((0x61 <= c && c <= 0x7A) || (0x30 <= c && c <= 0x39) || c == 0x2D || c == 0x2E);
+        let x = np as u32;
+        proof {
+            assert forall|j: u32| j < i + 1 implies #[trigger] verilith_simd::sse2::bit(m | (x << i), j) == !dplain(
+                s@[k + j],
+            ) by {
+                crate::encode::lemma_mask_bit(m, x, i, j);
+                if j < i {
+                    assert(verilith_simd::sse2::bit(m, j) == !dplain(s@[k + j]));
+                } else {
+                    assert(j == i);
+                    assert(s@[k + j] == c);
+                    assert((x == 1) == np);
+                }
+            }
+            crate::encode::lemma_mask_bit(m, x, i, 0);
+        }
+        m = m | (x << i);
+        i = i + 1;
+    }
+    proof {
+        assert((1u32 << 16u32) == 0x10000u32) by (bit_vector);
+    }
+    m
 }
 
 /// `find_cls` for a mask of classes plain bytes never have: skips plain

@@ -28,6 +28,8 @@ pub struct Handle {
     source: Vec<u8>,
     err: c_int,
     err_at: usize,
+    /// The instruction limit the pattern was compiled under.
+    limit: usize,
     pool: Pool,
     both_pool: Pool,
 }
@@ -87,8 +89,20 @@ pub const VREGEX_BAD_UTF8: c_int = 2;
 pub const VREGEX_TOO_BIG: c_int = 3;
 pub const VREGEX_UNSUPPORTED: c_int = 4;
 
-fn compile(pattern: &[u8], source: Vec<u8>) -> Box<Handle> {
-    let (re, err, err_at) = match Regex::new(&source) {
+/// The instruction limit for RE2's `max_mem`: RE2 gives two thirds of it
+/// to the program, at 16 bytes an instruction; verilith-regex's take about
+/// 32, so the default 8 MiB comes to `DEFAULT_MAX_PROG`. Zero or less
+/// means the default, as in RE2.
+fn limit_for(max_mem: i64) -> usize {
+    if max_mem <= 0 {
+        crate::ast::DEFAULT_MAX_PROG
+    } else {
+        ((max_mem as u64) / 32).clamp(2, crate::ast::MAX_PROG as u64) as usize
+    }
+}
+
+fn compile(pattern: &[u8], source: Vec<u8>, limit: usize) -> Box<Handle> {
+    let (re, err, err_at) = match Regex::with_limit(&source, limit) {
         Ok(re) => (Some(re), VREGEX_OK, 0),
         Err(Error::Syntax(at)) => (None, VREGEX_SYNTAX, at.saturating_sub(source.len() - pattern.len())),
         Err(Error::BadUtf8) => (None, VREGEX_BAD_UTF8, 0),
@@ -101,6 +115,7 @@ fn compile(pattern: &[u8], source: Vec<u8>) -> Box<Handle> {
         source,
         err,
         err_at,
+        limit,
         pool: Pool::new(),
         both_pool: Pool::new(),
     })
@@ -138,7 +153,16 @@ fn search(re: &Regex, pool: &Pool, text: &[u8], from: usize, found: impl FnOnce(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vregex_new(pattern: *const c_char, len: usize) -> *mut Handle {
     let pat = bytes(pattern, len);
-    Box::into_raw(compile(pat, pat.to_vec()))
+    Box::into_raw(compile(pat, pat.to_vec(), crate::ast::DEFAULT_MAX_PROG))
+}
+
+/// Compiles `pattern[..len]`, refusing it (`VREGEX_TOO_BIG`) if its
+/// program would have more than `max_insts` instructions (at most 2^24
+/// are ever allowed). Never null; check `vregex_error`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vregex_new_with_limit(pattern: *const c_char, len: usize, max_insts: usize) -> *mut Handle {
+    let pat = bytes(pattern, len);
+    Box::into_raw(compile(pat, pat.to_vec(), max_insts))
 }
 
 #[unsafe(no_mangle)]
@@ -330,7 +354,7 @@ cre2! {
         let defaults = Options::new();
         let o = if opt.is_null() { &defaults } else { &*opt };
         if o.longest_match || o.posix_syntax || o.never_nl || o.never_capture || o.encoding != CRE2_UTF8 {
-            let mut h = compile(pat, Vec::new());
+            let mut h = compile(pat, Vec::new(), limit_for(o.max_mem));
             h.re = None;
             h.err = VREGEX_UNSUPPORTED;
             return Box::into_raw(h);
@@ -347,7 +371,7 @@ cre2! {
         } else {
             src.extend_from_slice(pat);
         }
-        Box::into_raw(compile(pat, src))
+        Box::into_raw(compile(pat, src, limit_for(o.max_mem)))
     }
 }
 
@@ -457,7 +481,7 @@ cre2! {
                 src.extend_from_slice(b"(?:");
                 src.extend_from_slice(&h.source);
                 src.extend_from_slice(b")\\z");
-                *both = Some(Regex::new(&src).ok().map(Box::new));
+                *both = Some(Regex::with_limit(&src, h.limit.saturating_add(8)).ok().map(Box::new));
             }
             match both.as_ref().and_then(|b| b.as_ref()) {
                 Some(b) => search(b, &h.both_pool, t, from, fill),

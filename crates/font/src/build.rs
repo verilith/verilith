@@ -18,8 +18,9 @@ verus! {
 /// Inputs and tables larger than this are refused (as OTS refuses them).
 pub const MAX_LEN: usize = 0x4000_0000;
 
-/// Most encoding records a `cmap` may have.
-pub const MAX_CMAP_RECORDS: usize = 1024;
+/// Most encoding records a `cmap` may have: all that its 16-bit count can
+/// say, as in OTS.
+pub const MAX_CMAP_RECORDS: usize = 0xFFFF;
 
 pub struct Table {
     pub tag: u32,

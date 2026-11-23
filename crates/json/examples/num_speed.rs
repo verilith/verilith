@@ -5,7 +5,7 @@ fn main() {
     let d = std::fs::read(std::env::args().nth(1).unwrap()).unwrap();
     let doc = verilith_json::parse(&d).unwrap();
     let nums: Vec<(usize, usize)> =
-        doc.tape().iter().filter(|t| t.kind == verilith_json::parser::Kind::Num).map(|t| (t.a as usize, t.b as usize)).collect();
+        doc.tape().iter().filter(|t| t.kind == verilith_json::parser::Kind::Num).map(|t| (t.start(), t.end())).collect();
     for _ in 0..15 {
         let t = Instant::now();
         let mut s = 0.0;
