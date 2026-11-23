@@ -5,8 +5,13 @@ A verified GIF decoder in Rust, proven with
 files into what giflib's `DGifSlurp` gives: the logical screen, the global
 colour table, and every image with its descriptor, local colour table,
 graphic control extension and colour indices (deinterlaced). It decodes
-only. It does not composite the images of an animation into frames or
-turn indices into RGBA, and it has no C API yet.
+only, and it does not composite the images of an animation into frames or
+turn indices into RGBA.
+
+It also has giflib's decoding API for C (`src/capi.rs`): built with the
+`gif-abi` feature, `libverilith_gif.a` replaces giflib's decoder at link
+time for programs written against giflib 5.2's `gif_lib.h`. See
+[C API](#c-api).
 
 The sub-block chains, the record walk, LZW decompression, interlacing and
 the graphic control extension are proven against a specification of the
@@ -49,6 +54,11 @@ What the proofs assume rather than prove:
   the spec uses for LZW codes.
 - Verus, Z3 and the Rust compiler.
 
+- `src/capi.rs`: giflib's C API. Unverified glue: it calls the verified
+  decoder, and copies what it returns into giflib's structs, in memory from
+  the C allocator. Its pointer arithmetic over the caller's structs is as
+  trusted as the caller's.
+
 Everything else in `src/` is verified. `examples/` (a command-line decoder
 for the tests and a timer), `difftest/`, `fuzz/` and `bench/` are
 unverified tools.
@@ -73,8 +83,59 @@ this.
 | Images outside the logical screen, indices past the colour table | returned as they are | returned as they are (same) |
 | Width or height 0, more than 2^31 − 1 pixels | rejected | rejected (same) |
 | Memory | allocates what the header asks for | bounded by the caller's `limit` (`TooLarge`) |
-| Extension blocks other than graphic control | returned, raw | skipped |
-| C API (`DGifOpen`, `DGifSlurp`) | yes | not provided yet |
+| Extension blocks other than graphic control | returned, raw | skipped by the Rust API; returned, raw, by the C API |
+
+## C API
+
+`src/capi.rs` has the decoding half of giflib 5.2's API, with giflib's
+structs, error codes and memory rules: `DGifOpen`, `DGifOpenFileName`,
+`DGifOpenFileHandle` (Unix), `DGifSlurp`, `DGifCloseFile`,
+`DGifSavedExtensionToGCB`, `DGifExtensionToGCB`, `DGifGetGifVersion`, the
+record-by-record functions (`DGifGetScreenDesc`, `DGifGetRecordType`,
+`DGifGetImageHeader`, `DGifGetImageDesc`, `DGifGetLine`, `DGifGetPixel`,
+`DGifGetExtension`, `DGifGetExtensionNext`, `DGifGetCode`,
+`DGifGetCodeNext`, `DGifGetLZCodes`), the allocation helpers
+(`GifMakeMapObject`, `GifFreeMapObject`, `GifUnionColorMap`, `GifBitSize`,
+`GifApplyTranslation`, `GifAddExtensionBlock`, `GifFreeExtensions`,
+`GifMakeSavedImage`, `GifFreeSavedImages`) and `GifErrorString`. They are
+exported as `vgif_*`, and with the `gif-abi` feature also under giflib's
+names:
+
+```sh
+cargo build --release -p verilith-gif --features gif-abi
+cc prog.c target/release/libverilith_gif.a -lpthread -lm -ldl   # instead of -lgif
+```
+
+`DGifSlurp` runs the verified decoder over the whole file and fills in
+`SavedImages`, each image with the extension blocks before it (graphic
+control, comments, application extensions, as giflib keeps them), and the
+extensions after the last image in `ExtensionBlocks`. The record-by-record
+functions walk the blocks, and each image is decoded by the verified
+`image_exec` when its descriptor is read; `DGifGetLine` then hands out its
+rows in the order of the file (pass by pass for an interlaced image), as
+giflib does.
+
+Where the C API differs from giflib, besides the departures above:
+
+- The file is read in full when it is opened (giflib reads as it goes), so
+  `DGifOpen`'s read function is called until it returns 0 or less.
+- A defective image fails at the first `DGifGetLine` (giflib fails at the
+  line where the defect is), and a failed `DGifSlurp` leaves no images
+  (giflib keeps the ones before the defect).
+- The encoder (`EGif*`) and `GifQuantizeBuffer` are not provided.
+
+`difftest/abi.sh` checks it with programs written for giflib, compiled
+against giflib's `gif_lib.h`: `difftest/refgif.c` (`DGifSlurp`) linked with
+verilith-gif prints what `examples/vgifcat.rs` prints for every file, and
+`difftest/records.c` (every record-by-record function) and giflib's own
+`giftext` (with each of its dump options) print the same linked with
+verilith-gif as with giflib. On the 508 corpus files and 3000 mutants:
+`DGifSlurp` agreed with the Rust API on all 3,508; `records.c` printed the
+same as with giflib in all 6,600 runs on files the specification accepts;
+`giftext` printed the same in all 10,133 runs where it ran to the end with
+both libraries, and the 12 runs where only one failed are files the
+specification rejects. (On some files `giftext` overflows its own
+`HexForm` buffer and aborts, with either library.)
 
 ## Design
 
@@ -112,6 +173,7 @@ this.
   images, the GIFs shipped in an Ubuntu install, `difftest/gen.py`'s
   corpus of every palette size, interlaced and animated images, and GIFs
   from ImageMagick and ffmpeg): 508 identical, none different.
+- `difftest/abi.sh FILES...` checks the C API (see [C API](#c-api)).
 - `fuzz/run.sh OUT N SEED FILES...` writes `N` mutants of the seed files
   (`fuzz/mutate.py`: the image data cut into new sub-blocks, bit flips in
   the LZW codes, truncated codes, changed descriptor fields and code sizes,

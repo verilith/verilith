@@ -6,3 +6,5 @@ pub mod lzw;
 pub mod blocks;
 pub mod interlace;
 pub mod decode;
+#[cfg(not(verus_only))]
+pub mod capi;

@@ -11,6 +11,10 @@ edition = "2024"
 [lib]
 crate-type = ["rlib", "staticlib"]
 
+[features]
+# Export the C API under giflib's own names (DGif*, Gif*).
+gif-abi = []
+
 [dependencies]
 vstd = { workspace = true, features = ["std"] }
 verilith-core = { path = "../core", version = "0.1.0" }

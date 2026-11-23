@@ -84,6 +84,11 @@ pub struct Frame {
     /// The colour index of each pixel, `width` per row, top row first
     /// (deinterlaced).
     pub pixels: Vec<u8>,
+    /// Where the image descriptor starts in the file (after the image
+    /// separator), and where the image's data ends (after its block
+    /// terminator).
+    pub pos: usize,
+    pub end: usize,
 }
 
 impl Frame {
@@ -98,6 +103,8 @@ impl Frame {
             gce: gce_view(self.gce),
             min_code: self.min_code as nat,
             pixels: self.pixels@,
+            pos: self.pos as nat,
+            end: self.end as nat,
         }
     }
 }
@@ -342,6 +349,8 @@ pub fn image_exec(b: &[u8], p: usize, gce: Option<Gce>, room: usize, off: &mut [
         gce,
         min_code: m,
         pixels,
+        pos: p,
+        end: e,
     };
     proof {
         lemma_sub_blocks_end(b@, c + 1);

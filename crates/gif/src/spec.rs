@@ -337,6 +337,10 @@ pub struct Image {
     /// The colour index of each pixel, row by row from the top, `width`
     /// per row.
     pub pixels: Seq<u8>,
+    /// Where the image descriptor starts (after the image separator), and
+    /// where the image's data ends (after its block terminator).
+    pub pos: nat,
+    pub end: nat,
 }
 
 /// Largest number of pixels in an image. giflib: `DGifSlurp` rejects an
@@ -375,6 +379,8 @@ pub open spec fn image_at(b: Seq<u8>, p: int, gce: Option<Gce>) -> Option<(Image
                             gce,
                             min_code: b[c] as nat,
                             pixels: if flags & 0x40 != 0 { deinterlace(px, w, h) } else { px },
+                            pos: p as nat,
+                            end: e as nat,
                         },
                         e,
                     )),
