@@ -49,6 +49,9 @@ pub mod scan;
 #[doc(hidden)]
 pub mod spec;
 #[doc(hidden)]
+pub mod pe_spec;
+pub mod pe;
+#[doc(hidden)]
 pub mod stable;
 #[doc(hidden)]
 pub mod stable_pro;
@@ -65,10 +68,26 @@ pub mod uniq;
 #[cfg(not(verus_keep_ghost))]
 mod api;
 #[cfg(not(verus_keep_ghost))]
-pub use api::{parse, Attribute, Attrs, Child, Children, Document, Element, Error, ErrorKind};
+pub use api::{parse, parse_with, Attribute, Attrs, Child, Children, Document, Element, Error, ErrorKind};
 
 /// Whether `s` is a well-formed XML document, with its tape in `tape`: the
 /// verified check alone, with no tables built for reading.
 pub fn check(s: &[u8], tape: &mut tape::Tape) -> bool {
-    enc::ex_parse(s, tape).is_some()
+    matches!(
+        pe::ex_parse_x(s, tape, false, &mut pe::Loader::none(), pe::FLAT_FUEL),
+        Some((_, pe::XDocRes::Ok(_)))
+    )
+}
+
+/// `check`, reading the external subset and external entities with
+/// `loader` (as `parse_with` does). The tape is the document's.
+#[cfg(not(verus_keep_ghost))]
+pub fn check_with(s: &[u8], tape: &mut tape::Tape, loader: &mut pe::Loader) -> bool {
+    match parse_with(s, loader) {
+        Ok(d) => {
+            *tape = d.into_tape();
+            true
+        }
+        Err(_) => false,
+    }
 }
