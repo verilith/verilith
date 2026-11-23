@@ -281,13 +281,14 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseStringCharRef` over `s` at `*i`.
-    pub fn parse_string_char_ref(&mut self, s: &[u8], i: &mut usize) -> u32
+    pub fn parse_string_char_ref(&mut self, s: &[u8], i: &mut usize) -> (r: u32)
         requires
             old(self).wf(),
         ensures
             final(self).only_sink(old(self)),
             *final(i) >= *old(i),
             *final(i) == *old(i) || *final(i) <= s@.len(),
+            r != 0 ==> *final(i) > *old(i),
     {
         let _n = s.len();
         let mut p = *i;

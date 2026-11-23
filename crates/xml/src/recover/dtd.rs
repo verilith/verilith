@@ -168,41 +168,58 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseCommentComplex`.
-    #[verifier::external_body]
-    fn parse_comment_complex(&mut self, mut buf: Vec<u8>, mut size: usize) {
+    fn parse_comment_complex(&mut self, buf: Vec<u8>, size: usize)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
+        let mut buf = buf;
+        let mut size = size;
         let max = self.max_length(MAX_TEXT_LENGTH);
-        let (mut q, mut ql) = self.current_char_recover();
+        let c0 = self.current_char_recover();
+        let mut q = c0.0;
         if q == 0 {
             self.fatal_str(ERR_COMMENT_NOT_FINISHED, b"Comment not terminated\n", None);
             return;
         }
         if !is_char(q) {
-            let m = cat(&[b"xmlParseComment: invalid xmlChar value ", &itoa(q as i64), b"\n"]);
+            let m = cat(&[b"xmlParseComment: invalid xmlChar value ", itoa(q as i64).as_slice(), b"\n"]);
             self.fatal_int(ERR_INVALID_CHAR, &m, q as i32);
             return;
         }
-        self.nextl(ql);
-        let (mut r, mut rl) = self.current_char_recover();
+        self.nextl(c0.1);
+        let c1 = self.current_char_recover();
+        let mut r = c1.0;
         if r == 0 {
             self.fatal_str(ERR_COMMENT_NOT_FINISHED, b"Comment not terminated\n", None);
             return;
         }
         if !is_char(r) {
-            let m = cat(&[b"xmlParseComment: invalid xmlChar value ", &itoa(r as i64), b"\n"]);
+            let m = cat(&[b"xmlParseComment: invalid xmlChar value ", itoa(r as i64).as_slice(), b"\n"]);
             self.fatal_int(ERR_INVALID_CHAR, &m, r as i32);
             return;
         }
-        self.nextl(rl);
-        let (mut cur, mut l) = self.current_char_recover();
+        self.nextl(c1.1);
+        let c2 = self.current_char_recover();
+        let mut cur = c2.0;
+        let mut l = c2.1;
         if cur == 0 {
             self.fatal_str(ERR_COMMENT_NOT_FINISHED, b"Comment not terminated\n", None);
             return;
         }
-        while is_char(cur) && (cur != b'>' as u32 || r != b'-' as u32 || q != b'-' as u32) {
-            if r == b'-' as u32 && q == b'-' as u32 {
+        while is_char(cur) && (cur != 0x3E || r != 0x2D || q != 0x2D)
+            invariant
+                self.advances(old(self)),
+            decreases self.fuel,
+        {
+            if !self.step() {
+                return;
+            }
+            if r == 0x2D && q == 0x2D {
                 self.fatal(ERR_HYPHEN_IN_COMMENT, None);
             }
-            if buf.len() + 5 >= size {
+            if buf.len().saturating_add(5) >= size {
                 match grow_capacity(size, max) {
                     None => {
                         self.fatal_str(ERR_COMMENT_NOT_FINISHED, b"Comment too big found", None);
@@ -213,18 +230,17 @@ impl<S: Sink> Parser<S> {
             }
             push_char(&mut buf, q);
             q = r;
-            ql = rl;
             r = cur;
-            rl = l;
             self.nextl(l);
-            (cur, l) = self.current_char_recover();
+            let c = self.current_char_recover();
+            cur = c.0;
+            l = c.1;
         }
-        let _ = (ql, rl);
         if cur == 0 {
             let m = cat(&[b"Comment not terminated \n<!--", prefix_n(&buf, 50), b"\n"]);
-            self.fatal_str(ERR_COMMENT_NOT_FINISHED, &m, Some(&buf));
+            self.fatal_str(ERR_COMMENT_NOT_FINISHED, &m, Some(buf.as_slice()));
         } else if !is_char(cur) {
-            let m = cat(&[b"xmlParseComment: invalid xmlChar value ", &itoa(cur as i64), b"\n"]);
+            let m = cat(&[b"xmlParseComment: invalid xmlChar value ", itoa(cur as i64).as_slice(), b"\n"]);
             self.fatal_int(ERR_INVALID_CHAR, &m, cur as i32);
         } else {
             self.next();
@@ -236,8 +252,12 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseComment`.
-    #[verifier::external_body]
-    pub fn parse_comment(&mut self) {
+    pub fn parse_comment(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let max = self.max_length(MAX_TEXT_LENGTH);
         if self.cur() != b'<' || self.nxt(1) != b'!' {
             return;
@@ -248,84 +268,119 @@ impl<S: Sink> Parser<S> {
         }
         self.skip(2);
         self.grow();
-        let mut buf: Option<Vec<u8>> = None;
+        // `buf` is libxml2's buffer once it is allocated (`has_buf`).
+        let mut buf: Vec<u8> = Vec::new();
+        let mut has_buf = false;
         let mut size: usize = PARSER_BUFFER_SIZE;
         let mut p = self.inp().cur;
-        let b = |s: &Self, k: usize| at(&s.inp().buf, k);
-        loop {
+        loop
+            invariant
+                self.advances(old(self)),
+                p >= self.top().cur,
+            decreases self.fuel,
+        {
             if !self.step() {
                 return;
             }
-            if b(self, p) == 0x0A {
-                while b(self, p) == 0x0A {
-                    let i = self.inp_mut();
-                    i.line = sat_add_i32(i.line, 1);
-                    i.col = 1;
-                    p += 1;
+            let ghost f1 = self.fuel;
+            {
+                let ghost b0 = self.top().buf@;
+                let _bl = self.inp().buf.len();
+                if self.bat(p) == 0x0A {
+                    while self.bat(p) == 0x0A
+                        invariant
+                            self.advances(old(self)),
+                            self.fuel == f1,
+                            self.top().buf@ == b0,
+                            _bl == b0.len(),
+                            self.top().cur <= p <= b0.len(),
+                        decreases b0.len() - p,
+                    {
+                        self.line_inc();
+                        p = p + 1;
+                    }
                 }
             }
             // get_more:
-            loop {
+            loop
+                invariant
+                    self.advances(old(self)),
+                    self.fuel <= f1,
+                    p >= self.top().cur,
+                decreases self.fuel,
+            {
+                if !self.step() {
+                    return;
+                }
+                let ghost f2 = self.fuel;
+                let ghost b0 = self.top().buf@;
+                let _bl = self.inp().buf.len();
                 let mut ccol = self.inp().col;
-                loop {
-                    let c = b(self, p);
-                    if (c > b'-' && c <= 0x7F) || (c >= 0x20 && c < b'-') || c == 0x09 {
-                        p += 1;
+                loop
+                    invariant
+                        self.advances(old(self)),
+                        self.fuel == f2,
+                        self.top().buf@ == b0,
+                        _bl == b0.len(),
+                        p >= self.top().cur,
+                    decreases b0.len() - p,
+                {
+                    let c = self.bat(p);
+                    if (c > 0x2D && c <= 0x7F) || (c >= 0x20 && c < 0x2D) || c == 0x09 {
+                        p = p + 1;
                         ccol = sat_add_i32(ccol, 1);
                     } else {
                         break;
                     }
                 }
-                self.inp_mut().col = ccol;
-                if b(self, p) == 0x0A {
-                    while b(self, p) == 0x0A {
-                        let i = self.inp_mut();
-                        i.line = sat_add_i32(i.line, 1);
-                        i.col = 1;
-                        p += 1;
+                let line = self.inp().line;
+                self.set_pos(line, ccol);
+                if self.bat(p) == 0x0A {
+                    while self.bat(p) == 0x0A
+                        invariant
+                            self.advances(old(self)),
+                            self.fuel == f2,
+                            self.top().buf@ == b0,
+                            _bl == b0.len(),
+                            self.top().cur <= p <= b0.len(),
+                        decreases b0.len() - p,
+                    {
+                        self.line_inc();
+                        p = p + 1;
                     }
                     continue;
                 }
                 let start = self.inp().cur;
                 let nbchar = p - start;
                 if nbchar > 0 {
-                    let len = buf.as_ref().map_or(0, |v| v.len());
-                    if nbchar > max - len {
+                    let len = buf.len();
+                    if nbchar > max.saturating_sub(len) {
                         self.fatal_str(ERR_COMMENT_NOT_FINISHED, b"Comment too big found", None);
                         return;
                     }
-                    match buf.as_mut() {
-                        None => {
-                            size = if b(self, p) == b'-' && b(self, p + 1) == b'-' { nbchar + 1 } else { PARSER_BUFFER_SIZE + nbchar };
-                            buf = Some(self.slice(start, p));
+                    if !has_buf {
+                        size = if self.bat(p) == 0x2D && crate::lenient::at_off(&self.inp().buf, p, 1) == 0x2D { nbchar.saturating_add(1) } else { PARSER_BUFFER_SIZE.saturating_add(nbchar) };
+                        buf = self.slice(start, p);
+                        has_buf = true;
+                    } else {
+                        if buf.len().saturating_add(nbchar).saturating_add(1) >= size {
+                            size = size.saturating_add(buf.len()).saturating_add(nbchar).saturating_add(PARSER_BUFFER_SIZE);
                         }
-                        Some(v) => {
-                            if v.len() + nbchar + 1 >= size {
-                                size += v.len() + nbchar + PARSER_BUFFER_SIZE;
-                            }
-                            let t = &self.inputs[self.inputs.len() - 1].buf;
-                            let to = if p < t.len() { p } else { t.len() };
-                            if start < to {
-                                v.extend_from_slice(&t[start..to]);
-                            }
-                        }
+                        let t = self.slice(start, p);
+                        buf.extend_from_slice(&t);
                     }
                 }
-                self.inp_mut().cur = p;
-                if b(self, p) == 0x0A {
-                    p += 1;
-                    let i = self.inp_mut();
-                    i.line = sat_add_i32(i.line, 1);
-                    i.col = 1;
+                self.set_cur(p);
+                if self.bat(p) == 0x0A {
+                    p = p + 1;
+                    self.line_inc();
                 }
-                if b(self, p) == 0x0D {
-                    p += 1;
-                    if b(self, p) == 0x0A {
-                        self.inp_mut().cur = p;
-                        p += 1;
-                        let i = self.inp_mut();
-                        i.line = sat_add_i32(i.line, 1);
-                        i.col = 1;
+                if self.bat(p) == 0x0D {
+                    p = p + 1;
+                    if self.bat(p) == 0x0A {
+                        self.set_cur(p);
+                        p = p + 1;
+                        self.line_inc();
                         continue;
                     }
                     // `in--`: p is reloaded from cur below.
@@ -333,86 +388,97 @@ impl<S: Sink> Parser<S> {
                 self.shrink();
                 self.grow();
                 p = self.inp().cur;
-                if b(self, p) == b'-' {
-                    if b(self, p + 1) == b'-' {
-                        if b(self, p + 2) == b'>' {
+                let _bl = self.inp().buf.len();
+                if self.bat(p) == 0x2D {
+                    if crate::lenient::at_off(&self.inp().buf, p, 1) == 0x2D {
+                        if crate::lenient::at_off(&self.inp().buf, p, 2) == 0x3E {
                             self.skip(3);
                             if self.sax_on() {
                                 self.sync();
-                                match buf.as_ref() {
-                                    Some(v) => {
-                                        let v = v.clone();
-                                        self.sink.comment(&v);
-                                    }
-                                    None => self.sink.comment(b""),
+                                if has_buf {
+                                    self.sink.comment(&buf);
+                                } else {
+                                    self.sink.comment(b"");
                                 }
                             }
                             return;
                         }
-                        match buf.as_ref() {
-                            Some(v) => {
-                                let v = v.clone();
-                                let m = cat(&[b"Double hyphen within comment: <!--", prefix_n(&v, 50), b"\n"]);
-                                self.fatal_str(ERR_HYPHEN_IN_COMMENT, &m, Some(&v));
-                            }
-                            None => self.fatal_str(ERR_HYPHEN_IN_COMMENT, b"Double hyphen within comment\n", None),
+                        if has_buf {
+                            let m = cat(&[b"Double hyphen within comment: <!--", prefix_n(&buf, 50), b"\n"]);
+                            self.fatal_str(ERR_HYPHEN_IN_COMMENT, &m, Some(buf.as_slice()));
+                        } else {
+                            self.fatal_str(ERR_HYPHEN_IN_COMMENT, b"Double hyphen within comment\n", None);
                         }
-                        p += 1;
-                        let i = self.inp_mut();
-                        i.col = sat_add_i32(i.col, 1);
+                        p = p + 1;
+                        self.col_inc();
                     }
-                    p += 1;
-                    let i = self.inp_mut();
-                    i.col = sat_add_i32(i.col, 1);
+                    p = p + 1;
+                    self.col_inc();
                     continue;
                 }
                 break;
             }
-            let c = b(self, p);
-            if !((0x20..=0x7F).contains(&c) || c == 0x09 || c == 0x0A) {
+            let c = self.bat(p);
+            if !((0x20 <= c && c <= 0x7F) || c == 0x09 || c == 0x0A) {
                 break;
             }
         }
-        let v = match buf {
-            Some(v) => v,
-            None => {
-                size = PARSER_BUFFER_SIZE;
-                Vec::new()
-            }
-        };
-        self.parse_comment_complex(v, size);
+        if !has_buf {
+            size = PARSER_BUFFER_SIZE;
+        }
+        self.parse_comment_complex(buf, size);
     }
 
     /// `xmlParsePITarget`.
-    #[verifier::external_body]
-    pub fn parse_pi_target(&mut self) -> Option<Vec<u8>> {
+    pub fn parse_pi_target(&mut self) -> Option<Vec<u8>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let name = self.parse_name();
-        if let Some(n) = name.as_ref() {
-            if n.len() >= 3 && (n[0] == b'x' || n[0] == b'X') && (n[1] == b'm' || n[1] == b'M') && (n[2] == b'l' || n[2] == b'L') {
-                if n.as_slice() == b"xml" {
-                    self.fatal_msg(ERR_RESERVED_XML_NAME, b"XML declaration allowed only at the start of the document\n");
-                    return name;
-                } else if n.len() == 3 {
-                    self.fatal(ERR_RESERVED_XML_NAME, None);
-                    return name;
+        match &name {
+            None => {}
+            Some(n) => {
+                if n.len() >= 3 && (n[0] == b'x' || n[0] == b'X') && (n[1] == b'm' || n[1] == b'M') && (n[2] == b'l' || n[2] == b'L') {
+                    if crate::lenient::bytes_eq(n, b"xml") {
+                        self.fatal_msg(ERR_RESERVED_XML_NAME, b"XML declaration allowed only at the start of the document\n");
+                        return name;
+                    } else if n.len() == 3 {
+                        self.fatal(ERR_RESERVED_XML_NAME, None);
+                        return name;
+                    }
+                    if crate::lenient::bytes_eq(n, b"xml-stylesheet") || crate::lenient::bytes_eq(n, b"xml-model") {
+                        return name;
+                    }
+                    self.warning(ERR_RESERVED_XML_NAME, b"xmlParsePITarget: invalid name prefix 'xml'\n", None, None);
                 }
-                if n.as_slice() == b"xml-stylesheet" || n.as_slice() == b"xml-model" {
-                    return name;
+                let mut colon = false;
+                let mut k: usize = 0;
+                while k < n.len()
+                    decreases n@.len() - k,
+                {
+                    if n[k] == b':' {
+                        colon = true;
+                    }
+                    k = k + 1;
                 }
-                self.warning(ERR_RESERVED_XML_NAME, b"xmlParsePITarget: invalid name prefix 'xml'\n", None, None);
-            }
-            if n.contains(&b':') {
-                let n = n.clone();
-                let m = cat(&[b"colons are forbidden from PI names '", &n, b"'\n"]);
-                self.ns_err(NS_ERR_COLON, &m, Some(&n), None, None);
+                if colon {
+                    let m = cat(&[b"colons are forbidden from PI names '", n.as_slice(), b"'\n"]);
+                    self.ns_err(NS_ERR_COLON, &m, Some(n.as_slice()), None, None);
+                }
             }
         }
         name
     }
 
     /// `xmlParsePI`.
-    #[verifier::external_body]
-    pub fn parse_pi(&mut self) {
+    pub fn parse_pi(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let max = self.max_length(MAX_TEXT_LENGTH);
         if self.cur() != b'<' || self.nxt(1) != b'?' {
             return;
@@ -436,16 +502,25 @@ impl<S: Sink> Parser<S> {
         let mut buf: Vec<u8> = Vec::new();
         let mut size = PARSER_BUFFER_SIZE;
         if self.skip_blanks() == 0 {
-            let m = cat(&[b"ParsePI: PI ", &target, b" space expected\n"]);
-            self.fatal_str(ERR_SPACE_REQUIRED, &m, Some(&target));
+            let m = cat(&[b"ParsePI: PI ", target.as_slice(), b" space expected\n"]);
+            self.fatal_str(ERR_SPACE_REQUIRED, &m, Some(target.as_slice()));
         }
-        let (mut c, mut l) = self.current_char_recover();
-        while is_char(c) && (c != b'?' as u32 || self.nxt(1) != b'>') {
-            if buf.len() + 5 >= size {
+        let c0 = self.current_char_recover();
+        let mut c = c0.0;
+        let mut l = c0.1;
+        while is_char(c) && (c != 0x3F || self.nxt(1) != b'>')
+            invariant
+                self.advances(old(self)),
+            decreases self.fuel,
+        {
+            if !self.step() {
+                return;
+            }
+            if buf.len().saturating_add(5) >= size {
                 match grow_capacity(size, max) {
                     None => {
-                        let m = cat(&[b"PI ", &target, b" too big found"]);
-                        self.fatal_str(ERR_PI_NOT_FINISHED, &m, Some(&target));
+                        let m = cat(&[b"PI ", target.as_slice(), b" too big found"]);
+                        self.fatal_str(ERR_PI_NOT_FINISHED, &m, Some(target.as_slice()));
                         return;
                     }
                     Some(n) => size = n,
@@ -453,16 +528,18 @@ impl<S: Sink> Parser<S> {
             }
             push_char(&mut buf, c);
             self.nextl(l);
-            (c, l) = self.current_char_recover();
+            let r = self.current_char_recover();
+            c = r.0;
+            l = r.1;
         }
-        if c != b'?' as u32 {
-            let m = cat(&[b"ParsePI: PI ", &target, b" never end ...\n"]);
-            self.fatal_str(ERR_PI_NOT_FINISHED, &m, Some(&target));
+        if c != 0x3F {
+            let m = cat(&[b"ParsePI: PI ", target.as_slice(), b" never end ...\n"]);
+            self.fatal_str(ERR_PI_NOT_FINISHED, &m, Some(target.as_slice()));
         } else {
             self.skip(2);
             if self.sax_on() {
                 self.sync();
-                self.sink.processing_instruction(&target, Some(&buf));
+                self.sink.processing_instruction(&target, Some(buf.as_slice()));
             }
         }
     }
@@ -921,32 +998,60 @@ impl<S: Sink> Parser<S> {
         self.atts_default.push((key, vec![d]));
     }
 
-    #[verifier::external_body]
     pub fn special_lookup(&self, elem: &[u8], attr: &[u8]) -> Option<i32> {
-        let mut k = 0;
-        while k < self.atts_special.len() {
+        let mut k: usize = 0;
+        while k < self.atts_special.len()
+            decreases self.atts_special@.len() - k,
+        {
             let e = &self.atts_special[k];
-            if e.0 .0 == elem && e.0 .1 == attr {
+            if crate::lenient::bytes_eq(e.0.0.as_slice(), elem) && crate::lenient::bytes_eq(e.0.1.as_slice(), attr) {
                 return Some(e.1);
             }
-            k += 1;
+            k = k + 1;
         }
         None
     }
 
     /// `xmlAddSpecialAttr` (`xmlHashAdd2`: the first declaration stays).
-    #[verifier::external_body]
-    pub fn add_special_attr(&mut self, elem: &[u8], attr: &[u8], atype: i32) {
+    pub fn add_special_attr(&mut self, elem: &[u8], attr: &[u8], atype: i32)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).inputs == old(self).inputs,
+            final(self).fuel == old(self).fuel,
+    {
         let t = if self.external() { atype | SPECIAL_EXTERNAL } else { atype };
         if self.special_lookup(elem, attr).is_none() {
-            self.atts_special.push(((elem.to_vec(), attr.to_vec()), t));
+            self.atts_special.push(((crate::lenient::vec_of(elem), crate::lenient::vec_of(attr)), t));
         }
     }
 
     /// `xmlCleanSpecialAttr`.
-    #[verifier::external_body]
-    pub fn clean_special_attr(&mut self) {
-        self.atts_special.retain(|e| e.1 != ATTRIBUTE_CDATA);
+    pub fn clean_special_attr(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).inputs == old(self).inputs,
+            final(self).fuel == old(self).fuel,
+    {
+        let mut all: Vec<((Vec<u8>, Vec<u8>), i32)> = Vec::new();
+        std::mem::swap(&mut all, &mut self.atts_special);
+        let mut k: usize = 0;
+        while k < all.len()
+            invariant
+                self.wf(),
+                self.inputs == old(self).inputs,
+                self.fuel == old(self).fuel,
+            decreases all@.len() - k,
+        {
+            if all[k].1 != ATTRIBUTE_CDATA {
+                let e = ((all[k].0.0.clone(), all[k].0.1.clone()), all[k].1);
+                self.atts_special.push(e);
+            }
+            k = k + 1;
+        }
     }
 
     /// `xmlPopPE`.

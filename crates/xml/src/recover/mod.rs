@@ -910,6 +910,12 @@ impl<S: Sink> Parser<S> {
         self.sink.in_subset() == 2 || (self.inp().entity.is_some() && self.inp().etype == EXTERNAL_PARAMETER_ENTITY)
     }
 
+    /// `ctxt->inputNr`.
+    pub fn input_nr(&self) -> i32 {
+        let n = self.inputs.len();
+        if n > i32::MAX as usize { i32::MAX } else { n as i32 }
+    }
+
     pub fn max_length(&self, normal: usize) -> usize {
         if self.options & PARSE_HUGE != 0 { MAX_HUGE_LENGTH } else { normal }
     }
@@ -1260,6 +1266,8 @@ impl<S: Sink> Parser<S> {
             old(self).wf(),
         ensures
             final(self).moves(old(self)),
+            final(self).top().buf == old(self).top().buf,
+            final(self).top().cur as int == if old(self).top().cur as int + l as int > usize::MAX as int { usize::MAX as int } else { old(self).top().cur as int + l as int },
     {
         let i = self.inp_mut();
         if at(&i.buf, i.cur) == 0x0A {
@@ -1423,6 +1431,8 @@ impl<S: Sink> Parser<S> {
             old(self).wf(),
         ensures
             final(self).moves(old(self)),
+            final(self).top().cur == old(self).top().cur,
+            final(self).top().buf == old(self).top().buf,
             r <= 4,
     {
         let (c, c1, c2, c3) = {

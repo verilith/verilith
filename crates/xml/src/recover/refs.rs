@@ -16,6 +16,7 @@ pub const SPECIAL_TYPE_MASK: i32 = 0xFFFFF;
 pub const ATTRIBUTE_CDATA: i32 = 1;
 
 use crate::lenient::is_byte_char;
+use vstd::slice::slice_subrange;
 
 impl<S: Sink> Parser<S> {
     /// `xmlExpandPEsInEntityValue`.
@@ -124,9 +125,17 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlUTF8MultibyteLen` over a string.
-    #[verifier::external_body]
-    fn str_multibyte_len(&mut self, s: &[u8], p: usize, err_msg: &[u8]) -> usize {
-        let (c, c1, c2, c3) = (at(s, p), at(s, p + 1), at(s, p + 2), at(s, p + 3));
+    fn str_multibyte_len(&mut self, s: &[u8], p: usize, err_msg: &[u8]) -> (r: usize)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).moves(old(self)),
+            r <= 4,
+    {
+        let c = at(s, p);
+        let c1 = crate::lenient::at_off(s, p, 1);
+        let c2 = crate::lenient::at_off(s, p, 2);
+        let c3 = crate::lenient::at_off(s, p, 3);
         let r = multibyte_len(c, c1, c2, c3);
         if r == 33 {
             self.fatal_msg(ERR_INVALID_CHAR, err_msg);
@@ -134,9 +143,10 @@ impl<S: Sink> Parser<S> {
         }
         if r == 0 && self.inp().flags & INPUT_ENCODING_ERROR == 0 {
             self.err_io(ERR_INVALID_ENCODING);
-            self.inp_mut().flags |= INPUT_ENCODING_ERROR;
+            let i = self.inp_mut();
+            i.flags = i.flags | INPUT_ENCODING_ERROR;
         }
-        r
+        if r > 4 { 4 } else { r }
     }
 
     /// `xmlParseEntityValue`: the value and its literal text (`orig`).
@@ -181,7 +191,7 @@ impl<S: Sink> Parser<S> {
         let cur = self.inp().cur;
         let start = cur - length;
         let text = self.slice(start, cur);
-        let n = self.inputs.len() as i32;
+        let n = self.input_nr();
         self.expand_pes_in_entity_value(&mut buf, &text, n);
         self.nextl(1);
         let v = self.sbuf_finish(buf, b"entity length too long");
@@ -189,16 +199,21 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlCheckEntityInAttValue`.
-    #[verifier::external_body]
-    pub fn check_entity_in_att_value(&mut self, pent: Ent, depth: i32) {
+    pub fn check_entity_in_att_value(&mut self, pent: Ent, depth0: i32)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+        decreases 40 - depth0,
+    {
         let max_depth = if self.options & PARSE_HUGE != 0 { 40 } else { 20 };
         let pinfo = self.sink.ent_info(pent);
         let mut expanded: u64 = pinfo.length as u64;
-        let depth = depth + 1;
-        if depth > max_depth {
+        if depth0 >= max_depth {
             self.fatal_msg(ERR_RESOURCE_LIMIT, b"Maximum entity nesting depth exceeded");
             return;
         }
+        let depth = depth0 + 1;
         if pinfo.flags & ENT_EXPANDING != 0 {
             self.fatal(ERR_ENTITY_LOOP, None);
             return;
@@ -206,8 +221,18 @@ impl<S: Sink> Parser<S> {
         let flags = if self.sink.in_subset() == 0 { ENT_CHECKED | ENT_VALIDATED } else { ENT_VALIDATED };
         if pinfo.has_content {
             let s = self.sink.ent_content(pent);
+            let _n = s.len();
             let mut p = 0usize;
-            while !self.stopped() {
+            while !self.stopped()
+                invariant
+                    _n == s@.len(),
+                    p <= s@.len(),
+                    depth == depth0 + 1,
+                    depth <= 40,
+                    self.wf(),
+                    self.only_sink(old(self)),
+                decreases s@.len() - p,
+            {
                 let c = at(&s, p);
                 if c != b'&' {
                     if c == 0 {
@@ -215,11 +240,11 @@ impl<S: Sink> Parser<S> {
                     }
                     if c == b'<' {
                         let name = self.sink.ent_name(pent);
-                        let m = cat(&[b"'<' in entity '", &name, b"' is not allowed in attributes values\n"]);
-                        self.fatal_str(ERR_LT_IN_ATTRIBUTE, &m, Some(&name));
+                        let m = cat(&[b"'<' in entity '", name.as_slice(), b"' is not allowed in attributes values\n"]);
+                        self.fatal_str(ERR_LT_IN_ATTRIBUTE, &m, Some(name.as_slice()));
                     }
-                    p += 1;
-                } else if at(&s, p + 1) == b'#' {
+                    p = p + 1;
+                } else if crate::lenient::at_off(&s, p, 1) == b'#' {
                     let v = self.parse_string_char_ref(&s, &mut p);
                     if v == 0 {
                         self.sink.ent_truncate_content(pent);
@@ -234,18 +259,21 @@ impl<S: Sink> Parser<S> {
                         Some(n) => n,
                     };
                     let ent = self.lookup_general_entity(&name, true);
-                    if let Some(ent) = ent {
-                        let info = self.sink.ent_info(ent);
-                        if info.etype != INTERNAL_PREDEFINED_ENTITY {
-                            if info.flags & flags != flags {
-                                let f = self.sink.ent_info(pent).flags;
-                                self.sink.ent_set_flags(pent, f | ENT_EXPANDING);
-                                self.check_entity_in_att_value(ent, depth);
-                                let f = self.sink.ent_info(pent).flags;
-                                self.sink.ent_set_flags(pent, f & !ENT_EXPANDING);
-                            }
+                    match ent {
+                        None => {}
+                        Some(ent) => {
                             let info = self.sink.ent_info(ent);
-                            expanded = expanded.saturating_add(info.expanded_size).saturating_add(ENT_FIXED_COST);
+                            if info.etype != INTERNAL_PREDEFINED_ENTITY {
+                                if info.flags & flags != flags {
+                                    let f = self.sink.ent_info(pent).flags;
+                                    self.sink.ent_set_flags(pent, f | ENT_EXPANDING);
+                                    self.check_entity_in_att_value(ent, depth);
+                                    let f = self.sink.ent_info(pent).flags;
+                                    self.sink.ent_set_flags(pent, f & !ENT_EXPANDING);
+                                }
+                                let info = self.sink.ent_info(ent);
+                                expanded = expanded.saturating_add(info.expanded_size).saturating_add(ENT_FIXED_COST);
+                            }
                         }
                     }
                 }
@@ -259,76 +287,102 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlExpandEntityInAttValue`: whether normalization changed the value.
-    #[verifier::external_body]
-    pub fn expand_entity_in_att_value(&mut self, buf: &mut SBuf, s: &[u8], pent: Option<Ent>, normalize: bool, in_space: &mut bool, depth: i32, check: bool) -> bool {
+    pub fn expand_entity_in_att_value(&mut self, buf: &mut SBuf, s: &[u8], pent: Option<Ent>, normalize: bool, in_space: &mut bool, depth0: i32, check: bool) -> bool
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+            final(buf).max == old(buf).max,
+            old(buf).mem@.len() <= old(buf).max ==> final(buf).mem@.len() <= final(buf).max,
+        decreases 40 - depth0,
+    {
         let max_depth = if self.options & PARSE_HUGE != 0 { 40 } else { 20 };
         let mut norm_change = false;
-        let depth = depth + 1;
-        if depth > max_depth {
+        if depth0 >= max_depth {
             self.fatal_msg(ERR_RESOURCE_LIMIT, b"Maximum entity nesting depth exceeded");
             return false;
         }
-        if let Some(pe) = pent {
-            let info = self.sink.ent_info(pe);
-            if info.flags & ENT_EXPANDING != 0 {
-                self.fatal(ERR_ENTITY_LOOP, None);
-                return false;
-            }
-            if check && self.entity_check(info.length as u64) {
-                return false;
+        let depth = depth0 + 1;
+        match pent {
+            None => {}
+            Some(pe) => {
+                let info = self.sink.ent_info(pe);
+                if info.flags & ENT_EXPANDING != 0 {
+                    self.fatal(ERR_ENTITY_LOOP, None);
+                    return false;
+                }
+                if check && self.entity_check(info.length as u64) {
+                    return false;
+                }
             }
         }
+        let _n = s.len();
         let mut chunk: usize = 0;
         let mut p = 0usize;
-        while !self.stopped() {
+        while !self.stopped()
+            invariant
+                _n == s@.len(),
+                chunk <= p <= s@.len(),
+                depth == depth0 + 1,
+                depth <= 40,
+                self.wf(),
+                self.only_sink(old(self)),
+                buf.max == old(buf).max,
+                old(buf).mem@.len() <= old(buf).max ==> buf.mem@.len() <= buf.max,
+            decreases s@.len() - p,
+        {
             let c = at(s, p);
             if c != b'&' {
                 if c == 0 {
                     break;
                 }
-                if let Some(pe) = pent {
-                    if c == b'<' {
-                        let name = self.sink.ent_name(pe);
-                        let m = cat(&[b"'<' in entity '", &name, b"' is not allowed in attributes values\n"]);
-                        self.fatal_str(ERR_LT_IN_ATTRIBUTE, &m, Some(&name));
-                        break;
+                if c == b'<' {
+                    match pent {
+                        None => {}
+                        Some(pe) => {
+                            let name = self.sink.ent_name(pe);
+                            let m = cat(&[b"'<' in entity '", name.as_slice(), b"' is not allowed in attributes values\n"]);
+                            self.fatal_str(ERR_LT_IN_ATTRIBUTE, &m, Some(name.as_slice()));
+                            break;
+                        }
                     }
                 }
                 if c <= 0x20 {
                     if normalize && *in_space {
                         if chunk > 0 {
-                            buf.add(&s[p - chunk..p]);
+                            buf.add(slice_subrange(s, p - chunk, p));
                             chunk = 0;
                         }
                         norm_change = true;
                     } else if c < 0x20 {
                         if chunk > 0 {
-                            buf.add(&s[p - chunk..p]);
+                            buf.add(slice_subrange(s, p - chunk, p));
                             chunk = 0;
                         }
                         buf.add(b" ");
                     } else {
-                        chunk += 1;
+                        chunk = chunk + 1;
                     }
                     *in_space = true;
                 } else {
-                    chunk += 1;
+                    chunk = chunk + 1;
                     *in_space = false;
                 }
-                p += 1;
-            } else if at(s, p + 1) == b'#' {
+                p = p + 1;
+            } else if crate::lenient::at_off(s, p, 1) == b'#' {
                 if chunk > 0 {
-                    buf.add(&s[p - chunk..p]);
+                    buf.add(slice_subrange(s, p - chunk, p));
                     chunk = 0;
                 }
                 let v = self.parse_string_char_ref(s, &mut p);
                 if v == 0 {
-                    if let Some(pe) = pent {
-                        self.sink.ent_truncate_content(pe);
+                    match pent {
+                        None => {}
+                        Some(pe) => self.sink.ent_truncate_content(pe),
                     }
                     break;
                 }
-                if v == b' ' as u32 {
+                if v == 0x20 {
                     if normalize && *in_space {
                         norm_change = true;
                     } else {
@@ -341,53 +395,69 @@ impl<S: Sink> Parser<S> {
                 }
             } else {
                 if chunk > 0 {
-                    buf.add(&s[p - chunk..p]);
+                    buf.add(slice_subrange(s, p - chunk, p));
                     chunk = 0;
                 }
                 let name = match self.parse_string_entity_ref(s, &mut p) {
                     None => {
-                        if let Some(pe) = pent {
-                            self.sink.ent_truncate_content(pe);
+                        match pent {
+                            None => {}
+                            Some(pe) => self.sink.ent_truncate_content(pe),
                         }
                         break;
                     }
                     Some(n) => n,
                 };
                 let ent = self.lookup_general_entity(&name, true);
-                if let Some(ent) = ent {
-                    let info = self.sink.ent_info(ent);
-                    if info.etype == INTERNAL_PREDEFINED_ENTITY {
-                        if !info.has_content {
-                            self.fatal_msg(ERR_INTERNAL_ERROR, b"predefined entity has no content\n");
-                            break;
-                        }
-                        let content = self.sink.ent_content(ent);
-                        buf.add(&content);
-                        *in_space = false;
-                    } else if info.has_content {
-                        if let Some(pe) = pent {
-                            let f = self.sink.ent_info(pe).flags;
-                            self.sink.ent_set_flags(pe, f | ENT_EXPANDING);
-                        }
-                        let content = self.sink.ent_content(ent);
-                        norm_change |= self.expand_entity_in_att_value(buf, &content, Some(ent), normalize, in_space, depth, check);
-                        if let Some(pe) = pent {
-                            let f = self.sink.ent_info(pe).flags;
-                            self.sink.ent_set_flags(pe, f & !ENT_EXPANDING);
+                match ent {
+                    None => {}
+                    Some(ent) => {
+                        let info = self.sink.ent_info(ent);
+                        if info.etype == INTERNAL_PREDEFINED_ENTITY {
+                            if !info.has_content {
+                                self.fatal_msg(ERR_INTERNAL_ERROR, b"predefined entity has no content\n");
+                                break;
+                            }
+                            let content = self.sink.ent_content(ent);
+                            buf.add(&content);
+                            *in_space = false;
+                        } else if info.has_content {
+                            match pent {
+                                None => {}
+                                Some(pe) => {
+                                    let f = self.sink.ent_info(pe).flags;
+                                    self.sink.ent_set_flags(pe, f | ENT_EXPANDING);
+                                }
+                            }
+                            let content = self.sink.ent_content(ent);
+                            if self.expand_entity_in_att_value(buf, &content, Some(ent), normalize, in_space, depth, check) {
+                                norm_change = true;
+                            }
+                            match pent {
+                                None => {}
+                                Some(pe) => {
+                                    let f = self.sink.ent_info(pe).flags;
+                                    self.sink.ent_set_flags(pe, f & !ENT_EXPANDING);
+                                }
+                            }
                         }
                     }
                 }
             }
         }
-        if chunk > 0 && p >= chunk {
-            buf.add(&s[p - chunk..p]);
+        if chunk > 0 {
+            buf.add(slice_subrange(s, p - chunk, p));
         }
         norm_change
     }
 
     /// `xmlParseAttValueInternal`: the value and its `XML_ATTVAL_*` flags.
-    #[verifier::external_body]
-    pub fn parse_att_value_internal(&mut self, special: i32, is_ns: bool) -> Option<(Vec<u8>, u32)> {
+    pub fn parse_att_value_internal(&mut self, special: i32, is_ns: bool) -> Option<(Vec<u8>, u32)>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let max = self.max_length(MAX_TEXT_LENGTH);
         let normalize = (special & SPECIAL_TYPE_MASK) > ATTRIBUTE_CDATA;
         let mut flags: u32 = 0;
@@ -403,8 +473,19 @@ impl<S: Sink> Parser<S> {
         let ent_flags = if self.sink.in_subset() == 0 { ENT_CHECKED | ENT_VALIDATED } else { ENT_VALIDATED };
         let mut in_space = true;
         let mut chunk: usize = 0;
-        loop {
+        loop
+            invariant
+                self.advances(old(self)),
+                chunk <= self.top().cur,
+                buf.max == max,
+                buf.mem@.len() <= buf.max,
+            decreases self.fuel,
+        {
             if self.stopped() {
+                self.sbuf_cleanup(buf, b"AttValue length too long");
+                return None;
+            }
+            if !self.step() {
                 self.sbuf_cleanup(buf, b"AttValue length too long");
                 return None;
             }
@@ -429,7 +510,7 @@ impl<S: Sink> Parser<S> {
                     buf.add_repl();
                     self.nextl(1);
                 } else {
-                    chunk += l;
+                    chunk = chunk.saturating_add(l);
                     self.nextl(l);
                 }
                 in_space = false;
@@ -441,7 +522,7 @@ impl<S: Sink> Parser<S> {
                     if c == b'<' {
                         self.fatal(ERR_LT_IN_ATTRIBUTE, None);
                     }
-                    chunk += 1;
+                    chunk = chunk.saturating_add(1);
                     in_space = false;
                 } else if !is_byte_char(c) {
                     self.fatal_msg(ERR_INVALID_CHAR, b"invalid character in attribute value\n");
@@ -459,7 +540,7 @@ impl<S: Sink> Parser<S> {
                             buf.add(&t);
                             chunk = 0;
                         }
-                        flags |= ATTVAL_NORM_CHANGE;
+                        flags = flags | ATTVAL_NORM_CHANGE;
                     } else if c < 0x20 {
                         if chunk > 0 {
                             let t = self.slice(cp - chunk, cp);
@@ -468,11 +549,12 @@ impl<S: Sink> Parser<S> {
                         }
                         buf.add(b" ");
                     } else {
-                        chunk += 1;
+                        chunk = chunk.saturating_add(1);
                     }
                     in_space = true;
                     if c == 0x0D && self.nxt(1) == 0x0A {
-                        self.inp_mut().cur += 1;
+                        let i = self.inp_mut();
+                        i.cur = i.cur.saturating_add(1);
                     }
                 }
                 self.nextl(1);
@@ -487,12 +569,12 @@ impl<S: Sink> Parser<S> {
                     self.sbuf_cleanup(buf, b"AttValue length too long");
                     return None;
                 }
-                if v == b'&' as u32 && !replace {
+                if v == 0x26 && !replace {
                     buf.add(b"&#38;");
                     in_space = false;
-                } else if v == b' ' as u32 {
+                } else if v == 0x20 {
                     if normalize && in_space {
-                        flags |= ATTVAL_NORM_CHANGE;
+                        flags = flags | ATTVAL_NORM_CHANGE;
                     } else {
                         buf.add(b" ");
                     }
@@ -525,16 +607,16 @@ impl<S: Sink> Parser<S> {
                     }
                     in_space = false;
                 } else if replace {
-                    let content = if info.has_content { self.sink.ent_content(ent) } else { Vec::new() };
                     if info.has_content {
-                        let n = self.inputs.len() as i32;
+                        let content = self.sink.ent_content(ent);
+                        let n = self.input_nr();
                         if self.expand_entity_in_att_value(&mut buf, &content, Some(ent), normalize, &mut in_space, n, true) {
-                            flags |= ATTVAL_NORM_CHANGE;
+                            flags = flags | ATTVAL_NORM_CHANGE;
                         }
                     }
                 } else {
                     if info.flags & ent_flags != ent_flags {
-                        let n = self.inputs.len() as i32;
+                        let n = self.input_nr();
                         self.check_entity_in_att_value(ent, n);
                     }
                     let es = self.sink.ent_info(ent).expanded_size;
@@ -556,8 +638,8 @@ impl<S: Sink> Parser<S> {
         if !buf.alloc {
             let mut len = chunk;
             if normalize && in_space && chunk > 0 {
-                flags |= ATTVAL_NORM_CHANGE;
-                len -= 1;
+                flags = flags | ATTVAL_NORM_CHANGE;
+                len = len - 1;
             }
             ret = self.slice(cp - chunk, cp - chunk + len);
             self.sbuf_cleanup(buf, b"AttValue length too long");
@@ -566,12 +648,12 @@ impl<S: Sink> Parser<S> {
                 let t = self.slice(cp - chunk, cp);
                 buf.add(&t);
             }
-            if normalize && in_space && !buf.mem.is_empty() {
-                flags |= ATTVAL_NORM_CHANGE;
+            if normalize && in_space && buf.mem.len() > 0 {
+                flags = flags | ATTVAL_NORM_CHANGE;
                 buf.mem.pop();
             }
             let r = self.sbuf_finish(buf, b"AttValue length too long");
-            flags |= ATTVAL_ALLOC;
+            flags = flags | ATTVAL_ALLOC;
             match r {
                 None => {
                     self.nextl(1);
@@ -585,16 +667,26 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseAttValue`.
-    #[verifier::external_body]
-    pub fn parse_att_value(&mut self) -> Option<Vec<u8>> {
+    pub fn parse_att_value(&mut self) -> Option<Vec<u8>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         // With no out-flags, the value is always built in the buffer.
-        let r = self.parse_att_value_internal(0, false);
-        r.map(|(v, _)| v)
+        match self.parse_att_value_internal(0, false) {
+            None => None,
+            Some(r) => Some(r.0),
+        }
     }
 
     /// `xmlHandleUndeclaredEntity`.
-    #[verifier::external_body]
-    pub fn handle_undeclared_entity(&mut self, name: &[u8]) {
+    pub fn handle_undeclared_entity(&mut self, name: &[u8])
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         let m = cat(&[b"Entity '", name, b"' not defined\n"]);
         if self.sink.standalone() == 1 || (!self.sink.has_ext_subset() && !self.sink.has_perefs()) {
             self.fatal_str(ERR_UNDECLARED_ENTITY, &m, Some(name));
@@ -609,12 +701,17 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlLookupGeneralEntity`.
-    #[verifier::external_body]
-    pub fn lookup_general_entity(&mut self, name: &[u8], in_attr: bool) -> Option<Ent> {
+    pub fn lookup_general_entity(&mut self, name: &[u8], in_attr: bool) -> Option<Ent>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+    {
         let mut ent: Option<Ent> = None;
         if self.options & PARSE_OLDSAX == 0 {
-            if let Some(e) = self.sink.predefined_entity(name) {
-                return Some(e);
+            match self.sink.predefined_entity(name) {
+                Some(e) => return Some(e),
+                None => {}
             }
         }
         if self.sink.has_get_entity() {
@@ -649,8 +746,12 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseEntityRefInternal`.
-    #[verifier::external_body]
-    pub fn parse_entity_ref_internal(&mut self) -> Option<Vec<u8>> {
+    pub fn parse_entity_ref_internal(&mut self) -> Option<Vec<u8>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         self.grow();
         if self.cur() != b'&' {
             return None;
@@ -672,13 +773,21 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseStringEntityRef`.
-    #[verifier::external_body]
-    pub fn parse_string_entity_ref(&mut self, s: &[u8], i: &mut usize) -> Option<Vec<u8>> {
+    pub fn parse_string_entity_ref(&mut self, s: &[u8], i: &mut usize) -> (r: Option<Vec<u8>>)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+            *final(i) >= *old(i),
+            *final(i) == *old(i) || *final(i) <= s@.len(),
+            r.is_some() ==> *final(i) > *old(i),
+    {
+        let _n = s.len();
         let mut p = *i;
         if at(s, p) != b'&' {
             return None;
         }
-        p += 1;
+        p = p + 1;
         let name = match self.parse_string_name(s, &mut p) {
             None => {
                 self.fatal_msg(ERR_NAME_REQUIRED, b"xmlParseStringEntityRef: no name\n");
@@ -692,19 +801,27 @@ impl<S: Sink> Parser<S> {
             *i = p;
             return None;
         }
-        p += 1;
+        p = p + 1;
         *i = p;
         Some(name)
     }
 
     /// `xmlParseStringPEReference`.
-    #[verifier::external_body]
-    pub fn parse_string_pe_reference(&mut self, s: &[u8], i: &mut usize) -> Option<Ent> {
+    pub fn parse_string_pe_reference(&mut self, s: &[u8], i: &mut usize) -> (r: Option<Ent>)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).only_sink(old(self)),
+            *final(i) >= *old(i),
+            *final(i) == *old(i) || *final(i) <= s@.len(),
+            r.is_some() ==> *final(i) > *old(i),
+    {
+        let _n = s.len();
         let mut p = *i;
         if at(s, p) != b'%' {
             return None;
         }
-        p += 1;
+        p = p + 1;
         let name = match self.parse_string_name(s, &mut p) {
             None => {
                 self.fatal_msg(ERR_NAME_REQUIRED, b"xmlParseStringPEReference: no name\n");
@@ -718,7 +835,7 @@ impl<S: Sink> Parser<S> {
             *i = p;
             return None;
         }
-        p += 1;
+        p = p + 1;
         self.sink.set_has_perefs(true);
         let mut entity = None;
         if self.sink.has_get_parameter_entity() {
@@ -729,8 +846,8 @@ impl<S: Sink> Parser<S> {
             Some(e) => {
                 let t = self.sink.ent_info(e).etype;
                 if t != INTERNAL_PARAMETER_ENTITY && t != EXTERNAL_PARAMETER_ENTITY {
-                    let m = cat(&[b"%", &name, b"; is not a parameter entity\n"]);
-                    self.warning(WAR_UNDECLARED_ENTITY, &m, Some(&name), None);
+                    let m = cat(&[b"%", name.as_slice(), b"; is not a parameter entity\n"]);
+                    self.warning(WAR_UNDECLARED_ENTITY, &m, Some(name.as_slice()), None);
                 }
             }
         }

@@ -627,7 +627,7 @@ pub fn is_byte_char(c: u8) -> (r: bool)
 /// The bytes the fast character data loop takes (`test_char_data`).
 pub fn test_char_data(c: u8) -> (r: bool)
     ensures
-        r ==> !bad_byte(c) && c < 0x80 && c != 0x26 && c != 0x3C,
+        r ==> !bad_byte(c) && c < 0x80 && c != 0x26 && c != 0x3C && c != 0,
 {
     c == 0x09 || (0x20 <= c && c <= 0x7F && c != 0x26 && c != 0x3C && c != 0x5D)
 }

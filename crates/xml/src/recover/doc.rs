@@ -10,13 +10,17 @@ verus! {
 
 impl<S: Sink> Parser<S> {
     /// `xmlParseVersionNum`.
-    #[verifier::external_body]
-    pub fn parse_version_num(&mut self) -> Option<Vec<u8>> {
+    pub fn parse_version_num(&mut self) -> Option<Vec<u8>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
         let mut size: usize = 10;
         let mut buf: Vec<u8> = Vec::new();
         let mut cur = self.cur();
-        if !cur.is_ascii_digit() {
+        if !(0x30 <= cur && cur <= 0x39) {
             return None;
         }
         buf.push(cur);
@@ -28,11 +32,15 @@ impl<S: Sink> Parser<S> {
         buf.push(cur);
         self.next();
         cur = self.cur();
-        while cur.is_ascii_digit() {
+        while 0x30 <= cur && cur <= 0x39
+            invariant
+                self.advances(old(self)),
+            decreases self.fuel,
+        {
             if !self.step() {
                 return None;
             }
-            if buf.len() + 1 >= size {
+            if buf.len().saturating_add(1) >= size {
                 match grow_capacity_min(size, 1, max) {
                     None => {
                         self.fatal(ERR_NAME_TOO_LONG, Some(b"VersionNum"));
@@ -49,8 +57,12 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseVersionInfo`.
-    #[verifier::external_body]
-    pub fn parse_version_info(&mut self) -> Option<Vec<u8>> {
+    pub fn parse_version_info(&mut self) -> Option<Vec<u8>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let mut version = None;
         if self.cmp(b"version") {
             self.skip(7);
@@ -78,23 +90,32 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseEncName`.
-    #[verifier::external_body]
-    pub fn parse_enc_name(&mut self) -> Option<Vec<u8>> {
+    pub fn parse_enc_name(&mut self) -> Option<Vec<u8>>
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let max = if self.options & PARSE_HUGE != 0 { MAX_TEXT_LENGTH } else { MAX_NAME_LENGTH };
         let mut size: usize = 10;
         let mut cur = self.cur();
-        if !cur.is_ascii_alphabetic() {
+        if !((0x41 <= cur && cur <= 0x5A) || (0x61 <= cur && cur <= 0x7A)) {
             self.fatal(ERR_ENCODING_NAME, None);
             return None;
         }
-        let mut buf: Vec<u8> = vec![cur];
+        let mut buf: Vec<u8> = Vec::new();
+        buf.push(cur);
         self.next();
         cur = self.cur();
-        while cur.is_ascii_alphanumeric() || cur == b'.' || cur == b'_' || cur == b'-' {
+        while (0x41 <= cur && cur <= 0x5A) || (0x61 <= cur && cur <= 0x7A) || (0x30 <= cur && cur <= 0x39) || cur == b'.' || cur == b'_' || cur == b'-'
+            invariant
+                self.advances(old(self)),
+            decreases self.fuel,
+        {
             if !self.step() {
                 return None;
             }
-            if buf.len() + 1 >= size {
+            if buf.len().saturating_add(1) >= size {
                 match grow_capacity_min(size, 1, max) {
                     None => {
                         self.fatal(ERR_NAME_TOO_LONG, Some(b"EncName"));
@@ -111,8 +132,13 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseEncodingDecl`.
-    #[verifier::external_body]
-    pub fn parse_encoding_decl(&mut self) {
+    pub fn parse_encoding_decl(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+            final(self).inputs@.len() == old(self).inputs@.len(),
+    {
         self.skip_blanks();
         if !self.cmp(b"encoding") {
             return;
@@ -139,14 +165,19 @@ impl<S: Sink> Parser<S> {
             self.fatal(ERR_STRING_NOT_STARTED, None);
             return;
         }
-        if let Some(e) = encoding {
-            self.set_declared_encoding(e);
+        match encoding {
+            Some(e) => self.set_declared_encoding(e),
+            None => {}
         }
     }
 
     /// `xmlParseSDDecl`.
-    #[verifier::external_body]
-    pub fn parse_sd_decl(&mut self) -> i32 {
+    pub fn parse_sd_decl(&mut self) -> i32
+        requires
+            old(self).wf(),
+        ensures
+            final(self).advances(old(self)),
+    {
         let mut standalone = -2;
         self.skip_blanks();
         if self.cmp(b"standalone") {
@@ -183,8 +214,13 @@ impl<S: Sink> Parser<S> {
     }
 
     /// `xmlParseXMLDecl`.
-    #[verifier::external_body]
-    pub fn parse_xml_decl(&mut self) {
+    pub fn parse_xml_decl(&mut self)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).evolves(old(self)),
+            final(self).inputs@.len() == old(self).inputs@.len(),
+    {
         self.sink.set_standalone(-2);
         self.skip(5);
         if !blank(self.cur()) {
@@ -194,14 +230,14 @@ impl<S: Sink> Parser<S> {
         match self.parse_version_info() {
             None => self.fatal(ERR_VERSION_MISSING, None),
             Some(v) => {
-                if v.as_slice() != b"1.0" {
-                    let m = cat(&[b"Unsupported version '", &v, b"'\n"]);
+                if !crate::lenient::bytes_eq(&v, b"1.0") {
+                    let m = cat(&[b"Unsupported version '", v.as_slice(), b"'\n"]);
                     if self.options & PARSE_OLD10 != 0 {
-                        self.fatal_str(ERR_UNKNOWN_VERSION, &m, Some(&v));
+                        self.fatal_str(ERR_UNKNOWN_VERSION, &m, Some(v.as_slice()));
                     } else if at(&v, 0) == b'1' && at(&v, 1) == b'.' {
-                        self.warning(WAR_UNKNOWN_VERSION, &m, Some(&v), None);
+                        self.warning(WAR_UNKNOWN_VERSION, &m, Some(v.as_slice()), None);
                     } else {
-                        self.fatal_str(ERR_UNKNOWN_VERSION, &m, Some(&v));
+                        self.fatal_str(ERR_UNKNOWN_VERSION, &m, Some(v.as_slice()));
                     }
                 }
                 self.sink.set_version(&v);
@@ -235,7 +271,13 @@ impl<S: Sink> Parser<S> {
             self.next();
         } else {
             self.fatal(ERR_XMLDECL_NOT_FINISHED, None);
-            while !self.stopped() {
+            let ghost n0 = self.inputs@.len();
+            while !self.stopped()
+                invariant
+                    self.evolves(old(self)),
+                    self.inputs@.len() == n0,
+                decreases self.fuel,
+            {
                 if !self.step() {
                     break;
                 }
