@@ -631,7 +631,7 @@ impl<T> ArrayQueue<T> {
     #[verifier::exec_allows_no_decreases_clause]
     #[verifier::spinoff_prover]
     #[verifier::rlimit(30)]
-    pub fn push(&self, value: T) -> (r: Result<(), T>)
+    pub fn push_atomic(&self, value: T) -> (r: Result<(), T>)
         atomically (au) {
             type PushPred,
             (x: QueueView<T>) -> (y: Commit<QueueView<T>>),
@@ -872,7 +872,7 @@ impl<T> ArrayQueue<T> {
     #[verifier::loop_isolation(false)]
     #[verifier::exec_allows_no_decreases_clause]
     #[verifier::spinoff_prover]
-    pub fn pop(&self) -> (r: Option<T>)
+    pub fn pop_atomic(&self) -> (r: Option<T>)
         atomically (au) {
             type PopPred,
             (x: QueueView<T>) -> (y: Commit<QueueView<T>>),
@@ -1142,7 +1142,7 @@ impl<T> ArrayQueue<T> {
     /// `false` means only "maybe not": the head is read relaxed and may be
     /// stale. The tail is read with a read-modify-write (adding 0), which
     /// reads its latest value, as in `pop`.
-    pub fn confirm_empty(&self) -> (r: bool)
+    pub fn confirm_empty_atomic(&self) -> (r: bool)
         atomically (au) {
             type ConfirmEmptyPred,
             (x: QueueView<T>) -> (y: Commit<(QueueView<T>, Ghost<bool>)>),
@@ -1196,7 +1196,7 @@ impl<T> ArrayQueue<T> {
     /// answer: `true` means it was full at one instant during the call,
     /// `false` only "maybe not". The tail is read relaxed and the head with
     /// a read-modify-write, as in `push`.
-    pub fn confirm_full(&self) -> (r: bool)
+    pub fn confirm_full_atomic(&self) -> (r: bool)
         atomically (au) {
             type ConfirmFullPred,
             (x: QueueView<T>) -> (y: Commit<(QueueView<T>, Ghost<bool>)>),
@@ -1622,6 +1622,44 @@ impl<T> ArrayQueue<T> {
 }
 
 } // verus!
+
+// The plain-Rust API. Each queue operation is verified as a logically
+// atomic function (`*_atomic`), which since Verus 2026-11-22 takes its
+// atomic update as a `Tracked` argument that survives erasure. These
+// one-line wrappers are what code outside Verus calls: they pass a ghost
+// value that does not exist at run time (`Tracked::assume_new()`, nothing
+// is assumed about the data) and return what the verified function returns.
+// A Verus caller uses the `*_atomic` form with an `atomically` block.
+impl<T> ArrayQueue<T> {
+    /// Appends `value`, or gives it back if the queue holds `capacity` values.
+    #[inline]
+    pub fn push(&self, value: T) -> Result<(), T> {
+        self.push_atomic(value, Tracked::assume_new())
+    }
+
+    /// Removes the oldest value, or returns `None` if the queue is empty.
+    #[inline]
+    pub fn pop(&self) -> Option<T> {
+        self.pop_atomic(Tracked::assume_new())
+    }
+
+    /// Whether the queue is empty, for a thread that will sleep on the
+    /// answer: `true` means it was empty at one instant during the call,
+    /// `false` only "maybe not" (see `confirm_empty_atomic`).
+    #[inline]
+    pub fn confirm_empty(&self) -> bool {
+        self.confirm_empty_atomic(Tracked::assume_new())
+    }
+
+    /// Whether the queue is full, for a thread that will sleep on the
+    /// answer: `true` means it was full at one instant during the call,
+    /// `false` only "maybe not" (see `confirm_full_atomic`).
+    #[inline]
+    pub fn confirm_full(&self) -> bool {
+        self.confirm_full_atomic(Tracked::assume_new())
+    }
+}
+
 
 impl<T> Drop for ArrayQueue<T> {
     fn drop(&mut self) {
