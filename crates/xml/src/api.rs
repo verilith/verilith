@@ -102,6 +102,7 @@ struct AttDef {
 
 /// The declarations a document's content refers to: its own, or those of
 /// a stream's prolog (`Document::chunk`).
+#[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
 enum Dtd<'a> {
     Own(DtdOut),
     Prolog(&'a DtdOut),
@@ -237,6 +238,7 @@ impl<'a> Document<'a> {
     /// A stream's document, read a chunk at a time (`set_chunk`): its
     /// content refers to the declarations `dtd`, at positions in `pro`,
     /// whose tokens are `ptoks` (the prolog's).
+    #[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
     pub(crate) fn chunk(dtd: &'a DtdOut, pro: &'a [u8], ptoks: &[Tok], standalone: bool) -> Self {
         let n = dtd.ents.len();
         let mut d = Document {
@@ -258,12 +260,14 @@ impl<'a> Document<'a> {
 
     /// The next chunk of a stream's document: the window's text, and the
     /// tokens read in it. The tokens of the last chunk come back.
+    #[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
     pub(crate) fn set_chunk(&mut self, text: &'a [u8], tape: Tape) -> Tape {
         self.input = text;
         std::mem::replace(&mut self.tape, tape)
     }
 
     /// The XML declaration says `standalone="yes"`.
+    #[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
     pub(crate) fn standalone(&self) -> bool {
         self.standalone
     }

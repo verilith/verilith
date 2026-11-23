@@ -687,6 +687,8 @@ proof fn lemma_etag_fail(
 /// An end tag, checked against the innermost open element's name.
 #[verifier::spinoff_prover]
 #[verifier::rlimit(60)]
+// `env` is only for the proof.
+#[allow(unused_variables)]
 fn step_etag(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
     requires
         old(w).inv(env_view(env)),
@@ -1088,6 +1090,8 @@ proof fn lemma_text_last_fail(
 /// Text, from where it was left, as far as the window decides it.
 #[verifier::spinoff_prover]
 #[verifier::rlimit(200)]
+// `env` is only for the proof.
+#[allow(unused_variables)]
 fn step_text(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
     requires
         old(w).inv(env_view(env)),
@@ -1213,6 +1217,8 @@ fn step_text(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
 /// it.
 #[verifier::spinoff_prover]
 #[verifier::rlimit(100)]
+// `env` is only for the proof.
+#[allow(unused_variables)]
 fn step_cdata(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
     requires
         old(w).inv(env_view(env)),
@@ -1649,8 +1655,8 @@ fn start_cdata(w: &mut Win, Ghost(envv): Ghost<Env>)
         lemma_has_cr_empty(seen, base + w.pos + 9);
     }
     let p = w.pos;
-    let n = w.buf.len();
-    assert(p + 9 <= n);
+    let _n = w.buf.len();
+    assert(p + 9 <= _n);
     w.mode = M_CDATA;
     w.pos = p + 9;
     w.tem = w.pos;
