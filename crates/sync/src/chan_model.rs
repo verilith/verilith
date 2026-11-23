@@ -1,7 +1,7 @@
 //! The channel's progress model as a ghost resource the code must follow.
 //!
 //! A [`Model`] holds a state of `progress::channel` together with the
-//! execution that led to it. The only way to change it is [`Model::step`],
+//! execution that led to it. The only way to change it is `Model::step`,
 //! which demands a proof that the change is a step of the model, by the
 //! thread whose token the caller holds. `src/chan_sync.rs` keeps one
 //! `Model` per direction inside the channel's invariant, next to the
@@ -13,10 +13,10 @@
 //! the model, and the progress theorems are about them.
 //!
 //! A thread of the model is a call in progress, not an OS thread: a call
-//! takes an idle model thread from a pool when it starts ([`Model::enter`])
-//! and gives it back when it returns ([`Model::leave`]). The model has a
+//! takes an idle model thread from a pool when it starts (`Model::enter`)
+//! and gives it back when it returns (`Model::leave`). The model has a
 //! fixed number of threads, so this is where the one assumption of this
-//! module is: [`Model::pool_nonempty`].
+//! module is: `Model::pool_nonempty`.
 // Some parameters and imports are used only in specifications and proofs.
 #![allow(unused_variables, unused_imports, unused_mut)]
 #[allow(unused_imports)]

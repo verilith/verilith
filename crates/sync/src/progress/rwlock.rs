@@ -22,7 +22,7 @@
 //! - **no lost wakeups**: while anyone sleeps on the list, "parked" is set
 //!   or some thread is about to wake every sleeper.
 //!
-//! [`theorem_deadlock_free`] then follows: if nobody ever held the lock
+//! `theorem_deadlock_free` then follows: if nobody ever held the lock
 //! again, the threads finishing an unlock would wake everyone and go idle,
 //! the word would settle at 0 with nobody asleep, and the next load by the
 //! waiting thread would see a free lock and take it.

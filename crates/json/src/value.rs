@@ -86,7 +86,7 @@ impl Parser {
         Parser { tape: None, idx: Vec::new(), eager: false }
     }
 
-    /// Switches between lazy and eager string decoding (see [`lazy`]),
+    /// Switches between lazy and eager string decoding (see [`Parser::lazy`]),
     /// keeping this parser's buffers.
     pub fn set_lazy(&mut self, lazy: bool) {
         self.eager = !lazy;

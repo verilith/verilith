@@ -8,7 +8,7 @@
 //! infinite executions directly: an execution is a sequence of states
 //! `ex(0), ex(1), ...` where step `i` is taken by thread `sched(i)`, and a
 //! schedule is fair when it lets every thread take infinitely many steps
-//! ([`trace::fair`]). Nothing else is assumed about timing.
+//! (`trace::fair`). Nothing else is assumed about timing.
 //!
 //! Each module models one protocol at the granularity of its atomic
 //! accesses, including the global parking lot (`src/parking.rs`) or the

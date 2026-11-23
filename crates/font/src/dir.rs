@@ -1,4 +1,4 @@
-//! The table directory: the verified check of [`wf_directory`] and table
+//! The table directory: the verified check of `wf_directory` and table
 //! lookup.
 use crate::prims::*;
 use crate::spec::*;
@@ -57,7 +57,7 @@ pub fn find(s: &[u8], t: u32) -> (r: usize)
     n
 }
 
-/// The checksum of table `i`: see [`table_sum`].
+/// The checksum of table `i`: see `table_sum`.
 pub fn table_checksum(s: &[u8], i: usize) -> (r: u32)
     requires
         12 + 16 * (i + 1) <= s.len(),
@@ -121,7 +121,7 @@ fn check_rec(s: &[u8], n: usize, i: usize) -> (b: bool)
     rd32(s, r + 4) == table_checksum(s, i)
 }
 
-/// Decides [`wf_directory`].
+/// Decides `wf_directory`.
 pub fn check_directory(s: &[u8]) -> (b: bool)
     ensures
         b == wf_directory(s@),

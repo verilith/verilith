@@ -68,7 +68,7 @@ pub enum Step {
     Done(Seq<u64>, Store),
     /// A call to imported function `func` with `args`. `cfg` is the state
     /// with the arguments popped and the caller still at the `call`;
-    /// [`resume`] continues it with the host's results.
+    /// `resume` continues it with the host's results.
     Host { func: nat, args: Seq<u64>, cfg: Config },
     /// No rule applies (never reached from a validated module).
     Stuck,

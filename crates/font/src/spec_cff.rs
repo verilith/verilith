@@ -1,4 +1,4 @@
-//! The trusted specification of a well-formed `CFF ` table ([`wf_cff`]),
+//! The trusted specification of a well-formed `CFF ` table (`wf_cff`),
 //! written from Adobe Technical Note #5176 (the Compact Font Format).
 //!
 //! It covers the structure of the table: the header, every INDEX, the Top

@@ -1,4 +1,4 @@
-//! Verified check of `cmap`: decides [`wf_cmap`] exactly.
+//! Verified check of `cmap`: decides `wf_cmap` exactly.
 use crate::prims::*;
 use crate::spec::*;
 use vstd::prelude::*;
@@ -503,7 +503,7 @@ fn check_cmap14(t: &[u8], o: usize, ng: u16) -> (b: bool)
     true
 }
 
-/// Decides [`wf_cmap_sub`] for the subtable at `o`.
+/// Decides `wf_cmap_sub` for the subtable at `o`.
 pub fn check_cmap_sub(t: &[u8], o: usize, ng: u16) -> (b: bool)
     requires
         o <= u32::MAX,
@@ -529,7 +529,7 @@ pub fn check_cmap_sub(t: &[u8], o: usize, ng: u16) -> (b: bool)
     }
 }
 
-/// Decides [`cmap_use_ok`].
+/// Decides `cmap_use_ok`.
 pub fn cmap_use(pe: u32, fmt: u16) -> (b: bool)
     ensures
         b == cmap_use_ok(pe as int, fmt as int),
@@ -540,7 +540,7 @@ pub fn cmap_use(pe: u32, fmt: u16) -> (b: bool)
         == 0x0003_000A && (fmt == 12 || fmt == 13))
 }
 
-/// Decides [`cmap_rec_ok`] for encoding record `i`.
+/// Decides `cmap_rec_ok` for encoding record `i`.
 pub fn check_cmap_rec(t: &[u8], i: usize, ng: u16) -> (b: bool)
     requires
         t.len() >= 4,
@@ -557,7 +557,7 @@ pub fn check_cmap_rec(t: &[u8], i: usize, ng: u16) -> (b: bool)
     o >= 4 + 8 * (rd16(t, 2) as usize) && check_cmap_sub(t, o, ng) && cmap_use(rd32(t, r), rd16(t, o))
 }
 
-/// Decides [`wf_cmap`].
+/// Decides `wf_cmap`.
 pub fn check_cmap(t: &[u8], ng: u16) -> (b: bool)
     ensures
         b == wf_cmap(t@, ng as int),

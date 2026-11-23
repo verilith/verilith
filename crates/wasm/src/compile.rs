@@ -1,5 +1,5 @@
 //! Prepares checked functions for the interpreter: resolves every branch
-//! target from the certificate, proven to give [`code_ok`].
+//! target from the certificate, proven to give `code_ok`.
 use vstd::prelude::*;
 use crate::ast::*;
 use crate::sem::*;
