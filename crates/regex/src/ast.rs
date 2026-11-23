@@ -585,3 +585,28 @@ fn max(a: usize, b: usize) -> (r: usize)
 }
 
 } // verus!
+
+// Dropping a tree takes its nodes apart one at a time, children first onto
+// a list on the heap, so a deep tree costs no call stack (the derived drop
+// would recurse once per level). Plain Rust outside the proof: it only
+// frees memory.
+impl Drop for Ast {
+    fn drop(&mut self) {
+        let mut todo: Vec<Box<Ast>> = Vec::new();
+        take_children(&mut self.node, &mut todo);
+        while let Some(mut a) = todo.pop() {
+            take_children(&mut a.node, &mut todo);
+        }
+    }
+}
+
+fn take_children(n: &mut Node, todo: &mut Vec<Box<Ast>>) {
+    match core::mem::replace(n, Node::Empty) {
+        Node::Group(_, x) | Node::Opt(x, _) | Node::Plus(x, _) => todo.push(x),
+        Node::Cat(x, y) | Node::Alt(x, y) => {
+            todo.push(x);
+            todo.push(y);
+        },
+        _ => {},
+    }
+}
