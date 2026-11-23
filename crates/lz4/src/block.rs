@@ -379,7 +379,8 @@ fn fast(src: &[u8], out: &mut [u8], lo: usize, start: usize, ip0: usize, op0: us
 /// `None`: the block is not valid, or what it decodes to does not fit in
 /// `out`. Bytes of `out` from `start` on may be changed either way;
 /// bytes before `start` are not.
-#[verifier::rlimit(60)]
+#[verifier::rlimit(100)]
+#[verifier::spinoff_prover]
 pub fn decode_block_counted(src: &[u8], out: &mut [u8], lo: usize, start: usize) -> (r: (Option<usize>, Ghost<nat>))
     requires
         lo <= start <= old(out)@.len(),
