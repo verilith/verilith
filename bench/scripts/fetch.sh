@@ -41,6 +41,12 @@ for d in lz4 snappy; do
   for f in $SILESIA_FILES dickens-4k dickens-64k; do cp "$DATA/zlib/$f" "$DATA/$d/$f"; done
 done
 
+# sha2: short messages (the first 16, 64, 256 and 1024 bytes of dickens),
+# then 4 KiB, 64 KiB and all of it.
+mkdir -p "$DATA/sha2"
+for n in 16 64 256 1024; do head -c $n "$DATA/zlib/dickens" > "$DATA/sha2/dickens-$n"; done
+for f in dickens dickens-4k dickens-64k; do cp "$DATA/zlib/$f" "$DATA/sha2/$f"; done
+
 # XML: six of the XML files in Silesia's xml (a tar of 20): plays, tagged
 # corpora, statistics, a W3C page. Then the seven files of roxmltree's
 # benchmarks: SVG drawings, a property list, a large data file, and files

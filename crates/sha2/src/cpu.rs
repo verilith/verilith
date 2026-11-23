@@ -328,7 +328,16 @@ pub(crate) mod shani {
     }
 
     /// The whole blocks of `p`.
+    ///
+    /// Never inlined: the SHA instructions have only legacy SSE encodings,
+    /// and run many times slower while the upper halves of the YMM
+    /// registers are dirty (seen as about 5 µs per call on an AVX-512
+    /// Xeon). Built with AVX2 enabled (`target-cpu=native`), the callers
+    /// use 256-bit stores, and inlined into them this ran after those with
+    /// no `vzeroupper` in between. A call gets one: LLVM puts a
+    /// `vzeroupper` before every call made with the upper halves dirty.
     #[target_feature(enable = "sha,sse2,ssse3,sse4.1")]
+    #[inline(never)]
     pub unsafe fn compress_blocks(st: &mut [u32; 8], p: &[u8]) {
         // Big-endian words from little-endian lanes.
         let bswap = _mm_set_epi64x(0x0c0d_0e0f_0809_0a0b, 0x0405_0607_0001_0203);

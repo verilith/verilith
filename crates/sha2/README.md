@@ -265,6 +265,22 @@ Xeons), 1 MiB, measured on the same machine with OpenSSL told not to use
 SHA-NI (`OPENSSL_ia32cap`) and RustCrypto's portable code: verilith-sha2
 492, RustCrypto 380, OpenSSL 523.
 
+Through the C API, in [vbench](https://github.com/verilith/verilith/tree/main/bench)'s `sha2` suite (the
+same C driver linked with OpenSSL 4.1.0's libcrypto and with this
+library, both built for the machine with `-march=native` and
+`target-cpu=native`; an Ice Lake Xeon cloud VM, medians of 21 alternating
+pairs): one-shot `SHA256()` is 1.7 to 1.8 times OpenSSL's speed up to 256
+bytes, 1.14 at 1 KiB and the same from 64 KiB; `SHA512()` 1.2 to 1.3 at
+64 and 256 bytes and the same elsewhere. Streamed in 1000-byte pieces,
+SHA-256 is within a few percent of OpenSSL except at 64 bytes (0.8) and
+SHA-512 0.8 to 0.9.
+
+The SHA-NI kernel is never inlined. The SHA instructions have only legacy
+SSE encodings, and inlined into callers built with AVX2 enabled it ran
+right after their 256-bit stores with the upper halves of the YMM
+registers dirty and no `vzeroupper` between: a one-block `SHA256()` took
+5 µs instead of 75 ns on an AVX-512 Xeon. vbench found it.
+
 What the speed rests on:
 
 - The eight-round groups are called with constant t, so that once inlined
@@ -287,7 +303,9 @@ What the speed rests on:
   there.
 - RustCrypto's block-level `digest` API, which RustCrypto's `hmac::Hmac`
   and `SerializableState` need.
-- A [vbench](https://github.com/verilith/verilith/tree/main/bench) suite against OpenSSL through the drop-in C API.
+- Streamed SHA-512 through the C API is 10 to 25% behind OpenSSL 4.1 in
+  vbench (below): a piece that ends a block compresses one block at a
+  time, where the AVX2 kernels are fastest two at a time.
 - Verifying the SHA-NI and ARMv8 kernels against specifications of the
   instructions in [verilith-simd](https://github.com/verilith/verilith/tree/main/crates/simd), as verilith-core does for
   AArch64's `crc32x`.
