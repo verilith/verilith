@@ -112,6 +112,27 @@ What the proofs here assume rather than prove:
   and stores the hasher in the caller's context.
 - Verus, Z3 and the Rust compiler.
 
+## The specification on NIST's vectors
+
+The tests below run the code, which is proven to compute `spec.rs` and
+`spec512.rs`, so they speak for the specification only through the
+proofs. `spec-tests/` checks the specification on its own, with no code
+and no proof in between: each message of NIST's CAVP SHA-2 ShortMsg
+vectors becomes an `assert(sha256(msg) == digest) by (compute_only)`,
+which Verus proves by evaluating the spec function on the message.
+
+- SHA-224 and SHA-256: all 65 ShortMsg messages each, every length from
+  0 to 64 bytes, so the padding is checked at every length, including the
+  ones that need a second block. All agree with NIST.
+- SHA-384, SHA-512, SHA-512/224 and SHA-512/256: the empty message only,
+  which checks each one's initial value, rounds and truncation. All agree.
+  Verus's evaluator takes about six minutes per SHA-512 block (against
+  about twelve seconds per SHA-256 block), too long to run all 129
+  lengths of each in CI.
+
+Run it with `scripts/spec-tests.sh sha2` from the repository root; CI
+runs it too.
+
 ## C API
 
 `SHA256_Init`, `SHA256_Update`, `SHA256_Final`, `SHA256`, and the same

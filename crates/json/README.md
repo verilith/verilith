@@ -508,6 +508,17 @@ The behaviors that callers depend on are kept:
 
 * **JSONTestSuite** (`test_parsing`, 318 files), Rust API: every `y_` file is
   accepted and every `n_` file is rejected.
+* **JSONTestSuite on the spec itself.** The tests above run the parser,
+  which is proven equal to `spec::document`, so they speak for the spec
+  only through the proofs. `spec-tests/` checks the spec with no parser
+  and no proof involved: each file becomes an
+  `assert(document(bytes, true) is Some) by (compute_only)` (or `is None`),
+  which Verus proves by running `spec::document` on the file's bytes in
+  its own evaluator. All 315 files it can evaluate agree with the suite:
+  every `y_` file accepted, every `n_` file rejected, and each `i_` file
+  as the table above says. The three files nested 500 levels deep or
+  more go past the evaluator's recursion limit and are left out
+  (`scripts/spec-tests.sh json`, run in CI).
 * **JSONTestSuite through the C API**, `cJSON_ParseWithLengthOpts(...,
   require_null_terminated=1)`, built with ASan and UBSan:
   * verilith-json gets 1 file wrong: `n_multidigit_number_then_00.json`. That file
@@ -952,6 +963,7 @@ native C API. The two features can be enabled together.
 JSON_TEST_SUITE=/path/to/JSONTestSuite/test_parsing cargo test --profile release-abort
 cargo test --profile release-abort --features capi --test capi   # the native C API against the Rust API
 ./scripts/test-c.sh            # both C APIs; clones cJSON and JSONTestSuite at pinned commits
+../../scripts/spec-tests.sh json   # spec::document itself on JSONTestSuite, evaluated by Verus
 ```
 
 ## API coverage

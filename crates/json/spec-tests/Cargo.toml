@@ -1,0 +1,16 @@
+# The JSON specification run on JSONTestSuite (scripts/spec-tests.sh).
+# A separate project, outside the workspace: it is only ever verified.
+[package]
+name = "verilith-json-spec-tests"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+verilith-json = { path = "..", features = ["cjson"] }
+vstd = { version = "=0.0.0-2026-11-01-0251", default-features = false, features = ["std"] }
+
+[package.metadata.verus]
+verify = true
+
+[workspace]

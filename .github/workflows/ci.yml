@@ -64,6 +64,7 @@ jobs:
       test: ${{ steps.plan.outputs.test }}
       arm: ${{ steps.plan.outputs.arm }}
       fuzz: ${{ steps.plan.outputs.fuzz }}
+      spec: ${{ steps.plan.outputs.spec }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -98,6 +99,11 @@ jobs:
           import json, sys
           print(json.dumps([c for c in json.load(sys.stdin)["test"] if "\nfuzz() {" in open(f"crates/{c}/ci.sh").read()]))')
           echo "fuzz=$fuzz" >> "$GITHUB_OUTPUT"
+          # Crates whose spec is run on an upstream suite (spec-tests/).
+          spec=$(echo "$plan" | python3 -c '
+          import json, os, sys
+          print(json.dumps([c for c in json.load(sys.stdin)["test"] if os.path.exists(f"crates/{c}/spec-tests/gen.sh")]))')
+          echo "spec=$spec" >> "$GITHUB_OUTPUT"
           echo "all_verified=$(python3 scripts/affected.py all | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['verify']))")" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/buck2
       - name: The Buck2 files match the Cargo ones
@@ -242,6 +248,28 @@ jobs:
         if: matrix.crate == 'wasm'
         run: crates/wasm/ci.sh differential
 
+  # Each crate's spec.rs evaluated by Verus on an upstream conformance
+  # suite (scripts/spec-tests.sh): evidence that the spec, the one thing
+  # the proofs trust, says what the suite expects.
+  spec:
+    name: Spec ${{ matrix.crate }} against its suite
+    needs: plan
+    if: needs.plan.outputs.spec != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: ${{ fromJSON(needs.plan.outputs.spec) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/verus
+      - name: Evaluate the spec on the suite
+        run: scripts/spec-tests.sh ${{ matrix.crate }}
+      - name: Log
+        if: failure()
+        run: cat target/spec-tests/${{ matrix.crate }}.log
+
   test-arm:
     # The portable (non-x86) paths build and pass their tests on Arm.
     name: Test ${{ matrix.crate }} (Arm)
@@ -277,7 +305,7 @@ jobs:
   done:
     name: CI
     if: always()
-    needs: [plan, verus, verify, crosscheck, verus-arm, verify-arm, test, test-arm]
+    needs: [plan, verus, verify, crosscheck, verus-arm, verify-arm, test, test-arm, spec]
     runs-on: ubuntu-latest
     steps:
       - name: Every job passed or was skipped
