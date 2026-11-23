@@ -43,6 +43,12 @@ pub mod safe;
 pub mod emu;
 pub mod neon;
 pub mod emu_neon;
+// The SIMD128 backend of `neon` (its byte-array view of `uint8x16_t` is
+// the one used everywhere but AArch64).
+#[cfg(not(target_arch = "aarch64"))]
+pub mod wasm;
+#[cfg(not(target_arch = "aarch64"))]
+pub mod wasm_neon;
 pub mod neon_mask;
 
 /// The x86 vector types and intrinsics: `core::arch::x86_64` on x86-64,
