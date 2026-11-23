@@ -25,10 +25,12 @@ same=0 bothbad=0 onlyref=0 counts=0 skipped=0 bad=0
 : > "${TMPDIR:-/tmp}/rules.$$"
 for f in "$@"; do
   a=$("$v" "$f" 2>&1)
-  rule=$(python3 "$here/rules.py" "$f"); conforming=$?
-  if [ $conforming -gt 1 ]; then
-    bad=$((bad + 1)); echo "RULES.PY $rule: $f"; continue
-  elif [[ "$a" == invalid* ]] && [ $conforming = 1 ]; then
+  rule=$(python3 "$here/rules.py" "$f"); status=$?
+  if [ $status != 0 ] && [ $status != 3 ]; then
+    bad=$((bad + 1)); echo "RULES.PY failed ($status): $f"; continue
+  fi
+  conforming=$((status == 3))
+  if [[ "$a" == invalid* ]] && [ $conforming = 1 ]; then
     bad=$((bad + 1)); echo "REJECTED, BUT CONFORMING $f"; continue
   elif [[ "$a" != invalid* ]] && [ $conforming = 0 ]; then
     bad=$((bad + 1)); echo "DECODED, BUT $rule: $f"; continue

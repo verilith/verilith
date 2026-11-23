@@ -15,7 +15,7 @@ use vstd::arithmetic::mul::*;
 #[cfg(verus_only)]
 use vstd::arithmetic::power2::*;
 use vstd::prelude::*;
-use vstd::slice::{slice_subrange, slice_to_vec};
+use vstd::slice::slice_to_vec;
 use verilith_zlib::wrap::{Decompressor, Format as ZFormat};
 #[cfg(verus_only)]
 use verilith_zlib::spec as z;
@@ -98,10 +98,10 @@ pub fn decompress_exec(comp: u32, d: &[u8], need: usize, rb: usize, off: &mut [u
         },
 {
     if comp == 1 {
-        if d.len() < need {
+        if d.len() != need {
             return Err(Error::Invalid);
         }
-        Ok(slice_to_vec(slice_subrange(d, 0, need)))
+        Ok(slice_to_vec(d))
     } else if comp == 32773 {
         let mut out = match alloc_zeroed(need) {
             Some(v) => v,

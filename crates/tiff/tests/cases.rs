@@ -132,10 +132,11 @@ fn uncompressed_strips() {
     let t = ok(&gray(7, 10, 3, 1, &chunks));
     assert_eq!((t.width, t.height, t.bits_per_sample, t.samples_per_pixel), (7, 10, 8, 1));
     assert_eq!(t.pixels, px);
-    // A strip with more data than it needs: the rest is not read.
+    // A byte count that is not the strip's size ("the number of bytes in
+    // that strip after any compression").
     let mut long = chunks.clone();
     long[0].extend_from_slice(&[9; 10]);
-    assert_eq!(ok(&gray(7, 10, 3, 1, &long)).pixels, px);
+    assert_eq!(err(&gray(7, 10, 3, 1, &long)), Error::Invalid);
     // One byte short.
     let mut short = chunks.clone();
     short[3].pop();

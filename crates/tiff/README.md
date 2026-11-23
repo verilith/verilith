@@ -109,7 +109,7 @@ meant) and verilith-tiff rejects as `Invalid`:
 | An LZW strip without its end code, or with more or fewer bytes than the strip | "each strip begins with a ClearCode and ends with an EndOfInformation code" (§13) | stops at the last byte it needs |
 | An LZW table grown past 4096 entries without a clear code | "our table can have at most 4096 entries. The table should not be any larger" (§13) | grows it to 5119 |
 | A Deflate strip or tile with more or fewer bytes than it holds, or a stream damaged after them | "The data in the last strip is not padded" (§3); tiles are all the tile's size (§15) | stops once it has enough (and, through libdeflate, leaves the end of the strip unwritten when the stream is longer) |
-| An uncompressed strip shorter than the strip | each strip holds its rows (§3, §8) | recomputes the byte count from the file's size |
+| An uncompressed strip or tile whose byte count is not its size | the byte count is "the number of bytes in that strip after any compression" (§8) | reads a longer one (and in `TIFFReadRGBATile` rejects it); recomputes a shorter one from the file's size |
 | "Old-style" LZW (libtiff before 1993) | not TIFF | reads it |
 
 Files that are TIFF, but use a part of it that verilith-tiff does not read,
@@ -132,8 +132,8 @@ Where the standard leaves the reader a choice (`choice:` in `spec.rs`): the
 output is little-endian whatever the file's byte order; values need not
 start at an even offset ("The Value is expected to begin on a word
 boundary" asks it of writers, and ASCII strings "will often begin on an odd
-byte"); an uncompressed strip's byte count may be larger than the strip;
-data after a strip's last byte or end code is not read; the Predictor is
+byte"); compressed data after a strip's last row, end code or the end of its
+zlib stream is not read; the Predictor is
 read only for LZW and Deflate ("Currently this field is used only with
 LZW").
 
@@ -303,27 +303,28 @@ strips or tiles one at a time:
 
 Milliseconds per decode (best of 15, one core, file already in memory) on
 a cloud VM, against Ubuntu's libtiff 4.5.1 package (with libdeflate). The
-images are 2000 × 1500 RGB at 16 bits per sample (18 MB decoded), 80 rows
-per strip or 256 × 256 tiles. Lower is better. `bench/tbench.c` and
+images are one 2000 × 1500 RGB image (ImageMagick's `plasma:fractal`), 80
+rows per strip or 256 × 256 tiles. Lower is better. `bench/tbench.c` and
 `examples/vtiffbench.rs` are the timers.
 
 | file | verilith-tiff | libtiff |
 | --- | ---: | ---: |
-| uncompressed | 2.19 | **0.73** |
-| LZW, predictor | 98.0 | **64.8** |
-| LZW 16-bit, predictor | 99.3 | **66.7** |
-| Deflate, predictor | 57.1 | **46.4** |
-| Deflate, tiles | 59.4 | **46.0** |
-| PackBits | 4.94 | **3.17** |
-| PackBits, tiles | 4.55 | **2.01** |
+| uncompressed, 16-bit | 3.02 | **1.00** |
+| LZW, predictor, 8-bit | 59.9 | **37.3** |
+| LZW, predictor, 16-bit | 137.1 | **89.7** |
+| Deflate, predictor, 16-bit | 74.3 | **61.1** |
+| Deflate, predictor, 16-bit, tiles | 76.3 | **61.3** |
+| PackBits, 8-bit | 1.64 | **1.21** |
+| PackBits, 8-bit, tiles | 1.92 | **1.06** |
 
-libtiff is faster on every file: 1.2 to 1.5 times on Deflate and LZW,
+libtiff is faster on every file: 1.2 times on Deflate, 1.5 to 1.6 on LZW,
 more on the cheap schemes. The comparison is not quite equal work:
 `tbench.c` decodes every strip into one reused buffer, while verilith-tiff
-allocates the 18 MB image and copies each strip into place, which is most
+allocates the whole image and copies each strip into place, which is most
 of the time for the uncompressed and PackBits files. On LZW the gap is the
-decoder itself (libtiff's has had decades of tuning); on Deflate it is
-verilith-zlib against libdeflate.
+decoder itself (libtiff's has had decades of tuning, and verilith-tiff's
+checks each code against the end of the strip and the table's 4096
+entries); on Deflate it is verilith-zlib against libdeflate.
 
 ## Building
 

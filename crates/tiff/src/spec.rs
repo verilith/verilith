@@ -812,15 +812,14 @@ pub open spec fn lzw(d: Seq<u8>, need: nat) -> Option<Seq<u8>> {
 
 /// The `need` bytes, in rows of `rb`, that the data `d` of a strip or tile
 /// decompresses to with scheme `comp`. Each scheme's data must hold the
-/// strip's bytes: uncompressed, at least `need` bytes (choice: a byte count
-/// larger than the strip is allowed, and the first `need` bytes are the
-/// strip); PackBits, row by row; LZW, exactly `need` bytes to the end
+/// strip's bytes: uncompressed, exactly `need` bytes (the byte count is
+/// "the number of bytes in that strip after any compression", §8); PackBits, row by row; LZW, exactly `need` bytes to the end
 /// code; Deflate, a zlib stream (RFC 1950) that decompresses to exactly
 /// `need` bytes, since "the data in the last strip is not padded" (§3) and
 /// tiles are the tile's size (§15). Bytes after the data are not read.
 pub open spec fn decompress(comp: nat, d: Seq<u8>, need: nat, rb: nat) -> Option<Seq<u8>> {
     if comp == NONE {
-        if d.len() >= need { Some(d.subrange(0, need as int)) } else { None }
+        if d.len() == need { Some(d) } else { None }
     } else if comp == PACKBITS {
         packbits(d, 0, Seq::empty(), need, rb)
     } else if comp == LZW {

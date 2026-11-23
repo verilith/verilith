@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """rules.py FILE: names the first TIFF 6.0 rule the TIFF file's first image
 breaks, or a part of TIFF that verilith-tiff does not read, and exits 0; or
-prints "conforming" and exits 1.
+prints "conforming" and exits 3. Any other exit is a failure of this script.
 
 An independent check of src/spec.rs, written from the standard rather than
 from the spec: difftest/compare.sh runs it on every file that libtiff
@@ -197,7 +197,7 @@ def check(d):
 
 def chunk(comp, data, need, rb):
     if comp == 1:
-        return "§8: an uncompressed strip shorter than the strip" if len(data) < need else None
+        return "§8: an uncompressed strip's byte count is the strip's size" if len(data) != need else None
     if comp == 8:
         z = zlib.decompressobj()
         try:
@@ -279,4 +279,4 @@ except Exception as ex:  # a bug here, not a verdict
     print("rules.py failed:", ex)
     sys.exit(2)
 print(r or "conforming")
-sys.exit(0 if r else 1)
+sys.exit(0 if r else 3)

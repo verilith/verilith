@@ -88,7 +88,7 @@ for k in keys:
     if t in types and types[t] not in WANT.get(t, {1, 3, 4}):
         reasons.add("skipped")
         allowed.add(k)
-        if k == "orientation":
+        if k in ("orientation", "extrasamples"):
             allowed.add("rgba")
         if k == "rps":
             # TIFFTileSize of a strip image is RowsPerStrip rows.
