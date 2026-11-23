@@ -48,6 +48,15 @@ pub mod lex;
 pub mod scan;
 #[doc(hidden)]
 pub mod spec;
+#[doc(hidden)]
+pub mod stable;
+#[doc(hidden)]
+pub mod stable_pro;
+#[doc(hidden)]
+pub mod stream_spec;
+pub mod stream;
+pub mod push;
+pub mod reader;
 pub mod tape;
 #[doc(hidden)]
 pub mod uniq;

@@ -100,12 +100,36 @@ struct AttDef {
     value: (usize, usize),
 }
 
+/// The declarations a document's content refers to: its own, or those of
+/// a stream's prolog (`Document::chunk`).
+#[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
+enum Dtd<'a> {
+    Own(DtdOut),
+    Prolog(&'a DtdOut),
+}
+
+impl std::ops::Deref for Dtd<'_> {
+    type Target = DtdOut;
+
+    fn deref(&self) -> &DtdOut {
+        match self {
+            Dtd::Own(d) => d,
+            Dtd::Prolog(d) => d,
+        }
+    }
+}
+
 /// A parsed document.
 pub struct Document<'a> {
     input: &'a [u8],
     owned: Option<Vec<u8>>,
     tape: Tape,
-    dtd: DtdOut,
+    dtd: Dtd<'a>,
+    /// The text the declarations' positions are in, where it is not the
+    /// document's own: a stream's prolog.
+    pro: Option<&'a [u8]>,
+    /// The XML declaration says `standalone="yes"`.
+    standalone: bool,
     ent_tapes: Vec<OnceCell<Option<Tape>>>,
     defs: Vec<AttDef>,
     /// `defs` by (element type, attribute name), and by element type.
@@ -174,16 +198,30 @@ fn cow_utf8(c: Cow<'_, [u8]>) -> Cow<'_, str> {
 enum Src {
     Doc,
     Ent(usize),
+    /// The text of the declarations (the document's own, but for a
+    /// stream: its prolog).
+    Pro,
+}
+
+impl Src {
+    /// In the document's text (or its prolog's), not in an entity's
+    /// replacement text: line ends are not yet normalized.
+    fn raw(self) -> bool {
+        !matches!(self, Src::Ent(_))
+    }
 }
 
 impl<'a> Document<'a> {
     fn new(input: &'a [u8], owned: Option<Vec<u8>>, tape: Tape, dtd: DtdOut) -> Self {
         let n = dtd.ents.len();
+        let standalone = tape.toks.first().map_or(false, |t| t.kind == Kind::XmlDecl && t.f == 1);
         let mut d = Document {
             input,
             owned,
             tape,
-            dtd,
+            dtd: Dtd::Own(dtd),
+            pro: None,
+            standalone,
             ent_tapes: (0..n).map(|_| OnceCell::new()).collect(),
             defs: Vec::new(),
             def_index: HashMap::new(),
@@ -191,8 +229,55 @@ impl<'a> Document<'a> {
             root: 0,
         };
         d.root = d.tape.toks.iter().position(|t| t.kind == Kind::STag).unwrap_or(0) as usize;
-        d.att_defs();
+        let toks = std::mem::take(&mut d.tape.toks);
+        d.att_defs(&toks, None);
+        d.tape.toks = toks;
         d
+    }
+
+    /// A stream's document, read a chunk at a time (`set_chunk`): its
+    /// content refers to the declarations `dtd`, at positions in `pro`,
+    /// whose tokens are `ptoks` (the prolog's).
+    #[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
+    pub(crate) fn chunk(dtd: &'a DtdOut, pro: &'a [u8], ptoks: &[Tok], standalone: bool) -> Self {
+        let n = dtd.ents.len();
+        let mut d = Document {
+            input: &[],
+            owned: None,
+            tape: Tape::new(),
+            dtd: Dtd::Prolog(dtd),
+            pro: Some(pro),
+            standalone,
+            ent_tapes: (0..n).map(|_| OnceCell::new()).collect(),
+            defs: Vec::new(),
+            def_index: HashMap::new(),
+            defs_of: HashMap::new(),
+            root: 0,
+        };
+        d.att_defs(ptoks, Some(pro));
+        d
+    }
+
+    /// The next chunk of a stream's document: the window's text, and the
+    /// tokens read in it. The tokens of the last chunk come back.
+    #[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
+    pub(crate) fn set_chunk(&mut self, text: &'a [u8], tape: Tape) -> Tape {
+        self.input = text;
+        std::mem::replace(&mut self.tape, tape)
+    }
+
+    /// The XML declaration says `standalone="yes"`.
+    #[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
+    pub(crate) fn standalone(&self) -> bool {
+        self.standalone
+    }
+
+    /// The text the declarations' positions are in.
+    fn dtd_text(&self) -> &[u8] {
+        match self.pro {
+            Some(p) => p,
+            None => self.text(),
+        }
     }
 
     /// The text of the document in UTF-8.
@@ -252,7 +337,7 @@ impl<'a> Document<'a> {
     /// the document itself (an entity's replacement text already is).
     fn text_of(&self, src: Src, t: Tok) -> Cow<'_, str> {
         let raw = self.span(src, t.a(), t.b());
-        if src == Src::Doc && raw.contains(&b'\r') {
+        if src.raw() && raw.contains(&b'\r') {
             let mut out = Vec::with_capacity(raw.len());
             ex_eol(self.buf(src), t.a(), t.b(), &mut out);
             cow_utf8(Cow::Owned(out))
@@ -286,7 +371,7 @@ impl<'a> Document<'a> {
 
     fn env(&self) -> XEnv<'_> {
         XEnv {
-            doc: self.text(),
+            doc: self.dtd_text(),
             ents: &self.dtd.ents,
             wfc: self.dtd.wfc,
             oka: &self.dtd.oka,
@@ -299,6 +384,7 @@ impl<'a> Document<'a> {
         match src {
             Src::Doc => self.text(),
             Src::Ent(k) => &self.dtd.rts[k as usize],
+            Src::Pro => self.dtd_text(),
         }
     }
 
@@ -313,6 +399,7 @@ impl<'a> Document<'a> {
                 Some(t) => &t.toks,
                 None => &[],
             },
+            Src::Pro => &[],
         }
     }
 
@@ -345,10 +432,12 @@ impl<'a> Document<'a> {
     /// declarations that were processed (all before the first parameter
     /// entity reference that was not read, unless the document is
     /// standalone, §5.1), the first one binding for each attribute (§3.3).
-    fn att_defs(&mut self) {
-        let toks = &self.tape.toks;
-        let text: &[u8] = self.owned.as_deref().unwrap_or(self.input);
-        let standalone = toks.first().map_or(false, |t| t.kind == Kind::XmlDecl && t.f == 1);
+    fn att_defs(&mut self, toks: &[Tok], pro: Option<&[u8]>) {
+        let text: &[u8] = match pro {
+            Some(p) => p,
+            None => self.owned.as_deref().unwrap_or(self.input),
+        };
+        let standalone = self.standalone;
         let mut skip = false;
         let mut elem = (0, 0);
         let mut i = 0;
@@ -390,7 +479,7 @@ impl<'a> Document<'a> {
                 self.buf(src),
                 a as usize,
                 b as usize,
-                src == Src::Doc,
+                src.raw(),
                 &env,
                 &self.dtd.rts,
                 self.dtd.ents.len(),
@@ -520,7 +609,7 @@ impl<'d> Element<'d> {
             out.push(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: false });
             i += 2;
         }
-        let text = doc.text();
+        let text = doc.dtd_text();
         let given: HashSet<&[u8]> = out.iter().map(|a| a.name.as_bytes()).collect();
         for &k in doc.defs_for(elem) {
             let d = &doc.defs[k];
@@ -531,7 +620,7 @@ impl<'d> Element<'d> {
             if given.contains(name) {
                 continue;
             }
-            let value = doc.value(Src::Doc, d.value.0, d.value.1, false, d.ty, limit)?;
+            let value = doc.value(Src::Pro, d.value.0, d.value.1, false, d.ty, limit)?;
             out.push(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: true });
         }
         Ok(out)
@@ -606,7 +695,7 @@ impl<'d> Iterator for Attrs<'d> {
             let value = doc.value(self.e.src, v.a(), v.b(), v.f != 0, ty, usize::MAX).unwrap_or(Cow::Borrowed(&[]));
             return Some(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: false });
         }
-        let text = doc.text();
+        let text = doc.dtd_text();
         let mine = doc.defs_for(self.e.name_bytes());
         while self.d < mine.len() {
             let d = doc.defs[mine[self.d]];
@@ -624,7 +713,7 @@ impl<'d> Iterator for Attrs<'d> {
             if given {
                 continue;
             }
-            let value = doc.value(Src::Doc, d.value.0, d.value.1, false, d.ty, usize::MAX).unwrap_or(Cow::Borrowed(&[]));
+            let value = doc.value(Src::Pro, d.value.0, d.value.1, false, d.ty, usize::MAX).unwrap_or(Cow::Borrowed(&[]));
             return Some(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: true });
         }
         None
@@ -659,7 +748,7 @@ impl<'d> Iterator for Children<'d> {
                     Child::Element(Element { doc, src, idx: i })
                 }
                 Kind::Text | Kind::CData => {
-                    let v: Cow<'d, [u8]> = if src == Src::Doc && t.f != 0 {
+                    let v: Cow<'d, [u8]> = if src.raw() && t.f & 1 != 0 {
                         let mut out = Vec::with_capacity(t.b() - t.a());
                         ex_eol(doc.buf(src), t.a(), t.b(), &mut out);
                         Cow::Owned(out)
