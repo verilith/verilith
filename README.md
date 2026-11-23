@@ -230,6 +230,7 @@ verus/             the Buck2 rules that run Verus (see BUILDING.md)
 third-party/       what the proofs need from crates.io, for Buck2 (generated)
 THIRD-PARTY.md     what comes from other projects, and under which licence
 SECURITY.md        how to report a vulnerability
+CONTRIBUTING.md    how to check a change before sending it
 ```
 
 Some crates also hold separate Cargo projects (`bench/`, `fuzz/`,

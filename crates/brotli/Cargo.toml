@@ -5,6 +5,8 @@ license = "(MIT OR Apache-2.0) AND MIT"
 description = "A formally verified (Verus) Brotli (RFC 7932) decompressor with google/brotli's decoder C API"
 edition = "2024"
 repository = "https://github.com/verilith/verilith"
+keywords = ["brotli", "decompression", "verified", "verus", "rfc7932"]
+categories = ["compression"]
 
 [lib]
 crate-type = ["rlib", "staticlib"]

@@ -5,6 +5,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Formally verified (Verus) drop-in replacements for foundational libraries: one crate that re-exports each verilith-* library behind a feature"
 repository = "https://github.com/verilith/verilith"
+categories = ["compression", "parser-implementations", "encoding"]
 readme = "README.md"
 keywords = ["verified", "verus", "parser", "compression"]
 
