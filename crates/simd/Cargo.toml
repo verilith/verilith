@@ -1,6 +1,6 @@
 [package]
 name = "verilith-simd"
-version = "0.1.1"
+version = "0.1.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/verilith/verilith"
 keywords = ["simd", "intrinsics", "neon", "verus", "specification"]
