@@ -660,6 +660,7 @@ pub proof fn lemma_find_prefix_some(ents: Seq<Ent>, name: Seq<u8>, j: int)
 fn ex_ref_name(s: &[u8], i: usize) -> (r: usize)
     requires
         i + 1 <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
     ensures
         r == name_end(s@, i + 1),
         i + 1 <= r <= s@.len(),
@@ -671,6 +672,7 @@ fn ex_ref_name(s: &[u8], i: usize) -> (r: usize)
 pub fn ex_ref_syntax(s: &[u8], i: usize) -> (r: Option<usize>)
     requires
         i < s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
     ensures
         same(r, ref_syntax(s@, i as int)),
         r matches Some(e) ==> i < e <= s@.len(),
@@ -694,6 +696,7 @@ pub fn ex_ref_syntax(s: &[u8], i: usize) -> (r: Option<usize>)
 pub fn ex_att_ref(s: &[u8], i: usize, env: Option<&XEnv>, lim: usize) -> (r: Option<usize>)
     requires
         i < s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         oenv_wf(env, lim as int),
     ensures
         same(r, att_ref(s@, i as int, oenv_view(env, lim as int))),
@@ -743,6 +746,7 @@ pub fn ex_att_ref(s: &[u8], i: usize, env: Option<&XEnv>, lim: usize) -> (r: Opt
 pub fn ex_content_ref(s: &[u8], i: usize, env: &XEnv) -> (r: Option<(Tok, usize)>)
     requires
         i < s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         env_wf(env),
     ensures
         match content_ref(s@, i as int, env_view(env)) {
@@ -752,7 +756,7 @@ pub fn ex_content_ref(s: &[u8], i: usize, env: &XEnv) -> (r: Option<(Tok, usize)
 {
     if ex_byte_is(s, i + 1, 0x23) {
         match ex_charref(s, i) {
-            Some((c, e)) => Some((Tok { kind: Kind::CharRef, f: 0, a: i, b: c as usize, c: 0 }, e)),
+            Some((c, e)) => Some((Tok::new(Kind::CharRef, 0, i, c as usize, 0), e)),
             None => None,
         }
     } else {
@@ -761,7 +765,7 @@ pub fn ex_content_ref(s: &[u8], i: usize, env: &XEnv) -> (r: Option<(Tok, usize)
             None
         } else {
             match ex_predef(s, i + 1, n) {
-                Some(c) => Some((Tok { kind: Kind::CharRef, f: 0, a: i, b: c as usize, c: 0 }, n + 1)),
+                Some(c) => Some((Tok::new(Kind::CharRef, 0, i, c as usize, 0), n + 1)),
                 None => {
                     proof {
                         lemma_lim_all(env);
@@ -936,6 +940,7 @@ pub proof fn lemma_att_skip(s: Seq<u8>, i: int, j: int, k: int, q: u8, env: Opti
 pub fn ex_att_chars(s: &[u8], i: usize, q: u8, env: Option<&XEnv>, lim: usize) -> (r: Option<(usize, bool)>)
     requires
         i <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         oenv_wf(env, lim as int),
     ensures
         match att_chars(s@, i as int, q, oenv_view(env, lim as int)) {
@@ -950,6 +955,7 @@ pub fn ex_att_chars(s: &[u8], i: usize, q: u8, env: Option<&XEnv>, lim: usize) -
         invariant
             i <= j <= n,
             n == s@.len() <= isize::MAX,
+            s@.len() <= MAX_POS,
             oenv_wf(env, lim as int),
             att_chars(s@, j as int, q, oenv_view(env, lim as int)) == att_chars(s@, i as int, q, oenv_view(env, lim as int)),
             plain == att_plain(s@, i as int, j as int),
@@ -1002,6 +1008,7 @@ pub fn ex_att_chars(s: &[u8], i: usize, q: u8, env: Option<&XEnv>, lim: usize) -
 pub fn ex_ent_value_end(s: &[u8], i: usize, q: u8) -> (r: Option<usize>)
     requires
         i <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
     ensures
         same(r, ent_value_end(s@, i as int, q)),
         r matches Some(e) ==> i < e <= s@.len(),
@@ -1012,6 +1019,7 @@ pub fn ex_ent_value_end(s: &[u8], i: usize, q: u8) -> (r: Option<usize>)
         invariant
             i <= j <= n,
             n == s@.len() <= isize::MAX,
+            s@.len() <= MAX_POS,
             ent_value_end(s@, j as int, q) == ent_value_end(s@, i as int, q),
         decreases n - j,
     {
@@ -1170,6 +1178,7 @@ pub fn ex_comment_end(s: &[u8], i: usize) -> (r: Option<usize>)
 pub fn ex_comment(s: &[u8], i: usize, tape: &mut Tape) -> (r: Option<usize>)
     requires
         i + 4 <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() <= i,
     ensures
         match comment(s@, i as int, old(tape)@) {
@@ -1239,6 +1248,7 @@ fn ex_xml_name(s: &[u8], a: usize, b: usize) -> (r: bool)
 pub fn ex_pi(s: &[u8], i: usize, tape: &mut Tape) -> (r: Option<usize>)
     requires
         i + 2 <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() <= i,
     ensures
         match pi(s@, i as int, old(tape)@) {
@@ -1410,6 +1420,7 @@ pub fn ex_text_end(s: &[u8], i: usize) -> (r: Option<(usize, bool)>)
 pub fn ex_misc(s: &[u8], i: usize, tape: &mut Tape) -> (r: Option<usize>)
     requires
         i <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() <= i,
     ensures
         match misc(s@, i as int, old(tape)@) {
@@ -1424,6 +1435,7 @@ pub fn ex_misc(s: &[u8], i: usize, tape: &mut Tape) -> (r: Option<usize>)
     loop
         invariant
             i <= j <= s@.len() <= isize::MAX,
+            s@.len() <= MAX_POS,
             tape@.len() <= j,
             misc(s@, j as int, tape@) == misc(s@, i as int, old(tape)@),
             L_COMMENT@ == lit_comment(),

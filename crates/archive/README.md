@@ -106,6 +106,11 @@ Extraction (`extract`) is available on Unix only.
 `cargo run --release --example varc -- list|extract ARCHIVE [DIR]` is a
 small command line around this.
 
+Extraction (`extract`, and `archive_read_extract` in the C API) is
+Unix-only for now: the file system model in `src/policy.rs` is POSIX's.
+Reading and planning work everywhere, so a Windows program can list an
+archive, read its members and check the plan, then write the files itself.
+
 ## The C API: libarchive's read API
 
 With the feature `libarchive-abi`, `libverilith_archive.a` exports the part of

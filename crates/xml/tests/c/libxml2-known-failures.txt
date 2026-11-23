@@ -1,0 +1,271 @@
+# libxml2 2.15.4's runtest suites against verilith-xml's libxml2 ABI: the
+# tests that fail, as scripts/test-libxml2.sh lists them (suite, a tab, the
+# test), by reason. CI fails if another test fails or a listed one passes.
+
+# The push parser reads the document when the last chunk comes, so no SAX
+# call comes before it; these tests push a byte at a time and count the calls
+# each byte gives.
+XML push boundary tests	./test/adjacent-cdata.xml
+XML push boundary tests	./test/att10
+XML push boundary tests	./test/att11
+XML push boundary tests	./test/att3
+XML push boundary tests	./test/att4
+XML push boundary tests	./test/att5
+XML push boundary tests	./test/att6
+XML push boundary tests	./test/att8
+XML push boundary tests	./test/att9
+XML push boundary tests	./test/badcomment.xml
+XML push boundary tests	./test/cdata
+XML push boundary tests	./test/cdata-2-byte-UTF-8.xml
+XML push boundary tests	./test/cdata-3-byte-UTF-8.xml
+XML push boundary tests	./test/cdata-4-byte-UTF-8.xml
+XML push boundary tests	./test/cdata2
+XML push boundary tests	./test/comment.xml
+XML push boundary tests	./test/comment2.xml
+XML push boundary tests	./test/comment3.xml
+XML push boundary tests	./test/comment4.xml
+XML push boundary tests	./test/comment5.xml
+XML push boundary tests	./test/comment6.xml
+XML push boundary tests	./test/dav1
+XML push boundary tests	./test/dav10
+XML push boundary tests	./test/dav11
+XML push boundary tests	./test/dav12
+XML push boundary tests	./test/dav13
+XML push boundary tests	./test/dav15
+XML push boundary tests	./test/dav16
+XML push boundary tests	./test/dav17
+XML push boundary tests	./test/dav18
+XML push boundary tests	./test/dav19
+XML push boundary tests	./test/dav2
+XML push boundary tests	./test/dav3
+XML push boundary tests	./test/dav4
+XML push boundary tests	./test/dav5
+XML push boundary tests	./test/dav6
+XML push boundary tests	./test/dav7
+XML push boundary tests	./test/dav8
+XML push boundary tests	./test/dav9
+XML push boundary tests	./test/def-xml-attr.xml
+XML push boundary tests	./test/defattr.xml
+XML push boundary tests	./test/defattr2.xml
+XML push boundary tests	./test/dia1
+XML push boundary tests	./test/dia2
+XML push boundary tests	./test/dtd1
+XML push boundary tests	./test/dtd10
+XML push boundary tests	./test/dtd11
+XML push boundary tests	./test/dtd13
+XML push boundary tests	./test/dtd2
+XML push boundary tests	./test/dtd3
+XML push boundary tests	./test/dtd4
+XML push boundary tests	./test/dtd5
+XML push boundary tests	./test/dtd6
+XML push boundary tests	./test/dtd7
+XML push boundary tests	./test/dtd8
+XML push boundary tests	./test/dtd9
+XML push boundary tests	./test/emptycdata.xml
+XML push boundary tests	./test/ent13
+XML push boundary tests	./test/ent3
+XML push boundary tests	./test/ent4
+XML push boundary tests	./test/ent5
+XML push boundary tests	./test/ent6
+XML push boundary tests	./test/ent6hex
+XML push boundary tests	./test/ent7
+XML push boundary tests	./test/entity-in-ns-uri.xml
+XML push boundary tests	./test/eve.xml
+XML push boundary tests	./test/intsubset.xml
+XML push boundary tests	./test/intsubset2.xml
+XML push boundary tests	./test/isolat1
+XML push boundary tests	./test/isolat2
+XML push boundary tests	./test/isolat3
+XML push boundary tests	./test/issue626.xml
+XML push boundary tests	./test/issue643.xml
+XML push boundary tests	./test/issue655.xml
+XML push boundary tests	./test/japancrlf.xml
+XML push boundary tests	./test/ns
+XML push boundary tests	./test/ns5
+XML push boundary tests	./test/ns6
+XML push boundary tests	./test/nsclean.xml
+XML push boundary tests	./test/p3p
+XML push boundary tests	./test/pi.xml
+XML push boundary tests	./test/pi2.xml
+XML push boundary tests	./test/rdf1
+XML push boundary tests	./test/rdf2
+XML push boundary tests	./test/slashdot.rdf
+XML push boundary tests	./test/slashdot.xml
+XML push boundary tests	./test/slashdot16.xml
+XML push boundary tests	./test/svg1
+XML push boundary tests	./test/svg2
+XML push boundary tests	./test/svg3
+XML push boundary tests	./test/text-4-byte-UTF-16-BE-offset.xml
+XML push boundary tests	./test/text-4-byte-UTF-16-BE.xml
+XML push boundary tests	./test/text-4-byte-UTF-16-LE-offset.xml
+XML push boundary tests	./test/text-4-byte-UTF-16-LE.xml
+XML push boundary tests	./test/title.xml
+XML push boundary tests	./test/tstblanks.xml
+XML push boundary tests	./test/utf16bebom.xml
+XML push boundary tests	./test/utf16bom.xml
+XML push boundary tests	./test/utf16lebom.xml
+XML push boundary tests	./test/wap.xml
+XML push boundary tests	./test/winblanks.xml
+XML push boundary tests	./test/wml.xml
+XML push boundary tests	./test/xhtml1
+XML push boundary tests	./test/xhtmlcomp
+XML push boundary tests	./test/xml2
+
+# Malformed documents: libxml2 recovers and reports every error it meets;
+# here the verified parser rejects the document and one error is reported,
+# worked out from where it stopped (the code, message and position match
+# libxml2's on the common cases).
+Error cases regression tests	./test/errors/754946.xml
+Error cases regression tests	./test/errors/754947.xml
+Error cases regression tests	./test/errors/758588.xml
+Error cases regression tests	./test/errors/759020.xml
+Error cases regression tests	./test/errors/759398.xml
+Error cases regression tests	./test/errors/759573-2.xml
+Error cases regression tests	./test/errors/759573.xml
+Error cases regression tests	./test/errors/759579.xml
+Error cases regression tests	./test/errors/attr1.xml
+Error cases regression tests	./test/errors/attr2.xml
+Error cases regression tests	./test/errors/attr4.xml
+Error cases regression tests	./test/errors/attr6.xml
+Error cases regression tests	./test/errors/cdata.xml
+Error cases regression tests	./test/errors/charref1.xml
+Error cases regression tests	./test/errors/comment1.xml
+Error cases regression tests	./test/errors/content1.xml
+Error cases regression tests	./test/errors/doctype1.xml
+Error cases regression tests	./test/errors/doctype2.xml
+Error cases regression tests	./test/errors/dup-xml-attr2.xml
+Error cases regression tests	./test/errors/ent_redecl.xml
+Error cases regression tests	./test/errors/invalid-start-tag-1.xml
+Error cases regression tests	./test/errors/invalid-start-tag-2.xml
+Error cases regression tests	./test/errors/issue151.xml
+Error cases regression tests	./test/errors/issue868.xml
+Error cases regression tests	./test/errors/name.xml
+Error cases regression tests	./test/errors/name2.xml
+Error cases regression tests	./test/errors/name3.xml
+Error cases regression tests	./test/errors/ns-ent.xml
+Error cases regression tests	./test/errors/quadratic-defattr.xml
+Error cases regression tests	./test/errors/rec_att_default.xml
+Error cases regression tests	./test/errors/trailing-null-1.xml
+Error cases regression tests	./test/errors/trailing-null-2.xml
+Error cases regression tests	./test/errors/truncated-utf16.xml
+Error cases regression tests	./test/errors/unclosed-element.xml
+Error cases regression tests	./test/errors/unsupported-encoding.xml
+Error cases regression tests	./test/errors/utf8-1.xml
+Error cases regression tests	./test/errors/utf8-2.xml
+Error cases regression tests (old 1.0)	./test/errors10/781205.xml
+Error cases regression tests (old 1.0)	./test/errors10/781361.xml
+Error cases regression tests from file descriptor	./test/errors/754946.xml
+Error cases regression tests from file descriptor	./test/errors/754947.xml
+Error cases regression tests from file descriptor	./test/errors/758588.xml
+Error cases regression tests from file descriptor	./test/errors/759020.xml
+Error cases regression tests from file descriptor	./test/errors/759398.xml
+Error cases regression tests from file descriptor	./test/errors/759573-2.xml
+Error cases regression tests from file descriptor	./test/errors/759573.xml
+Error cases regression tests from file descriptor	./test/errors/759579.xml
+Error cases regression tests from file descriptor	./test/errors/attr1.xml
+Error cases regression tests from file descriptor	./test/errors/attr2.xml
+Error cases regression tests from file descriptor	./test/errors/attr4.xml
+Error cases regression tests from file descriptor	./test/errors/attr6.xml
+Error cases regression tests from file descriptor	./test/errors/cdata.xml
+Error cases regression tests from file descriptor	./test/errors/charref1.xml
+Error cases regression tests from file descriptor	./test/errors/comment1.xml
+Error cases regression tests from file descriptor	./test/errors/content1.xml
+Error cases regression tests from file descriptor	./test/errors/doctype1.xml
+Error cases regression tests from file descriptor	./test/errors/doctype2.xml
+Error cases regression tests from file descriptor	./test/errors/dup-xml-attr2.xml
+Error cases regression tests from file descriptor	./test/errors/ent_redecl.xml
+Error cases regression tests from file descriptor	./test/errors/invalid-start-tag-1.xml
+Error cases regression tests from file descriptor	./test/errors/invalid-start-tag-2.xml
+Error cases regression tests from file descriptor	./test/errors/issue151.xml
+Error cases regression tests from file descriptor	./test/errors/issue868.xml
+Error cases regression tests from file descriptor	./test/errors/name.xml
+Error cases regression tests from file descriptor	./test/errors/name2.xml
+Error cases regression tests from file descriptor	./test/errors/name3.xml
+Error cases regression tests from file descriptor	./test/errors/ns-ent.xml
+Error cases regression tests from file descriptor	./test/errors/quadratic-defattr.xml
+Error cases regression tests from file descriptor	./test/errors/rec_att_default.xml
+Error cases regression tests from file descriptor	./test/errors/trailing-null-1.xml
+Error cases regression tests from file descriptor	./test/errors/trailing-null-2.xml
+Error cases regression tests from file descriptor	./test/errors/truncated-utf16.xml
+Error cases regression tests from file descriptor	./test/errors/unclosed-element.xml
+Error cases regression tests from file descriptor	./test/errors/unsupported-encoding.xml
+Error cases regression tests from file descriptor	./test/errors/utf8-1.xml
+Error cases regression tests from file descriptor	./test/errors/utf8-2.xml
+Error cases regression tests with entity substitution	./test/errors/754946.xml
+Error cases regression tests with entity substitution	./test/errors/754947.xml
+Error cases regression tests with entity substitution	./test/errors/758588.xml
+Error cases regression tests with entity substitution	./test/errors/759020.xml
+Error cases regression tests with entity substitution	./test/errors/759398.xml
+Error cases regression tests with entity substitution	./test/errors/759573-2.xml
+Error cases regression tests with entity substitution	./test/errors/759573.xml
+Error cases regression tests with entity substitution	./test/errors/759579.xml
+Error cases regression tests with entity substitution	./test/errors/attr1.xml
+Error cases regression tests with entity substitution	./test/errors/attr2.xml
+Error cases regression tests with entity substitution	./test/errors/attr4.xml
+Error cases regression tests with entity substitution	./test/errors/attr6.xml
+Error cases regression tests with entity substitution	./test/errors/cdata.xml
+Error cases regression tests with entity substitution	./test/errors/charref1.xml
+Error cases regression tests with entity substitution	./test/errors/comment1.xml
+Error cases regression tests with entity substitution	./test/errors/content1.xml
+Error cases regression tests with entity substitution	./test/errors/doctype1.xml
+Error cases regression tests with entity substitution	./test/errors/doctype2.xml
+Error cases regression tests with entity substitution	./test/errors/dup-xml-attr2.xml
+Error cases regression tests with entity substitution	./test/errors/ent_redecl.xml
+Error cases regression tests with entity substitution	./test/errors/extparsedent.xml
+Error cases regression tests with entity substitution	./test/errors/invalid-start-tag-1.xml
+Error cases regression tests with entity substitution	./test/errors/invalid-start-tag-2.xml
+Error cases regression tests with entity substitution	./test/errors/issue151.xml
+Error cases regression tests with entity substitution	./test/errors/issue868.xml
+Error cases regression tests with entity substitution	./test/errors/name.xml
+Error cases regression tests with entity substitution	./test/errors/name2.xml
+Error cases regression tests with entity substitution	./test/errors/name3.xml
+Error cases regression tests with entity substitution	./test/errors/ns-ent.xml
+Error cases regression tests with entity substitution	./test/errors/quadratic-defattr.xml
+Error cases regression tests with entity substitution	./test/errors/rec_att_default.xml
+Error cases regression tests with entity substitution	./test/errors/rec_ext_ent.xml
+Error cases regression tests with entity substitution	./test/errors/trailing-null-1.xml
+Error cases regression tests with entity substitution	./test/errors/trailing-null-2.xml
+Error cases regression tests with entity substitution	./test/errors/truncated-utf16.xml
+Error cases regression tests with entity substitution	./test/errors/unclosed-element.xml
+Error cases regression tests with entity substitution	./test/errors/unsupported-encoding.xml
+Error cases regression tests with entity substitution	./test/errors/utf8-1.xml
+Error cases regression tests with entity substitution	./test/errors/utf8-2.xml
+
+# Parameter entity references in the internal subset are not expanded (as
+# the verified parser does not read them), so the declarations they hold are
+# missing (ent7: an element type; xml2: a general entity).
+SAX1 callbacks regression tests	./test/ent7
+SAX1 callbacks regression tests	./test/xml2
+SAX2 callbacks regression tests	./test/ent7
+SAX2 callbacks regression tests	./test/xml2
+SAX2 callbacks regression tests with entity substitution	./test/ent7
+SAX2 callbacks regression tests with entity substitution	./test/xml2
+XML entity subst regression tests	./test/ent7
+XML entity subst regression tests	./test/xml2
+XML push regression tests	./test/ent7
+XML push regression tests	./test/xml2
+XML regression tests	./test/ent7
+XML regression tests	./test/xml2
+XML regression tests on memory	./test/ent7
+XML regression tests on memory	./test/xml2
+
+# External parsed entities are not read, with XML_PARSE_NOENT either.
+SAX2 callbacks regression tests with entity substitution	./test/ent2
+XML entity subst regression tests	./test/ent2
+
+# libxml2 reads files 4000 bytes at a time and splits a run of character
+# data where a read ends; here a run is reported whole.
+SAX1 callbacks regression tests	./test/rdf2
+SAX2 callbacks regression tests	./test/rdf2
+SAX2 callbacks regression tests with entity substitution	./test/rdf2
+
+# Saved as XHTML (xmlsave's XHTML mode is part of libxml2's HTML support,
+# which this ABI leaves out, as the build of runtest here does).
+XML entity subst regression tests	./test/xhtml1
+XML entity subst regression tests	./test/xhtmlcomp
+XML push regression tests	./test/xhtml1
+XML push regression tests	./test/xhtmlcomp
+XML regression tests	./test/xhtml1
+XML regression tests	./test/xhtmlcomp
+XML regression tests on memory	./test/xhtml1
+XML regression tests on memory	./test/xhtmlcomp
