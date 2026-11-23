@@ -1,5 +1,5 @@
 //! Executable-independent specification of the WHATWG URL Standard
-//! (https://url.spec.whatwg.org/): the URL record, the host parser, the basic
+//! (<https://url.spec.whatwg.org/>): the URL record, the host parser, the basic
 //! URL parser's state machine and the URL serializer.
 //!
 //! Each definition transliterates the Standard's algorithm of the same name;

@@ -4,6 +4,7 @@ version = "0.1.0"
 license = "MIT OR Apache-2.0"
 description = "Formally verified (Verus) building blocks shared by the Verilith libraries: trusted memory primitives, byte and bit readers, canonical Huffman tables, UTF-8 validation, CRC-32, CRC-32C and Adler-32"
 edition = "2024"
+rust-version = "1.89"
 repository = "https://github.com/verilith/verilith"
 keywords = ["verified", "verus", "huffman", "crc32", "utf8"]
 categories = ["encoding", "parser-implementations"]

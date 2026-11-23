@@ -43,7 +43,7 @@ subject attribute, both validity times, key usage, the CA flag, the DNS
 subjectAltNames and the extended key usages, then free it, on a leaf, two
 roots and Mozilla's root bundle.
 These are the `x509-mbedtls-read` and `x509-mbedtls-native` rows of the
-[repository's benchmark table](../../README.md#benchmarks) (`bench/run.sh`
+[repository's benchmark table](https://github.com/verilith/verilith#benchmarks) (`bench/run.sh`
 on an Apple M3 Pro, 2026-11-22, 31 alternating pairs per case; speedup is
 mbedTLS's time over ours, geometric mean over the cases). Both columns run
 the same task against the same mbedTLS driver. The native number is what you
@@ -162,7 +162,7 @@ different place:
 
 Parsing the whole certificate from memory, Rust to Rust, verilith-x509 is
 32.15x faster than Verdict's parser (`x509-verdict` in the [repository's
-benchmark table](../../README.md#benchmarks), Apple M3 Pro, 2026-11-22).
+benchmark table](https://github.com/verilith/verilith#benchmarks), Apple M3 Pro, 2026-11-22).
 
 ## Performance
 

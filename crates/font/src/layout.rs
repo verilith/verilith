@@ -1210,7 +1210,7 @@ fn check_lookuplist(t: &[u8], o: usize, pos: bool, ng: usize, ms: usize) -> (b: 
     )
 }
 
-/// Decides [`wf_layout`]: a whole `GSUB` or `GPOS` table.
+/// Decides `wf_layout`: a whole `GSUB` or `GPOS` table.
 pub fn check_layout(t: &[u8], pos: bool, ng: usize, ms: usize) -> (b: bool)
     requires
         small(t),
@@ -1418,7 +1418,7 @@ fn check_marksets(t: &[u8], o: usize, ng: usize) -> (b: bool)
     true
 }
 
-/// Decides [`wf_gdef`].
+/// Decides `wf_gdef`.
 pub fn check_gdef(t: &[u8], ng: usize) -> (b: bool)
     requires
         small(t),

@@ -1,5 +1,5 @@
 //! The trusted specification of well-formed Type 2 charstrings
-//! ([`wf_charstrings`]), written from Adobe Technical Note #5177.
+//! (`wf_charstrings`), written from Adobe Technical Note #5177.
 //!
 //! A charstring is a small stack program. This file says what it means
 //! for every glyph's program to run cleanly: every byte decodes, the

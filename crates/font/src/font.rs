@@ -1,5 +1,5 @@
 //! The verified check of a whole font: [`check_font`] decides
-//! [`wf_font`] exactly.
+//! `wf_font` exactly.
 use crate::cmap::*;
 use crate::dir::*;
 use crate::glyf::*;
@@ -238,7 +238,7 @@ fn check_known(s: &[u8]) -> (b: bool)
     true
 }
 
-/// Decides [`wf_font`]: `true` exactly when `s` is a well-formed font.
+/// Decides `wf_font`: `true` exactly when `s` is a well-formed font.
 pub fn check_font(s: &[u8]) -> (b: bool)
     ensures
         b == wf_font(s@),

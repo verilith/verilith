@@ -3,9 +3,9 @@
 //! store, and the proof that the semantics does the same in as many steps.
 //!
 //! A register operation (see [`crate::reg`]) stands for such a run. Its
-//! correctness is stated against [`msteps`] (an equation between two
+//! correctness is stated against `msteps` (an equation between two
 //! functions of the stack, checked once per operation when the function is
-//! compiled), and [`lemma_msteps`] carries that over to the semantics.
+//! compiled), and `lemma_msteps` carries that over to the semantics.
 use vstd::prelude::*;
 use crate::ast::*;
 use crate::sem::*;

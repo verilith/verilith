@@ -536,23 +536,23 @@ pub open spec fn parse_rdns(s: Seq<u8>) -> Option<SpecName>
 /// GeneralName. Each alternative is its own variant, so one can never be
 /// read as another (the type confusions of CVE-2023-0286 and CVE-2020-1971).
 pub enum SpecGeneralName {
-    /// [0] otherName: type-id OID and the [0] EXPLICIT value.
+    /// \[0] otherName: type-id OID and the \[0] EXPLICIT value.
     Other { type_id: Seq<u8>, value: SpecTlv },
-    /// [1] rfc822Name IA5String
+    /// \[1] rfc822Name IA5String
     Rfc822(Seq<u8>),
-    /// [2] dNSName IA5String
+    /// \[2] dNSName IA5String
     Dns(Seq<u8>),
-    /// [3] x400Address ORAddress, kept as its contents.
+    /// \[3] x400Address ORAddress, kept as its contents.
     X400(Seq<u8>),
-    /// [4] directoryName Name
+    /// \[4] directoryName Name
     Directory(SpecName),
-    /// [5] ediPartyName, kept as its contents.
+    /// \[5] ediPartyName, kept as its contents.
     EdiParty(Seq<u8>),
-    /// [6] uniformResourceIdentifier IA5String
+    /// \[6] uniformResourceIdentifier IA5String
     Uri(Seq<u8>),
-    /// [7] iPAddress OCTET STRING
+    /// \[7] iPAddress OCTET STRING
     Ip(Seq<u8>),
-    /// [8] registeredID OBJECT IDENTIFIER
+    /// \[8] registeredID OBJECT IDENTIFIER
     Registered(Seq<u8>),
 }
 
@@ -860,9 +860,9 @@ pub open spec fn parse_subject_key_id(v: Seq<u8>) -> Option<Seq<u8>> {
 }
 
 /// AuthorityKeyIdentifier ::= SEQUENCE {
-///     keyIdentifier             [0] IMPLICIT OCTET STRING OPTIONAL,
-///     authorityCertIssuer       [1] IMPLICIT GeneralNames OPTIONAL,
-///     authorityCertSerialNumber [2] IMPLICIT INTEGER OPTIONAL }
+///     keyIdentifier             \[0] IMPLICIT OCTET STRING OPTIONAL,
+///     authorityCertIssuer       \[1] IMPLICIT GeneralNames OPTIONAL,
+///     authorityCertSerialNumber \[2] IMPLICIT INTEGER OPTIONAL }
 pub struct SpecAuthorityKeyId {
     pub key_id: Option<Seq<u8>>,
     pub issuer: Option<Seq<SpecGeneralName>>,
@@ -959,8 +959,8 @@ pub open spec fn parse_subtrees_nonempty(s: Seq<u8>) -> Option<Seq<SpecGeneralNa
     }
 }
 
-/// NameConstraints ::= SEQUENCE { permittedSubtrees [0] GeneralSubtrees
-/// OPTIONAL, excludedSubtrees [1] GeneralSubtrees OPTIONAL }; at least one
+/// NameConstraints ::= SEQUENCE { permittedSubtrees \[0] GeneralSubtrees
+/// OPTIONAL, excludedSubtrees \[1] GeneralSubtrees OPTIONAL }; at least one
 /// is present (RFC 5280 §4.2.1.10).
 pub struct SpecNameConstraints {
     pub permitted: Option<Seq<SpecGeneralName>>,

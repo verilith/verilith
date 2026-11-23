@@ -9,7 +9,7 @@
 //! `XML_PARSE_RECOVER` builds a tree from what it read. This module does
 //! that, and only for documents the verified parser rejected: it reads the
 //! input as libxml2 does, function for function, and makes its reports and
-//! SAX calls through a [`Sink`], which the libxml2 ABI layer
+//! SAX calls through a [`Sink`](crate::recover::Sink), which the libxml2 ABI layer
 //! (`api/libxml2/recover.rs`) implements over the parser context.
 //!
 //! The reading is libxml2's, including its buffering where that shows in
@@ -17,7 +17,7 @@
 //! `INPUT_CHUNK`, decoded from the input's encoding in libxml2's chunks,
 //! with the line and column kept as libxml2 keeps them.
 //!
-//! Every read of a buffer is through [`at`], which answers 0 past the end
+//! Every read of a buffer is through [`at`](crate::lenient::at), which answers 0 past the end
 //! (libxml2's buffers end in a NUL), so no index can be out of bounds;
 //! counters saturate; every loop either consumes input or is bounded.
 #![allow(clippy::too_many_arguments, clippy::collapsible_if, clippy::collapsible_else_if)]

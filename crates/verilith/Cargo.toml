@@ -2,6 +2,7 @@
 name = "verilith"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.89"
 license = "MIT OR Apache-2.0"
 description = "Formally verified (Verus) drop-in replacements for foundational libraries: one crate that re-exports each verilith-* library behind a feature"
 repository = "https://github.com/verilith/verilith"
@@ -69,3 +70,8 @@ verilith-xml = { path = "../xml", version = "0.1.0", optional = true }
 verilith-xxhash = { path = "../xxhash", version = "0.1.0", optional = true }
 verilith-zlib = { path = "../zlib", version = "0.1.0", optional = true }
 verilith-zstd = { path = "../zstd", version = "0.1.0", optional = true }
+
+# docs.rs documents every re-export; with no feature on (the default) the
+# crate is empty.
+[package.metadata.docs.rs]
+all-features = true

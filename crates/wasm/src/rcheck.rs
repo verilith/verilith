@@ -1,4 +1,4 @@
-//! What a correct register form is ([`rcode_ok`]), and its verified
+//! What a correct register form is (`rcode_ok`), and its verified
 //! checker.
 //!
 //! The translator in [`crate::reg`] is not trusted: [`check_rcode`] checks
@@ -6,7 +6,7 @@
 //! certificate, the way [`crate::check`] checks the validator's
 //! certificates. An operation is correct when, on every value stack, it
 //! computes what the instructions it stands for compute on the flat
-//! machine ([`crate::mach::msteps`]), on the slots the semantics can see.
+//! machine (`crate::mach::msteps`), on the slots the semantics can see.
 use vstd::prelude::*;
 use crate::ast::*;
 use crate::sem::*;

@@ -3,10 +3,10 @@
 //!
 //! [`crate::run::execute`] runs a function's register form
 //! ([`crate::reg`]), checked against its body by [`crate::rcheck`]. Its
-//! invariant [`rinv`] is the stack interpreter's ([`loop_inv`]) at the
+//! invariant `rinv` is the stack interpreter's (`loop_inv`) at the
 //! position the current operation starts at. A straight-line operation
 //! takes the semantics `k` steps (its run, through
-//! [`crate::mach::lemma_msteps`]); a branch operation takes `k - 1`, then
+//! `crate::mach::lemma_msteps`); a branch operation takes `k - 1`, then
 //! the final `br` or `br_if`; an [`OpCode::Op`] runs its instruction with
 //! the stack interpreter's step functions, then continues at the entry of
 //! where that took it.

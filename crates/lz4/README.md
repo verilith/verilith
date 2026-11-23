@@ -129,7 +129,7 @@ liblz4's place.
 comparison (`lz4-*`): one C driver linked with liblz4 1.11.1 and with
 verilith-lz4, both built with the same flags, over five Silesia files and 4 KiB
 and 64 KiB pieces. On an Apple Silicon Mac (M3 Pro, the run in the
-[repository's benchmark table](../../README.md#benchmarks), 2026-11-22),
+[repository's benchmark table](https://github.com/verilith/verilith#benchmarks), 2026-11-22),
 geometric means of liblz4's time over verilith-lz4's: block decompression
 1.10x, frame decompression 1.09x, block compression 0.97x (compressed
 sizes within a few bytes) and frame compression 0.94x. The widest gap

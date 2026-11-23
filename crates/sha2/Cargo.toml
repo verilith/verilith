@@ -4,9 +4,10 @@ version = "0.1.0"
 license = "MIT OR Apache-2.0"
 description = "Formally verified (Verus) SHA-2 (FIPS 180-4): SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224 and SHA-512/256, with SHA-NI and ARMv8 kernels and OpenSSL's SHA C API"
 edition = "2021"
+rust-version = "1.89"
 repository = "https://github.com/verilith/verilith"
 keywords = ["verified", "verus", "sha256", "sha512", "sha2"]
-categories = ["cryptography", "no-std"]
+categories = ["cryptography", "algorithms"]
 
 [lib]
 crate-type = ["rlib", "staticlib"]

@@ -4,6 +4,7 @@ version = "0.1.0"
 license = "MIT OR Apache-2.0"
 description = "A formally verified (Verus) Zstandard (RFC 8878) decompressor with libzstd's C API"
 edition = "2024"
+rust-version = "1.89"
 repository = "https://github.com/verilith/verilith"
 keywords = ["zstd", "zstandard", "decompression", "verified", "verus"]
 categories = ["compression"]

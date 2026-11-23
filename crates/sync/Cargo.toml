@@ -4,6 +4,7 @@ version = "0.1.0"
 license = "MIT OR Apache-2.0"
 description = "Formally verified (Verus) concurrency primitives: SPSC and MPMC queues, channels, and locks, as drop-ins for rtrb, crossbeam and parking_lot"
 edition = "2024"
+rust-version = "1.89"
 repository = "https://github.com/verilith/verilith"
 readme = "README.md"
 keywords = ["queue", "channel", "mutex", "verified", "verus"]

@@ -1,5 +1,5 @@
 //! The certificate checker: exec code proven to accept only certificates
-//! satisfying [`crate::cert::certs_ok`].
+//! satisfying `crate::cert::certs_ok`.
 use vstd::prelude::*;
 use crate::ast::*;
 use crate::sem::*;

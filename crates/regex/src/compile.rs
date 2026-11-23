@@ -88,8 +88,8 @@ proof fn lemma_pv_push(v: Seq<Inst>, i: Inst, cl: Seq<Class>)
 }
 
 /// What is left to emit, the next piece last: the normal copy of a tree
-/// (`N(x, b, e)`, as [`code_n`]), its no-progress copy (`Z(x, b, e0, nb,
-/// ne)`, as [`code_z`]), or one instruction.
+/// (`N(x, b, e)`, as `code_n`), its no-progress copy (`Z(x, b, e0, nb,
+/// ne)`, as `code_z`), or one instruction.
 pub enum Task<'a> {
     N(&'a Ast, usize, usize),
     Z(&'a Ast, usize, usize, usize, usize),

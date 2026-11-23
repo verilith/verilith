@@ -111,7 +111,7 @@ The framing format is in the Rust API only (`frame::frame_encode`,
 comparison (`snappy-*`): one C driver linked with libsnappy 1.3.1 and
 with verilith-snappy, both built with the same flags, over five Silesia files
 and 4 KiB and 64 KiB pieces. On an Apple Silicon Mac (M3 Pro, the run in
-the [repository's benchmark table](../../README.md#benchmarks),
+the [repository's benchmark table](https://github.com/verilith/verilith#benchmarks),
 2026-11-22), geometric means of libsnappy's time over verilith-snappy's:
 uncompress 0.93x, validate 0.97x, compress 0.91x (the compressed size
 within 1.5%).

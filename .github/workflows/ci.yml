@@ -339,6 +339,19 @@ jobs:
       - name: Build and test
         run: scripts/wasm32.sh
 
+  package:
+    # What crates.io and docs.rs will see: every published crate builds from
+    # its own package, and the documentation has no broken links.
+    name: Package and docs
+    needs: plan
+    if: needs.plan.outputs.test != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: Package and document
+        run: scripts/package.sh
+
   fuzz:
     name: Fuzz ${{ matrix.crate }}
     needs: plan
@@ -358,7 +371,7 @@ jobs:
   done:
     name: CI
     if: always()
-    needs: [plan, verus, verify, verify-narrow, crosscheck, verus-arm, verify-arm, test, test-arm, wasm32]
+    needs: [plan, verus, verify, verify-narrow, crosscheck, verus-arm, verify-arm, test, test-arm, wasm32, package]
     runs-on: ubuntu-latest
     steps:
       - name: Every job passed or was skipped

@@ -246,7 +246,7 @@ and converted by the non-interlaced paths.
 
 On the repository's benchmark (`png-libpng`: the 24 Kodak photos decoded
 to RGBA8, Apple M3 Pro, 2026-11-22) it is 1.41x libpng as a geometric mean;
-see the [benchmark table](../../README.md#benchmarks).
+see the [benchmark table](https://github.com/verilith/verilith#benchmarks).
 
 Where the remaining time goes, on the RGB photo in native format: about
 two thirds is decompression (verilith-zlib 31 ms against 26 ms for fdeflate, which

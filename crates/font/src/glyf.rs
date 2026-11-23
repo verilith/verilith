@@ -38,7 +38,7 @@ pub open spec fn flags_acc(g: Seq<u8>, p: int, pts: int, acc: int) -> Option<(in
     }
 }
 
-/// Scans the flags of a simple glyph: see [`flags_end`].
+/// Scans the flags of a simple glyph: see `flags_end`.
 pub fn scan_flags(g: &[u8], p0: usize, pts0: usize) -> (r: Option<(usize, usize)>)
     requires
         p0 <= g.len(),
@@ -93,7 +93,7 @@ pub fn scan_flags(g: &[u8], p0: usize, pts0: usize) -> (r: Option<(usize, usize)
     Some((p, acc))
 }
 
-/// Where a simple glyph with `nc` contours ends: see [`simple_end`].
+/// Where a simple glyph with `nc` contours ends: see `simple_end`.
 pub fn simple_glyph_end(g: &[u8], nc: usize) -> (r: Option<usize>)
     requires
         g.len() >= 10,
@@ -160,7 +160,7 @@ pub fn comp_extra_sz(lo: u8) -> (r: usize)
     })
 }
 
-/// Where a composite glyph ends: see [`comp_end`].
+/// Where a composite glyph ends: see `comp_end`.
 pub fn composite_glyph_end(g: &[u8], ng: u16) -> (r: Option<usize>)
     requires
         g.len() >= 10,
@@ -205,7 +205,7 @@ pub fn composite_glyph_end(g: &[u8], ng: u16) -> (r: Option<usize>)
 }
 
 /// Where the glyph description at the start of `g` ends: see
-/// [`glyph_end`].
+/// `glyph_end`.
 pub fn find_glyph_end(g: &[u8], ng: u16) -> (r: Option<usize>)
     ensures
         match r {
@@ -226,7 +226,7 @@ pub fn find_glyph_end(g: &[u8], ng: u16) -> (r: Option<usize>)
     }
 }
 
-/// Decides [`wf_glyph`].
+/// Decides `wf_glyph`.
 pub fn check_glyph(g: &[u8], ng: u16) -> (b: bool)
     ensures
         b == wf_glyph(g@, ng as int),
@@ -258,7 +258,7 @@ pub fn loca_get(loca: &[u8], fmt: u16, i: usize) -> (r: usize)
     }
 }
 
-/// Decides [`wf_loca`].
+/// Decides `wf_loca`.
 pub fn check_loca(loca: &[u8], fmt: u16, ng: u16, glyf_len: usize) -> (b: bool)
     requires
         fmt <= 1,
@@ -305,7 +305,7 @@ pub fn check_loca(loca: &[u8], fmt: u16, ng: u16, glyf_len: usize) -> (b: bool)
     prev == glyf_len || (prev == 0 && glyf_len == 1)
 }
 
-/// Decides [`wf_glyf`], given a well-formed `loca`.
+/// Decides `wf_glyf`, given a well-formed `loca`.
 pub fn check_glyf(glyf: &[u8], loca: &[u8], fmt: u16, ng: u16) -> (b: bool)
     requires
         fmt <= 1,

@@ -6,7 +6,7 @@
 //! no label stack at run time and no stack check on push or pop; a call
 //! checks once that the callee's whole frame fits.
 //!
-//! [`execute`] ends with ghost evidence `(hs, n)`: the spec, run for `n`
+//! `execute` ends with ghost evidence `(hs, n)`: the spec, run for `n`
 //! steps from the initial configuration with host responses `hs`, gives
 //! exactly the returned result and store (or is still running, if the
 //! interpreter stopped with [`Trap::Exhausted`]).
