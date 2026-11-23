@@ -141,6 +141,7 @@ pub fn pair256_avx2(
     nxt1: &mut [u32; 64],
 )
     requires
+        verilith_simd::cpu::avx2(),
         crate::compress::kw_schedule(cur0@, crate::spec::words(b0@)),
         crate::compress::kw_schedule(cur1@, crate::spec::words(b1@)),
         o0 + 64 <= p@.len(),
@@ -175,6 +176,7 @@ pub fn pair_avx2(
     nxt1: &mut [u64; 80],
 )
     requires
+        verilith_simd::cpu::avx2(),
         crate::compress512::kw_schedule(cur0@, crate::spec512::words(b0@)),
         crate::compress512::kw_schedule(cur1@, crate::spec512::words(b1@)),
         o0 + 128 <= p@.len(),

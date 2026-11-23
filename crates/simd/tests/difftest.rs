@@ -3232,6 +3232,2490 @@ fn mm_slli_epi32_255() {
 }
 
 #[test]
+fn mm_srli_epi64_0() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<0>(a) }
+    let mut rng = Rng::new(0x1785c2665ca2ab4e);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 0);
+        if got != want { fail("_mm_srli_epi64::<0>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_1() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<1>(a) }
+    let mut rng = Rng::new(0xa440e43655970a6);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 1);
+        if got != want { fail("_mm_srli_epi64::<1>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_2() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<2>(a) }
+    let mut rng = Rng::new(0x2c065a2df4241adf);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 2);
+        if got != want { fail("_mm_srli_epi64::<2>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_3() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<3>(a) }
+    let mut rng = Rng::new(0x31c79608cddfc137);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 3);
+        if got != want { fail("_mm_srli_epi64::<3>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_4() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<4>(a) }
+    let mut rng = Rng::new(0x165eb36096dece2d);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 4);
+        if got != want { fail("_mm_srli_epi64::<4>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_5() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<5>(a) }
+    let mut rng = Rng::new(0xb9f7f45af2515c5);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 5);
+        if got != want { fail("_mm_srli_epi64::<5>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_6() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<6>(a) }
+    let mut rng = Rng::new(0x2ddd2b2b3e587fbc);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 6);
+        if got != want { fail("_mm_srli_epi64::<6>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_7() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<7>(a) }
+    let mut rng = Rng::new(0x301ce70e07a3a454);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 7);
+        if got != want { fail("_mm_srli_epi64::<7>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_8() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<8>(a) }
+    let mut rng = Rng::new(0x1433206a132b67c9);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 8);
+        if got != want { fail("_mm_srli_epi64::<8>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_9() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<9>(a) }
+    let mut rng = Rng::new(0x9f2ec4f2ad0bc21);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 9);
+        if got != want { fail("_mm_srli_epi64::<9>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_10() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<10>(a) }
+    let mut rng = Rng::new(0x4d2b887ef297df7);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 10);
+        if got != want { fail("_mm_srli_epi64::<10>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_11() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<11>(a) }
+    let mut rng = Rng::new(0x191374a2c141ec66);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 11);
+        if got != want { fail("_mm_srli_epi64::<11>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_12() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<12>(a) }
+    let mut rng = Rng::new(0x3f5120cc68895894);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 12);
+        if got != want { fail("_mm_srli_epi64::<12>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_13() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<13>(a) }
+    let mut rng = Rng::new(0x2290ece946e1c905);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 13);
+        if got != want { fail("_mm_srli_epi64::<13>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_14() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<14>(a) }
+    let mut rng = Rng::new(0x509c9817b183170);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 14);
+        if got != want { fail("_mm_srli_epi64::<14>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_15() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<15>(a) }
+    let mut rng = Rng::new(0x18c805a45570a0e1);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 15);
+        if got != want { fail("_mm_srli_epi64::<15>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_16() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<16>(a) }
+    let mut rng = Rng::new(0x3e8a51cafcb81413);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 16);
+        if got != want { fail("_mm_srli_epi64::<16>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_17() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<17>(a) }
+    let mut rng = Rng::new(0x234b9defd2d08582);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 17);
+        if got != want { fail("_mm_srli_epi64::<17>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_18() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<18>(a) }
+    let mut rng = Rng::new(0x7645a8b1c3ae2b8);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 18);
+        if got != want { fail("_mm_srli_epi64::<18>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_19() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<19>(a) }
+    let mut rng = Rng::new(0x1aa596ae32527329);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 19);
+        if got != want { fail("_mm_srli_epi64::<19>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_20() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<20>(a) }
+    let mut rng = Rng::new(0xe19ec773e54178e);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 20);
+        if got != want { fail("_mm_srli_epi64::<20>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_21() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<21>(a) }
+    let mut rng = Rng::new(0x13d82052103c861f);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 21);
+        if got != want { fail("_mm_srli_epi64::<21>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_22() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<22>(a) }
+    let mut rng = Rng::new(0x359a743cb9f432ed);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 22);
+        if got != want { fail("_mm_srli_epi64::<22>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_23() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<23>(a) }
+    let mut rng = Rng::new(0x285bb819979ca37c);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 23);
+        if got != want { fail("_mm_srli_epi64::<23>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_24() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<24>(a) }
+    let mut rng = Rng::new(0xfc29d71aa655b09);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 24);
+        if got != want { fail("_mm_srli_epi64::<24>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_25() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<25>(a) }
+    let mut rng = Rng::new(0x12035154840dca98);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 25);
+        if got != want { fail("_mm_srli_epi64::<25>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_26() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<26>(a) }
+    let mut rng = Rng::new(0x3441053a2dc57e6a);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 26);
+        if got != want { fail("_mm_srli_epi64::<26>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_27() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<27>(a) }
+    let mut rng = Rng::new(0x2980c91f03adeffb);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 27);
+        if got != want { fail("_mm_srli_epi64::<27>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_28() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<28>(a) }
+    let mut rng = Rng::new(0xdaf0e7bcd4788c1);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 28);
+        if got != want { fail("_mm_srli_epi64::<28>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_29() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<29>(a) }
+    let mut rng = Rng::new(0x106ec25ee32f1950);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 29);
+        if got != want { fail("_mm_srli_epi64::<29>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_30() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<30>(a) }
+    let mut rng = Rng::new(0x85f2027c7afcc66);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 30);
+        if got != want { fail("_mm_srli_epi64::<30>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_31() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<31>(a) }
+    let mut rng = Rng::new(0x159eec02e9c75df7);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 31);
+        if got != want { fail("_mm_srli_epi64::<31>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_32() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<32>(a) }
+    let mut rng = Rng::new(0x33dcb86c400fe905);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 32);
+        if got != want { fail("_mm_srli_epi64::<32>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_33() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<33>(a) }
+    let mut rng = Rng::new(0x2e1d74496e677894);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 33);
+        if got != want { fail("_mm_srli_epi64::<33>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_34() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<34>(a) }
+    let mut rng = Rng::new(0x9845121539e80e1);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 34);
+        if got != want { fail("_mm_srli_epi64::<34>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_35() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<35>(a) }
+    let mut rng = Rng::new(0x14459d047df61170);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 35);
+        if got != want { fail("_mm_srli_epi64::<35>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_36() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<36>(a) }
+    let mut rng = Rng::new(0x3207c96ad43ea582);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 36);
+        if got != want { fail("_mm_srli_epi64::<36>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_37() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<37>(a) }
+    let mut rng = Rng::new(0x2fc6054ffa563413);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 37);
+        if got != want { fail("_mm_srli_epi64::<37>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_38() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<38>(a) }
+    let mut rng = Rng::new(0xbe9c22b34bc5329);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 38);
+        if got != want { fail("_mm_srli_epi64::<38>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_39() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<39>(a) }
+    let mut rng = Rng::new(0x16280e0e1ad4c2b8);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 39);
+        if got != want { fail("_mm_srli_epi64::<39>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_40() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<40>(a) }
+    let mut rng = Rng::new(0x1b8f45969caec37c);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 40);
+        if got != want { fail("_mm_srli_epi64::<40>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_41() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<41>(a) }
+    let mut rng = Rng::new(0x64e89b3b2c652ed);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 41);
+        if got != want { fail("_mm_srli_epi64::<41>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_42() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<42>(a) }
+    let mut rng = Rng::new(0x200cdddd1b0ee61f);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 42);
+        if got != want { fail("_mm_srli_epi64::<42>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_43() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<43>(a) }
+    let mut rng = Rng::new(0x3dcd11f83566778e);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 43);
+        if got != want { fail("_mm_srli_epi64::<43>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_44() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<44>(a) }
+    let mut rng = Rng::new(0x1a543490089f8ffb);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 44);
+        if got != want { fail("_mm_srli_epi64::<44>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_45() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<45>(a) }
+    let mut rng = Rng::new(0x795f8b526f71e6a);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 45);
+        if got != want { fail("_mm_srli_epi64::<45>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_46() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<46>(a) }
+    let mut rng = Rng::new(0x21d7acdb8f3faa98);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 46);
+        if got != want { fail("_mm_srli_epi64::<46>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_47() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<47>(a) }
+    let mut rng = Rng::new(0x3c1660fea1573b09);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 47);
+        if got != want { fail("_mm_srli_epi64::<47>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_48() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<48>(a) }
+    let mut rng = Rng::new(0x1839a79a6fbd5c33);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 48);
+        if got != want { fail("_mm_srli_epi64::<48>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_49() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<49>(a) }
+    let mut rng = Rng::new(0x5f86bbf41d5cda2);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 49);
+        if got != want { fail("_mm_srli_epi64::<49>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_50() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<50>(a) }
+    let mut rng = Rng::new(0x1dc989c665551894);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 50);
+        if got != want { fail("_mm_srli_epi64::<50>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_51() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<51>(a) }
+    let mut rng = Rng::new(0x845e34b3d8905);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 51);
+        if got != want { fail("_mm_srli_epi64::<51>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_52() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<52>(a) }
+    let mut rng = Rng::new(0x264a118de2f53df7);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 52);
+        if got != want { fail("_mm_srli_epi64::<52>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_53() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<53>(a) }
+    let mut rng = Rng::new(0x3b8bdda8cc9dac66);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 53);
+        if got != want { fail("_mm_srli_epi64::<53>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_54() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<54>(a) }
+    let mut rng = Rng::new(0x1c12f8c0f1645413);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 54);
+        if got != want { fail("_mm_srli_epi64::<54>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_55() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<55>(a) }
+    let mut rng = Rng::new(0x1d334e5df0cc582);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 55);
+        if got != want { fail("_mm_srli_epi64::<55>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_56() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<56>(a) }
+    let mut rng = Rng::new(0x2791608b76c47170);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 56);
+        if got != want { fail("_mm_srli_epi64::<56>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_57() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<57>(a) }
+    let mut rng = Rng::new(0x3a50acae58ace0e1);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 57);
+        if got != want { fail("_mm_srli_epi64::<57>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_58() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<58>(a) }
+    let mut rng = Rng::new(0x1e7f6bca964687db);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 58);
+        if got != want { fail("_mm_srli_epi64::<58>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_59() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<59>(a) }
+    let mut rng = Rng::new(0x3bea7efb82e164a);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 59);
+        if got != want { fail("_mm_srli_epi64::<59>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_60() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<60>(a) }
+    let mut rng = Rng::new(0x1702dd36b42872ed);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 60);
+        if got != want { fail("_mm_srli_epi64::<60>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_61() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<61>(a) }
+    let mut rng = Rng::new(0xac311139a40e37c);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 61);
+        if got != want { fail("_mm_srli_epi64::<61>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_62() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<62>(a) }
+    let mut rng = Rng::new(0x2c81457d3388578e);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 62);
+        if got != want { fail("_mm_srli_epi64::<62>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_63() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<63>(a) }
+    let mut rng = Rng::new(0x314089581de0c61f);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 63);
+        if got != want { fail("_mm_srli_epi64::<63>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_64() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<64>(a) }
+    let mut rng = Rng::new(0x16d9ac3020193e6a);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 64);
+        if got != want { fail("_mm_srli_epi64::<64>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_65() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<65>(a) }
+    let mut rng = Rng::new(0xb1860150e71affb);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 65);
+        if got != want { fail("_mm_srli_epi64::<65>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_127() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<127>(a) }
+    let mut rng = Rng::new(0x35649bc554bd35b0);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 127);
+        if got != want { fail("_mm_srli_epi64::<127>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_128() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<128>(a) }
+    let mut rng = Rng::new(0x114b5ca1d23f0665);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 128);
+        if got != want { fail("_mm_srli_epi64::<128>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_srli_epi64_255() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_srli_epi64::<255>(a) }
+    let mut rng = Rng::new(0x1da6c9a9ec05377b);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s128(a), 255);
+        if got != want { fail("_mm_srli_epi64::<255>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_0() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<0>(a) }
+    let mut rng = Rng::new(0x19dc2e30a57ec8a5);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 0);
+        if got != want { fail("_mm_slli_epi64::<0>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_1() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<1>(a) }
+    let mut rng = Rng::new(0x41de2159c85134d);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 1);
+        if got != want { fail("_mm_slli_epi64::<1>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_2() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<2>(a) }
+    let mut rng = Rng::new(0x225fb67b0df87934);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 2);
+        if got != want { fail("_mm_slli_epi64::<2>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_3() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<3>(a) }
+    let mut rng = Rng::new(0x3f9e7a5e3403a2dc);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 3);
+        if got != want { fail("_mm_slli_epi64::<3>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_4() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<4>(a) }
+    let mut rng = Rng::new(0x18075f366f02adc6);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 4);
+        if got != want { fail("_mm_slli_epi64::<4>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_5() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<5>(a) }
+    let mut rng = Rng::new(0x5c6931356f9762e);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 5);
+        if got != want { fail("_mm_slli_epi64::<5>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_6() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<6>(a) }
+    let mut rng = Rng::new(0x2384c77dc7841c57);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 6);
+        if got != want { fail("_mm_slli_epi64::<6>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_7() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<7>(a) }
+    let mut rng = Rng::new(0x3e450b58fe7fc7bf);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 7);
+        if got != want { fail("_mm_slli_epi64::<7>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_8() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<8>(a) }
+    let mut rng = Rng::new(0x1a6acc3ceaf70422);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 8);
+        if got != want { fail("_mm_slli_epi64::<8>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_9() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<9>(a) }
+    let mut rng = Rng::new(0x7ab0019d30cdfca);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 9);
+        if got != want { fail("_mm_slli_epi64::<9>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_10() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<10>(a) }
+    let mut rng = Rng::new(0x3bf2837496f51e1c);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 10);
+        if got != want { fail("_mm_slli_epi64::<10>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_11() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<11>(a) }
+    let mut rng = Rng::new(0x26334f51b89d8f8d);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 11);
+        if got != want { fail("_mm_slli_epi64::<11>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_12() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<12>(a) }
+    let mut rng = Rng::new(0x711b3f11553b7f);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 12);
+        if got != want { fail("_mm_slli_epi64::<12>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_13() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<13>(a) }
+    let mut rng = Rng::new(0x1db0d71a3f3daaee);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 13);
+        if got != want { fail("_mm_slli_epi64::<13>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_14() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<14>(a) }
+    let mut rng = Rng::new(0x3a29f27202c4529b);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 14);
+        if got != want { fail("_mm_slli_epi64::<14>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_15() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<15>(a) }
+    let mut rng = Rng::new(0x27e83e572cacc30a);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 15);
+        if got != want { fail("_mm_slli_epi64::<15>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_16() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<16>(a) }
+    let mut rng = Rng::new(0x1aa6a39856477f8);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 16);
+        if got != want { fail("_mm_slli_epi64::<16>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_17() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<17>(a) }
+    let mut rng = Rng::new(0x1c6ba61cab0ce669);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 17);
+        if got != want { fail("_mm_slli_epi64::<17>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_18() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<18>(a) }
+    let mut rng = Rng::new(0x3844617865e68153);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 18);
+        if got != want { fail("_mm_slli_epi64::<18>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_19() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<19>(a) }
+    let mut rng = Rng::new(0x2585ad5d4b8e10c2);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 19);
+        if got != want { fail("_mm_slli_epi64::<19>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_20() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<20>(a) }
+    let mut rng = Rng::new(0x3139d78447887465);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 20);
+        if got != want { fail("_mm_slli_epi64::<20>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_21() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<21>(a) }
+    let mut rng = Rng::new(0x2cf81ba169e0e5f4);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 21);
+        if got != want { fail("_mm_slli_epi64::<21>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_22() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<22>(a) }
+    let mut rng = Rng::new(0xaba4fcfc0285106);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 22);
+        if got != want { fail("_mm_slli_epi64::<22>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_23() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<23>(a) }
+    let mut rng = Rng::new(0x177b83eaee40c097);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 23);
+        if got != want { fail("_mm_slli_epi64::<23>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_24() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<24>(a) }
+    let mut rng = Rng::new(0x30e2a682d3b938e2);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 24);
+        if got != want { fail("_mm_slli_epi64::<24>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_25() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<25>(a) }
+    let mut rng = Rng::new(0x2d236aa7fdd1a973);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 25);
+        if got != want { fail("_mm_slli_epi64::<25>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_26() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<26>(a) }
+    let mut rng = Rng::new(0xb613ec954191d81);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 26);
+        if got != want { fail("_mm_slli_epi64::<26>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_27() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<27>(a) }
+    let mut rng = Rng::new(0x16a0f2ec7a718c10);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 27);
+        if got != want { fail("_mm_slli_epi64::<27>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_28() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<28>(a) }
+    let mut rng = Rng::new(0x328f3588b49beb2a);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 28);
+        if got != want { fail("_mm_slli_epi64::<28>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_29() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<29>(a) }
+    let mut rng = Rng::new(0x2f4ef9ad9af37abb);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 29);
+        if got != want { fail("_mm_slli_epi64::<29>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_30() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<30>(a) }
+    let mut rng = Rng::new(0x377f1bd4be73af8d);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 30);
+        if got != want { fail("_mm_slli_epi64::<30>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_31() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<31>(a) }
+    let mut rng = Rng::new(0x2abed7f1901b3e1c);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 31);
+        if got != want { fail("_mm_slli_epi64::<31>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_32() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<32>(a) }
+    let mut rng = Rng::new(0xcfc839f39d38aee);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 32);
+        if got != want { fail("_mm_slli_epi64::<32>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_33() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<33>(a) }
+    let mut rng = Rng::new(0x113d4fba17bb1b7f);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 33);
+        if got != want { fail("_mm_slli_epi64::<33>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_34() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<34>(a) }
+    let mut rng = Rng::new(0x36a46ad22a42e30a);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 34);
+        if got != want { fail("_mm_slli_epi64::<34>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_35() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<35>(a) }
+    let mut rng = Rng::new(0x2b65a6f7042a729b);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 35);
+        if got != want { fail("_mm_slli_epi64::<35>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_36() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<36>(a) }
+    let mut rng = Rng::new(0xd27f299ade2c669);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 36);
+        if got != want { fail("_mm_slli_epi64::<36>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_37() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<37>(a) }
+    let mut rng = Rng::new(0x10e63ebc838a57f8);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 37);
+        if got != want { fail("_mm_slli_epi64::<37>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_38() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<38>(a) }
+    let mut rng = Rng::new(0x34c9f9d84d6030c2);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 38);
+        if got != want { fail("_mm_slli_epi64::<38>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_39() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<39>(a) }
+    let mut rng = Rng::new(0x290835fd6308a153);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 39);
+        if got != want { fail("_mm_slli_epi64::<39>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_40() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<40>(a) }
+    let mut rng = Rng::new(0x24af7e65e572a097);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 40);
+        if got != want { fail("_mm_slli_epi64::<40>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_41() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<41>(a) }
+    let mut rng = Rng::new(0x396eb240cb1a3106);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 41);
+        if got != want { fail("_mm_slli_epi64::<41>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_42() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<42>(a) }
+    let mut rng = Rng::new(0x1f2ce62e62d285f4);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 42);
+        if got != want { fail("_mm_slli_epi64::<42>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_43() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<43>(a) }
+    let mut rng = Rng::new(0x2ed2a0b4cba1465);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 43);
+        if got != want { fail("_mm_slli_epi64::<43>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_44() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<44>(a) }
+    let mut rng = Rng::new(0x25740f637143ec10);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 44);
+        if got != want { fail("_mm_slli_epi64::<44>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_45() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<45>(a) }
+    let mut rng = Rng::new(0x38b5c3465f2b7d81);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 45);
+        if got != want { fail("_mm_slli_epi64::<45>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_46() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<46>(a) }
+    let mut rng = Rng::new(0x1ef79728f6e3c973);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 46);
+        if got != want { fail("_mm_slli_epi64::<46>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_47() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<47>(a) }
+    let mut rng = Rng::new(0x3365b0dd88b58e2);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 47);
+        if got != want { fail("_mm_slli_epi64::<47>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_48() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<48>(a) }
+    let mut rng = Rng::new(0x27199c6916613fd8);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 48);
+        if got != want { fail("_mm_slli_epi64::<48>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_49() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<49>(a) }
+    let mut rng = Rng::new(0x3ad8504c3809ae49);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 49);
+        if got != want { fail("_mm_slli_epi64::<49>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_50() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<50>(a) }
+    let mut rng = Rng::new(0x22e9b2351c897b7f);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 50);
+        if got != want { fail("_mm_slli_epi64::<50>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_51() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<51>(a) }
+    let mut rng = Rng::new(0x3f287e1032e1eaee);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 51);
+        if got != want { fail("_mm_slli_epi64::<51>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_52() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<52>(a) }
+    let mut rng = Rng::new(0x196a2a7e9b295e1c);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 52);
+        if got != want { fail("_mm_slli_epi64::<52>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_53() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<53>(a) }
+    let mut rng = Rng::new(0x4abe65bb541cf8d);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 53);
+        if got != want { fail("_mm_slli_epi64::<53>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_54() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<54>(a) }
+    let mut rng = Rng::new(0x2332c33388b837f8);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 54);
+        if got != want { fail("_mm_slli_epi64::<54>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_55() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<55>(a) }
+    let mut rng = Rng::new(0x3ef30f16a6d0a669);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 55);
+        if got != want { fail("_mm_slli_epi64::<55>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_56() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<56>(a) }
+    let mut rng = Rng::new(0x18b15b780f18129b);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 56);
+        if got != want { fail("_mm_slli_epi64::<56>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_57() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<57>(a) }
+    let mut rng = Rng::new(0x570975d2170830a);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 57);
+        if got != want { fail("_mm_slli_epi64::<57>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_58() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<58>(a) }
+    let mut rng = Rng::new(0x215f5039ef9ae430);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 58);
+        if got != want { fail("_mm_slli_epi64::<58>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_59() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<59>(a) }
+    let mut rng = Rng::new(0x3c9e9c1cc1f275a1);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 59);
+        if got != want { fail("_mm_slli_epi64::<59>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_60() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<60>(a) }
+    let mut rng = Rng::new(0x2822e6c5cdf41106);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 60);
+        if got != want { fail("_mm_slli_epi64::<60>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_61() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<61>(a) }
+    let mut rng = Rng::new(0x35e32ae0e39c8097);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 61);
+        if got != want { fail("_mm_slli_epi64::<61>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_62() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<62>(a) }
+    let mut rng = Rng::new(0x13a17e8e4a543465);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 62);
+        if got != want { fail("_mm_slli_epi64::<62>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_63() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<63>(a) }
+    let mut rng = Rng::new(0xe60b2ab643ca5f4);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 63);
+        if got != want { fail("_mm_slli_epi64::<63>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_64() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<64>(a) }
+    let mut rng = Rng::new(0x29f997c359c55d81);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 64);
+        if got != want { fail("_mm_slli_epi64::<64>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_65() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<65>(a) }
+    let mut rng = Rng::new(0x34385be677adcc10);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 65);
+        if got != want { fail("_mm_slli_epi64::<65>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_127() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<127>(a) }
+    let mut rng = Rng::new(0xc2ed47ded61565b);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 127);
+        if got != want { fail("_mm_slli_epi64::<127>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_128() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<128>(a) }
+    let mut rng = Rng::new(0x280113196be3658e);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 128);
+        if got != want { fail("_mm_slli_epi64::<128>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_slli_epi64_255() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i) -> __m128i { _mm_slli_epi64::<255>(a) }
+    let mut rng = Rng::new(0x24ec861155d95490);
+    for _ in 0..ITERS/16 {
+        let a = rng.v128();
+        let got = u64s128(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s128(a), 255);
+        if got != want { fail("_mm_slli_epi64::<255>", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
 fn mm_shuffle_epi32_0() {
     if !need_avx2() { return; }
     #[target_feature(enable = "avx2")]
@@ -12410,6 +14894,2490 @@ fn mm256_slli_epi32_255() {
         let got = u32s256(unsafe { go(a) });
         let want: Vec<u32> = ref_slli32(&u32s256(a), 255);
         if got != want { fail("_mm256_slli_epi32::<255>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_0() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<0>(a) }
+    let mut rng = Rng::new(0x267fc71dbc808c7e);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 0);
+        if got != want { fail("_mm256_srli_epi64::<0>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_1() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<1>(a) }
+    let mut rng = Rng::new(0x3bbe0b38d3d23a9f);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 1);
+        if got != want { fail("_mm256_srli_epi64::<1>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_2() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<2>(a) }
+    let mut rng = Rng::new(0x1dfc5f56b954e7fd);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 2);
+        if got != want { fail("_mm256_srli_epi64::<2>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_3() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<3>(a) }
+    let mut rng = Rng::new(0x3d9373d606511c);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 3);
+        if got != want { fail("_mm256_srli_epi64::<3>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_4() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<4>(a) }
+    let mut rng = Rng::new(0x27a4b61bf7285b78);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 4);
+        if got != want { fail("_mm256_srli_epi64::<4>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_5() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<5>(a) }
+    let mut rng = Rng::new(0x3a657a3e987aed99);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 5);
+        if got != want { fail("_mm256_srli_epi64::<5>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_6() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<6>(a) }
+    let mut rng = Rng::new(0x1c272e50f2fc30fb);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 6);
+        if got != want { fail("_mm256_srli_epi64::<6>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_7() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<7>(a) }
+    let mut rng = Rng::new(0x1e6e2759dae861a);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 7);
+        if got != want { fail("_mm256_srli_epi64::<7>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_8() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<8>(a) }
+    let mut rng = Rng::new(0x25c925112bd12272);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 8);
+        if got != want { fail("_mm256_srli_epi64::<8>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_9() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<9>(a) }
+    let mut rng = Rng::new(0x3808e93444839493);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 9);
+        if got != want { fail("_mm256_srli_epi64::<9>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_10() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<10>(a) }
+    let mut rng = Rng::new(0x150ff15d1b0771a3);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 10);
+        if got != want { fail("_mm256_srli_epi64::<10>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_11() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<11>(a) }
+    let mut rng = Rng::new(0x8ce3d784ce5f1fb);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 11);
+        if got != want { fail("_mm256_srli_epi64::<11>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_12() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<12>(a) }
+    let mut rng = Rng::new(0x2e8c69166fb37752);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 12);
+        if got != want { fail("_mm256_srli_epi64::<12>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_13() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<13>(a) }
+    let mut rng = Rng::new(0x334da5333851f70a);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 13);
+        if got != want { fail("_mm256_srli_epi64::<13>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_14() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<14>(a) }
+    let mut rng = Rng::new(0x14d4805bb26f7c41);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 14);
+        if got != want { fail("_mm256_srli_epi64::<14>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_15() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<15>(a) }
+    let mut rng = Rng::new(0x9154c7ee58dfc19);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 15);
+        if got != want { fail("_mm256_srli_epi64::<15>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_16() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<16>(a) }
+    let mut rng = Rng::new(0x2f571810c6db7ab0);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 16);
+        if got != want { fail("_mm256_srli_epi64::<16>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_17() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<17>(a) }
+    let mut rng = Rng::new(0x3296d4359139fae8);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 17);
+        if got != want { fail("_mm256_srli_epi64::<17>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_18() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<18>(a) }
+    let mut rng = Rng::new(0x16b9135192a66c26);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 18);
+        if got != want { fail("_mm256_srli_epi64::<18>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_19() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<19>(a) }
+    let mut rng = Rng::new(0xb78df74c544ec7e);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 19);
+        if got != want { fail("_mm256_srli_epi64::<19>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_20() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<20>(a) }
+    let mut rng = Rng::new(0x1fc4a5ad3181acc1);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 20);
+        if got != want { fail("_mm256_srli_epi64::<20>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_21() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<21>(a) }
+    let mut rng = Rng::new(0x205698866632c99);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 21);
+        if got != want { fail("_mm256_srli_epi64::<21>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_22() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<22>(a) }
+    let mut rng = Rng::new(0x24473de64535aa30);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 22);
+        if got != want { fail("_mm256_srli_epi64::<22>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_23() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<23>(a) }
+    let mut rng = Rng::new(0x3986f1c312d72a68);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 23);
+        if got != want { fail("_mm256_srli_epi64::<23>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_24() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<24>(a) }
+    let mut rng = Rng::new(0x1e1fd4ab98e9a123);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 24);
+        if got != want { fail("_mm256_srli_epi64::<24>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_25() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<25>(a) }
+    let mut rng = Rng::new(0x3de188ecf0b217b);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 25);
+        if got != want { fail("_mm256_srli_epi64::<25>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_26() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<26>(a) }
+    let mut rng = Rng::new(0x259c4ce0ec5da7d2);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 26);
+        if got != want { fail("_mm256_srli_epi64::<26>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_27() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<27>(a) }
+    let mut rng = Rng::new(0x385d80c5bbbf278a);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 27);
+        if got != want { fail("_mm256_srli_epi64::<27>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_28() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<28>(a) }
+    let mut rng = Rng::new(0x1c7247a1b820b144);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 28);
+        if got != want { fail("_mm256_srli_epi64::<28>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_29() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<29>(a) }
+    let mut rng = Rng::new(0x1b38b84efc2311c);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 29);
+        if got != want { fail("_mm256_srli_epi64::<29>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_30() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<30>(a) }
+    let mut rng = Rng::new(0x198269fd9ed31a20);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 30);
+        if got != want { fail("_mm256_srli_epi64::<30>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_31() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<31>(a) }
+    let mut rng = Rng::new(0x443a5d8c9319a78);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 31);
+        if got != want { fail("_mm256_srli_epi64::<31>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_32() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<32>(a) }
+    let mut rng = Rng::new(0x2201f1b6ea671cd1);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 32);
+        if got != want { fail("_mm256_srli_epi64::<32>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_33() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<33>(a) }
+    let mut rng = Rng::new(0x3fc03d93bd859c89);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 33);
+        if got != want { fail("_mm256_srli_epi64::<33>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_34() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<34>(a) }
+    let mut rng = Rng::new(0x185918fb37bb17c2);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 34);
+        if got != want { fail("_mm256_srli_epi64::<34>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_35() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<35>(a) }
+    let mut rng = Rng::new(0x598d4de6059979a);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 35);
+        if got != want { fail("_mm256_srli_epi64::<35>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_36() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<36>(a) }
+    let mut rng = Rng::new(0x23da80b0430f1133);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 36);
+        if got != want { fail("_mm256_srli_epi64::<36>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_37() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<37>(a) }
+    let mut rng = Rng::new(0x3e1b4c9514ed916b);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 37);
+        if got != want { fail("_mm256_srli_epi64::<37>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_38() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<38>(a) }
+    let mut rng = Rng::new(0x1a348bf1177207a5);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 38);
+        if got != want { fail("_mm256_srli_epi64::<38>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_39() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<39>(a) }
+    let mut rng = Rng::new(0x7f547d4409087fd);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 39);
+        if got != want { fail("_mm256_srli_epi64::<39>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_40() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<40>(a) }
+    let mut rng = Rng::new(0xa520c4cbffd1044);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 40);
+        if got != want { fail("_mm256_srli_epi64::<40>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_41() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<41>(a) }
+    let mut rng = Rng::new(0x1793c069e81f901c);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 41);
+        if got != want { fail("_mm256_srli_epi64::<41>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_42() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<42>(a) }
+    let mut rng = Rng::new(0x31d19407cb4916b5);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 42);
+        if got != want { fail("_mm256_srli_epi64::<42>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_43() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<43>(a) }
+    let mut rng = Rng::new(0x2c1058229cab96ed);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 43);
+        if got != want { fail("_mm256_srli_epi64::<43>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_44() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<44>(a) }
+    let mut rng = Rng::new(0xb897d4a16951da6);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 44);
+        if got != want { fail("_mm256_srli_epi64::<44>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_45() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<45>(a) }
+    let mut rng = Rng::new(0x1648b16f41779dfe);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 45);
+        if got != want { fail("_mm256_srli_epi64::<45>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_46() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<46>(a) }
+    let mut rng = Rng::new(0x300ae50162211b57);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 46);
+        if got != want { fail("_mm256_srli_epi64::<46>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_47() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<47>(a) }
+    let mut rng = Rng::new(0x2dcb292435c39b0f);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 47);
+        if got != want { fail("_mm256_srli_epi64::<47>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_48() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<48>(a) }
+    let mut rng = Rng::new(0x9e4ee40365c0dc1);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 48);
+        if got != want { fail("_mm256_srli_epi64::<48>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_49() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<49>(a) }
+    let mut rng = Rng::new(0x1425226561be8d99);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 49);
+        if got != want { fail("_mm256_srli_epi64::<49>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_50() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<50>(a) }
+    let mut rng = Rng::new(0xc14c01c10afa6a5);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 50);
+        if got != want { fail("_mm256_srli_epi64::<50>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_51() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<51>(a) }
+    let mut rng = Rng::new(0x11d50c39474d26fd);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 51);
+        if got != want { fail("_mm256_srli_epi64::<51>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_52() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<52>(a) }
+    let mut rng = Rng::new(0x37975857641ba054);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 52);
+        if got != want { fail("_mm256_srli_epi64::<52>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_53() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<53>(a) }
+    let mut rng = Rng::new(0x2a56947233f9200c);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 53);
+        if got != want { fail("_mm256_srli_epi64::<53>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_54() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<54>(a) }
+    let mut rng = Rng::new(0xdcfb11ab9c7ab47);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 54);
+        if got != want { fail("_mm256_srli_epi64::<54>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_55() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<55>(a) }
+    let mut rng = Rng::new(0x100e7d3fee252b1f);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 55);
+        if got != want { fail("_mm256_srli_epi64::<55>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_56() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<56>(a) }
+    let mut rng = Rng::new(0x364c2951cd73adb6);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 56);
+        if got != want { fail("_mm256_srli_epi64::<56>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_57() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<57>(a) }
+    let mut rng = Rng::new(0x2b8de5749a912dee);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 57);
+        if got != want { fail("_mm256_srli_epi64::<57>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_58() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<58>(a) }
+    let mut rng = Rng::new(0xfa22210990ebb20);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 58);
+        if got != want { fail("_mm256_srli_epi64::<58>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_59() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<59>(a) }
+    let mut rng = Rng::new(0x1263ee35ceec3b78);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 59);
+        if got != want { fail("_mm256_srli_epi64::<59>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_60() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<60>(a) }
+    let mut rng = Rng::new(0x6df94ec3a297bc7);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 60);
+        if got != want { fail("_mm256_srli_epi64::<60>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_61() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<61>(a) }
+    let mut rng = Rng::new(0x1b1e58c96dcbfb9f);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 61);
+        if got != want { fail("_mm256_srli_epi64::<61>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_62() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<62>(a) }
+    let mut rng = Rng::new(0x3d5c0ca74e9d7d36);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 62);
+        if got != want { fail("_mm256_srli_epi64::<62>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_63() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<63>(a) }
+    let mut rng = Rng::new(0x209dc082197ffd6e);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 63);
+        if got != want { fail("_mm256_srli_epi64::<63>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_64() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<64>(a) }
+    let mut rng = Rng::new(0x704e5ea93417625);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 64);
+        if got != want { fail("_mm256_srli_epi64::<64>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_65() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<65>(a) }
+    let mut rng = Rng::new(0x1ac529cfc4a3f67d);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 65);
+        if got != want { fail("_mm256_srli_epi64::<65>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_127() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<127>(a) }
+    let mut rng = Rng::new(0x1e2ca49d6110780d);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 127);
+        if got != want { fail("_mm256_srli_epi64::<127>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_128() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<128>(a) }
+    let mut rng = Rng::new(0x3a0363f95d8f082c);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 128);
+        if got != want { fail("_mm256_srli_epi64::<128>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_srli_epi64_255() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_srli_epi64::<255>(a) }
+    let mut rng = Rng::new(0x36eef6f18b6658a8);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_srli64(&u64s256(a), 255);
+        if got != want { fail("_mm256_srli_epi64::<255>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_0() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<0>(a) }
+    let mut rng = Rng::new(0x28262b4b1882159d);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 0);
+        if got != want { fail("_mm256_slli_epi64::<0>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_1() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<1>(a) }
+    let mut rng = Rng::new(0x35e7e76e77d0a37c);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 1);
+        if got != want { fail("_mm256_slli_epi64::<1>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_2() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<2>(a) }
+    let mut rng = Rng::new(0x13a5b3001d567e1e);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 2);
+        if got != want { fail("_mm256_slli_epi64::<2>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_3() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<3>(a) }
+    let mut rng = Rng::new(0xe647f257204c8ff);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 3);
+        if got != want { fail("_mm256_slli_epi64::<3>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_4() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<4>(a) }
+    let mut rng = Rng::new(0x29fd5a4d532ac29b);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 4);
+        if got != want { fail("_mm256_slli_epi64::<4>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_5() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<5>(a) }
+    let mut rng = Rng::new(0x343c96683c78747a);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 5);
+        if got != want { fail("_mm256_slli_epi64::<5>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_6() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<6>(a) }
+    let mut rng = Rng::new(0x127ec20656fea918);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 6);
+        if got != want { fail("_mm256_slli_epi64::<6>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_7() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<7>(a) }
+    let mut rng = Rng::new(0xfbf0e2339ac1ff9);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 7);
+        if got != want { fail("_mm256_slli_epi64::<7>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_8() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<8>(a) }
+    let mut rng = Rng::new(0x2b90c9478fd3bb91);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 8);
+        if got != want { fail("_mm256_slli_epi64::<8>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_9() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<9>(a) }
+    let mut rng = Rng::new(0x36510562e0810d70);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 9);
+        if got != want { fail("_mm256_slli_epi64::<9>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_10() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<10>(a) }
+    let mut rng = Rng::new(0x2a2fcaae3f05e840);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 10);
+        if got != want { fail("_mm256_slli_epi64::<10>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_11() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<11>(a) }
+    let mut rng = Rng::new(0x37ee068b68e76818);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 11);
+        if got != want { fail("_mm256_slli_epi64::<11>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_12() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<12>(a) }
+    let mut rng = Rng::new(0x11ac52e54bb1eeb1);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 12);
+        if got != want { fail("_mm256_slli_epi64::<12>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_13() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<13>(a) }
+    let mut rng = Rng::new(0xc6d9ec01c536ee9);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 13);
+        if got != want { fail("_mm256_slli_epi64::<13>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_14() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<14>(a) }
+    let mut rng = Rng::new(0x2bf4bba8966de5a2);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 14);
+        if got != want { fail("_mm256_slli_epi64::<14>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_15() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<15>(a) }
+    let mut rng = Rng::new(0x3635778dc18f65fa);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 15);
+        if got != want { fail("_mm256_slli_epi64::<15>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_16() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<16>(a) }
+    let mut rng = Rng::new(0x107723e3e2d9e353);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 16);
+        if got != want { fail("_mm256_slli_epi64::<16>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_17() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<17>(a) }
+    let mut rng = Rng::new(0xdb6efc6b53b630b);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 17);
+        if got != want { fail("_mm256_slli_epi64::<17>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_18() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<18>(a) }
+    let mut rng = Rng::new(0x299928a2b6a4f5c5);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 18);
+        if got != want { fail("_mm256_slli_epi64::<18>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_19() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<19>(a) }
+    let mut rng = Rng::new(0x3458e487e146759d);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 19);
+        if got != want { fail("_mm256_slli_epi64::<19>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_20() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<20>(a) }
+    let mut rng = Rng::new(0x20e49e5e15833522);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 20);
+        if got != want { fail("_mm256_slli_epi64::<20>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_21() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<21>(a) }
+    let mut rng = Rng::new(0x3d25527b4261b57a);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 21);
+        if got != want { fail("_mm256_slli_epi64::<21>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_22() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<22>(a) }
+    let mut rng = Rng::new(0x1b670615613733d3);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 22);
+        if got != want { fail("_mm256_slli_epi64::<22>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_23() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<23>(a) }
+    let mut rng = Rng::new(0x6a6ca3036d5b38b);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 23);
+        if got != want { fail("_mm256_slli_epi64::<23>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_24() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<24>(a) }
+    let mut rng = Rng::new(0x213fef58bceb38c0);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 24);
+        if got != want { fail("_mm256_slli_epi64::<24>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_25() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<25>(a) }
+    let mut rng = Rng::new(0x3cfe237deb09b898);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 25);
+        if got != want { fail("_mm256_slli_epi64::<25>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_26() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<26>(a) }
+    let mut rng = Rng::new(0x1abc7713c85f3e31);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 26);
+        if got != want { fail("_mm256_slli_epi64::<26>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_27() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<27>(a) }
+    let mut rng = Rng::new(0x77dbb369fbdbe69);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 27);
+        if got != want { fail("_mm256_slli_epi64::<27>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_28() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<28>(a) }
+    let mut rng = Rng::new(0x23527c529c2228a7);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 28);
+        if got != want { fail("_mm256_slli_epi64::<28>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_29() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<29>(a) }
+    let mut rng = Rng::new(0x3e93b077cbc0a8ff);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 29);
+        if got != want { fail("_mm256_slli_epi64::<29>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_30() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<30>(a) }
+    let mut rng = Rng::new(0x26a2520ebad183c3);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 30);
+        if got != want { fail("_mm256_slli_epi64::<30>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_31() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<31>(a) }
+    let mut rng = Rng::new(0x3b639e2bed33039b);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 31);
+        if got != want { fail("_mm256_slli_epi64::<31>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_32() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<32>(a) }
+    let mut rng = Rng::new(0x1d21ca45ce658532);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 32);
+        if got != want { fail("_mm256_slli_epi64::<32>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_33() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<33>(a) }
+    let mut rng = Rng::new(0xe006609987056a);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 33);
+        if got != want { fail("_mm256_slli_epi64::<33>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_34() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<34>(a) }
+    let mut rng = Rng::new(0x2779230813b98e21);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 34);
+        if got != want { fail("_mm256_slli_epi64::<34>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_35() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<35>(a) }
+    let mut rng = Rng::new(0x3ab8ef2d445b0e79);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 35);
+        if got != want { fail("_mm256_slli_epi64::<35>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_36() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<36>(a) }
+    let mut rng = Rng::new(0x1cfabb43670d88d0);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 36);
+        if got != want { fail("_mm256_slli_epi64::<36>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_37() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<37>(a) }
+    let mut rng = Rng::new(0x13b776630ef0888);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 37);
+        if got != want { fail("_mm256_slli_epi64::<37>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_38() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<38>(a) }
+    let mut rng = Rng::new(0x2514b00233709e46);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 38);
+        if got != want { fail("_mm256_slli_epi64::<38>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_39() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<39>(a) }
+    let mut rng = Rng::new(0x38d57c2764921e1e);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 39);
+        if got != want { fail("_mm256_slli_epi64::<39>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_40() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<40>(a) }
+    let mut rng = Rng::new(0x357237bf9bff89a7);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 40);
+        if got != want { fail("_mm256_slli_epi64::<40>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_41() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<41>(a) }
+    let mut rng = Rng::new(0x28b3fb9acc1d09ff);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 41);
+        if got != want { fail("_mm256_slli_epi64::<41>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_42() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<42>(a) }
+    let mut rng = Rng::new(0xef1aff4ef4b8f56);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 42);
+        if got != want { fail("_mm256_slli_epi64::<42>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_43() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<43>(a) }
+    let mut rng = Rng::new(0x133063d1b8a90f0e);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 43);
+        if got != want { fail("_mm256_slli_epi64::<43>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_44() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<44>(a) }
+    let mut rng = Rng::new(0x34a946b932978445);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 44);
+        if got != want { fail("_mm256_slli_epi64::<44>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_45() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<45>(a) }
+    let mut rng = Rng::new(0x29688a9c6575041d);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 45);
+        if got != want { fail("_mm256_slli_epi64::<45>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_46() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<46>(a) }
+    let mut rng = Rng::new(0xf2adef2462382b4);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 46);
+        if got != want { fail("_mm256_slli_epi64::<46>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_47() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<47>(a) }
+    let mut rng = Rng::new(0x12eb12d711c102ec);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 47);
+        if got != want { fail("_mm256_slli_epi64::<47>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_48() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<48>(a) }
+    let mut rng = Rng::new(0x36c4d5b3125e9422);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 48);
+        if got != want { fail("_mm256_slli_epi64::<48>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_49() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<49>(a) }
+    let mut rng = Rng::new(0x2b05199645bc147a);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 49);
+        if got != want { fail("_mm256_slli_epi64::<49>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_50() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<50>(a) }
+    let mut rng = Rng::new(0x3334fbef34ad3f46);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 50);
+        if got != want { fail("_mm256_slli_epi64::<50>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_51() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<51>(a) }
+    let mut rng = Rng::new(0x2ef537ca634fbf1e);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 51);
+        if got != want { fail("_mm256_slli_epi64::<51>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_52() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<52>(a) }
+    let mut rng = Rng::new(0x8b763a4401939b7);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 52);
+        if got != want { fail("_mm256_slli_epi64::<52>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_53() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<53>(a) }
+    let mut rng = Rng::new(0x1576af8117fbb9ef);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 53);
+        if got != want { fail("_mm256_slli_epi64::<53>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_54() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<54>(a) }
+    let mut rng = Rng::new(0x32ef8ae99dc532a4);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 54);
+        if got != want { fail("_mm256_slli_epi64::<54>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_55() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<55>(a) }
+    let mut rng = Rng::new(0x2f2e46ccca27b2fc);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 55);
+        if got != want { fail("_mm256_slli_epi64::<55>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_56() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<56>(a) }
+    let mut rng = Rng::new(0x96c12a2e9713455);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 56);
+        if got != want { fail("_mm256_slli_epi64::<56>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_57() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<57>(a) }
+    let mut rng = Rng::new(0x14adde87be93b40d);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 57);
+        if got != want { fail("_mm256_slli_epi64::<57>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_58() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<58>(a) }
+    let mut rng = Rng::new(0x308219e3bd0c22c3);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 58);
+        if got != want { fail("_mm256_slli_epi64::<58>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_59() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<59>(a) }
+    let mut rng = Rng::new(0x2d43d5c6eaeea29b);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 59);
+        if got != want { fail("_mm256_slli_epi64::<59>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_60() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<60>(a) }
+    let mut rng = Rng::new(0x39ffaf1f1e2be224);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 60);
+        if got != want { fail("_mm256_slli_epi64::<60>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_61() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<61>(a) }
+    let mut rng = Rng::new(0x243e633a49c9627c);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 61);
+        if got != want { fail("_mm256_slli_epi64::<61>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_62() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<62>(a) }
+    let mut rng = Rng::new(0x27c37546a9fe4d5);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 62);
+        if got != want { fail("_mm256_slli_epi64::<62>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_63() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<63>(a) }
+    let mut rng = Rng::new(0x1fbdfb713d7d648d);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 63);
+        if got != want { fail("_mm256_slli_epi64::<63>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_64() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<64>(a) }
+    let mut rng = Rng::new(0x3824de19b743efc6);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 64);
+        if got != want { fail("_mm256_slli_epi64::<64>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_65() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<65>(a) }
+    let mut rng = Rng::new(0x25e5123ce0a16f9e);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 65);
+        if got != want { fail("_mm256_slli_epi64::<65>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_127() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<127>(a) }
+    let mut rng = Rng::new(0x2766eb258512e1ee);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 127);
+        if got != want { fail("_mm256_slli_epi64::<127>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_128() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<128>(a) }
+    let mut rng = Rng::new(0x3492c41b98d91cf);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 128);
+        if got != want { fail("_mm256_slli_epi64::<128>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_slli_epi64_255() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i) -> __m256i { _mm256_slli_epi64::<255>(a) }
+    let mut rng = Rng::new(0xfa4b9496f64c14b);
+    for _ in 0..ITERS/16 {
+        let a = rng.v256();
+        let got = u64s256(unsafe { go(a) });
+        let want: Vec<u64> = ref_slli64(&u64s256(a), 255);
+        if got != want { fail("_mm256_slli_epi64::<255>", &bytes256(a), &[], &format!("{:?} vs {:?}", got, want)); }
     }
     }
     unsafe { body(iters()) }

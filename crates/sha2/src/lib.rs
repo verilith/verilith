@@ -34,6 +34,8 @@ pub mod cpu;
 pub mod avx2;
 mod store;
 #[doc(hidden)]
+pub mod lanes;
+#[doc(hidden)]
 pub mod hash;
 #[doc(hidden)]
 pub mod hash512;

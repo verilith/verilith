@@ -17,7 +17,7 @@ default = ["std"]
 # Without `std` the crate is `no_std` (and needs no allocator), and the
 # kernels are chosen at compile time from the target's features rather
 # than at run time.
-std = ["vstd/std", "verilith-core/std"]
+std = ["vstd/std", "verilith-core/std", "verilith-simd/std"]
 # Export the C API under OpenSSL's own names (SHA256_Init, SHA512_Init and the rest).
 openssl-abi = []
 # RustCrypto's `digest` 0.11 traits (as RustCrypto `sha2` 0.11 and `hmac`
@@ -31,6 +31,7 @@ oid = ["digest011?/oid", "digest010?/oid"]
 [dependencies]
 verilith-core = { path = "../core", version = "0.1.0", default-features = false }
 vstd = { workspace = true }
+verilith-simd = { path = "../simd", version = "0.1.0", default-features = false }
 digest011 = { package = "digest", version = "0.11.2", default-features = false, features = ["mac"], optional = true }
 digest010 = { package = "digest", version = "0.10.7", default-features = false, features = ["mac"], optional = true }
 

@@ -331,6 +331,9 @@ fn each16<const N: usize>(a: [u8; N], f: impl Fn(u16) -> u16) -> [u8; N] {
 fn each32<const N: usize>(a: [u8; N], f: impl Fn(u32) -> u32) -> [u8; N] {
     map32(a, a, |x, _| f(x))
 }
+fn each64<const N: usize>(a: [u8; N], f: impl Fn(u64) -> u64) -> [u8; N] {
+    map64(a, a, |x, _| f(x))
+}
 fn lanes1<const N: usize>(a: [u8; N], f: impl Fn(&[u8], &mut [u8])) -> [u8; N] {
     lanes2(a, a, |x, _, r| f(x, r))
 }
@@ -340,6 +343,8 @@ imm1!(_mm_slli_epi16, _mm256_slli_epi16, |a, k| each16(a, |x| if !(0..=15).conta
 imm1!(_mm_srai_epi16, _mm256_srai_epi16, |a, k| each16(a, |x| ((x as i16) >> (k as u32).min(15)) as u16));
 imm1!(_mm_srli_epi32, _mm256_srli_epi32, |a, k| each32(a, |x| if !(0..=31).contains(&k) { 0 } else { x >> k }));
 imm1!(_mm_slli_epi32, _mm256_slli_epi32, |a, k| each32(a, |x| if !(0..=31).contains(&k) { 0 } else { x << k }));
+imm1!(_mm_srli_epi64, _mm256_srli_epi64, |a, k| each64(a, |x| if !(0..=63).contains(&k) { 0 } else { x >> k }));
+imm1!(_mm_slli_epi64, _mm256_slli_epi64, |a, k| each64(a, |x| if !(0..=63).contains(&k) { 0 } else { x << k }));
 imm1!(_mm_shuffle_epi32, _mm256_shuffle_epi32, |a, k| lanes1(a, |x, r| shuffle32(x, k, r)));
 imm1!(_mm_slli_si128, _mm256_bslli_epi128, |a, k| lanes1(a, |x, r| bslli(x, (k & 0xff) as usize, r)));
 imm1!(_mm_srli_si128, _mm256_bsrli_epi128, |a, k| lanes1(a, |x, r| bsrli(x, (k & 0xff) as usize, r)));

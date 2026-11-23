@@ -12,6 +12,11 @@ wrappers in `verilith_simd::neon` call `core::arch::aarch64` on AArch64 and an
 emulation (`src/emu_neon.rs`) elsewhere, so NEON kernels are verified on an
 x86 machine like any other code and selected at run time with `has_neon()`.
 
+Without the default `std` feature the crate is `no_std`: `has_avx2()` and
+the other detections then report only the features the target is compiled
+with, and the reference implementations (`refs`, which allocate) need the
+`alloc` feature.
+
 A vector is modelled as its sequence of bytes (`b128`, `b256`), with
 little-endian views as 16-, 32- and 64-bit lanes (`u16s`, `u32s`, `u64s`) and
 signed readings (`s8`, `s16`, `s32`). Each intrinsic gets an
@@ -57,7 +62,7 @@ its own trusted base.
   `ops.rs` function does not match what the CPU does, every proof that uses
   it is about the wrong thing.
 - `src/mem.rs`: unaligned loads and stores between vectors and slices (of
-  `u8`, `u16`, `i16` and `u32`), and the 8-byte load and store of a
+  `u8`, `u16`, `i16`, `u32` and `u64`), and the 8-byte load and store of a
   vector's low half (`_mm_loadl_epi64`, `_mm_storel_epi64`) and the
   4-byte store of its low 32 bits (`_mm_storeu_si32`), each with a bounds
   `requires`.
@@ -179,7 +184,7 @@ Intrinsics need a `#[target_feature]` context even for SSE2, and
 ## Building
 
 ```text
-cargo verus verify                          # the proofs (278 functions)
+cargo verus verify                          # the proofs (341 functions)
 cargo test --release                        # the differential tests (~1 min)
 VSIMD_ITERS=10000 cargo test --release      # a quick run
 python3 tools/gen_x86.py src/x86.rs src/safe.rs src/x86_emu.rs  # regenerate the specifications, safe wrappers and emulation specs

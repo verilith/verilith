@@ -16,6 +16,9 @@ verus_library(
         "std",
     ],
     vstd = "//third-party:vstd-alloc-std",
-    deps = ["//crates/core:core"],
+    deps = [
+        "//crates/core:core",
+        "//crates/simd:simd",
+    ],
     visibility = ["PUBLIC"],
 )

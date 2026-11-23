@@ -11,10 +11,11 @@ traits (0.11 and 0.10) so it can stand in for RustCrypto's `sha2` and
 `hmac`, it works without `std`, and it builds a static library behind
 OpenSSL's `SHA224_*`, `SHA256_*`, `SHA384_*` and `SHA512_*` C API.
 
-`cargo verus verify` (or `scripts/verify.sh`) checks 209 functions and
+`cargo verus verify` (or `scripts/verify.sh`) checks 331 functions and
 lemmas with no errors and no `assume`. What is assumed instead is listed
 under [Trusted base](#trusted-base): the CPU dispatch, the SHA instruction
-kernels, the AVX2 message schedules, and two byte stores.
+kernels, verilith-simd's specifications of the AVX2 intrinsics, and two
+byte stores.
 
 ```rust
 let d: [u8; 32] = verilith_sha2::sha256(b"abc");
@@ -60,7 +61,8 @@ let m = hmac::SimpleHmac::<verilith_sha2::Sha256>::new_from_slice(b"key").unwrap
 | Whatever the sizes of the pieces given to `update`, `finalize` returns the hash of all of them in order: padding (§5.1.1, §5.1.2), the bit length modulo 2^64 or 2^128, one or two final blocks | `Sha256`, `Sha224` against `spec::sha256`, `spec::sha224`; `Sha512`, `Sha384`, `Sha512_224`, `Sha512_256` against `spec512::sha512`, `sha384`, `sha512_224`, `sha512_256` |
 | The 128-bit byte count of the SHA-512 family, kept as two 64-bit halves, is the message length modulo 2^128 | `hash512::Engine512::add_count` |
 | The rounds that take K_t + W_t precomputed, as a vectorized schedule gives it, are the rounds (addition modulo 2^n is associative) | `compress_block_kw` in each |
-| The pipelined kernels: each pair of blocks is compressed while the next pair's schedule is computed between its round groups, and the loop over pairs computes H(n) | `pair_kw` and `compress_blocks_pipe` in each, given the AVX2 schedule's contract |
+| The AVX2 message schedules, two blocks at once (whole, or a few words at a time for the pipelined kernels), compute K_t + W_t of §6.2.2 and §6.4.2 step 1: byte swaps, σ0 and σ1 from lane shifts, the words that straddle two vectors, the window of the last 16 words | `avx2::schedule512x2`, `sched_start`, `sched_steps2`, `schedule256x2`, `sched256_start`, `sched256_step` against `spec512::schedule` and `spec::schedule`, over verilith-simd's specifications of the intrinsics (lane lemmas in `lanes`) |
+| The pipelined kernels: each pair of blocks is compressed while the next pair's schedule is computed between its round groups, and the loop over pairs computes H(n) | `pair_kw` and `compress_blocks_pipe` in each |
 | The one-shot functions | `sha256`, `sha224`, `sha512`, `sha384`, `sha512_224`, `sha512_256` against the same |
 | For any key length, and whatever the sizes of the pieces given to `update`, HMAC's `finalize` returns HMAC(K, text) of FIPS 198-1 §4: K0 from the key (hashed if longer than the block, zero-padded), then H((K0 ⊕ opad) ‖ H((K0 ⊕ ipad) ‖ text)); `reset` returns to the keyed state; `verify` is equality with that MAC | `HmacSha224`, `HmacSha256`, `HmacSha384`, `HmacSha512`, `HmacSha512_224`, `HmacSha512_256` and the one-shot `hmac_*` against `spec_hmac::hmac_*` |
 
@@ -94,7 +96,11 @@ let m = hmac::SimpleHmac::<verilith_sha2::Sha256>::new_from_slice(b"key").unwrap
 - `src/cpu.rs`: the kernel dispatch and the SHA-NI and ARMv8 kernels
   (trusted, below).
 - `src/avx2.rs`: the AVX2 message schedules, two blocks at once, whole or
-  a few words at a time for the pipelined kernels (trusted, below).
+  a few words at a time for the pipelined kernels, written with
+  verilith-simd's safe intrinsics.
+- `src/lanes.rs`: lemmas about lanes for them: bitwise operations and
+  constant shifts on 32- and 64-bit lanes, `alignr`, the byte-swap
+  shuffles.
 - `src/store.rs`: big-endian stores of a word (trusted, below).
 - `src/capi.rs`: the C API (an unverified adapter).
 
@@ -124,15 +130,20 @@ What the proofs here assume rather than prove:
   `pair_avx2` and `pair256_avx2` are in the same position: each is the
   verified `pair_kw` compiled with AVX2 and out of line, trusted only to
   be that function.
-- `src/avx2.rs`, eight `external_body` functions (`schedule512x2`,
-  `sched_start`, `sched_steps2` and the three SHA-256 ones, and the opaque
-  `Sched512`/`Sched256`): that they compute K_t + W_t as
-  `spec512::schedule` and `spec::schedule` define them, which is what
-  their `ensures` say. The rounds that use them are verified. They are
+- `src/avx2.rs`, three `external_body` functions. `schedule512x2` and
+  `schedule256x2` call the verified `schedule512x2_body` and
+  `schedule256x2_body` compiled with AVX2 enabled (Verus does not accept
+  `#[target_feature]` on verified code), trusted only to be those
+  functions. `barrier` is the empty `asm!` each pipelined step's result
+  passes through, which only keeps LLVM from moving the step; its
+  `ensures` is that it returns its argument. The schedules are also still
   tested against FIPS 180-4's schedule written out directly
-  (`tests/kernels.rs`), and the kernels built on them against the
-  portable ones at every length up to 20 blocks. Each step passes its
-  result through an empty `asm!`, which only keeps LLVM from moving it.
+  (`tests/kernels.rs`).
+- From [verilith-simd](https://github.com/verilith/verilith/tree/main/crates/simd): the specifications of the AVX2 intrinsics
+  the schedules use (`safe.rs`), each checked against the CPU there
+  (`tests/difftest.rs`), and of the 128-bit loads and stores (`mem.rs`).
+  That the CPU has AVX2 is the `avx2()` precondition, which the trusted
+  dispatch in `cpu.rs` meets.
 - `src/store.rs`: `put_u32_be` and `put_u64_be`, one line each
   (`to_be_bytes` copied into place), whose `ensures` are the bytes
   written. LLVM does not merge the verified form's byte stores.
@@ -297,9 +308,6 @@ What the speed rests on:
 
 - A kernel for x86-64's own SHA-512 instructions (Arrow Lake, Lunar
   Lake). There was no CPU with them to test on.
-- Verifying the AVX2 schedules too, against verilith-simd's
-  specifications of the intrinsics; that needs 64-bit lane shifts added
-  there.
 - RustCrypto's block-level `digest` API, which RustCrypto's `hmac::Hmac`
   and `SerializableState` need.
 - Streamed SHA-512 through the C API is 10 to 25% behind OpenSSL 4.1 in

@@ -1277,6 +1277,112 @@ pub fn ref_slli32(a: &[u32], n: u32) -> (r: Vec<u32>)
     r
 }
 
+/// `2^n` for `n <= 63`.
+fn pow2e64(n: u32) -> (r: u128)
+    requires
+        n <= 63,
+    ensures
+        r as nat == pow2_spec(n as nat),
+        1 <= r <= 0x8000_0000_0000_0000,
+{
+    let mut p: u128 = 1;
+    let mut k: u32 = 0;
+    while k < n
+        invariant
+            k <= n <= 63,
+            p as nat == pow2_spec(k as nat),
+        decreases n - k,
+    {
+        proof {
+            lemma_pow2_spec_le(k as nat, 63);
+            lemma_pow2_63();
+        }
+        p = p * 2;
+        k = k + 1;
+    }
+    proof {
+        lemma_pow2_spec_le(0, n as nat);
+        lemma_pow2_spec_le(n as nat, 63);
+        lemma_pow2_63();
+    }
+    p
+}
+
+proof fn lemma_pow2_63()
+    ensures
+        pow2_spec(63) == 0x8000_0000_0000_0000,
+{
+    reveal_with_fuel(pow2_spec, 64);
+}
+
+pub fn ref_srli64(a: &[u64], n: u32) -> (r: Vec<u64>)
+    requires
+        n <= 255,
+    ensures
+        r@ == srli64(a@, n as int),
+{
+    let mut r: Vec<u64> = Vec::new();
+    let mut i: usize = 0;
+    while i < a.len()
+        invariant
+            n <= 255,
+            i <= a@.len(),
+            r@.len() == i,
+            forall|j: int| 0 <= j < i ==> r@[j] == #[trigger] srli64(a@, n as int)[j],
+        decreases a.len() - i,
+    {
+        let v = if n > 63 {
+            0u64
+        } else {
+            let p = pow2e64(n);
+            proof {
+                lemma_div_is_ordered_by_denominator(a[i as int] as int, 1, p as int);
+            }
+            (a[i] as u128 / p) as u64
+        };
+        r.push(v);
+        i = i + 1;
+    }
+    assert(r@ =~= srli64(a@, n as int));
+    r
+}
+
+pub fn ref_slli64(a: &[u64], n: u32) -> (r: Vec<u64>)
+    requires
+        n <= 255,
+    ensures
+        r@ == slli64(a@, n as int),
+{
+    let mut r: Vec<u64> = Vec::new();
+    let mut i: usize = 0;
+    while i < a.len()
+        invariant
+            n <= 255,
+            i <= a@.len(),
+            r@.len() == i,
+            forall|j: int| 0 <= j < i ==> r@[j] == #[trigger] slli64(a@, n as int)[j],
+        decreases a.len() - i,
+    {
+        let v = if n > 63 {
+            0u64
+        } else {
+            let p = pow2e64(n);
+            proof {
+                assert(a[i as int] * p <= 0xffff_ffff_ffff_ffff * 0x8000_0000_0000_0000) by (nonlinear_arith)
+                    requires
+                        p <= 0x8000_0000_0000_0000,
+                        a[i as int] <= 0xffff_ffff_ffff_ffff,
+                ;
+            }
+            ((a[i] as u128 * p) % 0x1_0000_0000_0000_0000) as u64
+        };
+        r.push(v);
+        i = i + 1;
+    }
+    assert(r@ =~= slli64(a@, n as int));
+    r
+}
+
 pub fn ref_shuffle32_lanes(a: &[u32], imm: u32) -> (r: Vec<u32>)
     requires
         a@.len() % 4 == 0,

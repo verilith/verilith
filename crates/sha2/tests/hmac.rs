@@ -2,7 +2,7 @@
 //! all six HMACs against RustCrypto's `hmac` over RustCrypto's `sha2` for
 //! every key length up to 300 (shorter than, equal to and longer than both
 //! block sizes) and messages in random pieces.
-use ::hmac::{KeyInit, Mac, SimpleHmac};
+use ::hmac::{KeyInit, SimpleHmac};
 use verilith_sha2::*;
 
 /// xorshift64*: reproducible bytes.
@@ -104,8 +104,8 @@ macro_rules! against {
                 let dlen = (r.next() % 700) as usize;
                 let d = r.bytes(dlen);
                 let mut t = <$theirs>::new_from_slice(&key).unwrap();
-                t.update(&d);
-                let want = t.finalize().into_bytes();
+                ::hmac::Mac::update(&mut t, &d);
+                let want = ::hmac::Mac::finalize(t).into_bytes();
                 assert_eq!(&$f(&key, &d)[..], &want[..], "key length {klen}");
                 // The same in random pieces, then again after a reset.
                 let mut m = $ours::new(&key);
@@ -113,17 +113,17 @@ macro_rules! against {
                     let mut i = 0;
                     while i < d.len() {
                         let n = ((r.next() % 200) as usize).min(d.len() - i);
-                        m.update(&d[i..i + n]);
+                        $ours::update(&mut m, &d[i..i + n]);
                         i += n;
                     }
-                    assert_eq!(&m.finalize()[..], &want[..], "key length {klen}, round {round}");
-                    assert!(m.verify(&want));
+                    assert_eq!(&$ours::finalize(&m)[..], &want[..], "key length {klen}, round {round}");
+                    assert!($ours::verify(&m, &want));
                     let mut bad = want.to_vec();
                     let j = (r.next() as usize) % bad.len();
                     bad[j] ^= 1 << (r.next() % 8);
-                    assert!(!m.verify(&bad));
-                    assert!(!m.verify(&want[..want.len() - 1]));
-                    m.reset();
+                    assert!(!$ours::verify(&m, &bad));
+                    assert!(!$ours::verify(&m, &want[..want.len() - 1]));
+                    $ours::reset(&mut m);
                 }
             }
         }

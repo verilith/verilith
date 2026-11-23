@@ -23,6 +23,7 @@
 // - `refs`: verified scalar implementations of every `ops` function, which
 //   `tests/difftest.rs` compares with the CPU.
 #![cfg_attr(not(verus_only), allow(unused_imports))]
+#![cfg_attr(not(feature = "std"), no_std)]
 pub mod lanes;
 pub mod ops;
 pub mod cpu;
@@ -66,6 +67,8 @@ pub mod avx512;
 pub mod mask;
 pub mod sse2;
 pub mod scalar;
+#[cfg(feature = "alloc")]
 pub mod refs;
+#[cfg(feature = "alloc")]
 pub mod refs_neon;
 pub mod patterns;

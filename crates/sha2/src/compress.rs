@@ -606,6 +606,8 @@ pub fn compress_block_kw(st: &mut [u32; 8], wk: &[u32; 64], Ghost(blk): Ghost<Se
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 pub fn compress_blocks_x2(st: &mut [u32; 8], p: &[u8])
+    requires
+        verilith_simd::cpu::avx2(),
     ensures
         final(st)@ == spec::hash_blocks(old(st)@, p@, (p@.len() / 64) as nat),
 {
@@ -617,6 +619,7 @@ pub fn compress_blocks_x2(st: &mut [u32; 8], p: &[u8])
         let mut w1 = [0u32; 64];
         while i + 2 <= n
             invariant
+                verilith_simd::cpu::avx2(),
                 n == p@.len() / 64,
                 p@.len() <= usize::MAX,
                 i <= n,
@@ -817,6 +820,7 @@ pub fn pair_kw(
     nxt1: &mut [u32; 64],
 )
     requires
+        verilith_simd::cpu::avx2(),
         kw_schedule(cur0@, spec::words(b0)),
         kw_schedule(cur1@, spec::words(b1)),
         o0 + 64 <= p@.len(),
@@ -844,6 +848,8 @@ pub fn pair_kw(
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 pub fn compress_blocks_pipe(st: &mut [u32; 8], p: &[u8])
+    requires
+        verilith_simd::cpu::avx2(),
     ensures
         final(st)@ == spec::hash_blocks(old(st)@, p@, (p@.len() / 64) as nat),
 {
@@ -863,6 +869,7 @@ pub fn compress_blocks_pipe(st: &mut [u32; 8], p: &[u8])
     // Blocks i and i + 1 are scheduled, in a0/a1 or c0/c1.
     while i + 4 <= n
         invariant
+            verilith_simd::cpu::avx2(),
             n == p@.len() / 64,
             p@.len() <= usize::MAX,
             i + 2 <= n,
