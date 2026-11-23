@@ -1368,7 +1368,7 @@ impl<T> Handle<T> {
     /// its receiver.
     pub fn pair(cap: usize) -> (r: (Handle<T>, Handle<T>))
         requires
-            0 < cap < 0x8000_0000,
+            0 < cap < 0x1000_0000_0000_0000,
         ensures
             r.0.wf(),
             !r.0.rx@,
