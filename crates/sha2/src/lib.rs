@@ -1,31 +1,41 @@
-//! SHA-2 (FIPS 180-4), proven with Verus: SHA-224 and SHA-256, and the
-//! 64-bit family SHA-384, SHA-512, SHA-512/224 and SHA-512/256.
-//!
-//! - [`spec`] and [`spec512`]: the standard as spec functions (trusted).
-//! - [`compress`] and [`compress512`]: the compression functions, proven
-//!   to compute `spec::compress` and `spec512::compress`.
-//! - [`hash`]: [`Sha256`] and [`Sha224`], whose `finalize` is proven to
-//!   return `spec::sha256` (or `spec::sha224`) of everything passed to
-//!   `update`; and the one-shot [`sha256`] and [`sha224`].
-//! - [`hash512`]: [`Sha512`], [`Sha384`], [`Sha512_224`] and [`Sha512_256`],
-//!   proven the same way against [`spec512`].
-//! - [`cpu`]: SHA-NI, ARMv8 SHA2 and ARMv8.2 SHA512 kernels, chosen at run
-//!   time (trusted, tested against the verified kernels).
-//! - [`capi`]: OpenSSL's `SHA224_*`, `SHA256_*`, `SHA384_*` and `SHA512_*`
-//!   C API (unverified adapter).
+#![doc = include_str!("../README.md")]
+// SHA-2 (FIPS 180-4), proven with Verus: SHA-224 and SHA-256, and the
+// 64-bit family SHA-384, SHA-512, SHA-512/224 and SHA-512/256.
+//
+// - [`spec`] and [`spec512`]: the standard as spec functions (trusted).
+// - [`compress`] and [`compress512`]: the compression functions, proven
+//   to compute `spec::compress` and `spec512::compress`.
+// - [`hash`]: [`Sha256`] and [`Sha224`], whose `finalize` is proven to
+//   return `spec::sha256` (or `spec::sha224`) of everything passed to
+//   `update`; and the one-shot [`sha256`] and [`sha224`].
+// - [`hash512`]: [`Sha512`], [`Sha384`], [`Sha512_224`] and [`Sha512_256`],
+//   proven the same way against [`spec512`].
+// - [`cpu`]: SHA-NI, ARMv8 SHA2 and ARMv8.2 SHA512 kernels, chosen at run
+//   time (trusted, tested against the verified kernels).
+// - [`capi`]: OpenSSL's `SHA224_*`, `SHA256_*`, `SHA384_*` and `SHA512_*`
+//   C API (unverified adapter).
 #![cfg_attr(not(verus_only), allow(unused_variables, unused_imports))]
 
+#[doc(hidden)]
 pub mod spec;
+#[doc(hidden)]
 pub mod compress;
+#[doc(hidden)]
 pub mod spec512;
+#[doc(hidden)]
 pub mod compress512;
+#[doc(hidden)]
 pub mod cpu;
 #[cfg(target_arch = "x86_64")]
+#[doc(hidden)]
 pub mod avx2;
 mod store;
+#[doc(hidden)]
 pub mod hash;
+#[doc(hidden)]
 pub mod hash512;
 #[allow(non_camel_case_types)]
+#[doc(hidden)]
 pub mod capi;
 
 pub use hash::{sha224, sha256, Sha224, Sha256};

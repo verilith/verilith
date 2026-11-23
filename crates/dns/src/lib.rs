@@ -1,42 +1,57 @@
-//! A formally verified DNS (RFC 1035) message parser and serializer.
+#![doc = include_str!("../README.md")]
+// A formally verified DNS (RFC 1035) message parser and serializer.
 #![cfg_attr(not(verus_only), allow(unused_variables, non_shorthand_field_patterns))]
 #![cfg_attr(not(feature = "std"), no_std)]
-//!
-//! - [`spec`]: the wire format as pure functions (the trusted specification).
-//! - [`lemmas`]: proofs about the spec, including the round-trip theorem.
-//! - [`message`]: the [`Message`] type, its verified accessors, builder and
-//!   serializer.
-//! - [`parse`]: the verified parser.
-//! - [`spec_rdata`], [`rdata`]: typed RDATA, specified and verified.
-//! - [`encode`]: the verified typed RDATA encoder, proven to be undone by
-//!   [`rdata::read_rdata`]; the c-ares writer uses it.
-//! - [`name`]: unverified conveniences (name views, presentation format,
-//!   iterators).
-//! - [`error`]: [`try_parse`], which says why a message was rejected.
-//! - [`capi`], `cares` (feature `cares`): unverified C ABI adapters for
-//!   c-ares's `ares_expand_name` and `ares_dns_parse`.
-//! - `native` (feature `capi`): the unverified native C API,
-//!   `include/vdns.h`.
+//
+// - [`spec`]: the wire format as pure functions (the trusted specification).
+// - [`lemmas`]: proofs about the spec, including the round-trip theorem.
+// - [`message`]: the [`Message`] type, its verified accessors, builder and
+//   serializer.
+// - [`parse`]: the verified parser.
+// - [`spec_rdata`], [`rdata`]: typed RDATA, specified and verified.
+// - [`encode`]: the verified typed RDATA encoder, proven to be undone by
+//   [`rdata::read_rdata`]; the c-ares writer uses it.
+// - [`name`]: unverified conveniences (name views, presentation format,
+//   iterators).
+// - [`error`]: [`try_parse`], which says why a message was rejected.
+// - [`capi`], `cares` (feature `cares`): unverified C ABI adapters for
+//   c-ares's `ares_expand_name` and `ares_dns_parse`.
+// - `native` (feature `capi`): the unverified native C API,
+//   `include/vdns.h`.
 extern crate alloc;
 
+#[doc(hidden)]
 pub mod capi;
+#[doc(hidden)]
 pub mod compress;
+#[doc(hidden)]
 pub mod encode;
 #[cfg(feature = "cares")]
+#[doc(hidden)]
 pub mod cares;
+#[doc(hidden)]
 pub mod error;
+#[doc(hidden)]
 pub mod lemmas;
+#[doc(hidden)]
 pub mod lemmas_rdata;
+#[doc(hidden)]
 pub mod message;
 pub mod name;
 // Unverified glue over `message`; not compiled when verifying.
 #[cfg(all(feature = "capi", not(verus_only)))]
+#[doc(hidden)]
 pub mod native;
+#[doc(hidden)]
 pub mod parse;
 pub mod rdata;
+#[doc(hidden)]
 pub mod spec;
+#[doc(hidden)]
 pub mod spec_rdata;
+#[doc(hidden)]
 pub mod spec_text;
+#[doc(hidden)]
 pub mod text;
 
 pub use message::{BuildError, Message, QuestionRef, RecordRef, Section};

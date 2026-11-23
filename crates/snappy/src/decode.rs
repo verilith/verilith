@@ -1450,3 +1450,14 @@ pub fn decompress_vec(src: &[u8], limit: usize) -> (r: Result<Vec<u8>, Error>)
 }
 
 } // verus!
+
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Error::Corrupt => "corrupt Snappy data",
+            Error::TooSmall => "the output is longer than the buffer or the limit",
+        })
+    }
+}
+
+impl std::error::Error for Error {}

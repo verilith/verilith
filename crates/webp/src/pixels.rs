@@ -1164,3 +1164,15 @@ pub proof fn lemma_decode_with_len(b: Seq<u8>, pos: int, w: nat, h: nat, cb: nat
 }
 
 } // verus!
+
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Error::Bitstream => "not a valid WebP image",
+            Error::OutOfMemory => "out of memory",
+            Error::Unsupported => "unsupported WebP image",
+        })
+    }
+}
+
+impl std::error::Error for Error {}

@@ -1858,3 +1858,15 @@ pub fn parse(pat: &[u8]) -> (r: Result<Parsed, Error>)
 }
 
 } // verus!
+
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Error::BadUtf8 => f.write_str("the pattern is not valid UTF-8"),
+            Error::Syntax(at) => write!(f, "syntax error at byte {at} of the pattern"),
+            Error::TooBig => f.write_str("the pattern is too large or too deep"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}

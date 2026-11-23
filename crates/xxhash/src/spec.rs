@@ -1,4 +1,4 @@
-//! XXH32 and XXH64 with seed 0, as pure functions, written from the xxHash
+//! XXH32 and XXH64, as pure functions, written from the xxHash
 //! specification (`doc/xxhash_spec.md` in the xxHash repository). This
 //! file is the trusted specification: everything else in the crate is
 //! proven against it.
@@ -120,6 +120,29 @@ pub open spec fn xxh32(b: Seq<u8>) -> u32 {
     avalanche32(tail32(b, full, add32(h0, (n % 0x1_0000_0000) as u32)))
 }
 
+/// The four accumulators before the first stripe, for `seed`.
+pub open spec fn init32(seed: u32) -> (u32, u32, u32, u32) {
+    (
+        add32(add32(seed, PRIME32_1), PRIME32_2),
+        add32(seed, PRIME32_2),
+        seed,
+        add32(seed, (0x1_0000_0000 - PRIME32_1) as u32),
+    )
+}
+
+/// XXH32 of `b` with `seed`.
+pub open spec fn xxh32_seed(b: Seq<u8>, seed: u32) -> u32 {
+    let n = b.len();
+    let full = (n / 16 * 16) as int;
+    let h0 = if n >= 16 {
+        let v = stripes32(b, 0, init32(seed));
+        add32(add32(add32(rotl32(v.0, 1), rotl32(v.1, 7)), rotl32(v.2, 12)), rotl32(v.3, 18))
+    } else {
+        add32(seed, PRIME32_5)
+    };
+    avalanche32(tail32(b, full, add32(h0, (n % 0x1_0000_0000) as u32)))
+}
+
 // ---------------------------------------------------------------------------
 // XXH64
 // ---------------------------------------------------------------------------
@@ -228,6 +251,33 @@ pub open spec fn xxh64(b: Seq<u8>) -> u64 {
         merge64(merge64(merge64(merge64(h, v.0), v.1), v.2), v.3)
     } else {
         PRIME64_5
+    };
+    avalanche64(tail64(b, full, add64(h0, (n % 0x1_0000_0000_0000_0000) as u64)))
+}
+
+/// The four accumulators before the first stripe, for `seed`.
+pub open spec fn init64(seed: u64) -> (u64, u64, u64, u64) {
+    (
+        add64(add64(seed, PRIME64_1), PRIME64_2),
+        add64(seed, PRIME64_2),
+        seed,
+        add64(seed, (0x1_0000_0000_0000_0000 - PRIME64_1) as u64),
+    )
+}
+
+/// XXH64 of `b` with `seed`.
+pub open spec fn xxh64_seed(b: Seq<u8>, seed: u64) -> u64 {
+    let n = b.len();
+    let full = (n / 32 * 32) as int;
+    let h0 = if n >= 32 {
+        let v = stripes64(b, 0, init64(seed));
+        let h = add64(
+            add64(add64(rotl64(v.0, 1), rotl64(v.1, 7)), rotl64(v.2, 12)),
+            rotl64(v.3, 18),
+        );
+        merge64(merge64(merge64(merge64(h, v.0), v.1), v.2), v.3)
+    } else {
+        add64(seed, PRIME64_5)
     };
     avalanche64(tail64(b, full, add64(h0, (n % 0x1_0000_0000_0000_0000) as u64)))
 }
