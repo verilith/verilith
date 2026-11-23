@@ -967,4 +967,72 @@ pub proof fn lemma_item_flip(
     }
 }
 
+/// `Misc` stops before the end: the document fails.
+pub proof fn lemma_fin_stop(s: Seq<u8>, p: int, t: Seq<XTok>)
+    requires
+        0 <= p < s.len(),
+        !is_ws(s[p]) && !has_lit(s, p, lit_comment()) && !has_lit(s, p, lit_pi()),
+    ensures
+        fin(s, p, t) is None,
+{
+    lemma_misc_stop(s, p, t);
+}
+
+pub proof fn lemma_fin_end(s: Seq<u8>, t: Seq<XTok>)
+    ensures
+        fin(s, s.len() as int, t) == Some(t),
+{
+    lemma_misc_stop(s, s.len() as int, t);
+}
+
+pub proof fn lemma_fin_ws(s: Seq<u8>, p: int, t: Seq<XTok>)
+    requires
+        0 <= p < s.len(),
+        is_ws(s[p]),
+    ensures
+        fin(s, p, t) == fin(s, p + 1, t),
+{
+    lemma_misc_ws(s, p, t);
+}
+
+/// A comment or processing instruction after the root element that fails
+/// or ends past the end: the document fails.
+pub proof fn lemma_fin_item_fail(s: Seq<u8>, p: int, t: Seq<XTok>, env: Env)
+    requires
+        0 <= p < s.len(),
+        has_lit(s, p, lit_comment()) || has_lit(s, p, lit_pi()),
+        item(s, p, Seq::empty(), t, env) matches Some((_, _, e)) ==> e > s.len(),
+    ensures
+        fin(s, p, t) is None,
+{
+    lemma_lits_stable();
+    assert(s.subrange(p, p + 2)[0] == s[p] && s.subrange(p, p + 2)[1] == s[p + 1]);
+    assert(!is_ws(s[p]));
+    assert(ws_end(s, p) == p);
+    if has_lit(s, p, lit_comment()) {
+        assert(s.subrange(p, p + 4)[1] == s[p + 1]);
+        assert(!byte_is(s, p + 1, 0x2F));
+    } else {
+        assert(!byte_is(s, p + 1, 0x2F));
+        assert(!has_lit(s, p, lit_comment()));
+        assert(!has_lit(s, p, lit_cdata())) by {
+            if has_lit(s, p, lit_cdata()) {
+                assert(s.subrange(p, p + 9)[1] == s[p + 1]);
+            }
+        }
+        assert(byte_is(s, p + 1, 0x3F));
+    }
+}
+
+pub proof fn lemma_fin_item(s: Seq<u8>, p: int, t: Seq<XTok>, env: Env)
+    requires
+        0 <= p < s.len(),
+        has_lit(s, p, lit_comment()) || has_lit(s, p, lit_pi()),
+        item(s, p, Seq::empty(), t, env) matches Some((_, _, e)) && p < e <= s.len(),
+    ensures
+        item(s, p, Seq::empty(), t, env) matches Some((st2, t2, e)) && st2.len() == 0 && fin(s, p, t) == fin(s, e, t2),
+{
+    lemma_misc_item(s, p, Seq::empty(), t, env);
+}
+
 } // verus!
