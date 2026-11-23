@@ -8,6 +8,28 @@ use vstd::prelude::*;
 
 verus! {
 
+/// The longest table [`small`](crate::lay::small) allows: the 32-bit
+/// lengths of a font directory on a 64-bit target. On a 32-bit one, half
+/// the address space, which leaves room for the offset sums of the table
+/// checks; no slice there is longer (Rust caps them at `isize::MAX` bytes).
+#[cfg(target_pointer_width = "64")]
+pub const TABLE_MAX: usize = 0xFFFF_FFFF;
+
+#[cfg(target_pointer_width = "32")]
+pub const TABLE_MAX: usize = 0x7FFF_FFFF;
+
+/// A slice as long as one can be on this target: any slice on a 64-bit
+/// target, and at most `isize::MAX` bytes on a 32-bit one.
+#[cfg(target_pointer_width = "64")]
+pub open spec fn fits(s: Seq<u8>) -> bool {
+    true
+}
+
+#[cfg(target_pointer_width = "32")]
+pub open spec fn fits(s: Seq<u8>) -> bool {
+    s.len() <= TABLE_MAX
+}
+
 #[inline(always)]
 pub fn rd8(s: &[u8], i: usize) -> (r: u8)
     requires

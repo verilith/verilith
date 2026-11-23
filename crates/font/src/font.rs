@@ -26,10 +26,11 @@ pub fn is_known_tag(t: u32) -> (b: bool)
 pub fn table_at<'a>(s: &'a [u8], i: usize) -> (t: &'a [u8])
     requires
         wf_directory(s@),
+        fits(s@),
         i < num_tables(s@),
     ensures
         t@ == s@.subrange(rec_off(s@, i as int), rec_end(s@, i as int)),
-        t.len() <= 0xFFFF_FFFF,
+        t.len() <= TABLE_MAX,
 {
     assert(rec_ok(s@, i as int));
     let r = 12 + 16 * i;
@@ -42,9 +43,10 @@ pub fn table_at<'a>(s: &'a [u8], i: usize) -> (t: &'a [u8])
 pub fn get_table<'a>(s: &'a [u8], t: u32) -> (r: Option<&'a [u8]>)
     requires
         wf_directory(s@),
+        fits(s@),
     ensures
         r is Some == has_table(s@, t as int),
-        r matches Some(x) ==> x@ == table(s@, t as int) && x.len() <= 0xFFFF_FFFF,
+        r matches Some(x) ==> x@ == table(s@, t as int) && x.len() <= TABLE_MAX,
 {
     let i = find(s, t);
     if i < rd16(s, 4) as usize {
@@ -58,6 +60,7 @@ pub fn get_table<'a>(s: &'a [u8], t: u32) -> (r: Option<&'a [u8]>)
 fn check_core(s: &[u8]) -> (b: bool)
     requires
         wf_directory(s@),
+        fits(s@),
         has_required(s@),
     ensures
         b == wf_core(s@),
@@ -87,6 +90,7 @@ fn check_core(s: &[u8]) -> (b: bool)
 fn check_outlines(s: &[u8]) -> (b: bool)
     requires
         wf_directory(s@),
+        fits(s@),
         has_required(s@),
         wf_core(s@),
     ensures
@@ -127,6 +131,7 @@ fn check_outlines(s: &[u8]) -> (b: bool)
 fn check_extras(s: &[u8]) -> (b: bool)
     requires
         wf_directory(s@),
+        fits(s@),
         has_required(s@),
         wf_core(s@),
     ensures
@@ -204,6 +209,7 @@ fn check_extras(s: &[u8]) -> (b: bool)
 fn check_tables(s: &[u8]) -> (b: bool)
     requires
         wf_directory(s@),
+        fits(s@),
         has_required(s@),
     ensures
         b == wf_tables(s@),
@@ -239,10 +245,16 @@ fn check_known(s: &[u8]) -> (b: bool)
 }
 
 /// Decides `wf_font`: `true` exactly when `s` is a well-formed font.
+/// ([`fits`] holds of every slice Rust makes; on a 32-bit target the
+/// proofs need it said.)
 pub fn check_font(s: &[u8]) -> (b: bool)
     ensures
-        b == wf_font(s@),
+        b == (fits(s@) && wf_font(s@)),
 {
+    #[cfg(target_pointer_width = "32")]
+    if s.len() > TABLE_MAX {
+        return false;
+    }
     if !check_directory(s) {
         return false;
     }

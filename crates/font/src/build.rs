@@ -162,9 +162,9 @@ pub fn read_ttc(input: &[u8], index: u32) -> (r: Option<Vec<Table>>) {
     if input.len() < 12 || input.len() > MAX_LEN {
         return None;
     }
-    let n = rd32(input, 8) as usize;
+    let n = rd32(input, 8) as u64;
     let i = index as usize;
-    if i >= n || 12 + 4 * n > input.len() {
+    if i as u64 >= n || 12 + 4 * n > input.len() as u64 {
         return None;
     }
     read_sfnt(input, rd32(input, 12 + 4 * i) as usize)
@@ -189,8 +189,9 @@ pub fn read_woff(input: &[u8]) -> (r: Option<Vec<Table>>) {
     if rd32(input, 8) as usize != input.len() {
         return None;
     }
-    let mut sfnt: usize = 12 + 16 * n;
-    let mut last: usize = 0;
+    // The sizes the header states, in u64: they can pass a 32-bit usize.
+    let mut sfnt: u64 = 12 + 16 * n as u64;
+    let mut last: u64 = 0;
     let mut dec = verilith_zlib::wrap::Decompressor::new();
     let mut ts: Vec<Table> = Vec::new();
     let mut total: usize = 0;
@@ -208,8 +209,8 @@ pub fn read_woff(input: &[u8]) -> (r: Option<Vec<Table>>) {
     {
         let r = 44 + 20 * i;
         let tag = rd32(input, r);
-        sfnt = sfnt + (rd32(input, r + 12) as usize + 3) / 4 * 4;
-        let e = rd32(input, r + 4) as usize + rd32(input, r + 8) as usize;
+        sfnt = sfnt + (rd32(input, r + 12) as u64 + 3) / 4 * 4;
+        let e = rd32(input, r + 4) as u64 + rd32(input, r + 8) as u64;
         if e > last {
             last = e;
         }
@@ -248,27 +249,27 @@ pub fn read_woff(input: &[u8]) -> (r: Option<Vec<Table>>) {
         i += 1;
     }
     // The header must also state the true size of the unpacked font.
-    if rd32(input, 16) as usize != sfnt {
+    if rd32(input, 16) as u64 != sfnt {
         return None;
     }
     // The metadata and private blocks, if any, follow the last table, and
     // the file ends there, with at most three bytes of padding between.
     let mut e = (last + 3) / 4 * 4;
-    let meta = rd32(input, 24) as usize;
+    let meta = rd32(input, 24) as u64;
     if meta != 0 {
         if e != meta {
             return None;
         }
-        e = (meta + rd32(input, 28) as usize + 3) / 4 * 4;
+        e = (meta + rd32(input, 28) as u64 + 3) / 4 * 4;
     }
-    let private = rd32(input, 36) as usize;
+    let private = rd32(input, 36) as u64;
     if private != 0 {
         if e != private {
             return None;
         }
-        e = (private + rd32(input, 40) as usize + 3) / 4 * 4;
+        e = (private + rd32(input, 40) as u64 + 3) / 4 * 4;
     }
-    if e != (input.len() + 3) / 4 * 4 {
+    if e != (input.len() as u64 + 3) / 4 * 4 {
         return None;
     }
     Some(ts)
@@ -406,7 +407,8 @@ pub fn rebuild_glyf(glyf: &[u8], loca: &[u8], fmt: u16, ng: u16) -> (r: Option<(
 /// A (source offset, new offset, length) triple for a kept cmap subtable.
 struct Kept {
     src: usize,
-    dst: usize,
+    // u64: the sum of the kept lengths can pass a 32-bit usize.
+    dst: u64,
     len: usize,
     fmt: u16,
 }
@@ -421,6 +423,7 @@ impl Kept {
 fn cmap_sub_len(t: &[u8], o: usize, ng: u16) -> (r: usize)
     requires
         o <= u32::MAX,
+        t.len() <= MAX_LEN,
         wf_cmap_sub(t@, o as int, ng as int),
     ensures
         o + r <= t.len(),
@@ -493,7 +496,7 @@ fn rebuild_cmap_from(t: &[u8], ng: u16) -> (r: Option<Vec<u8>>) {
     let mut kept: Vec<Kept> = Vec::new();
     let mut recs: Vec<(u32, usize)> = Vec::new();  // (platform/encoding, index in kept)
     let mut last: u32 = 0;
-    let mut body: usize = 0;
+    let mut body: u64 = 0;
     let mut i: usize = 0;
     while i < n
         invariant
@@ -541,7 +544,7 @@ fn rebuild_cmap_from(t: &[u8], ng: u16) -> (r: Option<Vec<u8>>) {
                         kept.push(Kept { src: o, dst: body, len, fmt: rd16(t, o) });
                         recs.push((pe, kept.len() - 1));
                         last = pe;
-                        body = body + len;
+                        body = body + len as u64;
                     }
                 },
             }
@@ -571,8 +574,8 @@ fn rebuild_cmap_from(t: &[u8], ng: u16) -> (r: Option<Vec<u8>>) {
         decreases recs@.len() - j,
     {
         let (pe, x) = recs[j];
-        let dst = hdr + kept[x].dst;
-        if dst > u32::MAX as usize {
+        let dst = hdr as u64 + kept[x].dst;
+        if dst > u32::MAX as u64 {
             return None;
         }
         put32(&mut out, pe);
@@ -676,7 +679,7 @@ fn copy_layout(t: &[u8], gdef: bool) -> (v: Vec<u8>) {
 /// language system that is still not well formed is removed.
 fn repair_default_langsys(v: &mut Vec<u8>) {
     let len = v.len();
-    if len < 10 || len > 0xFFFF_FFFF {
+    if len < 10 || len > TABLE_MAX {
         return;
     }
     let sl = rd16(v.as_slice(), 4) as usize;
@@ -694,7 +697,7 @@ fn repair_default_langsys(v: &mut Vec<u8>) {
     while i < n
         invariant
             v@.len() == len,
-            len <= 0xFFFF_FFFF,
+            len <= TABLE_MAX,
             sl + 2 <= len,
             n <= 65535,
         decreases n - i,

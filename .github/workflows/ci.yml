@@ -327,7 +327,7 @@ jobs:
   wasm32:
     # WebAssembly: what builds for wasm32-unknown-unknown, what refuses to
     # (the crates proven for 64-bit targets only), and the tests of text,
-    # url, regex, json, xxhash, snappy, lz4, zstd, archive and png on
+    # url, regex, json, xxhash, snappy, lz4, zstd, archive, png and font on
     # wasm32-wasip1 under wasmtime.
     name: wasm32
     needs: plan
