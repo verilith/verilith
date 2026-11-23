@@ -166,7 +166,7 @@ fn ex_attrs_distinct(s: &[u8], tape: &Tape, first: usize) -> (r: bool)
                             }
                             assert(s@.subrange(tj.sa(), tj.sb()).len() != s@.subrange(tk.sa(), tk.sb()).len());
                         }
-                    } else if ex_bytes_eq(s, tj.a() as usize, tj.b() as usize, s, tk.a() as usize, tk.b() as usize) {
+                    } else if ex_bytes_eq(s, tj.a48() as usize, tj.b48() as usize, s, tk.a48() as usize, tk.b48() as usize) {
                         proof {
                             assert(tape@[j as int] is Attr && tape@[k as int] is Attr);
                         }

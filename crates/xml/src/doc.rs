@@ -54,7 +54,7 @@ fn ex_defaults_ok(s: &[u8], tape: &Tape, env: &XEnv) -> (r: bool)
             assert(tape@[k as int] == t@);
         }
         if is_att_default(t.kind) && t.f >= 3 {
-            let (a, b, lim) = (t.a(), t.b(), t.c());
+            let (a, b, lim) = (t.a48(), t.b48(), t.c48());
             if !(a <= b && b < s.len() as u64 && lim <= env.ents.len() as u64) {
                 return false;
             }

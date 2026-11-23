@@ -307,7 +307,7 @@ Where it departs from libexpat:
   call with `isFinal` set, then parses it and calls the handlers. No
   handler runs before the last buffer arrives, and an error is found then,
   not in the call whose buffer holds it. Memory is the whole document plus
-  its tape (32 bytes per item).
+  its tape (20 bytes per item).
 * **No handler runs for a rejected document.** expat reports the items
   before an error; here the verdict comes first.
 * **The external DTD subset and external parameter entities are offered to
@@ -487,6 +487,14 @@ and input size went. On the same thirteen files, `bench/` (best of 15,
 two sittings each, the same cloud VM, 2026-11-22) puts the build after
 those changes at 1.03x the build before them for checking (0.97x to
 1.09x per file) and 1.02x for reading (0.96x to 1.07x).
+
+Positions then moved to 48 bits (tokens from 32 to 20 bytes). On the same
+files and VM (2026-11-23, 12 rounds of paired runs, the median ratio per
+file), the 20-byte build is 1.015x the 32-byte one for checking (0.99x to
+1.08x per file) and 1.011x for reading (0.95x to 1.09x, cdata.xml aside:
+0.78x in time but fewer instructions and cache misses under Cachegrind).
+Cachegrind on huge.xml counts 18% fewer L1 data misses and 23% fewer
+last-level misses, and 2% more instructions (the narrower stores).
 
 ### Against expat and libxml2 (vbench)
 

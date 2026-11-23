@@ -79,7 +79,7 @@ fn ex_list(tape: &Tape, first: usize) -> (r: (Vec<(usize, usize)>, Ghost<Seq<int
             proof {
                 assert(0 <= t[k as int]->Attr_start <= t[k as int]->Attr_end <= usize::MAX);
             }
-            ns.push((tk.a() as usize, tk.b() as usize));
+            ns.push((tk.a48() as usize, tk.b48() as usize));
             proof {
                 let ix0 = ix;
                 ix = ix.push(k as int);

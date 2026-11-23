@@ -531,7 +531,7 @@ impl Parser {
         let root = doc.root;
         if self.ext.is_some() {
             let toks = doc.toks(Src::Doc);
-            let close = toks[root].c;
+            let close = toks[root].c();
             let mut i = root + 1;
             while i < close && matches!(toks[i].kind, Kind::Attr | Kind::AttVal) {
                 i += 1;
@@ -1126,8 +1126,8 @@ impl Parser {
                 }
                 if let Some(f) = self.h.xml_decl {
                     self.s_clear();
-                    let v = self.s_push(&text[t.a..t.b]);
-                    let e = enc.map(|e| self.s_push(&text[e.a..e.b]));
+                    let v = self.s_push(&text[t.a()..t.b()]);
+                    let e = enc.map(|e| self.s_push(&text[e.a()..e.b()]));
                     let sd = match t.f {
                         1 => 1,
                         2 => 0,
@@ -1147,14 +1147,14 @@ impl Parser {
             Kind::Doctype => {
                 let mut j = i + 1;
                 let (mut pubid, mut sysid) = (None, None);
-                let mut last = t.b;
+                let mut last = t.b();
                 while j < toks.len() && matches!(toks[j].kind, Kind::PubId | Kind::SysId) {
                     if toks[j].kind == Kind::PubId {
                         pubid = Some(toks[j]);
                     } else {
                         sysid = Some(toks[j]);
                     }
-                    last = toks[j].b + 1;
+                    last = toks[j].b() + 1;
                     j += 1;
                 }
                 self.phase = Phase::Prolog(j);
@@ -1163,56 +1163,56 @@ impl Parser {
                     k += 1;
                 }
                 let subset = k < text.len() && text[k] == b'[';
-                self.set_ev(t.a.saturating_sub(10), k + 1);
+                self.set_ev(t.a().saturating_sub(10), k + 1);
                 self.dtd_skip = false;
                 if let Some(f) = self.h.start_doctype {
                     self.s_clear();
-                    let n = self.s_push(&text[t.a..t.b]);
-                    let s = sysid.map(|s| self.s_push(&text[s.a..s.b]));
-                    let p = pubid.map(|p| self.s_push(&text[p.a..p.b]));
+                    let n = self.s_push(&text[t.a()..t.b()]);
+                    let s = sysid.map(|s| self.s_push(&text[s.a()..s.b()]));
+                    let p = pubid.map(|p| self.s_push(&text[p.a()..p.b()]));
                     let arg = self.arg();
                     unsafe { f(arg, self.s_ptr(n), self.s_opt(s), self.s_opt(p), subset as c_int) };
                 }
-                self.doctype_ext = sysid.map(|s| (text[s.a..s.b].to_vec(), pubid.map(|p| text[p.a..p.b].to_vec())));
+                self.doctype_ext = sysid.map(|s| (text[s.a()..s.b()].to_vec(), pubid.map(|p| text[p.a()..p.b()].to_vec())));
             }
             Kind::DoctypeEnd => {
                 self.doctype_end(doc)?;
             }
             Kind::ElementDecl => {
-                self.set_ev(t.a.saturating_sub(10), t.b);
+                self.set_ev(t.a().saturating_sub(10), t.b());
                 if let Some(f) = self.h.element_decl {
-                    let end = text[t.b..].iter().position(|&c| c == b'>').map_or(text.len(), |e| t.b + e);
-                    let model = content_model(&text[t.b..end], self.mem);
+                    let end = text[t.b()..].iter().position(|&c| c == b'>').map_or(text.len(), |e| t.b() + e);
+                    let model = content_model(&text[t.b()..end], self.mem);
                     if model.is_null() {
                         return Err(E_NO_MEMORY);
                     }
                     self.s_clear();
-                    let n = self.s_push(&text[t.a..t.b]);
+                    let n = self.s_push(&text[t.a()..t.b()]);
                     let arg = self.arg();
                     unsafe { f(arg, self.s_ptr(n), model) };
                 }
             }
             Kind::AttlistDecl => {
-                self.attlist_elem = (t.a, t.b);
+                self.attlist_elem = (t.a(), t.b());
             }
             Kind::AttDef => {
                 self.phase = Phase::Prolog(i + 2);
                 let d = toks[i + 1];
-                self.set_ev(t.a, d.b);
+                self.set_ev(t.a(), d.b());
                 if self.dtd_skip {
                     return Ok(());
                 }
                 if let Some(f) = self.h.attlist_decl {
                     let ty = att_type(text, t);
                     let dflt = if d.f >= 3 {
-                        Some(doc.value(Src::Doc, d.a, d.b, false, t.f, usize::MAX).unwrap_or(Cow::Borrowed(&[])))
+                        Some(doc.value(Src::Doc, d.a(), d.b(), false, t.f, usize::MAX).unwrap_or(Cow::Borrowed(&[])))
                     } else {
                         None
                     };
                     self.s_clear();
                     let (ea, eb) = self.attlist_elem;
                     let e = self.s_push(&text[ea..eb]);
-                    let n = self.s_push(&text[t.a..t.b]);
+                    let n = self.s_push(&text[t.a()..t.b()]);
                     let ty = self.s_push(&ty);
                     let v = dflt.map(|v| self.s_push(&v));
                     let req = (d.f == 1 || d.f == 3) as c_int;
@@ -1233,26 +1233,26 @@ impl Parser {
                     j += 1;
                 }
                 self.phase = Phase::Prolog(j);
-                self.set_ev(t.a.saturating_sub(11), t.b);
+                self.set_ev(t.a().saturating_sub(11), t.b());
                 if let Some(f) = self.h.notation {
                     self.s_clear();
-                    let n = self.s_push(&text[t.a..t.b]);
+                    let n = self.s_push(&text[t.a()..t.b()]);
                     let b = self.base.clone().map(|b| self.s_push(&b));
-                    let s = sysid.map(|s| self.s_push(&text[s.a..s.b]));
-                    let p = pubid.map(|p| self.s_push(&text[p.a..p.b]));
+                    let s = sysid.map(|s| self.s_push(&text[s.a()..s.b()]));
+                    let p = pubid.map(|p| self.s_push(&text[p.a()..p.b()]));
                     let arg = self.arg();
                     unsafe { f(arg, self.s_ptr(n), self.s_opt(b), self.s_opt(s), self.s_opt(p)) };
                 }
             }
             Kind::PERef => {
-                self.set_ev(t.a.saturating_sub(1), t.b + 1);
+                self.set_ev(t.a().saturating_sub(1), t.b() + 1);
                 let standalone = toks.first().map_or(false, |x| x.kind == Kind::XmlDecl && x.f == 1);
                 if !standalone {
                     self.dtd_skip = true;
                 }
                 if let Some(f) = self.h.skipped {
                     self.s_clear();
-                    let n = self.s_push(&text[t.a..t.b]);
+                    let n = self.s_push(&text[t.a()..t.b()]);
                     let arg = self.arg();
                     unsafe { f(arg, self.s_ptr(n), 1) };
                 }
@@ -1311,21 +1311,21 @@ impl Parser {
             j += 1;
         }
         self.phase = Phase::Prolog(j);
-        self.set_ev(t.a.saturating_sub(9), toks[j - 1].b);
+        self.set_ev(t.a().saturating_sub(9), toks[j - 1].b());
         if self.dtd_skip {
             return Ok(());
         }
-        let name = &text[t.a..t.b];
+        let name = &text[t.a()..t.b()];
         if !self.seen_ents.insert((pe, name.to_vec())) {
             return Ok(());
         }
         let repl: Option<Cow<[u8]>> = value.map(|v| {
             if pe {
-                Cow::Borrowed(&text[v.a..v.b])
+                Cow::Borrowed(&text[v.a()..v.b()])
             } else {
-                match doc.dtd.ents.iter().position(|e| e.a == t.a) {
+                match doc.dtd.ents.iter().position(|e| e.a == t.a()) {
                     Some(k) if k < doc.dtd.rts.len() => Cow::Borrowed(&doc.dtd.rts[k][..]),
-                    _ => Cow::Borrowed(&text[v.a..v.b]),
+                    _ => Cow::Borrowed(&text[v.a()..v.b()]),
                 }
             }
         });
@@ -1335,9 +1335,9 @@ impl Parser {
             let v = repl.as_ref().map(|r| self.s_push(r));
             let vlen = repl.as_ref().map_or(0, |r| r.len() as c_int);
             let b = if value.is_none() { self.base.clone().map(|b| self.s_push(&b)) } else { None };
-            let s = sysid.map(|s| self.s_push(&text[s.a..s.b]));
-            let p = pubid.map(|p| self.s_push(&text[p.a..p.b]));
-            let nd = ndata.map(|d| self.s_push(&text[d.a..d.b]));
+            let s = sysid.map(|s| self.s_push(&text[s.a()..s.b()]));
+            let p = pubid.map(|p| self.s_push(&text[p.a()..p.b()]));
+            let nd = ndata.map(|d| self.s_push(&text[d.a()..d.b()]));
             let arg = self.arg();
             unsafe {
                 f(arg, self.s_ptr(n), pe as c_int, self.s_opt(v), vlen, self.s_opt(b), self.s_opt(s), self.s_opt(p), self.s_opt(nd))
@@ -1346,9 +1346,9 @@ impl Parser {
             self.s_clear();
             let n = self.s_push(name);
             let b = self.base.clone().map(|b| self.s_push(&b));
-            let s = sysid.map(|s| self.s_push(&text[s.a..s.b]));
-            let p = pubid.map(|p| self.s_push(&text[p.a..p.b]));
-            let d = self.s_push(&text[nd.a..nd.b]);
+            let s = sysid.map(|s| self.s_push(&text[s.a()..s.b()]));
+            let p = pubid.map(|p| self.s_push(&text[p.a()..p.b()]));
+            let d = self.s_push(&text[nd.a()..nd.b()]);
             let arg = self.arg();
             unsafe { f(arg, self.s_ptr(n), self.s_opt(b), self.s_opt(s), self.s_opt(p), self.s_ptr(d)) };
         }
@@ -1359,8 +1359,8 @@ impl Parser {
 
     fn comment(&mut self, doc: &'static Document<'static>, src: Src, t: Tok, here: bool) {
         if here {
-            self.set_ev(t.a - 4, t.b + 3);
-            self.last_end = t.b + 3;
+            self.set_ev(t.a() - 4, t.b() + 3);
+            self.last_end = t.b() + 3;
         }
         if let Some(f) = self.h.comment {
             let v = doc.text_of(src, t);
@@ -1369,26 +1369,26 @@ impl Parser {
             let arg = self.arg();
             unsafe { f(arg, self.s_ptr(k)) };
         } else if here {
-            self.report_default(t.a - 4, t.b + 3);
+            self.report_default(t.a() - 4, t.b() + 3);
         }
     }
 
     fn pi(&mut self, doc: &'static Document<'static>, src: Src, t: Tok, d: Tok, here: bool) {
         let buf = doc.buf(src);
-        let end = find(buf, d.b.max(t.b), b"?>").map_or(buf.len(), |e| e + 2);
+        let end = find(buf, d.b().max(t.b()), b"?>").map_or(buf.len(), |e| e + 2);
         if here {
-            self.set_ev(t.a - 2, end);
+            self.set_ev(t.a() - 2, end);
             self.last_end = end;
         }
         if let Some(f) = self.h.pi {
             let v = doc.text_of(src, d);
             self.s_clear();
-            let n = self.s_push(&buf[t.a..t.b]);
+            let n = self.s_push(&buf[t.a()..t.b()]);
             let k = self.s_push(v.as_bytes());
             let arg = self.arg();
             unsafe { f(arg, self.s_ptr(n), self.s_ptr(k)) };
         } else if here {
-            self.report_default(t.a - 2, end);
+            self.report_default(t.a() - 2, end);
         }
     }
 
@@ -1412,7 +1412,7 @@ impl Parser {
         let fr = match self.frames.last_mut() {
             Some(f) => f,
             None => {
-                let close = doc.toks(Src::Doc)[doc.root].c;
+                let close = doc.toks(Src::Doc)[doc.root].c();
                 self.phase = if self.ext.is_some() { Phase::Done } else { Phase::Epilog(close + 1) };
                 return Ok(());
             }
@@ -1432,14 +1432,14 @@ impl Parser {
         fr.i = i + 1;
         match t.kind {
             Kind::STag => {
-                fr.i = t.c + 1;
+                fr.i = t.c() + 1;
                 self.start_element(doc, src, i, here)?;
             }
             Kind::Text | Kind::CData => {
-                let raw = &doc.buf(src)[t.a..t.b];
+                let raw = &doc.buf(src)[t.a()..t.b()];
                 let v: Cow<[u8]> = if src == Src::Doc && t.f != 0 {
-                    let mut out = Vec::with_capacity(t.b - t.a);
-                    ex_eol(doc.buf(src), t.a, t.b, &mut out);
+                    let mut out = Vec::with_capacity(t.b() - t.a());
+                    ex_eol(doc.buf(src), t.a(), t.b(), &mut out);
                     Cow::Owned(out)
                 } else {
                     Cow::Borrowed(raw)
@@ -1447,11 +1447,11 @@ impl Parser {
                 let cdata = t.kind == Kind::CData;
                 if here {
                     if cdata {
-                        self.set_ev(t.a - 9, t.b + 3);
-                        self.last_end = t.b + 3;
+                        self.set_ev(t.a() - 9, t.b() + 3);
+                        self.last_end = t.b() + 3;
                     } else {
-                        self.set_ev(t.a, t.b);
-                        self.last_end = t.b;
+                        self.set_ev(t.a(), t.b());
+                        self.last_end = t.b();
                     }
                 }
                 if cdata {
@@ -1465,7 +1465,7 @@ impl Parser {
                 if self.h.chars.is_some() {
                     self.chars(&v);
                 } else if here {
-                    self.report_default(t.a, t.b);
+                    self.report_default(t.a(), t.b());
                 } else if self.h.default.is_some() {
                     self.report_default_bytes(&v);
                 }
@@ -1480,17 +1480,17 @@ impl Parser {
             }
             Kind::CharRef => {
                 let buf = doc.buf(src);
-                let e = buf[t.a..].iter().position(|&c| c == b';').map_or(buf.len(), |k| t.a + k + 1);
+                let e = buf[t.a()..].iter().position(|&c| c == b';').map_or(buf.len(), |k| t.a() + k + 1);
                 if here {
-                    self.set_ev(t.a, e);
+                    self.set_ev(t.a(), e);
                     self.last_end = e;
                 }
                 let mut tmp = [0u8; 4];
-                let s = char::from_u32(t.b as u32).map_or(&[][..], |c| c.encode_utf8(&mut tmp).as_bytes());
+                let s = char::from_u32(t.b() as u32).map_or(&[][..], |c| c.encode_utf8(&mut tmp).as_bytes());
                 if self.h.chars.is_some() {
                     self.chars(s);
                 } else if here {
-                    self.report_default(t.a, e);
+                    self.report_default(t.a(), e);
                 }
             }
             Kind::Comment => self.comment(doc, src, t, here),
@@ -1506,17 +1506,17 @@ impl Parser {
 
     fn entity_ref(&mut self, doc: &'static Document<'static>, src: Src, t: Tok, here: bool) -> Result<(), c_int> {
         if here {
-            self.set_ev(t.a - 1, t.b + 1);
-            self.last_end = t.b + 1;
+            self.set_ev(t.a() - 1, t.b() + 1);
+            self.last_end = t.b() + 1;
         }
         let buf = doc.buf(src);
-        let name = &buf[t.a..t.b];
-        match doc.entity(src, t.a, t.b) {
+        let name = &buf[t.a()..t.b()];
+        match doc.entity(src, t.a(), t.b()) {
             Some((k, true)) => {
                 if self.h.default.is_some() && !self.h.default_expand {
                     // expat reports the reference and does not expand it.
                     if here {
-                        self.report_default(t.a - 1, t.b + 1);
+                        self.report_default(t.a() - 1, t.b() + 1);
                     } else {
                         let mut r = vec![b'&'];
                         r.extend_from_slice(name);
@@ -1537,13 +1537,13 @@ impl Parser {
                     let e = &doc.dtd.ents[k];
                     let toks = doc.toks(Src::Doc);
                     let text = doc.text();
-                    let decl = toks.iter().position(|x| x.kind == Kind::EntityDecl && x.f == 0 && x.a == e.a);
+                    let decl = toks.iter().position(|x| x.kind == Kind::EntityDecl && x.f == 0 && x.a() == e.a);
                     let (mut sys, mut pubid) = (None, None);
                     if let Some(d) = decl {
                         for x in &toks[d + 1..] {
                             match x.kind {
-                                Kind::SysId => sys = Some(&text[x.a..x.b]),
-                                Kind::PubId => pubid = Some(&text[x.a..x.b]),
+                                Kind::SysId => sys = Some(&text[x.a()..x.b()]),
+                                Kind::PubId => pubid = Some(&text[x.a()..x.b()]),
                                 _ => break,
                             }
                         }
@@ -1562,7 +1562,7 @@ impl Parser {
                         return Err(E_EXTERNAL_ENTITY_HANDLING);
                     }
                 } else if here {
-                    self.report_default(t.a - 1, t.b + 1);
+                    self.report_default(t.a() - 1, t.b() + 1);
                 }
             }
             None => {
@@ -1572,7 +1572,7 @@ impl Parser {
                     let arg = self.arg();
                     unsafe { f(arg, self.s_ptr(n), 0) };
                 } else if here {
-                    self.report_default(t.a - 1, t.b + 1);
+                    self.report_default(t.a() - 1, t.b() + 1);
                 }
             }
         }
@@ -1606,9 +1606,9 @@ impl Parser {
         let buf = doc.buf(src);
         // Where the tag ends, and whether it is empty.
         let mut k = idx + 1;
-        let mut after = t.b;
+        let mut after = t.b();
         while k + 1 < toks.len() && toks[k].kind == Kind::Attr {
-            after = toks[k + 1].b + 1;
+            after = toks[k + 1].b() + 1;
             k += 2;
         }
         let (tag_end, empty) = match buf[after..].iter().position(|&c| c == b'>') {
@@ -1616,12 +1616,12 @@ impl Parser {
             None => (buf.len(), false),
         };
         if here {
-            self.set_ev(t.a - 1, tag_end);
+            self.set_ev(t.a() - 1, tag_end);
             self.last_end = tag_end;
         }
         let el = Element { doc, src, idx };
         let given = (k - idx - 1) / 2;
-        let qname = &buf[t.a..t.b];
+        let qname = &buf[t.a()..t.b()];
         self.s_clear();
         let mut nb = 0;
         let mut att_ks = std::mem::take(&mut self.att_ks);
@@ -1729,12 +1729,12 @@ impl Parser {
             let np = unsafe { self.names.as_ptr().add(name_at) } as *const XChar;
             unsafe { f(arg, np, self.atts.as_mut_ptr()) };
         } else if here {
-            self.report_default(t.a - 1, tag_end);
+            self.report_default(t.a() - 1, tag_end);
         }
-        let close = t.c;
+        let close = t.c();
         let first = k;
         self.att_ks = att_ks;
-        self.frames.push(Frame { src, i: first, end: close, kind: FrameKind::Elem { name_at, nb, stag: t.a - 1, empty } });
+        self.frames.push(Frame { src, i: first, end: close, kind: FrameKind::Elem { name_at, nb, stag: t.a() - 1, empty } });
         Ok(())
     }
 
@@ -1831,7 +1831,7 @@ fn att_type(text: &[u8], t: Tok) -> Vec<u8> {
         return names[t.f as usize - 1].to_vec();
     }
     let mut out = Vec::new();
-    let rest = &text[t.b..];
+    let rest = &text[t.b()..];
     let open = rest.iter().position(|&c| c == b'(').unwrap_or(0);
     if t.f == 9 {
         out.extend_from_slice(b"NOTATION");
@@ -2191,11 +2191,11 @@ fn internal_subset(d: &Document) -> Option<(Option<(usize, usize)>, bool)> {
     let toks = d.toks(Src::Doc);
     let text = d.text();
     let di = toks.iter().position(|t| t.kind == Kind::Doctype)?;
-    let mut last = toks[di].b;
+    let mut last = toks[di].b();
     let mut j = di + 1;
     let mut has_ext = false;
     while j < toks.len() && matches!(toks[j].kind, Kind::PubId | Kind::SysId) {
-        last = toks[j].b + 1;
+        last = toks[j].b() + 1;
         has_ext = true;
         j += 1;
     }
@@ -2210,9 +2210,9 @@ fn internal_subset(d: &Document) -> Option<(Option<(usize, usize)>, bool)> {
     let e = toks.iter().position(|t| t.kind == Kind::DoctypeEnd)?;
     let next = toks.get(e + 1)?;
     let m = match next.kind {
-        Kind::STag => next.a - 1,
-        Kind::Comment => next.a - 4,
-        Kind::PI => next.a - 2,
+        Kind::STag => next.a() - 1,
+        Kind::Comment => next.a() - 4,
+        Kind::PI => next.a() - 2,
         _ => return Some((None, has_ext)),
     };
     let mut q = m;

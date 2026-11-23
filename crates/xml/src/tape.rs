@@ -51,7 +51,8 @@ pub const MAX_POS: u64 = 0xFFFF_FFFF_FFFF;
 /// `a`, `b` and `c` are 48 bits each: the low 32 bits in `al`, `bl`, `cl`,
 /// the high 16 in `ah`, `bh`, `ch`. That makes the token 20 bytes (4-byte
 /// aligned) where three `usize` made it 32 on a 64-bit machine. Read them
-/// with `a()`, `b()` and `c()`.
+/// with `a()`, `b()` and `c()` (`a48()`, `b48()` and `c48()` in verified
+/// code).
 #[derive(Clone, Copy, Debug)]
 pub struct Tok {
     pub kind: Kind,
@@ -187,7 +188,7 @@ impl Tok {
 
     /// `a`: the span's start (a character reference's position).
     #[inline(always)]
-    pub fn a(&self) -> (r: u64)
+    pub fn a48(&self) -> (r: u64)
         ensures
             r == self.sa(),
     {
@@ -196,7 +197,7 @@ impl Tok {
 
     /// `b`: the span's end (a character reference's character).
     #[inline(always)]
-    pub fn b(&self) -> (r: u64)
+    pub fn b48(&self) -> (r: u64)
         ensures
             r == self.sb(),
     {
@@ -206,7 +207,7 @@ impl Tok {
     /// `c`: a start tag's link to its end token, or an attribute
     /// default's entity count; 0 otherwise.
     #[inline(always)]
-    pub fn c(&self) -> (r: u64)
+    pub fn c48(&self) -> (r: u64)
         ensures
             r == self.sc(),
     {
@@ -394,6 +395,45 @@ impl Tape {
             assert(t.kind == Kind::STag);
             assert(final(self)@ =~= close_at(old_v, k as int));
         }
+    }
+}
+
+/// The fields as `usize`, for the plain-Rust readers (the API and the C
+/// ABIs). A field is a position in the text, a token index or a count, so
+/// it fits in a `usize`; on a 64-bit target any 48-bit value does.
+impl Tok {
+    /// `a`: the span's start (a character reference's position).
+    #[inline(always)]
+    pub fn a(&self) -> (r: usize)
+        requires
+            self.sa() <= usize::MAX,
+        ensures
+            r == self.sa(),
+    {
+        self.a48() as usize
+    }
+
+    /// `b`: the span's end (a character reference's character).
+    #[inline(always)]
+    pub fn b(&self) -> (r: usize)
+        requires
+            self.sb() <= usize::MAX,
+        ensures
+            r == self.sb(),
+    {
+        self.b48() as usize
+    }
+
+    /// `c`: a start tag's link to its end token, or an attribute
+    /// default's entity count; 0 otherwise.
+    #[inline(always)]
+    pub fn c(&self) -> (r: usize)
+        requires
+            self.sc() <= usize::MAX,
+        ensures
+            r == self.sc(),
+    {
+        self.c48() as usize
     }
 }
 
