@@ -9,7 +9,7 @@
 //! texts the way §4.4 says a parameter entity reference is treated where
 //! it is recognized:
 //!
-//! * between declarations (DeclSep [28a]) and, in external text, inside a
+//! * between declarations (DeclSep \[28a\]) and, in external text, inside a
 //!   declaration: *included as PE*, its replacement text with one space
 //!   before and one after (§4.4.8);
 //! * in an entity value in external text: *included in literal*, with no
@@ -21,10 +21,10 @@
 //!   is rejected where it holds a `%`).
 //!
 //! Its well-formedness constraints are checked as it goes: PE Between
-//! Declarations [28a] (a replacement text referred to between
+//! Declarations \[28a\] (a replacement text referred to between
 //! declarations holds whole declarations: it ends between declarations),
 //! No Recursion (§4.1), the text declaration of each external parsed
-//! entity [77], and that comments, processing instructions, literals and
+//! entity \[77\], and that comments, processing instructions, literals and
 //! ignored sections end in the entity they begin in. The flattened DTD is
 //! then parsed as an internal subset by the verified parser (`spec::
 //! int_subset`), which checks every declaration in it; the document's
