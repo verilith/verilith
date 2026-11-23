@@ -8,6 +8,7 @@
 use crate::glyf::*;
 use crate::prims::*;
 use crate::spec::*;
+use vstd::arithmetic::power::*;
 use vstd::prelude::*;
 
 verus! {
@@ -195,6 +196,7 @@ fn glyph_slot<'a>(glyf: &'a [u8], loca: &[u8], fmt: u16, ng: u16, gid: u16) -> (
         gid < ng,
     ensures
         g@ == glyph_of(glyf@, loca@, fmt as int, gid as int),
+        g@.len() <= glyf@.len(),
 {
     proof {
         lemma_loca_le(loca@, fmt as int, ng as int, glyf.len() as int, gid as int + 1);
@@ -212,10 +214,251 @@ fn glyph_slot<'a>(glyf: &'a [u8], loca: &[u8], fmt: u16, ng: u16, gid: u16) -> (
     slice(glyf, a, b)
 }
 
-/// Computes [`glyph_info`] for `gid` within `fuel` levels, remembering
-/// what it learns.
-pub fn info_x(glyf: &[u8], loca: &[u8], fmt: u16, ng: u16, gid: u16, fuel: u32, memo: &mut Vec<Memo>) -> (r:
-    Option<InfoX>)
+/// A composite glyph whose totals [`info_x`] is working out: the
+/// components before `p` are summed in `acc`, and `len` is the length of
+/// its slot.
+#[derive(Clone, Copy)]
+pub struct Frame {
+    pub gid: u16,
+    pub len: usize,
+    pub p: usize,
+    pub acc: InfoX,
+    pub fuel: u32,
+}
+
+/// What a frame knows. A `waiting` frame has asked for the totals of the
+/// component at `p`.
+pub open spec fn frame_ok(gl: Seq<u8>, lo: Seq<u8>, fm: int, n: int, f: Frame, waiting: bool) -> bool {
+    let g = glyph_of(gl, lo, fm, f.gid as int);
+    &&& f.gid < n
+    &&& g.len() == f.len
+    &&& f.len <= gl.len()
+    &&& g.len() >= 10
+    &&& i16_at(g, 0) < 0
+    &&& 10 <= f.p <= g.len()
+    &&& 1 <= f.fuel <= MAX_COMPONENT_DEPTH
+    &&& info_small(f.acc)
+    &&& f.acc.points <= 0xFFFF
+    &&& f.acc.elems <= f.acc.comps
+    &&& f.acc.depth <= f.fuel
+    &&& glyph_info(gl, lo, fm, n, f.gid as int, f.fuel as nat) == comps_info(
+        gl,
+        lo,
+        fm,
+        n,
+        g,
+        f.p as int,
+        (f.fuel - 1) as nat,
+        f.acc@,
+    )
+    &&& waiting ==> f.p + 4 <= g.len() && u16_at(g, f.p + 2) < n
+}
+
+/// The glyph the frame at `f` waits for.
+pub open spec fn child_of(gl: Seq<u8>, lo: Seq<u8>, fm: int, f: Frame) -> int {
+    u16_at(glyph_of(gl, lo, fm, f.gid as int), f.p + 2)
+}
+
+/// The frames below the top are waiting, each for the one above it; the
+/// bottom one is glyph `gid` with `fuel` levels.
+pub open spec fn stack_ok(gl: Seq<u8>, lo: Seq<u8>, fm: int, n: int, st: Seq<Frame>, gid: int, fuel: int) -> bool {
+    &&& st.len() > 0 ==> st[0].gid == gid && st[0].fuel == fuel
+    &&& forall|k: int| 0 <= k < st.len() - 1 ==> #[trigger] frame_ok(gl, lo, fm, n, st[k], true)
+    &&& forall|k: int|
+        0 <= k < st.len() - 1 ==> st[k + 1].gid == child_of(gl, lo, fm, #[trigger] st[k]) && st[k + 1].fuel
+            == st[k].fuel - 1
+}
+
+/// The glyph and levels the top frame waits for (or the request itself
+/// when there are no frames).
+pub open spec fn want(gl: Seq<u8>, lo: Seq<u8>, fm: int, st: Seq<Frame>, gid: int, fuel: int) -> (int, int) {
+    if st.len() == 0 {
+        (gid, fuel)
+    } else {
+        (child_of(gl, lo, fm, st.last()), st.last().fuel - 1)
+    }
+}
+
+/// The weight of a frame in the termination measure: what is left of its
+/// slot in units of `b` to the power of its levels. A waiting frame has
+/// used one more byte: the request it made weighs less than that unit.
+pub open spec fn fwt(f: Frame, waiting: bool, b: int) -> int {
+    (f.len - f.p - if waiting {
+        1int
+    } else {
+        0int
+    }) * pow(b, f.fuel as nat)
+}
+
+pub open spec fn fsum(st: Seq<Frame>, b: int) -> int
+    decreases st.len(),
+{
+    if st.len() == 0 {
+        0
+    } else {
+        fsum(st.drop_last(), b) + fwt(st.last(), true, b)
+    }
+}
+
+proof fn lemma_fsum_nonneg(gl: Seq<u8>, lo: Seq<u8>, fm: int, n: int, st: Seq<Frame>, b: int)
+    requires
+        b > 0,
+        forall|k: int| 0 <= k < st.len() ==> #[trigger] frame_ok(gl, lo, fm, n, st[k], true),
+    ensures
+        fsum(st, b) >= 0,
+    decreases st.len(),
+{
+    if st.len() > 0 {
+        let s2 = st.drop_last();
+        assert forall|k: int| 0 <= k < s2.len() implies #[trigger] frame_ok(gl, lo, fm, n, s2[k], true) by {
+            assert(s2[k] == st[k]);
+        }
+        lemma_fsum_nonneg(gl, lo, fm, n, s2, b);
+        let f = st.last();
+        assert(frame_ok(gl, lo, fm, n, st[st.len() - 1], true));
+        lemma_pow_positive(b, f.fuel as nat);
+        vstd::arithmetic::mul::lemma_mul_nonnegative((f.len - f.p - 1) as int, pow(b, f.fuel as nat));
+    }
+}
+
+/// Popping the top frame: the one below it was waiting for it.
+proof fn lemma_pop(gl: Seq<u8>, lo: Seq<u8>, fm: int, n: int, st: Seq<Frame>, gid: int, fuel: int, b: int)
+    requires
+        stack_ok(gl, lo, fm, n, st, gid, fuel),
+        st.len() > 0,
+    ensures
+        stack_ok(gl, lo, fm, n, st.drop_last(), gid, fuel),
+        st.len() > 1 ==> frame_ok(gl, lo, fm, n, st.drop_last().last(), true),
+        want(gl, lo, fm, st.drop_last(), gid, fuel) == (st.last().gid as int, st.last().fuel as int),
+        fsum(st, b) == fsum(st.drop_last(), b) + fwt(st.last(), true, b),
+{
+    let s2 = st.drop_last();
+    assert forall|k: int| 0 <= k < s2.len() - 1 implies #[trigger] frame_ok(gl, lo, fm, n, s2[k], true) by {
+        assert(s2[k] == st[k]);
+    }
+    assert forall|k: int|
+        0 <= k < s2.len() - 1 implies s2[k + 1].gid == child_of(gl, lo, fm, #[trigger] s2[k]) && s2[k + 1].fuel
+        == s2[k].fuel - 1 by {
+        assert(s2[k] == st[k]);
+        assert(s2[k + 1] == st[k + 1]);
+    }
+    if st.len() > 1 {
+        let j = st.len() - 2;
+        assert(s2.last() == st[j]);
+        assert(frame_ok(gl, lo, fm, n, st[j], true));
+        assert(st[j + 1].gid == child_of(gl, lo, fm, st[j]));
+        assert(st[j + 1] == st.last());
+    } else {
+        assert(st[0] == st.last());
+    }
+}
+
+/// Pushing a frame for what the top one waits for.
+proof fn lemma_push(gl: Seq<u8>, lo: Seq<u8>, fm: int, n: int, st: Seq<Frame>, gid: int, fuel: int, f: Frame)
+    requires
+        stack_ok(gl, lo, fm, n, st, gid, fuel),
+        st.len() > 0 ==> frame_ok(gl, lo, fm, n, st.last(), true),
+        (f.gid as int, f.fuel as int) == want(gl, lo, fm, st, gid, fuel),
+    ensures
+        stack_ok(gl, lo, fm, n, st.push(f), gid, fuel),
+        st.push(f).drop_last() == st,
+        st.push(f).last() == f,
+{
+    let s2 = st.push(f);
+    assert(s2.drop_last() =~= st);
+    assert forall|k: int| 0 <= k < s2.len() - 1 implies #[trigger] frame_ok(gl, lo, fm, n, s2[k], true) by {
+        assert(s2[k] == st[k]);
+        if k == st.len() - 1 {
+            assert(st[k] == st.last());
+        }
+    }
+    assert forall|k: int|
+        0 <= k < s2.len() - 1 implies s2[k + 1].gid == child_of(gl, lo, fm, #[trigger] s2[k]) && s2[k + 1].fuel
+        == s2[k].fuel - 1 by {
+        assert(s2[k] == st[k]);
+        if k + 1 < st.len() {
+            assert(s2[k + 1] == st[k + 1]);
+        } else {
+            assert(st[k] == st.last());
+        }
+    }
+}
+
+/// Replacing the top frame by one for the same glyph and levels.
+proof fn lemma_set_top(gl: Seq<u8>, lo: Seq<u8>, fm: int, n: int, st: Seq<Frame>, gid: int, fuel: int, f: Frame)
+    requires
+        stack_ok(gl, lo, fm, n, st, gid, fuel),
+        st.len() > 0,
+        f.gid == st.last().gid,
+        f.fuel == st.last().fuel,
+    ensures
+        stack_ok(gl, lo, fm, n, st.update(st.len() - 1, f), gid, fuel),
+        st.update(st.len() - 1, f).drop_last() == st.drop_last(),
+        st.update(st.len() - 1, f).last() == f,
+{
+    let s2 = st.update(st.len() - 1, f);
+    assert(s2.drop_last() =~= st.drop_last());
+    assert forall|k: int| 0 <= k < s2.len() - 1 implies #[trigger] frame_ok(gl, lo, fm, n, s2[k], true) by {
+        assert(s2[k] == st[k]);
+    }
+    assert forall|k: int|
+        0 <= k < s2.len() - 1 implies s2[k + 1].gid == child_of(gl, lo, fm, #[trigger] s2[k]) && s2[k + 1].fuel
+        == s2[k].fuel - 1 by {
+        assert(s2[k] == st[k]);
+        if k + 1 < s2.len() - 1 {
+            assert(s2[k + 1] == st[k + 1]);
+        } else {
+            assert(st[k + 1] == st.last());
+        }
+    }
+    if st.len() == 1 {
+        assert(st[0] == st.last());
+    }
+}
+
+/// The frames below the top weigh nothing less than zero.
+proof fn lemma_below(gl: Seq<u8>, lo: Seq<u8>, fm: int, n: int, st: Seq<Frame>, gid: int, fuel: int, b: int)
+    requires
+        stack_ok(gl, lo, fm, n, st, gid, fuel),
+        st.len() > 0,
+        b > 0,
+    ensures
+        fsum(st.drop_last(), b) >= 0,
+{
+    let s2 = st.drop_last();
+    assert forall|k: int| 0 <= k < s2.len() implies #[trigger] frame_ok(gl, lo, fm, n, s2[k], true) by {
+        assert(s2[k] == st[k]);
+    }
+    lemma_fsum_nonneg(gl, lo, fm, n, s2, b);
+}
+
+/// The measure: the frames, the top one as `waiting` says, and, in
+/// `Call` mode, the request being made.
+pub open spec fn meas(st: Seq<Frame>, mode: u8, cf: u32, b: int, l: int) -> int {
+    if mode == 0 {
+        fsum(st, b) + (l + 1) * pow(b, cf as nat)
+    } else if mode == 1 {
+        fsum(st.drop_last(), b) + fwt(st.last(), false, b)
+    } else {
+        fsum(st, b)
+    }
+}
+
+/// What a result says about glyph `gid` within `fuel` levels.
+pub open spec fn res_ok(gl: Seq<u8>, lo: Seq<u8>, fm: int, n: int, gid: int, fuel: int, r: Option<InfoX>) -> bool {
+    match r {
+        Some(x) => glyph_info(gl, lo, fm, n, gid, fuel as nat) == Some(x@) && info_small(x) && x.depth <= fuel,
+        None => glyph_info(gl, lo, fm, n, gid, fuel as nat) is None,
+    }
+}
+
+/// Glyph `gid` within `fuel` levels, if that needs no component: from
+/// the memo, or a simple or empty glyph, or no levels left. Otherwise the
+/// frame to work it out with.
+fn info_leaf(glyf: &[u8], loca: &[u8], fmt: u16, ng: u16, gid: u16, fuel: u32, memo: &mut Vec<Memo>) -> (r: Result<
+    Option<InfoX>,
+    Frame,
+>)
     requires
         fmt <= 1,
         wf_loca(loca@, fmt as int, ng as int, glyf.len() as int),
@@ -225,12 +468,10 @@ pub fn info_x(glyf: &[u8], loca: &[u8], fmt: u16, ng: u16, gid: u16, fuel: u32, 
     ensures
         memos_ok(glyf@, loca@, fmt as int, ng as int, final(memo)@),
         match r {
-            Some(x) => glyph_info(glyf@, loca@, fmt as int, ng as int, gid as int, fuel as nat) == Some(
-                x@,
-            ) && info_small(x) && x.depth <= fuel,
-            None => glyph_info(glyf@, loca@, fmt as int, ng as int, gid as int, fuel as nat) is None,
+            Ok(x) => res_ok(glyf@, loca@, fmt as int, ng as int, gid as int, fuel as int, x),
+            Err(f) => frame_ok(glyf@, loca@, fmt as int, ng as int, f, false) && f.gid == gid && f.fuel == fuel
+                && f.p == 10 && f.len <= glyf.len(),
         },
-    decreases fuel,
 {
     let ghost gl = glyf@;
     let ghost lo = loca@;
@@ -241,11 +482,13 @@ pub fn info_x(glyf: &[u8], loca: &[u8], fmt: u16, ng: u16, gid: u16, fuel: u32, 
             proof {
                 lemma_info_fuel(gl, lo, fm, n, gid as int, x.depth as nat, fuel as nat);
             }
-            return if x.depth <= fuel {
-                Some(x)
-            } else {
-                None
-            };
+            return Ok(
+                if x.depth <= fuel {
+                    Some(x)
+                } else {
+                    None
+                },
+            );
         },
         Memo::Failed(k) => {
             if fuel <= k {
@@ -254,7 +497,7 @@ pub fn info_x(glyf: &[u8], loca: &[u8], fmt: u16, ng: u16, gid: u16, fuel: u32, 
                         lemma_info_fuel(gl, lo, fm, n, gid as int, fuel as nat, k as nat);
                     }
                 }
-                return None;
+                return Ok(None);
             }
         },
         Memo::Unknown => {},
@@ -263,7 +506,7 @@ pub fn info_x(glyf: &[u8], loca: &[u8], fmt: u16, ng: u16, gid: u16, fuel: u32, 
     if g.len() < 10 {
         let x = InfoX { points: 0, contours: 0, comps: 0, depth: 0, elems: 0 };
         memo.set(gid as usize, Memo::Done(x));
-        return Some(x);
+        return Ok(Some(x));
     }
     let nc = rdi16(g, 0);
     if nc >= 0 {
@@ -274,14 +517,188 @@ pub fn info_x(glyf: &[u8], loca: &[u8], fmt: u16, ng: u16, gid: u16, fuel: u32, 
         };
         let x = InfoX { points: pts, contours: nc as u32, comps: 0, depth: 0, elems: 0 };
         memo.set(gid as usize, Memo::Done(x));
-        return Some(x);
+        return Ok(Some(x));
     }
     if fuel == 0 {
         memo.set(gid as usize, Memo::Failed(0));
+        return Ok(None);
+    }
+    Err(
+        Frame {
+            gid: gid,
+            len: g.len(),
+            p: 10,
+            acc: InfoX { points: 0, contours: 0, comps: 0, depth: 0, elems: 0 },
+            fuel: fuel,
+        },
+    )
+}
+
+/// The component the frame `f` asks for next, or `None` if there is none
+/// where it should be (and so the glyph has no totals).
+fn info_ask(glyf: &[u8], loca: &[u8], fmt: u16, ng: u16, f: Frame) -> (r: Option<u16>)
+    requires
+        fmt <= 1,
+        wf_loca(loca@, fmt as int, ng as int, glyf.len() as int),
+        frame_ok(glyf@, loca@, fmt as int, ng as int, f, false),
+    ensures
+        match r {
+            Some(c) => frame_ok(glyf@, loca@, fmt as int, ng as int, f, true) && c == child_of(
+                glyf@,
+                loca@,
+                fmt as int,
+                f,
+            ),
+            None => glyph_info(glyf@, loca@, fmt as int, ng as int, f.gid as int, f.fuel as nat) is None,
+        },
+{
+    let g = glyph_slot(glyf, loca, fmt, ng, f.gid);
+    if 4 > g.len() - f.p {
         return None;
     }
-    let mut acc = InfoX { points: 0, contours: 0, comps: 0, depth: 0, elems: 0 };
-    let mut p: usize = 10;
+    let child = rd16(g, f.p + 2);
+    if child >= ng {
+        return None;
+    }
+    Some(child)
+}
+
+/// Adds `res`, the totals of the component frame `f` asked for, to it:
+/// the glyph's totals if that was its last component (or it has none),
+/// otherwise the frame for the rest.
+fn info_add(glyf: &[u8], loca: &[u8], fmt: u16, ng: u16, f: Frame, res: Option<InfoX>) -> (r: Result<
+    Option<InfoX>,
+    Frame,
+>)
+    requires
+        fmt <= 1,
+        wf_loca(loca@, fmt as int, ng as int, glyf.len() as int),
+        frame_ok(glyf@, loca@, fmt as int, ng as int, f, true),
+        res_ok(
+            glyf@,
+            loca@,
+            fmt as int,
+            ng as int,
+            child_of(glyf@, loca@, fmt as int, f),
+            f.fuel - 1,
+            res,
+        ),
+    ensures
+        match r {
+            Ok(x) => res_ok(glyf@, loca@, fmt as int, ng as int, f.gid as int, f.fuel as int, x),
+            Err(f2) => frame_ok(glyf@, loca@, fmt as int, ng as int, f2, false) && f2.gid == f.gid && f2.fuel
+                == f.fuel && f2.len == f.len && f2.p >= f.p + 4,
+        },
+{
+    let ghost gl = glyf@;
+    let ghost lo = loca@;
+    let ghost fm = fmt as int;
+    let ghost n = ng as int;
+    let g = glyph_slot(glyf, loca, fmt, ng, f.gid);
+    match res {
+        None => Ok(None),
+        Some(c) => {
+            let acc2 = InfoX {
+                points: f.acc.points + c.points,
+                contours: f.acc.contours + c.contours,
+                comps: f.acc.comps + c.comps + 1,
+                depth: if f.acc.depth > c.depth + 1 {
+                    f.acc.depth
+                } else {
+                    c.depth + 1
+                },
+                elems: f.acc.elems + 1,
+            };
+            if acc2.points > 0xFFFF || acc2.contours > 0xFFFF || acc2.comps > 0xFFFF {
+                return Ok(None);
+            }
+            let lob = rd8(g, f.p + 1);
+            let x = comp_extra_sz(lob);
+            if lob & 0x20 != 0 {
+                if x > g.len() - f.p - 4 {
+                    Ok(None)
+                } else {
+                    Err(Frame { gid: f.gid, len: f.len, p: f.p + 4 + x, acc: acc2, fuel: f.fuel })
+                }
+            } else {
+                proof {
+                    assert(comps_info(gl, lo, fm, n, g@, f.p as int, (f.fuel - 1) as nat, f.acc@) == Some(acc2@));
+                    lemma_info_fuel(gl, lo, fm, n, f.gid as int, f.fuel as nat, acc2.depth as nat);
+                }
+                Ok(Some(acc2))
+            }
+        },
+    }
+}
+
+/// Remembers what `r` says about glyph `gid` within `fuel` levels.
+fn remember(
+    memo: &mut Vec<Memo>,
+    gid: u16,
+    fuel: u32,
+    r: Option<InfoX>,
+    Ghost(gl): Ghost<Seq<u8>>,
+    Ghost(lo): Ghost<Seq<u8>>,
+    Ghost(fm): Ghost<int>,
+    Ghost(n): Ghost<int>,
+)
+    requires
+        gid < n,
+        fuel <= MAX_COMPONENT_DEPTH,
+        memos_ok(gl, lo, fm, n, old(memo)@),
+        res_ok(gl, lo, fm, n, gid as int, fuel as int, r),
+    ensures
+        memos_ok(gl, lo, fm, n, final(memo)@),
+{
+    match r {
+        Some(x) => {
+            proof {
+                lemma_info_fuel(gl, lo, fm, n, gid as int, fuel as nat, x.depth as nat);
+            }
+            memo.set(gid as usize, Memo::Done(x));
+        },
+        None => memo.set(gid as usize, Memo::Failed(fuel)),
+    }
+    proof {
+        assert forall|i: int| 0 <= i < n implies memo_ok(gl, lo, fm, n, i, #[trigger] memo@[i]) by {
+            if i != gid {
+                assert(memo@[i] == old(memo)@[i]);
+            }
+        }
+    }
+}
+
+/// Computes [`glyph_info`] for `gid` within `fuel` levels, remembering
+/// what it learns. Components are followed with a stack of frames on the
+/// heap, not by recursion, so nesting as deep as `fuel` costs no call
+/// stack.
+#[verifier::rlimit(100)]
+pub fn info_x(glyf: &[u8], loca: &[u8], fmt: u16, ng: u16, gid: u16, fuel: u32, memo: &mut Vec<Memo>) -> (r:
+    Option<InfoX>)
+    requires
+        fmt <= 1,
+        wf_loca(loca@, fmt as int, ng as int, glyf.len() as int),
+        gid < ng,
+        fuel <= MAX_COMPONENT_DEPTH,
+        memos_ok(glyf@, loca@, fmt as int, ng as int, old(memo)@),
+    ensures
+        memos_ok(glyf@, loca@, fmt as int, ng as int, final(memo)@),
+        res_ok(glyf@, loca@, fmt as int, ng as int, gid as int, fuel as int, r),
+{
+    let ghost gl = glyf@;
+    let ghost lo = loca@;
+    let ghost fm = fmt as int;
+    let ghost n = ng as int;
+    let ghost l = glyf.len() as int;
+    let ghost b = l + 2;
+    let mut st: Vec<Frame> = Vec::new();
+    // 0: evaluate the request (cg, cf); 1: the top frame asks for its
+    // next component; 2: hand `res`, the totals of what the top frame
+    // asked for, to it.
+    let mut mode: u8 = 0;
+    let mut cg: u16 = gid;
+    let mut cf: u32 = fuel;
+    let mut res: Option<InfoX> = None;
     loop
         invariant
             fmt <= 1,
@@ -290,78 +707,176 @@ pub fn info_x(glyf: &[u8], loca: &[u8], fmt: u16, ng: u16, gid: u16, fuel: u32, 
             lo == loca@,
             fm == fmt,
             n == ng,
+            l == glyf.len(),
+            b == l + 2,
             gid < ng,
-            1 <= fuel <= MAX_COMPONENT_DEPTH,
+            fuel <= MAX_COMPONENT_DEPTH,
+            mode <= 2,
             memos_ok(gl, lo, fm, n, memo@),
-            g@ == glyph_of(gl, lo, fm, gid as int),
-            g.len() >= 10,
-            i16_at(g@, 0) < 0,
-            10 <= p <= g.len(),
-            info_small(acc),
-            acc.points <= 0xFFFF,
-            acc.elems <= acc.comps,
-            acc.depth <= fuel,
-            glyph_info(gl, lo, fm, n, gid as int, fuel as nat) == comps_info(
-                gl,
-                lo,
-                fm,
-                n,
-                g@,
-                p as int,
-                (fuel - 1) as nat,
-                acc@,
-            ),
-        decreases g.len() - p,
+            stack_ok(gl, lo, fm, n, st@, gid as int, fuel as int),
+            mode != 1 ==> st@.len() > 0 ==> frame_ok(gl, lo, fm, n, st@.last(), true),
+            mode == 0 ==> (cg as int, cf as int) == want(gl, lo, fm, st@, gid as int, fuel as int) && cg < ng
+                && cf <= MAX_COMPONENT_DEPTH,
+            mode == 1 ==> st@.len() > 0 && frame_ok(gl, lo, fm, n, st@.last(), false),
+            mode == 2 ==> {
+                let w = want(gl, lo, fm, st@, gid as int, fuel as int);
+                res_ok(gl, lo, fm, n, w.0, w.1, res)
+            },
+        decreases meas(st@, mode, cf, b, l), 2 - mode,
     {
-        if 4 > g.len() - p {
-            memo.set(gid as usize, Memo::Failed(fuel));
-            return None;
-        }
-        let child = rd16(g, p + 2);
-        if child >= ng {
-            memo.set(gid as usize, Memo::Failed(fuel));
-            return None;
-        }
-        let c = match info_x(glyf, loca, fmt, ng, child, fuel - 1, memo) {
-            Some(c) => c,
-            None => {
-                memo.set(gid as usize, Memo::Failed(fuel));
-                return None;
-            },
-        };
-        let acc2 = InfoX {
-            points: acc.points + c.points,
-            contours: acc.contours + c.contours,
-            comps: acc.comps + c.comps + 1,
-            depth: if acc.depth > c.depth + 1 {
-                acc.depth
-            } else {
-                c.depth + 1
-            },
-            elems: acc.elems + 1,
-        };
-        if acc2.points > 0xFFFF || acc2.contours > 0xFFFF || acc2.comps > 0xFFFF {
-            memo.set(gid as usize, Memo::Failed(fuel));
-            return None;
-        }
-        let lob = rd8(g, p + 1);
-        let x = comp_extra_sz(lob);
-        if lob & 0x20 != 0 {
-            if x > g.len() - p - 4 {
-                memo.set(gid as usize, Memo::Failed(fuel));
-                return None;
+        let ghost st0 = st@;
+        let ghost m0 = meas(st@, mode, cf, b, l);
+        let ghost md0 = mode;
+        let ghost cf0 = cf;
+        proof {
+            lemma_pow_positive(b, cf as nat);
+            if st@.len() > 0 {
+                lemma_pow_positive(b, st@.last().fuel as nat);
+                lemma_below(gl, lo, fm, n, st@, gid as int, fuel as int, b);
             }
-            acc = acc2;
-            p = p + 4 + x;
-        } else {
+        }
+        if mode == 0 {
+            match info_leaf(glyf, loca, fmt, ng, cg, cf, memo) {
+                Ok(r) => {
+                    res = r;
+                    mode = 2;
+                    proof {
+                        vstd::arithmetic::mul::lemma_mul_strictly_positive(l + 1, pow(b, cf as nat));
+                        assert(m0 == fsum(st0, b) + (l + 1) * pow(b, cf as nat));
+                        assert(meas(st@, mode, cf, b, l) == fsum(st0, b));
+                    }
+                },
+                Err(f) => {
+                    proof {
+                        lemma_push(gl, lo, fm, n, st0, gid as int, fuel as int, f);
+                        // The frame weighs less than the request.
+                        vstd::arithmetic::mul::lemma_mul_inequality((f.len - 10) as int, l + 1, pow(b, cf as nat));
+                    }
+                    st.push(f);
+                    mode = 1;
+                    proof {
+                        assert(fwt(f, false, b) < (l + 1) * pow(b, cf as nat)) by (nonlinear_arith)
+                            requires
+                                fwt(f, false, b) == (f.len - 10) * pow(b, cf as nat),
+                                f.len <= l,
+                                pow(b, cf as nat) > 0,
+                        ;
+                        assert(m0 == fsum(st0, b) + (l + 1) * pow(b, cf as nat));
+                        assert(meas(st@, mode, cf, b, l) == fsum(st0, b) + fwt(f, false, b));
+                    }
+                },
+            }
+        } else if mode == 1 {
+            let k = st.len() - 1;
+            let f = st[k];
             proof {
-                assert(comps_info(gl, lo, fm, n, g@, p as int, (fuel - 1) as nat, acc@) == Some(acc2@));
-                lemma_info_fuel(gl, lo, fm, n, gid as int, fuel as nat, acc2.depth as nat);
+                assert(st@[k as int] == st@.last());
             }
-            memo.set(gid as usize, Memo::Done(acc2));
-            return Some(acc2);
+            match info_ask(glyf, loca, fmt, ng, f) {
+                None => {
+                    memo.set(f.gid as usize, Memo::Failed(f.fuel));
+                    proof {
+                        lemma_pop(gl, lo, fm, n, st0, gid as int, fuel as int, b);
+                        lemma_mul_nonneg_frame(f, b);
+                    }
+                    st.pop();
+                    res = None;
+                    mode = 2;
+                    proof {
+                        assert(st@ =~= st0.drop_last());
+                        assert(m0 == fsum(st0.drop_last(), b) + fwt(f, false, b));
+                        assert(meas(st@, mode, cf, b, l) == fsum(st0.drop_last(), b));
+                    }
+                },
+                Some(child) => {
+                    mode = 0;
+                    cg = child;
+                    cf = f.fuel - 1;
+                    proof {
+                        lemma_pop(gl, lo, fm, n, st0, gid as int, fuel as int, b);
+                        lemma_pow_positive(b, cf as nat);
+                        // Asking costs the frame a unit, more than the request
+                        // weighs.
+                        lemma_pow_adds(b, 1, cf as nat);
+                        lemma_pow1(b);
+                        assert(fwt(f, false, b) == fwt(f, true, b) + b * pow(b, cf as nat)) by (nonlinear_arith)
+                            requires
+                                fwt(f, false, b) == (f.len - f.p) * pow(b, f.fuel as nat),
+                                fwt(f, true, b) == (f.len - f.p - 1) * pow(b, f.fuel as nat),
+                                pow(b, f.fuel as nat) == b * pow(b, cf as nat),
+                        ;
+                        assert(b * pow(b, cf as nat) > (l + 1) * pow(b, cf as nat)) by (nonlinear_arith)
+                            requires
+                                b == l + 2,
+                                pow(b, cf as nat) > 0,
+                        ;
+                        assert(m0 == fsum(st0.drop_last(), b) + fwt(f, false, b));
+                        assert(meas(st@, mode, cf, b, l) == fsum(st0, b) + (l + 1) * pow(b, cf as nat));
+                    }
+                },
+            }
+        } else {
+            if st.len() == 0 {
+                return res;
+            }
+            let k = st.len() - 1;
+            let f = st[k];
+            proof {
+                assert(st@[k as int] == st@.last());
+                lemma_pop(gl, lo, fm, n, st0, gid as int, fuel as int, b);
+            }
+            match info_add(glyf, loca, fmt, ng, f, res) {
+                Ok(r) => {
+                    remember(memo, f.gid, f.fuel, r, Ghost(gl), Ghost(lo), Ghost(fm), Ghost(n));
+                    proof {
+                        vstd::arithmetic::mul::lemma_mul_strictly_positive(
+                            (f.len - f.p - 1) as int,
+                            pow(b, f.fuel as nat),
+                        );
+                    }
+                    st.pop();
+                    res = r;
+                    proof {
+                        assert(st@ =~= st0.drop_last());
+                        assert(m0 == fsum(st0, b));
+                        assert(meas(st@, mode, cf, b, l) == fsum(st0.drop_last(), b));
+                    }
+                },
+                Err(f2) => {
+                    proof {
+                        lemma_set_top(gl, lo, fm, n, st0, gid as int, fuel as int, f2);
+                    }
+                    st.set(k, f2);
+                    mode = 1;
+                    proof {
+                        assert(st@ =~= st0.update(st0.len() - 1, f2));
+                        assert(fwt(f2, false, b) < fwt(f, true, b)) by (nonlinear_arith)
+                            requires
+                                fwt(f2, false, b) == (f.len - f2.p) * pow(b, f.fuel as nat),
+                                fwt(f, true, b) == (f.len - f.p - 1) * pow(b, f.fuel as nat),
+                                f2.p >= f.p + 4,
+                                pow(b, f.fuel as nat) > 0,
+                        ;
+                        assert(m0 == fsum(st0, b));
+                        assert(st@.drop_last() == st0.drop_last());
+                        assert(st@.last() == f2);
+                        assert(meas(st@, mode, cf, b, l) == fsum(st0.drop_last(), b) + fwt(f2, false, b));
+                    }
+                },
+            }
         }
     }
+}
+
+proof fn lemma_mul_nonneg_frame(f: Frame, b: int)
+    requires
+        b > 0,
+        f.p <= f.len,
+    ensures
+        fwt(f, false, b) >= 0,
+{
+    lemma_pow_positive(b, f.fuel as nat);
+    vstd::arithmetic::mul::lemma_mul_nonnegative((f.len - f.p) as int, pow(b, f.fuel as nat));
 }
 
 /// The length of the instructions of a composite glyph: see

@@ -102,7 +102,7 @@ impl Regex {
                 Err(e) => e is TooBig || syntax::parse(pattern@) is None,
             },
     {
-        let p = parse::parse(pattern)?;
+        let p = parse::parse(pattern, max_insts)?;
         if p.classes.len() > LIM || p.ngroups > LIM || max_insts < 2 || p.ast.ln > max_insts - 2 {
             return Err(Error::TooBig);
         }

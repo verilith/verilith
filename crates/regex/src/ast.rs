@@ -16,8 +16,6 @@ pub const MAX_PROG: usize = 0x100_0000;
 /// `max_mem` of 8 MiB comes to at 32 bytes an instruction.
 pub const DEFAULT_MAX_PROG: usize = 0x4_0000;
 
-pub const MAX_HEIGHT: usize = 4096;
-
 pub const THRU: usize = usize::MAX;
 
 pub enum Node {
@@ -44,8 +42,6 @@ pub struct Ast {
     pub en: usize,
     /// The same for the no-progress copy.
     pub ez: usize,
-    /// Height of the tree.
-    pub h: usize,
     /// The largest product of nested `{n,m}` counts.
     pub rep: usize,
 }
@@ -258,15 +254,15 @@ impl Ast {
         }
     }
 
-    fn mk(node: Node, ln: usize, lz: usize, en: usize, ez: usize, h: usize, rep: usize) -> (r: Option<Ast>)
+    fn mk(node: Node, ln: usize, lz: usize, en: usize, ez: usize, rep: usize) -> (r: Option<Ast>)
         ensures
             r matches Some(a) ==> a.node == node && a.ln == ln && a.lz == lz && a.en == en && a.ez == ez && ln
                 <= MAX_PROG && lz <= MAX_PROG && a.rep == rep,
     {
-        if ln > MAX_PROG || lz > MAX_PROG || h > MAX_HEIGHT {
+        if ln > MAX_PROG || lz > MAX_PROG {
             None
         } else {
-            Some(Ast { node: node, ln: ln, lz: lz, en: en, ez: ez, h: h, rep: rep })
+            Some(Ast { node: node, ln: ln, lz: lz, en: en, ez: ez, rep: rep })
         }
     }
 
@@ -276,7 +272,7 @@ impl Ast {
             a.rep == 1,
             a.node == Node::Empty,
     {
-        Ast { node: Node::Empty, ln: 0, lz: 0, en: THRU, ez: THRU, h: 0, rep: 1 }
+        Ast { node: Node::Empty, ln: 0, lz: 0, en: THRU, ez: THRU, rep: 1 }
     }
 
     pub fn chr(cls: usize) -> (a: Ast)
@@ -285,7 +281,7 @@ impl Ast {
             a.rep == 1,
             a.node == Node::Char(cls),
     {
-        Ast { node: Node::Char(cls), ln: 1, lz: 1, en: 0, ez: 0, h: 0, rep: 1 }
+        Ast { node: Node::Char(cls), ln: 1, lz: 1, en: 0, ez: 0, rep: 1 }
     }
 
     pub fn look(k: Look) -> (a: Ast)
@@ -294,7 +290,7 @@ impl Ast {
             a.rep == 1,
             a.node == Node::Look(k),
     {
-        Ast { node: Node::Look(k), ln: 1, lz: 1, en: 0, ez: 0, h: 0, rep: 1 }
+        Ast { node: Node::Look(k), ln: 1, lz: 1, en: 0, ez: 0, rep: 1 }
     }
 
     pub fn group(k: usize, x: Ast) -> (r: Option<Ast>)
@@ -303,11 +299,8 @@ impl Ast {
         ensures
             r matches Some(a) ==> a.wf() && a.rep == x.rep && a.node == Node::Group(k, Box::new(x)),
     {
-        if x.h >= MAX_HEIGHT {
-            return None;
-        }
-        let (ln, lz, h, x_rep) = (x.ln + 2, x.lz + 2, x.h + 1, x.rep);
-        let r = Ast::mk(Node::Group(k, Box::new(x)), ln, lz, 0, 0, h, x_rep);
+        let (ln, lz, x_rep) = (x.ln + 2, x.lz + 2, x.rep);
+        let r = Ast::mk(Node::Group(k, Box::new(x)), ln, lz, 0, 0, x_rep);
         proof {
             if r is Some {
                 let a = r->0;
@@ -338,12 +331,8 @@ impl Ast {
         ensures
             r matches Some(a) ==> a.wf() && a.rep == (if x.rep > y.rep { x.rep } else { y.rep }) && a.node == Node::Cat(Box::new(x), Box::new(y)),
     {
-        if x.h >= MAX_HEIGHT || y.h >= MAX_HEIGHT {
-            return None;
-        }
         let ln = x.ln + y.ln;
         let lz = x.lz + y.lz;
-        let h = max(x.h, y.h) + 1;
         let rep = max(x.rep, y.rep);
         proof {
             assert forall|cl: Seq<Class>| true implies {
@@ -372,7 +361,7 @@ impl Ast {
         };
         let ghost w = x.re(Seq::empty());
         let ghost w2 = y.re(Seq::empty());
-        let r = Ast::mk(Node::Cat(Box::new(x), Box::new(y)), ln, lz, en, ez, h, rep);
+        let r = Ast::mk(Node::Cat(Box::new(x), Box::new(y)), ln, lz, en, ez, rep);
         proof {
             if r is Some {
                 let a = r->0;
@@ -406,14 +395,10 @@ impl Ast {
         ensures
             r matches Some(a) ==> a.wf() && a.rep == (if x.rep > y.rep { x.rep } else { y.rep }) && a.node == Node::Alt(Box::new(x), Box::new(y)),
     {
-        if x.h >= MAX_HEIGHT || y.h >= MAX_HEIGHT {
-            return None;
-        }
         let ln = x.ln + y.ln + 1;
         let lz = x.lz + y.lz + 1;
-        let h = max(x.h, y.h) + 1;
         let rep = max(x.rep, y.rep);
-        let r = Ast::mk(Node::Alt(Box::new(x), Box::new(y)), ln, lz, 0, 0, h, rep);
+        let r = Ast::mk(Node::Alt(Box::new(x), Box::new(y)), ln, lz, 0, 0, rep);
         proof {
             if r is Some {
                 let a = r->0;
@@ -446,11 +431,8 @@ impl Ast {
         ensures
             r matches Some(a) ==> a.wf() && a.rep == x.rep && a.node == Node::Opt(Box::new(x), greedy),
     {
-        if x.h >= MAX_HEIGHT {
-            return None;
-        }
-        let (ln, lz, h, x_rep) = (x.ln + 1, x.lz + 1, x.h + 1, x.rep);
-        let r = Ast::mk(Node::Opt(Box::new(x), greedy), ln, lz, 0, 0, h, x_rep);
+        let (ln, lz, x_rep) = (x.ln + 1, x.lz + 1, x.rep);
+        let r = Ast::mk(Node::Opt(Box::new(x), greedy), ln, lz, 0, 0, x_rep);
         proof {
             if r is Some {
                 let a = r->0;
@@ -480,11 +462,8 @@ impl Ast {
         ensures
             r matches Some(a) ==> a.wf() && a.rep == x.rep && a.node == Node::Plus(Box::new(x), greedy),
     {
-        if x.h >= MAX_HEIGHT {
-            return None;
-        }
         let ln = x.ln + 1 + 2 * x.lz;
-        let (lz, h, x_rep) = (x.lz, x.h + 1, x.rep);
+        let (lz, x_rep) = (x.lz, x.rep);
         proof {
             assert forall|cl: Seq<Class>| true implies (ezo(#[trigger] x.re(cl)) matches Some(k) ==> k < x.lz) by {
                 lemma_ent(x.re(cl), 0, 0);
@@ -497,7 +476,7 @@ impl Ast {
             THRU
         };
         let ez = x.ez;
-        let r = Ast::mk(Node::Plus(Box::new(x), greedy), ln, lz, en, ez, h, x_rep);
+        let r = Ast::mk(Node::Plus(Box::new(x), greedy), ln, lz, en, ez, x_rep);
         proof {
             if r is Some {
                 let a = r->0;
@@ -550,22 +529,292 @@ impl Ast {
         a
     }
 
+    /// A copy of the tree. It is walked with a stack of frames on the
+    /// heap, not by recursion, so its depth costs no call stack.
     pub fn dup(&self) -> (r: Ast)
         ensures
             r == *self,
-        decreases self,
     {
-        let node = match &self.node {
-            Node::Empty => Node::Empty,
-            Node::Char(c) => Node::Char(*c),
-            Node::Look(k) => Node::Look(*k),
-            Node::Group(k, x) => Node::Group(*k, Box::new(x.dup())),
-            Node::Cat(x, y) => Node::Cat(Box::new(x.dup()), Box::new(y.dup())),
-            Node::Alt(x, y) => Node::Alt(Box::new(x.dup()), Box::new(y.dup())),
-            Node::Opt(x, g) => Node::Opt(Box::new(x.dup()), *g),
-            Node::Plus(x, g) => Node::Plus(Box::new(x.dup()), *g),
-        };
-        Ast { node: node, ln: self.ln, lz: self.lz, en: self.en, ez: self.ez, h: self.h, rep: self.rep }
+        // Each frame is a node whose copy is being made, with the copy of
+        // its first child once that is done (for a node with two).
+        let mut st: Vec<(&Ast, Option<Ast>)> = Vec::new();
+        // Some(d): copy d next. None: `up` is the copy just made.
+        let mut down: Option<&Ast> = Some(self);
+        let mut up: Option<Ast> = None;
+        loop
+            invariant
+                frames_ok(st@, *self),
+                down matches Some(d) ==> *d == want_d(st@, *self) && up is None,
+                down is None ==> (up matches Some(v) && v == want_d(st@, *self)),
+            decreases dmeas(st@, down),
+        {
+            let ghost st0 = st@;
+            proof {
+                lemma_dsum_nonneg(st@);
+            }
+            match down {
+                Some(d) => {
+                    match &d.node {
+                        Node::Group(_, p) | Node::Opt(p, _) | Node::Plus(p, _) => {
+                            st.push((d, None));
+                            down = Some(&**p);
+                            proof {
+                                lemma_frame_push(st0, (d, None), *self);
+                            }
+                        },
+                        Node::Cat(p, _) | Node::Alt(p, _) => {
+                            st.push((d, None));
+                            down = Some(&**p);
+                            proof {
+                                lemma_frame_push(st0, (d, None), *self);
+                            }
+                        },
+                        Node::Empty => {
+                            up = Some(d.with(Node::Empty));
+                            down = None;
+                        },
+                        Node::Char(c) => {
+                            up = Some(d.with(Node::Char(*c)));
+                            down = None;
+                        },
+                        Node::Look(k) => {
+                            up = Some(d.with(Node::Look(*k)));
+                            down = None;
+                        },
+                    }
+                },
+                None => {
+                    let v = match up {
+                        Some(v) => v,
+                        None => {
+                            proof {
+                                assert(false);
+                            }
+                            return Ast::empty();
+                        },
+                    };
+                    up = None;
+                    if st.len() == 0 {
+                        return v;
+                    }
+                    let (o, l) = st.pop().unwrap();
+                    proof {
+                        lemma_frame_pop(st0, *self);
+                        assert((o, l) == st0.last());
+                    }
+                    match &o.node {
+                        Node::Group(k, _) => {
+                            up = Some(o.with(Node::Group(*k, Box::new(v))));
+                        },
+                        Node::Opt(_, g) => {
+                            up = Some(o.with(Node::Opt(Box::new(v), *g)));
+                        },
+                        Node::Plus(_, g) => {
+                            up = Some(o.with(Node::Plus(Box::new(v), *g)));
+                        },
+                        Node::Cat(_, q) => {
+                            match l {
+                                None => {
+                                    st.push((o, Some(v)));
+                                    down = Some(&**q);
+                                    proof {
+                                        lemma_frame_push(st@.drop_last(), (o, Some(v)), *self);
+                                        assert(st@.drop_last() =~= st0.drop_last());
+                                    }
+                                },
+                                Some(lv) => {
+                                    up = Some(o.with(Node::Cat(Box::new(lv), Box::new(v))));
+                                },
+                            }
+                        },
+                        Node::Alt(_, q) => {
+                            match l {
+                                None => {
+                                    st.push((o, Some(v)));
+                                    down = Some(&**q);
+                                    proof {
+                                        lemma_frame_push(st@.drop_last(), (o, Some(v)), *self);
+                                        assert(st@.drop_last() =~= st0.drop_last());
+                                    }
+                                },
+                                Some(lv) => {
+                                    up = Some(o.with(Node::Alt(Box::new(lv), Box::new(v))));
+                                },
+                            }
+                        },
+                        _ => {
+                            proof {
+                                assert(false);
+                            }
+                            return v;
+                        },
+                    }
+                },
+            }
+        }
+    }
+
+    /// This node's fields with another `node`.
+    fn with(&self, node: Node) -> (r: Ast)
+        ensures
+            r == (Ast { node: node, ..*self }),
+    {
+        Ast { node: node, ln: self.ln, lz: self.lz, en: self.en, ez: self.ez, rep: self.rep }
+    }
+}
+
+/// Nodes in the tree.
+pub open spec fn size(a: Ast) -> nat
+    decreases a,
+{
+    match a.node {
+        Node::Group(_, x) => 1 + size(*x),
+        Node::Opt(x, _) => 1 + size(*x),
+        Node::Plus(x, _) => 1 + size(*x),
+        Node::Cat(x, y) => 1 + size(*x) + size(*y),
+        Node::Alt(x, y) => 1 + size(*x) + size(*y),
+        _ => 1,
+    }
+}
+
+/// A frame of `dup`: a node with children, and the copy of its first child
+/// only if it has two.
+pub open spec fn frame_ok(f: (&Ast, Option<Ast>)) -> bool {
+    match f.0.node {
+        Node::Group(_, _) | Node::Opt(_, _) | Node::Plus(_, _) => f.1 is None,
+        Node::Cat(x, _) | Node::Alt(x, _) => f.1 matches Some(l) ==> l == *x,
+        _ => false,
+    }
+}
+
+/// The child the frame copies next.
+pub open spec fn next_child(f: (&Ast, Option<Ast>)) -> Ast {
+    match f.0.node {
+        Node::Group(_, x) => *x,
+        Node::Opt(x, _) => *x,
+        Node::Plus(x, _) => *x,
+        Node::Cat(x, y) => if f.1 is None {
+            *x
+        } else {
+            *y
+        },
+        Node::Alt(x, y) => if f.1 is None {
+            *x
+        } else {
+            *y
+        },
+        _ => arbitrary(),
+    }
+}
+
+/// What is being copied: the top frame's next child, or the whole tree.
+pub open spec fn want_d(st: Seq<(&Ast, Option<Ast>)>, root: Ast) -> Ast {
+    if st.len() == 0 {
+        root
+    } else {
+        next_child(st.last())
+    }
+}
+
+/// Every frame is one, each the next child of the one below it, the
+/// first the whole tree.
+pub open spec fn frames_ok(st: Seq<(&Ast, Option<Ast>)>, root: Ast) -> bool {
+    &&& forall|k: int| 0 <= k < st.len() ==> frame_ok(#[trigger] st[k])
+    &&& st.len() > 0 ==> *st[0].0 == root
+    &&& forall|k: int| 0 < k < st.len() ==> *(#[trigger] st[k]).0 == next_child(st[k - 1])
+}
+
+/// Termination: a node to copy weighs three per node, a frame what is
+/// left of it.
+pub open spec fn fw(f: (&Ast, Option<Ast>)) -> nat {
+    match f.0.node {
+        Node::Cat(_, y) => if f.1 is None {
+            3 * size(*y) + 2
+        } else {
+            1
+        },
+        Node::Alt(_, y) => if f.1 is None {
+            3 * size(*y) + 2
+        } else {
+            1
+        },
+        _ => 1,
+    }
+}
+
+pub open spec fn dsum(st: Seq<(&Ast, Option<Ast>)>) -> nat
+    decreases st.len(),
+{
+    if st.len() == 0 {
+        0
+    } else {
+        dsum(st.drop_last()) + fw(st.last())
+    }
+}
+
+pub open spec fn dmeas(st: Seq<(&Ast, Option<Ast>)>, down: Option<&Ast>) -> nat {
+    dsum(st) + match down {
+        Some(d) => 3 * size(*d),
+        None => 0,
+    }
+}
+
+proof fn lemma_dsum_nonneg(st: Seq<(&Ast, Option<Ast>)>)
+    ensures
+        dsum(st) >= 0,
+{
+}
+
+proof fn lemma_frame_push(st: Seq<(&Ast, Option<Ast>)>, f: (&Ast, Option<Ast>), root: Ast)
+    requires
+        frames_ok(st, root),
+        frame_ok(f),
+        *f.0 == want_d(st, root),
+    ensures
+        frames_ok(st.push(f), root),
+        st.push(f).drop_last() == st,
+        st.push(f).last() == f,
+        dsum(st.push(f)) == dsum(st) + fw(f),
+{
+    let s2 = st.push(f);
+    assert(s2.drop_last() =~= st);
+    assert forall|k: int| 0 <= k < s2.len() implies frame_ok(#[trigger] s2[k]) by {
+        if k < st.len() {
+            assert(s2[k] == st[k]);
+        }
+    }
+    assert forall|k: int| 0 < k < s2.len() implies *(#[trigger] s2[k]).0 == next_child(s2[k - 1]) by {
+        if k < st.len() {
+            assert(s2[k] == st[k]);
+            assert(s2[k - 1] == st[k - 1]);
+        } else {
+            assert(s2[k - 1] == st.last());
+        }
+    }
+}
+
+proof fn lemma_frame_pop(st: Seq<(&Ast, Option<Ast>)>, root: Ast)
+    requires
+        frames_ok(st, root),
+        st.len() > 0,
+    ensures
+        frames_ok(st.drop_last(), root),
+        frame_ok(st.last()),
+        *st.last().0 == want_d(st.drop_last(), root),
+        dsum(st) == dsum(st.drop_last()) + fw(st.last()),
+{
+    let s2 = st.drop_last();
+    assert forall|k: int| 0 <= k < s2.len() implies frame_ok(#[trigger] s2[k]) by {
+        assert(s2[k] == st[k]);
+    }
+    assert forall|k: int| 0 < k < s2.len() implies *(#[trigger] s2[k]).0 == next_child(s2[k - 1]) by {
+        assert(s2[k] == st[k]);
+        assert(s2[k - 1] == st[k - 1]);
+    }
+    assert(frame_ok(st[st.len() - 1]));
+    if st.len() > 1 {
+        assert(*st[st.len() - 1].0 == next_child(st[st.len() - 2]));
+        assert(s2.last() == st[st.len() - 2]);
     }
 }
 
@@ -585,3 +834,28 @@ fn max(a: usize, b: usize) -> (r: usize)
 }
 
 } // verus!
+
+// Dropping a tree takes its nodes apart one at a time, children first onto
+// a list on the heap, so a deep tree costs no call stack (the derived drop
+// would recurse once per level). Plain Rust outside the proof: it only
+// frees memory.
+impl Drop for Ast {
+    fn drop(&mut self) {
+        let mut todo: Vec<Box<Ast>> = Vec::new();
+        take_children(&mut self.node, &mut todo);
+        while let Some(mut a) = todo.pop() {
+            take_children(&mut a.node, &mut todo);
+        }
+    }
+}
+
+fn take_children(n: &mut Node, todo: &mut Vec<Box<Ast>>) {
+    match core::mem::replace(n, Node::Empty) {
+        Node::Group(_, x) | Node::Opt(x, _) | Node::Plus(x, _) => todo.push(x),
+        Node::Cat(x, y) | Node::Alt(x, y) => {
+            todo.push(x);
+            todo.push(y);
+        },
+        _ => {},
+    }
+}
