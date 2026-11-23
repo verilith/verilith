@@ -1562,7 +1562,7 @@ pub proof fn lemma_decl_eq(x: Seq<u8>, y: Seq<u8>, hi: int, j: int, t: Seq<XTok>
     }
 }
 
-proof fn lemma_comment_tokens(x: Seq<u8>, j: int, t: Seq<XTok>)
+pub proof fn lemma_comment_tokens(x: Seq<u8>, j: int, t: Seq<XTok>)
     requires
         comment(x, j, t) is Some,
     ensures
@@ -1572,7 +1572,7 @@ proof fn lemma_comment_tokens(x: Seq<u8>, j: int, t: Seq<XTok>)
     assert(added(t, u) =~= seq![XTok::Comment { start: j + 4, end: e - 3 }]);
 }
 
-proof fn lemma_pi_tokens(x: Seq<u8>, j: int, t: Seq<XTok>)
+pub proof fn lemma_pi_tokens(x: Seq<u8>, j: int, t: Seq<XTok>)
     requires
         pi(x, j, t) is Some,
     ensures
@@ -2335,7 +2335,7 @@ proof fn lemma_misc_bang(x: Seq<u8>, i: int, t: Seq<XTok>)
     }
 }
 
-proof fn lemma_xmldecl_end(x: Seq<u8>, i: int, enc: Enc)
+pub proof fn lemma_xmldecl_end(x: Seq<u8>, i: int, enc: Enc)
     requires
         xmldecl(x, i, enc) is Some,
     ensures
@@ -2344,7 +2344,7 @@ proof fn lemma_xmldecl_end(x: Seq<u8>, i: int, enc: Enc)
 {
 }
 
-proof fn lemma_dflt_head(x: Seq<u8>, enc: Enc, hi: int)
+pub proof fn lemma_dflt_head(x: Seq<u8>, enc: Enc, hi: int)
     requires
         decl_head(x, enc) is Some,
     ensures

@@ -1035,4 +1035,111 @@ pub proof fn lemma_fin_item(s: Seq<u8>, p: int, t: Seq<XTok>, env: Env)
     lemma_misc_item(s, p, Seq::empty(), t, env);
 }
 
+// ---------------------------------------------------------------------------
+// The prolog, a step at a time
+// ---------------------------------------------------------------------------
+
+pub proof fn lemma_comment_tape(s: Seq<u8>, p: int, t: Seq<XTok>)
+    ensures
+        comment(s, p, t) == (match comment(s, p, Seq::empty()) {
+            Some((u, e)) => Some((t + u, e)),
+            None => None,
+        }),
+{
+    if let Some((u, e)) = comment(s, p, Seq::empty()) {
+        assert(t + u =~= t.push(u[0]));
+    }
+}
+
+pub proof fn lemma_pi_tape(s: Seq<u8>, p: int, t: Seq<XTok>)
+    ensures
+        pi(s, p, t) == (match pi(s, p, Seq::empty()) {
+            Some((u, e)) => Some((t + u, e)),
+            None => None,
+        }),
+{
+    if let Some((u, e)) = pi(s, p, Seq::empty()) {
+        assert(t + u =~= t.push(u[0]).push(u[1]));
+    }
+}
+
+/// A comment at `p` in `Misc`.
+pub proof fn lemma_misc_comment(s: Seq<u8>, p: int, t: Seq<XTok>)
+    requires
+        0 <= p,
+        has_lit(s, p, lit_comment()),
+        comment(s, p, t) matches Some((_, e)) && p < e <= s.len(),
+    ensures
+        comment(s, p, t) matches Some((t2, e)) && misc(s, p, t) == misc(s, e, t2),
+{
+    lemma_lits_stable();
+    assert(s.subrange(p, p + 4)[0] == s[p]);
+    assert(ws_end(s, p) == p);
+}
+
+/// A processing instruction at `p` in `Misc`.
+pub proof fn lemma_misc_pi(s: Seq<u8>, p: int, t: Seq<XTok>)
+    requires
+        0 <= p,
+        has_lit(s, p, lit_pi()),
+        pi(s, p, t) matches Some((_, e)) && p < e <= s.len(),
+    ensures
+        pi(s, p, t) matches Some((t2, e)) && misc(s, p, t) == misc(s, e, t2),
+{
+    lemma_lits_stable();
+    assert(s.subrange(p, p + 2)[0] == s[p]);
+    assert(s.subrange(p, p + 2)[1] == s[p + 1]);
+    assert(ws_end(s, p) == p);
+    assert(!has_lit(s, p, lit_comment())) by {
+        if has_lit(s, p, lit_comment()) {
+            assert(s.subrange(p, p + 4)[1] == s[p + 1]);
+        }
+    }
+}
+
+/// No element starts at `p`.
+pub proof fn lemma_after_root_not_lt(s: Seq<u8>, p: int, t: Seq<XTok>, env: Env)
+    requires
+        0 <= p < s.len(),
+        s[p] != 0x3C,
+    ensures
+        after_root(s, p, t, env) is None,
+{
+}
+
+/// The comment or processing instruction the window has at `p`, on `y`.
+pub proof fn lemma_comment_pre(x: Seq<u8>, y: Seq<u8>, hi: int, p: int, t: Seq<XTok>)
+    requires
+        ag(x, y, hi),
+        0 <= p,
+        comment(x, p, t) matches Some((_, e)) && e <= hi,
+    ensures
+        comment(y, p, t) == comment(x, p, t),
+        comment(x, p, t) matches Some((u, e)) && e >= p + 7 && no_dflt(added(t, u)) && extends(t, u) && u.len()
+            == t.len() + 1,
+{
+    lemma_comment_mv(x, y, 0, hi, 0, p, t, t, 0);
+    let (u, e) = comment(x, p, t).unwrap();
+    lemma_mv_zero(added(t, u));
+    assert(t + added(t, u) =~= u);
+    lemma_comment_tokens(x, p, t);
+}
+
+pub proof fn lemma_pi_pre(x: Seq<u8>, y: Seq<u8>, hi: int, p: int, t: Seq<XTok>)
+    requires
+        ag(x, y, hi),
+        0 <= p,
+        pi(x, p, t) matches Some((_, e)) && e <= hi,
+    ensures
+        pi(y, p, t) == pi(x, p, t),
+        pi(x, p, t) matches Some((u, e)) && e >= p + 4 && no_dflt(added(t, u)) && extends(t, u) && u.len() == t.len()
+            + 2,
+{
+    lemma_pi_mv(x, y, 0, hi, 0, p, t, t, 0);
+    let (u, e) = pi(x, p, t).unwrap();
+    lemma_mv_zero(added(t, u));
+    assert(t + added(t, u) =~= u);
+    lemma_pi_tokens(x, p, t);
+}
+
 } // verus!
