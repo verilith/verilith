@@ -165,7 +165,7 @@ impl fmt::Debug for Document<'_> {
 /// entities declared in the internal subset are expanded; external
 /// entities are not read (see `parse_with`).
 pub fn parse(input: &[u8]) -> Result<Document<'_>, Error> {
-    parse_x(input, false, &mut crate::pe::Loader::none())
+    parse_x(input, false, &mut crate::pe::Loader::none(), false)
 }
 
 /// `parse`, reading the external subset and external parameter entities
@@ -173,10 +173,18 @@ pub fn parse(input: &[u8]) -> Result<Document<'_>, Error> {
 /// it gives is checked like the document: decoded by its byte order mark
 /// or text declaration, with every declaration in it well-formed.
 pub fn parse_with<'a>(input: &'a [u8], loader: &mut crate::pe::Loader) -> Result<Document<'a>, Error> {
-    parse_x(input, true, loader)
+    parse_x(input, true, loader, true)
 }
 
-fn parse_x<'a>(input: &'a [u8], load: bool, loader: &mut crate::pe::Loader) -> Result<Document<'a>, Error> {
+/// `parse_with`, reading the external subset and external parameter
+/// entities but not external general entities (libxml2's
+/// XML_PARSE_DTDLOAD).
+#[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
+pub(crate) fn parse_dtd_with<'a>(input: &'a [u8], loader: &mut crate::pe::Loader) -> Result<Document<'a>, Error> {
+    parse_x(input, true, loader, false)
+}
+
+fn parse_x<'a>(input: &'a [u8], load: bool, loader: &mut crate::pe::Loader, general: bool) -> Result<Document<'a>, Error> {
     use crate::pe::{XDocRes, XDtdRes};
     let mut tape = Tape::new();
     loader.trace.clear();
@@ -203,7 +211,7 @@ fn parse_x<'a>(input: &'a [u8], load: bool, loader: &mut crate::pe::Loader) -> R
         }
         None => return Err(diagnose(input, &tape)),
     };
-    if load {
+    if general {
         doc.read_external(loader)?;
     }
     Ok(doc)
@@ -357,6 +365,13 @@ impl<'a> Document<'a> {
             Some(p) => p,
             None => self.text(),
         }
+    }
+
+    /// Where each parameter entity's text begins (its name) and ends
+    /// (`None`) in the flattened DTD.
+    #[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
+    pub(crate) fn pe_trace(&self) -> &[(usize, Option<Vec<u8>>, Vec<u8>)] {
+        &self.trace
     }
 
     /// The document's tape.
