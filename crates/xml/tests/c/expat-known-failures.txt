@@ -108,7 +108,6 @@ runtests	test_bad_notation	error-code
 runtests	test_bad_public_doctype	error-code
 runtests	test_big_tokens_scale_linearly	incremental
 runtests	test_billions_laughs_attack_protection_api_float_round_trip	amplification
-runtests	test_buffer_can_grow_to_max	incremental
 runtests	test_bypass_heuristic_when_close_to_bufsize	incremental
 runtests	test_byte_info_at_end	error-code
 runtests	test_comment_handled_in_default	default-handler
@@ -134,7 +133,6 @@ runtests	test_ext_entity_utf16_be	utf16-without-bom
 runtests	test_ext_entity_utf16_le	utf16-without-bom
 runtests	test_external_bom_consumed	utf16-without-bom
 runtests	test_foreign_dtd_not_standalone	external-dtd
-runtests	test_get_buffer_1	incremental
 runtests	test_good_cdata_utf16	utf16-without-bom
 runtests	test_good_cdata_utf16_le	utf16-without-bom
 runtests	test_hash_salt_ulong	internal

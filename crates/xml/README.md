@@ -324,8 +324,8 @@ and linked against `libverilith_xml.a` (`scripts/test-expat.sh`, run by
 `ci.sh`):
 
 * `tests/runtests`, its unit tests, each at six chunk sizes with reparse
-  deferral on and off: 236 of 443 tests pass in every mode. Of the 207 that
-  fail, 86 test failing allocators, 35 need handlers to run (or errors to be
+  deferral on and off: 238 of 443 tests pass in every mode. Of the 205 that
+  fail, 86 test failing allocators, 33 need handlers to run (or errors to be
   found) before the final buffer, 34 feed UTF-16 without a byte order mark,
   14 need the external subset or external parameter entities read, 9 test
   libexpat's internals, 17 expect another error code or position, and 12

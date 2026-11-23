@@ -2294,7 +2294,10 @@ pub unsafe extern "C" fn XML_GetBuffer(p: *mut Parser, len: c_int) -> *mut c_voi
         _ => {}
     }
     let len = len as usize;
-    if p.input.len() + len > i32::MAX as usize || p.input.try_reserve(len).is_err() {
+    // libexpat doubles its buffer from 1 KiB and fails once that would pass
+    // INT_MAX, so no request reaches above 1 GiB; this keeps the same limit
+    // on what it holds.
+    if p.input.len() + len > 1 << 30 || p.input.try_reserve(len).is_err() {
         p.error = E_NO_MEMORY;
         return null_mut();
     }
