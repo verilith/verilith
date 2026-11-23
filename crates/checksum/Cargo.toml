@@ -8,9 +8,17 @@ repository = "https://github.com/verilith/verilith"
 keywords = ["verified", "verus", "crc32", "adler32", "checksum"]
 categories = ["algorithms", "encoding"]
 
+[features]
+default = ["std"]
+# Without `std` the crate is `no_std` and needs only `alloc` (for vstd);
+# the kernels are then chosen from the
+# CPU features the target is compiled for (`-C target-feature=...`)
+# instead of detected at run time. The verified code is the same.
+std = ["vstd/std", "verilith-simd/std"]
+
 [dependencies]
-vstd = { workspace = true, features = ["std"] }
-verilith-simd = { path = "../simd", version = "0.1.0" }
+vstd = { workspace = true, features = ["alloc"] }
+verilith-simd = { path = "../simd", version = "0.1.0", default-features = false }
 
 [package.metadata.verus]
 verify = true

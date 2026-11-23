@@ -11,7 +11,10 @@ verus_library(
     edition = "2024",
     crate_root = "src/lib.rs",
     srcs = glob(["src/**"]) + ["README.md"],
-    features = [],
+    features = [
+        "default",
+        "std",
+    ],
     vstd = "//third-party:vstd-alloc-std",
     deps = ["//crates/simd:simd"],
     visibility = ["PUBLIC"],

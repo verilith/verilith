@@ -54,6 +54,10 @@ verilith-simd is shared by the Verilith libraries (verilith-webp first; verilith
 verilith-zlib and verilith-url next). It covers only the intrinsics their kernels use, and
 grows as they need more.
 
+Without the default `std` feature the crate is `no_std` and needs only
+`alloc`; the `has_*` detection functions then report the features the
+target is compiled for instead of asking the CPU.
+
 ## Trusted base
 
 These are assumed, not proven. A library that uses verilith-simd should list them in

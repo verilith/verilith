@@ -104,7 +104,20 @@ What the proofs here assume rather than prove:
 - The specs: `src/spec.rs`.
 - Verus, Z3 and the Rust compiler.
 
-The crate needs `std`, for run-time CPU detection (as verilith-simd does).
+## Without `std`
+
+```toml
+verilith-checksum = { ..., default-features = false }
+```
+
+makes the crate `no_std` (it needs only `alloc`, for vstd), for embedded
+and kernel targets: it builds for `thumbv7em-none-eabihf`,
+`aarch64-unknown-none` and `x86_64-unknown-none`. Run-time CPU detection
+needs `std`, so without it each kernel is chosen from the features the
+target is compiled for: build with `-C target-feature=+pclmulqdq,+avx2`
+(or `-C target-cpu=...`) on x86-64, or `+crc,+dotprod` on AArch64, to get
+the vector kernels; otherwise the table kernels run. The verified code is
+the same either way; only the trusted detection differs.
 
 ## Verifying
 
