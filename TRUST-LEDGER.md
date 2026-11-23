@@ -28,7 +28,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | archive | 2 |  |  |  |  |  | 3 |
 | bind |  |  |  |  |  |  | 2 |
 | brotli | 2 |  |  |  | 1 |  | 4 |
-| core | 76 | 4 |  |  |  |  | 1 |
+| core | 84 | 5 |  |  |  |  | 1 |
 | dns |  |  |  |  |  |  | 6 |
 | font |  |  |  |  |  |  | 1 |
 | hpack | 2 |  |  |  |  |  | 3 |
@@ -52,7 +52,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  | 2 |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **531** | **34** | **266** | **5** | **22** | **12** | **110** |
+| **total** | **539** | **35** | **266** | **5** | **22** | **12** | **110** |
 
 ## Items
 
@@ -88,6 +88,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/core/src/checksum/lanes.rs`: external_body: `crc_word`
 - `crates/core/src/checksum/vclmul.rs`: external_body: `has_pclmul`, `has_vpclmul`, `has_vpclmul256`, `xv`, `xv`, `xv`, `x_load`, `x_set`, `x_get`, `x_xor`, `x_fold`, `x_clmul_lo`, `x_shr64`, `x_shr32`, `x_and`, `x_low64`, `y_load`, `y_reg`, `y_splat`, `y_xor`, `y_fold`, `y_block`, `z_load`, `z_reg`, `z_splat`, `z_xor`, `z_fold`, `z_block`; axioms: `axiom_vpclmul_pclmul`, `axiom_zl_len`, `axiom_yl_len`
 - `crates/core/src/checksum/vdot.rs`: external_body: `has_vnni512`, `has_avx2`, `zb`, `zb`, `zb`, `zb`, `zb_load`, `zd_zero`, `zd_add`, `zd_dot`, `zd_store`, `yb_load`, `yd_zero`, `yd_add`, `yd_dot`, `yd_store`; axioms: `axiom_lens`
+- `crates/core/src/checksum/vudot.rs`: external_body: `has_dotprod`, `nb`, `nb`, `nb_load`, `nd_zero`, `nd_add`, `nd_dot`, `nd_store`; axioms: `axiom_nlens`
 
 ### dns
 

@@ -26,7 +26,7 @@ once, and the libraries import it.
 | `utf8` | well-formed UTF-8 (Unicode Table 3-7), the three-byte local condition SIMD validators check, its proof, and a verified scalar validator | verilith-json |
 | `num` | decimal digits: `is_digit`, `digits_end`, `dec_value`, `decimal`; `parse_u64_dec` (checked) and `push_decimal` | verilith-json, verilith-url, verilith-dns |
 | `binary64` | IEEE 754 binary64 as a model in spec integers (in the style of Coq's Flocq): what each bit pattern is worth as an exact rational, round to nearest, ties to even (`rne`), proofs that rounding depends only on the value and that exact products and quotients of equal values are equal, that `u64 as f64` is exact below `2^53`, and `P10`, the exact doubles `10^0..=10^22`; `mul`, `div` and `from_u64` on bit patterns | verilith-json |
-| `checksum` | Adler-32 and CRC-32 (slicing-by-16), and CRC-32C (`checksum::crc32c`, a table per byte), proven against the RFC definitions in `checksum::spec`; `checksum::cpu` picks, for Adler-32, the verified dot-product kernels in `checksum::adlerv` (AVX-512 VNNI or AVX2) and, for CRC-32, the verified carry-less-multiply folding kernels in `checksum::fold` (VPCLMULQDQ on 512- or 256-bit vectors, or PCLMULQDQ), on AArch64 the verified three-lane `crc32x` kernel in `checksum::lanes`, and for CRC-32C the SSE4.2 or AArch64 CRC-32C instruction | verilith-zlib, verilith-snappy |
+| `checksum` | Adler-32 and CRC-32 (slicing-by-16), and CRC-32C (`checksum::crc32c`, a table per byte), proven against the RFC definitions in `checksum::spec`; `checksum::cpu` picks, for Adler-32, the verified dot-product kernels in `checksum::adlerv` (AVX-512 VNNI or AVX2, or `udot` on AArch64) and, for CRC-32, the verified carry-less-multiply folding kernels in `checksum::fold` (VPCLMULQDQ on 512- or 256-bit vectors, or PCLMULQDQ), on AArch64 the verified three-lane `crc32x` kernel in `checksum::lanes`, and for CRC-32C the SSE4.2 or AArch64 CRC-32C instruction | verilith-zlib, verilith-snappy |
 
 verilith-webp and verilith-brotli share the table builder in `htable`. verilith-zlib keeps its own:
 it builds a different layout (DEFLATE's flagged length/distance entries) on
@@ -74,7 +74,9 @@ What the proofs here assume rather than prove:
   `crc32_update` are themselves verified; trusted are the run-time
   feature checks and the one-line trampolines that compile the verified
   kernels (`checksum::adlerv`, `checksum::fold`, `checksum::lanes`) with
-  the target features their instructions need. `crc32c_update` runs the CPU's CRC-32C instruction (SSE4.2's
+  the target features their instructions need. The AArch64 Adler-32
+  kernel needs none: NEON is baseline and its `udot` names the
+  dot-product extension in the assembly. `crc32c_update` runs the CPU's CRC-32C instruction (SSE4.2's
   `crc32` on x86-64, `crc32cb`/`crc32cd` on AArch64) eight bytes at a
   time: trusted is that the instruction computes this CRC on the raw
   register, as it is defined to, and the eight-line loops around it.
@@ -114,6 +116,14 @@ What the proofs here assume rather than prove:
   proven: that the lanes' byte sums, the sums before each row and the
   weighted sums give Adler-32's two sums, that no lane overflows in a
   block of 1024 rows, and the reduction modulo 65521.
+- `src/checksum/vudot.rs`: the same operations for AArch64 on 64-byte
+  rows of four NEON registers (`nb`, `nd`), the dot product being `udot`
+  (written as inline assembly, `vdotq_u32` not being stable Rust), and
+  `dotprod()` with its detection. Each is the one instruction on each of
+  the four registers. On other CPUs detection is false and the bodies are
+  plain-Rust stand-ins, so `tests/vudot.rs` checks the verified kernel
+  `adlerv::udot` everywhere and the instructions themselves on AArch64
+  (run on an Apple M3).
 - `src/checksum/lanes.rs`, the one `external_body` function `crc_word`:
   on AArch64, that the `crc32x` instruction computes this CRC-32 over its
   eight bytes. The three-lane CRC-32 around it, the tables that combine

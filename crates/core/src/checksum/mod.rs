@@ -14,6 +14,7 @@ pub mod spec;
 pub mod vclmul;
 #[cfg(target_arch = "x86_64")]
 pub mod vdot;
+pub mod vudot;
 mod tables;
 
 pub use crc32c::{crc32c, crc32c_update};

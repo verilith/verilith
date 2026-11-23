@@ -590,3 +590,136 @@ pub fn adler32_avx2(a0: u32, b0: u32, d: &[u8]) -> (r: (u32, u32))
 }
 
 } // verus!
+
+/// The AArch64 kernel, on 64-byte rows of four NEON registers.
+pub mod udot {
+
+#[cfg(verus_only)]
+use super::super::{adler_from, lemma_adler_append, lemma_lanes_bound, lsum};
+#[cfg(verus_only)]
+use super::{desc_ok, dot4, lemma_dot4_bound, lemma_row, ones_ok, row_inv};
+use super::{block_sums, DESC64, ONES64};
+use super::super::vudot::*;
+use vstd::prelude::*;
+
+verus! {
+
+broadcast use group_vudot;
+
+/// One block of `rows` rows of 64 bytes from `i`, with the dot-product extension (`udot`).
+#[inline(always)]
+fn block_udot(a: u32, b: u32, d: &[u8], i: usize, rows: usize) -> (r: (u32, u32))
+    requires
+        dotprod(),
+        a < super::super::ADLER_MOD,
+        b < super::super::ADLER_MOD,
+        1 <= rows <= 1024,
+        i + 64 * rows <= d@.len() <= usize::MAX,
+    ensures
+        r.0 < super::super::ADLER_MOD,
+        r.1 < super::super::ADLER_MOD,
+        (r.0 as nat, r.1 as nat) == adler_from(a as nat, b as nat, d@.subrange(i as int, i + 64 * rows)),
+{
+    let oa = ONES64;
+    let da = DESC64;
+    let ones = nb_load(&oa, 0);
+    let desc = nb_load(&da, 0);
+    proof {
+        assert(oa@.subrange(0, 64) =~= oa@);
+        assert(da@.subrange(0, 64) =~= da@);
+    }
+    let mut s1 = nd_zero();
+    let mut s10 = nd_zero();
+    let mut s2 = nd_zero();
+    let mut r: usize = 0;
+    proof {
+        assert(d@.subrange(i as int, i as int) =~= Seq::<u8>::empty());
+        assert(lsum(nd(s1), 16) == 0) by { lemma_lanes_bound(nd(s1), 16, 0); }
+        assert(lsum(nd(s10), 16) == 0) by { lemma_lanes_bound(nd(s10), 16, 0); }
+        assert(lsum(nd(s2), 16) == 0) by { lemma_lanes_bound(nd(s2), 16, 0); }
+    }
+    while r < rows
+        invariant
+            dotprod(),
+            1 <= rows <= 1024,
+            r <= rows,
+            i + 64 * rows <= d@.len() <= usize::MAX,
+            ones_ok(nb(ones), 64),
+            desc_ok(nb(desc), 64),
+            row_inv(nd(s1), nd(s10), nd(s2), d@.subrange(i as int, i + 64 * r), 64, r as nat),
+        decreases rows - r,
+    {
+        assert(64 * r < 64 * rows) by (nonlinear_arith) requires r < rows;
+        let j = i + 64 * r;
+        let y = nb_load(d, j);
+        let t10 = nd_add(&s10, &s1);
+        // `udot` accumulates in place: four registers each, so the chain
+        // through a register is one row apart.
+        let t1 = nd_dot(&s1, &y, &ones);
+        let t2 = nd_dot(&s2, &y, &desc);
+        proof {
+            lemma_row(nd(s1), nd(s10), nd(s2), nd(t1), nd(t10), nd(t2), d@.subrange(i as int, j as int),
+                nb(y), nb(ones), nb(desc), 64, r as nat);
+            assert(d@.subrange(i as int, j as int) + nb(y) =~= d@.subrange(i as int, i + 64 * (r + 1)));
+        }
+        s1 = t1;
+        s10 = t10;
+        s2 = t2;
+        r = r + 1;
+    }
+    let v1 = nd_store(&s1);
+    let v10 = nd_store(&s10);
+    let v2 = nd_store(&s2);
+    block_sums(a, b, &v1, &v10, &v2, Ghost(d@.subrange(i as int, i + 64 * rows)), 64, rows as u64)
+}
+
+/// **Adler-32 with the dot-product extension (`udot`)**: blocks of up to 1024 rows of 64 bytes,
+/// then the portable code for the last 63 bytes or fewer.
+#[inline(always)]
+pub fn adler32_udot(a0: u32, b0: u32, d: &[u8]) -> (r: (u32, u32))
+    requires
+        dotprod(),
+        a0 < super::super::ADLER_MOD,
+        b0 < super::super::ADLER_MOD,
+    ensures
+        (r.0 as nat, r.1 as nat) == adler_from(a0 as nat, b0 as nat, d@),
+{
+    let n = d.len();
+    let mut a = a0;
+    let mut b = b0;
+    let mut i: usize = 0;
+    proof {
+        assert(d@.subrange(0, 0) =~= Seq::<u8>::empty());
+    }
+    while n - i >= 64
+        invariant
+            dotprod(),
+            n == d@.len(),
+            i <= n,
+            a < super::super::ADLER_MOD,
+            b < super::super::ADLER_MOD,
+            (a as nat, b as nat) == adler_from(a0 as nat, b0 as nat, d@.subrange(0, i as int)),
+        decreases n - i,
+    {
+        let rows = if (n - i) / 64 >= 1024 { 1024 } else { (n - i) / 64 };
+        let (x, y) = block_udot(a, b, d, i, rows);
+        proof {
+            lemma_adler_append(a0 as nat, b0 as nat, d@.subrange(0, i as int), d@.subrange(i as int, i + 64 * rows));
+            assert(d@.subrange(0, i as int) + d@.subrange(i as int, i + 64 * rows) =~= d@.subrange(0, i + 64 * rows));
+        }
+        a = x;
+        b = y;
+        i = i + 64 * rows;
+    }
+    let tail = vstd::slice::slice_subrange(d, i, n);
+    let (x, y) = super::super::adler32_update(a, b, tail);
+    proof {
+        lemma_adler_append(a0 as nat, b0 as nat, d@.subrange(0, i as int), tail@);
+        assert(d@.subrange(0, i as int) + tail@ =~= d@);
+    }
+    (x, y)
+}
+
+} // verus!
+
+} // mod udot

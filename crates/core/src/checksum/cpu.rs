@@ -4,7 +4,11 @@
 //!   dot-product kernels in `checksum::adlerv`: `vpdpbusd` on 64-byte rows
 //!   with AVX-512 VNNI, `vpmaddubsw`/`vpmaddwd` on 32-byte rows with AVX2.
 //!   Trusted are `vdot.rs` (the instructions' contracts) and the two
-//!   trampolines below.
+//!   trampolines below. On AArch64 with the dot-product extension (every Apple
+//!   Silicon CPU, Graviton 2 and later) it runs `adlerv::udot`, `udot`
+//!   on 64-byte rows, trusting `vudot.rs`; NEON is in the AArch64
+//!   baseline and the `udot` instruction names its extension itself, so
+//!   no trampoline is needed.
 //! - `crc32_update` is verified. On x86-64 it folds with carry-less
 //!   multiplication (`checksum::fold`): 256 bytes at a time with
 //!   VPCLMULQDQ on 512-bit vectors when the CPU has AVX-512 and
@@ -20,8 +24,6 @@
 //!   on x86-64, the CRC extension's `crc32c` on AArch64, eight bytes at a
 //!   time. Not verified: tested against the verified table-driven
 //!   `checksum::crc32c_update`, which is also what runs on other CPUs.
-//! - On AArch64, `adler32_update` is the portable code, which the compiler
-//!   vectorizes with NEON (part of the AArch64 baseline).
 #![allow(unsafe_op_in_unsafe_fn)]
 #[cfg(verus_only)]
 use crate::checksum::crc32c::crc32c_from;
@@ -56,6 +58,12 @@ pub fn adler32_update(a: u32, b: u32, d: &[u8]) -> (r: (u32, u32))
         }
         if d.len() >= 32 && super::vdot::has_avx2() {
             return adler32_avx2(a, b, d);
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        if d.len() >= 64 && super::vudot::has_dotprod() {
+            return super::adlerv::udot::adler32_udot(a, b, d);
         }
     }
     super::adler32_update(a, b, d)
