@@ -512,6 +512,8 @@ impl<T> ArrayQueue<T> {
         &&& c.head_id == self.head.0.id()
         &&& c.tail_id == self.tail.0.id()
         &&& self.buffer@.len() == c.cap
+        // The slots are a Vec: on 32-bit targets, fewer than 2^32.
+        &&& c.cap <= usize::MAX
         &&& forall|i: int| 0 <= i < c.cap ==> #[trigger] self.buffer@[i].stamp.id() == c.stamp_ids[i]
         &&& forall|i: int| 0 <= i < c.cap ==> #[trigger] self.buffer@[i].value.id() == c.cells[i]
     }
@@ -1556,6 +1558,7 @@ impl<T> ArrayQueue<T> {
                 c.lap == self.one_lap as nat,
                 self.mask as nat == c.lap - 1,
                 self.buffer@.len() == c.cap,
+                c.cap <= usize::MAX,
                 forall|i: int| 0 <= i < c.cap ==> #[trigger] self.buffer@[i].stamp.id() == c.stamp_ids[i],
                 forall|i: int| 0 <= i < c.cap ==> #[trigger] self.buffer@[i].value.id() == c.cells[i],
                 QueuePred::inv(c, s0),
@@ -1637,7 +1640,7 @@ impl<T> ArrayQueue<T> {
     /// If `cap` is zero or at least 2^60 (more than can be allocated).
     pub fn new(cap: usize) -> ArrayQueue<T> {
         assert!(cap > 0, "capacity must be non-zero");
-        assert!(cap < 0x1000_0000_0000_0000, "capacity must be below 2^60");
+        assert!((cap as u64) < 0x1000_0000_0000_0000, "capacity must be below 2^60");
         Self::new_with_view(cap).0
     }
 }

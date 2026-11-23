@@ -10,7 +10,7 @@ fn main() {
         _ => verilith_png::top::PixelFormat::Rgba8,
     };
     let mut out = std::io::stdout().lock();
-    match verilith_png::top::decode(&data, fmt, 1 << 32) {
+    match verilith_png::top::decode(&data, fmt, (1u64 << 32).min(usize::MAX as u64) as usize) {
         Ok((h, px)) => {
             writeln!(out, "{} {} {} {} {}", h.width, h.height, h.bit_depth, h.color_type, h.interlace).unwrap();
             out.write_all(&px).unwrap();

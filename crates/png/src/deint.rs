@@ -474,6 +474,38 @@ fn odd_row(
     }
 }
 
+/// A pass's row of whole-byte pixels is no longer than a row of the image.
+proof fn lemma_pass_row_le(hv: Ihdr, p: nat, bp: nat)
+    requires
+        hdr_ok(hv),
+        hv.interlace == 1,
+        p < 7,
+        pixel_bits(hv) == 8 * bp,
+    ensures
+        row_bytes(hv, pass_w(hv, p)) <= hv.w * bp,
+{
+    let pw = pass_w(hv, p);
+    let d = dx(hv, p);
+    assert(1 <= d <= 8);
+    if hv.w > x0(hv, p) {
+        let t = (hv.w - x0(hv, p) + d - 1) as nat;
+        assert(t <= hv.w * d) by (nonlinear_arith)
+            requires
+                t <= hv.w + d - 1,
+                hv.w >= 1,
+                d >= 1,
+        ;
+        vstd::arithmetic::div_mod::lemma_div_is_ordered(t as int, (hv.w * d) as int, d as int);
+        vstd::arithmetic::div_mod::lemma_div_multiples_vanish(hv.w as int, d as int);
+    }
+    assert(pw <= hv.w);
+    assert((pw * (8 * bp) + 7) / 8 == pw * bp) by (nonlinear_arith);
+    assert(pw * bp <= hv.w * bp) by (nonlinear_arith)
+        requires
+            pw <= hv.w,
+    ;
+}
+
 /// `spec::native` of an interlaced image of whole-byte pixels.
 #[verifier::spinoff_prover]
 pub fn deinterlace(h: &Header, buf: &[u8], off: &[usize; 8], limit: usize) -> (r: Result<Vec<u8>, crate::decode::Error>)
@@ -500,9 +532,33 @@ pub fn deinterlace(h: &Header, buf: &[u8], off: &[usize; 8], limit: usize) -> (r
                 bp <= 8,
                 hh <= 0x7fff_ffff,
         ;
+        assert(w * bp <= 0x7fff_ffff * 8) by (nonlinear_arith)
+            requires
+                w <= 0x7fff_ffff,
+                bp <= 8,
+        ;
     }
     if (w * bp as u64) as u128 * hh as u128 > limit as u128 {
         return Err(crate::decode::Error::TooLarge);
+    }
+    proof {
+        // Each partial product is at most `limit`, so fits a usize.
+        assert(w * bp <= w * bp * hh) by (nonlinear_arith)
+            requires
+                hh >= 1,
+        ;
+        // Whole-byte pixels: a depth of 8 or 16.
+        assert(hv.depth == 8 || hv.depth == 16) by {
+            if hv.depth < 8 {
+                assert(channels(hv.ct) == 1);
+            }
+        }
+        assert(pixel_bits(hv) == 8 * bp) by (nonlinear_arith)
+            requires
+                pixel_bits(hv) == channels(hv.ct) * hv.depth,
+                hv.depth == 8 || hv.depth == 16,
+                bp == pixel_bits(hv) / 8,
+        ;
     }
     let n = (w as usize * bp) * hh as usize;
     let mut out = match alloc_zeroed(n) {
@@ -521,9 +577,17 @@ pub fn deinterlace(h: &Header, buf: &[u8], off: &[usize; 8], limit: usize) -> (r
             p <= 7,
             rbs@.len() == 7,
             forall|q: int| 0 <= q < p ==> #[trigger] rbs@[q] == row_bytes(hv, pass_w(hv, q as nat)),
+            pixel_bits(hv) == 8 * bp,
+            w == hv.w,
+            w * bp <= limit,
         decreases 7 - p,
     {
         let (pw, _) = crate::geom::pass_dims(h, p);
+        proof {
+            // At most `limit`, so the cast keeps it on 32-bit targets too.
+            lemma_pass_row_le(hv, p as nat, bp as nat);
+            assert(p as usize == p);
+        }
         rbs[p as usize] = crate::geom::row_bytes_exec(h, pw) as usize;
         p = p + 1;
     }
