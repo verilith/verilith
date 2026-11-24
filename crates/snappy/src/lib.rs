@@ -1,10 +1,15 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // A formally verified Snappy compressor and decompressor.
 //
 // - [`spec`]: the format as pure functions (the trusted specification).
 // - [`decode`]: the decompressor, proven equal to the spec.
 // - [`compress`]: the compressor, proven to round-trip.
-#![cfg_attr(not(verus_only), allow(unused_variables, unused_imports))]
+// A normal build erases ghost code, so a variable, import, field or value
+// used only by proofs looks unused there, and the `verus!` syntax leaves
+// some redundant braces and parentheses. These lints are off in that build
+// only.
+#![cfg_attr(not(verus_only), allow(unused_variables, unused_imports, unused_assignments))]
 
 #[doc(hidden)]
 pub mod spec;

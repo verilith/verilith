@@ -1260,8 +1260,8 @@ fn transpose_halves(t: &[i16; 32], u: &mut [i16; 32])
             lemma_transposed_all(ts@, us@);
         }
     } else {
-        // SAFETY: SSE2 is part of x86-64 (and emulated elsewhere).
-        unsafe { transpose_halves_sse2(ts, us) };
+        // SSE2 is part of x86-64 (and emulated elsewhere).
+        transpose_halves_sse2(ts, us);
     }
 }
 
@@ -4073,8 +4073,8 @@ fn shuffle_block(r: &mut [u8; 128], rounds: usize)
             assert(rs@ =~= f);
         }
     } else {
-        // SAFETY: SSE2 is part of x86-64 (and emulated elsewhere).
-        unsafe { shuffle_rows_sse2(ss, rs, rounds) };
+        // SSE2 is part of x86-64 (and emulated elsewhere).
+        shuffle_rows_sse2(ss, rs, rounds);
     }
 }
 

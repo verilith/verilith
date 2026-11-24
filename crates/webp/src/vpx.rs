@@ -77,7 +77,6 @@ pub open spec fn chan_dist(x: u32, y: u32) -> int {
 }
 
 /// `chan_dist` with one `psadbw`.
-#[inline]
 #[inline(always)]
 pub fn chan_dist_sad(x: u32, y: u32) -> (r: u64)
     requires
@@ -145,7 +144,6 @@ proof fn lemma_sad_unroll(a: Seq<u8>, b: Seq<u8>)
 }
 
 /// `spec::select` with two `psadbw`s.
-#[inline]
 #[inline(always)]
 pub fn select_sad(l: u32, t: u32, tl: u32) -> (r: u32)
     requires

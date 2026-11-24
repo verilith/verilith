@@ -4,27 +4,49 @@ use vstd::prelude::*;
 
 verus! {
 
+/// The Unicode version the tables are built from.
 pub const UNICODE_VERSION: (u8, u8, u8) = (18, 0, 0);
+/// The trie's blocks are `1 << TRIE_SHIFT` code points.
 pub const TRIE_SHIFT: u32 = 6;
+/// Code points from here on are not in the trie: their word is `PLAIN_WORD`.
 pub const TRIE_LIMIT: u32 = 0x30000;
+/// The word of a code point with no decomposition, combining class 0 and no compositions.
 pub const PLAIN_WORD: u32 = 0xff0000;
+/// Flag: the code point is in NFD on its own and starts a new segment.
 pub const FLAG_FAST_NFD: u16 = 1;
+/// Flag: the code point is in NFKD on its own and starts a new segment.
 pub const FLAG_FAST_NFKD: u16 = 2;
+/// Flag: the code point is in NFC on its own and starts a new segment.
 pub const FLAG_FAST_NFC: u16 = 4;
+/// Flag: the code point is in NFKC on its own and starts a new segment.
 pub const FLAG_FAST_NFKC: u16 = 8;
+/// Flag: NFD can restart at the code point (a segment boundary before it).
 pub const FLAG_BB_NFD: u16 = 16;
+/// Flag: NFKD can restart at the code point (a segment boundary before it).
 pub const FLAG_BB_NFKD: u16 = 32;
+/// Flag: NFC can restart at the code point (a segment boundary before it).
 pub const FLAG_BB_NFC: u16 = 64;
+/// Flag: NFKC can restart at the code point (a segment boundary before it).
 pub const FLAG_BB_NFKC: u16 = 128;
+/// Flag: the code point is the second of some composition pair.
 pub const FLAG_SECOND: u16 = 256;
+/// The length of `TRIE_INDEX`.
 pub const TRIE_INDEX_LEN: usize = 3072;
+/// The length of `TRIE_DATA`.
 pub const TRIE_DATA_LEN: usize = 17984;
+/// The length of `REC_CCC`.
 pub const REC_CCC_LEN: usize = 4177;
+/// The length of `REC_FD`.
 pub const REC_FD_LEN: usize = 4177;
+/// The length of `REC_KD`.
 pub const REC_KD_LEN: usize = 4177;
+/// The length of `REC_COMP`.
 pub const REC_COMP_LEN: usize = 4177;
+/// The length of `POOL`.
 pub const POOL_LEN: usize = 6828;
+/// The length of `COMP_SECOND`.
 pub const COMP_SECOND_LEN: usize = 961;
+/// The length of `COMP_RESULT`.
 pub const COMP_RESULT_LEN: usize = 961;
 
 } // verus!

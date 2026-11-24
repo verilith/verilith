@@ -10,8 +10,16 @@ use codec::{decode_into, encode_into};
 /// Why a string was rejected, with the hex crate's variants.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FromHexError {
-    InvalidHexCharacter { c: char, index: usize },
+    /// A character that is not a hex digit.
+    InvalidHexCharacter {
+        /// The character.
+        c: char,
+        /// Its byte offset.
+        index: usize,
+    },
+    /// An odd number of digits.
     OddLength,
+    /// The output buffer's length is not half the input's.
     InvalidStringLength,
 }
 
@@ -57,6 +65,7 @@ fn diagnose(s: &[u8]) -> FromHexError {
     FromHexError::OddLength
 }
 
+/// Decodes the hex digits (either case) of `data`.
 pub fn decode<T: AsRef<[u8]>>(data: T) -> Result<Vec<u8>, FromHexError> {
     let s = data.as_ref();
     let mut out = vec![0u8; s.len() / 2];

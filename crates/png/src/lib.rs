@@ -1,6 +1,11 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // A formally verified PNG decoder.
-#![cfg_attr(not(verus_only), allow(unused_variables, unused_imports))]
+// A normal build erases ghost code, so a variable, import, field or value
+// used only by proofs looks unused there, and the `verus!` syntax leaves
+// some redundant braces and parentheses. These lints are off in that build
+// only.
+#![cfg_attr(not(verus_only), allow(unused_variables, unused_imports, unused_braces, non_shorthand_field_patterns))]
 
 // The image-size arithmetic is proven with 64-bit usize. Only where it
 // holds, so that a 32-bit build stops at the error above rather than at the

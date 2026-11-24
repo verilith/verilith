@@ -16,10 +16,12 @@ use vstd::prelude::*;
 
 verus! {
 
+/// Tells Verus about `__m128i`, an opaque type here: its contents are seen through the lane views.
 #[verifier::external_type_specification]
 #[verifier::external_body]
 pub struct ExM128i(__m128i);
 
+/// Tells Verus about `__m256i`, an opaque type here: its contents are seen through the lane views.
 #[verifier::external_type_specification]
 #[verifier::external_body]
 pub struct ExM256i(__m256i);
@@ -40,6 +42,7 @@ pub broadcast axiom fn axiom_b256_len(v: __m256i)
         #[trigger] b256(v).len() == 32,
 ;
 
+/// The axioms of this module, for `broadcast use group_lanes`.
 pub broadcast group group_lanes {
     axiom_b128_len,
     axiom_b256_len,

@@ -16,6 +16,11 @@ use vstd::prelude::*;
 
 verus! {
 
+/// `x` as a signed byte, widened.
+///
+/// ```text
+/// ensures  r == s8(x)
+/// ```
 pub fn s8e(x: u8) -> (r: i16)
     ensures
         r == s8(x),
@@ -27,6 +32,11 @@ pub fn s8e(x: u8) -> (r: i16)
     }
 }
 
+/// `x` as a signed 16-bit value, widened.
+///
+/// ```text
+/// ensures  r == s16(x)
+/// ```
 pub fn s16e(x: u16) -> (r: i32)
     ensures
         r == s16(x),
@@ -38,6 +48,11 @@ pub fn s16e(x: u16) -> (r: i32)
     }
 }
 
+/// `x` as a signed 32-bit value, widened.
+///
+/// ```text
+/// ensures  r == s32(x)
+/// ```
 pub fn s32e(x: u32) -> (r: i64)
     ensures
         r == s32(x),
@@ -239,6 +254,13 @@ fn pow2e(n: u32) -> (r: u64)
     p
 }
 
+/// The verified scalar reference for `blendv8`.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+///          a@.len() == m@.len()
+/// ensures  r@ == blendv8(a@, b@, m@)
+/// ```
 pub fn ref_blendv8(a: &[u8], b: &[u8], m: &[u8]) -> (r: Vec<u8>)
     requires
         a@.len() == b@.len(),
@@ -264,6 +286,12 @@ pub fn ref_blendv8(a: &[u8], b: &[u8], m: &[u8]) -> (r: Vec<u8>)
     r
 }
 
+/// The verified scalar reference for `movemask`.
+///
+/// ```text
+/// requires a@.len() <= 32
+/// ensures  r as nat == movemask(a@)
+/// ```
 pub fn ref_movemask(a: &[u8]) -> (r: u64)
     requires
         a@.len() <= 32,
@@ -322,6 +350,13 @@ proof fn lemma_pow2_31()
     reveal_with_fuel(pow2_spec, 32);
 }
 
+/// The verified scalar reference for `shuffle8_lanes`.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+///          a@.len() % 16 == 0
+/// ensures  r@ == shuffle8_lanes(a@, b@)
+/// ```
 pub fn ref_shuffle8_lanes(a: &[u8], b: &[u8]) -> (r: Vec<u8>)
     requires
         a@.len() == b@.len(),
@@ -386,6 +421,13 @@ proof fn lemma_lane_index(i: int, k: int, n: int)
     }
 }
 
+/// The verified scalar reference for `bslli_lanes`.
+///
+/// ```text
+/// requires a@.len() % 16 == 0
+///          n <= 255
+/// ensures  r@ == bslli_lanes(a@, n as int)
+/// ```
 pub fn ref_bslli_lanes(a: &[u8], n: usize) -> (r: Vec<u8>)
     requires
         a@.len() % 16 == 0,
@@ -416,6 +458,13 @@ pub fn ref_bslli_lanes(a: &[u8], n: usize) -> (r: Vec<u8>)
     r
 }
 
+/// The verified scalar reference for `bsrli_lanes`.
+///
+/// ```text
+/// requires a@.len() % 16 == 0
+///          n <= 255
+/// ensures  r@ == bsrli_lanes(a@, n as int)
+/// ```
 pub fn ref_bsrli_lanes(a: &[u8], n: usize) -> (r: Vec<u8>)
     requires
         a@.len() % 16 == 0,
@@ -450,6 +499,14 @@ pub fn ref_bsrli_lanes(a: &[u8], n: usize) -> (r: Vec<u8>)
     r
 }
 
+/// The verified scalar reference for `alignr_lanes`.
+///
+/// ```text
+/// requires hi@.len() == lo@.len()
+///          lo@.len() % 16 == 0
+///          n <= 255
+/// ensures  r@ == alignr_lanes(hi@, lo@, n as int)
+/// ```
 pub fn ref_alignr_lanes(hi: &[u8], lo: &[u8], n: usize) -> (r: Vec<u8>)
     requires
         hi@.len() == lo@.len(),
@@ -493,6 +550,13 @@ pub fn ref_alignr_lanes(hi: &[u8], lo: &[u8], n: usize) -> (r: Vec<u8>)
     r
 }
 
+/// The verified scalar reference for `unpacklo8_lanes`.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+///          a@.len() % 16 == 0
+/// ensures  r@ == unpacklo8_lanes(a@, b@)
+/// ```
 pub fn ref_unpacklo8_lanes(a: &[u8], b: &[u8]) -> (r: Vec<u8>)
     requires
         a@.len() == b@.len(),
@@ -528,6 +592,13 @@ pub fn ref_unpacklo8_lanes(a: &[u8], b: &[u8]) -> (r: Vec<u8>)
     r
 }
 
+/// The verified scalar reference for `unpackhi8_lanes`.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+///          a@.len() % 16 == 0
+/// ensures  r@ == unpackhi8_lanes(a@, b@)
+/// ```
 pub fn ref_unpackhi8_lanes(a: &[u8], b: &[u8]) -> (r: Vec<u8>)
     requires
         a@.len() == b@.len(),
@@ -591,6 +662,13 @@ proof fn lemma_group4(i: int, k: int, n: int)
     lemma_div_pos_is_pos(i, 4);
 }
 
+/// The verified scalar reference for `unpacklo32_lanes`.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+///          a@.len() % 4 == 0
+/// ensures  r@ == unpacklo32_lanes(a@, b@)
+/// ```
 pub fn ref_unpacklo32_lanes(a: &[u32], b: &[u32]) -> (r: Vec<u32>)
     requires
         a@.len() == b@.len(),
@@ -625,6 +703,13 @@ pub fn ref_unpacklo32_lanes(a: &[u32], b: &[u32]) -> (r: Vec<u32>)
     r
 }
 
+/// The verified scalar reference for `unpackhi32_lanes`.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+///          a@.len() % 4 == 0
+/// ensures  r@ == unpackhi32_lanes(a@, b@)
+/// ```
 pub fn ref_unpackhi32_lanes(a: &[u32], b: &[u32]) -> (r: Vec<u32>)
     requires
         a@.len() == b@.len(),
@@ -687,6 +772,13 @@ proof fn lemma_group8(i: int, k: int, n: int)
     lemma_div_pos_is_pos(i, 8);
 }
 
+/// The verified scalar reference for `unpacklo16_lanes`.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+///          a@.len() % 8 == 0
+/// ensures  r@ == unpacklo16_lanes(a@, b@)
+/// ```
 pub fn ref_unpacklo16_lanes(a: &[u16], b: &[u16]) -> (r: Vec<u16>)
     requires
         a@.len() == b@.len(),
@@ -721,6 +813,13 @@ pub fn ref_unpacklo16_lanes(a: &[u16], b: &[u16]) -> (r: Vec<u16>)
     r
 }
 
+/// The verified scalar reference for `unpackhi16_lanes`.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+///          a@.len() % 8 == 0
+/// ensures  r@ == unpackhi16_lanes(a@, b@)
+/// ```
 pub fn ref_unpackhi16_lanes(a: &[u16], b: &[u16]) -> (r: Vec<u16>)
     requires
         a@.len() == b@.len(),
@@ -755,6 +854,13 @@ pub fn ref_unpackhi16_lanes(a: &[u16], b: &[u16]) -> (r: Vec<u16>)
     r
 }
 
+/// The verified scalar reference for `unpackhi64_lanes`.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+///          a@.len() % 2 == 0
+/// ensures  r@ == unpackhi64_lanes(a@, b@)
+/// ```
 pub fn ref_unpackhi64_lanes(a: &[u64], b: &[u64]) -> (r: Vec<u64>)
     requires
         a@.len() == b@.len(),
@@ -785,6 +891,13 @@ pub fn ref_unpackhi64_lanes(a: &[u64], b: &[u64]) -> (r: Vec<u64>)
     r
 }
 
+/// The verified scalar reference for `unpacklo64_lanes`.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+///          a@.len() % 2 == 0
+/// ensures  r@ == unpacklo64_lanes(a@, b@)
+/// ```
 pub fn ref_unpacklo64_lanes(a: &[u64], b: &[u64]) -> (r: Vec<u64>)
     requires
         a@.len() == b@.len(),
@@ -828,6 +941,14 @@ fn sat_u8e(x: i32) -> (r: u8)
     }
 }
 
+/// The verified scalar reference for `packus16_lanes`.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+///          a@.len() <= 64
+///          a@.len() % 8 == 0
+/// ensures  r@ == packus16_lanes(a@, b@)
+/// ```
 pub fn ref_packus16_lanes(a: &[u16], b: &[u16]) -> (r: Vec<u8>)
     requires
         a@.len() == b@.len(),
@@ -889,6 +1010,14 @@ pub fn sat_s8e(x: i32) -> (r: u8)
     }
 }
 
+/// The verified scalar reference for `packs16_lanes`.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+///          a@.len() <= 64
+///          a@.len() % 8 == 0
+/// ensures  r@ == packs16_lanes(a@, b@)
+/// ```
 pub fn ref_packs16_lanes(a: &[u16], b: &[u16]) -> (r: Vec<u8>)
     requires
         a@.len() == b@.len(),
@@ -945,6 +1074,14 @@ fn absdiffe(x: u8, y: u8) -> (r: u64)
     }
 }
 
+/// The verified scalar reference for `sad8`.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+///          a@.len() % 8 == 0
+///          a@.len() <= 64
+/// ensures  r@ == sad8(a@, b@)
+/// ```
 pub fn ref_sad8(a: &[u8], b: &[u8]) -> (r: Vec<u64>)
     requires
         a@.len() == b@.len(),
@@ -992,6 +1129,12 @@ pub fn ref_sad8(a: &[u8], b: &[u8]) -> (r: Vec<u64>)
     r
 }
 
+/// The verified scalar reference for `srli16`.
+///
+/// ```text
+/// requires n <= 255
+/// ensures  r@ == srli16(a@, n as int)
+/// ```
 pub fn ref_srli16(a: &[u16], n: u32) -> (r: Vec<u16>)
     requires
         n <= 255,
@@ -1027,6 +1170,12 @@ pub fn ref_srli16(a: &[u16], n: u32) -> (r: Vec<u16>)
     r
 }
 
+/// The verified scalar reference for `slli16`.
+///
+/// ```text
+/// requires n <= 255
+/// ensures  r@ == slli16(a@, n as int)
+/// ```
 pub fn ref_slli16(a: &[u16], n: u32) -> (r: Vec<u16>)
     requires
         n <= 255,
@@ -1065,6 +1214,12 @@ pub fn ref_slli16(a: &[u16], n: u32) -> (r: Vec<u16>)
     r
 }
 
+/// The verified scalar reference for `srai16`.
+///
+/// ```text
+/// requires n <= 255
+/// ensures  r@ == srai16(a@, n as int)
+/// ```
 pub fn ref_srai16(a: &[u16], n: u32) -> (r: Vec<u16>)
     requires
         n <= 255,
@@ -1116,6 +1271,13 @@ pub fn ref_srai16(a: &[u16], n: u32) -> (r: Vec<u16>)
     r
 }
 
+/// The verified scalar reference for `madd16`.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+///          a@.len() % 2 == 0
+/// ensures  r@ == madd16(a@, b@)
+/// ```
 pub fn ref_madd16(a: &[u16], b: &[u16]) -> (r: Vec<u32>)
     requires
         a@.len() == b@.len(),
@@ -1157,6 +1319,13 @@ pub fn ref_madd16(a: &[u16], b: &[u16]) -> (r: Vec<u32>)
     r
 }
 
+/// The verified scalar reference for `maddubs`.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+///          a@.len() % 2 == 0
+/// ensures  r@ == maddubs(a@, b@)
+/// ```
 pub fn ref_maddubs(a: &[u8], b: &[u8]) -> (r: Vec<u16>)
     requires
         a@.len() == b@.len(),
@@ -1206,6 +1375,12 @@ pub fn ref_maddubs(a: &[u8], b: &[u8]) -> (r: Vec<u16>)
     r
 }
 
+/// The verified scalar reference for `srli32`.
+///
+/// ```text
+/// requires n <= 255
+/// ensures  r@ == srli32(a@, n as int)
+/// ```
 pub fn ref_srli32(a: &[u32], n: u32) -> (r: Vec<u32>)
     requires
         n <= 255,
@@ -1239,6 +1414,12 @@ pub fn ref_srli32(a: &[u32], n: u32) -> (r: Vec<u32>)
     r
 }
 
+/// The verified scalar reference for `slli32`.
+///
+/// ```text
+/// requires n <= 255
+/// ensures  r@ == slli32(a@, n as int)
+/// ```
 pub fn ref_slli32(a: &[u32], n: u32) -> (r: Vec<u32>)
     requires
         n <= 255,
@@ -1277,6 +1458,131 @@ pub fn ref_slli32(a: &[u32], n: u32) -> (r: Vec<u32>)
     r
 }
 
+/// `2^n` for `n <= 63`.
+fn pow2e64(n: u32) -> (r: u128)
+    requires
+        n <= 63,
+    ensures
+        r as nat == pow2_spec(n as nat),
+        1 <= r <= 0x8000_0000_0000_0000,
+{
+    let mut p: u128 = 1;
+    let mut k: u32 = 0;
+    while k < n
+        invariant
+            k <= n <= 63,
+            p as nat == pow2_spec(k as nat),
+        decreases n - k,
+    {
+        proof {
+            lemma_pow2_spec_le(k as nat, 63);
+            lemma_pow2_63();
+        }
+        p = p * 2;
+        k = k + 1;
+    }
+    proof {
+        lemma_pow2_spec_le(0, n as nat);
+        lemma_pow2_spec_le(n as nat, 63);
+        lemma_pow2_63();
+    }
+    p
+}
+
+proof fn lemma_pow2_63()
+    ensures
+        pow2_spec(63) == 0x8000_0000_0000_0000,
+{
+    reveal_with_fuel(pow2_spec, 64);
+}
+
+/// The verified scalar reference for `srli64`.
+///
+/// ```text
+/// requires n <= 255
+/// ensures  r@ == srli64(a@, n as int)
+/// ```
+pub fn ref_srli64(a: &[u64], n: u32) -> (r: Vec<u64>)
+    requires
+        n <= 255,
+    ensures
+        r@ == srli64(a@, n as int),
+{
+    let mut r: Vec<u64> = Vec::new();
+    let mut i: usize = 0;
+    while i < a.len()
+        invariant
+            n <= 255,
+            i <= a@.len(),
+            r@.len() == i,
+            forall|j: int| 0 <= j < i ==> r@[j] == #[trigger] srli64(a@, n as int)[j],
+        decreases a.len() - i,
+    {
+        let v = if n > 63 {
+            0u64
+        } else {
+            let p = pow2e64(n);
+            proof {
+                lemma_div_is_ordered_by_denominator(a[i as int] as int, 1, p as int);
+            }
+            (a[i] as u128 / p) as u64
+        };
+        r.push(v);
+        i = i + 1;
+    }
+    assert(r@ =~= srli64(a@, n as int));
+    r
+}
+
+/// The verified scalar reference for `slli64`.
+///
+/// ```text
+/// requires n <= 255
+/// ensures  r@ == slli64(a@, n as int)
+/// ```
+pub fn ref_slli64(a: &[u64], n: u32) -> (r: Vec<u64>)
+    requires
+        n <= 255,
+    ensures
+        r@ == slli64(a@, n as int),
+{
+    let mut r: Vec<u64> = Vec::new();
+    let mut i: usize = 0;
+    while i < a.len()
+        invariant
+            n <= 255,
+            i <= a@.len(),
+            r@.len() == i,
+            forall|j: int| 0 <= j < i ==> r@[j] == #[trigger] slli64(a@, n as int)[j],
+        decreases a.len() - i,
+    {
+        let v = if n > 63 {
+            0u64
+        } else {
+            let p = pow2e64(n);
+            proof {
+                assert(a[i as int] * p <= 0xffff_ffff_ffff_ffff * 0x8000_0000_0000_0000) by (nonlinear_arith)
+                    requires
+                        p <= 0x8000_0000_0000_0000,
+                        a[i as int] <= 0xffff_ffff_ffff_ffff,
+                ;
+            }
+            ((a[i] as u128 * p) % 0x1_0000_0000_0000_0000) as u64
+        };
+        r.push(v);
+        i = i + 1;
+    }
+    assert(r@ =~= slli64(a@, n as int));
+    r
+}
+
+/// The verified scalar reference for `shuffle32_lanes`.
+///
+/// ```text
+/// requires a@.len() % 4 == 0
+///          imm <= 255
+/// ensures  r@ == shuffle32_lanes(a@, imm as int)
+/// ```
 pub fn ref_shuffle32_lanes(a: &[u32], imm: u32) -> (r: Vec<u32>)
     requires
         a@.len() % 4 == 0,
@@ -1310,6 +1616,13 @@ pub fn ref_shuffle32_lanes(a: &[u32], imm: u32) -> (r: Vec<u32>)
     r
 }
 
+/// The verified scalar reference for `permvar32`.
+///
+/// ```text
+/// requires a@.len() == 8
+///          idx@.len() == 8
+/// ensures  r@ == permvar32(a@, idx@)
+/// ```
 pub fn ref_permvar32(a: &[u32], idx: &[u32]) -> (r: Vec<u32>)
     requires
         a@.len() == 8,
@@ -1347,6 +1660,11 @@ pub proof fn lemma_set_bits(m: u64, n: nat)
     }
 }
 
+/// The verified scalar reference for `popcount64`.
+///
+/// ```text
+/// ensures  r == popcount64(m)
+/// ```
 pub fn ref_popcount64(m: u64) -> (r: u32)
     ensures
         r == popcount64(m),
@@ -1368,6 +1686,12 @@ pub fn ref_popcount64(m: u64) -> (r: u32)
     c
 }
 
+/// The verified scalar reference for `compress8`.
+///
+/// ```text
+/// requires a@.len() <= 64
+/// ensures  r@ == compress8(m, a@)
+/// ```
 pub fn ref_compress8(m: u64, a: &[u8]) -> (r: Vec<u8>)
     requires
         a@.len() <= 64,
@@ -1406,6 +1730,11 @@ pub fn ref_compress8(m: u64, a: &[u8]) -> (r: Vec<u8>)
     r
 }
 
+/// The verified scalar reference for `zext8_32`.
+///
+/// ```text
+/// ensures  r@ == zext8_32(a@)
+/// ```
 pub fn ref_zext8_32(a: &[u8]) -> (r: Vec<u32>)
     ensures
         r@ == zext8_32(a@),
@@ -1443,6 +1772,14 @@ fn sat_s16e(x: i64) -> (r: u16)
     }
 }
 
+/// The verified scalar reference for `packs32_lanes`.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+///          a@.len() <= 64
+///          a@.len() % 4 == 0
+/// ensures  r@ == packs32_lanes(a@, b@)
+/// ```
 pub fn ref_packs32_lanes(a: &[u32], b: &[u32]) -> (r: Vec<u16>)
     requires
         a@.len() == b@.len(),
@@ -1488,6 +1825,11 @@ pub fn ref_packs32_lanes(a: &[u32], b: &[u32]) -> (r: Vec<u16>)
     r
 }
 
+/// The verified scalar reference for `clmul_lo`.
+///
+/// ```text
+/// ensures  r == clmul_lo(a, b, 64)
+/// ```
 pub fn ref_clmul_lo(a: u64, b: u64) -> (r: u64)
     ensures
         r == clmul_lo(a, b, 64),

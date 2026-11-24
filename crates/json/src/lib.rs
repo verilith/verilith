@@ -1,4 +1,10 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
+// A normal build erases ghost code, so a variable, import, field or value
+// used only by proofs looks unused there, and the `verus!` syntax leaves
+// some redundant braces and parentheses. These lints are off in that build
+// only.
+#![cfg_attr(not(verus_keep_ghost), allow(unused_variables, unused_imports, unused_braces))]
 // vjson: a fast JSON parser formally verified with Verus.
 //
 // * [`parse`] / [`Document`] / [`Value`]: the Rust API (zero-copy views).

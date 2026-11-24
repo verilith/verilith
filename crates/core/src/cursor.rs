@@ -11,6 +11,7 @@ use vstd::slice::slice_subrange;
 
 verus! {
 
+/// A byte slice and a read position in it.
 pub struct Cursor<'a> {
     buf: &'a [u8],
     pos: usize,
@@ -91,6 +92,11 @@ impl<'a> Cursor<'a> {
         self.buf
     }
 
+    /// How many bytes have been read.
+    ///
+    /// ```text
+    /// ensures  r == self.pos()
+    /// ```
     #[inline(always)]
     pub fn position(&self) -> (r: usize)
         ensures
@@ -99,6 +105,12 @@ impl<'a> Cursor<'a> {
         self.pos
     }
 
+    /// How many bytes are left.
+    ///
+    /// ```text
+    /// requires self.wf()
+    /// ensures  r == self.rest().len()
+    /// ```
     #[inline(always)]
     pub fn remaining(&self) -> (r: usize)
         requires
@@ -109,6 +121,12 @@ impl<'a> Cursor<'a> {
         self.buf.len() - self.pos
     }
 
+    /// Whether no bytes are left.
+    ///
+    /// ```text
+    /// requires self.wf()
+    /// ensures  r == (self.rest().len() == 0)
+    /// ```
     #[inline(always)]
     pub fn is_empty(&self) -> (r: bool)
         requires
@@ -135,6 +153,14 @@ impl<'a> Cursor<'a> {
         }
     }
 
+    /// Reads one byte, or returns `None` (and does not move) at the end.
+    ///
+    /// ```text
+    /// requires old(self).wf()
+    /// ensures  r is Some <==> old(self).rest().len() >= 1
+    ///          r matches Some(x) ==> x == old(self).rest()[0] && final(self).advanced(old(self), 1)
+    ///          r is None ==> *final(self) == *old(self)
+    /// ```
     #[inline(always)]
     pub fn read_u8(&mut self) -> (r: Option<u8>)
         requires

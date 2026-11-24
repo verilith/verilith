@@ -283,6 +283,20 @@ pub assume_specification<const IMM8: i32>[ crate::emu::_mm_slli_epi32::<IMM8> ](
         u32x4(r) == slli32(u32x4(a), IMM8 as int),
 ;
 
+pub assume_specification<const IMM8: i32>[ crate::emu::_mm_srli_epi64::<IMM8> ](a: __m128i) -> (r: __m128i)
+    requires
+        0 <= IMM8 <= 255,
+    ensures
+        u64x2(r) == srli64(u64x2(a), IMM8 as int),
+;
+
+pub assume_specification<const IMM8: i32>[ crate::emu::_mm_slli_epi64::<IMM8> ](a: __m128i) -> (r: __m128i)
+    requires
+        0 <= IMM8 <= 255,
+    ensures
+        u64x2(r) == slli64(u64x2(a), IMM8 as int),
+;
+
 pub assume_specification<const IMM8: i32>[ crate::emu::_mm_shuffle_epi32::<IMM8> ](a: __m128i) -> (r: __m128i)
     requires
         0 <= IMM8 <= 255,
@@ -695,6 +709,22 @@ pub assume_specification<const IMM8: i32>[ crate::emu::_mm256_slli_epi32::<IMM8>
         avx2(),
     ensures
         u32x8(r) == slli32(u32x8(a), IMM8 as int),
+;
+
+pub assume_specification<const IMM8: i32>[ crate::emu::_mm256_srli_epi64::<IMM8> ](a: __m256i) -> (r: __m256i)
+    requires
+        0 <= IMM8 <= 255,
+        avx2(),
+    ensures
+        u64x4(r) == srli64(u64x4(a), IMM8 as int),
+;
+
+pub assume_specification<const IMM8: i32>[ crate::emu::_mm256_slli_epi64::<IMM8> ](a: __m256i) -> (r: __m256i)
+    requires
+        0 <= IMM8 <= 255,
+        avx2(),
+    ensures
+        u64x4(r) == slli64(u64x4(a), IMM8 as int),
 ;
 
 pub assume_specification<const IMM8: i32>[ crate::emu::_mm256_shuffle_epi32::<IMM8> ](a: __m256i) -> (r: __m256i)

@@ -138,6 +138,7 @@ impl Writer {
         }
     }
 
+    /// `null`.
     pub fn null(&mut self) -> Result<(), WriteError> {
         self.before_value()?;
         self.out.extend_from_slice(b"null");
@@ -145,6 +146,7 @@ impl Writer {
         Ok(())
     }
 
+    /// `true` or `false`.
     pub fn bool(&mut self, b: bool) -> Result<(), WriteError> {
         self.before_value()?;
         self.out.extend_from_slice(if b { b"true" } else { b"false" });
@@ -177,10 +179,12 @@ impl Writer {
         Ok(())
     }
 
+    /// An integer.
     pub fn i64(&mut self, n: i64) -> Result<(), WriteError> {
         self.number_bytes(itoa(n < 0, n.unsigned_abs(), &mut [0; 24]))
     }
 
+    /// An unsigned integer.
     pub fn u64(&mut self, n: u64) -> Result<(), WriteError> {
         self.number_bytes(itoa(false, n, &mut [0; 24]))
     }
@@ -194,10 +198,12 @@ impl Writer {
         self.number_str(float_text(x, &mut zmij::Buffer::new()))
     }
 
+    /// Starts an array.
     pub fn begin_array(&mut self) -> Result<(), WriteError> {
         self.open(Frame::Array { empty: true }, b'[')
     }
 
+    /// Starts an object.
     pub fn begin_object(&mut self) -> Result<(), WriteError> {
         self.open(Frame::Object { empty: true, key: false }, b'{')
     }
@@ -212,6 +218,7 @@ impl Writer {
         Ok(())
     }
 
+    /// Ends the array that is open.
     pub fn end_array(&mut self) -> Result<(), WriteError> {
         match self.stack.last() {
             Some(&Frame::Array { empty }) => self.close(empty, b']'),
@@ -219,6 +226,7 @@ impl Writer {
         }
     }
 
+    /// Ends the object that is open.
     pub fn end_object(&mut self) -> Result<(), WriteError> {
         match self.stack.last() {
             Some(&Frame::Object { empty, key: false }) => self.close(empty, b'}'),

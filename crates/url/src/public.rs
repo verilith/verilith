@@ -32,10 +32,12 @@ impl Url {
         unsafe { core::str::from_utf8_unchecked(s) }
     }
 
+    /// The serialization of the URL, as bytes (always ASCII).
     pub fn as_bytes(&self) -> &[u8] {
         &self.href
     }
 
+    /// The serialization of the URL (the URL Standard's `href`).
     pub fn href(&self) -> &str {
         self.s(0, self.href.len())
     }
@@ -45,14 +47,17 @@ impl Url {
         self.s(0, self.scheme_end + 1)
     }
 
+    /// The scheme, lowercase and without the ":".
     pub fn scheme(&self) -> &str {
         self.s(0, self.scheme_end)
     }
 
+    /// Whether the URL has an authority (a host, possibly empty).
     pub fn has_authority(&self) -> bool {
         self.host_kind.is_some()
     }
 
+    /// The username, percent-encoded, or "" if there is none.
     pub fn username(&self) -> &str {
         if self.has_authority() {
             self.s(self.scheme_end + 3, self.username_end)
@@ -61,6 +66,7 @@ impl Url {
         }
     }
 
+    /// The password, percent-encoded, or "" if there is none.
     pub fn password(&self) -> &str {
         if self.has_authority() && self.username_end + 1 < self.host_start {
             self.s(self.username_end + 1, self.host_start - 1)
@@ -69,10 +75,12 @@ impl Url {
         }
     }
 
+    /// The host, serialized ("[...]" for IPv6), or "" if there is none.
     pub fn hostname(&self) -> &str {
         self.s(self.host_start, self.host_end)
     }
 
+    /// The port, or `None` if there is none. A scheme's default port is never stored.
     pub fn port(&self) -> Option<u16> {
         self.port
     }
@@ -94,10 +102,12 @@ impl Url {
         }
     }
 
+    /// The path, percent-encoded (the URL Standard's `pathname`).
     pub fn pathname(&self) -> &str {
         self.s(self.path_start, self.path_end())
     }
 
+    /// Whether the path is opaque (as in `mailto:x`), not a list of segments.
     pub fn has_opaque_path(&self) -> bool {
         self.opaque_path
     }
@@ -138,6 +148,7 @@ impl Url {
         self.fragment_start.map(|f| self.s(f + 1, self.href.len()))
     }
 
+    /// Whether the scheme is special (http, https, ws, wss, ftp or file).
     pub fn is_special(&self) -> bool {
         self.special
     }

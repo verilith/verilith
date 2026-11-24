@@ -315,6 +315,10 @@ from, so it skips what has not changed and can check a large crate in
 parts; CI uses it. [BUILDING.md](BUILDING.md) explains the Buck2 setup and
 what keeps it from passing a proof it did not check.
 
+Two verilith releases that pin different `vstd`s cannot be in one
+dependency graph; [RELEASING.md](RELEASING.md) says why, and when and how
+the pin moves.
+
 ## CI
 
 One workflow, `.github/workflows/ci.yml`.

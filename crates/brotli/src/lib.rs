@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // A formally verified Brotli (RFC 7932) decompressor.
 #![cfg_attr(not(verus_only), allow(unused_variables, unused_imports))]

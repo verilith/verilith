@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // - `spec`: XXH32 and XXH64 as pure functions (the trusted specification).
 // - `xxh32`: XXH32 of a slice, proven equal to `spec::xxh32_seed`.

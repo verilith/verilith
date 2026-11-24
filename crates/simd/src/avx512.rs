@@ -20,6 +20,7 @@ use vstd::prelude::*;
 
 verus! {
 
+/// Tells Verus about `__m512i`, an opaque type here: its contents are seen through the lane views.
 #[verifier::external_type_specification]
 #[verifier::external_body]
 #[allow(dead_code)]
@@ -77,6 +78,12 @@ pub fn store512_u32(s: &mut [u32], i: usize, v: __m512i)
 // Constructors and conversions (AVX-512F)
 // ---------------------------------------------------------------------------
 
+/// [`_mm512_set1_epi8`](core::arch::x86_64::_mm512_set1_epi8) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires avx512f()
+/// ensures  b512(r) == splat8(u8_of_i8(x), 64)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm512_set1_epi8(x: i8) -> (r: __m512i)
@@ -88,6 +95,12 @@ pub fn _mm512_set1_epi8(x: i8) -> (r: __m512i)
     unsafe { core::arch::x86_64::_mm512_set1_epi8(x) }
 }
 
+/// [`_mm512_set1_epi32`](core::arch::x86_64::_mm512_set1_epi32) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires avx512f()
+/// ensures  u32x16(r) == splat32(u32_of_i32(x), 16)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm512_set1_epi32(x: i32) -> (r: __m512i)
@@ -123,6 +136,12 @@ pub fn _mm512_cvtepu8_epi32(a: __m128i) -> (r: __m512i)
     unsafe { core::arch::x86_64::_mm512_cvtepu8_epi32(a) }
 }
 
+/// [`_mm512_castsi512_si128`](core::arch::x86_64::_mm512_castsi512_si128) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires avx512f()
+/// ensures  b128(r) == b512(a).subrange(0, 16)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm512_castsi512_si128(a: __m512i) -> (r: __m128i)
@@ -134,6 +153,13 @@ pub fn _mm512_castsi512_si128(a: __m512i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm512_castsi512_si128(a) }
 }
 
+/// [`_mm512_extracti32x4_epi32`](core::arch::x86_64::_mm512_extracti32x4_epi32) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires avx512f()
+///          0 <= IMM2 < 4
+/// ensures  b128(r) == b512(a).subrange(16 * IMM2, 16 * IMM2 + 16)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm512_extracti32x4_epi32<const IMM2: i32>(a: __m512i) -> (r: __m128i)
@@ -150,6 +176,12 @@ pub fn _mm512_extracti32x4_epi32<const IMM2: i32>(a: __m512i) -> (r: __m128i)
 // Lane arithmetic
 // ---------------------------------------------------------------------------
 
+/// [`_mm512_and_si512`](core::arch::x86_64::_mm512_and_si512) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires avx512f()
+/// ensures  b512(r) == and8(b512(a), b512(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm512_and_si512(a: __m512i, b: __m512i) -> (r: __m512i)
@@ -161,6 +193,12 @@ pub fn _mm512_and_si512(a: __m512i, b: __m512i) -> (r: __m512i)
     unsafe { core::arch::x86_64::_mm512_and_si512(a, b) }
 }
 
+/// [`_mm512_or_si512`](core::arch::x86_64::_mm512_or_si512) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires avx512f()
+/// ensures  b512(r) == or8(b512(a), b512(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm512_or_si512(a: __m512i, b: __m512i) -> (r: __m512i)
@@ -172,6 +210,12 @@ pub fn _mm512_or_si512(a: __m512i, b: __m512i) -> (r: __m512i)
     unsafe { core::arch::x86_64::_mm512_or_si512(a, b) }
 }
 
+/// [`_mm512_xor_si512`](core::arch::x86_64::_mm512_xor_si512) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires avx512f()
+/// ensures  b512(r) == xor8(b512(a), b512(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm512_xor_si512(a: __m512i, b: __m512i) -> (r: __m512i)
@@ -183,6 +227,12 @@ pub fn _mm512_xor_si512(a: __m512i, b: __m512i) -> (r: __m512i)
     unsafe { core::arch::x86_64::_mm512_xor_si512(a, b) }
 }
 
+/// [`_mm512_add_epi32`](core::arch::x86_64::_mm512_add_epi32) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires avx512f()
+/// ensures  u32x16(r) == add32(u32x16(a), u32x16(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm512_add_epi32(a: __m512i, b: __m512i) -> (r: __m512i)
@@ -194,6 +244,12 @@ pub fn _mm512_add_epi32(a: __m512i, b: __m512i) -> (r: __m512i)
     unsafe { core::arch::x86_64::_mm512_add_epi32(a, b) }
 }
 
+/// [`_mm512_subs_epu8`](core::arch::x86_64::_mm512_subs_epu8) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires avx512bw()
+/// ensures  b512(r) == subs_u8(b512(a), b512(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm512_subs_epu8(a: __m512i, b: __m512i) -> (r: __m512i)
@@ -217,6 +273,13 @@ pub fn _mm512_shuffle_epi8(a: __m512i, b: __m512i) -> (r: __m512i)
     unsafe { core::arch::x86_64::_mm512_shuffle_epi8(a, b) }
 }
 
+/// [`_mm512_srli_epi16`](core::arch::x86_64::_mm512_srli_epi16) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires avx512bw()
+///          IMM8 <= 255
+/// ensures  u16x32(r) == srli16(u16x32(a), IMM8 as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm512_srli_epi16<const IMM8: u32>(a: __m512i) -> (r: __m512i)

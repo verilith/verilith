@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // A formally verified Zstandard (RFC 8878) decompressor.
 //

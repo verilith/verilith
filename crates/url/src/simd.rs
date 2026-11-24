@@ -255,8 +255,8 @@ pub fn clean16(s: &[u8], j: usize, kind: u8) -> (r: bool)
     ensures
         r ==> forall|k: int| j <= k < j + 16 ==> !maybe(kind, #[trigger] s@[k]),
 {
-    // SAFETY: SSE2 is part of the x86-64 baseline.
-    unsafe { clean16_sse(s, j, kind) }
+    // SSE2 is part of the x86-64 baseline.
+    clean16_sse(s, j, kind)
 }
 
 /// No byte of `s[j..j + 16]` is `maybe(kind, _)` if this returns true.
@@ -361,8 +361,8 @@ pub fn tab_nl16(s: &[u8], j: usize) -> (r: bool)
     ensures
         !r ==> forall|k: int| j <= k < j + 16 ==> !is_ascii_tab_or_newline(#[trigger] s@[k]),
 {
-    // SAFETY: SSE2 is part of the x86-64 baseline.
-    unsafe { tab_nl16_sse(s, j) }
+    // SSE2 is part of the x86-64 baseline.
+    tab_nl16_sse(s, j)
 }
 
 /// `s[j..j + 16]` has no tab or newline if this returns false.

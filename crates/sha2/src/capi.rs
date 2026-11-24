@@ -67,10 +67,11 @@ unsafe fn store<T, C>(c: *mut C, v: T) {
 }
 
 unsafe fn wipe<C>(c: *mut C) {
-    // As OpenSSL's `_Final`, which cleanses the context.
-    for i in 0..core::mem::size_of::<C>() {
-        core::ptr::write_volatile((c as *mut u8).add(i), 0);
-    }
+    // As OpenSSL's `_Final`, which cleanses the context. The context is the
+    // caller's memory, which it can read after the call, so these stores
+    // cannot be removed as dead; a plain `write_bytes` is one `memset`
+    // where byte-by-byte volatile stores took 216 stores for a SHA512_CTX.
+    core::ptr::write_bytes(c as *mut u8, 0, core::mem::size_of::<C>());
 }
 
 export!("vsha2_SHA256_Init", "SHA256_Init", fn sha256_init(c: *mut SHA256_CTX) -> c_int {

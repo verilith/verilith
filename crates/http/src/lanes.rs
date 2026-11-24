@@ -54,7 +54,7 @@ pub fn splat16(c: u8) -> (r: __m128i)
     ensures
         b16(r) == Seq::new(16, |k: int| c),
 {
-    unsafe { _mm_set1_epi8(c as i8) }
+    _mm_set1_epi8(c as i8)
 }
 
 /// `pcmpeqb`: `0xFF` where the lanes are equal, else 0.
@@ -64,7 +64,7 @@ pub fn eq16(a: __m128i, b: __m128i) -> (r: __m128i)
     ensures
         b16(r) == Seq::new(16, |k: int| if b16(a)[k] == b16(b)[k] { 0xFFu8 } else { 0u8 }),
 {
-    unsafe { _mm_cmpeq_epi8(a, b) }
+    _mm_cmpeq_epi8(a, b)
 }
 
 /// `por`.
@@ -74,7 +74,7 @@ pub fn or16(a: __m128i, b: __m128i) -> (r: __m128i)
     ensures
         b16(r) == Seq::new(16, |k: int| b16(a)[k] | b16(b)[k]),
 {
-    unsafe { _mm_or_si128(a, b) }
+    _mm_or_si128(a, b)
 }
 
 /// `pminub`: unsigned minimum.
@@ -84,7 +84,7 @@ pub fn min16(a: __m128i, b: __m128i) -> (r: __m128i)
     ensures
         b16(r) == Seq::new(16, |k: int| if b16(a)[k] <= b16(b)[k] { b16(a)[k] } else { b16(b)[k] }),
 {
-    unsafe { _mm_min_epu8(a, b) }
+    _mm_min_epu8(a, b)
 }
 
 /// `pmovmskb`: bit `k` is the top bit of lane `k`.
@@ -95,7 +95,7 @@ pub fn movemask16(a: __m128i) -> (r: u32)
         r < 0x10000,
         forall|k: u32| k < 16 ==> #[trigger] bit(r, k) == (b16(a)[k as int] >= 0x80),
 {
-    unsafe { _mm_movemask_epi8(a) as u32 }
+    _mm_movemask_epi8(a) as u32
 }
 
 } // verus!
