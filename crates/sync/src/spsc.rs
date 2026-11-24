@@ -531,7 +531,7 @@ impl<T> Producer<T> {
 
     /// Appends `value`, or gives it back if the queue holds `capacity` values.
     #[verifier::spinoff_prover]
-    pub fn push(&mut self, value: T) -> (r: Result<(), T>)
+    pub fn push_atomic(&mut self, value: T) -> (r: Result<(), T>)
         atomically (au) {
             type PushPred,
             (x: QueueView<T>) -> (y: Commit<QueueView<T>>),
@@ -847,7 +847,7 @@ impl<T> Consumer<T> {
 
     /// Removes the oldest value, or returns `None` if the queue is empty.
     #[verifier::spinoff_prover]
-    pub fn pop(&mut self) -> (r: Option<T>)
+    pub fn pop_atomic(&mut self) -> (r: Option<T>)
         atomically (au) {
             type PopPred,
             (x: QueueView<T>) -> (y: Commit<QueueView<T>>),
@@ -1599,7 +1599,7 @@ impl<T: Copy> Producer<T> {
     /// `values` is empty or the queue was full.
     #[verifier::spinoff_prover]
     #[verifier::rlimit(60)]
-    pub fn push_slice(&mut self, values: &[T]) -> (n: usize)
+    pub fn push_slice_atomic(&mut self, values: &[T]) -> (n: usize)
         atomically (au) {
             type PushSlicePred,
             (x: QueueView<T>) -> (y: Commit<QueueView<T>>),
@@ -1802,7 +1802,7 @@ impl<T> Consumer<T> {
     /// only if `max` is zero or the queue was empty.
     #[verifier::spinoff_prover]
     #[verifier::rlimit(60)]
-    pub fn pop_into(&mut self, out: &mut Vec<T>, max: usize) -> (n: usize)
+    pub fn pop_into_atomic(&mut self, out: &mut Vec<T>, max: usize) -> (n: usize)
         atomically (au) {
             type PopIntoPred,
             (x: QueueView<T>) -> (y: Commit<QueueView<T>>),
@@ -2415,6 +2415,48 @@ pub fn new<T>(cap: u64) -> (r: (Producer<T>, Consumer<T>, Tracked<QueueView<T>>)
 }
 
 } // verus!
+
+// The plain-Rust API. Each queue operation is verified as a logically
+// atomic function (`*_atomic`), which since Verus 2026-11-22 takes its
+// atomic update as a `Tracked` argument that survives erasure. These
+// one-line wrappers are what code outside Verus calls: they pass a ghost
+// value that does not exist at run time (`Tracked::assume_new()`, nothing
+// is assumed about the data) and return what the verified function returns.
+// A Verus caller uses the `*_atomic` form with an `atomically` block.
+impl<T> Producer<T> {
+    /// Appends `value`, or gives it back if the queue holds `capacity` values.
+    #[inline]
+    pub fn push(&mut self, value: T) -> Result<(), T> {
+        self.push_atomic(value, Tracked::assume_new())
+    }
+}
+
+impl<T: Copy> Producer<T> {
+    /// Appends a prefix of `values`, as long as fits, with one index store
+    /// for the whole batch. Returns how many were appended: none only if
+    /// `values` is empty or the queue was full.
+    #[inline]
+    pub fn push_slice(&mut self, values: &[T]) -> usize {
+        self.push_slice_atomic(values, Tracked::assume_new())
+    }
+}
+
+impl<T> Consumer<T> {
+    /// Removes the oldest value, or returns `None` if the queue is empty.
+    #[inline]
+    pub fn pop(&mut self) -> Option<T> {
+        self.pop_atomic(Tracked::assume_new())
+    }
+
+    /// Moves up to `max` of the oldest values to the end of `out`, with one
+    /// index store for the whole batch. Returns how many were moved: none
+    /// only if `max` is zero or the queue was empty.
+    #[inline]
+    pub fn pop_into(&mut self, out: &mut Vec<T>, max: usize) -> usize {
+        self.pop_into_atomic(out, max, Tracked::assume_new())
+    }
+}
+
 
 impl<T> Drop for Producer<T> {
     fn drop(&mut self) {

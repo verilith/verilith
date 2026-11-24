@@ -28,8 +28,12 @@ assumption. The most important one is the release/acquire memory model in
   and the wrappers around `std`'s mutex, `park`/`unpark` and `Instant`
   that the channel uses), `src/parking.rs` and the `park`/`unpark`
   wrappers in the locks that call it, the public shell of the channel in
-  `src/channel.rs`, and the one-line `Send`, `Sync`, `Deref` and `Drop`
-  impls. CI runs the tests under Miri, whose weak-memory emulation
+  `src/channel.rs`, the one-line `Send`, `Sync`, `Deref` and `Drop`
+  impls, and the plain-Rust queue methods (`ArrayQueue::push`, `pop`,
+  `confirm_empty`, `confirm_full`; `Producer::push`, `push_slice`;
+  `Consumer::pop`, `pop_into`). Each calls its verified `*_atomic` form
+  with `Tracked::assume_new()` for the atomic update, a ghost argument
+  that is erased at run time and assumes nothing about the data. CI runs the tests under Miri, whose weak-memory emulation
   exercises release/acquire behaviour too.
 - **The progress models** in `src/progress/`: each is a hand-written
   transition system for one protocol, and the progress theorems are about

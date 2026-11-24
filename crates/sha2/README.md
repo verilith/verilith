@@ -249,7 +249,8 @@ Departures from OpenSSL:
 ## Performance
 
 `cargo run --release --example speed` compares against RustCrypto's
-`sha2` 0.10 and the system OpenSSL (3.0, through `SHA256()` and
+`sha2` (0.10 when the numbers below were measured; the example now builds
+against 0.11) and the system OpenSSL (3.0, through `SHA256()` and
 `SHA512()`). On an x86-64 cloud VM (with SHA-NI, AVX2 and BMI2), in MB/s,
 medians of 25 rounds that alternate the three. A shared VM moves by 5 to
 10% from run to run, so compare within a row.
@@ -327,7 +328,7 @@ What the speed rests on:
 ```
 
 needs `cargo-verus` from Verus commit
-8bf68ee741df833ea5d0fe6a2255126fdea87e47 on `PATH` and z3 (via
+1ce6a59bd72713cf486a7660097fe5ac57519617 on `PATH` and z3 (via
 `VERUS_Z3_PATH` or next to the verus binary). From the repository root,
 `scripts/prove.sh sha2` verifies it through Buck2.
 

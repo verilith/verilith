@@ -840,7 +840,7 @@ and column kept up to date for every item. That pass is kept cheap by:
 `bench/` (a separate project) times verilith-xml against the Rust XML
 parsers on the same thirteen files, in one process: best of 15 timings,
 MB/s, the same VM and day. roxmltree 0.21 builds its tree and counts the
-nodes; quick-xml 0.38 reads every event (it checks end tag names, and does
+nodes; quick-xml 0.38 (`bench/` now builds against 0.42) reads every event (it checks end tag names, and does
 not check characters, names or references, nor expand references); xml-rs 1
 reads every event.
 
