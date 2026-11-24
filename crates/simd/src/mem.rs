@@ -145,6 +145,7 @@ pub fn store256_u32(s: &mut [u32], i: usize, v: __m256i)
 }
 
 /// The two 64-bit values at `s[i..i + 2]`.
+/// The two 64-bit values at `s[i..i + 2]`.
 #[verifier::external_body]
 #[inline(always)]
 pub fn load128_u64(s: &[u64], i: usize) -> (r: __m128i)
@@ -157,6 +158,7 @@ pub fn load128_u64(s: &[u64], i: usize) -> (r: __m128i)
     unsafe { _mm_loadu_si128(s.as_ptr().add(i) as *const __m128i) }
 }
 
+/// Stores `v` at `s[i..i + 2]`.
 #[verifier::external_body]
 #[inline(always)]
 pub fn store128_u64(s: &mut [u64], i: usize, v: __m128i)
