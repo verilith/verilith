@@ -9,8 +9,16 @@ description = "Verus specifications for x86 SIMD intrinsics (SSE2..AVX2, some AV
 edition = "2024"
 rust-version = "1.89"
 
+[features]
+default = ["std"]
+# Run-time CPU detection. Without it the crate is `no_std`, and the
+# detection functions report the features the target is compiled with.
+std = ["alloc", "vstd/std"]
+# The verified scalar references (`refs`, `refs_neon`), which return `Vec`s.
+alloc = ["vstd/alloc"]
+
 [dependencies]
-vstd = { workspace = true, features = ["std"] }
+vstd = { workspace = true }
 
 [dev-dependencies]
 

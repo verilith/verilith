@@ -39,3 +39,4 @@ cargo doc --no-deps --workspace "${UNPUBLISHED[@]}"
 # The crates whose docs.rs build turns features on.
 cargo doc --no-deps -p verilith --all-features
 cargo doc --no-deps -p verilith-json --features serde
+cargo doc --no-deps -p verilith-sha2 --features digest,oid

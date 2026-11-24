@@ -769,6 +769,42 @@ pub fn _mm_slli_epi32<const IMM8: i32>(a: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_slli_epi32::<IMM8>(a) }
 }
 
+/// [`_mm_srli_epi64`](core::arch::x86_64::_mm_srli_epi64) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// ensures  u64x2(r) == srli64(u64x2(a), IMM8 as int)
+/// ```
+#[verifier::external_body]
+#[inline(always)]
+pub fn _mm_srli_epi64<const IMM8: i32>(a: __m128i) -> (r: __m128i)
+    requires
+        0 <= IMM8 <= 255,
+    ensures
+        u64x2(r) == srli64(u64x2(a), IMM8 as int),
+{
+    unsafe { core::arch::x86_64::_mm_srli_epi64::<IMM8>(a) }
+}
+
+/// [`_mm_slli_epi64`](core::arch::x86_64::_mm_slli_epi64) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// ensures  u64x2(r) == slli64(u64x2(a), IMM8 as int)
+/// ```
+#[verifier::external_body]
+#[inline(always)]
+pub fn _mm_slli_epi64<const IMM8: i32>(a: __m128i) -> (r: __m128i)
+    requires
+        0 <= IMM8 <= 255,
+    ensures
+        u64x2(r) == slli64(u64x2(a), IMM8 as int),
+{
+    unsafe { core::arch::x86_64::_mm_slli_epi64::<IMM8>(a) }
+}
+
 /// [`_mm_shuffle_epi32`](core::arch::x86_64::_mm_shuffle_epi32) as a safe function, with the
 /// specification Verus checks callers against:
 ///
@@ -1835,6 +1871,46 @@ pub fn _mm256_slli_epi32<const IMM8: i32>(a: __m256i) -> (r: __m256i)
         u32x8(r) == slli32(u32x8(a), IMM8 as int),
 {
     unsafe { core::arch::x86_64::_mm256_slli_epi32::<IMM8>(a) }
+}
+
+/// [`_mm256_srli_epi64`](core::arch::x86_64::_mm256_srli_epi64) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// requires avx2()
+/// ensures  u64x4(r) == srli64(u64x4(a), IMM8 as int)
+/// ```
+#[verifier::external_body]
+#[inline(always)]
+pub fn _mm256_srli_epi64<const IMM8: i32>(a: __m256i) -> (r: __m256i)
+    requires
+        0 <= IMM8 <= 255,
+        avx2(),
+    ensures
+        u64x4(r) == srli64(u64x4(a), IMM8 as int),
+{
+    unsafe { core::arch::x86_64::_mm256_srli_epi64::<IMM8>(a) }
+}
+
+/// [`_mm256_slli_epi64`](core::arch::x86_64::_mm256_slli_epi64) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// requires avx2()
+/// ensures  u64x4(r) == slli64(u64x4(a), IMM8 as int)
+/// ```
+#[verifier::external_body]
+#[inline(always)]
+pub fn _mm256_slli_epi64<const IMM8: i32>(a: __m256i) -> (r: __m256i)
+    requires
+        0 <= IMM8 <= 255,
+        avx2(),
+    ensures
+        u64x4(r) == slli64(u64x4(a), IMM8 as int),
+{
+    unsafe { core::arch::x86_64::_mm256_slli_epi64::<IMM8>(a) }
 }
 
 /// [`_mm256_shuffle_epi32`](core::arch::x86_64::_mm256_shuffle_epi32) as a safe function, with the

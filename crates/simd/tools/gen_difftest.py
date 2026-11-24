@@ -112,8 +112,10 @@ for w in (128, 256):
     IMMS = list(range(0, 18)) + [31, 32, 33, 63, 64, 127, 128, 255]
     for intr, ref, vin, vout in [("srli_epi16", "ref_srli16", "U16", "U16"), ("slli_epi16", "ref_slli16", "U16", "U16"),
                                  ("srai_epi16", "ref_srai16", "U16", "U16"), ("srli_epi32", "ref_srli32", "U32", "U32"),
-                                 ("slli_epi32", "ref_slli32", "U32", "U32")]:
-        for imm in IMMS:
+                                 ("slli_epi32", "ref_slli32", "U32", "U32"), ("srli_epi64", "ref_srli64", "U64", "U64"),
+                                 ("slli_epi64", "ref_slli64", "U64", "U64")]:
+        # Every count a 64-bit lane can shift by, and some past it.
+        for imm in (IMMS if vin != "U64" else list(range(0, 66)) + [127, 128, 255]):
             unop_imm(w, p + intr, imm, ref + "({a}, {imm})", vin, vout)
     for imm in range(256):
         unop_imm(w, p + "shuffle_epi32", imm, "ref_shuffle32_lanes({a}, {imm})", "U32", "U32")

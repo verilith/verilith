@@ -603,10 +603,12 @@ pub fn compress_block_kw(st: &mut [u64; 8], wk: &[u64; 80], Ghost(blk): Ghost<Se
 
 /// H(n) from H(0) = `st` over the whole blocks of `p`, two blocks' schedules
 /// at a time from the AVX2 kernel (`crate::avx2::schedule512x2`), and a last
-/// odd block by the scalar rounds. To be called only where the CPU has AVX2.
+/// odd block by the scalar rounds. Only where the CPU has AVX2.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 pub fn compress_blocks_x2(st: &mut [u64; 8], p: &[u8])
+    requires
+        verilith_simd::cpu::avx2(),
     ensures
         final(st)@ == spec::hash_blocks(old(st)@, p@, (p@.len() / 128) as nat),
 {
@@ -618,6 +620,7 @@ pub fn compress_blocks_x2(st: &mut [u64; 8], p: &[u8])
         let mut w1 = [0u64; 80];
         while i + 2 <= n
             invariant
+                verilith_simd::cpu::avx2(),
                 n == p@.len() / 128,
                 p@.len() <= usize::MAX,
                 i <= n,
@@ -822,6 +825,7 @@ pub fn pair_kw(
     nxt1: &mut [u64; 80],
 )
     requires
+        verilith_simd::cpu::avx2(),
         kw_schedule(cur0@, spec::words(b0)),
         kw_schedule(cur1@, spec::words(b1)),
         o0 + 128 <= p@.len(),
@@ -849,6 +853,8 @@ pub fn pair_kw(
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 pub fn compress_blocks_pipe(st: &mut [u64; 8], p: &[u8])
+    requires
+        verilith_simd::cpu::avx2(),
     ensures
         final(st)@ == spec::hash_blocks(old(st)@, p@, (p@.len() / 128) as nat),
 {
@@ -868,6 +874,7 @@ pub fn compress_blocks_pipe(st: &mut [u64; 8], p: &[u8])
     // Blocks i and i + 1 are scheduled, in a0/a1 or c0/c1.
     while i + 4 <= n
         invariant
+            verilith_simd::cpu::avx2(),
             n == p@.len() / 128,
             p@.len() <= usize::MAX,
             i + 2 <= n,
