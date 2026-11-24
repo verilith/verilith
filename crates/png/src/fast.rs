@@ -646,6 +646,16 @@ pub fn rgba8_flat16(png: &PngX, buf: &[u8], off: &[usize; 8], limit: usize) -> (
         assert(hh * (2 * (w * ch)) == 2 * ch * (w * hh)) by (nonlinear_arith);
         crate::output::lemma_pow2_shift(16);
     }
+    let _ = buf.len();
+    proof {
+        // The image is in `buf`, so `w * hh` fits a usize on 32-bit
+        // targets too.
+        assert(img.len() == 2 * ch * (w * hh));
+        assert(w * hh <= 2 * ch * (w * hh)) by (nonlinear_arith)
+            requires
+                ch >= 1,
+        ;
+    }
     let n = (w * hh) as usize;
     proof {
         assert forall|k: int| 0 <= k < 2 * ch * n implies #[trigger] img[k] == buf@[k] by {}

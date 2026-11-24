@@ -744,7 +744,7 @@ pub fn r_un(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(cod
         sset(stack, fp + r.pd as usize, pv);
     }
     proof { assert(stack@ =~= pre_s(*r, s0, fp as int)); }
-    let x = (if ua { *acc } else { sget(stack, fp + r.a as usize) });
+    let x = if ua { *acc } else { sget(stack, fp + r.a as usize) };
     match exec_unop(op, x) {
         Ok(v) => {
             sset(stack, fp + r.d1 as usize, v);
@@ -791,7 +791,7 @@ pub fn r_bin_rr(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost
         sset(stack, fp + r.pd as usize, pv);
     }
     proof { assert(stack@ =~= pre_s(*r, s0, fp as int)); }
-    let x = (if ua { *acc } else { sget(stack, fp + r.a as usize) });
+    let x = if ua { *acc } else { sget(stack, fp + r.a as usize) };
     let y = sget(stack, fp + r.b as usize);
     match exec_binop(op, x, y) {
         Ok(v) => {
@@ -839,7 +839,7 @@ pub fn r_bin_ri(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost
         sset(stack, fp + r.pd as usize, pv);
     }
     proof { assert(stack@ =~= pre_s(*r, s0, fp as int)); }
-    let x = (if ua { *acc } else { sget(stack, fp + r.a as usize) });
+    let x = if ua { *acc } else { sget(stack, fp + r.a as usize) };
     match exec_binop(op, x, r.imm) {
         Ok(v) => {
             sset(stack, fp + r.d1 as usize, v);
@@ -887,7 +887,7 @@ pub fn r_load(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(c
     }
     proof { assert(stack@ =~= pre_s(*r, s0, fp as int)); }
     let (nb, signed, is64, off) = load_kind_x(op);
-    let ea = lo((if ua { *acc } else { sget(stack, fp + r.a as usize) })) as u64 + off as u64;
+    let ea = lo(if ua { *acc } else { sget(stack, fp + r.a as usize) }) as u64 + off as u64;
     if ea + nb as u64 > st.mem.len() as u64 {
         proof {
             assert(reff(*r, op, s0, fp as int, store_view(st)) == RS::Trap(Trap::MemoryOutOfBounds, store_view(st)));
@@ -990,7 +990,7 @@ fn r_store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(code
     proof { lemma_rfacts(m, cs, codes, c0, g, s0, calls, d, rpc, fp, st); }
     let ghost st0 = *st;
     let (nb, off) = store_kind_x(op);
-    let ea = lo((if ua { acc } else { sget(stack, fp + r.a as usize) })) as u64 + off as u64;
+    let ea = lo(if ua { acc } else { sget(stack, fp + r.a as usize) }) as u64 + off as u64;
     if ea + nb as u64 > st.mem.len() as u64 {
         proof {
             assert(reff(*r, op, s0, fp as int, store_view(st)) == RS::Trap(Trap::MemoryOutOfBounds, store_view(st)));
@@ -1033,7 +1033,7 @@ pub fn r_brif<'a>(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Gho
     proof { if ua { lemma_acc_fam(r.op); } }
     proof { reveal(acc_ok); }
     proof { lemma_rslots(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st); }
-    let taken = (lo((if ua { acc } else { sget(stack, fp + r.a as usize) })) == 0) == z;
+    let taken = (lo(if ua { acc } else { sget(stack, fp + r.a as usize) }) == 0) == z;
     let ghost mut g2 = g;
     proof { g2 = lemma_rbranch(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st, taken); }
     proof { lemma_acc_br(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st); }
@@ -1087,7 +1087,7 @@ pub fn r_brif_rr<'a>(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, 
         lemma_rfacts(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st);
         lemma_cmp_any(op);
     }
-    let x = (if ua { acc } else { sget(stack, fp + r.a as usize) });
+    let x = if ua { acc } else { sget(stack, fp + r.a as usize) };
     let y = sget(stack, fp + r.b as usize);
     let taken = cmp_x(op, x, y);
     let ghost mut g2 = g;
@@ -1120,7 +1120,7 @@ pub fn r_brif_ri<'a>(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, 
         lemma_rfacts(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st);
         lemma_cmp_any(op);
     }
-    let x = (if ua { acc } else { sget(stack, fp + r.a as usize) });
+    let x = if ua { acc } else { sget(stack, fp + r.a as usize) };
     let taken = cmp_x(op, x, r.imm);
     let ghost mut g2 = g;
     proof { g2 = lemma_rbranch(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st, taken); }

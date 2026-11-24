@@ -329,7 +329,6 @@ fn unfilter_row_g(
 /// just after being written, which puts a store-to-load forward on the
 /// critical path). Returns how far it got.
 #[inline(always)]
-#[verifier::spinoff_prover]
 fn unfilter_reg(
     buf: &mut [u8],
     src: usize,
@@ -463,8 +462,6 @@ fn unfilter_reg(
             a[k] = v;
             c[k] = b;
             proof {
-                assert(a@[k as int] == v && v == buf@[dst + i + k]);
-                assert(c@[k as int] == b && b == prev[i + k]);
                 assert forall|q: int| #![trigger a@[q]] 0 <= q < bpp implies (q <= k ==> a@[q] == buf@[dst + i + q] && c@[q] == prev[i + q]) && (k < q ==> a@[q] == buf@[dst + i - bpp + q] && c@[q] == prev[i - bpp + q]) by {
                     if q != k {
                         assert(a@[q] == a0[q]);

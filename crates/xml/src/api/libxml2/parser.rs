@@ -242,6 +242,10 @@ pub struct State {
     push: Option<Box<Push>>,
     /// The push parser has begun (its first chunk came).
     push_begun: bool,
+    /// The push parser handed the input back to be read whole after it
+    /// had reported the start of the prolog: whether startDocument was
+    /// reported, and how many of the prolog's tokens.
+    whole_from: Option<(bool, usize)>,
 }
 
 impl State {
@@ -263,6 +267,7 @@ impl State {
             push_name: None,
             push: None,
             push_begun: false,
+            whole_from: None,
         })
     }
 
@@ -281,6 +286,7 @@ impl State {
         self.pushed = false;
         self.push = None;
         self.push_begun = false;
+        self.whole_from = None;
     }
 }
 
@@ -901,6 +907,15 @@ struct Walk<'d> {
     pend: Vec<u8>,
     pend_cdata: bool,
     pend_end: usize,
+    /// The declarations' tokens and text: the document's, or the flattened
+    /// DTD's (`Src::Pro`) when its parameter entities were expanded; and
+    /// how many of the flattened DTD's entity starts were reported.
+    dsrc: Src,
+    dtext: &'d [u8],
+    trace_k: usize,
+    /// The entities whose text the walk of the flattened DTD is in: for
+    /// each, whether it is the external subset.
+    pe_stack: Vec<bool>,
 }
 
 /// What a start tag needs, reused: a tag allocates nothing once these have
@@ -924,7 +939,7 @@ impl<'d> Walk<'d> {
         let (nls, ascii) = super::scan::line_index(text);
         // The input's position may be past the start (a context reused).
         let nl_k = if ctxt.is_null() || unsafe { (*ctxt).st.is_null() } { 0 } else { unsafe { nls.partition_point(|&p| p < st(ctxt).at.0) } };
-        Walk { ctxt, doc, text, dtd: DtdInfo::default(), sizes: vec![None; n], consumed: 0, scratch: Some(Box::default()), nls, ascii, nl_k, att_cache: FastMap::default(), names: Box::new([(null(), 0); 256]), names_dict: null_mut(), ent_inputs: Vec::new(), push: false, pbase: 0, dt_end: None, pend: Vec::new(), pend_cdata: false, pend_end: 0 }
+        Walk { ctxt, doc, text, dtd: DtdInfo::default(), sizes: vec![None; n], consumed: 0, scratch: Some(Box::default()), nls, ascii, nl_k, att_cache: FastMap::default(), names: Box::new([(null(), 0); 256]), names_dict: null_mut(), ent_inputs: Vec::new(), push: false, pbase: 0, dt_end: None, pend: Vec::new(), pend_cdata: false, pend_end: 0, dsrc: if doc.flattened() { Src::Pro } else { Src::Doc }, dtext: if doc.flattened() { doc.buf(Src::Pro) } else { text }, trace_k: 0, pe_stack: Vec::new() }
     }
 
     /// `dict(ctxt, b)`, through the cache of names: a name the walk has
@@ -1106,11 +1121,13 @@ impl<'d> Walk<'d> {
         }
     }
 
-    /// The index of the internal entity `name` in the document's DTD.
+    /// The index of the parsed entity `name` in the document's DTD.
     fn ent_index(&self, name: &[u8]) -> Option<usize> {
         let env = self.doc.env();
         let j = crate::lex::ex_find_ent(&env, self.doc.dtd.ents.len(), name, 0, name.len())?;
-        (self.doc.dtd.ents[j].kind == 0).then_some(j)
+        // Internal, or external parsed (whose text is read when it is
+        // expanded).
+        (self.doc.dtd.ents[j].kind != 2).then_some(j)
     }
 
     /// The size of entity `k` with its references expanded.
@@ -1121,7 +1138,7 @@ impl<'d> Walk<'d> {
         if depth > 40 {
             return 0;
         }
-        let rt = &self.doc.dtd.rts[k];
+        let rt = self.doc.buf(Src::Ent(k));
         let mut total = rt.len() as u64;
         let mut i = 0;
         while i < rt.len() {
@@ -1803,6 +1820,21 @@ impl<'d> Walk<'d> {
             if let Some(f) = handler(c).and_then(|h| h.internalSubset) {
                 f((*c).userData, name, (*c).extSubSystem, (*c).extSubURI);
             }
+            if self.dsrc == Src::Pro {
+                // The DTD read whole: its declarations, and a parameter
+                // entity reference (getParameterEntity) where each
+                // entity's text begins.
+                let ftoks = self.toks(Src::Pro);
+                let mut k = 0;
+                while k < ftoks.len() {
+                    self.pe_starts(ftoks[k].a());
+                    k = self.decl(k);
+                }
+                self.pe_starts(usize::MAX);
+                while j < toks.len() && toks[j].kind != Kind::DoctypeEnd {
+                    j += 1;
+                }
+            }
             while j < toks.len() && toks[j].kind != Kind::DoctypeEnd {
                 j = self.decl(j);
             }
@@ -1821,23 +1853,59 @@ impl<'d> Walk<'d> {
         }
     }
 
+    /// getParameterEntity for each parameter entity whose text begins in
+    /// the flattened DTD at or before `pos`, not yet reported.
+    unsafe fn pe_starts(&mut self, pos: usize) {
+        unsafe {
+            let c = self.ctxt;
+            let trace = self.doc.pe_trace();
+            while self.trace_k < trace.len() && trace[self.trace_k].0 <= pos {
+                match &trace[self.trace_k].1 {
+                    Some(name) => {
+                        self.pe_stack.push(name.is_empty());
+                        if !name.is_empty() {
+                            (*c).hasPErefs = 1;
+                            if !(*c).sax.is_null() {
+                                if let Some(f) = (*(*c).sax).getParameterEntity {
+                                    f((*c).userData, dict(c, name));
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        self.pe_stack.pop();
+                    }
+                }
+                self.trace_k += 1;
+            }
+            // The external subset's declarations go in the document's
+            // external subset (as xmlSAX2ExternalSubset makes it).
+            let ext = self.pe_stack.contains(&true);
+            (*c).inSubset = if ext { 2 } else { 1 };
+            let doc = (*c).myDoc;
+            if ext && !doc.is_null() && (*doc).extSubset.is_null() {
+                xmlNewDtd(doc, (*c).intSubName, (*c).extSubSystem, (*c).extSubURI);
+            }
+        }
+    }
+
     /// The markup declaration (or comment, PI, PE reference) at `i` in the
     /// internal subset; returns the index after it.
     unsafe fn decl(&mut self, i: usize) -> usize {
         unsafe {
             let c = self.ctxt;
-            let toks = self.toks(Src::Doc);
-            let text = self.text;
+            let toks = self.toks(self.dsrc);
+            let text = self.dtext;
             let t = toks[i];
             match t.kind {
-                Kind::Comment => self.comment(Src::Doc, t),
+                Kind::Comment => self.comment(self.dsrc, t),
                 Kind::PI => {
-                    self.pi(Src::Doc, t, toks[i + 1]);
+                    self.pi(self.dsrc, t, toks[i + 1]);
                     return i + 2;
                 }
                 Kind::ElementDecl => {
                     let end = text[t.b()..].iter().position(|&ch| ch == b'>').map_or(text.len(), |e| t.b() + e);
-                    self.at(end + 1);
+                    self.pos(self.dsrc, end + 1);
                     let name = dict(c, &text[t.a()..t.b()]);
                     let (ty, content) = content_spec((*c).myDoc, &text[t.b()..end]);
                     if let Some(f) = handler(c).and_then(|h| h.elementDecl) {
@@ -1868,7 +1936,7 @@ impl<'d> Walk<'d> {
                         }
                         j += 1;
                     }
-                    self.at(toks[j - 1].b() + 1);
+                    self.pos(self.dsrc, toks[j - 1].b() + 1);
                     let name = dict(c, &text[t.a()..t.b()]);
                     if let Some(f) = handler(c).and_then(|h| h.notationDecl) {
                         f((*c).userData, name, pubid.as_ref().map_or(null(), |v| v.as_ptr()), sysid.as_ref().map_or(null(), |v| v.as_ptr()));
@@ -1876,7 +1944,7 @@ impl<'d> Walk<'d> {
                     return j;
                 }
                 Kind::PERef => {
-                    self.at(t.b() + 1);
+                    self.pos(self.dsrc, t.b() + 1);
                     let name = &text[t.a()..t.b()];
                     (*c).hasPErefs = 1;
                     let n = dict(c, name);
@@ -1902,8 +1970,8 @@ impl<'d> Walk<'d> {
     unsafe fn att_def(&mut self, elem: &[u8], t: Tok, d: Tok) {
         unsafe {
             let c = self.ctxt;
-            let text = self.text;
-            self.at(if d.f >= 3 { d.b() + 1 } else { d.b() });
+            let text = self.dtext;
+            self.pos(self.dsrc, if d.f >= 3 { d.b() + 1 } else { d.b() });
             let name = &text[t.a()..t.b()];
             let ty = match t.f {
                 9 => ATTRIBUTE_NOTATION,
@@ -1959,8 +2027,8 @@ impl<'d> Walk<'d> {
     unsafe fn entity_decl(&mut self, i: usize) -> usize {
         unsafe {
             let c = self.ctxt;
-            let toks = self.toks(Src::Doc);
-            let text = self.text;
+            let toks = self.toks(self.dsrc);
+            let text = self.dtext;
             let t = toks[i];
             let pe = t.f != 0;
             let mut j = i + 1;
@@ -1982,7 +2050,7 @@ impl<'d> Walk<'d> {
             let name_b = &text[t.a()..t.b()];
             let name = dict(c, name_b);
             if super::scan::colon(name_b).is_some() {
-                self.at(t.b());
+                self.pos(self.dsrc, t.b());
                 let msg = cat(&[b"colons are forbidden from entities names '", name_b, b"'\n"]);
                 ns_err(c, NS_ERR_COLON, &msg, Some(name_b), None, None);
             }
@@ -1996,7 +2064,7 @@ impl<'d> Walk<'d> {
             if !pe && value.is_none() && ndata.is_none() {
                 q = end.saturating_sub(1).max(q);
             }
-            self.at(q);
+            self.pos(self.dsrc, q);
             let p = |v: &Option<Vec<u8>>| v.as_ref().map_or(null(), |v| v.as_ptr());
             let ud = (*c).userData;
             let mut orig: Option<&[u8]> = None;
@@ -2054,7 +2122,7 @@ impl<'d> Walk<'d> {
                     (*cur).orig = xstrdup(o);
                 }
             }
-            self.at(end);
+            self.pos(self.dsrc, end);
             j
         }
     }
@@ -2839,6 +2907,40 @@ impl<'d> Walk<'d> {
         }
     }
 
+    /// Reads the external parsed entity `ent` (the document's entity `k`)
+    /// from its URI, as `xmlLoadResource` does, and has the document check
+    /// it (`Document::set_ext`: decoded, and well-formed content). False,
+    /// with the error libxml2 reports, if it is not read.
+    unsafe fn read_external(&mut self, ent: *mut Entity, k: usize) -> bool {
+        unsafe {
+            let c = self.ctxt;
+            let Some(uri) = copt((*ent).URI).map(|u| u.to_vec()) else { return false };
+            let level = if (*c).validate == 0 { ERR_WARNING } else { ERR_ERROR };
+            if (*c).options & PARSE_NO_XXE != 0 {
+                let msg = cat(&[b"failed to load \"", &uri[..], b"\": ", message_for(IO_UNKNOWN).to_bytes(), b"\n"]);
+                ctx_err(c, null_mut(), FROM_IO, IO_UNKNOWN, level, Some(&uri), None, None, 0, &msg);
+                return false;
+            }
+            match super::recover::load_resource(&uri) {
+                Ok(bytes) => {
+                    if self.doc.set_ext(k, bytes) {
+                        return true;
+                    }
+                    let name = copt((*ent).name).unwrap_or(b"").to_vec();
+                    let msg = cat(&[b"Entity '", &name[..], b"' failed to parse\n"]);
+                    fatal(c, ERR_NOT_WELL_BALANCED, &msg, Some(&name));
+                    false
+                }
+                Err(code) => {
+                    let level = if code == IO_ENOENT || code == IO_UNKNOWN { level } else { ERR_FATAL };
+                    let msg = cat(&[b"failed to load \"", &uri[..], b"\": ", message_for(code).to_bytes(), b"\n"]);
+                    ctx_err(c, null_mut(), FROM_IO, code, level, Some(&uri), None, None, 0, &msg);
+                    false
+                }
+            }
+        }
+    }
+
     /// `xmlCtxtParseEntity`: the entity's content parsed, its SAX events
     /// made, and (when a tree is being built) its tree kept in the entity.
     unsafe fn parse_entity(&mut self, ent: *mut Entity, k: Option<usize>) {
@@ -2850,8 +2952,14 @@ impl<'d> Walk<'d> {
                 (*ent).flags |= ENT_PARSED | ENT_CHECKED;
                 return;
             }
+            if let Some(k) = k {
+                if (*ent).etype == EXTERNAL_GENERAL_PARSED_ENTITY && !self.doc.expandable(k) && !self.read_external(ent, k) {
+                    (*ent).flags |= ENT_PARSED | ENT_CHECKED;
+                    return;
+                }
+            }
             let tape_len = match k {
-                Some(k) if (*ent).etype == INTERNAL_GENERAL_ENTITY => self.doc.ent_tape(k).map(|t| t.toks.len()),
+                Some(k) if self.doc.expandable(k) => self.doc.ent_tape(k).map(|t| t.toks.len()),
                 _ => None,
             };
             let Some(n) = tape_len else {
@@ -4246,7 +4354,8 @@ unsafe fn parse_document(ctxt: *mut ParserCtxt) -> c_int {
         }
         initialize_late(ctxt);
         let c = ctxt;
-        if !(*c).sax.is_null() {
+        let resumed = st(c).whole_from.is_some();
+        if !(*c).sax.is_null() && !resumed {
             if let Some(f) = (*(*c).sax).setDocumentLocator {
                 f((*c).userData, &xmlDefaultSAXLocator as *const SaxLocator as *mut SaxLocator);
             }
@@ -4315,7 +4424,20 @@ unsafe fn parse_document(ctxt: *mut ParserCtxt) -> c_int {
             (*c).valid = 0;
             return -1;
         }
-        match crate::api::parse(bytes) {
+        // XML_PARSE_DTDLOAD (or DTDATTR): the external subset is read, and
+        // the external parameter entities, by the URI each resolves to.
+        let parsed = if (*c).loadsubset & !SKIP_IDS != 0 && (*c).options & PARSE_NO_XXE == 0 {
+            let doc_base = base_uri(c);
+            let mut ld = crate::pe::Loader::new(move |base: &[u8], sys: &[u8], _pubid: &[u8]| {
+                let from = if base.is_empty() { doc_base.clone() } else { Some(base.to_vec()) };
+                let uri = build_uri(sys, from.as_deref());
+                super::recover::load_resource(&uri).ok().map(|d| (d, uri))
+            });
+            crate::api::parse_dtd_with(bytes, &mut ld)
+        } else {
+            crate::api::parse(bytes)
+        };
+        match parsed {
             Ok(doc) if !st(c).pushed && beyond_document(c, &doc) && probe_finds_errors(c, raw) => {
                 // The document entity is well-formed (the verified verdict),
                 // but libxml2 reads more than it: the internal subset's
@@ -4341,7 +4463,10 @@ unsafe fn parse_document(ctxt: *mut ParserCtxt) -> c_int {
                 (*input).end = text.as_ptr().add(text.len());
                 let mut w = Walk::new(c, &doc);
                 let toks = doc.toks(Src::Doc);
-                let root = w.prolog();
+                let root = match st(c).whole_from.take() {
+                    Some((true, k)) => w.prolog_from(k),
+                    _ => w.prolog(),
+                };
                 if root < toks.len() && toks[root].kind == Kind::STag {
                     let close = toks[root].c();
                     w.content(Src::Doc, root, close + 1);
@@ -5198,6 +5323,12 @@ struct Push {
     /// UTF-16 input, converted to UTF-8 as it comes, as `parse_document`
     /// converts it whole.
     u16: Option<U16>,
+    /// The text fed, until the declarations are known: one with a
+    /// parameter entity reference is read whole (`api::parse` expands
+    /// them; the stream does not).
+    pre: Option<Vec<u8>>,
+    /// How many of the prolog's tokens were reported.
+    pro_done: usize,
 }
 
 /// UTF-16 input converted as it comes: little-endian or not, the byte
@@ -5289,6 +5420,9 @@ unsafe fn push_feed(c: *mut ParserCtxt, data: &[u8], terminate: bool) {
         }
         let old = p.doc.take();
         let base0 = p.stream.base();
+        if let Some(pre) = p.pre.as_mut() {
+            pre.extend_from_slice(data);
+        }
         let r = p.stream.feed(data, terminate);
         if r == R_WHOLE {
             // Not UTF-8, or a declaration read whole: nothing has been
@@ -5306,6 +5440,21 @@ unsafe fn push_feed(c: *mut ParserCtxt, data: &[u8], terminate: bool) {
             fatal(c, ERR_NO_MEMORY, b"Memory allocation failed : pushing input\n", None);
             (*c).disableSAX = 2;
             return;
+        }
+        if p.pre.is_some() && p.stream.dtd_read() {
+            let pe = p.stream.prolog_toks().iter().any(|t| t.kind == Kind::PERef);
+            if pe {
+                // Read whole, on from what was reported.
+                drop(old);
+                s.raw = p.pre.take().unwrap();
+                s.whole_from = Some((p.phase != PP_START, p.pro_done));
+                s.push = None;
+                if terminate {
+                    push_whole(c);
+                }
+                return;
+            }
+            p.pre = None;
         }
         let d = p.stream.base() - base0;
         s.at.0 = s.at.0.saturating_sub(d);
@@ -5352,6 +5501,8 @@ unsafe fn push_feed(c: *mut ParserCtxt, data: &[u8], terminate: bool) {
             i = w.prolog_from(i);
             if i < toks.len() {
                 p.phase = PP_CONTENT;
+            } else {
+                p.pro_done += toks.len();
             }
         }
         if p.phase == PP_CONTENT {
@@ -5500,6 +5651,8 @@ pub unsafe extern "C" fn xmlParseChunk(ctxt: *mut ParserCtxt, chunk: *const c_ch
                     pend_end: 0,
                     diag: Vec::new(),
                     u16: u16.map(|(le, skip)| U16 { le, skip, pend: Vec::new(), hold: Some(Vec::new()) }),
+                    pre: Some(Vec::new()),
+                    pro_done: 0,
                 }));
             }
         }

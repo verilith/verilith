@@ -169,12 +169,12 @@ fn setters_match_url_crate() {
     b.query_pairs_mut().clear();
     assert_eq!(a.as_str(), b.as_str());
 
-    let mut a = compat::Url::parse("foo://h/p").unwrap();
-    let mut b = url::Url::parse("foo://h/p").unwrap();
+    a = compat::Url::parse("foo://h/p").unwrap();
+    b = url::Url::parse("foo://h/p").unwrap();
     both!(set_host(None));
     both!(set_host(Some("h2")));
-    let mut a = compat::Url::parse("mailto:x").unwrap();
-    let mut b = url::Url::parse("mailto:x").unwrap();
+    a = compat::Url::parse("mailto:x").unwrap();
+    b = url::Url::parse("mailto:x").unwrap();
     both!(set_host(Some("h")));
     both!(set_username("u"));
     both!(set_port(Some(1)));

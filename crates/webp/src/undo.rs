@@ -113,8 +113,8 @@ pub fn undo_sg(px: &mut Vec<u32>)
 {
     let ghost src = px@;
     if has_avx2() {
-        // SAFETY: the CPU has AVX2.
-        unsafe { undo_sg_avx2(px) };
+        // The CPU has AVX2.
+        undo_sg_avx2(px);
         assert(px@ =~= undo(Transform::SubtractGreen, src, 0));
         return;
     }
@@ -258,8 +258,8 @@ pub fn undo_color(px: &mut Vec<u32>, w: usize, h: usize, bits: u32, data: &Vec<u
             let e = data[brow + bx];
             let ghost before = px@;
             if fast {
-                // SAFETY: the CPU has AVX2.
-                unsafe { uncolor_run_avx2(px, row + x0, row + x1, e) };
+                // The CPU has AVX2.
+                uncolor_run_avx2(px, row + x0, row + x1, e);
             } else {
                 uncolor_run_swar(px, row + x0, row + x1, e);
             }
@@ -343,8 +343,8 @@ pub fn undo_predict(px: &mut Vec<u32>, w: usize, h: usize, bits: u32, data: &Vec
         final(px)@ == undo(Transform::Predictor { bits: bits as nat, w: w as nat, data: data@ }, old(px)@, h as nat),
 {
     if has_avx2() {
-        // SAFETY: the CPU has AVX2.
-        unsafe { crate::vpred::unpredict_avx2(px, w, h, bits, data) };
+        // The CPU has AVX2.
+        crate::vpred::unpredict_avx2(px, w, h, bits, data);
         return;
     }
     proof {

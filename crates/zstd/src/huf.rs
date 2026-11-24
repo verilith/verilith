@@ -34,7 +34,7 @@ fn fw_run_exec(s: &[u8], t: &FseTab, p0: usize, s10: u32, s20: u32, Ghost(st): G
         tab_is(t, st),
         tab_wf(t, 256),
         p0 <= 8 * s@.len(),
-        s@.len() < 0x1_0000_0000,
+        s@.len() < BITS_MAX,
     ensures
         match fw_run(s@, st, p0 as int, s10 as nat, s20 as nat, Seq::empty()) {
             None => r is None,
@@ -56,7 +56,7 @@ fn fw_run_exec(s: &[u8], t: &FseTab, p0: usize, s10: u32, s20: u32, Ghost(st): G
             out@.len() <= 254,
             fw_run(s@, st, p as int, s1 as nat, s2 as nat, out@) == full,
             full == fw_run(s@, st, p0 as int, s10 as nat, s20 as nat, Seq::empty()),
-            s@.len() < 0x1_0000_0000,
+            s@.len() < BITS_MAX,
         decreases 256 - out@.len(),
     {
         if out.len() > 253 || s1 as usize >= n || s2 as usize >= n {
@@ -120,7 +120,7 @@ proof fn lemma_fw_run_len(s: Seq<u8>, t: FseTable, p: int, s1: nat, s2: nat, out
 /// Weights compressed with FSE (`fse_weights`).
 pub fn fse_weights_exec(b: &[u8]) -> (r: Option<Vec<u8>>)
     requires
-        b@.len() < 0x1_0000_0000,
+        b@.len() < BITS_MAX,
     ensures
         match fse_weights(b@) {
             None => r is None,
@@ -167,7 +167,7 @@ pub fn fse_weights_exec(b: &[u8]) -> (r: Option<Vec<u8>>)
 /// The listed weights (`huf_listed`).
 pub fn huf_listed_exec(b: &[u8]) -> (r: Option<(Vec<u8>, usize)>)
     requires
-        b@.len() < 0x1_0000_0000,
+        b@.len() < BITS_MAX,
     ensures
         match huf_listed(b@) {
             None => r is None,
@@ -974,7 +974,7 @@ fn huf_build(w: Vec<u8>, log: u32) -> (r: HufTab)
 /// A tree description at the start of `b` (`huf_desc`).
 pub fn huf_desc_exec(b: &[u8]) -> (r: Option<(HufTab, usize)>)
     requires
-        b@.len() < 0x1_0000_0000,
+        b@.len() < BITS_MAX,
     ensures
         match huf_desc(b@) {
             None => r is None,
@@ -1175,6 +1175,14 @@ fn x2_sym(t: &HufTab, s: &[u8], x: u64, q: usize, Ghost(k): Ghost<nat>, Ghost(n)
         lemma_top_peek(x, s@, q as int, k, t.log as nat);
         lemma_bits_bound(s@, q - t.log, t.log as nat);
     }
+    proof {
+        // Below 2^12, so the cast keeps it on 32-bit targets too.
+        let sh = (64 - t.log) as u64;
+        assert(x >> sh < 0x1000) by (bit_vector)
+            requires
+                52 <= sh < 64,
+        ;
+    }
     let v = (x >> (64 - t.log) as u64) as usize;
     proof {
         assert(v < t.x2@.len());
@@ -1201,6 +1209,7 @@ fn x2_sym(t: &HufTab, s: &[u8], x: u64, q: usize, Ghost(k): Ghost<nat>, Ghost(n)
 /// symbols, stored at once at `out[at..]`, after the symbols `d` of the run
 /// so far. The position and the count.
 #[inline(always)]
+#[verifier::spinoff_prover]
 fn x2_dec4(t: &HufTab, s: &[u8], p: usize, out: &mut Vec<u8>, at: usize, Ghost(n): Ghost<nat>, Ghost(d): Ghost<Seq<u8>>) -> (r: Option<(usize, usize)>)
     requires
         huf_wf(t),
@@ -1319,6 +1328,14 @@ fn huf_symx(t: &HufTab, s: &[u8], x: u64, q: usize, Ghost(k): Ghost<nat>) -> (r:
     proof {
         lemma_top_peek(x, s@, q as int, k, t.log as nat);
     }
+    proof {
+        // Below 2^12, so the cast keeps it on 32-bit targets too.
+        let sh = (64 - t.log) as u64;
+        assert(x >> sh < 0x1000) by (bit_vector)
+            requires
+                52 <= sh < 64,
+        ;
+    }
     let v = (x >> (64 - t.log) as u64) as usize;
     let x1 = t.x1.as_slice();
     // The table is full, so the row is there without a test.
@@ -1435,7 +1452,7 @@ fn huf_dec4(t: &HufTab, s: &[u8], p: usize, out: &mut Vec<u8>, at: usize, Ghost(
 pub fn huf_stream_exec(t: &HufTab, s: &[u8], n: usize, out: &mut Vec<u8>) -> (ok: bool)
     requires
         huf_wf(t),
-        s@.len() < 0x1_0000_0000,
+        s@.len() < BITS_MAX,
     ensures
         match huf_stream(huf_code_of(t), s@, n as nat) {
             None => !ok,
@@ -1561,8 +1578,8 @@ fn set_len(v: &mut Vec<u8>, n: usize)
 pub fn huf_4streams_exec(t: &HufTab, b: &[u8], n: usize, out: &mut Vec<u8>) -> (ok: bool)
     requires
         huf_wf(t),
-        b@.len() < 0x1_0000_0000,
-        n < 0x1_0000_0000,
+        b@.len() < BITS_MAX,
+        n < BITS_MAX,
     ensures
         match huf_4streams(huf_code_of(t), b@, n as nat) {
             None => !ok,
@@ -1948,7 +1965,7 @@ pub open spec fn huf_opt_is(t: Option<HufTab>, c: Option<HufCode>) -> bool {
 /// Raw and RLE literals (`lit_section`, types 0 and 1).
 fn lit_plain(b: &[u8], bmax: usize, lits: &mut Vec<u8>, Ghost(hc): Ghost<Option<HufCode>>) -> (r: Option<usize>)
     requires
-        b@.len() < 0x1_0000_0000,
+        b@.len() < BITS_MAX,
         b@.len() >= 2,
         b@[0] % 4 <= 1,
         bmax <= 131072,
@@ -2057,7 +2074,7 @@ pub fn lit_huf_sizes(b: &[u8]) -> (r: (usize, usize, usize))
             }
         }),
         r.1 < 262144,
-        r.2 < 0x1_0000_0000,
+        r.2 < 262144,
 {
     proof {
         reveal_with_fuel(le, 5);
@@ -2091,7 +2108,7 @@ pub fn lit_huf_sizes(b: &[u8]) -> (r: (usize, usize, usize))
 /// Compressed and treeless literals (`lit_section`, types 2 and 3).
 fn lit_huf(b: &[u8], bmax: usize, huf: &mut Option<HufTab>, lits: &mut Vec<u8>) -> (r: Option<usize>)
     requires
-        b@.len() < 0x1_0000_0000,
+        b@.len() < BITS_MAX,
         b@.len() >= 2,
         b@[0] % 4 >= 2,
         bmax <= 131072,
@@ -2143,6 +2160,10 @@ fn lit_huf(b: &[u8], bmax: usize, huf: &mut Option<HufTab>, lits: &mut Vec<u8>) 
                 // 4-stream literals: at eight times the table size it is
                 // level with the one-symbol table on Silesia, and below
                 // that it costs 3 to 5% of the whole decode.
+                let lg = t.log;
+                proof {
+                    assert(lg <= 12 ==> 8usize << lg <= 32768) by (bit_vector);
+                }
                 if sf != 0 && n >= (8usize << t.log) {
                     huf_add_x2(&mut t);
                 }
@@ -2194,7 +2215,7 @@ pub fn lit_section_exec(b: &[u8], bmax: usize, huf: &mut Option<HufTab>, lits: &
     usize,
 >)
     requires
-        b@.len() < 0x1_0000_0000,
+        b@.len() < BITS_MAX,
         bmax <= 131072,
         huf_opt_is(*old(huf), old_huf_code(old(huf))),
     ensures

@@ -29,6 +29,7 @@ abseil-cpp      https://github.com/abseil/abseil-cpp       20260817.0
 cre2            https://github.com/marcomaggi/cre2         f9ad1ced3f5358557b32d623babf317d6e4aa31d
 expat           https://github.com/libexpat/libexpat       a70841d9ffa64ddde29ab824ed6305035ebe4c47
 libxml2         https://github.com/GNOME/libxml2           v2.15.4
+openssl         https://github.com/openssl/openssl         openssl-4.1.0
 "
 # Notes on the choices:
 # - c-ares: the commit vdns's c-ares patch was made and tested against
@@ -45,6 +46,10 @@ libxml2         https://github.com/GNOME/libxml2           v2.15.4
 #   what RE2 needs.
 # - expat: R_2_10_0, the release vxml's differential fuzzing runs against
 #   (crates/xml/scripts/fetch-expat.sh pins the same commit).
+# - OpenSSL: the latest release, built as a static libcrypto with its
+#   assembly (SHA-NI, AVX2 and ARMv8 SHA2/SHA512 code, chosen at run time),
+#   as it ships. Its SHA256_*/SHA512_* functions are deprecated since 3.0
+#   but still built.
 # - libxml2: the latest release, from GNOME's GitHub mirror of
 #   gitlab.gnome.org/GNOME/libxml2.
 

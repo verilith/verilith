@@ -62,7 +62,7 @@ pub proof fn lemma_le_bound(b: Seq<u8>, i: int, n: nat)
 pub fn le_at(b: &[u8], i: usize, n: usize) -> (r: u64)
     requires
         i + n <= b@.len(),
-        b@.len() < 0x1_0000_0000_0000,
+        b@.len() < MAX_LIMIT,
         n <= 8,
     ensures
         r as nat == le(b@, i as int, n as nat),
@@ -121,7 +121,7 @@ pub open spec fn hdr_is(h: Hdr, s: Header) -> bool {
 /// The frame header at the start of `b` (`frame_header`).
 pub fn frame_header_exec(b: &[u8]) -> (r: Option<Hdr>)
     requires
-        b@.len() < 0x1_0000_0000_0000,
+        b@.len() < MAX_LIMIT,
     ensures
         match frame_header(b@) {
             None => r is None,
@@ -288,10 +288,10 @@ pub fn block_exec(
     bool,
 ))
     requires
-        b@.len() < 0x1_0000_0000_0000,
+        b@.len() < MAX_LIMIT,
         i + 3 <= b@.len(),
         dec_is(old(d), st),
-        old(d).out@.len() <= olimit <= 0x1_0000_0000_0000,
+        old(d).out@.len() <= olimit <= MAX_LIMIT,
     ensures
         ({
             let bh = le(b@, i as int, 3);
@@ -433,10 +433,10 @@ pub fn blocks_exec(
     Ghost(st): Ghost<FrameState>,
 ) -> (r: (Step, usize))
     requires
-        b@.len() < 0x1_0000_0000_0000,
+        b@.len() < MAX_LIMIT,
         i0 <= b@.len(),
         dec_is(old(d), st),
-        old(d).out@.len() <= olimit <= 0x1_0000_0000_0000,
+        old(d).out@.len() <= olimit <= MAX_LIMIT,
         hashing ==> old(hash).is(st.out),
         hashing ==> reach == window,
     ensures
@@ -463,14 +463,14 @@ pub fn blocks_exec(
     let mut i = i0;
     loop
         invariant
-            b@.len() < 0x1_0000_0000_0000,
+            b@.len() < MAX_LIMIT,
             i <= b@.len(),
             dec_is(d, cur),
             d.fstart == fs,
             fs == old(d).fstart,
             pre == old(d).out@.subrange(0, fs as int),
             d.out@.subrange(0, fs as int) == pre,
-            d.out@.len() <= olimit <= 0x1_0000_0000_0000,
+            d.out@.len() <= olimit <= MAX_LIMIT,
             full == blocks_r(b@, i0 as int, window as nat, reach as nat, st),
             blocks_r(b@, i as int, window as nat, reach as nat, cur) == full,
             hashing ==> hash.is(cur.out),
@@ -561,9 +561,9 @@ pub fn reset(d: &mut FrameDec)
 #[verifier::rlimit(30)]
 fn frame_exec(b: &[u8], i: usize, d: &mut FrameDec, olimit: usize) -> (r: (Step, usize))
     requires
-        b@.len() < 0x1_0000_0000_0000,
+        b@.len() < MAX_LIMIT,
         i + 4 <= b@.len(),
-        old(d).out@.len() <= olimit <= 0x1_0000_0000_0000,
+        old(d).out@.len() <= olimit <= MAX_LIMIT,
     ensures
         match frame(b@, i as int) {
             None => !(r.0 is Done),
@@ -666,8 +666,8 @@ pub enum Error {
 /// output would pass `limit` bytes.
 pub fn decompress_exec(b: &[u8], limit: usize) -> (r: Result<Vec<u8>, Error>)
     requires
-        b@.len() < 0x1_0000_0000_0000,
-        limit <= 0x1_0000_0000_0000,
+        b@.len() < MAX_LIMIT,
+        limit <= MAX_LIMIT,
     ensures
         match r {
             Ok(v) => decompress(b@) == Some(v@) && v@.len() <= limit,
@@ -683,8 +683,8 @@ pub fn decompress_exec(b: &[u8], limit: usize) -> (r: Result<Vec<u8>, Error>)
 /// first-touch page faults when a caller decodes many inputs.
 pub fn decompress_reuse(b: &[u8], limit: usize, buf: Vec<u8>) -> (r: Result<Vec<u8>, Error>)
     requires
-        b@.len() < 0x1_0000_0000_0000,
-        limit <= 0x1_0000_0000_0000,
+        b@.len() < MAX_LIMIT,
+        limit <= MAX_LIMIT,
     ensures
         match r {
             Ok(v) => decompress(b@) == Some(v@) && v@.len() <= limit,
@@ -711,8 +711,8 @@ pub fn decompress_reuse(b: &[u8], limit: usize, buf: Vec<u8>) -> (r: Result<Vec<
     }
     loop
         invariant
-            b@.len() < 0x1_0000_0000_0000,
-            limit <= 0x1_0000_0000_0000,
+            b@.len() < MAX_LIMIT,
+            limit <= MAX_LIMIT,
             i <= b@.len(),
             d.out@.len() <= limit,
             full == decompress(b@),

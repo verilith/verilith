@@ -114,12 +114,14 @@ pub fn encode_name(s: &str) -> Result<Vec<u8>, BuildError> {
 }
 
 impl<'a> QuestionRef<'a> {
+    /// The question's name.
     pub fn name(&self) -> Name<'a> {
         Name(self.name)
     }
 }
 
 impl<'a> RecordRef<'a> {
+    /// The record's owner name.
     pub fn name(&self) -> Name<'a> {
         Name(self.name)
     }
@@ -136,14 +138,17 @@ impl Message {
         Records { m: self, s, i: 0, n: self.record_count(s) }
     }
 
+    /// The records of the Answer section, in order.
     pub fn answers(&self) -> impl ExactSizeIterator<Item = RecordRef<'_>> + '_ {
         self.records(Section::Answer)
     }
 
+    /// The records of the Authority section, in order.
     pub fn authorities(&self) -> impl ExactSizeIterator<Item = RecordRef<'_>> + '_ {
         self.records(Section::Authority)
     }
 
+    /// The records of the Additional section, in order.
     pub fn additionals(&self) -> impl ExactSizeIterator<Item = RecordRef<'_>> + '_ {
         self.records(Section::Additional)
     }

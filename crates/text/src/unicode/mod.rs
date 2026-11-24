@@ -9,6 +9,7 @@
 pub mod data;
 pub mod norm;
 pub mod spec;
+/// The normalization data (generated; trusted, and checked by `tests/unicode_data.rs`).
 pub mod tables;
 
 use std::borrow::Cow;
@@ -17,9 +18,13 @@ use vstd::prelude::Ghost;
 /// The forms, as `(compose, compat)`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Form {
+    /// Canonical composition.
     Nfc,
+    /// Canonical decomposition.
     Nfd,
+    /// Compatibility composition.
     Nfkc,
+    /// Compatibility decomposition.
     Nfkd,
 }
 
@@ -60,34 +65,42 @@ pub fn is_normalized(s: &str, form: Form) -> bool {
     norm::quick_check(s.as_bytes(), compose, compat, Ghost::assume_new()) || normalize(s, form) == s
 }
 
+/// `s` in NFC.
 pub fn nfc(s: &str) -> Cow<'_, str> {
     normalize(s, Form::Nfc)
 }
 
+/// `s` in NFD.
 pub fn nfd(s: &str) -> Cow<'_, str> {
     normalize(s, Form::Nfd)
 }
 
+/// `s` in NFKC.
 pub fn nfkc(s: &str) -> Cow<'_, str> {
     normalize(s, Form::Nfkc)
 }
 
+/// `s` in NFKD.
 pub fn nfkd(s: &str) -> Cow<'_, str> {
     normalize(s, Form::Nfkd)
 }
 
+/// Whether `s` is in NFC.
 pub fn is_nfc(s: &str) -> bool {
     is_normalized(s, Form::Nfc)
 }
 
+/// Whether `s` is in NFD.
 pub fn is_nfd(s: &str) -> bool {
     is_normalized(s, Form::Nfd)
 }
 
+/// Whether `s` is in NFKC.
 pub fn is_nfkc(s: &str) -> bool {
     is_normalized(s, Form::Nfkc)
 }
 
+/// Whether `s` is in NFKD.
 pub fn is_nfkd(s: &str) -> bool {
     is_normalized(s, Form::Nfkd)
 }

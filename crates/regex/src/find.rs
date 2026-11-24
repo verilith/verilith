@@ -1,6 +1,6 @@
 //! Finding the next occurrence of one byte, 16 bytes at a time: SSE2 on
 //! x86-64 and NEON on AArch64, proven against the plain definition.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128")))]
 use crate::lanes::*;
 use vstd::prelude::*;
 
@@ -115,7 +115,7 @@ fn pair_scalar(s: &[u8], p: usize, q4: (u8, u8, u8, u8)) -> (r: (usize, Ghost<in
 
 } // verus!
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128")))]
 verus! {
 
 broadcast use verilith_simd::neon::group_neon;
@@ -900,7 +900,7 @@ pub fn find_byte(s: &[u8], p: usize, c: u8) -> (r: (usize, Ghost<int>))
 
 } // verus!
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128"))))]
 verus! {
 
 pub fn find_byte(s: &[u8], p: usize, c: u8) -> (r: (usize, Ghost<int>))
@@ -938,7 +938,7 @@ pub fn find_rng(s: &[u8], p: usize, r: (u8, u8, u8, u8, u8, u8)) -> (x: (usize, 
 
 } // verus!
 
-#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128"))))]
 mod tests {
     use super::*;
 

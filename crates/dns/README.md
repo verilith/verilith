@@ -500,8 +500,8 @@ minutes per fuzz target under AddressSanitizer.
 
 ## Verifying
 
-Install Verus at commit `1ce6a59` (release 0.2026.11.22.1ce6a59; Rust
-1.100.0), then:
+Install Verus at commit `8bf68ee` (release 0.2026.11.02.8bf68ee; Rust
+1.99.1), then:
 
 ```sh
 cargo verus verify

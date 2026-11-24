@@ -11,9 +11,12 @@ use crate::cert::NONE;
 use crate::instance::Checked;
 use crate::interp::{Host, Store};
 
+/// A WebAssembly value.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Val {
+    /// An `i32`.
     I32(i32),
+    /// An `i64`.
     I64(i64),
     /// Bit pattern.
     F32(u32),
@@ -22,6 +25,7 @@ pub enum Val {
 }
 
 impl Val {
+    /// The value's type.
     pub fn ty(&self) -> ValType {
         match self {
             Val::I32(_) => ValType::I32,
@@ -50,6 +54,7 @@ impl Val {
     }
 }
 
+/// Why loading, linking, instantiating or calling failed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
     /// The binary is malformed.
@@ -74,11 +79,16 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
+/// The type of an import or export.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExternType {
+    /// A function: parameter and result types.
     Func(Vec<ValType>, Vec<ValType>),
+    /// A global.
     Global(ast::GlobalType),
+    /// A memory, with its limits in pages.
     Memory(ast::Limits),
+    /// A table, with its limits.
     Table(ast::Limits),
 }
 
@@ -89,16 +99,19 @@ pub struct Module {
 }
 
 impl Module {
+    /// Decodes and validates a binary module.
     pub fn new(bytes: &[u8]) -> Result<Module, Error> {
         let m = crate::decode::decode(bytes).map_err(|e| Error::Decode(e.0))?;
         let certs = crate::validate::validate(&m).map_err(|e| Error::Invalid(e.0))?;
         Ok(Module { m, certs })
     }
 
+    /// The module's imports.
     pub fn imports(&self) -> &[ast::Import] {
         &self.m.imports
     }
 
+    /// The module's exports.
     pub fn exports(&self) -> &[ast::Export] {
         &self.m.exports
     }
@@ -121,10 +134,12 @@ fn key(module: &str, name: &str) -> (Vec<u8>, Vec<u8>) {
 }
 
 impl Linker {
+    /// A linker with no imports.
     pub fn new() -> Linker {
         Linker::default()
     }
 
+    /// Defines the function import `module.name`, with its type and the host function to call.
     pub fn func(&mut self, module: &str, name: &str, params: &[ValType], results: &[ValType],
         f: impl FnMut(&[Val], &mut [Val], &mut [u8]) -> Result<(), Trap> + 'static) -> &mut Self
     {
@@ -133,6 +148,7 @@ impl Linker {
         self
     }
 
+    /// Defines the global import `module.name`, with its value and whether it is mutable.
     pub fn global(&mut self, module: &str, name: &str, v: Val, mutable: bool) -> &mut Self {
         self.globals.insert(key(module, name), (v, mutable));
         self
@@ -200,6 +216,7 @@ pub struct Instance {
 const MAX_TABLE: u32 = 10_000_000;
 
 impl Instance {
+    /// Instantiates `module`, taking its imports from `linker`, and runs its start function.
     pub fn new(module: Module, linker: &Linker) -> Result<Instance, Error> {
         let Module { m, certs } = module;
         let mut funcs = Vec::new();
@@ -256,7 +273,16 @@ impl Instance {
         };
         let mem_limits = mem_limits.or_else(|| m.mems.get(m.n_imported_mems as usize).copied());
         let (mem, mem_max) = match mem_limits {
-            Some(l) => (vec![0u8; l.min as usize * 65536], l.max.unwrap_or(65536)),
+            Some(l) => {
+                // A 32-bit host has room for fewer pages (MAX_PAGES).
+                #[cfg(target_pointer_width = "32")]
+                if l.min > crate::interp::MAX_PAGES {
+                    return Err(Error::Instantiate("memory too large for a 32-bit host".into()));
+                }
+                #[cfg(target_pointer_width = "32")]
+                let l = ast::Limits { max: Some(l.max.unwrap_or(65536).min(crate::interp::MAX_PAGES)), ..l };
+                (vec![0u8; l.min as usize * 65536], l.max.unwrap_or(65536))
+            },
             None => (Vec::new(), 0),
         };
         table_limits.extend_from_slice(&m.tables[m.n_imported_tables as usize..]);
@@ -283,7 +309,8 @@ impl Instance {
         for (i, d) in m.datas.iter().enumerate() {
             if let DataMode::Active { offset } = &d.mode {
                 let off = eval(offset, &st.globals) as usize;
-                if off + d.bytes.len() > st.mem.len() {
+                // In u64: on a 32-bit host the sum can wrap.
+                if off as u64 + d.bytes.len() as u64 > st.mem.len() as u64 {
                     return Err(Error::Instantiate("out of bounds memory access".into()));
                 }
                 st.mem[off..off + d.bytes.len()].copy_from_slice(&d.bytes);
@@ -367,6 +394,7 @@ impl Instance {
         }
     }
 
+    /// The instance's memory (empty if it has none).
     pub fn memory(&self) -> &[u8] {
         match &self.inner {
             Some(i) => i.memory(),

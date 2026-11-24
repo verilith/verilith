@@ -1002,7 +1002,7 @@ impl Sink for CtxSink {
 
 /// An external resource's bytes (`xmlLoadResource` with the default
 /// loader: the I/O callbacks, then the file), or the I/O error code.
-fn load_resource(uri: &[u8]) -> Result<Vec<u8>, c_int> {
+pub(crate) fn load_resource(uri: &[u8]) -> Result<Vec<u8>, c_int> {
     match unsafe { super::io::read_by_callbacks(uri) } {
         Some(Some(d)) => Ok(d),
         Some(None) => Err(IO_UNKNOWN),

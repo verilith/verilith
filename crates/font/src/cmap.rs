@@ -185,10 +185,12 @@ fn check_cmap12(t: &[u8], o: usize, many: bool, ng: u16) -> (b: bool)
     if 16 > t.len() - o {
         return false;
     }
-    let n = rd32(t, o + 12) as usize;
-    if rd32(t, o + 4) as usize != 16 + 12 * n || 16 + 12 * n > t.len() - o {
+    // In u64: 12 * n can pass a 32-bit usize.
+    let n = rd32(t, o + 12) as u64;
+    if rd32(t, o + 4) as u64 != 16 + 12 * n || 16 + 12 * n > (t.len() - o) as u64 {
         return false;
     }
+    let n = n as usize;
     let mut k: usize = 0;
     while k < n
         invariant
@@ -214,13 +216,15 @@ fn check_duvs(t: &[u8], d: usize, end: usize) -> (b: bool)
     ensures
         b == wf_duvs(t@, d as int, end as int),
 {
-    if d + 4 > end {
+    // In u64: these can pass a 32-bit usize.
+    if d as u64 + 4 > end as u64 {
         return false;
     }
-    let n = rd32(t, d) as usize;
-    if n == 0 || d + 4 + 4 * n > end {
+    let n = rd32(t, d) as u64;
+    if n == 0 || d as u64 + 4 + 4 * n > end as u64 {
         return false;
     }
+    let n = n as usize;
     let mut k: usize = 0;
     while k < n
         invariant
@@ -252,13 +256,15 @@ fn check_nduvs(t: &[u8], d: usize, end: usize, ng: u16) -> (b: bool)
     ensures
         b == wf_nduvs(t@, d as int, end as int, ng as int),
 {
-    if d + 4 > end {
+    // In u64: these can pass a 32-bit usize.
+    if d as u64 + 4 > end as u64 {
         return false;
     }
-    let n = rd32(t, d) as usize;
-    if n == 0 || d + 4 + 5 * n > end {
+    let n = rd32(t, d) as u64;
+    if n == 0 || d as u64 + 4 + 5 * n > end as u64 {
         return false;
     }
+    let n = n as usize;
     let mut k: usize = 0;
     while k < n
         invariant
@@ -302,12 +308,21 @@ fn check_c14_rec(t: &[u8], o: usize, k: usize, hdr: usize, end: usize, ng: u16) 
         return false;
     }
     let d = rd32(t, r + 3) as usize;
+    // On a 32-bit target o + d can overflow; then it is past the end.
+    #[cfg(target_pointer_width = "32")]
+    if d != 0 && d >= hdr && d > end - o {
+        return false;
+    }
     if d != 0 {
         if d < hdr || !check_duvs(t, o + d, end) {
             return false;
         }
     }
     let nd = rd32(t, r + 7) as usize;
+    #[cfg(target_pointer_width = "32")]
+    if nd != 0 && nd >= hdr && nd > end - o {
+        return false;
+    }
     if nd != 0 {
         if nd < hdr || !check_nduvs(t, o + nd, end, ng) {
             return false;

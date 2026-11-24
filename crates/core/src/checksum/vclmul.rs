@@ -44,6 +44,11 @@ pub broadcast axiom fn axiom_vpclmul_pclmul()
         #[trigger] vpclmul256() ==> pclmul(),
 ;
 
+/// Whether the CPU has PCLMULQDQ, detected at run time.
+///
+/// ```text
+/// ensures  r ==> pclmul()
+/// ```
 #[verifier::external_body]
 #[inline]
 pub fn has_pclmul() -> (r: bool)
@@ -53,6 +58,11 @@ pub fn has_pclmul() -> (r: bool)
     x86_has!("pclmulqdq")
 }
 
+/// Whether the CPU has AVX-512F, VPCLMULQDQ and PCLMULQDQ, detected at run time.
+///
+/// ```text
+/// ensures  r ==> vpclmul()
+/// ```
 #[verifier::external_body]
 #[inline]
 pub fn has_vpclmul() -> (r: bool)
@@ -62,6 +72,11 @@ pub fn has_vpclmul() -> (r: bool)
     x86_has!("avx512f") && x86_has!("vpclmulqdq") && x86_has!("pclmulqdq")
 }
 
+/// Whether the CPU has AVX2, VPCLMULQDQ and PCLMULQDQ, detected at run time.
+///
+/// ```text
+/// ensures  r ==> vpclmul256()
+/// ```
 #[verifier::external_body]
 #[inline]
 pub fn has_vpclmul256() -> (r: bool)
@@ -103,6 +118,7 @@ pub broadcast axiom fn axiom_yl_len(y: Y256)
         #[trigger] yl(y).len() == 2,
 ;
 
+/// The axioms of this module, for `broadcast use group_vclmul`.
 pub broadcast group group_vclmul {
     axiom_vpclmul_pclmul,
     axiom_zl_len,
@@ -127,6 +143,12 @@ pub fn x_load(d: &[u8], i: usize) -> (r: X128)
     X128(unsafe { _mm_loadu_si128(d.as_ptr().add(i) as *const __m128i) })
 }
 
+/// The vector holding `v`.
+///
+/// ```text
+/// requires pclmul()
+/// ensures  xv(r) == v
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn x_set(v: u128) -> (r: X128)
@@ -138,6 +160,12 @@ pub fn x_set(v: u128) -> (r: X128)
     X128(unsafe { _mm_set_epi64x((v >> 64) as u64 as i64, v as u64 as i64) })
 }
 
+/// The vector as a `u128`.
+///
+/// ```text
+/// requires pclmul()
+/// ensures  r == xv(*x)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn x_get(x: &X128) -> (r: u128)
@@ -151,6 +179,12 @@ pub fn x_get(x: &X128) -> (r: u128)
     ((hi as u128) << 64) | lo as u128
 }
 
+/// `a ^ b`.
+///
+/// ```text
+/// requires pclmul()
+/// ensures  xv(r) == xv(*a) ^ xv(*b)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn x_xor(a: &X128, b: &X128) -> (r: X128)
@@ -211,6 +245,12 @@ pub fn x_shr32(a: &X128) -> (r: X128)
     X128(unsafe { _mm_srli_si128::<4>(a.0) })
 }
 
+/// `a & b`.
+///
+/// ```text
+/// requires pclmul()
+/// ensures  xv(r) == xv(*a) & xv(*b)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn x_and(a: &X128, b: &X128) -> (r: X128)
@@ -276,6 +316,12 @@ pub fn y_splat(v: u128) -> (r: Y256)
     Y256(unsafe { _mm256_broadcastsi128_si256(_mm_set_epi64x((v >> 64) as u64 as i64, v as u64 as i64)) })
 }
 
+/// `a ^ b`.
+///
+/// ```text
+/// requires vpclmul256()
+/// ensures  yl(r) == Seq::new(2, |j: int| yl(*a)[j] ^ yl(*b)[j])
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn y_xor(a: &Y256, b: &Y256) -> (r: Y256)
@@ -357,6 +403,12 @@ pub fn z_splat(v: u128) -> (r: Z512)
     Z512(unsafe { _mm512_broadcast_i32x4(_mm_set_epi64x((v >> 64) as u64 as i64, v as u64 as i64)) })
 }
 
+/// `a ^ b`.
+///
+/// ```text
+/// requires vpclmul()
+/// ensures  zl(r) == Seq::new(4, |j: int| zl(*a)[j] ^ zl(*b)[j])
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn z_xor(a: &Z512, b: &Z512) -> (r: Z512)

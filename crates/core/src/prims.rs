@@ -36,6 +36,12 @@ pub open spec fn le_bytes(b: Seq<u8>, i: int, n: nat) -> nat
     }
 }
 
+/// The little-endian `u64` at `b[i..i + 8]`.
+///
+/// ```text
+/// requires i + 8 <= b@.len()
+/// ensures  r as nat == le_word(b@, i as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn load_u64_le(b: &[u8], i: usize) -> (r: u64)
@@ -49,6 +55,12 @@ pub fn load_u64_le(b: &[u8], i: usize) -> (r: u64)
     unsafe { u64::from_le(core::ptr::read_unaligned(b.as_ptr().add(i) as *const u64)) }
 }
 
+/// `b[i]`.
+///
+/// ```text
+/// requires i < b@.len()
+/// ensures  r == b@[i as int]
+/// ```
 #[inline(always)]
 pub fn get(b: &[u8], i: usize) -> (r: u8)
     requires
@@ -60,6 +72,12 @@ pub fn get(b: &[u8], i: usize) -> (r: u8)
     unsafe { *b.get_unchecked(i) }
 }
 
+/// `b[i]`.
+///
+/// ```text
+/// requires i < b@.len()
+/// ensures  r == b@[i as int]
+/// ```
 #[inline(always)]
 pub fn get16(b: &[i16], i: usize) -> (r: i16)
     requires
@@ -71,6 +89,12 @@ pub fn get16(b: &[i16], i: usize) -> (r: i16)
     unsafe { *b.get_unchecked(i) }
 }
 
+/// `b[i]`.
+///
+/// ```text
+/// requires i < b@.len()
+/// ensures  r == b@[i as int]
+/// ```
 #[inline(always)]
 pub fn get32(b: &[u32], i: usize) -> (r: u32)
     requires
@@ -82,6 +106,12 @@ pub fn get32(b: &[u32], i: usize) -> (r: u32)
     unsafe { *b.get_unchecked(i) }
 }
 
+/// Sets `b[i]` to `v`.
+///
+/// ```text
+/// requires i < old(b)@.len()
+/// ensures  final(b)@ == old(b)@.update(i as int, v)
+/// ```
 #[inline(always)]
 pub fn set(b: &mut [u8], i: usize, v: u8)
     requires
@@ -93,6 +123,12 @@ pub fn set(b: &mut [u8], i: usize, v: u8)
     unsafe { *b.get_unchecked_mut(i) = v }
 }
 
+/// Sets `b[i]` to `v`.
+///
+/// ```text
+/// requires i < old(b)@.len()
+/// ensures  final(b)@ == old(b)@.update(i as int, v)
+/// ```
 #[inline(always)]
 pub fn set16(b: &mut [i16], i: usize, v: i16)
     requires
@@ -104,6 +140,12 @@ pub fn set16(b: &mut [i16], i: usize, v: i16)
     unsafe { *b.get_unchecked_mut(i) = v }
 }
 
+/// Sets `b[i]` to `v`.
+///
+/// ```text
+/// requires i < old(b)@.len()
+/// ensures  final(b)@ == old(b)@.update(i as int, v)
+/// ```
 #[inline(always)]
 pub fn set32(b: &mut [u32], i: usize, v: u32)
     requires

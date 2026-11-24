@@ -22,6 +22,11 @@
 //!   at its `tail` compare-and-swap, or, if the queue is full, at the `head`
 //!   load that shows it full; a pop at its `head` compare-and-swap, or, if
 //!   the queue is empty, at the `tail` load that shows it empty.
+
+// Each `atomically` clause defines a predicate struct (`XPred`) that the
+// `verus!` macro gives no docs and no place to attach one. Every other item
+// here is documented.
+#![allow(missing_docs)]
 use crate::mono::*;
 use crate::ra::*;
 use crate::util::{exhausted, Backoff, CachePadded};
@@ -47,6 +52,7 @@ pub open spec const QUEUE_NS: int = 0x5b4d;
 /// A client's view of the queue's contents, oldest first.
 pub type QueueView<T> = GhostVar<Seq<T>>;
 
+/// Where the slot for a position is in its life.
 pub ghost enum Phase {
     /// Waiting for the push at `pos`; its cell is uninitialized and shared.
     Free,
@@ -58,29 +64,55 @@ pub ghost enum Phase {
     Taken,
 }
 
+/// The ghost state of one slot.
 pub ghost struct SlotG {
+    /// The position the slot is for now.
     pub pos: nat,
+    /// Where that position's push and pop are.
     pub phase: Phase,
 }
 
 /// What a thread that holds a slot is obliged to do with it.
 pub ghost enum Ticket<T> {
-    Push { pos: nat, v: T },
-    Pop { pos: nat },
+    /// Write `v` into the slot claimed for position `pos`.
+    Push {
+        /// The position.
+        pos: nat,
+        /// The value.
+        v: T,
+    },
+    /// Take the value out of the slot claimed for position `pos`.
+    Pop {
+        /// The position.
+        pos: nat,
+    },
 }
 
+/// The queue's constants: its capacity, how positions are packed, and the ids of its atomics, cells and ghost resources.
 pub ghost struct Consts {
+    /// The capacity.
     pub cap: nat,
+    /// `one_lap`: a power of two above `cap`, the stride of a packed position's lap.
     pub lap: nat,
+    /// `lap == 2^shift`.
     pub shift: nat,
+    /// The id of the `head` atomic.
     pub head_id: int,
+    /// The id of the `tail` atomic.
     pub tail_id: int,
+    /// The ids of the slots' stamp atomics.
     pub stamp_ids: Seq<int>,
+    /// The ids of the slots' cells.
     pub cells: Seq<CellId>,
+    /// The location of the abstract queue (`QueueView`).
     pub q_id: Loc,
+    /// The location of the tickets.
     pub tk_id: Loc,
+    /// The location of `head`'s monotonic counter.
     pub head_mono: Loc,
+    /// The location of `tail`'s monotonic counter.
     pub tail_mono: Loc,
+    /// The locations of the stamps' monotonic counters.
     pub stamp_mono: Seq<Loc>,
 }
 
@@ -98,21 +130,34 @@ pub open spec fn consts_ok(c: Consts) -> bool {
     &&& c.stamp_mono.len() == c.cap
 }
 
+/// What the queue's invariant owns: the histories of every atomic, the abstract queue, and the cells no thread holds.
 pub tracked struct Shared<T> {
+    /// The history of `head`.
     pub head: Hist,
+    /// The history of `tail`.
     pub tail: Hist,
+    /// The authority of `head`'s monotonic counter.
     pub hm: MonoAuth,
+    /// The authority of `tail`'s monotonic counter.
     pub tm: MonoAuth,
+    /// The history of each slot's stamp.
     pub stamps: Map<nat, Hist>,
+    /// The authority of each stamp's monotonic counter.
     pub sm: Map<nat, MonoAuth>,
     /// The cells of free and full slots, each published at the view of the
     /// stamp store that made it free or full.
     pub cells: Map<nat, Published<PointsTo<T>>>,
+    /// The authoritative abstract queue.
     pub q: GhostVarAuth<Seq<T>>,
+    /// The authority over the tickets of threads that hold a slot.
     pub tk: GhostMapAuth<nat, Ticket<T>>,
+    /// The head position.
     pub hd: Ghost<nat>,
+    /// The tail position.
     pub tl: Ghost<nat>,
+    /// Each slot's ghost state.
     pub slots: Ghost<Map<nat, SlotG>>,
+    /// The value pushed at each position not yet popped.
     pub vals: Ghost<Map<nat, T>>,
 }
 
@@ -199,6 +244,7 @@ pub open spec fn slot_inv<T>(c: Consts, s: Shared<T>, i: nat) -> bool {
     }
 }
 
+/// The queue's invariant (see its `inv`).
 pub struct QueuePred;
 
 impl<T> InvariantPredicate<Consts, Shared<T>> for QueuePred {
@@ -386,11 +432,13 @@ proof fn lemma_abs_pop<T>(vals: Map<nat, T>, h: nat, t: nat)
 
 // ---------------------------------------------------------------------------
 
+/// One slot: its stamp and its cell.
 pub struct Slot<T> {
     stamp: RaU64,
     value: PCell<T>,
 }
 
+/// A bounded multi-producer multi-consumer queue, with crossbeam's `ArrayQueue` API.
 pub struct ArrayQueue<T> {
     head: CachePadded<RaU64>,
     tail: CachePadded<RaU64>,
@@ -512,6 +560,8 @@ impl<T> ArrayQueue<T> {
         &&& c.head_id == self.head.0.id()
         &&& c.tail_id == self.tail.0.id()
         &&& self.buffer@.len() == c.cap
+        // The slots are a Vec: on 32-bit targets, fewer than 2^32.
+        &&& c.cap <= usize::MAX
         &&& forall|i: int| 0 <= i < c.cap ==> #[trigger] self.buffer@[i].stamp.id() == c.stamp_ids[i]
         &&& forall|i: int| 0 <= i < c.cap ==> #[trigger] self.buffer@[i].value.id() == c.cells[i]
     }
@@ -631,7 +681,7 @@ impl<T> ArrayQueue<T> {
     #[verifier::exec_allows_no_decreases_clause]
     #[verifier::spinoff_prover]
     #[verifier::rlimit(30)]
-    pub fn push_atomic(&self, value: T) -> (r: Result<(), T>)
+    pub fn push(&self, value: T) -> (r: Result<(), T>)
         atomically (au) {
             type PushPred,
             (x: QueueView<T>) -> (y: Commit<QueueView<T>>),
@@ -872,7 +922,7 @@ impl<T> ArrayQueue<T> {
     #[verifier::loop_isolation(false)]
     #[verifier::exec_allows_no_decreases_clause]
     #[verifier::spinoff_prover]
-    pub fn pop_atomic(&self) -> (r: Option<T>)
+    pub fn pop(&self) -> (r: Option<T>)
         atomically (au) {
             type PopPred,
             (x: QueueView<T>) -> (y: Commit<QueueView<T>>),
@@ -1142,7 +1192,7 @@ impl<T> ArrayQueue<T> {
     /// `false` means only "maybe not": the head is read relaxed and may be
     /// stale. The tail is read with a read-modify-write (adding 0), which
     /// reads its latest value, as in `pop`.
-    pub fn confirm_empty_atomic(&self) -> (r: bool)
+    pub fn confirm_empty(&self) -> (r: bool)
         atomically (au) {
             type ConfirmEmptyPred,
             (x: QueueView<T>) -> (y: Commit<(QueueView<T>, Ghost<bool>)>),
@@ -1196,7 +1246,7 @@ impl<T> ArrayQueue<T> {
     /// answer: `true` means it was full at one instant during the call,
     /// `false` only "maybe not". The tail is read relaxed and the head with
     /// a read-modify-write, as in `push`.
-    pub fn confirm_full_atomic(&self) -> (r: bool)
+    pub fn confirm_full(&self) -> (r: bool)
         atomically (au) {
             type ConfirmFullPred,
             (x: QueueView<T>) -> (y: Commit<(QueueView<T>, Ghost<bool>)>),
@@ -1556,6 +1606,7 @@ impl<T> ArrayQueue<T> {
                 c.lap == self.one_lap as nat,
                 self.mask as nat == c.lap - 1,
                 self.buffer@.len() == c.cap,
+                c.cap <= usize::MAX,
                 forall|i: int| 0 <= i < c.cap ==> #[trigger] self.buffer@[i].stamp.id() == c.stamp_ids[i],
                 forall|i: int| 0 <= i < c.cap ==> #[trigger] self.buffer@[i].value.id() == c.cells[i],
                 QueuePred::inv(c, s0),
@@ -1623,44 +1674,6 @@ impl<T> ArrayQueue<T> {
 
 } // verus!
 
-// The plain-Rust API. Each queue operation is verified as a logically
-// atomic function (`*_atomic`), which since Verus 2026-11-22 takes its
-// atomic update as a `Tracked` argument that survives erasure. These
-// one-line wrappers are what code outside Verus calls: they pass a ghost
-// value that does not exist at run time (`Tracked::assume_new()`, nothing
-// is assumed about the data) and return what the verified function returns.
-// A Verus caller uses the `*_atomic` form with an `atomically` block.
-impl<T> ArrayQueue<T> {
-    /// Appends `value`, or gives it back if the queue holds `capacity` values.
-    #[inline]
-    pub fn push(&self, value: T) -> Result<(), T> {
-        self.push_atomic(value, Tracked::assume_new())
-    }
-
-    /// Removes the oldest value, or returns `None` if the queue is empty.
-    #[inline]
-    pub fn pop(&self) -> Option<T> {
-        self.pop_atomic(Tracked::assume_new())
-    }
-
-    /// Whether the queue is empty, for a thread that will sleep on the
-    /// answer: `true` means it was empty at one instant during the call,
-    /// `false` only "maybe not" (see `confirm_empty_atomic`).
-    #[inline]
-    pub fn confirm_empty(&self) -> bool {
-        self.confirm_empty_atomic(Tracked::assume_new())
-    }
-
-    /// Whether the queue is full, for a thread that will sleep on the
-    /// answer: `true` means it was full at one instant during the call,
-    /// `false` only "maybe not" (see `confirm_full_atomic`).
-    #[inline]
-    pub fn confirm_full(&self) -> bool {
-        self.confirm_full_atomic(Tracked::assume_new())
-    }
-}
-
-
 impl<T> Drop for ArrayQueue<T> {
     fn drop(&mut self) {
         self.destroy();
@@ -1675,7 +1688,7 @@ impl<T> ArrayQueue<T> {
     /// If `cap` is zero or at least 2^60 (more than can be allocated).
     pub fn new(cap: usize) -> ArrayQueue<T> {
         assert!(cap > 0, "capacity must be non-zero");
-        assert!(cap < 0x1000_0000_0000_0000, "capacity must be below 2^60");
+        assert!((cap as u64) < 0x1000_0000_0000_0000, "capacity must be below 2^60");
         Self::new_with_view(cap).0
     }
 }

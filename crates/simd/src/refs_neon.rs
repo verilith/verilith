@@ -6,6 +6,12 @@ use vstd::prelude::*;
 
 verus! {
 
+/// The verified scalar reference for `shr8`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires 1 <= n <= 8
+/// ensures  r@ == shr8(a@, n as int)
+/// ```
 pub fn ref_shr8(a: &[u8], n: u32) -> (r: Vec<u8>)
     requires
         1 <= n <= 8,
@@ -41,6 +47,12 @@ pub fn ref_shr8(a: &[u8], n: u32) -> (r: Vec<u8>)
     r
 }
 
+/// The verified scalar reference for `abd_u8`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+/// ensures  r@ == abd_u8(a@, b@)
+/// ```
 pub fn ref_abd_u8(a: &[u8], b: &[u8]) -> (r: Vec<u8>)
     requires
         a@.len() == b@.len(),
@@ -121,6 +133,12 @@ fn sra1(b: u8, n: u32) -> (v: u8)
     if q < 0 { (q + 256) as u8 } else { q as u8 }
 }
 
+/// The verified scalar reference for `sra8`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires 1 <= n <= 8
+/// ensures  r@ == sra8(a@, n as int)
+/// ```
 pub fn ref_sra8(a: &[u8], n: u32) -> (r: Vec<u8>)
     requires
         1 <= n <= 8,
@@ -144,6 +162,12 @@ pub fn ref_sra8(a: &[u8], n: u32) -> (r: Vec<u8>)
     r
 }
 
+/// The verified scalar reference for `tbl1`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires t@.len() == 16
+/// ensures  r@ == tbl1(t@, idx@)
+/// ```
 pub fn ref_tbl1(t: &[u8], idx: &[u8]) -> (r: Vec<u8>)
     requires
         t@.len() == 16,
@@ -168,6 +192,14 @@ pub fn ref_tbl1(t: &[u8], idx: &[u8]) -> (r: Vec<u8>)
     r
 }
 
+/// The verified scalar reference for `uzp1_8`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+///          a@.len() % 2 == 0
+///          a@.len() <= 0x1000_0000
+/// ensures  r@ == uzp1_8(a@, b@)
+/// ```
 pub fn ref_uzp1_8(a: &[u8], b: &[u8]) -> (r: Vec<u8>)
     requires
         a@.len() == b@.len(),
@@ -222,6 +254,13 @@ pub fn ref_max8(a: &[u8]) -> (r: u8)
     m
 }
 
+/// The largest lane of `a`, the verified scalar reference `tests/neon.rs` checks `vmaxvq_u16` against.
+///
+/// ```text
+/// requires a@.len() > 0
+/// ensures  forall|i: int| 0 <= i < a@.len() ==> #[trigger] a@[i] <= r
+///          exists|i: int| 0 <= i < a@.len() && #[trigger] a@[i] == r
+/// ```
 pub fn ref_max16(a: &[u16]) -> (r: u16)
     requires
         a@.len() > 0,
@@ -246,6 +285,14 @@ pub fn ref_max16(a: &[u16]) -> (r: u16)
     m
 }
 
+/// The verified scalar reference for `padd8`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+///          a@.len() % 2 == 0
+///          a@.len() <= 0x1000_0000
+/// ensures  r@ == padd8(a@, b@)
+/// ```
 pub fn ref_padd8(a: &[u8], b: &[u8]) -> (r: Vec<u8>)
     requires
         a@.len() == b@.len(),
@@ -280,6 +327,12 @@ pub fn ref_padd8(a: &[u8], b: &[u8]) -> (r: Vec<u8>)
     r
 }
 
+/// The verified scalar reference for `mullo8`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+/// ensures  r@ == mullo8(a@, b@)
+/// ```
 pub fn ref_mullo8(a: &[u8], b: &[u8]) -> (r: Vec<u8>)
     requires
         a@.len() == b@.len(),
@@ -312,6 +365,12 @@ pub fn ref_mullo8(a: &[u8], b: &[u8]) -> (r: Vec<u8>)
     r
 }
 
+/// The verified scalar reference for `mullo32`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+/// ensures  r@ == mullo32(a@, b@)
+/// ```
 pub fn ref_mullo32(a: &[u32], b: &[u32]) -> (r: Vec<u32>)
     requires
         a@.len() == b@.len(),
@@ -344,6 +403,12 @@ pub fn ref_mullo32(a: &[u32], b: &[u32]) -> (r: Vec<u32>)
     r
 }
 
+/// The verified scalar reference for `paddl8`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires a@.len() % 2 == 0
+/// ensures  r@ == paddl8(a@)
+/// ```
 pub fn ref_paddl8(a: &[u8]) -> (r: Vec<u16>)
     requires
         a@.len() % 2 == 0,
@@ -370,6 +435,12 @@ pub fn ref_paddl8(a: &[u8]) -> (r: Vec<u16>)
     r
 }
 
+/// The verified scalar reference for `paddl16`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires a@.len() % 2 == 0
+/// ensures  r@ == paddl16(a@)
+/// ```
 pub fn ref_paddl16(a: &[u16]) -> (r: Vec<u32>)
     requires
         a@.len() % 2 == 0,
@@ -396,6 +467,12 @@ pub fn ref_paddl16(a: &[u16]) -> (r: Vec<u32>)
     r
 }
 
+/// The verified scalar reference for `paddl32`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires a@.len() % 2 == 0
+/// ensures  r@ == paddl32(a@)
+/// ```
 pub fn ref_paddl32(a: &[u32]) -> (r: Vec<u64>)
     requires
         a@.len() % 2 == 0,
@@ -426,6 +503,11 @@ pub fn ref_paddl32(a: &[u32]) -> (r: Vec<u64>)
 // Integer transforms
 // ---------------------------------------------------------------------------
 
+/// The verified scalar reference for `abs16`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// ensures  r@ == abs16(a@)
+/// ```
 pub fn ref_abs16(a: &[u16]) -> (r: Vec<u16>)
     ensures
         r@ == abs16(a@),
@@ -446,6 +528,12 @@ pub fn ref_abs16(a: &[u16]) -> (r: Vec<u16>)
     r
 }
 
+/// The verified scalar reference for `max_u16`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+/// ensures  r@ == max_u16(a@, b@)
+/// ```
 pub fn ref_max_u16(a: &[u16], b: &[u16]) -> (r: Vec<u16>)
     requires
         a@.len() == b@.len(),
@@ -504,6 +592,12 @@ fn smul1(x: u16, y: u16) -> (r: u32)
     wrap32e(sx * sy)
 }
 
+/// The verified scalar reference for `mull_lo_s16`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+/// ensures  r@ == mull_lo_s16(a@, b@)
+/// ```
 pub fn ref_mull_lo_s16(a: &[u16], b: &[u16]) -> (r: Vec<u32>)
     requires
         a@.len() == b@.len(),
@@ -529,6 +623,12 @@ pub fn ref_mull_lo_s16(a: &[u16], b: &[u16]) -> (r: Vec<u32>)
     r
 }
 
+/// The verified scalar reference for `mull_hi_s16`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+/// ensures  r@ == mull_hi_s16(a@, b@)
+/// ```
 pub fn ref_mull_hi_s16(a: &[u16], b: &[u16]) -> (r: Vec<u32>)
     requires
         a@.len() == b@.len(),
@@ -634,6 +734,12 @@ fn rshr1(x: u32, n: u32) -> (r: u32)
     wrap32e(q0 - k)
 }
 
+/// The verified scalar reference for `rshr_s32`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires 1 <= n <= 31
+/// ensures  r@ == rshr_s32(a@, n as int)
+/// ```
 pub fn ref_rshr_s32(a: &[u32], n: u32) -> (r: Vec<u32>)
     requires
         1 <= n <= 31,
@@ -657,6 +763,14 @@ pub fn ref_rshr_s32(a: &[u32], n: u32) -> (r: Vec<u32>)
     r
 }
 
+/// The verified scalar reference for `uzp2_16`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+///          a@.len() % 2 == 0
+///          a@.len() <= 0x1000_0000
+/// ensures  r@ == uzp2_16(a@, b@)
+/// ```
 pub fn ref_uzp2_16(a: &[u16], b: &[u16]) -> (r: Vec<u16>)
     requires
         a@.len() == b@.len(),
@@ -687,6 +801,14 @@ pub fn ref_uzp2_16(a: &[u16], b: &[u16]) -> (r: Vec<u16>)
 }
 
 
+/// The verified scalar reference for `interleave3`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+///          a@.len() == c@.len()
+///          a@.len() <= 0x1000_0000
+/// ensures  r@ == interleave3(a@, b@, c@)
+/// ```
 pub fn ref_interleave3(a: &[u8], b: &[u8], c: &[u8]) -> (r: Vec<u8>)
     requires
         a@.len() == b@.len(),
@@ -720,6 +842,12 @@ pub fn ref_interleave3(a: &[u8], b: &[u8], c: &[u8]) -> (r: Vec<u8>)
 // The 16-bit inverse DCT
 // ---------------------------------------------------------------------------
 
+/// The verified scalar reference for `mull_lo_lane_s16`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires l < c@.len()
+/// ensures  r@ == mull_lo_lane_s16(a@, c@, l as int)
+/// ```
 pub fn ref_mull_lo_lane_s16(a: &[u16], c: &[u16], l: usize) -> (r: Vec<u32>)
     requires
         l < c@.len(),
@@ -745,6 +873,12 @@ pub fn ref_mull_lo_lane_s16(a: &[u16], c: &[u16], l: usize) -> (r: Vec<u32>)
     r
 }
 
+/// The verified scalar reference for `mull_hi_lane_s16`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires l < c@.len()
+/// ensures  r@ == mull_hi_lane_s16(a@, c@, l as int)
+/// ```
 pub fn ref_mull_hi_lane_s16(a: &[u16], c: &[u16], l: usize) -> (r: Vec<u32>)
     requires
         l < c@.len(),
@@ -792,6 +926,13 @@ fn smla1(acc: u32, x: u16, y: u16) -> (r: u32)
     }
 }
 
+/// The verified scalar reference for `mlal_lo_lane_s16`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires l < c@.len()
+///          acc@.len() <= a@.len()
+/// ensures  r@ == mlal_lo_lane_s16(acc@, a@, c@, l as int)
+/// ```
 pub fn ref_mlal_lo_lane_s16(acc: &[u32], a: &[u16], c: &[u16], l: usize) -> (r: Vec<u32>)
     requires
         l < c@.len(),
@@ -817,6 +958,13 @@ pub fn ref_mlal_lo_lane_s16(acc: &[u32], a: &[u16], c: &[u16], l: usize) -> (r: 
     r
 }
 
+/// The verified scalar reference for `mlal_hi_lane_s16`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires l < c@.len()
+///          2 * acc@.len() <= a@.len()
+/// ensures  r@ == mlal_hi_lane_s16(acc@, a@, c@, l as int)
+/// ```
 pub fn ref_mlal_hi_lane_s16(acc: &[u32], a: &[u16], c: &[u16], l: usize) -> (r: Vec<u32>)
     requires
         l < c@.len(),
@@ -846,6 +994,12 @@ pub fn ref_mlal_hi_lane_s16(acc: &[u32], a: &[u16], c: &[u16], l: usize) -> (r: 
     r
 }
 
+/// The verified scalar reference for `rshrn_s32`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires 1 <= n <= 16
+/// ensures  r@ == rshrn_s32(a@, n as int)
+/// ```
 pub fn ref_rshrn_s32(a: &[u32], n: u32) -> (r: Vec<u16>)
     requires
         1 <= n <= 16,
@@ -874,6 +1028,12 @@ pub fn ref_rshrn_s32(a: &[u32], n: u32) -> (r: Vec<u16>)
     r
 }
 
+/// The verified scalar reference for `adds_u16`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+/// ensures  r@ == adds_u16(a@, b@)
+/// ```
 pub fn ref_adds_u16(a: &[u16], b: &[u16]) -> (r: Vec<u16>)
     requires
         a@.len() == b@.len(),
@@ -898,6 +1058,12 @@ pub fn ref_adds_u16(a: &[u16], b: &[u16]) -> (r: Vec<u16>)
     r
 }
 
+/// The verified scalar reference for `sum_u16`, which `tests/neon.rs` checks the CPU against.
+///
+/// ```text
+/// requires a@.len() <= 0x1_0000
+/// ensures  r as int == sum_u16(a@)
+/// ```
 pub fn ref_sum_u16(a: &[u16]) -> (r: u64)
     requires
         a@.len() <= 0x1_0000,

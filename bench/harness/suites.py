@@ -194,4 +194,13 @@ COMPARISONS = [
     # cre2's API (the C wrapper of RE2): verilith-regex (cre2-abi) in place of cre2 + RE2.
     dict(id="regex-re2", suite="regex", data="regex", same_output=True, api="drop-in",
          ours=("verilith-regex", ["regex-vregex"]), rival=("RE2 2025-11-05", ["regex-re2"])),
+    # OpenSSL's SHA-2 API: verilith-sha2 (openssl-abi) in place of libcrypto.
+    dict(id="sha256", suite="sha2", data="sha2", same_output=True, api="drop-in",
+         ours=("verilith-sha2", ["sha2-vsha2", "sha256"]), rival=("OpenSSL 4.1.0", ["sha2-openssl", "sha256"])),
+    dict(id="sha512", suite="sha2", data="sha2", same_output=True, api="drop-in",
+         ours=("verilith-sha2", ["sha2-vsha2", "sha512"]), rival=("OpenSSL 4.1.0", ["sha2-openssl", "sha512"])),
+    dict(id="sha256-stream", suite="sha2", data="sha2", same_output=True, api="drop-in",
+         ours=("verilith-sha2", ["sha2-vsha2", "sha256-stream"]), rival=("OpenSSL 4.1.0", ["sha2-openssl", "sha256-stream"])),
+    dict(id="sha512-stream", suite="sha2", data="sha2", same_output=True, api="drop-in",
+         ours=("verilith-sha2", ["sha2-vsha2", "sha512-stream"]), rival=("OpenSSL 4.1.0", ["sha2-openssl", "sha512-stream"])),
 ]

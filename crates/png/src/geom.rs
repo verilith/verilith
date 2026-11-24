@@ -273,6 +273,7 @@ pub fn pass_offsets(h: &Header) -> (r: [u128; 8])
         decreases n - p,
     {
         let s = pass_size_exec(h, p);
+        assert(p as usize == p);
         let v = r[p as usize] + s;
         r[p as usize + 1] = v;
         p = p + 1;

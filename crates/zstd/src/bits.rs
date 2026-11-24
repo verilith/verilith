@@ -20,6 +20,16 @@ pub use verilith_core::bits::{lowmask, lemma_mask, lemma_and_mask};
 
 verus! {
 
+/// The bitstream readers take inputs shorter than this, so that a bit
+/// position (eight per byte) fits a usize: 4 GiB on 64-bit targets, and
+/// on 32-bit ones 128 MiB, so that twice a bit position fits too. Blocks
+/// are below 128 KiB, and dictionaries below `dict::DICT_MAX`.
+#[cfg(target_pointer_width = "64")]
+pub const BITS_MAX: usize = 0x1_0000_0000;
+
+#[cfg(target_pointer_width = "32")]
+pub const BITS_MAX: usize = 0x0800_0000;
+
 pub proof fn lemma_pow2_le(a: nat, b: nat)
     requires
         a <= b,
@@ -154,7 +164,7 @@ pub fn highbit32(x: u32) -> (r: u32)
 /// A backward stream's start: the number of useful bits.
 pub fn bstart_exec(s: &[u8]) -> (r: Option<usize>)
     requires
-        s@.len() < 0x1000_0000_0000_0000,
+        s@.len() < BITS_MAX,
     ensures
         r is Some <==> bstart(s@) is Some,
         r is Some ==> r.unwrap() as int == bstart(s@).unwrap(),

@@ -19,6 +19,11 @@
 //!   ghost token, exactly as a sequential FIFO of capacity `cap` would;
 //! - values left in the queue are dropped exactly once, by whichever side
 //!   is dropped last.
+
+// Each `atomically` clause defines a predicate struct (`XPred`) that the
+// `verus!` macro gives no docs and no place to attach one. Every other item
+// here is documented.
+#![allow(missing_docs)]
 use crate::ra::*;
 use crate::util::{arc_clone, exhausted, CachePadded};
 use std::sync::Arc;
@@ -40,54 +45,79 @@ broadcast use vstd::set_lib::range_set_properties;
 /// A client's view of the queue's contents, oldest first.
 pub type QueueView<T> = GhostVar<Seq<T>>;
 
+/// The producer's ghost state.
 pub ghost struct ProdGhost {
+    /// The next position the producer fills.
     pub tail: nat,
+    /// The head the producer last read.
     pub head_cache: nat,
     /// The producer's latest message in the tail history, and its view.
     pub tidx: nat,
+    /// The view of that message.
     pub tview: RaView,
     /// Set once the producer has been dropped.
     pub left: bool,
 }
 
+/// The consumer's ghost state.
 pub ghost struct ConsGhost<T> {
+    /// The next position the consumer takes.
     pub head: nat,
+    /// The tail the consumer last read.
     pub tail_cache: nat,
     /// The values in the slots the consumer has claimed, `[head, tail_cache)`.
     pub held: Seq<T>,
     /// The consumer's latest message in the head history, and its view.
     pub hidx: nat,
+    /// The view of that message.
     pub hview: RaView,
     /// Set once the consumer has been dropped.
     pub left: bool,
 }
 
+/// The ring buffer's constants: its capacity and the ids of its atomics, cells and ghost resources.
 pub ghost struct Consts {
+    /// The capacity.
     pub cap: nat,
+    /// The id of the `head` atomic.
     pub head_id: int,
+    /// The id of the `tail` atomic.
     pub tail_id: int,
+    /// The id of the `refs` atomic.
     pub refs_id: int,
+    /// The ids of the slots' cells.
     pub cells: Seq<CellId>,
+    /// The id of the cell the producer leaves its final tail in.
     pub tail_out: CellId,
+    /// The id of the cell the consumer leaves its final head in.
     pub head_out: CellId,
+    /// The location of the abstract queue (`QueueView`).
     pub q_id: Loc,
+    /// The location of the producer's ghost state.
     pub prod_id: Loc,
+    /// The location of the consumer's ghost state.
     pub cons_id: Loc,
 }
 
 /// What the producer leaves behind when dropped: its ghost state, and its
 /// final tail in a cell, for whichever side cleans up.
 pub tracked struct ProdLeft {
+    /// The producer's ghost state.
     pub g: GhostVar<ProdGhost>,
+    /// Its final tail.
     pub tail_out: Published<PointsTo<u64>>,
 }
 
 /// What the consumer leaves behind when dropped: its ghost state, the slots
 /// it had claimed, its final head, and its view when it left.
 pub tracked struct ConsLeft<T> {
+    /// The consumer's ghost state.
     pub g: GhostVar<ConsGhost<T>>,
+    /// The cells of the slots it had claimed.
     pub held: Map<nat, Published<PointsTo<T>>>,
+    /// Its final head.
     pub head_out: Published<PointsTo<u64>>,
+    /// Its view when it left.
     pub ghost view: RaView,
 }
 
@@ -98,14 +128,23 @@ pub tracked struct ConsLeft<T> {
 /// absolute position, so a slot freed at position `p` is filed under
 /// `p + cap`.
 pub tracked struct Shared<T> {
+    /// The history of `head`.
     pub head: Hist,
+    /// The history of `tail`.
     pub tail: Hist,
+    /// The history of `refs`.
     pub refs: Hist,
+    /// The authoritative abstract queue.
     pub q: GhostVarAuth<Seq<T>>,
+    /// The authority over the producer's ghost state.
     pub prod: GhostVarAuth<ProdGhost>,
+    /// The authority over the consumer's ghost state.
     pub cons: GhostVarAuth<ConsGhost<T>>,
+    /// The cells neither side holds, by absolute position.
     pub cells: Map<nat, Published<PointsTo<T>>>,
+    /// What the producer left, once it has been dropped.
     pub prod_left: Option<ProdLeft>,
+    /// What the consumer left, once it has been dropped.
     pub cons_left: Option<ConsLeft<T>>,
     /// Set by the last side to leave, once it has taken the values out.
     pub dead: bool,
@@ -180,6 +219,7 @@ pub open spec fn seen_by<T>(m: Map<nat, Published<PointsTo<T>>>, lo: nat, hi: na
     forall|p: nat| lo <= p < hi ==> (#[trigger] m[p]).view().le(v)
 }
 
+/// The ring buffer's invariant (see its `inv`).
 pub struct SpscPred;
 
 impl<T> InvariantPredicate<Consts, Shared<T>> for SpscPred {
@@ -249,6 +289,7 @@ impl<T> InvariantPredicate<Consts, Shared<T>> for SpscPred {
     }
 }
 
+/// The storage a `Producer` and `Consumer` share.
 pub struct RingBuffer<T> {
     head: CachePadded<RaU64>,
     tail: CachePadded<RaU64>,
@@ -278,6 +319,8 @@ impl<T> RingBuffer<T> {
         &&& c.head_out == self.head_out.id()
         &&& c.cells.len() == c.cap
         &&& self.buf@.len() == c.cap
+        // The slots are a Vec: on 32-bit targets, fewer than 2^32.
+        &&& c.cap <= usize::MAX
         &&& forall|i: int| 0 <= i < c.cap ==> #[trigger] self.buf@[i].id() == c.cells[i]
     }
 
@@ -290,6 +333,7 @@ impl<T> RingBuffer<T> {
     }
 }
 
+/// The sending half of a single-producer single-consumer ring buffer, with rtrb's API.
 pub struct Producer<T> {
     rb: Arc<RingBuffer<T>>,
     tail: u64,
@@ -302,6 +346,7 @@ pub struct Producer<T> {
     tid: Tracked<Tid>,
 }
 
+/// The receiving half of a single-producer single-consumer ring buffer, with rtrb's API.
 pub struct Consumer<T> {
     rb: Arc<RingBuffer<T>>,
     head: u64,
@@ -486,7 +531,7 @@ impl<T> Producer<T> {
 
     /// Appends `value`, or gives it back if the queue holds `capacity` values.
     #[verifier::spinoff_prover]
-    pub fn push_atomic(&mut self, value: T) -> (r: Result<(), T>)
+    pub fn push(&mut self, value: T) -> (r: Result<(), T>)
         atomically (au) {
             type PushPred,
             (x: QueueView<T>) -> (y: Commit<QueueView<T>>),
@@ -802,7 +847,7 @@ impl<T> Consumer<T> {
 
     /// Removes the oldest value, or returns `None` if the queue is empty.
     #[verifier::spinoff_prover]
-    pub fn pop_atomic(&mut self) -> (r: Option<T>)
+    pub fn pop(&mut self) -> (r: Option<T>)
         atomically (au) {
             type PopPred,
             (x: QueueView<T>) -> (y: Commit<QueueView<T>>),
@@ -1554,7 +1599,7 @@ impl<T: Copy> Producer<T> {
     /// `values` is empty or the queue was full.
     #[verifier::spinoff_prover]
     #[verifier::rlimit(60)]
-    pub fn push_slice_atomic(&mut self, values: &[T]) -> (n: usize)
+    pub fn push_slice(&mut self, values: &[T]) -> (n: usize)
         atomically (au) {
             type PushSlicePred,
             (x: QueueView<T>) -> (y: Commit<QueueView<T>>),
@@ -1757,7 +1802,7 @@ impl<T> Consumer<T> {
     /// only if `max` is zero or the queue was empty.
     #[verifier::spinoff_prover]
     #[verifier::rlimit(60)]
-    pub fn pop_into_atomic(&mut self, out: &mut Vec<T>, max: usize) -> (n: usize)
+    pub fn pop_into(&mut self, out: &mut Vec<T>, max: usize) -> (n: usize)
         atomically (au) {
             type PopIntoPred,
             (x: QueueView<T>) -> (y: Commit<QueueView<T>>),
@@ -1863,6 +1908,14 @@ impl<T> Consumer<T> {
                     assert(s.cells.dom().contains(p));
                     assert(s.cells[p].view() == self.tid@.view());
                 }
+                // Published first, while the facts about the slots just
+                // published are fresh (on 32-bit targets the solver loses them
+                // after the frame lemma below).
+                assert(seen_by(old_cells, pg.head_cache + c.cap, h0 + c.cap, cg.hview)) by {
+                    assert(seen_by(old_cells, pg.head_cache + c.cap, (hh[cg.hidx as int].val + c.cap) as nat, hh[cg.hidx as int].view));
+                }
+                assert(same_outside(s.cells, old_cells, h0 + c.cap, h0 + k as nat + c.cap));
+                lemma_publish_head(old_cells, s.cells, hh, s.head.msgs(), pg.head_cache + c.cap, h0, k as nat, c.cap, cg.hview, self.tid@.view());
                 let ghost cells1 = s.cells;
                 let ghost kn = k as nat;
                 assert forall|p: nat| #![trigger cells1.dom().contains(p)] h0 + c.cap <= p < h0 + kn + c.cap implies cells1.dom().contains(p) && cells1[p].value() == f[p] by {
@@ -1873,11 +1926,6 @@ impl<T> Consumer<T> {
                 assert(same_outside(cells1, old_cells, h0 + c.cap, h0 + kn + c.cap));
                 lemma_pop_frame(c, cells1, old_cells, f, old_q, cg.tail_cache, pg.tail, pg.head_cache, h0, kn);
                 assert(old_q.subrange(0, k as int) =~= held.subrange(0, k as int));
-                assert(seen_by(old_cells, pg.head_cache + c.cap, h0 + c.cap, cg.hview)) by {
-                    assert(seen_by(old_cells, pg.head_cache + c.cap, (hh[cg.hidx as int].val + c.cap) as nat, hh[cg.hidx as int].view));
-                }
-                assert(same_outside(s.cells, old_cells, h0 + c.cap, h0 + k as nat + c.cap));
-                lemma_publish_head(old_cells, s.cells, hh, s.head.msgs(), pg.head_cache + c.cap, h0, k as nat, c.cap, cg.hview, self.tid@.view());
                 lemma_seen_frame_above(old_cells, s.cells, lo, hi, cg.tail_cache, s.tail.msgs());
                 s.cons.update(self.g.borrow_mut(), ConsGhost {
                     head: next as nat,
@@ -1903,17 +1951,18 @@ impl<T> Consumer<T> {
         proof {
             let ghost nn = next as nat;
             let ghost tcn = self.tail_cache as nat;
-            assert forall|p: nat| nn <= p < tcn implies {
-                &&& #[trigger] self.perms@.dom().contains(p)
-                &&& slot_ok(c, p, self.perms@[p])
-                &&& self.perms@[p].is_init()
-                &&& self.perms@[p].value() == new_held[p - nn]
-            } by {
-                assert(h0 + k as nat <= p);
-                assert(self.perms@.dom().contains(p));
-                assert(new_held[p - nn] == held[p - h0]);
+            assert(full_perms(self.perms@, c, nn, tcn, new_held, nn)) by {
+                assert forall|p: nat| nn <= p < tcn implies {
+                    &&& #[trigger] self.perms@.dom().contains(p)
+                    &&& slot_ok(c, p, self.perms@[p])
+                    &&& self.perms@[p].is_init()
+                    &&& self.perms@[p].value() == new_held[p - nn]
+                } by {
+                    assert(h0 + k as nat <= p);
+                    assert(self.perms@.dom().contains(p));
+                    assert(new_held[p - nn] == held[p - h0]);
+                }
             }
-            assert(full_perms(self.perms@, c, nn, tcn, new_held, nn));
         }
         self.head = next;
         self.idx = idx;
@@ -2218,6 +2267,8 @@ impl<T> Consumer<T> {
 pub fn new<T>(cap: u64) -> (r: (Producer<T>, Consumer<T>, Tracked<QueueView<T>>))
     requires
         cap > 0,
+        // Always true on 64-bit targets: the slots are one Vec.
+        cap <= usize::MAX,
     ensures
         r.0.wf(),
         r.1.wf(),
@@ -2364,48 +2415,6 @@ pub fn new<T>(cap: u64) -> (r: (Producer<T>, Consumer<T>, Tracked<QueueView<T>>)
 }
 
 } // verus!
-
-// The plain-Rust API. Each queue operation is verified as a logically
-// atomic function (`*_atomic`), which since Verus 2026-11-22 takes its
-// atomic update as a `Tracked` argument that survives erasure. These
-// one-line wrappers are what code outside Verus calls: they pass a ghost
-// value that does not exist at run time (`Tracked::assume_new()`, nothing
-// is assumed about the data) and return what the verified function returns.
-// A Verus caller uses the `*_atomic` form with an `atomically` block.
-impl<T> Producer<T> {
-    /// Appends `value`, or gives it back if the queue holds `capacity` values.
-    #[inline]
-    pub fn push(&mut self, value: T) -> Result<(), T> {
-        self.push_atomic(value, Tracked::assume_new())
-    }
-}
-
-impl<T: Copy> Producer<T> {
-    /// Appends a prefix of `values`, as long as fits, with one index store
-    /// for the whole batch. Returns how many were appended: none only if
-    /// `values` is empty or the queue was full.
-    #[inline]
-    pub fn push_slice(&mut self, values: &[T]) -> usize {
-        self.push_slice_atomic(values, Tracked::assume_new())
-    }
-}
-
-impl<T> Consumer<T> {
-    /// Removes the oldest value, or returns `None` if the queue is empty.
-    #[inline]
-    pub fn pop(&mut self) -> Option<T> {
-        self.pop_atomic(Tracked::assume_new())
-    }
-
-    /// Moves up to `max` of the oldest values to the end of `out`, with one
-    /// index store for the whole batch. Returns how many were moved: none
-    /// only if `max` is zero or the queue was empty.
-    #[inline]
-    pub fn pop_into(&mut self, out: &mut Vec<T>, max: usize) -> usize {
-        self.pop_into_atomic(out, max, Tracked::assume_new())
-    }
-}
-
 
 impl<T> Drop for Producer<T> {
     fn drop(&mut self) {

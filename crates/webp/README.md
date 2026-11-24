@@ -8,14 +8,16 @@ for the still-image decode path of
 [libwebp](https://chromium.googlesource.com/webm/libwebp/), not for libwebp as
 a whole, and its output is byte-identical with libwebp 1.6.0's.
 
-The two formats are proven to different depths. The lossless decoder is
-proven correct against a specification of the format, in linear time. The
-lossy decoder is proven memory-safe, overflow-free, panic-free and
-terminating. Its first stages, the boolean entropy decoder, the frame header, the intra
-prediction modes and the coefficients of a macroblock, are also proven
-against a specification written from RFC 6386; the
-rest of its agreement with libwebp is tested (differential tests and
-fuzzing), not yet proven.
+Both formats are proven correct against a specification. The lossless
+decoder is proven correct in linear time. The lossy decoder is proven
+memory-safe, overflow-free, panic-free and terminating, and its output is
+proven to be the specification's: every stage from the boolean entropy
+decoder through the frame header, intra modes, coefficients, inverse
+transforms, prediction, loop filter and RGB conversion to the alpha plane.
+That theorem is for frames that satisfy `vp8_plain`, which every ordinary
+encoder's output does ([below](#what-is-proven)). Beyond it, agreement with
+libwebp is tested (differential tests and fuzzing), and the lossy decoder
+has no proven work bound.
 
 For lossless, the bit reader, the Huffman table builder, the color cache, the
 backward references, the four image transforms, the container parser and the
@@ -570,6 +572,20 @@ AVX2 (AArch64, older x86) the predictor and color transforms still go a run
 of one block at a time, with the same SWAR mode kernels and a scalar loop
 for the rest (`unpredict_swar`, `uncolor_run_swar`), rather than one pixel
 at a time with a division per pixel.
+
+### WebAssembly
+
+Built for WebAssembly with SIMD128 (`-C target-feature=+simd128`), the
+lossy decoder's NEON kernels (inverse transform, loop filters, prediction,
+upsampling and colour conversion) run on WebAssembly vectors: each NEON
+wrapper they use is proven on SIMD128 in verilith-simd
+(`src/wasm_neon.rs`), so the same proofs hold there. Under Node.js 22 on
+x86-64, a 1920x1080 lossy file decodes to RGBA in 21 ms, against 117 ms
+for the same SIMD128 build without the NEON paths (5.6x). Lossless
+decoding has no NEON kernels and is unchanged. Decoded pixels, in all
+eleven output layouts, are identical to the x86-64 and scalar
+WebAssembly builds on 56 test files (lossy, lossless and with
+alpha, sizes from 1x1).
 
 ## Building
 

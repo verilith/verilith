@@ -230,6 +230,9 @@ unsafe fn stage1(s: &[u8], out: &mut Stage1) -> bool {
     if W512 { stage1_w::<true>(s, out) } else { stage1_w::<false>(s, out) }
 }
 
+// The container stack `stage2` is handed. This prototype checks nesting
+// without pushing to it, so no `Ctx` is ever made.
+#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq)]
 enum Ctx {
     Arr,

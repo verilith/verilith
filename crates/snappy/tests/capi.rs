@@ -34,7 +34,8 @@ fn compress_and_uncompress() {
         return;
     };
     let mut rng = Rng(0x9e3779b97f4a7c15);
-    for n in [0usize, 1, 5, 6, 100, 65536, 1 << 20, 0xffff_ffff, 1 << 33] {
+    // 2^33, or on 32-bit targets the largest usize.
+    for n in [0usize, 1, 5, 6, 100, 65536, 1 << 20, 0xffff_ffff, (1u64 << 33).min(usize::MAX as u64) as usize] {
         assert_eq!(unsafe { capi::max_compressed_length_c(n) }, l.max_len(n), "max length {n}");
     }
     for size in sizes() {

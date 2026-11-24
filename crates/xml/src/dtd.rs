@@ -79,7 +79,7 @@ impl DtdOut {
 }
 
 /// The environment after the internal subset (`env_of`).
-fn ex_finish(s: &[u8], d: XDtd, ext: bool) -> (r: DtdOut)
+pub fn ex_finish(s: &[u8], d: XDtd, ext: bool) -> (r: DtdOut)
     requires
         s@.len() <= isize::MAX,
         s@.len() <= MAX_POS,
@@ -282,7 +282,7 @@ pub fn ex_enc_span(s: &[u8], j: usize) -> (r: Option<(usize, usize, usize)>)
 }
 
 /// `encoding_decl` at `j`.
-fn ex_encoding_decl(s: &[u8], j: usize, enc: Enc) -> (r: Option<(usize, usize, usize)>)
+pub fn ex_encoding_decl(s: &[u8], j: usize, enc: Enc) -> (r: Option<(usize, usize, usize)>)
     requires
         j + 8 <= s@.len() <= isize::MAX,
         s@.len() <= MAX_POS,
@@ -909,7 +909,7 @@ fn ex_ent_def(s: &[u8], c: usize, tape: &mut Tape, ge: bool) -> (r: Option<(usiz
 }
 
 /// `entity_decl` at `j`.
-fn ex_entity_decl(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<usize>)
+pub fn ex_entity_decl(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<usize>)
     requires
         j + 8 <= s@.len() <= isize::MAX,
         s@.len() <= MAX_POS,
@@ -1115,7 +1115,7 @@ fn ex_decl(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<usiz
 }
 
 /// `int_subset` from `i`: the position of the closing `]`.
-fn ex_int_subset(s: &[u8], i: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<usize>)
+pub fn ex_int_subset(s: &[u8], i: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<usize>)
     requires
         i <= s@.len() <= isize::MAX,
         s@.len() <= MAX_POS,

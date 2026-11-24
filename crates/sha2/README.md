@@ -4,15 +4,18 @@ SHA-2 (FIPS 180-4) in Rust, proven with
 [Verus](https://github.com/verus-lang/verus): SHA-224 and SHA-256, and
 the 64-bit family SHA-384, SHA-512, SHA-512/224 and SHA-512/256. These
 are the hash functions behind TLS, X.509 signatures, Ed25519 (SHA-512),
-Git's SHA-256 object format and most content addressing. It uses the
-CPU's SHA instructions where there are any, and it builds a static
-library behind OpenSSL's `SHA224_*`, `SHA256_*`, `SHA384_*` and
-`SHA512_*` C API.
+Git's SHA-256 object format and most content addressing. HMAC (FIPS
+198-1, RFC 2104) over each of them is proven too. It uses the CPU's SHA
+instructions where there are any, it implements RustCrypto's `digest`
+traits (0.11 and 0.10) so it can stand in for RustCrypto's `sha2` and
+`hmac`, it works without `std`, and it builds a static library behind
+OpenSSL's `SHA224_*`, `SHA256_*`, `SHA384_*` and `SHA512_*` C API.
 
-`cargo verus verify` (or `scripts/verify.sh`) checks 154 functions and
+`cargo verus verify` (or `scripts/verify.sh`) checks 331 functions and
 lemmas with no errors and no `assume`. What is assumed instead is listed
 under [Trusted base](#trusted-base): the CPU dispatch, the SHA instruction
-kernels, the AVX2 message schedules, and two byte stores.
+kernels, verilith-simd's specifications of the AVX2 intrinsics, and two
+byte stores.
 
 ```rust
 let d: [u8; 32] = verilith_sha2::sha256(b"abc");
@@ -24,6 +27,26 @@ assert_eq!(h.finalize(), d);
 
 let d: [u8; 64] = verilith_sha2::sha512(b"abc");
 let d: [u8; 48] = verilith_sha2::sha384(b"abc");
+
+let tag: [u8; 32] = verilith_sha2::hmac_sha256(b"key", b"message");
+let mut m = verilith_sha2::HmacSha256::new(b"key");
+m.update(b"mess");
+m.update(b"age");
+assert!(m.verify(&tag));
+```
+
+With the `digest` feature, the same types through RustCrypto's traits,
+where code is written against RustCrypto's `sha2` 0.11 and `hmac` 0.13:
+
+```rust,ignore
+use verilith_sha2::digest::{Digest, KeyInit, Mac};
+
+let d = verilith_sha2::Sha256::digest(b"abc");
+let mut m = <verilith_sha2::HmacSha256 as KeyInit>::new_from_slice(b"key").unwrap();
+Mac::update(&mut m, b"message");
+m.verify_slice(&tag).unwrap();
+// RustCrypto's own HMAC over these hashers works too.
+let m = hmac::SimpleHmac::<verilith_sha2::Sha256>::new_from_slice(b"key").unwrap();
 ```
 
 ## What is proven
@@ -38,8 +61,10 @@ let d: [u8; 48] = verilith_sha2::sha384(b"abc");
 | Whatever the sizes of the pieces given to `update`, `finalize` returns the hash of all of them in order: padding (§5.1.1, §5.1.2), the bit length modulo 2^64 or 2^128, one or two final blocks | `Sha256`, `Sha224` against `spec::sha256`, `spec::sha224`; `Sha512`, `Sha384`, `Sha512_224`, `Sha512_256` against `spec512::sha512`, `sha384`, `sha512_224`, `sha512_256` |
 | The 128-bit byte count of the SHA-512 family, kept as two 64-bit halves, is the message length modulo 2^128 | `hash512::Engine512::add_count` |
 | The rounds that take K_t + W_t precomputed, as a vectorized schedule gives it, are the rounds (addition modulo 2^n is associative) | `compress_block_kw` in each |
-| The pipelined kernels: each pair of blocks is compressed while the next pair's schedule is computed between its round groups, and the loop over pairs computes H(n) | `pair_kw` and `compress_blocks_pipe` in each, given the AVX2 schedule's contract |
+| The AVX2 message schedules, two blocks at once (whole, or a few words at a time for the pipelined kernels), compute K_t + W_t of §6.2.2 and §6.4.2 step 1: byte swaps, σ0 and σ1 from lane shifts, the words that straddle two vectors, the window of the last 16 words | `avx2::schedule512x2`, `sched_start`, `sched_steps2`, `schedule256x2`, `sched256_start`, `sched256_step` against `spec512::schedule` and `spec::schedule`, over verilith-simd's specifications of the intrinsics (lane lemmas in `lanes`) |
+| The pipelined kernels: each pair of blocks is compressed while the next pair's schedule is computed between its round groups, and the loop over pairs computes H(n) | `pair_kw` and `compress_blocks_pipe` in each |
 | The one-shot functions | `sha256`, `sha224`, `sha512`, `sha384`, `sha512_224`, `sha512_256` against the same |
+| For any key length, and whatever the sizes of the pieces given to `update`, HMAC's `finalize` returns HMAC(K, text) of FIPS 198-1 §4: K0 from the key (hashed if longer than the block, zero-padded), then H((K0 ⊕ opad) ‖ H((K0 ⊕ ipad) ‖ text)); `reset` returns to the keyed state; `verify` is equality with that MAC | `HmacSha224`, `HmacSha256`, `HmacSha384`, `HmacSha512`, `HmacSha512_224`, `HmacSha512_256` and the one-shot `hmac_*` against `spec_hmac::hmac_*` |
 
 ## Layout
 
@@ -61,10 +86,21 @@ let d: [u8; 48] = verilith_sha2::sha384(b"abc");
   length. The rounds are the same generated text over 64-bit words. The
   byte count is two 64-bit halves rather than a `u128`, so the hasher fits
   OpenSSL's 216-byte `SHA512_CTX`.
+- `src/spec_hmac.rs`: FIPS 198-1's HMAC as spec functions, over the
+  hashes of `spec` and `spec512`.
+- `src/hmac.rs`: the MACs. Each one keeps the inner hash with K0 ⊕ ipad
+  absorbed, the outer hash with K0 ⊕ opad absorbed, and a copy of the
+  inner one for `reset`, so the key is processed once.
+- `src/digest_impls.rs`: RustCrypto's `digest` traits over the hashers
+  and MACs (an unverified adapter).
 - `src/cpu.rs`: the kernel dispatch and the SHA-NI and ARMv8 kernels
   (trusted, below).
 - `src/avx2.rs`: the AVX2 message schedules, two blocks at once, whole or
-  a few words at a time for the pipelined kernels (trusted, below).
+  a few words at a time for the pipelined kernels, written with
+  verilith-simd's safe intrinsics.
+- `src/lanes.rs`: lemmas about lanes for them: bitwise operations and
+  constant shifts on 32- and 64-bit lanes, `alignr`, the byte-swap
+  shuffles.
 - `src/store.rs`: big-endian stores of a word (trusted, below).
 - `src/capi.rs`: the C API (an unverified adapter).
 
@@ -72,7 +108,9 @@ let d: [u8; 48] = verilith_sha2::sha384(b"abc");
 
 What the proofs here assume rather than prove:
 
-- `src/spec.rs` and `src/spec512.rs`: the specification. The constants
+- `src/spec.rs`, `src/spec512.rs` and `src/spec_hmac.rs`: the
+  specification. `spec_hmac` is also checked by running the MACs on
+  RFC 4231's examples (`tests/hmac.rs`). The constants
   are also derived again from their definitions by `tests/vectors.rs` and
   `tests/vectors512.rs`: K and the SHA-224, SHA-256, SHA-384 and SHA-512
   H(0) come from the fractional parts of cube and square roots of primes,
@@ -92,15 +130,20 @@ What the proofs here assume rather than prove:
   `pair_avx2` and `pair256_avx2` are in the same position: each is the
   verified `pair_kw` compiled with AVX2 and out of line, trusted only to
   be that function.
-- `src/avx2.rs`, eight `external_body` functions (`schedule512x2`,
-  `sched_start`, `sched_steps2` and the three SHA-256 ones, and the opaque
-  `Sched512`/`Sched256`): that they compute K_t + W_t as
-  `spec512::schedule` and `spec::schedule` define them, which is what
-  their `ensures` say. The rounds that use them are verified. They are
+- `src/avx2.rs`, three `external_body` functions. `schedule512x2` and
+  `schedule256x2` call the verified `schedule512x2_body` and
+  `schedule256x2_body` compiled with AVX2 enabled (Verus does not accept
+  `#[target_feature]` on verified code), trusted only to be those
+  functions. `barrier` is the empty `asm!` each pipelined step's result
+  passes through, which only keeps LLVM from moving the step; its
+  `ensures` is that it returns its argument. The schedules are also still
   tested against FIPS 180-4's schedule written out directly
-  (`tests/kernels.rs`), and the kernels built on them against the
-  portable ones at every length up to 20 blocks. Each step passes its
-  result through an empty `asm!`, which only keeps LLVM from moving it.
+  (`tests/kernels.rs`).
+- From [verilith-simd](https://github.com/verilith/verilith/tree/main/crates/simd): the specifications of the AVX2 intrinsics
+  the schedules use (`safe.rs`), each checked against the CPU there
+  (`tests/difftest.rs`), and of the 128-bit loads and stores (`mem.rs`).
+  That the CPU has AVX2 is the `avx2()` precondition, which the trusted
+  dispatch in `cpu.rs` meets.
 - `src/store.rs`: `put_u32_be` and `put_u64_be`, one line each
   (`to_be_bytes` copied into place), whose `ensures` are the bytes
   written. LLVM does not merge the verified form's byte stores.
@@ -110,7 +153,54 @@ What the proofs here assume rather than prove:
   `wrapping_mul`.
 - `src/capi.rs`: the C API is not verified. It converts pointers to slices
   and stores the hasher in the caller's context.
+- `src/digest_impls.rs`: the `digest` trait impls are not verified. Each
+  method calls the verified method of the same name and copies its array
+  into the trait's output type.
+- The constant-time tag comparison in the MACs' `verify` is proven to be
+  equality; that it takes the same time for any tag of a given length is
+  by inspection (it reads every byte and ORs the differences, with no
+  early exit), not proven.
 - Verus, Z3 and the Rust compiler.
+
+## Without `std`
+
+With `default-features = false` the crate is `no_std` and needs no
+allocator. Run-time CPU detection needs `std`, so without it the kernel is
+chosen at compile time from the target's features: build with
+`-C target-feature=+sha,+sse4.1` (or `target-cpu=native`) to get the
+SHA-NI kernel, `+sha2` on AArch64. Without them the verified portable
+kernel runs. CI builds the `no_std` library for `thumbv7em-none-eabihf`.
+
+Cargo builds every crate type a library lists, and this one lists
+`staticlib` (for the C API), which needs a panic handler. So a `no_std`
+crate that depends on this one gets a link error for the staticlib, as it
+does for the other Verilith crates with C APIs; building the dependency
+alone with `cargo rustc --crate-type rlib` works. Splitting the C API into
+its own crate would remove that.
+
+## RustCrypto traits
+
+With the `digest` feature (`digest` 0.11, re-exported as
+`verilith_sha2::digest`) or `digest010` (`digest` 0.10, re-exported as
+`verilith_sha2::digest010`):
+
+- The six hashers are `Digest` (and `DynDigest` with `digest`'s `alloc`
+  feature): `Default`, `Update`, `FixedOutput`, `FixedOutputReset`,
+  `Reset`, `HashMarker`, `OutputSizeUser` and `BlockSizeUser`. With `oid`,
+  also `AssociatedOid`, as RSA and ECDSA signing need. The block size makes
+  RustCrypto's `hmac::SimpleHmac` work over them.
+- The six MACs are `Mac`: `KeyInit` (any key length through
+  `new_from_slice`), `Update`, `FixedOutput`, `FixedOutputReset`, `Reset`
+  and `MacMarker`.
+
+Not provided: the block-level API (`digest::core_api`/`block_api`), so not
+RustCrypto's `hmac::Hmac` (its block-level HMAC; `SimpleHmac` and ours
+work), and not `SerializableState` or `zeroize`.
+
+The inherent methods keep their names, so with `Digest` imported,
+`h.finalize()` on a hasher calls `Digest::finalize` (which consumes it and
+returns `Output<Self>`), and `h.update(x)` the inherent `update`, which
+takes `&[u8]` rather than `impl AsRef<[u8]>`.
 
 ## C API
 
@@ -137,7 +227,8 @@ Departures from OpenSSL:
 
 ## Tests
 
-`cargo test --release`:
+`cargo test --release` (and `--features digest,digest010,oid` for
+`tests/digest.rs`):
 
 - `tests/vectors.rs`: the examples of FIPS 180-2 (Appendix B, and Change
   Notice 1 for SHA-224), including the million a's whole and in pieces,
@@ -158,8 +249,7 @@ Departures from OpenSSL:
 ## Performance
 
 `cargo run --release --example speed` compares against RustCrypto's
-`sha2` (0.10 when the numbers below were measured; the example now builds
-against 0.11) and the system OpenSSL (3.0, through `SHA256()` and
+`sha2` 0.10 and the system OpenSSL (3.0, through `SHA256()` and
 `SHA512()`). On an x86-64 cloud VM (with SHA-NI, AVX2 and BMI2), in MB/s,
 medians of 25 rounds that alternate the three. A shared VM moves by 5 to
 10% from run to run, so compare within a row.
@@ -185,6 +275,22 @@ Xeons), 1 MiB, measured on the same machine with OpenSSL told not to use
 SHA-NI (`OPENSSL_ia32cap`) and RustCrypto's portable code: verilith-sha2
 492, RustCrypto 380, OpenSSL 523.
 
+Through the C API, in [vbench](https://github.com/verilith/verilith/tree/main/bench)'s `sha2` suite (the
+same C driver linked with OpenSSL 4.1.0's libcrypto and with this
+library, both built for the machine with `-march=native` and
+`target-cpu=native`; an Ice Lake Xeon cloud VM, medians of 21 alternating
+pairs): one-shot `SHA256()` is 1.7 to 1.8 times OpenSSL's speed up to 256
+bytes, 1.14 at 1 KiB and the same from 64 KiB; `SHA512()` 1.2 to 1.3 at
+64 and 256 bytes and the same elsewhere. Streamed in 1000-byte pieces,
+SHA-256 is within a few percent of OpenSSL except at 64 bytes (0.8) and
+SHA-512 0.8 to 0.9.
+
+The SHA-NI kernel is never inlined. The SHA instructions have only legacy
+SSE encodings, and inlined into callers built with AVX2 enabled it ran
+right after their 256-bit stores with the upper halves of the YMM
+registers dirty and no `vzeroupper` between: a one-block `SHA256()` took
+5 µs instead of 75 ns on an AVX-512 Xeon. vbench found it.
+
 What the speed rests on:
 
 - The eight-round groups are called with constant t, so that once inlined
@@ -200,15 +306,13 @@ What the speed rests on:
 
 ## Not yet
 
-- HMAC.
 - A kernel for x86-64's own SHA-512 instructions (Arrow Lake, Lunar
   Lake). There was no CPU with them to test on.
-- Verifying the AVX2 schedules too, against verilith-simd's
-  specifications of the intrinsics; that needs 64-bit lane shifts added
-  there.
-- `no_std`: the crate needs `std` for run-time CPU detection.
-- RustCrypto's `digest` traits, for a drop-in `sha2` replacement.
-- A [vbench](https://github.com/verilith/verilith/tree/main/bench) suite against OpenSSL through the drop-in C API.
+- RustCrypto's block-level `digest` API, which RustCrypto's `hmac::Hmac`
+  and `SerializableState` need.
+- Streamed SHA-512 through the C API is 10 to 25% behind OpenSSL 4.1 in
+  vbench (below): a piece that ends a block compresses one block at a
+  time, where the AVX2 kernels are fastest two at a time.
 - Verifying the SHA-NI and ARMv8 kernels against specifications of the
   instructions in [verilith-simd](https://github.com/verilith/verilith/tree/main/crates/simd), as verilith-core does for
   AArch64's `crc32x`.
@@ -223,7 +327,7 @@ What the speed rests on:
 ```
 
 needs `cargo-verus` from Verus commit
-1ce6a59bd72713cf486a7660097fe5ac57519617 on `PATH` and z3 (via
+8bf68ee741df833ea5d0fe6a2255126fdea87e47 on `PATH` and z3 (via
 `VERUS_Z3_PATH` or next to the verus binary). From the repository root,
 `scripts/prove.sh sha2` verifies it through Buck2.
 

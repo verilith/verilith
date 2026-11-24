@@ -226,6 +226,12 @@ pub fn sample_exec(h: &Header, buf: &[u8], base: usize, rb: usize, pw: u64, ph: 
             requires
                 y < ph,
         ;
+        // So `y` and the index fit a usize on 32-bit targets too.
+        assert(rb >= 1);
+        assert(ph <= ph * rb) by (nonlinear_arith)
+            requires
+                rb >= 1,
+        ;
         lemma_pow2_shift(d);
     }
     let i = base + y as usize * rb + (k / 8) as usize;
@@ -323,6 +329,11 @@ pub fn px_sample_exec(h: &Header, buf: &[u8], off: &[usize; 8], x: u64, y: u64, 
         assert(img_size(hv, p as nat) == ph * rb);
         assert(off@[p + 1] == off@[p as int] + ph * rb);
         assert(imgs_of(hv, buf@, off@)[p as int] == buf@.subrange(off@[p as int] as int, off@[p as int] + ph * rb));
+        // Within `off[p + 1]`, a usize, so `rb as usize` keeps it.
+        assert(rb <= ph * rb) by (nonlinear_arith)
+            requires
+                ph >= 1,
+        ;
     }
     sample_exec(h, buf, off[p as usize], rb as usize, pw, ph, x / dx, y / dy, c)
 }
@@ -797,6 +808,9 @@ fn native_wide(h: &Header, buf: &[u8], off: &[usize; 8], j: u64, y: u64, bits: u
                 j % bp < bp,
         ;
         assert(imgs[p as int] == buf@.subrange(off@[p as int] as int, off@[p as int] + ph * rb));
+        // Below `off[p + 1]`, a usize: the cast and the sum keep the value on
+        // 32-bit targets too.
+        assert(off@[p + 1] == off@[p as int] + ph * rb);
     }
     buf[off[p as usize] + (sy * rb + sx * bp + j % bp) as usize]
 }
