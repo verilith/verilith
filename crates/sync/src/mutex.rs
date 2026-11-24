@@ -17,15 +17,20 @@ use crate::util::Deadline;
 
 verus! {
 
+/// The mutex's constants: the ids of its atomic, its cell and its token.
 pub struct MutexConsts {
+    /// The id of the state atomic.
     pub state: int,
+    /// The id of the data's cell.
     pub data: CellId,
+    /// The location of the `locked` ghost variable.
     pub token: Loc,
 }
 
 /// Everything the lock owns while unlocked, and the bookkeeping that tells
 /// a releasing thread the lock is held.
 pub tracked struct MutexShared<T> {
+    /// The state atomic's permission.
     pub state: PermissionU32,
     /// True exactly while the lock is held.
     pub locked: GhostVarAuth<bool>,
@@ -34,6 +39,7 @@ pub tracked struct MutexShared<T> {
     pub held: Option<(PointsTo<T>, GhostVar<bool>)>,
 }
 
+/// The mutex's invariant (see its `inv`).
 pub struct MutexPred;
 
 impl<T> InvariantPredicate<MutexConsts, MutexShared<T>> for MutexPred {
@@ -50,6 +56,7 @@ impl<T> InvariantPredicate<MutexConsts, MutexShared<T>> for MutexPred {
     }
 }
 
+/// A mutual-exclusion lock, with parking_lot's `Mutex` API.
 pub struct Mutex<T> {
     state: PAtomicU32,
     data: PCell<T>,
@@ -90,6 +97,7 @@ impl<T> Mutex<T> {
         }
     }
 
+    /// A mutex holding `value`, unlocked.
     pub fn new(value: T) -> (m: Self)
         ensures
             m.wf(),
@@ -391,6 +399,7 @@ impl<'a, T> MutexGuard<'a, T> {
         self.lock
     }
 
+    /// The data.
     pub fn get(&self) -> &T
         requires
             self.wf(),
@@ -398,6 +407,7 @@ impl<'a, T> MutexGuard<'a, T> {
         self.lock.data.borrow(Tracked(self.perm.borrow().tracked_borrow()))
     }
 
+    /// The data, mutably.
     pub fn get_mut(&mut self) -> &mut T
         requires
             old(self).wf(),

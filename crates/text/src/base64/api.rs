@@ -15,9 +15,13 @@ pub struct Engine {
     pad: bool,
 }
 
+/// The standard alphabet (`+/`), padded.
 pub const STANDARD: Engine = Engine { url: false, pad: true };
+/// The standard alphabet (`+/`), unpadded.
 pub const STANDARD_NO_PAD: Engine = Engine { url: false, pad: false };
+/// The URL-safe alphabet (`-_`), padded.
 pub const URL_SAFE: Engine = Engine { url: true, pad: true };
+/// The URL-safe alphabet (`-_`), unpadded.
 pub const URL_SAFE_NO_PAD: Engine = Engine { url: true, pad: false };
 
 /// Why a string was rejected, with the base64 crate's variants.
@@ -73,6 +77,7 @@ impl Engine {
         Ok(n)
     }
 
+    /// The encoding of `input`.
     pub fn encode(&self, input: impl AsRef<[u8]>) -> String {
         let x = input.as_ref();
         let mut out = vec![0u8; self.encoded_len(x.len())];
@@ -82,10 +87,12 @@ impl Engine {
         unsafe { String::from_utf8_unchecked(out) }
     }
 
+    /// Appends the encoding of `input` to `out`.
     pub fn encode_string(&self, input: impl AsRef<[u8]>, out: &mut String) {
         out.push_str(&self.encode(input));
     }
 
+    /// The encoding of `input` (the same as `encode`).
     pub fn encode_to_string(&self, input: impl AsRef<[u8]>) -> String {
         self.encode(input)
     }
@@ -95,6 +102,7 @@ impl Engine {
         (n + 3) / 4 * 3
     }
 
+    /// Decodes `input`, which must be a canonical encoding: no whitespace, padding exactly as configured, and zero unused bits.
     pub fn decode(&self, input: impl AsRef<[u8]>) -> Result<Vec<u8>, DecodeError> {
         let s = input.as_ref();
         let m = scalar::body_len_exec(self.cfg(), s);
@@ -106,10 +114,12 @@ impl Engine {
         }
     }
 
+    /// Decodes `input` (the same as `decode`).
     pub fn decode_to_vec(&self, input: impl AsRef<[u8]>) -> Result<Vec<u8>, DecodeError> {
         self.decode(input)
     }
 
+    /// Decodes `input` and appends the bytes to `out`.
     pub fn decode_vec(&self, input: impl AsRef<[u8]>, out: &mut Vec<u8>) -> Result<(), DecodeError> {
         out.extend_from_slice(&self.decode(input)?);
         Ok(())

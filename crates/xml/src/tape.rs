@@ -5,34 +5,61 @@ use vstd::prelude::*;
 
 verus! {
 
+/// A token's kind: one for each `XTok` variant, which says what the token's fields mean.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum Kind {
+    /// `<?xml ...?>`: the version number.
     XmlDecl,
+    /// The encoding name in the XML declaration.
     Encoding,
+    /// `<!DOCTYPE name`.
     Doctype,
+    /// The end of the document type declaration.
     DoctypeEnd,
+    /// A public identifier.
     PubId,
+    /// A system identifier.
     SysId,
+    /// `<!ELEMENT name ...>`.
     ElementDecl,
+    /// `<!ATTLIST name`.
     AttlistDecl,
+    /// An attribute definition.
     AttDef,
+    /// An attribute definition's default.
     AttDefault,
+    /// `<!ENTITY name`.
     EntityDecl,
+    /// A literal entity value.
     EntityValue,
+    /// `NDATA name`.
     NData,
+    /// `<!NOTATION name`.
     NotationDecl,
+    /// `%name;` in the internal subset.
     PERef,
+    /// A comment.
     Comment,
+    /// A processing instruction's target.
     PI,
+    /// A processing instruction's data.
     PIData,
+    /// A start tag, or an empty-element tag.
     STag,
+    /// An attribute's name.
     Attr,
+    /// An attribute's value.
     AttVal,
+    /// The end of an element.
     ETag,
+    /// Character data.
     Text,
+    /// A CDATA section's text.
     CData,
+    /// A character reference, or one of the predefined entities.
     CharRef,
+    /// Any other entity reference.
     EntRef,
 }
 
@@ -94,13 +121,21 @@ pub open spec fn hv(h: Hi) -> int {
 /// `b48()` and `c48()` in verified code).
 #[derive(Clone, Copy, Debug)]
 pub struct Tok {
+    /// What the token is.
     pub kind: Kind,
+    /// Its flag or small code.
     pub f: u8,
+    /// The high part of `a`.
     pub ah: Hi,
+    /// The low 32 bits of `a`.
     pub al: u32,
+    /// The low 32 bits of `b`.
     pub bl: u32,
+    /// The high part of `b`.
     pub bh: Hi,
+    /// The high part of `c`.
     pub ch: Hi,
+    /// The low 32 bits of `c`.
     pub cl: u32,
 }
 
@@ -129,6 +164,7 @@ pub fn split(v: u64) -> (r: (u32, Hi))
     (lo, hi)
 }
 
+/// The low and high parts of `v`, which `wide` puts back together.
 #[cfg(any(not(target_pointer_width = "64"), feature = "narrow-tokens"))]
 #[inline(always)]
 pub fn split(v: u64) -> (r: (u32, Hi))
@@ -156,6 +192,7 @@ pub fn join(lo: u32, hi: Hi) -> (r: u64)
     r
 }
 
+/// `wide(lo, hi)` as a `u64`.
 #[cfg(any(not(target_pointer_width = "64"), feature = "narrow-tokens"))]
 #[inline(always)]
 pub fn join(lo: u32, hi: Hi) -> (r: u64)
@@ -366,7 +403,9 @@ pub fn tok(kind: Kind, a: usize, b: usize, f: u8) -> (t: Tok)
     Tok::new(kind, f, a, b, 0)
 }
 
+/// The tokens of a parse, in order.
 pub struct Tape {
+    /// The tokens.
     pub toks: Vec<Tok>,
     /// The furthest position at which a step failed: for error messages
     /// only, outside the spec.
@@ -382,6 +421,7 @@ impl View for Tape {
 }
 
 impl Tape {
+    /// An empty tape.
     pub fn new() -> (r: Tape)
         ensures
             r@ == Seq::<XTok>::empty(),
@@ -420,6 +460,7 @@ impl Tape {
         self.toks.reserve(n);
     }
 
+    /// The number of tokens.
     #[inline(always)]
     pub fn len(&self) -> (n: usize)
         ensures
@@ -428,6 +469,7 @@ impl Tape {
         self.toks.len()
     }
 
+    /// Appends a token.
     #[inline(always)]
     pub fn push(&mut self, t: Tok)
         ensures

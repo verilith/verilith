@@ -1,6 +1,7 @@
 //! Python bindings: `vbind.URL` (the shape of the `ada_url` package's `URL`)
 //! and `vbind.loads` (the shape of `json.loads`). Parsing is vurl's and
 //! vjson's; this module only converts types.
+#![warn(missing_docs)]
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyString};

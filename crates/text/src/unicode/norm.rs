@@ -173,6 +173,12 @@ fn decode_lead(s: &[u8], i: usize, b0: u8, Ghost(c): Ghost<u32>) -> (r: (u32, us
     }
 }
 
+/// Appends the UTF-8 encoding of `c` to `out`.
+///
+/// ```text
+/// requires is_scalar(c)
+/// ensures  final(out)@ == old(out)@ + utf8_encode(c)
+/// ```
 #[inline(always)]
 pub fn push_utf8(out: &mut Vec<u8>, c: u32)
     requires
@@ -495,7 +501,9 @@ fn skip_ascii(s: &[u8], i: usize) -> (r: usize)
 
 /// Code points with their combining classes alongside.
 pub struct Buf {
+    /// The code points.
     pub cp: Vec<u32>,
+    /// Their combining classes.
     pub cc: Vec<u8>,
 }
 
@@ -509,6 +517,12 @@ impl Buf {
         self.cp@
     }
 
+    /// An empty buffer.
+    ///
+    /// ```text
+    /// ensures  r.wf()
+    ///          r@ == Seq::<u32>::empty()
+    /// ```
     pub fn new() -> (r: Buf)
         ensures
             r.wf(),
@@ -1135,12 +1149,19 @@ proof fn lemma_seg_scalars(cs: Seq<u32>, a: int, b: int)
 /// `done` to `i` (character `ki`) are stable, and `prev` is where the last
 /// of them starts.
 pub struct Scan {
+    /// The byte offset up to which `out` holds the normal form.
     pub done: usize,
+    /// The byte offset scanned to.
     pub i: usize,
+    /// The byte offset of the last stable character before `i`.
     pub prev: usize,
+    /// The combining class of the character before `i`.
     pub lastcc: u8,
+    /// `done` as a character index.
     pub kd: Ghost<int>,
+    /// `i` as a character index.
     pub ki: Ghost<int>,
+    /// `prev` as a character index.
     pub kp: Ghost<int>,
 }
 

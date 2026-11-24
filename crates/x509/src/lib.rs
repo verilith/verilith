@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // A formally verified (Verus) DER and X.509 certificate parser.
 #![cfg_attr(not(verus_only), allow(unused_variables, non_shorthand_field_patterns))]

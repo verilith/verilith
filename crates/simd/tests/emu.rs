@@ -187,7 +187,10 @@ fn extras() {
         }
     }
     if std::is_x86_feature_detected!("avx2") {
+        // `bin256!` wraps each call in `unsafe`, which `avx2()` below needs
+        // but a function with AVX2 enabled does not.
         #[target_feature(enable = "avx2")]
+        #[allow(unused_unsafe)]
         fn go(r: &mut Rng) {
             bin256!(r, _mm256_packs_epi32);
             for it in 0..N {

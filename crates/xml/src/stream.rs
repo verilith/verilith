@@ -145,25 +145,35 @@ pub fn ex_chars_scan(b: &[u8], c: usize, last: bool, Ghost(seen): Ghost<Seq<u8>>
 // The window, in the root element and after it
 // ---------------------------------------------------------------------------
 
+/// `Win::mode`: reading an item.
 pub const M_ITEM: u8 = 0;
+/// Reading text.
 pub const M_TEXT: u8 = 1;
+/// Reading a CDATA section.
 pub const M_CDATA: u8 = 2;
 
 /// Steps' results.
 pub const S_ON: u8 = 0;
+/// The step needs more input.
 pub const S_WAIT: u8 = 1;
+/// The step found the document not well-formed.
 pub const S_FAIL: u8 = 2;
+/// The step reached the end of the document.
 pub const S_DONE: u8 = 3;
 
 /// Emitted pieces of text and CDATA sections: bit 0, a carriage return in
 /// the piece; bit 1, the first piece of a CDATA section; bit 2, its last.
 pub const P_CR: u8 = 1;
+/// The first piece of a CDATA section.
 pub const P_FIRST: u8 = 2;
+/// The last piece of a CDATA section.
 pub const P_LAST: u8 = 4;
 
+/// The window the parser reads the root element through: the input it has not finished with, and the open elements.
 pub struct Win {
     /// The input from `base`.
     pub buf: Vec<u8>,
+    /// Where `buf` starts, in the input.
     pub base: usize,
     /// Where the parser stands in `buf`.
     pub pos: usize,
@@ -174,15 +184,21 @@ pub struct Win {
     /// Text or a CDATA section: emitted up to `tem`; a carriage return so
     /// far; nothing emitted yet.
     pub tem: usize,
+    /// A carriage return in the text so far.
     pub tcr: bool,
+    /// Nothing of the text emitted yet.
     pub tfirst: bool,
     /// The names of the open elements, end to end, and where each ends.
     pub names: Vec<u8>,
+    /// Where each open element's name ends in `names`.
     pub ends: Vec<usize>,
     /// What this chunk emitted, at positions in `buf`.
     pub out: Tape,
+    /// The input fed so far.
     pub seen: Ghost<Seq<u8>>,
+    /// The open elements, in the spec's terms.
     pub gst: Ghost<Seq<Open>>,
+    /// The tokens emitted so far, in the spec's terms.
     pub gt: Ghost<Seq<XTok>>,
     /// Where the text or CDATA section being read starts, in the input.
     pub gts: Ghost<int>,
@@ -341,6 +357,7 @@ pub proof fn lemma_content_past(s: Seq<u8>, j: int, st: Seq<Open>, t: Seq<XTok>,
 {
 }
 
+/// Appends `b[a..e]` to `v`.
 pub fn push_slice(v: &mut Vec<u8>, b: &[u8], a: usize, e: usize)
     requires
         a <= e <= b@.len(),

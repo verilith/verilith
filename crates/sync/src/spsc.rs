@@ -19,6 +19,11 @@
 //!   ghost token, exactly as a sequential FIFO of capacity `cap` would;
 //! - values left in the queue are dropped exactly once, by whichever side
 //!   is dropped last.
+
+// Each `atomically` clause defines a predicate struct (`XPred`) that the
+// `verus!` macro gives no docs and no place to attach one. Every other item
+// here is documented.
+#![allow(missing_docs)]
 use crate::ra::*;
 use crate::util::{arc_clone, exhausted, CachePadded};
 use std::sync::Arc;
@@ -40,54 +45,79 @@ broadcast use vstd::set_lib::range_set_properties;
 /// A client's view of the queue's contents, oldest first.
 pub type QueueView<T> = GhostVar<Seq<T>>;
 
+/// The producer's ghost state.
 pub ghost struct ProdGhost {
+    /// The next position the producer fills.
     pub tail: nat,
+    /// The head the producer last read.
     pub head_cache: nat,
     /// The producer's latest message in the tail history, and its view.
     pub tidx: nat,
+    /// The view of that message.
     pub tview: RaView,
     /// Set once the producer has been dropped.
     pub left: bool,
 }
 
+/// The consumer's ghost state.
 pub ghost struct ConsGhost<T> {
+    /// The next position the consumer takes.
     pub head: nat,
+    /// The tail the consumer last read.
     pub tail_cache: nat,
     /// The values in the slots the consumer has claimed, `[head, tail_cache)`.
     pub held: Seq<T>,
     /// The consumer's latest message in the head history, and its view.
     pub hidx: nat,
+    /// The view of that message.
     pub hview: RaView,
     /// Set once the consumer has been dropped.
     pub left: bool,
 }
 
+/// The ring buffer's constants: its capacity and the ids of its atomics, cells and ghost resources.
 pub ghost struct Consts {
+    /// The capacity.
     pub cap: nat,
+    /// The id of the `head` atomic.
     pub head_id: int,
+    /// The id of the `tail` atomic.
     pub tail_id: int,
+    /// The id of the `refs` atomic.
     pub refs_id: int,
+    /// The ids of the slots' cells.
     pub cells: Seq<CellId>,
+    /// The id of the cell the producer leaves its final tail in.
     pub tail_out: CellId,
+    /// The id of the cell the consumer leaves its final head in.
     pub head_out: CellId,
+    /// The location of the abstract queue (`QueueView`).
     pub q_id: Loc,
+    /// The location of the producer's ghost state.
     pub prod_id: Loc,
+    /// The location of the consumer's ghost state.
     pub cons_id: Loc,
 }
 
 /// What the producer leaves behind when dropped: its ghost state, and its
 /// final tail in a cell, for whichever side cleans up.
 pub tracked struct ProdLeft {
+    /// The producer's ghost state.
     pub g: GhostVar<ProdGhost>,
+    /// Its final tail.
     pub tail_out: Published<PointsTo<u64>>,
 }
 
 /// What the consumer leaves behind when dropped: its ghost state, the slots
 /// it had claimed, its final head, and its view when it left.
 pub tracked struct ConsLeft<T> {
+    /// The consumer's ghost state.
     pub g: GhostVar<ConsGhost<T>>,
+    /// The cells of the slots it had claimed.
     pub held: Map<nat, Published<PointsTo<T>>>,
+    /// Its final head.
     pub head_out: Published<PointsTo<u64>>,
+    /// Its view when it left.
     pub ghost view: RaView,
 }
 
@@ -98,14 +128,23 @@ pub tracked struct ConsLeft<T> {
 /// absolute position, so a slot freed at position `p` is filed under
 /// `p + cap`.
 pub tracked struct Shared<T> {
+    /// The history of `head`.
     pub head: Hist,
+    /// The history of `tail`.
     pub tail: Hist,
+    /// The history of `refs`.
     pub refs: Hist,
+    /// The authoritative abstract queue.
     pub q: GhostVarAuth<Seq<T>>,
+    /// The authority over the producer's ghost state.
     pub prod: GhostVarAuth<ProdGhost>,
+    /// The authority over the consumer's ghost state.
     pub cons: GhostVarAuth<ConsGhost<T>>,
+    /// The cells neither side holds, by absolute position.
     pub cells: Map<nat, Published<PointsTo<T>>>,
+    /// What the producer left, once it has been dropped.
     pub prod_left: Option<ProdLeft>,
+    /// What the consumer left, once it has been dropped.
     pub cons_left: Option<ConsLeft<T>>,
     /// Set by the last side to leave, once it has taken the values out.
     pub dead: bool,
@@ -180,6 +219,7 @@ pub open spec fn seen_by<T>(m: Map<nat, Published<PointsTo<T>>>, lo: nat, hi: na
     forall|p: nat| lo <= p < hi ==> (#[trigger] m[p]).view().le(v)
 }
 
+/// The ring buffer's invariant (see its `inv`).
 pub struct SpscPred;
 
 impl<T> InvariantPredicate<Consts, Shared<T>> for SpscPred {
@@ -249,6 +289,7 @@ impl<T> InvariantPredicate<Consts, Shared<T>> for SpscPred {
     }
 }
 
+/// The storage a `Producer` and `Consumer` share.
 pub struct RingBuffer<T> {
     head: CachePadded<RaU64>,
     tail: CachePadded<RaU64>,
@@ -290,6 +331,7 @@ impl<T> RingBuffer<T> {
     }
 }
 
+/// The sending half of a single-producer single-consumer ring buffer, with rtrb's API.
 pub struct Producer<T> {
     rb: Arc<RingBuffer<T>>,
     tail: u64,
@@ -302,6 +344,7 @@ pub struct Producer<T> {
     tid: Tracked<Tid>,
 }
 
+/// The receiving half of a single-producer single-consumer ring buffer, with rtrb's API.
 pub struct Consumer<T> {
     rb: Arc<RingBuffer<T>>,
     head: u64,

@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // A formally verified HPACK (RFC 7541) header decoder.
 #![cfg_attr(not(verus_keep_ghost), allow(unused_variables, unused_imports, dead_code))]

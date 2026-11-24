@@ -31,6 +31,7 @@ pub uninterp spec fn comp_result(i: int) -> u32;
 macro_rules! accessor {
     ($name:ident, $table:ident, $len:ident, $spec:ident, $ty:ty) => {
         verus! {
+            #[doc = concat!("Entry `i` of `", stringify!($table), "`.")]
             #[verifier::external_body]
             #[inline(always)]
             pub fn $name(i: usize) -> (r: $ty)
@@ -120,14 +121,23 @@ pub open spec fn bb_flag(compose: bool, compat: bool) -> u16 {
     }
 }
 
+/// The first Hangul syllable, U+AC00.
 pub const S_BASE: u32 = 0xAC00;
+/// The first leading consonant jamo, U+1100.
 pub const L_BASE: u32 = 0x1100;
+/// The first vowel jamo, U+1161.
 pub const V_BASE: u32 = 0x1161;
+/// One before the first trailing consonant jamo, U+11A7.
 pub const T_BASE: u32 = 0x11A7;
+/// The number of leading consonants.
 pub const L_COUNT: u32 = 19;
+/// The number of vowels.
 pub const V_COUNT: u32 = 21;
+/// The number of trailing consonants, plus one for none.
 pub const T_COUNT: u32 = 28;
+/// Syllables per leading consonant: `V_COUNT * T_COUNT`.
 pub const N_COUNT: u32 = 588;
+/// The number of Hangul syllables: `L_COUNT * N_COUNT`.
 pub const S_COUNT: u32 = 11172;
 
 pub open spec fn is_hangul(c: u32) -> bool {
@@ -290,6 +300,11 @@ pub axiom fn axiom_fast_below(c: u32, compose: bool, compat: bool)
     ensures
         has_flag(c, fast_flag(compose, compat));
 
+/// The code point below which every character is fast in the form (see `fast_below`).
+///
+/// ```text
+/// ensures  r == fast_below(compose, compat)
+/// ```
 pub fn fast_below_of(compose: bool, compat: bool) -> (r: u32)
     ensures
         r == fast_below(compose, compat),
@@ -328,6 +343,12 @@ pub fn word_of(c: u32) -> (r: u32)
     }
 }
 
+/// The record number of `c`.
+///
+/// ```text
+/// ensures  r == rec(c)
+///          r < REC_CCC_LEN
+/// ```
 #[inline(always)]
 pub fn rec_of(c: u32) -> (r: usize)
     ensures
@@ -337,6 +358,11 @@ pub fn rec_of(c: u32) -> (r: usize)
     (word_of(c) & 0xFFFF) as usize
 }
 
+/// The canonical combining class of `c`.
+///
+/// ```text
+/// ensures  r == ccc(c)
+/// ```
 #[inline(always)]
 pub fn ccc_of(c: u32) -> (r: u8)
     ensures
@@ -345,6 +371,11 @@ pub fn ccc_of(c: u32) -> (r: u8)
     rec_ccc_at(rec_of(c))
 }
 
+/// The `FLAG_*` bits of `c`.
+///
+/// ```text
+/// ensures  r == flags(c)
+/// ```
 #[inline(always)]
 pub fn flags_of(c: u32) -> (r: u16)
     ensures
@@ -353,6 +384,11 @@ pub fn flags_of(c: u32) -> (r: u16)
     (word_of(c) >> 16) as u16
 }
 
+/// The `FLAG_FAST_*` bit of the form.
+///
+/// ```text
+/// ensures  r == fast_flag(compose, compat)
+/// ```
 pub fn fast_flag_of(compose: bool, compat: bool) -> (r: u16)
     ensures
         r == fast_flag(compose, compat),
@@ -364,6 +400,11 @@ pub fn fast_flag_of(compose: bool, compat: bool) -> (r: u16)
     }
 }
 
+/// The `FLAG_BB_*` bit of the form.
+///
+/// ```text
+/// ensures  r == bb_flag(compose, compat)
+/// ```
 pub fn bb_flag_of(compose: bool, compat: bool) -> (r: u16)
     ensures
         r == bb_flag(compose, compat),
@@ -378,8 +419,11 @@ pub fn bb_flag_of(compose: bool, compat: bool) -> (r: u16)
 /// Where `decomp(c, compat)` is: a Hangul syllable (`0`), a run of `POOL`
 /// (`(w >> 5, w & 31)`), or `c` itself (`len == 1`, `off == usize::MAX`).
 pub struct Decomp {
+    /// `c` is a Hangul syllable, decomposed algorithmically.
     pub hangul: bool,
+    /// The start of the decomposition in `POOL`, or `usize::MAX` when it is `c` itself.
     pub off: usize,
+    /// The length of the decomposition.
     pub len: usize,
 }
 
@@ -394,6 +438,13 @@ impl Decomp {
     }
 }
 
+/// Where the full decomposition of `c` is; `w` is its trie word.
+///
+/// ```text
+/// requires w == tword(c)
+///          (w & 0xFFFF) < REC_CCC_LEN
+/// ensures  r.wf(c, compat)
+/// ```
 #[inline(always)]
 pub fn decomp_of(c: u32, compat: bool, w: u32) -> (r: Decomp)
     requires

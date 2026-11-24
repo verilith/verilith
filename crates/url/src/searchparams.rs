@@ -696,8 +696,10 @@ pub fn form_serialize_exec(list: &Vec<(Vec<u8>, Vec<u8>)>) -> (r: Vec<u8>)
 
 } // verus!
 
+/// A query's name-value pairs, the URL Standard's `URLSearchParams`: names and values are bytes, decoded.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UrlSearchParams {
+    /// The pairs, in order.
     pub list: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
@@ -765,18 +767,22 @@ impl UrlSearchParams {
         p
     }
 
+    /// Replaces the pairs with those parsed from `input` (a leading "?" is skipped).
     pub fn reset(&mut self, input: &[u8]) {
         params_reset(input, &mut self.list);
     }
 
+    /// The number of pairs.
     pub fn len(&self) -> usize {
         self.list.len()
     }
 
+    /// Whether there are no pairs.
     pub fn is_empty(&self) -> bool {
         self.list.is_empty()
     }
 
+    /// Appends the pair `(k, v)`.
     pub fn append(&mut self, k: &[u8], v: &[u8]) {
         self.list.push((k.to_vec(), v.to_vec()));
     }
@@ -797,26 +803,32 @@ impl UrlSearchParams {
         }
     }
 
+    /// Removes every pair named `k`.
     pub fn remove(&mut self, k: &[u8]) {
         self.list.retain(|(n, _)| n != k);
     }
 
+    /// Removes every pair `(k, v)`.
     pub fn remove_value(&mut self, k: &[u8], v: &[u8]) {
         self.list.retain(|(n, x)| n != k || x != v);
     }
 
+    /// Whether some pair is named `k`.
     pub fn has(&self, k: &[u8]) -> bool {
         self.list.iter().any(|(n, _)| n == k)
     }
 
+    /// Whether some pair is `(k, v)`.
     pub fn has_value(&self, k: &[u8], v: &[u8]) -> bool {
         self.list.iter().any(|(n, x)| n == k && x == v)
     }
 
+    /// The value of the first pair named `k`.
     pub fn get(&self, k: &[u8]) -> Option<&[u8]> {
         self.list.iter().find(|(n, _)| n == k).map(|(_, v)| &v[..])
     }
 
+    /// The values of the pairs named `k`, in order.
     pub fn get_all(&self, k: &[u8]) -> Vec<Vec<u8>> {
         self.list.iter().filter(|(n, _)| n == k).map(|(_, v)| v.clone()).collect()
     }

@@ -28,6 +28,11 @@ pub uninterp spec fn vnni512() -> bool;
 /// The CPU running this program has AVX2.
 pub uninterp spec fn avx2() -> bool;
 
+/// Whether the CPU has AVX-512F, AVX-512BW and AVX-512 VNNI, detected at run time.
+///
+/// ```text
+/// ensures  r ==> vnni512()
+/// ```
 #[verifier::external_body]
 #[inline]
 pub fn has_vnni512() -> (r: bool)
@@ -37,6 +42,11 @@ pub fn has_vnni512() -> (r: bool)
     x86_has!("avx512f") && x86_has!("avx512bw") && x86_has!("avx512vnni")
 }
 
+/// Whether the CPU has AVX2, detected at run time.
+///
+/// ```text
+/// ensures  r ==> avx2()
+/// ```
 #[verifier::external_body]
 #[inline]
 pub fn has_avx2() -> (r: bool)
@@ -78,6 +88,7 @@ pub broadcast axiom fn axiom_lens(a: ZB, b: ZD, c: YB, e: YD)
         #[trigger] yd(e).len() == 8,
 ;
 
+/// The axioms of this module, for `broadcast use group_vdot`.
 pub broadcast group group_vdot {
     axiom_lens,
 }
@@ -91,6 +102,13 @@ pub open spec fn add32(a: int, b: int) -> u32 {
 // 512 bits (AVX-512 VNNI)
 // ---------------------------------------------------------------------------
 
+/// The 64 bytes at `d[i..i + 64]`.
+///
+/// ```text
+/// requires vnni512()
+///          i + 64 <= d@.len()
+/// ensures  zb(r) == d@.subrange(i as int, i + 64)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn zb_load(d: &[u8], i: usize) -> (r: ZB)
@@ -104,6 +122,12 @@ pub fn zb_load(d: &[u8], i: usize) -> (r: ZB)
     ZB(unsafe { _mm512_loadu_si512(d.as_ptr().add(i) as *const __m512i) })
 }
 
+/// Sixteen zero lanes.
+///
+/// ```text
+/// requires vnni512()
+/// ensures  zd(r) == Seq::new(16, |j: int| 0u32)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn zd_zero() -> (r: ZD)
@@ -115,6 +139,12 @@ pub fn zd_zero() -> (r: ZD)
     ZD(unsafe { _mm512_setzero_si512() })
 }
 
+/// `a + b`, lane by lane, wrapping.
+///
+/// ```text
+/// requires vnni512()
+/// ensures  zd(r) == Seq::new(16, |j: int| add32(zd(*a)[j] as int, zd(*b)[j] as int))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn zd_add(a: &ZD, b: &ZD) -> (r: ZD)
@@ -140,6 +170,12 @@ pub fn zd_dot(acc: &ZD, x: &ZB, w: &ZB) -> (r: ZD)
     ZD(unsafe { _mm512_dpbusd_epi32(acc.0, x.0, w.0) })
 }
 
+/// The lanes, lowest first.
+///
+/// ```text
+/// requires vnni512()
+/// ensures  r@ == zd(*a)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn zd_store(a: &ZD) -> (r: [u32; 16])
@@ -157,6 +193,13 @@ pub fn zd_store(a: &ZD) -> (r: [u32; 16])
 // 256 bits (AVX2)
 // ---------------------------------------------------------------------------
 
+/// The 32 bytes at `d[i..i + 32]`.
+///
+/// ```text
+/// requires avx2()
+///          i + 32 <= d@.len()
+/// ensures  yb(r) == d@.subrange(i as int, i + 32)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn yb_load(d: &[u8], i: usize) -> (r: YB)
@@ -170,6 +213,12 @@ pub fn yb_load(d: &[u8], i: usize) -> (r: YB)
     YB(unsafe { _mm256_loadu_si256(d.as_ptr().add(i) as *const __m256i) })
 }
 
+/// Eight zero lanes.
+///
+/// ```text
+/// requires avx2()
+/// ensures  yd(r) == Seq::new(8, |j: int| 0u32)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn yd_zero() -> (r: YD)
@@ -181,6 +230,12 @@ pub fn yd_zero() -> (r: YD)
     YD(unsafe { _mm256_setzero_si256() })
 }
 
+/// `a + b`, lane by lane, wrapping.
+///
+/// ```text
+/// requires avx2()
+/// ensures  yd(r) == Seq::new(8, |j: int| add32(yd(*a)[j] as int, yd(*b)[j] as int))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn yd_add(a: &YD, b: &YD) -> (r: YD)
@@ -208,6 +263,12 @@ pub fn yd_dot(acc: &YD, x: &YB, w: &YB) -> (r: YD)
     YD(unsafe { _mm256_add_epi32(acc.0, _mm256_madd_epi16(_mm256_maddubs_epi16(x.0, w.0), _mm256_set1_epi16(1))) })
 }
 
+/// The lanes, lowest first.
+///
+/// ```text
+/// requires avx2()
+/// ensures  r@ == yd(*a)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn yd_store(a: &YD) -> (r: [u32; 8])

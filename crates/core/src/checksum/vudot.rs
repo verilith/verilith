@@ -27,6 +27,11 @@ verus! {
 /// The CPU running this program has NEON and the dot-product extension.
 pub uninterp spec fn dotprod() -> bool;
 
+/// Whether the CPU has the Arm dot-product instructions, detected at run time.
+///
+/// ```text
+/// ensures  r ==> dotprod()
+/// ```
 #[verifier::external_body]
 #[inline]
 pub fn has_dotprod() -> (r: bool)
@@ -54,10 +59,18 @@ pub broadcast axiom fn axiom_nlens(a: NB, b: ND)
         #[trigger] nd(b).len() == 16,
 ;
 
+/// The axioms of this module, for `broadcast use group_vudot`.
 pub broadcast group group_vudot {
     axiom_nlens,
 }
 
+/// The 64 bytes at `d[i..i + 64]`, as four NEON vectors.
+///
+/// ```text
+/// requires dotprod()
+///          i + 64 <= d@.len()
+/// ensures  nb(r) == d@.subrange(i as int, i + 64)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn nb_load(d: &[u8], i: usize) -> (r: NB)
@@ -72,6 +85,12 @@ pub fn nb_load(d: &[u8], i: usize) -> (r: NB)
     NB(unsafe { raw::load(d.as_ptr().add(i)) })
 }
 
+/// Sixteen zero lanes.
+///
+/// ```text
+/// requires dotprod()
+/// ensures  nd(r) == Seq::new(16, |j: int| 0u32)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn nd_zero() -> (r: ND)
@@ -83,6 +102,12 @@ pub fn nd_zero() -> (r: ND)
     ND(unsafe { raw::zero() })
 }
 
+/// `a + b`, lane by lane, wrapping.
+///
+/// ```text
+/// requires dotprod()
+/// ensures  nd(r) == Seq::new(16, |j: int| super::vdot_add32(nd(*a)[j] as int, nd(*b)[j] as int))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn nd_add(a: &ND, b: &ND) -> (r: ND)
@@ -107,6 +132,12 @@ pub fn nd_dot(acc: &ND, x: &NB, w: &NB) -> (r: ND)
     ND(unsafe { raw::dot(&acc.0, &x.0, &w.0) })
 }
 
+/// The lanes, lowest first.
+///
+/// ```text
+/// requires dotprod()
+/// ensures  r@ == nd(*a)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn nd_store(a: &ND) -> (r: [u32; 16])

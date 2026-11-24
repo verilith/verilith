@@ -33,18 +33,27 @@ verus! {
 /// known yet); the input is kept until its encoding is known; it is
 /// decoded to the stream; it is handed back whole; nothing more is read.
 pub const K_RAW: u8 = 0;
+/// The input is kept until its encoding is known.
 pub const K_DECIDE: u8 = 1;
+/// The input is decoded to the stream.
 pub const K_DEC: u8 = 2;
+/// The input is handed back whole.
 pub const K_WHOLE: u8 = 3;
+/// Nothing more is read.
 pub const K_DONE: u8 = 4;
 
 /// The decoders: UTF-16 little- and big-endian, ISO-8859-1, US-ASCII; and
 /// `decide`'s other answers.
 pub const D16LE: u8 = 0;
+/// UTF-16, big-endian.
 pub const D16BE: u8 = 1;
+/// ISO-8859-1.
 pub const DL1: u8 = 2;
+/// US-ASCII.
 pub const DASC: u8 = 3;
+/// The bytes do not say: the input is read whole.
 pub const DNONE: u8 = 4;
+/// The next bytes may say.
 pub const DWAIT: u8 = 5;
 
 pub open spec fn dk_enc(dk: u8) -> Enc {
@@ -537,22 +546,29 @@ fn enc_of(dk: u8) -> (e: Enc)
     }
 }
 
+/// The pull side of the parser: takes the input in any encoding it reads, and feeds the stream its text as UTF-8.
 pub struct Reader {
     /// The stream over the text.
     pub st: Stream,
+    /// How the input is read (`K_RAW` to `K_DONE`).
     pub kind: u8,
     /// `K_DEC`: the decoder, and the input it has not decoded yet (part of
     /// a UTF-16 code unit or pair).
     pub dk: u8,
+    /// The input the decoder has not decoded yet.
     pub pend: Vec<u8>,
     /// The input, kept while it may be handed back whole: `K_DECIDE`,
     /// `K_WHOLE`, and `K_DEC` while `keep`.
     pub head: Vec<u8>,
+    /// Whether the input is still kept.
     pub keep: bool,
     /// How much input has been fed, and decoded.
     pub fed: usize,
+    /// How much input has been decoded.
     pub done_in: usize,
+    /// The input fed so far.
     pub seen: Ghost<Seq<u8>>,
+    /// How much of `seen` has been decoded.
     pub dpos: Ghost<int>,
 }
 

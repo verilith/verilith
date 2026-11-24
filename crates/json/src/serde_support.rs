@@ -16,8 +16,11 @@ use std::fmt;
 /// that cannot be written.
 #[derive(Debug)]
 pub enum Error {
+    /// The input is not JSON.
     Parse(crate::Error),
+    /// The value cannot be written as JSON.
     Write(WriteError),
+    /// A message from the `Serialize` or `Deserialize` implementation.
     Message(String),
 }
 

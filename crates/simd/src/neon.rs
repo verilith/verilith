@@ -47,6 +47,7 @@ macro_rules! wasm_or {
 
 verus! {
 
+/// Tells Verus about `uint8x16_t`, an opaque type here: its contents are seen through the lane views.
 #[verifier::external_type_specification]
 #[verifier::external_body]
 pub struct ExUint8x16(uint8x16_t);
@@ -59,6 +60,7 @@ pub broadcast axiom fn axiom_n8_len(v: uint8x16_t)
         #[trigger] n8(v).len() == 16,
 ;
 
+/// The axioms of this module, for `broadcast use group_neon`.
 pub broadcast group group_neon {
     axiom_n8_len,
 }
@@ -170,6 +172,12 @@ pub fn vst1q_u32_at(s: &mut [u32], i: usize, v: uint8x16_t)
 // Lane operations
 // ---------------------------------------------------------------------------
 
+/// `vdupq_n_u8` (the NEON instruction on AArch64, `crate::emu_neon` elsewhere) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires neon()
+/// ensures  n8(r) == splat8(x, 16)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn vdupq_n_u8(x: u8) -> (r: uint8x16_t)
@@ -181,6 +189,12 @@ pub fn vdupq_n_u8(x: u8) -> (r: uint8x16_t)
     wasm_or!(crate::wasm_neon::vdupq_n_u8(x), unsafe { a64::vdupq_n_u8(x) })
 }
 
+/// `vandq_u8` (the NEON instruction on AArch64, `crate::emu_neon` elsewhere) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires neon()
+/// ensures  n8(r) == and8(n8(a), n8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn vandq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
@@ -192,6 +206,12 @@ pub fn vandq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     wasm_or!(crate::wasm_neon::vandq_u8(a, b), unsafe { a64::vandq_u8(a, b) })
 }
 
+/// `vorrq_u8` (the NEON instruction on AArch64, `crate::emu_neon` elsewhere) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires neon()
+/// ensures  n8(r) == or8(n8(a), n8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn vorrq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
@@ -203,6 +223,12 @@ pub fn vorrq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     wasm_or!(crate::wasm_neon::vorrq_u8(a, b), unsafe { a64::vorrq_u8(a, b) })
 }
 
+/// `veorq_u8` (the NEON instruction on AArch64, `crate::emu_neon` elsewhere) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires neon()
+/// ensures  n8(r) == xor8(n8(a), n8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn veorq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
@@ -214,6 +240,12 @@ pub fn veorq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     wasm_or!(crate::wasm_neon::veorq_u8(a, b), unsafe { a64::veorq_u8(a, b) })
 }
 
+/// `vaddq_u8` (the NEON instruction on AArch64, `crate::emu_neon` elsewhere) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires neon()
+/// ensures  n8(r) == add8(n8(a), n8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn vaddq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
@@ -237,6 +269,12 @@ pub fn vqsubq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     wasm_or!(crate::wasm_neon::vqsubq_u8(a, b), unsafe { a64::vqsubq_u8(a, b) })
 }
 
+/// `vceqq_u8` (the NEON instruction on AArch64, `crate::emu_neon` elsewhere) as a safe function, with the specification Verus checks callers against:
+///
+/// ```text
+/// requires neon()
+/// ensures  n8(r) == cmpeq8(n8(a), n8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn vceqq_u8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)

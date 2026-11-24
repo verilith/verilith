@@ -1,7 +1,7 @@
-// With the `http` feature, compiles llhttp's api.c and http.c (vhttp keeps
-// copies in compat/llhttp) into the library, so that it holds the whole of
-// llhttp's ABI: those two files are llhttp's public functions and callback
-// plumbing, and vhttp supplies the parser they call.
+//! With the `http` feature, compiles llhttp's api.c and http.c (vhttp keeps
+//! copies in compat/llhttp) into the library, so that it holds the whole of
+//! llhttp's ABI: those two files are llhttp's public functions and callback
+//! plumbing, and vhttp supplies the parser they call.
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
     if std::env::var_os("CARGO_FEATURE_HTTP").is_some() {
