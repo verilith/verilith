@@ -239,6 +239,11 @@ pub open spec fn desc_ok(a: Seq<u8>, w: nat) -> bool {
     a.len() == w && forall|k: int| 0 <= k < w ==> #[trigger] a[k] as int == w - k
 }
 
+/// Sixty-four 1 bytes: the weights that sum a 64-byte block.
+///
+/// ```text
+/// ensures  ones_ok(ONES64@, 64)
+/// ```
 pub exec const ONES64: [u8; 64]
     ensures
         ones_ok(ONES64@, 64),
@@ -248,6 +253,11 @@ pub exec const ONES64: [u8; 64]
     a
 }
 
+/// 64 down to 1: the weights of a 64-byte block's bytes in the `b` sum.
+///
+/// ```text
+/// ensures  desc_ok(DESC64@, 64)
+/// ```
 pub exec const DESC64: [u8; 64]
     ensures
         desc_ok(DESC64@, 64),
@@ -261,6 +271,11 @@ pub exec const DESC64: [u8; 64]
     a
 }
 
+/// Thirty-two 1 bytes: the weights that sum a 32-byte block.
+///
+/// ```text
+/// ensures  ones_ok(ONES32@, 32)
+/// ```
 pub exec const ONES32: [u8; 32]
     ensures
         ones_ok(ONES32@, 32),
@@ -270,6 +285,11 @@ pub exec const ONES32: [u8; 32]
     a
 }
 
+/// 32 down to 1: the weights of a 32-byte block's bytes in the `b` sum.
+///
+/// ```text
+/// ensures  desc_ok(DESC32@, 32)
+/// ```
 pub exec const DESC32: [u8; 32]
     ensures
         desc_ok(DESC32@, 32),

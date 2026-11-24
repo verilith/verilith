@@ -525,7 +525,6 @@ fn list_step(r: &[u8], kind: i32) -> Option<(i32, &[u8], &[u8])> {
 /// # Safety
 /// Pointers must be valid.
 #[unsafe(no_mangle)]
-#[inline]
 pub unsafe extern "C" fn vx509_list_next(rest: *mut VSpan, kind: i32, tag: *mut i32, out: *mut VSpan) -> i32 {
     let r = (*rest).get();
     if r.is_empty() {

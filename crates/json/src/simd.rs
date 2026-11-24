@@ -2067,7 +2067,7 @@ pub fn copy_plain16(s: &[u8], i: usize, end: usize, out: &mut Vec<u8>) -> (r: us
         final(out)@ == old(out)@ + s@.subrange(i as int, i + r),
         spare(*final(out)) == spare(*old(out)) - r,
 {
-    if cfg!(target_arch = "aarch64") {
+    if cfg!(any(target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128"))) {
         return crate::neon::copy_plain16_neon(s, i, end, out);
     }
     let lim = (end - i).min(16);
@@ -2085,7 +2085,7 @@ pub fn classify_special(s: &[u8], i: usize) -> (m: u32)
         m < 0x10000,
         forall|k: u32| k < 16 ==> (#[trigger] bit(m, k) <==> !plain(s@[i + k])),
 {
-    if cfg!(target_arch = "aarch64") {
+    if cfg!(any(target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128"))) {
         return crate::neon::classify_special_neon(s, i);
     }
     (0..16).filter(|&k| { let c = s[i + k]; !(c != 0x22 && c != 0x5C && c >= 0x20) }).fold(0, |m, k| m | 1 << k)
@@ -2100,7 +2100,7 @@ pub fn classify_non_ws(s: &[u8], i: usize) -> (m: u32)
         m < 0x10000,
         forall|k: u32| k < 16 ==> (#[trigger] bit(m, k) <==> !is_ws(s@[i + k])),
 {
-    if cfg!(target_arch = "aarch64") {
+    if cfg!(any(target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128"))) {
         return crate::neon::classify_non_ws_neon(s, i);
     }
     (0..16).filter(|&k| !matches!(s[i + k], 0x20 | 0x0A | 0x0D | 0x09)).fold(0, |m, k| m | 1 << k)
@@ -2115,7 +2115,7 @@ pub fn classify_non_digit(s: &[u8], i: usize) -> (m: u32)
         m < 0x10000,
         forall|k: u32| k < 16 ==> (#[trigger] bit(m, k) <==> !is_digit_byte(s@[i + k])),
 {
-    if cfg!(target_arch = "aarch64") {
+    if cfg!(any(target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128"))) {
         return crate::neon::classify_non_digit_neon(s, i);
     }
     (0..16).filter(|&k| !s[i + k].is_ascii_digit()).fold(0, |m, k| m | 1 << k)
@@ -2132,7 +2132,7 @@ pub fn digit_run_acc16(s: &[u8], i: usize) -> (r: (usize, u64))
         r.0 < 16 ==> !is_digit_byte(s@[i + r.0]),
         r.1 as int == dval(s@, i as int, i + r.0),
 {
-    if cfg!(target_arch = "aarch64") {
+    if cfg!(any(target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128"))) {
         return crate::neon::digit_run_acc16_neon(s, i);
     }
     let n = s[i..i + 16].iter().take_while(|c| c.is_ascii_digit()).count();

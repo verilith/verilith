@@ -54,64 +54,7 @@ proof fn lemma_scalars_append(a: Seq<u32>, b: Seq<u32>)
     }
 }
 
-/// Step 1, Map.
-fn map_exec(v: &Vec<u32>, t: bool) -> (r: Vec<u32>)
-    requires
-        scalars(v@),
-    ensures
-        r@ == map_all(v@, t),
-        scalars(r@),
-{
-    let mut r: Vec<u32> = Vec::with_capacity(v.len());
-    let mut j = 0;
-    proof {
-        assert(v@.take(0) =~= Seq::<u32>::empty());
-    }
-    while j < v.len()
-        invariant
-            j <= v@.len(),
-            scalars(v@),
-            r@ == map_all(v@.take(j as int), t),
-            scalars(r@),
-        decreases v@.len() - j,
-    {
-        let c = v[j];
-        let w = iword_of(c);
-        let st = w & 7;
-        let ghost r0 = r@;
-        if t && c == 0x1E9E {
-            r.push(0x73);
-            r.push(0x73);
-            proof {
-                assert(r@ =~= r0 + map_one(c, t));
-            }
-        } else if st == STATUS_IGNORED {
-            proof {
-                assert(r@ =~= r0 + map_one(c, t));
-            }
-        } else if st == STATUS_MAPPED || (st == STATUS_DEVIATION && t) {
-            push_mapping(&mut r, c, w);
-        } else {
-            r.push(c);
-            proof {
-                assert(r@ =~= r0 + map_one(c, t));
-            }
-        }
-        proof {
-            assert(v@.take(j + 1).drop_last() =~= v@.take(j as int));
-            assert(is_scalar(v@[j as int]));
-            lemma_map_one_scalars(c, t);
-            lemma_scalars_append(r0, map_one(c, t));
-        }
-        j += 1;
-    }
-    proof {
-        assert(v@.take(v@.len() as int) =~= v@);
-    }
-    r
-}
-
-/// Step 1 on the UTF-8 encoding `s` of `cs`, decoding as it goes.
+/// Step 1, Map, on the UTF-8 encoding `s` of `cs`, decoding as it goes.
 fn map_utf8(s: &[u8], t: bool, Ghost(cs): Ghost<Seq<u32>>, buf: Vec<u32>) -> (r: Vec<u32>)
     requires
         scalars(cs),
@@ -1966,6 +1909,14 @@ pub open spec fn url_domain_to_ascii(cs: Seq<u32>, o: Options) -> Option<Seq<u8>
     }
 }
 
+/// The URL Standard's domain to ASCII (beStrict false) on the UTF-8 `s`.
+///
+/// ```text
+/// requires scalars(cs)
+///          s@ == enc(cs)
+/// ensures  r matches Some(b) ==> url_domain_to_ascii(cs, o) == Some(b@)
+///          r is None ==> url_domain_to_ascii(cs, o) is None
+/// ```
 pub fn url_domain_to_ascii_exec(s: &[u8], o: Options, Ghost(cs): Ghost<Seq<u32>>) -> (r: Option<Vec<u8>>)
     requires
         scalars(cs),

@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // SHA-2 (FIPS 180-4), proven with Verus: SHA-224 and SHA-256, and the
 // 64-bit family SHA-384, SHA-512, SHA-512/224 and SHA-512/256.

@@ -31,6 +31,7 @@ pub open spec fn byte4(a: Seq<u8>, b: Seq<u8>, c: Seq<u8>, d: Seq<u8>, k: int) -
     }
 }
 
+/// The weight of each byte in a NEON movemask: byte `k` of each 8-byte half stands for bit `k % 8`, so a mask byte of `0xFF` ANDed with its weight and summed pairwise gives the bits.
 pub const WEIGHTS: [u8; 16] = [1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128];
 
 /// Eight weighted mask bytes, summed as the pairwise-add tree does, are the

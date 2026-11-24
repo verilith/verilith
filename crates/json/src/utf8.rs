@@ -848,10 +848,10 @@ pub fn utf8_valid(s: &[u8], st: usize) -> (r: bool)
     #[cfg(target_arch = "x86_64")]
     {
         if cpu_has_avx512bw() {
-            return unsafe { utf8_avx512(s, st) };
+            return utf8_avx512(s, st);
         }
         if cpu_has_avx2() {
-            return unsafe { utf8_avx2(s, st) };
+            return utf8_avx2(s, st);
         }
     }
     if verilith_simd::neon::has_neon() {
@@ -900,14 +900,14 @@ mod tests {
         assert_eq!(utf8_valid_scalar(s, st), want, "scalar {:x?}", &s[st..]);
         #[cfg(target_arch = "x86_64")]
         if detected!("avx2") {
-            assert_eq!(unsafe { utf8_avx2(s, st) }, want, "avx2 {:x?}", &s[st..]);
+            assert_eq!(utf8_avx2(s, st), want, "avx2 {:x?}", &s[st..]);
         }
         assert_eq!(utf8_blocks::<SCALAR>(s, st), want);
         // NEON runs natively on AArch64 and in vsimd's emulation elsewhere.
         assert_eq!(utf8_blocks::<NEON>(s, st), want, "neon {:x?}", &s[st..]);
         #[cfg(target_arch = "x86_64")]
         if detected!("avx512bw") {
-            assert_eq!(unsafe { utf8_avx512(s, st) }, want, "avx512 {:x?}", &s[st..]);
+            assert_eq!(utf8_avx512(s, st), want, "avx512 {:x?}", &s[st..]);
         }
         assert_eq!(utf8_valid(s, st), want);
         want

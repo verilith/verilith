@@ -1,7 +1,12 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // A formally verified DEFLATE (RFC 1951), zlib (RFC 1950) and gzip
 // (RFC 1952) decompressor and compressor.
-#![cfg_attr(not(verus_only), allow(unused_variables, unused_imports))]
+// A normal build erases ghost code, so a variable, import, field or value
+// used only by proofs looks unused there, and the `verus!` syntax leaves
+// some redundant braces and parentheses. These lints are off in that build
+// only.
+#![cfg_attr(not(verus_only), allow(unused_variables, unused_imports, unused_assignments, dead_code))]
 //
 // - [`spec`]: the formats as pure functions (the trusted specification).
 // - [`huffman`]: canonical Huffman decoding tables.

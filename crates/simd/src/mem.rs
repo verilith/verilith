@@ -68,6 +68,12 @@ pub fn load256_u32(s: &[u32], i: usize) -> (r: __m256i)
     unsafe { _mm256_loadu_si256(s.as_ptr().add(i) as *const __m256i) }
 }
 
+/// Stores the 128-bit vector `v` as the 16 bytes at `s[i..i + 16]`:
+///
+/// ```text
+/// requires i + 16 <= old(s)@.len()
+/// ensures  final(s)@ == old(s)@.subrange(0, i as int) + b128(v) + old(s)@.subrange(i + 16, old(s)@.len() as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn store128_u8(s: &mut [u8], i: usize, v: __m128i)
@@ -80,6 +86,13 @@ pub fn store128_u8(s: &mut [u8], i: usize, v: __m128i)
     unsafe { _mm_storeu_si128(s.as_mut_ptr().add(i) as *mut __m128i, v) }
 }
 
+/// Stores the 256-bit vector `v` as the 32 bytes at `s[i..i + 32]`:
+///
+/// ```text
+/// requires avx2()
+///          i + 32 <= old(s)@.len()
+/// ensures  final(s)@ == old(s)@.subrange(0, i as int) + b256(v) + old(s)@.subrange(i + 32, old(s)@.len() as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn store256_u8(s: &mut [u8], i: usize, v: __m256i)
@@ -93,6 +106,12 @@ pub fn store256_u8(s: &mut [u8], i: usize, v: __m256i)
     unsafe { _mm256_storeu_si256(s.as_mut_ptr().add(i) as *mut __m256i, v) }
 }
 
+/// Stores the 128-bit vector `v` as the 4 32-bit values at `s[i..i + 4]`:
+///
+/// ```text
+/// requires i + 4 <= old(s)@.len()
+/// ensures  final(s)@ == old(s)@.subrange(0, i as int) + u32x4(v) + old(s)@.subrange(i + 4, old(s)@.len() as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn store128_u32(s: &mut [u32], i: usize, v: __m128i)
@@ -105,6 +124,13 @@ pub fn store128_u32(s: &mut [u32], i: usize, v: __m128i)
     unsafe { _mm_storeu_si128(s.as_mut_ptr().add(i) as *mut __m128i, v) }
 }
 
+/// Stores the 256-bit vector `v` as the 8 32-bit values at `s[i..i + 8]`:
+///
+/// ```text
+/// requires avx2()
+///          i + 8 <= old(s)@.len()
+/// ensures  final(s)@ == old(s)@.subrange(0, i as int) + u32x8(v) + old(s)@.subrange(i + 8, old(s)@.len() as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn store256_u32(s: &mut [u32], i: usize, v: __m256i)
@@ -132,6 +158,13 @@ pub fn load256_u16(s: &[u16], i: usize) -> (r: __m256i)
     unsafe { _mm256_loadu_si256(s.as_ptr().add(i) as *const __m256i) }
 }
 
+/// Stores the 256-bit vector `v` as the 16 16-bit values at `s[i..i + 16]`:
+///
+/// ```text
+/// requires avx2()
+///          i + 16 <= old(s)@.len()
+/// ensures  final(s)@ == old(s)@.subrange(0, i as int) + u16x16(v) + old(s)@.subrange(i + 16, old(s)@.len() as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn store256_u16(s: &mut [u16], i: usize, v: __m256i)

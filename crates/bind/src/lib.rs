@@ -19,6 +19,7 @@
 //! Everything here is unverified glue: it calls the verified parsers and
 //! hands their results across the boundary. `include/` has the C header and
 //! the C++ headers built on it.
+#![warn(missing_docs)]
 #![allow(clippy::missing_safety_doc)]
 
 #[cfg(feature = "url")]

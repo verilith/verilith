@@ -546,8 +546,8 @@ fn unpredict_runs<const FAST: bool>(px: &mut Vec<u32>, w: usize, h: usize, bits:
     }
     let ghost before = px@;
     if FAST {
-        // SAFETY: FAST only when the CPU has AVX2.
-        unsafe { run_left(px, 1, w) };
+        // FAST only when the CPU has AVX2.
+        run_left(px, 1, w);
     } else {
         run_left_swar(px, 1, w);
     }
@@ -688,8 +688,8 @@ fn unpredict_runs<const FAST: bool>(px: &mut Vec<u32>, w: usize, h: usize, bits:
                 }
                 let ghost pre = px@;
                 if FAST {
-                    // SAFETY: FAST only when the CPU has AVX2.
-                    unsafe { run_mode(px, row + x0, row + x1, row, w, m) };
+                    // FAST only when the CPU has AVX2.
+                    run_mode(px, row + x0, row + x1, row, w, m);
                 } else {
                     run_mode_swar(px, row + x0, row + x1, row, w, m);
                 }

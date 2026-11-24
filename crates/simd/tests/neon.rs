@@ -1,7 +1,10 @@
 //! Differential test of every NEON wrapper in `verilith_simd::neon` against the
 //! verified reference implementation of its spec. On AArch64 this checks
-//! the real instructions (the trusted specs); elsewhere it checks the
-//! emulation the wrappers call there.
+//! the real instructions (the trusted specs). On `wasm32-wasip1` built
+//! with `simd128`, run under a WebAssembly engine, it checks the
+//! SIMD128 instructions (`verilith_simd::wasm`) through the verified
+//! `verilith_simd::wasm_neon`. Elsewhere it checks the emulation the
+//! wrappers call there.
 //!
 //! `VSIMD_ITERS` sets the number of random inputs per wrapper (default
 //! 200,000).
@@ -450,7 +453,7 @@ fn reductions_loads_and_stores() {
 
 #[test]
 fn detection() {
-    assert_eq!(has_neon(), cfg!(target_arch = "aarch64"));
+    assert_eq!(has_neon(), cfg!(any(target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128"))));
 }
 
 #[test]

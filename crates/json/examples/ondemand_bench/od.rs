@@ -9,7 +9,6 @@ pub type R<T> = Result<T, E>;
 /// The reader interface the access patterns are written against.
 pub trait Od<'a> {
     fn peek(&self) -> u8;
-    fn skip(&mut self) -> R<()>;
     fn arr_begin(&mut self) -> R<()>;
     fn arr_next(&mut self) -> R<bool>;
     fn obj_begin(&mut self) -> R<()>;
@@ -38,10 +37,6 @@ impl<'a> Od<'a> for Reader<'a> {
     #[inline(always)]
     fn peek(&self) -> u8 {
         Reader::peek(self)
-    }
-    #[inline(always)]
-    fn skip(&mut self) -> R<()> {
-        m(Reader::skip(self))
     }
     #[inline(always)]
     fn arr_begin(&mut self) -> R<()> {

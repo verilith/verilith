@@ -21,7 +21,8 @@ You need:
   in a normal build);
 - for the proofs: the Verus release pinned in `scripts/verus-version`.
   `scripts/install-verus.sh` installs it into `~/verus-bin`; then put that
-  directory on `PATH` and set `VERUS_Z3_PATH=~/verus-bin/z3`;
+  directory on `PATH` and set `VERUS_Z3_PATH=~/verus-bin/z3`. A change
+  to that pin follows [RELEASING.md](RELEASING.md);
 - for the C API tests and the comparisons, a C compiler, `cmake` and
   `git`: each crate's `ci.sh` fetches and builds the original library
   at a pinned version.

@@ -16,12 +16,14 @@ use vstd::slice::slice_subrange;
 
 verus! {
 
+/// The escape character, `%`.
 pub const PCT: u8 = 0x25;  // '%'
 
 /// A set of ASCII bytes, as the percent-encoding crate's `AsciiSet`: bit
 /// `b % 32` of `mask[b / 32]` says whether `b` is in it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AsciiSet {
+    /// Bit `b % 32` of `mask[b / 32]` is set when `b` is in the set.
     pub mask: [u32; 4],
 }
 
@@ -30,6 +32,11 @@ impl AsciiSet {
         b < 128 && (self.mask@[(b / 32) as int] >> ((b % 32) as u32)) & 1 == 1
     }
 
+    /// Whether `b` is in the set.
+    ///
+    /// ```text
+    /// ensures  r == self.has(b)
+    /// ```
     #[inline(always)]
     pub fn contains(&self, b: u8) -> (r: bool)
         ensures
@@ -43,6 +50,11 @@ impl AsciiSet {
         b >= 128 || self.has(b)
     }
 
+    /// Whether `b` is percent-encoded: it is in the set, or not ASCII.
+    ///
+    /// ```text
+    /// ensures  r == self.needs(b)
+    /// ```
     #[inline(always)]
     pub fn should_encode(&self, b: u8) -> (r: bool)
         ensures
@@ -419,6 +431,7 @@ use std::borrow::Cow;
 use std::fmt;
 
 impl AsciiSet {
+    /// The set with no bytes.
     pub const EMPTY: AsciiSet = AsciiSet { mask: [0; 4] };
 
     /// The set with `byte` added (`byte` must be ASCII).
@@ -428,12 +441,14 @@ impl AsciiSet {
         AsciiSet { mask }
     }
 
+    /// The set without `byte` (`byte` must be ASCII).
     pub const fn remove(&self, byte: u8) -> Self {
         let mut mask = self.mask;
         mask[byte as usize / 32] &= !(1 << (byte as usize % 32));
         AsciiSet { mask }
     }
 
+    /// The bytes in either set.
     pub const fn union(&self, other: AsciiSet) -> Self {
         AsciiSet {
             mask: [
@@ -445,6 +460,7 @@ impl AsciiSet {
         }
     }
 
+    /// The ASCII bytes not in the set.
     pub const fn complement(&self) -> Self {
         AsciiSet { mask: [!self.mask[0], !self.mask[1], !self.mask[2], !self.mask[3]] }
     }
@@ -511,10 +527,12 @@ impl<'a> From<PercentEncode<'a>> for Cow<'a, str> {
     }
 }
 
+/// Percent-encodes `input`: the bytes in `set`, and every non-ASCII byte.
 pub fn percent_encode<'a>(input: &'a [u8], set: &'static AsciiSet) -> PercentEncode<'a> {
     PercentEncode { bytes: input, set }
 }
 
+/// Percent-encodes the UTF-8 of `input`: the bytes in `set`, and every non-ASCII byte.
 pub fn utf8_percent_encode<'a>(input: &'a str, set: &'static AsciiSet) -> PercentEncode<'a> {
     percent_encode(input.as_bytes(), set)
 }
@@ -538,6 +556,7 @@ impl<'a> PercentDecode<'a> {
         Cow::Owned(out)
     }
 
+    /// The decoded bytes as UTF-8, or the error if they are not.
     pub fn decode_utf8(self) -> Result<Cow<'a, str>, std::str::Utf8Error> {
         match self.decoded() {
             Cow::Borrowed(b) => std::str::from_utf8(b).map(Cow::Borrowed),
@@ -548,6 +567,7 @@ impl<'a> PercentDecode<'a> {
         }
     }
 
+    /// The decoded bytes as UTF-8, with invalid sequences replaced by U+FFFD.
     pub fn decode_utf8_lossy(self) -> Cow<'a, str> {
         match self.decoded() {
             Cow::Borrowed(b) => String::from_utf8_lossy(b),
@@ -580,10 +600,12 @@ impl<'a> From<PercentDecode<'a>> for Cow<'a, [u8]> {
     }
 }
 
+/// Percent-decodes `input`: each `%` and two hex digits becomes that byte; anything else is kept.
 pub fn percent_decode(input: &[u8]) -> PercentDecode<'_> {
     PercentDecode { bytes: input, pos: 0, out: None }
 }
 
+/// Percent-decodes the bytes of `input`.
 pub fn percent_decode_str(input: &str) -> PercentDecode<'_> {
     percent_decode(input.as_bytes())
 }

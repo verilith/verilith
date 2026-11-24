@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // verilith-xml: an XML 1.0 parser formally verified with Verus.
 //
@@ -17,7 +18,7 @@
 // * `tape`    - the tokens the parser writes.
 // * `pe_spec`, `pe` - the DTD read whole: parameter entities, conditional
 //   sections, the external subset (`parse_with`), verified.
-#![cfg_attr(not(verus_keep_ghost), allow(unused_imports))]
+#![cfg_attr(not(verus_keep_ghost), allow(unused_imports, unused_variables))]
 #[doc(hidden)]
 pub mod chars;
 #[doc(hidden)]

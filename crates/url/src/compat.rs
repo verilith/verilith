@@ -15,15 +15,25 @@ use core::str::FromStr;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ParseError {
+    /// A special URL (such as `http:`) with an empty host.
     EmptyHost,
+    /// The host is not a valid international domain name.
     IdnaError,
+    /// The port is not a number below 65536.
     InvalidPort,
+    /// The host looks like an IPv4 address but is not a valid one.
     InvalidIpv4Address,
+    /// The bracketed host is not a valid IPv6 address.
     InvalidIpv6Address,
+    /// The host has a character no domain may contain.
     InvalidDomainCharacter,
+    /// The input is relative and there is no base URL.
     RelativeUrlWithoutBase,
+    /// The input is relative and the base URL cannot be a base.
     RelativeUrlWithCannotBeABaseBase,
+    /// A host was set on a URL that cannot have one.
     SetHostOnCannotBeABaseUrl,
+    /// Never returned; kept for the `url` crate's variants.
     Overflow,
 }
 
@@ -49,8 +59,11 @@ impl std::error::Error for ParseError {}
 /// The host of a URL, as in the `url` crate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Host<S = String> {
+    /// A domain (lowercase ASCII for special schemes) or, for other schemes, an opaque host.
     Domain(S),
+    /// An IPv4 address.
     Ipv4(std::net::Ipv4Addr),
+    /// An IPv6 address.
     Ipv6(std::net::Ipv6Addr),
 }
 
@@ -77,11 +90,13 @@ pub struct ParseOptions<'a> {
 }
 
 impl<'a> ParseOptions<'a> {
+    /// Sets the base URL relative inputs are resolved against.
     pub fn base_url(mut self, base: Option<&'a Url>) -> Self {
         self.base = base;
         self
     }
 
+    /// Parses `input` with these options.
     pub fn parse(self, input: &str) -> Result<Url, ParseError> {
         Url::parse_with(input, self.base)
     }
@@ -119,6 +134,7 @@ impl Url {
         Ok(url)
     }
 
+    /// Options for parsing, to set a base URL.
     pub fn options<'a>() -> ParseOptions<'a> {
         ParseOptions::default()
     }
@@ -133,38 +149,47 @@ impl Url {
         &self.inner
     }
 
+    /// The verified core URL.
     pub fn into_core(self) -> Core {
         self.inner
     }
 
+    /// Wraps a verified core URL.
     pub fn from_core(inner: Core) -> Url {
         Url { inner }
     }
 
+    /// The serialization of the URL (its href).
     pub fn as_str(&self) -> &str {
         self.inner.href()
     }
 
+    /// The scheme, lowercase and without the `:`.
     pub fn scheme(&self) -> &str {
         self.inner.scheme()
     }
 
+    /// Whether the scheme is special (http, https, ws, wss, ftp or file).
     pub fn is_special(&self) -> bool {
         self.inner.is_special()
     }
 
+    /// Whether the URL has an authority (`//` after the scheme).
     pub fn has_authority(&self) -> bool {
         self.inner.has_authority()
     }
 
+    /// Whether the path is opaque (as in `mailto:x`), so the URL cannot be a base for relative URLs.
     pub fn cannot_be_a_base(&self) -> bool {
         self.inner.has_opaque_path()
     }
 
+    /// The username, percent-encoded, or "" if there is none.
     pub fn username(&self) -> &str {
         self.inner.username()
     }
 
+    /// The password, percent-encoded, or `None` if it is empty.
     pub fn password(&self) -> Option<&str> {
         match self.inner.password() {
             "" => None,
@@ -187,6 +212,7 @@ impl Url {
         }
     }
 
+    /// The host, parsed into a domain or an IP address, or `None` without a host.
     pub fn host(&self) -> Option<Host<&str>> {
         let h = self.host_str()?;
         if let Some(v6) = h.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
@@ -208,10 +234,12 @@ impl Url {
         }
     }
 
+    /// The port, or `None` if it is absent or the scheme's default.
     pub fn port(&self) -> Option<u16> {
         self.inner.port()
     }
 
+    /// The port, or the default port of the scheme (http, ws: 80; https, wss: 443; ftp: 21).
     pub fn port_or_known_default(&self) -> Option<u16> {
         self.port().or(match self.scheme() {
             "http" | "ws" => Some(80),
@@ -221,6 +249,7 @@ impl Url {
         })
     }
 
+    /// The path, percent-encoded.
     pub fn path(&self) -> &str {
         self.inner.pathname()
     }
@@ -231,10 +260,12 @@ impl Url {
         p.strip_prefix('/').map(|p| p.split('/'))
     }
 
+    /// The query, without the `?`, or `None` if there is none.
     pub fn query(&self) -> Option<&str> {
         self.inner.query()
     }
 
+    /// The fragment, without the `#`, or `None` if there is none.
     pub fn fragment(&self) -> Option<&str> {
         self.inner.fragment()
     }
@@ -262,6 +293,7 @@ impl Url {
         self.inner.origin()
     }
 
+    /// Sets the scheme, by the URL Standard's `protocol` setter. `Err` if it was not changed.
     pub fn set_scheme(&mut self, scheme: &str) -> Result<(), ()> {
         let before = self.inner.scheme().to_owned();
         self.inner.set_protocol(scheme);
@@ -272,6 +304,7 @@ impl Url {
         }
     }
 
+    /// Sets the username. `Err` if the URL cannot have credentials (no host, or `file:`).
     pub fn set_username(&mut self, username: &str) -> Result<(), ()> {
         if !self.can_have_credentials() {
             return Err(());
@@ -280,6 +313,7 @@ impl Url {
         Ok(())
     }
 
+    /// Sets the password (`None` removes it). `Err` if the URL cannot have credentials.
     pub fn set_password(&mut self, password: Option<&str>) -> Result<(), ()> {
         if !self.can_have_credentials() {
             return Err(());
@@ -338,6 +372,7 @@ impl Url {
         }
     }
 
+    /// Sets the host to an IP address. `Err` if the URL cannot have a host.
     pub fn set_ip_host(&mut self, address: std::net::IpAddr) -> Result<(), ()> {
         let h = match address {
             std::net::IpAddr::V4(a) => a.to_string(),
@@ -346,6 +381,7 @@ impl Url {
         self.set_host(Some(&h)).map_err(|_| ())
     }
 
+    /// Sets the port (`None` removes it). `Err` if the URL has no host or is `file:`.
     pub fn set_port(&mut self, port: Option<u16>) -> Result<(), ()> {
         if !self.inner.has_authority() || self.inner.hostname().is_empty() || self.scheme() == "file" {
             return Err(());
@@ -361,10 +397,12 @@ impl Url {
         Ok(())
     }
 
+    /// Sets the path, by the URL Standard's `pathname` setter.
     pub fn set_path(&mut self, path: &str) {
         self.inner.set_pathname(path);
     }
 
+    /// Sets the query (`None` removes it, `Some("")` leaves an empty `?`).
     pub fn set_query(&mut self, query: Option<&str>) {
         match query {
             Some(q) => {
@@ -385,6 +423,7 @@ impl Url {
         }
     }
 
+    /// Sets the fragment (`None` removes it, `Some("")` leaves an empty `#`).
     pub fn set_fragment(&mut self, fragment: Option<&str>) {
         match fragment {
             Some(f) => {
@@ -408,6 +447,7 @@ pub struct QueryPairsMut<'a> {
 }
 
 impl QueryPairsMut<'_> {
+    /// Appends `name=value`, form-encoded.
     pub fn append_pair(&mut self, name: &str, value: &str) -> &mut Self {
         let mut out = Vec::new();
         if !self.query.is_empty() {
@@ -420,6 +460,7 @@ impl QueryPairsMut<'_> {
         self
     }
 
+    /// Appends each pair, form-encoded.
     pub fn extend_pairs<I, K, V>(&mut self, iter: I) -> &mut Self
     where
         I: IntoIterator,
@@ -434,6 +475,7 @@ impl QueryPairsMut<'_> {
         self
     }
 
+    /// Removes every pair.
     pub fn clear(&mut self) -> &mut Self {
         self.query.clear();
         self

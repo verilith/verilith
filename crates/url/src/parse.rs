@@ -6309,38 +6309,14 @@ pub(crate) fn parse_simple(input: &[u8], base: Option<&Url>, sc: &mut crate::hos
     }
 }
 
-/// Runs the state machine on `input` (already trimmed and without tabs and
-/// newlines).
 /// The state machine's work bound for an `n`-byte input and an `m`-byte
 /// base: the potential of the start state.
 pub open spec fn machine_cost(n: nat, m: nat) -> int {
     20 * (COST_W * (n + m + 2)) + COST_W * n
 }
 
-pub(crate) fn run_machine(input: &[u8], base: Option<&Url>, Tracked(cost): Tracked<&mut Meter>) -> (r: Option<Url>)
-    requires
-        base matches Some(b) ==> b.wf(),
-    ensures
-        final(cost).n <= old(cost).n + machine_cost(input.len() as nat, base_len(base_rec(base))),
-        r matches Some(u) ==> u.wf() && run(
-            input@,
-            base_rec(base),
-            None,
-            initial_machine(State::SchemeStart, new_url()),
-            0,
-        ) == Some(u@),
-        r is None ==> run(
-            input@,
-            base_rec(base),
-            None,
-            initial_machine(State::SchemeStart, new_url()),
-            0,
-        ) is None,
-{
-    run_machine_in(input, base, &mut crate::host::Scratch::new(), Tracked(cost))
-}
-
-/// `run_machine` with scratch storage kept by the caller: the href is
+/// Runs the state machine on `input` (already trimmed and without tabs and
+/// newlines), with scratch storage kept by the caller: the href is
 /// written into `sc.href` when that has room (else into a new buffer), and
 /// on failure the buffer is left there for reuse.
 pub(crate) fn run_machine_in(input: &[u8], base: Option<&Url>, sc: &mut crate::host::Scratch, Tracked(cost): Tracked<&mut Meter>) -> (r: Option<Url>)
