@@ -144,6 +144,7 @@ const E_CANT_CHANGE_FEATURE_ONCE_PARSING: c_int = 26;
 const E_UNBOUND_PREFIX: c_int = 27;
 const E_UNDECLARING_PREFIX: c_int = 28;
 const E_XML_DECL: c_int = 30;
+const E_TEXT_DECL: c_int = 31;
 const E_SUSPENDED: c_int = 33;
 const E_NOT_SUSPENDED: c_int = 34;
 const E_ABORTED: c_int = 35;
@@ -253,6 +254,9 @@ enum Ext {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
     Prolog(usize),
+    /// The declarations of the DTD read whole (`Document::flattened`), at a
+    /// token of its tape; then the prolog on from `dt_resume`.
+    Dtd(usize),
     Content,
     Epilog(usize),
     Done,
@@ -376,6 +380,34 @@ pub struct Parser {
     pending_text_decl: Option<(Option<Vec<u8>>, Option<Vec<u8>>)>,
     base_c: Option<Vec<u8>>,
     props: Props,
+    /// The declarations' tokens and text: the document's, or the DTD read
+    /// whole (`Src::Pro`); and the prolog's token after it.
+    dsrc: Src,
+    dt_resume: usize,
+    /// While the DTD is read whole: the text of the external entity the
+    /// handler is asked for, as the parser it makes for it is given it,
+    /// and the base URI set on that parser.
+    collect: Option<Vec<u8>>,
+    /// For each external entity of the DTD read so far: the base URI, the
+    /// external entity reference handler and its argument of the parser
+    /// that read it, which the entities it refers to are read with (the
+    /// loader's URI for it is its index here, after '#').
+    ext_tab: Vec<(Option<Vec<u8>>, ExtRefH, Option<*mut Parser>)>,
+    collect_h: Option<(Option<Vec<u8>>, ExtRefH, Option<*mut Parser>)>,
+    /// The parser made for the entity being read found it malformed.
+    collect_err: bool,
+    /// A parser made for the external subset or a parameter entity while
+    /// the parent reads its DTD whole: what it is given goes to the
+    /// parent's `collect`.
+    collect_to: Option<*mut Parser>,
+    /// The handler failed for an external entity of the DTD.
+    ext_fail: bool,
+    /// The external subset was read with the DTD (and is not offered to
+    /// the handler again at the end of the document type declaration).
+    ext_read: bool,
+    /// An external entity's parser whose wrapper holds the parent's DTD
+    /// read whole: it reads no external entity again.
+    no_load: bool,
 }
 
 impl Parser {
@@ -440,6 +472,16 @@ impl Parser {
             pending_text_decl: None,
             base_c: None,
             props: Props::default(),
+            dsrc: Src::Doc,
+            dt_resume: 0,
+            collect: None,
+            ext_tab: Vec::new(),
+            collect_h: None,
+            collect_err: false,
+            collect_to: None,
+            ext_fail: false,
+            ext_read: false,
+            no_load: false,
         })
     }
 
@@ -551,7 +593,7 @@ impl Parser {
         // does: `doc` is dropped before `owned_text` everywhere.
         let slice: &'static [u8] = unsafe { std::slice::from_raw_parts(boxed.as_ptr(), boxed.len()) };
         self.owned_text = Some(boxed);
-        if self.ext.is_none() && self.ns.is_none() && self.no_handlers() {
+        if self.ext.is_none() && self.ns.is_none() && self.no_handlers() && self.param_parsing == 0 {
             // Nothing to report: the verified check alone decides.
             let mut tape = crate::tape::Tape::new();
             if crate::enc::ex_parse(slice, &mut tape).is_some() {
@@ -564,7 +606,11 @@ impl Parser {
             self.err_at = at;
             return self.fail(code);
         }
-        match super::parse(slice) {
+        let parsed = self.parse_dtd(slice);
+        if self.ext_fail {
+            return self.fail(E_EXTERNAL_ENTITY_HANDLING);
+        }
+        match parsed {
             Ok(d) => {
                 self.doc = Some(Box::new(d));
                 self.origin = prefix_len;
@@ -602,6 +648,63 @@ impl Parser {
         self.walk()
     }
 
+    /// The document, as expat reads its DTD: parameter entities expanded
+    /// unless parameter entity parsing is off (XML_PARAM_ENTITY_PARSING_NEVER,
+    /// where a reference is skipped, and the declarations after it are
+    /// not processed, §5.1); the external subset and external parameter
+    /// entities read through the external entity reference handler.
+    fn parse_dtd(&mut self, slice: &'static [u8]) -> Result<Document<'static>, super::Error> {
+        if self.param_parsing == 0 {
+            return plain_parse(slice);
+        }
+        let standalone = self.param_parsing == 1 && declares_standalone(slice);
+        if self.h.ext_ref.is_none() || self.no_load || standalone {
+            return super::parse(slice);
+        }
+        let me = self as *mut Parser;
+        let mut ld = crate::pe::Loader::new(move |base: &[u8], sys: &[u8], pubid: &[u8]| unsafe { (*me).ext_dtd_entity(base, sys, pubid) });
+        let r = super::parse_dtd_with(slice, &mut ld);
+        // The handler was offered the external subset, if there is one.
+        self.ext_read = true;
+        r
+    }
+
+    /// The handler's text for an external entity of the DTD: the parser it
+    /// makes for it (`XML_ExternalEntityParserCreate` with no context)
+    /// keeps what it is given here (`collect`). `None` if the handler is
+    /// not there or failed (`ext_fail`), and the entity is not read.
+    fn ext_dtd_entity(&mut self, base: &[u8], sys: &[u8], pubid: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+        // The parser that would read the reference: this one (for the
+        // document), or the one that read the entity holding it.
+        let (b, f, arg) = if base.is_empty() {
+            (self.base.clone(), self.h.ext_ref, self.h.ext_ref_arg)
+        } else {
+            let k: usize = std::str::from_utf8(&base[1..]).ok()?.parse().ok()?;
+            self.ext_tab.get(k)?.clone()
+        };
+        let f = f?;
+        self.collect = Some(Vec::new());
+        self.collect_h = None;
+        self.collect_err = false;
+        self.s_clear();
+        let bk = b.map(|b| self.s_push(&b));
+        let sk = self.s_push(sys);
+        let pk = if pubid.is_empty() { None } else { Some(self.s_push(pubid)) };
+        let me = arg.unwrap_or(self as *mut Parser);
+        let ok = unsafe { f(me, null(), self.s_opt(bk), self.s_ptr(sk), self.s_opt(pk)) } != 0;
+        let text = self.collect.take().unwrap_or_default();
+        let h = self.collect_h.take().unwrap_or((None, None, None));
+        if !ok {
+            self.ext_fail = true;
+            return None;
+        }
+        self.ext_tab.push(h);
+        // An entity its parser rejected, which the handler let pass: as
+        // far as the document goes, empty.
+        let text = if std::mem::take(&mut self.collect_err) { Vec::new() } else { text };
+        Some((text, format!("#{}", self.ext_tab.len() - 1).into_bytes()))
+    }
+
     /// The text the verified parser reads: the input, or for an external
     /// entity the wrapper around it; and where the caller's text begins.
     fn prepare(&mut self, raw: Vec<u8>) -> Result<(Vec<u8>, usize), c_int> {
@@ -627,6 +730,80 @@ impl Parser {
     }
 }
 
+/// An external entity of the DTD read on its own, as the external subset
+/// (its references to parameter entities declared elsewhere not read): the
+/// error expat gives it, if it is malformed or refers to an entity whose
+/// text is being read (`open`).
+fn ext_dtd_check(text: &[u8], open: &[Vec<u8>]) -> Result<(), c_int> {
+    let t = text.to_vec();
+    let mut ld = crate::pe::Loader::new(move |b: &[u8], s: &[u8], _: &[u8]| (b.is_empty() && s == b"x").then(|| (t.clone(), b"#".to_vec())));
+    if super::parse_dtd_with(b"<!DOCTYPE d SYSTEM 'x'><d/>", &mut ld).is_err() {
+        return Err(ext_dtd_code(text));
+    }
+    let mut i = 0;
+    while let Some(p) = text[i..].iter().position(|&c| c == b'%') {
+        let a = i + p + 1;
+        let e = a + text[a..].iter().take_while(|&&c| !is_ws(c) && !b"%;<>'\"&".contains(&c)).count();
+        if e > a && text.get(e) == Some(&b';') && open.iter().any(|n| !n.is_empty() && n[..] == text[a..e]) {
+            return Err(E_RECURSIVE_ENTITY_REF);
+        }
+        i = a;
+    }
+    Ok(())
+}
+
+/// The error code for a malformed external entity of the DTD.
+fn ext_dtd_code(text: &[u8]) -> c_int {
+    let t = text.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(text);
+    if let Err(e) = std::str::from_utf8(t) {
+        let at = e.valid_up_to();
+        return if e.error_len().is_none() && at < t.len() { E_PARTIAL_CHAR } else { E_INVALID_TOKEN };
+    }
+    match crate::pe::ex_ext_text(text.to_vec()) {
+        None => return E_TEXT_DECL,
+        // Not read as a text declaration, but begun as one.
+        Some((_, 0)) if t.starts_with(b"<?xml") && t.get(5).is_none_or(|&c| is_ws(c) || c == b'?') => return E_TEXT_DECL,
+        _ => {}
+    }
+    // A literal that does not end.
+    let mut q: Option<u8> = None;
+    for &c in t {
+        match q {
+            Some(x) if c == x => q = None,
+            None if c == b'"' || c == b'\'' => q = Some(c),
+            _ => {}
+        }
+    }
+    if q.is_some() {
+        return E_UNCLOSED_TOKEN;
+    }
+    E_INVALID_TOKEN
+}
+
+/// The document with parameter entities not expanded (as the stream
+/// reads it): for the error the stream's verdict is.
+fn plain_parse(t: &[u8]) -> Result<Document<'_>, super::Error> {
+    let mut tape = crate::tape::Tape::new();
+    match crate::enc::ex_parse(t, &mut tape) {
+        Some((owned, dtd)) => Ok(Document::new(t, owned, tape, dtd, None)),
+        None => Err(super::diagnose(t, &tape)),
+    }
+}
+
+/// Whether the text's XML declaration says `standalone="yes"`.
+fn declares_standalone(t: &[u8]) -> bool {
+    let t = t.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(t);
+    if !t.starts_with(b"<?xml") {
+        return false;
+    }
+    let Some(e) = find(t, 0, b"?>") else { return false };
+    let d = &t[..e];
+    let Some(k) = find(d, 0, b"standalone") else { return false };
+    let rest = &d[k + 10..];
+    let v: Vec<u8> = rest.iter().copied().filter(|c| !is_ws(*c) && *c != b'=').collect();
+    v.starts_with(b"\"yes\"") || v.starts_with(b"'yes'")
+}
+
 /// `step`: the chunk's tokens are all read.
 const NEED_MORE: c_int = -1;
 
@@ -648,7 +825,7 @@ fn ext_end_error(t: &[u8], code: c_int, at: usize) -> (c_int, usize) {
     // Read without the wrapper's end tag, the first error is the same
     // unless the entity ends inside a token.
     let body = &t[..end];
-    match super::parse(body) {
+    match plain_parse(body) {
         Err(e) => match classify(body, &e) {
             (c, a) if matches!(c, E_UNCLOSED_TOKEN | E_PARTIAL_CHAR | E_UNCLOSED_CDATA_SECTION) => (c, a),
             _ => (code, at),
@@ -1290,7 +1467,32 @@ impl Parser {
                     return Ok(());
                 }
                 self.phase = Phase::Prolog(i + 1);
-                self.prolog_tok(doc, toks, i)
+                let r = self.prolog_tok(doc, toks, i);
+                if toks[i].kind == Kind::Doctype && doc.flattened() {
+                    // The declarations are the DTD read whole's.
+                    let Phase::Prolog(j) = self.phase else { return r };
+                    self.dt_resume = j + toks[j..].iter().position(|t| t.kind == Kind::DoctypeEnd).unwrap_or(toks.len() - j);
+                    self.phase = Phase::Dtd(0);
+                    self.dsrc = Src::Pro;
+                }
+                r
+            }
+            Phase::Dtd(k) => {
+                let ftoks = doc.toks(Src::Pro);
+                if k >= ftoks.len() {
+                    self.dsrc = Src::Doc;
+                    self.phase = Phase::Prolog(self.dt_resume);
+                    return Ok(());
+                }
+                self.phase = Phase::Prolog(k + 1);
+                // Positions stay the document type declaration's.
+                let ev = self.ev;
+                let r = self.prolog_tok(doc, ftoks, k);
+                if let Phase::Prolog(n) = self.phase {
+                    self.phase = Phase::Dtd(n);
+                }
+                self.ev = ev;
+                r
             }
             Phase::Content => self.content_step(doc),
             Phase::Epilog(i) => {
@@ -1404,7 +1606,8 @@ impl Parser {
 
     fn prolog_tok(&mut self, doc: &'static Document<'static>, toks: &'static [Tok], i: usize) -> Result<(), c_int> {
         let t = toks[i];
-        let text = doc.text();
+        let text = doc.buf(self.dsrc);
+        let here = self.dsrc == Src::Doc;
         match t.kind {
             Kind::XmlDecl => {
                 let end = find(text, 0, b"?>").map_or(text.len(), |e| e + 2);
@@ -1428,10 +1631,10 @@ impl Parser {
                     self.report_default(0, end);
                 }
             }
-            Kind::Comment => self.comment(doc, Src::Doc, t, true),
+            Kind::Comment => self.comment(doc, self.dsrc, t, here),
             Kind::PI => {
                 self.phase = Phase::Prolog(i + 2);
-                self.pi(doc, Src::Doc, t, toks[i + 1], true);
+                self.pi(doc, self.dsrc, t, toks[i + 1], here);
             }
             Kind::Doctype => {
                 let mut j = i + 1;
@@ -1494,7 +1697,7 @@ impl Parser {
                 if let Some(f) = self.h.attlist_decl {
                     let ty = att_type(text, t);
                     let dflt = if d.f >= 3 {
-                        Some(doc.value(Src::Doc, d.a(), d.b(), false, t.f, usize::MAX).unwrap_or(Cow::Borrowed(&[])))
+                        Some(doc.value(self.dsrc, d.a(), d.b(), false, t.f, usize::MAX).unwrap_or(Cow::Borrowed(&[])))
                     } else {
                         None
                     };
@@ -1555,7 +1758,7 @@ impl Parser {
         let want_ext = self.param_parsing != 0 || self.foreign_dtd;
         let standalone = doc.standalone();
         if want_ext && !(self.param_parsing == 1 && standalone) {
-            let ext = self.doctype_ext.take();
+            let ext = self.doctype_ext.take().filter(|_| !self.ext_read);
             if let (Some(f), Some((sys, pubid))) = (self.h.ext_ref, ext) {
                 self.s_clear();
                 let b = self.base.clone().map(|b| self.s_push(&b));
@@ -1583,7 +1786,7 @@ impl Parser {
     }
 
     fn entity_decl(&mut self, doc: &'static Document<'static>, toks: &'static [Tok], i: usize) -> Result<(), c_int> {
-        let text = doc.text();
+        let text = doc.buf(self.dsrc);
         let t = toks[i];
         let pe = t.f != 0;
         let mut j = i + 1;
@@ -1890,7 +2093,10 @@ impl Parser {
                             let st: &'static Stream = unsafe { &*(&st.st as *const Stream) };
                             (st.prolog_toks(), st.prolog())
                         }
-                        None => (doc.toks(Src::Doc), doc.text()),
+                        None => {
+                            let (src, toks) = doc.dtd_toks();
+                            (toks, doc.buf(src))
+                        }
                     };
                     let decl = toks.iter().position(|x| x.kind == Kind::EntityDecl && x.f == 0 && x.a() == e.a);
                     let (mut sys, mut pubid) = (None, None);
@@ -2519,6 +2725,9 @@ pub unsafe extern "C" fn XML_ExternalEntityParserCreate(
     }
     if context.is_null() {
         c.ext = Some(Ext::Dtd);
+        if pp.collect.is_some() {
+            c.collect_to = Some(parent);
+        }
         return Box::into_raw(c);
     }
     let ctx = unsafe { CStr::from_ptr(context) }.to_bytes();
@@ -2539,6 +2748,7 @@ pub unsafe extern "C" fn XML_ExternalEntityParserCreate(
         (None, Some(d)) => Some((d.standalone(), d.toks(Src::Doc), d.text())),
         _ => None,
     };
+    let flat = pp.doc.as_ref().filter(|d| d.flattened()).map(|d| d.buf(Src::Pro));
     if let Some((standalone, toks, text)) = parts {
         if standalone {
             prefix.extend_from_slice(b"<?xml version=\"1.0\" standalone=\"yes\"?>");
@@ -2549,7 +2759,13 @@ pub unsafe extern "C" fn XML_ExternalEntityParserCreate(
             if has_ext {
                 prefix.extend_from_slice(b" SYSTEM \"\"");
             }
-            if let Some((a, b)) = sub {
+            if let Some(f) = flat {
+                // The DTD read whole (which ends with ']'), whose external
+                // entities are not read again.
+                prefix.extend_from_slice(b" [");
+                prefix.extend_from_slice(f);
+                c.no_load = true;
+            } else if let Some((a, b)) = sub {
                 prefix.extend_from_slice(b" [");
                 prefix.extend_from_slice(&text[a..b]);
                 prefix.extend_from_slice(b"]");
@@ -2624,6 +2840,42 @@ impl Parser {
             }
             _ => {}
         }
+        if let Some(pp) = self.collect_to {
+            // For the parent, which reads its DTD whole.
+            let pp = unsafe { &mut *pp };
+            if let Some(v) = pp.collect.as_mut() {
+                v.extend_from_slice(s);
+                pp.collect_h = Some((self.base.clone(), self.h.ext_ref, self.h.ext_ref_arg));
+                if is_final {
+                    let text = v.clone();
+                    // Its text declaration, to this parser's handler.
+                    if let (Some(f), Ok((Some((ver, enc)), _))) = (self.h.xml_decl, ext_content(&text)) {
+                        self.parsing = P_PARSING;
+                        self.s_clear();
+                        let vk = ver.map(|v| self.s_push(&v));
+                        let ek = enc.map(|e| self.s_push(&e));
+                        let arg = self.arg();
+                        unsafe { f(arg, self.s_opt(vk), self.s_opt(ek), -1) };
+                        if self.parsing != P_PARSING {
+                            pp.collect_err = true;
+                            if self.error == E_NONE {
+                                self.error = E_ABORTED;
+                            }
+                            self.parsing = P_FINISHED;
+                            return STATUS_ERROR;
+                        }
+                    }
+                    // This parser's verdict on the entity, read as the
+                    // external subset is (the parent reads it in place).
+                    if let Err(code) = ext_dtd_check(&text, &crate::pe::open_entities()) {
+                        pp.collect_err = true;
+                        return self.fail(code);
+                    }
+                }
+            }
+            self.parsing = if is_final { P_FINISHED } else { P_PARSING };
+            return STATUS_OK;
+        }
         self.parsing = P_PARSING;
         self.input.extend_from_slice(s);
         if matches!(self.ext, Some(Ext::Entity { .. })) && !self.whole {
@@ -2649,7 +2901,8 @@ impl Parser {
     /// The push parser reads this document: UTF-8 by its first bytes and
     /// what the caller says (the stream hands any other back, whole).
     fn can_stream(&self) -> bool {
-        !self.whole && self.ext.is_none() && self.encoding.as_deref().is_none_or(|e| e.eq_ignore_ascii_case(b"UTF-8"))
+        // (The stream does not expand parameter entities.)
+        !self.whole && self.ext.is_none() && self.param_parsing == 0 && self.encoding.as_deref().is_none_or(|e| e.eq_ignore_ascii_case(b"UTF-8"))
     }
 
     /// An external entity's next chunk: once its text declaration is read,
@@ -2804,7 +3057,7 @@ impl Parser {
         if let Some(h) = &self.held {
             t.extend_from_slice(h);
         }
-        match super::parse(&t) {
+        match plain_parse(&t) {
             // The verified verdict is the stream's.
             Ok(_) => (E_SYNTAX, from, false),
             Err(e) => {

@@ -70,6 +70,16 @@ const REJECTED_ERRORS: &[&str] = &[
 
 #[test]
 fn xmlconf() {
+    run(false);
+}
+
+/// The suite again, reading external entities from the suite's files.
+#[test]
+fn xmlconf_external() {
+    run(true);
+}
+
+fn run(ext: bool) {
     let Some(root) = std::env::var("XMLCONF").ok().filter(|r| !r.is_empty()) else {
         eprintln!("XMLCONF not set; skipping the W3C conformance suite");
         return;
@@ -84,7 +94,22 @@ fn xmlconf() {
             fail.push(format!("{}: cannot read {}", c.id, c.path.display()));
             continue;
         };
-        let ok = verilith_xml::check(&data, &mut tape);
+        let ok = if ext {
+            let dir = c.path.parent().unwrap().to_path_buf();
+            let mut ld = verilith_xml::pe::Loader::new(move |base: &[u8], sys: &[u8], _pubid: &[u8]| {
+                let from = if base.is_empty() {
+                    dir.clone()
+                } else {
+                    PathBuf::from(String::from_utf8_lossy(base).into_owned()).parent()?.to_path_buf()
+                };
+                let p = from.join(String::from_utf8_lossy(sys).into_owned());
+                let b = std::fs::read(&p).ok()?;
+                Some((b, p.to_string_lossy().into_owned().into_bytes()))
+            });
+            verilith_xml::check_with(&data, &mut tape, &mut ld)
+        } else {
+            verilith_xml::check(&data, &mut tape)
+        };
         let want = match c.ty.as_str() {
             "not-wf" => Some(false),
             "valid" | "invalid" => Some(true),
@@ -100,9 +125,10 @@ fn xmlconf() {
         } else if let Some(why) = expected.get(c.id.as_str()) {
             let _ = why;
             seen_expected += 1;
-        } else if !want && c.entities != "none" && c.entities != "" {
+        } else if !ext && !want && c.entities != "none" && c.entities != "" {
             // A not-wf test that may only be detectable in an external
-            // entity, which is not read.
+            // entity, which is not read (they are all read, and every such
+            // test rejected, in `xmlconf_external`).
             ext_ok += 1;
             eprintln!("external? {} ({}) {}", c.id, c.entities, c.path.display());
         } else {
