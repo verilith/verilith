@@ -7,15 +7,16 @@
 // has rebuilt or nothing. The theorem, checked by Verus: every font it
 // returns satisfies [`spec::wf_font`].
 
-#[cfg(not(target_pointer_width = "64"))]
-compile_error!("verilith-font is proven for 64-bit targets only");
-
 // The table-size arithmetic is proven with 64-bit usize. Only where it
 // holds, so that a 32-bit build stops at the error above rather than at the
 // size check this generates.
 #[cfg(target_pointer_width = "64")]
 vstd::prelude::verus! {
 global size_of usize == 8;
+}
+#[cfg(target_pointer_width = "32")]
+vstd::prelude::verus! {
+global size_of usize == 4;
 }
 
 #[doc(hidden)]

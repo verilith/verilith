@@ -319,6 +319,8 @@ impl<T> RingBuffer<T> {
         &&& c.head_out == self.head_out.id()
         &&& c.cells.len() == c.cap
         &&& self.buf@.len() == c.cap
+        // The slots are a Vec: on 32-bit targets, fewer than 2^32.
+        &&& c.cap <= usize::MAX
         &&& forall|i: int| 0 <= i < c.cap ==> #[trigger] self.buf@[i].id() == c.cells[i]
     }
 
@@ -1906,6 +1908,14 @@ impl<T> Consumer<T> {
                     assert(s.cells.dom().contains(p));
                     assert(s.cells[p].view() == self.tid@.view());
                 }
+                // Published first, while the facts about the slots just
+                // published are fresh (on 32-bit targets the solver loses them
+                // after the frame lemma below).
+                assert(seen_by(old_cells, pg.head_cache + c.cap, h0 + c.cap, cg.hview)) by {
+                    assert(seen_by(old_cells, pg.head_cache + c.cap, (hh[cg.hidx as int].val + c.cap) as nat, hh[cg.hidx as int].view));
+                }
+                assert(same_outside(s.cells, old_cells, h0 + c.cap, h0 + k as nat + c.cap));
+                lemma_publish_head(old_cells, s.cells, hh, s.head.msgs(), pg.head_cache + c.cap, h0, k as nat, c.cap, cg.hview, self.tid@.view());
                 let ghost cells1 = s.cells;
                 let ghost kn = k as nat;
                 assert forall|p: nat| #![trigger cells1.dom().contains(p)] h0 + c.cap <= p < h0 + kn + c.cap implies cells1.dom().contains(p) && cells1[p].value() == f[p] by {
@@ -1916,11 +1926,6 @@ impl<T> Consumer<T> {
                 assert(same_outside(cells1, old_cells, h0 + c.cap, h0 + kn + c.cap));
                 lemma_pop_frame(c, cells1, old_cells, f, old_q, cg.tail_cache, pg.tail, pg.head_cache, h0, kn);
                 assert(old_q.subrange(0, k as int) =~= held.subrange(0, k as int));
-                assert(seen_by(old_cells, pg.head_cache + c.cap, h0 + c.cap, cg.hview)) by {
-                    assert(seen_by(old_cells, pg.head_cache + c.cap, (hh[cg.hidx as int].val + c.cap) as nat, hh[cg.hidx as int].view));
-                }
-                assert(same_outside(s.cells, old_cells, h0 + c.cap, h0 + k as nat + c.cap));
-                lemma_publish_head(old_cells, s.cells, hh, s.head.msgs(), pg.head_cache + c.cap, h0, k as nat, c.cap, cg.hview, self.tid@.view());
                 lemma_seen_frame_above(old_cells, s.cells, lo, hi, cg.tail_cache, s.tail.msgs());
                 s.cons.update(self.g.borrow_mut(), ConsGhost {
                     head: next as nat,
@@ -1946,17 +1951,18 @@ impl<T> Consumer<T> {
         proof {
             let ghost nn = next as nat;
             let ghost tcn = self.tail_cache as nat;
-            assert forall|p: nat| nn <= p < tcn implies {
-                &&& #[trigger] self.perms@.dom().contains(p)
-                &&& slot_ok(c, p, self.perms@[p])
-                &&& self.perms@[p].is_init()
-                &&& self.perms@[p].value() == new_held[p - nn]
-            } by {
-                assert(h0 + k as nat <= p);
-                assert(self.perms@.dom().contains(p));
-                assert(new_held[p - nn] == held[p - h0]);
+            assert(full_perms(self.perms@, c, nn, tcn, new_held, nn)) by {
+                assert forall|p: nat| nn <= p < tcn implies {
+                    &&& #[trigger] self.perms@.dom().contains(p)
+                    &&& slot_ok(c, p, self.perms@[p])
+                    &&& self.perms@[p].is_init()
+                    &&& self.perms@[p].value() == new_held[p - nn]
+                } by {
+                    assert(h0 + k as nat <= p);
+                    assert(self.perms@.dom().contains(p));
+                    assert(new_held[p - nn] == held[p - h0]);
+                }
             }
-            assert(full_perms(self.perms@, c, nn, tcn, new_held, nn));
         }
         self.head = next;
         self.idx = idx;
@@ -2261,6 +2267,8 @@ impl<T> Consumer<T> {
 pub fn new<T>(cap: u64) -> (r: (Producer<T>, Consumer<T>, Tracked<QueueView<T>>))
     requires
         cap > 0,
+        // Always true on 64-bit targets: the slots are one Vec.
+        cap <= usize::MAX,
     ensures
         r.0.wf(),
         r.1.wf(),

@@ -6,9 +6,18 @@ frame format (with its xxHash32 checksums), behind liblz4's C API. It is
 meant as a drop-in replacement for liblz4 where memory safety and
 correct output have to be certain.
 
-`cargo verus verify` (or `scripts/verify.sh`) checks 143 functions and
+`cargo verus verify` (or `scripts/verify.sh`) checks 144 functions and
 lemmas with no errors, no `assume` and no `external_body` in this crate.
 Everything assumed is listed in [TRUST.md](https://github.com/verilith/verilith/blob/main/crates/lz4/TRUST.md).
+
+The proofs are checked once per pointer width: CI also runs Verus
+compiling for `wasm32-unknown-unknown`, where `usize` is 32 bits
+(`scripts/verify-narrow.sh`), so the crate builds for wasm32 (browsers,
+Cloudflare Workers) and is proven as built there. Its tests also pass on
+`wasm32-wasip1` under wasmtime (`scripts/wasm32.sh` at the root).
+
+On a 32-bit target a decompressed frame is at most 1.75 GiB
+(`frame::MAX_OUT`), below the largest allocation there.
 
 ## Using it from Rust
 

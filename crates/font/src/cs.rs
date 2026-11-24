@@ -612,6 +612,9 @@ pub fn check_charstrings(t: &[u8], d: &DictX, g: usize, ng: u16, sm: usize) -> (
     ensures
         b == wf_charstrings(t@, d@, g as int, ng as int, sm as int),
 {
+    // The offsets fit in a usize, since they are in the table.
+    let _ = t.len();
+    assert(d@.charstrings + 2 <= t@.len());
     let cs = d.charstrings as usize;
     let n = ng as usize;
     let mut fdl: Vec<usize> = Vec::new();

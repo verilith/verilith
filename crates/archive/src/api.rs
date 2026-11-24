@@ -5,7 +5,7 @@
 //! `reader::parse`, and passes the caller's requests to `read::read_entry`
 //! and `plan::plan`. It is listed in TRUST.md.
 use crate::plan::{Item, Rejected};
-use crate::read::{read_entry, stored_in_place, Error};
+use crate::read::{read_entry, stored_in_place, Error, MAX_ARCHIVE};
 use std::borrow::Cow;
 use crate::reader::{parse, Format};
 use crate::zip::Entry;
@@ -13,9 +13,6 @@ use crate::zip::Entry;
 /// Most bytes any one decompression may produce unless the caller says
 /// otherwise: 1 GiB.
 pub const DEFAULT_LIMIT: usize = 1 << 30;
-
-/// The proofs cover archives below this size (256 TiB).
-const MAX_ARCHIVE: usize = 0x1_0000_0000_0000;
 
 /// The compression around the whole archive.
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]

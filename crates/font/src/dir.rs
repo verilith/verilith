@@ -103,18 +103,21 @@ fn check_rec(s: &[u8], n: usize, i: usize) -> (b: bool)
     } else {
         let poff = rd32(s, r - 16 + 8) as usize;
         let plen = rd32(s, r - 16 + 12) as usize;
-        if off != (poff + plen + 3) / 4 * 4 {
+        if off as u64 != (poff as u64 + plen as u64 + 3) / 4 * 4 {
             return false;
         }
         if rd32(s, r - 16) >= rd32(s, r) {
             return false;
         }
     }
-    let end = off + len;
+    // In u64: two 32-bit lengths can pass a 32-bit usize.
+    let end = off as u64 + len as u64;
     let pend = (end + 3) / 4 * 4;
-    if pend > s.len() {
+    if pend > s.len() as u64 {
         return false;
     }
+    let end = end as usize;
+    let pend = pend as usize;
     if !check_zeros(s, end, pend) {
         return false;
     }
@@ -164,7 +167,7 @@ pub fn check_directory(s: &[u8]) -> (b: bool)
     let r = 12 + 16 * (n - 1);
     let off = rd32(s, r + 8) as usize;
     let len = rd32(s, r + 12) as usize;
-    s.len() == (off + len + 3) / 4 * 4
+    s.len() as u64 == (off as u64 + len as u64 + 3) / 4 * 4
 }
 
 } // verus!

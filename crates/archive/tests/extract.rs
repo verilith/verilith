@@ -49,9 +49,22 @@ fn fixtures_extract() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+#[cfg(unix)]
 unsafe extern "C" {
     fn dlopen(name: *const c_char, flags: c_int) -> *mut c_void;
     fn dlsym(h: *mut c_void, name: *const c_char) -> *mut c_void;
+}
+
+// No dynamic loading on wasm32-wasip1: the reference library is never
+// found there, and the tests that compare with it skip.
+#[cfg(not(unix))]
+unsafe fn dlopen(_name: *const c_char, _flags: c_int) -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+#[cfg(not(unix))]
+unsafe fn dlsym(_h: *mut c_void, _name: *const c_char) -> *mut c_void {
+    std::ptr::null_mut()
 }
 
 /// A zip member compressed with Zstandard (method 93), made with the

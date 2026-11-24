@@ -220,7 +220,8 @@ jobs:
   verify-narrow:
     # The 32-bit build of a crate that supports wasm32, beside the 64-bit one
     # the verify jobs check: xml's 32-bit tape token through its
-    # narrow-tokens feature, and text, url and regex with Verus compiling for
+    # narrow-tokens feature, and the others (json, text, url, regex, xxhash,
+    # snappy, lz4, zstd, archive) with Verus compiling for
     # wasm32-unknown-unknown (each crate's scripts/verify-narrow.sh).
     name: Verify ${{ matrix.crate }} (32-bit layout)
     needs: [plan, verus]
@@ -324,9 +325,9 @@ jobs:
         run: crates/${{ matrix.crate }}/ci.sh
 
   wasm32:
-    # WebAssembly: what builds for wasm32-unknown-unknown, what refuses to
-    # (the crates proven for 64-bit targets only), and the tests of text,
-    # url, regex and json on wasm32-wasip1 under wasmtime.
+    # WebAssembly: every crate builds for wasm32-unknown-unknown, and the
+    # tests of text, url, regex, json, xxhash, snappy, lz4, zstd, archive,
+    # png, font and wasm pass on wasm32-wasip1 under wasmtime.
     name: wasm32
     needs: plan
     if: needs.plan.outputs.test != '[]'

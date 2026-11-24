@@ -15,13 +15,23 @@
 //   libarchive's read API. Plain Rust over the proven parts.
 #![cfg_attr(not(verus_only), allow(unused_variables, unused_imports))]
 
-#[cfg(not(target_pointer_width = "64"))]
-compile_error!("verilith-archive is proven for 64-bit targets only");
-
 #[cfg(verus_only)]
 vstd::prelude::verus! {
 
+// The proofs are checked once per pointer width.
+
+
+#[cfg(target_pointer_width = "64")]
+
+
 global size_of usize == 8;
+
+
+
+#[cfg(target_pointer_width = "32")]
+
+
+global size_of usize == 4;
 
 } // verus!
 

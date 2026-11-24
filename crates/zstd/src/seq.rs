@@ -18,6 +18,16 @@ use vstd::slice::slice_subrange;
 
 verus! {
 
+/// The most output a decode may be asked to produce, and the input sizes
+/// the decoders are proven for: 256 TiB on 64-bit targets, and on 32-bit
+/// ones 2 GiB, above the largest slice there (`isize::MAX` bytes), so that
+/// a length plus a block or a window still fits a `usize`.
+#[cfg(target_pointer_width = "64")]
+pub const MAX_LIMIT: usize = 0x1_0000_0000_0000;
+
+#[cfg(target_pointer_width = "32")]
+pub const MAX_LIMIT: usize = 0x8000_0000;
+
 // ---------------------------------------------------------------------------
 // Code tables
 // ---------------------------------------------------------------------------
@@ -663,7 +673,7 @@ pub fn seq_table_exec(b: &[u8], k: u8, mode: u8, prev: Option<&FseTab>, Ghost(gp
     requires
         k <= 2,
         mode <= 3,
-        b@.len() < 0x1_0000_0000,
+        b@.len() < BITS_MAX,
         match prev {
             None => gprev is None,
             Some(t) => gprev is Some && tab_is(t, gprev.unwrap()) && tab_wf(t, kind_nsym(k as nat)),
@@ -1231,7 +1241,7 @@ pub fn seq_step_exec(
 ) -> (r: Result<SeqOut, bool>)
     requires
         seqtabs_is(t, ts),
-        s@.len() < 0x1_0000_0000,
+        s@.len() < BITS_MAX,
         lits@.len() <= 131072,
         p <= 8 * s@.len(),
         li <= lits@.len(),
@@ -1239,7 +1249,7 @@ pub fn seq_step_exec(
         (sof as int) < t.of.rows@.len(),
         (sml as int) < t.ml.rows@.len(),
         fstart <= old(out)@.len() <= olimit,
-        olimit <= 0x1_0000_0000_0000,
+        olimit <= MAX_LIMIT,
         old(out).cap() >= olimit + 64,
     ensures
         final(out).cap() == old(out).cap(),
@@ -1329,7 +1339,7 @@ pub fn seq_step_exec(
         assert(out@.subrange(0, fstart as int) =~= pre);
         assert(fout(out@, fstart as int) =~= out1);
     }
-    if off as usize > out.len() - fstart || off > window || off == 0 {
+    if off > (out.len() - fstart) as u64 || off > window || off == 0 {
         return Err(false);
     }
     copy_match_exec(out, fstart, off as usize, ml as usize);
@@ -1345,7 +1355,7 @@ pub fn seq_step_exec(
 pub fn seq_next_exec(t: &SeqTabs, s: &[u8], p3: usize, sll: u32, sof: u32, sml: u32, Ghost(ts): Ghost<SeqTables>) -> (r: Option<(usize, u32, u32, u32)>)
     requires
         seqtabs_is(t, ts),
-        s@.len() < 0x1_0000_0000,
+        s@.len() < BITS_MAX,
         p3 <= 8 * s@.len(),
         (sll as int) < t.ll.rows@.len(),
         (sof as int) < t.of.rows@.len(),
@@ -1431,7 +1441,7 @@ pub open spec fn seq_dec_is(d: Dec, t: SeqTables, s: Seq<u8>, p: int, sll: int, 
 pub fn seq_dec(t: &SeqTabs, s: &[u8], p: usize, sll: u32, sof: u32, sml: u32, Ghost(ts): Ghost<SeqTables>) -> (r: Option<Dec>)
     requires
         seqtabs_is(t, ts),
-        s@.len() < 0x1_0000_0000,
+        s@.len() < BITS_MAX,
         64 <= p < 8 * s@.len(),
         (sll as int) < t.ll.rows@.len(),
         (sof as int) < t.of.rows@.len(),
@@ -1541,7 +1551,7 @@ pub fn seq_fast(
 ) -> (r: Fast)
     requires
         seqtabs_is(t, ts),
-        s@.len() < 0x1_0000_0000,
+        s@.len() < BITS_MAX,
         lits@.len() <= 131072,
         p0 <= 8 * s@.len(),
         li0 <= lits@.len(),
@@ -1549,7 +1559,7 @@ pub fn seq_fast(
         (sof0 as int) < t.of.rows@.len(),
         (sml0 as int) < t.ml.rows@.len(),
         fstart <= old(out)@.len() <= olimit,
-        olimit <= 0x1_0000_0000_0000,
+        olimit <= MAX_LIMIT,
         old(out).cap() >= olimit + 64,
     ensures
         final(out).cap() == old(out).cap(),
@@ -1610,7 +1620,7 @@ pub fn seq_fast(
         invariant
             left <= left0,
             seqtabs_is(t, ts),
-            s@.len() < 0x1_0000_0000,
+            s@.len() < BITS_MAX,
             lits@.len() <= 131072,
             p < 8 * s@.len(),
             li <= lits@.len(),
@@ -1618,7 +1628,7 @@ pub fn seq_fast(
             (sof as int) < t.of.rows@.len(),
             (sml as int) < t.ml.rows@.len(),
             fstart <= out@.len() <= olimit,
-            olimit <= 0x1_0000_0000_0000,
+            olimit <= MAX_LIMIT,
             out.cap() == old(out).cap(),
             out.cap() >= olimit + 64,
             wlim <= window,
@@ -1752,7 +1762,7 @@ pub fn seq_fast(
                 assert(out@.subrange(0, fstart as int) =~= pre);
                 assert(fout(out@, fstart as int) =~= out1);
             }
-            if off as usize > out.len() - fstart || off > window || off == 0 {
+            if off > (out.len() - fstart) as u64 || off > window || off == 0 {
                 proof {
                     assert(step is None);
                 }
@@ -1806,14 +1816,14 @@ pub fn seq_run_exec(
 ) -> (r: Result<SeqOut, bool>)
     requires
         seqtabs_is(t, ts),
-        s@.len() < 0x1_0000_0000,
+        s@.len() < BITS_MAX,
         lits@.len() <= 131072,
         p0 <= 8 * s@.len(),
         (sll0 as int) < t.ll.rows@.len(),
         (sof0 as int) < t.of.rows@.len(),
         (sml0 as int) < t.ml.rows@.len(),
         fstart <= old(out)@.len() <= olimit,
-        olimit <= 0x1_0000_0000_0000,
+        olimit <= MAX_LIMIT,
         olimit - old(out)@.len() <= 131072,
     ensures
         ({
@@ -1867,14 +1877,14 @@ fn seq_run_tail(
 ) -> (r: Result<SeqOut, bool>)
     requires
         seqtabs_is(t, ts),
-        s@.len() < 0x1_0000_0000,
+        s@.len() < BITS_MAX,
         lits@.len() <= 131072,
         p0 <= 8 * s@.len(),
         (sll0 as int) < t.ll.rows@.len(),
         (sof0 as int) < t.of.rows@.len(),
         (sml0 as int) < t.ml.rows@.len(),
         fstart <= old(out)@.len() <= olimit,
-        olimit <= 0x1_0000_0000_0000,
+        olimit <= MAX_LIMIT,
         old(out).cap() >= olimit + 64,
     ensures
         ({
@@ -1911,7 +1921,7 @@ fn seq_run_tail(
         invariant
             i <= n,
             seqtabs_is(t, ts),
-            s@.len() < 0x1_0000_0000,
+            s@.len() < BITS_MAX,
             lits@.len() <= 131072,
             p <= 8 * s@.len(),
             li <= lits@.len(),
@@ -1919,7 +1929,7 @@ fn seq_run_tail(
             (sof as int) < t.of.rows@.len(),
             (sml as int) < t.ml.rows@.len(),
             fstart <= out@.len() <= olimit,
-            olimit <= 0x1_0000_0000_0000,
+            olimit <= MAX_LIMIT,
             out.cap() >= olimit + 64,
             out@.subrange(0, fstart as int) == pre,
             pre == old(out)@.subrange(0, fstart as int),
@@ -2182,7 +2192,7 @@ pub proof fn lemma_seq_section(b: Seq<u8>, lits: Seq<u8>, window: nat, st: Frame
 /// Parses the three tables (`seq_hdr`).
 pub fn seq_hdr_exec(b: &[u8], h: usize, seqt: &Option<SeqTabs>, Ghost(st): Ghost<FrameState>) -> (r: Option<(SeqTabs, usize)>)
     requires
-        b@.len() < 0x1_0000_0000,
+        b@.len() < BITS_MAX,
         h < b@.len(),
         seqt_opt_is(*seqt, st.seqt),
     ensures
@@ -2249,12 +2259,12 @@ pub fn seq_body_exec(
     Ghost(ts): Ghost<SeqTables>,
 ) -> (ok: Step)
     requires
-        b@.len() < 0x1_0000_0000,
+        b@.len() < BITS_MAX,
         a3 <= b@.len(),
         seqtabs_is(&tabs, ts),
         dec_is(old(d), st),
         old(d).lits@.len() <= 131072,
-        old(d).out@.len() <= olimit <= 0x1_0000_0000_0000,
+        old(d).out@.len() <= olimit <= MAX_LIMIT,
         olimit - old(d).out@.len() <= 131072,
     ensures
         match seq_body(b@, old(d).lits@, window as nat, st, ts, a3 as int, n as nat) {
@@ -2383,10 +2393,10 @@ pub fn seq_body_exec(
 /// the output passes `olimit`.
 fn seq_section_exec(b: &[u8], window: u64, d: &mut FrameDec, olimit: usize, Ghost(st): Ghost<FrameState>) -> (ok: Step)
     requires
-        b@.len() < 0x1_0000_0000,
+        b@.len() < BITS_MAX,
         dec_is(old(d), st),
         old(d).lits@.len() <= 131072,
-        old(d).out@.len() <= olimit <= 0x1_0000_0000_0000,
+        old(d).out@.len() <= olimit <= MAX_LIMIT,
         olimit - old(d).out@.len() <= 131072,
     ensures
         match seq_section(b@, old(d).lits@, window as nat, st) {
@@ -2446,10 +2456,10 @@ fn seq_section_exec(b: &[u8], window: u64, d: &mut FrameDec, olimit: usize, Ghos
 #[verifier::rlimit(40)]
 pub fn compressed_block_exec(b: &[u8], window: u64, bmax: usize, d: &mut FrameDec, olimit: usize, Ghost(st): Ghost<FrameState>) -> (ok: Step)
     requires
-        b@.len() < 0x1_0000_0000,
+        b@.len() < BITS_MAX,
         bmax <= 131072,
         dec_is(old(d), st),
-        old(d).out@.len() <= olimit <= 0x1_0000_0000_0000,
+        old(d).out@.len() <= olimit <= MAX_LIMIT,
     ensures
         match compressed_block(b@, window as nat, bmax as nat, st) {
             None => !(ok is Done),

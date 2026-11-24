@@ -5,10 +5,18 @@ A verified Zstandard (RFC 8878) decompressor in Rust, proven with
 C API. It is meant to replace libzstd's decoder in hardened builds (Node.js
 first), alongside libzstd's compressor.
 
-`cargo verus verify` (or `scripts/verify.sh`) checks 286 functions and
+`cargo verus verify` (or `scripts/verify.sh`) checks 293 functions and
 lemmas with no errors and no `assume`; the only `external_body` functions
 in this crate are the seven small copy primitives in
 `src/prims.rs` and the three CPU-feature wrappers in `src/cpu.rs`.
+
+The proofs are checked once per pointer width: CI also runs Verus
+compiling for `wasm32-unknown-unknown`, where `usize` is 32 bits
+(`scripts/verify-narrow.sh`), so the crate builds for wasm32 (browsers,
+Cloudflare Workers) and is proven as built there. Its tests also pass on
+`wasm32-wasip1` under wasmtime (`scripts/wasm32.sh` at the root).
+On a 32-bit target the limits are smaller: see the last rows of
+[DEPARTURES.md](https://github.com/verilith/verilith/blob/main/crates/zstd/DEPARTURES.md).
 
 ## Using it from Rust
 

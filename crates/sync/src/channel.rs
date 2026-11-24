@@ -35,7 +35,7 @@ use std::time::{Duration, Instant};
 /// 2^60 (more than can be allocated).
 pub fn bounded<T>(cap: usize) -> (Sender<T>, Receiver<T>) {
     assert!(cap > 0, "vsync does not support zero-capacity channels yet");
-    assert!(cap < 0x1000_0000_0000_0000, "capacity must be below 2^60");
+    assert!((cap as u64) < 0x1000_0000_0000_0000, "capacity must be below 2^60");
     let (tx, rx) = Handle::pair(cap);
     (Sender { h: tx }, Receiver { h: rx })
 }

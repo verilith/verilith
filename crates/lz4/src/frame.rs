@@ -57,7 +57,14 @@ pub enum Error {
 }
 
 /// No output is longer than this, whatever limit is asked for.
+#[cfg(target_pointer_width = "64")]
 pub const MAX_OUT: usize = 0x4000_0000_0000_0000;
+
+/// No output is longer than this, whatever limit is asked for: on 32-bit
+/// targets, 1.75 GiB, below the largest allocation there (`isize::MAX`
+/// bytes) by more than a block.
+#[cfg(target_pointer_width = "32")]
+pub const MAX_OUT: usize = 0x7000_0000;
 
 /// A frame header, as `spec::Header`.
 #[derive(Debug, Clone, Copy)]

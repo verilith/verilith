@@ -261,8 +261,11 @@ decoder delivers it (level with the one-shot path).
 
 ## Building
 
-64-bit targets only: the proofs fix `usize` at 64 bits, so a 32-bit build
-(wasm32 included) stops with a `compile_error!`.
+The proofs hold for 64-bit and for 32-bit targets (wasm32 included):
+`scripts/verify.sh png` checks the first and `crates/png/scripts/verify-narrow.sh`
+the second, and the tests pass on wasm32-wasip1. On a 32-bit target an
+image whose output does not fit in the address space is refused with
+`Error::TooLarge`, as one over the caller's limit is.
 
 ```sh
 cargo build --release                       # the library

@@ -713,6 +713,7 @@ proof fn lemma_low32(s: Seq<u8>, i: int, w: u64)
 ///
 /// `roomy` says `dst` has `bound` bytes, and then nothing is checked.
 #[inline(always)]
+#[verifier::spinoff_prover]
 fn put_match(
     input: &[u8],
     start: usize,
@@ -865,6 +866,9 @@ fn put_match(
         lemma_lz_copy_is(o, r, off as int, ml as nat);
         lemma_reach_step(p0, hist, out0, strict, lits, off as nat, ml as nat);
     }
+    // The work bound: each length byte is one of 255 bytes counted.
+    assert(ip0 + ml == ip + 4 + more);
+    assert(ll / 255 <= ll && ml / 255 <= ml) by (nonlinear_arith);
     (Some((d2, ip0 + ml)), Ghost(work))
 }
 
@@ -1244,7 +1248,7 @@ fn core_big(
                     break ;
                 }
                 let step = nb >> 6;
-                assert(nb >> 6 >= 1 && nb >> 6 <= nb) by (bit_vector)
+                assert(nb >> 6 >= 1 && nb >> 6 <= nb && nb >> 6 == nb / 64) by (bit_vector)
                     requires
                         nb >= 64,
                 ;

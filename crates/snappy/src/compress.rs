@@ -1152,6 +1152,9 @@ pub open spec fn max_len(n: nat) -> nat {
 pub fn max_compressed_length(n: usize) -> (r: usize)
     requires
         n <= 0xffff_ffff,
+        // Implied by the line above on 64-bit targets; on 32-bit ones,
+        // by `n <= isize::MAX`, so by any slice's length.
+        32 + n + n / 6 <= usize::MAX,
     ensures
         r == max_len(n as nat),
 {

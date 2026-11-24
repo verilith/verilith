@@ -665,16 +665,28 @@ pub open spec fn rejected(x: Seq<u8>, d: Dict) -> bool {
     forall|b: Seq<u8>| ext(b, x) ==> !#[trigger] frame_start(b, d)
 }
 
+/// The streaming decoder's buffer, at most two reaches and three blocks,
+/// leaves room for two more blocks within `MAX_LIMIT`, on 32-bit targets
+/// too.
+pub proof fn lemma_buf_fits(len: nat, reach: nat)
+    requires
+        len <= 2 * reach + 3 * SBLOCK_MAX + 2,
+        reach <= SWINDOW_MAX + crate::dict::DICT_MAX,
+    ensures
+        len + 2 * SBLOCK_MAX <= MAX_LIMIT,
+{
+}
+
 /// What a failure means, for the input `x` of the frame so far: the spec
 /// rejects every frame that starts with `x`, except for the two limits
 /// the caller (or this decoder) sets. `Window`: the header names a window
 /// larger than the caller allows (libzstd's `maxWindowSize`), or than
-/// 1 TiB. `Limit`: the frame's output (`out` bytes so far) is close to
-/// `SLIMIT` (256 TiB).
+/// `SWINDOW_MAX` (1 TiB, or 256 MiB on 32-bit targets). `Limit`: the
+/// frame's output (`out` bytes so far) is close to `SLIMIT` (256 TiB).
 pub open spec fn fail_ok(f: Fail, x: Seq<u8>, d: Dict, max_window: u64, out: nat) -> bool {
     match f {
         Fail::Window => x.len() >= 5 && (frame_header(x.subrange(4, x.len() as int)) matches Some(h) && (h.window
-            > max_window || h.window > 0x100_0000_0000)),
+            > max_window || h.window > SWINDOW_MAX)),
         Fail::Limit => rejected(x, d) || out + 2 * SBLOCK_MAX > SLIMIT,
         _ => rejected(x, d),
     }
@@ -821,6 +833,15 @@ pub const SBLOCK_MAX: usize = 131072;
 /// Most output a frame may have when streamed.
 pub const SLIMIT: u64 = 0x1_0000_0000_0000;
 
+/// The largest window the streaming decoder takes: 1 TiB on 64-bit
+/// targets, and on 32-bit ones 256 MiB, so that it, a dictionary and two
+/// blocks fit the buffer it keeps.
+#[cfg(target_pointer_width = "64")]
+pub const SWINDOW_MAX: u64 = 0x100_0000_0000;
+
+#[cfg(target_pointer_width = "32")]
+pub const SWINDOW_MAX: u64 = 0x1000_0000;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Stage {
     /// Collecting a frame's first 5 bytes (or a skippable frame's 8).
@@ -953,7 +974,7 @@ impl Stream {
         &&& frame_header(g.subrange(4, 4 + h.size)) == Some(h)
         &&& (h.dict_id == 0 || h.dict_id == self.gdict@.id)
         &&& self.window as nat == h.window
-        &&& self.window <= 0x100_0000_0000
+        &&& self.window <= SWINDOW_MAX
         &&& self.reach as nat == h.window + self.dl()
         &&& match self.fcs {
             None => h.fcs is None,
@@ -1002,7 +1023,7 @@ impl Stream {
     pub open spec fn inv(&self) -> bool {
         &&& self.dict.is(self.gdict@)
         &&& self.dlen as nat == self.dl()
-        &&& self.dlen < 0x1_0000_0000
+        &&& self.dlen < crate::dict::DICT_MAX
         &&& self.stage_inv()
     }
 
@@ -1116,7 +1137,7 @@ impl Stream {
         requires
             old(self).dict.is(old(self).gdict@),
             old(self).dlen as nat == old(self).dl(),
-            old(self).dlen < 0x1_0000_0000,
+            old(self).dlen < crate::dict::DICT_MAX,
         ensures
             final(self).inv(),
             final(self).stage == Stage::Magic,
@@ -1179,7 +1200,7 @@ impl Stream {
         requires
             old(self).dict.is(old(self).gdict@),
             old(self).dlen as nat == old(self).dl(),
-            old(self).dlen < 0x1_0000_0000,
+            old(self).dlen < crate::dict::DICT_MAX,
         ensures
             final(self).inv(),
             final(self).stage == Stage::Failed,
@@ -1353,7 +1374,7 @@ impl Stream {
     fn trim(&mut self)
         requires
             old(self).dec_inv(),
-            old(self).reach <= 0x100_0000_0000 + 0x1_0000_0000,
+            old(self).reach <= SWINDOW_MAX + crate::dict::DICT_MAX,
         ensures
             final(self).dec_inv(),
             final(self).dict == old(self).dict,
@@ -1809,7 +1830,7 @@ impl Stream {
             }
             return Some(self.failed(Fail::Dict));
         }
-        if h.window > self.max_window || h.window > 0x100_0000_0000 {
+        if h.window > self.max_window || h.window > SWINDOW_MAX {
             return Some(self.failed(Fail::Window));
         }
         self.window = h.window;
@@ -2121,6 +2142,25 @@ impl Stream {
             }
             return Some(self.failed(Fail::Limit));
         }
+        // On 32-bit targets the buffer also stays below the decoder's limit
+        // (on 64-bit ones the check above keeps it there). Not reached: it
+        // holds at most two reaches (a window within `SWINDOW_MAX` and a
+        // dictionary) and three blocks.
+        #[cfg(target_pointer_width = "32")]
+        if before > MAX_LIMIT - 2 * SBLOCK_MAX {
+            proof {
+                assert(false) by {
+                    assert(s1.mem_ok());
+                    assert(before <= s1.dec.out@.len());
+                    assert(self.reach == s1.reach);
+                    assert(self.window <= SWINDOW_MAX);
+                    assert(self.dlen < crate::dict::DICT_MAX);
+                    assert(self.reach as nat == self.window + self.dl());
+                    lemma_buf_fits(before as nat, self.reach as nat);
+                }
+            }
+            return Some(self.failed(Fail::Limit));
+        }
         let olimit = before + 2 * SBLOCK_MAX;
         let need = self.need;
         let src: &[u8] = if direct {
@@ -2159,22 +2199,28 @@ impl Stream {
             assert(strim.out.len() == before);
         }
         let (res, _, last) = block_exec(src, 0, self.window, self.reach, &mut self.dec, olimit, Ghost(strim));
-        proof {
-            if !(res is Done) {
-                // The spec rejects the block: a block it accepts writes at
-                // most a block's worth, well inside `olimit`.
-                lemma_block_step_max(src@, 0, h.window, rch0, strim);
-                assert(block_step(src@, 0, h.window, rch0, strim) is None);
-                assert(gst.out =~= pre + strim.out);
-                lemma_reject_bad(g, j, src@, h, gst, strim, pre, self.gdict@);
-            }
-        }
         match res {
             Step::Done => {},
             Step::Limit => {
+                proof {
+                    // The spec rejects the block: a block it accepts writes
+                    // at most a block's worth, well inside `olimit`.
+                    lemma_block_step_max(src@, 0, h.window, rch0, strim);
+                    assert(block_step(src@, 0, h.window, rch0, strim) is None);
+                    assert(gst.out =~= pre + strim.out);
+                    lemma_reject_bad(g, j, src@, h, gst, strim, pre, self.gdict@);
+                }
                 return Some(self.failed(Fail::Limit));
             },
             Step::Bad => {
+                proof {
+                    // The spec rejects the block: a block it accepts writes
+                    // at most a block's worth, well inside `olimit`.
+                    lemma_block_step_max(src@, 0, h.window, rch0, strim);
+                    assert(block_step(src@, 0, h.window, rch0, strim) is None);
+                    assert(gst.out =~= pre + strim.out);
+                    lemma_reject_bad(g, j, src@, h, gst, strim, pre, self.gdict@);
+                }
                 return Some(self.failed(Fail::Corrupt));
             },
         }
