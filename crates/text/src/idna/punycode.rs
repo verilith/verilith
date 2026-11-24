@@ -8,12 +8,19 @@ use vstd::prelude::*;
 
 verus! {
 
+/// Punycode's `base` (RFC 3492, 5).
 pub const BASE: u32 = 36;
+/// Punycode's `tmin`.
 pub const TMIN: u32 = 1;
+/// Punycode's `tmax`.
 pub const TMAX: u32 = 26;
+/// Punycode's `skew`.
 pub const SKEW: u32 = 38;
+/// Punycode's `damp`.
 pub const DAMP: u32 = 700;
+/// Punycode's `initial_bias`.
 pub const INITIAL_BIAS: u32 = 72;
+/// Punycode's `initial_n`.
 pub const INITIAL_N: u32 = 0x80;
 
 // ---------------------------------------------------------------------------

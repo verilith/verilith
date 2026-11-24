@@ -17,22 +17,35 @@ use vstd::prelude::*;
 
 verus! {
 
+/// U+002E FULL STOP, the label separator.
 pub const DOT: u32 = 0x2E;
+/// U+002D HYPHEN-MINUS.
 pub const HYPHEN: u32 = 0x2D;
+/// U+200C ZERO WIDTH NON-JOINER.
 pub const ZWNJ: u32 = 0x200C;
+/// U+200D ZERO WIDTH JOINER.
 pub const ZWJ: u32 = 0x200D;
+/// The canonical combining class of a virama.
 pub const VIRAMA: u8 = 9;
+/// The longest `xn--` label, in bytes, that is decoded.
 pub const DECODE_MAX: usize = 2000;
+/// The longest non-ASCII label, in code points, that is encoded.
 pub const ENCODE_MAX: usize = 1000;
 
 /// The flags of UTS #46 (IgnoreInvalidPunycode is always false).
 #[derive(Clone, Copy)]
 pub struct Options {
+    /// CheckHyphens: no hyphen in the third and fourth positions, or first or last.
     pub check_hyphens: bool,
+    /// CheckBidi: the bidi rule of RFC 5893.
     pub check_bidi: bool,
+    /// CheckJoiners: the ContextJ rules of RFC 5892.
     pub check_joiners: bool,
+    /// UseSTD3ASCIIRules: only letters, digits and hyphens in ASCII.
     pub use_std3_ascii_rules: bool,
+    /// Transitional_Processing: deviation characters are mapped, not kept.
     pub transitional: bool,
+    /// VerifyDnsLength: labels of 1 to 63 bytes and a name of at most 253.
     pub verify_dns_length: bool,
 }
 

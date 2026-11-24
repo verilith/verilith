@@ -142,6 +142,15 @@ def spec(name, consts, params, ret, req, ens):
     for e in ens:
         P(f"        {e},")
     P(";\n")
+    SP(f"/// [`{name}`](core::arch::x86_64::{name}) as a safe function, with the")
+    SP("/// specification Verus checks callers against:")
+    SP("///")
+    SP("/// ```text")
+    for q in req:
+        SP(f"/// requires {q}")
+    for e in ens:
+        SP(f"/// ensures  {e}")
+    SP("/// ```")
     SP("#[verifier::external_body]\n#[inline(always)]")
     SP(f"pub fn {name}{g}({ps}) -> (r: {ret})")
     if req:

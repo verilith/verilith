@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // Verus specifications for x86 (SSE2 to AVX2) and AArch64 NEON SIMD
 // intrinsics.
@@ -22,7 +23,11 @@
 //   specs in terms of `ops`; off AArch64 they call `emu_neon`.
 // - `refs`: verified scalar implementations of every `ops` function, which
 //   `tests/difftest.rs` compares with the CPU.
-#![cfg_attr(not(verus_only), allow(unused_imports))]
+// A normal build erases ghost code, so a variable, import, field or value
+// used only by proofs looks unused there, and the `verus!` syntax leaves
+// some redundant braces and parentheses. These lints are off in that build
+// only.
+#![cfg_attr(not(verus_only), allow(unused_variables, unused_imports, dead_code))]
 #![cfg_attr(not(feature = "std"), no_std)]
 pub mod lanes;
 pub mod ops;
@@ -39,6 +44,12 @@ pub mod safe;
 pub mod emu;
 pub mod neon;
 pub mod emu_neon;
+// The SIMD128 backend of `neon` (its byte-array view of `uint8x16_t` is
+// the one used everywhere but AArch64).
+#[cfg(not(target_arch = "aarch64"))]
+pub mod wasm;
+#[cfg(not(target_arch = "aarch64"))]
+pub mod wasm_neon;
 pub mod neon_mask;
 
 /// The x86 vector types and intrinsics: `core::arch::x86_64` on x86-64,

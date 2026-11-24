@@ -11,13 +11,19 @@ verus! {
 
 /// A decoder (one per HTTP/2 connection direction).
 pub struct Decoder {
+    /// The dynamic table.
     pub table: Table,
+    /// The table size limit from SETTINGS_HEADER_TABLE_SIZE.
     pub settings: u32,
+    /// The smallest limit set since the last size update (`NO_LIMIT` if none is pending), which the next update may not exceed.
     pub pending: u32,
+    /// Whether no field has been decoded yet in this header block, where size updates are allowed.
     pub at_start: bool,
+    /// Whether a size update must come first, after the limit was lowered.
     pub expect: bool,
     /// The last field's name and value.
     pub name: Vec<u8>,
+    /// The last field's value (see `value_ref`).
     pub value: Vec<u8>,
     /// Input of a representation that has not fully arrived (`feed`).
     pub buf: Vec<u8>,
@@ -56,6 +62,7 @@ pub enum Step {
     /// The input ends inside the representation; at least this many bytes
     /// are needed before it can be decoded.
     Short(usize),
+    /// A decoding error.
     Bad,
     /// A field (in `name` and `value`), whether it is never-indexed, and
     /// the representation's length.
@@ -64,9 +71,13 @@ pub enum Step {
     Update(usize),
 }
 
+/// What reading a string literal found.
 pub enum StrE {
+    /// The input ends inside it; at least this many bytes are needed.
     Short(usize),
+    /// A decoding error.
     Bad,
+    /// The string was read; it ends at this position.
     Ok(usize),
 }
 
@@ -428,8 +439,11 @@ pub open spec fn feed_inv(st0: DState, s: Seq<u8>, ob: int, n: int, k: int, pos:
     &&& n < 0x1000_0000
 }
 
+/// What one step of `feed` decided.
 pub enum Next {
+    /// Stop, with this result.
     Done(Feed),
+    /// Go on from this position.
     Go(usize),
 }
 

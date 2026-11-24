@@ -160,7 +160,7 @@ fn ex2_str_tok<S: Sink>(cx: &mut Ctx, k: usize, j: usize, tape: &mut S, Ghost(st
             proof {
                 crate::lemmas::lemma_string_body_advances(g, j + 1, false);
             }
-            tape.push_str_fast(Tok::new(kind, false, (j + 1), (e - 1), NO), s);
+            tape.push_str_fast(Tok::new(kind, false, j + 1, e - 1, NO), s);
             proof {
                 lemma_win_entry(cx, k + 1);
             }
@@ -173,7 +173,7 @@ fn ex2_str_tok<S: Sink>(cx: &mut Ctx, k: usize, j: usize, tape: &mut S, Ghost(st
             proof {
                 crate::lemmas::lemma_string_body_advances(g, j + 1, false);
             }
-            tape.push_str_fast(Tok::new(kind, esc, (j + 1), (n - 1), NO), s);
+            tape.push_str_fast(Tok::new(kind, esc, j + 1, n - 1, NO), s);
             keep_room(cx, tape, kend0, Ghost(k2 as int));
             proof {
                 lemma_prefix(g, st, cx.wend as int, g.len() as int);
@@ -1595,7 +1595,7 @@ pub fn ex2_value<S: Sink, const N: u8>(
                 lemma_number_lexeme(g, j as int);
             }
             if tape.eager() {
-                match (if N != 0 || verilith_simd::neon::has_neon() { ex_number_scan_k(s, j) } else { ex_number_scan(s, j) }) {
+                match if N != 0 || verilith_simd::neon::has_neon() { ex_number_scan_k(s, j) } else { ex_number_scan(s, j) } {
                     Some((e, v, ok)) => {
                         tape.push_num_fast(Tok::new(Kind::Num, false, j, e, NO), s, v, ok);
                         e
@@ -2204,7 +2204,7 @@ fn ex2_member<S: Sink>(
                 }
                 return None;
             }
-            tape.push_str_fast(Tok::new(Kind::Key, false, (j + 1), (n - 1), NO), s);
+            tape.push_str_fast(Tok::new(Kind::Key, false, j + 1, n - 1, NO), s);
             let ghost tkey = tape.hist();
             let jv = ent(cx, k + 3);
             proof {

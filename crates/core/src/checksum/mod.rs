@@ -67,6 +67,7 @@ pub proof fn lemma_crc_from(d: Seq<u8>)
     }
 }
 
+/// The Adler-32 modulus: the largest prime below 2^16.
 pub const ADLER_MOD: u32 = 65521;
 
 /// `a + b` in a 32-bit lane, wrapping (what the vector adds compute).
@@ -84,8 +85,10 @@ pub const NMAX: usize = 5552;
 /// so `u32` lanes cannot overflow.
 pub const LANES: usize = 32;
 
+/// Rows per Adler-32 block (see `LANES`).
 pub const ROWS: usize = 1024;
 
+/// Bytes per Adler-32 block.
 pub const BLOCK: usize = LANES * ROWS;
 
 // ---------------------------------------------------------------------------
@@ -578,6 +581,11 @@ pub fn adler32_update(a0: u32, b0: u32, d: &[u8]) -> (r: (u32, u32))
     (a, b)
 }
 
+/// The Adler-32 checksum of `d` (RFC 1950), on the fastest kernel the CPU has.
+///
+/// ```text
+/// ensures  r as nat == spec::adler32(d@)
+/// ```
 pub fn adler32(d: &[u8]) -> (r: u32)
     ensures
         r as nat == spec::adler32(d@),
@@ -1124,6 +1132,11 @@ pub fn crc32_update(reg: u32, d: &[u8]) -> (r: u32)
     c
 }
 
+/// The CRC-32 of `d` (the one zlib, gzip and PNG use), on the fastest kernel the CPU has.
+///
+/// ```text
+/// ensures  r == spec::crc32(d@)
+/// ```
 pub fn crc32(d: &[u8]) -> (r: u32)
     ensures
         r == spec::crc32(d@),

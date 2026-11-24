@@ -25,6 +25,12 @@ use vstd::prelude::*;
 
 verus! {
 
+/// [`_mm_add_epi8`](core::arch::x86_64::_mm_add_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == add8(b128(a), b128(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_add_epi8(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -34,6 +40,12 @@ pub fn _mm_add_epi8(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_add_epi8(a, b) }
 }
 
+/// [`_mm_sub_epi8`](core::arch::x86_64::_mm_sub_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == sub8(b128(a), b128(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_sub_epi8(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -43,6 +55,12 @@ pub fn _mm_sub_epi8(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_sub_epi8(a, b) }
 }
 
+/// [`_mm_adds_epu8`](core::arch::x86_64::_mm_adds_epu8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == adds_u8(b128(a), b128(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_adds_epu8(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -52,6 +70,12 @@ pub fn _mm_adds_epu8(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_adds_epu8(a, b) }
 }
 
+/// [`_mm_subs_epu8`](core::arch::x86_64::_mm_subs_epu8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == subs_u8(b128(a), b128(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_subs_epu8(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -61,6 +85,12 @@ pub fn _mm_subs_epu8(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_subs_epu8(a, b) }
 }
 
+/// [`_mm_adds_epi8`](core::arch::x86_64::_mm_adds_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == adds_s8(b128(a), b128(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_adds_epi8(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -70,6 +100,12 @@ pub fn _mm_adds_epi8(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_adds_epi8(a, b) }
 }
 
+/// [`_mm_subs_epi8`](core::arch::x86_64::_mm_subs_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == subs_s8(b128(a), b128(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_subs_epi8(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -79,6 +115,12 @@ pub fn _mm_subs_epi8(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_subs_epi8(a, b) }
 }
 
+/// [`_mm_subs_epu16`](core::arch::x86_64::_mm_subs_epu16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u16x8(r) == subs_u16(u16x8(a), u16x8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_subs_epu16(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -88,6 +130,12 @@ pub fn _mm_subs_epu16(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_subs_epu16(a, b) }
 }
 
+/// [`_mm_min_epu8`](core::arch::x86_64::_mm_min_epu8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == min_u8(b128(a), b128(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_min_epu8(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -97,6 +145,12 @@ pub fn _mm_min_epu8(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_min_epu8(a, b) }
 }
 
+/// [`_mm_max_epu8`](core::arch::x86_64::_mm_max_epu8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == max_u8(b128(a), b128(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_max_epu8(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -106,6 +160,12 @@ pub fn _mm_max_epu8(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_max_epu8(a, b) }
 }
 
+/// [`_mm_avg_epu8`](core::arch::x86_64::_mm_avg_epu8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == avg_u8(b128(a), b128(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_avg_epu8(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -115,6 +175,12 @@ pub fn _mm_avg_epu8(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_avg_epu8(a, b) }
 }
 
+/// [`_mm_cmpeq_epi8`](core::arch::x86_64::_mm_cmpeq_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == cmpeq8(b128(a), b128(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_cmpeq_epi8(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -124,6 +190,12 @@ pub fn _mm_cmpeq_epi8(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_cmpeq_epi8(a, b) }
 }
 
+/// [`_mm_cmpgt_epi8`](core::arch::x86_64::_mm_cmpgt_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == cmpgt_s8(b128(a), b128(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_cmpgt_epi8(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -133,6 +205,12 @@ pub fn _mm_cmpgt_epi8(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_cmpgt_epi8(a, b) }
 }
 
+/// [`_mm_add_epi16`](core::arch::x86_64::_mm_add_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u16x8(r) == add16(u16x8(a), u16x8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_add_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -142,6 +220,12 @@ pub fn _mm_add_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_add_epi16(a, b) }
 }
 
+/// [`_mm_sub_epi16`](core::arch::x86_64::_mm_sub_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u16x8(r) == sub16(u16x8(a), u16x8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_sub_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -151,6 +235,12 @@ pub fn _mm_sub_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_sub_epi16(a, b) }
 }
 
+/// [`_mm_mullo_epi16`](core::arch::x86_64::_mm_mullo_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u16x8(r) == mullo16(u16x8(a), u16x8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_mullo_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -160,6 +250,12 @@ pub fn _mm_mullo_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_mullo_epi16(a, b) }
 }
 
+/// [`_mm_mulhi_epi16`](core::arch::x86_64::_mm_mulhi_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u16x8(r) == mulhi_s16(u16x8(a), u16x8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_mulhi_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -169,6 +265,12 @@ pub fn _mm_mulhi_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_mulhi_epi16(a, b) }
 }
 
+/// [`_mm_mulhi_epu16`](core::arch::x86_64::_mm_mulhi_epu16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u16x8(r) == mulhi_u16(u16x8(a), u16x8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_mulhi_epu16(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -178,6 +280,12 @@ pub fn _mm_mulhi_epu16(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_mulhi_epu16(a, b) }
 }
 
+/// [`_mm_cmpeq_epi16`](core::arch::x86_64::_mm_cmpeq_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u16x8(r) == cmpeq16(u16x8(a), u16x8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_cmpeq_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -187,6 +295,12 @@ pub fn _mm_cmpeq_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_cmpeq_epi16(a, b) }
 }
 
+/// [`_mm_madd_epi16`](core::arch::x86_64::_mm_madd_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u32x4(r) == madd16(u16x8(a), u16x8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_madd_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -196,6 +310,12 @@ pub fn _mm_madd_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_madd_epi16(a, b) }
 }
 
+/// [`_mm_add_epi32`](core::arch::x86_64::_mm_add_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u32x4(r) == add32(u32x4(a), u32x4(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_add_epi32(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -205,6 +325,12 @@ pub fn _mm_add_epi32(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_add_epi32(a, b) }
 }
 
+/// [`_mm_sub_epi32`](core::arch::x86_64::_mm_sub_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u32x4(r) == sub32(u32x4(a), u32x4(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_sub_epi32(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -214,6 +340,12 @@ pub fn _mm_sub_epi32(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_sub_epi32(a, b) }
 }
 
+/// [`_mm_cmpeq_epi32`](core::arch::x86_64::_mm_cmpeq_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u32x4(r) == cmpeq32(u32x4(a), u32x4(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_cmpeq_epi32(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -223,6 +355,12 @@ pub fn _mm_cmpeq_epi32(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_cmpeq_epi32(a, b) }
 }
 
+/// [`_mm_cmpgt_epi32`](core::arch::x86_64::_mm_cmpgt_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u32x4(r) == cmpgt_s32(u32x4(a), u32x4(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_cmpgt_epi32(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -232,6 +370,12 @@ pub fn _mm_cmpgt_epi32(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_cmpgt_epi32(a, b) }
 }
 
+/// [`_mm_add_epi64`](core::arch::x86_64::_mm_add_epi64) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u64x2(r) == add64(u64x2(a), u64x2(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_add_epi64(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -241,6 +385,12 @@ pub fn _mm_add_epi64(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_add_epi64(a, b) }
 }
 
+/// [`_mm_sad_epu8`](core::arch::x86_64::_mm_sad_epu8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u64x2(r) == sad8(b128(a), b128(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_sad_epu8(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -250,6 +400,12 @@ pub fn _mm_sad_epu8(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_sad_epu8(a, b) }
 }
 
+/// [`_mm_unpacklo_epi8`](core::arch::x86_64::_mm_unpacklo_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == unpacklo8_lanes(b128(a), b128(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_unpacklo_epi8(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -259,6 +415,12 @@ pub fn _mm_unpacklo_epi8(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_unpacklo_epi8(a, b) }
 }
 
+/// [`_mm_unpackhi_epi8`](core::arch::x86_64::_mm_unpackhi_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == unpackhi8_lanes(b128(a), b128(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_unpackhi_epi8(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -268,6 +430,12 @@ pub fn _mm_unpackhi_epi8(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_unpackhi_epi8(a, b) }
 }
 
+/// [`_mm_unpacklo_epi16`](core::arch::x86_64::_mm_unpacklo_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u16x8(r) == unpacklo16_lanes(u16x8(a), u16x8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_unpacklo_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -277,6 +445,12 @@ pub fn _mm_unpacklo_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_unpacklo_epi16(a, b) }
 }
 
+/// [`_mm_unpackhi_epi16`](core::arch::x86_64::_mm_unpackhi_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u16x8(r) == unpackhi16_lanes(u16x8(a), u16x8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_unpackhi_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -286,6 +460,12 @@ pub fn _mm_unpackhi_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_unpackhi_epi16(a, b) }
 }
 
+/// [`_mm_unpacklo_epi32`](core::arch::x86_64::_mm_unpacklo_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u32x4(r) == unpacklo32_lanes(u32x4(a), u32x4(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_unpacklo_epi32(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -295,6 +475,12 @@ pub fn _mm_unpacklo_epi32(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_unpacklo_epi32(a, b) }
 }
 
+/// [`_mm_unpackhi_epi32`](core::arch::x86_64::_mm_unpackhi_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u32x4(r) == unpackhi32_lanes(u32x4(a), u32x4(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_unpackhi_epi32(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -304,6 +490,12 @@ pub fn _mm_unpackhi_epi32(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_unpackhi_epi32(a, b) }
 }
 
+/// [`_mm_unpacklo_epi64`](core::arch::x86_64::_mm_unpacklo_epi64) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u64x2(r) == unpacklo64_lanes(u64x2(a), u64x2(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_unpacklo_epi64(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -313,6 +505,12 @@ pub fn _mm_unpacklo_epi64(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_unpacklo_epi64(a, b) }
 }
 
+/// [`_mm_unpackhi_epi64`](core::arch::x86_64::_mm_unpackhi_epi64) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u64x2(r) == unpackhi64_lanes(u64x2(a), u64x2(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_unpackhi_epi64(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -322,6 +520,12 @@ pub fn _mm_unpackhi_epi64(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_unpackhi_epi64(a, b) }
 }
 
+/// [`_mm_packus_epi16`](core::arch::x86_64::_mm_packus_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == packus16_lanes(u16x8(a), u16x8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_packus_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -331,6 +535,12 @@ pub fn _mm_packus_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_packus_epi16(a, b) }
 }
 
+/// [`_mm_packs_epi16`](core::arch::x86_64::_mm_packs_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == packs16_lanes(u16x8(a), u16x8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_packs_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -340,6 +550,12 @@ pub fn _mm_packs_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_packs_epi16(a, b) }
 }
 
+/// [`_mm_packs_epi32`](core::arch::x86_64::_mm_packs_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u16x8(r) == packs32_lanes(u32x4(a), u32x4(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_packs_epi32(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -349,6 +565,13 @@ pub fn _mm_packs_epi32(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_packs_epi32(a, b) }
 }
 
+/// [`_mm_shuffle_epi8`](core::arch::x86_64::_mm_shuffle_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires ssse3()
+/// ensures  b128(r) == shuffle8_lanes(b128(a), b128(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_shuffle_epi8(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -360,6 +583,13 @@ pub fn _mm_shuffle_epi8(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_shuffle_epi8(a, b) }
 }
 
+/// [`_mm_maddubs_epi16`](core::arch::x86_64::_mm_maddubs_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires ssse3()
+/// ensures  u16x8(r) == maddubs(b128(a), b128(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_maddubs_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -371,6 +601,12 @@ pub fn _mm_maddubs_epi16(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_maddubs_epi16(a, b) }
 }
 
+/// [`_mm_and_si128`](core::arch::x86_64::_mm_and_si128) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == and8(b128(a), b128(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_and_si128(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -380,6 +616,12 @@ pub fn _mm_and_si128(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_and_si128(a, b) }
 }
 
+/// [`_mm_or_si128`](core::arch::x86_64::_mm_or_si128) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == or8(b128(a), b128(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_or_si128(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -389,6 +631,12 @@ pub fn _mm_or_si128(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_or_si128(a, b) }
 }
 
+/// [`_mm_xor_si128`](core::arch::x86_64::_mm_xor_si128) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == xor8(b128(a), b128(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_xor_si128(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -398,6 +646,12 @@ pub fn _mm_xor_si128(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_xor_si128(a, b) }
 }
 
+/// [`_mm_andnot_si128`](core::arch::x86_64::_mm_andnot_si128) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == andnot8(b128(a), b128(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_andnot_si128(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -407,6 +661,13 @@ pub fn _mm_andnot_si128(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_andnot_si128(a, b) }
 }
 
+/// [`_mm_blendv_epi8`](core::arch::x86_64::_mm_blendv_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires sse41()
+/// ensures  b128(r) == blendv8(b128(a), b128(b), b128(mask))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_blendv_epi8(a: __m128i, b: __m128i, mask: __m128i) -> (r: __m128i)
@@ -418,6 +679,13 @@ pub fn _mm_blendv_epi8(a: __m128i, b: __m128i, mask: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_blendv_epi8(a, b, mask) }
 }
 
+/// [`_mm_srli_epi16`](core::arch::x86_64::_mm_srli_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// ensures  u16x8(r) == srli16(u16x8(a), IMM8 as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_srli_epi16<const IMM8: i32>(a: __m128i) -> (r: __m128i)
@@ -429,6 +697,13 @@ pub fn _mm_srli_epi16<const IMM8: i32>(a: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_srli_epi16::<IMM8>(a) }
 }
 
+/// [`_mm_slli_epi16`](core::arch::x86_64::_mm_slli_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// ensures  u16x8(r) == slli16(u16x8(a), IMM8 as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_slli_epi16<const IMM8: i32>(a: __m128i) -> (r: __m128i)
@@ -440,6 +715,13 @@ pub fn _mm_slli_epi16<const IMM8: i32>(a: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_slli_epi16::<IMM8>(a) }
 }
 
+/// [`_mm_srai_epi16`](core::arch::x86_64::_mm_srai_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// ensures  u16x8(r) == srai16(u16x8(a), IMM8 as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_srai_epi16<const IMM8: i32>(a: __m128i) -> (r: __m128i)
@@ -451,6 +733,13 @@ pub fn _mm_srai_epi16<const IMM8: i32>(a: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_srai_epi16::<IMM8>(a) }
 }
 
+/// [`_mm_srli_epi32`](core::arch::x86_64::_mm_srli_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// ensures  u32x4(r) == srli32(u32x4(a), IMM8 as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_srli_epi32<const IMM8: i32>(a: __m128i) -> (r: __m128i)
@@ -462,6 +751,13 @@ pub fn _mm_srli_epi32<const IMM8: i32>(a: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_srli_epi32::<IMM8>(a) }
 }
 
+/// [`_mm_slli_epi32`](core::arch::x86_64::_mm_slli_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// ensures  u32x4(r) == slli32(u32x4(a), IMM8 as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_slli_epi32<const IMM8: i32>(a: __m128i) -> (r: __m128i)
@@ -473,6 +769,13 @@ pub fn _mm_slli_epi32<const IMM8: i32>(a: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_slli_epi32::<IMM8>(a) }
 }
 
+/// [`_mm_shuffle_epi32`](core::arch::x86_64::_mm_shuffle_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// ensures  u32x4(r) == shuffle32_lanes(u32x4(a), IMM8 as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_srli_epi64<const IMM8: i32>(a: __m128i) -> (r: __m128i)
@@ -506,6 +809,13 @@ pub fn _mm_shuffle_epi32<const IMM8: i32>(a: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_shuffle_epi32::<IMM8>(a) }
 }
 
+/// [`_mm_slli_si128`](core::arch::x86_64::_mm_slli_si128) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// ensures  b128(r) == bslli_lanes(b128(a), IMM8 as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_slli_si128<const IMM8: i32>(a: __m128i) -> (r: __m128i)
@@ -517,6 +827,13 @@ pub fn _mm_slli_si128<const IMM8: i32>(a: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_slli_si128::<IMM8>(a) }
 }
 
+/// [`_mm_srli_si128`](core::arch::x86_64::_mm_srli_si128) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// ensures  b128(r) == bsrli_lanes(b128(a), IMM8 as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_srli_si128<const IMM8: i32>(a: __m128i) -> (r: __m128i)
@@ -528,6 +845,14 @@ pub fn _mm_srli_si128<const IMM8: i32>(a: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_srli_si128::<IMM8>(a) }
 }
 
+/// [`_mm_alignr_epi8`](core::arch::x86_64::_mm_alignr_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// requires ssse3()
+/// ensures  b128(r) == alignr_lanes(b128(a), b128(b), IMM8 as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_alignr_epi8<const IMM8: i32>(a: __m128i, b: __m128i) -> (r: __m128i)
@@ -540,6 +865,12 @@ pub fn _mm_alignr_epi8<const IMM8: i32>(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_alignr_epi8::<IMM8>(a, b) }
 }
 
+/// [`_mm_movemask_epi8`](core::arch::x86_64::_mm_movemask_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u32_of_i32(r) as nat == movemask(b128(a))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_movemask_epi8(a: __m128i) -> (r: i32)
@@ -549,6 +880,12 @@ pub fn _mm_movemask_epi8(a: __m128i) -> (r: i32)
     unsafe { core::arch::x86_64::_mm_movemask_epi8(a) }
 }
 
+/// [`_mm_setzero_si128`](core::arch::x86_64::_mm_setzero_si128) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == splat8(0u8, 16)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_setzero_si128() -> (r: __m128i)
@@ -558,6 +895,12 @@ pub fn _mm_setzero_si128() -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_setzero_si128() }
 }
 
+/// [`_mm_set1_epi8`](core::arch::x86_64::_mm_set1_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == splat8(u8_of_i8(x), 16)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_set1_epi8(x: i8) -> (r: __m128i)
@@ -567,6 +910,12 @@ pub fn _mm_set1_epi8(x: i8) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_set1_epi8(x) }
 }
 
+/// [`_mm_set1_epi16`](core::arch::x86_64::_mm_set1_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u16x8(r) == splat16(u16_of_i16(x), 8)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_set1_epi16(x: i16) -> (r: __m128i)
@@ -576,6 +925,12 @@ pub fn _mm_set1_epi16(x: i16) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_set1_epi16(x) }
 }
 
+/// [`_mm_set1_epi32`](core::arch::x86_64::_mm_set1_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u32x4(r) == splat32(u32_of_i32(x), 4)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_set1_epi32(x: i32) -> (r: __m128i)
@@ -585,6 +940,12 @@ pub fn _mm_set1_epi32(x: i32) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_set1_epi32(x) }
 }
 
+/// [`_mm_set1_epi64x`](core::arch::x86_64::_mm_set1_epi64x) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u64x2(r) == splat64(u64_of_i64(x), 2)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_set1_epi64x(x: i64) -> (r: __m128i)
@@ -594,6 +955,12 @@ pub fn _mm_set1_epi64x(x: i64) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_set1_epi64x(x) }
 }
 
+/// [`_mm_setr_epi32`](core::arch::x86_64::_mm_setr_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u32x4(r) == seq![u32_of_i32(e0), u32_of_i32(e1), u32_of_i32(e2), u32_of_i32(e3)]
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_setr_epi32(e0: i32, e1: i32, e2: i32, e3: i32) -> (r: __m128i)
@@ -603,6 +970,12 @@ pub fn _mm_setr_epi32(e0: i32, e1: i32, e2: i32, e3: i32) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_setr_epi32(e0, e1, e2, e3) }
 }
 
+/// [`_mm_setr_epi8`](core::arch::x86_64::_mm_setr_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  b128(r) == seq![u8_of_i8(e0), u8_of_i8(e1), u8_of_i8(e2), u8_of_i8(e3), u8_of_i8(e4), u8_of_i8(e5), u8_of_i8(e6), u8_of_i8(e7), u8_of_i8(e8), u8_of_i8(e9), u8_of_i8(e10), u8_of_i8(e11), u8_of_i8(e12), u8_of_i8(e13), u8_of_i8(e14), u8_of_i8(e15)]
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_setr_epi8(e0: i8, e1: i8, e2: i8, e3: i8, e4: i8, e5: i8, e6: i8, e7: i8, e8: i8, e9: i8, e10: i8, e11: i8, e12: i8, e13: i8, e14: i8, e15: i8) -> (r: __m128i)
@@ -612,6 +985,13 @@ pub fn _mm_setr_epi8(e0: i8, e1: i8, e2: i8, e3: i8, e4: i8, e5: i8, e6: i8, e7:
     unsafe { core::arch::x86_64::_mm_setr_epi8(e0, e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, e15) }
 }
 
+/// [`_mm256_add_epi8`](core::arch::x86_64::_mm256_add_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == add8(b256(a), b256(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_add_epi8(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -623,6 +1003,13 @@ pub fn _mm256_add_epi8(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_add_epi8(a, b) }
 }
 
+/// [`_mm256_sub_epi8`](core::arch::x86_64::_mm256_sub_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == sub8(b256(a), b256(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_sub_epi8(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -634,6 +1021,13 @@ pub fn _mm256_sub_epi8(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_sub_epi8(a, b) }
 }
 
+/// [`_mm256_adds_epu8`](core::arch::x86_64::_mm256_adds_epu8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == adds_u8(b256(a), b256(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_adds_epu8(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -645,6 +1039,13 @@ pub fn _mm256_adds_epu8(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_adds_epu8(a, b) }
 }
 
+/// [`_mm256_subs_epu8`](core::arch::x86_64::_mm256_subs_epu8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == subs_u8(b256(a), b256(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_subs_epu8(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -656,6 +1057,13 @@ pub fn _mm256_subs_epu8(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_subs_epu8(a, b) }
 }
 
+/// [`_mm256_adds_epi8`](core::arch::x86_64::_mm256_adds_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == adds_s8(b256(a), b256(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_adds_epi8(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -667,6 +1075,13 @@ pub fn _mm256_adds_epi8(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_adds_epi8(a, b) }
 }
 
+/// [`_mm256_subs_epi8`](core::arch::x86_64::_mm256_subs_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == subs_s8(b256(a), b256(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_subs_epi8(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -678,6 +1093,13 @@ pub fn _mm256_subs_epi8(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_subs_epi8(a, b) }
 }
 
+/// [`_mm256_subs_epu16`](core::arch::x86_64::_mm256_subs_epu16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u16x16(r) == subs_u16(u16x16(a), u16x16(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_subs_epu16(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -689,6 +1111,13 @@ pub fn _mm256_subs_epu16(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_subs_epu16(a, b) }
 }
 
+/// [`_mm256_min_epu8`](core::arch::x86_64::_mm256_min_epu8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == min_u8(b256(a), b256(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_min_epu8(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -700,6 +1129,13 @@ pub fn _mm256_min_epu8(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_min_epu8(a, b) }
 }
 
+/// [`_mm256_max_epu8`](core::arch::x86_64::_mm256_max_epu8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == max_u8(b256(a), b256(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_max_epu8(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -711,6 +1147,13 @@ pub fn _mm256_max_epu8(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_max_epu8(a, b) }
 }
 
+/// [`_mm256_avg_epu8`](core::arch::x86_64::_mm256_avg_epu8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == avg_u8(b256(a), b256(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_avg_epu8(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -722,6 +1165,13 @@ pub fn _mm256_avg_epu8(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_avg_epu8(a, b) }
 }
 
+/// [`_mm256_cmpeq_epi8`](core::arch::x86_64::_mm256_cmpeq_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == cmpeq8(b256(a), b256(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_cmpeq_epi8(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -733,6 +1183,13 @@ pub fn _mm256_cmpeq_epi8(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_cmpeq_epi8(a, b) }
 }
 
+/// [`_mm256_cmpgt_epi8`](core::arch::x86_64::_mm256_cmpgt_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == cmpgt_s8(b256(a), b256(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_cmpgt_epi8(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -744,6 +1201,13 @@ pub fn _mm256_cmpgt_epi8(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_cmpgt_epi8(a, b) }
 }
 
+/// [`_mm256_add_epi16`](core::arch::x86_64::_mm256_add_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u16x16(r) == add16(u16x16(a), u16x16(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_add_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -755,6 +1219,13 @@ pub fn _mm256_add_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_add_epi16(a, b) }
 }
 
+/// [`_mm256_sub_epi16`](core::arch::x86_64::_mm256_sub_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u16x16(r) == sub16(u16x16(a), u16x16(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_sub_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -766,6 +1237,13 @@ pub fn _mm256_sub_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_sub_epi16(a, b) }
 }
 
+/// [`_mm256_mullo_epi16`](core::arch::x86_64::_mm256_mullo_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u16x16(r) == mullo16(u16x16(a), u16x16(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_mullo_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -777,6 +1255,13 @@ pub fn _mm256_mullo_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_mullo_epi16(a, b) }
 }
 
+/// [`_mm256_mulhi_epi16`](core::arch::x86_64::_mm256_mulhi_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u16x16(r) == mulhi_s16(u16x16(a), u16x16(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_mulhi_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -788,6 +1273,13 @@ pub fn _mm256_mulhi_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_mulhi_epi16(a, b) }
 }
 
+/// [`_mm256_mulhi_epu16`](core::arch::x86_64::_mm256_mulhi_epu16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u16x16(r) == mulhi_u16(u16x16(a), u16x16(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_mulhi_epu16(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -799,6 +1291,13 @@ pub fn _mm256_mulhi_epu16(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_mulhi_epu16(a, b) }
 }
 
+/// [`_mm256_cmpeq_epi16`](core::arch::x86_64::_mm256_cmpeq_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u16x16(r) == cmpeq16(u16x16(a), u16x16(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_cmpeq_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -810,6 +1309,13 @@ pub fn _mm256_cmpeq_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_cmpeq_epi16(a, b) }
 }
 
+/// [`_mm256_madd_epi16`](core::arch::x86_64::_mm256_madd_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u32x8(r) == madd16(u16x16(a), u16x16(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_madd_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -821,6 +1327,13 @@ pub fn _mm256_madd_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_madd_epi16(a, b) }
 }
 
+/// [`_mm256_add_epi32`](core::arch::x86_64::_mm256_add_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u32x8(r) == add32(u32x8(a), u32x8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_add_epi32(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -832,6 +1345,13 @@ pub fn _mm256_add_epi32(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_add_epi32(a, b) }
 }
 
+/// [`_mm256_sub_epi32`](core::arch::x86_64::_mm256_sub_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u32x8(r) == sub32(u32x8(a), u32x8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_sub_epi32(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -843,6 +1363,13 @@ pub fn _mm256_sub_epi32(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_sub_epi32(a, b) }
 }
 
+/// [`_mm256_cmpeq_epi32`](core::arch::x86_64::_mm256_cmpeq_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u32x8(r) == cmpeq32(u32x8(a), u32x8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_cmpeq_epi32(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -854,6 +1381,13 @@ pub fn _mm256_cmpeq_epi32(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_cmpeq_epi32(a, b) }
 }
 
+/// [`_mm256_cmpgt_epi32`](core::arch::x86_64::_mm256_cmpgt_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u32x8(r) == cmpgt_s32(u32x8(a), u32x8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_cmpgt_epi32(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -865,6 +1399,13 @@ pub fn _mm256_cmpgt_epi32(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_cmpgt_epi32(a, b) }
 }
 
+/// [`_mm256_add_epi64`](core::arch::x86_64::_mm256_add_epi64) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u64x4(r) == add64(u64x4(a), u64x4(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_add_epi64(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -876,6 +1417,13 @@ pub fn _mm256_add_epi64(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_add_epi64(a, b) }
 }
 
+/// [`_mm256_sad_epu8`](core::arch::x86_64::_mm256_sad_epu8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u64x4(r) == sad8(b256(a), b256(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_sad_epu8(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -887,6 +1435,13 @@ pub fn _mm256_sad_epu8(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_sad_epu8(a, b) }
 }
 
+/// [`_mm256_unpacklo_epi8`](core::arch::x86_64::_mm256_unpacklo_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == unpacklo8_lanes(b256(a), b256(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_unpacklo_epi8(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -898,6 +1453,13 @@ pub fn _mm256_unpacklo_epi8(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_unpacklo_epi8(a, b) }
 }
 
+/// [`_mm256_unpackhi_epi8`](core::arch::x86_64::_mm256_unpackhi_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == unpackhi8_lanes(b256(a), b256(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_unpackhi_epi8(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -909,6 +1471,13 @@ pub fn _mm256_unpackhi_epi8(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_unpackhi_epi8(a, b) }
 }
 
+/// [`_mm256_unpacklo_epi16`](core::arch::x86_64::_mm256_unpacklo_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u16x16(r) == unpacklo16_lanes(u16x16(a), u16x16(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_unpacklo_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -920,6 +1489,13 @@ pub fn _mm256_unpacklo_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_unpacklo_epi16(a, b) }
 }
 
+/// [`_mm256_unpackhi_epi16`](core::arch::x86_64::_mm256_unpackhi_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u16x16(r) == unpackhi16_lanes(u16x16(a), u16x16(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_unpackhi_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -931,6 +1507,13 @@ pub fn _mm256_unpackhi_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_unpackhi_epi16(a, b) }
 }
 
+/// [`_mm256_unpacklo_epi32`](core::arch::x86_64::_mm256_unpacklo_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u32x8(r) == unpacklo32_lanes(u32x8(a), u32x8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_unpacklo_epi32(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -942,6 +1525,13 @@ pub fn _mm256_unpacklo_epi32(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_unpacklo_epi32(a, b) }
 }
 
+/// [`_mm256_unpackhi_epi32`](core::arch::x86_64::_mm256_unpackhi_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u32x8(r) == unpackhi32_lanes(u32x8(a), u32x8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_unpackhi_epi32(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -953,6 +1543,13 @@ pub fn _mm256_unpackhi_epi32(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_unpackhi_epi32(a, b) }
 }
 
+/// [`_mm256_unpacklo_epi64`](core::arch::x86_64::_mm256_unpacklo_epi64) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u64x4(r) == unpacklo64_lanes(u64x4(a), u64x4(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_unpacklo_epi64(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -964,6 +1561,13 @@ pub fn _mm256_unpacklo_epi64(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_unpacklo_epi64(a, b) }
 }
 
+/// [`_mm256_unpackhi_epi64`](core::arch::x86_64::_mm256_unpackhi_epi64) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u64x4(r) == unpackhi64_lanes(u64x4(a), u64x4(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_unpackhi_epi64(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -975,6 +1579,13 @@ pub fn _mm256_unpackhi_epi64(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_unpackhi_epi64(a, b) }
 }
 
+/// [`_mm256_packus_epi16`](core::arch::x86_64::_mm256_packus_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == packus16_lanes(u16x16(a), u16x16(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_packus_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -986,6 +1597,13 @@ pub fn _mm256_packus_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_packus_epi16(a, b) }
 }
 
+/// [`_mm256_packs_epi16`](core::arch::x86_64::_mm256_packs_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == packs16_lanes(u16x16(a), u16x16(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_packs_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -997,6 +1615,13 @@ pub fn _mm256_packs_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_packs_epi16(a, b) }
 }
 
+/// [`_mm256_packs_epi32`](core::arch::x86_64::_mm256_packs_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u16x16(r) == packs32_lanes(u32x8(a), u32x8(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_packs_epi32(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -1008,6 +1633,13 @@ pub fn _mm256_packs_epi32(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_packs_epi32(a, b) }
 }
 
+/// [`_mm256_shuffle_epi8`](core::arch::x86_64::_mm256_shuffle_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == shuffle8_lanes(b256(a), b256(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_shuffle_epi8(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -1019,6 +1651,13 @@ pub fn _mm256_shuffle_epi8(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_shuffle_epi8(a, b) }
 }
 
+/// [`_mm256_maddubs_epi16`](core::arch::x86_64::_mm256_maddubs_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u16x16(r) == maddubs(b256(a), b256(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_maddubs_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -1030,6 +1669,13 @@ pub fn _mm256_maddubs_epi16(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_maddubs_epi16(a, b) }
 }
 
+/// [`_mm256_and_si256`](core::arch::x86_64::_mm256_and_si256) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == and8(b256(a), b256(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_and_si256(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -1041,6 +1687,13 @@ pub fn _mm256_and_si256(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_and_si256(a, b) }
 }
 
+/// [`_mm256_or_si256`](core::arch::x86_64::_mm256_or_si256) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == or8(b256(a), b256(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_or_si256(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -1052,6 +1705,13 @@ pub fn _mm256_or_si256(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_or_si256(a, b) }
 }
 
+/// [`_mm256_xor_si256`](core::arch::x86_64::_mm256_xor_si256) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == xor8(b256(a), b256(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_xor_si256(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -1063,6 +1723,13 @@ pub fn _mm256_xor_si256(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_xor_si256(a, b) }
 }
 
+/// [`_mm256_andnot_si256`](core::arch::x86_64::_mm256_andnot_si256) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == andnot8(b256(a), b256(b))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_andnot_si256(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -1074,6 +1741,13 @@ pub fn _mm256_andnot_si256(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_andnot_si256(a, b) }
 }
 
+/// [`_mm256_blendv_epi8`](core::arch::x86_64::_mm256_blendv_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == blendv8(b256(a), b256(b), b256(mask))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_blendv_epi8(a: __m256i, b: __m256i, mask: __m256i) -> (r: __m256i)
@@ -1085,6 +1759,14 @@ pub fn _mm256_blendv_epi8(a: __m256i, b: __m256i, mask: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_blendv_epi8(a, b, mask) }
 }
 
+/// [`_mm256_srli_epi16`](core::arch::x86_64::_mm256_srli_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// requires avx2()
+/// ensures  u16x16(r) == srli16(u16x16(a), IMM8 as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_srli_epi16<const IMM8: i32>(a: __m256i) -> (r: __m256i)
@@ -1097,6 +1779,14 @@ pub fn _mm256_srli_epi16<const IMM8: i32>(a: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_srli_epi16::<IMM8>(a) }
 }
 
+/// [`_mm256_slli_epi16`](core::arch::x86_64::_mm256_slli_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// requires avx2()
+/// ensures  u16x16(r) == slli16(u16x16(a), IMM8 as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_slli_epi16<const IMM8: i32>(a: __m256i) -> (r: __m256i)
@@ -1109,6 +1799,14 @@ pub fn _mm256_slli_epi16<const IMM8: i32>(a: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_slli_epi16::<IMM8>(a) }
 }
 
+/// [`_mm256_srai_epi16`](core::arch::x86_64::_mm256_srai_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// requires avx2()
+/// ensures  u16x16(r) == srai16(u16x16(a), IMM8 as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_srai_epi16<const IMM8: i32>(a: __m256i) -> (r: __m256i)
@@ -1121,6 +1819,14 @@ pub fn _mm256_srai_epi16<const IMM8: i32>(a: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_srai_epi16::<IMM8>(a) }
 }
 
+/// [`_mm256_srli_epi32`](core::arch::x86_64::_mm256_srli_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// requires avx2()
+/// ensures  u32x8(r) == srli32(u32x8(a), IMM8 as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_srli_epi32<const IMM8: i32>(a: __m256i) -> (r: __m256i)
@@ -1133,6 +1839,14 @@ pub fn _mm256_srli_epi32<const IMM8: i32>(a: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_srli_epi32::<IMM8>(a) }
 }
 
+/// [`_mm256_slli_epi32`](core::arch::x86_64::_mm256_slli_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// requires avx2()
+/// ensures  u32x8(r) == slli32(u32x8(a), IMM8 as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_slli_epi32<const IMM8: i32>(a: __m256i) -> (r: __m256i)
@@ -1145,6 +1859,14 @@ pub fn _mm256_slli_epi32<const IMM8: i32>(a: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_slli_epi32::<IMM8>(a) }
 }
 
+/// [`_mm256_shuffle_epi32`](core::arch::x86_64::_mm256_shuffle_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// requires avx2()
+/// ensures  u32x8(r) == shuffle32_lanes(u32x8(a), IMM8 as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_srli_epi64<const IMM8: i32>(a: __m256i) -> (r: __m256i)
@@ -1181,6 +1903,14 @@ pub fn _mm256_shuffle_epi32<const IMM8: i32>(a: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_shuffle_epi32::<IMM8>(a) }
 }
 
+/// [`_mm256_bslli_epi128`](core::arch::x86_64::_mm256_bslli_epi128) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// requires avx2()
+/// ensures  b256(r) == bslli_lanes(b256(a), IMM8 as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_bslli_epi128<const IMM8: i32>(a: __m256i) -> (r: __m256i)
@@ -1193,6 +1923,14 @@ pub fn _mm256_bslli_epi128<const IMM8: i32>(a: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_bslli_epi128::<IMM8>(a) }
 }
 
+/// [`_mm256_bsrli_epi128`](core::arch::x86_64::_mm256_bsrli_epi128) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// requires avx2()
+/// ensures  b256(r) == bsrli_lanes(b256(a), IMM8 as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_bsrli_epi128<const IMM8: i32>(a: __m256i) -> (r: __m256i)
@@ -1205,6 +1943,14 @@ pub fn _mm256_bsrli_epi128<const IMM8: i32>(a: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_bsrli_epi128::<IMM8>(a) }
 }
 
+/// [`_mm256_alignr_epi8`](core::arch::x86_64::_mm256_alignr_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires 0 <= IMM8 <= 255
+/// requires avx2()
+/// ensures  b256(r) == alignr_lanes(b256(a), b256(b), IMM8 as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_alignr_epi8<const IMM8: i32>(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -1217,6 +1963,13 @@ pub fn _mm256_alignr_epi8<const IMM8: i32>(a: __m256i, b: __m256i) -> (r: __m256
     unsafe { core::arch::x86_64::_mm256_alignr_epi8::<IMM8>(a, b) }
 }
 
+/// [`_mm256_movemask_epi8`](core::arch::x86_64::_mm256_movemask_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u32_of_i32(r) as nat == movemask(b256(a))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_movemask_epi8(a: __m256i) -> (r: i32)
@@ -1228,6 +1981,13 @@ pub fn _mm256_movemask_epi8(a: __m256i) -> (r: i32)
     unsafe { core::arch::x86_64::_mm256_movemask_epi8(a) }
 }
 
+/// [`_mm256_setzero_si256`](core::arch::x86_64::_mm256_setzero_si256) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == splat8(0u8, 32)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_setzero_si256() -> (r: __m256i)
@@ -1239,6 +1999,13 @@ pub fn _mm256_setzero_si256() -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_setzero_si256() }
 }
 
+/// [`_mm256_set1_epi8`](core::arch::x86_64::_mm256_set1_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == splat8(u8_of_i8(x), 32)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_set1_epi8(x: i8) -> (r: __m256i)
@@ -1250,6 +2017,13 @@ pub fn _mm256_set1_epi8(x: i8) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_set1_epi8(x) }
 }
 
+/// [`_mm256_set1_epi16`](core::arch::x86_64::_mm256_set1_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u16x16(r) == splat16(u16_of_i16(x), 16)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_set1_epi16(x: i16) -> (r: __m256i)
@@ -1261,6 +2035,13 @@ pub fn _mm256_set1_epi16(x: i16) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_set1_epi16(x) }
 }
 
+/// [`_mm256_set1_epi32`](core::arch::x86_64::_mm256_set1_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u32x8(r) == splat32(u32_of_i32(x), 8)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_set1_epi32(x: i32) -> (r: __m256i)
@@ -1272,6 +2053,13 @@ pub fn _mm256_set1_epi32(x: i32) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_set1_epi32(x) }
 }
 
+/// [`_mm256_set1_epi64x`](core::arch::x86_64::_mm256_set1_epi64x) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u64x4(r) == splat64(u64_of_i64(x), 4)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_set1_epi64x(x: i64) -> (r: __m256i)
@@ -1283,6 +2071,13 @@ pub fn _mm256_set1_epi64x(x: i64) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_set1_epi64x(x) }
 }
 
+/// [`_mm256_setr_epi32`](core::arch::x86_64::_mm256_setr_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u32x8(r) == seq![u32_of_i32(e0), u32_of_i32(e1), u32_of_i32(e2), u32_of_i32(e3), u32_of_i32(e4), u32_of_i32(e5), u32_of_i32(e6), u32_of_i32(e7)]
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_setr_epi32(e0: i32, e1: i32, e2: i32, e3: i32, e4: i32, e5: i32, e6: i32, e7: i32) -> (r: __m256i)
@@ -1294,6 +2089,13 @@ pub fn _mm256_setr_epi32(e0: i32, e1: i32, e2: i32, e3: i32, e4: i32, e5: i32, e
     unsafe { core::arch::x86_64::_mm256_setr_epi32(e0, e1, e2, e3, e4, e5, e6, e7) }
 }
 
+/// [`_mm256_setr_epi8`](core::arch::x86_64::_mm256_setr_epi8) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == seq![u8_of_i8(e0), u8_of_i8(e1), u8_of_i8(e2), u8_of_i8(e3), u8_of_i8(e4), u8_of_i8(e5), u8_of_i8(e6), u8_of_i8(e7), u8_of_i8(e8), u8_of_i8(e9), u8_of_i8(e10), u8_of_i8(e11), u8_of_i8(e12), u8_of_i8(e13), u8_of_i8(e14), u8_of_i8(e15), u8_of_i8(e16), u8_of_i8(e17), u8_of_i8(e18), u8_of_i8(e19), u8_of_i8(e20), u8_of_i8(e21), u8_of_i8(e22), u8_of_i8(e23), u8_of_i8(e24), u8_of_i8(e25), u8_of_i8(e26), u8_of_i8(e27), u8_of_i8(e28), u8_of_i8(e29), u8_of_i8(e30), u8_of_i8(e31)]
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_setr_epi8(e0: i8, e1: i8, e2: i8, e3: i8, e4: i8, e5: i8, e6: i8, e7: i8, e8: i8, e9: i8, e10: i8, e11: i8, e12: i8, e13: i8, e14: i8, e15: i8, e16: i8, e17: i8, e18: i8, e19: i8, e20: i8, e21: i8, e22: i8, e23: i8, e24: i8, e25: i8, e26: i8, e27: i8, e28: i8, e29: i8, e30: i8, e31: i8) -> (r: __m256i)
@@ -1305,6 +2107,12 @@ pub fn _mm256_setr_epi8(e0: i8, e1: i8, e2: i8, e3: i8, e4: i8, e5: i8, e6: i8, 
     unsafe { core::arch::x86_64::_mm256_setr_epi8(e0, e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, e15, e16, e17, e18, e19, e20, e21, e22, e23, e24, e25, e26, e27, e28, e29, e30, e31) }
 }
 
+/// [`_mm_cvtsi32_si128`](core::arch::x86_64::_mm_cvtsi32_si128) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u32x4(r) == seq![u32_of_i32(x), 0u32, 0u32, 0u32]
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_cvtsi32_si128(x: i32) -> (r: __m128i)
@@ -1314,6 +2122,12 @@ pub fn _mm_cvtsi32_si128(x: i32) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_cvtsi32_si128(x) }
 }
 
+/// [`_mm_cvtsi128_si32`](core::arch::x86_64::_mm_cvtsi128_si32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u32_of_i32(r) == u32x4(a)[0]
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_cvtsi128_si32(a: __m128i) -> (r: i32)
@@ -1323,6 +2137,12 @@ pub fn _mm_cvtsi128_si32(a: __m128i) -> (r: i32)
     unsafe { core::arch::x86_64::_mm_cvtsi128_si32(a) }
 }
 
+/// [`_mm_cvtsi64_si128`](core::arch::x86_64::_mm_cvtsi64_si128) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u64x2(r) == seq![u64_of_i64(x), 0u64]
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_cvtsi64_si128(x: i64) -> (r: __m128i)
@@ -1332,6 +2152,12 @@ pub fn _mm_cvtsi64_si128(x: i64) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_cvtsi64_si128(x) }
 }
 
+/// [`_mm_cvtsi128_si64`](core::arch::x86_64::_mm_cvtsi128_si64) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u64_of_i64(r) == u64x2(a)[0]
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_cvtsi128_si64(a: __m128i) -> (r: i64)
@@ -1341,6 +2167,13 @@ pub fn _mm_cvtsi128_si64(a: __m128i) -> (r: i64)
     unsafe { core::arch::x86_64::_mm_cvtsi128_si64(a) }
 }
 
+/// [`_mm256_castsi256_si128`](core::arch::x86_64::_mm256_castsi256_si128) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b128(r) == b256(a).subrange(0, 16)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_castsi256_si128(a: __m256i) -> (r: __m128i)
@@ -1352,6 +2185,14 @@ pub fn _mm256_castsi256_si128(a: __m256i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm256_castsi256_si128(a) }
 }
 
+/// [`_mm256_extracti128_si256`](core::arch::x86_64::_mm256_extracti128_si256) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// requires IMM1 == 0 || IMM1 == 1
+/// ensures  b128(r) == b256(a).subrange(16 * IMM1, 16 * IMM1 + 16)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_extracti128_si256<const IMM1: i32>(a: __m256i) -> (r: __m128i)
@@ -1364,6 +2205,13 @@ pub fn _mm256_extracti128_si256<const IMM1: i32>(a: __m256i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm256_extracti128_si256::<IMM1>(a) }
 }
 
+/// [`_mm256_set_m128i`](core::arch::x86_64::_mm256_set_m128i) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == b128(lo) + b128(hi)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_set_m128i(hi: __m128i, lo: __m128i) -> (r: __m256i)
@@ -1375,6 +2223,13 @@ pub fn _mm256_set_m128i(hi: __m128i, lo: __m128i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_set_m128i(hi, lo) }
 }
 
+/// [`_mm256_permutevar8x32_epi32`](core::arch::x86_64::_mm256_permutevar8x32_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u32x8(r) == permvar32(u32x8(a), u32x8(idx))
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_permutevar8x32_epi32(a: __m256i, idx: __m256i) -> (r: __m256i)
@@ -1386,6 +2241,14 @@ pub fn _mm256_permutevar8x32_epi32(a: __m256i, idx: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_permutevar8x32_epi32(a, idx) }
 }
 
+/// [`_mm256_permute2x128_si256`](core::arch::x86_64::_mm256_permute2x128_si256) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// requires 0 <= IMM8 <= 255
+/// ensures  b256(r) == perm2x128(b256(a), b256(b), IMM8 as int)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_permute2x128_si256<const IMM8: i32>(a: __m256i, b: __m256i) -> (r: __m256i)
@@ -1398,6 +2261,12 @@ pub fn _mm256_permute2x128_si256<const IMM8: i32>(a: __m256i, b: __m256i) -> (r:
     unsafe { core::arch::x86_64::_mm256_permute2x128_si256::<IMM8>(a, b) }
 }
 
+/// [`_mm_setr_epi16`](core::arch::x86_64::_mm_setr_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u16x8(r) == seq![u16_of_i16(e0), u16_of_i16(e1), u16_of_i16(e2), u16_of_i16(e3), u16_of_i16(e4), u16_of_i16(e5), u16_of_i16(e6), u16_of_i16(e7)]
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_setr_epi16(e0: i16, e1: i16, e2: i16, e3: i16, e4: i16, e5: i16, e6: i16, e7: i16) -> (r: __m128i)
@@ -1407,6 +2276,13 @@ pub fn _mm_setr_epi16(e0: i16, e1: i16, e2: i16, e3: i16, e4: i16, e5: i16, e6: 
     unsafe { core::arch::x86_64::_mm_setr_epi16(e0, e1, e2, e3, e4, e5, e6, e7) }
 }
 
+/// [`_mm256_broadcastsi128_si256`](core::arch::x86_64::_mm256_broadcastsi128_si256) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  b256(r) == b128(a) + b128(a)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_broadcastsi128_si256(a: __m128i) -> (r: __m256i)
@@ -1418,6 +2294,14 @@ pub fn _mm256_broadcastsi128_si256(a: __m128i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_broadcastsi128_si256(a) }
 }
 
+/// [`_mm256_testz_si256`](core::arch::x86_64::_mm256_testz_si256) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  r == 0 || r == 1
+/// ensures  (r == 1) <==> (forall|i: int| 0 <= i < 32 ==> #[trigger] and8(b256(a), b256(b))[i] == 0u8)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm256_testz_si256(a: __m256i, b: __m256i) -> (r: i32)
@@ -1430,6 +2314,14 @@ pub fn _mm256_testz_si256(a: __m256i, b: __m256i) -> (r: i32)
     unsafe { core::arch::x86_64::_mm256_testz_si256(a, b) }
 }
 
+/// [`_mm_clmulepi64_si128`](core::arch::x86_64::_mm_clmulepi64_si128) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires pclmul()
+/// requires IMM8 == 0
+/// ensures  u64x2(r)[0] == clmul_lo(u64x2(a)[0], u64x2(b)[0], 64)
+/// ```
 #[verifier::external_body]
 #[inline(always)]
 pub fn _mm_clmulepi64_si128<const IMM8: i32>(a: __m128i, b: __m128i) -> (r: __m128i)

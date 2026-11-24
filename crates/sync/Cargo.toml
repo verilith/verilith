@@ -26,4 +26,7 @@ verify = true
 # during verification.
 unexpected_cfgs = { level = "warn", check-cfg = [
   'cfg(verus_only)',
+  # Set by Verus; tokenized_state_machine! output tests them.
+  'cfg(verus_keep_ghost)',
+  'cfg(verus_keep_ghost_body)',
 ] }

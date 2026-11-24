@@ -44,6 +44,13 @@ macro_rules! arm_has { ($f:tt) => { cfg!(target_feature = $f) }; }
 
 verus! {
 
+/// Adds `d` to the Adler-32 sums `(a, b)` with AVX2. Call only after `has_avx2` returned true.
+///
+/// ```text
+/// requires a < super::ADLER_MOD
+///          b < super::ADLER_MOD
+/// ensures  (r.0 as nat, r.1 as nat) == adler_from(a as nat, b as nat, d@)
+/// ```
 pub fn adler32_update(a: u32, b: u32, d: &[u8]) -> (r: (u32, u32))
     requires
         a < super::ADLER_MOD,
@@ -102,6 +109,11 @@ fn adler32_avx2(a: u32, b: u32, d: &[u8]) -> (r: (u32, u32))
     unsafe { tf::adler32_avx2(a, b, d) }
 }
 
+/// Adds `d` to the CRC-32 register `reg` with the Arm CRC instructions. Call only after `has_arm_crc` returned true.
+///
+/// ```text
+/// ensures  r == crc_from(reg, d@)
+/// ```
 pub fn crc32_update(reg: u32, d: &[u8]) -> (r: u32)
     ensures
         r == crc_from(reg, d@),
@@ -208,6 +220,11 @@ fn crc32_arm(reg: u32, d: &[u8]) -> (r: u32)
     unsafe { arm_crc::crc32_update(reg, d) }
 }
 
+/// Adds `d` to the CRC-32C register `reg`, with SSE4.2 or the Arm CRC instructions when the CPU has them, else in software.
+///
+/// ```text
+/// ensures  r == crc32c_from(reg, d@)
+/// ```
 #[verifier::external_body]
 pub fn crc32c_update(reg: u32, d: &[u8]) -> (r: u32)
     ensures

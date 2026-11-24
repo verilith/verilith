@@ -189,11 +189,13 @@ fn lanes2<const N: usize>(a: [u8; N], b: [u8; N], f: impl Fn(&[u8], &[u8], &mut 
 
 macro_rules! both {
     ($n128:ident, $n256:ident, |$a:ident, $b:ident| $e:expr) => {
+        #[doc = concat!("`", stringify!($n128), "`, emulated.")]
         #[inline]
         pub fn $n128(a: __m128i, b: __m128i) -> __m128i {
             let ($a, $b) = (a.0, b.0);
             __m128i($e)
         }
+        #[doc = concat!("`", stringify!($n256), "`, emulated.")]
         #[inline]
         pub fn $n256(a: __m256i, b: __m256i) -> __m256i {
             let ($a, $b) = (a.0, b.0);
@@ -269,6 +271,7 @@ both!(_mm_sad_epu8, _mm256_sad_epu8, |a, b| {
     r
 });
 
+/// `pblendvb`: each byte from `b` where that byte of `m` has its top bit set, else from `a`.
 #[inline]
 pub fn _mm_blendv_epi8(a: __m128i, b: __m128i, m: __m128i) -> __m128i {
     let mut r = a.0;
@@ -279,6 +282,7 @@ pub fn _mm_blendv_epi8(a: __m128i, b: __m128i, m: __m128i) -> __m128i {
     }
     __m128i(r)
 }
+/// `vpblendvb`: each byte from `b` where that byte of `m` has its top bit set, else from `a`.
 #[inline]
 pub fn _mm256_blendv_epi8(a: __m256i, b: __m256i, m: __m256i) -> __m256i {
     let mut r = a.0;
@@ -297,10 +301,12 @@ fn movemask(a: &[u8]) -> i32 {
     }
     m as i32
 }
+/// `pmovmskb`: bit `i` of the result is the top bit of byte `i`.
 #[inline]
 pub fn _mm_movemask_epi8(a: __m128i) -> i32 {
     movemask(&a.0)
 }
+/// `vpmovmskb`: bit `i` of the result is the top bit of byte `i`.
 #[inline]
 pub fn _mm256_movemask_epi8(a: __m256i) -> i32 {
     movemask(&a.0)
@@ -312,11 +318,13 @@ pub fn _mm256_movemask_epi8(a: __m256i) -> i32 {
 
 macro_rules! imm1 {
     ($n128:ident, $n256:ident, |$a:ident, $k:ident| $e:expr) => {
+        #[doc = concat!("`", stringify!($n128), "`, emulated.")]
         #[inline]
         pub fn $n128<const IMM8: i32>(a: __m128i) -> __m128i {
             let ($a, $k) = (a.0, IMM8);
             __m128i($e)
         }
+        #[doc = concat!("`", stringify!($n256), "`, emulated.")]
         #[inline]
         pub fn $n256<const IMM8: i32>(a: __m256i) -> __m256i {
             let ($a, $k) = (a.0, IMM8);
@@ -349,21 +357,25 @@ imm1!(_mm_shuffle_epi32, _mm256_shuffle_epi32, |a, k| lanes1(a, |x, r| shuffle32
 imm1!(_mm_slli_si128, _mm256_bslli_epi128, |a, k| lanes1(a, |x, r| bslli(x, (k & 0xff) as usize, r)));
 imm1!(_mm_srli_si128, _mm256_bsrli_epi128, |a, k| lanes1(a, |x, r| bsrli(x, (k & 0xff) as usize, r)));
 
+/// `palignr`: `a:b` (`a` high) shifted right by `IMM8` bytes, low 16 bytes.
 #[inline]
 pub fn _mm_alignr_epi8<const IMM8: i32>(a: __m128i, b: __m128i) -> __m128i {
     __m128i(lanes2(a.0, b.0, |x, y, r| alignr(x, y, (IMM8 & 0xff) as usize, r)))
 }
+/// `vpalignr`: `_mm_alignr_epi8` on each 128-bit half.
 #[inline]
 pub fn _mm256_alignr_epi8<const IMM8: i32>(a: __m256i, b: __m256i) -> __m256i {
     __m256i(lanes2(a.0, b.0, |x, y, r| alignr(x, y, (IMM8 & 0xff) as usize, r)))
 }
 
+/// `vextracti128`: the low (`IMM1` = 0) or high (1) half of `a`.
 #[inline]
 pub fn _mm256_extracti128_si256<const IMM1: i32>(a: __m256i) -> __m128i {
     let o = 16 * (IMM1 & 1) as usize;
     __m128i(a.0[o..o + 16].try_into().unwrap())
 }
 
+/// `vperm2i128`: each half of the result picked from the halves of `a` and `b` (or zeroed) by a nibble of `IMM8`.
 #[inline]
 pub fn _mm256_permute2x128_si256<const IMM8: i32>(a: __m256i, b: __m256i) -> __m256i {
     let pick = |c: i32| -> [u8; 16] {
@@ -380,6 +392,7 @@ pub fn _mm256_permute2x128_si256<const IMM8: i32>(a: __m256i, b: __m256i) -> __m
     __m256i(r)
 }
 
+/// `vpermd`: 32-bit lane `i` of the result is lane `idx[i] % 8` of `a`.
 #[inline]
 pub fn _mm256_permutevar8x32_epi32(a: __m256i, idx: __m256i) -> __m256i {
     let mut r = [0u8; 32];
@@ -393,10 +406,12 @@ pub fn _mm256_permutevar8x32_epi32(a: __m256i, idx: __m256i) -> __m256i {
 // Constructors and conversions
 // ---------------------------------------------------------------------------
 
+/// All zero.
 #[inline]
 pub fn _mm_setzero_si128() -> __m128i {
     __m128i([0; 16])
 }
+/// All zero.
 #[inline]
 pub fn _mm256_setzero_si256() -> __m256i {
     __m256i([0; 32])
@@ -409,39 +424,48 @@ fn splat<const N: usize, const W: usize>(x: [u8; W]) -> [u8; N] {
     }
     r
 }
+/// Every byte `x`.
 #[inline]
 pub fn _mm_set1_epi8(x: i8) -> __m128i {
     __m128i(splat(x.to_le_bytes()))
 }
+/// Every 16-bit lane `x`.
 #[inline]
 pub fn _mm_set1_epi16(x: i16) -> __m128i {
     __m128i(splat(x.to_le_bytes()))
 }
+/// Every 32-bit lane `x`.
 #[inline]
 pub fn _mm_set1_epi32(x: i32) -> __m128i {
     __m128i(splat(x.to_le_bytes()))
 }
+/// Every 64-bit lane `x`.
 #[inline]
 pub fn _mm_set1_epi64x(x: i64) -> __m128i {
     __m128i(splat(x.to_le_bytes()))
 }
+/// Every byte `x`.
 #[inline]
 pub fn _mm256_set1_epi8(x: i8) -> __m256i {
     __m256i(splat(x.to_le_bytes()))
 }
+/// Every 16-bit lane `x`.
 #[inline]
 pub fn _mm256_set1_epi16(x: i16) -> __m256i {
     __m256i(splat(x.to_le_bytes()))
 }
+/// Every 32-bit lane `x`.
 #[inline]
 pub fn _mm256_set1_epi32(x: i32) -> __m256i {
     __m256i(splat(x.to_le_bytes()))
 }
+/// Every 64-bit lane `x`.
 #[inline]
 pub fn _mm256_set1_epi64x(x: i64) -> __m256i {
     __m256i(splat(x.to_le_bytes()))
 }
 
+/// The 32-bit lanes `e0` (lowest) to `e3`.
 #[inline]
 pub fn _mm_setr_epi32(e0: i32, e1: i32, e2: i32, e3: i32) -> __m128i {
     let mut r = [0u8; 16];
@@ -450,6 +474,7 @@ pub fn _mm_setr_epi32(e0: i32, e1: i32, e2: i32, e3: i32) -> __m128i {
     }
     __m128i(r)
 }
+/// The 32-bit lanes `e0` (lowest) to `e7`.
 #[allow(clippy::too_many_arguments)]
 #[inline]
 pub fn _mm256_setr_epi32(e0: i32, e1: i32, e2: i32, e3: i32, e4: i32, e5: i32, e6: i32, e7: i32) -> __m256i {
@@ -459,6 +484,7 @@ pub fn _mm256_setr_epi32(e0: i32, e1: i32, e2: i32, e3: i32, e4: i32, e5: i32, e
     }
     __m256i(r)
 }
+/// The bytes `e0` (lowest) to `e15`.
 #[allow(clippy::too_many_arguments)]
 #[inline]
 pub fn _mm_setr_epi8(
@@ -467,6 +493,7 @@ pub fn _mm_setr_epi8(
 ) -> __m128i {
     __m128i([e0, e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, e15].map(|x| x as u8))
 }
+/// The bytes `e0` (lowest) to `e31`.
 #[allow(clippy::too_many_arguments)]
 #[inline]
 pub fn _mm256_setr_epi8(
@@ -484,30 +511,36 @@ pub fn _mm256_setr_epi8(
     )
 }
 
+/// `x` in the low 32 bits, the rest zero.
 #[inline]
 pub fn _mm_cvtsi32_si128(x: i32) -> __m128i {
     let mut r = [0u8; 16];
     s32(&mut r, 0, x as u32);
     __m128i(r)
 }
+/// The low 32 bits.
 #[inline]
 pub fn _mm_cvtsi128_si32(a: __m128i) -> i32 {
     g32(&a.0, 0) as i32
 }
+/// `x` in the low 64 bits, the rest zero.
 #[inline]
 pub fn _mm_cvtsi64_si128(x: i64) -> __m128i {
     let mut r = [0u8; 16];
     s64(&mut r, 0, x as u64);
     __m128i(r)
 }
+/// The low 64 bits.
 #[inline]
 pub fn _mm_cvtsi128_si64(a: __m128i) -> i64 {
     g64(&a.0, 0) as i64
 }
+/// The low 128 bits.
 #[inline]
 pub fn _mm256_castsi256_si128(a: __m256i) -> __m128i {
     __m128i(a.0[..16].try_into().unwrap())
 }
+/// `lo` in the low half, `hi` in the high half.
 #[inline]
 pub fn _mm256_set_m128i(hi: __m128i, lo: __m128i) -> __m256i {
     let mut r = [0u8; 32];
@@ -516,6 +549,7 @@ pub fn _mm256_set_m128i(hi: __m128i, lo: __m128i) -> __m256i {
     __m256i(r)
 }
 
+/// The 16-bit lanes `e0` (lowest) to `e7`.
 #[allow(clippy::too_many_arguments)]
 #[inline]
 pub fn _mm_setr_epi16(e0: i16, e1: i16, e2: i16, e3: i16, e4: i16, e5: i16, e6: i16, e7: i16) -> __m128i {
@@ -525,6 +559,7 @@ pub fn _mm_setr_epi16(e0: i16, e1: i16, e2: i16, e3: i16, e4: i16, e5: i16, e6: 
     }
     __m128i(r)
 }
+/// `a` in both halves.
 #[inline]
 pub fn _mm256_broadcastsi128_si256(a: __m128i) -> __m256i {
     _mm256_set_m128i(a, a)
@@ -553,6 +588,11 @@ pub fn _mm_clmulepi64_si128<const IMM8: i32>(a: __m128i, b: __m128i) -> __m128i 
 // Unaligned loads and stores
 // ---------------------------------------------------------------------------
 
+/// Reads 16 bytes from `p`, which need not be aligned.
+///
+/// # Safety
+///
+/// `p` must be valid for a 16-byte read.
 #[inline]
 pub unsafe fn _mm_loadu_si128(p: *const __m128i) -> __m128i {
     core::ptr::read_unaligned(p)
@@ -574,14 +614,29 @@ pub unsafe fn _mm_storel_epi64(p: *mut __m128i, v: __m128i) {
 pub unsafe fn _mm_storeu_si32(p: *mut u8, v: __m128i) {
     core::ptr::copy_nonoverlapping(v.0.as_ptr(), p, 4);
 }
+/// Reads 32 bytes from `p`, which need not be aligned.
+///
+/// # Safety
+///
+/// `p` must be valid for a 32-byte read.
 #[inline]
 pub unsafe fn _mm256_loadu_si256(p: *const __m256i) -> __m256i {
     core::ptr::read_unaligned(p)
 }
+/// Writes 16 bytes to `p`, which need not be aligned.
+///
+/// # Safety
+///
+/// `p` must be valid for a 16-byte write.
 #[inline]
 pub unsafe fn _mm_storeu_si128(p: *mut __m128i, v: __m128i) {
     core::ptr::write_unaligned(p, v)
 }
+/// Writes 32 bytes to `p`, which need not be aligned.
+///
+/// # Safety
+///
+/// `p` must be valid for a 32-byte write.
 #[inline]
 pub unsafe fn _mm256_storeu_si256(p: *mut __m256i, v: __m256i) {
     core::ptr::write_unaligned(p, v)

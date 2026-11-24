@@ -133,6 +133,7 @@ pub proof fn lemma_encode_decode(s: Seq<u8>)
 /// encode `b`.
 pub const DIGITS_LO: [u8; 16] = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 100, 101, 102];
 
+/// Uppercase digits: `DIGITS_UP[v]` encodes the nibble `v`.
 pub const DIGITS_UP: [u8; 16] = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 65, 66, 67, 68, 69, 70];
 
 /// `dval(c)`, with 255 for `None`.
@@ -204,8 +205,8 @@ pub fn encode_into(upper: bool, x: &[u8], out: &mut [u8])
         &DIGITS_LO
     };
     let mut i = if verilith_simd::cpu::has_avx2() {
-        // SAFETY: the CPU has AVX2.
-        unsafe { super::avx2::encode_bulk(upper, x, out) }
+        // The CPU has AVX2.
+        super::avx2::encode_bulk(upper, x, out)
     } else {
         0
     };
@@ -246,8 +247,8 @@ pub fn decode_into(s: &[u8], out: &mut [u8]) -> (ok: bool)
     }
     let n = s.len() / 2;
     let (mut i, ok) = if verilith_simd::cpu::has_avx2() {
-        // SAFETY: the CPU has AVX2.
-        unsafe { super::avx2::decode_bulk(s, out) }
+        // The CPU has AVX2.
+        super::avx2::decode_bulk(s, out)
     } else {
         (0, true)
     };

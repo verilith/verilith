@@ -178,7 +178,7 @@ cases.append(("constructors", f"""
 cases.append(("lanes256", f"""
     let mut rng = Rng::new(0x2560);
     #[target_feature(enable = "avx2")]
-    fn go(a: __m256i, b: __m256i, lo: __m128i, hi: __m128i, idx: __m256i)
+    fn go(a: __m256i, _b: __m256i, lo: __m128i, hi: __m128i, idx: __m256i)
         -> (__m128i, __m128i, __m128i, __m256i, __m256i) {{
         (_mm256_castsi256_si128(a), _mm256_extracti128_si256::<0>(a), _mm256_extracti128_si256::<1>(a),
          _mm256_set_m128i(hi, lo), _mm256_permutevar8x32_epi32(a, idx))

@@ -25,31 +25,49 @@ use vstd::prelude::*;
 
 verus! {
 
+/// `Stream::phase`: at the start, before the end of the XML declaration (if any).
 pub const PH_HEAD: u8 = 0;
+/// In the `Misc*` after the XML declaration, before the document type declaration.
 pub const PH_M1: u8 = 1;
+/// In the `Misc*` after the document type declaration (or where it would be).
 pub const PH_M2: u8 = 2;
+/// In the root element, or after it.
 pub const PH_BODY: u8 = 3;
+/// The document is rejected; the rest of the input is not read.
 pub const PH_FAILED: u8 = 4;
+/// The document is to be parsed whole (`R_WHOLE`).
 pub const PH_WHOLE: u8 = 5;
+/// The verdict has been given.
 pub const PH_DONE: u8 = 6;
 
 /// `feed`'s results.
 pub const R_MORE: u8 = 0;
+/// The document is well-formed.
 pub const R_OK: u8 = 1;
+/// The document is rejected.
 pub const R_ERR: u8 = 2;
+/// The document is to be parsed whole, once all of it is fed.
 pub const R_WHOLE: u8 = 3;
+/// The window outgrew the token positions.
 pub const R_LIMIT: u8 = 4;
 
+/// The push parser's state (see the module docs).
 pub struct Stream {
+    /// The window over the input.
     pub w: Win,
+    /// Where the parser is in the document (`PH_HEAD` to `PH_DONE`).
     pub phase: u8,
     /// Before the root element: the tape, and how much of it was emitted.
     pub ptape: Tape,
+    /// How many of `ptape`'s tokens were emitted.
     pub pmark: usize,
+    /// The XML declaration's standalone declaration: 0 absent, 1 `yes`, 2 `no`.
     pub sd: u8,
     /// The prolog's text and what its document type declaration declares.
     pub pro: Vec<u8>,
+    /// What the document type declaration declares.
     pub dtd: DtdOut,
+    /// The entities and attribute defaults declared, as the spec's environment.
     pub genv: Ghost<Env>,
     /// How far the document type declaration has been scanned for its end.
     pub dscan: DScan,
@@ -64,8 +82,11 @@ pub struct Stream {
 /// parsed once it can be complete, not again on every chunk. The scan only
 /// times the parse; the parse decides.
 pub struct DScan {
+    /// How far the scan has read, from the declaration's start.
     pub at: usize,
+    /// Where the scan is (`D_HEAD` to `D_END`).
     pub mode: u8,
+    /// The quote that closes the literal the scan is in.
     pub q: u8,
 }
 
@@ -73,13 +94,21 @@ pub struct DScan {
 /// literal there; in the subset, in a markup declaration, in a literal there,
 /// in a comment, in a processing instruction; after the subset; at the end.
 pub const D_HEAD: u8 = 0;
+/// In a literal, before the internal subset.
 pub const D_HEAD_LIT: u8 = 1;
+/// In the internal subset.
 pub const D_SUB: u8 = 2;
+/// In a markup declaration.
 pub const D_DECL: u8 = 3;
+/// In a literal in a markup declaration.
 pub const D_DECL_LIT: u8 = 4;
+/// In a comment.
 pub const D_COMMENT: u8 = 5;
+/// In a processing instruction.
 pub const D_PI: u8 = 6;
+/// After the internal subset.
 pub const D_AFTER: u8 = 7;
+/// At the declaration's end.
 pub const D_END: u8 = 8;
 
 /// The scan of the declaration that starts at `p`, from where it was left
@@ -2333,14 +2362,14 @@ impl Stream {
 // ---------------------------------------------------------------------------
 
 impl Stream {
-    /// Where, in the window, the next chunk keeps it from: no event of
-    /// the stream starts before it.
     /// Where in the input the parser has read to: the start of the item it
     /// has not finished.
     pub fn progress(&self) -> usize {
         self.w.base + self.w.pos
     }
 
+    /// Where, in the window, the next chunk keeps it from: no event of
+    /// the stream starts before it.
     pub fn keep(&self) -> usize {
         if self.phase != PH_BODY {
             return 0;
@@ -2362,10 +2391,12 @@ impl Stream {
         &self.w.buf
     }
 
+    /// Where `window()` starts, in the input.
     pub fn base(&self) -> usize {
         self.w.base
     }
 
+    /// Where the parser is in the document (`PH_HEAD` to `PH_DONE`).
     pub fn phase(&self) -> u8 {
         self.phase
     }
@@ -2400,6 +2431,7 @@ impl Stream {
         &self.dtd
     }
 
+    /// The prolog's text: all the input before the root element.
     pub fn prolog(&self) -> &[u8] {
         &self.pro
     }
