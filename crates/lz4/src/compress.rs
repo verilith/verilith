@@ -726,7 +726,7 @@ fn put_match(
     roomy: bool,
     Ghost(hist): Ghost<Seq<u8>>,
     Ghost(strict): Ghost<Option<nat>>,
-) -> (r: Option<(usize, usize)>)
+) -> (res: (Option<(usize, usize)>, Ghost<nat>))
     requires
         start <= anchor <= ip,
         ip + 12 <= end <= input@.len(),
@@ -742,13 +742,16 @@ fn put_match(
     ensures
         final(dst)@.len() == old(dst)@.len(),
         final(dst)@.subrange(0, base as int) == old(dst)@.subrange(0, base as int),
-        roomy ==> r.is_some(),
-        r matches Some((d2, ip2)) ==> {
+        roomy ==> res.0.is_some(),
+        res.0 matches Some((d2, ip2)) ==> {
             &&& d <= d2 <= final(dst)@.len()
             &&& ip + 4 <= ip2 <= end - 5
             &&& reach(final(dst)@.subrange(base as int, d2 as int), hist, input@.subrange(0, ip2 as int), strict)
             &&& roomy ==> 255 * (d2 - base) <= 256 * (ip2 - start)
+            &&& res.1@ <= 2 * (ip2 - anchor) + 40
         },
+        // Each byte compared or written, each loop turn.
+        res.1@ <= 2 * (end - anchor) + 40,
 {
     proof {
         lemma_load_eq(input@, cand as int, ip as int);
@@ -781,6 +784,9 @@ fn put_match(
     let more = eq_len(input, cand + 4, ip + 4, end - 5 - (ip + 4));
     let ml = b + 4 + more;
     let ll = ip0 - anchor;
+    // The turns stretching back, and `eq_len`'s: at most one for each
+    // byte compared and two more.
+    let ghost mut work: nat = (b + 1 + more + 2) as nat;
     let off = ip - cand;
     let ghost lits = input@.subrange(anchor as int, ip0 as int);
     let ghost out0 = input@.subrange(0, anchor as int);
@@ -825,11 +831,16 @@ fn put_match(
     } else {
         match emit_seq(dst, d, input, anchor, ll, off, ml) {
             None => {
-                return None;
+                return (None, Ghost(work));
             },
             Some(x) => x,
         }
     };
+    // The literals (copied up to 32 bytes at a time) and each length
+    // byte past the token.
+    proof {
+        work = (work + ll + 32 + ll / 255 + ml / 255 + 2) as nat;
+    }
     proof {
         let e = enc_seq(lits, off as nat, ml as nat);
         assert(d2 <= dst@.len());
@@ -854,7 +865,7 @@ fn put_match(
         lemma_lz_copy_is(o, r, off as int, ml as nat);
         lemma_reach_step(p0, hist, out0, strict, lits, off as nat, ml as nat);
     }
-    Some((d2, ip0 + ml))
+    (Some((d2, ip0 + ml)), Ghost(work))
 }
 
 /// Writes the literals that end the block.
@@ -941,7 +952,7 @@ fn core_small(
     base: usize,
     accel: usize,
     roomy: bool,
-) -> (r: Option<usize>)
+) -> (res: (Option<usize>, Ghost<nat>))
     requires
         start <= end <= input@.len(),
         end <= 65536,
@@ -951,23 +962,28 @@ fn core_small(
     ensures
         final(dst)@.len() == old(dst)@.len(),
         final(dst)@.subrange(0, base as int) == old(dst)@.subrange(0, base as int),
-        roomy ==> r.is_some(),
-        r matches Some(n) ==> base <= n <= final(dst)@.len() && block_strict(
+        roomy ==> res.0.is_some(),
+        res.0 matches Some(n) ==> base <= n <= final(dst)@.len() && block_strict(
             final(dst)@.subrange(base as int, n as int),
             input@.subrange(0, start as int),
             (end - start) as nat,
         ) == Some(input@.subrange(0, end as int)),
+        res.1@ <= HASH_SIZE + 18 * (end - start) + 60,
 {
     let ghost hist = input@.subrange(0, start as int);
     let ghost strict = Some(end as nat);
     let mut anchor = start;
     let mut d: usize = base;
+    let ghost mut work: nat = 0;
     proof {
         assert(input@.subrange(0, anchor as int) == hist);
         assert(dst@.subrange(base as int, base as int).len() == 0);
     }
     if end - start >= 13 {
         let mut table = [0u16;HASH_SIZE];
+        proof {
+            work = HASH_SIZE as nat;
+        }
         // A match may not start after `mflimit`.
         let mflimit = end - 12;
         // The first position has nothing before it to match.
@@ -977,6 +993,7 @@ fn core_small(
         loop
             invariant_except_break
                 start < ip <= mflimit,
+                work + 2 * (ip - anchor) <= HASH_SIZE + 16 * (ip - start),
                 forall|h: int| 0 <= h < HASH_SIZE ==> (#[trigger] table@[h]) < ip,
             invariant
                 dst@.len() == old(dst)@.len(),
@@ -993,8 +1010,13 @@ fn core_small(
                 strict == Some(end as nat),
                 reach(dst@.subrange(base as int, d as int), hist, input@.subrange(0, anchor as int), strict),
                 roomy ==> 255 * (d - base) <= 256 * (anchor - start) && dst@.len() - base >= bound(end - start),
+            ensures
+                work <= HASH_SIZE + 16 * (end - start) + 2,
             decreases end - anchor,
         {
+            proof {
+                work = work + 1;
+            }
             // Look for four bytes seen before, stepping faster the longer
             // nothing is found.
             let mut cand: usize = 0;
@@ -1009,6 +1031,7 @@ fn core_small(
                 invariant_except_break
                     !found,
                     ip <= mflimit,
+                    work + 2 * (ip - anchor) <= HASH_SIZE + 16 * (ip - start) + 1,
                     forall|h: int| 0 <= h < HASH_SIZE ==> (#[trigger] table@[h]) < ip,
                 invariant
                     start <= anchor <= ip,
@@ -1026,8 +1049,13 @@ fn core_small(
                         ip as int,
                         4,
                     ),
+                    found ==> work + 2 * (ip - anchor) <= HASH_SIZE + 16 * (ip - start) + 2,
+                    !found ==> work <= HASH_SIZE + 16 * (mflimit - start) + 2,
                 decreases mflimit - ip,
             {
+                proof {
+                    work = work + 1;
+                }
                 let x = load32(input, ip);
                 let h = hash4(x);
                 let e = table[h] as usize;
@@ -1051,9 +1079,13 @@ fn core_small(
             if !found {
                 break ;
             }
-            match put_match(input, start, end, anchor, ip, cand, dst, base, d, roomy, Ghost(hist), Ghost(strict)) {
+            let (pm, Ghost(w)) = put_match(input, start, end, anchor, ip, cand, dst, base, d, roomy, Ghost(hist), Ghost(strict));
+            proof {
+                work = (work + w) as nat;
+            }
+            match pm {
                 None => {
-                    return None;
+                    return (None, Ghost(work));
                 },
                 Some((d2, ip2)) => {
                     d = d2;
@@ -1069,7 +1101,12 @@ fn core_small(
             table[h2] = (ip - 2) as u16;
         }
     }
-    finish(input, start, end, anchor, dst, base, d, roomy, Ghost(hist), Ghost(strict))
+    // The last literals (copied up to 32 bytes at a time) and their
+    // length bytes.
+    proof {
+        work = (work + 2 * (end - anchor) + 34) as nat;
+    }
+    (finish(input, start, end, anchor, dst, base, d, roomy, Ghost(hist), Ghost(strict)), Ghost(work))
 }
 
 /// The compressor for larger inputs. The table holds 32-bit positions
@@ -1085,7 +1122,7 @@ fn core_big(
     table: &mut [u32; BIG_SIZE],
     accel: usize,
     roomy: bool,
-) -> (r: Option<usize>)
+) -> (res: (Option<usize>, Ghost<nat>))
     requires
         start <= end <= input@.len(),
         end - start <= MAX_INPUT,
@@ -1097,18 +1134,20 @@ fn core_big(
     ensures
         final(dst)@.len() == old(dst)@.len(),
         final(dst)@.subrange(0, base as int) == old(dst)@.subrange(0, base as int),
-        roomy ==> r.is_some(),
+        roomy ==> res.0.is_some(),
         forall|h: int| 0 <= h < BIG_SIZE ==> (#[trigger] final(table)@[h]) <= end,
-        r matches Some(n) ==> base <= n <= final(dst)@.len() && block_strict(
+        res.0 matches Some(n) ==> base <= n <= final(dst)@.len() && block_strict(
             final(dst)@.subrange(base as int, n as int),
             input@.subrange(0, start as int),
             (end - start) as nat,
         ) == Some(input@.subrange(0, end as int)),
+        res.1@ <= 18 * (end - start) + 60,
 {
     let ghost hist = input@.subrange(0, start as int);
     let ghost strict = Some(end as nat);
     let mut anchor = start;
     let mut d: usize = base;
+    let ghost mut work: nat = 0;
     proof {
         assert(input@.subrange(0, anchor as int) == hist);
         assert(dst@.subrange(base as int, base as int).len() == 0);
@@ -1123,6 +1162,7 @@ fn core_big(
         loop
             invariant_except_break
                 start < ip <= mflimit,
+                work + 2 * (ip - anchor) <= 0 + 16 * (ip - start),
                 forall|h: int| 0 <= h < BIG_SIZE ==> (#[trigger] table@[h]) < ip,
             invariant
                 dst@.len() == old(dst)@.len(),
@@ -1141,8 +1181,13 @@ fn core_big(
                 forall|h: int| 0 <= h < BIG_SIZE ==> (#[trigger] table@[h]) <= end,
                 reach(dst@.subrange(base as int, d as int), hist, input@.subrange(0, anchor as int), strict),
                 roomy ==> 255 * (d - base) <= 256 * (anchor - start) && dst@.len() - base >= bound(end - start),
+            ensures
+                work <= 0 + 16 * (end - start) + 2,
             decreases end - anchor,
         {
+            proof {
+                work = work + 1;
+            }
             // Look for four bytes seen before, stepping faster the longer
             // nothing is found.
             let mut cand: usize = 0;
@@ -1157,6 +1202,7 @@ fn core_big(
                 invariant_except_break
                     !found,
                     ip <= mflimit,
+                    work + 2 * (ip - anchor) <= 0 + 16 * (ip - start) + 1,
                     forall|h: int| 0 <= h < BIG_SIZE ==> (#[trigger] table@[h]) < ip,
                 invariant
                     start <= anchor <= ip,
@@ -1175,8 +1221,13 @@ fn core_big(
                         ip as int,
                         4,
                     ),
+                    found ==> work + 2 * (ip - anchor) <= 0 + 16 * (ip - start) + 2,
+                    !found ==> work <= 0 + 16 * (mflimit - start) + 2,
                 decreases mflimit - ip,
             {
+                proof {
+                    work = work + 1;
+                }
                 let w = load_u64_le(input, ip);
                 assert(w & 0xffff_ffff <= 0xffff_ffff) by (bit_vector);
                 let x = (w & 0xffff_ffff) as u32;
@@ -1206,9 +1257,13 @@ fn core_big(
             if !found {
                 break ;
             }
-            match put_match(input, start, end, anchor, ip, cand, dst, base, d, roomy, Ghost(hist), Ghost(strict)) {
+            let (pm, Ghost(w)) = put_match(input, start, end, anchor, ip, cand, dst, base, d, roomy, Ghost(hist), Ghost(strict));
+            proof {
+                work = (work + w) as nat;
+            }
+            match pm {
                 None => {
-                    return None;
+                    return (None, Ghost(work));
                 },
                 Some((d2, ip2)) => {
                     d = d2;
@@ -1224,7 +1279,12 @@ fn core_big(
             table[h2] = (ip - 2) as u32;
         }
     }
-    finish(input, start, end, anchor, dst, base, d, roomy, Ghost(hist), Ghost(strict))
+    // The last literals (copied up to 32 bytes at a time) and their
+    // length bytes.
+    proof {
+        work = (work + 2 * (end - anchor) + 34) as nat;
+    }
+    (finish(input, start, end, anchor, dst, base, d, roomy, Ghost(hist), Ghost(strict)), Ghost(work))
 }
 
 /// Whether `len` bytes are room enough for any block of `n`.
@@ -1245,6 +1305,7 @@ fn has_room(len: usize, n: usize) -> (r: bool)
 /// `input[start..end]` after that history, and follows the end-of-block
 /// rules. `None`: `dst` is too small, which `bound(end - start)` bytes
 /// after `base` never are. `dst[..base]` is left as it was.
+#[inline(always)]
 pub fn compress_small(
     input: &[u8],
     lo: usize,
@@ -1268,6 +1329,37 @@ pub fn compress_small(
             input@.subrange(lo as int, start as int),
             (end - start) as nat,
         ) == Some(input@.subrange(lo as int, end as int)),
+{
+    compress_small_counted(input, lo, start, end, dst, base, accel).0
+}
+
+/// `compress_small`, with its steps counted.
+pub fn compress_small_counted(
+    input: &[u8],
+    lo: usize,
+    start: usize,
+    end: usize,
+    dst: &mut [u8],
+    base: usize,
+    accel: usize,
+) -> (res: (Option<usize>, Ghost<nat>))
+    requires
+        lo <= start <= end <= input@.len(),
+        end - lo <= 65536,
+        1 <= accel <= 65537,
+        base <= old(dst)@.len(),
+    ensures
+        final(dst)@.len() == old(dst)@.len(),
+        final(dst)@.subrange(0, base as int) == old(dst)@.subrange(0, base as int),
+        old(dst)@.len() - base >= bound(end - start) ==> res.0.is_some(),
+        res.0 matches Some(n) ==> base <= n <= final(dst)@.len() && block_strict(
+            final(dst)@.subrange(base as int, n as int),
+            input@.subrange(lo as int, start as int),
+            (end - start) as nat,
+        ) == Some(input@.subrange(lo as int, end as int)),
+        // Steps: each loop turn, each byte compared or copied, each
+        // table entry cleared.
+        res.1@ <= HASH_SIZE + 18 * (end - start) + 60,
 {
     let w = slice_subrange(input, lo, end);
     proof {
@@ -1294,6 +1386,7 @@ pub fn compress_small(
 /// zeros, or what an earlier call with the same `input` and `lo` left.
 /// `accel` is liblz4's acceleration (1 is the default): larger skips
 /// through incompressible data faster.
+#[inline(always)]
 pub fn compress_block(
     input: &[u8],
     lo: usize,
@@ -1322,8 +1415,43 @@ pub fn compress_block(
             (end - start) as nat,
         ) == Some(input@.subrange(lo as int, end as int)),
 {
+    compress_block_counted(input, lo, start, end, dst, base, table, accel).0
+}
+
+/// `compress_block`, with its steps counted.
+pub fn compress_block_counted(
+    input: &[u8],
+    lo: usize,
+    start: usize,
+    end: usize,
+    dst: &mut [u8],
+    base: usize,
+    table: &mut [u32; BIG_SIZE],
+    accel: usize,
+) -> (res: (Option<usize>, Ghost<nat>))
+    requires
+        lo <= start <= end <= input@.len(),
+        end - start <= MAX_INPUT,
+        end - lo <= 0xf000_0000,
+        1 <= accel <= 65537,
+        base <= old(dst)@.len(),
+        forall|h: int| 0 <= h < BIG_SIZE ==> (#[trigger] old(table)@[h]) <= start - lo,
+    ensures
+        final(dst)@.len() == old(dst)@.len(),
+        final(dst)@.subrange(0, base as int) == old(dst)@.subrange(0, base as int),
+        old(dst)@.len() - base >= bound(end - start) ==> res.0.is_some(),
+        forall|h: int| 0 <= h < BIG_SIZE ==> (#[trigger] final(table)@[h]) <= end - lo,
+        res.0 matches Some(n) ==> base <= n <= final(dst)@.len() && block_strict(
+            final(dst)@.subrange(base as int, n as int),
+            input@.subrange(lo as int, start as int),
+            (end - start) as nat,
+        ) == Some(input@.subrange(lo as int, end as int)),
+        // Steps: each loop turn, each byte compared or copied, each
+        // table entry cleared.
+        res.1@ <= HASH_SIZE + 18 * (end - start) + 60,
+{
     if end - lo <= 65536 {
-        compress_small(input, lo, start, end, dst, base, accel)
+        compress_small_counted(input, lo, start, end, dst, base, accel)
     } else {
         let w = slice_subrange(input, lo, end);
         proof {
@@ -1359,6 +1487,7 @@ pub fn compress_bound(n: usize) -> (r: usize)
 /// a block that decodes to `input` and follows the end-of-block rules.
 /// `None`: `input` is longer than `MAX_INPUT`, or `dst` is too small,
 /// which `compress_bound(input.len())` bytes never are.
+#[inline(always)]
 pub fn compress_into(input: &[u8], dst: &mut [u8], accel: usize) -> (r: Option<usize>)
     ensures
         final(dst)@.len() == old(dst)@.len(),
@@ -1369,9 +1498,31 @@ pub fn compress_into(input: &[u8], dst: &mut [u8], accel: usize) -> (r: Option<u
             input@.len(),
         ) == Some(input@),
 {
+    compress_into_counted(input, dst, accel).0
+}
+
+/// A bound on `compress_into`'s steps: eighteen for each input byte, and
+/// the tables to clear.
+pub open spec fn compress_work(n: nat) -> nat {
+    18 * n + HASH_SIZE as nat + BIG_SIZE as nat + 60
+}
+
+/// `compress_into`, with its steps counted (each loop turn, each byte
+/// compared or copied, each table entry cleared).
+pub fn compress_into_counted(input: &[u8], dst: &mut [u8], accel: usize) -> (res: (Option<usize>, Ghost<nat>))
+    ensures
+        final(dst)@.len() == old(dst)@.len(),
+        input@.len() <= MAX_INPUT && old(dst)@.len() >= bound(input@.len() as int) ==> res.0.is_some(),
+        res.0 matches Some(n) ==> n <= final(dst)@.len() && block_strict(
+            final(dst)@.subrange(0, n as int),
+            Seq::empty(),
+            input@.len(),
+        ) == Some(input@),
+        res.1@ <= compress_work(input@.len()),
+{
     let n = input.len();
     if n > MAX_INPUT {
-        return None;
+        return (None, Ghost(0));
     }
     let a = if accel < 1 {
         1
@@ -1385,10 +1536,11 @@ pub fn compress_into(input: &[u8], dst: &mut [u8], accel: usize) -> (r: Option<u
         assert(input@.subrange(0, n as int) =~= input@);
     }
     if n <= 65536 {
-        compress_small(input, 0, 0, n, dst, 0, a)
+        compress_small_counted(input, 0, 0, n, dst, 0, a)
     } else {
         let mut table = [0u32;BIG_SIZE];
-        compress_block(input, 0, 0, n, dst, 0, &mut table, a)
+        let (r, Ghost(w)) = compress_block_counted(input, 0, 0, n, dst, 0, &mut table, a);
+        (r, Ghost((BIG_SIZE + w) as nat))
     }
 }
 

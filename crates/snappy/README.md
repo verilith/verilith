@@ -6,7 +6,7 @@ google/snappy's C API (`snappy-c.h`), and the framing format with its
 CRC-32C checksums. It is meant as a drop-in replacement for libsnappy
 where memory safety and correct output have to be certain.
 
-`cargo verus verify` (or `scripts/verify.sh`) checks 110 functions and
+`cargo verus verify` (or `scripts/verify.sh`) checks 113 functions and
 lemmas with no errors, no `assume` and no `external_body` in this crate.
 CRC-32C is verilith-core's. Everything assumed is listed in
 [TRUST.md](https://github.com/verilith/verilith/blob/main/crates/snappy/TRUST.md).
@@ -40,6 +40,9 @@ sized with `max_compressed_length` and `uncompressed_length`.
 | The wild copies: literals and matches are copied 16 bytes at a time past their end when there is room, and matches of any offset (overlapping ones too) give what a byte-by-byte copy gives | `verilith_core::lz::copy_match`, `copy_lits` against `verilith_core::lz::lz_copy` |
 | Validation without decompressing gives the decompressor's verdict | `decode::validate` against `spec::decompress` |
 | Compression round-trips: what `compress_into` writes decompresses, by the spec, to the input, whatever the hash table held | `compress::compress_into` against `spec::decompress` |
+| `max_compressed_length(n)` bytes are always enough: given that much room, `compress_into` returns `Some` for every input under 4 GiB | `compress::compress_into` ensures, via `compress::slack` |
+| Linear work, decompressing: at most `50n + m + 40` steps for `n` input bytes and `m` output bytes (or, if it fails, `m` bytes of room) | `decode::decompress_counted` ensures (`decompress_into` is the same code without the count) |
+| Linear work, compressing: at most `compress_work(n) = 9n + 16400` steps for `n` input bytes (the 16400 is clearing one hash table) | `compress::compress_into_counted` ensures (`compress_into` is the same code without the count) |
 | CRC-32C, by table | `verilith_core::checksum::crc32c_update` against `checksum::spec::crc32c_reg`, in [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core) (every table entry is checked against the bit-by-bit definition) |
 | Framing format decoding: `Ok` exactly when the stream is valid, with the spec's content: stream identifier, compressed and uncompressed chunks, masked checksums, the 64 KiB chunk limit, padding and skippable chunks, reserved chunks refused | `frame::frame_decode` against `spec::stream` |
 | Framing format encoding round-trips | `frame::frame_encode` against `spec::stream` |
@@ -50,9 +53,19 @@ acceleration. The table's contents are never trusted: a candidate is used
 only after its four bytes are compared. On the Silesia files it produces
 output of the same size as libsnappy 1.1.10 to within 0.6%.
 
-Not yet proven: that `max_compressed_length(n)` bytes are always enough
-(the tests have never seen it fail, and `compress_into` reports a buffer
-that is too small rather than overrunning it); and bounds on work.
+The room proof counts in sixths of a byte (`compress::slack`): the room
+left less 7/6 of a byte for each input byte still to compress. A copy of
+4 or more bytes costs at most 3 and raises it by at least 10. A literal
+lowers it by at most 5, and only a literal of 1 to 16 bytes does. Inside
+a fragment, literals and copies alternate, and every fragment but the
+last ends with at least 16 literals. So it never falls more than 5 below
+where it started, which `32 + n + n/6` leaves room for.
+
+A step of the work bounds is a loop turn, a byte copied or compared, or
+a table entry cleared, counting what the wide copies write past the end.
+The counters are ghost state, erased at compile time. Each fragment but
+the last is 64 KiB, which pays for clearing its table; the last may be
+short, which is the constant.
 
 ## Departures from google/snappy
 
