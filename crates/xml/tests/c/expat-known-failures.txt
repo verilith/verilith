@@ -13,15 +13,19 @@
 #                           tests/c/expat_internals.c
 #   utf16-without-bom       UTF-16 input without a byte order mark, which
 #                           XML 1.0 (4.3.3) requires; expat accepts it
-#   parameter-entity        a parameter entity reference in the internal
-#                           subset is reported as skipped, not expanded: the
-#                           declarations in its replacement text reach no
-#                           handler
+#   pe-in-declaration       a parameter entity reference inside a markup
+#                           declaration in the internal subset, from a
+#                           parameter entity's text there: XML 1.0 forbids
+#                           it (WFC: PEs in Internal Subset), expat reads it
 #   entity-error-first      an internal entity whose replacement text is not
 #                           well-formed is rejected where it is referenced,
 #                           before any of its content is reported
 #   external-dtd            the external DTD subset and external parameter
-#                           entities are not read
+#                           entities are read whole, through the external
+#                           entity reference handler, before the document's
+#                           events (and only with parameter entity parsing
+#                           on), not as expat reads them, in the parser the
+#                           handler makes
 #   encoding                encodings: UTF-8 checks that expat makes
 #                           differently, unknown-encoding handler details
 #   default-handler         markup reported to the default handler: DTD
@@ -33,8 +37,9 @@
 #                           position than expat gives it
 #   fifth-edition-names     names allowed by XML 1.0 Fifth Edition, which the
 #                           suite's older tests reject (as expat does)
-#   error-not-read          the error is in the external subset, an external
-#                           entity or a parameter entity, which are not read
+#   error-not-read          the error is in the external subset or an
+#                           external parameter entity, which xmlwf reads
+#                           here only as the handler gives it
 #   fails-with-libexpat-too fails the same way with libexpat 2.10.0 (the npm
 #                           package of the suite has CR LF line ends in places)
 runtests	test_accounting_precision	internal
@@ -44,7 +49,6 @@ runtests	test_alloc_dtd_default_handling	allocator
 runtests	test_alloc_explicit_encoding	allocator
 runtests	test_alloc_ext_entity_realloc_buffer	allocator
 runtests	test_alloc_nested_entities	allocator
-runtests	test_alloc_public_entity_value	allocator
 runtests	test_alloc_realloc_attribute_enum_value	allocator
 runtests	test_alloc_realloc_attributes	allocator
 runtests	test_alloc_realloc_buffer	allocator
@@ -82,6 +86,7 @@ runtests	test_bad_notation	error-code
 runtests	test_bad_public_doctype	error-code
 runtests	test_billions_laughs_attack_protection_api_float_round_trip	amplification
 runtests	test_comment_handled_in_default	default-handler
+runtests	test_deep_nested_entity_delayed_interpretation	pe-in-declaration
 runtests	test_default_current	default-handler
 runtests	test_default_doctype_handler	default-handler
 runtests	test_dtd_default_handling	default-handler
@@ -98,7 +103,6 @@ runtests	test_ext_entity_latin1_utf16le_bom2	utf16-without-bom
 runtests	test_ext_entity_not_standalone	external-dtd
 runtests	test_ext_entity_utf16_be	utf16-without-bom
 runtests	test_ext_entity_utf16_le	utf16-without-bom
-runtests	test_external_bom_consumed	utf16-without-bom
 runtests	test_foreign_dtd_not_standalone	external-dtd
 runtests	test_good_cdata_utf16	utf16-without-bom
 runtests	test_good_cdata_utf16_le	utf16-without-bom
@@ -122,7 +126,6 @@ runtests	test_misc_alloc_create_parser	allocator
 runtests	test_misc_alloc_create_parser_with_encoding	allocator
 runtests	test_misc_deny_internal_entity_closing_doctype_issue_317	error-not-read
 runtests	test_misc_low_surrogate_mozilla_bug_2053153	utf16-without-bom
-runtests	test_misc_no_infinite_loop_issue_1161	external-dtd
 runtests	test_multichar_cdata_utf16	utf16-without-bom
 runtests	test_no_indirectly_recursive_entity_refs	external-dtd
 runtests	test_nobom_utf16_le	utf16-without-bom
@@ -156,10 +159,6 @@ runtests	test_scan_entity_text	internal
 runtests	test_set_foreign_dtd	external-dtd
 runtests	test_short_doctype_2	error-code
 runtests	test_short_doctype_3	error-code
-runtests	test_skipped_parameter_entity	external-dtd
-runtests	test_suspend_resume_parameter_entity	parameter-entity
-runtests	test_unknown_encoding_bad_ignore	encoding
-runtests	test_user_parameters	default-handler
 runtests	test_utf16	utf16-without-bom
 runtests	test_utf16_attribute	utf16-without-bom
 runtests	test_utf16_be_comment	utf16-without-bom
@@ -171,35 +170,8 @@ runtests	test_utf16_second_attr	utf16-without-bom
 runtests	test_utf16_surrogate_pairs	utf16-without-bom
 runtests	test_utf8_auto_align	internal
 runtests	test_utf8_in_start_tags	encoding
-xmltest	Expected not well-formed: ibm/not-wf/P30/ibm30n01.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P31/ibm31n01.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P61/ibm61n01.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P62/ibm62n01.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P62/ibm62n02.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P62/ibm62n03.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P62/ibm62n04.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P62/ibm62n05.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P62/ibm62n06.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P62/ibm62n07.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P62/ibm62n08.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P63/ibm63n01.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P63/ibm63n02.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P63/ibm63n03.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P63/ibm63n04.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P63/ibm63n05.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P63/ibm63n06.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P63/ibm63n07.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P64/ibm64n01.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P64/ibm64n02.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P64/ibm64n03.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P65/ibm65n01.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P65/ibm65n02.xml	error-not-read
 xmltest	Expected not well-formed: ibm/not-wf/P69/ibm69n05.xml	error-not-read
 xmltest	Expected not well-formed: ibm/not-wf/P77/ibm77n01.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P77/ibm77n03.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P77/ibm77n04.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P79/ibm79n01.xml	error-not-read
-xmltest	Expected not well-formed: ibm/not-wf/P79/ibm79n02.xml	error-not-read
 xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n03.xml	fifth-edition-names
 xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n04.xml	fifth-edition-names
 xmltest	Expected not well-formed: ibm/not-wf/P85/ibm85n05.xml	fifth-edition-names
@@ -501,81 +473,17 @@ xmltest	Expected not well-formed: ibm/not-wf/P89/ibm89n03.xml	fifth-edition-name
 xmltest	Expected not well-formed: ibm/not-wf/P89/ibm89n04.xml	fifth-edition-names
 xmltest	Expected not well-formed: ibm/not-wf/P89/ibm89n05.xml	fifth-edition-names
 xmltest	Expected not well-formed: ibm/not-wf/misc/432gewf.xml	fails-with-libexpat-too
-xmltest	Expected not well-formed: ibm/not-wf/p28a/ibm28an01.xml	error-not-read
 xmltest	Expected not well-formed: oasis/p06fail1.xml	fails-with-libexpat-too
 xmltest	Expected not well-formed: oasis/p08fail1.xml	fails-with-libexpat-too
 xmltest	Expected not well-formed: oasis/p08fail2.xml	fails-with-libexpat-too
-xmltest	Expected not well-formed: oasis/p09fail1.xml	error-not-read
-xmltest	Expected not well-formed: oasis/p09fail2.xml	error-not-read
-xmltest	Expected not well-formed: oasis/p30fail1.xml	error-not-read
-xmltest	Expected not well-formed: oasis/p31fail1.xml	error-not-read
-xmltest	Expected not well-formed: oasis/p61fail1.xml	error-not-read
-xmltest	Expected not well-formed: oasis/p62fail1.xml	error-not-read
-xmltest	Expected not well-formed: oasis/p62fail2.xml	error-not-read
-xmltest	Expected not well-formed: oasis/p63fail1.xml	error-not-read
-xmltest	Expected not well-formed: oasis/p63fail2.xml	error-not-read
-xmltest	Expected not well-formed: oasis/p64fail1.xml	error-not-read
-xmltest	Expected not well-formed: oasis/p64fail2.xml	error-not-read
-xmltest	Expected not well-formed: sun/not-wf/cond01.xml	error-not-read
-xmltest	Expected not well-formed: sun/not-wf/cond02.xml	error-not-read
-xmltest	Expected not well-formed: sun/not-wf/decl01.xml	error-not-read
-xmltest	Expected not well-formed: sun/not-wf/dtd07.xml	error-not-read
 xmltest	Expected not well-formed: sun/not-wf/uri01.xml	fails-with-libexpat-too
-xmltest	Expected not well-formed: xmltest/not-wf/not-sa/001.xml	error-not-read
-xmltest	Expected not well-formed: xmltest/not-wf/not-sa/002.xml	error-not-read
-xmltest	Expected not well-formed: xmltest/not-wf/not-sa/003.xml	error-not-read
-xmltest	Expected not well-formed: xmltest/not-wf/not-sa/004.xml	error-not-read
 xmltest	Expected not well-formed: xmltest/not-wf/not-sa/005.xml	fails-with-libexpat-too
-xmltest	Expected not well-formed: xmltest/not-wf/not-sa/006.xml	error-not-read
-xmltest	Expected not well-formed: xmltest/not-wf/not-sa/007.xml	error-not-read
-xmltest	Expected not well-formed: xmltest/not-wf/not-sa/008.xml	error-not-read
-xmltest	Expected not well-formed: xmltest/not-wf/not-sa/009.xml	error-not-read
-xmltest	Expected not well-formed: xmltest/not-wf/not-sa/010.xml	error-not-read
-xmltest	Expected not well-formed: xmltest/not-wf/not-sa/011.xml	error-not-read
 xmltest	Expected not well-formed: xmltest/not-wf/sa/140.xml	fifth-edition-names
 xmltest	Expected not well-formed: xmltest/not-wf/sa/141.xml	fifth-edition-names
 xmltest	Output differs: ibm/invalid/P32/ibm32i01.xml	external-dtd
 xmltest	Output differs: ibm/invalid/P32/ibm32i03.xml	external-dtd
 xmltest	Output differs: ibm/valid/P02/ibm02v01.xml	fails-with-libexpat-too
-xmltest	Output differs: ibm/valid/P09/ibm09v03.xml	external-dtd
-xmltest	Output differs: ibm/valid/P09/ibm09v05.xml	external-dtd
-xmltest	Output differs: ibm/valid/P32/ibm32v01.xml	external-dtd
-xmltest	Output differs: ibm/valid/P32/ibm32v02.xml	external-dtd
-xmltest	Output differs: ibm/valid/P32/ibm32v03.xml	external-dtd
-xmltest	Output differs: ibm/valid/P32/ibm32v04.xml	external-dtd
-xmltest	Output differs: sun/valid/not-sa01.xml	external-dtd
-xmltest	Output differs: sun/valid/not-sa02.xml	external-dtd
-xmltest	Output differs: sun/valid/not-sa03.xml	external-dtd
-xmltest	Output differs: sun/valid/not-sa04.xml	external-dtd
 xmltest	Output differs: sun/valid/notation01.xml	external-dtd
-xmltest	Output differs: sun/valid/pe00.xml	external-dtd
-xmltest	Output differs: sun/valid/pe02.xml	external-dtd
 xmltest	Output differs: sun/valid/sa03.xml	external-dtd
 xmltest	Output differs: sun/valid/sa04.xml	external-dtd
 xmltest	Output differs: sun/valid/sa05.xml	external-dtd
-xmltest	Output differs: xmltest/invalid/not-sa/022.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/003.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/004.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/005.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/006.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/007.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/008.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/009.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/011.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/012.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/013.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/014.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/015.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/016.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/017.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/018.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/019.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/020.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/021.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/023.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/024.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/025.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/026.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/028.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/029.xml	external-dtd
-xmltest	Output differs: xmltest/valid/not-sa/031.xml	external-dtd
