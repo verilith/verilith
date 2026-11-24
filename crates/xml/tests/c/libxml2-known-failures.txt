@@ -2,30 +2,6 @@
 # tests that fail, as scripts/test-libxml2.sh lists them (suite, a tab, the
 # test), by reason. CI fails if another test fails or a listed one passes.
 
-# Parameter entity references in the internal subset are not expanded (as
-# the verified parser does not read them), so the declarations they hold are
-# missing (ent7: an element type; xml2: a general entity).
-SAX1 callbacks regression tests	./test/ent7
-SAX1 callbacks regression tests	./test/xml2
-SAX2 callbacks regression tests	./test/ent7
-SAX2 callbacks regression tests	./test/xml2
-SAX2 callbacks regression tests with entity substitution	./test/ent7
-SAX2 callbacks regression tests with entity substitution	./test/xml2
-XML push boundary tests	./test/ent7
-XML push boundary tests	./test/xml2
-XML entity subst regression tests	./test/ent7
-XML entity subst regression tests	./test/xml2
-XML push regression tests	./test/ent7
-XML push regression tests	./test/xml2
-XML regression tests	./test/ent7
-XML regression tests	./test/xml2
-XML regression tests on memory	./test/ent7
-XML regression tests on memory	./test/xml2
-
-# External parsed entities are not read, with XML_PARSE_NOENT either.
-SAX2 callbacks regression tests with entity substitution	./test/ent2
-XML entity subst regression tests	./test/ent2
-
 # libxml2 reads files 4000 bytes at a time and splits a run of character
 # data where a read ends; here a run is reported whole.
 SAX1 callbacks regression tests	./test/rdf2
