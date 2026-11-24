@@ -519,15 +519,23 @@ pub fn ex_ext_text(b: Vec<u8>) -> (r: Option<(Vec<u8>, usize)>)
 
 /// `Frame` (`pe` is `NO_PE` for none).
 pub struct XFrame {
+    /// The text being read.
     pub text: Vec<u8>,
+    /// Where reading is in `text`.
     pub pos: usize,
+    /// External text (see `Frame::ext`).
     pub ext: bool,
+    /// The parameter entity whose replacement text this is (an index into `XFl::pes`), or `NO_PE`.
     pub pe: usize,
+    /// Included in a literal (§4.4.5).
     pub lit: bool,
+    /// Referred to between declarations: it must end between declarations.
     pub sep: bool,
+    /// The URI of the external entity the text is in ("" for the document).
     pub base: Vec<u8>,
 }
 
+/// `XFrame::pe` for a text that is no parameter entity's replacement text.
 pub const NO_PE: usize = usize::MAX;
 
 pub open spec fn pe_int(p: usize) -> int {
@@ -546,13 +554,37 @@ pub open spec fn frames_view(v: Seq<XFrame>) -> Seq<Frame> {
     Seq::new(v.len(), |i: int| fview(v[i]))
 }
 
+/// `Mode`: what is being read.
 pub enum XMode {
+    /// Between declarations.
     Sep,
+    /// In a comment.
     Comment,
+    /// In a processing instruction.
     Pi,
-    Decl { start: usize, q: u8, ev: bool, ld: usize, base: Vec<u8> },
-    Cond { start: usize },
-    Ignore { depth: usize },
+    /// In a markup declaration (see `Mode::Decl`).
+    Decl {
+        /// Where the declaration begins in the output.
+        start: usize,
+        /// The quote of the literal being read (0 outside literals).
+        q: u8,
+        /// The literal being read is an entity value.
+        ev: bool,
+        /// How many frames were open when the literal began.
+        ld: usize,
+        /// The URI of the entity the declaration is in.
+        base: Vec<u8>,
+    },
+    /// In the keyword of a conditional section.
+    Cond {
+        /// Where the section begins in the output.
+        start: usize,
+    },
+    /// In an ignored section.
+    Ignore {
+        /// How many sections deep.
+        depth: usize,
+    },
 }
 
 pub open spec fn mview(m: XMode) -> Mode {
@@ -572,12 +604,19 @@ pub open spec fn mview(m: XMode) -> Mode {
     }
 }
 
+/// `PeDef`: a processed parameter entity declaration.
 pub struct XPe {
+    /// The entity's name.
     pub name: Vec<u8>,
+    /// Internal (with replacement text `rt`) rather than external.
     pub internal: bool,
+    /// The replacement text of an internal entity.
     pub rt: Vec<u8>,
+    /// The system identifier of an external entity.
     pub sys: Vec<u8>,
+    /// The public identifier of an external entity.
     pub pubid: Vec<u8>,
+    /// The URI of the entity the declaration is in.
     pub base: Vec<u8>,
 }
 
@@ -589,13 +628,22 @@ pub open spec fn pes_view(v: Seq<XPe>) -> Seq<PeDef> {
     Seq::new(v.len(), |i: int| pview(v[i]))
 }
 
+/// `Fl`: the state of flattening a DTD.
 pub struct XFl {
+    /// The texts being read, innermost last.
     pub frames: Vec<XFrame>,
+    /// The flattened DTD so far.
     pub out: Vec<u8>,
+    /// What is being read.
     pub mode: XMode,
+    /// The parameter entities declared so far.
     pub pes: Vec<XPe>,
+    /// A parameter entity that was not read was referred to, in a document
+    /// that is not standalone: nothing more is processed (§5.1).
     pub stop: bool,
+    /// Open INCLUDE sections.
     pub incl: usize,
+    /// The external subset is still to be read.
     pub ext_todo: bool,
 }
 
@@ -645,11 +693,17 @@ pub open spec fn counts(x: &XFl) -> int {
     vstd::math::max(vstd::math::max(x.pes@.len() as int, x.incl as int), vstd::math::max(x.frames@.len() as int, d))
 }
 
+/// `Cfg`: what does not change while flattening.
 pub struct XCfg {
+    /// The document is standalone.
     pub sa: bool,
+    /// External entities are loaded.
     pub load: bool,
+    /// The document type declaration has an external identifier.
     pub has_ext: bool,
+    /// The external subset's system identifier.
     pub ext_sys: Vec<u8>,
+    /// The external subset's public identifier.
     pub ext_pub: Vec<u8>,
 }
 
@@ -922,13 +976,21 @@ fn ex_first_ext(frames: &Vec<XFrame>) -> (r: usize)
     i
 }
 
+/// `INCLUDE`.
 pub const L_INCLUDE: [u8; 7] = [0x49, 0x4E, 0x43, 0x4C, 0x55, 0x44, 0x45];
+/// `IGNORE`.
 pub const L_IGNORE: [u8; 6] = [0x49, 0x47, 0x4E, 0x4F, 0x52, 0x45];
+/// `<![`, which opens a conditional section.
 pub const L_COND: [u8; 3] = [0x3C, 0x21, 0x5B];
+/// `]]>`, which closes a conditional section.
 pub const L_COND_END: [u8; 3] = [0x5D, 0x5D, 0x3E];
+/// `-->`, which closes a comment.
 pub const L_COMMENT_END: [u8; 3] = [0x2D, 0x2D, 0x3E];
+/// `<!`, which opens a markup declaration.
 pub const L_DECL: [u8; 2] = [0x3C, 0x21];
+/// `<?`, which opens a processing instruction.
 pub const L_PI: [u8; 2] = [0x3C, 0x3F];
+/// `?>`, which closes a processing instruction.
 pub const L_PI_END: [u8; 2] = [0x3F, 0x3E];
 
 proof fn lemma_pe_lits()
@@ -1815,10 +1877,15 @@ pub fn ex_flat(sub: Vec<u8>, c: &XCfg, ld: &mut Loader, fuel: usize) -> (r: (u8,
 
 /// `DtInfo`.
 pub struct XDtInfo {
+    /// The internal subset's state.
     pub d: XDtd,
+    /// The document type declaration has an external identifier.
     pub ext: bool,
+    /// Its system identifier.
     pub sys: Vec<u8>,
+    /// Its public identifier.
     pub pubid: Vec<u8>,
+    /// The span of the internal subset (the text between `[` and `]`), if there is one.
     pub sub: Option<(usize, usize)>,
 }
 
@@ -2007,9 +2074,20 @@ pub fn ex_prolog_x(s: &[u8], tape: &mut Tape, enc: Enc) -> (r: Option<(usize, Op
 /// (`DtdOut` over the document), or those of the flattened DTD (`text`,
 /// its `tape`, and `DtdOut` over `text`).
 pub enum XDtdRes {
+    /// From the document's own text: the internal subset as written.
     Own(DtdOut),
-    Flat { text: Vec<u8>, tape: Tape, out: DtdOut },
+    /// From the flattened DTD `text` (`]` ends it).
+    Flat {
+        /// The flattened DTD.
+        text: Vec<u8>,
+        /// Its tape.
+        tape: Tape,
+        /// Its declarations.
+        out: DtdOut,
+    },
+    /// The DTD is not well-formed.
     Bad,
+    /// A limit was reached (fuel, or the size of a position).
     Limit,
 }
 
@@ -2174,8 +2252,11 @@ fn ex_own_env(s: &[u8], t: &Tape, d: XDtInfo) -> (r: XDtdRes)
 /// What `ex_doc_x` found: the declarations of a well-formed document
 /// (the document's own, or a flattened DTD's), or why it is not.
 pub enum XDocRes {
+    /// Well-formed, with its declarations.
     Ok(XDtdRes),
+    /// Not well-formed.
     Bad,
+    /// A limit was reached (fuel, or the size of a position).
     Limit,
 }
 
