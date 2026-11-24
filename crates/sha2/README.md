@@ -11,7 +11,7 @@ traits (0.11 and 0.10) so it can stand in for RustCrypto's `sha2` and
 `hmac`, it works without `std`, and it builds a static library behind
 OpenSSL's `SHA224_*`, `SHA256_*`, `SHA384_*` and `SHA512_*` C API.
 
-`cargo verus verify` (or `scripts/verify.sh`) checks 331 functions and
+`cargo verus verify` (or `scripts/verify.sh`) checks 332 functions and
 lemmas with no errors and no `assume`. What is assumed instead is listed
 under [Trusted base](#trusted-base): the CPU dispatch, the SHA instruction
 kernels, verilith-simd's specifications of the AVX2 intrinsics, and two

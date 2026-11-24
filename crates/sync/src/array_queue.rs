@@ -922,6 +922,7 @@ impl<T> ArrayQueue<T> {
     #[verifier::loop_isolation(false)]
     #[verifier::exec_allows_no_decreases_clause]
     #[verifier::spinoff_prover]
+    #[verifier::rlimit(20)]
     pub fn pop_atomic(&self) -> (r: Option<T>)
         atomically (au) {
             type PopPred,

@@ -13,7 +13,7 @@ unpacked with [verilith-zlib](https://github.com/verilith/verilith/tree/main/cra
 [verilith-brotli](https://github.com/verilith/verilith/tree/main/crates/brotli), which are
 verified too.
 
-**Status:** `cargo verus verify` checks 380 functions with 0 errors. On
+**Status:** `cargo verus verify` checks 397 functions with 0 errors. On
 OTS's own test corpus verilith-font accepts 245 of the 277 fonts that OTS accepts,
 never crashes, and OTS accepts every font verilith-font writes. The layout tables
 `GDEF`, `GSUB` and `GPOS` are sanitized and kept. Variation, colour and

@@ -1774,7 +1774,14 @@ impl<T: Copy> Producer<T> {
                 }
                 lemma_publish_tail(old_cells, s.cells, th, s.tail.msgs(), cg.tail_cache, t0, k as nat, pg.tview, self.tid@.view());
                 lemma_seen_frame(old_cells, s.cells, t0, hi, pg.head_cache + c.cap, c.cap, s.head.msgs());
-                lemma_push_frame(c, s.cells, old_cells, w, values@, old_q, cg.tail_cache, cg.head, pg.head_cache, t0, k as nat);
+                // The batch's cells, in the form `lemma_push_frame` takes.
+                let ghost kn = k as nat;
+                assert(hi == t0 + kn);
+                assert forall|p: nat| t0 <= p < t0 + kn implies #[trigger] s.cells.dom().contains(p) && s.cells[p].value() == w[p] by {
+                    assert(p < hi);
+                    assert(s.cells.dom().contains(p));
+                }
+                lemma_push_frame(c, s.cells, old_cells, w, values@, old_q, cg.tail_cache, cg.head, pg.head_cache, t0, kn);
             }
             let tracked au = au_opt.tracked_take();
             try_open_atomic_update!(au, x => {

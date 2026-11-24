@@ -16,7 +16,7 @@ at 0.81 to 1.03 times wasmi's time and 1.04 to 1.47 times wasm3's on the
 benchmarks below (the stack interpreter it replaced took 2.5 to 3.4 times
 wasmi's, in an earlier run).
 
-**Verification status.** `cargo verus verify` checks 724 functions with
+**Verification status.** `cargo verus verify` checks 737 functions with
 no errors (about 19 minutes on an Apple M-series laptop and 42 on a 4-core Linux VM, most of it on the
 interpreter loop, `execute`). The translation to register form (`src/reg.rs`) is marked
 `external_body`: it is untrusted, and only the checker's verdict on its
