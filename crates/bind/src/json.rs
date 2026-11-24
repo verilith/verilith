@@ -21,33 +21,53 @@ use verilith_json::{ErrorKind, Parser};
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Tok {
+    /// The token's kind (see above).
     pub kind: u8,
+    /// 1 if the string's body has a backslash escape, else 0.
     pub escaped: u8,
+    /// Padding, always 0.
     pub pad: u16,
+    /// The start of the byte range, or the index of the matching close.
     pub a: u32,
+    /// The end of the byte range.
     pub b: u32,
 }
 
 /// Parse results, as returned by [`parse`]. Mirrors [`ErrorKind`].
 pub const OK: i32 = 0;
+/// `ErrorKind::UnexpectedEnd`.
 pub const E_UNEXPECTED_END: i32 = 1;
+/// `ErrorKind::UnterminatedString`.
 pub const E_UNTERMINATED_STRING: i32 = 2;
+/// `ErrorKind::UnexpectedByte`.
 pub const E_UNEXPECTED_BYTE: i32 = 3;
+/// `ErrorKind::ControlCharacter`.
 pub const E_CONTROL_CHARACTER: i32 = 4;
+/// `ErrorKind::InvalidEscape`.
 pub const E_INVALID_ESCAPE: i32 = 5;
+/// `ErrorKind::InvalidNumber`.
 pub const E_INVALID_NUMBER: i32 = 6;
+/// `ErrorKind::InvalidLiteral`.
 pub const E_INVALID_LITERAL: i32 = 7;
+/// `ErrorKind::TooDeep`.
 pub const E_TOO_DEEP: i32 = 8;
+/// `ErrorKind::TrailingData`.
 pub const E_TRAILING_DATA: i32 = 9;
+/// `ErrorKind::InvalidUtf8`.
 pub const E_INVALID_UTF8: i32 = 10;
+/// `ErrorKind::TooLarge`.
 pub const E_TOO_LARGE: i32 = 11;
+/// The input is empty, or only whitespace.
 pub const E_EMPTY: i32 = 12;
 
 /// Accessor results.
 pub const GET_OK: i32 = 0;
+/// The value has another type.
 pub const GET_WRONG_TYPE: i32 = 1;
+/// The index is past the end, or the number does not fit.
 pub const GET_OUT_OF_RANGE: i32 = 2;
 
+/// A parsed document: the parser, the source and the tokens, reused across parses. Made by [`vbind_json_doc_new`], freed by [`vbind_json_doc_free`].
 pub struct Doc {
     parser: Parser,
     src: *const u8,
@@ -133,6 +153,7 @@ fn is_blank(s: &[u8]) -> bool {
     s.iter().all(|c| matches!(c, b' ' | b'\t' | b'\n' | b'\r'))
 }
 
+/// A new, empty document. Free it with [`vbind_json_doc_free`].
 #[unsafe(no_mangle)]
 pub extern "C" fn vbind_json_doc_new() -> *mut Doc {
     Box::into_raw(Box::new(Doc {
@@ -145,6 +166,11 @@ pub extern "C" fn vbind_json_doc_new() -> *mut Doc {
     }))
 }
 
+/// Frees a document.
+///
+/// # Safety
+///
+/// `d` is null or came from [`vbind_json_doc_new`], and is not used again.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vbind_json_doc_free(d: *mut Doc) {
     if !d.is_null() {

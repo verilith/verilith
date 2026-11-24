@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 #![cfg_attr(not(verus_only), allow(unused_variables, unused_imports, unused_braces, unused_mut, unused_assignments, unused_parens))]
 // A formally verified (Verus) OpenType font sanitizer.

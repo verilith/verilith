@@ -398,10 +398,25 @@ build_xml() {
   rust_runner vxml-run xml-vxml
 }
 
+# OpenSSL's SHA-2 API (sha.h): libcrypto against vsha2 (openssl-abi).
+build_sha2() {
+  local o; o=$(orig openssl)
+  if [ ! -f "$BUILD/openssl/libcrypto.a" ]; then
+    rm -rf "$BUILD/openssl"; cp -R "$o" "$BUILD/openssl"; rm -rf "$BUILD/openssl/.git"
+    (cd "$BUILD/openssl" && ./Configure no-shared no-tests no-apps no-docs -O3 $CPUFLAG >/dev/null &&
+      make -j "$NPROC" build_libs >/dev/null) || die "OpenSSL build failed"
+  fi
+  local sys=""
+  [ "$OS" = Darwin ] || sys="-lpthread -ldl"
+  cc_runner sha2-openssl -I"$o/include" -I"$BUILD/openssl/include" "$S/sha2/sha2.c" "$BUILD/openssl/libcrypto.a" $sys
+  local lib; lib=$(rust_lib vsha2 openssl-abi)
+  cc_runner sha2-vsha2 -I"$o/include" -I"$BUILD/openssl/include" "$S/sha2/sha2.c" "$lib" $RUST_LIBS
+}
+
 # --print-lib REPO FEATURES: build one of our staticlibs and print its path.
 if [ "${1:-}" = --print-lib ]; then rust_lib "$2" "${3:-}"; exit; fi
 
-ALL="zlib dns http url json x509 x509n png webp brotli jpeg regex archive lz4 snappy font xml"
+ALL="zlib dns http url json x509 x509n png webp brotli jpeg regex archive lz4 snappy font xml sha2"
 want=${*:-$ALL}
 failed=""
 for s in $want; do

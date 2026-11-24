@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // A formally verified DNS (RFC 1035) message parser and serializer.
 #![cfg_attr(not(verus_only), allow(unused_variables, non_shorthand_field_patterns))]

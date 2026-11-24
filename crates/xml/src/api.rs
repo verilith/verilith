@@ -44,9 +44,13 @@ pub enum ErrorKind {
 /// encoding); `line` and `column` count from 1, the column in bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Error {
+    /// What is wrong.
     pub kind: ErrorKind,
+    /// The byte offset where it was found.
     pub offset: usize,
+    /// The line, from 1.
     pub line: usize,
+    /// The column, from 1, in bytes.
     pub column: usize,
 }
 
@@ -537,7 +541,9 @@ pub struct Element<'d> {
 /// An attribute, with its normalized value.
 #[derive(Clone, Debug)]
 pub struct Attribute<'d> {
+    /// The attribute's name.
     pub name: &'d str,
+    /// Its value, normalized (references replaced, white space as the attribute's type says).
     pub value: Cow<'d, str>,
     /// The value came from the DTD's default, not from the start tag.
     pub defaulted: bool,
@@ -547,12 +553,14 @@ pub struct Attribute<'d> {
 /// entities expanded in place.
 #[derive(Clone, Debug)]
 pub enum Child<'d> {
+    /// A child element.
     Element(Element<'d>),
     /// Character data, line ends normalized; a character reference is a
     /// child of its own.
     Text(Cow<'d, str>),
     /// The text of a CDATA section.
     CData(Cow<'d, str>),
+    /// A comment's text.
     Comment(Cow<'d, str>),
     /// A processing instruction: target and data.
     PI(&'d str, Cow<'d, str>),

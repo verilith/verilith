@@ -42,6 +42,7 @@ impl<'a> Name<'a> {
 }
 
 impl<'a> Rdn<'a> {
+    /// The attributes of this RDN, in order.
     pub fn attributes(&self) -> AtvIter<'a> {
         AtvIter::new(self)
     }
@@ -159,10 +160,12 @@ impl<'a> Certificate<'a> {
         crate::cert::parse(b)
     }
 
+    /// The issuer's Name.
     pub fn issuer(&self) -> Name<'a> {
         self.tbs.issuer
     }
 
+    /// The subject's Name.
     pub fn subject(&self) -> Name<'a> {
         self.tbs.subject
     }
@@ -177,10 +180,12 @@ impl<'a> Certificate<'a> {
         self.tbs.serial
     }
 
+    /// The start of the validity period.
     pub fn not_before(&self) -> Time {
         self.tbs.not_before
     }
 
+    /// The end of the validity period.
     pub fn not_after(&self) -> Time {
         self.tbs.not_after
     }

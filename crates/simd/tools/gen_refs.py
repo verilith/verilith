@@ -38,7 +38,13 @@ EW = [
 out = []
 P = out.append
 for name, ti, to, n, expr in EW:
-    P(f"""pub fn ref_{name}(a: &[{ti}], b: &[{ti}]) -> (r: Vec<{to}>)
+    P(f"""/// The verified scalar reference for `{name}`, lane by lane.
+///
+/// ```text
+/// requires a@.len() == b@.len()
+/// ensures  r@ == {name}(a@, b@)
+/// ```
+pub fn ref_{name}(a: &[{ti}], b: &[{ti}]) -> (r: Vec<{to}>)
     requires
         a@.len() == b@.len(),
     ensures

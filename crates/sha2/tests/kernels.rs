@@ -117,7 +117,7 @@ fn every_split_against_one_shot() {
             let mut h = Sha256::new();
             h.update(&data[..k]);
             h.update(&data[k..n]);
-            assert_eq!(h.finalize(), want, "len {n} split {k}");
+            assert_eq!(Sha256::finalize(&h), want, "len {n} split {k}");
         }
     }
 }

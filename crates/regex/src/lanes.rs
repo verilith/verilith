@@ -6,7 +6,7 @@
 //! These wrappers are trusted: see TRUST.md.
 use vstd::prelude::*;
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128")))]
 use verilith_simd::arch::*;
 
 verus! {
@@ -18,7 +18,7 @@ pub open spec fn bit(m: u32, k: u32) -> bool {
 
 } // verus!
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128")))]
 verus! {
 
 // `__m128i` is declared to Verus by vsimd.

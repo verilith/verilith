@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // A formally verified WebP decoder: lossless (VP8L) and lossy (VP8).
 #![cfg_attr(not(verus_only), allow(unused_variables, unused_imports))]

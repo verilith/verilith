@@ -5,6 +5,7 @@ pub mod avx2;
 pub mod forgiving;
 pub mod scalar;
 pub mod spec;
+/// The encoding and decoding tables (trusted data, checked by `lemma_tables`).
 pub mod tables;
 
 pub use api::*;
