@@ -144,6 +144,33 @@ pub fn store256_u32(s: &mut [u32], i: usize, v: __m256i)
     unsafe { _mm256_storeu_si256(s.as_mut_ptr().add(i) as *mut __m256i, v) }
 }
 
+/// The two 64-bit values at `s[i..i + 2]`.
+/// The two 64-bit values at `s[i..i + 2]`.
+#[verifier::external_body]
+#[inline(always)]
+pub fn load128_u64(s: &[u64], i: usize) -> (r: __m128i)
+    requires
+        i + 2 <= s@.len(),
+    ensures
+        u64x2(r) == s@.subrange(i as int, i + 2),
+{
+    debug_assert!(i + 2 <= s.len());
+    unsafe { _mm_loadu_si128(s.as_ptr().add(i) as *const __m128i) }
+}
+
+/// Stores `v` at `s[i..i + 2]`.
+#[verifier::external_body]
+#[inline(always)]
+pub fn store128_u64(s: &mut [u64], i: usize, v: __m128i)
+    requires
+        i + 2 <= old(s)@.len(),
+    ensures
+        final(s)@ == old(s)@.subrange(0, i as int) + u64x2(v) + old(s)@.subrange(i + 2, old(s)@.len() as int),
+{
+    debug_assert!(i + 2 <= s.len());
+    unsafe { _mm_storeu_si128(s.as_mut_ptr().add(i) as *mut __m128i, v) }
+}
+
 /// The sixteen 16-bit values at `s[i..i + 16]`.
 #[verifier::external_body]
 #[inline(always)]

@@ -150,6 +150,8 @@ so under the table (`note` in `harness/suites.py`).
 | xml-libxml2-dropin-check | drop-in | verilith-xml (libxml2 ABI) | libxml2 2.15.4 | `xmlCtxtReadMemory` with SAX2's DTD handlers and none for content | same |
 | xml-libxml2-read | native | verilith-xml (`parse`, `Element::attrs`, `children`) | libxml2 2.15.4 (SAX2) | the xml-expat-read task | same |
 | xml-libxml2-check | native | verilith-xml (`check`) | libxml2 2.15.4 (SAX2, no content handlers) | the xml-expat-check task | same |
+| sha256, sha512 | drop-in | verilith-sha2 (OpenSSL SHA ABI) | OpenSSL 4.1.0 | `SHA256()`, `SHA512()` of a whole message | 16, 64, 256 and 1024 bytes, 4 KiB and 64 KiB of dickens, and all of it |
+| sha256-stream, sha512-stream | drop-in | verilith-sha2 (OpenSSL SHA ABI) | OpenSSL 4.1.0 | `SHA256_Init`, `_Update` in 1000-byte pieces, `_Final` (and `SHA512_*`) | same |
 
 In archive-read the two libraries do not do quite the same work: verilith-archive
 parses and checks the whole archive when it is opened and checks a member's

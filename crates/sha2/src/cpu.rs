@@ -36,11 +36,16 @@ use vstd::prelude::*;
 #[cfg(verus_only)]
 use crate::spec;
 
-// Run-time CPU feature detection needs `std`, as in verilith-core.
-#[cfg(target_arch = "x86_64")]
+// Run-time CPU feature detection needs `std`; a `no_std` build uses only
+// the features the target is compiled for, as in verilith-core.
+#[cfg(all(feature = "std", target_arch = "x86_64"))]
 macro_rules! x86_has { ($f:tt) => { std::is_x86_feature_detected!($f) }; }
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(not(feature = "std"), target_arch = "x86_64"))]
+macro_rules! x86_has { ($f:tt) => { cfg!(target_feature = $f) }; }
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
 macro_rules! arm_has { ($f:tt) => { std::arch::is_aarch64_feature_detected!($f) }; }
+#[cfg(all(not(feature = "std"), target_arch = "aarch64"))]
+macro_rules! arm_has { ($f:tt) => { cfg!(target_feature = $f) }; }
 
 verus! {
 
@@ -136,6 +141,7 @@ pub fn pair256_avx2(
     nxt1: &mut [u32; 64],
 )
     requires
+        verilith_simd::cpu::avx2(),
         crate::compress::kw_schedule(cur0@, crate::spec::words(b0@)),
         crate::compress::kw_schedule(cur1@, crate::spec::words(b1@)),
         o0 + 64 <= p@.len(),
@@ -170,6 +176,7 @@ pub fn pair_avx2(
     nxt1: &mut [u64; 80],
 )
     requires
+        verilith_simd::cpu::avx2(),
         crate::compress512::kw_schedule(cur0@, crate::spec512::words(b0@)),
         crate::compress512::kw_schedule(cur1@, crate::spec512::words(b1@)),
         o0 + 128 <= p@.len(),
@@ -323,7 +330,16 @@ pub(crate) mod shani {
     }
 
     /// The whole blocks of `p`.
+    ///
+    /// Never inlined: the SHA instructions have only legacy SSE encodings,
+    /// and run many times slower while the upper halves of the YMM
+    /// registers are dirty (seen as about 5 µs per call on an AVX-512
+    /// Xeon). Built with AVX2 enabled (`target-cpu=native`), the callers
+    /// use 256-bit stores, and inlined into them this ran after those with
+    /// no `vzeroupper` in between. A call gets one: LLVM puts a
+    /// `vzeroupper` before every call made with the upper halves dirty.
     #[target_feature(enable = "sha,sse2,ssse3,sse4.1")]
+    #[inline(never)]
     pub unsafe fn compress_blocks(st: &mut [u32; 8], p: &[u8]) {
         // Big-endian words from little-endian lanes.
         let bswap = _mm_set_epi64x(0x0c0d_0e0f_0809_0a0b, 0x0405_0607_0001_0203);

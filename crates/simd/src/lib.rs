@@ -28,6 +28,7 @@
 // some redundant braces and parentheses. These lints are off in that build
 // only.
 #![cfg_attr(not(verus_only), allow(unused_variables, unused_imports, dead_code))]
+#![cfg_attr(not(feature = "std"), no_std)]
 pub mod lanes;
 pub mod ops;
 pub mod cpu;
@@ -77,6 +78,8 @@ pub mod avx512;
 pub mod mask;
 pub mod sse2;
 pub mod scalar;
+#[cfg(feature = "alloc")]
 pub mod refs;
+#[cfg(feature = "alloc")]
 pub mod refs_neon;
 pub mod patterns;
