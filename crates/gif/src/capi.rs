@@ -26,104 +26,174 @@ unsafe extern "C" {
     fn free(p: *mut c_void);
 }
 
+/// Returned by a function that failed; the reason is in `GifFileType::Error` or the error out-parameter.
 pub const GIF_ERROR: c_int = 0;
+/// Returned by a function that succeeded.
 pub const GIF_OK: c_int = 1;
 
+/// No error.
 pub const D_GIF_SUCCEEDED: c_int = 0;
+/// The file could not be opened.
 pub const D_GIF_ERR_OPEN_FAILED: c_int = 101;
+/// Reading the file failed.
 pub const D_GIF_ERR_READ_FAILED: c_int = 102;
+/// The data does not start with the "GIF" signature.
 pub const D_GIF_ERR_NOT_GIF_FILE: c_int = 103;
+/// The logical screen descriptor is missing or cut short.
 pub const D_GIF_ERR_NO_SCRN_DSCR: c_int = 104;
+/// An image descriptor is missing or cut short.
 pub const D_GIF_ERR_NO_IMAG_DSCR: c_int = 105;
+/// Neither a global nor a local colour table is present.
 pub const D_GIF_ERR_NO_COLOR_MAP: c_int = 106;
+/// A record is not an image, extension or trailer.
 pub const D_GIF_ERR_WRONG_RECORD: c_int = 107;
+/// The image data is larger, or the file has more images, than the decoder allows.
 pub const D_GIF_ERR_DATA_TOO_BIG: c_int = 108;
+/// An allocation failed.
 pub const D_GIF_ERR_NOT_ENOUGH_MEM: c_int = 109;
+/// Closing the file failed.
 pub const D_GIF_ERR_CLOSE_FAILED: c_int = 110;
+/// The file was not opened for reading.
 pub const D_GIF_ERR_NOT_READABLE: c_int = 111;
+/// The image data is corrupt.
 pub const D_GIF_ERR_IMAGE_DEFECT: c_int = 112;
+/// The file ends before its trailer.
 pub const D_GIF_ERR_EOF_TOO_SOON: c_int = 113;
 
+/// A record of unknown type.
 pub const UNDEFINED_RECORD_TYPE: c_int = 0;
+/// The logical screen descriptor.
 pub const SCREEN_DESC_RECORD_TYPE: c_int = 1;
+/// An image descriptor (the image separator, 0x2C).
 pub const IMAGE_DESC_RECORD_TYPE: c_int = 2;
+/// An extension (the extension introducer, 0x21).
 pub const EXTENSION_RECORD_TYPE: c_int = 3;
+/// The trailer (0x3B).
 pub const TERMINATE_RECORD_TYPE: c_int = 4;
 
+/// An extension's continuation sub-block, in `ExtensionBlock::Function`.
 pub const CONTINUE_EXT_FUNC_CODE: c_int = 0x00;
+/// The graphic control extension's label.
 pub const GRAPHICS_EXT_FUNC_CODE: c_int = 0xf9;
+/// `GraphicsControlBlock::TransparentColor` when there is no transparent colour.
 pub const NO_TRANSPARENT_COLOR: c_int = -1;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+/// One colour table entry.
 pub struct GifColorType {
+    /// Red intensity.
     pub Red: u8,
+    /// Green intensity.
     pub Green: u8,
+    /// Blue intensity.
     pub Blue: u8,
 }
 
 #[repr(C)]
+/// A colour table.
 pub struct ColorMapObject {
+    /// The number of entries, a power of two.
     pub ColorCount: c_int,
+    /// log2 of `ColorCount`.
     pub BitsPerPixel: c_int,
+    /// Whether the table is sorted by decreasing importance.
     pub SortFlag: bool,
+    /// The entries, `ColorCount` of them.
     pub Colors: *mut GifColorType,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+/// An image descriptor.
 pub struct GifImageDesc {
+    /// Column of the image's left edge on the logical screen.
     pub Left: c_int,
+    /// Row of the image's top edge on the logical screen.
     pub Top: c_int,
+    /// Width of the image, in pixels.
     pub Width: c_int,
+    /// Height of the image, in pixels.
     pub Height: c_int,
+    /// Whether the image's rows are stored interlaced.
     pub Interlace: bool,
+    /// The local colour table, or null.
     pub ColorMap: *mut ColorMapObject,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+/// One extension sub-block.
 pub struct ExtensionBlock {
+    /// The number of bytes in `Bytes`.
     pub ByteCount: c_int,
+    /// The sub-block's data.
     pub Bytes: *mut u8,
+    /// The extension's label, or `CONTINUE_EXT_FUNC_CODE` for a continuation sub-block.
     pub Function: c_int,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+/// One image read by `DGifSlurp`.
 pub struct SavedImage {
+    /// The image descriptor.
     pub ImageDesc: GifImageDesc,
+    /// The colour index of each pixel, `Width` per row, top row first (deinterlaced).
     pub RasterBits: *mut u8,
+    /// The number of extension blocks before the image.
     pub ExtensionBlockCount: c_int,
+    /// The extension blocks before the image.
     pub ExtensionBlocks: *mut ExtensionBlock,
 }
 
 #[repr(C)]
+/// An open GIF file.
 pub struct GifFileType {
+    /// Width of the logical screen, in pixels.
     pub SWidth: c_int,
+    /// Height of the logical screen, in pixels.
     pub SHeight: c_int,
+    /// The colour resolution: bits per primary colour.
     pub SColorResolution: c_int,
+    /// The background colour index.
     pub SBackGroundColor: c_int,
+    /// The pixel aspect ratio byte.
     pub AspectByte: u8,
+    /// The global colour table, or null.
     pub SColorMap: *mut ColorMapObject,
+    /// The number of images in `SavedImages`.
     pub ImageCount: c_int,
+    /// The descriptor of the image being read by the record API.
     pub Image: GifImageDesc,
+    /// The images read by `DGifSlurp`, `ImageCount` of them.
     pub SavedImages: *mut SavedImage,
+    /// The number of extension blocks after the last image.
     pub ExtensionBlockCount: c_int,
+    /// The extension blocks after the last image.
     pub ExtensionBlocks: *mut ExtensionBlock,
+    /// The last error, a `D_GIF_ERR_*` code.
     pub Error: c_int,
+    /// The caller's pointer, as passed to `DGifOpen`.
     pub UserData: *mut c_void,
+    /// The decoder's own state.
     pub Private: *mut c_void,
 }
 
 #[repr(C)]
+/// The fields of a graphic control extension, as giflib's `DGifExtensionToGCB` gives them.
 pub struct GraphicsControlBlock {
+    /// Disposal method, 0 to 7.
     pub DisposalMode: c_int,
+    /// Whether the viewer should wait for user input before going on.
     pub UserInputFlag: bool,
+    /// Delay time, in hundredths of a second.
     pub DelayTime: c_int,
+    /// The transparent colour index, or `NO_TRANSPARENT_COLOR`.
     pub TransparentColor: c_int,
 }
 
+/// Reads up to the given number of bytes into the buffer; returns the number read.
 pub type InputFunc = Option<unsafe extern "C" fn(*mut GifFileType, *mut u8, c_int) -> c_int>;
 
 /// The decoder's state behind `GifFileType::Private`.
@@ -642,6 +712,7 @@ pub unsafe extern "C" fn vgif_DGifOpenFileHandle(fd: c_int, err: *mut c_int) -> 
     open_bytes(g, data, err)
 }
 
+/// giflib's name for `vgif_DGifOpenFileHandle`.
 #[cfg(all(unix, feature = "gif-abi"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DGifOpenFileHandle(fd: c_int, err: *mut c_int) -> *mut GifFileType {

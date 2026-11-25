@@ -23,6 +23,7 @@ use verilith_zlib::spec as z;
 verus! {
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
+/// Why a file could not be decoded.
 pub enum Error {
     /// The file is not a TIFF file that the specification accepts.
     Invalid,

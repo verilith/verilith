@@ -7,6 +7,7 @@ use vstd::prelude::*;
 verus! {
 
 #[inline(always)]
+/// Reads the 16-bit integer at `i` in the file's byte order.
 pub fn u16_exec(b: &[u8], le: bool, i: usize) -> (r: u16)
     requires
         i + 1 < b@.len(),
@@ -24,6 +25,7 @@ pub fn u16_exec(b: &[u8], le: bool, i: usize) -> (r: u16)
 }
 
 #[inline(always)]
+/// Reads the 32-bit integer at `i` in the file's byte order.
 pub fn u32_exec(b: &[u8], le: bool, i: usize) -> (r: u32)
     requires
         i + 3 < b@.len(),
@@ -171,8 +173,11 @@ pub fn find_exec(b: &[u8], le: bool, o: usize, n: usize, tag: u16) -> (r: Option
 /// A field whose values are inside the file.
 #[derive(Clone, Copy)]
 pub struct Field {
+    /// The field type (1 BYTE, 3 SHORT, 4 LONG, ...).
     pub ty: u16,
+    /// The number of values.
     pub count: u32,
+    /// Where the values start in the file.
     pub pos: usize,
 }
 

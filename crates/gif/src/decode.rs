@@ -16,6 +16,7 @@ use vstd::slice::{slice_subrange, slice_to_vec};
 verus! {
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
+/// Why a file could not be decoded.
 pub enum Error {
     /// The file is not a GIF file that the specification accepts.
     Invalid,
@@ -30,6 +31,7 @@ pub enum Error {
 pub struct Gce {
     /// Disposal method, 0 to 7.
     pub disposal: u8,
+    /// Whether the viewer should wait for user input before going on.
     pub user_input: bool,
     /// Delay time, in hundredths of a second.
     pub delay: u16,
@@ -68,9 +70,13 @@ pub open spec fn table_view(t: Option<Vec<u8>>) -> Option<Seq<u8>> {
 /// One image (`spec::Image`).
 #[derive(Debug)]
 pub struct Frame {
+    /// Column of the image's left edge on the logical screen.
     pub left: u16,
+    /// Row of the image's top edge on the logical screen.
     pub top: u16,
+    /// Width of the image, in pixels.
     pub width: u16,
+    /// Height of the image, in pixels.
     pub height: u16,
     /// The packed fields byte of the image descriptor: local colour table
     /// flag (0x80), interlace flag (0x40), sort flag (0x20), size of the
@@ -78,6 +84,7 @@ pub struct Frame {
     pub flags: u8,
     /// The local colour table, 3 bytes per entry.
     pub lct: Option<Vec<u8>>,
+    /// The graphic control extension that applies to the image.
     pub gce: Option<Gce>,
     /// The LZW minimum code size.
     pub min_code: u8,
@@ -88,6 +95,7 @@ pub struct Frame {
     /// separator), and where the image's data ends (after its block
     /// terminator).
     pub pos: usize,
+    /// See `pos`.
     pub end: usize,
 }
 
@@ -114,6 +122,7 @@ impl Frame {
 pub struct Gif {
     /// The logical screen.
     pub width: u16,
+    /// Height of the logical screen, in pixels.
     pub height: u16,
     /// The packed fields byte of the logical screen descriptor: global
     /// colour table flag (0x80), colour resolution (0x70), sort flag
