@@ -4,6 +4,7 @@ version = "0.1.0"
 license = "MIT OR Apache-2.0"
 description = "A formally verified (Verus) DNS message parser and serializer, and a drop-in parser for c-ares"
 edition = "2024"
+rust-version = "1.89"
 repository = "https://github.com/verilith/verilith"
 readme = "README.md"
 keywords = ["dns", "parser", "verified", "verus", "c-ares"]

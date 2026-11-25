@@ -216,7 +216,7 @@ On an Apple Silicon Mac, measured with
 [vbench](https://github.com/verilith/verilith/tree/main/bench) against
 libjpeg-turbo 3.2.1 with NEON (geometric mean over the 24 photos, all
 outputs equal; the run in the [repository's benchmark
-table](../../README.md#benchmarks), 2026-11-22): baseline 4:2:0 runs at
+table](https://github.com/verilith/verilith#benchmarks), 2026-11-22): baseline 4:2:0 runs at
 0.91 times libjpeg-turbo's speed, baseline 4:4:4 at 0.97 times and
 progressive at 0.95 times. At commit 122d22c, against libjpeg-turbo 3.1.2,
 they were 0.87, 0.855 and 0.95 times. A profile of one baseline photo there puts entropy
@@ -234,6 +234,18 @@ Huffman decoding and the bit reader, 29% dequantization and the inverse DCT,
 Progressive and multi-scan files are decoded to whole-image coefficient
 arrays first, as in libjpeg-turbo. Every file still gets whole planes of
 samples before upsampling, where libjpeg-turbo keeps a few rows.
+
+### WebAssembly
+
+Built for WebAssembly with SIMD128 (`-C target-feature=+simd128`), the
+NEON inverse DCT and colour conversion run on WebAssembly vectors: each
+NEON wrapper they use is proven on SIMD128 in verilith-simd
+(`src/wasm_neon.rs`), so the same proofs hold there. Under Node.js 22 on
+x86-64, a 1920x1080 photo decodes in 8.8 ms (4:2:0) and 16.7 ms (4:4:4),
+against 13.5 ms and 29.9 ms for the same SIMD128 build without the NEON
+paths. Decoded pixels are identical to the x86-64 and scalar WebAssembly
+builds on 162 test files (sizes from 1x1, every
+subsampling, progressive, greyscale, CMYK).
 
 ## Building
 

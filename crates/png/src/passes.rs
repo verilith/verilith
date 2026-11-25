@@ -209,6 +209,12 @@ fn one_pass(h: &Header, roffs: &[u128; 8], buf: &mut [u8], off: &[usize; 8], p: 
             assert(roffs@[p as int] + ph * (rb + 1) <= buf@.len());
             assert(off@[p as int] <= roffs@[p as int]);
             lemma_rows_frame(b0, raw, roffs@[p as int] as int, rb as nat, bpp as nat, ph as nat);
+            // All within the buffer, so the casts below keep every value on
+            // 32-bit targets too.
+            assert(rb <= ph * (rb + 1) && ph <= ph * (rb + 1)) by (nonlinear_arith)
+                requires
+                    ph >= 1,
+            ;
         }
         let ok = unfilter_rows(buf, roffs[p as usize] as usize, rb as usize, bpp, ph as usize, off[p as usize]);
         if !ok {

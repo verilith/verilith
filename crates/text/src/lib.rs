@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // Formally verified (Verus) text encodings and Unicode.
 #![cfg_attr(not(verus_only), allow(unused_variables, unused_imports))]

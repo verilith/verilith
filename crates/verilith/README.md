@@ -23,6 +23,7 @@ shortest dependency list, depend on that crate directly.
 | `core` | `verilith::core` | [`verilith-core`](https://github.com/verilith/verilith/tree/main/crates/core) | shared verified building blocks (bit readers, Huffman tables, CRC-32, UTF-8) |
 | `dns` | `verilith::dns` | [`verilith-dns`](https://github.com/verilith/verilith/tree/main/crates/dns) | DNS message parser and serializer |
 | `font` | `verilith::font` | [`verilith-font`](https://github.com/verilith/verilith/tree/main/crates/font) | font sanitizer (OpenType, WOFF, WOFF2) |
+| `gif` | `verilith::gif` | [`verilith-gif`](https://github.com/verilith/verilith/tree/main/crates/gif) | GIF decoder |
 | `hpack` | `verilith::hpack` | [`verilith-hpack`](https://github.com/verilith/verilith/tree/main/crates/hpack) | HPACK header compression |
 | `http` | `verilith::http` | [`verilith-http`](https://github.com/verilith/verilith/tree/main/crates/http) | HTTP/1 parser |
 | `jpeg` | `verilith::jpeg` | [`verilith-jpeg`](https://github.com/verilith/verilith/tree/main/crates/jpeg) | JPEG decoder |
@@ -35,6 +36,7 @@ shortest dependency list, depend on that crate directly.
 | `snappy` | `verilith::snappy` | [`verilith-snappy`](https://github.com/verilith/verilith/tree/main/crates/snappy) | Snappy |
 | `sync` | `verilith::sync` | [`verilith-sync`](https://github.com/verilith/verilith/tree/main/crates/sync) | queues, channels and locks |
 | `text` | `verilith::text` | [`verilith-text`](https://github.com/verilith/verilith/tree/main/crates/text) | UTF-8/16, base64, Unicode and IDNA |
+| `tiff` | `verilith::tiff` | [`verilith-tiff`](https://github.com/verilith/verilith/tree/main/crates/tiff) | TIFF decoder |
 | `url` | `verilith::url` | [`verilith-url`](https://github.com/verilith/verilith/tree/main/crates/url) | WHATWG URL parser |
 | `wasm` | `verilith::wasm` | [`verilith-wasm`](https://github.com/verilith/verilith/tree/main/crates/wasm) | WebAssembly interpreter |
 | `webp` | `verilith::webp` | [`verilith-webp`](https://github.com/verilith/verilith/tree/main/crates/webp) | WebP decoder |

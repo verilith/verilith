@@ -1,4 +1,4 @@
-//! Verified check of the `CFF ` table: decides [`wf_cff`] exactly.
+//! Verified check of the `CFF ` table: decides `wf_cff` exactly.
 use crate::prims::*;
 use crate::spec::*;
 use crate::spec_cff::*;
@@ -50,7 +50,7 @@ fn index_off_x(t: &[u8], p: usize, i: usize) -> (r: usize)
     rdn(t, p + 3 + i * os, os) as usize
 }
 
-/// Decides [`wf_index`] and finds the INDEX's end.
+/// Decides `wf_index` and finds the INDEX's end.
 pub fn check_index(t: &[u8], p: usize) -> (r: Option<usize>)
     ensures
         match r {
@@ -529,7 +529,7 @@ fn dict_tok_x(d: &[u8], p: usize) -> (r: TokX)
     }
 }
 
-/// Reads a Top DICT or Font DICT: see [`dict_read`].
+/// Reads a Top DICT or Font DICT: see `dict_read`.
 pub fn dict_read_x(d: &[u8], fd: bool, sm: usize, len: usize) -> (r: Option<DictX>)
     ensures
         match r {
@@ -647,7 +647,7 @@ fn priv_apply_x(st: PrivX, op: u32, n: usize, b: i64) -> (r: PrivX)
     r
 }
 
-/// Reads a Private DICT: see [`priv_read`].
+/// Reads a Private DICT: see `priv_read`.
 pub fn priv_read_x(d: &[u8]) -> (r: Option<PrivX>)
     ensures
         match r {
@@ -1052,7 +1052,7 @@ fn check_name(x: &[u8]) -> (b: bool)
     true
 }
 
-/// Decides [`wf_cff`].
+/// Decides `wf_cff`.
 pub fn check_cff(t: &[u8], ng: u16) -> (b: bool)
     ensures
         b == wf_cff(t@, ng as int),

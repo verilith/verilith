@@ -1,14 +1,16 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // A formally verified WebAssembly validator and sandboxed interpreter.
 #![cfg_attr(not(verus_only), allow(unused_variables, unused_imports, unused_braces, non_shorthand_field_patterns))]
-#[cfg(not(target_pointer_width = "64"))]
-compile_error!("verilith-wasm is proven for 64-bit targets only");
-
-// Only where it holds, so that a 32-bit build stops at the error above
-// rather than at the size check this generates.
+// The proofs hold at both widths: scripts/verify.sh checks the 64-bit
+// layout and scripts/verify-narrow.sh the 32-bit one.
 #[cfg(target_pointer_width = "64")]
 vstd::prelude::verus! {
     global size_of usize == 8;
+}
+#[cfg(target_pointer_width = "32")]
+vstd::prelude::verus! {
+    global size_of usize == 4;
 }
 
 #[doc(hidden)]

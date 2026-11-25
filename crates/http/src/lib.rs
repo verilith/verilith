@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // A formally verified HTTP/1.1 (RFC 9112) parser.
 //

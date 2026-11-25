@@ -1,7 +1,7 @@
 //! Verified check of the composite-glyph graph and of `maxp`'s limits:
-//! decides [`wf_glyf_limits`] exactly.
+//! decides `wf_glyf_limits` exactly.
 //!
-//! [`glyph_info`] is defined with a budget of nesting levels. The checker
+//! `glyph_info` is defined with a budget of nesting levels. The checker
 //! does not recompute a glyph for every budget: it remembers each glyph's
 //! totals, and the lemmas here show that is sound, because a glyph's
 //! totals do not depend on the budget once the budget covers its depth.
@@ -668,7 +668,7 @@ fn remember(
     }
 }
 
-/// Computes [`glyph_info`] for `gid` within `fuel` levels, remembering
+/// Computes `glyph_info` for `gid` within `fuel` levels, remembering
 /// what it learns. Components are followed with a stack of frames on the
 /// heap, not by recursion, so nesting as deep as `fuel` costs no call
 /// stack.
@@ -987,7 +987,7 @@ fn fits_x(glyf: &[u8], loca: &[u8], fmt: u16, ng: u16, maxp: &[u8], i: u16, memo
     }
 }
 
-/// Decides [`wf_glyf_limits`].
+/// Decides `wf_glyf_limits`.
 pub fn check_glyf_limits(glyf: &[u8], loca: &[u8], fmt: u16, ng: u16, maxp: &[u8]) -> (b: bool)
     requires
         fmt <= 1,
@@ -1018,7 +1018,7 @@ pub fn check_glyf_limits(glyf: &[u8], loca: &[u8], fmt: u16, ng: u16, maxp: &[u8
 }
 
 /// The largest values any glyph needs of the `maxp` fields that
-/// [`glyph_fits`] reads.
+/// `glyph_fits` reads.
 pub struct Limits {
     pub points: u32,
     pub contours: u32,

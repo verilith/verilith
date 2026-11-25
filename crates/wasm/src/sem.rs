@@ -68,7 +68,7 @@ pub enum Step {
     Done(Seq<u64>, Store),
     /// A call to imported function `func` with `args`. `cfg` is the state
     /// with the arguments popped and the caller still at the `call`;
-    /// [`resume`] continues it with the host's results.
+    /// `resume` continues it with the host's results.
     Host { func: nat, args: Seq<u64>, cfg: Config },
     /// A `memory.grow` within the maximum, which may succeed (`ok`) or
     /// fail (`fail`, pushing -1): the spec (§4.4.7) lets it fail whenever

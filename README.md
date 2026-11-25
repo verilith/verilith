@@ -94,6 +94,7 @@ not proofs.
 | [`verilith-core`](crates/core) | Formally verified (Verus) building blocks shared by the Verilith libraries: trusted memory primitives, byte and bit readers, canonical Huffman tables, UTF-8 validation, CRC-32, CRC-32C and Adler-32 | [trusted](crates/core#trusted-base) |
 | [`verilith-dns`](crates/dns) | A formally verified (Verus) DNS message parser and serializer, and a drop-in parser for c-ares | [proven](crates/dns#what-is-proven), [trusted](crates/dns#trusted-computing-base) |
 | [`verilith-font`](crates/font) | A formally verified (Verus) OpenType font sanitizer | [proven](crates/font#what-is-proven), [trusted](crates/font/TRUST.md) |
+| [`verilith-gif`](crates/gif) | A formally verified (Verus) GIF decoder: LZW, interlacing and graphic control, checked against giflib, with giflib's decoding C API | [proven](crates/gif#what-is-proven), [trusted](crates/gif#trusted-base) |
 | [`verilith-hpack`](crates/hpack) | An HPACK (RFC 7541) header decoder formally verified with Verus, with nghttp2's inflater API | [proven](crates/hpack#what-is-proven), [trusted](crates/hpack#trusted-computing-base) |
 | [`verilith-http`](crates/http) | A fast HTTP/1.1 parser formally verified with Verus | [proven](crates/http#what-is-proven), [trusted](crates/http#trusted-computing-base) |
 | [`verilith-jpeg`](crates/jpeg) | A formally verified (Verus) JPEG decoder: baseline and progressive Huffman | [proven](crates/jpeg#what-is-proven), [trusted](crates/jpeg/TRUST.md) |
@@ -102,14 +103,15 @@ not proofs.
 | [`verilith-png`](crates/png) | A formally verified (Verus) PNG decoder | [proven](crates/png#what-is-proven), [trusted](crates/png#trusted-base) |
 | [`verilith-regex`](crates/regex) | A linear-time regular expression engine (RE2 syntax and semantics) formally verified with Verus | [proven](crates/regex#what-is-proven), [trusted](crates/regex/TRUST.md) |
 | [`verilith-sha2`](crates/sha2) | Formally verified (Verus) SHA-2 (FIPS 180-4): SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224 and SHA-512/256, with SHA-NI and ARMv8 kernels, behind OpenSSL's `SHA*` C API | [proven](crates/sha2#what-is-proven), [trusted](crates/sha2#trusted-base) |
-| [`verilith-simd`](crates/simd) | Verus specifications for x86 SIMD intrinsics (SSE2..AVX2, some AVX-512), differentially tested against the CPU | [trusted](crates/simd#trusted-base) |
+| [`verilith-simd`](crates/simd) | Verus specifications for x86 SIMD intrinsics (SSE2..AVX2, some AVX-512) and AArch64 NEON, differentially tested against the CPU | [trusted](crates/simd#trusted-base) |
 | [`verilith-snappy`](crates/snappy) | A formally verified (Verus) Snappy compressor and decompressor with the snappy-c API | [proven](crates/snappy#what-is-proven), [trusted](crates/snappy/TRUST.md) |
 | [`verilith-sync`](crates/sync) | Formally verified (Verus) concurrency primitives: SPSC and MPMC queues, channels, and locks, as drop-ins for rtrb, crossbeam and parking_lot | [proven](crates/sync#what-is-proven), [trusted](crates/sync/TRUST.md) |
 | [`verilith-text`](crates/text) | Formally verified (Verus) text encodings and Unicode: base64, hex, percent-encoding, Unicode normalization and IDNA (UTS #46) | [proven](crates/text#what-is-proven), [trusted](crates/text#the-trusted-base) |
+| [`verilith-tiff`](crates/tiff) | A formally verified (Verus) TIFF decoder: strips and tiles, PackBits, LZW and Deflate, the predictor, checked against libtiff, with libtiff's reading C API | [proven](crates/tiff#what-is-proven), [trusted](crates/tiff#trusted-base) |
 | [`verilith-url`](crates/url) | A formally verified (Verus) WHATWG URL parser | [proven](crates/url#what-is-proven), [trusted](crates/url#trusted-computing-base) |
 | [`verilith`](crates/verilith) | Formally verified (Verus) drop-in replacements for foundational libraries: one crate that re-exports each verilith-* library behind a feature | no code of its own |
 | [`verilith-wasm`](crates/wasm) | A formally verified (Verus) WebAssembly validator and sandboxed interpreter | [proven](crates/wasm#what-is-proven), [trusted](crates/wasm#trusted-base) |
-| [`verilith-webp`](crates/webp) | A formally verified (Verus) WebP lossless (VP8L) decoder | [proven](crates/webp#what-is-proven), [trusted](crates/webp#trusted-base) |
+| [`verilith-webp`](crates/webp) | A formally verified (Verus) WebP decoder: lossless (VP8L) proven correct, lossy (VP8) proven safe, with libwebp's decoding C API | [proven](crates/webp#what-is-proven), [trusted](crates/webp#trusted-base) |
 | [`verilith-x509`](crates/x509) | A formally verified (Verus) DER and X.509 certificate parser | [proven](crates/x509#what-is-proven), [trusted](crates/x509#what-is-proven) |
 | [`verilith-xml`](crates/xml) | A fast XML 1.0 parser formally verified with Verus: exactly the well-formedness rules, no panics, no recursion | [proven](crates/xml#what-is-proven), [trusted](crates/xml#what-is-not-proven) |
 | [`verilith-xxhash`](crates/xxhash) | Formally verified (Verus) XXH32 and XXH64, the checksums of the LZ4 and Zstandard frame formats | [proven](crates/xxhash#what-is-proven), [trusted](crates/xxhash#trusted-base) |
@@ -133,11 +135,10 @@ verilith-json = { git = "https://github.com/verilith/verilith" }                
 | macOS on Apple Silicon | every crate | no (proofs and benchmarks are run by hand) |
 | Windows x86-64 | every crate (`cargo check`) | no |
 | Big-endian (s390x) | every crate (`cargo check`) | no |
-| 32-bit, including wasm32 | bind, brotli, core, dns, hpack, http, jpeg, json, regex, sha2, simd, text, url, webp, x509, xml, zlib | every one of them builds for wasm32-unknown-unknown; text, url, regex and json are also proven as wasm32 builds them and pass their tests under wasmtime; xml's 32-bit layout is proven |
+| 32-bit, including wasm32 | every crate | every crate builds for wasm32-unknown-unknown; text, url, regex, json, xxhash, snappy, lz4, zstd, archive, png, font and wasm are also proven as wasm32 builds them and pass their tests under wasmtime, and sync is proven there too; xml's 32-bit layout is proven |
 
-The proofs of archive, font, lz4, png, snappy, sync, wasm, xxhash and zstd
-assume a 64-bit `usize`, so those crates refuse to compile for a
-32-bit target rather than run unproven code there. The proofs do
+The crates with a `scripts/verify-narrow.sh` are proven twice, once with
+a 64-bit `usize` and once with a 32-bit one. The proofs do
 not depend on byte order, but no big-endian machine runs the tests yet, so
 a byte-order slip in unverified glue there would not be caught.
 
@@ -314,6 +315,10 @@ from, so it skips what has not changed and can check a large crate in
 parts; CI uses it. [BUILDING.md](BUILDING.md) explains the Buck2 setup and
 what keeps it from passing a proof it did not check.
 
+Two verilith releases that pin different `vstd`s cannot be in one
+dependency graph; [RELEASING.md](RELEASING.md) says why, and when and how
+the pin moves.
+
 ## CI
 
 One workflow, `.github/workflows/ci.yml`.
@@ -331,6 +336,12 @@ already passed there.
 **Tests** run for the crates a change touches: a crate whose files changed,
 plus every crate that depends on it (`scripts/affected.py`). A change to
 the workspace files runs everything. What runs for a crate is its `ci.sh`.
+
+**Packages and docs** are checked as crates.io and docs.rs will see them
+(`scripts/package.sh`): every published crate is built from its own
+`cargo package` tarball, with plain rustc and no Verus; the workspace is
+checked with its minimum Rust version (1.89); and the documentation is
+built with broken links as errors.
 
 **Once a week**, and on request (run the workflow with "fresh"), every proof
 is checked again from nothing and each crate's count of verified proofs

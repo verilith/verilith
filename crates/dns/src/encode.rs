@@ -1282,7 +1282,7 @@ fn put_name(out: &mut Vec<u8>, x: &NameBytes) -> (r: Option<Ghost<SpecName>>)
     }
 }
 
-/// Appends a <character-string> if `x` fits one.
+/// Appends a `<character-string>` if `x` fits one.
 fn put_cstring(out: &mut Vec<u8>, x: &[u8]) -> (ok: bool)
     ensures
         ok == cstr_ok(x@),
@@ -2125,7 +2125,7 @@ pub open spec fn txt_split(v: Seq<Seq<u8>>) -> Seq<Seq<u8>>
     }
 }
 
-/// Splits each string into <character-string>-sized pieces, as c-ares
+/// Splits each string into `<character-string>`-sized pieces, as c-ares
 /// writes TXT strings longer than 255 octets.
 pub fn split_txt<'a>(strs: &Vec<&'a [u8]>) -> (r: Vec<&'a [u8]>)
     ensures

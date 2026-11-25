@@ -11,7 +11,8 @@
 use crate::huf::{huf_4streams_exec, huf_stream_exec, HufTab};
 #[cfg(verus_only)]
 use crate::huf::{huf_code_of, huf_wf};
-use crate::seq::{seq_run_exec, SeqOut, SeqTabs};
+use crate::bits::BITS_MAX;
+use crate::seq::{seq_run_exec, SeqOut, SeqTabs, MAX_LIMIT};
 #[cfg(verus_only)]
 use crate::seq::{seqtabs_is, sstate};
 #[cfg(verus_only)]
@@ -44,14 +45,14 @@ pub fn run_seqs(
 ) -> (r: Result<SeqOut, bool>)
     requires
         seqtabs_is(t, ts),
-        s@.len() < 0x1_0000_0000,
+        s@.len() < BITS_MAX,
         lits@.len() <= 131072,
         p0 <= 8 * s@.len(),
         (sll0 as int) < t.ll.rows@.len(),
         (sof0 as int) < t.of.rows@.len(),
         (sml0 as int) < t.ml.rows@.len(),
         fstart <= old(out)@.len() <= olimit,
-        olimit <= 0x1_0000_0000_0000,
+        olimit <= MAX_LIMIT,
         olimit - old(out)@.len() <= 131072,
     ensures
         ({
@@ -89,8 +90,8 @@ pub fn run_seqs(
 pub fn run_huf4(t: &HufTab, b: &[u8], n: usize, out: &mut Vec<u8>) -> (ok: bool)
     requires
         huf_wf(t),
-        b@.len() < 0x1_0000_0000,
-        n < 0x1_0000_0000,
+        b@.len() < BITS_MAX,
+        n < BITS_MAX,
     ensures
         match huf_4streams(huf_code_of(t), b@, n as nat) {
             None => !ok,
@@ -112,7 +113,7 @@ pub fn run_huf4(t: &HufTab, b: &[u8], n: usize, out: &mut Vec<u8>) -> (ok: bool)
 pub fn run_huf1(t: &HufTab, s: &[u8], n: usize, out: &mut Vec<u8>) -> (ok: bool)
     requires
         huf_wf(t),
-        s@.len() < 0x1_0000_0000,
+        s@.len() < BITS_MAX,
     ensures
         match huf_stream(huf_code_of(t), s@, n as nat) {
             None => !ok,

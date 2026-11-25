@@ -23,7 +23,7 @@
 //! `len` is modeled too: it loads the tail, the head and the tail again,
 //! and retries only if the tail moved in between.
 //!
-//! [`theorem_lock_free`]: in every fair execution, if some thread is in
+//! `theorem_lock_free`: in every fair execution, if some thread is in
 //! `push`, `pop` or `len` at time `i`, some call returns at some step
 //! `j >= i`.
 //! A thread that has claimed a position (won the CAS) finishes in one more

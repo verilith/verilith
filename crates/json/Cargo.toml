@@ -40,6 +40,11 @@ serde = ["dep:serde"]
 name = "serde_speed"
 required-features = ["serde"]
 
+# docs.rs documents the serde API too. The C ABIs (cjson, capi) add no Rust
+# items worth a page.
+[package.metadata.docs.rs]
+features = ["serde"]
+
 [package.metadata.verus]
 verify = true
 

@@ -165,9 +165,11 @@ pub fn xxh32_with_seed(b: &[u8], seed: u32) -> (r: u32)
     } else {
         add(seed, XQ5)
     };
-    let h = tail(b, full, add(h0, (n & 0xffff_ffff) as u32));
+    // Through u64, so the mask has a type on 32-bit targets too.
+    let n64 = n as u64;
+    let h = tail(b, full, add(h0, (n64 & 0xffff_ffff) as u32));
     proof {
-        assert(n & 0xffff_ffff == n % 0x1_0000_0000) by (bit_vector);
+        assert(n64 & 0xffff_ffff == n64 % 0x1_0000_0000) by (bit_vector);
     }
     let h1 = mul(h ^ (h >> 15), XQ2);
     let h2 = mul(h1 ^ (h1 >> 13), XQ3);

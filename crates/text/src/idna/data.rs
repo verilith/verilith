@@ -23,6 +23,7 @@ pub uninterp spec fn idna_pool(i: int) -> u32;
 macro_rules! accessor {
     ($name:ident, $table:ident, $len:ident, $spec:ident, $ty:ty) => {
         verus! {
+            #[doc = concat!("Entry `i` of `", stringify!($table), "`.")]
             #[verifier::external_body]
             #[inline(always)]
             pub fn $name(i: usize) -> (r: $ty)
@@ -126,6 +127,11 @@ pub axiom fn axiom_idna_ascii(c: u32)
 // Implementation
 // ---------------------------------------------------------------------------
 
+/// The trie word of `c` (see `tables`).
+///
+/// ```text
+/// ensures  r == iword(c)
+/// ```
 pub fn iword_of(c: u32) -> (r: u32)
     ensures
         r == iword(c),

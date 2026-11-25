@@ -9,10 +9,17 @@
 use vstd::prelude::*;
 
 /// Run-time detection of an x86 feature; always false on other targets.
-#[cfg(target_arch = "x86_64")]
+/// Without `std`, the features the target is compiled with.
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
 macro_rules! detect {
     ($f:tt) => {
         std::is_x86_feature_detected!($f)
+    };
+}
+#[cfg(all(target_arch = "x86_64", not(feature = "std")))]
+macro_rules! detect {
+    ($f:tt) => {
+        cfg!(target_feature = $f)
     };
 }
 #[cfg(not(target_arch = "x86_64"))]
@@ -68,11 +75,17 @@ pub broadcast axiom fn axiom_avx512_implications()
         #[trigger] avx512f() ==> avx2(),
 ;
 
+/// The axioms of this module, for `broadcast use group_cpu`.
 pub broadcast group group_cpu {
     axiom_feature_implications,
     axiom_avx512_implications,
 }
 
+/// Whether the CPU has AVX2, detected at run time; true proves the feature predicate:
+///
+/// ```text
+/// ensures  r ==> avx2()
+/// ```
 #[verifier::external_body]
 #[inline]
 pub fn has_avx2() -> (r: bool)
@@ -82,6 +95,11 @@ pub fn has_avx2() -> (r: bool)
     detect!("avx2")
 }
 
+/// Whether the CPU has SSE4.1, detected at run time; true proves the feature predicate:
+///
+/// ```text
+/// ensures  r ==> sse41()
+/// ```
 #[verifier::external_body]
 #[inline]
 pub fn has_sse41() -> (r: bool)
@@ -91,6 +109,11 @@ pub fn has_sse41() -> (r: bool)
     detect!("sse4.1")
 }
 
+/// Whether the CPU has SSSE3, detected at run time; true proves the feature predicate:
+///
+/// ```text
+/// ensures  r ==> ssse3()
+/// ```
 #[verifier::external_body]
 #[inline]
 pub fn has_ssse3() -> (r: bool)
@@ -114,6 +137,11 @@ pub fn compiled_with_ssse3() -> (r: bool)
     cfg!(all(target_arch = "x86_64", target_feature = "ssse3"))
 }
 
+/// Whether the CPU has BMI1 and BMI2, detected at run time; true proves the feature predicate:
+///
+/// ```text
+/// ensures  r ==> bmi2()
+/// ```
 #[verifier::external_body]
 #[inline]
 pub fn has_bmi2() -> (r: bool)
@@ -123,6 +151,11 @@ pub fn has_bmi2() -> (r: bool)
     detect!("bmi1") && detect!("bmi2")
 }
 
+/// Whether the CPU has PCLMULQDQ, detected at run time; true proves the feature predicate:
+///
+/// ```text
+/// ensures  r ==> pclmul()
+/// ```
 #[verifier::external_body]
 #[inline]
 pub fn has_pclmul() -> (r: bool)
@@ -132,6 +165,11 @@ pub fn has_pclmul() -> (r: bool)
     detect!("pclmulqdq")
 }
 
+/// Whether the CPU has AVX-512F and AVX-512BW, detected at run time; true proves the feature predicate:
+///
+/// ```text
+/// ensures  r ==> avx512bw()
+/// ```
 #[verifier::external_body]
 #[inline]
 pub fn has_avx512bw() -> (r: bool)
@@ -141,6 +179,11 @@ pub fn has_avx512bw() -> (r: bool)
     detect!("avx512f") && detect!("avx512bw")
 }
 
+/// Whether the CPU has AVX-512F, BW and VBMI2, detected at run time; true proves the feature predicate:
+///
+/// ```text
+/// ensures  r ==> avx512vbmi2()
+/// ```
 #[verifier::external_body]
 #[inline]
 pub fn has_avx512vbmi2() -> (r: bool)
@@ -150,6 +193,11 @@ pub fn has_avx512vbmi2() -> (r: bool)
     detect!("avx512f") && detect!("avx512bw") && detect!("avx512vbmi2")
 }
 
+/// Whether the CPU has POPCNT, detected at run time; true proves the feature predicate:
+///
+/// ```text
+/// ensures  r ==> popcnt()
+/// ```
 #[verifier::external_body]
 #[inline]
 pub fn has_popcnt() -> (r: bool)

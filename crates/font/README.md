@@ -122,7 +122,8 @@ lays out the new file. It is verified for memory safety only.
 
 The **checker** (`font::check_font` and everything under it) decides
 `wf_font` exactly: Verus proves `check_font(s) == wf_font(s)` for all
-bytes `s`. `sanitize` runs the checker on what the builder produced and
+bytes `s` (on a 32-bit target, for all `s` of at most `isize::MAX` bytes,
+which is every slice). `sanitize` runs the checker on what the builder produced and
 returns the font only if the answer is yes. So the theorem does not rest
 on the builder being right. A bug there can make verilith-font refuse a good
 font, and cannot make it emit a bad one.
@@ -308,8 +309,11 @@ accepts, 3 are damaged in a default language system and one has a
 
 ## Building and verifying
 
-64-bit targets only: the proofs fix `usize` at 64 bits, so a 32-bit build
-(wasm32 included) stops with a `compile_error!`.
+The proofs hold for 64-bit and for 32-bit targets (wasm32 included):
+`scripts/verify.sh font` checks the first and `crates/font/scripts/verify-narrow.sh`
+the second, and the tests pass on wasm32-wasip1. On a 32-bit target
+`check_font` also asks that the font be at most `isize::MAX` bytes,
+which every Rust slice is.
 
 ```sh
 cargo build --release      # target/release/libverilith_font.a and the rlib

@@ -1,11 +1,9 @@
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 // A formally verified Zstandard (RFC 8878) decompressor.
 //
 // - [`spec`]: the format as pure functions (the trusted specification).
 #![cfg_attr(not(verus_only), allow(unused_variables, unused_imports))]
-
-#[cfg(not(target_pointer_width = "64"))]
-compile_error!("verilith-zstd is proven for 64-bit targets only");
 
 #[doc(hidden)]
 pub mod spec;
@@ -13,8 +11,12 @@ pub mod spec;
 #[cfg(verus_only)]
 vstd::prelude::verus! {
 
-// The decoder is proven for 64-bit targets.
+// The proofs are checked once per pointer width.
+#[cfg(target_pointer_width = "64")]
 global size_of usize == 8;
+
+#[cfg(target_pointer_width = "32")]
+global size_of usize == 4;
 
 } // verus!
 

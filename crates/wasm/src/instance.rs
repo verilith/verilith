@@ -1,11 +1,11 @@
 //! A checked, ready-to-run module instance: the boundary between verified
 //! and unverified code.
 //!
-//! An [`Instance`] can only be built by [`Instance::new`], which checks the
+//! A [`Checked`] instance can only be built by [`Checked::new`], which checks the
 //! certificates and the initial store, and its fields are private, so its
 //! type invariant (checked certificates, compiled code, a well-formed
 //! store) holds for every instance whatever unverified code does with it.
-//! [`Instance::invoke`] is therefore safe to call from anywhere, and every
+//! [`Checked::invoke`] is therefore safe to call from anywhere, and every
 //! call runs the proven interpreter.
 use vstd::prelude::*;
 use crate::ast::*;
@@ -38,8 +38,8 @@ pub fn check_store(m: &Module, st: &Store) -> (r: bool)
     ensures r ==> store_ok(m, store_view(st)) && store_wf(st),
 {
     if st.globals.len() != m.global_types.len() || st.tables.len() != m.tables.len()
-        || st.dropped.len() != m.datas.len() || st.mem_max > 65536
-        || st.mem.len() > st.mem_max as usize * PAGE as usize || st.mem.len() % PAGE as usize != 0 {
+        || st.dropped.len() != m.datas.len() || st.mem_max > crate::interp::MAX_PAGES
+        || st.mem.len() as u64 > st.mem_max as u64 * PAGE || st.mem.len() % PAGE as usize != 0 {
         return false;
     }
     let nf = m.func_types.len();

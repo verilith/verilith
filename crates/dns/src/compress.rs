@@ -384,7 +384,7 @@ impl Dict {
         self.e.push(e);
         let n = self.e.len();
         if k < BUCKETS && n <= u32::MAX as usize {
-            self.head.set(k, n as u32);
+            self.head[k] = n as u32;
         }
     }
 }

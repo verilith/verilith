@@ -238,6 +238,11 @@ fn copy_fields(src: &[u8], ip: usize, kind: usize, hi: usize) -> (r: (usize, usi
     } else {
         1 + hi
     };
+    proof {
+        // So that `t + ...` below fits a 32-bit usize too.
+        assert(w & 0xff <= 0xff) by (bit_vector);
+        assert(OFF_MASK[1] == 0xff);
+    }
     let off = t + if one {
         (hi >> 3) << 8
     } else {
@@ -849,7 +854,7 @@ const ROOM: usize = 104;
 /// of no bytes and its overrun lands after the match.
 #[inline(never)]
 #[verifier::rlimit(300)]
-fn fast_loop(src: &[u8], out: &mut [u8], n: usize, ip0: usize, op0: usize) -> (r: (usize, usize))
+fn fast_loop(src: &[u8], out: &mut [u8], n: usize, ip0: usize, op0: usize) -> (r: (usize, usize, Ghost<nat>))
     requires
         ip0 <= src@.len(),
         op0 <= n <= old(out)@.len(),
@@ -864,14 +869,18 @@ fn fast_loop(src: &[u8], out: &mut [u8], n: usize, ip0: usize, op0: usize) -> (r
             old(out)@.subrange(0, op0 as int),
             n as nat,
         ),
+        // Work: each turn takes at least two input bytes.
+        op0 <= r.1,
+        r.2@ <= 50 * (r.0 - ip0) + (r.1 - op0) + 1,
 {
     let slen = src.len();
     let cap = out.len();
     let mut ip = ip0;
     let mut op = op0;
+    let ghost mut work: nat = 0;
     let ghost goal = elems(src@, ip0 as int, out@.subrange(0, op0 as int), n as nat);
     if slen - ip < ROOM || n - op < ROOM || op < 16 {
-        return (ip, op);
+        return (ip, op, Ghost(work));
     }
     let ip_max = slen - ROOM;
     let op_max = n - ROOM;
@@ -884,6 +893,7 @@ fn fast_loop(src: &[u8], out: &mut [u8], n: usize, ip0: usize, op0: usize) -> (r
             n - op >= ROOM,
             op >= 16,
             tag == src@[ip as int],
+            work <= 50 * (ip - ip0) + (op - op0),
         invariant
             slen == src@.len(),
             cap == out@.len(),
@@ -891,11 +901,16 @@ fn fast_loop(src: &[u8], out: &mut [u8], n: usize, ip0: usize, op0: usize) -> (r
             ip_max == slen - ROOM,
             op_max == n - ROOM,
             ip0 <= ip <= slen,
-            op <= n <= cap,
+            op0 <= op <= n <= cap,
             n <= 0xffff_ffff,
             elems(src@, ip as int, out@.subrange(0, op as int), n as nat) == goal,
+        ensures
+            work <= 50 * (ip - ip0) + (op - op0) + 1,
         decreases slen - ip,
     {
+        proof {
+            work = (work + 1) as nat;
+        }
         let ghost cur = out@.subrange(0, op as int);
         let ghost kind = src@[ip as int] % 4;
         let k = tag & 3;
@@ -939,6 +954,7 @@ fn fast_loop(src: &[u8], out: &mut [u8], n: usize, ip0: usize, op0: usize) -> (r
             copy_match(out, op, off, len);
             proof {
                 lemma_matched(mid, out@, 0, op as int, off as int, len as int);
+                work = (work + len + 32) as nat;
             }
             op = op + len;
             ip = ip2;
@@ -955,6 +971,7 @@ fn fast_loop(src: &[u8], out: &mut [u8], n: usize, ip0: usize, op0: usize) -> (r
         copy16_pick(out, op + 16, src, ip + 17, op - off + 16, lit);
         let ghost o2 = out@;
         proof {
+            work = (work + 32) as nat;
             if !lit && off >= 16 {
                 assert forall|j: int| op <= j < op + 32 implies #[trigger] o2[j] == o2[j - off] by {
                     if j < op + 16 {
@@ -987,6 +1004,7 @@ fn fast_loop(src: &[u8], out: &mut [u8], n: usize, ip0: usize, op0: usize) -> (r
             copy16_pick(out, op + 48, src, ip + 49, op - off + 48, lit);
             let ghost o4 = out@;
             proof {
+                work = (work + 32) as nat;
                 if !lit {
                     assert(off >= 16);
                     assert forall|j: int| op <= j < op + 64 implies #[trigger] o4[j] == o4[j - off] by {
@@ -1007,6 +1025,9 @@ fn fast_loop(src: &[u8], out: &mut [u8], n: usize, ip0: usize, op0: usize) -> (r
                     copy_lits_wild(out, op + 64, src, ip + 65, len - 64);
                 } else {
                     copy_match_wild(out, op + 64, off, len - 64);
+                }
+                proof {
+                    work = (work + (len - 64) + 32) as nat;
                 }
             }
             proof {
@@ -1049,7 +1070,7 @@ fn fast_loop(src: &[u8], out: &mut [u8], n: usize, ip0: usize, op0: usize) -> (r
             break;
         }
     }
-    (ip, op)
+    (ip, op, Ghost(work))
 }
 
 /// Decompresses `src` into `out`.
@@ -1061,20 +1082,26 @@ fn fast_loop(src: &[u8], out: &mut [u8], n: usize, ip0: usize, op0: usize) -> (r
 ///
 /// Bytes of `out` after the result may be changed.
 #[verifier::rlimit(60)]
-pub fn decompress_into(src: &[u8], out: &mut [u8]) -> (r: Result<usize, Error>)
+pub fn decompress_counted(src: &[u8], out: &mut [u8]) -> (r: (Result<usize, Error>, Ghost<nat>))
     ensures
         final(out)@.len() == old(out)@.len(),
-        match r {
+        match r.0 {
             Ok(n) => n <= final(out)@.len() && decompress(src@) == Some(final(out)@.subrange(0, n as int)),
             Err(Error::Corrupt) => decompress(src@).is_none(),
             Err(Error::TooSmall) => decompress(src@) matches Some(o) ==> o.len() > old(out)@.len(),
         },
+        // Work: linear in the input, and in the output (or, if it does
+        // not decode, in the room given).
+        r.1@ <= 50 * src@.len() + old(out)@.len() + 40,
+        r.0 matches Ok(n) ==> r.1@ <= 50 * src@.len() + n + 40,
 {
+    // The preamble's loop, at most five turns.
+    let ghost mut work: nat = 5;
     let slen = src.len();
     let cap = out.len();
     let (n, i0) = match read_varint(src) {
         None => {
-            return Err(Error::Corrupt);
+            return (Err(Error::Corrupt), Ghost(work));
         },
         Some(x) => x,
     };
@@ -1083,7 +1110,7 @@ pub fn decompress_into(src: &[u8], out: &mut [u8]) -> (r: Result<usize, Error>)
         proof {
             lemma_elems_len(src@, i0 as int, Seq::empty(), n as nat);
         }
-        return Err(Error::TooSmall);
+        return (Err(Error::TooSmall), Ghost(work));
     }
     let mut ip = i0;
     let mut op: usize = 0;
@@ -1091,6 +1118,8 @@ pub fn decompress_into(src: &[u8], out: &mut [u8]) -> (r: Result<usize, Error>)
         assert(out@.subrange(0, 0) =~= Seq::<u8>::empty());
     }
     while ip < slen
+        invariant_except_break
+            work <= 50 * ip + op,
         invariant
             slen == src@.len(),
             cap == out@.len(),
@@ -1098,14 +1127,19 @@ pub fn decompress_into(src: &[u8], out: &mut [u8]) -> (r: Result<usize, Error>)
             ip <= slen,
             op <= n <= cap,
             n <= 0xffff_ffff,
+            1 <= i0 <= ip,
             goal == decompress(src@),
             elems(src@, ip as int, out@.subrange(0, op as int), n as nat) == goal,
         ensures
             ip == slen,
+            work <= 50 * ip + op + 1,
         decreases slen - ip,
     {
         if slen - ip >= ROOM && n - op >= ROOM && op >= 16 {
-            let (i2, o2) = fast_loop(src, out, n, ip, op);
+            let (i2, o2, Ghost(w)) = fast_loop(src, out, n, ip, op);
+            proof {
+                work = (work + w) as nat;
+            }
             ip = i2;
             op = o2;
             if ip >= slen {
@@ -1113,6 +1147,12 @@ pub fn decompress_into(src: &[u8], out: &mut [u8]) -> (r: Result<usize, Error>)
             }
         }
         let ghost cur = out@.subrange(0, op as int);
+        let ghost w0 = work;
+        let ghost ip00 = ip;
+        let ghost op00 = op;
+        proof {
+            work = (work + 1) as nat;
+        }
         let tag = get(src, ip) as usize;
         let kind = tag % 4;
         let hi = tag / 4;
@@ -1123,22 +1163,33 @@ pub fn decompress_into(src: &[u8], out: &mut [u8]) -> (r: Result<usize, Error>)
                 hi - 59
             };
             if slen - ip - 1 < nb {
-                return Err(Error::Corrupt);
+                return (Err(Error::Corrupt), Ghost(work));
             }
             let len = if hi < 60 {
                 hi + 1
             } else {
-                read_le(src, ip + 1, nb) + 1
+                let v = read_le(src, ip + 1, nb);
+                // A 32-bit usize cannot hold 2^32, and no literal that
+                // long fits in the input (checked again just below).
+                #[cfg(target_pointer_width = "32")]
+                if v >= slen {
+                    return (Err(Error::Corrupt), Ghost(work));
+                }
+                v + 1
             };
+            proof {
+                // `read_le`'s loop.
+                work = (work + nb) as nat;
+            }
             let j = ip + 1 + nb;
             if len > slen - j {
-                return Err(Error::Corrupt);
+                return (Err(Error::Corrupt), Ghost(work));
             }
             if len > n - op {
                 proof {
                     lemma_elems_len(src@, j + len, cur + src@.subrange(j as int, j + len), n as nat);
                 }
-                return Err(Error::Corrupt);
+                return (Err(Error::Corrupt), Ghost(work));
             }
             if len <= 16 && slen - j >= 16 && cap - op >= 16 {
                 // The common case: copy 16 bytes whatever the length.
@@ -1148,6 +1199,7 @@ pub fn decompress_into(src: &[u8], out: &mut [u8]) -> (r: Result<usize, Error>)
             }
             proof {
                 assert(out@.subrange(0, op + len) =~= cur + src@.subrange(j as int, j + len));
+                work = (work + len + 32) as nat;
             }
             op = op + len;
             ip = j + len;
@@ -1158,19 +1210,19 @@ pub fn decompress_into(src: &[u8], out: &mut [u8]) -> (r: Result<usize, Error>)
                 match copy_fields_slow(src, ip, kind, hi) {
                     Some(f) => f,
                     None => {
-                        return Err(Error::Corrupt);
+                        return (Err(Error::Corrupt), Ghost(work));
                     },
                 }
             };
             if off == 0 || off > op {
-                return Err(Error::Corrupt);
+                return (Err(Error::Corrupt), Ghost(work));
             }
             if len > n - op {
                 proof {
                     lemma_lz_copy_len(cur, off as int, len as nat);
                     lemma_elems_len(src@, ip + 1 + nb, lz_copy(cur, off as int, len as nat), n as nat);
                 }
-                return Err(Error::Corrupt);
+                return (Err(Error::Corrupt), Ghost(work));
             }
             let ghost mid = out@;
             if off >= 8 && len <= 16 && cap - op >= 16 {
@@ -1181,16 +1233,39 @@ pub fn decompress_into(src: &[u8], out: &mut [u8]) -> (r: Result<usize, Error>)
             }
             proof {
                 lemma_matched(mid, out@, 0, op as int, off as int, len as int);
+                work = (work + len + 32) as nat;
             }
             op = op + len;
             ip = ip + 1 + nb;
         }
     }
     if op == n {
-        Ok(n)
+        (Ok(n), Ghost(work))
     } else {
-        Err(Error::Corrupt)
+        (Err(Error::Corrupt), Ghost(work))
     }
+}
+
+/// Decompresses `src` into `out` (`decompress_counted`, which also proves
+/// the work this takes).
+///
+/// - `Ok(n)`: `src` is valid and decompresses to `out[..n]`.
+/// - `Err(Corrupt)`: `src` is not valid.
+/// - `Err(TooSmall)`: `src` is not valid, or what it decompresses to is
+///   longer than `out`.
+///
+/// Bytes of `out` after the result may be changed.
+#[inline(always)]
+pub fn decompress_into(src: &[u8], out: &mut [u8]) -> (r: Result<usize, Error>)
+    ensures
+        final(out)@.len() == old(out)@.len(),
+        match r {
+            Ok(n) => n <= final(out)@.len() && decompress(src@) == Some(final(out)@.subrange(0, n as int)),
+            Err(Error::Corrupt) => decompress(src@).is_none(),
+            Err(Error::TooSmall) => decompress(src@) matches Some(o) ==> o.len() > old(out)@.len(),
+        },
+{
+    decompress_counted(src, out).0
 }
 
 /// `fast_loop` without the copies, for `validate`: the same walk from tag
@@ -1341,7 +1416,14 @@ pub fn validate(src: &[u8]) -> (r: bool)
             let len = if hi < 60 {
                 hi + 1
             } else {
-                read_le(src, ip + 1, nb) + 1
+                let v = read_le(src, ip + 1, nb);
+                // A 32-bit usize cannot hold 2^32, and no literal that
+                // long fits in the input (checked again just below).
+                #[cfg(target_pointer_width = "32")]
+                if v >= slen {
+                    return false;
+                }
+                v + 1
             };
             let j = ip + 1 + nb;
             if len > slen - j {

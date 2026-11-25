@@ -4,20 +4,39 @@ version = "0.1.0"
 license = "MIT OR Apache-2.0"
 description = "Formally verified (Verus) SHA-2 (FIPS 180-4): SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224 and SHA-512/256, with SHA-NI and ARMv8 kernels and OpenSSL's SHA C API"
 edition = "2021"
+rust-version = "1.89"
 repository = "https://github.com/verilith/verilith"
 keywords = ["verified", "verus", "sha256", "sha512", "sha2"]
-categories = ["cryptography", "no-std"]
+categories = ["cryptography", "algorithms", "no-std"]
 
 [lib]
 crate-type = ["rlib", "staticlib"]
 
 [features]
+default = ["std"]
+# Without `std` the crate is `no_std` (and needs no allocator), and the
+# kernels are chosen at compile time from the target's features rather
+# than at run time.
+std = ["vstd/std", "verilith-core/std", "verilith-simd/std"]
 # Export the C API under OpenSSL's own names (SHA256_Init, SHA512_Init and the rest).
 openssl-abi = []
+# RustCrypto's `digest` 0.11 traits (as RustCrypto `sha2` 0.11 and `hmac`
+# 0.13 implement them), re-exported as `verilith_sha2::digest`.
+digest = ["dep:digest011"]
+# RustCrypto's `digest` 0.10 traits (`sha2` 0.10, `hmac` 0.12).
+digest010 = ["dep:digest010"]
+# `AssociatedOid` for the hashers, with either of the above.
+oid = ["digest011?/oid", "digest010?/oid"]
 
 [dependencies]
-verilith-core = { path = "../core", version = "0.1.0" }
-vstd = { workspace = true, features = ["std"] }
+verilith-core = { path = "../core", version = "0.1.0", default-features = false }
+vstd = { workspace = true }
+verilith-simd = { path = "../simd", version = "0.1.0", default-features = false }
+digest011 = { package = "digest", version = "0.11.2", default-features = false, features = ["mac"], optional = true }
+digest010 = { package = "digest", version = "0.10.7", default-features = false, features = ["mac"], optional = true }
+
+[package.metadata.docs.rs]
+features = ["digest", "oid"]
 
 [package.metadata.verus]
 verify = true
@@ -32,3 +51,13 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 [dev-dependencies]
 # An independent implementation (RustCrypto's) to compare with.
 sha2 = "0.10"
+# RustCrypto's HMAC, for the HMAC tests; and `hmac` 0.12 over `digest`
+# 0.10, for the `digest010` impls.
+hmac = "0.13"
+hmac012 = { package = "hmac", version = "0.12" }
+# RustCrypto's sha2 0.11, over `digest` 0.11, for the HMAC and `digest` tests.
+sha2_011 = { package = "sha2", version = "0.11" }
+
+[[test]]
+name = "digest"
+required-features = ["digest", "digest010", "oid"]

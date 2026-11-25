@@ -4,7 +4,7 @@
 //! position, the operand-stack height and the label stack there (or marks
 //! the position dead). Label stacks are stored as a tree: each label record
 //! points at its enclosing label. The checker here verifies the
-//! certificate one instruction at a time; [`func_cert_ok`] is what it
+//! certificate one instruction at a time; `func_cert_ok` is what it
 //! proves. With a checked certificate, the machine in [`crate::sem`] never
 //! gets stuck and its stack heights and labels at every position are the
 //! certificate's (see [`crate::preserve`]), which is what lets the

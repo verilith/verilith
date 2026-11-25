@@ -88,6 +88,11 @@ pub proof fn lemma_dec_value_append(d: Seq<u8>, c: u8)
     assert(d.push(c).drop_last() =~= d);
 }
 
+/// Whether `c` is an ASCII digit.
+///
+/// ```text
+/// ensures  r == is_digit(c)
+/// ```
 #[inline(always)]
 pub fn ex_is_digit(c: u8) -> (r: bool)
     ensures

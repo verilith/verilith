@@ -825,6 +825,24 @@ fn check_pair_pos(t: &[u8], o: usize, ng: usize) -> (b: bool)
             cells <= 65535 * 65535,
             w <= 32,
     ;
+    // On a 32-bit target cells * w can overflow; it is then far above any
+    // 16-bit offset, so the class definitions cannot follow the records.
+    #[cfg(target_pointer_width = "32")]
+    {
+        if cells > 0xFFFF && w > 0 {
+            assert(16 + cells * w > 65535) by (nonlinear_arith)
+                requires
+                    cells > 0xFFFF,
+                    w > 0,
+            ;
+            return false;
+        }
+        assert(cells * w <= 0xFFFF * 32) by (nonlinear_arith)
+            requires
+                cells <= 0xFFFF || w == 0,
+                w <= 32,
+        ;
+    }
     let min = 16 + cells * w;
     let cd = |x: usize| -> (r: bool)
         requires
@@ -985,6 +1003,11 @@ fn check_anchorarray(t: &[u8], o: usize, cc: usize) -> (b: bool)
             cc <= 65535,
     ;
     let n = rows * cc;
+    // On a 32-bit target 2 * n can overflow; offsets that far are refused.
+    #[cfg(target_pointer_width = "32")]
+    if n > 0xFFFF {
+        return false;
+    }
     let an = |x: usize| -> (r: bool)
         requires
             x <= t.len(),
@@ -1210,7 +1233,7 @@ fn check_lookuplist(t: &[u8], o: usize, pos: bool, ng: usize, ms: usize) -> (b: 
     )
 }
 
-/// Decides [`wf_layout`]: a whole `GSUB` or `GPOS` table.
+/// Decides `wf_layout`: a whole `GSUB` or `GPOS` table.
 pub fn check_layout(t: &[u8], pos: bool, ng: usize, ms: usize) -> (b: bool)
     requires
         small(t),
@@ -1418,7 +1441,7 @@ fn check_marksets(t: &[u8], o: usize, ng: usize) -> (b: bool)
     true
 }
 
-/// Decides [`wf_gdef`].
+/// Decides `wf_gdef`.
 pub fn check_gdef(t: &[u8], ng: usize) -> (b: bool)
     requires
         small(t),

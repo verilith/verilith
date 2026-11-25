@@ -17,10 +17,13 @@ verus! {
 /// `URL_SAFE` and `URL_SAFE_NO_PAD`.
 #[derive(Clone, Copy)]
 pub struct Config {
+    /// The URL-safe alphabet (`-_`), not the standard one (`+/`).
     pub url: bool,
+    /// Whether the output is padded with `=` to a multiple of four.
     pub pad: bool,
 }
 
+/// The padding character, `=`.
 pub const PAD: u8 = 0x3D;  // '='
 
 /// The character for a 6-bit value (Table 1 and Table 2 of RFC 4648).

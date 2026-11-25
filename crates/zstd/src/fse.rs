@@ -31,7 +31,7 @@ pub open spec fn norm_ok(v: Seq<i16>, log: nat) -> bool {
 fn nc_zeros_exec(b: &[u8], q0: usize) -> (r: Option<(usize, usize)>)
     requires
         q0 <= 8 * b@.len(),
-        b@.len() < 0x1_0000_0000,
+        b@.len() < BITS_MAX,
     ensures
         match nc_zeros(b@, q0 as int, 0) {
             None => r is None,
@@ -45,7 +45,7 @@ fn nc_zeros_exec(b: &[u8], q0: usize) -> (r: Option<(usize, usize)>)
     loop
         invariant
             q <= 8 * b@.len(),
-            b@.len() < 0x1_0000_0000,
+            b@.len() < BITS_MAX,
             z <= 2 * q,
             nc_zeros(b@, q as int, z as nat) == nc_zeros(b@, q0 as int, 0),
         decreases 8 * b@.len() - q,
@@ -70,7 +70,7 @@ fn nc_zeros_exec(b: &[u8], q0: usize) -> (r: Option<(usize, usize)>)
 fn nc_value_exec(b: &[u8], q: usize, rem: u32) -> (r: Option<(u32, usize)>)
     requires
         q <= 8 * b@.len(),
-        b@.len() < 0x1_0000_0000,
+        b@.len() < BITS_MAX,
         2 <= rem <= 1025,
     ensures
         match nc_value(b@, q as int, rem as int) {
@@ -121,7 +121,7 @@ pub fn read_ncount(b: &[u8], maxsv: u32, maxlog: u32) -> (r: Option<(u32, Vec<i1
     requires
         maxsv <= 255,
         maxlog <= 9,
-        b@.len() < 0x1_0000_0000,
+        b@.len() < BITS_MAX,
     ensures
         match fse_desc(b@, maxsv as nat, maxlog as nat) {
             None => r is None,
@@ -174,7 +174,7 @@ pub fn read_ncount(b: &[u8], maxsv: u32, maxlog: u32) -> (r: Option<(u32, Vec<i1
     loop
         invariant
             q <= 8 * b@.len(),
-            b@.len() < 0x1_0000_0000,
+            b@.len() < BITS_MAX,
             maxsv1 == maxsv + 1,
             maxsv <= 255,
             5 <= log <= 9,

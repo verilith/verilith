@@ -1,5 +1,5 @@
 //! Verified check of the CFF charstrings: decides
-//! [`wf_charstrings`] exactly, by running every glyph's program the way
+//! `wf_charstrings` exactly, by running every glyph's program the way
 //! the specification does.
 use crate::cff::*;
 use crate::prims::*;
@@ -604,7 +604,7 @@ proof fn lemma_cs_all_none(t: Seq<u8>, top: Dict, g: int, k: int, n: int, sm: in
     }
 }
 
-/// Decides [`wf_charstrings`], given the rest of the table is well formed.
+/// Decides `wf_charstrings`, given the rest of the table is well formed.
 pub fn check_charstrings(t: &[u8], d: &DictX, g: usize, ng: u16, sm: usize) -> (b: bool)
     requires
         wf_index(t@, g as int),
@@ -612,6 +612,9 @@ pub fn check_charstrings(t: &[u8], d: &DictX, g: usize, ng: u16, sm: usize) -> (
     ensures
         b == wf_charstrings(t@, d@, g as int, ng as int, sm as int),
 {
+    // The offsets fit in a usize, since they are in the table.
+    let _ = t.len();
+    assert(d@.charstrings + 2 <= t@.len());
     let cs = d.charstrings as usize;
     let n = ng as usize;
     let mut fdl: Vec<usize> = Vec::new();

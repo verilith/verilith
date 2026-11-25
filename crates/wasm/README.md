@@ -135,9 +135,17 @@ Host functions get the arguments, a buffer for their results and the
 guest's linear memory. A host function returning `Err` (or panicking)
 traps the guest.
 
+The proofs hold for 64-bit and for 32-bit hosts (wasm32 included):
+`scripts/verify.sh wasm` checks the first and `crates/wasm/scripts/verify-narrow.sh`
+the second. A 32-bit host has room for at most `interp::MAX_PAGES`
+(32767) pages of guest memory, under the 2 GiB a `Vec` can hold there,
+rather than the 65536 a 64-bit one allows: past that, instantiation
+fails and `memory.grow` returns -1, as WebAssembly lets a host do.
+
 ### Resource limits
 
-By default a guest may run forever and grow its memory to 4 GiB. To run
+By default a guest may run forever and grow its memory to 4 GiB (2 GiB
+on a 32-bit host). To run
 untrusted code, set limits on the linker:
 
 ```rust

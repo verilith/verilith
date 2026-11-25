@@ -1039,6 +1039,11 @@ pub exec const R64: u128
     p >> 64u128
 }
 
+/// The fold constant for 32 bits ahead, for the last fold.
+///
+/// ```text
+/// ensures  R32 == fold_k(32) as u128
+/// ```
 pub exec const R32: u128
     ensures
         R32 == fold_k(32) as u128,
@@ -1049,6 +1054,11 @@ pub exec const R32: u128
     ((x as u64) as u128) << 1u128
 }
 
+/// The fold constants for folding 2048 bits ahead.
+///
+/// ```text
+/// ensures  K2048 == fold_pair(2048)
+/// ```
 pub exec const K2048: u128
     ensures
         K2048 == fold_pair(2048),
@@ -1056,6 +1066,11 @@ pub exec const K2048: u128
     fold_pair_exec(2048)
 }
 
+/// The fold constants for folding 1536 bits ahead.
+///
+/// ```text
+/// ensures  K1536 == fold_pair(1536)
+/// ```
 pub exec const K1536: u128
     ensures
         K1536 == fold_pair(1536),
@@ -1063,6 +1078,11 @@ pub exec const K1536: u128
     fold_pair_exec(1536)
 }
 
+/// The fold constants for folding 1024 bits ahead.
+///
+/// ```text
+/// ensures  K1024 == fold_pair(1024)
+/// ```
 pub exec const K1024: u128
     ensures
         K1024 == fold_pair(1024),
@@ -1070,6 +1090,11 @@ pub exec const K1024: u128
     fold_pair_exec(1024)
 }
 
+/// The fold constants for folding 768 bits ahead.
+///
+/// ```text
+/// ensures  K768 == fold_pair(768)
+/// ```
 pub exec const K768: u128
     ensures
         K768 == fold_pair(768),
@@ -1077,6 +1102,11 @@ pub exec const K768: u128
     fold_pair_exec(768)
 }
 
+/// The fold constants for folding 512 bits ahead.
+///
+/// ```text
+/// ensures  K512 == fold_pair(512)
+/// ```
 pub exec const K512: u128
     ensures
         K512 == fold_pair(512),
@@ -1084,6 +1114,11 @@ pub exec const K512: u128
     fold_pair_exec(512)
 }
 
+/// The fold constants for folding 384 bits ahead.
+///
+/// ```text
+/// ensures  K384 == fold_pair(384)
+/// ```
 pub exec const K384: u128
     ensures
         K384 == fold_pair(384),
@@ -1091,6 +1126,11 @@ pub exec const K384: u128
     fold_pair_exec(384)
 }
 
+/// The fold constants for folding 256 bits ahead.
+///
+/// ```text
+/// ensures  K256 == fold_pair(256)
+/// ```
 pub exec const K256: u128
     ensures
         K256 == fold_pair(256),
@@ -1098,6 +1138,11 @@ pub exec const K256: u128
     fold_pair_exec(256)
 }
 
+/// The fold constants for folding 128 bits ahead.
+///
+/// ```text
+/// ensures  K128 == fold_pair(128)
+/// ```
 pub exec const K128: u128
     ensures
         K128 == fold_pair(128),

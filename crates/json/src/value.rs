@@ -76,6 +76,7 @@ impl Default for Parser {
 }
 
 impl Parser {
+    /// A parser that decodes strings as it parses (see [`Parser::lazy`]).
     pub fn new() -> Parser {
         Parser { tape: None, idx: Vec::new(), eager: true }
     }
@@ -86,7 +87,7 @@ impl Parser {
         Parser { tape: None, idx: Vec::new(), eager: false }
     }
 
-    /// Switches between lazy and eager string decoding (see [`lazy`]),
+    /// Switches between lazy and eager string decoding (see [`Parser::lazy`]),
     /// keeping this parser's buffers.
     pub fn set_lazy(&mut self, lazy: bool) {
         self.eager = !lazy;
@@ -214,11 +215,17 @@ impl fmt::Debug for Document<'_> {
 /// The type of a JSON value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Type {
+    /// `null`.
     Null,
+    /// `true` or `false`.
     Bool,
+    /// A number.
     Number,
+    /// A string.
     String,
+    /// An array.
     Array,
+    /// An object.
     Object,
 }
 
@@ -256,6 +263,7 @@ impl<'d> Value<'d> {
         }
     }
 
+    /// The value's type.
     #[inline]
     pub fn kind(&self) -> Type {
         match self.tok().kind {
@@ -268,11 +276,13 @@ impl<'d> Value<'d> {
         }
     }
 
+    /// Whether the value is `null`.
     #[inline]
     pub fn is_null(&self) -> bool {
         self.tok().kind == Kind::Null
     }
 
+    /// The value if it is a boolean.
     #[inline]
     pub fn as_bool(&self) -> Option<bool> {
         match self.tok().kind {
@@ -397,11 +407,13 @@ pub struct Key<'d> {
 }
 
 impl<'d> Key<'d> {
+    /// The key, unescaped, as bytes.
     #[inline]
     pub fn as_bytes(&self) -> Cow<'d, [u8]> {
         string_bytes(self.v, self.idx, self.tok)
     }
 
+    /// The key, unescaped, if it is valid UTF-8.
     pub fn as_str(&self) -> Option<Cow<'d, str>> {
         cow_str(self.as_bytes())
     }

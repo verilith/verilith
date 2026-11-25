@@ -12,7 +12,7 @@
 //!   links exist at the time.
 use crate::order::*;
 use crate::policy::*;
-use crate::read::read_entry;
+use crate::read::{read_entry, MAX_ARCHIVE};
 use crate::spec::*;
 use crate::tar::find_byte_exec;
 use crate::zip::{copy_range, Entry};
@@ -534,7 +534,7 @@ pub open spec fn items_match(b: Seq<u8>, es: Seq<SEntry>, items: Seq<Item>) -> b
 fn build_items(b: &[u8], es: &Vec<Entry>) -> (r: Result<Vec<Item>, Rejected>)
     requires
         in_bounds(views(es@), b@.len() as int),
-        b@.len() < 0x1_0000_0000_0000,
+        b@.len() < MAX_ARCHIVE,
     ensures
         r matches Ok(items) ==> items_match(b@, views(es@), items@),
 {
@@ -546,7 +546,7 @@ fn build_items(b: &[u8], es: &Vec<Entry>) -> (r: Result<Vec<Item>, Rejected>)
             i <= n,
             n == es@.len(),
             in_bounds(views(es@), b@.len() as int),
-            b@.len() < 0x1_0000_0000_0000,
+            b@.len() < MAX_ARCHIVE,
             items_match(b@, views(es@), items@),
             forall|k: int| 0 <= k < items@.len() ==> (#[trigger] items@[k]).entry < i,
         decreases n - i,
@@ -1086,7 +1086,7 @@ pub open spec fn link_safe(items: Seq<SItem>, k: int) -> bool {
 pub fn plan(b: &[u8], es: &Vec<Entry>) -> (r: Result<Vec<Item>, Rejected>)
     requires
         in_bounds(views(es@), b@.len() as int),
-        b@.len() < 0x1_0000_0000_0000,
+        b@.len() < MAX_ARCHIVE,
     ensures
         r matches Ok(items) ==> plan_safe(sitems(items@)) && items_match(b@, views(es@), items@),
 {

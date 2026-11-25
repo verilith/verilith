@@ -246,7 +246,7 @@ and converted by the non-interlaced paths.
 
 On the repository's benchmark (`png-libpng`: the 24 Kodak photos decoded
 to RGBA8, Apple M3 Pro, 2026-11-22) it is 1.41x libpng as a geometric mean;
-see the [benchmark table](../../README.md#benchmarks).
+see the [benchmark table](https://github.com/verilith/verilith#benchmarks).
 
 Where the remaining time goes, on the RGB photo in native format: about
 two thirds is decompression (verilith-zlib 31 ms against 26 ms for fdeflate, which
@@ -261,8 +261,11 @@ decoder delivers it (level with the one-shot path).
 
 ## Building
 
-64-bit targets only: the proofs fix `usize` at 64 bits, so a 32-bit build
-(wasm32 included) stops with a `compile_error!`.
+The proofs hold for 64-bit and for 32-bit targets (wasm32 included):
+`scripts/verify.sh png` checks the first and `crates/png/scripts/verify-narrow.sh`
+the second, and the tests pass on wasm32-wasip1. On a 32-bit target an
+image whose output does not fit in the address space is refused with
+`Error::TooLarge`, as one over the caller's limit is.
 
 ```sh
 cargo build --release                       # the library

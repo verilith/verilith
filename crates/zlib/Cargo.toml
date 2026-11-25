@@ -7,6 +7,7 @@ keywords = ["zlib", "deflate", "gzip", "verified", "verus"]
 categories = ["compression"]
 description = "A formally verified (Verus) DEFLATE, zlib and gzip decompressor and compressor, with zlib's C API"
 edition = "2024"
+rust-version = "1.89"
 
 [lib]
 crate-type = ["rlib", "staticlib"]

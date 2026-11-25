@@ -1,4 +1,4 @@
-//! What a correct register form is ([`rcode_ok`]), and its verified
+//! What a correct register form is (`rcode_ok`), and its verified
 //! checker.
 //!
 //! The translator in [`crate::reg`] is not trusted: [`check_rcode`] checks
@@ -6,7 +6,7 @@
 //! certificate, the way [`crate::check`] checks the validator's
 //! certificates. An operation is correct when, on every value stack, it
 //! computes what the instructions it stands for compute on the flat
-//! machine ([`crate::mach::msteps`]), on the slots the semantics can see.
+//! machine (`crate::mach::msteps`), on the slots the semantics can see.
 use vstd::prelude::*;
 use crate::ast::*;
 use crate::sem::*;
@@ -1666,9 +1666,11 @@ pub fn check_rcode(m: &Module, d: usize, fc: &FuncCert, code: &Code) -> (ok: boo
     let ghost ops = rops_ok(m, d as nat, *fc, code);
     proof { assert(ops); }
     let mut p = 0;
+    let _ = code.entry.len();
     while p <= len
         invariant
             ops, ops == rops_ok(m, d as nat, *fc, code), body@ == m.funcs@[d as int].body@,
+            len < usize::MAX,
             len == m.funcs@[d as int].body@.len(), code.entry@.len() == len + 1,
             0 <= p <= len + 1,
             forall|p2: int| 0 <= p2 < p && code.entry@[p2] != NONE ==> #[trigger] entry_at(code, p2),

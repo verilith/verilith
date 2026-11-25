@@ -8,9 +8,10 @@ use vstd::prelude::*;
 
 verus! {
 
-/// Tables come out of a font directory, whose lengths are 32 bits.
+/// Tables come out of a font directory, whose lengths are 32 bits (and
+/// on a 32-bit target, out of a slice: see [`TABLE_MAX`]).
 pub open spec fn small(t: &[u8]) -> bool {
-    t.len() <= 0xFFFF_FFFF
+    t.len() <= TABLE_MAX
 }
 
 #[inline]

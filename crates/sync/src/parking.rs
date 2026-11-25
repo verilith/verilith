@@ -26,8 +26,12 @@ static TABLE: [Bucket; BUCKETS] = [const { Bucket { list: Mutex::new(Vec::new())
 
 #[inline]
 fn bucket(key: usize) -> &'static Bucket {
-    // Fibonacci hashing of the address.
-    &TABLE[(key.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (usize::BITS - 6)) as usize]
+    // Fibonacci hashing of the address: 2^64 or 2^32 over the golden ratio.
+    #[cfg(target_pointer_width = "64")]
+    const PHI: usize = 0x9E37_79B9_7F4A_7C15;
+    #[cfg(target_pointer_width = "32")]
+    const PHI: usize = 0x9E37_79B9;
+    &TABLE[(key.wrapping_mul(PHI) >> (usize::BITS - 6)) as usize]
 }
 
 /// Sleeps on `key` if `validate()` holds, until woken by `unpark_*` on the

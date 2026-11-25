@@ -756,7 +756,9 @@ proof fn lemma_sv_members(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STo
 /// A position between two tokens of `s`, reading the structural index
 /// through the window `w`.
 pub struct Cursor<'a> {
+    /// The document.
     pub s: &'a [u8],
+    /// The window onto the structural index.
     pub w: Win<'a>,
     /// The next unread index entry.
     pub k: usize,
@@ -1036,7 +1038,7 @@ impl<'a> Cursor<'a> {
         proof {
             lemma_number_lexeme(g, j as int);
         }
-        match (if verilith_simd::neon::has_neon() { ex_number_scan_k(self.s, j) } else { ex_number_scan(self.s, j) }) {
+        match if verilith_simd::neon::has_neon() { ex_number_scan_k(self.s, j) } else { ex_number_scan(self.s, j) } {
             Some((e, v, ok)) => {
                 proof {
                     lemma_scalar_run(g, st, j as int, e as int);

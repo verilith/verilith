@@ -1,11 +1,11 @@
 //! Certified code never gets stuck (progress), and every step keeps the
 //! machine's heights and labels equal to the certificate's (preservation).
 //!
-//! [`inv`] says each frame sits at a live position of its function's
+//! `inv` says each frame sits at a live position of its function's
 //! certificate with exactly the certified stack height and label stack;
-//! frames below the top are waiting at a call. [`lemma_step`] shows that
+//! frames below the top are waiting at a call. `lemma_step` shows that
 //! from such a state the semantics never returns `Stuck` and every
-//! successor state satisfies [`inv`] again.
+//! successor state satisfies `inv` again.
 use vstd::prelude::*;
 use crate::ast::*;
 use crate::sem::*;

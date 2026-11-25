@@ -37,6 +37,11 @@ pub enum ErrorKind {
     /// than any address space gives a process today. (A 32-bit target's
     /// limit, 2^32 - 1, is past the largest slice it can have.)
     TooLarge,
+    /// Reading the DTD whole (its parameter entities expanded, its
+    /// external subset loaded) takes more than the budget allows
+    /// (`pe::FLAT_FUEL` steps), as a "billion laughs" made of parameter
+    /// entities does.
+    Limit,
 }
 
 /// A rejected document: why, and where. `offset` is a byte offset into
@@ -44,9 +49,13 @@ pub enum ErrorKind {
 /// encoding); `line` and `column` count from 1, the column in bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Error {
+    /// What is wrong.
     pub kind: ErrorKind,
+    /// The byte offset where it was found.
     pub offset: usize,
+    /// The line, from 1.
     pub line: usize,
+    /// The column, from 1, in bytes.
     pub column: usize,
 }
 
@@ -56,6 +65,7 @@ impl fmt::Display for Error {
             ErrorKind::Encoding => "not text in a known encoding, or a character XML does not allow",
             ErrorKind::Syntax => "not well-formed",
             ErrorKind::TooLarge => "longer than token positions hold",
+            ErrorKind::Limit => "its DTD expands past the budget for reading it",
         };
         write!(f, "{what} at line {} column {} (byte {})", self.line, self.column, self.offset)
     }
@@ -100,13 +110,47 @@ struct AttDef {
     value: (usize, usize),
 }
 
+/// The declarations a document's content refers to: its own, or those of
+/// a stream's prolog (`Document::chunk`).
+#[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
+enum Dtd<'a> {
+    Own(DtdOut),
+    Prolog(&'a DtdOut),
+}
+
+impl std::ops::Deref for Dtd<'_> {
+    type Target = DtdOut;
+
+    fn deref(&self) -> &DtdOut {
+        match self {
+            Dtd::Own(d) => d,
+            Dtd::Prolog(d) => d,
+        }
+    }
+}
+
 /// A parsed document.
 pub struct Document<'a> {
     input: &'a [u8],
     owned: Option<Vec<u8>>,
     tape: Tape,
-    dtd: DtdOut,
+    dtd: Dtd<'a>,
+    /// The text the declarations' positions are in, where it is not the
+    /// document's own: a stream's prolog.
+    pro: Option<&'a [u8]>,
+    /// The XML declaration says `standalone="yes"`.
+    standalone: bool,
     ent_tapes: Vec<OnceCell<Option<Tape>>>,
+    /// The text of each external parsed entity that was read: decoded,
+    /// with its text declaration left out and line ends normalized, and
+    /// checked to be content (`content::ex_ent_content`).
+    ext_rts: Vec<OnceCell<Vec<u8>>>,
+    /// Where each parameter entity's text begins and ends in the
+    /// flattened DTD (`pe::Loader::note_push`).
+    trace: Vec<(usize, Option<Vec<u8>>, Vec<u8>)>,
+    /// The flattened DTD (`pe_spec::flat`) and its tape, when the DTD was
+    /// read whole: the declarations' positions are in it.
+    flat: Option<(Vec<u8>, Tape)>,
     defs: Vec<AttDef>,
     /// `defs` by (element type, attribute name), and by element type.
     def_index: HashMap<Box<[u8]>, HashMap<Box<[u8]>, usize>>,
@@ -121,13 +165,70 @@ impl fmt::Debug for Document<'_> {
 }
 
 /// Parses `input`, a document in UTF-8 (or UTF-16 with its byte order
-/// mark, or ISO-8859-1 or US-ASCII as its declaration says).
+/// mark, or ISO-8859-1 or US-ASCII as its declaration says). Parameter
+/// entities declared in the internal subset are expanded; external
+/// entities are not read (see `parse_with`).
 pub fn parse(input: &[u8]) -> Result<Document<'_>, Error> {
+    parse_x(input, false, &mut crate::pe::Loader::none(), false)
+}
+
+/// `parse`, reading the external subset and external parameter entities
+/// with `loader` (`pe::Loader::new`), which is asked for each once. What
+/// it gives is checked like the document: decoded by its byte order mark
+/// or text declaration, with every declaration in it well-formed.
+pub fn parse_with<'a>(input: &'a [u8], loader: &mut crate::pe::Loader) -> Result<Document<'a>, Error> {
+    parse_x(input, true, loader, true)
+}
+
+/// `parse_with`, reading the external subset and external parameter
+/// entities but not external general entities (libxml2's
+/// XML_PARSE_DTDLOAD).
+#[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
+pub(crate) fn parse_dtd_with<'a>(input: &'a [u8], loader: &mut crate::pe::Loader) -> Result<Document<'a>, Error> {
+    parse_x(input, true, loader, false)
+}
+
+fn parse_x<'a>(input: &'a [u8], load: bool, loader: &mut crate::pe::Loader, general: bool) -> Result<Document<'a>, Error> {
+    use crate::pe::{XDocRes, XDtdRes};
     let mut tape = Tape::new();
-    match crate::enc::ex_parse(input, &mut tape) {
-        Some((owned, dtd)) => Ok(Document::new(input, owned, tape, dtd)),
-        None => Err(diagnose(input, &tape)),
+    loader.trace.clear();
+    let doc = match crate::pe::ex_parse_x(input, &mut tape, load, loader, crate::pe::FLAT_FUEL) {
+        Some((owned, XDocRes::Ok(XDtdRes::Own(dtd)))) => Document::new(input, owned, tape, dtd, None),
+        Some((owned, XDocRes::Ok(XDtdRes::Flat { text, tape: ft, out }))) => {
+            let mut d = Document::new(input, owned, tape, out, Some((text, ft)));
+            d.trace = std::mem::take(&mut loader.trace);
+            d
+        }
+        Some((owned, XDocRes::Limit)) => {
+            let text: &[u8] = owned.as_deref().unwrap_or(input);
+            return Err(error_at(ErrorKind::Limit, text, doctype_at(&tape)));
+        }
+        Some((owned, _)) => {
+            let e = diagnose(input, &tape);
+            if e.kind == ErrorKind::Syntax && e.offset == 0 {
+                // Rejected for what the DTD read whole holds: at the
+                // document type declaration.
+                let text: &[u8] = owned.as_deref().unwrap_or(input);
+                return Err(error_at(ErrorKind::Syntax, text, doctype_at(&tape)));
+            }
+            return Err(e);
+        }
+        None => return Err(diagnose(input, &tape)),
+    };
+    if general {
+        doc.read_external(loader)?;
     }
+    Ok(doc)
+}
+
+/// At most this many external entities are read for a document, and at
+/// most this many bytes of them in all.
+const MAX_EXT_ENTITIES: usize = 1 << 12;
+const MAX_EXT_BYTES: usize = 1 << 28;
+
+/// Where the document type declaration's name is, on a tape (0 if none).
+fn doctype_at(tape: &Tape) -> usize {
+    tape.toks.iter().find(|t| t.kind == Kind::Doctype).map_or(0, |t| t.a())
 }
 
 fn diagnose(input: &[u8], tape: &Tape) -> Error {
@@ -171,28 +272,115 @@ fn cow_utf8(c: Cow<'_, [u8]>) -> Cow<'_, str> {
 /// A buffer of the document: the text itself, or the replacement text
 /// of the internal entity at an index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Src {
+pub(crate) enum Src {
     Doc,
     Ent(usize),
+    /// The text of the declarations (the document's own, but for a
+    /// stream: its prolog).
+    Pro,
+}
+
+impl Src {
+    /// In the document's text (or its prolog's), not in an entity's
+    /// replacement text: line ends are not yet normalized.
+    fn raw(self) -> bool {
+        !matches!(self, Src::Ent(_))
+    }
 }
 
 impl<'a> Document<'a> {
-    fn new(input: &'a [u8], owned: Option<Vec<u8>>, tape: Tape, dtd: DtdOut) -> Self {
+    fn new(input: &'a [u8], owned: Option<Vec<u8>>, tape: Tape, dtd: DtdOut, flat: Option<(Vec<u8>, Tape)>) -> Self {
         let n = dtd.ents.len();
+        let standalone = tape.toks.first().map_or(false, |t| t.kind == Kind::XmlDecl && t.f == 1);
         let mut d = Document {
             input,
             owned,
             tape,
-            dtd,
+            dtd: Dtd::Own(dtd),
+            pro: None,
+            standalone,
             ent_tapes: (0..n).map(|_| OnceCell::new()).collect(),
+            ext_rts: (0..n).map(|_| OnceCell::new()).collect(),
+            trace: Vec::new(),
+            flat,
             defs: Vec::new(),
             def_index: HashMap::new(),
             defs_of: HashMap::new(),
             root: 0,
         };
         d.root = d.tape.toks.iter().position(|t| t.kind == Kind::STag).unwrap_or(0) as usize;
-        d.att_defs();
+        if let Some((ft, fk)) = d.flat.take() {
+            d.att_defs(&fk.toks, Some(&ft));
+            d.flat = Some((ft, fk));
+        } else {
+            let toks = std::mem::take(&mut d.tape.toks);
+            d.att_defs(&toks, None);
+            d.tape.toks = toks;
+        }
         d
+    }
+
+    /// A stream's document, read a chunk at a time (`set_chunk`): its
+    /// content refers to the declarations `dtd`, at positions in `pro`,
+    /// whose tokens are `ptoks` (the prolog's).
+    #[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
+    pub(crate) fn chunk(dtd: &'a DtdOut, pro: &'a [u8], ptoks: &[Tok], standalone: bool) -> Self {
+        let n = dtd.ents.len();
+        let mut d = Document {
+            input: &[],
+            owned: None,
+            tape: Tape::new(),
+            dtd: Dtd::Prolog(dtd),
+            pro: Some(pro),
+            standalone,
+            ent_tapes: (0..n).map(|_| OnceCell::new()).collect(),
+            ext_rts: (0..n).map(|_| OnceCell::new()).collect(),
+            trace: Vec::new(),
+            flat: None,
+            defs: Vec::new(),
+            def_index: HashMap::new(),
+            defs_of: HashMap::new(),
+            root: 0,
+        };
+        d.att_defs(ptoks, Some(pro));
+        d
+    }
+
+    /// The next chunk of a stream's document: the window's text, and the
+    /// tokens read in it. The tokens of the last chunk come back.
+    #[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
+    pub(crate) fn set_chunk(&mut self, text: &'a [u8], tape: Tape) -> Tape {
+        self.input = text;
+        std::mem::replace(&mut self.tape, tape)
+    }
+
+    /// The XML declaration says `standalone="yes"`.
+    #[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
+    pub(crate) fn standalone(&self) -> bool {
+        self.standalone
+    }
+
+    /// The text the declarations' positions are in.
+    fn dtd_text(&self) -> &[u8] {
+        if let Some((t, _)) = &self.flat {
+            return t;
+        }
+        match self.pro {
+            Some(p) => p,
+            None => self.text(),
+        }
+    }
+
+    /// Where each parameter entity's text begins (its name) and ends
+    /// (`None`) in the flattened DTD.
+    #[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
+    pub(crate) fn pe_trace(&self) -> &[(usize, Option<Vec<u8>>, Vec<u8>)] {
+        &self.trace
+    }
+
+    /// The document's tape.
+    pub(crate) fn into_tape(self) -> Tape {
+        self.tape
     }
 
     /// The text of the document in UTF-8.
@@ -252,7 +440,7 @@ impl<'a> Document<'a> {
     /// the document itself (an entity's replacement text already is).
     fn text_of(&self, src: Src, t: Tok) -> Cow<'_, str> {
         let raw = self.span(src, t.a(), t.b());
-        if src == Src::Doc && raw.contains(&b'\r') {
+        if src.raw() && raw.contains(&b'\r') {
             let mut out = Vec::with_capacity(raw.len());
             ex_eol(self.buf(src), t.a(), t.b(), &mut out);
             cow_utf8(Cow::Owned(out))
@@ -264,7 +452,7 @@ impl<'a> Document<'a> {
     /// The notations declared in the internal subset: name, public id,
     /// system id.
     pub fn notations(&self) -> Vec<(&str, Option<&str>, Option<&str>)> {
-        let toks = &self.tape.toks;
+        let (src, toks) = self.dtd_toks();
         let mut out = Vec::new();
         for (i, t) in toks.iter().enumerate() {
             if t.kind != Kind::NotationDecl {
@@ -274,19 +462,19 @@ impl<'a> Document<'a> {
             let mut s = None;
             for u in &toks[i + 1..] {
                 match u.kind {
-                    Kind::PubId => p = Some(utf8(self.span(Src::Doc, u.a(), u.b()))),
-                    Kind::SysId => s = Some(utf8(self.span(Src::Doc, u.a(), u.b()))),
+                    Kind::PubId => p = Some(utf8(self.span(src, u.a(), u.b()))),
+                    Kind::SysId => s = Some(utf8(self.span(src, u.a(), u.b()))),
                     _ => break,
                 }
             }
-            out.push((utf8(self.span(Src::Doc, t.a(), t.b())), p, s));
+            out.push((utf8(self.span(src, t.a(), t.b())), p, s));
         }
         out
     }
 
     fn env(&self) -> XEnv<'_> {
         XEnv {
-            doc: self.text(),
+            doc: self.dtd_text(),
             ents: &self.dtd.ents,
             wfc: self.dtd.wfc,
             oka: &self.dtd.oka,
@@ -298,7 +486,8 @@ impl<'a> Document<'a> {
     fn buf(&self, src: Src) -> &[u8] {
         match src {
             Src::Doc => self.text(),
-            Src::Ent(k) => &self.dtd.rts[k as usize],
+            Src::Ent(k) => self.ent_text(k),
+            Src::Pro => self.dtd_text(),
         }
     }
 
@@ -313,7 +502,29 @@ impl<'a> Document<'a> {
                 Some(t) => &t.toks,
                 None => &[],
             },
+            Src::Pro => match &self.flat {
+                Some((_, t)) => &t.toks,
+                None => &[],
+            },
         }
+    }
+
+    /// The tokens of the declarations and the text they are in: the
+    /// flattened DTD's (`Src::Pro`) if the DTD was read whole, else the
+    /// document's own.
+    #[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
+    pub(crate) fn dtd_toks(&self) -> (Src, &[Tok]) {
+        match &self.flat {
+            Some((_, t)) => (Src::Pro, &t.toks),
+            None => (Src::Doc, &self.tape.toks),
+        }
+    }
+
+    /// The DTD was read whole: its declarations are in `dtd_toks`, over
+    /// `buf(Src::Pro)`.
+    #[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
+    pub(crate) fn flattened(&self) -> bool {
+        self.flat.is_some()
     }
 
     /// The tape of the replacement text of entity `k`, parsed as content
@@ -323,13 +534,145 @@ impl<'a> Document<'a> {
             .get_or_init(|| {
                 let mut t = Tape::new();
                 let env = self.env();
-                if crate::content::ex_ent_content(&self.dtd.rts[k], &mut t, &env) {
+                if crate::content::ex_ent_content(self.ent_text(k), &mut t, &env) {
                     Some(t)
                 } else {
                     None
                 }
             })
             .as_ref()
+    }
+
+    /// The replacement text of entity `k`: an internal entity's, or an
+    /// external parsed entity's that was read (empty if not).
+    fn ent_text(&self, k: usize) -> &[u8] {
+        if self.dtd.ents[k].kind == 0 {
+            &self.dtd.rts[k]
+        } else {
+            self.ext_rts[k].get().map_or(&[], |v| v.as_slice())
+        }
+    }
+
+    /// Whether entity `k`'s replacement text is known: it is internal, or
+    /// an external parsed entity that was read.
+    #[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
+    pub(crate) fn expandable(&self, k: usize) -> bool {
+        self.dtd.ents[k].kind == 0 || self.ext_rts[k].get().is_some()
+    }
+
+    /// The declaration of the external entity `k`: its system and public
+    /// identifiers, and the base URI they are relative to ("" for the
+    /// document entity).
+    pub(crate) fn ext_ids(&self, k: usize) -> Option<(&[u8], &[u8], &[u8])> {
+        let e = &self.dtd.ents[k];
+        if e.kind != 1 {
+            return None;
+        }
+        let (_, toks) = self.dtd_toks();
+        let text = self.dtd_text();
+        let i = toks.iter().position(|t| t.kind == Kind::EntityDecl && t.f == 0 && t.a() == e.a && t.b() == e.b)?;
+        let (mut sys, mut pubid): (&[u8], &[u8]) = (&[], &[]);
+        for u in &toks[i + 1..] {
+            match u.kind {
+                Kind::SysId => sys = &text[u.a()..u.b()],
+                Kind::PubId => pubid = &text[u.a()..u.b()],
+                Kind::NData => return None,
+                _ => break,
+            }
+        }
+        // The base: that of the innermost entity whose text holds the
+        // declaration.
+        let mut stack: Vec<&[u8]> = Vec::new();
+        for (pos, name, base) in &self.trace {
+            if *pos > e.a {
+                break;
+            }
+            match name {
+                Some(_) => stack.push(base),
+                None => {
+                    stack.pop();
+                }
+            }
+        }
+        Some((sys, pubid, stack.last().copied().unwrap_or(&[])))
+    }
+
+    /// Takes `bytes` as the text of the external parsed entity `k`: decoded
+    /// by its byte order mark or text declaration (`pe::ex_ext_text`), and
+    /// checked to be content (`content::ex_ent_content`). False if it is
+    /// not (and nothing is kept), or the entity was read already.
+    #[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
+    pub(crate) fn set_ext(&self, k: usize, bytes: Vec<u8>) -> bool {
+        if self.dtd.ents[k].kind != 1 || self.ext_rts[k].get().is_some() {
+            return false;
+        }
+        let Some((t, q)) = crate::pe::ex_ext_text(bytes) else { return false };
+        let mut r = Vec::with_capacity(t.len() - q);
+        ex_eol(&t, q, t.len(), &mut r);
+        let mut tape = Tape::new();
+        if !crate::content::ex_ent_content(&r, &mut tape, &self.env()) {
+            return false;
+        }
+        let _ = self.ext_rts[k].set(r);
+        let _ = self.ent_tapes[k].set(Some(tape));
+        true
+    }
+
+    /// Reads, with `loader`, each external parsed entity the content refers
+    /// to (in the document, or in the text of an entity it refers to), and
+    /// checks it (`set_ext`) and that no entity refers to itself.
+    fn read_external(&self, loader: &mut crate::pe::Loader) -> Result<(), Error> {
+        // 0: not seen, 1: being read, 2: done.
+        let mut state = vec![0u8; self.dtd.ents.len()];
+        let toks = &self.tape.toks;
+        let mut i = self.root;
+        while i < toks.len() {
+            if toks[i].kind == Kind::EntRef {
+                if let Some((k, _)) = self.entity(Src::Doc, toks[i].a(), toks[i].b()) {
+                    self.read_from(k, &mut state, loader).map_err(|kind| error_at(kind, self.text(), toks[i].a()))?;
+                }
+            }
+            i += 1;
+        }
+        Ok(())
+    }
+
+    fn read_from(&self, k: usize, state: &mut [u8], loader: &mut crate::pe::Loader) -> Result<(), ErrorKind> {
+        match state[k] {
+            1 => return Err(ErrorKind::Syntax),
+            2 => return Ok(()),
+            _ => {}
+        }
+        if self.dtd.ents[k].kind == 1 && self.ext_rts[k].get().is_none() {
+            let Some((sys, pubid, base)) = self.ext_ids(k) else { return Ok(()) };
+            if loader.count >= MAX_EXT_ENTITIES {
+                return Err(ErrorKind::Limit);
+            }
+            if let Some((bytes, _)) = loader.fetch(base, sys, pubid) {
+                if loader.bytes > MAX_EXT_BYTES {
+                    return Err(ErrorKind::Limit);
+                }
+                if !self.set_ext(k, bytes) {
+                    return Err(ErrorKind::Syntax);
+                }
+            }
+        }
+        if !self.expandable(k) {
+            state[k] = 2;
+            return Ok(());
+        }
+        state[k] = 1;
+        let n = self.ent_tape(k).map_or(0, |t| t.toks.len());
+        for j in 0..n {
+            let t = self.ent_tape(k).unwrap().toks[j];
+            if t.kind == Kind::EntRef {
+                if let Some((m, _)) = self.entity(Src::Ent(k), t.a(), t.b()) {
+                    self.read_from(m, state, loader)?;
+                }
+            }
+        }
+        state[k] = 2;
+        Ok(())
     }
 
     /// The entity a reference names, if it was declared: its index, and
@@ -345,10 +688,12 @@ impl<'a> Document<'a> {
     /// declarations that were processed (all before the first parameter
     /// entity reference that was not read, unless the document is
     /// standalone, §5.1), the first one binding for each attribute (§3.3).
-    fn att_defs(&mut self) {
-        let toks = &self.tape.toks;
-        let text: &[u8] = self.owned.as_deref().unwrap_or(self.input);
-        let standalone = toks.first().map_or(false, |t| t.kind == Kind::XmlDecl && t.f == 1);
+    fn att_defs(&mut self, toks: &[Tok], pro: Option<&[u8]>) {
+        let text: &[u8] = match pro {
+            Some(p) => p,
+            None => self.owned.as_deref().unwrap_or(self.input),
+        };
+        let standalone = self.standalone;
         let mut skip = false;
         let mut elem = (0, 0);
         let mut i = 0;
@@ -390,7 +735,7 @@ impl<'a> Document<'a> {
                 self.buf(src),
                 a as usize,
                 b as usize,
-                src == Src::Doc,
+                src.raw(),
                 &env,
                 &self.dtd.rts,
                 self.dtd.ents.len(),
@@ -448,7 +793,9 @@ pub struct Element<'d> {
 /// An attribute, with its normalized value.
 #[derive(Clone, Debug)]
 pub struct Attribute<'d> {
+    /// The attribute's name.
     pub name: &'d str,
+    /// Its value, normalized (references replaced, white space as the attribute's type says).
     pub value: Cow<'d, str>,
     /// The value came from the DTD's default, not from the start tag.
     pub defaulted: bool,
@@ -458,12 +805,14 @@ pub struct Attribute<'d> {
 /// entities expanded in place.
 #[derive(Clone, Debug)]
 pub enum Child<'d> {
+    /// A child element.
     Element(Element<'d>),
     /// Character data, line ends normalized; a character reference is a
     /// child of its own.
     Text(Cow<'d, str>),
     /// The text of a CDATA section.
     CData(Cow<'d, str>),
+    /// A comment's text.
     Comment(Cow<'d, str>),
     /// A processing instruction: target and data.
     PI(&'d str, Cow<'d, str>),
@@ -520,7 +869,7 @@ impl<'d> Element<'d> {
             out.push(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: false });
             i += 2;
         }
-        let text = doc.text();
+        let text = doc.dtd_text();
         let given: HashSet<&[u8]> = out.iter().map(|a| a.name.as_bytes()).collect();
         for &k in doc.defs_for(elem) {
             let d = &doc.defs[k];
@@ -531,7 +880,7 @@ impl<'d> Element<'d> {
             if given.contains(name) {
                 continue;
             }
-            let value = doc.value(Src::Doc, d.value.0, d.value.1, false, d.ty, limit)?;
+            let value = doc.value(Src::Pro, d.value.0, d.value.1, false, d.ty, limit)?;
             out.push(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: true });
         }
         Ok(out)
@@ -606,7 +955,7 @@ impl<'d> Iterator for Attrs<'d> {
             let value = doc.value(self.e.src, v.a(), v.b(), v.f != 0, ty, usize::MAX).unwrap_or(Cow::Borrowed(&[]));
             return Some(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: false });
         }
-        let text = doc.text();
+        let text = doc.dtd_text();
         let mine = doc.defs_for(self.e.name_bytes());
         while self.d < mine.len() {
             let d = doc.defs[mine[self.d]];
@@ -624,7 +973,7 @@ impl<'d> Iterator for Attrs<'d> {
             if given {
                 continue;
             }
-            let value = doc.value(Src::Doc, d.value.0, d.value.1, false, d.ty, usize::MAX).unwrap_or(Cow::Borrowed(&[]));
+            let value = doc.value(Src::Pro, d.value.0, d.value.1, false, d.ty, usize::MAX).unwrap_or(Cow::Borrowed(&[]));
             return Some(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: true });
         }
         None
@@ -659,7 +1008,7 @@ impl<'d> Iterator for Children<'d> {
                     Child::Element(Element { doc, src, idx: i })
                 }
                 Kind::Text | Kind::CData => {
-                    let v: Cow<'d, [u8]> = if src == Src::Doc && t.f != 0 {
+                    let v: Cow<'d, [u8]> = if src.raw() && t.f & 1 != 0 {
                         let mut out = Vec::with_capacity(t.b() - t.a());
                         ex_eol(doc.buf(src), t.a(), t.b(), &mut out);
                         Cow::Owned(out)
@@ -681,7 +1030,7 @@ impl<'d> Iterator for Children<'d> {
                     Child::PI(utf8(doc.span(src, t.a(), t.b())), doc.text_of(src, d))
                 }
                 Kind::EntRef => match doc.entity(src, t.a(), t.b()) {
-                    Some((k, true)) => {
+                    Some((k, _)) if doc.expandable(k) => {
                         let n = doc.ent_tape(k).map_or(0, |t| t.toks.len());
                         self.outer.push(self.cur);
                         self.cur = (Src::Ent(k as usize), 0, n as usize);

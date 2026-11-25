@@ -5,10 +5,18 @@ A verified Zstandard (RFC 8878) decompressor in Rust, proven with
 C API. It is meant to replace libzstd's decoder in hardened builds (Node.js
 first), alongside libzstd's compressor.
 
-`cargo verus verify` (or `scripts/verify.sh`) checks 276 functions and
+`cargo verus verify` (or `scripts/verify.sh`) checks 293 functions and
 lemmas with no errors and no `assume`; the only `external_body` functions
 in this crate are the seven small copy primitives in
 `src/prims.rs` and the three CPU-feature wrappers in `src/cpu.rs`.
+
+The proofs are checked once per pointer width: CI also runs Verus
+compiling for `wasm32-unknown-unknown`, where `usize` is 32 bits
+(`scripts/verify-narrow.sh`), so the crate builds for wasm32 (browsers,
+Cloudflare Workers) and is proven as built there. Its tests also pass on
+`wasm32-wasip1` under wasmtime (`scripts/wasm32.sh` at the root).
+On a 32-bit target the limits are smaller: see the last rows of
+[DEPARTURES.md](https://github.com/verilith/verilith/blob/main/crates/zstd/DEPARTURES.md).
 
 ## Using it from Rust
 
@@ -39,6 +47,7 @@ libzstd's decompression API.
 | Sequences: decoding, repeat offsets, execution with overlapping matches | `seq::seq_run_exec` against `spec::seq_run` |
 | XXH64 (the content checksum), one-shot and fed in pieces | `verilith_xxhash::Xxh64::update`/`digest` against `spec::xxh64` (both from [verilith-xxhash](https://github.com/verilith/verilith/tree/main/crates/xxhash)) |
 | Streaming, input and output in pieces of any size, with or without a dictionary: a frame end (0) is returned only when the input taken is a whole frame and the output handed out is its content, whatever input follows; before that, all output handed out is the start of the frame's content; the loop terminates | `stream::Stream::stream` against `spec::frame_d` with the stream's dictionary (`frame_ok`), `Stream::lemma_emitted_prefix` |
+| Streaming accepts every frame the spec accepts: it fails only when the spec rejects every frame (Zstandard or skippable) that starts with the frame's input so far. The two exceptions are limits: a window larger than the caller allows (or than 1 TiB), and output near 256 TiB | `stream::Stream::stream` ensures (`fail_ok`, `rejected`) |
 | Streaming keeps only the last window of output (with a dictionary, the last window plus the dictionary's size of dictionary and output), and that gives the same output (a match reaches back no further) | `stream::lemma_compressed_block_shift`, `lemma_block_step_shift` |
 | Streaming memory: the output kept is at most two windows (each with the dictionary's size added) and three blocks, and a unit being collected at most one block | `stream::Stream::inv` (`mem_ok`, `need`) |
 | Dictionaries, loaded: a formatted dictionary (magic number, ID, Huffman table, offset, match length and literals length FSE tables, three repeat offsets, content) is accepted exactly when the spec accepts it, with the spec's tables and offsets; anything shorter than 8 bytes or without the magic number is raw content | `dict::load_dict` against `spec::dict_load`, `dict::raw_dict_exec` against `spec::raw_dict` |
@@ -90,9 +99,13 @@ What the proofs assume rather than prove:
   tested against libzstd's own decoders.
 - Verus, Z3 and the Rust compiler.
 
-Not yet proven: bounds on work, and that streaming accepts every frame the
-spec accepts. What streaming accepts and hands out is proven; the
-streaming tests check against libzstd that it accepts what it should.
+Each of the stream's failures is proven to be the spec's, from the bytes
+already taken, whatever follows them. That covers a magic number that
+is neither kind of frame, a skippable frame too large, a header the spec
+rejects, the wrong dictionary, a block header or block the spec rejects,
+a content size that does not match, and a checksum that does not match.
+
+Not yet proven: bounds on work.
 
 ## Departures from libzstd
 

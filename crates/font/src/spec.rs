@@ -1,5 +1,5 @@
 //! The trusted specification: what it means for a byte string to be a
-//! well-formed OpenType font ([`wf_font`]).
+//! well-formed OpenType font (`wf_font`).
 //!
 //! Everything here is a pure function of the bytes, written from the
 //! OpenType specification (ISO/IEC 14496-22). The sanitizer is proven to
@@ -454,7 +454,7 @@ pub open spec fn info_zero() -> Info {
     Info { points: 0, contours: 0, comps: 0, depth: 0, elems: 0 }
 }
 
-/// How many levels of components [`glyph_fits`] follows: more than a font
+/// How many levels of components `glyph_fits` follows: more than a font
 /// of at most 65535 glyphs can nest without a glyph being a component of
 /// itself, so only a cycle runs out of them. (OTS has no limit either.)
 pub const MAX_COMPONENT_DEPTH: usize = 0xFFFF;

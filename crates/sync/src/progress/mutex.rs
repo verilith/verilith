@@ -10,7 +10,7 @@
 //! in one step, so an unlock that clears the word either comes before the
 //! check (and the waiter does not sleep) or finds the waiter on the list.
 //!
-//! What is proved ([`theorem_deadlock_free`]): in every fair execution,
+//! What is proved (`theorem_deadlock_free`): in every fair execution,
 //! if a thread is inside `lock()` at time `i`, some thread is in its
 //! critical section at some time `j >= i`. The proof rests on two
 //! invariants, both checked inductively over every step of every thread:

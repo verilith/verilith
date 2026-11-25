@@ -1,4 +1,4 @@
-//! Verified check of `cmap`: decides [`wf_cmap`] exactly.
+//! Verified check of `cmap`: decides `wf_cmap` exactly.
 use crate::prims::*;
 use crate::spec::*;
 use vstd::prelude::*;
@@ -185,10 +185,12 @@ fn check_cmap12(t: &[u8], o: usize, many: bool, ng: u16) -> (b: bool)
     if 16 > t.len() - o {
         return false;
     }
-    let n = rd32(t, o + 12) as usize;
-    if rd32(t, o + 4) as usize != 16 + 12 * n || 16 + 12 * n > t.len() - o {
+    // In u64: 12 * n can pass a 32-bit usize.
+    let n = rd32(t, o + 12) as u64;
+    if rd32(t, o + 4) as u64 != 16 + 12 * n || 16 + 12 * n > (t.len() - o) as u64 {
         return false;
     }
+    let n = n as usize;
     let mut k: usize = 0;
     while k < n
         invariant
@@ -214,13 +216,15 @@ fn check_duvs(t: &[u8], d: usize, end: usize) -> (b: bool)
     ensures
         b == wf_duvs(t@, d as int, end as int),
 {
-    if d + 4 > end {
+    // In u64: these can pass a 32-bit usize.
+    if d as u64 + 4 > end as u64 {
         return false;
     }
-    let n = rd32(t, d) as usize;
-    if n == 0 || d + 4 + 4 * n > end {
+    let n = rd32(t, d) as u64;
+    if n == 0 || d as u64 + 4 + 4 * n > end as u64 {
         return false;
     }
+    let n = n as usize;
     let mut k: usize = 0;
     while k < n
         invariant
@@ -252,13 +256,15 @@ fn check_nduvs(t: &[u8], d: usize, end: usize, ng: u16) -> (b: bool)
     ensures
         b == wf_nduvs(t@, d as int, end as int, ng as int),
 {
-    if d + 4 > end {
+    // In u64: these can pass a 32-bit usize.
+    if d as u64 + 4 > end as u64 {
         return false;
     }
-    let n = rd32(t, d) as usize;
-    if n == 0 || d + 4 + 5 * n > end {
+    let n = rd32(t, d) as u64;
+    if n == 0 || d as u64 + 4 + 5 * n > end as u64 {
         return false;
     }
+    let n = n as usize;
     let mut k: usize = 0;
     while k < n
         invariant
@@ -302,12 +308,21 @@ fn check_c14_rec(t: &[u8], o: usize, k: usize, hdr: usize, end: usize, ng: u16) 
         return false;
     }
     let d = rd32(t, r + 3) as usize;
+    // On a 32-bit target o + d can overflow; then it is past the end.
+    #[cfg(target_pointer_width = "32")]
+    if d != 0 && d >= hdr && d > end - o {
+        return false;
+    }
     if d != 0 {
         if d < hdr || !check_duvs(t, o + d, end) {
             return false;
         }
     }
     let nd = rd32(t, r + 7) as usize;
+    #[cfg(target_pointer_width = "32")]
+    if nd != 0 && nd >= hdr && nd > end - o {
+        return false;
+    }
     if nd != 0 {
         if nd < hdr || !check_nduvs(t, o + nd, end, ng) {
             return false;
@@ -503,7 +518,7 @@ fn check_cmap14(t: &[u8], o: usize, ng: u16) -> (b: bool)
     true
 }
 
-/// Decides [`wf_cmap_sub`] for the subtable at `o`.
+/// Decides `wf_cmap_sub` for the subtable at `o`.
 pub fn check_cmap_sub(t: &[u8], o: usize, ng: u16) -> (b: bool)
     requires
         o <= u32::MAX,
@@ -529,7 +544,7 @@ pub fn check_cmap_sub(t: &[u8], o: usize, ng: u16) -> (b: bool)
     }
 }
 
-/// Decides [`cmap_use_ok`].
+/// Decides `cmap_use_ok`.
 pub fn cmap_use(pe: u32, fmt: u16) -> (b: bool)
     ensures
         b == cmap_use_ok(pe as int, fmt as int),
@@ -540,7 +555,7 @@ pub fn cmap_use(pe: u32, fmt: u16) -> (b: bool)
         == 0x0003_000A && (fmt == 12 || fmt == 13))
 }
 
-/// Decides [`cmap_rec_ok`] for encoding record `i`.
+/// Decides `cmap_rec_ok` for encoding record `i`.
 pub fn check_cmap_rec(t: &[u8], i: usize, ng: u16) -> (b: bool)
     requires
         t.len() >= 4,
@@ -557,7 +572,7 @@ pub fn check_cmap_rec(t: &[u8], i: usize, ng: u16) -> (b: bool)
     o >= 4 + 8 * (rd16(t, 2) as usize) && check_cmap_sub(t, o, ng) && cmap_use(rd32(t, r), rd16(t, o))
 }
 
-/// Decides [`wf_cmap`].
+/// Decides `wf_cmap`.
 pub fn check_cmap(t: &[u8], ng: u16) -> (b: bool)
     ensures
         b == wf_cmap(t@, ng as int),

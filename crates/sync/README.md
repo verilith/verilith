@@ -33,8 +33,11 @@ faster than parking_lot in every contended configuration measured but one
 
 ## Usage
 
-64-bit targets only: the proofs fix `usize` at 64 bits, so a 32-bit build
-(wasm32 included) stops with a `compile_error!`.
+The proofs hold for 64-bit and for 32-bit targets (wasm32 included):
+`scripts/verify.sh sync` checks the first and `crates/sync/scripts/verify-narrow.sh`
+the second. Positions stay 64-bit on both, so the no-ABA argument below
+is the same. The crate builds for wasm32-unknown-unknown; its tests spawn
+threads, which wasm32-wasip1 does not have, so they run natively only.
 
 ```rust
 // Instead of parking_lot::{Mutex, RwLock}:

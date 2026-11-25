@@ -6,6 +6,10 @@ use verilith_zstd::frame::{frame_header_exec, le_at};
 use verilith_zstd::huf::*;
 use verilith_zstd::seq::*;
 
+/// A limit no test output reaches: 1 TiB, or 1 GiB on 32-bit targets
+/// (where the decoder takes limits up to 2 GiB).
+const BIG: usize = if usize::BITS == 64 { (1u64 << 40) as usize } else { 1 << 30 };
+
 fn diag(c: &[u8]) -> String {
     let h = match frame_header_exec(&c[4..]) {
         None => return "header".into(),
@@ -126,7 +130,7 @@ fn diag_dir() {
     names.sort();
     for f in names {
         let c = std::fs::read(&f).unwrap();
-        eprintln!("{}: {} | whole: {:?}", f.display(), diag(&c), verilith_zstd::frame::decompress_exec(&c, 1 << 40).map(|v| v.len()));
+        eprintln!("{}: {} | whole: {:?}", f.display(), diag(&c), verilith_zstd::frame::decompress_exec(&c, BIG).map(|v| v.len()));
     }
 }
 
