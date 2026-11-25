@@ -67,13 +67,17 @@ pub open spec fn sub_blocks(b: Seq<u8>, p: int) -> Option<(Seq<u8>, int)>
 
 /// The logical screen descriptor and global colour table.
 pub struct Screen {
+    /// Width of the logical screen, in pixels.
     pub width: nat,
+    /// Height of the logical screen, in pixels.
     pub height: nat,
     /// The packed fields byte: global colour table flag (0x80), colour
     /// resolution (0x70), sort flag (0x08), size of the global colour table
     /// (0x07).
     pub flags: u8,
+    /// The background colour index.
     pub bg: nat,
+    /// The pixel aspect ratio byte.
     pub aspect: nat,
     /// The global colour table: 3 bytes (red, green, blue) per entry.
     pub gct: Option<Seq<u8>>,
@@ -110,9 +114,11 @@ pub open spec fn screen(b: Seq<u8>) -> Option<(Screen, int)> {
 // Graphic control extension (§23)
 // ---------------------------------------------------------------------------
 
+/// A graphic control extension.
 pub struct Gce {
     /// Disposal method, 0 to 7.
     pub disposal: nat,
+    /// Whether the viewer should wait for user input before going on.
     pub user_input: bool,
     /// Delay time, in hundredths of a second.
     pub delay: nat,
@@ -322,13 +328,18 @@ pub open spec fn deinterlace(px: Seq<u8>, w: nat, h: nat) -> Seq<u8> {
 
 /// One image of the data stream.
 pub struct Image {
+    /// Column of the image's left edge on the logical screen.
     pub left: nat,
+    /// Row of the image's top edge on the logical screen.
     pub top: nat,
+    /// Width of the image, in pixels.
     pub width: nat,
+    /// Height of the image, in pixels.
     pub height: nat,
     /// The packed fields byte: local colour table flag (0x80), interlace
     /// flag (0x40), sort flag (0x20), size of the local colour table (0x07).
     pub flags: u8,
+    /// The local colour table: 3 bytes (red, green, blue) per entry.
     pub lct: Option<Seq<u8>>,
     /// The graphic control extension that applies to the image.
     pub gce: Option<Gce>,
@@ -340,6 +351,7 @@ pub struct Image {
     /// Where the image descriptor starts (after the image separator), and
     /// where the image's data ends (after its block terminator).
     pub pos: nat,
+    /// See `pos`.
     pub end: nat,
 }
 
@@ -470,7 +482,9 @@ proof fn walk_decreases(b: Seq<u8>, p: int, gce: Option<Option<Gce>>, imgs: Seq<
 
 /// A decoded GIF file: the logical screen and the images, in order.
 pub struct Gif {
+    /// The logical screen.
     pub screen: Screen,
+    /// The images, in the order they appear in the file.
     pub images: Seq<Image>,
 }
 
