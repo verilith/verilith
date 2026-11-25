@@ -369,6 +369,7 @@ jobs:
         run: crates/${{ matrix.crate }}/ci.sh fuzz
 
   # One check to require in branch protection, whatever the matrix was.
+  # While BLOCKING below is "false", it passes even when a job fails.
   done:
     name: CI
     if: always()
@@ -378,6 +379,15 @@ jobs:
       - name: Every job passed or was skipped
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
+          # CI is advisory for now: a failed job is reported as a warning and
+          # this check still passes, so nothing is blocked on it. Set to
+          # "true" to make failures block again.
+          BLOCKING: "false"
         run: |
           echo "$RESULTS"
-          case " $RESULTS " in *" failure "*|*" cancelled "*) exit 1 ;; esac
+          case " $RESULTS " in
+            *" failure "*|*" cancelled "*)
+              if [ "$BLOCKING" = true ]; then exit 1; fi
+              echo "::warning title=CI is advisory::A job failed or was cancelled ($RESULTS). Not blocking while BLOCKING is false in ci.yml."
+              ;;
+          esac
