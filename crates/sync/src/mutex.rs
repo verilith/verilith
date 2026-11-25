@@ -292,14 +292,23 @@ impl<T> Mutex<T> {
     /// Sleeps while the lock word is contended. Returns false at the deadline.
     #[verifier::external_body]
     fn park(&self, deadline: Deadline) -> bool {
-        let key = self as *const Self as usize;
-        let ok = crate::parking::park(key, || self.is_contended(), deadline.0);
+        let ok = crate::parking::park(self.key(), || self.is_contended(), deadline.0);
         ok || deadline.0.map_or(true, |d| std::time::Instant::now() < d)
     }
 
     #[verifier::external_body]
     fn unpark_one(&self) {
-        crate::parking::unpark(self as *const Self as usize, 1);
+        crate::parking::unpark(self.key(), 1);
+    }
+
+    /// The parking-lot key: the address of the lock word, not of the
+    /// mutex. A lock nested in another's data can share the outer lock's
+    /// address (`RwLock<Mutex<T>>` puts the mutex at offset 0), and then an
+    /// unlock of one could wake a waiter of the other instead of its own.
+    /// Two lock words alive at once never share an address.
+    #[verifier::external_body]
+    fn key(&self) -> usize {
+        &self.state as *const PAtomicU32 as usize
     }
 
     /// Takes the lock, sleeping until `deadline` at the latest.

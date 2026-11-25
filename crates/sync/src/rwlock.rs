@@ -533,15 +533,21 @@ impl<T> RwLock<T> {
 
     #[verifier::external_body]
     fn unpark_all(&self) {
-        crate::parking::unpark(self as *const Self as usize, usize::MAX);
+        crate::parking::unpark(self.key(), usize::MAX);
+    }
+
+    /// The parking-lot key: the address of the lock word (see
+    /// `Mutex::key` for why not the lock's own address).
+    #[verifier::external_body]
+    fn key(&self) -> usize {
+        &self.state as *const PAtomicU32 as usize
     }
 
     /// Sleeps while `blocked(state)` holds and the parked bit is set.
     /// Returns false at the deadline.
     #[verifier::external_body]
     fn park(&self, deadline: Deadline, for_write: bool) -> bool {
-        let key = self as *const Self as usize;
-        let ok = crate::parking::park(key, || {
+        let ok = crate::parking::park(self.key(), || {
             let s = self.state_now();
             let blocked = if for_write { s & WRITER != 0 || s >> 3 != 0 } else { s & BLOCKS_READ != 0 };
             blocked && s & PARKED != 0
