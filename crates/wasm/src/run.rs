@@ -2556,7 +2556,7 @@ pub fn execute<H: Host>(m: &Module, codes: &Vec<Code>, Ghost(cs): Ghost<Seq<Func
 /// Every branch operation and every operation run as a stack instruction
 /// (calls and returns among them) costs one unit, and the run stops with
 /// [`Trap::Exhausted`] when an operation that costs fuel finds none left,
-/// which [`executed`] allows at any point. Every loop iteration and every
+/// which `executed` allows at any point. Every loop iteration and every
 /// call goes through one of these, so a run with finite fuel ends.
 ///
 /// The loop is [`execute`]'s, except that all the branch codes share one
