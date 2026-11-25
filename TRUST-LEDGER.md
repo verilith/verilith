@@ -42,7 +42,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | sha2 | 9 |  |  |  |  |  | 3 |
 | simd | 362 | 6 | 274 | 4 |  |  | 3 |
 | snappy |  |  |  |  |  |  | 1 |
-| sync | 41 | 11 |  | 1 | 4 | 11 | 3 |
+| sync | 41 | 11 |  | 1 | 12 | 11 | 3 |
 | text | 18 | 13 |  |  | 13 |  | 9 |
 | tiff | 1 |  |  |  |  |  | 2 |
 | url | 1 |  |  |  |  |  | 5 |
@@ -54,7 +54,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  | 2 |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **637** | **35** | **274** | **5** | **22** | **12** | **105** |
+| **total** | **637** | **35** | **274** | **5** | **30** | **12** | **105** |
 
 ## Items
 
@@ -205,7 +205,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### sync
 
-- `crates/sync/src/array_queue.rs`: no termination check: `push`, `pop`, `len`
+- `crates/sync/src/array_queue.rs`: 4 assume_new; no termination check: `push_atomic`, `pop_atomic`, `len`
 - `crates/sync/src/chan_model.rs`: axioms: `pool_nonempty`
 - `crates/sync/src/chan_sync.rs`: no termination check: `slow`, `add_handle`
 - `crates/sync/src/channel.rs`: plain Rust
@@ -213,6 +213,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/sync/src/parking.rs`: plain Rust
 - `crates/sync/src/ra.rs`: external_body: `view`, `view`, `loc`, `loc`, `id`, `new`, `load_acquire`, `load_relaxed`, `store_release`, `fetch_add_acqrel`, `fetch_add_seqcst`, `fetch_sub_acqrel`, `compare_exchange_seqcst`, `sync_exclusive`; axioms: `new`, `dup`, `join`, `publish`, `acquire`, `nonempty_lemma`, `bounded_lemma`, `lb`, `lb_prefix`, `dup`; 4 assume_new
 - `crates/sync/src/rwlock.rs`: external_body: `unpark_all`, `park`; no termination check: `read`, `write`, `read_slow`, `write_slow`
+- `crates/sync/src/spsc.rs`: 4 assume_new
 - `crates/sync/src/util.rs`: external_body: `arc_clone`, `exhausted`, `no_deadline`, `no_deadline`, `leaked_guard`, `spin_hint`, `new`, `new`, `spin`, `snooze`, `is_completed`, `k`, `k`, `new`, `lock`, `unlock`, `current`, `current`, `unpark`, `is_timed`, `time_left`, `time_left`, `park_for`; ext. types: `ExDeadline`
 - `crates/sync/src/progress/mod.rs`: plain Rust
 

@@ -453,6 +453,7 @@ proof fn lemma_declared_stable(b: Seq<u8>, s: Seq<u8>)
 
 /// Which decoder reads every input that begins with `b`: `DNONE` if `b`
 /// does not say (the input is read whole), `DWAIT` if the next bytes may.
+#[verifier::spinoff_prover]
 fn decide(b: &[u8]) -> (r: u8)
     requires
         b@.len() >= 1,

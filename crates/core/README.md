@@ -11,7 +11,7 @@ blocks shared by the Verilith libraries
 live, with its proofs, in one or two of those crates; it now lives here
 once, and the libraries import it.
 
-`cargo verus verify` checks 403 functions with no errors.
+`cargo verus verify` checks 635 functions with no errors.
 
 | module | what it has | used by |
 | --- | --- | --- |
@@ -37,7 +37,7 @@ top of the shared code spec and proofs here.
 ```toml
 [dependencies]
 verilith-core = { git = "https://github.com/verilith/verilith", rev = "..." }
-vstd = "=0.0.0-2026-11-01-0251"
+vstd = "=0.0.0-2026-11-22-0344"
 ```
 
 Spec functions are erased in a normal build, so import them under
@@ -153,7 +153,7 @@ What the proofs here assume rather than prove:
 ```
 
 needs `cargo-verus` from Verus commit
-8bf68ee741df833ea5d0fe6a2255126fdea87e47 on `PATH` and z3 (via
+1ce6a59bd72713cf486a7660097fe5ac57519617 on `PATH` and z3 (via
 `VERUS_Z3_PATH` or next to the verus binary). CI builds it from source.
 
 ## License

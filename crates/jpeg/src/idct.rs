@@ -219,6 +219,7 @@ fn col_x(a: &Vec<i16>, o: usize, q: &[u16; 64], x: usize) -> (r: [i32; 8])
 }
 
 /// The second pass along row `y` of the workspace.
+#[verifier::spinoff_prover]
 fn row_x(ws: &[i32; 64], y: usize, rl: &[u8; 1024], Ghost(c): Ghost<Seq<int>>) -> (out: [u8; 8])
     requires
         forall|m: int| 0 <= m < 1024 ==> (#[trigger] rl[m]) == range_limit(m),

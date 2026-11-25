@@ -506,9 +506,71 @@ pub proof fn lemma_ext_span(seen: Seq<u8>, s: Seq<u8>, a: int, b: int)
     assert(s.subrange(a, b) =~= seen.subrange(a, b));
 }
 
+/// `Win::names_ok` for the names, their ends and the open elements, as
+/// plain sequences.
+pub open spec fn names_rel(names: Seq<u8>, ends: Seq<usize>, gst: Seq<Open>, seen: Seq<u8>) -> bool {
+    &&& ends.len() == gst.len()
+    &&& ends.len() == 0 ==> names.len() == 0
+    &&& ends.len() > 0 ==> ends.last() == names.len()
+    &&& forall|q1: int, q2: int| 0 <= q1 <= q2 < ends.len() ==> #[trigger] ends[q1] <= #[trigger] ends[q2]
+    &&& forall|q: int|
+        0 <= q < ends.len() ==> (if q == 0 { 0 } else { ends[q - 1] as int }) <= #[trigger] ends[q]
+            <= names.len() && 0 <= gst[q].0 <= gst[q].1 <= seen.len() && names.subrange(
+            if q == 0 { 0 } else { ends[q - 1] as int },
+            ends[q] as int,
+        ) == seen.subrange(gst[q].0, gst[q].1)
+}
+
+/// Closing the innermost element keeps the names' layout: drop its name
+/// and its end.
+#[verifier::spinoff_prover]
+proof fn lemma_pop_name(names: Seq<u8>, ends: Seq<usize>, gst: Seq<Open>, seen: Seq<u8>)
+    requires
+        names_rel(names, ends, gst, seen),
+        ends.len() > 0,
+    ensures
+        ({
+            let k = ends.len() - 1;
+            let a = if k == 0 { 0 } else { ends[k - 1] as int };
+            names_rel(names.subrange(0, a), ends.drop_last(), gst.drop_last(), seen)
+        }),
+{
+    let k = ends.len() - 1;
+    let a = if k == 0 { 0 } else { ends[k - 1] as int };
+    let names2 = names.subrange(0, a);
+    let ends2 = ends.drop_last();
+    let gst2 = gst.drop_last();
+    if k > 0 {
+        assert(ends[k - 1] <= ends[k]);
+        assert(ends[k] <= names.len());
+    }
+    assert(names2.len() == a);
+    assert forall|q1: int, q2: int| 0 <= q1 <= q2 < ends2.len() implies #[trigger] ends2[q1]
+        <= #[trigger] ends2[q2] by {
+        assert(ends2[q1] == ends[q1]);
+        assert(ends2[q2] == ends[q2]);
+    }
+    assert forall|q: int| 0 <= q < ends2.len() implies (if q == 0 { 0 } else { ends2[q - 1] as int })
+        <= #[trigger] ends2[q] <= names2.len() && 0 <= gst2[q].0 <= gst2[q].1 <= seen.len()
+        && names2.subrange(if q == 0 { 0 } else { ends2[q - 1] as int }, ends2[q] as int)
+        == seen.subrange(gst2[q].0, gst2[q].1) by {
+        assert(ends2[q] == ends[q]);
+        if q > 0 {
+            assert(ends2[q - 1] == ends[q - 1]);
+        }
+        assert(ends[q] <= ends[k - 1]);
+        assert(gst2[q] == gst[q]);
+        let lo = if q == 0 { 0 } else { ends[q - 1] as int };
+        assert(names2.subrange(lo, ends2[q] as int) =~= names.subrange(lo, ends[q] as int));
+    }
+    if ends2.len() > 0 {
+        assert(ends2.last() == ends[k - 1]);
+    }
+    assert(names_rel(names2, ends2, gst2, seen));
+}
+
 /// Closes the innermost element.
 #[verifier::spinoff_prover]
-#[verifier::rlimit(100)]
 fn win_pop_name(w: &mut Win)
     requires
         old(w).names_ok(),
@@ -545,30 +607,9 @@ fn win_pop_name(w: &mut Win)
     w.ends.pop();
     proof {
         w.gst@ = gst.drop_last();
-        let gst2 = w.gst@;
-        let seen = w.seen@;
-        assert forall|q1: int, q2: int| 0 <= q1 <= q2 < w.ends@.len() implies #[trigger] w.ends@[q1]
-            <= #[trigger] w.ends@[q2] by {
-            assert(w.ends@[q1] == ends0[q1]);
-            assert(w.ends@[q2] == ends0[q2]);
-        }
-        assert forall|q: int| 0 <= q < w.ends@.len() implies w.nstart(q) <= #[trigger] w.ends@[q] <= w.names@.len()
-            && 0 <= gst2[q].0 <= gst2[q].1 <= seen.len() && w.names@.subrange(w.nstart(q), w.ends@[q] as int)
-            == seen.subrange(gst2[q].0, gst2[q].1) by {
-            assert(w.ends@[q] == ends0[q]);
-            if q > 0 {
-                assert(w.ends@[q - 1] == ends0[q - 1]);
-            }
-            assert(ends0[q] <= ends0[k as int - 1]);
-            assert(gst2[q] == gst[q]);
-            assert(w.names@.subrange(w.nstart(q), w.ends@[q] as int) =~= names0.subrange(
-                w.nstart(q),
-                w.ends@[q] as int,
-            ));
-        }
-        if w.ends@.len() > 0 {
-            assert(w.ends@.last() == ends0[k as int - 1]);
-        }
+        assert(w.names@ == names0.subrange(0, a as int));
+        assert(w.ends@ == ends0.drop_last());
+        lemma_pop_name(names0, ends0, gst, w.seen@);
     }
 }
 

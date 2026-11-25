@@ -519,6 +519,7 @@ pub open spec fn vshape(body: Seq<Instr>, r: ROp, i: Instr, j0: nat, np: nat, nl
     &&& dests_ok(body, p + x + 1, r.k == x + 2, r, nl, h + np - ar)
 }
 
+#[verifier::spinoff_prover]
 #[verifier::rlimit(300)]
 pub proof fn lemma_vshape(body: Seq<Instr>, r: ROp, i: Instr, j0: nat, np: nat, nl: int, h: int, frame: int)
     requires
@@ -741,6 +742,7 @@ pub open spec fn selshape(body: Seq<Instr>, r: ROp, j0: nat, np: nat, nl: int, h
     &&& dests_ok(body, p + x + 1, r.k == x + 2, r, nl, h + np - 3)
 }
 
+#[verifier::spinoff_prover]
 #[verifier::rlimit(300)]
 pub proof fn lemma_selshape(body: Seq<Instr>, r: ROp, j0: nat, np: nat, nl: int, h: int, frame: int)
     requires

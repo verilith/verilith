@@ -388,6 +388,7 @@ pub proof fn lemma_rslots(m: &Module, cs: Seq<FuncCert>, codes: Seq<Code>, c0: C
 }
 
 
+#[verifier::spinoff_prover]
 /// After a value operation put `v` in its destinations, the accumulator
 /// `v` is right for the next operation; after any other straight-line
 /// operation, the next one does not read it.
@@ -482,6 +483,7 @@ pub fn r_acc_fix(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghos
 // Branch operations
 // ---------------------------------------------------------------------------
 
+#[verifier::spinoff_prover]
 #[verifier::rlimit(300)]
 /// A branch operation: its straight-line part, then the branch (if
 /// `taken`) to operation `r.d1`, or on to the next operation.
