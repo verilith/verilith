@@ -445,8 +445,7 @@ pub fn write_slices(fd: i32, bufs: &[&[u8]], more: bool) -> IoResult {
 }
 
 /// A file descriptor closed on drop.
-#[derive(Debug)]
-pub struct Fd(pub i32);
+pub use crate::out::Fd;
 
 impl Drop for Fd {
     fn drop(&mut self) {

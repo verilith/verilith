@@ -1200,22 +1200,51 @@ pub fn write_head_checked(
 /// Field lines checked once and kept as the bytes they are written as:
 /// the server's own fields (Server, Date, rebuilt once a second) and a
 /// route's fixed fields (Content-Type, Cache-Control, ...), so the hot path
-/// copies them instead of checking them again.
+/// copies them instead of checking them again. The fields are private and
+/// the type invariant says they are checked: a `Prepared` can only be made
+/// by [`Prepared::new`], [`Prepared::empty`] or [`Prepared::with_close`].
 pub struct Prepared {
-    pub bytes: Vec<u8>,
-    pub fs: Ghost<Seq<SField>>,
+    bytes: Vec<u8>,
+    fs: Ghost<Seq<SField>>,
+    /// Whether the fields may list `Connection: close`; false only if
+    /// they do not.
+    closes: bool,
+}
+
+/// `Connection: close`
+pub open spec fn conn_close() -> SField {
+    (
+        seq![0x43u8, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x69, 0x6f, 0x6e],
+        seq![0x63u8, 0x6c, 0x6f, 0x73, 0x65],
+    )
 }
 
 impl Prepared {
-    pub open spec fn wf(&self) -> bool {
+    #[verifier::type_invariant]
+    spec fn inv(self) -> bool {
         &&& fields_ok(self.fs@)
         &&& self.bytes@ == lines(self.fs@)
+        &&& !self.closes ==> !crate::persist::fields_close(self.fs@)
+    }
+
+    /// `false` only if the fields do not list the option `close`.
+    pub fn may_close(&self) -> (r: bool)
+        ensures
+            !r ==> !crate::persist::fields_close(self.fields()),
+    {
+        proof { use_type_invariant(self); }
+        self.closes
+    }
+
+    /// The field lines.
+    pub closed spec fn fields(&self) -> Seq<SField> {
+        self.fs@
     }
 
     /// Checks `fields` and keeps their lines, or `None` if one is not allowed.
     pub fn new(fields: &[Field]) -> (r: Option<Prepared>)
         ensures
-            r matches Some(p) ==> p.wf() && p.fs@ == fields_view(fields@),
+            r matches Some(p) ==> p.fields() == fields_view(fields@),
             r is None ==> !fields_ok(fields_view(fields@)),
     {
         if !check_fields(fields) {
@@ -1224,19 +1253,60 @@ impl Prepared {
         let mut bytes = Vec::new();
         push_lines(&mut bytes, fields);
         assert(bytes@ =~= lines(fields_view(fields@)));
-        Some(Prepared { bytes, fs: Ghost(fields_view(fields@)) })
+        let closes = crate::persist::fields_close_exec(fields);
+        Some(Prepared { bytes, fs: Ghost(fields_view(fields@)), closes })
     }
 
     /// No fields.
     pub fn empty() -> (r: Prepared)
         ensures
-            r.wf(),
-            r.fs@ == Seq::<SField>::empty(),
+            r.fields() == Seq::<SField>::empty(),
     {
-        let r = Prepared { bytes: Vec::new(), fs: Ghost(Seq::empty()) };
-        assert(r.bytes@ =~= lines(Seq::<SField>::empty()));
-        r
+        let bytes = Vec::new();
+        assert(bytes@ =~= lines(Seq::<SField>::empty()));
+        Prepared { bytes, fs: Ghost(Seq::empty()), closes: false }
     }
+
+    /// The same fields followed by `Connection: close`.
+    pub fn with_close(&self) -> (r: Prepared)
+        ensures
+            r.fields() == self.fields().push(conn_close()),
+    {
+        proof { use_type_invariant(self); }
+        let mut bytes = self.bytes.clone();
+        let name: [u8; 10] = [0x43u8, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x69, 0x6f, 0x6e];
+        let value: [u8; 5] = [0x63u8, 0x6c, 0x6f, 0x73, 0x65];
+        push_line(&mut bytes, &name, &value);
+        let ghost fs = self.fs@.push(conn_close());
+        proof {
+            assert(name@ =~= conn_close().0);
+            assert(value@ =~= conn_close().1);
+            lemma_lines_push(self.fs@, conn_close());
+            assert forall|i: int| 0 <= i < fs.len() implies name_ok(#[trigger] fs[i].0) && value_ok(fs[i].1) by {
+                if i < self.fs@.len() {
+                    assert(fs[i] == self.fs@[i]);
+                } else {
+                    assert(fs[i] == conn_close());
+                    lemma_conn_close_ok();
+                }
+            }
+        }
+        Prepared { bytes, fs: Ghost(fs), closes: true }
+    }
+}
+
+proof fn lemma_conn_close_ok()
+    ensures
+        name_ok(conn_close().0),
+        value_ok(conn_close().1),
+{
+    let n = conn_close().0;
+    let v = conn_close().1;
+    assert(hs::is_tchar(n[0]) && hs::is_tchar(n[1]) && hs::is_tchar(n[2]) && hs::is_tchar(n[3]) && hs::is_tchar(n[4]));
+    assert(hs::is_tchar(n[5]) && hs::is_tchar(n[6]) && hs::is_tchar(n[7]) && hs::is_tchar(n[8]) && hs::is_tchar(n[9]));
+    assert(!hs::ci_eq_dash(n, hs::name_content_length()));
+    assert(!hs::ci_eq_dash(n, hs::name_transfer_encoding()));
+    assert(forall|i: int| 0 <= i < v.len() ==> hs::is_value_char(#[trigger] v[i]));
 }
 
 /// [`write_head_checked`] with two prepared field lists before the
@@ -1251,24 +1321,25 @@ pub fn write_head_prepared(
     c: &[Field],
     framing: Framing,
 ) -> (r: bool)
-    requires
-        a.wf(),
-        b.wf(),
     ensures
         r ==> {
             &&& status_ok(status)
             &&& reason_ok(reason@)
-            &&& fields_ok(a.fs@ + b.fs@ + fields_view(c@))
+            &&& fields_ok(a.fields() + b.fields() + fields_view(c@))
             &&& framing_ok(framing)
             &&& final(out)@ == old(out)@ + head(
                 status,
                 reason@,
-                a.fs@ + b.fs@ + fields_view(c@),
+                a.fields() + b.fields() + fields_view(c@),
                 framing,
             )
         },
         !r ==> final(out)@ == old(out)@,
 {
+    proof {
+        use_type_invariant(a);
+        use_type_invariant(b);
+    }
     if status < 100 || status > 999 || !check_reason(reason) || !check_fields(c) {
         return false;
     }
