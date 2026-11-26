@@ -8,7 +8,7 @@
 use std::io;
 use std::sync::Arc;
 
-use crate::h1::{Conn, Ctx, Limits, Next};
+use crate::h1::{Conn, Ctx, Io, Limits, Next};
 use crate::h2::{Conn2, Limits2};
 use crate::sys::{self, IoResult};
 use crate::Handler;
@@ -130,6 +130,9 @@ impl Any {
     }
     fn pending<'a>(&'a self, out: &mut [&'a [u8]]) -> usize {
         each!(self, c => c.pending(out))
+    }
+    fn pending_io<'a>(&'a self, out: &mut [&'a [u8]], more: &mut bool) -> Io<'a> {
+        each!(self, c => c.pending_io(out, more))
     }
     fn pending_len(&self) -> usize {
         each!(self, c => c.pending_len())
@@ -327,8 +330,12 @@ fn flush(s: &mut Slot) -> bool {
             return s.conn.closing();
         }
         let mut v: [&[u8]; 8] = [&[]; 8];
-        let k = s.conn.pending(&mut v);
-        match sys::write_slices(s.fd, &v[..k]) {
+        let mut more = false;
+        let r = match s.conn.pending_io(&mut v, &mut more) {
+            Io::Slices(k, _) => sys::write_slices(s.fd, &v[..k], more),
+            Io::File { fd, off, len } => sys::sendfile_nb(s.fd, fd, off, len),
+        };
+        match r {
             IoResult::Done(n) => s.conn.wrote(n),
             IoResult::WouldBlock => return false,
             IoResult::Closed => return true,

@@ -6,7 +6,7 @@ serializer is proven against):
 
 | File | What it is | What the rest assumes of it |
 |---|---|---|
-| `src/sys/mod.rs`, `linux.rs`, `macos.rs` | One-call wrappers over `socket`, `bind`, `listen`, `accept4`/`accept`, `read`, `writev`, `close`, `epoll_*`/`kqueue`, `sched_setaffinity`, `time` | `read_into` returning `Done(n)` wrote exactly `buf[..n]`, `n <= buf.len()`; `write_slices` returning `Done(n)` wrote the first `n` bytes in order; events name the token a socket was registered with; closing a socket's only descriptor also removes it from the poller |
+| `src/sys/mod.rs`, `linux.rs`, `macos.rs` | One-call wrappers over `socket`, `bind`, `listen`, `accept4`/`accept`, `read`, `writev`, `close`, `epoll_*`/`kqueue`, `sched_setaffinity`, `time` | `read_into` returning `Done(n)` wrote exactly `buf[..n]`, `n <= buf.len()`; `write_slices` returning `Done(n)` wrote the first `n` bytes in order; `sendfile_nb` returning `Done(n)` sent the next `n` bytes of the file range; a sealed memfd's contents cannot change; events name the token a socket was registered with; closing a socket's only descriptor also removes it from the poller |
 | `src/worker.rs` | The event loop | Hands each connection's bytes to its engine once and in order, and writes the engine's output in order; one connection per slot |
 | `src/h1.rs` | The HTTP/1.1 connection engine | Not yet verified (DESIGN.md milestone 2): sequences the verified parser, chunked decoder and response writer; tested in `tests/h1.rs` |
 | `src/h2.rs` | The HTTP/2 connection engine | Not yet verified (DESIGN.md milestone 3): sequences the verified frame parser and serializer and the HPACK decoder; tested in `tests/h2.rs` |
