@@ -6,9 +6,10 @@ then the handshake state machine and the key schedule. The cryptographic
 primitives (AEAD, HKDF, signatures, key exchange) stay in aws-lc and are
 trusted; everything that decides what a byte from the peer means is proven.
 
-**Status: first part.** This release has the ClientHello parser and the
-record and handshake message headers. The server handshake state machine
-and the key schedule come next ([plan](#plan)).
+**Status: first parts.** This release has the ClientHello parser, the
+record and handshake message headers, and negotiation (what a server
+chooses from a ClientHello). The server handshake state machine and the
+key schedule come next ([plan](#plan)).
 
 ClientHello parsing is the part of a TLS server an unauthenticated peer
 reaches first, with the most structure: nested length-prefixed vectors,
@@ -53,16 +54,33 @@ definition names its section. The proofs show:
   they use a set (`seen.rs`) that keeps values below 64 in one word and up
   to 16 others in an array, and moves to a 2^16-bit bitmap only past that,
   so `k` inserts cost at most `17k` steps plus the move, once.
+- **Negotiation** (`negotiate.rs`): `negotiate` computes exactly
+  `spec::negotiate`, a TLS 1.3 server's choices for a full handshake from
+  a parsed ClientHello and its preferences: TLS 1.3 offered in
+  supported_versions, else `protocol_version` (§4.2.1); a compression list
+  of exactly `[0]`, else `illegal_parameter` (§4.1.2); signature_algorithms,
+  supported_groups and key_share present, else `missing_extension` (§9.2);
+  the server's first cipher suite and signature scheme the client offers,
+  else `handshake_failure`; the server's first ALPN protocol the client
+  offers, else `no_application_protocol` (RFC 7301 §3.2); and the server's
+  first group the client sent a key share for, or failing that a
+  HelloRetryRequest for its first group in supported_groups, or
+  `handshake_failure` (§4.2.8). Its loops run over the ClientHello once per
+  server preference, so its work is at most the ClientHello's length times
+  the longest preference list.
+- **Server names** (`negotiate::valid_host_name_x`) computes exactly
+  `spec::valid_host_name`: what RFC 6066 allows in HostName (labels of 1 to
+  63 letters, digits, hyphens and underscores, not starting or ending with
+  a hyphen, at most 253 bytes, no final dot), with no IPv4 or IPv6
+  literals.
 - **Record and handshake headers** (`record.rs`) read exactly
   `spec::record_header` and `spec::handshake_message`.
 - No panics, no overflow, no out-of-bounds access, in all of the above. No
   allocation, except the bitmap above, which no real client causes.
 
-What `parse` does not decide: whether the ClientHello can negotiate
-TLS 1.3 (legacy_version, a compression list of exactly `[0]`,
-supported_versions with 0x0304), which is the state machine's job, and
-whether a server name is a valid DNS name, which is the caller's. A valid
-TLS 1.2 ClientHello parses.
+`parse` does not decide whether the ClientHello can negotiate TLS 1.3
+(`negotiate` does), or whether its server name is a valid host name
+(`valid_host_name_x` does). A valid TLS 1.2 ClientHello parses.
 
 ## Trusted base
 
@@ -74,7 +92,9 @@ There is no `external_body` in this crate.
 
 ## Tests
 
-`tests/hello.rs` parses real ClientHellos (`tests/data`, captured by
+`tests/negotiate.rs` negotiates with the real ClientHellos under several
+server preferences (server preference wins, HelloRetryRequest, each
+alert) and checks host names. `tests/hello.rs` parses real ClientHellos (`tests/data`, captured by
 `tools/gen_hellos.py` from Python's OpenSSL, which offers X25519MLKEM768,
 and from `openssl s_client`), hand-built ones for each rule above, every
 prefix of the real ones, and 80,000 random mutations against a separate
@@ -115,9 +135,9 @@ returns spans.
 ## Plan
 
 1. ClientHello and extensions parser, record and handshake headers.
-   *(this release)*
+   *(done)*
 2. Negotiation, verified: version, cipher suite, group and key share,
-   signature scheme, ALPN choice, and server name validation.
+   signature scheme, ALPN choice, and server name validation. *(done)*
 3. The server handshake state machine (§2, §4, Appendix A.2): full
    handshake, HelloRetryRequest, PSK resumption, proven to send and accept
    messages only in the order the RFC allows, with the transcript hash over
