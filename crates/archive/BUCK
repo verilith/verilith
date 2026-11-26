@@ -14,7 +14,7 @@ verus_library(
     features = [],
     vstd = "//third-party:vstd-alloc-std",
     deps = [
-        "//crates/core:core",
+        "//crates/checksum:checksum",
         "//crates/zlib:zlib",
         "//crates/zstd:zstd",
     ],

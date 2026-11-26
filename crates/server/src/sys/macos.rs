@@ -15,6 +15,8 @@ pub const TCP_NODELAY: c_int = 1;
 const SO_NOSIGPIPE: c_int = 0x1022;
 /// SO_REUSEPORT on macOS sends every connection to the last socket bound.
 pub const REUSEPORT_BALANCES: bool = false;
+pub const NODELAY_INHERITED: bool = false;
+pub const TCP_DEFER_ACCEPT: Option<c_int> = None;
 
 const EVFILT_READ: i16 = -1;
 const EVFILT_WRITE: i16 = -2;
@@ -135,4 +137,17 @@ impl Poller {
         }
         n as usize
     }
+}
+
+/// macOS's `sendfile` has another signature and no sealed memory files;
+/// bodies are written from memory.
+pub const HAS_SENDFILE: bool = false;
+pub const MSG_MORE: c_int = 0;
+
+pub fn sendfile_nb(_sock: i32, _file: i32, _off: usize, _len: usize) -> super::IoResult {
+    super::IoResult::Closed
+}
+
+pub fn sealed_memfd(_bytes: &[u8]) -> Option<super::Fd> {
+    None
 }

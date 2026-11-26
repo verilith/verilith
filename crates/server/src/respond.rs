@@ -1197,4 +1197,137 @@ pub fn write_head_checked(
     true
 }
 
+/// Field lines checked once and kept as the bytes they are written as:
+/// the server's own fields (Server, Date, rebuilt once a second) and a
+/// route's fixed fields (Content-Type, Cache-Control, ...), so the hot path
+/// copies them instead of checking them again.
+pub struct Prepared {
+    pub bytes: Vec<u8>,
+    pub fs: Ghost<Seq<SField>>,
+}
+
+impl Prepared {
+    pub open spec fn wf(&self) -> bool {
+        &&& fields_ok(self.fs@)
+        &&& self.bytes@ == lines(self.fs@)
+    }
+
+    /// Checks `fields` and keeps their lines, or `None` if one is not allowed.
+    pub fn new(fields: &[Field]) -> (r: Option<Prepared>)
+        ensures
+            r matches Some(p) ==> p.wf() && p.fs@ == fields_view(fields@),
+            r is None ==> !fields_ok(fields_view(fields@)),
+    {
+        if !check_fields(fields) {
+            return None;
+        }
+        let mut bytes = Vec::new();
+        push_lines(&mut bytes, fields);
+        assert(bytes@ =~= lines(fields_view(fields@)));
+        Some(Prepared { bytes, fs: Ghost(fields_view(fields@)) })
+    }
+
+    /// No fields.
+    pub fn empty() -> (r: Prepared)
+        ensures
+            r.wf(),
+            r.fs@ == Seq::<SField>::empty(),
+    {
+        let r = Prepared { bytes: Vec::new(), fs: Ghost(Seq::empty()) };
+        assert(r.bytes@ =~= lines(Seq::<SField>::empty()));
+        r
+    }
+}
+
+/// [`write_head_checked`] with two prepared field lists before the
+/// unchecked ones: the head written is `head(status, reason, a ++ b ++ c,
+/// framing)`, and the theorem's preconditions hold for it.
+pub fn write_head_prepared(
+    out: &mut Vec<u8>,
+    status: u16,
+    reason: &[u8],
+    a: &Prepared,
+    b: &Prepared,
+    c: &[Field],
+    framing: Framing,
+) -> (r: bool)
+    requires
+        a.wf(),
+        b.wf(),
+    ensures
+        r ==> {
+            &&& status_ok(status)
+            &&& reason_ok(reason@)
+            &&& fields_ok(a.fs@ + b.fs@ + fields_view(c@))
+            &&& framing_ok(framing)
+            &&& final(out)@ == old(out)@ + head(
+                status,
+                reason@,
+                a.fs@ + b.fs@ + fields_view(c@),
+                framing,
+            )
+        },
+        !r ==> final(out)@ == old(out)@,
+{
+    if status < 100 || status > 999 || !check_reason(reason) || !check_fields(c) {
+        return false;
+    }
+    match framing {
+        Framing::Length(n) => {
+            if n > MAX_LENGTH {
+                return false;
+            }
+        },
+        _ => {},
+    }
+    let ghost all = a.fs@ + b.fs@ + fields_view(c@);
+    proof {
+        let x = a.fs@;
+        let y = b.fs@;
+        let z = fields_view(c@);
+        assert forall|i: int| 0 <= i < all.len() implies name_ok(#[trigger] all[i].0) && value_ok(
+            all[i].1,
+        ) by {
+            if i < x.len() {
+                assert(all[i] == x[i]);
+            } else if i < x.len() + y.len() {
+                assert(all[i] == y[i - x.len()]);
+            } else {
+                assert(all[i] == z[i - x.len() - y.len()]);
+            }
+        }
+    }
+    let start: [u8; 9] = [0x48u8, 0x54, 0x54, 0x50, 0x2F, 0x31, 0x2E, 0x31, 0x20];
+    assert(start@ =~= version_sp());
+    verilith_core::prims::extend(out, &start);
+    out.push((0x30 + status / 100) as u8);
+    out.push((0x30 + (status / 10) % 10) as u8);
+    out.push((0x30 + status % 10) as u8);
+    out.push(hs::SP);
+    verilith_core::prims::extend(out, reason);
+    out.push(hs::CR);
+    out.push(hs::LF);
+    let ghost pre = old(out)@ + status_line(status, reason@);
+    assert(out@ =~= pre);
+    verilith_core::prims::extend(out, &a.bytes);
+    verilith_core::prims::extend(out, &b.bytes);
+    push_lines(out, c);
+    proof {
+        lemma_lines_concat(a.fs@, b.fs@);
+        lemma_lines_concat(a.fs@ + b.fs@, fields_view(c@));
+        assert(out@ =~= pre + lines(all));
+    }
+    let ghost mid = out@;
+    push_framing(out, framing, Ghost(all));
+    proof {
+        let added = out@.subrange(mid.len() as int, out@.len() as int);
+        assert(out@ =~= mid + added);
+        assert(mid + added =~= pre + (lines(all) + added));
+    }
+    out.push(hs::CR);
+    out.push(hs::LF);
+    assert(final(out)@ =~= old(out)@ + head(status, reason@, all, framing));
+    true
+}
+
 } // verus!

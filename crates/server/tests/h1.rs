@@ -15,7 +15,7 @@ fn handler(req: &Request, res: &mut Response) {
 
 fn run(input: &[u8], cuts: &[usize]) -> Vec<u8> {
     let mut c = Conn::new(Limits::default());
-    let ctx = Ctx { date: b"Thu, 01 Jan 1970 00:00:00 GMT", server: b"t" };
+    let ctx = Ctx::new(b"t", b"Thu, 01 Jan 1970 00:00:00 GMT").unwrap();
     let mut out = Vec::new();
     let mut at = 0;
     for &cut in cuts.iter().chain(std::iter::once(&input.len())) {
@@ -146,7 +146,7 @@ fn handler_cannot_split_a_response() {
         assert!(res.send(200, &[], b"ok").is_ok());
     }
     let mut c = Conn::new(Limits::default());
-    let ctx = Ctx { date: b"d", server: b"t" };
+    let ctx = Ctx::new(b"t", b"d").unwrap();
     let m = b"GET / HTTP/1.1\r\nHost: x\r\n\r\n";
     c.read_buf()[..m.len()].copy_from_slice(m);
     c.filled(m.len());
@@ -160,4 +160,77 @@ fn too_large_head() {
     big.resize(20000, b'a');
     let out = run(&big, &[]);
     assert!(out.starts_with(b"HTTP/1.1 431"));
+}
+
+/// Static bodies: what the event loop sends (slices, and file ranges by
+/// `sendfile`) is byte for byte what the in-memory view says, across
+/// pipelined responses and partial writes.
+#[test]
+fn static_bodies_by_file_match_memory() {
+    use std::sync::Arc;
+    use verilith_server::h1::Io;
+    use verilith_server::{Fields, StaticBody};
+    let big: Vec<u8> = (0..40_000u32).map(|i| (i * 7 % 251) as u8).collect();
+    let body = Arc::new(StaticBody::new(big.clone()));
+    let f = Fields::new(&[Field { name: b"Content-Type", value: b"application/octet-stream" }]).unwrap();
+    let b2 = body.clone();
+    let h = move |req: &Request, res: &mut Response| {
+        if req.target == b"/big" {
+            let _ = res.send_static(200, &f, &b2);
+        } else {
+            let _ = res.send(200, &[], b"small");
+        }
+    };
+    let input = b"GET /big HTTP/1.1\r\nHost: x\r\n\r\nGET /s HTTP/1.1\r\nHost: x\r\n\r\nGET /big HTTP/1.1\r\nHost: x\r\n\r\nHEAD /big HTTP/1.1\r\nHost: x\r\n\r\n";
+    let ctx = Ctx::new(b"t", b"Thu, 01 Jan 1970 00:00:00 GMT").unwrap();
+    let feed = |c: &mut Conn| {
+        let b = c.read_buf();
+        b[..input.len()].copy_from_slice(input);
+        c.filled(input.len());
+        c.process(&h, &ctx);
+    };
+    // Reference: the in-memory view.
+    let mut c = Conn::new(Limits::default());
+    feed(&mut c);
+    let mut mem = Vec::new();
+    while c.pending_len() > 0 {
+        mem.extend(drain(&mut c));
+    }
+    assert_eq!(count(&mem, b"HTTP/1.1 200 OK"), 4);
+    assert!(mem.windows(big.len()).filter(|w| *w == &big[..]).count() == 2);
+    // The event loop's view, writing at most 3000 bytes per call.
+    let mut c = Conn::new(Limits::default());
+    feed(&mut c);
+    let mut wire = Vec::new();
+    let mut files = 0;
+    while c.pending_len() > 0 {
+        let mut v: [&[u8]; 8] = [&[]; 8];
+        let mut more = false;
+        let n = match c.pending_io(&mut v, &mut more) {
+            Io::Slices(k, _) => {
+                let mut n = 0;
+                for s in &v[..k] {
+                    let t = s.len().min(3000 - n);
+                    wire.extend_from_slice(&s[..t]);
+                    n += t;
+                    if n == 3000 {
+                        break;
+                    }
+                }
+                n
+            }
+            Io::File { fd, off, len } => {
+                files += 1;
+                let all = std::fs::read(format!("/proc/self/fd/{fd}")).unwrap();
+                let t = len.min(3000);
+                wire.extend_from_slice(&all[off..off + t]);
+                t
+            }
+        };
+        c.wrote(n);
+    }
+    assert_eq!(wire, mem);
+    if cfg!(target_os = "linux") {
+        assert!(files > 0);
+    }
 }

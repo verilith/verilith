@@ -91,6 +91,13 @@ def server_cmds(env):
     if b:
         out["hyper"] = [b, "--threads", str(env["threads"]), "--http", str(PORTS["HTTP"]), "--h2c", str(PORTS["H2C"]),
                         "--tls", str(PORTS["TLS"]), "--cert", env["cert"], "--key", env["key"], "--root", env["root"]]
+    bun = os.environ.get("BUN") or which("bun") or (os.path.expanduser("~/.bun/bin/bun") if os.path.exists(os.path.expanduser("~/.bun/bin/bun")) else None)
+    if bun:
+        out["bun"] = ["env", "BUN=" + bun, os.path.join(HERE, "baselines/bun/run.sh"), str(env["threads"]),
+                      str(PORTS["HTTP"]), str(PORTS["TLS"]), env["cert"], env["key"], env["root"]]
+    b = os.path.join(HERE, "baselines/may-minihttp/target/release/may-minihttp-hello")
+    if os.path.exists(b):
+        out["may-minihttp"] = [b, "--threads", str(env["threads"]), "--http", str(PORTS["HTTP"]), "--root", env["root"]]
     b = which("nginx")
     if b:
         conf = os.path.join(env["run"], "nginx.conf")
@@ -154,6 +161,9 @@ def group_cpu(pgid):
 def protocols(name, cmd):
     """The ports a server serves: all three, except a verilith-server build
     that says otherwise with --protocols (one line: http, h2c, tls)."""
+    fixed = {"bun": {"HTTP", "TLS"}, "may-minihttp": {"HTTP"}}
+    if name in fixed:
+        return fixed[name]
     if name != "verilith":
         return set(PORTS)
     try:
@@ -347,6 +357,13 @@ def versions(cmds):
             elif name == "hyper":
                 lock = open(os.path.join(HERE, "baselines/hyper/Cargo.lock")).read()
                 m = re.search(r'name = "hyper"\nversion = "([^"]+)"', lock)
+                v[name] = m.group(1) if m else "?"
+            elif name == "bun":
+                bun = cmds[name][1].split("=", 1)[1]
+                v[name] = subprocess.run([bun, "--version"], capture_output=True, text=True).stdout.strip()
+            elif name == "may-minihttp":
+                lock = open(os.path.join(HERE, "baselines/may-minihttp/Cargo.lock")).read()
+                m = re.search(r'name = "may_minihttp"\nversion = "([^"]+)"', lock)
                 v[name] = m.group(1) if m else "?"
             elif name == "verilith":
                 v[name] = subprocess.run(["git", "-C", ROOT, "rev-parse", "--short", "HEAD"], capture_output=True,

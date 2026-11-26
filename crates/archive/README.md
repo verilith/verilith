@@ -13,7 +13,7 @@ verilith-archive rules these out as theorems rather than by tests.
 
 It builds on [verilith-zlib](https://github.com/verilith/verilith/tree/main/crates/zlib) (DEFLATE,
 gzip), [verilith-zstd](https://github.com/verilith/verilith/tree/main/crates/zstd) (Zstandard) and
-[verilith-core](https://github.com/verilith/verilith/tree/main/crates/core) (CRC-32).
+[verilith-checksum](https://github.com/verilith/verilith/tree/main/crates/checksum) (CRC-32).
 
 ## What is proven
 
@@ -218,7 +218,7 @@ How to read it:
   reads the central directory; libarchive, reading from memory through its
   streaming interface, walks the local headers.
 - Reading a stored zip is nothing but CRC-32, so the two are level. (It
-  was 0.39x until verilith-core's CRC-32 on ARM went from one chain of `crc32x`
+  was 0.39x until the CRC-32 (then in verilith-core) on ARM went from one chain of `crc32x`
   instructions to three interleaved ones.)
 - Each figure is the mean of two sittings, which agreed within 2%.
 

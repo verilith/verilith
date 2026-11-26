@@ -4,8 +4,10 @@ A formally verified HTTP server, built from the Verilith parsers, aiming
 for nginx- and h2o-class speed. The plan, with the theorems still to come,
 is in [DESIGN.md](DESIGN.md). This README describes what exists today.
 
-**Status: milestone 2 of the design, HTTP/1.1 only.** HTTP/2, TLS and
-static files from disk are next. The API will change.
+**Status: HTTP/1.1, HTTP/2 over cleartext with prior knowledge (h2c,
+`--h2c PORT`), and TLS with h2 or http/1.1 by ALPN (`--features tls`,
+`--tls PORT --cert PEM --key PEM`; rustls for now).** Static files from
+disk with a proven path check, and HTTP/3, are next. The API will change.
 
 ```rust,no_run
 use std::sync::Arc;
@@ -23,8 +25,9 @@ fn main() {
 }
 ```
 
-`cargo run --release --bin verilith-server -- --http 8080 --root DIR`
-runs the server `bench/server` measures.
+`cargo run --release --features tls --bin verilith-server -- --http 8080
+--h2c 8081 --tls 8443 --cert C --key K --root DIR` runs the server
+`bench/server` measures.
 
 ## How it works
 
@@ -38,7 +41,7 @@ worker and get a zero-copy view of the request.
 
 ## What is proven
 
-`scripts/verify.sh` (Verus): 45 verified, 0 errors.
+`scripts/verify.sh` (Verus): 48 verified, 0 errors.
 
 - **Responses parse back exactly** (`respond::theorem_head_parses`). For
   any status, reason phrase, field lines and framing that pass the checks
@@ -79,6 +82,18 @@ deviations reads the same head end and framing), and the chunked decoder.
   (CL+TE, differing Content-Lengths, bare LF in chunks, obsolete folding)
   get one 400 and a closed connection. Verifying it is the next proof
   milestone in DESIGN.md.
+- **The HTTP/2 engine** (`h2.rs`): stream states, flow control, SETTINGS,
+  PING/GOAWAY and the control-frame flood limit. It only reads frames
+  through verilith-h2's verified parser and header blocks through
+  verilith-hpack's verified decoder, and it writes frames with verilith-h2's
+  serializer, and encodes response heads with verilith-hpack's verified
+  encoder (dynamic table included), whose theorem is that each block
+  decodes to exactly the fields given. That needs blocks to reach the peer
+  in the order they were encoded, so a head is encoded only when its
+  HEADERS frame is written. Tested in `tests/h2.rs`: every split of a
+  request stream gives the same responses, read back with the verified
+  parser and decoder; DATA stops at the peer's window; protocol errors and
+  a PING flood end in GOAWAY.
 - **The event loop and the OS shim** (`worker.rs`, `sys/`): trusted, as
   in every server. See [TRUST.md](TRUST.md).
 - `Connection` and `Expect` handling, the `Date` formatter, and the
@@ -90,23 +105,51 @@ deviations reads the same head end and framing), and the chunked decoder.
 cloud VM (server on 2 CPUs, wrk on the other 2). These are noisy numbers;
 the full report is in `bench/server/results/`.
 
-Requests per second, median of 3 rounds of 10 s
-(`bench/server/results/2026-11-26-cloud-h1`), and in brackets requests
-per server CPU-second, the figure least disturbed by a shared machine:
+Requests per second, median of 3 rounds of 10 s, after the HTTP/2,
+connection-setup and sendfile work
+(`bench/server/results/2026-11-26-cloud-all`, which also has Bun, the TLS
+cases and latencies), and in brackets requests per server CPU-second, the
+figure least disturbed by a shared machine:
 
-| case | verilith | hyper | nginx | h2o |
-|---|---:|---:|---:|---:|
-| `h1-plaintext` | **315k** (192k) | 223k (116k) | 299k (156k) | 202k (103k) |
-| `h1-plaintext-pipe` (16 deep) | **3.04M** (1.88M) | 1.34M (681k) | 333k (170k) | 198k (100k) |
-| `h1-static-1k` | **316k** (185k) | 203k (106k) | 168k (85k) | 306k (161k) |
-| `h1-static-64k` | 105k (55k) | 88k (45k) | **131k** (70k) | 103k (53k) |
-| `h1-static-1m` | **6.6k** (3.4k) | 6.4k (3.3k) | 5.3k (2.7k) | 5.0k (2.6k) |
-| `h1-close` (new connection per request) | 63k (**59k**) | **78k** (44k) | 65k (59k) | 78k (53k) |
+| case | verilith | hyper | may-minihttp | nginx | h2o |
+|---|---:|---:|---:|---:|---:|
+| `h1-plaintext` | 297k (**184k**) | 231k (120k) | **305k** (167k) | 303k (160k) | 192k (98k) |
+| `h1-plaintext-pipe` (16 deep) | 3.00M (**2.07M**) | 1.29M (654k) | **3.05M** (1.81M) | 352k (179k) | 199k (100k) |
+| `h1-static-1k` | 303k (**172k**) | 199k (103k) | **310k** (162k) | 184k (94k) | 305k (162k) |
+| `h1-static-64k` | **119k** (**74k**) | 90k (46k) | 84k (43k) | 118k (63k) | 99k (51k) |
+| `h1-static-1m` | **9.7k** (**5.0k**) | 6.4k (3.3k) | 5.4k (2.7k) | 5.2k (2.7k) | 5.0k (2.6k) |
+| `h1-close` (new connection per request) | 76k (**76k**) | **78k** (44k) | n/a* | 62k (59k) | 75k (50k) |
+| `h2c-plaintext` (h2load, 64 conns × 32 streams) | **1.54M** (**1.15M**) | 248k (134k) | no h2 | 321k (163k) | 502k (254k) |
 
-Since that run, bodies of 8 KiB and more are written from the shared
-buffer by `writev` instead of being copied (`Response::send_shared`):
-`h1-static-64k` in a quick run is 119k (70k) against nginx's 124k (69k).
-Still behind: nginx's `sendfile` on large files, and connection setup in
-`h1-close`, where verilith-server uses its CPU most efficiently but leaves
-some idle. Both are next. nginx's low pipelined number is how it works:
+\* may-minihttp ignores `Connection: close`, so its 311k there is a
+keep-alive figure. Where it is close in raw req/s, verilith-server does the same work on less CPU.
+
+Where the numbers come from: bodies of 8 KiB and more are written from a
+shared buffer by `writev`, not copied. HTTP/2 heads go through the
+verified HPACK encoder with its dynamic table (header bytes on the wire
+90% smaller than uncompressed, as with h2o), and streams are pooled; in
+`h2c-plaintext`, h2load is the bottleneck.
+
+TLS (rustls with aws-lc-rs, sans I/O in `tls.rs`), quick run: `h1-tls-plaintext`
+202k req/s (122k per CPU-second) against nginx 185k (100k), hyper 135k,
+h2o 115k; `h2-tls-plaintext` **1.07M** (973k) against h2o 432k (222k),
+nginx 347k, hyper 197k; `h2-tls-static-64k` 63k (34k) against hyper 56k,
+h2o 55k, nginx 45k.
+
+Connection setup (`h1-close`): accepting with `TCP_DEFER_ACCEPT` (the
+request arrives with the connection, one wakeup instead of two),
+TCP_NODELAY inherited from the listener, and no epoll removal before
+`close` took it from 63k to **88k** req/s (84k per CPU-second) in a quick
+run, against hyper 73k (42k), h2o 74k (54k) and nginx 68k (62k).
+`Config::spin` (`--spin N`) polls N times before sleeping, for more
+throughput at more CPU; it is off by default and in the benchmarks.
+
+Static files (`StaticBody`): bodies of 16 to 112 KiB are sent with
+`sendfile` from a sealed memory file (`memfd` with write, grow and shrink
+seals), so the bytes sent are always the ones the Content-Length counted,
+even if the file on disk changes; head and body go out in one packet
+(MSG_MORE). Larger bodies are faster by `writev` from memory on loopback
+(measured: `sendfile` is 10-37% slower from 128 KiB up), so they stay
+there. Quick run, requests per server CPU-second: `h1-static-64k` 76k
+against nginx's 73k, `h1-static-1m` 4.8k against 2.5k. nginx's low pipelined number is how it works:
 it writes each pipelined response with its own system call.

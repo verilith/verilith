@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use verilith_http::{Body, Chunked, ChunkedDecoder, Header, Status};
 
-use crate::respond::{self, Field, Framing};
+use crate::respond::{self, Field, Framing, Prepared};
 use crate::{Handler, Request, Response};
 
 /// Limits on one connection.
@@ -83,10 +83,26 @@ pub struct Conn {
     limits: Limits,
 }
 
-/// What [`Conn`]'s caller supplies per loop turn: the cached `Date` value.
-pub struct Ctx<'a> {
-    pub date: &'a [u8],
-    pub server: &'a [u8],
+/// The server's own field lines, checked once and rebuilt when `Date`
+/// changes (once a second per worker).
+pub struct Ctx {
+    own: Prepared,
+    own_close: Prepared,
+    empty: Prepared,
+    /// The same fields as HPACK representations, for HTTP/2.
+    pub(crate) own_h2: crate::h2::HList,
+}
+
+impl Ctx {
+    /// `None` if `server` or `date` is not a valid field value.
+    pub fn new(server: &[u8], date: &[u8]) -> Option<Ctx> {
+        let own = [Field { name: b"Server", value: server }, Field { name: b"Date", value: date }];
+        let own_close = [own[0], own[1], Field { name: b"Connection", value: b"close" }];
+        let mut own_h2 = crate::h2::HList::default();
+        own_h2.push(b"server", server);
+        own_h2.push(b"date", date);
+        Some(Ctx { own: Prepared::new(&own)?, own_close: Prepared::new(&own_close)?, empty: Prepared::empty(), own_h2 })
+    }
 }
 
 impl Conn {
@@ -158,6 +174,12 @@ impl Conn {
     /// order (for one `writev`). Returns how many slices were filled.
     pub fn pending<'a>(&'a self, out: &mut [&'a [u8]]) -> usize {
         self.wbuf.slices(out)
+    }
+
+    /// [`Conn::pending`] for the event loop: file-backed bodies come as
+    /// file ranges.
+    pub fn pending_io<'a>(&'a self, out: &mut [&'a [u8]], more: &mut bool) -> Io<'a> {
+        self.wbuf.slices_io(out, more)
     }
 
     /// How many bytes wait to be written.
@@ -319,7 +341,7 @@ impl Conn {
             headers: &self.headers,
             body: &buf[hd.head_len..hd.head_len + body_len],
         };
-        let mut res = Response { out: &mut self.wbuf, ctx, sent: false, close: !keep, head: method == b"HEAD" };
+        let mut res = Response { out: &mut self.wbuf, ctx, sent: false, close: !keep, head: method == b"HEAD", h2: None };
         h.handle(&request, &mut res);
         if !res.sent {
             res.error(500);
@@ -333,7 +355,7 @@ impl Conn {
     /// Writes an error response and marks the connection to close: after a
     /// rejected head, its length and the next request's start are unknown.
     fn error(&mut self, ctx: &Ctx, status: u16, reason: &[u8]) {
-        let mut res = Response { out: &mut self.wbuf, ctx, sent: false, close: true, head: false };
+        let mut res = Response { out: &mut self.wbuf, ctx, sent: false, close: true, head: false, h2: None };
         res.send_reason(status, reason, &[], reason).ok();
         self.phase = Phase::Closing;
     }
@@ -345,7 +367,7 @@ impl Conn {
 pub struct Out {
     pub(crate) buf: Vec<u8>,
     /// Shared bodies, each with the position in `buf` it follows.
-    segs: VecDeque<(usize, Arc<[u8]>)>,
+    segs: VecDeque<(usize, Seg)>,
     /// Bytes of `buf` already written.
     pos: usize,
     /// Bytes of the front shared body already written.
@@ -354,15 +376,36 @@ pub struct Out {
     pub(crate) queued: usize,
 }
 
+/// A shared body, or a range of one.
+pub(crate) struct Seg {
+    a: Arc<[u8]>,
+    off: usize,
+    len: usize,
+    /// A sealed file holding exactly `a`, to `sendfile` from.
+    file: Option<Arc<crate::sys::Fd>>,
+}
+
+/// What to write next: slices, or a range of a file.
+pub enum Io<'a> {
+    Slices(usize, std::marker::PhantomData<&'a ()>),
+    File { fd: i32, off: usize, len: usize },
+}
+
+impl Seg {
+    fn bytes(&self) -> &[u8] {
+        &self.a[self.off..self.off + self.len]
+    }
+}
+
 /// Bodies at least this long are sent from the shared buffer, not copied.
 pub const SHARE_MIN: usize = 8 * 1024;
 
 impl Out {
-    fn new() -> Out {
+    pub(crate) fn new() -> Out {
         Out { buf: Vec::with_capacity(4096), segs: VecDeque::new(), pos: 0, seg_off: 0, queued: 0 }
     }
 
-    fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.buf.clear();
         self.segs.clear();
         self.pos = 0;
@@ -380,12 +423,70 @@ impl Out {
         self.queued += self.buf.len() - before;
     }
 
-    pub(crate) fn share(&mut self, body: Arc<[u8]>) {
-        self.queued += body.len();
-        self.segs.push_back((self.buf.len(), body));
+    /// `body[off..off + n]`, shared.
+    pub(crate) fn share_range(&mut self, body: Arc<[u8]>, off: usize, n: usize) {
+        if off == 0 && n == body.len() {
+            return self.share(body);
+        }
+        // A sub-range: kept as its own allocation-free view.
+        self.queued += n;
+        self.segs.push_back((self.buf.len(), Seg { a: body, off, len: n, file: None }));
     }
 
-    fn slices<'a>(&'a self, out: &mut [&'a [u8]]) -> usize {
+    pub(crate) fn share(&mut self, body: Arc<[u8]>) {
+        self.queued += body.len();
+        let len = body.len();
+        self.segs.push_back((self.buf.len(), Seg { a: body, off: 0, len, file: None }));
+    }
+
+    /// A shared body that also lives in a sealed file, sent with `sendfile`.
+    pub(crate) fn share_file(&mut self, body: &StaticBody) {
+        self.queued += body.bytes.len();
+        let len = body.bytes.len();
+        self.segs.push_back((self.buf.len(), Seg { a: body.bytes.clone(), off: 0, len, file: body.file.clone() }));
+    }
+
+    /// [`Out::slices`], stopping before a file-backed body: the event loop
+    /// writes those with `sendfile`. `more` is set when slices stop at one
+    /// (more bytes follow at once: MSG_MORE).
+    pub(crate) fn slices_io<'a>(&'a self, out: &mut [&'a [u8]], more: &mut bool) -> Io<'a> {
+        *more = false;
+        let mut k = 0;
+        let mut p = self.pos;
+        let mut off = self.seg_off;
+        for (at, seg) in &self.segs {
+            if k == out.len() {
+                return Io::Slices(k, Default::default());
+            }
+            if p < *at {
+                out[k] = &self.buf[p..*at];
+                k += 1;
+                p = *at;
+                if k == out.len() {
+                    return Io::Slices(k, Default::default());
+                }
+            }
+            if off < seg.len {
+                if let Some(f) = &seg.file {
+                    if k == 0 {
+                        return Io::File { fd: f.0, off: seg.off + off, len: seg.len - off };
+                    }
+                    *more = true;
+                    return Io::Slices(k, Default::default());
+                }
+                out[k] = &seg.bytes()[off..];
+                k += 1;
+            }
+            off = 0;
+        }
+        if k < out.len() && p < self.buf.len() {
+            out[k] = &self.buf[p..];
+            k += 1;
+        }
+        Io::Slices(k, Default::default())
+    }
+
+    pub(crate) fn slices<'a>(&'a self, out: &mut [&'a [u8]]) -> usize {
         let mut k = 0;
         let mut p = self.pos;
         let mut off = self.seg_off;
@@ -401,8 +502,8 @@ impl Out {
                     return k;
                 }
             }
-            if off < seg.len() {
-                out[k] = &seg[off..];
+            if off < seg.len {
+                out[k] = &seg.bytes()[off..];
                 k += 1;
             }
             off = 0;
@@ -414,7 +515,7 @@ impl Out {
         k
     }
 
-    fn advance(&mut self, mut n: usize) {
+    pub(crate) fn advance(&mut self, mut n: usize) {
         self.queued -= n;
         while n > 0 {
             if let Some((at, seg)) = self.segs.front() {
@@ -424,10 +525,10 @@ impl Out {
                     n -= t;
                     continue;
                 }
-                let t = (seg.len() - self.seg_off).min(n);
+                let t = (seg.len - self.seg_off).min(n);
                 self.seg_off += t;
                 n -= t;
-                if self.seg_off == seg.len() {
+                if self.seg_off == seg.len {
                     self.segs.pop_front();
                     self.seg_off = 0;
                 }
@@ -438,7 +539,7 @@ impl Out {
         }
         // Drop finished zero-length leftovers.
         while let Some((at, seg)) = self.segs.front() {
-            if self.pos >= *at && self.seg_off >= seg.len() {
+            if self.pos >= *at && self.seg_off >= seg.len {
                 self.segs.pop_front();
                 self.seg_off = 0;
             } else {
@@ -496,6 +597,87 @@ pub fn reason(status: u16) -> &'static [u8] {
     }
 }
 
+fn fmt_len(b: &mut [u8; 20], mut n: usize) -> &[u8] {
+    let mut i = 20;
+    loop {
+        i -= 1;
+        b[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    &b[i..]
+}
+
+/// Field lines a route sends with every response, checked once: for
+/// HTTP/1.1 as verified prepared lines, for HTTP/2 as HPACK.
+pub struct Fields {
+    pub(crate) h1: Prepared,
+    pub(crate) h2: crate::h2::HList,
+}
+
+impl Fields {
+    /// `None` if a name or value is not allowed (see [`SendError::Invalid`]).
+    pub fn new(fields: &[Field]) -> Option<Fields> {
+        let h1 = Prepared::new(fields)?;
+        let mut h2 = crate::h2::HList::default();
+        for f in fields {
+            h2.push(f.name, f.value);
+        }
+        Some(Fields { h1, h2 })
+    }
+}
+
+/// A body served many times (a static file): in memory, and on Linux, for
+/// sizes where it is faster, also in a sealed memory file that HTTP/1.1
+/// responses are sent from with `sendfile`. Sealed, so the bytes sent are
+/// always the bytes the Content-Length counted, whatever happens to the
+/// file it was read from.
+pub struct StaticBody {
+    pub(crate) bytes: Arc<[u8]>,
+    pub(crate) file: Option<Arc<crate::sys::Fd>>,
+}
+
+/// [`StaticBody::new`] uses `sendfile` for bodies from this long...
+pub const SENDFILE_MIN: usize = 16 * 1024;
+/// ...to this long. Measured on loopback (bench/server, 2 server CPUs):
+/// `sendfile` is 6-17% faster from 32 to 96 KiB, and 10-37% slower from
+/// 128 KiB up, where `writev` from memory wins. Over a NIC that can send
+/// from page references, large files may differ: see
+/// [`StaticBody::with_sendfile`].
+pub const SENDFILE_MAX: usize = 112 * 1024;
+
+impl StaticBody {
+    pub fn new(bytes: Vec<u8>) -> StaticBody {
+        let on = (SENDFILE_MIN..=SENDFILE_MAX).contains(&bytes.len());
+        StaticBody::with_sendfile(bytes, on)
+    }
+
+    /// `sendfile` or not, whatever the size (it is used only where the
+    /// platform has it: Linux).
+    pub fn with_sendfile(bytes: Vec<u8>, sendfile: bool) -> StaticBody {
+        let file = if crate::sys::HAS_SENDFILE && sendfile && !bytes.is_empty() {
+            crate::sys::sealed_memfd(&bytes).map(Arc::new)
+        } else {
+            None
+        };
+        StaticBody { bytes: bytes.into(), file }
+    }
+
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    pub fn bytes(&self) -> &Arc<[u8]> {
+        &self.bytes
+    }
+}
+
 /// 1xx, 204 and 304 responses have no body (RFC 9112 §6.3).
 fn no_body(status: u16) -> bool {
     (100..200).contains(&status) || status == 204 || status == 304
@@ -527,26 +709,41 @@ impl<'a> Response<'a> {
         if body.len() < SHARE_MIN {
             return self.send(status, fields, body);
         }
-        self.head_only(status, reason(status), fields, body.len())?;
-        if !self.head && !no_body(status) {
-            self.out.share(body.clone());
-        }
+        self.head_only(status, reason(status), None, fields, body.len())?;
+        self.body_share(status, body);
         Ok(())
     }
 
-    fn head_only(&mut self, status: u16, reason: &[u8], fields: &[Field], len: usize) -> Result<(), SendError> {
+    fn head_only(&mut self, status: u16, reason: &[u8], pre: Option<&Fields>, fields: &[Field], len: usize) -> Result<(), SendError> {
         if self.sent {
             return Err(SendError::AlreadySent);
         }
+        if let Some(r) = self.h2.as_deref_mut() {
+            // HTTP/2: the same checks, then HPACK (no Connection field: §8.2.2).
+            if !(100..=999).contains(&status) || !respond::check_fields(fields) {
+                return Err(SendError::Invalid);
+            }
+            // Encoded when the HEADERS frame is written (h2.rs `schedule`).
+            r.status = status;
+            for f in fields {
+                r.fields.push(f.name, f.value);
+            }
+            if let Some(p) = pre {
+                r.fields.extend(&p.h2);
+            }
+            if !no_body(status) {
+                let mut cl = [0u8; 20];
+                r.fields.push(b"content-length", fmt_len(&mut cl, len));
+            }
+            self.sent = true;
+            return Ok(());
+        }
+        let pre = pre.map(|p| &p.h1);
         let framing = if no_body(status) { Framing::Neither } else { Framing::Length(len as u64) };
-        let own = [
-            Field { name: b"Server", value: self.ctx.server },
-            Field { name: b"Date", value: self.ctx.date },
-            Field { name: b"Connection", value: b"close" },
-        ];
-        let n = if self.close { 3 } else { 2 };
+        let own = if self.close { &self.ctx.own_close } else { &self.ctx.own };
+        let pre = pre.unwrap_or(&self.ctx.empty);
         let before = self.out.buf.len();
-        let ok = respond::write_head_checked(&mut self.out.buf, status, reason, &own[..n], fields, framing);
+        let ok = respond::write_head_prepared(&mut self.out.buf, status, reason, own, pre, fields, framing);
         self.out.grew(before);
         if !ok {
             return Err(SendError::Invalid);
@@ -555,11 +752,59 @@ impl<'a> Response<'a> {
         Ok(())
     }
 
-    fn send_reason(&mut self, status: u16, reason: &[u8], fields: &[Field], body: &[u8]) -> Result<(), SendError> {
-        self.head_only(status, reason, fields, body.len())?;
-        if !no_body(status) && !self.head {
-            self.out.extend(body);
+    /// [`Response::send`] with a route's fixed fields checked in advance
+    /// ([`Prepared::new`]): the fast path.
+    pub fn send_prepared(&mut self, status: u16, fields: &Fields, body: &[u8]) -> Result<(), SendError> {
+        self.head_only(status, reason(status), Some(fields), &[], body.len())?;
+        self.body_copy(status, body);
+        Ok(())
+    }
+
+    fn body_copy(&mut self, status: u16, body: &[u8]) {
+        if no_body(status) || self.head {
+            return;
         }
+        match self.h2.as_deref_mut() {
+            Some(r) => r.body = crate::h2::ReplyBody::Owned(body.to_vec()),
+            None => self.out.extend(body),
+        }
+    }
+
+    fn body_share(&mut self, status: u16, body: &Arc<[u8]>) {
+        if no_body(status) || self.head {
+            return;
+        }
+        match self.h2.as_deref_mut() {
+            Some(r) => r.body = crate::h2::ReplyBody::Shared(body.clone()),
+            None => self.out.share(body.clone()),
+        }
+    }
+
+    /// [`Response::send_shared`] with prepared fields.
+    pub fn send_shared_prepared(&mut self, status: u16, fields: &Fields, body: &Arc<[u8]>) -> Result<(), SendError> {
+        if body.len() < SHARE_MIN {
+            return self.send_prepared(status, fields, body);
+        }
+        self.head_only(status, reason(status), Some(fields), &[], body.len())?;
+        self.body_share(status, body);
+        Ok(())
+    }
+
+    /// A static body: `sendfile` on HTTP/1.1 where it can, shared otherwise.
+    pub fn send_static(&mut self, status: u16, fields: &Fields, body: &StaticBody) -> Result<(), SendError> {
+        if body.file.is_none() || self.h2.is_some() {
+            return self.send_shared_prepared(status, fields, &body.bytes);
+        }
+        self.head_only(status, reason(status), Some(fields), &[], body.len())?;
+        if !no_body(status) && !self.head {
+            self.out.share_file(body);
+        }
+        Ok(())
+    }
+
+    fn send_reason(&mut self, status: u16, reason: &[u8], fields: &[Field], body: &[u8]) -> Result<(), SendError> {
+        self.head_only(status, reason, None, fields, body.len())?;
+        self.body_copy(status, body);
         Ok(())
     }
 

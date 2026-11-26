@@ -15,9 +15,13 @@ pub mod date;
 #[cfg(not(verus_keep_ghost))]
 pub mod h1;
 #[cfg(not(verus_keep_ghost))]
+pub mod h2;
+#[cfg(not(verus_keep_ghost))]
 pub mod sys;
 #[cfg(not(verus_keep_ghost))]
 pub mod worker;
+#[cfg(all(feature = "tls", not(verus_keep_ghost)))]
+pub mod tls;
 
 #[cfg(not(verus_keep_ghost))]
 pub use api::*;
@@ -26,8 +30,9 @@ pub use api::*;
 mod api {
     use verilith_http::Header;
 
-    pub use crate::h1::{Limits, SendError};
-    pub use crate::respond::Field;
+    pub use crate::h1::{Fields, Limits, SendError, StaticBody};
+    pub use crate::h2::Limits2;
+    pub use crate::respond::{Field, Prepared};
     pub use crate::worker::{serve, Config};
 
     /// A request, as a handler sees it. Everything borrows the connection's
@@ -71,10 +76,12 @@ mod api {
     /// Where a handler writes its response. See [`Response::send`].
     pub struct Response<'a> {
         pub(crate) out: &'a mut crate::h1::Out,
-        pub(crate) ctx: &'a crate::h1::Ctx<'a>,
+        pub(crate) ctx: &'a crate::h1::Ctx,
         pub(crate) sent: bool,
         pub(crate) close: bool,
         pub(crate) head: bool,
+        /// Set on HTTP/2 streams: the response is encoded here.
+        pub(crate) h2: Option<&'a mut crate::h2::Reply>,
     }
 
     /// Request handling. Called on the worker thread that owns the

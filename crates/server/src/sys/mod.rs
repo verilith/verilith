@@ -40,6 +40,24 @@ pub struct iovec {
     pub iov_len: usize,
 }
 
+/// `struct msghdr`: Linux uses `size_t` for the lengths, macOS `int`/`socklen_t`.
+#[repr(C)]
+pub struct msghdr {
+    pub msg_name: *mut u8,
+    pub msg_namelen: socklen_t,
+    pub msg_iov: *const iovec,
+    #[cfg(target_os = "linux")]
+    pub msg_iovlen: usize,
+    #[cfg(target_os = "macos")]
+    pub msg_iovlen: c_int,
+    pub msg_control: *mut u8,
+    #[cfg(target_os = "linux")]
+    pub msg_controllen: usize,
+    #[cfg(target_os = "macos")]
+    pub msg_controllen: socklen_t,
+    pub msg_flags: c_int,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct sockaddr_in {
@@ -67,6 +85,7 @@ unsafe extern "C" {
     fn listen(fd: c_int, backlog: c_int) -> c_int;
     fn read(fd: c_int, buf: *mut u8, n: usize) -> isize;
     fn writev(fd: c_int, iov: *const iovec, n: c_int) -> isize;
+    fn sendmsg(fd: c_int, msg: *const msghdr, flags: c_int) -> isize;
     fn close(fd: c_int) -> c_int;
     fn clock_gettime(clk: c_int, ts: *mut timespec) -> c_int;
     fn time(t: *mut i64) -> i64;
@@ -99,6 +118,12 @@ pub fn listen_tcp(addr: [u8; 4], port: u16, reuseport: bool, backlog: i32) -> io
             let e = io::Error::last_os_error();
             close(fd);
             return Err(e);
+        }
+        // Best effort: the server is correct without either.
+        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one as *const c_int as *const u8, 4);
+        if let Some(opt) = TCP_DEFER_ACCEPT {
+            let secs: c_int = 1;
+            setsockopt(fd, IPPROTO_TCP, opt, &secs as *const c_int as *const u8, 4);
         }
         cvt(listen(fd, backlog))?;
         Ok(fd)
@@ -144,13 +169,19 @@ pub fn read_into(fd: i32, buf: &mut [u8]) -> IoResult {
 /// `writev(2)`. Contract: on `Done(n)`, `n <=` the total length, and the
 /// first `n` bytes of the slices, in order, were written.
 #[inline]
-pub fn write_slices(fd: i32, bufs: &[&[u8]]) -> IoResult {
+pub fn write_slices(fd: i32, bufs: &[&[u8]], more: bool) -> IoResult {
     let mut iov: [iovec; 8] = unsafe { std::mem::zeroed() };
     let k = bufs.len().min(8);
     for i in 0..k {
         iov[i] = iovec { iov_base: bufs[i].as_ptr(), iov_len: bufs[i].len() };
     }
-    let r = unsafe { writev(fd, iov.as_ptr(), k as c_int) };
+    let r = if more && MSG_MORE != 0 {
+        // A head with its body to follow by sendfile: one packet, not two.
+        let m = msghdr { msg_name: std::ptr::null_mut(), msg_namelen: 0, msg_iov: iov.as_ptr(), msg_iovlen: k as _, msg_control: std::ptr::null_mut(), msg_controllen: 0, msg_flags: 0 };
+        unsafe { sendmsg(fd, &m, MSG_MORE) }
+    } else {
+        unsafe { writev(fd, iov.as_ptr(), k as c_int) }
+    };
     if r >= 0 {
         IoResult::Done(r as usize)
     } else {
@@ -160,6 +191,16 @@ pub fn write_slices(fd: i32, bufs: &[&[u8]]) -> IoResult {
             io::ErrorKind::Interrupted => IoResult::Done(0),
             _ => IoResult::Closed,
         }
+    }
+}
+
+/// A file descriptor closed on drop.
+#[derive(Debug)]
+pub struct Fd(pub i32);
+
+impl Drop for Fd {
+    fn drop(&mut self) {
+        close_fd(self.0);
     }
 }
 

@@ -1,0 +1,23 @@
+[package]
+name = "quicbench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+verilith-quic = { path = ".." }
+quinn-proto = { version = "=0.11.19", default-features = false }
+quiche = "=0.24.9"
+bytes = "1"
+octets = "0.3"
+
+[patch.crates-io]
+quinn-proto = { path = "vendor/quinn-proto" }
+quiche = { path = "vendor/quiche" }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+debug = 1
+
+[workspace]

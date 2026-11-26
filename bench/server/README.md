@@ -9,7 +9,7 @@ The design and the reasons for each case are in
 # Linux (Debian/Ubuntu): the servers and load generators
 sudo apt-get install nginx-light h2o wrk nghttp2-client
 (cd baselines/hyper && cargo build --release)    # the hyper baseline
-cargo build --release -p verilith-server          # once it exists (from the repo root)
+cargo build --release -p verilith-server --features tls   # from the repo root
 
 ./run.py --list                                   # what was found
 ./run.py --quick                                  # smoke test: 1 round, 3 s per case

@@ -20,7 +20,8 @@ shortest dependency list, depend on that crate directly.
 |---|---|---|---|
 | `archive` | `verilith::archive` | [`verilith-archive`](https://github.com/verilith/verilith/tree/main/crates/archive) | zip and tar readers behind libarchive's read API |
 | `brotli` | `verilith::brotli` | [`verilith-brotli`](https://github.com/verilith/verilith/tree/main/crates/brotli) | Brotli |
-| `core` | `verilith::core` | [`verilith-core`](https://github.com/verilith/verilith/tree/main/crates/core) | shared verified building blocks (bit readers, Huffman tables, CRC-32, UTF-8) |
+| `checksum` | `verilith::checksum` | [`verilith-checksum`](https://github.com/verilith/verilith/tree/main/crates/checksum) | CRC-32, CRC-32C and Adler-32 |
+| `core` | `verilith::core` | [`verilith-core`](https://github.com/verilith/verilith/tree/main/crates/core) | shared verified building blocks (bit readers, Huffman tables, UTF-8) |
 | `dns` | `verilith::dns` | [`verilith-dns`](https://github.com/verilith/verilith/tree/main/crates/dns) | DNS message parser and serializer |
 | `font` | `verilith::font` | [`verilith-font`](https://github.com/verilith/verilith/tree/main/crates/font) | font sanitizer (OpenType, WOFF, WOFF2) |
 | `gif` | `verilith::gif` | [`verilith-gif`](https://github.com/verilith/verilith/tree/main/crates/gif) | GIF decoder |
@@ -31,6 +32,7 @@ shortest dependency list, depend on that crate directly.
 | `json` | `verilith::json` | [`verilith-json`](https://github.com/verilith/verilith/tree/main/crates/json) | JSON parser |
 | `lz4` | `verilith::lz4` | [`verilith-lz4`](https://github.com/verilith/verilith/tree/main/crates/lz4) | LZ4 |
 | `png` | `verilith::png` | [`verilith-png`](https://github.com/verilith/verilith/tree/main/crates/png) | PNG decoder |
+| `quic` | `verilith::quic` | [`verilith-quic`](https://github.com/verilith/verilith/tree/main/crates/quic) | QUIC (RFC 9000) packets, frames, transport parameters, flow control and stream states |
 | `regex` | `verilith::regex` | [`verilith-regex`](https://github.com/verilith/verilith/tree/main/crates/regex) | regular expressions |
 | `sha2` | `verilith::sha2` | [`verilith-sha2`](https://github.com/verilith/verilith/tree/main/crates/sha2) | SHA-2: SHA-224 to SHA-512 |
 | `simd` | `verilith::simd` | [`verilith-simd`](https://github.com/verilith/verilith/tree/main/crates/simd) | verified SIMD kernels |
