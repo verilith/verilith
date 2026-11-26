@@ -42,7 +42,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | sha2 | 9 |  |  |  |  |  | 3 |
 | simd | 362 | 6 | 274 | 4 |  |  | 3 |
 | snappy |  |  |  |  |  |  | 1 |
-| sync | 43 | 11 |  | 1 | 16 | 9 | 2 |
+| sync | 45 | 11 |  | 1 | 16 | 10 | 2 |
 | text | 18 | 13 |  |  | 13 |  | 9 |
 | tiff | 1 |  |  |  |  |  | 2 |
 | url | 1 |  |  |  |  |  | 5 |
@@ -54,7 +54,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  | 2 |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **639** | **35** | **274** | **5** | **34** | **10** | **104** |
+| **total** | **641** | **35** | **274** | **5** | **34** | **11** | **104** |
 
 ## Items
 
@@ -208,13 +208,14 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/sync/src/array_queue.rs`: 4 assume_new; no termination check: `push_atomic`, `pop_atomic`, `len`
 - `crates/sync/src/chan_sync.rs`: no termination check: `slow`, `add_handle`
 - `crates/sync/src/channel.rs`: plain Rust
+- `crates/sync/src/fair.rs`: external_body: `bomb`, `bomb`, `defuse`; no termination check: `lock`
 - `crates/sync/src/lot.rs`: external_body: `key`, `key`, `lock_bucket`, `unlock_bucket`; 2 assume_new
 - `crates/sync/src/model.rs`: axioms: `pool_nonempty`
 - `crates/sync/src/mutex.rs`: external_body: `key`; 1 assume_new; no termination check: `lock_slow`
-- `crates/sync/src/ra.rs`: external_body: `view`, `view`, `loc`, `loc`, `id`, `new`, `load_acquire`, `load_relaxed`, `store_release`, `fetch_add_acqrel`, `fetch_add_seqcst`, `fetch_sub_acqrel`, `compare_exchange_seqcst`, `sync_exclusive`; axioms: `new`, `dup`, `join`, `publish`, `acquire`, `nonempty_lemma`, `bounded_lemma`, `lb`, `lb_prefix`, `dup`; 4 assume_new
+- `crates/sync/src/ra.rs`: external_body: `view`, `view`, `loc`, `loc`, `id`, `new`, `load_acquire`, `load_relaxed`, `store_release`, `store_release_sra`, `fetch_add_acqrel`, `fetch_add_acqrel_sra`, `fetch_add_seqcst`, `fetch_sub_acqrel`, `fetch_sub_acqrel_sra`, `compare_exchange_seqcst`, `sync_exclusive`; axioms: `new`, `dup`, `join`, `publish`, `acquire`, `nonempty_lemma`, `bounded_lemma`, `lb`, `lb_prefix`, `dup`; 4 assume_new
 - `crates/sync/src/rwlock.rs`: external_body: `key`; 1 assume_new; no termination check: `park`, `read_slow`, `write_slow`
 - `crates/sync/src/spsc.rs`: 4 assume_new
-- `crates/sync/src/util.rs`: external_body: `arc_clone`, `exhausted`, `no_deadline`, `no_deadline`, `leaked_guard`, `spin_hint`, `new`, `new`, `spin`, `snooze`, `is_completed`, `k`, `k`, `new`, `lock`, `unlock`, `current`, `current`, `unpark`, `is_timed`, `time_left`, `time_left`, `park_for`; ext. types: `ExDeadline`
+- `crates/sync/src/util.rs`: external_body: `arc_clone`, `exhausted`, `no_deadline`, `no_deadline`, `leaked_guard`, `spin_hint`, `new`, `new`, `spin`, `snooze`, `is_completed`, `wait_turn`, `current`, `current`, `unpark`, `is_timed`, `time_left`, `time_left`, `park_for`; ext. types: `ExDeadline`
 - `crates/sync/src/progress/mod.rs`: plain Rust
 
 ### text

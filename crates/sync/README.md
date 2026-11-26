@@ -81,10 +81,12 @@ assert_eq!(c.pop(), Some(1));
 
 ## What is proven
 
-Checked by Verus: `cargo verus verify` reports 418 items verified, 0
+Checked by Verus: `cargo verus verify` reports 455 items verified, 0
 errors, with no `assume` or `admit` anywhere in the crate. The queue rows
-hold under the release/acquire model of `src/ra.rs`; the lock rows under
-vstd's sequentially consistent atomics. The progress rows at the end are
+hold under the release/acquire model of `src/ra.rs`, the MPMC queue's for
+C11 itself and the SPSC queue's for the hardware model (see "Trusted
+computing base"); the lock rows under vstd's sequentially consistent
+atomics. The progress rows at the end are
 proved about models of the protocols, and for every one of them the code
 is verified to follow its model, as explained below the table.
 
@@ -105,6 +107,8 @@ is verified to follow its model, as explained below the table.
 | **RwLock never deadlocks**: likewise for `read()` and `write()`. The parking hints are never left set with nobody to clear them, and a sleeper is never left with "parked" clear and nobody to wake it | `progress::rwlock`, and `src/rwlock.rs` for the code following the model |
 | **Channel waiters are never stranded**: if a message is queued while a receiver waits (or a slot is free while a sender waits), some receiver (sender) takes it, unless the waiter returns or the other side disconnects; and once the other side is gone, every waiter returns | `progress::channel`, and `src/chan_sync.rs` for the code following the model |
 | **MPMC queue is lock-free under fair scheduling**: while a thread is in `push`, `pop` or `len`, some call returns. Its relaxed loads may read old values; this needs only that, once nothing is written any more, each thread's loads eventually read the latest values | `progress::queue`, and `src/array_queue.rs` for the code following the model |
+| **Cloning a channel handle is lock-free**: while a thread is in `clone`, some clone or drop on the same side takes effect | `progress::handles`, and `src/chan_sync.rs` for the code following the model |
+| **The internal lock is fair**: the parking lot's buckets and the channel's waiter lists use a ticket lock, proven to exclude and to be starvation-free: every thread waiting for it gets it. The other progress rows used to assume this of `std`'s mutex, which does not promise it | `progress::ticket`, and `src/fair.rs` for the code following the model |
 
 The progress rows hold in every execution in which each thread keeps
 getting scheduled; nothing else is assumed about timing. Each blocking
@@ -145,14 +149,17 @@ argues for each item. In short:
   the SC atomics the locks use.
 - The release/acquire model in `src/ra.rs`: its axioms, and the claim that
   each `Objective` type holds no thread-relative resources. The model is
-  ORC11's, with one strengthening (stores append to the history), which is
-  the "strong release/acquire" model that x86, ARMv8 and POWER implement.
+  ORC11's. Its writes append to the history, and the MPMC queue and the
+  channel are proven to write only where C11 leaves no other place, so
+  their proofs hold for C11. The SPSC queue's hold for the "strong
+  release/acquire" model that x86, ARMv8 and POWER implement, which is
+  as far as they can go: TRUST.md gives a C11 execution in which SPSC's
+  `push` says "full" and `pop` says "empty" at once.
 - The specs: read `QueueView`, the `atomically` blocks on the queue
   operations, and the `RwToks` state machine to check that they say what
   you expect.
 - Unverified, with no access to the data: `src/util.rs` (backoff,
-  padding, and thin wrappers around `std`'s mutex, park/unpark and
-  clock), the channel's public shell in `src/channel.rs`, which only
+  padding, and thin wrappers around park/unpark and the clock), the channel's public shell in `src/channel.rs`, which only
   forwards to the verified `src/chan_sync.rs`, and the one-line `Send`,
   `Sync`, `Deref` and `Drop` impls. The tests run under Miri in CI, with
   its weak-memory emulation.
@@ -162,9 +169,11 @@ argues for each item. In short:
   hand-over of a lock's waiter list (`lock_bucket`, `unlock_bucket`, and
   each lock's `key`); for the queue, that stores become visible
   eventually; for the channel, sequentially consistent interleaving of
-  the SeqCst operations it relies on and mutual exclusion from
-  `std::sync::Mutex`; and, for progress only, that `unpark` wakes a
-  parked thread and a `std` mutex is eventually acquired.
+  the SeqCst operations it relies on; and, for progress only, that
+  `unpark` wakes a parked thread. The parking lot's buckets and the
+  channel's waiter lists use a verified ticket lock (`src/fair.rs`),
+  proven starvation-free, not `std`'s mutex, and cloning a channel
+  handle is proven lock-free.
 
 ## The memory model
 
@@ -190,6 +199,16 @@ it now uses a plain load (Acquire in SPSC, relaxed in MPMC) to suggest full
 (or empty), then confirms with
 an AcqRel `fetch_add(0)`, which reads the latest value. That only happens
 when the queue looks full or empty.
+
+"Reads the latest value" and "a store goes at the end" are where C11 and
+the hardware part ways: C11 may place a write before others that already
+happened. So `src/ra.rs` grants them only when C11 has no other choice: a
+store whose thread has seen the location's last write, or an RMW on a
+location that only RMWs write. The MPMC queue is proven to stay inside
+those rules, so its proofs hold for C11. The SPSC queue cannot: its
+index stores and the other side's confirming RMW race on one location,
+and TRUST.md shows a C11 execution in which `push` reports "full" while
+`pop` reports "empty". x86, ARMv8 and POWER do not allow it.
 
 ## Performance
 
