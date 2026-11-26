@@ -2,6 +2,7 @@
 //! on the client side) talks to the server over UDP on 127.0.0.1.
 #![cfg(feature = "h3")]
 use std::net::{SocketAddr, UdpSocket};
+use std::os::fd::AsRawFd;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -79,6 +80,7 @@ struct Client {
     enc: Encoder,
     server: SocketAddr,
     lost: Option<quinn_proto::ConnectionError>,
+    gso: bool,
 }
 
 impl Client {
@@ -95,7 +97,7 @@ impl Client {
         sock.set_read_timeout(Some(Duration::from_millis(5))).unwrap();
         let mut ep = Endpoint::new(Arc::new(EndpointConfig::default()), None, true, None);
         let (ch, q) = ep.connect(Instant::now(), cc, s.addr, "localhost").unwrap();
-        let mut c = Client { sock, ep, ch, q, dec: Decoder::new(0, 0, 1 << 16).unwrap(), enc: Encoder::new(0, 0, 0).unwrap(), server: s.addr, lost: None };
+        let mut c = Client { sock, ep, ch, q, dec: Decoder::new(0, 0, 1 << 16).unwrap(), enc: Encoder::new(0, 0, 0).unwrap(), server: s.addr, lost: None, gso: true };
         let t = Instant::now();
         while c.q.is_handshaking() {
             assert!(t.elapsed() < Duration::from_secs(5), "handshake timed out");
@@ -108,8 +110,12 @@ impl Client {
     fn step(&mut self) {
         let now = Instant::now();
         let mut buf = Vec::new();
-        while let Some(t) = self.q.poll_transmit(now, 1, &mut buf) {
-            self.sock.send_to(&buf[..t.size], t.destination).unwrap();
+        // Batches of datagrams with segmentation offload where the kernel
+        // has it, so the server's receive offload path is exercised.
+        while let Some(t) = self.q.poll_transmit(now, 10, &mut buf) {
+            let SocketAddr::V4(d) = t.destination else { unreachable!() };
+            let seg = t.segment_size.unwrap_or(t.size);
+            verilith_server::sys::send_to(self.sock.as_raw_fd(), &buf[..t.size], d.ip().octets(), d.port(), seg, &mut self.gso);
             buf.clear();
         }
         let mut rb = [0u8; 65536];

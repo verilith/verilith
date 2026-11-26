@@ -6,6 +6,7 @@ pub const AF_INET: c_int = 2;
 pub const SOCK_STREAM: c_int = 1;
 pub const SOCK_DGRAM: c_int = 2;
 pub const SOL_UDP: c_int = 17;
+pub const UDP_GRO: Option<c_int> = Some(104);
 /// Generic segmentation offload: one `sendmsg` carries many datagrams.
 pub const UDP_SEGMENT: Option<c_int> = Some(103);
 /// UDP sockets with SO_REUSEPORT are balanced by the 4-tuple, so a

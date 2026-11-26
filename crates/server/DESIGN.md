@@ -497,7 +497,7 @@ in `bench/server/results`, and a merge.
    for parity.
 8. **HTTP/3**: QPACK and HTTP/3 framing on quinn-proto, then verified
    QUIC parsing and state, then GSO/GRO (see [HTTP/3](#http3)). *(first
-   step done; GSO done, GRO and `recvmmsg` left)*
+   step done; GSO and GRO done, `recvmmsg` and connection-ID steering left)*
 9. **Reverse proxy.** Upstream HTTP/1.1 with verilith-http's response
    parser: here the smuggling theorem is about two hops of the same
    connection, which is the case it was written for.
