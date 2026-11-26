@@ -27,6 +27,9 @@ pub struct Config {
     /// Pin worker `i` to the `i`th allowed CPU (Linux).
     pub pin: bool,
     pub limits: Limits,
+    /// A TLS port (h2 and http/1.1 by ALPN), with its configuration.
+    #[cfg(feature = "tls")]
+    pub tls: Option<(u16, Arc<rustls::ServerConfig>)>,
     /// The `Server` field value.
     pub server: &'static [u8],
     /// Empty polls before a worker sleeps. 0 (the default) sleeps at once;
@@ -45,6 +48,8 @@ impl Default for Config {
             threads: 0,
             pin: true,
             limits: Limits::default(),
+            #[cfg(feature = "tls")]
+            tls: None,
             server: b"verilith",
             spin: 0,
         }
@@ -58,6 +63,8 @@ const LISTENER: u64 = u64::MAX;
 enum Proto {
     H1,
     H2,
+    #[cfg(feature = "tls")]
+    Tls,
 }
 
 /// Runs the server on the calling thread and `threads - 1` more, until the
@@ -69,6 +76,10 @@ pub fn serve<H: Handler>(cfg: Config, handler: Arc<H>) -> io::Result<()> {
     let mut ports = vec![(cfg.port, Proto::H1)];
     if let Some(p) = cfg.h2c_port {
         ports.push((p, Proto::H2));
+    }
+    #[cfg(feature = "tls")]
+    if let Some((p, _)) = &cfg.tls {
+        ports.push((*p, Proto::Tls));
     }
     // macOS: one listening socket per port for all workers, made up front.
     let shared: Option<Vec<(i32, Proto)>> = if sys::REUSEPORT_BALANCES {
@@ -101,13 +112,27 @@ pub fn serve<H: Handler>(cfg: Config, handler: Arc<H>) -> io::Result<()> {
 enum Any {
     H1(Conn),
     H2(Box<Conn2>),
+    #[cfg(feature = "tls")]
+    Tls(Box<crate::tls::TlsConn>),
 }
 
+#[cfg(not(feature = "tls"))]
 macro_rules! each {
     ($c:expr, $x:ident => $e:expr) => {
         match $c {
             Any::H1($x) => $e,
             Any::H2($x) => $e,
+        }
+    };
+}
+
+#[cfg(feature = "tls")]
+macro_rules! each {
+    ($c:expr, $x:ident => $e:expr) => {
+        match $c {
+            Any::H1($x) => $e,
+            Any::H2($x) => $e,
+            Any::Tls($x) => $e,
         }
     };
 }
@@ -132,7 +157,12 @@ impl Any {
         each!(self, c => c.pending(out))
     }
     fn pending_io<'a>(&'a self, out: &mut [&'a [u8]], more: &mut bool) -> Io<'a> {
-        each!(self, c => c.pending_io(out, more))
+        match self {
+            Any::H1(c) => c.pending_io(out, more),
+            Any::H2(c) => c.pending_io(out, more),
+            #[cfg(feature = "tls")]
+            Any::Tls(c) => Io::Slices(c.pending(out), Default::default()),
+        }
     }
     fn pending_len(&self) -> usize {
         each!(self, c => c.pending_len())
@@ -210,6 +240,14 @@ impl Worker {
                     None => Conn::new(self.cfg.limits),
                 }),
                 Proto::H2 => Any::H2(Box::new(Conn2::new(self.cfg.limits2))),
+                #[cfg(feature = "tls")]
+                Proto::Tls => match crate::tls::TlsConn::new(self.cfg.tls.as_ref().unwrap().1.clone(), self.cfg.limits, self.cfg.limits2) {
+                    Some(t) => Any::Tls(Box::new(t)),
+                    None => {
+                        sys::close_fd(fd);
+                        continue;
+                    }
+                },
             };
             let id = match self.free.pop() {
                 Some(i) => i,
