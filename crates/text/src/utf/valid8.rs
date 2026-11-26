@@ -6,9 +6,11 @@
 //! definition is vcore's `utf8_from`, read off Unicode's Table 3-7. vcore
 //! also proves the main theorem, `lemma_utf8_local`: well-formedness is
 //! the conjunction of a local condition `loc_ok` at every byte, which looks
-//! only at that byte and the three before it. Here `lemma_lookup` shows
-//! that three table lookups and a saturating subtraction compute
-//! `loc_ok`, which is how the kernel checks 32 bytes at once.
+//! only at that byte and the three before it, and (`lemma_lookup`,
+//! `lemma_err_lane`, shared with verilith-json) that three table lookups
+//! and a saturating subtraction compute `loc_ok`, which is how the kernel
+//! checks 32 bytes at once. Here the kernels are proven to compute those
+//! lookups.
 use super::avx2::*;
 use crate::simd::*;
 use verilith_simd::arch::*;
@@ -53,18 +55,6 @@ pub const T3X: [u8; 32] = [
     1, 1, 1, 1, 1, 1, 1, 1, 0xE6, 0xAE, 0xBA, 0xBA, 1, 1, 1, 1,
 ];
 
-pub open spec fn t1() -> Seq<u8> {
-    seq![2u8, 2, 2, 2, 2, 2, 2, 2, 0x80, 0x80, 0x80, 0x80, 0x21, 0x01, 0x15, 0x49]
-}
-
-pub open spec fn t2() -> Seq<u8> {
-    seq![0xE7u8, 0xA3, 0x83, 0x83, 0x8B, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xDB, 0xCB, 0xCB]
-}
-
-pub open spec fn t3() -> Seq<u8> {
-    seq![1u8, 1, 1, 1, 1, 1, 1, 1, 0xE6, 0xAE, 0xBA, 0xBA, 1, 1, 1, 1]
-}
-
 /// Each 32-byte table is its 16-byte table twice.
 proof fn lemma_tables_x()
     ensures
@@ -79,171 +69,9 @@ proof fn lemma_tables_x()
     }
 }
 
-/// The three lookups for the pair (p1, c), with `ch` the high nibble of c.
-pub open spec fn tbl(p1: u8, ch: int) -> u8 {
-    t1()[p1 as int / 16] & t2()[p1 as int % 16] & t3()[ch]
-}
-
-/// What the tables must give: bit 7 alone when a lead byte two or three
-/// back needs this byte, else nothing.
-pub open spec fn want(m23: bool) -> u8 {
-    if m23 {
-        0x80
-    } else {
-        0
-    }
-}
-
-/// `loc_ok` with c replaced by its high nibble, which is all it looks at.
-pub open spec fn loc_n(p1: u8, ch: int, m23: bool) -> bool {
-    let ct = 8 <= ch <= 0xB;
-    &&& !(p1 >= 0xC0 && !ct)
-    &&& !(p1 < 0x80 && ct)
-    &&& (cont(p1) && ct) == m23
-    &&& !((p1 == 0xC0 || p1 == 0xC1) && ct)
-    &&& !(p1 == 0xE0 && ct && ch < 0xA)
-    &&& !(p1 == 0xED && ct && ch >= 0xA)
-    &&& !(p1 == 0xF0 && ct && ch < 9)
-    &&& !(p1 >= 0xF4 && ct && ch >= 9)
-    &&& !(p1 >= 0xF5 && ct && ch < 9)
-}
-
-/// The tables agree with `loc_n` at pair `k`, numbered `p1 * 16 + ch`.
-pub open spec fn table_ok_at(k: int) -> bool {
-    let p1 = (k / 16) as u8;
-    let ch = k % 16;
-    &&& loc_n(p1, ch, true) == (tbl(p1, ch) == want(true))
-    &&& loc_n(p1, ch, false) == (tbl(p1, ch) == want(false))
-}
-
-/// `table_ok_at` on `[lo, lo + n)`.
-pub open spec fn tables_ok(lo: int, n: nat) -> bool
-    decreases n,
-{
-    if n == 0 {
-        true
-    } else {
-        table_ok_at(lo + n - 1) && tables_ok(lo, (n - 1) as nat)
-    }
-}
-
-proof fn lemma_tables_ok_at(lo: int, n: nat, k: int)
-    requires
-        tables_ok(lo, n),
-        lo <= k < lo + n,
-    ensures
-        table_ok_at(k),
-    decreases n,
-{
-    if k < lo + n - 1 {
-        lemma_tables_ok_at(lo, (n - 1) as nat, k);
-    }
-}
-
-/// The table check, for every pair: all 256 * 16 of them, by evaluation.
-pub proof fn lemma_lookup(p3: u8, p2: u8, p1: u8, c: u8)
-    ensures
-        loc_ok(p3, p2, p1, c) == (tbl(p1, c as int / 16) == want(p2 >= 0xE0 || p3 >= 0xF0)),
-{
-    let k = p1 as int * 16 + c as int / 16;
-    let lo = k / 128 * 128;
-    if lo == 0 { assert(tables_ok(0, 128)) by (compute_only); }
-    else if lo == 128 { assert(tables_ok(128, 128)) by (compute_only); }
-    else if lo == 256 { assert(tables_ok(256, 128)) by (compute_only); }
-    else if lo == 384 { assert(tables_ok(384, 128)) by (compute_only); }
-    else if lo == 512 { assert(tables_ok(512, 128)) by (compute_only); }
-    else if lo == 640 { assert(tables_ok(640, 128)) by (compute_only); }
-    else if lo == 768 { assert(tables_ok(768, 128)) by (compute_only); }
-    else if lo == 896 { assert(tables_ok(896, 128)) by (compute_only); }
-    else if lo == 1024 { assert(tables_ok(1024, 128)) by (compute_only); }
-    else if lo == 1152 { assert(tables_ok(1152, 128)) by (compute_only); }
-    else if lo == 1280 { assert(tables_ok(1280, 128)) by (compute_only); }
-    else if lo == 1408 { assert(tables_ok(1408, 128)) by (compute_only); }
-    else if lo == 1536 { assert(tables_ok(1536, 128)) by (compute_only); }
-    else if lo == 1664 { assert(tables_ok(1664, 128)) by (compute_only); }
-    else if lo == 1792 { assert(tables_ok(1792, 128)) by (compute_only); }
-    else if lo == 1920 { assert(tables_ok(1920, 128)) by (compute_only); }
-    else if lo == 2048 { assert(tables_ok(2048, 128)) by (compute_only); }
-    else if lo == 2176 { assert(tables_ok(2176, 128)) by (compute_only); }
-    else if lo == 2304 { assert(tables_ok(2304, 128)) by (compute_only); }
-    else if lo == 2432 { assert(tables_ok(2432, 128)) by (compute_only); }
-    else if lo == 2560 { assert(tables_ok(2560, 128)) by (compute_only); }
-    else if lo == 2688 { assert(tables_ok(2688, 128)) by (compute_only); }
-    else if lo == 2816 { assert(tables_ok(2816, 128)) by (compute_only); }
-    else if lo == 2944 { assert(tables_ok(2944, 128)) by (compute_only); }
-    else if lo == 3072 { assert(tables_ok(3072, 128)) by (compute_only); }
-    else if lo == 3200 { assert(tables_ok(3200, 128)) by (compute_only); }
-    else if lo == 3328 { assert(tables_ok(3328, 128)) by (compute_only); }
-    else if lo == 3456 { assert(tables_ok(3456, 128)) by (compute_only); }
-    else if lo == 3584 { assert(tables_ok(3584, 128)) by (compute_only); }
-    else if lo == 3712 { assert(tables_ok(3712, 128)) by (compute_only); }
-    else if lo == 3840 { assert(tables_ok(3840, 128)) by (compute_only); }
-    else { assert(tables_ok(3968, 128)) by (compute_only); }
-    lemma_tables_ok_at(lo, 128, k);
-    assert(k / 16 == p1 as int && k % 16 == c as int / 16);
-    let ch = c as int / 16;
-    assert((0x80 <= c <= 0xBF) == (8 <= ch <= 0xB));
-    assert((c < 0xA0) == (ch < 0xA));
-    assert((c < 0x90) == (ch < 9));
-}
-
-/// Saturating subtraction, as `vpsubusb`.
-pub open spec fn subs(a: u8, b: u8) -> u8 {
-    if a >= b {
-        (a - b) as u8
-    } else {
-        0
-    }
-}
-
-/// simdjson's test for "a lead byte two or three back".
-pub proof fn lemma_must23(p3: u8, p2: u8)
-    ensures
-        ((subs(p2, 0x60) | subs(p3, 0x70)) & 0x80) == want(p2 >= 0xE0 || p3 >= 0xF0),
-{
-    let a = subs(p2, 0x60);
-    let b = subs(p3, 0x70);
-    assert(a >= 0x80 <==> p2 >= 0xE0);
-    assert(b >= 0x80 <==> p3 >= 0xF0);
-    assert(a <= 0x9F);
-    assert(b <= 0x8F);
-    assert((a | b) & 0x80 == if a >= 0x80 || b >= 0x80 { 0x80u8 } else { 0u8 }) by (bit_vector);
-}
-
-/// The error lane is zero exactly when the local check passes.
-pub proof fn lemma_err_lane(p3: u8, p2: u8, p1: u8, c: u8)
-    ensures
-        ((tbl(p1, c as int / 16) ^ ((subs(p2, 0x60) | subs(p3, 0x70)) & 0x80)) == 0) == loc_ok(p3, p2, p1, c),
-{
-    lemma_lookup(p3, p2, p1, c);
-    lemma_must23(p3, p2);
-    let x = tbl(p1, c as int / 16);
-    let y = (subs(p2, 0x60) | subs(p3, 0x70)) & 0x80;
-    assert((x ^ y == 0) == (x == y)) by (bit_vector);
-}
-
 // ---------------------------------------------------------------------------
 // SIMD validator
 // ---------------------------------------------------------------------------
-
-/// Every byte of `[a, b)` is ASCII.
-pub open spec fn ascii_span(s: Seq<u8>, a: int, b: int) -> bool {
-    forall|t: int| a <= t < b ==> #[trigger] s[t] < 0x80
-}
-
-/// After an ASCII span, the local checks pass.
-proof fn lemma_ascii_span(s: Seq<u8>, st: int, j: int, b: int)
-    requires
-        st + 3 <= j,
-        b <= s.len(),
-        ascii_span(s, j - 3, b),
-    ensures
-        all_loc(s, st, j, b),
-{
-    assert forall|k: int| j <= k < b implies #[trigger] loc(s, st, k) by {
-        assert(s[k - 3] < 0x80 && s[k - 2] < 0x80 && s[k - 1] < 0x80 && s[k] < 0x80);
-    }
-}
 
 /// Whether `s[j - 3 .. j + 64]` is all ASCII, in three loads.
 #[inline(always)]
@@ -255,6 +83,7 @@ fn ascii67(s: &[u8], j: usize) -> (r: bool)
     ensures
         r ==> ascii_span(s@, j - 3, j + 64),
 {
+    let _n = s.len();  // so the solver sees the length is a usize
     let r = ascii64(s, j - 3) && ascii32(s, j + 32);
     proof {
         if r {
@@ -468,15 +297,6 @@ fn chunk128(s: &[u8], st: usize, j: usize, tb1: __m256i, tb2: __m256i, tb3: __m2
     pair32_ok(s, st, j + 64, tb1, tb2, tb3)
 }
 
-/// The validator's state part way through `s[st..]`: `ok` says whether the
-/// local checks pass on `[st, uj)`. Blocks need three bytes of history, so
-/// `uj` starts three bytes in (or at the end, for shorter texts).
-pub open spec fn u8_state(s: Seq<u8>, st: int, uj: int, ok: bool) -> bool {
-    &&& st <= uj <= s.len()
-    &&& (uj < st + 3 ==> uj == s.len())
-    &&& ok == all_loc(s, st, st, uj)
-}
-
 /// The first three bytes, one at a time.
 #[inline(always)]
 fn utf8_start(s: &[u8], st: usize) -> (r: (usize, bool))
@@ -588,15 +408,6 @@ fn utf8_avx2(s: &[u8], st: usize) -> (r: bool)
 // ---------------------------------------------------------------------------
 // NEON validator
 // ---------------------------------------------------------------------------
-
-/// `T1X` for one 128-bit NEON vector.
-pub const T1: [u8; 16] = [2, 2, 2, 2, 2, 2, 2, 2, 0x80, 0x80, 0x80, 0x80, 0x21, 0x01, 0x15, 0x49];
-
-/// `T2X` for one 128-bit NEON vector.
-pub const T2: [u8; 16] = [0xE7, 0xA3, 0x83, 0x83, 0x8B, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xDB, 0xCB, 0xCB];
-
-/// `T3X` for one 128-bit NEON vector.
-pub const T3: [u8; 16] = [1, 1, 1, 1, 1, 1, 1, 1, 0xE6, 0xAE, 0xBA, 0xBA, 1, 1, 1, 1];
 
 /// `ushr #4` gives the high nibble.
 proof fn lemma_shr4(a: Seq<u8>, r: Seq<u8>)

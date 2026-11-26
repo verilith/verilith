@@ -793,7 +793,7 @@ pub unsafe extern "C" fn vz_adler32_z(adler: c_ulong, buf: *const u8, len: usize
         return 1;
     }
     let d = std::slice::from_raw_parts(buf, len);
-    let (a, b) = verilith_core::checksum::cpu::adler32_update((adler & 0xffff) as u32 % 65521, ((adler >> 16) & 0xffff) as u32 % 65521, d);
+    let (a, b) = verilith_checksum::cpu::adler32_update((adler & 0xffff) as u32 % 65521, ((adler >> 16) & 0xffff) as u32 % 65521, d);
     ((b << 16) | a) as c_ulong
 }
 
@@ -814,7 +814,7 @@ pub unsafe extern "C" fn vz_crc32_z(crc: c_ulong, buf: *const u8, len: usize) ->
         return 0;
     }
     let d = std::slice::from_raw_parts(buf, len);
-    (!verilith_core::checksum::cpu::crc32_update(!(crc as u32), d)) as c_ulong
+    (!verilith_checksum::cpu::crc32_update(!(crc as u32), d)) as c_ulong
 }
 
 /// # Safety
@@ -1113,11 +1113,28 @@ struct DState {
     /// A preset dictionary from `deflateSetDictionary`, for the deflater
     /// the first `deflate()` makes.
     dict: Option<Vec<u8>>,
+    /// The caller's gzip header from `deflateSetHeader`. As in zlib, it is
+    /// read when the header is written, and kept across `deflateReset`.
+    head: *const GzHeader,
+    /// Bytes of the deflater's own fixed gzip header seen so far, while a
+    /// custom header is to replace it (`None` once replaced).
+    fixed: Option<Vec<u8>>,
 }
 
 impl DState {
     fn new(fmt: Format, level: u32, wbits: u32) -> DState {
-        DState { d: None, fresh: true, out: Pending::new(), fmt, level, wbits, last_flush: -1, dict: None }
+        DState {
+            d: None,
+            fresh: true,
+            out: Pending::new(),
+            fmt,
+            level,
+            wbits,
+            last_flush: -1,
+            dict: None,
+            head: std::ptr::null(),
+            fixed: None,
+        }
     }
 
     /// Makes the deflater on the first `deflate()`. When that call also
@@ -1145,13 +1162,74 @@ impl DState {
         }
     }
 
-    fn push(&mut self, v: Vec<u8>) {
+    fn push(&mut self, mut v: Vec<u8>) {
+        if let Some(seen) = self.fixed.as_mut() {
+            // Swap the deflater's 10-byte header for the caller's; the body
+            // and trailer (CRC-32 and length of the data) are unchanged.
+            let k = (10 - seen.len()).min(v.len());
+            seen.extend(v.drain(..k));
+            if seen.len() == 10 {
+                let xfl = seen[8];
+                self.fixed = None;
+                // SAFETY: `deflateSetHeader`'s caller keeps the header valid
+                // until the header is written, as zlib requires.
+                let mut h = unsafe { gzip_header_bytes(&*self.head, xfl) };
+                h.extend_from_slice(&v);
+                v = h;
+            }
+        }
         self.out = std::mem::replace(&mut self.out, Pending::new()).pushed(v);
     }
 
     fn pending(&self) -> usize {
         self.out.len()
     }
+}
+
+/// The NUL-terminated string at `p`, the NUL included.
+unsafe fn zstr(p: *const u8) -> &'static [u8] {
+    std::ffi::CStr::from_ptr(p as *const c_char).to_bytes_with_nul()
+}
+
+/// A gzip member header (RFC 1952 2.3) for `h`, as zlib's `deflate` writes
+/// it; `xfl` is the deflater's.
+unsafe fn gzip_header_bytes(h: &GzHeader, xfl: u8) -> Vec<u8> {
+    let mut flg = 0u8;
+    if h.text != 0 {
+        flg |= 1;
+    }
+    if h.hcrc != 0 {
+        flg |= 2;
+    }
+    if !h.extra.is_null() {
+        flg |= 4;
+    }
+    if !h.name.is_null() {
+        flg |= 8;
+    }
+    if !h.comment.is_null() {
+        flg |= 16;
+    }
+    let mut v = vec![31u8, 139, 8, flg];
+    v.extend_from_slice(&(h.time as u32).to_le_bytes());
+    v.push(xfl);
+    v.push(h.os as u8);
+    if !h.extra.is_null() {
+        let n = (h.extra_len & 0xffff) as usize;
+        v.extend_from_slice(&(n as u16).to_le_bytes());
+        v.extend_from_slice(std::slice::from_raw_parts(h.extra, n));
+    }
+    if !h.name.is_null() {
+        v.extend_from_slice(zstr(h.name));
+    }
+    if !h.comment.is_null() {
+        v.extend_from_slice(zstr(h.comment));
+    }
+    if h.hcrc != 0 {
+        let c = crate::checksum::crc32(&v) as u16;
+        v.extend_from_slice(&c.to_le_bytes());
+    }
+    v
 }
 
 unsafe fn dstate<'a>(strm: *mut ZStream) -> Option<&'a mut DState> {
@@ -1350,7 +1428,10 @@ pub unsafe extern "C" fn vz_deflateReset(strm: *mut ZStream) -> c_int {
         Some(st) => st,
         None => return Z_STREAM_ERROR,
     };
+    let head = st.head;
     *st = DState::new(st.fmt, st.level, st.wbits);
+    st.head = head;
+    st.fixed = if head.is_null() { None } else { Some(Vec::new()) };
     let s = &mut *strm;
     s.total_in = 0;
     s.total_out = 0;
@@ -1416,8 +1497,13 @@ fn bound(n: u64) -> u64 {
 /// As zlib's `deflateBound`.
 #[cfg_attr(feature = "zlib-abi", unsafe(export_name = "deflateBound"))]
 #[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
-pub unsafe extern "C" fn vz_deflateBound(_strm: *mut ZStream, source_len: c_ulong) -> c_ulong {
-    bound(source_len as u64) as c_ulong
+pub unsafe extern "C" fn vz_deflateBound(strm: *mut ZStream, source_len: c_ulong) -> c_ulong {
+    // A custom gzip header can be longer than the fixed one `bound` allows.
+    let head = match dstate(strm) {
+        Some(st) if !st.head.is_null() && st.fixed.is_some() => gzip_header_bytes(&*st.head, 0).len() as u64,
+        _ => 0,
+    };
+    (bound(source_len as u64) + head) as c_ulong
 }
 
 /// As zlib's `compressBound`.
@@ -1494,12 +1580,22 @@ pub unsafe extern "C" fn vz_deflateSetDictionary(strm: *mut ZStream, dictionary:
 }
 
 /// # Safety
-/// As zlib's `deflateSetHeader`; custom gzip headers are not supported
-/// (`Z_STREAM_ERROR`). The header written has no name, time or extra field.
+/// As zlib's `deflateSetHeader`: a gzip stream, before its first
+/// `deflate()`, writes `head`'s text flag, time, OS, extra field, name,
+/// comment and header CRC. `head` must stay valid until then.
 #[cfg_attr(feature = "zlib-abi", unsafe(export_name = "deflateSetHeader"))]
 #[cfg_attr(not(feature = "zlib-abi"), unsafe(no_mangle))]
-pub unsafe extern "C" fn vz_deflateSetHeader(_strm: *mut ZStream, _head: *mut GzHeader) -> c_int {
-    Z_STREAM_ERROR
+pub unsafe extern "C" fn vz_deflateSetHeader(strm: *mut ZStream, head: *mut GzHeader) -> c_int {
+    let st = match dstate(strm) {
+        Some(st) => st,
+        None => return Z_STREAM_ERROR,
+    };
+    if st.fmt != Format::Gzip || !st.fresh {
+        return Z_STREAM_ERROR;
+    }
+    st.head = head;
+    st.fixed = if head.is_null() { None } else { Some(Vec::new()) };
+    Z_OK
 }
 
 /// # Safety

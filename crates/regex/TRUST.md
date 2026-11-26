@@ -20,9 +20,11 @@ This file lists everything that is assumed, not proven.
 - **The Unicode tables**: `src/tables.rs` and the seven accessors in
   `src/data.rs`.
 - **SIMD instructions**: the specifications of the instructions the
-  first-byte scans use. On x86-64, six SSE2 wrappers in `src/lanes.rs`
-  (load 16 bytes, splat, compare bytes, subtract stopping at zero, or,
-  movemask), each one `unsafe` call with its meaning stated. On AArch64,
+  first-byte scans use. On x86-64, verilith-simd's specifications of the
+  six SSE2 instructions (load 16 bytes, splat, compare bytes, subtract
+  stopping at zero, or, movemask), which its tests check against the
+  CPU; the wrappers `src/lanes.rs` re-exports are verilith-simd's
+  `sse2` functions, proven from them. On AArch64,
   verilith-simd's NEON specifications (`vld1q_u8`, `vdupq_n_u8`, `vceqq_u8`,
   `vqsubq_u8`, `vorrq_u8`, and those under its verified `nibmask16`),
   its slice load, and its `has_neon` CPU check. The scans built from
@@ -34,7 +36,7 @@ This file lists everything that is assumed, not proven.
   vectors.
 
 `scripts/verify.sh` fails if `assume` or `admit` appears anywhere, or
-`external_body` outside `src/data.rs` and `src/lanes.rs`.
+`external_body` outside `src/data.rs`.
 
 ## The specifications
 

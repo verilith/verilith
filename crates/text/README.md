@@ -130,8 +130,9 @@ the encoders.
 
 - `valid8::utf8_valid` is proven to return exactly whether the input is
   UTF-8. Its AVX2 kernel is the three-table lookup validator that simdjson
-  and simdutf use, proven against verilith-simd's intrinsic specs (`lemma_lookup`
-  ties the tables to the byte classes of Table 3-7).
+  and simdutf use, proven against verilith-simd's intrinsic specs
+  (verilith-core's `utf8::lemma_lookup`, shared with verilith-json, ties the
+  tables to the byte classes of Table 3-7).
 - `conv::utf8_to_utf16`, `utf16_to_utf8`, `utf8_to_latin1`, `latin1_to_utf8`,
   `latin1_to_utf16` and `utf16_to_latin1` are proven to fail exactly on
   invalid input and otherwise to write exactly the spec's output, given an
@@ -281,9 +282,15 @@ These are what the proofs take on trust:
   against the UCD files, parsed again independently, and check every axiom
   for every code point.
 - **Glue.** The C APIs in `capi.rs` and `capi_utf.rs`, as described above. The `&str`
-  wrappers in `unicode/mod.rs` and `idna/mod.rs` pass `Ghost::assume_new()`
-  for the scalars a `&str` holds, which is the UTF-8 guarantee of `&str`.
-  They also turn verified ASCII or UTF-8 output back into `String`s.
+  wrappers in `unicode/mod.rs` and `idna/mod.rs` call the verified entry
+  points in `unicode/strs.rs` and `idna/strs.rs`, which prove from vstd's
+  model of `str` (its `as_bytes` are the UTF-8 encoding of its
+  characters) that the bytes encode the scalars the verified functions
+  are specified over, so no ghost value is assumed. The wrappers turn
+  verified ASCII or UTF-8 output back into `String`s. The ICU C API's
+  ASCII fast path goes through the verified `ascii_checked_bytes`, which
+  checks that bytes from C are ASCII before it relies on them encoding
+  their scalars.
 - **Target-feature trampolines.** Verus rejects `#[target_feature]` on
   verified code (verus-lang/verus#3362). Each AVX2 entry point (the
   `*_avx2` transcoders and counters in `utf/conv.rs`, `utf8_avx2` in

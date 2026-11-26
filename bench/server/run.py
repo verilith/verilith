@@ -91,6 +91,13 @@ def server_cmds(env):
     if b:
         out["hyper"] = [b, "--threads", str(env["threads"]), "--http", str(PORTS["HTTP"]), "--h2c", str(PORTS["H2C"]),
                         "--tls", str(PORTS["TLS"]), "--cert", env["cert"], "--key", env["key"], "--root", env["root"]]
+    bun = os.environ.get("BUN") or which("bun") or (os.path.expanduser("~/.bun/bin/bun") if os.path.exists(os.path.expanduser("~/.bun/bin/bun")) else None)
+    if bun:
+        out["bun"] = ["env", "BUN=" + bun, os.path.join(HERE, "baselines/bun/run.sh"), str(env["threads"]),
+                      str(PORTS["HTTP"]), str(PORTS["TLS"]), env["cert"], env["key"], env["root"]]
+    b = os.path.join(HERE, "baselines/may-minihttp/target/release/may-minihttp-hello")
+    if os.path.exists(b):
+        out["may-minihttp"] = [b, "--threads", str(env["threads"]), "--http", str(PORTS["HTTP"]), "--root", env["root"]]
     b = which("nginx")
     if b:
         conf = os.path.join(env["run"], "nginx.conf")
@@ -151,15 +158,33 @@ def group_cpu(pgid):
     return total / tick
 
 
+def protocols(name, cmd):
+    """The ports a server serves: all three, except a verilith-server build
+    that says otherwise with --protocols (one line: http, h2c, tls)."""
+    fixed = {"bun": {"HTTP", "TLS"}, "may-minihttp": {"HTTP"}}
+    if name in fixed:
+        return fixed[name]
+    if name != "verilith":
+        return set(PORTS)
+    try:
+        out = subprocess.run([cmd[0], "--protocols"], capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return set(PORTS)
+    names = {"http": "HTTP", "h2c": "H2C", "tls": "TLS"}
+    got = {names[w] for w in out.replace(",", " ").split() if w in names}
+    return got or set(PORTS)
+
+
 class Server:
-    def __init__(self, name, cmd, cpus, log):
+    def __init__(self, name, cmd, cpus, log, ports=None):
         self.name, self.cmd, self.cpus = name, cmd, cpus
+        self.ports = ports or set(PORTS)
         self.log = open(log, "w")
 
     def __enter__(self):
         self.p = subprocess.Popen(["taskset", "-c", self.cpus] + self.cmd, stdout=self.log, stderr=subprocess.STDOUT,
                                   start_new_session=True)
-        for port in PORTS.values():
+        for port in [PORTS[k] for k in self.ports]:
             if not wait_port(port):
                 self.__exit__()
                 raise RuntimeError("%s did not open port %d; see %s" % (self.name, port, self.log.name))
@@ -333,6 +358,13 @@ def versions(cmds):
                 lock = open(os.path.join(HERE, "baselines/hyper/Cargo.lock")).read()
                 m = re.search(r'name = "hyper"\nversion = "([^"]+)"', lock)
                 v[name] = m.group(1) if m else "?"
+            elif name == "bun":
+                bun = cmds[name][1].split("=", 1)[1]
+                v[name] = subprocess.run([bun, "--version"], capture_output=True, text=True).stdout.strip()
+            elif name == "may-minihttp":
+                lock = open(os.path.join(HERE, "baselines/may-minihttp/Cargo.lock")).read()
+                m = re.search(r'name = "may_minihttp"\nversion = "([^"]+)"', lock)
+                v[name] = m.group(1) if m else "?"
             elif name == "verilith":
                 v[name] = subprocess.run(["git", "-C", ROOT, "rev-parse", "--short", "HEAD"], capture_output=True,
                                          text=True).stdout.strip()
@@ -388,13 +420,16 @@ def main():
         cpu = platform.processor()
     meta = dict(date=datetime.datetime.now().isoformat(timespec="minutes"), cpu=cpu, ncpu=n, server_cpus=a.server_cpus,
                 client_cpus=a.client_cpus, rounds=a.rounds, duration=a.duration, versions=versions(servers))
+    serves = {s: protocols(s, cmds[s]) for s in servers}
     results = {}
     for rnd in range(a.rounds):
         order = servers if rnd % 2 == 0 else servers[::-1]
         for case in cases:
             for s in order:
+                if CASES[case]["port"] not in serves[s]:
+                    continue
                 try:
-                    with Server(s, cmds[s], a.server_cpus, os.path.join(out, "%s.log" % s)) as srv:
+                    with Server(s, cmds[s], a.server_cpus, os.path.join(out, "%s.log" % s), serves[s]) as srv:
                         r = measure(srv, case, a.client_cpus, count(a.client_cpus), a.duration, a.warmup, run)
                 except RuntimeError as e:
                     print("round %d %-18s %-9s failed: %s" % (rnd + 1, case, s, e), flush=True)

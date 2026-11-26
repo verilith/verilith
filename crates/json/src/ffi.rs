@@ -418,6 +418,14 @@ impl Sink for TreeSink {
     }
 }
 
+/// Parses `input` into `b`'s tree. The sink starts with an empty token
+/// history, as `parse_with` requires, so no ghost value is assumed.
+pub fn parse_tree(input: &[u8], require_end: bool, b: Builder) -> (r: (Result<usize, usize>, Builder)) {
+    let mut sink = TreeSink { hist: Ghost(Seq::empty()), room: Ghost(0), b };
+    let r = parse_with(input, require_end, &mut sink);
+    (r, sink.b)
+}
+
 } // verus!
 
 // ---------------------------------------------------------------------------
@@ -437,10 +445,10 @@ unsafe fn parse_impl(
     }
     let input = core::slice::from_raw_parts(value as *const u8, len);
     let (stack, scratch) = BUFFERS.with(|b| b.take());
-    let mut sink = TreeSink {
-        hist: Ghost::assume_new(),
-        room: Ghost::assume_new(),
-        b: Builder {
+    let (result, b) = parse_tree(
+        input,
+        require_null_terminated,
+        Builder {
             input: input.as_ptr(),
             input_len: input.len(),
             root: ptr::null_mut(),
@@ -451,10 +459,9 @@ unsafe fn parse_impl(
             err_pos: 0,
             failed: false,
         },
-    };
-    let result = parse_with(input, require_null_terminated, &mut sink);
-    let err_pos = sink.b.err_pos;
-    let root = sink.b.finish(result.is_ok());
+    );
+    let err_pos = b.err_pos;
+    let root = b.finish(result.is_ok());
     let end = match result {
         Ok(r) => r,
         Err(pos) => {

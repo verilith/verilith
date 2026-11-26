@@ -661,7 +661,7 @@ pub open spec fn nomatch(b: Seq<u8>, p: int, r: nat, l: nat) -> bool {
 }
 
 /// `hfind` skips lengths that do not match.
-proof fn lemma_hfind_skip(b: Seq<u8>, p: int, r: nat, a: nat, l0: nat)
+pub proof fn lemma_hfind_skip(b: Seq<u8>, p: int, r: nat, a: nat, l0: nat)
     requires
         a <= l0,
         forall|l: nat| a <= l < l0 ==> #[trigger] nomatch(b, p, r, l),

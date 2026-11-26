@@ -874,7 +874,7 @@ pub open spec fn entry_data(b: Seq<u8>, e: SEntry) -> Option<Seq<u8>> {
     } else {
         match unpack(e.method, b.subrange(e.data_off, e.end())) {
             None => None,
-            Some(o) => if o.len() == e.size && (e.has_crc ==> verilith_core::checksum::spec::crc32(o) as int == e.crc) {
+            Some(o) => if o.len() == e.size && (e.has_crc ==> verilith_checksum::spec::crc32(o) as int == e.crc) {
                 Some(o)
             } else {
                 None

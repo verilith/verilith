@@ -34,22 +34,6 @@ pub fn at<T: Copy, const N: usize>(a: &[T; N], i: usize) -> (r: T)
     unsafe { *a.get_unchecked(i) }
 }
 
-/// Copies `src[from..from + n]` to `dst[at..at + n]`.
-#[verifier::external_body]
-#[inline(always)]
-pub fn copy_into(dst: &mut [u8], at: usize, src: &[u8], from: usize, n: usize)
-    requires
-        at + n <= old(dst)@.len(),
-        from + n <= src@.len(),
-    ensures
-        final(dst)@ == old(dst)@.subrange(0, at as int) + src@.subrange(from as int, from + n) + old(dst)@.subrange(
-            at + n,
-            old(dst)@.len() as int,
-        ),
-{
-    dst[at..at + n].copy_from_slice(&src[from..from + n]);
-}
-
 /// The symbols of a two-symbol table entry: `a`, then `b` if `n` is 2.
 pub open spec fn pair(a: u8, b: u8, n: u8) -> Seq<u8> {
     if n == 1 {
