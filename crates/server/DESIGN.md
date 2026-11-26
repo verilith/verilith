@@ -306,9 +306,9 @@ in. HTTP/3's own layer is small (frames on QUIC streams, and QPACK, RFC
    format and these state machines, proven. *(done, as a second backend:
    [verilith-quic-conn](../quic-conn) is a QUIC server connection on
    verilith-quic and verilith-tls's verified QUIC handshake and packet
-   protection; `src/h3.rs` runs on it or on quinn-proto through one
-   trait, picked by `--h3-backend`, and `tests/h3.rs` runs on both. Its
-   connection logic is plain Rust, not yet verified)*
+   protection; `src/h3.rs` runs on it, the default, or on quinn-proto
+   (`--h3-backend quinn`) through one trait, and `tests/h3.rs` runs on
+   both. Its connection logic is plain Rust, not yet verified)*
 3. **UDP speed**: GSO and GRO, `sendmmsg`/`recvmmsg`, and one socket per
    worker with connection IDs routed to the worker that owns them (a BPF
    steering program on Linux). Without these every HTTP/3 server loses to

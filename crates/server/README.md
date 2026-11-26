@@ -10,9 +10,9 @@ is in [DESIGN.md](DESIGN.md). This README describes what exists today.
 and static files from disk with a proven path check (`files::Files`;
 `--root DIR`, served under `/static/`), and HTTP/3 (`--features h3`,
 `--h3 PORT --cert PEM --key PEM`, UDP): the verified verilith-h3 framing
-and verilith-qpack on quinn-proto's QUIC, or with `--h3-backend verilith`
-on verilith-quic-conn (verified QUIC wire format, recovery, handshake and
-packet protection).** The API will change.
+and verilith-qpack on verilith-quic-conn's QUIC (verified wire format,
+recovery, handshake and packet protection), or with `--h3-backend quinn`
+on quinn-proto.** The API will change.
 
 ```rust,no_run
 use std::sync::Arc;

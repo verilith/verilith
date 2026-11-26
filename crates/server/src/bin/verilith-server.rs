@@ -4,6 +4,7 @@
 //!                   [--tls PORT --cert PEM --key PEM]   (built with --features tls)
 //!                   [--tls-backend verilith|rustls]     (rustls: --features tls-rustls)
 //!                   [--h3 PORT --cert PEM --key PEM]    (UDP; built with --features h3)
+//!                   [--h3-backend verilith|quinn]       (QUIC: verilith-quic-conn, or quinn-proto)
 //!                   [--io-uring]                        (Linux: io_uring instead of epoll)
 //!
 //!   GET /plaintext       "Hello, World!", text/plain
@@ -75,8 +76,8 @@ fn main() {
             let (cert, key) = (arg(&args, "--cert").expect("--cert"), arg(&args, "--key").expect("--key"));
             use verilith_server::h3::Backend;
             let b = match arg(&args, "--h3-backend").as_deref() {
-                None | Some("quinn") => Backend::Quinn,
-                Some("verilith") => Backend::Verilith,
+                None | Some("verilith") => Backend::Verilith,
+                Some("quinn") => Backend::Quinn,
                 Some(b) => panic!("unknown --h3-backend {b}"),
             };
             let c = verilith_server::h3::server_config_on(b, &cert, &key, Default::default()).expect("QUIC configuration");
