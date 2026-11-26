@@ -28,6 +28,7 @@ once, and the libraries import it.
 | `num` | decimal digits: `is_digit`, `digits_end`, `dec_value`, `decimal`; `parse_u64_dec` (checked) and `push_decimal` | verilith-json, verilith-url, verilith-dns |
 | `binary64` | IEEE 754 binary64 as a model in spec integers (in the style of Coq's Flocq): what each bit pattern is worth as an exact rational, round to nearest, ties to even (`rne`), proofs that rounding depends only on the value and that exact products and quotients of equal values are equal, that `u64 as f64` is exact below `2^53`, and `P10`, the exact doubles `10^0..=10^22`; `mul`, `div` and `from_u64` on bit patterns | verilith-json |
 | `sort` | `order_by`: a stable merge sort of the positions `0..n` by a caller's comparison closure, proven to return a permutation (as multisets) in which each position compares `le` the next; the comparison need only be total | verilith-archive, verilith-zlib |
+| `scan` | byte-class tests eight bytes at a time (SWAR): `any_upper` (an ASCII uppercase letter) and `any_nul_cr_lf`, the HTTP/2 and HTTP/3 field checks; each word test is proven bit by bit, and each slice test equal to the byte-by-byte statement, short strings built into one word in registers | verilith-server |
 
 verilith-webp and verilith-brotli share the table builder in `htable`. verilith-zlib keeps its own:
 it builds a different layout (DEFLATE's flagged length/distance entries) on
