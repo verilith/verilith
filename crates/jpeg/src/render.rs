@@ -8,6 +8,7 @@ use crate::types::*;
 #[cfg(verus_only)]
 use vstd::arithmetic::div_mod::*;
 use crate::prims::*;
+use crate::work::Meter;
 use vstd::prelude::*;
 use vstd::slice::slice_subrange;
 
@@ -123,11 +124,12 @@ fn h2v1_px(row: &[u8], x: usize) -> (r: u8)
 /// the two between each sample and the next. The loop has no branches
 /// and its slices do not overlap, so compilers vectorize it.
 #[inline(always)]
-fn h2v1_run(row: &[u8], i0: usize, cnt: usize, out: &mut [u8])
+fn h2v1_run(row: &[u8], i0: usize, cnt: usize, out: &mut [u8], Tracked(mt): Tracked<&mut Meter>)
     requires
         i0 + cnt < row@.len(),
         2 * (i0 + cnt) < old(out)@.len(),
     ensures
+        final(mt).n == old(mt).n + cnt,
         final(out)@.len() == old(out)@.len(),
         forall|j: int| 2 * i0 + 1 <= j <= 2 * (i0 + cnt) ==> (#[trigger] final(out)@[j]) as int == h2v1_at(row@, j),
         forall|j: int|
@@ -137,6 +139,7 @@ fn h2v1_run(row: &[u8], i0: usize, cnt: usize, out: &mut [u8])
     let mut k: usize = 0;
     while k < cnt
         invariant
+            mt.n == old(mt).n + k,
             k <= cnt,
             i0 + cnt < row@.len(),
             2 * (i0 + cnt) < out@.len(),
@@ -154,6 +157,9 @@ fn h2v1_run(row: &[u8], i0: usize, cnt: usize, out: &mut [u8])
         sset(out, 2 * i + 1, ((3 * a + b + 2) / 4) as u8);
         sset(out, 2 * i + 2, ((3 * b + a + 1) / 4) as u8);
         k += 1;
+        proof {
+            mt.n = mt.n + 1;
+        }
     }
 }
 
@@ -161,24 +167,25 @@ fn h2v1_run(row: &[u8], i0: usize, cnt: usize, out: &mut [u8])
 /// time; the last sixteen are done again from `m - 16` when `m` is not a
 /// multiple of sixteen, so that no row ends one sample at a time.
 #[inline(never)]
-fn h2v1_mid(row: &[u8], m: usize, out: &mut [u8])
+fn h2v1_mid(row: &[u8], m: usize, out: &mut [u8], Tracked(mt): Tracked<&mut Meter>)
     requires
         m < row@.len(),
         2 * m < old(out)@.len(),
     ensures
+        final(mt).n <= old(mt).n + m + 16,
         final(out)@.len() == old(out)@.len(),
         forall|j: int| 1 <= j <= 2 * m ==> (#[trigger] final(out)@[j]) as int == h2v1_at(row@, j),
         forall|j: int|
             0 <= j < final(out)@.len() && (j == 0 || j > 2 * m) ==> (#[trigger] final(out)@[j]) == old(out)@[j],
 {
     if m < 16 {
-        h2v1_run(row, 0, m, out);
+        h2v1_run(row, 0, m, out, Tracked(mt));
         return ;
     }
     let whole = m - m % 16;
-    h2v1_run(row, 0, whole, out);
+    h2v1_run(row, 0, whole, out, Tracked(mt));
     if whole < m {
-        h2v1_run(row, m - 16, 16, out);
+        h2v1_run(row, m - 16, 16, out, Tracked(mt));
     }
 }
 
@@ -209,12 +216,13 @@ fn h2v2_px(nr: &[u8], fr: &[u8], x: usize) -> (r: u8)
 /// Outputs `2 * i0 + 1` to `2 * (i0 + cnt)` of the 2:1 filter in both
 /// directions.
 #[inline(always)]
-fn h2v2_run(nr: &[u8], fr: &[u8], i0: usize, cnt: usize, out: &mut [u8])
+fn h2v2_run(nr: &[u8], fr: &[u8], i0: usize, cnt: usize, out: &mut [u8], Tracked(mt): Tracked<&mut Meter>)
     requires
         nr@.len() == fr@.len(),
         i0 + cnt < nr@.len(),
         2 * (i0 + cnt) < old(out)@.len(),
     ensures
+        final(mt).n == old(mt).n + cnt,
         final(out)@.len() == old(out)@.len(),
         forall|j: int| 2 * i0 + 1 <= j <= 2 * (i0 + cnt) ==> (#[trigger] final(out)@[j]) as int == h2v2_at(nr@, fr@, j),
         forall|j: int|
@@ -224,6 +232,7 @@ fn h2v2_run(nr: &[u8], fr: &[u8], i0: usize, cnt: usize, out: &mut [u8])
     let mut k: usize = 0;
     while k < cnt
         invariant
+            mt.n == old(mt).n + k,
             k <= cnt,
             nr@.len() == fr@.len(),
             i0 + cnt < nr@.len(),
@@ -243,6 +252,9 @@ fn h2v2_run(nr: &[u8], fr: &[u8], i0: usize, cnt: usize, out: &mut [u8])
         sset(out, 2 * i + 1, ((3 * a + b + 7) / 16) as u8);
         sset(out, 2 * i + 2, ((3 * b + a + 8) / 16) as u8);
         k += 1;
+        proof {
+            mt.n = mt.n + 1;
+        }
     }
 }
 
@@ -251,37 +263,39 @@ fn h2v2_run(nr: &[u8], fr: &[u8], i0: usize, cnt: usize, out: &mut [u8])
 /// `m` is not a multiple of sixteen, so that no row ends one sample at a
 /// time.
 #[inline(never)]
-fn h2v2_mid(nr: &[u8], fr: &[u8], m: usize, out: &mut [u8])
+fn h2v2_mid(nr: &[u8], fr: &[u8], m: usize, out: &mut [u8], Tracked(mt): Tracked<&mut Meter>)
     requires
         nr@.len() == fr@.len(),
         m < nr@.len(),
         2 * m < old(out)@.len(),
     ensures
+        final(mt).n <= old(mt).n + m + 16,
         final(out)@.len() == old(out)@.len(),
         forall|j: int| 1 <= j <= 2 * m ==> (#[trigger] final(out)@[j]) as int == h2v2_at(nr@, fr@, j),
         forall|j: int|
             0 <= j < final(out)@.len() && (j == 0 || j > 2 * m) ==> (#[trigger] final(out)@[j]) == old(out)@[j],
 {
     if m < 16 {
-        h2v2_run(nr, fr, 0, m, out);
+        h2v2_run(nr, fr, 0, m, out, Tracked(mt));
         return ;
     }
     let whole = m - m % 16;
-    h2v2_run(nr, fr, 0, whole, out);
+    h2v2_run(nr, fr, 0, whole, out, Tracked(mt));
     if whole < m {
-        h2v2_run(nr, fr, m - 16, 16, out);
+        h2v2_run(nr, fr, m - 16, 16, out, Tracked(mt));
     }
 }
 
 /// The vertical 2:1 filter along a row: `(3 * near + far + bias) / 4`.
 #[inline(never)]
-fn v_mid(nr: &[u8], fr: &[u8], w: usize, bias: u32, out: &mut [u8])
+fn v_mid(nr: &[u8], fr: &[u8], w: usize, bias: u32, out: &mut [u8], Tracked(mt): Tracked<&mut Meter>)
     requires
         w <= nr@.len(),
         w <= fr@.len(),
         w <= old(out)@.len(),
         bias <= 2,
     ensures
+        final(mt).n == old(mt).n + w,
         final(out)@.len() == old(out)@.len(),
         forall|j: int| 0 <= j < w ==> (#[trigger] final(out)@[j]) as int == (csum(nr@, fr@, j) + bias) / 4,
         forall|j: int| w <= j < final(out)@.len() ==> (#[trigger] final(out)@[j]) == old(out)@[j],
@@ -290,6 +304,7 @@ fn v_mid(nr: &[u8], fr: &[u8], w: usize, bias: u32, out: &mut [u8])
     let mut x: usize = 0;
     while x < w
         invariant
+            mt.n == old(mt).n + x,
             x <= w,
             w <= nr@.len(),
             w <= fr@.len(),
@@ -303,6 +318,9 @@ fn v_mid(nr: &[u8], fr: &[u8], w: usize, bias: u32, out: &mut [u8])
     {
         sset(out, x, ((3 * sget(nr, x) as u32 + sget(fr, x) as u32 + bias) / 4) as u8);
         x += 1;
+        proof {
+            mt.n = mt.n + 1;
+        }
     }
 }
 
@@ -346,12 +364,14 @@ fn up_same(
     Ghost(rows): Ghost<int>,
     Ghost(k): Ghost<Coded>,
     Ghost(c): Ghost<int>,
+    Tracked(mt): Tracked<&mut Meter>,
 )
     requires
         up_pre(pl@, stride, pw, ph, hs, vs, y, w, rows, k, c),
         old(out).len() == w,
         hs == 1 && vs == 1,
     ensures
+        final(mt).n <= old(mt).n + 2 * w + 32,
         final(out).len() == w,
         forall|x: int| 0 <= x < w ==> (#[trigger] final(out)[x]) as int == upsampled(k, c, y as int, x),
 {
@@ -368,6 +388,9 @@ fn up_same(
     let r = y * stride;
     let row = slice_subrange(pl.as_slice(), r, r + w);
     out.as_mut_slice().copy_from_slice(row);
+    proof {
+        mt.n = mt.n + w as nat;
+    }
     proof {
         assert forall|x: int| 0 <= x < w implies (#[trigger] out[x]) as int == upsampled(k, c, yi, x) by {
             assert(out[x] == pl[r + x]);
@@ -391,12 +414,14 @@ fn up_h2v1(
     Ghost(rows): Ghost<int>,
     Ghost(k): Ghost<Coded>,
     Ghost(c): Ghost<int>,
+    Tracked(mt): Tracked<&mut Meter>,
 )
     requires
         up_pre(pl@, stride, pw, ph, hs, vs, y, w, rows, k, c),
         old(out).len() == w,
         hs == 2 && vs == 1 && pw > 2,
     ensures
+        final(mt).n <= old(mt).n + 2 * w + 32,
         final(out).len() == w,
         forall|x: int| 0 <= x < w ==> (#[trigger] final(out)[x]) as int == upsampled(k, c, y as int, x),
 {
@@ -436,11 +461,13 @@ fn up_h2v1(
         } else {
             pw - 1
         };
-        h2v1_mid(row, m, out.as_mut_slice());
+        h2v1_mid(row, m, out.as_mut_slice(), Tracked(mt));
         let mut x: usize = 2 * m + 1;
         while x < w
             invariant
                 x <= w,
+                mt.n <= old(mt).n + m + 16 + x - (2 * m + 1),
+                2 * m + 1 <= x,
                 out.len() == w,
                 w <= pw * 2,
                 row@.len() == pw,
@@ -449,6 +476,9 @@ fn up_h2v1(
         {
             vset(out, x, h2v1_px(row, x));
             x += 1;
+            proof {
+                mt.n = mt.n + 1;
+            }
         }
     }
 }
@@ -466,12 +496,14 @@ fn up_v2(
     Ghost(rows): Ghost<int>,
     Ghost(k): Ghost<Coded>,
     Ghost(c): Ghost<int>,
+    Tracked(mt): Tracked<&mut Meter>,
 )
     requires
         up_pre(pl@, stride, pw, ph, hs, vs, y, w, rows, k, c),
         old(out).len() == w,
         (hs == 1 && vs == 2) || (hs == 2 && vs == 2 && pw > 2),
     ensures
+        final(mt).n <= old(mt).n + 2 * w + 32,
         final(out).len() == w,
         forall|x: int| 0 <= x < w ==> (#[trigger] final(out)[x]) as int == upsampled(k, c, y as int, x),
 {
@@ -520,7 +552,7 @@ fn up_v2(
                 w <= pw * hs,
                 hs == 1,
         ;
-        v_mid(nr, fr, w, bias, out.as_mut_slice());
+        v_mid(nr, fr, w, bias, out.as_mut_slice(), Tracked(mt));
         proof {
             assert forall|x: int| 0 <= x < w implies (#[trigger] out[x]) as int == upsampled(k, c, yi, x) by {
                 assert(csum(nr@, fr@, x) == colsum(k, c, yi, x));
@@ -547,11 +579,13 @@ fn up_v2(
             } else {
                 pw - 1
             };
-            h2v2_mid(nr, fr, m, out.as_mut_slice());
+            h2v2_mid(nr, fr, m, out.as_mut_slice(), Tracked(mt));
             let mut x: usize = 2 * m + 1;
             while x < w
                 invariant
                     x <= w,
+                    mt.n <= old(mt).n + m + 16 + x - (2 * m + 1),
+                    2 * m + 1 <= x,
                     out.len() == w,
                     w <= pw * 2,
                     nr@.len() == pw,
@@ -561,6 +595,9 @@ fn up_v2(
             {
                 vset(out, x, h2v2_px(nr, fr, x));
                 x += 1;
+                proof {
+                    mt.n = mt.n + 1;
+                }
             }
         }
     }
@@ -579,12 +616,14 @@ fn up_rep(
     Ghost(rows): Ghost<int>,
     Ghost(k): Ghost<Coded>,
     Ghost(c): Ghost<int>,
+    Tracked(mt): Tracked<&mut Meter>,
 )
     requires
         up_pre(pl@, stride, pw, ph, hs, vs, y, w, rows, k, c),
         old(out).len() == w,
         !(hs == 1 && vs == 1) && !(hs == 2 && vs == 1 && pw > 2) && !((hs == 1 && vs == 2) || (hs == 2 && vs == 2 && pw > 2)),
     ensures
+        final(mt).n <= old(mt).n + 2 * w + 32,
         final(out).len() == w,
         forall|x: int| 0 <= x < w ==> (#[trigger] final(out)[x]) as int == upsampled(k, c, y as int, x),
 {
@@ -608,6 +647,7 @@ fn up_rep(
     while x < w
         invariant
             x <= w,
+            mt.n == old(mt).n + x,
             out.len() == w,
             w <= pw * hs,
             1 <= hs <= 4,
@@ -635,6 +675,9 @@ fn up_rep(
         assert(pat(pl@, st, ri, i as int) == pl[r + i]);
         vset(out, x, vget(pl, r + i));
         x += 1;
+        proof {
+            mt.n = mt.n + 1;
+        }
     }
 }
 
@@ -654,22 +697,24 @@ pub fn up_row(
     Ghost(rows): Ghost<int>,
     Ghost(k): Ghost<Coded>,
     Ghost(c): Ghost<int>,
+    Tracked(mt): Tracked<&mut Meter>,
 )
     requires
         up_pre(pl@, stride, pw, ph, hs, vs, y, w, rows, k, c),
         old(out).len() == w,
     ensures
+        final(mt).n <= old(mt).n + 2 * w + 32,
         final(out).len() == w,
         forall|x: int| 0 <= x < w ==> (#[trigger] final(out)[x]) as int == upsampled(k, c, y as int, x),
 {
     if hs == 1 && vs == 1 {
-        up_same(pl, stride, pw, ph, hs, vs, y, w, out, Ghost(rows), Ghost(k), Ghost(c));
+        up_same(pl, stride, pw, ph, hs, vs, y, w, out, Ghost(rows), Ghost(k), Ghost(c), Tracked(mt));
     } else if hs == 2 && vs == 1 && pw > 2 {
-        up_h2v1(pl, stride, pw, ph, hs, vs, y, w, out, Ghost(rows), Ghost(k), Ghost(c));
+        up_h2v1(pl, stride, pw, ph, hs, vs, y, w, out, Ghost(rows), Ghost(k), Ghost(c), Tracked(mt));
     } else if (hs == 1 && vs == 2) || (hs == 2 && vs == 2 && pw > 2) {
-        up_v2(pl, stride, pw, ph, hs, vs, y, w, out, Ghost(rows), Ghost(k), Ghost(c));
+        up_v2(pl, stride, pw, ph, hs, vs, y, w, out, Ghost(rows), Ghost(k), Ghost(c), Tracked(mt));
     } else {
-        up_rep(pl, stride, pw, ph, hs, vs, y, w, out, Ghost(rows), Ghost(k), Ghost(c));
+        up_rep(pl, stride, pw, ph, hs, vs, y, w, out, Ghost(rows), Ghost(k), Ghost(c), Tracked(mt));
     }
 }
 
@@ -711,13 +756,14 @@ pub open spec fn chan(color: Color, l: int, cb: int, cr: int, ch: int) -> int {
 /// A row of YCbCr to red, green, blue at `out[o..]`. The slices do not
 /// overlap, so compilers vectorize the loop.
 #[inline(never)]
-pub fn ycc_row(yr: &[u8], cbr: &[u8], crr: &[u8], w: usize, out: &mut [u8], o: usize)
+pub fn ycc_row(yr: &[u8], cbr: &[u8], crr: &[u8], w: usize, out: &mut [u8], o: usize, Tracked(mt): Tracked<&mut Meter>)
     requires
         yr@.len() == w,
         cbr@.len() == w,
         crr@.len() == w,
         o + 3 * w <= old(out)@.len(),
     ensures
+        final(mt).n <= old(mt).n + w,
         final(out)@.len() == old(out)@.len(),
         forall|i: int|
             o <= i < o + 3 * w ==> (#[trigger] final(out)@[i]) as int == chan(
@@ -736,6 +782,7 @@ pub fn ycc_row(yr: &[u8], cbr: &[u8], crr: &[u8], w: usize, out: &mut [u8], o: u
         while w - x >= 16
             invariant
                 x <= w,
+                mt.n <= old(mt).n + x,
                 verilith_simd::neon::neon(),
                 yr@.len() == w,
                 cbr@.len() == w,
@@ -775,11 +822,15 @@ pub fn ycc_row(yr: &[u8], cbr: &[u8], crr: &[u8], w: usize, out: &mut [u8], o: u
                 }
             }
             x += 16;
+            proof {
+                mt.n = mt.n + 1;
+            }
         }
     }
     while x < w
         invariant
             x <= w,
+            mt.n <= old(mt).n + x,
             yr@.len() == w,
             cbr@.len() == w,
             crr@.len() == w,
@@ -809,17 +860,21 @@ pub fn ycc_row(yr: &[u8], cbr: &[u8], crr: &[u8], w: usize, out: &mut [u8], o: u
         sset(out, o + 3 * x + 1, clamp8(l + ((-22554 * cb - 46802 * cr + 32768) >> 16)));
         sset(out, o + 3 * x + 2, clamp8(l + ((116130 * cb + 32768) >> 16)));
         x += 1;
+        proof {
+            mt.n = mt.n + 1;
+        }
     }
 }
 
 /// A row of three components, interleaved, at `out[o..]`.
-pub fn rgb_row(r0: &Vec<u8>, r1: &Vec<u8>, r2: &Vec<u8>, w: usize, out: &mut [u8], o: usize)
+pub fn rgb_row(r0: &Vec<u8>, r1: &Vec<u8>, r2: &Vec<u8>, w: usize, out: &mut [u8], o: usize, Tracked(mt): Tracked<&mut Meter>)
     requires
         r0.len() == w,
         r1.len() == w,
         r2.len() == w,
         o + 3 * w <= old(out)@.len(),
     ensures
+        final(mt).n == old(mt).n + w,
         final(out)@.len() == old(out)@.len(),
         forall|i: int|
             o <= i < o + 3 * w ==> (#[trigger] final(out)@[i]) as int == chan(
@@ -836,6 +891,7 @@ pub fn rgb_row(r0: &Vec<u8>, r1: &Vec<u8>, r2: &Vec<u8>, w: usize, out: &mut [u8
     while x < w
         invariant
             x <= w,
+            mt.n == old(mt).n + x,
             r0.len() == w,
             r1.len() == w,
             r2.len() == w,
@@ -857,15 +913,19 @@ pub fn rgb_row(r0: &Vec<u8>, r1: &Vec<u8>, r2: &Vec<u8>, w: usize, out: &mut [u8
         sset(out, o + 3 * x + 1, vget(r1, x));
         sset(out, o + 3 * x + 2, vget(r2, x));
         x += 1;
+        proof {
+            mt.n = mt.n + 1;
+        }
     }
 }
 
 /// A row of one component at `out[o..]`.
-pub fn gray_row(r0: &Vec<u8>, w: usize, out: &mut [u8], o: usize)
+pub fn gray_row(r0: &Vec<u8>, w: usize, out: &mut [u8], o: usize, Tracked(mt): Tracked<&mut Meter>)
     requires
         r0.len() == w,
         o + w <= old(out)@.len(),
     ensures
+        final(mt).n == old(mt).n + w,
         final(out)@.len() == old(out)@.len(),
         forall|i: int| o <= i < o + w ==> (#[trigger] final(out)@[i]) == r0[i - o],
         forall|i: int| 0 <= i < o || o + w <= i < final(out)@.len() ==> (#[trigger] final(out)@[i]) == old(out)@[i],
@@ -875,6 +935,7 @@ pub fn gray_row(r0: &Vec<u8>, w: usize, out: &mut [u8], o: usize)
     while x < w
         invariant
             x <= w,
+            mt.n == old(mt).n + x,
             r0.len() == w,
             o + w <= out@.len(),
             out@.len() == old(out)@.len(),
@@ -885,6 +946,9 @@ pub fn gray_row(r0: &Vec<u8>, w: usize, out: &mut [u8], o: usize)
     {
         sset(out, o + x, vget(r0, x));
         x += 1;
+        proof {
+            mt.n = mt.n + 1;
+        }
     }
 }
 

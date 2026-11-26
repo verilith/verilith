@@ -32,7 +32,7 @@ trusted](#what-is-proven-and-what-is-trusted) before relying on any of it.
   `push`/`pop`/`len`, the channel's wait loop and handle clone) and `verilith-wasm`'s
   interpreter loop, which runs as long as the guest program does.
 - **More, crate by crate.** Many crates prove further properties: bounds on
-  work or on output size (zlib, lz4, snappy, webp, gif, tiff, png, brotli,
+  work or on output size (zlib, lz4, snappy, webp, gif, tiff, png, brotli, jpeg,
   http, url, xml, hpack, regex, dns, x509), that compression round-trips (zlib,
   lz4, snappy), that a stream split into pieces anywhere
   decodes the same (zlib, zstd, brotli, hpack, http), linearizability of
