@@ -1402,6 +1402,7 @@ dependencies = [
  "verilith-sync",
  "verilith-text",
  "verilith-tiff",
+ "verilith-tls",
  "verilith-url",
  "verilith-wasm",
  "verilith-webp",
@@ -1638,6 +1639,14 @@ dependencies = [
  "cc",
  "verilith-core",
  "verilith-zlib",
+ "vstd",
+]
+
+[[package]]
+name = "verilith-tls"
+version = "0.1.0"
+dependencies = [
+ "verilith-core",
  "vstd",
 ]
 

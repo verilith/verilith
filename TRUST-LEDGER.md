@@ -47,6 +47,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | sync | 45 | 11 |  | 1 | 16 | 10 | 2 |
 | text | 18 | 13 |  |  |  |  | 9 |
 | tiff | 1 |  |  |  |  |  | 2 |
+| tls |  |  |  |  |  |  | 1 |
 | url | 1 |  |  |  |  |  | 5 |
 | verilith |  |  |  |  |  |  | 1 |
 | wasm | 33 |  |  |  |  | 2 | 4 |
@@ -56,7 +57,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  |  |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **650** | **35** | **274** | **5** | **16** | **12** | **114** |
+| **total** | **650** | **35** | **274** | **5** | **16** | **12** | **115** |
 
 ## Items
 
@@ -259,6 +260,10 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/tiff/src/capi.rs`: plain Rust
 - `crates/tiff/src/lib.rs`: plain Rust
 - `crates/tiff/src/prims.rs`: external_body: `alloc_zeroed`
+
+### tls
+
+- `crates/tls/src/lib.rs`: plain Rust
 
 ### url
 
