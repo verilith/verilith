@@ -36,7 +36,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | hpack | 2 |  |  |  |  |  | 3 |
 | http |  |  |  |  |  |  | 8 |
 | jpeg | 2 |  |  |  |  |  | 3 |
-| json | 26 |  |  |  | 2 |  | 7 |
+| json | 26 |  |  |  | 2 |  | 6 |
 | lz4 |  |  |  |  |  |  | 1 |
 | png | 2 |  |  |  |  |  | 7 |
 | regex | 1 |  |  |  |  |  | 3 |
@@ -44,7 +44,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | simd | 361 | 6 | 274 | 4 |  |  | 3 |
 | snappy |  |  |  |  |  |  | 1 |
 | sync | 45 | 11 |  | 1 | 16 | 10 | 2 |
-| text | 18 | 13 |  |  | 13 |  | 9 |
+| text | 18 | 13 |  |  |  |  | 9 |
 | tiff | 1 |  |  |  |  |  | 2 |
 | url | 1 |  |  |  |  |  | 5 |
 | verilith |  |  |  |  |  |  | 1 |
@@ -55,7 +55,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  | 2 |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **651** | **35** | **274** | **5** | **34** | **12** | **107** |
+| **total** | **651** | **35** | **274** | **5** | **21** | **12** | **106** |
 
 ## Items
 
@@ -151,7 +151,6 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/json/src/lanes.rs`: external_body: `opaque64`, `append16_spare_neon`, `len_spare`, `reserve_spare`, `reserve_spare_plus`, `push_spare`, `append4_spare`, `append_slice_spare`, `truncate_spare`, `set_spare`, `append16_spare`
 - `crates/json/src/lib.rs`: plain Rust
 - `crates/json/src/native.rs`: plain Rust
-- `crates/json/src/number.rs`: plain Rust
 - `crates/json/src/serde_support.rs`: plain Rust
 - `crates/json/src/simd.rs`: external_body: `load4`
 - `crates/json/src/utf8.rs`: external_body: `utf8_avx512`, `utf8_avx2`
@@ -227,7 +226,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### text
 
-- `crates/text/src/capi.rs`: 2 assume_new; plain Rust
+- `crates/text/src/capi.rs`: plain Rust
 - `crates/text/src/capi_utf.rs`: plain Rust
 - `crates/text/src/lib.rs`: plain Rust
 - `crates/text/src/base64/api.rs`: plain Rust
@@ -236,9 +235,9 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/text/src/hex/avx2.rs`: external_body: `encode_bulk`, `decode_bulk`
 - `crates/text/src/hex/mod.rs`: plain Rust
 - `crates/text/src/idna/data.rs`: external_body: `iword`; axioms: `axiom_idna_trie`, `axiom_idna_mapping`, `axiom_idna_ascii`
-- `crates/text/src/idna/mod.rs`: 7 assume_new; plain Rust
+- `crates/text/src/idna/mod.rs`: plain Rust
 - `crates/text/src/unicode/data.rs`: external_body: `is_scalar`; axioms: `axiom_decomp_scalar`, `axiom_comp`, `axiom_bb`, `axiom_pool`, `axiom_jamo`, `axiom_trie`, `axiom_ascii`, `axiom_fast_below`
-- `crates/text/src/unicode/mod.rs`: 4 assume_new; plain Rust
+- `crates/text/src/unicode/mod.rs`: plain Rust
 - `crates/text/src/unicode/spec.rs`: axioms: `axiom_fast`, `axiom_decomp_ordered`
 - `crates/text/src/utf/conv.rs`: external_body: `ascii_prefix_avx2`, `latin1_to_utf8_avx2`, `latin1_to_utf8_safe_avx2`, `latin1_to_utf16_avx2`, `utf16_to_latin1_avx2`, `utf8_to_utf16_avx2`, `utf8_to_latin1_avx2`, `utf16_to_utf8_avx2`, `count_latin1_utf8_avx2`, `count_utf8_avx2`, `count_utf16_avx2`
 - `crates/text/src/utf/mod.rs`: plain Rust
