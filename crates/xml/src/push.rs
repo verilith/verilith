@@ -12,6 +12,7 @@
 use crate::chars::*;
 use crate::content::*;
 use crate::doc::*;
+use crate::items_spec::*;
 use crate::dtd::*;
 use crate::lex::*;
 use crate::spec::*;
@@ -272,6 +273,20 @@ impl Stream {
         &&& self.phase == PH_WHOLE ==> self.w.base == 0 && self.w.win_ok()
     }
 
+    /// Every token emitted so far, at positions in the input.
+    pub open spec fn emitted(&self) -> Seq<XTok> {
+        self.w.emitted()
+    }
+
+    /// What has been emitted: before the root element, the prolog's tokens
+    /// up to `pmark`; from it on, the tokens read so far (`Win::emits`).
+    pub open spec fn items_ok(&self) -> bool {
+        &&& (self.phase == PH_HEAD || self.phase == PH_M1 || self.phase == PH_M2) ==> self.w.base == 0 && self.pmark
+            <= self.ptape@.len() && self.emitted() == self.ptape@.subrange(0, self.pmark as int)
+        &&& self.phase == PH_WHOLE ==> self.emitted().len() == 0
+        &&& self.phase == PH_BODY ==> self.w.emits()
+    }
+
     /// The same input, kept the same way.
     /// The verdict `r` (`R_OK`, `R_ERR`) on the input seen (`last`: all
     /// of it): on the text, on the input it is (when that is the text), and
@@ -296,6 +311,8 @@ pub fn stream_new(enc: Enc) -> (r: Stream)
         r.phase == PH_HEAD,
         r.enc == enc,
         r.seen() == Seq::<u8>::empty(),
+        r.items_ok(),
+        r.emitted() == Seq::<XTok>::empty(),
 {
     let pro: Vec<u8> = Vec::new();
     let dtd = DtdOut::none(pro.as_slice());
@@ -316,6 +333,7 @@ pub fn stream_new(enc: Enc) -> (r: Stream)
             gst: Ghost(Seq::empty()),
             gt: Ghost(Seq::empty()),
             gts: Ghost(0),
+            ge: Ghost(Emitted { prev: Seq::empty(), groups: Seq::empty(), open: Seq::empty() }),
         },
         phase: PH_HEAD,
         ptape: Tape::new(),
@@ -328,6 +346,8 @@ pub fn stream_new(enc: Enc) -> (r: Stream)
         enc,
     };
     proof {
+        assert(r.emitted() =~= Seq::<XTok>::empty());
+        assert(r.ptape@.subrange(0, 0) =~= Seq::<XTok>::empty());
         assert(r.w.buf@ =~= r.w.seen@.subrange(0, 0));
         assert forall|s: Seq<u8>| #[trigger] ext(r.seen(), s) implies doc_chars(s) == chars_from(s, 0) by {}
     }
@@ -446,6 +466,9 @@ fn head_step(st: &mut Stream) -> (r: u8)
         r == S_WAIT ==> final(st).phase == PH_HEAD,
         r == S_FAIL ==> final(st).phase == PH_WHOLE,
         r == S_ON || r == S_WAIT || r == S_FAIL,
+        final(st).w.out == old(st).w.out,
+        final(st).w.ge == old(st).w.ge,
+        final(st).pmark == old(st).pmark,
 {
     hide(document);
     hide(xmldecl);
@@ -784,6 +807,9 @@ fn misc_step(st: &mut Stream) -> (r: u8)
         final(st).dtd == old(st).dtd,
         final(st).genv == old(st).genv,
         final(st).pmark == old(st).pmark,
+        final(st).w.out == old(st).w.out,
+        final(st).w.ge == old(st).w.ge,
+        extends(old(st).ptape@, final(st).ptape@),
         r == S_ON || r == S_WAIT || r == S_DONE,
         r == S_ON ==> final(st).w.pos > old(st).w.pos,
         r != S_ON ==> final(st).w.pos == old(st).w.pos && final(st).ptape@ == old(st).ptape@,
@@ -810,6 +836,7 @@ fn misc_step(st: &mut Stream) -> (r: u8)
     proof {
         assert(seen.subrange(0, seen.len() as int) =~= seen);
         assert(st.w.buf@ == seen);
+        assert(t.subrange(0, t.len() as int) =~= t);
     }
     if p == n {
         return S_WAIT;
@@ -867,6 +894,7 @@ fn misc_step(st: &mut Stream) -> (r: u8)
                 tape_append(&mut st.ptape, &tp);
                 st.w.pos = e;
                 proof {
+                    assert(st.ptape@.subrange(0, t.len() as int) =~= t);
                     assert(old(st).seen() == st.seen());
                     lemma_misc_move(st.seen(), p as int, t, st.w.pos as int, st.ptape@, st.sd as int, st.genv@);
                     if st.phase == PH_M1 {
@@ -908,6 +936,7 @@ fn misc_step(st: &mut Stream) -> (r: u8)
                     tape_append(&mut st.ptape, &tp);
                     st.w.pos = e;
                     proof {
+                        assert(st.ptape@.subrange(0, t.len() as int) =~= t);
                         assert(old(st).seen() == st.seen());
                         lemma_misc_move(st.seen(), p as int, t, st.w.pos as int, st.ptape@, st.sd as int, st.genv@);
                         if st.phase == PH_M1 {
@@ -1112,6 +1141,9 @@ fn m1_decide(st: &mut Stream) -> (r: u8)
         final(st).inv(),
         final(st).same_input(old(st)),
         final(st).pmark == old(st).pmark,
+        final(st).w.out == old(st).w.out,
+        final(st).w.ge == old(st).w.ge,
+        extends(old(st).ptape@, final(st).ptape@),
         r == S_ON || r == S_WAIT,
         r == S_ON ==> final(st).phase == PH_M2,
         r == S_WAIT ==> final(st).phase == PH_M1 && final(st).w.pos == old(st).w.pos && final(st).ptape@ == old(
@@ -1134,6 +1166,7 @@ fn m1_decide(st: &mut Stream) -> (r: u8)
     let ghost t = st.ptape@;
     let ghost sd = st.sd as int;
     proof {
+        assert(t.subrange(0, t.len() as int) =~= t);
         assert(seen.subrange(0, seen.len() as int) =~= seen);
         assert(st.w.buf@ == seen);
         assert(old(st).m1_goal());
@@ -1173,6 +1206,9 @@ fn m1_decide(st: &mut Stream) -> (r: u8)
                         st.genv = Ghost(env);
                         st.phase = PH_M2;
                         proof {
+                            // The declaration's tokens follow the tape's.
+                            assert(agree(pro@, pro@, 0, pro@.len() as int, 0));
+                            lemma_doctype_eq(pro@, pro@, pro@.len() as int, p as int, t, sd == 1);
                             assert(e2 == e);
                             assert(ext(st.pro@, seen)) by {
                                 assert(seen.subrange(0, st.pro@.len() as int) =~= st.pro@);
@@ -1388,6 +1424,11 @@ fn flush_pro(st: &mut Stream)
         final(st).pro == old(st).pro,
         final(st).dtd == old(st).dtd,
         final(st).genv == old(st).genv,
+        final(st).w.ge == old(st).w.ge,
+        old(st).pmark <= old(st).ptape@.len() ==> final(st).w.out@ == old(st).w.out@ + old(st).ptape@.subrange(
+            old(st).pmark as int,
+            old(st).ptape@.len() as int,
+        ),
 {
     let n = st.ptape.toks.len();
     let mut i = st.pmark;
@@ -1414,10 +1455,24 @@ fn flush_pro(st: &mut Stream)
             st.pro == old(st).pro,
             st.dtd == old(st).dtd,
             st.genv == old(st).genv,
+            st.pmark == old(st).pmark,
+            st.w.ge == old(st).w.ge,
+            old(st).pmark <= i,
+            old(st).pmark <= n ==> old(st).pmark <= i <= n && st.w.out@ == old(st).w.out@ + st.ptape@.subrange(
+                old(st).pmark as int,
+                i as int,
+            ),
         decreases n - i,
     {
         let x = st.ptape.toks[i];
         st.w.out.push(x);
+        proof {
+            assert(x@ == st.ptape@[i as int]);
+            assert(st.ptape@.subrange(old(st).pmark as int, i + 1) =~= st.ptape@.subrange(
+                old(st).pmark as int,
+                i as int,
+            ).push(st.ptape@[i as int]));
+        }
         i = i + 1;
     }
     if st.pmark <= n {
@@ -1432,6 +1487,7 @@ fn flush_pro(st: &mut Stream)
 fn m2_root(st: &mut Stream) -> (r: u8)
     requires
         old(st).inv(),
+        old(st).items_ok(),
         old(st).phase == PH_M2,
         old(st).w.pos < old(st).w.buf@.len(),
         forall|s: Seq<u8>|
@@ -1441,6 +1497,7 @@ fn m2_root(st: &mut Stream) -> (r: u8)
     ensures
         final(st).enc == old(st).enc,
         final(st).inv(),
+        final(st).items_ok(),
         final(st).same_input(old(st)),
         r == S_ON || r == S_WAIT || r == S_FAIL,
         r == S_ON ==> final(st).phase == PH_BODY,
@@ -1531,7 +1588,10 @@ fn m2_root(st: &mut Stream) -> (r: u8)
                 lemma_root_goal(seen, st.pro@, p as int, t, envv);
                 assert(sc@.len() == sx.len());
             }
+            let ghost out0 = st.w.out@;
+            let ghost pm = st.pmark as int;
             flush_pro(st);
+            let ghost out1 = st.w.out@;
             if sc.len() == 1 {
                 let top = sc[0];
                 proof {
@@ -1552,6 +1612,30 @@ fn m2_root(st: &mut Stream) -> (r: u8)
             proof {
                 st.w.gst@ = gst2;
                 st.w.gt@ = gt2;
+                // Emitted: the prolog's tokens, then the start tag's, each
+                // its own group.
+                let g0 = st.w.ge@;
+                assert(st.w.out@ =~= out1 + u);
+                assert(out1 == out0 + t.subrange(pm, t.len() as int));
+                lemma_mv_zero(out0);
+                lemma_mv_zero(st.w.out@);
+                assert(g0.prev + out0 == t.subrange(0, pm));
+                assert(st.w.emitted() =~= t + u) by {
+                    assert(t.subrange(0, pm) + t.subrange(pm, t.len() as int) =~= t);
+                }
+                assert(t.subrange(0, t.len() as int) =~= t);
+                lemma_pre_ext(t, t);
+                lemma_pre_grps(t, t);
+                lemma_sing(sing(t, 0), t, u, 0, t.len() as int);
+                lemma_mv_zero(u);
+                assert(added(Seq::<XTok>::empty(), u) =~= u);
+                st.w.ge@ = Emitted { prev: g0.prev, groups: sing(t, 0) + sing(u, 0), open: Seq::empty() };
+                assert(st.w.emitted() =~= flat(st.w.ge@.groups) + st.w.ge@.open);
+                if sx.len() > 0 {
+                    assert(sc@[0].2 < u.len());
+                }
+                assert(opens_in(st.w.gst@, st.w.gt@.len() as int));
+                assert(st.w.emits());
             }
             st.phase = PH_BODY;
             proof {
@@ -1640,6 +1724,7 @@ fn pro_finish(st: &mut Stream) -> (r: bool)
         final(st).phase == old(st).phase,
         r == docx(old(st).seen()) is Some,
         r ==> final(st).ptape@ == docx(old(st).seen()).unwrap(),
+        r ==> pre(old(st).ptape@, final(st).ptape@),
 {
     hide(document);
     hide(doc_chars);
@@ -1662,14 +1747,28 @@ fn pro_finish(st: &mut Stream) -> (r: bool)
             assert(old(st).m1_goal());
             assert(docx(seen) == after_m1(seen, st.w.pos as int, t, st.sd as int));
         }
-        m1_finish(st.w.buf.as_slice(), st.w.pos, &mut st.ptape, st.sd)
+        let r = m1_finish(st.w.buf.as_slice(), st.w.pos, &mut st.ptape, st.sd);
+        proof {
+            if r {
+                reveal(after_m1);
+                lemma_after_m1_pre(seen, st.w.pos as int, t, st.sd as int);
+            }
+        }
+        r
     } else {
         proof {
             assert(old(st).m2_goal());
             assert(docx(seen) == after_m2(seen, st.w.pos as int, t, st.genv@));
         }
         let env = st.dtd.env(st.pro.as_slice());
-        m2_finish(st.w.buf.as_slice(), st.w.pos, &mut st.ptape, &env)
+        let r = m2_finish(st.w.buf.as_slice(), st.w.pos, &mut st.ptape, &env);
+        proof {
+            if r {
+                reveal(after_m2);
+                lemma_after_m2_pre(seen, st.w.pos as int, t, st.genv@);
+            }
+        }
+        r
     }
 }
 
@@ -1785,6 +1884,7 @@ fn win_append(w: &mut Win, data: &[u8])
         fed(old(w), final(w), data@),
         final(w).out == old(w).out,
         final(w).tfirst == old(w).tfirst,
+        final(w).ge == old(w).ge,
 {
     push_slice(&mut w.buf, data, 0, data.len());
     proof {
@@ -1802,8 +1902,12 @@ fn win_compact(w: &mut Win, Ghost(env): Ghost<Env>)
     requires
         old(w).inv(env),
         old(w).base + old(w).buf@.len() <= usize::MAX,
+        old(w).out@.len() == 0,
     ensures
         final(w).inv(env),
+        final(w).ge == old(w).ge,
+        final(w).emitted() == old(w).emitted(),
+        old(w).emits() ==> final(w).emits(),
         final(w).seen == old(w).seen,
         final(w).at() == old(w).at(),
         final(w).base + final(w).pos == old(w).base + old(w).pos,
@@ -1862,6 +1966,7 @@ fn win_compact(w: &mut Win, Ghost(env): Ghost<Env>)
         assert(w.mode_ok());
         assert(w.chars_inv());
         assert(w.goal(env));
+        assert(w.emitted() =~= old(w).emitted());
     }
 }
 
@@ -2004,6 +2109,7 @@ impl Stream {
     pub fn new() -> (r: Stream)
         ensures
             r.inv(),
+            r.items_ok(),
             r.enc == Enc::Utf8,
             r.seen() == Seq::<u8>::empty(),
     {
@@ -2015,6 +2121,7 @@ impl Stream {
     pub fn decoded(enc: Enc) -> (r: Stream)
         ensures
             r.inv(),
+            r.items_ok(),
             r.phase == PH_HEAD,
             r.enc == enc,
             r.seen() == Seq::<u8>::empty(),
@@ -2033,8 +2140,14 @@ impl Stream {
     pub fn feed(&mut self, data: &[u8], last: bool) -> (r: u8)
         requires
             old(self).inv(),
+            old(self).items_ok(),
         ensures
             final(self).inv(),
+            final(self).items_ok(),
+            // Accepted: all that was emitted, chunk by chunk, is the
+            // whole parse's tape.
+            r == R_OK ==> items(final(self).emitted(), docx(final(self).seen()).unwrap()),
+            r == R_WHOLE ==> final(self).emitted().len() == 0,
             r <= R_LIMIT,
             (old(self).phase == PH_FAILED || old(self).phase == PH_DONE) ==> r == R_ERR && final(self).seen()
                 == old(self).seen(),
@@ -2057,7 +2170,14 @@ impl Stream {
         hide(after_content);
         hide(input_enc);
         hide(parse);
+        // What the last chunk emitted is kept in the proof's account.
+        proof {
+            self.w.ge@ = Emitted { prev: self.emitted(), groups: self.w.ge@.groups, open: self.w.ge@.open };
+        }
         self.w.out.clear();
+        proof {
+            assert(self.emitted() =~= old(self).emitted());
+        }
         if self.phase == PH_FAILED || self.phase == PH_DONE {
             return R_ERR;
         }
@@ -2074,6 +2194,9 @@ impl Stream {
             lemma_stream_fed(old(self), self, data@);
         }
         let ghost seen = self.seen();
+        proof {
+            assert(self.items_ok());
+        }
         if self.phase == PH_BODY {
             win_compact(&mut self.w, Ghost(self.genv@));
             proof {
@@ -2082,16 +2205,32 @@ impl Stream {
             }
         }
         if self.phase == PH_HEAD {
+            proof {
+                assert(self.emitted() =~= Seq::<XTok>::empty());
+            }
             let h = head_step(self);
+            proof {
+                assert(self.emitted() =~= Seq::<XTok>::empty());
+                assert(self.ptape@.subrange(0, self.pmark as int) =~= Seq::<XTok>::empty());
+            }
             if h == S_WAIT {
                 if last {
                     self.phase = PH_WHOLE;
+                    proof {
+                        assert(self.emitted() =~= self.ptape@.subrange(0, self.pmark as int));
+                    }
                     return R_WHOLE;
                 }
                 return R_MORE;
             }
             if h == S_FAIL {
+                proof {
+                    assert(self.emitted() =~= old(self).ptape@.subrange(0, self.pmark as int));
+                }
                 return R_WHOLE;
+            }
+            proof {
+                assert(self.ptape@.subrange(0, self.pmark as int) =~= Seq::<XTok>::empty());
             }
         }
         if self.phase == PH_WHOLE {
@@ -2125,6 +2264,7 @@ impl Stream {
                         assert(self.pro_ok());
                     }
                     assert(self.inv());
+                    assert(self.items_ok());
                 }
             },
             None => {
@@ -2153,11 +2293,13 @@ impl Stream {
                     !wait,
                 invariant
                     self.inv(),
+                    self.items_ok(),
                     self.seen() == seen1,
                     self.enc == old(self).enc,
                     last ==> self.w.cpos == self.w.buf@.len(),
                 ensures
                     self.inv(),
+                    self.items_ok(),
                     self.seen() == seen1,
                     self.enc == old(self).enc,
                     last ==> self.w.cpos == self.w.buf@.len(),
@@ -2165,7 +2307,11 @@ impl Stream {
                     !wait ==> self.phase == PH_M2,
                 decreases self.w.buf@.len() - self.w.pos,
             {
+                let ghost t0 = self.ptape@;
                 let m = misc_step(self);
+                proof {
+                    assert(self.ptape@.subrange(0, self.pmark as int) =~= t0.subrange(0, self.pmark as int));
+                }
                 if m == S_WAIT {
                     wait = true;
                     break;
@@ -2188,7 +2334,11 @@ impl Stream {
                             break;
                         }
                     }
+                    let ghost t1 = self.ptape@;
                     let d = m1_decide(self);
+                    proof {
+                        assert(self.ptape@.subrange(0, self.pmark as int) =~= t1.subrange(0, self.pmark as int));
+                    }
                     if d == S_WAIT {
                         wait = true;
                         // It was not: on with the scan.
@@ -2219,11 +2369,13 @@ impl Stream {
                     !fail,
                 invariant
                     self.inv(),
+                    self.items_ok(),
                     self.seen() == seen1,
                     self.enc == old(self).enc,
                     last ==> self.w.cpos == self.w.buf@.len(),
                 ensures
                     self.inv(),
+                    self.items_ok(),
                     self.seen() == seen1,
                     self.enc == old(self).enc,
                     last ==> self.w.cpos == self.w.buf@.len(),
@@ -2232,7 +2384,11 @@ impl Stream {
                     !wait && !fail ==> self.phase == PH_BODY,
                 decreases self.w.buf@.len() - self.w.pos,
             {
+                let ghost t0 = self.ptape@;
                 let m = misc_step(self);
+                proof {
+                    assert(self.ptape@.subrange(0, self.pmark as int) =~= t0.subrange(0, self.pmark as int));
+                }
                 if m == S_WAIT {
                     wait = true;
                     break;
@@ -2290,9 +2446,34 @@ impl Stream {
         proof {
             assert(self.utf8());
             lemma_parse_ok(self);
+            // The tokens read are the document's, each with its group.
+            assert(self.w.emitted() =~= flat(self.w.ge@.groups));
+            lemma_items(self.w.ge@.groups, self.w.gt@);
         }
         self.phase = PH_DONE;
         R_OK
+    }
+
+    /// The tokens the last chunk emitted, at positions in `window()`
+    /// (`base()` in the input). They stay in the proof's account of what
+    /// was emitted (`emitted`).
+    pub fn take_out(&mut self) -> (r: Tape)
+        ensures
+            r@ == old(self).w.out@,
+            final(self).w.out@.len() == 0,
+            final(self).emitted() == old(self).emitted(),
+            old(self).inv() ==> final(self).inv(),
+            old(self).items_ok() ==> final(self).items_ok(),
+    {
+        proof {
+            self.w.ge@ = Emitted { prev: self.emitted(), groups: self.w.ge@.groups, open: self.w.ge@.open };
+        }
+        let mut r = Tape::new();
+        std::mem::swap(&mut r, &mut self.w.out);
+        proof {
+            assert(self.emitted() =~= old(self).emitted());
+        }
+        r
     }
 
     /// Before the root element, the window decides nothing more: at the
@@ -2302,10 +2483,13 @@ impl Stream {
     fn prolog_wait(&mut self, last: bool) -> (r: u8)
         requires
             old(self).inv(),
+            old(self).items_ok(),
             old(self).phase == PH_M1 || old(self).phase == PH_M2,
             last ==> old(self).w.cpos == old(self).w.buf@.len(),
         ensures
             final(self).inv(),
+            final(self).items_ok(),
+            r == R_OK ==> items(final(self).emitted(), docx(final(self).seen()).unwrap()),
             final(self).seen() == old(self).seen(),
             final(self).enc == old(self).enc,
             final(self).phase != PH_HEAD && final(self).phase != PH_WHOLE,
@@ -2323,10 +2507,19 @@ impl Stream {
         proof {
             assert(self.utf8());
         }
+        let ghost t0 = self.ptape@;
+        let ghost out0 = self.w.out@;
+        let ghost pm = self.pmark as int;
+        proof {
+            lemma_mv_zero(out0);
+            assert(self.w.ge@.prev + out0 == t0.subrange(0, pm));
+        }
         if !last {
             flush_pro(self);
             proof {
                 assert(self.inv());
+                lemma_mv_zero(self.w.out@);
+                assert(self.emitted() =~= self.ptape@.subrange(0, self.pmark as int));
             }
             return R_MORE;
         }
@@ -2340,6 +2533,24 @@ impl Stream {
             self.phase = PH_DONE;
             proof {
                 lemma_parse_ok(self);
+                // Emitted: the prolog's tokens as they were, then the rest
+                // of the tape.
+                let t1 = self.ptape@;
+                let a = t0.subrange(0, pm);
+                let b = t1.subrange(pm, t1.len() as int);
+                lemma_mv_zero(self.w.out@);
+                assert(self.emitted() =~= a + b);
+                assert(pre(a, t1)) by {
+                    assert forall|i: int| 0 <= i < a.len() implies #[trigger] same_item(a[i], t1[i]) by {
+                        assert(a[i] == t0[i]);
+                        assert(same_item(t0[i], t1[i]));
+                    }
+                }
+                lemma_pre_grps(a, t1);
+                lemma_sing(sing(a, 0), t1.subrange(0, pm), b, 0, 0);
+                lemma_mv_zero(b);
+                assert(t1.subrange(0, pm) + b =~= t1);
+                lemma_items(sing(a, 0) + sing(b, 0), t1);
             }
             R_OK
         } else {
@@ -2379,11 +2590,6 @@ impl Stream {
             k = k.min(self.w.tem);
         }
         k
-    }
-
-    /// The tokens the last chunk emitted, at positions in `window()`.
-    pub fn take_out(&mut self) -> Tape {
-        std::mem::replace(&mut self.w.out, Tape::new())
     }
 
     /// The input from `base()`.
