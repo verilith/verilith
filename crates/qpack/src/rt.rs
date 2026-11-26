@@ -293,4 +293,193 @@ pub proof fn lemma_line_item(t: Table, ric: nat, base: nat, b: Seq<u8>, pos: int
     }
 }
 
+// ---------------------------------------------------------------------------
+// Field sections
+// ---------------------------------------------------------------------------
+
+/// The items' bytes, one after another.
+pub open spec fn cat(its: Seq<Item>) -> Seq<u8>
+    decreases its.len(),
+{
+    if its.len() == 0 { Seq::empty() } else { its[0].bytes + cat(its.drop_first()) }
+}
+
+/// The items' fields.
+pub open spec fn flds(its: Seq<Item>) -> Seq<Field> {
+    Seq::new(its.len(), |i: int| its[i].field)
+}
+
+/// The sum of the items' field sizes.
+pub open spec fn fsum(its: Seq<Item>) -> nat
+    decreases its.len(),
+{
+    if its.len() == 0 { 0 } else { fsize(its[0].field) + fsum(its.drop_first()) }
+}
+
+/// Every item is a correct encoding, referring only to entries below `ric`.
+pub open spec fn items_ok(t: Table, ric: nat, base: nat, its: Seq<Item>) -> bool {
+    forall|i: int| 0 <= i < its.len() ==> {
+        &&& item_ok(t, base, #[trigger] its[i])
+        &&& (iref(its[i]) matches Some(a) ==> a < ric)
+    }
+}
+
+pub proof fn lemma_cat_push(its: Seq<Item>, x: Item)
+    ensures
+        cat(its.push(x)) == cat(its) + x.bytes,
+        fsum(its.push(x)) == fsum(its) + fsize(x.field),
+    decreases its.len(),
+{
+    if its.len() == 0 {
+        let y = its.push(x);
+        assert(y.drop_first() =~= Seq::<Item>::empty());
+        assert(cat(y.drop_first()) == Seq::<u8>::empty());
+        assert(fsum(y.drop_first()) == 0);
+        assert(y[0] == x);
+        assert(cat(y) =~= x.bytes);
+    } else {
+        assert(its.push(x).drop_first() =~= its.drop_first().push(x));
+        lemma_cat_push(its.drop_first(), x);
+        assert(its.push(x)[0] == its[0]);
+        assert(fsum(its.push(x)) == fsize(its[0].field) + fsum(its.drop_first().push(x)));
+        assert(cat(its.push(x)) =~= cat(its) + x.bytes);
+    }
+}
+
+/// Field lines written one after another, to the end of `b`, decode to
+/// their fields.
+pub proof fn lemma_lines_items(t: Table, ric: nat, base: nat, max_size: nat, b: Seq<u8>, pos: int, size: nat, acc: Seq<Field>, its: Seq<Item>)
+    requires
+        items_ok(t, ric, base, its),
+        base_ok(t, base),
+        ric <= icount(t),
+        0 <= pos <= b.len(),
+        b.subrange(pos, b.len() as int) == cat(its),
+        size + fsum(its) <= max_size,
+    ensures
+        lines(t, ric, base, max_size, b, pos, size, acc) == SecR::Ok(acc + flds(its), ric),
+    decreases its.len(),
+{
+    if its.len() == 0 {
+        assert(acc + flds(its) =~= acc);
+    } else {
+        let x = its[0];
+        let rest = its.drop_first();
+        let c = cat(its);
+        assert(c == x.bytes + cat(rest));
+        assert(b.subrange(pos, pos + x.bytes.len()) =~= x.bytes) by {
+            assert(b.subrange(pos, pos + x.bytes.len()) =~= c.subrange(0, x.bytes.len() as int));
+        }
+        assert(item_ok(t, base, its[0]));
+        lemma_line_item(t, ric, base, b, pos, x);
+        let e = pos + x.bytes.len();
+        assert(b.subrange(e, b.len() as int) =~= cat(rest)) by {
+            assert(b.subrange(e, b.len() as int) =~= c.subrange(x.bytes.len() as int, c.len() as int));
+        }
+        assert(items_ok(t, ric, base, rest)) by {
+            assert forall|i: int| 0 <= i < rest.len() implies item_ok(t, base, #[trigger] rest[i]) && (iref(rest[i]) matches Some(a) ==> a < ric) by {
+                assert(rest[i] == its[i + 1]);
+            }
+        }
+        lemma_lines_items(t, ric, base, max_size, b, e, size + fsize(x.field), acc.push(x.field), rest);
+        assert(acc.push(x.field) + flds(rest) =~= acc + flds(its));
+    }
+}
+
+/// The Required Insert Count's encoding decodes back (§4.5.1.1), at an
+/// Insert Count `total` no more than MaxEntries past it.
+pub proof fn lemma_ric_rt(ric: nat, max_cap: nat, total: nat)
+    requires
+        ric <= total,
+        ric == 0 || (max_entries(max_cap) > 0 && total < ric + max_entries(max_cap)),
+    ensures
+        decode_ric(encode_ric(ric, max_cap), max_cap, total) == Some(ric),
+        encode_ric(ric, max_cap) <= 2 * max_entries(max_cap),
+{
+    if ric > 0 {
+        let me = max_entries(max_cap);
+        let full = 2 * me;
+        let mv = total + me;
+        let q1 = ric / full;
+        let r = ric % full;
+        let w = mv / full;
+        let rm = mv % full;
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(ric as int, full as int);
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(mv as int, full as int);
+        assert(0 <= r < full && 0 <= rm < full);
+        assert(q1 == w || q1 + 1 == w) by (nonlinear_arith)
+            requires
+                ric == full * q1 + r, mv == full * w + rm,
+                0 <= r < full, 0 <= rm < full,
+                mv < ric + full, ric <= mv, full > 0;
+        let mw = w * full;
+        vstd::arithmetic::mul::lemma_mul_is_commutative(w as int, full as int);
+        let comp = mw + r;
+        if q1 == w {
+            assert(comp == ric);
+        } else {
+            assert(full * w == full * q1 + full) by (nonlinear_arith) requires q1 + 1 == w;
+            assert(comp == ric + full);
+            assert(r > rm);
+            assert(comp > mv);
+        }
+    }
+}
+
+/// A field section as the encoder writes it: the prefix (Required Insert
+/// Count, Base), then the items.
+pub open spec fn sec_bytes(ric: nat, base: nat, max_cap: nat, its: Seq<Item>) -> Seq<u8> {
+    let pre = if base >= ric {
+        int_enc(0, 7, (base - ric) as nat)
+    } else {
+        int_enc(0x80, 7, (ric - base - 1) as nat)
+    };
+    int_enc(0, 8, encode_ric(ric, max_cap)) + pre + cat(its)
+}
+
+/// The round trip for a field section: decoded with the table the encoder
+/// had, it gives back the fields.
+pub proof fn lemma_section_rt(t: Table, max_cap: nat, max_size: nat, ric: nat, base: nat, its: Seq<Item>)
+    requires
+        items_ok(t, ric, base, its),
+        base_ok(t, base),
+        ric <= icount(t),
+        ric == 0 || (max_entries(max_cap) > 0 && icount(t) < ric + max_entries(max_cap)),
+        ric > 0 || base == 0,
+        fsum(its) <= max_size,
+        max_cap <= MAX_INT,
+    ensures
+        section(t, max_cap, max_size, sec_bytes(ric, base, max_cap, its)) == SecR::Ok(flds(its), ric),
+{
+    lemma_p2_vals();
+    let b = sec_bytes(ric, base, max_cap, its);
+    let enc = encode_ric(ric, max_cap);
+    lemma_ric_rt(ric, max_cap, icount(t));
+    let x1 = int_enc(0, 8, enc);
+    let sign = base < ric;
+    let fl: nat = if sign { 0x80 } else { 0 };
+    let dv: nat = if sign { (ric - base - 1) as nat } else { (base - ric) as nat };
+    let x2 = int_enc(fl, 7, dv);
+    assert(b == x1 + x2 + cat(its));
+    assert(enc <= MAX_INT) by {
+        assert(max_entries(max_cap) * 32 <= max_cap) by {
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(max_cap as int, 32);
+        }
+    }
+    assert(b.subrange(0, x1.len() as int) =~= x1);
+    lemma_int_at(b, 0, 0, 8, enc);
+    let e1 = x1.len() as int;
+    assert(b.subrange(e1, e1 + x2.len()) =~= x2);
+    assert(dv <= MAX_INT);
+    lemma_int_at(b, e1, fl, 7, dv);
+    lemma_int_first(fl, 7, dv);
+    assert((b[e1] >= 0x80) == sign);
+    let e2 = e1 + x2.len();
+    assert(b.subrange(e2, b.len() as int) =~= cat(its));
+    let base2: nat = if sign { (ric - dv - 1) as nat } else { ric + dv };
+    assert(base2 == base);
+    lemma_lines_items(t, ric, base, max_size, b, e2, 0, Seq::empty(), its);
+    assert(Seq::<Field>::empty() + flds(its) =~= flds(its));
+}
+
 } // verus!
