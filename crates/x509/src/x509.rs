@@ -61,19 +61,39 @@ pub fn read_alg_id<'a>(c: &'a [u8]) -> (r: Option<AlgId<'a>>)
         r matches Some(a) ==> parse_alg_id(c@) == Some(a@),
         r is None ==> parse_alg_id(c@) is None,
 {
+    read_alg_id_m(c).0
+}
+
+/// The octets an AlgorithmIdentifier's fields hold, which bounds the steps
+/// `alg_id_eq` takes.
+pub open spec fn alg_size(a: SpecAlgId) -> nat {
+    a.oid.len() + match a.params {
+        Some(p) => p.tag.len() + p.content.len(),
+        None => 0,
+    }
+}
+
+/// `read_alg_id`, with its steps.
+pub fn read_alg_id_m<'a>(c: &'a [u8]) -> (r: (Option<AlgId<'a>>, Ghost<nat>))
+    ensures
+        r.0 matches Some(a) ==> parse_alg_id(c@) == Some(a@) && alg_size(a@) <= c@.len(),
+        r.0 is None ==> parse_alg_id(c@) is None,
+        r.1@ <= 2 * c@.len(),
+{
     let (oid, r) = match read_expect(c, 0x06) {
         Some(x) => x,
-        None => return None,
+        None => return (None, Ghost(0)),
     };
-    if !check_oid(oid) {
-        return None;
+    let (ok, st) = check_oid_m(oid);
+    if !ok {
+        return (None, st);
     }
     if r.len() == 0 {
-        return Some(AlgId { oid, params: None });
+        return (Some(AlgId { oid, params: None }), st);
     }
     match read_only_tlv(r) {
-        Some(p) => Some(AlgId { oid, params: Some(p) }),
-        None => None,
+        Some(p) => (Some(AlgId { oid, params: Some(p) }), st),
+        None => (None, st),
     }
 }
 
@@ -82,21 +102,36 @@ pub fn alg_id_eq(a: &AlgId, b: &AlgId) -> (r: bool)
     ensures
         r == (a@ == b@),
 {
-    if !bytes_eq(a.oid, b.oid) {
-        return false;
+    alg_id_eq_m(a, b).0
+}
+
+/// `alg_id_eq`, with its steps.
+#[inline]
+pub fn alg_id_eq_m(a: &AlgId, b: &AlgId) -> (r: (bool, Ghost<nat>))
+    ensures
+        r.0 == (a@ == b@),
+        r.1@ <= alg_size(a@),
+{
+    let (eq, s1) = bytes_eq_m(a.oid, b.oid);
+    if !eq {
+        return (false, s1);
     }
     match (a.params, b.params) {
-        (None, None) => true,
+        (None, None) => (true, s1),
         (Some(x), Some(y)) => {
-            let r = bytes_eq(x.tag, y.tag) && bytes_eq(x.content, y.content);
+            let (e2, s2) = bytes_eq_m(x.tag, y.tag);
+            if !e2 {
+                return (false, Ghost(s1@ + s2@));
+            }
+            let (e3, s3) = bytes_eq_m(x.content, y.content);
             proof {
-                if !r {
+                if !e3 {
                     assert(opt_tlv_view(a.params) != opt_tlv_view(b.params));
                 }
             }
-            r
+            (e3, Ghost(s1@ + s2@ + s3@))
         },
-        _ => false,
+        _ => (false, s1),
     }
 }
 
@@ -121,21 +156,32 @@ pub fn read_spki<'a>(c: &'a [u8]) -> (r: Option<Spki<'a>>)
         r matches Some(a) ==> parse_spki(c@) == Some(a@),
         r is None ==> parse_spki(c@) is None,
 {
+    read_spki_m(c).0
+}
+
+/// `read_spki`, with its steps.
+pub fn read_spki_m<'a>(c: &'a [u8]) -> (r: (Option<Spki<'a>>, Ghost<nat>))
+    ensures
+        r.0 matches Some(a) ==> parse_spki(c@) == Some(a@),
+        r.0 is None ==> parse_spki(c@) is None,
+        r.1@ <= 2 * c@.len(),
+{
     let (a, r) = match read_expect(c, 0x30) {
         Some(x) => x,
-        None => return None,
+        None => return (None, Ghost(0)),
     };
-    let alg = match read_alg_id(a) {
+    let (alg, st) = read_alg_id_m(a);
+    let alg = match alg {
         Some(x) => x,
-        None => return None,
+        None => return (None, st),
     };
     let k = match read_only(r, 0x03) {
         Some(x) => x,
-        None => return None,
+        None => return (None, st),
     };
     match read_octet_aligned_bits(k) {
-        Some(key) => Some(Spki { alg, key }),
-        None => None,
+        Some(key) => (Some(Spki { alg, key }), st),
+        None => (None, st),
     }
 }
 
@@ -260,49 +306,73 @@ pub fn read_atv<'a>(c: &'a [u8]) -> (r: Option<Atv<'a>>)
         r matches Some(a) ==> parse_atv(c@) == Some(a@),
         r is None ==> parse_atv(c@) is None,
 {
+    read_atv_m(c).0
+}
+
+/// `read_atv`, with its steps.
+#[inline]
+pub fn read_atv_m<'a>(c: &'a [u8]) -> (r: (Option<Atv<'a>>, Ghost<nat>))
+    ensures
+        r.0 matches Some(a) ==> parse_atv(c@) == Some(a@),
+        r.0 is None ==> parse_atv(c@) is None,
+        r.1@ <= 2 * c@.len(),
+{
     let (oid, r) = match read_expect(c, 0x06) {
         Some(x) => x,
-        None => return None,
+        None => return (None, Ghost(0)),
     };
-    if !check_oid(oid) {
-        return None;
+    let (ok, st) = check_oid_m(oid);
+    if !ok {
+        return (None, st);
     }
     match read_only_tlv(r) {
-        Some(v) => Some(Atv { oid, value: v }),
-        None => None,
+        Some(v) => (Some(Atv { oid, value: v }), st),
+        None => (None, st),
     }
 }
 
-pub fn check_atvs(s: &[u8]) -> (r: bool)
+pub fn check_atvs(s: &[u8]) -> (r: (bool, Ghost<nat>))
     ensures
-        r == parse_atvs(s@) is Some,
+        r.0 == parse_atvs(s@) is Some,
+        r.1@ <= 2 * s@.len(),
 {
     let mut cur = s;
+    let ghost mut st: nat = 0;
     while cur.len() > 0
         invariant
             (parse_atvs(s@) is Some) == (parse_atvs(cur@) is Some),
+            cur@.len() <= s@.len(),
+            st <= 2 * (s@.len() - cur@.len()),
         decreases cur@.len(),
     {
         let (c, r) = match read_expect(cur, 0x30) {
             Some(x) => x,
-            None => return false,
+            None => return (false, Ghost(st)),
         };
         proof {
             lemma_tlv_shrinks(cur@);
         }
-        if read_atv(c).is_none() {
-            return false;
+        let (a, s1) = read_atv_m(c);
+        proof {
+            st = st + 1 + s1@;
+        }
+        if a.is_none() {
+            return (false, Ghost(st));
         }
         cur = r;
     }
-    true
+    (true, Ghost(st))
 }
 
-pub fn check_rdn(c: &[u8]) -> (r: bool)
+pub fn check_rdn(c: &[u8]) -> (r: (bool, Ghost<nat>))
     ensures
-        r == parse_rdn(c@) is Some,
+        r.0 == parse_rdn(c@) is Some,
+        r.1@ <= 2 * c@.len(),
 {
-    c.len() > 0 && check_atvs(c)
+    if c.len() == 0 {
+        return (false, Ghost(0));
+    }
+    check_atvs(c)
 }
 
 /// One step of `check_atvs_rec`: the attribute after `acc` in `f`.
@@ -324,12 +394,14 @@ proof fn lemma_atvs_step(prev: Seq<(SpecAtv, bool)>, f: Seq<SpecAtv>, acc: Seq<S
 
 /// `check_atvs`, giving each attribute to `list`.
 #[verifier::spinoff_prover]
-pub fn check_atvs_rec<'a, S: AtvSink<'a>>(s: &'a [u8], list: &mut S) -> (r: bool)
+pub fn check_atvs_rec<'a, S: AtvSink<'a>>(s: &'a [u8], list: &mut S) -> (r: (bool, Ghost<nat>))
     ensures
-        r == parse_atvs(s@) is Some,
-        r ==> final(list).log() == old(list).log() + rdn_atvs(parse_atvs(s@).unwrap()),
+        r.0 == parse_atvs(s@) is Some,
+        r.0 ==> final(list).log() == old(list).log() + rdn_atvs(parse_atvs(s@).unwrap()),
+        r.1@ <= 2 * s@.len(),
 {
     let mut cur = s;
+    let ghost mut st: nat = 0;
     let ghost prev = list.log();
     let ghost f = parse_atvs(s@).unwrap();
     let ghost mut acc: Seq<SpecAtv> = Seq::empty();
@@ -346,18 +418,23 @@ pub fn check_atvs_rec<'a, S: AtvSink<'a>>(s: &'a [u8], list: &mut S) -> (r: bool
             parse_atvs(s@) is Some ==> f == acc + parse_atvs(cur@).unwrap(),
             parse_atvs(s@) is Some ==> list.log() == prev + rdn_atvs(f).take(acc.len() as int),
             cur@.len() <= s@.len(),
+            st <= 2 * (s@.len() - cur@.len()),
         decreases cur@.len(),
     {
         let (c, r) = match read_expect(cur, 0x30) {
             Some(x) => x,
-            None => return false,
+            None => return (false, Ghost(st)),
         };
         proof {
             lemma_tlv_shrinks(cur@);
         }
-        let a = match read_atv(c) {
+        let (a, s1) = read_atv_m(c);
+        proof {
+            st = st + 1 + s1@;
+        }
+        let a = match a {
             Some(a) => a,
-            None => return false,
+            None => return (false, Ghost(st)),
         };
         proof {
             if parse_atvs(s@) is Some {
@@ -382,17 +459,19 @@ pub fn check_atvs_rec<'a, S: AtvSink<'a>>(s: &'a [u8], list: &mut S) -> (r: bool
             assert(rdn_atvs(f).take(acc.len() as int) =~= rdn_atvs(f));
         }
     }
-    true
+    (true, Ghost(st))
 }
 
 /// `check_rdns`, giving every attribute to `list`.
 #[verifier::spinoff_prover]
-pub fn check_rdns_rec<'a, S: AtvSink<'a>>(s: &'a [u8], list: &mut S) -> (r: bool)
+pub fn check_rdns_rec<'a, S: AtvSink<'a>>(s: &'a [u8], list: &mut S) -> (r: (bool, Ghost<nat>))
     ensures
-        r == parse_rdns(s@) is Some,
-        r ==> final(list).log() == old(list).log() + name_atvs(parse_rdns(s@).unwrap()),
+        r.0 == parse_rdns(s@) is Some,
+        r.0 ==> final(list).log() == old(list).log() + name_atvs(parse_rdns(s@).unwrap()),
+        r.1@ <= 2 * s@.len(),
 {
     let mut cur = s;
+    let ghost mut st: nat = 0;
     let ghost prev = list.log();
     let ghost mut acc: SpecName = Seq::empty();
     proof {
@@ -407,17 +486,25 @@ pub fn check_rdns_rec<'a, S: AtvSink<'a>>(s: &'a [u8], list: &mut S) -> (r: bool
             parse_rdns(cur@) is Some ==> parse_rdns(s@) == Some(acc + parse_rdns(cur@).unwrap()),
             list.log() == prev + name_atvs(acc),
             cur@.len() <= s@.len(),
+            st <= 2 * (s@.len() - cur@.len()),
         decreases cur@.len(),
     {
         let (c, r) = match read_expect(cur, 0x31) {
             Some(x) => x,
-            None => return false,
+            None => return (false, Ghost(st)),
         };
         proof {
             lemma_tlv_shrinks(cur@);
         }
-        if !(c.len() > 0 && check_atvs_rec(c, list)) {
-            return false;
+        if c.len() == 0 {
+            return (false, Ghost(st));
+        }
+        let (ok, s1) = check_atvs_rec(c, list);
+        proof {
+            st = st + 1 + s1@;
+        }
+        if !ok {
+            return (false, Ghost(st));
         }
         proof {
             let rdn = parse_atvs(c@).unwrap();
@@ -436,20 +523,22 @@ pub fn check_rdns_rec<'a, S: AtvSink<'a>>(s: &'a [u8], list: &mut S) -> (r: bool
     proof {
         assert(acc + Seq::<SpecRdn>::empty() =~= acc);
     }
-    true
+    (true, Ghost(st))
 }
 
 /// `read_name`, giving the Name's attributes to `list`.
-pub fn read_name_rec<'a, S: AtvSink<'a>>(c: &'a [u8], list: &mut S) -> (r: Option<Name<'a>>)
+pub fn read_name_rec<'a, S: AtvSink<'a>>(c: &'a [u8], list: &mut S) -> (r: (Option<Name<'a>>, Ghost<nat>))
     ensures
-        r matches Some(n) ==> parse_rdns(c@) == Some(n@) && n.raw@ == c@,
-        r matches Some(n) ==> final(list).log() == old(list).log() + name_atvs(n@),
-        r is None ==> parse_rdns(c@) is None,
+        r.0 matches Some(n) ==> parse_rdns(c@) == Some(n@) && n.raw@ == c@,
+        r.0 matches Some(n) ==> final(list).log() == old(list).log() + name_atvs(n@),
+        r.0 is None ==> parse_rdns(c@) is None,
+        r.1@ <= 2 * c@.len(),
 {
-    if check_rdns_rec(c, list) {
-        Some(Name { raw: c })
+    let (ok, st) = check_rdns_rec(c, list);
+    if ok {
+        (Some(Name { raw: c }), st)
     } else {
-        None
+        (None, st)
     }
 }
 
@@ -457,36 +546,54 @@ pub fn check_rdns(s: &[u8]) -> (r: bool)
     ensures
         r == parse_rdns(s@) is Some,
 {
+    check_rdns_m(s).0
+}
+
+/// `check_rdns`, with its steps.
+pub fn check_rdns_m(s: &[u8]) -> (r: (bool, Ghost<nat>))
+    ensures
+        r.0 == parse_rdns(s@) is Some,
+        r.1@ <= 2 * s@.len(),
+{
     let mut cur = s;
+    let ghost mut st: nat = 0;
     while cur.len() > 0
         invariant
             (parse_rdns(s@) is Some) == (parse_rdns(cur@) is Some),
+            cur@.len() <= s@.len(),
+            st <= 2 * (s@.len() - cur@.len()),
         decreases cur@.len(),
     {
         let (c, r) = match read_expect(cur, 0x31) {
             Some(x) => x,
-            None => return false,
+            None => return (false, Ghost(st)),
         };
         proof {
             lemma_tlv_shrinks(cur@);
         }
-        if !check_rdn(c) {
-            return false;
+        let (ok, s1) = check_rdn(c);
+        proof {
+            st = st + 1 + s1@;
+        }
+        if !ok {
+            return (false, Ghost(st));
         }
         cur = r;
     }
-    true
+    (true, Ghost(st))
 }
 
-pub fn read_name<'a>(c: &'a [u8]) -> (r: Option<Name<'a>>)
+pub fn read_name<'a>(c: &'a [u8]) -> (r: (Option<Name<'a>>, Ghost<nat>))
     ensures
-        r matches Some(n) ==> parse_rdns(c@) == Some(n@) && n.raw@ == c@,
-        r is None ==> parse_rdns(c@) is None,
+        r.0 matches Some(n) ==> parse_rdns(c@) == Some(n@) && n.raw@ == c@,
+        r.0 is None ==> parse_rdns(c@) is None,
+        r.1@ <= 2 * c@.len(),
 {
-    if check_rdns(c) {
-        Some(Name { raw: c })
+    let (ok, st) = check_rdns_m(c);
+    if ok {
+        (Some(Name { raw: c }), st)
     } else {
-        None
+        (None, st)
     }
 }
 
@@ -529,25 +636,27 @@ impl<'a> View for GeneralName<'a> {
     }
 }
 
-fn read_other_name<'a>(c: &'a [u8]) -> (r: Option<GeneralName<'a>>)
+fn read_other_name<'a>(c: &'a [u8]) -> (r: (Option<GeneralName<'a>>, Ghost<nat>))
     ensures
-        r matches Some(g) ==> parse_other_name(c@) == Some(g@),
-        r is None ==> parse_other_name(c@) is None,
+        r.0 matches Some(g) ==> parse_other_name(c@) == Some(g@),
+        r.0 is None ==> parse_other_name(c@) is None,
+        r.1@ <= 2 * c@.len(),
 {
     let (oid, r) = match read_expect(c, 0x06) {
         Some(x) => x,
-        None => return None,
+        None => return (None, Ghost(0)),
     };
-    if !check_oid(oid) {
-        return None;
+    let (ok, st) = check_oid_m(oid);
+    if !ok {
+        return (None, st);
     }
     let v = match read_only(r, 0xA0) {
         Some(x) => x,
-        None => return None,
+        None => return (None, st),
     };
     match read_only_tlv(v) {
-        Some(val) => Some(GeneralName::Other { type_id: oid, value: val }),
-        None => None,
+        Some(val) => (Some(GeneralName::Other { type_id: oid, value: val }), st),
+        None => (None, st),
     }
 }
 
@@ -557,149 +666,198 @@ pub fn read_general_name<'a>(x: Tlv<'a>, subtree: bool) -> (r: Option<GeneralNam
         r matches Some(g) ==> parse_general_name(x@, subtree) == Some(g@),
         r is None ==> parse_general_name(x@, subtree) is None,
 {
+    read_general_name_m(x, subtree).0
+}
+
+/// `read_general_name`, with its steps.
+pub fn read_general_name_m<'a>(x: Tlv<'a>, subtree: bool) -> (r: (Option<GeneralName<'a>>, Ghost<nat>))
+    ensures
+        r.0 matches Some(g) ==> parse_general_name(x@, subtree) == Some(g@),
+        r.0 is None ==> parse_general_name(x@, subtree) is None,
+        r.1@ <= 2 * x.content@.len(),
+{
     let c = x.content;
     let t = x.tag;
     if tag_is(t, 0xA0) {
         read_other_name(c)
     } else if tag_is(t, 0x81) {
-        if check_ia5_name(c) {
-            Some(GeneralName::Rfc822(c))
+        let (ok, st) = check_ia5_name(c);
+        if ok {
+            (Some(GeneralName::Rfc822(c)), st)
         } else {
-            None
+            (None, st)
         }
     } else if tag_is(t, 0x82) {
-        if check_ia5_name(c) {
-            Some(GeneralName::Dns(c))
+        let (ok, st) = check_ia5_name(c);
+        if ok {
+            (Some(GeneralName::Dns(c)), st)
         } else {
-            None
+            (None, st)
         }
     } else if tag_is(t, 0xA3) {
-        Some(GeneralName::X400(c))
+        (Some(GeneralName::X400(c)), Ghost(0))
     } else if tag_is(t, 0xA4) {
         match read_only(c, 0x30) {
-            None => None,
-            Some(n) => match read_name(n) {
-                None => None,
-                Some(name) => Some(GeneralName::Directory(name)),
+            None => (None, Ghost(0)),
+            Some(n) => {
+                let (name, st) = read_name(n);
+                match name {
+                    None => (None, st),
+                    Some(name) => (Some(GeneralName::Directory(name)), st),
+                }
             },
         }
     } else if tag_is(t, 0xA5) {
-        Some(GeneralName::EdiParty(c))
+        (Some(GeneralName::EdiParty(c)), Ghost(0))
     } else if tag_is(t, 0x86) {
-        if check_ia5_name(c) {
-            Some(GeneralName::Uri(c))
+        let (ok, st) = check_ia5_name(c);
+        if ok {
+            (Some(GeneralName::Uri(c)), st)
         } else {
-            None
+            (None, st)
         }
     } else if tag_is(t, 0x87) {
         let n = c.len();
         if (!subtree && (n == 4 || n == 16)) || (subtree && (n == 8 || n == 32)) {
-            Some(GeneralName::Ip(c))
+            (Some(GeneralName::Ip(c)), Ghost(0))
         } else {
-            None
+            (None, Ghost(0))
         }
     } else if tag_is(t, 0x88) {
-        if check_oid(c) {
-            Some(GeneralName::Registered(c))
+        let (ok, st) = check_oid_m(c);
+        if ok {
+            (Some(GeneralName::Registered(c)), st)
         } else {
-            None
+            (None, st)
         }
     } else {
-        None
+        (None, Ghost(0))
     }
 }
 
-pub fn check_general_names(s: &[u8]) -> (r: bool)
+pub fn check_general_names(s: &[u8]) -> (r: (bool, Ghost<nat>))
     ensures
-        r == parse_general_names(s@) is Some,
+        r.0 == parse_general_names(s@) is Some,
+        r.1@ <= 2 * s@.len(),
 {
     let mut cur = s;
+    let ghost mut st: nat = 0;
     while cur.len() > 0
         invariant
             (parse_general_names(s@) is Some) == (parse_general_names(cur@) is Some),
+            cur@.len() <= s@.len(),
+            st <= 2 * (s@.len() - cur@.len()),
         decreases cur@.len(),
     {
         let (x, r) = match read_tlv(cur) {
             Some(x) => x,
-            None => return false,
+            None => return (false, Ghost(st)),
         };
         proof {
             lemma_tlv_shrinks(cur@);
         }
-        if read_general_name(x, false).is_none() {
-            return false;
+        let (g, s1) = read_general_name_m(x, false);
+        proof {
+            st = st + 1 + s1@;
+        }
+        if g.is_none() {
+            return (false, Ghost(st));
         }
         cur = r;
     }
-    true
+    (true, Ghost(st))
 }
 
-pub fn check_general_names_nonempty(s: &[u8]) -> (r: bool)
+pub fn check_general_names_nonempty(s: &[u8]) -> (r: (bool, Ghost<nat>))
     ensures
-        r == parse_general_names_nonempty(s@) is Some,
+        r.0 == parse_general_names_nonempty(s@) is Some,
+        r.1@ <= 2 * s@.len(),
 {
-    s.len() > 0 && check_general_names(s)
+    if s.len() == 0 {
+        return (false, Ghost(0));
+    }
+    check_general_names(s)
 }
 
-pub fn check_subtrees(s: &[u8]) -> (r: bool)
+pub fn check_subtrees(s: &[u8]) -> (r: (bool, Ghost<nat>))
     ensures
-        r == parse_subtrees(s@) is Some,
+        r.0 == parse_subtrees(s@) is Some,
+        r.1@ <= 2 * s@.len(),
 {
     let mut cur = s;
+    let ghost mut st: nat = 0;
     while cur.len() > 0
         invariant
             (parse_subtrees(s@) is Some) == (parse_subtrees(cur@) is Some),
+            cur@.len() <= s@.len(),
+            st <= 2 * (s@.len() - cur@.len()),
         decreases cur@.len(),
     {
         let (c, r) = match read_expect(cur, 0x30) {
             Some(x) => x,
-            None => return false,
+            None => return (false, Ghost(st)),
         };
         proof {
             lemma_tlv_shrinks(cur@);
         }
         let x = match read_only_tlv(c) {
             Some(x) => x,
-            None => return false,
+            None => return (false, Ghost(st)),
         };
-        if read_general_name(x, true).is_none() {
-            return false;
+        let (g, s1) = read_general_name_m(x, true);
+        proof {
+            st = st + 1 + s1@;
+        }
+        if g.is_none() {
+            return (false, Ghost(st));
         }
         cur = r;
     }
-    true
+    (true, Ghost(st))
 }
 
-pub fn check_subtrees_nonempty(s: &[u8]) -> (r: bool)
+pub fn check_subtrees_nonempty(s: &[u8]) -> (r: (bool, Ghost<nat>))
     ensures
-        r == parse_subtrees_nonempty(s@) is Some,
+        r.0 == parse_subtrees_nonempty(s@) is Some,
+        r.1@ <= 2 * s@.len(),
 {
-    s.len() > 0 && check_subtrees(s)
+    if s.len() == 0 {
+        return (false, Ghost(0));
+    }
+    check_subtrees(s)
 }
 
-pub fn check_oids(s: &[u8]) -> (r: bool)
+pub fn check_oids(s: &[u8]) -> (r: (bool, Ghost<nat>))
     ensures
-        r == parse_oids(s@) is Some,
+        r.0 == parse_oids(s@) is Some,
+        r.1@ <= 2 * s@.len(),
 {
     let mut cur = s;
+    let ghost mut st: nat = 0;
     while cur.len() > 0
         invariant
             (parse_oids(s@) is Some) == (parse_oids(cur@) is Some),
+            cur@.len() <= s@.len(),
+            st <= 2 * (s@.len() - cur@.len()),
         decreases cur@.len(),
     {
         let (c, r) = match read_expect(cur, 0x06) {
             Some(x) => x,
-            None => return false,
+            None => return (false, Ghost(st)),
         };
         proof {
             lemma_tlv_shrinks(cur@);
         }
-        if !check_oid(c) {
-            return false;
+        let (ok, s1) = check_oid_m(c);
+        proof {
+            st = st + 1 + s1@;
+        }
+        if !ok {
+            return (false, Ghost(st));
         }
         cur = r;
     }
-    true
+    (true, Ghost(st))
 }
 
 } // verus!

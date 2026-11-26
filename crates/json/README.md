@@ -227,11 +227,11 @@ the tests check.
 ## What is proven
 
 Everything in `src/spec.rs`, `src/parser.rs`, `src/index.rs`,
-`src/stage2.rs`, `src/ondemand.rs`, `src/protocol.rs`, `src/utf8.rs`, `src/write.rs`, `src/simd.rs`, `src/float.rs`
-and `src/lemmas.rs` is checked by Verus (`./scripts/verify.sh`, which runs `cargo verus verify`,
-833 items, 0 errors). The proofs are checked once per pointer width:
+`src/stage2.rs`, `src/ondemand.rs`, `src/protocol.rs`, `src/utf8.rs`, `src/write.rs`, `src/simd.rs`, `src/float.rs`,
+`src/diag.rs` and `src/lemmas.rs` is checked by Verus (`./scripts/verify.sh`, which runs `cargo verus verify`,
+880 items, 0 errors). The proofs are checked once per pointer width:
 also for `wasm32-unknown-unknown` at a 32-bit `usize`
-(`./scripts/verify-narrow.sh`, 747 items, without the x86 and Arm
+(`./scripts/verify-narrow.sh`, 794 items, without the x86 and Arm
 kernels, which that build does not have).
 The trusted base is listed under [What is not proven](#what-is-not-proven).
 
@@ -248,6 +248,16 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   to read the spec's tokens through that windowed index. This holds for accepted and rejected
   inputs, and covers the decoded string bytes (UTF-8 for `\u` escapes and
   surrogate pairs), the byte range of each number, and the end position.
+* **Error reasons and positions.** `doc_fail` in `src/diag.rs` says what
+  error a rejected text gets: it reads the text with the grammar, rule for
+  rule, and reports the first byte where no rule applies (or the end of the
+  input, if more was needed), with the reason; ill-formed UTF-8 at or before
+  that byte wins, reported at its first ill-formed sequence.
+  `lemma_doc_fail` proves that it reports an error exactly when `document`
+  rejects the text. `explain` is proven to return `doc_fail`'s error and
+  `line_col` its line and column, so the `Error` that `parse` and
+  `parse_prefix` return is the specified one. (`cJSON_GetErrorPtr` keeps
+  cJSON's own idea of the error position, which is not specified.)
 * **Numbers, from text to `f64`.** `number_value` in `src/spec.rs` says
   what a number lexeme means, as integers: a sign, a significand (every
   digit of the integer and fraction parts read as one integer) and a power
@@ -389,13 +399,22 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   pass over an unread value, then return `false` exactly at the innermost
   container's end token, the one its start token links to, and `true`
   otherwise; `leave` moves past that end token from anywhere in the
-  container; `find` stops at a member of the same object with the key
-  asked for, or past the object's end; `at_end` holds exactly once the
+  container; `find` stops at the first member of the same object from the
+  cursor on with the key asked for (`none_before`: every key it passed
+  differs), or past the object's end when none has it; `at_end` holds exactly once the
   document's value has been read, and then the reader is at the tape's
   end. Each leaves the reader synced at the place it says, so by induction
   any sequence of calls that fits reads what the tape holds, in order. A
   call that does not fit (a number where the tape has a string, a key
-  where a value is expected) returns `Mismatch` and changes nothing. The
+  where a value is expected, `arr_next` in an object, `obj_next` or
+  `find` in an array, `leave` at the top) returns `Mismatch` and changes
+  nothing: the reader keeps the kinds of the containers it is in, and
+  checks them. The scalar readers are verified too: `str` and `key` give
+  the token's bytes (`str_bytes`, `key_bytes`: the body, decoded if it
+  has escapes); `i64` gives the number's value exactly when the lexeme is
+  an integer that fits (`int_value`); `num_bits`, under `f64`, gives the
+  bits of the nearest double, ties to even (`float::is_round` of the
+  lexeme's exact `number_value`), with its sign. The
   lemmas say that each move leaves `finish` unchanged
   (`lemma_value_step`, `lemma_open_step`, `lemma_key_step`,
   `lemma_comma_step`, `lemma_start_step`, `lemma_leave_step`), that tokens
@@ -439,21 +458,15 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   vstd's spec of `get_unchecked_mut` and need no trust. A unit test checks each
   kernel against a scalar version, and another checks that the scalar,
   AVX2 and AVX-512 stage 1 kernels agree.
-* **The on-demand reader, outside the protocol.** The protocol proof
-  covers calls that fit where the reader is. `arr_next` inside an object,
-  `obj_next` inside an array and `leave` at the top level have no tape
-  contract: they stay safe (proof (1) above), but the reader may then
-  read a key as a value and no longer follows the tape. `find` is proven
-  to stop at a member with the key asked for, not that it is the first
-  such member after the cursor. On input the grammar rejects nothing is
-  claimed beyond safety, and skipped parts are not validated, by design.
+* **The on-demand reader, outside the protocol.** On input the grammar
+  rejects nothing is claimed beyond safety, and skipped parts are not
+  validated, by design.
   `tests/ondemand.rs` and the `ondemand` fuzz target still read every
   accepted text through the reader and compare it with the tape, and
   check that partial reads end at its end. `Reader::new` is proven to
-  return `None` only for input that is not UTF-8. The scalar conversions
-  `Reader::f64` and `i64`, and the slice-returning `str` and `key`, are
-  the same unverified glue over the verified scanner and `src/float.rs`
-  that `Value` uses.
+  return `None` only for input that is not UTF-8. `Reader::f64` is two
+  lines of glue over the verified `num_bits`: `f64::from_bits` of its bits,
+  or, for more than 19 significant digits, `f64::from_str` of the lexeme.
 * **NEON specs** come from verilith-simd (`verilith_simd::neon`), on the same footing:
   each intrinsic is a one-line wrapper with a trusted spec, checked against
   the real instructions by verilith-simd's `tests/neon.rs` on AArch64. The NEON
@@ -515,11 +528,10 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   output is checked against the verified grammar before it is written.
 * `src/value.rs`, the Rust API, is ordinary Rust over the tape; its
   unchecked accesses rely only on the proven facts above.
-* Error reasons and positions (`src/error.rs`, and `cJSON_GetErrorPtr`) are
-  diagnostics outside the spec. The verified parser decides whether the text
-  is JSON; `src/error.rs` then rescans the input up to the reported failure
-  to say why. It is tested on every JSONTestSuite `n_` file and on random
-  inputs, but not proven.
+* `cJSON_GetErrorPtr`'s position is the one the parser reports, as in
+  cJSON, and is not specified. The `Error` of the Rust and native C APIs is
+  (see "Error reasons and positions" above); `src/error.rs` only converts
+  it to the public types.
 
 ## How verilith-json reads RFC 8259
 
@@ -1045,7 +1057,8 @@ src/utf8.rs      verified SIMD UTF-8 validation (the UTF-8 spec, its local
 src/lemmas.rs    proofs about the spec
 src/value.rs     Rust API over the tape
 src/native.rs    native C API over src/value.rs (unverified, feature `capi`; include/vjson.h)
-src/error.rs     error reasons and positions (unverified)
+src/diag.rs      error reasons and positions (verified)
+src/error.rs     the public error types
 src/write.rs     verified string escaping and number checks for the writer
 src/writer.rs    Writer (unverified state machine over src/write.rs)
 src/serde_support.rs  serde Serializer/Deserializer (feature `serde`)

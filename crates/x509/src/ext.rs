@@ -29,26 +29,40 @@ pub fn read_extension<'a>(c: &'a [u8]) -> (r: Option<Extension<'a>>)
         r matches Some(e) ==> parse_extension(c@) == Some(e@),
         r is None ==> parse_extension(c@) is None,
 {
+    read_extension_m(c).0
+}
+
+/// `read_extension`, with its steps (at most two for each octet of the OID).
+#[inline(always)]
+pub fn read_extension_m<'a>(c: &'a [u8]) -> (r: (Option<Extension<'a>>, Ghost<nat>))
+    ensures
+        r.0 matches Some(e) ==> parse_extension(c@) == Some(e@),
+        r.0 matches Some(e) ==> e.oid@.len() + e.value@.len() + 4 <= c@.len() && r.1@ <= 2
+            * e.oid@.len(),
+        r.0 is None ==> parse_extension(c@) is None,
+        r.1@ <= 2 * c@.len(),
+{
     let (oid, r) = match read_expect(c, 0x06) {
         Some(x) => x,
-        None => return None,
+        None => return (None, Ghost(0)),
     };
-    if !check_oid(oid) {
-        return None;
+    let (ok, st) = check_oid_m(oid);
+    if !ok {
+        return (None, st);
     }
     match read_expect(r, 0x01) {
         Some((b, r2)) => {
             if b.len() != 1 {
-                return None;
+                return (None, st);
             }
             match read_only(r2, 0x04) {
-                Some(v) => Some(Extension { oid, critical: b[0] != 0, value: v }),
-                None => None,
+                Some(v) => (Some(Extension { oid, critical: b[0] != 0, value: v }), st),
+                None => (None, st),
             }
         },
         None => match read_only(r, 0x04) {
-            Some(v) => Some(Extension { oid, critical: false, value: v }),
-            None => None,
+            Some(v) => (Some(Extension { oid, critical: false, value: v }), st),
+            None => (None, st),
         },
     }
 }
@@ -139,7 +153,7 @@ pub fn read_key_usage(v: &[u8]) -> (out: Option<u16>)
     ensures
         out == parse_key_usage(v@),
 {
-    match read_key_usage_bits(v) {
+    match read_key_usage_bits(v).0 {
         Some((k, _)) => Some(k),
         None => None,
     }
@@ -147,24 +161,25 @@ pub fn read_key_usage(v: &[u8]) -> (out: Option<u16>)
 
 /// `read_key_usage`, with the BIT STRING's octets.
 #[inline]
-pub fn read_key_usage_bits<'a>(v: &'a [u8]) -> (out: Option<(u16, &'a [u8])>)
+pub fn read_key_usage_bits<'a>(v: &'a [u8]) -> (out: (Option<(u16, &'a [u8])>, Ghost<nat>))
     ensures
-        out matches Some((k, b)) ==> parse_key_usage(v@) == Some(k) && (match parse_only(v@, T_BIT_STRING) {
+        out.1@ <= v@.len(),
+        out.0 matches Some((k, b)) ==> parse_key_usage(v@) == Some(k) && (match parse_only(v@, T_BIT_STRING) {
             Some(c) => match parse_bit_string(c) {
                 Some(bs) => bs.bytes == b@,
                 None => false,
             },
             None => false,
         }),
-        out is None ==> parse_key_usage(v@) is None,
+        out.0 is None ==> parse_key_usage(v@) is None,
 {
     let c = match read_only(v, 0x03) {
         Some(c) => c,
-        None => return None,
+        None => return (None, Ghost(0)),
     };
     let bs = match read_bit_string(c) {
         Some(b) => b,
-        None => return None,
+        None => return (None, Ghost(0)),
     };
     let n = bs.bytes.len();
     let mut i: usize = 2;
@@ -173,7 +188,9 @@ pub fn read_key_usage_bits<'a>(v: &'a [u8]) -> (out: Option<(u16, &'a [u8])>)
             parse_only(v@, T_BIT_STRING) == Some(c@),
             parse_bit_string(c@) == Some(bs@),
             n == bs.bytes@.len(),
+            n < v@.len(),
             2 <= i,
+            n >= 2 ==> i <= n,
             forall|j: int| 2 <= j < i && j < n ==> #[trigger] bs.bytes@[j] == 0,
         decreases n - i,
     {
@@ -181,16 +198,17 @@ pub fn read_key_usage_bits<'a>(v: &'a [u8]) -> (out: Option<(u16, &'a [u8])>)
             proof {
                 assert(!zero_from(bs.bytes@, 2));
             }
-            return None;
+            return (None, Ghost(i as nat));
         }
         i = i + 1;
     }
+    let ghost st: nat = i as nat;
     if n == 0 {
-        Some((0, bs.bytes))
+        (Some((0, bs.bytes)), Ghost(0))
     } else if n == 1 {
-        Some((rev8_exec(bs.bytes[0]), bs.bytes))
+        (Some((rev8_exec(bs.bytes[0]), bs.bytes)), Ghost(0))
     } else {
-        Some((rev8_exec(bs.bytes[0]) + (bs.bytes[1] / 128) as u16 * 256, bs.bytes))
+        (Some((rev8_exec(bs.bytes[0]) + (bs.bytes[1] / 128) as u16 * 256, bs.bytes)), Ghost(st))
     }
 }
 
@@ -201,13 +219,30 @@ pub fn read_ext_key_usage<'a>(v: &'a [u8]) -> (out: Option<&'a [u8]>)
         out matches Some(l) ==> parse_ext_key_usage(v@) == Some(parse_oids(l@).unwrap()) && parse_oids(l@) is Some,
         out is None ==> parse_ext_key_usage(v@) is None,
 {
+    read_ext_key_usage_m(v).0
+}
+
+/// `read_ext_key_usage`, with its steps.
+pub fn read_ext_key_usage_m<'a>(v: &'a [u8]) -> (out: (Option<&'a [u8]>, Ghost<nat>))
+    ensures
+        out.0 matches Some(l) ==> parse_only(v@, T_SEQUENCE) == Some(l@),
+        out.0 matches Some(l) ==> parse_ext_key_usage(v@) == Some(parse_oids(l@).unwrap()) && parse_oids(l@) is Some,
+        out.0 is None ==> parse_ext_key_usage(v@) is None,
+        out.1@ <= 2 * v@.len(),
+{
     match read_only(v, 0x30) {
-        Some(c) => if c.len() > 0 && check_oids(c) {
-            Some(c)
-        } else {
-            None
+        Some(c) => {
+            if c.len() == 0 {
+                return (None, Ghost(0));
+            }
+            let (ok, st) = check_oids(c);
+            if ok {
+                (Some(c), st)
+            } else {
+                (None, st)
+            }
         },
-        None => None,
+        None => (None, Ghost(0)),
     }
 }
 
@@ -218,13 +253,27 @@ pub fn read_alt_name<'a>(v: &'a [u8]) -> (out: Option<&'a [u8]>)
         out matches Some(l) ==> parse_alt_name(v@) == Some(parse_general_names(l@).unwrap()) && parse_general_names(l@) is Some,
         out is None ==> parse_alt_name(v@) is None,
 {
+    read_alt_name_m(v).0
+}
+
+/// `read_alt_name`, with its steps.
+pub fn read_alt_name_m<'a>(v: &'a [u8]) -> (out: (Option<&'a [u8]>, Ghost<nat>))
+    ensures
+        out.0 matches Some(l) ==> parse_only(v@, T_SEQUENCE) == Some(l@),
+        out.0 matches Some(l) ==> parse_alt_name(v@) == Some(parse_general_names(l@).unwrap()) && parse_general_names(l@) is Some,
+        out.0 is None ==> parse_alt_name(v@) is None,
+        out.1@ <= 2 * v@.len(),
+{
     match read_only(v, 0x30) {
-        Some(c) => if check_general_names_nonempty(c) {
-            Some(c)
-        } else {
-            None
+        Some(c) => {
+            let (ok, st) = check_general_names_nonempty(c);
+            if ok {
+                (Some(c), st)
+            } else {
+                (None, st)
+            }
         },
-        None => None,
+        None => (None, Ghost(0)),
     }
 }
 
@@ -281,26 +330,28 @@ fn read_aki_serial<'a>(s: &'a [u8]) -> (out: Option<Option<&'a [u8]>>)
     }
 }
 
-fn read_aki_issuer<'a>(s: &'a [u8]) -> (out: Option<(Option<&'a [u8]>, Option<&'a [u8]>)>)
+fn read_aki_issuer<'a>(s: &'a [u8]) -> (out: (Option<(Option<&'a [u8]>, Option<&'a [u8]>)>, Ghost<nat>))
     ensures
-        out matches Some((g, sn)) ==> parse_aki_issuer(s@) == Some(
+        out.0 matches Some((g, sn)) ==> parse_aki_issuer(s@) == Some(
             (opt_general_names_view(g), opt_bytes_view(sn)),
         ) && (g matches Some(l) ==> parse_general_names(l@) is Some),
-        out is None ==> parse_aki_issuer(s@) is None,
+        out.0 is None ==> parse_aki_issuer(s@) is None,
+        out.1@ <= 2 * s@.len(),
 {
     match read_expect(s, 0xA1) {
         Some((c, r)) => {
-            if !check_general_names_nonempty(c) {
-                return None;
+            let (ok, st) = check_general_names_nonempty(c);
+            if !ok {
+                return (None, st);
             }
             match read_aki_serial(r) {
-                None => None,
-                Some(sn) => Some((Some(c), sn)),
+                None => (None, st),
+                Some(sn) => (Some((Some(c), sn)), st),
             }
         },
         None => match read_aki_serial(s) {
-            None => None,
-            Some(sn) => Some((None, sn)),
+            None => (None, Ghost(0)),
+            Some(sn) => (Some((None, sn)), Ghost(0)),
         },
     }
 }
@@ -312,18 +363,36 @@ pub fn read_authority_key_id<'a>(v: &'a [u8]) -> (out: Option<AuthorityKeyId<'a>
         ) ==> parse_general_names(l@) is Some),
         out is None ==> parse_authority_key_id(v@) is None,
 {
+    read_authority_key_id_m(v).0
+}
+
+/// `read_authority_key_id`, with its steps.
+pub fn read_authority_key_id_m<'a>(v: &'a [u8]) -> (out: (Option<AuthorityKeyId<'a>>, Ghost<nat>))
+    ensures
+        out.0 matches Some(a) ==> parse_authority_key_id(v@) == Some(a@) && (a.issuer matches Some(
+            l,
+        ) ==> parse_general_names(l@) is Some),
+        out.0 is None ==> parse_authority_key_id(v@) is None,
+        out.1@ <= 2 * v@.len(),
+{
     let c = match read_only(v, 0x30) {
         Some(c) => c,
-        None => return None,
+        None => return (None, Ghost(0)),
     };
     match read_expect(c, 0x80) {
-        Some((k, r)) => match read_aki_issuer(r) {
-            None => None,
-            Some((g, sn)) => Some(AuthorityKeyId { key_id: Some(k), issuer: g, serial: sn }),
+        Some((k, r)) => {
+            let (i, st) = read_aki_issuer(r);
+            match i {
+                None => (None, st),
+                Some((g, sn)) => (Some(AuthorityKeyId { key_id: Some(k), issuer: g, serial: sn }), st),
+            }
         },
-        None => match read_aki_issuer(c) {
-            None => None,
-            Some((g, sn)) => Some(AuthorityKeyId { key_id: None, issuer: g, serial: sn }),
+        None => {
+            let (i, st) = read_aki_issuer(c);
+            match i {
+                None => (None, st),
+                Some((g, sn)) => (Some(AuthorityKeyId { key_id: None, issuer: g, serial: sn }), st),
+            }
         },
     }
 }
@@ -353,22 +422,26 @@ impl<'a> View for NameConstraints<'a> {
     }
 }
 
-fn read_nc_excluded<'a>(s: &'a [u8]) -> (out: Option<Option<&'a [u8]>>)
+fn read_nc_excluded<'a>(s: &'a [u8]) -> (out: (Option<Option<&'a [u8]>>, Ghost<nat>))
     ensures
-        out matches Some(o) ==> parse_nc_excluded(s@) == Some(opt_subtrees_view(o)) && (o matches Some(
+        out.0 matches Some(o) ==> parse_nc_excluded(s@) == Some(opt_subtrees_view(o)) && (o matches Some(
             l,
         ) ==> parse_subtrees(l@) is Some),
-        out is None ==> parse_nc_excluded(s@) is None,
+        out.0 is None ==> parse_nc_excluded(s@) is None,
+        out.1@ <= 2 * s@.len(),
 {
     if s.len() == 0 {
-        return Some(None);
+        return (Some(None), Ghost(0));
     }
     match read_only(s, 0xA1) {
-        None => None,
-        Some(c) => if check_subtrees_nonempty(c) {
-            Some(Some(c))
-        } else {
-            None
+        None => (None, Ghost(0)),
+        Some(c) => {
+            let (ok, st) = check_subtrees_nonempty(c);
+            if ok {
+                (Some(Some(c)), st)
+            } else {
+                (None, st)
+            }
         },
     }
 }
@@ -378,57 +451,80 @@ pub fn read_name_constraints<'a>(v: &'a [u8]) -> (out: Option<NameConstraints<'a
         out matches Some(n) ==> parse_name_constraints(v@) == Some(n@),
         out is None ==> parse_name_constraints(v@) is None,
 {
+    read_name_constraints_m(v).0
+}
+
+/// `read_name_constraints`, with its steps.
+pub fn read_name_constraints_m<'a>(v: &'a [u8]) -> (out: (Option<NameConstraints<'a>>, Ghost<nat>))
+    ensures
+        out.0 matches Some(n) ==> parse_name_constraints(v@) == Some(n@),
+        out.0 is None ==> parse_name_constraints(v@) is None,
+        out.1@ <= 2 * v@.len(),
+{
     let c = match read_only(v, 0x30) {
         Some(c) => c,
-        None => return None,
+        None => return (None, Ghost(0)),
     };
     if c.len() == 0 {
-        return None;
+        return (None, Ghost(0));
     }
     match read_expect(c, 0xA0) {
         Some((p, r)) => {
-            if !check_subtrees_nonempty(p) {
-                return None;
+            let (ok, s1) = check_subtrees_nonempty(p);
+            if !ok {
+                return (None, s1);
             }
-            match read_nc_excluded(r) {
-                None => None,
-                Some(e) => Some(NameConstraints { permitted: Some(p), excluded: e }),
+            let (e, s2) = read_nc_excluded(r);
+            match e {
+                None => (None, Ghost(s1@ + s2@)),
+                Some(e) => (Some(NameConstraints { permitted: Some(p), excluded: e }), Ghost(s1@ + s2@)),
             }
         },
-        None => match read_nc_excluded(c) {
-            None => None,
-            Some(e) => Some(NameConstraints { permitted: None, excluded: e }),
+        None => {
+            let (e, st) = read_nc_excluded(c);
+            match e {
+                None => (None, st),
+                Some(e) => (Some(NameConstraints { permitted: None, excluded: e }), st),
+            }
         },
     }
 }
 
-fn check_qualifiers(s: &[u8]) -> (r: bool)
+fn check_qualifiers(s: &[u8]) -> (r: (bool, Ghost<nat>))
     ensures
-        r == parse_qualifiers(s@),
+        r.0 == parse_qualifiers(s@),
+        r.1@ <= 2 * s@.len(),
 {
     let mut cur = s;
+    let ghost mut st: nat = 0;
     while cur.len() > 0
         invariant
             parse_qualifiers(s@) == parse_qualifiers(cur@),
+            cur@.len() <= s@.len(),
+            st <= 2 * (s@.len() - cur@.len()),
         decreases cur@.len(),
     {
         let (c, r) = match read_expect(cur, 0x30) {
             Some(x) => x,
-            None => return false,
+            None => return (false, Ghost(st)),
         };
         proof {
             lemma_tlv_shrinks(cur@);
         }
         let (oid, q) = match read_expect(c, 0x06) {
             Some(x) => x,
-            None => return false,
+            None => return (false, Ghost(st)),
         };
-        if !check_oid(oid) || read_only_tlv(q).is_none() {
-            return false;
+        let (ok, s1) = check_oid_m(oid);
+        proof {
+            st = st + 1 + s1@;
+        }
+        if !ok || read_only_tlv(q).is_none() {
+            return (false, Ghost(st));
         }
         cur = r;
     }
-    true
+    (true, Ghost(st))
 }
 
 pub fn read_policy_info<'a>(c: &'a [u8]) -> (r: Option<&'a [u8]>)
@@ -436,50 +532,73 @@ pub fn read_policy_info<'a>(c: &'a [u8]) -> (r: Option<&'a [u8]>)
         r matches Some(o) ==> parse_policy_info(c@) == Some(o@),
         r is None ==> parse_policy_info(c@) is None,
 {
+    read_policy_info_m(c).0
+}
+
+/// `read_policy_info`, with its steps.
+pub fn read_policy_info_m<'a>(c: &'a [u8]) -> (r: (Option<&'a [u8]>, Ghost<nat>))
+    ensures
+        r.0 matches Some(o) ==> parse_policy_info(c@) == Some(o@),
+        r.0 is None ==> parse_policy_info(c@) is None,
+        r.1@ <= 2 * c@.len(),
+{
     let (oid, r) = match read_expect(c, 0x06) {
         Some(x) => x,
-        None => return None,
+        None => return (None, Ghost(0)),
     };
-    if !check_oid(oid) {
-        return None;
+    let (ok, s1) = check_oid_m(oid);
+    if !ok {
+        return (None, s1);
     }
     if r.len() == 0 {
-        return Some(oid);
+        return (Some(oid), s1);
     }
     let q = match read_only(r, 0x30) {
         Some(q) => q,
-        None => return None,
+        None => return (None, s1),
     };
-    if q.len() > 0 && check_qualifiers(q) {
-        Some(oid)
+    if q.len() == 0 {
+        return (None, s1);
+    }
+    let (ok2, s2) = check_qualifiers(q);
+    if ok2 {
+        (Some(oid), Ghost(s1@ + s2@))
     } else {
-        None
+        (None, Ghost(s1@ + s2@))
     }
 }
 
-pub fn check_policies(s: &[u8]) -> (r: bool)
+pub fn check_policies(s: &[u8]) -> (r: (bool, Ghost<nat>))
     ensures
-        r == parse_policies(s@) is Some,
+        r.0 == parse_policies(s@) is Some,
+        r.1@ <= 2 * s@.len(),
 {
     let mut cur = s;
+    let ghost mut st: nat = 0;
     while cur.len() > 0
         invariant
             (parse_policies(s@) is Some) == (parse_policies(cur@) is Some),
+            cur@.len() <= s@.len(),
+            st <= 2 * (s@.len() - cur@.len()),
         decreases cur@.len(),
     {
         let (c, r) = match read_expect(cur, 0x30) {
             Some(x) => x,
-            None => return false,
+            None => return (false, Ghost(st)),
         };
         proof {
             lemma_tlv_shrinks(cur@);
         }
-        if read_policy_info(c).is_none() {
-            return false;
+        let (p, s1) = read_policy_info_m(c);
+        proof {
+            st = st + 1 + s1@;
+        }
+        if p.is_none() {
+            return (false, Ghost(st));
         }
         cur = r;
     }
-    true
+    (true, Ghost(st))
 }
 
 /// certificatePolicies: the contents of its SEQUENCE OF PolicyInformation.
@@ -489,13 +608,30 @@ pub fn read_certificate_policies<'a>(v: &'a [u8]) -> (out: Option<&'a [u8]>)
         out matches Some(l) ==> parse_certificate_policies(v@) == Some(parse_policies(l@).unwrap()) && parse_policies(l@) is Some,
         out is None ==> parse_certificate_policies(v@) is None,
 {
+    read_certificate_policies_m(v).0
+}
+
+/// `read_certificate_policies`, with its steps.
+pub fn read_certificate_policies_m<'a>(v: &'a [u8]) -> (out: (Option<&'a [u8]>, Ghost<nat>))
+    ensures
+        out.0 matches Some(l) ==> parse_only(v@, T_SEQUENCE) == Some(l@),
+        out.0 matches Some(l) ==> parse_certificate_policies(v@) == Some(parse_policies(l@).unwrap()) && parse_policies(l@) is Some,
+        out.0 is None ==> parse_certificate_policies(v@) is None,
+        out.1@ <= 2 * v@.len(),
+{
     match read_only(v, 0x30) {
-        Some(c) => if c.len() > 0 && check_policies(c) {
-            Some(c)
-        } else {
-            None
+        Some(c) => {
+            if c.len() == 0 {
+                return (None, Ghost(0));
+            }
+            let (ok, st) = check_policies(c);
+            if ok {
+                (Some(c), st)
+            } else {
+                (None, st)
+            }
         },
-        None => None,
+        None => (None, Ghost(0)),
     }
 }
 
@@ -568,10 +704,11 @@ fn dec_bc<'a>(v: &'a [u8]) -> (r: Option<Decoded<'a>>)
     }
 }
 
-fn dec_ku<'a>(v: &'a [u8]) -> (r: Option<Decoded<'a>>)
+fn dec_ku<'a>(v: &'a [u8]) -> (r: (Option<Decoded<'a>>, Ghost<nat>))
     ensures
-        r is Some == parse_key_usage(v@) is Some,
-        r matches Some(d) ==> d.kind == 15 && (match parse_only(v@, T_BIT_STRING) {
+        r.1@ <= v@.len(),
+        r.0 is Some == parse_key_usage(v@) is Some,
+        r.0 matches Some(d) ==> d.kind == 15 && (match parse_only(v@, T_BIT_STRING) {
             Some(c) => match parse_bit_string(c) {
                 Some(bs) => bs.bytes == d.a@,
                 None => false,
@@ -580,27 +717,30 @@ fn dec_ku<'a>(v: &'a [u8]) -> (r: Option<Decoded<'a>>)
         }),
 {
     let mut d = no_decoded();
-    match read_key_usage_bits(v) {
+    let (k, st) = read_key_usage_bits(v);
+    match k {
         Some((_, b)) => {
             d.kind = 15;
             d.a = b;
-            Some(d)
+            (Some(d), st)
         },
-        None => None,
+        None => (None, st),
     }
 }
 
-fn dec_aki<'a>(v: &'a [u8]) -> (r: Option<Decoded<'a>>)
+fn dec_aki<'a>(v: &'a [u8]) -> (r: (Option<Decoded<'a>>, Ghost<nat>))
     ensures
-        r is Some == parse_authority_key_id(v@) is Some,
-        r matches Some(d) ==> d.kind == 35 && parse_authority_key_id(v@) == Some(SpecAuthorityKeyId {
+        r.1@ <= 2 * v@.len(),
+        r.0 is Some == parse_authority_key_id(v@) is Some,
+        r.0 matches Some(d) ==> d.kind == 35 && parse_authority_key_id(v@) == Some(SpecAuthorityKeyId {
             key_id: if d.a_some { Some(d.a@) } else { None },
             issuer: opt_general_names_view(d.b),
             serial: opt_bytes_view(d.c),
         }),
 {
     let mut d = no_decoded();
-    match read_authority_key_id(v) {
+    let (a, st) = read_authority_key_id_m(v);
+    match a {
         Some(a) => {
             d.kind = 35;
             match a.key_id {
@@ -618,19 +758,20 @@ fn dec_aki<'a>(v: &'a [u8]) -> (r: Option<Decoded<'a>>)
                 issuer: opt_general_names_view(d.b),
                 serial: opt_bytes_view(d.c),
             });
-            Some(d)
+            (Some(d), st)
         },
-        None => None,
+        None => (None, st),
     }
 }
 
 /// `check_known_extension`, keeping what it decoded.
 #[verifier::spinoff_prover]
 #[inline(always)]
-pub fn decode_known_extension<'a>(e: &Extension<'a>) -> (r: Option<Decoded<'a>>)
+pub fn decode_known_extension<'a>(e: &Extension<'a>) -> (r: (Option<Decoded<'a>>, Ghost<nat>))
     ensures
-        r is Some == known_extension_ok(e@),
-        r matches Some(d) ==> decoded_ok(e@, d),
+        r.0 is Some == known_extension_ok(e@),
+        r.0 matches Some(d) ==> decoded_ok(e@, d),
+        r.1@ <= 2 * e.value@.len(),
 {
     let oid = e.oid;
     let v = e.value;
@@ -647,48 +788,49 @@ pub fn decode_known_extension<'a>(e: &Extension<'a>) -> (r: Option<Decoded<'a>>)
     }
     let mut d = no_decoded();
     if !(oid.len() == 3 && oid[0] == 0x55 && oid[1] == 0x1D) {
-        return Some(d);
+        return (Some(d), Ghost(0));
     }
     let x = oid[2];
     if x == 19 {
-        dec_bc(v)
+        (dec_bc(v), Ghost(0))
     } else if x == 15 {
         dec_ku(v)
     } else if x == 35 {
         dec_aki(v)
     } else if x == 37 || x == 17 || x == 18 || x == 32 {
-        let l = if x == 37 {
-            read_ext_key_usage(v)
+        let (l, st) = if x == 37 {
+            read_ext_key_usage_m(v)
         } else if x == 32 {
-            read_certificate_policies(v)
+            read_certificate_policies_m(v)
         } else {
-            read_alt_name(v)
+            read_alt_name_m(v)
         };
         match l {
             Some(l) => {
                 d.kind = x;
                 d.a = l;
-                Some(d)
+                (Some(d), st)
             },
-            None => None,
+            None => (None, st),
         }
     } else if x == 14 {
         match read_only(v, 0x04) {
             Some(k) => {
                 d.kind = 14;
                 d.a = k;
-                Some(d)
+                (Some(d), Ghost(0))
             },
-            None => None,
+            None => (None, Ghost(0)),
         }
     } else if x == 30 {
-        if read_name_constraints(v).is_some() {
-            Some(d)
+        let (n, st) = read_name_constraints_m(v);
+        if n.is_some() {
+            (Some(d), st)
         } else {
-            None
+            (None, st)
         }
     } else {
-        Some(d)
+        (Some(d), Ghost(0))
     }
 }
 
@@ -787,22 +929,30 @@ pub proof fn lemma_ext_list_step(s: Seq<u8>, c: Seq<u8>, r: Seq<u8>, oid: Seq<u8
 }
 
 /// Whether no extension in `b`, which is `all.skip(j)`, has OID `oid`.
-fn oid_absent(b: &[u8], oid: &[u8], Ghost(all): Ghost<Seq<SpecExtension>>, Ghost(i): Ghost<int>, Ghost(j): Ghost<int>) -> (r: bool)
+#[verifier::spinoff_prover]
+#[verifier::rlimit(40)]
+fn oid_absent(bs: &[u8], oid: &[u8], Ghost(all): Ghost<Seq<SpecExtension>>, Ghost(i): Ghost<int>, Ghost(j): Ghost<int>) -> (r: (bool, Ghost<nat>))
     requires
         0 <= i < j <= all.len(),
         oid@ == all[i].oid,
-        parse_extensions(b@) == Some(all.skip(j)),
+        parse_extensions(bs@) == Some(all.skip(j)),
     ensures
-        r == forall|q: int| j <= q < all.len() ==> all[i].oid != #[trigger] all[q].oid,
+        r.0 == forall|q: int| j <= q < all.len() ==> all[i].oid != #[trigger] all[q].oid,
+        r.1@ <= bs@.len(),
 {
-    let mut b = b;
+    let ghost b0 = bs@;
+    let mut b = bs;
     let ghost mut k: int = j;
+    let ghost mut st: nat = 0;
     while b.len() > 0
         invariant
             0 <= i < j <= k <= all.len(),
             oid@ == all[i].oid,
             parse_extensions(b@) == Some(all.skip(k)),
             forall|q: int| j <= q < k ==> all[i].oid != #[trigger] all[q].oid,
+            b0 == bs@,
+            b@.len() <= b0.len(),
+            st <= b0.len() - b@.len(),
         decreases b@.len(),
     {
         let (c2, r2) = match read_expect(b, 0x30) {
@@ -811,7 +961,7 @@ fn oid_absent(b: &[u8], oid: &[u8], Ghost(all): Ghost<Seq<SpecExtension>>, Ghost
                 proof {
                     assert(false);
                 }
-                return false;
+                return (false, Ghost(st));
             },
         };
         proof {
@@ -824,7 +974,7 @@ fn oid_absent(b: &[u8], oid: &[u8], Ghost(all): Ghost<Seq<SpecExtension>>, Ghost
                     lemma_ext_list_unfold(b@, c2@, r2@);
                     assert(false);
                 }
-                return false;
+                return (false, Ghost(st));
             },
         };
         proof {
@@ -832,8 +982,13 @@ fn oid_absent(b: &[u8], oid: &[u8], Ghost(all): Ghost<Seq<SpecExtension>>, Ghost
             let e2 = parse_extension(c2@).unwrap();
             lemma_skip_step(all, k, e2, parse_extensions(r2@).unwrap());
         }
-        if bytes_eq(oid, oid2) {
-            return false;
+        let (eq, s1) = bytes_eq_m(oid, oid2);
+        proof {
+            st = st + 1 + s1@;
+            assert(st <= b0.len() - r2@.len());
+        }
+        if eq {
+            return (false, Ghost(st));
         }
         b = r2;
         proof {
@@ -843,26 +998,28 @@ fn oid_absent(b: &[u8], oid: &[u8], Ghost(all): Ghost<Seq<SpecExtension>>, Ghost
     proof {
         assert(all.skip(k).len() == 0);
     }
-    true
+    (true, Ghost(st))
 }
 
 /// Whether two OIDs differ; looks at the last octets first, where OIDs of
 /// the same arc (id-ce, id-pe) differ.
 #[inline(always)]
-fn oid_ne(a: &[u8], b: &[u8]) -> (r: bool)
+fn oid_ne(a: &[u8], b: &[u8]) -> (r: (bool, Ghost<nat>))
     ensures
-        r == (a@ != b@),
+        r.0 == (a@ != b@),
+        r.1@ <= b@.len(),
 {
     if a.len() != b.len() {
-        return true;
+        return (true, Ghost(0));
     }
     if a.len() > 0 && a[a.len() - 1] != b[b.len() - 1] {
         proof {
             assert(a@[a@.len() - 1] != b@[b@.len() - 1]);
         }
-        return true;
+        return (true, Ghost(0));
     }
-    !bytes_eq(a, b)
+    let (eq, st) = bytes_eq_m(a, b);
+    (!eq, st)
 }
 
 /// How many OIDs outside the low id-ce arcs `check_extensions` keeps to find
@@ -989,26 +1146,50 @@ proof fn lemma_dup(acc: Seq<SpecExtension>, e: SpecExtension, rest: Seq<SpecExte
 }
 
 /// Whether `oid` is one of the first `m` OIDs kept.
-fn oid_kept(others: &[&[u8]; MAX_OTHER_EXTENSIONS], m: usize, oid: &[u8]) -> (r: bool)
+fn oid_kept(others: &[&[u8]; MAX_OTHER_EXTENSIONS], m: usize, oid: &[u8]) -> (r: (bool, Ghost<nat>))
     requires
         m <= MAX_OTHER_EXTENSIONS,
     ensures
-        r == kept(others@, m as int, oid@),
+        r.0 == kept(others@, m as int, oid@),
+        r.1@ <= 8 * oid@.len(),
 {
     let mut j: usize = 0;
+    let ghost mut st: nat = 0;
     while j < m
         invariant
             j <= m,
             m <= MAX_OTHER_EXTENSIONS,
             forall|k: int| 0 <= k < j ==> (#[trigger] others@[k])@ != oid@,
+            st <= j * oid@.len(),
         decreases m - j,
     {
-        if !oid_ne(others[j], oid) {
-            return true;
+        let (ne, s1) = oid_ne(others[j], oid);
+        proof {
+            assert(st + s1@ <= (j + 1) * oid@.len()) by (nonlinear_arith)
+                requires
+                    st <= j * oid@.len(),
+                    s1@ <= oid@.len(),
+            ;
+            st = st + s1@;
+        }
+        if !ne {
+            proof {
+                assert((j + 1) * oid@.len() <= 8 * oid@.len()) by (nonlinear_arith)
+                    requires
+                        j < 8,
+                ;
+            }
+            return (true, Ghost(st));
         }
         j = j + 1;
     }
-    false
+    proof {
+        assert(j * oid@.len() <= 8 * oid@.len()) by (nonlinear_arith)
+            requires
+                j <= 8,
+        ;
+    }
+    (false, Ghost(st))
 }
 
 /// What `check_extensions` remembers of the OIDs of `acc`, which are
@@ -1034,14 +1215,15 @@ fn note_oid<'a>(
     oid: &'a [u8],
     Ghost(acc): Ghost<Seq<SpecExtension>>,
     Ghost(e): Ghost<SpecExtension>,
-) -> (t: u8)
+) -> (r: (u8, Ghost<nat>))
     requires
         tracked(*old(seen), old(others)@, *old(m), acc),
         e.oid == oid@,
     ensures
-        t <= 2,
-        t == 0 ==> has_oid(acc, e.oid),
-        t == 1 ==> tracked(*final(seen), final(others)@, *final(m), acc.push(e)),
+        r.0 <= 2,
+        r.0 == 0 ==> has_oid(acc, e.oid),
+        r.0 == 1 ==> tracked(*final(seen), final(others)@, *final(m), acc.push(e)),
+        r.1@ <= 8 * oid@.len(),
 {
     let ghost acc2 = acc.push(e);
     if oid.len() == 3 && oid[0] == 0x55 && oid[1] == 0x1D && oid[2] < 64 {
@@ -1054,7 +1236,7 @@ fn note_oid<'a>(
                 let k = choose|k: int| 0 <= k < acc.len() && small_ce(#[trigger] acc[k].oid) && acc[k].oid[2] as u64 == x;
                 assert(acc[k].oid =~= e.oid);
             }
-            return 0;
+            return (0, Ghost(0));
         }
         let ghost seen0 = *seen;
         *seen = *seen | (1u64 << x);
@@ -1080,18 +1262,19 @@ fn note_oid<'a>(
                 assert(acc2[k] == acc[k]);
             }
         }
-        1
+        (1, Ghost(0))
     } else {
         assert(!small_ce(e.oid));
-        if oid_kept(others, *m, oid) {
+        let (kp, st) = oid_kept(others, *m, oid);
+        if kp {
             proof {
                 let j = choose|j: int| 0 <= j < *m && (#[trigger] others@[j])@ == oid@;
                 assert(has_oid(acc, others@[j]@));
             }
-            return 0;
+            return (0, st);
         }
         if *m == MAX_OTHER_EXTENSIONS {
-            return 2;
+            return (2, st);
         }
         let ghost others0 = others@;
         let ghost m0 = *m as int;
@@ -1126,7 +1309,7 @@ fn note_oid<'a>(
             }
         }
         *m = *m + 1;
-        1
+        (1, st)
     }
 }
 
@@ -1192,20 +1375,26 @@ pub fn check_extensions(l: &[u8]) -> (r: bool)
         r == (parse_extensions(l@) matches Some(e) && e.len() > 0 && valid_extensions(e)),
 {
     let mut x = no_exts();
-    check_extensions_rec(l, &mut x)
+    check_extensions_rec(l, &mut x).0
 }
+
+/// Steps `check_extensions_rec` takes for each octet of the list, besides
+/// the duplicate check of `pass2`.
+pub spec const EXT_STEPS: nat = 10;
 
 /// `check_extensions`, giving the extensions and their decoded values to
 /// `list`.
-pub fn check_extensions_rec<'a, S: ExtSink<'a>>(l: &'a [u8], list: &mut S) -> (r: bool)
+pub fn check_extensions_rec<'a, S: ExtSink<'a>>(l: &'a [u8], list: &mut S) -> (r: (bool, Ghost<nat>))
     ensures
-        r == (parse_extensions(l@) matches Some(e) && e.len() > 0 && valid_extensions(e)),
-        r ==> ext_log_ok(old(list).log(), final(list).log(), parse_extensions(l@).unwrap()),
+        r.0 == (parse_extensions(l@) matches Some(e) && e.len() > 0 && valid_extensions(e)),
+        r.0 ==> ext_log_ok(old(list).log(), final(list).log(), parse_extensions(l@).unwrap()),
+        r.1@ <= EXT_STEPS * l@.len() + dup_cost(l@.len() as nat),
 {
     let ghost prev = list.log();
     if l.len() == 0 {
-        return false;
+        return (false, Ghost(0));
     }
+    let ghost mut st: nat = 0;
     // Every extension is well-formed and its OID differs from the ones
     // before it: the low id-ce arcs seen so far are the bits of `seen`,
     // and up to MAX_OTHER_EXTENSIONS other OIDs are kept in `others`.
@@ -1230,20 +1419,27 @@ pub fn check_extensions_rec<'a, S: ExtSink<'a>>(l: &'a [u8], list: &mut S) -> (r
             cur@.len() <= l@.len(),
             !many ==> tracked(seen, others@, m, acc),
             ext_log_ok(prev, list.log(), acc),
+            st <= EXT_STEPS * (l@.len() - cur@.len()),
         decreases cur@.len(),
     {
+        let ghost st0 = st;
         let (c, r) = match read_expect(cur, 0x30) {
             Some(x) => x,
-            None => return false,
+            None => return (false, Ghost(st)),
         };
         proof {
             lemma_tlv_shrinks(cur@);
         }
-        let e = match read_extension(c) {
+        let (e, s1) = read_extension_m(c);
+        let e = match e {
             Some(e) => e,
-            None => return false,
+            None => return (false, Ghost(st + 1 + s1@)),
         };
-        let dec = match decode_known_extension(&e) {
+        let (dec, s2) = decode_known_extension(&e);
+        proof {
+            st = st + 1 + s1@ + s2@;
+        }
+        let dec = match dec {
             Some(d) => d,
             None => {
             proof {
@@ -1252,7 +1448,7 @@ pub fn check_extensions_rec<'a, S: ExtSink<'a>>(l: &'a [u8], list: &mut S) -> (r
                     assert(all[acc.len() as int] == e@);
                 }
             }
-                return false;
+                return (false, Ghost(st));
             },
         };
         list.push(e, dec);
@@ -1267,18 +1463,25 @@ pub fn check_extensions_rec<'a, S: ExtSink<'a>>(l: &'a [u8], list: &mut S) -> (r
         }
 
         if !many {
-            let t = note_oid(&mut seen, &mut others, &mut m, e.oid, Ghost(acc), Ghost(e@));
+            let (t, s3) = note_oid(&mut seen, &mut others, &mut m, e.oid, Ghost(acc), Ghost(e@));
+            proof {
+                st = st + s3@;
+            }
             if t == 0 {
                 proof {
                     if let Some(rest) = parse_extensions(r@) {
                         lemma_dup(acc, e@, rest);
                     }
+                    lemma_dup_cost_nonneg(l@.len() as nat);
                 }
-                return false;
+                return (false, Ghost(st));
             }
             if t == 2 {
                 many = true;
             }
+        }
+        proof {
+            assert(st <= st0 + EXT_STEPS * (cur@.len() - r@.len()));
         }
         proof {
             if let Some(rest) = parse_extensions(r@) {
@@ -1292,23 +1495,132 @@ pub fn check_extensions_rec<'a, S: ExtSink<'a>>(l: &'a [u8], list: &mut S) -> (r
     proof {
         assert(acc + Seq::<SpecExtension>::empty() =~= acc);
         assert(all.len() > 0);
+        lemma_dup_cost_nonneg(l@.len() as nat);
     }
     if !many {
-        return true;
+        return (true, Ghost(st));
     }
+    let (ok, s4) = pass2(l, Ghost(all));
+    (ok, Ghost(st + s4@))
+}
+
+/// Steps the duplicate check of `pass2` may take for an `n`-octet list:
+/// with `alloc`, `n` for each halving of a merge sort; without it, `n`
+/// for each extension.
+#[cfg(feature = "alloc")]
+pub open spec fn dup_cost(n: nat) -> nat {
+    n * (crate::dedup::depth(n) + 2)
+}
+
+#[cfg(not(feature = "alloc"))]
+pub open spec fn dup_cost(n: nat) -> nat {
+    n * n
+}
+
+pub proof fn lemma_dup_cost_nonneg(n: nat)
+    ensures
+        dup_cost(n) >= 0,
+{
+}
+
+#[cfg(feature = "alloc")]
+pub proof fn lemma_dup_cost_mono(a: nat, b: nat)
+    requires
+        a <= b,
+    ensures
+        dup_cost(a) <= dup_cost(b),
+{
+    crate::dedup::lemma_depth_mono(a, b);
+    let da = crate::dedup::depth(a) + 2;
+    let db = crate::dedup::depth(b) + 2;
+    assert(a * da <= b * db) by (nonlinear_arith)
+        requires
+            a <= b,
+            da <= db,
+    ;
+}
+
+#[cfg(not(feature = "alloc"))]
+pub proof fn lemma_dup_cost_mono(a: nat, b: nat)
+    requires
+        a <= b,
+    ensures
+        dup_cost(a) <= dup_cost(b),
+{
+    assert(a * a <= b * b) by (nonlinear_arith)
+        requires
+            a <= b,
+    ;
+}
+
+/// Pass 2 of `check_extensions`, which runs only when the list has more
+/// than `MAX_OTHER_EXTENSIONS` OIDs outside the low id-ce arcs: whether the
+/// OIDs of `all`, which `l` parses to, are distinct. With `alloc` it sorts
+/// them (`dedup`); without, it compares each with every later one.
+#[cfg(feature = "alloc")]
+#[cold]
+#[inline(never)]
+fn pass2(l: &[u8], Ghost(all): Ghost<Seq<SpecExtension>>) -> (r: (bool, Ghost<nat>))
+    requires
+        parse_extensions(l@) == Some(all),
+    ensures
+        r.0 == distinct_oids(all),
+        r.1@ <= dup_cost(l@.len() as nat),
+{
+    crate::dedup::distinct_sorted(l, Ghost(all))
+}
+
+#[cfg(not(feature = "alloc"))]
+#[cold]
+#[inline(never)]
+fn pass2(l: &[u8], Ghost(all): Ghost<Seq<SpecExtension>>) -> (r: (bool, Ghost<nat>))
+    requires
+        parse_extensions(l@) == Some(all),
+    ensures
+        r.0 == distinct_oids(all),
+        r.1@ <= dup_cost(l@.len() as nat),
+{
     distinct_extension_oids(l, Ghost(all))
+}
+
+proof fn lemma_quad_step(st: nat, s1: nat, x: nat, d: nat, n: nat)
+    requires
+        st <= x * n,
+        1 + s1 <= n,
+        d >= 1,
+        x + d <= n,
+    ensures
+        st + 1 + s1 <= (x + d) * n,
+        (x + d) * n <= n * n,
+{
+    assert((x + d) * n <= n * n) by (nonlinear_arith)
+        requires
+            x + d <= n,
+    ;
+    assert(st + 1 + s1 <= (x + d) * n) by (nonlinear_arith)
+        requires
+            st <= x * n,
+            1 + s1 <= n,
+            d >= 1,
+    ;
 }
 
 /// Pass 2 of `check_extensions`: whether the OIDs of `all`, which `l`
 /// parses to, are distinct.
-fn distinct_extension_oids(l: &[u8], Ghost(all): Ghost<Seq<SpecExtension>>) -> (r: bool)
+#[cfg_attr(feature = "alloc", allow(dead_code))]
+#[verifier::spinoff_prover]
+#[verifier::rlimit(100)]
+fn distinct_extension_oids(l: &[u8], Ghost(all): Ghost<Seq<SpecExtension>>) -> (r: (bool, Ghost<nat>))
     requires
         parse_extensions(l@) == Some(all),
     ensures
-        r == distinct_oids(all),
+        r.0 == distinct_oids(all),
+        r.1@ <= l@.len() * l@.len(),
 {
     let mut a = l;
     let ghost mut i: int = 0;
+    let ghost mut st: nat = 0;
+    let ghost n = l@.len();
     proof {
         assert(all.skip(0) =~= all);
     }
@@ -1319,6 +1631,9 @@ fn distinct_extension_oids(l: &[u8], Ghost(all): Ghost<Seq<SpecExtension>>) -> (
             parse_extensions(a@) == Some(all.skip(i)),
             forall|p: int, q: int|
                 0 <= p < i && p < q < all.len() ==> #[trigger] all[p].oid != #[trigger] all[q].oid,
+            n == l@.len(),
+            a@.len() <= n,
+            st <= (n - a@.len()) * n,
         decreases a@.len(),
     {
         let (c, r) = match read_expect(a, 0x30) {
@@ -1327,7 +1642,7 @@ fn distinct_extension_oids(l: &[u8], Ghost(all): Ghost<Seq<SpecExtension>>) -> (
                 proof {
                     assert(false);
                 }
-                return false;
+                return (false, Ghost(st));
             },
         };
         proof {
@@ -1340,7 +1655,7 @@ fn distinct_extension_oids(l: &[u8], Ghost(all): Ghost<Seq<SpecExtension>>) -> (
                     lemma_ext_list_unfold(a@, c@, r@);
                     assert(false);
                 }
-                return false;
+                return (false, Ghost(st));
             },
         };
         proof {
@@ -1348,12 +1663,17 @@ fn distinct_extension_oids(l: &[u8], Ghost(all): Ghost<Seq<SpecExtension>>) -> (
             let e = parse_extension(c@).unwrap();
             lemma_skip_step(all, i, e, parse_extensions(r@).unwrap());
         }
-        if !oid_absent(r, oid, Ghost(all), Ghost(i), Ghost(i + 1)) {
+        let (absent, s1) = oid_absent(r, oid, Ghost(all), Ghost(i), Ghost(i + 1));
+        proof {
+            lemma_quad_step(st, s1@, (n - a@.len()) as nat, (a@.len() - r@.len()) as nat, n);
+            st = st + 1 + s1@;
+        }
+        if !absent {
             proof {
                 let q = choose|q: int| i + 1 <= q < all.len() && all[i].oid == #[trigger] all[q].oid;
                 assert(!distinct_oids(all));
             }
-            return false;
+            return (false, Ghost(st));
         }
         proof {
             assert forall|p: int, q: int| 0 <= p < i + 1 && p < q < all.len() implies #[trigger] all[p].oid
@@ -1371,7 +1691,7 @@ fn distinct_extension_oids(l: &[u8], Ghost(all): Ghost<Seq<SpecExtension>>) -> (
     proof {
         assert(all.skip(i).len() == 0);
     }
-    true
+    (true, Ghost(st))
 }
 
 /// The extension with OID `oid` in a well-formed extensions list.

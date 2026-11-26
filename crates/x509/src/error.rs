@@ -5,7 +5,7 @@
 //! the walker reads through the verified DER primitives.
 use crate::cert::{parse, Certificate};
 use crate::der::*;
-use crate::ext::{check_known_extension, read_extension};
+use crate::ext::{check_extensions, check_known_extension, read_extension};
 use crate::time::read_time;
 use crate::x509::{alg_id_eq, check_rdns, read_alg_id, read_spki};
 use core::fmt;
@@ -114,10 +114,12 @@ fn diagnose(b: &[u8]) -> Error {
             if !check_known_extension(&x) {
                 return err(ErrorKind::ExtensionContents(x.oid[x.oid.len() - 1]), l);
             }
-            if seen_before(&all[..all.len() - l.len()], x.oid) {
-                return err(ErrorKind::DuplicateExtension, l);
-            }
             l = r;
+        }
+        // Every extension is well-formed, so the verified check fails only
+        // on a repeated OID.
+        if !check_extensions(all) {
+            return err(ErrorKind::DuplicateExtension, first_duplicate(all));
         }
     }
     let Some((a, r2)) = read_expect(r1, 0x30) else { return err(ErrorKind::SignatureAlgorithm, r1) };
@@ -128,7 +130,45 @@ fn diagnose(b: &[u8]) -> Error {
     err(ErrorKind::SignatureValue, r2)
 }
 
+/// The first extension in `all`, a list of well-formed extensions, whose OID
+/// an earlier one has: found by sorting the OIDs with their offsets.
+#[cfg(feature = "alloc")]
+fn first_duplicate(all: &[u8]) -> &[u8] {
+    let mut v: alloc::vec::Vec<(&[u8], usize)> = alloc::vec::Vec::new();
+    let mut l = all;
+    while let Some((c, r)) = read_expect(l, 0x30) {
+        if let Some(x) = read_extension(c) {
+            v.push((x.oid, all.len() - l.len()));
+        }
+        l = r;
+    }
+    v.sort_unstable();
+    let mut first = all.len();
+    for w in v.windows(2) {
+        if w[0].0 == w[1].0 {
+            first = first.min(w[1].1);
+        }
+    }
+    &all[first..]
+}
+
+/// The same without a heap: each extension against those before it.
+#[cfg(not(feature = "alloc"))]
+fn first_duplicate(all: &[u8]) -> &[u8] {
+    let mut l = all;
+    while let Some((c, r)) = read_expect(l, 0x30) {
+        if let Some(x) = read_extension(c) {
+            if seen_before(&all[..all.len() - l.len()], x.oid) {
+                return l;
+            }
+        }
+        l = r;
+    }
+    l
+}
+
 /// Whether an extension in `l`, a list of well-formed extensions, has `oid`.
+#[cfg(not(feature = "alloc"))]
 fn seen_before(mut l: &[u8], oid: &[u8]) -> bool {
     while let Some((c, r)) = read_expect(l, 0x30) {
         if read_extension(c).is_some_and(|x| x.oid == oid) {

@@ -1,4 +1,4 @@
-//! `runner <vwasm|wasmtime|wasmi> <file.wasm> <func> <args...>`: runs one
+//! `runner <vwasm|vwasm-fuel|wasmtime|wasmi> <file.wasm> <func> <args...>`: runs one
 //! exported function and prints its result (the bench script times the
 //! whole process, as it does for the wasm3 and iwasm command lines).
 fn main() {
@@ -7,7 +7,9 @@ fn main() {
     let args: Vec<i64> = a[4..].iter().map(|s| s.parse().unwrap()).collect();
     let bytes = std::fs::read(file).unwrap();
     let r = match engine.as_str() {
-        "vwasm" => vwasm_run(&bytes, func, &args),
+        "vwasm" => vwasm_run(&bytes, func, &args, false),
+        // Metered, with more fuel than the run needs.
+        "vwasm-fuel" => vwasm_run(&bytes, func, &args, true),
         "wasmtime" => wasmtime_run(&bytes, func, &args),
         "wasmi" => wasmi_run(&bytes, func, &args),
         _ => panic!("unknown engine"),
@@ -15,11 +17,15 @@ fn main() {
     println!("{r}");
 }
 
-fn vwasm_run(bytes: &[u8], func: &str, args: &[i64]) -> String {
+fn vwasm_run(bytes: &[u8], func: &str, args: &[i64], metered: bool) -> String {
     use verilith_wasm::api::*;
     use verilith_wasm::ast::ValType;
     let m = Module::new(bytes).unwrap();
-    let mut inst = Instance::new(m, &Linker::new()).unwrap();
+    let mut linker = Linker::new();
+    if metered {
+        linker.fuel(u64::MAX);
+    }
+    let mut inst = Instance::new(m, &linker).unwrap();
     let params = inst.exports().into_iter().find(|(n, _)| n == func).map(|(_, t)| match t {
         ExternType::Func(p, _) => p,
         _ => panic!(),

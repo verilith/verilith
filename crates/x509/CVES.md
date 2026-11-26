@@ -28,7 +28,7 @@ Two properties hold for every input and cover several rows at once:
 | CVE-2015-1789 | OpenSSL | `X509_cmp_time` read out of bounds on a malformed time | Times must be exactly `YYMMDDHHMMSSZ` or `YYYYMMDDHHMMSSZ`, with a valid month, day (leap years included), hour, minute and second | `cve_2015_1789_times` |
 | CVE-2016-2108 | OpenSSL | A negative-zero INTEGER corrupted memory when re-encoded | INTEGERs must be minimal, and verilith-x509 never re-encodes | `cve_2016_2108_and_2014_8275_non_der` |
 | CVE-2014-8275 | OpenSSL | Non-DER encodings changed a certificate's fingerprint without breaking its signature | signatureAlgorithm must equal the TBSCertificate's signature byte for byte, BIT STRING padding must be zero, lengths and INTEGERs minimal, v1 not encoded. BOOLEAN is the exception: see DEPARTURES.md | same test |
-| CVE-2023-2650 | OpenSSL | `OBJ_obj2txt` took super-linear time on very long OIDs | OIDs are checked in one pass and never converted in the verified parser | `cve_2023_2650_long_oids`: a 200 KB OID |
+| CVE-2023-2650 | OpenSSL | `OBJ_obj2txt` took super-linear time on very long OIDs | OIDs are checked in one pass and never converted in the verified parser, and the whole parse is proven to take at most `n(⌈log₂ n⌉ + 12)` steps (`parse_metered`) | `cve_2023_2650_long_oids`: a 200 KB OID; `tests/work.rs`: 50,000 extensions |
 | CVE-2021-43527 | NSS ("BigSig") | An oversized signature was copied into a fixed-size stack buffer | The signature is a slice of the input; nothing is copied | `cve_2021_43527_big_signature`: a 64 KB signature |
 
 Not tied to one CVE, but `duplicate_extensions` checks that a repeated

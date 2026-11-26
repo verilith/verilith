@@ -71,7 +71,7 @@ pub proof fn lemma_tag_len_bounds(s: Seq<u8>)
 pub proof fn lemma_tlv_shrinks(s: Seq<u8>)
     ensures
         parse_tlv(s) matches Some((x, r)) ==> r.len() + 2 <= s.len() && x.content.len() + 2
-            <= s.len() - r.len(),
+            <= s.len() - r.len() && x.tag.len() + x.content.len() + 1 <= s.len() - r.len(),
 {
     lemma_tag_len_bounds(s);
 }
@@ -178,10 +178,13 @@ pub fn read_len(s: &[u8], i: usize) -> (r: Option<(usize, usize)>)
 pub fn read_tlv<'a>(s: &'a [u8]) -> (r: Option<(Tlv<'a>, &'a [u8])>)
     ensures
         r matches Some((x, rest)) ==> parse_tlv(s@) == Some((x@, rest@)),
+        r matches Some((x, rest)) ==> x.tag@.len() + x.content@.len() + rest@.len() + 1 <= s@.len()
+            && x.content@.len() + rest@.len() + 2 <= s@.len(),
         r is None ==> parse_tlv(s@) is None,
 {
     proof {
         lemma_tag_len_bounds(s@);
+        lemma_tlv_shrinks(s@);
     }
     // One identifier octet and a short-form length: most TLVs.
     if s.len() >= 2 && at(s, 0) % 32 != 31 && at(s, 1) < 128 {
@@ -201,10 +204,13 @@ pub fn read_tlv<'a>(s: &'a [u8]) -> (r: Option<(Tlv<'a>, &'a [u8])>)
 pub fn read_tlv_long<'a>(s: &'a [u8]) -> (r: Option<(Tlv<'a>, &'a [u8])>)
     ensures
         r matches Some((x, rest)) ==> parse_tlv(s@) == Some((x@, rest@)),
+        r matches Some((x, rest)) ==> x.tag@.len() + x.content@.len() + rest@.len() + 1 <= s@.len()
+            && x.content@.len() + rest@.len() + 2 <= s@.len(),
         r is None ==> parse_tlv(s@) is None,
 {
     proof {
         lemma_tag_len_bounds(s@);
+        lemma_tlv_shrinks(s@);
     }
     let h = match read_tag_len(s) {
         Some(h) => h,
@@ -230,10 +236,12 @@ pub fn read_expect<'a>(s: &'a [u8], t: u8) -> (r: Option<(&'a [u8], &'a [u8])>)
         t % 32 != 31,
     ensures
         r matches Some((c, rest)) ==> parse_expect(s@, t) == Some((c@, rest@)),
+        r matches Some((c, rest)) ==> c@.len() + rest@.len() + 2 <= s@.len(),
         r is None ==> parse_expect(s@, t) is None,
 {
     proof {
         lemma_tag_len_bounds(s@);
+        lemma_tlv_shrinks(s@);
     }
     // The expected tag and a short-form length: most TLVs in a certificate.
     if s.len() >= 2 && at(s, 0) == t && at(s, 1) < 128 {
@@ -287,6 +295,7 @@ pub fn read_only<'a>(s: &'a [u8], t: u8) -> (r: Option<&'a [u8]>)
         t % 32 != 31,
     ensures
         r matches Some(c) ==> parse_only(s@, t) == Some(c@),
+        r matches Some(c) ==> c@.len() + 2 <= s@.len(),
         r is None ==> parse_only(s@, t) is None,
 {
     match read_expect(s, t) {
@@ -304,6 +313,8 @@ pub fn read_only<'a>(s: &'a [u8], t: u8) -> (r: Option<&'a [u8]>)
 pub fn read_only_tlv<'a>(s: &'a [u8]) -> (r: Option<Tlv<'a>>)
     ensures
         r matches Some(x) ==> parse_only_tlv(s@) == Some(x@),
+        r matches Some(x) ==> x.tag@.len() + x.content@.len() + 1 <= s@.len() && x.content@.len() + 2
+            <= s@.len(),
         r is None ==> parse_only_tlv(s@) is None,
 {
     match read_tlv(s) {
@@ -340,8 +351,20 @@ pub fn bytes_eq(a: &[u8], b: &[u8]) -> (r: bool)
     ensures
         r == (a@ == b@),
 {
+    bytes_eq_m(a, b).0
+}
+
+/// `bytes_eq`, with the number of steps it took (see the README): at most
+/// the length of either slice.
+#[inline(always)]
+pub fn bytes_eq_m(a: &[u8], b: &[u8]) -> (r: (bool, Ghost<nat>))
+    ensures
+        r.0 == (a@ == b@),
+        r.1@ <= a@.len(),
+        r.1@ <= b@.len(),
+{
     if a.len() != b.len() {
-        return false;
+        return (false, Ghost(0));
     }
     let mut i: usize = 0;
     while i < a.len()
@@ -355,14 +378,14 @@ pub fn bytes_eq(a: &[u8], b: &[u8]) -> (r: bool)
             proof {
                 assert(a@[i as int] != b@[i as int]);
             }
-            return false;
+            return (false, Ghost(i as nat));
         }
         i = i + 1;
     }
     proof {
         assert(a@ =~= b@);
     }
-    true
+    (true, Ghost(i as nat))
 }
 
 pub fn check_integer(c: &[u8]) -> (r: bool)
@@ -388,15 +411,25 @@ pub fn check_oid(c: &[u8]) -> (r: bool)
     ensures
         r == valid_oid(c@),
 {
+    check_oid_m(c).0
+}
+
+/// `check_oid`, with its steps: at most two for each octet.
+#[inline]
+pub fn check_oid_m(c: &[u8]) -> (r: (bool, Ghost<nat>))
+    ensures
+        r.0 == valid_oid(c@),
+        r.1@ <= 2 * c@.len(),
+{
     let n = c.len();
     if n == 0 || at(c, n - 1) >= 128 {
-        return false;
+        return (false, Ghost(0));
     }
     // Almost every OID has no 0x80 octet at all, and then none begins a
     // subidentifier. Three octets (id-ce, id-at) are the most common.
     if n == 3 {
         if at(c, 0) != 0x80 && at(c, 1) != 0x80 {
-            return true;
+            return (true, Ghost(0));
         }
     } else {
         let mut any = false;
@@ -412,11 +445,11 @@ pub fn check_oid(c: &[u8]) -> (r: bool)
             k = k + 1;
         }
         if !any {
-            return true;
+            return (true, Ghost(n as nat));
         }
     }
     if at(c, 0) == 0x80 {
-        return false;
+        return (false, Ghost(n as nat));
     }
     // A 0x80 octet that begins a subidentifier is padding.
     let mut i: usize = 1;
@@ -430,11 +463,11 @@ pub fn check_oid(c: &[u8]) -> (r: bool)
         decreases n - i,
     {
         if at(c, i) == 0x80 && at(c, i - 1) < 128 {
-            return false;
+            return (false, Ghost((n + i) as nat));
         }
         i = i + 1;
     }
-    true
+    (true, Ghost((n + i) as nat))
 }
 
 /// A BIT STRING, borrowed.
@@ -481,7 +514,7 @@ pub fn pow2_u8(u: u8) -> (r: u8)
 
 pub fn read_bit_string<'a>(c: &'a [u8]) -> (r: Option<BitString<'a>>)
     ensures
-        r matches Some(b) ==> parse_bit_string(c@) == Some(b@),
+        r matches Some(b) ==> parse_bit_string(c@) == Some(b@) && b.bytes@.len() < c@.len(),
         r is None ==> parse_bit_string(c@) is None,
 {
     let n = c.len();
@@ -590,9 +623,10 @@ pub proof fn lemma_pow256_le8(n: int)
 }
 
 /// IA5String name contents: 7-bit with no NUL.
-pub fn check_ia5_name(c: &[u8]) -> (r: bool)
+pub fn check_ia5_name(c: &[u8]) -> (r: (bool, Ghost<nat>))
     ensures
-        r == valid_ia5_name(c@),
+        r.0 == valid_ia5_name(c@),
+        r.1@ == c@.len(),
 {
     // No early exit, so that the compiler can check many octets at a time.
     let mut i: usize = 0;
@@ -613,7 +647,7 @@ pub fn check_ia5_name(c: &[u8]) -> (r: bool)
         }
         i = i + 1;
     }
-    ok
+    (ok, Ghost(i as nat))
 }
 
 } // verus!

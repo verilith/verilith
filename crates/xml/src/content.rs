@@ -197,7 +197,7 @@ fn ex_attrs_distinct(s: &[u8], tape: &Tape, first: usize) -> (r: bool)
 
 /// `stag` at `i` (`s[i]` is `<`): the end, whether the tag was empty, and
 /// the end of the element type's name.
-fn ex_stag(s: &[u8], i: usize, tape: &mut Tape, env: &XEnv) -> (r: Option<(usize, bool, usize)>)
+pub fn ex_stag(s: &[u8], i: usize, tape: &mut Tape, env: &XEnv) -> (r: Option<(usize, bool, usize)>)
     requires
         i < s@.len() <= isize::MAX,
         s@.len() <= MAX_POS,

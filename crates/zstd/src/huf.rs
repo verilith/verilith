@@ -5,6 +5,7 @@ use crate::spec::*;
 use crate::bits::*;
 use crate::fse::*;
 use crate::prims::*;
+use crate::work::Meter;
 #[cfg(verus_only)]
 use verilith_core::bits::*;
 #[allow(unused_imports)]
@@ -27,7 +28,7 @@ verus! {
 // ---------------------------------------------------------------------------
 
 /// The interleaved two-state loop (`fw_run`).
-fn fw_run_exec(s: &[u8], t: &FseTab, p0: usize, s10: u32, s20: u32, Ghost(st): Ghost<FseTable>) -> (r: Option<
+fn fw_run_exec(s: &[u8], t: &FseTab, p0: usize, s10: u32, s20: u32, Ghost(st): Ghost<FseTable>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<
     Vec<u8>,
 >)
     requires
@@ -36,6 +37,7 @@ fn fw_run_exec(s: &[u8], t: &FseTab, p0: usize, s10: u32, s20: u32, Ghost(st): G
         p0 <= 8 * s@.len(),
         s@.len() < BITS_MAX,
     ensures
+        final(m).n <= old(m).n + 128,
         match fw_run(s@, st, p0 as int, s10 as nat, s20 as nat, Seq::empty()) {
             None => r is None,
             Some(o) => r is Some && r.unwrap()@ == o,
@@ -57,8 +59,13 @@ fn fw_run_exec(s: &[u8], t: &FseTab, p0: usize, s10: u32, s20: u32, Ghost(st): G
             fw_run(s@, st, p as int, s1 as nat, s2 as nat, out@) == full,
             full == fw_run(s@, st, p0 as int, s10 as nat, s20 as nat, Seq::empty()),
             s@.len() < BITS_MAX,
+            2 * (m.n - old(m).n) == out@.len(),
+            m.n >= old(m).n,
         decreases 256 - out@.len(),
     {
+        proof {
+            m.n = m.n + 1;
+        }
         if out.len() > 253 || s1 as usize >= n || s2 as usize >= n {
             return None;
         }
@@ -118,19 +125,26 @@ proof fn lemma_fw_run_len(s: Seq<u8>, t: FseTable, p: int, s1: nat, s2: nat, out
 }
 
 /// Weights compressed with FSE (`fse_weights`).
-pub fn fse_weights_exec(b: &[u8]) -> (r: Option<Vec<u8>>)
+pub fn fse_weights_exec(b: &[u8], Tracked(m): Tracked<&mut Meter>) -> (r: Option<Vec<u8>>)
     requires
         b@.len() < BITS_MAX,
     ensures
+        final(m).n <= old(m).n + 8 * b@.len() + 2000,
         match fse_weights(b@) {
             None => r is None,
             Some(o) => r is Some && r.unwrap()@ == o && o.len() <= 255,
         },
 {
-    match read_ncount(b, 255, 6) {
+    match read_ncount(b, 255, 6, Tracked(m)) {
         None => None,
         Some((log, norm, used)) => {
-            let t = build_table(norm.as_slice(), log);
+            proof {
+                lemma_pow2_le(log as nat, 6);
+                assert(pow2(6) == 64) by {
+                    lemma2_to64();
+                }
+            }
+            let t = build_table(norm.as_slice(), log, Tracked(m));
             let ghost st = fse_table(iseq(norm@), log as nat);
             let s = slice_subrange(b, used, b.len());
             match bstart_exec(s) {
@@ -144,6 +158,10 @@ pub fn fse_weights_exec(b: &[u8]) -> (r: Option<Vec<u8>>)
                         assert(pow2(9) == 512) by {
                             lemma2_to64();
                         }
+                        lemma_pow2_le(log as nat, 6);
+                        assert(pow2(6) == 64) by {
+                            lemma2_to64();
+                        }
                     }
                     let s1 = rd(s, p, log) as u32;
                     let s2 = rd(s, p - log as usize, log) as u32;
@@ -153,7 +171,7 @@ pub fn fse_weights_exec(b: &[u8]) -> (r: Option<Vec<u8>>)
                     proof {
                         lemma_fw_run_len(s@, st, p - 2 * log, s1 as nat, s2 as nat, Seq::empty());
                     }
-                    fw_run_exec(s, &t, p - 2 * log as usize, s1, s2, Ghost(st))
+                    fw_run_exec(s, &t, p - 2 * log as usize, s1, s2, Ghost(st), Tracked(m))
                 },
             }
         },
@@ -165,10 +183,11 @@ pub fn fse_weights_exec(b: &[u8]) -> (r: Option<Vec<u8>>)
 // ---------------------------------------------------------------------------
 
 /// The listed weights (`huf_listed`).
-pub fn huf_listed_exec(b: &[u8]) -> (r: Option<(Vec<u8>, usize)>)
+pub fn huf_listed_exec(b: &[u8], Tracked(m): Tracked<&mut Meter>) -> (r: Option<(Vec<u8>, usize)>)
     requires
         b@.len() < BITS_MAX,
     ensures
+        final(m).n <= old(m).n + 3100,
         match huf_listed(b@) {
             None => r is None,
             Some((w, used)) => r is Some && r.unwrap().0@ == w && r.unwrap().1 as int == used && used
@@ -200,8 +219,12 @@ pub fn huf_listed_exec(b: &[u8]) -> (r: Option<(Vec<u8>, usize)>)
                     } else {
                         b@[1 + j / 2] % 16
                     },
+                m.n == old(m).n + i,
             decreases n - i,
         {
+            proof {
+                m.n = m.n + 1;
+            }
             let c = b[1 + i / 2];
             if i % 2 == 0 {
                 w.push(c / 16);
@@ -228,7 +251,7 @@ pub fn huf_listed_exec(b: &[u8]) -> (r: Option<(Vec<u8>, usize)>)
             return None;
         }
         let region = slice_subrange(b, 1, 1 + hb);
-        match fse_weights_exec(region) {
+        match fse_weights_exec(region, Tracked(m)) {
             None => None,
             Some(w) => Some((w, 1 + hb)),
         }
@@ -368,11 +391,24 @@ proof fn lemma_rows_len(c: HufCode, x: nat, s: int)
     decreases c.log + 1 - x, c.w.len() - s,
 {
     if s >= c.w.len() {
+        assert(huf_rows_from(c, x, s) == huf_rows_from(c, x + 1, 0));
+        assert(above(c.w, c.log, x + 1, c.w.len() as int) == lsum(c.w, x + 1, c.w.len() as int) + above(
+            c.w,
+            c.log,
+            x + 2,
+            c.w.len() as int,
+        ) || x + 1 > c.log);
         if x + 1 <= c.log {
             lemma_rows_len(c, x + 1, 0);
+            assert(lsum(c.w, x + 1, 0) == 0);
         }
     } else {
         lemma_rows_len(c, x, s + 1);
+        assert(lsum(c.w, x, s + 1) == lsum(c.w, x, s) + if c.w[s] as nat == x {
+            pow2((x - 1) as nat)
+        } else {
+            0
+        });
     }
 }
 
@@ -432,10 +468,11 @@ pub proof fn lemma_huf_full(listed: Seq<u8>)
 }
 
 /// The full code from the listed weights (`huf_code`).
-fn huf_code_exec(listed: Vec<u8>) -> (r: Option<(Vec<u8>, u32)>)
+fn huf_code_exec(listed: Vec<u8>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<(Vec<u8>, u32)>)
     requires
         listed@.len() <= 255,
     ensures
+        final(m).n <= old(m).n + 512,
         match huf_code(listed@) {
             None => r is None,
             Some(c) => r is Some && r.unwrap().0@ == c.w && r.unwrap().1 as nat == c.log && 1 <= c.log
@@ -453,8 +490,12 @@ fn huf_code_exec(listed: Vec<u8>) -> (r: Option<(Vec<u8>, u32)>)
             forall|j: int| 0 <= j < i ==> listed@[j] <= 12,
             total as nat == wsum(listed@, i as int),
             total <= 2048 * i,
+            m.n == old(m).n + i,
         decreases n - i,
     {
+        proof {
+            m.n = m.n + 1;
+        }
         let x = listed[i];
         if x > 12 {
             proof {
@@ -524,8 +565,12 @@ fn huf_code_exec(listed: Vec<u8>) -> (r: Option<(Vec<u8>, u32)>)
             w@.len() == n + 1,
             ones as nat == wcount(w@, 1, j as int),
             ones <= j,
+            m.n == old(m).n + n + j,
         decreases w@.len() - j,
     {
+        proof {
+            m.n = m.n + 1;
+        }
         if w[j] == 1 {
             ones = ones + 1;
         }
@@ -805,11 +850,12 @@ proof fn lemma_rows_skip(c: HufCode, x: nat, s: int)
 }
 
 /// Builds the rows of a code (`huf_rows`).
-fn huf_build(w: Vec<u8>, log: u32) -> (r: HufTab)
+fn huf_build(w: Vec<u8>, log: u32, Tracked(m): Tracked<&mut Meter>) -> (r: HufTab)
     requires
         1 <= log <= 12,
         w@.len() <= 256,
     ensures
+        final(m).n <= old(m).n + 2 * w@.len() + 12 + 2 * huf_rows(HufCode { w: w@, log: log as nat }).len(),
         r.log == log,
         r.w@ == w@,
         r.x2@.len() == 0,
@@ -835,8 +881,12 @@ fn huf_build(w: Vec<u8>, log: u32) -> (r: HufTab)
             n <= 256,
             forall|x: int| 0 <= x < 16 ==> #[trigger] head@[x] as int == first_w(w@, x as nat, j as int),
             forall|i: int| j <= i < n && w@[i] < 16 ==> #[trigger] nxt@[i] as int == first_w(w@, w@[i] as nat, i + 1),
+            m.n == old(m).n + (n - j),
         decreases j,
     {
+        proof {
+            m.n = m.n + 1;
+        }
         j = j - 1;
         let wv = w[j] as usize;
         if wv < 16 {
@@ -868,8 +918,12 @@ fn huf_build(w: Vec<u8>, log: u32) -> (r: HufTab)
             forall|x: int| 0 <= x < 16 ==> #[trigger] head@[x] as int == first_w(w@, x as nat, 0),
             forall|i: int| 0 <= i < n && w@[i] < 16 ==> #[trigger] nxt@[i] as int == first_w(w@, w@[i] as nat, i + 1),
             zip(syms, lens) + huf_rows_from(c, x as nat, 0) == huf_rows(c),
+            m.n <= old(m).n + n + (x - 1) + 2 * syms.len(),
         decreases log + 1 - x,
     {
+        proof {
+            m.n = m.n + 1;
+        }
         let mut s: usize = head[x as usize] as usize;
         proof {
             lemma_rows_skip(c, x as nat, 0);
@@ -890,6 +944,7 @@ fn huf_build(w: Vec<u8>, log: u32) -> (r: HufTab)
                 s < n ==> w@[s as int] as nat == x,
                 forall|i: int| 0 <= i < n && w@[i] < 16 ==> #[trigger] nxt@[i] as int == first_w(w@, w@[i] as nat, i + 1),
                 zip(syms, lens) + huf_rows_from(c, x as nat, s as int) == huf_rows(c),
+                m.n <= old(m).n + n + x + 2 * syms.len(),
             decreases n - s,
         {
             let ghost s_in = s;
@@ -916,6 +971,11 @@ fn huf_build(w: Vec<u8>, log: u32) -> (r: HufTab)
                 let ghost e0 = x1@;
                 let e: u16 = (len as u16) | ((s as u8 as u16) << 8);
                 x1.resize(n0 + cnt as usize, e);
+                proof {
+                    // The turn, and the rows written.
+                    m.n = (m.n + 1 + cnt) as nat;
+                    lemma_pow2_pos((x - 1) as nat);
+                }
                 let k = cnt;
                 proof {
                     assert forall|i: int| 0 <= i < x1@.len() implies #[trigger] x1@[i] == x1e(syms[i], lens[i]) by {
@@ -967,15 +1027,22 @@ fn huf_build(w: Vec<u8>, log: u32) -> (r: HufTab)
     proof {
         assert(huf_rows_from(c, x as nat, 0) == Seq::<(u8, u8)>::empty());
         assert(zip(syms, lens) + Seq::<(u8, u8)>::empty() =~= zip(syms, lens));
+        assert(zip(syms, lens).len() == syms.len());
     }
     HufTab { log: log, w: w, syms: Ghost(syms), lens: Ghost(lens), x2: Vec::new(), x1 }
 }
 
+/// The most steps a tree description takes: the weights (at most 3100),
+/// the code (512), and the table (a pass over the weights and two steps
+/// per row, at most 4096 rows).
+pub spec const HUF_DESC_WORK: nat = 12400;
+
 /// A tree description at the start of `b` (`huf_desc`).
-pub fn huf_desc_exec(b: &[u8]) -> (r: Option<(HufTab, usize)>)
+pub fn huf_desc_exec(b: &[u8], Tracked(m): Tracked<&mut Meter>) -> (r: Option<(HufTab, usize)>)
     requires
         b@.len() < BITS_MAX,
     ensures
+        final(m).n <= old(m).n + HUF_DESC_WORK,
         match huf_desc(b@) {
             None => r is None,
             Some((c, used)) => {
@@ -987,14 +1054,21 @@ pub fn huf_desc_exec(b: &[u8]) -> (r: Option<(HufTab, usize)>)
             },
         },
 {
-    match huf_listed_exec(b) {
+    match huf_listed_exec(b, Tracked(m)) {
         None => None,
         Some((listed, used)) => {
             let ghost l = listed@;
-            match huf_code_exec(listed) {
+            match huf_code_exec(listed, Tracked(m)) {
                 None => None,
                 Some((w, log)) => {
-                    let t = huf_build(w, log);
+                    proof {
+                        lemma_huf_full(l);
+                        lemma_pow2_le(log as nat, 12);
+                        assert(pow2(12) == 4096) by {
+                            lemma2_to64();
+                        }
+                    }
+                    let t = huf_build(w, log, Tracked(m));
                     proof {
                         let c = huf_code(l).unwrap();
                         assert(t.w@.drop_last() =~= l);
@@ -1045,13 +1119,14 @@ proof fn lemma_huf_run_prefix(
 
 /// Decodes `n` symbols from position `p0` (`huf_run`), appending to `out`.
 #[inline(always)]
-fn huf_run_exec(t: &HufTab, s: &[u8], p0: usize, n: usize, out: &mut Vec<u8>) -> (r: Option<usize>)
+fn huf_run_exec(t: &HufTab, s: &[u8], p0: usize, n: usize, out: &mut Vec<u8>, Tracked(mt): Tracked<&mut Meter>) -> (r: Option<usize>)
     requires
         1 <= t.log <= 12,
         t.syms@.len() == t.lens@.len(),
         x1_ok(t.x1@, t.syms@, t.lens@, t.log),
         p0 <= 8 * s@.len(),
     ensures
+        final(mt).n <= old(mt).n + 2 * n,
         match huf_run(zip(t.syms@, t.lens@), t.log as nat, s@, p0 as int, n as nat, old(out)@) {
             None => r is None,
             Some((o, q)) => r is Some && final(out)@ == o && r.unwrap() as int == q,
@@ -1077,8 +1152,13 @@ fn huf_run_exec(t: &HufTab, s: &[u8], p0: usize, n: usize, out: &mut Vec<u8>) ->
             huf_run(rows, t.log as nat, s@, p as int, (n - i) as nat, out@) == full,
             full == huf_run(rows, t.log as nat, s@, p0 as int, n as nat, out0),
             out0 == old(out)@,
+            mt.n <= old(mt).n + 2 * i,
         decreases n - i,
     {
+        let ghost m0 = mt.n;
+        proof {
+            mt.n = mt.n + 1;
+        }
         if n - i >= 4 && p >= 56 {
             // Four symbols from one 56-bit read.
             let lo = p - 56;
@@ -1104,8 +1184,13 @@ fn huf_run_exec(t: &HufTab, s: &[u8], p0: usize, n: usize, out: &mut Vec<u8>) ->
                     huf_run(rows, t.log as nat, s@, p as int, (n - i) as nat, out@) == full,
                     full == huf_run(rows, t.log as nat, s@, p0 as int, n as nat, out0),
                     out0 == old(out)@,
+                    m0 <= old(mt).n + 2 * i0,
+                    mt.n == m0 + 1 + j,
                 decreases 4 - j,
             {
+                proof {
+                    mt.n = mt.n + 1;
+                }
                 let v = field(w, (p - lo) as u32 - t.log, t.log, Ghost(s@), Ghost(lo as int), Ghost(56)) as usize;
                 if v >= m {
                     return None;
@@ -1449,11 +1534,12 @@ fn huf_dec4(t: &HufTab, s: &[u8], p: usize, out: &mut Vec<u8>, at: usize, Ghost(
 
 /// A whole stream of exactly `n` symbols (`huf_stream`), appended to `out`.
 #[inline(always)]
-pub fn huf_stream_exec(t: &HufTab, s: &[u8], n: usize, out: &mut Vec<u8>) -> (ok: bool)
+pub fn huf_stream_exec(t: &HufTab, s: &[u8], n: usize, out: &mut Vec<u8>, Tracked(m): Tracked<&mut Meter>) -> (ok: bool)
     requires
         huf_wf(t),
         s@.len() < BITS_MAX,
     ensures
+        final(m).n <= old(m).n + 2 * n,
         match huf_stream(huf_code_of(t), s@, n as nat) {
             None => !ok,
             Some(o) => ok && final(out)@ == old(out)@ + o,
@@ -1475,7 +1561,7 @@ pub fn huf_stream_exec(t: &HufTab, s: &[u8], n: usize, out: &mut Vec<u8>) -> (ok
                 );
                 assert(pre + Seq::<u8>::empty() =~= pre);
             }
-            match huf_run_exec(t, s, p, n, out) {
+            match huf_run_exec(t, s, p, n, out, Tracked(m)) {
                 None => false,
                 Some(q) => q == 0,
             }
@@ -1575,12 +1661,13 @@ fn set_len(v: &mut Vec<u8>, n: usize)
 /// Four streams after a jump table (`huf_4streams`), into an empty `out`.
 /// Each stream is decoded straight into its part of the output.
 #[inline(always)]
-pub fn huf_4streams_exec(t: &HufTab, b: &[u8], n: usize, out: &mut Vec<u8>) -> (ok: bool)
+pub fn huf_4streams_exec(t: &HufTab, b: &[u8], n: usize, out: &mut Vec<u8>, Tracked(m): Tracked<&mut Meter>) -> (ok: bool)
     requires
         huf_wf(t),
         b@.len() < BITS_MAX,
         n < BITS_MAX,
     ensures
+        final(m).n <= old(m).n + 5 * n,
         match huf_4streams(huf_code_of(t), b@, n as nat) {
             None => !ok,
             Some(o) => ok && final(out)@ == o,
@@ -1634,6 +1721,11 @@ pub fn huf_4streams_exec(t: &HufTab, b: &[u8], n: usize, out: &mut Vec<u8>) -> (
     // The output, with stream k decoded into [bk, bk + its count). What
     // `out` held is dropped; all `n` bytes are written below.
     set_len(out, n);
+    proof {
+        // At most `n` bytes cleared.
+        m.n = (m.n + n) as nat;
+    }
+    let ghost m1 = m.n;
     let b2 = seg;
     let b3 = 2 * seg;
     let b4 = 3 * seg;
@@ -1684,8 +1776,13 @@ pub fn huf_4streams_exec(t: &HufTab, b: &[u8], n: usize, out: &mut Vec<u8>) -> (
                 huf_run(rows, t.log as nat, s4@, p4 as int, (n4 - i4) as nat, d4) == f4,
                 huf_4streams(c, b@, n as nat) == huf_join(huf_fin(f1), huf_fin(f2), huf_fin(f3), huf_fin(f4)),
                 c == huf_code_of(t),
+                m.n <= m1 + i1,
+                m1 == old(m).n + n,
             decreases seg - i1,
         {
+            proof {
+                m.n = m.n + 1;
+            }
             let ghost o0 = out@;
             let r1 = x2_dec4(t, s1, p1, out, i1, Ghost((seg - i1) as nat), Ghost(d1));
             let ghost oa = out@;
@@ -1776,8 +1873,13 @@ pub fn huf_4streams_exec(t: &HufTab, b: &[u8], n: usize, out: &mut Vec<u8>) -> (
                 huf_run(rows, t.log as nat, s4@, p4 as int, (n4 - i) as nat, d4) == f4,
                 huf_4streams(c, b@, n as nat) == huf_join(huf_fin(f1), huf_fin(f2), huf_fin(f3), huf_fin(f4)),
                 c == huf_code_of(t),
+                m.n <= m1 + i,
+                m1 == old(m).n + n,
             decreases both - i,
         {
+            proof {
+                m.n = m.n + 1;
+            }
             proof {
                 lemma_huf_run_split(rows, t.log as nat, s1@, p1 as int, 4, (seg - i - 4) as nat, d1);
                 lemma_huf_run_split(rows, t.log as nat, s2@, p2 as int, 4, (seg - i - 4) as nat, d2);
@@ -1826,6 +1928,9 @@ pub fn huf_4streams_exec(t: &HufTab, b: &[u8], n: usize, out: &mut Vec<u8>) -> (
                     p4 = x4;
                 },
                 _ => {
+                    proof {
+                        assert(i + 1 <= n);
+                    }
                     return false;
                 },
             }
@@ -1839,7 +1944,10 @@ pub fn huf_4streams_exec(t: &HufTab, b: &[u8], n: usize, out: &mut Vec<u8>) -> (
     // The ends of the streams, one symbol at a time.
     let mut tail: Vec<u8> = Vec::new();
     let ghost o0 = out@;
-    if !huf_tail(t, s1, p1, seg - i1, out, 0, i1, &mut tail, Ghost(d1)) {
+    proof {
+        assert(m.n <= m1 + i1);
+    }
+    if !huf_tail(t, s1, p1, seg - i1, out, 0, i1, &mut tail, Ghost(d1), Tracked(m)) {
         return false;
     }
     let ghost oa = out@;
@@ -1848,7 +1956,7 @@ pub fn huf_4streams_exec(t: &HufTab, b: &[u8], n: usize, out: &mut Vec<u8>) -> (
         lemma_holds_kept(o0, oa, i1 as int, b2 as int, b3 as int, d3);
         lemma_holds_kept(o0, oa, i1 as int, b2 as int, b4 as int, d4);
     }
-    if !huf_tail(t, s2, p2, seg - i2, out, b2, i2, &mut tail, Ghost(d2)) {
+    if !huf_tail(t, s2, p2, seg - i2, out, b2, i2, &mut tail, Ghost(d2), Tracked(m)) {
         return false;
     }
     let ghost ob = out@;
@@ -1856,14 +1964,14 @@ pub fn huf_4streams_exec(t: &HufTab, b: &[u8], n: usize, out: &mut Vec<u8>) -> (
         lemma_holds_kept(oa, ob, b2 + i2, b3 as int, b3 as int, d3);
         lemma_holds_kept(oa, ob, b2 + i2, b3 as int, b4 as int, d4);
     }
-    if !huf_tail(t, s3, p3, seg - i3, out, b3, i3, &mut tail, Ghost(d3)) {
+    if !huf_tail(t, s3, p3, seg - i3, out, b3, i3, &mut tail, Ghost(d3), Tracked(m)) {
         return false;
     }
     proof {
         lemma_holds_kept(ob, out@, b3 + i3, b4 as int, b4 as int, d4);
     }
     let ghost oc = out@;
-    if !huf_tail(t, s4, p4, n4 - i4, out, b4, i4, &mut tail, Ghost(d4)) {
+    if !huf_tail(t, s4, p4, n4 - i4, out, b4, i4, &mut tail, Ghost(d4), Tracked(m)) {
         return false;
     }
     proof {
@@ -1886,7 +1994,7 @@ pub fn huf_4streams_exec(t: &HufTab, b: &[u8], n: usize, out: &mut Vec<u8>) -> (
 /// into `out[b..]`, decoded one at a time into `tail` and then stored after
 /// `d`. True if the stream then ends exactly.
 #[inline(always)]
-fn huf_tail(t: &HufTab, s: &[u8], p: usize, m: usize, out: &mut Vec<u8>, b: usize, k: usize, tail: &mut Vec<u8>, Ghost(d): Ghost<Seq<u8>>) -> (ok: bool)
+fn huf_tail(t: &HufTab, s: &[u8], p: usize, m: usize, out: &mut Vec<u8>, b: usize, k: usize, tail: &mut Vec<u8>, Ghost(d): Ghost<Seq<u8>>, Tracked(mt): Tracked<&mut Meter>) -> (ok: bool)
     requires
         huf_wf(t),
         p <= 8 * s@.len(),
@@ -1897,6 +2005,7 @@ fn huf_tail(t: &HufTab, s: &[u8], p: usize, m: usize, out: &mut Vec<u8>, b: usiz
     ensures
         final(out)@.len() == old(out)@.len(),
         kept(old(out)@, final(out)@, b + k, b + k + m),
+        final(mt).n <= old(mt).n + 3 * m,
         match huf_fin(huf_run(zip(t.syms@, t.lens@), t.log as nat, s@, p as int, m as nat, d)) {
             None => !ok,
             Some(o) => ok && o.len() == k + m && holds(final(out)@, b as int, o),
@@ -1912,10 +2021,11 @@ fn huf_tail(t: &HufTab, s: &[u8], p: usize, m: usize, out: &mut Vec<u8>, b: usiz
         assert(d + Seq::<u8>::empty() =~= d);
         lemma_huf_run_len(rows, t.log as nat, s@, p as int, m as nat, Seq::empty());
     }
-    match huf_run_exec(t, s, p, m, tail) {
+    match huf_run_exec(t, s, p, m, tail, Tracked(mt)) {
         Some(0) => {
             proof {
                 assert(tail@.len() == m);
+                mt.n = (mt.n + m) as nat;
             }
             put(out, b + k, tail.as_slice(), 0, m);
             proof {
@@ -1963,13 +2073,15 @@ pub open spec fn huf_opt_is(t: Option<HufTab>, c: Option<HufCode>) -> bool {
 }
 
 /// Raw and RLE literals (`lit_section`, types 0 and 1).
-fn lit_plain(b: &[u8], bmax: usize, lits: &mut Vec<u8>, Ghost(hc): Ghost<Option<HufCode>>) -> (r: Option<usize>)
+fn lit_plain(b: &[u8], bmax: usize, lits: &mut Vec<u8>, Ghost(hc): Ghost<Option<HufCode>>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<usize>)
     requires
         b@.len() < BITS_MAX,
         b@.len() >= 2,
         b@[0] % 4 <= 1,
         bmax <= 131072,
     ensures
+        final(m).n <= old(m).n + bmax,
+        r is Some ==> final(m).n <= old(m).n + final(lits)@.len(),
         match lit_section(b@, bmax as nat, hc) {
             None => r is None,
             Some(l) => {
@@ -2018,6 +2130,7 @@ fn lit_plain(b: &[u8], bmax: usize, lits: &mut Vec<u8>, Ghost(hc): Ghost<Option<
         lits.extend_from_slice(src);
         proof {
             assert(lits@ =~= b@.subrange(lh as int, lh + n));
+            m.n = (m.n + n) as nat;
         }
         Some(lh + n)
     } else {
@@ -2030,8 +2143,12 @@ fn lit_plain(b: &[u8], bmax: usize, lits: &mut Vec<u8>, Ghost(hc): Ghost<Option<
             invariant
                 k <= n,
                 lits@ == Seq::new(k as nat, |i: int| c),
+                m.n == old(m).n + k,
             decreases n - k,
         {
+            proof {
+                m.n = m.n + 1;
+            }
             lits.push(c);
             k = k + 1;
             proof {
@@ -2106,7 +2223,7 @@ pub fn lit_huf_sizes(b: &[u8]) -> (r: (usize, usize, usize))
 }
 
 /// Compressed and treeless literals (`lit_section`, types 2 and 3).
-fn lit_huf(b: &[u8], bmax: usize, huf: &mut Option<HufTab>, lits: &mut Vec<u8>) -> (r: Option<usize>)
+fn lit_huf(b: &[u8], bmax: usize, huf: &mut Option<HufTab>, lits: &mut Vec<u8>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<usize>)
     requires
         b@.len() < BITS_MAX,
         b@.len() >= 2,
@@ -2114,6 +2231,8 @@ fn lit_huf(b: &[u8], bmax: usize, huf: &mut Option<HufTab>, lits: &mut Vec<u8>) 
         bmax <= 131072,
         huf_opt_is(*old(huf), old_huf_code(old(huf))),
     ensures
+        final(m).n <= old(m).n + HUF_DESC_WORK + 6 * bmax,
+        r is Some ==> final(m).n <= old(m).n + HUF_DESC_WORK + 6 * final(lits)@.len(),
         match lit_section(b@, bmax as nat, old_huf_code(old(huf))) {
             None => r is None,
             Some(l) => {
@@ -2150,7 +2269,7 @@ fn lit_huf(b: &[u8], bmax: usize, huf: &mut Option<HufTab>, lits: &mut Vec<u8>) 
     };
     let tu: usize;
     if ty == 2 {
-        match huf_desc_exec(region) {
+        match huf_desc_exec(region, Tracked(m)) {
             None => {
                 return None;
             },
@@ -2163,9 +2282,16 @@ fn lit_huf(b: &[u8], bmax: usize, huf: &mut Option<HufTab>, lits: &mut Vec<u8>) 
                 let lg = t.log;
                 proof {
                     assert(lg <= 12 ==> 8usize << lg <= 32768) by (bit_vector);
+                    lemma_usize_pow2_no_overflow(lg as nat);
+                    lemma_pow2_le(lg as nat, 12);
+                    assert(pow2(12) == 4096) by {
+                        lemma2_to64();
+                    }
+                    lemma_usize_shl_is_mul(8, lg as usize);
                 }
                 if sf != 0 && n >= (8usize << t.log) {
-                    huf_add_x2(&mut t);
+                    // Paid for by the literals: at most half a step each.
+                    huf_add_x2(&mut t, Tracked(m));
                 }
                 *huf = Some(t);
                 tu = u;
@@ -2184,9 +2310,9 @@ fn lit_huf(b: &[u8], bmax: usize, huf: &mut Option<HufTab>, lits: &mut Vec<u8>) 
             }
             if sf == 0 {
                 lits.clear();
-                crate::cpu::run_huf1(t, streams, n, lits)
+                crate::cpu::run_huf1(t, streams, n, lits, Tracked(m))
             } else {
-                crate::cpu::run_huf4(t, streams, n, lits)
+                crate::cpu::run_huf4(t, streams, n, lits, Tracked(m))
             }
         },
         None => false,
@@ -2211,7 +2337,7 @@ fn lit_huf(b: &[u8], bmax: usize, huf: &mut Option<HufTab>, lits: &mut Vec<u8>) 
 /// The literals section at the start of `b` (`lit_section`). The decoded
 /// literals replace `lits`; `huf` is updated to the code to keep. Returns
 /// the bytes used.
-pub fn lit_section_exec(b: &[u8], bmax: usize, huf: &mut Option<HufTab>, lits: &mut Vec<u8>) -> (r: Option<
+pub fn lit_section_exec(b: &[u8], bmax: usize, huf: &mut Option<HufTab>, lits: &mut Vec<u8>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<
     usize,
 >)
     requires
@@ -2219,6 +2345,8 @@ pub fn lit_section_exec(b: &[u8], bmax: usize, huf: &mut Option<HufTab>, lits: &
         bmax <= 131072,
         huf_opt_is(*old(huf), old_huf_code(old(huf))),
     ensures
+        final(m).n <= old(m).n + HUF_DESC_WORK + 6 * bmax,
+        r is Some ==> final(m).n <= old(m).n + HUF_DESC_WORK + 6 * final(lits)@.len(),
         match lit_section(b@, bmax as nat, old_huf_code(old(huf))) {
             None => r is None,
             Some(l) => {
@@ -2239,9 +2367,9 @@ pub fn lit_section_exec(b: &[u8], bmax: usize, huf: &mut Option<HufTab>, lits: &
     }
     if b[0] % 4 <= 1 {
         let ghost hc = old_huf_code(huf);
-        lit_plain(b, bmax, lits, Ghost(hc))
+        lit_plain(b, bmax, lits, Ghost(hc), Tracked(m))
     } else {
-        lit_huf(b, bmax, huf, lits)
+        lit_huf(b, bmax, huf, lits, Tracked(m))
     }
 }
 
@@ -2298,10 +2426,11 @@ proof fn lemma_x2_step(rows: Seq<(u8, u8)>, log: nat, s: Seq<u8>, q: int, n: nat
 }
 
 /// Adds the two-symbol table to `t`.
-pub fn huf_add_x2(t: &mut HufTab)
+pub fn huf_add_x2(t: &mut HufTab, Tracked(mt): Tracked<&mut Meter>)
     requires
         huf_wf(old(t)),
     ensures
+        final(mt).n <= old(mt).n + 4 * pow2(old(t).log as nat),
         huf_wf(final(t)),
         huf_code_of(final(t)) == huf_code_of(old(t)),
         final(t).syms@ == old(t).syms@,
@@ -2313,6 +2442,9 @@ pub fn huf_add_x2(t: &mut HufTab)
     let r = t.x1.len();
     let log = t.log;
     proof {
+        // A table the spec accepts has 2^log rows.
+        lemma_huf_full(t.w@.drop_last());
+        assert(r == pow2(log as nat));
         lemma_u32_pow2_no_overflow(log as nat);
         lemma_pow2_le(log as nat, 12);
         assert(pow2(12) == 4096) by {
@@ -2334,8 +2466,12 @@ pub fn huf_add_x2(t: &mut HufTab)
             r == t.x1@.len(),
             x1_ok(t.x1@, t.syms@, t.lens@, t.log),
             sum <= 255 * j,
+            mt.n == old(mt).n + j,
         decreases r - j,
     {
+        proof {
+            mt.n = mt.n + 1;
+        }
         sum = sum + t.len(j) as usize;
         j = j + 1;
     }
@@ -2348,6 +2484,9 @@ pub fn huf_add_x2(t: &mut HufTab)
     }
     // runend[x]: the end of the run of equal rows that holds x.
     let mut runend: Vec<usize> = vec![0usize; r];
+    proof {
+        mt.n = (mt.n + r) as nat;
+    }
     let mut k: usize = r;
     while k > 0
         invariant
@@ -2360,8 +2499,12 @@ pub fn huf_add_x2(t: &mut HufTab)
             forall|x: int|
                 #![trigger runend@[x]]
                 k <= x < r ==> x < runend@[x] <= r && forall|y: int| x <= y < runend@[x] ==> #[trigger] rows[y] == rows[x],
+            mt.n == old(mt).n + 2 * r + (r - k),
         decreases k,
     {
+        proof {
+            mt.n = mt.n + 1;
+        }
         k = k - 1;
         let e = if k + 1 < r && t.sym(k) == t.sym(k + 1) && t.len(k) == t.len(k + 1) {
             runend[k + 1]
@@ -2411,8 +2554,13 @@ pub fn huf_add_x2(t: &mut HufTab)
             x2@.len() == v,
             pairs <= v,
             forall|j: int| #![trigger x2@[j]] 0 <= j < v ==> x2_ok(rows, log as nat, j, x2@[j]),
+            r == size,
+            mt.n == old(mt).n + 3 * r + v,
         decreases size - v,
     {
+        proof {
+            mt.n = mt.n + 1;
+        }
         let ent = if v >= r {
             X2e { a: 0, b: 0, n: 0, tot: 0 }
         } else {

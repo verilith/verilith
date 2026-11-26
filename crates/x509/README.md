@@ -5,8 +5,9 @@ A DER and X.509 certificate parser in Rust, formally verified with
 exactly a specification of DER (X.690) and the RFC 5280 certificate profile,
 written as pure functions in [`src/spec.rs`](https://github.com/verilith/verilith/blob/main/crates/x509/src/spec.rs): it accepts a
 certificate if and only if the spec does, and returns exactly the fields
-the spec says. Verus also proves that it never reads out of bounds and
-never overflows.
+the spec says. Verus also proves that it never reads out of bounds, never
+overflows, and that it takes at most `n(⌈log₂ n⌉ + 12)` steps on an
+`n`-byte input.
 
 It is a drop-in for mbedTLS: with a 20-line patch, mbedTLS 4.3.0 decodes
 every certificate it reads (`mbedtls_x509_crt_parse_der`, and so
@@ -15,9 +16,13 @@ verilith-x509 and passes its own test suites, except for 18 synthetic test
 certificates that break DER and RFC 5280 (see
 [mbedtls/README.md](https://github.com/verilith/verilith/blob/main/crates/x509/mbedtls/README.md)).
 
-It is `no_std`, never allocates and never copies: a parsed certificate is a
-set of slices of the input. It builds for bare-metal targets such as
-`thumbv7em-none-eabihf`, where mbedTLS is mostly used.
+It is `no_std` and never copies: a parsed certificate is a set of slices of
+the input. It allocates only for a certificate with more than eight
+extensions outside the first 64 id-ce arcs, which no issued certificate
+has, to check them for duplicates (with the `alloc` feature, which the
+default `std` turns on; without it, that check is quadratic). It builds for
+bare-metal targets such as `thumbv7em-none-eabihf`, where mbedTLS is mostly
+used.
 
 It is fast: 8 to 12 times faster than x509-parser and x509-cert, the other
 Rust parsers that decode a whole certificate (see Performance).
@@ -108,7 +113,7 @@ the certificate. Nothing is allocated, nothing is copied and there is
 nothing to free, where the mbedTLS shape has to build `mbedtls_x509_crt`'s
 linked lists. Names, extensions and lists are read with cursor functions
 (`vx509_rdn_next`, `vx509_ext_next`, ...), and every decoded extension of
-the Rust API has a getter. It is `no_std` and allocation-free like the
+the Rust API has a getter. It is `no_std` and allocates no more than the
 parser.
 
 ## What is proven
@@ -123,6 +128,18 @@ parser.
   spec's lists.
 - **Safety.** No out-of-bounds index, no arithmetic overflow, no panic and
   no unbounded loop in the verified code.
+- **Work bound.** `cert::parse_metered` counts the parser's steps in ghost
+  state and proves the count is at most `parse_cost(n)` for an `n`-byte
+  input, whatever the outcome: `10n` for reading the certificate, plus
+  `n(⌈log₂ n⌉ + 2)` for the duplicate-extension check of a list with more
+  than eight extensions outside the first 64 id-ce arcs. That check
+  collects their OIDs into a vector, merge-sorts it and compares
+  neighbours; the merge sort is proven to return a sorted permutation, and
+  each merge costs at most the octets it moves. Without `alloc` the check
+  compares each OID with every later one, and the proven term is `n²`
+  (`ext::dup_cost`). Lists with at most eight such OIDs, which is every
+  issued certificate, never take that path, so their parse is within
+  `10n`.
 - **The spec** checks DER framing (minimal lengths, at most 4 length octets,
   single-octet tags where X.509 uses them), minimal INTEGERs and OIDs,
   times, Names, every field of TBSCertificate, version rules (unique IDs
@@ -130,7 +147,17 @@ parser.
   of every extension listed above, and signatureAlgorithm equal to the
   TBSCertificate's signature.
 
-The trusted base is the spec, Verus, Z3 and rustc. `src/api.rs`
+The trusted base is the spec, Verus, Z3 and rustc. For the work bound, it
+also includes what a step is: one turn of a loop whose number of turns no
+constant bounds (each one consumes input, or walks a list or an OID), plus
+one per OID moved by the merge sort. Loops with a constant bound (tag and
+length octets, `read_u64`, times, the eight kept OIDs) are not counted, but
+the comparisons inside the last of them are. `Vec::push` (amortized
+constant time, and an abort if the allocator fails) and the
+`AtvSink`/`ExtSink` hooks the mbedTLS adapter fills are assumed to take
+constant time. Only the default build (`alloc` on) is verified; the
+`alloc`-less `ext::pass2` and `ext::dup_cost` are the other side of a
+`cfg` and are checked by the compiler only. `src/api.rs`
 (`Iterator` impls, text, timestamps), `src/error.rs` (rejection reasons),
 and the mbedTLS adapter (`src/mbedtls.rs`, `src/mbedtls_err.rs`,
 `mbedtls/vx509_mbedtls.c`) are unverified. None of them decides whether a
@@ -222,6 +249,10 @@ cryptography.io, in `bench/data/`.
 ## Testing
 
 - `tests/cves.rs`: certificates shaped like fourteen CVEs (see CVES.md).
+- `tests/work.rs`: certificates with 50,000 extensions, distinct or with one
+  repeated, which the duplicate check handles in about 8 ms (it took 4.9 s
+  when it compared each OID with every later one), and the edge at nine
+  such extensions.
 - `tests/differential.rs`: against OpenSSL, x509-parser, x509-cert and
   webpki on about 31,000 certificates from x509-limbo, pyca/cryptography's
   vectors and the system trust store, with 0 disagreements on decoded

@@ -187,3 +187,30 @@ fn setters() {
     eprintln!("{} cases, {} failures", n, failures.len());
     assert!(failures.is_empty());
 }
+
+/// UTF-8 decode turns ill-formed UTF-8 into U+FFFD, which UTS #46
+/// disallows, so the host fails, whether the bytes arrive raw or
+/// percent-encoded, as U+FFFD itself does.
+#[test]
+fn ill_formed_host() {
+    for host in [
+        &b"%FF.com"[..],
+        b"a%C3.com",
+        b"%E2%82.com",
+        b"%F0%9F%98.com",
+        b"%ED%A0%80.com",
+        b"%C0%80.com",
+        b"%EF%BF%BD.com",
+        b"\xff.com",
+        b"\xc3a.com",
+        b"\xe2\x82.com",
+    ] {
+        let mut input = b"http://".to_vec();
+        input.extend_from_slice(host);
+        input.push(b'/');
+        assert!(Url::parse_bytes(&input, None).is_none(), "{:?}", String::from_utf8_lossy(&input));
+    }
+    // Well-formed non-ASCII still works, raw and percent-encoded.
+    assert_eq!(Url::parse_bytes("http://é.com/".as_bytes(), None).unwrap().href(), "http://xn--9ca.com/");
+    assert_eq!(Url::parse_bytes(b"http://%C3%A9.com/", None).unwrap().href(), "http://xn--9ca.com/");
+}

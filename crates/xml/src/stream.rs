@@ -178,6 +178,15 @@ pub struct Emitted {
     pub groups: Seq<Seq<XTok>>,
     /// The pieces emitted of the text or CDATA section being read.
     pub open: Seq<XTok>,
+    /// The flags of the tokens in `prev`, one each.
+    pub pfl: Seq<u8>,
+    /// The flags of each group's tokens.
+    pub gfl: Seq<Seq<u8>>,
+    /// The flags of the pieces in `open`.
+    pub ofl: Seq<u8>,
+    /// The first group whose flags are proven right: the one after the
+    /// root element's start tag.
+    pub k0: int,
 }
 
 /// The window the parser reads the root element through: the input it has not finished with, and the open elements.
@@ -317,6 +326,11 @@ impl Win {
         self.ge@.prev + mv(self.out@, -(self.base as int), 0)
     }
 
+    /// The flags of every token emitted so far, in the same order.
+    pub open spec fn flags(&self) -> Seq<u8> {
+        self.ge@.pfl + self.out.fl()
+    }
+
     /// What has been emitted is the tokens so far (`gt`), each as its
     /// group, then the pieces of the text or CDATA section being read.
     pub open spec fn emits(&self) -> bool {
@@ -331,11 +345,16 @@ impl Win {
         } else {
             o.len() > 0 && run(o, true, self.gts@ + 9, self.base + self.tem)
         }
+        // The flags: right for every piece from group `k0` on.
+        &&& fls(self.seen@, self.ge@.groups, self.ge@.gfl, self.ge@.k0)
+        &&& self.flags() == flat8(self.ge@.gfl) + self.ge@.ofl
+        &&& open_fl(self.seen@, o, self.ge@.ofl, self.mode == M_CDATA)
     }
 
     /// The same window and input.
     pub open spec fn same_win(&self, o: &Win) -> bool {
-        self.seen == o.seen && self.buf == o.buf && self.base == o.base && self.cpos == o.cpos
+        &&& self.seen == o.seen && self.buf == o.buf && self.base == o.base && self.cpos == o.cpos
+        &&& self.ge@.prev == o.ge@.prev && self.ge@.pfl == o.ge@.pfl
     }
 }
 
@@ -812,6 +831,7 @@ fn step_etag(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
     let ghost gst = w.gst@;
     let ghost gt = w.gt@;
     let ghost out0 = w.out@;
+    let ghost ofl0 = w.out.fl();
     let j = w.pos;
     let n = w.buf.len();
     let n2 = ex_name_end(w.buf.as_slice(), j + 2);
@@ -871,8 +891,13 @@ fn step_etag(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
         lemma_grps_push(g0, gt, seq![XTok::ETag], XTok::ETag);
         lemma_grps_close(g0.push(seq![XTok::ETag]), gt.push(XTok::ETag), k);
         lemma_mv_push(out0, XTok::ETag, -base, 0);
-        w.ge@ = Emitted { prev: w.ge@.prev, groups: g0.push(seq![XTok::ETag]), open: w.ge@.open };
+        let e0 = w.ge@;
+        assert(grp_fl(seen, seq![XTok::ETag], seq![0u8]));
+        lemma_fls_push(seen, g0, e0.gfl, e0.k0, seq![XTok::ETag], seq![0u8]);
+        w.ge@ = Emitted { groups: g0.push(seq![XTok::ETag]), gfl: e0.gfl.push(seq![0u8]), ..e0 };
         assert(w.emitted() =~= flat(w.ge@.groups) + w.ge@.open);
+        assert(e0.ofl =~= Seq::<u8>::empty());
+        assert(w.flags() =~= flat8(w.ge@.gfl) + w.ge@.ofl);
         assert forall|q: int| 0 <= q < w.gst@.len() implies 0 <= #[trigger] w.gst@[q].2 < w.gt@.len() by {
             assert(w.gst@[q] == gst[q]);
         }
@@ -893,6 +918,7 @@ fn step_item(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
         old(w).pos < old(w).buf@.len(),
         !is_etag(old(w).buf@, old(w).pos as int),
         old(w).buf@[old(w).pos as int] == 0x3C || old(w).buf@[old(w).pos as int] == 0x26,
+        !has_lit(old(w).buf@, old(w).pos as int, lit_cdata()),
         old(w).emits(),
     ensures
         r == S_ON || r == S_WAIT ==> final(w).emits(),
@@ -913,6 +939,7 @@ fn step_item(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
     let ghost gst = w.gst@;
     let ghost gt = w.gt@;
     let ghost out0 = w.out@;
+    let ghost ofl0 = w.out.fl();
     slice_len_bound(w.buf.as_slice());
     let j = w.pos;
     let mut sc: Vec<(usize, usize, usize)> = Vec::new();
@@ -953,6 +980,7 @@ fn step_item(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
                     assert(gst2 == gst);
                 }
             }
+            let ghost tp0 = tp;
             w.out.toks.append(&mut tp.toks);
             w.pos = e;
             proof {
@@ -965,8 +993,17 @@ fn step_item(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
                 assert(w.out@ =~= out0 + u);
                 assert(mv(out0 + u, -base, 0) =~= mv(out0, -base, 0) + mv(u, -base, 0));
                 lemma_sing(g0, gt, u, -base, gt.len() as int);
-                w.ge@ = Emitted { prev: w.ge@.prev, groups: g0 + sing(u, -base), open: w.ge@.open };
+                let e0 = w.ge@;
+                let uf = tp0.fl();
+                lemma_np_item(w.buf@, j as int, Seq::empty(), envv, 0);
+                assert(tp0@ == u);
+                assert(forall|i: int| 0 <= i < u.len() ==> !(#[trigger] u[i] is Text) && !(u[i] is CData));
+                lemma_fls_sing(seen, g0, e0.gfl, e0.k0, u, -base, uf);
+                w.ge@ = Emitted { groups: g0 + sing(u, -base), gfl: e0.gfl + sing8(uf), ..e0 };
                 assert(w.emitted() =~= flat(w.ge@.groups) + w.ge@.open);
+                assert(w.out.fl() =~= ofl0 + uf);
+                assert(e0.ofl =~= Seq::<u8>::empty());
+                assert(w.flags() =~= flat8(w.ge@.gfl) + w.ge@.ofl);
                 if sx.len() > 0 {
                     assert(sc@[0].2 < u.len());
                 }
@@ -1003,15 +1040,21 @@ fn step_item(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
 fn ex_any_cr(b: &[u8], a: usize, e: usize) -> (r: bool)
     requires
         a <= e <= b@.len(),
+    ensures
+        r == has_cr(b@, a as int, e as int),
 {
     let mut i = a;
     while i < e
         invariant
             a <= i <= e <= b@.len(),
+            !has_cr(b@, a as int, i as int),
         decreases e - i,
     {
         if b[i] == 0x0D {
             return true;
+        }
+        proof {
+            lemma_has_cr_step(b@, a as int, i as int);
         }
         i = i + 1;
     }
@@ -1023,8 +1066,35 @@ fn win_emit(w: &mut Win, kind: Kind, e: usize, flags: u8, Ghost(a): Ghost<int>)
     requires
         old(w).tem <= e <= old(w).buf@.len(),
         old(w).buf@.len() <= MAX_POS,
+        old(w).win_ok(),
         kind is Text || kind is CData,
+        flags % 2 == 0 && flags < 8,
+        kind is Text ==> flags == 0,
+        kind is CData ==> firstb(flags) == (old(w).ge@.open.len() == 0),
     ensures
+        // The piece's flags.
+        final(w).ge@.pfl == old(w).ge@.pfl,
+        final(w).ge@.gfl == old(w).ge@.gfl,
+        final(w).ge@.k0 == old(w).ge@.k0,
+        final(w).ge@.open == old(w).ge@.open.push(final(w).ge@.open.last()),
+        final(w).ge@.ofl == old(w).ge@.ofl.push(final(w).ge@.ofl.last()),
+        piece(final(w).ge@.open.last(), kind is CData),
+        piece_fl(
+            final(w).seen@,
+            final(w).ge@.open.last(),
+            final(w).ge@.ofl.last(),
+            kind is CData,
+            old(w).ge@.open.len() == 0,
+            lastb(flags),
+        ),
+        old(w).flags() == flat8(old(w).ge@.gfl) + old(w).ge@.ofl ==> final(w).flags() == flat8(final(w).ge@.gfl)
+            + final(w).ge@.ofl,
+        open_fl(old(w).seen@, old(w).ge@.open, old(w).ge@.ofl, kind is CData) && !lastb(flags) ==> open_fl(
+            final(w).seen@,
+            final(w).ge@.open,
+            final(w).ge@.ofl,
+            kind is CData,
+        ),
         final(w).buf == old(w).buf,
         final(w).seen == old(w).seen,
         final(w).base == old(w).base,
@@ -1056,9 +1126,10 @@ fn win_emit(w: &mut Win, kind: Kind, e: usize, flags: u8, Ghost(a): Ghost<int>)
     let ghost o0 = w.out@;
     let ghost base = w.base as int;
     let ghost g0 = w.ge@;
+    let ghost fl0 = w.flags();
     let cr = ex_any_cr(w.buf.as_slice(), w.tem, e);
     let f = if cr {
-        flags | P_CR
+        flags + P_CR
     } else {
         flags
     };
@@ -1070,11 +1141,39 @@ fn win_emit(w: &mut Win, kind: Kind, e: usize, flags: u8, Ghost(a): Ghost<int>)
             lemma_run_push(g0.open, kind is CData, a, x);
         }
         lemma_mv_push(o0, t@, -base, 0);
-        w.ge@ = Emitted { prev: g0.prev, groups: g0.groups, open: g0.open.push(x) };
+        let seen = w.seen@;
+        assert(agree(w.buf@, seen, 0, w.buf@.len() as int, -base)) by {
+            assert forall|k: int| 0 <= k < w.buf@.len() implies #[trigger] w.buf@[k] == seen[k + base] by {
+                assert(w.buf@[k] == seen.subrange(base, seen.len() as int)[k]);
+            }
+        }
+        lemma_has_cr_mv(w.buf@, seen, 0, w.buf@.len() as int, -base, w.tem as int, e as int);
+        assert(piece_fl(seen, x, f, kind is CData, g0.open.len() == 0, lastb(flags)));
+        w.ge@ = Emitted { open: g0.open.push(x), ofl: g0.ofl.push(f), ..g0 };
         assert((flat(g0.groups) + g0.open).push(x) =~= flat(g0.groups) + g0.open.push(x));
         assert((g0.prev + mv(o0, -base, 0)).push(x) =~= g0.prev + mv(o0, -base, 0).push(x));
+        assert(w.ge@.open.last() == x);
+        assert(w.ge@.ofl.last() == f);
+        if open_fl(seen, g0.open, g0.ofl, kind is CData) && !lastb(flags) {
+            let o2 = g0.open.push(x);
+            let f2 = g0.ofl.push(f);
+            let cd = kind is CData;
+            assert forall|j: int| 0 <= j < o2.len() implies #[trigger] oat(seen, o2, f2, cd, j) by {
+                if j < g0.open.len() {
+                    assert(o2[j] == g0.open[j] && f2[j] == g0.ofl[j]);
+                    assert(oat(seen, g0.open, g0.ofl, cd, j));
+                }
+            }
+        }
     }
     w.out.push(t);
+    proof {
+        assert(w.out.fl() == old(w).out.fl().push(f));
+        assert(w.flags() =~= fl0.push(f));
+        if fl0 == flat8(g0.gfl) + g0.ofl {
+            assert(w.flags() =~= flat8(w.ge@.gfl) + w.ge@.ofl);
+        }
+    }
     w.tem = e;
     w.tfirst = false;
 }
@@ -1326,8 +1425,13 @@ fn step_text(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
                 assert(w.buf@[m as int] == seen[k]);
                 lemma_run_nonempty(o, false, ts, k);
                 lemma_grps_push(g0, gt, o, XTok::Text { start: ts, end: k, cr: cr });
-                w.ge@ = Emitted { prev: w.ge@.prev, groups: g0.push(o), open: Seq::empty() };
+                let e0 = w.ge@;
+                lemma_run_pieces(o, false, ts, k);
+                lemma_text_close_fl(seen, o, e0.ofl);
+                lemma_fls_push(seen, g0, e0.gfl, e0.k0, o, e0.ofl);
+                w.ge@ = Emitted { groups: g0.push(o), open: Seq::empty(), gfl: e0.gfl.push(e0.ofl), ofl: Seq::empty(), ..e0 };
                 assert(w.emitted() =~= flat(w.ge@.groups) + w.ge@.open);
+                assert(w.flags() =~= flat8(w.ge@.gfl) + w.ge@.ofl);
                 assert forall|q: int| 0 <= q < w.gst@.len() implies 0 <= #[trigger] w.gst@[q].2 < w.gt@.len() by {}
             }
             return S_ON;
@@ -1463,7 +1567,7 @@ fn step_cdata(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
                 }
             }
             let f = if w.tfirst {
-                P_FIRST | P_LAST
+                P_FIRST + P_LAST
             } else {
                 P_LAST
             };
@@ -1472,7 +1576,14 @@ fn step_cdata(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
                     lemma_run_empty(true, ts + 9);
                 }
             }
+            let ghost e1 = w.ge@;
             win_emit(w, Kind::CData, m, f, Ghost(ts + 9));
+            proof {
+                if e1.open.len() > 0 {
+                    lemma_run_pieces(e1.open, true, ts + 9, base + old(w).tem);
+                }
+                lemma_close_fl(seen, e1.open, e1.ofl, true, w.ge@.open.last(), w.ge@.ofl.last());
+            }
             w.mode = M_ITEM;
             w.pos = m + 3;
             proof {
@@ -1481,8 +1592,11 @@ fn step_cdata(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
                 let o = w.ge@.open;
                 let g0 = w.ge@.groups;
                 lemma_grps_push(g0, gt, o, XTok::CData { start: ts + 9, end: k, cr: cr });
-                w.ge@ = Emitted { prev: w.ge@.prev, groups: g0.push(o), open: Seq::empty() };
+                let e0 = w.ge@;
+                lemma_fls_push(seen, g0, e0.gfl, e0.k0, o, e0.ofl);
+                w.ge@ = Emitted { groups: g0.push(o), open: Seq::empty(), gfl: e0.gfl.push(e0.ofl), ofl: Seq::empty(), ..e0 };
                 assert(w.emitted() =~= flat(w.ge@.groups) + w.ge@.open);
+                assert(w.flags() =~= flat8(w.ge@.gfl) + w.ge@.ofl);
                 assert forall|q: int| 0 <= q < w.gst@.len() implies 0 <= #[trigger] w.gst@[q].2 < w.gt@.len() by {}
             }
             return S_ON;
@@ -1673,7 +1787,7 @@ proof fn lemma_epilog_stop(b: Seq<u8>, seen: Seq<u8>, base: int, j: int, gt: Seq
 /// After the root element: white space, comments and processing
 /// instructions to the end.
 #[verifier::spinoff_prover]
-#[verifier::rlimit(100)]
+#[verifier::rlimit(200)]
 fn step_epilog(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
     requires
         old(w).inv(env_view(env)),
@@ -1702,6 +1816,7 @@ fn step_epilog(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
     let ghost base = w.base as int;
     let ghost gt = w.gt@;
     let ghost out0 = w.out@;
+    let ghost ofl0 = w.out.fl();
     slice_len_bound(w.buf.as_slice());
     proof {
         lemma_lits_stable();
@@ -1763,6 +1878,7 @@ fn step_epilog(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
         } else {
             assert(w.buf@.subrange(j as int, j + 4) =~= lit_comment());
         }
+        lemma_not_cdata(w.buf@, j as int);
     }
     let mut sc: Vec<(usize, usize, usize)> = Vec::new();
     let mut tp = Tape::new();
@@ -1776,6 +1892,7 @@ fn step_epilog(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
                 lemma_epilog_item_goal(w.buf@, seen, base, j as int, gt, envv);
                 w.gt@ = gt + mv(added(Seq::empty(), u), -base, gt.len() as int);
             }
+            let ghost tp0 = tp;
             w.out.toks.append(&mut tp.toks);
             w.pos = e;
             proof {
@@ -1786,8 +1903,17 @@ fn step_epilog(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
                 assert(w.out@ =~= out0 + u);
                 assert(mv(out0 + u, -base, 0) =~= mv(out0, -base, 0) + mv(u, -base, 0));
                 lemma_sing(g0, gt, u, -base, gt.len() as int);
-                w.ge@ = Emitted { prev: w.ge@.prev, groups: g0 + sing(u, -base), open: w.ge@.open };
+                let e0 = w.ge@;
+                let uf = tp0.fl();
+                lemma_np_item(w.buf@, j as int, Seq::empty(), envv, 0);
+                assert(tp0@ == u);
+                assert(forall|i: int| 0 <= i < u.len() ==> !(#[trigger] u[i] is Text) && !(u[i] is CData));
+                lemma_fls_sing(seen, g0, e0.gfl, e0.k0, u, -base, uf);
+                w.ge@ = Emitted { groups: g0 + sing(u, -base), gfl: e0.gfl + sing8(uf), ..e0 };
                 assert(w.emitted() =~= flat(w.ge@.groups) + w.ge@.open);
+                assert(w.out.fl() =~= ofl0 + uf);
+                assert(e0.ofl =~= Seq::<u8>::empty());
+                assert(w.flags() =~= flat8(w.ge@.gfl) + w.ge@.ofl);
             }
             S_ON
         },
@@ -1972,11 +2098,17 @@ pub fn content_run(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
                             start_cdata(w, Ghost(envv));
                             S_ON
                         } else if n - j >= 9 || last {
+                            proof {
+                                lemma_lits();
+                            }
                             step_item(w, env, last)
                         } else {
                             S_WAIT
                         }
                     } else {
+                        proof {
+                            lemma_not_cdata(w.buf@, j as int);
+                        }
                         step_item(w, env, last)
                     }
                 } else if x == 0x26 {

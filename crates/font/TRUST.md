@@ -1,9 +1,11 @@
 # What verilith-font's proofs assume
 
-The theorem is: every font `sanitize` returns satisfies `spec::wf_font`,
-and the verified code cannot read or write out of bounds, overflow an
-integer, or panic. This file lists everything that theorem takes on
-trust.
+The theorems are: every font `sanitize` returns satisfies
+`spec::wf_font`; it draws the same as the input's tables
+(`spec_same::draws_same`); a valid input (`spec_same::valid_tables`) is
+never refused; and the verified code cannot read or write out of bounds,
+overflow an integer, or panic. This file lists everything those theorems
+take on trust.
 
 ## The specification
 
@@ -14,8 +16,12 @@ trust.
   FDSelect, Private DICT).
 - `src/spec_cs.rs`: Type 2 charstrings.
 - `src/spec_layout.rs`: the layout tables `GDEF`, `GSUB` and `GPOS`.
+- `src/spec_same.rs`: what the input's table set is for a plain sfnt
+  file and a TrueType Collection (`input_tables`), what it means for the
+  output to draw the same as it (`draws_same`), and which table sets
+  are valid fonts (`valid_tables`).
 
-These four files are definitions, with no proofs to check them against.
+These five files are definitions, with no proofs to check them against.
 If a predicate is weaker than the OpenType specification intends, the
 theorem is weaker in the same way. Review them against the OpenType
 specification and Adobe Technical Notes #5176 and #5177. Places where
@@ -34,15 +40,23 @@ Two things the specification deliberately does not say:
   feature tags and feature parameters are not interpreted. A shaper must
   still treat a glyph id or class it reads from those places as a number
   that may match nothing.
-- Nothing that relates the output to the input. `wf_font` is a property
-  of the output alone.
+- `draws_same` treats the bytes of a glyph, a `CFF ` table, a `cmap`
+  subtable or a hinting program as what determines how it draws. It
+  does not interpret them, so two fonts that draw alike but are encoded
+  differently do not count as the same. That is stricter than needed and
+  never weaker.
+- `draws_same` does not cover `name` when the input's is malformed,
+  `maxp`'s outline limits, the `OS/2` version field, or the tables that
+  are dropped (README, "Which tables are kept"). Changes the sanitizer
+  makes to the layout tables are listed one by one in `layout_fix`.
 
 ## Trusted code
 
 - `src/prims.rs`, `rd8`: one `get_unchecked` read. Its `requires` is the
   bounds check, which Verus proves at every call. Every other read in
-  the crate goes through it. The same file states `size_of usize == 8`:
-  the proofs are for 64-bit targets.
+  the crate goes through it. `src/lib.rs` states the size of `usize`
+  for the target being built (8 or 4 bytes), and the proofs are checked
+  for both.
 - `src/capi.rs`: the C interface, about 60 lines, not verified. It turns
   the caller's pointer and length into a slice, calls the verified
   `sanitize_index`, and hands the output buffer over as a boxed slice.
@@ -56,12 +70,23 @@ There is no `assume`, `admit` or `external_body` in the crate.
 
 ## Verified, but only for safety
 
-`src/build.rs` and `src/woff2.rs` (reading the containers, rebuilding
-tables, laying out the file) are verified to be free of out-of-bounds
-access, overflow and panics, and nothing more. The theorem does not
-depend on them doing the right thing, because `sanitize` returns their
-output only after the verified checker has accepted it. Whether they
-accept the fonts they should is a matter for the tests.
+Rebuilding the tables (`build::build_tables` and what it calls) and
+decoding WOFF and WOFF2 (`build.rs`, `src/woff2.rs`) are verified to be
+free of out-of-bounds access, overflow and panics, and nothing more.
+Theorems 1 and 2 do not depend on the rebuilding being right, because
+`sanitize` returns its output only after the verified checkers have
+accepted it, and theorem 3 does not either, because a valid font
+refused there is laid out again by the proven fallback.
+
+The decoders are different: for a WOFF or WOFF2 input, `draws_same` and
+`valid_tables` are about the tables the decoder produced. If a decoder
+produced the wrong tables, the output would draw like those, and still
+be well formed. The tests and the differential runs against OTS are the
+evidence that it does not.
+
+Reading a plain sfnt file or a collection (`read_sfnt`, `read_ttc`) and
+laying out the file (`assemble`) are fully verified against
+`input_tables` and `wf_font`'s directory rules.
 
 ## Dependencies
 

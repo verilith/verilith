@@ -35,7 +35,7 @@ pub(crate) fn parse_mode(input: &[u8], eager: bool) -> Result<Document<'_>, Erro
     let mut idx = Vec::new();
     match parse_tape(input, &mut tape, &mut idx, eager) {
         Ok(_) => Ok(Document::new(input, Cow::Owned(tape))),
-        Err(_) => Err(error_at(input, &mut tape)),
+        Err(_) => Err(error_at(input)),
     }
 }
 
@@ -99,18 +99,16 @@ impl Parser {
         let tape = self.tape.get_or_insert_with(|| Tape::with_capacity(input.len() / 8 + 4));
         match parse_tape(input, tape, &mut self.idx, self.eager) {
             Ok(_) => Ok(Document::new(input, Cow::Borrowed(tape))),
-            Err(_) => Err(error_at(input, tape)),
+            Err(_) => Err(error_at(input)),
         }
     }
 }
 
-/// The two-pass parser does not track where it failed, so rerun the
-/// one-pass parser for a precise error offset. This costs time only on
-/// invalid input.
+/// Works out why the text is not JSON. This costs time only on invalid
+/// input.
 #[cold]
-fn error_at(input: &[u8], tape: &mut Tape) -> Error {
-    let p = parse_into(input, true, tape).err().unwrap_or(0);
-    crate::error::diagnose(input, true, p)
+fn error_at(input: &[u8]) -> Error {
+    crate::error::diagnose(input, true)
 }
 
 /// Parses one JSON value at the start of `input` (after whitespace and an
@@ -119,7 +117,7 @@ fn error_at(input: &[u8], tape: &mut Tape) -> Error {
 pub fn parse_prefix(input: &[u8]) -> Result<(Document<'_>, usize), Error> {
     match parse_document(input, false) {
         Ok((tape, end)) => Ok((Document::new(input, Cow::Owned(tape)), end)),
-        Err(p) => Err(crate::error::diagnose(input, false, p)),
+        Err(_) => Err(crate::error::diagnose(input, false)),
     }
 }
 

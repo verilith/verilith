@@ -127,6 +127,10 @@ pub struct Linker {
     globals: HashMap<(Vec<u8>, Vec<u8>), (Val, bool)>,
     mems: HashMap<(Vec<u8>, Vec<u8>), ast::Limits>,
     tables: HashMap<(Vec<u8>, Vec<u8>), ast::Limits>,
+    /// Cap on every instance's memory, in pages.
+    max_pages: Option<u32>,
+    /// Fuel each instance starts with (`None`: unmetered).
+    fuel: Option<u64>,
 }
 
 fn key(module: &str, name: &str) -> (Vec<u8>, Vec<u8>) {
@@ -164,6 +168,22 @@ impl Linker {
     /// As [`Linker::memory`], for tables.
     pub fn table(&mut self, module: &str, name: &str, min: u32, max: Option<u32>) -> &mut Self {
         self.tables.insert(key(module, name), ast::Limits { min, max });
+        self
+    }
+
+    /// Caps the linear memory of instances made with this linker at
+    /// `bytes` (rounded down to whole 64 KiB pages). An instance whose
+    /// memory starts above the cap fails to instantiate, and `memory.grow`
+    /// past it returns -1, as it does past the module's own maximum.
+    pub fn max_memory(&mut self, bytes: u64) -> &mut Self {
+        self.max_pages = Some((bytes / 65536).min(65536) as u32);
+        self
+    }
+
+    /// Meters instances made with this linker: each starts with `fuel`
+    /// units (see [`Instance::set_fuel`]). Unmetered by default.
+    pub fn fuel(&mut self, fuel: u64) -> &mut Self {
+        self.fuel = Some(fuel);
         self
     }
 }
@@ -210,6 +230,23 @@ pub struct Instance {
     host: Funcs,
     exports: HashMap<Vec<u8>, ExportDesc>,
     types: Vec<(Vec<ValType>, Vec<ValType>)>,
+    fuel: Option<u64>,
+}
+
+/// `n` zero bytes, or `None` if they cannot be allocated. Zeroed
+/// allocation, as `vec![0; n]` does, so the pages are not written up front.
+fn zeroed(n: usize) -> Option<Vec<u8>> {
+    if n == 0 {
+        return Some(Vec::new());
+    }
+    let layout = std::alloc::Layout::array::<u8>(n).ok()?;
+    // SAFETY: `layout` has nonzero size; a non-null result is an allocation
+    // of `n` initialized (zero) bytes from the global allocator with the
+    // layout `Vec<u8>` uses for capacity `n`.
+    unsafe {
+        let p = std::alloc::alloc_zeroed(layout);
+        if p.is_null() { None } else { Some(Vec::from_raw_parts(p, n, n)) }
+    }
 }
 
 /// Largest table we allocate.
@@ -272,17 +309,21 @@ impl Instance {
             }
         };
         let mem_limits = mem_limits.or_else(|| m.mems.get(m.n_imported_mems as usize).copied());
+        let cap = linker.max_pages.unwrap_or(65536).min(crate::interp::MAX_PAGES);
         let (mem, mem_max) = match mem_limits {
             Some(l) => {
                 // A 32-bit host has room for fewer pages (MAX_PAGES).
-                #[cfg(target_pointer_width = "32")]
                 if l.min > crate::interp::MAX_PAGES {
-                    return Err(Error::Instantiate("memory too large for a 32-bit host".into()));
+                    return Err(Error::Instantiate("memory too large for this host".into()));
                 }
-                #[cfg(target_pointer_width = "32")]
-                let l = ast::Limits { max: Some(l.max.unwrap_or(65536).min(crate::interp::MAX_PAGES)), ..l };
-                (vec![0u8; l.min as usize * 65536], l.max.unwrap_or(65536))
-            },
+                if l.min > cap {
+                    return Err(Error::Instantiate("memory larger than the embedder's limit".into()));
+                }
+                let Some(mem) = zeroed(l.min as usize * 65536) else {
+                    return Err(Error::Instantiate("cannot allocate memory".into()));
+                };
+                (mem, l.max.unwrap_or(65536).min(cap))
+            }
             None => (Vec::new(), 0),
         };
         table_limits.extend_from_slice(&m.tables[m.n_imported_tables as usize..]);
@@ -330,6 +371,7 @@ impl Instance {
             host: Funcs { funcs, args: Vec::new(), results: Vec::new() },
             exports,
             types,
+            fuel: linker.fuel,
         };
         if let Some(s) = start {
             inst.invoke(s, &[]).map_err(|e| Error::Instantiate(format!("start function: {e}")))?;
@@ -345,12 +387,29 @@ impl Instance {
         }
         let slots: Vec<u64> = args.iter().map(|a| a.to_slot()).collect();
         let inner = self.inner.take().ok_or(Error::Call("instance poisoned by an earlier panic".into()))?;
-        let (inner, r) = inner.invoke(func, &slots, &mut self.host);
+        let mut fuel = self.fuel.unwrap_or(0);
+        let (inner, r) = inner.invoke(func, &slots, &mut self.host, self.fuel.is_some(), &mut fuel);
         self.inner = Some(inner);
+        if self.fuel.is_some() {
+            self.fuel = Some(fuel);
+        }
         match r {
             Ok(v) => Ok(v.iter().zip(results).map(|(&s, &t)| Val::from_slot(t, s)).collect()),
             Err(t) => Err(Error::Trap(t)),
         }
+    }
+
+    /// Sets the fuel left (`None`: unmetered). Each branch, call and
+    /// return costs one unit, and a call that runs out traps with
+    /// [`Trap::Exhausted`], leaving the fuel at 0. Fuel carries over
+    /// between calls.
+    pub fn set_fuel(&mut self, fuel: Option<u64>) {
+        self.fuel = fuel;
+    }
+
+    /// The fuel left, or `None` if unmetered.
+    pub fn fuel(&self) -> Option<u64> {
+        self.fuel
     }
 
     /// Calls the exported function `name`.

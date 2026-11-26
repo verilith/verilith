@@ -39,22 +39,22 @@ not occur in any crate's `src/` (the script fails if one appears).
 | lz4 |  |  |  |  |  |  | 1 |
 | png | 2 |  |  |  |  |  | 7 |
 | regex | 7 |  |  |  |  |  | 2 |
-| sha2 | 9 |  |  |  |  |  | 3 |
+| sha2 | 34 |  |  |  |  |  | 3 |
 | simd | 362 | 6 | 274 | 4 |  |  | 3 |
 | snappy |  |  |  |  |  |  | 1 |
-| sync | 43 | 11 |  | 1 | 16 | 9 | 2 |
+| sync | 45 | 11 |  | 1 | 16 | 10 | 2 |
 | text | 18 | 13 |  |  | 13 |  | 9 |
 | tiff | 1 |  |  |  |  |  | 2 |
 | url | 1 |  |  |  |  |  | 5 |
 | verilith |  |  |  |  |  |  | 1 |
-| wasm | 35 |  |  |  |  | 1 | 4 |
+| wasm | 35 |  |  |  |  | 2 | 4 |
 | webp | 10 |  |  |  |  |  | 3 |
 | x509 |  |  |  |  |  |  | 6 |
-| xml | 7 |  |  |  |  |  | 12 |
+| xml | 9 |  |  |  |  |  | 12 |
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  | 2 |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **639** | **35** | **274** | **5** | **34** | **10** | **104** |
+| **total** | **668** | **35** | **274** | **5** | **34** | **12** | **104** |
 
 ## Items
 
@@ -176,11 +176,13 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### sha2
 
+- `crates/sha2/src/armv8.rs`: external_body: `has_sha2`, `has_sha512`, `vsha256hq`, `vsha256h2q`, `vsha256su0q`, `vsha256su1q`, `vsha512hq`, `vsha512h2q`, `vsha512su0q`, `vsha512su1q`, `vrev32q_u8`, `vrev64q_u8`, `vaddq_u64`, `vld1q_u64_at`, `vst1q_u64_at`, `compress_blocks`, `compress512_blocks`
 - `crates/sha2/src/avx2.rs`: external_body: `barrier`, `schedule512x2`, `schedule256x2`
 - `crates/sha2/src/capi.rs`: plain Rust
-- `crates/sha2/src/cpu.rs`: external_body: `compress_blocks`, `compress512_blocks`, `pair256_avx2`, `pair_avx2`
+- `crates/sha2/src/cpu.rs`: external_body: `bmi2_256`, `bmi2_512`, `avx2_256`, `avx2_512`, `pair256_avx2`, `pair_avx2`
 - `crates/sha2/src/digest_impls.rs`: plain Rust
 - `crates/sha2/src/lib.rs`: plain Rust
+- `crates/sha2/src/shani.rs`: external_body: `has_shani`, `sha256rnds2`, `sha256msg1`, `sha256msg2`, `blend_epi16`, `compress_blocks`
 - `crates/sha2/src/store.rs`: external_body: `put_u32_be`, `put_u64_be`
 
 ### simd
@@ -208,13 +210,14 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/sync/src/array_queue.rs`: 4 assume_new; no termination check: `push_atomic`, `pop_atomic`, `len`
 - `crates/sync/src/chan_sync.rs`: no termination check: `slow`, `add_handle`
 - `crates/sync/src/channel.rs`: plain Rust
+- `crates/sync/src/fair.rs`: external_body: `bomb`, `bomb`, `defuse`; no termination check: `lock`
 - `crates/sync/src/lot.rs`: external_body: `key`, `key`, `lock_bucket`, `unlock_bucket`; 2 assume_new
 - `crates/sync/src/model.rs`: axioms: `pool_nonempty`
 - `crates/sync/src/mutex.rs`: external_body: `key`; 1 assume_new; no termination check: `lock_slow`
-- `crates/sync/src/ra.rs`: external_body: `view`, `view`, `loc`, `loc`, `id`, `new`, `load_acquire`, `load_relaxed`, `store_release`, `fetch_add_acqrel`, `fetch_add_seqcst`, `fetch_sub_acqrel`, `compare_exchange_seqcst`, `sync_exclusive`; axioms: `new`, `dup`, `join`, `publish`, `acquire`, `nonempty_lemma`, `bounded_lemma`, `lb`, `lb_prefix`, `dup`; 4 assume_new
+- `crates/sync/src/ra.rs`: external_body: `view`, `view`, `loc`, `loc`, `id`, `new`, `load_acquire`, `load_relaxed`, `store_release`, `store_release_sra`, `fetch_add_acqrel`, `fetch_add_acqrel_sra`, `fetch_add_seqcst`, `fetch_sub_acqrel`, `fetch_sub_acqrel_sra`, `compare_exchange_seqcst`, `sync_exclusive`; axioms: `new`, `dup`, `join`, `publish`, `acquire`, `nonempty_lemma`, `bounded_lemma`, `lb`, `lb_prefix`, `dup`; 4 assume_new
 - `crates/sync/src/rwlock.rs`: external_body: `key`; 1 assume_new; no termination check: `park`, `read_slow`, `write_slow`
 - `crates/sync/src/spsc.rs`: 4 assume_new
-- `crates/sync/src/util.rs`: external_body: `arc_clone`, `exhausted`, `no_deadline`, `no_deadline`, `leaked_guard`, `spin_hint`, `new`, `new`, `spin`, `snooze`, `is_completed`, `k`, `k`, `new`, `lock`, `unlock`, `current`, `current`, `unpark`, `is_timed`, `time_left`, `time_left`, `park_for`; ext. types: `ExDeadline`
+- `crates/sync/src/util.rs`: external_body: `arc_clone`, `exhausted`, `no_deadline`, `no_deadline`, `leaked_guard`, `spin_hint`, `new`, `new`, `spin`, `snooze`, `is_completed`, `wait_turn`, `current`, `current`, `unpark`, `is_timed`, `time_left`, `time_left`, `park_for`; ext. types: `ExDeadline`
 - `crates/sync/src/progress/mod.rs`: plain Rust
 
 ### text
@@ -263,9 +266,9 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/wasm/src/fops.rs`: external_body: `exec_un`, `exec_bin`, `exec_cmp`, `exec_cvt`
 - `crates/wasm/src/instance.rs`: external_body: `memory_mut`
 - `crates/wasm/src/interp.rs`: external_body: `call_host`
-- `crates/wasm/src/prims.rs`: external_body: `scopy_down`, `szero`, `load`, `store`, `fill`, `copy_within`, `copy_in`, `grow`, `idx`, `cur_at`, `cur_off`, `cur_next`, `cur_get`
+- `crates/wasm/src/prims.rs`: external_body: `scopy_down`, `szero`, `load`, `store`, `fill`, `copy_within`, `copy_in`, `try_grow`, `idx`, `cur_at`, `cur_off`, `cur_next`, `cur_get`
 - `crates/wasm/src/reg.rs`: external_body: `rop`, `has_target`, `mem_off`, `lower`, `producer`, `jmp_at`, `sink`, `tr_shape`, `fits`, `jmp_fits`, `tr_run`, `translate`, `fuse_copies`, `trivial`
-- `crates/wasm/src/run.rs`: no termination check: `execute`
+- `crates/wasm/src/run.rs`: no termination check: `execute`, `execute_metered`
 - `crates/wasm/src/sint.rs`: external_body: `popcnt32`, `popcnt64`
 - `crates/wasm/src/validate.rs`: plain Rust
 
@@ -293,7 +296,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 - `crates/xml/src/api.rs`: plain Rust
 - `crates/xml/src/lib.rs`: plain Rust
-- `crates/xml/src/pe.rs`: external_body: `load_model`, `fetch`, `note_push`, `note_fetch`, `note_pop`
+- `crates/xml/src/pe.rs`: external_body: `load_model`, `count`, `bytes`, `fetch`, `note_push`, `note_fetch`, `note_pop`
 - `crates/xml/src/tape.rs`: external_body: `slice_len_bound`
 - `crates/xml/src/uniq.rs`: external_body: `seed`
 - `crates/xml/src/api/expat.rs`: plain Rust

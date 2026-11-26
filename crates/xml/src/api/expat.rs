@@ -601,7 +601,7 @@ impl Parser {
                 self.ev = (slice.len(), slice.len());
                 return STATUS_OK;
             }
-            let e = super::diagnose(slice, &tape);
+            let e = super::rejected(slice);
             let (code, at) = classify(slice, &e);
             self.err_at = at;
             return self.fail(code);
@@ -786,7 +786,7 @@ fn plain_parse(t: &[u8]) -> Result<Document<'_>, super::Error> {
     let mut tape = crate::tape::Tape::new();
     match crate::enc::ex_parse(t, &mut tape) {
         Some((owned, dtd)) => Ok(Document::new(t, owned, tape, dtd, None)),
-        None => Err(super::diagnose(t, &tape)),
+        None => Err(super::rejected(t)),
     }
 }
 
@@ -2263,7 +2263,7 @@ impl Parser {
             }
         } else {
             self.names.extend_from_slice(qname);
-            let ids = !doc.defs.is_empty();
+            let ids = doc.has_defs();
             for (j, a) in el.attrs().enumerate() {
                 if j < given {
                     nspec += 1;

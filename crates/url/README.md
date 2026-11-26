@@ -101,7 +101,8 @@ that verilith-url itself produced:
 - **IDNA.** Non-ASCII domains go through verilith-text's UTS #46
   (`verilith_text::idna::uts46::url_domain_to_ascii_exec`), which verilith-text proves
   equal to its transliteration of UTS #46. `idna.rs` proves the UTF-8
-  decoding that connects the two.
+  decoding that connects the two, U+FFFD replacement of ill-formed UTF-8
+  included (`spec::utf8_decode`, the Encoding Standard's decoder).
 - **Well-formedness.** Every URL that is returned satisfies `Url::wf`: its
   component offsets lie inside `href` and delimit the spec's components.
   The getters depend on this.
@@ -154,7 +155,7 @@ as their own crates in this repository. CI (`.github/workflows/ci.yml` at the re
 | Standard | verilith-url's model | Why it is safe or what it costs |
 |---|---|---|
 | Input is a string of Unicode scalar values. | Input is its UTF-8 bytes, one per step. | Every parser decision compares against ASCII, and every percent-encode set contains all non-ASCII code points, so the two agree on valid UTF-8 (argued at the top of `spec.rs`). The Rust API takes `&str`. Through the C API or `parse_bytes`, invalid UTF-8 has no counterpart in the Standard; verilith-url gives the model's bytewise result. |
-| UTS #46 (`domain to ASCII`) for non-ASCII domains, after UTF-8 decode without BOM. | verilith-text's specification of UTS #46 (`spec::domain_to_ascii`). Ill-formed UTF-8 fails. | verilith-text's spec transliterates UTS #46 and is part of verilith-text's trusted base. Ill-formed UTF-8 decodes to U+FFFD, which UTS #46 disallows, so failing is what the Standard does; this step is argued, not proven. ASCII domains never reach UTS #46 and are fully specified. Passes WPT `toascii.json`. |
+| UTS #46 (`domain to ASCII`) for non-ASCII domains, after UTF-8 decode without BOM. | verilith-text's specification of UTS #46 (`spec::domain_to_ascii`), applied to `spec::utf8_decode`: each well-formed sequence becomes its scalar and each maximal subpart of ill-formed UTF-8 becomes U+FFFD, as the Encoding Standard's decoder does. | verilith-text's spec transliterates UTS #46 and is part of verilith-text's trusted base. The decode step is proven: ill-formed input goes to UTS #46 with its U+FFFDs in place, so it fails because verilith-text's table says U+FFFD is disallowed, not because the model says so (tested: `ill_formed_host`). ASCII domains never reach UTS #46 and are fully specified. Passes WPT `toascii.json`. |
 | ToASCII's result may be any length. | A result over 8 bytes per input byte fails (`spec::domain_to_ascii`). | Keeps the parser's output, and so its running time, linear without assuming anything about verilith-text. No input is known to reach the limit: over every code point the largest ratio is 5.67 (U+337F, 3 bytes, becomes 17). |
 | Validation errors are reported. | Not modelled. | They never change the result. |
 | Non-UTF-8 query encodings (HTML documents in legacy encodings). | The query is always UTF-8. | Matches every non-HTML caller; a browser would need its own query encoder. |

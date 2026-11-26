@@ -4,6 +4,7 @@
 use crate::spec::*;
 use crate::bits::*;
 use crate::seq::*;
+use crate::work::Meter;
 use verilith_xxhash::Xxh64;
 #[cfg(verus_only)]
 use verilith_core::prims::le_bytes;
@@ -272,6 +273,46 @@ pub proof fn lemma_blocks_grows(b: Seq<u8>, i: int, window: nat, reach: nat, st:
     }
 }
 
+/// Steps a block may take for each of its bytes, header included, besides
+/// nine a byte of output: three header bytes pay for a compressed block's
+/// fixed cost (`CBLOCK_WORK`).
+pub spec const BLOCK_BYTE_WORK: nat = 6535;
+
+/// The steps a failing block may take besides `BLOCK_BYTE_WORK` a byte of
+/// input: the literals and output it decodes before it fails, at most
+/// `BLOCK_MAX` bytes of each (`6 * bmax + 3 * bmax`).
+pub spec const BLOCK_FAIL_WORK: nat = 1179648;
+
+/// Steps the decoder may take for each byte of input, besides ten a byte of
+/// output (nine to make it, one to hash it).
+pub spec const BYTE_WORK: nat = 6537;
+
+/// Steps scale over a sum: the arithmetic the work bounds add up with.
+pub proof fn lemma_work_add(k: int, x: int, y: int)
+    requires
+        k >= 0,
+        x >= 0,
+        y >= 0,
+    ensures
+        k * (x + y) == k * x + k * y,
+        (k + 1) * y == k * y + y,
+        k * x >= 0,
+        k * y >= 0,
+{
+    assert(k * (x + y) == k * x + k * y) by (nonlinear_arith);
+    assert((k + 1) * y == k * y + y) by (nonlinear_arith);
+    assert(k * x >= 0) by (nonlinear_arith)
+        requires
+            k >= 0,
+            x >= 0,
+    ;
+    assert(k * y >= 0) by (nonlinear_arith)
+        requires
+            k >= 0,
+            y >= 0,
+    ;
+}
+
 /// One raw, RLE or compressed block at `i`. Returns the position after it.
 #[verifier::rlimit(30)]
 pub fn block_exec(
@@ -282,6 +323,7 @@ pub fn block_exec(
     d: &mut FrameDec,
     olimit: usize,
     Ghost(st): Ghost<FrameState>,
+    Tracked(m): Tracked<&mut Meter>,
 ) -> (r: (
     Step,
     usize,
@@ -293,6 +335,11 @@ pub fn block_exec(
         dec_is(old(d), st),
         old(d).out@.len() <= olimit <= MAX_LIMIT,
     ensures
+        // Work: linear in the block's bytes and in the output it adds.
+        old(d).out@.len() <= final(d).out@.len() <= olimit,
+        r.0 is Done ==> i + 3 <= r.1 <= b@.len(),
+        r.0 is Done ==> final(m).n <= old(m).n + BLOCK_BYTE_WORK * (r.1 - i) + 9 * (final(d).out@.len() - old(d).out@.len()),
+        final(m).n <= old(m).n + BLOCK_BYTE_WORK * (b@.len() - i) + BLOCK_FAIL_WORK,
         ({
             let bh = le(b@, i as int, 3);
             let last = bh % 2 == 1;
@@ -370,6 +417,7 @@ pub fn block_exec(
         let ghost o0 = d.out@;
         d.out.extend_from_slice(slice_subrange(b, c, c + size));
         proof {
+            m.n = (m.n + size) as nat;
             assert(d.out@.subrange(0, d.fstart as int) =~= pre);
             assert(fout(d.out@, d.fstart as int) =~= st.out + b@.subrange(c as int, c + size));
         }
@@ -389,6 +437,8 @@ pub fn block_exec(
                 k <= size,
                 d.fstart <= d.out@.len(),
                 d.out@.len() == old(d).out@.len() + k,
+                m.n == old(m).n + k,
+                old(d).out@.len() + size <= olimit,
                 d.out@.subrange(0, d.fstart as int) == pre,
                 fout(d.out@, d.fstart as int) == o0 + Seq::new(k as nat, |q: int| x),
             decreases size - k,
@@ -396,6 +446,7 @@ pub fn block_exec(
             let ghost before = d.out@;
             d.out.push(x);
             proof {
+                m.n = m.n + 1;
                 assert(d.out@.subrange(0, d.fstart as int) =~= pre);
                 assert(fout(d.out@, d.fstart as int) =~= fout(before, d.fstart as int).push(x));
                 assert(Seq::new((k + 1) as nat, |q: int| x) =~= Seq::new(k as nat, |q: int| x).push(x));
@@ -411,7 +462,7 @@ pub fn block_exec(
         if size > b.len() - c {
             return (Step::Bad, 0, last);
         }
-        let res = compressed_block_exec(slice_subrange(b, c, c + size), reach, bmax, d, olimit, Ghost(st));
+        let res = compressed_block_exec(slice_subrange(b, c, c + size), reach, bmax, d, olimit, Ghost(st), Tracked(m));
         (res, c + size, last)
     } else {
         (Step::Bad, 0, last)
@@ -431,6 +482,7 @@ pub fn blocks_exec(
     hash: &mut Xxh64,
     hashing: bool,
     Ghost(st): Ghost<FrameState>,
+    Tracked(m): Tracked<&mut Meter>,
 ) -> (r: (Step, usize))
     requires
         b@.len() < MAX_LIMIT,
@@ -440,6 +492,13 @@ pub fn blocks_exec(
         hashing ==> old(hash).is(st.out),
         hashing ==> reach == window,
     ensures
+        // Work: a block's steps, one for its turn and one a byte hashed.
+        old(d).out@.len() <= final(d).out@.len() <= olimit,
+        r.0 is Done ==> i0 <= r.1 <= b@.len(),
+        r.0 is Done ==> final(m).n <= old(m).n + (BLOCK_BYTE_WORK + 1) * (r.1 - i0) + 10 * (final(d).out@.len()
+            - old(d).out@.len()),
+        final(m).n <= old(m).n + (BLOCK_BYTE_WORK + 1) * (b@.len() - i0) + 10 * (final(d).out@.len() - old(d).out@.len())
+            + BLOCK_FAIL_WORK,
         hashing && r.0 is Done ==> final(hash).is(blocks_r(b@, i0 as int, window as nat, reach as nat, st).unwrap().1.out),
         match blocks_r(b@, i0 as int, window as nat, reach as nat, st) {
             None => !(r.0 is Done),
@@ -464,7 +523,9 @@ pub fn blocks_exec(
     loop
         invariant
             b@.len() < MAX_LIMIT,
-            i <= b@.len(),
+            i0 <= i <= b@.len(),
+            old(d).out@.len() <= d.out@.len(),
+            m.n <= old(m).n + (BLOCK_BYTE_WORK + 1) * (i - i0) + 10 * (d.out@.len() - old(d).out@.len()),
             dec_is(d, cur),
             d.fstart == fs,
             fs == old(d).fstart,
@@ -477,12 +538,20 @@ pub fn blocks_exec(
             hashing ==> reach == window,
         decreases b@.len() - i,
     {
+        proof {
+            lemma_work_add(BLOCK_BYTE_WORK as int, i - i0, b@.len() - i);
+            lemma_work_add(BLOCK_BYTE_WORK + 1int, i - i0, b@.len() - i);
+        }
         if i + 3 > b.len() {
             return (Step::Bad, 0);
         }
         let ghost prev = cur;
+        let ghost m0 = m.n;
         let before = d.out.len();
-        let (res, j, last) = block_exec(b, i, window, reach, d, olimit, Ghost(cur));
+        proof {
+            m.n = m.n + 1;
+        }
+        let (res, j, last) = block_exec(b, i, window, reach, d, olimit, Ghost(cur), Tracked(m));
         match res {
             Step::Done => {},
             _ => {
@@ -526,6 +595,13 @@ pub fn blocks_exec(
                 assert(cur.out =~= prev.out + new@);
             }
             hash.update(new, Ghost(prev.out));
+            proof {
+                m.n = m.n + new@.len();
+            }
+        }
+        proof {
+            lemma_work_add(BLOCK_BYTE_WORK as int, i - i0, j - i);
+            lemma_work_add(BLOCK_BYTE_WORK + 1int, i - i0, j - i);
         }
         if last {
             return (Step::Done, j);
@@ -559,12 +635,19 @@ pub fn reset(d: &mut FrameDec)
 
 /// One Zstandard frame at `i` (`frame`), appended to `d.out`.
 #[verifier::rlimit(30)]
-fn frame_exec(b: &[u8], i: usize, d: &mut FrameDec, olimit: usize) -> (r: (Step, usize))
+fn frame_exec(b: &[u8], i: usize, d: &mut FrameDec, olimit: usize, Tracked(m): Tracked<&mut Meter>) -> (r: (Step, usize))
     requires
         b@.len() < MAX_LIMIT,
         i + 4 <= b@.len(),
         old(d).out@.len() <= olimit <= MAX_LIMIT,
     ensures
+        // Work: the blocks' steps, and 32 for the checksum's last bytes.
+        old(d).out@.len() <= final(d).out@.len() <= olimit,
+        r.0 is Done ==> i < r.1 <= b@.len(),
+        r.0 is Done ==> final(m).n <= old(m).n + (BLOCK_BYTE_WORK + 1) * (r.1 - i) + 10 * (final(d).out@.len()
+            - old(d).out@.len()),
+        final(m).n <= old(m).n + (BLOCK_BYTE_WORK + 1) * (b@.len() - i) + 10 * (final(d).out@.len() - old(d).out@.len())
+            + BLOCK_FAIL_WORK,
         match frame(b@, i as int) {
             None => !(r.0 is Done),
             Some((j, o)) => match r.0 {
@@ -602,7 +685,17 @@ fn frame_exec(b: &[u8], i: usize, d: &mut FrameDec, olimit: usize) -> (r: (Step,
         None => {},
     }
     let mut hash = Xxh64::new();
-    let (res, j) = blocks_exec(b, i + 4 + h.size, h.window, h.window, d, olimit, &mut hash, h.checksum, Ghost(initial_state()));
+    let (res, j) = blocks_exec(b, i + 4 + h.size, h.window, h.window, d, olimit, &mut hash, h.checksum, Ghost(initial_state()), Tracked(m));
+    proof {
+        let i1 = i + 4 + h.size;
+        if i1 <= b@.len() {
+            lemma_work_add(BLOCK_BYTE_WORK + 1int, i1 - i, b@.len() - i1);
+        }
+        if res is Done {
+            lemma_work_add(BLOCK_BYTE_WORK + 1int, i1 - i, j - i1);
+            lemma_work_add(BLOCK_BYTE_WORK + 1int, j - i, 4);
+        }
+    }
     match res {
         Step::Done => {},
         _ => {
@@ -631,6 +724,10 @@ fn frame_exec(b: &[u8], i: usize, d: &mut FrameDec, olimit: usize) -> (r: (Step,
             return (Step::Bad, 0);
         }
         let x = hash.digest(Ghost(fout(d.out@, fstart as int)));
+        proof {
+            // The digest hashes the bytes left in the buffer, fewer than 32.
+            m.n = m.n + 32;
+        }
         let want = le_at(b, j, 4);
         let lo = x & 0xFFFF_FFFF;
         proof {
@@ -692,6 +789,32 @@ pub fn decompress_reuse(b: &[u8], limit: usize, buf: Vec<u8>) -> (r: Result<Vec<
             Err(Error::TooLarge) => decompress(b@) is None || decompress(b@).unwrap().len() > limit,
         },
 {
+    let tracked mut m = Meter { n: 0 };
+    decompress_metered(b, limit, buf, Tracked(&mut m))
+}
+
+/// `decompress_reuse`, counting its steps in `m`: the decoder's work is
+/// linear, at most `BYTE_WORK` steps a byte of input and ten a byte of
+/// output. When it fails, the output it had made is at most `limit` bytes,
+/// and the failing block costs at most `BLOCK_FAIL_WORK` more.
+pub fn decompress_metered(b: &[u8], limit: usize, buf: Vec<u8>, Tracked(mt): Tracked<&mut Meter>) -> (r: Result<
+    Vec<u8>,
+    Error,
+>)
+    requires
+        b@.len() < MAX_LIMIT,
+        limit <= MAX_LIMIT,
+    ensures
+        match r {
+            Ok(v) => decompress(b@) == Some(v@) && v@.len() <= limit,
+            Err(Error::Corrupt) => decompress(b@) is None,
+            Err(Error::TooLarge) => decompress(b@) is None || decompress(b@).unwrap().len() > limit,
+        },
+        match r {
+            Ok(v) => final(mt).n <= old(mt).n + BYTE_WORK * b@.len() + 10 * v@.len() + 1,
+            Err(_) => final(mt).n <= old(mt).n + BYTE_WORK * b@.len() + 10 * limit + BLOCK_FAIL_WORK,
+        },
+{
     let mut buf = buf;
     buf.clear();
     let mut d = FrameDec {
@@ -715,10 +838,17 @@ pub fn decompress_reuse(b: &[u8], limit: usize, buf: Vec<u8>) -> (r: Result<Vec<
             limit <= MAX_LIMIT,
             i <= b@.len(),
             d.out@.len() <= limit,
+            mt.n <= old(mt).n + BYTE_WORK * i + 10 * d.out@.len(),
             full == decompress(b@),
             frames(b@, i as int, d.out@) == full,
         decreases b@.len() - i,
     {
+        proof {
+            mt.n = mt.n + 1;
+            lemma_work_add(BYTE_WORK as int, i as int, b@.len() - i);
+            lemma_work_add(BLOCK_BYTE_WORK + 1int, i as int, b@.len() - i);
+            assert(BYTE_WORK == BLOCK_BYTE_WORK + 2);
+        }
         if i == b.len() {
             return Ok(d.out);
         }
@@ -734,12 +864,15 @@ pub fn decompress_reuse(b: &[u8], limit: usize, buf: Vec<u8>) -> (r: Result<Vec<
             if size + 8 >= 0x1_0000_0000 || size as usize > b.len() - i - 8 {
                 return Err(Error::Corrupt);
             }
+            proof {
+                lemma_work_add(BYTE_WORK as int, i as int, 8 + size);
+            }
             i = i + 8 + size as usize;
         } else if m != 0xFD2FB528 {
             return Err(Error::Corrupt);
         } else {
             let ghost o0 = d.out@;
-            let (res, j) = frame_exec(b, i, &mut d, limit);
+            let (res, j) = frame_exec(b, i, &mut d, limit, Tracked(mt));
             match res {
                 Step::Done => {},
                 Step::Bad => {
@@ -758,6 +891,10 @@ pub fn decompress_reuse(b: &[u8], limit: usize, buf: Vec<u8>) -> (r: Result<Vec<
             }
             if j <= i || j > b.len() {
                 return Err(Error::Corrupt);
+            }
+            proof {
+                lemma_work_add(BYTE_WORK as int, i as int, j - i);
+                lemma_work_add(BLOCK_BYTE_WORK + 1int, i as int, j - i);
             }
             i = j;
         }

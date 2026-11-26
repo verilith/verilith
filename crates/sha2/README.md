@@ -11,11 +11,15 @@ traits (0.11 and 0.10) so it can stand in for RustCrypto's `sha2` and
 `hmac`, it works without `std`, and it builds a static library behind
 OpenSSL's `SHA224_*`, `SHA256_*`, `SHA384_*` and `SHA512_*` C API.
 
-`cargo verus verify` (or `scripts/verify.sh`) checks 332 functions and
-lemmas with no errors and no `assume`. What is assumed instead is listed
-under [Trusted base](#trusted-base): the CPU dispatch, the SHA instruction
-kernels, verilith-simd's specifications of the AVX2 intrinsics, and two
-byte stores.
+`cargo verus verify` (or `scripts/verify.sh`) checks 459 functions and
+lemmas with no errors and no `assume`, including the SHA-NI and ARMv8
+kernels, proven against the vendors' definitions of the SHA instructions.
+What is assumed instead is listed under [Trusted base](#trusted-base) and
+in full in [TRUST.md](https://github.com/verilith/verilith/blob/main/crates/sha2/TRUST.md): the
+specifications, one-line wrappers of the instructions and CPU detection,
+and verified code compiled with target features. That the time does not
+depend on secrets is checked mechanically on the compiled code, with
+Valgrind (see [Constant time](#constant-time)).
 
 ```rust
 let d: [u8; 32] = verilith_sha2::sha256(b"abc");
@@ -63,6 +67,9 @@ let m = hmac::SimpleHmac::<verilith_sha2::Sha256>::new_from_slice(b"key").unwrap
 | The rounds that take K_t + W_t precomputed, as a vectorized schedule gives it, are the rounds (addition modulo 2^n is associative) | `compress_block_kw` in each |
 | The AVX2 message schedules, two blocks at once (whole, or a few words at a time for the pipelined kernels), compute K_t + W_t of §6.2.2 and §6.4.2 step 1: byte swaps, σ0 and σ1 from lane shifts, the words that straddle two vectors, the window of the last 16 words | `avx2::schedule512x2`, `sched_start`, `sched_steps2`, `schedule256x2`, `sched256_start`, `sched256_step` against `spec512::schedule` and `spec::schedule`, over verilith-simd's specifications of the intrinsics (lane lemmas in `lanes`) |
 | The pipelined kernels: each pair of blocks is compressed while the next pair's schedule is computed between its round groups, and the loop over pairs computes H(n) | `pair_kw` and `compress_blocks_pipe` in each |
+| The SHA-NI kernel (x86-64) computes H(n) from H(0): `sha256rnds2`'s two rounds on the state in its ABEF/CDGH order, `sha256msg1` and `sha256msg2` with the `palignr` add as the schedule, the byte swaps and the state's reordering in and out | `shani::compress_blocks_body` against `spec::hash_blocks`, over the instructions' specifications in `isa` |
+| The ARMv8 SHA2 kernel and the ARMv8.2 SHA512 kernel (AArch64) compute H(n) from H(0): four rounds per `sha256h`/`sha256h2` pair, two per `sha512h`/`sha512h2` with the state's registers rotating, the schedules from `sha256su0`/`su1` and `sha512su0`/`su1` | `armv8::compress_blocks_body` and `compress512_blocks_body` against `spec::hash_blocks` and `spec512::hash_blocks`, over `isa` |
+| The dispatch: whichever kernel the CPU gets, the result is the portable kernel's | `cpu::compress_blocks`, `cpu::compress512_blocks` |
 | The one-shot functions | `sha256`, `sha224`, `sha512`, `sha384`, `sha512_224`, `sha512_256` against the same |
 | For any key length, and whatever the sizes of the pieces given to `update`, HMAC's `finalize` returns HMAC(K, text) of FIPS 198-1 §4: K0 from the key (hashed if longer than the block, zero-padded), then H((K0 ⊕ opad) ‖ H((K0 ⊕ ipad) ‖ text)); `reset` returns to the keyed state; `verify` is equality with that MAC | `HmacSha224`, `HmacSha256`, `HmacSha384`, `HmacSha512`, `HmacSha512_224`, `HmacSha512_256` and the one-shot `hmac_*` against `spec_hmac::hmac_*` |
 
@@ -93,8 +100,21 @@ let m = hmac::SimpleHmac::<verilith_sha2::Sha256>::new_from_slice(b"key").unwrap
   inner one for `reset`, so the key is processed once.
 - `src/digest_impls.rs`: RustCrypto's `digest` traits over the hashers
   and MACs (an unverified adapter).
-- `src/cpu.rs`: the kernel dispatch and the SHA-NI and ARMv8 kernels
-  (trusted, below).
+- `src/isa.rs`: what the SHA instructions compute (Intel's `SHA256RNDS2`,
+  `SHA256MSG1`, `SHA256MSG2`; Arm's `SHA256H`, `SHA256H2`, `SHA256SU0`,
+  `SHA256SU1` and the four `SHA512` ones), transcribed from the vendors'
+  pseudocode as functions on lanes (trusted, below). `src/isa_ref.rs`
+  implements them, verified, for the tests that check them against the
+  CPU.
+- `src/shani.rs`: the SHA-NI kernel, over one-line wrappers of the
+  instructions whose `ensures` are their `isa` specifications.
+- `src/armv8.rs`: the ARMv8 SHA2 and SHA512 kernels, the same way. On
+  other targets the wrappers are `isa_ref`, so the kernels run (slowly)
+  everywhere.
+- `src/sha_lemmas.rs`: lemmas the kernels share: addition modulo 2^32,
+  the rounds and the schedule four steps at a time.
+- `src/cpu.rs`: the kernel dispatch, verified, and the verified kernels
+  compiled again with BMI2 or AVX2 (trusted, below).
 - `src/avx2.rs`: the AVX2 message schedules, two blocks at once, whole or
   a few words at a time for the pipelined kernels, written with
   verilith-simd's safe intrinsics.
@@ -116,20 +136,22 @@ What the proofs here assume rather than prove:
   H(0) come from the fractional parts of cube and square roots of primes,
   computed with exact integer roots, and the SHA-512/224 and SHA-512/256
   H(0) come from running FIPS 180-4's IV generation function (§5.3.6).
-- `src/cpu.rs`, the two `external_body` functions `compress_blocks` and
-  `compress512_blocks`: that the SHA-NI kernel (x86-64), the ARMv8 SHA2
-  kernel and the ARMv8.2 SHA512 kernel (AArch64) compute what the
-  verified portable kernels compute. They are tested against them
-  (`tests/kernels.rs`, `tests/kernels512.rs`: every length up to 40 and
-  24 blocks, from random states) and against RustCrypto's `sha2` and
-  OpenSSL. CI runs the ARMv8 kernels on an Arm runner and under qemu.
-  Without those instructions the verified kernels run, with nothing
-  assumed. On x86-64 with BMI2 they run compiled a second time with BMI2
-  enabled: the same verified code with other instruction selection, as
-  verilith-core does for Adler-32 with AVX2, and tested the same way.
-  `pair_avx2` and `pair256_avx2` are in the same position: each is the
-  verified `pair_kw` compiled with AVX2 and out of line, trusted only to
-  be that function.
+- `src/isa.rs`: the specifications of the SHA instructions, from the
+  Intel and Arm manuals. `tests/isa.rs` runs every instruction on 200,000
+  random operands against `isa_ref` (natively on x86-64 with SHA-NI, on
+  AArch64 natively and under qemu in CI).
+- `src/shani.rs` and `src/armv8.rs`: one `external_body` wrapper per
+  instruction (as verilith-simd's and verilith-core's are), the run-time
+  detection of the extensions, and `compress_blocks` (and
+  `compress512_blocks`), which call the verified kernel compiled with the
+  extension enabled, trusted only to be that function.
+- `src/cpu.rs`: `bmi2_256`, `bmi2_512`, `avx2_256` and `avx2_512`, the
+  verified portable and pipelined kernels compiled with BMI2 (and AVX2),
+  as verilith-core does for Adler-32 with AVX2; and `pair_avx2` and
+  `pair256_avx2`, the verified `pair_kw` compiled with AVX2 and out of
+  line. Each is trusted only to be that function, and all are tested
+  against the portable kernels (`tests/kernels.rs`, `tests/kernels512.rs`)
+  and RustCrypto's `sha2`.
 - `src/avx2.rs`, three `external_body` functions. `schedule512x2` and
   `schedule256x2` call the verified `schedule512x2_body` and
   `schedule256x2_body` compiled with AVX2 enabled (Verus does not accept
@@ -156,11 +178,25 @@ What the proofs here assume rather than prove:
 - `src/digest_impls.rs`: the `digest` trait impls are not verified. Each
   method calls the verified method of the same name and copies its array
   into the trait's output type.
-- The constant-time tag comparison in the MACs' `verify` is proven to be
-  equality; that it takes the same time for any tag of a given length is
-  by inspection (it reads every byte and ORs the differences, with no
-  early exit), not proven.
+- That the time does not depend on secrets is not proven but checked on
+  the compiled code (below).
 - Verus, Z3 and the Rust compiler.
+
+## Constant time
+
+`./ci.sh ct` runs `examples/ctgrind.rs` under Valgrind's memcheck with the
+message, the key, the chaining state and the tag given to `verify` marked
+undefined, as Adam Langley's ctgrind does. Memcheck then reports every
+conditional branch and every memory address that depends on them, and it
+reports none: not in the portable kernels nor their BMI2 and AVX2 builds,
+the six hashers over every length up to 300, or the six MACs with every
+key length up to 300 and `verify` on right, wrong and wrong-length tags.
+Two leaking controls (an early-exit compare, a lookup at a secret index)
+must be reported first, so a check that saw nothing would fail. Lengths
+are public. Valgrind's CPU has no SHA-NI, so that kernel's machine code is
+checked instead: two conditional jumps, both on the length, and no calls.
+[TRUST.md](https://github.com/verilith/verilith/blob/main/crates/sha2/TRUST.md#constant-time) says what this does not
+cover.
 
 ## Without `std`
 
@@ -240,6 +276,9 @@ Departures from OpenSSL:
   (`libcrypto.so.3`, or `VSHA2_LIBCRYPTO`) loaded with `dlopen`. That
   covers one-shot and streamed, every length up to 600 and some longer,
   in six patterns of pieces, plus the C API's edge cases.
+- `tests/isa.rs`: each SHA instruction on random operands against its
+  specification (through `isa_ref`), and the ARMv8 kernels against the
+  portable ones.
 - `tests/vectors512.rs`, `tests/kernels512.rs`, `tests/openssl512.rs`:
   the same for the 64-bit family. They cover FIPS 180-2's SHA-384 and
   SHA-512 examples and NIST's SHA-512/t examples, every length up to
@@ -314,12 +353,8 @@ What the speed rests on:
 - Streamed SHA-512 through the C API is 10 to 25% behind OpenSSL 4.1 in
   vbench (below): a piece that ends a block compresses one block at a
   time, where the AVX2 kernels are fastest two at a time.
-- Verifying the SHA-NI and ARMv8 kernels against specifications of the
-  instructions in [verilith-simd](https://github.com/verilith/verilith/tree/main/crates/simd), as verilith-core does for
-  AArch64's `crc32x`.
-- A proof that the portable kernel's time does not depend on the data. It
-  has no branch or memory index that depends on the message, but this
-  is by inspection, not proven.
+- A mechanical constant-time check of the ARMv8 kernels (Valgrind's
+  check runs on x86-64 only).
 
 ## Verifying
 

@@ -5,8 +5,9 @@
 //
 // - [`spec`]: DER and the RFC 5280 certificate profile as pure functions
 //   (the trusted specification).
-// - [`der`], [`time`], [`x509`], [`ext`], [`cert`]: the parser, proven to
-//   compute exactly the spec.
+// - [`der`], [`time`], [`x509`], [`ext`], [`cert`], `dedup`: the parser,
+//   proven to compute exactly the spec, in at most `cert::parse_cost(n)`
+//   steps.
 // - [`iter`]: iterators over names, extensions and GeneralNames, proven to
 //   yield exactly the spec's lists.
 // - [`api`], [`error`]: unverified conveniences (`Iterator` impls, text,
@@ -15,8 +16,10 @@
 // - `native` (feature `capi`): the unverified native C API,
 //   `include/vx509.h`.
 //
-// The crate is `no_std` and never allocates. The `alloc` feature (on by
-// default, through `std`) adds [`oid_to_string`].
+// The crate is `no_std`. The `alloc` feature (on by default, through
+// `std`) adds [`oid_to_string`] and lets the duplicate-extension check sort
+// (`dedup`) instead of comparing every pair; it allocates only for a list
+// with more than eight extensions outside the low id-ce arcs.
 #![no_std]
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -27,6 +30,9 @@ pub mod api;
 pub mod cert;
 #[doc(hidden)]
 pub mod der;
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub mod dedup;
 #[doc(hidden)]
 pub mod error;
 #[doc(hidden)]
