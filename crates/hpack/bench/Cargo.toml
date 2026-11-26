@@ -1,0 +1,24 @@
+[package]
+name = "vhpack-bench"
+publish = false
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+verilith-hpack = { path = ".." }
+# h2's own HPACK encoder: run.sh copies h2 into ext/h2 and makes its
+# private `hpack` module public, nothing else.
+h2 = { path = "ext/h2" }
+http = "1"
+bytes = "1"
+
+[build-dependencies]
+cc = "1"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+debug = 1
+
+# Its own project, outside the verilith workspace.
+[workspace]

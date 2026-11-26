@@ -32,6 +32,9 @@ pub use verilith_font as font;
 /// `verilith-gif`: GIF decoder.
 #[cfg(feature = "gif")]
 pub use verilith_gif as gif;
+/// `verilith-h2`: HTTP/2 frames.
+#[cfg(feature = "h2")]
+pub use verilith_h2 as h2;
 /// `verilith-h3`: HTTP/3 framing.
 #[cfg(feature = "h3")]
 pub use verilith_h3 as h3;
@@ -53,6 +56,9 @@ pub use verilith_lz4 as lz4;
 /// `verilith-png`: PNG decoder.
 #[cfg(feature = "png")]
 pub use verilith_png as png;
+/// `verilith-quic`: the QUIC wire format and transport state machines.
+#[cfg(feature = "quic")]
+pub use verilith_quic as quic;
 /// `verilith-regex`: regular expressions.
 #[cfg(feature = "regex")]
 pub use verilith_regex as regex;
@@ -74,6 +80,9 @@ pub use verilith_text as text;
 /// `verilith-tiff`: TIFF decoder.
 #[cfg(feature = "tiff")]
 pub use verilith_tiff as tiff;
+/// `verilith-tls`: TLS 1.3 message parsing.
+#[cfg(feature = "tls")]
+pub use verilith_tls as tls;
 /// `verilith-url`: WHATWG URL parser.
 #[cfg(feature = "url")]
 pub use verilith_url as url;

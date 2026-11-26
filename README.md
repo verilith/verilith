@@ -97,20 +97,24 @@ not proofs.
 | [`verilith-dns`](crates/dns) | A formally verified (Verus) DNS message parser and serializer, and a drop-in parser for c-ares | [proven](crates/dns#what-is-proven), [trusted](crates/dns#trusted-computing-base) |
 | [`verilith-font`](crates/font) | A formally verified (Verus) OpenType font sanitizer | [proven](crates/font#what-is-proven), [trusted](crates/font/TRUST.md) |
 | [`verilith-gif`](crates/gif) | A formally verified (Verus) GIF decoder: LZW, interlacing and graphic control, checked against giflib, with giflib's decoding C API | [proven](crates/gif#what-is-proven), [trusted](crates/gif#trusted-base) |
-| [`verilith-hpack`](crates/hpack) | An HPACK (RFC 7541) header decoder formally verified with Verus, with nghttp2's inflater API | [proven](crates/hpack#what-is-proven), [trusted](crates/hpack#trusted-computing-base) |
+| [`verilith-h2`](crates/h2) | An HTTP/2 (RFC 9113) frame parser and serializer formally verified with Verus, sans I/O, proven to round-trip | [proven](crates/h2#what-is-proven), [trusted](crates/h2#trusted-computing-base) |
 | [`verilith-h3`](crates/h3) | Sans-I/O HTTP/3 (RFC 9114) framing formally verified with Verus: varints, frames, stream types and the frame-order rules | [proven](crates/h3#what-is-proven), [trusted](crates/h3#trusted-computing-base) |
+| [`verilith-hpack`](crates/hpack) | An HPACK (RFC 7541) header decoder formally verified with Verus, with nghttp2's inflater API | [proven](crates/hpack#what-is-proven), [trusted](crates/hpack#trusted-computing-base) |
 | [`verilith-http`](crates/http) | A fast HTTP/1.1 parser formally verified with Verus | [proven](crates/http#what-is-proven), [trusted](crates/http#trusted-computing-base) |
 | [`verilith-jpeg`](crates/jpeg) | A formally verified (Verus) JPEG decoder: baseline and progressive Huffman | [proven](crates/jpeg#what-is-proven), [trusted](crates/jpeg/TRUST.md) |
 | [`verilith-json`](crates/json) | A fast JSON parser, proven correct with Verus: exactly RFC 8259, no panics, bounded recursion. Includes serde support and a cJSON-compatible C ABI. | [proven](crates/json#what-is-proven), [trusted](crates/json#what-is-not-proven) |
 | [`verilith-lz4`](crates/lz4) | A formally verified (Verus) LZ4 compressor and decompressor (block and frame formats) with liblz4's C API | [proven](crates/lz4#what-is-proven), [trusted](crates/lz4/TRUST.md) |
 | [`verilith-png`](crates/png) | A formally verified (Verus) PNG decoder | [proven](crates/png#what-is-proven), [trusted](crates/png#trusted-base) |
+| [`verilith-quic`](crates/quic) | The QUIC (RFC 9000) wire format and transport state machines, formally verified with Verus: packet headers, frames, transport parameters, flow control, stream states and the anti-amplification limit | [proven](crates/quic#what-is-proven), [trusted](crates/quic#trusted-base) |
 | [`verilith-regex`](crates/regex) | A linear-time regular expression engine (RE2 syntax and semantics) formally verified with Verus | [proven](crates/regex#what-is-proven), [trusted](crates/regex/TRUST.md) |
+| [`verilith-server`](crates/server) | A formally verified (Verus) HTTP server built from the Verilith parsers: HTTP/1.1 today, with responses proven to parse back exactly; HTTP/2, TLS and HTTP/3 planned in its DESIGN.md | [proven](crates/server#what-is-proven), [trusted](crates/server/TRUST.md) |
 | [`verilith-sha2`](crates/sha2) | Formally verified (Verus) SHA-2 (FIPS 180-4): SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224 and SHA-512/256, with SHA-NI and ARMv8 kernels, behind OpenSSL's `SHA*` C API | [proven](crates/sha2#what-is-proven), [trusted](crates/sha2#trusted-base) |
 | [`verilith-simd`](crates/simd) | Verus specifications for x86 SIMD intrinsics (SSE2..AVX2, some AVX-512) and AArch64 NEON, differentially tested against the CPU | [trusted](crates/simd#trusted-base) |
 | [`verilith-snappy`](crates/snappy) | A formally verified (Verus) Snappy compressor and decompressor with the snappy-c API | [proven](crates/snappy#what-is-proven), [trusted](crates/snappy/TRUST.md) |
 | [`verilith-sync`](crates/sync) | Formally verified (Verus) concurrency primitives: SPSC and MPMC queues, channels, and locks, as drop-ins for rtrb, crossbeam and parking_lot | [proven](crates/sync#what-is-proven), [trusted](crates/sync/TRUST.md) |
 | [`verilith-text`](crates/text) | Formally verified (Verus) text encodings and Unicode: base64, hex, percent-encoding, Unicode normalization and IDNA (UTS #46) | [proven](crates/text#what-is-proven), [trusted](crates/text#the-trusted-base) |
 | [`verilith-tiff`](crates/tiff) | A formally verified (Verus) TIFF decoder: strips and tiles, PackBits, LZW and Deflate, the predictor, checked against libtiff, with libtiff's reading C API | [proven](crates/tiff#what-is-proven), [trusted](crates/tiff#trusted-base) |
+| [`verilith-tls`](crates/tls) | TLS 1.3 (RFC 8446) message parsing, handshake state machine and key schedule, formally verified with Verus | [proven](crates/tls#what-is-proven), [trusted](crates/tls#trusted-base) |
 | [`verilith-url`](crates/url) | A formally verified (Verus) WHATWG URL parser | [proven](crates/url#what-is-proven), [trusted](crates/url#trusted-computing-base) |
 | [`verilith`](crates/verilith) | Formally verified (Verus) drop-in replacements for foundational libraries: one crate that re-exports each verilith-* library behind a feature | no code of its own |
 | [`verilith-wasm`](crates/wasm) | A formally verified (Verus) WebAssembly validator and sandboxed interpreter | [proven](crates/wasm#what-is-proven), [trusted](crates/wasm#trusted-base) |
@@ -291,7 +295,7 @@ the one `scripts/profile <name>` prints:
 |---|---|---|
 | `release` | 1 codegen unit, thin LTO | every crate not listed below |
 | `release-fat` | 1 codegen unit, fat LTO | text, url, x509 |
-| `release-abort` | 1 codegen unit, fat LTO, `panic = "abort"` | json, http, hpack, h3, regex, bind, xml |
+| `release-abort` | 1 codegen unit, fat LTO, `panic = "abort"` | json, http, hpack, h2, h3, regex, bind, xml |
 
 So the drop-in JSON library is built with
 `cargo build --profile release-abort --features cjson` and lands in

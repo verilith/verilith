@@ -1,19 +1,19 @@
 //! Unicode normalization (NFC, NFD, NFKC, NFKD), verified against the
 //! algorithm of UAX #15 over the Unicode 18.0 data.
 //!
-//! The functions here are the unverified glue: each passes the bytes of a
-//! `&str` to the verified [`norm::normalize_into`], whose precondition (the
-//! bytes are the UTF-8 encoding of some scalars) is what `&str` guarantees,
-//! and turns the result back into a `String`, which is UTF-8 by its
-//! postcondition.
+//! The functions here are the unverified glue: each passes a `&str` to
+//! the verified entry points in [`strs`] (which prove, from vstd's model of
+//! `str`, that its bytes are the UTF-8 encoding of its scalars, the
+//! normalizer's precondition), and turns the result back into a `String`,
+//! which is UTF-8 by their postconditions.
 pub mod data;
 pub mod norm;
 pub mod spec;
+pub mod strs;
 /// The normalization data (generated; trusted, and checked by `tests/unicode_data.rs`).
 pub mod tables;
 
 use std::borrow::Cow;
-use vstd::prelude::Ghost;
 
 /// The forms, as `(compose, compat)`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -42,16 +42,16 @@ impl Form {
 /// Appends the normal form of `s` to `out`.
 pub fn normalize_to(s: &str, form: Form, out: &mut String) {
     let (compose, compat) = form.flags();
-    // SAFETY: `normalize_into` appends the UTF-8 encoding of scalars.
+    // SAFETY: `normalize_into_str` appends the UTF-8 encoding of scalars.
     let v = unsafe { out.as_mut_vec() };
-    norm::normalize_into(s.as_bytes(), compose, compat, v, Ghost::assume_new());
+    strs::normalize_into_str(s, compose, compat, v);
 }
 
 /// The normal form of `s`; borrowed when `s` is already normalized as far
 /// as the quick check can tell.
 pub fn normalize(s: &str, form: Form) -> Cow<'_, str> {
     let (compose, compat) = form.flags();
-    if norm::quick_check(s.as_bytes(), compose, compat, Ghost::assume_new()) {
+    if strs::quick_check_str(s, compose, compat) {
         return Cow::Borrowed(s);
     }
     let mut out = String::with_capacity(s.len() + s.len() / 4);
@@ -62,7 +62,7 @@ pub fn normalize(s: &str, form: Form) -> Cow<'_, str> {
 /// Whether `s` is in the normal form.
 pub fn is_normalized(s: &str, form: Form) -> bool {
     let (compose, compat) = form.flags();
-    norm::quick_check(s.as_bytes(), compose, compat, Ghost::assume_new()) || normalize(s, form) == s
+    strs::quick_check_str(s, compose, compat) || normalize(s, form) == s
 }
 
 /// `s` in NFC.
@@ -110,7 +110,7 @@ pub fn is_nfkd(s: &str) -> bool {
 pub fn normalize_reference(s: &str, form: Form) -> String {
     let (compose, compat) = form.flags();
     let mut v = Vec::new();
-    norm::normalize_slow(s.as_bytes(), compose, compat, &mut v, Ghost::assume_new());
-    // SAFETY: `normalize_slow` produces the UTF-8 encoding of scalars.
+    strs::normalize_slow_str(s, compose, compat, &mut v);
+    // SAFETY: `normalize_slow_str` produces the UTF-8 encoding of scalars.
     unsafe { String::from_utf8_unchecked(v) }
 }

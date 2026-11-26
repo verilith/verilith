@@ -1,0 +1,18 @@
+[package]
+name = "may-minihttp-hello"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# may-minihttp, near the top of TechEmpower's plaintext ranking: stackful
+# coroutines (may) and a minimal HTTP/1.1 server. HTTP/1.1 only.
+
+[dependencies]
+may_minihttp = "0.1"
+may = "=0.3.51"
+bytes = "1"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+panic = "abort"
