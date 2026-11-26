@@ -70,11 +70,22 @@ pub struct Ctx {
 impl Ctx {
     /// `None` if `server` or `date` is not a valid field value.
     pub fn new(server: &[u8], date: &[u8]) -> Option<Ctx> {
-        let own = [Field { name: b"Server", value: server }, Field { name: b"Date", value: date }];
-        let own_close = [own[0], own[1], Field { name: b"Connection", value: b"close" }];
+        Ctx::with_alt_svc(server, date, None)
+    }
+
+    /// [`Ctx::new`], adding `Alt-Svc: alt` to every response (RFC 7838):
+    /// how a browser that reached us over TCP learns of HTTP/3.
+    pub fn with_alt_svc(server: &[u8], date: &[u8], alt: Option<&[u8]>) -> Option<Ctx> {
+        let mut own = vec![Field { name: b"Server", value: server }, Field { name: b"Date", value: date }];
         let mut own_h2 = crate::h2::HList::default();
         own_h2.push(b"server", server);
         own_h2.push(b"date", date);
+        if let Some(a) = alt {
+            own.push(Field { name: b"Alt-Svc", value: a });
+            own_h2.push(b"alt-svc", a);
+        }
+        let mut own_close = own.clone();
+        own_close.push(Field { name: b"Connection", value: b"close" });
         Some(Ctx { own: Prepared::new(&own)?, own_close: Prepared::new(&own_close)?, empty: Prepared::empty(), own_h2 })
     }
 }

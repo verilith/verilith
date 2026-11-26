@@ -215,6 +215,10 @@ struct Worker {
     cfg: Config,
     now: i64,
     ctx: Ctx,
+    /// For TLS connections: `ctx` with Alt-Svc advertising HTTP/3, when
+    /// it is served.
+    ctx_tls: Ctx,
+    alt: Option<Vec<u8>>,
     #[cfg(feature = "h3")]
     h3: Option<crate::h3::H3>,
 }
@@ -228,6 +232,14 @@ impl Worker {
         let now = sys::unix_time();
         let ctx = Ctx::new(cfg.server, &crate::date::imf_fixdate(now))
             .ok_or_else(|| io::Error::other("the Server value is not a valid field value"))?;
+        #[allow(unused_mut)]
+        let mut alt: Option<Vec<u8>> = None;
+        #[cfg(feature = "h3")]
+        if let Some((p, _)) = &cfg.h3 {
+            alt = Some(format!("h3=\":{p}\"; ma=86400").into_bytes());
+        }
+        let ctx_tls = Ctx::with_alt_svc(cfg.server, &crate::date::imf_fixdate(now), alt.as_deref())
+            .ok_or_else(|| io::Error::other("the Server value is not a valid field value"))?;
         Ok(Worker {
             lfds,
             poll,
@@ -237,6 +249,8 @@ impl Worker {
             cfg,
             now,
             ctx,
+            ctx_tls,
+            alt,
             #[cfg(feature = "h3")]
             h3: None,
         })
@@ -261,8 +275,12 @@ impl Worker {
             let t = sys::unix_time();
             if t != self.now {
                 self.now = t;
-                if let Some(c) = Ctx::new(self.cfg.server, &crate::date::imf_fixdate(t)) {
+                let d = crate::date::imf_fixdate(t);
+                if let Some(c) = Ctx::new(self.cfg.server, &d) {
                     self.ctx = c;
+                }
+                if let Some(c) = Ctx::with_alt_svc(self.cfg.server, &d, self.alt.as_deref()) {
+                    self.ctx_tls = c;
                 }
             }
             for e in &evs {
@@ -325,8 +343,11 @@ impl Worker {
     }
 
     fn on_event<H: Handler + ?Sized>(&mut self, h: &H, id: usize, readable: bool, writable: bool) {
-        let ctx = &self.ctx;
         let Some(Some(s)) = self.slots.get_mut(id) else { return };
+        #[cfg(feature = "tls")]
+        let ctx = if matches!(s.conn, Any::Tls(_)) { &self.ctx_tls } else { &self.ctx };
+        #[cfg(not(feature = "tls"))]
+        let ctx = &self.ctx;
         let mut close = false;
         if writable || s.read_paused {
             close = flush(s);
