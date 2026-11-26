@@ -4,9 +4,10 @@ A formally verified HTTP server, built from the Verilith parsers, aiming
 for nginx- and h2o-class speed. The plan, with the theorems still to come,
 is in [DESIGN.md](DESIGN.md). This README describes what exists today.
 
-**Status: milestones 2 and 3 of the design: HTTP/1.1, and HTTP/2 over
-cleartext with prior knowledge (h2c, `--h2c PORT`).** TLS (so h2 by ALPN)
-and static files from disk are next. The API will change.
+**Status: HTTP/1.1, HTTP/2 over cleartext with prior knowledge (h2c,
+`--h2c PORT`), and TLS with h2 or http/1.1 by ALPN (`--features tls`,
+`--tls PORT --cert PEM --key PEM`; rustls for now).** Static files from
+disk with a proven path check, and HTTP/3, are next. The API will change.
 
 ```rust,no_run
 use std::sync::Arc;
@@ -24,8 +25,9 @@ fn main() {
 }
 ```
 
-`cargo run --release --bin verilith-server -- --http 8080 --root DIR`
-runs the server `bench/server` measures.
+`cargo run --release --features tls --bin verilith-server -- --http 8080
+--h2c 8081 --tls 8443 --cert C --key K --root DIR` runs the server
+`bench/server` measures.
 
 ## How it works
 
@@ -127,6 +129,12 @@ shared buffer by `writev`, not copied. HTTP/2 heads go through the
 verified HPACK encoder with its dynamic table (header bytes on the wire
 90% smaller than uncompressed, as with h2o), and streams are pooled; in
 `h2c-plaintext`, h2load is the bottleneck.
+
+TLS (rustls with aws-lc-rs, sans I/O in `tls.rs`), quick run: `h1-tls-plaintext`
+202k req/s (122k per CPU-second) against nginx 185k (100k), hyper 135k,
+h2o 115k; `h2-tls-plaintext` **1.07M** (973k) against h2o 432k (222k),
+nginx 347k, hyper 197k; `h2-tls-static-64k` 63k (34k) against hyper 56k,
+h2o 55k, nginx 45k.
 
 Connection setup (`h1-close`): accepting with `TCP_DEFER_ACCEPT` (the
 request arrives with the connection, one wakeup instead of two),

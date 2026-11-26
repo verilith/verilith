@@ -23,6 +23,16 @@ verilith-http = { path = "../http", version = "0.1.0" }
 verilith-h2 = { path = "../h2", version = "0.1.0" }
 verilith-hpack = { path = "../hpack", version = "0.1.0" }
 vstd = { workspace = true, features = ["std"] }
+# TLS (`--features tls`): rustls's record layer and handshake with
+# aws-lc-rs's cryptography, trusted (TRUST.md) until Verilith's own TLS
+# crate replaces it.
+rustls = { version = "0.23", optional = true, default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+
+[dev-dependencies]
+rcgen = "0.14"
+
+[features]
+tls = ["dep:rustls"]
 
 [package.metadata.verus]
 verify = true

@@ -20,6 +20,8 @@ pub mod h2;
 pub mod sys;
 #[cfg(not(verus_keep_ghost))]
 pub mod worker;
+#[cfg(all(feature = "tls", not(verus_keep_ghost)))]
+pub mod tls;
 
 #[cfg(not(verus_keep_ghost))]
 pub use api::*;
