@@ -50,11 +50,11 @@ not occur in any crate's `src/` (the script fails if one appears).
 | wasm | 35 |  |  |  |  | 2 | 4 |
 | webp | 10 |  |  |  |  |  | 3 |
 | x509 |  |  |  |  |  |  | 6 |
-| xml | 7 |  |  |  |  |  | 12 |
+| xml | 9 |  |  |  |  |  | 12 |
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  | 2 |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **666** | **35** | **274** | **5** | **34** | **12** | **104** |
+| **total** | **668** | **35** | **274** | **5** | **34** | **12** | **104** |
 
 ## Items
 
@@ -296,7 +296,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 - `crates/xml/src/api.rs`: plain Rust
 - `crates/xml/src/lib.rs`: plain Rust
-- `crates/xml/src/pe.rs`: external_body: `load_model`, `fetch`, `note_push`, `note_fetch`, `note_pop`
+- `crates/xml/src/pe.rs`: external_body: `load_model`, `count`, `bytes`, `fetch`, `note_push`, `note_fetch`, `note_pop`
 - `crates/xml/src/tape.rs`: external_body: `slice_len_bound`
 - `crates/xml/src/uniq.rs`: external_body: `seed`
 - `crates/xml/src/api/expat.rs`: plain Rust
