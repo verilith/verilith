@@ -61,6 +61,10 @@ fn configs(alpn: &[u8], backend: Backend) -> (Arc<Config>, Arc<rustls::ClientCon
 /// goes in pieces of at most `chunk` bytes. Returns the client's plaintext.
 fn talk(backend: Backend, alpn: &[u8], request: &[u8], chunk: usize) -> Vec<u8> {
     let (sc, cc) = configs(alpn, backend);
+    talk_with(sc, cc, request, chunk).0
+}
+
+fn talk_with(sc: Arc<Config>, cc: Arc<rustls::ClientConfig>, request: &[u8], chunk: usize) -> (Vec<u8>, rustls::ClientConnection) {
     let mut srv = TlsConn::new(sc, Limits::default(), Limits2::default()).unwrap();
     let mut cli = rustls::ClientConnection::new(cc, ServerName::try_from("localhost").unwrap()).unwrap();
     cli.writer().write_all(request).unwrap();
@@ -116,7 +120,7 @@ fn talk(backend: Backend, alpn: &[u8], request: &[u8], chunk: usize) -> Vec<u8> 
             break;
         }
     }
-    got
+    (got, cli)
 }
 
 #[test]
@@ -153,4 +157,18 @@ fn pem_decodes() {
     let pem = format!("junk\n{}{}", c.cert.pem(), c.signing_key.serialize_pem());
     assert_eq!(verilith_server::tls::pem_blocks(pem.as_bytes(), "CERTIFICATE"), vec![c.cert.der().to_vec()]);
     assert_eq!(verilith_server::tls::pem_blocks(pem.as_bytes(), "PRIVATE KEY"), vec![c.signing_key.serialize_der()]);
+}
+
+#[test]
+fn tickets_resume() {
+    for &b in BACKENDS {
+        let (sc, cc) = configs(b"http/1.1", b);
+        let req = b"GET /a HTTP/1.1\r\nHost: x\r\n\r\n";
+        let (got, c1) = talk_with(sc.clone(), cc.clone(), req, 1 << 20);
+        assert!(got.starts_with(b"HTTP/1.1 200"), "{b:?}");
+        assert_eq!(c1.handshake_kind(), Some(rustls::HandshakeKind::Full), "{b:?}");
+        let (got, c2) = talk_with(sc, cc, req, 7);
+        assert!(got.starts_with(b"HTTP/1.1 200"), "{b:?}");
+        assert_eq!(c2.handshake_kind(), Some(rustls::HandshakeKind::Resumed), "{b:?}");
+    }
 }

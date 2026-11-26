@@ -189,14 +189,14 @@ with requests per server CPU-second in brackets: `h1-tls-plaintext` 221k
 `h2-tls-plaintext` **1.16M** (1.11M) against h2o 535k (270k), nginx 372k,
 hyper 226k; `h2-tls-static-64k` **71k** (38k) against h2o 65k (34k), hyper
 57k, nginx 41k. The same server on rustls (`--tls-backend rustls`) is within
-the run-to-run noise of it (209k, 1.35M, 64k). `h1-tls-close`, a full
-handshake per request: 7.0k requests per server CPU-second, against hyper
-5.4k and nginx 3.2k; its req/s (3.2k, against hyper 6.5k and nginx 5.5k) is
-wrk's own CPU, since verilith-tls sends no session tickets yet and the
-others let wrk resume. A TLS 1.3 server that sends no ticket answers the
-client's Finished with nothing, so a client with Nagle on would hold its
-request for the kernel's 40 ms delayed ACK: the server sets `TCP_QUICKACK`
-while handshaking.
+the run-to-run noise of it (209k, 1.35M, 64k). `h1-tls-close`, a new
+connection per request, with session tickets (shared by all workers, so
+a ticket from one resumes on any; `results/2026-11-26-cloud-tls-tickets`):
+5.6k req/s and **8.2k** per server CPU-second, against hyper 6.4k (4.9k),
+nginx 6.0k (3.4k) and h2o 4.0k (2.5k); there wrk's own CPU is the limit.
+A TLS 1.3 server answers a client's Finished with nothing when it sends no
+ticket, so a client with Nagle on would hold its request for the kernel's
+40 ms delayed ACK: the server sets `TCP_QUICKACK` while handshaking.
 
 Connection setup (`h1-close`): accepting with `TCP_DEFER_ACCEPT` (the
 request arrives with the connection, one wakeup instead of two),
