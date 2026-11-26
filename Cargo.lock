@@ -1394,6 +1394,7 @@ dependencies = [
  "verilith-json",
  "verilith-lz4",
  "verilith-png",
+ "verilith-quic",
  "verilith-regex",
  "verilith-sha2",
  "verilith-simd",

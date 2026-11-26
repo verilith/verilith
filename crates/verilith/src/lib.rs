@@ -50,6 +50,9 @@ pub use verilith_lz4 as lz4;
 /// `verilith-png`: PNG decoder.
 #[cfg(feature = "png")]
 pub use verilith_png as png;
+/// `verilith-quic`: the QUIC wire format and transport state machines.
+#[cfg(feature = "quic")]
+pub use verilith_quic as quic;
 /// `verilith-regex`: regular expressions.
 #[cfg(feature = "regex")]
 pub use verilith_regex as regex;

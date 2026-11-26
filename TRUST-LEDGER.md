@@ -38,6 +38,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | json | 26 |  |  |  | 2 |  | 7 |
 | lz4 |  |  |  |  |  |  | 1 |
 | png | 2 |  |  |  |  |  | 7 |
+| quic |  |  |  |  |  |  | 1 |
 | regex | 7 |  |  |  |  |  | 2 |
 | sha2 | 34 |  |  |  |  |  | 3 |
 | simd | 362 | 6 | 274 | 4 |  |  | 3 |
@@ -54,7 +55,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  | 2 |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **666** | **35** | **274** | **5** | **34** | **12** | **104** |
+| **total** | **666** | **35** | **274** | **5** | **34** | **12** | **105** |
 
 ## Items
 
@@ -167,6 +168,10 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/png/src/libpng/read.rs`: plain Rust
 - `crates/png/src/libpng/stubs.rs`: plain Rust
 - `crates/png/src/libpng/xform.rs`: plain Rust
+
+### quic
+
+- `crates/quic/src/lib.rs`: plain Rust
 
 ### regex
 

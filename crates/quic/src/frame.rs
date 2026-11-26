@@ -9,7 +9,9 @@
 use crate::spec::*;
 use crate::varint;
 use vstd::prelude::*;
-use verilith_core::prims::extend;
+use verilith_core::prims::{extend, load_u64_le};
+#[cfg(verus_only)]
+use verilith_core::prims::{le_bytes, le_word};
 use vstd::slice::slice_subrange;
 
 verus! {
@@ -304,7 +306,7 @@ fn read_bytes<'a>(b: &'a [u8], p: usize) -> (r: Option<(&'a [u8], usize)>)
     take_exec(b, p1, n)
 }
 
-/// The number of zero bytes from `p`.
+/// The number of zero bytes from `p`, eight at a time.
 #[inline(always)]
 fn count_zeros(b: &[u8], p: usize) -> (r: usize)
     requires
@@ -314,6 +316,17 @@ fn count_zeros(b: &[u8], p: usize) -> (r: usize)
         p + r <= b@.len(),
 {
     let mut i = p;
+    while i <= b.len() && b.len() - i >= 8 && load_u64_le(b, i) == 0
+        invariant
+            p <= i <= b@.len(),
+            zeros(b@, p as int) == (i - p) + zeros(b@, i as int),
+        decreases b@.len() - i,
+    {
+        proof {
+            lemma_zero_word(b@, i as int);
+        }
+        i = i + 8;
+    }
     while i < b.len() && b[i] == 0
         invariant
             p <= i <= b@.len(),
@@ -326,6 +339,21 @@ fn count_zeros(b: &[u8], p: usize) -> (r: usize)
         lemma_zeros_bound(b@, i as int);
     }
     i - p
+}
+
+/// Eight zero bytes are eight more zeros.
+proof fn lemma_zero_word(b: Seq<u8>, i: int)
+    requires
+        0 <= i,
+        i + 8 <= b.len(),
+        le_word(b, i) == 0,
+    ensures
+        zeros(b, i) == 8 + zeros(b, i + 8),
+{
+    reveal_with_fuel(le_bytes, 9);
+    assert(b[i] == 0 && b[i + 1] == 0 && b[i + 2] == 0 && b[i + 3] == 0);
+    assert(b[i + 4] == 0 && b[i + 5] == 0 && b[i + 6] == 0 && b[i + 7] == 0);
+    reveal_with_fuel(zeros, 9);
 }
 
 proof fn lemma_zeros_bound(b: Seq<u8>, p: int)

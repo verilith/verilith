@@ -1,1 +1,140 @@
 # verilith-quic
+
+The QUIC version 1 (RFC 9000) wire format and transport state machines,
+written in Rust and proven correct with
+[Verus](https://github.com/verus-lang/verus): packet headers, packet
+numbers, all twenty frame types, transport parameters, flow control,
+stream IDs and stream states, and the anti-amplification limit. It is
+sans-I/O and borrows from the caller's buffers: parsing allocates nothing.
+
+It is the part of a QUIC stack that reads bytes from the network. The
+cryptography (packet and header protection, TLS 1.3), loss recovery and
+congestion control are not part of it; in Verilith's HTTP/3 server they
+stay in quinn-proto, trusted.
+
+## What is proven
+
+`src/spec.rs` is the specification, written from RFC 9000 as pure
+functions: a parser for each structure, from the whole input and a
+position, and an encoder that always chooses the shortest integers. The
+proofs show, with no panics and no unproven arithmetic anywhere:
+
+- **Variable-length integers** (§16, `varint`): `read` is `spec::varint`,
+  `write` is `spec::varint_enc`, and every value below `2^62` reads back.
+- **Frames** (§12.4, §19, `frame`): `parse` is `spec::frame` for all
+  twenty frame types, and `encode` is `spec::frame_enc`. The round trip
+  (`lemmas::lemma_frame_roundtrip`): the encoding of every valid frame,
+  at any position and followed by anything that may follow it, parses back
+  to the same frame and ends where the encoding ends. The checks the RFC
+  makes connection errors are part of the spec: ACK ranges that would make
+  a packet number negative, a STREAM or CRYPTO frame past `2^62 - 1`,
+  MAX_STREAMS and STREAMS_BLOCKED above `2^60`, an empty NEW_TOKEN, a
+  NEW_CONNECTION_ID whose Retire Prior To exceeds its sequence number or
+  whose connection ID is not 1 to 20 bytes, and a frame type not in its
+  shortest encoding. ACK ranges are checked when the frame is parsed and
+  read lazily, as packet numbers, with `Ack::ranges`.
+- **Packet headers** (§17, `packet`): `parse_header` is `spec::header`:
+  Initial, 0-RTT, Handshake, Retry, Version Negotiation, other versions'
+  invariant fields (RFC 8999) and 1-RTT, as they are before header
+  protection is removed, with the fixed bit, connection ID lengths and the
+  Length field checked against the datagram. `packet_end` finds where each
+  of a datagram's coalesced packets ends (§12.2). `encode_header` is
+  `spec::header_enc`, and every valid header reads back
+  (`lemmas::lemma_header_roundtrip`).
+- **Packet numbers** (§17.1, Appendix A): `decode_pn` is Appendix A.3,
+  and the theorem `lemmas::lemma_decode_pn` says it recovers every packet
+  number within half a window of the one expected. With `pn_len`
+  (Appendix A.2), `lemmas::lemma_pn_roundtrip`: a packet number encoded
+  with the length the sender chose is recovered by any receiver whose
+  largest received packet is at or past the sender's largest acknowledged.
+- **Transport parameters** (§18, `params`): `parse` is
+  `spec::transport_params` (all of RFC 9000's and RFC 9221's
+  max_datagram_frame_size; duplicates and invalid values rejected, unknown
+  ones ignored), `encode` is `spec::transport_params_enc`, and valid
+  parameters read back (`lemmas::lemma_transport_params_roundtrip`).
+  `client_ok` checks a client sent none of the server-only parameters.
+- **Flow control** (§4.1, `flow`): a `RecvCredit` never lets the peer's
+  usage exceed what was advertised, and reports FLOW_CONTROL_ERROR
+  otherwise; a `SendCredit` never spends past the peer's limit and
+  ignores limits that would decrease.
+- **Streams** (§2.1, §3, §4.5, §4.6, `streams`): the sending and receiving
+  states move only along the arrows of RFC 9000's Figures 2 and 3
+  (`send_step`, `recv_step`). A stream's final size never changes once
+  known, no data is accepted past it (FINAL_SIZE_ERROR), and every byte
+  offset is counted against both the stream's and the connection's limit,
+  so the connection's count is always the sum of its streams' (each call
+  changes both by the same amount). A sender's RESET_STREAM carries exactly
+  the bytes it sent. `StreamIds` rejects frames for streams in the wrong
+  direction or not yet opened (STREAM_STATE_ERROR) and beyond the limit
+  advertised (STREAM_LIMIT_ERROR), and the peer never has more streams
+  open than allowed.
+- **Anti-amplification** (§8.1, `amplification`): `Budget`'s invariant is
+  the RFC's sentence: before the address is validated, the bytes sent are
+  at most three times the bytes received, after any sequence of calls.
+
+Every loop in a parser consumes input, so parsing is linear in the input;
+the PADDING scan reads eight bytes at a time.
+
+## Trusted base
+
+- `src/spec.rs`: the specification. Reading it against RFC 9000 is what
+  the proofs cannot do for you.
+- `verilith-core`'s `extend` (a `memcpy` into a `Vec`) and `load_u64_le`,
+  and vstd's `slice_subrange`.
+- Verus, Z3 and rustc.
+
+There is no `external_body`, `assume` or `unsafe` in this crate.
+
+Not covered: RFC 9221 DATAGRAM frames and other extensions (types
+0x30, 0x31, ACK_FREQUENCY) are rejected as unknown frame types; QUIC
+version 2 (RFC 9369) headers are reported as another version.
+
+## Tests
+
+`cargo test` runs RFC 9000's Appendix A examples, and round trips of
+random frames, headers and transport parameters through the encoders and
+parsers.
+
+`bench/` compares verilith-quic with quinn-proto 0.11.19 and quiche
+0.24.9 (`bench/setup.sh` copies them from crates.io and makes their frame
+parsers public; nothing else in them changes).
+`cargo run --release --bin agree` is a differential test:
+
+- 200,000 valid frames of every type, encoded by verilith-quic, are read
+  identically by all three.
+- Of 200,000 mutated frames (bytes changed, inserted, cut), every
+  disagreement is one where verilith-quic rejects a frame RFC 9000 makes
+  an error and the others accept it at parse time; the test fails on any
+  other. In the last run: 852 extension frame types that were not
+  negotiated and 282 frame types in a longer encoding than needed
+  (§12.4), 750 stream counts above `2^60` (§19.11, §19.14), 61 Retire
+  Prior To values above the Sequence Number (§19.15) and 11 empty
+  NEW_TOKEN frames (§19.7).
+
+## Performance
+
+`bench/run.sh`, on a 4-vCPU cloud x86 VM (Xeon, 2.1 GHz), fastest of three
+runs, in nanoseconds. The frame rows parse every frame of a decrypted
+1-RTT payload and read what a receiver reads (data lengths, ACK ranges).
+
+| | verilith-quic | quinn-proto | quiche |
+|---|---:|---:|---:|
+| frames: server data (ACK, STREAM of 1100 bytes) | **30** | 89 | 122 |
+| frames: client ACK of 8 ranges with ECN, 3 credit frames, PING | **74** | 136 | 333 |
+| frames: handshake end (CRYPTO, 3 NEW_CONNECTION_ID, NEW_TOKEN) | **46** | 154 | 183 |
+| frames: 20 small STREAM frames | **107** | 551 | 1071 |
+| frames: CRYPTO and 900 bytes of PADDING | **71** | 4649 | 700 |
+| header: client Initial, 1200 bytes | **6.6** | 118 (36 of it copying into `BytesMut`) | 45 |
+| header: 1-RTT | **2.9** | 73 (23 of it copying) | 16 |
+| transport parameters (a server's 13) | **54** | 90 | 459 |
+| 1000 varints of mixed lengths | **1246** | 1596 | 1562 |
+| encode: ACK of 8 ranges | **48** | | 205 |
+| encode: STREAM of 1100 bytes | 19 | **14** | 15 |
+
+quinn-proto's header parser takes a `BytesMut` it owns, so its time
+includes making one from the datagram; the row also gives the copy alone.
+quiche copies STREAM and CRYPTO data out of the packet; verilith-quic and
+quinn-proto borrow it. STREAM encoding is the one row verilith-quic does
+not lead: it pushes the header's bytes into a `Vec` one at a time, where
+the others write into a buffer of known size. An encoder into a fixed
+buffer is the fix.

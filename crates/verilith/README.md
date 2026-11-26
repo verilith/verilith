@@ -30,6 +30,7 @@ shortest dependency list, depend on that crate directly.
 | `json` | `verilith::json` | [`verilith-json`](https://github.com/verilith/verilith/tree/main/crates/json) | JSON parser |
 | `lz4` | `verilith::lz4` | [`verilith-lz4`](https://github.com/verilith/verilith/tree/main/crates/lz4) | LZ4 |
 | `png` | `verilith::png` | [`verilith-png`](https://github.com/verilith/verilith/tree/main/crates/png) | PNG decoder |
+| `quic` | `verilith::quic` | [`verilith-quic`](https://github.com/verilith/verilith/tree/main/crates/quic) | QUIC (RFC 9000) packets, frames, transport parameters, flow control and stream states |
 | `regex` | `verilith::regex` | [`verilith-regex`](https://github.com/verilith/verilith/tree/main/crates/regex) | regular expressions |
 | `sha2` | `verilith::sha2` | [`verilith-sha2`](https://github.com/verilith/verilith/tree/main/crates/sha2) | SHA-2: SHA-224 to SHA-512 |
 | `simd` | `verilith::simd` | [`verilith-simd`](https://github.com/verilith/verilith/tree/main/crates/simd) | verified SIMD kernels |
