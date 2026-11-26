@@ -47,6 +47,10 @@ const MAX_CRYPTO_BUFFER: usize = 64 * 1024;
 /// Frames recorded per packet are packed in a token with the count in the
 /// low byte.
 const MAX_FRAMES: usize = 255;
+/// The most bytes one batch for segmentation offload may hold: a UDP
+/// payload's maximum over IPv4.
+pub const GSO_BYTES: usize = 65507;
+
 /// A datagram this close to full still starts a batch for segmentation
 /// offload.
 const BATCH_SLACK: usize = 32;
@@ -1627,6 +1631,11 @@ impl<P: Provider> Connection<P> {
         let mut count = 0;
         while count < max.max(1) {
             let limit = seg.unwrap_or(mds);
+            // A batch for segmentation offload is one UDP payload of at
+            // most 65507 bytes (Linux: and at most 64 segments).
+            if count > 0 && buf.len() + limit > GSO_BYTES {
+                break;
+            }
             let n = self.build_datagram(now, buf, limit, seg);
             if n == 0 {
                 break;

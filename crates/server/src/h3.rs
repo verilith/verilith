@@ -538,8 +538,12 @@ struct VConn {
     deadline: Option<Instant>,
 }
 
-/// Datagrams per `sendmsg` with segmentation offload.
-const BATCH: usize = 16;
+/// Datagrams per `sendmsg` with segmentation offload: Linux's limit
+/// (UDP_MAX_SEGMENTS), and verilith-quic-conn also keeps a batch within
+/// one UDP payload. 16 sent a 64 KiB response in three or four batches,
+/// against nginx-quic's one or two, and the extra sends and receives
+/// left the server waiting on the client.
+const BATCH: usize = 64;
 const RECV_ROOM: usize = 64 * 1024;
 
 impl H3 {
