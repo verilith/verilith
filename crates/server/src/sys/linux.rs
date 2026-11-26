@@ -13,6 +13,11 @@ pub const IPPROTO_TCP: c_int = 6;
 pub const TCP_NODELAY: c_int = 1;
 /// The kernel spreads connections across SO_REUSEPORT sockets.
 pub const REUSEPORT_BALANCES: bool = true;
+/// Accepted sockets inherit TCP_NODELAY from the listener.
+pub const NODELAY_INHERITED: bool = true;
+/// Wake `accept` only once the client has sent data (nginx's `deferred`):
+/// the request arrives with the connection, one wakeup instead of two.
+pub const TCP_DEFER_ACCEPT: Option<c_int> = Some(9);
 
 const EPOLL_CLOEXEC: c_int = 0o2000000;
 const EPOLL_CTL_ADD: c_int = 1;

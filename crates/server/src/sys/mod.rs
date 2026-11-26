@@ -100,6 +100,12 @@ pub fn listen_tcp(addr: [u8; 4], port: u16, reuseport: bool, backlog: i32) -> io
             close(fd);
             return Err(e);
         }
+        // Best effort: the server is correct without either.
+        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one as *const c_int as *const u8, 4);
+        if let Some(opt) = TCP_DEFER_ACCEPT {
+            let secs: c_int = 1;
+            setsockopt(fd, IPPROTO_TCP, opt, &secs as *const c_int as *const u8, 4);
+        }
         cvt(listen(fd, backlog))?;
         Ok(fd)
     }
