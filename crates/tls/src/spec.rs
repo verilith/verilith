@@ -683,4 +683,277 @@ pub open spec fn parse_client_hello(b: Seq<u8>) -> Result<SpecHello, SpecAlert> 
     }
 }
 
+// ---------------------------------------------------------------------------
+// Negotiation: what a TLS 1.3 server chooses from a ClientHello (§4.1.1)
+// ---------------------------------------------------------------------------
+
+/// `ProtocolVersion` of TLS 1.3 (§4.2.1).
+pub const TLS13: u16 = 0x0304;
+
+/// The 2-byte values in `[s, e)`, in order.
+pub open spec fn u16s(b: Seq<u8>, s: int, e: int) -> Seq<u16> {
+    Seq::new(((e - s) / 2) as nat, |i: int| be16(b, s + 2 * i) as u16)
+}
+
+/// The first of `prefs[i..]` that `offered` contains: the server's
+/// preference wins, as in rustls (§4.1.1 leaves the choice to the server).
+pub open spec fn first_in(prefs: Seq<u16>, i: int, offered: Seq<u16>) -> Option<u16>
+    decreases prefs.len() - i,
+{
+    if i < 0 || i >= prefs.len() {
+        None
+    } else if offered.contains(prefs[i]) {
+        Some(prefs[i])
+    } else {
+        first_in(prefs, i + 1, offered)
+    }
+}
+
+/// The key_exchange of the first `KeyShareEntry` for group `g` in
+/// `[pos, end)` (§4.2.8).
+pub open spec fn find_share(b: Seq<u8>, pos: int, end: int, g: u16) -> Option<(int, int)>
+    decreases end - pos,
+{
+    if pos < 0 || pos >= end {
+        None
+    } else {
+        match vec16(b, pos + 2, end) {
+            None => None,
+            Some((s, e)) => if be16(b, pos) == g as nat {
+                Some((s, e))
+            } else {
+                find_share(b, e, end, g)
+            },
+        }
+    }
+}
+
+/// The first group of `groups[i..]` the client sent a key share for, and
+/// that share.
+pub open spec fn pick_share(b: Seq<u8>, s: int, e: int, groups: Seq<u16>, i: int) -> Option<
+    (u16, (int, int)),
+>
+    decreases groups.len() - i,
+{
+    if i < 0 || i >= groups.len() {
+        None
+    } else {
+        match find_share(b, s, e, groups[i]) {
+            Some(sp) => Some((groups[i], sp)),
+            None => pick_share(b, s, e, groups, i + 1),
+        }
+    }
+}
+
+/// The first ALPN protocol name in `[pos, end)` equal to `name`.
+pub open spec fn alpn_has(b: Seq<u8>, pos: int, end: int, name: Seq<u8>) -> Option<(int, int)>
+    decreases end - pos,
+{
+    if pos < 0 || pos >= end {
+        None
+    } else {
+        match vec8(b, pos, end) {
+            None => None,
+            Some((s, e)) => if b.subrange(s, e) == name {
+                Some((s, e))
+            } else {
+                alpn_has(b, e, end, name)
+            },
+        }
+    }
+}
+
+/// The first of the server's protocols, `cfg[p..cend]` in ALPN wire form,
+/// that the client offers in `b[cs..ce]` (RFC 7301 §3.2: "the server
+/// SHALL select the most highly preferred protocol that it supports and
+/// that is also advertised by the client"): its span in `cfg` and in `b`.
+pub open spec fn pick_alpn(cfg: Seq<u8>, p: int, cend: int, b: Seq<u8>, cs: int, ce: int) -> Option<
+    ((int, int), (int, int)),
+>
+    decreases cend - p,
+{
+    if p < 0 || p >= cend {
+        None
+    } else {
+        match vec8(cfg, p, cend) {
+            None => None,
+            Some((s, e)) => match alpn_has(b, cs, ce, cfg.subrange(s, e)) {
+                Some(c) => Some(((s, e), c)),
+                None => pick_alpn(cfg, e, cend, b, cs, ce),
+            },
+        }
+    }
+}
+
+/// What the server chose for a full handshake.
+pub struct SpecChoice {
+    pub suite: u16,
+    pub group: u16,
+    /// The client's key_exchange for `group`.
+    pub share: (int, int),
+    pub signature_scheme: u16,
+    /// The protocol, as a span of the server's list and of the
+    /// ClientHello, if the client offered ALPN.
+    pub alpn: Option<((int, int), (int, int))>,
+}
+
+/// Alerts negotiation can end in (§6.2).
+pub enum SpecNegAlert {
+    /// `protocol_version` (70): the client does not offer TLS 1.3.
+    ProtocolVersion,
+    /// `illegal_parameter` (47).
+    IllegalParameter,
+    /// `missing_extension` (109), §9.2.
+    MissingExtension,
+    /// `handshake_failure` (40): no cipher suite, signature scheme or
+    /// group in common.
+    HandshakeFailure,
+    /// `no_application_protocol` (120), RFC 7301 §3.2.
+    NoApplicationProtocol,
+}
+
+pub enum SpecOutcome {
+    /// A ServerHello can be sent.
+    Accept(SpecChoice),
+    /// No key share for a group the server takes, but a group in
+    /// common: a HelloRetryRequest for `group` (§4.1.4).
+    Retry { suite: u16, group: u16 },
+    Reject(SpecNegAlert),
+}
+
+/// A TLS 1.3 server's choices for a full (certificate) handshake, from a
+/// parsed ClientHello `h` of body `b`, given its preferences in order:
+/// cipher suites, groups, signature schemes, and ALPN protocols in wire
+/// form (`protocol_name_list`'s contents; empty for none). In order:
+///
+/// 1. supported_versions must offer TLS 1.3 (§4.2.1: a server "MUST NOT
+///    use the ClientHello.legacy_version value for version negotiation"
+///    when it is present), else `protocol_version`. This crate is TLS 1.3
+///    only, so a ClientHello without it is `protocol_version` too.
+/// 2. legacy_compression_methods must be exactly `[0]` (§4.1.2), else
+///    `illegal_parameter`.
+/// 3. signature_algorithms, supported_groups and key_share must be there
+///    (§9.2, for a handshake not using PSK), else `missing_extension`.
+/// 4. The first server cipher suite the client offers, the first server
+///    signature scheme in signature_algorithms; none is
+///    `handshake_failure`.
+/// 5. If the client offered ALPN, the first server protocol it offers;
+///    none is `no_application_protocol`.
+/// 6. The first server group the client sent a key share for: Accept.
+///    Otherwise the first server group in supported_groups: Retry.
+///    Otherwise `handshake_failure` (§4.2.8, §4.1.1).
+///
+/// PSKs are not negotiated here: a server that does not resume just
+/// ignores pre_shared_key (§4.2.11), which this does.
+pub open spec fn negotiate(
+    b: Seq<u8>,
+    h: SpecHello,
+    suites: Seq<u16>,
+    groups: Seq<u16>,
+    sigs: Seq<u16>,
+    alpn: Seq<u8>,
+) -> SpecOutcome {
+    let (ms, me) = h.outer.compression_methods;
+    let (cs, ce) = h.outer.cipher_suites;
+    match h.supported_versions {
+        None => SpecOutcome::Reject(SpecNegAlert::ProtocolVersion),
+        Some((vs, ve)) => if !u16s(b, vs, ve).contains(TLS13) {
+            SpecOutcome::Reject(SpecNegAlert::ProtocolVersion)
+        } else if !(me - ms == 1 && b[ms] == 0) {
+            SpecOutcome::Reject(SpecNegAlert::IllegalParameter)
+        } else {
+            match (h.signature_algorithms, h.supported_groups, h.key_shares) {
+                (Some((ss, se)), Some((gs, ge)), Some((ks, ke))) => match (
+                    first_in(suites, 0, u16s(b, cs, ce)),
+                    first_in(sigs, 0, u16s(b, ss, se)),
+                ) {
+                    (Some(suite), Some(sig)) => {
+                        let a = match h.alpn {
+                            None => Some(None),
+                            Some((as_, ae)) => match pick_alpn(
+                                alpn,
+                                0,
+                                alpn.len() as int,
+                                b,
+                                as_,
+                                ae,
+                            ) {
+                                Some(x) => Some(Some(x)),
+                                None => None,
+                            },
+                        };
+                        match a {
+                            None => SpecOutcome::Reject(SpecNegAlert::NoApplicationProtocol),
+                            Some(a) => match pick_share(b, ks, ke, groups, 0) {
+                                Some((g, sp)) => SpecOutcome::Accept(
+                                    SpecChoice {
+                                        suite,
+                                        group: g,
+                                        share: sp,
+                                        signature_scheme: sig,
+                                        alpn: a,
+                                    },
+                                ),
+                                None => match first_in(groups, 0, u16s(b, gs, ge)) {
+                                    Some(g) => SpecOutcome::Retry { suite, group: g },
+                                    None => SpecOutcome::Reject(SpecNegAlert::HandshakeFailure),
+                                },
+                            },
+                        }
+                    },
+                    _ => SpecOutcome::Reject(SpecNegAlert::HandshakeFailure),
+                },
+                _ => SpecOutcome::Reject(SpecNegAlert::MissingExtension),
+            }
+        },
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Server names (RFC 6066 §3)
+// ---------------------------------------------------------------------------
+
+/// A letter, digit, hyphen or underscore. The underscore is not LDH
+/// (RFC 1123), but names with one are common and rustls takes them.
+pub open spec fn host_char(c: u8) -> bool {
+    (0x30 <= c <= 0x39) || (0x41 <= c <= 0x5a) || (0x61 <= c <= 0x7a) || c == 0x2d || c == 0x5f
+}
+
+pub open spec fn is_digit(c: u8) -> bool {
+    0x30 <= c <= 0x39
+}
+
+/// One label `h[s..e]`: 1 to 63 bytes, not starting or ending in a hyphen.
+pub open spec fn label_ok(h: Seq<u8>, s: int, e: int) -> bool {
+    1 <= e - s <= 63 && h[s] != 0x2d && h[e - 1] != 0x2d
+}
+
+pub open spec fn all_digits(h: Seq<u8>, s: int, e: int) -> bool {
+    forall|k: int| s <= k < e ==> is_digit(#[trigger] h[k])
+}
+
+/// The labels of `h` from `i`, the current one starting at `start`.
+pub open spec fn labels_ok(h: Seq<u8>, i: int, start: int) -> bool
+    decreases h.len() - i,
+{
+    if i < 0 || i >= h.len() {
+        i == h.len() && label_ok(h, start, i) && !all_digits(h, start, i)
+    } else if h[i] == 0x2e {
+        label_ok(h, start, i) && labels_ok(h, i + 1, i + 1)
+    } else {
+        host_char(h[i]) && labels_ok(h, i + 1, start)
+    }
+}
+
+/// A host name a server can match against its certificates: what RFC 6066
+/// §3 allows in HostName ("the fully qualified DNS hostname", "without a
+/// trailing dot", "Literal IPv4 and IPv6 addresses are not permitted"):
+/// at most 253 bytes of labels of letters, digits, hyphens and
+/// underscores, separated by dots, the last not all digits (which would
+/// be an IPv4 address; an IPv6 one has colons). Case is not changed: DNS
+/// names compare without case.
+pub open spec fn valid_host_name(h: Seq<u8>) -> bool {
+    1 <= h.len() <= 253 && labels_ok(h, 0, 0)
+}
+
 } // verus!

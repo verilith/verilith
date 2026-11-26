@@ -33,7 +33,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | font |  |  |  |  |  |  | 1 |
 | gif | 1 |  |  |  |  |  | 2 |
 | h2 |  |  |  |  |  |  | 1 |
-| hpack | 2 |  |  |  |  |  | 3 |
+| hpack | 4 |  |  |  |  |  | 3 |
 | http |  |  |  |  |  |  | 8 |
 | jpeg | 2 |  |  |  |  |  | 3 |
 | json | 26 |  |  |  |  |  | 6 |
@@ -57,7 +57,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  |  |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **650** | **35** | **274** | **5** | **16** | **12** | **115** |
+| **total** | **652** | **35** | **274** | **5** | **16** | **12** | **115** |
 
 ## Items
 
@@ -121,6 +121,8 @@ not occur in any crate's `src/` (the script fails if one appears).
 ### hpack
 
 - `crates/hpack/src/capi.rs`: plain Rust
+- `crates/hpack/src/encoder.rs`: external_body: `bytes_eq`
+- `crates/hpack/src/hencode.rs`: external_body: `ready`
 - `crates/hpack/src/huffman.rs`: external_body: `dtab`
 - `crates/hpack/src/lib.rs`: plain Rust
 - `crates/hpack/src/stable.rs`: plain Rust

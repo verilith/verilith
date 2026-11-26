@@ -241,6 +241,7 @@ fn server_name_x(b: &[u8], s: usize, e: usize) -> (r: (Option<Option<Span>>, Gho
     requires
         s <= e <= b@.len(),
     ensures
+        r.0 matches Some(Some(sp)) ==> sp.start <= sp.end <= e,
         match r.0 {
             None => server_name(b@, s as int, e as int) is None,
             Some(h) => server_name(b@, s as int, e as int) == Some(ov(h)),
@@ -266,6 +267,7 @@ fn server_name_x(b: &[u8], s: usize, e: usize) -> (r: (Option<Option<Span>>, Gho
             l.end - l.start >= 1,
             whole16(b@, s as int, e as int) == Some((l.start as int, l.end as int)),
             steps <= pos - l.start,
+            found matches Some(f) ==> f.start <= f.end <= pos,
             server_names(b@, l.start as int, l.end as int, None) == server_names(
                 b@,
                 pos as int,
@@ -953,6 +955,35 @@ impl ClientHello {
         &&& self.models_exts(s)
     }
 
+    pub open spec fn ext_spans_ok(self, n: nat) -> bool {
+        &&& self.server_name matches Some(sp) ==> sp.start <= sp.end <= n
+        &&& self.alpn matches Some(sp) ==> sp.start <= sp.end <= n
+        &&& self.key_shares matches Some(sp) ==> sp.start <= sp.end <= n
+        &&& self.supported_versions matches Some(sp) ==> sp.start <= sp.end <= n && (sp.end
+            - sp.start) % 2 == 0
+        &&& self.supported_groups matches Some(sp) ==> sp.start <= sp.end <= n && (sp.end
+            - sp.start) % 2 == 0
+        &&& self.signature_algorithms matches Some(sp) ==> sp.start <= sp.end <= n && (sp.end
+            - sp.start) % 2 == 0
+    }
+
+    /// Every span is inside an `n`-byte body, and the lists of 2-byte
+    /// values have even lengths.
+    pub open spec fn spans_ok(self, n: nat) -> bool {
+        &&& self.cipher_suites.start <= self.cipher_suites.end <= n
+        &&& (self.cipher_suites.end - self.cipher_suites.start) % 2 == 0
+        &&& self.compression_methods.start < self.compression_methods.end <= n
+        &&& self.server_name matches Some(sp) ==> sp.start <= sp.end <= n
+        &&& self.alpn matches Some(sp) ==> sp.start <= sp.end <= n
+        &&& self.key_shares matches Some(sp) ==> sp.start <= sp.end <= n
+        &&& self.supported_versions matches Some(sp) ==> sp.start <= sp.end <= n && (sp.end
+            - sp.start) % 2 == 0
+        &&& self.supported_groups matches Some(sp) ==> sp.start <= sp.end <= n && (sp.end
+            - sp.start) % 2 == 0
+        &&& self.signature_algorithms matches Some(sp) ==> sp.start <= sp.end <= n && (sp.end
+            - sp.start) % 2 == 0
+    }
+
     /// The interpreted extensions are the spec's.
     pub open spec fn models_exts(self, s: SpecHello) -> bool {
         &&& ov(self.server_name) == s.server_name
@@ -973,6 +1004,7 @@ impl ClientHello {
     pub fn parse(b: &[u8]) -> (r: Result<ClientHello, Alert>)
         ensures
             r matches Ok(h) ==> parse_client_hello(b@) matches Ok(s) && h.models(s),
+            r matches Ok(h) ==> h.spans_ok(b@.len()),
             r matches Err(a) ==> parse_client_hello(b@) == Err::<SpecHello, SpecAlert>(a.spec()),
     {
         Self::parse_counted(b).0
@@ -983,6 +1015,7 @@ impl ClientHello {
     pub fn parse_counted(b: &[u8]) -> (r: (Result<ClientHello, Alert>, Ghost<nat>))
         ensures
             r.0 matches Ok(h) ==> parse_client_hello(b@) matches Ok(s) && h.models(s),
+            r.0 matches Ok(h) ==> h.spans_ok(b@.len()),
             r.0 matches Err(a) ==> parse_client_hello(b@) == Err::<SpecHello, SpecAlert>(a.spec()),
             r.1@ <= 12 * b@.len() + 2100,
     {
@@ -1115,6 +1148,7 @@ fn chk_sni(b: &[u8], slot: Option<Span>) -> (r: (Option<Option<Span>>, Ghost<nat
     requires
         slot_ok(b@, slot),
     ensures
+        r.0 matches Some(Some(sp)) ==> sp.start <= sp.end <= b@.len(),
         match r.0 {
             None => opt(ov(slot), |s: int, e: int| server_name(b@, s, e)) is None,
             Some(h) => opt(ov(slot), |s: int, e: int| server_name(b@, s, e)) matches Some(v) && (
@@ -1138,6 +1172,7 @@ fn chk_alpn(b: &[u8], slot: Option<Span>) -> (r: (Option<Option<Span>>, Ghost<na
     requires
         slot_ok(b@, slot),
     ensures
+        r.0 matches Some(Some(sp)) ==> sp.start <= sp.end <= b@.len(),
         oov(r.0) == opt(ov(slot), |s: int, e: int| alpn_list(b@, s, e)),
         r.1@ <= span_len(slot) + 1,
 {
@@ -1157,6 +1192,7 @@ fn chk_versions(b: &[u8], slot: Option<Span>) -> (r: Option<Option<Span>>)
     requires
         slot_ok(b@, slot),
     ensures
+        r matches Some(Some(sp)) ==> sp.start <= sp.end <= b@.len() && (sp.end - sp.start) % 2 == 0,
         oov(r) == opt(ov(slot), |s: int, e: int| versions_list(b@, s, e)),
 {
     match slot {
@@ -1172,6 +1208,7 @@ fn chk_u16_list(b: &[u8], slot: Option<Span>) -> (r: Option<Option<Span>>)
     requires
         slot_ok(b@, slot),
     ensures
+        r matches Some(Some(sp)) ==> sp.start <= sp.end <= b@.len() && (sp.end - sp.start) % 2 == 0,
         oov(r) == opt(ov(slot), |s: int, e: int| u16_list(b@, s, e)),
 {
     match slot {
@@ -1217,6 +1254,7 @@ fn chk_key_share(b: &[u8], slot: Option<Span>) -> (r: (Option<(Option<Span>, boo
     requires
         slot_ok(b@, slot),
     ensures
+        r.0 matches Some((Some(sp), _)) ==> sp.start <= sp.end <= b@.len(),
         match r.0 {
             None => opt(ov(slot), |s: int, e: int| key_share_list(b@, s, e)) is None,
             Some((sp, dup)) => opt(ov(slot), |s: int, e: int| key_share_list(b@, s, e)) matches Some(
@@ -1265,6 +1303,8 @@ fn chk_psk(b: &[u8], slot: Option<Span>) -> (r: (Option<Option<(Span, Span)>>, G
 /// Step 3 and 4 of `spec::parse_client_hello`: the contents of each
 /// extension, then the key share groups. The ClientHello's outer fields
 /// are left for the caller to fill in.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(40)]
 fn interpret(b: &[u8], scan: &ExtScan, Ghost(o): Ghost<SpecOuter>) -> (r: (
     Result<ClientHello, Alert>,
     Ghost<nat>,
@@ -1280,6 +1320,7 @@ fn interpret(b: &[u8], scan: &ExtScan, Ghost(o): Ghost<SpecOuter>) -> (r: (
     ensures
         r.0 matches Ok(h) ==> parse_client_hello(b@) matches Ok(s) && h.models_exts(s) && s.outer
             == o,
+        r.0 matches Ok(h) ==> h.ext_spans_ok(b@.len()),
         r.0 matches Err(a) ==> parse_client_hello(b@) == Err::<SpecHello, SpecAlert>(a.spec()),
         r.1@ <= 7 * b@.len() + 1050,
 {

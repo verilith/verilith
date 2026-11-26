@@ -5,5 +5,6 @@ extern crate alloc;
 #[doc(hidden)]
 pub mod seen;
 pub mod hello;
+pub mod negotiate;
 pub mod record;
 pub mod spec;
