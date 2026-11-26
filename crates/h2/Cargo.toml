@@ -1,0 +1,20 @@
+[package]
+name = "verilith-h2"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "An HTTP/2 (RFC 9113) frame parser and serializer formally verified with Verus, sans I/O"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/verilith/verilith"
+keywords = ["http2", "h2", "frame", "verified", "verus"]
+categories = ["network-programming", "web-programming", "parser-implementations"]
+exclude = ["scripts/", "bench/"]
+
+[dependencies]
+vstd = { workspace = true, features = ["std"] }
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(verus_only)'] }

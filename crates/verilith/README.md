@@ -24,6 +24,7 @@ shortest dependency list, depend on that crate directly.
 | `dns` | `verilith::dns` | [`verilith-dns`](https://github.com/verilith/verilith/tree/main/crates/dns) | DNS message parser and serializer |
 | `font` | `verilith::font` | [`verilith-font`](https://github.com/verilith/verilith/tree/main/crates/font) | font sanitizer (OpenType, WOFF, WOFF2) |
 | `gif` | `verilith::gif` | [`verilith-gif`](https://github.com/verilith/verilith/tree/main/crates/gif) | GIF decoder |
+| `h2` | `verilith::h2` | [`verilith-h2`](https://github.com/verilith/verilith/tree/main/crates/h2) | HTTP/2 frames |
 | `hpack` | `verilith::hpack` | [`verilith-hpack`](https://github.com/verilith/verilith/tree/main/crates/hpack) | HPACK header compression |
 | `http` | `verilith::http` | [`verilith-http`](https://github.com/verilith/verilith/tree/main/crates/http) | HTTP/1 parser |
 | `jpeg` | `verilith::jpeg` | [`verilith-jpeg`](https://github.com/verilith/verilith/tree/main/crates/jpeg) | JPEG decoder |

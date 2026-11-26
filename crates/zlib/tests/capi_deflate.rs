@@ -405,3 +405,65 @@ fn deflate_set_dictionary() {
     assert_eq!(c[1] & 0x20, 0);
     assert_eq!(zinflate(&c, 15).unwrap().0, b"hello hello");
 }
+
+#[test]
+fn custom_gzip_header() {
+    let data = text(&mut Rng(12), 30_000);
+    let mut extra = b"AB\x02\x00hi".to_vec();
+    let mut name = b"a.txt\0".to_vec();
+    let mut comment = b"note\0".to_vec();
+    let mut h = GzHeader {
+        text: 1,
+        time: 0x0102_0304,
+        xflags: 0,
+        os: 3,
+        extra: extra.as_mut_ptr(),
+        extra_len: extra.len() as c_uint,
+        extra_max: 0,
+        name: name.as_mut_ptr(),
+        name_max: 0,
+        comment: comment.as_mut_ptr(),
+        comm_max: 0,
+        hcrc: 1,
+        done: 0,
+    };
+    for out_room in [1usize, 7, 1 << 20] {
+        let mut s = new_stream();
+        init(&mut s, 6, 31);
+        let mut c = Vec::new();
+        unsafe {
+            assert_eq!(vz_deflateSetHeader(&mut s, &mut h), Z_OK);
+            s.next_in = data.as_ptr();
+            s.avail_in = data.len() as c_uint;
+            loop {
+                let mut buf = vec![0u8; out_room];
+                s.next_out = buf.as_mut_ptr();
+                s.avail_out = buf.len() as c_uint;
+                let r = vz_deflate(&mut s, Z_FINISH);
+                c.extend_from_slice(&buf[..out_room - s.avail_out as usize]);
+                if r == Z_STREAM_END {
+                    break;
+                }
+                assert!(r == Z_OK || r == Z_BUF_ERROR, "deflate returned {r}");
+            }
+            // Too late once the stream has started.
+            assert_eq!(vz_deflateSetHeader(&mut s, &mut h), Z_STREAM_ERROR);
+            vz_deflateEnd(&mut s);
+        }
+        let mut want = vec![31u8, 139, 8, 1 | 2 | 4 | 8 | 16, 4, 3, 2, 1, 0, 3, 6, 0];
+        want.extend_from_slice(&extra);
+        want.extend_from_slice(&name);
+        want.extend_from_slice(&comment);
+        let crc = unsafe { vz_crc32(0, want.as_ptr(), want.len() as c_uint) } as u16;
+        want.extend_from_slice(&crc.to_le_bytes());
+        assert_eq!(&c[..want.len()], &want[..]);
+        assert_eq!(zinflate(&c, 31), Some((data.clone(), c.len())));
+    }
+    // Only gzip streams take a header.
+    let mut s = new_stream();
+    init(&mut s, 6, 15);
+    unsafe {
+        assert_eq!(vz_deflateSetHeader(&mut s, &mut h), Z_STREAM_ERROR);
+        vz_deflateEnd(&mut s);
+    }
+}
