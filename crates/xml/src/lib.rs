@@ -30,6 +30,8 @@ pub mod content;
 #[doc(hidden)]
 pub mod decode;
 #[doc(hidden)]
+pub mod diag;
+#[doc(hidden)]
 pub mod doc;
 #[doc(hidden)]
 pub mod dtd;

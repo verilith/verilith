@@ -1071,7 +1071,7 @@ fn ex_pe_ref(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<us
 /// `decl` at `j`.
 #[verifier::spinoff_prover]
 #[verifier::rlimit(60)]
-fn ex_decl(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<usize>)
+pub fn ex_decl(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<usize>)
     requires
         j < s@.len() <= isize::MAX,
         s@.len() <= MAX_POS,
