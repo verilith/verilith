@@ -1,5 +1,5 @@
 //! The verified Huffman encoder (RFC 7541 §5.2, Appendix B), with the
-//! theorem that `verilith_hpack`'s Huffman decoding (`hdec`) of its output
+//! theorem that this crate's Huffman decoding (`hdec`) of its output
 //! is the input.
 //!
 //! The encoding of a string is the codes of its bytes, first bit most
@@ -7,14 +7,14 @@
 //! bits of EOS (all ones). `hval` is that bit string as a number and
 //! `hbits` its length. The round trip rests on the code being canonical
 //! and prefix-free, which `check` verifies at run time against the RFC
-//! table, as `verilith_hpack::huffman::check` does for the decoder.
+//! table, as `crate::huffman::check` does for the decoder.
 #[cfg(verus_only)]
-use verilith_hpack::bits::*;
-use verilith_hpack::htables::*;
+use crate::bits::*;
+use crate::htables::*;
 #[cfg(verus_only)]
-use verilith_hpack::huffman::{layout_ok, lemma_match};
+use crate::huffman::{layout_ok, lemma_match};
 #[cfg(verus_only)]
-use verilith_hpack::spec::{code, hcode, hdec, hfind, hlen, hmatch, hsym, pow2_8};
+use crate::spec::{code, hcode, hdec, hfind, hlen, hmatch, hsym, pow2_8};
 #[cfg(verus_only)]
 use vstd::arithmetic::div_mod::*;
 #[cfg(verus_only)]
@@ -67,7 +67,7 @@ pub fn check() -> (r: bool)
     ensures
         r ==> code_ok(),
 {
-    if !verilith_hpack::huffman::check() {
+    if !crate::huffman::check() {
         return false;
     }
     let mut l: usize = 1;

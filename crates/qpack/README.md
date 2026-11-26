@@ -38,7 +38,7 @@ dec.take_output(&mut ds);
 assert!(enc.feed_decoder(&ds));
 ```
 
-The Huffman decoder and its proofs come from
+The Huffman decoder and encoder and their proofs come from
 [`verilith-hpack`](../hpack), since QPACK uses HPACK's code.
 
 ## What is proven
@@ -81,7 +81,7 @@ and says so. The proofs show:
   hold. The lemmas are in `rt.rs`: one per field line kind and encoder
   instruction, then a theorem for whole sections (`lemma_section_rt`).
   Huffman coding is part of it: the encoder uses Huffman only when it is
-  shorter, and `henc::encode` is proven to produce bytes that `hpack`'s
+  shorter, and `verilith_hpack::henc::encode` is proven to produce bytes that `hpack`'s
   verified decoder decodes back to the input.
 - **The encoder keeps its obligations to the decoder** (`spec::enc_ok`,
   part of `Encoder::inv`, kept by every method). The table capacity stays
@@ -112,11 +112,10 @@ What the proofs do not cover, and what is done about each:
   script fails unless they agree entry for entry. `table::static_entry` is
   the `external_body` function that reads it. `tests/tables.rs` checks
   entries quoted from the RFC.
-- **The Huffman tables.** The decoder uses `verilith-hpack`'s table, whose
-  layout is checked at run time against the RFC code (see that crate's
-  README). The encoder's byte-pair table is built once from the verified
-  single-symbol encoder, behind a `OnceLock`; `henc::ptab` is the
-  `external_body` wrapper that states what the built table holds.
+- **The Huffman tables.** Both are `verilith-hpack`'s: the decoder's,
+  whose layout is checked at run time against the RFC code, and the
+  encoder's byte-pair table, built once behind a `OnceLock` (see that
+  crate's README).
 - **Hints** (`hints.rs`, plain Rust). The encoder looks fields up in a hash
   index and a static-table index to find candidates. These are not trusted
   for correctness: every candidate is compared byte for byte against the

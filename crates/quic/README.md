@@ -23,6 +23,8 @@ proofs show, with no panics and no unproven arithmetic anywhere:
 
 - **Variable-length integers** (§16, `varint`): `read` is `spec::varint`,
   `write` is `spec::varint_enc`, and every value below `2^62` reads back.
+  The code and these specs are verilith-core's (`verilith_core::varint`),
+  shared with verilith-h3.
 - **Frames** (§12.4, §19, `frame`): `parse` is `spec::frame` for all
   twenty frame types, and `encode` is `spec::frame_enc`. The round trip
   (`lemmas::lemma_frame_roundtrip`): the encoding of every valid frame,

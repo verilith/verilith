@@ -25,6 +25,10 @@
 // - [`binary64`]: IEEE 754 doubles as a model in spec integers, round to
 //   nearest even, and the hardware `*`, `/` and `u64 as f64` (trusted).
 // - [`sort`]: a merge sort of positions by a caller's comparison.
+// - [`varint`]: QUIC variable-length integers (RFC 9000 §16), for QUIC and
+//   HTTP/3.
+// - [`scan`]: byte-class tests eight bytes at a time (uppercase letters;
+//   NUL, CR and LF), as HTTP/2 and HTTP/3 field checks need.
 extern crate alloc;
 
 pub mod binary64;
@@ -36,7 +40,9 @@ pub mod huffman;
 pub mod lz;
 pub mod num;
 pub mod prims;
+pub mod scan;
 pub mod sort;
 pub mod spare;
 pub mod tail;
 pub mod utf8;
+pub mod varint;
