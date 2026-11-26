@@ -14,14 +14,13 @@
 fn main() {}
 
 #[cfg(not(verus_keep_ghost))]
-use std::collections::HashMap;
 #[cfg(not(verus_keep_ghost))]
 use std::sync::Arc;
 
 #[allow(unused_imports)]
 use vstd::prelude::*;
 #[cfg(not(verus_keep_ghost))]
-use verilith_server::{serve, Config, Field, Fields, Request, Response, StaticBody};
+use verilith_server::{serve, Config, Field, Fields, Request, Response};
 
 #[cfg(not(verus_keep_ghost))]
 fn arg(args: &[String], k: &str) -> Option<String> {
@@ -35,16 +34,9 @@ fn main() {
         println!("{}", if cfg!(feature = "tls-rustls") { "http h2c tls tls-rustls" } else if cfg!(feature = "tls") { "http h2c tls" } else { "http h2c" });
         return;
     }
-    let mut files: HashMap<Vec<u8>, StaticBody> = HashMap::new();
-    if let Some(root) = arg(&args, "--root") {
-        for e in std::fs::read_dir(&root).expect("--root") {
-            let e = e.unwrap();
-            if e.file_type().unwrap().is_file() {
-                let name = format!("/static/{}", e.file_name().into_string().unwrap());
-                files.insert(name.into_bytes(), StaticBody::new(std::fs::read(e.path()).unwrap()));
-            }
-        }
-    }
+    // `--root DIR` is served under /static/ (verified path resolution,
+    // openat2 beneath DIR; see files.rs).
+    let files = arg(&args, "--root").map(|r| verilith_server::files::Files::new(&r).expect("--root"));
     let cfg = Config {
         port: arg(&args, "--http").map_or(8080, |p| p.parse().unwrap()),
         h2c_port: arg(&args, "--h2c").map(|p| p.parse().unwrap()),
@@ -64,15 +56,15 @@ fn main() {
         }),
         ..Config::default()
     };
-    let files = Arc::new(files);
     let text = Fields::new(&[Field { name: b"Content-Type", value: b"text/plain" }]).unwrap();
-    let octet = Fields::new(&[Field { name: b"Content-Type", value: b"application/octet-stream" }]).unwrap();
     let h = move |req: &Request, res: &mut Response| {
         let path = req.path();
         if path == b"/plaintext" {
             let _ = res.send_prepared(200, &text, b"Hello, World!");
-        } else if let Some(b) = files.get(path) {
-            let _ = res.send_static(200, &octet, b);
+        } else if let (Some(f), Some(rest)) = (&files, path.strip_prefix(b"/static")) {
+            if !f.serve(req, res, rest) {
+                res.error(404);
+            }
         } else {
             res.error(404);
         }

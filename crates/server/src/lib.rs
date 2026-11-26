@@ -10,9 +10,13 @@
 #![cfg_attr(not(verus_keep_ghost), allow(unused_variables, unused_imports, dead_code))]
 pub mod respond;
 pub mod conn;
+pub mod path;
+pub mod range;
 
 #[cfg(not(verus_keep_ghost))]
 pub mod date;
+#[cfg(not(verus_keep_ghost))]
+pub mod files;
 #[cfg(not(verus_keep_ghost))]
 pub mod h1;
 #[cfg(not(verus_keep_ghost))]

@@ -1699,6 +1699,7 @@ dependencies = [
  "verilith-h2",
  "verilith-hpack",
  "verilith-http",
+ "verilith-text",
  "verilith-tls",
  "verilith-tls-aws-lc",
  "vstd",

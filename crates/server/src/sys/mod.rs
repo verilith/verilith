@@ -87,6 +87,7 @@ unsafe extern "C" {
     fn writev(fd: c_int, iov: *const iovec, n: c_int) -> isize;
     fn sendmsg(fd: c_int, msg: *const msghdr, flags: c_int) -> isize;
     fn close(fd: c_int) -> c_int;
+    fn openat(dir: c_int, path: *const std::ffi::c_char, flags: c_int, ...) -> c_int;
     fn clock_gettime(clk: c_int, ts: *mut timespec) -> c_int;
     fn time(t: *mut i64) -> i64;
 }
@@ -148,6 +149,38 @@ pub fn quickack(fd: i32) {
             setsockopt(fd, IPPROTO_TCP, opt, &one as *const c_int as *const u8, 4);
         }
     }
+}
+
+/// Opens `rel` (components joined by `/`) for reading, beneath the
+/// directory `dir`: on Linux with `openat2(RESOLVE_BENEATH |
+/// RESOLVE_NO_MAGICLINKS)`, so no `..` or symlink resolves outside `dir`;
+/// elsewhere (or before Linux 5.6) one component at a time with
+/// `O_NOFOLLOW`, so no symlink is followed at all. The kernel's guarantee,
+/// trusted (TRUST.md); `path.rs` proves `rel` has no `.`, `..` or empty
+/// component to begin with.
+pub fn open_beneath(dir: &std::fs::File, rel: &[u8]) -> io::Result<std::fs::File> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    let c = std::ffi::CString::new(rel).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+    if let Some(r) = openat2_beneath(dir.as_raw_fd(), &c) {
+        return r.map(|fd| unsafe { std::fs::File::from_raw_fd(fd) });
+    }
+    let parts: Vec<&[u8]> = rel.split(|&b| b == b'/').collect();
+    let mut cur: Option<std::fs::File> = None;
+    for (i, p) in parts.iter().enumerate() {
+        if p.is_empty() || *p == b"." || *p == b".." {
+            return Err(io::Error::from(io::ErrorKind::InvalidInput));
+        }
+        let c = std::ffi::CString::new(*p).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        let last = i + 1 == parts.len();
+        let flags = O_CLOEXEC | O_NOFOLLOW | if last { 0 } else { O_DIRECTORY };
+        let at = cur.as_ref().map_or(dir.as_raw_fd(), |f| f.as_raw_fd());
+        let fd = unsafe { openat(at, c.as_ptr(), flags) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        cur = Some(unsafe { std::fs::File::from_raw_fd(fd) });
+    }
+    cur.ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))
 }
 
 pub enum IoResult {

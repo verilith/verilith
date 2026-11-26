@@ -15,10 +15,52 @@ pub const TCP_NODELAY: c_int = 1;
 pub const REUSEPORT_BALANCES: bool = true;
 /// Accepted sockets inherit TCP_NODELAY from the listener.
 pub const NODELAY_INHERITED: bool = true;
+pub const TCP_QUICKACK: Option<c_int> = Some(12);
 /// Wake `accept` only once the client has sent data (nginx's `deferred`):
 /// the request arrives with the connection, one wakeup instead of two.
-pub const TCP_QUICKACK: Option<c_int> = Some(12);
 pub const TCP_DEFER_ACCEPT: Option<c_int> = Some(9);
+
+pub const O_CLOEXEC: c_int = 0o2000000;
+#[cfg(target_arch = "aarch64")]
+pub const O_NOFOLLOW: c_int = 0o100000;
+#[cfg(target_arch = "aarch64")]
+pub const O_DIRECTORY: c_int = 0o40000;
+#[cfg(not(target_arch = "aarch64"))]
+pub const O_NOFOLLOW: c_int = 0o400000;
+#[cfg(not(target_arch = "aarch64"))]
+pub const O_DIRECTORY: c_int = 0o200000;
+
+const SYS_OPENAT2: std::ffi::c_long = 437;
+const RESOLVE_NO_MAGICLINKS: u64 = 0x02;
+const RESOLVE_BENEATH: u64 = 0x08;
+
+#[repr(C)]
+struct OpenHow {
+    flags: u64,
+    mode: u64,
+    resolve: u64,
+}
+
+unsafe extern "C" {
+    fn syscall(n: std::ffi::c_long, ...) -> std::ffi::c_long;
+}
+
+/// `openat2(dir, path, O_RDONLY | O_CLOEXEC, RESOLVE_BENEATH |
+/// RESOLVE_NO_MAGICLINKS)`: the kernel refuses any resolution, through
+/// `..` or a symlink, that leaves `dir`. None if the kernel has no openat2
+/// (before 5.6).
+pub fn openat2_beneath(dir: c_int, path: &std::ffi::CStr) -> Option<io::Result<c_int>> {
+    let how = OpenHow { flags: O_CLOEXEC as u64, mode: 0, resolve: RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS };
+    let r = unsafe { syscall(SYS_OPENAT2, dir as std::ffi::c_long, path.as_ptr(), &how as *const OpenHow, std::mem::size_of::<OpenHow>()) };
+    if r < 0 {
+        let e = io::Error::last_os_error();
+        if e.raw_os_error() == Some(38) {
+            return None; // ENOSYS
+        }
+        return Some(Err(e));
+    }
+    Some(Ok(r as c_int))
+}
 
 const EPOLL_CLOEXEC: c_int = 0o2000000;
 const EPOLL_CTL_ADD: c_int = 1;
