@@ -804,6 +804,28 @@ impl Encoder {
             forall|ms: nat| ms >= fsizes(fields.view()) ==> #[trigger] section(final(self).table.view(), final(self).max_cap as nat, ms,
                 final(out)@.subrange(old(out)@.len() as int, final(out)@.len() as int)) == SecR::Ok(fields.view(), r@),
     {
+        if self.risky.len() as u64 >= self.max_blocked && self.max_blocked > 0 {
+            self.prune_risky();
+        }
+        self.encode_inner(stream, fields, out)
+    }
+
+    #[verifier::spinoff_prover]
+    fn encode_inner(&mut self, stream: u64, fields: &Fields, out: &mut Vec<u8>) -> (r: Ghost<nat>)
+        requires
+            old(self).inv(),
+            fields.inv(),
+            fields.buf@.len() <= 0x1000_0000,
+        ensures
+            final(self).inv(),
+            final(self).max_cap == old(self).max_cap,
+            final(self).taken@ == old(self).taken@,
+            final(self).held@ == old(self).held@,
+            final(out)@.len() >= old(out)@.len(),
+            final(out)@.subrange(0, old(out)@.len() as int) == old(out)@,
+            forall|ms: nat| ms >= fsizes(fields.view()) ==> #[trigger] section(final(self).table.view(), final(self).max_cap as nat, ms,
+                final(out)@.subrange(old(out)@.len() as int, final(out)@.len() as int)) == SecR::Ok(fields.view(), r@),
+    {
         let base = self.table.icount();
         let can_block = self.can_block(stream);
         let min_sent = self.min_sent();
@@ -1252,6 +1274,87 @@ impl Encoder {
             assert(dframe(self.held@) is Short);
         }
         true
+    }
+
+    /// Whether stream `s` has a section that could block.
+    fn has_risky(&self, s: u64) -> (r: bool)
+        ensures
+            r == exists|j: int| 0 <= j < self.sent@.len() && #[trigger] self.sent@[j].stream == s && self.sent@[j].ric > self.krc,
+    {
+        let mut i: usize = 0;
+        while i < self.sent.len()
+            invariant
+                i <= self.sent@.len(),
+                forall|j: int| 0 <= j < i ==> !(#[trigger] self.sent@[j].stream == s && self.sent@[j].ric > self.krc),
+            decreases self.sent@.len() - i,
+        {
+            if self.sent[i].stream == s && self.sent[i].ric > self.krc {
+                return true;
+            }
+            i = i + 1;
+        }
+        false
+    }
+
+    /// Drops the streams that can no longer block from `risky`.
+    fn prune_risky(&mut self)
+        requires
+            old(self).inv(),
+        ensures
+            final(self).inv(),
+            final(self).state() == old(self).state(),
+            final(self).same_but_acks(old(self)),
+    {
+        let mut kept: Vec<u64> = Vec::new();
+        let mut i: usize = 0;
+        let ghost sv = sview(self.sent@);
+        let ghost ss = nats(self.risky@);
+        while i < self.risky.len()
+            invariant
+                self.inv(),
+                sv == sview(self.sent@),
+                ss == nats(self.risky@),
+                i <= self.risky@.len(),
+                kept@.len() <= i,
+                forall|j: int| 0 <= j < sv.len() && #[trigger] sv[j].ric > self.krc && ss.take(i as int).contains(sv[j].stream)
+                    ==> nats(kept@).contains(sv[j].stream),
+            decreases self.risky@.len() - i,
+        {
+            let s = self.risky[i];
+            let h = self.has_risky(s);
+            let ghost k0 = kept@;
+            if h {
+                kept.push(s);
+            }
+            proof {
+                assert(nats(kept@) == if h { nats(k0).push(s as nat) } else { nats(k0) }) by {
+                    if h {
+                        assert(nats(kept@) =~= nats(k0).push(s as nat));
+                    }
+                }
+                assert forall|j: int| 0 <= j < sv.len() && #[trigger] sv[j].ric > self.krc && ss.take(i + 1).contains(sv[j].stream)
+                    implies nats(kept@).contains(sv[j].stream) by {
+                    let w = choose|w: int| 0 <= w < i + 1 && #[trigger] ss.take(i + 1)[w] == sv[j].stream;
+                    if w < i {
+                        assert(ss.take(i as int)[w] == sv[j].stream);
+                        assert(nats(k0).contains(sv[j].stream));
+                        let z = choose|z: int| 0 <= z < nats(k0).len() && nats(k0)[z] == sv[j].stream;
+                        assert(nats(kept@)[z] == nats(k0)[z]);
+                    } else {
+                        assert(sv[j].stream == s as nat);
+                        assert(self.sent@[j].stream == s && self.sent@[j].ric > self.krc);
+                        assert(h);
+                        assert(nats(kept@)[nats(kept@).len() - 1] == s as nat);
+                    }
+                }
+            }
+            i = i + 1;
+        }
+        proof {
+            assert(ss.take(i as int) =~= ss);
+            assert(covers(nats(kept@), sv, self.krc as nat));
+        }
+        self.risky = kept;
     }
 }
 

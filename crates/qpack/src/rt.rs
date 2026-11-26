@@ -5,7 +5,9 @@
 use crate::integer::*;
 use crate::lemmas::*;
 use crate::spec::*;
+#[cfg(verus_only)]
 use crate::table::lemma_evict;
+#[cfg(verus_only)]
 use verilith_hpack::spec::hdec;
 use vstd::prelude::*;
 
