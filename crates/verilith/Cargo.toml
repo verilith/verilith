@@ -28,6 +28,7 @@ jpeg = ["dep:verilith-jpeg"]
 json = ["dep:verilith-json"]
 lz4 = ["dep:verilith-lz4"]
 png = ["dep:verilith-png"]
+quic = ["dep:verilith-quic"]
 regex = ["dep:verilith-regex"]
 sha2 = ["dep:verilith-sha2"]
 simd = ["dep:verilith-simd"]
@@ -35,6 +36,7 @@ snappy = ["dep:verilith-snappy"]
 sync = ["dep:verilith-sync"]
 text = ["dep:verilith-text"]
 tiff = ["dep:verilith-tiff"]
+tls = ["dep:verilith-tls"]
 url = ["dep:verilith-url"]
 wasm = ["dep:verilith-wasm"]
 webp = ["dep:verilith-webp"]
@@ -59,6 +61,7 @@ verilith-jpeg = { path = "../jpeg", version = "0.1.0", optional = true }
 verilith-json = { path = "../json", version = "0.1.0", optional = true }
 verilith-lz4 = { path = "../lz4", version = "0.1.0", optional = true }
 verilith-png = { path = "../png", version = "0.1.0", optional = true }
+verilith-quic = { path = "../quic", version = "0.1.0", optional = true }
 verilith-regex = { path = "../regex", version = "0.1.0", optional = true }
 verilith-sha2 = { path = "../sha2", version = "0.1.0", optional = true }
 verilith-simd = { path = "../simd", version = "0.1.0", optional = true }
@@ -66,6 +69,7 @@ verilith-snappy = { path = "../snappy", version = "0.1.0", optional = true }
 verilith-sync = { path = "../sync", version = "0.1.0", optional = true }
 verilith-text = { path = "../text", version = "0.1.0", optional = true }
 verilith-tiff = { path = "../tiff", version = "0.1.0", optional = true }
+verilith-tls = { path = "../tls", version = "0.1.0", optional = true }
 verilith-url = { path = "../url", version = "0.1.0", optional = true }
 verilith-wasm = { path = "../wasm", version = "0.1.0", optional = true }
 verilith-webp = { path = "../webp", version = "0.1.0", optional = true }

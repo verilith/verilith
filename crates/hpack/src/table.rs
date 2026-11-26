@@ -86,6 +86,20 @@ impl Table {
         t
     }
 
+    /// `new`, with room for `n` entries before the first allocation grows.
+    pub fn with_capacity(max: u32, n: usize) -> (r: Table)
+        ensures
+            r.inv(),
+            r.view() == Seq::<Entry>::empty(),
+            r.max == max,
+    {
+        let t = Table { ents: VecDeque::with_capacity(n), size: 0, max, ins: 0, spare: Vec::new() };
+        proof {
+            assert(t.view() =~= Seq::<Entry>::empty());
+        }
+        t
+    }
+
     pub fn len(&self) -> (r: usize)
         ensures
             r == self.view().len(),
@@ -251,6 +265,33 @@ impl Table {
         } else {
             (false, g)
         }
+    }
+
+    /// Adds a copy of the entry `(name, value)` (§4.4), reusing the buffers
+    /// of an evicted entry when there is one.
+    pub fn insert_copy(&mut self, name: &[u8], value: &[u8])
+        requires
+            old(self).inv(),
+            name@.len() <= 0xFFFF_FFFF,
+            value@.len() <= 0xFFFF_FFFF,
+        ensures
+            final(self).inv(),
+            final(self).max == old(self).max,
+            final(self).view() == insert(old(self).view(), old(self).max as nat, (name@, value@)),
+    {
+        let (mut n, mut v) = match self.spare.pop() {
+            Some(x) => (x.name, x.value),
+            None => (Vec::new(), Vec::new()),
+        };
+        n.clear();
+        verilith_core::prims::extend(&mut n, name);
+        v.clear();
+        verilith_core::prims::extend(&mut v, value);
+        proof {
+            assert(n@ =~= name@);
+            assert(v@ =~= value@);
+        }
+        self.insert(n, v);
     }
 
     /// Entry `i` of the index space (1..=61 static, then dynamic).

@@ -193,8 +193,9 @@ the RFCs alone imply, or from zlib:
   `inflateSync` the rest is decoded as raw DEFLATE. On the compression
   side `deflateSetDictionary` works for zlib and raw streams before the
   first `deflate()` (zlib also allows it later on raw streams; verilith-zlib
-  returns `Z_STREAM_ERROR` there), and `deflateSetHeader` (custom gzip
-  headers) and `deflatePrime` are not supported (`Z_STREAM_ERROR`); the strategy
+  returns `Z_STREAM_ERROR` there); `deflateSetHeader` works before the
+  first `deflate()` (zlib also allows it later, until the header is
+  written); `deflatePrime` is not supported (`Z_STREAM_ERROR`); the strategy
   and `deflateTune` parameters are accepted and not used; `deflate()` may
   hold up to a few hundred KiB of output internally when the caller's
   output buffer is small, and `deflateBound` is a little larger than

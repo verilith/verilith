@@ -25,6 +25,7 @@ and its README are right and this file is updated.
 - [I/O model](#io-model)
 - [HTTP/1.1](#http11)
 - [HTTP/2](#http2)
+- [HTTP/3](#http3)
 - [TLS](#tls)
 - [Static files, compression and the rest of the request path](#static-files-compression-and-the-rest-of-the-request-path)
 - [What is verified and what is trusted](#what-is-verified-and-what-is-trusted)
@@ -275,7 +276,30 @@ incremental), not the RFC 7540 dependency tree, which RFC 9113 deprecates.
 Within an urgency, round robin by DATA frame. Proven fair in the simple
 sense: a stream with data and window is served within one round.
 
-HTTP/3 is out of scope for this design. It needs QUIC, a project of its own.
+## HTTP/3
+
+HTTP/3 (RFC 9114) runs on QUIC (RFC 9000), a transport of its own over
+UDP: packet protection, loss recovery, congestion control and TLS 1.3 built
+in. HTTP/3's own layer is small (frames on QUIC streams, and QPACK, RFC
+9204, for fields). It comes after HTTP/2, in three steps:
+
+1. **Verified HTTP/3 framing and QPACK** (a sibling of verilith-hpack, with
+   the same split-invariance and linear-work theorems, plus QPACK's
+   blocked-stream rules), on **quinn-proto** as the QUIC transport.
+   quinn-proto is sans I/O, so it slots in as rustls does: trusted, not
+   verified.
+2. **Verified QUIC parsing and state**: packet headers, varints, the
+   frame types, transport parameters, stream and connection flow control,
+   and the stream state machines (RFC 9000 §3), with the same resource
+   bounds as HTTP/2 (amplification limits before address validation, §8,
+   are a theorem rather than a check). Congestion control and the
+   cryptography stay trusted. This is [verilith-quic](../quic): the wire
+   format and these state machines, proven; wiring it into quinn-proto in
+   place of quinn-proto's own parsers is what remains of this step.
+3. **UDP speed**: GSO and GRO, `sendmmsg`/`recvmmsg`, and one socket per
+   worker with connection IDs routed to the worker that owns them (a BPF
+   steering program on Linux). Without these every HTTP/3 server loses to
+   HTTP/2 on throughput.
 
 ## TLS
 
@@ -458,13 +482,17 @@ in `bench/server/results`, and a merge.
 4. **TLS.** rustls integration, ALPN, certificates through verilith-x509.
 5. **HPACK encoder** in verilith-hpack, and **verilith-h2 frames**. These
    two do not depend on milestones 2 to 4 and can run in parallel threads.
-   *(frames done: `crates/h2`, with the round trip and its benchmark
-   against h2 and nghttp2 in its README)*
+   *(encoder done: `crates/hpack/src/encoder.rs`, the per-connection cache
+   of encoded response heads left to verilith-h2; frames done:
+   `crates/h2`, with the round trip and its benchmark against h2 and
+   nghttp2 in its README)*
 6. **HTTP/2 connection**: streams, flow control, scheduling, the resource
    bounds; h2c and h2 benchmarks against h2o.
 7. **io_uring and kTLS** backends, if the benchmarks show they are needed
    for parity.
-8. **Reverse proxy.** Upstream HTTP/1.1 with verilith-http's response
+8. **HTTP/3**: QPACK and HTTP/3 framing on quinn-proto, then verified
+   QUIC parsing and state, then GSO/GRO (see [HTTP/3](#http3)).
+9. **Reverse proxy.** Upstream HTTP/1.1 with verilith-http's response
    parser: here the smuggling theorem is about two hops of the same
    connection, which is the case it was written for.
 

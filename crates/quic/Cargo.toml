@@ -1,0 +1,21 @@
+[package]
+name = "verilith-quic"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "The QUIC (RFC 9000) wire format and transport state machines, formally verified with Verus: packet headers, frames, transport parameters, flow control, stream states and the anti-amplification limit"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/verilith/verilith"
+keywords = ["quic", "http3", "verified", "verus", "parser"]
+categories = ["network-programming", "parser-implementations"]
+exclude = ["scripts/", "bench/", "compat/"]
+
+[dependencies]
+verilith-core = { path = "../core", version = "0.1.0" }
+vstd = { workspace = true, features = ["std"] }
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(verus_only)'] }
