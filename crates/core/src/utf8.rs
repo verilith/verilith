@@ -349,10 +349,13 @@ pub fn utf8_valid_scalar(s: &[u8], st: usize) -> (r: bool)
 // (p1, c) is in a class when all three lookups have its bit. Bit 7 is the
 // pair "continuation, continuation", which is an error unless a lead byte two
 // or three back asks for it, and an error to miss if one does.
+/// The table indexed by the previous byte's high nibble.
 pub const T1: [u8; 16] = [2, 2, 2, 2, 2, 2, 2, 2, 0x80, 0x80, 0x80, 0x80, 0x21, 0x01, 0x15, 0x49];
+/// The table indexed by the previous byte's low nibble.
 pub const T2: [u8; 16] = [
     0xE7, 0xA3, 0x83, 0x83, 0x8B, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xDB, 0xCB, 0xCB,
 ];
+/// The table indexed by the current byte's high nibble.
 pub const T3: [u8; 16] = [1, 1, 1, 1, 1, 1, 1, 1, 0xE6, 0xAE, 0xBA, 0xBA, 1, 1, 1, 1];
 
 pub open spec fn t1() -> Seq<u8> {
