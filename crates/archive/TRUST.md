@@ -80,20 +80,23 @@ in the same way: one step per member not of kind `Other`, in member order,
 each `item_of` its member. The planner is proven to return that plan when
 it exists and satisfies `plan_safe`, and to refuse otherwise: every
 refusal except `Why::Internal` comes with a proof that the archive has no
-plan satisfying the policy. `Why::Internal` is returned only if the
-unverified sort below returns something that is not a sorted permutation,
-so completeness rests on that sort being correct. Which of the other `Why`
+plan satisfying the policy. `Why::Internal` is returned only if the sort
+below returns something `check_sorted` does not accept as a strictly
+sorted permutation. The sort is proven to return a sorted permutation,
+but that `check_sorted` then always accepts it is not proven, so
+completeness rests on that step. Which of the other `Why`
 values is returned, and for which member, is not proven: it names the
 check that failed first.
 
 ## The two sorts
 
-`order_by_offset` (`src/zip.rs`) and `order_by_path` (`src/plan.rs`) call
-the standard library's sort. Verus assumes nothing about what they return:
-`check_order` and `check_sorted` verify that the result is a permutation in
-strictly increasing order before it is used. If the zip check fails, the
-reader falls back to a verified comparison of every pair. What is trusted
-is that the sort is memory safe and returns.
+`order_by_offset` (`src/zip.rs`) and `order_by_path` (`src/plan.rs`) are
+verilith-core's verified merge sort (`verilith_core::sort::order_by`),
+which is proven to return a permutation in which each member is not after
+the next. Nothing in them is trusted. `check_order` and `check_sorted`
+still check the result before it is used (strictly increasing, for
+paths), and if the zip check fails the reader falls back to a verified
+comparison of every pair.
 
 ## Plain Rust
 

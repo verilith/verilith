@@ -12,7 +12,7 @@ The chunk parser, the image-data decompression (through
 five row filters, Adam7 deinterlacing and both output formats are proven
 against a specification of the format, and so is a bound on the decoder's
 work that is linear in the file's size and the output's. `cargo verus
-verify` checks 328 functions with no errors.
+verify` checks 329 functions with no errors.
 
 libpng's security history is mostly memory-safety bugs in exactly these
 places: chunk lengths ([CVE-2017-12652](#cves)), palette and transparency
@@ -56,11 +56,12 @@ What the proofs assume rather than prove:
   standard; if the spec is wrong, the proofs still hold, against the wrong
   thing. Every place it follows libpng rather than a strict reading of the
   standard is marked `libpng:` in a comment.
-- `src/prims.rs`: two `#[verifier::external_body]` primitives — a
-  non-overlapping copy and a zeroed allocation. Each `requires` clause is
-  the bounds fact Verus proves at every call site. (The unchecked byte get
-  and set next to them are verified against vstd's spec of
-  `get_unchecked`.)
+- verilith-core's trusted base, for two of its memory primitives: a
+  non-overlapping copy (`copy_in`, which `src/prims.rs`'s `copy` is
+  verified against) and a zeroed allocation (`alloc_u8`). Each `requires`
+  clause is the bounds fact Verus proves at every call site. (The
+  unchecked byte get and set in `src/prims.rs` are verified against
+  vstd's spec of `get_unchecked`.)
 - The work bound's unit: that a non-overlapping copy, a zeroed allocation,
   a CRC and `slice_to_vec` of `n` bytes cost on the order of `n` steps,
   that a `Vec` push is amortized constant, that `Decompressor::new` costs

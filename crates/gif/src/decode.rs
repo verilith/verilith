@@ -2,7 +2,7 @@
 use crate::blocks::*;
 use crate::interlace::deinterlace_exec;
 use crate::lzw::{lzw_exec, SLACK};
-use crate::prims::alloc_zeroed;
+use verilith_core::prims::alloc_u8;
 use crate::spec;
 use crate::spec::*;
 use verilith_core::prims::{alloc_u32, get};
@@ -363,7 +363,7 @@ pub fn image_exec_counted(b: &[u8], p: usize, gce: Option<Gce>, room: usize, off
         lemma_mul_inequality(1, w as int, h as int);
     }
     let (data, Ghost(w2)) = gather(b, c + 1, e);
-    let mut out = match alloc_zeroed(need + SLACK) {
+    let mut out = match alloc_u8(need + SLACK) {
         Some(v) => v,
         None => return (Err(Error::OutOfMemory), Ghost((w1 + w2, need as nat))),
     };

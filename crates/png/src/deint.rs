@@ -587,7 +587,7 @@ pub fn deinterlace(h: &Header, buf: &[u8], off: &[usize; 8], limit: usize, Track
         ;
     }
     let n = (w as usize * bp) * hh as usize;
-    let mut out = match alloc_zeroed(n) {
+    let mut out = match alloc_u8(n) {
         Some(v) => v,
         None => return Err(crate::decode::Error::OutOfMemory),
     };

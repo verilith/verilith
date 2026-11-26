@@ -62,15 +62,13 @@ What the proofs assume rather than prove:
   wrong, the proofs still hold, about the wrong thing. Every place it
   follows giflib rather than a strict reading of the standard is marked
   `giflib:` in a comment.
-- `src/prims.rs`: one `#[verifier::external_body]` primitive, a zeroed
-  allocation.
 - The work bound's unit: that a verilith-core copy of `n` bytes, and a
   zeroed allocation of `n` bytes, cost on the order of `n` steps. The
   counters are ghost code and count what the verified loops do; the
   primitives' cost is assumed, not proven.
 - verilith-core's trusted base (its memory primitives, used here for
   unchecked loads and stores, the copies `copy_in` and `copy_match`'s
-  chunks, and `alloc_u32`), and its bit-string definitions (`bits`), which
+  chunks, and the zeroed allocations `alloc_u8` and `alloc_u32`), and its bit-string definitions (`bits`), which
   the spec uses for LZW codes.
 - Verus, Z3 and the Rust compiler.
 

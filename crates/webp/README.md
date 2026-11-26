@@ -201,10 +201,7 @@ What the proofs assume rather than prove:
     AVX2 implies SSE4.1 and SSSE3, and `compiled_with_ssse3()`, which is
     `cfg!(target_feature = "ssse3")`: true only in a build whose every
     target CPU has SSSE3.
-- Two trusted helpers of the lossy decoder: `vp8frame::alloc_u8`, a
-  zeroed `Vec<u8>` of a given length that returns `None` when the
-  allocation fails (`external_body`, five lines), and the accessors for the
-  five large constant tables in `src/vp8tables.rs` (the token and mode
+- The accessors for the lossy decoder's five large constant tables in `src/vp8tables.rs` (the token and mode
   probabilities and the quantizer steps), kept outside `verus!` so their
   thousands of entries stay out of the solver's context. The accessors
   state only an index bound and, for the quantizer tables, a value range,

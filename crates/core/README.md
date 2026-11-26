@@ -11,11 +11,11 @@ blocks shared by the Verilith libraries
 live, with its proofs, in one or two of those crates; it now lives here
 once, and the libraries import it.
 
-`cargo verus verify` checks 635 functions with no errors.
+`cargo verus verify` checks 643 functions with no errors.
 
 | module | what it has | used by |
 | --- | --- | --- |
-| `prims` | memory primitives: unchecked `get`/`set` on `u8` and `u32` slices, `store_at`, unaligned little-endian loads, 8-byte copies and fills, slice copies, `extend`, fallible allocation | verilith-zlib, verilith-webp, verilith-http, verilith-json |
+| `prims` | memory primitives: unchecked `get`/`set` on `u8` and `u32` slices, `store_at`, unaligned little-endian loads, 8-byte copies and fills, slice copies, `extend`, fallible zeroed allocation (`alloc_u8`, `alloc_i16`, `alloc_u32`) | verilith-zlib, verilith-webp, verilith-http, verilith-json, verilith-gif, verilith-tiff, verilith-png, verilith-jpeg |
 | `lz` | LZ77 over byte slices, for decoders that write into a caller's buffer and for compressors: `lz_copy` (what a match copy means, overlap included), `copy_match` (any offset, 16 bytes at a time where there is room: offsets under 8 are widened by overlapping 8-byte moves), `copy_match24`/`copy_match16` (short matches from at least 8 back, no loop), `copy_match_wild` and `copy_lits_wild` (32 bytes at a time into room the caller has, with no test before the first 32), `copy_lits`, `eq_len` (match length, 8 bytes per compare), `load32`, and the lemmas that tie them to `lz_copy` (`lemma_matched`, `lemma_lz_copy_is`) | verilith-lz4, verilith-snappy |
 | `tail` | `Tail`: a byte vector appended to without capacity tests. Room is reserved once, and each append's precondition, proven by the caller, says the bytes fit. Appends from a slice and from the vector's own earlier bytes, copied 16 bytes at a time | verilith-zstd |
 | `bytes` | big- and little-endian integers in byte strings as spec functions; `read_u16`/`read_u32` proven to return them | verilith-dns, verilith-zlib (spec) |
@@ -26,6 +26,7 @@ once, and the libraries import it.
 | `utf8` | well-formed UTF-8 (Unicode Table 3-7), the three-byte local condition SIMD validators check, its proof, and a verified scalar validator | verilith-json |
 | `num` | decimal digits: `is_digit`, `digits_end`, `dec_value`, `decimal`; `parse_u64_dec` (checked) and `push_decimal` | verilith-json, verilith-url, verilith-dns |
 | `binary64` | IEEE 754 binary64 as a model in spec integers (in the style of Coq's Flocq): what each bit pattern is worth as an exact rational, round to nearest, ties to even (`rne`), proofs that rounding depends only on the value and that exact products and quotients of equal values are equal, that `u64 as f64` is exact below `2^53`, and `P10`, the exact doubles `10^0..=10^22`; `mul`, `div` and `from_u64` on bit patterns | verilith-json |
+| `sort` | `order_by`: a stable merge sort of the positions `0..n` by a caller's comparison closure, proven to return a permutation (as multisets) in which each position compares `le` the next; the comparison need only be total | verilith-archive, verilith-zlib |
 | `checksum` | Adler-32 and CRC-32 (slicing-by-16), and CRC-32C (`checksum::crc32c`, a table per byte), proven against the RFC definitions in `checksum::spec`; `checksum::cpu` picks, for Adler-32, the verified dot-product kernels in `checksum::adlerv` (AVX-512 VNNI or AVX2, or `udot` on AArch64) and, for CRC-32, the verified carry-less-multiply folding kernels in `checksum::fold` (VPCLMULQDQ on 512- or 256-bit vectors, or PCLMULQDQ), on AArch64 the verified three-lane `crc32x` kernel in `checksum::lanes`, and for CRC-32C the SSE4.2 or AArch64 CRC-32C instruction | verilith-zlib, verilith-snappy |
 
 verilith-webp and verilith-brotli share the table builder in `htable`. verilith-zlib keeps its own:
@@ -57,7 +58,7 @@ What the proofs here assume rather than prove:
 - `src/prims.rs`, the `external_body` functions only: `load_u64_le`,
   `copy8`, `copy16`, `move8` (an 8-byte load then store, so its ranges
   may overlap), `copy16_in`, `fill8`, `copy_in`, `copy_to_front`, `copy_within`,
-  `alloc_u32`, `pick` (one of two numbers, chosen without a branch) and
+  `alloc_u8`, `alloc_i16`, `alloc_u32`, `pick` (one of two numbers, chosen without a branch) and
   `copy16_pick` (`copy16_in` or `copy16`, with the source chosen without a
   branch). Each is one line whose effect its `ensures` states, except
   `copy16_pick`, which is six.

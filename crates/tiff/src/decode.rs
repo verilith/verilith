@@ -6,7 +6,7 @@ use crate::lzw::STORED;
 use crate::params::*;
 use crate::place::*;
 use crate::predict::unpredict_exec;
-use crate::prims::alloc_zeroed;
+use verilith_core::prims::alloc_u8;
 use crate::spec;
 use crate::spec::*;
 use crate::work::*;
@@ -857,7 +857,7 @@ pub fn decode_counted(b: &[u8], limit: usize) -> (r: (Result<Tiff, Error>, Ghost
     if size > limit as u128 {
         return (Err(Error::TooLarge), Ghost((m.n, 0)));
     }
-    let mut out = match alloc_zeroed(size as usize) {
+    let mut out = match alloc_u8(size as usize) {
         Some(v) => v,
         None => return (Err(Error::OutOfMemory), Ghost((m.n, 0))),
     };
