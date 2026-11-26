@@ -117,7 +117,11 @@ needs `std`, so without it each kernel is chosen from the features the
 target is compiled for: build with `-C target-feature=+pclmulqdq,+avx2`
 (or `-C target-cpu=...`) on x86-64, or `+crc,+dotprod` on AArch64, to get
 the vector kernels; otherwise the table kernels run. The verified code is
-the same either way; only the trusted detection differs.
+the same either way; only the trusted detection differs. On
+`x86_64-unknown-none`, which has no SSE registers, the x86-64 vector
+kernels are not compiled at all, so CRC-32 and Adler-32 use the table
+kernels; CRC-32C's `crc32` instruction is scalar and is still used when
+SSE4.2 is enabled.
 
 ## Verifying
 

@@ -35,6 +35,14 @@ use vstd::prelude::*;
 
 // Run-time CPU feature detection needs `std`; a `no_std` build uses only
 // the features the target is compiled for.
+//
+// The x86-64 vector kernels (PCLMULQDQ, AVX2, AVX-512) are compiled only
+// where the target has SSE registers (`target_feature = "sse2"`, true of
+// every x86-64 target with an OS). Soft-float targets such as
+// `x86_64-unknown-none` have none: LLVM cannot lower the vector intrinsics
+// there ("Do not know how to split the result of this operator"), and
+// without `std` the kernels could never be selected anyway, since their
+// features are not in the target. Those targets get the table code.
 #[cfg(all(feature = "std", target_arch = "aarch64"))]
 macro_rules! arm_has { ($f:tt) => { std::arch::is_aarch64_feature_detected!($f) }; }
 #[cfg(all(not(feature = "std"), target_arch = "aarch64"))]
@@ -56,7 +64,7 @@ pub fn adler32_update(a: u32, b: u32, d: &[u8]) -> (r: (u32, u32))
     ensures
         (r.0 as nat, r.1 as nat) == adler_from(a as nat, b as nat, d@),
 {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
         if d.len() >= 64 && verilith_simd::vdot::has_vnni512() {
             return adler32_vnni(a, b, d);
@@ -77,7 +85,7 @@ pub fn adler32_update(a: u32, b: u32, d: &[u8]) -> (r: (u32, u32))
 /// Trusted: `adlerv::adler32_vnni` compiled with `avx512f,avx512bw,avx512vnni`
 /// enabled, through `tf::adler32_vnni`; the contract is the verified
 /// kernel's. The caller checks the CPU first.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[verifier::external_body]
 fn adler32_vnni(a: u32, b: u32, d: &[u8]) -> (r: (u32, u32))
     requires
@@ -93,7 +101,7 @@ fn adler32_vnni(a: u32, b: u32, d: &[u8]) -> (r: (u32, u32))
 
 /// Trusted: `adlerv::adler32_avx2` compiled with `avx2` enabled, through
 /// `tf::adler32_avx2`; the contract is the verified kernel's.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[verifier::external_body]
 fn adler32_avx2(a: u32, b: u32, d: &[u8]) -> (r: (u32, u32))
     requires
@@ -116,7 +124,7 @@ pub fn crc32_update(reg: u32, d: &[u8]) -> (r: u32)
     ensures
         r == crc_from(reg, d@),
 {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
         if d.len() >= VPCLMUL_MIN && verilith_simd::clmul::has_vpclmul() {
             return crc32_vpclmul(reg, d);
@@ -139,21 +147,21 @@ pub fn crc32_update(reg: u32, d: &[u8]) -> (r: u32)
 
 /// The shortest input the 512-bit kernel takes (it needs 256 bytes; below
 /// 512 the 256-bit kernel is as fast).
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub const VPCLMUL_MIN: usize = 512;
 
 /// The shortest input the 256-bit kernel takes (it needs 128 bytes).
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub const VPCLMUL256_MIN: usize = 128;
 
 /// The shortest input the 128-bit kernel takes (it needs 64 bytes).
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub const PCLMUL_MIN: usize = 64;
 
 /// Trusted: `fold::crc32_vpclmul` compiled with `avx512f,vpclmulqdq`
 /// enabled, through `tf::crc32_vpclmul`; the contract is the verified
 /// kernel's. The caller checks the CPU first.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[verifier::external_body]
 fn crc32_vpclmul(reg: u32, d: &[u8]) -> (r: u32)
     requires
@@ -169,7 +177,7 @@ fn crc32_vpclmul(reg: u32, d: &[u8]) -> (r: u32)
 /// Trusted: `fold::crc32_vpclmul256` compiled with `avx2,vpclmulqdq`
 /// enabled, through `tf::crc32_vpclmul256`; the contract is the verified
 /// kernel's.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[verifier::external_body]
 fn crc32_vpclmul256(reg: u32, d: &[u8]) -> (r: u32)
     requires
@@ -184,7 +192,7 @@ fn crc32_vpclmul256(reg: u32, d: &[u8]) -> (r: u32)
 
 /// Trusted: `fold::crc32_pclmul` compiled with `pclmulqdq` enabled,
 /// through `tf::crc32_pclmul`; the contract is the verified kernel's.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[verifier::external_body]
 fn crc32_pclmul(reg: u32, d: &[u8]) -> (r: u32)
     requires
@@ -247,7 +255,7 @@ fn crc32c_hw(reg: u32, d: &[u8]) -> (r: u32)
     #[cfg(target_arch = "x86_64")]
     {
         // SAFETY: only called after `has_crc32c` returned true.
-        unsafe { tf::crc32c_sse42(reg, d) }
+        unsafe { tf_crc32c::crc32c_sse42(reg, d) }
     }
     #[cfg(target_arch = "aarch64")]
     {
@@ -266,7 +274,7 @@ fn crc32c_hw(reg: u32, d: &[u8]) -> (r: u32)
 /// its instructions need. Each is one call; `#[target_feature]` only
 /// changes code generation. Verus rejects the attribute on verified code
 /// (verus-lang/verus#3362), so it lives outside `verus!`.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 mod tf {
     #[target_feature(enable = "avx512f,avx512bw,avx512vnni")]
     pub(super) unsafe fn adler32_vnni(a: u32, b: u32, d: &[u8]) -> (u32, u32) {
@@ -292,7 +300,13 @@ mod tf {
     pub(super) unsafe fn crc32_pclmul(reg: u32, d: &[u8]) -> u32 {
         crate::fold::crc32_pclmul(reg, d)
     }
+}
 
+/// The CRC-32C trampoline, kept apart from `tf`: `crc32` takes and returns
+/// general-purpose registers, so it builds on every x86-64 target,
+/// including those without SSE registers.
+#[cfg(target_arch = "x86_64")]
+mod tf_crc32c {
     #[target_feature(enable = "sse4.2")]
     pub(super) unsafe fn crc32c_sse42(reg: u32, d: &[u8]) -> u32 {
         crate::crc32c::crc32c_words(reg, d)

@@ -8,8 +8,16 @@ test() {
   cargo test --profile "$P"
   # Without std: a bare-metal build, and the tests with the vector kernels
   # chosen at compile time instead of detected.
-  rustup target add thumbv7em-none-eabihf > /dev/null
-  cargo build --profile "$P" --no-default-features --target thumbv7em-none-eabihf
+  # The three bare-metal targets the README names, each in the release
+  # profile and in dev: dev compiles every function, including kernels a
+  # release build drops as dead code, so it is what catches an intrinsic
+  # LLVM cannot lower on a target (x86_64-unknown-none has no SSE
+  # registers; see the top of src/cpu.rs).
+  for t in thumbv7em-none-eabihf aarch64-unknown-none x86_64-unknown-none; do
+    rustup target add "$t" > /dev/null
+    cargo build --profile "$P" --no-default-features --target "$t"
+    cargo build --profile dev --no-default-features --target "$t"
+  done
   RUSTFLAGS="-C target-cpu=native" CARGO_TARGET_DIR="$T/nostd" cargo test --profile "$P" --no-default-features
   # The crc32x and udot kernels, on emulated AArch64.
   if [ -n "${CI:-}" ]; then

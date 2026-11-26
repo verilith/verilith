@@ -362,7 +362,7 @@ pub fn block_sums(a: u32, b: u32, s1: &[u32], s10: &[u32], s2: &[u32], Ghost(x):
 
 } // verus!
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 verus! {
 
 use verilith_simd::vdot::*;
