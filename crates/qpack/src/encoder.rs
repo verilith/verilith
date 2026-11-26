@@ -665,6 +665,208 @@ impl Encoder {
             (refs, Ghost(it))
         }
     }
+
+    /// Encodes the field section `fields` for stream `stream`, appending
+    /// it to `out` (the encoder instructions it needs go to the encoder
+    /// stream). The result is its Required Insert Count. Proven: the spec
+    /// decoder, with the encoder's table, decodes the section to `fields`
+    /// under any size limit that allows them.
+    pub fn encode(&mut self, stream: u64, fields: &Fields, out: &mut Vec<u8>) -> (r: Ghost<nat>)
+        requires
+            old(self).inv(),
+            fields.inv(),
+            fields.buf@.len() <= 0x1000_0000,
+        ensures
+            final(self).inv(),
+            final(self).max_cap == old(self).max_cap,
+            final(self).taken@ == old(self).taken@,
+            final(self).held@ == old(self).held@,
+            final(out)@.len() >= old(out)@.len(),
+            final(out)@.subrange(0, old(out)@.len() as int) == old(out)@,
+            forall|ms: nat| ms >= fsizes(fields.view()) ==> #[trigger] section(final(self).table.view(), final(self).max_cap as nat, ms,
+                final(out)@.subrange(old(out)@.len() as int, final(out)@.len() as int)) == SecR::Ok(fields.view(), r@),
+    {
+        let base = self.table.icount();
+        let can_block = self.can_block(stream);
+        let min_sent = self.min_sent();
+        let mut lines: Vec<u8> = Vec::new();
+        let mut refs = Refs { has: false, min: 0, max: 0 };
+        let ghost mut its: Seq<Item> = Seq::empty();
+        let n = fields.len();
+        let mut i: usize = 0;
+        let ghost s0 = *old(self);
+        proof {
+            assert(lines@ =~= cat(its));
+            assert(flds(its) =~= fields.view().take(0));
+        }
+        while i < n
+            invariant
+                self.inv(),
+                self.same_but_table(&s0),
+                s0 == *old(self),
+                fields.inv(),
+                fields.buf@.len() <= 0x1000_0000,
+                n == fields.view().len(),
+                i <= n,
+                base <= icount(self.table.view()),
+                forall|j: int| 0 <= j < self.sent@.len() ==> min_sent <= #[trigger] self.sent@[j].min_ref,
+                refs.has && refs.max >= self.krc ==> can_block,
+                can_block == (nats(self.risky@).contains(stream as nat) || self.risky@.len() < self.max_blocked),
+                sec_ok(self.table.view(), base as nat, refs, its),
+                its.len() == i,
+                lines@ == cat(its),
+                flds(its) == fields.view().take(i as int),
+            decreases n - i,
+        {
+            let (name, value, never) = fields.get(i);
+            let ghost t0 = self.table.view();
+            let ghost l0 = lines@;
+            let (r2, it) = self.line(name, value, never, base, can_block, min_sent, refs, &mut lines);
+            proof {
+                let t1 = self.table.view();
+                assert forall|k: int| 0 <= k < its.len() implies {
+                    &&& item_ok(t1, base as nat, #[trigger] its[k])
+                    &&& (iref(its[k]) matches Some(a) ==> r2.has && r2.min <= a <= r2.max)
+                } by {
+                    lemma_item_keeps(t0, t1, base as nat, its[k]);
+                }
+                let its2 = its.push(it@);
+                lemma_cat_push(its, it@);
+                assert forall|k: int| 0 <= k < its2.len() implies {
+                    &&& item_ok(t1, base as nat, #[trigger] its2[k])
+                    &&& (iref(its2[k]) matches Some(a) ==> r2.has && r2.min <= a <= r2.max)
+                } by {
+                    if k < its.len() {
+                        assert(its2[k] == its[k]);
+                    }
+                }
+                assert(flds(its2) =~= fields.view().take(i + 1));
+                its = its2;
+            }
+            refs = r2;
+            i = i + 1;
+        }
+        let ghost t = self.table.view();
+        let ghost mc = self.max_cap as nat;
+        proof {
+            assert(fields.view().take(n as int) =~= fields.view());
+            lemma_p2_vals();
+        }
+        let ric: u64 = if refs.has { refs.max + 1 } else { 0 };
+        let bw: u64 = if refs.has { base } else { 0 };
+        let me = self.max_cap / 32;
+        proof {
+            lemma_max_entries(t, mc);
+            if refs.has {
+                assert(t.ents.len() > 0);
+                assert(me > 0);
+            }
+        }
+        let enc_ric: u64 = if ric == 0 { 0 } else { ric % (2 * me) + 1 };
+        let ghost o0 = out@;
+        integer::encode(out, 0, 8, enc_ric);
+        if bw >= ric {
+            integer::encode(out, 0, 7, bw - ric);
+        } else {
+            integer::encode(out, 0x80, 7, ric - bw - 1);
+        }
+        extend(out, lines.as_slice());
+        proof {
+            let sb = sec_bytes(ric as nat, bw as nat, mc, its);
+            assert(enc_ric as nat == encode_ric(ric as nat, mc));
+            assert(out@ =~= o0 + sb);
+            assert(out@.subrange(o0.len() as int, out@.len() as int) =~= sb);
+            assert(out@.subrange(0, o0.len() as int) =~= o0);
+            assert(items_ok(t, ric as nat, bw as nat, its)) by {
+                assert forall|k: int| 0 <= k < its.len() implies {
+                    &&& item_ok(t, bw as nat, #[trigger] its[k])
+                    &&& (iref(its[k]) matches Some(a) ==> a < ric)
+                } by {
+                    if !refs.has {
+                        lemma_item_base(t, base as nat, bw as nat, its[k]);
+                    }
+                }
+            }
+            lemma_fsum(its);
+            assert forall|ms: nat| ms >= fsizes(fields.view()) implies #[trigger] section(t, mc, ms, sb) == SecR::Ok(fields.view(), ric as nat) by {
+                lemma_section_rt(t, mc, ms, ric as nat, bw as nat, its);
+            }
+        }
+        if ric > 0 {
+            let ghost sv0 = sview(self.sent@);
+            self.sent.push(SentX { stream, ric, min_ref: refs.min });
+            proof {
+                assert(sview(self.sent@) =~= sv0.push(Sent { stream: stream as nat, ric: ric as nat, min_ref: refs.min as nat }));
+            }
+            if ric > self.krc && !self.contains_risky(stream) {
+                let ghost rv0 = self.risky@;
+                self.risky.push(stream);
+                proof {
+                    assert(nats(self.risky@) =~= nats(rv0).push(stream as nat));
+                }
+            }
+            proof {
+                let st = self.state();
+                let ss = nats(self.risky@);
+                assert forall|j: int| 0 <= j < st.sent.len() && #[trigger] st.sent[j].ric > st.krc implies ss.contains(st.sent[j].stream) by {
+                    if j < sv0.len() {
+                        assert(st.sent[j] == sv0[j]);
+                        assert(covers(nats(old(self).risky@), sv0, st.krc));
+                        let w = choose|w: int| 0 <= w < nats(old(self).risky@).len() && nats(old(self).risky@)[w] == sv0[j].stream;
+                        assert(ss[w] == nats(old(self).risky@)[w]);
+                    } else {
+                        assert(st.sent[j].stream == stream as nat);
+                        if nats(old(self).risky@).contains(stream as nat) {
+                            let w = choose|w: int| 0 <= w < nats(old(self).risky@).len() && nats(old(self).risky@)[w] == stream as nat;
+                            assert(ss[w] == nats(old(self).risky@)[w]);
+                        } else {
+                            assert(ss[ss.len() - 1] == stream as nat);
+                        }
+                    }
+                }
+                assert(covers(ss, st.sent, st.krc));
+                assert forall|j: int| 0 <= j < st.sent.len() implies st.table.dropped <= #[trigger] st.sent[j].min_ref by {
+                    if j < sv0.len() {
+                        assert(st.sent[j] == sv0[j]);
+                    }
+                }
+                assert forall|j: int| 0 <= j < st.sent.len() implies 0 < #[trigger] st.sent[j].ric <= icount(st.table) by {
+                    if j < sv0.len() {
+                        assert(st.sent[j] == sv0[j]);
+                    }
+                }
+            }
+        }
+        Ghost(ric as nat)
+    }
+
+    fn contains_risky(&self, stream: u64) -> (r: bool)
+        ensures
+            r == nats(self.risky@).contains(stream as nat),
+    {
+        let mut i: usize = 0;
+        while i < self.risky.len()
+            invariant
+                i <= self.risky@.len(),
+                forall|j: int| 0 <= j < i ==> self.risky@[j] != stream,
+            decreases self.risky@.len() - i,
+        {
+            if self.risky[i] == stream {
+                proof {
+                    assert(nats(self.risky@)[i as int] == stream as nat);
+                }
+                return true;
+            }
+            i = i + 1;
+        }
+        proof {
+            if nats(self.risky@).contains(stream as nat) {
+                let j = choose|j: int| 0 <= j < nats(self.risky@).len() && nats(self.risky@)[j] == stream as nat;
+                assert(self.risky@[j] == stream);
+            }
+        }
+        false
+    }
 }
 
 } // verus!
