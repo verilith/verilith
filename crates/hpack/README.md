@@ -84,12 +84,13 @@ encoder's own state after the call. So the peer's decoder ends each block
 with the dynamic table the encoder has, and the next block is encoded
 against the right table. What the proofs cover:
 
-- **Huffman** (`hencode.rs`): the bytes written decode by `spec::hdec` to
-  the input. The proof is on bit sequences: the codes one after another,
-  then fewer than 8 one bits. That such bits decode back needs the code to
-  be prefix-free and no run of 1 to 7 one bits to be a code;
-  `hencode::check` verifies both against the RFC table at run time, once,
-  as the decoder's `huffman::check` verifies its canonical layout.
+- **Huffman** (`henc.rs`, shared with verilith-qpack): the bytes written
+  decode by `spec::hdec` to the input. It codes two bytes at a time when
+  their codes fit a byte-pair table built once from the single-byte codes
+  (and proven to hold their concatenation). That the bits decode back needs
+  the code to be canonical and prefix-free; `henc::check` verifies that
+  against the RFC table at run time, once, as the decoder's
+  `huffman::check` verifies its canonical layout.
 - **Integers, string literals, every representation** (`emit.rs`):
   indexed, literal with incremental indexing, without indexing and never
   indexed, each with an indexed or a new name; and size updates. Each is a
@@ -155,9 +156,9 @@ What the proofs do not cover, and what is done about each:
   and that every symbol round-trips.
 - **`table::static_entry`**: it returns `stable.rs`'s entry `i`, which
   the spec names `static_name(i)` and `static_value(i)`.
-- **The encoder's `external_body` function** `hencode::ready` (a
-  `OnceLock` returns what `hencode::check` computed), the same pattern as
-  the decoder's `huffman::dtab`. `encoder::bytes_eq` is verified: it
+- **The encoder's `external_body` function** `henc::ptab` (a `OnceLock`
+  returns the pair table `henc::build_ptab` computed, after `henc::check`),
+  the same pattern as the decoder's `huffman::dtab`. `encoder::bytes_eq` is verified: it
   compares 8 bytes at a time with verilith-core's `load_u64_le`, as the
   hash index reads them.
 - **The statement `spec::block`**, which strings `spec::rep` together over

@@ -618,12 +618,14 @@ pub open spec fn known(k: int) -> u16 {
         EXT_PRE_SHARED_KEY
     } else if k == 9 {
         EXT_COOKIE
-    } else {
+    } else if k == 10 {
         EXT_EARLY_DATA
+    } else {
+        EXT_ECH
     }
 }
 
-pub const SLOTS: usize = 11;
+pub const SLOTS: usize = 12;
 
 #[inline(always)]
 fn slot_of(t: u16) -> (r: Option<usize>)
@@ -643,6 +645,7 @@ fn slot_of(t: u16) -> (r: Option<usize>)
         41 => Some(8),
         44 => Some(9),
         42 => Some(10),
+        0xfe0d => Some(11),
         _ => None,
     }
 }
@@ -942,6 +945,8 @@ pub struct ClientHello {
     pub pre_shared_key: Option<(Span, Span)>,
     pub cookie: Option<Span>,
     pub early_data: bool,
+    /// encrypted_client_hello's data (RFC 9849), not interpreted here.
+    pub ech: Option<Span>,
 }
 
 impl ClientHello {
@@ -965,6 +970,7 @@ impl ClientHello {
             - sp.start) % 2 == 0
         &&& self.signature_algorithms matches Some(sp) ==> sp.start <= sp.end <= n && (sp.end
             - sp.start) % 2 == 0
+        &&& self.ech matches Some(sp) ==> sp.start <= sp.end <= n
     }
 
     /// Every span is inside an `n`-byte body, and the lists of 2-byte
@@ -997,6 +1003,7 @@ impl ClientHello {
         &&& ov2(self.pre_shared_key) == s.pre_shared_key
         &&& ov(self.cookie) == s.cookie
         &&& self.early_data == s.early_data
+        &&& ov(self.ech) == s.ech
     }
 
     /// Parses a ClientHello body (the handshake message without its
@@ -1350,6 +1357,7 @@ fn interpret(b: &[u8], scan: &ExtScan, Ghost(o): Ghost<SpecOuter>) -> (r: (
         assert(ov(sl@[8]) == find_ext(x, EXT_PRE_SHARED_KEY));
         assert(ov(sl@[9]) == find_ext(x, EXT_COOKIE));
         assert(ov(sl@[10]) == find_ext(x, EXT_EARLY_DATA));
+        assert(ov(sl@[11]) == find_ext(x, EXT_ECH));
     }
     let (sni, c1) = chk_sni(b, sl[0]);
     let (alpn, c2) = chk_alpn(b, sl[1]);
@@ -1406,6 +1414,7 @@ fn interpret(b: &[u8], scan: &ExtScan, Ghost(o): Ghost<SpecOuter>) -> (r: (
             pre_shared_key: ov2(psk),
             cookie: ov(ck),
             early_data: sl@[10] is Some,
+            ech: ov(sl@[11]),
         };
         assert(parse_client_hello(bs) == Ok::<SpecHello, SpecAlert>(want));
     }
@@ -1426,6 +1435,7 @@ fn interpret(b: &[u8], scan: &ExtScan, Ghost(o): Ghost<SpecOuter>) -> (r: (
         pre_shared_key: psk,
         cookie: ck,
         early_data: sl[10].is_some(),
+        ech: sl[11],
     };
     (Ok(h), Ghost(steps))
 }

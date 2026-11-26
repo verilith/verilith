@@ -6,6 +6,9 @@
 //! input is malformed or ends too soon. Each encoder is a function from a
 //! value to the bytes the RFC prescribes for it, always choosing the
 //! shortest variable-length integers.
+pub use verilith_core::varint::{VARINT_LIMIT, VARINT_MAX};
+#[cfg(verus_only)]
+pub use verilith_core::varint::{b8, by, varint, varint_enc, varint_size, vlen};
 use vstd::prelude::*;
 
 verus! {
@@ -14,101 +17,9 @@ verus! {
 // Variable-length integers (§16)
 // ---------------------------------------------------------------------------
 
-/// `2^62`: every variable-length integer is below it.
-pub const VARINT_LIMIT: u64 = 0x4000_0000_0000_0000;
-
-/// `2^62 - 1`, the largest variable-length integer.
-pub const VARINT_MAX: u64 = 0x3fff_ffff_ffff_ffff;
-
-/// The length of the variable-length integer whose first byte is `first`:
-/// its two most significant bits are the base-2 logarithm of the length.
-pub open spec fn vlen(first: u8) -> int {
-    if first < 0x40 {
-        1
-    } else if first < 0x80 {
-        2
-    } else if first < 0xc0 {
-        4
-    } else {
-        8
-    }
-}
-
-/// Byte `b[i]` as a `u64`.
-pub open spec fn by(b: Seq<u8>, i: int) -> u64 {
-    b[i] as u64
-}
-
-/// The variable-length integer at `b[pos]` (§16): its value and the
-/// position after it. The remaining bits of the first byte and the bytes
-/// after it are the value, most significant first. Any of the four lengths
-/// may encode any value that fits.
-pub open spec fn varint(b: Seq<u8>, pos: int) -> Option<(u64, int)> {
-    if pos < 0 || pos >= b.len() {
-        None
-    } else {
-        let n = vlen(b[pos]);
-        if pos + n > b.len() {
-            None
-        } else {
-            let v0 = by(b, pos) & 0x3f;
-            let v = if n == 1 {
-                v0
-            } else if n == 2 {
-                (v0 << 8) | by(b, pos + 1)
-            } else if n == 4 {
-                (v0 << 24) | (by(b, pos + 1) << 16) | (by(b, pos + 2) << 8) | by(b, pos + 3)
-            } else {
-                (v0 << 56) | (by(b, pos + 1) << 48) | (by(b, pos + 2) << 40) | (by(b, pos + 3) << 32)
-                    | (by(b, pos + 4) << 24) | (by(b, pos + 5) << 16) | (by(b, pos + 6) << 8) | by(
-                    b,
-                    pos + 7,
-                )
-            };
-            Some((v, pos + n))
-        }
-    }
-}
-
-/// The low 8 bits of `x`.
-pub open spec fn b8(x: u64) -> u8 {
-    x as u8
-}
-
-/// The shortest encoding of `v` (which must be below `2^62`).
-pub open spec fn varint_enc(v: u64) -> Seq<u8> {
-    if v < 0x40 {
-        seq![b8(v)]
-    } else if v < 0x4000 {
-        seq![b8(0x40 | (v >> 8)), b8(v)]
-    } else if v < 0x4000_0000 {
-        seq![b8(0x80 | (v >> 24)), b8(v >> 16), b8(v >> 8), b8(v)]
-    } else {
-        seq![
-            b8(0xc0 | (v >> 56)),
-            b8(v >> 48),
-            b8(v >> 40),
-            b8(v >> 32),
-            b8(v >> 24),
-            b8(v >> 16),
-            b8(v >> 8),
-            b8(v),
-        ]
-    }
-}
-
-/// The length of `varint_enc(v)`.
-pub open spec fn varint_size(v: u64) -> int {
-    if v < 0x40 {
-        1
-    } else if v < 0x4000 {
-        2
-    } else if v < 0x4000_0000 {
-        4
-    } else {
-        8
-    }
-}
+// The definitions are verilith-core's (`verilith_core::varint`), shared
+// with HTTP/3: `VARINT_LIMIT`, `VARINT_MAX`, `vlen`, `by`, `varint`, `b8`,
+// `varint_enc` and `varint_size`.
 
 
 // ---------------------------------------------------------------------------

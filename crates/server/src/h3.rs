@@ -1063,7 +1063,7 @@ fn dispatch<Id: Copy + Eq + Hash + Into<u64>, H: Handler + ?Sized>(c: &mut App<I
     reply.status = 0;
     reply.sent_headers = false;
     reply.off = 0;
-    let mut scratch = Out::empty();
+    let mut scratch = crate::out::Wire::empty();
     let mut res = Response { out: &mut scratch, ctx, sent: false, close: false, head: method == b"HEAD", h2: Some(&mut reply) };
     if req.too_big {
         res.error(413);
