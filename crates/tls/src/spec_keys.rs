@@ -168,6 +168,7 @@ pub open spec fn hkdf_label(l: nat, label: Seq<u8>, ctx: Seq<u8>) -> Seq<u8> {
 }
 
 /// `HKDF-Expand-Label(Secret, Label, Context, Length)`.
+#[verifier::opaque]
 pub open spec fn expand_label(a: HashAlg, secret: Seq<u8>, label: Seq<u8>, ctx: Seq<u8>, l: nat) -> Seq<
     u8,
 > {
@@ -288,6 +289,7 @@ pub open spec fn pow256(n: nat) -> nat
 }
 
 /// The per-record nonce: the padded sequence number XORed with the IV.
+#[verifier::opaque]
 pub open spec fn record_nonce(iv: Seq<u8>, seq: u64) -> Seq<u8> {
     Seq::new(12, |i: int| iv[i] ^ seq_byte(seq, i))
 }

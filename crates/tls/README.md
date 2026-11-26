@@ -6,10 +6,27 @@ then the handshake state machine and the key schedule. The cryptographic
 primitives (AEAD, HKDF, signatures, key exchange) stay in aws-lc and are
 trusted; everything that decides what a byte from the peer means is proven.
 
-**Status: first parts.** This release has the ClientHello parser, the
-record and handshake message headers, negotiation (what a server chooses
-from a ClientHello), and the key schedule. The server handshake state
-machine and record protection come next ([plan](#plan)).
+**Status: a working TLS 1.3 server.** This release has the ClientHello
+parser, negotiation, the key schedule, record protection and the server
+handshake state machine, all proven, and talks to rustls clients with every
+TLS 1.3 cipher suite and X25519, P-256, P-384 and X25519MLKEM768. It does a
+full handshake with a certificate: no PSK resumption, no 0-RTT and no
+client certificates yet ([plan](#plan)). The cryptography is
+[`verilith-tls-aws-lc`](../tls-aws-lc), a separate crate.
+
+```rust,ignore
+use std::sync::Arc;
+use verilith_tls::{server::Config, stream::ServerStream};
+use verilith_tls_aws_lc::{AwsLc, SigningKey, GROUPS, SUITES};
+
+let key = SigningKey::from_pkcs8(&key_der).unwrap();
+let cfg = Arc::new(Config::new(SUITES.to_vec(), GROUPS.to_vec(), key.schemes().to_vec(),
+                               b"\x02h2\x08http/1.1".to_vec(), &vec![cert_der]).unwrap());
+let mut tls = ServerStream::new(cfg, AwsLc::new(Some(key)));
+tls.read_tls(&bytes_from_socket);
+tls.process()?;                       // plaintext in tls.plaintext()
+socket.write_all(tls.pending())?;     // answers to send
+```
 
 ClientHello parsing is the part of a TLS server an unauthenticated peer
 reaches first, with the most structure: nested length-prefixed vectors,
@@ -86,6 +103,46 @@ definition names its section. The proofs show:
   given to it. HMAC and SHA-2 are verilith-sha2's, which are proven too
   (against FIPS 198-1 and FIPS 180-4), so the key schedule assumes nothing
   of its own. It does not allocate.
+- **Record protection** (`protect.rs`) computes exactly `spec_record.rs`
+  (§5.2, §5.3): the protected record header, which is also the AEAD's
+  additional data; TLSInnerPlaintext as content, type and no padding when
+  sealing; when opening, the 2^14 + 256 ciphertext and 2^14 + 1 plaintext
+  limits (`record_overflow`), the padding stripped back to the last
+  non-zero byte (`unexpected_message` if there is none), and the per-record
+  nonce. Each direction's sequence number goes up by one per record and
+  stops before it would wrap, and `lemma_nonce_injective` proves distinct
+  sequence numbers give distinct nonces: no nonce is used twice under a key.
+- **The server state machine** (`server.rs`, over `spec_server.rs`):
+  - a connection is only ever in one of the states of Appendix A.2
+    (`Phase`: Start, Retried, WaitFinished, Connected, Closed), and moves
+    between them only forward;
+  - every handshake message the server sends is exactly `spec_server.rs`'s
+    encoding of it (ServerHello, HelloRetryRequest, EncryptedExtensions
+    with the ALPN choice, Certificate, CertificateVerify, Finished,
+    KeyUpdate); the flight after ServerHello is proven to be exactly those
+    messages sealed in order under the server handshake keys from sequence
+    number 0;
+  - `SpecHs::valid`: each ClientHello negotiated (`spec::negotiate`)
+    exactly the suite, group, signature scheme and ALPN protocol used; after
+    a HelloRetryRequest the second ClientHello had to agree with it
+    (§4.1.4), and the transcript starts with `message_hash` (§4.4.1); the
+    shared secret is the provider's key exchange of the client's share; the
+    CertificateVerify signature is over §4.4.3's content for the transcript
+    through Certificate;
+  - the transcript hash is over exactly the messages §4.4.1 says, and every
+    secret and key is the key schedule's for it;
+  - `lemma_connected`: once Connected, the client's Finished was exactly
+    the one RFC 8446 defines for that transcript (compared in constant
+    time);
+  - application data is delivered (`Event::Data`) only when Connected, and
+    only from a record that `spec_record::open_record` opens under the
+    client's application traffic keys (after however many KeyUpdates);
+    `write` seals under the server's;
+  - change_cipher_spec records are dropped only between the ClientHello and
+    the client's Finished, and only when they are the single byte 1;
+    handshake messages may span records but not a change of keys; refused
+    0-RTT data is skipped up to a bound (§4.2.10). Anything else is the
+    alert §6 gives.
 - **Record and handshake headers** (`record.rs`) read exactly
   `spec::record_header` and `spec::handshake_message`.
 - No panics, no overflow, no out-of-bounds access, in all of the above. No
@@ -97,7 +154,17 @@ definition names its section. The proofs show:
 
 ## Trusted base
 
-- **The spec** (`spec.rs`, `spec_keys.rs`). Read them against the RFCs.
+- **The spec** (`spec.rs`, `spec_keys.rs`, `spec_record.rs`,
+  `spec_server.rs`). Read them against the RFCs.
+- **The cryptography** (`crypto.rs`): the AEADs, key exchange, signatures
+  and random numbers are uninterpreted functions, and the proofs assume the
+  provider's implementation meets the contracts on the `AeadKey` and
+  `Provider` traits. [`verilith-tls-aws-lc`](../tls-aws-lc) implements them
+  over aws-lc; it is a separate crate, outside the workspace and Buck,
+  because aws-lc is C.
+- `stream.rs`, a byte-stream adapter that frames records and buffers
+  bytes for `ServerConn`, is plain Rust and not verified; it decides
+  nothing about what the bytes mean.
 - Verus, vstd, Z3, rustc; verilith-core's `bytes::be16`, a spec function;
   and verilith-sha2's specifications of SHA-2 and HMAC (and its own
   trusted base: the SHA instructions' specifications and CPU detection).
@@ -105,6 +172,14 @@ definition names its section. The proofs show:
 There is no `external_body` in this crate.
 
 ## Tests
+
+`../tls-aws-lc/tests/interop.rs` handshakes with a rustls 0.23 client in
+memory: all three cipher suites with each of the four groups, ALPN
+selection, a HelloRetryRequest, KeyUpdates both ways, close_notify, records
+fed one byte at a time, a no-common-group and a no-common-ALPN failure, and
+a tampered record (`bad_record_mac`, and nothing more is sent).
+`../tls-aws-lc/tests/protect.rs` checks record protection against the AEAD
+called directly with §5.3's nonce, with padding and each error.
 
 `tests/keys.rs` checks the key schedule against RFC 8448's early and
 derived secrets and, for both hashes and 100 random handshakes, against
@@ -148,21 +223,39 @@ returns spans.
 | openssl s_client, P-256 and P-384 (260 B) | 85 ns | 1178 ns | 14x |
 | rustls client, SNI, ALPN (1490 B) | 95 ns | 1653 ns | 17x |
 
+### Against a rustls server
+
+`../tls-aws-lc/examples/bench.rs` (`cargo run --release --example bench`),
+same VM. Both servers use aws-lc for their cryptography, so the difference
+is the TLS layer; a rustls client drives both and only the server's own
+work is timed. ECDSA P-256 certificate, TLS_AES_128_GCM_SHA256.
+
+| full handshake, server side | verilith-tls | rustls 0.23 | speedup |
+|---|---:|---:|---:|
+| X25519 | 62.9 µs | 74.3 µs | 1.18x |
+| P-256 | 91.9 µs | 103.6 µs | 1.13x |
+| X25519MLKEM768 | 85.0 µs | 99.5 µs | 1.17x |
+
+| 16 MiB in 16 KiB records | verilith-tls | rustls 0.23 | speedup |
+|---|---:|---:|---:|
+| server seals | 11.2 GB/s | 9.1 GB/s | 1.23x |
+| server opens | 4.5 GB/s | 3.6 GB/s | 1.27x |
+
+Most of a handshake is the signature and the key exchange, which are the
+same aws-lc calls on both sides.
+
 ## Plan
 
 1. ClientHello and extensions parser, record and handshake headers.
    *(done)*
 2. Negotiation, verified: version, cipher suite, group and key share,
    signature scheme, ALPN choice, and server name validation. *(done)*
-3. The server handshake state machine (§2, §4, Appendix A.2): full
-   handshake, HelloRetryRequest, PSK resumption, proven to send and accept
-   messages only in the order the RFC allows, with the transcript hash over
-   exactly the messages §4.4.1 says.
+3. The server handshake state machine (§2, §4, Appendix A.2). *(done for
+   the full handshake and HelloRetryRequest; PSK resumption, session
+   tickets and client certificates next)*
 4. The key schedule (§7). *(done, over verilith-sha2's proven HMAC, so
    no HKDF is trusted)*
-5. Record protection (§5.2, §5.3): TLSInnerPlaintext framing and
-   padding, sequence numbers proven never to repeat under one key, with
-   the AEADs from aws-lc, trusted.
+5. Record protection (§5.2, §5.3). *(done)*
 6. A drop-in under rustls's server API where the server needs it, and
    benchmarks of full handshakes against rustls.
 
