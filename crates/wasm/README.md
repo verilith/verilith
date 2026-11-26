@@ -18,9 +18,9 @@ at 0.81 to 1.03 times wasmi's time and 1.04 to 1.47 times wasm3's on the
 benchmarks below (the stack interpreter it replaced took 2.5 to 3.4 times
 wasmi's, in an earlier run).
 
-**Verification status.** `cargo verus verify` checks 737 functions with
-no errors (about 19 minutes on an Apple M-series laptop and 42 on a 4-core Linux VM, most of it on the
-interpreter loop, `execute`). The translation to register form (`src/reg.rs`) is marked
+**Verification status.** `cargo verus verify` checks 744 functions with
+no errors (about 5 minutes with two threads on a 4-core Linux VM, for
+both a 64-bit and a 32-bit target). The translation to register form (`src/reg.rs`) is marked
 `external_body`: it is untrusted, and only the checker's verdict on its
 output matters.
 
@@ -178,14 +178,17 @@ instance.set_fuel(Some(1_000_000)); // refuel (None: unmetered)
 
   Unmetered instances pay nothing for this: they run `run::execute`, the
   loop without fuel, and metered ones run `run::execute_metered` (both
-  proven). Metered runs execute 8 to 35% more instructions on the
-  benchmarks below (`fib` 12%, `sieve` 35%, `matmul` 10%, `sort` 8%,
-  `crc32` 11%, `sha256` 8%; `runner vwasm-fuel` in `bench/`). That is
-  the check on each branch, call and return, and a second dispatch: the
-  metered loop sends every branch code through one arm, because with an
-  exit for running out of fuel in each branch code's own arm the loop's
-  proof exceeds its resource limit. Checking fuel before every operation
-  instead made the benchmarks up to 1.65 times slower.
+  proven). The metered loop checks fuel on each branch, call and return,
+  and sends every branch code through one arm that charges and then
+  dispatches again (`rsteps::s_branch`). On the benchmarks below that
+  costs nothing measurable: metered runs execute 1 to 13% fewer
+  instructions than unmetered ones (`fib` 7%, `sieve` 13%, `matmul` 5%,
+  `sort` 5%, `crc32` 1%, `sha256` 4%; `runner vwasm-fuel` in `bench/`),
+  as the shared arm compiles to tighter code, and take about the same
+  time. A charge in each branch arm instead proves in 13 minutes rather
+  than under 5 and executes 1 to 5% more instructions than unmetered
+  runs. Checking fuel before every operation made the benchmarks up to
+  1.65 times slower.
 - **Memory cap.** `max_memory(bytes)` caps every instance's memory
   (rounded down to whole pages). A module whose memory starts above the
   cap fails to instantiate, and `memory.grow` past the cap returns -1, as
