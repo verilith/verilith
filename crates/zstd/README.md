@@ -5,7 +5,7 @@ A verified Zstandard (RFC 8878) decompressor in Rust, proven with
 C API. It is meant to replace libzstd's decoder in hardened builds (Node.js
 first), alongside libzstd's compressor.
 
-`cargo verus verify` (or `scripts/verify.sh`) checks 337 functions and
+`cargo verus verify` (or `scripts/verify.sh`) checks 338 functions and
 lemmas with no errors and no `assume`; the only `external_body` functions
 in this crate are the three wild-copy primitives in
 `src/prims.rs` and the three CPU-feature wrappers in `src/cpu.rs`.
@@ -67,8 +67,7 @@ What the proofs assume rather than prove:
   departs from the RFC or from libzstd, it says so, and
   [DEPARTURES.md](https://github.com/verilith/verilith/blob/main/crates/zstd/DEPARTURES.md) lists every case.
 - [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core)'s trusted
-  primitives: `load_u64_le` (an unaligned load whose `requires` is the
-  bounds check, proven at each call site) and `tail::Tail`, the vector
+  primitives: `tail::Tail`, the vector
   the sequence loop appends to. `Tail::take` reserves room for the whole
   block once; each append (`append_from`, `append_within` and their
   32-byte forms) copies 16 bytes at a time through a raw pointer, and
@@ -76,15 +75,15 @@ What the proofs assume rather than prove:
   fit in what was reserved. Trusted is that each append stays within
   those bounds.
 - `src/prims.rs`: `extend_from` (append a range of a slice, copying 16
-  bytes at a time where there is room), `put4` and `put_pairs4` (store
-  four Huffman symbols or four symbol pairs at a position with one or
-  eight raw stores, leaving the rest of the vector as it was); each
-  `requires` is the bounds check, proven at the call site. `grow`, `put`
-  and `drop_front` are verified against vstd's specs of `resize`,
-  `copy_from_slice`, `copy_within` and `truncate`, and `row` and `at`
-  against its spec of `get_unchecked`. Copying a
-  range into the caller's output buffer is verilith-core's
-  `prims::copy_in`.
+  bytes at a time where there is room) and `put_pairs4` (store four
+  symbol pairs at a position with eight raw stores, leaving the rest of
+  the vector as it was); each `requires` is the bounds check, proven at
+  the call site. `grow`, `put`, `put4` and `drop_front` are verified
+  against vstd's specs of `resize`, `copy_from_slice`, `copy_within`,
+  `get_unchecked_mut` and `truncate`, and `row` and `at` against its spec
+  of `get_unchecked`. Copying a range into the caller's output buffer is
+  verilith-core's `prims::copy_in`, and `load_u64_le` is verilith-core's
+  too; both are verified there.
 - `src/cpu.rs`: `run_seqs`, `run_huf4` and `run_huf1` call the verified
   `seq_run_exec`, `huf_4streams_exec` and `huf_stream_exec`, through a copy
   compiled with BMI2 when the CPU has it (Verus rejects `#[target_feature]`

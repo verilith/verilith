@@ -1,9 +1,12 @@
-//! Memory primitives with hand-written specs (part of the trusted base).
+//! Memory primitives with hand-written specs.
 //!
-//! Each is a one-line wrapper around an unchecked access. The `requires`
-//! clause is the bounds check, which Verus proves at every call site, so
-//! verified code can only reach the linear memory and the value stack
-//! within their bounds. Without verification they keep a `debug_assert!`.
+//! Each wraps an unchecked access. The `requires` clause is the bounds
+//! check, which Verus proves at every call site, so verified code can only
+//! reach the linear memory and the value stack within their bounds. The
+//! element accesses, copies, fills and `try_grow` are verified against
+//! vstd's specs; `load`, `store` and the `Cur` cursor are trusted
+//! (`external_body`, part of the trusted base) and keep a `debug_assert!`
+//! for unverified callers.
 use vstd::prelude::*;
 #[allow(unused_imports)]
 use crate::sem::*;
@@ -55,7 +58,6 @@ pub fn sset(s: &mut Vec<u64>, i: usize, v: u64)
 }
 
 /// Copies `n` slots from `src` to `dst` (`dst <= src`), as `memmove`.
-#[verifier::external_body]
 #[inline(always)]
 pub fn scopy_down(s: &mut Vec<u64>, dst: usize, src: usize, n: usize)
     requires dst <= src, src + n <= old(s)@.len(),
@@ -64,16 +66,11 @@ pub fn scopy_down(s: &mut Vec<u64>, dst: usize, src: usize, n: usize)
         forall|i: int| 0 <= i < final(s)@.len() ==> #[trigger] final(s)@[i] ==
             if dst <= i < dst + n { old(s)@[src + (i - dst)] } else { old(s)@[i] },
 {
-    debug_assert!(dst <= src && src + n <= s.len());
-    // SAFETY: both ranges are inside `s`; `copy` allows overlap.
-    unsafe {
-        let p = s.as_mut_ptr();
-        core::ptr::copy(p.add(src), p.add(dst), n)
-    }
+    let _ = s.len();  // bounds `src + n` by `usize::MAX` for Verus
+    s.as_mut_slice().copy_within(src..src + n, dst);
 }
 
 /// Sets `n` slots from `i` to zero.
-#[verifier::external_body]
 #[inline(always)]
 pub fn szero(s: &mut Vec<u64>, i: usize, n: usize)
     requires i + n <= old(s)@.len(),
@@ -82,9 +79,20 @@ pub fn szero(s: &mut Vec<u64>, i: usize, n: usize)
         forall|j: int| 0 <= j < final(s)@.len() ==> #[trigger] final(s)@[j] ==
             if i <= j < i + n { 0 } else { old(s)@[j] },
 {
-    debug_assert!(i + n <= s.len());
-    // SAFETY: the range is inside `s`.
-    unsafe { core::ptr::write_bytes(s.as_mut_ptr().add(i), 0, n) }
+    let _ = s.len();  // bounds `i + n` by `usize::MAX` for Verus
+    let e = i + n;
+    let mut j = i;
+    // A loop LLVM turns into one `memset`.
+    while j < e
+        invariant
+            i <= j <= e <= s@.len(),
+            s@.len() == old(s)@.len(),
+            forall|k: int| 0 <= k < s@.len() ==> #[trigger] s@[k] == if i <= k < j { 0 } else { old(s)@[k] },
+        decreases e - j,
+    {
+        sset(s, j, 0);
+        j += 1;
+    }
 }
 
 /// Loads `n` (1, 2, 4 or 8) little-endian bytes at `i`.
@@ -128,59 +136,90 @@ pub fn store(m: &mut Vec<u8>, i: usize, v: u64, n: usize)
 }
 
 /// `memory.fill`.
-#[verifier::external_body]
 #[inline(always)]
 pub fn fill(m: &mut Vec<u8>, d: usize, v: u8, n: usize)
     requires d + n <= old(m)@.len(),
     ensures final(m)@ == old(m)@.subrange(0, d as int) + Seq::new(n as nat, |_i| v)
         + old(m)@.subrange((d + n) as int, old(m)@.len() as int),
 {
-    debug_assert!(d + n <= m.len());
-    // SAFETY: the range is inside `m`.
-    unsafe { core::ptr::write_bytes(m.as_mut_ptr().add(d), v, n) }
+    let _ = m.len();  // bounds `d + n` by `usize::MAX` for Verus
+    let e = d + n;
+    let mut j = d;
+    // A loop LLVM turns into one `memset`.
+    while j < e
+        invariant
+            d <= j <= e <= m@.len(),
+            m@.len() == old(m)@.len(),
+            forall|k: int| 0 <= k < m@.len() ==> #[trigger] m@[k] == if d <= k < j { v } else { old(m)@[k] },
+        decreases e - j,
+    {
+        // SAFETY: `j < e <= m.len()`.
+        unsafe { *m.as_mut_slice().get_unchecked_mut(j) = v }
+        j += 1;
+    }
+    proof {
+        assert(final(m)@ =~= old(m)@.subrange(0, d as int) + Seq::new(n as nat, |_i| v)
+            + old(m)@.subrange((d + n) as int, old(m)@.len() as int));
+    }
 }
 
 /// `memory.copy` (the ranges may overlap).
-#[verifier::external_body]
 #[inline(always)]
 pub fn copy_within(m: &mut Vec<u8>, d: usize, s: usize, n: usize)
     requires d + n <= old(m)@.len(), s + n <= old(m)@.len(),
     ensures final(m)@ == old(m)@.subrange(0, d as int) + old(m)@.subrange(s as int, (s + n) as int)
         + old(m)@.subrange((d + n) as int, old(m)@.len() as int),
 {
-    debug_assert!(d + n <= m.len() && s + n <= m.len());
-    // SAFETY: both ranges are inside `m`; `copy` allows overlap.
-    unsafe {
-        let p = m.as_mut_ptr();
-        core::ptr::copy(p.add(s), p.add(d), n)
+    let _ = m.len();  // bounds `s + n` by `usize::MAX` for Verus
+    m.as_mut_slice().copy_within(s..s + n, d);
+    proof {
+        assert(final(m)@ =~= old(m)@.subrange(0, d as int) + old(m)@.subrange(s as int, (s + n) as int)
+            + old(m)@.subrange((d + n) as int, old(m)@.len() as int));
     }
 }
 
 /// `memory.init`: copies `data[s..s + n]` to `d`.
-#[verifier::external_body]
 #[inline(always)]
 pub fn copy_in(m: &mut Vec<u8>, d: usize, data: &[u8], s: usize, n: usize)
     requires d + n <= old(m)@.len(), s + n <= data@.len(),
     ensures final(m)@ == old(m)@.subrange(0, d as int) + data@.subrange(s as int, (s + n) as int)
         + old(m)@.subrange((d + n) as int, old(m)@.len() as int),
 {
-    debug_assert!(d + n <= m.len() && s + n <= data.len());
-    m[d..d + n].copy_from_slice(&data[s..s + n]);
+    let _ = m.len();  // bounds `d + n` by `usize::MAX` for Verus
+    let _ = data.len();
+    // SAFETY: both ranges are in bounds by the precondition.
+    let src = unsafe { data.get_unchecked(s..s + n) };
+    let dst = unsafe { m.as_mut_slice().get_unchecked_mut(d..d + n) };
+    dst.copy_from_slice(src);
+    proof {
+        assert(final(m)@ =~= old(m)@.subrange(0, d as int) + data@.subrange(s as int, (s + n) as int)
+            + old(m)@.subrange((d + n) as int, old(m)@.len() as int));
+    }
 }
 
 /// Appends `n` zero bytes (`memory.grow`), or leaves `m` unchanged and
 /// returns `false` if the allocation fails.
-#[verifier::external_body]
 #[inline(never)]
 pub fn try_grow(m: &mut Vec<u8>, n: usize) -> (r: bool)
     ensures
         r ==> final(m)@ == old(m)@ + Seq::new(n as nat, |_i| 0u8),
         !r ==> final(m)@ == old(m)@,
 {
-    if m.try_reserve_exact(n).is_err() {
+    let len = m.len();
+    if n > usize::MAX - len || m.try_reserve_exact(n).is_err() {
         return false;
     }
-    m.resize(m.len() + n, 0);
+    m.resize(len + n, 0);
+    proof {
+        assert forall|i: int| 0 <= i < final(m)@.len() implies #[trigger] final(m)@[i] == (old(m)@ + Seq::new(n as nat, |_i| 0u8))[i] by {
+            if i >= len {
+                assert(cloned::<u8>(0u8, final(m)@[i]));
+            } else {
+                assert(final(m)@[i] == final(m)@.subrange(0, len as int)[i]);
+            }
+        }
+        assert(final(m)@ =~= old(m)@ + Seq::new(n as nat, |_i| 0u8));
+    }
     true
 }
 

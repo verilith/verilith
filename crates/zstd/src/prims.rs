@@ -96,7 +96,6 @@ pub fn put(v: &mut Vec<u8>, at: usize, src: &[u8], from: usize, n: usize)
 }
 
 /// Writes four bytes at `at` with one store.
-#[verifier::external_body]
 #[inline(always)]
 pub fn put4(v: &mut Vec<u8>, at: usize, a: [u8; 4])
     requires
@@ -106,9 +105,12 @@ pub fn put4(v: &mut Vec<u8>, at: usize, a: [u8; 4])
         kept(old(v)@, final(v)@, at as int, at + 4),
         final(v)@.subrange(at as int, at + 4) == a@,
 {
+    let _ = v.len();  // bounds `at + 4` by `usize::MAX` for Verus
     // SAFETY: `at + 4 <= len`.
-    unsafe {
-        core::ptr::copy_nonoverlapping(a.as_ptr(), v.as_mut_ptr().add(at), 4);
+    let d = unsafe { v.as_mut_slice().get_unchecked_mut(at..at + 4) };
+    d.copy_from_slice(&a);
+    proof {
+        reveal(kept);
     }
 }
 

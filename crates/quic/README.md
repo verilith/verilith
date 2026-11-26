@@ -119,8 +119,9 @@ the PADDING scan reads eight bytes at a time.
 
 - `src/spec.rs`: the specification. Reading it against RFC 9000 is what
   the proofs cannot do for you.
-- `verilith-core`'s `extend` (a `memcpy` into a `Vec`) and `load_u64_le`,
-  and vstd's `slice_subrange`.
+- `verilith-core`'s `extend` (a `memcpy` into a `Vec`) and `load_u64_le`
+  (both verified there against vstd's specs of `extend_from_slice` and
+  `get_unchecked`), and vstd's `slice_subrange`.
 - Verus, Z3 and rustc.
 
 There is no `external_body`, `assume` or `unsafe` in this crate.

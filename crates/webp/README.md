@@ -157,10 +157,10 @@ What the proofs assume rather than prove:
   tables it names (`spec_dc_table` and the like) are tied to the tables in
   `src/vp8tables.rs` by trusted one-line readers.
 - [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core)'s trusted base:
-  the memory primitives in `verilith_core::prims` (verilith-webp uses its unaligned
-  little-endian load, the slice copies `copy_in` and `copy_within`, and
-  fallible `Vec<u32>` allocation; the unchecked `get`/`set` accessors at 8,
-  16 and 32 bits are proven there), and the spec functions for bits and
+  the memory primitives in `verilith_core::prims` (verilith-webp uses its
+  fallible `Vec<u32>` allocation; its unaligned little-endian load, the
+  slice copies `copy_in` and `copy_within`, and the unchecked `get`/`set`
+  accessors at 8, 16 and 32 bits are proven there), and the spec functions for bits and
   canonical codes in `verilith_core::bits` and `verilith_core::huffman`, which `src/spec.rs`
   re-exports. Each primitive's `requires` clause is the bounds/size fact
   Verus proves at every call site.

@@ -92,9 +92,9 @@ What the proofs assume rather than prove:
   its steps (its work bound, proven there). The counters count what the
   verified loops do; the primitives' cost is assumed.
 - verilith-zlib's trusted base (its specification of zlib and DEFLATE and
-  its own primitives), and verilith-core's (the memory primitives used
-  here: unchecked loads and stores, `copy_in`, `copy_match`'s chunks,
-  and the zeroed allocations `alloc_u8` and `alloc_u32`).
+  its own primitives), and verilith-core's (the zeroed allocations
+  `alloc_u8` and `alloc_u32`; the unchecked loads and stores, `copy_in`
+  and `copy_match`'s chunks used here are verified there).
 - Verus, Z3 and the Rust compiler.
 
 - `src/capi.rs` and `capi/tiffshim.c`: libtiff's C API. Unverified glue:
