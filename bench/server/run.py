@@ -117,6 +117,9 @@ def server_cmds(env):
             out["verilith"] += ["--h3", str(PORTS["H3"])]
         if "tls-rustls" in p:
             out["verilith-rustls"] = out["verilith"] + ["--tls-backend", "rustls"]
+        # The same server on its io_uring event loop (Linux).
+        if "io-uring" in p:
+            out["verilith-uring"] = out["verilith"] + ["--io-uring"]
     b = hyper_bin()
     if b:
         out["hyper"] = [b, "--threads", str(env["threads"]), "--http", str(PORTS["HTTP"]), "--h2c", str(PORTS["H2C"]),
@@ -229,7 +232,7 @@ def protocols(name, cmd):
     tcp = set(PORTS) - UDP
     if name in fixed:
         return fixed[name]
-    if name != "verilith":
+    if name not in ("verilith", "verilith-uring"):
         return tcp
     try:
         out = subprocess.run([cmd[0], "--protocols"], capture_output=True, text=True, timeout=10).stdout
@@ -446,7 +449,7 @@ def versions(cmds):
                 lock = open(os.path.join(HERE, "baselines/may-minihttp/Cargo.lock")).read()
                 m = re.search(r'name = "may_minihttp"\nversion = "([^"]+)"', lock)
                 v[name] = m.group(1) if m else "?"
-            elif name in ("verilith", "verilith-rustls"):
+            elif name in ("verilith", "verilith-rustls", "verilith-uring"):
                 v[name] = subprocess.run(["git", "-C", ROOT, "rev-parse", "--short", "HEAD"], capture_output=True,
                                          text=True).stdout.strip()
         except Exception:

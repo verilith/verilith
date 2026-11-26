@@ -13,6 +13,10 @@ use crate::h2::{Conn2, Limits2};
 use crate::sys::{self, IoResult};
 use crate::Handler;
 
+#[cfg(target_os = "linux")]
+#[path = "worker_uring.rs"]
+mod uring;
+
 /// How to run the server.
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -41,6 +45,9 @@ pub struct Config {
     /// a few hundred trade CPU for lower latency when connections are
     /// short (`h1-close`: +14% requests, twice the CPU).
     pub spin: u32,
+    /// Linux: run each worker on io_uring instead of epoll (falls back
+    /// to epoll where the kernel has no io_uring).
+    pub io_uring: bool,
 }
 
 impl Default for Config {
@@ -61,6 +68,7 @@ impl Default for Config {
             limits3: crate::h3::Limits3::default(),
             server: b"verilith",
             spin: 0,
+            io_uring: false,
         }
     }
 }
@@ -118,6 +126,20 @@ pub fn serve<H: Handler>(cfg: Config, handler: Arc<H>) -> io::Result<()> {
         joins.push(std::thread::Builder::new().name(format!("verilith-w{i}")).spawn(move || {
             if cfg.pin {
                 sys::pin_to_cpu(cpu);
+            }
+            #[cfg(target_os = "linux")]
+            if cfg.io_uring {
+                match uring::UWorker::new(lfd.clone(), cfg.clone()) {
+                    Ok(mut w) => {
+                        #[cfg(feature = "h3")]
+                        if let (Some(fd), Some((_, qc))) = (udp, &cfg.h3) {
+                            w.add_udp(fd, crate::h3::H3::new(fd, qc.clone(), cfg.limits3));
+                        }
+                        return w.run(&*h);
+                    }
+                    Err(e) if i == 0 => eprintln!("verilith-server: no io_uring ({e}); using epoll"),
+                    Err(_) => {}
+                }
             }
             #[allow(unused_mut)]
             let mut w = Worker::new(lfd, cfg)?;

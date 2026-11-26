@@ -4,6 +4,7 @@
 //!                   [--tls PORT --cert PEM --key PEM]   (built with --features tls)
 //!                   [--tls-backend verilith|rustls]     (rustls: --features tls-rustls)
 //!                   [--h3 PORT --cert PEM --key PEM]    (UDP; built with --features h3)
+//!                   [--io-uring]                        (Linux: io_uring instead of epoll)
 //!
 //!   GET /plaintext       "Hello, World!", text/plain
 //!   GET /static/<name>   a file under DIR, read at start; sent with
@@ -42,6 +43,9 @@ fn main() {
         if cfg!(feature = "h3") {
             p.push("h3");
         }
+        if cfg!(target_os = "linux") {
+            p.push("io-uring");
+        }
         println!("{}", p.join(" "));
         return;
     }
@@ -53,6 +57,7 @@ fn main() {
         h2c_port: arg(&args, "--h2c").map(|p| p.parse().unwrap()),
         threads: arg(&args, "--threads").map_or(0, |t| t.parse().unwrap()),
         spin: arg(&args, "--spin").map_or(0, |t| t.parse().unwrap()),
+        io_uring: args.iter().any(|a| a == "--io-uring"),
         #[cfg(feature = "tls")]
         tls: arg(&args, "--tls").map(|p| {
             let (cert, key) = (arg(&args, "--cert").expect("--cert"), arg(&args, "--key").expect("--key"));

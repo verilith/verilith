@@ -152,12 +152,19 @@ machines does not need. An async handler API on top of the worker loop
 (a minimal executor per worker, no stealing) is planned for applications
 that want one; it sits in L3 and changes nothing below.
 
-**io_uring** is the second backend for Linux, behind the same L0 interface:
-multishot accept and recv with provided buffer rings, registered files,
-`send_zc` for large bodies. It comes after epoll because epoll is what runs
-on macOS and older kernels, and because with batching epoll is close to
-io_uring for small responses; the benchmarks decide how far io_uring is
-taken.
+**io_uring** is the second backend for Linux (`Config::io_uring`,
+`--io-uring`; `src/worker_uring.rs` over `src/sys/uring.rs`), driving the
+same engines: multishot accept, multishot receive from a provided-buffer
+ring, sends as ring entries, single-issuer rings with deferred task work,
+one `io_uring_enter` per loop turn. Measured on the 4-vCPU cloud VM
+(`bench/server/results/2026-11-26-cloud-uring`), it makes 12x fewer system
+calls than epoll on `h1-plaintext` for the same CPU: system calls are cheap
+there and loopback TCP is most of the profile, so the results are +4 to
++10% on large files, h2c and h2 over TLS and -3 to -7% on small HTTP/1.1
+requests and new connections. Epoll stays the default until a machine
+where system calls cost more (KPTI, older CPUs) or a real NIC
+(`send_zc`, zero-copy receive) shows io_uring ahead; registered files and
+`send_zc` are the next things to try there.
 
 ## HTTP/1.1
 
