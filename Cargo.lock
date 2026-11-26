@@ -1800,6 +1800,7 @@ dependencies = [
  "verilith-hpack",
  "verilith-http",
  "verilith-qpack",
+ "verilith-quic-conn",
  "verilith-text",
  "verilith-tls",
  "verilith-tls-aws-lc",

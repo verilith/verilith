@@ -46,6 +46,9 @@ const MAX_CRYPTO_BUFFER: usize = 64 * 1024;
 /// Frames recorded per packet are packed in a token with the count in the
 /// low byte.
 const MAX_FRAMES: usize = 255;
+/// A datagram this close to full still starts a batch for segmentation
+/// offload.
+const BATCH_SLACK: usize = 32;
 
 /// The server's settings.
 pub struct Config<P> {
@@ -62,8 +65,15 @@ pub struct Config<P> {
     /// Streams the client may open.
     pub max_streams_bidi: u64,
     pub max_streams_uni: u64,
-    /// The largest UDP payload sent.
+    /// The largest UDP payload sent at first. Paths must carry 1200 bytes
+    /// (§14); more is found by probing.
     pub max_datagram: usize,
+    /// Path MTU discovery (§14.3, DPLPMTUD of RFC 8899 in its simplest
+    /// form): once the handshake is confirmed, one PING padded to this
+    /// size is sent (up to three times if lost); when acknowledged, it
+    /// becomes the largest payload sent. Not above the peer's
+    /// max_udp_payload_size; 0 turns it off.
+    pub probe_datagram: usize,
     /// Bytes written to streams and not yet acknowledged, across the
     /// connection.
     pub send_buffer: usize,
@@ -82,6 +92,7 @@ impl<P> Config<P> {
             max_streams_bidi: 100,
             max_streams_uni: 100,
             max_datagram: 1200,
+            probe_datagram: 1452,
             send_buffer: 8 << 20,
             max_ack_delay_ms: 25,
         }
@@ -127,6 +138,16 @@ pub struct Transmit {
     /// For segmentation offload: every datagram but the last is this
     /// size. `None` for a single datagram.
     pub segment_size: Option<usize>,
+}
+
+/// Path MTU discovery's state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Pmtu {
+    /// A probe should be sent (after `fails` were lost).
+    Due { fails: u8 },
+    /// A probe is in flight in packet `pn`.
+    Sent { pn: u64, fails: u8 },
+    Done,
 }
 
 /// What a sent packet carried, to act on when it is acknowledged or lost.
@@ -265,6 +286,10 @@ pub struct Connection<P: Provider> {
     peer_ack_exponent: u64,
     peer_idle: u64,
     peer_max_udp: u64,
+    /// The largest UDP payload we send now.
+    mtu: usize,
+    /// Path MTU discovery.
+    pmtu: Pmtu,
     /// Flow control: what we may send, and what the peer may.
     tx_credit: SendCredit,
     rx_credit: RecvCredit,
@@ -409,6 +434,8 @@ impl<P: Provider> Connection<P> {
             peer_ack_exponent: 3,
             peer_idle: 0,
             peer_max_udp: 65527,
+            mtu: mds as usize,
+            pmtu: if cfg.probe_datagram > mds as usize { Pmtu::Due { fails: 0 } } else { Pmtu::Done },
             tx_credit: SendCredit::new(0),
             rx_credit: RecvCredit::new(cfg.max_data),
             rx_advertised: cfg.max_data,
@@ -771,6 +798,16 @@ impl<P: Provider> Connection<P> {
             self.pto_count = 0;
         }
         for d in &done {
+            if s == 2 && matches!(self.pmtu, Pmtu::Sent { pn, .. } if pn == d.pn) {
+                // The path carries the probe's size.
+                let size = (d.packet.size as usize).clamp(self.mtu, 65527);
+                self.mtu = size;
+                if size as u64 > self.cc.mds {
+                    self.cc.raise_mds(size as u64);
+                }
+                self.pmtu = Pmtu::Done;
+                trace(format_args!("mtu {size}"));
+            }
             if d.packet.in_flight {
                 self.cc.on_ack(d.packet.time, (d.packet.size as u64).min(self.cc.mds), false);
             }
@@ -791,6 +828,18 @@ impl<P: Provider> Connection<P> {
         sp.loss_time = r.timer;
         let mut latest_lost = None;
         for d in &lost {
+            trace(format_args!("lost s{s} pn{} size{}", d.pn, d.packet.size));
+            if s == 2 {
+                if let Pmtu::Sent { pn, fails } = self.pmtu {
+                    if pn == d.pn {
+                        // A lost probe says nothing about congestion
+                        // (§14.4).
+                        self.pmtu = if fails >= 2 { Pmtu::Done } else { Pmtu::Due { fails: fails + 1 } };
+                        self.on_recs(s, d.packet.token, false);
+                        continue;
+                    }
+                }
+            }
             if d.packet.in_flight {
                 latest_lost = Some(latest_lost.map_or(d.packet.time, |t: u64| t.max(d.packet.time)));
             }
@@ -799,6 +848,7 @@ impl<P: Provider> Connection<P> {
         self.scratch_done = lost;
         if let Some(t) = latest_lost {
             self.cc.on_congestion(t, now);
+            trace(format_args!("congestion cwnd{}", self.cc.cwnd));
         }
         if r.persistent && self.rtt.sampled {
             self.cc.on_persistent();
@@ -1488,33 +1538,83 @@ impl<P: Provider> Connection<P> {
     // -----------------------------------------------------------------
 
     fn max_datagram(&self) -> usize {
-        (self.cfg.max_datagram as u64).min(self.peer_max_udp).max(1200) as usize
+        (self.mtu as u64).min(self.peer_max_udp).max(1200) as usize
+    }
+
+    /// The size path MTU discovery probes.
+    fn probe_size(&self) -> usize {
+        (self.cfg.probe_datagram as u64).min(self.peer_max_udp).min(65527) as usize
+    }
+
+    /// Sends the path MTU probe as a datagram of its own, if it is due and
+    /// the window has room: its size, or 0.
+    fn build_mtu_probe(&mut self, now: u64, buf: &mut Vec<u8>) -> usize {
+        let Pmtu::Due { fails } = self.pmtu else { return 0 };
+        let size = self.probe_size();
+        if size <= self.mtu {
+            self.pmtu = Pmtu::Done;
+            return 0;
+        }
+        if !self.handshake_done || self.state != State::Established || self.spaces[2].tx.is_none() {
+            return 0;
+        }
+        let inflight: u64 = self.spaces.iter().map(|s| s.sent.bytes_in_flight()).sum();
+        if !self.cc.can_send(inflight, size as u64) || self.budget.allowance() < size as u64 {
+            return 0;
+        }
+        let start = buf.len();
+        // A probe (PING if nothing else goes), outside the window, which
+        // was checked above.
+        self.spaces[2].probes += 1;
+        let cwnd_room = self.cc.room(inflight) as usize;
+        let Some(p) = self.build_packet(now, 2, buf, size, cwnd_room) else {
+            self.spaces[2].probes = self.spaces[2].probes.saturating_sub(1);
+            buf.truncate(start);
+            return 0;
+        };
+        let pad = size.saturating_sub(buf.len() - start + 16);
+        let pn = p.pn;
+        self.seal(now, buf, p, pad);
+        self.pmtu = Pmtu::Sent { pn, fails };
+        if self.last_eliciting <= self.idle_from {
+            self.idle_from = now;
+        }
+        self.last_eliciting = now;
+        let n = buf.len() - start;
+        self.budget.on_sent(n as u64);
+        trace(format_args!("mtu probe pn{pn} size{n}"));
+        n
     }
 
     /// Writes datagrams to send into `buf` (cleared first): up to `max`
     /// of them, all but the last of the same size.
     pub fn poll_transmit(&mut self, now: u64, max: usize, buf: &mut Vec<u8>) -> Option<Transmit> {
         buf.clear();
+        let n = self.build_mtu_probe(now, buf);
+        if n > 0 {
+            return Some(Transmit { size: n, segment_size: None });
+        }
         let mds = self.max_datagram();
         let mut seg = None;
         let mut count = 0;
         while count < max.max(1) {
-            let start = buf.len();
             let limit = seg.unwrap_or(mds);
-            let n = self.build_datagram(now, buf, limit);
+            let n = self.build_datagram(now, buf, limit, seg);
             if n == 0 {
                 break;
             }
             count += 1;
             if seg.is_none() {
-                seg = Some(n);
-                if n < mds {
+                // Frames seldom fill a datagram to the byte: one within
+                // a few bytes of full sets the batch's size, and the
+                // ones after are padded to it.
+                if n + BATCH_SLACK < mds {
                     break;
                 }
+                seg = Some(n);
             } else if n < limit {
                 break;
             }
-            let _ = start;
             if !matches!(self.state, State::Handshake | State::Established) {
                 break;
             }
@@ -1525,9 +1625,10 @@ impl<P: Provider> Connection<P> {
         Some(Transmit { size: buf.len(), segment_size: if count > 1 { seg } else { None } })
     }
 
-    /// Builds one datagram at the end of `buf`, at most `limit` bytes:
-    /// returns its size (0: nothing to send).
-    fn build_datagram(&mut self, now: u64, buf: &mut Vec<u8>, limit: usize) -> usize {
+    /// Builds one datagram at the end of `buf`, at most `limit` bytes, and
+    /// padded to `fill` if it comes within [`BATCH_SLACK`] of it: returns
+    /// its size (0: nothing to send).
+    fn build_datagram(&mut self, now: u64, buf: &mut Vec<u8>, limit: usize, fill: Option<usize>) -> usize {
         let start = buf.len();
         let allowance = self.budget.allowance().min(limit as u64) as usize;
         if allowance < 64 {
@@ -1576,11 +1677,14 @@ impl<P: Provider> Connection<P> {
         }
         let Some(p) = pending else { return buf.len() - start };
         // §14.1: a datagram with an ack-eliciting Initial is padded to 1200.
+        let size = buf.len() - start + 16;
         let pad = if has_initial_eliciting {
-            let size = buf.len() - start + 16;
             1200usize.saturating_sub(size).min(allowance.saturating_sub(size))
         } else {
-            0
+            match fill {
+                Some(f) if size < f && f - size <= BATCH_SLACK => (f - size).min(allowance.saturating_sub(size)),
+                _ => 0,
+            }
         };
         self.seal(now, buf, p, pad);
         if any_eliciting {

@@ -27,26 +27,32 @@ pub enum Datagram {
     Dropped,
 }
 
-/// Connections on one socket.
-pub struct Server<P: Provider> {
+/// Connections on one socket, each with a value `T` of the caller's (its
+/// application state, say).
+pub struct Server<P: Provider, T = ()> {
     cfg: Arc<Config<P>>,
     prov: P,
-    conns: Vec<Option<Connection<P>>>,
+    conns: Vec<Option<(Connection<P>, T)>>,
     free: Vec<usize>,
     /// Client-chosen Destination Connection IDs of connections still in
     /// their handshake.
     initial: HashMap<Vec<u8>, usize>,
 }
 
-impl<P: Provider> Server<P> {
-    pub fn new(cfg: Arc<Config<P>>) -> Server<P> {
+impl<P: Provider, T> Server<P, T> {
+    pub fn new(cfg: Arc<Config<P>>) -> Server<P, T> {
         let prov = (cfg.provider)();
         Server { cfg, prov, conns: Vec::new(), free: Vec::new(), initial: HashMap::new() }
     }
 
     /// The connection in slot `i`.
     pub fn conn(&mut self, i: usize) -> Option<&mut Connection<P>> {
-        self.conns.get_mut(i).and_then(|c| c.as_mut())
+        self.conns.get_mut(i).and_then(|c| c.as_mut()).map(|c| &mut c.0)
+    }
+
+    /// The connection in slot `i` and its value.
+    pub fn get(&mut self, i: usize) -> Option<(&mut Connection<P>, &mut T)> {
+        self.conns.get_mut(i).and_then(|c| c.as_mut()).map(|(c, t)| (c, t))
     }
 
     /// Slots in use.
@@ -56,9 +62,9 @@ impl<P: Provider> Server<P> {
 
     /// Removes connection `i` if it is closed; true if it was.
     pub fn reap(&mut self, i: usize) -> bool {
-        let closed = matches!(self.conns.get(i), Some(Some(c)) if c.is_closed());
+        let closed = matches!(self.conns.get(i), Some(Some((c, _))) if c.is_closed());
         if closed {
-            let c = self.conns[i].take().unwrap();
+            let (c, _) = self.conns[i].take().unwrap();
             self.initial.remove(&c.odcid);
             self.free.push(i);
         }
@@ -67,7 +73,15 @@ impl<P: Provider> Server<P> {
 
     /// Handles a datagram from the network. A stateless response, if any,
     /// is written to `out`.
-    pub fn handle(&mut self, now: u64, data: &mut [u8], out: &mut Vec<u8>) -> Datagram {
+    pub fn handle(&mut self, now: u64, data: &mut [u8], out: &mut Vec<u8>) -> Datagram
+    where
+        T: Default,
+    {
+        self.handle_with(now, data, out, T::default)
+    }
+
+    /// [`Server::handle`], with `make` giving a new connection's value.
+    pub fn handle_with(&mut self, now: u64, data: &mut [u8], out: &mut Vec<u8>, make: impl FnOnce() -> T) -> Datagram {
         let Some((h, _)) = packet::parse_header(data, 0, CID_LEN) else { return Datagram::Dropped };
         let slot = match h {
             Header::Short { dcid, .. } => self.slot_of(dcid),
@@ -99,7 +113,7 @@ impl<P: Provider> Server<P> {
                         return Datagram::Dropped;
                     };
                     self.initial.insert(dcid.to_vec(), i);
-                    self.conns[i] = Some(c);
+                    self.conns[i] = Some((c, make()));
                     Some(i)
                 } else {
                     None
@@ -126,7 +140,7 @@ impl<P: Provider> Server<P> {
             _ => None,
         };
         let Some(i) = slot else { return Datagram::Dropped };
-        let Some(Some(c)) = self.conns.get_mut(i) else { return Datagram::Dropped };
+        let Some(Some((c, _))) = self.conns.get_mut(i) else { return Datagram::Dropped };
         c.handle_datagram(now, data);
         if !c.is_handshaking() {
             let k = c.odcid.clone();
@@ -141,7 +155,7 @@ impl<P: Provider> Server<P> {
         }
         let i = u32::from_be_bytes([dcid[0], dcid[1], dcid[2], dcid[3]]) as usize;
         match self.conns.get(i) {
-            Some(Some(c)) if c.local_cid[..] == *dcid => Some(i),
+            Some(Some((c, _))) if c.local_cid[..] == *dcid => Some(i),
             _ => None,
         }
     }

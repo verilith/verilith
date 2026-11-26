@@ -73,7 +73,13 @@ fn main() {
         #[cfg(feature = "h3")]
         h3: arg(&args, "--h3").map(|p| {
             let (cert, key) = (arg(&args, "--cert").expect("--cert"), arg(&args, "--key").expect("--key"));
-            let c = verilith_server::h3::server_config(&cert, &key, Default::default()).expect("QUIC configuration");
+            use verilith_server::h3::Backend;
+            let b = match arg(&args, "--h3-backend").as_deref() {
+                None | Some("quinn") => Backend::Quinn,
+                Some("verilith") => Backend::Verilith,
+                Some(b) => panic!("unknown --h3-backend {b}"),
+            };
+            let c = verilith_server::h3::server_config_on(b, &cert, &key, Default::default()).expect("QUIC configuration");
             (p.parse().unwrap(), c)
         }),
         ..Config::default()

@@ -36,7 +36,7 @@ pub struct Config {
     pub tls: Option<(u16, Arc<crate::tls::Config>)>,
     /// An HTTP/3 port (UDP), with its QUIC configuration.
     #[cfg(feature = "h3")]
-    pub h3: Option<(u16, Arc<quinn_proto::ServerConfig>)>,
+    pub h3: Option<(u16, crate::h3::QuicConfig)>,
     #[cfg(feature = "h3")]
     pub limits3: crate::h3::Limits3,
     /// The `Server` field value.
