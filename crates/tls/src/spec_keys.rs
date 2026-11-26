@@ -124,6 +124,14 @@ pub open spec fn l_res() -> Seq<u8> {
 }
 
 /// `"key"`
+pub open spec fn l_res_binder() -> Seq<u8> {
+    seq![114u8, 101, 115, 32, 98, 105, 110, 100, 101, 114]
+}
+
+pub open spec fn l_resumption() -> Seq<u8> {
+    seq![114u8, 101, 115, 117, 109, 112, 116, 105, 111, 110]
+}
+
 pub open spec fn l_key() -> Seq<u8> {
     seq![107, 101, 121]
 }
@@ -184,59 +192,72 @@ pub open spec fn derive_secret(a: HashAlg, secret: Seq<u8>, label: Seq<u8>, mess
 }
 
 // ---------------------------------------------------------------------------
-// The key schedule (§7.1), for a handshake without a PSK
+// The key schedule (§7.1). `psk` is the PSK of a resumption, or
+// `zeros(hash_len(a))` for a handshake without one.
 // ---------------------------------------------------------------------------
 
-/// Early Secret, with no PSK: `HKDF-Extract(0, 0)`.
-pub open spec fn early_secret(a: HashAlg) -> Seq<u8> {
-    hkdf_extract(a, zeros(hash_len(a)), zeros(hash_len(a)))
+/// Early Secret: `HKDF-Extract(0, PSK)`.
+pub open spec fn early_secret(a: HashAlg, psk: Seq<u8>) -> Seq<u8> {
+    hkdf_extract(a, zeros(hash_len(a)), psk)
+}
+
+/// binder_key for a resumption PSK: `Derive-Secret(Early, "res binder", "")`.
+pub open spec fn binder_key(a: HashAlg, psk: Seq<u8>) -> Seq<u8> {
+    derive_secret(a, early_secret(a, psk), l_res_binder(), Seq::empty())
+}
+
+/// The PSK a NewSessionTicket with `nonce` makes (§4.6.1):
+/// `HKDF-Expand-Label(resumption_master_secret, "resumption", nonce,
+/// Hash.length)`.
+pub open spec fn ticket_psk(a: HashAlg, res_master: Seq<u8>, nonce: Seq<u8>) -> Seq<u8> {
+    expand_label(a, res_master, l_resumption(), nonce, hash_len(a))
 }
 
 /// Handshake Secret: `HKDF-Extract(Derive-Secret(Early, "derived", ""),
 /// (EC)DHE)`.
-pub open spec fn handshake_secret(a: HashAlg, dhe: Seq<u8>) -> Seq<u8> {
-    hkdf_extract(a, derive_secret(a, early_secret(a), l_derived(), Seq::empty()), dhe)
+pub open spec fn handshake_secret(a: HashAlg, psk: Seq<u8>, dhe: Seq<u8>) -> Seq<u8> {
+    hkdf_extract(a, derive_secret(a, early_secret(a, psk), l_derived(), Seq::empty()), dhe)
 }
 
 /// Master Secret: `HKDF-Extract(Derive-Secret(Handshake, "derived", ""),
 /// 0)`.
-pub open spec fn master_secret(a: HashAlg, dhe: Seq<u8>) -> Seq<u8> {
+pub open spec fn master_secret(a: HashAlg, psk: Seq<u8>, dhe: Seq<u8>) -> Seq<u8> {
     hkdf_extract(
         a,
-        derive_secret(a, handshake_secret(a, dhe), l_derived(), Seq::empty()),
+        derive_secret(a, handshake_secret(a, psk, dhe), l_derived(), Seq::empty()),
         zeros(hash_len(a)),
     )
 }
 
 /// client_handshake_traffic_secret, `messages` being ClientHello to
 /// ServerHello.
-pub open spec fn client_hs_traffic(a: HashAlg, dhe: Seq<u8>, messages: Seq<u8>) -> Seq<u8> {
-    derive_secret(a, handshake_secret(a, dhe), l_c_hs(), messages)
+pub open spec fn client_hs_traffic(a: HashAlg, psk: Seq<u8>, dhe: Seq<u8>, messages: Seq<u8>) -> Seq<u8> {
+    derive_secret(a, handshake_secret(a, psk, dhe), l_c_hs(), messages)
 }
 
 /// server_handshake_traffic_secret, ClientHello to ServerHello.
-pub open spec fn server_hs_traffic(a: HashAlg, dhe: Seq<u8>, messages: Seq<u8>) -> Seq<u8> {
-    derive_secret(a, handshake_secret(a, dhe), l_s_hs(), messages)
+pub open spec fn server_hs_traffic(a: HashAlg, psk: Seq<u8>, dhe: Seq<u8>, messages: Seq<u8>) -> Seq<u8> {
+    derive_secret(a, handshake_secret(a, psk, dhe), l_s_hs(), messages)
 }
 
 /// client_application_traffic_secret_0, ClientHello to server Finished.
-pub open spec fn client_ap_traffic(a: HashAlg, dhe: Seq<u8>, messages: Seq<u8>) -> Seq<u8> {
-    derive_secret(a, master_secret(a, dhe), l_c_ap(), messages)
+pub open spec fn client_ap_traffic(a: HashAlg, psk: Seq<u8>, dhe: Seq<u8>, messages: Seq<u8>) -> Seq<u8> {
+    derive_secret(a, master_secret(a, psk, dhe), l_c_ap(), messages)
 }
 
 /// server_application_traffic_secret_0, ClientHello to server Finished.
-pub open spec fn server_ap_traffic(a: HashAlg, dhe: Seq<u8>, messages: Seq<u8>) -> Seq<u8> {
-    derive_secret(a, master_secret(a, dhe), l_s_ap(), messages)
+pub open spec fn server_ap_traffic(a: HashAlg, psk: Seq<u8>, dhe: Seq<u8>, messages: Seq<u8>) -> Seq<u8> {
+    derive_secret(a, master_secret(a, psk, dhe), l_s_ap(), messages)
 }
 
 /// exporter_master_secret, ClientHello to server Finished.
-pub open spec fn exporter_master(a: HashAlg, dhe: Seq<u8>, messages: Seq<u8>) -> Seq<u8> {
-    derive_secret(a, master_secret(a, dhe), l_exp(), messages)
+pub open spec fn exporter_master(a: HashAlg, psk: Seq<u8>, dhe: Seq<u8>, messages: Seq<u8>) -> Seq<u8> {
+    derive_secret(a, master_secret(a, psk, dhe), l_exp(), messages)
 }
 
 /// resumption_master_secret, ClientHello to client Finished.
-pub open spec fn resumption_master(a: HashAlg, dhe: Seq<u8>, messages: Seq<u8>) -> Seq<u8> {
-    derive_secret(a, master_secret(a, dhe), l_res(), messages)
+pub open spec fn resumption_master(a: HashAlg, psk: Seq<u8>, dhe: Seq<u8>, messages: Seq<u8>) -> Seq<u8> {
+    derive_secret(a, master_secret(a, psk, dhe), l_res(), messages)
 }
 
 /// `application_traffic_secret_N+1` (§7.2).

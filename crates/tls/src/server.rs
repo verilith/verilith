@@ -86,6 +86,11 @@ pub struct Config {
     alpn: Vec<u8>,
     cert: Vec<u8>,
     chain: Ghost<Seq<Seq<u8>>>,
+    /// Session tickets to send after each handshake, if the provider
+    /// issues them.
+    tickets: u8,
+    /// Their lifetime, in seconds.
+    lifetime: u32,
 }
 
 impl Config {
@@ -138,7 +143,20 @@ impl Config {
             Some(c) => c,
             None => return None,
         };
-        Some(Config { suites, groups, sigs, alpn, cert, chain: Ghost(chain_view(chain@)) })
+        Some(Config { suites, groups, sigs, alpn, cert, chain: Ghost(chain_view(chain@)), tickets: 2, lifetime: 21600 })
+    }
+
+    /// How many session tickets to send after each handshake (2 unless
+    /// set; 0 for none), and their lifetime in seconds (6 hours unless set;
+    /// at most a week, §4.6.1).
+    pub fn set_tickets(&mut self, count: u8, lifetime: u32)
+        ensures
+            final(self)@ == old(self)@,
+            old(self).wf() ==> final(self).wf(),
+    {
+        self.tickets = count;
+        self.lifetime = if lifetime > 604800 { 604800 } else { lifetime };
+        assert(self.suites@ == old(self).suites@);
     }
 }
 
@@ -160,7 +178,16 @@ pub enum Phase {
 enum State<K: AeadKey> {
     Start,
     WaitCh2 { tr: Transcript, suite: u16, group: u16 },
-    WaitFinished { suite: u16, rx: Protect<K>, tx: Protect<K>, expect: Secret, c_ap: Secret, s_ap: Secret },
+    WaitFinished {
+        suite: u16,
+        rx: Protect<K>,
+        tx: Protect<K>,
+        expect: Secret,
+        c_ap: Secret,
+        s_ap: Secret,
+        /// resumption_master_secret, if the server will send tickets.
+        res: Option<Secret>,
+    },
     Connected { suite: u16, rx: Protect<K>, tx: Protect<K>, c_sec: Secret, s_sec: Secret },
     Closed,
 }
@@ -223,9 +250,10 @@ proof fn lemma_be3(m: Seq<u8>)
     assert(m =~= hs_msg(m[0], m.skip(4)));
 }
 
-/// The handshake traffic secrets and keys for shared secret `dhe` and
-/// transcript `th_sh` (ClientHello..ServerHello), whose hash is `th`.
-fn hs_keys<P: Provider>(prov: &P, suite: u16, dhe: &[u8], th: &Secret, Ghost(th_sh): Ghost<Seq<u8>>) -> (r: (
+/// The handshake traffic secrets and keys for PSK `psk`, shared secret
+/// `dhe` and transcript `th_sh` (ClientHello..ServerHello), whose hash is
+/// `th`.
+fn hs_keys<P: Provider>(prov: &P, suite: u16, psk: &[u8], dhe: &[u8], th: &Secret, Ghost(th_sh): Ghost<Seq<u8>>) -> (r: (
     Secret,
     Secret,
     Secret,
@@ -237,17 +265,17 @@ fn hs_keys<P: Provider>(prov: &P, suite: u16, dhe: &[u8], th: &Secret, Ghost(th_
         th@ == hash(suite_hash(suite), th_sh),
         th@.len() == hash_len(suite_hash(suite)),
     ensures
-        r.0.wf() && r.0@ == handshake_secret(suite_hash(suite), dhe@),
-        r.1.wf() && r.1@ == client_hs_traffic(suite_hash(suite), dhe@, th_sh),
-        r.2.wf() && r.2@ == server_hs_traffic(suite_hash(suite), dhe@, th_sh),
+        r.0.wf() && r.0@ == handshake_secret(suite_hash(suite), psk@, dhe@),
+        r.1.wf() && r.1@ == client_hs_traffic(suite_hash(suite), psk@, dhe@, th_sh),
+        r.2.wf() && r.2@ == server_hs_traffic(suite_hash(suite), psk@, dhe@, th_sh),
         keys_are(r.3, suite, r.1@),
         keys_are(r.4, suite, r.2@),
         r.4.seq() == 0,
 {
     let a = suite_hash_x(suite);
     let kl = suite_key_len_x(suite);
-    let hs = handshake_secret_x(a, dhe);
-    let (c_hs, s_hs) = hs_traffic_x(a, &hs, th, Ghost(dhe@), Ghost(th_sh));
+    let hs = handshake_secret_x(a, psk, dhe);
+    let (c_hs, s_hs) = hs_traffic_x(a, &hs, th, Ghost(psk@), Ghost(dhe@), Ghost(th_sh));
     let (ck, civ) = traffic_keys_x(a, &c_hs, kl);
     let rx = Protect::new(prov.aead_key(suite, ck.as_slice()), &civ);
     let (sk, siv) = traffic_keys_x(a, &s_hs, kl);
@@ -332,6 +360,48 @@ fn server_flight<P: Provider>(
     Some((fl, Ghost(sig@)))
 }
 
+/// The server's flight when resuming: EncryptedExtensions and Finished.
+fn resumed_flight(alpn: Option<&[u8]>, tr: &mut Transcript, s_hs: &Secret) -> (r: Vec<u8>)
+    requires
+        old(tr).wf(),
+        s_hs.wf(),
+        alpn matches Some(p) ==> p@.len() <= 255,
+    ensures
+        final(tr).wf(),
+        final(tr).alg() == old(tr).alg(),
+        ({
+            let a = old(tr).alg();
+            let ee = encrypted_extensions(
+                match alpn {
+                    Some(p) => Some(p@),
+                    None => None,
+                },
+            );
+            let sf = finished(verify_data(a, s_hs@, old(tr).data() + ee));
+            &&& r@ == ee + sf
+            &&& final(tr).data() == old(tr).data() + ee + sf
+            &&& r@.len() < 0x1000
+        }),
+{
+    let a = tr.alg_x();
+    let ghost t0 = tr.data();
+    let mut fl: Vec<u8> = Vec::new();
+    encrypted_extensions_x(&mut fl, alpn);
+    let ghost ee = fl@;
+    tr.update(fl.as_slice());
+    let th = tr.hash();
+    let svd = verify_data_x(a, s_hs, &th, Ghost(tr.data()));
+    let mut sf: Vec<u8> = Vec::new();
+    finished_x(&mut sf, &svd);
+    tr.update(sf.as_slice());
+    put(&mut fl, sf.as_slice());
+    proof {
+        assert(fl@ =~= ee + sf@);
+        assert(tr.data() =~= t0 + ee + sf@);
+    }
+    fl
+}
+
 /// The handshake `accept` made is valid, and its messages and secrets are
 /// `SpecHs`'s.
 #[verifier::spinoff_prover]
@@ -363,25 +433,36 @@ proof fn lemma_accept_spec(
             None => Seq::<u8>::empty(),
             Some((ch1, hrr)) => message_hash(hsv.alg(), ch1) + hrr,
         },
+        match hsv.resumed {
+            None => true,
+            Some(r) => resumption_ok(m, pre, hsv.alg(), r),
+        },
         peer == bytes(m.skip(4), hsv.choice.share),
         key_exchange(hsv.choice.group, peer, hsv.share, hsv.dhe),
         sid == session_id(m),
-        sh == server_hello(hsv.random, sid, hsv.choice.suite, hsv.choice.group, hsv.share),
+        sh == server_hello(hsv.random, sid, hsv.choice.suite, hsv.choice.group, hsv.share, hsv.resumed is Some),
         th_sh == pre + m + sh,
         hsv.alpn(cc) == match alpn {
             Some(p) => Some(p@),
             None => None,
         },
-        ({
+        hsv.resumed is None ==> ({
             let a = hsv.alg();
             let ee = encrypted_extensions(hsv.alpn(cc));
             let cert = certificate(cc.chain);
             let th_cert = th_sh + ee + cert;
             let cv = certificate_verify(hsv.choice.signature_scheme, hsv.sig);
-            let sf = finished(verify_data(a, server_hs_traffic(a, hsv.dhe, th_sh), th_cert + cv));
+            let sf = finished(verify_data(a, server_hs_traffic(a, hsv.psk(), hsv.dhe, th_sh), th_cert + cv));
             &&& signed(hsv.choice.signature_scheme, cv_content(hash(a, th_cert)), hsv.sig)
             &&& fl == ee + cert + cv + sf
             &&& th_sfin == th_cert + cv + sf
+        }),
+        hsv.resumed is Some ==> ({
+            let a = hsv.alg();
+            let ee = encrypted_extensions(hsv.alpn(cc));
+            let sf = finished(verify_data(a, server_hs_traffic(a, hsv.psk(), hsv.dhe, th_sh), th_sh + ee));
+            &&& fl == ee + sf
+            &&& th_sfin == th_sh + ee + sf
         }),
     ensures
         hsv.valid(cc),
@@ -389,13 +470,15 @@ proof fn lemma_accept_spec(
         th_sh == hsv.th_sh(),
         th_sfin == hsv.th_sfin(cc),
         fl == hsv.flight(cc),
-        hsv.c_hs() == client_hs_traffic(hsv.alg(), hsv.dhe, th_sh),
-        hsv.s_hs() == server_hs_traffic(hsv.alg(), hsv.dhe, th_sh),
-        hsv.client_finished(cc) == finished(verify_data(hsv.alg(), client_hs_traffic(hsv.alg(), hsv.dhe, th_sh), th_sfin)),
-        hsv.c_ap(cc) == client_ap_traffic(hsv.alg(), hsv.dhe, th_sfin),
-        hsv.s_ap(cc) == server_ap_traffic(hsv.alg(), hsv.dhe, th_sfin),
+        hsv.c_hs() == client_hs_traffic(hsv.alg(), hsv.psk(), hsv.dhe, th_sh),
+        hsv.s_hs() == server_hs_traffic(hsv.alg(), hsv.psk(), hsv.dhe, th_sh),
+        hsv.client_finished(cc) == finished(verify_data(hsv.alg(), client_hs_traffic(hsv.alg(), hsv.psk(), hsv.dhe, th_sh), th_sfin)),
+        hsv.c_ap(cc) == client_ap_traffic(hsv.alg(), hsv.psk(), hsv.dhe, th_sfin),
+        hsv.s_ap(cc) == server_ap_traffic(hsv.alg(), hsv.psk(), hsv.dhe, th_sfin),
+        hsv.res_master(cc) == resumption_master(hsv.alg(), hsv.psk(), hsv.dhe, th_sfin + hsv.client_finished(cc)),
 {
     reveal(SpecHs::valid);
+    reveal(SpecHs::resume_ok);
     reveal(SpecHs::server_hello);
     reveal(SpecHs::th_sh);
     reveal(SpecHs::th_cert);
@@ -408,10 +491,16 @@ proof fn lemma_accept_spec(
     reveal(SpecHs::client_finished);
     reveal(SpecHs::c_ap);
     reveal(SpecHs::s_ap);
+    reveal(SpecHs::res_master);
     assert(th_sh == hsv.th_sh());
-    let th_cert = th_sh + encrypted_extensions(hsv.alpn(cc)) + certificate(cc.chain);
-    assert(th_cert == hsv.th_cert(cc));
-    assert(th_cert + hsv.certificate_verify() == hsv.th_cv(cc));
+    assert(pre == hsv.prefix());
+    if hsv.resumed is None {
+        let th_cert = th_sh + encrypted_extensions(hsv.alpn(cc)) + certificate(cc.chain);
+        assert(th_cert == hsv.th_cert(cc));
+        assert(th_cert + hsv.certificate_verify() == hsv.th_cv(cc));
+    } else {
+        assert(th_sh + encrypted_extensions(hsv.alpn(cc)) == hsv.th_cv(cc));
+    }
     assert(th_sfin =~= hsv.th_sfin(cc));
     assert(fl =~= hsv.flight(cc));
 }
@@ -425,14 +514,23 @@ struct Prep<K: AeadKey> {
     expect: Secret,
     c_ap: Secret,
     s_ap: Secret,
+    res: Option<Secret>,
     hs: Ghost<SpecHs>,
 }
 
 #[verifier::opaque]
-spec fn prep_ok<K: AeadKey>(p: Prep<K>, cc: SpecCfg, m: Seq<u8>, retry: Option<(Seq<u8>, Seq<u8>)>, choice: SpecChoice) -> bool {
+spec fn prep_ok<K: AeadKey>(
+    p: Prep<K>,
+    cc: SpecCfg,
+    m: Seq<u8>,
+    retry: Option<(Seq<u8>, Seq<u8>)>,
+    choice: SpecChoice,
+    resumed: Option<SpecResume>,
+) -> bool {
     let h = p.hs@;
     &&& h.valid(cc)
     &&& h.retry == retry
+    &&& h.resumed == resumed
     &&& h.ch == m
     &&& h.choice == choice
     &&& p.sh@ == h.server_hello()
@@ -446,10 +544,11 @@ spec fn prep_ok<K: AeadKey>(p: Prep<K>, cc: SpecCfg, m: Seq<u8>, retry: Option<(
     &&& p.expect@.len() == hash_len(suite_hash(choice.suite))
     &&& p.c_ap.wf() && p.c_ap@ == h.c_ap(cc)
     &&& p.s_ap.wf() && p.s_ap@ == h.s_ap(cc)
+    &&& p.res matches Some(rm) ==> rm.wf() && rm@ == h.res_master(cc)
 }
 
 /// The server's side of the key exchange, its random, and ServerHello.
-fn exchange<P: Provider>(prov: &mut P, peer: &[u8], sid: &[u8], suite: u16, group: u16) -> (r: Result<
+fn exchange<P: Provider>(prov: &mut P, peer: &[u8], sid: &[u8], suite: u16, group: u16, psk: bool) -> (r: Result<
     (Vec<u8>, [u8; 64], usize, [u8; 32], Vec<u8>),
     u8,
 >)
@@ -459,7 +558,7 @@ fn exchange<P: Provider>(prov: &mut P, peer: &[u8], sid: &[u8], suite: u16, grou
         r matches Ok((share, shared, dn, random, sh)) ==> {
             &&& dn <= 64
             &&& key_exchange(group, peer@, share@, shared@.take(dn as int))
-            &&& sh@ == server_hello(random@, sid@, suite, group, share@)
+            &&& sh@ == server_hello(random@, sid@, suite, group, share@, psk)
             &&& sh@.len() < 65536
         },
 {
@@ -476,7 +575,7 @@ fn exchange<P: Provider>(prov: &mut P, peer: &[u8], sid: &[u8], suite: u16, grou
     let mut random = [0u8; 32];
     prov.random(&mut random);
     let mut sh: Vec<u8> = Vec::new();
-    server_hello_x(&mut sh, &random, sid, suite, group, share.as_slice());
+    server_hello_x(&mut sh, &random, sid, suite, group, share.as_slice(), psk);
     Ok((share, shared, dn, random, sh))
 }
 
@@ -492,6 +591,8 @@ fn prepare<P: Provider>(
     tr: Transcript,
     Ghost(retry): Ghost<Option<(Seq<u8>, Seq<u8>)>>,
     Ghost(choice): Ghost<SpecChoice>,
+    psk: Option<Secret>,
+    Ghost(resumed): Ghost<Option<SpecResume>>,
 ) -> (r: Result<Prep<P::Key>, u8>)
         requires
             cfg.wf(),
@@ -515,8 +616,11 @@ fn prepare<P: Provider>(
                 None => Seq::<u8>::empty(),
                 Some((ch1, hrr)) => message_hash(suite_hash(c.suite), ch1) + hrr,
             },
+            psk is Some == resumed is Some,
+            psk matches Some(k) ==> k.wf() && k@ == resumed.unwrap().psk,
+            resumed matches Some(rs) ==> resumption_ok(m@, tr.data(), suite_hash(c.suite), rs),
     ensures
-        r matches Ok(p) ==> prep_ok(p, cfg@, m@, retry, choice),
+        r matches Ok(p) ==> prep_ok(p, cfg@, m@, retry, choice, resumed),
 {
         let mut tr = tr;
         let suite = c.suite;
@@ -534,7 +638,13 @@ fn prepare<P: Provider>(
                 Some(ours.of(cfg.alpn.as_slice()))
             },
         };
-        let (share, shared, dn, random, sh) = match exchange(prov, peer, sid, suite, c.group) {
+        let resuming = psk.is_some();
+        let zero = Secret::zeros_of(a);
+        let pk: Secret = match psk {
+            Some(k) => k,
+            None => zero,
+        };
+        let (share, shared, dn, random, sh) = match exchange(prov, peer, sid, suite, c.group, resuming) {
             Ok(x) => x,
             Err(e) => return Err(e),
         };
@@ -545,18 +655,32 @@ fn prepare<P: Provider>(
         tr.update(sh.as_slice());
         let ghost th_sh = tr.data();
         let th = tr.hash();
-        let (hs, c_hs, s_hs, rx, mut tx) = hs_keys(&*prov, suite, dhe, &th, Ghost(th_sh));
-        let (fl, Ghost(sig)) = match server_flight(prov, cfg, c.signature_scheme, alpn, &mut tr, &s_hs) {
-            Some(x) => x,
-            None => return Err(INTERNAL_ERROR),
+        let (hs, c_hs, s_hs, rx, mut tx) = hs_keys(&*prov, suite, pk.as_slice(), dhe, &th, Ghost(th_sh));
+        let (fl, Ghost(sig)) = if resuming {
+            (resumed_flight(alpn, &mut tr, &s_hs), Ghost(Seq::<u8>::empty()))
+        } else {
+            match server_flight(prov, cfg, c.signature_scheme, alpn, &mut tr, &s_hs) {
+                Some(x) => x,
+                None => return Err(INTERNAL_ERROR),
+            }
         };
         let ghost th_sfin = tr.data();
         let th4 = tr.hash();
         let expect = verify_data_x(a, &c_hs, &th4, Ghost(th_sfin));
-        let ms = master_secret_x(a, &hs, Ghost(dhe@));
-        let (c_ap, s_ap, _exp) = ap_traffic_x(a, &ms, &th4, Ghost(dhe@), Ghost(th_sfin));
-        let ghost hsv = SpecHs { retry, ch: m@, choice, random: random@, share: share@, dhe: dhe@, sig };
+        let ms = master_secret_x(a, &hs, Ghost(pk@), Ghost(dhe@));
+        let (c_ap, s_ap, _exp) = ap_traffic_x(a, &ms, &th4, Ghost(pk@), Ghost(dhe@), Ghost(th_sfin));
+        let res = if cfg.tickets > 0 && prov.tickets() {
+            let mut cf: Vec<u8> = Vec::new();
+            finished_x(&mut cf, &expect);
+            tr.update(cf.as_slice());
+            let th5 = tr.hash();
+            Some(resumption_master_x(a, &ms, &th5, Ghost(pk@), Ghost(dhe@), Ghost(tr.data())))
+        } else {
+            None
+        };
+        let ghost hsv = SpecHs { retry, ch: m@, choice, random: random@, share: share@, dhe: dhe@, sig, resumed };
         proof {
+            assert(pk@ == hsv.psk());
             lemma_accept_spec(cfg@, hsv, m@, pre, sh@, th_sh, th_sfin, fl@, peer@, alpn, sid@);
             assert(cfg.cert@ == certificate(cfg@.chain));
         }
@@ -571,7 +695,7 @@ fn prepare<P: Provider>(
             reveal(prep_ok);
             assert(sh@.len() < 65536);
         }
-        Ok(Prep { sh, fl, rx, tx, expect, c_ap, s_ap, hs: Ghost(hsv) })
+        Ok(Prep { sh, fl, rx, tx, expect, c_ap, s_ap, res, hs: Ghost(hsv) })
 }
 
 /// The next traffic secret after `sec` (§7.2) and its protection.
@@ -589,6 +713,266 @@ fn rekey<P: Provider>(prov: &P, suite: u16, sec: &Secret) -> (r: (Secret, Protec
     let (k, iv) = traffic_keys_x(a, &s2, kl);
     let p = Protect::new(prov.aead_key(suite, k.as_slice()), &iv);
     (s2, p)
+}
+
+/// Whether `a` and `b` are equal, in time that depends only on their
+/// lengths.
+fn ct_eq(a: &[u8], b: &[u8]) -> (r: bool)
+    ensures
+        r == (a@ == b@),
+{
+    let n = a.len();
+    if b.len() != n {
+        return false;
+    }
+    let mut acc: u8 = 0;
+    let mut i: usize = 0;
+    while i < n
+        invariant
+            i <= n,
+            n == a@.len(),
+            n == b@.len(),
+            (acc == 0) == (forall|j: int| 0 <= j < i ==> a@[j] == b@[j]),
+        decreases n - i,
+    {
+        proof {
+            lemma_or_xor(acc, a@[i as int], b@[i as int]);
+        }
+        acc = acc | (a[i] ^ b[i]);
+        i = i + 1;
+    }
+    proof {
+        if acc == 0 {
+            assert(a@ =~= b@);
+        }
+    }
+    acc == 0
+}
+
+/// Whether `b[s..e]` holds byte `v`.
+fn has_byte(b: &[u8], s: usize, e: usize, v: u8) -> (r: bool)
+    requires
+        s <= e <= b@.len(),
+    ensures
+        r == b@.subrange(s as int, e as int).contains(v),
+{
+    let mut i = s;
+    while i < e
+        invariant
+            s <= i <= e <= b@.len(),
+            forall|j: int| s <= j < i ==> b@[j] != v,
+        decreases e - i,
+    {
+        if b[i] == v {
+            proof {
+                assert(b@.subrange(s as int, e as int)[i - s] == v);
+            }
+            return true;
+        }
+        i = i + 1;
+    }
+    proof {
+        if b@.subrange(s as int, e as int).contains(v) {
+            let k = choose|k: int| 0 <= k < e - s && b@.subrange(s as int, e as int)[k] == v;
+            assert(b@[s + k] == v);
+        }
+    }
+    false
+}
+
+/// The big-endian u64 at `b[i..i + 8]`.
+fn be8_at(b: &[u8], i: usize) -> (r: u64)
+    requires
+        i + 8 <= b@.len(),
+{
+    let hi = (b[i] as u32) * 0x100_0000 + (b[i + 1] as u32) * 0x1_0000 + (b[i + 2] as u32) * 0x100 + b[i + 3] as u32;
+    let lo = (b[i + 4] as u32) * 0x100_0000 + (b[i + 5] as u32) * 0x1_0000 + (b[i + 6] as u32) * 0x100 + b[i + 7] as u32;
+    (hi as u64) * 0x1_0000_0000 + lo as u64
+}
+
+/// The resumption ClientHello `m` (body `body`, parsed as `h`) offers, if
+/// the server takes it, and its PSK: `tr` is the transcript before `m`,
+/// `suite` the suite negotiated. A ticket the server cannot open, for
+/// another suite, or too old gives a full handshake (§4.2.11: the server
+/// may decline a PSK); a wrong binder is an error (decrypt_error).
+#[verifier::spinoff_prover]
+#[verifier::rlimit(40)]
+fn try_resume<P: Provider>(
+    prov: &mut P,
+    cfg: &Config,
+    m: &[u8],
+    body: &[u8],
+    h: &ClientHello,
+    Ghost(s): Ghost<SpecHello>,
+    suite: u16,
+    tr: &Transcript,
+) -> (r: Result<Option<(Secret, Ghost<SpecResume>)>, u8>)
+    requires
+        is_msg(m@, 1),
+        body@ == m@.skip(4),
+        parse_client_hello(body@) == Ok::<SpecHello, SpecAlert>(s),
+        h.models(s),
+        tr.wf(),
+        tr.alg() == suite_hash(suite),
+        known_suite(suite),
+    ensures
+        r matches Ok(Some((k, g))) ==> k.wf() && k@ == g@.psk && resumption_ok(m@, tr.data(), suite_hash(suite), g@),
+{
+    if cfg.tickets == 0 || !prov.tickets() {
+        return Ok(None);
+    }
+    let mp = match h.psk_modes {
+        Some(x) => x,
+        None => return Ok(None),
+    };
+    let (ids, bds) = match h.pre_shared_key {
+        Some(x) => x,
+        None => return Ok(None),
+    };
+    if !(mp.start <= mp.end && mp.end <= body.len() && ids.end <= body.len() && bds.end <= body.len()
+        && bds.start >= 2 && bds.start <= bds.end) {
+        return Ok(None);
+    }
+    if !has_byte(body, mp.start, mp.end, 1) {
+        return Ok(None);
+    }
+    let id = match vec16_x(body, ids.start, ids.end) {
+        Some(x) => x,
+        None => return Ok(None),
+    };
+    let bd = match vec8_x(body, bds.start, bds.end) {
+        Some(x) => x,
+        None => return Ok(None),
+    };
+    let ident = id.of(body);
+    let mut st: Vec<u8> = Vec::new();
+    if !prov.open_ticket(ident, &mut st) {
+        return Ok(None);
+    }
+    let n = st.len();
+    if n < 16 || st[0] != 1 || !(st[15] == 32 || st[15] == 48) || n != 16 + st[15] as usize {
+        return Ok(None);
+    }
+    let ts = (st[1] as u16) * 256 + st[2] as u16;
+    if ts != suite {
+        return Ok(None);
+    }
+    let a = suite_hash_x(suite);
+    let issued = be8_at(st.as_slice(), 3);
+    let now = prov.now();
+    if now < issued || now - issued > cfg.lifetime as u64 {
+        return Ok(None);
+    }
+    let rest = vstd::slice::slice_subrange(st.as_slice(), 16, n);
+    let psk = Secret::from_slice(rest, n - 16);
+    proof {
+        assert(psk@ =~= st@.skip(16));
+        assert(ticket_suite_psk(st@) == Some((ts, st@.skip(16))));
+    }
+    // The binder: verify_data under binder_key over the transcript up to
+    // the binders list (§4.2.11.2).
+    let cut = 4 + bds.start - 2;
+    let part = vstd::slice::slice_subrange(m, 0, cut);
+    let mut t2 = *tr;
+    t2.update(part);
+    let th = t2.hash();
+    let bk = binder_key_x(a, psk.as_slice());
+    let vd = verify_data_x(a, &bk, &th, Ghost(t2.data()));
+    if !ct_eq(vd.as_slice(), bd.of(body)) {
+        return Err(DECRYPT_ERROR);
+    }
+    let ghost g = SpecResume { identity: ident@, state: st@, psk: psk@ };
+    proof {
+        assert(part@ =~= m@.take(4 + bds.start - 2));
+        assert(ov(h.psk_modes) == s.psk_modes);
+        assert(ov2(h.pre_shared_key) == s.pre_shared_key);
+    }
+    Ok(Some((psk, Ghost(g))))
+}
+
+/// The lifetime and `ticket_age_add` of a ticket, when it was issued, and
+/// the ticket.
+pub struct TicketSent {
+    pub lifetime: u32,
+    pub age_add: u32,
+    pub time: u64,
+    pub ticket: Seq<u8>,
+}
+
+/// Sends a NewSessionTicket (§4.6.1) with nonce `[i]` for
+/// resumption_master_secret `rm`, protected by `tx`: the ticket, sealed by
+/// the provider, holds the PSK RFC 8446 derives for it. `false` if the
+/// provider could not seal one, and nothing is sent.
+#[verifier::spinoff_prover]
+fn issue_ticket<P: Provider>(
+    prov: &mut P,
+    suite: u16,
+    lifetime: u32,
+    i: u8,
+    rm: &Secret,
+    tx: &mut Protect<P::Key>,
+    out: &mut Vec<u8>,
+) -> (r: (bool, Ghost<TicketSent>))
+    requires
+        rm.wf(),
+        old(out)@.len() + 0x20000 <= usize::MAX,
+    ensures
+        final(tx).suite() == old(tx).suite(),
+        final(tx).key() == old(tx).key(),
+        final(tx).iv() == old(tx).iv(),
+        final(out)@.take(old(out)@.len() as int) == old(out)@,
+        old(out)@.len() <= final(out)@.len() <= old(out)@.len() + 256,
+        r.0 ==> {
+            let t = r.1@;
+            let nonce = seq![i];
+            &&& t.lifetime == lifetime
+            &&& final(out)@ == old(out)@ + seal_record(
+                old(tx).suite(),
+                old(tx).key(),
+                old(tx).iv(),
+                old(tx).seq(),
+                22,
+                new_session_ticket(t.lifetime, t.age_add, nonce, t.ticket),
+            )
+            &&& ticket_issued(t.ticket, ticket_state(suite, t.time, t.age_add, ticket_psk(suite_hash(suite), rm@, nonce)))
+        },
+        !r.0 ==> final(out)@ == old(out)@,
+{
+    let a = suite_hash_x(suite);
+    let nonce: [u8; 1] = [i];
+    let psk = ticket_psk_x(a, rm, &nonce);
+    let mut rnd = [0u8; 32];
+    prov.random(&mut rnd);
+    let age_add = ((rnd[0] as u32) << 24u32) | ((rnd[1] as u32) << 16u32) | ((rnd[2] as u32) << 8u32) | (rnd[3] as u32);
+    let time = prov.now();
+    let mut st: Vec<u8> = Vec::new();
+    ticket_state_x(&mut st, suite, time, age_add, &psk);
+    let mut ticket: Vec<u8> = Vec::new();
+    let ghost none = TicketSent { lifetime, age_add, time, ticket: Seq::empty() };
+    proof {
+        assert(out@.take(out@.len() as int) =~= out@);
+        assert(st@.len() <= 64);
+    }
+    if !prov.seal_ticket(st.as_slice(), &mut ticket) {
+        return (false, Ghost(none));
+    }
+    assert(ticket@.skip(0) =~= ticket@);
+    if ticket.len() > 200 {
+        return (false, Ghost(none));
+    }
+    let mut nst: Vec<u8> = Vec::new();
+    new_session_ticket_x(&mut nst, lifetime, age_add, &nonce, ticket.as_slice());
+    let ghost o = out@;
+    proof {
+        assert(nonce@ =~= seq![i]);
+    }
+    if !tx.seal(22, nst.as_slice(), out) {
+        return (false, Ghost(none));
+    }
+    proof {
+        assert(out@.take(o.len() as int) =~= o);
+    }
+    (true, Ghost(TicketSent { lifetime, age_add, time, ticket: ticket@ }))
 }
 
 /// A server connection, with its cryptography `P`.
@@ -693,7 +1077,7 @@ impl<P: Provider> ServerConn<P> {
                 &&& self.hrr@ == hello_retry_request(session_id(self.ch1@), suite, group)
                 &&& tr.data() == message_hash(suite_hash(suite), self.ch1@) + self.hrr@
             },
-            State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap } => {
+            State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap, res } => {
                 let h = self.hs@;
                 let c = self.config();
                 &&& self.hs_ok()
@@ -704,6 +1088,7 @@ impl<P: Provider> ServerConn<P> {
                 &&& expect@.len() == hash_len(suite_hash(suite))
                 &&& c_ap.wf() && c_ap@ == h.c_ap(c)
                 &&& s_ap.wf() && s_ap@ == h.s_ap(c)
+                &&& res matches Some(rm) ==> rm.wf() && rm@ == h.res_master(c)
             },
             State::Connected { suite, rx, tx, c_sec, s_sec } => {
                 let h = self.hs@;
@@ -910,9 +1295,13 @@ impl<P: Provider> ServerConn<P> {
         retried: bool,
         Ghost(retry): Ghost<Option<(Seq<u8>, Seq<u8>)>>,
         Ghost(choice): Ghost<SpecChoice>,
+        h: &ClientHello,
+        Ghost(s): Ghost<SpecHello>,
         out: &mut Vec<u8>,
     ) -> (r: Result<Event, Error>)
         requires
+            parse_client_hello(body@) == Ok::<SpecHello, SpecAlert>(s),
+            h.models(s),
             old(self).wf(),
             old(self).phase() == Phase::Start || old(self).phase() == Phase::Retried,
             cfg.wf(),
@@ -947,11 +1336,19 @@ impl<P: Provider> ServerConn<P> {
             r matches Ok(e) ==> e is Nothing,
             final(self).phase() == Phase::WaitFinished ==> final(self).handshake().retry == retry && final(self).handshake().ch == m@,
     {
-        let p = match prepare(&mut self.prov, cfg, m, body, sid, c, tr, Ghost(retry), Ghost(choice)) {
+        let rs = match try_resume(&mut self.prov, cfg, m, body, h, Ghost(s), c.suite, &tr) {
+            Ok(x) => x,
+            Err(code) => return Err(self.fail(code, out)),
+        };
+        let (psk, Ghost(resumed)) = match rs {
+            Some((k, g)) => (Some(k), Ghost(Some(g@))),
+            None => (None, Ghost(None)),
+        };
+        let p = match prepare(&mut self.prov, cfg, m, body, sid, c, tr, Ghost(retry), Ghost(choice), psk, Ghost(resumed)) {
             Ok(p) => p,
             Err(code) => return Err(self.fail(code, out)),
         };
-        let Prep { sh, fl, rx, mut tx, expect, c_ap, s_ap, hs: Ghost(hsv) } = p;
+        let Prep { sh, fl, rx, mut tx, expect, c_ap, s_ap, res, hs: Ghost(hsv) } = p;
         proof {
             reveal(prep_ok);
         }
@@ -986,7 +1383,7 @@ impl<P: Provider> ServerConn<P> {
             Some((ours, _)) => Some(ours),
             None => None,
         };
-        self.enter_wait_finished(Ghost(hsv), suite, rx, tx, expect, c_ap, s_ap);
+        self.enter_wait_finished(Ghost(hsv), suite, rx, tx, expect, c_ap, s_ap, res);
         Ok(Event::Nothing)
     }
 
@@ -1000,8 +1397,10 @@ impl<P: Provider> ServerConn<P> {
         expect: Secret,
         c_ap: Secret,
         s_ap: Secret,
+        res: Option<Secret>,
     )
         requires
+            res matches Some(rm) ==> rm.wf() && rm@ == hsv.res_master(old(self).config()),
             (*old(self).cfg).wf(),
             old(self).buf@.len() <= MAX_MESSAGE + 4,
             hsv.valid(old(self).config()),
@@ -1020,7 +1419,7 @@ impl<P: Provider> ServerConn<P> {
             final(self).config() == old(self).config(),
     {
         self.hs = Ghost(hsv);
-        self.state = State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap };
+        self.state = State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap, res };
     }
 
     /// A ClientHello message `m`, in `Start` or `Retried`.
@@ -1092,7 +1491,7 @@ impl<P: Provider> ServerConn<P> {
                             _ => arbitrary(),
                         };
                         let tr = Transcript::new(suite_hash_x(c.suite));
-                        self.accept(cfg, m, body, sid, c, tr, false, Ghost(None), Ghost(choice), out)
+                        self.accept(cfg, m, body, sid, c, tr, false, Ghost(None), Ghost(choice), &h, Ghost(s), out)
                     },
                 }
             },
@@ -1119,7 +1518,7 @@ impl<P: Provider> ServerConn<P> {
                             },
                         };
                         self.state = State::Start;
-                        self.accept(cfg, m, body, sid, c, tr, true, Ghost(Some((ch1, hrr))), Ghost(choice), out)
+                        self.accept(cfg, m, body, sid, c, tr, true, Ghost(Some((ch1, hrr))), Ghost(choice), &h, Ghost(s), out)
                     },
                     Outcome::Retry { .. } => Err(self.fail(ILLEGAL_PARAMETER, out)),
                     Outcome::Reject(a) => Err(self.fail(a.code(), out)),
@@ -1169,31 +1568,15 @@ impl<P: Provider> ServerConn<P> {
         let mut st = State::Closed;
         core::mem::swap(&mut self.state, &mut st);
         match st {
-            State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap } => {
+            State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap, res } => {
                 let n = expect.len();
-                let e = expect.as_slice();
                 if m.len() != 4 + n {
-                    self.state = State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap };
+                    self.state = State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap, res };
                     return Err(self.fail(DECODE_ERROR, out));
                 }
-                let mut acc: u8 = 0;
-                let mut i: usize = 0;
-                while i < n
-                    invariant
-                        i <= n,
-                        n == e@.len(),
-                        m@.len() == 4 + n,
-                        (acc == 0) == (forall|j: int| 0 <= j < i ==> m@[4 + j] == e@[j]),
-                    decreases n - i,
-                {
-                    proof {
-                        lemma_or_xor(acc, m@[4 + i as int], e@[i as int]);
-                    }
-                    acc = acc | (m[4 + i] ^ e[i]);
-                    i = i + 1;
-                }
-                if acc != 0 {
-                    self.state = State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap };
+                let got = vstd::slice::slice_subrange(m, 4, m.len());
+                if !ct_eq(got, expect.as_slice()) {
+                    self.state = State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap, res };
                     return Err(self.fail(DECRYPT_ERROR, out));
                 }
                 proof {
@@ -1205,7 +1588,36 @@ impl<P: Provider> ServerConn<P> {
                 let (ck, civ) = traffic_keys_x(a, &c_ap, kl);
                 let rx2 = Protect::new(self.prov.aead_key(suite, ck.as_slice()), &civ);
                 let (sk, siv) = traffic_keys_x(a, &s_ap, kl);
-                let tx2 = Protect::new(self.prov.aead_key(suite, sk.as_slice()), &siv);
+                let mut tx2 = Protect::new(self.prov.aead_key(suite, sk.as_slice()), &siv);
+                let ghost o = out@;
+                match res {
+                    Some(rm) => {
+                        let k = self.cfg.tickets;
+                        let lifetime = self.cfg.lifetime;
+                        let mut i: u8 = 0;
+                        while i < k
+                            invariant
+                                rm.wf(),
+                                o.len() <= usize::MAX / 2,
+                                out@.len() <= o.len() + 256 * (i as int),
+                                out@.take(o.len() as int) == o,
+                                out@.len() >= o.len(),
+                                keys_are(tx2, suite, s_ap@),
+                            decreases k - i,
+                        {
+                            let ghost o2 = out@;
+                            let (ok, _) = issue_ticket(&mut self.prov, suite, lifetime, i, &rm, &mut tx2, out);
+                            proof {
+                                assert(out@.take(o.len() as int) =~= o2.take(o.len() as int));
+                            }
+                            if !ok {
+                                break;
+                            }
+                            i = i + 1;
+                        }
+                    },
+                    None => {},
+                }
                 self.fin = Ghost(m@);
                 self.nrx = Ghost(0);
                 self.ntx = Ghost(0);
@@ -1214,7 +1626,6 @@ impl<P: Provider> ServerConn<P> {
                 proof {
                     assert(updated(a, c_ap@, 0) == c_ap@);
                     assert(updated(a, s_ap@, 0) == s_ap@);
-                    assert(out@.take(out@.len() as int) =~= out@);
                 }
                 Ok(Event::HandshakeDone)
             },
@@ -1415,9 +1826,9 @@ impl<P: Provider> ServerConn<P> {
         let mut st = State::Closed;
         core::mem::swap(&mut self.state, &mut st);
         match st {
-            State::WaitFinished { suite, mut rx, tx, expect, c_ap, s_ap } => {
+            State::WaitFinished { suite, mut rx, tx, expect, c_ap, s_ap, res } => {
                 let r = rx.open(hdr, body);
-                self.state = State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap };
+                self.state = State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap, res };
                 r
             },
             State::Connected { suite, mut rx, tx, c_sec, s_sec } => {

@@ -210,3 +210,123 @@ fn tampered_records_are_refused() {
     assert_eq!(s.process(), Err(Error::Sent(20)));
     assert_eq!(s.write(b"x"), Err(Error::Closed));
 }
+
+fn server_with(cfg: &Arc<Config>, keys: &Arc<TicketKeys>) -> ServerStream<AwsLc> {
+    ServerStream::new(cfg.clone(), AwsLc::new(Some(SigningKey::from_pkcs8(KEY).unwrap())).with_tickets(keys.clone()))
+}
+
+fn connect(cc: &Arc<ClientConfig>, s: &mut ServerStream<AwsLc>) -> ClientConnection {
+    let mut c = ClientConnection::new(cc.clone(), ServerName::try_from("localhost").unwrap()).unwrap();
+    pump(&mut c, s).unwrap();
+    assert!(!c.is_handshaking() && !s.is_handshaking());
+    c
+}
+
+#[test]
+fn resumption() {
+    use rustls::HandshakeKind;
+    let keys = Arc::new(TicketKeys::new(21600));
+    for suite in SUITES {
+        let sc = server_config(&[suite], &GROUPS, &[b"h2"]);
+        let cc = client_config(None, &[b"h2"]);
+        let mut s = server_with(&sc, &keys);
+        let mut c = connect(&cc, &mut s);
+        assert_eq!(c.handshake_kind(), Some(HandshakeKind::Full));
+        echo(&mut c, &mut s, 100);
+        // Each resumption gets new tickets, so it can go on.
+        for _ in 0..4 {
+            let mut s = server_with(&sc, &keys);
+            let mut c = connect(&cc, &mut s);
+            assert_eq!(c.handshake_kind(), Some(HandshakeKind::Resumed), "suite {suite:x}");
+            assert_eq!(s.alpn(), Some(&b"h2"[..]));
+            echo(&mut c, &mut s, 100);
+            echo(&mut c, &mut s, 20000);
+            c.refresh_traffic_keys().unwrap();
+            echo(&mut c, &mut s, 10);
+        }
+    }
+}
+
+#[test]
+fn resumption_after_hello_retry_request() {
+    use rustls::HandshakeKind;
+    let keys = Arc::new(TicketKeys::new(21600));
+    let cc = client_config(None, &[]);
+    // The first server takes X25519, so the client's next first share is
+    // X25519; the second takes only P-256, and asks for it.
+    let mut s = server_with(&server_config(&SUITES, &[X25519], &[]), &keys);
+    connect(&cc, &mut s);
+    let mut s = server_with(&server_config(&SUITES, &[SECP256R1], &[]), &keys);
+    let mut c = connect(&cc, &mut s);
+    assert_eq!(c.handshake_kind(), Some(HandshakeKind::Resumed));
+    assert_eq!(c.negotiated_key_exchange_group().unwrap().name(), rustls::NamedGroup::secp256r1);
+    echo(&mut c, &mut s, 1000);
+}
+
+#[test]
+fn unknown_tickets_and_no_tickets_give_full_handshakes() {
+    use rustls::HandshakeKind;
+    let sc = server_config(&SUITES, &GROUPS, &[]);
+    let cc = client_config(None, &[]);
+    let mut s = server_with(&sc, &Arc::new(TicketKeys::new(21600)));
+    connect(&cc, &mut s);
+    // Other keys: the ticket does not open.
+    let mut s = server_with(&sc, &Arc::new(TicketKeys::new(21600)));
+    let mut c = connect(&cc, &mut s);
+    assert_eq!(c.handshake_kind(), Some(HandshakeKind::Full));
+    echo(&mut c, &mut s, 100);
+    // No ticket keys at all.
+    let mut s = server(&sc);
+    let mut c = connect(&cc, &mut s);
+    assert_eq!(c.handshake_kind(), Some(HandshakeKind::Full));
+    echo(&mut c, &mut s, 100);
+    // Tickets turned off in the configuration.
+    let mut sc2 = server_config(&SUITES, &GROUPS, &[]);
+    Arc::get_mut(&mut sc2).unwrap().set_tickets(0, 3600);
+    let keys = Arc::new(TicketKeys::new(21600));
+    let mut s = server_with(&sc2, &keys);
+    connect(&cc, &mut s);
+    let mut s = server_with(&sc2, &keys);
+    let c = connect(&cc, &mut s);
+    assert_eq!(c.handshake_kind(), Some(HandshakeKind::Full));
+}
+
+#[test]
+fn wrong_binder_is_refused() {
+    let sc = server_config(&SUITES, &GROUPS, &[]);
+    let cc = client_config(None, &[]);
+    let keys = Arc::new(TicketKeys::new(21600));
+    let mut s = server_with(&sc, &keys);
+    connect(&cc, &mut s);
+    let mut c = ClientConnection::new(cc.clone(), ServerName::try_from("localhost").unwrap()).unwrap();
+    let mut buf = Vec::new();
+    c.write_tls(&mut buf).unwrap();
+    // The binders end the ClientHello.
+    let last = buf.len() - 1;
+    buf[last] ^= 1;
+    let mut s = server_with(&sc, &keys);
+    s.read_tls(&buf);
+    assert_eq!(s.process(), Err(Error::Sent(51)));
+}
+
+#[test]
+fn ticket_keys_rotate() {
+    let keys = TicketKeys::new(1);
+    let mut t = Vec::new();
+    assert!(keys.seal(b"state", &mut t));
+    let mut out = Vec::new();
+    assert!(keys.open(&t, &mut out));
+    assert_eq!(out, b"state");
+    let mut bad = t.clone();
+    bad[20] ^= 1;
+    assert!(!keys.open(&bad, &mut Vec::new()));
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let mut t2 = Vec::new();
+    assert!(keys.seal(b"two", &mut t2));
+    // The old key still opens; after another rotation it does not.
+    assert!(keys.open(&t, &mut Vec::new()));
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    assert!(keys.seal(b"three", &mut Vec::new()));
+    assert!(!keys.open(&t, &mut Vec::new()));
+    assert!(keys.open(&t2, &mut Vec::new()));
+}

@@ -66,16 +66,21 @@ pub open spec fn ext_version() -> Seq<u8> {
     ext(43, seq![3u8, 4u8])
 }
 
-/// A ServerHello (§4.1.3) with supported_versions, and key_share with the
-/// server's share for `group` (§4.2.8, `KeyShareServerHello`).
-pub open spec fn server_hello(random: Seq<u8>, sid: Seq<u8>, suite: u16, group: u16, share: Seq<u8>) -> Seq<u8> {
+/// A ServerHello (§4.1.3) with supported_versions, key_share with the
+/// server's share for `group` (§4.2.8, `KeyShareServerHello`), and, when
+/// resuming, pre_shared_key with `selected_identity` 0 (§4.2.11).
+pub open spec fn server_hello(random: Seq<u8>, sid: Seq<u8>, suite: u16, group: u16, share: Seq<u8>, psk: bool) -> Seq<u8> {
     hs_msg(
         2,
         server_hello_body(
             random,
             sid,
             suite,
-            ext_version() + ext(51, be2(group as nat) + be2(share.len()) + share),
+            ext_version() + ext(51, be2(group as nat) + be2(share.len()) + share) + (if psk {
+                ext(41, be2(0))
+            } else {
+                Seq::empty()
+            }),
         ),
     )
 }
@@ -240,6 +245,74 @@ pub open spec fn session_id(ch: Seq<u8>) -> Seq<u8> {
     }
 }
 
+/// What a server keeps in a session ticket (its own format, sealed by the
+/// provider): version 1, the cipher suite, when it was issued (seconds),
+/// the `ticket_age_add`, and the resumption PSK.
+pub open spec fn ticket_state(suite: u16, time: u64, age_add: u32, psk: Seq<u8>) -> Seq<u8> {
+    seq![1u8] + be2(suite as nat) + be8(time as nat) + be4(age_add as nat) + seq![psk.len() as u8] + psk
+}
+
+pub open spec fn be4(n: nat) -> Seq<u8> {
+    be2(n / 65536) + be2(n % 65536)
+}
+
+pub open spec fn be8(n: nat) -> Seq<u8> {
+    be4(n / 0x1_0000_0000) + be4(n % 0x1_0000_0000)
+}
+
+/// A ticket state's suite and PSK, if it is one.
+pub open spec fn ticket_suite_psk(st: Seq<u8>) -> Option<(u16, Seq<u8>)> {
+    if st.len() >= 16 && st[0] == 1 && st.len() == 16 + st[15] as int && (st[15] == 32 || st[15] == 48) {
+        Some(((st[1] as nat * 256 + st[2] as nat) as u16, st.skip(16)))
+    } else {
+        None
+    }
+}
+
+/// NewSessionTicket (§4.6.1), with no extensions.
+pub open spec fn new_session_ticket(lifetime: u32, age_add: u32, nonce: Seq<u8>, ticket: Seq<u8>) -> Seq<u8> {
+    hs_msg(
+        4,
+        be4(lifetime as nat) + be4(age_add as nat) + seq![nonce.len() as u8] + nonce + be2(ticket.len())
+            + ticket + be2(0),
+    )
+}
+
+/// A resumption: the client's first PSK identity (a ticket), the state the
+/// server sealed in it, and the PSK in that.
+pub struct SpecResume {
+    pub identity: Seq<u8>,
+    pub state: Seq<u8>,
+    pub psk: Seq<u8>,
+}
+
+/// A resumption RFC 8446 §4.2.11 allows, for ClientHello `ch` after
+/// transcript `prefix`, with hash `a`: the client offered psk_dhe_ke; its
+/// first PSK identity is a ticket the server issued
+/// (`crypto::ticket_issued`) holding a PSK for a suite with hash `a`; and
+/// its first binder is `verify_data` under that PSK's binder_key over the
+/// transcript up to the binders (§4.2.11.2).
+pub open spec fn resumption_ok(ch: Seq<u8>, prefix: Seq<u8>, a: HashAlg, r: SpecResume) -> bool {
+    let body = ch.skip(4);
+    match parse_client_hello(body) {
+        Ok(s) => match (s.psk_modes, s.pre_shared_key) {
+            (Some((ms, me)), Some(((is, ie), (bs, be)))) => {
+                &&& bytes(body, (ms, me)).contains(1u8)
+                &&& vec16(body, is, ie) matches Some(id) && bytes(body, id) == r.identity
+                &&& ticket_issued(r.identity, r.state)
+                &&& ticket_suite_psk(r.state) matches Some((ts, p)) && p == r.psk && suite_hash(ts) == a
+                &&& vec8(body, bs, be) matches Some(bd) && bytes(body, bd) == verify_data(
+                    a,
+                    binder_key(a, r.psk),
+                    prefix + ch.take(4 + bs - 2),
+                )
+            },
+            _ => false,
+        },
+        Err(_) => false,
+    }
+}
+
 /// A handshake as it went: the messages, and what the server's
 /// cryptography gave it (its random, its key share, the shared secret, its
 /// signature).
@@ -252,11 +325,21 @@ pub struct SpecHs {
     pub share: Seq<u8>,
     pub dhe: Seq<u8>,
     pub sig: Seq<u8>,
+    /// A PSK resumption (psk_dhe_ke), if it was one.
+    pub resumed: Option<SpecResume>,
 }
 
 impl SpecHs {
     pub open spec fn alg(self) -> HashAlg {
         suite_hash(self.choice.suite)
+    }
+
+    /// The PSK: the resumption's, or zeros.
+    pub open spec fn psk(self) -> Seq<u8> {
+        match self.resumed {
+            Some(r) => r.psk,
+            None => zeros(hash_len(self.alg())),
+        }
     }
 
     /// The transcript before ClientHello (§4.4.1): after a
@@ -277,6 +360,7 @@ impl SpecHs {
             self.choice.suite,
             self.choice.group,
             self.share,
+            self.resumed is Some,
         )
     }
 
@@ -303,20 +387,25 @@ impl SpecHs {
         certificate_verify(self.choice.signature_scheme, self.sig)
     }
 
-    /// ..CertificateVerify.
+    /// What the server's Finished covers: ..CertificateVerify, or, when
+    /// resuming (no certificate), ..EncryptedExtensions.
     #[verifier::opaque]
     pub open spec fn th_cv(self, c: SpecCfg) -> Seq<u8> {
-        self.th_cert(c) + self.certificate_verify()
+        if self.resumed is Some {
+            self.th_sh() + encrypted_extensions(self.alpn(c))
+        } else {
+            self.th_cert(c) + self.certificate_verify()
+        }
     }
 
     #[verifier::opaque]
     pub open spec fn c_hs(self) -> Seq<u8> {
-        client_hs_traffic(self.alg(), self.dhe, self.th_sh())
+        client_hs_traffic(self.alg(), self.psk(), self.dhe, self.th_sh())
     }
 
     #[verifier::opaque]
     pub open spec fn s_hs(self) -> Seq<u8> {
-        server_hs_traffic(self.alg(), self.dhe, self.th_sh())
+        server_hs_traffic(self.alg(), self.psk(), self.dhe, self.th_sh())
     }
 
     /// The server's Finished.
@@ -332,11 +421,16 @@ impl SpecHs {
     }
 
     /// What the server sends under its handshake keys:
-    /// EncryptedExtensions, Certificate, CertificateVerify, Finished.
+    /// EncryptedExtensions, Certificate, CertificateVerify, Finished; or
+    /// EncryptedExtensions and Finished when resuming.
     #[verifier::opaque]
     pub open spec fn flight(self, c: SpecCfg) -> Seq<u8> {
-        encrypted_extensions(self.alpn(c)) + certificate(c.chain) + self.certificate_verify()
-            + self.server_finished(c)
+        if self.resumed is Some {
+            encrypted_extensions(self.alpn(c)) + self.server_finished(c)
+        } else {
+            encrypted_extensions(self.alpn(c)) + certificate(c.chain) + self.certificate_verify()
+                + self.server_finished(c)
+        }
     }
 
     /// The client's Finished, as it must be.
@@ -347,12 +441,27 @@ impl SpecHs {
 
     #[verifier::opaque]
     pub open spec fn c_ap(self, c: SpecCfg) -> Seq<u8> {
-        client_ap_traffic(self.alg(), self.dhe, self.th_sfin(c))
+        client_ap_traffic(self.alg(), self.psk(), self.dhe, self.th_sfin(c))
     }
 
     #[verifier::opaque]
     pub open spec fn s_ap(self, c: SpecCfg) -> Seq<u8> {
-        server_ap_traffic(self.alg(), self.dhe, self.th_sfin(c))
+        server_ap_traffic(self.alg(), self.psk(), self.dhe, self.th_sfin(c))
+    }
+
+    /// resumption_master_secret, the client's Finished included.
+    #[verifier::opaque]
+    pub open spec fn res_master(self, c: SpecCfg) -> Seq<u8> {
+        resumption_master(self.alg(), self.psk(), self.dhe, self.th_sfin(c) + self.client_finished(c))
+    }
+
+    /// The resumption, if any, is one `resumption_ok` allows.
+    #[verifier::opaque]
+    pub open spec fn resume_ok(self) -> bool {
+        match self.resumed {
+            None => true,
+            Some(r) => resumption_ok(self.ch, self.prefix(), self.alg(), r),
+        }
     }
 
     /// The handshake followed the RFC, given the configuration:
@@ -363,9 +472,10 @@ impl SpecHs {
     /// - ClientHello negotiated `choice`, with the same suite and group as
     ///   the HelloRetryRequest if there was one (§4.1.4);
     /// - the shared secret is the key exchange of the client's share for the
-    ///   group and the server's share (`crypto::key_exchange`), and the
-    ///   CertificateVerify signature is over §4.4.3's content for the
-    ///   transcript through Certificate (`crypto::signed`).
+    ///   group and the server's share (`crypto::key_exchange`);
+    /// - a full handshake's CertificateVerify signature is over §4.4.3's
+    ///   content for the transcript through Certificate (`crypto::signed`);
+    ///   a resumption is `resume_ok`.
     #[verifier::opaque]
     pub open spec fn valid(self, c: SpecCfg) -> bool {
         &&& self.random.len() == 32
@@ -378,11 +488,12 @@ impl SpecHs {
         &&& is_msg(self.ch, 1)
         &&& outcome(c, self.ch) == Some(SpecOutcome::Accept(self.choice))
         &&& key_exchange(self.choice.group, bytes(self.ch.skip(4), self.choice.share), self.share, self.dhe)
-        &&& signed(
+        &&& self.resumed is None ==> signed(
             self.choice.signature_scheme,
             cv_content(hash(self.alg(), self.th_cert(c))),
             self.sig,
         )
+        &&& self.resume_ok()
     }
 }
 

@@ -1,5 +1,5 @@
 //! verilith-tls against rustls 0.23 as a TLS 1.3 server, both over aws-lc:
-//! full handshakes, and record throughput. A rustls client drives both;
+//! full and resumed handshakes, and record throughput. A rustls client drives both;
 //! only the server's own work is timed.
 //!
 //!     cargo run --release --example bench
@@ -82,6 +82,12 @@ fn client_config(group: &'static dyn rustls::crypto::SupportedKxGroup) -> Arc<Cl
     Arc::new(c)
 }
 
+fn resuming_client_config(group: &'static dyn rustls::crypto::SupportedKxGroup) -> Arc<ClientConfig> {
+    let mut c = (*client_config(group)).clone();
+    c.resumption = rustls::client::Resumption::default();
+    Arc::new(c)
+}
+
 /// One handshake; returns the server's time and the connected pair.
 fn handshake<S: Server>(cc: &Arc<ClientConfig>, mut s: S) -> (Duration, ClientConnection, S) {
     let mut c = ClientConnection::new(cc.clone(), ServerName::try_from("localhost").unwrap()).unwrap();
@@ -153,6 +159,65 @@ fn main() {
             b.push(tb.as_secs_f64() * 1e6 / 300.0);
         }
         println!("| {} | {:.1} | {:.1} |", name, median(a), median(b));
+    }
+
+    // Resumed handshakes: both servers issue 2 tickets per connection
+    // (rustls's default), and the client resumes with one each time.
+    let keys = Arc::new(TicketKeys::new(21600));
+    let new_ours_t = || {
+        Ours(ServerStream::new(
+            ours_cfg.clone(),
+            AwsLc::new(Some(SigningKey::from_pkcs8(KEY).unwrap())).with_tickets(keys.clone()),
+        ))
+    };
+    let mut theirs_t = ServerConfig::builder_with_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![CertificateDer::from(LEAF.to_vec())],
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(KEY.to_vec())),
+        )
+        .unwrap();
+    theirs_t.alpn_protocols = vec![b"h2".to_vec()];
+    theirs_t.ticketer = rustls::crypto::aws_lc_rs::Ticketer::new().unwrap();
+    let theirs_t = Arc::new(theirs_t);
+    let new_theirs_t = || Theirs(ServerConnection::new(theirs_t.clone()).unwrap());
+    println!();
+    println!("Full handshake issuing 2 tickets, and resumed handshake (psk_dhe_ke), server side (median of 9 runs of 300, us)");
+    println!("| group | handshake | verilith-tls | rustls 0.23 |");
+    println!("|---|---|---:|---:|");
+    for (name, g) in [("X25519", kx_group::X25519), ("P-256", kx_group::SECP256R1), ("X25519MLKEM768", kx_group::X25519MLKEM768)] {
+        let mut fa = Vec::new();
+        let mut fb = Vec::new();
+        let mut ra = Vec::new();
+        let mut rb = Vec::new();
+        for _ in 0..9 {
+            let (mut tfa, mut tfb, mut tra, mut trb) = (Duration::ZERO, Duration::ZERO, Duration::ZERO, Duration::ZERO);
+            for _ in 0..300 {
+                // A fresh client cache: a full handshake, then a resumption.
+                let ca = resuming_client_config(g);
+                let cb = resuming_client_config(g);
+                let (t, c, _) = handshake(&ca, new_ours_t());
+                assert_eq!(c.handshake_kind(), Some(rustls::HandshakeKind::Full));
+                tfa += t;
+                let (t, c, _) = handshake(&cb, new_theirs_t());
+                assert_eq!(c.handshake_kind(), Some(rustls::HandshakeKind::Full));
+                tfb += t;
+                let (t, c, _) = handshake(&ca, new_ours_t());
+                assert_eq!(c.handshake_kind(), Some(rustls::HandshakeKind::Resumed));
+                tra += t;
+                let (t, c, _) = handshake(&cb, new_theirs_t());
+                assert_eq!(c.handshake_kind(), Some(rustls::HandshakeKind::Resumed));
+                trb += t;
+            }
+            fa.push(tfa.as_secs_f64() * 1e6 / 300.0);
+            fb.push(tfb.as_secs_f64() * 1e6 / 300.0);
+            ra.push(tra.as_secs_f64() * 1e6 / 300.0);
+            rb.push(trb.as_secs_f64() * 1e6 / 300.0);
+        }
+        println!("| {} | full | {:.1} | {:.1} |", name, median(fa), median(fb));
+        println!("| {} | resumed | {:.1} | {:.1} |", name, median(ra), median(rb));
     }
 
     // Throughput: 16 MiB each way, in 16 KiB writes.

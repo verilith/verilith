@@ -10,19 +10,23 @@ trusted; everything that decides what a byte from the peer means is proven.
 parser, negotiation, the key schedule, record protection and the server
 handshake state machine, all proven, and talks to rustls clients with every
 TLS 1.3 cipher suite and X25519, P-256, P-384 and X25519MLKEM768. It does a
-full handshake with a certificate: no PSK resumption, no 0-RTT and no
-client certificates yet ([plan](#plan)). The cryptography is
+full handshake with a certificate, issues session tickets, and resumes
+sessions from them (psk_dhe_ke); no 0-RTT and no client certificates yet
+([plan](#plan)). The cryptography, ticket keys included, is
 [`verilith-tls-aws-lc`](../tls-aws-lc), a separate crate.
 
 ```rust,ignore
 use std::sync::Arc;
 use verilith_tls::{server::Config, stream::ServerStream};
-use verilith_tls_aws_lc::{AwsLc, SigningKey, GROUPS, SUITES};
+use verilith_tls_aws_lc::{AwsLc, SigningKey, TicketKeys, GROUPS, SUITES};
 
-let key = SigningKey::from_pkcs8(&key_der).unwrap();
+let key = Arc::new(SigningKey::from_pkcs8(&key_der).unwrap());
 let cfg = Arc::new(Config::new(SUITES.to_vec(), GROUPS.to_vec(), key.schemes().to_vec(),
                                b"\x02h2\x08http/1.1".to_vec(), &vec![cert_der]).unwrap());
-let mut tls = ServerStream::new(cfg, AwsLc::new(Some(key)));
+// Shared by every connection and worker, so any of them resumes any ticket.
+let tickets = Arc::new(TicketKeys::new(6 * 3600));
+// Per connection:
+let mut tls = ServerStream::new(cfg.clone(), AwsLc::shared(key.clone()).with_tickets(tickets.clone()));
 tls.read_tls(&bytes_from_socket);
 tls.process()?;                       // plaintext in tls.plaintext()
 socket.write_all(tls.pending())?;     // answers to send
@@ -94,8 +98,9 @@ definition names its section. The proofs show:
   is RFC 8446 §7 written over HKDF (RFC 5869) and HMAC: HKDF-Extract,
   HKDF-Expand with its T(i) blocks, the `HkdfLabel` encoding,
   HKDF-Expand-Label and Derive-Secret; the Early, Handshake and Master
-  Secrets for a handshake without a PSK; the handshake and application
-  traffic secrets, the exporter and resumption master secrets; traffic
+  Secrets from a PSK (zeros for none); binder_key and a ticket's PSK
+  (§4.6.1); the handshake and application traffic secrets, the exporter
+  and resumption master secrets; traffic
   keys and IVs (§7.3); Finished's `verify_data` (§4.4.4); the next
   traffic secret of a KeyUpdate (§7.2); and the per-record nonce (§5.3),
   the IV XORed with the left-padded sequence number. The transcript hash
@@ -119,16 +124,32 @@ definition names its section. The proofs show:
   - every handshake message the server sends is exactly `spec_server.rs`'s
     encoding of it (ServerHello, HelloRetryRequest, EncryptedExtensions
     with the ALPN choice, Certificate, CertificateVerify, Finished,
-    KeyUpdate); the flight after ServerHello is proven to be exactly those
-    messages sealed in order under the server handshake keys from sequence
-    number 0;
+    KeyUpdate, NewSessionTicket); the flight after ServerHello is proven to
+    be exactly those messages sealed in order under the server handshake
+    keys from sequence number 0;
   - `SpecHs::valid`: each ClientHello negotiated (`spec::negotiate`)
     exactly the suite, group, signature scheme and ALPN protocol used; after
     a HelloRetryRequest the second ClientHello had to agree with it
     (§4.1.4), and the transcript starts with `message_hash` (§4.4.1); the
-    shared secret is the provider's key exchange of the client's share; the
-    CertificateVerify signature is over §4.4.3's content for the transcript
-    through Certificate;
+    shared secret is the provider's key exchange of the client's share; in
+    a full handshake the CertificateVerify signature is over §4.4.3's
+    content for the transcript through Certificate;
+  - **resumption** (`spec_server::resumption_ok`, §4.2.11): the server
+    resumes only when the client offered psk_dhe_ke, its first PSK identity
+    is a ticket the server's keys sealed (`crypto::ticket_issued`) holding
+    a PSK for a suite with the negotiated hash, and its first binder is
+    `verify_data` under that PSK's binder_key over the transcript up to
+    the binders list (after a HelloRetryRequest too); a wrong binder is
+    `decrypt_error`, and a ticket it cannot use is a full handshake. A
+    resumed handshake's ServerHello carries pre_shared_key with identity
+    0, its flight is EncryptedExtensions and Finished, and every secret
+    after it is the key schedule's with that PSK;
+  - **tickets** (`issue_ticket`): after the client's Finished, each
+    NewSessionTicket is exactly §4.6.1's encoding, sealed under the
+    server's application keys, and its ticket is one the provider sealed
+    (`ticket_issued`) over this crate's ticket state holding the suite,
+    the time, the `ticket_age_add` and the PSK RFC 8446 derives from this
+    connection's resumption_master_secret and the ticket's nonce;
   - the transcript hash is over exactly the messages §4.4.1 says, and every
     secret and key is the key schedule's for it;
   - `lemma_connected`: once Connected, the client's Finished was exactly
@@ -159,7 +180,10 @@ definition names its section. The proofs show:
 - **The cryptography** (`crypto.rs`): the AEADs, key exchange, signatures
   and random numbers are uninterpreted functions, and the proofs assume the
   provider's implementation meets the contracts on the `AeadKey` and
-  `Provider` traits. [`verilith-tls-aws-lc`](../tls-aws-lc) implements them
+  `Provider` traits. That includes session tickets: `ticket_issued` says a
+  ticket is one the server sealed, holding a given state, and the proofs
+  assume `open_ticket` opens only those (an AEAD under keys only the
+  server has), and the clock (`now`) used for ticket lifetimes. [`verilith-tls-aws-lc`](../tls-aws-lc) implements them
   over aws-lc; it is a separate crate, outside the workspace and Buck,
   because aws-lc is C.
 - `stream.rs`, a byte-stream adapter that frames records and buffers
@@ -176,8 +200,12 @@ There is no `external_body` in this crate.
 `../tls-aws-lc/tests/interop.rs` handshakes with a rustls 0.23 client in
 memory: all three cipher suites with each of the four groups, ALPN
 selection, a HelloRetryRequest, KeyUpdates both ways, close_notify, records
-fed one byte at a time, a no-common-group and a no-common-ALPN failure, and
-a tampered record (`bad_record_mac`, and nothing more is sent).
+fed one byte at a time, a no-common-group and a no-common-ALPN failure, a
+tampered record (`bad_record_mac`, and nothing more is sent); and session
+resumption with each suite (several in a row, each on a ticket the last
+one issued, with KeyUpdates), after a HelloRetryRequest, with a ticket
+from other keys, with no ticket keys or tickets turned off (full
+handshakes), a wrong binder (`decrypt_error`), and ticket key rotation.
 `../tls-aws-lc/tests/protect.rs` checks record protection against the AEAD
 called directly with §5.3's nonce, with padding and each error.
 
@@ -230,19 +258,33 @@ same VM. Both servers use aws-lc for their cryptography, so the difference
 is the TLS layer; a rustls client drives both and only the server's own
 work is timed. ECDSA P-256 certificate, TLS_AES_128_GCM_SHA256.
 
-| full handshake, server side | verilith-tls | rustls 0.23 | speedup |
+| full handshake, no tickets, server side | verilith-tls | rustls 0.23 | speedup |
 |---|---:|---:|---:|
-| X25519 | 62.9 µs | 74.3 µs | 1.18x |
-| P-256 | 91.9 µs | 103.6 µs | 1.13x |
-| X25519MLKEM768 | 85.0 µs | 99.5 µs | 1.17x |
+| X25519 | 70.5 µs | 85.6 µs | 1.21x |
+| P-256 | 91.5 µs | 106.7 µs | 1.17x |
+| X25519MLKEM768 | 84.2 µs | 96.8 µs | 1.15x |
+
+With session tickets on both sides (2 per connection, rustls's default;
+rustls's own `Ticketer`), a client's first handshake and then a resumed
+one:
+
+| server side | verilith-tls | rustls 0.23 | speedup |
+|---|---:|---:|---:|
+| X25519, full, issuing 2 tickets | 73.8 µs | 89.8 µs | 1.22x |
+| X25519, resumed | 54.1 µs | 72.0 µs | 1.33x |
+| P-256, full, issuing 2 tickets | 92.4 µs | 107.7 µs | 1.17x |
+| P-256, resumed | 75.2 µs | 92.1 µs | 1.22x |
+| X25519MLKEM768, full, issuing 2 tickets | 98.6 µs | 117.8 µs | 1.19x |
+| X25519MLKEM768, resumed | 79.4 µs | 98.0 µs | 1.23x |
 
 | 16 MiB in 16 KiB records | verilith-tls | rustls 0.23 | speedup |
 |---|---:|---:|---:|
-| server seals | 11.2 GB/s | 9.1 GB/s | 1.23x |
-| server opens | 4.5 GB/s | 3.6 GB/s | 1.27x |
+| server seals | 11.6 GB/s | 9.1 GB/s | 1.28x |
+| server opens | 4.6 GB/s | 3.5 GB/s | 1.30x |
 
 Most of a handshake is the signature and the key exchange, which are the
-same aws-lc calls on both sides.
+same aws-lc calls on both sides; a resumption saves the signature, and
+still does the key exchange (psk_dhe_ke keeps forward secrecy).
 
 ## Plan
 
@@ -251,8 +293,8 @@ same aws-lc calls on both sides.
 2. Negotiation, verified: version, cipher suite, group and key share,
    signature scheme, ALPN choice, and server name validation. *(done)*
 3. The server handshake state machine (§2, §4, Appendix A.2). *(done for
-   the full handshake and HelloRetryRequest; PSK resumption, session
-   tickets and client certificates next)*
+   the full handshake, HelloRetryRequest, session tickets and psk_dhe_ke
+   resumption; client certificates and 0-RTT next)*
 4. The key schedule (§7). *(done, over verilith-sha2's proven HMAC, so
    no HKDF is trusted)*
 5. Record protection (§5.2, §5.3). *(done)*
