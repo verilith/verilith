@@ -293,7 +293,9 @@ in. HTTP/3's own layer is small (frames on QUIC streams, and QPACK, RFC
    and the stream state machines (RFC 9000 §3), with the same resource
    bounds as HTTP/2 (amplification limits before address validation, §8,
    are a theorem rather than a check). Congestion control and the
-   cryptography stay trusted.
+   cryptography stay trusted. This is [verilith-quic](../quic): the wire
+   format and these state machines, proven; wiring it into quinn-proto in
+   place of quinn-proto's own parsers is what remains of this step.
 3. **UDP speed**: GSO and GRO, `sendmmsg`/`recvmmsg`, and one socket per
    worker with connection IDs routed to the worker that owns them (a BPF
    steering program on Linux). Without these every HTTP/3 server loses to

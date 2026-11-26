@@ -39,6 +39,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | json | 26 |  |  |  |  |  | 6 |
 | lz4 |  |  |  |  |  |  | 1 |
 | png | 2 |  |  |  |  |  | 7 |
+| quic |  |  |  |  |  |  | 1 |
 | regex | 1 |  |  |  |  |  | 3 |
 | server |  |  |  |  |  |  | 9 |
 | sha2 | 34 |  |  |  |  |  | 3 |
@@ -174,6 +175,10 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/png/src/libpng/read.rs`: plain Rust
 - `crates/png/src/libpng/stubs.rs`: plain Rust
 - `crates/png/src/libpng/xform.rs`: plain Rust
+
+### quic
+
+- `crates/quic/src/lib.rs`: plain Rust
 
 ### regex
 

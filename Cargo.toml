@@ -15,6 +15,7 @@ members = [
     "crates/json",
     "crates/lz4",
     "crates/png",
+    "crates/quic",
     "crates/regex",
     "crates/server",
     "crates/sha2",

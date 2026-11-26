@@ -1404,6 +1404,7 @@ dependencies = [
  "verilith-json",
  "verilith-lz4",
  "verilith-png",
+ "verilith-quic",
  "verilith-regex",
  "verilith-sha2",
  "verilith-simd",
@@ -1561,6 +1562,14 @@ name = "verilith-png"
 version = "0.1.0"
 dependencies = [
  "verilith-zlib",
+ "vstd",
+]
+
+[[package]]
+name = "verilith-quic"
+version = "0.1.0"
+dependencies = [
+ "verilith-core",
  "vstd",
 ]
 
