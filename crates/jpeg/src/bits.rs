@@ -2,6 +2,7 @@
 //! segment.
 use crate::prims::*;
 use crate::spec::*;
+use crate::work::Meter;
 #[cfg(verus_only)]
 use vstd::arithmetic::div_mod::*;
 #[cfg(verus_only)]
@@ -50,13 +51,16 @@ pub fn rd16(data: &[u8], i: usize) -> (r: u16)
     (rd(data, i) as u16) * 256 + rd(data, i + 1) as u16
 }
 
-pub fn skip_ff_x(data: &[u8], q: usize) -> (r: usize)
+pub fn skip_ff_x(data: &[u8], q: usize, Tracked(mt): Tracked<&mut Meter>) -> (r: usize)
     requires
         len_ok(data@),
         q <= data@.len() + 0x1_0020,
     ensures
         r as int == skip_ff(data@, q as int),
         r <= q + 1 || r <= data@.len() + 1,
+        q <= r,
+        final(mt).n + q <= old(mt).n + r,
+        q >= data@.len() ==> final(mt).n == old(mt).n,
 {
     let ghost q0 = q;
     let mut q = q;
@@ -64,9 +68,14 @@ pub fn skip_ff_x(data: &[u8], q: usize) -> (r: usize)
         invariant
             skip_ff(data@, q as int) == skip_ff(data@, q0 as int),
             q <= data@.len() || q == q0,
+            q0 <= q,
+            mt.n + q0 == old(mt).n + q,
         decreases data@.len() - q,
     {
         q += 1;
+        proof {
+            mt.n = mt.n + 1;
+        }
     }
     if q >= data.len() {
         if (q - data.len()) % 2 == 0 {
@@ -79,13 +88,17 @@ pub fn skip_ff_x(data: &[u8], q: usize) -> (r: usize)
     }
 }
 
-pub fn marker_after_x(data: &[u8], p: usize) -> (r: (u8, usize))
+pub fn marker_after_x(data: &[u8], p: usize, Tracked(mt): Tracked<&mut Meter>) -> (r: (u8, usize))
     requires
         len_ok(data@),
         p <= data@.len() + 0x1_0020,
     ensures
         r.0 == marker_after(data@, p as int).0,
         r.1 as int == marker_after(data@, p as int).1,
+        final(mt).n + 2 * p <= old(mt).n + 2 * r.1,
+        p + 2 <= r.1,
+        p < r.1,
+        p >= data@.len() ==> r.1 <= p + 3,
 {
     let mut i = p;
     loop
@@ -93,6 +106,9 @@ pub fn marker_after_x(data: &[u8], p: usize) -> (r: (u8, usize))
             len_ok(data@),
             i <= data@.len() + 0x1_0020,
             marker_after(data@, i as int) == marker_after(data@, p as int),
+            p <= i,
+            mt.n + 2 * p <= old(mt).n + 2 * i,
+            p >= data@.len() ==> i == p,
         decreases left(data@, i as int),
     {
         if i >= data.len() {
@@ -100,11 +116,15 @@ pub fn marker_after_x(data: &[u8], p: usize) -> (r: (u8, usize))
         }
         if data[i] != 0xFF {
             i += 1;
+            proof {
+                mt.n = mt.n + 1;
+            }
         } else {
-            let q = skip_ff_x(data, i + 1);
+            let q = skip_ff_x(data, i + 1, Tracked(mt));
             let c = rd(data, q);
             proof {
                 lemma_skip_ff(data@, i + 1);
+                mt.n = mt.n + 1;
             }
             if c == 0 {
                 i = q + 1;
@@ -112,6 +132,36 @@ pub fn marker_after_x(data: &[u8], p: usize) -> (r: (u8, usize))
                 return (c, q + 1);
             }
         }
+    }
+}
+
+/// Moving from a marker's first 0xFF to its last changes neither the
+/// segment's end nor the marker that follows.
+pub proof fn lemma_park(d: Seq<u8>, p: int)
+    requires
+        0 <= p < d.len(),
+        byte(d, p) == 0xFF,
+        byte(d, skip_ff(d, p + 1)) != 0,
+    ensures
+        ecs(d, skip_ff(d, p + 1) - 1).len() == 0,
+        marker_after(d, skip_ff(d, p + 1) - 1) == marker_after(d, p),
+        p <= skip_ff(d, p + 1) - 1 <= d.len(),
+{
+    lemma_skip_ff(d, p + 1);
+    let q = skip_ff(d, p + 1);
+    let r = q - 1;
+    assert(byte(d, r) == 0xFF);
+    if r < d.len() {
+        lemma_skip_ff(d, r + 1);
+        if q < d.len() {
+            assert(skip_ff(d, q) == q);
+        } else {
+            assert(q == d.len());
+            assert(false);
+        }
+    } else {
+        assert(r == d.len());
+        assert(q == d.len() + 1);
     }
 }
 
@@ -354,6 +404,9 @@ pub struct BitReader {
     /// Where the segment starts, and how many of its bits have been used.
     pub p0: Ghost<int>,
     pub n: Ghost<int>,
+    /// Steps taken looking for the end of the segment (turns of
+    /// `skip_ff_x`): at most the bytes the reader has moved over.
+    pub wk: Ghost<int>,
 }
 
 impl BitReader {
@@ -387,6 +440,7 @@ impl BitReader {
         &&& pos_ok(d, self.p0@)
         &&& self.pos <= d.len() || self.pos <= self.p0@ + 1
         &&& self.pos >= self.p0@
+        &&& 0 <= self.wk@ <= self.pos - self.p0@
         &&& cnt <= 64
         &&& n >= 0
         &&& self.buf as int % (pow2(cnt as nat) as int) == ebits(e, n, cnt as nat)
@@ -418,7 +472,7 @@ impl BitReader {
             assert(ecs(d, pos as int).skip(0) =~= ecs(d, pos as int));
             lemma2_to64();
         }
-        BitReader { pos, buf: 0, cnt: 0, pad: 0, stk: false, p0: Ghost(pos as int), n: Ghost(0) }
+        BitReader { pos, buf: 0, cnt: 0, pad: 0, stk: false, p0: Ghost(pos as int), n: Ghost(0), wk: Ghost(0) }
     }
 
     /// The reader after taking in one more data byte `b`.
@@ -431,6 +485,7 @@ impl BitReader {
             stk: self.stk,
             p0: self.p0,
             n: self.n,
+            wk: self.wk,
         }
     }
 
@@ -620,12 +675,21 @@ impl BitReader {
                 is_data = true;
                 self.pos += 1;
             } else {
-                let q = skip_ff_x(data, self.pos + 1);
+                let tracked mut wm = Meter { n: self.wk@ as nat };
+                let q = skip_ff_x(data, self.pos + 1, Tracked(&mut wm));
                 if rd(data, q) == 0 {
                     b = 0xFF;
                     is_data = true;
                     self.pos = q + 1;
+                } else if self.pos < data.len() {
+                    // A marker: wait on its last 0xFF, so that the next
+                    // refill does not walk the run of them again.
+                    proof {
+                        lemma_park(d, pos0);
+                    }
+                    self.pos = q - 1;
                 }
+                self.wk = Ghost(wm.n as int);
             }
             proof {
                 // The byte loaded is the next eight bits of the segment.

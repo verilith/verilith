@@ -22,6 +22,32 @@ pub enum Flow {
     Fail,
 }
 
+/// Why a handler returned `Flow::Fail`: the reason itself, or for a host
+/// the parser rejected, the host's bytes in the input (`start..end`) and
+/// whether it is opaque, so that the reason can be worked out afterwards.
+#[derive(Clone, Copy)]
+pub enum Fault {
+    NoBase,
+    CannotBeABase,
+    EmptyHost,
+    Port,
+    Host(usize, usize, bool),
+}
+
+pub open spec fn fault_why(input: Seq<u8>, f: Fault) -> Why {
+    match f {
+        Fault::NoBase => Why::NoBase,
+        Fault::CannotBeABase => Why::CannotBeABase,
+        Fault::EmptyHost => Why::EmptyHost,
+        Fault::Port => Why::Port,
+        Fault::Host(s, e, o) => host_why(input.subrange(s as int, e as int), o),
+    }
+}
+
+pub open spec fn fault_ok(f: Fault, n: nat) -> bool {
+    f matches Fault::Host(s, e, _) ==> s <= e <= n
+}
+
 pub struct Parser {
     pub href: Vec<u8>,
     pub p: usize,
@@ -44,6 +70,8 @@ pub struct Parser {
     pub fragment_start: Option<usize>,
     pub host_kind: Option<HostKind>,
     pub opaque_path: bool,
+    /// Set when a handler returns `Flow::Fail`.
+    pub fault: Fault,
     pub gm: Ghost<Machine>,
 }
 
@@ -425,18 +453,19 @@ pub open spec fn handler_ok(
     c0: nat,
     c1: nat,
 ) -> bool {
-    let before = run(input, base, None, old_ps.gm@, old_ps.p as int);
+    let before = run_r(input, base, None, old_ps.gm@, old_ps.p as int);
     match r {
-        Flow::Continue => ps.inv(input, base) && ps.measure_lt(old_ps) && before == run(
+        Flow::Continue => ps.inv(input, base) && ps.measure_lt(old_ps) && before == run_r(
             input,
             base,
             None,
             ps.gm@,
             ps.p as int,
         ) && c1 + pot(ps, input, base) + 1 <= c0 + pot(old_ps, input, base),
-        Flow::Done => done_ok(ps, ps.gm@.url) && before == Some(ps.gm@.url) && c1 + ps.href@.len()
+        Flow::Done => done_ok(ps, ps.gm@.url) && before == Ok(ps.gm@.url) && c1 + ps.href@.len()
             + 1 <= c0 + pot(old_ps, input, base),
-        Flow::Fail => before is None && c1 + 1 <= c0 + pot(old_ps, input, base),
+        Flow::Fail => before == Err(fault_why(input, ps.fault)) && fault_ok(ps.fault, input.len()) && c1
+            + 1 <= c0 + pot(old_ps, input, base),
     }
 }
 
@@ -591,7 +620,7 @@ fn h_scheme(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): Tr
         handler_ok(old(ps), final(ps), input@, base_rec(base), r, old(cost).n, final(cost).n),
 {
     let ghost b = base_rec(base);
-    let ghost target = run(input@, b, None, ps.gm@, ps.p as int);
+    let ghost target = run_r(input@, b, None, ps.gm@, ps.p as int);
     let mut k = ps.p;
     while k < input.len() && is_scheme_char(input[k])
         invariant
@@ -599,7 +628,7 @@ fn h_scheme(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): Tr
             ps.state == State::Scheme,
             ps.p == old(ps).p,
             old(ps).p <= k <= input.len(),
-            target == run(input@, b, None, ps.gm@, k as int),
+            target == run_r(input@, b, None, ps.gm@, k as int),
             cost.n == old(cost).n + (k - old(ps).p),
             ps.href@.len() == old(ps).href@.len() + (k - old(ps).p),
         decreases input.len() - k,
@@ -801,12 +830,16 @@ fn h_no_scheme(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost):
 {
     let p = ps.p;
     match base {
-        None => Flow::Fail,
+        None => {
+            ps.fault = Fault::NoBase;
+            Flow::Fail
+        },
         Some(bu) => {
             let hash = p < input.len() && input[p] == b'#';
             if bu.opaque_path && hash {
                 no_scheme_fragment(ps, input, base, bu, Tracked(cost))
             } else if bu.opaque_path {
+                ps.fault = Fault::CannotBeABase;
                 Flow::Fail
             } else if !is_file_exec(url_scheme(bu)) {
                 ps.gm = Ghost(Machine { state: State::Relative, ..ps.gm@ });
@@ -1084,6 +1117,7 @@ fn h_relative(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): 
 {
     let bu = match base {
         None => {
+            ps.fault = Fault::NoBase;
             return Flow::Fail;
         },
         Some(bu) => bu,
@@ -1291,6 +1325,7 @@ fn h_relative_slash(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(c
     }
     let bu = match base {
         None => {
+            ps.fault = Fault::NoBase;
             return Flow::Fail;
         },
         Some(bu) => bu,
@@ -1380,12 +1415,12 @@ fn h_special_authority_ignore_slashes(ps: &mut Parser, input: &[u8], base: Optio
         handler_ok(old(ps), final(ps), input@, base_rec(base), r, old(cost).n, final(cost).n),
 {
     let ghost b = base_rec(base);
-    let ghost target = run(input@, b, None, ps.gm@, ps.p as int);
+    let ghost target = run_r(input@, b, None, ps.gm@, ps.p as int);
     let mut k = ps.p;
     while k < input.len() && (input[k] == b'/' || input[k] == b'\\')
         invariant
             old(ps).p <= k <= input.len(),
-            target == run(input@, b, None, ps.gm@, k as int),
+            target == run_r(input@, b, None, ps.gm@, k as int),
             *ps == *old(ps),
             ps.inv(input@, b),
             ps.state == State::SpecialAuthorityIgnoreSlashes,
@@ -1424,7 +1459,7 @@ proof fn lemma_run_next(
         step(input, b, None, m, p) == Step::Next(m2, p2),
         -1 <= p2 < input.len(),
     ensures
-        run(input, b, None, m, p) == run(input, b, None, m2, p2 + 1),
+        run_r(input, b, None, m, p) == run_r(input, b, None, m2, p2 + 1),
 {
 }
 
@@ -1433,7 +1468,7 @@ proof fn lemma_run_eof(input: Seq<u8>, b: Option<UrlRecord>, m: Machine, m2: Mac
     requires
         step(input, b, None, m, input.len() as int) == Step::Next(m2, input.len() as int),
     ensures
-        run(input, b, None, m, input.len() as int) == Some(m2.url),
+        run_r(input, b, None, m, input.len() as int) == Ok(m2.url),
 {
 }
 
@@ -1442,7 +1477,7 @@ proof fn lemma_run_fail(input: Seq<u8>, b: Option<UrlRecord>, m: Machine, p: int
         0 <= p <= input.len(),
         step(input, b, None, m, p) == Step::Fail,
     ensures
-        run(input, b, None, m, p) is None,
+        run_r(input, b, None, m, p) == Err(fail_why(b, m)),
 {
 }
 
@@ -1726,7 +1761,7 @@ proof fn lemma_run_authority_chars(input: Seq<u8>, b: Option<UrlRecord>, m: Mach
         m.state == State::Authority,
         forall|j: int| p <= j < k ==> input[j] != b'@' && !is_authority_end(input, j, is_special(m.url)),
     ensures
-        run(input, b, None, m, p) == run(
+        run_r(input, b, None, m, p) == run_r(
             input,
             b,
             None,
@@ -1760,7 +1795,7 @@ fn authority_fast(ps: &mut Parser, input: &[u8], base: Option<&Url>, sc: &mut cr
         r is None ==> final(cost).n <= old(cost).n + (input.len() - old(ps).p) + 1,
         r matches Some(f) ==> handler_ok(old(ps), final(ps), input@, base_rec(base), f, old(cost).n, final(cost).n),
 {
-    hide(run);
+    hide(run_r);
     hide(step);
     let ghost b = base_rec(base);
     let ghost c0 = cost.n;
@@ -1845,6 +1880,7 @@ fn authority_fast(ps: &mut Parser, input: &[u8], base: Option<&Url>, sc: &mut cr
             assert(cost.n <= c0 + 97 * (k - p) + 9);
             lemma_pot_fail(old(ps), input@, b, c0 as int, cost.n as int, 1);
         }
+        ps.fault = Fault::Host(p, k, !special);
         Some(Flow::Fail)
     }
 }
@@ -1857,10 +1893,10 @@ fn h_authority(ps: &mut Parser, input: &[u8], base: Option<&Url>, sc: &mut crate
     ensures
         handler_ok(old(ps), final(ps), input@, base_rec(base), r, old(cost).n, final(cost).n),
 {
-    hide(run);
+    hide(run_r);
     hide(step);
     let ghost b = base_rec(base);
-    let ghost target = run(input@, b, None, ps.gm@, ps.p as int);
+    let ghost target = run_r(input@, b, None, ps.gm@, ps.p as int);
     match authority_fast(ps, input, base, sc, Tracked(cost)) {
         Some(f) => {
             return f;
@@ -1877,8 +1913,8 @@ fn h_authority(ps: &mut Parser, input: &[u8], base: Option<&Url>, sc: &mut crate
             cost.n + COST_W * (input.len() - ps.p) + ps.href@.len() + 8 * (ps.p - ps.bs) <= cs + COST_W * (input.len() - old(ps).p) + old(ps).href@.len() + 8 * (old(ps).p - old(ps).bs),
             ps.state == State::Authority,
             ps.special == special,
-            target == run(input@, b, None, ps.gm@, ps.p as int),
-            target == run(input@, b, None, old(ps).gm@, old(ps).p as int),
+            target == run_r(input@, b, None, ps.gm@, ps.p as int),
+            target == run_r(input@, b, None, old(ps).gm@, old(ps).p as int),
             b == base_rec(base),
             old(ps).state == State::Authority,
         decreases input.len() - ps.p,
@@ -1898,6 +1934,7 @@ fn h_authority(ps: &mut Parser, input: &[u8], base: Option<&Url>, sc: &mut crate
                     lemma_run_fail(input@, b, m, k as int);
                     lemma_pot_fail(old(ps), input@, b, old(cost).n as int, cost.n as int, 2);
                 }
+                ps.fault = Fault::EmptyHost;
                 return Flow::Fail;
             }
             let ghost bs = ps.bs;
@@ -2052,7 +2089,7 @@ proof fn lemma_run_host_chars(input: Seq<u8>, b: Option<UrlRecord>, m: Machine, 
         m.state == State::Host || m.state == State::Hostname,
         forall|j: int| p <= j < k ==> host_plain(input, j, is_special(m.url)),
     ensures
-        run(input, b, None, m, p) == run(
+        run_r(input, b, None, m, p) == run_r(
             input,
             b,
             None,
@@ -2084,10 +2121,10 @@ fn h_host(ps: &mut Parser, input: &[u8], base: Option<&Url>, sc: &mut crate::hos
     ensures
         handler_ok(old(ps), final(ps), input@, base_rec(base), r, old(cost).n, final(cost).n),
 {
-    hide(run);
+    hide(run_r);
     hide(step);
     let ghost b = base_rec(base);
-    let ghost target = run(input@, b, None, ps.gm@, ps.p as int);
+    let ghost target = run_r(input@, b, None, ps.gm@, ps.p as int);
     let special = ps.special;
     let mut clean = ps.p == ps.bs;
     loop
@@ -2099,8 +2136,8 @@ fn h_host(ps: &mut Parser, input: &[u8], base: Option<&Url>, sc: &mut crate::hos
             old(ps).p <= ps.p,
             old(ps).bs <= old(ps).p <= input.len(),
             cost.n + COST_W * (input.len() - ps.p) + ps.href@.len() + 104 * (ps.p - ps.bs) <= old(cost).n + COST_W * (input.len() - old(ps).p) + old(ps).href@.len() + 104 * (old(ps).p - old(ps).bs),
-            target == run(input@, b, None, ps.gm@, ps.p as int),
-            target == run(input@, b, None, old(ps).gm@, old(ps).p as int),
+            target == run_r(input@, b, None, ps.gm@, ps.p as int),
+            target == run_r(input@, b, None, old(ps).gm@, old(ps).p as int),
             b == base_rec(base),
             old(ps).state == State::Host || old(ps).state == State::Hostname,
         decreases input.len() - ps.p,
@@ -2109,6 +2146,7 @@ fn h_host(ps: &mut Parser, input: &[u8], base: Option<&Url>, sc: &mut crate::hos
             cost.n = cost.n + 1;
         }
         let k = ps.p;
+        let bs = ps.bs;
         let ghost m = ps.gm@;
         proof {
             lemma_step_host(input@, b, m, k as int);
@@ -2121,6 +2159,7 @@ fn h_host(ps: &mut Parser, input: &[u8], base: Option<&Url>, sc: &mut crate::hos
                     lemma_run_fail(input@, b, m, k as int);
                     lemma_pot_fail(old(ps), input@, b, old(cost).n as int, cost.n as int, 1);
                 }
+                ps.fault = Fault::EmptyHost;
                 return Flow::Fail;
             }
             if host_end(ps, input, base, sc, true, clean, Tracked(cost)) {
@@ -2134,6 +2173,7 @@ fn h_host(ps: &mut Parser, input: &[u8], base: Option<&Url>, sc: &mut crate::hos
                     lemma_run_fail(input@, b, m, k as int);
                     lemma_pot_fail(old(ps), input@, b, old(cost).n as int, cost.n as int, 1);
                 }
+                ps.fault = if bs == k { Fault::EmptyHost } else { Fault::Host(bs, k, !special) };
                 return Flow::Fail;
             }
         }
@@ -2143,6 +2183,7 @@ fn h_host(ps: &mut Parser, input: &[u8], base: Option<&Url>, sc: &mut crate::hos
                     lemma_run_fail(input@, b, m, k as int);
                     lemma_pot_fail(old(ps), input@, b, old(cost).n as int, cost.n as int, 1);
                 }
+                ps.fault = Fault::EmptyHost;
                 return Flow::Fail;
             }
             if host_end(ps, input, base, sc, false, clean, Tracked(cost)) {
@@ -2156,6 +2197,7 @@ fn h_host(ps: &mut Parser, input: &[u8], base: Option<&Url>, sc: &mut crate::hos
                     lemma_run_fail(input@, b, m, k as int);
                     lemma_pot_fail(old(ps), input@, b, old(cost).n as int, cost.n as int, 1);
                 }
+                ps.fault = if bs == k { Fault::EmptyHost } else { Fault::Host(bs, k, !special) };
                 return Flow::Fail;
             }
         }
@@ -2402,10 +2444,10 @@ fn h_port(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): Trac
     ensures
         handler_ok(old(ps), final(ps), input@, base_rec(base), r, old(cost).n, final(cost).n),
 {
-    hide(run);
+    hide(run_r);
     hide(step);
     let ghost b = base_rec(base);
-    let ghost target = run(input@, b, None, ps.gm@, ps.p as int);
+    let ghost target = run_r(input@, b, None, ps.gm@, ps.p as int);
     let special = ps.special;
     loop
         invariant
@@ -2416,8 +2458,8 @@ fn h_port(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): Trac
             old(ps).bs <= old(ps).p <= input.len(),
             ps.bs == old(ps).bs,
             cost.n + COST_W * (input.len() - ps.p) + ps.href@.len() + 2 * (ps.p - ps.bs) <= old(cost).n + COST_W * (input.len() - old(ps).p) + old(ps).href@.len() + 2 * (old(ps).p - old(ps).bs),
-            target == run(input@, b, None, ps.gm@, ps.p as int),
-            target == run(input@, b, None, old(ps).gm@, old(ps).p as int),
+            target == run_r(input@, b, None, ps.gm@, ps.p as int),
+            target == run_r(input@, b, None, old(ps).gm@, old(ps).p as int),
             b == base_rec(base),
             old(ps).state == State::Port,
         decreases input.len() - ps.p,
@@ -2453,6 +2495,7 @@ fn h_port(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): Trac
                     lemma_run_fail(input@, b, m, k as int);
                 lemma_pot_fail(old(ps), input@, b, old(cost).n as int, cost.n as int, 1);
                 }
+                ps.fault = Fault::Port;
                 return Flow::Fail;
             }
         } else {
@@ -2460,6 +2503,7 @@ fn h_port(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): Trac
                 lemma_run_fail(input@, b, m, k as int);
                 lemma_pot_fail(old(ps), input@, b, old(cost).n as int, cost.n as int, 1);
             }
+            ps.fault = Fault::Port;
             return Flow::Fail;
         }
     }
@@ -2684,7 +2728,7 @@ fn file_to_slash(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost
     ensures
         handler_ok(old(ps), final(ps), input@, base_rec(base), r, old(cost).n, final(cost).n),
 {
-    hide(run);
+    hide(run_r);
     let ghost m = ps.gm@;
     let p = ps.p;
     proof {
@@ -2714,7 +2758,7 @@ fn file_plain(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): 
     ensures
         handler_ok(old(ps), final(ps), input@, base_rec(base), r, old(cost).n, final(cost).n),
 {
-    hide(run);
+    hide(run_r);
     let ghost m = ps.gm@;
     let p = ps.p;
     proof {
@@ -2751,7 +2795,7 @@ fn file_base_tail(ps: &mut Parser, input: &[u8], base: Option<&Url>, bu: &Url, T
     ensures
         handler_ok(old(ps), final(ps), input@, base_rec(base), r, old(cost).n, final(cost).n),
 {
-    hide(run);
+    hide(run_r);
     let ghost m = ps.gm@;
     let ghost b = bu@;
     let p = ps.p;
@@ -2829,7 +2873,7 @@ fn file_base_path(ps: &mut Parser, input: &[u8], base: Option<&Url>, bu: &Url, T
     ensures
         handler_ok(old(ps), final(ps), input@, base_rec(base), r, old(cost).n, final(cost).n),
 {
-    hide(run);
+    hide(run_r);
     let ghost m = ps.gm@;
     let ghost b = bu@;
     let p = ps.p;
@@ -3006,7 +3050,7 @@ fn h_file_slash(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost)
     ensures
         handler_ok(old(ps), final(ps), input@, base_rec(base), r, old(cost).n, final(cost).n),
 {
-    hide(run);
+    hide(run_r);
     let ghost m = ps.gm@;
     let ghost url = m.url;
     let p = ps.p;
@@ -3107,7 +3151,7 @@ proof fn lemma_run_file_host_chars(input: Seq<u8>, b: Option<UrlRecord>, m: Mach
         m.state == State::FileHost,
         forall|j: int| p <= j < k ==> !file_host_end(input, j),
     ensures
-        run(input, b, None, m, p) == run(
+        run_r(input, b, None, m, p) == run_r(
             input,
             b,
             None,
@@ -3325,7 +3369,7 @@ fn h_file_host(ps: &mut Parser, input: &[u8], base: Option<&Url>, sc: &mut crate
     ensures
         handler_ok(old(ps), final(ps), input@, base_rec(base), r, old(cost).n, final(cost).n),
 {
-    hide(run);
+    hide(run_r);
     hide(step);
     let ghost b = base_rec(base);
     let ghost m = ps.gm@;
@@ -3353,6 +3397,7 @@ fn h_file_host(ps: &mut Parser, input: &[u8], base: Option<&Url>, sc: &mut crate
         lemma_step_file_host(input@, b, m1, k as int);
     }
     let bs = ps.bs;
+    let fsp = ps.special;
     let drive = k - bs == 2 && is_alpha(input[bs]) && (input[bs + 1] == b':' || input[bs + 1]
         == b'|');
     proof {
@@ -3384,6 +3429,7 @@ fn h_file_host(ps: &mut Parser, input: &[u8], base: Option<&Url>, sc: &mut crate
             lemma_run_fail(input@, b, m1, k as int);
         }
         proof { lemma_pot_fail(old(ps), input@, base_rec(base), old(cost).n as int, cost.n as int, 1); }
+        ps.fault = Fault::Host(bs, k, !fsp);
         Flow::Fail
     }
 }
@@ -3470,7 +3516,7 @@ fn h_path_start(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost)
     ensures
         handler_ok(old(ps), final(ps), input@, base_rec(base), r, old(cost).n, final(cost).n),
 {
-    hide(run);
+    hide(run_r);
     hide(step);
     let ghost b = base_rec(base);
     let p = ps.p;
@@ -3518,7 +3564,7 @@ fn h_path_start(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost)
         return Flow::Continue;
     }
     proof {
-        reveal(run);
+        reveal(run_r);
     }
     proof { lemma_pot_fail(old(ps), input@, base_rec(base), old(cost).n as int, (cost.n + ps.href@.len()) as int, 1); }
     Flow::Done
@@ -3666,7 +3712,7 @@ proof fn lemma_run_path_chars(input: Seq<u8>, b: Option<UrlRecord>, m: Machine, 
         m.state == State::Path,
         forall|j: int| p <= j < k ==> !path_end_byte(input, j, is_special(m.url)),
     ensures
-        run(input, b, None, m, p) == run(
+        run_r(input, b, None, m, p) == run_r(
             input,
             b,
             None,
@@ -3709,9 +3755,9 @@ proof fn lemma_run_path_end(input: Seq<u8>, b: Option<UrlRecord>, m: Machine, k:
             let url = path_seg_url(m.url, m.buffer, slash);
             let m2 = Machine { url, buffer: Seq::empty(), ..m };
             if k == input.len() {
-                run(input, b, None, m, k) == Some(url)
+                run_r(input, b, None, m, k) == Ok(url)
             } else if input[k] == b'?' {
-                run(input, b, None, m, k) == run(
+                run_r(input, b, None, m, k) == run_r(
                     input,
                     b,
                     None,
@@ -3719,7 +3765,7 @@ proof fn lemma_run_path_end(input: Seq<u8>, b: Option<UrlRecord>, m: Machine, k:
                     k + 1,
                 )
             } else if input[k] == b'#' {
-                run(input, b, None, m, k) == run(
+                run_r(input, b, None, m, k) == run_r(
                     input,
                     b,
                     None,
@@ -3731,7 +3777,7 @@ proof fn lemma_run_path_end(input: Seq<u8>, b: Option<UrlRecord>, m: Machine, k:
                     k + 1,
                 )
             } else {
-                run(input, b, None, m, k) == run(input, b, None, m2, k + 1)
+                run_r(input, b, None, m, k) == run_r(input, b, None, m2, k + 1)
             }
         }),
 {
@@ -3893,7 +3939,7 @@ proof fn lemma_run_path_fast(input: Seq<u8>, b: Option<UrlRecord>, m: Machine, p
         m.buffer.len() > 0 ==> m.buffer[0] != b'.' && m.buffer[0] != b'%',
         m.buffer.len() == 0 ==> (p == p0 || input[p - 1] == b'/'),
     ensures
-        run(input, b, None, m, p) == run(
+        run_r(input, b, None, m, p) == run_r(
             input,
             b,
             None,
@@ -4245,7 +4291,7 @@ fn path_fast_segs(ps: &mut Parser, input: &[u8], base: Option<&Url>, q: usize, T
         final(ps).bs == final(ps).href@.len(),
         final(ps).gm@.url.scheme == old(ps).gm@.url.scheme,
         final(ps).special == old(ps).special,
-        run(input@, base_rec(base), None, old(ps).gm@, old(ps).p as int) == run(
+        run_r(input@, base_rec(base), None, old(ps).gm@, old(ps).p as int) == run_r(
             input@,
             base_rec(base),
             None,
@@ -4401,7 +4447,7 @@ fn path_fast(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): T
             &&& final(ps).state == State::Path
             &&& old(ps).p <= final(ps).p
             &&& final(ps).special == old(ps).special
-            &&& run(input@, base_rec(base), None, old(ps).gm@, old(ps).p as int) == run(
+            &&& run_r(input@, base_rec(base), None, old(ps).gm@, old(ps).p as int) == run_r(
                 input@,
                 base_rec(base),
                 None,
@@ -4415,7 +4461,7 @@ fn path_fast(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): T
             &&& !(f is Fail)
         },
 {
-    hide(run);
+    hide(run_r);
     hide(step);
     let ghost m = ps.gm@;
     let ghost url = m.url;
@@ -4753,10 +4799,10 @@ fn h_path(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): Trac
     ensures
         handler_ok(old(ps), final(ps), input@, base_rec(base), r, old(cost).n, final(cost).n),
 {
-    hide(run);
+    hide(run_r);
     hide(step);
     let ghost b = base_rec(base);
-    let ghost target = run(input@, b, None, ps.gm@, ps.p as int);
+    let ghost target = run_r(input@, b, None, ps.gm@, ps.p as int);
     let special = ps.special;
     loop
         invariant
@@ -4766,8 +4812,8 @@ fn h_path(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): Trac
             old(ps).p <= ps.p,
             old(ps).p <= input.len(),
             cost.n + COST_W * (input.len() - ps.p) + ps.href@.len() <= old(cost).n + COST_W * (input.len() - old(ps).p) + old(ps).href@.len(),
-            target == run(input@, b, None, ps.gm@, ps.p as int),
-            target == run(input@, b, None, old(ps).gm@, old(ps).p as int),
+            target == run_r(input@, b, None, ps.gm@, ps.p as int),
+            target == run_r(input@, b, None, old(ps).gm@, old(ps).p as int),
             b == base_rec(base),
             old(ps).state == State::Path,
         decreases input.len() - ps.p,
@@ -4857,7 +4903,7 @@ proof fn lemma_run_opaque_chars(input: Seq<u8>, b: Option<UrlRecord>, m: Machine
         m.url.path is Opaque,
         forall|j: int| p <= j < k ==> opaque_plain(input, j),
     ensures
-        run(input, b, None, m, p) == run(
+        run_r(input, b, None, m, p) == run_r(
             input,
             b,
             None,
@@ -4906,7 +4952,7 @@ proof fn lemma_run_opaque_space(input: Seq<u8>, b: Option<UrlRecord>, m: Machine
         input[p] == b' ',
         input[p + 1] == b'?' || input[p + 1] == b'#',
     ensures
-        run(input, b, None, m, p) == run(
+        run_r(input, b, None, m, p) == run_r(
             input,
             b,
             None,
@@ -4923,15 +4969,15 @@ proof fn lemma_run_opaque_end(input: Seq<u8>, b: Option<UrlRecord>, m: Machine, 
         m.state == State::OpaquePath,
         k == input.len() || input[k] == b'?' || input[k] == b'#',
     ensures
-        k == input.len() ==> run(input, b, None, m, k) == Some(m.url),
-        k < input.len() && input[k] == b'?' ==> run(input, b, None, m, k) == run(
+        k == input.len() ==> run_r(input, b, None, m, k) == Ok(m.url),
+        k < input.len() && input[k] == b'?' ==> run_r(input, b, None, m, k) == run_r(
             input,
             b,
             None,
             Machine { url: UrlRecord { query: Some(Seq::empty()), ..m.url }, state: State::Query, ..m },
             k + 1,
         ),
-        k < input.len() && input[k] == b'#' ==> run(input, b, None, m, k) == run(
+        k < input.len() && input[k] == b'#' ==> run_r(input, b, None, m, k) == run_r(
             input,
             b,
             None,
@@ -5075,7 +5121,7 @@ fn h_opaque_path(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost
     ensures
         handler_ok(old(ps), final(ps), input@, base_rec(base), r, old(cost).n, final(cost).n),
 {
-    hide(run);
+    hide(run_r);
     hide(step);
     let ghost b = base_rec(base);
     let ghost m = ps.gm@;
@@ -5137,7 +5183,7 @@ proof fn lemma_run_query_chars(input: Seq<u8>, b: Option<UrlRecord>, m: Machine,
         m.state == State::Query,
         forall|j: int| p <= j < k ==> input[j] != b'#',
     ensures
-        run(input, b, None, m, p) == run(
+        run_r(input, b, None, m, p) == run_r(
             input,
             b,
             None,
@@ -5169,9 +5215,9 @@ proof fn lemma_run_query_end(input: Seq<u8>, b: Option<UrlRecord>, m: Machine, k
             let set = if is_special(m.url) { EncodeSet::SpecialQuery } else { EncodeSet::Query };
             let url = UrlRecord { query: Some(m.url.query->0 + pe_seq(m.buffer, set)), ..m.url };
             if k == input.len() {
-                run(input, b, None, m, k) == Some(url)
+                run_r(input, b, None, m, k) == Ok(url)
             } else {
-                run(input, b, None, m, k) == run(
+                run_r(input, b, None, m, k) == run_r(
                     input,
                     b,
                     None,
@@ -5271,14 +5317,14 @@ fn query_end(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): T
             assert(ps.href@ =~= core_serialize(url2));
             assert(ps.inv(input@, base_rec(base)));
             assert(ps.measure_lt(old(ps)));
-            assert(run(input@, base_rec(base), None, m, k as int) == run(input@, base_rec(base), None, ps.gm@, ps.p as int));
+            assert(run_r(input@, base_rec(base), None, m, k as int) == run_r(input@, base_rec(base), None, ps.gm@, ps.p as int));
         }
         Flow::Continue
     } else {
         ps.gm = Ghost(Machine { url, buffer: Seq::empty(), ..m });
         proof {
             assert(done_ok(ps, url));
-            assert(run(input@, base_rec(base), None, m, k as int) == Some(url));
+            assert(run_r(input@, base_rec(base), None, m, k as int) == Ok(url));
         }
         Flow::Done
     }
@@ -5292,7 +5338,7 @@ fn h_query(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost): Tra
     ensures
         handler_ok(old(ps), final(ps), input@, base_rec(base), r, old(cost).n, final(cost).n),
 {
-    hide(run);
+    hide(run_r);
     hide(step);
     let ghost m = ps.gm@;
     let ghost b = base_rec(base);
@@ -5330,7 +5376,7 @@ proof fn lemma_run_fragment(input: Seq<u8>, b: Option<UrlRecord>, m: Machine, p:
         m.state == State::Fragment,
         m.url.fragment == Some(f),
     ensures
-        run(input, b, None, m, p) == Some(
+        run_r(input, b, None, m, p) == Ok(
             UrlRecord {
                 fragment: Some(f + pe_seq(input.subrange(p, input.len() as int), EncodeSet::Fragment)),
                 ..m.url
@@ -5440,8 +5486,8 @@ proof fn lemma_run_scheme_lower(input: Seq<u8>, b: Option<UrlRecord>, k: int, se
         1 <= k <= se < input.len(),
         forall|j: int| 0 <= j < se ==> is_ascii_lower_alpha(#[trigger] input[j]),
     ensures
-        run(input, b, None, Machine { buffer: input.subrange(0, k), state: State::Scheme, ..initial_machine(State::SchemeStart, new_url()) }, k)
-            == run(input, b, None, Machine { buffer: input.subrange(0, se), state: State::Scheme, ..initial_machine(State::SchemeStart, new_url()) }, se),
+        run_r(input, b, None, Machine { buffer: input.subrange(0, k), state: State::Scheme, ..initial_machine(State::SchemeStart, new_url()) }, k)
+            == run_r(input, b, None, Machine { buffer: input.subrange(0, se), state: State::Scheme, ..initial_machine(State::SchemeStart, new_url()) }, se),
     decreases se - k,
 {
     if k < se {
@@ -5465,7 +5511,7 @@ proof fn lemma_scheme_fast_run(input: Seq<u8>, b: Option<UrlRecord>, se: int)
         input[se] == b':' && input[se + 1] == b'/' && input[se + 2] == b'/',
         input[se + 3] != b'/' && input[se + 3] != b'\\',
     ensures
-        run(input, b, None, initial_machine(State::SchemeStart, new_url()), 0) == run(
+        run_r(input, b, None, initial_machine(State::SchemeStart, new_url()), 0) == run_r(
             input,
             b,
             None,
@@ -5473,7 +5519,7 @@ proof fn lemma_scheme_fast_run(input: Seq<u8>, b: Option<UrlRecord>, se: int)
             se + 3,
         ),
 {
-    hide(run);
+    hide(run_r);
     hide(step);
     let m0 = initial_machine(State::SchemeStart, new_url());
     let sch = input.subrange(0, se);
@@ -5541,7 +5587,7 @@ fn scheme_fast(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost):
         r ==> {
             &&& final(ps).inv(input@, base_rec(base))
             &&& final(ps).state == State::Authority
-            &&& run(input@, base_rec(base), None, old(ps).gm@, 0) == run(
+            &&& run_r(input@, base_rec(base), None, old(ps).gm@, 0) == run_r(
                 input@,
                 base_rec(base),
                 None,
@@ -5568,7 +5614,7 @@ fn scheme_fast(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost):
             &&& final(cost).n == old(cost).n + 8
         },
 {
-    hide(run);
+    hide(run_r);
     hide(step);
     let n = input.len();
     if n < 9 || input[0] != b'h' || input[1] != b't' || input[2] != b't' || input[3] != b'p' {
@@ -5739,9 +5785,9 @@ proof fn lemma_simple_run(input: Seq<u8>, b: Option<UrlRecord>, se: int, k: int,
     requires
         simple_shape(input, se, k, j, q),
     ensures
-        run(input, b, None, fast_authority_machine(input, se), se + 3) == Some(simple_url(input, se, k, j, q)),
+        run_r(input, b, None, fast_authority_machine(input, se), se + 3) == Ok(simple_url(input, se, k, j, q)),
 {
-    hide(run);
+    hide(run_r);
     hide(step);
     let n = input.len() as int;
     let p = se + 3;
@@ -6058,7 +6104,7 @@ fn simple_rest(ps: &mut Parser, input: &[u8], base: Option<&Url>, Tracked(cost):
         !r ==> *final(ps) == *old(ps),
         final(cost).n <= old(cost).n + 12 * input.len() + 64,
         r ==> done_ok(final(ps), final(ps).gm@.url),
-        r ==> run(input@, base_rec(base), None, old(ps).gm@, old(ps).p as int) == Some(final(ps).gm@.url),
+        r ==> run_r(input@, base_rec(base), None, old(ps).gm@, old(ps).p as int) == Ok(final(ps).gm@.url),
         r ==> forall|i: int| 0 <= i < input.len() ==> input@[i] > 0x20,
         r ==> final(ps).href@.len() <= input.len() + 1,
 {
@@ -6242,13 +6288,13 @@ pub(crate) fn parse_simple(input: &[u8], base: Option<&Url>, sc: &mut crate::hos
         base matches Some(b) ==> b.wf(),
     ensures
         final(cost).n <= old(cost).n + simple_cost(input.len() as nat),
-        r matches Some(u) ==> u.wf() && run(
+        r matches Some(u) ==> u.wf() && run_r(
             input@,
             base_rec(base),
             None,
             initial_machine(State::SchemeStart, new_url()),
             0,
-        ) == Some(u@),
+        ) == Ok(u@),
         r is Some ==> input.len() > 0 && forall|i: int| 0 <= i < input.len() ==> input@[i] > 0x20,
 {
     let n = input.len();
@@ -6278,6 +6324,7 @@ pub(crate) fn parse_simple(input: &[u8], base: Option<&Url>, sc: &mut crate::hos
         fragment_start: None,
         host_kind: None,
         opaque_path: false,
+        fault: Fault::NoBase,
         gm: Ghost(initial_machine(State::SchemeStart, new_url())),
     };
     proof {
@@ -6339,8 +6386,38 @@ pub(crate) fn run_machine_in(input: &[u8], base: Option<&Url>, sc: &mut crate::h
             0,
         ) is None,
 {
+    proof {
+        crate::why::lemma_run_r(input@, base_rec(base), None, initial_machine(State::SchemeStart, new_url()), 0);
+    }
+    match run_machine_f(input, base, sc, Tracked(cost)) {
+        Ok(u) => Some(u),
+        Err(_) => None,
+    }
+}
+
+/// `run_machine_in`, with the fault on failure.
+pub(crate) fn run_machine_f(input: &[u8], base: Option<&Url>, sc: &mut crate::host::Scratch, Tracked(cost): Tracked<&mut Meter>) -> (r: Result<Url, Fault>)
+    requires
+        base matches Some(b) ==> b.wf(),
+    ensures
+        final(cost).n <= old(cost).n + machine_cost(input.len() as nat, base_len(base_rec(base))),
+        r matches Ok(u) ==> u.wf() && run_r(
+            input@,
+            base_rec(base),
+            None,
+            initial_machine(State::SchemeStart, new_url()),
+            0,
+        ) == Ok(u@),
+        r matches Err(f) ==> fault_ok(f, input.len() as nat) && run_r(
+            input@,
+            base_rec(base),
+            None,
+            initial_machine(State::SchemeStart, new_url()),
+            0,
+        ) == Err(fault_why(input@, f)),
+{
     let ghost b = base_rec(base);
-    let ghost target = run(input@, b, None, initial_machine(State::SchemeStart, new_url()), 0);
+    let ghost target = run_r(input@, b, None, initial_machine(State::SchemeStart, new_url()), 0);
     // Take the spare buffer when it has room but is not much bigger than
     // needed (the URL may keep it).
     let href = take_href(sc, input.len().saturating_add(8));
@@ -6363,6 +6440,7 @@ pub(crate) fn run_machine_in(input: &[u8], base: Option<&Url>, sc: &mut crate::h
         fragment_start: None,
         host_kind: None,
         opaque_path: false,
+        fault: Fault::NoBase,
         gm: Ghost(initial_machine(State::SchemeStart, new_url())),
     };
     proof {
@@ -6384,8 +6462,8 @@ pub(crate) fn run_machine_in(input: &[u8], base: Option<&Url>, sc: &mut crate::h
             base matches Some(bb) ==> bb.wf(),
             b == base_rec(base),
             ps.inv(input@, b),
-            target == run(input@, b, None, ps.gm@, ps.p as int),
-            target == run(input@, b, None, initial_machine(State::SchemeStart, new_url()), 0),
+            target == run_r(input@, b, None, ps.gm@, ps.p as int),
+            target == run_r(input@, b, None, initial_machine(State::SchemeStart, new_url()), 0),
             cost.n + pot(&ps, input@, b) <= old(cost).n + machine_cost(input.len() as nat, base_len(b)),
         decreases phase(ps.state), input@.len() - ps.p, rank(ps.state),
     {
@@ -6396,13 +6474,14 @@ pub(crate) fn run_machine_in(input: &[u8], base: Option<&Url>, sc: &mut crate::h
         match handle(&mut ps, input, base, sc, Tracked(cost)) {
             Flow::Continue => {},
             Flow::Done => {
-                return Some(finish(ps, Tracked(cost)));
+                return Ok(finish(ps, Tracked(cost)));
             },
             Flow::Fail => {
+                let f = ps.fault;
                 if crate::host::capacity(&ps.href) <= 4096 {
                     sc.href = ps.href;
                 }
-                return None;
+                return Err(f);
             },
         }
     }

@@ -1388,6 +1388,7 @@ dependencies = [
  "verilith-dns",
  "verilith-font",
  "verilith-gif",
+ "verilith-h2",
  "verilith-hpack",
  "verilith-http",
  "verilith-jpeg",
@@ -1488,6 +1489,13 @@ name = "verilith-gif"
 version = "0.1.0"
 dependencies = [
  "verilith-core",
+ "vstd",
+]
+
+[[package]]
+name = "verilith-h2"
+version = "0.1.0"
+dependencies = [
  "vstd",
 ]
 

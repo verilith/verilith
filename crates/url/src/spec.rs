@@ -2199,6 +2199,118 @@ pub open spec fn parse_url(input: Seq<u8>, base: Option<UrlRecord>) -> Option<Ur
     run(input, base, None, initial_machine(State::SchemeStart, new_url()), 0)
 }
 
+// ---------------------------------------------------------------------------
+// Why the parser fails (not part of the Standard)
+// ---------------------------------------------------------------------------
+
+/// The reason the basic URL parser returns failure, in the terms of the
+/// `url` crate's `ParseError`. The Standard names a validation error at
+/// each "return failure"; these group them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Why {
+    /// No scheme and no base URL.
+    NoBase,
+    /// No scheme, and the base URL has an opaque path.
+    CannotBeABase,
+    /// A missing host, or a domain that maps to the empty string.
+    EmptyHost,
+    /// A port that is not digits or is over 65535.
+    Port,
+    /// A domain that ends in a number but is not an IPv4 address.
+    Ipv4,
+    /// A host in brackets that is not an IPv6 address.
+    Ipv6,
+    /// A domain that UTS #46 rejects, or that holds a forbidden domain
+    /// code point after it.
+    Idna,
+    /// An opaque host with a forbidden host code point.
+    DomainChar,
+}
+
+/// Why the host parser fails on `s` (meaningful when `host_parse(s,
+/// is_opaque)` is `None`): the branch of the host parser that failed.
+pub open spec fn host_why(s: Seq<u8>, is_opaque: bool) -> Why {
+    if s.len() > 0 && s[0] == b'[' {
+        Why::Ipv6
+    } else if is_opaque {
+        Why::DomainChar
+    } else {
+        match domain_parse_result(percent_decode(s)) {
+            None => Why::Idna,
+            Some(r) => if r.len() == 0 {
+                Why::EmptyHost
+            } else if contains_forbidden_domain_code_point(r) {
+                Why::Idna
+            } else {
+                Why::Ipv4
+            },
+        }
+    }
+}
+
+/// Why `step` returns failure in machine `m` (meaningful when it does). Only
+/// these states return failure without a state override.
+pub open spec fn fail_why(base: Option<UrlRecord>, m: Machine) -> Why {
+    match m.state {
+        State::NoScheme => if base is None {
+            Why::NoBase
+        } else {
+            Why::CannotBeABase
+        },
+        State::Authority => Why::EmptyHost,
+        State::Host => if m.buffer.len() == 0 {
+            Why::EmptyHost
+        } else {
+            host_why(m.buffer, !is_special(m.url))
+        },
+        State::Hostname => if m.buffer.len() == 0 {
+            Why::EmptyHost
+        } else {
+            host_why(m.buffer, !is_special(m.url))
+        },
+        State::Port => Why::Port,
+        State::FileHost => host_why(m.buffer, !is_special(m.url)),
+        _ => Why::NoBase,
+    }
+}
+
+/// `run`, with the reason on failure.
+pub open spec fn run_r(
+    input: Seq<u8>,
+    base: Option<UrlRecord>,
+    state_override: Option<State>,
+    m: Machine,
+    p: int,
+) -> Result<UrlRecord, Why>
+    decreases phase(m.state), input.len() - p, rank(m.state),
+{
+    if p < 0 || p > input.len() {
+        Err(Why::NoBase)  // unreachable
+    } else {
+        match step(input, base, state_override, m, p) {
+            Step::Fail => Err(fail_why(base, m)),
+            Step::Return(url) => Ok(url),
+            Step::Next(m2, p2) => if p2 >= input.len() {
+                Ok(m2.url)
+            } else if p2 + 1 < 0 {
+                Err(Why::NoBase)  // unreachable
+            } else {
+                run_r(input, base, state_override, m2, p2 + 1)
+            }
+        }
+    }
+}
+
+/// Why the basic URL parser fails on `input` against `base`, or `None`
+/// when it succeeds.
+pub open spec fn parse_why(input: Seq<u8>, base: Option<UrlRecord>) -> Option<Why> {
+    let input = remove_tab_newline(trim_c0_space(input));
+    match run_r(input, base, None, initial_machine(State::SchemeStart, new_url()), 0) {
+        Ok(_) => None,
+        Err(w) => Some(w),
+    }
+}
+
 /// The basic URL parser with url and state override: the URL it leaves
 /// behind, or `None` on failure.
 pub open spec fn parse_url_override(input: Seq<u8>, url: UrlRecord, state: State) -> Option<

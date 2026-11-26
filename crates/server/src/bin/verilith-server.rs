@@ -6,17 +6,26 @@
 //!   GET /static/<name>   a file under DIR, read into memory at start
 //!
 //! `--protocols` prints which of bench/server's ports this build serves.
+// Verus checks the library's proofs; this binary is plain Rust over it.
+#[cfg(verus_keep_ghost)]
+fn main() {}
+
+#[cfg(not(verus_keep_ghost))]
 use std::collections::HashMap;
+#[cfg(not(verus_keep_ghost))]
 use std::sync::Arc;
 
 #[allow(unused_imports)]
 use vstd::prelude::*;
+#[cfg(not(verus_keep_ghost))]
 use verilith_server::{serve, Config, Field, Request, Response};
 
+#[cfg(not(verus_keep_ghost))]
 fn arg(args: &[String], k: &str) -> Option<String> {
     args.iter().position(|a| a == k).map(|i| args[i + 1].clone())
 }
 
+#[cfg(not(verus_keep_ghost))]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--protocols") {

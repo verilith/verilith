@@ -1,0 +1,16 @@
+# The XXH32 and XXH64 specification run on xxHash's sanity vectors (scripts/spec-tests.sh).
+# A separate project, outside the workspace: it is only ever verified.
+[package]
+name = "verilith-xxhash-spec-tests"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+verilith-xxhash = { path = ".." }
+vstd = { version = "=0.0.0-2026-11-22-0344", default-features = false, features = ["std"] }
+
+[package.metadata.verus]
+verify = true
+
+[workspace]

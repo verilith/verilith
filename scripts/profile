@@ -3,7 +3,7 @@
 # (see [profile.*] in the workspace Cargo.toml). CRATE is the directory
 # name under crates/, with or without the verilith- prefix.
 case "${1#verilith-}" in
-  json|http|hpack|regex|bind|xml) echo release-abort ;;
+  json|http|hpack|h2|regex|bind|xml) echo release-abort ;;
   text|url|x509) echo release-fat ;;
   *) echo release ;;
 esac
