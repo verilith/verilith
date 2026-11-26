@@ -44,6 +44,20 @@ pub struct Loader {
 pub uninterp spec fn load_model(l: &Loader) -> LoadFn;
 
 impl Loader {
+    /// How many entities the loader has read: for `reach`'s limit only.
+    /// Trusted to return a number; nothing is assumed of it.
+    #[verifier::external_body]
+    pub fn count(&self) -> usize {
+        self.count
+    }
+
+    /// How many bytes of entities the loader has read: for `reach`'s
+    /// limit only. Trusted to return a number; nothing is assumed of it.
+    #[verifier::external_body]
+    pub fn bytes(&self) -> usize {
+        self.bytes
+    }
+
     /// The answer for (base, system identifier, public identifier).
     #[verifier::external_body]
     pub fn fetch(&mut self, base: &[u8], sys: &[u8], pubid: &[u8]) -> (r: Option<(Vec<u8>, Vec<u8>)>)

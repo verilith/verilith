@@ -180,10 +180,10 @@ assert_eq!(texts.concat(), b"Hello");
 
 Everything in `src/spec.rs`, `src/chars.rs`, `src/lex.rs`, `src/dtd.rs`,
 `src/content.rs`, `src/doc.rs`, `src/ent.rs`, `src/enc.rs`, `src/decode.rs`,
-`src/uniq.rs`, `src/index.rs`, `src/scan.rs`, `src/lanes.rs`,
+`src/uniq.rs`, `src/index.rs`, `src/atts.rs`, `src/reach.rs`, `src/scan.rs`, `src/lanes.rs`,
 `src/tape.rs`, `src/pe_spec.rs`, `src/pe.rs`, and of the push parser `src/stream_spec.rs`,
 `src/items_spec.rs`, `src/stream.rs`, `src/push.rs` and `src/reader.rs`, is checked by Verus (`./scripts/verify.sh`, which runs
-`cargo verus verify`: 2055 verified, 0 errors, in a few minutes on x86-64;
+`cargo verus verify`: 2152 verified, 0 errors, in a few minutes on x86-64;
 fewer for an AArch64 target, which has no SSE2 code. The SSE2 wrappers are
 verified in verilith-simd). The trusted base is listed under
 [What is not proven](#what-is-not-proven).
@@ -225,6 +225,29 @@ verified in verilith-simd). The trusted base is listed under
   `pe::FLAT_FUEL` (2^25) steps and a text under `tape::MAX_POS`, past
   which the document is refused with `ErrorKind::Limit`, so parameter
   entities cannot make a "billion laughs".
+* **Attribute definitions.** `atts::decls` states which attribute-list
+  declarations of the DTD read whole apply: those before the end of the
+  document type declaration and, in a document that is not standalone,
+  before the first parameter-entity reference that was not read (§5.1),
+  the first definition of an attribute for an element type binding
+  (§3.3). `AttTable` indexes them by element type and attribute name, and
+  is proven to find exactly that binding definition (`def_for`), and to
+  list exactly the defaults a start tag does not specify, in declaration
+  order (`ex_defaults`, `next_default`, §3.3.2). `atts::collapse` states
+  the further normalization of a value whose declared type is not CDATA
+  (§3.3.3: no leading or trailing space, no two spaces in a row, every
+  other byte kept), and `ex_collapse` is proven to compute it.
+* **External parsed entities.** `reach::reachable` states which entities
+  a document reaches: a reference in its content names an entity (the
+  first declaration binding, §4.2), and a reference in an entity's
+  replacement text, parsed as content, names another. For an external
+  entity the replacement text is what the loader gives for its base URI
+  and identifiers, decoded, after its text declaration, with line ends
+  normalized. `reach::ex_read_external` is proven to read exactly those
+  entities, and to refuse the document if one of them is not content
+  (§4.3.2) or lies on a cycle of references (§4.1, WFC: No Recursion). It
+  walks them with an explicit stack, so a long chain of entities cannot
+  exhaust the thread's stack.
 * **Characters.** Name characters are the Fifth Edition's ranges, read
   from code points that `utf8_len` (verilith-core, Unicode Table 3-7)
   decodes. The table that classifies ASCII bytes is checked for all 256
@@ -313,24 +336,33 @@ verified in verilith-simd). The trusted base is listed under
 
 ### What is not proven
 
-* **The API** (`src/api.rs`, about 1000 lines, no `unsafe`) is ordinary Rust over
-  the verified tape and decoders: navigation, the table of attribute
-  definitions built from the DTD's tokens (which ones apply, defaults,
-  and the collapsing of white space for declared types other than CDATA),
-  and the conversion of byte spans to `&str` (checked, with
-  `str::from_utf8`). It is tested: the W3C suite's 262 output tests that
-  need no external entity produce the expected canonical form byte for
-  byte, and the differential tests against expat below compare canonical
-  forms on millions of documents. Its tables of attribute definitions are
-  hash maps, so that supplying defaults stays proportional to an element's
-  own definitions.
+* **The API** (`src/api.rs`, about 900 lines, no `unsafe`) is ordinary Rust over
+  the verified tape and decoders: navigation, the conversion of byte spans
+  to `&str` (checked, with `str::from_utf8`), and the glue that calls the
+  verified modules below and keeps their results. The decisions it used to
+  make itself are now verified: which attribute definitions apply, their
+  defaults and the collapsing of white space for declared types other than
+  CDATA (`src/atts.rs`), and finding the external entities a document
+  reaches and refusing one that refers to itself (`src/reach.rs`); see
+  [TRUST.md](TRUST.md). Being unverified, the glue is trusted to meet those
+  functions' preconditions: that it passes `AttTable`'s methods the DTD
+  text the table was built from and a group `group_of` returned, and
+  `reach::ex_read_external` the environment and replacement texts the
+  verified DTD parser produced. It is tested: the W3C suite's 262 output
+  tests that need no external entity produce the expected canonical form
+  byte for byte, and the differential tests against expat below compare
+  canonical forms on millions of documents.
 * **The loader** (`pe::Loader`), which reads external entities for
   `parse_with`, is trusted: its answers are taken to be a function of the
   question (it keeps each answer, so they are), and that is all that is
-  known of them. Reading external parsed general entities in content
-  (`parse_with`) checks each entity's text with the verified content
-  parser, but finding the entities a document reaches, and refusing one
-  that refers to itself through others, is ordinary Rust in `src/api.rs`.
+  known of them. Given those answers, `reach::ex_read_external` is proven
+  to read exactly the external parsed entities the document reaches, to
+  check each one's text with the verified content parser, and to refuse
+  the document when one of them is not content (§4.3.2) or lies on a cycle
+  of references (§4.1, WFC: No Recursion). The limits on what is read
+  (4096 entities, 256 MiB) are counted by the loader (`Loader::count`,
+  `Loader::bytes`, trusted): a wrong count can only refuse a document with
+  `ErrorKind::Limit` or let more be read, never change what is accepted.
 * **The expat ABI** (`src/api/expat.rs`, about 3700 lines, feature `expat-abi`)
   is ordinary Rust with `unsafe` at the C boundary: it calls the caller's
   handlers with pointers into the document and into its own buffers, and
@@ -365,8 +397,9 @@ verified in verilith-simd). The trusted base is listed under
   result), `tape::slice_len_bound`, which states that a slice is at
   most `isize::MAX` bytes long, as Rust guarantees of every object, so
   that positions cannot overflow, and `pe::Loader` (above) with its
-  `fetch` and the `note_*` methods that record, for reporting only, where
-  each parameter entity's text is in the DTD read whole; Verus, Z3 and the Rust compiler.
+  `fetch`, `count` and `bytes` and the `note_*` methods that record where
+  each parameter entity's text is in the DTD read whole (for error
+  positions, and the base URI an external entity is asked for with); Verus, Z3 and the Rust compiler.
 * **Other targets.** The scanners use SSE2 on x86-64. Elsewhere they skip
   nothing and the scalar loops do the work (verified the same); there are
   no NEON kernels yet, so AArch64 runs slower than the numbers below.
@@ -943,6 +976,8 @@ src/enc.rs       encodings: choosing, UTF-16 and ISO-8859-1 decoders, parse
 src/decode.rs    line-end and attribute-value normalization
 src/uniq.rs      Unique Att Spec in linear time
 src/index.rs     the entities by name, for references
+src/atts.rs      attribute definitions: which apply, defaults, white space collapsing
+src/reach.rs     the external entities a document reaches, and No Recursion
 src/scan.rs      SSE2 scanners
 src/lanes.rs     SSE2 wrappers proven over verilith-simd
 src/tape.rs      the tokens

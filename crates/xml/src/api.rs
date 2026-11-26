@@ -212,11 +212,6 @@ fn parse_x<'a>(input: &'a [u8], load: bool, loader: &mut crate::pe::Loader, gene
     Ok(doc)
 }
 
-/// At most this many external entities are read for a document, and at
-/// most this many bytes of them in all.
-const MAX_EXT_ENTITIES: usize = 1 << 12;
-const MAX_EXT_BYTES: usize = 1 << 28;
-
 /// Where the document type declaration's name is, on a tape (0 if none).
 fn doctype_at(tape: &Tape) -> usize {
     tape.toks.iter().find(|t| t.kind == Kind::Doctype).map_or(0, |t| t.a())
@@ -547,43 +542,6 @@ impl<'a> Document<'a> {
         self.dtd.ents[k].kind == 0 || self.ext_rts[k].get().is_some()
     }
 
-    /// The declaration of the external entity `k`: its system and public
-    /// identifiers, and the base URI they are relative to ("" for the
-    /// document entity).
-    pub(crate) fn ext_ids(&self, k: usize) -> Option<(&[u8], &[u8], &[u8])> {
-        let e = &self.dtd.ents[k];
-        if e.kind != 1 {
-            return None;
-        }
-        let (_, toks) = self.dtd_toks();
-        let text = self.dtd_text();
-        let i = toks.iter().position(|t| t.kind == Kind::EntityDecl && t.f == 0 && t.a() == e.a && t.b() == e.b)?;
-        let (mut sys, mut pubid): (&[u8], &[u8]) = (&[], &[]);
-        for u in &toks[i + 1..] {
-            match u.kind {
-                Kind::SysId => sys = &text[u.a()..u.b()],
-                Kind::PubId => pubid = &text[u.a()..u.b()],
-                Kind::NData => return None,
-                _ => break,
-            }
-        }
-        // The base: that of the innermost entity whose text holds the
-        // declaration.
-        let mut stack: Vec<&[u8]> = Vec::new();
-        for (pos, name, base) in &self.trace {
-            if *pos > e.a {
-                break;
-            }
-            match name {
-                Some(_) => stack.push(base),
-                None => {
-                    stack.pop();
-                }
-            }
-        }
-        Some((sys, pubid, stack.last().copied().unwrap_or(&[])))
-    }
-
     /// Takes `bytes` as the text of the external parsed entity `k`: decoded
     /// by its byte order mark or text declaration (`pe::ex_ext_text`), and
     /// checked to be content (`content::ex_ent_content`). False if it is
@@ -607,59 +565,33 @@ impl<'a> Document<'a> {
 
     /// Reads, with `loader`, each external parsed entity the content refers
     /// to (in the document, or in the text of an entity it refers to), and
-    /// checks it (`set_ext`) and that no entity refers to itself.
+    /// checks it and that no entity refers to itself: the verified
+    /// `reach::ex_read_external`, whose results are kept here.
     fn read_external(&self, loader: &mut crate::pe::Loader) -> Result<(), Error> {
-        // 0: not seen, 1: being read, 2: done.
-        let mut state = vec![0u8; self.dtd.ents.len()];
+        use crate::reach::RErr;
+        let (_, pt) = self.dtd_toks();
+        let env = self.env();
         let toks = &self.tape.toks;
-        let mut i = self.root;
-        while i < toks.len() {
-            if toks[i].kind == Kind::EntRef {
-                if let Some((k, _)) = self.entity(Src::Doc, toks[i].a(), toks[i].b()) {
-                    self.read_from(k, &mut state, loader).map_err(|kind| error_at(kind, self.text(), toks[i].a()))?;
+        match crate::reach::ex_read_external(&env, &self.dtd.rts, pt, &self.trace, loader, self.text(), toks, self.root) {
+            Ok(reads) => {
+                for (k, r) in reads.into_iter().enumerate() {
+                    if let Some(r) = r {
+                        if let Some(t) = r.text {
+                            let _ = self.ext_rts[k].set(t);
+                        }
+                        let _ = self.ent_tapes[k].set(r.tape);
+                    }
                 }
+                Ok(())
             }
-            i += 1;
-        }
-        Ok(())
-    }
-
-    fn read_from(&self, k: usize, state: &mut [u8], loader: &mut crate::pe::Loader) -> Result<(), ErrorKind> {
-        match state[k] {
-            1 => return Err(ErrorKind::Syntax),
-            2 => return Ok(()),
-            _ => {}
-        }
-        if self.dtd.ents[k].kind == 1 && self.ext_rts[k].get().is_none() {
-            let Some((sys, pubid, base)) = self.ext_ids(k) else { return Ok(()) };
-            if loader.count >= MAX_EXT_ENTITIES {
-                return Err(ErrorKind::Limit);
-            }
-            if let Some((bytes, _)) = loader.fetch(base, sys, pubid) {
-                if loader.bytes > MAX_EXT_BYTES {
-                    return Err(ErrorKind::Limit);
-                }
-                if !self.set_ext(k, bytes) {
-                    return Err(ErrorKind::Syntax);
-                }
+            Err((e, i)) => {
+                let kind = match e {
+                    RErr::Syntax => ErrorKind::Syntax,
+                    RErr::Limit => ErrorKind::Limit,
+                };
+                Err(error_at(kind, self.text(), toks[i].a()))
             }
         }
-        if !self.expandable(k) {
-            state[k] = 2;
-            return Ok(());
-        }
-        state[k] = 1;
-        let n = self.ent_tape(k).map_or(0, |t| t.toks.len());
-        for j in 0..n {
-            let t = self.ent_tape(k).unwrap().toks[j];
-            if t.kind == Kind::EntRef {
-                if let Some((m, _)) = self.entity(Src::Ent(k), t.a(), t.b()) {
-                    self.read_from(m, state, loader)?;
-                }
-            }
-        }
-        state[k] = 2;
-        Ok(())
     }
 
     /// The entity a reference names, if it was declared: its index, and

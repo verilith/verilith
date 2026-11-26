@@ -61,6 +61,8 @@ pub mod spec;
 pub mod pe_spec;
 pub mod pe;
 #[doc(hidden)]
+pub mod reach;
+#[doc(hidden)]
 pub mod stable;
 #[doc(hidden)]
 pub mod stable_pro;
