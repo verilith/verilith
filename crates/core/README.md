@@ -11,7 +11,7 @@ blocks shared by the Verilith libraries
 live, with its proofs, in one or two of those crates; it now lives here
 once, and the libraries import it.
 
-`cargo verus verify` checks 273 functions with no errors.
+`cargo verus verify` checks 272 functions with no errors.
 
 | module | what it has | used by |
 | --- | --- | --- |
