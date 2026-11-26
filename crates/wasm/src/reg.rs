@@ -82,14 +82,12 @@ pub struct ROp {
     pub pd: u32,
 }
 
-#[verifier::external_body]
 fn rop(op: OpCode, a: u32, b: u32, d1: u32, d2: u32, k: u32, x: u32, imm: u64) -> (r: ROp)
 {
     ROp { imm, a, b, d1, d2, k, x, pc: 0, op, pa: 0, pd: 0 }
 }
 
 /// The ops whose `d1` is a branch target.
-#[verifier::external_body]
 fn has_target(op: OpCode) -> (r: bool)
 {
     match op {
@@ -98,7 +96,6 @@ fn has_target(op: OpCode) -> (r: bool)
     }
 }
 
-#[verifier::external_body]
 fn mem_off(i: Instr) -> (r: u32)
 {
     match i {
@@ -114,7 +111,6 @@ fn mem_off(i: Instr) -> (r: u32)
 
 /// The interpreter's form of a shape (`None` for one it runs as a stack
 /// instruction: branches that move values).
-#[verifier::external_body]
 fn lower(s: Shape) -> (r: Option<ROp>)
 {
     match s {
@@ -160,7 +156,6 @@ pub enum Src {
 
 /// What `i` pushes, if it only pushes a local or a constant.
 #[inline(always)]
-#[verifier::external_body]
 fn producer(i: Instr, nl: u32) -> (r: Option<Src>)
 {
     match i {
@@ -469,7 +464,6 @@ fn tr_shape(code: &Code, body: &Vec<Instr>, nl: u32, frame: u32, pc: usize, h: u
 }
 
 /// Every slot `op` names is below `frame`.
-#[verifier::external_body]
 fn fits(op: Shape, frame: u32) -> (r: bool)
 {
     match op {
@@ -489,7 +483,6 @@ fn fits(op: Shape, frame: u32) -> (r: bool)
     }
 }
 
-#[verifier::external_body]
 fn jmp_fits(t: Jmp, frame: u32) -> (r: bool)
 {
     t.dst <= t.src && t.src as u64 + t.n as u64 <= frame as u64

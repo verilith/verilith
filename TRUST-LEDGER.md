@@ -35,7 +35,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | gif |  |  |  |  |  |  | 2 |
 | h2 |  |  |  |  |  |  | 1 |
 | h3 |  |  |  |  |  |  | 1 |
-| hpack | 4 |  |  |  |  |  | 3 |
+| hpack | 3 |  |  |  |  |  | 3 |
 | http |  |  |  |  |  |  | 8 |
 | jpeg |  |  |  |  |  |  | 3 |
 | json | 18 |  |  |  |  |  | 6 |
@@ -45,7 +45,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | quic |  |  |  |  |  |  | 1 |
 | quic-conn |  |  |  |  |  |  | 3 |
 | regex | 1 |  |  |  |  |  | 3 |
-| server | 5 |  |  |  | 1 |  | 14 |
+| server | 1 |  |  |  | 1 |  | 14 |
 | sha2 | 34 |  |  |  |  |  | 3 |
 | simd | 413 | 11 | 274 | 4 |  |  | 3 |
 | snappy |  |  |  |  |  |  | 1 |
@@ -56,14 +56,14 @@ not occur in any crate's `src/` (the script fails if one appears).
 | tls-aws-lc |  |  |  |  |  |  | 1 |
 | url | 1 |  |  |  |  |  | 5 |
 | verilith |  |  |  |  |  |  | 1 |
-| wasm | 33 |  |  |  |  | 2 | 4 |
+| wasm | 26 |  |  |  |  | 2 | 4 |
 | webp | 9 |  |  |  |  |  | 3 |
 | x509 |  |  |  |  |  |  | 6 |
 | xml | 9 |  |  |  |  |  | 12 |
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 |
-| zstd | 9 |  |  |  |  |  | 1 |
-| **total** | **657** | **35** | **274** | **5** | **17** | **12** | **130** |
+| zstd | 6 |  |  |  |  |  | 1 |
+| **total** | **642** | **35** | **274** | **5** | **17** | **12** | **130** |
 
 ## Items
 
@@ -129,7 +129,6 @@ not occur in any crate's `src/` (the script fails if one appears).
 ### hpack
 
 - `crates/hpack/src/capi.rs`: plain Rust
-- `crates/hpack/src/encoder.rs`: external_body: `bytes_eq`
 - `crates/hpack/src/hencode.rs`: external_body: `ready`
 - `crates/hpack/src/huffman.rs`: external_body: `dtab`
 - `crates/hpack/src/lib.rs`: plain Rust
@@ -208,7 +207,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### server
 
-- `crates/server/src/conn.rs`: external_body: `decode_in`, `truncate_to`, `grow_zeros`, `shift_down`, `vec_zeros`; 1 assume_new
+- `crates/server/src/conn.rs`: external_body: `decode_in`; 1 assume_new
 - `crates/server/src/date.rs`: plain Rust
 - `crates/server/src/files.rs`: plain Rust
 - `crates/server/src/h1.rs`: plain Rust
@@ -327,7 +326,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/wasm/src/instance.rs`: external_body: `memory_mut`
 - `crates/wasm/src/interp.rs`: external_body: `call_host`
 - `crates/wasm/src/prims.rs`: external_body: `scopy_down`, `szero`, `load`, `store`, `fill`, `copy_within`, `copy_in`, `try_grow`, `idx`, `cur_at`, `cur_off`, `cur_next`, `cur_get`
-- `crates/wasm/src/reg.rs`: external_body: `rop`, `has_target`, `mem_off`, `lower`, `producer`, `jmp_at`, `sink`, `tr_shape`, `fits`, `jmp_fits`, `tr_run`, `translate`, `fuse_copies`, `trivial`
+- `crates/wasm/src/reg.rs`: external_body: `jmp_at`, `sink`, `tr_shape`, `tr_run`, `translate`, `fuse_copies`, `trivial`
 - `crates/wasm/src/run.rs`: no termination check: `execute`, `execute_metered`
 - `crates/wasm/src/validate.rs`: plain Rust
 
@@ -380,4 +379,4 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 - `crates/zstd/src/capi.rs`: plain Rust
 - `crates/zstd/src/cpu.rs`: external_body: `run_seqs`, `run_huf4`, `run_huf1`
-- `crates/zstd/src/prims.rs`: external_body: `grow`, `put`, `put4`, `put_pairs4`, `drop_front`, `extend_from`
+- `crates/zstd/src/prims.rs`: external_body: `put4`, `put_pairs4`, `extend_from`

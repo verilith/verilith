@@ -49,7 +49,7 @@ for when it is faster and when not).
 
 ## What is proven
 
-`scripts/verify.sh` (Verus): 145 verified, 0 errors.
+`scripts/verify.sh` (Verus): 148 verified, 0 errors.
 
 - **Requests are exactly the specification's, in order** (`conn.rs`,
   the invariant of `Core`). `first` is the request at the front of a byte

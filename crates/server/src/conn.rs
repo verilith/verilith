@@ -743,7 +743,8 @@ impl Core {
             final(self).max_body == old(self).max_body,
     {
         if self.rbuf.len() > cap {
-            truncate_to(&mut self.rbuf, cap);
+            // A new buffer, which frees the larger one: its bytes are dead.
+            self.rbuf = vec_zeros(cap);
         }
         self.start = 0;
         self.end = 0;
@@ -1271,19 +1272,7 @@ fn decode_in(st: &mut CState, v: &mut Vec<u8>, from: usize, end: usize) -> (r: (
     (r.0, Ghost::assume_new())
 }
 
-/// Shortens to `n` bytes and frees the rest. Trusted: `Vec::truncate`
-/// and `shrink_to_fit`.
-#[verifier::external_body]
-fn truncate_to(v: &mut Vec<u8>, n: usize)
-    ensures
-        final(v)@.len() == if old(v)@.len() < n { old(v)@.len() } else { n as nat },
-{
-    v.truncate(n);
-    v.shrink_to_fit();
-}
-
-/// Appends zeros up to length `n`. Trusted: this is `Vec::resize`.
-#[verifier::external_body]
+/// Appends zeros up to length `n`.
 fn grow_zeros(v: &mut Vec<u8>, n: usize)
     requires
         old(v)@.len() < n,
@@ -1291,12 +1280,13 @@ fn grow_zeros(v: &mut Vec<u8>, n: usize)
         final(v)@.len() == n,
         final(v)@.subrange(0, old(v)@.len() as int) == old(v)@,
 {
-    v.resize(n, 0);
+    v.resize(n, 0u8);
+    proof {
+        assert(v@.subrange(0, old(v)@.len() as int) =~= old(v)@);
+    }
 }
 
-/// `v[..end - from] = v[from..end]`, the rest unchanged. Trusted: this is
-/// `slice::copy_within`.
-#[verifier::external_body]
+/// `v[..end - from] = v[from..end]`, the rest unchanged.
 fn shift_down(v: &mut Vec<u8>, from: usize, end: usize)
     requires
         from <= end <= old(v)@.len(),
@@ -1304,10 +1294,13 @@ fn shift_down(v: &mut Vec<u8>, from: usize, end: usize)
         final(v)@.len() == old(v)@.len(),
         final(v)@.subrange(0, end - from) == old(v)@.subrange(from as int, end as int),
 {
-    v.copy_within(from..end, 0);
+    v.as_mut_slice().copy_within(from..end, 0);
+    proof {
+        assert(v@.subrange(0, end - from) =~= old(v)@.subrange(from as int, end as int));
+    }
 }
 
-#[verifier::external_body]
+/// `n` zero bytes.
 fn vec_zeros(n: usize) -> (r: Vec<u8>)
     ensures
         r@.len() == n,
