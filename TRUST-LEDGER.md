@@ -34,6 +34,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | font |  |  |  |  |  |  | 1 |
 | gif | 1 |  |  |  |  |  | 2 |
 | h2 |  |  |  |  |  |  | 1 |
+| h3 |  |  |  |  |  |  | 1 |
 | hpack | 4 |  |  |  |  |  | 3 |
 | http |  |  |  |  |  |  | 8 |
 | jpeg | 2 |  |  |  |  |  | 3 |
@@ -59,7 +60,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 3 |  |  |  |  |  | 3 |
 | zstd | 9 |  |  |  |  |  | 1 |
-| **total** | **651** | **35** | **274** | **5** | **16** | **12** | **117** |
+| **total** | **651** | **35** | **274** | **5** | **16** | **12** | **118** |
 
 ## Items
 
@@ -120,6 +121,10 @@ not occur in any crate's `src/` (the script fails if one appears).
 ### h2
 
 - `crates/h2/src/lib.rs`: plain Rust
+
+### h3
+
+- `crates/h3/src/lib.rs`: plain Rust
 
 ### hpack
 

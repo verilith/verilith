@@ -176,6 +176,12 @@ impl Conn {
         self.wbuf.slices(out)
     }
 
+    /// [`Conn::pending`] for the event loop: file-backed bodies come as
+    /// file ranges.
+    pub fn pending_io<'a>(&'a self, out: &mut [&'a [u8]], more: &mut bool) -> Io<'a> {
+        self.wbuf.slices_io(out, more)
+    }
+
     /// How many bytes wait to be written.
     pub fn pending_len(&self) -> usize {
         self.wbuf.queued
@@ -375,6 +381,14 @@ pub(crate) struct Seg {
     a: Arc<[u8]>,
     off: usize,
     len: usize,
+    /// A sealed file holding exactly `a`, to `sendfile` from.
+    file: Option<Arc<crate::sys::Fd>>,
+}
+
+/// What to write next: slices, or a range of a file.
+pub enum Io<'a> {
+    Slices(usize, std::marker::PhantomData<&'a ()>),
+    File { fd: i32, off: usize, len: usize },
 }
 
 impl Seg {
@@ -416,13 +430,60 @@ impl Out {
         }
         // A sub-range: kept as its own allocation-free view.
         self.queued += n;
-        self.segs.push_back((self.buf.len(), Seg { a: body, off, len: n }));
+        self.segs.push_back((self.buf.len(), Seg { a: body, off, len: n, file: None }));
     }
 
     pub(crate) fn share(&mut self, body: Arc<[u8]>) {
         self.queued += body.len();
         let len = body.len();
-        self.segs.push_back((self.buf.len(), Seg { a: body, off: 0, len }));
+        self.segs.push_back((self.buf.len(), Seg { a: body, off: 0, len, file: None }));
+    }
+
+    /// A shared body that also lives in a sealed file, sent with `sendfile`.
+    pub(crate) fn share_file(&mut self, body: &StaticBody) {
+        self.queued += body.bytes.len();
+        let len = body.bytes.len();
+        self.segs.push_back((self.buf.len(), Seg { a: body.bytes.clone(), off: 0, len, file: body.file.clone() }));
+    }
+
+    /// [`Out::slices`], stopping before a file-backed body: the event loop
+    /// writes those with `sendfile`. `more` is set when slices stop at one
+    /// (more bytes follow at once: MSG_MORE).
+    pub(crate) fn slices_io<'a>(&'a self, out: &mut [&'a [u8]], more: &mut bool) -> Io<'a> {
+        *more = false;
+        let mut k = 0;
+        let mut p = self.pos;
+        let mut off = self.seg_off;
+        for (at, seg) in &self.segs {
+            if k == out.len() {
+                return Io::Slices(k, Default::default());
+            }
+            if p < *at {
+                out[k] = &self.buf[p..*at];
+                k += 1;
+                p = *at;
+                if k == out.len() {
+                    return Io::Slices(k, Default::default());
+                }
+            }
+            if off < seg.len {
+                if let Some(f) = &seg.file {
+                    if k == 0 {
+                        return Io::File { fd: f.0, off: seg.off + off, len: seg.len - off };
+                    }
+                    *more = true;
+                    return Io::Slices(k, Default::default());
+                }
+                out[k] = &seg.bytes()[off..];
+                k += 1;
+            }
+            off = 0;
+        }
+        if k < out.len() && p < self.buf.len() {
+            out[k] = &self.buf[p..];
+            k += 1;
+        }
+        Io::Slices(k, Default::default())
     }
 
     pub(crate) fn slices<'a>(&'a self, out: &mut [&'a [u8]]) -> usize {
@@ -568,6 +629,55 @@ impl Fields {
     }
 }
 
+/// A body served many times (a static file): in memory, and on Linux, for
+/// sizes where it is faster, also in a sealed memory file that HTTP/1.1
+/// responses are sent from with `sendfile`. Sealed, so the bytes sent are
+/// always the bytes the Content-Length counted, whatever happens to the
+/// file it was read from.
+pub struct StaticBody {
+    pub(crate) bytes: Arc<[u8]>,
+    pub(crate) file: Option<Arc<crate::sys::Fd>>,
+}
+
+/// [`StaticBody::new`] uses `sendfile` for bodies from this long...
+pub const SENDFILE_MIN: usize = 16 * 1024;
+/// ...to this long. Measured on loopback (bench/server, 2 server CPUs):
+/// `sendfile` is 6-17% faster from 32 to 96 KiB, and 10-37% slower from
+/// 128 KiB up, where `writev` from memory wins. Over a NIC that can send
+/// from page references, large files may differ: see
+/// [`StaticBody::with_sendfile`].
+pub const SENDFILE_MAX: usize = 112 * 1024;
+
+impl StaticBody {
+    pub fn new(bytes: Vec<u8>) -> StaticBody {
+        let on = (SENDFILE_MIN..=SENDFILE_MAX).contains(&bytes.len());
+        StaticBody::with_sendfile(bytes, on)
+    }
+
+    /// `sendfile` or not, whatever the size (it is used only where the
+    /// platform has it: Linux).
+    pub fn with_sendfile(bytes: Vec<u8>, sendfile: bool) -> StaticBody {
+        let file = if crate::sys::HAS_SENDFILE && sendfile && !bytes.is_empty() {
+            crate::sys::sealed_memfd(&bytes).map(Arc::new)
+        } else {
+            None
+        };
+        StaticBody { bytes: bytes.into(), file }
+    }
+
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    pub fn bytes(&self) -> &Arc<[u8]> {
+        &self.bytes
+    }
+}
+
 /// 1xx, 204 and 304 responses have no body (RFC 9112 §6.3).
 fn no_body(status: u16) -> bool {
     (100..200).contains(&status) || status == 204 || status == 304
@@ -677,6 +787,18 @@ impl<'a> Response<'a> {
         }
         self.head_only(status, reason(status), Some(fields), &[], body.len())?;
         self.body_share(status, body);
+        Ok(())
+    }
+
+    /// A static body: `sendfile` on HTTP/1.1 where it can, shared otherwise.
+    pub fn send_static(&mut self, status: u16, fields: &Fields, body: &StaticBody) -> Result<(), SendError> {
+        if body.file.is_none() || self.h2.is_some() {
+            return self.send_shared_prepared(status, fields, &body.bytes);
+        }
+        self.head_only(status, reason(status), Some(fields), &[], body.len())?;
+        if !no_body(status) && !self.head {
+            self.out.share_file(body);
+        }
         Ok(())
     }
 

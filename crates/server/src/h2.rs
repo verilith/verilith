@@ -232,6 +232,10 @@ impl Conn2 {
         self.out.slices(out)
     }
 
+    pub fn pending_io<'a>(&'a self, out: &mut [&'a [u8]], more: &mut bool) -> crate::h1::Io<'a> {
+        self.out.slices_io(out, more)
+    }
+
     pub fn pending_len(&self) -> usize {
         self.out.queued
     }
