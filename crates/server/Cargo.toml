@@ -23,16 +23,20 @@ verilith-http = { path = "../http", version = "0.1.0" }
 verilith-h2 = { path = "../h2", version = "0.1.0" }
 verilith-hpack = { path = "../hpack", version = "0.1.0" }
 vstd = { workspace = true, features = ["std"] }
-# TLS (`--features tls`): rustls's record layer and handshake with
-# aws-lc-rs's cryptography, trusted (TRUST.md) until Verilith's own TLS
-# crate replaces it.
-rustls = { version = "0.23", optional = true, default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+# TLS (`--features tls`): verilith-tls's record layer and handshake
+# (verified) with aws-lc's cryptography (verilith-tls-aws-lc, trusted;
+# TRUST.md). `tls-rustls` adds rustls as a second backend to compare.
+verilith-tls = { path = "../tls", version = "0.1.0", optional = true }
+verilith-tls-aws-lc = { path = "../tls-aws-lc", version = "0.1.0", optional = true }
+rustls = { version = "0.23", optional = true, default-features = false, features = ["aws_lc_rs", "std"] }
 
 [dev-dependencies]
 rcgen = "0.14"
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
 
 [features]
-tls = ["dep:rustls"]
+tls = ["dep:verilith-tls", "dep:verilith-tls-aws-lc"]
+tls-rustls = ["tls", "dep:rustls"]
 
 [package.metadata.verus]
 verify = true

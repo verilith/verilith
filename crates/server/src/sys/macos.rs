@@ -16,6 +16,7 @@ const SO_NOSIGPIPE: c_int = 0x1022;
 /// SO_REUSEPORT on macOS sends every connection to the last socket bound.
 pub const REUSEPORT_BALANCES: bool = false;
 pub const NODELAY_INHERITED: bool = false;
+pub const TCP_QUICKACK: Option<c_int> = None;
 pub const TCP_DEFER_ACCEPT: Option<c_int> = None;
 
 const EVFILT_READ: i16 = -1;

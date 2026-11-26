@@ -1,34 +1,256 @@
 //! TLS (DESIGN.md, "TLS"), sans I/O: ciphertext in from the socket,
 //! plaintext through the HTTP/1.1 or HTTP/2 engine (chosen by ALPN),
-//! ciphertext out. The record layer and handshake are rustls's (trusted,
-//! with aws-lc-rs's cryptography); Verilith's own TLS crate is meant to
-//! replace it behind this same shape: feed ciphertext, take plaintext,
-//! give plaintext, take ciphertext.
-use std::io::{Read, Write};
+//! ciphertext out.
+//!
+//! The record layer and handshake are verilith-tls's (TLS 1.3, verified),
+//! with aws-lc's cryptography through verilith-tls-aws-lc (trusted). With
+//! `--features tls-rustls`, rustls is a second backend behind the same
+//! shape, kept to compare against.
 use std::sync::Arc;
+
+use verilith_tls::stream::ServerStream;
+use verilith_tls_aws_lc::{AwsLc, SigningKey, GROUPS, SUITES};
 
 use crate::h1::{Conn, Ctx, Limits, Next};
 use crate::h2::{Conn2, Limits2};
 use crate::Handler;
 
-/// A rustls server configuration for `cert`/`key` (PEM files), with ALPN
-/// offering h2 and http/1.1.
-pub fn config(cert: &str, key: &str) -> std::io::Result<Arc<rustls::ServerConfig>> {
+/// ALPN, in the server's order of preference.
+const ALPN: &[u8] = b"\x02h2\x08http/1.1";
+
+/// A server's TLS configuration: certificate chain and key.
+pub enum Config {
+    Verilith { cfg: Arc<verilith_tls::server::Config>, key: Arc<SigningKey> },
+    #[cfg(feature = "tls-rustls")]
+    Rustls(Arc<rustls::ServerConfig>),
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Config::Verilith { .. } => "Config::Verilith",
+            #[cfg(feature = "tls-rustls")]
+            Config::Rustls(_) => "Config::Rustls",
+        })
+    }
+}
+
+fn bad(m: &str) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, m.to_string())
+}
+
+/// The DER bodies of the PEM blocks labelled `label` in `pem`.
+pub fn pem_blocks(pem: &[u8], label: &str) -> Vec<Vec<u8>> {
+    let text = String::from_utf8_lossy(pem);
+    let (begin, end) = (format!("-----BEGIN {label}-----"), format!("-----END {label}-----"));
+    let mut out = Vec::new();
+    let mut rest = &text[..];
+    while let Some(i) = rest.find(&begin) {
+        let after = &rest[i + begin.len()..];
+        let Some(j) = after.find(&end) else { break };
+        if let Some(der) = base64(&after[..j]) {
+            out.push(der);
+        }
+        rest = &after[j + end.len()..];
+    }
+    out
+}
+
+fn base64(s: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(s.len() * 3 / 4);
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for c in s.bytes() {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' | b' ' | b'\t' | b'\r' | b'\n' => continue,
+            _ => return None,
+        };
+        acc = acc << 6 | v as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Some(out)
+}
+
+/// A configuration from a certificate chain (DER, leaf first) and a
+/// PKCS#8 key (DER): ECDSA P-256/P-384, Ed25519 or RSA.
+pub fn config_der(chain: Vec<Vec<u8>>, key_pkcs8: &[u8]) -> std::io::Result<Arc<Config>> {
+    let key = SigningKey::from_pkcs8(key_pkcs8).ok_or_else(|| bad("the key is not PKCS#8 ECDSA, Ed25519 or RSA"))?;
+    let cfg = verilith_tls::server::Config::new(SUITES.to_vec(), GROUPS.to_vec(), key.schemes().to_vec(), ALPN.to_vec(), &chain)
+        .ok_or_else(|| bad("the certificate chain is empty or too long"))?;
+    Ok(Arc::new(Config::Verilith { cfg: Arc::new(cfg), key: Arc::new(key) }))
+}
+
+/// A configuration for `cert`/`key` (PEM files; the key "PRIVATE KEY",
+/// that is PKCS#8).
+pub fn config(cert: &str, key: &str) -> std::io::Result<Arc<Config>> {
+    let chain = pem_blocks(&std::fs::read(cert)?, "CERTIFICATE");
+    let keys = pem_blocks(&std::fs::read(key)?, "PRIVATE KEY");
+    let key = keys.first().ok_or_else(|| bad("no PKCS#8 \"PRIVATE KEY\" block in the key file"))?;
+    config_der(chain, key)
+}
+
+/// The same with rustls, with ALPN offering h2 and http/1.1.
+#[cfg(feature = "tls-rustls")]
+pub fn rustls_config(cert: &str, key: &str) -> std::io::Result<Arc<Config>> {
     use rustls::pki_types::pem::PemObject;
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-    let bad = |e: rustls::pki_types::pem::Error| std::io::Error::other(e.to_string());
-    let certs = CertificateDer::pem_file_iter(cert).map_err(bad)?.collect::<Result<Vec<_>, _>>().map_err(bad)?;
-    let key = PrivateKeyDer::from_pem_file(key).map_err(bad)?;
+    let e = |e: rustls::pki_types::pem::Error| std::io::Error::other(e.to_string());
+    let certs = CertificateDer::pem_file_iter(cert).map_err(e)?.collect::<Result<Vec<_>, _>>().map_err(e)?;
+    let key = PrivateKeyDer::from_pem_file(key).map_err(e)?;
     let mut c = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
-        .with_safe_default_protocol_versions()
+        .with_protocol_versions(&[&rustls::version::TLS13])
         .map_err(|e| std::io::Error::other(e.to_string()))?
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .map_err(|e| std::io::Error::other(e.to_string()))?;
     c.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-    // No session tickets or stateful resumption across workers: each
-    // worker would need the same keys; full handshakes for now.
-    Ok(Arc::new(c))
+    // Like verilith-tls: full handshakes, no tickets.
+    c.send_tls13_tickets = 0;
+    Ok(Arc::new(Config::Rustls(Arc::new(c))))
+}
+
+/// Plaintext decrypted and not yet taken by the engine, past which no
+/// more ciphertext is decrypted.
+const PLAIN_HIGH: usize = 256 * 1024;
+
+/// One TLS session, of either backend.
+enum Session {
+    V(Box<ServerStream<AwsLc>>),
+    #[cfg(feature = "tls-rustls")]
+    R(Box<rustls::ServerConnection>),
+}
+
+impl Session {
+    /// Takes ciphertext: the bytes taken, or Err on a TLS error (an alert
+    /// is queued).
+    fn feed(&mut self, data: &[u8]) -> Result<usize, ()> {
+        match self {
+            Session::V(s) => {
+                if s.plaintext().len() >= PLAIN_HIGH || s.peer_closed() {
+                    return Ok(0);
+                }
+                s.read_tls(data);
+                s.process().map_err(|_| ())?;
+                Ok(data.len())
+            }
+            #[cfg(feature = "tls-rustls")]
+            Session::R(s) => {
+                let mut r = data;
+                // Err: rustls's plaintext buffer is full.
+                let n = s.read_tls(&mut r).unwrap_or(0);
+                if n > 0 {
+                    s.process_new_packets().map_err(|_| ())?;
+                }
+                Ok(n)
+            }
+        }
+    }
+
+    /// Plaintext into `buf`: (bytes, whether the peer closed and all its
+    /// plaintext has been read).
+    fn read(&mut self, buf: &mut [u8]) -> (usize, bool) {
+        match self {
+            Session::V(s) => {
+                let p = s.plaintext();
+                let n = p.len().min(buf.len());
+                buf[..n].copy_from_slice(&p[..n]);
+                s.consume_plaintext(n);
+                (n, s.plaintext().is_empty() && s.peer_closed())
+            }
+            #[cfg(feature = "tls-rustls")]
+            Session::R(s) => {
+                use std::io::Read;
+                match s.reader().read(buf) {
+                    Ok(0) => (0, true),
+                    Ok(k) => (k, false),
+                    Err(_) => (0, false),
+                }
+            }
+        }
+    }
+
+    /// Protects `data`: the bytes taken.
+    fn write(&mut self, data: &[u8]) -> Result<usize, ()> {
+        match self {
+            Session::V(s) => s.write(data).map(|_| data.len()).map_err(|_| ()),
+            #[cfg(feature = "tls-rustls")]
+            Session::R(s) => {
+                use std::io::Write;
+                Ok(s.writer().write(data).unwrap_or(0))
+            }
+        }
+    }
+
+    /// Ciphertext out, onto `out` (from `pos`, the part already sent).
+    fn put(&mut self, out: &mut Vec<u8>, pos: &mut usize) {
+        match self {
+            Session::V(s) => {
+                if s.pending().is_empty() {
+                    return;
+                }
+                if *pos == out.len() {
+                    out.clear();
+                    *pos = 0;
+                    s.swap_pending(out);
+                } else {
+                    out.extend_from_slice(s.pending());
+                    let n = s.pending().len();
+                    s.consume_pending(n);
+                }
+            }
+            #[cfg(feature = "tls-rustls")]
+            Session::R(s) => {
+                while s.wants_write() && out.len() - *pos < COUT_HIGH {
+                    if s.write_tls(out).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    fn handshaking(&self) -> bool {
+        match self {
+            Session::V(s) => s.is_handshaking(),
+            #[cfg(feature = "tls-rustls")]
+            Session::R(s) => s.is_handshaking(),
+        }
+    }
+
+    fn h2(&self) -> bool {
+        match self {
+            Session::V(s) => s.alpn() == Some(b"h2"),
+            #[cfg(feature = "tls-rustls")]
+            Session::R(s) => s.alpn_protocol() == Some(b"h2"),
+        }
+    }
+
+    fn close(&mut self) {
+        match self {
+            Session::V(s) => s.close(),
+            #[cfg(feature = "tls-rustls")]
+            Session::R(s) => s.send_close_notify(),
+        }
+    }
+}
+
+/// Writes the gathered plaintext: false if the session took less.
+fn flush(tls: &mut Session, gather: &mut Vec<u8>) -> Result<bool, ()> {
+    if gather.is_empty() {
+        return Ok(true);
+    }
+    let n = tls.write(gather)?;
+    let all = n == gather.len();
+    gather.drain(..n);
+    Ok(all)
 }
 
 enum Inner {
@@ -45,13 +267,15 @@ macro_rules! inner {
     };
 }
 
-/// Ciphertext kept before rustls takes it, and written before the socket
-/// takes it, at most.
+/// Ciphertext kept before the session takes it, and written before the
+/// socket takes it, at most.
 const CIN: usize = 32 * 1024;
 const COUT_HIGH: usize = 1 << 20;
+/// Plaintext gathered into one write (one or a few records).
+const GATHER: usize = 16 * 1024;
 
 pub struct TlsConn {
-    tls: rustls::ServerConnection,
+    tls: Session,
     inner: Option<Inner>,
     limits: Limits,
     limits2: Limits2,
@@ -60,16 +284,22 @@ pub struct TlsConn {
     cin_end: usize,
     cout: Vec<u8>,
     cout_pos: usize,
+    /// Small plaintext pieces gathered into one record.
+    gather: Vec<u8>,
     closing: bool,
     eof: bool,
-    /// Ciphertext is waiting that rustls will not take until plaintext is
-    /// read out of it.
+    /// Ciphertext is waiting that the session will not take until
+    /// plaintext is read out of it.
     blocked: bool,
 }
 
 impl TlsConn {
-    pub fn new(cfg: Arc<rustls::ServerConfig>, limits: Limits, limits2: Limits2) -> Option<TlsConn> {
-        let tls = rustls::ServerConnection::new(cfg).ok()?;
+    pub fn new(cfg: Arc<Config>, limits: Limits, limits2: Limits2) -> Option<TlsConn> {
+        let tls = match &*cfg {
+            Config::Verilith { cfg, key } => Session::V(Box::new(ServerStream::new(cfg.clone(), AwsLc::shared(key.clone())))),
+            #[cfg(feature = "tls-rustls")]
+            Config::Rustls(c) => Session::R(Box::new(rustls::ServerConnection::new(c.clone()).ok()?)),
+        };
         Some(TlsConn {
             tls,
             inner: None,
@@ -80,6 +310,7 @@ impl TlsConn {
             cin_end: 0,
             cout: Vec::new(),
             cout_pos: 0,
+            gather: Vec::new(),
             closing: false,
             eof: false,
             blocked: false,
@@ -113,6 +344,11 @@ impl TlsConn {
         self.closing
     }
 
+    /// The handshake is not finished.
+    pub fn handshaking(&self) -> bool {
+        self.inner.is_none() && !self.closing
+    }
+
     pub fn pending<'a>(&'a self, out: &mut [&'a [u8]]) -> usize {
         if self.cout_pos == self.cout.len() || out.is_empty() {
             return 0;
@@ -138,21 +374,16 @@ impl TlsConn {
         let mut moved = false;
         self.blocked = false;
         while self.cin_start < self.cin_end {
-            let mut r = &self.cin[self.cin_start..self.cin_end];
-            match self.tls.read_tls(&mut r) {
-                Ok(0) => break,
+            match self.tls.feed(&self.cin[self.cin_start..self.cin_end]) {
+                Err(()) => return (false, moved),
+                Ok(0) => {
+                    self.blocked = true;
+                    break;
+                }
                 Ok(k) => {
                     self.cin_start += k;
                     moved = true;
                 }
-                Err(_) => {
-                    // rustls's plaintext buffer is full: read it out first.
-                    self.blocked = true;
-                    break;
-                }
-            }
-            if self.tls.process_new_packets().is_err() {
-                return (false, moved);
             }
         }
         if self.cin_start == self.cin_end {
@@ -163,11 +394,67 @@ impl TlsConn {
     }
 
     fn put_ciphertext(&mut self) {
-        while self.tls.wants_write() && self.pending_len() < COUT_HIGH {
-            if self.tls.write_tls(&mut self.cout).is_err() {
+        self.tls.put(&mut self.cout, &mut self.cout_pos);
+    }
+
+
+    /// Plaintext out of the engine, as far as the session and `cout`
+    /// take it: whether any moved, or Err on a TLS error.
+    fn plaintext_out(&mut self) -> Result<bool, ()> {
+        let Some(i) = self.inner.as_mut() else { return Ok(false) };
+        let mut progress = false;
+        // Bytes left in `gather` from a short write go first.
+        if !flush(&mut self.tls, &mut self.gather)? {
+            return Ok(false);
+        }
+        while self.cout.len() - self.cout_pos < COUT_HIGH {
+            let mut v: [&[u8]; 8] = [&[]; 8];
+            let k = inner!(i, c => c.pending(&mut v));
+            if k == 0 {
+                break;
+            }
+            // Each piece is gathered (small) or written as it is (big);
+            // `taken` counts the bytes the session has, or `gather` holds.
+            let mut taken = 0;
+            let mut short = false;
+            for s in &v[..k] {
+                if self.gather.len() + s.len() <= GATHER {
+                    self.gather.extend_from_slice(s);
+                    taken += s.len();
+                    continue;
+                }
+                let n = self.gather.len();
+                let w = self.tls.write(&self.gather)?;
+                self.gather.drain(..w);
+                if w < n {
+                    short = true;
+                    break;
+                }
+                if s.len() >= GATHER {
+                    let w = self.tls.write(s)?;
+                    taken += w;
+                    if w < s.len() {
+                        short = true;
+                        break;
+                    }
+                } else {
+                    self.gather.extend_from_slice(s);
+                    taken += s.len();
+                }
+            }
+            if !short && !flush(&mut self.tls, &mut self.gather)? {
+                short = true;
+            }
+            if taken > 0 {
+                inner!(i, c => c.wrote(taken));
+                progress = true;
+            }
+            self.tls.put(&mut self.cout, &mut self.cout_pos);
+            if short || taken == 0 {
                 break;
             }
         }
+        Ok(progress)
     }
 
     pub fn process<H: Handler + ?Sized>(&mut self, h: &H, ctx: &Ctx) -> Next {
@@ -179,11 +466,8 @@ impl TlsConn {
                 self.closing = true;
                 return Next::Close;
             }
-            if self.inner.is_none() && !self.tls.is_handshaking() {
-                self.inner = Some(match self.tls.alpn_protocol() {
-                    Some(b"h2") => Inner::H2(Box::new(Conn2::new(self.limits2))),
-                    _ => Inner::H1(Conn::new(self.limits)),
-                });
+            if self.inner.is_none() && !self.tls.handshaking() {
+                self.inner = Some(if self.tls.h2() { Inner::H2(Box::new(Conn2::new(self.limits2))) } else { Inner::H1(Conn::new(self.limits)) });
                 if self.eof {
                     inner!(self.inner.as_mut().unwrap(), c => c.eof());
                 }
@@ -196,50 +480,34 @@ impl TlsConn {
                     if b.is_empty() {
                         break;
                     }
-                    match self.tls.reader().read(b) {
-                        Ok(0) => {
-                            peer_closed = true;
-                            break;
-                        }
-                        Ok(k) => {
-                            inner!(i, c => c.filled(k));
-                            progress = true;
-                        }
-                        Err(_) => break,
+                    let (k, closed) = self.tls.read(b);
+                    if k > 0 {
+                        inner!(i, c => c.filled(k));
+                        progress = true;
+                    }
+                    if closed {
+                        peer_closed = true;
+                    }
+                    if k == 0 {
+                        break;
                     }
                 }
                 let _ = inner!(i, c => c.process(h, ctx));
                 if peer_closed {
                     inner!(i, c => c.eof());
                 }
-                // Plaintext out, as far as rustls will buffer it.
-                loop {
-                    let mut v: [&[u8]; 8] = [&[]; 8];
-                    let k = inner!(i, c => c.pending(&mut v));
-                    if k == 0 {
-                        break;
-                    }
-                    let mut n = 0;
-                    let mut full = false;
-                    for s in &v[..k] {
-                        let w = self.tls.writer().write(s).unwrap_or(0);
-                        n += w;
-                        if w < s.len() {
-                            full = true;
-                            break;
-                        }
-                    }
-                    if n > 0 {
-                        inner!(i, c => c.wrote(n));
-                        progress = true;
-                    }
-                    if full || n == 0 {
-                        break;
+                match self.plaintext_out() {
+                    Ok(p) => progress |= p,
+                    Err(()) => {
+                        self.put_ciphertext();
+                        self.closing = true;
+                        return Next::Close;
                     }
                 }
-                let done = inner!(i, c => c.closing() && c.pending_len() == 0);
+                let i = self.inner.as_mut().unwrap();
+                let done = inner!(i, c => c.closing() && c.pending_len() == 0) && self.gather.is_empty();
                 if done && !self.closing {
-                    self.tls.send_close_notify();
+                    self.tls.close();
                     self.closing = true;
                 }
             } else if self.eof {

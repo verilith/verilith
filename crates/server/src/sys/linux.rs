@@ -17,6 +17,7 @@ pub const REUSEPORT_BALANCES: bool = true;
 pub const NODELAY_INHERITED: bool = true;
 /// Wake `accept` only once the client has sent data (nginx's `deferred`):
 /// the request arrives with the connection, one wakeup instead of two.
+pub const TCP_QUICKACK: Option<c_int> = Some(12);
 pub const TCP_DEFER_ACCEPT: Option<c_int> = Some(9);
 
 const EPOLL_CLOEXEC: c_int = 0o2000000;

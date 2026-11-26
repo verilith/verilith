@@ -29,7 +29,7 @@ pub struct Config {
     pub limits: Limits,
     /// A TLS port (h2 and http/1.1 by ALPN), with its configuration.
     #[cfg(feature = "tls")]
-    pub tls: Option<(u16, Arc<rustls::ServerConfig>)>,
+    pub tls: Option<(u16, Arc<crate::tls::Config>)>,
     /// The `Server` field value.
     pub server: &'static [u8],
     /// Empty polls before a worker sleeps. 0 (the default) sleeps at once;
@@ -335,7 +335,19 @@ fn read_process_write<H: Handler + ?Sized>(s: &mut Slot, h: &H, ctx: &Ctx) -> bo
         if eof {
             s.conn.eof();
         }
-        if flush(s) {
+        let broken = flush(s);
+        #[cfg(feature = "tls")]
+        if let Any::Tls(c) = &s.conn {
+            // A TLS 1.3 client's Finished gets no answer from the server
+            // (no session tickets), so a client with Nagle on holds its
+            // request until the kernel's delayed ACK, 40 ms. Quick ACKs
+            // while handshaking release it at once (after the write, which
+            // would otherwise turn delayed ACKs back on).
+            if c.handshaking() {
+                sys::quickack(s.fd);
+            }
+        }
+        if broken {
             return true;
         }
         match next {

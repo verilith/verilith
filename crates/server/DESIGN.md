@@ -77,7 +77,7 @@ usual base (Verus, Z3, rustc, the specs).
           │   buffer pool, connection slab, timer wheel, write queue  │
           ├───────────────────────────────────────────────────────────┤
   L0      │ trusted OS shim: sockets, epoll/kqueue (io_uring later),  │  trusted, small
-          │   writev, sendfile, accept4, clock; TLS (rustls)          │
+          │   writev, sendfile, accept4, clock; TLS crypto (aws-lc)   │
           └───────────────────────────────────────────────────────────┘
 ```
 
@@ -303,38 +303,35 @@ in. HTTP/3's own layer is small (frames on QUIC streams, and QPACK, RFC
 
 ## TLS
 
-**The TLS stack is trusted: rustls, with aws-lc-rs as its cryptography.**
-rustls is sans-I/O (`read_tls`, `process_new_packets`, `reader`, `writer`,
-`write_tls`), so it sits between L0 and L2 with no adaptation: ciphertext
-from the socket goes into rustls, plaintext from rustls goes into
-`h1::Conn` or `h2::Conn`, and back. It is memory safe Rust with a strong
-record, aws-lc's AES-GCM and ChaCha20-Poly1305 are the same assembly
-OpenSSL uses (nginx and h2o in the benchmarks), and several of its
-primitives have proofs of their own (AWS's SAW and HOL Light work on
-aws-lc). ALPN chooses `h2` or `http/1.1`.
+**The TLS stack is verilith-tls: TLS 1.3's handshake state machine, key
+schedule, message parsing and record protection, verified, with aws-lc's
+primitives (AEAD, key exchange, signatures, random numbers) trusted
+through the small verilith-tls-aws-lc crate.** It is sans I/O
+(`read_tls`, `process`, `plaintext`, `write`, `pending`), so it sits
+between L0 and L2 with no adaptation: ciphertext from the socket goes into
+it, plaintext goes into `h1::Conn` or `h2::Conn`, and back. aws-lc's
+AES-GCM and ChaCha20-Poly1305 are the same assembly OpenSSL uses (nginx and
+h2o in the benchmarks), and several of its primitives have proofs of their
+own (AWS's SAW and HOL Light work on aws-lc). ALPN chooses `h2` or
+`http/1.1`. rustls stays as a second backend (`--features tls-rustls`,
+`--tls-backend rustls`), to compare against; TLS 1.2 clients are refused.
 
 What Verilith adds at the boundary:
 
 - **Certificates through verilith-x509.** The server's own chain is parsed
   by the verified DER and X.509 parser at load time, before it is handed to
-  rustls, so a malformed certificate in a deployment is rejected with a
+  the TLS stack, so a malformed certificate in a deployment is rejected with a
   reason rather than half-used. Client certificates for mutual TLS are
   parsed the same way to give handlers their fields (subject, SANs,
-  validity) from a verified parse. Chain validation and signature checks
-  remain rustls's and webpki's: verilith-x509 parses, it does not verify
-  signatures.
-- **Record sizes.** The engines' output is handed to rustls in 16 KiB
-  pieces so each `write_tls` produces full records, and the first records
+  validity) from a verified parse. verilith-x509 parses, it does not
+  verify signatures.
+- **Record sizes.** The engines' small output pieces are gathered into
+  16 KiB writes so each produces full records, and the first records
   of a response are kept small (one MSS) while the connection is new, as
   h2o does, for time to first byte.
 - **kTLS** on Linux, after the handshake, for `sendfile` of static files
-  under TLS: the kernel encrypts, rustls exports the traffic secrets. Phase
-  two.
-
-A verified TLS 1.3 record layer and handshake state machine (the key
-schedule and message parsing, with the cryptographic primitives still
-trusted) is the obvious next project after this one, and is not part of
-this design.
+  under TLS: the kernel encrypts, verilith-tls exports the traffic secrets.
+  Phase two.
 
 ## Static files, compression and the rest of the request path
 
@@ -387,7 +384,8 @@ read once per loop turn, never per request; channels for control messages.
 | Buffer pool, connection slab, timer wheel | verified | new; proven no use after free of a slot, no double use of a buffer, bounded |
 | Cross-worker control | verified | verilith-sync |
 | Event loop and syscalls (epoll, kqueue, io_uring, sockets, writev, sendfile, openat2) | **trusted** | `src/sys/`, each call an `external_body` with a contract (a read of `n` writes `buf[..n]`, `n <= len`); kept as small as possible and listed in TRUST.md |
-| TLS: rustls and aws-lc-rs | **trusted** | memory safe Rust plus assembly; not verified by Verilith |
+| TLS 1.3: handshake, key schedule, records | verified | verilith-tls |
+| TLS cryptography: aws-lc (verilith-tls-aws-lc) | **trusted** | C and assembly behind the contracts on verilith-tls's `Provider` trait |
 | The kernel's TCP, `sendfile`, `openat2` semantics | **trusted** | |
 | Handlers and the router | not verified | application code; it only reaches the wire through the verified `send` |
 | Configuration file parsing | not verified at first | small; a verified parser later if the format grows |

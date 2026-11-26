@@ -14,6 +14,7 @@ use aws_lc_rs::agreement::{self, EphemeralPrivateKey, UnparsedPublicKey};
 use aws_lc_rs::kem::{EncapsulationKey, ML_KEM_768};
 use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use aws_lc_rs::signature::{self, EcdsaKeyPair, Ed25519KeyPair, KeyPair, RsaKeyPair};
+use std::sync::Arc;
 use verilith_tls::crypto::{AeadKey, Provider};
 
 pub const TLS_AES_128_GCM_SHA256: u16 = 0x1301;
@@ -110,16 +111,21 @@ impl SigningKey {
 /// aws-lc, with the server's signing key.
 pub struct AwsLc {
     rng: SystemRandom,
-    key: Option<SigningKey>,
+    key: Option<Arc<SigningKey>>,
 }
 
 impl AwsLc {
     pub fn new(key: Option<SigningKey>) -> AwsLc {
-        AwsLc { rng: SystemRandom::new(), key }
+        AwsLc { rng: SystemRandom::new(), key: key.map(Arc::new) }
+    }
+
+    /// With a key shared by many connections (a server's), parsed once.
+    pub fn shared(key: Arc<SigningKey>) -> AwsLc {
+        AwsLc { rng: SystemRandom::new(), key: Some(key) }
     }
 
     pub fn signing_key(&self) -> Option<&SigningKey> {
-        self.key.as_ref()
+        self.key.as_deref()
     }
 }
 
@@ -191,7 +197,7 @@ impl Provider for AwsLc {
     }
 
     fn sign(&mut self, scheme: u16, msg: &[u8], out: &mut Vec<u8>) -> bool {
-        let sig = match (&self.key, scheme) {
+        let sig = match (self.key.as_deref(), scheme) {
             (Some(SigningKey::Ecdsa256(k)), ECDSA_SECP256R1_SHA256) | (Some(SigningKey::Ecdsa384(k)), ECDSA_SECP384R1_SHA384) => {
                 match k.sign(&self.rng, msg) {
                     Ok(s) => s.as_ref().to_vec(),
