@@ -40,7 +40,10 @@ connections; nothing is shared between workers on the request path. Per
 readiness event a worker reads until the socket is empty, has the
 HTTP/1.1 engine handle every complete request in what it read, and writes
 all the responses with one system call. Handlers run inline on the
-worker and get a zero-copy view of the request.
+worker and get a zero-copy view of the request. On Linux, `--io-uring`
+(`Config::io_uring`) runs each worker on io_uring instead: the same
+engines, one `io_uring_enter` per loop turn (see DESIGN.md, "I/O model",
+for when it is faster and when not).
 
 ## What is proven
 

@@ -1,5 +1,8 @@
 //! Linux: epoll, edge-triggered; accept4; one SO_REUSEPORT socket per worker.
 use super::{c_int, cvt, Event};
+
+#[path = "uring.rs"]
+pub mod uring;
 use std::io;
 
 pub const AF_INET: c_int = 2;
