@@ -15,7 +15,7 @@
 //! right, since every hint is checked, byte for byte, before it is used.
 use crate::decoder::to_vec;
 use crate::fields::Fields;
-use crate::henc;
+use verilith_hpack::henc;
 use crate::integer::{self, IntE, P2};
 use crate::strings::EndE;
 #[cfg(verus_only)]
@@ -26,77 +26,12 @@ use crate::table::*;
 use crate::lemmas::*;
 use std::rc::Rc;
 use verilith_core::prims::{extend, load_u64_le};
-#[cfg(verus_only)]
-use verilith_core::prims::le_bytes;
 use vstd::prelude::*;
 
 verus! {
 
-proof fn lemma_le_eq(a: Seq<u8>, b: Seq<u8>, i: int, n: nat)
-    requires
-        0 <= i,
-        i + n <= a.len(),
-        i + n <= b.len(),
-        le_bytes(a, i, n) == le_bytes(b, i, n),
-    ensures
-        forall|j: int| i <= j < i + n ==> a[j] == b[j],
-    decreases n,
-{
-    if n > 0 {
-        let ra = le_bytes(a, i + 1, (n - 1) as nat);
-        let rb = le_bytes(b, i + 1, (n - 1) as nat);
-        let x = a[i] as int;
-        let y = b[i] as int;
-        assert(x == y && ra == rb) by (nonlinear_arith)
-            requires x + 256 * ra == y + 256 * rb, 0 <= x < 256, 0 <= y < 256, ra >= 0, rb >= 0;
-        lemma_le_eq(a, b, i + 1, (n - 1) as nat);
-    }
-}
-
-/// `a == b`, eight bytes at a time.
-pub fn bytes_eq(a: &[u8], b: &[u8]) -> (r: bool)
-    ensures
-        r == (a@ == b@),
-{
-    if a.len() != b.len() {
-        return false;
-    }
-    let n = a.len();
-    let mut i: usize = 0;
-    while n - i >= 8
-        invariant
-            i <= n,
-            n == a@.len(),
-            a@.len() == b@.len(),
-            forall|j: int| 0 <= j < i ==> a@[j] == b@[j],
-        decreases n - i,
-    {
-        if load_u64_le(a, i) != load_u64_le(b, i) {
-            return false;
-        }
-        proof {
-            lemma_le_eq(a@, b@, i as int, 8);
-        }
-        i = i + 8;
-    }
-    while i < n
-        invariant
-            i <= n,
-            n == a@.len(),
-            a@.len() == b@.len(),
-            forall|j: int| 0 <= j < i ==> a@[j] == b@[j],
-        decreases n - i,
-    {
-        if a[i] != b[i] {
-            return false;
-        }
-        i = i + 1;
-    }
-    proof {
-        assert(a@ =~= b@);
-    }
-    true
-}
+/// `a == b`, eight bytes at a time: verilith-hpack's, shared.
+pub use verilith_hpack::encoder::bytes_eq;
 
 /// Writes the `n`-bit prefix string literal of `s` under `flags`,
 /// Huffman-coding it when that is shorter.

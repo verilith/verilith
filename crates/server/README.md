@@ -340,6 +340,21 @@ client sends it again after the handshake. The register is per process,
 so servers on several machines sharing ticket keys should leave 0-RTT
 off.
 
+Encrypted Client Hello (`--ech PUBLIC_NAME [--ech-key FILE]`, off by
+default; RFC 9849): the client encrypts its real ClientHello (server name,
+ALPN) to a key the server publishes, so an on-path observer sees only
+PUBLIC_NAME. The server prints the ECHConfigList to put in the name's DNS
+HTTPS record (`ech=`); FILE holds the 32-byte X25519 key
+(`head -c 32 /dev/urandom > ech.key`) so the record outlives restarts, and
+the certificate must also be valid for PUBLIC_NAME, which a client with
+stale keys authenticates to fetch the new ones. verilith-tls proves how
+ClientHelloInner is rebuilt from the decrypted bytes and the outer one
+and the acceptance signal in ServerHello; HPKE is aws-lc's, trusted. An
+ECH handshake costs the server about 30 µs more (one X25519 and the
+decryption: 77 against 107 µs of server CPU per full handshake, in
+memory, `tls-aws-lc/tests/ech.rs` `ech_server_cost`); GREASE ECH from
+clients with no keys costs nothing measurable.
+
 Connection setup (`h1-close`): accepting with `TCP_DEFER_ACCEPT` (the
 request arrives with the connection, one wakeup instead of two),
 TCP_NODELAY inherited from the listener, and no epoll removal before
