@@ -2,9 +2,9 @@
 //! parser, so code written against `url` can switch by changing an import.
 //!
 //! Parsing decides acceptance with the verified parser. When it rejects an
-//! input, `ParseError` names a likely reason, found by a separate diagnostic
-//! pass ([`diagnose`]) that is plain Rust outside the proof: the reason is a
-//! best effort, the rejection is not.
+//! input, the `ParseError` reason is also proven: it is `spec::parse_why`,
+//! the branch of the state machine that returned failure. (The setters'
+//! errors are still a best-effort diagnosis; see [`Url::set_host`].)
 use crate::url::Url as Core;
 use core::fmt;
 use core::borrow::Borrow;
@@ -111,7 +111,7 @@ impl Url {
     fn parse_with(input: &str, base: Option<&Url>) -> Result<Url, ParseError> {
         match Core::parse(input, base.map(|b| &b.inner)) {
             Some(inner) => Ok(Url { inner }),
-            None => Err(diagnose(input, base.map(|b| &b.inner))),
+            None => Err(reason(crate::api::explain(input.as_bytes(), base.map(|b| &b.inner)))),
         }
     }
 
@@ -566,88 +566,28 @@ impl core::hash::Hash for Url {
 }
 
 // ---------------------------------------------------------------------------
-// Diagnosis of a rejected input (best effort, outside the proof)
+// Why an input was rejected
 // ---------------------------------------------------------------------------
 
-/// A likely reason the parser rejected `input` against `base`. Only called
-/// after the verified parser has rejected it.
-pub fn diagnose(input: &str, base: Option<&Core>) -> ParseError {
-    let s: String = input
-        .trim_matches(|c: char| c <= ' ')
-        .chars()
-        .filter(|&c| c != '\t' && c != '\n' && c != '\r')
-        .collect();
-    let scheme_len = s
-        .char_indices()
-        .take_while(|&(i, c)| if i == 0 { c.is_ascii_alphabetic() } else { c.is_ascii_alphanumeric() || "+-.".contains(c) })
-        .count();
-    let has_scheme = scheme_len > 0 && s[scheme_len..].starts_with(':');
-    let (scheme, rest) = if has_scheme {
-        (s[..scheme_len].to_ascii_lowercase(), &s[scheme_len + 1..])
-    } else {
-        match base {
-            None => return ParseError::RelativeUrlWithoutBase,
-            Some(b) if b.has_opaque_path() => return ParseError::RelativeUrlWithCannotBeABaseBase,
-            Some(b) => (b.scheme().to_owned(), &s[..]),
-        }
-    };
-    let special = matches!(scheme.as_str(), "http" | "https" | "ws" | "wss" | "ftp" | "file");
-    let slash = |c: char| c == '/' || (special && c == '\\');
-    let after = rest.trim_start_matches(slash);
-    if !has_scheme && rest.len() - after.len() < 2 && !special {
-        return ParseError::RelativeUrlWithoutBase;
+/// The `ParseError` for the parser's proven reason (`spec::Why`). `None`
+/// (the parser accepted the input) cannot happen where this is called.
+fn reason(w: Option<crate::spec::Why>) -> ParseError {
+    use crate::spec::Why;
+    match w {
+        Some(Why::CannotBeABase) => ParseError::RelativeUrlWithCannotBeABaseBase,
+        Some(Why::EmptyHost) => ParseError::EmptyHost,
+        Some(Why::Port) => ParseError::InvalidPort,
+        Some(Why::Ipv4) => ParseError::InvalidIpv4Address,
+        Some(Why::Ipv6) => ParseError::InvalidIpv6Address,
+        Some(Why::Idna) => ParseError::IdnaError,
+        Some(Why::DomainChar) => ParseError::InvalidDomainCharacter,
+        Some(Why::NoBase) | None => ParseError::RelativeUrlWithoutBase,
     }
-    let auth_end = after.find(|c: char| slash(c) || c == '?' || c == '#').unwrap_or(after.len());
-    let authority = &after[..auth_end];
-    let hostport = match authority.rfind('@') {
-        Some(i) => &authority[i + 1..],
-        None => authority,
-    };
-    let (host, port) = if scheme == "file" {
-        // A file URL has no port, so a ':' is part of the host.
-        (hostport, None)
-    } else if hostport.starts_with('[') {
-        match hostport.find(']') {
-            Some(i) => (&hostport[..=i], hostport[i + 1..].strip_prefix(':')),
-            None => return ParseError::InvalidIpv6Address,
-        }
-    } else {
-        match hostport.find(':') {
-            Some(i) => (&hostport[..i], Some(&hostport[i + 1..])),
-            None => (hostport, None),
-        }
-    };
-    if host.is_empty() {
-        return ParseError::EmptyHost;
-    }
-    if let Some(p) = port {
-        if !p.is_empty() && (!p.bytes().all(|c| c.is_ascii_digit()) || p.parse::<u32>().map_or(true, |n| n > 65535)) {
-            return ParseError::InvalidPort;
-        }
-    }
-    diagnose_host(host, special)
 }
 
+/// A likely reason a host setter rejected `host`: the host parser's reason
+/// (`spec::host_why`) for the whole string. Best effort: the setter may
+/// have stopped at a ':' or '/' first.
 fn diagnose_host(host: &str, special: bool) -> ParseError {
-    if host.starts_with('[') {
-        return ParseError::InvalidIpv6Address;
-    }
-    if !special {
-        return ParseError::InvalidDomainCharacter;
-    }
-    let decoded = crate::searchparams::form_decode(host.replace('+', "%2B").as_bytes());
-    if !decoded.is_ascii() {
-        return ParseError::IdnaError;
-    }
-    let lower = String::from_utf8_lossy(&decoded).to_ascii_lowercase();
-    let last = lower.trim_end_matches('.').rsplit('.').next().unwrap_or("");
-    let numeric = !last.is_empty()
-        && (last.bytes().all(|c| c.is_ascii_digit())
-            || (last.starts_with("0x") && last[2..].bytes().all(|c| c.is_ascii_hexdigit())));
-    if numeric {
-        return ParseError::InvalidIpv4Address;
-    }
-    // The Standard rejects these as forbidden domain code points after
-    // UTS 46 mapping; like the url crate, report them as IDNA errors.
-    ParseError::IdnaError
+    reason(Some(crate::why::host_why_exec(host.as_bytes(), !special)))
 }

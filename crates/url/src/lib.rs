@@ -18,6 +18,7 @@ pub mod ascii;
 pub mod creds;
 #[doc(hidden)]
 pub mod idna;
+pub mod why;
 #[doc(hidden)]
 pub mod parse;
 mod public;
