@@ -170,28 +170,34 @@ pub fn hello_retry_request_x(out: &mut Vec<u8>, sid: &[u8], suite: u16, group: u
     }
 }
 
-/// Appends EncryptedExtensions: ALPN's choice, if any, then the
-/// transport parameters `tp` over QUIC.
+/// Appends EncryptedExtensions: ALPN's choice, if any, early_data,
+/// ECH's retry_configs, then the transport parameters `tp` over QUIC.
 #[verifier::spinoff_prover]
-#[verifier::rlimit(120)]
-pub fn encrypted_extensions_x(out: &mut Vec<u8>, alpn: Option<&[u8]>, tp: Option<&[u8]>, early: bool)
+#[verifier::rlimit(200)]
+pub fn encrypted_extensions_x(out: &mut Vec<u8>, alpn: Option<&[u8]>, tp: Option<&[u8]>, early: bool, retry: Option<&[u8]>)
     requires
         alpn matches Some(p) ==> p@.len() <= 255,
         tp matches Some(t) ==> t@.len() <= 60000,
+        retry matches Some(l) ==> l@.len() <= 4096,
     ensures
         final(out)@ == old(out)@ + encrypted_extensions(
             opt_view(alpn),
             opt_view(tp),
             early,
+            opt_view(retry),
         ),
-        encrypted_extensions(opt_view(alpn), opt_view(tp), early).len() <= 61000,
+        encrypted_extensions(opt_view(alpn), opt_view(tp), early, opt_view(retry)).len() <= 65000,
 {
     reveal(encrypted_extensions);
     let na0: usize = match alpn {
         None => 0,
         Some(p) => p.len() + 7,
     };
-    let na: usize = if early { na0 + 4 } else { na0 };
+    let na1: usize = if early { na0 + 4 } else { na0 };
+    let na: usize = match retry {
+        None => na1,
+        Some(l) => na1 + l.len() + 4,
+    };
     let nt: usize = match tp {
         None => 0,
         Some(t) => t.len() + 4,
@@ -217,6 +223,15 @@ pub fn encrypted_extensions_x(out: &mut Vec<u8>, alpn: Option<&[u8]>, tp: Option
         put2(out, 42);
         put2(out, 0);
     }
+    let ghost o16 = out@;
+    match retry {
+        None => {},
+        Some(l) => {
+            put2(out, 0xfe0d);
+            put2(out, l.len());
+            put(out, l);
+        },
+    }
     let ghost o2 = out@;
     match tp {
         None => {},
@@ -229,15 +244,17 @@ pub fn encrypted_extensions_x(out: &mut Vec<u8>, alpn: Option<&[u8]>, tp: Option
     proof {
         let av = opt_view(alpn);
         let tv = opt_view(tp);
+        let rv = opt_view(retry);
         assert(o15.skip(o1.len() as int) =~= alpn_ext(av));
-        assert(o2.skip(o15.len() as int) =~= early_ext(early));
-        assert(o2.skip(o1.len() as int) =~= alpn_ext(av) + early_ext(early));
+        assert(o16.skip(o15.len() as int) =~= early_ext(early));
+        assert(o2.skip(o16.len() as int) =~= ech_retry_ext(rv));
+        assert(o2.skip(o1.len() as int) =~= alpn_ext(av) + early_ext(early) + ech_retry_ext(rv));
         assert(out@.skip(o2.len() as int) =~= tp_ext(tv));
-        let e = alpn_ext(av) + early_ext(early) + tp_ext(tv);
+        let e = alpn_ext(av) + early_ext(early) + ech_retry_ext(rv) + tp_ext(tv);
         assert(e.len() == na + nt);
         assert(out@ =~= o + (seq![8u8] + be3(e.len() + 2) + (be2(e.len()) + e)));
         assert(hs_msg(8, be2(e.len()) + e) =~= seq![8u8] + be3(e.len() + 2) + (be2(e.len()) + e));
-        assert(encrypted_extensions(av, tv, early).len() == out@.len() - o.len());
+        assert(encrypted_extensions(av, tv, early, rv).len() == out@.len() - o.len());
     }
 }
 

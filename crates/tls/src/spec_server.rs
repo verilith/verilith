@@ -17,6 +17,7 @@
 use crate::crypto::*;
 use crate::spec::*;
 use crate::spec_keys::*;
+use crate::spec_ech::*;
 use vstd::prelude::*;
 
 verus! {
@@ -129,12 +130,22 @@ pub open spec fn early_ext(early: bool) -> Seq<u8> {
     }
 }
 
+/// encrypted_client_hello in EncryptedExtensions (RFC 9849 §7.1): the
+/// server's ECHConfigList as retry_configs, when it did not accept the
+/// client's ECH; nothing otherwise.
+pub open spec fn ech_retry_ext(retry: Option<Seq<u8>>) -> Seq<u8> {
+    match retry {
+        None => Seq::empty(),
+        Some(l) => ext(0xfe0d, l),
+    }
+}
+
 /// EncryptedExtensions (§4.3.1): ALPN's choice, if one was made, then
-/// early_data if 0-RTT data is accepted, then over QUIC the server's
-/// transport parameters.
+/// early_data if 0-RTT data is accepted, then ECH's retry_configs, then
+/// over QUIC the server's transport parameters.
 #[verifier::opaque]
-pub open spec fn encrypted_extensions(alpn: Option<Seq<u8>>, tp: Option<Seq<u8>>, early: bool) -> Seq<u8> {
-    let e = alpn_ext(alpn) + early_ext(early) + tp_ext(tp);
+pub open spec fn encrypted_extensions(alpn: Option<Seq<u8>>, tp: Option<Seq<u8>>, early: bool, retry: Option<Seq<u8>>) -> Seq<u8> {
+    let e = alpn_ext(alpn) + early_ext(early) + ech_retry_ext(retry) + tp_ext(tp);
     hs_msg(8, be2(e.len()) + e)
 }
 
@@ -248,6 +259,9 @@ pub struct SpecCfg {
     pub sigs: Seq<u16>,
     pub alpn: Seq<u8>,
     pub chain: Seq<Seq<u8>>,
+    /// The ECHConfigList (RFC 9849 §4), length prefix included, that the
+    /// provider has keys for; empty when the server does no ECH.
+    pub ech_list: Seq<u8>,
 }
 
 /// Whether `m` is one handshake message of type `t` (§4).
@@ -403,6 +417,12 @@ pub struct SpecHs {
     pub tp: Option<Seq<u8>>,
     /// The server took the client's 0-RTT data (§4.2.10).
     pub early: bool,
+    /// The server accepted ECH (RFC 9849): ClientHelloOuter, and the
+    /// EncodedClientHelloInner it decrypted; `ch` is ClientHelloInner.
+    pub ech: Option<(Seq<u8>, Seq<u8>)>,
+    /// The server did not accept the client's ECH and sent its
+    /// ECHConfigList as retry_configs.
+    pub ech_retry: bool,
 }
 
 impl SpecHs {
@@ -447,6 +467,47 @@ impl SpecHs {
         }
     }
 
+    /// EncryptedExtensions.
+    pub open spec fn ee(self, c: SpecCfg) -> Seq<u8> {
+        encrypted_extensions(self.alpn(c), self.tp, self.early, if self.ech_retry {
+            Some(c.ech_list)
+        } else {
+            None
+        })
+    }
+
+    /// ECH (RFC 9849), if accepted, was as §7.1 says: ClientHelloInner is
+    /// what the server's key opened from ClientHelloOuter, decoded
+    /// (`ech_decrypted`), with no HelloRetryRequest; and the last 8 bytes
+    /// of ServerHello.random are the acceptance confirmation (§7.2) over
+    /// ClientHelloInner and the ServerHello with those bytes zero.
+    /// retry_configs are sent only when the client offered ECH, the
+    /// server has an ECHConfigList, and ECH was not accepted.
+    #[verifier::opaque]
+    pub open spec fn ech_ok(self, c: SpecCfg) -> bool {
+        match self.ech {
+            None => self.ech_retry ==> (c.ech_list.len() > 0 && (parse_client_hello(self.ch.skip(4)) matches Ok(s) && s.ech is Some)),
+            Some((outer, pt)) => {
+                &&& !self.ech_retry
+                &&& self.retry is None
+                &&& c.ech_list.len() > 0
+                &&& ech_decrypted(outer, pt, self.ch)
+                &&& self.random.skip(24) == ech_confirm(
+                    self.alg(),
+                    self.ch.subrange(6, 38),
+                    self.ch + server_hello(
+                        self.random.take(24) + zeros(8),
+                        session_id(self.ch),
+                        self.choice.suite,
+                        self.choice.group,
+                        self.share,
+                        self.resumed is Some,
+                    ),
+                )
+            },
+        }
+    }
+
     /// ClientHello..ServerHello.
     #[verifier::opaque]
     pub open spec fn th_sh(self) -> Seq<u8> {
@@ -456,7 +517,7 @@ impl SpecHs {
     /// ..Certificate.
     #[verifier::opaque]
     pub open spec fn th_cert(self, c: SpecCfg) -> Seq<u8> {
-        self.th_sh() + encrypted_extensions(self.alpn(c), self.tp, self.early) + certificate(c.chain)
+        self.th_sh() + self.ee(c) + certificate(c.chain)
     }
 
     pub open spec fn certificate_verify(self) -> Seq<u8> {
@@ -468,7 +529,7 @@ impl SpecHs {
     #[verifier::opaque]
     pub open spec fn th_cv(self, c: SpecCfg) -> Seq<u8> {
         if self.resumed is Some {
-            self.th_sh() + encrypted_extensions(self.alpn(c), self.tp, self.early)
+            self.th_sh() + self.ee(c)
         } else {
             self.th_cert(c) + self.certificate_verify()
         }
@@ -502,9 +563,9 @@ impl SpecHs {
     #[verifier::opaque]
     pub open spec fn flight(self, c: SpecCfg) -> Seq<u8> {
         if self.resumed is Some {
-            encrypted_extensions(self.alpn(c), self.tp, self.early) + self.server_finished(c)
+            self.ee(c) + self.server_finished(c)
         } else {
-            encrypted_extensions(self.alpn(c), self.tp, self.early) + certificate(c.chain) + self.certificate_verify()
+            self.ee(c) + certificate(c.chain) + self.certificate_verify()
                 + self.server_finished(c)
         }
     }
@@ -594,6 +655,7 @@ impl SpecHs {
         )
         &&& self.resume_ok()
         &&& self.early_ok(c)
+        &&& self.ech_ok(c)
     }
 }
 

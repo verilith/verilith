@@ -17,6 +17,7 @@
 //! - application data is delivered only once `Connected`, and only from a
 //!   record that opened under the client's application traffic keys.
 use crate::crypto::*;
+use crate::ech::*;
 use crate::hello::*;
 use crate::keys::*;
 use crate::messages::*;
@@ -25,6 +26,7 @@ use crate::protect::*;
 use crate::record::*;
 use crate::spec::*;
 use crate::spec_keys::*;
+use crate::spec_ech::*;
 use crate::spec_record::*;
 use crate::spec_server::*;
 use alloc::sync::Arc;
@@ -93,6 +95,8 @@ pub struct Config {
     pub(crate) lifetime: u32,
     /// The most 0-RTT data a ticket allows (0: no 0-RTT).
     pub(crate) max_early: u32,
+    /// The ECHConfigList the provider has keys for (empty: no ECH).
+    pub(crate) ech_list: Vec<u8>,
 }
 
 impl Config {
@@ -103,6 +107,7 @@ impl Config {
             sigs: self.sigs@,
             alpn: self.alpn@,
             chain: self.chain@,
+            ech_list: self.ech_list@,
         }
     }
 
@@ -110,6 +115,7 @@ impl Config {
         &&& forall|i: int| 0 <= i < self.suites@.len() ==> known_suite(#[trigger] self.suites@[i])
         &&& self.cert@ == certificate(self.chain@)
         &&& self.cert@.len() < 0x100_0000
+        &&& self.ech_list@.len() <= 4096
     }
 
     /// The view, field by field (for the QUIC handshake in `quic.rs`).
@@ -136,6 +142,7 @@ impl Config {
                 sigs: sigs@,
                 alpn: alpn@,
                 chain: chain_view(chain@),
+                ech_list: Seq::empty(),
             }),
     {
         let mut i: usize = 0;
@@ -155,7 +162,7 @@ impl Config {
             Some(c) => c,
             None => return None,
         };
-        Some(Config { suites, groups, sigs, alpn, cert, chain: Ghost(chain_view(chain@)), tickets: 2, lifetime: 21600, max_early: 0 })
+        Some(Config { suites, groups, sigs, alpn, cert, chain: Ghost(chain_view(chain@)), tickets: 2, lifetime: 21600, max_early: 0, ech_list: Vec::new() })
     }
 
     /// How many session tickets to send after each handshake (2 unless
@@ -177,6 +184,23 @@ impl Config {
     /// (`Provider::claim_early`) takes each ClientHello's at most once, and
     /// the application should act on early requests only when replaying
     /// them is harmless (RFC 8470).
+    /// Does Encrypted Client Hello (RFC 9849) with the provider's ECH
+    /// keys: `list` is their ECHConfigList (length prefix included), sent
+    /// as retry_configs to a client whose ECH the server did not accept.
+    /// `false` (and no change) if it is longer than 4096 bytes.
+    pub fn set_ech(&mut self, list: Vec<u8>) -> (r: bool)
+        ensures
+            old(self).wf() ==> final(self).wf(),
+            r ==> final(self)@ == (SpecCfg { ech_list: list@, ..old(self)@ }),
+            !r ==> final(self)@ == old(self)@,
+    {
+        if list.len() > 4096 {
+            return false;
+        }
+        self.ech_list = list;
+        true
+    }
+
     pub fn set_early_data(&mut self, max: u32)
         ensures
             final(self)@ == old(self)@,
@@ -336,6 +360,7 @@ fn server_flight<P: Provider>(
     alpn: Option<&[u8]>,
     tp: Option<&[u8]>,
     early: bool,
+    retry: Option<&[u8]>,
     tr: &mut Transcript,
     s_hs: &Secret,
 ) -> (r: Option<(Vec<u8>, Ghost<Seq<u8>>)>)
@@ -345,6 +370,7 @@ fn server_flight<P: Provider>(
         s_hs.wf(),
         alpn matches Some(p) ==> p@.len() <= 255,
         tp matches Some(t) ==> t@.len() <= 60000,
+        retry matches Some(l) ==> l@.len() <= 4096,
     ensures
         final(tr).wf(),
         final(tr).alg() == old(tr).alg(),
@@ -354,6 +380,7 @@ fn server_flight<P: Provider>(
                 opt_view(alpn),
                 opt_view(tp),
                 early,
+                opt_view(retry),
             );
             let cert = certificate(cfg@.chain);
             let th_cert = old(tr).data() + ee + cert;
@@ -368,7 +395,7 @@ fn server_flight<P: Provider>(
     let a = tr.alg_x();
     let ghost t0 = tr.data();
     let mut fl: Vec<u8> = Vec::new();
-    encrypted_extensions_x(&mut fl, alpn, tp, early);
+    encrypted_extensions_x(&mut fl, alpn, tp, early, retry);
     let ghost ee = fl@;
     put(&mut fl, cfg.cert.as_slice());
     tr.update(fl.as_slice());
@@ -406,12 +433,13 @@ fn server_flight<P: Provider>(
 }
 
 /// The server's flight when resuming: EncryptedExtensions and Finished.
-fn resumed_flight(alpn: Option<&[u8]>, tp: Option<&[u8]>, early: bool, tr: &mut Transcript, s_hs: &Secret) -> (r: Vec<u8>)
+fn resumed_flight(alpn: Option<&[u8]>, tp: Option<&[u8]>, early: bool, retry: Option<&[u8]>, tr: &mut Transcript, s_hs: &Secret) -> (r: Vec<u8>)
     requires
         old(tr).wf(),
         s_hs.wf(),
         alpn matches Some(p) ==> p@.len() <= 255,
         tp matches Some(t) ==> t@.len() <= 60000,
+        retry matches Some(l) ==> l@.len() <= 4096,
     ensures
         final(tr).wf(),
         final(tr).alg() == old(tr).alg(),
@@ -421,6 +449,7 @@ fn resumed_flight(alpn: Option<&[u8]>, tp: Option<&[u8]>, early: bool, tr: &mut 
                 opt_view(alpn),
                 opt_view(tp),
                 early,
+                opt_view(retry),
             );
             let sf = finished(verify_data(a, s_hs@, old(tr).data() + ee));
             &&& r@ == ee + sf
@@ -431,7 +460,7 @@ fn resumed_flight(alpn: Option<&[u8]>, tp: Option<&[u8]>, early: bool, tr: &mut 
     let a = tr.alg_x();
     let ghost t0 = tr.data();
     let mut fl: Vec<u8> = Vec::new();
-    encrypted_extensions_x(&mut fl, alpn, tp, early);
+    encrypted_extensions_x(&mut fl, alpn, tp, early, retry);
     let ghost ee = fl@;
     tr.update(fl.as_slice());
     let th = tr.hash();
@@ -489,9 +518,10 @@ proof fn lemma_accept_spec(
         th_sh == pre + m + sh,
         hsv.alpn(cc) == opt_view(alpn),
         hsv.early ==> early_allowed(cc, m, hsv.retry, hsv.choice, hsv.resumed),
+        hsv.ech_ok(cc),
         hsv.resumed is None ==> ({
             let a = hsv.alg();
-            let ee = encrypted_extensions(hsv.alpn(cc), hsv.tp, hsv.early);
+            let ee = hsv.ee(cc);
             let cert = certificate(cc.chain);
             let th_cert = th_sh + ee + cert;
             let cv = certificate_verify(hsv.choice.signature_scheme, hsv.sig);
@@ -502,7 +532,7 @@ proof fn lemma_accept_spec(
         }),
         hsv.resumed is Some ==> ({
             let a = hsv.alg();
-            let ee = encrypted_extensions(hsv.alpn(cc), hsv.tp, hsv.early);
+            let ee = hsv.ee(cc);
             let sf = finished(verify_data(a, server_hs_traffic(a, hsv.psk(), hsv.dhe, th_sh), th_sh + ee));
             &&& fl == ee + sf
             &&& th_sfin == th_sh + ee + sf
@@ -543,11 +573,11 @@ proof fn lemma_accept_spec(
     assert(th_sh == hsv.th_sh());
     assert(pre == hsv.prefix());
     if hsv.resumed is None {
-        let th_cert = th_sh + encrypted_extensions(hsv.alpn(cc), hsv.tp, hsv.early) + certificate(cc.chain);
+        let th_cert = th_sh + hsv.ee(cc) + certificate(cc.chain);
         assert(th_cert == hsv.th_cert(cc));
         assert(th_cert + hsv.certificate_verify() == hsv.th_cv(cc));
     } else {
-        assert(th_sh + encrypted_extensions(hsv.alpn(cc), hsv.tp, hsv.early) == hsv.th_cv(cc));
+        assert(th_sh + hsv.ee(cc) == hsv.th_cv(cc));
     }
     assert(th_sfin =~= hsv.th_sfin(cc));
     assert(fl =~= hsv.flight(cc));
@@ -579,10 +609,14 @@ pub(crate) open spec fn prep_ok(
     resumed: Option<SpecResume>,
     tp: Option<Seq<u8>>,
     early: bool,
+    ech: Option<(Seq<u8>, Seq<u8>)>,
+    ech_retry: bool,
 ) -> bool {
     let h = p.hs@;
     &&& h.valid(cc)
     &&& h.early == early
+    &&& h.ech == ech
+    &&& h.ech_retry == ech_retry
     &&& p.c_early is Some == early
     &&& p.c_early matches Some(k) ==> k.wf() && k@ == h.c_early()
     &&& h.retry == retry
@@ -604,7 +638,7 @@ pub(crate) open spec fn prep_ok(
 }
 
 /// The server's side of the key exchange, its random, and ServerHello.
-fn exchange<P: Provider>(prov: &mut P, peer: &[u8], sid: &[u8], suite: u16, group: u16, psk: bool) -> (r: Result<
+fn exchange<P: Provider>(prov: &mut P, peer: &[u8], sid: &[u8], suite: u16, group: u16, psk: bool, zero_tail: bool) -> (r: Result<
     (Vec<u8>, [u8; 64], usize, [u8; 32], Vec<u8>),
     u8,
 >)
@@ -616,6 +650,8 @@ fn exchange<P: Provider>(prov: &mut P, peer: &[u8], sid: &[u8], suite: u16, grou
             &&& key_exchange(group, peer@, share@, shared@.take(dn as int))
             &&& sh@ == server_hello(random@, sid@, suite, group, share@, psk)
             &&& sh@.len() < 65536
+            &&& share@.len() <= 16000
+            &&& zero_tail ==> random@.skip(24) == zeros(8)
         },
 {
     let mut share: Vec<u8> = Vec::new();
@@ -630,6 +666,21 @@ fn exchange<P: Provider>(prov: &mut P, peer: &[u8], sid: &[u8], suite: u16, grou
     assert(share@.skip(0) =~= share@);
     let mut random = [0u8; 32];
     prov.random(&mut random);
+    if zero_tail {
+        // ECH: the last 8 bytes become the acceptance confirmation, over
+        // a ServerHello with them zero (RFC 9849 §7.2).
+        let mut k: usize = 24;
+        while k < 32
+            invariant
+                24 <= k <= 32,
+                forall|j: int| 24 <= j < k ==> random@[j] == 0,
+            decreases 32 - k,
+        {
+            random[k] = 0;
+            k = k + 1;
+        }
+        assert(random@.skip(24) =~= zeros(8));
+    }
     let mut sh: Vec<u8> = Vec::new();
     server_hello_x(&mut sh, &random, sid, suite, group, share.as_slice(), psk);
     Ok((share, shared, dn, random, sh))
@@ -723,6 +774,79 @@ fn late_keys(
     (c_ap, s_ap, expect, rm)
 }
 
+proof fn lemma_ech_ok(cc: SpecCfg, hsv: SpecHs, m: Seq<u8>, random0: Seq<u8>, sh0: Seq<u8>, sid: Seq<u8>)
+    requires
+        hsv.ch == m,
+        sid == session_id(m),
+        hsv.ech matches Some((outer, pt)) ==> {
+            &&& hsv.retry is None
+            &&& ech_decrypted(outer, pt, m)
+            &&& cc.ech_list.len() > 0
+            &&& !hsv.ech_retry
+            &&& hsv.random.take(24) + zeros(8) == random0
+            &&& hsv.random.skip(24) == ech_confirm(hsv.alg(), m.subrange(6, 38), m + sh0)
+            &&& sh0 == server_hello(random0, sid, hsv.choice.suite, hsv.choice.group, hsv.share, hsv.resumed is Some)
+        },
+        hsv.ech_retry ==> hsv.ech is None && cc.ech_list.len() > 0 && (parse_client_hello(m.skip(4)) matches Ok(s) && s.ech is Some),
+    ensures
+        hsv.ech_ok(cc),
+{
+    reveal(SpecHs::ech_ok);
+}
+
+/// ECH accepted: ServerHello.random's last 8 bytes, zero in `random`,
+/// become the acceptance confirmation over ClientHelloInner `m` and the
+/// ServerHello `sh` with them zero (RFC 9849 §7.2); and that ServerHello
+/// again with the new random.
+fn ech_finish(a: HashAlg, m: &[u8], random: [u8; 32], sh: &Vec<u8>, sid: &[u8], suite: u16, group: u16, share: &[u8], psk: bool) -> (r: Option<([u8; 32], Vec<u8>)>)
+    requires
+        sid@.len() <= 32,
+        share@.len() <= 16000,
+        random@.skip(24) == zeros(8),
+        sh@ == server_hello(random@, sid@, suite, group, share@, psk),
+    ensures
+        r matches Some((r2, sh2)) ==> {
+            &&& r2@.take(24) + zeros(8) == random@
+            &&& r2@.skip(24) == ech_confirm(a, m@.subrange(6, 38), m@ + sh@)
+            &&& sh2@ == server_hello(r2@, sid@, suite, group, share@, psk)
+            &&& sh2@.len() < 65536
+        },
+{
+    if m.len() < 38 {
+        return None;
+    }
+    let mut t2 = Transcript::new(a);
+    t2.update(m);
+    t2.update(sh.as_slice());
+    let th = t2.hash();
+    proof {
+        assert(Seq::<u8>::empty() + m@ + sh@ =~= m@ + sh@);
+        assert(hash_len(a) <= 255);
+    }
+    let conf = ech_confirm_x(a, vstd::slice::slice_subrange(m, 6, 38), &th, Ghost(m@ + sh@));
+    let cs = conf.as_slice();
+    let mut r2 = random;
+    let mut k: usize = 0;
+    while k < 8
+        invariant
+            k <= 8,
+            cs@.len() == 8,
+            forall|j: int| 0 <= j < 24 ==> r2@[j] == random@[j],
+            forall|j: int| 0 <= j < k ==> r2@[24 + j] == cs@[j],
+        decreases 8 - k,
+    {
+        r2[24 + k] = cs[k];
+        k = k + 1;
+    }
+    proof {
+        assert(r2@.take(24) + zeros(8) =~= random@);
+        assert(r2@.skip(24) =~= cs@);
+    }
+    let mut sh2: Vec<u8> = Vec::new();
+    server_hello_x(&mut sh2, &r2, sid, suite, group, share, psk);
+    Some((r2, sh2))
+}
+
 #[verifier::spinoff_prover]
 #[verifier::rlimit(1000)]
 pub(crate) fn prepare<P: Provider>(
@@ -739,6 +863,9 @@ pub(crate) fn prepare<P: Provider>(
     Ghost(resumed): Ghost<Option<SpecResume>>,
     tp: Option<&[u8]>,
     early: bool,
+    Ghost(ech): Ghost<Option<(Seq<u8>, Seq<u8>)>>,
+    ech_on: bool,
+    ech_retry: bool,
 ) -> (r: Result<Prep, u8>)
         requires
             cfg.wf(),
@@ -767,8 +894,12 @@ pub(crate) fn prepare<P: Provider>(
             resumed matches Some(rs) ==> resumption_ok(m@, tr.data(), suite_hash(c.suite), rs),
             tp matches Some(t) ==> t@.len() <= 60000,
             early ==> early_allowed(cfg@, m@, retry, choice, resumed),
+            ech_on == ech is Some,
+            ech matches Some((outer, pt)) ==> retry is None && ech_decrypted(outer, pt, m@) && cfg@.ech_list.len() > 0 && !ech_retry,
+            ech_retry ==> ech is None && cfg@.ech_list.len() > 0 && (parse_client_hello(m@.skip(4)) matches Ok(s) && s.ech is Some),
+            ech_retry ==> tp is None,
     ensures
-        r matches Ok(p) ==> prep_ok(p, cfg@, m@, retry, choice, resumed, opt_view(tp), early),
+        r matches Ok(p) ==> prep_ok(p, cfg@, m@, retry, choice, resumed, opt_view(tp), early, ech, ech_retry),
 {
         let mut tr = tr;
         let suite = c.suite;
@@ -792,10 +923,21 @@ pub(crate) fn prepare<P: Provider>(
             Some(k) => k,
             None => zero,
         };
-        let (share, shared, dn, random, sh) = match exchange(prov, peer, sid, suite, c.group, resuming) {
+        let (share, shared, dn, random, sh) = match exchange(prov, peer, sid, suite, c.group, resuming, ech_on) {
             Ok(x) => x,
             Err(e) => return Err(e),
         };
+        let ghost random0 = random@;
+        let ghost sh0 = sh@;
+        let (random, sh) = if ech_on {
+            match ech_finish(a, m, random, &sh, sid, suite, c.group, share.as_slice(), resuming) {
+                Some(x) => x,
+                None => return Err(INTERNAL_ERROR),
+            }
+        } else {
+            (random, sh)
+        };
+        let retry_l: Option<&[u8]> = if ech_retry { Some(cfg.ech_list.as_slice()) } else { None };
         let dhe = vstd::slice::slice_subrange(vstd::array::array_as_slice(&shared), 0, dn);
         assert(dhe@ =~= shared@.take(dn as int));
         let ghost pre = tr.data();
@@ -808,9 +950,9 @@ pub(crate) fn prepare<P: Provider>(
         let th = tr.hash();
         let (hs, c_hs, s_hs) = hs_keys(suite, pk.as_slice(), dhe, &th, Ghost(th_sh));
         let (fl, Ghost(sig)) = if resuming {
-            (resumed_flight(alpn, tp, early, &mut tr, &s_hs), Ghost(Seq::<u8>::empty()))
+            (resumed_flight(alpn, tp, early, retry_l, &mut tr, &s_hs), Ghost(Seq::<u8>::empty()))
         } else {
-            match server_flight(prov, cfg, c.signature_scheme, alpn, tp, early, &mut tr, &s_hs) {
+            match server_flight(prov, cfg, c.signature_scheme, alpn, tp, early, retry_l, &mut tr, &s_hs) {
                 Some(x) => x,
                 None => return Err(INTERNAL_ERROR),
             }
@@ -820,8 +962,10 @@ pub(crate) fn prepare<P: Provider>(
         let (c_ap, s_ap, expect, res) = late_keys(a, &hs, &c_hs, Ghost(pk@), Ghost(dhe@), tr, early, want_res);
         let ghost th_eoed = if early { th_sfin + end_of_early_data() } else { th_sfin };
         let ghost tpv = opt_view(tp);
-        let ghost hsv = SpecHs { retry, ch: m@, choice, random: random@, share: share@, dhe: dhe@, sig, resumed, tp: tpv, early };
+        let ghost hsv = SpecHs { retry, ch: m@, choice, random: random@, share: share@, dhe: dhe@, sig, resumed, tp: tpv, early, ech, ech_retry };
         proof {
+            assert(hsv.ee(cfg@) == encrypted_extensions(opt_view(alpn), opt_view(tp), early, opt_view(retry_l)));
+            lemma_ech_ok(cfg@, hsv, m@, random0, sh0, sid@);
             assert(pk@ == hsv.psk());
             if early {
                 lemma_early_no_retry(cfg@, m@, retry, choice, resumed);
@@ -1573,6 +1717,9 @@ impl<P: Provider> ServerConn<P> {
         Ghost(choice): Ghost<SpecChoice>,
         h: &ClientHello,
         Ghost(s): Ghost<SpecHello>,
+        Ghost(ech): Ghost<Option<(Seq<u8>, Seq<u8>)>>,
+        ech_on: bool,
+        ech_retry: bool,
         out: &mut Vec<u8>,
     ) -> (r: Result<Event, Error>)
         requires
@@ -1581,6 +1728,9 @@ impl<P: Provider> ServerConn<P> {
             old(self).wf(),
             old(self).phase() == Phase::Start || old(self).phase() == Phase::Retried,
             cfg.wf(),
+            ech_on == ech is Some,
+            ech matches Some((outer, pt)) ==> retry is None && ech_decrypted(outer, pt, m@) && cfg@.ech_list.len() > 0 && !ech_retry,
+            ech_retry ==> ech is None && cfg@.ech_list.len() > 0 && s.ech is Some,
             cfg@ == old(self).config(),
             old(out)@.len() <= usize::MAX / 2,
             is_msg(m@, 1),
@@ -1656,7 +1806,7 @@ impl<P: Provider> ServerConn<P> {
                 assert(early_allowed(cfg@, m@, retry, choice, resumed));
             }
         }
-        let p = match prepare(&mut self.prov, cfg, m, body, sid, c, tr, Ghost(retry), Ghost(choice), psk, Ghost(resumed), None, early) {
+        let p = match prepare(&mut self.prov, cfg, m, body, sid, c, tr, Ghost(retry), Ghost(choice), psk, Ghost(resumed), None, early, Ghost(ech), ech_on, ech_retry) {
             Ok(p) => p,
             Err(code) => return Err(self.fail(code, out)),
         };
@@ -1750,6 +1900,143 @@ impl<P: Provider> ServerConn<P> {
     /// A ClientHello message `m`, in `Start` or `Retried`.
     #[verifier::spinoff_prover]
     #[verifier::rlimit(60)]
+    /// ECH (RFC 9849 §7.1) on ClientHelloOuter `body`: `Ok(None)` if the
+    /// server's keys do not open it (ECH declined), else ClientHelloInner
+    /// (a message) and the EncodedClientHelloInner it was decoded from;
+    /// `Err` with the alert for a malformed extension or inner.
+    fn open_ech(&mut self, cfg: &Config, body: &[u8], h: &ClientHello, Ghost(s): Ghost<SpecHello>) -> (r: Result<Option<(Vec<u8>, Ghost<Seq<u8>>)>, u8>)
+        requires
+            parse_client_hello(body@) == Ok::<SpecHello, SpecAlert>(s),
+            h.models(s),
+            h.ext_spans_ok(body@.len()),
+            h.session_id.start <= h.session_id.end <= body@.len(),
+            h.extensions.start <= h.extensions.end <= body@.len(),
+            h.ech is Some,
+        ensures
+            final(self).wf() == old(self).wf(),
+            final(self).state == old(self).state,
+            final(self).cfg == old(self).cfg,
+            final(self).buf == old(self).buf,
+            r matches Ok(Some((inner, pt))) ==> ech_decrypted(hs_msg(1, body@), pt@, inner@),
+    {
+        let sp = h.ech.unwrap();
+        if !(sp.start < sp.end) {
+            return Err(DECODE_ERROR);
+        }
+        if body[sp.start] != 0 {
+            // An inner ECHClientHello in ClientHelloOuter (§7.1).
+            return Err(ILLEGAL_PARAMETER);
+        }
+        let eo = match ech_outer_x(body, sp.start, sp.end) {
+            Some(x) => x,
+            None => return Err(DECODE_ERROR),
+        };
+        let aad = outer_aad_x(body, eo.payload);
+        let mut pt: Vec<u8> = Vec::new();
+        if !self.prov.ech_open(eo.config_id, eo.kdf, eo.aead, eo.enc.of(body), aad.as_slice(), eo.payload.of(body), &mut pt) {
+            return Ok(None);
+        }
+        proof {
+            assert(parse_exts(body@, h.extensions.start as int, h.extensions.end as int) == Some(s.outer.exts));
+        }
+        let ib = match decode_inner_x(pt.as_slice(), body, h.extensions.start, h.extensions.end, h.session_id, Ghost(s.outer.exts)) {
+            Some(v) => v,
+            None => return Err(ILLEGAL_PARAMETER),
+        };
+        if ib.len() >= 0x10000 {
+            return Err(ILLEGAL_PARAMETER);
+        }
+        let mut inner: Vec<u8> = Vec::with_capacity(ib.len() + 4);
+        put1(&mut inner, 1);
+        put3(&mut inner, ib.len());
+        put(&mut inner, ib.as_slice());
+        proof {
+            assert(inner@ =~= hs_msg(1, ib@));
+            assert(inner@.skip(4) =~= ib@);
+            assert(hs_msg(1, body@).skip(4) =~= body@);
+        }
+        // The inner must say it is one (§7.1), else illegal_parameter;
+        // checked by the caller once it is parsed.
+        Ok(Some((inner, Ghost(pt@))))
+    }
+
+    /// The handshake on ClientHelloInner `im`, decrypted from
+    /// ClientHelloOuter `m`. `None`: it would need a HelloRetryRequest,
+    /// which this server does not do under ECH, so ECH is declined and
+    /// nothing has changed.
+    fn on_inner_hello(&mut self, cfg: &Config, m: &[u8], im: &[u8], Ghost(pt): Ghost<Seq<u8>>, out: &mut Vec<u8>) -> (r: Option<Result<Event, Error>>)
+        requires
+            old(self).wf(),
+            old(self).phase() == Phase::Start,
+            cfg.wf(),
+            cfg@ == old(self).config(),
+            cfg@.ech_list.len() > 0,
+            old(out)@.len() <= usize::MAX / 2,
+            is_msg(m@, 1),
+            ech_decrypted(m@, pt, im@),
+        ensures
+            r is None ==> final(self) == old(self) && final(out)@ == old(out)@,
+            r is Some ==> {
+                &&& final(self).wf()
+                &&& final(self).config() == old(self).config()
+                &&& final(out)@.take(old(out)@.len() as int) == old(out)@
+                &&& r matches Some(Ok(e)) ==> e is Nothing
+                &&& final(self).phase() == Phase::WaitFinished || final(self).phase() == Phase::Closed
+                &&& final(self).phase() == Phase::WaitFinished ==> final(self).handshake().ech matches Some((o, _)) && o == m@
+            },
+    {
+        if im.len() < 4 {
+            return Some(Err(self.fail(INTERNAL_ERROR, out)));
+        }
+        let body = vstd::slice::slice_subrange(im, 4, im.len());
+        proof {
+            assert(body@ =~= im@.skip(4));
+        }
+        let h = match ClientHello::parse(body) {
+            Ok(h) => h,
+            Err(a) => return Some(Err(self.fail(a.code(), out))),
+        };
+        let ghost s = choose|s: SpecHello| parse_client_hello(body@) == Ok::<SpecHello, SpecAlert>(s) && h.models(s);
+        let inner_ok = match h.ech {
+            Some(sp) => sp.start <= sp.end && sp.end <= body.len() && ech_inner_x(body, sp.start, sp.end),
+            None => false,
+        };
+        if !inner_ok {
+            return Some(Err(self.fail(ILLEGAL_PARAMETER, out)));
+        }
+        let o = crate::negotiate::negotiate(body, &h, cfg.suites.as_slice(), cfg.groups.as_slice(), cfg.sigs.as_slice(), cfg.alpn.as_slice());
+        proof {
+            reveal(outcome);
+            reveal(session_id);
+            assert(o@ == crate::spec::negotiate(body@, s, cfg@.suites, cfg@.groups, cfg@.sigs, cfg@.alpn));
+            assert(outcome(cfg@, im@) == Some(o@));
+        }
+        let c = match o {
+            Outcome::Reject(a) => return Some(Err(self.fail(a.code(), out))),
+            Outcome::Retry { .. } => return None,
+            Outcome::Accept(c) => c,
+        };
+        let sp = h.session_id;
+        if !(sp.start <= sp.end && sp.end <= body.len() && sp.end - sp.start <= 32) {
+            return Some(Err(self.fail(DECODE_ERROR, out)));
+        }
+        let sid = sp.of(body);
+        proof {
+            reveal(session_id);
+            assert(sid@ == session_id(im@));
+        }
+        if !(c.suite == 0x1301 || c.suite == 0x1302 || c.suite == 0x1303) {
+            return Some(Err(self.fail(INTERNAL_ERROR, out)));
+        }
+        self.skip = if h.early_data { EARLY_SKIP } else { 0 };
+        let ghost choice = match o@ {
+            SpecOutcome::Accept(x) => x,
+            _ => arbitrary(),
+        };
+        let tr = Transcript::new(suite_hash_x(c.suite));
+        Some(self.accept(cfg, im, body, sid, c, tr, false, Ghost(None), Ghost(choice), &h, Ghost(s), Ghost(Some((m@, pt))), true, false, out))
+    }
+
     fn on_client_hello(&mut self, m: &[u8], out: &mut Vec<u8>) -> (r: Result<Event, Error>)
         requires
             old(self).wf(),
@@ -1764,7 +2051,7 @@ impl<P: Provider> ServerConn<P> {
             final(self).phase() == Phase::WaitFinished || final(self).phase() == Phase::Closed || (old(
                 self,
             ).phase() == Phase::Start && final(self).phase() == Phase::Retried),
-            final(self).phase() == Phase::WaitFinished ==> final(self).handshake().ch == m@,
+            final(self).phase() == Phase::WaitFinished ==> final(self).handshake().ch == m@ || (final(self).handshake().ech matches Some((o, _)) && o == m@),
     {
         let cfg_arc = self.cfg.clone();
         let cfg: &Config = &*cfg_arc;
@@ -1798,6 +2085,28 @@ impl<P: Provider> ServerConn<P> {
         match st {
             State::Start => {
                 self.state = State::Start;
+                // Encrypted Client Hello (RFC 9849 §7.1): if the client's
+                // ECH opens, the handshake is ClientHelloInner's.
+                let ech_cfg = cfg.ech_list.len() > 0;
+                if ech_cfg && h.ech.is_some() {
+                    match self.open_ech(cfg, body, &h, Ghost(s)) {
+                        Err(code) => return Err(self.fail(code, out)),
+                        Ok(Some((inner, gpt))) => {
+                            let ghost pt = gpt@;
+                            proof {
+                                assert(ech_decrypted(m@, pt, inner@));
+                            }
+                            match self.on_inner_hello(cfg, m, inner.as_slice(), Ghost(pt), out) {
+                                Some(r) => return r,
+                                // ClientHelloInner would need a
+                                // HelloRetryRequest: ECH is declined.
+                                None => {},
+                            }
+                        },
+                        Ok(None) => {},
+                    }
+                }
+                let ech_retry = ech_cfg && h.ech.is_some();
                 match o {
                     Outcome::Reject(a) => Err(self.fail(a.code(), out)),
                     Outcome::Retry { suite, group } => {
@@ -1816,7 +2125,7 @@ impl<P: Provider> ServerConn<P> {
                             _ => arbitrary(),
                         };
                         let tr = Transcript::new(suite_hash_x(c.suite));
-                        self.accept(cfg, m, body, sid, c, tr, false, Ghost(None), Ghost(choice), &h, Ghost(s), out)
+                        self.accept(cfg, m, body, sid, c, tr, false, Ghost(None), Ghost(choice), &h, Ghost(s), Ghost(None), false, ech_retry, out)
                     },
                 }
             },
@@ -1843,7 +2152,8 @@ impl<P: Provider> ServerConn<P> {
                             },
                         };
                         self.state = State::Start;
-                        self.accept(cfg, m, body, sid, c, tr, true, Ghost(Some((ch1, hrr))), Ghost(choice), &h, Ghost(s), out)
+                        let ech_retry = cfg.ech_list.len() > 0 && h.ech.is_some();
+                        self.accept(cfg, m, body, sid, c, tr, true, Ghost(Some((ch1, hrr))), Ghost(choice), &h, Ghost(s), Ghost(None), false, ech_retry, out)
                     },
                     Outcome::Retry { .. } => Err(self.fail(ILLEGAL_PARAMETER, out)),
                     Outcome::Reject(a) => Err(self.fail(a.code(), out)),
