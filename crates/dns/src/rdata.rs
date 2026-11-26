@@ -1329,7 +1329,12 @@ fn name_into_in(b: &[u8], p: usize, end: usize, out: &mut Vec<u8>) -> (r: Option
         },
         r is None ==> parse_name_in(b@, p as int, end as int) is None,
         is_prefix(old(out)@, final(out)@),
+        final(out)@.len() <= old(out)@.len() + MAX_NAME_WIRE_LEN,
+        r matches Some((e, _)) ==> p < e <= end,
 {
+    proof {
+        lemma_parse_name_valid(b@, p as int);
+    }
     match read_name_into(b, p, out) {
         Some((e, n)) => if e <= end {
             Some((e, n))
@@ -1340,34 +1345,42 @@ fn name_into_in(b: &[u8], p: usize, end: usize, out: &mut Vec<u8>) -> (r: Option
     }
 }
 
-fn canon_one_name(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (ok: bool)
+/// The `canon_*` functions return, besides whether they succeeded, how
+/// many names they decoded (each at most `MAX_NAME_STEPS` loop turns of
+/// `read_name_into`). What they write is at most the RDATA's length plus
+/// two names.
+fn canon_one_name(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (r: (bool, Ghost<nat>))
     requires
         start <= end <= b@.len(),
         t == 2 || t == 5 || t == 12,
     ensures
-        ok ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
+        r.0 ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
             out,
         )@ + c),
-        !ok ==> canon_names(b@, t, start as int, end as int) is None,
+        !r.0 ==> canon_names(b@, t, start as int, end as int) is None,
         is_prefix(old(out)@, final(out)@),
+        r.1@ <= 2,
+        final(out)@.len() <= old(out)@.len() + (end - start) + 2 * MAX_NAME_WIRE_LEN,
 {
     let ghost o0 = out@;
     match name_into_in(b, start, end, out) {
-        Some((e, n)) => e == end,
-        None => false,
+        Some((e, n)) => (e == end, Ghost(1)),
+        None => (false, Ghost(1)),
     }
 }
 
-fn canon_mx_srv(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (ok: bool)
+fn canon_mx_srv(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (r: (bool, Ghost<nat>))
     requires
         start <= end <= b@.len(),
         t == 15 || t == 33,
     ensures
-        ok ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
+        r.0 ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
             out,
         )@ + c),
-        !ok ==> canon_names(b@, t, start as int, end as int) is None,
+        !r.0 ==> canon_names(b@, t, start as int, end as int) is None,
         is_prefix(old(out)@, final(out)@),
+        r.1@ <= 2,
+        final(out)@.len() <= old(out)@.len() + (end - start) + 2 * MAX_NAME_WIRE_LEN,
 {
     let ghost o0 = out@;
     let k: usize = if t == 15 { 2 } else { 6 };
@@ -1375,7 +1388,7 @@ fn canon_mx_srv(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -
         proof {
             lemma_prefix_refl(o0);
         }
-        return false;
+        return (false, Ghost(0));
     }
     push_bytes(out, slice_subrange(b, start, start + k));
     let ghost o1 = out@;
@@ -1388,27 +1401,29 @@ fn canon_mx_srv(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -
             proof {
                 assert(out@ =~= o0 + (b@.subrange(start as int, start + k) + ser_name(n@)));
             }
-            e == end
+            (e == end, Ghost(1))
         },
-        None => false,
+        None => (false, Ghost(1)),
     }
 }
 
-fn canon_soa(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (ok: bool)
+fn canon_soa(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (r: (bool, Ghost<nat>))
     requires
         start <= end <= b@.len(),
         t == 6,
     ensures
-        ok ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
+        r.0 ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
             out,
         )@ + c),
-        !ok ==> canon_names(b@, t, start as int, end as int) is None,
+        !r.0 ==> canon_names(b@, t, start as int, end as int) is None,
         is_prefix(old(out)@, final(out)@),
+        r.1@ <= 2,
+        final(out)@.len() <= old(out)@.len() + (end - start) + 2 * MAX_NAME_WIRE_LEN,
 {
     let ghost o0 = out@;
     let (p1, n1) = match name_into_in(b, start, end, out) {
         Some(x) => x,
-        None => return false,
+        None => return (false, Ghost(1)),
     };
     let ghost o1 = out@;
     let r = name_into_in(b, p1, end, out);
@@ -1418,36 +1433,38 @@ fn canon_soa(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (
     }
     let (p2, n2) = match r {
         Some(x) => x,
-        None => return false,
+        None => return (false, Ghost(2)),
     };
     if end - p2 != 20 {
-        return false;
+        return (false, Ghost(2));
     }
     push_bytes(out, slice_subrange(b, p2, end));
     proof {
         lemma_prefix_trans(o0, o2, out@);
         assert(out@ =~= o0 + (ser_name(n1@) + ser_name(n2@) + b@.subrange(p2 as int, end as int)));
     }
-    true
+    (true, Ghost(2))
 }
 
-fn canon_sig(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (ok: bool)
+fn canon_sig(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (r: (bool, Ghost<nat>))
     requires
         start <= end <= b@.len(),
         t == 24,
     ensures
-        ok ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
+        r.0 ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
             out,
         )@ + c),
-        !ok ==> canon_names(b@, t, start as int, end as int) is None,
+        !r.0 ==> canon_names(b@, t, start as int, end as int) is None,
         is_prefix(old(out)@, final(out)@),
+        r.1@ <= 2,
+        final(out)@.len() <= old(out)@.len() + (end - start) + 2 * MAX_NAME_WIRE_LEN,
 {
     let ghost o0 = out@;
     if end - start < 18 {
         proof {
             lemma_prefix_refl(o0);
         }
-        return false;
+        return (false, Ghost(0));
     }
     push_bytes(out, slice_subrange(b, start, start + 18));
     let ghost o1 = out@;
@@ -1458,7 +1475,7 @@ fn canon_sig(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (
     }
     let (p, n) = match r {
         Some(x) => x,
-        None => return false,
+        None => return (false, Ghost(1)),
     };
     push_bytes(out, slice_subrange(b, p, end));
     proof {
@@ -1466,39 +1483,48 @@ fn canon_sig(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (
         assert(out@ =~= o0 + (b@.subrange(start as int, start + 18) + ser_name(n@)
             + b@.subrange(p as int, end as int)));
     }
-    true
+    (true, Ghost(1))
 }
 
-fn canon_naptr(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (ok: bool)
+fn canon_naptr(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (r: (bool, Ghost<nat>))
     requires
         start <= end <= b@.len(),
         t == 35,
     ensures
-        ok ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
+        r.0 ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
             out,
         )@ + c),
-        !ok ==> canon_names(b@, t, start as int, end as int) is None,
+        !r.0 ==> canon_names(b@, t, start as int, end as int) is None,
         is_prefix(old(out)@, final(out)@),
+        r.1@ <= 2,
+        final(out)@.len() <= old(out)@.len() + (end - start) + 2 * MAX_NAME_WIRE_LEN,
 {
     let ghost o0 = out@;
     proof {
         lemma_prefix_refl(o0);
     }
     if end - start < 4 {
-        return false;
+        return (false, Ghost(0));
     }
     let p1 = match read_cstring(b, start + 4, end) {
         Some((_, q)) => q,
-        None => return false,
+        None => return (false, Ghost(0)),
     };
     let p2 = match read_cstring(b, p1, end) {
         Some((_, q)) => q,
-        None => return false,
+        None => return (false, Ghost(0)),
     };
     let p3 = match read_cstring(b, p2, end) {
         Some((_, q)) => q,
-        None => return false,
+        None => return (false, Ghost(0)),
     };
+    proof {
+        assert(start <= p1 <= p2 <= p3 <= end) by {
+            lemma_cstring_end(b@, start + 4, end as int);
+            lemma_cstring_end(b@, p1 as int, end as int);
+            lemma_cstring_end(b@, p2 as int, end as int);
+        }
+    }
     push_bytes(out, slice_subrange(b, start, p3));
     let ghost o1 = out@;
     let r = name_into_in(b, p3, end, out);
@@ -1510,10 +1536,16 @@ fn canon_naptr(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) ->
             proof {
                 assert(out@ =~= o0 + (b@.subrange(start as int, p3 as int) + ser_name(n@)));
             }
-            e == end
+            (e == end, Ghost(1))
         },
-        None => false,
+        None => (false, Ghost(1)),
     }
+}
+
+proof fn lemma_cstring_end(b: Seq<u8>, p: int, end: int)
+    ensures
+        parse_cstring(b, p, end) matches Some((_, q)) ==> p < q <= end,
+{
 }
 
 /// Appends the canonical form of the RDATA `b[start..end]` of type `t`
@@ -1531,6 +1563,23 @@ pub fn canon_into(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>)
         !ok ==> canon_names(b@, t, start as int, end as int) is None,
         is_prefix(old(out)@, final(out)@),
 {
+    canon_into_metered(b, t, start, end, out).0
+}
+
+/// `canon_into`, and how many names it decoded (at most 2).
+#[inline(always)]
+pub fn canon_into_metered(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (r: (bool, Ghost<nat>))
+    requires
+        start <= end <= b@.len(),
+    ensures
+        r.0 ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
+            out,
+        )@ + c),
+        !r.0 ==> canon_names(b@, t, start as int, end as int) is None,
+        is_prefix(old(out)@, final(out)@),
+        r.1@ <= 2,
+        final(out)@.len() <= old(out)@.len() + (end - start) + 2 * MAX_NAME_WIRE_LEN,
+{
     if t == 2 || t == 5 || t == 12 {
         canon_one_name(b, t, start, end, out)
     } else if t == 15 || t == 33 {
@@ -1543,7 +1592,7 @@ pub fn canon_into(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>)
         canon_naptr(b, t, start, end, out)
     } else {
         push_bytes(out, slice_subrange(b, start, end));
-        true
+        (true, Ghost(0))
     }
 }
 
