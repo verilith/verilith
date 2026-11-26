@@ -399,7 +399,7 @@ fn scalars() {
     let mut r = Reader::new(s, &mut idx).unwrap();
     let mut buf = Vec::new();
     r.arr_begin().unwrap();
-    let mut next = |r: &mut Reader| assert_eq!(r.arr_next(), Ok(true));
+    let next = |r: &mut Reader| assert_eq!(r.arr_next(), Ok(true));
     next(&mut r);
     assert_eq!(r.i64(), Ok(i64::MIN));
     next(&mut r);
