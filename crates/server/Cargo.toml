@@ -1,0 +1,29 @@
+[package]
+name = "verilith-server"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "A formally verified (Verus) HTTP server built from the Verilith parsers"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/verilith/verilith"
+keywords = ["http", "server", "verified", "verus"]
+categories = ["network-programming", "web-programming::http-server"]
+publish = false
+
+[lib]
+crate-type = ["rlib"]
+
+[[bin]]
+name = "verilith-server"
+path = "src/bin/verilith-server.rs"
+
+[dependencies]
+verilith-core = { path = "../core", version = "0.1.0" }
+verilith-http = { path = "../http", version = "0.1.0" }
+vstd = { workspace = true, features = ["std"] }
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(verus_only)'] }
