@@ -5,7 +5,6 @@
 pub mod spec;
 mod stable;
 pub mod integer;
-pub mod henc;
 pub mod table;
 pub mod lemmas;
 pub mod decoder;
