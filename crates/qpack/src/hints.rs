@@ -2,7 +2,6 @@
 //! tables. Nothing here is verified, and nothing needs to be: the encoder
 //! checks every hint byte for byte before it uses it, so a wrong hint
 //! costs compression, never correctness.
-use std::collections::HashMap;
 
 fn static_ids(name: &[u8]) -> &'static [u8] {
     match name {
@@ -82,49 +81,52 @@ fn mix(h: u64, w: u64) -> u64 {
     (h ^ w).wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(29)
 }
 
+/// A hash of a field.
 #[inline]
-fn hash(name: &[u8], value: &[u8]) -> u64 {
+pub fn hash(name: &[u8], value: &[u8]) -> u64 {
     let mut h = (name.len() as u64) << 32 | value.len() as u64;
     for s in [name, value] {
         let mut c = s.chunks_exact(8);
         for w in &mut c {
             h = mix(h, u64::from_le_bytes(w.try_into().unwrap()));
         }
+        let r = c.remainder();
         let mut t = 0u64;
-        for (k, &b) in c.remainder().iter().enumerate() {
+        for (k, &b) in r.iter().enumerate() {
             t |= (b as u64) << (8 * k);
         }
         h = mix(h, t ^ 0xff);
     }
-    h
+    h | 1
 }
 
 const SEEN: usize = 512;
 
+/// Where the dynamic table may hold a field, by hash: one slot a hash,
+/// newer entries overwriting older ones. A lost or stale slot costs a
+/// missed reference, nothing more.
 pub struct Index {
-    pairs: HashMap<u64, u64>,
+    slots: Vec<(u64, u64)>,
+    mask: usize,
     seen: Vec<u64>,
-    live: u64,
 }
 
 impl Index {
-    pub fn new() -> Index {
-        Index { pairs: HashMap::new(), seen: vec![0; SEEN], live: 0 }
+    pub fn new(cap: u64) -> Index {
+        let n = ((cap / 32) as usize * 4).next_power_of_two().max(64);
+        Index { slots: vec![(0, 0); n], mask: n - 1, seen: vec![0; SEEN] }
     }
 
     #[inline]
-    pub fn find(&self, name: &[u8], value: &[u8]) -> Option<u64> {
-        if self.pairs.is_empty() {
-            return None;
-        }
-        self.pairs.get(&hash(name, value)).copied()
+    pub fn find(&self, h: u64) -> Option<u64> {
+        let s = self.slots[(h >> 20) as usize & self.mask];
+        if s.0 == h { Some(s.1) } else { None }
     }
 
     /// True the second time a field is seen (in a window of recent
     /// fields): a field seen once is often seen again.
     #[inline]
-    pub fn worth(&mut self, name: &[u8], value: &[u8]) -> bool {
-        let h = hash(name, value) | 1;
+    pub fn worth(&mut self, h: u64) -> bool {
         let slot = (h >> 40) as usize % SEEN;
         if self.seen[slot] == h {
             true
@@ -134,11 +136,8 @@ impl Index {
         }
     }
 
-    pub fn add(&mut self, name: &[u8], value: &[u8], a: u64, dropped: u64) {
-        self.pairs.insert(hash(name, value), a);
-        self.live = a + 1 - dropped;
-        if self.pairs.len() as u64 > 2 * self.live + 64 {
-            self.pairs.retain(|_, x| *x >= dropped);
-        }
+    #[inline]
+    pub fn add(&mut self, h: u64, a: u64) {
+        self.slots[(h >> 20) as usize & self.mask] = (h, a);
     }
 }

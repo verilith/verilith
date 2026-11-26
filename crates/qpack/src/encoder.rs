@@ -25,12 +25,35 @@ use crate::spec::*;
 use crate::table::*;
 use crate::lemmas::*;
 use std::rc::Rc;
-use verilith_core::prims::extend;
+use verilith_core::prims::{extend, load_u64_le};
+#[cfg(verus_only)]
+use verilith_core::prims::le_bytes;
 use vstd::prelude::*;
 
 verus! {
 
-/// `a == b`.
+proof fn lemma_le_eq(a: Seq<u8>, b: Seq<u8>, i: int, n: nat)
+    requires
+        0 <= i,
+        i + n <= a.len(),
+        i + n <= b.len(),
+        le_bytes(a, i, n) == le_bytes(b, i, n),
+    ensures
+        forall|j: int| i <= j < i + n ==> a[j] == b[j],
+    decreases n,
+{
+    if n > 0 {
+        let ra = le_bytes(a, i + 1, (n - 1) as nat);
+        let rb = le_bytes(b, i + 1, (n - 1) as nat);
+        let x = a[i] as int;
+        let y = b[i] as int;
+        assert(x == y && ra == rb) by (nonlinear_arith)
+            requires x + 256 * ra == y + 256 * rb, 0 <= x < 256, 0 <= y < 256, ra >= 0, rb >= 0;
+        lemma_le_eq(a, b, i + 1, (n - 1) as nat);
+    }
+}
+
+/// `a == b`, eight bytes at a time.
 pub fn bytes_eq(a: &[u8], b: &[u8]) -> (r: bool)
     ensures
         r == (a@ == b@),
@@ -38,13 +61,31 @@ pub fn bytes_eq(a: &[u8], b: &[u8]) -> (r: bool)
     if a.len() != b.len() {
         return false;
     }
+    let n = a.len();
     let mut i: usize = 0;
-    while i < a.len()
+    while n - i >= 8
         invariant
-            i <= a@.len(),
+            i <= n,
+            n == a@.len(),
             a@.len() == b@.len(),
             forall|j: int| 0 <= j < i ==> a@[j] == b@[j],
-        decreases a@.len() - i,
+        decreases n - i,
+    {
+        if load_u64_le(a, i) != load_u64_le(b, i) {
+            return false;
+        }
+        proof {
+            lemma_le_eq(a@, b@, i as int, 8);
+        }
+        i = i + 8;
+    }
+    while i < n
+        invariant
+            i <= n,
+            n == a@.len(),
+            a@.len() == b@.len(),
+            forall|j: int| 0 <= j < i ==> a@[j] == b@[j],
+        decreases n - i,
     {
         if a[i] != b[i] {
             return false;
@@ -140,6 +181,13 @@ pub fn static_find(name: &[u8], value: &[u8]) -> (usize, usize) {
     crate::hints::static_find(name, value)
 }
 
+/// A hash of a field, for `Hints`.
+#[verifier::external_body]
+#[inline(always)]
+pub fn field_hash(name: &[u8], value: &[u8]) -> u64 {
+    crate::hints::hash(name, value)
+}
+
 /// Lookups in the dynamic table, by hash: hints only.
 #[verifier::external_body]
 pub struct Hints {
@@ -148,26 +196,29 @@ pub struct Hints {
 
 impl Hints {
     #[verifier::external_body]
-    pub fn new() -> Hints {
-        Hints { h: crate::hints::Index::new() }
+    pub fn new(cap: u64) -> Hints {
+        Hints { h: crate::hints::Index::new(cap) }
     }
 
-    /// The newest entry that may be `name: value`.
+    /// An entry that may be the field with hash `h`.
     #[verifier::external_body]
-    pub fn find(&self, name: &[u8], value: &[u8]) -> Option<u64> {
-        self.h.find(name, value)
+    #[inline(always)]
+    pub fn find(&self, h: u64) -> Option<u64> {
+        self.h.find(h)
     }
 
-    /// Whether `name: value` is worth inserting.
+    /// Whether the field with hash `h` is worth inserting.
     #[verifier::external_body]
-    pub fn worth(&mut self, name: &[u8], value: &[u8]) -> bool {
-        self.h.worth(name, value)
+    #[inline(always)]
+    pub fn worth(&mut self, h: u64) -> bool {
+        self.h.worth(h)
     }
 
-    /// Entry `a` is `name: value`; entries below `dropped` are gone.
+    /// Entry `a` is the field with hash `h`.
     #[verifier::external_body]
-    pub fn add(&mut self, name: &[u8], value: &[u8], a: u64, dropped: u64) {
-        self.h.add(name, value, a, dropped)
+    #[inline(always)]
+    pub fn add(&mut self, h: u64, a: u64) {
+        self.h.add(h, a)
     }
 }
 
@@ -365,6 +416,8 @@ pub struct Encoder {
     /// The start of a decoder instruction that has not fully arrived.
     pub held: Vec<u8>,
     pub hints: Hints,
+    /// A buffer for field lines, kept between sections.
+    pub scratch: Vec<u8>,
     /// The whole encoder stream so far, and the part taken.
     pub es_all: Ghost<Seq<u8>>,
     pub taken: Ghost<Seq<u8>>,
@@ -415,7 +468,8 @@ impl Encoder {
             risky: Vec::new(),
             es: Vec::new(),
             held: Vec::new(),
-            hints: Hints::new(),
+            hints: Hints::new(cap),
+            scratch: Vec::new(),
             es_all: Ghost(Seq::empty()),
             taken: Ghost(Seq::empty()),
         };
@@ -695,8 +749,9 @@ impl Encoder {
                 return (refs, Ghost(Item { bytes: int_enc(0xC0, 6, si as nat), field: f, kind: Kind::IdxStatic(si as nat) }));
             }
         }
+        let fh = if never { 0 } else { field_hash(name, value) };
         if !never {
-            match self.hints.find(name, value) {
+            match self.hints.find(fh) {
                 Some(a) => {
                     if a >= self.table.dropped && a < self.table.icount() && (a < self.krc || can_block) {
                         let e = self.table.abs(a);
@@ -714,13 +769,12 @@ impl Encoder {
                 None => {},
             }
         }
-        if !never && can_block && self.hints.worth(name, value) {
+        if !never && can_block && self.hints.worth(fh) {
             let limit = if refs.has && refs.min < min_sent { refs.min } else { min_sent };
             let a = self.table.icount();
             if self.insert_field(name, value, sn, limit) {
                 let ghost t1 = self.table.view();
-                let d = self.table.dropped;
-                self.hints.add(name, value, a, d);
+                self.hints.add(fh, a);
                 let r2 = Refs { has: true, min: if refs.has { refs.min } else { a }, max: a };
                 let it = emit_idx(lines, base, a, Ghost(t1));
                 return (r2, it);
@@ -830,11 +884,13 @@ impl Encoder {
         let can_block = self.can_block(stream);
         let min_sent = self.min_sent();
         let mut lines: Vec<u8> = Vec::new();
+        core::mem::swap(&mut lines, &mut self.scratch);
+        lines.clear();
         let mut refs = Refs { has: false, min: 0, max: 0 };
         let ghost mut its: Seq<Item> = Seq::empty();
         let n = fields.len();
         let mut i: usize = 0;
-        let ghost s0 = *old(self);
+        let ghost s0 = *self;
         proof {
             assert(lines@ =~= cat(its));
             assert(flds(its) =~= fields.view().take(0));
@@ -843,7 +899,8 @@ impl Encoder {
             invariant
                 self.inv(),
                 self.same_but_table(&s0),
-                s0 == *old(self),
+                s0.same_but_table(old(self)),
+                s0.table.view() == old(self).table.view(),
                 fields.inv(),
                 fields.buf@.len() <= 0x1000_0000,
                 n == fields.view().len(),
@@ -911,6 +968,7 @@ impl Encoder {
             integer::encode(out, 0x80, 7, ric - bw - 1);
         }
         extend(out, lines.as_slice());
+        core::mem::swap(&mut lines, &mut self.scratch);
         proof {
             let sb = sec_bytes(ric as nat, bw as nat, mc, its);
             assert(enc_ric as nat == encode_ric(ric as nat, mc));

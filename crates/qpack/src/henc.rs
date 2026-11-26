@@ -473,7 +473,7 @@ proof fn lemma_tail_push(out: Seq<u8>, z: int, x: u8)
 #[inline(always)]
 fn add_code(acc: u64, nb: u64, c: u64, l: u64) -> (r: u64)
     requires
-        nb < 8,
+        nb < 32,
         acc < pow2(nb as nat),
         1 <= l <= 30,
         c < pow2(l as nat),
@@ -552,7 +552,7 @@ pub fn encode(s: &[u8], out: &mut Vec<u8>)
             z == o0.len(),
             z <= out@.len(),
             out@.subrange(0, z) == o0,
-            nb < 8,
+            nb < 32,
             acc < pow2(nb as nat),
             val(tail(out@, z)) * pow2(nb as nat) + acc == hval(s@.subrange(0, i as int)),
             8 * tail(out@, z).len() + nb == hbits(s@.subrange(0, i as int)),
@@ -576,17 +576,58 @@ pub fn encode(s: &[u8], out: &mut Vec<u8>)
             lemma_mul_is_associative(v0 as int, pow2(n0) as int, pow2(l as nat) as int);
             lemma_mul_is_distributive_add_other_way(pow2(l as nat) as int, (v0 * pow2(n0)) as int, a0 as int);
         }
+        // Bytes go out four or more at a time.
+        if nb >= 32 {
+            while nb >= 8
+                invariant
+                    i < s@.len(),
+                    nb < 62,
+                    code_ok(),
+                    z == o0.len(),
+                    z <= out@.len(),
+                    out@.subrange(0, z) == o0,
+                    acc < pow2(nb as nat),
+                    val(tail(out@, z)) * pow2(nb as nat) + acc == hval(s@.subrange(0, i + 1)),
+                    8 * tail(out@, z).len() + nb == hbits(s@.subrange(0, i + 1)),
+                decreases nb,
+            {
+                let ghost e0 = tail(out@, z);
+                let ghost an = acc as nat;
+                let (top, low) = take_byte(acc, nb);
+                proof {
+                    lemma_tail_push(out@, z, top);
+                    lemma_val_push(e0, top);
+                }
+                out.push(top);
+                proof {
+                    let r = (nb - 8) as nat;
+                    lemma_pow2_adds(r, 8);
+                    lemma2_to64();
+                    let v0 = val(e0);
+                    // v0 * 2^nb + acc == (v0 * 256 + top) * 2^r + low
+                    lemma_mul_is_associative(v0 as int, 256, pow2(r) as int);
+                    lemma_mul_is_commutative(256, pow2(r) as int);
+                    lemma_mul_is_distributive_add_other_way(pow2(r) as int, (v0 * 256) as int, top as int);
+                }
+                acc = low;
+                nb = nb - 8;
+            }
+        }
+        i = i + 1;
+    }
+    proof {
+        assert(s@.subrange(0, s@.len() as int) =~= s@);
+    }
         while nb >= 8
             invariant
-                i < s@.len(),
-                nb < 38,
+                nb < 62,
                 code_ok(),
                 z == o0.len(),
                 z <= out@.len(),
                 out@.subrange(0, z) == o0,
                 acc < pow2(nb as nat),
-                val(tail(out@, z)) * pow2(nb as nat) + acc == hval(s@.subrange(0, i + 1)),
-                8 * tail(out@, z).len() + nb == hbits(s@.subrange(0, i + 1)),
+                val(tail(out@, z)) * pow2(nb as nat) + acc == hval(s@),
+                8 * tail(out@, z).len() + nb == hbits(s@),
             decreases nb,
         {
             let ghost e0 = tail(out@, z);
@@ -610,11 +651,6 @@ pub fn encode(s: &[u8], out: &mut Vec<u8>)
             acc = low;
             nb = nb - 8;
         }
-        i = i + 1;
-    }
-    proof {
-        assert(s@.subrange(0, s@.len() as int) =~= s@);
-    }
     let ghost e0 = tail(out@, z);
     if nb > 0 {
         let p = 8 - nb;
