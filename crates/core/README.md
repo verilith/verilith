@@ -11,7 +11,7 @@ blocks shared by the Verilith libraries
 live, with its proofs, in one or two of those crates; it now lives here
 once, and the libraries import it.
 
-`cargo verus verify` checks 272 functions with no errors.
+`cargo verus verify` checks 292 functions with no errors.
 
 | module | what it has | used by |
 | --- | --- | --- |
@@ -56,15 +56,18 @@ they are now their own crate,
 
 What the proofs here assume rather than prove:
 
-- `src/prims.rs`, the `external_body` functions only: `load_u64_le`,
-  `copy8`, `copy16`, `move8` (an 8-byte load then store, so its ranges
-  may overlap), `copy16_in`, `fill8`, `copy_in`, `copy_to_front`, `copy_within`,
+- `src/prims.rs`, the `external_body` functions only:
   `alloc_u8`, `alloc_i16`, `alloc_u32`, `pick` (one of two numbers, chosen without a branch) and
   `copy16_pick` (`copy16_in` or `copy16`, with the source chosen without a
   branch). Each is one line whose effect its `ensures` states, except
   `copy16_pick`, which is six.
   (`get`, `get16`, `get32`, `set`, `set16`, `set32`, `store_at` and `extend` are verified
-  against vstd's specs of `get_unchecked` and `extend_from_slice`.)
+  against vstd's specs of `get_unchecked` and `extend_from_slice`. So are
+  the loads and copies `load_u64_le`, `copy8`, `copy16`, `move8`,
+  `copy16_in`, `fill8`, `copy_in`, `copy_to_front` and `copy_within`,
+  against its specs of `get_unchecked`, `get_unchecked_mut`,
+  `copy_from_slice` and `copy_within`; each still compiles to one
+  unaligned load or store, or one `memcpy`/`memmove`.)
 - `src/spare.rs`, all of it: the uninterpreted `spare` and its nine
   functions (`len_spare`, `reserve_spare`, `reserve_spare_plus`,
   `push_spare`, `append4_spare`, `append8_spare`, `append_slice_spare`,

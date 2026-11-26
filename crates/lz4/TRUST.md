@@ -40,8 +40,10 @@ thousands of valid and corrupted inputs.
 verilith-lz4 has no `external_body` function and no `unsafe` of its own outside
 `src/capi.rs`. It uses these from
 [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core) (`src/prims.rs`),
-each one line whose `requires` is its bounds check, proven here at every
-call:
+each with a `requires` that is its bounds check, proven here at every
+call. All of them are now verified in verilith-core, against vstd's specs
+of `get_unchecked`, `get_unchecked_mut` and `copy_from_slice`; none is
+trusted:
 
 - `load_u64_le`: an unaligned 8-byte load.
 - `copy8`, `copy16`: copy 8 or 16 bytes forward inside one slice, from a
@@ -53,8 +55,7 @@ call:
 - `copy_in`: copy `n` bytes from one slice into another.
 
 `copy16`, `move8` and `copy16_in` were added to verilith-core for verilith-lz4 and
-verilith-snappy. Trusted is that each does what its `ensures` says within the
-bounds its `requires` gives. `get` and `set` (unchecked indexing) are
+verilith-snappy. `get` and `set` (unchecked indexing) are
 verified in verilith-core against vstd's specs of `get_unchecked`.
 
 ## The C API adapter

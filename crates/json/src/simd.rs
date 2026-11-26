@@ -137,7 +137,6 @@ pub open spec fn is_op(c: u8) -> bool {
 }
 
 /// The four bytes at `i` as a little-endian word.
-#[verifier::external_body]
 #[inline(always)]
 pub fn load4(s: &[u8], i: usize) -> (r: u32)
     requires
@@ -146,7 +145,11 @@ pub fn load4(s: &[u8], i: usize) -> (r: u32)
         r == s@[i as int] as u32 | (s@[i + 1] as u32) << 8u32 | (s@[i + 2] as u32) << 16u32
             | (s@[i + 3] as u32) << 24u32,
 {
-    u32::from_le(unsafe { (s.as_ptr().add(i) as *const u32).read_unaligned() })
+    let _ = s.len();  // bounds `i + 4` by `usize::MAX` for Verus
+    // Four byte loads that LLVM combines into one unaligned load.
+    // SAFETY: `i + 4 <= s.len()` by the precondition.
+    let w = unsafe { s.get_unchecked(i..i + 4) };
+    w[0] as u32 | (w[1] as u32) << 8u32 | (w[2] as u32) << 16u32 | (w[3] as u32) << 24u32
 }
 
 /// Whether the four bytes at `i` are `b0 b1 b2 b3`, by one word compare.

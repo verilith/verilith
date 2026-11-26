@@ -29,7 +29,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | bind |  |  |  |  |  |  | 2 |
 | brotli | 1 |  |  |  |  |  | 4 |
 | checksum | 12 |  |  |  |  |  |  |
-| core | 34 |  |  |  |  |  | 1 |
+| core | 25 |  |  |  |  |  | 1 |
 | dns |  |  |  |  |  |  | 6 |
 | font |  |  |  |  |  |  | 1 |
 | gif |  |  |  |  |  |  | 2 |
@@ -38,7 +38,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | hpack | 3 |  |  |  |  |  | 3 |
 | http |  |  |  |  |  |  | 8 |
 | jpeg |  |  |  |  |  |  | 3 |
-| json | 18 |  |  |  |  |  | 6 |
+| json | 17 |  |  |  |  |  | 6 |
 | lz4 |  |  |  |  |  |  | 1 |
 | png |  |  |  |  |  |  | 7 |
 | qpack | 9 |  |  |  |  |  | 2 |
@@ -56,14 +56,14 @@ not occur in any crate's `src/` (the script fails if one appears).
 | tls-aws-lc |  |  |  |  |  |  | 1 |
 | url | 1 |  |  |  |  |  | 5 |
 | verilith |  |  |  |  |  |  | 1 |
-| wasm | 26 |  |  |  |  | 2 | 4 |
+| wasm | 20 |  |  |  |  | 2 | 4 |
 | webp | 9 |  |  |  |  |  | 3 |
 | x509 |  |  |  |  |  |  | 6 |
 | xml | 9 |  |  |  |  |  | 12 |
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 |
-| zstd | 6 |  |  |  |  |  | 1 |
-| **total** | **642** | **35** | **274** | **5** | **17** | **12** | **130** |
+| zstd | 5 |  |  |  |  |  | 1 |
+| **total** | **625** | **35** | **274** | **5** | **17** | **12** | **130** |
 
 ## Items
 
@@ -96,7 +96,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 - `crates/core/src/binary64.rs`: external_body: `mul`, `div`, `from_u64`
 - `crates/core/src/lib.rs`: plain Rust
-- `crates/core/src/prims.rs`: external_body: `load_u64_le`, `copy8`, `copy16`, `move8`, `copy16_in`, `pick`, `copy16_pick`, `fill8`, `copy_in`, `copy_to_front`, `copy_within`, `alloc_u32`, `alloc_u8`, `alloc_i16`
+- `crates/core/src/prims.rs`: external_body: `pick`, `copy16_pick`, `alloc_u32`, `alloc_u8`, `alloc_i16`
 - `crates/core/src/spare.rs`: external_body: `len_spare`, `reserve_spare`, `reserve_spare_plus`, `push_spare`, `append4_spare`, `append_slice_spare`, `truncate_spare`, `set_spare`, `append8_spare`
 - `crates/core/src/tail.rs`: external_body: `view`, `take`, `put_back`, `len`, `append_from`, `append_from32`, `append_within`, `append_within32`
 
@@ -161,7 +161,6 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/json/src/lib.rs`: plain Rust
 - `crates/json/src/native.rs`: plain Rust
 - `crates/json/src/serde_support.rs`: plain Rust
-- `crates/json/src/simd.rs`: external_body: `load4`
 - `crates/json/src/utf8.rs`: external_body: `utf8_avx512`, `utf8_avx2`
 - `crates/json/src/value.rs`: plain Rust
 - `crates/json/src/writer.rs`: plain Rust
@@ -325,7 +324,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/wasm/src/fops.rs`: external_body: `exec_un`, `exec_bin`, `exec_cmp`, `exec_cvt`
 - `crates/wasm/src/instance.rs`: external_body: `memory_mut`
 - `crates/wasm/src/interp.rs`: external_body: `call_host`
-- `crates/wasm/src/prims.rs`: external_body: `scopy_down`, `szero`, `load`, `store`, `fill`, `copy_within`, `copy_in`, `try_grow`, `idx`, `cur_at`, `cur_off`, `cur_next`, `cur_get`
+- `crates/wasm/src/prims.rs`: external_body: `load`, `store`, `idx`, `cur_at`, `cur_off`, `cur_next`, `cur_get`
 - `crates/wasm/src/reg.rs`: external_body: `jmp_at`, `sink`, `tr_shape`, `tr_run`, `translate`, `fuse_copies`, `trivial`
 - `crates/wasm/src/run.rs`: no termination check: `execute`, `execute_metered`
 - `crates/wasm/src/validate.rs`: plain Rust
@@ -379,4 +378,4 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 - `crates/zstd/src/capi.rs`: plain Rust
 - `crates/zstd/src/cpu.rs`: external_body: `run_seqs`, `run_huf4`, `run_huf1`
-- `crates/zstd/src/prims.rs`: external_body: `put4`, `put_pairs4`, `extend_from`
+- `crates/zstd/src/prims.rs`: external_body: `put_pairs4`, `extend_from`
