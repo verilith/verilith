@@ -61,8 +61,16 @@ states the policy (`plan_safe`). The planner's contract is
 
 ```rust,ignore
 pub fn plan(b: &[u8], es: &Vec<Entry>) -> (r: Result<Vec<Item>, Rejected>)
-    ensures r matches Ok(items) ==> plan_safe(sitems(items@)) && items_match(b@, views(es@), items@)
+    ensures
+        r matches Ok(items) ==> plan_safe(sitems(items@)) && plan_of(b@, views(es@), sitems(items@))
+            && items_match(b@, views(es@), items@),
+        r matches Err(e) ==> e.why is Internal
+            || forall|p: Seq<SItem>| plan_of(b@, views(es@), p) ==> !plan_safe(p),
 ```
+
+`plan_of` says what the plan of an archive is: one step per member not of
+kind `Other`, in member order, each what the policy makes of its member
+(`item_of`). It determines the plan, so an archive has at most one.
 
 and the theorem is
 
@@ -84,10 +92,13 @@ archive; a symbolic link's target is relative and, walked from the link's
 directory, stays under the root and passes through no other link; a hard
 link's target is a regular file that an earlier member creates.
 
-The planner is sound, not complete: when it refuses, it has not proven that
-the archive is dangerous. It refuses some harmless archives on purpose (a
-member stored twice, a file written through a symbolic link that points
-inside the tree).
+The planner is sound and complete for this policy: it accepts exactly the
+archives whose plan satisfies `plan_safe`. A refusal is proven to mean the
+policy is broken, with one exception, `Why::Internal`, returned only if the
+standard library's sort misbehaves (see TRUST.md). The policy itself refuses
+some harmless archives on purpose (a member stored twice, a file written
+through a symbolic link that points inside the tree, a symbolic link target
+longer than 4096 bytes, which `symlink` would refuse anyway).
 
 ## Using it
 

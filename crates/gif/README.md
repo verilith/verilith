@@ -15,7 +15,8 @@ time for programs written against giflib 5.2's `gif_lib.h`. See
 
 The sub-block chains, the record walk, LZW decompression, interlacing and
 the graphic control extension are proven against a specification of the
-format. `cargo verus verify` checks 37 functions with no errors.
+format, and so is a bound on the decoder's work that is linear in the
+file and the pixels. `cargo verus verify` checks 43 functions with no errors.
 
 giflib's security history is mostly memory-safety bugs in exactly these
 places: the LZW table (CVE-2018-11490, a write past the table as it
@@ -36,6 +37,21 @@ is ruled out for every input by the proofs.
 | Sub-block chains are read exactly as the spec reads them | `blocks::skip_blocks`, `blocks::gather` against `spec::sub_blocks` |
 | Interlaced rows are put back in order; the row map never leaves the image | `interlace::deinterlace_exec` against `spec::deinterlace`, `interlace::lemma_pass_rows` |
 | The specification's record walk terminates on every input | `spec::walk_decreases` |
+| Linear work: at most `gif_work(n, px) = 800n + 5px + 18384` steps for an `n`-byte file whose images take `px` bytes of pixels, with `px` at most the caller's `limit`, and exactly the decoded images' size when the file decodes | `decode::decode_counted` ensures (`decode` is the same code without the count) |
+| Linear work per image: at most `12(e - p) + 5px + 9192` steps for an image whose record spans `p..e`; LZW decoding at most `9n + need + 4096` steps for `n` bytes of data and `need` pixels | `decode::image_exec_counted`, `lzw::lzw_exec` ensures |
+
+A step of the work bound is a loop turn, or a byte copied, compared or
+zeroed; a copy of `n` bytes by a verilith-core primitive is charged `n`
+steps. The counters are ghost state, erased at compile time. The 800 per
+byte of file is almost all the fixed cost of an image (zeroing the LZW
+decoder's 4 KiB of slack, and a local colour table), which takes at least
+12 bytes of the file; real files run far below it. The bound is what rules
+out a crafted file that makes the decoder work out of proportion to its
+size: the work is linear in the bytes read and the pixels written, and the
+pixels are capped by `limit`. An image's pixel buffer is allocated, and
+zeroed, from its declared size before its data is decoded, so a small file
+can still make the decoder zero up to `limit` bytes; the `5px` term counts
+that.
 
 ### Trusted base
 
@@ -48,6 +64,10 @@ What the proofs assume rather than prove:
   `giflib:` in a comment.
 - `src/prims.rs`: one `#[verifier::external_body]` primitive, a zeroed
   allocation.
+- The work bound's unit: that a verilith-core copy of `n` bytes, and a
+  zeroed allocation of `n` bytes, cost on the order of `n` steps. The
+  counters are ghost code and count what the verified loops do; the
+  primitives' cost is assumed, not proven.
 - verilith-core's trusted base (its memory primitives, used here for
   unchecked loads and stores, the copies `copy_in` and `copy_match`'s
   chunks, and `alloc_u32`), and its bit-string definitions (`bits`), which
