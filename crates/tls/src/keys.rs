@@ -72,6 +72,7 @@ impl Secret {
             self.wf(),
         ensures
             r == self@.len(),
+            r <= 48,
     {
         self.len
     }
@@ -89,7 +90,7 @@ impl Secret {
     }
 
     /// The first `l` bytes of `src`.
-    fn from_slice(src: &[u8], l: usize) -> (r: Secret)
+    pub fn from_slice(src: &[u8], l: usize) -> (r: Secret)
         requires
             l <= src@.len(),
             l <= 48,
@@ -168,6 +169,16 @@ impl Transcript {
         match self {
             Transcript::S256(h) => h.wf(),
             Transcript::S384(h) => h.wf(),
+        }
+    }
+
+    pub fn alg_x(&self) -> (r: HashAlg)
+        ensures
+            r == self.alg(),
+    {
+        match self {
+            Transcript::S256(_) => HashAlg::Sha256,
+            Transcript::S384(_) => HashAlg::Sha384,
         }
     }
 
@@ -317,6 +328,7 @@ pub fn expand_label_x(a: HashAlg, secret: &[u8], label: &[u8], ctx: &[u8], l: us
             1u8,
         ]);
         lemma_expand_one(a, secret@, hkdf_label(l as nat, label@, ctx@), l as nat);
+        reveal(expand_label);
     }
     let r = Secret::from_slice(full.as_slice(), l);
     assert(r@ =~= full@.take(l as int));
@@ -549,6 +561,7 @@ pub fn record_nonce_x(iv: &[u8; 12], seq: u64) -> (r: [u8; 12])
     ensures
         r@ == record_nonce(iv@, seq),
 {
+    reveal(record_nonce);
     let mut out = *iv;
     let mut s = seq;
     let mut i: usize = 12;

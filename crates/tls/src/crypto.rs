@@ -1,0 +1,117 @@
+//! The cryptography verilith-tls uses and does not prove: the AEADs, key
+//! exchange, signatures and random numbers. Everything in this file is
+//! trusted. The functions are uninterpreted: the proofs know only that
+//! they are functions (the same inputs give the same output) and the
+//! lengths stated here. The implementation is a separate crate,
+//! `verilith-tls-aws-lc`, over aws-lc; any type that implements these
+//! traits with these contracts can stand in for it.
+use alloc::vec::Vec;
+use vstd::prelude::*;
+
+verus! {
+
+/// The AEAD of `suite` (§5.2: AEAD-Encrypt(write_key, nonce,
+/// additional_data, plaintext)).
+pub uninterp spec fn aead_seal(suite: u16, key: Seq<u8>, nonce: Seq<u8>, aad: Seq<u8>, pt: Seq<u8>) -> Seq<
+    u8,
+>;
+
+/// AEAD-Decrypt: the plaintext, or `None` if the tag does not verify.
+pub uninterp spec fn aead_open(suite: u16, key: Seq<u8>, nonce: Seq<u8>, aad: Seq<u8>, ct: Seq<u8>) -> Option<
+    Seq<u8>,
+>;
+
+/// The tag length of every TLS 1.3 cipher suite.
+pub const TAG_LEN: usize = 16;
+
+/// An AEAD key, ready to use.
+pub trait AeadKey: Sized {
+    spec fn suite(&self) -> u16;
+
+    spec fn key(&self) -> Seq<u8>;
+
+    /// Encrypts `buf[start..]` in place and appends the tag.
+    fn seal_in_place(&self, nonce: &[u8; 12], aad: &[u8; 5], buf: &mut Vec<u8>, start: usize)
+        requires
+            start <= old(buf)@.len(),
+        ensures
+            final(buf)@ == old(buf)@.take(start as int) + aead_seal(
+                self.suite(),
+                self.key(),
+                nonce@,
+                aad@,
+                old(buf)@.skip(start as int),
+            ),
+            aead_seal(self.suite(), self.key(), nonce@, aad@, old(buf)@.skip(start as int)).len()
+                == old(buf)@.len() - start + TAG_LEN,
+    ;
+
+    /// Decrypts `buf` (ciphertext and tag) in place. `Some(n)`: the
+    /// plaintext is `buf[..n]`.
+    fn open_in_place(&self, nonce: &[u8; 12], aad: &[u8; 5], buf: &mut [u8]) -> (r: Option<usize>)
+        ensures
+            match r {
+                Some(n) => n <= final(buf)@.len() && aead_open(
+                    self.suite(),
+                    self.key(),
+                    nonce@,
+                    aad@,
+                    old(buf)@,
+                ) == Some(final(buf)@.take(n as int)),
+                None => aead_open(self.suite(), self.key(), nonce@, aad@, old(buf)@) is None,
+            },
+            final(buf)@.len() == old(buf)@.len(),
+    ;
+}
+
+/// Whether `shared` is the key exchange's shared secret for `group`, the
+/// peer's share `peer` and the share `ours` this side sent (§4.2.8,
+/// §7.4). What this means (X25519, ECDH, ML-KEM encapsulation) is the
+/// provider's: the proofs only carry it.
+pub uninterp spec fn key_exchange(group: u16, peer: Seq<u8>, ours: Seq<u8>, shared: Seq<u8>) -> bool;
+
+/// Whether `sig` is a signature by the server's key with `scheme` of `msg`.
+pub uninterp spec fn signed(scheme: u16, msg: Seq<u8>, sig: Seq<u8>) -> bool;
+
+/// The cryptography a server needs, and its keys.
+pub trait Provider {
+    type Key: AeadKey;
+
+    /// The AEAD of `suite` with `key` (16 or 32 bytes).
+    fn aead_key(&self, suite: u16, key: &[u8]) -> (r: Self::Key)
+        ensures
+            r.suite() == suite,
+            r.key() == key@,
+    ;
+
+    /// The server's side of a key exchange for `group`, given the client's
+    /// share: appends the server's share to `share` and writes the shared
+    /// secret to `shared`, returning its length; `None` if the client's
+    /// share is malformed (an `illegal_parameter` alert).
+    fn key_exchange(&mut self, group: u16, peer: &[u8], share: &mut Vec<u8>, shared: &mut [u8; 64]) -> (r: Option<usize>)
+        ensures
+            r matches Some(n) ==> n <= 64 && final(share)@.len() > old(share)@.len()
+                && key_exchange(
+                group,
+                peer@,
+                final(share)@.skip(old(share)@.len() as int),
+                final(shared)@.take(n as int),
+            ),
+            final(share)@.take(old(share)@.len() as int) == old(share)@,
+            final(share)@.len() <= old(share)@.len() + 65536,
+    ;
+
+    /// Signs `msg` with the server's key and `scheme`, appending the
+    /// signature to `out`; `false` if the scheme is not the key's.
+    fn sign(&mut self, scheme: u16, msg: &[u8], out: &mut Vec<u8>) -> (r: bool)
+        ensures
+            r ==> signed(scheme, msg@, final(out)@.skip(old(out)@.len() as int)),
+            final(out)@.take(old(out)@.len() as int) == old(out)@,
+            final(out)@.len() <= old(out)@.len() + 65535,
+    ;
+
+    /// 32 random bytes.
+    fn random(&mut self, out: &mut [u8; 32]);
+}
+
+} // verus!
