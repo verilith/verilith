@@ -4,7 +4,8 @@
 Every server serves the same routes (GET /plaintext and GET /static/<file>),
 is pinned to the same CPUs with the same number of worker threads, and is
 measured in the same sitting by the same load generators (wrk for HTTP/1.1,
-h2load for HTTP/2). Servers take turns case by case, and the order is
+h2load for HTTP/2, and h2load built with ngtcp2 and nghttp3 for HTTP/3: see
+h3/build.sh). Servers take turns case by case, and the order is
 reversed every round, so drift in the machine hits all of them alike.
 
 Reported per case and server: requests per second (median of the rounds and
@@ -27,7 +28,11 @@ import argparse, datetime, json, os, platform, re, shutil, signal, socket, stati
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
-PORTS = {"HTTP": 18080, "H2C": 18081, "TLS": 18443}
+# H3 is UDP: the same number as TLS, as an HTTP/3 deployment uses.
+PORTS = {"HTTP": 18080, "H2C": 18081, "TLS": 18443, "H3": 18443}
+UDP = {"H3"}
+# Where h3/build.sh installs the HTTP/3 tools.
+H3_TOOLS = os.environ.get("H3_TOOLS") or os.path.join(ROOT, "target/h3-tools")
 
 # Files under /static/. Sizes cover a typical small asset, a large one and a
 # download, so that sendfile and write batching both show up.
@@ -48,6 +53,10 @@ CASES = {
     "h2c-plaintext":     dict(tool="h2load", port="H2C", path="/plaintext", conns=64, streams=32),
     "h2-tls-plaintext":  dict(tool="h2load", port="TLS", path="/plaintext", conns=64, streams=32, tls=True),
     "h2-tls-static-64k": dict(tool="h2load", port="TLS", path="/static/64k.bin", conns=16, streams=16, tls=True),
+    # HTTP/3: the h2 cases' shapes over QUIC, and a download.
+    "h3-plaintext":      dict(tool="h2load", port="H3", path="/plaintext", conns=64, streams=32, tls=True, h3=True),
+    "h3-static-64k":     dict(tool="h2load", port="H3", path="/static/64k.bin", conns=16, streams=16, tls=True, h3=True),
+    "h3-static-1m":      dict(tool="h2load", port="H3", path="/static/1m.bin", conns=16, streams=1, tls=True, h3=True),
 }
 
 
@@ -73,6 +82,16 @@ def hyper_bin():
     return p if os.path.exists(p) else None
 
 
+def h3_tool(env, *rel):
+    """An HTTP/3 tool: $ENV if set, else from H3_TOOLS (h3/build.sh)."""
+    p = os.environ.get(env) or os.path.join(H3_TOOLS, *rel)
+    return p if os.path.exists(p) else None
+
+
+def h2load_h3():
+    return h3_tool("H2LOAD_H3", "bin", "h2load")
+
+
 def fill(src, dst, vars):
     s = open(src).read()
     for k, v in vars.items():
@@ -94,6 +113,8 @@ def server_cmds(env):
             p = subprocess.run([b, "--protocols"], capture_output=True, text=True, timeout=10).stdout.split()
         except Exception:
             p = []
+        if "h3" in p:
+            out["verilith"] += ["--h3", str(PORTS["H3"])]
         if "tls-rustls" in p:
             out["verilith-rustls"] = out["verilith"] + ["--tls-backend", "rustls"]
     b = hyper_bin()
@@ -107,6 +128,20 @@ def server_cmds(env):
     b = os.path.join(HERE, "baselines/may-minihttp/target/release/may-minihttp-hello")
     if os.path.exists(b):
         out["may-minihttp"] = [b, "--threads", str(env["threads"]), "--http", str(PORTS["HTTP"]), "--root", env["root"]]
+    b = os.path.join(HERE, "baselines/h3-quinn/target/release/h3-quinn-hello")
+    if os.path.exists(b):
+        out["h3-quinn"] = [b, "--threads", str(env["threads"]), "--h3", str(PORTS["H3"]), "--cert", env["cert"],
+                           "--key", env["key"], "--root", env["root"]]
+    b = h3_tool("NGINX_H3", "nginx", "sbin", "nginx")
+    if b:
+        conf = os.path.join(env["run"], "nginx-quic.conf")
+        fill(os.path.join(HERE, "conf/nginx-quic.conf.in"), conf, v)
+        out["nginx-quic"] = [b, "-c", conf, "-p", env["run"]]
+    b = h3_tool("H2O_H3", "bin", "h2o")
+    if b:
+        conf = os.path.join(env["run"], "h2o-quic.conf")
+        fill(os.path.join(HERE, "conf/h2o-quic.conf.in"), conf, v)
+        out["h2o-quic"] = [b, "-c", conf]
     b = which("nginx")
     if b:
         conf = os.path.join(env["run"], "nginx.conf")
@@ -139,9 +174,27 @@ def make_env(run, threads):
     return dict(run=run, root=root, cert=cert, key=key, threads=threads)
 
 
-def wait_port(port, timeout=10.0):
+def udp_bound(port):
+    """Whether any socket is bound to UDP port (from /proc/net/udp{,6})."""
+    for f in ["/proc/net/udp", "/proc/net/udp6"]:
+        try:
+            lines = open(f).read().splitlines()[1:]
+        except OSError:
+            continue
+        for l in lines:
+            if int(l.split()[1].rsplit(":", 1)[1], 16) == port:
+                return True
+    return False
+
+
+def wait_port(port, timeout=10.0, udp=False):
     end = time.time() + timeout
     while time.time() < end:
+        if udp:
+            if udp_bound(port):
+                return True
+            time.sleep(0.05)
+            continue
         try:
             socket.create_connection(("127.0.0.1", port), 0.2).close()
             return True
@@ -168,35 +221,39 @@ def group_cpu(pgid):
 
 
 def protocols(name, cmd):
-    """The ports a server serves: all three, except a verilith-server build
-    that says otherwise with --protocols (one line: http, h2c, tls)."""
-    fixed = {"bun": {"HTTP", "TLS"}, "may-minihttp": {"HTTP"}, "verilith-rustls": {"TLS"}}
+    """The ports a server serves: the three TCP ones, except where fixed
+    here, or a verilith-server build that says otherwise with --protocols
+    (one line: http, h2c, tls, h3)."""
+    fixed = {"bun": {"HTTP", "TLS"}, "may-minihttp": {"HTTP"}, "verilith-rustls": {"TLS"},
+             "h3-quinn": {"H3"}, "nginx-quic": {"H3"}, "h2o-quic": {"H3"}}
+    tcp = set(PORTS) - UDP
     if name in fixed:
         return fixed[name]
     if name != "verilith":
-        return set(PORTS)
+        return tcp
     try:
         out = subprocess.run([cmd[0], "--protocols"], capture_output=True, text=True, timeout=10).stdout
     except Exception:
-        return set(PORTS)
-    names = {"http": "HTTP", "h2c": "H2C", "tls": "TLS"}
+        return tcp
+    names = {"http": "HTTP", "h2c": "H2C", "tls": "TLS", "h3": "H3"}
     got = {names[w] for w in out.replace(",", " ").split() if w in names}
-    return got or set(PORTS)
+    return got or tcp
 
 
 class Server:
     def __init__(self, name, cmd, cpus, log, ports=None):
         self.name, self.cmd, self.cpus = name, cmd, cpus
-        self.ports = ports or set(PORTS)
+        self.ports = ports or (set(PORTS) - UDP)
         self.log = open(log, "w")
 
     def __enter__(self):
         self.p = subprocess.Popen(["taskset", "-c", self.cpus] + self.cmd, stdout=self.log, stderr=subprocess.STDOUT,
                                   start_new_session=True)
-        for port in [PORTS[k] for k in self.ports]:
-            if not wait_port(port):
+        for k in self.ports:
+            if not wait_port(PORTS[k], udp=k in UDP):
                 self.__exit__()
-                raise RuntimeError("%s did not open port %d; see %s" % (self.name, port, self.log.name))
+                raise RuntimeError("%s did not open %s port %d; see %s" % (
+                    self.name, "UDP" if k in UDP else "TCP", PORTS[k], self.log.name))
         return self
 
     def cpu(self):
@@ -214,7 +271,7 @@ class Server:
             self.p.wait()
         # nginx's workers can outlive the master by a moment; wait for the ports.
         for _ in range(100):
-            if not any(port_open(p) for p in PORTS.values()):
+            if not any(udp_bound(PORTS[k]) if k in UDP else port_open(PORTS[k]) for k in PORTS):
                 break
             time.sleep(0.05)
 
@@ -277,8 +334,15 @@ def run_h2load(case, cpus, threads, dur, run):
     scheme = "https" if c.get("tls") else "http"
     url = "%s://127.0.0.1:%d%s" % (scheme, PORTS[c["port"]], c["path"])
     conns = c["conns"]
-    cmd = ["taskset", "-c", cpus, "h2load", "-t", str(threads), "-c", str(conns), "-m", str(c.get("streams", 1)),
+    tool = "h2load"
+    if c.get("h3"):
+        tool = h2load_h3()
+        if not tool:
+            raise RuntimeError("no HTTP/3 h2load: run h3/build.sh, or set H2LOAD_H3")
+    cmd = ["taskset", "-c", cpus, tool, "-t", str(threads), "-c", str(conns), "-m", str(c.get("streams", 1)),
            "-D", "%g" % dur, "--warm-up-time=0"]
+    if c.get("h3"):
+        cmd.append("--alpn-list=h3")
     cmd.append(url)
     out = subprocess.run(cmd, capture_output=True, text=True, timeout=dur + 60).stdout
     r = {}
@@ -351,7 +415,7 @@ def report(results, servers, cases, meta, out):
                 s, fmt_rate(med(rps)), rng, fmt_rate(med([r.get("req_per_cpu_s") for r in rs])),
                 fmt_lat(p50), fmt_lat(med([r.get("p99") for r in rs])), sum((r.get("errors") or 0) for r in rs)))
         L.append("")
-    L.append("h2load reports a mean request time, not percentiles; for h2 cases p50 shows that mean.")
+    L.append("h2load reports a mean request time, not percentiles; for h2 and h3 cases p50 shows that mean.")
     open(out, "w").write("\n".join(L) + "\n")
 
 
@@ -361,6 +425,14 @@ def versions(cmds):
         try:
             if name == "nginx":
                 v[name] = subprocess.run(["nginx", "-v"], capture_output=True, text=True).stderr.strip().split("/")[-1]
+            elif name == "nginx-quic":
+                v[name] = subprocess.run([cmds[name][0], "-v"], capture_output=True, text=True).stderr.strip().split("/")[-1]
+            elif name == "h2o-quic":
+                v[name] = subprocess.run([cmds[name][0], "--version"], capture_output=True, text=True).stdout.split("\n")[0].split()[-1]
+            elif name == "h3-quinn":
+                lock = open(os.path.join(HERE, "baselines/h3-quinn/Cargo.lock")).read()
+                v[name] = " ".join("%s %s" % (c, re.search(r'name = "%s"\nversion = "([^"]+)"' % c, lock).group(1))
+                                   for c in ["h3", "quinn"])
             elif name == "h2o":
                 v[name] = subprocess.run(["h2o", "--version"], capture_output=True, text=True).stdout.split("\n")[0].split()[-1]
             elif name == "hyper":
@@ -428,7 +500,10 @@ def main():
     except Exception:
         cpu = platform.processor()
     meta = dict(date=datetime.datetime.now().isoformat(timespec="minutes"), cpu=cpu, ncpu=n, server_cpus=a.server_cpus,
-                client_cpus=a.client_cpus, rounds=a.rounds, duration=a.duration, versions=versions(servers))
+                client_cpus=a.client_cpus, rounds=a.rounds, duration=a.duration, versions=versions({s: cmds[s] for s in servers}))
+    if any(CASES[c].get("h3") for c in cases) and h2load_h3():
+        meta["versions"]["h2load (h3)"] = subprocess.run([h2load_h3(), "--version"], capture_output=True,
+                                                         text=True).stdout.split()[-1]
     serves = {s: protocols(s, cmds[s]) for s in servers}
     results = {}
     for rnd in range(a.rounds):
