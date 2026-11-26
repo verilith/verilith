@@ -1,0 +1,19 @@
+[package]
+name = "verilith-quic-conn"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "A sans-I/O QUIC server connection (RFC 9000, 9001, 9002) over verilith-quic's verified wire format and recovery and verilith-tls's verified handshake and packet protection"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/verilith/verilith"
+publish = false
+
+[dependencies]
+verilith-quic = { path = "../quic", version = "0.1.0" }
+verilith-tls = { path = "../tls", version = "0.1.0" }
+
+[dev-dependencies]
+verilith-tls-aws-lc = { path = "../tls-aws-lc", version = "0.1.0" }
+quinn-proto = { version = "0.11.19", default-features = false, features = ["rustls-aws-lc-rs"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
+bytes = "1.9"

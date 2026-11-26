@@ -19,6 +19,7 @@ members = [
     "crates/png",
     "crates/qpack",
     "crates/quic",
+    "crates/quic-conn",
     "crates/regex",
     "crates/server",
     "crates/sha2",
