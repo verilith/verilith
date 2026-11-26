@@ -35,7 +35,7 @@ pub(crate) fn parse_mode(input: &[u8], eager: bool) -> Result<Document<'_>, Erro
     let mut idx = Vec::new();
     match parse_tape(input, &mut tape, &mut idx, eager) {
         Ok(_) => Ok(Document::new(input, Cow::Owned(tape))),
-        Err(_) => Err(error_at(input, &mut tape)),
+        Err(_) => Err(error_at(input)),
     }
 }
 
@@ -76,6 +76,7 @@ impl Default for Parser {
 }
 
 impl Parser {
+    /// A parser that decodes strings as it parses (see [`Parser::lazy`]).
     pub fn new() -> Parser {
         Parser { tape: None, idx: Vec::new(), eager: true }
     }
@@ -86,7 +87,7 @@ impl Parser {
         Parser { tape: None, idx: Vec::new(), eager: false }
     }
 
-    /// Switches between lazy and eager string decoding (see [`lazy`]),
+    /// Switches between lazy and eager string decoding (see [`Parser::lazy`]),
     /// keeping this parser's buffers.
     pub fn set_lazy(&mut self, lazy: bool) {
         self.eager = !lazy;
@@ -98,18 +99,16 @@ impl Parser {
         let tape = self.tape.get_or_insert_with(|| Tape::with_capacity(input.len() / 8 + 4));
         match parse_tape(input, tape, &mut self.idx, self.eager) {
             Ok(_) => Ok(Document::new(input, Cow::Borrowed(tape))),
-            Err(_) => Err(error_at(input, tape)),
+            Err(_) => Err(error_at(input)),
         }
     }
 }
 
-/// The two-pass parser does not track where it failed, so rerun the
-/// one-pass parser for a precise error offset. This costs time only on
-/// invalid input.
+/// Works out why the text is not JSON. This costs time only on invalid
+/// input.
 #[cold]
-fn error_at(input: &[u8], tape: &mut Tape) -> Error {
-    let p = parse_into(input, true, tape).err().unwrap_or(0);
-    crate::error::diagnose(input, true, p)
+fn error_at(input: &[u8]) -> Error {
+    crate::error::diagnose(input, true)
 }
 
 /// Parses one JSON value at the start of `input` (after whitespace and an
@@ -118,7 +117,7 @@ fn error_at(input: &[u8], tape: &mut Tape) -> Error {
 pub fn parse_prefix(input: &[u8]) -> Result<(Document<'_>, usize), Error> {
     match parse_document(input, false) {
         Ok((tape, end)) => Ok((Document::new(input, Cow::Owned(tape)), end)),
-        Err(p) => Err(crate::error::diagnose(input, false, p)),
+        Err(_) => Err(crate::error::diagnose(input, false)),
     }
 }
 
@@ -214,11 +213,17 @@ impl fmt::Debug for Document<'_> {
 /// The type of a JSON value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Type {
+    /// `null`.
     Null,
+    /// `true` or `false`.
     Bool,
+    /// A number.
     Number,
+    /// A string.
     String,
+    /// An array.
     Array,
+    /// An object.
     Object,
 }
 
@@ -251,11 +256,12 @@ impl<'d> Value<'d> {
     fn next_idx(&self) -> usize {
         let t = self.tok();
         match t.kind {
-            Kind::ArrStart | Kind::ObjStart => t.a as usize + 1,
+            Kind::ArrStart | Kind::ObjStart => t.start() + 1,
             _ => self.idx + 1,
         }
     }
 
+    /// The value's type.
     #[inline]
     pub fn kind(&self) -> Type {
         match self.tok().kind {
@@ -268,11 +274,13 @@ impl<'d> Value<'d> {
         }
     }
 
+    /// Whether the value is `null`.
     #[inline]
     pub fn is_null(&self) -> bool {
         self.tok().kind == Kind::Null
     }
 
+    /// The value if it is a boolean.
     #[inline]
     pub fn as_bool(&self) -> Option<bool> {
         match self.tok().kind {
@@ -309,7 +317,7 @@ impl<'d> Value<'d> {
                 }
             }
         }
-        Some(crate::number::parse_f64_at(self.v.src, t.a as usize, t.b as usize))
+        Some(crate::number::parse_f64_at(self.v.src, t.start(), t.end()))
     }
 
     /// A number with no fraction or exponent that fits in `i64`.
@@ -397,11 +405,13 @@ pub struct Key<'d> {
 }
 
 impl<'d> Key<'d> {
+    /// The key, unescaped, as bytes.
     #[inline]
     pub fn as_bytes(&self) -> Cow<'d, [u8]> {
         string_bytes(self.v, self.idx, self.tok)
     }
 
+    /// The key, unescaped, if it is valid UTF-8.
     pub fn as_str(&self) -> Option<Cow<'d, str>> {
         cow_str(self.as_bytes())
     }
@@ -471,14 +481,14 @@ impl<'d> Iterator for Members<'d> {
 /// The input bytes of a number token or of a string token's raw body.
 #[inline(always)]
 fn lexeme<'d>(v: &View<'d>, t: &Tok) -> &'d [u8] {
-    debug_assert!(t.a <= t.b && t.b as usize <= v.src.len());
+    debug_assert!(t.start() <= t.end() && t.end() <= v.src.len());
     // SAFETY: every tape a `Document` holds was returned by a parser that
     // is verified to return only tapes accepted by `document`, and every
     // such tape lies within the input (`lemmas::in_bounds`, proved in
     // `lemmas::lemma_document_in_bounds` and stated in the parsers'
     // `ensures`): `t.a <= t.b <= src.len()` for every number, string and
     // key token. `t` is one of the tape's tokens and `v.src` that input.
-    unsafe { v.src.get_unchecked(t.a as usize..t.b as usize) }
+    unsafe { v.src.get_unchecked(t.start()..t.end()) }
 }
 
 #[inline(always)]
@@ -501,7 +511,7 @@ fn escaped_bytes<'d>(v: &View<'d>, idx: usize, t: &Tok) -> Cow<'d, [u8]> {
             }
         }
     }
-    let (a, b) = (t.a as usize, t.b as usize);
+    let (a, b) = (t.start(), t.end());
     let mut out = Vec::with_capacity(b - a);
     ex_decode(src, a, b, &mut out);
     Cow::Owned(out)

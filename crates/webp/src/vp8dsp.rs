@@ -1260,8 +1260,8 @@ fn transpose_halves(t: &[i16; 32], u: &mut [i16; 32])
             lemma_transposed_all(ts@, us@);
         }
     } else {
-        // SAFETY: SSE2 is part of x86-64 (and emulated elsewhere).
-        unsafe { transpose_halves_sse2(ts, us) };
+        // SSE2 is part of x86-64 (and emulated elsewhere).
+        transpose_halves_sse2(ts, us);
     }
 }
 
@@ -4073,8 +4073,8 @@ fn shuffle_block(r: &mut [u8; 128], rounds: usize)
             assert(rs@ =~= f);
         }
     } else {
-        // SAFETY: SSE2 is part of x86-64 (and emulated elsewhere).
-        unsafe { shuffle_rows_sse2(ss, rs, rounds) };
+        // SSE2 is part of x86-64 (and emulated elsewhere).
+        shuffle_rows_sse2(ss, rs, rounds);
     }
 }
 
@@ -7661,6 +7661,45 @@ proof fn lemma_tr8(
         forall|m: int| 0 <= m < 16 ==> #[trigger] c2[m] == x[m % 8][(if hi { 8int } else { 0 }) + 4 + m / 8],
         forall|m: int| 0 <= m < 16 ==> #[trigger] c3[m] == x[m % 8][(if hi { 8int } else { 0 }) + 6 + m / 8],
 {
+    lemma_tr8_quarter(x, a0, a1, a2, a3, b0, b2, c0, false, false, hi);
+    lemma_tr8_quarter(x, a0, a1, a2, a3, b0, b2, c1, false, true, hi);
+    lemma_tr8_quarter(x, a0, a1, a2, a3, b1, b3, c2, true, false, hi);
+    lemma_tr8_quarter(x, a0, a1, a2, a3, b1, b3, c3, true, true, hi);
+}
+
+/// One of `lemma_tr8`'s four outputs: `c` is the 32-bit interleave (high
+/// when `h32`) of `p` and `q`, the 16-bit interleaves (high when `h16`) of
+/// `a0, a1` and of `a2, a3`, so it holds columns `4 h16 + 2 h32` and one
+/// more. Proved apart so each proof sees only the facts it needs.
+proof fn lemma_tr8_quarter(
+    x: Seq<Seq<u8>>,
+    a0: Seq<u8>,
+    a1: Seq<u8>,
+    a2: Seq<u8>,
+    a3: Seq<u8>,
+    p: Seq<u8>,
+    q: Seq<u8>,
+    c: Seq<u8>,
+    h16: bool,
+    h32: bool,
+    hi: bool,
+)
+    requires
+        x.len() == 8,
+        forall|k: int| 0 <= k < 8 ==> (#[trigger] x[k]).len() == 16,
+        p.len() == 16 && q.len() == 16 && c.len() == 16,
+        a0 == (if hi { unpackhi8_lanes(x[0], x[1]) } else { unpacklo8_lanes(x[0], x[1]) }),
+        a1 == (if hi { unpackhi8_lanes(x[2], x[3]) } else { unpacklo8_lanes(x[2], x[3]) }),
+        a2 == (if hi { unpackhi8_lanes(x[4], x[5]) } else { unpacklo8_lanes(x[4], x[5]) }),
+        a3 == (if hi { unpackhi8_lanes(x[6], x[7]) } else { unpacklo8_lanes(x[6], x[7]) }),
+        u16s(p) == (if h16 { unpackhi16_lanes(u16s(a0), u16s(a1)) } else { unpacklo16_lanes(u16s(a0), u16s(a1)) }),
+        u16s(q) == (if h16 { unpackhi16_lanes(u16s(a2), u16s(a3)) } else { unpacklo16_lanes(u16s(a2), u16s(a3)) }),
+        u32s(c) == (if h32 { unpackhi32_lanes(u32s(p), u32s(q)) } else { unpacklo32_lanes(u32s(p), u32s(q)) }),
+    ensures
+        forall|m: int|
+            0 <= m < 16 ==> #[trigger] c[m] == x[m % 8][(if hi { 8int } else { 0 }) + (if h16 { 4int } else { 0 }) + (
+            if h32 { 2int } else { 0 }) + m / 8],
+{
     hide(u16s);
     hide(u32s);
     hide(unpacklo8_lanes);
@@ -7673,25 +7712,11 @@ proof fn lemma_tr8(
     lemma_unpack8_bytes(x[2], x[3], a1, hi);
     lemma_unpack8_bytes(x[4], x[5], a2, hi);
     lemma_unpack8_bytes(x[6], x[7], a3, hi);
-    lemma_unpack16_bytes(a0, a1, b0, false);
-    lemma_unpack16_bytes(a0, a1, b1, true);
-    lemma_unpack16_bytes(a2, a3, b2, false);
-    lemma_unpack16_bytes(a2, a3, b3, true);
-    lemma_unpack32_bytes(b0, b2, c0, false);
-    lemma_unpack32_bytes(b0, b2, c1, true);
-    lemma_unpack32_bytes(b1, b3, c2, false);
-    lemma_unpack32_bytes(b1, b3, c3, true);
-    let o: int = if hi { 8 } else { 0 };
-    assert forall|m: int| 0 <= m < 16 implies c0[m] == x[m % 8][o + m / 8] by {
-        lemma_tr8_at(m);
-    }
-    assert forall|m: int| 0 <= m < 16 implies c1[m] == x[m % 8][o + 2 + m / 8] by {
-        lemma_tr8_at(m);
-    }
-    assert forall|m: int| 0 <= m < 16 implies c2[m] == x[m % 8][o + 4 + m / 8] by {
-        lemma_tr8_at(m);
-    }
-    assert forall|m: int| 0 <= m < 16 implies c3[m] == x[m % 8][o + 6 + m / 8] by {
+    lemma_unpack16_bytes(a0, a1, p, h16);
+    lemma_unpack16_bytes(a2, a3, q, h16);
+    lemma_unpack32_bytes(p, q, c, h32);
+    let o: int = (if hi { 8int } else { 0 }) + (if h16 { 4int } else { 0 }) + (if h32 { 2int } else { 0 });
+    assert forall|m: int| 0 <= m < 16 implies #[trigger] c[m] == x[m % 8][o + m / 8] by {
         lemma_tr8_at(m);
     }
 }
@@ -8645,6 +8670,8 @@ fn filter16_vec<V: Lfv>(b: &mut [u8], p: usize, hstride: usize, vstride: usize, 
 /// `filter16_vec` for the same eight-pixel edge of both chroma planes:
 /// `bu`'s lanes are the low eight of the sixteen, `bv`'s the high eight.
 #[inline(always)]
+#[verifier::spinoff_prover]
+#[verifier::rlimit(30)]
 fn filter8uv_vec<V: Lfv>(
     bu: &mut [u8],
     bv: &mut [u8],

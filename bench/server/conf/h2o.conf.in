@@ -1,0 +1,32 @@
+# h2o for bench/server. @VARS@ are filled in by run.py.
+num-threads: @THREADS@
+# Run as the invoking user: as root h2o would otherwise switch to nobody.
+user: @USER@
+error-log: @RUN@/h2o.error.log
+http2-max-concurrent-requests-per-connection: 256
+listen:
+  host: 127.0.0.1
+  port: @HTTP@
+  reuseport: ON
+listen:
+  host: 127.0.0.1
+  port: @H2C@
+  reuseport: ON
+listen:
+  host: 127.0.0.1
+  port: @TLS@
+  reuseport: ON
+  ssl:
+    certificate-file: @CERT@
+    key-file: @KEY@
+    minimum-version: TLSv1.3
+hosts:
+  default:
+    paths:
+      /plaintext:
+        mruby.handler: |
+          Proc.new do |env|
+            [200, {"content-type" => "text/plain"}, ["Hello, World!"]]
+          end
+      /static:
+        file.dir: @ROOT@

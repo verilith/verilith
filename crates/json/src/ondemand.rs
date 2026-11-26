@@ -16,11 +16,20 @@
 use crate::index::*;
 use crate::parser::*;
 #[allow(unused_imports)]
+use crate::lemmas::*;
+pub use crate::protocol::{AFTER, KEY, START, VALUE};
+use crate::protocol::*;
+#[allow(unused_imports)]
 use crate::spec::*;
 use crate::stage2::*;
 #[allow(unused_imports)]
 use crate::simd::*;
+#[cfg(verus_keep_ghost)]
+use crate::float::is_round;
+#[cfg(verus_keep_ghost)]
+use verilith_core::num::{all_digits, dec_value, is_digit};
 use vstd::prelude::*;
+use vstd::slice::slice_subrange;
 
 verus! {
 
@@ -48,13 +57,13 @@ pub open spec fn delta(c: u8) -> int {
 
 /// Walking the index from entry `k` at nesting depth `d`: the entry after
 /// the bracket that brings the depth to 0.
-pub open spec fn close_k(s: Seq<u8>, idx: Seq<u32>, k: int, d: int) -> Option<int>
+pub open spec fn close_k(s: Seq<u8>, idx: Seq<int>, k: int, d: int) -> Option<int>
     decreases idx.len() - k,
 {
     if k < 0 || k >= idx.len() {
         None
     } else {
-        let d2 = d + delta(byte(s, idx[k] as int));
+        let d2 = d + delta(byte(s, idx[k]));
         if d2 == 0 {
             Some(k + 1)
         } else {
@@ -64,13 +73,13 @@ pub open spec fn close_k(s: Seq<u8>, idx: Seq<u32>, k: int, d: int) -> Option<in
 }
 
 /// Opening brackets among the `m` index entries from `k`.
-pub open spec fn opens(s: Seq<u8>, idx: Seq<u32>, k: int, m: int) -> int
+pub open spec fn opens(s: Seq<u8>, idx: Seq<int>, k: int, m: int) -> int
     decreases m,
 {
     if m <= 0 {
         0
     } else {
-        opens(s, idx, k, m - 1) + if delta(byte(s, idx[k + m - 1] as int)) == 1 {
+        opens(s, idx, k, m - 1) + if delta(byte(s, idx[k + m - 1])) == 1 {
             1int
         } else {
             0
@@ -79,13 +88,13 @@ pub open spec fn opens(s: Seq<u8>, idx: Seq<u32>, k: int, m: int) -> int
 }
 
 /// Closing brackets among the `m` index entries from `k`.
-pub open spec fn closes(s: Seq<u8>, idx: Seq<u32>, k: int, m: int) -> int
+pub open spec fn closes(s: Seq<u8>, idx: Seq<int>, k: int, m: int) -> int
     decreases m,
 {
     if m <= 0 {
         0
     } else {
-        closes(s, idx, k, m - 1) + if delta(byte(s, idx[k + m - 1] as int)) == -1 {
+        closes(s, idx, k, m - 1) + if delta(byte(s, idx[k + m - 1])) == -1 {
             1int
         } else {
             0
@@ -95,7 +104,7 @@ pub open spec fn closes(s: Seq<u8>, idx: Seq<u32>, k: int, m: int) -> int
 
 /// A run of entries with fewer closing brackets than the depth cannot
 /// bring the depth to 0: the walk passes over it.
-pub proof fn lemma_block(s: Seq<u8>, idx: Seq<u32>, k: int, d: int, m: int)
+pub proof fn lemma_block(s: Seq<u8>, idx: Seq<int>, k: int, d: int, m: int)
     requires
         0 <= k,
         0 <= m,
@@ -110,7 +119,7 @@ pub proof fn lemma_block(s: Seq<u8>, idx: Seq<u32>, k: int, d: int, m: int)
     if m > 0 {
         lemma_block(s, idx, k, d, m - 1);
         let d1 = d + opens(s, idx, k, m - 1) - closes(s, idx, k, m - 1);
-        let dl = delta(byte(s, idx[k + m - 1] as int));
+        let dl = delta(byte(s, idx[k + m - 1]));
         assert(d1 + dl != 0);
         assert(close_k(s, idx, k + m - 1, d1) == close_k(s, idx, k + m, d1 + dl));
     }
@@ -118,23 +127,27 @@ pub proof fn lemma_block(s: Seq<u8>, idx: Seq<u32>, k: int, d: int, m: int)
 
 /// Where `skip` takes a cursor at `p`: the index entry and the position
 /// after the value, or `None` if it does not move.
-pub open spec fn skip_to(s: Seq<u8>, st: int, idx: Seq<u32>, p: int) -> Option<(int, int)> {
+pub open spec fn skip_to(s: Seq<u8>, st: int, idx: Seq<int>, p: int) -> Option<(int, int)> {
     let j = skip_ws(s, p);
     let k = cnt(s, st, p);
     if j >= s.len() {
         None
     } else if s[j] == 0x22 {
         let q = quote_from(s, st, j + 1);
-        Some((cnt(s, st, q + 1), q + 1))
+        if q >= s.len() {
+            None
+        } else {
+            Some((cnt(s, st, q + 1), q + 1))
+        }
     } else if s[j] == 0x5B || s[j] == 0x7B {
         match close_k(s, idx, k + 1, 1) {
-            Some(k1) => Some((k1, idx[k1 - 1] as int + 1)),
+            Some(k1) => Some((k1, idx[k1 - 1] + 1)),
             None => None,
         }
     } else if s[j] == 0x2C || s[j] == 0x3A || s[j] == 0x5D || s[j] == 0x7D {
         None
     } else {
-        let q = if k + 1 < idx.len() { idx[k + 1] as int } else { s.len() as int };
+        let q = if k + 1 < idx.len() { idx[k + 1] } else { s.len() as int };
         if byte(s, q - 1) == 0x5C {
             None
         } else {
@@ -180,7 +193,7 @@ proof fn lemma_quote_from(s: Seq<u8>, st: int, a: int, b: int)
 /// tokens, provided the byte before it is not a backslash.
 pub proof fn lemma_after_scalar(s: Seq<u8>, st: int, j: int, q: int)
     requires
-        indexed(s, st, positions(s, st, st, s.len() as int)),
+        0 <= st <= s.len(),
         st <= j < s.len(),
         structural(s, st, j),
         !instr(s, st, j - 1),
@@ -190,7 +203,7 @@ pub proof fn lemma_after_scalar(s: Seq<u8>, st: int, j: int, q: int)
             s,
             st,
             j,
-        ) + 1] as int,
+        ) + 1],
         cnt(s, st, j) + 1 >= cnt(s, st, s.len() as int) ==> q == s.len(),
     ensures
         j < q <= s.len(),
@@ -265,13 +278,13 @@ proof fn lemma_between(s: Seq<u8>, st: int, a: int, q: int)
 // ---------------------------------------------------------------------------
 
 /// The whole structural index of `s`.
-pub open spec fn full(s: Seq<u8>, st: int) -> Seq<u32> {
+pub open spec fn full(s: Seq<u8>, st: int) -> Seq<int> {
     positions(s, st, st, s.len() as int)
 }
 
 /// Index entries `a..b` leave the bracket walk as it was, at any depth:
 /// they open and close nothing, or as much as they open.
-pub open spec fn transparent(s: Seq<u8>, idx: Seq<u32>, a: int, b: int) -> bool {
+pub open spec fn transparent(s: Seq<u8>, idx: Seq<int>, a: int, b: int) -> bool {
     forall|d: int| d >= 1 ==> #[trigger] close_k(s, idx, a, d) == close_k(s, idx, b, d)
 }
 
@@ -284,7 +297,8 @@ pub open spec fn skipped(s: Seq<u8>, st: int, p: int, e: int) -> bool {
     }
 }
 
-proof fn lemma_trans(s: Seq<u8>, idx: Seq<u32>, a: int, b: int, c: int)
+/// Transparency composes.
+pub proof fn lemma_trans(s: Seq<u8>, idx: Seq<int>, a: int, b: int, c: int)
     requires
         transparent(s, idx, a, b),
         transparent(s, idx, b, c),
@@ -302,7 +316,6 @@ proof fn lemma_trans(s: Seq<u8>, idx: Seq<u32>, a: int, b: int, c: int)
 proof fn lemma_flat(s: Seq<u8>, st: int, a: int, b: int)
     requires
         0 <= st <= a <= b <= s.len(),
-        s.len() <= u32::MAX,
         forall|m: int| a <= m < b && #[trigger] structural(s, st, m) ==> delta(byte(s, m)) == 0,
     ensures
         cnt(s, st, a) <= cnt(s, st, b),
@@ -323,7 +336,7 @@ proof fn lemma_flat(s: Seq<u8>, st: int, a: int, b: int)
                 d,
             ) by {
                 assert(close_k(s, idx, cnt(s, st, a), d) == close_k(s, idx, k, d));
-                assert(idx[k] as int == b - 1);
+                assert(idx[k] == b - 1);
                 assert(delta(byte(s, b - 1)) == 0);
                 assert(close_k(s, idx, k, d) == close_k(s, idx, k + 1, d));
             }
@@ -366,7 +379,7 @@ proof fn lemma_body_quote(s: Seq<u8>, st: int, i: int, e: bool)
 /// A string the grammar accepts, at the structural position `j`.
 proof fn lemma_sv_string(s: Seq<u8>, st: int, j: int)
     requires
-        indexed(s, st, full(s, st)),
+        0 <= st <= s.len(),
         st <= j < s.len(),
         out(s, st, j),
         !esc(s, st, j),
@@ -403,7 +416,7 @@ proof fn lemma_sv_string(s: Seq<u8>, st: int, j: int)
             assert(instr(s, st, m));
             assert(instr(s, st, m - 1));
             assert(strs(s, st, m));
-            assert(escape_start(s, st, m));
+            assert(byte(s, m) == 0x5C || byte(s, m) < 0x20);
         }
     }
     lemma_flat(s, st, j, n);
@@ -414,7 +427,7 @@ proof fn lemma_sv_string(s: Seq<u8>, st: int, j: int)
 /// A number or literal the grammar accepts in `[j, e)`.
 proof fn lemma_sv_scalar(s: Seq<u8>, st: int, p: int, e: int)
     requires
-        indexed(s, st, full(s, st)),
+        0 <= st <= s.len(),
         st <= p <= s.len(),
         out(s, st, p),
         bnd(s, st, p),
@@ -446,7 +459,7 @@ proof fn lemma_sv_scalar(s: Seq<u8>, st: int, p: int, e: int)
     crate::lemmas::lemma_skip_ws_bounds(s, e);
     let q = skip_ws(s, e);
     let k = cnt(s, st, p);
-    assert(q == if k + 1 < idx.len() { idx[k + 1] as int } else { s.len() as int });
+    assert(q == if k + 1 < idx.len() { idx[k + 1] } else { s.len() as int });
     if q > e {
         lemma_ws_run(s, e, q - 1);
     } else {
@@ -506,7 +519,7 @@ pub open spec fn body_ok(s: Seq<u8>, st: int, p: int, n: int, close: u8) -> bool
 /// at `e` with the matching bracket.
 proof fn lemma_sv_wrap(s: Seq<u8>, st: int, p: int, e: int, close: u8)
     requires
-        indexed(s, st, full(s, st)),
+        0 <= st <= s.len(),
         st <= p <= s.len(),
         out(s, st, p),
         bnd(s, st, p),
@@ -530,8 +543,8 @@ proof fn lemma_sv_wrap(s: Seq<u8>, st: int, p: int, e: int, close: u8)
     let kc = cnt(s, st, e - 1);
     assert(byte(s, e - 1) == close);
     assert(!scalar(s, st, e - 1));
-    assert(idx[kp] as int == i);
-    assert(idx[kc] as int == e - 1);
+    assert(idx[kp] == i);
+    assert(idx[kc] == e - 1);
     assert forall|d: int| d >= 1 implies #[trigger] close_k(s, idx, kp, d) == close_k(s, idx, kc + 1, d) by {
         assert(close_k(s, idx, kp, d) == close_k(s, idx, kp + 1, d + 1));
         assert(close_k(s, idx, kp + 1, d + 1) == close_k(s, idx, kc, d + 1));
@@ -547,7 +560,7 @@ proof fn lemma_sv_wrap(s: Seq<u8>, st: int, p: int, e: int, close: u8)
 #[verifier::rlimit(300)]
 pub proof fn lemma_skip_value(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
     requires
-        indexed(s, st, full(s, st)),
+        0 <= st <= s.len(),
         st <= p <= s.len(),
         out(s, st, p),
         bnd(s, st, p),
@@ -606,9 +619,11 @@ pub proof fn lemma_skip_value(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq
     }
 }
 
-proof fn lemma_sv_array(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
+/// The rest of an array, read from just after its `[`, ends with its `]`
+/// at the depth the walk started at.
+pub proof fn lemma_sv_array(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
     requires
-        indexed(s, st, full(s, st)),
+        0 <= st <= s.len(),
         st <= p <= s.len(),
         out(s, st, p),
         bnd(s, st, p),
@@ -628,9 +643,11 @@ proof fn lemma_sv_array(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>
     }
 }
 
-proof fn lemma_sv_elements(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
+/// `lemma_sv_array` from just after a `[` or a `,` that is followed by an
+/// element.
+pub proof fn lemma_sv_elements(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
     requires
-        indexed(s, st, full(s, st)),
+        0 <= st <= s.len(),
         st <= p <= s.len(),
         out(s, st, p),
         bnd(s, st, p),
@@ -664,10 +681,9 @@ proof fn lemma_sv_elements(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<ST
 }
 
 /// One structural byte that is not a bracket is transparent.
-proof fn lemma_step(s: Seq<u8>, st: int, q: int)
+pub proof fn lemma_step(s: Seq<u8>, st: int, q: int)
     requires
         0 <= st <= q < s.len(),
-        s.len() <= u32::MAX,
         structural(s, st, q),
         delta(s[q]) == 0,
     ensures
@@ -679,9 +695,11 @@ proof fn lemma_step(s: Seq<u8>, st: int, q: int)
     lemma_at(s, st, q);
 }
 
-proof fn lemma_sv_object(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
+/// The rest of an object, read from just after its `{`, ends with its `}`
+/// at the depth the walk started at.
+pub proof fn lemma_sv_object(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
     requires
-        indexed(s, st, full(s, st)),
+        0 <= st <= s.len(),
         st <= p <= s.len(),
         out(s, st, p),
         bnd(s, st, p),
@@ -701,9 +719,11 @@ proof fn lemma_sv_object(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok
     }
 }
 
-proof fn lemma_sv_members(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
+/// `lemma_sv_object` from just after a `{` or a `,` that is followed by a
+/// member.
+pub proof fn lemma_sv_members(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
     requires
-        indexed(s, st, full(s, st)),
+        0 <= st <= s.len(),
         st <= p <= s.len(),
         out(s, st, p),
         bnd(s, st, p),
@@ -751,12 +771,17 @@ proof fn lemma_sv_members(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STo
     }
 }
 
-/// A position between two tokens of `s`, with the structural index `idx`.
+/// A position between two tokens of `s`, reading the structural index
+/// through the window `w`.
 pub struct Cursor<'a> {
+    /// The document.
     pub s: &'a [u8],
-    pub idx: &'a [u32],
+    /// The window onto the structural index.
+    pub w: Win<'a>,
     /// The next unread index entry.
     pub k: usize,
+    /// Where entry `k` is: the next token, or the end of the input.
+    pub j: usize,
     /// Where the index starts (after a byte order mark).
     pub st: Ghost<int>,
     /// The position in `s`: just after the last token read.
@@ -764,14 +789,24 @@ pub struct Cursor<'a> {
 }
 
 impl<'a> Cursor<'a> {
+    /// The whole index.
+    pub open spec fn idx(&self) -> Seq<int> {
+        full(self.s@, self.st@)
+    }
+
     /// The cursor is between tokens, outside any string, and `k` is the
-    /// index entry of the next token.
+    /// index entry of the next token, which is at `j`.
     pub open spec fn wf(&self) -> bool {
-        &&& indexed(self.s@, self.st@, self.idx@)
+        &&& self.w.inv()
+        &&& self.w.s == self.s
+        &&& self.w.st == self.st@
         &&& self.st@ <= self.p@ <= self.s@.len()
+        &&& self.s@.len() <= isize::MAX
+        &&& self.idx().len() <= self.s@.len()
         &&& out(self.s@, self.st@, self.p@)
         &&& bnd(self.s@, self.st@, self.p@)
         &&& self.k == cnt(self.s@, self.st@, self.p@)
+        &&& self.j == if self.k < self.idx().len() { self.idx()[self.k as int] } else { self.s@.len() as int }
     }
 
     /// Where the next token starts, or the end of the input.
@@ -791,9 +826,17 @@ impl<'a> Cursor<'a> {
     /// The same input and index, at position `p`.
     pub open spec fn moved(&self, old: &Self, p: int) -> bool {
         &&& self.s == old.s
-        &&& self.idx == old.idx
         &&& self.st == old.st
         &&& self.p@ == p
+    }
+
+    /// The same place (the window may have moved).
+    pub open spec fn same(&self, old: &Self) -> bool {
+        &&& self.s == old.s
+        &&& self.st == old.st
+        &&& self.p == old.p
+        &&& self.k == old.k
+        &&& self.j == old.j
     }
 
     /// The cursor's entry is within the index.
@@ -801,24 +844,74 @@ impl<'a> Cursor<'a> {
         requires
             self.wf(),
         ensures
-            self.k <= self.idx@.len(),
+            self.k <= self.idx().len(),
     {
         lemma_cnt_bound(self.s@, self.st@, self.s@.len() as int);
         lemma_prefix(self.s@, self.st@, self.p@, self.s@.len() as int);
     }
 
-    /// A cursor at the start of the input.
-    pub fn new(s: &'a [u8], idx: &'a [u32], Ghost(st): Ghost<int>) -> (r: Self)
+    /// The next token is at `j`.
+    pub proof fn lemma_tok(&self)
         requires
-            indexed(s@, st, idx@),
+            self.wf(),
+        ensures
+            self.j == self.tok(),
+            self.tok() < self.s@.len() <==> self.k < self.idx().len(),
+            self.tok() <= self.s@.len(),
+    {
+        lemma_close(self.s@, self.st@, self.p@);
+    }
+
+    /// Reads entry `k` into `j`, once `k` and `p` have moved.
+    #[inline(always)]
+    fn fetch(&mut self)
+        requires
+            old(self).w.inv(),
+            old(self).w.s == old(self).s,
+            old(self).w.st == old(self).st@,
+            old(self).st@ <= old(self).p@ <= old(self).s@.len(),
+            old(self).s@.len() <= isize::MAX,
+            old(self).idx().len() <= old(self).s@.len(),
+            out(old(self).s@, old(self).st@, old(self).p@),
+            bnd(old(self).s@, old(self).st@, old(self).p@),
+            old(self).k == cnt(old(self).s@, old(self).st@, old(self).p@),
+        ensures
+            final(self).wf(),
+            final(self).moved(old(self), old(self).p@),
+            final(self).k == old(self).k,
+    {
+        self.j = match self.w.at(self.k) {
+            Some(q) => q,
+            None => self.s.len(),
+        };
+    }
+
+    /// A cursor at the start of the input.
+    pub fn new(s: &'a [u8], w: Win<'a>, Ghost(st): Ghost<int>) -> (r: Self)
+        requires
+            w.inv(),
+            s@.len() <= isize::MAX,
+            w.s == s,
+            w.st == st,
         ensures
             r.wf(),
             r.s == s,
-            r.idx == idx,
             r.st@ == st,
             r.p@ == st,
     {
-        Cursor { s, idx, k: 0, st: Ghost(st), p: Ghost(st) }
+        let _n = s.len();
+        let mut c = Cursor { s, w, k: 0, j: 0, st: Ghost(st), p: Ghost(st) };
+        proof {
+            assert(positions(s@, st, st, st) =~= Seq::<int>::empty());
+            lemma_positions_len(s@, st, st, s@.len() as int);
+        }
+        c.fetch();
+        c
+    }
+
+    /// Gives back the window's buffer.
+    pub fn into_buf(self) -> Vec<u32> {
+        self.w.into_buf()
     }
 
     /// The first byte of the next token (0 at the end of the input).
@@ -828,14 +921,15 @@ impl<'a> Cursor<'a> {
             self.wf(),
         ensures
             c == self.next(),
-            self.tok() < self.s@.len() <==> self.k < self.idx@.len(),
-            self.tok() < self.s@.len() ==> self.idx@[self.k as int] as int == self.tok(),
+            self.tok() < self.s@.len() <==> self.k < self.idx().len(),
+            self.tok() < self.s@.len() ==> self.idx()[self.k as int] == self.tok(),
+            self.j == self.tok(),
     {
         proof {
-            lemma_close(self.s@, self.st@, self.p@);
+            self.lemma_tok();
         }
-        if self.k < self.idx.len() {
-            get8(self.s, get32(self.idx, self.k) as usize)
+        if self.j < self.s.len() {
+            get8(self.s, self.j)
         } else {
             0
         }
@@ -850,10 +944,9 @@ impl<'a> Cursor<'a> {
             r == (self.tok() == self.s@.len()),
     {
         proof {
-            lemma_close(self.s@, self.st@, self.p@);
-            crate::lemmas::lemma_skip_ws_bounds(self.s@, self.p@);
+            self.lemma_tok();
         }
-        self.k >= self.idx.len()
+        self.j >= self.s.len()
     }
 
     /// Steps over the operator `c` if it is the next token.
@@ -873,10 +966,9 @@ impl<'a> Cursor<'a> {
             lemma_close(self.s@, self.st@, self.p@);
         }
         if self.peek() == c {
-            let _n = self.idx.len();
-            assert(self.k < _n);
             self.k = self.k + 1;
             self.p = Ghost(skip_ws(self.s@, self.p@) + 1);
+            self.fetch();
             true
         } else {
             false
@@ -906,11 +998,12 @@ impl<'a> Cursor<'a> {
         proof {
             lemma_close(g, st, self.p@);
             lemma_skip(g, st, self.p@);
+            self.lemma_tok();
         }
-        if self.k >= self.idx.len() {
+        if self.j >= self.s.len() {
             return false;
         }
-        let j = get32(self.idx, self.k) as usize;
+        let j = self.j;
         if !ex_has_lit(self.s, j, lit) {
             return false;
         }
@@ -929,6 +1022,7 @@ impl<'a> Cursor<'a> {
         }
         self.k = self.k + 1;
         self.p = Ghost(e as int);
+        self.fetch();
         true
     }
 
@@ -953,15 +1047,16 @@ impl<'a> Cursor<'a> {
         proof {
             lemma_close(g, st, self.p@);
             lemma_skip(g, st, self.p@);
+            self.lemma_tok();
         }
-        if self.k >= self.idx.len() {
+        if self.j >= self.s.len() {
             return None;
         }
-        let j = get32(self.idx, self.k) as usize;
+        let j = self.j;
         proof {
             lemma_number_lexeme(g, j as int);
         }
-        match (if verilith_simd::neon::has_neon() { ex_number_scan_k(self.s, j) } else { ex_number_scan(self.s, j) }) {
+        match if verilith_simd::neon::has_neon() { ex_number_scan_k(self.s, j) } else { ex_number_scan(self.s, j) } {
             Some((e, v, ok)) => {
                 proof {
                     lemma_scalar_run(g, st, j as int, e as int);
@@ -974,6 +1069,7 @@ impl<'a> Cursor<'a> {
                 }
                 self.k = self.k + 1;
                 self.p = Ghost(e as int);
+                self.fetch();
                 Some((j, e, v, ok))
             },
             None => None,
@@ -999,7 +1095,7 @@ impl<'a> Cursor<'a> {
                 } else {
                     old(dst)@
                 },
-                None => r is None && *final(self) == *old(self),
+                None => r is None && final(self).same(old(self)),
             },
     {
         proof {
@@ -1008,34 +1104,22 @@ impl<'a> Cursor<'a> {
         if self.peek() != 0x22 {
             return None;
         }
-        let j = get32(self.idx, self.k) as usize;
+        let j = self.j;
         proof {
             crate::lemmas::lemma_string_body_advances(self.s@, j + 1, false);
             if let Some((n, _)) = string(self.s@, j as int) {
                 lemma_cnt_bound(self.s@, self.st@, n);
             }
         }
-        // A string whose closing quote is the next index entry has no
-        // escapes: the scan that does not decode ends at once. (It is the
-        // scan that says so; if it found escapes after all, the decoding
-        // scan below would still be right.)
-        let n = self.idx.len();
-        proof {
-            if self.k + 1 < n {
-                lemma_entry(self.s@, self.st@, self.s@.len() as int, self.k + 1);
-            }
+        // The scan reads forward from entry `k`: the window must not be past it.
+        if self.w.kbase > self.k {
+            let _ = self.w.at(self.k);
         }
-        if self.k + 1 < n && get8(self.s, get32(self.idx, self.k + 1) as usize) == 0x22 {
-            if let Some((k2, e, false)) = ex2_string(self.s, self.idx, self.k, Ghost(self.st@)) {
-                self.k = k2;
-                self.p = Ghost(e as int);
-                return Some((j + 1, e - 1, false));
-            }
-        }
-        match ex2_string_dec(self.s, self.idx, self.k, Ghost(self.st@), dst) {
+        match ex2_string_dec(&mut self.w, self.k, j, Ghost(self.st@), dst) {
             Some((k2, e, esc)) => {
                 self.k = k2;
                 self.p = Ghost(e as int);
+                self.fetch();
                 Some((j + 1, e - 1, esc))
             },
             None => None,
@@ -1046,7 +1130,8 @@ impl<'a> Cursor<'a> {
     /// its closing quote, a container up to its matching bracket, anything
     /// else as one scalar. False (and the cursor stays) if there is no
     /// value to pass over: at an operator other than an opening bracket,
-    /// at the end of the input, or when the brackets do not match up.
+    /// at the end of the input, or when the brackets or quotes do not
+    /// match up.
     #[inline(always)]
     pub fn skip(&mut self) -> (r: bool)
         requires
@@ -1055,25 +1140,24 @@ impl<'a> Cursor<'a> {
             final(self).wf(),
             final(self).k >= old(self).k,
             final(self).s == old(self).s,
-            final(self).idx == old(self).idx,
             final(self).st == old(self).st,
-            match skip_to(old(self).s@, old(self).st@, old(self).idx@, old(self).p@) {
+            match skip_to(old(self).s@, old(self).st@, old(self).idx(), old(self).p@) {
                 Some((k1, p1)) => r && final(self).k == k1 && final(self).p@ == p1,
-                None => !r && *final(self) == *old(self),
+                None => !r && final(self).same(old(self)),
             },
     {
         let ghost g = self.s@;
         let ghost st = self.st@;
         let ghost p0 = self.p@;
-        let n = self.idx.len();
         proof {
             lemma_close(g, st, p0);
             lemma_skip(g, st, p0);
+            self.lemma_tok();
         }
-        if self.k >= n {
+        if self.j >= self.s.len() {
             return false;
         }
-        let j = get32(self.idx, self.k) as usize;
+        let j = self.j;
         let c = get8(self.s, j);
         proof {
             assert(byte(g, j as int) == g[j as int]);
@@ -1084,13 +1168,17 @@ impl<'a> Cursor<'a> {
             proof {
                 assert(uq(g, st, j as int));
                 assert(instr(g, st, j as int));
+                lemma_at(g, st, j as int);
             }
             loop
                 invariant
                     g == self.s@,
                     st == self.st@,
-                    n == self.idx@.len(),
-                    indexed(g, st, self.idx@),
+                    self.w.inv(),
+                    self.w.s == self.s,
+                    self.w.st == st,
+                    g.len() <= isize::MAX,
+                    full(g, st).len() <= g.len(),
                     st <= j < lo <= g.len(),
                     j == skip_ws(g, p0),
                     g[j as int] == 0x22,
@@ -1098,16 +1186,25 @@ impl<'a> Cursor<'a> {
                     k == cnt(g, st, lo),
                     instr(g, st, lo - 1),
                     quote_from(g, st, j + 1) == quote_from(g, st, lo),
-                    *self == *old(self),
+                    self.same(old(self)),
+                    old(self).wf(),
                     k > self.k,
                 decreases g.len() - lo,
             {
-                proof {
-                    lemma_string_step(g, st, lo, lo);
-                }
-                let q = get32(self.idx, k) as usize;
+                let q = match self.w.at(k) {
+                    Some(q) => q,
+                    None => {
+                        proof {
+                            lemma_none_after(g, st, lo);
+                            lemma_no_quote(g, st, lo, g.len() as int);
+                            assert(quote_from(g, st, g.len() as int) == g.len());
+                        }
+                        return false;
+                    },
+                };
                 let d = get8(self.s, q);
                 proof {
+                    lemma_next(g, st, lo, lo);
                     assert(byte(g, q as int) == g[q as int]);
                     lemma_no_quote(g, st, lo, q as int);
                 }
@@ -1120,17 +1217,21 @@ impl<'a> Cursor<'a> {
                     }
                     self.k = k + 1;
                     self.p = Ghost(q + 1);
+                    self.fetch();
                     return true;
                 }
                 proof {
                     assert(!uq(g, st, q as int));
                     assert(instr(g, st, q as int));
-                    assert(d == 0x5C);
+                    assert(quote_from(g, st, q as int) == quote_from(g, st, q + 1));
                     lo = q + 1;
                 }
                 k = k + 1;
             }
         } else if c == 0x5B || c == 0x7B {
+            proof {
+                self.lemma_bound();
+            }
             self.walk(self.k + 1)
         } else if c == 0x2C || c == 0x3A || c == 0x5D || c == 0x7D {
             false
@@ -1138,13 +1239,9 @@ impl<'a> Cursor<'a> {
             // One scalar. The cursor moves to the next index entry; the
             // byte before it must not be a backslash, which would leave
             // that entry escaped.
-            let q = if self.k + 1 < n {
-                proof {
-                    lemma_entry(g, st, g.len() as int, self.k + 1);
-                }
-                get32(self.idx, self.k + 1) as usize
-            } else {
-                self.s.len()
+            let q = match self.w.at(self.k + 1) {
+                Some(q) => q,
+                None => self.s.len(),
             };
             proof {
                 lemma_after_scalar(g, st, j as int, q as int);
@@ -1157,6 +1254,7 @@ impl<'a> Cursor<'a> {
             }
             self.k = self.k + 1;
             self.p = Ghost(q as int);
+            self.fetch();
             true
         }
     }
@@ -1167,82 +1265,106 @@ impl<'a> Cursor<'a> {
     fn walk(&mut self, from: usize) -> (r: bool)
         requires
             old(self).wf(),
-            old(self).k <= from <= old(self).idx@.len(),
+            old(self).k <= from <= old(self).idx().len(),
         ensures
             final(self).wf(),
             final(self).k >= old(self).k,
             final(self).s == old(self).s,
-            final(self).idx == old(self).idx,
             final(self).st == old(self).st,
-            match close_k(old(self).s@, old(self).idx@, from as int, 1) {
-                Some(k1) => r && final(self).k == k1 && final(self).p@ == old(self).idx@[k1 - 1] as int + 1,
-                None => !r && *final(self) == *old(self),
+            match close_k(old(self).s@, old(self).idx(), from as int, 1) {
+                Some(k1) => r && final(self).k == k1 && final(self).p@ == old(self).idx()[k1 - 1] + 1,
+                None => !r && final(self).same(old(self)),
             },
     {
         let ghost g = self.s@;
         let ghost st = self.st@;
         let ghost k0 = from as int;
-        let n = self.idx.len();
+        let ghost idx = full(g, st);
         let mut k = from;
         let mut d: usize = 0;
-        // Eight entries at a time where that is enough: if they hold no
-        // more closing brackets than the depth below the start, the depth
-        // cannot reach 0 among them. Otherwise eight single steps, and
-        // back to blocks.
-        while k < n
+        // Eight entries at a time where the window holds them: if they
+        // hold no more closing brackets than the depth below the start,
+        // the depth cannot reach 0 among them. Otherwise eight single
+        // steps, and back to blocks.
+        loop
             invariant
                 g == self.s@,
                 st == self.st@,
-                n == self.idx@.len(),
-                indexed(g, st, self.idx@),
-                0 <= k0 <= k <= n,
+                idx == full(g, st),
+                self.w.inv(),
+                self.w.s == self.s,
+                self.w.st == st,
+                0 <= k0 <= k,
+                k <= idx.len(),
+                idx.len() <= g.len() <= isize::MAX,
                 0 <= d <= k - k0,
-                close_k(g, self.idx@, k0, 1) == close_k(g, self.idx@, k as int, d + 1),
-                *self == *old(self),
+                close_k(g, idx, k0, 1) == close_k(g, idx, k as int, d + 1),
+                self.same(old(self)),
+                old(self).wf(),
                 g == old(self).s@,
-                self.idx@ == old(self).idx@,
                 k0 == from,
                 self.k <= k0,
-            decreases n - k,
+            decreases idx.len() - k,
         {
             let ghost ks = k;
-            while n - k >= 8
+            while self.w.kbase <= k && k <= self.w.kend && 8 <= self.w.kend - k
                 invariant
                     ks <= k,
+                    k <= idx.len(),
+                    idx.len() <= g.len() <= isize::MAX,
                     g == self.s@,
                     st == self.st@,
-                    n == self.idx@.len(),
-                    indexed(g, st, self.idx@),
-                    0 <= k0 <= k <= n,
+                    idx == full(g, st),
+                    self.w.inv(),
+                    self.w.s == self.s,
+                    self.w.st == st,
+                    0 <= k0 <= k,
                     0 <= d <= k - k0,
-                    close_k(g, self.idx@, k0, 1) == close_k(g, self.idx@, k as int, d + 1),
-                    *self == *old(self),
-                decreases n - k,
+                    close_k(g, idx, k0, 1) == close_k(g, idx, k as int, d + 1),
+                    self.same(old(self)),
+                    old(self).wf(),
+                decreases self.w.kend - k,
             {
                 let mut o: usize = 0;
                 let mut c: usize = 0;
                 let mut j: usize = 0;
+                let i0 = k - self.w.kbase;
+                let w0 = self.w.w0;
+                let src = self.s;
+                let bs = self.w.buf.as_slice();
+                proof {
+                    lemma_win_entry(&self.w, k as int);
+                    lemma_win_entry(&self.w, k + 7);
+                }
                 while j < 8
                     invariant
                         g == self.s@,
                         st == self.st@,
-                        n == self.idx@.len(),
-                        indexed(g, st, self.idx@),
-                        k + 8 <= n,
+                        idx == full(g, st),
+                        self.w.inv(),
+                        self.w.s == self.s,
+                        self.w.st == st,
+                        self.w.kbase <= k,
+                        k + 8 <= self.w.kend,
+                        i0 == k - self.w.kbase,
+                        w0 == self.w.w0,
+                        src@ == g,
+                        bs@ == self.w.buf@,
+                        k + 8 <= idx.len(),
                         0 <= j <= 8,
-                        o == opens(g, self.idx@, k as int, j as int),
-                        c == closes(g, self.idx@, k as int, j as int),
+                        o == opens(g, idx, k as int, j as int),
+                        c == closes(g, idx, k as int, j as int),
                         o <= j,
                         c <= j,
                     decreases 8 - j,
                 {
                     proof {
-                        lemma_entry(g, st, g.len() as int, k + j);
+                        lemma_win_entry(&self.w, k + j);
                     }
-                    let b = get8(self.s, get32(self.idx, k + j) as usize) & 0xDF;
+                    let b = get8(src, w0 + get32(bs, i0 + j) as usize) & 0xDF;
                     proof {
-                        let b0 = g[self.idx@[k + j] as int];
-                        assert(byte(g, self.idx@[k + j] as int) == b0);
+                        let b0 = g[idx[k + j]];
+                        assert(byte(g, idx[k + j]) == b0);
                         assert((b0 & 0xDF == 0x5B) == (b0 == 0x5B || b0 == 0x7B)) by (bit_vector);
                         assert((b0 & 0xDF == 0x5D) == (b0 == 0x5D || b0 == 0x7D)) by (bit_vector);
                     }
@@ -1254,43 +1376,52 @@ impl<'a> Cursor<'a> {
                     break;
                 }
                 proof {
-                    lemma_block(g, self.idx@, k as int, d + 1, 8);
+                    lemma_block(g, idx, k as int, d + 1, 8);
                 }
                 d = d + o - c;
                 k = k + 8;
             }
-            let stop = if n - k < 16 { n } else { k + 8 };
-            assert(stop > ks);
+            let ghost kb = k;
+            let stop = k + 8;
             while k < stop
                 invariant
                     g == self.s@,
                     st == self.st@,
-                    n == self.idx@.len(),
-                    indexed(g, st, self.idx@),
-                    0 <= k0 <= k <= n,
+                    idx == full(g, st),
+                    self.w.inv(),
+                    self.w.s == self.s,
+                    self.w.st == st,
+                    0 <= k0 <= k,
                     0 <= d <= k - k0,
-                    close_k(g, self.idx@, k0, 1) == close_k(g, self.idx@, k as int, d + 1),
-                    *self == *old(self),
+                    close_k(g, idx, k0, 1) == close_k(g, idx, k as int, d + 1),
+                    self.same(old(self)),
+                    old(self).wf(),
                     g == old(self).s@,
-                    self.idx@ == old(self).idx@,
                     k0 == from,
                     self.k <= k0,
-                    stop <= n,
                     k <= stop,
-                    ks < stop,
+                    stop == kb + 8,
+                    ks <= kb <= k,
+                    k <= idx.len(),
+                    idx.len() <= g.len() <= isize::MAX,
                 decreases stop - k,
             {
-                proof {
-                    lemma_entry(g, st, g.len() as int, k as int);
-                }
-                let q = get32(self.idx, k) as usize;
+                let q = match self.w.at(k) {
+                    Some(q) => q,
+                    None => {
+                        proof {
+                            assert(close_k(g, idx, k as int, d + 1) is None);
+                        }
+                        return false;
+                    },
+                };
                 let b = get8(self.s, q);
                 proof {
                     assert(byte(g, q as int) == g[q as int]);
-                    assert(close_k(g, self.idx@, k as int, d + 1) == if d + 1 + delta(b) == 0 {
+                    assert(close_k(g, idx, k as int, d + 1) == if d + 1 + delta(b) == 0 {
                         Some(k + 1)
                     } else {
-                        close_k(g, self.idx@, k + 1, d + 1 + delta(b))
+                        close_k(g, idx, k + 1, d + 1 + delta(b))
                     });
                 }
                 k = k + 1;
@@ -1300,8 +1431,8 @@ impl<'a> Cursor<'a> {
                     if d == 0 {
                         proof {
                             assert(delta(b) == -1);
-                            assert(close_k(g, self.idx@, k0, 1) == Some(k as int));
-                            assert(close_k(old(self).s@, old(self).idx@, from as int, 1) == Some(k as int));
+                            assert(close_k(g, idx, k0, 1) == Some(k as int));
+                            lemma_entry(g, st, g.len() as int, k - 1);
                             lemma_at(g, st, q as int);
                             assert(!strs(g, st, q as int));
                             assert(!scalar(g, st, q as int));
@@ -1311,25 +1442,21 @@ impl<'a> Cursor<'a> {
                         }
                         self.k = k;
                         self.p = Ghost(q + 1);
-                        assert(self.wf());
-                        assert(self.idx@ == old(self).idx@);
-                        assert(old(self).idx@[k - 1] as int == q);
-                        assert(close_k(old(self).s@, old(self).idx@, from as int, 1) == Some(k as int));
+                        self.fetch();
                         return true;
                     }
                     d = d - 1;
                 }
             }
-            assert(k > ks);
         }
-        assert(close_k(g, self.idx@, k as int, d + 1) is None);
-        false
     }
 
     /// Leaves the container the cursor is in: moves past the bracket that
     /// closes it, wherever in it the cursor is. Nothing passed over is
     /// validated. False (and the cursor stays) if no bracket closes it.
     #[inline(always)]
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(100)]
     pub fn leave(&mut self) -> (r: bool)
         requires
             old(self).wf(),
@@ -1337,16 +1464,14 @@ impl<'a> Cursor<'a> {
             final(self).wf(),
             final(self).k >= old(self).k,
             final(self).s == old(self).s,
-            final(self).idx == old(self).idx,
             final(self).st == old(self).st,
-            match close_k(old(self).s@, old(self).idx@, old(self).k as int, 1) {
-                Some(k1) => r && final(self).k == k1 && final(self).p@ == old(self).idx@[k1 - 1] as int + 1,
-                None => !r && *final(self) == *old(self),
+            match close_k(old(self).s@, old(self).idx(), old(self).k as int, 1) {
+                Some(k1) => r && final(self).k == k1 && final(self).p@ == old(self).idx()[k1 - 1] + 1,
+                None => !r && final(self).same(old(self)),
             },
     {
         proof {
-            lemma_cnt_bound(self.s@, self.st@, self.s@.len() as int);
-            lemma_prefix(self.s@, self.st@, self.p@, self.s@.len() as int);
+            self.lemma_bound();
         }
         self.walk(self.k)
     }
@@ -1360,40 +1485,30 @@ impl<'a> Cursor<'a> {
             r == self.tok(),
     {
         proof {
-            lemma_close(self.s@, self.st@, self.p@);
+            self.lemma_tok();
         }
-        if self.k < self.idx.len() {
-            get32(self.idx, self.k) as usize
-        } else {
-            self.s.len()
-        }
+        self.j
     }
 }
 
-/// Stage 1 for the on-demand reader. Returns the number of index entries
-/// and where the index starts, or `None` if stage 1 already rejects the
-/// input: invalid UTF-8, an unterminated string, a control character in a
-/// string, or 4 GiB or more.
-pub fn index_for(s: &[u8], idx: &mut Vec<u32>) -> (r: Option<(usize, Ghost<int>)>)
+/// Where the index of `s` starts, after a byte order mark, if `s` is
+/// UTF-8; the on-demand reader rejects other input at once. (The rest of
+/// stage 1's checks need no pass of their own: a control character inside
+/// a string is in the index, and a string left open runs out of index;
+/// the reader rejects either when it reaches it.)
+pub fn index_start(s: &[u8]) -> (r: Option<usize>)
     ensures
-        r matches Some((n, st)) ==> n <= final(idx)@.len() && indexed(
-            s@,
-            st@,
-            final(idx)@.subrange(0, n as int),
-        ),
+        r matches Some(st) ==> st == bom_end(s@) && utf8_from(s@, st as int),
+        r is None ==> !utf8_from(s@, bom_end(s@)),
 {
-    if s.len() > (u32::MAX - 64) as usize {
-        return None;
-    }
     let start: usize = if ex_has_lit(s, 0, &[0xEF, 0xBB, 0xBF]) { 3 } else { 0 };
     proof {
         assert([0xEFu8, 0xBB, 0xBF]@ == seq![0xEFu8, 0xBB, 0xBF]);
     }
-    let (n, ok, utf8) = crate::index::index(s, start, idx);
-    if !ok || !utf8 {
+    if !crate::utf8::utf8_valid(s, start) {
         return None;
     }
-    Some((n, Ghost(start as int)))
+    Some(start)
 }
 
 /// Why a `Reader` call failed: the token it was asked for is not what is
@@ -1401,32 +1516,86 @@ pub fn index_for(s: &[u8], idx: &mut Vec<u32>) -> (r: Option<(usize, Ghost<int>)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Mismatch;
 
-/// What the reader expects next.
-const VALUE: u8 = 0;
+/// Walking an object's members on its tape `d` from index `i` (a key, or
+/// the object's end), member by member, reaches index `e` exactly, and no
+/// key before it is `key`.
+pub open spec fn none_before(s: Seq<u8>, d: Seq<STok>, i: int, e: int, key: Seq<u8>) -> bool
+    decreases e - i,
+{
+    if i >= e {
+        i == e
+    } else if !(d[i] is Key) || key_bytes(s, d[i]) == key {
+        false
+    } else {
+        let n = next_val(d, i + 1);
+        if n <= i || n > e {
+            false
+        } else {
+            none_before(s, d, n, e, key)
+        }
+    }
+}
 
-const AFTER: u8 = 1;
-
-const START: u8 = 2;
-
-const KEY: u8 = 3;
+/// One more member whose key is not `key`.
+pub proof fn lemma_none_ext(s: Seq<u8>, d: Seq<STok>, a: int, b: int, key: Seq<u8>)
+    requires
+        none_before(s, d, a, b, key),
+        d[b] is Key,
+        key_bytes(s, d[b]) != key,
+        next_val(d, b + 1) > b,
+    ensures
+        none_before(s, d, a, next_val(d, b + 1), key),
+    decreases b - a,
+{
+    if a < b {
+        lemma_none_ext(s, d, next_val(d, a + 1), b, key);
+    } else {
+        let c = next_val(d, b + 1);
+        assert(none_before(s, d, c, c, key));
+    }
+}
 
 /// The on-demand reader: a `Cursor` and what the caller may read next (a
 /// value, a key, or a separator after a value). Every call is safe in any
 /// state and on any input; a call that does not fit returns `Mismatch`.
+///
+/// On a JSON text (`document(s, true)` accepts it) the reader also follows
+/// the tape: `synced` says its place corresponds to index `pos()` of the
+/// document's tape `doc()`, inside the containers whose start tokens are at
+/// `opens()`, expecting `want()` next (`VALUE`, `AFTER`, `START` or `KEY`).
+/// Each method's contract says, for a synced reader, which call succeeds
+/// there, that what it returns is the tape's token at `pos()`, and where it
+/// leaves the reader, which is synced again. A call that does not fit
+/// returns `Mismatch` and leaves the reader where it was, including
+/// `arr_next` inside an object, `obj_next` inside an array and `leave` at
+/// the top.
 pub struct Reader<'a> {
     c: Cursor<'a>,
     state: u8,
+    /// The kinds of the containers the cursor is in, outermost first
+    /// (`true`: an object).
+    kinds: Vec<bool>,
     scratch: Vec<u8>,
+    /// Where the index window's buffer goes back to when the reader is
+    /// dropped.
+    home: &'a mut Vec<u32>,
+    /// The containers the cursor is in, outermost first.
+    fs: Ghost<Seq<Frame>>,
+    /// The tape of everything before the cursor.
+    tp: Ghost<Seq<STok>>,
 }
 
 impl<'a> Reader<'a> {
+    /// The cursor is between two tokens of the input.
     pub closed spec fn inv(&self) -> bool {
-        self.c.wf()
+        &&& self.c.wf()
+        &&& self.kinds@.len() == self.fs@.len()
+        &&& forall|a: int| 0 <= a < self.fs@.len() ==> #[trigger] self.kinds@[a] == self.fs@[a].obj
     }
 
     /// Index entries not yet read.
     pub closed spec fn left(&self) -> int {
-        self.c.idx@.len() - self.c.k
+        self.c.idx().len() - self.c.k
     }
 
     /// The input.
@@ -1434,17 +1603,166 @@ impl<'a> Reader<'a> {
         self.c.s@
     }
 
-    /// Runs stage 1 over `s` into `idx` and stands at the document's
-    /// value. `None` if stage 1 rejects the input (see `index_for`).
+    /// The input is a JSON text, and the reader stands where index `pos()`
+    /// of its tape begins: reading on from here the way the grammar does
+    /// gives exactly the document's tape.
+    pub closed spec fn synced(&self) -> bool {
+        &&& self.c.wf()
+        &&& document(self.c.s@, true) is Some
+        &&& frames_ok(self.fs@, self.tp@)
+        &&& finish(self.c.s@, self.fs@, self.state, self.c.p@, self.tp@) == Some(document(self.c.s@, true).unwrap().0)
+    }
+
+    /// The document's tape.
+    pub open spec fn doc(&self) -> Seq<STok> {
+        document(self.src(), true).unwrap().0
+    }
+
+    /// The index on the tape of the next token.
+    pub closed spec fn pos(&self) -> int {
+        self.tp@.len() as int
+    }
+
+    /// What the reader expects next: `VALUE`, `AFTER`, `START` or `KEY`.
+    pub closed spec fn want(&self) -> u8 {
+        self.state
+    }
+
+    /// The indices on the tape of the start tokens of the containers the
+    /// reader is in, outermost first.
+    pub closed spec fn opens(&self) -> Seq<int> {
+        starts(self.fs@)
+    }
+
+    /// Synced, on the same input as `old`, at tape index `pos`, expecting
+    /// `want`, inside the containers `opens`.
+    pub open spec fn moved_to(&self, old: &Self, pos: int, want: u8, opens: Seq<int>) -> bool {
+        &&& self.synced()
+        &&& self.src() == old.src()
+        &&& self.pos() == pos
+        &&& self.want() == want
+        &&& self.opens() == opens
+    }
+
+    /// Unchanged: still synced, at the same place.
+    pub open spec fn kept(&self, old: &Self) -> bool {
+        self.moved_to(old, old.pos(), old.want(), old.opens())
+    }
+
+    /// The innermost open container is an array.
+    pub open spec fn in_arr(&self) -> bool {
+        self.opens().len() > 0 && self.doc()[self.opens().last()] is ArrStart
+    }
+
+    /// The innermost open container is an object.
+    pub open spec fn in_obj(&self) -> bool {
+        self.opens().len() > 0 && self.doc()[self.opens().last()] is ObjStart
+    }
+
+    /// The innermost container's kind on the tape is its frame's.
+    proof fn lemma_kind(&self)
+        requires
+            self.synced(),
+            self.fs@.len() > 0,
+        ensures
+            self.opens().len() == self.fs@.len(),
+            self.opens().last() == self.fs@.last().start,
+            (self.doc()[self.opens().last()] is ObjStart) == self.fs@.last().obj,
+            (self.doc()[self.opens().last()] is ArrStart) == !self.fs@.last().obj,
+    {
+        lemma_leave_step(self.c.s@, self.fs@, self.state, self.c.p@, self.tp@);
+        lemma_starts(self.fs@, self.fs@.last());
+    }
+
+    /// At a value: what the grammar reads there, and what the reader is
+    /// after it.
+    proof fn lemma_value(&self)
+        requires
+            self.synced(),
+            self.state == VALUE,
+        ensures
+            ({
+                let s = self.c.s@;
+                let j = skip_ws(s, self.c.p@);
+                let (t1, k) = value(s, j, vdepth(self.fs@), self.tp@).unwrap();
+                &&& value(s, j, vdepth(self.fs@), self.tp@) is Some
+                &&& j == self.c.tok()
+                &&& j < s.len()
+                &&& finish(s, self.fs@, AFTER, k, t1) == Some(self.doc())
+                &&& frames_ok(self.fs@, t1)
+                &&& self.pos() < t1.len()
+                &&& self.doc()[self.pos()] == t1[self.pos()]
+                &&& next_val(self.doc(), self.pos()) == t1.len()
+                &&& self.c.st@ <= k
+                &&& bnd(s, self.c.st@, k)
+                &&& skipped(s, self.c.st@, self.c.p@, k)
+            }),
+    {
+        let s = self.c.s@;
+        let st = self.c.st@;
+        let p = self.c.p@;
+        let j = skip_ws(s, p);
+        lemma_value_step(s, self.fs@, p, self.tp@);
+        lemma_value_head(s, j, vdepth(self.fs@), self.tp@);
+        let (t1, k) = value(s, j, vdepth(self.fs@), self.tp@).unwrap();
+        lemma_close(s, st, p);
+        lemma_after_bnd(s, st, self.fs@, k, t1);
+        lemma_skip_value(s, st, p, vdepth(self.fs@), self.tp@);
+    }
+
+    /// Stands at the document's value in `s`, indexing it a window at a
+    /// time into `idx`'s buffer, which is given back when the reader is
+    /// dropped. `None` if `s` is not UTF-8 (see `index_start`).
     pub fn new(s: &'a [u8], idx: &'a mut Vec<u32>) -> (r: Option<Self>)
         ensures
-            r matches Some(rd) ==> rd.inv(),
+            r matches Some(rd) ==> rd.inv() && rd.src() == s@,
+            r is None && s@.len() <= isize::MAX ==> !utf8_from(s@, bom_end(s@)),
+            document(s@, true) is Some ==> (r matches Some(rd) && rd.synced() && rd.pos() == 0 && rd.want()
+                == VALUE && rd.opens().len() == 0),
     {
-        match index_for(s, idx) {
-            Some((n, st)) => {
-                let v: &'a Vec<u32> = idx;
-                let ix = slice_prefix(v.as_slice(), n);
-                Some(Reader { c: Cursor::new(s, ix, st), state: VALUE, scratch: Vec::new() })
+        Self::with_window(s, idx, WINDOW)
+    }
+
+    /// `new` with index windows of `win` bytes, a multiple of 128 from 128
+    /// up to 2^30 (for tests; `None` otherwise).
+    pub fn with_window(s: &'a [u8], idx: &'a mut Vec<u32>, win: usize) -> (r: Option<Self>)
+        ensures
+            r matches Some(rd) ==> rd.inv() && rd.src() == s@,
+            r is None && 128 <= win <= 0x4000_0000 && win % 128 == 0 && s@.len() <= isize::MAX ==> !utf8_from(
+                s@,
+                bom_end(s@),
+            ),
+            document(s@, true) is Some && 128 <= win <= 0x4000_0000 && win % 128 == 0 ==> (r matches Some(rd)
+                && rd.synced() && rd.pos() == 0 && rd.want() == VALUE && rd.opens().len() == 0),
+    {
+        proof {
+            if document(s@, true) is Some {
+                lemma_start(s@);
+            }
+        }
+        // No slice is longer than `isize::MAX` bytes; the proofs need it
+        // said.
+        if win < 128 || win > 0x4000_0000 || win % 128 != 0 || s.len() > isize::MAX as usize {
+            return None;
+        }
+        match index_start(s) {
+            Some(st) => {
+                let mut buf = Vec::new();
+                std::mem::swap(idx, &mut buf);
+                let w = Win::new(s, st, win, buf);
+                let rd = Reader {
+                    c: Cursor::new(s, w, Ghost(st as int)),
+                    state: VALUE,
+                    kinds: Vec::new(),
+                    scratch: Vec::new(),
+                    home: idx,
+                    fs: Ghost(Seq::empty()),
+                    tp: Ghost(Seq::empty()),
+                };
+                proof {
+                    assert(rd.opens() =~= Seq::<int>::empty());
+                }
+                Some(rd)
             },
             None => None,
         }
@@ -1469,26 +1787,66 @@ impl<'a> Reader<'a> {
         self.c.offset()
     }
 
-    /// Whether a complete value has been read and nothing follows it.
-    pub fn at_end(&self) -> bool
+    /// Whether a complete value has been read and nothing follows it. On a
+    /// synced reader: exactly when the document's value has been read,
+    /// and then the whole tape has.
+    pub fn at_end(&self) -> (r: bool)
         requires
             self.inv(),
+        ensures
+            self.synced() ==> (r <==> (self.want() == AFTER && self.opens().len() == 0)),
+            self.synced() && r ==> self.pos() == self.doc().len(),
     {
+        proof {
+            if self.synced() && self.fs@.len() > 0 && self.state == AFTER {
+                assert(after(self.c.s@, self.c.p@, self.fs@.last(), self.tp@) is Some);
+            }
+        }
         self.state == AFTER && self.c.done()
     }
 
-    /// Passes over the value at the cursor without validating it.
+    /// Passes over the value at the cursor without validating it. Synced:
+    /// succeeds exactly where a value is expected, and moves past it on
+    /// the tape.
     #[inline(always)]
     pub fn skip(&mut self) -> (r: Result<(), Mismatch>)
         requires
             old(self).inv(),
         ensures
             final(self).inv(),
+            final(self).src() == old(self).src(),
+            old(self).synced() ==> if old(self).want() == VALUE {
+                r is Ok && final(self).moved_to(
+                    old(self),
+                    next_val(old(self).doc(), old(self).pos()),
+                    AFTER,
+                    old(self).opens(),
+                )
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
-        if self.state != VALUE || !self.c.skip() {
+        if self.state != VALUE {
+            return Err(Mismatch);
+        }
+        let ghost sy = self.synced();
+        let ghost s = self.c.s@;
+        let ghost vr = value(s, skip_ws(s, self.c.p@), vdepth(self.fs@), self.tp@).unwrap();
+        proof {
+            if sy {
+                self.lemma_value();
+            }
+        }
+        if !self.c.skip() {
             return Err(Mismatch);
         }
         self.state = AFTER;
+        self.tp = Ghost(vr.0);
+        proof {
+            if sy {
+                lemma_after_ws(s, self.fs@, self.c.p@, vr.1, vr.0);
+            }
+        }
         Ok(())
     }
 
@@ -1496,63 +1854,266 @@ impl<'a> Reader<'a> {
     fn open(&mut self, c: u8) -> (r: Result<(), Mismatch>)
         requires
             old(self).inv(),
-            is_op(c),
+            c == 0x5B || c == 0x7B,
         ensures
             final(self).inv(),
+            final(self).src() == old(self).src(),
+            old(self).synced() ==> if old(self).want() == VALUE && (if c == 0x7B {
+                old(self).doc()[old(self).pos()] is ObjStart
+            } else {
+                old(self).doc()[old(self).pos()] is ArrStart
+            }) {
+                r is Ok && final(self).moved_to(
+                    old(self),
+                    old(self).pos() + 1,
+                    START,
+                    old(self).opens().push(old(self).pos()),
+                )
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
-        if self.state != VALUE || !self.c.eat(c) {
+        if self.state != VALUE {
             return Err(Mismatch);
         }
+        let ghost sy = self.synced();
+        let ghost s = self.c.s@;
+        let ghost p0 = self.c.p@;
+        let ghost fs0 = self.fs@;
+        let ghost t0 = self.tp@;
+        let ghost j = skip_ws(s, p0);
+        proof {
+            if sy {
+                self.lemma_value();
+                lemma_value_head(s, j, vdepth(fs0), t0);
+            }
+        }
+        if !self.c.eat(c) {
+            return Err(Mismatch);
+        }
+        proof {
+            if sy {
+                lemma_open_step(s, fs0, p0, t0);
+            }
+        }
+        let ghost f = Frame { obj: c == 0x7B, depth: vdepth(fs0), start: t0.len() as int };
+        let ghost x = if c == 0x7B {
+            STok::ObjStart { end: 0 }
+        } else {
+            STok::ArrStart { end: 0 }
+        };
+        self.fs = Ghost(fs0.push(f));
+        self.tp = Ghost(t0.push(x));
         self.state = START;
+        self.kinds.push(c == 0x7B);
+        proof {
+            lemma_starts(fs0, f);
+            assert forall|a: int| 0 <= a < self.fs@.len() implies #[trigger] self.kinds@[a] == self.fs@[a].obj by {
+                if a < fs0.len() {
+                    assert(self.fs@[a] == fs0[a]);
+                }
+            }
+        }
         Ok(())
     }
 
+    /// Steps to the next element or key. The shared body of `arr_next`
+    /// and `obj_next`.
     #[inline(always)]
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(200)]
     fn step(&mut self, close: u8, to: u8) -> (r: Result<bool, Mismatch>)
         requires
             old(self).inv(),
-            is_op(close),
+            (close == 0x5D && to == VALUE) || (close == 0x7D && to == KEY),
         ensures
             final(self).inv(),
             final(self).left() <= old(self).left(),
+            final(self).src() == old(self).src(),
+            old(self).synced() && !(old(self).opens().len() > 0 && (old(self).doc()[old(self).opens().last()] is ObjStart)
+                == (close == 0x7D)) ==> r is Err && final(self).kept(old(self)),
+            old(self).synced() && old(self).opens().len() > 0 && (old(self).doc()[old(self).opens().last()] is ObjStart)
+                == (close == 0x7D) ==> {
+                let d = old(self).doc();
+                let i0 = if old(self).want() == VALUE {
+                    next_val(d, old(self).pos())
+                } else {
+                    old(self).pos()
+                };
+                &&& old(self).want() == KEY ==> close == 0x7D && r is Err && final(self).kept(old(self))
+                &&& old(self).want() != KEY && d[i0] == end_tok(close == 0x7D) ==> r == Ok(false) && i0 == link(
+                    d[old(self).opens().last()],
+                ) && final(self).moved_to(old(self), i0 + 1, AFTER, old(self).opens().drop_last())
+                &&& old(self).want() != KEY && d[i0] != end_tok(close == 0x7D) ==> r == Ok(true) && final(self).moved_to(old(self), i0, to, old(self).opens())
+            },
     {
+        let ghost s = self.c.s@;
+        let ghost st = self.c.st@;
+        let ghost sy = self.synced() && self.fs@.len() > 0 && (self.doc()[self.opens().last()] is ObjStart) == (close
+            == 0x7D);
+        proof {
+            lemma_starts(self.fs@, Frame { obj: false, depth: 0, start: 0 });
+            if self.synced() && self.fs@.len() > 0 {
+                self.lemma_kind();
+            }
+        }
+        // Only in a container of the kind `close` closes.
+        let nk = self.kinds.len();
+        if nk == 0 || self.kinds[nk - 1] != (close == 0x7D) {
+            proof {
+                if self.synced() && nk > 0 {
+                    assert(self.kinds@[nk - 1] == self.fs@.last().obj);
+                }
+            }
+            return Err(Mismatch);
+        }
+        proof {
+            if self.synced() {
+                assert(self.kinds@[nk - 1] == self.fs@.last().obj);
+                assert(sy);
+            }
+            if sy {
+                if self.state == KEY {
+                    assert(rest(s, KEY, self.c.p@, self.fs@.last(), self.tp@) is Some);
+                }
+            }
+        }
         if self.state == VALUE {
+            let ghost vr = value(s, skip_ws(s, self.c.p@), vdepth(self.fs@), self.tp@).unwrap();
+            proof {
+                if sy {
+                    self.lemma_value();
+                }
+            }
             if !self.c.skip() {
                 return Err(Mismatch);
             }
             self.state = AFTER;
+            self.tp = Ghost(vr.0);
+            proof {
+                if sy {
+                    lemma_after_ws(s, self.fs@, self.c.p@, vr.1, vr.0);
+                }
+            }
         }
         if self.state == KEY {
             return Err(Mismatch);
         }
+        let ghost p0 = self.c.p@;
+        let ghost t0 = self.tp@;
+        let ghost fs0 = self.fs@;
+        let ghost w0 = self.state;
+        let ghost f = fs0.last();
+        let ghost j = skip_ws(s, p0);
+        proof {
+            if sy {
+                assert(self.synced());
+                assert(self.opens() == old(self).opens());
+                lemma_close(s, st, p0);
+                lemma_skip(s, st, p0);
+                lemma_skip_ws_bounds(s, p0);
+                self.c.lemma_tok();
+                assert(rest(s, w0, p0, f, t0) is Some);
+            }
+        }
         if self.c.eat(close) {
+            let ghost t3 = close_at(t0.push(end_tok(f.obj)), f.start);
+            proof {
+                if sy {
+                    assert(rest(s, w0, p0, f, t0) == Some((t0.push(end_tok(f.obj)), j + 1)));
+                    lemma_leave_step(s, fs0, w0, p0, t0);
+                    assert forall|a: int| 0 <= a < fs0.drop_last().len() implies #[trigger] fs0.drop_last()[a].start
+                        < t0.len() by {
+                        assert(fs0.drop_last()[a] == fs0[a]);
+                    }
+                    lemma_finish_keeps(s, fs0.drop_last(), AFTER, j + 1, t3, t0.len() as int);
+                    lemma_ext_push(t0, end_tok(f.obj));
+                }
+            }
             self.state = AFTER;
+            self.fs = Ghost(fs0.drop_last());
+            self.tp = Ghost(t3);
+            self.kinds.pop();
+            proof {
+                lemma_starts(fs0, f);
+                assert forall|a: int| 0 <= a < self.fs@.len() implies #[trigger] self.kinds@[a] == self.fs@[a].obj by {
+                    assert(self.fs@[a] == fs0[a]);
+                }
+            }
             return Ok(false);
         }
         if self.state == START {
+            proof {
+                if sy {
+                    lemma_start_step(s, fs0, p0, t0);
+                }
+            }
             self.state = to;
+            proof {
+                if sy {
+                    if to == VALUE {
+                        lemma_value_step(s, fs0, p0, t0);
+                        lemma_value_head(s, j, vdepth(fs0), t0);
+                    } else {
+                        lemma_key_step(s, fs0, p0, t0);
+                    }
+                }
+            }
             return Ok(true);
         }
         if self.c.eat(0x2C) {
+            proof {
+                if sy {
+                    lemma_comma_step(s, fs0, p0, t0);
+                }
+            }
             self.state = to;
+            proof {
+                if sy {
+                    lemma_skip_ws_bounds(s, j + 1);
+                    if to == VALUE {
+                        lemma_value_step(s, fs0, j + 1, t0);
+                        lemma_value_head(s, skip_ws(s, j + 1), vdepth(fs0), t0);
+                    } else {
+                        lemma_key_step(s, fs0, j + 1, t0);
+                    }
+                }
+            }
             return Ok(true);
+        }
+        proof {
+            if sy {
+                assert(after(s, p0, f, t0) is None);
+            }
         }
         Err(Mismatch)
     }
 
-    /// Enters the array at the cursor.
+    /// Enters the array at the cursor. Synced: succeeds exactly where the
+    /// tape has an array.
     #[inline(always)]
     pub fn arr_begin(&mut self) -> (r: Result<(), Mismatch>)
         requires
             old(self).inv(),
         ensures
             final(self).inv(),
+            old(self).synced() ==> if old(self).want() == VALUE && old(self).doc()[old(self).pos()] is ArrStart {
+                r is Ok && final(self).moved_to(
+                    old(self),
+                    old(self).pos() + 1,
+                    START,
+                    old(self).opens().push(old(self).pos()),
+                )
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
         self.open(0x5B)
     }
 
     /// Steps to the next element, passing over the current one if it was
-    /// not read. `false` once the array is closed.
+    /// not read. `false` once the array is closed. Synced, in an array:
+    /// `false` exactly at the array's end token.
     #[inline(always)]
     pub fn arr_next(&mut self) -> (r: Result<bool, Mismatch>)
         requires
@@ -1560,23 +2121,60 @@ impl<'a> Reader<'a> {
         ensures
             final(self).inv(),
             final(self).left() <= old(self).left(),
+            old(self).synced() && old(self).in_arr() ==> old(self).want() != KEY && {
+                let d = old(self).doc();
+                let i0 = if old(self).want() == VALUE {
+                    next_val(d, old(self).pos())
+                } else {
+                    old(self).pos()
+                };
+                if d[i0] is ArrEnd {
+                    r == Ok(false) && i0 == link(d[old(self).opens().last()]) && final(self).moved_to(
+                        old(self),
+                        i0 + 1,
+                        AFTER,
+                        old(self).opens().drop_last(),
+                    )
+                } else {
+                    r == Ok(true) && final(self).moved_to(old(self), i0, VALUE, old(self).opens())
+                }
+            },
+            // Not in an array: refused.
+            old(self).synced() && !old(self).in_arr() ==> r is Err && final(self).kept(old(self)),
     {
+        proof {
+            if old(self).synced() && old(self).opens().len() > 0 {
+                old(self).lemma_kind();
+            }
+        }
         self.step(0x5D, VALUE)
     }
 
-    /// Enters the object at the cursor.
+    /// Enters the object at the cursor. Synced: succeeds exactly where the
+    /// tape has an object.
     #[inline(always)]
     pub fn obj_begin(&mut self) -> (r: Result<(), Mismatch>)
         requires
             old(self).inv(),
         ensures
             final(self).inv(),
+            old(self).synced() ==> if old(self).want() == VALUE && old(self).doc()[old(self).pos()] is ObjStart {
+                r is Ok && final(self).moved_to(
+                    old(self),
+                    old(self).pos() + 1,
+                    START,
+                    old(self).opens().push(old(self).pos()),
+                )
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
         self.open(0x7B)
     }
 
     /// Steps to the next key, passing over the current value if it was
-    /// not read. `false` once the object is closed.
+    /// not read. `false` once the object is closed. Synced, in an object
+    /// and not at a key: `false` exactly at the object's end token.
     #[inline(always)]
     pub fn obj_next(&mut self) -> (r: Result<bool, Mismatch>)
         requires
@@ -1584,23 +2182,91 @@ impl<'a> Reader<'a> {
         ensures
             final(self).inv(),
             final(self).left() <= old(self).left(),
+            old(self).synced() && old(self).in_obj() ==> if old(self).want() == KEY {
+                r is Err && final(self).kept(old(self))
+            } else {
+                let d = old(self).doc();
+                let i0 = if old(self).want() == VALUE {
+                    next_val(d, old(self).pos())
+                } else {
+                    old(self).pos()
+                };
+                if d[i0] is ObjEnd {
+                    r == Ok(false) && i0 == link(d[old(self).opens().last()]) && final(self).moved_to(
+                        old(self),
+                        i0 + 1,
+                        AFTER,
+                        old(self).opens().drop_last(),
+                    )
+                } else {
+                    r == Ok(true) && final(self).moved_to(old(self), i0, KEY, old(self).opens())
+                }
+            },
+            // Not in an object: refused.
+            old(self).synced() && !old(self).in_obj() ==> r is Err && final(self).kept(old(self)),
     {
+        proof {
+            if old(self).synced() && old(self).opens().len() > 0 {
+                old(self).lemma_kind();
+            }
+        }
         self.step(0x7D, KEY)
     }
 
     /// Leaves the innermost container the cursor is in, from anywhere in
-    /// it, without validating the rest of it.
+    /// it, without validating the rest of it. Synced, in a container: to
+    /// just after its end token.
     #[inline(always)]
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(100)]
     pub fn leave(&mut self) -> (r: Result<(), Mismatch>)
         requires
             old(self).inv(),
         ensures
             final(self).inv(),
+            old(self).synced() && old(self).opens().len() > 0 ==> r is Ok && final(self).moved_to(
+                old(self),
+                link(old(self).doc()[old(self).opens().last()]) + 1,
+                AFTER,
+                old(self).opens().drop_last(),
+            ),
+            old(self).synced() && old(self).opens().len() == 0 ==> r is Err && final(self).kept(old(self)),
     {
+        proof {
+            lemma_starts(self.fs@, Frame { obj: false, depth: 0, start: 0 });
+        }
+        if self.kinds.len() == 0 {
+            return Err(Mismatch);
+        }
+        let ghost s = self.c.s@;
+        let ghost st = self.c.st@;
+        let ghost p0 = self.c.p@;
+        let ghost fs0 = self.fs@;
+        let ghost t0 = self.tp@;
+        let ghost f = fs0.last();
+        let ghost sy = self.synced() && fs0.len() > 0;
+        let ghost rr = rest(s, self.state, p0, f, t0).unwrap();
+        proof {
+            if sy {
+                self.lemma_kind();
+                lemma_leave_step(s, fs0, self.state, p0, t0);
+                lemma_rest_body(s, st, self.state, p0, f, t0);
+                lemma_body_close(s, st, p0, rr.1, close_byte(f.obj));
+            }
+        }
         if !self.c.leave() {
             return Err(Mismatch);
         }
         self.state = AFTER;
+        self.fs = Ghost(fs0.drop_last());
+        self.tp = Ghost(close_at(rr.0, f.start));
+        self.kinds.pop();
+        proof {
+            lemma_starts(fs0, f);
+            assert forall|a: int| 0 <= a < self.fs@.len() implies #[trigger] self.kinds@[a] == self.fs@[a].obj by {
+                assert(self.fs@[a] == fs0[a]);
+            }
+        }
         Ok(())
     }
 
@@ -1617,6 +2283,15 @@ impl<'a> Reader<'a> {
             r is Ok ==> final(self).left() < old(self).left(),
             r matches Ok((a, b, _)) ==> a <= b <= final(self).src().len(),
             final(self).src() == old(self).src(),
+            old(self).synced() ==> if old(self).want() == KEY {
+                r matches Ok((a, b, esc)) && old(self).doc()[old(self).pos()] == (STok::Key {
+                    start: a as int,
+                    end: b as int,
+                    escaped: esc,
+                }) && (esc ==> final(self).scratch@ == decode(old(self).src(), a as int, b as int)) && final(self).moved_to(old(self), old(self).pos() + 1, VALUE, old(self).opens())
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
         if self.state != KEY {
             return Err(Mismatch);
@@ -1624,8 +2299,17 @@ impl<'a> Reader<'a> {
         self.scratch.clear();
         let ghost g = self.c.s@;
         let ghost j = self.c.tok();
+        let ghost sy = self.synced();
+        let ghost p0 = self.c.p@;
+        let ghost fs0 = self.fs@;
+        let ghost t0 = self.tp@;
         proof {
             crate::lemmas::lemma_string_body_advances(g, j + 1, false);
+            if sy {
+                assert(fs0.len() > 0);
+                lemma_key_step(g, fs0, p0, t0);
+                self.c.lemma_tok();
+            }
         }
         match self.c.string(&mut self.scratch) {
             Some((a, b, esc)) => {
@@ -1633,6 +2317,12 @@ impl<'a> Reader<'a> {
                     return Err(Mismatch);
                 }
                 self.state = VALUE;
+                self.tp = Ghost(t0.push(STok::Key { start: a as int, end: b as int, escaped: esc }));
+                proof {
+                    if sy {
+                        assert(self.scratch@ =~= Seq::<u8>::empty() + self.scratch@);
+                    }
+                }
                 Ok((a, b, esc))
             },
             None => Err(Mismatch),
@@ -1646,6 +2336,16 @@ impl<'a> Reader<'a> {
             old(self).inv(),
         ensures
             final(self).inv(),
+            old(self).synced() ==> if old(self).want() == KEY {
+                r is Ok && old(self).doc()[old(self).pos()] is Key && final(self).moved_to(
+                    old(self),
+                    old(self).pos() + 1,
+                    VALUE,
+                    old(self).opens(),
+                )
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
         match self.key_raw() {
             Ok(_) => Ok(()),
@@ -1654,7 +2354,8 @@ impl<'a> Reader<'a> {
     }
 
     /// Whether the key at the cursor is `key` (compared decoded); moves to
-    /// its value either way.
+    /// its value either way. Synced: the comparison is with the tape's
+    /// key.
     #[inline(always)]
     pub fn key_is(&mut self, key: &[u8]) -> (r: Result<bool, Mismatch>)
         requires
@@ -1662,13 +2363,31 @@ impl<'a> Reader<'a> {
         ensures
             final(self).inv(),
             r is Ok ==> final(self).left() < old(self).left(),
+            old(self).synced() ==> if old(self).want() == KEY {
+                &&& old(self).doc()[old(self).pos()] is Key
+                &&& r == Ok(key_bytes(old(self).src(), old(self).doc()[old(self).pos()]) == key@)
+                &&& final(self).moved_to(old(self), old(self).pos() + 1, VALUE, old(self).opens())
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
         match self.key_raw() {
             Ok((a, b, esc)) => {
+                let ghost s = self.c.s@;
                 if esc {
-                    Ok(self.scratch.len() == key.len() && ex_has_lit(self.scratch.as_slice(), 0, key))
+                    let r = self.scratch.len() == key.len() && ex_has_lit(self.scratch.as_slice(), 0, key);
+                    proof {
+                        assert(self.scratch@.subrange(0, self.scratch@.len() as int) =~= self.scratch@);
+                    }
+                    Ok(r)
                 } else {
-                    Ok(b - a == key.len() && ex_has_lit(self.c.s, a, key))
+                    let r = b - a == key.len() && ex_has_lit(self.c.s, a, key);
+                    proof {
+                        if s.subrange(a as int, b as int) == key@ {
+                            assert(s.subrange(a as int, b as int).len() == b - a);
+                        }
+                    }
+                    Ok(r)
                 }
             },
             Err(e) => Err(e),
@@ -1677,34 +2396,151 @@ impl<'a> Reader<'a> {
 
     /// Moves to the value of the next field named `key`, searching
     /// forward only. `false` (and the object is closed) if there is none.
+    /// Synced, in an object and not at a key: `true` at the first member
+    /// of this object from the cursor on with that key, `false` just after
+    /// its end token when no member from the cursor on has it; anywhere
+    /// else, `Mismatch`, and the reader stays where it was.
     #[inline(always)]
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(300)]
     pub fn find(&mut self, key: &[u8]) -> (r: Result<bool, Mismatch>)
         requires
             old(self).inv(),
         ensures
             final(self).inv(),
+            old(self).synced() && old(self).in_obj() && old(self).want() != KEY ==> {
+                let d = old(self).doc();
+                let i0 = if old(self).want() == VALUE {
+                    next_val(d, old(self).pos())
+                } else {
+                    old(self).pos()
+                };
+                &&& r is Ok
+                &&& r == Ok(true) ==> {
+                    &&& final(self).moved_to(old(self), final(self).pos(), VALUE, old(self).opens())
+                    &&& final(self).doc()[final(self).pos() - 1] is Key
+                    &&& key_bytes(final(self).src(), final(self).doc()[final(self).pos() - 1]) == key@
+                    &&& none_before(old(self).src(), d, i0, final(self).pos() - 1, key@)
+                }
+                &&& r == Ok(false) ==> final(self).moved_to(
+                    old(self),
+                    link(old(self).doc()[old(self).opens().last()]) + 1,
+                    AFTER,
+                    old(self).opens().drop_last(),
+                ) && none_before(old(self).src(), d, i0, link(d[old(self).opens().last()]), key@)
+            },
+            old(self).synced() && !(old(self).in_obj() && old(self).want() != KEY) ==> r is Err
+                && final(self).kept(old(self)),
     {
+        hide(Reader::synced);
+        hide(document);
+        hide(next_val);
+        hide(key_bytes);
+        let ghost sy = self.synced() && self.in_obj() && self.state != KEY;
+        let ghost src0 = self.src();
+        let ghost opens0 = self.opens();
+        let ghost d0 = self.doc();
+        let ghost first = if self.want() == VALUE {
+            next_val(d0, self.pos())
+        } else {
+            self.pos()
+        };
+        let ghost mut once = false;
+        proof {
+            if sy {
+                assert(first == (if old(self).want() == VALUE {
+                    next_val(old(self).doc(), old(self).pos())
+                } else {
+                    old(self).pos()
+                }));
+            }
+        }
         loop
             invariant
                 self.inv(),
+                sy ==> self.synced() && self.src() == src0 && self.opens() == opens0 && self.want() != KEY,
+                sy ==> old(self).src() == src0 && old(self).opens() == opens0 && d0 == old(self).doc(),
+                sy ==> opens0.len() > 0 && d0[opens0.last()] is ObjStart,
+                sy == (old(self).synced() && old(self).in_obj() && old(self).want() != KEY),
+                sy ==> none_before(src0, d0, first, if self.want() == VALUE {
+                    next_val(d0, self.pos())
+                } else {
+                    self.pos()
+                }, key@),
+                !once && old(self).synced() ==> self.kept(old(self)),
+                sy ==> first == (if old(self).want() == VALUE {
+                    next_val(old(self).doc(), old(self).pos())
+                } else {
+                    old(self).pos()
+                }),
+                old(self).synced() && !sy ==> !once,
             decreases self.left(),
         {
+            let ghost i0 = if self.want() == VALUE {
+                next_val(d0, self.pos())
+            } else {
+                self.pos()
+            };
+            proof {
+                if sy {
+                    assert(self.doc() == d0);
+                    assert(self.in_obj());
+                }
+            }
+            let ghost pre_sy = self.synced() && self.in_obj() && self.want() != KEY;
+            proof {
+                assert(sy ==> pre_sy);
+            }
             match self.obj_next() {
                 Ok(true) => {},
                 Ok(false) => {
+                    proof {
+                        if sy {
+                            assert(none_before(src0, d0, first, i0, key@));
+                            assert(i0 == link(d0[opens0.last()]));
+                            assert(d0[opens0.last()] == old(self).doc()[old(self).opens().last()]);
+                            assert(none_before(old(self).src(), old(self).doc(), first, link(old(self).doc()[old(self).opens().last()]), key@));
+                            assert(self.moved_to(old(self), i0 + 1, AFTER, opens0.drop_last()));
+                        }
+                    }
                     return Ok(false);
                 },
                 Err(e) => {
+                    proof {
+                        assert(!pre_sy);
+                    }
                     return Err(e);
                 },
             }
+            proof {
+                if sy {
+                    assert(self.synced() && self.want() == KEY && self.opens() == opens0 && self.src() == src0);
+                }
+            }
+            let ghost pos2 = self.pos();
             match self.key_is(key) {
                 Ok(true) => {
+                    proof {
+                        if sy {
+                            assert(self.pos() - 1 == pos2);
+                            assert(self.doc() == d0);
+                            assert(pos2 == i0);
+                            assert(none_before(src0, d0, first, pos2, key@));
+                        }
+                    }
                     return Ok(true);
                 },
                 Ok(false) => {
                     proof {
                         self.c.lemma_bound();
+                        if sy {
+                            reveal(Reader::synced);
+                            self.lemma_value();
+                            assert(self.doc() == d0);
+                            assert(self.pos() == pos2 + 1);
+                            lemma_none_ext(src0, d0, first, pos2, key@);
+                        }
+                        once = true;
                     }
                 },
                 Err(e) => {
@@ -1716,6 +2552,8 @@ impl<'a> Reader<'a> {
 
     /// Reads the string at the cursor: its raw body `s[a..b]` and whether
     /// it has escapes; if it has, the decoded string is appended to `dst`.
+    /// Synced: succeeds exactly where the tape has a string, and returns
+    /// that token.
     #[inline(always)]
     pub fn str_raw(&mut self, dst: &mut Vec<u8>) -> (r: Result<(usize, usize, bool), Mismatch>)
         requires
@@ -1724,16 +2562,38 @@ impl<'a> Reader<'a> {
             final(self).inv(),
             r matches Ok((a, b, _)) ==> a <= b <= final(self).src().len(),
             final(self).src() == old(self).src(),
+            old(self).synced() ==> if old(self).want() == VALUE && old(self).doc()[old(self).pos()] is Str {
+                &&& r matches Ok((a, b, esc)) && old(self).doc()[old(self).pos()] == (STok::Str {
+                    start: a as int,
+                    end: b as int,
+                    escaped: esc,
+                }) && final(dst)@ == if esc {
+                    old(dst)@ + decode(old(self).src(), a as int, b as int)
+                } else {
+                    old(dst)@
+                }
+                &&& final(self).moved_to(old(self), old(self).pos() + 1, AFTER, old(self).opens())
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
         if self.state != VALUE {
             return Err(Mismatch);
         }
+        let ghost sy = self.synced();
+        let ghost s = self.c.s@;
+        let ghost vr = value(s, skip_ws(s, self.c.p@), vdepth(self.fs@), self.tp@).unwrap();
         proof {
             crate::lemmas::lemma_string_body_advances(self.c.s@, self.c.tok() + 1, false);
+            if sy {
+                self.lemma_value();
+                lemma_value_head(s, self.c.tok(), vdepth(self.fs@), self.tp@);
+            }
         }
         match self.c.string(dst) {
             Some(r) => {
                 self.state = AFTER;
+                self.tp = Ghost(vr.0);
                 Ok(r)
             },
             None => Err(Mismatch),
@@ -1741,7 +2601,9 @@ impl<'a> Reader<'a> {
     }
 
     /// Reads the number at the cursor: its lexeme `s[a..b]`, and its
-    /// significand and power of ten with whether those are exact.
+    /// significand and power of ten with whether those are exact. Synced:
+    /// succeeds exactly where the tape has a number, and returns that
+    /// token.
     #[inline(always)]
     pub fn num_raw(&mut self) -> (r: Result<(usize, usize, NumVal, bool), Mismatch>)
         requires
@@ -1750,17 +2612,34 @@ impl<'a> Reader<'a> {
             final(self).inv(),
             r matches Ok((a, b, _, _)) ==> a <= b <= final(self).src().len(),
             final(self).src() == old(self).src(),
+            old(self).synced() ==> if old(self).want() == VALUE && old(self).doc()[old(self).pos()] is Num {
+                &&& r matches Ok((a, b, v, ok)) && old(self).doc()[old(self).pos()] == (STok::Num {
+                    start: a as int,
+                    end: b as int,
+                }) && (ok ==> number_value(old(self).src(), a as int) == (v.neg, v.w as int, v.q as int))
+                &&& final(self).moved_to(old(self), old(self).pos() + 1, AFTER, old(self).opens())
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
         if self.state != VALUE {
             return Err(Mismatch);
         }
+        let ghost sy = self.synced();
+        let ghost s = self.c.s@;
+        let ghost vr = value(s, skip_ws(s, self.c.p@), vdepth(self.fs@), self.tp@).unwrap();
         proof {
             crate::lemmas::lemma_skip_ws_bounds(self.c.s@, self.c.p@);
             lemma_number_lexeme(self.c.s@, self.c.tok());
+            if sy {
+                self.lemma_value();
+                lemma_value_head(s, self.c.tok(), vdepth(self.fs@), self.tp@);
+            }
         }
         match self.c.num() {
             Some(r) => {
                 self.state = AFTER;
+                self.tp = Ghost(vr.0);
                 Ok(r)
             },
             None => Err(Mismatch),
@@ -1768,47 +2647,102 @@ impl<'a> Reader<'a> {
     }
 
     #[inline(always)]
-    fn lit(&mut self, lit: &[u8]) -> (r: bool)
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(200)]
+    fn lit(&mut self, lit: &[u8], Ghost(x): Ghost<STok>) -> (r: bool)
         requires
             old(self).inv(),
-            lit@.len() > 0,
-            forall|m: int| 0 <= m < lit@.len() ==> lexeme(#[trigger] lit@[m]),
+            (lit@ == seq![0x74u8, 0x72, 0x75, 0x65] && x == STok::True) || (lit@ == seq![0x66u8, 0x61, 0x6C, 0x73, 0x65]
+                && x == STok::False) || (lit@ == seq![0x6Eu8, 0x75, 0x6C, 0x6C] && x == STok::Null),
         ensures
             final(self).inv(),
+            old(self).synced() ==> if old(self).want() == VALUE && old(self).doc()[old(self).pos()] == x {
+                r && final(self).moved_to(old(self), old(self).pos() + 1, AFTER, old(self).opens())
+            } else {
+                !r && final(self).kept(old(self))
+            },
     {
-        if self.state == VALUE && self.c.lit(lit) {
+        hide(finish);
+        hide(document);
+        hide(value);
+        proof {
+            assert forall|m: int| 0 <= m < lit@.len() implies lexeme(#[trigger] lit@[m]) by {}
+        }
+        if self.state != VALUE {
+            return false;
+        }
+        let ghost sy = self.synced();
+        let ghost s = self.c.s@;
+        let ghost j = self.c.tok();
+        let ghost vr = value(s, skip_ws(s, self.c.p@), vdepth(self.fs@), self.tp@).unwrap();
+        proof {
+            if sy {
+                self.lemma_value();
+                lemma_value_head(s, j, vdepth(self.fs@), self.tp@);
+                if has_lit(s, j, lit@) {
+                    assert(s.subrange(j, j + lit@.len())[0] == s[j]);
+                }
+            }
+        }
+        if self.c.lit(lit) {
             self.state = AFTER;
+            self.tp = Ghost(vr.0);
             true
         } else {
             false
         }
     }
 
-    /// Reads `null` if it is the value at the cursor.
+    /// Reads `null` if it is the value at the cursor. Synced: exactly
+    /// where the tape has `null`.
     #[inline(always)]
     pub fn null(&mut self) -> (r: bool)
         requires
             old(self).inv(),
         ensures
             final(self).inv(),
+            old(self).synced() ==> if old(self).want() == VALUE && old(self).doc()[old(self).pos()] is Null {
+                r && final(self).moved_to(old(self), old(self).pos() + 1, AFTER, old(self).opens())
+            } else {
+                !r && final(self).kept(old(self))
+            },
     {
         let l = [0x6Eu8, 0x75, 0x6C, 0x6C];
-        self.lit(&l)
+        proof {
+            assert(l@ == seq![0x6Eu8, 0x75, 0x6C, 0x6C]);
+        }
+        self.lit(&l, Ghost(STok::Null))
     }
 
-    /// Reads the `true` or `false` at the cursor.
+    /// Reads the `true` or `false` at the cursor. Synced: exactly where
+    /// the tape has one, and it is that one.
     #[inline(always)]
     pub fn bool(&mut self) -> (r: Result<bool, Mismatch>)
         requires
             old(self).inv(),
         ensures
             final(self).inv(),
+            old(self).synced() ==> if old(self).want() == VALUE && (old(self).doc()[old(self).pos()] is True
+                || old(self).doc()[old(self).pos()] is False) {
+                r == Ok(old(self).doc()[old(self).pos()] is True) && final(self).moved_to(
+                    old(self),
+                    old(self).pos() + 1,
+                    AFTER,
+                    old(self).opens(),
+                )
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
         let t = [0x74u8, 0x72, 0x75, 0x65];
         let f = [0x66u8, 0x61, 0x6C, 0x73, 0x65];
-        if self.lit(&t) {
+        proof {
+            assert(t@ == seq![0x74u8, 0x72, 0x75, 0x65]);
+            assert(f@ == seq![0x66u8, 0x61, 0x6C, 0x73, 0x65]);
+        }
+        if self.lit(&t, Ghost(STok::True)) {
             Ok(true)
-        } else if self.lit(&f) {
+        } else if self.lit(&f, Ghost(STok::False)) {
             Ok(false)
         } else {
             Err(Mismatch)
@@ -1816,61 +2750,337 @@ impl<'a> Reader<'a> {
     }
 }
 
-} // verus!
+/// The bytes of a string token: its body, decoded if it has escapes.
+pub open spec fn str_bytes(s: Seq<u8>, x: STok) -> Seq<u8> {
+    match x {
+        STok::Str { start, end, escaped } => if escaped {
+            decode(s, start, end)
+        } else {
+            s.subrange(start, end)
+        },
+        _ => Seq::empty(),
+    }
+}
+
+/// The lexeme of a number token.
+pub open spec fn num_lex(s: Seq<u8>, x: STok) -> Seq<u8> {
+    match x {
+        STok::Num { start, end } => s.subrange(start, end),
+        _ => Seq::empty(),
+    }
+}
+
+/// The value of an integer lexeme: an optional `-` and digits, and nothing
+/// else (no fraction, no exponent).
+pub open spec fn int_value(lex: Seq<u8>) -> Option<int> {
+    let neg = lex.len() > 0 && lex[0] == 0x2D;
+    let d = if neg {
+        lex.subrange(1, lex.len() as int)
+    } else {
+        lex
+    };
+    if d.len() > 0 && all_digits(d) {
+        Some(
+            if neg {
+                -(dec_value(d) as int)
+            } else {
+                dec_value(d) as int
+            },
+        )
+    } else {
+        None
+    }
+}
+
+/// The lexeme as an `i64`, if it is an integer lexeme that fits.
+pub fn parse_i64(lex: &[u8]) -> (r: Option<i64>)
+    ensures
+        r == (match int_value(lex@) {
+            Some(v) => if i64::MIN <= v <= i64::MAX {
+                Some(v as i64)
+            } else {
+                None
+            },
+            None => None,
+        }),
+{
+    let n = lex.len();
+    let neg = n > 0 && lex[0] == 0x2D;
+    let i0: usize = if neg {
+        1
+    } else {
+        0
+    };
+    let ghost d = if neg {
+        lex@.subrange(1, n as int)
+    } else {
+        lex@
+    };
+    proof {
+        assert(d =~= lex@.subrange(i0 as int, n as int));
+    }
+    if i0 == n {
+        return None;
+    }
+    let mut v: i64 = 0;
+    let mut i = i0;
+    // `v` is the digits so far, negated if `neg`; `big` once they no
+    // longer fit (the rest is still checked to be digits).
+    let mut big = false;
+    while i < n
+        invariant
+            i0 <= i <= n,
+            n == lex@.len(),
+            d == lex@.subrange(i0 as int, n as int),
+            d == (if neg {
+                lex@.subrange(1, n as int)
+            } else {
+                lex@
+            }),
+            neg == (n > 0 && lex@[0] == 0x2D),
+            i0 == (if neg {
+                1usize
+            } else {
+                0usize
+            }),
+            all_digits(lex@.subrange(i0 as int, i as int)),
+            !big ==> v as int == if neg {
+                -(dec_value(lex@.subrange(i0 as int, i as int)) as int)
+            } else {
+                dec_value(lex@.subrange(i0 as int, i as int)) as int
+            },
+            big ==> dec_value(lex@.subrange(i0 as int, i as int)) > i64::MAX as int + 1 || (!neg
+                && dec_value(lex@.subrange(i0 as int, i as int)) > i64::MAX as int),
+        decreases n - i,
+    {
+        let c = lex[i];
+        let ghost p = lex@.subrange(i0 as int, i as int);
+        let ghost p2 = lex@.subrange(i0 as int, i + 1);
+        proof {
+            assert(p2.drop_last() =~= p);
+            assert(p2.last() == c);
+        }
+        if c < 0x30 || c > 0x39 {
+            proof {
+                assert(d[i - i0] == c);
+                assert(!is_digit(d[i - i0]));
+                assert(!all_digits(d));
+                assert(int_value(lex@) is None);
+            }
+            return None;
+        }
+        proof {
+            assert forall|k: int| 0 <= k < p2.len() implies is_digit(#[trigger] p2[k]) by {
+                if k < p.len() {
+                    assert(p2[k] == p[k]);
+                }
+            }
+            assert(dec_value(p2) == dec_value(p) * 10 + (c - 0x30) as nat);
+        }
+        if !big {
+            let dg = (c - 0x30) as i64;
+            match v.checked_mul(10) {
+                Some(v10) => {
+                    let nv = if neg {
+                        v10.checked_sub(dg)
+                    } else {
+                        v10.checked_add(dg)
+                    };
+                    match nv {
+                        Some(x) => {
+                            v = x;
+                        },
+                        None => {
+                            big = true;
+                        },
+                    }
+                },
+                None => {
+                    big = true;
+                },
+            }
+        } else {
+            proof {
+                assert(dec_value(p2) >= dec_value(p)) by (nonlinear_arith)
+                    requires
+                        dec_value(p2) == dec_value(p) * 10 + (c - 0x30) as nat,
+                ;
+            }
+        }
+        i = i + 1;
+    }
+    proof {
+        assert(lex@.subrange(i0 as int, n as int) == d);
+    }
+    if big {
+        None
+    } else {
+        Some(v)
+    }
+}
 
 impl<'a> Reader<'a> {
     /// Reads the string at the cursor, decoded. Borrows the input unless
-    /// the string has escapes; then it is decoded into `buf`.
+    /// the string has escapes; then it is decoded into `buf`. Synced:
+    /// succeeds exactly where the tape has a string, and gives its bytes.
     #[inline(always)]
-    pub fn str<'b>(&mut self, buf: &'b mut Vec<u8>) -> Result<&'b [u8], Mismatch>
-    where
-        'a: 'b,
+    pub fn str<'b>(&mut self, buf: &'b mut Vec<u8>) -> (r: Result<&'b [u8], Mismatch>)
+        where
+            'a: 'b,
+        requires
+            old(self).inv(),
+        ensures
+            final(self).inv(),
+            old(self).synced() ==> if old(self).want() == VALUE && old(self).doc()[old(self).pos()] is Str {
+                &&& r matches Ok(v) && v@ == str_bytes(old(self).src(), old(self).doc()[old(self).pos()])
+                &&& final(self).moved_to(old(self), old(self).pos() + 1, AFTER, old(self).opens())
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
         buf.clear();
-        let (a, b, esc) = self.str_raw(buf)?;
-        if esc {
-            Ok(&buf[..])
-        } else {
-            let s: &'a [u8] = self.c.s;
-            Ok(&s[a..b])
+        match self.str_raw(buf) {
+            Ok((a, b, esc)) => {
+                if esc {
+                    proof {
+                        assert(buf@ =~= Seq::<u8>::empty() + buf@);
+                    }
+                    Ok(buf.as_slice())
+                } else {
+                    let s: &'a [u8] = self.c.s;
+                    Ok(slice_subrange(s, a, b))
+                }
+            },
+            Err(e) => Err(e),
         }
-    }
-
-    /// Reads the number at the cursor as the nearest double.
-    #[inline(always)]
-    pub fn f64(&mut self) -> Result<f64, Mismatch> {
-        let (a, b, v, ok) = self.num_raw()?;
-        if ok {
-            if let Some(x) = crate::number::from_parts(v.neg, v.w, v.q as i64) {
-                return Ok(x);
-            }
-        }
-        Ok(crate::number::parse_f64_at(self.c.s, a, b))
-    }
-
-    /// Reads the number at the cursor if it is an integer (no fraction or
-    /// exponent) that fits in `i64`.
-    #[inline(always)]
-    pub fn i64(&mut self) -> Result<i64, Mismatch> {
-        let (a, b, v, ok) = self.num_raw()?;
-        let lex = &self.c.s[a..b];
-        // An exact significand with no fraction or exponent is the integer.
-        if ok && v.q == 0 && v.w <= i64::MAX as u64 && !lex.iter().any(|&c| c == b'.' || c | 0x20 == b'e') {
-            return Ok(if v.neg { -(v.w as i64) } else { v.w as i64 });
-        }
-        crate::number::parse_i64(lex).ok_or(Mismatch)
     }
 
     /// Reads the key at the cursor, decoded, and moves to its value. The
-    /// slice is valid until the reader is used again.
+    /// slice is valid until the reader is used again. Synced: succeeds
+    /// exactly at a key, and gives its bytes.
     #[inline(always)]
-    pub fn key(&mut self) -> Result<&[u8], Mismatch> {
-        let (a, b, esc) = self.key_raw()?;
-        if esc {
-            Ok(&self.scratch[..])
-        } else {
-            Ok(&self.c.s[a..b])
+    pub fn key(&mut self) -> (r: Result<&[u8], Mismatch>)
+        requires
+            old(self).inv(),
+        ensures
+            final(self).inv(),
+            old(self).synced() ==> if old(self).want() == KEY {
+                &&& old(self).doc()[old(self).pos()] is Key
+                &&& r matches Ok(v) && v@ == key_bytes(old(self).src(), old(self).doc()[old(self).pos()])
+                &&& final(self).moved_to(old(self), old(self).pos() + 1, VALUE, old(self).opens())
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
+    {
+        match self.key_raw() {
+            Ok((a, b, esc)) => {
+                if esc {
+                    Ok(self.scratch.as_slice())
+                } else {
+                    Ok(slice_subrange(self.c.s, a, b))
+                }
+            },
+            Err(e) => Err(e),
         }
+    }
+
+    /// Reads the number at the cursor if it is an integer (no fraction or
+    /// exponent) that fits in `i64`. Synced, at a number: passes it either
+    /// way, and gives its value exactly when it is such an integer.
+    #[inline(always)]
+    pub fn i64(&mut self) -> (r: Result<i64, Mismatch>)
+        requires
+            old(self).inv(),
+        ensures
+            final(self).inv(),
+            old(self).synced() ==> if old(self).want() == VALUE && old(self).doc()[old(self).pos()] is Num {
+                &&& r == (match int_value(num_lex(old(self).src(), old(self).doc()[old(self).pos()])) {
+                    Some(v) => if i64::MIN <= v <= i64::MAX {
+                        Ok(v as i64)
+                    } else {
+                        Err(Mismatch)
+                    },
+                    None => Err(Mismatch),
+                })
+                &&& final(self).moved_to(old(self), old(self).pos() + 1, AFTER, old(self).opens())
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
+    {
+        match self.num_raw() {
+            Ok((a, b, _v, _ok)) => {
+                match parse_i64(slice_subrange(self.c.s, a, b)) {
+                    Some(x) => Ok(x),
+                    None => Err(Mismatch),
+                }
+            },
+            Err(e) => Err(e),
+        }
+    }
+
+    /// The number at the cursor as the bits of a double, where the
+    /// verified conversion decides it: `Some(bits)` is the nearest double
+    /// to the number's exact value, ties to even, with its sign; `None`
+    /// for more than 19 significant digits, or a case `to_bits` leaves
+    /// undecided. Also the lexeme's range, for the fallback.
+    pub fn num_bits(&mut self) -> (r: Result<(Option<u64>, usize, usize), Mismatch>)
+        requires
+            old(self).inv(),
+        ensures
+            final(self).inv(),
+            r matches Ok((_, a, b)) ==> a <= b <= final(self).src().len(),
+            final(self).src() == old(self).src(),
+            old(self).synced() ==> if old(self).want() == VALUE && old(self).doc()[old(self).pos()] is Num {
+                &&& r matches Ok((bits, a, b)) && old(self).doc()[old(self).pos()] == (STok::Num {
+                    start: a as int,
+                    end: b as int,
+                }) && (bits matches Some(x) ==> {
+                    let (neg, w, q) = number_value(old(self).src(), a as int);
+                    &&& is_round(w, q, (x % 0x8000_0000_0000_0000) as u64)
+                    &&& (x >= 0x8000_0000_0000_0000) == neg
+                })
+                &&& final(self).moved_to(old(self), old(self).pos() + 1, AFTER, old(self).opens())
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
+    {
+        match self.num_raw() {
+            Ok((a, b, v, ok)) => {
+                if ok {
+                    match crate::float::to_bits(v.w, v.q as i64) {
+                        Some(x) => {
+                            if x < 0x8000_0000_0000_0000 {
+                                let bits = if v.neg {
+                                    x + 0x8000_0000_0000_0000
+                                } else {
+                                    x
+                                };
+                                return Ok((Some(bits), a, b));
+                            }
+                        },
+                        None => {},
+                    }
+                }
+                Ok((None, a, b))
+            },
+            Err(e) => Err(e),
+        }
+    }
+}
+
+} // verus!
+
+impl<'a> Reader<'a> {
+    /// Reads the number at the cursor as the nearest double. Where
+    /// `num_bits` decides it, these are its proven bits; otherwise (more
+    /// than 19 significant digits) `f64::from_str` reads the lexeme.
+    #[inline(always)]
+    pub fn f64(&mut self) -> Result<f64, Mismatch> {
+        let (bits, a, b) = self.num_bits()?;
+        Ok(match bits {
+            Some(x) => f64::from_bits(x),
+            None => crate::number::parse_f64_at(self.c.s, a, b),
+        })
     }
 
     /// The input.
@@ -1878,3 +3088,17 @@ impl<'a> Reader<'a> {
         self.c.s
     }
 }
+
+impl Drop for Reader<'_> {
+    fn drop(&mut self) {
+        std::mem::swap(self.home, &mut self.c.w.buf);
+    }
+}
+
+impl core::fmt::Display for Mismatch {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("the JSON at the cursor is not what was asked for")
+    }
+}
+
+impl std::error::Error for Mismatch {}

@@ -786,8 +786,8 @@ fn interleave2(e: &[u8], o: &[u8], s: &mut [u8], off: usize, n: usize)
             m = m + 16;
         }
     } else {
-        // SAFETY: SSE2 is part of x86-64 (and emulated elsewhere).
-        m = unsafe { interleave2_sse2(e, o, s, off, n) };
+        // SSE2 is part of x86-64 (and emulated elsewhere).
+        m = interleave2_sse2(e, o, s, off, n);
     }
     while m < n
         invariant
@@ -2581,8 +2581,8 @@ fn pack4(c0: &[u8], c1: &[u8], c2: &[u8], c3: &[u8], ob: &mut [u8], oo: usize, l
             j = j + 16;
         }
     } else {
-        // SAFETY: SSE2 is part of x86-64 (and emulated elsewhere).
-        j = unsafe { pack4_sse2(c0, c1, c2, c3, ob, oo, len) };
+        // SSE2 is part of x86-64 (and emulated elsewhere).
+        j = pack4_sse2(c0, c1, c2, c3, ob, oo, len);
     }
     while j < len
         invariant
@@ -2956,6 +2956,9 @@ fn yuv_pack4_neon(
 /// One line converted and packed in a single pass, for the four-byte
 /// layouts (kinds 1 to 3) on AVX2 or NEON: `yuv_pack4_avx2` or
 /// `yuv_pack4_neon`, the rest one by one.
+// `yuv_pack4_avx2` enables AVX2, which makes it unsafe to call, on x86-64
+// only.
+#[cfg_attr(not(target_arch = "x86_64"), allow(unused_unsafe))]
 fn yuv_pack4(
     ys: &[u8], yo: usize, su: &[u8], sv: &[u8], sa: &[u8], ob: &mut [u8], oo: usize, len: usize, kind: u8,
 )
@@ -3264,8 +3267,8 @@ fn upsample_line(
     // On x86, sixteen at a time as `ConvertYUV444ToRGB_SSE2` does them.
     let mut j: usize = 0;
     if !has_neon() {
-        // SAFETY: SSE2 is part of x86-64 (and emulated elsewhere).
-        j = unsafe { yuv_to_rgb_sse2(ys, yo, su, sv, sg, len) };
+        // SSE2 is part of x86-64 (and emulated elsewhere).
+        j = yuv_to_rgb_sse2(ys, yo, su, sv, sg, len);
     }
     while j < len
         invariant

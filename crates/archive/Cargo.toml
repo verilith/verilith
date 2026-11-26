@@ -4,6 +4,7 @@ version = "0.1.0"
 license = "MIT OR Apache-2.0"
 description = "Formally verified (Verus) zip and tar readers with proven extraction safety, behind libarchive's read API"
 edition = "2024"
+rust-version = "1.89"
 repository = "https://github.com/verilith/verilith"
 keywords = ["zip", "tar", "archive", "verified", "verus"]
 categories = ["compression", "parser-implementations", "filesystem"]

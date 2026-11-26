@@ -3359,7 +3359,8 @@ pub open spec fn lf_recon(a: Recon, fh: FrameHeader, ms: Seq<MbModeSpec>, cos: S
 /// The first `rows` macroblock rows of a frame: each row is reconstructed
 /// and then loop-filtered. Prediction reads the scratch block and the
 /// saved rows, which the filter does not touch, so later rows see these
-/// rows unfiltered, as section 15 requires.
+/// rows unfiltered, as section 15 requires. `vp8order` proves this is
+/// the same as filtering the whole frame after it is reconstructed.
 pub open spec fn frame_recon(
     file: Seq<u8>,
     pstart: int,

@@ -74,18 +74,25 @@ read large constant arrays; nothing else in the crate is `external_body`.
 Compile-time assertions check each table's length against the constant
 used in the accessor's precondition.
 
-## Checked at run time, not proven
+## The compiler's output needs no run-time check
 
-The compiler's output is proven to be the compilation scheme's program
-(`compile::emit_n`). One property of that program is not proven but
-checked each time a pattern is compiled, by the verified function
-`compile::check`: that every jump that consumes no input goes forward
-(which is what makes the matcher's closure terminate within its bound),
-and that class and slot numbers are in range. If the check fails,
-`Regex::new` returns `TooBig`. So soundness does not depend on it: a
-`Regex` that exists has passed the check, and the theorems apply to it.
-What is not proven is that the check never fails. It never has, in
-several hundred thousand random patterns.
+The matcher relies on three properties of the program it runs: every jump
+that consumes no input goes forward (which is what makes its closure
+terminate within its bound), every jump stays inside the program, and
+class and slot numbers are in range. These used to be checked each time a
+pattern was compiled, with `Regex::new` returning `TooBig` if the check
+failed, and it was only tested, not proven, that the check never fails.
+
+They are now proven for every program the compiler emits, and the check is
+gone. `compile::lemma_compiled_fwd` proves the first two for the
+compilation scheme's program (`code_n` followed by `Match` and `Fail`), by
+induction over the regular expression with `lemma_fwd_n` for the normal
+copy of a loop body and `lemma_fwd_z` for its no-progress copies; the
+compiler is already proven to emit exactly that program. The emitter
+carries the third (`compile::insts_ok`) from the syntax tree, whose class
+and group numbers are bounded. So `compile::compile` returns a program
+that meets `Prog::wf` for every pattern the parser accepts, and
+`Regex::new` returns `TooBig` only for a pattern over a size limit.
 
 ## Unverified code
 

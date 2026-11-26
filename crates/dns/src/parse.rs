@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 #[cfg(verus_only)]
 use crate::lemmas::*;
 use crate::message::*;
-use crate::rdata::canon_into;
+use crate::rdata::canon_into_metered;
 use crate::spec::*;
 #[allow(unused_imports)]
 use crate::spec_rdata::*;
@@ -90,6 +90,7 @@ pub fn read_name_into(b: &[u8], pos: usize, arena: &mut Vec<u8>) -> (r: Option<
         },
         r is None ==> parse_name(b@, pos as int) is None,
         is_prefix(old(arena)@, final(arena)@),
+        final(arena)@.len() <= old(arena)@.len() + MAX_NAME_WIRE_LEN,
 {
     if pos >= b.len() {
         proof {
@@ -137,6 +138,7 @@ pub fn read_name_into(b: &[u8], pos: usize, arena: &mut Vec<u8>) -> (r: Option<
             is_prefix(old(arena)@, arena@),
             wire == ser_name(acc).len(),
             wire <= MAX_NAME_WIRE_LEN,
+            arena@.len() + 1 <= old(arena)@.len() + wire,
             parse_labels(b@, pos as int, pos as int) == combine(
                 acc,
                 saved,
@@ -309,6 +311,7 @@ fn read_name_span(b: &[u8], pos: usize, arena: &mut Vec<u8>) -> (r: Option<
         },
         r is None ==> parse_name(b@, pos as int) is None,
         is_prefix(old(arena)@, final(arena)@),
+        final(arena)@.len() <= old(arena)@.len() + MAX_NAME_WIRE_LEN,
 {
     let start = arena.len();
     let (end, n) = match read_name_into(b, pos, arena) {
@@ -323,33 +326,45 @@ fn read_name_span(b: &[u8], pos: usize, arena: &mut Vec<u8>) -> (r: Option<
     Some((sp, end, n))
 }
 
-fn read_question(b: &[u8], pos: usize, arena: &mut Vec<u8>) -> (r: Option<
+/// The work of decoding one name: at most `MAX_NAME_STEPS` turns of
+/// `read_name_into`'s loop, plus the bytes it copies.
+pub open spec fn name_cost(a0: Seq<u8>, a1: Seq<u8>) -> nat {
+    MAX_NAME_STEPS + (a1.len() - a0.len()) as nat
+}
+
+/// Decodes a question. The second result is its work (`name_cost`), at
+/// most 511.
+fn read_question(b: &[u8], pos: usize, arena: &mut Vec<u8>) -> (r: (Option<
     (Entry, usize, Ghost<SpecQuestion>),
->)
+>, Ghost<nat>))
     requires
         is_prefix(b@, old(arena)@),
     ensures
-        r matches Some((e, end, g)) ==> {
+        r.0 matches Some((e, end, g)) ==> {
             &&& parse_question(b@, pos as int) == Some((g@, end as int))
             &&& is_prefix(old(arena)@, final(arena)@)
             &&& question_ok(final(arena)@, e, g@)
         },
-        r is None ==> parse_question(b@, pos as int) is None,
+        r.0 is None ==> parse_question(b@, pos as int) is None,
+        is_prefix(old(arena)@, final(arena)@),
+        r.1@ == name_cost(old(arena)@, final(arena)@),
+        r.1@ <= MAX_NAME_STEPS + MAX_NAME_WIRE_LEN,
 {
     let (name, p1, n) = match read_name_span(b, pos, arena) {
         Some(x) => x,
-        None => return None,
+        None => return (None, Ghost(name_cost(old(arena)@, arena@))),
     };
+    let ghost cost = name_cost(old(arena)@, arena@);
     let (qtype, p2) = match read_u16(b, p1) {
         Some(x) => x,
-        None => return None,
+        None => return (None, Ghost(cost)),
     };
     let (qclass, p3) = match read_u16(b, p2) {
         Some(x) => x,
-        None => return None,
+        None => return (None, Ghost(cost)),
     };
     let e = Entry { name, rtype: qtype, rclass: qclass, ttl: 0, rdata: Span { start: 0, len: 0 } };
-    Some((e, p3, Ghost(SpecQuestion { qname: n@, qtype, qclass })))
+    (Some((e, p3, Ghost(SpecQuestion { qname: n@, qtype, qclass }))), Ghost(cost))
 }
 
 /// A name already decoded into the arena: the offset it was decoded from
@@ -395,6 +410,7 @@ fn read_owner(
         r is None ==> parse_name(b@, pos as int) is None,
         is_prefix(old(arena)@, final(arena)@),
         memo_ok(b@, final(arena)@, *final(last), final(last_name)@),
+        final(arena)@.len() <= old(arena)@.len() + MAX_NAME_WIRE_LEN,
 {
     if pos < b.len() && b.len() - pos >= 2 && b[pos] >= 192 {
         let target = ((b[pos] - 192) as usize) * 256 + b[pos + 1] as usize;
@@ -452,6 +468,13 @@ fn read_owner(
     r
 }
 
+/// The most work one record takes beyond its RDATA's length: three names
+/// (the owner and at most two in the RDATA) and the bytes they expand to.
+pub spec const RECORD_COST: nat = 3 * (MAX_NAME_STEPS + MAX_NAME_WIRE_LEN);
+
+/// Decodes a record. The second result is its work: `MAX_NAME_STEPS` for
+/// each name decoded and one per byte copied to the arena, at most
+/// `RECORD_COST` plus the length of the RDATA (or of the rest of `b`).
 fn read_record(
     b: &[u8],
     pos: usize,
@@ -460,56 +483,66 @@ fn read_record(
     memo_name: Ghost<SpecName>,
     last: &mut Option<(usize, Span)>,
     last_name: &mut Ghost<SpecName>,
-) -> (r: Option<(Entry, usize, Ghost<SpecRecord>)>)
+) -> (r: (Option<(Entry, usize, Ghost<SpecRecord>)>, Ghost<nat>))
     requires
         memo_ok(b@, old(arena)@, memo, memo_name@),
         memo_ok(b@, old(arena)@, *old(last), old(last_name)@),
         is_prefix(b@, old(arena)@),
+        pos <= b@.len(),
     ensures
-        r matches Some((e, end, g)) ==> {
+        r.0 matches Some((e, end, g)) ==> {
             &&& parse_record(b@, pos as int) == Some((g@, end as int))
             &&& record_ok(final(arena)@, e, g@)
+            &&& end >= pos + 11
+            &&& r.1@ + 11 <= RECORD_COST + (end - pos)
         },
-        r is None ==> parse_record(b@, pos as int) is None,
+        r.0 is None ==> parse_record(b@, pos as int) is None,
         is_prefix(old(arena)@, final(arena)@),
         memo_ok(b@, final(arena)@, *final(last), final(last_name)@),
+        r.1@ <= RECORD_COST + (b@.len() - pos),
 {
     let (name, p1, n) = match read_owner(b, pos, arena, memo, memo_name, last, last_name) {
         Some(x) => x,
-        None => return None,
+        None => return (None, Ghost(name_cost(old(arena)@, arena@))),
     };
     let ghost a1 = arena@;
+    let ghost cost = name_cost(old(arena)@, arena@);
+    proof {
+        lemma_parse_name_valid(b@, pos as int);
+    }
     let (rtype, p2) = match read_u16(b, p1) {
         Some(x) => x,
-        None => return None,
+        None => return (None, Ghost(cost)),
     };
     let (rclass, p3) = match read_u16(b, p2) {
         Some(x) => x,
-        None => return None,
+        None => return (None, Ghost(cost)),
     };
     let (ttl, p4) = match read_u32(b, p3) {
         Some(x) => x,
-        None => return None,
+        None => return (None, Ghost(cost)),
     };
     let (rdlen, p5) = match read_u16(b, p4) {
         Some(x) => x,
-        None => return None,
+        None => return (None, Ghost(cost)),
     };
     if rdlen as usize > b.len() - p5 {
-        return None;
+        return (None, Ghost(cost));
     }
     let end = p5 + rdlen as usize;
     let ghost data = canon_rdata(b@, rtype, p5 as int, end as int).unwrap();
+    let ghost mut cost = cost;
     let rdata = if is_compressible(rtype) {
         // Names inside the RDATA are decompressed onto the arena.
         let start = arena.len();
-        let ok = canon_into(b, rtype, p5, end, arena);
+        let (ok, k) = canon_into_metered(b, rtype, p5, end, arena);
         proof {
             lemma_prefix_trans(old(arena)@, a1, arena@);
             lemma_memo_grow(b@, a1, arena@, *last, last_name@);
+            cost = cost + k@ * MAX_NAME_STEPS + (arena@.len() - a1.len()) as nat;
         }
         if !ok || arena.len() - start > 65535 {
-            return None;
+            return (None, Ghost(cost));
         }
         proof {
             lemma_new_span(a1, data);
@@ -525,13 +558,13 @@ fn read_record(
         }
         Span { start: p5, len: rdlen as usize }
     };
-    Some(
+    (Some(
         (
             Entry { name, rtype, rclass, ttl, rdata },
             end,
             Ghost(SpecRecord { name: n@, rtype, rclass, ttl, rdata: data }),
         ),
-    )
+    ), Ghost(cost))
 }
 
 /// Whether names inside RDATA of type `t` may be compressed.
@@ -550,27 +583,35 @@ pub open spec fn prepend<T>(acc: Seq<T>, r: Option<(Seq<T>, int)>) -> Option<(Se
     }
 }
 
-/// Parses `n` questions at `pos`, appending them to `entries`.
+/// The work bound's rate: steps per input byte of questions and records.
+pub spec const PER_BYTE: nat = 160;
+
+/// Parses `n` questions at `pos`, appending them to `entries`. The second
+/// result is the work: per question a loop turn and its `name_cost`.
 fn read_questions(
     b: &[u8],
     pos: usize,
     n: u16,
     arena: &mut Vec<u8>,
     entries: &mut Vec<Entry>,
-) -> (r: Option<(usize, Ghost<Seq<SpecQuestion>>)>)
+) -> (r: (Option<(usize, Ghost<Seq<SpecQuestion>>)>, Ghost<nat>))
     requires
         is_prefix(b@, old(arena)@),
+        pos <= b@.len(),
     ensures
-        r matches Some((end, g)) ==> {
+        r.0 matches Some((end, _)) ==> pos <= end <= b@.len() && r.1@ <= PER_BYTE * (end - pos),
+        r.1@ <= PER_BYTE * (b@.len() - pos) + RECORD_COST + b@.len() + 1,
+        r.0 matches Some((end, g)) ==> {
             &&& parse_questions(b@, pos as int, n as nat) == Some((g@, end as int))
             &&& is_prefix(old(arena)@, final(arena)@)
             &&& is_prefix(old(entries)@, final(entries)@)
             &&& final(entries)@.len() == old(entries)@.len() + n
             &&& questions_at(final(arena)@, final(entries)@, old(entries)@.len() as int, g@)
         },
-        r is None ==> parse_questions(b@, pos as int, n as nat) is None,
+        r.0 is None ==> parse_questions(b@, pos as int, n as nat) is None,
 {
     let ghost off = entries@.len() as int;
+    let ghost mut cost: nat = 0;
     let ghost mut g: Seq<SpecQuestion> = Seq::empty();
     let mut p = pos;
     let mut i: u16 = 0;
@@ -596,15 +637,20 @@ fn read_questions(
             is_prefix(b@, arena@),
             is_prefix(old(entries)@, entries@),
             questions_at(arena@, entries@, off, g),
+            pos <= p <= b@.len(),
+            cost <= PER_BYTE * (p - pos),
         decreases n - i,
     {
         let ghost a0 = arena@;
         let ghost e0 = entries@;
-        let (e, p2, gq) = match read_question(b, p, arena) {
+        let (rq, gc) = read_question(b, p, arena);
+        let (e, p2, gq) = match rq {
             Some(x) => x,
-            None => return None,
+            None => return (None, Ghost(cost + 1 + gc@)),
         };
         proof {
+            lemma_parse_name_valid(b@, p as int);
+            cost = cost + 1 + gc@;
             if let Some((rest, e)) = parse_questions(b@, p2 as int, (n - i - 1) as nat) {
                 assert(g + (seq![gq@] + rest) =~= g.push(gq@) + rest);
             }
@@ -634,7 +680,7 @@ fn read_questions(
     proof {
         assert(g + Seq::empty() =~= g);
     }
-    Some((p, Ghost(g)))
+    (Some((p, Ghost(g))), Ghost(cost))
 }
 
 /// Parses `n` records at `pos`, appending them to `entries`.
@@ -658,21 +704,25 @@ fn read_records(
     entries: &mut Vec<Entry>,
     memo: Option<(usize, Span)>,
     memo_name: Ghost<SpecName>,
-) -> (r: Option<(usize, Ghost<Seq<SpecRecord>>)>)
+) -> (r: (Option<(usize, Ghost<Seq<SpecRecord>>)>, Ghost<nat>))
     requires
         memo_ok(b@, old(arena)@, memo, memo_name@),
         is_prefix(b@, old(arena)@),
+        pos <= b@.len(),
     ensures
-        r matches Some((end, g)) ==> {
+        r.0 matches Some((end, _)) ==> pos <= end <= b@.len() && r.1@ <= PER_BYTE * (end - pos),
+        r.1@ <= PER_BYTE * (b@.len() - pos) + RECORD_COST + b@.len() + 1,
+        r.0 matches Some((end, g)) ==> {
             &&& parse_records(b@, pos as int, n as nat) == Some((g@, end as int))
             &&& is_prefix(old(arena)@, final(arena)@)
             &&& is_prefix(old(entries)@, final(entries)@)
             &&& final(entries)@.len() == old(entries)@.len() + n
             &&& records_at(final(arena)@, final(entries)@, old(entries)@.len() as int, g@)
         },
-        r is None ==> parse_records(b@, pos as int, n as nat) is None,
+        r.0 is None ==> parse_records(b@, pos as int, n as nat) is None,
 {
     let ghost off = entries@.len() as int;
+    let ghost mut cost: nat = 0;
     let ghost mut g: Seq<SpecRecord> = Seq::empty();
     let mut p = pos;
     let mut last: Option<(usize, Span)> = None;
@@ -702,16 +752,20 @@ fn read_records(
             records_at(arena@, entries@, off, g),
             memo_ok(b@, arena@, memo, memo_name@),
             memo_ok(b@, arena@, last, last_name@),
+            pos <= p <= b@.len(),
+            cost <= PER_BYTE * (p - pos),
         decreases n - i,
     {
         let ghost a0 = arena@;
         let ghost e0 = entries@;
-        let (e, p2, gr) = match read_record(b, p, arena, memo, memo_name, &mut last, &mut last_name) {
+        let (rr, gc) = read_record(b, p, arena, memo, memo_name, &mut last, &mut last_name);
+        let (e, p2, gr) = match rr {
             Some(x) => x,
-            None => return None,
+            None => return (None, Ghost(cost + 1 + gc@)),
         };
         proof {
             lemma_memo_grow(b@, a0, arena@, memo, memo_name@);
+            cost = cost + 1 + gc@;
         }
         proof {
             if let Some((rest, e)) = parse_records(b@, p2 as int, (n - i - 1) as nat) {
@@ -743,13 +797,92 @@ fn read_records(
     proof {
         assert(g + Seq::empty() =~= g);
     }
-    Some((p, Ghost(g)))
+    (Some((p, Ghost(g))), Ghost(cost))
+}
+
+/// What `parse_with` has once every section is read: the message the
+/// spec decodes, laid out in the final arena and entry table. Proved apart
+/// from the exec body, whose many buffer snapshots make this expensive there.
+#[verifier::spinoff_prover]
+proof fn lemma_parse_with_parts(
+    b: Seq<u8>,
+    m: SpecMessage,
+    qd: u16,
+    an: u16,
+    ns: u16,
+    ar: u16,
+    p1: int,
+    p2: int,
+    p3: int,
+    a1: Seq<u8>,
+    a2: Seq<u8>,
+    a3: Seq<u8>,
+    a: Seq<u8>,
+    e1: Seq<Entry>,
+    e2: Seq<Entry>,
+    e3: Seq<Entry>,
+    e: Seq<Entry>,
+)
+    requires
+        b.len() >= 12,
+        parse_u16(b, 0) == Some((m.id, 2int)),
+        parse_u16(b, 2) == Some((m.flags, 4int)),
+        parse_u16(b, 4) == Some((qd, 6int)),
+        parse_u16(b, 6) == Some((an, 8int)),
+        parse_u16(b, 8) == Some((ns, 10int)),
+        parse_u16(b, 10) == Some((ar, 12int)),
+        parse_questions(b, 12, qd as nat) == Some((m.questions, p1)),
+        parse_records(b, p1, an as nat) == Some((m.answers, p2)),
+        parse_records(b, p2, ns as nat) == Some((m.authorities, p3)),
+        parse_records(b, p3, ar as nat) == Some((m.additionals, b.len() as int)),
+        is_prefix(b, a1),
+        is_prefix(a1, a2),
+        is_prefix(a2, a3),
+        is_prefix(a3, a),
+        is_prefix(e1, e2),
+        is_prefix(e2, e3),
+        is_prefix(e3, e),
+        e1.len() == qd,
+        e2.len() == e1.len() + an,
+        e3.len() == e2.len() + ns,
+        e.len() == e3.len() + ar,
+        questions_at(a1, e1, 0, m.questions),
+        records_at(a2, e2, qd as int, m.answers),
+        records_at(a3, e3, qd + an, m.authorities),
+        records_at(a, e, qd + an + ns, m.additionals),
+    ensures
+        parse_message(b) == Some(m),
+        parts_ok(m.id, m.flags, a, e, qd as usize, an as usize, ns as usize, m),
+        b.len() <= a.len(),
+        a.subrange(0, b.len() as int) == b,
+{
+    theorem_parse_valid(b);
+    lemma_prefix_trans(b, a1, a2);
+    lemma_prefix_trans(b, a2, a3);
+    lemma_prefix_trans(b, a3, a);
+    lemma_prefix_trans(a1, a2, a3);
+    lemma_prefix_trans(a1, a3, a);
+    lemma_prefix_trans(a2, a3, a);
+    lemma_prefix_trans(e1, e2, e3);
+    lemma_prefix_trans(e1, e3, e);
+    lemma_prefix_trans(e2, e3, e);
+    lemma_questions_at_grow(a1, a, e1, e, 0, m.questions);
+    lemma_records_at_grow(a2, a, e2, e, qd as int, m.answers);
+    lemma_records_at_grow(a3, a, e3, e, qd + an, m.authorities);
+    lemma_parse_questions_valid(b, 12, qd as nat);
+    lemma_parse_records_valid(b, p1, an as nat);
+    lemma_parse_records_valid(b, p2, ns as nat);
+    lemma_parse_records_valid(b, p3, ar as nat);
+}
+
+/// The work bound of `parse`: at most this many steps for an `n`-byte
+/// message, whatever it holds and whether or not it parses.
+pub open spec fn parse_cost(n: nat) -> nat {
+    (PER_BYTE + 3) * n + 2 * RECORD_COST
 }
 
 /// Parses `b` using the given (empty) buffers. On failure, hands the buffers
 /// back so their capacity can be reused.
-#[verifier::rlimit(120)]
-#[verifier::spinoff_prover]
 fn parse_with(b: &[u8], arena: Vec<u8>, entries: Vec<Entry>) -> (r: Result<
     Message,
     (Vec<u8>, Vec<Entry>),
@@ -761,10 +894,34 @@ fn parse_with(b: &[u8], arena: Vec<u8>, entries: Vec<Entry>) -> (r: Result<
         r matches Ok(m) ==> parse_message(b@) == Some(m@) && m.wire_bytes() == b@,
         r is Err ==> parse_message(b@) is None,
 {
+    parse_with_metered(b, arena, entries).0
+}
+
+/// `parse_with`, and its work, at most `parse_cost(b.len())`: linear in
+/// the input. A step is a turn of a loop whose number of turns is not
+/// bounded by a constant (one per question and per record), a byte copied
+/// into the arena, or one of the at most `MAX_NAME_STEPS` turns of
+/// decoding a name (charged in full for every name). A question takes at
+/// least 5 bytes and a record at least 11, so the names a message can
+/// hold, each expanding to at most 255 bytes, are paid for by its length.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(60)]
+fn parse_with_metered(b: &[u8], arena: Vec<u8>, entries: Vec<Entry>) -> (r: (Result<
+    Message,
+    (Vec<u8>, Vec<Entry>),
+>, Ghost<nat>))
+    requires
+        arena@.len() == 0,
+        entries@.len() == 0,
+    ensures
+        r.0 matches Ok(m) ==> parse_message(b@) == Some(m@) && m.wire_bytes() == b@,
+        r.0 is Err ==> parse_message(b@) is None,
+        r.1@ <= parse_cost(b@.len()),
+{
     let mut arena = arena;
     let mut entries = entries;
     if b.len() < 12 {
-        return Err((arena, entries));
+        return (Err((arena, entries)), Ghost(0));
     }
     let id = read_u16(b, 0).unwrap().0;
     let flags = read_u16(b, 2).unwrap().0;
@@ -780,7 +937,7 @@ fn parse_with(b: &[u8], arena: Vec<u8>, entries: Vec<Entry>) -> (r: Result<
         proof {
             lemma_counts_fit(b@);
         }
-        return Err((arena, entries));
+        return (Err((arena, entries)), Ghost(0));
     }
     entries.reserve(total);
     // The arena starts with a copy of the input, so each RDATA is a span
@@ -794,16 +951,28 @@ fn parse_with(b: &[u8], arena: Vec<u8>, entries: Vec<Entry>) -> (r: Result<
         },
     );
     append(&mut arena, b);
+    let ghost mut cost: nat = b@.len() as nat;
     proof {
+        assert(PER_BYTE == 160 && RECORD_COST == 1533 && MAX_NAME_STEPS == 256);
         assert(arena@ =~= b@);
         lemma_prefix_refl(b@);
     }
     let ghost a0 = arena@;
     let ghost e0 = entries@;
-    let (p1, gq) = match read_questions(b, 12, qd, &mut arena, &mut entries) {
+    let (rq, c1) = read_questions(b, 12, qd, &mut arena, &mut entries);
+    let (p1, gq) = match rq {
         Some(x) => x,
-        None => return Err((arena, entries)),
+        None => {
+            proof {
+                assert(c1@ <= 160 * (b@.len() - 12) + 1533 + b@.len() + 1);
+                assert(parse_cost(b@.len() as nat) == 163 * b@.len() + 3066);
+            }
+            return (Err((arena, entries)), Ghost(cost + c1@));
+        },
     };
+    proof {
+        cost = cost + c1@;
+    }
     let ghost a1 = arena@;
     let ghost e1 = entries@;
     // Answer owner names usually point at the first question's name.
@@ -825,10 +994,19 @@ fn parse_with(b: &[u8], arena: Vec<u8>, entries: Vec<Entry>) -> (r: Result<
             assert(pq.unwrap().0 == gq@[0]);
         }
     }
-    let (p2, gan) = match read_records(b, p1, an, &mut arena, &mut entries, memo, Ghost(memo_name)) {
+    let (rr, c2) = read_records(b, p1, an, &mut arena, &mut entries, memo, Ghost(memo_name));
+    let (p2, gan) = match rr {
         Some(x) => x,
-        None => return Err((arena, entries)),
+        None => {
+            proof {
+                assert(parse_cost(b@.len() as nat) == 163 * b@.len() + 3066);
+            }
+            return (Err((arena, entries)), Ghost(cost + c2@));
+        },
     };
+    proof {
+        cost = cost + c2@;
+    }
     let ghost a2 = arena@;
     let ghost e2 = entries@;
     proof {
@@ -836,25 +1014,40 @@ fn parse_with(b: &[u8], arena: Vec<u8>, entries: Vec<Entry>) -> (r: Result<
         lemma_prefix_trans(b@, a0, a1);
         lemma_prefix_trans(b@, a1, arena@);
     }
-    let (p3, gns) = match read_records(b, p2, ns, &mut arena, &mut entries, memo, Ghost(memo_name)) {
+    let (rr, c3) = read_records(b, p2, ns, &mut arena, &mut entries, memo, Ghost(memo_name));
+    let (p3, gns) = match rr {
         Some(x) => x,
-        None => return Err((arena, entries)),
+        None => {
+            proof {
+                assert(parse_cost(b@.len() as nat) == 163 * b@.len() + 3066);
+            }
+            return (Err((arena, entries)), Ghost(cost + c3@));
+        },
     };
+    proof {
+        cost = cost + c3@;
+    }
     let ghost a3 = arena@;
     let ghost e3 = entries@;
     proof {
         lemma_memo_grow(b@, a2, arena@, memo, memo_name);
         lemma_prefix_trans(b@, a2, arena@);
     }
-    let (end, gar) = match read_records(b, p3, ar, &mut arena, &mut entries, memo, Ghost(memo_name)) {
+    let (rr, c4) = read_records(b, p3, ar, &mut arena, &mut entries, memo, Ghost(memo_name));
+    let (end, gar) = match rr {
         Some(x) => x,
-        None => return Err((arena, entries)),
+        None => {
+            proof {
+                assert(parse_cost(b@.len() as nat) == 163 * b@.len() + 3066);
+            }
+            return (Err((arena, entries)), Ghost(cost + c4@));
+        },
     };
-    if end != b.len() {
-        return Err((arena, entries));
-    }
     proof {
-        lemma_prefix_trans(b@, a3, arena@);
+        cost = cost + c4@;
+    }
+    if end != b.len() {
+        return (Err((arena, entries)), Ghost(cost));
     }
     let ghost spec = SpecMessage {
         id,
@@ -865,22 +1058,27 @@ fn parse_with(b: &[u8], arena: Vec<u8>, entries: Vec<Entry>) -> (r: Result<
         additionals: gar@,
     };
     proof {
-        theorem_parse_valid(b@);
-        lemma_prefix_trans(a1, a2, a3);
-        lemma_prefix_trans(a1, a3, arena@);
-        lemma_prefix_trans(a2, a3, arena@);
-        lemma_prefix_trans(e1, e2, e3);
-        lemma_prefix_trans(e1, e3, entries@);
-        lemma_prefix_trans(e2, e3, entries@);
-        lemma_questions_at_grow(a1, arena@, e1, entries@, 0, gq@);
-        lemma_records_at_grow(a2, arena@, e2, entries@, qd as int, gan@);
-        lemma_records_at_grow(a3, arena@, e3, entries@, qd + an, gns@);
-        lemma_parse_questions_valid(b@, 12, qd as nat);
-        lemma_parse_records_valid(b@, p1 as int, an as nat);
-        lemma_parse_records_valid(b@, p2 as int, ns as nat);
-        lemma_parse_records_valid(b@, p3 as int, ar as nat);
+        lemma_parse_with_parts(
+            b@,
+            spec,
+            qd,
+            an,
+            ns,
+            ar,
+            p1 as int,
+            p2 as int,
+            p3 as int,
+            a1,
+            a2,
+            a3,
+            arena@,
+            e1,
+            e2,
+            e3,
+            entries@,
+        );
     }
-    Ok(
+    (Ok(
         Message::from_parts(
             id,
             flags,
@@ -892,7 +1090,21 @@ fn parse_with(b: &[u8], arena: Vec<u8>, entries: Vec<Entry>) -> (r: Result<
             b.len(),
             Ghost(spec),
         ),
-    )
+    ), Ghost(cost))
+}
+
+/// `parse`, and its work: at most `parse_cost(b.len())` steps, linear in
+/// the message's length (see `parse_with_metered`).
+pub fn parse_metered(b: &[u8]) -> (r: (Option<Message>, Ghost<nat>))
+    ensures
+        r.0 matches Some(m) ==> parse_message(b@) == Some(m@) && m.wire_bytes() == b@,
+        r.0 is None ==> parse_message(b@) is None,
+        r.1@ <= parse_cost(b@.len()),
+{
+    match parse_with_metered(b, Vec::new(), Vec::new()) {
+        (Ok(m), g) => (Some(m), g),
+        (Err(_), g) => (None, g),
+    }
 }
 
 /// Parses a complete DNS message.

@@ -8,6 +8,7 @@ use crate::output::*;
 use crate::passes::*;
 use crate::prims::*;
 use crate::spec::*;
+use crate::work::Meter;
 use vstd::prelude::*;
 
 verus! {
@@ -215,6 +216,7 @@ fn even_row(
     y: u64,
     out: &mut [u8],
     Ghost(goal): Ghost<Seq<u8>>,
+    Tracked(m): Tracked<&mut Meter>,
 )
     requires
         tables_ok(h.view(), buf@, off@, rbs@, sx@, sy@),
@@ -224,6 +226,7 @@ fn even_row(
         old(out)@.len() == goal.len(),
         forall|i: int| 0 <= i < y * row_bytes(h.view(), h.view().w) ==> #[trigger] old(out)@[i] == goal[i],
     ensures
+        final(m).n <= old(m).n + 2 * row_bytes(h.view(), h.view().w),
         final(out)@.len() == goal.len(),
         forall|i: int| 0 <= i < (y + 1) * row_bytes(h.view(), h.view().w) ==> #[trigger] final(out)@[i] == goal[i],
 {
@@ -247,8 +250,11 @@ fn even_row(
     }
     let mut o: usize = (y as usize) * (w as usize * bp);
     let mut x: u64 = 0;
+    let ghost mr = m.n;
     while x < w
         invariant
+            mr == old(m).n,
+            m.n + y * rb <= mr + o + x,
             tables_ok(h.view(), buf@, off@, rbs@, sx@, sy@),
             hv == h.view(),
             imgs == imgs_of(hv, buf@, off@),
@@ -277,9 +283,14 @@ fn even_row(
                     rb == hv.w * bp,
             ;
         }
+        proof {
+            m.n = m.n + 1;
+        }
         let mut k: usize = 0;
         while k < bp
             invariant
+                mr == old(m).n,
+                m.n + y * rb <= mr + o + k + x + 1,
                 tables_ok(h.view(), buf@, off@, rbs@, sx@, sy@),
                 hv == h.view(),
                 imgs == imgs_of(hv, buf@, off@),
@@ -308,6 +319,9 @@ fn even_row(
                 lemma_native_at(hv, imgs, x as nat, y as nat, k as nat);
             }
             set(out, o + k, get(buf, s + k));
+            proof {
+                m.n = m.n + 1;
+            }
             k = k + 1;
         }
         proof {
@@ -320,6 +334,11 @@ fn even_row(
         assert(y * rb + w * bp == (y + 1) * rb) by (nonlinear_arith)
             requires
                 rb == w * bp,
+        ;
+        assert(w <= rb) by (nonlinear_arith)
+            requires
+                rb == w * bp,
+                bp >= 1,
         ;
     }
 }
@@ -401,6 +420,7 @@ fn odd_row(
     y: u64,
     out: &mut [u8],
     Ghost(goal): Ghost<Seq<u8>>,
+    Tracked(m): Tracked<&mut Meter>,
 )
     requires
         tables_ok(h.view(), buf@, off@, rbs@, sx@, sy@),
@@ -411,6 +431,7 @@ fn odd_row(
         old(out)@.len() == goal.len(),
         forall|i: int| 0 <= i < y * row_bytes(h.view(), h.view().w) ==> #[trigger] old(out)@[i] == goal[i],
     ensures
+        final(m).n <= old(m).n + 2 * row_bytes(h.view(), h.view().w),
         final(out)@.len() == goal.len(),
         forall|i: int| 0 <= i < (y + 1) * row_bytes(h.view(), h.view().w) ==> #[trigger] final(out)@[i] == goal[i],
 {
@@ -436,6 +457,9 @@ fn odd_row(
     let n = w as usize * bp;
     let o = y as usize * n;
     let ghost o0 = out@;
+    proof {
+        m.n = (m.n + n) as nat;
+    }
     copy(out, o, buf, s, n);
     proof {
         assert forall|i: int| 0 <= i < (y + 1) * rb implies #[trigger] out@[i] == goal[i] by {
@@ -474,9 +498,41 @@ fn odd_row(
     }
 }
 
+/// A pass's row of whole-byte pixels is no longer than a row of the image.
+proof fn lemma_pass_row_le(hv: Ihdr, p: nat, bp: nat)
+    requires
+        hdr_ok(hv),
+        hv.interlace == 1,
+        p < 7,
+        pixel_bits(hv) == 8 * bp,
+    ensures
+        row_bytes(hv, pass_w(hv, p)) <= hv.w * bp,
+{
+    let pw = pass_w(hv, p);
+    let d = dx(hv, p);
+    assert(1 <= d <= 8);
+    if hv.w > x0(hv, p) {
+        let t = (hv.w - x0(hv, p) + d - 1) as nat;
+        assert(t <= hv.w * d) by (nonlinear_arith)
+            requires
+                t <= hv.w + d - 1,
+                hv.w >= 1,
+                d >= 1,
+        ;
+        vstd::arithmetic::div_mod::lemma_div_is_ordered(t as int, (hv.w * d) as int, d as int);
+        vstd::arithmetic::div_mod::lemma_div_multiples_vanish(hv.w as int, d as int);
+    }
+    assert(pw <= hv.w);
+    assert((pw * (8 * bp) + 7) / 8 == pw * bp) by (nonlinear_arith);
+    assert(pw * bp <= hv.w * bp) by (nonlinear_arith)
+        requires
+            pw <= hv.w,
+    ;
+}
+
 /// `spec::native` of an interlaced image of whole-byte pixels.
 #[verifier::spinoff_prover]
-pub fn deinterlace(h: &Header, buf: &[u8], off: &[usize; 8], limit: usize) -> (r: Result<Vec<u8>, crate::decode::Error>)
+pub fn deinterlace(h: &Header, buf: &[u8], off: &[usize; 8], limit: usize, Tracked(m): Tracked<&mut Meter>, Tracked(a): Tracked<&mut Meter>) -> (r: Result<Vec<u8>, crate::decode::Error>)
     requires
         bufs_ok(h.view(), buf@, off@),
         h.view().interlace == 1,
@@ -484,6 +540,8 @@ pub fn deinterlace(h: &Header, buf: &[u8], off: &[usize; 8], limit: usize) -> (r
     ensures
         r matches Ok(v) ==> v@ == native(h.view(), imgs_of(h.view(), buf@, off@)),
         r matches Err(e) ==> e != crate::decode::Error::Invalid,
+        old(a).n <= final(a).n <= old(a).n + limit,
+        final(m).n + 12 * old(a).n <= old(m).n + 12 * final(a).n + 1000,
 {
     let ghost hv = h.view();
     let ghost imgs = imgs_of(hv, buf@, off@);
@@ -500,40 +558,87 @@ pub fn deinterlace(h: &Header, buf: &[u8], off: &[usize; 8], limit: usize) -> (r
                 bp <= 8,
                 hh <= 0x7fff_ffff,
         ;
+        assert(w * bp <= 0x7fff_ffff * 8) by (nonlinear_arith)
+            requires
+                w <= 0x7fff_ffff,
+                bp <= 8,
+        ;
     }
     if (w * bp as u64) as u128 * hh as u128 > limit as u128 {
         return Err(crate::decode::Error::TooLarge);
+    }
+    proof {
+        // Each partial product is at most `limit`, so fits a usize.
+        assert(w * bp <= w * bp * hh) by (nonlinear_arith)
+            requires
+                hh >= 1,
+        ;
+        // Whole-byte pixels: a depth of 8 or 16.
+        assert(hv.depth == 8 || hv.depth == 16) by {
+            if hv.depth < 8 {
+                assert(channels(hv.ct) == 1);
+            }
+        }
+        assert(pixel_bits(hv) == 8 * bp) by (nonlinear_arith)
+            requires
+                pixel_bits(hv) == channels(hv.ct) * hv.depth,
+                hv.depth == 8 || hv.depth == 16,
+                bp == pixel_bits(hv) / 8,
+        ;
     }
     let n = (w as usize * bp) * hh as usize;
     let mut out = match alloc_zeroed(n) {
         Some(v) => v,
         None => return Err(crate::decode::Error::OutOfMemory),
     };
+    proof {
+        a.n = (a.n + n) as nat;
+        m.n = (m.n + n) as nat;
+    }
+    let ghost mo = m.n;
+    let ghost a1 = a.n;
     let mut rbs: [usize; 7] = [0; 7];
     let sx: [u64; 7] = [3, 3, 2, 2, 1, 1, 0];
     let sy: [u64; 7] = [3, 3, 3, 2, 2, 1, 1];
     let mut p: u64 = 0;
     while p < 7
         invariant
+            m.n == mo + p,
+            a.n == a1,
             bufs_ok(hv, buf@, off@),
             hv == h.view(),
             hv.interlace == 1,
             p <= 7,
             rbs@.len() == 7,
             forall|q: int| 0 <= q < p ==> #[trigger] rbs@[q] == row_bytes(hv, pass_w(hv, q as nat)),
+            pixel_bits(hv) == 8 * bp,
+            w == hv.w,
+            w * bp <= limit,
         decreases 7 - p,
     {
         let (pw, _) = crate::geom::pass_dims(h, p);
+        proof {
+            // At most `limit`, so the cast keeps it on 32-bit targets too.
+            lemma_pass_row_le(hv, p as nat, bp as nat);
+            assert(p as usize == p);
+        }
         rbs[p as usize] = crate::geom::row_bytes_exec(h, pw) as usize;
+        proof {
+            m.n = m.n + 1;
+        }
         p = p + 1;
     }
     proof {
         assert forall|q: int| 0 <= q < 7 implies #[trigger] sx@[q] <= 3 && pw2(sx@[q] as nat) == dx(hv, q as nat) by {}
         assert forall|q: int| 0 <= q < 7 implies #[trigger] sy@[q] <= 3 && pw2(sy@[q] as nat) == dy(hv, q as nat) by {}
     }
+    let ghost my = m.n;
     let mut y: u64 = 0;
     while y < hh
         invariant
+            my == mo + 7,
+            a.n == a1,
+            m.n <= my + 2 * (y * row_bytes(hv, hv.w)) + y,
             tables_ok(hv, buf@, off@, rbs@, sx@, sy@),
             hv == h.view(),
             hh == h.height,
@@ -545,10 +650,14 @@ pub fn deinterlace(h: &Header, buf: &[u8], off: &[usize; 8], limit: usize) -> (r
             forall|i: int| 0 <= i < y * row_bytes(hv, hv.w) ==> #[trigger] out@[i] == goal[i],
         decreases hh - y,
     {
+        proof {
+            m.n = m.n + 1;
+            assert((y + 1) * row_bytes(hv, hv.w) == y * row_bytes(hv, hv.w) + row_bytes(hv, hv.w)) by (nonlinear_arith);
+        }
         if y % 2 == 1 {
-            odd_row_dispatch(h, buf, off, &rbs, &sx, &sy, bp, y, out.as_mut_slice(), Ghost(goal));
+            odd_row_dispatch(h, buf, off, &rbs, &sx, &sy, bp, y, out.as_mut_slice(), Ghost(goal), Tracked(m));
         } else {
-            even_row_dispatch(h, buf, off, &rbs, &sx, &sy, bp, y, out.as_mut_slice(), Ghost(goal));
+            even_row_dispatch(h, buf, off, &rbs, &sx, &sy, bp, y, out.as_mut_slice(), Ghost(goal), Tracked(m));
         }
         y = y + 1;
     }
@@ -560,6 +669,11 @@ pub fn deinterlace(h: &Header, buf: &[u8], off: &[usize; 8], limit: usize) -> (r
                 goal.len() == row_bytes(hv, hv.w) * hv.h,
         ;
         assert(out@ =~= goal);
+        assert(hh <= y * row_bytes(hv, hv.w)) by (nonlinear_arith)
+            requires
+                y == hh,
+                row_bytes(hv, hv.w) >= 1,
+        ;
     }
     Ok(out)
 }
@@ -576,6 +690,7 @@ fn odd_row_dispatch(
     y: u64,
     out: &mut [u8],
     Ghost(goal): Ghost<Seq<u8>>,
+    Tracked(m): Tracked<&mut Meter>,
 )
     requires
         tables_ok(h.view(), buf@, off@, rbs@, sx@, sy@),
@@ -586,10 +701,11 @@ fn odd_row_dispatch(
         old(out)@.len() == goal.len(),
         forall|i: int| 0 <= i < y * row_bytes(h.view(), h.view().w) ==> #[trigger] old(out)@[i] == goal[i],
     ensures
+        final(m).n <= old(m).n + 2 * row_bytes(h.view(), h.view().w),
         final(out)@.len() == goal.len(),
         forall|i: int| 0 <= i < (y + 1) * row_bytes(h.view(), h.view().w) ==> #[trigger] final(out)@[i] == goal[i],
 {
-    odd_row(h, buf, off, rbs, sx, sy, bp, y, out, Ghost(goal))
+    odd_row(h, buf, off, rbs, sx, sy, bp, y, out, Ghost(goal), Tracked(m))
 }
 
 /// `even_row` with the pixel size a constant, so the byte loop unrolls.
@@ -604,6 +720,7 @@ fn even_row_dispatch(
     y: u64,
     out: &mut [u8],
     Ghost(goal): Ghost<Seq<u8>>,
+    Tracked(m): Tracked<&mut Meter>,
 )
     requires
         tables_ok(h.view(), buf@, off@, rbs@, sx@, sy@),
@@ -613,23 +730,24 @@ fn even_row_dispatch(
         old(out)@.len() == goal.len(),
         forall|i: int| 0 <= i < y * row_bytes(h.view(), h.view().w) ==> #[trigger] old(out)@[i] == goal[i],
     ensures
+        final(m).n <= old(m).n + 2 * row_bytes(h.view(), h.view().w),
         final(out)@.len() == goal.len(),
         forall|i: int| 0 <= i < (y + 1) * row_bytes(h.view(), h.view().w) ==> #[trigger] final(out)@[i] == goal[i],
 {
     if bp == 1 {
-        even_row(h, buf, off, rbs, sx, sy, 1, y, out, Ghost(goal))
+        even_row(h, buf, off, rbs, sx, sy, 1, y, out, Ghost(goal), Tracked(m))
     } else if bp == 2 {
-        even_row(h, buf, off, rbs, sx, sy, 2, y, out, Ghost(goal))
+        even_row(h, buf, off, rbs, sx, sy, 2, y, out, Ghost(goal), Tracked(m))
     } else if bp == 3 {
-        even_row(h, buf, off, rbs, sx, sy, 3, y, out, Ghost(goal))
+        even_row(h, buf, off, rbs, sx, sy, 3, y, out, Ghost(goal), Tracked(m))
     } else if bp == 4 {
-        even_row(h, buf, off, rbs, sx, sy, 4, y, out, Ghost(goal))
+        even_row(h, buf, off, rbs, sx, sy, 4, y, out, Ghost(goal), Tracked(m))
     } else if bp == 6 {
-        even_row(h, buf, off, rbs, sx, sy, 6, y, out, Ghost(goal))
+        even_row(h, buf, off, rbs, sx, sy, 6, y, out, Ghost(goal), Tracked(m))
     } else if bp == 8 {
-        even_row(h, buf, off, rbs, sx, sy, 8, y, out, Ghost(goal))
+        even_row(h, buf, off, rbs, sx, sy, 8, y, out, Ghost(goal), Tracked(m))
     } else {
-        even_row(h, buf, off, rbs, sx, sy, bp, y, out, Ghost(goal))
+        even_row(h, buf, off, rbs, sx, sy, bp, y, out, Ghost(goal), Tracked(m))
     }
 }
 
@@ -784,7 +902,7 @@ pub proof fn lemma_rgba_flat(png: Png, imgs: Seq<Seq<u8>>, off0: Seq<usize>)
 
 /// `spec::rgba8` of an interlaced 8- or 16-bit image: deinterlaced into
 /// its own format, then converted as a non-interlaced image.
-pub fn rgba8_interlaced(png: crate::decode::PngX, buf: &[u8], off: &[usize; 8], limit: usize) -> (r: Result<Vec<u8>, crate::decode::Error>)
+pub fn rgba8_interlaced(png: crate::decode::PngX, buf: &[u8], off: &[usize; 8], limit: usize, Tracked(m): Tracked<&mut Meter>, Tracked(a): Tracked<&mut Meter>) -> (r: Result<Vec<u8>, crate::decode::Error>)
     requires
         png.wf(),
         bufs_ok(png.hdr.view(), buf@, off@),
@@ -793,13 +911,15 @@ pub fn rgba8_interlaced(png: crate::decode::PngX, buf: &[u8], off: &[usize; 8], 
     ensures
         r matches Ok(v) ==> v@ == rgba8(png.view(), imgs_of(png.hdr.view(), buf@, off@)),
         r matches Err(e) ==> e != crate::decode::Error::Invalid,
+        old(a).n <= final(a).n <= old(a).n + 2 * limit,
+        final(m).n + 12 * old(a).n <= old(m).n + 12 * final(a).n + 2000,
 {
     let ghost pv = png.view();
     let ghost imgs = imgs_of(pv.hdr, buf@, off@);
     proof {
         lemma_bits(pv.hdr);
     }
-    let nv = match deinterlace(&png.hdr, buf, off, limit) {
+    let nv = match deinterlace(&png.hdr, buf, off, limit, Tracked(m), Tracked(a)) {
         Ok(v) => v,
         Err(e) => return Err(e),
     };
@@ -816,9 +936,9 @@ pub fn rgba8_interlaced(png: crate::decode::PngX, buf: &[u8], off: &[usize; 8], 
         assert(png0.view() == Png { hdr: flat_hdr(pv.hdr), ..pv });
     }
     if hdr.bit_depth == 8 {
-        crate::fast::rgba8_flat(&png0, nv, &off0, limit)
+        crate::fast::rgba8_flat(&png0, nv, &off0, limit, Tracked(m), Tracked(a))
     } else {
-        crate::fast::rgba8_flat16(&png0, nv.as_slice(), &off0, limit)
+        crate::fast::rgba8_flat16(&png0, nv.as_slice(), &off0, limit, Tracked(m), Tracked(a))
     }
 }
 

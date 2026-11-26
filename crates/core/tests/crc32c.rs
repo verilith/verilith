@@ -1,6 +1,9 @@
 //! CRC-32C: published values, the table kernel against a bit-at-a-time
-//! reference written from the definition, and the CPU's instruction
-//! (`checksum::cpu`, unverified) against the table kernel.
+//! reference written from the definition, the CPU's instruction (the
+//! trusted `crc32c::crc32c_word`) against the table kernel on random
+//! registers and words, and the verified instruction kernel
+//! (`checksum::cpu`) against the table kernel.
+use verilith_core::checksum::crc32c::{crc32c_word, has_crc32c};
 use verilith_core::checksum::{cpu, crc32c, crc32c_update};
 
 /// The register update one bit at a time (RFC 3720 appendix B.4).
@@ -59,5 +62,38 @@ fn cpu_against_table() {
             let reg = (n as u32 ^ off as u32).wrapping_mul(0x85eb_ca77);
             assert_eq!(cpu::crc32c_update(reg, s), crc32c_update(reg, s), "offset {off}, len {n}");
         }
+    }
+}
+
+/// What `crc32c_word` is trusted for: on 1,000,000 random registers and
+/// words (with zero, all-one and one-bit words mixed in), the instruction
+/// gives what the verified table kernel gives over the same eight bytes.
+#[test]
+fn instruction_against_table() {
+    if !has_crc32c() {
+        eprintln!("skipped: this CPU has no CRC-32C instruction");
+        return;
+    }
+    let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+    let mut next = || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x
+    };
+    for k in 0..1_000_000u32 {
+        let reg = next() as u32;
+        let w = match k % 8 {
+            0 => 0,
+            1 => u64::MAX,
+            2 => 1u64 << (next() % 64),
+            _ => next(),
+        };
+        let reg = if k % 16 == 3 { 0 } else if k % 16 == 5 { u32::MAX } else { reg };
+        let b = w.to_le_bytes();
+        let mut d = [0u8; 11];
+        let i = (k % 4) as usize;
+        d[i..i + 8].copy_from_slice(&b);
+        assert_eq!(crc32c_word(reg as u64, &d, i), crc32c_update(reg, &b) as u64, "reg {reg:#x}, word {w:#x}");
     }
 }

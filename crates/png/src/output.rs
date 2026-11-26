@@ -6,6 +6,7 @@ use crate::geom::*;
 use crate::passes::*;
 use crate::prims::*;
 use crate::spec::*;
+use crate::work::Meter;
 use vstd::prelude::*;
 
 verus! {
@@ -226,6 +227,12 @@ pub fn sample_exec(h: &Header, buf: &[u8], base: usize, rb: usize, pw: u64, ph: 
             requires
                 y < ph,
         ;
+        // So `y` and the index fit a usize on 32-bit targets too.
+        assert(rb >= 1);
+        assert(ph <= ph * rb) by (nonlinear_arith)
+            requires
+                rb >= 1,
+        ;
         lemma_pow2_shift(d);
     }
     let i = base + y as usize * rb + (k / 8) as usize;
@@ -323,6 +330,11 @@ pub fn px_sample_exec(h: &Header, buf: &[u8], off: &[usize; 8], x: u64, y: u64, 
         assert(img_size(hv, p as nat) == ph * rb);
         assert(off@[p + 1] == off@[p as int] + ph * rb);
         assert(imgs_of(hv, buf@, off@)[p as int] == buf@.subrange(off@[p as int] as int, off@[p as int] + ph * rb));
+        // Within `off[p + 1]`, a usize, so `rb as usize` keeps it.
+        assert(rb <= ph * rb) by (nonlinear_arith)
+            requires
+                ph >= 1,
+        ;
     }
     sample_exec(h, buf, off[p as usize], rb as usize, pw, ph, x / dx, y / dy, c)
 }
@@ -482,13 +494,15 @@ pub proof fn lemma_rgba_index(x: nat, y: nat, w: nat, j: nat)
 }
 
 /// The image as 8-bit RGBA (`spec::rgba8`), if it fits in `limit` bytes.
-pub fn to_rgba8(png: &PngX, buf: &[u8], off: &[usize; 8], limit: usize) -> (r: Result<Vec<u8>, crate::decode::Error>)
+pub fn to_rgba8(png: &PngX, buf: &[u8], off: &[usize; 8], limit: usize, Tracked(m): Tracked<&mut Meter>, Tracked(a): Tracked<&mut Meter>) -> (r: Result<Vec<u8>, crate::decode::Error>)
     requires
         png.wf(),
         bufs_ok(png.hdr.view(), buf@, off@),
     ensures
         r matches Ok(v) ==> v@ == rgba8(png.view(), imgs_of(png.hdr.view(), buf@, off@)),
         r matches Err(e) ==> e != crate::decode::Error::Invalid,
+        old(a).n <= final(a).n <= old(a).n + limit,
+        final(m).n + 12 * old(a).n <= old(m).n + 12 * final(a).n + 1000,
 {
     let h = &png.hdr;
     let ghost pv = png.view();
@@ -510,6 +524,11 @@ pub fn to_rgba8(png: &PngX, buf: &[u8], off: &[usize; 8], limit: usize) -> (r: R
         Some(v) => v,
         None => return Err(crate::decode::Error::OutOfMemory),
     };
+    proof {
+        a.n = (a.n + n) as nat;
+        m.n = (m.n + n) as nat;
+    }
+    let ghost mo = m.n;
     let ghost spec_out = rgba8(pv, imgs);
     let mut y: u64 = 0;
     let mut o: usize = 0;
@@ -521,6 +540,9 @@ pub fn to_rgba8(png: &PngX, buf: &[u8], off: &[usize; 8], limit: usize) -> (r: R
     }
     while y < hh
         invariant
+            a.n == old(a).n + n,
+            mo == old(m).n + n,
+            4 * m.n <= 4 * mo + o + 4 * y,
             png.wf(),
             bufs_ok(h.view(), buf@, off@),
             h == &png.hdr,
@@ -538,6 +560,9 @@ pub fn to_rgba8(png: &PngX, buf: &[u8], off: &[usize; 8], limit: usize) -> (r: R
             forall|i: int| 0 <= i < o ==> #[trigger] out@[i] == spec_out[i],
         decreases hh - y,
     {
+        proof {
+            m.n = m.n + 1;
+        }
         let mut x: u64 = 0;
         proof {
             assert(4 * y * w + 4 * w <= n) by (nonlinear_arith)
@@ -548,6 +573,9 @@ pub fn to_rgba8(png: &PngX, buf: &[u8], off: &[usize; 8], limit: usize) -> (r: R
         }
         while x < w
             invariant
+                a.n == old(a).n + n,
+                mo == old(m).n + n,
+                4 * m.n <= 4 * mo + o + 4 * y + 4,
                 png.wf(),
                 bufs_ok(h.view(), buf@, off@),
                 h == &png.hdr,
@@ -579,6 +607,9 @@ pub fn to_rgba8(png: &PngX, buf: &[u8], off: &[usize; 8], limit: usize) -> (r: R
                     }
                 }
             }
+            proof {
+                m.n = m.n + 1;
+            }
             x = x + 1;
             o = o + 4;
         }
@@ -596,6 +627,10 @@ pub fn to_rgba8(png: &PngX, buf: &[u8], off: &[usize; 8], limit: usize) -> (r: R
         assert(4 * y * w == 4 * w * hh) by (nonlinear_arith)
             requires
                 y == hh,
+        ;
+        assert(4 * hh <= 4 * w * hh) by (nonlinear_arith)
+            requires
+                w >= 1,
         ;
         assert(spec_out.len() == n);
         assert(out@ =~= spec_out);
@@ -706,19 +741,20 @@ pub proof fn lemma_samples_bound(h: Ihdr, imgs: Seq<Seq<u8>>, y: nat)
 }
 
 /// Byte `j` of row `y` in the image's own format (`spec::native_byte`).
-pub fn native_byte_exec(h: &Header, buf: &[u8], off: &[usize; 8], j: u64, y: u64) -> (r: u8)
+pub fn native_byte_exec(h: &Header, buf: &[u8], off: &[usize; 8], j: u64, y: u64, Tracked(m): Tracked<&mut Meter>) -> (r: u8)
     requires
         bufs_ok(h.view(), buf@, off@),
         j < row_bytes(h.view(), h.view().w),
         y < h.height,
     ensures
+        final(m).n <= old(m).n + 8,
         r == native_byte(h.view(), imgs_of(h.view(), buf@, off@), j as nat, y as nat),
 {
     let bits = crate::geom::pixel_bits_exec(h);
     if bits >= 8 {
         native_wide(h, buf, off, j, y, bits)
     } else {
-        native_packed(h, buf, off, j, y)
+        native_packed(h, buf, off, j, y, Tracked(m))
     }
 }
 
@@ -797,6 +833,9 @@ fn native_wide(h: &Header, buf: &[u8], off: &[usize; 8], j: u64, y: u64, bits: u
                 j % bp < bp,
         ;
         assert(imgs[p as int] == buf@.subrange(off@[p as int] as int, off@[p as int] + ph * rb));
+        // Below `off[p + 1]`, a usize: the cast and the sum keep the value on
+        // 32-bit targets too.
+        assert(off@[p + 1] == off@[p as int] + ph * rb);
     }
     buf[off[p as usize] + (sy * rb + sx * bp + j % bp) as usize]
 }
@@ -843,13 +882,14 @@ proof fn lemma_packed_step(h: Ihdr, imgs: Seq<Seq<u8>>, j: nat, y: nat, t: nat, 
 }
 
 #[verifier::spinoff_prover]
-fn native_packed(h: &Header, buf: &[u8], off: &[usize; 8], j: u64, y: u64) -> (r: u8)
+fn native_packed(h: &Header, buf: &[u8], off: &[usize; 8], j: u64, y: u64, Tracked(m): Tracked<&mut Meter>) -> (r: u8)
     requires
         bufs_ok(h.view(), buf@, off@),
         j < row_bytes(h.view(), h.view().w),
         y < h.height,
         pixel_bits(h.view()) < 8,
     ensures
+        final(m).n <= old(m).n + 8,
         r == native_byte(h.view(), imgs_of(h.view(), buf@, off@), j as nat, y as nat),
 {
     let ghost hv = h.view();
@@ -867,8 +907,11 @@ fn native_packed(h: &Header, buf: &[u8], off: &[usize; 8], j: u64, y: u64) -> (r
         crate::geom::lemma_row_bytes_bound(hv, hv.w);
         lemma_pow2_shift(d);
     }
+    let ghost m0 = m.n;
     while t < per
         invariant
+            m0 == old(m).n,
+            m.n <= m0 + t,
             bufs_ok(hv, buf@, off@),
             hv == h.view(),
             imgs == imgs_of(hv, buf@, off@),
@@ -914,6 +957,9 @@ fn native_packed(h: &Header, buf: &[u8], off: &[usize; 8], j: u64, y: u64) -> (r
             }
             acc = acc + (s << sh);
         }
+        proof {
+            m.n = m.n + 1;
+        }
         t = t + 1;
     }
     proof {
@@ -924,12 +970,14 @@ fn native_packed(h: &Header, buf: &[u8], off: &[usize; 8], j: u64, y: u64) -> (r
 
 /// The image in its own format (`spec::native`), if it fits in `limit`
 /// bytes.
-pub fn to_native(h: &Header, buf: &[u8], off: &[usize; 8], limit: usize) -> (r: Result<Vec<u8>, crate::decode::Error>)
+pub fn to_native(h: &Header, buf: &[u8], off: &[usize; 8], limit: usize, Tracked(m): Tracked<&mut Meter>, Tracked(a): Tracked<&mut Meter>) -> (r: Result<Vec<u8>, crate::decode::Error>)
     requires
         bufs_ok(h.view(), buf@, off@),
     ensures
         r matches Ok(v) ==> v@ == native(h.view(), imgs_of(h.view(), buf@, off@)),
         r matches Err(e) ==> e != crate::decode::Error::Invalid,
+        old(a).n <= final(a).n <= old(a).n + limit,
+        final(m).n + 12 * old(a).n <= old(m).n + 12 * final(a).n + 1000,
 {
     let ghost hv = h.view();
     let ghost imgs = imgs_of(hv, buf@, off@);
@@ -950,6 +998,11 @@ pub fn to_native(h: &Header, buf: &[u8], off: &[usize; 8], limit: usize) -> (r: 
         Some(v) => v,
         None => return Err(crate::decode::Error::OutOfMemory),
     };
+    proof {
+        a.n = (a.n + n) as nat;
+        m.n = (m.n + n) as nat;
+    }
+    let ghost mo = m.n;
     let ghost spec_out = native(hv, imgs);
     let mut y: u64 = 0;
     let mut o: usize = 0;
@@ -961,6 +1014,9 @@ pub fn to_native(h: &Header, buf: &[u8], off: &[usize; 8], limit: usize) -> (r: 
     }
     while y < hh
         invariant
+            a.n == old(a).n + n,
+            mo == old(m).n + n,
+            m.n <= mo + 9 * o + y,
             bufs_ok(hv, buf@, off@),
             hv == h.view(),
             imgs == imgs_of(hv, buf@, off@),
@@ -976,6 +1032,9 @@ pub fn to_native(h: &Header, buf: &[u8], off: &[usize; 8], limit: usize) -> (r: 
             forall|i: int| 0 <= i < o ==> #[trigger] out@[i] == spec_out[i],
         decreases hh - y,
     {
+        proof {
+            m.n = m.n + 1;
+        }
         let mut j: u64 = 0;
         proof {
             assert(y * rb + rb <= n) by (nonlinear_arith)
@@ -986,6 +1045,9 @@ pub fn to_native(h: &Header, buf: &[u8], off: &[usize; 8], limit: usize) -> (r: 
         }
         while j < rb
             invariant
+                a.n == old(a).n + n,
+                mo == old(m).n + n,
+                m.n <= mo + 9 * o + y + 1,
                 bufs_ok(hv, buf@, off@),
                 hv == h.view(),
                 imgs == imgs_of(hv, buf@, off@),
@@ -1002,7 +1064,10 @@ pub fn to_native(h: &Header, buf: &[u8], off: &[usize; 8], limit: usize) -> (r: 
                 forall|i: int| 0 <= i < o ==> #[trigger] out@[i] == spec_out[i],
             decreases rb - j,
         {
-            let v = native_byte_exec(h, buf, off, j, y);
+            proof {
+                m.n = m.n + 1;
+            }
+            let v = native_byte_exec(h, buf, off, j, y, Tracked(m));
             out.set(o, v);
             proof {
                 vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(o as int, rb as int, y as int, j as int);
@@ -1019,6 +1084,10 @@ pub fn to_native(h: &Header, buf: &[u8], off: &[usize; 8], limit: usize) -> (r: 
         assert(y * rb == rb * hh) by (nonlinear_arith)
             requires
                 y == hh,
+        ;
+        assert(hh <= rb * hh) by (nonlinear_arith)
+            requires
+                rb >= 1,
         ;
         assert(out@ =~= spec_out);
     }

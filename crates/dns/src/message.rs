@@ -1257,3 +1257,16 @@ fn write_u32(out: &mut Vec<u8>, x: u32)
 }
 
 } // verus!
+
+impl core::fmt::Display for BuildError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            BuildError::BadName => "not a valid domain name",
+            BuildError::SectionFull => "the section already holds 65535 entries",
+            BuildError::RdataTooLong => "RDATA is longer than 65535 bytes",
+            BuildError::BadRdata => "RDATA does not decode as its type",
+        })
+    }
+}
+
+impl core::error::Error for BuildError {}

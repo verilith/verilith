@@ -15,10 +15,27 @@ crates produce the same href (562 inputs; on the other 65 the `url` crate
 departs from the Standard). On a 20,000-URL corpus the hrefs agree on
 19,997 and the accessors on all of those.
 
-The verified parser decides whether an input is accepted. When it is
-rejected, the `ParseError` reason comes from a separate diagnostic pass in
-plain Rust: the reason is best effort, the rejection is not. It matches the
-`url` crate's reason on 262 of the 269 WPT inputs both crates reject.
+```rust
+use verilith_url::compat::Url;
+
+fn main() -> Result<(), verilith_url::compat::ParseError> {
+    let base = Url::parse("https://example.com/a/b?x=1")?;
+    let u = base.join("../c?q=v%20w#top")?;
+    assert_eq!(u.as_str(), "https://example.com/c?q=v%20w#top");
+    assert_eq!(u.host_str(), Some("example.com"));
+    assert_eq!(u.port_or_known_default(), Some(443));
+    assert_eq!(u.query_pairs().next(), Some(("q".into(), "v w".into())));
+    Ok(())
+}
+```
+
+The verified parser decides whether an input is accepted, and when it is
+rejected, why: the `ParseError` reason is proven to be `spec::parse_why`,
+the branch of the state machine that returned failure (no base URL, an
+empty host, a bad port, or the host parser's IPv6, opaque-host, UTS #46 or
+IPv4 step). It matches the `url` crate's reason on all 269 WPT inputs both
+crates reject. The setters' errors (`set_host` and friends) are still a
+best-effort diagnosis.
 
 The lower-level `verilith_url::Url` exposes the URL Standard's getters (`href`,
 `protocol`, `hostname`, `search`, ...) directly.
@@ -64,9 +81,22 @@ that verilith-url itself produced:
   The exec parser in `parse.rs` is proven to compute that machine's result,
   though it works differently: it uses bulk scans (some eight bytes at a
   time in a `u64`, with each lane's formula proven exact by Verus's
-  bit-vector solver, in `swar.rs`), fast paths for an
+  bit-vector solver, in `swar.rs`; hosts and paths sixteen at a time with
+  SSE2 or NEON compare chains read back as a bit mask, in `simd.rs`,
+  proven against verilith-simd's models of the instructions), fast paths for an
   `http://` or `https://` prefix and for plain paths, and writes `href` and
-  the component offsets in a single pass.
+  the component offsets in a single pass. The commonest shape,
+  `http(s)://host/path?query#fragment` with a plain lowercase host, no
+  credentials, no port and nothing to percent-encode, skips the state
+  machine altogether (`parse::parse_simple`, the idea behind ada 4's
+  `try_parse_simple_absolute`): the proof shows that the machine would
+  have reached the same record, so the fast path is not trusted, only
+  shortcut.
+- **Error reasons.** When parsing fails, `api::explain` returns exactly
+  `spec::parse_why`: the state handlers record why they returned failure
+  (`parse::Fault`), proven to match `spec::run_r`, and `why::host_why_exec`
+  recomputes the host parser's failing step for a rejected host. The
+  `compat` API's `ParseError` is this reason.
 - **Setters.** Each of the Standard's setters (protocol, username,
   password, host, hostname, port, pathname, search, hash) is proven to
   leave exactly the record that the Standard's setter leaves
@@ -79,7 +109,8 @@ that verilith-url itself produced:
 - **IDNA.** Non-ASCII domains go through verilith-text's UTS #46
   (`verilith_text::idna::uts46::url_domain_to_ascii_exec`), which verilith-text proves
   equal to its transliteration of UTS #46. `idna.rs` proves the UTF-8
-  decoding that connects the two.
+  decoding that connects the two, U+FFFD replacement of ill-formed UTF-8
+  included (`spec::utf8_decode`, the Encoding Standard's decoder).
 - **Well-formedness.** Every URL that is returned satisfies `Url::wf`: its
   component offsets lie inside `href` and delimit the spec's components.
   The getters depend on this.
@@ -100,8 +131,8 @@ that verilith-url itself produced:
   count is not bounded by a constant, and once per byte that a bulk copy
   moves. The theorem is
 
-  ```
-  steps(parse(input, base)) <= parse_cost(n, m) = 3n + 32 + 20 * 128 * (n + m + 2) + 128n
+  ```text
+  steps(parse(input, base)) <= parse_cost(n, m) = 19n + 160 + 20 * 128 * (n + m + 2) + 128n
   ```
 
   where `n = input.len()` and `m` is the length of the base URL's href.
@@ -113,6 +144,8 @@ that verilith-url itself produced:
   start of the host. Bytes written to `href` are counted in the potential,
   so the `..` segment, which shortens `href`, is paid for by the earlier
   writes it undoes.
+  The `16n + 128` term pays for a failed attempt at the simple fast path
+  before the state machine runs.
 
   The meter runs through every state handler in `parse.rs`, the host
   parser in `host.rs`, the percent-encoding and byte-class scans in
@@ -120,7 +153,7 @@ that verilith-url itself produced:
   iteration, not a machine instruction: the bound also assumes `Vec::push`
   is amortized O(1) and that the IDNA call is linear (see below).
 
-`cargo verus focus` reports 529 verified, 0 errors. The crates it builds on,
+`cargo verus focus` reports 611 verified, 0 errors. The crates it builds on,
 [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core) and
 [verilith-text](https://github.com/verilith/verilith/tree/main/crates/text), are verified
 as their own crates in this repository. CI (`.github/workflows/ci.yml` at the repository root) verifies the proofs and runs `ci.sh` on every pull request and push to `main` that touches this crate or a crate it depends on.
@@ -130,9 +163,9 @@ as their own crates in this repository. CI (`.github/workflows/ci.yml` at the re
 | Standard | verilith-url's model | Why it is safe or what it costs |
 |---|---|---|
 | Input is a string of Unicode scalar values. | Input is its UTF-8 bytes, one per step. | Every parser decision compares against ASCII, and every percent-encode set contains all non-ASCII code points, so the two agree on valid UTF-8 (argued at the top of `spec.rs`). The Rust API takes `&str`. Through the C API or `parse_bytes`, invalid UTF-8 has no counterpart in the Standard; verilith-url gives the model's bytewise result. |
-| UTS #46 (`domain to ASCII`) for non-ASCII domains, after UTF-8 decode without BOM. | verilith-text's specification of UTS #46 (`spec::domain_to_ascii`). Ill-formed UTF-8 fails. | verilith-text's spec transliterates UTS #46 and is part of verilith-text's trusted base. Ill-formed UTF-8 decodes to U+FFFD, which UTS #46 disallows, so failing is what the Standard does; this step is argued, not proven. ASCII domains never reach UTS #46 and are fully specified. Passes WPT `toascii.json`. |
+| UTS #46 (`domain to ASCII`) for non-ASCII domains, after UTF-8 decode without BOM. | verilith-text's specification of UTS #46 (`spec::domain_to_ascii`), applied to `spec::utf8_decode`: each well-formed sequence becomes its scalar and each maximal subpart of ill-formed UTF-8 becomes U+FFFD, as the Encoding Standard's decoder does. | verilith-text's spec transliterates UTS #46 and is part of verilith-text's trusted base. The decode step is proven: ill-formed input goes to UTS #46 with its U+FFFDs in place, so it fails because verilith-text's table says U+FFFD is disallowed, not because the model says so (tested: `ill_formed_host`). ASCII domains never reach UTS #46 and are fully specified. Passes WPT `toascii.json`. |
 | ToASCII's result may be any length. | A result over 8 bytes per input byte fails (`spec::domain_to_ascii`). | Keeps the parser's output, and so its running time, linear without assuming anything about verilith-text. No input is known to reach the limit: over every code point the largest ratio is 5.67 (U+337F, 3 bytes, becomes 17). |
-| Validation errors are reported. | Not modelled. | They never change the result. |
+| Validation errors are reported. | Not modelled. Instead, when parsing fails, `spec::parse_why` gives the reason, grouped as the `url` crate's `ParseError` (`spec::Why`): `spec::run_r` is `run` with the failing state's reason (`fail_why`, and `host_why` for the host parser), and `why::lemma_run_r` proves the two agree. | Validation errors never change the result. The reasons are this crate's grouping, not the Standard's names. |
 | Non-UTF-8 query encodings (HTML documents in legacy encodings). | The query is always UTF-8. | Matches every non-HTML caller; a browser would need its own query encoder. |
 | Blob URL entries. | Not modelled. | They are a lookup outside URL parsing. |
 | The setters change the URL in place, and keep what the parser changed even when it then returns failure. | `spec::run_url` returns the URL as the failing state found it. | Exact: no state changes the URL in the step that returns failure. |
@@ -152,7 +185,7 @@ as their own crates in this repository. CI (`.github/workflows/ci.yml` at the re
 - **verilith-text's trusted base** for UTS #46: its specification, the Unicode
   tables and the axioms about them (see verilith-text's README).
 - **Verus, Z3, rustc,** and the `vstd` library (the published
-  `vstd = "=0.0.0-2026-11-01-0251"` crate, matching Verus commit `8bf68ee7`).
+  `vstd = "=0.0.0-2026-11-22-0344"` crate, matching Verus commit `1ce6a59b`).
 - **Glue outside the proof**, plain Rust:
   - `public.rs`: getters that slice the verified `href` at the verified
     offsets.
@@ -161,12 +194,14 @@ as their own crates in this repository. CI (`.github/workflows/ci.yml` at the re
   - `searchparams.rs`: URLSearchParams's list edits (`append`, `set`,
     `remove`, ...) and `sort`. Its parser and serializer are verified.
   - `capi.rs`: the C ABI.
-  - `compat.rs`: the `url`-crate-shaped API and its error diagnosis.
+  - `compat.rs`: the `url`-crate-shaped API. A parse error's reason is
+    the verified `api::explain`; a setter's is a best-effort diagnosis.
 
 ## Testing
 
-Everything below runs in the CI workflow (`.github/workflows/ci.yml`, manual runs only),
-alongside the Verus proof check.
+Everything below runs in the CI workflow (`.github/workflows/ci.yml` at the
+repository root), alongside the Verus proof check, on every pull request and
+push to `main` that touches this crate or one it depends on.
 
 - The WPT `urltestdata.json` suite passes in full (896/896), as do
   `setters_tests.json` (278/278) and `toascii.json`: `cargo test`.
@@ -191,6 +226,23 @@ alongside the Verus proof check.
   locally with no failures; CI runs each for two minutes.
 
 ## Speed
+
+The reference numbers come from an Apple M3 Pro (macOS 27.2.1, on AC
+power), running `bench/run.sh --only url` at commit 15f10cd, against ada
+4.1.1 built from source. That script parses ada's
+[url-dataset](https://github.com/ada-url/url-dataset) (ef70651: 100,031
+URLs, and separately its first 1,000), takes 31 sample pairs per case, and
+checks that both parsers produce the same output. Medians of three runs,
+which agreed within about 2%:
+
+| case | verilith-url ns/URL | ada 4.1.1 ns/URL | ada's time / verilith-url's (95% CI) | instructions, verilith-url / ada |
+|---|---:|---:|---:|---:|
+| 1k URLs | **32.2** | 76.7 | 2.38x (2.36-2.40) | 0.47 |
+| 100k URLs | **46.7** | 79.5 | 1.72x (1.70-1.72) | 0.54 |
+
+So on this machine verilith-url takes 0.42x to 0.59x ada's time. The
+older measurements below came from cloud VMs, used earlier versions of both
+parsers, and include other parsers.
 
 Parsing the 100,025 URLs of ada's
 [url-dataset](https://github.com/ada-url/url-various-datasets) (`out.txt`,
@@ -237,25 +289,60 @@ There verilith-url takes 0.75x ada's time. So verilith-url is within 10% of ada 
 machine and ahead of it on another; neither result should be read as a
 general ranking.
 
+With the simple-URL fast path, on a 4-vCPU cloud x86 VM with the same
+harness and ada 4.1.1, verilith-url went from 64.3 to 50.4 ns/URL while
+ada measured 61.3 to 61.7 ns/URL: 0.82x ada's time, down from 1.04x.
+Through the C API (`bench/run.sh --only url` at the repository root, the
+drop-in for ada's `ada_c.h`), `ada_free` now keeps the handle's box and a
+small href buffer on the thread for the next `ada_parse`, and the parse
+result is written into the box in place; that took the C API from 1,475
+to 875 instructions per URL on the 1k set (ada: 1,028).
+With the host and path scans moved to 16-byte vector masks (one compare
+chain per block, the first stop found with a trailing-zero count), the C
+API runs 922 instructions per URL on the full dataset against ada's 1,055,
+and on the same cloud VM takes 71 ns per URL to ada's 81.
+Four more changes took that to 707 instructions per URL (about 55 ns to
+ada's 82 on the same VM, 0.67x ada's time). First, href buffers are sized in
+power-of-two classes from 128 bytes and the freed one is always recycled
+when it fits the next URL, so a run of URLs of similar length reuses one
+buffer; a buffer is at most max(128, 2 x the URL's length) bytes. Second,
+the parse builds the `Url` directly in the C handle and skips the
+dot-slash check when a host is present, since such a URL never needs it
+(`finish_hosted`). Third, the query and fragment scans use a proven SSE2
+mask for the bytes that may need encoding. Fourth, `ada_get_components`
+computes the offsets when it is called instead of every parse doing it
+(setters still refresh them, so a pointer already handed out stays
+current). A single-pass scan over the
+whole URL was built three ways and measured; each ran 5 to 18% more
+instructions than the separate scans, so it was not kept.
+
 The harness in `bench/` is a small Rust crate that links ada and libcurl
 through a C++ shim. It expects ada and the dataset to be cloned under
 `$EXT`: `EXT=~/ext bench/run.sh`.
 
 ## Building
 
-```
+```text
 cargo build --profile release-fat          # rlib + staticlib exporting vurl_* symbols
 cargo build --profile release-fat --features ada-abi   # export ada_* symbols instead
-cargo verus focus              # verify (needs Verus at the commit pinned in ci.yml)
+cargo verus focus              # verify (needs the Verus release in scripts/verus-version)
+cargo build --release --target wasm32-unknown-unknown   # WebAssembly
 ```
+
+The proofs fix no pointer width, so they cover 32-bit targets too: the crate
+builds for `wasm32-unknown-unknown` (browsers, Cloudflare Workers). CI also
+runs Verus compiling for that target, so that the code a wasm32 build has
+(no x86 or Arm paths) is checked as compiled there, and runs the tests on
+`wasm32-wasip1` under wasmtime (`scripts/verify-narrow.sh` here, `scripts/wasm32.sh` at the
+root).
 
 The C header is ada's `ada_c.h`. With `ada-abi`, linking `libverilith_url.a` in
 place of ada needs no source changes.
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/url/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/url/LICENSE-MIT), at your option.
 
 The URL test data in `tests/data` comes from web-platform-tests
-(BSD-3-Clause); see [LICENSE-wpt](LICENSE-wpt).
+(BSD-3-Clause); see [LICENSE-wpt](https://github.com/verilith/verilith/blob/main/crates/url/LICENSE-wpt).

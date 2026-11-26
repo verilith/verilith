@@ -4,6 +4,7 @@ use crate::chunks::Header;
 use crate::geom::*;
 use crate::spec::*;
 use crate::unfilter::*;
+use crate::work::Meter;
 use vstd::prelude::*;
 
 verus! {
@@ -88,6 +89,28 @@ pub fn reconstruct(h: &Header, buf: &mut [u8]) -> (r: Result<[usize; 8], ()>)
             Err(()) => pass_images(h.view(), old(buf)@, npasses(h.view())) is None,
         },
 {
+    let tracked mut m = Meter { n: 0 };
+    reconstruct_counted(h, buf, Tracked(&mut m))
+}
+
+/// `reconstruct`, counting its steps: at most three for each byte of the
+/// image data, and 8.
+pub fn reconstruct_counted(h: &Header, buf: &mut [u8], Tracked(m): Tracked<&mut Meter>) -> (r: Result<[usize; 8], ()>)
+    requires
+        hdr_ok(h.view()),
+        old(buf)@.len() == raw_size(h.view()),
+    ensures
+        final(buf)@.len() == old(buf)@.len(),
+        match r {
+            Ok(off) => offs_ok(h.view(), off@) && off@[npasses(h.view()) as int] <= final(buf)@.len()
+                && pass_images(h.view(), old(buf)@, npasses(h.view())) == Some(
+                imgs_view(final(buf)@, off@, npasses(h.view())),
+            ),
+            Err(()) => pass_images(h.view(), old(buf)@, npasses(h.view())) is None,
+        },
+        final(m).n <= old(m).n + 3 * old(buf)@.len() + 8,
+{
+    let ghost m0 = m.n;
     let ghost hv = h.view();
     let ghost raw = buf@;
     let np = npasses_exec(h);
@@ -109,8 +132,13 @@ pub fn reconstruct(h: &Header, buf: &mut [u8]) -> (r: Result<[usize; 8], ()>)
             buf@.len() <= usize::MAX,
             forall|q: int| 0 <= q <= npasses(hv) ==> #[trigger] roffs@[q] == pass_off(hv, q as nat),
             forall|q: int| 0 <= q <= p ==> #[trigger] off@[q] == img_off(hv, q as nat),
+            m.n <= m0 + p,
+            m0 == old(m).n,
         decreases np - p,
     {
+        proof {
+            m.n = m.n + 1;
+        }
         let (pw, ph) = pass_dims(h, p);
         let sz: usize = if pw == 0 || ph == 0 {
             0
@@ -155,9 +183,14 @@ pub fn reconstruct(h: &Header, buf: &mut [u8]) -> (r: Result<[usize; 8], ()>)
             off@[np as int] <= buf@.len(),
             pass_images(hv, raw, p as nat) == Some(imgs_view(buf@, off@, p as nat)),
             forall|k: int| 0 <= k < buf@.len() && k >= roffs@[p as int] ==> #[trigger] buf@[k] == raw[k],
+            m.n <= m0 + 7 + 3 * pass_off(hv, p as nat),
+            m0 == old(m).n,
         decreases np - p,
     {
-        if !one_pass(h, &roffs, buf, &off, p, bpp, Ghost(raw)) {
+        proof {
+            lemma_off_le_raw(hv, (p + 1) as nat);
+        }
+        if !one_pass(h, &roffs, buf, &off, p, bpp, Ghost(raw), Tracked(m)) {
             proof {
                 lemma_images_none(hv, raw, (p + 1) as nat, np as nat);
             }
@@ -172,7 +205,7 @@ pub fn reconstruct(h: &Header, buf: &mut [u8]) -> (r: Result<[usize; 8], ()>)
 /// invalid filter type.
 #[verifier::spinoff_prover]
 #[verifier::rlimit(60)]
-fn one_pass(h: &Header, roffs: &[u128; 8], buf: &mut [u8], off: &[usize; 8], p: u64, bpp: usize, Ghost(raw): Ghost<Seq<u8>>) -> (ok: bool)
+fn one_pass(h: &Header, roffs: &[u128; 8], buf: &mut [u8], off: &[usize; 8], p: u64, bpp: usize, Ghost(raw): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (ok: bool)
     requires
         hdr_ok(h.view()),
         p < npasses(h.view()),
@@ -184,6 +217,7 @@ fn one_pass(h: &Header, roffs: &[u128; 8], buf: &mut [u8], off: &[usize; 8], p: 
         pass_images(h.view(), raw, p as nat) == Some(imgs_view(old(buf)@, off@, p as nat)),
         forall|k: int| 0 <= k < old(buf)@.len() && k >= roffs@[p as int] ==> #[trigger] old(buf)@[k] == raw[k],
     ensures
+        final(m).n <= old(m).n + 3 * pass_size(h.view(), p as nat),
         final(buf)@.len() == old(buf)@.len(),
         ok ==> pass_images(h.view(), raw, (p + 1) as nat) == Some(imgs_view(final(buf)@, off@, (p + 1) as nat)),
         ok ==> forall|k: int| 0 <= k < final(buf)@.len() && k >= roffs@[p + 1] ==> #[trigger] final(buf)@[k] == raw[k],
@@ -209,8 +243,14 @@ fn one_pass(h: &Header, roffs: &[u128; 8], buf: &mut [u8], off: &[usize; 8], p: 
             assert(roffs@[p as int] + ph * (rb + 1) <= buf@.len());
             assert(off@[p as int] <= roffs@[p as int]);
             lemma_rows_frame(b0, raw, roffs@[p as int] as int, rb as nat, bpp as nat, ph as nat);
+            // All within the buffer, so the casts below keep every value on
+            // 32-bit targets too.
+            assert(rb <= ph * (rb + 1) && ph <= ph * (rb + 1)) by (nonlinear_arith)
+                requires
+                    ph >= 1,
+            ;
         }
-        let ok = unfilter_rows(buf, roffs[p as usize] as usize, rb as usize, bpp, ph as usize, off[p as usize]);
+        let ok = unfilter_rows(buf, roffs[p as usize] as usize, rb as usize, bpp, ph as usize, off[p as usize], Tracked(m));
         if !ok {
             return false;
         }
@@ -228,6 +268,19 @@ fn one_pass(h: &Header, roffs: &[u128; 8], buf: &mut [u8], off: &[usize; 8], p: 
         lemma_imgs_step(hv, raw, b0, buf@, off@, p as nat);
     }
     true
+}
+
+/// The passes up to `p` fit in the image data.
+pub proof fn lemma_off_le_raw(h: Ihdr, p: nat)
+    requires
+        p <= npasses(h),
+    ensures
+        pass_off(h, p) <= raw_size(h),
+    decreases npasses(h) - p,
+{
+    if p < npasses(h) {
+        lemma_off_le_raw(h, p + 1);
+    }
 }
 
 /// `recon_rows` reads only the rows it reconstructs.

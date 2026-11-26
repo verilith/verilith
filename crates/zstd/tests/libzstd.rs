@@ -5,9 +5,26 @@
 use std::ffi::{c_char, c_int, c_void, CString};
 use verilith_zstd::frame::{decompress_exec, Error};
 
+/// A limit no test output reaches: 1 TiB, or 1 GiB on 32-bit targets
+/// (where the decoder takes limits up to 2 GiB).
+const BIG: usize = if usize::BITS == 64 { (1u64 << 40) as usize } else { 1 << 30 };
+
+#[cfg(unix)]
 unsafe extern "C" {
     fn dlopen(name: *const c_char, flags: c_int) -> *mut c_void;
     fn dlsym(h: *mut c_void, name: *const c_char) -> *mut c_void;
+}
+
+// No dynamic loading on wasm32-wasip1: the reference library is never
+// found there, and the tests that compare with it skip.
+#[cfg(not(unix))]
+unsafe fn dlopen(_name: *const c_char, _flags: c_int) -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+#[cfg(not(unix))]
+unsafe fn dlsym(_h: *mut c_void, _name: *const c_char) -> *mut c_void {
+    std::ptr::null_mut()
 }
 
 type Compress2 = unsafe extern "C" fn(*mut c_void, *mut u8, usize, *const u8, usize) -> usize;
@@ -190,7 +207,7 @@ fn round_trips() {
             let wlog = if r.below(3) == 0 { 10 + r.below(8) as i32 } else { 0 };
             let strategy = if r.below(4) == 0 { 1 + r.below(9) as i32 } else { 0 };
             let c = z.compress(&src, level, checksum, wlog, size, strategy);
-            let ours = decompress_exec(&c, 1 << 40);
+            let ours = decompress_exec(&c, BIG);
             assert_eq!(ours.as_deref().ok(), Some(&src[..]), "n={n} level={level} wlog={wlog} strategy={strategy}");
             count += 1;
         }
@@ -218,7 +235,7 @@ fn concatenated_and_skippable() {
                 want.extend_from_slice(&src);
             }
         }
-        assert_eq!(decompress_exec(&all, 1 << 40).ok(), Some(want.clone()));
+        assert_eq!(decompress_exec(&all, BIG).ok(), Some(want.clone()));
         assert_eq!(z.decompress(&all, want.len()), Some(want));
     }
 }

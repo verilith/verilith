@@ -1,0 +1,22 @@
+# libxml2 2.15.4's runtest suites against verilith-xml's libxml2 ABI: the
+# tests that fail, as scripts/test-libxml2.sh lists them (suite, a tab, the
+# test), by reason. CI fails if another test fails or a listed one passes.
+
+# libxml2 reads files 4000 bytes at a time and splits a run of character
+# data where a read ends; here a run is reported whole.
+SAX1 callbacks regression tests	./test/rdf2
+SAX2 callbacks regression tests	./test/rdf2
+SAX2 callbacks regression tests with entity substitution	./test/rdf2
+
+# Saved as XHTML (xmlsave's XHTML mode is part of libxml2's HTML support,
+# which this ABI leaves out, as the build of runtest here does).
+XML entity subst regression tests	./test/xhtml1
+XML entity subst regression tests	./test/xhtmlcomp
+XML push boundary tests	./test/xhtml1
+XML push boundary tests	./test/xhtmlcomp
+XML push regression tests	./test/xhtml1
+XML push regression tests	./test/xhtmlcomp
+XML regression tests	./test/xhtml1
+XML regression tests	./test/xhtmlcomp
+XML regression tests on memory	./test/xhtml1
+XML regression tests on memory	./test/xhtmlcomp

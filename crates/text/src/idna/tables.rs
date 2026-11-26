@@ -4,32 +4,59 @@ use vstd::prelude::*;
 
 verus! {
 
+/// UTS #46 status `valid`.
 pub const STATUS_VALID: u32 = 0;
+/// UTS #46 status `ignored`.
 pub const STATUS_IGNORED: u32 = 1;
+/// UTS #46 status `mapped`.
 pub const STATUS_MAPPED: u32 = 2;
+/// UTS #46 status `deviation`.
 pub const STATUS_DEVIATION: u32 = 3;
+/// UTS #46 status `disallowed`.
 pub const STATUS_DISALLOWED: u32 = 4;
+/// Bidi_Class `L`.
 pub const BIDI_L: u32 = 0;
+/// Bidi_Class `R`.
 pub const BIDI_R: u32 = 1;
+/// Bidi_Class `AL`.
 pub const BIDI_AL: u32 = 2;
+/// Bidi_Class `EN`.
 pub const BIDI_EN: u32 = 3;
+/// Bidi_Class `ES`.
 pub const BIDI_ES: u32 = 4;
+/// Bidi_Class `ET`.
 pub const BIDI_ET: u32 = 5;
+/// Bidi_Class `AN`.
 pub const BIDI_AN: u32 = 6;
+/// Bidi_Class `CS`.
 pub const BIDI_CS: u32 = 7;
+/// Bidi_Class `NSM`.
 pub const BIDI_NSM: u32 = 8;
+/// Bidi_Class `BN`.
 pub const BIDI_BN: u32 = 9;
+/// Bidi_Class `ON`.
 pub const BIDI_ON: u32 = 10;
+/// Bidi_Class: any class the bidi rule does not name.
 pub const BIDI_OTHER: u32 = 11;
+/// Joining_Type `U`.
 pub const JT_U: u32 = 0;
+/// Joining_Type `L`.
 pub const JT_L: u32 = 1;
+/// Joining_Type `R`.
 pub const JT_R: u32 = 2;
+/// Joining_Type `D`.
 pub const JT_D: u32 = 3;
+/// Joining_Type `T`.
 pub const JT_T: u32 = 4;
+/// Joining_Type `C`.
 pub const JT_C: u32 = 5;
+/// The length of `IDNA_L1`.
 pub const IDNA_L1_LEN: usize = 272;
+/// The length of `IDNA_L2`.
 pub const IDNA_L2_LEN: usize = 2176;
+/// The length of `IDNA_DATA`.
 pub const IDNA_DATA_LEN: usize = 29312;
+/// The length of `IDNA_POOL`.
 pub const IDNA_POOL_LEN: usize = 5557;
 
 } // verus!

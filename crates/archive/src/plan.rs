@@ -12,7 +12,7 @@
 //!   links exist at the time.
 use crate::order::*;
 use crate::policy::*;
-use crate::read::read_entry;
+use crate::read::{read_entry, MAX_ARCHIVE};
 use crate::spec::*;
 use crate::tar::find_byte_exec;
 use crate::zip::{copy_range, Entry};
@@ -362,7 +362,7 @@ fn target_ok_exec(s: &[u8]) -> (r: bool)
     ensures
         r == target_ok(s@),
 {
-    s.len() > 0 && s[0] != 0x2f && clean_exec(s)
+    s.len() > 0 && s[0] != 0x2f && clean_exec(s) && s.len() <= MAX_LINK
 }
 
 fn eq_bytes(a: &[u8], b: &[u8]) -> (r: bool)
@@ -531,30 +531,104 @@ pub open spec fn items_match(b: Seq<u8>, es: Seq<SEntry>, items: Seq<Item>) -> b
     &&& forall|k: int, m: int| 0 <= k < m < items.len() ==> (#[trigger] items[k]).entry < (#[trigger] items[m]).entry
 }
 
+/// Member `j` has no item: the policy refuses its name or its target.
+pub open spec fn refused(b: Seq<u8>, es: Seq<SEntry>, j: int) -> bool {
+    &&& 0 <= j < es.len()
+    &&& !(es[j].kind is Other)
+    &&& forall|it: SItem| !#[trigger] item_of(b, es[j], it)
+}
+
+proof fn lemma_kept_has(es: Seq<SEntry>, j: int)
+    requires
+        0 <= j < es.len(),
+        !(es[j].kind is Other),
+    ensures
+        exists|k: int| 0 <= k < kept(es).len() && kept(es)[k] == es[j],
+    decreases es.len(),
+{
+    let d = es.drop_last();
+    if j == es.len() - 1 {
+        assert(kept(es) == kept(d).push(es[j]));
+        assert(kept(es)[kept(d).len() as int] == es[j]);
+    } else {
+        assert(d[j] == es[j]);
+        lemma_kept_has(d, j);
+        let k = choose|k: int| 0 <= k < kept(d).len() && kept(d)[k] == d[j];
+        if es.last().kind is Other {
+            assert(kept(es) == kept(d));
+        } else {
+            assert(kept(es) == kept(d).push(es.last()));
+            assert(kept(es)[k] == kept(d)[k]);
+        }
+    }
+}
+
+/// An archive with a refused member has no plan.
+proof fn lemma_refused_no_plan(b: Seq<u8>, es: Seq<SEntry>, j: int, p: Seq<SItem>)
+    requires
+        refused(b, es, j),
+    ensures
+        !plan_of(b, es, p),
+{
+    lemma_kept_has(es, j);
+    let k = choose|k: int| 0 <= k < kept(es).len() && kept(es)[k] == es[j];
+    if plan_of(b, es, p) {
+        assert(item_of(b, kept(es)[k], p[k]));
+    }
+}
+
+/// `item_of` determines the item, so an archive has at most one plan.
+proof fn lemma_plan_unique(b: Seq<u8>, es: Seq<SEntry>, p: Seq<SItem>, q: Seq<SItem>)
+    requires
+        plan_of(b, es, p),
+        plan_of(b, es, q),
+    ensures
+        p == q,
+{
+    assert forall|k: int| 0 <= k < p.len() implies p[k] == q[k] by {
+        assert(item_of(b, kept(es)[k], p[k]));
+        assert(item_of(b, kept(es)[k], q[k]));
+        let e = kept(es)[k];
+        if !(e.kind is Symlink) && !(e.kind is Hardlink) {
+            assert(p[k].target =~= q[k].target);
+        }
+    }
+    assert(p =~= q);
+}
+
 fn build_items(b: &[u8], es: &Vec<Entry>) -> (r: Result<Vec<Item>, Rejected>)
     requires
         in_bounds(views(es@), b@.len() as int),
-        b@.len() < 0x1_0000_0000_0000,
+        b@.len() < MAX_ARCHIVE,
     ensures
-        r matches Ok(items) ==> items_match(b@, views(es@), items@),
+        r matches Ok(items) ==> items_match(b@, views(es@), items@) && plan_of(b@, views(es@), sitems(items@)),
+        r matches Err(e) ==> refused(b@, views(es@), e.entry as int) && !(e.why is Internal),
 {
     let n = es.len();
     let mut items: Vec<Item> = Vec::new();
     let mut i: usize = 0;
+    proof {
+        assert(views(es@).subrange(0, 0) =~= Seq::<SEntry>::empty());
+        assert(sitems(items@) =~= Seq::<SItem>::empty());
+    }
     while i < n
         invariant
             i <= n,
             n == es@.len(),
             in_bounds(views(es@), b@.len() as int),
-            b@.len() < 0x1_0000_0000_0000,
+            b@.len() < MAX_ARCHIVE,
             items_match(b@, views(es@), items@),
             forall|k: int| 0 <= k < items@.len() ==> (#[trigger] items@[k]).entry < i,
+            plan_of(b@, views(es@).subrange(0, i as int), sitems(items@)),
         decreases n - i,
     {
         let e = &es[i];
+        let ghost es1 = views(es@).subrange(0, i + 1);
         proof {
             assert(views(es@)[i as int] == e.sv());
             assert(views(es@)[i as int].end() <= b@.len());
+            assert(es1.drop_last() =~= views(es@).subrange(0, i as int));
+            assert(es1.last() == e.sv());
         }
         if !is_other(e.kind) {
             let path = match name_ok_exec(e.name.as_slice()) {
@@ -565,7 +639,7 @@ fn build_items(b: &[u8], es: &Vec<Entry>) -> (r: Result<Vec<Item>, Rejected>)
                 let text = if e.link.len() > 0 {
                     dup(&e.link)
                 } else {
-                    match read_entry(b, e, 4096) {
+                    match read_entry(b, e, MAX_LINK) {
                         Ok(v) => v,
                         Err(_) => return Err(Rejected { entry: i, why: Why::SymlinkTarget }),
                     }
@@ -583,12 +657,33 @@ fn build_items(b: &[u8], es: &Vec<Entry>) -> (r: Result<Vec<Item>, Rejected>)
                 Vec::new()
             };
             let it = Item { path, kind: e.kind, target, entry: i };
+            let ghost old_items = items@;
             proof {
                 assert(item_of(b@, e.sv(), it.sv()));
             }
             items.push(it);
+            proof {
+                assert(kept(es1) == kept(views(es@).subrange(0, i as int)).push(e.sv()));
+                assert(sitems(items@) =~= sitems(old_items).push(it.sv()));
+                assert forall|k: int| 0 <= k < sitems(items@).len() implies #[trigger] item_of(
+                    b@,
+                    kept(es1)[k],
+                    sitems(items@)[k],
+                ) by {
+                    if k < old_items.len() {
+                        assert(item_of(b@, kept(views(es@).subrange(0, i as int))[k], sitems(old_items)[k]));
+                    }
+                }
+            }
+        } else {
+            proof {
+                assert(kept(es1) == kept(views(es@).subrange(0, i as int)));
+            }
         }
         i += 1;
+    }
+    proof {
+        assert(views(es@).subrange(0, n as int) =~= views(es@));
     }
     Ok(items)
 }
@@ -632,6 +727,7 @@ enum Sorted {
 fn check_sorted(items: &Vec<Item>, ord: &Vec<usize>) -> (r: Sorted)
     ensures
         r matches Sorted::Yes(inv) ==> sorted_perm(items@, ord@, inv@),
+        r matches Sorted::Dup(_) ==> !distinct_paths(sitems(items@)),
 {
     let n = items.len();
     if ord.len() != n {
@@ -686,12 +782,25 @@ fn check_sorted(items: &Vec<Item>, ord: &Vec<usize>) -> (r: Sorted)
             1 <= k,
             n == items@.len(),
             ord@.len() == n,
-            forall|m: int| #![auto] 0 <= m < n ==> ord@[m] < n,
+            inv@.len() == n,
+            forall|m: int| #![auto] 0 <= m < n ==> ord@[m] < n && inv@[ord@[m] as int] == m,
             forall|m: int| 0 <= m < k - 1 ==> plt(#[trigger] pp(items@, ord@)[m], pp(items@, ord@)[m + 1]),
         decreases n - k,
     {
         let c = cmp_path(&items[ord[k - 1]].path, &items[ord[k]].path);
         if c == 0 {
+            proof {
+                let x = ord@[k - 1] as int;
+                let y = ord@[k as int] as int;
+                assert(inv@[x] != inv@[y]);
+                let si = sitems(items@);
+                assert(si[x].path == si[y].path);
+                if x < y {
+                    assert(!distinct_paths(si));
+                } else {
+                    assert(!distinct_paths(si));
+                }
+            }
             return Sorted::Dup(items[ord[k]].entry);
         }
         if c > 0 {
@@ -907,11 +1016,31 @@ proof fn lemma_path_safe(items: Seq<Item>, ord: Seq<usize>, inv: Seq<usize>, k: 
     assert(p.subrange(0, p.len() as int) =~= p);
 }
 
+proof fn lemma_walk_blocked(links: Map<Path, Path>, p: Path, a: int, m: int)
+    requires
+        no_dotdot(p),
+        0 <= a < m < p.len(),
+        links.dom().contains(p.subrange(0, m)),
+    ensures
+        !safe_walk(links, p.subrange(0, a), p.subrange(a, p.len() as int)),
+    decreases m - a,
+{
+    let rest = p.subrange(a, p.len() as int);
+    let n = p.subrange(0, a).push(rest[0]);
+    assert(rest[0] == p[a]);
+    assert(n =~= p.subrange(0, a + 1));
+    assert(rest.subrange(1, rest.len() as int) =~= p.subrange(a + 1, p.len() as int));
+    if a + 1 < m {
+        lemma_walk_blocked(links, p, a + 1, m);
+    }
+}
+
 fn check_adjacent(items: &Vec<Item>, ord: &Vec<usize>, Ghost(inv): Ghost<Seq<usize>>) -> (r: Option<usize>)
     requires
         sorted_perm(items@, ord@, inv),
     ensures
         r is None ==> adj_ok(items@, ord@),
+        r is Some ==> !plan_safe(sitems(items@)),
 {
     let n = items.len();
     let mut k: usize = 1;
@@ -930,6 +1059,35 @@ fn check_adjacent(items: &Vec<Item>, ord: &Vec<usize>, Ghost(inv): Ghost<Seq<usi
         let a = &items[ord[k - 1]];
         let c = &items[ord[k]];
         if is_symlink(a.kind) && is_prefix_exec(&a.path, &c.path) {
+            proof {
+                let x = ord@[k - 1] as int;
+                let y = ord@[k as int] as int;
+                let si = sitems(items@);
+                let ps = pp(items@, ord@);
+                assert(ps[k - 1] == pv(a.path@) && ps[k as int] == pv(c.path@));
+                assert(plt(ps[k - 1], ps[k as int]));
+                let p = pv(c.path@);
+                let q = pv(a.path@);
+                if q.len() == p.len() {
+                    assert(q =~= p);
+                    lemma_plt_irrefl(q, 0);
+                }
+                lemma_sitems_distinct(items@, ord@, inv);
+                lemma_links_has(si, si.len() as int, x);
+                assert(si[x].path == q);
+                assert(si[y].path == p);
+                assert(p.subrange(0, q.len() as int) =~= q);
+                if q.len() == 0 {
+                    assert(!item_safe(si, x));
+                } else if no_dotdot(p) {
+                    lemma_walk_blocked(links_of(si), p, 0, q.len() as int);
+                    assert(p.subrange(0, 0) =~= Seq::<Seq<u8>>::empty());
+                    assert(p.subrange(0, p.len() as int) =~= p);
+                    assert(!item_safe(si, y));
+                } else {
+                    assert(!item_safe(si, y));
+                }
+            }
             return Some(c.entry);
         }
         proof {
@@ -950,7 +1108,7 @@ fn check_target(items: &Vec<Item>, ord: &Vec<usize>, Ghost(inv): Ghost<Seq<usize
         i < items@.len(),
         items@[i as int].path@.len() > 0,
     ensures
-        r ==> safe_walk(
+        r == safe_walk(
             links_of(sitems(items@)),
             pv(items@[i as int].path@).drop_last(),
             pv(items@[i as int].target@),
@@ -999,7 +1157,7 @@ fn check_target(items: &Vec<Item>, ord: &Vec<usize>, Ghost(inv): Ghost<Seq<usize
             links == links_of(si),
             sorted_perm(items@, ord@, inv),
             distinct_paths(si),
-            safe_walk(links, pv(cur@), target.subrange(t as int, tl as int)) ==> safe_walk(links, parent, target),
+            safe_walk(links, pv(cur@), target.subrange(t as int, tl as int)) == safe_walk(links, parent, target),
         decreases tl - t,
     {
         let c = &it.target[t];
@@ -1030,11 +1188,8 @@ fn check_target(items: &Vec<Item>, ord: &Vec<usize>, Ghost(inv): Ghost<Seq<usize
                             assert(si[j as int].kind is Symlink && si[j as int].path == np);
                             lemma_links_has(si, si.len() as int, j as int);
                             assert(links.dom().contains(np));
-                            if t + 1 == tl {
-                                assert(rest.len() == 1);
-                                assert(np == cur0.push(rest[0]));
-                                assert(safe_walk(links, cur0, rest));
-                            }
+                            assert(np == cur0.push(rest[0]));
+                            assert(safe_walk(links, cur0, rest) == (t + 1 == tl));
                         }
                         return t + 1 == tl;
                     }
@@ -1064,6 +1219,9 @@ fn check_target(items: &Vec<Item>, ord: &Vec<usize>, Ghost(inv): Ghost<Seq<usize
         }
         t += 1;
     }
+    proof {
+        assert(target.subrange(tl as int, tl as int) =~= Seq::<Seq<u8>>::empty());
+    }
     true
 }
 
@@ -1077,35 +1235,75 @@ pub open spec fn link_safe(items: Seq<SItem>, k: int) -> bool {
     &&& it.kind is Hardlink ==> exists|j: int| 0 <= j < k && (#[trigger] items[j]).kind is File && items[j].path == it.target
 }
 
+proof fn lemma_only_plan(b: Seq<u8>, es: Seq<SEntry>, si: Seq<SItem>)
+    requires
+        plan_of(b, es, si),
+        !plan_safe(si),
+    ensures
+        forall|p: Seq<SItem>| #[trigger] plan_of(b, es, p) ==> !plan_safe(p),
+{
+    assert forall|p: Seq<SItem>| #[trigger] plan_of(b, es, p) implies !plan_safe(p) by {
+        lemma_plan_unique(b, es, p, si);
+    }
+}
+
 /// **Plans the extraction of an archive.** `es` are the members of the
 /// archive `b` (from `parse_zip` or `parse_tar`).
 ///
-/// A returned plan satisfies the extraction policy `plan_safe`, so
-/// `theorem_contained` applies to it; and its steps are the archive's
-/// members, in order, without those of kind `Other`.
+/// A returned plan is the archive's plan (`plan_of`: its steps are the
+/// archive's members, in order, without those of kind `Other`) and
+/// satisfies the extraction policy `plan_safe`, so `theorem_contained`
+/// applies to it. A refusal means the archive has no plan that satisfies
+/// the policy, unless it is `Why::Internal` (the unverified sort misbehaved,
+/// see TRUST.md). So the planner accepts every archive whose plan is safe.
 pub fn plan(b: &[u8], es: &Vec<Entry>) -> (r: Result<Vec<Item>, Rejected>)
     requires
         in_bounds(views(es@), b@.len() as int),
-        b@.len() < 0x1_0000_0000_0000,
+        b@.len() < MAX_ARCHIVE,
     ensures
-        r matches Ok(items) ==> plan_safe(sitems(items@)) && items_match(b@, views(es@), items@),
+        r matches Ok(items) ==> plan_safe(sitems(items@)) && plan_of(b@, views(es@), sitems(items@)) && items_match(
+            b@,
+            views(es@),
+            items@,
+        ),
+        r matches Err(e) ==> e.why is Internal || forall|p: Seq<SItem>|
+            #[trigger] plan_of(b@, views(es@), p) ==> !plan_safe(p),
 {
     let items = match build_items(b, es) {
         Ok(items) => items,
-        Err(e) => return Err(e),
+        Err(e) => {
+            proof {
+                assert forall|p: Seq<SItem>| #[trigger] plan_of(b@, views(es@), p) implies !plan_safe(p) by {
+                    lemma_refused_no_plan(b@, views(es@), e.entry as int, p);
+                }
+            }
+            return Err(e);
+        },
     };
+    let ghost si = sitems(items@);
+    let ghost bv = b@;
+    let ghost ev = views(es@);
     let ord = order_by_path(&items);
     let inv = match check_sorted(&items, &ord) {
         Sorted::Yes(inv) => inv,
-        Sorted::Dup(e) => return Err(Rejected { entry: e, why: Why::Duplicate }),
+        Sorted::Dup(e) => {
+            proof {
+                lemma_only_plan(bv, ev, si);
+            }
+            return Err(Rejected { entry: e, why: Why::Duplicate });
+        },
         Sorted::No => return Err(Rejected { entry: 0, why: Why::Internal }),
     };
     let ghost inv = inv@;
     match check_adjacent(&items, &ord, Ghost(inv)) {
-        Some(e) => return Err(Rejected { entry: e, why: Why::ThroughSymlink }),
+        Some(e) => {
+            proof {
+                lemma_only_plan(bv, ev, si);
+            }
+            return Err(Rejected { entry: e, why: Why::ThroughSymlink });
+        },
         None => {},
     }
-    let ghost si = sitems(items@);
     let ghost links = links_of(si);
     proof {
         lemma_sitems_distinct(items@, ord@, inv);
@@ -1120,6 +1318,10 @@ pub fn plan(b: &[u8], es: &Vec<Entry>) -> (r: Result<Vec<Item>, Rejected>)
             links == links_of(si),
             sorted_perm(items@, ord@, inv),
             items_match(b@, views(es@), items@),
+            plan_of(bv, ev, si),
+            bv == b@,
+            ev == views(es@),
+            distinct_paths(si),
             forall|k: int| 0 <= k < i ==> #[trigger] link_safe(si, k),
         decreases n - i,
     {
@@ -1130,6 +1332,10 @@ pub fn plan(b: &[u8], es: &Vec<Entry>) -> (r: Result<Vec<Item>, Rejected>)
         }
         if is_symlink(it.kind) {
             if !check_target(&items, &ord, Ghost(inv), i) {
+                proof {
+                    assert(!item_safe(si, i as int));
+                    lemma_only_plan(bv, ev, si);
+                }
                 return Err(Rejected { entry: it.entry, why: Why::SymlinkTarget });
             }
             proof {
@@ -1139,6 +1345,19 @@ pub fn plan(b: &[u8], es: &Vec<Entry>) -> (r: Result<Vec<Item>, Rejected>)
             match find(&items, &ord, &it.target, Ghost(inv)) {
                 Some(j) => {
                     if j >= i || !is_file(items[j].kind) {
+                        proof {
+                            assert(si[j as int].path == si[i as int].target);
+                            assert forall|j2: int| 0 <= j2 < i && (#[trigger] si[j2]).kind is File implies si[j2].path
+                                != si[i as int].target by {
+                                if j2 < j {
+                                    assert(si[j2].path != si[j as int].path);
+                                } else if j2 > j {
+                                    assert(si[j as int].path != si[j2].path);
+                                }
+                            }
+                            assert(!item_safe(si, i as int));
+                            lemma_only_plan(bv, ev, si);
+                        }
                         return Err(Rejected { entry: it.entry, why: Why::HardlinkTarget });
                     }
                     proof {
@@ -1146,7 +1365,17 @@ pub fn plan(b: &[u8], es: &Vec<Entry>) -> (r: Result<Vec<Item>, Rejected>)
                         assert(link_safe(si, i as int));
                     }
                 },
-                None => return Err(Rejected { entry: it.entry, why: Why::HardlinkTarget }),
+                None => {
+                    proof {
+                        assert forall|j2: int| 0 <= j2 < i && (#[trigger] si[j2]).kind is File implies si[j2].path
+                            != si[i as int].target by {
+                            assert(si[j2].path == pv(items@[j2].path@));
+                        }
+                        assert(!item_safe(si, i as int));
+                        lemma_only_plan(bv, ev, si);
+                    }
+                    return Err(Rejected { entry: it.entry, why: Why::HardlinkTarget });
+                },
             }
         }
         i += 1;
@@ -1162,3 +1391,26 @@ pub fn plan(b: &[u8], es: &Vec<Entry>) -> (r: Result<Vec<Item>, Rejected>)
 }
 
 } // verus!
+
+impl core::fmt::Display for Why {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Why::Path => "the path is empty, absolute, has a `..` component, a NUL or a backslash",
+            Why::Duplicate => "two members have the same path",
+            Why::ThroughSymlink => "the path passes through a symbolic link of the archive",
+            Why::SymlinkTarget => "the symbolic link points outside the root or through another link",
+            Why::HardlinkTarget => "the hard link does not point to an earlier regular file",
+            Why::Internal => "internal error",
+        })
+    }
+}
+
+impl std::error::Error for Why {}
+
+impl core::fmt::Display for Rejected {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "member {} refused: {}", self.entry, self.why)
+    }
+}
+
+impl std::error::Error for Rejected {}

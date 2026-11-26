@@ -63,7 +63,30 @@ same machine can use the same convention: `mkdir ~/vf-bench.lock` (then write
 your pid to `~/vf-bench.lock/pid`) before
 timing, `rmdir` (or `rm -rf`) after.
 
-## What it compares
+## On a Linux server
+
+A shared cloud VM is the noisiest place to time anything: other tenants share
+the host, the CPU's frequency moves, and most VMs expose no performance
+counters. For numbers worth publishing, use a dedicated (bare-metal) x86-64
+machine, by the hour or the month, and quiet it first:
+
+```sh
+sudo scripts/linux-quiet.sh on 7     # CPU 7: boost off, governor performance,
+                                     # its hyperthread offline, interrupts elsewhere
+VBENCH_CPU=7 ./run.sh                # every runner pinned to CPU 7
+sudo scripts/linux-quiet.sh off      # put the settings back
+```
+
+`scripts/linux-quiet.sh status` shows the current settings and whether the
+machine is a VM. Booting with `isolcpus=7 nohz_full=7` (and stopping cron and
+automatic updates) removes most of what is left.
+
+What to trust from which machine: the speedups are a property of one machine
+and are reported with the machine they came from. Instruction counts per call
+barely move between runs or between machines with the same instruction set,
+so they are the number to watch for regressions, on any machine with
+counters.
+
 
 Every comparison is one of two kinds, and the report labels each number
 with its kind. They answer different questions, so neither replaces the
@@ -110,6 +133,7 @@ so under the table (`note` in `harness/suites.py`).
 | x509-mbedtls-read | drop-in | mbedTLS + verilith-x509 patch | mbedTLS 4.3.0 | `mbedtls_x509_crt_parse_der_nocopy`, read serial, names, validity, key usage, CA flag, DNS names and EKUs, free | same |
 | x509-mbedtls-native | native | verilith-x509 (`verilith_x509::parse` and its accessors) | mbedTLS 4.3.0 | the x509-mbedtls-read task | same |
 | x509-verdict | native | verilith-x509 (`verilith_x509::parse`) | Verdict ([secure-foundations/verdict](https://github.com/secure-foundations/verdict), 2025-11-18) | parse the whole certificate from memory, Rust to Rust, both verified in Verus | same |
+| png-libpng-abi | drop-in | verilith-png (libpng ABI) | libpng 1.6.59 | `png_read_image` to RGBA8 (`png_set_expand`, `png_set_strip_16`, `png_set_gray_to_rgb`, filler) | the 24 Kodak photos |
 | png-libpng | native | verilith-png (Rust API) | libpng 1.6.59 | decode to RGBA8 | the 24 Kodak photos |
 | webp-lossless | drop-in | verilith-webp (libwebp ABI) | libwebp 1.6.0 | `WebPDecodeRGBAInto` | the Kodak photos, lossless WebP |
 | webp-lossy | drop-in | verilith-webp (libwebp ABI) | libwebp 1.6.0 | `WebPDecodeRGBAInto` | the Kodak photos, lossy WebP at quality 75 |
@@ -118,17 +142,23 @@ so under the table (`note` in `harness/suites.py`).
 | jpeg-444 | drop-in | verilith-jpeg (TurboJPEG ABI) | libjpeg-turbo 3.2.1 | `tj3Decompress8` to RGB | the Kodak photos, baseline JPEG, 4:4:4 at quality 90 |
 | font-sanitize | drop-in | verilith-font (OTS's C++ API) | OTS ([khaledhosny/ots](https://github.com/khaledhosny/ots), 2026-11) | `ots::OTSContext::Process` into a memory stream | Source Serif 4 Regular as OTF, TTF, WOFF and WOFF2 |
 | regex-re2 | drop-in | verilith-regex (cre2 C ABI) | RE2 2025-11-05 under cre2 | find every match of a pattern, with its groups (`cre2_match` in a loop) | 12 patterns over 64 KiB and 1 MiB of dickens and 1k URLs |
+| xml-expat-dropin-read | drop-in | verilith-xml (expat ABI) | expat 2.10.0 | the xml-expat-read task, through the same SAX driver | 6 of Silesia's XML files and the 7 files of roxmltree's benchmarks |
+| xml-expat-dropin-check | drop-in | verilith-xml (expat ABI) | expat 2.10.0 | `XML_Parse` with no handlers | same |
 | xml-expat-read | native | verilith-xml (`parse`, `Element::attrs`, `children`) | expat 2.10.0 (SAX) | parse, visit every element, attribute (normalized value) and run of character data | 6 of Silesia's XML files and the 7 files of roxmltree's benchmarks |
 | xml-expat-check | native | verilith-xml (`check`) | expat 2.10.0 (no handlers) | decide whether the document is well-formed | same |
+| xml-libxml2-dropin-read | drop-in | verilith-xml (libxml2 ABI) | libxml2 2.15.4 | the xml-expat-read task, through the same SAX2 driver | same |
+| xml-libxml2-dropin-check | drop-in | verilith-xml (libxml2 ABI) | libxml2 2.15.4 | `xmlCtxtReadMemory` with SAX2's DTD handlers and none for content | same |
 | xml-libxml2-read | native | verilith-xml (`parse`, `Element::attrs`, `children`) | libxml2 2.15.4 (SAX2) | the xml-expat-read task | same |
 | xml-libxml2-check | native | verilith-xml (`check`) | libxml2 2.15.4 (SAX2, no content handlers) | the xml-expat-check task | same |
+| sha256, sha512 | drop-in | verilith-sha2 (OpenSSL SHA ABI) | OpenSSL 4.1.0 | `SHA256()`, `SHA512()` of a whole message | 16, 64, 256 and 1024 bytes, 4 KiB and 64 KiB of dickens, and all of it |
+| sha256-stream, sha512-stream | drop-in | verilith-sha2 (OpenSSL SHA ABI) | OpenSSL 4.1.0 | `SHA256_Init`, `_Update` in 1000-byte pieces, `_Final` (and `SHA512_*`) | same |
 
 In archive-read the two libraries do not do quite the same work: verilith-archive
 parses and checks the whole archive when it is opened and checks a member's
 length and CRC-32 before it returns any of its data, where libarchive streams.
 
-Five tasks are measured both ways (against c-ares, llhttp, picohttpparser,
-cJSON and mbedTLS), and the report prints those side by side, case by case,
+Ten tasks are measured both ways (against c-ares, llhttp, picohttpparser,
+cJSON, mbedTLS, libpng, and expat's and libxml2's read and check), and the report prints those side by side, case by case,
 under "Drop-in and native, side by side". Three things to know when reading
 the native column:
 
@@ -142,8 +172,7 @@ the native column:
 - **picohttpparser** already has a flat API that copies nothing, so its two
   columns are close, as they should be.
 
-verilith-png has no libpng C ABI yet, nor verilith-xml an expat or libxml2 one, and
-simdjson and Verdict are compared core against core, so those five have a native number only. zlib, brotli, lz4, snappy, archives, WebP, JPEG, fonts, regex
+simdjson and Verdict are compared core against core, so those have a native number only. zlib, brotli, lz4, snappy, archives, WebP, JPEG, fonts, regex
 and URL have a drop-in number only: their own APIs do the same work as the
 originals' (verilith-url's Rust API against ada's C++ API is not measured yet).
 Native comparisons use Rust runners (`runners/`) against C/C++ runners, with

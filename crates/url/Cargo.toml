@@ -7,6 +7,7 @@ keywords = ["url", "whatwg", "parser", "verified", "verus"]
 categories = ["parser-implementations", "web-programming", "encoding"]
 description = "A formally verified (Verus) WHATWG URL parser"
 edition = "2024"
+rust-version = "1.89"
 exclude = ["bench/"]
 
 [lib]

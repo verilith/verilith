@@ -110,9 +110,48 @@ pub fn components(u: &Url) -> AdaUrlComponents {
 }
 
 fn new_handle(url: Option<Url>) -> *mut Handle {
-    let url = url.filter(|u| u.href.len() <= max_len());
-    let comps = url.as_ref().map(components).unwrap_or_default();
-    Box::into_raw(Box::new(Handle { url, comps }))
+    new_handle_with(|| url)
+}
+
+/// A handle for the URL `f` returns, which is written into the handle's
+/// box in place (the box the last `free` on this thread kept, if any).
+#[inline(always)]
+fn new_handle_with(f: impl FnOnce() -> Option<Url>) -> *mut Handle {
+    let mut bx = with_bufs(|b| b.spare.take()).unwrap_or_else(|| Box::new(Handle { url: None, comps: Default::default() }));
+    fill(&mut bx, f);
+    Box::into_raw(bx)
+}
+
+/// Puts the URL `f` returns (or `None` if its href is over the length
+/// limit) in `h`.
+#[inline(always)]
+fn fill(h: &mut Handle, f: impl FnOnce() -> Option<Url>) {
+    h.url = f();
+    if h.url.as_ref().map_or(false, |u| u.href.len() > max_len()) {
+        h.url = None;
+    }
+}
+
+/// Frees a handle, keeping its box and a small href buffer on this thread
+/// for the next parse, which then allocates nothing.
+unsafe fn free_handle(p: *mut Handle) {
+    let mut bx = Box::from_raw(p);
+    let url = bx.url.take();
+    // During thread teardown the buffers may be gone; then just drop.
+    let _ = BUFS.try_with(|c| {
+        // SAFETY: as in `with_bufs`; nothing below re-enters it.
+        let b = &mut *c.get();
+        if let Some(u) = url {
+            if u.href.capacity() <= 4096 {
+                let mut v = u.href;
+                v.clear();
+                b.sc.href = v;
+            }
+        }
+        if b.spare.is_none() {
+            b.spare = Some(bx);
+        }
+    });
 }
 
 unsafe fn get<'a>(p: *mut Handle) -> Option<&'a Url> {
@@ -168,6 +207,8 @@ fn can_parse_limited(input: &[u8], base: Option<&Url>) -> bool {
 struct Bufs {
     sc: crate::host::Scratch,
     host: Vec<u8>,
+    /// A freed handle's box, kept for the next `new_handle`.
+    spare: Option<Box<Handle>>,
 }
 
 thread_local! {
@@ -176,6 +217,7 @@ thread_local! {
         core::cell::UnsafeCell::new(Bufs {
             sc: crate::host::Scratch { dec: Vec::new(), map: Vec::new(), href: Vec::new() },
             host: Vec::new(),
+            spare: None,
         })
     };
 }
@@ -257,7 +299,7 @@ macro_rules! setter {
 
 export! {
     fn parse(input: *const c_char, length: usize) -> *mut Handle {
-        new_handle(parse_limited(bytes(input, length), None))
+        new_handle_with(|| parse_limited(bytes(input, length), None))
     }
 
     fn parse_with_base(input: *const c_char, input_length: usize, base: *const c_char, base_length: usize) -> *mut Handle {
@@ -275,7 +317,7 @@ export! {
 
     fn free(p: *mut Handle) {
         if !p.is_null() {
-            drop(Box::from_raw(p));
+            free_handle(p);
         }
     }
 
@@ -432,9 +474,17 @@ export! {
     }
 
     fn get_components(p: *mut Handle) -> *const AdaUrlComponents {
-        match p.as_ref() {
-            Some(h) if h.url.is_some() => &h.comps,
-            _ => core::ptr::null(),
+        // Computed here rather than at parse time, since most callers
+        // never ask; setters refresh them for pointers already handed out.
+        match p.as_mut() {
+            Some(h) => match h.url.as_ref() {
+                Some(u) => {
+                    h.comps = components(u);
+                    &h.comps
+                }
+                None => core::ptr::null(),
+            },
+            None => core::ptr::null(),
         }
     }
 

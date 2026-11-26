@@ -1,5 +1,5 @@
 //! The trusted specification: what it means for a byte string to be a
-//! well-formed OpenType font ([`wf_font`]).
+//! well-formed OpenType font (`wf_font`).
 //!
 //! Everything here is a pure function of the bytes, written from the
 //! OpenType specification (ISO/IEC 14496-22). The sanitizer is proven to
@@ -454,8 +454,10 @@ pub open spec fn info_zero() -> Info {
     Info { points: 0, contours: 0, comps: 0, depth: 0, elems: 0 }
 }
 
-/// How deep components may nest in a sanitized font.
-pub const MAX_COMPONENT_DEPTH: usize = 64;
+/// How many levels of components `glyph_fits` follows: more than a font
+/// of at most 65535 glyphs can nest without a glyph being a component of
+/// itself, so only a cycle runs out of them. (OTS has no limit either.)
+pub const MAX_COMPONENT_DEPTH: usize = 0xFFFF;
 
 /// The totals for glyph `gid`, if they can be worked out with at most
 /// `fuel` levels of nesting below it. `None` if a component names a glyph
@@ -585,8 +587,8 @@ pub open spec fn glyph_ilen(g: Seq<u8>) -> int {
 /// contours and instructions if it is simple; if it is composite, its
 /// expanded points and contours, its number of components, how deep they
 /// nest, and its instructions. For a composite this also says its
-/// component graph is finite: no glyph is a component of itself, at any
-/// depth up to [`MAX_COMPONENT_DEPTH`].
+/// component graph is finite: no glyph is a component of itself (a cycle
+/// would need more than [`MAX_COMPONENT_DEPTH`] levels).
 pub open spec fn glyph_fits(
     glyf: Seq<u8>,
     loca: Seq<u8>,

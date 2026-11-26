@@ -3,9 +3,9 @@
 //! store, and the proof that the semantics does the same in as many steps.
 //!
 //! A register operation (see [`crate::reg`]) stands for such a run. Its
-//! correctness is stated against [`msteps`] (an equation between two
+//! correctness is stated against `msteps` (an equation between two
 //! functions of the stack, checked once per operation when the function is
-//! compiled), and [`lemma_msteps`] carries that over to the semantics.
+//! compiled), and `lemma_msteps` carries that over to the semantics.
 use vstd::prelude::*;
 use crate::ast::*;
 use crate::sem::*;
@@ -405,6 +405,12 @@ pub proof fn lemma_run_concat(m: &Module, c0: Config, hs: Seq<HostResp>, n: nat,
             Step::Host { func, args, cfg } => {
                 if let HostResp::Ok(st, res) = hs[0] {
                     lemma_run_concat(m, resume(cfg, st, res), hs.drop_first(), (n - 1) as nat, c, k);
+                    assert((n + k - 1) as nat == (n - 1) as nat + k);
+                }
+            },
+            Step::Grow { ok, fail } => {
+                if let HostResp::Grow(b) = hs[0] {
+                    lemma_run_concat(m, if b { ok } else { fail }, hs.drop_first(), (n - 1) as nat, c, k);
                     assert((n + k - 1) as nat == (n - 1) as nat + k);
                 }
             },

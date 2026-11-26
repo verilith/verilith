@@ -22,7 +22,7 @@ the same orderings as the crates they replace: Release stores, Acquire
 loads, AcqRel read-modify-writes (the queue's head/tail CAS and the
 read-modify-writes that confirm it full or empty are SeqCst, which the
 channel's wakeup handshake needs). Verus itself only models sequentially
-consistent atomics; [TRUST.md](TRUST.md) states the model's axioms and
+consistent atomics; [TRUST.md](https://github.com/verilith/verilith/blob/main/crates/sync/TRUST.md) states the model's axioms and
 argues they are sound.
 
 With those orderings the queues run about as fast as the originals: the
@@ -32,6 +32,12 @@ faster than parking_lot in every contended configuration measured but one
 (two threads on a mutex), and tie uncontended.
 
 ## Usage
+
+The proofs hold for 64-bit and for 32-bit targets (wasm32 included):
+`scripts/verify.sh sync` checks the first and `crates/sync/scripts/verify-narrow.sh`
+the second. Positions stay 64-bit on both, so the no-ABA argument below
+is the same. The crate builds for wasm32-unknown-unknown; its tests spawn
+threads, which wasm32-wasip1 does not have, so they run natively only.
 
 ```rust
 // Instead of parking_lot::{Mutex, RwLock}:
@@ -75,12 +81,14 @@ assert_eq!(c.pop(), Some(1));
 
 ## What is proven
 
-Checked by Verus: `cargo verus verify` reports 350 items verified, 0
+Checked by Verus: `cargo verus verify` reports 455 items verified, 0
 errors, with no `assume` or `admit` anywhere in the crate. The queue rows
-hold under the release/acquire model of `src/ra.rs`; the lock rows under
-vstd's sequentially consistent atomics. The progress rows at the end are
-proved about models of the protocols, as explained below the table; for
-the channel, the code is verified to follow its model.
+hold under the release/acquire model of `src/ra.rs`, the MPMC queue's for
+C11 itself and the SPSC queue's for the hardware model (see "Trusted
+computing base"); the lock rows under vstd's sequentially consistent
+atomics. The progress rows at the end are
+proved about models of the protocols, and for every one of them the code
+is verified to follow its model, as explained below the table.
 
 | Property | Where |
 | --- | --- |
@@ -95,33 +103,45 @@ the channel, the code is verified to follow its model.
 | **RwLock excludes**: one 32-bit word holds the writer bit, two parking hints and the reader count. A tokenized state machine (writer token, reader tokens, data in storage) proves a writer holds the data alone and readers borrow it shared, and that the bits always match the tokens. `downgrade` turns a write lock into a read lock in one atomic step | `src/rwlock.rs` |
 | **Locks drop the data exactly once**, and `into_inner` returns it | `Mutex::take_inner`, `RwLock::take_inner` |
 | **SPSC is wait-free**: every SPSC function passes Verus's termination check, so each call returns after a bounded number of its own steps whatever the other side does. So do `try_lock`, `try_read`, `try_write`, the unlocks and `downgrade` | `src/spsc.rs` (no loop is exempt) |
-| **Mutex never deadlocks**: while a thread waits in `lock()`, some thread holds the lock later. No lost wakeups: while anyone sleeps in the parking lot, the word says "contended" or some thread is committed to waking a sleeper or re-marking the word | `progress::mutex` |
-| **RwLock never deadlocks**: likewise for `read()` and `write()`. The parking hints are never left set with nobody to clear them, and a sleeper is never left with "parked" clear and nobody to wake it | `progress::rwlock` |
+| **Mutex never deadlocks**: while a thread waits in `lock()`, some thread holds the lock later. No lost wakeups: while anyone sleeps in the parking lot, the word says "contended" or some thread is committed to waking a sleeper or re-marking the word | `progress::mutex`, and `src/mutex.rs` and `src/lot.rs` for the code following the model |
+| **RwLock never deadlocks**: likewise for `read()` and `write()`. The parking hints are never left set with nobody to clear them, and a sleeper is never left with "parked" clear and nobody to wake it | `progress::rwlock`, and `src/rwlock.rs` for the code following the model |
 | **Channel waiters are never stranded**: if a message is queued while a receiver waits (or a slot is free while a sender waits), some receiver (sender) takes it, unless the waiter returns or the other side disconnects; and once the other side is gone, every waiter returns | `progress::channel`, and `src/chan_sync.rs` for the code following the model |
-| **MPMC queue is lock-free under fair scheduling**: while a thread is in `push`, `pop` or `len`, some call returns | `progress::queue` |
+| **MPMC queue is lock-free under fair scheduling**: while a thread is in `push`, `pop` or `len`, some call returns. Its relaxed loads may read old values; this needs only that, once nothing is written any more, each thread's loads eventually read the latest values | `progress::queue`, and `src/array_queue.rs` for the code following the model |
+| **Cloning a channel handle is lock-free**: while a thread is in `clone`, some clone or drop on the same side takes effect | `progress::handles`, and `src/chan_sync.rs` for the code following the model |
+| **The internal lock is fair**: the parking lot's buckets and the channel's waiter lists use a ticket lock, proven to exclude and to be starvation-free: every thread waiting for it gets it. The other progress rows used to assume this of `std`'s mutex, which does not promise it | `progress::ticket`, and `src/fair.rs` for the code following the model |
 
 The progress rows hold in every execution in which each thread keeps
 getting scheduled; nothing else is assumed about timing. Each blocking
-protocol is modeled one step per atomic access. For the locks and the
-queue, `TRUST.md` ("Progress") maps the model to the code line by line,
-by hand. For the channel the mapping is checked by Verus: the channel's
-blocking code (`src/chan_sync.rs`: the handle counts, the waiter lists,
-the send and receive loops, clone and drop) holds the model's state as a
-ghost resource that can only change by a step of the model, inside an
-invariant that ties it to the real atomics and the queue, so every access
-the code makes to shared state has to be a step of the model. What that
-still assumes is listed in `TRUST.md` ("The channel"): mainly that
-SeqCst operations interleave, that `std`'s mutex excludes, and that a
-bounded number of calls run at once. These are deadlock-freedom results, not fairness ones: a
-particular thread can still lose every race, as with parking_lot and
-crossbeam. Writing the channel proof found a real lost-wakeup bug that the
-move to release/acquire had introduced (a receiver could park next to a
-message, on ARM or under Miri), now fixed and covered by
-`tests/lost_wakeup.rs`.
+protocol is modeled one step per atomic access, and the code is checked
+by Verus to take exactly those steps. Each primitive holds the model's
+state as a ghost resource (`src/model.rs`) that can only change by a
+proven step of the model, inside the invariant that ties it to the real
+atomics, so every access the code makes to shared state has to come with
+the model step it stands for. The locks also do this for their sleeping:
+the parking lot they use (`src/lot.rs`) is verified, and its buckets hand
+each lock the ghost list of its waiters while the bucket is locked.
+
+What the match still assumes is in `TRUST.md`: for the locks, that the
+parking lot hands each lock its own list (it rests on two live lock
+words never sharing an address); for the queue, that stores become
+visible eventually; for the channel, that SeqCst operations interleave,
+that `std`'s mutex excludes, and that a bounded number of calls run at
+once. These are deadlock-freedom results, not fairness ones: a particular
+thread can still lose every race, as with parking_lot and crossbeam.
+
+Writing these proofs found two real bugs, both fixed and covered by
+tests. The channel proof found a lost wakeup that the move to
+release/acquire had introduced (a receiver could park next to a message,
+on ARM or under Miri; `tests/lost_wakeup.rs`). The mutex proof found that
+a lock nested at offset 0 of another lock's data, as in
+`RwLock<Mutex<T>>`, parked under the same key as the outer lock, so the
+mutex's unlock could wake the RwLock's waiter instead of its own, which
+then slept forever next to an unlocked mutex (`tests/nested_locks.rs`).
+Locks are now keyed by their lock word's address.
 
 ## Trusted computing base
 
-[TRUST.md](TRUST.md) lists everything assumed rather than proven and
+[TRUST.md](https://github.com/verilith/verilith/blob/main/crates/sync/TRUST.md) lists everything assumed rather than proven and
 argues for each item. In short:
 
 - Verus, Z3 and the Rust compiler.
@@ -129,25 +149,31 @@ argues for each item. In short:
   the SC atomics the locks use.
 - The release/acquire model in `src/ra.rs`: its axioms, and the claim that
   each `Objective` type holds no thread-relative resources. The model is
-  ORC11's, with one strengthening (stores append to the history), which is
-  the "strong release/acquire" model that x86, ARMv8 and POWER implement.
+  ORC11's. Its writes append to the history, and the MPMC queue and the
+  channel are proven to write only where C11 leaves no other place, so
+  their proofs hold for C11. The SPSC queue's hold for the "strong
+  release/acquire" model that x86, ARMv8 and POWER implement, which is
+  as far as they can go: TRUST.md gives a C11 execution in which SPSC's
+  `push` says "full" and `pop` says "empty" at once.
 - The specs: read `QueueView`, the `atomically` blocks on the queue
   operations, and the `RwToks` state machine to check that they say what
   you expect.
-- Unverified, with no access to the data: `src/util.rs`, `src/parking.rs`
-  (which now includes thin wrappers around `std`'s mutex, park/unpark and
-  clock for the channel) and the locks' park/unpark wrappers, the
-  channel's public shell in `src/channel.rs`, which only forwards to the
-  verified `src/chan_sync.rs`, and the one-line `Send`, `Sync`, `Deref`
-  and `Drop` impls. The tests run under Miri in CI, with its weak-memory
-  emulation.
-- The progress models. For the mutex, the RwLock and the queue, their
-  match with the code is argued, not proven. For the channel it is
-  proven, up to the assumptions `TRUST.md` lists under "The channel": one
-  axiom (boundedly many calls in progress at once), sequentially
-  consistent interleaving of the SeqCst operations the proof relies on,
-  mutual exclusion from `std::sync::Mutex`, and, for progress only, that
-  `unpark` wakes a parked thread and the mutex is eventually acquired.
+- Unverified, with no access to the data: `src/util.rs` (backoff,
+  padding, and thin wrappers around park/unpark and the clock), the channel's public shell in `src/channel.rs`, which only
+  forwards to the verified `src/chan_sync.rs`, and the one-line `Send`,
+  `Sync`, `Deref` and `Drop` impls. The tests run under Miri in CI, with
+  its weak-memory emulation.
+- The progress models' match with the code is proven, up to the
+  assumptions `TRUST.md` lists: one axiom (boundedly many calls in
+  progress at once, in `src/model.rs`); for the locks, the parking lot's
+  hand-over of a lock's waiter list (`lock_bucket`, `unlock_bucket`, and
+  each lock's `key`); for the queue, that stores become visible
+  eventually; for the channel, sequentially consistent interleaving of
+  the SeqCst operations it relies on; and, for progress only, that
+  `unpark` wakes a parked thread. The parking lot's buckets and the
+  channel's waiter lists use a verified ticket lock (`src/fair.rs`),
+  proven starvation-free, not `std`'s mutex, and cloning a channel
+  handle is proven lock-free.
 
 ## The memory model
 
@@ -173,6 +199,16 @@ it now uses a plain load (Acquire in SPSC, relaxed in MPMC) to suggest full
 (or empty), then confirms with
 an AcqRel `fetch_add(0)`, which reads the latest value. That only happens
 when the queue looks full or empty.
+
+"Reads the latest value" and "a store goes at the end" are where C11 and
+the hardware part ways: C11 may place a write before others that already
+happened. So `src/ra.rs` grants them only when C11 has no other choice: a
+store whose thread has seen the location's last write, or an RMW on a
+location that only RMWs write. The MPMC queue is proven to stay inside
+those rules, so its proofs hold for C11. The SPSC queue cannot: its
+index stores and the other side's confirming RMW race on one location,
+and TRUST.md shows a C11 execution in which `push` reports "full" while
+`pop` reports "empty". x86, ARMv8 and POWER do not allow it.
 
 ## Performance
 
@@ -254,8 +290,7 @@ differences smaller than that as ties.
   holds off new readers.
 - **crossbeam-channel**: `bounded(n)` for `n > 0` only. No `unbounded()`,
   zero-capacity rendezvous channels or `select!` yet.
-- **crossbeam-queue**: `ArrayQueue` capacity is limited to below 2^31, and
-  it has no `force_push`.
+- **crossbeam-queue**: `ArrayQueue` has no `force_push`.
 - **rtrb**: `spsc::new(cap)` returns the producer and consumer (and the
   ghost view); `push` fails with `Err(value)` and `pop` returns an
   `Option`, where rtrb has its own error types. Batches go through
@@ -279,5 +314,5 @@ library, and uses it on production queue algorithms.
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/sync/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/sync/LICENSE-MIT), at your option.

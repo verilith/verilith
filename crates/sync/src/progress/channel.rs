@@ -7,13 +7,13 @@
 //! appears only through its verified spec: a pop takes one message if
 //! there is one, a push adds one if there is room. `chan_sync.rs` is
 //! verified to follow this model: it can change the model's state (which
-//! it holds as a ghost resource, `chan_model::Model`) only by a [`step`].
+//! it holds as a ghost resource, `chan_model::Model`) only by a `step`.
 //!
 //! Three things are looser here than a first reading of the code
 //! suggests, because the code's accesses are separate atomic steps:
-//! a notifier sets one waiter's flag per step ([`pop_all`]); a load of a
+//! a notifier sets one waiter's flag per step (`pop_all`); a load of a
 //! list's `empty` flag may still say "not empty" just after the last
-//! waiter left ([`load_empty`]); and a waiter's re-check may say "maybe"
+//! waiter left (`load_empty`); and a waiter's re-check may say "maybe"
 //! when there is nothing to take, though it never misses something that
 //! is there.
 //!
@@ -30,10 +30,10 @@
 //! Proved, for every fair execution and every taker `r` waiting with no
 //! deadline:
 //!
-//! - [`theorem_resource_taken`]: if `c > 0` (a message is there, or a slot
+//! - `theorem_resource_taken`: if `c > 0` (a message is there, or a slot
 //!   is free), some taker takes one, or `r` returns, or the other side
 //!   disconnects. So `r` is never left asleep next to a message.
-//! - [`theorem_disconnect_seen`]: once the other side has disconnected,
+//! - `theorem_disconnect_seen`: once the other side has disconnected,
 //!   `r` returns.
 //!
 //! The first rests on a counting invariant. While some taker sleeps on the
@@ -103,7 +103,7 @@ pub struct St {
     pub alive: nat,
     pub th: Seq<Th>,
     /// The takers' waiter list. The `empty` flag is not a variable of the
-    /// model: see [`load_empty`].
+    /// model: see `load_empty`.
     pub list: Set<nat>,
     pub owner: Map<nat, nat>,
     pub notified: Set<nat>,
@@ -1346,4 +1346,49 @@ pub proof fn lemma_nonvacuous(s0: St, n: nat)
     }
 }
 
+/// The protocol, for `model::Model`.
+pub struct P;
+
+impl crate::model::Protocol for P {
+    type St = St;
+    type Th = Th;
+
+    open spec fn init(s: St, n: nat) -> bool {
+        init(s, n)
+    }
+
+    open spec fn step(s: St, t: nat, s2: St) -> bool {
+        step(s, t, s2)
+    }
+
+    open spec fn inv(s: St, n: nat) -> bool {
+        inv(s, n)
+    }
+
+    open spec fn threads(s: St) -> Seq<Th> {
+        s.th
+    }
+
+    open spec fn idle(th: Th) -> bool {
+        th.ph == Ph::Idle
+    }
+
+    proof fn lemma_init(s: St, n: nat) {
+        lemma_init(s, n);
+        assert forall|t: int| 0 <= t < n implies (#[trigger] s.th[t]).ph == Ph::Idle by {}
+    }
+
+    proof fn lemma_step(s: St, n: nat, t: nat, s2: St) {
+        lemma_step(s, n, t, s2);
+        lemma_step_frame(s, n, t, s2);
+        assert forall|u: int| 0 <= u < n && u != t implies #[trigger] s2.th[u] == s.th[u] by {
+            assert(s2.th[(u as nat) as int] == s.th[(u as nat) as int]);
+        }
+    }
+
+    proof fn lemma_len(s: St, n: nat) {
+    }
+}
+
 } // verus!
+

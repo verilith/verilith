@@ -79,9 +79,10 @@ impl DtdOut {
 }
 
 /// The environment after the internal subset (`env_of`).
-fn ex_finish(s: &[u8], d: XDtd, ext: bool) -> (r: DtdOut)
+pub fn ex_finish(s: &[u8], d: XDtd, ext: bool) -> (r: DtdOut)
     requires
         s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         d.ents@.len() <= s@.len(),
         dtd_wf(s@, &d),
     ensures
@@ -281,9 +282,10 @@ pub fn ex_enc_span(s: &[u8], j: usize) -> (r: Option<(usize, usize, usize)>)
 }
 
 /// `encoding_decl` at `j`.
-fn ex_encoding_decl(s: &[u8], j: usize, enc: Enc) -> (r: Option<(usize, usize, usize)>)
+pub fn ex_encoding_decl(s: &[u8], j: usize, enc: Enc) -> (r: Option<(usize, usize, usize)>)
     requires
         j + 8 <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
     ensures
         match encoding_decl(s@, j as int, enc) {
             Some((e, a, b)) => r matches Some((x, y, z)) && x == e && y == a && z == b && j < a <= b < e <= s@.len(),
@@ -304,6 +306,7 @@ fn ex_encoding_decl(s: &[u8], j: usize, enc: Enc) -> (r: Option<(usize, usize, u
 fn ex_sd_decl(s: &[u8], j: usize) -> (r: Option<(usize, u8)>)
     requires
         j + 10 <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
     ensures
         match sd_decl(s@, j as int) {
             Some((e, v)) => r matches Some((x, y)) && x == e && y == v && j < e <= s@.len(),
@@ -337,6 +340,7 @@ fn ex_sd_decl(s: &[u8], j: usize) -> (r: Option<(usize, u8)>)
 pub fn ex_xmldecl(s: &[u8], i: usize, tape: &mut Tape, enc: Enc) -> (r: Option<(usize, u8)>)
     requires
         i + 5 <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() == 0,
     ensures
         match xmldecl(s@, i as int, enc) {
@@ -406,6 +410,7 @@ pub fn ex_xmldecl(s: &[u8], i: usize, tape: &mut Tape, enc: Enc) -> (r: Option<(
 pub fn ex_external_id(s: &[u8], k: usize, tape: &mut Tape) -> (r: Option<usize>)
     requires
         k <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() <= k,
     ensures
         match external_id(s@, k as int, old(tape)@) {
@@ -476,6 +481,7 @@ fn ex_quant_end(s: &[u8], i: usize) -> (r: usize)
 fn ex_cmodel(s: &[u8], b: usize) -> (r: Option<usize>)
     requires
         b <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
     ensures
         same(r, cmodel(s@, b as int, Seq::empty(), false)),
         r matches Some(e) ==> b < e <= s@.len(),
@@ -488,6 +494,7 @@ fn ex_cmodel(s: &[u8], b: usize) -> (r: Option<usize>)
         invariant
             b <= i <= n,
             n == s@.len() <= isize::MAX,
+            s@.len() <= MAX_POS,
             cmodel(s@, i as int, st@, after) == cmodel(s@, b as int, Seq::empty(), false),
             i == b ==> st@.len() == 0 && !after,
         decreases n - i,
@@ -542,6 +549,7 @@ fn ex_cmodel(s: &[u8], b: usize) -> (r: Option<usize>)
 fn ex_mixed(s: &[u8], i: usize) -> (r: Option<usize>)
     requires
         i <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
     ensures
         same(r, mixed(s@, i as int, false)),
         r matches Some(e) ==> i < e <= s@.len(),
@@ -551,6 +559,7 @@ fn ex_mixed(s: &[u8], i: usize) -> (r: Option<usize>)
     loop
         invariant
             i <= j <= s@.len() <= isize::MAX,
+            s@.len() <= MAX_POS,
             mixed(s@, j as int, names) == mixed(s@, i as int, false),
         decreases s@.len() - j,
     {
@@ -581,6 +590,7 @@ fn ex_mixed(s: &[u8], i: usize) -> (r: Option<usize>)
 fn ex_contentspec(s: &[u8], b: usize) -> (r: Option<usize>)
     requires
         b <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
     ensures
         same(r, contentspec(s@, b as int)),
         r matches Some(e) ==> b < e <= s@.len(),
@@ -608,6 +618,7 @@ fn ex_contentspec(s: &[u8], b: usize) -> (r: Option<usize>)
 fn ex_element_decl(s: &[u8], j: usize, tape: &mut Tape) -> (r: Option<usize>)
     requires
         j + 9 <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() <= j,
     ensures
         match element_decl(s@, j as int, old(tape)@) {
@@ -640,6 +651,7 @@ fn ex_element_decl(s: &[u8], j: usize, tape: &mut Tape) -> (r: Option<usize>)
 fn ex_alt_list(s: &[u8], i: usize, nm: bool) -> (r: Option<usize>)
     requires
         i <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
     ensures
         same(r, alt_list(s@, i as int, nm)),
         r matches Some(e) ==> i < e <= s@.len(),
@@ -648,6 +660,7 @@ fn ex_alt_list(s: &[u8], i: usize, nm: bool) -> (r: Option<usize>)
     loop
         invariant
             i <= j <= s@.len() <= isize::MAX,
+            s@.len() <= MAX_POS,
             alt_list(s@, j as int, nm) == alt_list(s@, i as int, nm),
         decreases s@.len() - j,
     {
@@ -675,6 +688,7 @@ fn ex_alt_list(s: &[u8], i: usize, nm: bool) -> (r: Option<usize>)
 fn ex_att_type(s: &[u8], k: usize) -> (r: Option<(usize, u8)>)
     requires
         k <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
     ensures
         match att_type(s@, k as int) {
             Some((e, ty)) => r matches Some((x, y)) && x == e && y == ty && k < e <= s@.len(),
@@ -724,6 +738,7 @@ fn ex_att_type(s: &[u8], k: usize) -> (r: Option<(usize, u8)>)
 fn ex_default_decl(s: &[u8], m: usize) -> (r: Option<(usize, u8, usize, usize)>)
     requires
         m <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
     ensures
         match default_decl(s@, m as int) {
             Some((e, kind, va, vb)) => r matches Some((x, y, z, w)) && x == e && y == kind && z == va && w == vb
@@ -763,8 +778,10 @@ fn ex_default_decl(s: &[u8], m: usize) -> (r: Option<(usize, u8, usize, usize)>)
 fn ex_att_defs(s: &[u8], i: usize, tape: &mut Tape, nents: usize) -> (r: Option<usize>)
     requires
         i <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() <= i,
         nents <= isize::MAX,
+        nents <= MAX_POS,
     ensures
         match att_defs(s@, i as int, old(tape)@, nents as int) {
             Some((t, e)) => r matches Some(x) && x == e && final(tape)@ == t && i < e <= s@.len() && t.len() <= e,
@@ -776,9 +793,11 @@ fn ex_att_defs(s: &[u8], i: usize, tape: &mut Tape, nents: usize) -> (r: Option<
     loop
         invariant
             i <= j0 <= s@.len() <= isize::MAX,
+            s@.len() <= MAX_POS,
             tape@.len() <= j0,
             old(tape)@.len() <= tape@.len(),
             nents <= isize::MAX,
+            nents <= MAX_POS,
             att_defs(s@, j0 as int, tape@, nents as int) == att_defs(s@, i as int, old(tape)@, nents as int),
         decreases s@.len() - j0,
     {
@@ -810,7 +829,7 @@ fn ex_att_defs(s: &[u8], i: usize, tape: &mut Tape, nents: usize) -> (r: Option<
             },
             Some((d, kind, va, vb)) => {
                 tape.push(tok(Kind::AttDef, j, n, ty));
-                tape.push(Tok { kind: Kind::AttDefault, f: kind, a: va, b: vb, c: nents });
+                tape.push(Tok::new(Kind::AttDefault, kind, va, vb, nents));
                 j0 = d;
             },
         }
@@ -821,8 +840,10 @@ fn ex_att_defs(s: &[u8], i: usize, tape: &mut Tape, nents: usize) -> (r: Option<
 fn ex_attlist_decl(s: &[u8], j: usize, tape: &mut Tape, nents: usize) -> (r: Option<usize>)
     requires
         j + 9 <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() <= j,
         nents <= isize::MAX,
+        nents <= MAX_POS,
     ensures
         match attlist_decl(s@, j as int, old(tape)@, nents as int) {
             Some((t, e)) => r matches Some(x) && x == e && final(tape)@ == t && j < e <= s@.len() && t.len() <= e,
@@ -843,6 +864,7 @@ fn ex_attlist_decl(s: &[u8], j: usize, tape: &mut Tape, nents: usize) -> (r: Opt
 fn ex_ent_def(s: &[u8], c: usize, tape: &mut Tape, ge: bool) -> (r: Option<(usize, u8, usize, usize)>)
     requires
         c <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() <= c,
     ensures
         match ent_def(s@, c as int, old(tape)@, ge) {
@@ -887,9 +909,10 @@ fn ex_ent_def(s: &[u8], c: usize, tape: &mut Tape, ge: bool) -> (r: Option<(usiz
 }
 
 /// `entity_decl` at `j`.
-fn ex_entity_decl(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<usize>)
+pub fn ex_entity_decl(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<usize>)
     requires
         j + 8 <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() <= j,
         dtd_wf(s@, old(d)),
         old(d).ents@.len() <= old(tape)@.len(),
@@ -958,6 +981,7 @@ fn ex_entity_decl(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Opti
 fn ex_notation_decl(s: &[u8], j: usize, tape: &mut Tape) -> (r: Option<usize>)
     requires
         j + 10 <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() <= j,
     ensures
         match notation_decl(s@, j as int, old(tape)@) {
@@ -1023,6 +1047,7 @@ fn ex_notation_decl(s: &[u8], j: usize, tape: &mut Tape) -> (r: Option<usize>)
 fn ex_pe_ref(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<usize>)
     requires
         j < s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() <= j,
         dtd_wf(s@, old(d)),
         old(d).ents@.len() <= old(tape)@.len(),
@@ -1046,9 +1071,10 @@ fn ex_pe_ref(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<us
 /// `decl` at `j`.
 #[verifier::spinoff_prover]
 #[verifier::rlimit(60)]
-fn ex_decl(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<usize>)
+pub fn ex_decl(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<usize>)
     requires
         j < s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() <= j,
         dtd_wf(s@, old(d)),
         old(d).ents@.len() <= old(tape)@.len(),
@@ -1089,9 +1115,10 @@ fn ex_decl(s: &[u8], j: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<usiz
 }
 
 /// `int_subset` from `i`: the position of the closing `]`.
-fn ex_int_subset(s: &[u8], i: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<usize>)
+pub fn ex_int_subset(s: &[u8], i: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Option<usize>)
     requires
         i <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() <= i,
         dtd_wf(s@, old(d)),
         old(d).ents@.len() <= old(tape)@.len(),
@@ -1107,6 +1134,7 @@ fn ex_int_subset(s: &[u8], i: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Optio
     loop
         invariant
             i <= j0 <= s@.len() <= isize::MAX,
+            s@.len() <= MAX_POS,
             tape@.len() <= j0,
             dtd_wf(s@, d),
             d.ents@.len() <= tape@.len(),
@@ -1143,6 +1171,7 @@ fn ex_int_subset(s: &[u8], i: usize, tape: &mut Tape, d: &mut XDtd) -> (r: Optio
 pub fn ex_doctype(s: &[u8], i: usize, tape: &mut Tape, sa: bool) -> (r: Option<(usize, DtdOut)>)
     requires
         i + 9 <= s@.len() <= isize::MAX,
+        s@.len() <= MAX_POS,
         old(tape)@.len() <= i,
     ensures
         match doctype(s@, i as int, old(tape)@, sa) {

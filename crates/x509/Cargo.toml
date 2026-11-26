@@ -4,6 +4,7 @@ version = "0.1.0"
 license = "MIT OR Apache-2.0"
 description = "A formally verified (Verus) DER and X.509 certificate parser"
 edition = "2024"
+rust-version = "1.89"
 repository = "https://github.com/verilith/verilith"
 readme = "README.md"
 keywords = ["x509", "der", "asn1", "verified", "verus"]
@@ -16,8 +17,9 @@ crate-type = ["rlib", "staticlib"]
 [features]
 default = ["std"]
 std = ["alloc"]
-# oid_to_string. The parser itself never allocates.
-alloc = []
+# oid_to_string, and the sorting duplicate-extension check (dedup.rs), which
+# allocates only for more than eight extensions outside the low id-ce arcs.
+alloc = ["vstd/alloc"]
 # The C ABI behind the mbedTLS drop-in (mbedtls/).
 mbedtls = []
 # The native C API (include/vx509.h): the Rust API's zero-copy views.

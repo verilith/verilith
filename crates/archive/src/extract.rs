@@ -80,3 +80,23 @@ pub fn extract(a: &Archive, root: &Path) -> Result<usize, ExtractError> {
     }
     Ok(items.len())
 }
+
+impl std::fmt::Display for ExtractError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExtractError::Rejected(r) => write!(f, "archive refused: {r}"),
+            ExtractError::Read(i, e) => write!(f, "member {i}: {e}"),
+            ExtractError::Io(i, e) => write!(f, "member {i}: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for ExtractError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ExtractError::Rejected(r) => Some(r),
+            ExtractError::Read(_, e) => Some(e),
+            ExtractError::Io(_, e) => Some(e),
+        }
+    }
+}

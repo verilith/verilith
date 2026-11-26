@@ -33,6 +33,12 @@ for c in $crates; do
   dir=$ROOT/crates/$c/spec-tests
   log=$ROOT/target/spec-tests/$c.log
   [ -f "$dir/gen.sh" ] || { echo "FAIL $c: no spec-tests/gen.sh"; status=1; continue; }
+  # spec-tests/ is outside the workspace, so it pins vstd itself; it must
+  # be the workspace's pin, or Cargo cannot resolve the crate under test.
+  want_pin=$(grep -oE 'vstd = \{ version = "=[^"]*"' "$ROOT/Cargo.toml")
+  if ! grep -qF "$want_pin" "$dir/Cargo.toml"; then
+    echo "FAIL $c: spec-tests/Cargo.toml must pin the workspace's $want_pin"; status=1; continue
+  fi
   start=$(date +%s)
   if ! (cd "$dir" && . ./gen.sh) > "$log" 2>&1; then
     echo "FAIL $c: generating the cases failed; see $log"; status=1; continue
@@ -41,6 +47,9 @@ for c in $crates; do
   # Extra Verus flags, such as a larger --rlimit, which also bounds the
   # evaluator's time.
   args=$(cat "$dir/verus-args" 2>/dev/null || true)
+  # Cargo skips a crate it built before, which would leave no result line.
+  # (cargo verus builds under verus-partial/, which `cargo clean -p` misses).
+  rm -rf "$ROOT"/target/spec-tests/target/verus-partial/*/.fingerprint/"verilith-$c-spec-tests"-*
   # shellcheck disable=SC2086
   (cd "$dir" && CARGO_TARGET_DIR=$ROOT/target/spec-tests/target cargo verus focus -- $args) >> "$log" 2>&1
   rc=$?

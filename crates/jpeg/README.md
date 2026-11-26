@@ -11,8 +11,23 @@ there is no encoder.
 The marker parser, Huffman decoding, every baseline and progressive scan
 type, restart handling, dequantization, the inverse DCT, chroma upsampling
 and colour conversion are proven against a specification of the format,
-down to the value of every output byte. `cargo verus verify` checks 523
-functions with no errors.
+down to the value of every output byte, and so is a bound on the decoder's
+work: linear in the file's size, the image's size, and the frame's blocks
+once per scan. `cargo verus verify` checks 651 functions with no errors.
+
+## Using it from Rust
+
+```rust,no_run
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let data = std::fs::read("photo.jpg")?;
+    let header = verilith_jpeg::read_header(&data)?; // size and components, no decoding
+    println!("{} x {}, progressive: {}", header.w, header.h, header.prog);
+    let pic = verilith_jpeg::decode(&data)?;
+    // pic.nc bytes per pixel (1 gray, 3 RGB), row by row.
+    assert_eq!(pic.px.len(), pic.w as usize * pic.h as usize * pic.nc as usize);
+    Ok(())
+}
+```
 
 ## What is proven
 
@@ -27,11 +42,34 @@ functions with no errors.
 | The Huffman decoder, with its 10-bit lookahead table and 16-bit window, returns the symbol of T.81's DECODE procedure | `huff::decode` against `spec::huff` |
 | The inverse DCT equals the specification's (libjpeg's `jidctint.c`) on all its paths: on AArch64, NEON intrinsics in 16-bit lanes for blocks whose magnitudes sum to at most 2120 (nearly every block of a photograph) and in 32-bit lanes for the others whose dequantized values fit in 15 bits; elsewhere 32-bit arithmetic that compilers vectorize; and 64-bit arithmetic for the rest | `idct::idct_into`, `idct16::idct16_neon`, `idct_neon::idct_neon` against `spec::idct` |
 | Upsampling and colour conversion equal the specification's, including the branch-free kernels compilers vectorize and, on AArch64, colour conversion with NEON intrinsics | `render::up_row`, `render::ycc_row`, `color_neon::ycc16` |
+| Work: at most `jpeg_work(n, s, b, px) = 4n + (s + 1)(300b + 10) + 66b + 110px + 262,480` steps for an `n`-byte file with `s` scans, whose frame is stored in `b` blocks of 8x8 coefficients and has `px` pixels; `s` is at most `n + 65,552` | `decode::decode_counted` ensures (`decode` is the same code without the count) |
+| Work per stage: the marker segments, entropy decoding and restart searches at most `4(n + 65,568) + (s + 1)(300b + 10) + 200` steps; the inverse DCT and upsampling at most 66 steps per block and 110 per pixel | `parse::run_x`, `scan::scan_x`, `decode::render_x` |
+
+A step of the work bound is a loop turn, or an element zeroed by an
+allocation. Loops whose length the format fixes (the 64 coefficients of a
+block, the 16 code lengths of a Huffman table, the rows of one inverse DCT)
+count as part of the turn that runs them. The counter is ghost state
+(`work::Meter`), erased at compile time.
+
+The bound is linear in the file and in the image it declares, except for
+one term: each scan costs work in proportion to the whole frame (it walks
+every block of its components, and a progressive scan has to), and a
+progressive file may hold many scans, each only a few bytes long. So a
+small file that declares a large frame and repeats short scans makes the
+decoder work in proportion to its size times the frame's. libjpeg-turbo
+has the same cost, and its TurboJPEG API offers `TJPARAM_SCANLIMIT` to
+refuse files with too many scans; verilith-jpeg has no such limit yet, and
+the bound states the cost exactly rather than hiding it. Proving the bound
+also removed some wasted work: once the bit reader reached a marker, each
+refill rescanned the run of `0xFF` fill bytes before it until the scan
+noticed its data had ended, about a dozen times over (a file with 30 MB of
+fill bytes in a scan took 0.73 s, now 0.06 s). The reader now stops at the
+run's last byte.
 
 `read_header` (used by the TurboJPEG header calls) is verified for memory
 safety and termination only; it reuses the verified segment parser.
 
-[TRUST.md](TRUST.md) lists everything the proofs assume rather than prove.
+[TRUST.md](https://github.com/verilith/verilith/blob/main/crates/jpeg/TRUST.md) lists everything the proofs assume rather than prove.
 In short: the specification (`src/spec.rs`), two allocation primitives, the
 specifications of 35 NEON intrinsics in
 [verilith-simd](https://github.com/verilith/verilith/tree/main/crates/simd) (AArch64 only), the
@@ -200,10 +238,12 @@ libjpeg-turbo's C code and 1.8 to 3 times slower than its hand-written SIMD.
 
 On an Apple Silicon Mac, measured with
 [vbench](https://github.com/verilith/verilith/tree/main/bench) against
-libjpeg-turbo 3.1.2 with NEON (geometric mean over the 24 photos, all
-outputs equal, at commit 122d22c): baseline 4:2:0 runs at about 0.87 times
-libjpeg-turbo's speed, baseline 4:4:4 at about 0.855 times and progressive
-at about 0.95 times. A profile of one baseline photo there puts entropy
+libjpeg-turbo 3.2.1 with NEON (geometric mean over the 24 photos, all
+outputs equal; the run in the [repository's benchmark
+table](https://github.com/verilith/verilith#benchmarks), 2026-11-22): baseline 4:2:0 runs at
+0.91 times libjpeg-turbo's speed, baseline 4:4:4 at 0.97 times and
+progressive at 0.95 times. At commit 122d22c, against libjpeg-turbo 3.1.2,
+they were 0.87, 0.855 and 0.95 times. A profile of one baseline photo there puts entropy
 decoding at 1.04 times libjpeg-turbo's cycles, the inverse DCT at 1.23
 times, colour conversion at 1.18 times and chroma upsampling at 1.35 times,
 1.11 times in all. Those figures do not yet include the current inverse
@@ -219,6 +259,18 @@ Progressive and multi-scan files are decoded to whole-image coefficient
 arrays first, as in libjpeg-turbo. Every file still gets whole planes of
 samples before upsampling, where libjpeg-turbo keeps a few rows.
 
+### WebAssembly
+
+Built for WebAssembly with SIMD128 (`-C target-feature=+simd128`), the
+NEON inverse DCT and colour conversion run on WebAssembly vectors: each
+NEON wrapper they use is proven on SIMD128 in verilith-simd
+(`src/wasm_neon.rs`), so the same proofs hold there. Under Node.js 22 on
+x86-64, a 1920x1080 photo decodes in 8.8 ms (4:2:0) and 16.7 ms (4:4:4),
+against 13.5 ms and 29.9 ms for the same SIMD128 build without the NEON
+paths. Decoded pixels are identical to the x86-64 and scalar WebAssembly
+builds on 162 test files (sizes from 1x1, every
+subsampling, progressive, greyscale, CMYK).
+
 ## Building
 
 ```sh
@@ -228,10 +280,10 @@ cargo build --release --example djpeg            # djpeg FILE > out.ppm
 ./scripts/verify.sh                              # needs cargo-verus and z3 on PATH
 ```
 
-The proofs are checked with Verus `0.2026.11.02.8bf68ee` (vstd
-`0.0.0-2026-11-01-0251`).
+The proofs are checked with Verus `0.2026.11.22.1ce6a59` (vstd
+`0.0.0-2026-11-22-0344`).
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/jpeg/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/jpeg/LICENSE-MIT), at your option.

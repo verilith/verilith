@@ -1,5 +1,5 @@
-// Links a c-ares static library for the differential test when
-// CARES_LIB_DIR is set; otherwise that test is compiled out.
+//! Links a c-ares static library for the differential test when
+//! CARES_LIB_DIR is set; otherwise that test is compiled out.
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(have_cares)");
     println!("cargo::rerun-if-env-changed=CARES_LIB_DIR");

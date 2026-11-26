@@ -1,5 +1,5 @@
 //! Executable-independent specification of the WHATWG URL Standard
-//! (https://url.spec.whatwg.org/): the URL record, the host parser, the basic
+//! (<https://url.spec.whatwg.org/>): the URL record, the host parser, the basic
 //! URL parser's state machine and the URL serializer.
 //!
 //! Each definition transliterates the Standard's algorithm of the same name;
@@ -243,10 +243,35 @@ pub tracked struct Meter {
     pub ghost n: nat,
 }
 
-/// The scalars that the well-formed UTF-8 in `s[i..]` encodes (vcore's
-/// `utf8_len` gives each one's length, Table 3-7, and vtext's `dec8_at`
-/// its value, Table 3-6).
-pub open spec fn utf8_scalars(s: Seq<u8>, i: int) -> Seq<u32>
+/// The length of the maximal subpart (Unicode 3.9, D93b) of the ill-formed
+/// UTF-8 at `s[i]`: the longest prefix of a well-formed sequence that it
+/// starts with, and at least one byte. The Encoding Standard's UTF-8
+/// decoder replaces each maximal subpart with one U+FFFD.
+pub open spec fn utf8_subpart(s: Seq<u8>, i: int) -> int {
+    let b = s[i];
+    if 0xE0 <= b <= 0xEF {
+        let lo: u8 = if b == 0xE0 { 0xA0 } else { 0x80 };
+        let hi: u8 = if b == 0xED { 0x9F } else { 0xBF };
+        if verilith_core::utf8::byte_in(s, i + 1, lo, hi) { 2 } else { 1 }
+    } else if 0xF0 <= b <= 0xF4 {
+        let lo: u8 = if b == 0xF0 { 0x90 } else { 0x80 };
+        let hi: u8 = if b == 0xF4 { 0x8F } else { 0xBF };
+        if verilith_core::utf8::byte_in(s, i + 1, lo, hi) {
+            if verilith_core::utf8::byte_in(s, i + 2, 0x80, 0xBF) { 3 } else { 2 }
+        } else {
+            1
+        }
+    } else {
+        1
+    }
+}
+
+/// "UTF-8 decode without BOM" (Encoding Standard) of `s[i..]`: each
+/// well-formed sequence (vcore's `utf8_len` gives its length, Table 3-7,
+/// and vtext's `dec8_at` its value, Table 3-6) becomes its scalar, and each
+/// maximal subpart of ill-formed UTF-8 becomes U+FFFD. The URL Standard
+/// strips no BOM here.
+pub open spec fn utf8_decode(s: Seq<u8>, i: int) -> Seq<u32>
     decreases s.len() - i,
 {
     if i < 0 || i >= s.len() {
@@ -254,11 +279,11 @@ pub open spec fn utf8_scalars(s: Seq<u8>, i: int) -> Seq<u32>
     } else {
         match verilith_core::utf8::utf8_len(s, i) {
             Some(l) => if l > 0 {
-                seq![verilith_text::utf::spec::dec8_at(s, i, l)] + utf8_scalars(s, i + l)
+                seq![verilith_text::utf::spec::dec8_at(s, i, l)] + utf8_decode(s, i + l)
             } else {
                 Seq::empty()
             },
-            None => Seq::empty(),
+            None => seq![0xFFFDu32] + utf8_decode(s, i + utf8_subpart(s, i)),
         }
     }
 }
@@ -286,24 +311,17 @@ pub open spec fn url_domain_to_ascii_url(cs: Seq<u32>) -> Option<Seq<u8>> {
 
 /// "Let asciiDomain be the result of running domain to ASCII with domain"
 /// on "the result of running UTF-8 decode without BOM on the
-/// percent-decoding of input". The model takes the bytes before decoding:
-/// well-formed UTF-8 decodes to its scalars, and anything else fails,
-/// because UTF-8 decode without BOM turns each ill-formed sequence into
-/// U+FFFD, which UTS #46's mapping table marks disallowed, so ToASCII
-/// records an error and fails. A result more than 8 bytes per input byte
-/// also fails: a limit the Standard does not have, which keeps the
+/// percent-decoding of input": the decoding, with U+FFFD for ill-formed
+/// UTF-8, goes to UTS #46 as it is. A result more than 8 bytes per input
+/// byte also fails: a limit the Standard does not have, which keeps the
 /// parser's output linear. No domain is known to reach it; over every code
 /// point the largest ratio is 5.67 (U+337F). (Opaque: the parser's proofs
 /// treat it as a black box, and only `idna.rs` looks inside.)
 #[verifier::opaque]
 pub open spec fn domain_to_ascii(domain: Seq<u8>) -> Option<Seq<u8>> {
-    if verilith_core::utf8::utf8_from(domain, 0) {
-        match url_domain_to_ascii_url(utf8_scalars(domain, 0)) {
-            Some(v) if v.len() <= 8 * domain.len() => Some(v),
-            _ => None,
-        }
-    } else {
-        None
+    match url_domain_to_ascii_url(utf8_decode(domain, 0)) {
+        Some(v) if v.len() <= 8 * domain.len() => Some(v),
+        _ => None,
     }
 }
 
@@ -2179,6 +2197,118 @@ pub open spec fn initial_machine(state: State, url: UrlRecord) -> Machine {
 pub open spec fn parse_url(input: Seq<u8>, base: Option<UrlRecord>) -> Option<UrlRecord> {
     let input = remove_tab_newline(trim_c0_space(input));
     run(input, base, None, initial_machine(State::SchemeStart, new_url()), 0)
+}
+
+// ---------------------------------------------------------------------------
+// Why the parser fails (not part of the Standard)
+// ---------------------------------------------------------------------------
+
+/// The reason the basic URL parser returns failure, in the terms of the
+/// `url` crate's `ParseError`. The Standard names a validation error at
+/// each "return failure"; these group them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Why {
+    /// No scheme and no base URL.
+    NoBase,
+    /// No scheme, and the base URL has an opaque path.
+    CannotBeABase,
+    /// A missing host, or a domain that maps to the empty string.
+    EmptyHost,
+    /// A port that is not digits or is over 65535.
+    Port,
+    /// A domain that ends in a number but is not an IPv4 address.
+    Ipv4,
+    /// A host in brackets that is not an IPv6 address.
+    Ipv6,
+    /// A domain that UTS #46 rejects, or that holds a forbidden domain
+    /// code point after it.
+    Idna,
+    /// An opaque host with a forbidden host code point.
+    DomainChar,
+}
+
+/// Why the host parser fails on `s` (meaningful when `host_parse(s,
+/// is_opaque)` is `None`): the branch of the host parser that failed.
+pub open spec fn host_why(s: Seq<u8>, is_opaque: bool) -> Why {
+    if s.len() > 0 && s[0] == b'[' {
+        Why::Ipv6
+    } else if is_opaque {
+        Why::DomainChar
+    } else {
+        match domain_parse_result(percent_decode(s)) {
+            None => Why::Idna,
+            Some(r) => if r.len() == 0 {
+                Why::EmptyHost
+            } else if contains_forbidden_domain_code_point(r) {
+                Why::Idna
+            } else {
+                Why::Ipv4
+            },
+        }
+    }
+}
+
+/// Why `step` returns failure in machine `m` (meaningful when it does). Only
+/// these states return failure without a state override.
+pub open spec fn fail_why(base: Option<UrlRecord>, m: Machine) -> Why {
+    match m.state {
+        State::NoScheme => if base is None {
+            Why::NoBase
+        } else {
+            Why::CannotBeABase
+        },
+        State::Authority => Why::EmptyHost,
+        State::Host => if m.buffer.len() == 0 {
+            Why::EmptyHost
+        } else {
+            host_why(m.buffer, !is_special(m.url))
+        },
+        State::Hostname => if m.buffer.len() == 0 {
+            Why::EmptyHost
+        } else {
+            host_why(m.buffer, !is_special(m.url))
+        },
+        State::Port => Why::Port,
+        State::FileHost => host_why(m.buffer, !is_special(m.url)),
+        _ => Why::NoBase,
+    }
+}
+
+/// `run`, with the reason on failure.
+pub open spec fn run_r(
+    input: Seq<u8>,
+    base: Option<UrlRecord>,
+    state_override: Option<State>,
+    m: Machine,
+    p: int,
+) -> Result<UrlRecord, Why>
+    decreases phase(m.state), input.len() - p, rank(m.state),
+{
+    if p < 0 || p > input.len() {
+        Err(Why::NoBase)  // unreachable
+    } else {
+        match step(input, base, state_override, m, p) {
+            Step::Fail => Err(fail_why(base, m)),
+            Step::Return(url) => Ok(url),
+            Step::Next(m2, p2) => if p2 >= input.len() {
+                Ok(m2.url)
+            } else if p2 + 1 < 0 {
+                Err(Why::NoBase)  // unreachable
+            } else {
+                run_r(input, base, state_override, m2, p2 + 1)
+            }
+        }
+    }
+}
+
+/// Why the basic URL parser fails on `input` against `base`, or `None`
+/// when it succeeds.
+pub open spec fn parse_why(input: Seq<u8>, base: Option<UrlRecord>) -> Option<Why> {
+    let input = remove_tab_newline(trim_c0_space(input));
+    match run_r(input, base, None, initial_machine(State::SchemeStart, new_url()), 0) {
+        Ok(_) => None,
+        Err(w) => Some(w),
+    }
 }
 
 /// The basic URL parser with url and state override: the URL it leaves

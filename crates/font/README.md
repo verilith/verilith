@@ -13,7 +13,7 @@ unpacked with [verilith-zlib](https://github.com/verilith/verilith/tree/main/cra
 [verilith-brotli](https://github.com/verilith/verilith/tree/main/crates/brotli), which are
 verified too.
 
-**Status:** `cargo verus verify` checks 380 functions with 0 errors. On
+**Status:** `cargo verus verify` checks 481 functions with 0 errors. On
 OTS's own test corpus verilith-font accepts 245 of the 277 fonts that OTS accepts,
 never crashes, and OTS accepts every font verilith-font writes. The layout tables
 `GDEF`, `GSUB` and `GPOS` are sanitized and kept. Variation, colour and
@@ -44,14 +44,35 @@ same job and not identical output.
 
 ## What is proven
 
-```rust
+```rust,ignore
 pub fn sanitize(input: &[u8]) -> (r: Option<Vec<u8>>)
-    ensures r matches Some(out) ==> spec::wf_font(out@)
+    ensures
+        r matches Some(out) ==> spec::wf_font(out@),
+        r matches Some(out) ==> (spec_same::input_tables(input@, 0) matches Some(t)
+            ==> spec_same::draws_same(t, out@)),
+        (spec_same::input_tables(input@, 0) matches Some(t) && spec_same::valid_tables(t))
+            ==> r is Some,
 ```
 
-Every font that `sanitize` returns is well formed, for every input. Verus
-also proves that none of the verified code can read or write out of
-bounds, overflow an integer, or panic.
+Three theorems, for every input:
+
+1. **Every font that `sanitize` returns is well formed** (`wf_font`).
+2. **It draws the same as the input** (`draws_same`).
+3. **A valid font is never refused** (`valid_tables`).
+
+Verus also proves that none of the verified code can read or write out
+of bounds, overflow an integer, or panic. `sanitize_tables`, which takes
+the tables a container reader found, has the same three theorems for
+any table set, and is what `sanitize` calls.
+
+Theorems 2 and 3 are about the input's *table set*: the known tables the
+container holds, as (tag, bytes) pairs. For a plain OpenType file and a
+TrueType Collection, `spec_same::input_tables` says exactly what that set
+is, and the reader is proven to find it. For WOFF and WOFF2 the set is
+whatever the decoders produce, which is not specified, so for those
+inputs the theorems hold relative to the decoded tables and the
+fidelity of decompression rests on the tests (see
+[TRUST.md](https://github.com/verilith/verilith/blob/main/crates/font/TRUST.md)).
 
 `wf_font` is the specification, written from the OpenType specification
 and Adobe's Technical Notes #5176 and #5177. It is about 3,100 lines in
@@ -75,8 +96,9 @@ and Adobe's Technical Notes #5176 and #5177. It is about 3,100 lines in
   fewer than four bytes of padding: contour end points increase, the
   flags and coordinates are all present, a composite's component records
   are complete. Every component is a glyph that exists. No glyph contains
-  itself, directly or through other glyphs, and components nest at most
-  64 deep. `maxp` tells the truth: no glyph has more points, contours,
+  itself, directly or through other glyphs. Components may nest as deep
+  as the glyphs allow, as in OTS; they are followed with a stack on the
+  heap. `maxp` tells the truth: no glyph has more points, contours,
   instruction bytes, components or nesting than `maxp` says, counting a
   composite glyph's points and contours through all its components.
 - **Character map (`cmap`).** Encoding records are sorted and each leads
@@ -96,8 +118,8 @@ and Adobe's Technical Notes #5176 and #5177. It is about 3,100 lines in
   holds more than 48 numbers, each operator finds the operands it takes,
   every subroutine call names a subroutine that exists, calls nest at
   most 10 deep, hint masks have the bytes their stems need, and the
-  program ends with `endchar`. All the charstrings of a font together
-  execute at most 2^26 operators, so a consumer's work is bounded.
+  program ends with `endchar`. Each glyph's charstring executes at most
+  2^26 operators, as in OTS, so a consumer's work is bounded.
 - **Layout (`GDEF`, `GSUB`, `GPOS`).** Every offset a shaper can follow,
   from the table header down to the last device table, leads to a
   structure that lies inside the table and is itself well formed: script,
@@ -112,36 +134,99 @@ and Adobe's Technical Notes #5176 and #5177. It is about 3,100 lines in
   lookup in the lookup list, and a lookup's mark filtering set is one
   `GDEF` defines. Coverage ranges are in order and their indices add up.
 
-### How the theorem is proved
+### Draws the same
+
+`draws_same(t, out)`, in `src/spec_same.rs` (about 600 lines), says
+that a renderer given the output draws every glyph and maps every
+character it maps exactly as it would with the input, and that a
+shaper sees the same layout data but for named repairs:
+
+- **Glyphs.** The output has TrueType outlines exactly when the input
+  does, and then every glyph's outline (its contours or components and
+  its instructions, cut at the end its own structure gives) is the
+  input's. A `CFF ` table is the input's byte for byte.
+- **Metrics.** `hhea`, `hmtx`, and `vhea` and `vmtx` when kept, are
+  prefixes of the input's, so every advance and side bearing is the
+  input's. `head` is the input's first 54 bytes, except for
+  `checkSumAdjustment` and `indexToLocFormat`. `maxp` has the same glyph
+  count and, for TrueType, the same limits a hinting interpreter
+  allocates by, with `maxZones` clamped to 1 or 2. `OS/2` is a prefix of
+  the input's.
+- **Hinting.** `fpgm`, `prep`, `cvt `, `gasp` and `kern` are the input's
+  when present. In a TrueType font the first four are dropped only when
+  empty or malformed, and `kern` in any font only when malformed.
+- **Characters.** Every `cmap` encoding record of the output is one of
+  the input's, with the same platform, encoding and subtable bytes, or
+  the bytes after OTS's repair of a format 4 last segment (which only
+  changes U+FFFF to map to glyph 0).
+- **Layout.** `GDEF`, `GSUB` and `GPOS` are present exactly when in the
+  input, the same length, and differ only where a link to variation data
+  is cleared or a script's default language system is repaired or
+  removed.
+- **`name` and `post`.** `name` is the input's if well formed. `post`
+  keeps the input's italic angle, underline metrics and fixed-pitch flag,
+  and is the whole input table if well formed.
+
+It does not say: that `name` survives when malformed; that `maxp`'s
+outline limits are the input's (they are recomputed); that dropped
+`cmap` records or a dropped `vhea`/`vmtx` were unusable (only that what
+is kept is unchanged); that a CFF font keeps `fpgm`, `prep`, `cvt ` or
+`gasp` (they are TrueType-only); or anything about the dropped tables.
+
+### Valid fonts are accepted
+
+`valid_tables(t)` holds when the input's known tables, laid out as a
+file of their own, would satisfy `wf_font`, and together take at most
+1 GiB. Nothing is asked of the input's directory beyond what the reader
+needs: its order, packing, padding and checksums, its unknown tables and
+`head.checkSumAdjustment` may all be anything. A font whose known tables
+need repair (a malformed `cmap` subtable, a too-long `hmtx`, a `glyf`
+with padding after a glyph, a default language system that must be
+fixed) is outside the theorem; the builder may still accept it, and the
+differential tests below are the evidence that it usually does.
+
+### How the theorems are proved
 
 The sanitizer has two halves.
 
 The **builder** reads the container, rebuilds or copies each table, and
 lays out the new file. It is verified for memory safety only.
 
-The **checker** (`font::check_font` and everything under it) decides
+The **checkers** decide the specifications. `font::check_font` decides
 `wf_font` exactly: Verus proves `check_font(s) == wf_font(s)` for all
-bytes `s`. `sanitize` runs the checker on what the builder produced and
-returns the font only if the answer is yes. So the theorem does not rest
-on the builder being right. A bug there can make verilith-font refuse a good
-font, and cannot make it emit a bad one.
+bytes `s` (on a 32-bit target, for all `s` of at most `isize::MAX` bytes,
+which is every slice). `same::check_same(t, s)` is proven sound for
+`draws_same` (when it says yes, `draws_same` holds) and complete when the
+output holds exactly the input's known tables. `sanitize` runs both on
+what the builder produced and returns the font only if both say yes. So
+theorems 1 and 2 do not rest on the builder being right. A bug there can
+make the builder's output be refused, and cannot make verilith-font emit
+a bad font or one that draws differently.
 
-The cost is a second pass over the output. Proving the builder's output
-well formed directly, so that the second pass can go, is future work.
+Theorem 3 needs one more piece. When the builder's output is refused,
+`relay` lays out the input's known tables again, unchanged, in tag
+order, with the file layout code (`build::assemble`), which is proven to
+produce the directory, padding and checksums `wf_font` asks for. If the
+input is valid, that file is well formed and holds exactly the input's
+tables, so both checkers accept it. The fallback never changes the
+answer for a font the builder handles; it catches the fonts the builder
+would wrongly refuse.
+
+The cost is a second pass over the output, and a third for the
+comparison with the input. Proving the builder's output correct
+directly, so that the checks can go, is future work.
 
 ### What is not proven
 
-- That a good font is accepted. Nothing in the proofs stops `sanitize`
-  from refusing everything. The differential test below is the evidence
-  that it does not.
-- That the output draws the same as the input. The builder copies glyph
-  data and metrics and the tests compare against OTS, but there is no
-  theorem.
+- That a font which needs repair is accepted. Theorem 3 covers fonts
+  whose known tables are already well formed. For the rest, the
+  differential test below is the evidence.
+- That WOFF and WOFF2 decode to the right tables (see above).
 - Anything about TrueType instructions. `fpgm`, `prep` and the
   instructions inside glyphs are copied as bytes (their lengths are
   bounded by `maxp`). OTS does the same. A rasterizer that executes
   hinting programs must defend itself.
-- That the specification is the right one. See [TRUST.md](TRUST.md).
+- That the specification is the right one. See [TRUST.md](https://github.com/verilith/verilith/blob/main/crates/font/TRUST.md).
 
 ## Which tables are kept
 
@@ -198,9 +283,7 @@ Where verilith-font accepts less:
   overlap. OTS accepts some that do not; verilith-font drops the subtable. (Both
   repair the common case of a last segment whose `idRangeOffset` is
   0xFFFF.)
-- Limits: input up to 1 GiB, 300 MiB after decompression, 1024 `cmap`
-  encoding records, composites nested 64 deep, 2^26 charstring operators
-  per font (OTS allows that many per glyph).
+- Limits: input up to 1 GiB and 300 MiB after decompression (both OTS's).
 - In CFF, a Font DICT may not hold the operators that describe the whole
   font, a font that is not CID-keyed may not have an FDArray or FDSelect,
   and charset ranges must not name string ids that do not exist.
@@ -222,10 +305,14 @@ Where verilith-font accepts more, or acts differently:
 
 Rust:
 
-```rust
-match verilith_font::sanitize(&bytes) {
-    Some(font) => use_font(&font),
-    None => fall_back(),
+```rust,no_run
+fn main() -> std::io::Result<()> {
+    let bytes = std::fs::read("font.woff2")?;
+    match verilith_font::sanitize(&bytes) {
+        Some(font) => std::fs::write("font.ttf", font)?, // rebuilt, and proven well-formed
+        None => eprintln!("refused"),
+    }
+    Ok(())
 }
 ```
 
@@ -263,7 +350,11 @@ exits with 0 if the font was accepted and 1 if it was refused.
   WOFF, collection, composites with and without cycles, and `GDEF`,
   `GSUB` and `GPOS` tables), every one-byte corruption and every
   truncation of them. Whatever comes out must pass the checker and be a
-  fixed point of the sanitizer.
+  fixed point of the sanitizer. `tests/fidelity.rs` checks that the
+  output passes `check_same`, that changing a byte of a glyph, metric,
+  `head` or `cmap` of the input is noticed, and that a valid font in a
+  sloppy layout with unknown tables comes out the same as when laid out
+  well.
 - `scripts/test-capi.sh`: the C interface and the OTS-style C++ headers.
 - `scripts/difftest.sh DIR...`: runs verilith-font and OTS on every file in the
   directories and reports where they differ. It also checks that OTS
@@ -305,6 +396,12 @@ accepts, 3 are damaged in a default language system and one has a
 
 ## Building and verifying
 
+The proofs hold for 64-bit and for 32-bit targets (wasm32 included):
+`scripts/verify.sh font` checks the first and `crates/font/scripts/verify-narrow.sh`
+the second, and the tests pass on wasm32-wasip1. On a 32-bit target
+`check_font` also asks that the font be at most `isize::MAX` bytes,
+which every Rust slice is.
+
 ```sh
 cargo build --release      # target/release/libverilith_font.a and the rlib
 cargo test --release
@@ -317,5 +414,5 @@ in `Cargo.toml`. CI (`.github/workflows/ci.yml` at the repository root) verifies
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/font/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/font/LICENSE-MIT), at your option.

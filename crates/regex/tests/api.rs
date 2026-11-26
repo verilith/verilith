@@ -40,7 +40,27 @@ fn errors() {
     assert!(matches!(Regex::new(b"a{1001}"), Err(Error::Syntax(_))));
     assert!(matches!(Regex::new(b"(?P<n>a)(?P<n>b)"), Err(Error::Syntax(_))));
     assert!(matches!(Regex::new(b"\xff"), Err(Error::BadUtf8)));
-    assert!(matches!(Regex::new("(".repeat(300).as_bytes()), Err(Error::TooBig)));
+    assert!(matches!(Regex::new("(".repeat(300).as_bytes()), Err(Error::Syntax(300))));
+}
+
+#[test]
+fn deep_nesting() {
+    // Groups nest as deep as the pattern is long: the parser, compiler and
+    // tree copy and drop keep their own stacks, not the call stack.
+    let n = 100_000;
+    let pat = format!("{}a{}", "(?:".repeat(n), ")".repeat(n));
+    let re = Regex::new(pat.as_bytes()).unwrap();
+    assert_eq!(&re.captures_at(b"xay", 0).unwrap()[..], &[1, 2]);
+    let pat = format!("{}a{}*", "(?:".repeat(n), ")".repeat(n));
+    let re = Regex::new(pat.as_bytes()).unwrap();
+    assert_eq!(&re.captures_at(b"aaa", 0).unwrap()[..], &[0, 3]);
+    let n = 2_000;
+    let pat = format!("{}a{}", "(".repeat(n), ")".repeat(n));
+    let re = Regex::new(pat.as_bytes()).unwrap();
+    assert_eq!(re.groups(), n + 1);
+    let caps = re.captures_at(b"xa", 0).unwrap();
+    assert_eq!(&caps[..4], &[1, 2, 1, 2]);
+    assert_eq!(&caps[2 * n..], &[1, 2]);
 }
 
 #[test]
@@ -214,4 +234,25 @@ fn range_scan_agrees_with_plain_search() {
             }
         }
     }
+}
+
+#[test]
+fn limits() {
+    // Patterns may be longer than 64 KiB.
+    let long = "a".repeat(70_000);
+    assert!(Regex::new(long.as_bytes()).is_ok());
+    // The instruction limit is the caller's.
+    let big = "a{1000}".repeat(300);
+    assert!(matches!(Regex::new(big.as_bytes()), Err(Error::TooBig)));
+    assert!(matches!(Regex::with_limit(b"a{1000}", 900), Err(Error::TooBig)));
+    assert!(Regex::with_limit(b"a{1000}", 2000).is_ok());
+    assert!(matches!(Regex::with_limit(b"abc", 3), Err(Error::TooBig)));
+    // Repetitions stop expanding at the limit, so this is refused at once
+    // rather than after building millions of nodes.
+    let wide = format!("(?:{}){{1000}}", "a".repeat(16_000));
+    let t = std::time::Instant::now();
+    assert!(matches!(Regex::new(wide.as_bytes()), Err(Error::TooBig)));
+    assert!(t.elapsed().as_secs() < 5);
+    let many = "(?:a{1000})".repeat(2_000);
+    assert!(matches!(Regex::new(many.as_bytes()), Err(Error::TooBig)));
 }

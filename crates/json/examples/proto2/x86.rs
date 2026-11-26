@@ -230,6 +230,9 @@ unsafe fn stage1(s: &[u8], out: &mut Stage1) -> bool {
     if W512 { stage1_w::<true>(s, out) } else { stage1_w::<false>(s, out) }
 }
 
+// The container stack `stage2` is handed. This prototype checks nesting
+// without pushing to it, so no `Ctx` is ever made.
+#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq)]
 enum Ctx {
     Arr,
@@ -320,7 +323,7 @@ fn stage2(s: &[u8], st: &Stage1, toks: &mut Vec<Tok>, stack: &mut Vec<(Ctx, u32)
     if !s[st.start..idx[0] as usize].iter().all(|c| matches!(c, b' ' | b'\n' | b'\r' | b'\t')) {
         return false;
     }
-    let blank = Tok { kind: Kind::Null, escaped: false, a: 0, b: 0, x: verilith_json::parser::NO };
+    let blank = Tok { kind: Kind::Null, escaped: false, x: verilith_json::parser::NO, ah: 0, a: 0, b: 0, bh: 0 };
     toks.clear();
     toks.reserve(n + 1);
     stack.clear();
@@ -368,7 +371,7 @@ fn stage2(s: &[u8], st: &Stage1, toks: &mut Vec<Tok>, stack: &mut Vec<(Ctx, u32)
             if done > e {
                 return false;
             }
-            emit!(Tok { kind: $kind, escaped: any, a: (p + 1) as u32, b: e as u32, x: verilith_json::parser::NO });
+            emit!(Tok { kind: $kind, escaped: any, a: (p + 1) as u32, b: e as u32, ..blank });
         }};
     }
     macro_rules! key {
@@ -436,7 +439,7 @@ fn stage2(s: &[u8], st: &Stage1, toks: &mut Vec<Tok>, stack: &mut Vec<(Ctx, u32)
                 emit!(Tok { kind, ..blank });
             }
             _ => match number_end(s, p) {
-                Some(e) if is_delim(s, e) => emit!(Tok { kind: Kind::Num, escaped: false, a: p as u32, b: e as u32, x: verilith_json::parser::NO }),
+                Some(e) if is_delim(s, e) => emit!(Tok { kind: Kind::Num, escaped: false, a: p as u32, b: e as u32, ..blank }),
                 _ => return false,
             },
         }

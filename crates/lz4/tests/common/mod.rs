@@ -2,9 +2,22 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 use std::ffi::{c_char, c_int, c_void, CString};
 
+#[cfg(unix)]
 unsafe extern "C" {
     fn dlopen(name: *const c_char, flags: c_int) -> *mut c_void;
     fn dlsym(h: *mut c_void, name: *const c_char) -> *mut c_void;
+}
+
+// No dynamic loading on wasm32-wasip1: the reference library is never
+// found there, and the tests that compare with it skip.
+#[cfg(not(unix))]
+unsafe fn dlopen(_name: *const c_char, _flags: c_int) -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+#[cfg(not(unix))]
+unsafe fn dlsym(_h: *mut c_void, _name: *const c_char) -> *mut c_void {
+    std::ptr::null_mut()
 }
 
 /// liblz4, under its Linux or macOS name (or VLZ4_LIBLZ4).

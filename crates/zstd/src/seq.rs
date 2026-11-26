@@ -6,6 +6,7 @@ use crate::bits::*;
 use crate::fse::*;
 use crate::huf::*;
 use crate::prims::{at, row};
+use crate::work::Meter;
 use verilith_core::tail::Tail;
 #[cfg(verus_only)]
 use verilith_core::bits::*;
@@ -17,6 +18,16 @@ use vstd::prelude::*;
 use vstd::slice::slice_subrange;
 
 verus! {
+
+/// The most output a decode may be asked to produce, and the input sizes
+/// the decoders are proven for: 256 TiB on 64-bit targets, and on 32-bit
+/// ones 2 GiB, above the largest slice there (`isize::MAX` bytes), so that
+/// a length plus a block or a window still fits a `usize`.
+#[cfg(target_pointer_width = "64")]
+pub const MAX_LIMIT: usize = 0x1_0000_0000_0000;
+
+#[cfg(target_pointer_width = "32")]
+pub const MAX_LIMIT: usize = 0x8000_0000;
 
 // ---------------------------------------------------------------------------
 // Code tables
@@ -194,6 +205,60 @@ exec static LL_BITS: [u32; 36]
         }
     }
     r
+}
+
+/// Every match is at least three bytes long.
+pub proof fn lemma_ml_base_min(c: nat)
+    requires
+        c < 53,
+    ensures
+        ml_base(c) >= 3,
+{
+    if c >= 32 {
+        if c == 32 {
+            assert(ml_base(32) == 35nat) by (compute_only);
+        } else if c == 33 {
+            assert(ml_base(33) == 37nat) by (compute_only);
+        } else if c == 34 {
+            assert(ml_base(34) == 39nat) by (compute_only);
+        } else if c == 35 {
+            assert(ml_base(35) == 41nat) by (compute_only);
+        } else if c == 36 {
+            assert(ml_base(36) == 43nat) by (compute_only);
+        } else if c == 37 {
+            assert(ml_base(37) == 47nat) by (compute_only);
+        } else if c == 38 {
+            assert(ml_base(38) == 51nat) by (compute_only);
+        } else if c == 39 {
+            assert(ml_base(39) == 59nat) by (compute_only);
+        } else if c == 40 {
+            assert(ml_base(40) == 67nat) by (compute_only);
+        } else if c == 41 {
+            assert(ml_base(41) == 83nat) by (compute_only);
+        } else if c == 42 {
+            assert(ml_base(42) == 99nat) by (compute_only);
+        } else if c == 43 {
+            assert(ml_base(43) == 131nat) by (compute_only);
+        } else if c == 44 {
+            assert(ml_base(44) == 259nat) by (compute_only);
+        } else if c == 45 {
+            assert(ml_base(45) == 515nat) by (compute_only);
+        } else if c == 46 {
+            assert(ml_base(46) == 1027nat) by (compute_only);
+        } else if c == 47 {
+            assert(ml_base(47) == 2051nat) by (compute_only);
+        } else if c == 48 {
+            assert(ml_base(48) == 4099nat) by (compute_only);
+        } else if c == 49 {
+            assert(ml_base(49) == 8195nat) by (compute_only);
+        } else if c == 50 {
+            assert(ml_base(50) == 16387nat) by (compute_only);
+        } else if c == 51 {
+            assert(ml_base(51) == 32771nat) by (compute_only);
+        } else if c == 52 {
+            assert(ml_base(52) == 65539nat) by (compute_only);
+        }
+    }
 }
 
 /// Match length baselines.
@@ -515,30 +580,32 @@ pub open spec fn baked(d: Seq<SeqE>, rows: Seq<FseRow>, k: nat) -> bool {
 }
 
 /// Looks up each row's baseline and extra bits (`baked`).
-pub fn bake(t: &FseTab, k: u8) -> (d: Vec<SeqE>)
+pub fn bake(t: &FseTab, k: u8, Tracked(m): Tracked<&mut Meter>) -> (d: Vec<SeqE>)
     requires
         k <= 2,
         tab_wf(t, kind_nsym(k as nat)),
     ensures
         baked(d@, t.rows@, k as nat),
+        final(m).n == old(m).n + t.rows@.len(),
 {
     // One copy of the loop per kind, so the kind is not tested per row.
     if k == 0 {
-        bake_kind(t, 0)
+        bake_kind(t, 0, Tracked(m))
     } else if k == 1 {
-        bake_kind(t, 1)
+        bake_kind(t, 1, Tracked(m))
     } else {
-        bake_kind(t, 2)
+        bake_kind(t, 2, Tracked(m))
     }
 }
 
 #[inline(always)]
-fn bake_kind(t: &FseTab, k: u8) -> (d: Vec<SeqE>)
+fn bake_kind(t: &FseTab, k: u8, Tracked(m): Tracked<&mut Meter>) -> (d: Vec<SeqE>)
     requires
         k <= 2,
         tab_wf(t, kind_nsym(k as nat)),
     ensures
         baked(d@, t.rows@, k as nat),
+        final(m).n == old(m).n + t.rows@.len(),
 {
     let n = t.rows.len();
     let mut d: Vec<SeqE> = Vec::with_capacity(n);
@@ -560,8 +627,12 @@ fn bake_kind(t: &FseTab, k: u8) -> (d: Vec<SeqE>)
                     &&& d@[u].xb <= (if k == 1 { 31u8 } else { 16u8 })
                     &&& k != 1 ==> d@[u].base <= 65539
                 },
+            m.n == old(m).n + i,
         decreases n - i,
     {
+        proof {
+            m.n = m.n + 1;
+        }
         let r = t.rows[i];
         proof {
             assert((t.rows@[i as int].sym as nat) < kind_nsym(k as nat));
@@ -617,12 +688,13 @@ pub open spec fn kind_nsym(k: nat) -> nat {
 }
 
 /// A predefined table.
-pub fn default_tab(k: u8) -> (r: FseTab)
+pub fn default_tab(k: u8, Tracked(wm): Tracked<&mut Meter>) -> (r: FseTab)
     requires
         k <= 2,
     ensures
         tab_is(&r, kind_default(k as nat)),
         tab_wf(&r, kind_nsym(k as nat)),
+        final(wm).n <= old(wm).n + 351,
 {
     proof {
         lemma2_to64();
@@ -634,16 +706,18 @@ pub fn default_tab(k: u8) -> (r: FseTab)
         ];
         proof {
             assert(iseq(a@) =~= ll_default());
+            assert(psum(ll_default(), 36) == 64) by (compute_only);
         }
-        build_table(&a, 6)
+        build_table(&a, 6, Tracked(wm))
     } else if k == 1 {
         let a: [i16; 29] = [
             1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1,
         ];
         proof {
             assert(iseq(a@) =~= of_default());
+            assert(psum(of_default(), 29) == 32) by (compute_only);
         }
-        let t = build_table(&a, 5);
+        let t = build_table(&a, 5, Tracked(wm));
         t
     } else {
         let a: [i16; 53] = [
@@ -652,18 +726,19 @@ pub fn default_tab(k: u8) -> (r: FseTab)
         ];
         proof {
             assert(iseq(a@) =~= ml_default());
+            assert(psum(ml_default(), 53) == 64) by (compute_only);
         }
-        build_table(&a, 6)
+        build_table(&a, 6, Tracked(wm))
     }
 }
 
 /// One table of the sequences header (`seq_table`).
-pub fn seq_table_exec(b: &[u8], k: u8, mode: u8, prev: Option<&FseTab>, Ghost(gprev): Ghost<Option<FseTable>>) -> (r:
+pub fn seq_table_exec(b: &[u8], k: u8, mode: u8, prev: Option<&FseTab>, Ghost(gprev): Ghost<Option<FseTable>>, Tracked(m): Tracked<&mut Meter>) -> (r:
     Option<(FseTab, usize)>)
     requires
         k <= 2,
         mode <= 3,
-        b@.len() < 0x1_0000_0000,
+        b@.len() < BITS_MAX,
         match prev {
             None => gprev is None,
             Some(t) => gprev is Some && tab_is(t, gprev.unwrap()) && tab_wf(t, kind_nsym(k as nat)),
@@ -679,7 +754,11 @@ pub fn seq_table_exec(b: &[u8], k: u8, mode: u8, prev: Option<&FseTab>, Ghost(gp
                 &&& used <= b@.len()
             },
         },
+        final(m).n <= old(m).n + 8 * b@.len() + 1870,
 {
+    proof {
+        lemma2_to64();
+    }
     let maxsv: u32 = if k == 0 {
         35
     } else if k == 1 {
@@ -688,7 +767,7 @@ pub fn seq_table_exec(b: &[u8], k: u8, mode: u8, prev: Option<&FseTab>, Ghost(gp
         52
     };
     if mode == 0 {
-        Some((default_tab(k), 0))
+        Some((default_tab(k, Tracked(m)), 0))
     } else if mode == 1 {
         if b.len() < 1 || b[0] as u32 > maxsv {
             return None;
@@ -700,14 +779,24 @@ pub fn seq_table_exec(b: &[u8], k: u8, mode: u8, prev: Option<&FseTab>, Ghost(gp
         } else {
             9
         };
-        match read_ncount(b, maxsv, maxlog) {
+        match read_ncount(b, maxsv, maxlog, Tracked(m)) {
             None => None,
-            Some((log, norm, used)) => Some((build_table(norm.as_slice(), log), used)),
+            Some((log, norm, used)) => {
+                proof {
+                    lemma_pow2_le(log as nat, 9);
+                }
+                Some((build_table(norm.as_slice(), log, Tracked(m)), used))
+            },
         }
     } else {
         match prev {
             None => None,
-            Some(t) => Some((t.clone_tab(), 0)),
+            Some(t) => {
+                proof {
+                    lemma_pow2_le(t.log as nat, 9);
+                }
+                Some((t.clone_tab(Tracked(m)), 0))
+            },
         }
     }
 }
@@ -859,13 +948,14 @@ pub open spec fn per_seq(o: Seq<u8>, d: int, k: nat) -> Seq<u8> {
 /// Appends a match of `len` bytes from `off` back (`copy_match`): one
 /// copy when it does not overlap what it copies.
 #[inline(always)]
-fn copy_match_exec(out: &mut Tail, fstart: usize, off: usize, len: usize)
+fn copy_match_exec(out: &mut Tail, fstart: usize, off: usize, len: usize, Tracked(m): Tracked<&mut Meter>)
     requires
         fstart <= old(out)@.len(),
         1 <= off <= old(out)@.len() - fstart,
         old(out)@.len() + len + 32 <= old(out).cap(),
     ensures
         final(out).cap() == old(out).cap(),
+        final(m).n <= old(m).n + 2 * len,
         final(out)@ == old(out)@.subrange(0, fstart as int) + copy_match(
             old(out)@.subrange(fstart as int, old(out)@.len() as int),
             off as nat,
@@ -888,22 +978,24 @@ fn copy_match_exec(out: &mut Tail, fstart: usize, off: usize, len: usize)
             }
             assert(out@ =~= all0 + per_seq(o0, d, len as nat));
             assert(out@ =~= pre + copy_match(o0, off as nat, len as nat));
+            m.n = (m.n + len) as nat;
         }
     } else {
-        copy_match_loop(out, fstart, off, len);
+        copy_match_loop(out, fstart, off, len, Tracked(m));
     }
 }
 
 /// `copy_match_exec` for overlapping matches: in chunks that double, each
 /// one a copy of bytes already written. Out of line, as it is rare.
 #[inline(never)]
-fn copy_match_loop(out: &mut Tail, fstart: usize, off: usize, len: usize)
+fn copy_match_loop(out: &mut Tail, fstart: usize, off: usize, len: usize, Tracked(mt): Tracked<&mut Meter>)
     requires
         fstart <= old(out)@.len(),
         1 <= off <= old(out)@.len() - fstart,
         old(out)@.len() + len + 32 <= old(out).cap(),
     ensures
         final(out).cap() == old(out).cap(),
+        final(mt).n <= old(mt).n + 2 * len,
         final(out)@ == old(out)@.subrange(0, fstart as int) + copy_match(
             old(out)@.subrange(fstart as int, old(out)@.len() as int),
             off as nat,
@@ -923,6 +1015,7 @@ fn copy_match_loop(out: &mut Tail, fstart: usize, off: usize, len: usize)
         // No overlap: one copy.
         out.append_within(start, len);
         proof {
+            mt.n = (mt.n + len) as nat;
             assert forall|j: int| 0 <= j < len implies #[trigger] per_seq(o0, d, len as nat)[j] == all0[start + j] by {
                 vstd::arithmetic::div_mod::lemma_small_mod(j as nat, d as nat);
             }
@@ -947,10 +1040,15 @@ fn copy_match_loop(out: &mut Tail, fstart: usize, off: usize, len: usize)
             m >= 0,
             done < len ==> done as int == m * d,
             out@ == all0 + per_seq(o0, d, done as nat),
+            mt.n <= old(mt).n + 2 * done,
         decreases len - done,
     {
         let avail = out.len() - start;
         let n = if len - done < avail { len - done } else { avail };
+        proof {
+            // The turn, and the bytes copied (at least one).
+            mt.n = (mt.n + 1 + n) as nat;
+        }
         let ghost before = out@;
         proof {
             vstd::arithmetic::mul::lemma_mul_nonnegative(m, d);
@@ -1003,7 +1101,7 @@ fn copy_match_loop(out: &mut Tail, fstart: usize, off: usize, len: usize)
 /// `copy_match_exec` for a match of at most 32 bytes from at least 16
 /// back that does not overlap what it copies: two 16-byte copies.
 #[inline(always)]
-fn copy_match_short(out: &mut Tail, fstart: usize, off: usize, len: usize)
+fn copy_match_short(out: &mut Tail, fstart: usize, off: usize, len: usize, Tracked(m): Tracked<&mut Meter>)
     requires
         fstart <= old(out)@.len(),
         16 <= off <= old(out)@.len() - fstart,
@@ -1012,6 +1110,7 @@ fn copy_match_short(out: &mut Tail, fstart: usize, off: usize, len: usize)
         old(out)@.len() + 32 <= old(out).cap(),
     ensures
         final(out).cap() == old(out).cap(),
+        final(m).n == old(m).n + len,
         final(out)@ == old(out)@.subrange(0, fstart as int) + copy_match(
             old(out)@.subrange(fstart as int, old(out)@.len() as int),
             off as nat,
@@ -1028,6 +1127,7 @@ fn copy_match_short(out: &mut Tail, fstart: usize, off: usize, len: usize)
     let start = out.len() - off;
     out.append_within32(start, len);
     proof {
+        m.n = (m.n + len) as nat;
         assert forall|j: int| 0 <= j < len implies #[trigger] per_seq(o0, d, len as nat)[j] == all0[start + j] by {
             vstd::arithmetic::div_mod::lemma_small_mod(j as nat, d as nat);
         }
@@ -1228,10 +1328,11 @@ pub fn seq_step_exec(
     fstart: usize,
     olimit: usize,
     Ghost(ts): Ghost<SeqTables>,
+    Tracked(m): Tracked<&mut Meter>,
 ) -> (r: Result<SeqOut, bool>)
     requires
         seqtabs_is(t, ts),
-        s@.len() < 0x1_0000_0000,
+        s@.len() < BITS_MAX,
         lits@.len() <= 131072,
         p <= 8 * s@.len(),
         li <= lits@.len(),
@@ -1239,10 +1340,16 @@ pub fn seq_step_exec(
         (sof as int) < t.of.rows@.len(),
         (sml as int) < t.ml.rows@.len(),
         fstart <= old(out)@.len() <= olimit,
-        olimit <= 0x1_0000_0000_0000,
+        olimit <= MAX_LIMIT,
         old(out).cap() >= olimit + 64,
     ensures
         final(out).cap() == old(out).cap(),
+        // Work: two steps a byte at most, and every sequence writes three.
+        final(out)@.len() >= old(out)@.len(),
+        final(m).n <= old(m).n + 2 * (final(out)@.len() - old(out)@.len()),
+        final(out)@.len() <= olimit,
+        r is Ok ==> final(out)@.len() >= old(out)@.len() + 3,
+        r is Ok ==> final(out)@.len() - old(out)@.len() >= r.unwrap().li - li,
         ({
             let cur = sstate(p, sll, sof, sml, r1, r2, r3, li, old(out)@, fstart as int);
             match seq_step(ts, s@, lits@, window as nat, cur) {
@@ -1274,7 +1381,13 @@ pub fn seq_step_exec(
         assert(t.ml.rows@[sml as int] == eml);
     }
     let oc = eof.sym as u32;
+    proof {
+        assert((eml.sym as int) < 53);
+    }
     let (mlbase, mlb) = ml_code(eml.sym);
+    proof {
+        lemma_ml_base_min(eml.sym as nat);
+    }
     let (llbase, llb) = ll_code(ell.sym);
     if (oc + mlb + llb) as usize > p {
         return Err(false);
@@ -1328,11 +1441,12 @@ pub fn seq_step_exec(
     proof {
         assert(out@.subrange(0, fstart as int) =~= pre);
         assert(fout(out@, fstart as int) =~= out1);
+        m.n = (m.n + ll) as nat;
     }
-    if off as usize > out.len() - fstart || off > window || off == 0 {
+    if off > (out.len() - fstart) as u64 || off > window || off == 0 {
         return Err(false);
     }
-    copy_match_exec(out, fstart, off as usize, ml as usize);
+    copy_match_exec(out, fstart, off as usize, ml as usize, Tracked(m));
     proof {
         assert(out@.subrange(0, fstart as int) =~= pre);
         assert(fout(out@, fstart as int) =~= copy_match(out1, off as nat, ml as nat));
@@ -1345,7 +1459,7 @@ pub fn seq_step_exec(
 pub fn seq_next_exec(t: &SeqTabs, s: &[u8], p3: usize, sll: u32, sof: u32, sml: u32, Ghost(ts): Ghost<SeqTables>) -> (r: Option<(usize, u32, u32, u32)>)
     requires
         seqtabs_is(t, ts),
-        s@.len() < 0x1_0000_0000,
+        s@.len() < BITS_MAX,
         p3 <= 8 * s@.len(),
         (sll as int) < t.ll.rows@.len(),
         (sof as int) < t.of.rows@.len(),
@@ -1431,7 +1545,7 @@ pub open spec fn seq_dec_is(d: Dec, t: SeqTables, s: Seq<u8>, p: int, sll: int, 
 pub fn seq_dec(t: &SeqTabs, s: &[u8], p: usize, sll: u32, sof: u32, sml: u32, Ghost(ts): Ghost<SeqTables>) -> (r: Option<Dec>)
     requires
         seqtabs_is(t, ts),
-        s@.len() < 0x1_0000_0000,
+        s@.len() < BITS_MAX,
         64 <= p < 8 * s@.len(),
         (sll as int) < t.ll.rows@.len(),
         (sof as int) < t.of.rows@.len(),
@@ -1538,10 +1652,11 @@ pub fn seq_fast(
     fstart: usize,
     olimit: usize,
     Ghost(ts): Ghost<SeqTables>,
+    Tracked(m): Tracked<&mut Meter>,
 ) -> (r: Fast)
     requires
         seqtabs_is(t, ts),
-        s@.len() < 0x1_0000_0000,
+        s@.len() < BITS_MAX,
         lits@.len() <= 131072,
         p0 <= 8 * s@.len(),
         li0 <= lits@.len(),
@@ -1549,10 +1664,14 @@ pub fn seq_fast(
         (sof0 as int) < t.of.rows@.len(),
         (sml0 as int) < t.ml.rows@.len(),
         fstart <= old(out)@.len() <= olimit,
-        olimit <= 0x1_0000_0000_0000,
+        olimit <= MAX_LIMIT,
         old(out).cap() >= olimit + 64,
     ensures
         final(out).cap() == old(out).cap(),
+        final(out)@.len() >= old(out)@.len(),
+        final(m).n <= old(m).n + 3 * (final(out)@.len() - old(out)@.len()) + 2,
+        final(out)@.len() <= olimit,
+        r.res == 0 ==> final(out)@.len() - old(out)@.len() >= r.li - li0,
         ({
             let st0 = sstate(p0, sll0, sof0, sml0, r10, r20, r30, li0, old(out)@, fstart as int);
             let full = seq_run(ts, s@, lits@, window as nat, left0 as nat, st0);
@@ -1607,10 +1726,12 @@ pub fn seq_fast(
         (out.len() - fstart) as u64
     };
     loop
+        invariant_except_break
+            m.n <= old(m).n + 3 * (out@.len() - old(out)@.len()) + 1,
         invariant
             left <= left0,
             seqtabs_is(t, ts),
-            s@.len() < 0x1_0000_0000,
+            s@.len() < BITS_MAX,
             lits@.len() <= 131072,
             p < 8 * s@.len(),
             li <= lits@.len(),
@@ -1618,7 +1739,7 @@ pub fn seq_fast(
             (sof as int) < t.of.rows@.len(),
             (sml as int) < t.ml.rows@.len(),
             fstart <= out@.len() <= olimit,
-            olimit <= 0x1_0000_0000_0000,
+            olimit <= MAX_LIMIT,
             out.cap() == old(out).cap(),
             out.cap() >= olimit + 64,
             wlim <= window,
@@ -1629,8 +1750,16 @@ pub fn seq_fast(
             full == seq_run(ts, s@, lits@, window as nat, left0 as nat, st0),
             seq_run(ts, s@, lits@, window as nat, left as nat, sstate(p, sll, sof, sml, r1, r2, r3, li, out@, fstart as int))
                 == full,
+            out@.len() >= old(out)@.len(),
+            li >= li0,
+            out@.len() - old(out)@.len() >= li - li0,
+        ensures
+            m.n <= old(m).n + 3 * (out@.len() - old(out)@.len()) + 2,
         decreases left,
     {
+        proof {
+            m.n = m.n + 1;
+        }
         if left <= 1 || p < 64 {
             break;
         }
@@ -1683,6 +1812,11 @@ pub fn seq_fast(
         }
         let ll = d.ll;
         let ml = d.ml;
+        proof {
+            assert(eml.sym == t.ml.rows@[sml as int].sym as nat);
+            lemma_ml_base_min(eml.sym);
+            assert(ml >= 3);
+        }
         let (off, n1, n2, n3) = match resolve_offset_exec(d.ov, ll == 0, r1, r2, r3) {
             None => {
                 proof {
@@ -1704,8 +1838,9 @@ pub fn seq_fast(
             proof {
                 assert(out@.subrange(0, fstart as int) =~= pre);
                 assert(fout(out@, fstart as int) =~= out1);
+                m.n = (m.n + ll) as nat;
             }
-            copy_match_short(out, fstart, off as usize, ml as usize);
+            copy_match_short(out, fstart, off as usize, ml as usize, Tracked(m));
             proof {
                 assert(out@.subrange(0, fstart as int) =~= pre);
                 assert(fout(out@, fstart as int) =~= copy_match(out1, off as nat, ml as nat));
@@ -1751,14 +1886,15 @@ pub fn seq_fast(
             proof {
                 assert(out@.subrange(0, fstart as int) =~= pre);
                 assert(fout(out@, fstart as int) =~= out1);
+                m.n = (m.n + ll) as nat;
             }
-            if off as usize > out.len() - fstart || off > window || off == 0 {
+            if off > (out.len() - fstart) as u64 || off > window || off == 0 {
                 proof {
                     assert(step is None);
                 }
                 return Fast { res: 1, p, sll, sof, sml, r1, r2, r3, li, left };
             }
-            copy_match_exec(out, fstart, off as usize, ml as usize);
+            copy_match_exec(out, fstart, off as usize, ml as usize, Tracked(m));
         }
         let lend = li + ll as usize;
         proof {
@@ -1803,19 +1939,24 @@ pub fn seq_run_exec(
     fstart: usize,
     olimit: usize,
     Ghost(ts): Ghost<SeqTables>,
+    Tracked(m): Tracked<&mut Meter>,
 ) -> (r: Result<SeqOut, bool>)
     requires
         seqtabs_is(t, ts),
-        s@.len() < 0x1_0000_0000,
+        s@.len() < BITS_MAX,
         lits@.len() <= 131072,
         p0 <= 8 * s@.len(),
         (sll0 as int) < t.ll.rows@.len(),
         (sof0 as int) < t.of.rows@.len(),
         (sml0 as int) < t.ml.rows@.len(),
         fstart <= old(out)@.len() <= olimit,
-        olimit <= 0x1_0000_0000_0000,
+        olimit <= MAX_LIMIT,
         olimit - old(out)@.len() <= 131072,
     ensures
+        final(out)@.len() >= old(out)@.len(),
+        final(m).n <= old(m).n + 3 * (final(out)@.len() - old(out)@.len()) + 3,
+        final(out)@.len() <= olimit,
+        r is Ok ==> final(out)@.len() - old(out)@.len() >= r.unwrap().li,
         ({
             let st0 = sstate(p0, sll0, sof0, sml0, r10, r20, r30, 0, old(out)@, fstart as int);
             match seq_run(ts, s@, lits@, window as nat, n as nat, st0) {
@@ -1838,7 +1979,7 @@ pub fn seq_run_exec(
     // in the loop has to test for it.
     let extra = olimit - out.len() + 64;
     let mut w = Tail::take(out, extra);
-    let r = seq_run_tail(t, s, lits, window, n, p0, sll0, sof0, sml0, r10, r20, r30, &mut w, fstart, olimit, Ghost(ts));
+    let r = seq_run_tail(t, s, lits, window, n, p0, sll0, sof0, sml0, r10, r20, r30, &mut w, fstart, olimit, Ghost(ts), Tracked(m));
     w.put_back(out);
     r
 }
@@ -1864,19 +2005,24 @@ fn seq_run_tail(
     fstart: usize,
     olimit: usize,
     Ghost(ts): Ghost<SeqTables>,
+    Tracked(m): Tracked<&mut Meter>,
 ) -> (r: Result<SeqOut, bool>)
     requires
         seqtabs_is(t, ts),
-        s@.len() < 0x1_0000_0000,
+        s@.len() < BITS_MAX,
         lits@.len() <= 131072,
         p0 <= 8 * s@.len(),
         (sll0 as int) < t.ll.rows@.len(),
         (sof0 as int) < t.of.rows@.len(),
         (sml0 as int) < t.ml.rows@.len(),
         fstart <= old(out)@.len() <= olimit,
-        olimit <= 0x1_0000_0000_0000,
+        olimit <= MAX_LIMIT,
         old(out).cap() >= olimit + 64,
     ensures
+        final(out)@.len() >= old(out)@.len(),
+        final(m).n <= old(m).n + 3 * (final(out)@.len() - old(out)@.len()) + 3,
+        final(out)@.len() <= olimit,
+        r is Ok ==> final(out)@.len() - old(out)@.len() >= r.unwrap().li,
         ({
             let st0 = sstate(p0, sll0, sof0, sml0, r10, r20, r30, 0, old(out)@, fstart as int);
             match seq_run(ts, s@, lits@, window as nat, n as nat, st0) {
@@ -1911,7 +2057,7 @@ fn seq_run_tail(
         invariant
             i <= n,
             seqtabs_is(t, ts),
-            s@.len() < 0x1_0000_0000,
+            s@.len() < BITS_MAX,
             lits@.len() <= 131072,
             p <= 8 * s@.len(),
             li <= lits@.len(),
@@ -1919,7 +2065,7 @@ fn seq_run_tail(
             (sof as int) < t.of.rows@.len(),
             (sml as int) < t.ml.rows@.len(),
             fstart <= out@.len() <= olimit,
-            olimit <= 0x1_0000_0000_0000,
+            olimit <= MAX_LIMIT,
             out.cap() >= olimit + 64,
             out@.subrange(0, fstart as int) == pre,
             pre == old(out)@.subrange(0, fstart as int),
@@ -1927,8 +2073,14 @@ fn seq_run_tail(
             full == seq_run(ts, s@, lits@, window as nat, n as nat, st0),
             seq_run(ts, s@, lits@, window as nat, (n - i) as nat, sstate(p, sll, sof, sml, r1, r2, r3, li, out@, fstart as int))
                 == full,
+            out@.len() >= old(out)@.len(),
+            m.n <= old(m).n + 3 * (out@.len() - old(out)@.len()),
+            out@.len() - old(out)@.len() >= li,
         decreases n - i,
     {
+        proof {
+            m.n = m.n + 1;
+        }
         let ghost cur = sstate(p, sll, sof, sml, r1, r2, r3, li, out@, fstart as int);
         if i == n {
             proof {
@@ -1939,7 +2091,7 @@ fn seq_run_tail(
             return Ok(SeqOut { p, r1, r2, r3, li });
         }
         // As many sequences as the fast loop takes, then one the slow way.
-        let f = seq_fast(t, s, lits, window, n - i, p, sll, sof, sml, r1, r2, r3, li, out, fstart, olimit, Ghost(ts));
+        let f = seq_fast(t, s, lits, window, n - i, p, sll, sof, sml, r1, r2, r3, li, out, fstart, olimit, Ghost(ts), Tracked(m));
         if f.res != 0 {
             return Err(f.res == 2);
         }
@@ -1964,7 +2116,7 @@ fn seq_run_tail(
         proof {
             lemma_seq_run_unfold(ts, s@, lits@, window as nat, (n - i) as nat, cur);
         }
-        let o = match seq_step_exec(t, s, lits, window, p, sll, sof, sml, r1, r2, r3, li, out, fstart, olimit, Ghost(ts)) {
+        let o = match seq_step_exec(t, s, lits, window, p, sll, sof, sml, r1, r2, r3, li, out, fstart, olimit, Ghost(ts), Tracked(m)) {
             Err(lim) => {
                 proof {
                     if let Some(a) = seq_step(ts, s@, lits@, window as nat, cur) {
@@ -2179,13 +2331,19 @@ pub proof fn lemma_seq_section(b: Seq<u8>, lits: Seq<u8>, window: nat, st: Frame
     reveal(seq_section);
 }
 
+/// The most steps the three tables of a sequences header take, besides
+/// 24 per byte of the block: each is read (`read_ncount`, at most 162),
+/// built (`build_table`, at most 1695) and baked (at most 512).
+pub spec const SEQ_HDR_WORK: nat = 7200;
+
 /// Parses the three tables (`seq_hdr`).
-pub fn seq_hdr_exec(b: &[u8], h: usize, seqt: &Option<SeqTabs>, Ghost(st): Ghost<FrameState>) -> (r: Option<(SeqTabs, usize)>)
+pub fn seq_hdr_exec(b: &[u8], h: usize, seqt: &Option<SeqTabs>, Ghost(st): Ghost<FrameState>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<(SeqTabs, usize)>)
     requires
-        b@.len() < 0x1_0000_0000,
+        b@.len() < BITS_MAX,
         h < b@.len(),
         seqt_opt_is(*seqt, st.seqt),
     ensures
+        final(m).n <= old(m).n + SEQ_HDR_WORK + 24 * b@.len(),
         match seq_hdr(b@, h as int, st) {
             None => r is None,
             Some((t, a3)) => r is Some && seqtabs_is(&r.unwrap().0, t) && r.unwrap().1 as int == a3 && a3 <= b@.len(),
@@ -2209,29 +2367,35 @@ pub fn seq_hdr_exec(b: &[u8], h: usize, seqt: &Option<SeqTabs>, Ghost(st): Ghost
         None => (None, None, None),
         Some(t) => (Some(&t.ll), Some(&t.of), Some(&t.ml)),
     };
-    let (ll, u0) = match seq_table_exec(slice_subrange(b, a0, b.len()), 0, modes / 64, prev_ll, Ghost(gprev_ll)) {
+    let (ll, u0) = match seq_table_exec(slice_subrange(b, a0, b.len()), 0, modes / 64, prev_ll, Ghost(gprev_ll), Tracked(m)) {
         None => {
             return None;
         },
         Some(x) => x,
     };
     let a1 = a0 + u0;
-    let (of, u1) = match seq_table_exec(slice_subrange(b, a1, b.len()), 1, (modes / 16) % 4, prev_of, Ghost(gprev_of)) {
+    let (of, u1) = match seq_table_exec(slice_subrange(b, a1, b.len()), 1, (modes / 16) % 4, prev_of, Ghost(gprev_of), Tracked(m)) {
         None => {
             return None;
         },
         Some(x) => x,
     };
     let a2 = a1 + u1;
-    let (ml, u2) = match seq_table_exec(slice_subrange(b, a2, b.len()), 2, (modes / 4) % 4, prev_ml, Ghost(gprev_ml)) {
+    let (ml, u2) = match seq_table_exec(slice_subrange(b, a2, b.len()), 2, (modes / 4) % 4, prev_ml, Ghost(gprev_ml), Tracked(m)) {
         None => {
             return None;
         },
         Some(x) => x,
     };
-    let dl = bake(&ll, 0);
-    let dof = bake(&of, 1);
-    let dml = bake(&ml, 2);
+    proof {
+        lemma_pow2_le(ll.log as nat, 9);
+        lemma_pow2_le(of.log as nat, 9);
+        lemma_pow2_le(ml.log as nat, 9);
+        lemma2_to64();
+    }
+    let dl = bake(&ll, 0, Tracked(m));
+    let dof = bake(&of, 1, Tracked(m));
+    let dml = bake(&ml, 2, Tracked(m));
     Some((SeqTabs { ll, of, ml, dl, dof, dml }, a2 + u2))
 }
 
@@ -2247,16 +2411,21 @@ pub fn seq_body_exec(
     n: usize,
     Ghost(st): Ghost<FrameState>,
     Ghost(ts): Ghost<SeqTables>,
+    Tracked(m): Tracked<&mut Meter>,
 ) -> (ok: Step)
     requires
-        b@.len() < 0x1_0000_0000,
+        b@.len() < BITS_MAX,
         a3 <= b@.len(),
         seqtabs_is(&tabs, ts),
         dec_is(old(d), st),
         old(d).lits@.len() <= 131072,
-        old(d).out@.len() <= olimit <= 0x1_0000_0000_0000,
+        old(d).out@.len() <= olimit <= MAX_LIMIT,
         olimit - old(d).out@.len() <= 131072,
     ensures
+        final(d).out@.len() >= old(d).out@.len(),
+        final(m).n <= old(m).n + 3 * (final(d).out@.len() - old(d).out@.len()) + 3,
+        final(d).out@.len() <= olimit,
+        ok is Done ==> final(d).out@.len() - old(d).out@.len() >= old(d).lits@.len(),
         match seq_body(b@, old(d).lits@, window as nat, st, ts, a3 as int, n as nat) {
             None => !(ok is Done),
             Some(st2) => match ok {
@@ -2328,6 +2497,7 @@ pub fn seq_body_exec(
         fstart,
         olimit,
         Ghost(ts),
+        Tracked(m),
     );
     proof {
         lemma_seq_run_grows(ts, s@, lits, window as nat, n as nat, st0);
@@ -2362,6 +2532,9 @@ pub fn seq_body_exec(
             }
             let ghost o1 = d.out@;
             d.out.extend_from_slice(rest);
+            proof {
+                m.n = m.n + rest@.len();
+            }
             d.r1 = o.r1;
             d.r2 = o.r2;
             d.r3 = o.r3;
@@ -2381,14 +2554,18 @@ pub fn seq_body_exec(
 /// The sequences section `b` of a block whose literals are in `d.lits`
 /// (`seq_section`). Fails early, with the spec's result too large, once
 /// the output passes `olimit`.
-fn seq_section_exec(b: &[u8], window: u64, d: &mut FrameDec, olimit: usize, Ghost(st): Ghost<FrameState>) -> (ok: Step)
+fn seq_section_exec(b: &[u8], window: u64, d: &mut FrameDec, olimit: usize, Ghost(st): Ghost<FrameState>, Tracked(m): Tracked<&mut Meter>) -> (ok: Step)
     requires
-        b@.len() < 0x1_0000_0000,
+        b@.len() < BITS_MAX,
         dec_is(old(d), st),
         old(d).lits@.len() <= 131072,
-        old(d).out@.len() <= olimit <= 0x1_0000_0000_0000,
+        old(d).out@.len() <= olimit <= MAX_LIMIT,
         olimit - old(d).out@.len() <= 131072,
     ensures
+        final(d).out@.len() >= old(d).out@.len(),
+        final(m).n <= old(m).n + SEQ_HDR_WORK + 24 * b@.len() + 3 * (final(d).out@.len() - old(d).out@.len()) + 3,
+        final(d).out@.len() <= olimit,
+        ok is Done ==> final(d).out@.len() - old(d).out@.len() >= old(d).lits@.len(),
         match seq_section(b@, old(d).lits@, window as nat, st) {
             None => !(ok is Done),
             Some(st2) => match ok {
@@ -2424,6 +2601,7 @@ fn seq_section_exec(b: &[u8], window: u64, d: &mut FrameDec, olimit: usize, Ghos
         }
         d.out.extend_from_slice(d.lits.as_slice());
         proof {
+            m.n = m.n + lits.len();
             assert(d.out@.subrange(0, d.fstart as int) =~= pre);
             assert(fout(d.out@, d.fstart as int) =~= st.out + lits);
         }
@@ -2432,25 +2610,36 @@ fn seq_section_exec(b: &[u8], window: u64, d: &mut FrameDec, olimit: usize, Ghos
     if h + 1 > b.len() || b[h] % 4 != 0 {
         return Step::Bad;
     }
-    let (tabs, a3) = match seq_hdr_exec(b, h, &d.seqt, Ghost(st)) {
+    let (tabs, a3) = match seq_hdr_exec(b, h, &d.seqt, Ghost(st), Tracked(m)) {
         None => {
             return Step::Bad;
         },
         Some(x) => x,
     };
     let ghost ts = seq_hdr(b@, h as int, st).unwrap().0;
-    seq_body_exec(b, window, d, olimit, tabs, a3, n, Ghost(st), Ghost(ts))
+    seq_body_exec(b, window, d, olimit, tabs, a3, n, Ghost(st), Ghost(ts), Tracked(m))
 }
+
+/// The most steps a compressed block takes besides those linear in its
+/// size and output: a Huffman tree and three sequence tables.
+pub spec const CBLOCK_WORK: nat = 19603;
 
 /// A compressed block (`compressed_block`).
 #[verifier::rlimit(40)]
-pub fn compressed_block_exec(b: &[u8], window: u64, bmax: usize, d: &mut FrameDec, olimit: usize, Ghost(st): Ghost<FrameState>) -> (ok: Step)
+pub fn compressed_block_exec(b: &[u8], window: u64, bmax: usize, d: &mut FrameDec, olimit: usize, Ghost(st): Ghost<FrameState>, Tracked(m): Tracked<&mut Meter>) -> (ok: Step)
     requires
-        b@.len() < 0x1_0000_0000,
+        b@.len() < BITS_MAX,
         bmax <= 131072,
         dec_is(old(d), st),
-        old(d).out@.len() <= olimit <= 0x1_0000_0000_0000,
+        old(d).out@.len() <= olimit <= MAX_LIMIT,
     ensures
+        // Work: linear in the block and in the output it adds (or, if it
+        // fails, the literals it may have decoded).
+        final(d).out@.len() >= old(d).out@.len(),
+        final(m).n <= old(m).n + CBLOCK_WORK + 24 * b@.len() + 6 * bmax + 3 * (final(d).out@.len() - old(d).out@.len()),
+        final(d).out@.len() <= olimit,
+        final(d).out@.len() <= old(d).out@.len() + bmax,
+        ok is Done ==> final(m).n <= old(m).n + CBLOCK_WORK + 24 * b@.len() + 9 * (final(d).out@.len() - old(d).out@.len()),
         match compressed_block(b@, window as nat, bmax as nat, st) {
             None => !(ok is Done),
             Some(st2) => match ok {
@@ -2466,7 +2655,7 @@ pub fn compressed_block_exec(b: &[u8], window: u64, bmax: usize, d: &mut FrameDe
         },
 {
     let ghost hc = old_huf_code(&d.huf);
-    let used = match lit_section_exec(b, bmax, &mut d.huf, &mut d.lits) {
+    let used = match lit_section_exec(b, bmax, &mut d.huf, &mut d.lits, Tracked(m)) {
         None => {
             return Step::Bad;
         },
@@ -2476,7 +2665,7 @@ pub fn compressed_block_exec(b: &[u8], window: u64, bmax: usize, d: &mut FrameDe
     let ghost st1 = FrameState { huf: l.huf, ..st };
     // The block may not grow the output by more than `bmax`.
     let blim = if olimit - d.out.len() > bmax { d.out.len() + bmax } else { olimit };
-    let ok = seq_section_exec(slice_subrange(b, used, b.len()), window, d, blim, Ghost(st1));
+    let ok = seq_section_exec(slice_subrange(b, used, b.len()), window, d, blim, Ghost(st1), Tracked(m));
     proof {
         let r = seq_section(b@.subrange(used as int, b@.len() as int), l.lits, window as nat, st1);
         if r is Some {

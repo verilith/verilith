@@ -97,8 +97,9 @@ impl Table {
         self.ents.len()
     }
 
-    /// Evicts the oldest entries until `room` more bytes fit in `max`.
-    fn evict_for(&mut self, room: u64, max: u32)
+    /// Evicts the oldest entries until `room` more bytes fit in `max`. The
+    /// second result counts the loop's turns: one per entry evicted.
+    fn evict_for(&mut self, room: u64, max: u32) -> (r: Ghost<nat>)
         requires
             old(self).size as nat == tsize(old(self).view()),
             old(self).size <= 0xFFFF_FFFF,
@@ -108,7 +109,9 @@ impl Table {
             final(self).view() == evict(old(self).view(), room as nat, max as nat),
             final(self).max == old(self).max,
             final(self).size <= old(self).size,
+            final(self).view().len() + r@ == old(self).view().len(),
     {
+        let ghost mut steps: nat = 0;
         while self.ents.len() > 0 && self.size + room > max as u64
             invariant
                 self.size as nat == tsize(self.view()),
@@ -117,6 +120,7 @@ impl Table {
                 self.max == old(self).max,
                 self.size <= old(self).size,
                 evict(old(self).view(), room as nat, max as nat) == evict(self.view(), room as nat, max as nat),
+                self.view().len() + steps == old(self).view().len(),
             decreases self.ents@.len(),
         {
             let ghost v = self.view();
@@ -138,23 +142,29 @@ impl Table {
                 },
                 None => {},
             }
+            proof {
+                steps = steps + 1;
+            }
         }
+        Ghost(steps)
     }
 
     /// Sets the maximum size, evicting to fit (§4.3).
-    pub fn resize(&mut self, max: u32)
+    pub fn resize(&mut self, max: u32) -> (r: Ghost<nat>)
         requires
             old(self).inv(),
         ensures
             final(self).inv(),
             final(self).max == max,
             final(self).view() == evict(old(self).view(), 0, max as nat),
+            final(self).view().len() + r@ == old(self).view().len(),
     {
-        self.evict_for(0, max);
+        let g = self.evict_for(0, max);
         proof {
             lemma_evict_len(old(self).view(), 0, max as nat);
         }
         self.max = max;
+        g
     }
 
     /// Adds an entry (§4.4).
@@ -170,7 +180,7 @@ impl Table {
     {
         let room = name.len() as u64 + value.len() as u64 + 32;
         let max = self.max;
-        self.evict_for(room, max);
+        let _ = self.evict_for(room, max);
         proof {
             lemma_evict_len(old(self).view(), room as nat, max as nat);
         }
@@ -194,21 +204,26 @@ impl Table {
     /// entry 0, and `name` and `value` hold other buffers, contents
     /// unspecified); false if it did not fit (the table is then empty, and
     /// `name` and `value` are unchanged).
-    pub fn insert_move(&mut self, name: &mut Vec<u8>, value: &mut Vec<u8>) -> (r: bool)
+    ///
+    /// The second result counts the eviction loop's turns, one per entry
+    /// evicted: with the entry added, at most one more than the entries
+    /// the table lost.
+    pub fn insert_move(&mut self, name: &mut Vec<u8>, value: &mut Vec<u8>) -> (r: (bool, Ghost<nat>))
         requires
             old(self).inv(),
             old(name)@.len() <= 0xFFFF_FFFF,
             old(value)@.len() <= 0xFFFF_FFFF,
         ensures
+            final(self).view().len() + r.1@ <= old(self).view().len() + 1,
             final(self).inv(),
             final(self).max == old(self).max,
             final(self).view() == insert(old(self).view(), old(self).max as nat, (old(name)@, old(value)@)),
-            r ==> final(self).view().len() > 0 && final(self).view()[0] == (old(name)@, old(value)@),
-            !r ==> final(name)@ == old(name)@ && final(value)@ == old(value)@,
+            r.0 ==> final(self).view().len() > 0 && final(self).view()[0] == (old(name)@, old(value)@),
+            !r.0 ==> final(name)@ == old(name)@ && final(value)@ == old(value)@,
     {
         let room = name.len() as u64 + value.len() as u64 + 32;
         let max = self.max;
-        self.evict_for(room, max);
+        let g = self.evict_for(room, max);
         proof {
             lemma_evict_len(old(self).view(), room as nat, max as nat);
         }
@@ -232,9 +247,9 @@ impl Table {
             if self.ins < u64::MAX {
                 self.ins = self.ins + 1;
             }
-            true
+            (true, g)
         } else {
-            false
+            (false, g)
         }
     }
 
@@ -246,6 +261,7 @@ impl Table {
             r.0@ == entry(self.view(), i as nat).0,
             r.1@ == entry(self.view(), i as nat).1,
             self.inv() ==> r.0@.len() <= 0xFFFF_FFFF && r.1@.len() <= 0xFFFF_FFFF,
+            self.inv() ==> r.0@.len() <= self.max + 64,
     {
         proof {
             if self.inv() && i > 61 {

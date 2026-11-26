@@ -1,11 +1,11 @@
 //! A checked, ready-to-run module instance: the boundary between verified
 //! and unverified code.
 //!
-//! An [`Instance`] can only be built by [`Instance::new`], which checks the
+//! A [`Checked`] instance can only be built by [`Checked::new`], which checks the
 //! certificates and the initial store, and its fields are private, so its
 //! type invariant (checked certificates, compiled code, a well-formed
 //! store) holds for every instance whatever unverified code does with it.
-//! [`Instance::invoke`] is therefore safe to call from anywhere, and every
+//! [`Checked::invoke`] is therefore safe to call from anywhere, and every
 //! call runs the proven interpreter.
 use vstd::prelude::*;
 use crate::ast::*;
@@ -38,8 +38,8 @@ pub fn check_store(m: &Module, st: &Store) -> (r: bool)
     ensures r ==> store_ok(m, store_view(st)) && store_wf(st),
 {
     if st.globals.len() != m.global_types.len() || st.tables.len() != m.tables.len()
-        || st.dropped.len() != m.datas.len() || st.mem_max > 65536
-        || st.mem.len() > st.mem_max as usize * PAGE as usize || st.mem.len() % PAGE as usize != 0 {
+        || st.dropped.len() != m.datas.len() || st.mem_max > crate::interp::MAX_PAGES
+        || st.mem.len() as u64 > st.mem_max as u64 * PAGE || st.mem.len() % PAGE as usize != 0 {
         return false;
     }
     let nf = m.func_types.len();
@@ -145,8 +145,13 @@ impl Checked {
     }
 
     /// Runs function `func` (an index among all the module's functions)
-    /// on `args`. A wrong number of arguments traps with `Unreachable`.
-    pub fn invoke<H: Host>(self, func: u32, args: &[u64], host: &mut H) -> (r: (Checked, Result<Vec<u64>, Trap>)) {
+    /// on `args`. If `metered`, the call has `*fuel` units of fuel (see
+    /// [`execute_metered`]) and leaves the fuel that remains in `*fuel`;
+    /// otherwise it is unlimited ([`execute`]) and `*fuel` is unchanged. A
+    /// wrong number of arguments traps with `Unreachable`.
+    pub fn invoke<H: Host>(self, func: u32, args: &[u64], host: &mut H, metered: bool, fuel: &mut u64)
+        -> (r: (Checked, Result<Vec<u64>, Trap>))
+    {
         proof { use_type_invariant(&self); }
         let Checked { m, cs, codes, mut st, mut stack, mut calls } = self;
         let nf = m.func_types.len();
@@ -208,7 +213,15 @@ impl Checked {
             assert(c0.frames.last() == f);
             assert(inv(&m, cs@, c0));
         }
-        let (r, _, _) = execute(&m, &codes, Ghost(cs@), &mut st, &mut stack, &mut calls, host, d, Ghost(c0));
+        let r = if metered {
+            let (r, _, _, left) = execute_metered(&m, &codes, Ghost(cs@), &mut st, &mut stack, &mut calls, host, d,
+                Ghost(c0), *fuel);
+            *fuel = left;
+            r
+        } else {
+            let (r, _, _) = execute(&m, &codes, Ghost(cs@), &mut st, &mut stack, &mut calls, host, d, Ghost(c0));
+            r
+        };
         (Checked { m, cs, codes, st, stack, calls }, r)
     }
 }

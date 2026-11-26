@@ -7,6 +7,7 @@ members = [
     "crates/core",
     "crates/dns",
     "crates/font",
+    "crates/gif",
     "crates/hpack",
     "crates/http",
     "crates/jpeg",
@@ -19,6 +20,7 @@ members = [
     "crates/snappy",
     "crates/sync",
     "crates/text",
+    "crates/tiff",
     "crates/url",
     "crates/verilith",
     "crates/wasm",
@@ -40,10 +42,10 @@ exclude = ["bench", "target", "crates/bind/target"]
 [workspace.dependencies]
 # The one Verus release every crate is verified with. The verifier itself is
 # the release build of the matching commit: see scripts/verus-version.
-vstd = { version = "=0.0.0-2026-11-01-0251", default-features = false }
-verus_builtin = "=0.0.0-2026-11-01-0251"
-verus_builtin_macros = "=0.0.0-2026-11-01-0251"
-verus_state_machines_macros = "=0.0.0-2026-11-01-0251"
+vstd = { version = "=0.0.0-2026-11-22-0344", default-features = false }
+verus_builtin = "=0.0.0-2026-11-22-0344"
+verus_builtin_macros = "=0.0.0-2026-11-22-0344"
+verus_state_machines_macros = "=0.0.0-2026-11-22-0344"
 
 # Profiles are per workspace, not per crate. Before the monorepo each library
 # set its own, and the three below reproduce them, so that a library built

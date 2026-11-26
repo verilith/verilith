@@ -64,7 +64,7 @@ pub enum Shape {
 }
 
 /// A register operation as the interpreter runs it: its [`OpCode`] and
-/// fields (whose use depends on the code; see [`lower`]).
+/// fields (whose use depends on the code; see `lower`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ROp {
     pub imm: u64,

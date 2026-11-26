@@ -90,3 +90,22 @@ fn streaming_byte_at_a_time() {
     }
     assert_eq!(h.digest(Ghost::assume_new()), xxhash_rust::xxh64::xxh64(&d, 0));
 }
+
+#[test]
+fn seeds_match_xxhash_rust() {
+    use std::hash::Hasher;
+    let d = data(700);
+    for seed in [0u64, 1, 0x9E3779B97F4A7C15, u64::MAX] {
+        for n in [0, 1, 3, 4, 15, 16, 17, 31, 32, 33, 63, 64, 100, 255, 700] {
+            let s = &d[..n];
+            assert_eq!(verilith_xxhash::xxh32(s, seed as u32), xxhash_rust::xxh32::xxh32(s, seed as u32), "xxh32 seed {seed} len {n}");
+            assert_eq!(verilith_xxhash::xxh64(s, seed), xxhash_rust::xxh64::xxh64(s, seed), "xxh64 seed {seed} len {n}");
+            for cut in [0, n / 3, n / 2, n] {
+                let mut h = verilith_xxhash::XxHash64::with_seed(seed);
+                h.write(&s[..cut]);
+                h.write(&s[cut..]);
+                assert_eq!(h.finish(), xxhash_rust::xxh64::xxh64(s, seed), "XxHash64 seed {seed} len {n} cut {cut}");
+            }
+        }
+    }
+}

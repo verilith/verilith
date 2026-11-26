@@ -8,7 +8,7 @@
 //! inverse DCT (`jidctint.c`), chroma upsampling (`jdsample.c`) and the
 //! YCbCr to RGB conversion (`jdcolor.c`). Each part names its source.
 //!
-//! Everything here is a total function over `Seq<u8>`: [`jpeg_decode`]
+//! Everything here is a total function over `Seq<u8>`: `jpeg_decode`
 //! gives, for every byte string, either the image or `None`.
 #[cfg(verus_only)]
 use vstd::arithmetic::power2::pow2;

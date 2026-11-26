@@ -185,7 +185,10 @@ pub fn unexplained(data: &[u8]) -> Option<Diff> {
             let after_pe = (at(b"<!ATTLIST") || at(b"<!ENTITY"))
                 && data[..e.offset].windows(1).any(|w| w == b"%")
                 && !data.windows(16).any(|w| w == b"standalone=\"yes\"" || w == b"standalone='yes'");
-            if bad_version || bom_conflict || utf16_text || after_pe {
+            // expat (by default) does not read parameter entities; the
+            // document is well-formed if they are not read either.
+            let pe_read = verilith_xml::enc::ex_parse(data, &mut verilith_xml::tape::Tape::new()).is_some();
+            if bad_version || bom_conflict || utf16_text || after_pe || pe_read {
                 None
             } else {
                 Some(Diff::OnlyExpat)

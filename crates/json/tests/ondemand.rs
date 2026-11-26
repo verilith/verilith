@@ -193,11 +193,17 @@ fn chaos(r: &mut Reader, buf: &mut Vec<u8>, seed: &mut u64) {
 }
 
 pub fn check(data: &[u8]) {
+    check_win(data, verilith_json::index::WINDOW);
+    check_win(data, 128);
+}
+
+/// `check` with index windows of `win` bytes.
+pub fn check_win(data: &[u8], win: usize) {
     let tape = verilith_json::parse(data);
     let mut idx = Vec::new();
     let mut buf = Vec::new();
     let mut got = Vec::new();
-    let full = match Reader::new(data, &mut idx) {
+    let full = match Reader::with_window(data, &mut idx, win) {
         Some(mut r) => dump_od(&mut r, &mut buf, &mut got, DEPTH).is_ok() && r.at_end(),
         None => false,
     };
@@ -208,11 +214,11 @@ pub fn check(data: &[u8]) {
             dump_tape(doc.root(), &mut want);
             assert!(want == got, "values differ");
             let mut idx = Vec::new();
-            let mut r = Reader::new(data, &mut idx).unwrap();
+            let mut r = Reader::with_window(data, &mut idx, win).unwrap();
             assert!(r.skip().is_ok() && r.at_end(), "skip of the document");
             for s in 1..6u64 {
                 let mut idx = Vec::new();
-                let mut r = Reader::new(data, &mut idx).unwrap();
+                let mut r = Reader::with_window(data, &mut idx, win).unwrap();
                 let mut seed = s.wrapping_mul(0x9E3779B97F4A7C15) ^ data.len() as u64 | 1;
                 assert!(mixed(&mut r, &mut buf, &mut seed, DEPTH).is_ok(), "mixed read");
                 assert!(r.at_end(), "mixed read ends at the end");
@@ -222,7 +228,7 @@ pub fn check(data: &[u8]) {
     }
     for s in 1..4u64 {
         let mut idx = Vec::new();
-        if let Some(mut r) = Reader::new(data, &mut idx) {
+        if let Some(mut r) = Reader::with_window(data, &mut idx, win) {
             let mut seed = s.wrapping_mul(0xD1B54A32D192ED03) ^ data.len() as u64 | 1;
             let _ = mixed(&mut r, &mut buf, &mut seed, DEPTH);
             chaos(&mut r, &mut buf, &mut seed);
@@ -339,4 +345,77 @@ fn corpora() {
             }
         }
     }
+}
+
+/// Calls that do not fit where the reader is are refused, and the reader
+/// stays where it was.
+#[test]
+fn misuse_is_refused() {
+    let s = br#"{"a": [1, 2], "b": {"c": 3}}"#;
+    let mut idx = Vec::new();
+    let mut r = Reader::new(s, &mut idx).unwrap();
+    assert!(r.leave().is_err(), "leave at the top");
+    assert!(r.arr_next().is_err() && r.obj_next().is_err(), "next outside a container");
+    r.obj_begin().unwrap();
+    assert!(r.arr_next().is_err(), "arr_next in an object");
+    assert_eq!(r.obj_next(), Ok(true));
+    assert_eq!(r.key().unwrap(), b"a");
+    r.arr_begin().unwrap();
+    assert!(r.obj_next().is_err(), "obj_next in an array");
+    assert!(r.find(b"x").is_err(), "find in an array");
+    assert_eq!(r.arr_next(), Ok(true));
+    assert_eq!(r.i64(), Ok(1));
+    r.leave().unwrap();
+    // Back in the object, after "a"'s value, as if nothing went wrong.
+    assert_eq!(r.find(b"b"), Ok(true));
+    r.obj_begin().unwrap();
+    assert_eq!(r.find(b"c"), Ok(true));
+    assert_eq!(r.f64(), Ok(3.0));
+    assert_eq!(r.obj_next(), Ok(false));
+    assert_eq!(r.obj_next(), Ok(false));
+    assert!(r.at_end());
+    assert!(r.leave().is_err(), "leave at the top, at the end");
+}
+
+/// `find` stops at the first member with the key, from the cursor on.
+#[test]
+fn find_first() {
+    let s = br#"{"k": 1, "x": 0, "k": 2, "k": 3}"#;
+    let mut idx = Vec::new();
+    let mut r = Reader::new(s, &mut idx).unwrap();
+    r.obj_begin().unwrap();
+    assert_eq!(r.find(b"k"), Ok(true));
+    assert_eq!(r.i64(), Ok(1));
+    assert_eq!(r.find(b"k"), Ok(true));
+    assert_eq!(r.i64(), Ok(2));
+    assert_eq!(r.find(b"x"), Ok(false));
+}
+
+/// The scalar readers.
+#[test]
+fn scalars() {
+    let s = br#"[-9223372036854775808, 9223372036854775807, 9223372036854775808, 1.0, 1e2, -0, "ab", 0.1, 123456789012345678901234567890]"#;
+    let mut idx = Vec::new();
+    let mut r = Reader::new(s, &mut idx).unwrap();
+    let mut buf = Vec::new();
+    r.arr_begin().unwrap();
+    let next = |r: &mut Reader| assert_eq!(r.arr_next(), Ok(true));
+    next(&mut r);
+    assert_eq!(r.i64(), Ok(i64::MIN));
+    next(&mut r);
+    assert_eq!(r.i64(), Ok(i64::MAX));
+    next(&mut r);
+    assert!(r.i64().is_err());
+    next(&mut r);
+    assert!(r.i64().is_err());
+    next(&mut r);
+    assert!(r.i64().is_err());
+    next(&mut r);
+    assert_eq!(r.i64(), Ok(0));
+    next(&mut r);
+    assert_eq!(r.str(&mut buf).unwrap(), b"ab");
+    next(&mut r);
+    assert_eq!(r.f64().unwrap().to_bits(), 0.1f64.to_bits());
+    next(&mut r);
+    assert_eq!(r.f64().unwrap(), 123456789012345678901234567890f64);
 }

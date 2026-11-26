@@ -1,15 +1,17 @@
-//! Verilith: formally verified (Verus) drop-in replacements for foundational
-//! libraries.
-//!
-//! This crate holds no code of its own. Each feature re-exports one library
-//! crate under a short name, and no feature is on by default:
-//!
-//! ```toml
-//! verilith = { version = "0.1", features = ["json", "zlib"] }
-//! ```
-//!
-//! gives `verilith::json` and `verilith::zlib`. Depending on `verilith-json`
-//! directly is the same code with a shorter dependency list.
+#![warn(missing_docs)]
+#![doc = include_str!("../README.md")]
+// Verilith: formally verified (Verus) drop-in replacements for foundational
+// libraries.
+//
+// This crate holds no code of its own. Each feature re-exports one library
+// crate under a short name, and no feature is on by default:
+//
+// ```toml
+// verilith = { version = "0.1", features = ["json", "zlib"] }
+// ```
+//
+// gives `verilith::json` and `verilith::zlib`. Depending on `verilith-json`
+// directly is the same code with a shorter dependency list.
 #![no_std]
 
 /// `verilith-archive`: zip and tar readers behind libarchive's read API.
@@ -27,6 +29,9 @@ pub use verilith_dns as dns;
 /// `verilith-font`: font sanitizer (OpenType, WOFF, WOFF2).
 #[cfg(feature = "font")]
 pub use verilith_font as font;
+/// `verilith-gif`: GIF decoder.
+#[cfg(feature = "gif")]
+pub use verilith_gif as gif;
 /// `verilith-hpack`: HPACK header compression.
 #[cfg(feature = "hpack")]
 pub use verilith_hpack as hpack;
@@ -63,6 +68,9 @@ pub use verilith_sync as sync;
 /// `verilith-text`: UTF-8/16, base64, Unicode and IDNA.
 #[cfg(feature = "text")]
 pub use verilith_text as text;
+/// `verilith-tiff`: TIFF decoder.
+#[cfg(feature = "tiff")]
+pub use verilith_tiff as tiff;
 /// `verilith-url`: WHATWG URL parser.
 #[cfg(feature = "url")]
 pub use verilith_url as url;

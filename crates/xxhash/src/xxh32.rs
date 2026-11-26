@@ -1,4 +1,5 @@
-//! XXH32 with seed 0, proven equal to `spec::xxh32`.
+//! XXH32, proven equal to `spec::xxh32_seed` (and with seed 0, to
+//! `spec::xxh32`).
 #[cfg(verus_only)]
 use crate::bytes::lemma_le_is;
 use crate::spec::*;
@@ -80,22 +81,15 @@ fn round(acc: u32, lane: u32) -> (r: u32)
     mul(rotl(add(acc, mul(lane, XQ2)), 13), XQ1)
 }
 
-/// The accumulators after all whole stripes (`stripes32`).
-fn stripes(b: &[u8]) -> (r: (u32, u32, u32, u32))
+/// The accumulators after all whole stripes (`stripes32`), from `v0`.
+fn stripes(b: &[u8], v0: (u32, u32, u32, u32)) -> (r: (u32, u32, u32, u32))
     ensures
-        r == stripes32(b@, 0, (add32(PRIME32_1, PRIME32_2), PRIME32_2, 0u32, (0x1_0000_0000 - PRIME32_1) as u32)),
+        r == stripes32(b@, 0, v0),
 {
     let n = b.len();
-    let ghost v0 = (add32(PRIME32_1, PRIME32_2), PRIME32_2, 0u32, (0x1_0000_0000 - PRIME32_1) as u32);
     let ghost goal = stripes32(b@, 0, v0);
-    let mut v1 = add(XQ1, XQ2);
-    let mut v2 = XQ2;
-    let mut v3 = 0u32;
-    let mut v4 = 0u32.wrapping_sub(XQ1);
+    let (mut v1, mut v2, mut v3, mut v4) = v0;
     let mut i: usize = 0;
-    proof {
-        assert(v4 == (0x1_0000_0000 - PRIME32_1) as u32);
-    }
     while n - i >= 16
         invariant
             n == b@.len(),
@@ -143,26 +137,55 @@ fn tail(b: &[u8], i0: usize, h0: u32) -> (r: u32)
     h
 }
 
-/// XXH32 of `b` with seed 0 (`xxh32`).
-pub fn xxh32_exec(b: &[u8]) -> (r: u32)
+/// Seed 0 is the unseeded XXH32 of the specification.
+pub proof fn lemma_xxh32_seed0(b: Seq<u8>)
     ensures
-        r == xxh32(b@),
+        xxh32_seed(b, 0) == xxh32(b),
+{
+    reveal(add32);
+    assert(init32(0) == (add32(PRIME32_1, PRIME32_2), PRIME32_2, 0u32, (0x1_0000_0000 - PRIME32_1) as u32));
+    assert(add32(0, PRIME32_5) == PRIME32_5);
+}
+
+/// XXH32 of `b` with `seed` (`spec::xxh32_seed`).
+#[inline]
+pub fn xxh32_with_seed(b: &[u8], seed: u32) -> (r: u32)
+    ensures
+        r == xxh32_seed(b@, seed),
 {
     let n = b.len();
     let full = n / 16 * 16;
     let h0 = if n >= 16 {
-        let (v1, v2, v3, v4) = stripes(b);
+        let v0 = (add(add(seed, XQ1), XQ2), add(seed, XQ2), seed, add(seed, 0u32.wrapping_sub(XQ1)));
+        proof {
+            assert(0u32.wrapping_sub(XQ1) == (0x1_0000_0000 - PRIME32_1) as u32);
+        }
+        let (v1, v2, v3, v4) = stripes(b, v0);
         add(add(add(rotl(v1, 1), rotl(v2, 7)), rotl(v3, 12)), rotl(v4, 18))
     } else {
-        XQ5
+        add(seed, XQ5)
     };
-    let h = tail(b, full, add(h0, (n & 0xffff_ffff) as u32));
+    // Through u64, so the mask has a type on 32-bit targets too.
+    let n64 = n as u64;
+    let h = tail(b, full, add(h0, (n64 & 0xffff_ffff) as u32));
     proof {
-        assert(n & 0xffff_ffff == n % 0x1_0000_0000) by (bit_vector);
+        assert(n64 & 0xffff_ffff == n64 % 0x1_0000_0000) by (bit_vector);
     }
     let h1 = mul(h ^ (h >> 15), XQ2);
     let h2 = mul(h1 ^ (h1 >> 13), XQ3);
     h2 ^ (h2 >> 16)
+}
+
+/// XXH32 of `b` with seed 0 (`xxh32`).
+#[inline]
+pub fn xxh32_exec(b: &[u8]) -> (r: u32)
+    ensures
+        r == xxh32(b@),
+{
+    proof {
+        lemma_xxh32_seed0(b@);
+    }
+    xxh32_with_seed(b, 0)
 }
 
 } // verus!

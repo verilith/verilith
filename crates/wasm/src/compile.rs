@@ -1,5 +1,5 @@
 //! Prepares checked functions for the interpreter: resolves every branch
-//! target from the certificate, proven to give [`code_ok`].
+//! target from the certificate, proven to give `code_ok`.
 use vstd::prelude::*;
 use crate::ast::*;
 use crate::sem::*;
@@ -148,6 +148,7 @@ pub fn compile(m: &Module, cs: &Vec<FuncCert>, d: usize) -> (r: Option<Code>)
                                 == target_of(*fc, pc as int, m.br_table@[start + jj] as nat),
                         decreases tl - j,
                     {
+                        let _ = m.br_table.len();
                         let k = m.br_table[start as usize + j as usize];
                         assert(nth_id(fc.labels@, fc.lab@[pc as int], m.br_table@[start + j] as nat) is Some);
                         let tg = target_x(fc, pc, k);

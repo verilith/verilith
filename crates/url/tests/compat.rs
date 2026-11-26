@@ -91,6 +91,9 @@ fn accessors_match_url_crate() {
     }
     eprintln!("same href: {same}, both rejected: {both_fail} (same reason: {same_reason}), url crate differs: {differ}");
     assert!(same > 500);
+    // The reason is proven to follow the Standard's state machine, which
+    // the url crate also follows on every WPT input both reject.
+    assert_eq!(same_reason, both_fail, "reasons differ from the url crate");
     assert!(failures.is_empty(), "{} mismatches:\n{}", failures.len(), failures.join("\n"));
 }
 
@@ -118,6 +121,18 @@ fn parse_errors() {
         ("http://a b/", IdnaError, true),
         ("http://a<b/", IdnaError, true),
         ("file://example:1/", IdnaError, true),
+        // The host is parsed (and fails) before the port is looked at.
+        ("http://%5B::1]", IdnaError, true),
+        ("http://a b:99999/", IdnaError, true),
+        // UTS 46 maps a soft hyphen to nothing: an empty domain.
+        ("https://%C2%AD/", EmptyHost, true),
+        ("file://\u{ad}/p", EmptyHost, true),
+        // The IPv4 parser runs on the result of ToASCII.
+        ("http://\u{1F4A9}.123/", InvalidIpv4Address, true),
+        ("sc://[1::2::3]/", InvalidIpv6Address, true),
+        ("http://user@/", EmptyHost, true),
+        ("http://[::1]:x/", InvalidPort, true),
+        ("http://[::1]x/", InvalidIpv6Address, true),
     ];
     for &(input, want, agrees) in cases {
         assert_eq!(compat::Url::parse(input).err(), Some(want), "{input}");
@@ -169,12 +184,12 @@ fn setters_match_url_crate() {
     b.query_pairs_mut().clear();
     assert_eq!(a.as_str(), b.as_str());
 
-    let mut a = compat::Url::parse("foo://h/p").unwrap();
-    let mut b = url::Url::parse("foo://h/p").unwrap();
+    a = compat::Url::parse("foo://h/p").unwrap();
+    b = url::Url::parse("foo://h/p").unwrap();
     both!(set_host(None));
     both!(set_host(Some("h2")));
-    let mut a = compat::Url::parse("mailto:x").unwrap();
-    let mut b = url::Url::parse("mailto:x").unwrap();
+    a = compat::Url::parse("mailto:x").unwrap();
+    b = url::Url::parse("mailto:x").unwrap();
     both!(set_host(Some("h")));
     both!(set_username("u"));
     both!(set_port(Some(1)));

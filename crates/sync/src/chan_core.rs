@@ -7,9 +7,9 @@
 //! A thread in a channel call is at a [`Pc`]: the next access it will make
 //! to shared state. `chan_sync.rs` runs a call as a loop that makes the
 //! access for its `Pc` and asks [`next`] where to go, with what the access
-//! read. [`theorem_next_refines`] proves that every such move is a step of
-//! the model, given that the access read and wrote what [`reads`] and
-//! [`writes`] say. [`theorem_notify_refines`] proves the same for
+//! read. `theorem_next_refines` proves that every such move is a step of
+//! the model, given that the access read and wrote what `reads` and
+//! `writes` say. `theorem_notify_refines` proves the same for
 //! `notify_one` and `notify_all`, one waiter per step.
 //!
 //! `chan_sync.rs` is the other half: at each access it proves `reads` and
@@ -133,7 +133,7 @@ pub open spec fn next_spec(pc: Pc, cfg: Cfg, flag: bool, aux: bool) -> Pc {
     }
 }
 
-/// [`next_spec`], for `chan_sync.rs` to run.
+/// `next_spec`, for `chan_sync.rs` to run.
 #[inline(always)]
 pub fn next(pc: Pc, cfg: Cfg, flag: bool, aux: bool) -> (r: Pc)
     ensures

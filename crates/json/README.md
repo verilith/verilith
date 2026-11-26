@@ -55,9 +55,11 @@ files (see [Performance](#performance)).
 1. **Stage 1** (`src/index.rs`) reads the input 64 bytes at a time and
    writes the position of every structural byte (brackets, braces, commas,
    colons, quotes, the first byte of each number or literal, and each
-   backslash inside a string) to an index. It finds string interiors with a
-   carry-less multiply (prefix XOR) over the unescaped quotes, and it checks
-   in the same pass that no control character appears inside a string. It
+   backslash or control character inside a string) to an index. The index
+   is a window: it covers 64 KiB of input at a time, in a buffer of the
+   same fixed size whatever the input's length, and stage 1 resumes where
+   it stopped when stage 2 reads past the window's end. It finds string interiors with a
+   carry-less multiply (prefix XOR) over the unescaped quotes. It
    uses AVX-512 (with VBMI2 compress) or AVX2 when the CPU has them, NEON
    on AArch64 (Apple Silicon and other ARM64 CPUs; `src/neon.rs`), and a
    scalar kernel otherwise. On NEON the prefix XOR is the scalar shift
@@ -74,10 +76,10 @@ files (see [Performance](#performance)).
    and pairwise-add steps. Its result is proven equal to the decimal value
    of the run.
 
-If stage 1 rejects the input (an unterminated string or a control character
-in one), or the input is too large to index, the parser falls back to the
-one-pass parser in `src/parser.rs`. That parser is also used by
-`parse_prefix` and by the C API. It scans strings, whitespace and digits 16
+Stage 1 rejects nothing on its own. A control character inside a string
+is in the index, so stage 2 rejects it where it reaches it, and a string
+left open runs out of index. The one-pass parser in `src/parser.rs` is
+used by `parse_prefix` and by the C API. It scans strings, whitespace and digits 16
 bytes at a time with SSE2 (`src/simd.rs`).
 
 The one-pass parser emits tokens to a `Sink`. Two sinks exist:
@@ -90,10 +92,13 @@ The one-pass parser emits tokens to a `Sink`. Two sinks exist:
 ### Rust API
 
 ```rust
-let doc = verilith_json::parse(br#"{"name": "verilith-json", "n": 2}"#)?;
-let root = doc.root();
-assert_eq!(root.get("name").unwrap().as_str().as_deref(), Some("verilith-json"));
-assert_eq!(root.get("n").unwrap().as_i64(), Some(2));
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let doc = verilith_json::parse(br#"{"name": "verilith-json", "n": 2}"#)?;
+    let root = doc.root();
+    assert_eq!(root.get("name").unwrap().as_str().as_deref(), Some("verilith-json"));
+    assert_eq!(root.get("n").unwrap().as_i64(), Some(2));
+    Ok(())
+}
 ```
 
 `Value` is a borrowed view with `kind`, `as_bool`, `as_f64`, `as_i64`,
@@ -108,7 +113,13 @@ invalid number or literal, nesting too deep, trailing data, invalid UTF-8)
 and its byte offset, line and column, e.g. `unexpected ']' at line 3
 column 3 (byte 11)`.
 
-Inputs must be smaller than 4 GiB, because spans are 32-bit.
+Inputs may be up to 2^48 - 1 bytes (256 TiB), more than a 64-bit address
+space holds today: token positions are 48 bits, so a token is 16 bytes.
+On 32-bit targets (wasm32 for browsers and Cloudflare Workers) any slice
+fits. The index takes the same fixed memory at any input size.
+Parsing recurses once per nesting level, so the full 1000 levels take
+about 400 KiB of stack under wasmtime; give a wasm host at least 512 KiB
+(wasmtime's default is just that, browsers give about 1 MiB).
 
 ### On-demand reading
 
@@ -118,14 +129,18 @@ read the values you want and pass over the rest.
 
 ```rust
 use verilith_json::ondemand::Reader;
-let src = br#"{"skipped": [1, {"x": "y"}], "id": 7, "name": "verilith-json"}"#;
-let (mut idx, mut buf) = (Vec::new(), Vec::new());
-let mut r = Reader::new(src, &mut idx).unwrap();
-r.obj_begin()?;
-assert!(r.find(b"id")?);
-assert_eq!(r.i64()?, 7);
-assert!(r.find(b"name")?);
-assert_eq!(r.str(&mut buf)?, b"verilith-json");
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let src = br#"{"skipped": [1, {"x": "y"}], "id": 7, "name": "verilith-json"}"#;
+    let (mut idx, mut buf) = (Vec::new(), Vec::new());
+    let mut r = Reader::new(src, &mut idx).unwrap();
+    r.obj_begin()?;
+    assert!(r.find(b"id")?);
+    assert_eq!(r.i64()?, 7);
+    assert!(r.find(b"name")?);
+    assert_eq!(r.str(&mut buf)?, b"verilith-json");
+    Ok(())
+}
 ```
 
 `arr_begin`/`arr_next` and `obj_begin`/`obj_next` step through containers
@@ -141,9 +156,13 @@ string, literal, key, comma, colon or bracket the reader hands back or
 steps over one at a time is exactly the grammar's token. What is passed
 over (`skip`, `leave`, an unread value before `arr_next`/`obj_next`,
 everything after the last read) is only bracket-counted, so `[1, nul]` can
-be skipped as an array. The input as a whole is still checked to be UTF-8
-with every string terminated and free of control characters, because
-stage 1 does that. Use `verilith_json::parse` when the whole text must be valid.
+be skipped as an array. `Reader::new` checks that the whole input is
+UTF-8 before the first read. A string is checked to be terminated when
+the reader reaches it, and to be free of control characters when it is
+read. Use `verilith_json::parse` when the whole text must be valid.
+On a valid text, the reader is proven to read what the tape parser
+would: each value, key and container end it returns is the tape's token
+at the same place (see [What is proven](#what-is-proven)).
 
 ### C API (native)
 
@@ -184,14 +203,17 @@ out. Calls out of order (a value where a member name is due, a mismatched
 close, a second top-level value) are refused rather than written.
 
 ```rust
-let mut w = verilith_json::Writer::new();
-w.begin_object()?;
-w.key("name")?;
-w.string("say \"hi\"\n")?;
-w.key("n")?;
-w.f64(2.5)?;
-w.end_object()?;
-assert_eq!(w.finish()?, br#"{"name":"say \"hi\"\n","n":2.5}"#);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut w = verilith_json::Writer::new();
+    w.begin_object()?;
+    w.key("name")?;
+    w.string("say \"hi\"\n")?;
+    w.key("n")?;
+    w.f64(2.5)?;
+    w.end_object()?;
+    assert_eq!(w.finish()?, br#"{"name":"say \"hi\"\n","n":2.5}"#);
+    Ok(())
+}
 ```
 
 ### serde
@@ -205,9 +227,12 @@ the tests check.
 ## What is proven
 
 Everything in `src/spec.rs`, `src/parser.rs`, `src/index.rs`,
-`src/stage2.rs`, `src/ondemand.rs`, `src/utf8.rs`, `src/write.rs`, `src/simd.rs`, `src/float.rs`
-and `src/lemmas.rs` is checked by Verus (`./scripts/verify.sh`, which runs `cargo verus verify`,
-750 items, 0 errors).
+`src/stage2.rs`, `src/ondemand.rs`, `src/protocol.rs`, `src/utf8.rs`, `src/write.rs`, `src/simd.rs`, `src/float.rs`,
+`src/diag.rs` and `src/lemmas.rs` is checked by Verus (`./scripts/verify.sh`, which runs `cargo verus verify`,
+880 items, 0 errors). The proofs are checked once per pointer width:
+also for `wasm32-unknown-unknown` at a 32-bit `usize`
+(`./scripts/verify-narrow.sh`, 794 items, without the x86 and Arm
+kernels, which that build does not have).
 The trusted base is listed under [What is not proven](#what-is-not-proven).
 
 * **Conformance.** `src/spec.rs` states the RFC 8259 grammar as Verus spec
@@ -218,10 +243,21 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   what its spec function returns. The two-pass parser is proven against the
   same spec: `parse2_with` returns exactly `document(s, true)`. Stage 1 is
   proven to produce exactly the structural positions defined in
-  `src/index.rs`, and stage 2 is proven to read the spec's tokens through
-  that index. This holds for accepted and rejected
+  `src/index.rs`, window by window (each window resumes stage 1's state
+  and the UTF-8 check's where the last one stopped), and stage 2 is proven
+  to read the spec's tokens through that windowed index. This holds for accepted and rejected
   inputs, and covers the decoded string bytes (UTF-8 for `\u` escapes and
   surrogate pairs), the byte range of each number, and the end position.
+* **Error reasons and positions.** `doc_fail` in `src/diag.rs` says what
+  error a rejected text gets: it reads the text with the grammar, rule for
+  rule, and reports the first byte where no rule applies (or the end of the
+  input, if more was needed), with the reason; ill-formed UTF-8 at or before
+  that byte wins, reported at its first ill-formed sequence.
+  `lemma_doc_fail` proves that it reports an error exactly when `document`
+  rejects the text. `explain` is proven to return `doc_fail`'s error and
+  `line_col` its line and column, so the `Error` that `parse` and
+  `parse_prefix` return is the specified one. (`cJSON_GetErrorPtr` keeps
+  cJSON's own idea of the error position, which is not specified.)
 * **Numbers, from text to `f64`.** `number_value` in `src/spec.rs` says
   what a number lexeme means, as integers: a sign, a significand (every
   digit of the integer and fraction parts read as one integer) and a power
@@ -344,6 +380,47 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   ends. `leave` is the same walk started inside a container. The walk
   that looks at eight entries at a time is proven equal to the one that
   looks at one (`lemma_block`).
+* **The on-demand protocol.** `src/protocol.rs` and `Reader`'s contracts
+  prove that the reader's sequencing of those operations reads a JSON text
+  the way the tape does. The reader carries, as ghost state, the tape of
+  everything before the cursor and the containers it is in, and on any
+  input that `document(s, true)` accepts it is `synced`: finishing the
+  parse from its place the grammar's way (`finish`, a continuation made of
+  what is left of the innermost container, `rest`, then of each one around
+  it, `unwind`) gives exactly the document's tape. `Reader::new` is synced
+  at tape index 0. Each call is then specified against the tape token at
+  the reader's index `pos()`: `null`, `bool`, `num_raw`, `str_raw`,
+  `arr_begin` and `obj_begin` succeed exactly when a value is expected and
+  the tape has that kind of token there, and return its contents (the
+  string's range and escape flag and decoded bytes, the number's lexeme
+  and exact value); `key_is` compares with the tape's key and `key_skip`
+  passes it; `skip` moves to the index after the value
+  (`next_val`, through the start token's link); `arr_next` and `obj_next`
+  pass over an unread value, then return `false` exactly at the innermost
+  container's end token, the one its start token links to, and `true`
+  otherwise; `leave` moves past that end token from anywhere in the
+  container; `find` stops at the first member of the same object from the
+  cursor on with the key asked for (`none_before`: every key it passed
+  differs), or past the object's end when none has it; `at_end` holds exactly once the
+  document's value has been read, and then the reader is at the tape's
+  end. Each leaves the reader synced at the place it says, so by induction
+  any sequence of calls that fits reads what the tape holds, in order. A
+  call that does not fit (a number where the tape has a string, a key
+  where a value is expected, `arr_next` in an object, `obj_next` or
+  `find` in an array, `leave` at the top) returns `Mismatch` and changes
+  nothing: the reader keeps the kinds of the containers it is in, and
+  checks them. The scalar readers are verified too: `str` and `key` give
+  the token's bytes (`str_bytes`, `key_bytes`: the body, decoded if it
+  has escapes); `i64` gives the number's value exactly when the lexeme is
+  an integer that fits (`int_value`); `num_bits`, under `f64`, gives the
+  bits of the nearest double, ties to even (`float::is_round` of the
+  lexeme's exact `number_value`), with its sign. The
+  lemmas say that each move leaves `finish` unchanged
+  (`lemma_value_step`, `lemma_open_step`, `lemma_key_step`,
+  `lemma_comma_step`, `lemma_start_step`, `lemma_leave_step`), that tokens
+  already on the tape stay there (`lemma_finish_keeps`), and that the
+  bracket walk `leave` does stops where the grammar ends the container
+  (`lemma_rest_body`).
 
 ### What is not proven
 
@@ -381,19 +458,15 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   vstd's spec of `get_unchecked_mut` and need no trust. A unit test checks each
   kernel against a scalar version, and another checks that the scalar,
   AVX2 and AVX-512 stage 1 kernels agree.
-* **The on-demand protocol.** The proofs above are about the cursor's
-  operations one at a time. That `Reader`'s sequencing of them (which call
-  is allowed after which, `find`'s loop) reads a valid document the way
-  the tape does is tested, not proven: `tests/ondemand.rs` and the
-  `ondemand` fuzz target read every accepted text in full through the
-  reader and compare each value with the tape's, and check that partial
-  reads of an accepted text end at its end. Skipped parts are not
-  validated, by design. There is also no proof that stage 1 accepts every
-  valid document (the tape parser does not need one: it falls back to the
-  one-pass parser), so `Reader::new` returning `None` is proven to be
-  safe but only tested to mean "not JSON". The scalar conversions
-  `Reader::f64` and `i64` are the same unverified glue over the verified
-  scanner and `src/float.rs` that `Value` uses.
+* **The on-demand reader, outside the protocol.** On input the grammar
+  rejects nothing is claimed beyond safety, and skipped parts are not
+  validated, by design.
+  `tests/ondemand.rs` and the `ondemand` fuzz target still read every
+  accepted text through the reader and compare it with the tape, and
+  check that partial reads end at its end. `Reader::new` is proven to
+  return `None` only for input that is not UTF-8. `Reader::f64` is two
+  lines of glue over the verified `num_bits`: `f64::from_bits` of its bits,
+  or, for more than 19 significant digits, `f64::from_str` of the lexeme.
 * **NEON specs** come from verilith-simd (`verilith_simd::neon`), on the same footing:
   each intrinsic is a one-line wrapper with a trusted spec, checked against
   the real instructions by verilith-simd's `tests/neon.rs` on AArch64. The NEON
@@ -403,6 +476,11 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   high 64-bit lane), added to verilith-simd for it. Off AArch64 the wrappers run an
   emulation, so the NEON kernels are also tested on x86
   (`cargo test neon`) and, under qemu, on AArch64.
+  Off x86-64 the 16-byte scans (`classify_special`, `classify_non_ws`,
+  `classify_non_digit`, `digit_run_acc16`, `copy_plain16`) choose, in
+  verified code, between the NEON kernels and verified scalar loops (for
+  WebAssembly without SIMD128); `cargo test portable_kernels` runs the
+  scalar loops on x86-64.
 * **Vec capacity.** vstd does not model a `Vec`'s capacity, so
   `src/lanes.rs` declares it as an uninterpreted `spare` and wraps
   `reserve`, a `push` into reserved space without the capacity check, and
@@ -455,11 +533,10 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   output is checked against the verified grammar before it is written.
 * `src/value.rs`, the Rust API, is ordinary Rust over the tape; its
   unchecked accesses rely only on the proven facts above.
-* Error reasons and positions (`src/error.rs`, and `cJSON_GetErrorPtr`) are
-  diagnostics outside the spec. The verified parser decides whether the text
-  is JSON; `src/error.rs` then rescans the input up to the reported failure
-  to say why. It is tested on every JSONTestSuite `n_` file and on random
-  inputs, but not proven.
+* `cJSON_GetErrorPtr`'s position is the one the parser reports, as in
+  cJSON, and is not specified. The `Error` of the Rust and native C APIs is
+  (see "Error reasons and positions" above); `src/error.rs` only converts
+  it to the public types.
 
 ## How verilith-json reads RFC 8259
 
@@ -472,7 +549,7 @@ spec (`document` in `src/spec.rs`), so the parser is proven to follow them:
 | Text that is not UTF-8 | not JSON (§8.1) | rejected |
 | A lone surrogate escape, e.g. `"\ud800"` | allowed by the grammar, meaning undefined (§8.2) | rejected (it cannot be decoded to UTF-8) |
 | Nesting deeper than 1000 | limits allowed (§9) | rejected |
-| Inputs of 4 GiB or more | limits allowed (§9) | rejected |
+| Inputs of 256 TiB or more | limits allowed (§9) | rejected |
 | Numbers beyond `f64` range, e.g. `1e400` | limits allowed (§9) | accepted; `as_f64` gives ±infinity |
 | Duplicate member names | should be unique, behavior unpredictable (§4) | all kept, in order; `get` returns the first |
 | `parse_prefix`: data after the value | (not a JSON text) | allowed, except a top-level number directly followed by a byte that could continue it (`01`, `1.`, `2e`), which is rejected rather than read as a shorter number |
@@ -982,12 +1059,13 @@ included.
 
 ## Layout
 
-```
+```text
 src/spec.rs      RFC 8259 grammar as Verus spec functions
 src/parser.rs    verified one-pass parser and the Sink trait
 src/index.rs     verified stage 1: the structural index
 src/stage2.rs    verified stage 2: parsing through the index
 src/ondemand.rs  verified on-demand cursor and the Reader over it
+src/protocol.rs  the Reader's protocol against the tape (verified)
 src/lanes.rs     single-instruction SIMD wrappers, verified over verilith-simd (the 16-byte SSE2 ones are
                  verilith_simd::sse2, shared with verilith-xml); the trusted Vec-capacity model
 src/simd.rs      verified classification and bit-mask kernels built from them
@@ -996,7 +1074,8 @@ src/utf8.rs      verified SIMD UTF-8 validation (the UTF-8 spec, its local
 src/lemmas.rs    proofs about the spec
 src/value.rs     Rust API over the tape
 src/native.rs    native C API over src/value.rs (unverified, feature `capi`; include/vjson.h)
-src/error.rs     error reasons and positions (unverified)
+src/diag.rs      error reasons and positions (verified)
+src/error.rs     the public error types
 src/write.rs     verified string escaping and number checks for the writer
 src/writer.rs    Writer (unverified state machine over src/write.rs)
 src/serde_support.rs  serde Serializer/Deserializer (feature `serde`)
@@ -1016,8 +1095,8 @@ tests/c/         C harnesses and the upstream-test shim
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/json/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/json/LICENSE-MIT), at your option.
 
 `include/cJSON.h` and the tree-building functions in `src/ffi.rs`, which
 are ported from cJSON 1.7.19, are under cJSON's MIT license, whose notice

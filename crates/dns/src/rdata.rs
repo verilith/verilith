@@ -19,7 +19,9 @@ verus! {
 /// record's (canonical) RDATA, and is owned only when it had to be
 /// decompressed.
 pub enum NameBytes<'a> {
+    /// Borrowed from the message.
     Borrowed(&'a [u8]),
+    /// Decompressed into a new buffer.
     Owned(Vec<u8>),
 }
 
@@ -58,73 +60,232 @@ proof fn lemma_plain_is_name(b: Seq<u8>, p: int, end: int, n: SpecName, e: int)
 /// Decoded RDATA. Names are in uncompressed wire form (see `Name`); other
 /// variable-length fields borrow from the message.
 pub enum Rdata<'a> {
+    /// An IPv4 address (RFC 1035): its 4 bytes.
     A(&'a [u8]),
+    /// An IPv6 address (RFC 3596): its 16 bytes.
     Aaaa(&'a [u8]),
+    /// An authoritative name server.
     Ns(NameBytes<'a>),
+    /// The canonical name this name is an alias for.
     Cname(NameBytes<'a>),
+    /// The name a reverse-lookup name points to.
     Ptr(NameBytes<'a>),
-    Mx { preference: u16, exchange: NameBytes<'a> },
+    /// A mail exchange.
+    Mx {
+        /// Lower is preferred.
+        preference: u16,
+        /// The mail server.
+        exchange: NameBytes<'a>,
+    },
+    /// Text: the character-strings, each without its length byte.
     Txt(Vec<&'a [u8]>),
-    Hinfo { cpu: &'a [u8], os: &'a [u8] },
+    /// Host information (RFC 1035; RFC 8482 answers ANY queries with it).
+    Hinfo {
+        /// The CPU type.
+        cpu: &'a [u8],
+        /// The operating system.
+        os: &'a [u8],
+    },
+    /// The start of a zone of authority.
     Soa {
+        /// The zone's primary name server.
         mname: NameBytes<'a>,
+        /// The mailbox of the person responsible, as a name.
         rname: NameBytes<'a>,
+        /// The zone's version number.
         serial: u32,
+        /// Seconds between secondary refreshes.
         refresh: u32,
+        /// Seconds before a failed refresh is retried.
         retry: u32,
+        /// Seconds after which a secondary stops answering for the zone.
         expire: u32,
+        /// The TTL of negative answers (RFC 2308).
         minimum: u32,
     },
+    /// A signature (RFC 2535). The same fields as [`Rdata::Rrsig`].
     Sig {
+        /// The record type the signature covers.
         type_covered: u16,
+        /// The signing algorithm.
         algorithm: u8,
+        /// The number of labels in the signed owner name.
         labels: u8,
+        /// The TTL of the signed records.
         original_ttl: u32,
+        /// The end of the validity period, in seconds since 1970 (mod 2^32).
         expiration: u32,
+        /// The start of the validity period.
         inception: u32,
+        /// The key tag of the signing key.
         key_tag: u16,
+        /// The signer's name.
         signer: NameBytes<'a>,
+        /// The signature.
         signature: &'a [u8],
     },
-    Ds { key_tag: u16, algorithm: u8, digest_type: u8, digest: &'a [u8] },
-    Sshfp { algorithm: u8, fp_type: u8, fingerprint: &'a [u8] },
+    /// A delegation signer (RFC 4034): a digest of a child zone's key.
+    Ds {
+        /// The key tag of the key digested.
+        key_tag: u16,
+        /// That key's algorithm.
+        algorithm: u8,
+        /// The digest algorithm.
+        digest_type: u8,
+        /// The digest.
+        digest: &'a [u8],
+    },
+    /// An SSH host key fingerprint (RFC 4255).
+    Sshfp {
+        /// The key algorithm.
+        algorithm: u8,
+        /// The fingerprint's hash algorithm.
+        fp_type: u8,
+        /// The fingerprint.
+        fingerprint: &'a [u8],
+    },
+    /// A DNSSEC signature over a record set (RFC 4034).
     Rrsig {
+        /// The record type the signature covers.
         type_covered: u16,
+        /// The signing algorithm.
         algorithm: u8,
+        /// The number of labels in the signed owner name.
         labels: u8,
+        /// The TTL of the signed records.
         original_ttl: u32,
+        /// The end of the validity period, in seconds since 1970 (mod 2^32).
         expiration: u32,
+        /// The start of the validity period.
         inception: u32,
+        /// The key tag of the signing key.
         key_tag: u16,
+        /// The signer's name.
         signer: NameBytes<'a>,
+        /// The signature.
         signature: &'a [u8],
     },
-    Nsec { next: NameBytes<'a>, type_bitmaps: &'a [u8] },
-    Dnskey { flags: u16, protocol: u8, algorithm: u8, public_key: &'a [u8] },
-    Nsec3 {
-        hash_algorithm: u8,
-        flags: u8,
-        iterations: u16,
-        salt: &'a [u8],
-        next_hashed: &'a [u8],
+    /// Authenticated denial of existence (RFC 4034).
+    Nsec {
+        /// The next owner name in the zone.
+        next: NameBytes<'a>,
+        /// The types present at the owner name, as wire-form bitmaps.
         type_bitmaps: &'a [u8],
     },
-    Nsec3param { hash_algorithm: u8, flags: u8, iterations: u16, salt: &'a [u8] },
-    Srv { priority: u16, weight: u16, port: u16, target: NameBytes<'a> },
+    /// A DNSSEC public key (RFC 4034).
+    Dnskey {
+        /// The key flags (zone key, secure entry point).
+        flags: u16,
+        /// Always 3.
+        protocol: u8,
+        /// The key's algorithm.
+        algorithm: u8,
+        /// The public key.
+        public_key: &'a [u8],
+    },
+    /// Hashed authenticated denial of existence (RFC 5155).
+    Nsec3 {
+        /// The hash algorithm.
+        hash_algorithm: u8,
+        /// The flags (opt-out).
+        flags: u8,
+        /// Extra hash iterations.
+        iterations: u16,
+        /// The salt.
+        salt: &'a [u8],
+        /// The next hashed owner name, unencoded.
+        next_hashed: &'a [u8],
+        /// The types present at the owner name, as wire-form bitmaps.
+        type_bitmaps: &'a [u8],
+    },
+    /// The NSEC3 parameters of a zone (RFC 5155).
+    Nsec3param {
+        /// The hash algorithm.
+        hash_algorithm: u8,
+        /// The flags.
+        flags: u8,
+        /// Extra hash iterations.
+        iterations: u16,
+        /// The salt.
+        salt: &'a [u8],
+    },
+    /// A service location (RFC 2782).
+    Srv {
+        /// Lower is tried first.
+        priority: u16,
+        /// The relative weight among targets of the same priority.
+        weight: u16,
+        /// The port of the service.
+        port: u16,
+        /// The host that provides it.
+        target: NameBytes<'a>,
+    },
+    /// A naming authority pointer (RFC 3403).
     Naptr {
+        /// Lower is processed first.
         order: u16,
+        /// Lower is preferred among equal `order`.
         preference: u16,
+        /// The flags character-string.
         flags: &'a [u8],
+        /// The services character-string.
         services: &'a [u8],
+        /// The substitution expression.
         regexp: &'a [u8],
+        /// The next name to query.
         replacement: NameBytes<'a>,
     },
+    /// EDNS options (RFC 6891): (option code, option data) pairs.
     Opt(Vec<(u16, &'a [u8])>),
-    Tlsa { usage: u8, selector: u8, matching: u8, data: &'a [u8] },
-    Svcb { priority: u16, target: NameBytes<'a>, params: Vec<(u16, &'a [u8])> },
-    Https { priority: u16, target: NameBytes<'a>, params: Vec<(u16, &'a [u8])> },
-    Uri { priority: u16, weight: u16, target: &'a [u8] },
-    Caa { flags: u8, tag: &'a [u8], value: &'a [u8] },
+    /// A TLS certificate association (RFC 6698).
+    Tlsa {
+        /// The certificate usage.
+        usage: u8,
+        /// Which part of the certificate is matched.
+        selector: u8,
+        /// How it is matched (exactly or by hash).
+        matching: u8,
+        /// The certificate association data.
+        data: &'a [u8],
+    },
+    /// A service binding (RFC 9460).
+    Svcb {
+        /// 0 for alias mode, else the priority (lower first).
+        priority: u16,
+        /// The target name.
+        target: NameBytes<'a>,
+        /// The (key, value) parameters, in wire order.
+        params: Vec<(u16, &'a [u8])>,
+    },
+    /// A service binding for HTTPS (RFC 9460). The same fields as
+    /// [`Rdata::Svcb`].
+    Https {
+        /// 0 for alias mode, else the priority (lower first).
+        priority: u16,
+        /// The target name.
+        target: NameBytes<'a>,
+        /// The (key, value) parameters, in wire order.
+        params: Vec<(u16, &'a [u8])>,
+    },
+    /// A URI (RFC 7553).
+    Uri {
+        /// Lower is tried first.
+        priority: u16,
+        /// The relative weight among targets of the same priority.
+        weight: u16,
+        /// The URI.
+        target: &'a [u8],
+    },
+    /// A certification authority authorization (RFC 8659).
+    Caa {
+        /// The flags (bit 7: critical).
+        flags: u8,
+        /// The property tag, such as `issue`.
+        tag: &'a [u8],
+        /// The property value.
+        value: &'a [u8],
+    },
+    /// A type this crate does not decode: the raw RDATA.
     Unknown(&'a [u8]),
 }
 
@@ -1168,7 +1329,12 @@ fn name_into_in(b: &[u8], p: usize, end: usize, out: &mut Vec<u8>) -> (r: Option
         },
         r is None ==> parse_name_in(b@, p as int, end as int) is None,
         is_prefix(old(out)@, final(out)@),
+        final(out)@.len() <= old(out)@.len() + MAX_NAME_WIRE_LEN,
+        r matches Some((e, _)) ==> p < e <= end,
 {
+    proof {
+        lemma_parse_name_valid(b@, p as int);
+    }
     match read_name_into(b, p, out) {
         Some((e, n)) => if e <= end {
             Some((e, n))
@@ -1179,34 +1345,42 @@ fn name_into_in(b: &[u8], p: usize, end: usize, out: &mut Vec<u8>) -> (r: Option
     }
 }
 
-fn canon_one_name(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (ok: bool)
+/// The `canon_*` functions return, besides whether they succeeded, how
+/// many names they decoded (each at most `MAX_NAME_STEPS` loop turns of
+/// `read_name_into`). What they write is at most the RDATA's length plus
+/// two names.
+fn canon_one_name(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (r: (bool, Ghost<nat>))
     requires
         start <= end <= b@.len(),
         t == 2 || t == 5 || t == 12,
     ensures
-        ok ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
+        r.0 ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
             out,
         )@ + c),
-        !ok ==> canon_names(b@, t, start as int, end as int) is None,
+        !r.0 ==> canon_names(b@, t, start as int, end as int) is None,
         is_prefix(old(out)@, final(out)@),
+        r.1@ <= 2,
+        final(out)@.len() <= old(out)@.len() + (end - start) + 2 * MAX_NAME_WIRE_LEN,
 {
     let ghost o0 = out@;
     match name_into_in(b, start, end, out) {
-        Some((e, n)) => e == end,
-        None => false,
+        Some((e, n)) => (e == end, Ghost(1)),
+        None => (false, Ghost(1)),
     }
 }
 
-fn canon_mx_srv(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (ok: bool)
+fn canon_mx_srv(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (r: (bool, Ghost<nat>))
     requires
         start <= end <= b@.len(),
         t == 15 || t == 33,
     ensures
-        ok ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
+        r.0 ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
             out,
         )@ + c),
-        !ok ==> canon_names(b@, t, start as int, end as int) is None,
+        !r.0 ==> canon_names(b@, t, start as int, end as int) is None,
         is_prefix(old(out)@, final(out)@),
+        r.1@ <= 2,
+        final(out)@.len() <= old(out)@.len() + (end - start) + 2 * MAX_NAME_WIRE_LEN,
 {
     let ghost o0 = out@;
     let k: usize = if t == 15 { 2 } else { 6 };
@@ -1214,7 +1388,7 @@ fn canon_mx_srv(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -
         proof {
             lemma_prefix_refl(o0);
         }
-        return false;
+        return (false, Ghost(0));
     }
     push_bytes(out, slice_subrange(b, start, start + k));
     let ghost o1 = out@;
@@ -1227,27 +1401,29 @@ fn canon_mx_srv(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -
             proof {
                 assert(out@ =~= o0 + (b@.subrange(start as int, start + k) + ser_name(n@)));
             }
-            e == end
+            (e == end, Ghost(1))
         },
-        None => false,
+        None => (false, Ghost(1)),
     }
 }
 
-fn canon_soa(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (ok: bool)
+fn canon_soa(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (r: (bool, Ghost<nat>))
     requires
         start <= end <= b@.len(),
         t == 6,
     ensures
-        ok ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
+        r.0 ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
             out,
         )@ + c),
-        !ok ==> canon_names(b@, t, start as int, end as int) is None,
+        !r.0 ==> canon_names(b@, t, start as int, end as int) is None,
         is_prefix(old(out)@, final(out)@),
+        r.1@ <= 2,
+        final(out)@.len() <= old(out)@.len() + (end - start) + 2 * MAX_NAME_WIRE_LEN,
 {
     let ghost o0 = out@;
     let (p1, n1) = match name_into_in(b, start, end, out) {
         Some(x) => x,
-        None => return false,
+        None => return (false, Ghost(1)),
     };
     let ghost o1 = out@;
     let r = name_into_in(b, p1, end, out);
@@ -1257,36 +1433,38 @@ fn canon_soa(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (
     }
     let (p2, n2) = match r {
         Some(x) => x,
-        None => return false,
+        None => return (false, Ghost(2)),
     };
     if end - p2 != 20 {
-        return false;
+        return (false, Ghost(2));
     }
     push_bytes(out, slice_subrange(b, p2, end));
     proof {
         lemma_prefix_trans(o0, o2, out@);
         assert(out@ =~= o0 + (ser_name(n1@) + ser_name(n2@) + b@.subrange(p2 as int, end as int)));
     }
-    true
+    (true, Ghost(2))
 }
 
-fn canon_sig(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (ok: bool)
+fn canon_sig(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (r: (bool, Ghost<nat>))
     requires
         start <= end <= b@.len(),
         t == 24,
     ensures
-        ok ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
+        r.0 ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
             out,
         )@ + c),
-        !ok ==> canon_names(b@, t, start as int, end as int) is None,
+        !r.0 ==> canon_names(b@, t, start as int, end as int) is None,
         is_prefix(old(out)@, final(out)@),
+        r.1@ <= 2,
+        final(out)@.len() <= old(out)@.len() + (end - start) + 2 * MAX_NAME_WIRE_LEN,
 {
     let ghost o0 = out@;
     if end - start < 18 {
         proof {
             lemma_prefix_refl(o0);
         }
-        return false;
+        return (false, Ghost(0));
     }
     push_bytes(out, slice_subrange(b, start, start + 18));
     let ghost o1 = out@;
@@ -1297,7 +1475,7 @@ fn canon_sig(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (
     }
     let (p, n) = match r {
         Some(x) => x,
-        None => return false,
+        None => return (false, Ghost(1)),
     };
     push_bytes(out, slice_subrange(b, p, end));
     proof {
@@ -1305,39 +1483,48 @@ fn canon_sig(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (
         assert(out@ =~= o0 + (b@.subrange(start as int, start + 18) + ser_name(n@)
             + b@.subrange(p as int, end as int)));
     }
-    true
+    (true, Ghost(1))
 }
 
-fn canon_naptr(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (ok: bool)
+fn canon_naptr(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (r: (bool, Ghost<nat>))
     requires
         start <= end <= b@.len(),
         t == 35,
     ensures
-        ok ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
+        r.0 ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
             out,
         )@ + c),
-        !ok ==> canon_names(b@, t, start as int, end as int) is None,
+        !r.0 ==> canon_names(b@, t, start as int, end as int) is None,
         is_prefix(old(out)@, final(out)@),
+        r.1@ <= 2,
+        final(out)@.len() <= old(out)@.len() + (end - start) + 2 * MAX_NAME_WIRE_LEN,
 {
     let ghost o0 = out@;
     proof {
         lemma_prefix_refl(o0);
     }
     if end - start < 4 {
-        return false;
+        return (false, Ghost(0));
     }
     let p1 = match read_cstring(b, start + 4, end) {
         Some((_, q)) => q,
-        None => return false,
+        None => return (false, Ghost(0)),
     };
     let p2 = match read_cstring(b, p1, end) {
         Some((_, q)) => q,
-        None => return false,
+        None => return (false, Ghost(0)),
     };
     let p3 = match read_cstring(b, p2, end) {
         Some((_, q)) => q,
-        None => return false,
+        None => return (false, Ghost(0)),
     };
+    proof {
+        assert(start <= p1 <= p2 <= p3 <= end) by {
+            lemma_cstring_end(b@, start + 4, end as int);
+            lemma_cstring_end(b@, p1 as int, end as int);
+            lemma_cstring_end(b@, p2 as int, end as int);
+        }
+    }
     push_bytes(out, slice_subrange(b, start, p3));
     let ghost o1 = out@;
     let r = name_into_in(b, p3, end, out);
@@ -1349,10 +1536,16 @@ fn canon_naptr(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) ->
             proof {
                 assert(out@ =~= o0 + (b@.subrange(start as int, p3 as int) + ser_name(n@)));
             }
-            e == end
+            (e == end, Ghost(1))
         },
-        None => false,
+        None => (false, Ghost(1)),
     }
+}
+
+proof fn lemma_cstring_end(b: Seq<u8>, p: int, end: int)
+    ensures
+        parse_cstring(b, p, end) matches Some((_, q)) ==> p < q <= end,
+{
 }
 
 /// Appends the canonical form of the RDATA `b[start..end]` of type `t`
@@ -1370,6 +1563,23 @@ pub fn canon_into(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>)
         !ok ==> canon_names(b@, t, start as int, end as int) is None,
         is_prefix(old(out)@, final(out)@),
 {
+    canon_into_metered(b, t, start, end, out).0
+}
+
+/// `canon_into`, and how many names it decoded (at most 2).
+#[inline(always)]
+pub fn canon_into_metered(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>) -> (r: (bool, Ghost<nat>))
+    requires
+        start <= end <= b@.len(),
+    ensures
+        r.0 ==> (canon_names(b@, t, start as int, end as int) matches Some(c) && final(out)@ == old(
+            out,
+        )@ + c),
+        !r.0 ==> canon_names(b@, t, start as int, end as int) is None,
+        is_prefix(old(out)@, final(out)@),
+        r.1@ <= 2,
+        final(out)@.len() <= old(out)@.len() + (end - start) + 2 * MAX_NAME_WIRE_LEN,
+{
     if t == 2 || t == 5 || t == 12 {
         canon_one_name(b, t, start, end, out)
     } else if t == 15 || t == 33 {
@@ -1382,7 +1592,7 @@ pub fn canon_into(b: &[u8], t: u16, start: usize, end: usize, out: &mut Vec<u8>)
         canon_naptr(b, t, start, end, out)
     } else {
         push_bytes(out, slice_subrange(b, start, end));
-        true
+        (true, Ghost(0))
     }
 }
 

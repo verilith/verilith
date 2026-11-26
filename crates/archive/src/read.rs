@@ -6,6 +6,15 @@ use vstd::slice::slice_subrange;
 
 verus! {
 
+/// The proofs cover archives below this size: 256 TiB on 64-bit targets,
+/// and on 32-bit ones 2 GiB, above the largest slice there (`isize::MAX`
+/// bytes). The same as verilith-zstd's `MAX_LIMIT`.
+#[cfg(target_pointer_width = "64")]
+pub const MAX_ARCHIVE: usize = 0x1_0000_0000_0000;
+
+#[cfg(target_pointer_width = "32")]
+pub const MAX_ARCHIVE: usize = 0x8000_0000;
+
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum Error {
     /// The member is encrypted or uses a compression method other than
@@ -34,8 +43,8 @@ fn zeros(n: usize) -> (v: Vec<u8>)
 pub fn read_entry(b: &[u8], e: &Entry, limit: usize) -> (r: Result<Vec<u8>, Error>)
     requires
         e.data_off + e.csize <= b@.len(),
-        b@.len() < 0x1_0000_0000_0000,
-        limit <= 0x1_0000_0000_0000,
+        b@.len() < MAX_ARCHIVE,
+        limit <= MAX_ARCHIVE,
     ensures
         match r {
             Ok(v) => entry_data(b@, e.sv()) == Some(v@) && v@.len() == e.size && v@.len() <= limit,
@@ -115,7 +124,7 @@ pub fn read_entry(b: &[u8], e: &Entry, limit: usize) -> (r: Result<Vec<u8>, Erro
 pub fn stored_in_place(b: &[u8], e: &Entry, limit: usize) -> (r: bool)
     requires
         e.data_off + e.csize <= b@.len(),
-        b@.len() < 0x1_0000_0000_0000,
+        b@.len() < MAX_ARCHIVE,
     ensures
         r ==> e.size <= limit && e.size == e.csize && entry_data(b@, e.sv()) == Some(
             b@.subrange(e.data_off as int, e.data_off + e.size),
@@ -133,3 +142,15 @@ pub fn stored_in_place(b: &[u8], e: &Entry, limit: usize) -> (r: bool)
 }
 
 } // verus!
+
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Error::Unsupported => "the member is encrypted or uses an unsupported compression method",
+            Error::TooLarge => "the member is larger than the limit",
+            Error::BadData => "the member's data does not match what the archive declares",
+        })
+    }
+}
+
+impl std::error::Error for Error {}

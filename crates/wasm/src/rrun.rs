@@ -3,10 +3,10 @@
 //!
 //! [`crate::run::execute`] runs a function's register form
 //! ([`crate::reg`]), checked against its body by [`crate::rcheck`]. Its
-//! invariant [`rinv`] is the stack interpreter's ([`loop_inv`]) at the
+//! invariant `rinv` is the stack interpreter's (`loop_inv`) at the
 //! position the current operation starts at. A straight-line operation
 //! takes the semantics `k` steps (its run, through
-//! [`crate::mach::lemma_msteps`]); a branch operation takes `k - 1`, then
+//! `crate::mach::lemma_msteps`); a branch operation takes `k - 1`, then
 //! the final `br` or `br_if`; an [`OpCode::Op`] runs its instruction with
 //! the stack interpreter's step functions, then continues at the entry of
 //! where that took it.
@@ -388,6 +388,7 @@ pub proof fn lemma_rslots(m: &Module, cs: Seq<FuncCert>, codes: Seq<Code>, c0: C
 }
 
 
+#[verifier::spinoff_prover]
 /// After a value operation put `v` in its destinations, the accumulator
 /// `v` is right for the next operation; after any other straight-line
 /// operation, the next one does not read it.
@@ -482,6 +483,25 @@ pub fn r_acc_fix(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghos
 // Branch operations
 // ---------------------------------------------------------------------------
 
+/// The step of a `br` or `br_if`, proved apart from the branch lemma so that
+/// it never sees the definition of every other instruction's step.
+pub proof fn lemma_step_br(m: &Module, c: Config)
+    requires
+        at_instr(m, c),
+        cur(m, c) is Br || cur(m, c) is BrIf,
+    ensures
+        cur(m, c) is Br ==> step(m, c) == br(c, top(c), cur(m, c)->Br_0 as nat),
+        cur(m, c) is BrIf && top(c).stack.len() >= 1 ==> step(m, c) == (if lo32(peek(top(c), 0)) != 0 {
+            br(c, popn(top(c), 1), cur(m, c)->BrIf_0 as nat)
+        } else {
+            next(c, adv(popn(top(c), 1)))
+        }),
+{
+    lemma_step_instr(m, c);
+    reveal(step_instr);
+}
+
+#[verifier::spinoff_prover]
 #[verifier::rlimit(300)]
 /// A branch operation: its straight-line part, then the branch (if
 /// `taken`) to operation `r.d1`, or on to the next operation.
@@ -526,8 +546,6 @@ pub proof fn lemma_rbranch(m: &Module, cs: Seq<FuncCert>, codes: Seq<Code>, c0: 
     // The branch.
     assert(pre(m, cs, codes, c1, s1, calls, fp as int, sp1));
     lemma_facts(m, cs, codes, c1, s1, calls, fp as int, sp1);
-    lemma_step_instr(m, c1);
-    reveal(step_instr);
     let f = top(c1);
     let base = fp + nl;
     assert(cur(m, c1) == body[pb]);
@@ -569,7 +587,8 @@ pub proof fn lemma_rbranch(m: &Module, cs: Seq<FuncCert>, codes: Seq<Code>, c0: 
             (gf, sp1 - 1)
         }
     };
-    assert(step(m, c1) == next(c1, gf));
+    // The step's definition is large: unfold it only here.
+    assert(step(m, c1) == next(c1, gf)) by { lemma_step_br(m, c1); }
     lemma_mach_top(m, s1, s, calls, fp as int, sp1, c1, gf, sp2);
     lemma_advance(m, cs, c0, g.hs, n1, c1);
     let c2 = with_top(c1, gf);
@@ -742,7 +761,7 @@ pub fn r_un(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(cod
         sset(stack, fp + r.pd as usize, pv);
     }
     proof { assert(stack@ =~= pre_s(*r, s0, fp as int)); }
-    let x = (if ua { *acc } else { sget(stack, fp + r.a as usize) });
+    let x = if ua { *acc } else { sget(stack, fp + r.a as usize) };
     match exec_unop(op, x) {
         Ok(v) => {
             sset(stack, fp + r.d1 as usize, v);
@@ -789,7 +808,7 @@ pub fn r_bin_rr(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost
         sset(stack, fp + r.pd as usize, pv);
     }
     proof { assert(stack@ =~= pre_s(*r, s0, fp as int)); }
-    let x = (if ua { *acc } else { sget(stack, fp + r.a as usize) });
+    let x = if ua { *acc } else { sget(stack, fp + r.a as usize) };
     let y = sget(stack, fp + r.b as usize);
     match exec_binop(op, x, y) {
         Ok(v) => {
@@ -837,7 +856,7 @@ pub fn r_bin_ri(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost
         sset(stack, fp + r.pd as usize, pv);
     }
     proof { assert(stack@ =~= pre_s(*r, s0, fp as int)); }
-    let x = (if ua { *acc } else { sget(stack, fp + r.a as usize) });
+    let x = if ua { *acc } else { sget(stack, fp + r.a as usize) };
     match exec_binop(op, x, r.imm) {
         Ok(v) => {
             sset(stack, fp + r.d1 as usize, v);
@@ -885,7 +904,7 @@ pub fn r_load(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(c
     }
     proof { assert(stack@ =~= pre_s(*r, s0, fp as int)); }
     let (nb, signed, is64, off) = load_kind_x(op);
-    let ea = lo((if ua { *acc } else { sget(stack, fp + r.a as usize) })) as u64 + off as u64;
+    let ea = lo(if ua { *acc } else { sget(stack, fp + r.a as usize) }) as u64 + off as u64;
     if ea + nb as u64 > st.mem.len() as u64 {
         proof {
             assert(reff(*r, op, s0, fp as int, store_view(st)) == RS::Trap(Trap::MemoryOutOfBounds, store_view(st)));
@@ -988,7 +1007,7 @@ fn r_store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(code
     proof { lemma_rfacts(m, cs, codes, c0, g, s0, calls, d, rpc, fp, st); }
     let ghost st0 = *st;
     let (nb, off) = store_kind_x(op);
-    let ea = lo((if ua { acc } else { sget(stack, fp + r.a as usize) })) as u64 + off as u64;
+    let ea = lo(if ua { acc } else { sget(stack, fp + r.a as usize) }) as u64 + off as u64;
     if ea + nb as u64 > st.mem.len() as u64 {
         proof {
             assert(reff(*r, op, s0, fp as int, store_view(st)) == RS::Trap(Trap::MemoryOutOfBounds, store_view(st)));
@@ -1031,7 +1050,7 @@ pub fn r_brif<'a>(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Gho
     proof { if ua { lemma_acc_fam(r.op); } }
     proof { reveal(acc_ok); }
     proof { lemma_rslots(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st); }
-    let taken = (lo((if ua { acc } else { sget(stack, fp + r.a as usize) })) == 0) == z;
+    let taken = (lo(if ua { acc } else { sget(stack, fp + r.a as usize) }) == 0) == z;
     let ghost mut g2 = g;
     proof { g2 = lemma_rbranch(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st, taken); }
     proof { lemma_acc_br(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st); }
@@ -1085,7 +1104,7 @@ pub fn r_brif_rr<'a>(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, 
         lemma_rfacts(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st);
         lemma_cmp_any(op);
     }
-    let x = (if ua { acc } else { sget(stack, fp + r.a as usize) });
+    let x = if ua { acc } else { sget(stack, fp + r.a as usize) };
     let y = sget(stack, fp + r.b as usize);
     let taken = cmp_x(op, x, y);
     let ghost mut g2 = g;
@@ -1118,7 +1137,7 @@ pub fn r_brif_ri<'a>(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, 
         lemma_rfacts(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st);
         lemma_cmp_any(op);
     }
-    let x = (if ua { acc } else { sget(stack, fp + r.a as usize) });
+    let x = if ua { acc } else { sget(stack, fp + r.a as usize) };
     let taken = cmp_x(op, x, r.imm);
     let ghost mut g2 = g;
     proof { g2 = lemma_rbranch(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st, taken); }

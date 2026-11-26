@@ -331,8 +331,8 @@ fn decode_body(url: bool, c: &[u8], m: usize, out: &mut [u8])
         assert(3 * (m / 4) <= decoded_len(m as nat));
     }
     let (g, ok) = if verilith_simd::cpu::has_avx2() {
-        // SAFETY: the CPU has AVX2.
-        unsafe { super::avx2::decode_bulk(url, c, m, out) }
+        // The CPU has AVX2.
+        super::avx2::decode_bulk(url, c, m, out)
     } else {
         (0, true)
     };

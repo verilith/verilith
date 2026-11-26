@@ -1,60 +1,325 @@
-//! The tape the parser writes: one 16-byte `Tok` per item, viewed as the
-//! spec's `XTok`.
+//! The tape the parser writes: one `Tok` per item (20 bytes on a 64-bit
+//! target, 16 on a 32-bit one), viewed as the spec's `XTok`.
 use crate::spec::*;
 use vstd::prelude::*;
 
 verus! {
 
+/// A token's kind: one for each `XTok` variant, which says what the token's fields mean.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum Kind {
+    /// `<?xml ...?>`: the version number.
     XmlDecl,
+    /// The encoding name in the XML declaration.
     Encoding,
+    /// `<!DOCTYPE name`.
     Doctype,
+    /// The end of the document type declaration.
     DoctypeEnd,
+    /// A public identifier.
     PubId,
+    /// A system identifier.
     SysId,
+    /// `<!ELEMENT name ...>`.
     ElementDecl,
+    /// `<!ATTLIST name`.
     AttlistDecl,
+    /// An attribute definition.
     AttDef,
+    /// An attribute definition's default.
     AttDefault,
+    /// `<!ENTITY name`.
     EntityDecl,
+    /// A literal entity value.
     EntityValue,
+    /// `NDATA name`.
     NData,
+    /// `<!NOTATION name`.
     NotationDecl,
+    /// `%name;` in the internal subset.
     PERef,
+    /// A comment.
     Comment,
+    /// A processing instruction's target.
     PI,
+    /// A processing instruction's data.
     PIData,
+    /// A start tag, or an empty-element tag.
     STag,
+    /// An attribute's name.
     Attr,
+    /// An attribute's value.
     AttVal,
+    /// The end of an element.
     ETag,
+    /// Character data.
     Text,
+    /// A CDATA section's text.
     CData,
+    /// A character reference, or one of the predefined entities.
     CharRef,
+    /// Any other entity reference.
     EntRef,
+}
+
+// The layout is chosen per target. On a 64-bit target positions are 48
+// bits: a low `u32` and a high `u16` (`Hi`), so a token is 20 bytes where
+// three `usize` made it 32. On a 32-bit target (wasm32) no slice reaches
+// 2^31 bytes, so the low `u32` is the whole position, `Hi` is the empty
+// `Z`, and a token is 16 bytes. The feature `narrow-tokens` picks the
+// 32-bit layout on a 64-bit host, so that `scripts/verify-narrow.sh` and
+// the tests check it there; the rest of the crate is the same text for
+// both.
+
+/// The largest position a token holds: 2^48 - 1 (256 TiB), more than any
+/// address space gives a process today (x86-64 gives 2^47 bytes, AArch64
+/// at most 2^52 in all, which no machine fills with one document). A
+/// document longer than this is refused (`ErrorKind::TooLarge`) instead of
+/// stored wrong.
+#[cfg(not(any(not(target_pointer_width = "64"), feature = "narrow-tokens")))]
+pub const MAX_POS: u64 = 0xFFFF_FFFF_FFFF;
+
+/// The largest position a token holds: 2^32 - 1, more than a 32-bit
+/// target's slices can be (at most 2^31 - 1 bytes), so on such a target
+/// nothing is refused. (Under `narrow-tokens` on a 64-bit host, a text
+/// past 4 GiB is refused: that build is for checking the layout.)
+#[cfg(any(not(target_pointer_width = "64"), feature = "narrow-tokens"))]
+pub const MAX_POS: u64 = 0xFFFF_FFFF;
+
+/// The high 16 bits of a position.
+#[cfg(not(any(not(target_pointer_width = "64"), feature = "narrow-tokens")))]
+pub type Hi = u16;
+
+/// No high bits: the 32-bit layout.
+#[cfg(any(not(target_pointer_width = "64"), feature = "narrow-tokens"))]
+pub type Hi = Z;
+
+/// Nothing, in no bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Z;
+
+/// The value of the high part.
+#[cfg(not(any(not(target_pointer_width = "64"), feature = "narrow-tokens")))]
+pub open spec fn hv(h: Hi) -> int {
+    h as int
+}
+
+#[cfg(any(not(target_pointer_width = "64"), feature = "narrow-tokens"))]
+pub open spec fn hv(h: Hi) -> int {
+    0
 }
 
 /// One item. `a..b` is the item's span (see `XTok`); `f` is its flag or
 /// small code (`sd`, `ty`, `kind`, `pe`, `plain`, `cr`); `c` is a start
 /// tag's link to its end, or an attribute default's entity count. A
 /// character reference keeps its position in `a` and its character in `b`.
+///
+/// `a`, `b` and `c` are each a low `u32` (`al`, `bl`, `cl`) and a high part
+/// (`ah`, `bh`, `ch`, of type `Hi`): 20 bytes in all on a 64-bit target,
+/// 16 on a 32-bit one. Read them with `a()`, `b()` and `c()` (`a48()`,
+/// `b48()` and `c48()` in verified code).
 #[derive(Clone, Copy, Debug)]
 pub struct Tok {
+    /// What the token is.
     pub kind: Kind,
+    /// Its flag or small code.
     pub f: u8,
-    pub a: usize,
-    pub b: usize,
-    pub c: usize,
+    /// The high part of `a`.
+    pub ah: Hi,
+    /// The low 32 bits of `a`.
+    pub al: u32,
+    /// The low 32 bits of `b`.
+    pub bl: u32,
+    /// The high part of `b`.
+    pub bh: Hi,
+    /// The high part of `c`.
+    pub ch: Hi,
+    /// The low 32 bits of `c`.
+    pub cl: u32,
+}
+
+/// A position from its low 32 bits and its high part.
+pub open spec fn wide(lo: u32, hi: Hi) -> int {
+    lo as int + hv(hi) * 0x1_0000_0000
+}
+
+/// The low and high parts of `v`, which `wide` puts back together.
+#[cfg(not(any(not(target_pointer_width = "64"), feature = "narrow-tokens")))]
+#[inline(always)]
+pub fn split(v: u64) -> (r: (u32, Hi))
+    requires
+        v <= MAX_POS,
+    ensures
+        wide(r.0, r.1) == v,
+{
+    let lo = v as u32;
+    let hi = (v >> 32u64) as u16;
+    assert(lo as int + hi as int * 0x1_0000_0000 == v as int) by (bit_vector)
+        requires
+            v <= 0xFFFF_FFFF_FFFFu64,
+            lo == v as u32,
+            hi == (v >> 32u64) as u16,
+    ;
+    (lo, hi)
+}
+
+/// The low and high parts of `v`, which `wide` puts back together.
+#[cfg(any(not(target_pointer_width = "64"), feature = "narrow-tokens"))]
+#[inline(always)]
+pub fn split(v: u64) -> (r: (u32, Hi))
+    requires
+        v <= MAX_POS,
+    ensures
+        wide(r.0, r.1) == v,
+{
+    (v as u32, Z)
+}
+
+/// `wide(lo, hi)` as a `u64`.
+#[cfg(not(any(not(target_pointer_width = "64"), feature = "narrow-tokens")))]
+#[inline(always)]
+pub fn join(lo: u32, hi: Hi) -> (r: u64)
+    ensures
+        r == wide(lo, hi),
+        r <= MAX_POS,
+{
+    let r = (lo as u64) | ((hi as u64) << 32u64);
+    assert(r as int == lo as int + hi as int * 0x1_0000_0000 && r <= 0xFFFF_FFFF_FFFFu64) by (bit_vector)
+        requires
+            r == (lo as u64) | ((hi as u64) << 32u64),
+    ;
+    r
+}
+
+/// `wide(lo, hi)` as a `u64`.
+#[cfg(any(not(target_pointer_width = "64"), feature = "narrow-tokens"))]
+#[inline(always)]
+pub fn join(lo: u32, hi: Hi) -> (r: u64)
+    ensures
+        r == wide(lo, hi),
+        r <= MAX_POS,
+{
+    lo as u64
+}
+
+/// The low 32 bits of `t`'s span length, `b - a`.
+pub open spec fn low_len(t: Tok) -> u32 {
+    if t.bl >= t.al {
+        (t.bl - t.al) as u32
+    } else {
+        (t.bl - t.al + 0x1_0000_0000) as u32
+    }
+}
+
+/// Spans of the same length have the same `low_len`.
+pub proof fn lemma_low_len(t: Tok, u: Tok)
+    requires
+        t.sa() <= t.sb(),
+        u.sa() <= u.sb(),
+        t.sb() - t.sa() == u.sb() - u.sa(),
+    ensures
+        low_len(t) == low_len(u),
+{
+    let d = t.bl as int - t.al as int;
+    let e = u.bl as int - u.al as int;
+    let k = (hv(u.bh) - hv(u.ah)) - (hv(t.bh) - hv(t.ah));
+    assert(d - e == k * 0x1_0000_0000) by (nonlinear_arith)
+        requires
+            t.sb() - t.sa() == u.sb() - u.sa(),
+            t.sb() == t.bl as int + hv(t.bh) * 0x1_0000_0000,
+            t.sa() == t.al as int + hv(t.ah) * 0x1_0000_0000,
+            u.sb() == u.bl as int + hv(u.bh) * 0x1_0000_0000,
+            u.sa() == u.al as int + hv(u.ah) * 0x1_0000_0000,
+            d == t.bl as int - t.al as int,
+            e == u.bl as int - u.al as int,
+            k == (hv(u.bh) - hv(u.ah)) - (hv(t.bh) - hv(t.ah)),
+    ;
+    assert(-1 <= k <= 1) by (nonlinear_arith)
+        requires
+            d - e == k * 0x1_0000_0000,
+            -0x1_0000_0000 < d < 0x1_0000_0000,
+            -0x1_0000_0000 < e < 0x1_0000_0000,
+    ;
+}
+
+impl Tok {
+    /// `low_len(self)`.
+    #[inline(always)]
+    pub fn low_len(&self) -> (r: u32)
+        ensures
+            r == low_len(*self),
+    {
+        self.bl.wrapping_sub(self.al)
+    }
+
+    pub open spec fn sa(&self) -> int {
+        wide(self.al, self.ah)
+    }
+
+    pub open spec fn sb(&self) -> int {
+        wide(self.bl, self.bh)
+    }
+
+    pub open spec fn sc(&self) -> int {
+        wide(self.cl, self.ch)
+    }
+
+    /// The token with these fields.
+    #[inline(always)]
+    pub fn new(kind: Kind, f: u8, a: usize, b: usize, c: usize) -> (t: Tok)
+        requires
+            a <= MAX_POS,
+            b <= MAX_POS,
+            c <= MAX_POS,
+        ensures
+            t.kind == kind,
+            t.f == f,
+            t.sa() == a,
+            t.sb() == b,
+            t.sc() == c,
+    {
+        let (al, ah) = split(a as u64);
+        let (bl, bh) = split(b as u64);
+        let (cl, ch) = split(c as u64);
+        Tok { kind, f, ah, al, bl, bh, ch, cl }
+    }
+
+    /// `a`: the span's start (a character reference's position).
+    #[inline(always)]
+    pub fn a48(&self) -> (r: u64)
+        ensures
+            r == self.sa(),
+    {
+        join(self.al, self.ah)
+    }
+
+    /// `b`: the span's end (a character reference's character).
+    #[inline(always)]
+    pub fn b48(&self) -> (r: u64)
+        ensures
+            r == self.sb(),
+    {
+        join(self.bl, self.bh)
+    }
+
+    /// `c`: a start tag's link to its end token, or an attribute
+    /// default's entity count; 0 otherwise.
+    #[inline(always)]
+    pub fn c48(&self) -> (r: u64)
+        ensures
+            r == self.sc(),
+    {
+        join(self.cl, self.ch)
+    }
 }
 
 impl View for Tok {
     type V = XTok;
 
     open spec fn view(&self) -> XTok {
-        let a = self.a as int;
-        let b = self.b as int;
+        let a = self.sa();
+        let b = self.sb();
         match self.kind {
             Kind::XmlDecl => XTok::XmlDecl { start: a, end: b, sd: self.f as int },
             Kind::Encoding => XTok::Encoding { start: a, end: b },
@@ -65,7 +330,7 @@ impl View for Tok {
             Kind::ElementDecl => XTok::ElementDecl { start: a, end: b },
             Kind::AttlistDecl => XTok::AttlistDecl { start: a, end: b },
             Kind::AttDef => XTok::AttDef { start: a, end: b, ty: self.f as int },
-            Kind::AttDefault => XTok::AttDefault { start: a, end: b, kind: self.f as int, nents: self.c as int },
+            Kind::AttDefault => XTok::AttDefault { start: a, end: b, kind: self.f as int, nents: self.sc() },
             Kind::EntityDecl => XTok::EntityDecl { start: a, end: b, pe: self.f != 0 },
             Kind::EntityValue => XTok::EntityValue { start: a, end: b },
             Kind::NData => XTok::NData { start: a, end: b },
@@ -74,7 +339,7 @@ impl View for Tok {
             Kind::Comment => XTok::Comment { start: a, end: b },
             Kind::PI => XTok::PI { start: a, end: b },
             Kind::PIData => XTok::PIData { start: a, end: b },
-            Kind::STag => XTok::STag { start: a, end: b, close: self.c as int },
+            Kind::STag => XTok::STag { start: a, end: b, close: self.sc() },
             Kind::Attr => XTok::Attr { start: a, end: b },
             Kind::AttVal => XTok::AttVal { start: a, end: b, plain: self.f != 0 },
             Kind::ETag => XTok::ETag,
@@ -126,19 +391,21 @@ pub fn is_att_default(k: Kind) -> (r: bool)
 #[inline(always)]
 pub fn tok(kind: Kind, a: usize, b: usize, f: u8) -> (t: Tok)
     requires
-        a <= isize::MAX,
-        b <= isize::MAX,
+        a <= MAX_POS,
+        b <= MAX_POS,
     ensures
         t.kind == kind,
-        t.a == a,
-        t.b == b,
+        t.sa() == a,
+        t.sb() == b,
         t.f == f,
-        t.c == 0,
+        t.sc() == 0,
 {
-    Tok { kind, f, a, b, c: 0 }
+    Tok::new(kind, f, a, b, 0)
 }
 
+/// The tokens of a parse, in order.
 pub struct Tape {
+    /// The tokens.
     pub toks: Vec<Tok>,
     /// The furthest position at which a step failed: for error messages
     /// only, outside the spec.
@@ -154,12 +421,20 @@ impl View for Tape {
 }
 
 impl Tape {
+    /// The tokens' flag bytes (for the push parser's proof).
+    pub open spec fn fl(&self) -> Seq<u8> {
+        self.toks@.map_values(|t: Tok| t.f)
+    }
+
+    /// An empty tape.
     pub fn new() -> (r: Tape)
         ensures
             r@ == Seq::<XTok>::empty(),
+            r.fl() == Seq::<u8>::empty(),
     {
         let r = Tape { toks: Vec::new(), err: 0 };
         assert(r@ =~= Seq::<XTok>::empty());
+        assert(r.fl() =~= Seq::<u8>::empty());
         r
     }
 
@@ -167,10 +442,12 @@ impl Tape {
     pub fn clear(&mut self)
         ensures
             final(self)@ == Seq::<XTok>::empty(),
+            final(self).fl() == Seq::<u8>::empty(),
     {
         self.toks.clear();
         self.err = 0;
         assert(self@ =~= Seq::<XTok>::empty());
+        assert(self.fl() =~= Seq::<u8>::empty());
     }
 
     /// Records a failure at `pos` (diagnostic only).
@@ -192,6 +469,7 @@ impl Tape {
         self.toks.reserve(n);
     }
 
+    /// The number of tokens.
     #[inline(always)]
     pub fn len(&self) -> (n: usize)
         ensures
@@ -200,21 +478,25 @@ impl Tape {
         self.toks.len()
     }
 
+    /// Appends a token.
     #[inline(always)]
     pub fn push(&mut self, t: Tok)
         ensures
             final(self)@ == old(self)@.push(t@),
+            final(self).fl() == old(self).fl().push(t.f),
     {
         let ghost tv = t@;
+        let ghost tf = t.f;
         self.toks.push(t);
         assert(final(self)@ =~= old(self)@.push(tv));
+        assert(final(self).fl() =~= old(self).fl().push(tf));
     }
 
     /// `close_at`: links the start tag at `k` to the last token.
     #[inline(always)]
     pub fn close(&mut self, k: usize)
         requires
-            k < old(self)@.len() <= isize::MAX,
+            k < old(self)@.len() <= MAX_POS,
             old(self)@[k as int] is STag,
         ensures
             final(self)@ == close_at(old(self)@, k as int),
@@ -222,12 +504,52 @@ impl Tape {
         let n = self.toks.len();
         let t = self.toks[k];
         let ghost old_v = self@;
-        self.toks.set(k, Tok { kind: t.kind, f: t.f, a: t.a, b: t.b, c: n - 1 });
+        let (cl, ch) = split((n - 1) as u64);
+        self.toks.set(k, Tok { kind: t.kind, f: t.f, ah: t.ah, al: t.al, bl: t.bl, bh: t.bh, ch, cl });
         proof {
             assert(t@ == old_v[k as int]);
             assert(t.kind == Kind::STag);
             assert(final(self)@ =~= close_at(old_v, k as int));
         }
+    }
+}
+
+/// The fields as `usize`, for the plain-Rust readers (the API and the C
+/// ABIs). A field is a position in the text, a token index or a count, so
+/// it fits in a `usize`; on a 64-bit target any 48-bit value does.
+impl Tok {
+    /// `a`: the span's start (a character reference's position).
+    #[inline(always)]
+    pub fn a(&self) -> (r: usize)
+        requires
+            self.sa() <= usize::MAX,
+        ensures
+            r == self.sa(),
+    {
+        self.a48() as usize
+    }
+
+    /// `b`: the span's end (a character reference's character).
+    #[inline(always)]
+    pub fn b(&self) -> (r: usize)
+        requires
+            self.sb() <= usize::MAX,
+        ensures
+            r == self.sb(),
+    {
+        self.b48() as usize
+    }
+
+    /// `c`: a start tag's link to its end token, or an attribute
+    /// default's entity count; 0 otherwise.
+    #[inline(always)]
+    pub fn c(&self) -> (r: usize)
+        requires
+            self.sc() <= usize::MAX,
+        ensures
+            r == self.sc(),
+    {
+        self.c48() as usize
     }
 }
 

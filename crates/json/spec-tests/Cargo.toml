@@ -8,7 +8,7 @@ publish = false
 
 [dependencies]
 verilith-json = { path = "..", features = ["cjson"] }
-vstd = { version = "=0.0.0-2026-11-01-0251", default-features = false, features = ["std"] }
+vstd = { version = "=0.0.0-2026-11-22-0344", default-features = false, features = ["std"] }
 
 [package.metadata.verus]
 verify = true

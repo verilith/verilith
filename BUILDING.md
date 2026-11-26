@@ -124,6 +124,20 @@ whose entry exists. Entries count only when saved by the same branch or by
 main, which is also all GitHub lets a pull request read. The weekly run
 ignores the entries.
 
+A pull request also drops every proof whose hash is the same on the tip of
+main it merges into (`--base`): its inputs are main's, so the pull request
+cannot change its result, and main's own runs check every proof main has
+not passed. A pull request therefore checks the proofs it changes, however
+far main's runs are behind.
+
+The Arm jobs on main verify through `cargo verus`, so their hash
+(`--cargo`) adds what Cargo reads besides the Buck2 inputs: each crate's
+`Cargo.toml` and `build.rs` in the dependency closure, the crate's
+`scripts/verify.sh` and `scripts/verify.sh`, the Verus installer, the root
+`Cargo.toml` apart from its member list, and the `Cargo.lock` entries the
+crate can reach. A crate whose hash passed on Arm before is not verified on
+Arm again; the weekly run checks every crate on Arm from nothing as well.
+
 ## What Buck2 does not do yet
 
 - **Building and testing.** `cargo build`, `cargo test` and each crate's

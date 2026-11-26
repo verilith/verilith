@@ -4,6 +4,7 @@ use crate::decode::*;
 use crate::output::*;
 use crate::passes::*;
 use crate::spec::*;
+use crate::work::Meter;
 use vstd::prelude::*;
 
 verus! {
@@ -40,15 +41,59 @@ pub fn decode(b: &[u8], fmt: PixelFormat, limit: usize) -> (r: Result<(Header, V
             Err(_) => true,
         },
 {
-    let (png, mut buf) = match parse_exec(b, limit) {
+    let mut tail = Tail::new();
+    decode_tail(b, fmt, limit, &mut tail)
+}
+
+/// `decode`, also saying what the image data held beyond the image.
+pub fn decode_tail(b: &[u8], fmt: PixelFormat, limit: usize, tail: &mut Tail) -> (r: Result<(Header, Vec<u8>), Error>)
+    ensures
+        match r {
+            Ok((h, px)) => crate::spec::decode(b@, fview(fmt)) == Some((h.view(), px@)),
+            Err(Error::Invalid) => crate::spec::decode(b@, fview(fmt)) is None,
+            Err(_) => true,
+        },
+{
+    decode_counted(b, fmt, limit, tail).0
+}
+
+/// The bound on `decode`'s work for an `n`-byte file that makes it allocate
+/// `px` bytes for its output: linear in both.
+pub open spec fn png_work(n: nat, px: nat) -> nat {
+    parse_work(n) + 3096 * n + 12 * px + 2008
+}
+
+/// `decode_tail`, counting its steps and the bytes it allocates for the
+/// output (`px`, at most twice `limit`): at most `png_work(b.len(), px)`
+/// steps.
+pub fn decode_counted(b: &[u8], fmt: PixelFormat, limit: usize, tail: &mut Tail) -> (r: (
+    Result<(Header, Vec<u8>), Error>,
+    Ghost<(nat, nat)>,
+))
+    ensures
+        match r.0 {
+            Ok((h, px)) => crate::spec::decode(b@, fview(fmt)) == Some((h.view(), px@)),
+            Err(Error::Invalid) => crate::spec::decode(b@, fview(fmt)) is None,
+            Err(_) => true,
+        },
+        r.1@.1 <= 2 * limit,
+        r.1@.0 <= png_work(b@.len(), r.1@.1),
+{
+    let tracked mut m = Meter { n: 0 };
+    let tracked mut a = Meter { n: 0 };
+    let (png, mut buf) = match parse_counted(b, limit, tail, Tracked(&mut m)) {
         Ok(p) => p,
-        Err(e) => return Err(e),
+        Err(e) => return (Err(e), Ghost((m.n, 0))),
     };
     let ghost raw = buf@;
-    let off = match reconstruct(&png.hdr, buf.as_mut_slice()) {
+    let off = match reconstruct_counted(&png.hdr, buf.as_mut_slice(), Tracked(&mut m)) {
         Ok(x) => x,
-        Err(()) => return Err(Error::Invalid),
+        Err(()) => return (Err(Error::Invalid), Ghost((m.n, 0))),
     };
+    let ghost m1 = m.n;
+    proof {
+        assert(m1 <= parse_work(b@.len()) + 3096 * b@.len() + 8);
+    }
     let ghost imgs = imgs_of(png.hdr.view(), buf@, off@);
     proof {
         lemma_rgba8_raw(Png { raw, ..png.view() }, png.view(), imgs);
@@ -57,25 +102,29 @@ pub fn decode(b: &[u8], fmt: PixelFormat, limit: usize) -> (r: Result<(Header, V
     let flat = png.hdr.interlace == 0;
     let px = match fmt {
         PixelFormat::Rgba8 => if flat && png.hdr.bit_depth == 8 {
-            crate::fast::rgba8_flat(&png, buf, &off, limit)
+            crate::fast::rgba8_flat(&png, buf, &off, limit, Tracked(&mut m), Tracked(&mut a))
         } else if flat && png.hdr.bit_depth == 16 {
-            crate::fast::rgba8_flat16(&png, buf.as_slice(), &off, limit)
+            crate::fast::rgba8_flat16(&png, buf.as_slice(), &off, limit, Tracked(&mut m), Tracked(&mut a))
         } else if png.hdr.bit_depth >= 8 {
-            crate::deint::rgba8_interlaced(png, buf.as_slice(), &off, limit)
+            crate::deint::rgba8_interlaced(png, buf.as_slice(), &off, limit, Tracked(&mut m), Tracked(&mut a))
         } else {
-            to_rgba8(&png, buf.as_slice(), &off, limit)
+            to_rgba8(&png, buf.as_slice(), &off, limit, Tracked(&mut m), Tracked(&mut a))
         },
         PixelFormat::Native => if flat && crate::geom::pixel_bits_exec(&png.hdr) >= 8 {
             Ok(crate::fast::native_flat(&png.hdr, buf, &off))
         } else if !flat && crate::geom::pixel_bits_exec(&png.hdr) >= 8 {
-            crate::deint::deinterlace(&png.hdr, buf.as_slice(), &off, limit)
+            crate::deint::deinterlace(&png.hdr, buf.as_slice(), &off, limit, Tracked(&mut m), Tracked(&mut a))
         } else {
-            to_native(&png.hdr, buf.as_slice(), &off, limit)
+            to_native(&png.hdr, buf.as_slice(), &off, limit, Tracked(&mut m), Tracked(&mut a))
         },
     };
+    proof {
+        assert(m.n <= m1 + 12 * a.n + 2000);
+    }
+    let ghost cnt = (m.n, a.n);
     match px {
-        Ok(v) => Ok((hdr, v)),
-        Err(e) => Err(e),
+        Ok(v) => (Ok((hdr, v)), Ghost(cnt)),
+        Err(e) => (Err(e), Ghost(cnt)),
     }
 }
 

@@ -4,10 +4,17 @@
 //! [`adler32`], [`crc32`] and [`crc32c()`] pick the fastest kernel this CPU
 //! has (see [`cpu`]); [`adler32_update`], [`crc32_update`] and
 //! [`crc32c_update`] are the portable verified kernels.
+pub mod adlerv;
 pub mod cpu;
+pub mod fold;
 pub mod crc32c;
 pub mod lanes;
 pub mod spec;
+#[cfg(target_arch = "x86_64")]
+pub mod vclmul;
+#[cfg(target_arch = "x86_64")]
+pub mod vdot;
+pub mod vudot;
 mod tables;
 
 pub use crc32c::{crc32c, crc32c_update};
@@ -60,7 +67,13 @@ pub proof fn lemma_crc_from(d: Seq<u8>)
     }
 }
 
+/// The Adler-32 modulus: the largest prime below 2^16.
 pub const ADLER_MOD: u32 = 65521;
+
+/// `a + b` in a 32-bit lane, wrapping (what the vector adds compute).
+pub open spec fn vdot_add32(a: int, b: int) -> u32 {
+    ((a + b) % 0x1_0000_0000) as u32
+}
 
 /// Most bytes that can be summed before the sums must be reduced: the
 /// largest `n` with `255 * n * (n + 1) / 2 + (n + 1) * (ADLER_MOD - 1)`
@@ -72,8 +85,10 @@ pub const NMAX: usize = 5552;
 /// so `u32` lanes cannot overflow.
 pub const LANES: usize = 32;
 
+/// Rows per Adler-32 block (see `LANES`).
 pub const ROWS: usize = 1024;
 
+/// Bytes per Adler-32 block.
 pub const BLOCK: usize = LANES * ROWS;
 
 // ---------------------------------------------------------------------------
@@ -566,6 +581,11 @@ pub fn adler32_update(a0: u32, b0: u32, d: &[u8]) -> (r: (u32, u32))
     (a, b)
 }
 
+/// The Adler-32 checksum of `d` (RFC 1950), on the fastest kernel the CPU has.
+///
+/// ```text
+/// ensures  r as nat == spec::adler32(d@)
+/// ```
 pub fn adler32(d: &[u8]) -> (r: u32)
     ensures
         r as nat == spec::adler32(d@),
@@ -974,9 +994,63 @@ proof fn lemma_crc16(c: u32, d: Seq<u8>, w: u32)
     ;
 }
 
+/// The register `c` stepped past four zero bytes, with four tables
+/// (slicing-by-4 with no data).
+#[inline(always)]
+#[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
+pub(crate) fn crc_shift32(c: u32) -> (r: u32)
+    ensures
+        r == spec::crc_steps(c, 32),
+{
+    let b0 = c & 0xff;
+    let b1 = (c >> 8) & 0xff;
+    let b2 = (c >> 16) & 0xff;
+    let b3 = c >> 24;
+    proof {
+        reveal(tab);
+        let c1 = c >> 8u32;
+        let c2 = c >> 16u32;
+        let c3 = c >> 24u32;
+        assert(c1 & 0xff == b1 && c2 & 0xff == b2 && c1 >> 8u32 == c2 && c2 >> 8u32 == c3 && b0 < 256
+            && b1 < 256 && b2 < 256 && b3 < 256 && c3 == b3) by (bit_vector)
+            requires
+                c1 == c >> 8u32,
+                c2 == c >> 16u32,
+                c3 == c >> 24u32,
+                b0 == c & 0xff,
+                b1 == (c >> 8u32) & 0xff,
+                b2 == (c >> 16u32) & 0xff,
+                b3 == c >> 24u32,
+        ;
+        lemma_byte_split(c, 32);
+        lemma_byte_split(c1, 24);
+        lemma_byte_split(c2, 16);
+        lemma_table(3, b0 as int);
+        lemma_table(2, b1 as int);
+        lemma_table(1, b2 as int);
+        lemma_table(0, b3 as int);
+        assert((b0 as int) as u32 == b0 && (b1 as int) as u32 == b1 && (b2 as int) as u32 == b2 && (
+        b3 as int) as u32 == b3);
+        let s0 = spec::crc_steps(b0, 32);
+        let s1 = spec::crc_steps(b1, 24);
+        let s2 = spec::crc_steps(b2, 16);
+        let s3 = spec::crc_steps(b3, 8);
+        let r1 = spec::crc_steps(c1, 24);
+        let r2 = spec::crc_steps(c2, 16);
+        let cs = spec::crc_steps(c, 32);
+        assert(cs == ((s0 ^ s1) ^ s2) ^ s3) by (bit_vector)
+            requires
+                cs == s0 ^ r1,
+                r1 == s1 ^ r2,
+                r2 == s2 ^ s3,
+        ;
+    }
+    T3[b0 as usize] ^ T2[b1 as usize] ^ T1[b2 as usize] ^ T0[b3 as usize]
+}
+
 /// The register after the 16 bytes at `i`.
 #[inline(always)]
-fn crc_step16(c: u32, d: &[u8], i: usize) -> (r: u32)
+pub(crate) fn crc_step16(c: u32, d: &[u8], i: usize) -> (r: u32)
     requires
         i + 16 <= d@.len(),
     ensures
@@ -1058,6 +1132,11 @@ pub fn crc32_update(reg: u32, d: &[u8]) -> (r: u32)
     c
 }
 
+/// The CRC-32 of `d` (the one zlib, gzip and PNG use), on the fastest kernel the CPU has.
+///
+/// ```text
+/// ensures  r == spec::crc32(d@)
+/// ```
 pub fn crc32(d: &[u8]) -> (r: u32)
     ensures
         r == spec::crc32(d@),

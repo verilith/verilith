@@ -21,7 +21,8 @@ You need:
   in a normal build);
 - for the proofs: the Verus release pinned in `scripts/verus-version`.
   `scripts/install-verus.sh` installs it into `~/verus-bin`; then put that
-  directory on `PATH` and set `VERUS_Z3_PATH=~/verus-bin/z3`;
+  directory on `PATH` and set `VERUS_Z3_PATH=~/verus-bin/z3`. A change
+  to that pin follows [RELEASING.md](RELEASING.md);
 - for the C API tests and the comparisons, a C compiler, `cmake` and
   `git`: each crate's `ci.sh` fetches and builds the original library
   at a pinned version.
@@ -40,6 +41,14 @@ cd ../.. && scripts/verify.sh zlib    # the proofs, with cargo verus
 `scripts/prove.sh zlib` checks the same proofs through Buck2, which is what
 CI uses ([BUILDING.md](BUILDING.md)). If you change a `Cargo.toml`, run
 `scripts/buckify.py` and commit the BUCK files it writes.
+
+If you add, remove or move anything Verus takes on trust (an
+`external_body`, an `axiom fn`, an `assume_specification`, a
+`Ghost::assume_new()`, an `exec_allows_no_decreases_clause`, or a `src/`
+file with no `verus!` block), run `scripts/trust-ledger.py` and commit the
+`TRUST-LEDGER.md` it writes; CI fails until you do. Say in the pull request
+why the new item is needed, and add it to the crate's TRUST.md or "Trusted
+base" section.
 
 CI checks the crates your change touches and every crate that depends on
 them. A pull request is ready to merge when the `CI` check passes.

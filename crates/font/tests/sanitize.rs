@@ -188,3 +188,25 @@ fn empty_and_tiny_inputs() {
         assert!(verilith_font::sanitize(magic).is_none());
     }
 }
+
+#[test]
+fn accepts_components_nested_deeper_than_64() {
+    // Glyph k + 1 has glyph k as its one component, 30000 levels deep;
+    // nothing recurses, so the test thread's small stack is enough.
+    let mut gs = vec![Vec::new(), triangle()];
+    for k in 1..30_000u16 {
+        gs.push(composite(k));
+    }
+    accepted(&sfnt(0x0001_0000, &tables(&gs)));
+}
+
+#[test]
+fn refuses_a_long_component_cycle() {
+    // Glyphs 1 to 5000, each a component of the one before, and 5000 of 1.
+    let mut gs = vec![Vec::new()];
+    for k in 1..5_000u16 {
+        gs.push(composite(k + 1));
+    }
+    gs.push(composite(1));
+    assert!(verilith_font::sanitize(&sfnt(0x0001_0000, &tables(&gs))).is_none());
+}

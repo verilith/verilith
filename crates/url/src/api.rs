@@ -220,7 +220,7 @@ pub(crate) fn any_tab_newline(t: &[u8], Tracked(cost): Tracked<&mut Meter>) -> (
 
 /// The parser's work bound for an `n`-byte input and an `m`-byte base.
 pub open spec fn parse_cost(n: nat, m: nat) -> int {
-    3 * n + 32 + machine_cost(n, m)
+    3 * n + 32 + crate::parse::simple_cost(n) + machine_cost(n, m)
 }
 
 /// Parses `input` against an optional base URL (the WHATWG URL parser).
@@ -271,12 +271,29 @@ pub(crate) fn parse_metered_in(input: &[u8], base: Option<&Url>, sc: &mut crate:
         final(cost).n <= old(cost).n + parse_cost(input.len() as nat, base_len(base_rec(base))),
 {
     let n = input.len();
+    // Most URLs need neither trimming nor the state machine.
+    let ghost c0 = cost.n;
+    match crate::parse::parse_simple(input, base, sc, Tracked(cost)) {
+        Some(u) => {
+            proof {
+                crate::why::lemma_run_r(input@, base_rec(base), None, initial_machine(State::SchemeStart, new_url()), 0);
+                lemma_trim(input@, 0, n as int);
+                assert(input@.subrange(0, n as int) =~= input@);
+                lemma_filter_identity(input@);
+                crate::ascii::lemma_parse_url_ascii(input@, base_rec(base));
+                crate::creds::lemma_parse_url_creds(input@, base_rec(base));
+            }
+            return Some(u);
+        },
+        None => {},
+    }
+    let ghost c1 = cost.n;
     let mut i = 0;
     while i < n && input[i] <= 0x20
         invariant
             i <= n == input.len(),
             forall|k: int| 0 <= k < i ==> is_c0_control_or_space(#[trigger] input@[k]),
-            cost.n == old(cost).n + i,
+            cost.n == c1 + i,
         decreases n - i,
     {
         proof {
@@ -289,7 +306,7 @@ pub(crate) fn parse_metered_in(input: &[u8], base: Option<&Url>, sc: &mut crate:
         invariant
             i <= j <= n == input.len(),
             forall|k: int| j <= k < n ==> is_c0_control_or_space(#[trigger] input@[k]),
-            cost.n == old(cost).n + i + (n - j),
+            cost.n == c1 + i + (n - j),
         decreases j,
     {
         proof {
@@ -323,6 +340,52 @@ pub(crate) fn parse_metered_in(input: &[u8], base: Option<&Url>, sc: &mut crate:
     } else {
         let v = remove_tab_newline_exec(input, i, j, Tracked(cost));
         run_machine_in(v.as_slice(), base, sc, Tracked(cost))
+    }
+}
+
+/// Why the parser rejects `input` against `base`: `None` when it accepts
+/// it, else the reason `spec::parse_why` gives.
+pub(crate) fn explain(input: &[u8], base: Option<&Url>) -> (r: Option<Why>)
+    requires
+        base matches Some(b) ==> b.ok(),
+    ensures
+        r == parse_why(input@, base_rec(base)),
+{
+    let tracked mut meter = Meter { n: 0 };
+    let n = input.len();
+    let mut i = 0;
+    while i < n && input[i] <= 0x20
+        invariant
+            i <= n == input.len(),
+            forall|k: int| 0 <= k < i ==> is_c0_control_or_space(#[trigger] input@[k]),
+        decreases n - i,
+    {
+        i = i + 1;
+    }
+    let mut j = n;
+    while j > i && input[j - 1] <= 0x20
+        invariant
+            i <= j <= n == input.len(),
+            forall|k: int| j <= k < n ==> is_c0_control_or_space(#[trigger] input@[k]),
+        decreases j,
+    {
+        j = j - 1;
+    }
+    proof {
+        if i == j {
+            assert forall|k: int| 0 <= k < n implies is_c0_control_or_space(#[trigger] input@[k]) by {
+                if k >= i {
+                    assert(k >= j);
+                }
+            }
+        }
+        lemma_trim(input@, i as int, j as int);
+    }
+    let v = remove_tab_newline_exec(input, i, j, Tracked(&mut meter));
+    let mut sc = crate::host::Scratch::new();
+    match run_machine_f(v.as_slice(), base, &mut sc, Tracked(&mut meter)) {
+        Ok(_) => None,
+        Err(f) => Some(crate::why::fault_why_exec(v.as_slice(), f)),
     }
 }
 

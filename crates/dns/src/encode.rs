@@ -737,6 +737,115 @@ proof fn lemma_rt_hinfo(s: SpecRdata, t: u16)
     }
 }
 
+/// A character-string followed by `rest`: the string decodes, and `rest`
+/// starts right after it.
+proof fn lemma_cstring_then(b: Seq<u8>, p: int, end: int, s: Seq<u8>, rest: Seq<u8>)
+    requires
+        at(b, p, ser_cstring(s) + rest),
+        cstr_ok(s),
+        p + 1 + s.len() + rest.len() <= end <= b.len(),
+    ensures
+        parse_cstring(b, p, end) == Some((s, p + 1 + s.len() as int)),
+        at(b, p + 1 + s.len() as int, rest),
+{
+    lemma_at_split(b, p, ser_cstring(s), rest);
+    lemma_cstring_rt(b, p, end, s);
+}
+
+/// The NAPTR fields after order and preference: three character-strings
+/// and the replacement name, which ends the RDATA.
+proof fn lemma_naptr_tail(
+    b: Seq<u8>,
+    flags: Seq<u8>,
+    services: Seq<u8>,
+    regexp: Seq<u8>,
+    replacement: SpecName,
+)
+    requires
+        at(b, 4, ser_cstring(flags) + (ser_cstring(services) + (ser_cstring(regexp) + ser_name(
+            replacement,
+        )))),
+        b.len() == 4 + ser_cstring(flags).len() + ser_cstring(services).len() + ser_cstring(
+            regexp,
+        ).len() + ser_name(replacement).len(),
+        cstr_ok(flags),
+        cstr_ok(services),
+        cstr_ok(regexp),
+        valid_name(replacement),
+    ensures
+        ({
+            let l = b.len() as int;
+            let p1 = 5 + flags.len() as int;
+            let p2 = p1 + 1 + services.len() as int;
+            let p3 = p2 + 1 + regexp.len() as int;
+            &&& parse_cstring(b, 4, l) == Some((flags, p1))
+            &&& parse_cstring(b, p1, l) == Some((services, p2))
+            &&& parse_cstring(b, p2, l) == Some((regexp, p3))
+            &&& parse_name_exact(b, p3, l) == Some(replacement)
+        }),
+{
+    let l = b.len() as int;
+    let p1 = 5 + flags.len() as int;
+    let p2 = p1 + 1 + services.len() as int;
+    let p3 = p2 + 1 + regexp.len() as int;
+    lemma_cstring_then(
+        b,
+        4,
+        l,
+        flags,
+        ser_cstring(services) + (ser_cstring(regexp) + ser_name(replacement)),
+    );
+    lemma_cstring_then(b, p1, l, services, ser_cstring(regexp) + ser_name(replacement));
+    lemma_cstring_then(b, p2, l, regexp, ser_name(replacement));
+    lemma_name_in_rt(b, p3, l, replacement);
+}
+
+/// Two 16-bit fields followed by `rest`.
+proof fn lemma_u16_pair_then(b: Seq<u8>, x: u16, y: u16, rest: Seq<u8>)
+    requires
+        b == ser_u16(x) + ser_u16(y) + rest,
+    ensures
+        parse_u16(b, 0) == Some((x, 2int)),
+        parse_u16(b, 2) == Some((y, 4int)),
+        at(b, 4, rest),
+        b.len() == 4 + rest.len(),
+{
+    let h = ser_u16(x) + ser_u16(y);
+    lemma_cat(b, h, rest);
+    lemma_cat(h, ser_u16(x), ser_u16(y));
+    assert(b[0] == h[0] && b[1] == h[1] && b[2] == h[2] && b[3] == h[3]);
+    lemma_u16_roundtrip(h, 0, x);
+    lemma_u16_roundtrip(h, 2, y);
+}
+
+/// `parse_rdata` and `canon_names` on a NAPTR record are its NAPTR
+/// branches. Proved apart, with nothing else in context: the other types'
+/// branches are expensive to rule out next to a large RDATA term.
+proof fn lemma_naptr_dispatch(b: Seq<u8>, end: int)
+    requires
+        0 <= end <= b.len(),
+    ensures
+        parse_rdata(b, TYPE_NAPTR, 0, end) == parse_naptr(b, 0, end),
+        canon_names(b, TYPE_NAPTR, 0, end) == (if end >= 4 {
+            match parse_cstring(b, 4, end) {
+                Some((_, p1)) => match parse_cstring(b, p1, end) {
+                    Some((_, p2)) => match parse_cstring(b, p2, end) {
+                        Some((_, p3)) => match parse_name_exact(b, p3, end) {
+                            Some(n) => Some(b.subrange(0, p3) + ser_name(n)),
+                            None => None,
+                        },
+                        None => None,
+                    },
+                    None => None,
+                },
+                None => None,
+            }
+        } else {
+            None
+        }),
+{
+}
+
 #[verifier::spinoff_prover]
 proof fn lemma_rt_naptr(s: SpecRdata, t: u16)
     requires
@@ -749,35 +858,16 @@ proof fn lemma_rt_naptr(s: SpecRdata, t: u16)
     let l = b.len() as int;
     match s {
         SpecRdata::Naptr { order, preference, flags, services, regexp, replacement } => {
-            let x = ser_u16(order) + ser_u16(preference);
             let y = ser_cstring(flags) + (ser_cstring(services) + (ser_cstring(regexp) + ser_name(
                 replacement,
             )));
-            assert(b =~= x + y);
-            lemma_cat(b, x, y);
-            lemma_cat(x, ser_u16(order), ser_u16(preference));
-            assert(b[0] == x[0] && b[1] == x[1] && b[2] == x[2] && b[3] == x[3]);
-            lemma_u16_roundtrip(x, 0, order);
-            lemma_u16_roundtrip(x, 2, preference);
-            let p1: int = 5 + flags.len() as int;
-            let p2: int = p1 + 1 + services.len();
-            let p3: int = p2 + 1 + regexp.len();
-            lemma_at_split(b, 4, ser_cstring(flags), ser_cstring(services) + (ser_cstring(regexp)
-                + ser_name(replacement)));
-            lemma_at_split(b, p1, ser_cstring(services), ser_cstring(regexp) + ser_name(replacement));
-            lemma_at_split(b, p2, ser_cstring(regexp), ser_name(replacement));
-            lemma_cstring_rt(b, 4, l, flags);
-            lemma_cstring_rt(b, p1, l, services);
-            lemma_cstring_rt(b, p2, l, regexp);
-            lemma_name_in_rt(b, p3, l, replacement);
-            assert(b.subrange(0, p3) + ser_name(replacement) =~= b);
-            assert(parse_cstring(b, 4, l) == Some((flags, p1)));
-            assert(parse_cstring(b, p1, l) == Some((services, p2)));
-            assert(parse_cstring(b, p2, l) == Some((regexp, p3)));
-            assert(p3 + ser_name(replacement).len() == l);
-            assert(parse_name_exact(b, p3, l) == Some(replacement));
+            assert(b =~= ser_u16(order) + ser_u16(preference) + y);
+            lemma_u16_pair_then(b, order, preference, y);
+            lemma_naptr_tail(b, flags, services, regexp, replacement);
+            let p3 = 7 + flags.len() + services.len() + regexp.len() as int;
             assert(parse_naptr(b, 0, l) == Some(s));
-            assert(parse_rdata(b, t, 0, l) == Some(s));
+            assert(b.subrange(0, p3) + ser_name(replacement) =~= b);
+            lemma_naptr_dispatch(b, l);
         },
         _ => {},
     }
@@ -1282,7 +1372,7 @@ fn put_name(out: &mut Vec<u8>, x: &NameBytes) -> (r: Option<Ghost<SpecName>>)
     }
 }
 
-/// Appends a <character-string> if `x` fits one.
+/// Appends a `<character-string>` if `x` fits one.
 fn put_cstring(out: &mut Vec<u8>, x: &[u8]) -> (ok: bool)
     ensures
         ok == cstr_ok(x@),
@@ -2125,7 +2215,7 @@ pub open spec fn txt_split(v: Seq<Seq<u8>>) -> Seq<Seq<u8>>
     }
 }
 
-/// Splits each string into <character-string>-sized pieces, as c-ares
+/// Splits each string into `<character-string>`-sized pieces, as c-ares
 /// writes TXT strings longer than 255 octets.
 pub fn split_txt<'a>(strs: &Vec<&'a [u8]>) -> (r: Vec<&'a [u8]>)
     ensures

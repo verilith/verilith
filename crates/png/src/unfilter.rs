@@ -2,6 +2,7 @@
 //! and `spec::recon_rows`.
 use crate::prims::*;
 use crate::spec::*;
+use crate::work::Meter;
 use vstd::prelude::*;
 
 verus! {
@@ -90,6 +91,7 @@ pub fn unfilter_row(
     rb: usize,
     bpp: usize,
     ft: u8,
+    Tracked(m): Tracked<&mut Meter>,
 )
     requires
         src + rb <= old(buf)@.len(),
@@ -97,6 +99,7 @@ pub fn unfilter_row(
         has_prev ==> pv + rb <= dst,
         1 <= bpp <= 8,
     ensures
+        final(m).n <= old(m).n + 3 * rb,
         final(buf)@.len() == old(buf)@.len(),
         final(buf)@.subrange(dst as int, dst + rb) == recon(
             ft,
@@ -114,86 +117,86 @@ pub fn unfilter_row(
     // the predictor's dispatch and the left-neighbour distance constant.
     if ft == 0 {
         if bpp == 1 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 1, 0)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 1, 0, Tracked(m))
         } else if bpp == 2 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 2, 0)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 2, 0, Tracked(m))
         } else if bpp == 3 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 3, 0)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 3, 0, Tracked(m))
         } else if bpp == 4 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 4, 0)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 4, 0, Tracked(m))
         } else if bpp == 6 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 6, 0)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 6, 0, Tracked(m))
         } else if bpp == 8 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 8, 0)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 8, 0, Tracked(m))
         } else {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, bpp, 0)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, bpp, 0, Tracked(m))
         }
     } else if ft == 1 {
         if bpp == 1 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 1, 1)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 1, 1, Tracked(m))
         } else if bpp == 2 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 2, 1)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 2, 1, Tracked(m))
         } else if bpp == 3 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 3, 1)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 3, 1, Tracked(m))
         } else if bpp == 4 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 4, 1)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 4, 1, Tracked(m))
         } else if bpp == 6 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 6, 1)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 6, 1, Tracked(m))
         } else if bpp == 8 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 8, 1)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 8, 1, Tracked(m))
         } else {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, bpp, 1)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, bpp, 1, Tracked(m))
         }
     } else if ft == 2 {
         if bpp == 1 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 1, 2)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 1, 2, Tracked(m))
         } else if bpp == 2 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 2, 2)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 2, 2, Tracked(m))
         } else if bpp == 3 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 3, 2)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 3, 2, Tracked(m))
         } else if bpp == 4 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 4, 2)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 4, 2, Tracked(m))
         } else if bpp == 6 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 6, 2)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 6, 2, Tracked(m))
         } else if bpp == 8 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 8, 2)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 8, 2, Tracked(m))
         } else {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, bpp, 2)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, bpp, 2, Tracked(m))
         }
     } else if ft == 3 {
         if bpp == 1 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 1, 3)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 1, 3, Tracked(m))
         } else if bpp == 2 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 2, 3)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 2, 3, Tracked(m))
         } else if bpp == 3 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 3, 3)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 3, 3, Tracked(m))
         } else if bpp == 4 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 4, 3)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 4, 3, Tracked(m))
         } else if bpp == 6 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 6, 3)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 6, 3, Tracked(m))
         } else if bpp == 8 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 8, 3)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 8, 3, Tracked(m))
         } else {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, bpp, 3)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, bpp, 3, Tracked(m))
         }
     } else if ft == 4 {
         if bpp == 1 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 1, 4)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 1, 4, Tracked(m))
         } else if bpp == 2 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 2, 4)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 2, 4, Tracked(m))
         } else if bpp == 3 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 3, 4)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 3, 4, Tracked(m))
         } else if bpp == 4 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 4, 4)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 4, 4, Tracked(m))
         } else if bpp == 6 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 6, 4)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 6, 4, Tracked(m))
         } else if bpp == 8 {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 8, 4)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, 8, 4, Tracked(m))
         } else {
-            unfilter_row_h(buf, src, dst, pv, has_prev, rb, bpp, 4)
+            unfilter_row_h(buf, src, dst, pv, has_prev, rb, bpp, 4, Tracked(m))
         }
     } else {
-        unfilter_row_h(buf, src, dst, pv, has_prev, rb, bpp, ft)
+        unfilter_row_h(buf, src, dst, pv, has_prev, rb, bpp, ft, Tracked(m))
     }
 }
 
@@ -207,6 +210,7 @@ fn unfilter_row_h(
     rb: usize,
     bpp: usize,
     ft: u8,
+    Tracked(m): Tracked<&mut Meter>,
 )
     requires
         src + rb <= old(buf)@.len(),
@@ -214,6 +218,7 @@ fn unfilter_row_h(
         has_prev ==> pv + rb <= dst,
         1 <= bpp <= 8,
     ensures
+        final(m).n <= old(m).n + 3 * rb,
         final(buf)@.len() == old(buf)@.len(),
         final(buf)@.subrange(dst as int, dst + rb) == recon(
             ft,
@@ -228,9 +233,9 @@ fn unfilter_row_h(
             )@[k],
 {
     if has_prev {
-        unfilter_row_g(buf, src, dst, pv, true, rb, bpp, ft)
+        unfilter_row_g(buf, src, dst, pv, true, rb, bpp, ft, Tracked(m))
     } else {
-        unfilter_row_g(buf, src, dst, pv, false, rb, bpp, ft)
+        unfilter_row_g(buf, src, dst, pv, false, rb, bpp, ft, Tracked(m))
     }
 }
 
@@ -244,6 +249,7 @@ fn unfilter_row_g(
     rb: usize,
     bpp: usize,
     ft: u8,
+    Tracked(m): Tracked<&mut Meter>,
 )
     requires
         src + rb <= old(buf)@.len(),
@@ -251,6 +257,7 @@ fn unfilter_row_g(
         has_prev ==> pv + rb <= dst,
         1 <= bpp <= 8,
     ensures
+        final(m).n <= old(m).n + 3 * rb,
         final(buf)@.len() == old(buf)@.len(),
         final(buf)@.subrange(dst as int, dst + rb) == recon(
             ft,
@@ -267,6 +274,7 @@ fn unfilter_row_g(
     let ghost prev = prev_row(buf@, pv as int, has_prev, rb as nat);
     let ghost cur = buf@.subrange(src as int, src + rb);
     let ghost d_in = buf@;
+    let ghost m0 = m.n;
     let mut i: usize = 0;
     let _ = buf.len();
     proof {
@@ -294,13 +302,18 @@ fn unfilter_row_g(
             cur == d_in.subrange(src as int, src + rb),
             buf@.subrange(dst as int, dst + i) == recon(ft, prev, cur, bpp as nat, i as nat),
             forall|k: int| 0 <= k < buf@.len() && !(dst <= k < dst + i) ==> #[trigger] buf@[k] == d_in[k],
+            m.n <= m0 + i,
+            m0 == old(m).n,
         decreases first - i,
     {
+        proof {
+            m.n = m.n + 1;
+        }
         recon_step(buf, src, dst, pv, has_prev, rb, bpp, ft, i, false, Ghost(prev), Ghost(cur), Ghost(d_in));
         i = i + 1;
     }
     if (ft == 1 || ft == 3 || ft == 4) && i == bpp {
-        i = unfilter_reg(buf, src, dst, pv, has_prev, rb, bpp, ft, Ghost(prev), Ghost(cur), Ghost(d_in));
+        i = unfilter_reg(buf, src, dst, pv, has_prev, rb, bpp, ft, Ghost(prev), Ghost(cur), Ghost(d_in), Tracked(m));
     }
     while i < rb
         invariant
@@ -317,8 +330,13 @@ fn unfilter_row_g(
             cur == d_in.subrange(src as int, src + rb),
             buf@.subrange(dst as int, dst + i) == recon(ft, prev, cur, bpp as nat, i as nat),
             forall|k: int| 0 <= k < buf@.len() && !(dst <= k < dst + i) ==> #[trigger] buf@[k] == d_in[k],
+            m.n <= m0 + 3 * i,
+            m0 == old(m).n,
         decreases rb - i,
     {
+        proof {
+            m.n = m.n + 1;
+        }
         recon_step(buf, src, dst, pv, has_prev, rb, bpp, ft, i, true, Ghost(prev), Ghost(cur), Ghost(d_in));
         i = i + 1;
     }
@@ -329,6 +347,7 @@ fn unfilter_row_g(
 /// just after being written, which puts a store-to-load forward on the
 /// critical path). Returns how far it got.
 #[inline(always)]
+#[verifier::spinoff_prover]
 fn unfilter_reg(
     buf: &mut [u8],
     src: usize,
@@ -341,6 +360,7 @@ fn unfilter_reg(
     Ghost(prev): Ghost<Seq<u8>>,
     Ghost(cur): Ghost<Seq<u8>>,
     Ghost(d_in): Ghost<Seq<u8>>,
+    Tracked(m): Tracked<&mut Meter>,
 ) -> (r: usize)
     requires
         src + rb <= old(buf)@.len(),
@@ -355,6 +375,7 @@ fn unfilter_reg(
         old(buf)@.subrange(dst as int, dst + bpp) == recon(ft, prev, cur, bpp as nat, bpp as nat),
         forall|k: int| 0 <= k < old(buf)@.len() && !(dst <= k < dst + bpp) ==> #[trigger] old(buf)@[k] == d_in[k],
     ensures
+        final(m).n <= old(m).n + 2 * r,
         bpp <= r <= rb,
         final(buf)@.len() == d_in.len(),
         final(buf)@.subrange(dst as int, dst + r) == recon(ft, prev, cur, bpp as nat, r as nat),
@@ -362,6 +383,7 @@ fn unfilter_reg(
 {
     let mut a: [u8; 8] = [0; 8];
     let mut c: [u8; 8] = [0; 8];
+    let ghost m0 = m.n;
     let mut k: usize = 0;
     while k < bpp
         invariant
@@ -377,8 +399,13 @@ fn unfilter_reg(
             dst <= src,
             buf@.len() <= usize::MAX,
             forall|q: int| #![trigger a@[q]] 0 <= q < k ==> a@[q] == buf@[dst + q] && c@[q] == prev[q],
+            m.n <= m0 + k,
+            m0 == old(m).n,
         decreases bpp - k,
     {
+        proof {
+            m.n = m.n + 1;
+        }
         let va = get(buf, dst + k);
         let vc = if has_prev {
             get(buf, pv + k)
@@ -420,8 +447,13 @@ fn unfilter_reg(
             buf@.subrange(dst as int, dst + i) == recon(ft, prev, cur, bpp as nat, i as nat),
             forall|q: int| 0 <= q < buf@.len() && !(dst <= q < dst + i) ==> #[trigger] buf@[q] == d_in[q],
             forall|q: int| #![trigger a@[q]] 0 <= q < bpp ==> a@[q] == buf@[dst + i - bpp + q] && c@[q] == prev[i - bpp + q],
+            m.n + bpp <= m0 + 2 * i,
+            m0 == old(m).n,
         decreases rb - i,
     {
+        proof {
+            m.n = m.n + 1;
+        }
         let mut k: usize = 0;
         while k < bpp
             invariant
@@ -440,8 +472,13 @@ fn unfilter_reg(
                 forall|q: int| 0 <= q < buf@.len() && !(dst <= q < dst + i + k) ==> #[trigger] buf@[q] == d_in[q],
                 forall|q: int| #![trigger a@[q]] 0 <= q < k ==> a@[q] == buf@[dst + i + q] && c@[q] == prev[i + q],
                 forall|q: int| #![trigger a@[q]] k <= q < bpp ==> a@[q] == buf@[dst + i - bpp + q] && c@[q] == prev[i - bpp + q],
+                m.n + bpp <= m0 + 2 * i + 1 + k,
+                m0 == old(m).n,
             decreases bpp - k,
         {
+            proof {
+                m.n = m.n + 1;
+            }
             let ghost b0 = buf@;
             proof {
                 assert(a@[k as int] == b0.subrange(dst as int, dst + i + k)[i + k - bpp]);
@@ -462,6 +499,8 @@ fn unfilter_reg(
             a[k] = v;
             c[k] = b;
             proof {
+                assert(a@[k as int] == v && v == buf@[dst + i + k]);
+                assert(c@[k as int] == b && b == prev[i + k]);
                 assert forall|q: int| #![trigger a@[q]] 0 <= q < bpp implies (q <= k ==> a@[q] == buf@[dst + i + q] && c@[q] == prev[i + q]) && (k < q ==> a@[q] == buf@[dst + i - bpp + q] && c@[q] == prev[i - bpp + q]) by {
                     if q != k {
                         assert(a@[q] == a0[q]);
@@ -717,12 +756,13 @@ pub proof fn lemma_rows_prefix(raw: Seq<u8>, off: int, rb: nat, bpp: nat, y: nat
 /// `o <= off` (`spec::recon_rows`). Returns `false` at an invalid filter
 /// type. Bytes before `o` and from the end of the filtered rows on are
 /// left alone.
-pub fn unfilter_rows(buf: &mut [u8], off: usize, rb: usize, bpp: usize, n: usize, o: usize) -> (ok: bool)
+pub fn unfilter_rows(buf: &mut [u8], off: usize, rb: usize, bpp: usize, n: usize, o: usize, Tracked(m): Tracked<&mut Meter>) -> (ok: bool)
     requires
         off + n * (rb + 1) <= old(buf)@.len(),
         o <= off,
         1 <= bpp <= 8,
     ensures
+        final(m).n <= old(m).n + 3 * (n * (rb + 1)),
         final(buf)@.len() == old(buf)@.len(),
         match recon_rows(old(buf)@, off as int, rb as nat, bpp as nat, n as nat) {
             Some(s) => ok && final(buf)@.subrange(o as int, o + n * rb) == s,
@@ -735,6 +775,7 @@ pub fn unfilter_rows(buf: &mut [u8], off: usize, rb: usize, bpp: usize, n: usize
 {
     let _ = buf.len();
     let ghost raw = buf@;
+    let ghost m0 = m.n;
     let mut y: usize = 0;
     let mut ro = off;
     let mut wo = o;
@@ -759,6 +800,8 @@ pub fn unfilter_rows(buf: &mut [u8], off: usize, rb: usize, bpp: usize, n: usize
                 && buf@.subrange(o as int, wo as int) == s,
             forall|k: int|
                 0 <= k < buf@.len() && (k < o || k >= ro) ==> #[trigger] buf@[k] == raw[k],
+            m.n + 3 * off <= m0 + 3 * ro,
+            m0 == old(m).n,
         decreases n - y,
     {
         proof {
@@ -790,7 +833,10 @@ pub fn unfilter_rows(buf: &mut [u8], off: usize, rb: usize, bpp: usize, n: usize
         proof {
             assert(d0.subrange(ro + 1, ro + 1 + rb) =~= raw.subrange(ro + 1, ro + 1 + rb));
         }
-        unfilter_row(buf, ro + 1, wo, pv, y > 0, rb, bpp, ft);
+        unfilter_row(buf, ro + 1, wo, pv, y > 0, rb, bpp, ft, Tracked(m));
+        proof {
+            m.n = m.n + 1;
+        }
         proof {
             let prev = prev_row(d0, pv as int, y > 0, rb as nat);
             if y > 0 {

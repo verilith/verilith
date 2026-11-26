@@ -1,5 +1,5 @@
 //! Exec evaluation of the numeric instructions, proven equal to
-//! [`crate::sem::eval_unop`] and [`crate::sem::eval_binop`].
+//! `crate::sem::eval_unop` and `crate::sem::eval_binop`.
 use vstd::prelude::*;
 use crate::ast::*;
 use crate::sem::*;

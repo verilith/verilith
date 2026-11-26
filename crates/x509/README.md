@@ -3,27 +3,32 @@
 A DER and X.509 certificate parser in Rust, formally verified with
 [Verus](https://github.com/verus-lang/verus). The parser is proven to compute
 exactly a specification of DER (X.690) and the RFC 5280 certificate profile,
-written as pure functions in [`src/spec.rs`](src/spec.rs): it accepts a
+written as pure functions in [`src/spec.rs`](https://github.com/verilith/verilith/blob/main/crates/x509/src/spec.rs): it accepts a
 certificate if and only if the spec does, and returns exactly the fields
-the spec says. Verus also proves that it never reads out of bounds and
-never overflows.
+the spec says. Verus also proves that it never reads out of bounds, never
+overflows, and that it takes at most `n(⌈log₂ n⌉ + 12)` steps on an
+`n`-byte input.
 
 It is a drop-in for mbedTLS: with a 20-line patch, mbedTLS 4.3.0 decodes
 every certificate it reads (`mbedtls_x509_crt_parse_der`, and so
 `mbedtls_x509_crt_parse`, PEM files, the TLS handshake and PKCS#7) with
 verilith-x509 and passes its own test suites, except for 18 synthetic test
 certificates that break DER and RFC 5280 (see
-[mbedtls/README.md](mbedtls/README.md)).
+[mbedtls/README.md](https://github.com/verilith/verilith/blob/main/crates/x509/mbedtls/README.md)).
 
-It is `no_std`, never allocates and never copies: a parsed certificate is a
-set of slices of the input. It builds for bare-metal targets such as
-`thumbv7em-none-eabihf`, where mbedTLS is mostly used.
+It is `no_std` and never copies: a parsed certificate is a set of slices of
+the input. It allocates only for a certificate with more than eight
+extensions outside the first 64 id-ce arcs, which no issued certificate
+has, to check them for duplicates (with the `alloc` feature, which the
+default `std` turns on; without it, that check is quadratic). It builds for
+bare-metal targets such as `thumbv7em-none-eabihf`, where mbedTLS is mostly
+used.
 
 It is fast: 8 to 12 times faster than x509-parser and x509-cert, the other
 Rust parsers that decode a whole certificate (see Performance).
 
 Every place where it reads X.690 or RFC 5280 strictly or loosely is listed
-in [DEPARTURES.md](DEPARTURES.md), and [CVES.md](CVES.md) maps fourteen
+in [DEPARTURES.md](https://github.com/verilith/verilith/blob/main/crates/x509/DEPARTURES.md), and [CVES.md](https://github.com/verilith/verilith/blob/main/crates/x509/CVES.md) maps fourteen
 certificate parsing CVEs in OpenSSL, NSS, Windows CryptoAPI and PolarSSL
 to the proven property that rules out each bug class.
 
@@ -32,19 +37,20 @@ to the proven property that rules out each bug class.
 Swap verilith-x509 in under mbedTLS today and get the proofs at no cost in speed;
 call `verilith_x509::parse` directly where certificate parsing is hot.
 
-| | what you change | against mbedTLS 3.6.4 |
+| | what you change | against mbedTLS 4.3.0 |
 | --- | --- | --- |
-| **Drop-in** (mbedTLS with the patch) | apply the patch, rebuild | 1.00x (0.94x to 1.03x) |
-| **Native** (`verilith_x509::parse` and its accessors) | port the calling code | up to 3.15x (1.98x to 5.35x) |
+| **Drop-in** (mbedTLS with the patch) | apply the patch, rebuild | 1.01x |
+| **Native** (`verilith_x509::parse` and its accessors) | port the calling code | 4.43x (an upper bound: see below) |
 
 The task is: parse a certificate in place
 (`mbedtls_x509_crt_parse_der_nocopy`), read the serial, every issuer and
 subject attribute, both validity times, key usage, the CA flag, the DNS
 subjectAltNames and the extended key usages, then free it, on a leaf, two
 roots and Mozilla's root bundle.
-Measured with [vbench](https://github.com/verilith/verilith/tree/main/bench) on an
-Apple M3 Pro (2026-11-20, 31 alternating pairs per case; speedup is mbedTLS's
-time over ours, geometric mean and range over the cases). Both columns run
+These are the `x509-mbedtls-read` and `x509-mbedtls-native` rows of the
+[repository's benchmark table](https://github.com/verilith/verilith#benchmarks) (`bench/run.sh`
+on an Apple M3 Pro, 2026-11-22, 31 alternating pairs per case; speedup is
+mbedTLS's time over ours, geometric mean over the cases). Both columns run
 the same task against the same mbedTLS driver. The native number is what you
 get after porting the calling code; relinking alone gets the drop-in
 number.
@@ -59,22 +65,28 @@ the key pays for decoding it on our side too.
 
 ## Usage
 
-```rust
-let cert = verilith_x509::parse(&der).ok_or("malformed")?;
-// Or, to learn why a certificate was rejected:
-// let cert = verilith_x509::try_parse(&der)?;   // Err says what, at which offset
+```rust,no_run
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let der = std::fs::read("cert.der")?;
+    let cert = verilith_x509::parse(&der).ok_or("malformed")?;
+    // Or, to learn why a certificate was rejected:
+    let cert2 = verilith_x509::try_parse(&der)?; // Err says what, at which offset
+    assert_eq!(cert.tbs_der, cert2.tbs_der);
 
-for atv in cert.subject().attributes() {
-    println!("{} = {:?}", verilith_x509::OidDisplay(atv.oid), atv.value_str());
+    for atv in cert.subject().attributes() {
+        println!("{} = {:?}", verilith_x509::OidDisplay(atv.oid), atv.value_str());
+    }
+    for dns in cert.dns_names() {
+        println!("DNS: {}", String::from_utf8_lossy(dns));
+    }
+    if let Some(bc) = cert.basic_constraints() {
+        println!("CA: {}, path length: {:?}", bc.ca, bc.path_len);
+    }
+    let signed = cert.tbs_der; // the exact bytes the signature covers
+    let signature = cert.signature;
+    println!("{} signed bytes, {} signature bytes", signed.len(), signature.len());
+    Ok(())
 }
-for dns in cert.dns_names() {
-    println!("DNS: {}", String::from_utf8_lossy(dns));
-}
-if let Some(bc) = cert.basic_constraints() {
-    println!("CA: {}, path length: {:?}", bc.ca, bc.path_len);
-}
-let signed = cert.tbs_der;      // the exact bytes the signature covers
-let signature = cert.signature;
 ```
 
 ### From C
@@ -101,7 +113,7 @@ the certificate. Nothing is allocated, nothing is copied and there is
 nothing to free, where the mbedTLS shape has to build `mbedtls_x509_crt`'s
 linked lists. Names, extensions and lists are read with cursor functions
 (`vx509_rdn_next`, `vx509_ext_next`, ...), and every decoded extension of
-the Rust API has a getter. It is `no_std` and allocation-free like the
+the Rust API has a getter. It is `no_std` and allocates no more than the
 parser.
 
 ## What is proven
@@ -116,6 +128,18 @@ parser.
   spec's lists.
 - **Safety.** No out-of-bounds index, no arithmetic overflow, no panic and
   no unbounded loop in the verified code.
+- **Work bound.** `cert::parse_metered` counts the parser's steps in ghost
+  state and proves the count is at most `parse_cost(n)` for an `n`-byte
+  input, whatever the outcome: `10n` for reading the certificate, plus
+  `n(⌈log₂ n⌉ + 2)` for the duplicate-extension check of a list with more
+  than eight extensions outside the first 64 id-ce arcs. That check
+  collects their OIDs into a vector, merge-sorts it and compares
+  neighbours; the merge sort is proven to return a sorted permutation, and
+  each merge costs at most the octets it moves. Without `alloc` the check
+  compares each OID with every later one, and the proven term is `n²`
+  (`ext::dup_cost`). Lists with at most eight such OIDs, which is every
+  issued certificate, never take that path, so their parse is within
+  `10n`.
 - **The spec** checks DER framing (minimal lengths, at most 4 length octets,
   single-octet tags where X.509 uses them), minimal INTEGERs and OIDs,
   times, Names, every field of TBSCertificate, version rules (unique IDs
@@ -123,7 +147,17 @@ parser.
   of every extension listed above, and signatureAlgorithm equal to the
   TBSCertificate's signature.
 
-The trusted base is the spec, Verus, Z3 and rustc. `src/api.rs`
+The trusted base is the spec, Verus, Z3 and rustc. For the work bound, it
+also includes what a step is: one turn of a loop whose number of turns no
+constant bounds (each one consumes input, or walks a list or an OID), plus
+one per OID moved by the merge sort. Loops with a constant bound (tag and
+length octets, `read_u64`, times, the eight kept OIDs) are not counted, but
+the comparisons inside the last of them are. `Vec::push` (amortized
+constant time, and an abort if the allocator fails) and the
+`AtvSink`/`ExtSink` hooks the mbedTLS adapter fills are assumed to take
+constant time. Only the default build (`alloc` on) is verified; the
+`alloc`-less `ext::pass2` and `ext::dup_cost` are the other side of a
+`cfg` and are checked by the compiler only. `src/api.rs`
 (`Iterator` impls, text, timestamps), `src/error.rs` (rejection reasons),
 and the mbedTLS adapter (`src/mbedtls.rs`, `src/mbedtls_err.rs`,
 `mbedtls/vx509_mbedtls.c`) are unverified. None of them decides whether a
@@ -153,7 +187,9 @@ different place:
 - **Hand-written code against a direct spec**, rather than combinators,
   which is what makes it zero-copy and fast.
 
-Verdict has not been benchmarked against verilith-x509 yet.
+Parsing the whole certificate from memory, Rust to Rust, verilith-x509 is
+32.15x faster than Verdict's parser (`x509-verdict` in the [repository's
+benchmark table](https://github.com/verilith/verilith#benchmarks), Apple M3 Pro, 2026-11-22).
 
 ## Performance
 
@@ -162,7 +198,9 @@ certificate, lower is better. Each row ran on its own in three separate
 processes, each taking the best of 30 runs of 20k iterations after a
 warm-up; the table gives the best of the three. Rust is built with
 `lto = "fat"`, mbedTLS 3.6.4 with CMake's Release flags (`-O2`). One
-machine (Intel Xeon @ 2.1 GHz), not reproduced independently.
+machine (Intel Xeon @ 2.1 GHz), not reproduced independently. These rows
+predate the move to mbedTLS 4.3.0; the current comparison is under "Two
+speeds" above.
 
 | What is measured | leaf (1,473 B, 8 extensions) | RSA root (1,391 B) | ECDSA root (543 B) |
 | --- | --- | --- | --- |
@@ -175,22 +213,22 @@ machine (Intel Xeon @ 2.1 GHz), not reproduced independently.
 | rustls-webpki 0.103 `EndEntityCert::try_from` | 182 | 103 | 103 |
 | **C, into `mbedtls_x509_crt`** (includes decoding the public key and allocating the name lists) | | | |
 | mbedTLS 3.6.4 `mbedtls_x509_crt_parse_der` | 1,250 | 955 | 1,416 |
-| vx509-backed mbedTLS, same call | 1,581 | 1,162 | 1,561 |
+| verilith-x509-backed mbedTLS, same call | 1,581 | 1,162 | 1,561 |
 | mbedTLS 3.6.4 `mbedtls_x509_crt_parse_der_nocopy` | 1,064 | 782 | 1,363 |
-| vx509-backed mbedTLS, same call | 1,386 | 964 | 1,440 |
+| verilith-x509-backed mbedTLS, same call | 1,386 | 964 | 1,440 |
 | **Other** | | | |
 | OpenSSL 3.0.13 `X509::from_der` | 126,506 | 122,662 | 123,705 |
 
-The two vx509-backed mbedTLS rows above were measured before the adapter
+The two verilith-x509-backed mbedTLS rows above were measured before the adapter
 was reworked (the verified parser now hands each attribute and extension
 to the adapter as it checks it, instead of filling records that were
 copied twice more). Measured since, on an Apple M3 Pro with the
 [vbench](https://github.com/verilith/verilith/tree/main/bench) harness
 (`mbedtls_x509_crt_parse_der` + free, both sides Apple clang 21 `-O3`,
-31 pairs per case, three sittings, 2026-11-19), vx509-backed mbedTLS
+31 pairs per case, three sittings, 2026-11-19), verilith-x509-backed mbedTLS
 against stock mbedTLS 3.6.4:
 
-| Case | vx509-backed | stock | speed vs stock |
+| Case | verilith-x509-backed | stock | speed vs stock |
 | --- | ---: | ---: | --- |
 | leaf (8 extensions) | 595 ns | 580 ns | 0.96x to 0.99x |
 | RSA root | 420 ns | 441 ns | 1.04x to 1.07x |
@@ -211,10 +249,14 @@ cryptography.io, in `bench/data/`.
 ## Testing
 
 - `tests/cves.rs`: certificates shaped like fourteen CVEs (see CVES.md).
+- `tests/work.rs`: certificates with 50,000 extensions, distinct or with one
+  repeated, which the duplicate check handles in about 8 ms (it took 4.9 s
+  when it compared each OID with every later one), and the edge at nine
+  such extensions.
 - `tests/differential.rs`: against OpenSSL, x509-parser, x509-cert and
   webpki on about 31,000 certificates from x509-limbo, pyca/cryptography's
   vectors and the system trust store, with 0 disagreements on decoded
-  fields (see [corpus/README.md](corpus/README.md)).
+  fields (see [corpus/README.md](https://github.com/verilith/verilith/blob/main/crates/x509/corpus/README.md)).
 - `tests/capi.rs` (`cargo test --features capi`): the native C API against
   the Rust API, field by field, on the corpus and on every truncation and
   single-byte change of four certificates. `scripts/test-c.sh` runs
@@ -230,7 +272,7 @@ cryptography.io, in `bench/data/`.
 | Target | What it checks |
 | --- | --- |
 | `parse` | Every accessor and iterator, text output, timestamps, and that `try_parse` agrees with `parse` |
-| `mbedtls` | The vx509-backed `mbedtls_x509_crt_parse_der` and `_nocopy`, then `mbedtls_x509_crt_info` on every accepted certificate and `mbedtls_x509_crt_free`, with mbedTLS built with AddressSanitizer. mbedTLS must never accept a certificate verilith-x509 rejects |
+| `mbedtls` | The verilith-x509-backed `mbedtls_x509_crt_parse_der` and `_nocopy`, then `mbedtls_x509_crt_info` on every accepted certificate and `mbedtls_x509_crt_free`, with mbedTLS built with AddressSanitizer. mbedTLS must never accept a certificate verilith-x509 rejects |
 
 ```sh
 git -C mbedtls apply ../verilith/crates/x509/mbedtls/mbedtls-use-vx509.patch
@@ -239,7 +281,7 @@ CC=clang cmake -S mbedtls -B mbedtls/build-asan -DCMAKE_C_COMPILER_WORKS=1 \
   -DMBEDTLS_VX509_LIB=$PWD/verilith/target/release-fat/libverilith_x509.a \
   -DCMAKE_C_FLAGS="-fsanitize=address,fuzzer-no-link -g"
 cmake --build mbedtls/build-asan --target mbedx509 tfpsacrypto
-cd vx509/fuzz && MBEDTLS_LIB_DIR=$PWD/../../mbedtls/build-asan/library \
+cd verilith/crates/x509/fuzz && MBEDTLS_LIB_DIR=$PWD/../../../../mbedtls/build-asan/library \
   cargo +nightly fuzz run -s address mbedtls corpus/mbedtls seeds
 ```
 
@@ -265,8 +307,8 @@ minutes per fuzz target under AddressSanitizer.
 
 ## Verifying
 
-Install Verus at commit `8bf68ee` (release 0.2026.11.02.8bf68ee; Rust
-1.99.1), then:
+Install Verus at commit `1ce6a59` (release 0.2026.11.22.1ce6a59; Rust
+1.100.0), then:
 
 ```sh
 cargo verus verify
@@ -274,14 +316,13 @@ cargo verus verify
 
 ## Next steps
 
-1. Benchmark against Verdict.
-2. Prove the mbedTLS adapter's field copies, so that the spans it hands to
+1. Prove the mbedTLS adapter's field copies, so that the spans it hands to
    mbedTLS are the spec's.
-3. Report upstream that mbedTLS accepts a `[2]`-tagged serial number and an
+2. Report upstream that mbedTLS accepts a `[2]`-tagged serial number and an
    explicit v1 version.
-4. CRLs and CSRs, which mbedTLS still parses itself.
+3. CRLs and CSRs, which mbedTLS still parses itself.
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/x509/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/x509/LICENSE-MIT), at your option.

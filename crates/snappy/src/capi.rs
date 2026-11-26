@@ -44,8 +44,9 @@ unsafe fn output<'a>(p: *mut c_char, n: usize) -> &'a mut [u8] {
 }
 
 export!("vsnappy_max_compressed_length", "snappy_max_compressed_length", fn max_compressed_length_c(n: usize) -> usize {
-    // As snappy: the formula, whatever the length.
-    if n <= 0xffff_ffff {
+    // As snappy: the formula, whatever the length. (The second test is
+    // always true on 64-bit targets.)
+    if n <= 0xffff_ffff && n <= isize::MAX as usize {
         max_compressed_length(n)
     } else {
         32usize.wrapping_add(n).wrapping_add(n / 6)
@@ -53,7 +54,7 @@ export!("vsnappy_max_compressed_length", "snappy_max_compressed_length", fn max_
 });
 
 export!("vsnappy_compress", "snappy_compress", fn compress(src: *const c_char, n: usize, dst: *mut c_char, dst_len: *mut usize) -> c_int {
-    if dst_len.is_null() || n > 0xffff_ffff {
+    if dst_len.is_null() || n > 0xffff_ffff || n > isize::MAX as usize {
         return SNAPPY_INVALID_INPUT;
     }
     if *dst_len < max_compressed_length(n) {

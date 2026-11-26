@@ -6,7 +6,7 @@
 //! no label stack at run time and no stack check on push or pop; a call
 //! checks once that the callee's whole frame fits.
 //!
-//! [`execute`] ends with ghost evidence `(hs, n)`: the spec, run for `n`
+//! `execute` ends with ghost evidence `(hs, n)`: the spec, run for `n`
 //! steps from the initial configuration with host responses `hs`, gives
 //! exactly the returned result and store (or is still running, if the
 //! interpreter stopped with [`Trap::Exhausted`]).
@@ -59,10 +59,20 @@ pub struct CallFrame {
     pub fp: u32,
 }
 
+/// Most pages a memory may have: all 65536 (4 GiB) on a 64-bit host,
+/// and on a 32-bit one 32767, which keeps a memory below `isize::MAX`
+/// bytes, the most a `Vec` can hold there. (A host may limit memories;
+/// past this an instance is refused, or `memory.grow` fails.)
+#[cfg(target_pointer_width = "64")]
+pub const MAX_PAGES: u32 = 65536;
+
+#[cfg(target_pointer_width = "32")]
+pub const MAX_PAGES: u32 = 32767;
+
 /// The mutable state of an instance.
 pub struct Store {
     pub mem: Vec<u8>,
-    /// Page limit for `memory.grow` (at most 65536).
+    /// Page limit for `memory.grow` (at most [`MAX_PAGES`]).
     pub mem_max: u32,
     pub globals: Vec<u64>,
     /// Function indices, `NONE` for null.
@@ -111,7 +121,7 @@ pub open spec fn store_view(st: &Store) -> crate::sem::Store {
 }
 
 pub open spec fn store_wf(st: &Store) -> bool {
-    &&& st.mem_max <= 65536
+    &&& st.mem_max <= MAX_PAGES
     &&& st.mem@.len() <= st.mem_max as nat * PAGE as nat
     &&& st.mem@.len() % PAGE as nat == 0
 }

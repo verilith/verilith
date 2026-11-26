@@ -6,8 +6,6 @@ use vstd::prelude::*;
 
 verus! {
 
-global size_of usize == 8;
-
 /// A header that `spec::parse_ihdr` accepts.
 pub open spec fn hdr_ok(h: Ihdr) -> bool {
     &&& 1 <= h.w <= MAX_LEN
@@ -275,6 +273,7 @@ pub fn pass_offsets(h: &Header) -> (r: [u128; 8])
         decreases n - p,
     {
         let s = pass_size_exec(h, p);
+        assert(p as usize == p);
         let v = r[p as usize] + s;
         r[p as usize + 1] = v;
         p = p + 1;

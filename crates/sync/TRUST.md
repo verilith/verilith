@@ -4,7 +4,10 @@ Verus checks every proof in verilith-sync, but a proof only means something
 relative to the specifications and axioms it starts from. This file lists
 everything that is assumed rather than proven, and argues for each
 assumption. The most important one is the release/acquire memory model in
-`src/ra.rs`, which the queues are verified against.
+`src/ra.rs`, which the queues are verified against. The MPMC queue and
+the channel use only its C11 rules, so their proofs hold for C11 itself;
+the SPSC queue's hold for x86, ARMv8 and POWER, and "Where writes go"
+below shows why no proof could cover C11 for it as written.
 
 ## The short list
 
@@ -14,30 +17,43 @@ assumption. The most important one is the release/acquire memory model in
   atomics (`PAtomicU32`, `PAtomicU64`), which the locks use.
 - **`src/ra.rs`**: the release/acquire model. Every `axiom fn` and
   `external_body` function in it is an assumption. Most of this file is
-  about them.
-- **One more axiom**, `Model::pool_nonempty` in `src/chan_model.rs`:
-  boundedly many channel calls are in progress at once (see "The
-  channel" at the end).
+  about them. Three of them (`store_release_sra`, `fetch_add_acqrel_sra`,
+  `fetch_sub_acqrel_sra`) hold only for the hardware model, and only
+  `spsc` uses them.
+- **One more axiom**, `Model::pool_nonempty` in `src/model.rs`:
+  boundedly many calls are in progress at once on one lock, queue or
+  channel (see "Progress").
+- **The parking lot's hand-over** in `src/lot.rs`: `lock_bucket` and
+  `unlock_bucket`, and each lock's `key`, are trusted to give a lock the
+  ghost list of its own waiters (see "The parking lot").
 - **`impl Objective`**: a trusted claim per type (see below). There are
   four: `Hist`, `HistLb`, `spsc::Shared`, `array_queue::Shared`.
 - **Specifications**: `QueueView` and the `atomically` blocks on the queue
   operations, and the `RwToks` state machine. Read these to check that they
   say what you expect.
 - **Unverified code with no access to the data**: `src/util.rs`
-  (`CachePadded`, `Backoff`, `arc_clone`, `exhausted`, `leaked_guard`,
-  and the wrappers around `std`'s mutex, `park`/`unpark` and `Instant`
-  that the channel uses), `src/parking.rs` and the `park`/`unpark`
-  wrappers in the locks that call it, the public shell of the channel in
-  `src/channel.rs`, and the one-line `Send`, `Sync`, `Deref` and `Drop`
-  impls. CI runs the tests under Miri, whose weak-memory emulation
+  (`CachePadded`, `Backoff`, `wait_turn`, `arc_clone`, `exhausted`,
+  `leaked_guard`, and the wrappers around `park`/`unpark` and `Instant`
+  that the channel and the parking lot use), `fair::Bomb` (it aborts if a
+  fair lock's guard is dropped without `unlock`), the public shell of the channel in
+  `src/channel.rs`, the one-line `Send`, `Sync`, `Deref` and `Drop`
+  impls, and the plain-Rust queue methods (`ArrayQueue::push`, `pop`,
+  `confirm_empty`, `confirm_full`; `Producer::push`, `push_slice`;
+  `Consumer::pop`, `pop_into`). Each calls its verified `*_atomic` form
+  with `Tracked::assume_new()` for the atomic update, a ghost argument
+  that is erased at run time and assumes nothing about the data. CI runs the tests under Miri, whose weak-memory emulation
   exercises release/acquire behaviour too.
 - **The progress models** in `src/progress/`: each is a hand-written
   transition system for one protocol, and the progress theorems are about
-  the model. For the mutex, the RwLock and the queue, that the model
-  matches the code is argued in "Progress" below, step by step, not
-  proven. For the channel it is proven: `src/chan_sync.rs` is verified
-  against the model, and what that proof still assumes is listed under
-  "The channel: what is still assumed".
+  the model. That the code follows its model is proven for all six (the
+  mutex, the RwLock, the MPMC queue, the channel, the channel's handle
+  counts and the fair lock), as "Progress" explains. What those proofs
+  still assume is the axiom and the hand-over above, fairness of
+  scheduling and of the memory system, and for the channel the items
+  under "The channel: what is still assumed". They no longer assume
+  anything of `std`'s mutex: the parking lot and the channel's waiter
+  lists use `src/fair.rs`, a ticket lock proven to give mutual exclusion
+  and to be starvation-free.
 
 CI greps for `assume` and `admit` and fails if either appears, and for
 any `axiom fn` outside `src/ra.rs` other than that one.
@@ -57,9 +73,11 @@ Jourdan, Kaiser and Dreyer, "RustBelt Meets Relaxed Memory", POPL 2020).
 - A **load** may read any message at or after the thread's timestamp for
   the location. An acquire load also joins the message's view into the
   thread's view. A relaxed load joins only the message's own timestamp.
-- A **release store** appends a message whose view is the thread's view.
+- A **release store** appends a message whose view is the thread's view,
+  if the thread has seen the last message.
 - A **read-modify-write** reads the *last* message and appends its result
-  right after it. Its new message's view includes the view of the message
+  right after it, if the thread has seen the last message or only RMWs
+  have written the location. Its new message's view includes the view of the message
   it read, which models release sequences.
 - A **failed compare-and-swap** is a relaxed load.
 - A resource whose meaning depends on the thread's view (a cell
@@ -117,10 +135,14 @@ model only appends to a history, so a snapshot stays a prefix forever.
 **`RaU64::load_acquire`, `load_relaxed`.** These are coherence (read at or
 after your timestamp) and acquire synchronization, as in ORC11.
 
-**RMWs (`fetch_add_acqrel`, `fetch_sub_acqrel`, successful
-`compare_exchange_seqcst`) read the last message.** This is C11's RMW
-atomicity: an RMW reads the write immediately before its own in
-modification order. `compare_exchange_seqcst` is SeqCst on success and the
+**RMWs (`fetch_add_acqrel`, `fetch_add_seqcst`, `fetch_sub_acqrel`,
+successful `compare_exchange_seqcst`) read the last message, and
+`store_release` appends.** C11's RMW atomicity says an RMW reads the
+write immediately before its own in modification order; that this is the
+*last* message, and that a store goes at the end, is what the
+preconditions `rmw_reads_last` and `seen_last` buy, as "Where writes go"
+below explains. The `_sra` forms drop the preconditions and hold only in
+the hardware model. `compare_exchange_seqcst` is SeqCst on success and the
 model treats it as AcqRel, which SeqCst includes, so this loses nothing;
 the SeqCst is there for the channel's wakeup handshake, which the model
 does not cover (see "Progress" below).
@@ -132,33 +154,81 @@ through shared references. Rust guarantees this, since otherwise
 does nothing at run time. verilith-sync uses it only when dropping an
 `ArrayQueue`.
 
-### The one place the model is stronger than C11
+### Where writes go: C11, and where the hardware model is still assumed
 
-In this model a store **appends** to the history, so modification order
-agrees with the order in which the model interleaves writes. ORC11 instead
-lets a store insert its message anywhere after the thread's own timestamp.
-
-Appending is the "strong release/acquire" model (SRA) of Lahav,
+C11 does not order a location's writes by when they happen. In ORC11 a
+store may take any place in the modification order after the messages
+its thread has seen, except between a read-modify-write and the message
+that RMW read (RMW atomicity), and an RMW may read any message the thread
+has not seen past, as long as no other RMW has read it. The model here
+keeps a history as a list in modification order and appends every
+write. That alone is the "strong release/acquire" model (SRA) of Lahav,
 Giannarakis and Vafeiadis ("Taming Release-Acquire Consistency", POPL
-2016). SRA forbids a few outcomes that C11's release/acquire allows, the
-classic one being 2+2W. They show that SRA is exactly what x86-TSO, ARMv8
-and POWER provide for release/acquire accesses under the standard
-compilation mappings. So the proofs hold for the machine code verilith-sync
-compiles to on those architectures. They are not proven for every execution
-the C11 specification would allow.
+2016): exactly what x86-TSO, ARMv8 and POWER provide for release/acquire
+accesses under the standard mappings, but stronger than C11, which also
+allows 2+2W and store buffering through RMWs (see below).
 
-For verilith-sync's own code, the gap should not matter. Every location in verilith-sync
-has, at any moment, at most one thread that writes it with plain stores:
-the SPSC producer owns `tail` and the consumer owns `head`, and an
-`ArrayQueue` slot's stamp is written only by the thread holding that
-slot's ticket, after an acquire load that read the current stamp. Every
-other write to these locations is an RMW. Call the writer's last write (or
-the message it read) `m`. Coherence puts the new store after `m`. RMW
-atomicity puts each RMW immediately after the message it read, so no store
-can land inside the chain of RMWs that follows `m`. The store therefore
-goes after every message in the history, which is what appending says.
-This is an argument, not a proof. Making the model C11-exact would mean
-modelling insertion, and is future work.
+So the C11 rules in `src/ra.rs` append only where C11 leaves no other
+place, and their preconditions say when that is:
+
+- **`store_release`** requires `seen_last`: the thread's view is at the
+  location's last message. A C11 store goes after everything its thread
+  has seen, and nothing comes after the last message, so the end is its
+  only place.
+- **Read-modify-writes** (`fetch_add_acqrel`, `fetch_add_seqcst`,
+  `fetch_sub_acqrel`, a successful `compare_exchange_seqcst`) require
+  `rmw_reads_last`: `seen_last`, or `rmw_only`, which says that every
+  message but the first was written by an RMW of the one before it. Then
+  every message but the last has already been read by an RMW, so C11
+  leaves a new RMW only the last message to read. `RaU64::new` starts a
+  history with `rmw_only`, every RMW keeps it, and a store ends it.
+- Loads, failed CASes and `sync_exclusive` are unchanged: they never
+  needed the list to be in time order.
+
+Under these preconditions each step the model takes is one ORC11 allows,
+and ORC11's other choices at that step are ruled out, so proofs that use
+only these rules hold for C11 itself (as ORC11 formalizes it, which, like
+RC11, rules out out-of-thin-air values). Two primitives use only these
+rules:
+
+- **The MPMC queue.** `head` and `tail` are written only by RMWs, and
+  its invariant now records `rmw_only` for both. A slot's stamp is
+  written by a plain store, by the thread holding that slot's ticket,
+  after an acquire load of the stamp. The invariant now also says that
+  only the last message of a stamp holds its current value, so the
+  message that load read, which held the value the ticket is for, is the
+  last one, and the storing thread has seen it. Verus checks `seen_last`
+  at both stores.
+- **The channel**, which is the MPMC queue plus SeqCst atomics (see
+  "Mixing" below and "The channel").
+
+This replaces a paper argument (every location has one plain writer, so
+its stores land at the end). The argument was right for the MPMC queue,
+as the proof now shows. For the SPSC queue it was wrong:
+
+**The SPSC queue is linearizable on the hardware, but not in C11.** Its
+producer writes `tail` with plain stores and the consumer writes it
+with the `fetch_add(0)` that confirms "empty"; `head` is the mirror
+image. Take capacity 2. The producer pushes items 1 and 2 (it stores
+`tail = 1`, then `tail = 2`) and tries a third push: its load of `head`
+says 0, so the queue looks full, and it confirms with an RMW of `head`.
+The consumer pops item 1 (it reads `tail = 1` and stores `head = 1`) and
+tries another pop: its load of `tail` says 1, so the queue looks empty,
+and it confirms with an RMW of `tail`. C11 lets the producer's RMW read
+`head = 0`, placed before the consumer's store, and the consumer's RMW
+read `tail = 1`, placed between the producer's two stores: no
+happens-before edge forbids either. That is store buffering, with RMWs
+as the loads. Then `push` reports "full" and `pop` reports "empty", and
+no order of the operations explains both: "full" needs push 2 before
+pop 1, and "empty" needs pop 1 before push 2. x86, ARMv8 and POWER
+forbid this outcome (there, an RMW is ordered after the thread's earlier
+stores, which is what SRA says). So the SPSC proofs use the SRA rules
+(`store_release_sra`, `fetch_add_acqrel_sra`, and `fetch_sub_acqrel_sra`
+for the reference count), and Verus rejects the C11 rules there, as it
+should. Making SPSC correct for C11 would take RMWs for the index stores
+(an `xchg` per push on x86, the cost this queue was rebuilt to avoid) or
+SeqCst fences before the confirming RMWs, which this model cannot
+express yet.
 
 ### Mixing with the sequentially consistent proofs
 
@@ -196,6 +266,8 @@ re-check, a last reader that does not wake, a pop that never confirms
 | `channel::theorem_resource_taken` | While a receiver waits and a message is queued (or a sender waits and a slot is free), some receiver (sender) takes one, or the waiter returns, or the other side disconnects |
 | `channel::theorem_disconnect_seen` | Once every sender (receiver) is gone, a waiting receiver (sender) returns |
 | `queue::theorem_lock_free` | While a thread is in `push`, `pop` or `len`, some call returns |
+| `handles::theorem_lock_free` | While a thread is cloning a channel handle, some clone or drop on the same side takes effect |
+| `ticket::theorem_starvation_free` | Every thread waiting for a fair lock (a parking-lot bucket, a channel waiter list) gets it |
 
 The key invariants, each checked over every step of every thread:
 
@@ -215,74 +287,136 @@ The key invariants, each checked over every step of every thread:
 - **Queue**: the usual Vyukov window invariant (each slot is free for, or
   holds, the position in `[head, head + cap)` it maps to, or a claimant is
   in flight on it), on unpacked positions and stamp ranks.
+- **Fair lock**: the tickets from `serving` up to `next` belong to
+  distinct threads, each waiting or, for `serving` only, holding the
+  lock. So `serving` keeps growing while anyone waits, and reaches every
+  waiter. The same fact bounds the outstanding tickets by the number of
+  threads, which is why the counters may wrap around at 2^64.
+- **Handle count**: the count changes only by a clone or drop that takes
+  effect, so a clone's CAS fails only after one did.
 
 Not proved, because it is false for these algorithms: that every
 individual thread eventually succeeds. Drepper's mutex and the RwLock let
 newcomers barge, channel receivers can lose every race for a message, and
-queue operations can lose every CAS. crossbeam and parking_lot (between
+queue operations and handle clones can lose every CAS. (The fair lock is
+the exception: it serves waiters in order.) crossbeam and parking_lot (between
 its fairness timeouts) behave the same way. SPSC needs no model: none of
 its functions is exempt from Verus's termination check, so each `push`,
 `pop`, `push_slice` and `pop_into` returns after a bounded number of its
 own steps whatever the other side does, which is wait-freedom. The same
 holds for `try_lock`, `try_read`, `try_write`, every unlock and
-`downgrade`. CI checks that `exec_allows_no_decreases_clause`, which turns
-the termination check off, appears only on eleven looping functions: the
-nine the models cover, `ArrayQueue::{push, pop, len}`,
-`Mutex::{lock, lock_slow}`, `RwLock::{read, write, read_slow, write_slow}`
-and the channel's `Chan::slow`, plus `Chan::add_handle` (see "The
-channel", item 6).
+`downgrade`. `exec_allows_no_decreases_clause`, which turns the
+termination check off, appears on ten looping functions:
+`ArrayQueue::{push_atomic, pop_atomic, len}`, `Mutex::lock_slow`,
+`RwLock::{read_slow, write_slow, park}`, the channel's `Chan::slow`
+and `Chan::add_handle`, and `fair::Lock::lock`. Each has a progress
+theorem: `lock`, `read` and `write` call their slow paths without a
+deadline, which are proven to return the lock then; `add_handle` is
+lock-free and `fair::Lock::lock` starvation-free. The repository's
+[trust ledger](../../TRUST-LEDGER.md), which CI keeps up to date, lists
+them by name, so an eleventh would show up in review.
 
-### Why the models match the code
+### How the code is checked against the models
+
+Each primitive keeps, inside the invariant that holds its atomics, a
+ghost `model::Model` (`src/model.rs`): a state of its protocol's model
+and the execution so far. The only way to change it is `Model::step`,
+which demands a proof that the change is a step of the model by the
+thread whose token (`Tok`) the caller holds. The invariant ties the
+model's state to the real one (the lock word, the waiters' flags, the
+queue's head, tail and stamps), so every access the code makes to shared
+state has to come with the model step it stands for, and a call that
+returned has taken a path through the model. A call takes an idle model
+thread when it starts and gives it back when it returns, so the axiom
+`pool_nonempty` (some model thread is free) says only that boundedly
+many calls are in progress on one object at once; the number of model
+threads is uninterpreted and the theorems hold for every number.
 
 **One step per access.** Each model step is one atomic access to shared
 state, or one critical section of a mutex that every other access to the
-same data also takes (a parking-lot bucket, a channel waiter list). A
-critical section touches its protected data plus at most one other
-atomic, read once (`park`'s `validate`), so running it as one step changes
-no outcome. Purely local work between accesses (computing an index,
-backing off) is folded into the neighbouring step. `Backoff` is modeled as
-a counter of snoozes left, chosen freely when a call starts: the model
-allows every number of snoozes, which covers whatever `Backoff` does.
+same data also takes (a parking-lot bucket, a channel waiter list).
+Purely local work between accesses (computing an index, backing off) is
+folded into the neighbouring step. Thread-local choices are
+nondeterministic in the model: calls with a deadline may time out
+wherever the code checks the deadline, and any thread may start any call
+at any time. Allowing more behaviour than the code has only makes the
+theorems stronger.
 
-**Thread-local choices are nondeterministic.** Calls with a deadline may
-time out wherever the code checks the deadline; any thread may start any
-call at any time; the channel model lets any thread act on either side.
-Allowing more behaviour than the code has only makes the theorems
-stronger, since they hold for every execution of the model.
+**Mutex** (`src/mutex.rs`, model `src/progress/mutex.rs`):
 
-**Mapping.** Mutex (`src/progress/mutex.rs`): `Fast` is the `cas(0, 1)`
-in `lock`/`try_lock_until_deadline`; `Spin`/`SpinCas` are `lock_slow`'s
-spin loop (`load`, then `cas(0, 1)`); `Swap` is `swap_contended`; `Check`
-is `parking::park`'s bucket section with `validate = is_contended`;
-`Asleep` is the `while !notified` loop, including the deadline branch;
-`Crit` to `Unpark` is `unlock`'s swap to 0; `Unpark` is `parking::unpark`'s
-bucket section and `Notify` the `notified` store after it. RwLock
-(`src/progress/rwlock.rs`): the word is kept as its fields (bit 0 `w`,
-bit 1 `pk`, bit 2 `ww`, bits 3 and up `rc`); `Load`/`Cas`/`Flag`/`Check`
-are the branches of `read_slow` and `write_slow` (`cas_read`, `cas_write`,
-`cas_flags`, `park`), with `write`'s fast-path `cas_write(0)` as a `Cas`
-from 0; `RCrit` is `unlock_read` (`fetch_sub`, then `clear_flags` and
-`unpark_all` if it was the last reader with a hint set), `WCrit` is
-`unlock_write` (swap 0, then `unpark_all` if a hint was set) or
-`downgrade` (`fetch_add(ONE_READER - WRITER)`, then `unpark_all` if
-parked), and `Unpark`/`Notify` are `unpark_all`'s bucket section and its
-loop of `notified` stores. The channel's mapping is not argued here: it
-is proven (next section). Queue
-(`src/progress/queue.rs`): one phase per atomic access of `push`, `pop`
-and `len`, with the stamp comparisons translated to ranks as its module
-comment explains.
+| Code | Model step |
+| --- | --- |
+| `cas_lock`: the `cas(0, 1)` in `try_lock`, `lock_slow` and its spin loop | `Fast`, `SpinCas` |
+| `load_spin`, `spun_out`: the spin loop's load, with its count | `Spin` |
+| `swap_contended` | `Swap` |
+| `check`: the bucket section that parks if the word is still 2 | `Check` |
+| `wait_flag`: load of the waiter's `notified` | `Asleep` |
+| `timeout`: the bucket section of a waiter past its deadline | `Asleep` (gives up, or was woken) |
+| `unlock`: the swap to 0 | `Crit` |
+| `unpark_one`: the bucket section that takes a waiter off and sets its flag | `Unpark`, `Notify` |
 
-**Memory model.** The models are sequentially consistent.
+**RwLock** (`src/rwlock.rs`, model `src/progress/rwlock.rs`):
 
-- The locks and the parking lot use only SeqCst atomics and mutexes, so
-  for them the models are exact.
-- The channel is covered in the next section.
-- The queue's loads are relaxed or acquire and can return an older value.
-  That only adds failed attempts, after which the loop reloads; the model
-  shows that once nobody makes progress, nothing changes, so the next
-  attempt that reads the final values succeeds. Reading them needs the
-  stores to become visible eventually, which C++ only encourages
-  ([intro.progress]: "should") but every hardware target provides.
+| Code | Model step |
+| --- | --- |
+| `load_at`: a load of the word in `read_slow` or `write_slow`, which decides what comes next: CAS, snooze (counted down as the model's `left`), set a hint, or sleep (`wait`) | `Load` |
+| `cas_read`, `cas_write`: the CAS that takes a read or write lock, including the fast paths (`write` starts with a CAS from 0) | `Cas` |
+| `cas_flags`: the CAS that sets a parking hint | `Flag` |
+| `check`: the bucket section that parks if the word still blocks and the hint is set | `Check` |
+| `wait_flag`, `timeout` | `Asleep` |
+| `unlock_read`: the `fetch_sub`; `clear_flags` | `RCrit`, `Clear` |
+| `unlock_write`: the swap to 0; `downgrade_lock`: the `fetch_add` | `WCrit` |
+| `unpark_all`: the bucket section that empties the list, then one `notified` store per waiter | `Unpark`, `Notify` |
+
+**MPMC queue** (`src/array_queue.rs`, model `src/progress/queue.rs`):
+
+| Code | Model step |
+| --- | --- |
+| `push_atomic`'s load of `tail`, of the slot's stamp, its CAS on `tail`, its load of `head`, the confirming `fetch_add(0)`, and the stamp store | `PLoad`, `PStamp`, `PCas`, `PHead`, `PConfirm`, `PWrite` |
+| `pop_atomic`'s, likewise on `head` and `tail` | `QLoad`, `QStamp`, `QCas`, `QTail`, `QConfirm`, `QRead` |
+| `len`'s loads of `tail`, `head` and `tail` again | `LTail`, `LHead`, `LTail2` |
+
+The queue's model is kept on unpacked positions and stamp ranks; the
+invariant ties the model's slot ranks to the stamps' ghost phases
+(`model_ok` in `src/array_queue.rs`).
+
+**Fair lock** (`src/fair.rs`, model `src/progress/ticket.rs`):
+
+| Code | Model step |
+| --- | --- |
+| `take_ticket`: the `fetch_add` on `next` | `Idle` to `Wait` |
+| `poll`: a load of `serving`, which lets the thread in if it equals its ticket | `Wait` |
+| `unlock`: the `fetch_add` on `serving` | `Crit` to `Idle` |
+
+This model has 2^62 threads, a concrete number, so that `lemma_bound`
+(fewer outstanding tickets than threads) lets the code compare tickets
+mod 2^64. Here `pool_nonempty` says that fewer than 2^62 calls are in
+progress on one lock at once.
+
+**Handle counts** (`src/chan_sync.rs`, model `src/progress/handles.rs`),
+one model per side of a channel, beside the channel's own:
+
+| Code | Model step |
+| --- | --- |
+| `add_handle`'s load of the count, and each compare-and-swap | `Idle` to `Cas`, `Cas` |
+| `drop_handle`'s `fetch_sub` | `Idle` (a drop) |
+
+**Memory model.**
+
+- The locks, the parking lot, the fair lock and the handle counts use
+  only SeqCst atomics, so their models are sequentially consistent and
+  exact.
+- The channel is covered in the last section.
+- The queue's loads are relaxed or acquire and can return an older
+  value, and so can a failed CAS. The model allows exactly that: a step
+  of a thread is either the sequentially consistent one (`sc_step`) or a
+  load that read an older value (`stale_step`), which only sends the
+  thread round its loop again. Lock-freedom then needs the memory system
+  to be fair: once nothing is written any more, each thread's loads
+  eventually read the latest values (`mfair`, a hypothesis of
+  `theorem_lock_free`, shown satisfiable in `lemma_nonvacuous`). C++
+  only encourages this ([intro.progress]: stores "should" become visible
+  in a finite period of time); every hardware target provides it.
 
 **Scheduling.** Fairness is weak: it does not say how often or in what
 order threads run, only that none stops for good. A thread that never
@@ -293,12 +427,48 @@ holder unlocks (its next step is the unlock), and that each thread does
 one lock operation at a time, so a thread waiting for a lock it already
 holds is outside the theorems, as it deadlocks in parking_lot too.
 
+## The parking lot
+
+`src/lot.rs` is the global parking lot the mutex and the RwLock sleep in,
+as parking_lot_core is for parking_lot: 64 buckets, each a list of
+waiters behind a verified fair lock (`src/fair.rs`), shared by every lock
+whose key hashes to it. Its list operations (search, push, removal) are verified. What the
+locks' proofs need from it is the link between a bucket's contents and
+their own ghost state, and that link is trusted:
+
+- **`lock_bucket(key, k)`** locks the bucket and returns, besides the
+  list, the lot's half of the asking lock's ghost `list` (the tickets of
+  its waiters, which the lock's invariant holds the other half of),
+  with `listed`: the waiters under `key` are this lock's and their
+  tickets are exactly that list. It also returns the bucket's ghost map
+  of the ids it has handed out (`bids`), so that a waiter that times out
+  and finds an entry with its id knows the entry is its own.
+- **`unlock_bucket`** takes both back and requires `listed` and `bids_ok`
+  again, plus that waiters under other keys are as they were, so a
+  critical section can change only its own lock's waiters, and only in
+  step with its list.
+- **Each lock's `key()`** returns the address of its lock word with a
+  `KeyOf` that names the lock's ghost locations.
+
+Why this is sound: the ghost halves are created out of nothing
+(`Tracked::assume_new`) and taken back at unlock, so the claim is that at
+most one of them is outstanding per lock (the bucket mutex ensures this)
+and that it is the asking lock's. That rests on keys: a lock's waiters
+each hold a borrow of the lock, so while any are listed the lock word
+cannot move or be freed, and no other live lock word has the same
+address. (Keying by the lock's address, as before, broke this: a lock at
+offset 0 of another's data shares its address. That was a real bug, now
+fixed and covered by `tests/nested_locks.rs`.) The `bids` map is one per
+bucket (`bucket_loc`), so keys that share a bucket share it, and a
+bucket hands out each id once.
+
 ## The channel: what is proven, and what is still assumed
 
 The channel's progress theorems used to be about a model that was matched
-to the code by hand. Now Verus checks the match.
+to the code by hand. Now Verus checks the match, as it does for the
+locks and the queue.
 
-**How.** `src/chan_model.rs` wraps a state of the model
+**How.** `src/model.rs` wraps a state of the model
 (`progress::channel::St`) in a ghost resource, `Model`, that can only be
 changed by `Model::step`, and `step` demands a proof that the change is a
 `step` of the model by the thread whose token the caller holds. The
@@ -358,7 +528,7 @@ the call. The fence is gone.
 **What is still assumed.** Exactly this:
 
 1. **Boundedly many calls at once** (`Model::pool_nonempty`, the one
-   axiom outside `src/ra.rs`). The model has `n` threads, and a call acts
+   axiom outside `src/ra.rs`, shared with the locks and the queue). The model has `n` threads, and a call acts
    as one of them from start to return, so some model thread must be free
    whenever a call starts. `n` is not a number in the program (it is
    `chan_sync::model_threads()`, uninterpreted) and the theorems hold for
@@ -385,22 +555,23 @@ the call. The fence is gone.
    operations. `src/ra.rs` gives these read-modify-writes only
    acquire-release meaning, which is all the queue's own proof needs.
 
-3. **`std`, through four wrappers in `src/util.rs`.** `Lock`: that
-   `std::sync::Mutex` gives mutual exclusion, so the value `lock` returns
-   is the one the last `unlock` stored (a guard dropped without `unlock`
-   aborts, so the invariant cannot be skipped). `Unparker::unpark` and
-   `park_for` have no specification at all: they only affect when a thread
-   runs. `time_left` is trusted to report "late" only when there is a
-   deadline. `Backoff` is used only to pause; the number of snoozes before
-   a call registers is a verified counter (`chan_sync::SNOOZES`).
+3. **`std`, through three wrappers in `src/util.rs`.** `Unparker::unpark`
+   and `park_for` have no specification at all: they only affect when a
+   thread runs. `time_left` is trusted to report "late" only when there
+   is a deadline. `Backoff` is used only to pause; the number of snoozes
+   before a call registers is a verified counter (`chan_sync::SNOOZES`).
+   The waiter lists' lock is no longer `std::sync::Mutex` but
+   `fair::Lock`, whose mutual exclusion is proven (a guard dropped
+   without `unlock` still aborts, so the invariant cannot be skipped).
 
 4. **Scheduling, for the progress theorems to apply.** They hold for
    executions of the model in which every thread keeps taking steps. For
    the code this means: a thread that is not parked keeps running; a
-   thread waiting for a waiter list's mutex gets it (critical sections
-   are short and proven to terminate, but `std`'s mutex is not proven
-   fair); and a parked thread whose `notified` flag has been set runs
-   again. The last depends on `notify` calling `unpark` after it stores
+   thread waiting for a waiter list's lock gets it, which
+   `ticket::theorem_starvation_free` derives from the first (the critical
+   sections are proven to terminate, and the model builds in that a
+   holder unlocks); and a parked thread whose `notified` flag has been
+   set runs again. The last depends on `notify` calling `unpark` after it stores
    the flag, and on `std`'s promise that `unpark` wakes a parked thread or
    makes its next `park` return. Verus does not check that the call is
    there, since `unpark` has no specification; nothing but progress
@@ -418,8 +589,9 @@ the call. The fence is gone.
 6. **Two loops without a termination proof.** `Chan::slow` is the
    blocking loop the progress theorems are about. `Chan::add_handle`
    (cloning a handle) retries a compare-and-swap, so that the count
-   provably cannot overflow; a retry means another clone or drop on the
-   same side succeeded, so it is lock-free, but that is not proven.
+   provably cannot overflow. `handles::theorem_lock_free` proves that a
+   retry means another clone or drop on the same side took effect, for
+   the handle-count model the code is verified to follow.
 
 What the theorems say is unchanged, and so is what they do not say: a
 particular receiver can lose every race for a message.

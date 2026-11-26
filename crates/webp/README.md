@@ -8,14 +8,16 @@ for the still-image decode path of
 [libwebp](https://chromium.googlesource.com/webm/libwebp/), not for libwebp as
 a whole, and its output is byte-identical with libwebp 1.6.0's.
 
-The two formats are proven to different depths. The lossless decoder is
-proven correct against a specification of the format, in linear time. The
-lossy decoder is proven memory-safe, overflow-free, panic-free and
-terminating. Its first stages, the boolean entropy decoder, the frame header, the intra
-prediction modes and the coefficients of a macroblock, are also proven
-against a specification written from RFC 6386; the
-rest of its agreement with libwebp is tested (differential tests and
-fuzzing), not yet proven.
+Both formats are proven correct against a specification. The lossless
+decoder is proven correct in linear time. The lossy decoder is proven
+memory-safe, overflow-free, panic-free and terminating, and its output is
+proven to be the specification's: every stage from the boolean entropy
+decoder through the frame header, intra modes, coefficients, inverse
+transforms, prediction, loop filter and RGB conversion to the alpha plane.
+That theorem is for frames that satisfy `vp8_plain`, which every ordinary
+encoder's output does ([below](#what-is-proven)). Beyond it, agreement with
+libwebp is tested (differential tests and fuzzing), and the lossy decoder
+has no proven work bound.
 
 For lossless, the bit reader, the Huffman table builder, the color cache, the
 backward references, the four image transforms, the container parser and the
@@ -23,12 +25,31 @@ top-level decode are all proven against a specification of the format. `cargo ve
 verify` checks the functions here, in
 [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core) (the shared bit and
 canonical-code proofs) and in [verilith-simd](https://github.com/verilith/verilith/tree/main/crates/simd),
-with no errors. The CI workflow (`.github/workflows/ci.yml`, manual runs only)
-reruns the proofs, the differential tests against libwebp, and the fuzzer.
+with no errors. The CI workflow (`.github/workflows/ci.yml` at the repository root)
+reruns the proofs and the differential tests against libwebp on every pull
+request and push to `main` that touches this crate or one it depends on, and
+the fuzzer when a run is started by hand.
 
 WebP lossless is where [CVE-2023-4863](#cve-2023-4863) lived — a heap overflow
 in the Huffman table builder, exploited in the wild. In verilith-webp that class of bug
 is proven impossible for every input.
+
+## Using it from Rust
+
+```rust,no_run
+use verilith_webp::Mode;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let data = std::fs::read("image.webp")?;
+    let img = verilith_webp::decode(&data)?; // lossless or lossy
+    println!("{} x {}, {} ARGB pixels", img.width, img.height, img.argb.len());
+
+    // Or bytes in the layout libwebp's WebPDecodeRGBA gives.
+    let (rgba, w, h) = verilith_webp::decode_to(&data, Mode::RGBA)?;
+    assert_eq!(rgba.len(), w * h * 4);
+    Ok(())
+}
+```
 
 ## What is proven
 
@@ -83,8 +104,9 @@ it only after `parse_headers` said lossy.
 
 Two things about that theorem. The specification filters each macroblock row right after reconstructing it, as the
 decoder does, rather than the whole frame at the end; the two are the same because prediction reads only unfiltered
-copies, but that equivalence is argued, not proven. And `frame_solid` is there because libwebp decides a macroblock's
-inner-edge filtering from its per-block transform selectors; the specification says "it is `B_PRED` or has a nonzero
+copies, and `vp8order::lemma_vp8_frame_filter_order` proves it: reconstructing every row with no filter, then
+filtering the whole frame macroblock by macroblock in raster order (`frame_unfiltered`, `lf_frame`), gives
+`vp8_frame`'s planes. And `frame_solid` is there because libwebp decides a macroblock's inner-edge filtering from its per-block transform selectors; the specification says "it is `B_PRED` or has a nonzero
 coefficient", and the hypothesis excludes the blocks where the selectors and the coefficients could disagree
 (explicit zeros past a block's second position).
 
@@ -156,14 +178,14 @@ What the proofs assume rather than prove:
   What is trusted there is that the attribute changes code generation
   only; its one `unsafe` call site is under a proven `avx2()`.
 - The SIMD intrinsics, specified in
-  [verilith-simd](https://github.com/verilith/verilith/tree/main/crates/simd) (a git dependency,
-  pinned by commit in `Cargo.toml`):
-  - `vsimd/src/x86.rs`: about 118 `assume_specification`s, one per
+  [verilith-simd](https://github.com/verilith/verilith/tree/main/crates/simd) (a path dependency in
+  this repository):
+  - `crates/simd/src/x86.rs`: about 118 `assume_specification`s, one per
     `core::arch` intrinsic, each stating the intrinsic's result as a
-    function of its input bytes (`vsimd/src/ops.rs`). These are
+    function of its input bytes (`crates/simd/src/ops.rs`). These are
     trusted; verilith-simd checks each one against the real CPU on a million random
     inputs (its `tests/difftest.rs`), but that is testing, not proof.
-  - `vsimd/src/neon.rs`: the AArch64 NEON wrappers the lossy decoder uses
+  - `crates/simd/src/neon.rs`: the AArch64 NEON wrappers the lossy decoder uses
     (loads and stores of 16 and of 8 bytes, `zip1`/`zip2` at 8 to 64 bits,
     signed 16-bit arithmetic with `sqdmulh`, byte averages, widening and
     saturating narrowing shifts, and the loop filter's byte operations:
@@ -172,10 +194,10 @@ What the proofs assume rather than prove:
     64-bit halves and a 4-byte store of one 32-bit lane), specified the same
     way and tested against the same references on AArch64
     (`tests/neon.rs`).
-  - `vsimd/src/mem.rs`: unaligned vector loads and stores from slices
+  - `crates/simd/src/mem.rs`: unaligned vector loads and stores from slices
     (and the 4-byte store of a vector's low 32 bits the 4x4 predictor
     uses on x86), with bounds `requires`.
-  - `vsimd/src/cpu.rs`: CPU feature detection, the assumption that
+  - `crates/simd/src/cpu.rs`: CPU feature detection, the assumption that
     AVX2 implies SSE4.1 and SSSE3, and `compiled_with_ssse3()`, which is
     `cfg!(target_feature = "ssse3")`: true only in a build whose every
     target CPU has SSSE3.
@@ -341,7 +363,7 @@ cross-check.
 incomplete one). `difftest/cve_demo` decodes each with both libwebp 1.6.0 and
 verilith-webp and confirms they agree — both reject the malformed tables safely:
 
-```
+```text
 $ make -C difftest cve_demo
 $ python3 scripts/make_cve_trigger.py /tmp/cve && ./difftest/cve_demo /tmp/cve/*.webp
 file                          libwebp 1.6.0       verilith-webp (verified)    result
@@ -552,9 +574,23 @@ of one block at a time, with the same SWAR mode kernels and a scalar loop
 for the rest (`unpredict_swar`, `uncolor_run_swar`), rather than one pixel
 at a time with a division per pixel.
 
+### WebAssembly
+
+Built for WebAssembly with SIMD128 (`-C target-feature=+simd128`), the
+lossy decoder's NEON kernels (inverse transform, loop filters, prediction,
+upsampling and colour conversion) run on WebAssembly vectors: each NEON
+wrapper they use is proven on SIMD128 in verilith-simd
+(`src/wasm_neon.rs`), so the same proofs hold there. Under Node.js 22 on
+x86-64, a 1920x1080 lossy file decodes to RGBA in 21 ms, against 117 ms
+for the same SIMD128 build without the NEON paths (5.6x). Lossless
+decoding has no NEON kernels and is unchanged. Decoded pixels, in all
+eleven output layouts, are identical to the x86-64 and scalar
+WebAssembly builds on 56 test files (lossy, lossless and with
+alpha, sizes from 1x1).
+
 ## Building
 
-```
+```text
 cargo build --release                 # the library and C ABI (libverilith_webp.a)
 cargo build --release --example vdwebp # a dwebp-style decoder to PAM
 cargo verus verify                     # re-check every proof (needs Verus + Z3)
@@ -566,5 +602,5 @@ point `LIBWEBP_SRC` and `LIBWEBP_BUILD` at them (see `difftest/Makefile`).
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/webp/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/webp/LICENSE-MIT), at your option.

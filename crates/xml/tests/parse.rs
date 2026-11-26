@@ -33,6 +33,31 @@ fn errors_have_positions() {
     assert_eq!(e.kind, ErrorKind::Encoding);
     assert!(parse(b"").is_err());
     assert!(parse(b"<a/><b/>").is_err());
+    // Each error is at the item that fails, inside it for a start tag.
+    for (text, offset) in [
+        (&b"<a>x</b>"[..], 4),
+        (b"<a><b></a>", 6),
+        (b"<a x='1' x='2'/>", 0),
+        (b"<a>&nope;</a>", 3),
+        (b"<1a/>", 0),
+        (b"<a>", 3),
+        (b"<a/><b/>", 4),
+        (b"<a b=c/>", 5),
+        (b"<a b='1'c='2'/>", 8),
+        (b"<a b/>", 4),
+        (b"<a b='<'/>", 6),
+        (b"<a><!-- -- --></a>", 3),
+        (b"<a>]]></a>", 3),
+        (b"<!DOCTYPE a [<!ENTITY e 'v'> <!BAD>]><a/>", 29),
+        (b"<!DOCTYPE a [<!ENTITY e 'v'>", 28),
+        (b"<?xml version='2.0'?><a/>", 0),
+        (b"\xEF\xBB\xBF<?xml version='2.0'?><a/>", 3),
+        (b"<!-- - -- --><a/>", 0),
+        (b"<a/> x", 5),
+    ] {
+        let e = parse(text).unwrap_err();
+        assert_eq!((e.kind, e.offset), (ErrorKind::Syntax, offset), "{:?}", String::from_utf8_lossy(text));
+    }
     assert!(parse(b"<a>]]></a>").is_err());
     assert!(parse(b"<a>&undeclared;</a>").is_err());
 }
@@ -281,4 +306,13 @@ fn entity_declared_depends_on_the_whole_subset() {
     assert_eq!(doc.root().attribute("a").as_deref(), Some("&foo;"));
     // Without the parameter entity reference, it applies.
     assert!(parse(b"<!DOCTYPE doc [<!ATTLIST doc a CDATA \"&foo;\">]><doc/>").is_err());
+}
+
+#[test]
+fn token_size() {
+    // `tape::Tok`: 48-bit positions on a 64-bit target, 32-bit ones on a
+    // 32-bit target (or with `narrow-tokens`).
+    let narrow = cfg!(any(not(target_pointer_width = "64"), feature = "narrow-tokens"));
+    assert_eq!(std::mem::size_of::<verilith_xml::tape::Tok>(), if narrow { 16 } else { 20 });
+    assert_eq!(std::mem::align_of::<verilith_xml::tape::Tok>(), 4);
 }

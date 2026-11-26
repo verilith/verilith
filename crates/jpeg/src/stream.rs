@@ -7,6 +7,7 @@
 //! frame), so the samples are final when the scan ends.
 use crate::idct::*;
 use crate::prims::*;
+use crate::work::*;
 #[cfg(verus_only)]
 use crate::scan::lemma_grid;
 use crate::spec::*;
@@ -280,10 +281,11 @@ pub proof fn lemma_win_block(
 }
 
 /// Zeros the window.
-fn win_zero(a: &mut Vec<i16>)
+fn win_zero(a: &mut Vec<i16>, Tracked(mt): Tracked<&mut Meter>)
     ensures
         final(a).len() == old(a).len(),
         forall|j: int| 0 <= j < final(a).len() ==> (#[trigger] final(a)[j]) == 0,
+        final(mt).n == old(mt).n + old(a).len(),
 {
     let n = a.len();
     let mut j: usize = 0;
@@ -292,10 +294,14 @@ fn win_zero(a: &mut Vec<i16>)
             j <= n,
             a.len() == n,
             forall|i: int| 0 <= i < j ==> (#[trigger] a[i]) == 0,
+            mt.n == old(mt).n + j,
         decreases n - j,
     {
         vset(a, j, 0i16);
         j += 1;
+        proof {
+            mt.n = mt.n + 1;
+        }
     }
 }
 
@@ -315,6 +321,7 @@ pub fn flush_x(
     row: usize,
     Ghost(g): Ghost<Seq<i16>>,
     Ghost(chh): Ghost<int>,
+    Tracked(mt): Tracked<&mut Meter>,
 )
     requires
         win_ok(old(a)@, g, old(pl)@, q@, cw as int, chh, wb as int, hb as int, vr as int, row as int),
@@ -325,6 +332,7 @@ pub fn flush_x(
         kt@ == crate::idct16::kt_spec(),
     ensures
         win_ok(final(a)@, g, final(pl)@, q@, cw as int, chh, wb as int, hb as int, vr as int, row + 1),
+        final(mt).n <= old(mt).n + 66 * (cw * vr),
 {
     let stride = 8 * wb;
     let ghost st = stride as int;
@@ -345,6 +353,7 @@ pub fn flush_x(
     while ly < vr
         invariant
             ly <= vr,
+            mt.n <= old(mt).n + ly * (wb + 1),
             by0 == vr * row,
             by0 + vr <= chh <= 0x4_0080,
             st == stride == 8 * wb,
@@ -366,11 +375,13 @@ pub fn flush_x(
         decreases vr - ly,
     {
         let by = by0 + ly;
+        let ghost m1 = mt.n;
         if by < hb {
             let mut bx: usize = 0;
             while bx < wb
                 invariant
                     bx <= wb,
+                    mt.n <= m1 + bx,
                     ly < vr,
                     by == by0 + ly,
                     by < hb,
@@ -423,6 +434,9 @@ pub fn flush_x(
                     lemma_block_stored(out0, pl@, blk@, g, q@, cwi, st, by as int, bx as int);
                 }
                 bx += 1;
+                proof {
+                    mt.n = mt.n + 1;
+                }
             }
             proof {
                 assert forall|j: int| 0 <= j < pl.len() && j / st < 8 * (by + 1) implies (#[trigger] pl[j]) == psample(
@@ -453,8 +467,17 @@ pub fn flush_x(
             }
         }
         ly += 1;
+        proof {
+            mt.n = mt.n + 1;
+            assert(ly * (wb + 1) == (ly - 1) * (wb + 1) + wb + 1) by (nonlinear_arith);
+        }
     }
-    win_zero(a);
+    win_zero(a, Tracked(mt));
+    assert(vr * (wb + 1) + 64 * (cw * vr) <= 66 * (cw * vr)) by (nonlinear_arith)
+        requires
+            1 <= wb <= cw,
+            vr >= 0,
+    ;
     proof {
         let nb = wbase(cwi, vr as int, row + 1);
         assert(8 * (vr * (row + 1)) == 8 * (by0 + vr)) by (nonlinear_arith)

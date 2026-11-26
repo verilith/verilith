@@ -26,7 +26,7 @@ The proof covers the whole path: the parser, the compiler to a program for
 an automaton, and the matcher (a Pike VM, with a lazy DFA in front of it
 that passes over text where no match can be). Nothing in that path is assumed
 or tested instead of proven; what is trusted is listed in
-[TRUST.md](TRUST.md).
+[TRUST.md](https://github.com/verilith/verilith/blob/main/crates/regex/TRUST.md).
 
 ```rust
 let re = verilith_regex::Regex::new(br"(?P<year>\d{4})-(?P<month>\d{2})").unwrap();
@@ -74,13 +74,18 @@ parser over the bytes of the pattern.
 - `Regex::new(pattern)` returns `Ok(re)` only with `parse(pattern) ==
   Some(Pat { re: re.re, .. })`, and returns `Err(e)` only if `parse(pattern)`
   is `None` or `e` is `TooBig`.
+- Compiling never fails. Every program the compiler emits has only forward
+  jumps where no input is consumed, only addresses inside the program, and
+  class and slot numbers in range (`compile::lemma_compiled_fwd`,
+  `compile::insts_ok`), which is what the matcher needs. So no check runs
+  at compile time, and `TooBig` means only that a size limit was passed.
 - `re.search_with(text, from, ..)` returns true exactly when
   `search(re.re, text, from, slots)` is some match `m`, and then the slots
   it filled are `m.caps`. It also returns the number of loop iterations it
   made (as a ghost value, erased when compiled), proven to be at most
   `(text.len() - from + 2) * step_cost(P, S)` with
 
-  ```
+  ```text
   step_cost(P, S) = pike_cost(P, S) + dfa_cost(P) + memo_cost(P, S) + 2 + 34 * quick_cost(P, S)
   pike_cost(P, S) = 5 * (S + 3) * P + (S + 67) * P + (S + 67) + 7 * P + 7 * S + 12
   dfa_cost(P)     = 331 * P + 302
@@ -108,7 +113,7 @@ parser over the bytes of the pattern.
 | parser | `parse.rs` | computes `syntax::parse` |
 | character classes | `class.rs` | ranges, union, negation, case folding and Unicode groups compute the sets `data.rs` defines |
 | compiler, on paper | `cproof.rs` | the compilation scheme preserves the list of matches, in order |
-| compiler, in code | `compile.rs` | emits exactly the scheme's program |
+| compiler, in code | `compile.rs` | emits exactly the scheme's program, which always meets the matcher's requirements (`lemma_compiled_fwd`) |
 | matcher | `pike.rs`, `vmspec.rs` | reports the first match of the program's own semantics (`sem.rs`), within the step and memory bounds |
 | skipping | `skip.rs` | no match starts at a byte the table rules out |
 | second byte | `skip.rs` | no match starts at an ASCII byte unless the byte after it is one the pattern can go on with (`lemma_pair`) |
@@ -117,7 +122,7 @@ parser over the bytes of the pattern.
 | lazy DFA | `dfa.rs` | no match starts anywhere the DFA passed with an empty state; at most 256 states |
 | stored steps | `memo.rs` | a stored step, replayed, leaves the threads and their capture slots exactly as the matcher's own step would; at most 256 thread lists |
 
-`scripts/verify.sh` runs Verus on all of it: 565 items verified, no
+`scripts/verify.sh` runs Verus on all of it: 589 items verified, no
 `assume`, no `admit`.
 
 ## Supported syntax
@@ -145,10 +150,12 @@ Not supported, as in RE2: backreferences, lookahead and lookbehind.
 Not supported, though RE2 has them: `\C` (match one byte), Latin-1 mode,
 POSIX syntax mode and longest-match mode.
 
-Limits: a pattern is at most 64 KiB, groups nest at most 250 deep, and the
-compiled program has at most 262,144 instructions. A pattern over a limit
-is refused with `TooBig`. (RE2's limits are different: by default it
-refuses programs over about 8 MiB of memory.)
+Limits: patterns may be any length, and groups may nest to any depth. The
+compiled program has at most 262,144 instructions by default, about the
+same as RE2's default `max_mem` of 8 MiB allows; `Regex::with_limit`
+(`vregex_new_with_limit`, or `cre2_opt_set_max_mem` at 32 bytes an
+instruction) sets another limit, up to 2^24 instructions, which is RE2's
+ceiling too. A pattern over a limit is refused with `TooBig`.
 
 ## Differences from RE2
 
@@ -344,15 +351,24 @@ cargo test --profile release-abort
 scripts/verify.sh                     # needs cargo-verus, see the script
 tests/capi/run.sh                     # C API; see the script for RE2
 scripts/check_tables.sh RE2_CHECKOUT  # the Unicode tables are RE2's
+cargo build --release --target wasm32-unknown-unknown   # WebAssembly
 ```
+
+The crate builds for `wasm32-unknown-unknown` (browsers, Cloudflare
+Workers). The proofs are checked twice, at a fixed pointer width each time:
+on the host with a 64-bit `usize`, and with Verus compiling for
+`wasm32-unknown-unknown` with a 32-bit one, which also covers the code
+without x86 or Arm paths that a wasm32 build has. CI does both, and runs the
+tests on `wasm32-wasip1` under wasmtime (`scripts/verify-narrow.sh` here, `scripts/wasm32.sh` at the
+root).
 
 `tests/diff/diff.py` compares verilith-regex with RE2 on fixed and random cases;
 its header says how to build the two programs it needs.
 
 ## Licence
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/regex/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/regex/LICENSE-MIT), at your option.
 
 The Unicode tables in `src/tables.rs` are generated from RE2's, which are
-under the BSD licence in [LICENSE-re2](LICENSE-re2).
+under the BSD licence in [LICENSE-re2](https://github.com/verilith/verilith/blob/main/crates/regex/LICENSE-re2).

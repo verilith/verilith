@@ -18,7 +18,11 @@ gzip), [verilith-zstd](https://github.com/verilith/verilith/tree/main/crates/zst
 ## What is proven
 
 Everything below is checked by Verus on every build of the proofs
-(`scripts/verify.sh`: 135 verified, 0 errors). [TRUST.md](TRUST.md) lists
+(`scripts/verify.sh`: 136 verified, 0 errors), once per pointer width:
+CI also runs Verus compiling for `wasm32-unknown-unknown`, where `usize`
+is 32 bits (`scripts/verify-narrow.sh`), so the crate builds for wasm32
+and is proven as built there, and its tests pass on `wasm32-wasip1` under
+wasmtime. There, archives are below 2 GiB. [TRUST.md](https://github.com/verilith/verilith/blob/main/crates/archive/TRUST.md) lists
 what the proofs assume.
 
 **No panics, no out-of-bounds reads, no overflow** in the parsers, the
@@ -29,7 +33,7 @@ member reader and the planner, on any input.
 POSIX ustar and pax and the GNU tar formats, what members an archive has.
 The parsers return exactly that:
 
-```rust
+```rust,ignore
 pub fn parse_zip(b: &[u8]) -> (r: Option<Vec<Entry>>)
     ensures match r {
         Some(es) => zip(b@) == Some(views(es@)) && disjoint(views(es@)) && in_bounds(views(es@), b@.len()),
@@ -55,14 +59,22 @@ allocated.
 operating system walks a path, following symbolic links (`resolve`), and
 states the policy (`plan_safe`). The planner's contract is
 
-```rust
+```rust,ignore
 pub fn plan(b: &[u8], es: &Vec<Entry>) -> (r: Result<Vec<Item>, Rejected>)
-    ensures r matches Ok(items) ==> plan_safe(sitems(items@)) && items_match(b@, views(es@), items@)
+    ensures
+        r matches Ok(items) ==> plan_safe(sitems(items@)) && plan_of(b@, views(es@), sitems(items@))
+            && items_match(b@, views(es@), items@),
+        r matches Err(e) ==> e.why is Internal
+            || forall|p: Seq<SItem>| plan_of(b@, views(es@), p) ==> !plan_safe(p),
 ```
+
+`plan_of` says what the plan of an archive is: one step per member not of
+kind `Other`, in member order, each what the policy makes of its member
+(`item_of`). It determines the plan, so an archive has at most one.
 
 and the theorem is
 
-```rust
+```rust,ignore
 pub proof fn theorem_contained(items: Seq<SItem>, i: int, sub: Map<Path, Path>, fuel: nat)
     requires plan_safe(items), 0 <= i < items.len(), sub.submap_of(links_of(items)),
     ensures
@@ -80,23 +92,39 @@ archive; a symbolic link's target is relative and, walked from the link's
 directory, stays under the root and passes through no other link; a hard
 link's target is a regular file that an earlier member creates.
 
-The planner is sound, not complete: when it refuses, it has not proven that
-the archive is dangerous. It refuses some harmless archives on purpose (a
-member stored twice, a file written through a symbolic link that points
-inside the tree).
+The planner is sound and complete for this policy: it accepts exactly the
+archives whose plan satisfies `plan_safe`. A refusal is proven to mean the
+policy is broken, with one exception, `Why::Internal`, returned only if the
+standard library's sort misbehaves (see TRUST.md). The policy itself refuses
+some harmless archives on purpose (a member stored twice, a file written
+through a symbolic link that points inside the tree, a symbolic link target
+longer than 4096 bytes, which `symlink` would refuse anyway).
 
 ## Using it
 
-```rust
-let a = verilith_archive::Archive::open(&bytes)?;      // zip, tar, .tar.gz, .tar.zst
-for (i, e) in a.entries().iter().enumerate() {
-    let data = a.read(i)?;                      // exactly e.size bytes, CRC checked
+```rust,no_run
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = std::fs::read("release.tar.gz")?;
+    let a = verilith_archive::Archive::open(&bytes)?;   // zip, tar, .tar.gz, .tar.zst
+    for (i, e) in a.entries().iter().enumerate() {
+        let data = a.read(i)?;                          // exactly the declared size, CRC checked
+        println!("{} bytes", data.len());
+    }
+    let n = verilith_archive::extract(&a, std::path::Path::new("out"))?;  // all of it, or nothing
+    println!("extracted {n} members");
+    Ok(())
 }
-verilith_archive::extract(&a, std::path::Path::new("out"))?;   // all of it, or nothing
 ```
+
+Extraction (`extract`) is available on Unix only.
 
 `cargo run --release --example varc -- list|extract ARCHIVE [DIR]` is a
 small command line around this.
+
+Extraction (`extract`, and `archive_read_extract` in the C API) is
+Unix-only for now: the file system model in `src/policy.rs` is POSIX's.
+Reading and planning work everywhere, so a Windows program can list an
+archive, read its members and check the plan, then write the files itself.
 
 ## The C API: libarchive's read API
 
@@ -196,5 +224,5 @@ How to read it:
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/archive/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/archive/LICENSE-MIT), at your option.

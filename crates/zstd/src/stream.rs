@@ -272,6 +272,13 @@ pub open spec fn block_step(b: Seq<u8>, i: int, window: nat, reach: nat, st: Fra
     }
 }
 
+/// A block the spec accepts adds at most a block's worth of output.
+pub proof fn lemma_block_step_max(b: Seq<u8>, i: int, w: nat, r: nat, st: FrameState)
+    ensures
+        block_step(b, i, w, r, st) matches Some((_j, st2, _l)) ==> st2.out.len() <= st.out.len() + BLOCK_MAX,
+{
+}
+
 pub proof fn lemma_blocks_unfold(b: Seq<u8>, i: int, w: nat, r: nat, st: FrameState)
     ensures
         blocks_r(b, i, w, r, st) == match block_step(b, i, w, r, st) {
@@ -645,6 +652,160 @@ pub open spec fn frame_ok(x: Seq<u8>, o: Seq<u8>, d: Dict) -> bool {
     ||| (skip_frame(x) && o.len() == 0)
 }
 
+/// A frame of either kind starts at the start of `b`: a Zstandard frame
+/// the spec accepts (with the dictionary `d`), or a skippable frame.
+pub open spec fn frame_start(b: Seq<u8>, d: Dict) -> bool {
+    ||| (b.len() >= 4 && le(b, 0, 4) == MAGIC && frame_d(b, 0, d) is Some)
+    ||| (b.len() >= 8 && skippable(le(b, 0, 4)) && le(b, 4, 4) + 8 < 0x1_0000_0000 && b.len() >= 8 + le(b, 4, 4))
+}
+
+/// No frame starts with `x`: whatever input follows it, the spec rejects
+/// it.
+pub open spec fn rejected(x: Seq<u8>, d: Dict) -> bool {
+    forall|b: Seq<u8>| ext(b, x) ==> !#[trigger] frame_start(b, d)
+}
+
+/// The streaming decoder's buffer, at most two reaches and three blocks,
+/// leaves room for two more blocks within `MAX_LIMIT`, on 32-bit targets
+/// too.
+pub proof fn lemma_buf_fits(len: nat, reach: nat)
+    requires
+        len <= 2 * reach + 3 * SBLOCK_MAX + 2,
+        reach <= SWINDOW_MAX + crate::dict::DICT_MAX,
+    ensures
+        len + 2 * SBLOCK_MAX <= MAX_LIMIT,
+{
+}
+
+/// What a failure means, for the input `x` of the frame so far: the spec
+/// rejects every frame that starts with `x`, except for the two limits
+/// the caller (or this decoder) sets. `Window`: the header names a window
+/// larger than the caller allows (libzstd's `maxWindowSize`), or than
+/// `SWINDOW_MAX` (1 TiB, or 256 MiB on 32-bit targets). `Limit`: the
+/// frame's output (`out` bytes so far) is close to `SLIMIT` (256 TiB).
+pub open spec fn fail_ok(f: Fail, x: Seq<u8>, d: Dict, max_window: u64, out: nat) -> bool {
+    match f {
+        Fail::Window => x.len() >= 5 && (frame_header(x.subrange(4, x.len() as int)) matches Some(h) && (h.window
+            > max_window || h.window > SWINDOW_MAX)),
+        Fail::Limit => rejected(x, d) || out + 2 * SBLOCK_MAX > SLIMIT,
+        _ => rejected(x, d),
+    }
+}
+
+/// A frame header is read from its first `hsize` bytes alone, whatever
+/// follows them, and is that long when it is read.
+pub proof fn lemma_header_local(x: Seq<u8>, y: Seq<u8>)
+    requires
+        1 <= x.len() <= y.len(),
+        y.subrange(0, x.len() as int) == x,
+        x.len() >= hsize(x[0]),
+    ensures
+        frame_header(y) == frame_header(x),
+        frame_header(x) matches Some(h) ==> h.size == hsize(x[0]),
+{
+    assert forall|t: int| 0 <= t < x.len() implies y[t] == x[t] by {
+        assert(x[t] == y.subrange(0, x.len() as int)[t]);
+    }
+    let fhd = x[0];
+    let did_flag = fhd % 4;
+    let single = (fhd / 32) % 2 == 1;
+    let fcs_flag = fhd / 64;
+    let wd_size: int = if single { 0 } else { 1 };
+    let did_size: int = if did_flag == 0 { 0 } else if did_flag == 1 { 1 } else if did_flag == 2 { 2 } else { 4 };
+    let fcs_size: int = if fcs_flag == 0 { if single { 1 } else { 0 } } else if fcs_flag == 1 { 2 } else if fcs_flag == 2 { 4 } else { 8 };
+    let size = 1 + wd_size + did_size + fcs_size;
+    assert(size == hsize(fhd));
+    assert(y.subrange(1 + wd_size, 1 + wd_size + did_size) =~= x.subrange(1 + wd_size, 1 + wd_size + did_size));
+    lemma_le_local(y, 1 + wd_size, x, 1 + wd_size, did_size as nat);
+    assert(y.subrange(1 + wd_size + did_size, size) =~= x.subrange(1 + wd_size + did_size, size));
+    lemma_le_local(y, 1 + wd_size + did_size, x, 1 + wd_size + did_size, fcs_size as nat);
+}
+
+/// A little-endian field inside `x` reads the same in any `b` that starts
+/// with `x`.
+pub proof fn lemma_ext_le(b: Seq<u8>, x: Seq<u8>, i: int, n: nat)
+    requires
+        ext(b, x),
+        0 <= i,
+        i + n <= x.len(),
+    ensures
+        le(b, i, n) == le(x, i, n),
+{
+    assert(b.subrange(i, i + n) =~= x.subrange(i, i + n)) by {
+        assert forall|t: int| 0 <= t < n implies #[trigger] b.subrange(i, i + n)[t] == x.subrange(i, i + n)[t] by {
+            assert(b.subrange(0, x.len() as int)[i + t] == x[i + t]);
+        }
+    }
+    lemma_le_local(b, i, x, i, n);
+}
+
+/// A Zstandard frame's magic number, with no frame of it that the spec
+/// accepts after `g`, is rejected.
+pub proof fn lemma_rejected_magic(g: Seq<u8>, d: Dict)
+    requires
+        g.len() >= 4,
+        le(g, 0, 4) == MAGIC,
+        forall|b: Seq<u8>| ext(b, g) ==> #[trigger] frame_d(b, 0, d) is None,
+    ensures
+        rejected(g, d),
+{
+    assert forall|b: Seq<u8>| ext(b, g) implies !#[trigger] frame_start(b, d) by {
+        lemma_ext_le(b, g, 0, 4);
+        assert(frame_d(b, 0, d) is None);
+    }
+}
+
+/// In a frame whose header is complete in `g`, any `b` that starts with
+/// `g` has the same header, with the frame's dictionary check passed.
+pub proof fn lemma_hdr_ext(b: Seq<u8>, g: Seq<u8>, h: Header)
+    requires
+        ext(b, g),
+        1 <= h.size,
+        4 + h.size <= g.len(),
+        frame_header(g.subrange(4, 4 + h.size)) == Some(h),
+    ensures
+        frame_header(b.subrange(4, b.len() as int)) == Some(h),
+{
+    let x = g.subrange(4, 4 + h.size);
+    let y = b.subrange(4, b.len() as int);
+    assert(y.subrange(0, x.len() as int) =~= x) by {
+        assert forall|t: int| 0 <= t < x.len() implies #[trigger] y.subrange(0, x.len() as int)[t] == x[t] by {
+            assert(b.subrange(0, g.len() as int)[4 + t] == g[4 + t]);
+        }
+    }
+    lemma_header_ext(x, y);
+}
+
+/// A frame whose header is complete in `g` and whose blocks, after any
+/// input that starts with `g`, are rejected or end with output of a size
+/// other than the header's content size, is rejected.
+pub proof fn lemma_reject_frame(g: Seq<u8>, h: Header, d: Dict)
+    requires
+        1 <= h.size,
+        4 + h.size <= g.len(),
+        le(g, 0, 4) == MAGIC,
+        frame_header(g.subrange(4, 4 + h.size)) == Some(h),
+        forall|b: Seq<u8>|
+            ext(b, g) ==> match #[trigger] blocks_r(b, 4 + h.size, h.window, h.window + d.st.out.len(), d.st) {
+                None => true,
+                Some((_j, st)) => h.fcs matches Some(f) && f + d.st.out.len() != st.out.len() && d.st.out.len()
+                    <= st.out.len(),
+            },
+    ensures
+        rejected(g, d),
+{
+    assert forall|b: Seq<u8>| ext(b, g) implies #[trigger] frame_d(b, 0, d) is None by {
+        lemma_hdr_ext(b, g, h);
+        let r = blocks_r(b, 4 + h.size, h.window, h.window + d.st.out.len(), d.st);
+        if r is Some {
+            let st = r.unwrap().1;
+            let out = st.out.subrange(d.st.out.len() as int, st.out.len() as int);
+            assert(out.len() + d.st.out.len() == st.out.len());
+        }
+    }
+    lemma_rejected_magic(g, d);
+}
+
 pub proof fn lemma_ext_trans(b: Seq<u8>, x: Seq<u8>, y: Seq<u8>)
     requires
         ext(b, x),
@@ -671,6 +832,15 @@ pub const SBLOCK_MAX: usize = 131072;
 
 /// Most output a frame may have when streamed.
 pub const SLIMIT: u64 = 0x1_0000_0000_0000;
+
+/// The largest window the streaming decoder takes: 1 TiB on 64-bit
+/// targets, and on 32-bit ones 256 MiB, so that it, a dictionary and two
+/// blocks fit the buffer it keeps.
+#[cfg(target_pointer_width = "64")]
+pub const SWINDOW_MAX: u64 = 0x100_0000_0000;
+
+#[cfg(target_pointer_width = "32")]
+pub const SWINDOW_MAX: u64 = 0x1000_0000;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Stage {
@@ -804,7 +974,7 @@ impl Stream {
         &&& frame_header(g.subrange(4, 4 + h.size)) == Some(h)
         &&& (h.dict_id == 0 || h.dict_id == self.gdict@.id)
         &&& self.window as nat == h.window
-        &&& self.window <= 0x100_0000_0000
+        &&& self.window <= SWINDOW_MAX
         &&& self.reach as nat == h.window + self.dl()
         &&& match self.fcs {
             None => h.fcs is None,
@@ -853,7 +1023,7 @@ impl Stream {
     pub open spec fn inv(&self) -> bool {
         &&& self.dict.is(self.gdict@)
         &&& self.dlen as nat == self.dl()
-        &&& self.dlen < 0x1_0000_0000
+        &&& self.dlen < crate::dict::DICT_MAX
         &&& self.stage_inv()
     }
 
@@ -868,6 +1038,7 @@ impl Stream {
                 &&& self.gin@ == self.unit@
                 &&& self.gemit@.len() == 0
                 &&& 5 <= self.unit@.len() <= self.need <= 18
+                &&& self.need == 4 + hsize(self.unit@[4])
                 &&& le(self.gin@, 0, 4) == MAGIC
             },
             Stage::Skip => {
@@ -928,8 +1099,9 @@ impl Stream {
             r.gin@.len() == 0,
             r.gdict@ == no_dict(),
     {
+        let tracked mut wm0 = crate::work::Meter { n: 0 };
         let none: Vec<u8> = Vec::new();
-        let dict = raw_dict_exec(none.as_slice());
+        let dict = raw_dict_exec(none.as_slice(), Tracked(&mut wm0));
         proof {
             assert(none@ =~= Seq::<u8>::empty());
             assert(raw_dict(Seq::empty()) == no_dict());
@@ -966,7 +1138,7 @@ impl Stream {
         requires
             old(self).dict.is(old(self).gdict@),
             old(self).dlen as nat == old(self).dl(),
-            old(self).dlen < 0x1_0000_0000,
+            old(self).dlen < crate::dict::DICT_MAX,
         ensures
             final(self).inv(),
             final(self).stage == Stage::Magic,
@@ -1013,8 +1185,9 @@ impl Stream {
             final(self).max_window == old(self).max_window,
             final(self).gdict@ == no_dict(),
     {
+        let tracked mut wm0 = crate::work::Meter { n: 0 };
         let none: Vec<u8> = Vec::new();
-        self.dict = raw_dict_exec(none.as_slice());
+        self.dict = raw_dict_exec(none.as_slice(), Tracked(&mut wm0));
         self.dlen = 0;
         self.gdict = Ghost(no_dict());
         proof {
@@ -1029,13 +1202,14 @@ impl Stream {
         requires
             old(self).dict.is(old(self).gdict@),
             old(self).dlen as nat == old(self).dl(),
-            old(self).dlen < 0x1_0000_0000,
+            old(self).dlen < crate::dict::DICT_MAX,
         ensures
             final(self).inv(),
             final(self).stage == Stage::Failed,
             r == Err::<usize, Fail>(f),
             final(self).max_window == old(self).max_window,
             final(self).gdict == old(self).gdict,
+            final(self).gst == old(self).gst,
     {
         self.stage = Stage::Failed;
         self.fail = f;
@@ -1063,9 +1237,30 @@ fn collect(unit: &mut Vec<u8>, need: usize, inp: &[u8], ipos: &mut usize) -> (r:
     unit.len() == need
 }
 
+/// The size of a frame header (`frame_header`'s `size`) from its first
+/// byte, as a spec.
+pub open spec fn hsize(fhd: u8) -> int {
+    let did_flag = fhd % 4;
+    let single = (fhd / 32) % 2 == 1;
+    let fcs_flag = fhd / 64;
+    let wd: int = if single { 0 } else { 1 };
+    let did: int = if did_flag == 0 { 0 } else if did_flag == 1 { 1 } else if did_flag == 2 { 2 } else { 4 };
+    let fcs: int = if fcs_flag == 0 {
+        if single { 1 } else { 0 }
+    } else if fcs_flag == 1 {
+        2
+    } else if fcs_flag == 2 {
+        4
+    } else {
+        8
+    };
+    1 + wd + did + fcs
+}
+
 /// The size of a frame header (`frame_header`'s `size`) from its first byte.
 fn header_size(fhd: u8) -> (r: usize)
     ensures
+        r as int == hsize(fhd),
         forall|x: Seq<u8>| x.len() >= 1 && x[0] == fhd && #[trigger] frame_header(x) is Some ==> frame_header(x).unwrap().size == r as int,
         1 <= r <= 14,
 {
@@ -1181,7 +1376,7 @@ impl Stream {
     fn trim(&mut self)
         requires
             old(self).dec_inv(),
-            old(self).reach <= 0x100_0000_0000 + 0x1_0000_0000,
+            old(self).reach <= SWINDOW_MAX + crate::dict::DICT_MAX,
         ensures
             final(self).dec_inv(),
             final(self).dict == old(self).dict,
@@ -1314,7 +1509,12 @@ pub open spec fn step_post(
             &&& s1.gin@ == s0.gin@ + took
             &&& s1.gemit@ == s0.gemit@ + gave
         },
-        Some(Err(_)) => s1.stage == Stage::Failed && s1.inv(),
+        Some(Err(f)) => {
+            &&& s1.stage == Stage::Failed
+            &&& s1.inv()
+            &&& s0.stage != Stage::Failed
+            &&& fail_ok(f, s0.gin@ + took, s0.gdict@, s0.max_window, s1.gst@.out.len())
+        },
     }
 }
 
@@ -1421,6 +1621,27 @@ impl Stream {
             assert(d & 0xFFFF_FFFF == d % 0x1_0000_0000) by (bit_vector);
         }
         if lo != want {
+            proof {
+                // Every frame that starts with this input has these blocks
+                // and this checksum field, which does not match.
+                let g = self.gin@;
+                let j = self.gbpos@;
+                let h = self.ghdr@;
+                let dl = self.dl() as int;
+                assert(g.subrange(j, j + 4) =~= self.unit@.subrange(0, 4));
+                lemma_le_local(g, j, self.unit@, 0, 4);
+                assert(g.subrange(0, 4) =~= s0.gin@.subrange(0, 4));
+                lemma_le_local(g, 0, s0.gin@, 0, 4);
+                assert forall|b: Seq<u8>| ext(b, g) implies #[trigger] frame_d(b, 0, self.gdict@) is None by {
+                    lemma_hdr_ext(b, g, h);
+                    lemma_ext_trans(b, g, g.subrange(0, j));
+                    assert(blocks_r(b, 4 + h.size, h.window, h.window + self.dl(), self.gdict@.st) == Some((j, self.gst@)));
+                    lemma_ext_le(b, g, j, 4);
+                    assert(le(b, j, 4) == want);
+                    assert(xxh64(self.gst@.out.subrange(dl, self.gst@.out.len() as int)) == d);
+                }
+                lemma_rejected_magic(g, self.gdict@);
+            }
             return Some(self.failed(Fail::Checksum));
         }
         proof {
@@ -1484,6 +1705,14 @@ impl Stream {
             }
             let n = le_at(self.unit.as_slice(), 4, 4);
             if n > 0xFFFF_FFFF - 8 {
+                proof {
+                    let g = self.gin@;
+                    assert(g =~= self.unit@);
+                    assert forall|b: Seq<u8>| ext(b, g) implies !#[trigger] frame_start(b, self.gdict@) by {
+                        lemma_ext_le(b, g, 0, 4);
+                        lemma_ext_le(b, g, 4, 4);
+                    }
+                }
                 return Some(self.failed(Fail::Param));
             }
             self.skip = n as usize;
@@ -1491,6 +1720,13 @@ impl Stream {
             return None;
         }
         if m != 0xFD2F_B528 {
+            proof {
+                let g = self.gin@;
+                assert(g =~= self.unit@);
+                assert forall|b: Seq<u8>| ext(b, g) implies !#[trigger] frame_start(b, self.gdict@) by {
+                    lemma_ext_le(b, g, 0, 4);
+                }
+            }
             return Some(self.failed(Fail::Prefix));
         }
         self.need = 5;
@@ -1507,6 +1743,17 @@ impl Stream {
         }
         let fhd = self.unit[4];
         if fhd & 0x08 != 0 {
+            proof {
+                // A reserved bit: no header the spec accepts starts so.
+                let g = self.gin@;
+                assert(g =~= self.unit@);
+                assert(fhd & 0x08 != 0 ==> (fhd / 8) % 2 == 1) by (bit_vector);
+                assert forall|b: Seq<u8>| ext(b, g) implies #[trigger] frame_d(b, 0, self.gdict@) is None by {
+                    assert(b.subrange(4, b.len() as int)[0] == b[4]);
+                    assert(b[4] == b.subrange(0, g.len() as int)[4]);
+                }
+                lemma_rejected_magic(g, self.gdict@);
+            }
             return Some(self.failed(Fail::Param));
         }
         self.need = 4 + header_size(fhd);
@@ -1539,23 +1786,53 @@ impl Stream {
             return Some(Ok(self.need - self.unit.len()));
         }
         let x = slice_subrange(self.unit.as_slice(), 4, self.unit.len());
+        proof {
+            let g = self.gin@;
+            assert(g =~= self.unit@);
+            assert(x@ =~= g.subrange(4, g.len() as int));
+            assert(x@[0] == self.unit@[4]);
+            assert(x@.subrange(0, x@.len() as int) =~= x@);
+            lemma_header_local(x@, x@);
+        }
         let h = match frame_header_exec(x) {
             None => {
+                proof {
+                    let g = self.gin@;
+                    assert forall|b: Seq<u8>| ext(b, g) implies #[trigger] frame_d(b, 0, self.gdict@) is None by {
+                        let y = b.subrange(4, b.len() as int);
+                        assert(y.subrange(0, x@.len() as int) =~= x@) by {
+                            assert forall|t: int| 0 <= t < x@.len() implies #[trigger] y.subrange(0, x@.len() as int)[t] == x@[t] by {
+                                assert(b.subrange(0, g.len() as int)[4 + t] == g[4 + t]);
+                            }
+                        }
+                        lemma_header_local(x@, y);
+                    }
+                    lemma_rejected_magic(g, self.gdict@);
+                }
                 return Some(self.failed(Fail::Header));
             },
             Some(h) => h,
         };
         let ghost hs = frame_header(x@).unwrap();
         if h.size != self.need - 4 {
+            // Not reached: the header's size is the one its first byte gave.
             return Some(self.failed(Fail::Header));
         }
         proof {
             reveal(DDict::is);
         }
         if h.dict_id != 0 && h.dict_id != self.dict.id as u64 {
+            proof {
+                let g = self.gin@;
+                assert(x@ =~= g.subrange(4, 4 + hs.size));
+                assert forall|b: Seq<u8>| ext(b, g) implies #[trigger] frame_d(b, 0, self.gdict@) is None by {
+                    lemma_hdr_ext(b, g, hs);
+                }
+                lemma_rejected_magic(g, self.gdict@);
+            }
             return Some(self.failed(Fail::Dict));
         }
-        if h.window > self.max_window || h.window > 0x100_0000_0000 {
+        if h.window > self.max_window || h.window > SWINDOW_MAX {
             return Some(self.failed(Fail::Window));
         }
         self.window = h.window;
@@ -1569,8 +1846,9 @@ impl Stream {
         self.dec.r1 = self.dict.r1;
         self.dec.r2 = self.dict.r2;
         self.dec.r3 = self.dict.r3;
-        self.dec.huf = copy_huf_opt(&self.dict.huf);
-        self.dec.seqt = copy_seqt_opt(&self.dict.seqt);
+        let tracked mut wm0 = crate::work::Meter { n: 0 };
+        self.dec.huf = copy_huf_opt(&self.dict.huf, Tracked(&mut wm0));
+        self.dec.seqt = copy_seqt_opt(&self.dict.seqt, Tracked(&mut wm0));
         self.flushed = self.dlen;
         self.dropped = 0;
         self.hash = Xxh64::new();
@@ -1630,12 +1908,138 @@ impl Stream {
         let size = (bh / 8) as usize;
         let bmax: usize = if self.window < SBLOCK_MAX as u64 { self.window as usize } else { SBLOCK_MAX };
         if ty == 3 || size > bmax {
+            proof {
+                let g = self.gin@;
+                let j = self.gbpos@;
+                let h = self.ghdr@;
+                assert(g.subrange(j, j + 3) =~= self.unit@);
+                assert(self.unit@.subrange(0, 3) =~= self.unit@);
+                lemma_le_local(g, j, self.unit@, 0, 3);
+                assert forall|b: Seq<u8>| ext(b, g) implies match #[trigger] blocks_r(
+                    b,
+                    4 + h.size,
+                    h.window,
+                    h.window + self.gdict@.st.out.len(),
+                    self.gdict@.st,
+                ) {
+                    None => true,
+                    Some((_j, st)) => h.fcs matches Some(f) && f + self.gdict@.st.out.len() != st.out.len()
+                        && self.gdict@.st.out.len() <= st.out.len(),
+                } by {
+                    lemma_ext_trans(b, g, g.subrange(0, j));
+                    lemma_ext_le(b, g, j, 3);
+                    assert(blocks_r(b, j, h.window, h.window + self.dl(), self.gst@) is None);
+                }
+                lemma_reject_frame(g, h, self.gdict@);
+            }
             return Some(self.failed(Fail::Corrupt));
         }
         self.need = 3 + if ty == 1 { 1 } else { size };
         self.stage = Stage::Block;
         None
     }
+}
+
+/// A block the spec rejects, at `j` of `g`: every frame that starts with
+/// `g` is rejected.
+proof fn lemma_reject_block(g: Seq<u8>, j: int, src: Seq<u8>, h: Header, st: FrameState, d: Dict)
+    requires
+        1 <= h.size,
+        4 + h.size <= j,
+        j + src.len() == g.len(),
+        g == g.subrange(0, j) + src,
+        le(g, 0, 4) == MAGIC,
+        frame_header(g.subrange(4, 4 + h.size)) == Some(h),
+        3 <= src.len(),
+        3 + body_len(src) <= src.len(),
+        forall|b: Seq<u8>|
+            ext(b, g.subrange(0, j)) ==> #[trigger] blocks_r(b, 4 + h.size, h.window, h.window + d.st.out.len(), d.st) == blocks_r(b, j, h.window, h.window + d.st.out.len(), st),
+        block_step(src, 0, h.window, h.window + d.st.out.len(), st) is None,
+    ensures
+        rejected(g, d),
+{
+    let rch = h.window + d.st.out.len();
+    assert forall|b: Seq<u8>| ext(b, g) implies match #[trigger] blocks_r(b, 4 + h.size, h.window, rch, d.st) {
+        None => true,
+        Some((_j, s)) => h.fcs matches Some(f) && f + d.st.out.len() != s.out.len() && d.st.out.len() <= s.out.len(),
+    } by {
+        assert(g.subrange(0, j).len() == j);
+        lemma_ext_trans(b, g, g.subrange(0, j));
+        assert(b.subrange(j, j + src.len()) =~= src) by {
+            assert forall|t: int| 0 <= t < src.len() implies #[trigger] b.subrange(j, j + src.len())[t] == src[t] by {
+                assert(b.subrange(0, g.len() as int)[j + t] == g[j + t]);
+            }
+        }
+        lemma_block_step_local(b, j, src, h.window, rch, st);
+        lemma_blocks_unfold(b, j, h.window, rch, st);
+    }
+    lemma_reject_frame(g, h, d);
+}
+
+/// The frame's blocks end at the end of `g` with output of other than the
+/// header's content size, or (`!last`) already have more output than it,
+/// which later blocks only add to.
+proof fn lemma_reject_fcs(g: Seq<u8>, h: Header, st: FrameState, d: Dict, last: bool)
+    requires
+        1 <= h.size,
+        4 + h.size <= g.len(),
+        le(g, 0, 4) == MAGIC,
+        frame_header(g.subrange(4, 4 + h.size)) == Some(h),
+        d.st.out.len() <= st.out.len(),
+        h.fcs is Some,
+        last ==> h.fcs.unwrap() + d.st.out.len() != st.out.len(),
+        !last ==> h.fcs.unwrap() + d.st.out.len() < st.out.len(),
+        forall|b: Seq<u8>|
+            ext(b, g) ==> #[trigger] blocks_r(b, 4 + h.size, h.window, h.window + d.st.out.len(), d.st) == if last {
+                Some((g.len() as int, st))
+            } else {
+                blocks_r(b, g.len() as int, h.window, h.window + d.st.out.len(), st)
+            },
+    ensures
+        rejected(g, d),
+{
+    let dlx = d.st.out.len();
+    let rx = h.window + dlx;
+    assert forall|b: Seq<u8>| ext(b, g) implies match #[trigger] blocks_r(b, 4 + h.size, h.window, rx, d.st) {
+        None => true,
+        Some((_j, s)) => h.fcs matches Some(f) && f + dlx != s.out.len() && dlx <= s.out.len(),
+    } by {
+        if !last {
+            lemma_blocks_prefix(b, g.len() as int, h.window, rx, st);
+        }
+    }
+    lemma_reject_frame(g, h, d);
+}
+
+/// The block `src`, which `block_exec` did not decode, is one the spec
+/// rejects, so every frame that starts with `g` is rejected.
+proof fn lemma_reject_bad(g: Seq<u8>, j: int, src: Seq<u8>, h: Header, gst: FrameState, strim: FrameState, pre: Seq<u8>, d: Dict)
+    requires
+        1 <= h.size,
+        4 + h.size <= j,
+        j + src.len() == g.len(),
+        g == g.subrange(0, j) + src,
+        le(g, 0, 4) == MAGIC,
+        frame_header(g.subrange(4, 4 + h.size)) == Some(h),
+        3 <= src.len(),
+        3 + body_len(src) <= src.len(),
+        forall|b: Seq<u8>|
+            ext(b, g.subrange(0, j)) ==> #[trigger] blocks_r(b, 4 + h.size, h.window, h.window + d.st.out.len(), d.st) == blocks_r(b, j, h.window, h.window + d.st.out.len(), gst),
+        block_step(src, 0, h.window, h.window + d.st.out.len(), strim) is None,
+        gst.out == pre + strim.out,
+        gst == shift(strim, pre),
+        pre.len() > 0 ==> h.window + d.st.out.len() <= strim.out.len(),
+    ensures
+        rejected(g, d),
+{
+    let rch0 = h.window + d.st.out.len();
+    if pre.len() == 0 {
+        assert(strim.out =~= gst.out);
+        assert(strim == gst);
+    } else {
+        lemma_block_step_shift(src, 0, h.window, rch0, strim, pre);
+    }
+    lemma_reject_block(g, j, src, h, gst, d);
 }
 
 /// The block `src` at `gbpos` of `g`: what the frame's blocks are after it.
@@ -1681,8 +2085,31 @@ proof fn lemma_next_block(g0: Seq<u8>, j: int, src: Seq<u8>, h: Header, st: Fram
     }
 }
 
+/// The output after a block, as `step_block` keeps it: `pre` dropped,
+/// `so` kept before the block and `d` after it, `new` the block's.
+proof fn lemma_block_out(pre: Seq<u8>, so: Seq<u8>, d: Seq<u8>, new: Seq<u8>, before: int, dl: int, dropped: int, flushed: int)
+    requires
+        0 <= before <= d.len(),
+        so == d.subrange(0, before),
+        new == d.subrange(before, d.len() as int),
+        dropped == pre.len(),
+        0 <= dl <= dropped + flushed,
+        0 <= flushed <= before,
+    ensures
+        pre + d == (pre + so) + new,
+        (pre + d).subrange(dl, (pre + d).len() as int) == (pre + so).subrange(dl, (pre + so).len() as int) + new,
+        (pre + d).subrange(dropped, (pre + d).len() as int) == d,
+        (pre + d).subrange(dl, dropped + flushed) == (pre + so).subrange(dl, dropped + flushed),
+{
+    assert(pre + d =~= (pre + so) + new);
+    assert((pre + d).subrange(dl, (pre + d).len() as int) =~= (pre + so).subrange(dl, (pre + so).len() as int) + new);
+    assert((pre + d).subrange(dropped, (pre + d).len() as int) =~= d);
+    assert((pre + d).subrange(dl, dropped + flushed) =~= (pre + so).subrange(dl, dropped + flushed));
+}
+
 impl Stream {
     #[verifier::rlimit(400)]
+    #[verifier::spinoff_prover]
     fn step_block(&mut self, out: &mut [u8], opos: &mut usize, inp: &[u8], ipos: &mut usize) -> (r: Option<Result<usize, Fail>>)
         requires
             old(self).inv(),
@@ -1698,14 +2125,22 @@ impl Stream {
         // Hand out what is there before decoding more.
         if !self.flush(out, opos) {
             proof {
-                assert(inp@.subrange(i0 as int, i0 as int) =~= Seq::<u8>::empty());
-                assert(self.gin@ =~= s0.gin@ + Seq::<u8>::empty());
+                assert(inp@.subrange(i0 as int, i0 as int) == Seq::<u8>::empty()) by {
+                    assert(inp@.subrange(i0 as int, i0 as int) =~= Seq::<u8>::empty());
+                }
+                assert(self.gin@ == s0.gin@ + Seq::<u8>::empty()) by {
+                    assert(self.gin@ =~= s0.gin@ + Seq::<u8>::empty());
+                }
             }
             return Some(Ok(1));
         }
         proof {
-            assert(inp@.subrange(i0 as int, i0 as int) =~= Seq::<u8>::empty());
-            assert(self.gin@ =~= s0.gin@ + Seq::<u8>::empty());
+            assert(inp@.subrange(i0 as int, i0 as int) == Seq::<u8>::empty()) by {
+                assert(inp@.subrange(i0 as int, i0 as int) =~= Seq::<u8>::empty());
+            }
+            assert(self.gin@ == s0.gin@ + Seq::<u8>::empty()) by {
+                assert(self.gin@ =~= s0.gin@ + Seq::<u8>::empty());
+            }
         }
         let ghost s1 = *self;
         // When the header came from this input and the whole block follows
@@ -1719,12 +2154,22 @@ impl Stream {
                 let g = self.gin@;
                 let j = self.gbpos@;
                 let k = 4 + self.ghdr@.size;
-                assert(g.subrange(j, g.len() as int) =~= self.unit@);
-                assert(g.subrange(0, j) =~= s0.gin@.subrange(0, j));
-                assert(g.subrange(4, k) =~= s0.gin@.subrange(4, k));
-                assert(g.subrange(0, 4) =~= s0.gin@.subrange(0, 4));
+                assert(g.subrange(j, g.len() as int) == self.unit@) by {
+                    assert(g.subrange(j, g.len() as int) =~= self.unit@);
+                }
+                assert(g.subrange(0, j) == s0.gin@.subrange(0, j)) by {
+                    assert(g.subrange(0, j) =~= s0.gin@.subrange(0, j));
+                }
+                assert(g.subrange(4, k) == s0.gin@.subrange(4, k)) by {
+                    assert(g.subrange(4, k) =~= s0.gin@.subrange(4, k));
+                }
+                assert(g.subrange(0, 4) == s0.gin@.subrange(0, 4)) by {
+                    assert(g.subrange(0, 4) =~= s0.gin@.subrange(0, 4));
+                }
                 lemma_le_local(g, 0, s0.gin@, 0, 4);
-                assert(self.unit@.subrange(0, 3) =~= s0.unit@.subrange(0, 3));
+                assert(self.unit@.subrange(0, 3) == s0.unit@.subrange(0, 3)) by {
+                    assert(self.unit@.subrange(0, 3) =~= s0.unit@.subrange(0, 3));
+                }
                 lemma_le_local(self.unit@, 0, s0.unit@, 0, 3);
             }
             if !done {
@@ -1734,6 +2179,29 @@ impl Stream {
         self.trim();
         let before = self.dec.out.len();
         if self.dropped > SLIMIT - (2 * SBLOCK_MAX) as u64 || before as u64 > SLIMIT - (2 * SBLOCK_MAX) as u64 - self.dropped {
+            proof {
+                assert(self.gst@ == s0.gst@);
+                assert(self.gst@.out.len() == self.dropped + self.dec.out@.len());
+            }
+            return Some(self.failed(Fail::Limit));
+        }
+        // On 32-bit targets the buffer also stays below the decoder's limit
+        // (on 64-bit ones the check above keeps it there). Not reached: it
+        // holds at most two reaches (a window within `SWINDOW_MAX` and a
+        // dictionary) and three blocks.
+        #[cfg(target_pointer_width = "32")]
+        if before > MAX_LIMIT - 2 * SBLOCK_MAX {
+            proof {
+                assert(false) by {
+                    assert(s1.mem_ok());
+                    assert(before <= s1.dec.out@.len());
+                    assert(self.reach == s1.reach);
+                    assert(self.window <= SWINDOW_MAX);
+                    assert(self.dlen < crate::dict::DICT_MAX);
+                    assert(self.reach as nat == self.window + self.dl());
+                    lemma_buf_fits(before as nat, self.reach as nat);
+                }
+            }
             return Some(self.failed(Fail::Limit));
         }
         let olimit = before + 2 * SBLOCK_MAX;
@@ -1756,26 +2224,59 @@ impl Stream {
         let ghost j = self.gbpos@;
         let ghost h = self.ghdr@;
         proof {
-            assert(g =~= g.subrange(0, j) + src@);
-            assert(g.subrange(0, j) =~= s0.gin@.subrange(0, j));
-            assert(g =~= s0.gin@ + inp@.subrange(i0 as int, *ipos as int));
-            assert(src@.subrange(0, 3) =~= s0.unit@.subrange(0, 3));
+            // Not `g == g.subrange(0, j) + src@`, which mentions `g` on both
+            // sides and sends the solver's sequence axioms in circles.
+            assert(g.subrange(j, g.len() as int) == src@) by {
+                assert(g =~= g.subrange(0, j) + src@);
+                assert(g.subrange(j, g.len() as int) =~= src@);
+            }
+            assert(g.subrange(0, j) == s0.gin@.subrange(0, j)) by {
+                assert(g.subrange(0, j) =~= s0.gin@.subrange(0, j));
+            }
+            assert(g == s0.gin@ + inp@.subrange(i0 as int, *ipos as int)) by {
+                assert(g =~= s0.gin@ + inp@.subrange(i0 as int, *ipos as int));
+            }
+            assert(src@.subrange(0, 3) == s0.unit@.subrange(0, 3)) by {
+                assert(src@.subrange(0, 3) =~= s0.unit@.subrange(0, 3));
+            }
             lemma_le_local(src@, 0, s0.unit@, 0, 3);
-            assert(g.subrange(4, 4 + h.size) =~= s0.gin@.subrange(4, 4 + h.size));
-            assert(g.subrange(0, 4) =~= s0.gin@.subrange(0, 4));
+            assert(g.subrange(4, 4 + h.size) == s0.gin@.subrange(4, 4 + h.size)) by {
+                assert(g.subrange(4, 4 + h.size) =~= s0.gin@.subrange(4, 4 + h.size));
+            }
+            assert(g.subrange(0, 4) == s0.gin@.subrange(0, 4)) by {
+                assert(g.subrange(0, 4) =~= s0.gin@.subrange(0, 4));
+            }
             lemma_le_local(g, 0, s0.gin@, 0, 4);
         }
         let ghost gst = self.gst@;
         let ghost strim = FrameState { out: self.dec.out@, ..gst };
         let ghost pre = gst.out.subrange(0, self.dropped as int);
-        let (res, _, last) = block_exec(src, 0, self.window, self.reach, &mut self.dec, olimit, Ghost(strim));
+        let ghost rch0 = h.window + self.gdict@.st.out.len();
+        proof {
+            assert(self.dec.fstart == 0);
+            assert(strim.out.len() == before);
+        }
+        let tracked mut wm = crate::work::Meter { n: 0 };
+        let (res, _, last) = block_exec(src, 0, self.window, self.reach, &mut self.dec, olimit, Ghost(strim), Tracked(&mut wm));
         match res {
             Step::Done => {},
-            Step::Limit => {
-                return Some(self.failed(Fail::Limit));
-            },
-            Step::Bad => {
-                return Some(self.failed(Fail::Corrupt));
+            _ => {
+                proof {
+                    // The spec rejects the block: a block it accepts writes
+                    // at most a block's worth, well inside `olimit`.
+                    assert(rejected(g, self.gdict@)) by {
+                        assert(g =~= g.subrange(0, j) + src@);
+                        lemma_block_step_max(src@, 0, h.window, rch0, strim);
+                        assert(block_step(src@, 0, h.window, rch0, strim) is None);
+                        assert(gst.out =~= pre + strim.out);
+                        lemma_reject_bad(g, j, src@, h, gst, strim, pre, self.gdict@);
+                    }
+                }
+                let f = match res {
+                    Step::Limit => Fail::Limit,
+                    _ => Fail::Corrupt,
+                };
+                return Some(self.failed(f));
             },
         }
         let ghost rch = h.window + self.gdict@.st.out.len();
@@ -1787,39 +2288,95 @@ impl Stream {
         let ghost st2 = bs.unwrap().1;
         let ghost nst = shift(st2, pre);
         proof {
-            assert(gst.out =~= pre + strim.out);
-            assert(gst == shift(strim, pre));
-            if self.dropped == 0 {
-                assert(pre =~= Seq::<u8>::empty());
-                assert(st2.out =~= pre + st2.out);
-                assert(nst == st2);
-                assert(strim == gst);
-            } else {
-                lemma_block_step_shift(src@, 0, h.window, rch, strim, pre);
+            assert({
+                &&& block_step(src@, 0, h.window, rch, gst) == Some((j2, nst, last))
+                &&& j2 == src@.len()
+                &&& g == s0.gin@.subrange(0, j) + src@
+                &&& self.dec.out@ == st2.out
+                &&& st2.out.subrange(0, before as int) == strim.out
+                &&& gst.out == pre + strim.out
+            }) by {
+                assert(gst.out =~= pre + strim.out);
+                assert(gst == shift(strim, pre));
+                if self.dropped == 0 {
+                    assert(pre =~= Seq::<u8>::empty());
+                    assert(st2.out =~= pre + st2.out);
+                    assert(nst == st2);
+                    assert(strim == gst);
+                } else {
+                    lemma_block_step_shift(src@, 0, h.window, rch, strim, pre);
+                }
+                lemma_block_step_prefix(src@, 0, h.window, rch, strim);
+                assert(g =~= g.subrange(0, j) + src@);
+                assert(g =~= s0.gin@.subrange(0, j) + src@);
+                assert(fout(self.dec.out@, 0) =~= self.dec.out@);
             }
-            lemma_block_step_prefix(src@, 0, h.window, rch, strim);
-            assert(block_step(src@, 0, h.window, rch, gst) == Some((j2, nst, last)));
-            assert(j2 == src@.len());
             lemma_next_block(s0.gin@, j, src@, h, gst, j2, nst, last, self.gdict@);
-            assert(g =~= s0.gin@.subrange(0, j) + src@);
-            assert(fout(self.dec.out@, 0) =~= self.dec.out@);
-            assert(self.dec.out@ == st2.out);
-            assert(st2.out.subrange(0, before as int) == strim.out);
         }
         let new = slice_subrange(self.dec.out.as_slice(), before, self.dec.out.len());
         let ghost dl = self.dlen as int;
         proof {
-            assert(nst.out =~= gst.out + new@);
-            assert(nst.out.subrange(dl, nst.out.len() as int) =~= gst.out.subrange(dl, gst.out.len() as int) + new@);
+            lemma_block_out(pre, strim.out, st2.out, new@, before as int, dl, self.dropped as int, self.flushed as int);
         }
         self.hash.update(new, Ghost(gst.out.subrange(dl, gst.out.len() as int)));
         self.gst = Ghost(nst);
         self.gbpos = Ghost(g.len() as int);
         proof {
-            assert(nst.out.subrange(self.dropped as int, nst.out.len() as int) =~= st2.out);
-            assert(nst.out.subrange(dl, self.dropped + self.flushed) =~= gst.out.subrange(dl, self.dropped + self.flushed));
             assert(FrameState { out: self.dec.out@, ..nst } == st2);
+            assert(g.subrange(0, g.len() as int) == g) by {
+                assert(g.subrange(0, g.len() as int) =~= g);
+            }
+        }
+        self.block_next(last)
+    }
+
+    /// The rest of `step_block` once the block is decoded and the state
+    /// follows it: checks the content size and moves to the next stage.
+    /// Apart so that its proof does not see the block's.
+    fn block_next(&mut self, last: bool) -> (r: Option<Result<usize, Fail>>)
+        requires
+            old(self).stage == Stage::Block,
+            old(self).dict.is(old(self).gdict@),
+            old(self).dlen as nat == old(self).dl(),
+            old(self).dlen < crate::dict::DICT_MAX,
+            old(self).hdr_inv(),
+            old(self).mem_ok(),
+            old(self).dec_inv(),
+            old(self).gbpos@ == old(self).gin@.len(),
+            4 + old(self).ghdr@.size <= old(self).gbpos@,
+            ({
+                let g = old(self).gin@;
+                let h = old(self).ghdr@;
+                let rx = h.window + old(self).dl();
+                forall|b: Seq<u8>|
+                    ext(b, g) ==> #[trigger] blocks_r(b, 4 + h.size, h.window, rx, old(self).gdict@.st) == if last {
+                        Some((g.len() as int, old(self).gst@))
+                    } else {
+                        blocks_r(b, g.len() as int, h.window, rx, old(self).gst@)
+                    }
+            }),
+        ensures
+            final(self).inv(),
+            final(self).max_window == old(self).max_window,
+            final(self).gdict == old(self).gdict,
+            final(self).gst == old(self).gst,
+            match r {
+                None => {
+                    &&& final(self).stage != Stage::Failed
+                    &&& rank(final(self).stage) < rank(Stage::Block)
+                    &&& final(self).gin == old(self).gin
+                    &&& final(self).gemit == old(self).gemit
+                },
+                Some(x) => x == Err::<usize, Fail>(Fail::Corrupt) && final(self).stage == Stage::Failed && rejected(
+                    old(self).gin@,
+                    old(self).gdict@,
+                ),
+            },
+    {
+        proof {
+            let g = self.gin@;
             assert(g.subrange(0, g.len() as int) =~= g);
+            reveal(crate::dict::DDict::is);
         }
         // The frame's content so far: the output after the dictionary's.
         let total = self.dropped + self.dec.out.len() as u64 - self.dlen as u64;
@@ -1827,6 +2384,10 @@ impl Stream {
             match self.fcs {
                 Some(f) => {
                     if f != total {
+                        proof {
+                            assert(self.gst@.out.len() == self.dropped + self.dec.out@.len());
+                            lemma_reject_fcs(self.gin@, self.ghdr@, self.gst@, self.gdict@, true);
+                        }
                         return Some(self.failed(Fail::Corrupt));
                     }
                 },
@@ -1837,11 +2398,13 @@ impl Stream {
                 self.need = 4;
                 self.stage = Stage::Checksum;
                 proof {
-                    assert(self.gin@.subrange(self.gbpos@, self.gin@.len() as int) =~= self.unit@);
+                    assert(self.gin@.subrange(self.gbpos@, self.gin@.len() as int) == self.unit@) by {
+                        assert(self.gin@.subrange(self.gbpos@, self.gin@.len() as int) =~= self.unit@);
+                    }
                 }
             } else {
                 proof {
-                    lemma_frame_done(g, h, g.len() as int, nst, self.gdict@);
+                    lemma_frame_done(self.gin@, self.ghdr@, self.gin@.len() as int, self.gst@, self.gdict@);
                 }
                 self.stage = Stage::Done;
             }
@@ -1849,6 +2412,10 @@ impl Stream {
             match self.fcs {
                 Some(f) => {
                     if total > f {
+                        proof {
+                            assert(self.gst@.out.len() == self.dropped + self.dec.out@.len());
+                            lemma_reject_fcs(self.gin@, self.ghdr@, self.gst@, self.gdict@, false);
+                        }
                         return Some(self.failed(Fail::Corrupt));
                     }
                 },
@@ -1858,7 +2425,9 @@ impl Stream {
             self.need = 3;
             self.stage = Stage::BlockHeader;
             proof {
-                assert(self.gin@.subrange(self.gbpos@, self.gin@.len() as int) =~= self.unit@);
+                assert(self.gin@.subrange(self.gbpos@, self.gin@.len() as int) == self.unit@) by {
+                    assert(self.gin@.subrange(self.gbpos@, self.gin@.len() as int) =~= self.unit@);
+                }
             }
         }
         None
@@ -1898,7 +2467,20 @@ impl Stream {
                         &&& final(self).gin@ == old(self).gin@ + took
                         &&& final(self).gemit@ == old(self).gemit@ + gave
                     },
-                    Err(_) => final(self).stage == Stage::Failed,
+                    // A failure means the spec rejects every frame that
+                    // starts with the frame's input so far (`fail_ok`): so
+                    // streaming accepts every frame the spec accepts, short
+                    // of the two limits.
+                    Err(f) => {
+                        &&& final(self).stage == Stage::Failed
+                        &&& old(self).stage != Stage::Failed ==> fail_ok(
+                            f,
+                            old(self).gin@ + took,
+                            old(self).gdict@,
+                            old(self).max_window,
+                            final(self).gst@.out.len(),
+                        )
+                    },
                 }
             }),
     {

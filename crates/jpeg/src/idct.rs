@@ -6,6 +6,7 @@ use crate::render::clamp8;
 use crate::scan::*;
 use crate::spec::*;
 use crate::types::*;
+use crate::work::Meter;
 #[cfg(verus_only)]
 use vstd::arithmetic::div_mod::*;
 #[cfg(verus_only)]
@@ -219,6 +220,7 @@ fn col_x(a: &Vec<i16>, o: usize, q: &[u16; 64], x: usize) -> (r: [i32; 8])
 }
 
 /// The second pass along row `y` of the workspace.
+#[verifier::spinoff_prover]
 fn row_x(ws: &[i32; 64], y: usize, rl: &[u8; 1024], Ghost(c): Ghost<Seq<int>>) -> (out: [u8; 8])
     requires
         forall|m: int| 0 <= m < 1024 ==> (#[trigger] rl[m]) == range_limit(m),
@@ -1350,13 +1352,14 @@ pub fn store_block(out: &mut Vec<u8>, blk: &[u8; 64], row0: usize, col0: usize, 
 /// The samples of a component: `8 * wb` by `8 * hb`, from its `wb` by `hb`
 /// blocks that hold image data.
 #[inline(never)]
-pub fn plane_x(a: &Vec<i16>, q: &[u16; 64], kt: &[i16; 24], cw: u32, wb: u32, hb: u32, Ghost(chh): Ghost<int>) -> (r: Option<Vec<u8>>)
+pub fn plane_x(a: &Vec<i16>, q: &[u16; 64], kt: &[i16; 24], cw: u32, wb: u32, hb: u32, Ghost(chh): Ghost<int>, Tracked(mt): Tracked<&mut Meter>) -> (r: Option<Vec<u8>>)
     requires
         1 <= wb <= cw <= 0x4_0080,
         1 <= hb <= chh <= 0x4_0080,
         a.len() == 64 * (cw * chh),
         kt@ == crate::idct16::kt_spec(),
     ensures
+        final(mt).n <= old(mt).n + 66 * (cw * chh),
         r matches Some(pl) ==> {
             &&& pl.len() == (8 * wb) * (8 * hb)
             &&& forall|rr: int, x: int|
@@ -1379,6 +1382,17 @@ pub fn plane_x(a: &Vec<i16>, q: &[u16; 64], kt: &[i16; 24], cw: u32, wb: u32, hb
     if n > usize::MAX as u64 {
         return None;
     }
+    assert(n + hb * (wb + 1) <= 66 * (cw * chh)) by (nonlinear_arith)
+        requires
+            n == stride * 8 * hb,
+            stride == 8 * wb,
+            1 <= wb <= cw,
+            1 <= hb <= chh,
+    ;
+    proof {
+        mt.n = mt.n + n as nat;
+    }
+    let ghost m1 = mt.n;
     let mut out = match alloc_u8(n as usize) {
         Some(v) => v,
         None => {
@@ -1392,6 +1406,7 @@ pub fn plane_x(a: &Vec<i16>, q: &[u16; 64], kt: &[i16; 24], cw: u32, wb: u32, hb
             forall|m: int| 0 <= m < 1024 ==> (#[trigger] rl[m]) == range_limit(m),
             kt@ == crate::idct16::kt_spec(),
             by <= hb,
+            mt.n <= m1 + by * (wb + 1),
             st == stride == 8 * wb,
             1 <= wb <= cw <= 0x4_0080,
             1 <= hb <= chh <= 0x4_0080,
@@ -1401,9 +1416,11 @@ pub fn plane_x(a: &Vec<i16>, q: &[u16; 64], kt: &[i16; 24], cw: u32, wb: u32, hb
                 0 <= j < out.len() && j / st < 8 * by ==> (#[trigger] out[j]) == psample(a@, q@, cw as int, j / st, j % st),
         decreases hb - by,
     {
+        let ghost m2 = mt.n;
         let mut bx: usize = 0;
         while bx < wb as usize
             invariant
+                mt.n <= m2 + bx,
                 forall|m: int| 0 <= m < 1024 ==> (#[trigger] rl[m]) == range_limit(m),
                 kt@ == crate::idct16::kt_spec(),
                 bx <= wb,
@@ -1433,6 +1450,9 @@ pub fn plane_x(a: &Vec<i16>, q: &[u16; 64], kt: &[i16; 24], cw: u32, wb: u32, hb
                 lemma_block_stored(out0@, out@, blk@, a@, q@, cw as int, st, by as int, bx as int);
             }
             bx += 1;
+            proof {
+                mt.n = mt.n + 1;
+            }
         }
         proof {
             assert forall|j: int| 0 <= j < out.len() && j / st < 8 * (by + 1) implies (#[trigger] out[j]) == psample(
@@ -1446,7 +1466,12 @@ pub fn plane_x(a: &Vec<i16>, q: &[u16; 64], kt: &[i16; 24], cw: u32, wb: u32, hb
             }
         }
         by += 1;
+        proof {
+            mt.n = mt.n + 1;
+            assert(by * (wb + 1) == (by - 1) * (wb + 1) + wb + 1) by (nonlinear_arith);
+        }
     }
+
     proof {
         assert forall|rr: int, x: int| 0 <= rr < 8 * hb && 0 <= x < 8 * wb implies #[trigger] pat(out@, 8 * wb, rr, x)
             == psample(a@, q@, cw as int, rr, x) by {

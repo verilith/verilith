@@ -1,13 +1,13 @@
 //! The trusted specification of well-formed Type 2 charstrings
-//! ([`wf_charstrings`]), written from Adobe Technical Note #5177.
+//! (`wf_charstrings`), written from Adobe Technical Note #5177.
 //!
 //! A charstring is a small stack program. This file says what it means
 //! for every glyph's program to run cleanly: every byte decodes, the
 //! operand stack never holds more than 48 numbers, every operator finds
 //! the operands it takes, every subroutine call names a subroutine that
 //! exists, calls nest at most 10 deep, hint masks have the bytes the
-//! declared stems need, and the program ends with `endchar`. Running the
-//! programs of the whole font takes at most [`MAX_CS_OPS`] operators, so
+//! declared stems need, and the program ends with `endchar`. Running one
+//! glyph's program takes at most [`MAX_CS_OPS`] operators, as in OTS, so
 //! a consumer's work is bounded too.
 //!
 //! The rules follow what OTS accepts. Like OTS, the specification does not
@@ -25,7 +25,8 @@ verus! {
 /// 16.16 fixed-point operand, or the result of an arithmetic operator.
 pub const UNK: i32 = 0x7FFF_FFFF;
 
-/// The most operators the charstrings of one font may execute in all.
+/// The most operators the charstring of one glyph may execute, with the
+/// subroutines it calls (OTS's `kMaxCharStringOps`).
 pub const MAX_CS_OPS: u32 = 0x400_0000;
 
 /// One charstring token.
@@ -459,10 +460,9 @@ pub open spec fn glyph_lsubrs(t: Seq<u8>, top: Dict, i: int, sm: int) -> int {
     }
 }
 
-/// Runs the charstring of glyph `i` after `ops` operators have been spent
-/// on the glyphs before it; gives the operators spent after it, or `None`
-/// if the charstring is longer than 65535 bytes or does not run cleanly
-/// to an `endchar`.
+/// Runs the charstring of glyph `i`, with its own count of operators;
+/// gives `ops` back, or `None` if the charstring is longer than 65535
+/// bytes or does not run cleanly to an `endchar`.
 pub open spec fn cs_glyph(t: Seq<u8>, top: Dict, g: int, i: int, ops: int, sm: int) -> Option<int> {
     let cs = top.charstrings;
     let a = index_base(t, cs) + index_off(t, cs, i);
@@ -470,8 +470,8 @@ pub open spec fn cs_glyph(t: Seq<u8>, top: Dict, g: int, i: int, ops: int, sm: i
     if b - a > 65535 {
         None
     } else {
-        match cs_run(t, g, glyph_lsubrs(t, top, i, sm), a, b, 0, cs_init(ops)) {
-            CsRes::End(st) => Some(st.ops),
+        match cs_run(t, g, glyph_lsubrs(t, top, i, sm), a, b, 0, cs_init(0)) {
+            CsRes::End(st) => Some(ops),
             _ => None,
         }
     }

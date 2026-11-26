@@ -1,4 +1,4 @@
-//! What a correct register form is ([`rcode_ok`]), and its verified
+//! What a correct register form is (`rcode_ok`), and its verified
 //! checker.
 //!
 //! The translator in [`crate::reg`] is not trusted: [`check_rcode`] checks
@@ -6,7 +6,7 @@
 //! certificate, the way [`crate::check`] checks the validator's
 //! certificates. An operation is correct when, on every value stack, it
 //! computes what the instructions it stands for compute on the flat
-//! machine ([`crate::mach::msteps`]), on the slots the semantics can see.
+//! machine (`crate::mach::msteps`), on the slots the semantics can see.
 use vstd::prelude::*;
 use crate::ast::*;
 use crate::sem::*;
@@ -519,6 +519,7 @@ pub open spec fn vshape(body: Seq<Instr>, r: ROp, i: Instr, j0: nat, np: nat, nl
     &&& dests_ok(body, p + x + 1, r.k == x + 2, r, nl, h + np - ar)
 }
 
+#[verifier::spinoff_prover]
 #[verifier::rlimit(300)]
 pub proof fn lemma_vshape(body: Seq<Instr>, r: ROp, i: Instr, j0: nat, np: nat, nl: int, h: int, frame: int)
     requires
@@ -741,6 +742,7 @@ pub open spec fn selshape(body: Seq<Instr>, r: ROp, j0: nat, np: nat, nl: int, h
     &&& dests_ok(body, p + x + 1, r.k == x + 2, r, nl, h + np - 3)
 }
 
+#[verifier::spinoff_prover]
 #[verifier::rlimit(300)]
 pub proof fn lemma_selshape(body: Seq<Instr>, r: ROp, j0: nat, np: nat, nl: int, h: int, frame: int)
     requires
@@ -1666,9 +1668,11 @@ pub fn check_rcode(m: &Module, d: usize, fc: &FuncCert, code: &Code) -> (ok: boo
     let ghost ops = rops_ok(m, d as nat, *fc, code);
     proof { assert(ops); }
     let mut p = 0;
+    let _ = code.entry.len();
     while p <= len
         invariant
             ops, ops == rops_ok(m, d as nat, *fc, code), body@ == m.funcs@[d as int].body@,
+            len < usize::MAX,
             len == m.funcs@[d as int].body@.len(), code.entry@.len() == len + 1,
             0 <= p <= len + 1,
             forall|p2: int| 0 <= p2 < p && code.entry@[p2] != NONE ==> #[trigger] entry_at(code, p2),

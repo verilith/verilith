@@ -475,6 +475,17 @@ pub open spec fn slli32(a: Seq<u32>, n: int) -> Seq<u32> {
     )
 }
 
+pub open spec fn srli64(a: Seq<u64>, n: int) -> Seq<u64> {
+    Seq::new(a.len(), |i: int| if n > 63 { 0u64 } else { (a[i] as nat / pow2_spec(n as nat)) as u64 })
+}
+
+pub open spec fn slli64(a: Seq<u64>, n: int) -> Seq<u64> {
+    Seq::new(
+        a.len(),
+        |i: int| if n > 63 { 0u64 } else { ((a[i] as nat * pow2_spec(n as nat)) % 0x1_0000_0000_0000_0000) as u64 },
+    )
+}
+
 /// `pshufd`: per 16-byte lane, 32-bit lane `i` takes lane `imm[2i+1:2i]`.
 pub open spec fn shuffle32_lanes(a: Seq<u32>, imm: int) -> Seq<u32> {
     Seq::new(a.len(), |i: int| a[(i / 4) * 4 + (imm / pow2_spec(2 * (i % 4) as nat) as int) % 4])

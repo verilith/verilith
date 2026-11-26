@@ -141,7 +141,7 @@ fn sparse_build_matches_build() {
         }
         for root in [1u32, 8, 10] {
             let a = build(&lens, root).0;
-            let b = build_sparse(Ghost::assume_new(), n, &used, &cnts, root);
+            let b = build_sparse(Ghost::assume_new(), n, &used, &cnts, root).0;
             assert_eq!(a.is_some(), b.is_some());
             if let (Some(a), Some(b)) = (a, b) {
                 some += 1;

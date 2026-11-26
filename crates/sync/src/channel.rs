@@ -32,10 +32,10 @@ use std::time::{Duration, Instant};
 /// # Panics
 ///
 /// If `cap` is zero (rendezvous channels are not supported yet) or at least
-/// 2^31.
+/// 2^60 (more than can be allocated).
 pub fn bounded<T>(cap: usize) -> (Sender<T>, Receiver<T>) {
     assert!(cap > 0, "vsync does not support zero-capacity channels yet");
-    assert!(cap < 0x8000_0000, "capacity must be below 2^31");
+    assert!((cap as u64) < 0x1000_0000_0000_0000, "capacity must be below 2^60");
     let (tx, rx) = Handle::pair(cap);
     (Sender { h: tx }, Receiver { h: rx })
 }
@@ -84,18 +84,22 @@ impl<T> Sender<T> {
         self.send_deadline(msg, Some(deadline))
     }
 
+    /// Whether the channel holds no messages.
     pub fn is_empty(&self) -> bool {
         self.h.chan.queue.len() == 0
     }
 
+    /// Whether the channel is at capacity.
     pub fn is_full(&self) -> bool {
         self.h.chan.queue.len() == self.h.chan.queue.capacity()
     }
 
+    /// The number of messages in the channel.
     pub fn len(&self) -> usize {
         self.h.chan.queue.len()
     }
 
+    /// The capacity (always `Some`: the channel is bounded).
     pub fn capacity(&self) -> Option<usize> {
         Some(self.h.chan.queue.capacity())
     }
@@ -148,18 +152,22 @@ impl<T> Receiver<T> {
         TryIter { rx: self }
     }
 
+    /// Whether the channel holds no messages.
     pub fn is_empty(&self) -> bool {
         self.h.chan.queue.len() == 0
     }
 
+    /// Whether the channel is at capacity.
     pub fn is_full(&self) -> bool {
         self.h.chan.queue.len() == self.h.chan.queue.capacity()
     }
 
+    /// The number of messages in the channel.
     pub fn len(&self) -> usize {
         self.h.chan.queue.len()
     }
 
+    /// The capacity (always `Some`: the channel is bounded).
     pub fn capacity(&self) -> Option<usize> {
         Some(self.h.chan.queue.capacity())
     }
@@ -206,6 +214,7 @@ impl<T> fmt::Debug for Receiver<T> {
     }
 }
 
+/// The messages, blocking for each, until the channel is empty and disconnected.
 pub struct Iter<'a, T> {
     rx: &'a Receiver<T>,
 }
@@ -217,6 +226,7 @@ impl<T> Iterator for Iter<'_, T> {
     }
 }
 
+/// The messages available now, without blocking.
 pub struct TryIter<'a, T> {
     rx: &'a Receiver<T>,
 }
@@ -228,6 +238,7 @@ impl<T> Iterator for TryIter<'_, T> {
     }
 }
 
+/// The messages, blocking for each, until the channel is empty and disconnected.
 pub struct IntoIter<T> {
     rx: Receiver<T>,
 }
@@ -257,83 +268,108 @@ impl<'a, T> IntoIterator for &'a Receiver<T> {
 
 // Errors, shaped like crossbeam-channel's.
 
+/// The channel is disconnected; the message is given back.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub struct SendError<T>(pub T);
 
+/// Why `try_send` failed; the message is given back.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum TrySendError<T> {
+    /// The channel is full.
     Full(T),
+    /// Every receiver is gone.
     Disconnected(T),
 }
 
+/// Why `send_timeout` failed; the message is given back.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum SendTimeoutError<T> {
+    /// The channel stayed full until the deadline.
     Timeout(T),
+    /// Every receiver is gone.
     Disconnected(T),
 }
 
+/// The channel is empty and every sender is gone.
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub struct RecvError;
 
+/// Why `try_recv` failed.
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum TryRecvError {
+    /// The channel is empty.
     Empty,
+    /// The channel is empty and every sender is gone.
     Disconnected,
 }
 
+/// Why `recv_timeout` failed.
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum RecvTimeoutError {
+    /// No message came before the deadline.
     Timeout,
+    /// The channel is empty and every sender is gone.
     Disconnected,
 }
 
 impl<T> SendError<T> {
+    /// The message that was not sent.
     pub fn into_inner(self) -> T {
         self.0
     }
 }
 
 impl<T> TrySendError<T> {
+    /// The message that was not sent.
     pub fn into_inner(self) -> T {
         match self {
             TrySendError::Full(v) | TrySendError::Disconnected(v) => v,
         }
     }
+    /// Whether the channel was full.
     pub fn is_full(&self) -> bool {
         matches!(self, TrySendError::Full(_))
     }
+    /// Whether every receiver was gone.
     pub fn is_disconnected(&self) -> bool {
         matches!(self, TrySendError::Disconnected(_))
     }
 }
 
 impl<T> SendTimeoutError<T> {
+    /// The message that was not sent.
     pub fn into_inner(self) -> T {
         match self {
             SendTimeoutError::Timeout(v) | SendTimeoutError::Disconnected(v) => v,
         }
     }
+    /// Whether the deadline passed.
     pub fn is_timeout(&self) -> bool {
         matches!(self, SendTimeoutError::Timeout(_))
     }
+    /// Whether every receiver was gone.
     pub fn is_disconnected(&self) -> bool {
         matches!(self, SendTimeoutError::Disconnected(_))
     }
 }
 
 impl TryRecvError {
+    /// Whether the channel was empty.
     pub fn is_empty(&self) -> bool {
         matches!(self, TryRecvError::Empty)
     }
+    /// Whether every sender was gone.
     pub fn is_disconnected(&self) -> bool {
         matches!(self, TryRecvError::Disconnected)
     }
 }
 
 impl RecvTimeoutError {
+    /// Whether the deadline passed.
     pub fn is_timeout(&self) -> bool {
         matches!(self, RecvTimeoutError::Timeout)
     }
+    /// Whether every sender was gone.
     pub fn is_disconnected(&self) -> bool {
         matches!(self, RecvTimeoutError::Disconnected)
     }

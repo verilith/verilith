@@ -168,15 +168,21 @@ pub fn copy_in(m: &mut Vec<u8>, d: usize, data: &[u8], s: usize, n: usize)
     m[d..d + n].copy_from_slice(&data[s..s + n]);
 }
 
-/// Appends `n` zero bytes (`memory.grow`).
+/// Appends `n` zero bytes (`memory.grow`), or leaves `m` unchanged and
+/// returns `false` if the allocation fails.
 #[verifier::external_body]
-#[inline(always)]
-pub fn grow(m: &mut Vec<u8>, n: usize)
-    ensures final(m)@ == old(m)@ + Seq::new(n as nat, |_i| 0u8),
+#[inline(never)]
+pub fn try_grow(m: &mut Vec<u8>, n: usize) -> (r: bool)
+    ensures
+        r ==> final(m)@ == old(m)@ + Seq::new(n as nat, |_i| 0u8),
+        !r ==> final(m)@ == old(m)@,
 {
+    if m.try_reserve_exact(n).is_err() {
+        return false;
+    }
     m.resize(m.len() + n, 0);
+    true
 }
-
 
 /// The size of a [`crate::reg::ROp`] in bytes (checked at compile time
 /// below the `verus!` block).

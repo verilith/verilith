@@ -206,6 +206,19 @@ fn error_reasons() {
         (b"{} x", 3, TrailingData),
         (b"[\"\xC0\x80\"]", 2, InvalidUtf8),
         (b"[1,\n  2,\n  ]", 11, UnexpectedByte(b']')),
+        (b"[1,]", 3, UnexpectedByte(b']')),
+        (b"01", 0, InvalidNumber),
+        (b"[1e5e]", 1, InvalidNumber),
+        (b"-", 0, InvalidNumber),
+        (b"[tr", 3, UnexpectedEnd),
+        (b"{\"a\" 1}", 5, UnexpectedByte(b'1')),
+        (b"{1:2}", 1, UnexpectedByte(b'1')),
+        (b"{\"a\":1,}", 7, UnexpectedByte(b'}')),
+        (b"[\"\\", 3, UnterminatedString),
+        (b"[\xFF, x]", 1, InvalidUtf8),
+        (b"[1, x] \xFF", 4, UnexpectedByte(b'x')),
+        (b"", 0, UnexpectedEnd),
+        (b"\xEF\xBB\xBF ", 4, UnexpectedEnd),
     ];
     for &(text, offset, kind) in cases {
         let e = verilith_json::parse(text).unwrap_err();
@@ -482,5 +495,30 @@ fn eager_numbers_match_std() {
             let want: f64 = l.parse().unwrap();
             assert_eq!(g.to_bits(), want.to_bits(), "{l}");
         }
+    }
+}
+
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn wide_positions() {
+    // Token positions are 48 bits, so inputs past 4 GiB fit.
+    use verilith_json::parser::{Kind, Tok, NO};
+    assert_eq!(std::mem::size_of::<Tok>(), 16);
+    for (a, b) in [(0, 0), (5, 9), (0xFFFF_FFFF, 0x1_0000_0000), (0x1234_5678_9ABC, verilith_json::spec::MAX_INPUT)] {
+        let t = Tok::new(Kind::Str, true, a, b, NO);
+        assert_eq!((t.start(), t.end()), (a, b));
+    }
+    assert!(verilith_json::spec::MAX_INPUT > u32::MAX as usize);
+}
+
+#[cfg(target_pointer_width = "32")]
+#[test]
+fn narrow_positions() {
+    // On 32-bit targets a position is one u32 and any slice fits.
+    use verilith_json::parser::{Kind, Tok, NO};
+    assert_eq!(verilith_json::spec::MAX_INPUT, isize::MAX as usize);
+    for (a, b) in [(0, 0), (5, 9), (0x7FFF_0000, verilith_json::spec::MAX_INPUT)] {
+        let t = Tok::new(Kind::Str, true, a, b, NO);
+        assert_eq!((t.start(), t.end()), (a, b));
     }
 }

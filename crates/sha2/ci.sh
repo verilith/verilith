@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # What CI runs for this crate, besides Verus (scripts/verify.sh).
-#   ./ci.sh           the tests
+#   ./ci.sh           the tests, then the constant-time check
+#   ./ci.sh ct        the constant-time check only (needs Valgrind, x86-64)
 # Runs anywhere; with CI set it also installs the system packages it needs.
 . "$(dirname "$0")/../../scripts/ci-lib.sh"
 
@@ -9,6 +10,11 @@ test() {
   python3 tools/gen_rounds.py --check
   cargo test --profile "$P"
   cargo test --profile "$P" --features openssl-abi --test openssl --test openssl512
+  cargo test --profile "$P" --features digest,digest010,oid --test digest
+  # no_std, on a target with no std at all (the rlib: the staticlib needs a
+  # panic handler), with the digest traits.
+  rustup target add thumbv7em-none-eabihf
+  cargo rustc --lib --crate-type rlib --no-default-features --features digest,digest010,oid --target thumbv7em-none-eabihf
   # The ARMv8 SHA2 kernel, on emulated AArch64 (on an x86 runner; the Arm
   # runner runs it natively above).
   if [ -n "${CI:-}" ] && [ "$(uname -m)" = x86_64 ]; then
@@ -16,8 +22,40 @@ test() {
     rustup target add aarch64-unknown-linux-gnu
     CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
     CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER="qemu-aarch64 -cpu max -L /usr/aarch64-linux-gnu" \
-      cargo test --profile "$P" --target aarch64-unknown-linux-gnu --test kernels --test vectors --test kernels512 --test vectors512
+      cargo test --profile "$P" --target aarch64-unknown-linux-gnu --test isa --test kernels --test vectors --test kernels512 --test vectors512
   fi
+  ct
+}
+
+# The constant-time check (examples/ctgrind.rs): Valgrind's memcheck, with
+# the secrets marked undefined, must report nothing; and must report each of
+# the two leaking controls, or the check is not seeing what it should.
+ct() {
+  if [ "$(uname -m)" != x86_64 ]; then echo "ct: x86-64 only, skipped"; return; fi
+  apt valgrind binutils
+  cargo build --profile "$P" --example ctgrind
+  local bin="$T/$P/examples/ctgrind" vg="valgrind -q --error-exitcode=1"
+  for c in branch index; do
+    if $vg "$bin" --control "$c" 2> /dev/null; then
+      echo "ct: memcheck missed the $c control"; exit 1
+    fi
+  done
+  $vg "$bin"
+  # Valgrind's CPU has no SHA-NI, so that kernel is checked on its code: its
+  # only conditional jumps are the two on the length (is there a block, is
+  # there another), it calls nothing, and every load or store is at the
+  # state, the round constants, or the block offset, all public.
+  local f
+  f=$(objdump -d --no-show-raw-insn -C "$bin" | awk '/^[0-9a-f]+ <verilith_sha2::shani::tf::compress_blocks>:/{f=1} f&&/^$/{exit} f')
+  [ -n "$f" ] || { echo "ct: SHA-NI kernel not found"; exit 1; }
+  local jumps calls
+  jumps=$(grep -cE '\sj[a-z]+ ' <<< "$f" || true)
+  calls=$(grep -cE '\scall' <<< "$f" || true)
+  if [ "$jumps" != 2 ] || [ "$calls" != 0 ]; then
+    echo "ct: the SHA-NI kernel has $jumps jumps and $calls calls, not 2 and 0:"; echo "$f"; exit 1
+  fi
+  grep -B2 -E '\sj[a-z]+ ' <<< "$f"
+  echo "ct: no secret-dependent branches or addresses"
 }
 
 "${1:-test}"

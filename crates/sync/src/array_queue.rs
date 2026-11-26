@@ -9,7 +9,7 @@
 //! at `p`; the pop of `p` then sets it to `pk(p + cap)`.
 //!
 //! Unlike crossbeam, positions never wrap: the counters are 64 bits and the
-//! queue aborts if one would overflow (after at least 2^32 laps of the buffer). This is
+//! queue aborts if one would overflow (after at least 2^62 pushes, whatever the capacity). This is
 //! what makes the compare-and-swaps on `head` and `tail` ABA-free in the
 //! proof; crossbeam lets them wrap.
 //!
@@ -22,7 +22,16 @@
 //!   at its `tail` compare-and-swap, or, if the queue is full, at the `head`
 //!   load that shows it full; a pop at its `head` compare-and-swap, or, if
 //!   the queue is empty, at the `tail` load that shows it empty.
+
+// Each `atomically` clause defines a predicate struct (`XPred`) that the
+// `verus!` macro gives no docs and no place to attach one. Every other item
+// here is documented.
+#![allow(missing_docs)]
+use crate::model::*;
 use crate::mono::*;
+use crate::progress::queue::{P, Ph, St};
+#[cfg(verus_only)]
+use crate::progress::queue::{go, rank, ret, sc_step, stale_step, step};
 use crate::ra::*;
 use crate::util::{exhausted, Backoff, CachePadded};
 use vstd::atomic::Commit;
@@ -47,6 +56,7 @@ pub open spec const QUEUE_NS: int = 0x5b4d;
 /// A client's view of the queue's contents, oldest first.
 pub type QueueView<T> = GhostVar<Seq<T>>;
 
+/// Where the slot for a position is in its life.
 pub ghost enum Phase {
     /// Waiting for the push at `pos`; its cell is uninitialized and shared.
     Free,
@@ -58,30 +68,58 @@ pub ghost enum Phase {
     Taken,
 }
 
+/// The ghost state of one slot.
 pub ghost struct SlotG {
+    /// The position the slot is for now.
     pub pos: nat,
+    /// Where that position's push and pop are.
     pub phase: Phase,
 }
 
 /// What a thread that holds a slot is obliged to do with it.
 pub ghost enum Ticket<T> {
-    Push { pos: nat, v: T },
-    Pop { pos: nat },
+    /// Write `v` into the slot claimed for position `pos`.
+    Push {
+        /// The position.
+        pos: nat,
+        /// The value.
+        v: T,
+    },
+    /// Take the value out of the slot claimed for position `pos`.
+    Pop {
+        /// The position.
+        pos: nat,
+    },
 }
 
+/// The queue's constants: its capacity, how positions are packed, and the ids of its atomics, cells and ghost resources.
 pub ghost struct Consts {
+    /// The capacity.
     pub cap: nat,
+    /// `one_lap`: a power of two above `cap`, the stride of a packed position's lap.
     pub lap: nat,
+    /// `lap == 2^shift`.
     pub shift: nat,
+    /// The id of the `head` atomic.
     pub head_id: int,
+    /// The id of the `tail` atomic.
     pub tail_id: int,
+    /// The ids of the slots' stamp atomics.
     pub stamp_ids: Seq<int>,
+    /// The ids of the slots' cells.
     pub cells: Seq<CellId>,
+    /// The location of the abstract queue (`QueueView`).
     pub q_id: Loc,
+    /// The location of the tickets.
     pub tk_id: Loc,
+    /// The location of `head`'s monotonic counter.
     pub head_mono: Loc,
+    /// The location of `tail`'s monotonic counter.
     pub tail_mono: Loc,
+    /// The locations of the stamps' monotonic counters.
     pub stamp_mono: Seq<Loc>,
+    /// The location of the progress model.
+    pub model: Loc,
 }
 
 pub open spec fn pk(c: Consts, p: nat) -> nat {
@@ -91,29 +129,44 @@ pub open spec fn pk(c: Consts, p: nat) -> nat {
 pub open spec fn consts_ok(c: Consts) -> bool {
     &&& 0 < c.cap < c.lap
     &&& c.lap == vstd::arithmetic::power2::pow2(c.shift)
-    &&& c.shift < 32
-    &&& c.lap < 0x1_0000_0000
+    &&& c.shift < 61
+    &&& c.lap < 0x2000_0000_0000_0000
     &&& c.stamp_ids.len() == c.cap
     &&& c.cells.len() == c.cap
     &&& c.stamp_mono.len() == c.cap
 }
 
+/// What the queue's invariant owns: the histories of every atomic, the abstract queue, and the cells no thread holds.
 pub tracked struct Shared<T> {
+    /// The history of `head`.
     pub head: Hist,
+    /// The history of `tail`.
     pub tail: Hist,
+    /// The authority of `head`'s monotonic counter.
     pub hm: MonoAuth,
+    /// The authority of `tail`'s monotonic counter.
     pub tm: MonoAuth,
+    /// The history of each slot's stamp.
     pub stamps: Map<nat, Hist>,
+    /// The authority of each stamp's monotonic counter.
     pub sm: Map<nat, MonoAuth>,
     /// The cells of free and full slots, each published at the view of the
     /// stamp store that made it free or full.
     pub cells: Map<nat, Published<PointsTo<T>>>,
+    /// The authoritative abstract queue.
     pub q: GhostVarAuth<Seq<T>>,
+    /// The authority over the tickets of threads that hold a slot.
     pub tk: GhostMapAuth<nat, Ticket<T>>,
+    /// The head position.
     pub hd: Ghost<nat>,
+    /// The tail position.
     pub tl: Ghost<nat>,
+    /// Each slot's ghost state.
     pub slots: Ghost<Map<nat, SlotG>>,
+    /// The value pushed at each position not yet popped.
     pub vals: Ghost<Map<nat, T>>,
+    /// The progress model, which the code follows step by step.
+    pub model: Model<P>,
 }
 
 // Histories, ghost resources and published permissions only.
@@ -159,6 +212,9 @@ pub open spec fn slot_inv<T>(c: Consts, s: Shared<T>, i: nat) -> bool {
     &&& s.stamps[i].loc() == c.stamp_ids[i as int]
     &&& s.stamps[i].msgs().len() > 0
     &&& forall|k: int| 0 <= k < s.stamps[i].msgs().len() ==> #[trigger] s.stamps[i].msgs()[k].val <= st
+    // Only the last message holds the current stamp, so a thread that
+    // read it has seen the last message.
+    &&& forall|k: int| 0 <= k < s.stamps[i].msgs().len() - 1 ==> #[trigger] s.stamps[i].msgs()[k].val < st
     &&& s.sm[i].wf()
     &&& s.sm[i].loc() == c.stamp_mono[i as int]
     &&& s.sm[i]@ == st
@@ -199,6 +255,34 @@ pub open spec fn slot_inv<T>(c: Consts, s: Shared<T>, i: nat) -> bool {
     }
 }
 
+/// A slot's stamp as the progress model's rank: `2p` while it is free for
+/// (or being pushed at) position `p`, `2p + 1` while it holds (or is being
+/// popped at) `p`.
+pub open spec fn srank(g: SlotG) -> nat {
+    match g.phase {
+        Phase::Free | Phase::Claimed => 2 * g.pos,
+        Phase::Full | Phase::Taken => 2 * g.pos + 1,
+    }
+}
+
+/// The number of threads in each queue's model: any number (see
+/// `model::Model::pool_nonempty`).
+pub uninterp spec fn model_threads() -> nat;
+
+/// The progress model's state matches the queue's ghost state.
+pub open spec fn model_ok<T>(c: Consts, s: Shared<T>) -> bool {
+    let m = s.model@;
+    &&& s.model.wf()
+    &&& s.model.loc() == c.model
+    &&& s.model.n() == model_threads()
+    &&& m.cap == c.cap
+    &&& m.head == s.hd@
+    &&& m.tail == s.tl@
+    &&& m.st.len() == c.cap
+    &&& forall|i: nat| i < c.cap ==> #[trigger] m.st[i as int] == srank(s.slots@[i])
+}
+
+/// The queue's invariant (see its `inv`).
 pub struct QueuePred;
 
 impl<T> InvariantPredicate<Consts, Shared<T>> for QueuePred {
@@ -210,6 +294,9 @@ impl<T> InvariantPredicate<Consts, Shared<T>> for QueuePred {
         &&& s.tail.loc() == c.tail_id
         &&& pos_hist(c, s.head, h)
         &&& pos_hist(c, s.tail, t)
+        // Only read-modify-writes write `head` and `tail`.
+        &&& s.head.rmw_only()
+        &&& s.tail.rmw_only()
         &&& s.hm.wf()
         &&& s.hm.loc() == c.head_mono
         &&& s.hm@ == pk(c, h)
@@ -222,6 +309,120 @@ impl<T> InvariantPredicate<Consts, Shared<T>> for QueuePred {
         &&& s.q@ == abs_queue(s.vals@, h, t)
         &&& s.tk.id() == c.tk_id
         &&& forall|i: nat| i < c.cap ==> #[trigger] slot_inv(c, s, i)
+        &&& model_ok(c, s)
+    }
+}
+
+/// The token is for a thread of the queue's model, in phase `p`.
+pub open spec fn tok_at(tok: Tok<P>, c: Consts, p: Ph) -> bool {
+    tok.id() == c.model && tok.value() == p
+}
+
+/// Where a load of the tail that sees position `t` takes a thread.
+pub open spec fn tail_next(p: Ph, t: nat) -> Ph {
+    match p {
+        Ph::PLoad => Ph::PStamp { a: t },
+        Ph::QTail { a } => if t == a { Ph::QConfirm { a } } else { Ph::QLoad },
+        Ph::LTail => Ph::LHead { a: t },
+        Ph::LTail2 { a } => if t == a { Ph::Idle } else { Ph::LTail },
+        _ => p,
+    }
+}
+
+/// Where a load of the head that sees position `h` takes a thread.
+pub open spec fn head_next(c: Consts, p: Ph, h: nat) -> Ph {
+    match p {
+        Ph::QLoad => Ph::QStamp { a: h },
+        Ph::PHead { a } => if h + c.cap == a { Ph::PConfirm { a } } else { Ph::PLoad },
+        Ph::LHead { a } => Ph::LTail2 { a },
+        _ => p,
+    }
+}
+
+/// Where a load of the stamp of position `a`'s slot that sees `v` takes
+/// a thread: the code's tests on the packed stamp.
+pub open spec fn stamp_next(c: Consts, p: Ph, v: nat) -> Ph {
+    match p {
+        Ph::PStamp { a } => if v == pk(c, a) {
+            Ph::PCas { a }
+        } else if pk(c, a) + 1 >= c.lap && v == pk(c, a) + 1 - c.lap {
+            Ph::PHead { a }
+        } else {
+            Ph::PLoad
+        },
+        Ph::QStamp { a } => if v == pk(c, a) + 1 {
+            Ph::QCas { a }
+        } else if v == pk(c, a) {
+            Ph::QTail { a }
+        } else {
+            Ph::QLoad
+        },
+        _ => p,
+    }
+}
+
+/// What a stamp `v` read for position `a`'s slot says about the slot's
+/// rank, given that no message is above the current stamp `st`.
+proof fn lemma_stamp_rank(c: Consts, g: SlotG, st: nat, v: nat, a: nat)
+    requires
+        consts_ok(c),
+        g.pos % c.cap == a % c.cap,
+        st == (match g.phase {
+            Phase::Free | Phase::Claimed => pk(c, g.pos),
+            Phase::Full | Phase::Taken => pk(c, g.pos) + 1,
+        }),
+        v <= st,
+    ensures
+        v == pk(c, a) ==> srank(g) >= 2 * a,
+        v == pk(c, a) + 1 ==> srank(g) >= 2 * a + 1,
+        pk(c, a) + 1 >= c.lap && v == pk(c, a) + 1 - c.lap ==> a >= c.cap && srank(g) >= 2 * (a - c.cap) + 1,
+{
+    if g.pos < a {
+        lemma_same_slot(c, g.pos, a);
+    } else if g.pos > a {
+        lemma_same_slot(c, a, g.pos);
+    }
+    if pk(c, a) + 1 >= c.lap && v == pk(c, a) + 1 - c.lap {
+        if a < c.cap {
+            lemma_pk_small(c, a);
+        }
+        let b = (a - c.cap) as nat;
+        lemma_pk_cap(c, b);
+        vstd::arithmetic::div_mod::lemma_mod_add_multiples_vanish(b as int, c.cap as int);
+        assert((b + c.cap) % c.cap == b % c.cap);
+        if g.pos < b {
+            lemma_same_slot(c, g.pos, b);
+        } else if g.pos > b {
+            lemma_same_slot(c, b, g.pos);
+        }
+    }
+}
+
+/// Packing is one to one.
+proof fn lemma_pk_inj(c: Consts, p: nat, q: nat)
+    requires
+        consts_ok(c),
+        pk(c, p) == pk(c, q),
+    ensures
+        p == q,
+{
+    if p < q {
+        lemma_pk_mono(c, p, q);
+    } else if q < p {
+        lemma_pk_mono(c, q, p);
+    }
+}
+
+/// The code's "full" test on packed positions is the model's.
+proof fn lemma_full_test(c: Consts, h: nat, t: nat)
+    requires
+        consts_ok(c),
+    ensures
+        (pk(c, t) >= c.lap && pk(c, h) == pk(c, t) - c.lap) == (h + c.cap == t),
+{
+    lemma_pk_cap(c, h);
+    if pk(c, t) >= c.lap && pk(c, h) == pk(c, t) - c.lap {
+        lemma_pk_inj(c, h + c.cap, t);
     }
 }
 
@@ -326,10 +527,10 @@ pub proof fn lemma_decode(c: Consts, x: u64, mask: u64, p: nat)
     lemma_div_mod(p, c.cap);
     let (a, r) = (p / c.cap, p % c.cap);
     vstd::arithmetic::power2::lemma2_to64();
-    vstd::arithmetic::power2::lemma_pow2_strictly_increases(c.shift, 32);
+    vstd::arithmetic::power2::lemma_pow2_strictly_increases(c.shift, 61);
     assert(vstd::bits::low_bits_mask(c.shift) == c.lap - 1);
     vstd::bits::lemma_u64_low_bits_mask_is_mod(x, c.shift);
-    assert(c.lap < 0x1_0000_0000);
+    assert(c.lap < 0x2000_0000_0000_0000);
     assert((x as nat) % c.lap == r) by {
         lemma_split(x as nat, c.lap, a, r);
     }
@@ -386,11 +587,13 @@ proof fn lemma_abs_pop<T>(vals: Map<nat, T>, h: nat, t: nat)
 
 // ---------------------------------------------------------------------------
 
+/// One slot: its stamp and its cell.
 pub struct Slot<T> {
     stamp: RaU64,
     value: PCell<T>,
 }
 
+/// A bounded multi-producer multi-consumer queue, with crossbeam's `ArrayQueue` API.
 pub struct ArrayQueue<T> {
     head: CachePadded<RaU64>,
     tail: CachePadded<RaU64>,
@@ -512,6 +715,8 @@ impl<T> ArrayQueue<T> {
         &&& c.head_id == self.head.0.id()
         &&& c.tail_id == self.tail.0.id()
         &&& self.buffer@.len() == c.cap
+        // The slots are a Vec: on 32-bit targets, fewer than 2^32.
+        &&& c.cap <= usize::MAX
         &&& forall|i: int| 0 <= i < c.cap ==> #[trigger] self.buffer@[i].stamp.id() == c.stamp_ids[i]
         &&& forall|i: int| 0 <= i < c.cap ==> #[trigger] self.buffer@[i].value.id() == c.cells[i]
     }
@@ -626,12 +831,204 @@ impl<T> ArrayQueue<T> {
         (stamp, Tracked(lb), Tracked(hl), Ghost(k))
     }
 
+    /// A call starts: it takes an idle model thread and starts `push`
+    /// (`PLoad`), `pop` (`QLoad`) or `len` (`LTail`).
+    fn enter(&self, Ghost(p): Ghost<Ph>) -> (r: Tracked<Tok<P>>)
+        requires
+            self.wf(),
+            p == Ph::PLoad || p == Ph::QLoad || p == Ph::LTail,
+        ensures
+            tok_at(r@, self.consts(), p),
+    {
+        let ghost c = self.consts();
+        let tracked mut tok;
+        open_atomic_invariant!(self.inv.borrow().tracked_borrow().inner() => s => {
+            let ghost s0 = s;
+            proof {
+                tok = s.model.enter();
+                s.model.agree(&tok);
+                let m = s.model@;
+                let u = tok.key();
+                let s2 = go(m, u, p);
+                assert(sc_step(m, u, s2));
+                s.model.step(&mut tok, s2);
+                assert forall|j: nat| j < c.cap implies #[trigger] slot_inv(c, s, j) by {
+                    assert(slot_inv(c, s0, j));
+                }
+            }
+        });
+        Tracked(tok)
+    }
+
+    /// A call returns: its model thread, idle again, goes back.
+    fn leave(&self, Tracked(tok): Tracked<Tok<P>>)
+        requires
+            self.wf(),
+            tok_at(tok, self.consts(), Ph::Idle),
+    {
+        let ghost c = self.consts();
+        open_atomic_invariant!(self.inv.borrow().tracked_borrow().inner() => s => {
+            let ghost s0 = s;
+            proof {
+                s.model.leave(tok);
+                assert forall|j: nat| j < c.cap implies #[trigger] slot_inv(c, s, j) by {
+                    assert(slot_inv(c, s0, j));
+                }
+            }
+        });
+    }
+
+    /// `load_tail` in a call, with the model's step: `PLoad`, `QTail`,
+    /// `LTail` or `LTail2`.
+    fn load_tail_at(&self, Tracked(tok): Tracked<&mut Tok<P>>) -> (r: (u64, Ghost<nat>, Tracked<MonoLb>))
+        requires
+            self.wf(),
+            old(tok).id() == self.consts().model,
+            old(tok).value() is PLoad || old(tok).value() is QTail || old(tok).value() is LTail || old(tok).value() is LTail2,
+        ensures
+            r.0 as nat == pk(self.consts(), r.1@),
+            r.2@.loc() == self.consts().tail_mono,
+            r.2@@ == r.0 as nat,
+            (r.1@ / self.consts().cap) * self.consts().lap + 4 * self.consts().lap <= u64::MAX,
+            tok_at(*final(tok), self.consts(), tail_next(old(tok).value(), r.1@)),
+    {
+        let ghost c = self.consts();
+        let tracked mut tid = Tid::new();
+        let tail;
+        let ghost mut t = 0;
+        let tracked mut lb;
+        open_atomic_invariant!(self.inv.borrow().tracked_borrow().inner() => s => {
+            let ghost s0 = s;
+            let (v, Ghost(k)) = self.tail.0.load_relaxed(Tracked(&s.tail), Tracked(&mut tid));
+            tail = v;
+            proof {
+                let ghost m0 = s.tail.msgs()[k as int];
+                t = unpk(c, v as nat);
+                lemma_pk_le(c, t, s.tl@);
+                lb = s.tm.lb().weaken(v as nat);
+                s.model.agree(tok);
+                let m = s.model@;
+                let u = tok.key();
+                let p2 = tail_next(tok.value(), t);
+                let s2 = if p2 == Ph::Idle { ret(m, u) } else { go(m, u, p2) };
+                assert(stale_step(m, u, s2));
+                s.model.step(tok, s2);
+                assert forall|j: nat| j < c.cap implies #[trigger] slot_inv(c, s, j) by {
+                    assert(slot_inv(c, s0, j));
+                }
+            }
+        });
+        (tail, Ghost(t), Tracked(lb))
+    }
+
+    /// `load_head` in a call, with the model's step: `QLoad`, `PHead` or
+    /// `LHead`.
+    fn load_head_at(&self, Tracked(tok): Tracked<&mut Tok<P>>) -> (r: (u64, Ghost<nat>, Tracked<MonoLb>))
+        requires
+            self.wf(),
+            old(tok).id() == self.consts().model,
+            old(tok).value() is QLoad || old(tok).value() is PHead || old(tok).value() is LHead,
+        ensures
+            r.0 as nat == pk(self.consts(), r.1@),
+            r.2@.loc() == self.consts().head_mono,
+            r.2@@ == r.0 as nat,
+            (r.1@ / self.consts().cap) * self.consts().lap + 4 * self.consts().lap <= u64::MAX,
+            tok_at(*final(tok), self.consts(), head_next(self.consts(), old(tok).value(), r.1@)),
+    {
+        let ghost c = self.consts();
+        let tracked mut tid = Tid::new();
+        let head;
+        let ghost mut h = 0;
+        let tracked mut lb;
+        open_atomic_invariant!(self.inv.borrow().tracked_borrow().inner() => s => {
+            let ghost s0 = s;
+            let (v, Ghost(k)) = self.head.0.load_relaxed(Tracked(&s.head), Tracked(&mut tid));
+            head = v;
+            proof {
+                let ghost m0 = s.head.msgs()[k as int];
+                h = unpk(c, v as nat);
+                lemma_pk_le(c, h, s.hd@);
+                lemma_lap_mono(c, s.hd@, s.tl@);
+                lb = s.hm.lb().weaken(v as nat);
+                s.model.agree(tok);
+                let m = s.model@;
+                let u = tok.key();
+                let s2 = go(m, u, head_next(c, tok.value(), h));
+                assert(step(m, u, s2));
+                s.model.step(tok, s2);
+                assert forall|j: nat| j < c.cap implies #[trigger] slot_inv(c, s, j) by {
+                    assert(slot_inv(c, s0, j));
+                }
+            }
+        });
+        (head, Ghost(h), Tracked(lb))
+    }
+
+    /// `load_stamp` in a call, for position `a`, with the model's step:
+    /// `PStamp` or `QStamp`.
+    fn load_stamp_at(&self, index: u64, Tracked(tid): Tracked<&mut Tid>, Tracked(tok): Tracked<&mut Tok<P>>, Ghost(a): Ghost<nat>) -> (r: (u64, Tracked<MonoLb>, Tracked<HistLb>, Ghost<nat>))
+        requires
+            self.wf(),
+            index < self.cap,
+            index as nat == a % self.consts().cap,
+            old(tok).id() == self.consts().model,
+            old(tok).value() == (Ph::PStamp { a }) || old(tok).value() == (Ph::QStamp { a }),
+        ensures
+            r.1@.loc() == self.consts().stamp_mono[index as int],
+            r.1@@ == r.0 as nat,
+            r.2@.loc() == self.consts().stamp_ids[index as int],
+            r.3@ < r.2@.msgs().len(),
+            r.2@.msgs()[r.3@ as int].val == r.0,
+            r.2@.msgs()[r.3@ as int].view.le(final(tid).view()),
+            old(tid).view().le(final(tid).view()),
+            final(tid).view().at(self.consts().stamp_ids[index as int]) >= r.3@,
+            tok_at(*final(tok), self.consts(), stamp_next(self.consts(), old(tok).value(), r.0 as nat)),
+    {
+        let ghost c = self.consts();
+        let ghost i = index as nat;
+        let slot = &self.buffer[index as usize];
+        let stamp;
+        let tracked mut lb;
+        let tracked mut hl;
+        let ghost mut k = 0;
+        open_atomic_invariant!(self.inv.borrow().tracked_borrow().inner() => s => {
+            let ghost s0 = s;
+            proof {
+                assert(slot_inv(c, s, i));
+            }
+            let ghost tid0 = tid.view();
+            let (v, Ghost(kk)) = slot.stamp.load_acquire(Tracked(s.stamps.tracked_borrow(i)), Tracked(&mut *tid));
+            stamp = v;
+            proof {
+                k = kk;
+                let ghost m0 = s.stamps[i].msgs()[kk as int];
+                lemma_acquired(tid0, m0.view, c.stamp_ids[i as int], kk, tid.view());
+                lemma_view_join(tid0.join(m0.view), RaView::single(c.stamp_ids[i as int], kk));
+                assert(RaView::single(c.stamp_ids[i as int], kk).at(c.stamp_ids[i as int]) == kk);
+                lb = s.sm.tracked_borrow(i).lb().weaken(v as nat);
+                hl = s.stamps.tracked_borrow(i).lb();
+                s.model.agree(tok);
+                let m = s.model@;
+                let u = tok.key();
+                lemma_stamp_rank(c, s.slots@[i], (s.stamps[i].last().val) as nat, v as nat, a);
+                assert(rank(m, a) == srank(s.slots@[i]));
+                let s2 = go(m, u, stamp_next(c, tok.value(), v as nat));
+                assert(stale_step(m, u, s2));
+                s.model.step(tok, s2);
+                assert forall|j: nat| j < c.cap implies #[trigger] slot_inv(c, s, j) by {
+                    assert(slot_inv(c, s0, j));
+                }
+            }
+        });
+        (stamp, Tracked(lb), Tracked(hl), Ghost(k))
+    }
+
     /// Appends `value`, or gives it back if the queue holds `capacity` values.
     #[verifier::loop_isolation(false)]
     #[verifier::exec_allows_no_decreases_clause]
     #[verifier::spinoff_prover]
     #[verifier::rlimit(30)]
-    pub fn push(&self, value: T) -> (r: Result<(), T>)
+    pub fn push_atomic(&self, value: T) -> (r: Result<(), T>)
         atomically (au) {
             type PushPred,
             (x: QueueView<T>) -> (y: Commit<QueueView<T>>),
@@ -657,7 +1054,8 @@ impl<T> ArrayQueue<T> {
         let tracked mut au_opt = Some(au);
         let tracked mut tid = Tid::new();
         let backoff = Backoff::new();
-        let (mut tail, Ghost(mut t), Tracked(mut tlb)) = self.load_tail();
+        let Tracked(mut tok) = self.enter(Ghost(Ph::PLoad));
+        let (mut tail, Ghost(mut t), Tracked(mut tlb)) = self.load_tail_at(Tracked(&mut tok));
         loop
             invariant
                 self.wf(),
@@ -667,6 +1065,7 @@ impl<T> ArrayQueue<T> {
                 tlb.loc() == c.tail_mono,
                 tlb@ == tail as nat,
                 (t / c.cap) * c.lap + 4 * c.lap <= u64::MAX,
+                tok_at(tok, c, Ph::PStamp { a: t }),
         {
             proof {
                 lemma_decode(c, tail, self.mask, t);
@@ -683,7 +1082,8 @@ impl<T> ArrayQueue<T> {
                 lap + self.one_lap
             };
             let ghost i = index as nat;
-            let (stamp, Tracked(slb), Tracked(shl), Ghost(sk)) = self.load_stamp(index, Tracked(&mut tid));
+            let (stamp, Tracked(slb), Tracked(shl), Ghost(sk)) = self.load_stamp_at(index, Tracked(&mut tid), Tracked(&mut tok), Ghost(t));
+            let ghost v_load = tid.view();
             if tail == stamp {
                 let res;
                 let tracked mut claim: Option<(PointsTo<T>, GhostPointsTo<nat, Ticket<T>>)> = None;
@@ -730,6 +1130,16 @@ impl<T> ArrayQueue<T> {
                                 s.tm.advance(new_tail as nat);
                                 claim = Some((perm, ticket));
                                 lemma_abs_push(s0.vals@, s.hd@, t, value);
+                                // The model's `PCas`, succeeding.
+                                s.model.agree(&tok);
+                                let m = s0.model@;
+                                let u = tok.key();
+                                let s2 = St { tail: t + 1, ..go(m, u, Ph::PWrite { a: t }) };
+                                assert(sc_step(m, u, s2));
+                                s.model.step(&mut tok, s2);
+                                assert forall|j: nat| j < c.cap implies #[trigger] s.model@.st[j as int] == srank(s.slots@[j]) by {
+                                    assert(s0.model@.st[j as int] == srank(s0.slots@[j]));
+                                }
                             }
                             let tracked au = au_opt.tracked_take();
                             try_open_atomic_update!(au, x => {
@@ -762,6 +1172,13 @@ impl<T> ArrayQueue<T> {
                                 cur = unpk(c, v as nat);
                                 lemma_pk_le(c, cur, s.tl@);
                                 cur_lb = s.tm.lb().weaken(v as nat);
+                                // The model's `PCas`, failing: a load.
+                                s.model.agree(&tok);
+                                let mm = s.model@;
+                                let u = tok.key();
+                                let s2 = go(mm, u, Ph::PStamp { a: cur });
+                                assert(step(mm, u, s2));
+                                s.model.step(&mut tok, s2);
                                 assert forall|j: nat| j < c.cap implies #[trigger] slot_inv(c, s, j) by {
                                     assert(slot_inv(c, s0, j));
                                 }
@@ -782,6 +1199,18 @@ impl<T> ArrayQueue<T> {
                             }
                             let tracked mut sh = s.stamps.tracked_remove(i);
                             let ghost h0 = sh;
+                            proof {
+                                // The thread read the only message holding the
+                                // current stamp, so it has seen the last one.
+                                sh.lb_prefix(&shl);
+                                sh.bounded_lemma(&tid);
+                                assert(h0.msgs()[sk as int] == shl.msgs()[sk as int]);
+                                assert(v_load.at(c.stamp_ids[i as int]) <= tid.view().at(c.stamp_ids[i as int]));
+                                if sk < h0.msgs().len() - 1 {
+                                    assert(h0.msgs()[sk as int].val < h0.last().val);
+                                }
+                                assert(sh.seen_last(&tid));
+                            }
                             slot.stamp.store_release(Tracked(&mut sh), Tracked(&mut tid), tail + 1);
                             proof {
                                 lemma_stamp_store(h0, sh, pk(c, t), (tail + 1) as u64, tid.view());
@@ -790,11 +1219,22 @@ impl<T> ArrayQueue<T> {
                                 s.tk.delete_points_to(ticket);
                                 s.slots = Ghost(s.slots@.insert(i, SlotG { pos: t, phase: Phase::Full }));
                                 s.sm.tracked_borrow_mut(i).advance((tail + 1) as nat);
+                                // The model's `PWrite`: the call returns.
+                                s.model.agree(&tok);
+                                let m = s0.model@;
+                                let u = tok.key();
+                                let s2 = St { st: m.st.update((t % m.cap) as int, 2 * t + 1), ..ret(m, u) };
+                                assert(sc_step(m, u, s2));
+                                s.model.step(&mut tok, s2);
+                                assert forall|j: nat| j < c.cap implies #[trigger] s.model@.st[j as int] == srank(s.slots@[j]) by {
+                                    assert(s0.model@.st[j as int] == srank(s0.slots@[j]));
+                                }
                                 assert forall|j: nat| j < c.cap implies #[trigger] slot_inv(c, s, j) by {
                                     assert(slot_inv(c, s0, j));
                                 }
                             }
                         });
+                        self.leave(Tracked(tok));
                         return Ok(());
                     }
                     Err(cur_tail) => {
@@ -811,7 +1251,10 @@ impl<T> ArrayQueue<T> {
                 // queue may be full. A relaxed load of the head says whether
                 // to look closer; a read-modify-write, which reads the latest
                 // head, decides.
-                let (head, _, _) = self.load_head();
+                let (head, Ghost(hh), _) = self.load_head_at(Tracked(&mut tok));
+                proof {
+                    lemma_full_test(c, hh, t);
+                }
                 if tail >= self.one_lap && head == tail - self.one_lap {
                     let cur;
                     open_atomic_invariant!(self.inv.borrow().tracked_borrow().inner() => s => {
@@ -819,6 +1262,14 @@ impl<T> ArrayQueue<T> {
                         cur = self.head.0.fetch_add_seqcst(Tracked(&mut s.head), Tracked(&mut tid), 0);
                         proof {
                             lemma_pos_hist_rmw(c, s0.head, s.head, s.hd@, tid.view());
+                            // The model's `PConfirm`.
+                            lemma_full_test(c, s.hd@, t);
+                            s.model.agree(&tok);
+                            let m = s.model@;
+                            let u = tok.key();
+                            let s2 = if m.head + m.cap == t { ret(m, u) } else { go(m, u, Ph::PLoad) };
+                            assert(sc_step(m, u, s2));
+                            s.model.step(&mut tok, s2);
                         }
                         if tail >= self.one_lap && cur == tail - self.one_lap {
                             proof {
@@ -845,11 +1296,12 @@ impl<T> ArrayQueue<T> {
                         }
                     });
                     if tail >= self.one_lap && cur == tail - self.one_lap {
+                        self.leave(Tracked(tok));
                         return Err(value);
                     }
                 }
                 backoff.spin();
-                let (t2, Ghost(ta), Tracked(lb2)) = self.load_tail();
+                let (t2, Ghost(ta), Tracked(lb2)) = self.load_tail_at(Tracked(&mut tok));
                 tail = t2;
                 proof {
                     t = ta;
@@ -858,7 +1310,7 @@ impl<T> ArrayQueue<T> {
             } else {
                 // Another thread is mid-operation on this slot: wait.
                 backoff.snooze();
-                let (t2, Ghost(ta), Tracked(lb2)) = self.load_tail();
+                let (t2, Ghost(ta), Tracked(lb2)) = self.load_tail_at(Tracked(&mut tok));
                 tail = t2;
                 proof {
                     t = ta;
@@ -872,7 +1324,8 @@ impl<T> ArrayQueue<T> {
     #[verifier::loop_isolation(false)]
     #[verifier::exec_allows_no_decreases_clause]
     #[verifier::spinoff_prover]
-    pub fn pop(&self) -> (r: Option<T>)
+    #[verifier::rlimit(20)]
+    pub fn pop_atomic(&self) -> (r: Option<T>)
         atomically (au) {
             type PopPred,
             (x: QueueView<T>) -> (y: Commit<QueueView<T>>),
@@ -898,7 +1351,8 @@ impl<T> ArrayQueue<T> {
         let tracked mut au_opt = Some(au);
         let tracked mut tid = Tid::new();
         let backoff = Backoff::new();
-        let (mut head, Ghost(mut h), Tracked(mut hlb)) = self.load_head();
+        let Tracked(mut tok) = self.enter(Ghost(Ph::QLoad));
+        let (mut head, Ghost(mut h), Tracked(mut hlb)) = self.load_head_at(Tracked(&mut tok));
         loop
             invariant
                 self.wf(),
@@ -908,6 +1362,7 @@ impl<T> ArrayQueue<T> {
                 hlb.loc() == c.head_mono,
                 hlb@ == head as nat,
                 (h / c.cap) * c.lap + 4 * c.lap <= u64::MAX,
+                tok_at(tok, c, Ph::QStamp { a: h }),
         {
             proof {
                 lemma_decode(c, head, self.mask, h);
@@ -921,7 +1376,8 @@ impl<T> ArrayQueue<T> {
                 lap + self.one_lap
             };
             let ghost i = index as nat;
-            let (stamp, Tracked(slb), Tracked(shl), Ghost(sk)) = self.load_stamp(index, Tracked(&mut tid));
+            let (stamp, Tracked(slb), Tracked(shl), Ghost(sk)) = self.load_stamp_at(index, Tracked(&mut tid), Tracked(&mut tok), Ghost(h));
+            let ghost v_load = tid.view();
             if head + 1 == stamp {
                 let res;
                 let tracked mut claim: Option<(PointsTo<T>, GhostPointsTo<nat, Ticket<T>>)> = None;
@@ -966,6 +1422,16 @@ impl<T> ArrayQueue<T> {
                                 s.hm.advance(new_head as nat);
                                 claim = Some((perm, ticket));
                                 lemma_abs_pop(s0.vals@, h, s.tl@);
+                                // The model's `QCas`, succeeding.
+                                s.model.agree(&tok);
+                                let m = s0.model@;
+                                let u = tok.key();
+                                let s2 = St { head: h + 1, ..go(m, u, Ph::QRead { a: h }) };
+                                assert(sc_step(m, u, s2));
+                                s.model.step(&mut tok, s2);
+                                assert forall|j: nat| j < c.cap implies #[trigger] s.model@.st[j as int] == srank(s.slots@[j]) by {
+                                    assert(s0.model@.st[j as int] == srank(s0.slots@[j]));
+                                }
                             }
                             let tracked au = au_opt.tracked_take();
                             try_open_atomic_update!(au, x => {
@@ -989,6 +1455,13 @@ impl<T> ArrayQueue<T> {
                                 lemma_pk_le(c, cur, s.hd@);
                                 lemma_lap_mono(c, s.hd@, s.tl@);
                                 cur_lb = s.hm.lb().weaken(v as nat);
+                                // The model's `QCas`, failing: a load.
+                                s.model.agree(&tok);
+                                let mm = s.model@;
+                                let u = tok.key();
+                                let s2 = go(mm, u, Ph::QStamp { a: cur });
+                                assert(step(mm, u, s2));
+                                s.model.step(&mut tok, s2);
                                 assert forall|j: nat| j < c.cap implies #[trigger] slot_inv(c, s, j) by {
                                     assert(slot_inv(c, s0, j));
                                 }
@@ -1012,6 +1485,18 @@ impl<T> ArrayQueue<T> {
                             }
                             let tracked mut sh = s.stamps.tracked_remove(i);
                             let ghost h0 = sh;
+                            proof {
+                                // The thread read the only message holding the
+                                // current stamp, so it has seen the last one.
+                                sh.lb_prefix(&shl);
+                                sh.bounded_lemma(&tid);
+                                assert(h0.msgs()[sk as int] == shl.msgs()[sk as int]);
+                                assert(v_load.at(c.stamp_ids[i as int]) <= tid.view().at(c.stamp_ids[i as int]));
+                                if sk < h0.msgs().len() - 1 {
+                                    assert(h0.msgs()[sk as int].val < h0.last().val);
+                                }
+                                assert(sh.seen_last(&tid));
+                            }
                             slot.stamp.store_release(Tracked(&mut sh), Tracked(&mut tid), released);
                             proof {
                                 lemma_stamp_store(h0, sh, (pk(c, h) + 1) as nat, released, tid.view());
@@ -1020,11 +1505,22 @@ impl<T> ArrayQueue<T> {
                                 s.tk.delete_points_to(ticket);
                                 s.slots = Ghost(s.slots@.insert(i, SlotG { pos: h + c.cap, phase: Phase::Free }));
                                 s.sm.tracked_borrow_mut(i).advance(released as nat);
+                                // The model's `QRead`: the call returns.
+                                s.model.agree(&tok);
+                                let m = s0.model@;
+                                let u = tok.key();
+                                let s2 = St { st: m.st.update((h % m.cap) as int, 2 * (h + m.cap)), ..ret(m, u) };
+                                assert(sc_step(m, u, s2));
+                                s.model.step(&mut tok, s2);
+                                assert forall|j: nat| j < c.cap implies #[trigger] s.model@.st[j as int] == srank(s.slots@[j]) by {
+                                    assert(s0.model@.st[j as int] == srank(s0.slots@[j]));
+                                }
                                 assert forall|j: nat| j < c.cap implies #[trigger] slot_inv(c, s, j) by {
                                     assert(slot_inv(c, s0, j));
                                 }
                             }
                         });
+                        self.leave(Tracked(tok));
                         return Some(value);
                     }
                     Err(cur_head) => {
@@ -1041,7 +1537,12 @@ impl<T> ArrayQueue<T> {
                 // queue may be empty. As in `push`, a relaxed load of the
                 // tail says whether to look closer, and a read-modify-write
                 // decides.
-                let (tail, _, _) = self.load_tail();
+                let (tail, Ghost(tt), _) = self.load_tail_at(Tracked(&mut tok));
+                proof {
+                    if tail == head {
+                        lemma_pk_inj(c, tt, h);
+                    }
+                }
                 if tail == head {
                     let cur;
                     open_atomic_invariant!(self.inv.borrow().tracked_borrow().inner() => s => {
@@ -1049,6 +1550,16 @@ impl<T> ArrayQueue<T> {
                         cur = self.tail.0.fetch_add_seqcst(Tracked(&mut s.tail), Tracked(&mut tid), 0);
                         proof {
                             lemma_pos_hist_rmw(c, s0.tail, s.tail, s.tl@, tid.view());
+                            // The model's `QConfirm`.
+                            if cur == head {
+                                lemma_pk_inj(c, s.tl@, h);
+                            }
+                            s.model.agree(&tok);
+                            let m = s.model@;
+                            let u = tok.key();
+                            let s2 = if m.tail == h { ret(m, u) } else { go(m, u, Ph::QLoad) };
+                            assert(sc_step(m, u, s2));
+                            s.model.step(&mut tok, s2);
                         }
                         if cur == head {
                             proof {
@@ -1074,11 +1585,12 @@ impl<T> ArrayQueue<T> {
                         }
                     });
                     if cur == head {
+                        self.leave(Tracked(tok));
                         return None;
                     }
                 }
                 backoff.spin();
-                let (h2, Ghost(ha), Tracked(lb2)) = self.load_head();
+                let (h2, Ghost(ha), Tracked(lb2)) = self.load_head_at(Tracked(&mut tok));
                 head = h2;
                 proof {
                     h = ha;
@@ -1087,7 +1599,7 @@ impl<T> ArrayQueue<T> {
             } else {
                 // Another thread is mid-operation on this slot: wait.
                 backoff.snooze();
-                let (h2, Ghost(ha), Tracked(lb2)) = self.load_head();
+                let (h2, Ghost(ha), Tracked(lb2)) = self.load_head_at(Tracked(&mut tok));
                 head = h2;
                 proof {
                     h = ha;
@@ -1107,19 +1619,27 @@ impl<T> ArrayQueue<T> {
             r <= self.capacity_spec(),
     {
         let ghost c = self.consts();
+        let Tracked(mut tok) = self.enter(Ghost(Ph::LTail));
         loop
             invariant
                 self.wf(),
                 c == self.consts(),
+                tok_at(tok, c, Ph::LTail),
         {
-            let (tail, Ghost(t), _) = self.load_tail();
-            let (head, Ghost(h), _) = self.load_head();
-            let (tail2, _, _) = self.load_tail();
+            let (tail, Ghost(t), _) = self.load_tail_at(Tracked(&mut tok));
+            let (head, Ghost(h), _) = self.load_head_at(Tracked(&mut tok));
+            let (tail2, Ghost(t2), _) = self.load_tail_at(Tracked(&mut tok));
+            proof {
+                if tail2 == tail {
+                    lemma_pk_inj(c, t2, t);
+                }
+            }
             if tail2 == tail {
                 proof {
                     lemma_decode(c, tail, self.mask, t);
                     lemma_decode(c, head, self.mask, h);
                 }
+                self.leave(Tracked(tok));
                 let hix = head & self.mask;
                 let tix = tail & self.mask;
                 return if hix < tix {
@@ -1142,7 +1662,7 @@ impl<T> ArrayQueue<T> {
     /// `false` means only "maybe not": the head is read relaxed and may be
     /// stale. The tail is read with a read-modify-write (adding 0), which
     /// reads its latest value, as in `pop`.
-    pub fn confirm_empty(&self) -> (r: bool)
+    pub fn confirm_empty_atomic(&self) -> (r: bool)
         atomically (au) {
             type ConfirmEmptyPred,
             (x: QueueView<T>) -> (y: Commit<(QueueView<T>, Ghost<bool>)>),
@@ -1196,7 +1716,7 @@ impl<T> ArrayQueue<T> {
     /// answer: `true` means it was full at one instant during the call,
     /// `false` only "maybe not". The tail is read relaxed and the head with
     /// a read-modify-write, as in `push`.
-    pub fn confirm_full(&self) -> (r: bool)
+    pub fn confirm_full_atomic(&self) -> (r: bool)
         atomically (au) {
             type ConfirmFullPred,
             (x: QueueView<T>) -> (y: Commit<(QueueView<T>, Ghost<bool>)>),
@@ -1272,11 +1792,11 @@ impl<T> ArrayQueue<T> {
     /// The smallest power of two above `cap`.
     fn lap_for(cap: u64) -> (r: (u64, Ghost<nat>))
         requires
-            0 < cap < 0x8000_0000,
+            0 < cap < 0x1000_0000_0000_0000,
         ensures
-            cap < r.0 < 0x1_0000_0000,
+            cap < r.0 < 0x2000_0000_0000_0000,
             r.0 == vstd::arithmetic::power2::pow2(r.1@),
-            r.1@ < 32,
+            r.1@ < 61,
     {
         proof {
             vstd::arithmetic::power2::lemma2_to64();
@@ -1287,7 +1807,7 @@ impl<T> ArrayQueue<T> {
             invariant
                 one_lap == vstd::arithmetic::power2::pow2(shift),
                 1 <= one_lap <= 2 * cap,
-                cap < 0x8000_0000,
+                cap < 0x1000_0000_0000_0000,
             decreases 2 * cap - one_lap,
         {
             one_lap = one_lap * 2;
@@ -1298,8 +1818,8 @@ impl<T> ArrayQueue<T> {
         }
         proof {
             vstd::arithmetic::power2::lemma2_to64();
-            if shift > 31 {
-                vstd::arithmetic::power2::lemma_pow2_strictly_increases(31, shift);
+            if shift > 61 {
+                vstd::arithmetic::power2::lemma_pow2_strictly_increases(61, shift);
             }
         }
         (one_lap, Ghost(shift))
@@ -1326,7 +1846,7 @@ impl<T> ArrayQueue<T> {
                 &&& forall|j: nat| j < cap ==> {
                     &&& #[trigger] stamps@.contains_key(j)
                     &&& stamps@[j].loc() == stamp_ids[j as int]
-                    &&& stamps@[j].msgs().len() > 0
+                    &&& stamps@[j].msgs().len() == 1
                     &&& forall|k: int| 0 <= k < stamps@[j].msgs().len() ==> #[trigger] stamps@[j].msgs()[k].val <= j
                     &&& stamp_hist(stamps@[j], j, cells@[j].view())
                     &&& sm@.contains_key(j)
@@ -1359,7 +1879,7 @@ impl<T> ArrayQueue<T> {
                 forall|j: nat| j < i ==> {
                     &&& #[trigger] stamps.contains_key(j)
                     &&& stamps[j].loc() == stamp_ids[j as int]
-                    &&& stamps[j].msgs().len() > 0
+                    &&& stamps[j].msgs().len() == 1
                     &&& forall|k: int| 0 <= k < stamps[j].msgs().len() ==> #[trigger] stamps[j].msgs()[k].val <= j
                     &&& stamp_hist(stamps[j], j, cells[j].view())
                     &&& sm.contains_key(j)
@@ -1395,7 +1915,7 @@ impl<T> ArrayQueue<T> {
                 assert forall|j: nat| j < i + 1 implies {
                     &&& #[trigger] stamps.contains_key(j)
                     &&& stamps[j].loc() == stamp_ids[j as int]
-                    &&& stamps[j].msgs().len() > 0
+                    &&& stamps[j].msgs().len() == 1
                     &&& forall|k: int| 0 <= k < stamps[j].msgs().len() ==> #[trigger] stamps[j].msgs()[k].val <= j
                     &&& stamp_hist(stamps[j], j, cells[j].view())
                     &&& sm.contains_key(j)
@@ -1424,7 +1944,7 @@ impl<T> ArrayQueue<T> {
     /// (empty) contents.
     pub fn new_with_view(cap: usize) -> (r: (ArrayQueue<T>, Tracked<QueueView<T>>))
         requires
-            0 < cap < 0x8000_0000,
+            0 < cap < 0x1000_0000_0000_0000,
         ensures
             r.0.wf(),
             r.0.capacity_spec() == cap,
@@ -1444,6 +1964,16 @@ impl<T> ArrayQueue<T> {
         let tracked (qa, qv) = GhostVarAuth::new(Seq::<T>::empty());
         let tracked (tk, _sub) = GhostMapAuth::<nat, Ticket<T>>::new(Map::empty());
         let ghost slots = Map::new(Set::<nat>::range(0, cap as nat), |j: nat| SlotG { pos: j, phase: Phase::Free });
+        let ghost n = model_threads();
+        let ghost s0 = St {
+            cap: cap as nat,
+            head: 0,
+            tail: 0,
+            st: Seq::new(cap as nat, |k: int| (2 * k) as nat),
+            th: Seq::new(n, |i: int| Ph::Idle),
+            done: 0,
+        };
+        let tracked model = Model::<P>::new(s0, n);
         let ghost c = Consts {
             cap: cap as nat,
             lap: one_lap as nat,
@@ -1457,6 +1987,7 @@ impl<T> ArrayQueue<T> {
             head_mono: hm.loc(),
             tail_mono: tm.loc(),
             stamp_mono: mono_locs,
+            model: model.loc(),
         };
         let tracked s = Shared {
             head: hp,
@@ -1472,6 +2003,7 @@ impl<T> ArrayQueue<T> {
             tl: Ghost(0),
             slots: Ghost(slots),
             vals: Ghost(Map::empty()),
+            model,
         };
         proof {
             assert(consts_ok(c));
@@ -1485,6 +2017,8 @@ impl<T> ArrayQueue<T> {
             assert forall|j: nat| j < c.cap implies #[trigger] slot_inv(c, s, j) by {
                 lemma_pk_small(c, j);
                 vstd::arithmetic::div_mod::lemma_small_mod(j, c.cap);
+                assert(s.stamps.contains_key(j));
+                assert(s.stamps[j].msgs().len() == 1);
             }
         }
         let tracked inv = ObjInvariant::<_, _, QueuePred>::new(c, s, QUEUE_NS);
@@ -1556,6 +2090,7 @@ impl<T> ArrayQueue<T> {
                 c.lap == self.one_lap as nat,
                 self.mask as nat == c.lap - 1,
                 self.buffer@.len() == c.cap,
+                c.cap <= usize::MAX,
                 forall|i: int| 0 <= i < c.cap ==> #[trigger] self.buffer@[i].stamp.id() == c.stamp_ids[i],
                 forall|i: int| 0 <= i < c.cap ==> #[trigger] self.buffer@[i].value.id() == c.cells[i],
                 QueuePred::inv(c, s0),
@@ -1623,6 +2158,44 @@ impl<T> ArrayQueue<T> {
 
 } // verus!
 
+// The plain-Rust API. Each queue operation is verified as a logically
+// atomic function (`*_atomic`), which since Verus 2026-11-22 takes its
+// atomic update as a `Tracked` argument that survives erasure. These
+// one-line wrappers are what code outside Verus calls: they pass a ghost
+// value that does not exist at run time (`Tracked::assume_new()`, nothing
+// is assumed about the data) and return what the verified function returns.
+// A Verus caller uses the `*_atomic` form with an `atomically` block.
+impl<T> ArrayQueue<T> {
+    /// Appends `value`, or gives it back if the queue holds `capacity` values.
+    #[inline]
+    pub fn push(&self, value: T) -> Result<(), T> {
+        self.push_atomic(value, Tracked::assume_new())
+    }
+
+    /// Removes the oldest value, or returns `None` if the queue is empty.
+    #[inline]
+    pub fn pop(&self) -> Option<T> {
+        self.pop_atomic(Tracked::assume_new())
+    }
+
+    /// Whether the queue is empty, for a thread that will sleep on the
+    /// answer: `true` means it was empty at one instant during the call,
+    /// `false` only "maybe not" (see `confirm_empty_atomic`).
+    #[inline]
+    pub fn confirm_empty(&self) -> bool {
+        self.confirm_empty_atomic(Tracked::assume_new())
+    }
+
+    /// Whether the queue is full, for a thread that will sleep on the
+    /// answer: `true` means it was full at one instant during the call,
+    /// `false` only "maybe not" (see `confirm_full_atomic`).
+    #[inline]
+    pub fn confirm_full(&self) -> bool {
+        self.confirm_full_atomic(Tracked::assume_new())
+    }
+}
+
+
 impl<T> Drop for ArrayQueue<T> {
     fn drop(&mut self) {
         self.destroy();
@@ -1634,10 +2207,10 @@ impl<T> ArrayQueue<T> {
     ///
     /// # Panics
     ///
-    /// If `cap` is zero or at least 2^31.
+    /// If `cap` is zero or at least 2^60 (more than can be allocated).
     pub fn new(cap: usize) -> ArrayQueue<T> {
         assert!(cap > 0, "capacity must be non-zero");
-        assert!(cap < 0x8000_0000, "capacity must be below 2^31");
+        assert!((cap as u64) < 0x1000_0000_0000_0000, "capacity must be below 2^60");
         Self::new_with_view(cap).0
     }
 }

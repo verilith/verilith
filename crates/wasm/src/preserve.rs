@@ -1,11 +1,11 @@
 //! Certified code never gets stuck (progress), and every step keeps the
 //! machine's heights and labels equal to the certificate's (preservation).
 //!
-//! [`inv`] says each frame sits at a live position of its function's
+//! `inv` says each frame sits at a live position of its function's
 //! certificate with exactly the certified stack height and label stack;
-//! frames below the top are waiting at a call. [`lemma_step`] shows that
+//! frames below the top are waiting at a call. `lemma_step` shows that
 //! from such a state the semantics never returns `Stuck` and every
-//! successor state satisfies [`inv`] again.
+//! successor state satisfies `inv` again.
 use vstd::prelude::*;
 use crate::ast::*;
 use crate::sem::*;
@@ -96,6 +96,7 @@ pub open spec fn step_ok(m: &Module, cs: Seq<FuncCert>, c: Config, r: Step) -> b
             && inv_host(m, cs, cfg, func),
         Step::Done(res, s) => c.frames.len() == 1
             && res.len() == n_results(func_type(m, c.frames[0].func + n_imp(m))),
+        Step::Grow { ok, fail } => inv(m, cs, ok) && inv(m, cs, fail),
         Step::Trap(..) => true,
         Step::Stuck => false,
     }
@@ -387,6 +388,8 @@ pub proof fn lemma_other(m: &Module, cs: Seq<FuncCert>, c: Config, i: Instr)
             } else {
                 let s2 = Store { mem: s.mem + Seq::new(n * PAGE as nat, |_i| 0u8), ..s };
                 lemma_simple(m, cs, c, s2, adv(push(popn(f, 1), old as u64)));
+                lemma_simple(m, cs, c, s, adv(push(popn(f, 1), 0xffff_ffff)));
+                assert(Config { store: s, ..c } == c);
             }
         },
         Instr::MemoryFill | Instr::MemoryCopy | Instr::MemoryInit(_) | Instr::DataDrop(_) => {

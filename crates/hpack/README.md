@@ -36,6 +36,32 @@ limit, and an update required after the limit is lowered). The proofs show:
   reports are what `spec::rep` gives on the concatenation, not on the
   pieces. This rests on an extension lemma (`lemmas.rs`): once a
   representation decodes or fails, more input after it changes nothing.
+- **Linear work, however the input is split** (`Decoder::feed_metered`).
+  The decoder counts its work in ghost state: a step is a turn of a loop
+  whose number of turns is not bounded by a constant (`feed`'s own loop,
+  the Huffman decoder's, the table's eviction loop) or a byte copied. The
+  theorem is a potential argument:
+
+  ```text
+  steps(feed(input)) + pot(after) <= pot(before) + 16 * input.len() + 96 + settings
+  ```
+
+  `pot` is 8 per buffered byte, less 4 per byte of a cached name, plus 1
+  per dynamic table entry (which pays for evicting it). It is 0 for a new
+  decoder and never negative, so over any sequence of calls the work is at
+  most 16 steps per input byte plus `96 + settings` per call, wherever the
+  input is split. `settings` is SETTINGS_HEADER_TABLE_SIZE (4096 unless the
+  local side raises it); it pays for the one copy that is not proportional
+  to the input, the name of a table entry copied into a new entry.
+  `change_settings_metered` and `end_block` only lower the potential. The
+  bound rests on two facts about buffered input: a representation that was
+  too short is decoded again only once enough input has arrived to
+  possibly complete it, and the name string it had already decoded is
+  kept, not decoded again (`Decoder::name_end`). A completed
+  representation then ends exactly at the end of the buffer
+  (`lemmas::lemma_end_at_need`, from the truncation lemma
+  `lemma_rep_trunc`: decoding reads nothing past the representation's
+  end).
 - No panics, overflows or out-of-bounds accesses, in all of the above.
 
 ## Trusted computing base
@@ -59,6 +85,12 @@ What the proofs do not cover, and what is done about each:
 - **The C API** (`src/capi.rs`) and **the nghttp2 shim**
   (`compat/nghttp2/nghttp2_hd_vhpack.inc`), which are unverified glue:
   pointers in and out, and nghttp2's reference-counted buffers.
+- **What a step costs.** The work bound counts loop turns and bytes
+  copied, not machine instructions. It assumes `Vec` growth is amortized
+  constant time per byte and that allocation and freeing take constant
+  time. The integer decoder (at most 6 turns), the Huffman decoder's
+  refill (at most 8) and code search (at most 30) are bounded by constants
+  and not counted.
 - **A buffer limit.** `feed` buffers at most 16 MiB of a representation that
   has not fully arrived (one is at most 131085 bytes), and reports
   "invalid" beyond that. The spec allows that outcome explicitly.
@@ -139,6 +171,10 @@ verilith-http's README.
   random size updates and random splits, decoded and compared with the
   encoder's model of the table; and random garbage, which must get the same
   verdict whole and byte by byte.
+- `tests/work.rs`: a block that resumes in the buffered path with `fin`
+  set, which used to cost time quadratic in its length (each field copied
+  the rest of the block; 40,000 one-byte fields took 16 ms instead of
+  0.1 ms) and is now linear, as the work bound says.
 - `compat/nghttp2/test/run.sh NGHTTP2_LIB_DIR [SEEDS] [CASES]`: a
   differential test of nghttp2 on verilith-hpack against stock nghttp2, both under
   ASan and UBSan. Each case deflates random header lists with nghttp2's own
@@ -195,5 +231,5 @@ CI (`.github/workflows/ci.yml` at the repository root) verifies the proofs and r
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/hpack/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/hpack/LICENSE-MIT), at your option.

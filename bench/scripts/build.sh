@@ -175,6 +175,9 @@ png_lib() { echo "$BUILD/libpng/libpng16.a -lz -lm"; }
 build_png() {
   build_libpng
   cc_runner png-libpng $(png_inc) "$S/png/libpng.c" $(png_lib)
+  # The same driver on vpng's libpng API (no zlib: vpng has its own).
+  local lib; lib=$(rust_lib vpng libpng-abi)
+  cc_runner png-vpng-abi $(png_inc) "$S/png/libpng.c" "$lib" $RUST_LIBS
   rust_runner vpng-run png-vpng
 }
 
@@ -370,14 +373,17 @@ build_regex() {
   $CC $objs "$lib" $RUST_LIBS -o "$BIN/regex-vregex"
 }
 
-# XML: expat's and libxml2's SAX APIs against verilith-xml's own API
-# (native: vxml has neither ABI yet).
+# XML: expat's and libxml2's SAX APIs, drop-in (the same drivers linked
+# against verilith-xml's expat and libxml2 ABIs) and against verilith-xml's
+# own API.
 build_xml() {
   local src; src=$(orig expat)/expat
   cmake_build "$src" "$BUILD/expat" -DEXPAT_BUILD_TOOLS=OFF -DEXPAT_BUILD_EXAMPLES=OFF -DEXPAT_BUILD_TESTS=OFF \
     -DEXPAT_BUILD_DOCS=OFF -DEXPAT_SHARED_LIBS=OFF
   local a; a=$(find "$BUILD/expat" -name 'libexpat*.a' | head -1)
   cc_runner xml-expat -I"$src/lib" "$S/xml/expat.c" "$a"
+  local vx; vx=$(rust_lib vxml expat-abi)
+  cc_runner xml-expat-vxml -I"$src/lib" "$S/xml/expat.c" "$vx" $RUST_LIBS
   # libxml2 as it builds by default, less its programs, tests and iconv (its
   # own UTF-8, UTF-16, ISO-8859-x and ASCII decoders remain).
   local x; x=$(orig libxml2)
@@ -387,13 +393,30 @@ build_xml() {
   local sys="-lm"
   [ "$OS" = Darwin ] || sys="$sys -lpthread"
   cc_runner xml-libxml2 -I"$x/include" -I"$BUILD/libxml2" "$S/xml/libxml2.c" "$l" $sys
+  local vl; vl=$(rust_lib vxml libxml2-abi)
+  cc_runner xml-libxml2-vxml -I"$x/include" -I"$BUILD/libxml2" "$S/xml/libxml2.c" "$vl" $RUST_LIBS
   rust_runner vxml-run xml-vxml
+}
+
+# OpenSSL's SHA-2 API (sha.h): libcrypto against vsha2 (openssl-abi).
+build_sha2() {
+  local o; o=$(orig openssl)
+  if [ ! -f "$BUILD/openssl/libcrypto.a" ]; then
+    rm -rf "$BUILD/openssl"; cp -R "$o" "$BUILD/openssl"; rm -rf "$BUILD/openssl/.git"
+    (cd "$BUILD/openssl" && ./Configure no-shared no-tests no-apps no-docs -O3 $CPUFLAG >/dev/null &&
+      make -j "$NPROC" build_libs >/dev/null) || die "OpenSSL build failed"
+  fi
+  local sys=""
+  [ "$OS" = Darwin ] || sys="-lpthread -ldl"
+  cc_runner sha2-openssl -I"$o/include" -I"$BUILD/openssl/include" "$S/sha2/sha2.c" "$BUILD/openssl/libcrypto.a" $sys
+  local lib; lib=$(rust_lib vsha2 openssl-abi)
+  cc_runner sha2-vsha2 -I"$o/include" -I"$BUILD/openssl/include" "$S/sha2/sha2.c" "$lib" $RUST_LIBS
 }
 
 # --print-lib REPO FEATURES: build one of our staticlibs and print its path.
 if [ "${1:-}" = --print-lib ]; then rust_lib "$2" "${3:-}"; exit; fi
 
-ALL="zlib dns http url json x509 x509n png webp brotli jpeg regex archive lz4 snappy font xml"
+ALL="zlib dns http url json x509 x509n png webp brotli jpeg regex archive lz4 snappy font xml sha2"
 want=${*:-$ALL}
 failed=""
 for s in $want; do

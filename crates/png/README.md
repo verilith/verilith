@@ -10,8 +10,9 @@ tRNS (no gamma, colour profiles, text or animation).
 The chunk parser, the image-data decompression (through
 [verilith-zlib](https://github.com/verilith/verilith/tree/main/crates/zlib), itself verified), the
 five row filters, Adam7 deinterlacing and both output formats are proven
-against a specification of the format. `cargo verus verify` checks 297
-functions with no errors.
+against a specification of the format, and so is a bound on the decoder's
+work that is linear in the file's size and the output's. `cargo verus
+verify` checks 328 functions with no errors.
 
 libpng's security history is mostly memory-safety bugs in exactly these
 places: chunk lengths ([CVE-2017-12652](#cves)), palette and transparency
@@ -32,6 +33,19 @@ CVEs). In verilith-png that class of bug is ruled out for every input by the pro
 | Each row filter reconstructs exactly `spec::recon`, in place | `unfilter::unfilter_row`, `unfilter::unfilter_rows` |
 | Every Adam7 pass is reconstructed at the right place | `passes::reconstruct` against `spec::pass_images` |
 | RGBA and native output equal `spec::rgba8` and `spec::native` pixel for pixel, on the general (sub-byte) path, the direct non-interlaced paths and the row-by-row deinterlacer | `output::to_rgba8`, `output::to_native`, `fast::*`, `deint::*` |
+| Linear work: at most `png_work(n, px) = 303,104n + 12px + 82,028` steps for an `n`-byte file that makes the decoder allocate `px` bytes for the output, with `px` at most twice the caller's `limit` | `top::decode_counted` ensures (`decode` and `decode_tail` are the same code without the count) |
+| Linear work per stage: the chunk walk at most `2n + 20` steps; decompression at most `300,000m + 80,000` for `m` bytes of image data, Deflate's bound from verilith-zlib included; unfiltering and pass reconstruction at most 3 steps per byte of image data, which is at most 1032 bytes per byte of the file; each output conversion at most 12 steps per output byte | `decode::container_counted`, `decode::inflate_exec`, `decode::parse_counted`, `passes::reconstruct_counted`, the output functions' ensures |
+
+A step of the work bound is a loop turn, or a byte copied, compared or
+zeroed; a copy of `n` bytes by a verilith-core primitive is charged `n`,
+and decompression is charged verilith-zlib's own count of its steps plus
+4096 for setting up its decoder. The counter is ghost state
+(`work::Meter`), erased at compile time. The constants are mostly
+verilith-zlib's Deflate bound, which is written for the worst case; real
+files run far below it. No file can make the decoder work out of
+proportion to its size and the image it asks for: the image data is at
+most 1032 times the compressed data (checked before allocating), and
+every later stage is linear in the image data or the output.
 
 ### Trusted base
 
@@ -47,6 +61,12 @@ What the proofs assume rather than prove:
   the bounds fact Verus proves at every call site. (The unchecked byte get
   and set next to them are verified against vstd's spec of
   `get_unchecked`.)
+- The work bound's unit: that a non-overlapping copy, a zeroed allocation,
+  a CRC and `slice_to_vec` of `n` bytes cost on the order of `n` steps,
+  that a `Vec` push is amortized constant, that `Decompressor::new` costs
+  at most 4096, and verilith-zlib's own count of its steps (its work bound,
+  proven there). The counters count what the verified loops do; the
+  primitives' cost is assumed.
 - verilith-zlib's trusted base (its specification of zlib/DEFLATE and its own
   primitives), Verus, Z3 and the Rust compiler.
 
@@ -71,7 +91,71 @@ output is byte-identical; the differential tests and the fuzzer check this.
 | IEND with a bad CRC or with data | CRC checked as for an ancillary chunk, so ignored; data ignored | same |
 | Output conversions (gamma, background composition, scaling) | many | 8-bit RGBA or native only |
 | Width and height | up to 2^31 − 1, with a default limit of 1,000,000 each | up to 2^31 − 1; memory is bounded by the caller's `limit` instead |
-| Streaming / progressive decode, C API | yes | not provided yet |
+| Streaming / progressive decode, C API | yes | libpng's read API, over the same decoder (below) |
+
+## The libpng API
+
+`src/libpng/` is libpng 1.6.59's read API over the verified decoder, so a C
+program written for libpng can decode with verilith-png. Every function is
+exported as `vpng_<name>` (`vpng_read_info`); built with `--features
+libpng-abi`, under libpng's own names, and `libverilith_png.a` is then a
+drop-in libpng for reading: compile against `include/png.h` (libpng's
+headers, with a `pnglibconf.h` that says what is here) and link with
+`libverilith_png.a` instead of `libpng16.a`. The module is not verified: it
+reads the chunks through the caller's I/O functions, does libpng's chunk
+handling, and at the first row hands the signature, IHDR, PLTE, tRNS and the
+image data to `top::decode`. The pixels then go to the caller the way libpng
+gives them.
+
+What is there:
+
+- The sequential reader (`png_read_info`, `png_read_update_info`,
+  `png_read_row(s)`, `png_read_image`, `png_read_end`), `png_read_png`, and
+  the progressive reader (`png_process_data`, the info, row and end
+  callbacks, `png_progressive_combine_row`, pausing).
+- The transformations that need no gamma: expand (palette, low-bit grey,
+  tRNS), expand 16, strip 16 and scale 16, strip alpha, grey to RGB, filler
+  and add alpha, BGR, swap alpha, invert alpha, invert mono, shift (sBIT),
+  packing, packswap, swap, and user transforms; interlace handling, with
+  the sparkle and rectangle display rows.
+- The ancillary chunks of `include/pnglibconf.h` (bKGD, cHRM, eXIf, gAMA,
+  hIST, iCCP, iTXt, oFFs, pHYs, sBIT, sRGB, tEXt, tIME, tRNS, zTXt) with
+  their `png_get_*` and `png_set_*` functions, unknown chunks (keep lists,
+  `png_set_keep_unknown_chunks`, the user chunk callback), CRC actions,
+  user limits, benign errors, and the caller's memory, error, warning and
+  I/O functions, `setjmp`/`longjmp` included.
+
+What is not: writing (the write functions do nothing and
+`png_create_write_struct` returns NULL), the simplified API
+(`png_image_*`), gamma correction, background composition, alpha modes, RGB
+to grey, quantizing, and the pCAL, sCAL, sPLT, cICP, cLLI and mDCV chunks (read as unknown chunks).
+
+It is checked against libpng 1.6.59 built with the same `pnglibconf.h`
+(`include/vpng.dfa`). `difftest/abitest.c` reads a file through every
+reader (sequential, rows with a display buffer, `png_read_image`,
+`png_read_png`, and the progressive reader fed 1, 7 and 4096 bytes at a
+time), with each of 21 transformations, every pair of them and some larger
+sets, and prints the header, every `png_get_*` value, each warning and error,
+and a hash of the rows; `difftest/abicompare.py` runs it linked with libpng
+and with verilith-png and compares the output. On PngSuite and libpng's
+test images, crashers and bad-palette files (88,830 cases) and 3,000
+damaged files from `fuzz/mutate.py` (27,000 cases), the two print the same,
+apart from the departures below. libpng's own read tests (`pngunknown`,
+`pngimage`, `readpng`) pass against it (`difftest/upstream.sh`); its other
+tests need writing or the simplified API.
+
+Where it departs from libpng:
+
+| area | libpng 1.6.59 | verilith-png |
+| --- | --- | --- |
+| Damaged image data | an error at the row where it is found, with zlib's message | an error at the first row: `IDAT: invalid image data` |
+| Image data damaged after the last byte the image needs | a warning; the image decodes | an error (as for `top::decode` above) |
+| Progressive reader | rows as the image data arrives | rows once all of it has arrived; a file that ends inside the image data gets none, and damaged or short image data is an error where libpng gives the rows before the damage |
+| Progressive reader, data after the image | "Extra compressed data" warnings, as many as the caller's calls | no warning |
+| Damaged compressed text or iCCP | a warning with zlib's message | a warning: "bad compressed data"; the chunk is dropped in both |
+| An IDAT chunk with a bad CRC | the error comes after the rows before it are read | the error comes at the first row |
+| A caller's read function failing on the chunk header after the image data | at the end of the image | at the first row (with libpng's own I/O, at the same point as libpng) |
+| `png_struct` | allocated with the caller's allocator | allocated by Rust; the caller's allocator is used for what `png_malloc` returns |
 
 ## Design
 
@@ -112,6 +196,8 @@ the spec:
   compares the bytes. On 649 files (PngSuite, libpng's and libspng's test
   images and a corpus of photographs and screenshots), in both formats:
   1128 identical, 170 rejected by both, none different.
+- `difftest/abicompare.py` and `difftest/upstream.sh` check the libpng
+  API (above).
 - `fuzz/run.sh OUT N SEED FILES...` writes `N` mutants of the seed files
   (byte flips, mutated and recompressed image data, changed IHDR fields,
   duplicated, dropped and reordered chunks, random PLTE/tRNS; CRCs repaired
@@ -170,13 +256,17 @@ Native output:
 | logo_rgba8 | 2.3 | 4.3 | 4.4 | **2.1** | 2.3 |
 | text_gray8 | **0.4** | 1.0 | 1.1 | 0.4 | 0.5 |
 
-verilith-png is 1.6 to 2.8 times as fast as libpng and libspng on every
+On these images verilith-png is 1.6 to 2.8 times as fast as libpng and libspng on every
 photograph, interlaced ones included, and level with them on the screenshot.
 Against the Rust `png` crate it is faster on the RGB photos to RGBA at
 every compression level (interlaced too), the palette and level-1 photos,
 grey to RGBA and the fractal, and 2 to 15% behind on the rest. Interlaced images used to be the slowest
 of the five decoders; 8- and 16-bit ones are now deinterlaced row by row
 and converted by the non-interlaced paths.
+
+On the repository's benchmark (`png-libpng`: the 24 Kodak photos decoded
+to RGBA8, Apple M3 Pro, 2026-11-22) it is 1.41x libpng as a geometric mean;
+see the [benchmark table](https://github.com/verilith/verilith#benchmarks).
 
 Where the remaining time goes, on the RGB photo in native format: about
 two thirds is decompression (verilith-zlib 31 ms against 26 ms for fdeflate, which
@@ -191,24 +281,33 @@ decoder delivers it (level with the one-shot path).
 
 ## Building
 
+The proofs hold for 64-bit and for 32-bit targets (wasm32 included):
+`scripts/verify.sh png` checks the first and `crates/png/scripts/verify-narrow.sh`
+the second, and the tests pass on wasm32-wasip1. On a 32-bit target an
+image whose output does not fit in the address space is refused with
+`Error::TooLarge`, as one over the caller's limit is.
+
 ```sh
 cargo build --release                       # the library
 cargo build --release --example vpngcat     # vpngcat FILE [rgba8|native]
 ./scripts/verify.sh                         # needs cargo-verus and z3 on PATH
 ```
 
-The proofs are checked with Verus at commit `8bf68ee7` (vstd
-`0.0.0-2026-11-01-0251`) and Rust 1.99.1.
+The proofs are checked with Verus at commit `1ce6a59b` (vstd
+`0.0.0-2026-11-22-0344`) and Rust 1.100.0.
 
-```rust
-use verilith_png::top::{decode, PixelFormat};
-match decode(&bytes, PixelFormat::Rgba8, 1 << 30) {
-    Ok((header, rgba)) => { /* header.width x header.height, 4 bytes per pixel */ }
-    Err(e) => { /* Invalid, TooLarge or OutOfMemory */ }
+```rust,no_run
+use verilith_png::{decode, PixelFormat};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = std::fs::read("image.png")?;
+    let (header, rgba) = decode(&bytes, PixelFormat::Rgba8, 1 << 30)?; // Invalid, TooLarge or OutOfMemory
+    println!("{} x {}, {} bytes of RGBA", header.width, header.height, rgba.len());
+    Ok(())
 }
 ```
 
 ## License
 
-Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
-or the [MIT license](LICENSE-MIT), at your option.
+Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/png/LICENSE-APACHE)
+or the [MIT license](https://github.com/verilith/verilith/blob/main/crates/png/LICENSE-MIT), at your option.
