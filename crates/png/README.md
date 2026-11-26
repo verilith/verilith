@@ -10,8 +10,9 @@ tRNS (no gamma, colour profiles, text or animation).
 The chunk parser, the image-data decompression (through
 [verilith-zlib](https://github.com/verilith/verilith/tree/main/crates/zlib), itself verified), the
 five row filters, Adam7 deinterlacing and both output formats are proven
-against a specification of the format. `cargo verus verify` checks 302
-functions with no errors.
+against a specification of the format, and so is a bound on the decoder's
+work that is linear in the file's size and the output's. `cargo verus
+verify` checks 328 functions with no errors.
 
 libpng's security history is mostly memory-safety bugs in exactly these
 places: chunk lengths ([CVE-2017-12652](#cves)), palette and transparency
@@ -32,6 +33,19 @@ CVEs). In verilith-png that class of bug is ruled out for every input by the pro
 | Each row filter reconstructs exactly `spec::recon`, in place | `unfilter::unfilter_row`, `unfilter::unfilter_rows` |
 | Every Adam7 pass is reconstructed at the right place | `passes::reconstruct` against `spec::pass_images` |
 | RGBA and native output equal `spec::rgba8` and `spec::native` pixel for pixel, on the general (sub-byte) path, the direct non-interlaced paths and the row-by-row deinterlacer | `output::to_rgba8`, `output::to_native`, `fast::*`, `deint::*` |
+| Linear work: at most `png_work(n, px) = 303,104n + 12px + 82,028` steps for an `n`-byte file that makes the decoder allocate `px` bytes for the output, with `px` at most twice the caller's `limit` | `top::decode_counted` ensures (`decode` and `decode_tail` are the same code without the count) |
+| Linear work per stage: the chunk walk at most `2n + 20` steps; decompression at most `300,000m + 80,000` for `m` bytes of image data, Deflate's bound from verilith-zlib included; unfiltering and pass reconstruction at most 3 steps per byte of image data, which is at most 1032 bytes per byte of the file; each output conversion at most 12 steps per output byte | `decode::container_counted`, `decode::inflate_exec`, `decode::parse_counted`, `passes::reconstruct_counted`, the output functions' ensures |
+
+A step of the work bound is a loop turn, or a byte copied, compared or
+zeroed; a copy of `n` bytes by a verilith-core primitive is charged `n`,
+and decompression is charged verilith-zlib's own count of its steps plus
+4096 for setting up its decoder. The counter is ghost state
+(`work::Meter`), erased at compile time. The constants are mostly
+verilith-zlib's Deflate bound, which is written for the worst case; real
+files run far below it. No file can make the decoder work out of
+proportion to its size and the image it asks for: the image data is at
+most 1032 times the compressed data (checked before allocating), and
+every later stage is linear in the image data or the output.
 
 ### Trusted base
 
@@ -47,6 +61,12 @@ What the proofs assume rather than prove:
   the bounds fact Verus proves at every call site. (The unchecked byte get
   and set next to them are verified against vstd's spec of
   `get_unchecked`.)
+- The work bound's unit: that a non-overlapping copy, a zeroed allocation,
+  a CRC and `slice_to_vec` of `n` bytes cost on the order of `n` steps,
+  that a `Vec` push is amortized constant, that `Decompressor::new` costs
+  at most 4096, and verilith-zlib's own count of its steps (its work bound,
+  proven there). The counters count what the verified loops do; the
+  primitives' cost is assumed.
 - verilith-zlib's trusted base (its specification of zlib/DEFLATE and its own
   primitives), Verus, Z3 and the Rust compiler.
 

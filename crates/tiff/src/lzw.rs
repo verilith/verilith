@@ -356,6 +356,7 @@ fn code_first(st: &mut St, need: usize, out: &mut [u8], off: &[u32], len: &[u32]
         ok == lzw_code(old(st).s@, c as nat, need as nat) is Some,
         ok ==> final(st).ok(need as nat, final(out)@, off@, len@)
             && final(st).s@ == lzw_code(old(st).s@, c as nat, need as nat)->Some_0,
+        ok ==> final(st).pos >= old(st).pos,
 {
     let ghost s = st.s@;
     if c >= 256 {
@@ -455,6 +456,7 @@ fn code_next(st: &mut St, need: usize, out: &mut [u8], off: &mut [u32], len: &mu
         ok == lzw_code(old(st).s@, c as nat, need as nat) is Some,
         ok ==> final(st).ok(need as nat, final(out)@, final(off)@, final(len)@)
             && final(st).s@ == lzw_code(old(st).s@, c as nat, need as nat)->Some_0,
+        ok ==> final(st).pos >= old(st).pos,
 {
     let ghost s = st.s@;
     let ghost o = out@;
@@ -506,8 +508,12 @@ fn code_next(st: &mut St, need: usize, out: &mut [u8], off: &mut [u32], len: &mu
 /// Decodes the LZW data `data`, to its end code, into `out[..need]`.
 /// Returns whether `spec::lzw` accepts the data; `out` from `need` on is
 /// scratch space, and so are `off` and `len`.
+///
+/// Counts its steps on `m`: one for each code and each byte of `data`
+/// read, and one for each byte of output written, so at most
+/// `lzw_work(data.len(), need)`.
 #[verifier::loop_isolation(false)]
-pub fn lzw_exec(data: &[u8], need: usize, out: &mut [u8], off: &mut [u32], len: &mut [u32]) -> (r: bool)
+pub fn lzw_exec(data: &[u8], need: usize, out: &mut [u8], off: &mut [u32], len: &mut [u32], Tracked(m): Tracked<&mut crate::work::Meter>) -> (r: bool)
     requires
         need + SLACK <= old(out)@.len() <= u32::MAX,
         old(off)@.len() == STORED,
@@ -518,7 +524,9 @@ pub fn lzw_exec(data: &[u8], need: usize, out: &mut [u8], off: &mut [u32], len: 
         final(len)@.len() == STORED,
         r == lzw(data@, need as nat) is Some,
         r ==> lzw(data@, need as nat) == Some(final(out)@.subrange(0, need as int)),
+        final(m).n <= old(m).n + lzw_work(data@.len(), need as nat),
 {
+    let ghost m0 = m.n;
     let ghost dd = data@;
     let ghost olen = out@.len();
     let mut st = st_new(false, 0, Ghost(Seq::empty()));
@@ -543,9 +551,11 @@ pub fn lzw_exec(data: &[u8], need: usize, out: &mut [u8], off: &mut [u32], len: 
             cnt < 20,
             buf as nat == mbits(dd, 8 * ip - cnt, cnt as nat),
             lzw(dd, need as nat) == lzw_run(dd, need as nat, st.s@, 8 * ip - cnt),
+            m.n + cnt <= m0 + 9 * ip + st.pos,
         decreases 8 * data@.len() - (8 * ip - cnt),
     {
         let ghost q = 8 * ip - cnt;
+        let ghost pos0 = st.pos;
         let w = st.w;
         while cnt < w
             invariant
@@ -554,10 +564,15 @@ pub fn lzw_exec(data: &[u8], need: usize, out: &mut [u8], off: &mut [u32], len: 
                 cnt < 20,
                 8 * ip - cnt == q,
                 buf as nat == mbits(dd, q, cnt as nat),
+                m.n + cnt <= m0 + 9 * ip + st.pos,
+                st.pos == pos0,
             decreases data@.len() - ip,
         {
             if ip >= data.len() {
                 return false;
+            }
+            proof {
+                m.n = m.n + 1;
             }
             let byte = get(data, ip) as u64;
             proof {
@@ -623,14 +638,30 @@ pub fn lzw_exec(data: &[u8], need: usize, out: &mut [u8], off: &mut [u32], len: 
                 return false;
             }
             if !code_first(&mut st, need, out, off, len, c) {
+                proof {
+                    m.n = (m.n + SLACK) as nat;
+                }
                 return false;
             }
         } else {
             if !code_next(&mut st, need, out, off, len, c) {
+                // A string may have been written past the strip.
+                proof {
+                    m.n = (m.n + SLACK) as nat;
+                }
                 return false;
             }
         }
+        proof {
+            m.n = (m.n + 1 + (st.pos - pos0)) as nat;
+        }
     }
+}
+
+/// The bound on `lzw_exec`'s work, for `n` bytes of data and `need` bytes
+/// of output.
+pub open spec fn lzw_work(n: nat, need: nat) -> nat {
+    (9 * n + need + SLACK) as nat
 }
 
 } // verus!

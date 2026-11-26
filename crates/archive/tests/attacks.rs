@@ -232,3 +232,16 @@ fn nothing_is_written_when_refused() {
     assert!(!dir.join("escaped.txt").exists());
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn symlink_target_length() {
+    // A target of MAX_LINK (4096) bytes is accepted, one byte more is not,
+    // in the header (pax `linkpath`) and in the data (zip) alike.
+    let at = |n: usize| "a/".repeat(n / 2) + if n % 2 == 1 { "b" } else { "" };
+    let t = tar(&[("pax", b'x', &pax("linkpath", &at(4096)), ""), ("l", b'2', b"", "ok")]);
+    assert_eq!(ok(&t), 1);
+    let t = tar(&[("pax", b'x', &pax("linkpath", &at(4097)), ""), ("l", b'2', b"", "ok")]);
+    assert_eq!(why(&t), Why::SymlinkTarget);
+    assert_eq!(ok(&zip(&[zip_symlink("l", &at(4096))])), 1);
+    assert_eq!(why(&zip(&[zip_symlink("l", &at(4097))])), Why::SymlinkTarget);
+}

@@ -3,8 +3,8 @@
 //!
 //! Threads sleep keyed by an address, as in parking_lot_core, so a lock
 //! needs no space for its own wait queue: 64 buckets, each a list of
-//! waiters behind a `std` mutex, shared by every lock whose key hashes to
-//! it. A lock's key is the address of its lock word.
+//! waiters behind a fair lock (`src/fair.rs`), shared by every lock whose
+//! key hashes to it. A lock's key is the address of its lock word.
 //!
 //! Each lock keeps, in its own invariant, the set of its waiters' tickets
 //! (`list`, a ghost variable that is exactly its progress model's list),
@@ -85,6 +85,21 @@ impl Waiter {
         &&& self.brec@.key() == self.id
         &&& self.brec@.value() == (self.lot@, self.tk@, self.key)
     }
+}
+
+/// A bucket's lock holds any list: what ties it to the locks' ghost
+/// state is `lock_bucket`'s and `unlock_bucket`'s business.
+pub struct AnyList;
+
+impl LockInv<(), BucketList> for AnyList {
+    open spec fn inv(k: (), l: BucketList) -> bool {
+        true
+    }
+}
+
+/// A bucket's lock, holding an empty list.
+pub fn new_bucket_lock() -> Lock<(), BucketList, AnyList> {
+    Lock::new(BucketList { q: Vec::new(), next: 0 }, Ghost(()))
 }
 
 /// A bucket's list.
@@ -191,7 +206,7 @@ impl KeyOf {
 /// Proof that a bucket is locked, and what it held when it was.
 #[verifier::external_body]
 pub struct BucketGuard {
-    g: Option<std::sync::MutexGuard<'static, Option<BucketList>>>,
+    g: Option<LockGuard<'static, (), BucketList, AnyList>>,
 }
 
 impl BucketGuard {
@@ -217,8 +232,7 @@ pub fn lock_bucket(key: usize, Tracked(k): Tracked<&KeyOf>) -> (r: (BucketGuard,
         r.3@.id() == bucket_loc(key),
         bids_ok(r.1.q@, r.1.next, r.3@),
 {
-    let mut g = bucket(key).list.lock().unwrap_or_else(|e| e.into_inner());
-    let l = g.take().unwrap();
+    let (g, l) = bucket(key).list.lock();
     (BucketGuard { g: Some(g) }, l, Tracked::assume_new(), Tracked::assume_new())
 }
 
@@ -236,8 +250,7 @@ pub fn unlock_bucket(g: BucketGuard, l: BucketList, Tracked(half): Tracked<Ghost
         same_others(l.q@, g.got(), k.key()),
 {
     let mut g = g;
-    let mut inner = g.g.take().unwrap();
-    *inner = Some(l);
+    g.g.take().unwrap().unlock(l);
 }
 
 /// The first waiter under `key`, or `q.len()` if there is none.
@@ -436,7 +449,7 @@ pub proof fn lemma_push_wf(l: BucketList, w: Arc<Waiter>)
 } // verus!
 
 struct Bucket {
-    list: std::sync::Mutex<Option<BucketList>>,
+    list: Lock<(), BucketList, AnyList>,
 }
 
 // Each bucket on its own cache line(s), as before.
@@ -445,7 +458,14 @@ struct Padded(Bucket);
 
 const BUCKETS: usize = 64;
 
-static TABLE: [Padded; BUCKETS] = [const { Padded(Bucket { list: std::sync::Mutex::new(Some(BucketList { q: Vec::new(), next: 0 })) }) }; BUCKETS];
+/// The buckets, made on first use: the fair lock has no `const`
+/// constructor.
+static TABLE: std::sync::OnceLock<Box<[Padded]>> = std::sync::OnceLock::new();
+
+#[cold]
+fn make_table() -> Box<[Padded]> {
+    (0..BUCKETS).map(|_| Padded(Bucket { list: new_bucket_lock() })).collect()
+}
 
 #[inline]
 fn bucket(key: usize) -> &'static Bucket {
@@ -454,7 +474,7 @@ fn bucket(key: usize) -> &'static Bucket {
     const PHI: usize = 0x9E37_79B9_7F4A_7C15;
     #[cfg(target_pointer_width = "32")]
     const PHI: usize = 0x9E37_79B9;
-    &TABLE[(key.wrapping_mul(PHI) >> (usize::BITS - 6)) as usize].0
+    &TABLE.get_or_init(make_table)[(key.wrapping_mul(PHI) >> (usize::BITS - 6)) as usize].0
 }
 
 impl Drop for BucketGuard {

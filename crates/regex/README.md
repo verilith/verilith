@@ -74,6 +74,11 @@ parser over the bytes of the pattern.
 - `Regex::new(pattern)` returns `Ok(re)` only with `parse(pattern) ==
   Some(Pat { re: re.re, .. })`, and returns `Err(e)` only if `parse(pattern)`
   is `None` or `e` is `TooBig`.
+- Compiling never fails. Every program the compiler emits has only forward
+  jumps where no input is consumed, only addresses inside the program, and
+  class and slot numbers in range (`compile::lemma_compiled_fwd`,
+  `compile::insts_ok`), which is what the matcher needs. So no check runs
+  at compile time, and `TooBig` means only that a size limit was passed.
 - `re.search_with(text, from, ..)` returns true exactly when
   `search(re.re, text, from, slots)` is some match `m`, and then the slots
   it filled are `m.caps`. It also returns the number of loop iterations it
@@ -108,7 +113,7 @@ parser over the bytes of the pattern.
 | parser | `parse.rs` | computes `syntax::parse` |
 | character classes | `class.rs` | ranges, union, negation, case folding and Unicode groups compute the sets `data.rs` defines |
 | compiler, on paper | `cproof.rs` | the compilation scheme preserves the list of matches, in order |
-| compiler, in code | `compile.rs` | emits exactly the scheme's program |
+| compiler, in code | `compile.rs` | emits exactly the scheme's program, which always meets the matcher's requirements (`lemma_compiled_fwd`) |
 | matcher | `pike.rs`, `vmspec.rs` | reports the first match of the program's own semantics (`sem.rs`), within the step and memory bounds |
 | skipping | `skip.rs` | no match starts at a byte the table rules out |
 | second byte | `skip.rs` | no match starts at an ASCII byte unless the byte after it is one the pattern can go on with (`lemma_pair`) |
@@ -117,7 +122,7 @@ parser over the bytes of the pattern.
 | lazy DFA | `dfa.rs` | no match starts anywhere the DFA passed with an empty state; at most 256 states |
 | stored steps | `memo.rs` | a stored step, replayed, leaves the threads and their capture slots exactly as the matcher's own step would; at most 256 thread lists |
 
-`scripts/verify.sh` runs Verus on all of it: 565 items verified, no
+`scripts/verify.sh` runs Verus on all of it: 589 items verified, no
 `assume`, no `admit`.
 
 ## Supported syntax

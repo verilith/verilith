@@ -25,8 +25,9 @@ See [C API](#c-api).
 The IFD reader, the image parameters, each of the four compression
 schemes, the byte swap, the predictor, and where each strip or tile lands
 in the output are proven against a specification of the format, written
-from the standard. `cargo verus focus` checks 140 functions with no
-errors.
+from the standard, and so is a bound on the decoder's work that is linear
+in the file and the bytes it allocates. `cargo verus focus` checks 150
+functions with no errors.
 
 libtiff's long CVE list is mostly memory-safety bugs in exactly these
 places: the arithmetic on strip and tile sizes and offsets, the predictor
@@ -42,11 +43,37 @@ by the proofs.
 | Termination of every loop | every function (`decreases`) |
 | Correctness: the image's parameters and samples equal the specification's for every file the spec accepts; `Unsupported` is returned exactly for the TIFF files that use a part of TIFF not read here, and `Invalid` for the other files the spec rejects | `decode::decode` against `spec::decode` and `spec::unsupported` |
 | The only other results are `TooLarge` (the caller's memory limit) and `OutOfMemory` (a failed allocation); the output is allocated only once its size is known to be within the limit | `decode::decode` ensures |
+| Linear work: at most `tiff_work(n, px) = 50,000n + 10,000px + 50,000` steps for an `n`-byte file that allocates `px` bytes for the image and its strips or tiles, with `px` at most twice the caller's `limit` | `decode::decode_counted` ensures (`decode` is the same code without the count) |
+| Linear work per strip or tile: at most `9600c + 149s + 36,549` steps for one that reads `c` bytes and decodes to `s`, Deflate's bound from verilith-zlib included; the IFD reader at most 38 walks of the IFD or of a field's values | `decode::chunk_counted`, `chunk::decompress_exec`, `params::params_counted` ensures |
 | IFD entries and their values are read as the spec reads them, inline or at an offset, in either byte order; the entries are in ascending order of tag; a field of a type other than BYTE, SHORT or LONG is skipped | `ifd::field_exec`, `ifd::scalar_exec`, `ifd::sorted_exec` against `spec::field`, `spec::scalar`, `spec::sorted` |
 | The parameters are the spec's, and the standard's rules on the fields that must agree with the samples (PhotometricInterpretation, ExtraSamples, ColorMap, SampleFormat, SMin/SMaxSampleValue, tiles) are checked | `params::params_exec` against `spec::params`, `params::extras_exec` against `spec::extras` |
 | PackBits (row by row), LZW (most significant bit first, early change, a 4096-entry table, to the end code) and Deflate (through verilith-zlib) decode exactly the spec's bytes | `packbits::packbits_exec`, `lzw::lzw_exec`, `chunk::decompress_exec` |
 | Byte swapping and horizontal differencing are undone as the spec says, in place | `chunk::swap_exec`, `predict::unpredict_exec` against `spec::to_le`, `spec::unpredict` |
 | Every byte of the output is written by exactly the strip or tile that the spec says it comes from, at the offset it says | `place::lemma_strip_a`/`_b`, `place::lemma_tile_a`/`_b`, `decode::place_strip`, `decode::place_tile` |
+
+A step of the work bound is a loop turn, or a byte copied, compared or
+zeroed; a copy of `n` bytes by a verilith-core primitive is charged `n`,
+and a Deflate strip or tile is charged verilith-zlib's own count of its
+steps plus 4096 for setting up its decoder. The counter is ghost state
+(`work::Meter`), erased at compile time. The constants are mostly
+verilith-zlib's Deflate bound, which is written for the worst case; real
+files run far below it.
+
+Strips and tiles can share bytes of the file, and a strip can be all
+clear codes, or empty Deflate blocks, that decode to nothing. A file of
+`n` bytes with `n / 4` strips pointing at the same data would make the
+decoder read it `n / 4` times, so the work would grow with the square of
+the file's size. To rule that out the decoder also returns `TooLarge`,
+before decoding a strip or tile, when (1) the strips or tiles decoded so
+far and this one would take more than `limit` bytes in all, or (2) they
+would read more bytes than the file has and than they decode to, together.
+No file whose strips and tiles do not overlap is affected by (2), and for
+a striped image (1) is the check on the image's size the decoder already
+made; a tiled image whose tiles, padding included, take more than `limit`
+is newly `TooLarge`. Both are departures from libtiff, which has neither
+limit. `TooLarge` is outside the correctness theorem, which says nothing
+about a file it is returned for beyond that the spec does not call the file
+`Unsupported`.
 
 ### Trusted base
 
@@ -61,6 +88,11 @@ What the proofs assume rather than prove:
   tests check the spec against.
 - `src/prims.rs`: one `#[verifier::external_body]` primitive, a zeroed
   allocation.
+- The work bound's unit: that a verilith-core copy, a zeroed allocation
+  and `slice_to_vec` of `n` bytes cost on the order of `n` steps, that
+  `Decompressor::new` costs at most 4096, and verilith-zlib's own count of
+  its steps (its work bound, proven there). The counters count what the
+  verified loops do; the primitives' cost is assumed.
 - verilith-zlib's trusted base (its specification of zlib and DEFLATE and
   its own primitives), and verilith-core's (the memory primitives used
   here: unchecked loads and stores, `copy_in`, `copy_match`'s chunks,
