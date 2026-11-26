@@ -511,8 +511,9 @@ in `bench/server/results`, and a merge.
    multipart ranges, streaming files larger than the cache)*
 4. **TLS.** ALPN, certificates through verilith-x509. *(done on
    verilith-tls, with rustls kept to compare, session tickets, and 0-RTT
-   behind `--early-data` (425 Too Early for unsafe methods); left:
-   verilith-x509 at load, kTLS, ECH)*
+   behind `--early-data` (425 Too Early for unsafe methods), and
+   Encrypted Client Hello behind `--ech`; left: verilith-x509 at load,
+   kTLS)*
 5. **HPACK encoder** in verilith-hpack, and **verilith-h2 frames**. These
    two do not depend on milestones 2 to 4 and can run in parallel threads.
    *(encoder done: `crates/hpack/src/encoder.rs`, the per-connection cache
