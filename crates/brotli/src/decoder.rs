@@ -14,6 +14,7 @@ use crate::huffman::*;
 use crate::items::*;
 use crate::prefix::*;
 use crate::words::*;
+use crate::work::*;
 #[cfg(verus_only)]
 use crate::spec;
 #[cfg(verus_only)]
@@ -311,14 +312,16 @@ pub open spec fn dtab_ok(t: Seq<u64>, np: u32, nd: u32) -> bool {
 
 /// The distance table for `np` and `nd`.
 #[verifier::spinoff_prover]
-pub fn mk_dtab(np: u32, nd: u32) -> (v: Vec<u64>)
+pub fn mk_dtab(np: u32, nd: u32, Tracked(m): Tracked<&mut Meter>) -> (v: Vec<u64>)
     requires
         np <= 3,
         nd <= 120,
     ensures
         dtab_ok(v@, np, nd),
         v@.len() != 0,
+        final(m).n <= old(m).n + 520,
 {
+    let ghost m0 = m.n;
     proof {
         lemma2_to64();
         lemma_pow2_le(np as nat, 3);
@@ -335,6 +338,7 @@ pub fn mk_dtab(np: u32, nd: u32) -> (v: Vec<u64>)
             alpha <= 520,
             i <= alpha,
             v@.len() == i,
+            m.n == m0 + i,
             forall|j: int| 0 <= j < i ==> #[trigger] v@[j] == dt_ent(j, np as int, nd as int) && dt_fits(j, np as int, nd as int),
         decreases alpha - i,
     {
@@ -352,6 +356,9 @@ pub fn mk_dtab(np: u32, nd: u32) -> (v: Vec<u64>)
         };
         v.push(e);
         i = i + 1;
+        proof {
+            m.n = m.n + 1;
+        }
     }
     proof {
         reveal(dtab_ok);
@@ -591,6 +598,7 @@ pub open spec fn reading_ok(ph: Ph, nbt: [u32; 3], npostfix: u32, ndirect: u32, 
             &&& cm.stage <= 3
             &&& (cm.stage != 1 ==> !pc.started)
             &&& (cm.stage == 0 ==> cm.view() == spec::cm_init())
+            &&& (cm.stage <= 1 ==> cm.map@.len() == 0)
             &&& (cm.stage >= 1 ==> 2 <= cm.ntrees <= 256 && cm.rlemax <= 16)
             &&& (cm.stage >= 2 ==> hcode_ok(cm.code, cm.lens@) && cm.lens@.len() == cm.ntrees + cm.rlemax)
             &&& cm.map@.len() <= size
@@ -616,6 +624,9 @@ pub open spec fn cmd_ok(
 ) -> bool {
     &&& dctx < 4
     &&& forall|i: int| 0 <= i < 4 ==> 1 <= #[trigger] dr[i] <= 0x7fff_fffc
+    // The last distances are the first four or ones copied from: within
+    // the window.
+    &&& forall|i: int| 0 <= i < 4 ==> #[trigger] dr[i] <= 16 || dr[i] <= spec::max_distance(total as int, wbits as int)
     &&& (ph == Ph::Insert ==> 1 <= ilen <= mrem)
     &&& (ph == Ph::Insert || ph == Ph::Dist ==> 2 <= clen <= 2118 + 0xff_ffff)
     &&& (ph == Ph::Copy ==> 1 <= clen <= mrem && 1 <= dist <= spec::max_distance(total as int, wbits as int))
@@ -835,6 +846,7 @@ impl Decoder {
             final(self).view() == old(self).view(),
             final(self).steps == old(self).steps,
             final(self).ring == old(self).ring,
+            *final(self) == (Decoder { flushed: final(self).flushed, ..*old(self) }),
             n == vstd::math::min((old(self).total - old(self).flushed) as int, old(out)@.len() - at),
             final(out)@.len() == old(out)@.len(),
             final(out)@.subrange(0, at as int) == old(out)@.subrange(0, at as int),
@@ -1015,13 +1027,23 @@ pub open spec fn wstep_ok(o: Decoder, n: Decoder, r: Option<Status>, src: Seq<u8
     }
 }
 
+/// The distance step from `o` to `n` resolved: a backward copy, or a
+/// dictionary word that output a byte or came with bits.
+pub open spec fn resolved(o: Decoder, n: Decoder) -> bool {
+    &&& n.ring@.len() == o.ring@.len()
+    &&& o.out@.len() <= n.out@.len()
+    &&& o.pos <= n.pos
+    &&& ((n.ph == Ph::Copy && n.out@.len() == o.out@.len()) || ((n.ph == Ph::CmdBegin || n.ph == Ph::MetaDone)
+        && (n.out@.len() > o.out@.len() || n.pos > o.pos)))
+}
+
 /// What one exec step did, from `o` to `n`.
 pub open spec fn step_ok(o: Decoder, n: Decoder, r: Option<Status>, src: Seq<u8>, base: u64, b: Seq<u8>) -> bool {
     match r {
         None => moved(o, n, src, base, b) && o.steps@ < n.steps@ && crate::rank::rank_lt(b, n.view(), o.view()),
         Some(Status::Done) => moved(o, n, src, base, b) && n.ph == Ph::Done && (o.ph == Ph::Done ==> n == o)
             && (o.ph != Ph::Done ==> crate::rank::rank_lt(b, n.view(), o.view())),
-        Some(Status::Bad) => spec::rejects(b),
+        Some(Status::Bad) => spec::rejects(b) && o.pos <= n.pos <= lim(src, base as int),
         Some(Status::Short) => n == o && (full(src, base as int, b) ==> spec::step(b, o.view()) is Short),
         Some(Status::Full) => n == o && n.ring@.len() - (n.total - n.flushed) < MAX_WORD && n.ring@.len() >= 1024,
         Some(Status::Limit) => n == o && o.total + 0x1_0000_0000 > MAX_OUT,
@@ -1032,7 +1054,7 @@ pub open spec fn step_ok(o: Decoder, n: Decoder, r: Option<Status>, src: Seq<u8>
 /// What `Decoder::run` did, from `o` to `n`.
 pub open spec fn run_ok(o: Decoder, n: Decoder, r: Status, src: Seq<u8>, base: u64, b: Seq<u8>) -> bool {
     match r {
-        Status::Bad => spec::rejects(b),
+        Status::Bad => spec::rejects(b) && o.pos <= n.pos <= lim(src, base as int),
         _ => {
             &&& moved(o, n, src, base, b)
             &&& (r is Done ==> n.ph == Ph::Done)
@@ -2031,6 +2053,7 @@ pub proof fn lemma_dist_facts(d: Decoder)
             && d.dstl@[i].len() == spec::dist_alpha(d.npostfix as int, d.ndirect as int),
         d.npostfix <= 3 && d.ndirect <= 120,
         forall|i: int| 0 <= i < 4 ==> 1 <= #[trigger] d.dr[i] <= 0x7fff_fffc,
+        forall|i: int| 0 <= i < 4 ==> #[trigger] d.dr[i] <= 16 || d.dr[i] <= spec::max_distance(d.total as int, d.wbits as int),
         2 <= d.clen <= 2118 + 0xff_ffff,
         10 <= d.wbits <= 24,
 {
@@ -2606,7 +2629,7 @@ pub open spec fn flat_ok(f: Seq<u32>, codes: Seq<HCode>, t: u64) -> bool {
 /// The tables of `codes` side by side, each widened to the widest one's
 /// bits, for `sym_winf`. Empty when there are no codes.
 #[verifier::spinoff_prover]
-pub fn mk_flat(codes: &[HCode]) -> (r: (Vec<u32>, u64))
+pub fn mk_flat(codes: &[HCode], Tracked(m): Tracked<&mut Meter>) -> (r: (Vec<u32>, u64))
     requires
         codes@.len() <= 256,
         forall|i: int| 0 <= i < codes@.len() ==> (#[trigger] codes@[i]).tbits <= 10 && codes@[i].table@.len() == pow2(
@@ -2614,7 +2637,9 @@ pub fn mk_flat(codes: &[HCode]) -> (r: (Vec<u32>, u64))
         ),
     ensures
         r.0@.len() != 0 ==> flat_ok(r.0@, codes@, r.1),
+        final(m).n <= old(m).n + flc() * codes@.len(),
 {
+    let ghost m0 = m.n;
     let n = codes.len();
     let mut t: u32 = 0;
     let mut i: usize = 0;
@@ -2624,12 +2649,16 @@ pub fn mk_flat(codes: &[HCode]) -> (r: (Vec<u32>, u64))
             t <= 10,
             forall|k: int| 0 <= k < i ==> (#[trigger] codes@[k]).tbits <= t,
             forall|k: int| 0 <= k < codes@.len() ==> (#[trigger] codes@[k]).tbits <= 10,
+            m.n == m0 + i,
         decreases n - i,
     {
         if codes[i].tbits > t {
             t = codes[i].tbits;
         }
         i = i + 1;
+        proof {
+            m.n = m.n + 1;
+        }
     }
     proof {
         verilith_core::bits::lemma_mask(t as u64);
@@ -2664,8 +2693,13 @@ pub fn mk_flat(codes: &[HCode]) -> (r: (Vec<u32>, u64))
                 codes@[k].tbits as nat,
             ),
             forall|k: int| 0 <= k < i ==> flat_at(f@, k, t as u64, #[trigger] codes@[k]),
+            m.n <= m0 + n + 2049 * i,
         decreases n - i,
     {
+        proof {
+            m.n = m.n + 1;
+        }
+        let ghost mi = m.n;
         let h = &codes[i];
         let tb = h.tbits;
         let ghost pt = pow2(tb as nat) as int;
@@ -2707,11 +2741,16 @@ pub fn mk_flat(codes: &[HCode]) -> (r: (Vec<u32>, u64))
                 f0.is_prefix_of(f@),
                 f@.len() == i * pf + q * pt,
                 forall|j: int| 0 <= j < q * pt ==> #[trigger] f@[i * pf + j] == h.table@[j % pt],
+                m.n == mi + q * (1 + pt),
+                mi <= m0 + n + 2049 * i + 1,
             decreases reps - q,
         {
             let ghost f1 = f@;
             f.extend_from_slice(h.table.as_slice());
             proof {
+                // A turn, and a copy of `pt` entries.
+                m.n = (m.n + 1 + pt) as nat;
+                assert(q * (1 + pt) + 1 + pt == (q + 1) * (1 + pt)) by (nonlinear_arith);
                 assert(q * pt + pt == (q + 1) * pt) by (nonlinear_arith);
                 assert forall|j: int| 0 <= j < (q + 1) * pt implies #[trigger] f@[i * pf + j] == h.table@[j % pt] by {
                     if j < q * pt {
@@ -2731,6 +2770,9 @@ pub fn mk_flat(codes: &[HCode]) -> (r: (Vec<u32>, u64))
                     q == pd,
                     pf == pt * pd,
             ;
+            assert(q * (1 + pt) == q + q * pt) by (nonlinear_arith);
+            assert(m.n <= m0 + n + 2049 * i + 2049);
+            assert(2049 * i + 2049 == 2049 * (i + 1)) by (nonlinear_arith);
             assert(i * pf + pf == (i + 1) * pf) by (nonlinear_arith);
             assert((i + 1) * pf <= 256 * 1024) by (nonlinear_arith)
                 requires
@@ -2751,6 +2793,7 @@ pub fn mk_flat(codes: &[HCode]) -> (r: (Vec<u32>, u64))
     }
     proof {
         reveal(flat_ok);
+        assert(n + 2049 * n == flc() * n) by (nonlinear_arith);
     }
     (f, t as u64)
 }
@@ -2844,8 +2887,9 @@ impl Decoder {
     /// byte read is one the copy writes (`m <= dist`). Writes only the
     /// ring: the decoder after it is `copy_next`.
     #[verifier::spinoff_prover]
+    #[verifier::rlimit(60)]
     #[inline(always)]
-    pub fn copy_chunk(ring: &mut Vec<u8>, si: usize, ti: usize, m: u64, wide: bool, Ghost(g): Ghost<Decoder>, Ghost(b): Ghost<Seq<u8>>)
+    pub fn copy_chunk(ring: &mut Vec<u8>, si: usize, ti: usize, m: u64, wide: bool, Ghost(g): Ghost<Decoder>, Ghost(b): Ghost<Seq<u8>>, Tracked(mt): Tracked<&mut Meter>)
         requires
             wide ==> ti + 16 <= g.ring@.len() && g.ring@.len() - (g.total - g.flushed) >= 16,
             g.wf(),
@@ -2866,7 +2910,12 @@ impl Decoder {
             copy_next(g, *final(ring), m).reached(b),
             g.out@.is_prefix_of(copy_next(g, *final(ring), m).out@),
             crate::rank::rank_lt(b, copy_next(g, *final(ring), m).view(), g.view()),
+            final(mt).n == old(mt).n + m,
     {
+        proof {
+            // A bulk copy counts one per byte.
+            mt.n = (mt.n + m) as nat;
+        }
         let ghost o = g;
         let ghost s = g.view();
         proof {
@@ -2930,7 +2979,7 @@ impl Decoder {
 
     /// `copy_chunk` on the decoder itself.
     #[verifier::spinoff_prover]
-    fn copy_bulk(&mut self, si: usize, ti: usize, m: u64, Ghost(b): Ghost<Seq<u8>>)
+    fn copy_bulk(&mut self, si: usize, ti: usize, m: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(mt): Tracked<&mut Meter>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -2951,13 +3000,17 @@ impl Decoder {
             final(self).pos == old(self).pos,
             old(self).steps@ < final(self).steps@,
             crate::rank::rank_lt(b, final(self).view(), old(self).view()),
+            final(mt).n == old(mt).n + m,
+            final(self).out@.len() == old(self).out@.len() + m,
+            final(self).ring@.len() == old(self).ring@.len(),
+            final(self).ph == Ph::Copy || final(self).ph == Ph::CmdBegin || final(self).ph == Ph::MetaDone,
     {
         let ghost o = *self;
         proof {
             reveal(cmd_ok);
             reveal(ring_ok);
         }
-        Self::copy_chunk(&mut self.ring, si, ti, m, false, Ghost(o), Ghost(b));
+        Self::copy_chunk(&mut self.ring, si, ti, m, false, Ghost(o), Ghost(b), Tracked(mt));
         let ghost n = copy_next(o, self.ring, m);
         self.total = self.total + m;
         self.clen = self.clen - m as u32;
@@ -2977,7 +3030,7 @@ impl Decoder {
     /// after it.
     #[verifier::spinoff_prover]
     #[inline(always)]
-    pub fn copy_all(ring: &mut Vec<u8>, si: usize, ti: usize, n: u64, d: u64, wide: bool, Ghost(g): Ghost<Decoder>, Ghost(b): Ghost<Seq<u8>>) -> (gn: Ghost<Decoder>)
+    pub fn copy_all(ring: &mut Vec<u8>, si: usize, ti: usize, n: u64, d: u64, wide: bool, Ghost(g): Ghost<Decoder>, Ghost(b): Ghost<Seq<u8>>, Tracked(mt): Tracked<&mut Meter>) -> (gn: Ghost<Decoder>)
         requires
             wide ==> ti + 16 <= g.ring@.len() && g.ring@.len() - (g.total - g.flushed) >= 16,
             g.wf(),
@@ -3000,7 +3053,9 @@ impl Decoder {
             g.out@.is_prefix_of(gn@.out@),
             g.steps@ < gn@.steps@,
             crate::rank::rank_lt(b, gn@.view(), g.view()),
+            final(mt).n <= old(mt).n + 2 * n,
     {
+        let ghost m0 = mt.n;
         let ghost r = g.ring@.len() as int;
         let ghost mut cur = g;
         proof {
@@ -3020,7 +3075,7 @@ impl Decoder {
                 lemma_mod_add((g.total - g.dist) as int, r, 0);
                 lemma_mod_add(g.total as int, r, 0);
             }
-            Self::copy_chunk(ring, si, ti, n, wide, Ghost(g), Ghost(b));
+            Self::copy_chunk(ring, si, ti, n, wide, Ghost(g), Ghost(b), Tracked(mt));
             return Ghost(copy_next(g, *ring, n));
         }
         let mut k: u64 = 0;
@@ -3060,15 +3115,19 @@ impl Decoder {
                 k == 0 ==> cur == g,
                 k > 0 ==> g.steps@ < cur.steps@ && crate::rank::rank_lt(b, cur.view(), g.view()),
                 r == rl,
+                mt.n <= m0 + 2 * k,
             decreases n - k,
         {
             let m = if n - k < d { n - k } else { d };
+            proof {
+                mt.n = mt.n + 1;
+            }
             proof {
                 lemma_mod_add((g.total - g.dist) as int, r, k as int);
                 lemma_mod_add(g.total as int, r, k as int);
             }
             let ghost prev = cur;
-            Self::copy_chunk(ring, si + k as usize, ti + k as usize, m, false, Ghost(cur), Ghost(b));
+            Self::copy_chunk(ring, si + k as usize, ti + k as usize, m, false, Ghost(cur), Ghost(b), Tracked(mt));
             proof {
                 cur = copy_next(prev, *ring, m);
                 lemma_prefix_trans(g.out@, prev.out@, cur.out@);
@@ -3258,7 +3317,7 @@ impl Decoder {
     /// the ring; `st_copy` deals with those.
     #[verifier::spinoff_prover]
     #[inline(always)]
-    pub fn copy_cmd(ring: &mut Vec<u8>, tot: u64, d: u64, n: u64, r: u64, flushed: u64, Ghost(g): Ghost<Decoder>, Ghost(b): Ghost<Seq<u8>>) -> (res: (bool, Ghost<Decoder>))
+    pub fn copy_cmd(ring: &mut Vec<u8>, tot: u64, d: u64, n: u64, r: u64, flushed: u64, Ghost(g): Ghost<Decoder>, Ghost(b): Ghost<Seq<u8>>, Tracked(mt): Tracked<&mut Meter>) -> (res: (bool, Ghost<Decoder>))
         requires
             g.wf(),
             g.reached(b),
@@ -3272,7 +3331,8 @@ impl Decoder {
             r > 0,
         ensures
             final(ring)@.len() == old(ring)@.len(),
-            !res.0 ==> *final(ring) == *old(ring),
+            !res.0 ==> *final(ring) == *old(ring) && final(mt).n == old(mt).n,
+            final(mt).n <= old(mt).n + 2 * n,
             res.0 ==> {
                 let gn = res.1@;
                 &&& gn == copy_done(g, *final(ring), gn.out, gn.steps)
@@ -3306,7 +3366,7 @@ impl Decoder {
                 lemma_ring_order(tot - d, d as int, r as int);
                 assert(d >= 16);
             }
-            Self::copy_chunk(ring, si, ti, n, true, Ghost(g), Ghost(b));
+            Self::copy_chunk(ring, si, ti, n, true, Ghost(g), Ghost(b), Tracked(mt));
             let ghost gn = copy_next(g, *ring, n);
             proof {
                 assert(gn == copy_done(g, *ring, gn.out, gn.steps));
@@ -3316,7 +3376,7 @@ impl Decoder {
         if n > room || si as u64 + n > r || ti as u64 + n > r {
             return (false, Ghost(g));
         }
-        let gn = Self::copy_all(ring, si, ti, n, d, false, Ghost(g), Ghost(b));
+        let gn = Self::copy_all(ring, si, ti, n, d, false, Ghost(g), Ghost(b), Tracked(mt));
         (true, gn)
     }
 
@@ -3325,7 +3385,7 @@ impl Decoder {
     /// `BrotliCalculateRingBufferSize`). `ph2` and `mrem2` are the phase
     /// and bytes left the ring is for.
     #[verifier::spinoff_prover]
-    fn grow_ring(&mut self, need: u64, Ghost(ph2): Ghost<Ph>, Ghost(mrem2): Ghost<u32>)
+    fn grow_ring(&mut self, need: u64, Ghost(ph2): Ghost<Ph>, Ghost(mrem2): Ghost<u32>, Tracked(m): Tracked<&mut Meter>)
         requires
             ring_ok(old(self).ring@, old(self).rbits, old(self).total, old(self).flushed, old(self).out@, Ph::MetaHeader, 0, old(self).wbits),
             10 <= old(self).wbits <= 24,
@@ -3334,6 +3394,8 @@ impl Decoder {
         ensures
             ring_ok(final(self).ring@, final(self).rbits, final(self).total, final(self).flushed, final(self).out@, ph2, mrem2, final(self).wbits),
             *final(self) == (Decoder { ring: final(self).ring, rbits: final(self).rbits, ..*old(self) }),
+            final(self).ring@.len() <= rmax(),
+            final(m).n + 4 * old(self).ring@.len() <= old(m).n + 4 * final(self).ring@.len(),
     {
         proof {
             reveal(ring_ok);
@@ -3367,7 +3429,14 @@ impl Decoder {
             size = size * 2;
             bits = bits + 1;
         }
+        proof {
+            lemma_pow2_le(bits as nat, 24);
+            assert(pow2(24) == 0x100_0000) by (compute);
+        }
         let ghost win_i = win as int;
+        proof {
+            reveal(ring_ok);
+        }
         if (self.ring.len() as u64) < size {
             // Below the window size the ring has never wrapped: byte `i` of
             // the output is at `ring[i]`.
@@ -3378,6 +3447,20 @@ impl Decoder {
                 assert(self.total <= old_ring.len());
             }
             verilith_core::prims::copy_in(r.as_mut_slice(), 0, self.ring.as_slice(), 0, n);
+            proof {
+                // A zeroed allocation of `size` bytes and a copy of `n`.
+                m.n = (m.n + size + n) as nat;
+                if old_ring.len() > 0 {
+                    assert(old_ring.len() == pow2(self.rbits as nat));
+                    if bits <= self.rbits {
+                        lemma_pow2_le(bits as nat, self.rbits as nat);
+                    }
+                    assert(bits > self.rbits);
+                    lemma_pow2_adds(self.rbits as nat, 1);
+                    lemma_pow2_le((self.rbits + 1) as nat, bits as nat);
+                    assert(2 * old_ring.len() <= size);
+                }
+            }
             self.ring = r;
             self.rbits = bits;
             proof {
@@ -3435,7 +3518,7 @@ impl Decoder {
 impl Decoder {
     /// `WBits`: the window size.
     #[verifier::spinoff_prover]
-    fn st_wbits(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    fn st_wbits(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -3443,6 +3526,7 @@ impl Decoder {
             old(self).ph == Ph::WBits,
         ensures
             step_ok(*old(self), *final(self), r, src@, base, b),
+            wpaid(*old(self), *final(self), r, old(m).n, final(m).n),
     {
         proof {
             if !(self.ph is Done) {
@@ -3483,7 +3567,7 @@ impl Decoder {
     /// `MetaDone`: the padding after the last meta-block, or the next
     /// meta-block.
     #[verifier::spinoff_prover]
-    fn st_metadone(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    fn st_metadone(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -3491,6 +3575,7 @@ impl Decoder {
             old(self).ph == Ph::MetaDone,
         ensures
             step_ok(*old(self), *final(self), r, src@, base, b),
+            wpaid(*old(self), *final(self), r, old(m).n, final(m).n),
     {
         proof {
             if !(self.ph is Done) {
@@ -3631,7 +3716,7 @@ impl Decoder {
 
     /// `MetaHeader`: a meta-block header.
     #[verifier::spinoff_prover]
-    fn st_header(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    fn st_header(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -3639,6 +3724,7 @@ impl Decoder {
             old(self).ph == Ph::MetaHeader,
         ensures
             step_ok(*old(self), *final(self), r, src@, base, b),
+            wpaid(*old(self), *final(self), r, old(m).n, final(m).n),
     {
         proof {
             if !(self.ph is Done) {
@@ -3717,7 +3803,7 @@ impl Decoder {
             return Some(Status::Limit);
         }
         let ph2 = if h.kind == K_UNCOMPRESSED { Ph::Uncompressed } else { Ph::NBlockTypes(0) };
-        self.grow_ring(self.total + h.len as u64, Ghost(ph2), Ghost(h.len));
+        self.grow_ring(self.total + h.len as u64, Ghost(ph2), Ghost(h.len), Tracked(m));
         self.pos = p;
         self.last = h.last;
         self.mrem = h.len;
@@ -3752,7 +3838,7 @@ impl Decoder {
 
     /// `Metadata`: skips metadata bytes.
     #[verifier::spinoff_prover]
-    fn st_skip(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    fn st_skip(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -3760,6 +3846,7 @@ impl Decoder {
             old(self).ph == Ph::Metadata,
         ensures
             step_ok(*old(self), *final(self), r, src@, base, b),
+            wpaid(*old(self), *final(self), r, old(m).n, final(m).n),
     {
         proof {
             if !(self.ph is Done) {
@@ -3808,7 +3895,7 @@ impl Decoder {
     /// `Uncompressed`: copies bytes of an uncompressed meta-block.
     #[verifier::loop_isolation(false)]
     #[verifier::spinoff_prover]
-    fn st_raw(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    fn st_raw(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -3816,6 +3903,7 @@ impl Decoder {
             old(self).ph == Ph::Uncompressed,
         ensures
             step_ok(*old(self), *final(self), r, src@, base, b),
+            wpaid(*old(self), *final(self), r, old(m).n, final(m).n),
     {
         proof {
             if !(self.ph is Done) {
@@ -3859,6 +3947,7 @@ impl Decoder {
         if n > room {
             n = room;
         }
+        let ghost m0 = m.n;
         let start = (self.pos / 8 - base) as usize;
         let mut k: usize = 0;
         while k < n as usize
@@ -3880,6 +3969,7 @@ impl Decoder {
                 self.ring@.len() == o.ring@.len(),
                 self.pos % 8 == 0,
                 start == o.pos / 8 - base,
+                m.n == m0 + k,
                 o.pos + 8 * n <= lim(src@, base as int),
             decreases n - k,
         {
@@ -3897,6 +3987,9 @@ impl Decoder {
             self.put(x);
             self.pos = self.pos + 8;
             self.mrem = self.mrem - 1;
+            proof {
+                m.n = m.n + 1;
+            }
             self.steps = Ghost(self.steps@ + 1);
             k = k + 1;
             proof {
@@ -3914,7 +4007,7 @@ impl Decoder {
 
     /// `NBlockTypes(c)`.
     #[verifier::spinoff_prover]
-    fn st_nbt(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    fn st_nbt(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -3922,6 +4015,7 @@ impl Decoder {
             old(self).ph is NBlockTypes,
         ensures
             step_ok(*old(self), *final(self), r, src@, base, b),
+            wpaid(*old(self), *final(self), r, old(m).n, final(m).n),
     {
         proof {
             if !(self.ph is Done) {
@@ -3973,7 +4067,7 @@ impl Decoder {
     /// `BTypeCode(c)` and `BCountCode(c)`: one item of a block type or
     /// block count code.
     #[verifier::spinoff_prover]
-    fn st_code(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    fn st_code(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -3981,6 +4075,7 @@ impl Decoder {
             old(self).ph is BTypeCode || old(self).ph is BCountCode,
         ensures
             step_ok(*old(self), *final(self), r, src@, base, b),
+            wpaid(*old(self), *final(self), r, old(m).n, final(m).n),
     {
         proof {
             if !(self.ph is Done) {
@@ -4000,7 +4095,7 @@ impl Decoder {
             reveal(cat_ok);
         }
         let alpha = self.pc_alpha();
-        match self.pc.step(src, base, self.pos, alpha, Ghost(b)) {
+        match self.pc.step(src, base, self.pos, alpha, Ghost(b), Tracked(m)) {
             Res::Bad => {
                 proof {
                     lemma_rejects(b, o.steps@, s0);
@@ -4048,7 +4143,7 @@ impl Decoder {
 
     /// `BCount(c)`: the first block count of category `c`.
     #[verifier::spinoff_prover]
-    fn st_bcount(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    fn st_bcount(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -4056,6 +4151,7 @@ impl Decoder {
             old(self).ph is BCount,
         ensures
             step_ok(*old(self), *final(self), r, src@, base, b),
+            wpaid(*old(self), *final(self), r, old(m).n, final(m).n),
     {
         proof {
             if !(self.ph is Done) {
@@ -4098,7 +4194,7 @@ impl Decoder {
 
     /// `DistParams`: `NPOSTFIX` and `NDIRECT`.
     #[verifier::spinoff_prover]
-    fn st_dparams(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    fn st_dparams(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -4106,6 +4202,7 @@ impl Decoder {
             old(self).ph == Ph::DistParams,
         ensures
             step_ok(*old(self), *final(self), r, src@, base, b),
+            wpaid(*old(self), *final(self), r, old(m).n, final(m).n),
     {
         proof {
             if !(self.ph is Done) {
@@ -4138,7 +4235,7 @@ impl Decoder {
                 }
                 self.ndirect = ((v / 4) as u32) << np;
                 if self.dtab.len() == 0 || self.dnp != np || self.dnd != self.ndirect {
-                    self.dtab = mk_dtab(np, self.ndirect);
+                    self.dtab = mk_dtab(np, self.ndirect, Tracked(m));
                     self.dnp = np;
                     self.dnd = self.ndirect;
                 }
@@ -4164,7 +4261,7 @@ impl Decoder {
 
     /// `CModes`: one context mode.
     #[verifier::spinoff_prover]
-    fn st_cmodes(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    fn st_cmodes(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -4172,6 +4269,7 @@ impl Decoder {
             old(self).ph == Ph::CModes,
         ensures
             step_ok(*old(self), *final(self), r, src@, base, b),
+            wpaid(*old(self), *final(self), r, old(m).n, final(m).n),
     {
         proof {
             if !(self.ph is Done) {
@@ -4202,12 +4300,12 @@ impl Decoder {
         }
         match read_bits(src, base, self.pos, 2, Ghost(b)) {
             None => Some(Status::Short),
-            Some(m) => {
+            Some(cm) => {
                 proof {
                     lemma2_to64();
                 }
                 self.pos = self.pos + 2;
-                self.cmodes.push(m as u8);
+                self.cmodes.push(cm as u8);
                 self.steps = Ghost(self.steps@ + 1);
                 proof {
                     assert(spec::step(b, s0) == Step::Next(self.view()));
@@ -4226,7 +4324,8 @@ impl Decoder {
 
     /// `Trees(g)`: one item of a literal, insert-and-copy or distance code.
     #[verifier::spinoff_prover]
-    fn st_trees(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    #[verifier::rlimit(100)]
+    fn st_trees(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(mt): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -4234,6 +4333,7 @@ impl Decoder {
             old(self).ph is Trees,
         ensures
             step_ok(*old(self), *final(self), r, src@, base, b),
+            wpaid(*old(self), *final(self), r, old(mt).n, final(mt).n),
     {
         proof {
             if !(self.ph is Done) {
@@ -4280,10 +4380,10 @@ impl Decoder {
                 }
                 let nt = self.lit.len() as u64 + self.dst.len() as u64;
                 if self.lit.len() <= 256 && self.dst.len() <= 256 && nt << 12 <= self.mrem as u64 {
-                    let (f, t) = mk_flat(self.lit.as_slice());
+                    let (f, t) = mk_flat(self.lit.as_slice(), Tracked(mt));
                     self.litf = f;
                     self.litt = t;
-                    let (f, t) = mk_flat(self.dst.as_slice());
+                    let (f, t) = mk_flat(self.dst.as_slice(), Tracked(mt));
                     self.dstf = f;
                     self.dstt = t;
                 }
@@ -4303,9 +4403,15 @@ impl Decoder {
         // The lengths of one code come one per step; take them in a row.
         let mut prog = false;
         let mut budget: u32 = 4096;
+        let ghost m0 = mt.n;
         loop
             invariant
                 o == *old(self),
+                m0 == old(mt).n,
+                !prog ==> mt.n == m0,
+                prog ==> mt.n + 1 <= m0 + earned(o, *self),
+                pot(*self) - pc_cr(*self) == pot(o) - pc_cr(o),
+                self.ring == o.ring,
                 self.wf(),
                 self.reached(b),
                 at(src@, base, self.pos, b),
@@ -4342,7 +4448,7 @@ impl Decoder {
                 reveal(cat_ok);
                 reveal(reading_ok);
             }
-            match self.pc.step(src, base, self.pos, alpha, Ghost(b)) {
+            match self.pc.step(src, base, self.pos, alpha, Ghost(b), Tracked(mt)) {
                 Res::Bad => {
                     proof {
                         lemma_rejects(b, m.steps@, sm);
@@ -4382,6 +4488,10 @@ impl Decoder {
                     budget = budget - 1;
                     if budget == 0 {
                         return None;
+                    }
+                    proof {
+                        // The next turn.
+                        mt.n = mt.n + 1;
                     }
                 },
                 Res::Ok(PcOut::Code(h, lens), p) => {
@@ -4537,7 +4647,7 @@ impl Decoder {
     /// A block switch of category `c` (`spec::block_switch`), the step when
     /// the block count of `c` has run out.
     #[verifier::spinoff_prover]
-    fn st_switch(&mut self, src: &[u8], base: u64, c: usize, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    fn st_switch(&mut self, src: &[u8], base: u64, c: usize, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -4548,6 +4658,7 @@ impl Decoder {
             spec::step(b, old(self).view()) == spec::block_switch(old(self).view(), b, c as int),
         ensures
             step_ok(*old(self), *final(self), r, src@, base, b),
+            wpaid(*old(self), *final(self), r, old(m).n, final(m).n),
     {
         proof {
             if !(self.ph is Done) {
@@ -4602,7 +4713,7 @@ impl Decoder {
     }
     /// `CmdBegin`: an insert-and-copy command.
     #[verifier::spinoff_prover]
-    fn st_command(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    fn st_command(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -4610,6 +4721,7 @@ impl Decoder {
             old(self).ph == Ph::CmdBegin,
         ensures
             step_ok(*old(self), *final(self), r, src@, base, b),
+            wpaid(*old(self), *final(self), r, old(m).n, final(m).n),
     {
         proof {
             if !(self.ph is Done) {
@@ -4625,7 +4737,7 @@ impl Decoder {
             proof {
                 lemma_step_sw(b, s0, 1);
             }
-            return self.st_switch(src, base, 1, Ghost(b));
+            return self.st_switch(src, base, 1, Ghost(b), Tracked(m));
         }
         let (wx, c) = peek(src, base, self.pos, Ghost(b));
         self.cmd_w(src, base, wx, c, Ghost(b)).0
@@ -4793,6 +4905,9 @@ impl Decoder {
         ensures
             wstep_ok(*old(self), *final(self), r.0, src@, base, b, fresh(src@, base, old(self).pos, c)),
             r.0 is None ==> win_ok(src@, base, final(self).pos, r.1, r.2, b),
+            r.0 is None ==> (final(self).ph == Ph::Insert || final(self).ph == Ph::Dist) && final(self).ring == old(self).ring
+                && final(self).out == old(self).out,
+            r.0 != Some(Status::Done),
     {
         let ghost o = *self;
         proof {
@@ -4844,6 +4959,7 @@ impl Decoder {
         tot0: u64,
         Ghost(o): Ghost<Decoder>,
         Ghost(b): Ghost<Seq<u8>>,
+        Tracked(m): Tracked<&mut Meter>,
     ) -> (r: (u64, u64, u64, u64, Ghost<Seq<u8>>))
         requires
             o.wf(),
@@ -4866,6 +4982,8 @@ impl Decoder {
         ensures
             r.0 <= n,
             final(ring)@.len() == old(ring)@.len(),
+            final(m).n <= old(m).n + r.0 + 1,
+            r.4@.len() == o.total + r.0 && o.pos <= r.3,
             r.0 == 0 ==> *final(ring) == *old(ring) && r.3 == o.pos && r.4@ == o.out@ && ((fresh(src@, base, o.pos, c0) || c0 < 15)
                 ==> full(src@, base as int, b) ==> spec::step(b, o.view()) is Short),
             win_ok(src@, base, r.3, r.1, r.2, b),
@@ -4921,6 +5039,7 @@ impl Decoder {
                 fresh = true;
             }
         }
+        let ghost m0 = m.n;
         let mut k: u64 = 0;
         let mut short = false;
         while k < n && !short
@@ -4972,6 +5091,7 @@ impl Decoder {
                 wx < pow2(c as nat),
                 pos + c <= lim(src@, base as int),
                 fresh ==> (c == 56 || pos + c == lim(src@, base as int)),
+                m.n == m0 + k + (if short { 1int } else { 0int }),
             decreases n - k, (if short { 0int } else { 1int }),
         {
             if c < 15 {
@@ -5030,6 +5150,9 @@ impl Decoder {
                     p2 = p1;
                     p1 = x;
                     k = k + 1;
+                    proof {
+                        m.n = m.n + 1;
+                    }
                 },
                 _ => {
                     proof {
@@ -5038,6 +5161,9 @@ impl Decoder {
                         }
                     }
                     short = true;
+                    proof {
+                        m.n = m.n + 1;
+                    }
                 },
             }
         }
@@ -5055,7 +5181,7 @@ impl Decoder {
     /// `lit_p` on the decoder itself.
     #[verifier::spinoff_prover]
     #[inline(always)]
-    fn lit_fast(&mut self, src: &[u8], base: u64, n: u64, wx0: u64, c0: u64, Ghost(b): Ghost<Seq<u8>>) -> (r: (u64, u64, u64))
+    fn lit_fast(&mut self, src: &[u8], base: u64, n: u64, wx0: u64, c0: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: (u64, u64, u64))
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -5067,6 +5193,10 @@ impl Decoder {
             win_ok(src@, base, old(self).pos, wx0, c0, b),
         ensures
             r.0 <= n,
+            final(m).n <= old(m).n + r.0 + 1,
+            r.0 > 0 ==> final(self).out@.len() == old(self).out@.len() + r.0 && final(self).pos >= old(self).pos
+                && final(self).ring@.len() == old(self).ring@.len()
+                && (final(self).ph == Ph::Insert || final(self).ph == Ph::Dist || final(self).ph == Ph::MetaDone),
             r.0 == 0 ==> *final(self) == *old(self) && ((fresh(src@, base, old(self).pos, c0) || c0 < 15) ==> full(src@, base as int, b) ==> spec::step(b, old(self).view()) is Short),
             win_ok(src@, base, final(self).pos, r.1, r.2, b),
             r.0 > 0 ==> moved(*old(self), *final(self), src@, base, b) && old(self).steps@ < final(self).steps@
@@ -5101,6 +5231,7 @@ impl Decoder {
             self.total,
             Ghost(o),
             Ghost(b),
+            Tracked(m),
         );
         let k = r.0;
         if k == 0 {
@@ -5129,7 +5260,7 @@ impl Decoder {
 
     /// `Insert`: one literal.
     #[verifier::spinoff_prover]
-    fn st_literal(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    fn st_literal(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -5137,6 +5268,7 @@ impl Decoder {
             old(self).ph == Ph::Insert,
         ensures
             step_ok(*old(self), *final(self), r, src@, base, b),
+            wpaid(*old(self), *final(self), r, old(m).n, final(m).n),
     {
         proof {
             if !(self.ph is Done) {
@@ -5149,7 +5281,7 @@ impl Decoder {
             proof {
                 lemma_step_sw(b, s0, 0);
             }
-            return self.st_switch(src, base, 0, Ghost(b));
+            return self.st_switch(src, base, 0, Ghost(b), Tracked(m));
         }
         if self.room() == 0 {
             proof {
@@ -5171,7 +5303,7 @@ impl Decoder {
         }
         if n >= 2 {
             let (wx, c) = peek(src, base, self.pos, Ghost(b));
-            if self.lit_fast(src, base, n, wx, c, Ghost(b)).0 == 0 {
+            if self.lit_fast(src, base, n, wx, c, Ghost(b), Tracked(m)).0 == 0 {
                 return Some(Status::Short);
             }
             return None;
@@ -5200,7 +5332,9 @@ impl Decoder {
         ensures
             r matches Some(x) ==> moved(*old(self), *final(self), src@, base, b) && final(self).mrem < old(self).mrem
                 && final(self).out@ == old(self).out@.push(x)
-                && crate::rank::rank_lt(b, final(self).view(), old(self).view()),
+                && crate::rank::rank_lt(b, final(self).view(), old(self).view())
+                && final(self).ring@.len() == old(self).ring@.len()
+                && (final(self).ph == Ph::Insert || final(self).ph == Ph::Dist || final(self).ph == Ph::MetaDone),
             r is None ==> *final(self) == *old(self) && (full(src@, base as int, b) ==> spec::step(b, old(self).view()) is Short),
     {
         let ghost s0 = self.view();
@@ -5275,7 +5409,7 @@ impl Decoder {
     // Compiled twice, once for each value of `fl` (see `fast_loop` and
     // `fast_loop_f`), so that the choice of lookup costs nothing per symbol.
     #[inline(always)]
-    fn fast_loop_g(&mut self, fl: bool, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>) -> (prog: bool)
+    fn fast_loop_g(&mut self, fl: bool, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(mt): Tracked<&mut Meter>) -> (prog: bool)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -5286,6 +5420,8 @@ impl Decoder {
             moved(*old(self), *final(self), src@, base, b),
             !prog ==> *final(self) == *old(self),
             prog ==> old(self).steps@ < final(self).steps@ && crate::rank::rank_lt(b, final(self).view(), old(self).view()),
+            prog ==> final(mt).n + 1 <= old(mt).n + earned(*old(self), *final(self)),
+            !prog ==> final(mt).n == old(mt).n,
     {
         let ghost o = *self;
         proof {
@@ -5358,8 +5494,13 @@ impl Decoder {
         proof {
             assert(g.blen =~= [bl0, bl1, bl2]);
         }
+        let ghost m0 = mt.n;
         loop
             invariant
+                m0 == old(mt).n,
+                !prog ==> mt.n == m0,
+                prog ==> mt.n + 1 <= m0 + earned(o, g),
+                g.ring@.len() == o.ring@.len(),
                 g.wf(),
                 g.reached(b),
                 moved(o, g, src@, base, b),
@@ -5410,6 +5551,8 @@ impl Decoder {
             proof {
                 let g1 = cmd_next(g, rc.1, rc.2, rc.3, rc.4, rc.5);
                 lemma_adv(o, g, g1, prog, src@, base, b);
+                lemma_pot_cmd(o, g);
+                lemma_pot_cmd(o, g1);
                 g = g1;
             }
             pos = rc.5;
@@ -5434,7 +5577,7 @@ impl Decoder {
                     ph = Ph::Insert;
                     break;
                 }
-                let rl2 = Self::lit_p(ring, lit, litf, lt, fl, cmap, src, base, mode, row, ilen as u64, wx, c, pos, tot, Ghost(g), Ghost(b));
+                let rl2 = Self::lit_p(ring, lit, litf, lt, fl, cmap, src, base, mode, row, ilen as u64, wx, c, pos, tot, Ghost(g), Ghost(b), Tracked(mt));
                 let k = rl2.0;
                 wx = rl2.1;
                 c = rl2.2;
@@ -5442,6 +5585,10 @@ impl Decoder {
                     proof {
                         let g1 = fast_state(g, *ring, rl2.3, rl2.4@, k as int);
                         lemma_adv(o, g, g1, prog, src@, base, b);
+                        lemma_ring_basic(g);
+                        lemma_ring_basic(g1);
+                        lemma_pot_cmd(o, g);
+                        lemma_pot_cmd(o, g1);
                         g = g1;
                     }
                     pos = rl2.3;
@@ -5500,6 +5647,10 @@ impl Decoder {
                     let g1 = rw.2@;
                     assert(moved(g, g1, src@, base, b));
                     lemma_adv(o, g, g1, prog, src@, base, b);
+                    lemma_ring_basic(g);
+                    lemma_ring_basic(g1);
+                    lemma_pot_cmd(o, g);
+                    lemma_pot_cmd(o, g1);
                     g = g1;
                 }
                 pos = rd.3;
@@ -5512,6 +5663,10 @@ impl Decoder {
                     ph = Ph::MetaDone;
                     break;
                 }
+                proof {
+                    // The next turn.
+                    mt.n = mt.n + 1;
+                }
                 continue;
             }
             if clen > mrem {
@@ -5522,6 +5677,8 @@ impl Decoder {
                 lemma_dist_next(g, d, rd.2, rd.3, rd.4, src@, base, b);
                 let g1 = dist_next(g, d as u32, rd.2, rd.3, rd.4);
                 lemma_adv(o, g, g1, prog, src@, base, b);
+                lemma_pot_cmd(o, g);
+                lemma_pot_cmd(o, g1);
                 g = g1;
             }
             pos = rd.3;
@@ -5535,7 +5692,7 @@ impl Decoder {
             }
             // The copy.
             let n = clen as u64;
-            let rcp = Self::copy_cmd(ring, tot, d, n, r, flushed, Ghost(g), Ghost(b));
+            let rcp = Self::copy_cmd(ring, tot, d, n, r, flushed, Ghost(g), Ghost(b), Tracked(mt));
             if !rcp.0 {
                 ph = Ph::Copy;
                 break;
@@ -5544,6 +5701,10 @@ impl Decoder {
                 let gn = rcp.1@;
                 assert(moved(g, gn, src@, base, b));
                 lemma_adv(o, g, gn, prog, src@, base, b);
+                lemma_ring_basic(g);
+                lemma_ring_basic(gn);
+                lemma_pot_cmd(o, g);
+                lemma_pot_cmd(o, gn);
                 g = gn;
             }
             tot = tot + n;
@@ -5552,6 +5713,10 @@ impl Decoder {
             if mrem == 0 {
                 ph = Ph::MetaDone;
                 break;
+            }
+            proof {
+                // The next turn.
+                mt.n = mt.n + 1;
             }
         }
         self.pos = pos;
@@ -5578,7 +5743,7 @@ impl Decoder {
     /// `fast_loop_g` with each tree's own table.
     // Its own function: inlined into `run`, LLVM keeps the bit window in memory.
     #[inline(never)]
-    fn fast_loop(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>) -> (prog: bool)
+    fn fast_loop(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(mt): Tracked<&mut Meter>) -> (prog: bool)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -5588,13 +5753,15 @@ impl Decoder {
             moved(*old(self), *final(self), src@, base, b),
             !prog ==> *final(self) == *old(self),
             prog ==> old(self).steps@ < final(self).steps@ && crate::rank::rank_lt(b, final(self).view(), old(self).view()),
+            prog ==> final(mt).n + 1 <= old(mt).n + earned(*old(self), *final(self)),
+            !prog ==> final(mt).n == old(mt).n,
     {
-        self.fast_loop_g(false, src, base, Ghost(b))
+        self.fast_loop_g(false, src, base, Ghost(b), Tracked(mt))
     }
 
     /// `fast_loop_g` with the side-by-side tables.
     #[inline(never)]
-    fn fast_loop_f(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>) -> (prog: bool)
+    fn fast_loop_f(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(mt): Tracked<&mut Meter>) -> (prog: bool)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -5605,13 +5772,15 @@ impl Decoder {
             moved(*old(self), *final(self), src@, base, b),
             !prog ==> *final(self) == *old(self),
             prog ==> old(self).steps@ < final(self).steps@ && crate::rank::rank_lt(b, final(self).view(), old(self).view()),
+            prog ==> final(mt).n + 1 <= old(mt).n + earned(*old(self), *final(self)),
+            !prog ==> final(mt).n == old(mt).n,
     {
-        self.fast_loop_g(true, src, base, Ghost(b))
+        self.fast_loop_g(true, src, base, Ghost(b), Tracked(mt))
     }
 
     /// Commands: as many as `fast_loop` takes, or else one step.
     #[verifier::spinoff_prover]
-    fn fast_cmds(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    fn fast_cmds(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -5619,23 +5788,25 @@ impl Decoder {
             old(self).ph == Ph::CmdBegin,
         ensures
             step_ok(*old(self), *final(self), r, src@, base, b),
+            wpaid(*old(self), *final(self), r, old(m).n, final(m).n),
     {
         let prog = if self.litf.len() != 0 && self.dstf.len() != 0 {
-            self.fast_loop_f(src, base, Ghost(b))
+            self.fast_loop_f(src, base, Ghost(b), Tracked(m))
         } else {
-            self.fast_loop(src, base, Ghost(b))
+            self.fast_loop(src, base, Ghost(b), Tracked(m))
         };
         if prog {
             return None;
         }
-        self.step(src, base, Ghost(b))
+        self.step(src, base, Ghost(b), Tracked(m))
     }
 
     /// `Copy`: copies bytes from `dist` back, as many as fit.
     #[verifier::spinoff_prover]
     #[verifier::loop_isolation(false)]
+    #[verifier::rlimit(80)]
     #[inline(always)]
-    fn st_copy(&mut self, Ghost(src): Ghost<Seq<u8>>, base: u64, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    fn st_copy(&mut self, Ghost(src): Ghost<Seq<u8>>, base: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(mt): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -5644,6 +5815,7 @@ impl Decoder {
         ensures
             step_ok(*old(self), *final(self), r, src, base, b),
             final(self).pos == old(self).pos,
+            wpaid(*old(self), *final(self), r, old(mt).n, final(mt).n),
     {
         proof {
             if !(self.ph is Done) {
@@ -5689,12 +5861,14 @@ impl Decoder {
         }
         let m = if n < d { n } else { d };
         if m >= 8 {
-            self.copy_bulk(si, ti, m, Ghost(b));
+            self.copy_bulk(si, ti, m, Ghost(b), Tracked(mt));
             return None;
         }
+        let ghost w0 = mt.n;
         let mut k: u64 = 0;
         while k < n
             invariant
+                mt.n == w0 + k,
                 si + n <= r && ti + n <= r,
                 r == self.ring@.len(),
                 k < n ==> (si + k) as int == (self.total - d) as int % r as int,
@@ -5747,6 +5921,9 @@ impl Decoder {
             self.steps = Ghost(self.steps@ + 1);
             k = k + 1;
             proof {
+                mt.n = mt.n + 1;
+            }
+            proof {
                 if k < n {
                     lemma_mod_inc((self.total - 1 - d) as int, r as int);
                     lemma_mod_inc((self.total - 1) as int, r as int);
@@ -5770,7 +5947,7 @@ impl Decoder {
 
     /// `Dist`: the distance of the command.
     #[verifier::spinoff_prover]
-    fn st_distance(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    fn st_distance(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -5778,6 +5955,7 @@ impl Decoder {
             old(self).ph == Ph::Dist,
         ensures
             step_ok(*old(self), *final(self), r, src@, base, b),
+            wpaid(*old(self), *final(self), r, old(m).n, final(m).n),
     {
         proof {
             if !(self.ph is Done) {
@@ -5794,7 +5972,7 @@ impl Decoder {
                 proof {
                     lemma_step_sw(b, s0, 2);
                 }
-                return self.st_switch(src, base, 2, Ghost(b));
+                return self.st_switch(src, base, 2, Ghost(b), Tracked(m));
             }
         }
         let (wx, c) = peek(src, base, self.pos, Ghost(b));
@@ -5865,6 +6043,9 @@ impl Decoder {
                     r.2,
                 )
                 &&& win_ok(src@, base, r.3, r.5, r.6, b)
+                // A distance with no bits is a last distance, near one, or
+                // a direct one.
+                &&& (r.3 == g.pos ==> r.1 <= 120 || r.1 <= spec::max_distance(g.total as int, g.wbits as int) + 3)
             },
     {
         let ghost s0 = g.view();
@@ -5874,6 +6055,7 @@ impl Decoder {
         }
         if implicit {
             proof {
+                assert(drb[di as int] == g.dr[0]);
                 lemma_dist_implicit(b, s0);
                 assert(seq3(o.blen).update(2, o.blen[2] as int) =~= seq3(o.blen));
                 assert(St { pos: o.pos as int, blen: seq3(o.blen).update(2, o.blen[2] as int), ..s0 } == s0);
@@ -5999,6 +6181,13 @@ impl Decoder {
                     false,
                 ));
             }
+            proof {
+                if p + nb == pos {
+                    assert(nb == 0);
+                    assert(dcode < 16 + nd);
+                    assert(d <= 120);
+                }
+            }
             return (None, d, false, p + nb, blen2, wo, co);
         }
     }
@@ -6016,6 +6205,8 @@ impl Decoder {
         ensures
             wstep_ok(*old(self), *final(self), r.0, src@, base, b, fresh(src@, base, old(self).pos, c)),
             r.0 is None ==> win_ok(src@, base, final(self).pos, r.1, r.2, b),
+            r.0 is None ==> resolved(*old(self), *final(self)),
+            r.0 != Some(Status::Done),
     {
         let ghost o = *self;
         proof {
@@ -6074,6 +6265,7 @@ impl Decoder {
             old(self).pos <= p <= lim(src, base as int),
             blen2 <= old(self).blen[2],
             1 <= d < 0x8000_0000,
+            p == old(self).pos ==> d <= 120 || d <= spec::max_distance(old(self).total as int, old(self).wbits as int) + 3,
             spec::step(b, old(self).view()) == spec::resolve(
                 St { pos: p as int, blen: seq3(old(self).blen).update(2, blen2 as int), ..old(self).view() },
                 d as int,
@@ -6082,6 +6274,8 @@ impl Decoder {
         ensures
             step_ok(*old(self), *final(self), r, src, base, b),
             r is None ==> final(self).pos == p,
+            r is None ==> resolved(*old(self), *final(self)),
+            r != Some(Status::Done),
     {
         proof {
             if !(self.ph is Done) {
@@ -6140,6 +6334,8 @@ impl Decoder {
         ensures
             step_ok(*old(self), *final(self), r, src, base, b),
             r is None ==> final(self).pos == p,
+            r is None ==> resolved(*old(self), *final(self)),
+            r != Some(Status::Done),
     {
         proof {
             if !(self.ph is Done) {
@@ -6215,9 +6411,12 @@ impl Decoder {
             ),
             maxd == spec::max_distance(old(self).total as int, old(self).wbits as int),
             d > maxd,
+            p == old(self).pos ==> d <= 120 || d <= maxd + 3,
         ensures
             step_ok(*old(self), *final(self), r, src, base, b),
             r is None ==> final(self).pos == p,
+            r is None ==> resolved(*old(self), *final(self)),
+            r != Some(Status::Done),
     {
         proof {
             if !(self.ph is Done) {
@@ -6265,6 +6464,21 @@ impl Decoder {
                 requires
                     idx < pn,
             ;
+        }
+        proof {
+            // With no bits read, the word is near the window: transform 0.
+            if p == o.pos && d > 120 {
+                assert(forall|i: int| 4 <= i <= 24 ==> #[trigger] NDBITS[i] >= 5) by (compute);
+                lemma_pow2_le(5, NDBITS[len as int] as nat);
+                assert(pow2(5) == 32) by (compute);
+                assert(addr <= 2);
+                assert(tid == 0) by (nonlinear_arith)
+                    requires
+                        tid == addr / pn,
+                        addr <= 2,
+                        pn >= 32,
+                ;
+            }
         }
         let word = dict_word(len, idx as usize);
         // Transform 0, the identity, is the common one: no buffer for it.
@@ -6379,6 +6593,7 @@ impl Decoder {
             final(self).wf(),
             final(self).out == old(self).out && final(self).flushed == old(self).flushed && final(self).steps == old(self).steps,
             final(self).pos == p,
+            pot(*final(self)) == (if w == 0 { 5int } else { 4int }) + ring_cr(*old(self)),
     {
         proof {
             reveal(ring_ok);
@@ -6416,7 +6631,7 @@ impl Decoder {
 
     /// `CMap(w)`, stage 0: `NTREES` and `RLEMAX`.
     #[verifier::spinoff_prover]
-    fn st_cm0(&mut self, src: &[u8], base: u64, w: u8, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    fn st_cm0(&mut self, src: &[u8], base: u64, w: u8, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -6425,6 +6640,7 @@ impl Decoder {
             old(self).cm.stage == 0,
         ensures
             step_ok(*old(self), *final(self), r, src@, base, b),
+            wpaid(*old(self), *final(self), r, old(m).n, final(m).n),
     {
         proof {
             if !(self.ph is Done) {
@@ -6443,16 +6659,21 @@ impl Decoder {
             Res::Short => Some(Status::Short),
             Res::Ok(v, p) => {
                 if v == 0 {
+                    let ghost m0 = m.n;
                     let mut map: Vec<u8> = Vec::with_capacity(size as usize);
                     let mut i: u32 = 0;
                     while i < size
                         invariant
                             i <= size,
                             map@ == Seq::new(i as nat, |j: int| 0u8),
+                            m.n == m0 + i,
                         decreases size - i,
                     {
                         map.push(0);
                         i = i + 1;
+                        proof {
+                            m.n = m.n + 1;
+                        }
                         proof {
                             assert(map@ =~= Seq::new(i as nat, |j: int| 0u8));
                         }
@@ -6484,6 +6705,13 @@ impl Decoder {
                     self.pos = p + 5;
                     self.cm.rlemax = r4 as u32 + 1;
                 }
+                proof {
+                    assert(size * (v + 1) <= 16384 * 256) by (nonlinear_arith)
+                        requires
+                            size <= 16384,
+                            v + 1 <= 256,
+                    ;
+                }
                 self.cm.stage = 1;
                 self.cm.ntrees = v as u32 + 1;
                 self.pc.reset();
@@ -6505,7 +6733,7 @@ impl Decoder {
 
     /// `CMap(w)`, stage 1: the prefix code of the map's symbols.
     #[verifier::spinoff_prover]
-    fn st_cm1(&mut self, src: &[u8], base: u64, w: u8, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    fn st_cm1(&mut self, src: &[u8], base: u64, w: u8, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -6514,6 +6742,7 @@ impl Decoder {
             old(self).cm.stage == 1,
         ensures
             step_ok(*old(self), *final(self), r, src@, base, b),
+            wpaid(*old(self), *final(self), r, old(m).n, final(m).n),
     {
         proof {
             if !(self.ph is Done) {
@@ -6528,7 +6757,7 @@ impl Decoder {
         }
         let cap = self.cm_size(w) as usize;
         let alpha = self.pc_alpha();
-        match self.pc.step(src, base, self.pos, alpha, Ghost(b)) {
+        match self.pc.step(src, base, self.pos, alpha, Ghost(b), Tracked(m)) {
             Res::Bad => {
                 proof {
                     lemma_rejects(b, o.steps@, s0);
@@ -6577,7 +6806,7 @@ impl Decoder {
 
     /// `CMap(w)`, stage 2: one symbol of the map, or a run of zeros.
     #[verifier::spinoff_prover]
-    fn st_cm2(&mut self, src: &[u8], base: u64, w: u8, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    fn st_cm2(&mut self, src: &[u8], base: u64, w: u8, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -6586,6 +6815,7 @@ impl Decoder {
             old(self).cm.stage == 2,
         ensures
             step_ok(*old(self), *final(self), r, src@, base, b),
+            wpaid(*old(self), *final(self), r, old(m).n, final(m).n),
     {
         proof {
             if !(self.ph is Done) {
@@ -6660,6 +6890,7 @@ impl Decoder {
             return Some(Status::Bad);
         }
         self.pos = p + sym;
+        let ghost w0 = m.n;
         let mut k: u64 = 0;
         while k < reps
             invariant
@@ -6667,10 +6898,14 @@ impl Decoder {
                 m0.len() + reps <= size,
                 self.cm.map@ == m0 + Seq::new(k as nat, |i: int| 0u8),
                 *self == (Decoder { cm: Cmx { map: self.cm.map, ..o.cm }, pos: (p + sym) as u64, ..o }),
+                m.n == w0 + k,
             decreases reps - k,
         {
             self.cm.map.push(0);
             k = k + 1;
+            proof {
+                m.n = m.n + 1;
+            }
             proof {
                 assert(self.cm.map@ =~= m0 + Seq::new(k as nat, |i: int| 0u8));
             }
@@ -6696,7 +6931,7 @@ impl Decoder {
 
     /// `CMap(w)`, stage 3: the `IMTF` bit, then the map is complete.
     #[verifier::spinoff_prover]
-    fn st_cm3(&mut self, src: &[u8], base: u64, w: u8, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    fn st_cm3(&mut self, src: &[u8], base: u64, w: u8, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
@@ -6705,6 +6940,7 @@ impl Decoder {
             old(self).cm.stage == 3,
         ensures
             step_ok(*old(self), *final(self), r, src@, base, b),
+            wpaid(*old(self), *final(self), r, old(m).n, final(m).n),
     {
         proof {
             if !(self.ph is Done) {
@@ -6742,7 +6978,7 @@ impl Decoder {
             assert(self.cm.map@ =~= Seq::<u8>::empty());
         }
         if x == 1 {
-            imtf(&mut map, nt);
+            imtf(&mut map, nt, Tracked(m));
         }
         let ghost pre = *self;
         self.cm_finish(w, nt, map, p);
@@ -6759,13 +6995,14 @@ impl Decoder {
 
     /// One step (or a run of steps of the same kind). `None`: continue.
     #[verifier::spinoff_prover]
-    fn step(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>) -> (r: Option<Status>)
+    fn step(&mut self, src: &[u8], base: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<Status>)
         requires
             old(self).wf(),
             old(self).reached(b),
             at(src@, base, old(self).pos, b),
         ensures
             step_ok(*old(self), *final(self), r, src@, base, b),
+            wpaid(*old(self), *final(self), r, old(m).n, final(m).n),
     {
         proof {
             if !(self.ph is Done) {
@@ -6773,36 +7010,36 @@ impl Decoder {
             }
         }
         match self.ph {
-            Ph::WBits => self.st_wbits(src, base, Ghost(b)),
-            Ph::MetaHeader => self.st_header(src, base, Ghost(b)),
-            Ph::Metadata => self.st_skip(src, base, Ghost(b)),
-            Ph::Uncompressed => self.st_raw(src, base, Ghost(b)),
-            Ph::NBlockTypes(_) => self.st_nbt(src, base, Ghost(b)),
-            Ph::BTypeCode(_) => self.st_code(src, base, Ghost(b)),
-            Ph::BCountCode(_) => self.st_code(src, base, Ghost(b)),
-            Ph::BCount(_) => self.st_bcount(src, base, Ghost(b)),
-            Ph::DistParams => self.st_dparams(src, base, Ghost(b)),
-            Ph::CModes => self.st_cmodes(src, base, Ghost(b)),
+            Ph::WBits => self.st_wbits(src, base, Ghost(b), Tracked(m)),
+            Ph::MetaHeader => self.st_header(src, base, Ghost(b), Tracked(m)),
+            Ph::Metadata => self.st_skip(src, base, Ghost(b), Tracked(m)),
+            Ph::Uncompressed => self.st_raw(src, base, Ghost(b), Tracked(m)),
+            Ph::NBlockTypes(_) => self.st_nbt(src, base, Ghost(b), Tracked(m)),
+            Ph::BTypeCode(_) => self.st_code(src, base, Ghost(b), Tracked(m)),
+            Ph::BCountCode(_) => self.st_code(src, base, Ghost(b), Tracked(m)),
+            Ph::BCount(_) => self.st_bcount(src, base, Ghost(b), Tracked(m)),
+            Ph::DistParams => self.st_dparams(src, base, Ghost(b), Tracked(m)),
+            Ph::CModes => self.st_cmodes(src, base, Ghost(b), Tracked(m)),
             Ph::CMap(w) => {
                 proof {
                     reveal(reading_ok);
                 }
                 if self.cm.stage == 0 {
-                    self.st_cm0(src, base, w, Ghost(b))
+                    self.st_cm0(src, base, w, Ghost(b), Tracked(m))
                 } else if self.cm.stage == 1 {
-                    self.st_cm1(src, base, w, Ghost(b))
+                    self.st_cm1(src, base, w, Ghost(b), Tracked(m))
                 } else if self.cm.stage == 2 {
-                    self.st_cm2(src, base, w, Ghost(b))
+                    self.st_cm2(src, base, w, Ghost(b), Tracked(m))
                 } else {
-                    self.st_cm3(src, base, w, Ghost(b))
+                    self.st_cm3(src, base, w, Ghost(b), Tracked(m))
                 }
             },
-            Ph::Trees(_) => self.st_trees(src, base, Ghost(b)),
-            Ph::CmdBegin => self.st_command(src, base, Ghost(b)),
-            Ph::Insert => self.st_literal(src, base, Ghost(b)),
-            Ph::Dist => self.st_distance(src, base, Ghost(b)),
-            Ph::Copy => self.st_copy(Ghost(src@), base, Ghost(b)),
-            Ph::MetaDone => self.st_metadone(src, base, Ghost(b)),
+            Ph::Trees(_) => self.st_trees(src, base, Ghost(b), Tracked(m)),
+            Ph::CmdBegin => self.st_command(src, base, Ghost(b), Tracked(m)),
+            Ph::Insert => self.st_literal(src, base, Ghost(b), Tracked(m)),
+            Ph::Dist => self.st_distance(src, base, Ghost(b), Tracked(m)),
+            Ph::Copy => self.st_copy(Ghost(src@), base, Ghost(b), Tracked(m)),
+            Ph::MetaDone => self.st_metadone(src, base, Ghost(b), Tracked(m)),
             Ph::Done => Some(Status::Done),
         }
     }
@@ -6812,41 +7049,53 @@ impl Decoder {
     /// the output would pass `MAX_OUT` (`Limit`), or `budget` steps are
     /// done (`Yield`).
     #[verifier::spinoff_prover]
-    pub fn run(&mut self, src: &[u8], base: u64, budget: u64, Ghost(b): Ghost<Seq<u8>>) -> (r: Status)
+    pub fn run(&mut self, src: &[u8], base: u64, fuel: u64, Ghost(b): Ghost<Seq<u8>>, Tracked(mt): Tracked<&mut Meter>) -> (r: (Status, Ghost<Decoder>))
         requires
             old(self).wf(),
             old(self).reached(b),
             at(src@, base, old(self).pos, b),
-            budget > 0,
+            fuel > 0,
         ensures
-            run_ok(*old(self), *final(self), r, src@, base, b),
+            run_ok(*old(self), *final(self), r.0, src@, base, b),
+            r.0 is Bad ==> r.1@.wf() && old(self).pos <= r.1@.pos <= final(self).pos && old(self).out@.len() <= r.1@.out@.len() && r.1@.flushed == old(self).flushed,
+            r.0 !is Bad ==> r.1@ == *final(self),
+            r.0 is Bad ==> final(mt).n <= old(mt).n + earned(*old(self), r.1@) + xc() + 1 + kbit() * (final(self).pos - r.1@.pos),
+            r.0 is Yield ==> final(mt).n <= old(mt).n + earned(*old(self), *final(self)),
+            !(r.0 is Bad) && !(r.0 is Yield) ==> final(mt).n <= old(mt).n + earned(*old(self), *final(self)) + 2,
     {
         let ghost o = *self;
-        let ghost b0 = budget;
-        let mut budget = budget;
+        let ghost b0 = fuel;
+        let ghost m0 = mt.n;
+        let mut fuel = fuel;
         proof {
             assert(o.out@.is_prefix_of(o.out@)) by {
                 assert(o.out@.subrange(0, o.out@.len() as int) =~= o.out@);
             }
         }
-        while budget > 0
+        while fuel > 0
             invariant
                 o == *old(self),
                 moved(o, *self, src@, base, b),
                 at(src@, base, o.pos, b),
-                budget <= b0,
-                budget < b0 ==> o.steps@ < self.steps@ && crate::rank::rank_lt(b, self.view(), o.view()),
-                budget == b0 ==> *self == o,
-            decreases budget,
+                fuel <= b0,
+                fuel < b0 ==> o.steps@ < self.steps@ && crate::rank::rank_lt(b, self.view(), o.view()),
+                fuel == b0 ==> *self == o,
+                mt.n <= m0 + earned(o, *self),
+                m0 == old(mt).n,
+            decreases fuel,
         {
-            budget = budget - 1;
+            fuel = fuel - 1;
             let ghost m = *self;
-            let st = if self.ph == Ph::CmdBegin { self.fast_cmds(src, base, Ghost(b)) } else { self.step(src, base, Ghost(b)) };
+            proof {
+                mt.n = mt.n + 1;
+            }
+            let ghost w1 = mt.n;
+            let st = if self.ph == Ph::CmdBegin { self.fast_cmds(src, base, Ghost(b), Tracked(mt)) } else { self.step(src, base, Ghost(b), Tracked(mt)) };
             match st {
                 None => {
                     proof {
                         lemma_moved_trans(o, m, *self, src@, base, b);
-                        if budget + 1 < b0 {
+                        if fuel + 1 < b0 {
                             crate::rank::lemma_rank_trans(b, self.view(), m.view(), o.view());
                         }
                     }
@@ -6855,18 +7104,25 @@ impl Decoder {
                     proof {
                         if s is Done {
                             lemma_moved_trans(o, m, *self, src@, base, b);
-                            if budget + 1 < b0 && m.ph != Ph::Done {
+                            if fuel + 1 < b0 && m.ph != Ph::Done {
                                 crate::rank::lemma_rank_trans(b, self.view(), m.view(), o.view());
                             }
                         } else if !(s is Bad) {
                             assert(*self == m);
                         }
                     }
-                    return s;
+                    proof {
+                        assert(wpaid(m, *self, Some(s), w1, mt.n));
+                        assert(earned(o, m) + earned(m, *self) == earned(o, *self));
+                    }
+                    if s == Status::Bad {
+                        return (s, Ghost(m));
+                    }
+                    return (s, Ghost(*self));
                 },
             }
         }
-        Status::Yield
+        (Status::Yield, Ghost(*self))
     }
 }
 
@@ -7159,7 +7415,7 @@ fn dist_val(dcode: u32, e: u64, np: u32, nd: u32, nb: u64) -> (r: u64)
 
 /// Moves `l[x]` to the front.
 #[verifier::spinoff_prover]
-fn move_to_front(l: &mut Vec<u8>, x: usize)
+fn move_to_front(l: &mut Vec<u8>, x: usize, Tracked(m): Tracked<&mut Meter>)
     requires
         old(l)@.len() == 256,
         x < 256,
@@ -7169,7 +7425,9 @@ fn move_to_front(l: &mut Vec<u8>, x: usize)
         final(l)@[0] == old(l)@[x as int],
         forall|i: int| 1 <= i <= x ==> #[trigger] final(l)@[i] == old(l)@[i - 1],
         forall|i: int| x < i < 256 ==> #[trigger] final(l)@[i] == old(l)@[i],
+        final(m).n == old(m).n + x,
 {
+    let ghost m0 = m.n;
     let ghost l0 = l@;
     let y = l[x];
     let mut j = x;
@@ -7179,11 +7437,15 @@ fn move_to_front(l: &mut Vec<u8>, x: usize)
             l@.len() == 256,
             forall|i: int| j < i <= x ==> #[trigger] l@[i] == l0[i - 1],
             forall|i: int| 0 <= i < 256 && (i > x || i <= j) ==> #[trigger] l@[i] == l0[i],
+            m.n + j == m0 + x,
         decreases j,
     {
         let t = l[j - 1];
         l.set(j, t);
         j = j - 1;
+        proof {
+            m.n = m.n + 1;
+        }
     }
     l.set(0, y);
     assert(l@ =~= seq![y] + l0.remove(x as int));
@@ -7191,7 +7453,7 @@ fn move_to_front(l: &mut Vec<u8>, x: usize)
 
 /// Inverse move-to-front (§7.3), in place. Values below `nt` stay below it.
 #[verifier::spinoff_prover]
-fn imtf(v: &mut Vec<u8>, nt: u32)
+fn imtf(v: &mut Vec<u8>, nt: u32, Tracked(m): Tracked<&mut Meter>)
     requires
         1 <= nt <= 256,
         forall|i: int| 0 <= i < old(v)@.len() ==> #[trigger] old(v)@[i] < nt,
@@ -7199,7 +7461,9 @@ fn imtf(v: &mut Vec<u8>, nt: u32)
         final(v)@ == spec::imtf(old(v)@),
         forall|i: int| 0 <= i < final(v)@.len() ==> #[trigger] final(v)@[i] < nt,
         final(v)@.len() == old(v)@.len(),
+        final(m).n <= old(m).n + imtfc(old(v)@.len() as int, nt as int),
 {
+    let ghost m0 = m.n;
     let ghost orig = v@;
     let mut l: Vec<u8> = Vec::new();
     let mut i: usize = 0;
@@ -7207,10 +7471,14 @@ fn imtf(v: &mut Vec<u8>, nt: u32)
         invariant
             i <= 256,
             l@ == Seq::new(i as nat, |j: int| j as u8),
+            m.n == m0 + i,
         decreases 256 - i,
     {
         l.push(i as u8);
         i = i + 1;
+        proof {
+            m.n = m.n + 1;
+        }
         proof {
             assert(l@ =~= Seq::new(i as nat, |j: int| j as u8));
         }
@@ -7228,16 +7496,21 @@ fn imtf(v: &mut Vec<u8>, nt: u32)
             1 <= nt <= 256,
             forall|j: int| 0 <= j < k ==> #[trigger] v@[j] < nt,
             v@.subrange(0, k as int) + spec::imtf_from(orig, k as int, l@) == spec::imtf(orig),
+            m.n <= m0 + 256 + k * nt,
         decreases n - k,
     {
         let x = v[k] as usize;
         let y = l[x];
         let ghost l0 = l@;
         let ghost v0 = v@;
-        move_to_front(&mut l, x);
+        proof {
+            m.n = m.n + 1;
+        }
+        move_to_front(&mut l, x, Tracked(m));
         v.set(k, y);
         k = k + 1;
         proof {
+            assert(k * nt == (k - 1) * nt + nt) by (nonlinear_arith);
             assert(x < nt);
             assert(spec::imtf_from(orig, k - 1, l0) == seq![y] + spec::imtf_from(orig, k as int, l@));
             assert(v@.subrange(0, k as int) =~= v0.subrange(0, k - 1).push(y));
@@ -7254,6 +7527,7 @@ fn imtf(v: &mut Vec<u8>, nt: u32)
         }
     }
     proof {
+        assert(n * nt == nt * n) by (nonlinear_arith);
         assert(v@.subrange(0, n as int) =~= v@);
         assert(spec::imtf_from(orig, n as int, l@) =~= Seq::<u8>::empty());
     }
