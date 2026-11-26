@@ -676,6 +676,9 @@ fn dispatch<H: Handler + ?Sized>(c: &mut Conn3, id: StreamId, h: &H, ctx: &Ctx) 
     let target = get(b":path");
     let request = Request { method, target, minor: 1, buf: a, headers: &req.fields, body: &req.body };
     let mut reply = req.reply.take().unwrap_or(Reply { status: 0, fields: HList::default(), body: ReplyBody::None, sent_headers: false, off: 0 });
+    // A reused stream's reply keeps its buffers, not its fields.
+    reply.fields.clear();
+    reply.status = 0;
     reply.sent_headers = false;
     reply.off = 0;
     let mut scratch = Out::new();
