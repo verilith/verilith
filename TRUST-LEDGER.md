@@ -51,7 +51,8 @@ not occur in any crate's `src/` (the script fails if one appears).
 | sync | 45 | 11 |  | 1 | 16 | 10 | 2 |
 | text | 18 | 13 |  |  |  |  | 9 |
 | tiff | 1 |  |  |  |  |  | 2 |
-| tls |  |  |  |  |  |  | 1 |
+| tls |  |  |  |  |  |  | 2 |
+| tls-aws-lc |  |  |  |  |  |  | 1 |
 | url | 1 |  |  |  |  |  | 5 |
 | verilith |  |  |  |  |  |  | 1 |
 | wasm | 33 |  |  |  |  | 2 | 4 |
@@ -61,7 +62,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 3 |  |  |  |  |  | 3 |
 | zstd | 9 |  |  |  |  |  | 1 |
-| **total** | **660** | **35** | **274** | **5** | **16** | **12** | **121** |
+| **total** | **660** | **35** | **274** | **5** | **16** | **12** | **123** |
 
 ## Items
 
@@ -292,6 +293,11 @@ not occur in any crate's `src/` (the script fails if one appears).
 ### tls
 
 - `crates/tls/src/lib.rs`: plain Rust
+- `crates/tls/src/stream.rs`: plain Rust
+
+### tls-aws-lc
+
+- `crates/tls-aws-lc/src/lib.rs`: plain Rust
 
 ### url
 
