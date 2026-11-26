@@ -386,8 +386,25 @@ proof fn lemma_accept_spec(
         th_sh == hsv.th_sh(),
         th_sfin == hsv.th_sfin(cc),
         fl == hsv.flight(cc),
+        hsv.c_hs() == client_hs_traffic(hsv.alg(), hsv.dhe, th_sh),
+        hsv.s_hs() == server_hs_traffic(hsv.alg(), hsv.dhe, th_sh),
+        hsv.client_finished(cc) == finished(verify_data(hsv.alg(), client_hs_traffic(hsv.alg(), hsv.dhe, th_sh), th_sfin)),
+        hsv.c_ap(cc) == client_ap_traffic(hsv.alg(), hsv.dhe, th_sfin),
+        hsv.s_ap(cc) == server_ap_traffic(hsv.alg(), hsv.dhe, th_sfin),
 {
     reveal(SpecHs::valid);
+    reveal(SpecHs::server_hello);
+    reveal(SpecHs::th_sh);
+    reveal(SpecHs::th_cert);
+    reveal(SpecHs::th_cv);
+    reveal(SpecHs::c_hs);
+    reveal(SpecHs::s_hs);
+    reveal(SpecHs::server_finished);
+    reveal(SpecHs::th_sfin);
+    reveal(SpecHs::flight);
+    reveal(SpecHs::client_finished);
+    reveal(SpecHs::c_ap);
+    reveal(SpecHs::s_ap);
     assert(th_sh == hsv.th_sh());
     let th_cert = th_sh + encrypted_extensions(hsv.alpn(cc)) + certificate(cc.chain);
     assert(th_cert == hsv.th_cert(cc));
@@ -554,6 +571,23 @@ fn prepare<P: Provider>(
         Ok(Prep { sh, fl, rx, tx, expect, c_ap, s_ap, hs: Ghost(hsv) })
 }
 
+/// The next traffic secret after `sec` (§7.2) and its protection.
+fn rekey<P: Provider>(prov: &P, suite: u16, sec: &Secret) -> (r: (Secret, Protect<P::Key>))
+    requires
+        sec.wf(),
+    ensures
+        r.0.wf(),
+        r.0@ == next_traffic_secret(suite_hash(suite), sec@),
+        keys_are(r.1, suite, r.0@),
+{
+    let a = suite_hash_x(suite);
+    let kl = suite_key_len_x(suite);
+    let s2 = next_traffic_secret_x(a, sec);
+    let (k, iv) = traffic_keys_x(a, &s2, kl);
+    let p = Protect::new(prov.aead_key(suite, k.as_slice()), &iv);
+    (s2, p)
+}
+
 /// A server connection, with its cryptography `P`.
 pub struct ServerConn<P: Provider> {
     cfg: Arc<Config>,
@@ -563,6 +597,8 @@ pub struct ServerConn<P: Provider> {
     buf: Vec<u8>,
     /// 0-RTT bytes left to skip.
     skip: usize,
+    /// The ALPN protocol chosen, a span of the configuration's list.
+    alpn_sel: Option<Span>,
     hs: Ghost<SpecHs>,
     ch1: Ghost<Seq<u8>>,
     hrr: Ghost<Seq<u8>>,
@@ -614,6 +650,25 @@ impl<P: Provider> ServerConn<P> {
             State::Connected { rx, .. } => rx.seq(),
             _ => 0,
         }
+    }
+
+    /// The server's current traffic secret and next sequence number.
+    pub closed spec fn tx_secret(&self) -> Seq<u8> {
+        match self.state {
+            State::Connected { s_sec, .. } => s_sec@,
+            _ => Seq::empty(),
+        }
+    }
+
+    pub closed spec fn tx_seq(&self) -> u64 {
+        match self.state {
+            State::Connected { tx, .. } => tx.seq(),
+            _ => 0,
+        }
+    }
+
+    pub closed spec fn tx_updates(&self) -> nat {
+        self.ntx@
     }
 
     pub closed spec fn hs_ok(&self) -> bool {
@@ -693,6 +748,7 @@ impl<P: Provider> ServerConn<P> {
             state: State::Start,
             buf: Vec::new(),
             skip: 0,
+            alpn_sel: None,
             hs: Ghost(arbitrary()),
             ch1: Ghost(Seq::empty()),
             hrr: Ghost(Seq::empty()),
@@ -923,6 +979,10 @@ impl<P: Provider> ServerConn<P> {
         if retried {
             self.skip = 0;
         }
+        self.alpn_sel = match c.alpn {
+            Some((ours, _)) => Some(ours),
+            None => None,
+        };
         self.enter_wait_finished(Ghost(hsv), suite, rx, tx, expect, c_ap, s_ap);
         Ok(Event::Nothing)
     }
@@ -958,6 +1018,619 @@ impl<P: Provider> ServerConn<P> {
     {
         self.hs = Ghost(hsv);
         self.state = State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap };
+    }
+
+    /// A ClientHello message `m`, in `Start` or `Retried`.
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(60)]
+    fn on_client_hello(&mut self, m: &[u8], out: &mut Vec<u8>) -> (r: Result<Event, Error>)
+        requires
+            old(self).wf(),
+            old(self).phase() == Phase::Start || old(self).phase() == Phase::Retried,
+            old(out)@.len() <= usize::MAX / 2,
+            is_msg(m@, 1),
+        ensures
+            final(self).wf(),
+            final(self).config() == old(self).config(),
+            final(out)@.take(old(out)@.len() as int) == old(out)@,
+            r matches Ok(e) ==> e is Nothing,
+            final(self).phase() == Phase::WaitFinished || final(self).phase() == Phase::Closed || (old(
+                self,
+            ).phase() == Phase::Start && final(self).phase() == Phase::Retried),
+            final(self).phase() == Phase::WaitFinished ==> final(self).handshake().ch == m@,
+    {
+        let cfg_arc = self.cfg.clone();
+        let cfg: &Config = &*cfg_arc;
+        let body = vstd::slice::slice_subrange(m, 4, m.len());
+        proof {
+            assert(body@ =~= m@.skip(4));
+        }
+        let h = match ClientHello::parse(body) {
+            Ok(h) => h,
+            Err(a) => return Err(self.fail(a.code(), out)),
+        };
+        let ghost s = choose|s: SpecHello| parse_client_hello(body@) == Ok::<SpecHello, SpecAlert>(s) && h.models(s);
+        let o = crate::negotiate::negotiate(body, &h, cfg.suites.as_slice(), cfg.groups.as_slice(), cfg.sigs.as_slice(), cfg.alpn.as_slice());
+        proof {
+            reveal(outcome);
+            reveal(session_id);
+            assert(o@ == crate::spec::negotiate(body@, s, cfg@.suites, cfg@.groups, cfg@.sigs, cfg@.alpn));
+            assert(outcome(cfg@, m@) == Some(o@));
+        }
+        let sp = h.session_id;
+        if !(sp.start <= sp.end && sp.end <= body.len() && sp.end - sp.start <= 32) {
+            return Err(self.fail(DECODE_ERROR, out));
+        }
+        let sid = sp.of(body);
+        proof {
+            reveal(session_id);
+            assert(sid@ == session_id(m@));
+        }
+        let mut st = State::Closed;
+        core::mem::swap(&mut self.state, &mut st);
+        match st {
+            State::Start => {
+                self.state = State::Start;
+                match o {
+                    Outcome::Reject(a) => Err(self.fail(a.code(), out)),
+                    Outcome::Retry { suite, group } => {
+                        if !(suite == 0x1301 || suite == 0x1302 || suite == 0x1303) {
+                            return Err(self.fail(INTERNAL_ERROR, out));
+                        }
+                        self.send_hrr(m, sid, suite, group, h.early_data, out)
+                    },
+                    Outcome::Accept(c) => {
+                        if !(c.suite == 0x1301 || c.suite == 0x1302 || c.suite == 0x1303) {
+                            return Err(self.fail(INTERNAL_ERROR, out));
+                        }
+                        self.skip = if h.early_data { EARLY_SKIP } else { 0 };
+                        let ghost choice = match o@ {
+                            SpecOutcome::Accept(x) => x,
+                            _ => arbitrary(),
+                        };
+                        let tr = Transcript::new(suite_hash_x(c.suite));
+                        self.accept(cfg, m, body, sid, c, tr, false, Ghost(None), Ghost(choice), out)
+                    },
+                }
+            },
+            State::WaitCh2 { tr, suite, group } => {
+                let ghost ch1 = self.ch1@;
+                let ghost hrr = self.hrr@;
+                self.state = State::WaitCh2 { tr, suite, group };
+                match o {
+                    Outcome::Accept(c) => {
+                        if c.suite != suite || c.group != group {
+                            return Err(self.fail(ILLEGAL_PARAMETER, out));
+                        }
+                        let ghost choice = match o@ {
+                            SpecOutcome::Accept(x) => x,
+                            _ => arbitrary(),
+                        };
+                        let mut st2 = State::Closed;
+                        core::mem::swap(&mut self.state, &mut st2);
+                        let tr = match st2 {
+                            State::WaitCh2 { tr, .. } => tr,
+                            _ => {
+                                proof { assert(false); }
+                                Transcript::new(suite_hash_x(c.suite))
+                            },
+                        };
+                        self.state = State::Start;
+                        self.accept(cfg, m, body, sid, c, tr, true, Ghost(Some((ch1, hrr))), Ghost(choice), out)
+                    },
+                    Outcome::Retry { .. } => Err(self.fail(ILLEGAL_PARAMETER, out)),
+                    Outcome::Reject(a) => Err(self.fail(a.code(), out)),
+                }
+            },
+            _ => {
+                proof { assert(false); }
+                Err(Error::Closed)
+            },
+        }
+    }
+
+    /// Which state: 0 Start, 1 Retried, 2 WaitFinished, 3 Connected, 4 Closed.
+    fn phase_x(&self) -> (r: u8)
+        ensures
+            r == 0 <==> self.phase() == Phase::Start,
+            r == 1 <==> self.phase() == Phase::Retried,
+            r == 2 <==> self.phase() == Phase::WaitFinished,
+            r == 3 <==> self.phase() == Phase::Connected,
+            r == 4 <==> self.phase() == Phase::Closed,
+    {
+        match self.state {
+            State::Start => 0,
+            State::WaitCh2 { .. } => 1,
+            State::WaitFinished { .. } => 2,
+            State::Connected { .. } => 3,
+            State::Closed => 4,
+        }
+    }
+
+    /// The client's Finished `m`.
+    #[verifier::spinoff_prover]
+    fn on_finished(&mut self, m: &[u8], out: &mut Vec<u8>) -> (r: Result<Event, Error>)
+        requires
+            old(self).wf(),
+            old(self).phase() == Phase::WaitFinished,
+            old(out)@.len() <= usize::MAX / 2,
+            is_msg(m@, 20),
+        ensures
+            final(self).wf(),
+            final(self).config() == old(self).config(),
+            final(out)@.take(old(out)@.len() as int) == old(out)@,
+            final(self).phase() == Phase::Connected || final(self).phase() == Phase::Closed,
+            final(self).phase() == Phase::Connected ==> (r matches Ok(e) && e is HandshakeDone),
+            r matches Ok(e) ==> e is HandshakeDone && final(self).phase() == Phase::Connected,
+    {
+        let mut st = State::Closed;
+        core::mem::swap(&mut self.state, &mut st);
+        match st {
+            State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap } => {
+                let n = expect.len();
+                let e = expect.as_slice();
+                if m.len() != 4 + n {
+                    self.state = State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap };
+                    return Err(self.fail(DECODE_ERROR, out));
+                }
+                let mut acc: u8 = 0;
+                let mut i: usize = 0;
+                while i < n
+                    invariant
+                        i <= n,
+                        n == e@.len(),
+                        m@.len() == 4 + n,
+                        (acc == 0) == (forall|j: int| 0 <= j < i ==> m@[4 + j] == e@[j]),
+                    decreases n - i,
+                {
+                    proof {
+                        lemma_or_xor(acc, m@[4 + i as int], e@[i as int]);
+                    }
+                    acc = acc | (m[4 + i] ^ e[i]);
+                    i = i + 1;
+                }
+                if acc != 0 {
+                    self.state = State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap };
+                    return Err(self.fail(DECRYPT_ERROR, out));
+                }
+                proof {
+                    assert(m@.skip(4) =~= expect@);
+                    lemma_be3(m@);
+                }
+                let a = suite_hash_x(suite);
+                let kl = suite_key_len_x(suite);
+                let (ck, civ) = traffic_keys_x(a, &c_ap, kl);
+                let rx2 = Protect::new(self.prov.aead_key(suite, ck.as_slice()), &civ);
+                let (sk, siv) = traffic_keys_x(a, &s_ap, kl);
+                let tx2 = Protect::new(self.prov.aead_key(suite, sk.as_slice()), &siv);
+                self.fin = Ghost(m@);
+                self.nrx = Ghost(0);
+                self.ntx = Ghost(0);
+                self.skip = 0;
+                self.state = State::Connected { suite, rx: rx2, tx: tx2, c_sec: c_ap, s_sec: s_ap };
+                proof {
+                    assert(updated(a, c_ap@, 0) == c_ap@);
+                    assert(updated(a, s_ap@, 0) == s_ap@);
+                    assert(out@.take(out@.len() as int) =~= out@);
+                }
+                Ok(Event::HandshakeDone)
+            },
+            _ => {
+                proof {
+                    assert(false);
+                }
+                Err(Error::Closed)
+            },
+        }
+    }
+
+    /// A KeyUpdate `m` (§4.6.3).
+    #[verifier::spinoff_prover]
+    fn on_key_update(&mut self, m: &[u8], out: &mut Vec<u8>) -> (r: Result<Event, Error>)
+        requires
+            old(self).wf(),
+            old(self).phase() == Phase::Connected,
+            old(out)@.len() <= usize::MAX / 2,
+            is_msg(m@, 24),
+        ensures
+            final(self).wf(),
+            final(self).config() == old(self).config(),
+            final(out)@.take(old(out)@.len() as int) == old(out)@,
+            final(self).phase() == Phase::Connected || final(self).phase() == Phase::Closed,
+            r matches Ok(e) ==> e is Nothing,
+    {
+        if m.len() != 5 {
+            return Err(self.fail(DECODE_ERROR, out));
+        }
+        let req = m[4];
+        if req > 1 {
+            return Err(self.fail(ILLEGAL_PARAMETER, out));
+        }
+        let mut st = State::Closed;
+        core::mem::swap(&mut self.state, &mut st);
+        match st {
+            State::Connected { suite, rx, tx, c_sec, s_sec } => {
+                let ghost a = suite_hash(suite);
+                let mut tx = tx;
+                let mut s_sec = s_sec;
+                let ghost o = out@;
+                if req == 1 {
+                    // update_requested: answer with update_not_requested
+                    // under the current keys, then move on.
+                    let ku: [u8; 5] = [24, 0, 0, 1, 0];
+                    if !tx.seal(22, &ku, out) {
+                        self.state = State::Connected { suite, rx, tx, c_sec, s_sec };
+                        return Err(self.fail(INTERNAL_ERROR, out));
+                    }
+                    let (s2, tx2) = rekey(&self.prov, suite, &s_sec);
+                    tx = tx2;
+                    s_sec = s2;
+                    self.ntx = Ghost(self.ntx@ + 1);
+                }
+                let (c2, rx2) = rekey(&self.prov, suite, &c_sec);
+                self.nrx = Ghost(self.nrx@ + 1);
+                self.state = State::Connected { suite, rx: rx2, tx, c_sec: c2, s_sec };
+                proof {
+                    assert(out@.take(o.len() as int) =~= o);
+                }
+                Ok(Event::Nothing)
+            },
+            _ => {
+                proof {
+                    assert(false);
+                }
+                Err(Error::Closed)
+            },
+        }
+    }
+
+    /// One whole handshake message `m`.
+    fn dispatch(&mut self, m: &[u8], out: &mut Vec<u8>) -> (r: Result<Event, Error>)
+        requires
+            old(self).wf(),
+            old(self).phase() != Phase::Closed,
+            old(out)@.len() <= usize::MAX / 2,
+            m@.len() >= 4,
+            be24(m@, 1) == m@.len() - 4,
+        ensures
+            final(self).wf(),
+            final(self).config() == old(self).config(),
+            final(out)@.take(old(out)@.len() as int) == old(out)@,
+            final(self).phase() == Phase::Connected ==> old(self).phase() == Phase::Connected
+                || old(self).phase() == Phase::WaitFinished,
+            final(self).phase() == Phase::WaitFinished ==> old(self).phase() == Phase::Start
+                || old(self).phase() == Phase::Retried,
+            final(self).phase() == Phase::Retried ==> old(self).phase() == Phase::Start,
+            final(self).phase() == Phase::Start ==> false,
+            r matches Ok(e) ==> (e is Nothing || (e is HandshakeDone && old(self).phase()
+                == Phase::WaitFinished && final(self).phase() == Phase::Connected)),
+    {
+        let t = m[0];
+        let ph = self.phase_x();
+        if ph <= 1 && t == 1 {
+            self.on_client_hello(m, out)
+        } else if ph == 2 && t == 20 {
+            self.on_finished(m, out)
+        } else if ph == 3 && t == 24 {
+            self.on_key_update(m, out)
+        } else {
+            Err(self.fail(UNEXPECTED_MESSAGE, out))
+        }
+    }
+
+    /// A fragment of handshake messages (§5.1: they may span records, but
+    /// not a change of keys, and every message this server takes is
+    /// followed by one, or by its answer).
+    fn on_handshake(&mut self, frag: &[u8], out: &mut Vec<u8>) -> (r: Result<Event, Error>)
+        requires
+            old(self).wf(),
+            old(self).phase() != Phase::Closed,
+            old(out)@.len() <= usize::MAX / 2,
+        ensures
+            final(self).wf(),
+            final(self).config() == old(self).config(),
+            final(out)@.take(old(out)@.len() as int) == old(out)@,
+            final(self).phase() == Phase::Connected ==> old(self).phase() == Phase::Connected
+                || old(self).phase() == Phase::WaitFinished,
+            final(self).phase() == Phase::WaitFinished ==> old(self).phase() == Phase::Start
+                || old(self).phase() == Phase::Retried || old(self).phase() == Phase::WaitFinished,
+            final(self).phase() == Phase::Retried ==> old(self).phase() == Phase::Start
+                || old(self).phase() == Phase::Retried,
+            final(self).phase() == Phase::Start ==> old(self).phase() == Phase::Start,
+            r matches Ok(e) ==> (e is Nothing || (e is HandshakeDone && old(self).phase()
+                == Phase::WaitFinished && final(self).phase() == Phase::Connected)),
+    {
+        if self.buf.len() == 0 {
+            match handshake_length(frag) {
+                Some(l) => {
+                    if l <= MAX_MESSAGE && l == frag.len() - 4 {
+                        return self.dispatch(frag, out);
+                    }
+                    if l <= MAX_MESSAGE && l < frag.len() - 4 {
+                        return Err(self.fail(UNEXPECTED_MESSAGE, out));
+                    }
+                    if l > MAX_MESSAGE {
+                        return Err(self.fail(UNEXPECTED_MESSAGE, out));
+                    }
+                },
+                None => {},
+            }
+        }
+        if frag.len() > MAX_MESSAGE + 4 - self.buf.len() {
+            return Err(self.fail(UNEXPECTED_MESSAGE, out));
+        }
+        put(&mut self.buf, frag);
+        match handshake_length(self.buf.as_slice()) {
+            None => {
+                assert(out@.take(out@.len() as int) =~= out@);
+                Ok(Event::Nothing)
+            },
+            Some(l) => {
+                if l > MAX_MESSAGE || l < self.buf.len() - 4 {
+                    return Err(self.fail(UNEXPECTED_MESSAGE, out));
+                }
+                if l > self.buf.len() - 4 {
+                    assert(out@.take(out@.len() as int) =~= out@);
+                    return Ok(Event::Nothing);
+                }
+                let mut m: Vec<u8> = Vec::new();
+                core::mem::swap(&mut m, &mut self.buf);
+                self.dispatch(m.as_slice(), out)
+            },
+        }
+    }
+
+    /// Opens a protected record under the client's current keys.
+    #[verifier::spinoff_prover]
+    fn open_rec(&mut self, hdr: &[u8; 5], body: &mut [u8]) -> (r: Result<(u8, usize), RecErr>)
+        requires
+            old(self).wf(),
+            old(self).phase() == Phase::WaitFinished || old(self).phase() == Phase::Connected,
+        ensures
+            final(self).wf(),
+            final(self).config() == old(self).config(),
+            final(self).phase() == old(self).phase(),
+            final(self).handshake() == old(self).handshake(),
+            final(self).rx_secret() == old(self).rx_secret(),
+            final(self).rx_updates() == old(self).rx_updates(),
+            final(self).tx_secret() == old(self).tx_secret(),
+            final(self).tx_seq() == old(self).tx_seq(),
+            final(self).tx_updates() == old(self).tx_updates(),
+            final(self).client_finished() == old(self).client_finished(),
+            old(self).phase() == Phase::Connected ==> {
+                let s = old(self).handshake().choice.suite;
+                let a = suite_hash(s);
+                let sec = old(self).rx_secret();
+                let o = open_record(s, traffic_key(a, sec, suite_key_len(s)), traffic_iv(a, sec), old(self).rx_seq(), hdr@, old(body)@);
+                match r {
+                    Ok((ct, n)) => n < final(body)@.len() && o == Ok::<(u8, Seq<u8>), SpecRecErr>((ct, final(body)@.take(n as int))),
+                    Err(e) => o == Err::<(u8, Seq<u8>), SpecRecErr>(e.spec()),
+                }
+            },
+            r matches Ok((ct, n)) ==> n < final(body)@.len(),
+    {
+        let mut st = State::Closed;
+        core::mem::swap(&mut self.state, &mut st);
+        match st {
+            State::WaitFinished { suite, mut rx, tx, expect, c_ap, s_ap } => {
+                let r = rx.open(hdr, body);
+                self.state = State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap };
+                r
+            },
+            State::Connected { suite, mut rx, tx, c_sec, s_sec } => {
+                let r = rx.open(hdr, body);
+                self.state = State::Connected { suite, rx, tx, c_sec, s_sec };
+                r
+            },
+            _ => {
+                proof {
+                    assert(false);
+                }
+                Err(RecErr::BadMac)
+            },
+        }
+    }
+
+    /// One record from the client: its header and body. What the server
+    /// sends in answer is appended to `out`.
+    pub fn read_record(&mut self, hdr: &[u8; 5], body: &mut [u8], out: &mut Vec<u8>) -> (r: Result<Event, Error>)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).config() == old(self).config(),
+            final(out)@.take(old(out)@.len() as int) == old(out)@,
+            final(self).phase() == Phase::Connected ==> old(self).phase() == Phase::Connected
+                || old(self).phase() == Phase::WaitFinished,
+            final(self).phase() == Phase::WaitFinished ==> old(self).phase() != Phase::Connected
+                && old(self).phase() != Phase::Closed,
+            final(self).phase() == Phase::Retried ==> old(self).phase() == Phase::Start
+                || old(self).phase() == Phase::Retried,
+            final(self).phase() == Phase::Start ==> old(self).phase() == Phase::Start,
+            old(self).phase() == Phase::Closed ==> (r matches Err(e) && e is Closed),
+            r matches Ok(e) && e is HandshakeDone ==> old(self).phase() == Phase::WaitFinished
+                && final(self).phase() == Phase::Connected,
+            r matches Ok(e) && e is Data ==> old(self).phase() == Phase::Connected
+                && final(self).phase() == Phase::Connected,
+            r matches Ok(Event::Data(n)) ==> {
+                let s = old(self).handshake().choice.suite;
+                let a = suite_hash(s);
+                let sec = old(self).rx_secret();
+                &&& n < final(body)@.len()
+                &&& open_record(s, traffic_key(a, sec, suite_key_len(s)), traffic_iv(a, sec), old(self).rx_seq(), hdr@, old(body)@)
+                    == Ok::<(u8, Seq<u8>), SpecRecErr>((23u8, final(body)@.take(n as int)))
+            },
+    {
+        let ph = self.phase_x();
+        if ph == 4 {
+            return Err(Error::Closed);
+        }
+        if out.len() > usize::MAX / 2 {
+            return Err(Error::OutputFull);
+        }
+        let n = body.len();
+        let ln = (hdr[3] as usize) * 256 + hdr[4] as usize;
+        if ln != n {
+            return Err(self.fail(DECODE_ERROR, out));
+        }
+        if n > 16640 {
+            return Err(self.fail(RECORD_OVERFLOW, out));
+        }
+        let ct = hdr[0];
+        if ph <= 2 && ct == 20 {
+            // A change_cipher_spec, which middlebox compatibility mode sends
+            // and §5 says to drop, between ClientHello and Finished.
+            if ph >= 1 && n == 1 && body[0] == 1 && self.buf.len() == 0 {
+                assert(out@.take(out@.len() as int) =~= out@);
+                return Ok(Event::Nothing);
+            }
+            return Err(self.fail(UNEXPECTED_MESSAGE, out));
+        }
+        if ph <= 2 && ct == 21 {
+            if n > 16384 {
+                return Err(self.fail(RECORD_OVERFLOW, out));
+            }
+            return self.on_alert(body, out);
+        }
+        if ph <= 1 {
+            if ct == 22 {
+                if n > 16384 {
+                    return Err(self.fail(RECORD_OVERFLOW, out));
+                }
+                if n == 0 {
+                    return Err(self.fail(UNEXPECTED_MESSAGE, out));
+                }
+                return self.on_handshake(body, out);
+            }
+            if ct == 23 && ph == 1 && self.skip >= n {
+                // 0-RTT data after a HelloRetryRequest (§4.2.10).
+                self.skip = self.skip - n;
+                assert(out@.take(out@.len() as int) =~= out@);
+                return Ok(Event::Nothing);
+            }
+            return Err(self.fail(UNEXPECTED_MESSAGE, out));
+        }
+        if ct != 23 {
+            return Err(self.fail(UNEXPECTED_MESSAGE, out));
+        }
+        let res = self.open_rec(hdr, body);
+        match res {
+            Err(e) => {
+                if ph == 2 && matches!(e, RecErr::BadMac) && self.skip >= n {
+                    // 0-RTT data the server did not take (§4.2.10).
+                    self.skip = self.skip - n;
+                    assert(out@.take(out@.len() as int) =~= out@);
+                    return Ok(Event::Nothing);
+                }
+                let code = match e {
+                    RecErr::BadMac => BAD_RECORD_MAC,
+                    RecErr::Overflow => RECORD_OVERFLOW,
+                    RecErr::NoType => UNEXPECTED_MESSAGE,
+                    RecErr::Exhausted => INTERNAL_ERROR,
+                };
+                Err(self.fail(code, out))
+            },
+            Ok((ict, k)) => {
+                self.skip = 0;
+                let content = vstd::slice::slice_subrange(&*body, 0, k);
+                if ict == 22 {
+                    if k == 0 {
+                        return Err(self.fail(UNEXPECTED_MESSAGE, out));
+                    }
+                    self.on_handshake(content, out)
+                } else if ict == 21 {
+                    self.on_alert(content, out)
+                } else if ict == 23 && ph == 3 && self.buf.len() == 0 {
+                    assert(out@.take(out@.len() as int) =~= out@);
+                    Ok(Event::Data(k))
+                } else {
+                    Err(self.fail(UNEXPECTED_MESSAGE, out))
+                }
+            },
+        }
+    }
+
+    /// Protects application data `data` into `out`.
+    pub fn write(&mut self, data: &[u8], out: &mut Vec<u8>) -> (r: Result<(), Error>)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).config() == old(self).config(),
+            final(self).phase() == old(self).phase(),
+            r is Ok ==> old(self).phase() == Phase::Connected && {
+                let s = old(self).handshake().choice.suite;
+                let a = suite_hash(s);
+                let sec = old(self).tx_secret();
+                final(out)@ == old(out)@ + seal_chunks(s, traffic_key(a, sec, suite_key_len(s)), traffic_iv(a, sec), old(self).tx_seq(), 23, data@)
+            },
+            r is Err ==> final(out)@ == old(out)@,
+    {
+        if out.len() > usize::MAX / 4 || data.len() > usize::MAX / 4 {
+            return Err(Error::OutputFull);
+        }
+        let mut st = State::Closed;
+        core::mem::swap(&mut self.state, &mut st);
+        match st {
+            State::Connected { suite, rx, mut tx, c_sec, s_sec } => {
+                proof {
+                    assert(out@.len() + data@.len() + 22 * (data@.len() / 16384 + 1) + 16384 + 32 <= usize::MAX) by (nonlinear_arith)
+                        requires out@.len() <= usize::MAX / 4, data@.len() <= usize::MAX / 4, usize::MAX >= 0xffff_ffff;
+                }
+                let ok = tx.seal_all(23, data, out);
+                self.state = State::Connected { suite, rx, tx, c_sec, s_sec };
+                if ok { Ok(()) } else { Err(Error::OutputFull) }
+            },
+            other => {
+                self.state = other;
+                Err(Error::Closed)
+            },
+        }
+    }
+
+    /// Sends close_notify and closes.
+    pub fn close(&mut self, out: &mut Vec<u8>)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).phase() == Phase::Closed,
+            final(self).config() == old(self).config(),
+    {
+        if out.len() > usize::MAX / 2 {
+            self.state = State::Closed;
+            return;
+        }
+        let mut st = State::Closed;
+        core::mem::swap(&mut self.state, &mut st);
+        let body: [u8; 2] = [1, 0];
+        match st {
+            State::Connected { mut tx, .. } => {
+                tx.seal(21, &body, out);
+            },
+            State::WaitFinished { mut tx, .. } => {
+                tx.seal(21, &body, out);
+            },
+            _ => {
+                plain_header_x(out, 21, 2);
+                put(out, &body);
+            },
+        }
+    }
+
+    /// The ALPN protocol chosen, once the server has sent its flight.
+    pub fn alpn(&self) -> Option<&[u8]> {
+        match self.alpn_sel {
+            Some(sp) => {
+                let a = self.cfg.alpn.as_slice();
+                if sp.start <= sp.end && sp.end <= a.len() {
+                    Some(sp.of(a))
+                } else {
+                    None
+                }
+            },
+            None => None,
+        }
     }
 }
 

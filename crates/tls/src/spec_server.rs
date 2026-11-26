@@ -269,6 +269,7 @@ impl SpecHs {
         }
     }
 
+    #[verifier::opaque]
     pub open spec fn server_hello(self) -> Seq<u8> {
         server_hello(
             self.random,
@@ -287,11 +288,13 @@ impl SpecHs {
     }
 
     /// ClientHello..ServerHello.
+    #[verifier::opaque]
     pub open spec fn th_sh(self) -> Seq<u8> {
         self.prefix() + self.ch + self.server_hello()
     }
 
     /// ..Certificate.
+    #[verifier::opaque]
     pub open spec fn th_cert(self, c: SpecCfg) -> Seq<u8> {
         self.th_sh() + encrypted_extensions(self.alpn(c)) + certificate(c.chain)
     }
@@ -301,44 +304,53 @@ impl SpecHs {
     }
 
     /// ..CertificateVerify.
+    #[verifier::opaque]
     pub open spec fn th_cv(self, c: SpecCfg) -> Seq<u8> {
         self.th_cert(c) + self.certificate_verify()
     }
 
+    #[verifier::opaque]
     pub open spec fn c_hs(self) -> Seq<u8> {
         client_hs_traffic(self.alg(), self.dhe, self.th_sh())
     }
 
+    #[verifier::opaque]
     pub open spec fn s_hs(self) -> Seq<u8> {
         server_hs_traffic(self.alg(), self.dhe, self.th_sh())
     }
 
     /// The server's Finished.
+    #[verifier::opaque]
     pub open spec fn server_finished(self, c: SpecCfg) -> Seq<u8> {
         finished(verify_data(self.alg(), self.s_hs(), self.th_cv(c)))
     }
 
     /// ..server Finished.
+    #[verifier::opaque]
     pub open spec fn th_sfin(self, c: SpecCfg) -> Seq<u8> {
         self.th_cv(c) + self.server_finished(c)
     }
 
     /// What the server sends under its handshake keys:
     /// EncryptedExtensions, Certificate, CertificateVerify, Finished.
+    #[verifier::opaque]
     pub open spec fn flight(self, c: SpecCfg) -> Seq<u8> {
         encrypted_extensions(self.alpn(c)) + certificate(c.chain) + self.certificate_verify()
             + self.server_finished(c)
     }
 
     /// The client's Finished, as it must be.
+    #[verifier::opaque]
     pub open spec fn client_finished(self, c: SpecCfg) -> Seq<u8> {
         finished(verify_data(self.alg(), self.c_hs(), self.th_sfin(c)))
     }
 
+    #[verifier::opaque]
     pub open spec fn c_ap(self, c: SpecCfg) -> Seq<u8> {
         client_ap_traffic(self.alg(), self.dhe, self.th_sfin(c))
     }
 
+    #[verifier::opaque]
     pub open spec fn s_ap(self, c: SpecCfg) -> Seq<u8> {
         server_ap_traffic(self.alg(), self.dhe, self.th_sfin(c))
     }

@@ -328,6 +328,7 @@ pub fn expand_label_x(a: HashAlg, secret: &[u8], label: &[u8], ctx: &[u8], l: us
             1u8,
         ]);
         lemma_expand_one(a, secret@, hkdf_label(l as nat, label@, ctx@), l as nat);
+        reveal(expand_label);
     }
     let r = Secret::from_slice(full.as_slice(), l);
     assert(r@ =~= full@.take(l as int));
@@ -560,6 +561,7 @@ pub fn record_nonce_x(iv: &[u8; 12], seq: u64) -> (r: [u8; 12])
     ensures
         r@ == record_nonce(iv@, seq),
 {
+    reveal(record_nonce);
     let mut out = *iv;
     let mut s = seq;
     let mut i: usize = 12;

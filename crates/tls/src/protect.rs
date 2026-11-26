@@ -87,6 +87,7 @@ pub proof fn lemma_nonce_injective(iv: Seq<u8>, a: u64, b: u64)
     ensures
         a == b,
 {
+    reveal(record_nonce);
     assert forall|i: int| 4 <= i < 12 implies seq_byte(a, i) == seq_byte(b, i) by {
         let na = record_nonce(iv, a);
         let nb = record_nonce(iv, b);
@@ -210,6 +211,7 @@ impl<K: AeadKey> Protect<K> {
             final(self).key() == old(self).key(),
             final(self).iv() == old(self).iv(),
     {
+        reveal(seal_record);
         if self.seq == 0xffff_ffff_ffff_ffffu64 {
             return false;
         }
@@ -349,6 +351,7 @@ impl<K: AeadKey> Protect<K> {
                     rest.take(m as int),
                 ));
                 assert(rest.len() > 0);
+                reveal(seal_chunks);
                 assert(seal_chunks(self.suite(), self.key(), self.iv(), (self.seq() - 1) as u64, ct, rest)
                     == seal_record(
                     self.suite(),
@@ -435,6 +438,7 @@ impl<K: AeadKey> Protect<K> {
             final(self).key() == old(self).key(),
             final(self).iv() == old(self).iv(),
     {
+        reveal(open_record);
         if self.seq == 0xffff_ffff_ffff_ffffu64 {
             return Err(RecErr::Exhausted);
         }

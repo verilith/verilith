@@ -16,6 +16,7 @@ pub open spec fn protected_header(len: nat) -> Seq<u8> {
 /// A protected record of content type `ct` with `content`, sent with
 /// sequence number `seq`: `TLSInnerPlaintext` is the content, the type,
 /// and no padding.
+#[verifier::opaque]
 pub open spec fn seal_record(suite: u16, key: Seq<u8>, iv: Seq<u8>, seq: u64, ct: u8, content: Seq<u8>) -> Seq<
     u8,
 > {
@@ -86,6 +87,7 @@ pub enum SpecRecErr {
 
 /// A protected record with header `hdr` and `encrypted_record` `body`,
 /// received with sequence number `seq`: its content type and content.
+#[verifier::opaque]
 pub open spec fn open_record(suite: u16, key: Seq<u8>, iv: Seq<u8>, seq: u64, hdr: Seq<u8>, body: Seq<u8>) -> Result<
     (u8, Seq<u8>),
     SpecRecErr,
