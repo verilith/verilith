@@ -120,7 +120,7 @@ async fn listen(st: Arc<State>, port: u16, tls: Option<Arc<tokio_rustls::rustls:
         tokio::spawn(async move {
             let svc = hyper::service::service_fn(move |r| serve(st.clone(), r));
             let mut b = auto::Builder::new(TokioExecutor::new());
-            b.http1().keep_alive(true);
+            b.http1().keep_alive(true).pipeline_flush(true);
             b.http2().max_concurrent_streams(256);
             if h2_only {
                 let b = b.http2_only();

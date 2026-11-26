@@ -200,11 +200,13 @@ impl Stream {
         r
     }
 
-    /// `new` for callers outside Verus, who have no ghost `full` to give.
-    /// The proofs about `full` then say nothing.
-    #[verifier::external_body]
-    pub fn open() -> Stream {
-        Stream::new(Ghost::assume_new())
+    /// `new` for callers with no ghost `full` to give. The ghost stream is
+    /// empty, so the proofs about `full` say nothing past the first byte.
+    pub fn open() -> (r: Stream)
+        ensures
+            r.inv(),
+    {
+        Stream::new(Ghost(Seq::empty()))
     }
 
     /// Output decoded but not handed out yet.

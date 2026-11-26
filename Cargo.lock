@@ -1388,6 +1388,7 @@ dependencies = [
  "verilith-dns",
  "verilith-font",
  "verilith-gif",
+ "verilith-h2",
  "verilith-hpack",
  "verilith-http",
  "verilith-jpeg",
@@ -1401,6 +1402,7 @@ dependencies = [
  "verilith-sync",
  "verilith-text",
  "verilith-tiff",
+ "verilith-tls",
  "verilith-url",
  "verilith-wasm",
  "verilith-webp",
@@ -1492,6 +1494,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "verilith-h2"
+version = "0.1.0"
+dependencies = [
+ "vstd",
+]
+
+[[package]]
 name = "verilith-hpack"
 version = "0.1.0"
 dependencies = [
@@ -1553,6 +1562,15 @@ dependencies = [
  "verilith-core",
  "verilith-simd",
  "verilith-text",
+ "vstd",
+]
+
+[[package]]
+name = "verilith-server"
+version = "0.1.0"
+dependencies = [
+ "verilith-core",
+ "verilith-http",
  "vstd",
 ]
 
@@ -1621,6 +1639,14 @@ dependencies = [
  "cc",
  "verilith-core",
  "verilith-zlib",
+ "vstd",
+]
+
+[[package]]
+name = "verilith-tls"
+version = "0.1.0"
+dependencies = [
+ "verilith-core",
  "vstd",
 ]
 

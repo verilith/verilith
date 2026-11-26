@@ -90,10 +90,11 @@ its own trusted base.
 - `src/lanes.rs`: the byte model of `__m128i`/`__m256i` (an uninterpreted
   `b128`/`b256` of length 16/32).
 - `src/sse2.rs`: verified wrappers over the SSE2 instructions byte scanners
-  use (`load16`, `splat16`, `eq16`, `or16`, `min16`, `movemask16`, on x86-64
-  only), each with a contract on the 16 bytes `b16` and the mask bits
-  `bit` proven from the specifications here, and `first_set16`. Shared by
-  verilith-json and verilith-xml.
+  use (`load16`, `splat16`, `eq16`, `subs16`, `or16`, `min16`,
+  `movemask16`), each with a contract on the 16 bytes `b16` and the mask
+  bits `bit` proven from the specifications here, and `first_set16`.
+  Off x86-64 they build on the emulation, as `arch` does. Shared by
+  verilith-json, verilith-xml, verilith-http and verilith-regex.
 - `src/avx512.rs` (x86-64 only): safe wrappers, with specifications, for 17
   AVX-512 intrinsics (F, BW and VBMI2: bitwise ops, `shuffle_epi8`,
   `subs_epu8`, `srli_epi16`, `add_epi32`, the byte compares and `test` into
@@ -103,7 +104,6 @@ its own trusted base.
   uses them is x86-64 only. Each requires `avx512f()`, `avx512bw()` or
   `avx512vbmi2()`, which `has_avx512bw()` and `has_avx512vbmi2()` ensure,
   with the axiom that VBMI2 implies BW, BW implies F and F implies AVX2.
-- `src/scalar.rs`: `popcnt64`, specified as the number of set bits.
 - `src/neon.rs`: the NEON wrappers' specifications (84: loads and
   stores on `u8`, `u16`, `i16` and `u32` slices, bitwise ops, add,
   saturating subtract, compare, `ushr`, `tbl`, `ext`, `zip1`/`zip2` at 8,

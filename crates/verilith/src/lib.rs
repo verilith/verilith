@@ -32,6 +32,9 @@ pub use verilith_font as font;
 /// `verilith-gif`: GIF decoder.
 #[cfg(feature = "gif")]
 pub use verilith_gif as gif;
+/// `verilith-h2`: HTTP/2 frames.
+#[cfg(feature = "h2")]
+pub use verilith_h2 as h2;
 /// `verilith-hpack`: HPACK header compression.
 #[cfg(feature = "hpack")]
 pub use verilith_hpack as hpack;
@@ -71,6 +74,9 @@ pub use verilith_text as text;
 /// `verilith-tiff`: TIFF decoder.
 #[cfg(feature = "tiff")]
 pub use verilith_tiff as tiff;
+/// `verilith-tls`: TLS 1.3 message parsing.
+#[cfg(feature = "tls")]
+pub use verilith_tls as tls;
 /// `verilith-url`: WHATWG URL parser.
 #[cfg(feature = "url")]
 pub use verilith_url as url;

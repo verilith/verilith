@@ -476,6 +476,11 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   high 64-bit lane), added to verilith-simd for it. Off AArch64 the wrappers run an
   emulation, so the NEON kernels are also tested on x86
   (`cargo test neon`) and, under qemu, on AArch64.
+  Off x86-64 the 16-byte scans (`classify_special`, `classify_non_ws`,
+  `classify_non_digit`, `digit_run_acc16`, `copy_plain16`) choose, in
+  verified code, between the NEON kernels and verified scalar loops (for
+  WebAssembly without SIMD128); `cargo test portable_kernels` runs the
+  scalar loops on x86-64.
 * **Vec capacity.** vstd does not model a `Vec`'s capacity, so
   `src/lanes.rs` declares it as an uninterpreted `spare` and wraps
   `reserve`, a `push` into reserved space without the capacity check, and
@@ -517,11 +522,13 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   `parse` fuzzer checks every number it reads, eager and lazy, against
   `f64::from_str`. Allocation is Rust's: how much capacity a `Vec` keeps
   beyond its length is up to the standard library.
-* `src/number.rs` is the glue between the verified scanner and the
-  verified conversion: it calls `ex_number_scan` and `to_bits`, sets the
-  sign bit, and calls `f64::from_bits`. Lexemes with more than 19
-  significant digits, or that `to_bits` cannot decide, go to
-  `f64::from_str`.
+* `src/number.rs`: `lexeme_bits`, which calls `ex_number_scan` and
+  `to_bits` and sets the sign bit, is verified to return the correctly
+  rounded bits of the lexeme's `number_value` whenever it returns any,
+  and `parse_i64` to return an integer lexeme's value exactly when it
+  fits in `i64`. What is left unverified is `f64::from_bits` of those
+  bits, and lexemes with more than 19 significant digits, or that
+  `to_bits` cannot decide, which go to `f64::from_str`.
 * `src/writer.rs` (the `Writer` state machine: brackets, commas and colons)
   and `src/serde_support.rs` are ordinary Rust, tested by parsing what they
   write. Floats are formatted by the `zmij` crate, as in serde_json; its
@@ -580,6 +587,17 @@ The behaviors that callers depend on are kept:
 
 * **JSONTestSuite** (`test_parsing`, 318 files), Rust API: every `y_` file is
   accepted and every `n_` file is rejected.
+* **JSONTestSuite on the spec itself.** The tests above run the parser,
+  which is proven equal to `spec::document`, so they speak for the spec
+  only through the proofs. `spec-tests/` checks the spec with no parser
+  and no proof involved: each file becomes an
+  `assert(document(bytes, true) is Some) by (compute_only)` (or `is None`),
+  which Verus proves by running `spec::document` on the file's bytes in
+  its own evaluator. All 315 files it can evaluate agree with the suite:
+  every `y_` file accepted, every `n_` file rejected, and each `i_` file
+  as the table above says. The three files nested 500 levels deep or
+  more go past the evaluator's recursion limit and are left out
+  (`scripts/spec-tests.sh json`, run in CI).
 * **JSONTestSuite through the C API**, `cJSON_ParseWithLengthOpts(...,
   require_null_terminated=1)`, built with ASan and UBSan:
   * verilith-json gets 1 file wrong: `n_multidigit_number_then_00.json`. That file
@@ -1024,6 +1042,7 @@ native C API. The two features can be enabled together.
 JSON_TEST_SUITE=/path/to/JSONTestSuite/test_parsing cargo test --profile release-abort
 cargo test --profile release-abort --features capi --test capi   # the native C API against the Rust API
 ./scripts/test-c.sh            # both C APIs; clones cJSON and JSONTestSuite at pinned commits
+../../scripts/spec-tests.sh json   # spec::document itself on JSONTestSuite, evaluated by Verus
 ```
 
 ## API coverage
@@ -1063,7 +1082,7 @@ src/write.rs     verified string escaping and number checks for the writer
 src/writer.rs    Writer (unverified state machine over src/write.rs)
 src/serde_support.rs  serde Serializer/Deserializer (feature `serde`)
 src/float.rs     verified correctly rounded conversion of w * 10^q to f64 bits
-src/number.rs    glue from the verified scanner to src/float.rs (src/pow5.rs is its table)
+src/number.rs    verified glue from the scanner to src/float.rs (src/pow5.rs is its table)
 src/minify.rs    verified in-place cJSON_Minify
 src/ffi.rs       cJSON-compatible C ABI (unverified)
 examples/        benchmark and debugging drivers

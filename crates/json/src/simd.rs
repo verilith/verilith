@@ -2049,10 +2049,9 @@ pub fn digit_run_acc16(s: &[u8], i: usize) -> (r: (usize, u64))
 #[cfg(not(target_arch = "x86_64"))]
 verus! {
 
-/// Off x86-64: on AArch64, the verified NEON kernels in `crate::neon`
-/// (each with this function's contract; NEON is part of the AArch64
-/// baseline); elsewhere, scalar fallbacks, which are not verified.
-#[verifier::external_body]
+/// Off x86-64 these are the portable kernels below: the verified NEON
+/// kernels in `crate::neon` where the CPU has NEON (AArch64, and
+/// WebAssembly with SIMD128), otherwise verified scalar loops.
 #[inline(always)]
 pub fn copy_plain16(s: &[u8], i: usize, end: usize, out: &mut Vec<u8>) -> (r: usize)
     requires
@@ -2067,16 +2066,9 @@ pub fn copy_plain16(s: &[u8], i: usize, end: usize, out: &mut Vec<u8>) -> (r: us
         final(out)@ == old(out)@ + s@.subrange(i as int, i + r),
         spare(*final(out)) == spare(*old(out)) - r,
 {
-    if cfg!(any(target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128"))) {
-        return crate::neon::copy_plain16_neon(s, i, end, out);
-    }
-    let lim = (end - i).min(16);
-    let r = s[i..i + lim].iter().take_while(|&&c| c != 0x22 && c != 0x5C && c >= 0x20).count();
-    out.extend_from_slice(&s[i..i + r]);
-    r
+    copy_plain16_any(s, i, end, out)
 }
 
-#[verifier::external_body]
 #[inline(always)]
 pub fn classify_special(s: &[u8], i: usize) -> (m: u32)
     requires
@@ -2085,13 +2077,9 @@ pub fn classify_special(s: &[u8], i: usize) -> (m: u32)
         m < 0x10000,
         forall|k: u32| k < 16 ==> (#[trigger] bit(m, k) <==> !plain(s@[i + k])),
 {
-    if cfg!(any(target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128"))) {
-        return crate::neon::classify_special_neon(s, i);
-    }
-    (0..16).filter(|&k| { let c = s[i + k]; !(c != 0x22 && c != 0x5C && c >= 0x20) }).fold(0, |m, k| m | 1 << k)
+    classify_special_any(s, i)
 }
 
-#[verifier::external_body]
 #[inline(always)]
 pub fn classify_non_ws(s: &[u8], i: usize) -> (m: u32)
     requires
@@ -2100,13 +2088,9 @@ pub fn classify_non_ws(s: &[u8], i: usize) -> (m: u32)
         m < 0x10000,
         forall|k: u32| k < 16 ==> (#[trigger] bit(m, k) <==> !is_ws(s@[i + k])),
 {
-    if cfg!(any(target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128"))) {
-        return crate::neon::classify_non_ws_neon(s, i);
-    }
-    (0..16).filter(|&k| !matches!(s[i + k], 0x20 | 0x0A | 0x0D | 0x09)).fold(0, |m, k| m | 1 << k)
+    classify_non_ws_any(s, i)
 }
 
-#[verifier::external_body]
 #[inline(always)]
 pub fn classify_non_digit(s: &[u8], i: usize) -> (m: u32)
     requires
@@ -2115,13 +2099,9 @@ pub fn classify_non_digit(s: &[u8], i: usize) -> (m: u32)
         m < 0x10000,
         forall|k: u32| k < 16 ==> (#[trigger] bit(m, k) <==> !is_digit_byte(s@[i + k])),
 {
-    if cfg!(any(target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128"))) {
-        return crate::neon::classify_non_digit_neon(s, i);
-    }
-    (0..16).filter(|&k| !s[i + k].is_ascii_digit()).fold(0, |m, k| m | 1 << k)
+    classify_non_digit_any(s, i)
 }
 
-#[verifier::external_body]
 #[inline(always)]
 pub fn digit_run_acc16(s: &[u8], i: usize) -> (r: (usize, u64))
     requires
@@ -2132,11 +2112,235 @@ pub fn digit_run_acc16(s: &[u8], i: usize) -> (r: (usize, u64))
         r.0 < 16 ==> !is_digit_byte(s@[i + r.0]),
         r.1 as int == dval(s@, i as int, i + r.0),
 {
-    if cfg!(any(target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128"))) {
+    digit_run_acc16_any(s, i)
+}
+
+} // verus!
+
+verus! {
+
+/// The byte classes the portable masks test: 0 is "not plain", 1 "not
+/// whitespace", 2 "not a digit".
+pub open spec fn in_class(kind: u8, c: u8) -> bool {
+    if kind == 0 {
+        !plain(c)
+    } else if kind == 1 {
+        !is_ws(c)
+    } else {
+        !is_digit_byte(c)
+    }
+}
+
+/// Setting bit `k` of a mask below `2^k`.
+#[verifier::bit_vector]
+proof fn lemma_mask_step(m: u32, k: u32, j: u32)
+    requires
+        k < 16,
+        m < (1u32 << k),
+    ensures
+        (m | (1u32 << k)) < (1u32 << (k + 1)),
+        m < (1u32 << (k + 1)),
+        j < k ==> (((m | (1u32 << k)) >> j) & 1u32 == 1u32) == ((m >> j) & 1u32 == 1u32),
+        ((m | (1u32 << k)) >> k) & 1u32 == 1u32,
+        (m >> k) & 1u32 != 1u32,
+{
+}
+
+/// The mask of the 16 bytes at `i` in class `kind`, a byte at a time.
+fn class_mask_scalar(s: &[u8], i: usize, kind: u8) -> (m: u32)
+    requires
+        i + 16 <= s@.len(),
+        kind <= 2,
+    ensures
+        m < 0x10000,
+        forall|k: u32| k < 16 ==> (#[trigger] bit(m, k) <==> in_class(kind, s@[i + k])),
+{
+    let mut m: u32 = 0;
+    let mut k: u32 = 0;
+    proof {
+        assert((1u32 << 0u32) == 1u32) by (bit_vector);
+    }
+    while k < 16
+        invariant
+            i + 16 <= s@.len(),
+            k <= 16,
+            m < (1u32 << k),
+            forall|j: u32| j < k ==> (#[trigger] bit(m, j) <==> in_class(kind, s@[i + j])),
+        decreases 16 - k,
+    {
+        let c = s[i + k as usize];
+        let hit = if kind == 0 {
+            !(c != 0x22 && c != 0x5C && c >= 0x20)
+        } else if kind == 1 {
+            !(c == 0x20 || c == 0x0A || c == 0x0D || c == 0x09)
+        } else {
+            !(0x30 <= c && c <= 0x39)
+        };
+        let ghost m0 = m;
+        assert(hit == in_class(kind, s@[i + k]));
+        if hit {
+            m = m | (1u32 << k);
+        }
+        proof {
+            assert forall|j: u32| j < k + 1 implies (#[trigger] bit(m, j) <==> in_class(kind, s@[i + j])) by {
+                lemma_mask_step(m0, k, j);
+                if j < k {
+                    assert(bit(m0, j) <==> in_class(kind, s@[i + j]));
+                }
+            }
+            lemma_mask_step(m0, k, 0);
+        }
+        k = k + 1;
+    }
+    proof {
+        assert((1u32 << 16u32) == 0x10000u32) by (bit_vector);
+    }
+    m
+}
+
+/// `10^a <= 10^b` for `a <= b`.
+proof fn lemma_p10i_mono(a: nat, b: nat)
+    requires
+        a <= b,
+    ensures
+        1 <= p10i(a) <= p10i(b),
+    decreases b,
+{
+    if b > a {
+        lemma_p10i_mono(a, (b - 1) as nat);
+    } else if a > 0 {
+        lemma_p10i_mono((a - 1) as nat, (a - 1) as nat);
+    }
+}
+
+/// `classify_special` on any target: NEON where the CPU has it,
+/// otherwise a byte at a time.
+#[inline(always)]
+pub fn classify_special_any(s: &[u8], i: usize) -> (m: u32)
+    requires
+        i + 16 <= s@.len(),
+    ensures
+        m < 0x10000,
+        forall|k: u32| k < 16 ==> (#[trigger] bit(m, k) <==> !plain(s@[i + k])),
+{
+    if verilith_simd::neon::has_neon() {
+        return crate::neon::classify_special_neon(s, i);
+    }
+    class_mask_scalar(s, i, 0)
+}
+
+/// `classify_non_ws` on any target.
+#[inline(always)]
+pub fn classify_non_ws_any(s: &[u8], i: usize) -> (m: u32)
+    requires
+        i + 16 <= s@.len(),
+    ensures
+        m < 0x10000,
+        forall|k: u32| k < 16 ==> (#[trigger] bit(m, k) <==> !is_ws(s@[i + k])),
+{
+    if verilith_simd::neon::has_neon() {
+        return crate::neon::classify_non_ws_neon(s, i);
+    }
+    class_mask_scalar(s, i, 1)
+}
+
+/// `classify_non_digit` on any target.
+#[inline(always)]
+pub fn classify_non_digit_any(s: &[u8], i: usize) -> (m: u32)
+    requires
+        i + 16 <= s@.len(),
+    ensures
+        m < 0x10000,
+        forall|k: u32| k < 16 ==> (#[trigger] bit(m, k) <==> !is_digit_byte(s@[i + k])),
+{
+    if verilith_simd::neon::has_neon() {
+        return crate::neon::classify_non_digit_neon(s, i);
+    }
+    class_mask_scalar(s, i, 2)
+}
+
+/// `digit_run_acc16` on any target: NEON where the CPU has it,
+/// otherwise a digit at a time.
+#[inline(always)]
+pub fn digit_run_acc16_any(s: &[u8], i: usize) -> (r: (usize, u64))
+    requires
+        i + 16 <= s@.len(),
+    ensures
+        r.0 <= 16,
+        forall|q: int| i <= q < i + r.0 ==> is_digit_byte(#[trigger] s@[q]),
+        r.0 < 16 ==> !is_digit_byte(s@[i + r.0]),
+        r.1 as int == dval(s@, i as int, i + r.0),
+{
+    if verilith_simd::neon::has_neon() {
         return crate::neon::digit_run_acc16_neon(s, i);
     }
-    let n = s[i..i + 16].iter().take_while(|c| c.is_ascii_digit()).count();
-    (n, s[i..i + n].iter().fold(0u64, |w, &c| w.wrapping_mul(10).wrapping_add((c - b'0') as u64)))
+    let mut n: usize = 0;
+    let mut w: u64 = 0;
+    let len = s.len();
+    proof {
+        assert(p10i(16) == 10000000000000000) by (compute_only);
+    }
+    while n < 16
+        invariant
+            len == s@.len(),
+            i + 16 <= s@.len(),
+            n <= 16,
+            i + n <= s@.len(),
+            p10i(16) == 10000000000000000,
+            forall|q: int| i <= q < i + n ==> is_digit_byte(#[trigger] s@[q]),
+            w as int == dval(s@, i as int, i + n),
+        ensures
+            n <= 16,
+            forall|q: int| i <= q < i + n ==> is_digit_byte(#[trigger] s@[q]),
+            w as int == dval(s@, i as int, i + n),
+            n < 16 ==> !is_digit_byte(s@[i + n]),
+        decreases 16 - n,
+    {
+        let c = s[i + n];
+        if !(0x30 <= c && c <= 0x39) {
+            break;
+        }
+        proof {
+            crate::parser::lemma_dval_bound(s@, i as int, i + n);
+            lemma_p10i_mono(n as nat, 15);
+            assert(p10i(16) == 10 * p10i(15));
+        }
+        w = w * 10 + (c - 0x30) as u64;
+        n = n + 1;
+    }
+    (n, w)
+}
+
+/// `copy_plain16` on any target: NEON where the CPU has it, otherwise
+/// the plain run found by `classify_special_any`, copied into the
+/// reserved space.
+#[inline(always)]
+pub fn copy_plain16_any(s: &[u8], i: usize, end: usize, out: &mut Vec<u8>) -> (r: usize)
+    requires
+        i + 16 <= s@.len(),
+        i <= end,
+        spare(*old(out)) >= 16,
+    ensures
+        r <= 16,
+        i + r <= end,
+        forall|q: int| i <= q < i + r ==> plain(#[trigger] s@[q]),
+        (r < 16 && i + r < end) ==> !plain(s@[i + r]),
+        final(out)@ == old(out)@ + s@.subrange(i as int, i + r),
+        spare(*final(out)) == spare(*old(out)) - r,
+{
+    if verilith_simd::neon::has_neon() {
+        return crate::neon::copy_plain16_neon(s, i, end, out);
+    }
+    let m = classify_special_any(s, i);
+    let p = first_set16(m);
+    proof {
+        assert forall|q: int| i <= q < i + p implies plain(#[trigger] s@[q]) by {
+            assert(!bit(m, (q - i) as u32));
+        }
+    }
+    let r = if p < end - i { p } else { end - i };
+    append_slice_spare(out, s, i, i + r);
+    r
 }
 
 } // verus!
@@ -2266,6 +2470,45 @@ mod tests {
 
     fn scalar(f: fn(u8) -> bool, s: &[u8], i: usize) -> u32 {
         (0..16).filter(|&k| f(s[i + k])).fold(0, |m, k| m | 1 << k)
+    }
+
+    /// The portable kernels (`*_any`), which off x86-64 are the
+    /// classifiers. Off AArch64 and SIMD128 they run their scalar loops,
+    /// which are what this tests on x86-64; on AArch64 their NEON ones.
+    #[test]
+    fn portable_kernels() {
+        let alphabet = b"0123456789 \t\n\r\"\\\x00\x1fa-.eE+\x7f\xff";
+        let mut x: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut data = vec![0u8; 4096];
+        for (j, b) in data.iter_mut().enumerate() {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            // Long runs of one class, and runs of random bytes.
+            *b = if (j / 37) % 3 == 0 { x as u8 } else { alphabet[(x % alphabet.len() as u64) as usize] };
+        }
+        let not_plain = |c: u8| !(c != 0x22 && c != 0x5C && c >= 0x20);
+        let not_ws = |c: u8| !matches!(c, 0x20 | 0x0A | 0x0D | 0x09);
+        let not_digit = |c: u8| !c.is_ascii_digit();
+        for i in 0..data.len() - 16 {
+            assert_eq!(classify_special_any(&data, i), scalar(not_plain, &data, i));
+            assert_eq!(classify_non_ws_any(&data, i), scalar(not_ws, &data, i));
+            assert_eq!(classify_non_digit_any(&data, i), scalar(not_digit, &data, i));
+            let n = data[i..i + 16].iter().take_while(|c| c.is_ascii_digit()).count();
+            let w = data[i..i + n].iter().fold(0u64, |w, &c| w * 10 + (c - b'0') as u64);
+            assert_eq!(digit_run_acc16_any(&data, i), (n, w));
+            for end in [i, i + 1, i + 7, i + 16, i + 40] {
+                let mut out = b"ab".to_vec();
+                reserve_spare(&mut out, 16);
+                let r = copy_plain16_any(&data, i, end, &mut out);
+                let want = data[i..i + 16].iter().take_while(|&&c| !not_plain(c)).count().min(end - i);
+                assert_eq!(r, want);
+                assert_eq!(&out[2..], &data[i..i + r]);
+            }
+        }
+        // All digits: the longest run, and the largest value.
+        let nines = [b'9'; 16];
+        assert_eq!(digit_run_acc16_any(&nines, 0), (16, 9_999_999_999_999_999));
     }
 
     #[test]

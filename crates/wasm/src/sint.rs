@@ -453,12 +453,47 @@ pub fn ctz32(a: u32) -> (r: u32)
     r
 }
 
-#[verifier::external_body]
+/// `popcnt` is vstd's `nat_count_ones`, which specifies `count_ones`.
+proof fn lemma_popcnt_count_ones(a: nat)
+    ensures
+        popcnt(a) == vstd::std_specs::bits::nat_count_ones(a),
+    decreases a,
+{
+    if a >= 2 {
+        lemma_popcnt_count_ones(a / 2);
+    } else if a == 1 {
+        assert(popcnt(1) == 1 + popcnt(0));
+    }
+}
+
+/// A number below `2^k` has at most `k` set bits.
+proof fn lemma_popcnt_bound(a: nat, k: nat)
+    requires
+        a < vstd::arithmetic::power2::pow2(k),
+    ensures
+        popcnt(a) <= k,
+    decreases k,
+{
+    if k > 0 && a > 0 {
+        vstd::arithmetic::power2::lemma_pow2_unfold(k);
+        assert(a / 2 < vstd::arithmetic::power2::pow2((k - 1) as nat));
+        lemma_popcnt_bound(a / 2, (k - 1) as nat);
+    } else if k == 0 {
+        vstd::arithmetic::power2::lemma2_to64();
+    }
+}
+
 #[inline(always)]
 pub fn popcnt32(a: u32) -> (r: u32)
     ensures r == popcnt(a as nat),
 {
-    a.count_ones()
+    let r = a.count_ones();
+    proof {
+        lemma_popcnt_count_ones(a as nat);
+        vstd::arithmetic::power2::lemma2_to64();
+        lemma_popcnt_bound(a as nat, 32);
+    }
+    r
 }
 
 #[inline(always)]
@@ -541,12 +576,17 @@ pub fn ctz64(a: u64) -> (r: u64)
     r as u64
 }
 
-#[verifier::external_body]
 #[inline(always)]
 pub fn popcnt64(a: u64) -> (r: u64)
     ensures r == popcnt(a as nat),
 {
-    a.count_ones() as u64
+    let r = a.count_ones();
+    proof {
+        lemma_popcnt_count_ones(a as nat);
+        vstd::arithmetic::power2::lemma2_to64();
+        lemma_popcnt_bound(a as nat, 64);
+    }
+    r as u64
 }
 
 } // verus!
