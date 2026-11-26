@@ -918,7 +918,6 @@ proof fn lemma_put_after(o: Seq<u8>, done: Seq<u8>, k: int, s: u8, o2: Seq<u8>)
 /// bits) plus two bytes, so a table entry's two symbols are both written
 /// with no checks and the count of them taken; it is cut to the result at
 /// the end.
-#[verifier::rlimit(60)]
 pub fn decode(b: &[u8], out: &mut Vec<u8>, t: &[u32]) -> (ok: bool)
     requires
         layout_ok(),
@@ -929,10 +928,33 @@ pub fn decode(b: &[u8], out: &mut Vec<u8>, t: &[u32]) -> (ok: bool)
         ok ==> final(out)@ == hdec(b@, 0)->Some_0,
         final(out)@.len() <= 8 * b@.len() / 5 + 2,
 {
+    decode_metered(b, out, t).0
+}
+
+/// `decode`, and its work: the decoding loop's turns plus the bytes the
+/// output is grown by, at most `4 * b.len() + 4`. The loop takes a whole
+/// code (at least 5 bits) or returns on every turn; `refill` and `find`
+/// run at most 8 and 30 times inside one turn, so they are not counted.
+#[verifier::rlimit(60)]
+pub fn decode_metered(b: &[u8], out: &mut Vec<u8>, t: &[u32]) -> (r: (bool, Ghost<nat>))
+    requires
+        layout_ok(),
+        dtab_ok(t@),
+        8 * b@.len() + 2 < usize::MAX,
+    ensures
+        r.0 == hdec(b@, 0) is Some,
+        r.0 ==> final(out)@ == hdec(b@, 0)->Some_0,
+        final(out)@.len() <= 8 * b@.len() / 5 + 2,
+        r.1@ <= 4 * b@.len() + 4,
+{
     let ghost bs = b@;
     let n = b.len();
     let need = 8 * n / 5 + 2;
+    let ghost mut steps: nat = 0;
     if out.len() < need {
+        proof {
+            steps = (need - out@.len()) as nat;
+        }
         out.resize(need, 0u8);
     }
     let mut i: usize = 0;
@@ -957,6 +979,7 @@ pub fn decode(b: &[u8], out: &mut Vec<u8>, t: &[u32]) -> (ok: bool)
             w == done.len(),
             layout_ok(),
             dtab_ok(t@),
+            steps <= need + w,
         decreases 8 * n - (8 * i - nb),
     {
         // Refill only when the window may be shorter than a code.
@@ -978,7 +1001,7 @@ pub fn decode(b: &[u8], out: &mut Vec<u8>, t: &[u32]) -> (ok: bool)
             proof {
                 assert(done + Seq::<u8>::empty() =~= done);
             }
-            return true;
+            return (true, Ghost(steps + 1));
         }
         let mut from: u64 = 1;
         if nb >= 12 {
@@ -1043,6 +1066,9 @@ pub fn decode(b: &[u8], out: &mut Vec<u8>, t: &[u32]) -> (ok: bool)
                 nb = n2;
                 buf = buf << lt;
                 w = w + k as usize;
+                proof {
+                    steps = steps + 1;
+                }
                 continue;
             }
             if k == 0 {
@@ -1072,16 +1098,16 @@ pub fn decode(b: &[u8], out: &mut Vec<u8>, t: &[u32]) -> (ok: bool)
                         proof {
                             assert(done + Seq::<u8>::empty() =~= done);
                         }
-                        return true;
+                        return (true, Ghost(steps + 1));
                     }
                 }
                 out.truncate(0);
-                return false;
+                return (false, Ghost(steps + 1));
             },
             Some((sym, l)) => {
                 if sym == 256 {
                     out.truncate(0);
-                    return false;
+                    return (false, Ghost(steps + 1));
                 }
                 let ghost o0 = out@;
                 proof {
@@ -1103,6 +1129,9 @@ pub fn decode(b: &[u8], out: &mut Vec<u8>, t: &[u32]) -> (ok: bool)
                 nb = n2;
                 buf = buf << l;
                 w = w + 1;
+                proof {
+                    steps = steps + 1;
+                }
             },
         }
     }
