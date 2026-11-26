@@ -135,85 +135,24 @@ impl Backoff {
     }
 }
 
+/// A fair lock's waiter with `ahead` tickets before its own (counting the
+/// holder's) pauses before it looks again: the next in line spins, then
+/// yields; the others yield at once, so that on an oversubscribed machine
+/// the threads ahead of them get the CPU. Only timing, like `Backoff`.
+#[verifier::external_body]
+#[inline]
+pub fn wait_turn(ahead: u64, backoff: &Backoff) {
+    if ahead <= 1 {
+        backoff.snooze()
+    } else {
+        std::thread::yield_now()
+    }
+}
+
 } // verus!
 
 verus! {
 
-/// What a [`Lock`] protects: `inv(k, v)` holds of its value whenever the
-/// lock is free.
-pub trait LockInv<K, V> {
-    spec fn inv(k: K, v: V) -> bool;
-}
-
-/// `std::sync::Mutex` with an invariant on its contents. Trusted: that
-/// the standard mutex gives mutual exclusion, so the value `lock` hands
-/// out is the one the last `unlock` put back.
-#[verifier::external_body]
-#[verifier::reject_recursive_types(K)]
-#[verifier::reject_recursive_types(V)]
-#[verifier::reject_recursive_types(P)]
-pub struct Lock<K, V, P> {
-    m: std::sync::Mutex<Option<V>>,
-    _p: core::marker::PhantomData<fn() -> (K, P)>,
-}
-
-/// Proof that a [`Lock`] is held. It must be given back with
-/// [`LockGuard::unlock`]; dropping it any other way aborts, since the
-/// lock's value would be gone.
-#[verifier::external_body]
-#[verifier::reject_recursive_types(K)]
-#[verifier::reject_recursive_types(V)]
-#[verifier::reject_recursive_types(P)]
-pub struct LockGuard<'a, K, V, P> {
-    g: Option<std::sync::MutexGuard<'a, Option<V>>>,
-    _p: core::marker::PhantomData<fn() -> (K, P)>,
-}
-
-impl<K, V, P: LockInv<K, V>> Lock<K, V, P> {
-    /// The constant the invariant is about.
-    pub uninterp spec fn k(&self) -> K;
-
-    #[verifier::external_body]
-    pub fn new(v: V, Ghost(k): Ghost<K>) -> (r: Self)
-        requires
-            P::inv(k, v),
-        ensures
-            r.k() == k,
-    {
-        Lock { m: std::sync::Mutex::new(Some(v)), _p: core::marker::PhantomData }
-    }
-
-    /// Takes the lock and its value.
-    #[verifier::external_body]
-    #[inline]
-    pub fn lock(&self) -> (r: (LockGuard<'_, K, V, P>, V))
-        ensures
-            r.0.k() == self.k(),
-            P::inv(self.k(), r.1),
-    {
-        let mut g = self.m.lock().unwrap();
-        let v = g.take().unwrap();
-        (LockGuard { g: Some(g), _p: core::marker::PhantomData }, v)
-    }
-}
-
-impl<'a, K, V, P: LockInv<K, V>> LockGuard<'a, K, V, P> {
-    pub uninterp spec fn k(&self) -> K;
-
-    /// Puts the value back and releases the lock.
-    #[verifier::external_body]
-    #[inline]
-    pub fn unlock(self, v: V)
-        requires
-            P::inv(self.k(), v),
-    {
-        let mut this = self;
-        let mut g = this.g.take().unwrap();
-        *g = Some(v);
-    }
-}
-
-/// A handle for waking a parked thread.
 #[verifier::external_body]
 pub struct Unparker {
     t: std::thread::Thread,
@@ -282,12 +221,4 @@ pub fn park_for(t: TimeLeft) {
 
 } // verus!
 
-impl<K, V, P> Drop for LockGuard<'_, K, V, P> {
-    fn drop(&mut self) {
-        if self.g.is_some() {
-            // Dropped without `unlock`: the lock would be left without
-            // its value.
-            std::process::abort();
-        }
-    }
-}
+pub use crate::fair::{Lock, LockGuard, LockInv};

@@ -16,7 +16,9 @@
 //! to the code it stands for and explains why one step per access is faithful.
 //! Everything here is spec and proof code: it compiles to nothing.
 pub mod channel;
+pub mod handles;
 pub mod mutex;
 pub mod queue;
 pub mod rwlock;
+pub mod ticket;
 pub mod trace;

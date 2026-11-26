@@ -16,8 +16,19 @@
 //!   into the thread's view.
 //! - A release store appends a message whose view is the thread's view; a
 //!   relaxed store's message carries only its own timestamp.
-//! - A read-modify-write reads the *last* message (C11 RMW atomicity) and
-//!   appends a new one right after it.
+//! - A read-modify-write reads the *last* message and appends a new one
+//!   right after it.
+//!
+//! C11 may instead place a store anywhere after the messages its thread
+//! has seen (but never between an RMW and the message it read), and let
+//! an RMW read any message no other RMW has read. The operations below
+//! append only where C11 leaves no other choice: a store or RMW by a
+//! thread that has seen the last message (`Hist::seen_last`), or an RMW
+//! on a location that only RMWs have written (`Hist::rmw_only`). Proofs
+//! that use only them hold for C11. The `_sra` operations append
+//! unconditionally: that is the strong release/acquire model of x86,
+//! ARMv8 and POWER, not C11, and only `spsc` uses them (TRUST.md, "Where
+//! writes go").
 //!
 //! In proofs, [`Tid`] is a lower bound on the current thread's view, and
 //! [`Hist`] is a location's history. Resources whose validity depends on
@@ -265,6 +276,22 @@ impl Hist {
         self.msgs().last()
     }
 
+    /// Every message but the first was written by a read-modify-write of
+    /// the message before it. In C11 no other write can then come between
+    /// two of them, so the only message an RMW can read is the last.
+    pub uninterp spec fn rmw_only(&self) -> bool;
+
+    /// The thread has seen the last message: no write it has not seen
+    /// can go after its next one.
+    pub open spec fn seen_last(&self, tid: &Tid) -> bool {
+        tid.view().at(self.loc()) == self.msgs().len() - 1
+    }
+
+    /// What C11 needs for a read-modify-write to read the last message.
+    pub open spec fn rmw_reads_last(&self, tid: &Tid) -> bool {
+        self.rmw_only() || self.seen_last(tid)
+    }
+
     /// Every location has its initial message.
     pub axiom fn nonempty_lemma(tracked &self)
         ensures
@@ -322,6 +349,7 @@ impl RaU64 {
         ensures
             r.1@.loc() == r.0.id(),
             r.1@.msgs() == seq![Msg { val: v, view: final(tid).view() }],
+            r.1@.rmw_only(),
             final(tid).view() == old(tid).view().join(RaView::single(r.0.id(), 0)),
     {
         (RaU64 { a: AtomicU64::new(v) }, Tracked::assume_new())
@@ -362,10 +390,37 @@ impl RaU64 {
     }
 
     /// A release store: the new message carries the thread's view.
+    ///
+    /// C11 lets a store take any place in modification order after the
+    /// messages the thread has seen, except between a read-modify-write
+    /// and the message it read. A thread that has seen the last message
+    /// leaves it one place: the end.
     #[inline(always)]
     #[verifier::external_body]
     #[verifier::atomic]
     pub fn store_release(&self, Tracked(h): Tracked<&mut Hist>, Tracked(tid): Tracked<&mut Tid>, v: u64)
+        requires
+            old(h).loc() == self.id(),
+            old(h).seen_last(old(tid)),
+        ensures
+            final(h).loc() == self.id(),
+            !final(h).rmw_only(),
+            final(tid).view() == old(tid).view().join(RaView::single(self.id(), old(h).msgs().len())),
+            final(h).msgs() == old(h).msgs().push(Msg { val: v, view: final(tid).view() }),
+        opens_invariants none
+        no_unwind
+    {
+        self.a.store(v, Ordering::Release)
+    }
+
+    /// A release store, in the SRA model: appended whether or not the
+    /// thread has seen the last message. This is what x86, ARMv8 and POWER
+    /// provide (TRUST.md, "Where writes go"),
+    /// but not every C11 execution; only `spsc` uses it.
+    #[inline(always)]
+    #[verifier::external_body]
+    #[verifier::atomic]
+    pub fn store_release_sra(&self, Tracked(h): Tracked<&mut Hist>, Tracked(tid): Tracked<&mut Tid>, v: u64)
         requires
             old(h).loc() == self.id(),
         ensures
@@ -384,6 +439,29 @@ impl RaU64 {
     #[verifier::external_body]
     #[verifier::atomic]
     pub fn fetch_add_acqrel(&self, Tracked(h): Tracked<&mut Hist>, Tracked(tid): Tracked<&mut Tid>, n: u64) -> (r: u64)
+        requires
+            old(h).loc() == self.id(),
+            old(h).last().val + n <= u64::MAX,
+            old(h).rmw_reads_last(old(tid)),
+        ensures
+            final(h).rmw_only() == old(h).rmw_only(),
+            r == old(h).last().val,
+            final(h).loc() == self.id(),
+            final(tid).view() == old(tid).view().join(old(h).last().view).join(RaView::single(self.id(), old(h).msgs().len())),
+            final(h).msgs() == old(h).msgs().push(Msg { val: (r + n) as u64, view: final(tid).view() }),
+        opens_invariants none
+        no_unwind
+    {
+        self.a.fetch_add(n, Ordering::AcqRel)
+    }
+
+    /// An acquire-release fetch-and-add, in the SRA model: it reads the
+    /// last message whatever the thread has seen. Only `spsc` uses it
+    /// (TRUST.md, "Where writes go").
+    #[inline(always)]
+    #[verifier::external_body]
+    #[verifier::atomic]
+    pub fn fetch_add_acqrel_sra(&self, Tracked(h): Tracked<&mut Hist>, Tracked(tid): Tracked<&mut Tid>, n: u64) -> (r: u64)
         requires
             old(h).loc() == self.id(),
             old(h).last().val + n <= u64::MAX,
@@ -411,7 +489,9 @@ impl RaU64 {
         requires
             old(h).loc() == self.id(),
             old(h).last().val + n <= u64::MAX,
+            old(h).rmw_reads_last(old(tid)),
         ensures
+            final(h).rmw_only() == old(h).rmw_only(),
             r == old(h).last().val,
             final(h).loc() == self.id(),
             final(tid).view() == old(tid).view().join(old(h).last().view).join(RaView::single(self.id(), old(h).msgs().len())),
@@ -427,6 +507,28 @@ impl RaU64 {
     #[verifier::external_body]
     #[verifier::atomic]
     pub fn fetch_sub_acqrel(&self, Tracked(h): Tracked<&mut Hist>, Tracked(tid): Tracked<&mut Tid>, n: u64) -> (r: u64)
+        requires
+            old(h).loc() == self.id(),
+            old(h).last().val >= n,
+            old(h).rmw_reads_last(old(tid)),
+        ensures
+            final(h).rmw_only() == old(h).rmw_only(),
+            r == old(h).last().val,
+            final(h).loc() == self.id(),
+            final(tid).view() == old(tid).view().join(old(h).last().view).join(RaView::single(self.id(), old(h).msgs().len())),
+            final(h).msgs() == old(h).msgs().push(Msg { val: (r - n) as u64, view: final(tid).view() }),
+        opens_invariants none
+        no_unwind
+    {
+        self.a.fetch_sub(n, Ordering::AcqRel)
+    }
+
+    /// An acquire-release fetch-and-subtract, in the SRA model (see
+    /// `fetch_add_acqrel_sra`). Only `spsc` uses it.
+    #[inline(always)]
+    #[verifier::external_body]
+    #[verifier::atomic]
+    pub fn fetch_sub_acqrel_sra(&self, Tracked(h): Tracked<&mut Hist>, Tracked(tid): Tracked<&mut Tid>, n: u64) -> (r: u64)
         requires
             old(h).loc() == self.id(),
             old(h).last().val >= n,
@@ -455,6 +557,7 @@ impl RaU64 {
     pub fn compare_exchange_seqcst(&self, Tracked(h): Tracked<&mut Hist>, Tracked(tid): Tracked<&mut Tid>, current: u64, new: u64) -> (r: (Result<u64, u64>, Ghost<nat>))
         requires
             old(h).loc() == self.id(),
+            old(h).rmw_reads_last(old(tid)),
         ensures
             final(h).loc() == self.id(),
             match r.0 {
@@ -463,6 +566,7 @@ impl RaU64 {
                     &&& old(h).last().val == current
                     &&& final(tid).view() == old(tid).view().join(old(h).last().view).join(RaView::single(self.id(), old(h).msgs().len()))
                     &&& final(h).msgs() == old(h).msgs().push(Msg { val: new, view: final(tid).view() })
+                    &&& final(h).rmw_only() == old(h).rmw_only()
                 },
                 Err(v) => {
                     &&& old(tid).view().at(self.id()) <= r.1@ < old(h).msgs().len()
