@@ -47,14 +47,14 @@ not occur in any crate's `src/` (the script fails if one appears).
 | tiff | 1 |  |  |  |  |  | 2 |
 | url | 1 |  |  |  |  |  | 5 |
 | verilith |  |  |  |  |  |  | 1 |
-| wasm | 35 |  |  |  |  | 1 | 4 |
+| wasm | 35 |  |  |  |  | 2 | 4 |
 | webp | 10 |  |  |  |  |  | 3 |
 | x509 |  |  |  |  |  |  | 6 |
 | xml | 7 |  |  |  |  |  | 12 |
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  | 2 |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **666** | **35** | **274** | **5** | **34** | **11** | **104** |
+| **total** | **666** | **35** | **274** | **5** | **34** | **12** | **104** |
 
 ## Items
 
@@ -266,9 +266,9 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/wasm/src/fops.rs`: external_body: `exec_un`, `exec_bin`, `exec_cmp`, `exec_cvt`
 - `crates/wasm/src/instance.rs`: external_body: `memory_mut`
 - `crates/wasm/src/interp.rs`: external_body: `call_host`
-- `crates/wasm/src/prims.rs`: external_body: `scopy_down`, `szero`, `load`, `store`, `fill`, `copy_within`, `copy_in`, `grow`, `idx`, `cur_at`, `cur_off`, `cur_next`, `cur_get`
+- `crates/wasm/src/prims.rs`: external_body: `scopy_down`, `szero`, `load`, `store`, `fill`, `copy_within`, `copy_in`, `try_grow`, `idx`, `cur_at`, `cur_off`, `cur_next`, `cur_get`
 - `crates/wasm/src/reg.rs`: external_body: `rop`, `has_target`, `mem_off`, `lower`, `producer`, `jmp_at`, `sink`, `tr_shape`, `fits`, `jmp_fits`, `tr_run`, `translate`, `fuse_copies`, `trivial`
-- `crates/wasm/src/run.rs`: no termination check: `execute`
+- `crates/wasm/src/run.rs`: no termination check: `execute`, `execute_metered`
 - `crates/wasm/src/sint.rs`: external_body: `popcnt32`, `popcnt64`
 - `crates/wasm/src/validate.rs`: plain Rust
 
