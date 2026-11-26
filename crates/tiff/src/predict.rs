@@ -1,5 +1,6 @@
 //! Horizontal differencing undone (§14), proven against `spec::unpredict`.
 use crate::spec::*;
+use crate::work::Meter;
 use verilith_core::prims::{get, set};
 #[cfg(verus_only)]
 use vstd::arithmetic::div_mod::*;
@@ -119,14 +120,20 @@ pub proof fn lemma_le_val_sub(d: Seq<u8>, a: int, b: int, i: int, k: nat)
 
 /// The `k` bytes at `i` as a little-endian number (`spec::le_val`).
 #[inline(always)]
-fn read_le(v: &[u8], i: usize, k: usize) -> (r: u64)
+fn read_le(v: &[u8], i: usize, k: usize, Tracked(m): Tracked<&mut Meter>) -> (r: u64)
     requires
         1 <= k <= 4,
         i + k <= v@.len(),
     ensures
         r as nat == le_val(v@, i as int, k as nat),
+        final(m).n == old(m).n + k,
 {
     let l0 = v.len();
+    proof {
+        if k <= 2 {
+            m.n = (m.n + k) as nat;
+        }
+    }
     if k == 1 {
         proof {
             reveal_with_fuel(le_val, 2);
@@ -149,8 +156,12 @@ fn read_le(v: &[u8], i: usize, k: usize) -> (r: u64)
             i + k <= v@.len(),
             j <= k,
             acc as nat == le_val(v@, i + j, (k - j) as nat),
+            m.n == old(m).n + (k - j),
         decreases j,
     {
+        proof {
+            m.n = m.n + 1;
+        }
         proof {
             lemma_le_val_bound(v@, i + j, (k - j) as nat);
             if 8 * (k - j) < 24 { lemma_pow2_strictly_increases(8 * (k - j) as nat, 24); }
@@ -167,11 +178,12 @@ fn read_le(v: &[u8], i: usize, k: usize) -> (r: u64)
 
 /// Writes the `k` bytes of `x` at `i`, least significant first.
 #[inline(always)]
-fn write_le(v: &mut [u8], i: usize, k: usize, x: u64)
+fn write_le(v: &mut [u8], i: usize, k: usize, x: u64, Tracked(m): Tracked<&mut Meter>)
     requires
         1 <= k <= 4,
         i + k <= old(v)@.len(),
     ensures
+        final(m).n == old(m).n + k,
         final(v)@.len() == old(v)@.len(),
         forall|j: int| 0 <= j < final(v)@.len() ==> #[trigger] final(v)@[j] == if i <= j < i + k {
             byte_of(x as nat, (j - i) as nat)
@@ -180,6 +192,11 @@ fn write_le(v: &mut [u8], i: usize, k: usize, x: u64)
         },
 {
     let l0 = v.len();
+    proof {
+        if k <= 2 {
+            m.n = (m.n + k) as nat;
+        }
+    }
     if k == 1 {
         proof {
             lemma2_to64();
@@ -224,8 +241,12 @@ fn write_le(v: &mut [u8], i: usize, k: usize, x: u64)
             } else {
                 o[t]
             },
+            m.n == old(m).n + j,
         decreases k - j,
     {
+        proof {
+            m.n = m.n + 1;
+        }
         let sh = (8 * j) as u64;
         let b = (x >> sh) as u8;
         proof {
@@ -240,7 +261,10 @@ fn write_le(v: &mut [u8], i: usize, k: usize, x: u64)
 
 /// Undoes horizontal differencing in each row of `rb` bytes of `v`:
 /// samples of `k` bytes, `stride` per pixel (`spec::unpredict`).
-pub fn unpredict_exec(v: &mut [u8], rb: usize, k: usize, stride: usize)
+///
+/// Counts at most `14 * v.len()` steps: one a row, and one a sample plus
+/// a step for each byte it reads or writes (at most 12 for a sample).
+pub fn unpredict_exec(v: &mut [u8], rb: usize, k: usize, stride: usize, Tracked(m): Tracked<&mut Meter>)
     requires
         k == 1 || k == 2 || k == 4,
         1 <= stride,
@@ -249,7 +273,9 @@ pub fn unpredict_exec(v: &mut [u8], rb: usize, k: usize, stride: usize)
         old(v)@.len() % (rb as nat) == 0,
     ensures
         final(v)@ == unpredict(old(v)@, rb as nat, k as nat, stride as nat),
+        final(m).n <= old(m).n + 14 * old(v)@.len(),
 {
+    let ghost m0 = m.n;
     let ghost o = v@;
     let ghost want = unpredict(o, rb as nat, k as nat, stride as nat);
     let n = v.len();
@@ -279,11 +305,14 @@ pub fn unpredict_exec(v: &mut [u8], rb: usize, k: usize, stride: usize)
             want == unpredict(o, rb as nat, k as nat, stride as nat),
             forall|i: int| 0 <= i < base ==> #[trigger] v@[i] == want[i],
             forall|i: int| base <= i < n ==> #[trigger] v@[i] == o[i],
+            m.n <= m0 + 14 * base,
         decreases n - base,
     {
         proof {
             crate::chunk::lemma_multiples(base as int, n as int, rb as int);
+            m.n = m.n + 1;
         }
+        let ghost mr = m.n;
         let ghost row = o.subrange(base as int, base + rb);
         let mut s: usize = 0;
         while s < ns
@@ -305,6 +334,7 @@ pub fn unpredict_exec(v: &mut [u8], rb: usize, k: usize, stride: usize)
                         undiff(row, t as nat, stride as nat, k as nat),
                         j as nat,
                     ),
+                m.n <= mr + 13 * s,
             decreases ns - s,
         {
             proof {
@@ -312,7 +342,7 @@ pub fn unpredict_exec(v: &mut [u8], rb: usize, k: usize, stride: usize)
                 lemma_mul_is_distributive_add_other_way(k as int, s as int, 1);
             }
             let at = base + s * k;
-            let cur = read_le(v, at, k);
+            let cur = read_le(v, at, k, Tracked(m));
             proof {
                 assert(v@.subrange(at as int, at + k) =~= o.subrange(at as int, at + k));
                 assert forall|j: int| 0 <= j < k implies #[trigger] v@[at + j] == o[at + j] by {}
@@ -321,7 +351,7 @@ pub fn unpredict_exec(v: &mut [u8], rb: usize, k: usize, stride: usize)
             }
             if s >= stride {
                 let pt = base + (s - stride) * k;
-                let prev = read_le(v, pt, k);
+                let prev = read_le(v, pt, k, Tracked(m));
                 proof {
                     let t = (s - stride) as int;
                     let u = undiff(row, t as nat, stride as nat, k as nat);
@@ -357,7 +387,7 @@ pub fn unpredict_exec(v: &mut [u8], rb: usize, k: usize, stride: usize)
                         lemma_small_mod(sum as nat, modulus as nat);
                     }
                 }
-                write_le(v, at, k, x);
+                write_le(v, at, k, x, Tracked(m));
             } else {
                 // The first pixel of the row is stored as it is.
                 proof {
@@ -384,6 +414,7 @@ pub fn unpredict_exec(v: &mut [u8], rb: usize, k: usize, stride: usize)
                 assert forall|i: int| base + (s + 1) * k <= i < n implies #[trigger] v@[i] == o[i] by {
                     lemma_mul_is_distributive_add_other_way(k as int, s as int, 1);
                 }
+                m.n = m.n + 1;
             }
             s = s + 1;
         }
@@ -409,6 +440,7 @@ pub fn unpredict_exec(v: &mut [u8], rb: usize, k: usize, stride: usize)
                 }
             }
             lemma_mod_add_multiples_vanish(base as int, rb as int);
+            lemma_mul_inequality(1, k as int, ns as int);
         }
         base = base + rb;
     }
