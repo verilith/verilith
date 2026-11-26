@@ -41,7 +41,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | json | 18 |  |  |  |  |  | 6 |
 | lz4 |  |  |  |  |  |  | 1 |
 | png |  |  |  |  |  |  | 7 |
-| qpack | 9 |  |  |  |  |  | 2 |
+| qpack | 8 |  |  |  |  |  | 2 |
 | quic |  |  |  |  |  |  | 1 |
 | quic-conn |  |  |  |  |  |  | 3 |
 | regex | 1 |  |  |  |  |  | 3 |
@@ -63,7 +63,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 |
 | zstd | 6 |  |  |  |  |  | 1 |
-| **total** | **642** | **35** | **274** | **5** | **17** | **12** | **130** |
+| **total** | **641** | **35** | **274** | **5** | **17** | **12** | **130** |
 
 ## Items
 
@@ -129,7 +129,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 ### hpack
 
 - `crates/hpack/src/capi.rs`: plain Rust
-- `crates/hpack/src/hencode.rs`: external_body: `ready`
+- `crates/hpack/src/henc.rs`: external_body: `ptab`
 - `crates/hpack/src/huffman.rs`: external_body: `dtab`
 - `crates/hpack/src/lib.rs`: plain Rust
 - `crates/hpack/src/stable.rs`: plain Rust
@@ -183,7 +183,6 @@ not occur in any crate's `src/` (the script fails if one appears).
 ### qpack
 
 - `crates/qpack/src/encoder.rs`: external_body: `static_find`, `field_hash`, `new`, `new`, `find`, `worth`, `add`
-- `crates/qpack/src/henc.rs`: external_body: `ptab`
 - `crates/qpack/src/hints.rs`: plain Rust
 - `crates/qpack/src/stable.rs`: plain Rust
 - `crates/qpack/src/table.rs`: external_body: `static_entry`
