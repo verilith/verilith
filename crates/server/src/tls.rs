@@ -60,26 +60,16 @@ pub fn pem_blocks(pem: &[u8], label: &str) -> Vec<Vec<u8>> {
     out
 }
 
+/// A PEM body: base64 with line breaks, decoded by verilith-text's
+/// verified forgiving-base64 decoder (WHATWG Infra: ASCII whitespace is
+/// skipped, padding is optional, anything else outside the alphabet is an
+/// error).
 fn base64(s: &str) -> Option<Vec<u8>> {
-    let mut out = Vec::with_capacity(s.len() * 3 / 4);
-    let (mut acc, mut bits) = (0u32, 0u32);
-    for c in s.bytes() {
-        let v = match c {
-            b'A'..=b'Z' => c - b'A',
-            b'a'..=b'z' => c - b'a' + 26,
-            b'0'..=b'9' => c - b'0' + 52,
-            b'+' => 62,
-            b'/' => 63,
-            b'=' | b' ' | b'\t' | b'\r' | b'\n' => continue,
-            _ => return None,
-        };
-        acc = acc << 6 | v as u32;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((acc >> bits) as u8);
-        }
-    }
+    use verilith_text::base64::forgiving::{decode_forgiving, max_len_exec};
+    let s = s.as_bytes();
+    let mut out = vec![0u8; max_len_exec(s)];
+    let n = decode_forgiving(false, s, &mut out).ok()?;
+    out.truncate(n);
     Some(out)
 }
 
@@ -259,6 +249,15 @@ impl Session {
                 use std::io::Write;
                 Ok(s.writer().write(data).unwrap_or(0))
             }
+        }
+    }
+
+    /// Ciphertext the session holds that `put` has not moved out yet.
+    fn held(&self) -> usize {
+        match self {
+            Session::V(s) => s.pending().len(),
+            #[cfg(feature = "tls-rustls")]
+            Session::R(_) => 0,
         }
     }
 
@@ -495,7 +494,7 @@ impl TlsConn {
         if !flush(&mut self.tls, &mut self.gather)? {
             return Ok(false);
         }
-        while self.cout.len() - self.cout_pos < COUT_HIGH {
+        while self.cout.len() - self.cout_pos + self.tls.held() < COUT_HIGH {
             let mut v: [&[u8]; 8] = [&[]; 8];
             let k = inner!(i, c => c.pending(&mut v));
             if k == 0 {
@@ -537,7 +536,14 @@ impl TlsConn {
                 inner!(i, c => c.wrote(taken));
                 progress = true;
             }
-            self.tls.put(&mut self.cout, &mut self.cout_pos);
+            // verilith-tls keeps sealed records in its own buffer until
+            // `process` moves them out once, by swapping buffers when `cout`
+            // is drained: moving them after each write copied every
+            // record but the first. rustls is drained as it goes.
+            #[cfg(feature = "tls-rustls")]
+            if matches!(self.tls, Session::R(_)) {
+                self.tls.put(&mut self.cout, &mut self.cout_pos);
+            }
             if short || taken == 0 {
                 break;
             }
