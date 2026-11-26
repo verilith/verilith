@@ -149,6 +149,11 @@ pub uninterp spec fn signed(scheme: u16, msg: Seq<u8>, sig: Seq<u8>) -> bool;
 /// issue, is the provider's: an AEAD under keys only the server has.
 pub uninterp spec fn ticket_issued(ticket: Seq<u8>, state: Seq<u8>) -> bool;
 
+/// Whether the provider's anti-replay (RFC 8446 §8) accepted 0-RTT data
+/// for ClientHello `ch`: the ticket's age is within the freshness window
+/// and this ClientHello has not had its 0-RTT data taken before.
+pub uninterp spec fn early_claimed(ch: Seq<u8>) -> bool;
+
 /// The cryptography a server needs, and its keys.
 pub trait Provider {
     type Key: AeadKey;
@@ -219,6 +224,17 @@ pub trait Provider {
 
     /// Seconds since the Unix epoch, for ticket lifetimes.
     fn now(&mut self) -> u64;
+
+    /// Anti-replay for 0-RTT data (§8): whether to take ClientHello
+    /// `ch`'s early data, given its first PSK binder `binder` (unique to
+    /// the ClientHello), the ticket's `obfuscated_ticket_age`, and when
+    /// the ticket was issued and its `ticket_age_add`. `true` at most once
+    /// for a binder within the freshness window, and only if the
+    /// client's view of the ticket's age agrees with the server's.
+    fn claim_early(&mut self, ch: &[u8], binder: &[u8], obfuscated_age: u32, issued: u64, age_add: u32) -> (r: bool)
+        ensures
+            r ==> early_claimed(ch@),
+    ;
 }
 
 } // verus!

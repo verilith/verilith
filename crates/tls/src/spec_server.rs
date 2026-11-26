@@ -119,11 +119,28 @@ pub open spec fn tp_ext(tp: Option<Seq<u8>>) -> Seq<u8> {
     }
 }
 
-/// EncryptedExtensions (§4.3.1): ALPN's choice, if one was made, then over
-/// QUIC the server's transport parameters.
-pub open spec fn encrypted_extensions(alpn: Option<Seq<u8>>, tp: Option<Seq<u8>>) -> Seq<u8> {
-    let e = alpn_ext(alpn) + tp_ext(tp);
+/// The early_data extension (§4.2.10), empty, when the server takes the
+/// client's 0-RTT data; nothing otherwise.
+pub open spec fn early_ext(early: bool) -> Seq<u8> {
+    if early {
+        ext(42, Seq::empty())
+    } else {
+        Seq::empty()
+    }
+}
+
+/// EncryptedExtensions (§4.3.1): ALPN's choice, if one was made, then
+/// early_data if 0-RTT data is accepted, then over QUIC the server's
+/// transport parameters.
+#[verifier::opaque]
+pub open spec fn encrypted_extensions(alpn: Option<Seq<u8>>, tp: Option<Seq<u8>>, early: bool) -> Seq<u8> {
+    let e = alpn_ext(alpn) + early_ext(early) + tp_ext(tp);
     hs_msg(8, be2(e.len()) + e)
+}
+
+/// EndOfEarlyData (§4.5): an empty handshake message of type 5.
+pub open spec fn end_of_early_data() -> Seq<u8> {
+    hs_msg(5, Seq::empty())
 }
 
 /// The `certificate_list` entries (§4.4.2) of a chain of DER
@@ -262,10 +279,38 @@ pub open spec fn session_id(ch: Seq<u8>) -> Seq<u8> {
 }
 
 /// What a server keeps in a session ticket (its own format, sealed by the
-/// provider): version 1, the cipher suite, when it was issued (seconds),
-/// the `ticket_age_add`, and the resumption PSK.
-pub open spec fn ticket_state(suite: u16, time: u64, age_add: u32, psk: Seq<u8>) -> Seq<u8> {
-    seq![1u8] + be2(suite as nat) + be8(time as nat) + be4(age_add as nat) + seq![psk.len() as u8] + psk
+/// provider): version 2, the cipher suite, when it was issued (seconds),
+/// the `ticket_age_add`, the resumption PSK, the most 0-RTT data the
+/// ticket allows (0: none), and the ALPN protocol of the connection that
+/// issued it (empty for none), which 0-RTT must keep (§4.2.10).
+pub open spec fn ticket_state(suite: u16, time: u64, age_add: u32, psk: Seq<u8>, max_early: u32, alpn: Seq<u8>) -> Seq<u8> {
+    seq![2u8] + be2(suite as nat) + be8(time as nat) + be4(age_add as nat) + seq![psk.len() as u8] + psk
+        + be4(max_early as nat) + seq![alpn.len() as u8] + alpn
+}
+
+/// The big-endian u32 at `st[i..i + 4]`.
+pub open spec fn be4_at(st: Seq<u8>, i: int) -> nat {
+    ((st[i] as nat * 256 + st[i + 1] as nat) * 256 + st[i + 2] as nat) * 256 + st[i + 3] as nat
+}
+
+/// A well-formed ticket state's PSK length.
+pub open spec fn ticket_psk_len(st: Seq<u8>) -> int {
+    st[15] as int
+}
+
+/// Whether `st` has ticket_state's shape.
+pub open spec fn ticket_shaped(st: Seq<u8>) -> bool {
+    &&& st.len() >= 16
+    &&& st[0] == 2
+    &&& (st[15] == 32 || st[15] == 48)
+    &&& st.len() >= 16 + st[15] as int + 5
+    &&& st.len() == 16 + st[15] as int + 5 + st[16 + st[15] as int + 4] as int
+}
+
+/// A ticket state's 0-RTT allowance and ALPN protocol.
+pub open spec fn ticket_early(st: Seq<u8>) -> (nat, Seq<u8>) {
+    let l = ticket_psk_len(st);
+    (be4_at(st, 16 + l), st.skip(16 + l + 5))
 }
 
 pub open spec fn be4(n: nat) -> Seq<u8> {
@@ -278,19 +323,29 @@ pub open spec fn be8(n: nat) -> Seq<u8> {
 
 /// A ticket state's suite and PSK, if it is one.
 pub open spec fn ticket_suite_psk(st: Seq<u8>) -> Option<(u16, Seq<u8>)> {
-    if st.len() >= 16 && st[0] == 1 && st.len() == 16 + st[15] as int && (st[15] == 32 || st[15] == 48) {
-        Some(((st[1] as nat * 256 + st[2] as nat) as u16, st.skip(16)))
+    if ticket_shaped(st) {
+        Some(((st[1] as nat * 256 + st[2] as nat) as u16, st.subrange(16, 16 + st[15] as int)))
     } else {
         None
     }
 }
 
-/// NewSessionTicket (§4.6.1), with no extensions.
-pub open spec fn new_session_ticket(lifetime: u32, age_add: u32, nonce: Seq<u8>, ticket: Seq<u8>) -> Seq<u8> {
+/// The extensions of a NewSessionTicket: early_data with
+/// max_early_data_size when the ticket allows 0-RTT data (§4.2.10).
+pub open spec fn nst_exts(max_early: u32) -> Seq<u8> {
+    if max_early > 0 {
+        ext(42, be4(max_early as nat))
+    } else {
+        Seq::empty()
+    }
+}
+
+/// NewSessionTicket (§4.6.1).
+pub open spec fn new_session_ticket(lifetime: u32, age_add: u32, nonce: Seq<u8>, ticket: Seq<u8>, max_early: u32) -> Seq<u8> {
     hs_msg(
         4,
         be4(lifetime as nat) + be4(age_add as nat) + seq![nonce.len() as u8] + nonce + be2(ticket.len())
-            + ticket + be2(0),
+            + ticket + be2(nst_exts(max_early).len()) + nst_exts(max_early),
     )
 }
 
@@ -346,6 +401,8 @@ pub struct SpecHs {
     /// Over QUIC, the server's transport parameters (RFC 9001 §8.2), sent
     /// in EncryptedExtensions.
     pub tp: Option<Seq<u8>>,
+    /// The server took the client's 0-RTT data (§4.2.10).
+    pub early: bool,
 }
 
 impl SpecHs {
@@ -399,7 +456,7 @@ impl SpecHs {
     /// ..Certificate.
     #[verifier::opaque]
     pub open spec fn th_cert(self, c: SpecCfg) -> Seq<u8> {
-        self.th_sh() + encrypted_extensions(self.alpn(c), self.tp) + certificate(c.chain)
+        self.th_sh() + encrypted_extensions(self.alpn(c), self.tp, self.early) + certificate(c.chain)
     }
 
     pub open spec fn certificate_verify(self) -> Seq<u8> {
@@ -411,7 +468,7 @@ impl SpecHs {
     #[verifier::opaque]
     pub open spec fn th_cv(self, c: SpecCfg) -> Seq<u8> {
         if self.resumed is Some {
-            self.th_sh() + encrypted_extensions(self.alpn(c), self.tp)
+            self.th_sh() + encrypted_extensions(self.alpn(c), self.tp, self.early)
         } else {
             self.th_cert(c) + self.certificate_verify()
         }
@@ -445,17 +502,34 @@ impl SpecHs {
     #[verifier::opaque]
     pub open spec fn flight(self, c: SpecCfg) -> Seq<u8> {
         if self.resumed is Some {
-            encrypted_extensions(self.alpn(c), self.tp) + self.server_finished(c)
+            encrypted_extensions(self.alpn(c), self.tp, self.early) + self.server_finished(c)
         } else {
-            encrypted_extensions(self.alpn(c), self.tp) + certificate(c.chain) + self.certificate_verify()
+            encrypted_extensions(self.alpn(c), self.tp, self.early) + certificate(c.chain) + self.certificate_verify()
                 + self.server_finished(c)
+        }
+    }
+
+    /// What the client's Finished covers: ..server Finished, then
+    /// EndOfEarlyData if 0-RTT data was accepted (§4.4.1).
+    #[verifier::opaque]
+    pub open spec fn th_eoed(self, c: SpecCfg) -> Seq<u8> {
+        if self.early {
+            self.th_sfin(c) + end_of_early_data()
+        } else {
+            self.th_sfin(c)
         }
     }
 
     /// The client's Finished, as it must be.
     #[verifier::opaque]
     pub open spec fn client_finished(self, c: SpecCfg) -> Seq<u8> {
-        finished(verify_data(self.alg(), self.c_hs(), self.th_sfin(c)))
+        finished(verify_data(self.alg(), self.c_hs(), self.th_eoed(c)))
+    }
+
+    /// client_early_traffic_secret: the 0-RTT key, over the ClientHello.
+    #[verifier::opaque]
+    pub open spec fn c_early(self) -> Seq<u8> {
+        client_early_traffic(self.alg(), self.psk(), self.ch)
     }
 
     #[verifier::opaque]
@@ -471,7 +545,7 @@ impl SpecHs {
     /// resumption_master_secret, the client's Finished included.
     #[verifier::opaque]
     pub open spec fn res_master(self, c: SpecCfg) -> Seq<u8> {
-        resumption_master(self.alg(), self.psk(), self.dhe, self.th_sfin(c) + self.client_finished(c))
+        resumption_master(self.alg(), self.psk(), self.dhe, self.th_eoed(c) + self.client_finished(c))
     }
 
     /// The resumption, if any, is one `resumption_ok` allows.
@@ -481,6 +555,12 @@ impl SpecHs {
             None => true,
             Some(r) => resumption_ok(self.ch, self.prefix(), self.alg(), r),
         }
+    }
+
+    /// 0-RTT data, if taken, is taken as §4.2.10 allows (`early_allowed`).
+    #[verifier::opaque]
+    pub open spec fn early_ok(self, c: SpecCfg) -> bool {
+        self.early ==> early_allowed(c, self.ch, self.retry, self.choice, self.resumed)
     }
 
     /// The handshake followed the RFC, given the configuration:
@@ -513,7 +593,55 @@ impl SpecHs {
             self.sig,
         )
         &&& self.resume_ok()
+        &&& self.early_ok(c)
     }
+}
+
+/// The ALPN protocol `choice` selects from the configuration's list, or
+/// empty for none.
+pub open spec fn alpn_or_empty(c: SpecCfg, choice: SpecChoice) -> Seq<u8> {
+    match choice.alpn {
+        None => Seq::empty(),
+        Some((ours, _)) => bytes(c.alpn, ours),
+    }
+}
+
+/// Whether the server may take ClientHello `ch`'s 0-RTT data (§4.2.10):
+/// the client offered it, with no HelloRetryRequest, resuming with its
+/// first PSK identity, a ticket that allows 0-RTT data and was issued for
+/// the same cipher suite and ALPN protocol; and the provider's
+/// anti-replay accepted this ClientHello (`early_claimed`, §8).
+#[verifier::opaque]
+pub open spec fn early_allowed(
+    c: SpecCfg,
+    ch: Seq<u8>,
+    retry: Option<(Seq<u8>, Seq<u8>)>,
+    choice: SpecChoice,
+    resumed: Option<SpecResume>,
+) -> bool {
+    &&& retry is None
+    &&& parse_client_hello(ch.skip(4)) matches Ok(s) && s.early_data
+    &&& resumed matches Some(r) && {
+        &&& ticket_suite_psk(r.state) matches Some((ts, _)) && ts == choice.suite
+        &&& ticket_early(r.state).0 > 0
+        &&& ticket_early(r.state).1 == alpn_or_empty(c, choice)
+    }
+    &&& early_claimed(ch)
+}
+
+pub proof fn lemma_early_no_retry(
+    c: SpecCfg,
+    ch: Seq<u8>,
+    retry: Option<(Seq<u8>, Seq<u8>)>,
+    choice: SpecChoice,
+    resumed: Option<SpecResume>,
+)
+    requires
+        early_allowed(c, ch, retry, choice, resumed),
+    ensures
+        retry is None,
+{
+    reveal(early_allowed);
 }
 
 /// The traffic secret after `n` KeyUpdates (§7.2).

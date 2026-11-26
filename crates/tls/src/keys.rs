@@ -34,6 +34,9 @@ pub const L_RES: [u8; 10] = [114, 101, 115, 32, 109, 97, 115, 116, 101, 114];
 /// `"res binder"`
 pub const L_RES_BINDER: [u8; 10] = [114, 101, 115, 32, 98, 105, 110, 100, 101, 114];
 
+/// `"c e traffic"`
+pub const L_C_E: [u8; 11] = [99, 32, 101, 32, 116, 114, 97, 102, 102, 105, 99];
+
 /// `"resumption"`
 pub const L_RESUMPTION: [u8; 10] = [114, 101, 115, 117, 109, 112, 116, 105, 111, 110];
 
@@ -394,6 +397,25 @@ pub fn binder_key_x(a: HashAlg, psk: &[u8]) -> (r: Secret)
         assert(L_RES_BINDER@ =~= l_res_binder());
     }
     derive_secret_x(a, &early, &L_RES_BINDER, &eh, Ghost(Seq::empty()))
+}
+
+/// client_early_traffic_secret for `psk`, given `th`, the hash of the
+/// ClientHello (`messages`).
+pub fn early_traffic_x(a: HashAlg, psk: &[u8], th: &Secret, Ghost(messages): Ghost<Seq<u8>>) -> (r: Secret)
+    requires
+        th.wf(),
+        th@ == hash(a, messages),
+        th@.len() == hash_len(a),
+    ensures
+        r.wf(),
+        r@.len() == hash_len(a),
+        r@ == client_early_traffic(a, psk@, messages),
+{
+    let early = early_secret_x(a, psk);
+    proof {
+        assert(L_C_E@ =~= l_c_e());
+    }
+    derive_secret_x(a, &early, &L_C_E, th, Ghost(messages))
 }
 
 /// The PSK of a NewSessionTicket with `nonce`.

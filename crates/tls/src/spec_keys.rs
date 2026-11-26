@@ -206,6 +206,17 @@ pub open spec fn binder_key(a: HashAlg, psk: Seq<u8>) -> Seq<u8> {
     derive_secret(a, early_secret(a, psk), l_res_binder(), Seq::empty())
 }
 
+/// `"c e traffic"`
+pub open spec fn l_c_e() -> Seq<u8> {
+    seq![99u8, 32, 101, 32, 116, 114, 97, 102, 102, 105, 99]
+}
+
+/// client_early_traffic_secret (§7.1): `Derive-Secret(Early Secret,
+/// "c e traffic", ClientHello)`, the key of 0-RTT data.
+pub open spec fn client_early_traffic(a: HashAlg, psk: Seq<u8>, messages: Seq<u8>) -> Seq<u8> {
+    derive_secret(a, early_secret(a, psk), l_c_e(), messages)
+}
+
 /// The PSK a NewSessionTicket with `nonce` makes (§4.6.1):
 /// `HKDF-Expand-Label(resumption_master_secret, "resumption", nonce,
 /// Hash.length)`.

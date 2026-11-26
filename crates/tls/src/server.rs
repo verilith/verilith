@@ -91,6 +91,8 @@ pub struct Config {
     pub(crate) tickets: u8,
     /// Their lifetime, in seconds.
     pub(crate) lifetime: u32,
+    /// The most 0-RTT data a ticket allows (0: no 0-RTT).
+    pub(crate) max_early: u32,
 }
 
 impl Config {
@@ -153,7 +155,7 @@ impl Config {
             Some(c) => c,
             None => return None,
         };
-        Some(Config { suites, groups, sigs, alpn, cert, chain: Ghost(chain_view(chain@)), tickets: 2, lifetime: 21600 })
+        Some(Config { suites, groups, sigs, alpn, cert, chain: Ghost(chain_view(chain@)), tickets: 2, lifetime: 21600, max_early: 0 })
     }
 
     /// How many session tickets to send after each handshake (2 unless
@@ -166,6 +168,21 @@ impl Config {
     {
         self.tickets = count;
         self.lifetime = if lifetime > 604800 { 604800 } else { lifetime };
+        assert(self.suites@ == old(self).suites@);
+    }
+
+    /// Takes up to `max` bytes of 0-RTT data on a resumption (RFC 8446
+    /// §4.2.10; 0, the default, for none), and says so in the tickets it
+    /// issues. Early data can be replayed: the provider's anti-replay
+    /// (`Provider::claim_early`) takes each ClientHello's at most once, and
+    /// the application should act on early requests only when replaying
+    /// them is harmless (RFC 8470).
+    pub fn set_early_data(&mut self, max: u32)
+        ensures
+            final(self)@ == old(self)@,
+            old(self).wf() ==> final(self).wf(),
+    {
+        self.max_early = max;
         assert(self.suites@ == old(self).suites@);
     }
 }
@@ -188,10 +205,15 @@ pub enum Phase {
 enum State<K: AeadKey> {
     Start,
     WaitCh2 { tr: Transcript, suite: u16, group: u16 },
+    /// `tx` is under the server's application key from its Finished on,
+    /// so that it can answer 0-RTT data at once ("0.5-RTT", §4.4.4);
+    /// `early`, while 0-RTT data is coming, is under the client's early
+    /// key, and `rx` its handshake key after that.
     WaitFinished {
         suite: u16,
         rx: Protect<K>,
         tx: Protect<K>,
+        early: Option<Protect<K>>,
         expect: Secret,
         c_ap: Secret,
         s_ap: Secret,
@@ -211,6 +233,10 @@ pub enum Event {
     HandshakeDone,
     /// Application data: the first `n` bytes of the record's body.
     Data(usize),
+    /// 0-RTT application data (§4.2.10): the first `n` bytes of the
+    /// record's body. It may be a replay (§8); RFC 8470 says what is safe
+    /// to do with it.
+    EarlyData(usize),
     /// The client sent close_notify.
     Closed,
 }
@@ -309,6 +335,7 @@ fn server_flight<P: Provider>(
     scheme: u16,
     alpn: Option<&[u8]>,
     tp: Option<&[u8]>,
+    early: bool,
     tr: &mut Transcript,
     s_hs: &Secret,
 ) -> (r: Option<(Vec<u8>, Ghost<Seq<u8>>)>)
@@ -326,6 +353,7 @@ fn server_flight<P: Provider>(
             let ee = encrypted_extensions(
                 opt_view(alpn),
                 opt_view(tp),
+                early,
             );
             let cert = certificate(cfg@.chain);
             let th_cert = old(tr).data() + ee + cert;
@@ -340,7 +368,7 @@ fn server_flight<P: Provider>(
     let a = tr.alg_x();
     let ghost t0 = tr.data();
     let mut fl: Vec<u8> = Vec::new();
-    encrypted_extensions_x(&mut fl, alpn, tp);
+    encrypted_extensions_x(&mut fl, alpn, tp, early);
     let ghost ee = fl@;
     put(&mut fl, cfg.cert.as_slice());
     tr.update(fl.as_slice());
@@ -378,7 +406,7 @@ fn server_flight<P: Provider>(
 }
 
 /// The server's flight when resuming: EncryptedExtensions and Finished.
-fn resumed_flight(alpn: Option<&[u8]>, tp: Option<&[u8]>, tr: &mut Transcript, s_hs: &Secret) -> (r: Vec<u8>)
+fn resumed_flight(alpn: Option<&[u8]>, tp: Option<&[u8]>, early: bool, tr: &mut Transcript, s_hs: &Secret) -> (r: Vec<u8>)
     requires
         old(tr).wf(),
         s_hs.wf(),
@@ -392,6 +420,7 @@ fn resumed_flight(alpn: Option<&[u8]>, tp: Option<&[u8]>, tr: &mut Transcript, s
             let ee = encrypted_extensions(
                 opt_view(alpn),
                 opt_view(tp),
+                early,
             );
             let sf = finished(verify_data(a, s_hs@, old(tr).data() + ee));
             &&& r@ == ee + sf
@@ -402,7 +431,7 @@ fn resumed_flight(alpn: Option<&[u8]>, tp: Option<&[u8]>, tr: &mut Transcript, s
     let a = tr.alg_x();
     let ghost t0 = tr.data();
     let mut fl: Vec<u8> = Vec::new();
-    encrypted_extensions_x(&mut fl, alpn, tp);
+    encrypted_extensions_x(&mut fl, alpn, tp, early);
     let ghost ee = fl@;
     tr.update(fl.as_slice());
     let th = tr.hash();
@@ -459,9 +488,10 @@ proof fn lemma_accept_spec(
         sh == server_hello(hsv.random, sid, hsv.choice.suite, hsv.choice.group, hsv.share, hsv.resumed is Some),
         th_sh == pre + m + sh,
         hsv.alpn(cc) == opt_view(alpn),
+        hsv.early ==> early_allowed(cc, m, hsv.retry, hsv.choice, hsv.resumed),
         hsv.resumed is None ==> ({
             let a = hsv.alg();
-            let ee = encrypted_extensions(hsv.alpn(cc), hsv.tp);
+            let ee = encrypted_extensions(hsv.alpn(cc), hsv.tp, hsv.early);
             let cert = certificate(cc.chain);
             let th_cert = th_sh + ee + cert;
             let cv = certificate_verify(hsv.choice.signature_scheme, hsv.sig);
@@ -472,7 +502,7 @@ proof fn lemma_accept_spec(
         }),
         hsv.resumed is Some ==> ({
             let a = hsv.alg();
-            let ee = encrypted_extensions(hsv.alpn(cc), hsv.tp);
+            let ee = encrypted_extensions(hsv.alpn(cc), hsv.tp, hsv.early);
             let sf = finished(verify_data(a, server_hs_traffic(a, hsv.psk(), hsv.dhe, th_sh), th_sh + ee));
             &&& fl == ee + sf
             &&& th_sfin == th_sh + ee + sf
@@ -485,11 +515,16 @@ proof fn lemma_accept_spec(
         fl == hsv.flight(cc),
         hsv.c_hs() == client_hs_traffic(hsv.alg(), hsv.psk(), hsv.dhe, th_sh),
         hsv.s_hs() == server_hs_traffic(hsv.alg(), hsv.psk(), hsv.dhe, th_sh),
-        hsv.client_finished(cc) == finished(verify_data(hsv.alg(), client_hs_traffic(hsv.alg(), hsv.psk(), hsv.dhe, th_sh), th_sfin)),
+        hsv.th_eoed(cc) == (if hsv.early { th_sfin + end_of_early_data() } else { th_sfin }),
+        hsv.client_finished(cc) == finished(verify_data(hsv.alg(), client_hs_traffic(hsv.alg(), hsv.psk(), hsv.dhe, th_sh), hsv.th_eoed(cc))),
         hsv.c_ap(cc) == client_ap_traffic(hsv.alg(), hsv.psk(), hsv.dhe, th_sfin),
         hsv.s_ap(cc) == server_ap_traffic(hsv.alg(), hsv.psk(), hsv.dhe, th_sfin),
-        hsv.res_master(cc) == resumption_master(hsv.alg(), hsv.psk(), hsv.dhe, th_sfin + hsv.client_finished(cc)),
+        hsv.res_master(cc) == resumption_master(hsv.alg(), hsv.psk(), hsv.dhe, hsv.th_eoed(cc) + hsv.client_finished(cc)),
+        hsv.c_early() == client_early_traffic(hsv.alg(), hsv.psk(), m),
 {
+    reveal(SpecHs::early_ok);
+    reveal(SpecHs::th_eoed);
+    reveal(SpecHs::c_early);
     reveal(SpecHs::valid);
     reveal(SpecHs::resume_ok);
     reveal(SpecHs::server_hello);
@@ -508,11 +543,11 @@ proof fn lemma_accept_spec(
     assert(th_sh == hsv.th_sh());
     assert(pre == hsv.prefix());
     if hsv.resumed is None {
-        let th_cert = th_sh + encrypted_extensions(hsv.alpn(cc), hsv.tp) + certificate(cc.chain);
+        let th_cert = th_sh + encrypted_extensions(hsv.alpn(cc), hsv.tp, hsv.early) + certificate(cc.chain);
         assert(th_cert == hsv.th_cert(cc));
         assert(th_cert + hsv.certificate_verify() == hsv.th_cv(cc));
     } else {
-        assert(th_sh + encrypted_extensions(hsv.alpn(cc), hsv.tp) == hsv.th_cv(cc));
+        assert(th_sh + encrypted_extensions(hsv.alpn(cc), hsv.tp, hsv.early) == hsv.th_cv(cc));
     }
     assert(th_sfin =~= hsv.th_sfin(cc));
     assert(fl =~= hsv.flight(cc));
@@ -529,6 +564,8 @@ pub(crate) struct Prep {
     pub(crate) c_ap: Secret,
     pub(crate) s_ap: Secret,
     pub(crate) res: Option<Secret>,
+    /// client_early_traffic_secret, when 0-RTT data is taken.
+    pub(crate) c_early: Option<Secret>,
     pub(crate) hs: Ghost<SpecHs>,
 }
 
@@ -541,9 +578,13 @@ pub(crate) open spec fn prep_ok(
     choice: SpecChoice,
     resumed: Option<SpecResume>,
     tp: Option<Seq<u8>>,
+    early: bool,
 ) -> bool {
     let h = p.hs@;
     &&& h.valid(cc)
+    &&& h.early == early
+    &&& p.c_early is Some == early
+    &&& p.c_early matches Some(k) ==> k.wf() && k@ == h.c_early()
     &&& h.retry == retry
     &&& h.resumed == resumed
     &&& h.ch == m
@@ -594,8 +635,96 @@ fn exchange<P: Provider>(prov: &mut P, peer: &[u8], sid: &[u8], suite: u16, grou
     Ok((share, shared, dn, random, sh))
 }
 
+/// The client's 0-RTT traffic secret over transcript `tr`, when `early`.
+fn early_key(a: HashAlg, pk: &Secret, tr: &Transcript, early: bool) -> (r: Option<Secret>)
+    requires
+        pk.wf(),
+        tr.wf(),
+        tr.alg() == a,
+    ensures
+        r is Some == early,
+        r matches Some(k) ==> k.wf() && k@ == client_early_traffic(a, pk@, tr.data()),
+{
+    if early {
+        let th_ch = tr.hash();
+        Some(early_traffic_x(a, pk.as_slice(), &th_ch, Ghost(tr.data())))
+    } else {
+        None
+    }
+}
+
+/// Adds the EndOfEarlyData message to `tr`, when `early`.
+fn eoed_update(tr: &mut Transcript, early: bool)
+    requires
+        old(tr).wf(),
+    ensures
+        final(tr).wf(),
+        final(tr).alg() == old(tr).alg(),
+        final(tr).data() == if early { old(tr).data() + end_of_early_data() } else { old(tr).data() },
+{
+    if early {
+        let eoed: [u8; 4] = [5, 0, 0, 0];
+        proof {
+            assert(eoed@ =~= end_of_early_data());
+        }
+        tr.update(&eoed);
+    }
+}
+
+/// The keys after the server's Finished, over transcript `tr` (to it):
+/// the application traffic secrets; the client Finished's verify_data,
+/// over EndOfEarlyData too if `early` (§4.4.1); and, if `res`, the
+/// resumption master secret.
+fn late_keys(
+    a: HashAlg,
+    hs: &Secret,
+    c_hs: &Secret,
+    Ghost(psk): Ghost<Seq<u8>>,
+    Ghost(dhe): Ghost<Seq<u8>>,
+    tr: Transcript,
+    early: bool,
+    res: bool,
+) -> (r: (Secret, Secret, Secret, Option<Secret>))
+    requires
+        hs.wf(),
+        hs@ == handshake_secret(a, psk, dhe),
+        c_hs.wf(),
+        tr.wf(),
+        tr.alg() == a,
+    ensures
+        ({
+            let (c_ap, s_ap, expect, rm) = r;
+            let te = if early { tr.data() + end_of_early_data() } else { tr.data() };
+            &&& c_ap.wf() && c_ap@ == client_ap_traffic(a, psk, dhe, tr.data())
+            &&& s_ap.wf() && s_ap@ == server_ap_traffic(a, psk, dhe, tr.data())
+            &&& expect.wf() && expect@ == verify_data(a, c_hs@, te)
+            &&& expect@.len() == hash_len(a)
+            &&& rm is Some == res
+            &&& rm matches Some(k) ==> k.wf() && k@ == resumption_master(a, psk, dhe, te + finished(expect@))
+        }),
+{
+    let mut tr = tr;
+    let th4 = tr.hash();
+    let ms = master_secret_x(a, hs, Ghost(psk), Ghost(dhe));
+    let (c_ap, s_ap, _exp) = ap_traffic_x(a, &ms, &th4, Ghost(psk), Ghost(dhe), Ghost(tr.data()));
+    eoed_update(&mut tr, early);
+    let th4e = tr.hash();
+    let expect = verify_data_x(a, c_hs, &th4e, Ghost(tr.data()));
+    let rm = if res {
+        let mut cf: Vec<u8> = Vec::new();
+        finished_x(&mut cf, &expect);
+        assert(cf@ =~= finished(expect@));
+        tr.update(cf.as_slice());
+        let th5 = tr.hash();
+        Some(resumption_master_x(a, &ms, &th5, Ghost(psk), Ghost(dhe), Ghost(tr.data())))
+    } else {
+        None
+    };
+    (c_ap, s_ap, expect, rm)
+}
+
 #[verifier::spinoff_prover]
-#[verifier::rlimit(600)]
+#[verifier::rlimit(1000)]
 pub(crate) fn prepare<P: Provider>(
     prov: &mut P,
     cfg: &Config,
@@ -609,6 +738,7 @@ pub(crate) fn prepare<P: Provider>(
     psk: Option<Secret>,
     Ghost(resumed): Ghost<Option<SpecResume>>,
     tp: Option<&[u8]>,
+    early: bool,
 ) -> (r: Result<Prep, u8>)
         requires
             cfg.wf(),
@@ -636,8 +766,9 @@ pub(crate) fn prepare<P: Provider>(
             psk matches Some(k) ==> k.wf() && k@ == resumed.unwrap().psk,
             resumed matches Some(rs) ==> resumption_ok(m@, tr.data(), suite_hash(c.suite), rs),
             tp matches Some(t) ==> t@.len() <= 60000,
+            early ==> early_allowed(cfg@, m@, retry, choice, resumed),
     ensures
-        r matches Ok(p) ==> prep_ok(p, cfg@, m@, retry, choice, resumed, opt_view(tp)),
+        r matches Ok(p) ==> prep_ok(p, cfg@, m@, retry, choice, resumed, opt_view(tp), early),
 {
         let mut tr = tr;
         let suite = c.suite;
@@ -669,36 +800,33 @@ pub(crate) fn prepare<P: Provider>(
         assert(dhe@ =~= shared@.take(dn as int));
         let ghost pre = tr.data();
         tr.update(m);
+        // 0-RTT data is protected under a key over the ClientHello alone.
+        let c_early = early_key(a, &pk, &tr, early);
+        let ghost th_ch = tr.data();
         tr.update(sh.as_slice());
         let ghost th_sh = tr.data();
         let th = tr.hash();
         let (hs, c_hs, s_hs) = hs_keys(suite, pk.as_slice(), dhe, &th, Ghost(th_sh));
         let (fl, Ghost(sig)) = if resuming {
-            (resumed_flight(alpn, tp, &mut tr, &s_hs), Ghost(Seq::<u8>::empty()))
+            (resumed_flight(alpn, tp, early, &mut tr, &s_hs), Ghost(Seq::<u8>::empty()))
         } else {
-            match server_flight(prov, cfg, c.signature_scheme, alpn, tp, &mut tr, &s_hs) {
+            match server_flight(prov, cfg, c.signature_scheme, alpn, tp, early, &mut tr, &s_hs) {
                 Some(x) => x,
                 None => return Err(INTERNAL_ERROR),
             }
         };
         let ghost th_sfin = tr.data();
-        let th4 = tr.hash();
-        let expect = verify_data_x(a, &c_hs, &th4, Ghost(th_sfin));
-        let ms = master_secret_x(a, &hs, Ghost(pk@), Ghost(dhe@));
-        let (c_ap, s_ap, _exp) = ap_traffic_x(a, &ms, &th4, Ghost(pk@), Ghost(dhe@), Ghost(th_sfin));
-        let res = if cfg.tickets > 0 && prov.tickets() {
-            let mut cf: Vec<u8> = Vec::new();
-            finished_x(&mut cf, &expect);
-            tr.update(cf.as_slice());
-            let th5 = tr.hash();
-            Some(resumption_master_x(a, &ms, &th5, Ghost(pk@), Ghost(dhe@), Ghost(tr.data())))
-        } else {
-            None
-        };
+        let want_res = cfg.tickets > 0 && prov.tickets();
+        let (c_ap, s_ap, expect, res) = late_keys(a, &hs, &c_hs, Ghost(pk@), Ghost(dhe@), tr, early, want_res);
+        let ghost th_eoed = if early { th_sfin + end_of_early_data() } else { th_sfin };
         let ghost tpv = opt_view(tp);
-        let ghost hsv = SpecHs { retry, ch: m@, choice, random: random@, share: share@, dhe: dhe@, sig, resumed, tp: tpv };
+        let ghost hsv = SpecHs { retry, ch: m@, choice, random: random@, share: share@, dhe: dhe@, sig, resumed, tp: tpv, early };
         proof {
             assert(pk@ == hsv.psk());
+            if early {
+                lemma_early_no_retry(cfg@, m@, retry, choice, resumed);
+            }
+            assert(early ==> retry is None && pre == Seq::<u8>::empty() && th_ch =~= m@);
             assert(hsv.tp == opt_view(tp));
             assert(hsv.alpn(cfg@) == opt_view(alpn));
             lemma_accept_spec(cfg@, hsv, m@, pre, sh@, th_sh, th_sfin, fl@, peer@, alpn, sid@);
@@ -707,6 +835,8 @@ pub(crate) fn prepare<P: Provider>(
         proof {
             assert(c_hs@ == hsv.c_hs());
             assert(s_hs@ == hsv.s_hs());
+            assert(hsv.th_eoed(cfg@) == th_eoed);
+            assert(expect@ == verify_data(suite_hash(c.suite), c_hs@, th_eoed));
             assert(finished(expect@) == hsv.client_finished(cfg@));
             assert(c_ap@ == hsv.c_ap(cfg@));
             assert(s_ap@ == hsv.s_ap(cfg@));
@@ -715,7 +845,7 @@ pub(crate) fn prepare<P: Provider>(
             reveal(prep_ok);
             assert(sh@.len() < 65536);
         }
-        Ok(Prep { sh, fl, c_hs, s_hs, expect, c_ap, s_ap, res, hs: Ghost(hsv) })
+        Ok(Prep { sh, fl, c_hs, s_hs, expect, c_ap, s_ap, res, c_early, hs: Ghost(hsv) })
 }
 
 /// The next traffic secret after `sec` (§7.2) and its protection.
@@ -810,6 +940,44 @@ fn be8_at(b: &[u8], i: usize) -> (r: u64)
     (hi as u64) * 0x1_0000_0000 + lo as u64
 }
 
+/// The big-endian u32 at `b[i..i + 4]`.
+fn be4_at_x(b: &[u8], i: usize) -> (r: u32)
+    requires
+        i + 4 <= b@.len(),
+    ensures
+        r as nat == be4_at(b@, i as int),
+{
+    let a0 = b[i] as u32;
+    let a1 = b[i + 1] as u32;
+    let a2 = b[i + 2] as u32;
+    let a3 = b[i + 3] as u32;
+    proof {
+        assert(a0 * 256 + a1 <= 65535) by (nonlinear_arith)
+            requires a0 < 256, a1 < 256;
+        assert((a0 * 256 + a1) * 256 + a2 <= 0xff_ffff) by (nonlinear_arith)
+            requires a0 * 256 + a1 <= 65535, a2 < 256;
+        assert(((a0 * 256 + a1) * 256 + a2) * 256 + a3 <= 0xffff_ffff) by (nonlinear_arith)
+            requires (a0 * 256 + a1) * 256 + a2 <= 0xff_ffff, a3 < 256;
+    }
+    ((a0 * 256 + a1) * 256 + a2) * 256 + a3
+}
+
+/// What a resumption's ticket says about 0-RTT data, and what the
+/// provider's anti-replay needs to judge it.
+pub(crate) struct ResumeInfo {
+    /// The ticket's max_early_data_size (0: no 0-RTT data).
+    pub(crate) max_early: u32,
+    /// The ALPN protocol of the connection that issued the ticket.
+    pub(crate) alpn: Vec<u8>,
+    /// When the ticket was issued (seconds), and its ticket_age_add.
+    pub(crate) issued: u64,
+    pub(crate) age_add: u32,
+    /// The client's obfuscated_ticket_age for it.
+    pub(crate) obf_age: u32,
+    /// The first PSK binder: unique to the ClientHello.
+    pub(crate) binder: Vec<u8>,
+}
+
 /// The resumption ClientHello `m` (body `body`, parsed as `h`) offers, if
 /// the server takes it, and its PSK: `tr` is the transcript before `m`,
 /// `suite` the suite negotiated. A ticket the server cannot open, for
@@ -826,7 +994,7 @@ pub(crate) fn try_resume<P: Provider>(
     Ghost(s): Ghost<SpecHello>,
     suite: u16,
     tr: &Transcript,
-) -> (r: Result<Option<(Secret, Ghost<SpecResume>)>, u8>)
+) -> (r: Result<Option<(Secret, Ghost<SpecResume>, ResumeInfo)>, u8>)
     requires
         is_msg(m@, 1),
         body@ == m@.skip(4),
@@ -836,7 +1004,12 @@ pub(crate) fn try_resume<P: Provider>(
         tr.alg() == suite_hash(suite),
         known_suite(suite),
     ensures
-        r matches Ok(Some((k, g))) ==> k.wf() && k@ == g@.psk && resumption_ok(m@, tr.data(), suite_hash(suite), g@),
+        r matches Ok(Some((k, g, info))) ==> {
+            &&& k.wf() && k@ == g@.psk && resumption_ok(m@, tr.data(), suite_hash(suite), g@)
+            &&& ticket_suite_psk(g@.state) matches Some((ts, _)) && ts == suite
+            &&& info.max_early as nat == ticket_early(g@.state).0
+            &&& info.alpn@ == ticket_early(g@.state).1
+        },
 {
     if cfg.tickets == 0 || !prov.tickets() {
         return Ok(None);
@@ -870,7 +1043,11 @@ pub(crate) fn try_resume<P: Provider>(
         return Ok(None);
     }
     let n = st.len();
-    if n < 16 || st[0] != 1 || !(st[15] == 32 || st[15] == 48) || n != 16 + st[15] as usize {
+    if n < 16 || st[0] != 2 || !(st[15] == 32 || st[15] == 48) {
+        return Ok(None);
+    }
+    let l = st[15] as usize;
+    if n < 16 + l + 5 || n != 16 + l + 5 + st[16 + l + 4] as usize {
         return Ok(None);
     }
     let ts = (st[1] as u16) * 256 + st[2] as u16;
@@ -883,11 +1060,20 @@ pub(crate) fn try_resume<P: Provider>(
     if now < issued || now - issued > cfg.lifetime as u64 {
         return Ok(None);
     }
-    let rest = vstd::slice::slice_subrange(st.as_slice(), 16, n);
-    let psk = Secret::from_slice(rest, n - 16);
+    let rest = vstd::slice::slice_subrange(st.as_slice(), 16, 16 + l);
+    let psk = Secret::from_slice(rest, l);
     proof {
-        assert(psk@ =~= st@.skip(16));
-        assert(ticket_suite_psk(st@) == Some((ts, st@.skip(16))));
+        assert(psk@ =~= st@.subrange(16, 16 + l));
+        assert(ticket_shaped(st@));
+        assert(ticket_suite_psk(st@) == Some((ts, st@.subrange(16, 16 + l))));
+    }
+    let max_early = be4_at_x(st.as_slice(), 16 + l);
+    let alpn_v = vstd::slice::slice_subrange(st.as_slice(), 16 + l + 5, n);
+    let mut alpn: Vec<u8> = Vec::new();
+    put(&mut alpn, alpn_v);
+    let age_add = be4_at_x(st.as_slice(), 11);
+    proof {
+        assert(alpn@ =~= st@.skip(16 + l + 5));
     }
     // The binder: verify_data under binder_key over the transcript up to
     // the binders list (§4.2.11.2).
@@ -907,7 +1093,12 @@ pub(crate) fn try_resume<P: Provider>(
         assert(ov(h.psk_modes) == s.psk_modes);
         assert(ov2(h.pre_shared_key) == s.pre_shared_key);
     }
-    Ok(Some((psk, Ghost(g))))
+    // obfuscated_ticket_age follows the first identity (§4.2.11).
+    let obf_age = if id.end <= ids.end && ids.end - id.end >= 4 { be4_at_x(body, id.end) } else { 0 };
+    let mut binder: Vec<u8> = Vec::new();
+    put(&mut binder, bd.of(body));
+    let info = ResumeInfo { max_early, alpn, issued, age_add, obf_age, binder };
+    Ok(Some((psk, Ghost(g), info)))
 }
 
 /// The lifetime and `ticket_age_add` of a ticket, when it was issued, and
@@ -930,16 +1121,19 @@ pub(crate) fn make_ticket<P: Provider>(
     lifetime: u32,
     i: u8,
     rm: &Secret,
+    max_early: u32,
+    alpn: &[u8],
 ) -> (r: Option<(Vec<u8>, Ghost<TicketSent>)>)
     requires
         rm.wf(),
+        alpn@.len() <= 255,
     ensures
         r matches Some((nst, t)) ==> {
             let nonce = seq![i];
             &&& t@.lifetime == lifetime
-            &&& nst@ == new_session_ticket(t@.lifetime, t@.age_add, nonce, t@.ticket)
-            &&& nst@.len() <= 234
-            &&& ticket_issued(t@.ticket, ticket_state(suite, t@.time, t@.age_add, ticket_psk(suite_hash(suite), rm@, nonce)))
+            &&& nst@ == new_session_ticket(t@.lifetime, t@.age_add, nonce, t@.ticket, max_early)
+            &&& nst@.len() <= 500
+            &&& ticket_issued(t@.ticket, ticket_state(suite, t@.time, t@.age_add, ticket_psk(suite_hash(suite), rm@, nonce), max_early, alpn@))
         },
 {
     let a = suite_hash_x(suite);
@@ -950,24 +1144,24 @@ pub(crate) fn make_ticket<P: Provider>(
     let age_add = ((rnd[0] as u32) << 24u32) | ((rnd[1] as u32) << 16u32) | ((rnd[2] as u32) << 8u32) | (rnd[3] as u32);
     let time = prov.now();
     let mut st: Vec<u8> = Vec::new();
-    ticket_state_x(&mut st, suite, time, age_add, &psk);
+    ticket_state_x(&mut st, suite, time, age_add, &psk, max_early, alpn);
     let mut ticket: Vec<u8> = Vec::new();
     proof {
-        assert(st@.len() <= 64);
+        assert(st@.len() <= 330);
     }
     if !prov.seal_ticket(st.as_slice(), &mut ticket) {
         return None;
     }
     assert(ticket@.skip(0) =~= ticket@);
-    if ticket.len() > 200 {
+    if ticket.len() > 460 {
         return None;
     }
     let mut nst: Vec<u8> = Vec::new();
-    new_session_ticket_x(&mut nst, lifetime, age_add, &nonce, ticket.as_slice());
+    new_session_ticket_x(&mut nst, lifetime, age_add, &nonce, ticket.as_slice(), max_early);
     proof {
         assert(nonce@ =~= seq![i]);
     }
-    if nst.len() > 234 {
+    if nst.len() > 500 {
         return None;
     }
     Some((nst, Ghost(TicketSent { lifetime, age_add, time, ticket: ticket@ })))
@@ -982,18 +1176,21 @@ fn issue_ticket<P: Provider>(
     lifetime: u32,
     i: u8,
     rm: &Secret,
+    max_early: u32,
+    alpn: &[u8],
     tx: &mut Protect<P::Key>,
     out: &mut Vec<u8>,
 ) -> (r: (bool, Ghost<TicketSent>))
     requires
         rm.wf(),
+        alpn@.len() <= 255,
         old(out)@.len() + 0x20000 <= usize::MAX,
     ensures
         final(tx).suite() == old(tx).suite(),
         final(tx).key() == old(tx).key(),
         final(tx).iv() == old(tx).iv(),
         final(out)@.take(old(out)@.len() as int) == old(out)@,
-        old(out)@.len() <= final(out)@.len() <= old(out)@.len() + 256,
+        old(out)@.len() <= final(out)@.len() <= old(out)@.len() + 1024,
         r.0 ==> {
             let t = r.1@;
             let nonce = seq![i];
@@ -1004,9 +1201,9 @@ fn issue_ticket<P: Provider>(
                 old(tx).iv(),
                 old(tx).seq(),
                 22,
-                new_session_ticket(t.lifetime, t.age_add, nonce, t.ticket),
+                new_session_ticket(t.lifetime, t.age_add, nonce, t.ticket, max_early),
             )
-            &&& ticket_issued(t.ticket, ticket_state(suite, t.time, t.age_add, ticket_psk(suite_hash(suite), rm@, nonce)))
+            &&& ticket_issued(t.ticket, ticket_state(suite, t.time, t.age_add, ticket_psk(suite_hash(suite), rm@, nonce), max_early, alpn@))
         },
         !r.0 ==> final(out)@ == old(out)@,
 {
@@ -1014,7 +1211,7 @@ fn issue_ticket<P: Provider>(
     proof {
         assert(out@.take(out@.len() as int) =~= out@);
     }
-    let (nst, t) = match make_ticket(prov, suite, lifetime, i, rm) {
+    let (nst, t) = match make_ticket(prov, suite, lifetime, i, rm, max_early, alpn) {
         Some(x) => x,
         None => return (false, Ghost(none)),
     };
@@ -1037,6 +1234,10 @@ pub struct ServerConn<P: Provider> {
     buf: Vec<u8>,
     /// 0-RTT bytes left to skip.
     skip: usize,
+    /// 0-RTT bytes left to take, when they are taken.
+    early_left: u32,
+    /// 0-RTT data was taken in this handshake (`handshake().early`).
+    early_taken: bool,
     /// The ALPN protocol chosen, a span of the configuration's list.
     alpn_sel: Option<Span>,
     hs: Ghost<SpecHs>,
@@ -1096,6 +1297,7 @@ impl<P: Provider> ServerConn<P> {
     pub closed spec fn tx_secret(&self) -> Seq<u8> {
         match self.state {
             State::Connected { s_sec, .. } => s_sec@,
+            State::WaitFinished { s_ap, .. } => s_ap@,
             _ => Seq::empty(),
         }
     }
@@ -1103,6 +1305,23 @@ impl<P: Provider> ServerConn<P> {
     pub closed spec fn tx_seq(&self) -> u64 {
         match self.state {
             State::Connected { tx, .. } => tx.seq(),
+            State::WaitFinished { tx, .. } => tx.seq(),
+            _ => 0,
+        }
+    }
+
+    /// 0-RTT data is still coming (the client's EndOfEarlyData has not).
+    pub closed spec fn in_early(&self) -> bool {
+        match self.state {
+            State::WaitFinished { early, .. } => early is Some,
+            _ => false,
+        }
+    }
+
+    /// The sequence number of the next 0-RTT record.
+    pub closed spec fn early_seq(&self) -> u64 {
+        match self.state {
+            State::WaitFinished { early: Some(p), .. } => p.seq(),
             _ => 0,
         }
     }
@@ -1130,13 +1349,15 @@ impl<P: Provider> ServerConn<P> {
                 &&& self.hrr@ == hello_retry_request(session_id(self.ch1@), suite, group)
                 &&& tr.data() == message_hash(suite_hash(suite), self.ch1@) + self.hrr@
             },
-            State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap, res } => {
+            State::WaitFinished { suite, rx, tx, early, expect, c_ap, s_ap, res } => {
                 let h = self.hs@;
                 let c = self.config();
                 &&& self.hs_ok()
                 &&& suite == h.choice.suite
+                &&& self.early_taken == h.early
                 &&& keys_are(rx, suite, h.c_hs())
-                &&& keys_are(tx, suite, h.s_hs())
+                &&& keys_are(tx, suite, h.s_ap(c))
+                &&& early matches Some(p) ==> h.early && keys_are(p, suite, h.c_early())
                 &&& expect.wf() && finished(expect@) == h.client_finished(c)
                 &&& expect@.len() == hash_len(suite_hash(suite))
                 &&& c_ap.wf() && c_ap@ == h.c_ap(c)
@@ -1189,6 +1410,8 @@ impl<P: Provider> ServerConn<P> {
             state: State::Start,
             buf: Vec::new(),
             skip: 0,
+            early_left: 0,
+            early_taken: false,
             alpn_sel: None,
             hs: Ghost(arbitrary()),
             ch1: Ghost(Seq::empty()),
@@ -1252,7 +1475,7 @@ impl<P: Provider> ServerConn<P> {
             final(self).config() == old(self).config(),
             final(out)@.take(old(out)@.len() as int) == old(out)@,
             final(self).phase() == old(self).phase() || final(self).phase() == Phase::Closed,
-            r matches Ok(e) ==> !(e is HandshakeDone) && !(e is Data),
+            r matches Ok(e) ==> !(e is HandshakeDone) && !(e is Data) && !(e is EarlyData),
     {
         if a.len() != 2 {
             return Err(self.fail(DECODE_ERROR, out));
@@ -1393,15 +1616,51 @@ impl<P: Provider> ServerConn<P> {
             Ok(x) => x,
             Err(code) => return Err(self.fail(code, out)),
         };
-        let (psk, Ghost(resumed)) = match rs {
-            Some((k, g)) => (Some(k), Ghost(Some(g@))),
-            None => (None, Ghost(None)),
+        let (psk, Ghost(resumed), info) = match rs {
+            Some((k, g, i)) => (Some(k), Ghost(Some(g@)), Some(i)),
+            None => (None, Ghost(None), None),
         };
-        let p = match prepare(&mut self.prov, cfg, m, body, sid, c, tr, Ghost(retry), Ghost(choice), psk, Ghost(resumed), None) {
+        // 0-RTT data (§4.2.10): only on a resumption with no
+        // HelloRetryRequest, from a ticket that allows it, for the same
+        // ALPN protocol, and only if the provider's anti-replay takes this
+        // ClientHello (asked last: it uses up the ClientHello).
+        let chosen: &[u8] = match c.alpn {
+            None => &[],
+            Some((ours, _)) => {
+                if !(ours.start <= ours.end && ours.end <= cfg.alpn.len()) {
+                    return Err(self.fail(INTERNAL_ERROR, out));
+                }
+                ours.of(cfg.alpn.as_slice())
+            },
+        };
+        proof {
+            assert(chosen@ == alpn_or_empty(cfg@, choice));
+        }
+        let mut early = false;
+        if h.early_data && !retried && cfg.max_early > 0 {
+            match &info {
+                Some(i) => {
+                    if i.max_early > 0 && ct_eq(i.alpn.as_slice(), chosen) {
+                        early = self.prov.claim_early(m, i.binder.as_slice(), i.obf_age, i.issued, i.age_add);
+                    }
+                },
+                None => {},
+            }
+        }
+        proof {
+            if early {
+                assert(retry is None);
+                assert(body@ == m@.skip(4));
+                assert(s.early_data);
+                reveal(early_allowed);
+                assert(early_allowed(cfg@, m@, retry, choice, resumed));
+            }
+        }
+        let p = match prepare(&mut self.prov, cfg, m, body, sid, c, tr, Ghost(retry), Ghost(choice), psk, Ghost(resumed), None, early) {
             Ok(p) => p,
             Err(code) => return Err(self.fail(code, out)),
         };
-        let Prep { sh, fl, c_hs, s_hs, expect, c_ap, s_ap, res, hs: Ghost(hsv) } = p;
+        let Prep { sh, fl, c_hs, s_hs, expect, c_ap, s_ap, res, c_early, hs: Ghost(hsv) } = p;
         proof {
             reveal(prep_ok);
         }
@@ -1431,14 +1690,22 @@ impl<P: Provider> ServerConn<P> {
         proof {
             assert(out@.take(o.len() as int) =~= o);
         }
-        if retried {
+        if retried || early {
             self.skip = 0;
         }
+        self.early_left = if early { cfg.max_early } else { 0 };
+        self.early_taken = early;
         self.alpn_sel = match c.alpn {
             Some((ours, _)) => Some(ours),
             None => None,
         };
-        self.enter_wait_finished(Ghost(hsv), suite, rx, tx, expect, c_ap, s_ap, res);
+        // From its Finished on, the server sends under its application key.
+        let tx_ap = protect_of(&self.prov, suite, &s_ap);
+        let ep = match c_early {
+            Some(k) => Some(protect_of(&self.prov, suite, &k)),
+            None => None,
+        };
+        self.enter_wait_finished(Ghost(hsv), suite, rx, tx_ap, ep, expect, c_ap, s_ap, res);
         Ok(Event::Nothing)
     }
 
@@ -1449,6 +1716,7 @@ impl<P: Provider> ServerConn<P> {
         suite: u16,
         rx: Protect<P::Key>,
         tx: Protect<P::Key>,
+        early: Option<Protect<P::Key>>,
         expect: Secret,
         c_ap: Secret,
         s_ap: Secret,
@@ -1462,7 +1730,9 @@ impl<P: Provider> ServerConn<P> {
             known_suite(suite),
             suite == hsv.choice.suite,
             keys_are(rx, suite, hsv.c_hs()),
-            keys_are(tx, suite, hsv.s_hs()),
+            keys_are(tx, suite, hsv.s_ap(old(self).config())),
+            old(self).early_taken == hsv.early,
+            early matches Some(p) ==> hsv.early && keys_are(p, suite, hsv.c_early()),
             expect.wf() && finished(expect@) == hsv.client_finished(old(self).config()),
             expect@.len() == hash_len(suite_hash(suite)),
             c_ap.wf() && c_ap@ == hsv.c_ap(old(self).config()),
@@ -1474,7 +1744,7 @@ impl<P: Provider> ServerConn<P> {
             final(self).config() == old(self).config(),
     {
         self.hs = Ghost(hsv);
-        self.state = State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap, res };
+        self.state = State::WaitFinished { suite, rx, tx, early, expect, c_ap, s_ap, res };
     }
 
     /// A ClientHello message `m`, in `Start` or `Retried`.
@@ -1623,15 +1893,15 @@ impl<P: Provider> ServerConn<P> {
         let mut st = State::Closed;
         core::mem::swap(&mut self.state, &mut st);
         match st {
-            State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap, res } => {
+            State::WaitFinished { suite, rx, tx, early, expect, c_ap, s_ap, res } => {
                 let n = expect.len();
                 if m.len() != 4 + n {
-                    self.state = State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap, res };
+                    self.state = State::WaitFinished { suite, rx, tx, early, expect, c_ap, s_ap, res };
                     return Err(self.fail(DECODE_ERROR, out));
                 }
                 let got = vstd::slice::slice_subrange(m, 4, m.len());
                 if !ct_eq(got, expect.as_slice()) {
-                    self.state = State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap, res };
+                    self.state = State::WaitFinished { suite, rx, tx, early, expect, c_ap, s_ap, res };
                     return Err(self.fail(DECRYPT_ERROR, out));
                 }
                 proof {
@@ -1642,9 +1912,21 @@ impl<P: Provider> ServerConn<P> {
                 let kl = suite_key_len_x(suite);
                 let (ck, civ) = traffic_keys_x(a, &c_ap, kl);
                 let rx2 = Protect::new(self.prov.aead_key(suite, ck.as_slice()), &civ);
-                let (sk, siv) = traffic_keys_x(a, &s_ap, kl);
-                let mut tx2 = Protect::new(self.prov.aead_key(suite, sk.as_slice()), &siv);
+                let mut tx2 = tx;
                 let ghost o = out@;
+                let max_early = self.cfg.max_early;
+                let cfa = self.cfg.clone();
+                let alpn: &[u8] = match self.alpn_sel {
+                    Some(sp) => {
+                        let ab = cfa.alpn.as_slice();
+                        if sp.start <= sp.end && sp.end <= ab.len() && sp.end - sp.start <= 255 {
+                            sp.of(ab)
+                        } else {
+                            &[]
+                        }
+                    },
+                    None => &[],
+                };
                 match res {
                     Some(rm) => {
                         let k = self.cfg.tickets;
@@ -1653,15 +1935,16 @@ impl<P: Provider> ServerConn<P> {
                         while i < k
                             invariant
                                 rm.wf(),
+                                alpn@.len() <= 255,
                                 o.len() <= usize::MAX / 2,
-                                out@.len() <= o.len() + 256 * (i as int),
+                                out@.len() <= o.len() + 1024 * (i as int),
                                 out@.take(o.len() as int) == o,
                                 out@.len() >= o.len(),
                                 keys_are(tx2, suite, s_ap@),
                             decreases k - i,
                         {
                             let ghost o2 = out@;
-                            let (ok, _) = issue_ticket(&mut self.prov, suite, lifetime, i, &rm, &mut tx2, out);
+                            let (ok, _) = issue_ticket(&mut self.prov, suite, lifetime, i, &rm, max_early, alpn, &mut tx2, out);
                             proof {
                                 assert(out@.take(o.len() as int) =~= o2.take(o.len() as int));
                             }
@@ -1881,9 +2164,9 @@ impl<P: Provider> ServerConn<P> {
         let mut st = State::Closed;
         core::mem::swap(&mut self.state, &mut st);
         match st {
-            State::WaitFinished { suite, mut rx, tx, expect, c_ap, s_ap, res } => {
+            State::WaitFinished { suite, mut rx, tx, early, expect, c_ap, s_ap, res } => {
                 let r = rx.open(hdr, body);
-                self.state = State::WaitFinished { suite, rx, tx, expect, c_ap, s_ap, res };
+                self.state = State::WaitFinished { suite, rx, tx, early, expect, c_ap, s_ap, res };
                 r
             },
             State::Connected { suite, mut rx, tx, c_sec, s_sec } => {
@@ -1896,6 +2179,110 @@ impl<P: Provider> ServerConn<P> {
                     assert(false);
                 }
                 Err(RecErr::BadMac)
+            },
+        }
+    }
+
+    fn in_early_x(&self) -> (r: bool)
+        ensures
+            r == self.in_early(),
+    {
+        match &self.state {
+            State::WaitFinished { early, .. } => early.is_some(),
+            _ => false,
+        }
+    }
+
+    fn early_hs_x(&self) -> (r: bool)
+        requires
+            self.wf(),
+            self.phase() == Phase::WaitFinished,
+        ensures
+            r == self.handshake().early,
+    {
+        // The early key is made when, and only when, 0-RTT data is taken;
+        // after EndOfEarlyData, `early_left` is what remains of it.
+        self.early_taken
+    }
+
+    /// A record while 0-RTT data is coming (§4.2.10): application data
+    /// under the client's early key, up to the ticket's allowance, until
+    /// EndOfEarlyData, after which the client's handshake key applies.
+    #[verifier::spinoff_prover]
+    fn read_early(&mut self, hdr: &[u8; 5], body: &mut [u8], out: &mut Vec<u8>) -> (r: Result<Event, Error>)
+        requires
+            old(self).wf(),
+            old(self).phase() == Phase::WaitFinished,
+            old(self).in_early(),
+            old(out)@.len() <= usize::MAX / 2,
+        ensures
+            final(self).wf(),
+            final(self).config() == old(self).config(),
+            final(out)@.take(old(out)@.len() as int) == old(out)@,
+            final(self).phase() == Phase::WaitFinished || final(self).phase() == Phase::Closed,
+            r matches Ok(e) ==> (e is Nothing || e is EarlyData || e is Closed),
+            r matches Ok(Event::EarlyData(n)) ==> {
+                let s = old(self).handshake().choice.suite;
+                let a = suite_hash(s);
+                let sec = old(self).handshake().c_early();
+                &&& final(self).phase() == Phase::WaitFinished
+                &&& old(self).handshake().early
+                &&& n < final(body)@.len()
+                &&& open_record(s, traffic_key(a, sec, suite_key_len(s)), traffic_iv(a, sec), old(self).early_seq(), hdr@, old(body)@)
+                    == Ok::<(u8, Seq<u8>), SpecRecErr>((23u8, final(body)@.take(n as int)))
+            },
+    {
+        let mut st = State::Closed;
+        core::mem::swap(&mut self.state, &mut st);
+        match st {
+            State::WaitFinished { suite, rx, tx, early: Some(mut ep), expect, c_ap, s_ap, res } => {
+                let r = ep.open(hdr, body);
+                match r {
+                    Err(e) => {
+                        self.state = State::WaitFinished { suite, rx, tx, early: Some(ep), expect, c_ap, s_ap, res };
+                        let code = match e {
+                            RecErr::BadMac => BAD_RECORD_MAC,
+                            RecErr::Overflow => RECORD_OVERFLOW,
+                            RecErr::NoType => UNEXPECTED_MESSAGE,
+                            RecErr::Exhausted => INTERNAL_ERROR,
+                        };
+                        Err(self.fail(code, out))
+                    },
+                    Ok((ict, k)) => {
+                        if ict == 23 {
+                            if k as u64 > self.early_left as u64 {
+                                // More than max_early_data_size (§4.2.10).
+                                self.state = State::WaitFinished { suite, rx, tx, early: Some(ep), expect, c_ap, s_ap, res };
+                                return Err(self.fail(UNEXPECTED_MESSAGE, out));
+                            }
+                            self.early_left = self.early_left - k as u32;
+                            self.state = State::WaitFinished { suite, rx, tx, early: Some(ep), expect, c_ap, s_ap, res };
+                            assert(out@.take(out@.len() as int) =~= out@);
+                            Ok(Event::EarlyData(k))
+                        } else if ict == 22 && k == 4 && body[0] == 5 && body[1] == 0 && body[2] == 0 && body[3] == 0
+                            && self.buf.len() == 0 {
+                            // EndOfEarlyData, alone in its record (a key
+                            // change follows it): the handshake key next.
+                            self.state = State::WaitFinished { suite, rx, tx, early: None, expect, c_ap, s_ap, res };
+                            assert(out@.take(out@.len() as int) =~= out@);
+                            Ok(Event::Nothing)
+                        } else if ict == 21 {
+                            self.state = State::WaitFinished { suite, rx, tx, early: Some(ep), expect, c_ap, s_ap, res };
+                            let content = vstd::slice::slice_subrange(&*body, 0, k);
+                            self.on_alert(content, out)
+                        } else {
+                            self.state = State::WaitFinished { suite, rx, tx, early: Some(ep), expect, c_ap, s_ap, res };
+                            Err(self.fail(UNEXPECTED_MESSAGE, out))
+                        }
+                    },
+                }
+            },
+            other => {
+                self.state = other;
+                proof {
+                    assert(false);
+                }
+                Err(Error::Closed)
             },
         }
     }
@@ -1921,6 +2308,16 @@ impl<P: Provider> ServerConn<P> {
                 && final(self).phase() == Phase::Connected,
             r matches Ok(e) && e is Data ==> old(self).phase() == Phase::Connected
                 && final(self).phase() == Phase::Connected,
+            r matches Ok(Event::EarlyData(n)) ==> {
+                let s = old(self).handshake().choice.suite;
+                let a = suite_hash(s);
+                let sec = old(self).handshake().c_early();
+                &&& old(self).phase() == Phase::WaitFinished && final(self).phase() == Phase::WaitFinished
+                &&& old(self).handshake().early && old(self).in_early()
+                &&& n < final(body)@.len()
+                &&& open_record(s, traffic_key(a, sec, suite_key_len(s)), traffic_iv(a, sec), old(self).early_seq(), hdr@, old(body)@)
+                    == Ok::<(u8, Seq<u8>), SpecRecErr>((23u8, final(body)@.take(n as int)))
+            },
             r matches Ok(Event::Data(n)) ==> {
                 let s = old(self).handshake().choice.suite;
                 let a = suite_hash(s);
@@ -1982,6 +2379,9 @@ impl<P: Provider> ServerConn<P> {
         if ct != 23 {
             return Err(self.fail(UNEXPECTED_MESSAGE, out));
         }
+        if ph == 2 && self.in_early_x() {
+            return self.read_early(hdr, body, out);
+        }
         let res = self.open_rec(hdr, body);
         match res {
             Err(e) => {
@@ -2027,7 +2427,8 @@ impl<P: Provider> ServerConn<P> {
             final(self).wf(),
             final(self).config() == old(self).config(),
             final(self).phase() == old(self).phase(),
-            r is Ok ==> old(self).phase() == Phase::Connected && {
+            r is Ok ==> (old(self).phase() == Phase::Connected || (old(self).phase() == Phase::WaitFinished
+                && old(self).handshake().early)) && {
                 let s = old(self).handshake().choice.suite;
                 let a = suite_hash(s);
                 let sec = old(self).tx_secret();
@@ -2038,6 +2439,10 @@ impl<P: Provider> ServerConn<P> {
         if out.len() > usize::MAX / 4 || data.len() > usize::MAX / 4 {
             return Err(Error::OutputFull);
         }
+        let half = match &self.state {
+            State::WaitFinished { .. } => self.early_hs_x(),
+            _ => false,
+        };
         let mut st = State::Closed;
         core::mem::swap(&mut self.state, &mut st);
         match st {
@@ -2048,6 +2453,21 @@ impl<P: Provider> ServerConn<P> {
                 }
                 let ok = tx.seal_all(23, data, out);
                 self.state = State::Connected { suite, rx, tx, c_sec, s_sec };
+                if ok { Ok(()) } else { Err(Error::OutputFull) }
+            },
+            State::WaitFinished { suite, rx, mut tx, early, expect, c_ap, s_ap, res } => {
+                // 0.5-RTT data (§4.4.4): an answer to 0-RTT data, before
+                // the client's Finished. Only when 0-RTT data was taken.
+                if !half {
+                    self.state = State::WaitFinished { suite, rx, tx, early, expect, c_ap, s_ap, res };
+                    return Err(Error::Closed);
+                }
+                proof {
+                    assert(out@.len() + data@.len() + 22 * (data@.len() / 16384 + 1) + 16384 + 32 <= usize::MAX) by (nonlinear_arith)
+                        requires out@.len() <= usize::MAX / 4, data@.len() <= usize::MAX / 4, usize::MAX >= 0xffff_ffff;
+                }
+                let ok = tx.seal_all(23, data, out);
+                self.state = State::WaitFinished { suite, rx, tx, early, expect, c_ap, s_ap, res };
                 if ok { Ok(()) } else { Err(Error::OutputFull) }
             },
             other => {
@@ -2085,6 +2505,11 @@ impl<P: Provider> ServerConn<P> {
                 put(out, &body);
             },
         }
+    }
+
+    /// Whether this handshake took the client's 0-RTT data.
+    pub fn early_accepted(&self) -> bool {
+        self.early_taken
     }
 
     /// The ALPN protocol chosen, once the server has sent its flight.

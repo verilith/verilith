@@ -173,8 +173,8 @@ pub fn hello_retry_request_x(out: &mut Vec<u8>, sid: &[u8], suite: u16, group: u
 /// Appends EncryptedExtensions: ALPN's choice, if any, then the
 /// transport parameters `tp` over QUIC.
 #[verifier::spinoff_prover]
-#[verifier::rlimit(40)]
-pub fn encrypted_extensions_x(out: &mut Vec<u8>, alpn: Option<&[u8]>, tp: Option<&[u8]>)
+#[verifier::rlimit(120)]
+pub fn encrypted_extensions_x(out: &mut Vec<u8>, alpn: Option<&[u8]>, tp: Option<&[u8]>, early: bool)
     requires
         alpn matches Some(p) ==> p@.len() <= 255,
         tp matches Some(t) ==> t@.len() <= 60000,
@@ -182,12 +182,16 @@ pub fn encrypted_extensions_x(out: &mut Vec<u8>, alpn: Option<&[u8]>, tp: Option
         final(out)@ == old(out)@ + encrypted_extensions(
             opt_view(alpn),
             opt_view(tp),
+            early,
         ),
+        encrypted_extensions(opt_view(alpn), opt_view(tp), early).len() <= 61000,
 {
-    let na: usize = match alpn {
+    reveal(encrypted_extensions);
+    let na0: usize = match alpn {
         None => 0,
         Some(p) => p.len() + 7,
     };
+    let na: usize = if early { na0 + 4 } else { na0 };
     let nt: usize = match tp {
         None => 0,
         Some(t) => t.len() + 4,
@@ -208,6 +212,11 @@ pub fn encrypted_extensions_x(out: &mut Vec<u8>, alpn: Option<&[u8]>, tp: Option
             put(out, p);
         },
     }
+    let ghost o15 = out@;
+    if early {
+        put2(out, 42);
+        put2(out, 0);
+    }
     let ghost o2 = out@;
     match tp {
         None => {},
@@ -220,12 +229,15 @@ pub fn encrypted_extensions_x(out: &mut Vec<u8>, alpn: Option<&[u8]>, tp: Option
     proof {
         let av = opt_view(alpn);
         let tv = opt_view(tp);
-        assert(o2.skip(o1.len() as int) =~= alpn_ext(av));
+        assert(o15.skip(o1.len() as int) =~= alpn_ext(av));
+        assert(o2.skip(o15.len() as int) =~= early_ext(early));
+        assert(o2.skip(o1.len() as int) =~= alpn_ext(av) + early_ext(early));
         assert(out@.skip(o2.len() as int) =~= tp_ext(tv));
-        let e = alpn_ext(av) + tp_ext(tv);
+        let e = alpn_ext(av) + early_ext(early) + tp_ext(tv);
         assert(e.len() == na + nt);
         assert(out@ =~= o + (seq![8u8] + be3(e.len() + 2) + (be2(e.len()) + e)));
         assert(hs_msg(8, be2(e.len()) + e) =~= seq![8u8] + be3(e.len() + 2) + (be2(e.len()) + e));
+        assert(encrypted_extensions(av, tv, early).len() == out@.len() - o.len());
     }
 }
 
@@ -383,46 +395,58 @@ pub fn put8(out: &mut Vec<u8>, n: u64)
 }
 
 /// Appends a ticket state.
-pub fn ticket_state_x(out: &mut Vec<u8>, suite: u16, time: u64, age_add: u32, psk: &Secret)
+pub fn ticket_state_x(out: &mut Vec<u8>, suite: u16, time: u64, age_add: u32, psk: &Secret, max_early: u32, alpn: &[u8])
     requires
         psk.wf(),
+        alpn@.len() <= 255,
     ensures
-        final(out)@ == old(out)@ + ticket_state(suite, time, age_add, psk@),
+        final(out)@ == old(out)@ + ticket_state(suite, time, age_add, psk@, max_early, alpn@),
 {
-    put1(out, 1);
+    put1(out, 2);
     put2(out, suite as usize);
     put8(out, time);
     put4(out, age_add);
     put1(out, psk.len() as u8);
     put(out, psk.as_slice());
-    assert(final(out)@ =~= old(out)@ + ticket_state(suite, time, age_add, psk@));
+    put4(out, max_early);
+    put1(out, alpn.len() as u8);
+    put(out, alpn);
+    assert(final(out)@ =~= old(out)@ + ticket_state(suite, time, age_add, psk@, max_early, alpn@));
 }
 
 /// Appends a NewSessionTicket.
-pub fn new_session_ticket_x(out: &mut Vec<u8>, lifetime: u32, age_add: u32, nonce: &[u8], ticket: &[u8])
+pub fn new_session_ticket_x(out: &mut Vec<u8>, lifetime: u32, age_add: u32, nonce: &[u8], ticket: &[u8], max_early: u32)
     requires
         nonce@.len() <= 255,
         ticket@.len() <= 65535,
     ensures
-        final(out)@ == old(out)@ + new_session_ticket(lifetime, age_add, nonce@, ticket@),
+        final(out)@ == old(out)@ + new_session_ticket(lifetime, age_add, nonce@, ticket@, max_early),
 {
-    let bl = 4 + 4 + 1 + nonce.len() + 2 + ticket.len() + 2;
+    let mut x: Vec<u8> = Vec::new();
+    if max_early > 0 {
+        put2(&mut x, 42);
+        put2(&mut x, 4);
+        put4(&mut x, max_early);
+    }
+    assert(x@ =~= nst_exts(max_early));
+    let bl = 4 + 4 + 1 + nonce.len() + 2 + ticket.len() + 2 + x.len();
+    let ghost body = be4(lifetime as nat) + be4(age_add as nat) + seq![nonce@.len() as u8] + nonce@ + be2(
+        ticket@.len(),
+    ) + ticket@ + be2(x@.len()) + x@;
+    assert(body.len() == bl);
     put1(out, 4);
     put3(out, bl);
+    let ghost o1 = out@;
     put4(out, lifetime);
     put4(out, age_add);
     put1(out, nonce.len() as u8);
     put(out, nonce);
     put2(out, ticket.len());
     put(out, ticket);
-    put2(out, 0);
-    proof {
-        let body = be4(lifetime as nat) + be4(age_add as nat) + seq![nonce@.len() as u8] + nonce@ + be2(
-            ticket@.len(),
-        ) + ticket@ + be2(0);
-        assert(body.len() == bl);
-        assert(final(out)@ =~= old(out)@ + new_session_ticket(lifetime, age_add, nonce@, ticket@));
-    }
+    put2(out, x.len());
+    put(out, x.as_slice());
+    assert(out@ =~= o1 + body);
+    assert(final(out)@ =~= old(out)@ + new_session_ticket(lifetime, age_add, nonce@, ticket@, max_early));
 }
 
 } // verus!

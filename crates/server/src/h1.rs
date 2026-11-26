@@ -55,6 +55,8 @@ pub struct Conn {
     wbuf: Out,
     sent_continue: bool,
     limits: Limits,
+    /// Requests are being read from 0-RTT data (set by the TLS layer).
+    pub(crate) early: bool,
 }
 
 /// The server's own field lines, checked once and rebuilt when `Date`
@@ -92,7 +94,7 @@ impl Ctx {
 
 impl Conn {
     pub fn new(limits: Limits) -> Conn {
-        Conn { core: Core::new(limits.max_head, limits.max_headers, limits.max_body), wbuf: Out::new(), sent_continue: false, limits }
+        Conn { core: Core::new(limits.max_head, limits.max_headers, limits.max_body), wbuf: Out::new(), sent_continue: false, limits, early: false }
     }
 
     /// Makes the connection new again, keeping its buffers.
@@ -100,6 +102,7 @@ impl Conn {
         self.core.reset(self.limits.max_head);
         self.wbuf.clear();
         self.sent_continue = false;
+        self.early = false;
     }
 
     /// Room to read into. Empty when the connection should not read now.
@@ -236,9 +239,14 @@ impl Conn {
             buf,
             headers: &c.headers,
             body: &buf[hd.head_len..hd.head_len + body],
+            early: self.early,
         };
         let mut res = Response { out: &mut self.wbuf, ctx, sent: false, close: !keep, head: method == b"HEAD", h2: None };
-        h.handle(&request, &mut res);
+        if self.early && !crate::early_ok(method) {
+            res.too_early();
+        } else {
+            h.handle(&request, &mut res);
+        }
         if !res.sent {
             res.error(500);
         }
@@ -728,6 +736,12 @@ impl<'a> Response<'a> {
     }
 
     /// A plain-text error response.
+    /// 425 Too Early (RFC 8470 §5.2): the client sends the request again
+    /// once the handshake is done.
+    pub(crate) fn too_early(&mut self) {
+        let _ = self.send_reason(425, b"Too Early", &[], b"Too Early");
+    }
+
     pub fn error(&mut self, status: u16) {
         let r = reason(status);
         let _ = self.send(status, &[Field { name: b"Content-Type", value: b"text/plain" }], r);

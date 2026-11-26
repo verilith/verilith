@@ -14,7 +14,8 @@ use aws_lc_rs::agreement::{self, EphemeralPrivateKey, UnparsedPublicKey};
 use aws_lc_rs::kem::{EncapsulationKey, ML_KEM_768};
 use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use aws_lc_rs::signature::{self, EcdsaKeyPair, Ed25519KeyPair, KeyPair, RsaKeyPair};
-use std::sync::{Arc, RwLock};
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use aws_lc_rs::aead::quic::{self as quic_hp, HeaderProtectionKey};
 use verilith_tls::crypto::{AeadKey, HpKey, Provider};
@@ -168,6 +169,30 @@ struct Keys {
     since: u64,
 }
 
+/// How far apart (ms) the client's and the server's view of a ticket's
+/// age may be for its 0-RTT data to be taken (RFC 8446 §8.3).
+pub const EARLY_WINDOW_MS: u64 = 10_000;
+
+/// The most ClientHellos the anti-replay register holds per generation.
+/// When it is full, 0-RTT is refused (the handshake goes on, 1-RTT).
+pub const EARLY_REGISTER_MAX: usize = 1 << 18;
+
+/// The single-use register of RFC 8446 §8.1: binders whose 0-RTT data was
+/// taken, in two generations. A ClientHello passes the freshness check
+/// (§8.3) for at most `2 * EARLY_WINDOW_MS` of server time, so a binder
+/// is kept for at least that long: a generation lasts that long, and the
+/// one before it is still checked.
+struct Register {
+    current: HashSet<[u8; 32]>,
+    previous: HashSet<[u8; 32]>,
+    /// When `current` was started (ms since the epoch).
+    since: u64,
+}
+
+fn unix_now_ms() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
 /// Session ticket keys, made at random and shared by every connection of
 /// a server, across its threads (`Arc<TicketKeys>`). A ticket is
 /// `name(4) | nonce(12) | ChaCha20-Poly1305(state) | tag(16)`, the name as
@@ -179,6 +204,7 @@ pub struct TicketKeys {
     keys: RwLock<Keys>,
     period: u64,
     rng: SystemRandom,
+    register: Mutex<Register>,
 }
 
 /// Bytes a sealed ticket adds to its state.
@@ -189,7 +215,40 @@ impl TicketKeys {
     pub fn new(period: u64) -> TicketKeys {
         let rng = SystemRandom::new();
         let current = TicketKey::generate(&rng);
-        TicketKeys { keys: RwLock::new(Keys { current, previous: None, since: unix_now() }), period: period.max(1), rng }
+        let register = Mutex::new(Register { current: HashSet::new(), previous: HashSet::new(), since: unix_now_ms() });
+        TicketKeys { keys: RwLock::new(Keys { current, previous: None, since: unix_now() }), period: period.max(1), rng, register }
+    }
+
+    /// Anti-replay for 0-RTT data (RFC 8446 §8): `true` if the client's
+    /// view of the ticket's age (`obfuscated_age - age_add`, ms) is within
+    /// `EARLY_WINDOW_MS` of the server's (now less `issued`, s), and no
+    /// ClientHello with this `binder` has had its 0-RTT data taken here
+    /// before. The register is this process's: servers that share ticket
+    /// keys across machines must not enable 0-RTT without a shared one.
+    pub fn claim_early(&self, binder: &[u8], obfuscated_age: u32, issued: u64, age_add: u32) -> bool {
+        let now = unix_now_ms();
+        let client_age = obfuscated_age.wrapping_sub(age_add) as u64;
+        // `issued` has whole seconds: the server's age is at most 1 s more
+        // than the truth.
+        let server_age = now.saturating_sub(issued.saturating_mul(1000));
+        if client_age.abs_diff(server_age) > EARLY_WINDOW_MS || binder.len() < 32 {
+            return false;
+        }
+        let mut id = [0u8; 32];
+        id.copy_from_slice(&binder[..32]);
+        let Ok(mut r) = self.register.lock() else { return false };
+        let span = 2 * EARLY_WINDOW_MS + 1000;
+        if now.saturating_sub(r.since) >= span {
+            let fresh = if now.saturating_sub(r.since) >= 2 * span { HashSet::new() } else { std::mem::take(&mut r.current) };
+            r.previous = fresh;
+            r.current = HashSet::new();
+            r.since = now;
+        }
+        if r.previous.contains(&id) || r.current.contains(&id) || r.current.len() >= EARLY_REGISTER_MAX {
+            return false;
+        }
+        r.current.insert(id);
+        true
     }
 
     pub fn period(&self) -> u64 {
@@ -431,5 +490,12 @@ impl Provider for AwsLc {
 
     fn now(&mut self) -> u64 {
         unix_now()
+    }
+
+    fn claim_early(&mut self, _ch: &[u8], binder: &[u8], obfuscated_age: u32, issued: u64, age_add: u32) -> bool {
+        match &self.tickets {
+            Some(t) => t.claim_early(binder, obfuscated_age, issued, age_add),
+            None => false,
+        }
     }
 }

@@ -63,7 +63,8 @@ fn main() {
         tls: arg(&args, "--tls").map(|p| {
             let (cert, key) = (arg(&args, "--cert").expect("--cert"), arg(&args, "--key").expect("--key"));
             let c = match arg(&args, "--tls-backend").as_deref() {
-                None | Some("verilith") => verilith_server::tls::config(&cert, &key),
+                // `--early-data N`: take up to N bytes of 0-RTT data.
+                None | Some("verilith") => verilith_server::tls::config_early(&cert, &key, arg(&args, "--early-data").map_or(0, |n| n.parse().unwrap())),
                 #[cfg(feature = "tls-rustls")]
                 Some("rustls") => verilith_server::tls::rustls_config(&cert, &key),
                 Some(b) => panic!("unknown --tls-backend {b}"),

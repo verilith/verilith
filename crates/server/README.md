@@ -34,6 +34,67 @@ fn main() {
 --h2c 8081 --tls 8443 --cert C --key K --root DIR` runs the server
 `bench/server` measures.
 
+## Quickstart
+
+Rust 1.89 or later; macOS or Linux. From the repository root:
+
+```sh
+# Build: HTTP/1.1 and h2c always; `tls` adds HTTPS (h2 + http/1.1 by ALPN);
+# `h3` adds HTTP/3 over UDP (and implies `tls`).
+cargo build --release -p verilith-server --features h3
+
+# A certificate for localhost (or use mkcert, or your real cert and key in PEM;
+# the key must be PKCS#8: ECDSA, Ed25519 or RSA).
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+  -keyout key.pem -out cert.pem -days 365 -subj /CN=localhost \
+  -addext subjectAltName=DNS:localhost,IP:127.0.0.1
+
+# Serve ./site under /static/ over HTTP/1.1 (8080), HTTPS (TCP 8443) and
+# HTTP/3 (UDP 8443; HTTPS responses advertise it with Alt-Svc).
+./target/release/verilith-server --http 8080 \
+  --tls 8443 --h3 8443 --cert cert.pem --key key.pem --root ./site
+```
+
+Then `curl http://localhost:8080/static/`, `curl -k
+https://localhost:8443/static/index.html` (h2), or a browser at
+`https://localhost:8443/static/` (it moves to HTTP/3 after the first
+response). `GET /plaintext` answers "Hello, World!". Other flags:
+`--threads N` (default: one per CPU), `--h2c PORT` (cleartext HTTP/2 with
+prior knowledge), `--io-uring` (Linux), `--tls-backend rustls` and
+`--h3-backend quinn` (the trusted libraries, to compare).
+
+The binary is the benchmark server; for your own routes, use the library
+(the example above): `serve(Config, handler)`, where the handler gets a
+`Request` and writes through `Response::send`, and `files::Files::serve`
+serves a directory from inside it.
+
+## How the crates fit together
+
+The request path, from socket to response, with the crate that does each
+step (each a separate crate with its own proofs):
+
+| Step | HTTP/1.1 | HTTP/2 | HTTP/3 |
+|---|---|---|---|
+| Event loop, sockets | `worker.rs` / `worker_uring.rs`, `sys/` (trusted) | same | same, UDP with GSO/GRO |
+| Encryption | verilith-tls (TLS 1.3 handshake, record layer), crypto from verilith-tls-aws-lc (trusted) | same | verilith-quic-conn (QUIC transport) on verilith-quic (packets, frames, loss recovery) and verilith-tls's QUIC mode |
+| Framing | verilith-http (request parser, body framing: the smuggling theorems) | verilith-h2 (frames) | verilith-h3 (frames, stream rules) |
+| Field compression | — | verilith-hpack | verilith-qpack |
+| Connection logic | `conn.rs` + `persist.rs` (verified: requests exactly the spec's, in order) | `h2.rs` with `flow.rs`, `streams.rs` (verified flow control and stream states) | `h3.rs` |
+| Handler | your code: `Request` in, `Response` out | same | same |
+| Response | `respond.rs` (verified: the head parses back exactly) | HPACK-encoded fields | QPACK-encoded fields |
+| Static files | `path.rs` (verified: never leaves the root), `range.rs` (verified), verilith-text (percent-decoding), `files.rs` | same | same |
+
+Where the proofs meet: each crate proves its piece against an RFC
+specification written in that crate's `spec.rs`, and the server's
+verified modules use those specifications directly. For example, `conn.rs`'s
+invariant is stated with verilith-http's `spec::parse_request`, and
+`respond.rs`'s theorem with its `spec::parse_response`, so "the server
+hands the handler exactly the request the parser's spec sees" and "the
+response the client parses is exactly what the handler sent" are one
+chain. The plain-Rust glue (event loops, `h2.rs`, `h3.rs`, the trusted
+OS and crypto calls) is listed in [TRUST.md](TRUST.md) with what each
+piece is assumed to do.
+
 ## How it works
 
 One worker thread per CPU, each pinned, each with its own epoll (Linux)
@@ -210,6 +271,23 @@ nginx 6.0k (3.4k) and h2o 4.0k (2.5k); there wrk's own CPU is the limit.
 A TLS 1.3 server answers a client's Finished with nothing when it sends no
 ticket, so a client with Nagle on would hold its request for the kernel's
 40 ms delayed ACK: the server sets `TCP_QUICKACK` while handshaking.
+
+TLS 1.3 0-RTT (`--early-data N`, off by default): a client resuming a
+session sends its request with the ClientHello and gets the response with
+the server's flight, one round trip sooner. Through a proxy adding 20 ms
+of round trip, the first response byte of a resumed connection came after
+42.5 ms without 0-RTT and **21.7 ms** with it (50 ms: 102.8 against
+51.6 ms; `bench/server/zero-rtt`, `results/2026-11-26-cloud-0rtt`).
+Early data can be replayed by an attacker, so the server takes it only as
+verilith-tls proves (a resumption, the ticket's suite and ALPN, within
+the size it advertised) and only once: verilith-tls-aws-lc keeps a
+single-use register of ClientHellos and a 10 s freshness window on the
+ticket's age (RFC 8446 §8). A request read from early data has
+`Request::early()` set, and any method but GET, HEAD and OPTIONS is
+answered 425 Too Early (RFC 8470) without calling the handler; the
+client sends it again after the handshake. The register is per process,
+so servers on several machines sharing ticket keys should leave 0-RTT
+off.
 
 Connection setup (`h1-close`): accepting with `TCP_DEFER_ACCEPT` (the
 request arrives with the connection, one wakeup instead of two),
