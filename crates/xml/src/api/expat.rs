@@ -2263,7 +2263,7 @@ impl Parser {
             }
         } else {
             self.names.extend_from_slice(qname);
-            let ids = !doc.defs.is_empty();
+            let ids = doc.has_defs();
             for (j, a) in el.attrs().enumerate() {
                 if j < given {
                     nspec += 1;

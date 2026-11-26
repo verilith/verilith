@@ -5,15 +5,17 @@
 //! its tape, the verified decoders (`decode`) give character data and
 //! attribute values their meaning, and the verified `content::ex_ent_content`
 //! parses an entity's replacement text when a reference to it is read.
-//! What is here is navigation over tokens, the tables built from the DTD's
-//! tokens (attribute defaults and declared types), and error positions.
+//! The verified `atts` module builds the table of attribute definitions
+//! from the DTD's tokens and decides which defaults an element gets and
+//! how a value of a declared type is collapsed. What is here is
+//! navigation over tokens and error positions.
+use crate::atts::{ex_collapse, AttTable};
 use crate::decode::{ex_att_norm, ex_eol};
 use crate::dtd::DtdOut;
 use crate::lex::{ex_find_ent, XEnv};
 use crate::tape::{Kind, Tape, Tok};
 use std::borrow::Cow;
 use std::cell::OnceCell;
-use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 #[cfg(feature = "expat-abi")]
@@ -101,15 +103,6 @@ fn bad_char_at(s: &[u8]) -> usize {
     i
 }
 
-/// An attribute definition from the internal subset that applies.
-#[derive(Clone, Copy, Debug)]
-struct AttDef {
-    name: (usize, usize),
-    ty: u8,
-    kind: u8,
-    value: (usize, usize),
-}
-
 /// The declarations a document's content refers to: its own, or those of
 /// a stream's prolog (`Document::chunk`).
 #[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
@@ -151,10 +144,8 @@ pub struct Document<'a> {
     /// The flattened DTD (`pe_spec::flat`) and its tape, when the DTD was
     /// read whole: the declarations' positions are in it.
     flat: Option<(Vec<u8>, Tape)>,
-    defs: Vec<AttDef>,
-    /// `defs` by (element type, attribute name), and by element type.
-    def_index: HashMap<Box<[u8]>, HashMap<Box<[u8]>, usize>>,
-    defs_of: HashMap<Box<[u8]>, Vec<usize>>,
+    /// The attribute definitions that apply (`atts::decls`), indexed.
+    atts: AttTable,
     root: usize,
 }
 
@@ -303,9 +294,7 @@ impl<'a> Document<'a> {
             ext_rts: (0..n).map(|_| OnceCell::new()).collect(),
             trace: Vec::new(),
             flat,
-            defs: Vec::new(),
-            def_index: HashMap::new(),
-            defs_of: HashMap::new(),
+            atts: AttTable::build(&[], &[], false),
             root: 0,
         };
         d.root = d.tape.toks.iter().position(|t| t.kind == Kind::STag).unwrap_or(0) as usize;
@@ -337,9 +326,7 @@ impl<'a> Document<'a> {
             ext_rts: (0..n).map(|_| OnceCell::new()).collect(),
             trace: Vec::new(),
             flat: None,
-            defs: Vec::new(),
-            def_index: HashMap::new(),
-            defs_of: HashMap::new(),
+            atts: AttTable::build(&[], &[], false),
             root: 0,
         };
         d.att_defs(ptoks, Some(pro));
@@ -684,42 +671,17 @@ impl<'a> Document<'a> {
         Some((j, self.dtd.ents[j].kind == 0))
     }
 
-    /// The attribute definitions that apply: those of the ATTLIST
-    /// declarations that were processed (all before the first parameter
-    /// entity reference that was not read, unless the document is
-    /// standalone, §5.1), the first one binding for each attribute (§3.3).
+    /// The attribute definitions that apply (`atts::decls`): those of the
+    /// ATTLIST declarations that were processed (all before the first
+    /// parameter entity reference that was not read, unless the document
+    /// is standalone, §5.1), the first one binding for each attribute
+    /// (§3.3).
     fn att_defs(&mut self, toks: &[Tok], pro: Option<&[u8]>) {
         let text: &[u8] = match pro {
             Some(p) => p,
             None => self.owned.as_deref().unwrap_or(self.input),
         };
-        let standalone = self.standalone;
-        let mut skip = false;
-        let mut elem = (0, 0);
-        let mut i = 0;
-        while i < toks.len() {
-            let t = toks[i];
-            match t.kind {
-                Kind::PERef if !standalone => skip = true,
-                Kind::AttlistDecl => elem = (t.a(), t.b()),
-                Kind::AttDef if !skip => {
-                    let d = toks[i + 1];
-                    let e: Box<[u8]> = text[elem.0 as usize..elem.1 as usize].into();
-                    let n: Box<[u8]> = text[t.a()..t.b()].into();
-                    let by_name = self.def_index.entry(e.clone()).or_default();
-                    if !by_name.contains_key(&n) {
-                        let k = self.defs.len();
-                        self.defs.push(AttDef { name: (t.a(), t.b()), ty: t.f, kind: d.f, value: (d.a(), d.b()) });
-                        by_name.insert(n, k);
-                        self.defs_of.entry(e).or_default().push(k);
-                    }
-                    i += 1;
-                }
-                Kind::DoctypeEnd => break,
-                _ => {}
-            }
-            i += 1;
-        }
+        self.atts = AttTable::build(text, toks, self.standalone);
     }
 
     /// The normalized value (§3.3.3) of the raw attribute value
@@ -750,34 +712,29 @@ impl<'a> Document<'a> {
         if ty <= 1 {
             return Ok(v);
         }
-        // A type other than CDATA: no leading or trailing spaces, and one
-        // space between tokens.
-        let collapsed: Vec<u8> = v
-            .split(|&c| c == b' ')
-            .filter(|w| !w.is_empty())
-            .collect::<Vec<_>>()
-            .join(&b' ');
-        if collapsed.len() == v.len() {
+        // A type other than CDATA (§3.3.3).
+        let collapsed = ex_collapse(&v);
+        if collapsed[..] == v[..] {
             Ok(v)
         } else {
             Ok(Cow::Owned(collapsed))
         }
     }
 
-    fn def_for(&self, elem: &[u8], name: &[u8]) -> Option<&AttDef> {
-        if self.defs.is_empty() {
-            return None;
-        }
-        let k = self.def_index.get(elem)?.get(name)?;
-        Some(&self.defs[*k])
+    /// Whether any attribute definition applies.
+    #[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
+    pub(crate) fn has_defs(&self) -> bool {
+        !self.atts.decls.is_empty()
     }
 
-    /// The indices in `defs` of the definitions for the element type `elem`.
-    fn defs_for(&self, elem: &[u8]) -> &[usize] {
-        if self.defs.is_empty() {
-            return &[];
+    /// The binding definition of the attribute `name` of the element type
+    /// `elem` (`AttTable::def_for`).
+    pub(crate) fn def_for(&self, elem: &[u8], name: &[u8]) -> Option<&crate::atts::ADecl> {
+        if self.atts.decls.is_empty() {
+            return None;
         }
-        self.defs_of.get(elem).map_or(&[], |v| v.as_slice())
+        let k = self.atts.def_for(self.dtd_text(), elem, 0, elem.len(), name, 0, name.len())?;
+        Some(&self.atts.decls[k])
     }
 }
 
@@ -869,18 +826,15 @@ impl<'d> Element<'d> {
             out.push(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: false });
             i += 2;
         }
+        if doc.atts.decls.is_empty() {
+            return Ok(out);
+        }
         let text = doc.dtd_text();
-        let given: HashSet<&[u8]> = out.iter().map(|a| a.name.as_bytes()).collect();
-        for &k in doc.defs_for(elem) {
-            let d = &doc.defs[k];
-            if d.kind < 3 {
-                continue;
-            }
-            let name = &text[d.name.0 as usize..d.name.1 as usize];
-            if given.contains(name) {
-                continue;
-            }
-            let value = doc.value(Src::Pro, d.value.0, d.value.1, false, d.ty, limit)?;
+        let t = self.tok();
+        for k in doc.atts.ex_defaults(text, doc.buf(self.src), toks, self.idx + 1, t.a(), t.b()) {
+            let d = doc.atts.decls[k];
+            let name = &text[d.na..d.nb];
+            let value = doc.value(Src::Pro, d.va, d.vb, false, d.ty, limit)?;
             out.push(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: true });
         }
         Ok(out)
@@ -905,7 +859,7 @@ impl<'d> Element<'d> {
     /// The attributes, without allocating: those in the start tag, then
     /// the DTD's defaults (as `attributes`), whole values, however long.
     pub fn attrs(&self) -> Attrs<'d> {
-        Attrs { e: *self, i: self.idx as usize + 1, d: 0 }
+        Attrs { e: *self, i: self.idx as usize + 1, g: None, k: 0 }
     }
 
     /// The child elements.
@@ -938,7 +892,11 @@ impl<'d> Element<'d> {
 pub struct Attrs<'d> {
     e: Element<'d>,
     i: usize,
-    d: usize,
+    /// The element type's group of definitions, once the start tag's
+    /// attributes are read (`Some(None)`: there is none), and where in its
+    /// binding definitions to go on.
+    g: Option<Option<usize>>,
+    k: usize,
 }
 
 impl<'d> Iterator for Attrs<'d> {
@@ -951,32 +909,23 @@ impl<'d> Iterator for Attrs<'d> {
             let (n, v) = (toks[self.i], toks[self.i + 1]);
             self.i += 2;
             let name = doc.span(self.e.src, n.a(), n.b());
-            let ty = if doc.defs.is_empty() { 1 } else { doc.def_for(self.e.name_bytes(), name).map_or(1, |d| d.ty) };
+            let ty = doc.def_for(self.e.name_bytes(), name).map_or(1, |d| d.ty);
             let value = doc.value(self.e.src, v.a(), v.b(), v.f != 0, ty, usize::MAX).unwrap_or(Cow::Borrowed(&[]));
             return Some(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: false });
         }
-        let text = doc.dtd_text();
-        let mine = doc.defs_for(self.e.name_bytes());
-        while self.d < mine.len() {
-            let d = doc.defs[mine[self.d]];
-            self.d += 1;
-            if d.kind < 3 {
-                continue;
-            }
-            let name = &text[d.name.0 as usize..d.name.1 as usize];
-            // Whether the start tag gives it: the definition for a given
-            // attribute is found by its name, so look the tag's names up.
-            let given = toks[self.e.idx as usize + 1..]
-                .chunks(2)
-                .take_while(|p| p[0].kind == Kind::Attr)
-                .any(|p| doc.span(self.e.src, p[0].a(), p[0].b()) == name);
-            if given {
-                continue;
-            }
-            let value = doc.value(Src::Pro, d.value.0, d.value.1, false, d.ty, usize::MAX).unwrap_or(Cow::Borrowed(&[]));
-            return Some(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: true });
+        if doc.atts.decls.is_empty() {
+            return None;
         }
-        None
+        let text = doc.dtd_text();
+        let buf = doc.buf(self.e.src);
+        let t = self.e.tok();
+        let g = *self.g.get_or_insert_with(|| doc.atts.group_of(text, buf, t.a(), t.b()));
+        let (k, next) = doc.atts.next_default(text, buf, toks, self.e.idx + 1, t.a(), t.b(), g?, self.k)?;
+        self.k = next;
+        let d = doc.atts.decls[k];
+        let name = &text[d.na..d.nb];
+        let value = doc.value(Src::Pro, d.va, d.vb, false, d.ty, usize::MAX).unwrap_or(Cow::Borrowed(&[]));
+        Some(Attribute { name: utf8(name), value: cow_utf8(value), defaulted: true })
     }
 }
 

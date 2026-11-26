@@ -22,6 +22,8 @@
 //   `items_spec` - what it emits, proven to be the whole parse's tape.
 #![cfg_attr(not(verus_keep_ghost), allow(unused_imports, unused_variables))]
 #[doc(hidden)]
+pub mod atts;
+#[doc(hidden)]
 pub mod chars;
 #[doc(hidden)]
 pub mod content;
