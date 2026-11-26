@@ -67,10 +67,15 @@ pub open spec fn name_ok(s: Seq<u8>) -> bool {
     s.len() > 0 && s[0] != 0x2f && clean_bytes(s) && comps_from(s, 0).len() > 0 && no_dotdot(comps_from(s, 0))
 }
 
-/// A symbolic link target the planner accepts: relative and clean. It may
-/// contain `..`; where it leads is checked by `safe_walk`.
+/// The longest symbolic link target accepted, in bytes: Linux's and
+/// macOS's `PATH_MAX`, past which `symlink` fails anyway.
+pub const MAX_LINK: usize = 4096;
+
+/// A symbolic link target the planner accepts: relative, clean and at most
+/// `MAX_LINK` bytes. It may contain `..`; where it leads is checked by
+/// `safe_walk`.
 pub open spec fn target_ok(s: Seq<u8>) -> bool {
-    s.len() > 0 && s[0] != 0x2f && clean_bytes(s)
+    s.len() > 0 && s[0] != 0x2f && clean_bytes(s) && s.len() <= MAX_LINK
 }
 
 /// One step of an extraction plan. `path` is relative to the extraction
@@ -230,6 +235,32 @@ pub open spec fn item_of(b: Seq<u8>, e: SEntry, it: SItem) -> bool {
         None => false,
     }
     &&& e.kind is Hardlink ==> name_ok(e.link) && it.target == comps_from(e.link, 0)
+    &&& !(e.kind is Symlink) && !(e.kind is Hardlink) ==> it.target.len() == 0
+}
+
+/// The members a plan extracts: all but those of kind `Other`, in order.
+pub open spec fn kept(es: Seq<SEntry>) -> Seq<SEntry>
+    decreases es.len(),
+{
+    if es.len() == 0 {
+        Seq::empty()
+    } else if es.last().kind is Other {
+        kept(es.drop_last())
+    } else {
+        kept(es.drop_last()).push(es.last())
+    }
+}
+
+/// **The plan of an archive.** `items` has one step for each member that
+/// is not of kind `Other`, in member order, and each is what the policy
+/// makes of its member. An archive has at most one plan (`item_of`
+/// determines the item), and none if a member's name or target is refused.
+///
+/// The planner is proven to return the plan when there is one and it
+/// satisfies `plan_safe`, and to refuse the archive otherwise.
+pub open spec fn plan_of(b: Seq<u8>, es: Seq<SEntry>, items: Seq<SItem>) -> bool {
+    &&& items.len() == kept(es).len()
+    &&& forall|k: int| 0 <= k < items.len() ==> #[trigger] item_of(b, kept(es)[k], items[k])
 }
 
 } // verus!
