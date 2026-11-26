@@ -1,0 +1,163 @@
+//! The HTTP/1.1 engine against every way of splitting its input, and its
+//! output against verilith-http's response parser.
+use verilith_server::h1::{Conn, Ctx, Limits};
+use verilith_server::{Field, Request, Response};
+
+fn handler(req: &Request, res: &mut Response) {
+    let mut body = Vec::new();
+    body.extend_from_slice(req.method);
+    body.push(b' ');
+    body.extend_from_slice(req.target);
+    body.push(b' ');
+    body.extend_from_slice(req.body);
+    let _ = res.send(200, &[Field { name: b"X-Test", value: b"1" }], &body);
+}
+
+fn run(input: &[u8], cuts: &[usize]) -> Vec<u8> {
+    let mut c = Conn::new(Limits::default());
+    let ctx = Ctx { date: b"Thu, 01 Jan 1970 00:00:00 GMT", server: b"t" };
+    let mut out = Vec::new();
+    let mut at = 0;
+    for &cut in cuts.iter().chain(std::iter::once(&input.len())) {
+        let piece = &input[at..cut];
+        at = cut;
+        let mut p = piece;
+        while !p.is_empty() {
+            let b = c.read_buf();
+            if b.is_empty() {
+                break;
+            }
+            let n = b.len().min(p.len());
+            b[..n].copy_from_slice(&p[..n]);
+            c.filled(n);
+            p = &p[n..];
+            c.process(&handler, &ctx);
+            let w = drain(&mut c);
+            out.extend_from_slice(&w);
+        }
+        if c.closing() {
+            break;
+        }
+    }
+    out
+}
+
+const MSGS: &[u8] = b"GET /a HTTP/1.1\r\nHost: x\r\n\r\n\
+POST /b HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello\
+POST /c HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n2;x=y\r\nde\r\n0\r\nT: 1\r\n\r\n\
+GET /d HTTP/1.1\r\nHost: x\r\n\r\n";
+
+#[test]
+fn split_anywhere_same_output() {
+    let whole = run(MSGS, &[]);
+    assert_eq!(count(&whole, b"HTTP/1.1 200 OK"), 4);
+    for i in 0..=MSGS.len() {
+        assert_eq!(run(MSGS, &[i]), whole, "split at {i}");
+    }
+    for i in (0..=MSGS.len()).step_by(7) {
+        for j in i..=MSGS.len() {
+            assert_eq!(run(MSGS, &[i, j]), whole, "split at {i}, {j}");
+        }
+    }
+    let ones: Vec<usize> = (1..MSGS.len()).collect();
+    assert_eq!(run(MSGS, &ones), whole, "one byte at a time");
+}
+
+fn drain(c: &mut Conn) -> Vec<u8> {
+    let mut w = Vec::new();
+    let mut v: [&[u8]; 8] = [&[]; 8];
+    let k = c.pending(&mut v);
+    for s in &v[..k] {
+        w.extend_from_slice(s);
+    }
+    c.wrote(w.len());
+    w
+}
+
+fn count(h: &[u8], n: &[u8]) -> usize {
+    h.windows(n.len()).filter(|w| *w == n).count()
+}
+
+/// Every response parses, with verilith-http, to what the handler sent, and
+/// they come in request order.
+#[test]
+fn responses_parse_back_in_order() {
+    let out = run(MSGS, &[]);
+    let mut rest = &out[..];
+    let mut bodies = Vec::new();
+    let mut hs = Vec::new();
+    while !rest.is_empty() {
+        match verilith_http::parse_response(rest, false, false, &mut hs).unwrap() {
+            verilith_http::Status::Complete(r) => {
+                assert_eq!(r.status(), 200);
+                let fields: Vec<_> = r.headers(&hs).map(|(n, v)| (n.to_vec(), v.to_vec())).collect();
+                assert_eq!(fields[2], (b"X-Test".to_vec(), b"1".to_vec()));
+                let verilith_http::Body::Length(n) = r.body else { panic!() };
+                let b = &rest[r.head_len..r.head_len + n as usize];
+                bodies.push(b.to_vec());
+                rest = &rest[r.head_len + n as usize..];
+            }
+            _ => panic!("partial response"),
+        }
+    }
+    assert_eq!(bodies, vec![b"GET /a ".to_vec(), b"POST /b hello".to_vec(), b"POST /c abcde".to_vec(), b"GET /d ".to_vec()]);
+}
+
+#[test]
+fn smuggling_shapes_close_the_connection() {
+    for bad in [
+        &b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\nGET /smuggled HTTP/1.1\r\nHost: x\r\n\r\n"[..],
+        b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\nContent-Length: 4\r\n\r\nabcdGET /smuggled HTTP/1.1\r\nHost: x\r\n\r\n",
+        b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3\nabc\r\n0\r\n\r\nGET /smuggled HTTP/1.1\r\nHost: x\r\n\r\n",
+        b"GET / HTTP/1.1\r\nHost: x\r\n Folded: y\r\n\r\nGET /smuggled HTTP/1.1\r\nHost: x\r\n\r\n",
+    ] {
+        let out = run(bad, &[]);
+        assert!(out.starts_with(b"HTTP/1.1 400"), "{}", String::from_utf8_lossy(&out));
+        assert_eq!(count(&out, b"HTTP/1.1"), 1);
+        assert!(count(&out, b"Connection: close") == 1);
+    }
+}
+
+#[test]
+fn http10_and_close() {
+    let out = run(b"GET /a HTTP/1.0\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n", &[]);
+    assert_eq!(count(&out, b"HTTP/1.1 200"), 1);
+    assert!(count(&out, b"Connection: close") == 1);
+    let out = run(b"GET /a HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n", &[]);
+    assert_eq!(count(&out, b"HTTP/1.1 200"), 1);
+    let out = run(b"GET /a HTTP/1.0\r\nConnection: keep-alive\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n", &[]);
+    assert_eq!(count(&out, b"HTTP/1.1 200"), 2);
+}
+
+#[test]
+fn head_has_no_body() {
+    let out = run(b"HEAD /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n", &[]);
+    let s = String::from_utf8_lossy(&out);
+    assert!(s.contains("Content-Length: 8\r\n\r\nHTTP/1.1 200"), "{s}");
+}
+
+#[test]
+fn handler_cannot_split_a_response() {
+    fn evil(_: &Request, res: &mut Response) {
+        assert!(res.send(200, &[Field { name: b"X", value: b"a\r\nContent-Length: 0" }], b"x").is_err());
+        assert!(res.send(200, &[Field { name: b"Content-Length", value: b"0" }], b"x").is_err());
+        assert!(res.send(200, &[Field { name: b"Content_Length", value: b"0" }], b"x").is_err());
+        assert!(res.send(200, &[Field { name: b"Bad Name", value: b"0" }], b"x").is_err());
+        assert!(res.send(200, &[], b"ok").is_ok());
+    }
+    let mut c = Conn::new(Limits::default());
+    let ctx = Ctx { date: b"d", server: b"t" };
+    let m = b"GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+    c.read_buf()[..m.len()].copy_from_slice(m);
+    c.filled(m.len());
+    c.process(&evil, &ctx);
+    assert!(drain(&mut c).ends_with(b"Content-Length: 2\r\n\r\nok"));
+}
+
+#[test]
+fn too_large_head() {
+    let mut big = b"GET / HTTP/1.1\r\nHost: x\r\nX: ".to_vec();
+    big.resize(20000, b'a');
+    let out = run(&big, &[]);
+    assert!(out.starts_with(b"HTTP/1.1 431"));
+}

@@ -522,11 +522,13 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   `parse` fuzzer checks every number it reads, eager and lazy, against
   `f64::from_str`. Allocation is Rust's: how much capacity a `Vec` keeps
   beyond its length is up to the standard library.
-* `src/number.rs` is the glue between the verified scanner and the
-  verified conversion: it calls `ex_number_scan` and `to_bits`, sets the
-  sign bit, and calls `f64::from_bits`. Lexemes with more than 19
-  significant digits, or that `to_bits` cannot decide, go to
-  `f64::from_str`.
+* `src/number.rs`: `lexeme_bits`, which calls `ex_number_scan` and
+  `to_bits` and sets the sign bit, is verified to return the correctly
+  rounded bits of the lexeme's `number_value` whenever it returns any,
+  and `parse_i64` to return an integer lexeme's value exactly when it
+  fits in `i64`. What is left unverified is `f64::from_bits` of those
+  bits, and lexemes with more than 19 significant digits, or that
+  `to_bits` cannot decide, which go to `f64::from_str`.
 * `src/writer.rs` (the `Writer` state machine: brackets, commas and colons)
   and `src/serde_support.rs` are ordinary Rust, tested by parsing what they
   write. Floats are formatted by the `zmij` crate, as in serde_json; its
@@ -1080,7 +1082,7 @@ src/write.rs     verified string escaping and number checks for the writer
 src/writer.rs    Writer (unverified state machine over src/write.rs)
 src/serde_support.rs  serde Serializer/Deserializer (feature `serde`)
 src/float.rs     verified correctly rounded conversion of w * 10^q to f64 bits
-src/number.rs    glue from the verified scanner to src/float.rs (src/pow5.rs is its table)
+src/number.rs    verified glue from the scanner to src/float.rs (src/pow5.rs is its table)
 src/minify.rs    verified in-place cJSON_Minify
 src/ffi.rs       cJSON-compatible C ABI (unverified)
 examples/        benchmark and debugging drivers
