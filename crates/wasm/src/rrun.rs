@@ -482,6 +482,24 @@ pub fn r_acc_fix(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghos
 // Branch operations
 // ---------------------------------------------------------------------------
 
+/// The step of a `br` or `br_if`, proved apart from the branch lemma so that
+/// it never sees the definition of every other instruction's step.
+pub proof fn lemma_step_br(m: &Module, c: Config)
+    requires
+        at_instr(m, c),
+        cur(m, c) is Br || cur(m, c) is BrIf,
+    ensures
+        cur(m, c) is Br ==> step(m, c) == br(c, top(c), cur(m, c)->Br_0 as nat),
+        cur(m, c) is BrIf && top(c).stack.len() >= 1 ==> step(m, c) == (if lo32(peek(top(c), 0)) != 0 {
+            br(c, popn(top(c), 1), cur(m, c)->BrIf_0 as nat)
+        } else {
+            next(c, adv(popn(top(c), 1)))
+        }),
+{
+    lemma_step_instr(m, c);
+    reveal(step_instr);
+}
+
 #[verifier::rlimit(300)]
 /// A branch operation: its straight-line part, then the branch (if
 /// `taken`) to operation `r.d1`, or on to the next operation.
@@ -526,8 +544,6 @@ pub proof fn lemma_rbranch(m: &Module, cs: Seq<FuncCert>, codes: Seq<Code>, c0: 
     // The branch.
     assert(pre(m, cs, codes, c1, s1, calls, fp as int, sp1));
     lemma_facts(m, cs, codes, c1, s1, calls, fp as int, sp1);
-    lemma_step_instr(m, c1);
-    reveal(step_instr);
     let f = top(c1);
     let base = fp + nl;
     assert(cur(m, c1) == body[pb]);
@@ -569,7 +585,8 @@ pub proof fn lemma_rbranch(m: &Module, cs: Seq<FuncCert>, codes: Seq<Code>, c0: 
             (gf, sp1 - 1)
         }
     };
-    assert(step(m, c1) == next(c1, gf));
+    // The step's definition is large: unfold it only here.
+    assert(step(m, c1) == next(c1, gf)) by { lemma_step_br(m, c1); }
     lemma_mach_top(m, s1, s, calls, fp as int, sp1, c1, gf, sp2);
     lemma_advance(m, cs, c0, g.hs, n1, c1);
     let c2 = with_top(c1, gf);
