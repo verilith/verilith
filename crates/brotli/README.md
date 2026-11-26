@@ -11,9 +11,9 @@ sequences, canonical prefix codes, and the verified Huffman table builder
 it shares with verilith-webp, `verilith_core::htable`).
 
 **Status:** the decoder and the streaming wrapper are verified against
-the spec (`cargo verus verify`: 372 functions, 0 errors, plus the Huffman
+the spec (`cargo verus verify`: 390 functions, 0 errors, plus the Huffman
 table builder it shares with verilith-webp, verified in verilith-core), including that
-streaming always finishes. It passes google/brotli's test vectors and
+streaming always finishes and does linear work. It passes google/brotli's test vectors and
 a differential test against google/brotli on valid and corrupted streams.
 
 **Speed:** measured with [vbench](https://github.com/verilith/verilith/tree/main/bench)'s
@@ -86,8 +86,33 @@ malformed.
 - `bitread`, `items`, `prefix`: every read agrees with the spec's reading
   of the same bits; `huffman` (from verilith-webp): table construction and lookup
   agree with canonical decoding of the code lengths.
+- Linear work, for any input, in pieces of any size (`Stream::decompress`
+  ensures on `Stream::work`, with `Stream::lemma_steps`: the steps so far
+  are at most `work()`): a new `Stream` starts at `work() = 209,326,595`,
+  and each call adds at most 8,000,002 per input byte it takes, 10 per
+  output byte it hands out and 200,016 for the call; a call that returns
+  `Error` adds up to 8,000,000 more per byte it was given. Summed over the
+  calls, the decoder's steps for a whole stream are linear in its input
+  and output. `Decoder::run` carries the per-step version: each step is
+  paid for by the bits it reads, the bytes it outputs and a credit
+  (`work::pot`) for the work that some steps do ahead of the input that
+  pays for it.
 
-Not proven: anything about speed.
+A step is a ghost count (`work::Meter`, erased at compile time) of the
+turns of every loop whose length depends on the input: the table builder
+in verilith-core, the decoder's step loop, the command loop, copies byte
+by byte, inverse move-to-front, and so on. Loops of a few turns fixed by
+the format (the 18 code length code lengths, a simple code's four
+symbols, a dictionary word's transform) count as part of the turn that
+runs them, and a zeroed allocation counts its size. The constants are
+large because the bound has one price per input bit, a million steps:
+enough for the most that a few bits can make the decoder do with no more
+input and no output, which is the five bits that start a context map of
+16,384 entries over 256 codes, read with a one-symbol code and moved to
+front. The starting credit pays for the ring buffer (up to 16 MiB, grown
+as the window needs) and for the last steps of the stream. These are
+worst cases; the proof does not say how fast the decoder runs on real
+streams, only that no stream can make it do more than this.
 
 The hot path is `Decoder::fast_loop` in `src/decoder.rs`: it decodes whole
 commands (insert-and-copy symbol, literals, distance, copy) with the

@@ -992,7 +992,7 @@ pub fn sparse_push(Ghost(lens): Ghost<Seq<u8>>, n: usize, used: &mut Vec<(u16, u
 /// symbols with a code, not to the alphabet.
 #[verifier::spinoff_prover]
 #[verifier::rlimit(60)]
-pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8)], cnts_in: &[u16; 16], max_root: u32) -> (r: Option<HCode>)
+pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8)], cnts_in: &[u16; 16], max_root: u32) -> (r: (Option<HCode>, Ghost<nat>))
     requires
         1 <= max_root <= MAX_ROOT,
         1 <= lens.len() <= MAX_ALPHA,
@@ -1001,10 +1001,12 @@ pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8
         sparse_ok(lens, used_syms@),
         forall|l: int| 1 <= l < 16 ==> #[trigger] cnts_in@[l] as nat == count(lens, l as nat),
     ensures
-        r is Some == valid_code(lens),
-        r matches Some(h) ==> hcode_ok(h, lens) && h.tbits <= max_root,
+        r.0 is Some == valid_code(lens),
+        r.0 matches Some(h) ==> hcode_ok(h, lens) && h.tbits <= max_root,
+        r.1@ <= build_cost(lens.len(), max_root as nat),
 {
     let ghost ls = lens;
+    let ghost mut w: nat = 0;
     proof {
         lemma2_to64();
     }
@@ -1019,7 +1021,7 @@ pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8
     let nz = n - cnts[0] as usize;
     assert(nz == used(ls));
     if nz == 0 {
-        return None;
+        return (None, Ghost(w));
     }
     if nz == 1 {
         // A single symbol: a one-entry table whose code takes no bits.
@@ -1041,7 +1043,7 @@ pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8
             offs: [0u16; 16],
             sorted: Vec::new(),
         };
-        return Some(h);
+        return (Some(h), Ghost(w));
     }
     // Kraft: `rem` codes of length `l` remain unassigned.
     let mut rem: i32 = 1;
@@ -1059,9 +1061,11 @@ pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8
             n <= MAX_ALPHA,
             nz == used(ls),
             nz >= 2,
+            w == l - 1,
         decreases 16 - l,
     {
         proof {
+            w = w + 1;
             if l - 1 < 14 {
                 lemma_pow2_strictly_increases((l - 1) as nat, 14);
             }
@@ -1076,15 +1080,19 @@ pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8
                 assert(used(ls) != 1);
                 assert(!valid_code(ls));
             }
-            return None;
+            return (None, Ghost(w));
         }
         l = l + 1;
     }
     if rem != 0 {
-        return None;
+        return (None, Ghost(w));
     }
     assert(valid_code(ls));
     let mut sorted: Vec<u16> = vec![0u16; n];
+    proof {
+        w = w + n as nat;
+        assert(w == 15 + n);
+    }
     // Where each length's symbols start in `sorted`.
     let mut offs = [0u16; 16];
     proof {
@@ -1104,9 +1112,11 @@ pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8
             left(ls, 15) == 0,
             forall|l: int| 0 <= l < 16 ==> #[trigger] cnts@[l] as nat == count(ls, l as nat),
             forall|k: int| 1 <= k <= l ==> #[trigger] offs@[k] as nat + count(ls, 0) == csum(ls, k as nat, n as int),
+            w == 15 + n + l - 1,
         decreases 15 - l,
     {
         proof {
+            w = w + 1;
             lemma_csum_mono(ls, (l + 1) as nat, 16, n as int);
             assert(cnts@[l as int] as nat == count(ls, l as nat));
             assert(offs@[l as int] as nat + count(ls, 0) == csum(ls, l as nat, n as int));
@@ -1169,9 +1179,11 @@ pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8
             forall|k: nat, r: nat|
                 1 <= k <= 15 && r < count_below(ls, k, s) ==> sorted@[offs@[k as int]
                     as int + r] as int == #[trigger] nth_with_len(ls, k, r, 0),
+            w == 29 + n + i,
         decreases m - i,
     {
         proof {
+            w = w + 1;
         }
         let su = used_syms[i].0 as usize;
         assert(su == s);
@@ -1239,9 +1251,11 @@ pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8
             n == ls.len(),
             left(ls, 15) == 0,
             csum(ls, 16, n as int) == n,
+            w == 29 + n + m + l - 2,
         decreases 16 - l,
     {
         proof {
+            w = w + 1;
             assert(left(ls, (l - 1) as nat) >= 0);
             lemma_codes_fit(ls, (l - 1) as nat);
             if l - 1 < 14 {
@@ -1273,9 +1287,11 @@ pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8
             n == ls.len(),
             left(ls, 15) == 0,
             csum(ls, 16, n as int) == n,
+            w == 43 + n + m + 15 - longest,
         decreases longest,
     {
         proof {
+            w = w + 1;
         }
         assert(cnts@[longest as int] as nat == count(ls, longest as nat));
         longest = longest - 1;
@@ -1289,7 +1305,7 @@ pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8
             assert(left(ls, 0) == 1);
         }
         assert(false);
-        return None;
+        return (None, Ghost(w));
     }
     let tbits: u32 = if longest as u32 > max_root {
         max_root
@@ -1306,6 +1322,12 @@ pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8
     let mut table: Vec<u32> = vec![LONG; size];
     assert(forall|j: int| 0 <= j < size ==> #[trigger] table@[j] == LONG);
     proof {
+        assert(m <= n);
+        w = w + size as nat;
+    }
+    let ghost w7 = w;
+    assert(w7 <= 2 * n + 58 + size);
+    proof {
     }
     // Longest first, so shorter matches win.
     proof {
@@ -1317,6 +1339,11 @@ pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8
         invariant
             ls == lens,
             n == ls.len(),
+            w <= w7 + (tbits - l) + 16 * (csum(ls, (tbits + 1) as nat, n as int) - csum(
+                ls,
+                (l + 1) as nat,
+                n as int,
+            )) + fill_cost(ls, tbits as nat, l as nat),
             csum(ls, (l + 1) as nat, n as int) <= csum(ls, (tbits + 1) as nat, n as int),
             csum(ls, (tbits + 1) as nat, n as int) <= n,
             l <= tbits <= MAX_ROOT,
@@ -1345,6 +1372,7 @@ pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8
         let base = offs[l] as usize;
         let cnt = cnts[l] as usize;
         proof {
+            w = w + 1;
             lemma_pow2_pos(l as nat);
             if l < 15 {
                 lemma_pow2_strictly_increases(l as nat, 15);
@@ -1358,6 +1386,7 @@ pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8
         let step = 1usize << l;
         let ghost tl = table@;
         let ghost q = pow2((tbits - l) as nat);
+        let ghost wl = w;
         proof {
             lemma_pow2_adds(l as nat, (tbits - l) as nat);
             lemma_pow2_pos((tbits - l) as nat);
@@ -1369,6 +1398,7 @@ pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8
                 ls == lens,
                 size == step * q,
                 q >= 1,
+                w <= wl + 16 * r + r * q,
                 1 <= l <= tbits <= 15,
                 r <= cnt,
                 cnt == count(ls, l as nat),
@@ -1402,11 +1432,13 @@ pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8
             let rv = reverse_fast(c, l as u32);
             let rc = rv as usize;
             proof {
+                w = w + 1;
                 lemma_rev_bound(c as nat, l as nat);
                 lemma_small_mod(rc as nat, step as nat);
             }
             let mut i = rc;
             let ghost tr = table@;
+            let ghost wr = w;
             let ghost mut k: nat = 0;
             assert forall|j: int| 0 <= j < size implies #[trigger] table@[j] == (if j % (
             step as int) == rc && j < i {
@@ -1430,6 +1462,7 @@ pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8
                     size == step * q,
                     i == rc + k * step,
                     k <= q,
+                    w == wr + k,
                     table@.len() == size,
                     forall|j: int|
                         0 <= j < size ==> #[trigger] table@[j] == (if j % (step as int) == rc && j
@@ -1442,6 +1475,7 @@ pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8
             {
                 set32(&mut table, i, e);
                 proof {
+                    w = w + 1;
                     assert(k < q) by (nonlinear_arith)
                         requires
                             rc + k * step < step * q,
@@ -1478,6 +1512,10 @@ pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8
                     assert(mid_ok(tr[j], tl[j], ls, j as nat, l as nat, r0 as nat));
                     assert(r as nat == r0 as nat + 1);
                 }
+                assert(r0 * q + q == r * q) by (nonlinear_arith)
+                    requires
+                        r == r0 + 1,
+                ;
             }
         }
         proof {
@@ -1527,7 +1565,7 @@ pub fn build_sparse(Ghost(lens): Ghost<Seq<u8>>, n: usize, used_syms: &[(u16, u8
     code.table = table;
     code.tbits = tbits;
     assert(code_ok(code, ls));
-    Some(code)
+    (Some(code), Ghost(w))
 }
 // --- sparse build: end
 

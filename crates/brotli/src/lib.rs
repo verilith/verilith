@@ -28,6 +28,8 @@ pub mod rank;
 pub mod codes;
 #[doc(hidden)]
 pub mod words;
+#[doc(hidden)]
+pub mod work;
 
 pub use api::{decompress, Error};
 pub use stream::{Result as StreamResult, Stream};

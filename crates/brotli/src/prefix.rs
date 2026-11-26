@@ -4,6 +4,7 @@ use crate::bitread::*;
 use crate::huffman::*;
 use crate::items::*;
 use crate::spec::CL_ORDER;
+use crate::work::*;
 #[cfg(verus_only)]
 use crate::codes::*;
 #[cfg(verus_only)]
@@ -144,14 +145,25 @@ impl Pcx {
     /// `Short` the state is unchanged.
     #[verifier::rlimit(30)]
     #[inline(always)]
-    pub fn step(&mut self, src: &[u8], base: u64, pos: u64, alpha: u32, Ghost(b): Ghost<Seq<u8>>) -> (r: Res<PcOut>)
+    pub fn step(&mut self, src: &[u8], base: u64, pos: u64, alpha: u32, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Res<PcOut>)
         requires
             old(self).inv(alpha as int),
             at(src@, base, pos, b),
             2 <= alpha <= 2328,
         ensures
             pc_agrees(r, pc_step(b, pos as int, old(self).view(), alpha as int), final(self).view(), src@, base, b),
-            r is Short ==> *final(self) == *old(self),
+            r is Short ==> *final(self) == *old(self) && final(m).n == old(m).n,
+            r matches Res::Ok(PcOut::More, p) ==> if old(self).started {
+                final(m).n + old(self).n + 1 <= old(m).n + final(self).n + kbit() * (p - pos) && old(self).n < final(self).n
+            } else {
+                final(m).n <= old(m).n + clb() && pos + 2 <= p && final(self).n == 0
+            },
+            r matches Res::Ok(PcOut::Code(_, _), p) ==> if old(self).started {
+                final(m).n + old(self).n + 1 <= old(m).n + alpha + pcb(alpha as int) + kbit() * (p - pos) && old(self).n < alpha
+            } else {
+                final(m).n <= old(m).n + pcb(alpha as int) && pos + 2 <= p
+            },
+            final(m).n <= old(m).n + clb() + alpha + pcb(alpha as int),
             r matches Res::Ok(PcOut::More, p) ==> final(self).inv(alpha as int) && pos <= p,
             r matches Res::Ok(PcOut::Code(_, lens), p) ==> lens@.len() == alpha && pos <= p,
     {
@@ -164,9 +176,9 @@ impl Pcx {
                 Some(x) => x,
             };
             if hskip == 1 {
-                return read_simple(src, base, pos + 2, alpha, Ghost(b));
+                return read_simple(src, base, pos + 2, alpha, Ghost(b), Tracked(m));
             }
-            return self.start_complex(src, base, pos, hskip, alpha, Ghost(b));
+            return self.start_complex(src, base, pos, hskip, alpha, Ghost(b), Tracked(m));
         }
         let ghost pc = self.view();
         let (c, p) = match read_sym(&self.clh, src, base, pos, Ghost(self.cl@), Ghost(b)) {
@@ -230,9 +242,11 @@ impl Pcx {
                 self.lens = Ghost(old_lens + Seq::new(d as nat, |i: int| 0u8));
                 self.n = self.n + d as usize;
             } else {
+                let ghost m0 = m.n;
                 let mut k: u32 = 0;
                 while k < d
                     invariant
+                        m.n == m0 + k,
                         k <= d,
                         self.lens@ == old_lens + Seq::new(k as nat, |i: int| newlen as u8),
                         self.n == self.lens@.len(),
@@ -246,6 +260,9 @@ impl Pcx {
                     sparse_push(Ghost(cur), self.n, &mut self.used, &mut self.cnts, newlen as u8);
                     self.lens = Ghost(cur.push(newlen as u8));
                     self.n = self.n + 1;
+                    proof {
+                        m.n = m.n + 1;
+                    }
                     k = k + 1;
                     assert(self.lens@ =~= old_lens + Seq::new(k as nat, |i: int| newlen as u8));
                 }
@@ -295,7 +312,11 @@ impl Pcx {
             }
             lemma_kraft_valid(lens);
         }
-        let h = build_sparse(Ghost(lens), alpha as usize, self.used.as_slice(), &self.cnts, MAX_ROOT);
+        let (h, Ghost(bw)) = build_sparse(Ghost(lens), alpha as usize, self.used.as_slice(), &self.cnts, MAX_ROOT);
+        proof {
+            lemma2_to64();
+            m.n = m.n + bw;
+        }
         match h {
             Some(h) => Res::Ok(PcOut::Code(h, Ghost(lens)), p),
             None => Res::Bad,
@@ -303,7 +324,7 @@ impl Pcx {
     }
 
     /// The start of a complex code: the code length code lengths.
-    fn start_complex(&mut self, src: &[u8], base: u64, pos: u64, hskip: u64, alpha: u32, Ghost(b): Ghost<Seq<u8>>) -> (r: Res<PcOut>)
+    fn start_complex(&mut self, src: &[u8], base: u64, pos: u64, hskip: u64, alpha: u32, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Res<PcOut>)
         requires
             old(self).view() == pc_init(),
             at(src@, base, pos, b),
@@ -314,9 +335,10 @@ impl Pcx {
             2 <= alpha <= 2328,
         ensures
             pc_agrees(r, pc_step(b, pos as int, pc_init(), alpha as int), final(self).view(), src@, base, b),
-            r is Short ==> *final(self) == *old(self),
-            r matches Res::Ok(PcOut::More, p) ==> final(self).inv(alpha as int) && pos <= p,
+            r is Short ==> *final(self) == *old(self) && final(m).n == old(m).n,
+            r matches Res::Ok(PcOut::More, p) ==> final(self).inv(alpha as int) && pos + 2 <= p && final(self).n == 0,
             !(r is Ok && r->Ok_0 is Code),
+            final(m).n <= old(m).n + clb(),
     {
         proof {
             lemma2_to64();
@@ -424,7 +446,11 @@ impl Pcx {
                 lemma_kraft_valid(cl@);
             }
         }
-        let (h, _) = build(cl.as_slice(), 5);
+        let (h, Ghost(bw)) = build(cl.as_slice(), 5);
+        proof {
+            lemma2_to64();
+            m.n = m.n + bw;
+        }
         let clh = match h {
             Some(h) => h,
             None => return Res::Bad,
@@ -603,7 +629,7 @@ proof fn lemma_simple_at(alpha: int, syms: Seq<int>, ls: Seq<u8>, k: int)
 /// sorted and handed to `build_sparse`, so that nothing is in proportion
 /// to the alphabet.
 #[verifier::spinoff_prover]
-fn build_simple(alpha: u32, syms: &Vec<u32>, ls: &[u8; 4], Ghost(gs): Ghost<Seq<int>>) -> (h: Option<HCode>)
+fn build_simple(alpha: u32, syms: &Vec<u32>, ls: &[u8; 4], Ghost(gs): Ghost<Seq<int>>, Tracked(m): Tracked<&mut Meter>) -> (h: Option<HCode>)
     requires
         2 <= alpha <= 2328,
         1 <= syms@.len() <= 4,
@@ -618,6 +644,7 @@ fn build_simple(alpha: u32, syms: &Vec<u32>, ls: &[u8; 4], Ghost(gs): Ghost<Seq<
             &&& h is Some == valid_code(lens)
             &&& h matches Some(x) ==> hcode_ok(x, lens) && x.tbits <= MAX_ROOT
         }),
+        final(m).n <= old(m).n + pcb(alpha as int),
 {
     let n = syms.len();
     let ghost lq = ls@.take(n as int);
@@ -720,7 +747,7 @@ fn build_simple(alpha: u32, syms: &Vec<u32>, ls: &[u8; 4], Ghost(gs): Ghost<Seq<
     let mut used: Vec<(u16, u8)> = Vec::with_capacity(4);
     let mut cnts = [0u16; 16];
     let ghost mut cur: Seq<u8> = Seq::empty();
-    let mut m: usize = 0;
+    let mut mm: usize = 0;
     let mut j: usize = 0;
     proof {
         assert(full.take(0) =~= cur);
@@ -737,21 +764,21 @@ fn build_simple(alpha: u32, syms: &Vec<u32>, ls: &[u8; 4], Ghost(gs): Ghost<Seq<
             sa@[0] < sa@[1] < sa@[2] < sa@[3],
             forall|k: int| 0 <= k < n ==> (#[trigger] sa@[k]) < alpha && full[sa@[k] as int] == sb@[k] && 1 <= sb@[k] <= 15,
             forall|x: int| 0 <= x < alpha && x != sa@[0] && x != sa@[1] && x != sa@[2] && x != sa@[3] ==> #[trigger] full[x] == 0,
-            m == cur.len(),
-            m <= alpha,
-            j == 0 ==> m == 0,
-            j > 0 ==> m == sa@[j - 1] + 1,
-            cur == full.take(m as int),
+            mm == cur.len(),
+            mm <= alpha,
+            j == 0 ==> mm == 0,
+            j > 0 ==> mm == sa@[j - 1] + 1,
+            cur == full.take(mm as int),
             sparse_inv(cur, used@, cnts),
         decreases n - j,
     {
         let sym = sa[j] as usize;
-        let d = sym - m;
+        let d = sym - mm;
         proof {
             lemma_sparse_zeros(cur, used@, cnts, d as nat);
             let c2 = cur + Seq::new(d as nat, |i: int| 0u8);
             assert(c2 =~= full.take(sym as int)) by {
-                assert forall|x: int| m <= x < sym implies full[x] == 0 by {
+                assert forall|x: int| mm <= x < sym implies full[x] == 0 by {
                     assert(x != sa@[0] && x != sa@[1] && x != sa@[2] && x != sa@[3]);
                 }
             }
@@ -762,29 +789,36 @@ fn build_simple(alpha: u32, syms: &Vec<u32>, ls: &[u8; 4], Ghost(gs): Ghost<Seq<
             assert(cur.push(sb@[j as int]) =~= full.take(sym + 1));
             cur = cur.push(sb@[j as int]);
         }
-        m = sym + 1;
+        mm = sym + 1;
         j = j + 1;
     }
     proof {
-        let d = (alpha - m) as nat;
+        let d = (alpha - mm) as nat;
         lemma_sparse_zeros(cur, used@, cnts, d);
         let c2 = cur + Seq::new(d, |i: int| 0u8);
         assert(c2 =~= full) by {
-            assert forall|x: int| m <= x < alpha implies full[x] == 0 by {
+            assert forall|x: int| mm <= x < alpha implies full[x] == 0 by {
                 assert(x != sa@[0] && x != sa@[1] && x != sa@[2] && x != sa@[3]);
             }
         }
         assert(short(full));
     }
-    build_sparse(Ghost(full), alpha as usize, used.as_slice(), &cnts, MAX_ROOT)
+    let (h, Ghost(bw)) = build_sparse(Ghost(full), alpha as usize, used.as_slice(), &cnts, MAX_ROOT);
+    proof {
+        lemma2_to64();
+        m.n = m.n + bw;
+    }
+    h
 }
 
 /// `spec::read_simple`: a simple prefix code.
-fn read_simple(src: &[u8], base: u64, pos: u64, alpha: u32, Ghost(b): Ghost<Seq<u8>>) -> (r: Res<PcOut>)
+fn read_simple(src: &[u8], base: u64, pos: u64, alpha: u32, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>) -> (r: Res<PcOut>)
     requires
         at(src@, base, pos, b),
         2 <= alpha <= 2328,
     ensures
+        r is Short ==> final(m).n == old(m).n,
+        final(m).n <= old(m).n + pcb(alpha as int),
         forall|after: Pc| pc_agrees(r, crate::spec::read_simple(b, pos as int, alpha as int), after, src@, base, b),
         !(r is Ok && r->Ok_0 is More),
         r matches Res::Ok(PcOut::Code(_, lens), p) ==> lens@.len() == alpha && pos <= p,
@@ -974,7 +1008,7 @@ fn read_simple(src: &[u8], base: u64, pos: u64, alpha: u32, Ghost(b): Ghost<Seq<
             lemma_kraft_valid(lens);
         }
     }
-    let h = build_simple(alpha, &syms, &ls, Ghost(gs));
+    let h = build_simple(alpha, &syms, &ls, Ghost(gs), Tracked(m));
     match h {
         Some(h) => Res::Ok(PcOut::Code(h, Ghost(lens)), p),
         None => Res::Bad,

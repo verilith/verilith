@@ -458,7 +458,7 @@ pub fn read_wbits(src: &[u8], base: u64, pos: u64, Ghost(b): Ghost<Seq<u8>>) -> 
         at(src@, base, pos, b),
     ensures
         agrees(r, crate::spec::read_wbits(b, pos as int), src@, base, b),
-        r matches Res::Ok(w, p) ==> 10 <= w <= 24,
+        r matches Res::Ok(w, p) ==> 10 <= w <= 24 && pos < p,
 {
     match read_bits(src, base, pos, 1, Ghost(b)) {
         None => Res::Short,
@@ -494,7 +494,7 @@ pub fn varlen8(src: &[u8], base: u64, pos: u64, Ghost(b): Ghost<Seq<u8>>) -> (r:
         at(src@, base, pos, b),
     ensures
         agrees(r, crate::spec::varlen8(b, pos as int), src@, base, b),
-        r matches Res::Ok(v, p) ==> v <= 255 && pos < p,
+        r matches Res::Ok(v, p) ==> v <= 255 && pos < p && (v > 0 ==> pos + 4 <= p),
         !(r is Bad),
 {
     match read_bits(src, base, pos, 1, Ghost(b)) {
@@ -559,12 +559,15 @@ pub fn read_blen(h: &HCode, src: &[u8], base: u64, pos: u64, Ghost(lens): Ghost<
         at(src@, base, pos, b),
     ensures
         agrees(r, crate::spec::read_blen(lens, b, pos as int), src@, base, b),
-        r matches Res::Ok(v, p) ==> 1 <= v <= 16625 + 0xff_ffff && pos <= p,
+        r matches Res::Ok(v, p) ==> 1 <= v <= 16625 + 0xff_ffff && pos + 2 <= p,
         !(r is Bad),
 {
     match read_sym(h, src, base, pos, Ghost(lens), Ghost(b)) {
         Res::Ok(sym, p) => {
             let n = BLEN_EXTRA[sym as usize] as u64;
+            proof {
+                assert(forall|i: int| 0 <= i < 26 ==> #[trigger] BLEN_EXTRA[i] >= 2) by (compute);
+            }
             match read_bits(src, base, p, n, Ghost(b)) {
                 None => Res::Short,
                 Some(e) => {

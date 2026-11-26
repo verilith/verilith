@@ -16,6 +16,7 @@
 //! until the decoder is past the bytes kept, then goes back to reading the
 //! caller's input directly, handing back what it appended past that point.
 use crate::decoder::*;
+use crate::work::*;
 #[cfg(verus_only)]
 use crate::bitread::*;
 #[cfg(verus_only)]
@@ -60,6 +61,8 @@ pub struct Stream {
     pub dlv: Ghost<Seq<u8>>,
     /// `bad` because the output would pass `MAX_OUT`.
     pub limit: Ghost<bool>,
+    /// The decoder's steps so far.
+    pub steps: Ghost<nat>,
 }
 
 /// What a round of decoding did, from `o` to `n`, returning `r`.
@@ -79,6 +82,20 @@ pub open spec fn round_ok(o: Stream, n: Stream, r: (Status, usize), len: nat, u0
     &&& (!n.bad && r.0 == Status::Full ==> n.dec.total > n.dec.flushed)
     // Stopping for input with all of it in: the spec stops too.
     &&& (!n.bad && r.0 == Status::Short && n.used@ == n.full@.len() ==> spec::step(n.full@, n.dec.view()) is Short)
+}
+
+/// The work of a round from `o` to `n` that took `r.0`, with `input`
+/// and `ip` as it was given: what its bits pay for, and two steps for a
+/// round that stopped for a reason other than its step budget. A round
+/// that finds the stream malformed may have read all of `input` and pays
+/// the most such a step does.
+pub open spec fn round_work(o: Stream, n: Stream, r: (Status, usize), ilen: nat, ip: nat) -> bool {
+    if n.bad {
+        n.work() <= o.work() + 8 * kbit() * (ilen - ip) + xc() + 1
+    } else {
+        n.work() + 2 * o.tl() <= o.work() + 8 * kbit() * (n.used@ - o.used@) + (if r.0 == Status::Yield { 0int } else { 2int })
+            + 2 * n.tl()
+    }
 }
 
 /// The stream decodes, with output small enough, and the call gets the
@@ -113,6 +130,45 @@ impl Stream {
             + 0x1_0000_0000 > MAX_OUT)
     }
 
+    /// Whether bytes are kept in `tail`.
+    pub open spec fn tl(&self) -> int {
+        if self.tail@.len() > 0 {
+            1
+        } else {
+            0
+        }
+    }
+
+    /// The steps paid for in advance: the decoder's credit, the bits of
+    /// the input taken but not read yet, the output not handed out yet,
+    /// and a round for the bytes kept.
+    pub open spec fn credit(&self) -> int {
+        if self.bad {
+            0
+        } else {
+            pot(self.dec) + 3 + kbit() * (8 * self.used@ + 8 - self.dec.pos) + lbyte() * (rmax() - (self.dec.total
+                - self.dec.flushed)) + 2 * self.tl()
+        }
+    }
+
+    /// The steps so far plus the credit: what the work bound is about.
+    pub open spec fn work(&self) -> int {
+        self.steps@ + self.credit()
+    }
+
+    /// The steps so far are at most `work()`.
+    pub proof fn lemma_steps(&self)
+        requires
+            self.inv(),
+        ensures
+            self.steps@ <= self.work(),
+    {
+        if !self.bad {
+            lemma_pot_lb(self.dec);
+            lemma_ring_basic(self.dec);
+        }
+    }
+
     #[verifier::spinoff_prover]
     pub fn new(Ghost(full): Ghost<Seq<u8>>) -> (r: Stream)
         requires
@@ -122,6 +178,8 @@ impl Stream {
             r.full@ == full,
             r.used@ == 0,
             r.dlv@ == Seq::<u8>::empty(),
+            r.steps@ == 0,
+            r.work() == 12 * rmax() + 8 * kbit() + 3,
     {
         let dec = Decoder::new();
         let r = Stream {
@@ -134,6 +192,7 @@ impl Stream {
             used: Ghost(0),
             dlv: Ghost(Seq::empty()),
             limit: Ghost(false),
+            steps: Ghost(0),
         };
         proof {
             assert(r.dec.out@.subrange(0, 0) =~= Seq::<u8>::empty());
@@ -198,12 +257,17 @@ impl Stream {
             r.0 == Result::Error <==> final(self).bad,
             // Completeness.
             complete(*old(self), input@.len(), old(output)@.len()) ==> r.0 == Result::Success,
+            // Linear work.
+            final(self).work() <= old(self).work() + (8 * kbit() + 2) * r.1 + 10 * r.2 + xc() + 16 + (if r.0
+                == Result::Error { 8 * kbit() * input@.len() } else { 0 }),
     {
+        hide(Stream::work);
         let ghost b = self.full@;
         let ghost u0 = self.used@;
         let ghost d0 = self.dlv@;
         let ghost out0 = output@;
         let ghost cpl = complete(*self, input@.len(), output@.len());
+        let ghost w0 = self.work();
         let ghost fo: Seq<u8> = Seq::empty();
         let ghost fu: int = 0;
         let ghost fst: spec::St = spec::init();
@@ -249,6 +313,7 @@ impl Stream {
                 self.used@ == u0 + ip,
                 self.dlv@ == d0 + output@.subrange(0, op as int),
                 self.dec.flushed <= MAX_OUT,
+                self.work() <= w0 + 8_000_002 * ip + 10 * op + (if self.done { 2int } else { 0int }),
                 cpl ==> {
                     &&& spec::run(b, spec::init(), fnn) == spec::Step::Next(fst)
                     &&& fst.phase is Done
@@ -271,9 +336,15 @@ impl Stream {
         {
             let ghost dec0 = self.dec;
             let ghost ip0 = ip;
+            proof {
+                lemma_kb(input@.len() as int, ip as int);
+            }
             let ghost tl0 = self.tail@.len();
             op = self.flush_to(output, op, Ghost(d0));
             let ghost dec1 = self.dec;
+            let ghost wk1 = self.work();
+            let ghost s1 = *self;
+            assert(wk1 <= w0 + 8_000_002 * ip + 10 * op + (if self.done { 2int } else { 0int }));
             proof {
                 lemma_ring_basic(self.dec);
                 if cpl {
@@ -305,7 +376,23 @@ impl Stream {
                 self.direct_round(input, ip, Ghost(u0))
             };
             ip = ip2;
+            let ghost wk2 = self.work();
+            proof {
+                assert(round_work(s1, *self, (st, ip2), input@.len() as nat, ip0 as nat));
+                assert(ip0 <= ip);
+                lemma_kb(input@.len() - ip0, ip0 as int);
+                lemma_kb(self.used@ - s1.used@, ip as int);
+                lemma_kb(input@.len() as int, ip as int);
+                if !self.bad {
+                    assert(wk2 + 2 * s1.tl() <= wk1 + 8_000_000 * (ip - ip0) + (if st == Status::Yield { 0int } else { 2int })
+                        + 2 * self.tl());
+                    if st != Status::Short {
+                        assert(self.tl() <= s1.tl());
+                    }
+                }
+            }
             if st == Status::Bad || st == Status::Limit {
+                assert(self.work() <= wk1 + 8_000_000 * (input@.len() - ip0) + xc() + 1);
                 proof {
                     if cpl && self.limit@ {
                         let t = choose|t: spec::St| #[trigger] spec::reaches(b, t) && t.out.len() + 0x1_0000_0000
@@ -327,7 +414,12 @@ impl Stream {
             }
             match st {
                 Status::Done => {
+                    let ghost sd = *self;
                     self.done = true;
+                    assert(self.work() == sd.work()) by {
+                        reveal(Stream::work);
+                    }
+                    assert(self.work() <= w0 + 8_000_002 * ip + 10 * op + 2);
                 },
                 Status::Short => {
                     if ip < input.len() {
@@ -353,6 +445,9 @@ impl Stream {
                     return (Result::NeedsMoreInput, ip, op);
                 },
                 Status::Full => {
+                    let ghost op1 = op;
+                    let ghost wk3 = self.work();
+                    let ghost fl1 = self.dec.flushed;
                     op = self.flush_to(output, op, Ghost(d0));
                     proof {
                         lemma_ring_basic(self.dec);
@@ -370,11 +465,15 @@ impl Stream {
                     }
                     proof {
                         assert(self.dec == dec1 ==> self.dec.flushed > dec0.flushed);
+                        assert(self.dec.flushed > fl1);
+                        assert(op > op1);
+                        assert(self.work() == wk3 + 8 * (op - op1));
                     }
                 },
                 _ => {
                     proof {
                         assert(st == Status::Yield);
+                        assert(self.work() <= w0 + 8_000_002 * ip + 10 * op);
                         assert(rank_lt(b, self.dec.view(), dec0.view()));
                     }
                 },
@@ -385,6 +484,7 @@ impl Stream {
     /// Decodes from the bytes kept in `tail`, with up to `TAIL_STEP` more
     /// from `input[ip..]`. Returns why the decoder stopped and the new `ip`.
     #[verifier::spinoff_prover]
+    #[verifier::rlimit(80)]
     fn tail_round(&mut self, input: &[u8], ip: usize, Ghost(u0): Ghost<nat>) -> (r: (Status, usize))
         requires
             old(self).inv(),
@@ -398,8 +498,11 @@ impl Stream {
         ensures
             round_ok(*old(self), *final(self), r, input@.len(), u0),
             r.1 == ip ==> final(self).tail@.len() == 0 || ip == input@.len(),
+            round_work(*old(self), *final(self), r, input@.len() as nat, ip as nat),
     {
         let ghost b = self.full@;
+        let ghost o = *self;
+        let ghost ip00 = ip;
         let mut ip = ip;
         let old_end = self.tail_base + self.tail.len() as u64;
         let mut add = input.len() - ip;
@@ -414,7 +517,21 @@ impl Stream {
             assert(self.tail@ =~= b.subrange(self.tail_base as int, self.used@ as int));
         }
         let ghost r0 = self.dec;
-        let st = self.dec.run(self.tail.as_slice(), self.tail_base, BUDGET, Ghost(b));
+        let ghost s1 = *self;
+        let tracked mut wm = Meter { n: self.steps@ };
+        let (st, g) = self.dec.run(self.tail.as_slice(), self.tail_base, BUDGET, Ghost(b), Tracked(&mut wm));
+        proof {
+            self.steps@ = wm.n;
+            lemma_pot_lb(r0);
+            lemma_ring_basic(r0);
+            if st == Status::Bad {
+                lemma_pot_lb(g@);
+                lemma_ring_basic(g@);
+            } else {
+                lemma_pot_lb(self.dec);
+                lemma_ring_basic(self.dec);
+            }
+        }
         if st == Status::Bad || st == Status::Limit {
             proof {
                 if st == Status::Limit {
@@ -426,7 +543,13 @@ impl Stream {
                     assert(spec::reaches(self.full@, self.dec.view()) && self.dec.view().out.len() + 0x1_0000_0000 > MAX_OUT);
                 }
             }
+            let ghost fp = self.dec.pos as int;
             self.fail(st);
+            proof {
+                if st == Status::Bad {
+                    lemma_work_bad(o, *self, g@, fp, input@.len() as int, ip00 as int);
+                }
+            }
             return (st, ip);
         }
         proof {
@@ -452,6 +575,11 @@ impl Stream {
                 assert(self.tail@ =~= b.subrange(self.tail_base as int, self.used@ as int));
             }
         }
+        proof {
+            lemma_ring_basic(self.dec);
+            lemma_ring_basic(o.dec);
+            lemma_work_diff(o, *self);
+        }
         (st, ip)
     }
 
@@ -471,8 +599,12 @@ impl Stream {
         ensures
             round_ok(*old(self), *final(self), r, input@.len(), u0),
             r.0 == Status::Short ==> r.1 == input@.len(),
+            r.0 != Status::Short && !final(self).bad ==> final(self).tail@.len() == 0,
+            round_work(*old(self), *final(self), r, input@.len() as nat, ip as nat),
     {
         let ghost b = self.full@;
+        let ghost o = *self;
+        let ghost ip00 = ip;
         let mut ip = ip;
         let ilen = input.len();
         let q0 = self.dec.pos / 8;
@@ -485,7 +617,20 @@ impl Stream {
             assert(rest@ =~= b.subrange(q0 as int, q0 + rest@.len()));
         }
         let ghost r0 = self.dec;
-        let st = self.dec.run(rest, q0, BUDGET, Ghost(b));
+        let tracked mut wm = Meter { n: self.steps@ };
+        let (st, g) = self.dec.run(rest, q0, BUDGET, Ghost(b), Tracked(&mut wm));
+        proof {
+            self.steps@ = wm.n;
+            lemma_pot_lb(r0);
+            lemma_ring_basic(r0);
+            if st == Status::Bad {
+                lemma_pot_lb(g@);
+                lemma_ring_basic(g@);
+            } else {
+                lemma_pot_lb(self.dec);
+                lemma_ring_basic(self.dec);
+            }
+        }
         if st == Status::Bad || st == Status::Limit {
             proof {
                 if st == Status::Limit {
@@ -497,7 +642,14 @@ impl Stream {
                     assert(spec::reaches(self.full@, self.dec.view()) && self.dec.view().out.len() + 0x1_0000_0000 > MAX_OUT);
                 }
             }
+            let ghost fp = self.dec.pos as int;
             self.fail(st);
+            proof {
+                if st == Status::Bad {
+                    assert(q0 == o.used@);
+                    lemma_work_bad(o, *self, g@, fp, input@.len() as int, ip00 as int);
+                }
+            }
             return (st, ip);
         }
         proof {
@@ -526,6 +678,11 @@ impl Stream {
                 assert(self.tail@ =~= b.subrange(self.tail_base as int, self.used@ as int));
             }
         }
+        proof {
+            lemma_ring_basic(self.dec);
+            lemma_ring_basic(o.dec);
+            lemma_work_diff(o, *self);
+        }
         (st, ip)
     }
 
@@ -548,6 +705,8 @@ impl Stream {
             final(output)@.len() == old(output)@.len(),
             final(self).dlv@ == d0 + final(output)@.subrange(0, r as int),
             r < old(output)@.len() ==> final(self).dec.total == final(self).dec.flushed,
+            final(self).work() == old(self).work() + lbyte() * (r - op),
+            final(self).dec.flushed == old(self).dec.flushed + (r - op),
     {
         let ghost f0 = self.dec;
         let ghost o0 = output@;
@@ -585,12 +744,70 @@ impl Stream {
             final(self).used == old(self).used,
             final(self).dlv == old(self).dlv,
             final(self).done == old(self).done,
+            final(self).steps == old(self).steps,
+            final(self).tail == old(self).tail,
     {
         self.bad = true;
         proof {
             self.limit@ = st == Status::Limit;
         }
     }
+}
+
+/// `kbit()` written out, for linear arithmetic.
+pub proof fn lemma_kb(x: int, y: int)
+    ensures
+        8 * kbit() * x == 8_000_000 * x,
+        (8 * kbit() + 2) * y == 8_000_002 * y,
+{
+    assert(8 * kbit() * x == 8_000_000 * x && (8 * kbit() + 2) * y == 8_000_002 * y) by (nonlinear_arith)
+        requires
+            kbit() == 1_000_000,
+    ;
+}
+
+/// How the work changes when the decoder goes from `o.dec` to `n.dec`
+/// without handing anything out: the steps taken, less what the decoder
+/// earned, plus the bits of the input taken and a round for bytes kept.
+pub proof fn lemma_work_diff(o: Stream, n: Stream)
+    requires
+        !o.bad,
+        !n.bad,
+        o.dec.flushed == n.dec.flushed,
+        o.dec.total == o.dec.out@.len(),
+        n.dec.total == n.dec.out@.len(),
+    ensures
+        n.work() - o.work() == (n.steps@ - o.steps@) - earned(o.dec, n.dec) + 8 * kbit() * (n.used@ - o.used@) + 2 * (
+        n.tl() - o.tl()),
+{
+    let k = kbit();
+    let (nu, ou, np, op) = (n.used@ as int, o.used@ as int, n.dec.pos as int, o.dec.pos as int);
+    assert(k * (8 * nu + 8 - np) - k * (8 * ou + 8 - op) == 8 * k * (nu - ou) - k * (np - op)) by (nonlinear_arith);
+    let (nt, ot, f) = (n.dec.total as int, o.dec.total as int, o.dec.flushed as int);
+    assert(lbyte() * (rmax() - (nt - f)) - lbyte() * (rmax() - (ot - f)) == -(lbyte() * (nt - ot))) by (nonlinear_arith);
+}
+
+/// A round that found the stream malformed, at `g` the last good state,
+/// having read up to bit `fp`: its work is paid for by the credit and the
+/// bits of the input it was given.
+pub proof fn lemma_work_bad(o: Stream, n: Stream, g: Decoder, fp: int, ilen: int, ip: int)
+    requires
+        o.inv(),
+        !o.bad,
+        n.bad,
+        g.wf(),
+        g.flushed == o.dec.flushed,
+        o.dec.pos <= g.pos <= fp,
+        fp <= 8 * (o.used@ + ilen - ip),
+        ip <= ilen,
+        n.steps@ <= o.steps@ + earned(o.dec, g) + xc() + 1 + kbit() * (fp - g.pos),
+    ensures
+        n.work() <= o.work() + 8 * kbit() * (ilen - ip) + xc() + 1,
+{
+    lemma_pot_lb(g);
+    lemma_ring_basic(g);
+    lemma_ring_basic(o.dec);
+    lemma_pot_lb(o.dec);
 }
 
 /// `reached` is `spec::reaches`.
