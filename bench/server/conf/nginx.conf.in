@@ -1,0 +1,44 @@
+# nginx for bench/server. @VARS@ are filled in by run.py.
+daemon off;
+master_process on;
+worker_processes @THREADS@;
+worker_cpu_affinity auto;
+pid @RUN@/nginx.pid;
+error_log @RUN@/nginx.error.log error;
+events {
+    worker_connections 65536;
+    use epoll;
+    multi_accept on;
+}
+http {
+    access_log off;
+    server_tokens off;
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_requests 10000000;
+    keepalive_timeout 300s;
+    http2_max_concurrent_streams 256;
+    client_body_temp_path @RUN@/body;
+    proxy_temp_path @RUN@/proxy;
+    fastcgi_temp_path @RUN@/fastcgi;
+    uwsgi_temp_path @RUN@/uwsgi;
+    scgi_temp_path @RUN@/scgi;
+    ssl_certificate @CERT@;
+    ssl_certificate_key @KEY@;
+    ssl_protocols TLSv1.3;
+    ssl_session_cache shared:SSL:10m;
+    server {
+        listen 127.0.0.1:@HTTP@ reuseport backlog=65535;
+        listen 127.0.0.1:@H2C@ http2 reuseport backlog=65535;
+        listen 127.0.0.1:@TLS@ ssl http2 reuseport backlog=65535;
+        location = /plaintext {
+            default_type text/plain;
+            return 200 "Hello, World!";
+        }
+        location /static/ {
+            alias @ROOT@/;
+            default_type application/octet-stream;
+        }
+    }
+}
