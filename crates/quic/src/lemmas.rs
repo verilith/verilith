@@ -978,4 +978,288 @@ pub proof fn lemma_pn_roundtrip(pn: int, largest_acked: int, largest: int)
     let n = pn_len(pn, largest_acked);
     lemma_decode_pn(largest + 1, pn, (8 * n) as nat);
 }
+
+// ---------------------------------------------------------------------------
+// Transport parameters
+// ---------------------------------------------------------------------------
+
+/// Reading one encoded parameter.
+pub proof fn lemma_tp_step(b: Seq<u8>, p: int, acc: TP, id: u64, v: Seq<u8>)
+    requires
+        vi(id),
+        v.len() < VARINT_LIMIT,
+        at(b, p, tp_entry_enc(id, v)),
+    ensures
+        tp_parse(b, p, acc) == match tp_apply(acc, id, v) {
+            None => None,
+            Some(a) => tp_parse(b, p + tp_entry_enc(id, v).len(), a),
+        },
+{
+    broadcast use lemma_at_split, lemma_at_varint, lemma_varint_size, lemma_at_bytes_len;
+
+    assert(tp_entry(b, p) == Some((id, v, p + tp_entry_enc(id, v).len())));
+}
+
+proof fn lemma_tp_int_roundtrip(x: u64)
+    requires
+        vi(x),
+    ensures
+        tp_int(varint_enc(x)) == Some(x),
+{
+    lemma_varint_roundtrip(x, Seq::empty(), Seq::empty());
+    assert(Seq::<u8>::empty() + varint_enc(x) + Seq::<u8>::empty() =~= varint_enc(x));
+}
+
+proof fn lemma_pref_roundtrip(a: SPref)
+    requires
+        a.v4.len() == 6,
+        a.v6.len() == 18,
+        1 <= a.cid.len() <= 20,
+        a.token.len() == 16,
+    ensures
+        pref_parse(pref_enc(a)) == Some(a),
+{
+    let v = pref_enc(a);
+    assert(v[24] == a.cid.len() as u8);
+    assert(v.subrange(0, 6) =~= a.v4);
+    assert(v.subrange(6, 24) =~= a.v6);
+    assert(v.subrange(25, 25 + a.cid.len() as int) =~= a.cid);
+    assert(v.subrange(25 + a.cid.len() as int, v.len() as int) =~= a.token);
+}
+
+/// Step `k` of the round trip: parameter `k` reads back into `tp_upto(t, k)`.
+#[verifier::rlimit(60)]
+proof fn lemma_tp_field(b: Seq<u8>, p: int, t: TP, k: nat)
+    requires
+        tp_wf(t),
+        k < 18,
+        at(b, p, tp_field_enc(t, k as int) + tp_enc_from(t, k + 1)),
+    ensures
+        tp_parse(b, p, tp_upto(t, k)) == tp_parse(b, p + tp_field_enc(t, k as int).len(), tp_upto(t, k + 1)),
+{
+    broadcast use lemma_at_split;
+
+    let fe = tp_field_enc(t, k as int);
+    assert(at(b, p, fe));
+    if k == 0 {
+        if let Some(v) = t.original_dcid {
+            lemma_tp_step(b, p, tp_upto(t, k), 0x00, v);
+            assert(tp_apply(tp_upto(t, k), 0x00, v) == Some(tp_upto(t, k + 1)));
+        } else {
+            assert(tp_upto(t, k) == tp_upto(t, k + 1));
+        }
+    } else if k == 1 {
+        if let Some(x) = t.max_idle_timeout {
+            lemma_tp_int_roundtrip(x);
+            lemma_tp_step(b, p, tp_upto(t, k), 0x01, varint_enc(x));
+            assert(tp_apply(tp_upto(t, k), 0x01, varint_enc(x)) == Some(tp_upto(t, k + 1)));
+        } else {
+            assert(tp_upto(t, k) == tp_upto(t, k + 1));
+        }
+    } else if k == 2 {
+        if let Some(v) = t.stateless_reset_token {
+            lemma_tp_step(b, p, tp_upto(t, k), 0x02, v);
+            assert(tp_apply(tp_upto(t, k), 0x02, v) == Some(tp_upto(t, k + 1)));
+        } else {
+            assert(tp_upto(t, k) == tp_upto(t, k + 1));
+        }
+    } else if k == 3 {
+        if let Some(x) = t.max_udp_payload_size {
+            lemma_tp_int_roundtrip(x);
+            lemma_tp_step(b, p, tp_upto(t, k), 0x03, varint_enc(x));
+            assert(tp_apply(tp_upto(t, k), 0x03, varint_enc(x)) == Some(tp_upto(t, k + 1)));
+        } else {
+            assert(tp_upto(t, k) == tp_upto(t, k + 1));
+        }
+    } else if k == 4 {
+        if let Some(x) = t.initial_max_data {
+            lemma_tp_int_roundtrip(x);
+            lemma_tp_step(b, p, tp_upto(t, k), 0x04, varint_enc(x));
+            assert(tp_apply(tp_upto(t, k), 0x04, varint_enc(x)) == Some(tp_upto(t, k + 1)));
+        } else {
+            assert(tp_upto(t, k) == tp_upto(t, k + 1));
+        }
+    } else if k == 5 {
+        if let Some(x) = t.initial_max_stream_data_bidi_local {
+            lemma_tp_int_roundtrip(x);
+            lemma_tp_step(b, p, tp_upto(t, k), 0x05, varint_enc(x));
+            assert(tp_apply(tp_upto(t, k), 0x05, varint_enc(x)) == Some(tp_upto(t, k + 1)));
+        } else {
+            assert(tp_upto(t, k) == tp_upto(t, k + 1));
+        }
+    } else if k == 6 {
+        if let Some(x) = t.initial_max_stream_data_bidi_remote {
+            lemma_tp_int_roundtrip(x);
+            lemma_tp_step(b, p, tp_upto(t, k), 0x06, varint_enc(x));
+            assert(tp_apply(tp_upto(t, k), 0x06, varint_enc(x)) == Some(tp_upto(t, k + 1)));
+        } else {
+            assert(tp_upto(t, k) == tp_upto(t, k + 1));
+        }
+    } else if k == 7 {
+        if let Some(x) = t.initial_max_stream_data_uni {
+            lemma_tp_int_roundtrip(x);
+            lemma_tp_step(b, p, tp_upto(t, k), 0x07, varint_enc(x));
+            assert(tp_apply(tp_upto(t, k), 0x07, varint_enc(x)) == Some(tp_upto(t, k + 1)));
+        } else {
+            assert(tp_upto(t, k) == tp_upto(t, k + 1));
+        }
+    } else if k == 8 {
+        if let Some(x) = t.initial_max_streams_bidi {
+            lemma_tp_int_roundtrip(x);
+            lemma_tp_step(b, p, tp_upto(t, k), 0x08, varint_enc(x));
+            assert(tp_apply(tp_upto(t, k), 0x08, varint_enc(x)) == Some(tp_upto(t, k + 1)));
+        } else {
+            assert(tp_upto(t, k) == tp_upto(t, k + 1));
+        }
+    } else if k == 9 {
+        if let Some(x) = t.initial_max_streams_uni {
+            lemma_tp_int_roundtrip(x);
+            lemma_tp_step(b, p, tp_upto(t, k), 0x09, varint_enc(x));
+            assert(tp_apply(tp_upto(t, k), 0x09, varint_enc(x)) == Some(tp_upto(t, k + 1)));
+        } else {
+            assert(tp_upto(t, k) == tp_upto(t, k + 1));
+        }
+    } else if k == 10 {
+        if let Some(x) = t.ack_delay_exponent {
+            lemma_tp_int_roundtrip(x);
+            lemma_tp_step(b, p, tp_upto(t, k), 0x0a, varint_enc(x));
+            assert(tp_apply(tp_upto(t, k), 0x0a, varint_enc(x)) == Some(tp_upto(t, k + 1)));
+        } else {
+            assert(tp_upto(t, k) == tp_upto(t, k + 1));
+        }
+    } else if k == 11 {
+        if let Some(x) = t.max_ack_delay {
+            lemma_tp_int_roundtrip(x);
+            lemma_tp_step(b, p, tp_upto(t, k), 0x0b, varint_enc(x));
+            assert(tp_apply(tp_upto(t, k), 0x0b, varint_enc(x)) == Some(tp_upto(t, k + 1)));
+        } else {
+            assert(tp_upto(t, k) == tp_upto(t, k + 1));
+        }
+    } else if k == 12 {
+        if t.disable_active_migration {
+            lemma_tp_step(b, p, tp_upto(t, k), 0x0c, Seq::empty());
+            assert(tp_apply(tp_upto(t, k), 0x0c, Seq::empty()) == Some(tp_upto(t, k + 1)));
+        } else {
+            assert(tp_upto(t, k) == tp_upto(t, k + 1));
+        }
+    } else if k == 13 {
+        if let Some(a) = t.preferred_address {
+            lemma_pref_roundtrip(a);
+            lemma_tp_step(b, p, tp_upto(t, k), 0x0d, pref_enc(a));
+            assert(tp_apply(tp_upto(t, k), 0x0d, pref_enc(a)) == Some(tp_upto(t, k + 1)));
+        } else {
+            assert(tp_upto(t, k) == tp_upto(t, k + 1));
+        }
+    } else if k == 14 {
+        if let Some(x) = t.active_connection_id_limit {
+            lemma_tp_int_roundtrip(x);
+            lemma_tp_step(b, p, tp_upto(t, k), 0x0e, varint_enc(x));
+            assert(tp_apply(tp_upto(t, k), 0x0e, varint_enc(x)) == Some(tp_upto(t, k + 1)));
+        } else {
+            assert(tp_upto(t, k) == tp_upto(t, k + 1));
+        }
+    } else if k == 15 {
+        if let Some(v) = t.initial_scid {
+            lemma_tp_step(b, p, tp_upto(t, k), 0x0f, v);
+            assert(tp_apply(tp_upto(t, k), 0x0f, v) == Some(tp_upto(t, k + 1)));
+        } else {
+            assert(tp_upto(t, k) == tp_upto(t, k + 1));
+        }
+    } else if k == 16 {
+        if let Some(v) = t.retry_scid {
+            lemma_tp_step(b, p, tp_upto(t, k), 0x10, v);
+            assert(tp_apply(tp_upto(t, k), 0x10, v) == Some(tp_upto(t, k + 1)));
+        } else {
+            assert(tp_upto(t, k) == tp_upto(t, k + 1));
+        }
+    } else if k == 17 {
+        if let Some(x) = t.max_datagram_frame_size {
+            lemma_tp_int_roundtrip(x);
+            lemma_tp_step(b, p, tp_upto(t, k), 0x20, varint_enc(x));
+            assert(tp_apply(tp_upto(t, k), 0x20, varint_enc(x)) == Some(tp_upto(t, k + 1)));
+        } else {
+            assert(tp_upto(t, k) == tp_upto(t, k + 1));
+        }
+    }
+}
+
+/// The encodings of parameters `k..` read back.
+proof fn lemma_tp_from(b: Seq<u8>, p: int, t: TP, k: nat)
+    requires
+        tp_wf(t),
+        k <= 18,
+        at(b, p, tp_enc_from(t, k)),
+        b.len() == p + tp_enc_from(t, k).len(),
+    ensures
+        tp_parse(b, p, tp_upto(t, k)) == Some(t),
+    decreases 18 - k,
+{
+    if k >= 18 {
+        assert(tp_upto(t, k) == t);
+    } else {
+        lemma_tp_field(b, p, t, k);
+        lemma_at_split(b, p, tp_field_enc(t, k as int), tp_enc_from(t, k + 1));
+        lemma_tp_from(b, p + tp_field_enc(t, k as int).len(), t, k + 1);
+    }
+}
+
+/// Round trip: valid transport parameters read back from their encoding.
+pub proof fn lemma_transport_params_roundtrip(t: TP)
+    requires
+        tp_wf(t),
+    ensures
+        transport_params(transport_params_enc(t)) == Some(t),
+{
+    let e = transport_params_enc(t);
+    assert(e.subrange(0, e.len() as int) =~= e);
+    assert(tp_upto(t, 0) == tp_empty());
+    lemma_tp_from(e, 0, t, 0);
+}
+
+/// The encodings of parameters `..k`.
+pub open spec fn tp_enc_upto(t: TP, k: nat) -> Seq<u8>
+    decreases k,
+{
+    if k == 0 {
+        Seq::empty()
+    } else {
+        tp_enc_upto(t, (k - 1) as nat) + tp_field_enc(t, k - 1)
+    }
+}
+
+proof fn lemma_tp_enc_split(t: TP, k: nat)
+    requires
+        k <= 18,
+    ensures
+        tp_enc_upto(t, k) + tp_enc_from(t, k) == transport_params_enc(t),
+    decreases k,
+{
+    if k > 0 {
+        lemma_tp_enc_split(t, (k - 1) as nat);
+        assert(tp_enc_from(t, (k - 1) as nat) == tp_field_enc(t, k - 1) + tp_enc_from(t, k));
+        assert(tp_enc_upto(t, k) + tp_enc_from(t, k) =~= tp_enc_upto(t, (k - 1) as nat) + tp_enc_from(t, (k - 1) as nat));
+    } else {
+        assert(Seq::<u8>::empty() + tp_enc_from(t, 0) =~= tp_enc_from(t, 0));
+    }
+}
+
+pub proof fn lemma_tp_enc_upto_all(t: TP)
+    ensures
+        tp_enc_upto(t, 18) == transport_params_enc(t),
+{
+    lemma_tp_enc_split(t, 18);
+    assert(tp_enc_from(t, 18) == Seq::<u8>::empty());
+    assert(tp_enc_upto(t, 18) + Seq::<u8>::empty() =~= tp_enc_upto(t, 18));
+}
+
+
+pub proof fn lemma_tp_enc_step(o: Seq<u8>, before: Seq<u8>, out: Seq<u8>, t: TP, n: nat)
+    requires
+        before == o + tp_enc_upto(t, n),
+        out == before + tp_field_enc(t, n as int),
+    ensures
+        out == o + tp_enc_upto(t, n + 1),
+{
+    assert(out =~= o + tp_enc_upto(t, n + 1));
+}
 } // verus!

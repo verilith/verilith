@@ -838,4 +838,472 @@ pub open spec fn pn_len(pn: int, largest_acked: int) -> int {
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// Transport parameters (§18)
+// ---------------------------------------------------------------------------
+
+/// A preferred_address value (§18.2): the IPv4 address and port (6
+/// bytes), the IPv6 address and port (18 bytes), a connection ID of 1 to
+/// 20 bytes and a stateless reset token (16 bytes).
+pub struct SPref {
+    pub v4: Seq<u8>,
+    pub v6: Seq<u8>,
+    pub cid: Seq<u8>,
+    pub token: Seq<u8>,
+}
+
+/// The transport parameters of RFC 9000 (and max_datagram_frame_size of
+/// RFC 9221), each absent or with its value. Others are ignored (§7.4.2).
+pub struct TP {
+    /// 0x00: original_destination_connection_id.
+    pub original_dcid: Option<Seq<u8>>,
+    /// 0x01: max_idle_timeout (milliseconds).
+    pub max_idle_timeout: Option<u64>,
+    /// 0x02: stateless_reset_token (16 bytes).
+    pub stateless_reset_token: Option<Seq<u8>>,
+    /// 0x03: max_udp_payload_size, at least 1200.
+    pub max_udp_payload_size: Option<u64>,
+    /// 0x04: initial_max_data.
+    pub initial_max_data: Option<u64>,
+    /// 0x05: initial_max_stream_data_bidi_local.
+    pub initial_max_stream_data_bidi_local: Option<u64>,
+    /// 0x06: initial_max_stream_data_bidi_remote.
+    pub initial_max_stream_data_bidi_remote: Option<u64>,
+    /// 0x07: initial_max_stream_data_uni.
+    pub initial_max_stream_data_uni: Option<u64>,
+    /// 0x08: initial_max_streams_bidi, at most 2^60.
+    pub initial_max_streams_bidi: Option<u64>,
+    /// 0x09: initial_max_streams_uni, at most 2^60.
+    pub initial_max_streams_uni: Option<u64>,
+    /// 0x0a: ack_delay_exponent, at most 20.
+    pub ack_delay_exponent: Option<u64>,
+    /// 0x0b: max_ack_delay (milliseconds), below 2^14.
+    pub max_ack_delay: Option<u64>,
+    /// 0x0c: disable_active_migration.
+    pub disable_active_migration: bool,
+    /// 0x0d: preferred_address.
+    pub preferred_address: Option<SPref>,
+    /// 0x0e: active_connection_id_limit, at least 2.
+    pub active_connection_id_limit: Option<u64>,
+    /// 0x0f: initial_source_connection_id.
+    pub initial_scid: Option<Seq<u8>>,
+    /// 0x10: retry_source_connection_id.
+    pub retry_scid: Option<Seq<u8>>,
+    /// 0x20: max_datagram_frame_size (RFC 9221).
+    pub max_datagram_frame_size: Option<u64>,
+}
+
+/// No parameters.
+pub open spec fn tp_empty() -> TP {
+    TP {
+        original_dcid: None,
+        max_idle_timeout: None,
+        stateless_reset_token: None,
+        max_udp_payload_size: None,
+        initial_max_data: None,
+        initial_max_stream_data_bidi_local: None,
+        initial_max_stream_data_bidi_remote: None,
+        initial_max_stream_data_uni: None,
+        initial_max_streams_bidi: None,
+        initial_max_streams_uni: None,
+        ack_delay_exponent: None,
+        max_ack_delay: None,
+        disable_active_migration: false,
+        preferred_address: None,
+        active_connection_id_limit: None,
+        initial_scid: None,
+        retry_scid: None,
+        max_datagram_frame_size: None,
+    }
+}
+
+/// A preferred_address value.
+pub open spec fn pref_parse(v: Seq<u8>) -> Option<SPref> {
+    if v.len() < 41 || v[24] < 1 || v[24] > 20 || v.len() != 41 + v[24] {
+        None
+    } else {
+        Some(SPref {
+            v4: v.subrange(0, 6),
+            v6: v.subrange(6, 24),
+            cid: v.subrange(25, 25 + v[24]),
+            token: v.subrange(25 + v[24], v.len() as int),
+        })
+    }
+}
+
+/// The encoding of a preferred_address value.
+pub open spec fn pref_enc(a: SPref) -> Seq<u8> {
+    a.v4 + a.v6 + seq![a.cid.len() as u8] + a.cid + a.token
+}
+
+/// An integer parameter's value: one variable-length integer, filling it.
+pub open spec fn tp_int(v: Seq<u8>) -> Option<u64> {
+    match varint(v, 0) {
+        Some((x, e)) => if e == v.len() { Some(x) } else { None },
+        None => None,
+    }
+}
+
+/// `acc` with the parameter `id` of value `v` added, or `None` if it is
+/// a duplicate (§7.4) or its value is invalid (§18.2): a connection
+/// error of type TRANSPORT_PARAMETER_ERROR. Unknown parameters are
+/// ignored.
+pub open spec fn tp_apply(acc: TP, id: u64, v: Seq<u8>) -> Option<TP> {
+    if id == 0x00 {
+        if acc.original_dcid is Some || v.len() > MAX_CID_LEN {
+            None
+        } else {
+            Some(TP { original_dcid: Some(v), ..acc })
+        }
+    } else if id == 0x01 {
+        if acc.max_idle_timeout is Some {
+            None
+        } else {
+            match tp_int(v) {
+                None => None,
+                Some(x) => if false {
+                    None
+                } else {
+                    Some(TP { max_idle_timeout: Some(x), ..acc })
+                },
+            }
+        }
+    } else if id == 0x02 {
+        if acc.stateless_reset_token is Some || v.len() != 16 {
+            None
+        } else {
+            Some(TP { stateless_reset_token: Some(v), ..acc })
+        }
+    } else if id == 0x03 {
+        if acc.max_udp_payload_size is Some {
+            None
+        } else {
+            match tp_int(v) {
+                None => None,
+                Some(x) => if !(x >= 1200) {
+                    None
+                } else {
+                    Some(TP { max_udp_payload_size: Some(x), ..acc })
+                },
+            }
+        }
+    } else if id == 0x04 {
+        if acc.initial_max_data is Some {
+            None
+        } else {
+            match tp_int(v) {
+                None => None,
+                Some(x) => if false {
+                    None
+                } else {
+                    Some(TP { initial_max_data: Some(x), ..acc })
+                },
+            }
+        }
+    } else if id == 0x05 {
+        if acc.initial_max_stream_data_bidi_local is Some {
+            None
+        } else {
+            match tp_int(v) {
+                None => None,
+                Some(x) => if false {
+                    None
+                } else {
+                    Some(TP { initial_max_stream_data_bidi_local: Some(x), ..acc })
+                },
+            }
+        }
+    } else if id == 0x06 {
+        if acc.initial_max_stream_data_bidi_remote is Some {
+            None
+        } else {
+            match tp_int(v) {
+                None => None,
+                Some(x) => if false {
+                    None
+                } else {
+                    Some(TP { initial_max_stream_data_bidi_remote: Some(x), ..acc })
+                },
+            }
+        }
+    } else if id == 0x07 {
+        if acc.initial_max_stream_data_uni is Some {
+            None
+        } else {
+            match tp_int(v) {
+                None => None,
+                Some(x) => if false {
+                    None
+                } else {
+                    Some(TP { initial_max_stream_data_uni: Some(x), ..acc })
+                },
+            }
+        }
+    } else if id == 0x08 {
+        if acc.initial_max_streams_bidi is Some {
+            None
+        } else {
+            match tp_int(v) {
+                None => None,
+                Some(x) => if !(x <= MAX_STREAMS_LIMIT) {
+                    None
+                } else {
+                    Some(TP { initial_max_streams_bidi: Some(x), ..acc })
+                },
+            }
+        }
+    } else if id == 0x09 {
+        if acc.initial_max_streams_uni is Some {
+            None
+        } else {
+            match tp_int(v) {
+                None => None,
+                Some(x) => if !(x <= MAX_STREAMS_LIMIT) {
+                    None
+                } else {
+                    Some(TP { initial_max_streams_uni: Some(x), ..acc })
+                },
+            }
+        }
+    } else if id == 0x0a {
+        if acc.ack_delay_exponent is Some {
+            None
+        } else {
+            match tp_int(v) {
+                None => None,
+                Some(x) => if !(x <= 20) {
+                    None
+                } else {
+                    Some(TP { ack_delay_exponent: Some(x), ..acc })
+                },
+            }
+        }
+    } else if id == 0x0b {
+        if acc.max_ack_delay is Some {
+            None
+        } else {
+            match tp_int(v) {
+                None => None,
+                Some(x) => if !(x < 0x4000) {
+                    None
+                } else {
+                    Some(TP { max_ack_delay: Some(x), ..acc })
+                },
+            }
+        }
+    } else if id == 0x0c {
+        if acc.disable_active_migration || v.len() != 0 {
+            None
+        } else {
+            Some(TP { disable_active_migration: true, ..acc })
+        }
+    } else if id == 0x0d {
+        if acc.preferred_address is Some {
+            None
+        } else {
+            match pref_parse(v) {
+                None => None,
+                Some(a) => Some(TP { preferred_address: Some(a), ..acc }),
+            }
+        }
+    } else if id == 0x0e {
+        if acc.active_connection_id_limit is Some {
+            None
+        } else {
+            match tp_int(v) {
+                None => None,
+                Some(x) => if !(x >= 2) {
+                    None
+                } else {
+                    Some(TP { active_connection_id_limit: Some(x), ..acc })
+                },
+            }
+        }
+    } else if id == 0x0f {
+        if acc.initial_scid is Some || v.len() > MAX_CID_LEN {
+            None
+        } else {
+            Some(TP { initial_scid: Some(v), ..acc })
+        }
+    } else if id == 0x10 {
+        if acc.retry_scid is Some || v.len() > MAX_CID_LEN {
+            None
+        } else {
+            Some(TP { retry_scid: Some(v), ..acc })
+        }
+    } else if id == 0x20 {
+        if acc.max_datagram_frame_size is Some {
+            None
+        } else {
+            match tp_int(v) {
+                None => None,
+                Some(x) => if false {
+                    None
+                } else {
+                    Some(TP { max_datagram_frame_size: Some(x), ..acc })
+                },
+            }
+        }
+    } else {
+        Some(acc)
+    }
+}
+
+/// One parameter at `p`: its ID, its value and the position after it.
+pub open spec fn tp_entry(b: Seq<u8>, p: int) -> Option<(u64, Seq<u8>, int)> {
+    match varint(b, p) {
+        None => None,
+        Some((id, p1)) => match bytes_len(b, p1) {
+            None => None,
+            Some((v, p2)) => Some((id, v, p2)),
+        },
+    }
+}
+
+/// The parameters from `p` to the end of `b`, added to `acc`.
+pub open spec fn tp_parse(b: Seq<u8>, p: int, acc: TP) -> Option<TP>
+    decreases b.len() - p,
+{
+    if p < 0 || p > b.len() {
+        None
+    } else if p == b.len() {
+        Some(acc)
+    } else {
+        match tp_entry(b, p) {
+            None => None,
+            Some((id, v, e)) => if e <= p {
+                None
+            } else {
+                match tp_apply(acc, id, v) {
+                    None => None,
+                    Some(a) => tp_parse(b, e, a),
+                }
+            },
+        }
+    }
+}
+
+/// The transport parameters encoded in `b` (§18).
+pub open spec fn transport_params(b: Seq<u8>) -> Option<TP> {
+    tp_parse(b, 0, tp_empty())
+}
+
+/// A client sent none of the parameters only a server may send (§18.2):
+/// otherwise a connection error of type TRANSPORT_PARAMETER_ERROR.
+pub open spec fn tp_client_ok(t: TP) -> bool {
+    t.original_dcid is None && t.stateless_reset_token is None && t.preferred_address is None
+        && t.retry_scid is None
+}
+
+/// The encoding of one parameter.
+pub open spec fn tp_entry_enc(id: u64, v: Seq<u8>) -> Seq<u8> {
+    varint_enc(id) + bytes_len_enc(v)
+}
+
+/// The encoding of parameter `k` of `t`, in ID order (empty if absent).
+pub open spec fn tp_field_enc(t: TP, k: int) -> Seq<u8> {
+    if k == 0 {
+        match t.original_dcid { None => Seq::empty(), Some(v) => tp_entry_enc(0x00, v) }
+    } else if k == 1 {
+        match t.max_idle_timeout { None => Seq::empty(), Some(x) => tp_entry_enc(0x01, varint_enc(x)) }
+    } else if k == 2 {
+        match t.stateless_reset_token { None => Seq::empty(), Some(v) => tp_entry_enc(0x02, v) }
+    } else if k == 3 {
+        match t.max_udp_payload_size { None => Seq::empty(), Some(x) => tp_entry_enc(0x03, varint_enc(x)) }
+    } else if k == 4 {
+        match t.initial_max_data { None => Seq::empty(), Some(x) => tp_entry_enc(0x04, varint_enc(x)) }
+    } else if k == 5 {
+        match t.initial_max_stream_data_bidi_local { None => Seq::empty(), Some(x) => tp_entry_enc(0x05, varint_enc(x)) }
+    } else if k == 6 {
+        match t.initial_max_stream_data_bidi_remote { None => Seq::empty(), Some(x) => tp_entry_enc(0x06, varint_enc(x)) }
+    } else if k == 7 {
+        match t.initial_max_stream_data_uni { None => Seq::empty(), Some(x) => tp_entry_enc(0x07, varint_enc(x)) }
+    } else if k == 8 {
+        match t.initial_max_streams_bidi { None => Seq::empty(), Some(x) => tp_entry_enc(0x08, varint_enc(x)) }
+    } else if k == 9 {
+        match t.initial_max_streams_uni { None => Seq::empty(), Some(x) => tp_entry_enc(0x09, varint_enc(x)) }
+    } else if k == 10 {
+        match t.ack_delay_exponent { None => Seq::empty(), Some(x) => tp_entry_enc(0x0a, varint_enc(x)) }
+    } else if k == 11 {
+        match t.max_ack_delay { None => Seq::empty(), Some(x) => tp_entry_enc(0x0b, varint_enc(x)) }
+    } else if k == 12 {
+        if t.disable_active_migration { tp_entry_enc(0x0c, Seq::empty()) } else { Seq::empty() }
+    } else if k == 13 {
+        match t.preferred_address { None => Seq::empty(), Some(a) => tp_entry_enc(0x0d, pref_enc(a)) }
+    } else if k == 14 {
+        match t.active_connection_id_limit { None => Seq::empty(), Some(x) => tp_entry_enc(0x0e, varint_enc(x)) }
+    } else if k == 15 {
+        match t.initial_scid { None => Seq::empty(), Some(v) => tp_entry_enc(0x0f, v) }
+    } else if k == 16 {
+        match t.retry_scid { None => Seq::empty(), Some(v) => tp_entry_enc(0x10, v) }
+    } else if k == 17 {
+        match t.max_datagram_frame_size { None => Seq::empty(), Some(x) => tp_entry_enc(0x20, varint_enc(x)) }
+    } else {
+        Seq::empty()
+    }
+}
+
+/// The encodings of parameters `k..18` of `t`.
+pub open spec fn tp_enc_from(t: TP, k: nat) -> Seq<u8>
+    decreases 18 - k,
+{
+    if k >= 18 {
+        Seq::empty()
+    } else {
+        tp_field_enc(t, k as int) + tp_enc_from(t, k + 1)
+    }
+}
+
+/// The encoding of transport parameters, in ID order, with the shortest
+/// integers.
+pub open spec fn transport_params_enc(t: TP) -> Seq<u8> {
+    tp_enc_from(t, 0)
+}
+
+/// Transport parameters that can be encoded and parse back.
+pub open spec fn tp_wf(t: TP) -> bool {
+    &&& (t.original_dcid matches Some(v) ==> v.len() <= MAX_CID_LEN)
+    &&& (t.max_idle_timeout matches Some(x) ==> vi(x))
+    &&& (t.stateless_reset_token matches Some(v) ==> v.len() == 16)
+    &&& (t.max_udp_payload_size matches Some(x) ==> vi(x) && x >= 1200)
+    &&& (t.initial_max_data matches Some(x) ==> vi(x))
+    &&& (t.initial_max_stream_data_bidi_local matches Some(x) ==> vi(x))
+    &&& (t.initial_max_stream_data_bidi_remote matches Some(x) ==> vi(x))
+    &&& (t.initial_max_stream_data_uni matches Some(x) ==> vi(x))
+    &&& (t.initial_max_streams_bidi matches Some(x) ==> vi(x) && x <= MAX_STREAMS_LIMIT)
+    &&& (t.initial_max_streams_uni matches Some(x) ==> vi(x) && x <= MAX_STREAMS_LIMIT)
+    &&& (t.ack_delay_exponent matches Some(x) ==> vi(x) && x <= 20)
+    &&& (t.max_ack_delay matches Some(x) ==> vi(x) && x < 0x4000)
+    &&& (t.preferred_address matches Some(a) ==> a.v4.len() == 6 && a.v6.len() == 18 && 1 <= a.cid.len() <= 20 && a.token.len() == 16)
+    &&& (t.active_connection_id_limit matches Some(x) ==> vi(x) && x >= 2)
+    &&& (t.initial_scid matches Some(v) ==> v.len() <= MAX_CID_LEN)
+    &&& (t.retry_scid matches Some(v) ==> v.len() <= MAX_CID_LEN)
+    &&& (t.max_datagram_frame_size matches Some(x) ==> vi(x))
+}
+
+/// `t` with parameters `k..` removed.
+pub open spec fn tp_upto(t: TP, k: nat) -> TP {
+    TP {
+        original_dcid: if k > 0 { t.original_dcid } else { None },
+        max_idle_timeout: if k > 1 { t.max_idle_timeout } else { None },
+        stateless_reset_token: if k > 2 { t.stateless_reset_token } else { None },
+        max_udp_payload_size: if k > 3 { t.max_udp_payload_size } else { None },
+        initial_max_data: if k > 4 { t.initial_max_data } else { None },
+        initial_max_stream_data_bidi_local: if k > 5 { t.initial_max_stream_data_bidi_local } else { None },
+        initial_max_stream_data_bidi_remote: if k > 6 { t.initial_max_stream_data_bidi_remote } else { None },
+        initial_max_stream_data_uni: if k > 7 { t.initial_max_stream_data_uni } else { None },
+        initial_max_streams_bidi: if k > 8 { t.initial_max_streams_bidi } else { None },
+        initial_max_streams_uni: if k > 9 { t.initial_max_streams_uni } else { None },
+        ack_delay_exponent: if k > 10 { t.ack_delay_exponent } else { None },
+        max_ack_delay: if k > 11 { t.max_ack_delay } else { None },
+        disable_active_migration: if k > 12 { t.disable_active_migration } else { false },
+        preferred_address: if k > 13 { t.preferred_address } else { None },
+        active_connection_id_limit: if k > 14 { t.active_connection_id_limit } else { None },
+        initial_scid: if k > 15 { t.initial_scid } else { None },
+        retry_scid: if k > 16 { t.retry_scid } else { None },
+        max_datagram_frame_size: if k > 17 { t.max_datagram_frame_size } else { None },
+    }
+}
+
 } // verus!

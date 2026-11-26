@@ -740,6 +740,7 @@ proof fn lemma_ranges_enc_step(rs: Seq<(u64, u64)>, i: int)
 }
 
 /// Appends the encoding of an ACK frame.
+#[verifier::rlimit(60)]
 fn encode_ack(a: &Ack, out: &mut Vec<u8>)
     requires
         a.wf(),
