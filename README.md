@@ -97,6 +97,7 @@ not proofs.
 | [`verilith-dns`](crates/dns) | A formally verified (Verus) DNS message parser and serializer, and a drop-in parser for c-ares | [proven](crates/dns#what-is-proven), [trusted](crates/dns#trusted-computing-base) |
 | [`verilith-font`](crates/font) | A formally verified (Verus) OpenType font sanitizer | [proven](crates/font#what-is-proven), [trusted](crates/font/TRUST.md) |
 | [`verilith-gif`](crates/gif) | A formally verified (Verus) GIF decoder: LZW, interlacing and graphic control, checked against giflib, with giflib's decoding C API | [proven](crates/gif#what-is-proven), [trusted](crates/gif#trusted-base) |
+| [`verilith-h2`](crates/h2) | An HTTP/2 (RFC 9113) frame parser and serializer formally verified with Verus, sans I/O, proven to round-trip | [proven](crates/h2#what-is-proven), [trusted](crates/h2#trusted-computing-base) |
 | [`verilith-hpack`](crates/hpack) | An HPACK (RFC 7541) header decoder formally verified with Verus, with nghttp2's inflater API | [proven](crates/hpack#what-is-proven), [trusted](crates/hpack#trusted-computing-base) |
 | [`verilith-http`](crates/http) | A fast HTTP/1.1 parser formally verified with Verus | [proven](crates/http#what-is-proven), [trusted](crates/http#trusted-computing-base) |
 | [`verilith-jpeg`](crates/jpeg) | A formally verified (Verus) JPEG decoder: baseline and progressive Huffman | [proven](crates/jpeg#what-is-proven), [trusted](crates/jpeg/TRUST.md) |
@@ -290,7 +291,7 @@ the one `scripts/profile <name>` prints:
 |---|---|---|
 | `release` | 1 codegen unit, thin LTO | every crate not listed below |
 | `release-fat` | 1 codegen unit, fat LTO | text, url, x509 |
-| `release-abort` | 1 codegen unit, fat LTO, `panic = "abort"` | json, http, hpack, regex, bind, xml |
+| `release-abort` | 1 codegen unit, fat LTO, `panic = "abort"` | json, http, hpack, h2, regex, bind, xml |
 
 So the drop-in JSON library is built with
 `cargo build --profile release-abort --features cjson` and lands in

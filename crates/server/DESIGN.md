@@ -458,6 +458,8 @@ in `bench/server/results`, and a merge.
 4. **TLS.** rustls integration, ALPN, certificates through verilith-x509.
 5. **HPACK encoder** in verilith-hpack, and **verilith-h2 frames**. These
    two do not depend on milestones 2 to 4 and can run in parallel threads.
+   *(frames done: `crates/h2`, with the round trip and its benchmark
+   against h2 and nghttp2 in its README)*
 6. **HTTP/2 connection**: streams, flow control, scheduling, the resource
    bounds; h2c and h2 benchmarks against h2o.
 7. **io_uring and kTLS** backends, if the benchmarks show they are needed
