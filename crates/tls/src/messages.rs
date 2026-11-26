@@ -45,17 +45,56 @@ pub fn put(out: &mut Vec<u8>, s: &[u8])
     out.extend_from_slice(s);
 }
 
+/// Appends a ServerHello's extensions.
+#[verifier::spinoff_prover]
+fn server_hello_exts_x(out: &mut Vec<u8>, group: u16, share: &[u8], psk: bool)
+    requires
+        share@.len() <= 16000,
+    ensures
+        final(out)@ == old(out)@ + ext_version() + ext(51, be2(group as nat) + be2(share@.len()) + share@) + (if psk {
+            ext(41, be2(0))
+        } else {
+            Seq::<u8>::empty()
+        }),
+{
+    put2(out, 43);
+    put2(out, 2);
+    put1(out, 3);
+    put1(out, 4);
+    put2(out, 51);
+    put2(out, 4 + share.len());
+    put2(out, group as usize);
+    put2(out, share.len());
+    put(out, share);
+    if psk {
+        put2(out, 41);
+        put2(out, 2);
+        put2(out, 0);
+    }
+    proof {
+        let ks = be2(group as nat) + be2(share@.len()) + share@;
+        assert(ks.len() == 4 + share@.len());
+        let pe = if psk { ext(41, be2(0)) } else { Seq::<u8>::empty() };
+        assert(final(out)@ =~= old(out)@ + ext_version() + ext(51, ks) + pe);
+    }
+}
+
 /// Appends a ServerHello.
 #[verifier::spinoff_prover]
 #[verifier::rlimit(40)]
-pub fn server_hello_x(out: &mut Vec<u8>, random: &[u8; 32], sid: &[u8], suite: u16, group: u16, share: &[u8])
+pub fn server_hello_x(out: &mut Vec<u8>, random: &[u8; 32], sid: &[u8], suite: u16, group: u16, share: &[u8], psk: bool)
     requires
         sid@.len() <= 32,
         share@.len() <= 16000,
     ensures
-        final(out)@ == old(out)@ + server_hello(random@, sid@, suite, group, share@),
+        final(out)@ == old(out)@ + server_hello(random@, sid@, suite, group, share@, psk),
 {
-    let el = 6 + 4 + 4 + share.len();
+    let mut exts: Vec<u8> = Vec::new();
+    server_hello_exts_x(&mut exts, group, share, psk);
+    proof {
+        assert(exts@.len() <= 6 + 4 + 4 + 16000 + 6);
+    }
+    let el = exts.len();
     let bl = 2 + 32 + 1 + sid.len() + 2 + 1 + 2 + el;
     put1(out, 2);
     put3(out, bl);
@@ -67,23 +106,16 @@ pub fn server_hello_x(out: &mut Vec<u8>, random: &[u8; 32], sid: &[u8], suite: u
     put2(out, suite as usize);
     put1(out, 0);
     put2(out, el);
-    put2(out, 43);
-    put2(out, 2);
-    put1(out, 3);
-    put1(out, 4);
-    put2(out, 51);
-    put2(out, 4 + share.len());
-    put2(out, group as usize);
-    put2(out, share.len());
-    put(out, share);
+    put(out, exts.as_slice());
     proof {
-        let ks = be2(group as nat) + be2(share@.len()) + share@;
-        let exts = ext_version() + ext(51, ks);
-        assert(ks.len() == 4 + share@.len());
-        assert(exts.len() == el);
-        let body = server_hello_body(random@, sid@, suite, exts);
+        let body = server_hello_body(random@, sid@, suite, exts@);
         assert(body.len() == bl);
-        assert(final(out)@ =~= old(out)@ + server_hello(random@, sid@, suite, group, share@));
+        assert(exts@ =~= ext_version() + ext(51, be2(group as nat) + be2(share@.len()) + share@) + (if psk {
+            ext(41, be2(0))
+        } else {
+            Seq::<u8>::empty()
+        }));
+        assert(final(out)@ =~= old(out)@ + server_hello(random@, sid@, suite, group, share@, psk));
     }
 }
 
@@ -303,6 +335,67 @@ pub fn plain_header_x(out: &mut Vec<u8>, ct: u8, n: usize)
     put1(out, 3);
     put1(out, 3);
     put2(out, n);
+}
+
+pub fn put4(out: &mut Vec<u8>, n: u32)
+    ensures
+        final(out)@ == old(out)@ + be4(n as nat),
+{
+    put2(out, (n / 65536) as usize);
+    put2(out, (n % 65536) as usize);
+    assert(final(out)@ =~= old(out)@ + be4(n as nat));
+}
+
+pub fn put8(out: &mut Vec<u8>, n: u64)
+    ensures
+        final(out)@ == old(out)@ + be8(n as nat),
+{
+    put4(out, (n / 0x1_0000_0000) as u32);
+    put4(out, (n % 0x1_0000_0000) as u32);
+    assert(final(out)@ =~= old(out)@ + be8(n as nat));
+}
+
+/// Appends a ticket state.
+pub fn ticket_state_x(out: &mut Vec<u8>, suite: u16, time: u64, age_add: u32, psk: &Secret)
+    requires
+        psk.wf(),
+    ensures
+        final(out)@ == old(out)@ + ticket_state(suite, time, age_add, psk@),
+{
+    put1(out, 1);
+    put2(out, suite as usize);
+    put8(out, time);
+    put4(out, age_add);
+    put1(out, psk.len() as u8);
+    put(out, psk.as_slice());
+    assert(final(out)@ =~= old(out)@ + ticket_state(suite, time, age_add, psk@));
+}
+
+/// Appends a NewSessionTicket.
+pub fn new_session_ticket_x(out: &mut Vec<u8>, lifetime: u32, age_add: u32, nonce: &[u8], ticket: &[u8])
+    requires
+        nonce@.len() <= 255,
+        ticket@.len() <= 65535,
+    ensures
+        final(out)@ == old(out)@ + new_session_ticket(lifetime, age_add, nonce@, ticket@),
+{
+    let bl = 4 + 4 + 1 + nonce.len() + 2 + ticket.len() + 2;
+    put1(out, 4);
+    put3(out, bl);
+    put4(out, lifetime);
+    put4(out, age_add);
+    put1(out, nonce.len() as u8);
+    put(out, nonce);
+    put2(out, ticket.len());
+    put(out, ticket);
+    put2(out, 0);
+    proof {
+        let body = be4(lifetime as nat) + be4(age_add as nat) + seq![nonce@.len() as u8] + nonce@ + be2(
+            ticket@.len(),
+        ) + ticket@ + be2(0);
+        assert(body.len() == bl);
+        assert(final(out)@ =~= old(out)@ + new_session_ticket(lifetime, age_add, nonce@, ticket@));
+    }
 }
 
 } // verus!

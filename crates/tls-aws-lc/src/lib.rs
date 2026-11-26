@@ -14,7 +14,8 @@ use aws_lc_rs::agreement::{self, EphemeralPrivateKey, UnparsedPublicKey};
 use aws_lc_rs::kem::{EncapsulationKey, ML_KEM_768};
 use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use aws_lc_rs::signature::{self, EcdsaKeyPair, Ed25519KeyPair, KeyPair, RsaKeyPair};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 use verilith_tls::crypto::{AeadKey, Provider};
 
 pub const TLS_AES_128_GCM_SHA256: u16 = 0x1301;
@@ -108,20 +109,164 @@ impl SigningKey {
     }
 }
 
-/// aws-lc, with the server's signing key.
+/// Seconds since the Unix epoch.
+fn unix_now() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// One ticket key: a name (the first 4 bytes of every ticket it seals)
+/// and a ChaCha20-Poly1305 key.
+struct TicketKey {
+    name: [u8; 4],
+    key: LessSafeKey,
+}
+
+impl TicketKey {
+    fn generate(rng: &SystemRandom) -> TicketKey {
+        let mut k = [0u8; 32];
+        let mut name = [0u8; 4];
+        rng.fill(&mut k).expect("the system's random number generator works");
+        rng.fill(&mut name).expect("the system's random number generator works");
+        let key = UnboundKey::new(&aead::CHACHA20_POLY1305, &k).expect("a 32-byte key");
+        TicketKey { name, key: LessSafeKey::new(key) }
+    }
+}
+
+struct Keys {
+    current: TicketKey,
+    previous: Option<TicketKey>,
+    /// When `current` was made.
+    since: u64,
+}
+
+/// Session ticket keys, made at random and shared by every connection of
+/// a server, across its threads (`Arc<TicketKeys>`). A ticket is
+/// `name(4) | nonce(12) | ChaCha20-Poly1305(state) | tag(16)`, the name as
+/// associated data. The key changes every `period` seconds, and the one
+/// before it still opens tickets, so a ticket opens for at least `period`
+/// seconds after it was issued: give the server's `Config::set_tickets`
+/// the same lifetime.
+pub struct TicketKeys {
+    keys: RwLock<Keys>,
+    period: u64,
+    rng: SystemRandom,
+}
+
+/// Bytes a sealed ticket adds to its state.
+pub const TICKET_OVERHEAD: usize = 4 + 12 + 16;
+
+impl TicketKeys {
+    /// Keys that change every `period` seconds (6 hours is rustls's).
+    pub fn new(period: u64) -> TicketKeys {
+        let rng = SystemRandom::new();
+        let current = TicketKey::generate(&rng);
+        TicketKeys { keys: RwLock::new(Keys { current, previous: None, since: unix_now() }), period: period.max(1), rng }
+    }
+
+    pub fn period(&self) -> u64 {
+        self.period
+    }
+
+    fn rotate_if_due(&self, now: u64) {
+        let due = { self.keys.read().map(|k| now.saturating_sub(k.since) >= self.period).unwrap_or(false) };
+        if !due {
+            return;
+        }
+        if let Ok(mut k) = self.keys.write() {
+            // Another thread may have rotated first.
+            if now.saturating_sub(k.since) >= self.period {
+                let fresh = TicketKey::generate(&self.rng);
+                let old = std::mem::replace(&mut k.current, fresh);
+                k.previous = Some(old);
+                k.since = now;
+            }
+        }
+    }
+
+    /// Seals `state`, appending the ticket to `out`.
+    pub fn seal(&self, state: &[u8], out: &mut Vec<u8>) -> bool {
+        self.rotate_if_due(unix_now());
+        let Ok(keys) = self.keys.read() else { return false };
+        let k = &keys.current;
+        let mut nonce = [0u8; 12];
+        if self.rng.fill(&mut nonce).is_err() {
+            return false;
+        }
+        let start = out.len();
+        out.reserve(state.len() + TICKET_OVERHEAD);
+        out.extend_from_slice(&k.name);
+        out.extend_from_slice(&nonce);
+        out.extend_from_slice(state);
+        let at = start + 16;
+        match k.key.seal_in_place_separate_tag(Nonce::assume_unique_for_key(nonce), Aad::from(k.name), &mut out[at..]) {
+            Ok(tag) => {
+                out.extend_from_slice(tag.as_ref());
+                true
+            }
+            Err(_) => {
+                out.truncate(start);
+                false
+            }
+        }
+    }
+
+    /// Opens a ticket these keys sealed into `out`.
+    pub fn open(&self, ticket: &[u8], out: &mut Vec<u8>) -> bool {
+        if ticket.len() < TICKET_OVERHEAD {
+            return false;
+        }
+        let Ok(keys) = self.keys.read() else { return false };
+        let name = &ticket[..4];
+        let k = if keys.current.name == name {
+            &keys.current
+        } else {
+            match &keys.previous {
+                Some(p) if p.name == name => p,
+                _ => return false,
+            }
+        };
+        let mut nonce = [0u8; 12];
+        nonce.copy_from_slice(&ticket[4..16]);
+        let start = out.len();
+        out.extend_from_slice(&ticket[16..]);
+        let mut name4 = [0u8; 4];
+        name4.copy_from_slice(name);
+        match k.key.open_in_place(Nonce::assume_unique_for_key(nonce), Aad::from(name4), &mut out[start..]) {
+            Ok(pt) => {
+                let n = pt.len();
+                out.truncate(start + n);
+                true
+            }
+            Err(_) => {
+                out.truncate(start);
+                false
+            }
+        }
+    }
+}
+
+/// aws-lc, with the server's signing key and session ticket keys.
 pub struct AwsLc {
     rng: SystemRandom,
     key: Option<Arc<SigningKey>>,
+    tickets: Option<Arc<TicketKeys>>,
 }
 
 impl AwsLc {
     pub fn new(key: Option<SigningKey>) -> AwsLc {
-        AwsLc { rng: SystemRandom::new(), key: key.map(Arc::new) }
+        AwsLc { rng: SystemRandom::new(), key: key.map(Arc::new), tickets: None }
     }
 
     /// With a key shared by many connections (a server's), parsed once.
     pub fn shared(key: Arc<SigningKey>) -> AwsLc {
-        AwsLc { rng: SystemRandom::new(), key: Some(key) }
+        AwsLc { rng: SystemRandom::new(), key: Some(key), tickets: None }
+    }
+
+    /// And session tickets sealed with `keys`, which every connection that
+    /// should resume each other's sessions shares.
+    pub fn with_tickets(mut self, keys: Arc<TicketKeys>) -> AwsLc {
+        self.tickets = Some(keys);
+        self
     }
 
     pub fn signing_key(&self) -> Option<&SigningKey> {
@@ -225,5 +370,27 @@ impl Provider for AwsLc {
 
     fn random(&mut self, out: &mut [u8; 32]) {
         self.rng.fill(out).expect("the system's random number generator works");
+    }
+
+    fn tickets(&self) -> bool {
+        self.tickets.is_some()
+    }
+
+    fn seal_ticket(&mut self, state: &[u8], out: &mut Vec<u8>) -> bool {
+        match &self.tickets {
+            Some(t) => t.seal(state, out),
+            None => false,
+        }
+    }
+
+    fn open_ticket(&self, ticket: &[u8], out: &mut Vec<u8>) -> bool {
+        match &self.tickets {
+            Some(t) => t.open(ticket, out),
+            None => false,
+        }
+    }
+
+    fn now(&mut self) -> u64 {
+        unix_now()
     }
 }

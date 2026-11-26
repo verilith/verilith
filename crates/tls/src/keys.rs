@@ -31,6 +31,12 @@ pub const L_EXP: [u8; 10] = [101, 120, 112, 32, 109, 97, 115, 116, 101, 114];
 /// `"res master"`
 pub const L_RES: [u8; 10] = [114, 101, 115, 32, 109, 97, 115, 116, 101, 114];
 
+/// `"res binder"`
+pub const L_RES_BINDER: [u8; 10] = [114, 101, 115, 32, 98, 105, 110, 100, 101, 114];
+
+/// `"resumption"`
+pub const L_RESUMPTION: [u8; 10] = [114, 101, 115, 117, 109, 112, 116, 105, 111, 110];
+
 /// `"key"`
 pub const L_KEY: [u8; 3] = [107, 101, 121];
 
@@ -117,7 +123,7 @@ impl Secret {
     }
 
     /// Zeros, `Hash.length` of them.
-    fn zeros_of(a: HashAlg) -> (r: Secret)
+    pub fn zeros_of(a: HashAlg) -> (r: Secret)
         ensures
             r.wf(),
             r@.len() == hash_len(a),
@@ -364,15 +370,57 @@ fn empty_hash(a: HashAlg) -> (r: Secret)
     Transcript::new(a).hash()
 }
 
-/// The Handshake Secret, from the (EC)DHE shared secret, with no PSK.
-pub fn handshake_secret_x(a: HashAlg, dhe: &[u8]) -> (r: Secret)
+/// The Early Secret, from the PSK (`zeros` for none).
+pub fn early_secret_x(a: HashAlg, psk: &[u8]) -> (r: Secret)
     ensures
         r.wf(),
         r@.len() == hash_len(a),
-        r@ == handshake_secret(a, dhe@),
+        r@ == early_secret(a, psk@),
 {
     let z = Secret::zeros_of(a);
-    let early = hmac_x(a, z.as_slice(), z.as_slice());
+    hmac_x(a, z.as_slice(), psk)
+}
+
+/// The binder_key of a resumption PSK.
+pub fn binder_key_x(a: HashAlg, psk: &[u8]) -> (r: Secret)
+    ensures
+        r.wf(),
+        r@.len() == hash_len(a),
+        r@ == binder_key(a, psk@),
+{
+    let early = early_secret_x(a, psk);
+    let eh = empty_hash(a);
+    proof {
+        assert(L_RES_BINDER@ =~= l_res_binder());
+    }
+    derive_secret_x(a, &early, &L_RES_BINDER, &eh, Ghost(Seq::empty()))
+}
+
+/// The PSK of a NewSessionTicket with `nonce`.
+pub fn ticket_psk_x(a: HashAlg, res_master: &Secret, nonce: &[u8]) -> (r: Secret)
+    requires
+        res_master.wf(),
+        nonce@.len() <= 255,
+    ensures
+        r.wf(),
+        r@.len() == hash_len(a),
+        r@ == ticket_psk(a, res_master@, nonce@),
+{
+    proof {
+        assert(L_RESUMPTION@ =~= l_resumption());
+    }
+    expand_label_x(a, res_master.as_slice(), &L_RESUMPTION, nonce, hash_len_x(a))
+}
+
+/// The Handshake Secret, from the PSK (`zeros` for none) and the (EC)DHE
+/// shared secret.
+pub fn handshake_secret_x(a: HashAlg, psk: &[u8], dhe: &[u8]) -> (r: Secret)
+    ensures
+        r.wf(),
+        r@.len() == hash_len(a),
+        r@ == handshake_secret(a, psk@, dhe@),
+{
+    let early = early_secret_x(a, psk);
     let eh = empty_hash(a);
     let derived = derive_secret_x(a, &early, &L_DERIVED, &eh, Ghost(Seq::empty()));
     proof {
@@ -382,14 +430,14 @@ pub fn handshake_secret_x(a: HashAlg, dhe: &[u8]) -> (r: Secret)
 }
 
 /// The Master Secret, from the Handshake Secret.
-pub fn master_secret_x(a: HashAlg, hs: &Secret, Ghost(dhe): Ghost<Seq<u8>>) -> (r: Secret)
+pub fn master_secret_x(a: HashAlg, hs: &Secret, Ghost(psk): Ghost<Seq<u8>>, Ghost(dhe): Ghost<Seq<u8>>) -> (r: Secret)
     requires
         hs.wf(),
-        hs@ == handshake_secret(a, dhe),
+        hs@ == handshake_secret(a, psk, dhe),
     ensures
         r.wf(),
         r@.len() == hash_len(a),
-        r@ == master_secret(a, dhe),
+        r@ == master_secret(a, psk, dhe),
 {
     let eh = empty_hash(a);
     let derived = derive_secret_x(a, hs, &L_DERIVED, &eh, Ghost(Seq::empty()));
@@ -402,20 +450,20 @@ pub fn master_secret_x(a: HashAlg, hs: &Secret, Ghost(dhe): Ghost<Seq<u8>>) -> (
 
 /// client_ and server_handshake_traffic_secret, given the transcript hash
 /// of ClientHello to ServerHello.
-pub fn hs_traffic_x(a: HashAlg, hs: &Secret, th: &Secret, Ghost(dhe): Ghost<Seq<u8>>, Ghost(messages): Ghost<
+pub fn hs_traffic_x(a: HashAlg, hs: &Secret, th: &Secret, Ghost(psk): Ghost<Seq<u8>>, Ghost(dhe): Ghost<Seq<u8>>, Ghost(messages): Ghost<
     Seq<u8>,
 >) -> (r: (Secret, Secret))
     requires
         hs.wf(),
         th.wf(),
-        hs@ == handshake_secret(a, dhe),
+        hs@ == handshake_secret(a, psk, dhe),
         th@ == hash(a, messages),
         th@.len() <= 255,
     ensures
         r.0.wf() && r.1.wf(),
         r.0@.len() == hash_len(a) && r.1@.len() == hash_len(a),
-        r.0@ == client_hs_traffic(a, dhe, messages),
-        r.1@ == server_hs_traffic(a, dhe, messages),
+        r.0@ == client_hs_traffic(a, psk, dhe, messages),
+        r.1@ == server_hs_traffic(a, psk, dhe, messages),
 {
     let c = derive_secret_x(a, hs, &L_C_HS, th, Ghost(messages));
     let s = derive_secret_x(a, hs, &L_S_HS, th, Ghost(messages));
@@ -429,21 +477,21 @@ pub fn hs_traffic_x(a: HashAlg, hs: &Secret, th: &Secret, Ghost(dhe): Ghost<Seq<
 /// client_ and server_application_traffic_secret_0 and
 /// exporter_master_secret, given the transcript hash of ClientHello to
 /// server Finished.
-pub fn ap_traffic_x(a: HashAlg, ms: &Secret, th: &Secret, Ghost(dhe): Ghost<Seq<u8>>, Ghost(messages): Ghost<
+pub fn ap_traffic_x(a: HashAlg, ms: &Secret, th: &Secret, Ghost(psk): Ghost<Seq<u8>>, Ghost(dhe): Ghost<Seq<u8>>, Ghost(messages): Ghost<
     Seq<u8>,
 >) -> (r: (Secret, Secret, Secret))
     requires
         ms.wf(),
         th.wf(),
-        ms@ == master_secret(a, dhe),
+        ms@ == master_secret(a, psk, dhe),
         th@ == hash(a, messages),
         th@.len() <= 255,
     ensures
         r.0.wf() && r.1.wf() && r.2.wf(),
         r.0@.len() == hash_len(a) && r.1@.len() == hash_len(a) && r.2@.len() == hash_len(a),
-        r.0@ == client_ap_traffic(a, dhe, messages),
-        r.1@ == server_ap_traffic(a, dhe, messages),
-        r.2@ == exporter_master(a, dhe, messages),
+        r.0@ == client_ap_traffic(a, psk, dhe, messages),
+        r.1@ == server_ap_traffic(a, psk, dhe, messages),
+        r.2@ == exporter_master(a, psk, dhe, messages),
 {
     let c = derive_secret_x(a, ms, &L_C_AP, th, Ghost(messages));
     let s = derive_secret_x(a, ms, &L_S_AP, th, Ghost(messages));
@@ -458,19 +506,19 @@ pub fn ap_traffic_x(a: HashAlg, ms: &Secret, th: &Secret, Ghost(dhe): Ghost<Seq<
 
 /// resumption_master_secret, given the transcript hash of ClientHello to
 /// client Finished.
-pub fn resumption_master_x(a: HashAlg, ms: &Secret, th: &Secret, Ghost(dhe): Ghost<Seq<u8>>, Ghost(messages): Ghost<
+pub fn resumption_master_x(a: HashAlg, ms: &Secret, th: &Secret, Ghost(psk): Ghost<Seq<u8>>, Ghost(dhe): Ghost<Seq<u8>>, Ghost(messages): Ghost<
     Seq<u8>,
 >) -> (r: Secret)
     requires
         ms.wf(),
         th.wf(),
-        ms@ == master_secret(a, dhe),
+        ms@ == master_secret(a, psk, dhe),
         th@ == hash(a, messages),
         th@.len() <= 255,
     ensures
         r.wf(),
         r@.len() == hash_len(a),
-        r@ == resumption_master(a, dhe, messages),
+        r@ == resumption_master(a, psk, dhe, messages),
 {
     proof {
         assert(L_RES@ =~= l_res());

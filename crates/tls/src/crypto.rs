@@ -73,6 +73,11 @@ pub uninterp spec fn key_exchange(group: u16, peer: Seq<u8>, ours: Seq<u8>, shar
 /// Whether `sig` is a signature by the server's key with `scheme` of `msg`.
 pub uninterp spec fn signed(scheme: u16, msg: Seq<u8>, sig: Seq<u8>) -> bool;
 
+/// Whether `ticket` is a session ticket this server (its ticket keys)
+/// issued, holding `state`. Sealing tickets, and refusing tickets it did not
+/// issue, is the provider's: an AEAD under keys only the server has.
+pub uninterp spec fn ticket_issued(ticket: Seq<u8>, state: Seq<u8>) -> bool;
+
 /// The cryptography a server needs, and its keys.
 pub trait Provider {
     type Key: AeadKey;
@@ -112,6 +117,27 @@ pub trait Provider {
 
     /// 32 random bytes.
     fn random(&mut self, out: &mut [u8; 32]);
+
+    /// Whether the provider has session ticket keys.
+    fn tickets(&self) -> bool;
+
+    /// Seals `state` into a session ticket appended to `out`.
+    fn seal_ticket(&mut self, state: &[u8], out: &mut Vec<u8>) -> (r: bool)
+        ensures
+            r ==> ticket_issued(final(out)@.skip(old(out)@.len() as int), state@),
+            final(out)@.take(old(out)@.len() as int) == old(out)@,
+            final(out)@.len() <= old(out)@.len() + state@.len() + 64,
+    ;
+
+    /// Opens a session ticket into `out` (empty): `true` only for a ticket
+    /// this server issued, and then `out` is what it holds.
+    fn open_ticket(&self, ticket: &[u8], out: &mut Vec<u8>) -> (r: bool)
+        ensures
+            r ==> ticket_issued(ticket@, final(out)@),
+    ;
+
+    /// Seconds since the Unix epoch, for ticket lifetimes.
+    fn now(&mut self) -> u64;
 }
 
 } // verus!
