@@ -204,6 +204,7 @@ impl<K: AeadKey> Protect<K> {
                 content@,
             ),
             r ==> final(self).seq() == old(self).seq() + 1,
+            r ==> final(out)@.len() == old(out)@.len() + content@.len() + 22,
             !r ==> final(out)@ == old(out)@ && final(self).seq() == old(self).seq(),
             final(self).suite() == old(self).suite(),
             final(self).key() == old(self).key(),
@@ -249,6 +250,158 @@ impl<K: AeadKey> Protect<K> {
             ));
         }
         self.seq = self.seq + 1;
+        true
+    }
+
+    #[inline(always)]
+    pub fn seq_x(&self) -> (r: u64)
+        ensures
+            r == self.seq(),
+    {
+        self.seq
+    }
+
+    /// Appends `data` of type `ct` as protected records of at most 2^14
+    /// bytes of content; `false`, and nothing written, if the sequence
+    /// numbers would run out.
+    pub fn seal_all(&mut self, ct: u8, data: &[u8], out: &mut Vec<u8>) -> (r: bool)
+        requires
+            old(out)@.len() + data@.len() + 22 * (data@.len() / 16384 + 1) + 16384 + 32 <= usize::MAX,
+        ensures
+            r ==> final(out)@ == old(out)@ + seal_chunks(
+                old(self).suite(),
+                old(self).key(),
+                old(self).iv(),
+                old(self).seq(),
+                ct,
+                data@,
+            ),
+            r ==> final(self).seq() == old(self).seq() + chunks(data@.len()),
+            !r ==> final(out)@ == old(out)@ && final(self).seq() == old(self).seq(),
+            r == (old(self).seq() as nat + chunks(data@.len()) < 0xffff_ffff_ffff_ffffu64),
+            final(self).suite() == old(self).suite(),
+            final(self).key() == old(self).key(),
+            final(self).iv() == old(self).iv(),
+    {
+        reveal(seal_chunks);
+        let n = data.len();
+        let k: u64 = if n == 0 { 0 } else { ((n - 1) / 16384 + 1) as u64 };
+        if self.seq >= 0xffff_ffff_ffff_ffffu64 - k {
+            return false;
+        }
+        let ghost o = out@;
+        let ghost seq0 = self.seq;
+        let mut p: usize = 0;
+        assert(data@.skip(0) =~= data@);
+        while p < n
+            invariant
+                p <= n,
+                n == data@.len(),
+                p % 16384 == 0 || p == n,
+                self.suite() == old(self).suite(),
+                self.key() == old(self).key(),
+                self.iv() == old(self).iv(),
+                self.seq() as nat == seq0 as nat + chunks(p as nat),
+                seq0 == old(self).seq(),
+                (seq0 as nat) + k < 0xffff_ffff_ffff_ffffu64,
+                k == chunks(n as nat),
+                out@.len() == o.len() + p + 22 * chunks(p as nat),
+                chunks(p as nat) <= n / 16384 + 1,
+                o.len() + n + 22 * (n / 16384 + 1) + 16384 + 32 <= usize::MAX,
+                o + seal_chunks(self.suite(), self.key(), self.iv(), seq0, ct, data@) == out@
+                    + seal_chunks(
+                    self.suite(),
+                    self.key(),
+                    self.iv(),
+                    self.seq(),
+                    ct,
+                    data@.skip(p as int),
+                ),
+            decreases n - p,
+        {
+            let m = if n - p > 16384 { 16384 } else { n - p };
+            let ghost before = out@;
+            let ghost rest = data@.skip(p as int);
+            proof {
+                assert(chunks(p as nat) < k) by {
+                    if p == 0 {
+                    } else {
+                        assert(p % 16384 == 0);
+                        assert((p - 1) / 16384 + 1 == p / 16384) by (nonlinear_arith)
+                            requires p % 16384 == 0, p > 0;
+                        assert(p / 16384 < (n - 1) / 16384 + 1) by (nonlinear_arith)
+                            requires p < n, p % 16384 == 0;
+                    }
+                }
+                assert(rest.take(m as int) =~= data@.subrange(p as int, (p + m) as int));
+                assert(rest.skip(m as int) =~= data@.skip((p + m) as int));
+            }
+            let ok = self.seal(ct, &data[p..p + m], out);
+            assert(ok);
+            proof {
+                assert(data@.subrange(p as int, (p + m) as int) == rest.take(m as int));
+                assert(out@ == before + seal_record(
+                    self.suite(),
+                    self.key(),
+                    self.iv(),
+                    (self.seq() - 1) as u64,
+                    ct,
+                    rest.take(m as int),
+                ));
+                assert(rest.len() > 0);
+                assert(seal_chunks(self.suite(), self.key(), self.iv(), (self.seq() - 1) as u64, ct, rest)
+                    == seal_record(
+                    self.suite(),
+                    self.key(),
+                    self.iv(),
+                    (self.seq() - 1) as u64,
+                    ct,
+                    rest.take(m as int),
+                ) + seal_chunks(
+                    self.suite(),
+                    self.key(),
+                    self.iv(),
+                    self.seq(),
+                    ct,
+                    data@.skip((p + m) as int),
+                ));
+                vstd::seq_lib::lemma_concat_associative::<u8>(before, seal_record(
+                    self.suite(),
+                    self.key(),
+                    self.iv(),
+                    (self.seq() - 1) as u64,
+                    ct,
+                    rest.take(m as int),
+                ), seal_chunks(
+                    self.suite(),
+                    self.key(),
+                    self.iv(),
+                    self.seq(),
+                    ct,
+                    data@.skip((p + m) as int),
+                ));
+                if p + m < n {
+                    assert(m == 16384);
+                    assert((p + m) % 16384 == 0) by (nonlinear_arith)
+                        requires p % 16384 == 0, m == 16384;
+                    assert(chunks((p + m) as nat) == chunks(p as nat) + 1) by (nonlinear_arith)
+                        requires p % 16384 == 0, m == 16384, p + m > 0;
+                } else {
+                    assert(chunks((p + m) as nat) == chunks(p as nat) + 1) by (nonlinear_arith)
+                        requires p % 16384 == 0 || p == n, p + m == n, m <= 16384, m > 0,
+                            p == 0 || p % 16384 == 0;
+                }
+                assert(chunks(n as nat) <= n / 16384 + 1) by (nonlinear_arith)
+                    requires n > 0;
+                assert(chunks((p + m) as nat) <= chunks(n as nat)) by (nonlinear_arith)
+                    requires p + m <= n, p + m > 0;
+            }
+            p = p + m;
+        }
+        proof {
+            assert(data@.skip(n as int).len() == 0);
+            assert(o + seal_chunks(self.suite(), self.key(), self.iv(), seq0, ct, data@) =~= out@);
+        }
         true
     }
 

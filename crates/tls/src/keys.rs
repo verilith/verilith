@@ -72,6 +72,7 @@ impl Secret {
             self.wf(),
         ensures
             r == self@.len(),
+            r <= 48,
     {
         self.len
     }
@@ -89,7 +90,7 @@ impl Secret {
     }
 
     /// The first `l` bytes of `src`.
-    fn from_slice(src: &[u8], l: usize) -> (r: Secret)
+    pub fn from_slice(src: &[u8], l: usize) -> (r: Secret)
         requires
             l <= src@.len(),
             l <= 48,
@@ -168,6 +169,16 @@ impl Transcript {
         match self {
             Transcript::S256(h) => h.wf(),
             Transcript::S384(h) => h.wf(),
+        }
+    }
+
+    pub fn alg_x(&self) -> (r: HashAlg)
+        ensures
+            r == self.alg(),
+    {
+        match self {
+            Transcript::S256(_) => HashAlg::Sha256,
+            Transcript::S384(_) => HashAlg::Sha384,
         }
     }
 

@@ -29,6 +29,34 @@ pub open spec fn seal_record(suite: u16, key: Seq<u8>, iv: Seq<u8>, seq: u64, ct
     )
 }
 
+/// `data` of type `ct` sent as protected records of at most 2^14 bytes of
+/// content each, the first with sequence number `seq`.
+#[verifier::opaque]
+pub open spec fn seal_chunks(suite: u16, key: Seq<u8>, iv: Seq<u8>, seq: u64, ct: u8, data: Seq<u8>) -> Seq<
+    u8,
+>
+    decreases data.len(),
+{
+    if data.len() == 0 {
+        Seq::empty()
+    } else {
+        let n: int = if data.len() > 16384 { 16384 } else { data.len() as int };
+        seal_record(suite, key, iv, seq, ct, data.take(n)) + seal_chunks(
+            suite,
+            key,
+            iv,
+            (seq + 1) as u64,
+            ct,
+            data.skip(n),
+        )
+    }
+}
+
+/// How many records `seal_chunks` makes of `n` bytes.
+pub open spec fn chunks(n: nat) -> nat {
+    if n == 0 { 0 } else { ((n - 1) / 16384 + 1) as nat }
+}
+
 /// `TLSInnerPlaintext` without its padding: the last non-zero byte of
 /// `inner[..n]` is the content type, and what is before it the content.
 pub open spec fn unpad(inner: Seq<u8>, n: nat) -> Option<(u8, Seq<u8>)>

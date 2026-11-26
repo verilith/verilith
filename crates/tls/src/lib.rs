@@ -4,12 +4,15 @@ extern crate alloc;
 
 #[doc(hidden)]
 pub mod seen;
+pub mod server;
 pub mod crypto;
 pub mod hello;
 pub mod protect;
 pub mod keys;
+pub mod messages;
 pub mod negotiate;
 pub mod record;
 pub mod spec;
 pub mod spec_keys;
 pub mod spec_record;
+pub mod spec_server;
