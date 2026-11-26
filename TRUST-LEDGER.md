@@ -39,7 +39,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | lz4 |  |  |  |  |  |  | 1 |
 | png | 2 |  |  |  |  |  | 7 |
 | regex | 7 |  |  |  |  |  | 2 |
-| sha2 | 9 |  |  |  |  |  | 3 |
+| sha2 | 34 |  |  |  |  |  | 3 |
 | simd | 362 | 6 | 274 | 4 |  |  | 3 |
 | snappy |  |  |  |  |  |  | 1 |
 | sync | 43 | 11 |  | 1 | 16 | 9 | 2 |
@@ -54,7 +54,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  | 2 |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **639** | **35** | **274** | **5** | **34** | **10** | **104** |
+| **total** | **664** | **35** | **274** | **5** | **34** | **10** | **104** |
 
 ## Items
 
@@ -176,11 +176,13 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### sha2
 
+- `crates/sha2/src/armv8.rs`: external_body: `has_sha2`, `has_sha512`, `vsha256hq`, `vsha256h2q`, `vsha256su0q`, `vsha256su1q`, `vsha512hq`, `vsha512h2q`, `vsha512su0q`, `vsha512su1q`, `vrev32q_u8`, `vrev64q_u8`, `vaddq_u64`, `vld1q_u64_at`, `vst1q_u64_at`, `compress_blocks`, `compress512_blocks`
 - `crates/sha2/src/avx2.rs`: external_body: `barrier`, `schedule512x2`, `schedule256x2`
 - `crates/sha2/src/capi.rs`: plain Rust
-- `crates/sha2/src/cpu.rs`: external_body: `compress_blocks`, `compress512_blocks`, `pair256_avx2`, `pair_avx2`
+- `crates/sha2/src/cpu.rs`: external_body: `bmi2_256`, `bmi2_512`, `avx2_256`, `avx2_512`, `pair256_avx2`, `pair_avx2`
 - `crates/sha2/src/digest_impls.rs`: plain Rust
 - `crates/sha2/src/lib.rs`: plain Rust
+- `crates/sha2/src/shani.rs`: external_body: `has_shani`, `sha256rnds2`, `sha256msg1`, `sha256msg2`, `blend_epi16`, `compress_blocks`
 - `crates/sha2/src/store.rs`: external_body: `put_u32_be`, `put_u64_be`
 
 ### simd

@@ -85,7 +85,7 @@ mod x86 {
                 for _ in 0..1000 {
                     let (x, y) = (r.u8x16(), r.u8x16());
                     let got: [u8; 16] = unsafe {
-                        core::mem::transmute(shani::blend_epi16::<$imm>(core::mem::transmute(x), core::mem::transmute(y)))
+                        core::mem::transmute(shani::blend_epi16::<$imm>(core::mem::transmute::<[u8; 16], __m128i>(x), core::mem::transmute::<[u8; 16], __m128i>(y)))
                     };
                     assert_eq!(got, isa_ref::blend16(x, y, $imm), "pblendw {:#x}", $imm);
                 }
