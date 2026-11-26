@@ -127,6 +127,17 @@ fn http10_and_close() {
     assert_eq!(count(&out, b"HTTP/1.1 200"), 1);
     let out = run(b"GET /a HTTP/1.0\r\nConnection: keep-alive\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n", &[]);
     assert_eq!(count(&out, b"HTTP/1.1 200"), 2);
+    // Options are list elements, any case, OWS trimmed, on any Connection line.
+    for c in ["Connection: keep-alive, CLOSE", "Connection: ,  Close  ,", "X: 1\r\nconnection: upgrade\r\nCONNECTION: close"] {
+        let req = format!("GET /a HTTP/1.1\r\nHost: x\r\n{c}\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n");
+        assert_eq!(count(&run(req.as_bytes(), &[]), b"HTTP/1.1 200"), 1, "{c}");
+    }
+    for c in ["Connection: closed", "Connection: keep-alive", "Connection: close-ish", "X-Connection: close"] {
+        let req = format!("GET /a HTTP/1.1\r\nHost: x\r\n{c}\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n");
+        assert_eq!(count(&run(req.as_bytes(), &[]), b"HTTP/1.1 200"), 2, "{c}");
+    }
+    let out = run(b"GET /a HTTP/1.0\r\nConnection: Keep-Alive\r\n\r\nGET /b HTTP/1.0\r\n\r\nGET /c HTTP/1.1\r\n\r\n", &[]);
+    assert_eq!(count(&out, b"HTTP/1.1 200"), 2);
 }
 
 #[test]

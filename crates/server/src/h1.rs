@@ -216,7 +216,7 @@ impl Conn {
         let Phase::Ready { hd, body } = self.core.phase else { return };
         let c = &self.core;
         let buf = &c.rbuf[c.start..c.end];
-        let keep = keep_alive(hd.minor, buf, &c.headers);
+        let keep = c.ready_persists();
         let method = &buf[hd.method.start..hd.method.end];
         let request = Request {
             method,
@@ -443,25 +443,6 @@ impl Out {
     }
 }
 
-/// RFC 9112 §9.3: HTTP/1.1 persists unless `Connection: close`; HTTP/1.0
-/// persists only with `Connection: keep-alive`.
-fn keep_alive(minor: u8, buf: &[u8], headers: &[Header]) -> bool {
-    let mut close = false;
-    let mut keep = false;
-    for hd in headers {
-        if hd.name.of(buf).eq_ignore_ascii_case(b"connection") {
-            for opt in hd.value.of(buf).split(|&c| c == b',') {
-                let o = opt.trim_ascii();
-                if o.eq_ignore_ascii_case(b"close") {
-                    close = true;
-                } else if o.eq_ignore_ascii_case(b"keep-alive") {
-                    keep = true;
-                }
-            }
-        }
-    }
-    if close { false } else if minor >= 1 { true } else { keep }
-}
 
 /// The reason phrase the server sends for a status code.
 pub fn reason(status: u16) -> &'static [u8] {

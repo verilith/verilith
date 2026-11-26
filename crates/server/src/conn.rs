@@ -30,6 +30,9 @@ use verilith_http::parse::{hdr_ok, hdrs_ok, headers_view};
 use verilith_http::parse::{request_fx, request_resume, Header, Out, RequestLine, Span};
 use verilith_http::spec::*;
 use vstd::slice::slice_subrange;
+use crate::persist::persists_exec;
+#[cfg(verus_keep_ghost)]
+use crate::persist::{lemma_conn_frame, persists};
 
 verus! {
 
@@ -1034,8 +1037,45 @@ impl Core {
         }
     }
 
+    /// Whether the ready request lets the connection carry another
+    /// (RFC 9112 §9.3): exactly `persist::persists` of it.
+    pub fn ready_persists(&self) -> (r: bool)
+        requires
+            self.inv(),
+            self.phase is Ready,
+        ensures
+            r == persists(self.rest(), first(self.rest(), self.max()).unwrap().req),
+    {
+        let hd = match self.phase {
+            Phase::Ready { hd, body: _ } => hd,
+            _ => { return false; },
+        };
+        let w = slice_subrange(self.rbuf.as_slice(), self.start, self.end);
+        let r = persists_exec(w, self.headers.as_slice(), hd.minor);
+        proof {
+            let e = hd.head_len as int;
+            let hs = headers_view(self.headers@);
+            assert(w@ == self.win());
+            assert forall|j: int| 0 <= j < hs.len() implies {
+                &&& 0 <= #[trigger] hs[j].name.start <= hs[j].name.end <= e
+                &&& 0 <= hs[j].value.start <= hs[j].value.end <= e
+            } by {
+                assert(hdr_ok(self.headers@[j], e));
+            }
+            assert(hdrs_ok(self.headers@, w@.len() as int)) by {
+                assert forall|j: int| 0 <= j < self.headers@.len() implies hdr_ok(#[trigger] self.headers@[j], w@.len() as int) by {
+                    assert(hdr_ok(self.headers@[j], e));
+                }
+            }
+            lemma_conn_frame(self.win(), self.rest(), hs, e);
+        }
+        r
+    }
+
     /// The handler has answered the ready request: move past it, to the
-    /// next request if `keep`, else to `Closed`.
+    /// next request if `keep` and the request persists (RFC 9112 §9.3),
+    /// else to `Closed`. The check is here, not in the caller: whatever
+    /// `h1.rs` passes, a request that does not persist ends the connection.
     pub fn done(&mut self, keep: bool)
         requires
             old(self).inv(),
@@ -1045,9 +1085,10 @@ impl Core {
             final(self).stream@ == old(self).stream@,
             final(self).rbuf@.len() == old(self).rbuf@.len(),
             final(self).log@ == old(self).log@.push(first(old(self).rest(), old(self).max()).unwrap()),
-            keep ==> final(self).phase is Head,
-            !keep ==> final(self).phase is Closed,
+            final(self).phase is Head <==> (keep && persists(old(self).rest(), first(old(self).rest(), old(self).max()).unwrap().req)),
+            !(final(self).phase is Head) ==> final(self).phase is Closed,
     {
+        let keep = keep && self.ready_persists();
         let (hd, body) = match self.phase {
             Phase::Ready { hd, body } => (hd, body),
             _ => { return; },
