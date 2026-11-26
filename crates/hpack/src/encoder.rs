@@ -89,6 +89,21 @@ proof fn lemma_le_eq(a: Seq<u8>, b: Seq<u8>, i: int, n: nat)
     }
 }
 
+/// The little-endian value of the four bytes of `b` at `i`, built so
+/// that the compiler makes it one 32-bit load.
+#[inline(always)]
+fn word4(b: &[u8], i: usize) -> (r: u32)
+    requires
+        i + 4 <= b@.len(),
+    ensures
+        r as nat == le_bytes(b@, i as int, 4),
+{
+    proof {
+        reveal_with_fuel(le_bytes, 5);
+    }
+    b[i] as u32 + 256 * (b[i + 1] as u32 + 256 * (b[i + 2] as u32 + 256 * (b[i + 3] as u32)))
+}
+
 /// `a == b`, eight bytes at a time (the same code as verilith-qpack's).
 #[inline(always)]
 pub fn bytes_eq(a: &[u8], b: &[u8]) -> (r: bool)
@@ -115,6 +130,30 @@ pub fn bytes_eq(a: &[u8], b: &[u8]) -> (r: bool)
             lemma_le_eq(a@, b@, i as int, 8);
         }
         i = i + 8;
+    }
+    if n >= 8 {
+        // The last eight bytes, overlapping the words already compared:
+        // one load in place of up to seven byte compares.
+        if load_u64_le(a, n - 8) != load_u64_le(b, n - 8) {
+            return false;
+        }
+        proof {
+            lemma_le_eq(a@, b@, n - 8, 8);
+            assert(a@ =~= b@);
+        }
+        return true;
+    }
+    if n >= 4 {
+        // Four to seven bytes: the first four and the last four.
+        if word4(a, 0) != word4(b, 0) || word4(a, n - 4) != word4(b, n - 4) {
+            return false;
+        }
+        proof {
+            lemma_le_eq(a@, b@, 0, 4);
+            lemma_le_eq(a@, b@, n - 4, 4);
+            assert(a@ =~= b@);
+        }
+        return true;
     }
     while i < n
         invariant

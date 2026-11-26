@@ -8,6 +8,7 @@
 //! stream states (`flow`, `streams`) and the anti-amplification limit
 //! (`amplification`). This file connects them.
 use crate::buf::{Assembler, SendBuf};
+use bytes::Bytes;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use verilith_quic::amplification::Budget;
@@ -1270,6 +1271,33 @@ impl<P: Provider> Connection<P> {
             return Err(StreamError::Blocked);
         }
         snd.buf.write(&data[..n]);
+        if n < data.len() {
+            snd.want_writable = true;
+        }
+        self.buffered += n;
+        queue!(self, id);
+        Ok(n)
+    }
+
+    /// [`Connection::write`] for a shared buffer: what of `data` fits is
+    /// kept as it is, not copied, when it is large ([`crate::buf::SHARE_MIN`]).
+    /// The same send-buffer limit applies: returns how many bytes were taken.
+    pub fn write_bytes(&mut self, id: u64, data: &Bytes) -> Result<usize, StreamError> {
+        let room = self.cfg.send_buffer.saturating_sub(self.buffered);
+        let Some(Stream { send: Some(snd), .. }) = self.streams.get_mut(&id) else { return Err(StreamError::Unknown) };
+        if let Some(code) = snd.stopped {
+            return Err(StreamError::Reset(code));
+        }
+        if snd.reset.is_some() || snd.buf.fin {
+            return Err(StreamError::Closed);
+        }
+        let n = data.len().min(room);
+        trace(format_args!("write {id} {n}"));
+        if n == 0 && !data.is_empty() {
+            snd.want_writable = true;
+            return Err(StreamError::Blocked);
+        }
+        snd.buf.write_bytes(data.slice(..n));
         if n < data.len() {
             snd.want_writable = true;
         }

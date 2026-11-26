@@ -27,6 +27,8 @@
 //! the peer chooses to send on them.
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
+
+type IdHasher = std::hash::BuildHasherDefault<crate::h2::IdHash>;
 use std::hash::Hash;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
@@ -357,7 +359,8 @@ impl Quic for vq::Connection<AwsLc> {
     fn write(&mut self, id: u64, out: &mut [Bytes]) -> Result<(usize, usize), bool> {
         let (mut chunks, mut bytes) = (0, 0);
         for b in out.iter_mut() {
-            match vq::Connection::write(self, id, b) {
+            // Shared, not copied, when large: the response body.
+            match vq::Connection::write_bytes(self, id, b) {
                 Ok(n) => {
                     bytes += n;
                     if n < b.len() {
@@ -461,8 +464,10 @@ struct App<Id> {
     seen: UniSeen,
     /// Our control stream, once opened.
     ctrl: Option<Id>,
-    uni: HashMap<Id, Uni>,
-    reqs: HashMap<Id, Box<Req>>,
+    /// Keyed by stream ID with h2's multiply-and-fold hash: SipHash
+    /// cost 2% of the CPU in h3-plaintext.
+    uni: HashMap<Id, Uni, IdHasher>,
+    reqs: HashMap<Id, Box<Req>, IdHasher>,
     pool: Vec<Box<Req>>,
     /// Scratch for decoded field lines.
     lines: Fields,
@@ -481,8 +486,8 @@ impl<Id> App<Id> {
             enc: Encoder::new(0, 0, 0).expect("QPACK encoder"),
             seen: UniSeen { control: false, encoder: false, decoder: false },
             ctrl: None,
-            uni: HashMap::new(),
-            reqs: HashMap::new(),
+            uni: HashMap::default(),
+            reqs: HashMap::default(),
             pool: Vec::new(),
             lines: Fields::new(),
             section: Vec::new(),
@@ -1058,7 +1063,7 @@ fn dispatch<Id: Copy + Eq + Hash + Into<u64>, H: Handler + ?Sized>(c: &mut App<I
     reply.status = 0;
     reply.sent_headers = false;
     reply.off = 0;
-    let mut scratch = Out::new();
+    let mut scratch = Out::empty();
     let mut res = Response { out: &mut scratch, ctx, sent: false, close: false, head: method == b"HEAD", h2: Some(&mut reply) };
     if req.too_big {
         res.error(413);

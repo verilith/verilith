@@ -308,6 +308,13 @@ impl Out {
         Out { buf: Vec::with_capacity(4096), segs: VecDeque::new(), pos: 0, seg_off: 0, queued: 0 }
     }
 
+    /// An `Out` that has allocated nothing: for a response that writes
+    /// elsewhere (HTTP/2 and HTTP/3 replies), so a request costs no
+    /// allocation for it.
+    pub(crate) fn empty() -> Out {
+        Out { buf: Vec::new(), segs: VecDeque::new(), pos: 0, seg_off: 0, queued: 0 }
+    }
+
     pub(crate) fn clear(&mut self) {
         self.buf.clear();
         self.segs.clear();
@@ -656,7 +663,14 @@ impl<'a> Response<'a> {
             return;
         }
         match self.h2.as_deref_mut() {
-            Some(r) => r.body = crate::h2::ReplyBody::Owned(body.to_vec()),
+            // A reused reply keeps its owned body's buffer.
+            Some(r) => match &mut r.body {
+                crate::h2::ReplyBody::Owned(v) => {
+                    v.clear();
+                    v.extend_from_slice(body);
+                }
+                b => *b = crate::h2::ReplyBody::Owned(body.to_vec()),
+            },
             None => self.out.extend(body),
         }
     }
