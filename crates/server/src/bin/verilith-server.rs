@@ -18,7 +18,7 @@ use std::sync::Arc;
 #[allow(unused_imports)]
 use vstd::prelude::*;
 #[cfg(not(verus_keep_ghost))]
-use verilith_server::{serve, Config, Field, Request, Response};
+use verilith_server::{serve, Config, Field, Fields, Request, Response};
 
 #[cfg(not(verus_keep_ghost))]
 fn arg(args: &[String], k: &str) -> Option<String> {
@@ -29,7 +29,7 @@ fn arg(args: &[String], k: &str) -> Option<String> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--protocols") {
-        println!("http");
+        println!("http h2c");
         return;
     }
     let mut files: HashMap<Vec<u8>, Arc<[u8]>> = HashMap::new();
@@ -44,16 +44,19 @@ fn main() {
     }
     let cfg = Config {
         port: arg(&args, "--http").map_or(8080, |p| p.parse().unwrap()),
+        h2c_port: arg(&args, "--h2c").map(|p| p.parse().unwrap()),
         threads: arg(&args, "--threads").map_or(0, |t| t.parse().unwrap()),
         ..Config::default()
     };
     let files = Arc::new(files);
+    let text = Fields::new(&[Field { name: b"Content-Type", value: b"text/plain" }]).unwrap();
+    let octet = Fields::new(&[Field { name: b"Content-Type", value: b"application/octet-stream" }]).unwrap();
     let h = move |req: &Request, res: &mut Response| {
         let path = req.path();
         if path == b"/plaintext" {
-            let _ = res.send(200, &[Field { name: b"Content-Type", value: b"text/plain" }], b"Hello, World!");
+            let _ = res.send_prepared(200, &text, b"Hello, World!");
         } else if let Some(b) = files.get(path) {
-            let _ = res.send_shared(200, &[Field { name: b"Content-Type", value: b"application/octet-stream" }], b);
+            let _ = res.send_shared_prepared(200, &octet, b);
         } else {
             res.error(404);
         }

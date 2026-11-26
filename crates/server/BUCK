@@ -15,6 +15,8 @@ verus_library(
     vstd = "//third-party:vstd-alloc-std",
     deps = [
         "//crates/core:core",
+        "//crates/h2:h2",
+        "//crates/hpack:hpack",
         "//crates/http:http",
     ],
     visibility = ["PUBLIC"],

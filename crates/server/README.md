@@ -4,8 +4,9 @@ A formally verified HTTP server, built from the Verilith parsers, aiming
 for nginx- and h2o-class speed. The plan, with the theorems still to come,
 is in [DESIGN.md](DESIGN.md). This README describes what exists today.
 
-**Status: milestone 2 of the design, HTTP/1.1 only.** HTTP/2, TLS and
-static files from disk are next. The API will change.
+**Status: milestones 2 and 3 of the design: HTTP/1.1, and HTTP/2 over
+cleartext with prior knowledge (h2c, `--h2c PORT`).** TLS (so h2 by ALPN)
+and static files from disk are next. The API will change.
 
 ```rust,no_run
 use std::sync::Arc;
@@ -38,7 +39,7 @@ worker and get a zero-copy view of the request.
 
 ## What is proven
 
-`scripts/verify.sh` (Verus): 45 verified, 0 errors.
+`scripts/verify.sh` (Verus): 48 verified, 0 errors.
 
 - **Responses parse back exactly** (`respond::theorem_head_parses`). For
   any status, reason phrase, field lines and framing that pass the checks
@@ -79,6 +80,15 @@ deviations reads the same head end and framing), and the chunked decoder.
   (CL+TE, differing Content-Lengths, bare LF in chunks, obsolete folding)
   get one 400 and a closed connection. Verifying it is the next proof
   milestone in DESIGN.md.
+- **The HTTP/2 engine** (`h2.rs`): stream states, flow control, SETTINGS,
+  PING/GOAWAY and the control-frame flood limit. It only reads frames
+  through verilith-h2's verified parser and header blocks through
+  verilith-hpack's verified decoder, and it writes frames with verilith-h2's
+  serializer. Responses are HPACK literals without indexing for now; the
+  verified HPACK encoder is next. Tested in `tests/h2.rs`: every split of a
+  request stream gives the same responses, read back with the verified
+  parser and decoder; DATA stops at the peer's window; protocol errors and
+  a PING flood end in GOAWAY.
 - **The event loop and the OS shim** (`worker.rs`, `sys/`): trusted, as
   in every server. See [TRUST.md](TRUST.md).
 - `Connection` and `Expect` handling, the `Date` formatter, and the
@@ -106,6 +116,10 @@ per server CPU-second, the figure least disturbed by a shared machine:
 Since that run, bodies of 8 KiB and more are written from the shared
 buffer by `writev` instead of being copied (`Response::send_shared`):
 `h1-static-64k` in a quick run is 119k (70k) against nginx's 124k (69k).
+HTTP/2 over cleartext (`h2c-plaintext`, h2load, 64 connections, 32
+streams each), in a quick run: verilith-server **1.50M** req/s (867k per
+CPU-second), h2o 527k (269k), nginx 315k (159k), hyper 259k (140k).
+
 Still behind: nginx's `sendfile` on large files, and connection setup in
 `h1-close`, where verilith-server uses its CPU most efficiently but leaves
 some idle. Both are next. nginx's low pipelined number is how it works:
