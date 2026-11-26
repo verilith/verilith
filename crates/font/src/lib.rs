@@ -52,6 +52,8 @@ pub mod spec_cs;
 #[doc(hidden)]
 pub mod spec_layout;
 #[doc(hidden)]
+pub mod spec_same;
+#[doc(hidden)]
 pub mod tables;
 #[doc(hidden)]
 pub mod woff2;
