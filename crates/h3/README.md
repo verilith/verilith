@@ -110,7 +110,10 @@ The proofs show:
   every frame `f` that can be sent (`lemma_frame_rt`). Through the reader,
   an encoded frame is one unit that yields exactly `f`'s event
   (`lemma_unit_rt`), unless an ID rule refuses it. The varint encoder is
-  the shortest encoding (RFC 9000 §16).
+  the shortest encoding (RFC 9000 §16). The varint reader and writer are
+  verilith-core's (`verilith_core::varint`, shared with verilith-quic);
+  `varint.rs` proves they compute this crate's `var_dec` and `var_enc`
+  (`lemma_var_core`, `lemma_enc_core`).
 - No panics, overflows or out-of-bounds accesses, in all of the above. The
   public writers check their arguments and room at run time, so plain Rust
   callers cannot reach the unchecked `put_*` writers that verified callers
