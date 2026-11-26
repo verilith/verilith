@@ -43,7 +43,7 @@ worker and get a zero-copy view of the request.
 
 ## What is proven
 
-`scripts/verify.sh` (Verus): 113 verified, 0 errors.
+`scripts/verify.sh` (Verus): 129 verified, 0 errors.
 
 - **Requests are exactly the specification's, in order** (`conn.rs`,
   the invariant of `Core`). `first` is the request at the front of a byte
@@ -57,6 +57,13 @@ worker and get a zero-copy view of the request.
   where a body ends, including chunked bodies decoded in place across
   reads and buffer moves. Request smuggling and desynchronization within a
   connection are ruled out by the theorem.
+- **Persistence is RFC 9112 §9.3's** (`persist.rs`, `Core::done`). A
+  request persists unless a `Connection` field lists `close`; an
+  HTTP/1.0 request only if one lists `keep-alive`; options are the list's
+  elements, OWS trimmed, in any case, on any number of Connection lines.
+  `persists_exec` computes that exactly, and `Core::done` calls it
+  itself: the core reads a next request only if the one answered
+  persists, whatever the plain Rust around it asks.
 - **Responses parse back exactly** (`respond::theorem_head_parses`). For
   any status, reason phrase, field lines and framing that pass the checks
   in `respond.rs`, the head `write_head` writes, followed by any bytes at
@@ -103,10 +110,10 @@ deviations reads the same head end and framing), and the chunked decoder.
 
 ## What is not proven yet
 
-- **Persistence and response order** (`h1.rs`): when to close (RFC 9112
-  §9.3: `Connection: close`, HTTP/1.0 without keep-alive, a handler's
-  choice) and that responses are queued in request order. Plain Rust
-  around the verified core; tested in `tests/h1.rs`.
+- **Response order** (`h1.rs`): that each request's response is queued
+  once, in request order, and that a closing response says
+  `Connection: close`. Plain Rust around the verified core (one handler
+  call per request the core hands out); tested in `tests/h1.rs`.
 - **The HTTP/2 engine** (`h2.rs`): stream states, flow control, SETTINGS,
   PING/GOAWAY and the control-frame flood limit. It only reads frames
   through verilith-h2's verified parser and header blocks through

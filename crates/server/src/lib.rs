@@ -12,6 +12,7 @@ pub mod respond;
 pub mod conn;
 pub mod path;
 pub mod range;
+pub mod persist;
 
 #[cfg(not(verus_keep_ghost))]
 pub mod date;
