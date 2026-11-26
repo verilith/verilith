@@ -1,6 +1,8 @@
 //! String literals (RFC 9204 §4.1.2): framing (`end`) and decoding
 //! (`read`), verified against `spec::str_end` and `spec::str_dec`.
-use crate::integer::{self, IntE, P2, lemma_pows};
+use crate::integer::{self, IntE, P2};
+#[cfg(verus_only)]
+use crate::integer::lemma_pows;
 use crate::spec::*;
 use verilith_hpack::huffman;
 use vstd::prelude::*;

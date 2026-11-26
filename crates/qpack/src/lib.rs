@@ -24,3 +24,7 @@ global size_of usize == 8;
 global size_of usize == 4;
 
 } // verus!
+
+pub use decoder::Decoder;
+pub use fields::Fields;
+pub use section::Res;

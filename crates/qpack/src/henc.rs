@@ -8,9 +8,12 @@
 //! `hbits` its length. The round trip rests on the code being canonical
 //! and prefix-free, which `check` verifies at run time against the RFC
 //! table, as `verilith_hpack::huffman::check` does for the decoder.
+#[cfg(verus_only)]
 use verilith_hpack::bits::*;
 use verilith_hpack::htables::*;
+#[cfg(verus_only)]
 use verilith_hpack::huffman::{layout_ok, lemma_match};
+#[cfg(verus_only)]
 use verilith_hpack::spec::{code, hcode, hdec, hfind, hlen, hmatch, hsym, pow2_8};
 #[cfg(verus_only)]
 use vstd::arithmetic::div_mod::*;
