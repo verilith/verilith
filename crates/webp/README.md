@@ -104,8 +104,9 @@ it only after `parse_headers` said lossy.
 
 Two things about that theorem. The specification filters each macroblock row right after reconstructing it, as the
 decoder does, rather than the whole frame at the end; the two are the same because prediction reads only unfiltered
-copies, but that equivalence is argued, not proven. And `frame_solid` is there because libwebp decides a macroblock's
-inner-edge filtering from its per-block transform selectors; the specification says "it is `B_PRED` or has a nonzero
+copies, and `vp8order::lemma_vp8_frame_filter_order` proves it: reconstructing every row with no filter, then
+filtering the whole frame macroblock by macroblock in raster order (`frame_unfiltered`, `lf_frame`), gives
+`vp8_frame`'s planes. And `frame_solid` is there because libwebp decides a macroblock's inner-edge filtering from its per-block transform selectors; the specification says "it is `B_PRED` or has a nonzero
 coefficient", and the hypothesis excludes the blocks where the selectors and the coefficients could disagree
 (explicit zeros past a block's second position).
 
