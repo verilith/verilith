@@ -4,12 +4,14 @@ The QUIC version 1 (RFC 9000) wire format and transport state machines,
 written in Rust and proven correct with
 [Verus](https://github.com/verus-lang/verus): packet headers, packet
 numbers, all twenty frame types, transport parameters, flow control,
-stream IDs and stream states, and the anti-amplification limit. It is
+stream IDs and stream states, the anti-amplification limit, and loss
+recovery and congestion control (RFC 9002). It is
 sans-I/O and borrows from the caller's buffers: parsing allocates nothing.
 
-It is the part of a QUIC stack that reads bytes from the network. The
-cryptography (packet and header protection, TLS 1.3), loss recovery and
-congestion control are not part of it; in Verilith's HTTP/3 server they
+It is the part of a QUIC stack that reads bytes from the network and
+decides what to send. The TLS 1.3 handshake for QUIC (RFC 9001) is in
+`verilith-tls` (`verilith_tls::quic`); packet protection and the
+connection itself are not here yet, and in Verilith's HTTP/3 server they
 stay in quinn-proto, trusted.
 
 ## What is proven
@@ -72,6 +74,42 @@ proofs show, with no panics and no unproven arithmetic anywhere:
   the RFC's sentence: before the address is validated, the bytes sent are
   at most three times the bytes received, after any sequence of calls.
 
+Loss recovery (RFC 9002), for one packet number space each:
+
+- **Sent packets** (§2, §6, `sent`): `Sent` keeps every packet sent and
+  not yet acknowledged or declared lost, and its count of bytes in flight
+  is always exactly the sum over in-flight packets still outstanding.
+  `on_ack` rejects an ACK of a packet number never sent
+  (PROTOCOL_VIOLATION) and otherwise moves exactly the packets in the
+  ACK's ranges that were outstanding to acknowledged, each once, reporting
+  the largest newly acknowledged for the RTT sample (§5.1).
+  `detect_lost` declares lost exactly the outstanding packets sent before
+  the largest acknowledged with three or more acknowledged packets after
+  them (kPacketThreshold) or sent more than the loss delay ago (§6.1), and
+  returns the earliest time another would be (the loss timer, §6.1.2).
+  It reports persistent congestion only for two ack-eliciting packets lost
+  in that call, sent at least the given duration apart, with no packet
+  between them acknowledged (§7.6.2).
+- **RTT** (§5, `rtt`): `Rtt::update` computes `spec::rtt_next`, RFC
+  9002's smoothed_rtt, rttvar and min_rtt over whole microseconds, with
+  the ACK delay capped at max_ack_delay once the handshake is confirmed
+  and never subtracted below min_rtt; `loss_delay`, `pto` and
+  `persistent` are §6.1.2's, §6.2.1's and §7.6.1's formulas.
+- **Congestion control** (§7, Appendix B, `cc`): NewReno, proven to follow
+  the appendix's transitions, with the window never below kMinimumWindow
+  (two datagrams). A loss or ECN-CE for a packet sent before the current
+  recovery period began changes nothing, so the window is reduced at most
+  once per period, and acknowledgments of such packets do not grow it.
+  `can_send` is exactly `bytes_in_flight + size <= cwnd`.
+- **Received packets** (RFC 9000 §12.3, §13.2, `recv`): `Received`
+  tracks the packet numbers received in at most 32 ranges. A number
+  received before is always reported as a duplicate, and the ranges hold
+  only numbers that were received, so the ACK frame `ack_fields` builds
+  acknowledges nothing else (§13.1); its (Gap, ACK Range Length) pairs
+  decode, through the same `frame::AckRanges` a peer uses, back to
+  exactly those ranges. When a 33rd range is needed the oldest is dropped
+  and everything below it is treated as a duplicate from then on.
+
 Every loop in a parser consumes input, so parsing is linear in the input;
 the PADDING scan reads eight bytes at a time.
 
@@ -93,7 +131,12 @@ version 2 (RFC 9369) headers are reported as another version.
 
 `cargo test` runs RFC 9000's Appendix A examples, and round trips of
 random frames, headers and transport parameters through the encoders and
-parsers.
+parsers. `tests/recovery.rs` runs a sender's `Sent` and a receiver's
+`Received` over a lossy, reordering path for 39 seeds, with every ACK
+frame encoded and parsed in between, and checks that only received
+packets are acknowledged, no packet is acknowledged or lost twice, and
+the bytes in flight match a model; and RFC 9002's arithmetic on known
+values.
 
 `bench/` compares verilith-quic with quinn-proto 0.11.19 and quiche
 0.24.9 (`bench/setup.sh` copies them from crates.io and makes their frame
