@@ -27,16 +27,16 @@ not occur in any crate's `src/` (the script fails if one appears).
 |---|---:|---:|---:|---:|---:|---:|---:|
 | archive | 2 |  |  |  |  |  | 3 |
 | bind |  |  |  |  |  |  | 2 |
-| brotli | 2 |  |  |  | 1 |  | 4 |
+| brotli | 1 |  |  |  |  |  | 4 |
 | core | 87 | 5 |  |  |  |  | 1 |
 | dns |  |  |  |  |  |  | 6 |
 | font |  |  |  |  |  |  | 1 |
 | gif | 1 |  |  |  |  |  | 2 |
 | h2 |  |  |  |  |  |  | 1 |
-| hpack | 2 |  |  |  |  |  | 3 |
+| hpack | 4 |  |  |  |  |  | 3 |
 | http |  |  |  |  |  |  | 8 |
 | jpeg | 2 |  |  |  |  |  | 3 |
-| json | 26 |  |  |  | 2 |  | 6 |
+| json | 26 |  |  |  |  |  | 6 |
 | lz4 |  |  |  |  |  |  | 1 |
 | png | 2 |  |  |  |  |  | 7 |
 | regex | 1 |  |  |  |  |  | 3 |
@@ -47,6 +47,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | sync | 45 | 11 |  | 1 | 16 | 10 | 2 |
 | text | 18 | 13 |  |  |  |  | 9 |
 | tiff | 1 |  |  |  |  |  | 2 |
+| tls |  |  |  |  |  |  | 1 |
 | url | 1 |  |  |  |  |  | 5 |
 | verilith |  |  |  |  |  |  | 1 |
 | wasm | 33 |  |  |  |  | 2 | 4 |
@@ -54,9 +55,9 @@ not occur in any crate's `src/` (the script fails if one appears).
 | x509 |  |  |  |  |  |  | 6 |
 | xml | 9 |  |  |  |  |  | 12 |
 | xxhash |  |  |  |  |  |  |  |
-| zlib | 4 |  |  |  | 2 |  | 3 |
+| zlib | 4 |  |  |  |  |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **651** | **35** | **274** | **5** | **21** | **12** | **115** |
+| **total** | **652** | **35** | **274** | **5** | **16** | **12** | **116** |
 
 ## Items
 
@@ -80,7 +81,6 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/brotli/src/dict.rs`: external_body: `dict_bytes`
 - `crates/brotli/src/huffman.rs`: plain Rust
 - `crates/brotli/src/lib.rs`: plain Rust
-- `crates/brotli/src/stream.rs`: external_body: `open`; 1 assume_new
 
 ### core
 
@@ -121,6 +121,8 @@ not occur in any crate's `src/` (the script fails if one appears).
 ### hpack
 
 - `crates/hpack/src/capi.rs`: plain Rust
+- `crates/hpack/src/encoder.rs`: external_body: `bytes_eq`
+- `crates/hpack/src/hencode.rs`: external_body: `ready`
 - `crates/hpack/src/huffman.rs`: external_body: `dtab`
 - `crates/hpack/src/lib.rs`: plain Rust
 - `crates/hpack/src/stable.rs`: plain Rust
@@ -147,7 +149,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 ### json
 
 - `crates/json/src/error.rs`: plain Rust
-- `crates/json/src/ffi.rs`: external_body: `input`, `push`, `push_fast`, `eager`, `push_num_fast`, `push_str_fast`, `reserve`, `count`, `close`, `fail`; 2 assume_new
+- `crates/json/src/ffi.rs`: external_body: `input`, `push`, `push_fast`, `eager`, `push_num_fast`, `push_str_fast`, `reserve`, `count`, `close`, `fail`
 - `crates/json/src/index.rs`: external_body: `fill_avx512`, `fill_avx2`
 - `crates/json/src/lanes.rs`: external_body: `opaque64`, `append16_spare_neon`, `len_spare`, `reserve_spare`, `reserve_spare_plus`, `push_spare`, `append4_spare`, `append_slice_spare`, `truncate_spare`, `set_spare`, `append16_spare`
 - `crates/json/src/lib.rs`: plain Rust
@@ -262,6 +264,10 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/tiff/src/lib.rs`: plain Rust
 - `crates/tiff/src/prims.rs`: external_body: `alloc_zeroed`
 
+### tls
+
+- `crates/tls/src/lib.rs`: plain Rust
+
 ### url
 
 - `crates/url/src/capi.rs`: plain Rust
@@ -335,7 +341,6 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/zlib/src/par.rs`: external_body: `run`
 - `crates/zlib/src/prims.rs`: external_body: `push_word`
 - `crates/zlib/src/simd.rs`: external_body: `run`
-- `crates/zlib/src/stream.rs`: 2 assume_new
 
 ### zstd
 

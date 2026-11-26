@@ -2901,6 +2901,33 @@ impl Stream {
             }
             ip = nip;
             if st == Status::Truncated && ip == inp.len() {
+                // Out of input: hand out what this step decoded before
+                // stopping, so a flushed block's bytes are not held back
+                // until more input comes.
+                if self.out_read < self.inf.out_pos && *op < output.len() {
+                    let ghost o1 = output@;
+                    let ghost op1 = *op;
+                    self.deliver(output, op);
+                    proof {
+                        assert(output@.subrange(0, *old(op) as int) =~= o1.subrange(0, *old(op) as int)) by {
+                            assert(output@.subrange(0, op1 as int).subrange(0, *old(op) as int) =~= output@.subrange(0, *old(op) as int));
+                            assert(o1.subrange(0, op1 as int).subrange(0, *old(op) as int) =~= o1.subrange(0, *old(op) as int));
+                        }
+                        assert(output@.subrange(*old(op) as int, *op as int) =~= o1.subrange(*old(op) as int, op1 as int)
+                            + output@.subrange(op1 as int, *op as int)) by {
+                            assert forall|i: int| *old(op) <= i < op1 implies output@[i] == o1[i] by {
+                                assert(output@.subrange(0, op1 as int)[i] == o1.subrange(0, op1 as int)[i]);
+                            }
+                        }
+                        assert(old(self).delivered@ + (o1.subrange(*old(op) as int, op1 as int) + output@.subrange(
+                            op1 as int,
+                            *op as int,
+                        )) =~= old(self).delivered@ + o1.subrange(*old(op) as int, op1 as int) + output@.subrange(
+                            op1 as int,
+                            *op as int,
+                        ));
+                    }
+                }
                 break;
             }
         }
@@ -3378,20 +3405,34 @@ pub fn feed_in_pieces(wrapper: Wrapper, data: &[u8], piece: usize, room: usize) 
     }
 }
 
+impl Stream {
+    /// `new` for callers with no ghost `full` to give. The ghost stream is
+    /// empty, so `ok()` turns false at the first input byte and the proofs
+    /// about `full` then say nothing; the memory safety and the error
+    /// behavior do not depend on them.
+    pub fn open(wrapper: Wrapper) -> (r: Stream)
+        ensures
+            r.wf(),
+            r.wrapper_spec() == wrapper,
+    {
+        Stream::new(wrapper, Ghost(Seq::empty()))
+    }
+
+    /// `reset` for callers with no ghost `full` to give (see `open`).
+    pub fn restart(&mut self, wrapper: Wrapper)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).wrapper_spec() == wrapper,
+    {
+        self.reset(wrapper, Ghost(Seq::empty()))
+    }
+}
+
 } // verus!
 
 impl Stream {
-    /// `new` for callers outside Verus, who have no ghost `full` to give.
-    /// The proofs about `full` then say nothing; the memory safety and
-    /// the error behavior do not depend on them.
-    pub fn open(wrapper: Wrapper) -> Stream {
-        Stream::new(wrapper, Ghost::assume_new())
-    }
-
-    /// `reset` for callers outside Verus.
-    pub fn restart(&mut self, wrapper: Wrapper) {
-        self.reset(wrapper, Ghost::assume_new())
-    }
 
     /// The stream is still reading its zlib or gzip header.
     pub fn in_header(&self) -> bool {

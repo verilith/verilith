@@ -74,6 +74,9 @@ pub use verilith_text as text;
 /// `verilith-tiff`: TIFF decoder.
 #[cfg(feature = "tiff")]
 pub use verilith_tiff as tiff;
+/// `verilith-tls`: TLS 1.3 message parsing.
+#[cfg(feature = "tls")]
+pub use verilith_tls as tls;
 /// `verilith-url`: WHATWG URL parser.
 #[cfg(feature = "url")]
 pub use verilith_url as url;
