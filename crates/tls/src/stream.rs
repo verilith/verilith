@@ -115,6 +115,12 @@ impl<P: Provider> ServerStream<P> {
         core::mem::take(&mut self.out)
     }
 
+    /// Swaps the bytes to send with `v`, which should be empty: the
+    /// caller takes them without a copy and lends its buffer back.
+    pub fn swap_pending(&mut self, v: &mut Vec<u8>) {
+        core::mem::swap(&mut self.out, v)
+    }
+
     pub fn is_handshaking(&self) -> bool {
         !self.handshake_done
     }

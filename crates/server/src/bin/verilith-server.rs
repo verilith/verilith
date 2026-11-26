@@ -2,6 +2,7 @@
 //!
 //!   verilith-server --threads N --http PORT [--h2c PORT] [--root DIR] [--protocols]
 //!                   [--tls PORT --cert PEM --key PEM]   (built with --features tls)
+//!                   [--tls-backend verilith|rustls]     (rustls: --features tls-rustls)
 //!
 //!   GET /plaintext       "Hello, World!", text/plain
 //!   GET /static/<name>   a file under DIR, read at start; sent with
@@ -31,7 +32,7 @@ fn arg(args: &[String], k: &str) -> Option<String> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--protocols") {
-        println!("{}", if cfg!(feature = "tls") { "http h2c tls" } else { "http h2c" });
+        println!("{}", if cfg!(feature = "tls-rustls") { "http h2c tls tls-rustls" } else if cfg!(feature = "tls") { "http h2c tls" } else { "http h2c" });
         return;
     }
     let mut files: HashMap<Vec<u8>, StaticBody> = HashMap::new();
@@ -51,7 +52,14 @@ fn main() {
         spin: arg(&args, "--spin").map_or(0, |t| t.parse().unwrap()),
         #[cfg(feature = "tls")]
         tls: arg(&args, "--tls").map(|p| {
-            let c = verilith_server::tls::config(&arg(&args, "--cert").expect("--cert"), &arg(&args, "--key").expect("--key")).expect("TLS configuration");
+            let (cert, key) = (arg(&args, "--cert").expect("--cert"), arg(&args, "--key").expect("--key"));
+            let c = match arg(&args, "--tls-backend").as_deref() {
+                None | Some("verilith") => verilith_server::tls::config(&cert, &key),
+                #[cfg(feature = "tls-rustls")]
+                Some("rustls") => verilith_server::tls::rustls_config(&cert, &key),
+                Some(b) => panic!("unknown --tls-backend {b}"),
+            }
+            .expect("TLS configuration");
             (p.parse().unwrap(), c)
         }),
         ..Config::default()

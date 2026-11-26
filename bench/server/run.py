@@ -44,6 +44,7 @@ CASES = {
     "h1-static-1m":      dict(tool="wrk", port="HTTP", path="/static/1m.bin", conns=16),
     "h1-close":          dict(tool="wrk", port="HTTP", path="/plaintext", conns=64, close=True),
     "h1-tls-plaintext":  dict(tool="wrk", port="TLS", path="/plaintext", conns=256, tls=True),
+    "h1-tls-close":      dict(tool="wrk", port="TLS", path="/plaintext", conns=64, close=True, tls=True),
     "h2c-plaintext":     dict(tool="h2load", port="H2C", path="/plaintext", conns=64, streams=32),
     "h2-tls-plaintext":  dict(tool="h2load", port="TLS", path="/plaintext", conns=64, streams=32, tls=True),
     "h2-tls-static-64k": dict(tool="h2load", port="TLS", path="/static/64k.bin", conns=16, streams=16, tls=True),
@@ -87,6 +88,14 @@ def server_cmds(env):
     if b:
         out["verilith"] = [b, "--threads", str(env["threads"]), "--http", str(PORTS["HTTP"]), "--h2c", str(PORTS["H2C"]),
                            "--tls", str(PORTS["TLS"]), "--cert", env["cert"], "--key", env["key"], "--root", env["root"]]
+        # The same server on rustls instead of verilith-tls, when built
+        # with --features tls-rustls: TLS cases only.
+        try:
+            p = subprocess.run([b, "--protocols"], capture_output=True, text=True, timeout=10).stdout.split()
+        except Exception:
+            p = []
+        if "tls-rustls" in p:
+            out["verilith-rustls"] = out["verilith"] + ["--tls-backend", "rustls"]
     b = hyper_bin()
     if b:
         out["hyper"] = [b, "--threads", str(env["threads"]), "--http", str(PORTS["HTTP"]), "--h2c", str(PORTS["H2C"]),
@@ -161,7 +170,7 @@ def group_cpu(pgid):
 def protocols(name, cmd):
     """The ports a server serves: all three, except a verilith-server build
     that says otherwise with --protocols (one line: http, h2c, tls)."""
-    fixed = {"bun": {"HTTP", "TLS"}, "may-minihttp": {"HTTP"}}
+    fixed = {"bun": {"HTTP", "TLS"}, "may-minihttp": {"HTTP"}, "verilith-rustls": {"TLS"}}
     if name in fixed:
         return fixed[name]
     if name != "verilith":
@@ -365,7 +374,7 @@ def versions(cmds):
                 lock = open(os.path.join(HERE, "baselines/may-minihttp/Cargo.lock")).read()
                 m = re.search(r'name = "may_minihttp"\nversion = "([^"]+)"', lock)
                 v[name] = m.group(1) if m else "?"
-            elif name == "verilith":
+            elif name in ("verilith", "verilith-rustls"):
                 v[name] = subprocess.run(["git", "-C", ROOT, "rev-parse", "--short", "HEAD"], capture_output=True,
                                          text=True).stdout.strip()
         except Exception:

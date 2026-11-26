@@ -6,7 +6,7 @@ is in [DESIGN.md](DESIGN.md). This README describes what exists today.
 
 **Status: HTTP/1.1, HTTP/2 over cleartext with prior knowledge (h2c,
 `--h2c PORT`), and TLS with h2 or http/1.1 by ALPN (`--features tls`,
-`--tls PORT --cert PEM --key PEM`; rustls for now).** Static files from
+`--tls PORT --cert PEM --key PEM`; TLS 1.3 on the verified verilith-tls).** Static files from
 disk with a proven path check, and HTTP/3, are next. The API will change.
 
 ```rust,no_run
@@ -136,11 +136,21 @@ verified HPACK encoder with its dynamic table (header bytes on the wire
 90% smaller than uncompressed, as with h2o), and streams are pooled; in
 `h2c-plaintext`, h2load is the bottleneck.
 
-TLS (rustls with aws-lc-rs, sans I/O in `tls.rs`), quick run: `h1-tls-plaintext`
-202k req/s (122k per CPU-second) against nginx 185k (100k), hyper 135k,
-h2o 115k; `h2-tls-plaintext` **1.07M** (973k) against h2o 432k (222k),
-nginx 347k, hyper 197k; `h2-tls-static-64k` 63k (34k) against hyper 56k,
-h2o 55k, nginx 45k.
+TLS 1.3 on verilith-tls (verified handshake and record layer, aws-lc
+cryptography; `bench/server/results/2026-11-26-cloud-tls`), quick run, req/s
+with requests per server CPU-second in brackets: `h1-tls-plaintext` 221k
+(**156k**) against nginx 194k (106k), hyper 180k (99k), h2o 151k (81k);
+`h2-tls-plaintext` **1.16M** (1.11M) against h2o 535k (270k), nginx 372k,
+hyper 226k; `h2-tls-static-64k` **71k** (38k) against h2o 65k (34k), hyper
+57k, nginx 41k. The same server on rustls (`--tls-backend rustls`) is within
+the run-to-run noise of it (209k, 1.35M, 64k). `h1-tls-close`, a full
+handshake per request: 7.0k requests per server CPU-second, against hyper
+5.4k and nginx 3.2k; its req/s (3.2k, against hyper 6.5k and nginx 5.5k) is
+wrk's own CPU, since verilith-tls sends no session tickets yet and the
+others let wrk resume. A TLS 1.3 server that sends no ticket answers the
+client's Finished with nothing, so a client with Nagle on would hold its
+request for the kernel's 40 ms delayed ACK: the server sets `TCP_QUICKACK`
+while handshaking.
 
 Connection setup (`h1-close`): accepting with `TCP_DEFER_ACCEPT` (the
 request arrives with the connection, one wakeup instead of two),

@@ -138,6 +138,18 @@ pub fn set_nodelay(fd: i32) {
     }
 }
 
+/// Acknowledges the next segments at once instead of delaying the ACK
+/// (Linux; a no-op elsewhere). The kernel leaves quick-ACK mode by itself,
+/// so a caller sets it again for as long as it wants it.
+pub fn quickack(fd: i32) {
+    if let Some(opt) = TCP_QUICKACK {
+        let one: c_int = 1;
+        unsafe {
+            setsockopt(fd, IPPROTO_TCP, opt, &one as *const c_int as *const u8, 4);
+        }
+    }
+}
+
 pub enum IoResult {
     /// This many bytes.
     Done(usize),
