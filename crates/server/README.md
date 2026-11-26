@@ -84,8 +84,11 @@ deviations reads the same head end and framing), and the chunked decoder.
   PING/GOAWAY and the control-frame flood limit. It only reads frames
   through verilith-h2's verified parser and header blocks through
   verilith-hpack's verified decoder, and it writes frames with verilith-h2's
-  serializer. Responses are HPACK literals without indexing for now; the
-  verified HPACK encoder is next. Tested in `tests/h2.rs`: every split of a
+  serializer, and encodes response heads with verilith-hpack's verified
+  encoder (dynamic table included), whose theorem is that each block
+  decodes to exactly the fields given. That needs blocks to reach the peer
+  in the order they were encoded, so a head is encoded only when its
+  HEADERS frame is written. Tested in `tests/h2.rs`: every split of a
   request stream gives the same responses, read back with the verified
   parser and decoder; DATA stops at the peer's window; protocol errors and
   a PING flood end in GOAWAY.
@@ -117,8 +120,11 @@ Since that run, bodies of 8 KiB and more are written from the shared
 buffer by `writev` instead of being copied (`Response::send_shared`):
 `h1-static-64k` in a quick run is 119k (70k) against nginx's 124k (69k).
 HTTP/2 over cleartext (`h2c-plaintext`, h2load, 64 connections, 32
-streams each), in a quick run: verilith-server **1.50M** req/s (867k per
-CPU-second), h2o 527k (269k), nginx 315k (159k), hyper 259k (140k).
+streams each), in quick runs: verilith-server **1.29–1.50M** req/s
+(1.17M per CPU-second with the HPACK dynamic table and pooled streams;
+h2load is then the bottleneck), h2o 440–530k (225–270k), nginx 315k (159k),
+hyper 259k (140k). Header bytes on the wire are 90% smaller than
+uncompressed, as with h2o.
 
 Still behind: nginx's `sendfile` on large files, and connection setup in
 `h1-close`, where verilith-server uses its CPU most efficiently but leaves

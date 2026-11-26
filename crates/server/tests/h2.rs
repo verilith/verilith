@@ -91,7 +91,16 @@ fn drain(c: &mut Conn2, out: &mut Vec<u8>) {
 
 /// (stream, status, body) for each response, and the control frames seen.
 fn responses(out: &[u8]) -> (Vec<(u32, Vec<(Vec<u8>, Vec<u8>)>, Vec<u8>)>, Vec<String>) {
+    responses_with(out, None)
+}
+
+/// `responses`, with the client's decoder table limited to `table` bytes
+/// (what its SETTINGS_HEADER_TABLE_SIZE said).
+fn responses_with(out: &[u8], table: Option<u32>) -> (Vec<(u32, Vec<(Vec<u8>, Vec<u8>)>, Vec<u8>)>, Vec<String>) {
     let mut dec = Decoder::new().unwrap();
+    if let Some(n) = table {
+        assert!(dec.change_settings(n));
+    }
     let mut rs: Vec<(u32, Vec<(Vec<u8>, Vec<u8>)>, Vec<u8>)> = Vec::new();
     let mut ctl = Vec::new();
     let mut rest = out;
@@ -201,4 +210,73 @@ fn ping_flood_is_stopped() {
     let (_, ctl) = responses(&run(&c, &[]));
     assert!(ctl.contains(&"goaway 11".to_string()));
     assert!(ctl.iter().filter(|s| s.starts_with("ping")).count() < 1100);
+}
+
+fn many_gets(n: u32, settings: &[u8]) -> Vec<u8> {
+    let mut c = PREFACE.to_vec();
+    serialize(&Frame::Settings { ack: false, params: Params::new(settings).unwrap() }, 16384, &mut c).unwrap();
+    for i in 0..n {
+        let b = block(b"GET", format!("/r{i}").as_bytes());
+        serialize(&Frame::Headers { stream: 2 * i + 1, end_stream: true, end_headers: true, pad: None, priority: None, fragment: &b }, 16384, &mut c).unwrap();
+    }
+    c
+}
+
+/// Header block bytes the server wrote, per HEADERS frame.
+fn block_sizes(out: &[u8]) -> Vec<usize> {
+    let mut v = Vec::new();
+    let mut rest = out;
+    while let Parsed::Frame(f, n) = verilith_h2::parse(rest, 1 << 20) {
+        if let Frame::Headers { fragment, .. } = f {
+            v.push(fragment.len());
+        }
+        rest = &rest[n..];
+    }
+    v
+}
+
+#[test]
+fn dynamic_table_shrinks_repeated_heads() {
+    let input = many_gets(50, &[]);
+    let out = run(&input, &[]);
+    let (rs, _) = responses(&out);
+    assert_eq!(rs.len(), 50);
+    for (i, r) in rs.iter().enumerate() {
+        assert_eq!(r.0, 2 * i as u32 + 1);
+        assert_eq!(r.1[0], (b":status".to_vec(), b"200".to_vec()));
+        assert!(r.1.contains(&(b"server".to_vec(), b"t".to_vec())));
+        assert!(r.1.contains(&(b"x-test".to_vec(), b"1".to_vec())));
+        assert_eq!(r.2, format!("GET /r{i} ").into_bytes());
+    }
+    let sizes = block_sizes(&out);
+    // After the first head, the repeated fields are one-byte indices.
+    assert!(sizes[10] * 3 < sizes[0], "{sizes:?}");
+    // Split anywhere: the same responses (the table survives any cut).
+    for i in (0..input.len()).step_by(7) {
+        assert_eq!(responses(&run(&input, &[i])).0, rs, "split at {i}");
+    }
+}
+
+#[test]
+fn peer_table_size_zero_is_honoured() {
+    let input = many_gets(5, &[0, 1, 0, 0, 0, 0]);
+    let out = run(&input, &[]);
+    let (rs, _) = responses_with(&out, Some(0));
+    assert_eq!(rs.len(), 5);
+    assert_eq!(rs[4].2, b"GET /r4 ");
+}
+
+#[test]
+fn reset_before_headers_keeps_table_in_step() {
+    // Stream 1 is answered but reset by the client in the same read,
+    // before its HEADERS can go out; stream 3's head must still decode.
+    let mut c = PREFACE.to_vec();
+    serialize(&Frame::Settings { ack: false, params: Params::new(&[]).unwrap() }, 16384, &mut c).unwrap();
+    let b = block(b"GET", b"/a");
+    serialize(&Frame::Headers { stream: 1, end_stream: true, end_headers: true, pad: None, priority: None, fragment: &b }, 16384, &mut c).unwrap();
+    serialize(&Frame::RstStream { stream: 1, code: 8 }, 16384, &mut c).unwrap();
+    let b = block(b"GET", b"/b");
+    serialize(&Frame::Headers { stream: 3, end_stream: true, end_headers: true, pad: None, priority: None, fragment: &b }, 16384, &mut c).unwrap();
+    let (rs, _) = responses(&run(&c, &[]));
+    assert_eq!(rs.last().unwrap().2, b"GET /b ");
 }

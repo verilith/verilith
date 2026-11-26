@@ -90,7 +90,7 @@ pub struct Ctx {
     own_close: Prepared,
     empty: Prepared,
     /// The same fields as HPACK representations, for HTTP/2.
-    pub(crate) own_h2: Vec<u8>,
+    pub(crate) own_h2: crate::h2::HList,
 }
 
 impl Ctx {
@@ -98,7 +98,9 @@ impl Ctx {
     pub fn new(server: &[u8], date: &[u8]) -> Option<Ctx> {
         let own = [Field { name: b"Server", value: server }, Field { name: b"Date", value: date }];
         let own_close = [own[0], own[1], Field { name: b"Connection", value: b"close" }];
-        let own_h2 = crate::h2::encode_fields(&[(b"server", server), (b"date", date)]);
+        let mut own_h2 = crate::h2::HList::default();
+        own_h2.push(b"server", server);
+        own_h2.push(b"date", date);
         Some(Ctx { own: Prepared::new(&own)?, own_close: Prepared::new(&own_close)?, empty: Prepared::empty(), own_h2 })
     }
 }
@@ -551,15 +553,18 @@ fn fmt_len(b: &mut [u8; 20], mut n: usize) -> &[u8] {
 /// HTTP/1.1 as verified prepared lines, for HTTP/2 as HPACK.
 pub struct Fields {
     pub(crate) h1: Prepared,
-    pub(crate) h2: Vec<u8>,
+    pub(crate) h2: crate::h2::HList,
 }
 
 impl Fields {
     /// `None` if a name or value is not allowed (see [`SendError::Invalid`]).
     pub fn new(fields: &[Field]) -> Option<Fields> {
         let h1 = Prepared::new(fields)?;
-        let v: Vec<(&[u8], &[u8])> = fields.iter().map(|f| (f.name, f.value)).collect();
-        Some(Fields { h1, h2: crate::h2::encode_fields(&v) })
+        let mut h2 = crate::h2::HList::default();
+        for f in fields {
+            h2.push(f.name, f.value);
+        }
+        Some(Fields { h1, h2 })
     }
 }
 
@@ -608,20 +613,18 @@ impl<'a> Response<'a> {
             if !(100..=999).contains(&status) || !respond::check_fields(fields) {
                 return Err(SendError::Invalid);
             }
-            let mut v: Vec<(&[u8], &[u8])> = Vec::with_capacity(fields.len() + 1);
+            // Encoded when the HEADERS frame is written (h2.rs `schedule`).
+            r.status = status;
             for f in fields {
-                v.push((f.name, f.value));
+                r.fields.push(f.name, f.value);
             }
-            let mut extra = self.ctx.own_h2.clone();
             if let Some(p) = pre {
-                extra.extend_from_slice(&p.h2);
+                r.fields.extend(&p.h2);
             }
-            let mut cl = [0u8; 20];
-            let cls = fmt_len(&mut cl, len);
             if !no_body(status) {
-                v.push((b"content-length", cls));
+                let mut cl = [0u8; 20];
+                r.fields.push(b"content-length", fmt_len(&mut cl, len));
             }
-            crate::h2::encode_head(&mut r.block, status, &v, &extra);
             self.sent = true;
             return Ok(());
         }

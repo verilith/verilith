@@ -7,15 +7,18 @@
 //! flow control, SETTINGS, and scheduling. It is not yet verified (that is
 //! DESIGN.md's milestone 6); it is tested in `tests/h2.rs`.
 //!
-//! Responses are encoded with HPACK representations that need no dynamic
-//! table on the encoder's side: `:status` from the static table, and
-//! literals without indexing for the rest. A verified encoder with a
-//! dynamic table is being written in verilith-hpack and will replace this.
+//! Response heads are encoded by verilith-hpack's verified encoder, with
+//! its dynamic table: its theorem is that each block decodes, from the
+//! peer's decoder state, to exactly the fields given. That holds only if
+//! blocks reach the peer in the order they were encoded, so a head is
+//! encoded when its HEADERS frame is written (`schedule`), not when the
+//! handler answers: a stream reset in between never touches the table.
 use std::collections::{HashMap, VecDeque};
+use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::Arc;
 
 use verilith_h2::{Frame, Parsed};
-use verilith_hpack::{Decoder, Feed};
+use verilith_hpack::{Decoder, Encoder, Feed, Header as HHeader};
 use verilith_http::Header;
 use verilith_http::parse::Span;
 
@@ -27,6 +30,7 @@ pub const PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 // Error codes (§7).
 const NO_ERROR: u32 = 0x0;
 const PROTOCOL_ERROR: u32 = 0x1;
+const INTERNAL_ERROR: u32 = 0x2;
 const FLOW_CONTROL_ERROR: u32 = 0x3;
 const STREAM_CLOSED: u32 = 0x5;
 const FRAME_SIZE_ERROR: u32 = 0x6;
@@ -91,7 +95,8 @@ struct Stream {
 
 /// A response waiting to be framed.
 pub struct Reply {
-    pub(crate) block: Vec<u8>,
+    pub(crate) status: u16,
+    pub(crate) fields: HList,
     pub(crate) body: ReplyBody,
     pub(crate) sent_headers: bool,
     pub(crate) off: usize,
@@ -127,7 +132,12 @@ pub struct Conn2 {
     preface: bool,
     out: Out,
     dec: Decoder,
-    streams: HashMap<u32, Stream>,
+    enc: Encoder,
+    /// Scratch for one encoded header block.
+    hbuf: Vec<u8>,
+    streams: HashMap<u32, Box<Stream>, BuildHasherDefault<IdHash>>,
+    /// Closed streams, kept with their buffers for the next ones.
+    pool: Vec<Box<Stream>>,
     /// Streams with a response to send, in round-robin order.
     ready: VecDeque<u32>,
     /// The highest client stream opened.
@@ -156,7 +166,10 @@ impl Conn2 {
             preface: false,
             out: Out::new(),
             dec: Decoder::new().expect("HPACK tables"),
-            streams: HashMap::new(),
+            enc: Encoder::new().expect("HPACK tables"),
+            hbuf: Vec::new(),
+            streams: HashMap::default(),
+            pool: Vec::new(),
             ready: VecDeque::new(),
             last_stream: 0,
             block: None,
@@ -247,9 +260,25 @@ impl Conn2 {
         self.out.grew(before);
     }
 
+    /// Forgets a stream, keeping its buffers for reuse.
+    fn close_stream(&mut self, id: u32) {
+        if let Some(mut s) = self.streams.remove(&id) {
+            if self.pool.len() < 64 {
+                s.arena.clear();
+                s.fields.clear();
+                s.body.clear();
+                if let Some(r) = s.reply.as_mut() {
+                    r.fields.clear();
+                    r.body = ReplyBody::None;
+                }
+                self.pool.push(s);
+            }
+        }
+    }
+
     fn rst(&mut self, stream: u32, code: u32) {
         self.frame(&Frame::RstStream { stream, code });
-        self.streams.remove(&stream);
+        self.close_stream(stream);
     }
 
     /// Handles every complete frame read, then frames as much response data
@@ -295,7 +324,7 @@ impl Conn2 {
             self.start = 0;
             self.end = 0;
         }
-        self.schedule();
+        self.schedule(ctx);
         if self.closing { Next::Close } else if self.out.queued > 1 << 20 { Next::Write } else { Next::Read }
     }
 
@@ -327,7 +356,9 @@ impl Conn2 {
                             }
                         }
                         S_MAX_FRAME_SIZE => self.peer_max_frame = p.value,
-                        S_HEADER_TABLE_SIZE => {} // our encoder uses no dynamic table
+                        // The encoder keeps to min(this, its 4096-byte target)
+                        // and signals any shrink at the next block (§4.2).
+                        S_HEADER_TABLE_SIZE => self.enc.change_settings(p.value),
                         _ => {}
                     }
                 }
@@ -370,7 +401,7 @@ impl Conn2 {
                 if stream > self.last_stream {
                     return Action::Conn(PROTOCOL_ERROR);
                 }
-                self.streams.remove(&stream);
+                self.close_stream(stream);
                 Action::None
             }
             Frame::GoAway { .. } => {
@@ -403,9 +434,14 @@ impl Conn2 {
                 self.block = Some(Block { stream, end_stream, len: 0 });
                 let refuse = self.streams.len() as u32 >= self.limits.max_streams;
                 if !refuse {
-                    self.streams.insert(
-                        stream,
-                        Stream {
+                    let s = match self.pool.pop() {
+                        Some(mut s) => {
+                            s.st = St::Open;
+                            s.send_window = self.peer_initial_window;
+                            s.unacked = 0;
+                            s
+                        }
+                        None => Box::new(Stream {
                             st: St::Open,
                             arena: Vec::new(),
                             fields: Vec::new(),
@@ -413,8 +449,9 @@ impl Conn2 {
                             send_window: self.peer_initial_window,
                             unacked: 0,
                             reply: None,
-                        },
-                    );
+                        }),
+                    };
+                    self.streams.insert(stream, s);
                 }
                 let a = self.header_fragment(fragment, end_headers, false);
                 if refuse && matches!(a, Action::None | Action::Dispatch(_)) && self.block.is_none() {
@@ -541,7 +578,10 @@ impl Conn2 {
         let method = get(b":method");
         let target = get(b":path");
         let request = Request { method, target, minor: 1, buf: a, headers: &s.fields, body: &s.body };
-        let mut reply = Reply { block: Vec::new(), body: ReplyBody::None, sent_headers: false, off: 0 };
+        // A reused stream keeps its reply's buffers (cleared on close).
+        let mut reply = s.reply.take().unwrap_or(Reply { status: 0, fields: HList::default(), body: ReplyBody::None, sent_headers: false, off: 0 });
+        reply.sent_headers = false;
+        reply.off = 0;
         let mut scratch = Out::new();
         let mut res = Response { out: &mut scratch, ctx, sent: false, close: false, head: method == b"HEAD", h2: Some(&mut reply) };
         h.handle(&request, &mut res);
@@ -554,7 +594,7 @@ impl Conn2 {
 
     /// Frames responses: HEADERS, then DATA within the windows, round robin
     /// over the streams that have something to send.
-    fn schedule(&mut self) {
+    fn schedule(&mut self, ctx: &Ctx) {
         let max = self.peer_max_frame.min(16384) as usize;
         let mut rounds = self.ready.len();
         while rounds > 0 {
@@ -565,17 +605,48 @@ impl Conn2 {
             let body_len = r.body.bytes().len();
             if !r.sent_headers {
                 let end_stream = body_len == 0;
+                let st = [b'0' + (r.status / 100) as u8, b'0' + (r.status / 10 % 10) as u8, b'0' + (r.status % 10) as u8];
+                let mut hs: Vec<HHeader> = Vec::with_capacity(r.fields.len() + ctx.own_h2.len() + 1);
+                hs.push(HHeader { name: b":status", value: &st, sensitive: false });
+                for (n, v) in r.fields.iter().chain(ctx.own_h2.iter()) {
+                    // A cookie is a secret an attacker could probe by
+                    // compression (RFC 7541 §7.1.3): never indexed.
+                    hs.push(HHeader { name: n, value: v, sensitive: n == b"set-cookie" });
+                }
+                self.hbuf.clear();
+                if !self.enc.encode(&hs, &mut self.hbuf) {
+                    // A name or value over 64 KiB: nothing was encoded, the
+                    // table is unchanged.
+                    drop(hs);
+                    self.close_stream(id);
+                    self.rst(id, INTERNAL_ERROR);
+                    continue;
+                }
+                drop(hs);
                 let before = self.out.buf.len();
-                // One HEADERS frame; the block is small, well under any frame size.
-                let _ = verilith_h2::serialize(
-                    &Frame::Headers { stream: id, end_stream, end_headers: true, pad: None, priority: None, fragment: &r.block },
-                    self.peer_max_frame,
-                    &mut self.out.buf,
-                );
+                // HEADERS, then CONTINUATION, within the peer's frame size.
+                let mut frag: &[u8] = &self.hbuf;
+                let mut first = true;
+                loop {
+                    let k = frag.len().min(max);
+                    let (a, b) = frag.split_at(k);
+                    let last = b.is_empty();
+                    let f = if first {
+                        Frame::Headers { stream: id, end_stream, end_headers: last, pad: None, priority: None, fragment: a }
+                    } else {
+                        Frame::Continuation { stream: id, end_headers: last, fragment: a }
+                    };
+                    let _ = verilith_h2::serialize(&f, self.peer_max_frame, &mut self.out.buf);
+                    first = false;
+                    frag = b;
+                    if last {
+                        break;
+                    }
+                }
                 self.out.grew(before);
                 r.sent_headers = true;
                 if end_stream {
-                    self.streams.remove(&id);
+                    self.close_stream(id);
                     continue;
                 }
             }
@@ -604,7 +675,7 @@ impl Conn2 {
                 }
             }
             if r.off == body_len {
-                self.streams.remove(&id);
+                self.close_stream(id);
             } else if s.send_window > 0 && self.conn_send_window > 0 {
                 self.ready.push_back(id);
             } else {
@@ -670,61 +741,68 @@ fn request_fields_ok(a: &[u8], fields: &[Header]) -> bool {
     m == 1 && s == 1 && p == 1 && au <= 1
 }
 
-/// HPACK for a response head without an encoder-side dynamic table:
-/// `:status` indexed when the static table has it (RFC 7541 Appendix A),
-/// everything else a literal without indexing (§6.2.2) with a new,
-/// lowercased name.
-pub(crate) fn encode_head(out: &mut Vec<u8>, status: u16, fields: &[(&[u8], &[u8])], extra: &[u8]) {
-    match status {
-        200 => out.push(0x80 | 8),
-        204 => out.push(0x80 | 9),
-        206 => out.push(0x80 | 10),
-        304 => out.push(0x80 | 11),
-        400 => out.push(0x80 | 12),
-        404 => out.push(0x80 | 13),
-        500 => out.push(0x80 | 14),
-        _ => {
-            out.push(0x08); // literal without indexing, name = static 8 (:status)
-            out.push(3);
-            out.extend_from_slice(&[b'0' + (status / 100) as u8, b'0' + (status / 10 % 10) as u8, b'0' + (status % 10) as u8]);
+/// Header fields, owned: lowercased names (RFC 9113 §8.2.1) and values,
+/// back to back in one buffer.
+#[derive(Clone, Default, Debug)]
+pub(crate) struct HList {
+    bytes: Vec<u8>,
+    /// Where each name and each value ends in `bytes`.
+    ends: Vec<(u32, u32)>,
+}
+
+impl HList {
+    pub(crate) fn clear(&mut self) {
+        self.bytes.clear();
+        self.ends.clear();
+    }
+
+    pub(crate) fn push(&mut self, name: &[u8], value: &[u8]) {
+        self.bytes.extend(name.iter().map(|c| c.to_ascii_lowercase()));
+        let n = self.bytes.len() as u32;
+        self.bytes.extend_from_slice(value);
+        self.ends.push((n, self.bytes.len() as u32));
+    }
+
+    pub(crate) fn extend(&mut self, o: &HList) {
+        let base = self.bytes.len() as u32;
+        self.bytes.extend_from_slice(&o.bytes);
+        self.ends.extend(o.ends.iter().map(|&(a, b)| (a + base, b + base)));
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.ends.len()
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
+        let mut at = 0usize;
+        self.ends.iter().map(move |&(n, v)| {
+            let r = (&self.bytes[at..n as usize], &self.bytes[n as usize..v as usize]);
+            at = v as usize;
+            r
+        })
+    }
+}
+
+/// The stream map's hash: stream IDs are small integers chosen by the
+/// peer, at most `max_streams` of them live, so a multiply-and-fold
+/// suffices; SipHash cost 6% of the CPU in h2c-plaintext.
+#[derive(Default)]
+struct IdHash(u64);
+
+impl Hasher for IdHash {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, b: &[u8]) {
+        for &x in b {
+            self.write_u64(x as u64);
         }
     }
-    for (n, v) in fields {
-        out.push(0x00);
-        hpack_int(out, 0, 7, n.len());
-        out.extend(n.iter().map(|c| c.to_ascii_lowercase()));
-        hpack_int(out, 0, 7, v.len());
-        out.extend_from_slice(v);
+    fn write_u32(&mut self, x: u32) {
+        self.write_u64(x as u64);
     }
-    out.extend_from_slice(extra);
-}
-
-/// An HPACK integer (RFC 7541 §5.1) with an `n`-bit prefix, OR-ed into the
-/// first byte's high bits `hi`.
-fn hpack_int(out: &mut Vec<u8>, hi: u8, n: u32, mut v: usize) {
-    let max = (1usize << n) - 1;
-    if v < max {
-        out.push(hi | v as u8);
-        return;
+    fn write_u64(&mut self, x: u64) {
+        let h = (self.0 ^ x).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        self.0 = h ^ (h >> 29);
     }
-    out.push(hi | max as u8);
-    v -= max;
-    while v >= 128 {
-        out.push((v % 128 + 128) as u8);
-        v /= 128;
-    }
-    out.push(v as u8);
-}
-
-/// `extra` for [`encode_head`]: a field list encoded once.
-pub(crate) fn encode_fields(fields: &[(&[u8], &[u8])]) -> Vec<u8> {
-    let mut out = Vec::new();
-    for (n, v) in fields {
-        out.push(0x00);
-        hpack_int(&mut out, 0, 7, n.len());
-        out.extend(n.iter().map(|c| c.to_ascii_lowercase()));
-        hpack_int(&mut out, 0, 7, v.len());
-        out.extend_from_slice(v);
-    }
-    out
 }
