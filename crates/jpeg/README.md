@@ -11,8 +11,9 @@ there is no encoder.
 The marker parser, Huffman decoding, every baseline and progressive scan
 type, restart handling, dequantization, the inverse DCT, chroma upsampling
 and colour conversion are proven against a specification of the format,
-down to the value of every output byte. `cargo verus verify` checks 523
-functions with no errors.
+down to the value of every output byte, and so is a bound on the decoder's
+work: linear in the file's size, the image's size, and the frame's blocks
+once per scan. `cargo verus verify` checks 651 functions with no errors.
 
 ## Using it from Rust
 
@@ -41,6 +42,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | The Huffman decoder, with its 10-bit lookahead table and 16-bit window, returns the symbol of T.81's DECODE procedure | `huff::decode` against `spec::huff` |
 | The inverse DCT equals the specification's (libjpeg's `jidctint.c`) on all its paths: on AArch64, NEON intrinsics in 16-bit lanes for blocks whose magnitudes sum to at most 2120 (nearly every block of a photograph) and in 32-bit lanes for the others whose dequantized values fit in 15 bits; elsewhere 32-bit arithmetic that compilers vectorize; and 64-bit arithmetic for the rest | `idct::idct_into`, `idct16::idct16_neon`, `idct_neon::idct_neon` against `spec::idct` |
 | Upsampling and colour conversion equal the specification's, including the branch-free kernels compilers vectorize and, on AArch64, colour conversion with NEON intrinsics | `render::up_row`, `render::ycc_row`, `color_neon::ycc16` |
+| Work: at most `jpeg_work(n, s, b, px) = 4n + (s + 1)(300b + 10) + 66b + 110px + 262,480` steps for an `n`-byte file with `s` scans, whose frame is stored in `b` blocks of 8x8 coefficients and has `px` pixels; `s` is at most `n + 65,552` | `decode::decode_counted` ensures (`decode` is the same code without the count) |
+| Work per stage: the marker segments, entropy decoding and restart searches at most `4(n + 65,568) + (s + 1)(300b + 10) + 200` steps; the inverse DCT and upsampling at most 66 steps per block and 110 per pixel | `parse::run_x`, `scan::scan_x`, `decode::render_x` |
+
+A step of the work bound is a loop turn, or an element zeroed by an
+allocation. Loops whose length the format fixes (the 64 coefficients of a
+block, the 16 code lengths of a Huffman table, the rows of one inverse DCT)
+count as part of the turn that runs them. The counter is ghost state
+(`work::Meter`), erased at compile time.
+
+The bound is linear in the file and in the image it declares, except for
+one term: each scan costs work in proportion to the whole frame (it walks
+every block of its components, and a progressive scan has to), and a
+progressive file may hold many scans, each only a few bytes long. So a
+small file that declares a large frame and repeats short scans makes the
+decoder work in proportion to its size times the frame's. libjpeg-turbo
+has the same cost, and its TurboJPEG API offers `TJPARAM_SCANLIMIT` to
+refuse files with too many scans; verilith-jpeg has no such limit yet, and
+the bound states the cost exactly rather than hiding it. Proving the bound
+also removed some wasted work: once the bit reader reached a marker, each
+refill rescanned the run of `0xFF` fill bytes before it until the scan
+noticed its data had ended, about a dozen times over (a file with 30 MB of
+fill bytes in a scan took 0.73 s, now 0.06 s). The reader now stops at the
+run's last byte.
 
 `read_header` (used by the TurboJPEG header calls) is verified for memory
 safety and termination only; it reuses the verified segment parser.

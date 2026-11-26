@@ -6,6 +6,7 @@ use crate::spec::*;
 use crate::stream::*;
 use crate::types::*;
 use crate::prims::*;
+use crate::work::*;
 #[cfg(verus_only)]
 use vstd::arithmetic::div_mod::*;
 use vstd::prelude::*;
@@ -185,6 +186,24 @@ impl Geom {
                 &&& self.ch[c] <= 0x4_0080
             }
     }
+}
+
+/// One component's entry of a frame's geometry.
+pub proof fn lemma_geom_c(f: Frame, g: Geom, c: int)
+    requires
+        g.wf(f),
+        0 <= c < f.nc,
+    ensures
+        g.cw[c] == cw(f, c),
+        g.ch[c] == ch(f, c),
+        g.wb[c] == wb(f, c),
+        g.hb[c] == hb(f, c),
+        g.wb[c] <= g.cw[c],
+        g.hb[c] <= g.ch[c],
+        g.cw[c] <= 0x4_0080,
+        g.ch[c] <= 0x4_0080,
+{
+    assert(g.cw[c] == cw(f, c));
 }
 
 /// `a <= ceil(a / b) * b`.
@@ -403,13 +422,15 @@ pub proof fn lemma_restart_seg(d: Seq<u8>, pi: int, p: int, rst: int)
     }
 }
 
-pub fn resync_x(data: &[u8], m: u8, q: usize, want: u8) -> (r: (usize, bool))
+pub fn resync_x(data: &[u8], m: u8, q: usize, want: u8, Tracked(mt): Tracked<&mut Meter>) -> (r: (usize, bool))
     requires
         len_ok(data@),
         2 <= q <= data@.len() + 0x1_0020,
         want < 8,
     ensures
         (r.0 as int, r.1) == resync(data@, m, q as int, want as int),
+        final(mt).n + 3 * q <= old(mt).n + 3 * r.0 + 6,
+        q <= r.0 + 2,
 {
     let mut mm = m;
     let mut qq = q;
@@ -419,6 +440,8 @@ pub fn resync_x(data: &[u8], m: u8, q: usize, want: u8) -> (r: (usize, bool))
             2 <= qq <= data@.len() + 0x1_0020,
             want < 8,
             resync(data@, mm, qq as int, want as int) == resync(data@, m, q as int, want as int),
+            q <= qq,
+            mt.n + 3 * q <= old(mt).n + 3 * qq,
         decreases togo(qq as int, data@.len() as int + 1),
     {
         proof {
@@ -427,7 +450,10 @@ pub fn resync_x(data: &[u8], m: u8, q: usize, want: u8) -> (r: (usize, bool))
         if qq > data.len() {
             return (qq - 2, false);
         } else if mm < 0xC0 || mm == 0xD0 + (want + 7) % 8 || mm == 0xD0 + (want + 6) % 8 {
-            let (m2, q2) = marker_after_x(data, qq);
+            let (m2, q2) = marker_after_x(data, qq, Tracked(mt));
+            proof {
+                mt.n = mt.n + 1;
+            }
             mm = m2;
             qq = q2;
         } else if mm < 0xD0 || mm > 0xD7 || mm == 0xD0 + (want + 1) % 8 || mm == 0xD0 + (want + 2) % 8 {
@@ -1669,7 +1695,14 @@ fn mcu_x(
 
 /// A restart: on from the next restart marker, with the predictions and
 /// the end-of-band run cleared.
-fn restart_x(data: &[u8], t: &Tabs, st: &mut ScanSt, Ghost(pi): Ghost<int>, Ghost(a): Ghost<Seq<Seq<i16>>>)
+fn restart_x(
+    data: &[u8],
+    t: &Tabs,
+    st: &mut ScanSt,
+    Ghost(pi): Ghost<int>,
+    Ghost(a): Ghost<Seq<Seq<i16>>>,
+    Tracked(mt): Tracked<&mut Meter>,
+)
     requires
         old(st).br.wf(data@),
         seg_ok(data@, pi, old(st).br.p0@),
@@ -1679,8 +1712,9 @@ fn restart_x(data: &[u8], t: &Tabs, st: &mut ScanSt, Ghost(pi): Ghost<int>, Ghos
         seg_ok(data@, pi, final(st).br.p0@),
         final(st).rst < 8,
         final(st).togo == t.ri,
-        final(st).br.p0@ >= old(st).br.p0@,
+        final(st).br.p0@ >= old(st).br.pos,
         ssv(*final(st), a) == restart(data@, t@, ssv(*old(st), a)),
+        final(mt).n + 4 * old(st).br.p0@ <= old(mt).n + 4 * final(st).br.p0@ + 6,
 {
     let ghost d = data@;
     let ghost p0 = st.br.p0@;
@@ -1690,11 +1724,19 @@ fn restart_x(data: &[u8], t: &Tabs, st: &mut ScanSt, Ghost(pi): Ghost<int>, Ghos
         lemma_restart_seg(d, pi, p0, st.rst as int);
         lemma_resync_p(d, marker_after(d, p0).0, marker_after(d, p0).1, st.rst as int);
     }
-    let (m, q) = marker_after_x(data, st.br.pos);
+    // The reader's own steps, and the search for the marker.
+    proof {
+        mt.n = mt.n + st.br.wk@ as nat;
+    }
+    let ghost pos0 = st.br.pos as int;
+    let (m, q) = marker_after_x(data, st.br.pos, Tracked(mt));
+    proof {
+        lemma_marker_after(d, pos0);
+    }
     let (p2, taken) = if m == 0xD0 + st.rst {
         (q, true)
     } else {
-        resync_x(data, m, q, st.rst)
+        resync_x(data, m, q, st.rst, Tracked(mt))
     };
     assert((p2 as int, taken) == restart_p(d, p0, st.rst as int));
     st.br = BitReader::new(p2, Ghost(data@));
@@ -1727,6 +1769,7 @@ fn mcu_step_x(
     my: u32,
     mx: u32,
     Ghost(p): Ghost<int>,
+    Tracked(mt): Tracked<&mut Meter>,
 ) -> (ok: bool)
     requires
         frame_basic(f@),
@@ -1752,6 +1795,7 @@ fn mcu_step_x(
         final(st).br.p0@ >= old(st).br.p0@,
         final(st).rst < 8,
         old(st).togo - 1 <= final(st).togo <= 65535,
+        final(mt).n + 4 * old(st).br.p0@ <= old(mt).n + 4 * final(st).br.p0@ + 6,
         ({
             let m = my * mcu_w(f@, s@) + mx;
             let sp = mcu_step(data@, f@, t@, s@, ssv(*old(st), old(co).view(f@.nc)), m);
@@ -1767,7 +1811,7 @@ fn mcu_step_x(
     let ghost m = my * mcu_w(fv, sv) + mx;
     let ghost cur0 = ssv(*st, co.view(nc));
     if t.ri != 0 && st.togo == 0 {
-        restart_x(data, t, st, Ghost(p), Ghost(co.view(nc)));
+        restart_x(data, t, st, Ghost(p), Ghost(co.view(nc)), Tracked(mt));
     }
     let ghost st1 = ssv(*st, co.view(nc));
     assert(st1 == if tv.ri != 0 && cur0.togo == 0 {
@@ -1796,7 +1840,250 @@ fn mcu_step_x(
 
 /// The end of an MCU row of a streamed scan: each component's samples go
 /// to its plane and its window moves on.
-fn flush_row(co: &mut Coefs, f: &FrameX, g: &Geom)
+/// The most work a scan does beyond 4 steps per byte: 7 per MCU and, per
+/// MCU row, one and a streamed scan's `flush_row`.
+pub open spec fn scan_work(f: Frame, s: Scan, stream: bool) -> int {
+    7 * scan_mcus(f, s) + mcu_h(f, s) * ((if stream { rowc(f) } else { 0 }) + 1)
+}
+
+/// `scan_work` covers the work up to MCU (`my`, `mx`) of the scan.
+pub proof fn lemma_scan_work(f: Frame, s: Scan, stream: bool, my: int, mx: int, fr: int)
+    requires
+        fr == (if stream { rowc(f) } else { 0 }),
+        fr >= 0,
+        0 <= mx <= mcu_w(f, s),
+        0 <= my <= mcu_h(f, s),
+        my * mcu_w(f, s) + mx <= scan_mcus(f, s),
+        scan_mcus(f, s) == mcu_w(f, s) * mcu_h(f, s),
+    ensures
+        7 * (my * mcu_w(f, s) + mx) + my * (fr + 1) <= scan_work(f, s, stream),
+{
+    assert(my * (fr + 1) <= mcu_h(f, s) * (fr + 1)) by (nonlinear_arith)
+        requires
+            0 <= my <= mcu_h(f, s),
+            fr >= 0,
+    ;
+}
+
+/// The work bounds are not negative.
+pub proof fn lemma_sw_nn(f: Frame, g: Geom, s: Scan, stream: bool)
+    requires
+        g.wf(f),
+        frame_basic(f),
+        scan_pre(f, s),
+    ensures
+        rowc(f) >= 0,
+        scan_work(f, s, stream) >= 0,
+        scan_mcus(f, s) == mcu_w(f, s) * mcu_h(f, s),
+        mcu_w(f, s) >= 0,
+        mcu_h(f, s) >= 0,
+{
+    let c = s.ci[0] as int;
+    assert(0 <= c < f.nc);
+    lemma_geom_c(f, g, c);
+    lemma_geom_c(f, g, 0);
+    let (c0, r0) = (cw(f, 0), srows(f, 0));
+    assert(c0 * r0 >= 0) by (nonlinear_arith)
+        requires
+            c0 >= 0,
+            r0 >= 0,
+    ;
+    if f.nc == 3 {
+        assert(g.cw[1] == cw(f, 1) && g.cw[2] == cw(f, 2));
+        let (c1, r1, c2, r2) = (cw(f, 1), srows(f, 1), cw(f, 2), srows(f, 2));
+        assert(c1 * r1 >= 0 && c2 * r2 >= 0) by (nonlinear_arith)
+            requires
+                c1 >= 0,
+                r1 >= 0,
+                c2 >= 0,
+                r2 >= 0,
+        ;
+    }
+    let (w, h) = (mcu_w(f, s), mcu_h(f, s));
+    let fr: int = if stream { rowc(f) } else { 0 };
+    assert(w * h >= 0 && h * (fr + 1) >= 0) by (nonlinear_arith)
+        requires
+            w >= 0,
+            h >= 0,
+            fr >= 0,
+    ;
+}
+
+/// A component's coefficient array has at least one block each way.
+pub proof fn lemma_cw_pos(f: Frame, g: Geom, c: int)
+    requires
+        g.wf(f),
+        frame_basic(f),
+        0 <= c < f.nc,
+    ensures
+        cw(f, c) >= 1,
+        ch(f, c) >= 1,
+        cw(f, c) >= mcux(f),
+        ch(f, c) >= mcuy(f),
+        mcux(f) >= 1,
+        mcuy(f) >= 1,
+{
+    assert(g.cw[c] == cw(f, c));
+    lemma_cdiv(f.w as int, 8 * maxh(f));
+    lemma_cdiv(f.h as int, 8 * maxv(f));
+    let (a, b) = (mcux(f), mcuy(f));
+    let (h, v) = (f.comps[c].h as int, f.comps[c].v as int);
+    assert(a >= 1) by (nonlinear_arith)
+        requires
+            1 <= f.w as int <= a * (8 * maxh(f)),
+            a >= 0,
+    ;
+    assert(b >= 1) by (nonlinear_arith)
+        requires
+            1 <= f.h as int <= b * (8 * maxv(f)),
+            b >= 0,
+    ;
+    assert(a * h >= a && b * v >= b) by (nonlinear_arith)
+        requires
+            a >= 1,
+            b >= 1,
+            h >= 1,
+            v >= 1,
+    ;
+}
+
+/// A frame has a block.
+pub proof fn lemma_fblk(f: Frame, g: Geom)
+    requires
+        g.wf(f),
+        frame_basic(f),
+    ensures
+        fblk(f) >= 1,
+{
+    lemma_cw_pos(f, g, 0);
+    let (c0, h0) = (cw(f, 0), ch(f, 0));
+    assert(c0 * h0 >= 1) by (nonlinear_arith)
+        requires
+            c0 >= 1,
+            h0 >= 1,
+    ;
+    if f.nc == 3 {
+        lemma_cw_pos(f, g, 1);
+        lemma_cw_pos(f, g, 2);
+        let (c1, h1, c2, h2) = (cw(f, 1), ch(f, 1), cw(f, 2), ch(f, 2));
+        assert(c1 * h1 >= 1 && c2 * h2 >= 1) by (nonlinear_arith)
+            requires
+                c1 >= 1,
+                h1 >= 1,
+                c2 >= 1,
+                h2 >= 1,
+        ;
+    }
+}
+
+/// A scan's work is at most 74 steps per block of the frame (`stream`
+/// only for the one scan of a sequential frame that has every component).
+pub proof fn lemma_sw_le(f: Frame, g: Geom, s: Scan, stream: bool)
+    requires
+        g.wf(f),
+        frame_basic(f),
+        scan_pre(f, s),
+        stream ==> s.ns == f.nc,
+    ensures
+        scan_work(f, s, stream) <= 74 * fblk(f),
+        fblk(f) >= 1,
+{
+    lemma_sw_nn(f, g, s, stream);
+    lemma_cw_pos(f, g, 0);
+    let c = s.ci[0] as int;
+    lemma_cw_pos(f, g, c);
+    assert(g.cw[c] == cw(f, c));
+    let (c0, h0) = (cw(f, 0), ch(f, 0));
+    let mut tot: int = c0 * h0;
+    if f.nc == 3 {
+        lemma_cw_pos(f, g, 1);
+        lemma_cw_pos(f, g, 2);
+        let (c1, h1, c2, h2) = (cw(f, 1), ch(f, 1), cw(f, 2), ch(f, 2));
+        assert(c1 * h1 >= 1 && c2 * h2 >= 1) by (nonlinear_arith)
+            requires
+                c1 >= 1,
+                h1 >= 1,
+                c2 >= 1,
+                h2 >= 1,
+        ;
+    }
+    assert(c0 * h0 >= 1) by (nonlinear_arith)
+        requires
+            c0 >= 1,
+            h0 >= 1,
+    ;
+    let (cc, hc) = (cw(f, c), ch(f, c));
+    assert(cc * hc <= fblk(f));
+    let (w, h) = (mcu_w(f, s), mcu_h(f, s));
+    // MCUs and MCU rows.
+    if s.ns == 1 {
+        assert(w <= cc && h <= hc);
+    } else {
+        assert(w <= c0 && h <= h0);
+    }
+    assert(w * h <= fblk(f) && h <= fblk(f)) by (nonlinear_arith)
+        requires
+            s.ns == 1 ==> w <= cc && h <= hc,
+            s.ns != 1 ==> w <= c0 && h <= h0,
+            cc * hc <= fblk(f),
+            c0 * h0 <= fblk(f),
+            0 <= w,
+            0 <= h,
+            1 <= cc,
+            1 <= c0,
+    ;
+    if stream {
+        if f.nc == 1 {
+            assert(c == 0);
+            assert(g.hb[0] == hb(f, 0));
+            assert(rowc(f) * h <= 66 * fblk(f)) by (nonlinear_arith)
+                requires
+                    rowc(f) == 66 * c0,
+                    h <= h0,
+                    fblk(f) == c0 * h0,
+                    c0 >= 1,
+                    h >= 0,
+            ;
+        } else {
+            let (c1, c2) = (cw(f, 1), cw(f, 2));
+            let (v0, v1, v2) = (srows(f, 0), srows(f, 1), srows(f, 2));
+            assert(h == mcuy(f));
+            let (h0, h1, h2) = (ch(f, 0), ch(f, 1), ch(f, 2));
+            assert(h0 == h * v0 && h1 == h * v1 && h2 == h * v2);
+            assert((c0 * v0) * h == c0 * h0) by (nonlinear_arith)
+                requires
+                    h0 == h * v0,
+            ;
+            assert((c1 * v1) * h == c1 * h1) by (nonlinear_arith)
+                requires
+                    h1 == h * v1,
+            ;
+            assert((c2 * v2) * h == c2 * h2) by (nonlinear_arith)
+                requires
+                    h2 == h * v2,
+            ;
+            let (a0, a1, a2) = (c0 * v0, c1 * v1, c2 * v2);
+            assert((66 * a0 + 66 * a1 + 66 * a2) * h == 66 * (a0 * h) + 66 * (a1 * h) + 66 * (a2 * h)) by (nonlinear_arith);
+            assert(fblk(f) == c0 * h0 + c1 * h1 + c2 * h2);
+            assert(rowc(f) == 66 * a0 + 66 * a1 + 66 * a2);
+            assert(rowc(f) * h == 66 * fblk(f));
+        }
+    }
+    let fr: int = if stream { rowc(f) } else { 0 };
+    assert(h * (fr + 1) == h * fr + h) by (nonlinear_arith);
+    assert(h * fr == fr * h) by (nonlinear_arith);
+}
+
+/// The work of `flush_row`.
+pub open spec fn rowc(f: Frame) -> int {
+    if f.nc == 1 {
+        66 * cw(f, 0)
+    } else {
+        66 * (cw(f, 0) * srows(f, 0)) + 66 * (cw(f, 1) * srows(f, 1)) + 66 * (cw(f, 2) * srows(f, 2))
+    }
+}
+
+fn flush_row(co: &mut Coefs, f: &FrameX, g: &Geom, Tracked(mt): Tracked<&mut Meter>)
     requires
         frame_basic(f@),
         g.wf(f@),
@@ -1809,6 +2096,7 @@ fn flush_row(co: &mut Coefs, f: &FrameX, g: &Geom)
         final(co).row == old(co).row + 1,
         final(co).view(f@.nc) == old(co).view(f@.nc),
         final(co).sqv() == old(co).sqv(),
+        final(mt).n <= old(mt).n + rowc(f@),
 {
     reveal(Coefs::sqv);
     reveal(Coefs::swf);
@@ -1843,10 +2131,13 @@ fn flush_row(co: &mut Coefs, f: &FrameX, g: &Geom)
         row,
         Ghost(co.g0@),
         Ghost(g.ch[0] as int),
+        Tracked(mt),
     );
     if nc == 3 {
-        assert(g.cw[1] == cw(fv, 1) && g.ch[1] == ch(fv, 1) && g.wb[1] == wb(fv, 1) && g.hb[1] == hb(fv, 1));
-        assert(g.cw[2] == cw(fv, 2) && g.ch[2] == ch(fv, 2) && g.wb[2] == wb(fv, 2) && g.hb[2] == hb(fv, 2));
+        proof {
+            lemma_geom_c(fv, *g, 1);
+            lemma_geom_c(fv, *g, 2);
+        }
         assert(fv.comps[1] == f.comps[1] && fv.comps[2] == f.comps[2]);
         let vr1 = f.comps[1].v as usize;
         let vr2 = f.comps[2].v as usize;
@@ -1871,6 +2162,7 @@ fn flush_row(co: &mut Coefs, f: &FrameX, g: &Geom)
             row,
             Ghost(co.g1@),
             Ghost(g.ch[1] as int),
+            Tracked(mt),
         );
         flush_x(
             &mut co.a2,
@@ -1885,6 +2177,7 @@ fn flush_row(co: &mut Coefs, f: &FrameX, g: &Geom)
             row,
             Ghost(co.g2@),
             Ghost(g.ch[2] as int),
+            Tracked(mt),
         );
     }
     co.row = co.row + 1;
@@ -1895,7 +2188,16 @@ fn flush_row(co: &mut Coefs, f: &FrameX, g: &Geom)
 /// `None` if the file is to be rejected.
 #[verifier::spinoff_prover]
 #[verifier::rlimit(40)]
-pub fn scan_x(data: &[u8], f: &FrameX, g: &Geom, t: &Tabs, s: &ScanX, co: &mut Coefs, p: usize) -> (r: Option<usize>)
+pub fn scan_x(
+    data: &[u8],
+    f: &FrameX,
+    g: &Geom,
+    t: &Tabs,
+    s: &ScanX,
+    co: &mut Coefs,
+    p: usize,
+    Tracked(mt): Tracked<&mut Meter>,
+) -> (r: Option<usize>)
     requires
         len_ok(data@),
         p <= data@.len() + 0x1_0008,
@@ -1919,6 +2221,10 @@ pub fn scan_x(data: &[u8], f: &FrameX, g: &Geom, t: &Tabs, s: &ScanX, co: &mut C
                 &&& p <= pos <= data@.len() + 0x1_0010
             }
         }),
+        final(mt).n + 4 * p <= old(mt).n + 4 * (match r {
+            Some(pos) => pos as int,
+            None => data@.len() + 0x1_0020int,
+        }) + scan_work(f@, s@, old(co).stream),
 {
     let ghost d = data@;
     let ghost fv = f@;
@@ -1926,6 +2232,9 @@ pub fn scan_x(data: &[u8], f: &FrameX, g: &Geom, t: &Tabs, s: &ScanX, co: &mut C
     let ghost sv = s@;
     let ghost nc = fv.nc;
     let ghost total = scan(d, fv, tv, sv, co.view(nc), p as int);
+    proof {
+        lemma_sw_nn(fv, *g, sv, co.stream);
+    }
     let cx = match make_ctx(f, t, s) {
         Some(cx) => cx,
         None => {
@@ -1985,10 +2294,17 @@ pub fn scan_x(data: &[u8], f: &FrameX, g: &Geom, t: &Tabs, s: &ScanX, co: &mut C
         assert(init.pred =~= lit.pred);
         assert(init == lit);
     }
+    let ghost m0 = mt.n;
+    let ghost fr: int = if co.stream { rowc(fv) } else { 0 };
+    assert(fr >= 0);
     let mut my: u32 = 0;
     while my < mh
         invariant
             my <= mh,
+            m0 == old(mt).n,
+            fr == if old(co).stream { rowc(fv) } else { 0int },
+            fr >= 0,
+            mt.n + 4 * p <= m0 + 4 * st.br.p0@ + 7 * (my * mw) + my * (fr + 1),
             d == data@,
             fv == f@,
             tv == t@,
@@ -2025,6 +2341,10 @@ pub fn scan_x(data: &[u8], f: &FrameX, g: &Geom, t: &Tabs, s: &ScanX, co: &mut C
         while mx < mw
             invariant
                 mx <= mw,
+                m0 == old(mt).n,
+                fr == if old(co).stream { rowc(fv) } else { 0int },
+                fr >= 0,
+                mt.n + 4 * p <= m0 + 4 * st.br.p0@ + 7 * (my * mw + mx) + my * (fr + 1),
                 my < mh,
                 d == data@,
                 fv == f@,
@@ -2066,9 +2386,14 @@ pub fn scan_x(data: &[u8], f: &FrameX, g: &Geom, t: &Tabs, s: &ScanX, co: &mut C
                 assert(mh * mw == mw * mh) by (nonlinear_arith);
                 assert(m < nm);
             }
-            let ok = mcu_step_x(data, f, g, t, s, &cx, &mut st, co, my, mx, Ghost(p as int));
+            let ok = mcu_step_x(data, f, g, t, s, &cx, &mut st, co, my, mx, Ghost(p as int), Tracked(mt));
+            proof {
+                mt.n = mt.n + 1;
+            }
             if !ok {
                 proof {
+                    mt.n = mt.n + st.br.wk@ as nat;
+                    lemma_scan_work(fv, sv, old(co).stream, my as int, mx as int + 1, fr);
                     lemma_scan_notok(d, fv, tv, sv, mcu_step(d, fv, tv, sv, cur0, m), m + 1);
                 }
                 return None;
@@ -2083,15 +2408,21 @@ pub fn scan_x(data: &[u8], f: &FrameX, g: &Geom, t: &Tabs, s: &ScanX, co: &mut C
         }
         proof {
             assert((my + 1) * mw == my * mw + mw) by (nonlinear_arith);
+            assert((my + 1) * (fr + 1) == my * (fr + 1) + fr + 1) by (nonlinear_arith);
         }
         if co.stream {
-            flush_row(co, f, g);
+            flush_row(co, f, g, Tracked(mt));
+        }
+        proof {
+            mt.n = mt.n + 1;
         }
         my += 1;
     }
     proof {
         assert(mh * mw == mw * mh) by (nonlinear_arith);
         assert(ssv(st, co.view(nc)) == total);
+        mt.n = mt.n + st.br.wk@ as nat;
+        lemma_scan_work(fv, sv, old(co).stream, mh as int, 0, fr);
     }
     Some(st.br.pos)
 }
