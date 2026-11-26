@@ -57,7 +57,10 @@ pub struct ExDeadline(Deadline);
 
 #[verifier::external_body]
 #[inline(always)]
-pub fn no_deadline() -> Deadline {
+pub fn no_deadline() -> (r: Deadline)
+    ensures
+        !has_deadline(r),
+{
     Deadline(None)
 }
 

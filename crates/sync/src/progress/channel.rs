@@ -1346,4 +1346,49 @@ pub proof fn lemma_nonvacuous(s0: St, n: nat)
     }
 }
 
+/// The protocol, for `model::Model`.
+pub struct P;
+
+impl crate::model::Protocol for P {
+    type St = St;
+    type Th = Th;
+
+    open spec fn init(s: St, n: nat) -> bool {
+        init(s, n)
+    }
+
+    open spec fn step(s: St, t: nat, s2: St) -> bool {
+        step(s, t, s2)
+    }
+
+    open spec fn inv(s: St, n: nat) -> bool {
+        inv(s, n)
+    }
+
+    open spec fn threads(s: St) -> Seq<Th> {
+        s.th
+    }
+
+    open spec fn idle(th: Th) -> bool {
+        th.ph == Ph::Idle
+    }
+
+    proof fn lemma_init(s: St, n: nat) {
+        lemma_init(s, n);
+        assert forall|t: int| 0 <= t < n implies (#[trigger] s.th[t]).ph == Ph::Idle by {}
+    }
+
+    proof fn lemma_step(s: St, n: nat, t: nat, s2: St) {
+        lemma_step(s, n, t, s2);
+        lemma_step_frame(s, n, t, s2);
+        assert forall|u: int| 0 <= u < n && u != t implies #[trigger] s2.th[u] == s.th[u] by {
+            assert(s2.th[(u as nat) as int] == s.th[(u as nat) as int]);
+        }
+    }
+
+    proof fn lemma_len(s: St, n: nat) {
+    }
+}
+
 } // verus!
+

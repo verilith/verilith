@@ -421,9 +421,11 @@ proof fn publish_range<T>(tracked src: Map<nat, PointsTo<T>>, tracked m: &mut Ma
         forall|p: nat| #![trigger final(m).dom().contains(p)] lo <= p < hi ==> final(m).dom().contains(p) && final(m)[p].value() == src[p] && final(m)[p].view() == tid.view(),
         forall|p: nat| #![trigger final(m).dom().contains(p)] #![trigger final(m)[p]] !(lo <= p < hi) ==> (final(m).dom().contains(p) == old(m).dom().contains(p) && final(m)[p] == old(m)[p]),
         same_outside(*final(m), *old(m), lo, hi),
+        holds_values(*final(m), src, lo, hi),
     decreases hi - lo,
 {
     reveal(same_outside);
+    let ghost m0 = *m;
     if lo < hi {
         let tracked mut src = src;
         let ghost s0 = src;
@@ -431,6 +433,7 @@ proof fn publish_range<T>(tracked src: Map<nat, PointsTo<T>>, tracked m: &mut Ma
         m.tracked_insert(lo, Published::publish(x, tid));
         publish_range(src, m, lo + 1, hi, tid);
     }
+    lemma_holds_values_intro(*m, src, lo, hi);
 }
 
 impl<T> Producer<T> {
@@ -1145,6 +1148,33 @@ pub open spec fn same_outside<T>(a: Map<nat, Published<PointsTo<T>>>, b: Map<nat
     forall|p: nat| #![trigger a.dom().contains(p)] #![trigger a[p]] !(lo <= p < hi) ==> (a.dom().contains(p) == b.dom().contains(p) && a[p] == b[p])
 }
 
+/// The cells in `[lo, hi)` are published and hold `f`'s permissions. Opaque
+/// so that a caller proves the frame lemmas' precondition as this one term:
+/// matching it as a quantifier against the caller's own was left to the
+/// solver, and on Arm it failed to (`pop_into`, Verus 0.2026.11).
+#[verifier::opaque]
+pub open spec fn holds_values<T>(cells: Map<nat, Published<PointsTo<T>>>, f: Map<nat, PointsTo<T>>, lo: nat, hi: nat) -> bool {
+    forall|p: nat| #![trigger cells.dom().contains(p)] lo <= p < hi ==> cells.dom().contains(p) && cells[p].value() == f[p]
+}
+
+proof fn lemma_holds_values_intro<T>(cells: Map<nat, Published<PointsTo<T>>>, f: Map<nat, PointsTo<T>>, lo: nat, hi: nat)
+    requires
+        forall|p: nat| #![trigger cells.dom().contains(p)] lo <= p < hi ==> cells.dom().contains(p) && cells[p].value() == f[p],
+    ensures
+        holds_values(cells, f, lo, hi),
+{
+    reveal(holds_values);
+}
+
+proof fn lemma_holds_values_elim<T>(cells: Map<nat, Published<PointsTo<T>>>, f: Map<nat, PointsTo<T>>, lo: nat, hi: nat)
+    requires
+        holds_values(cells, f, lo, hi),
+    ensures
+        forall|p: nat| #![trigger cells.dom().contains(p)] lo <= p < hi ==> cells.dom().contains(p) && cells[p].value() == f[p],
+{
+    reveal(holds_values);
+}
+
 /// A read-modify-write appends a copy of the last message with a larger
 /// view; every `seen_by` fact about the history still holds.
 proof fn lemma_rmw_seen<T>(cells: Map<nat, Published<PointsTo<T>>>, lo: nat, off: nat, h: Seq<Msg>, h2: Seq<Msg>, v: RaView)
@@ -1400,7 +1430,7 @@ proof fn lemma_push_frame<T>(
 )
     requires
         same_outside(cells, old_cells, t0, t0 + k),
-        forall|p: nat| #![trigger cells.dom().contains(p)] t0 <= p < t0 + k ==> cells.dom().contains(p) && cells[p].value() == w[p],
+        holds_values(cells, w, t0, t0 + k),
         full_perms(w, c, t0, t0 + k, values, t0),
         k <= values.len(),
         full_pub(old_cells, c, tc, t0, old_q, head),
@@ -1414,6 +1444,7 @@ proof fn lemma_push_frame<T>(
         empty_pub(cells, c, hc + c.cap, head + c.cap),
 {
     reveal(same_outside);
+    lemma_holds_values_elim(cells, w, t0, t0 + k);
     let vals = values.subrange(0, k as int);
     assert forall|p: nat| tc <= p < t0 + k implies {
         &&& #[trigger] cells.dom().contains(p)
@@ -1463,7 +1494,7 @@ proof fn lemma_pop_frame<T>(
 )
     requires
         same_outside(cells, old_cells, h0 + c.cap, h0 + k + c.cap),
-        forall|p: nat| #![trigger cells.dom().contains(p)] h0 + c.cap <= p < h0 + k + c.cap ==> cells.dom().contains(p) && cells[p].value() == f[p],
+        holds_values(cells, f, h0 + c.cap, h0 + k + c.cap),
         empty_perms(f, c, h0 + c.cap, h0 + k + c.cap),
         full_pub(old_cells, c, tc, tail, old_q, h0),
         empty_pub(old_cells, c, hc + c.cap, h0 + c.cap),
@@ -1475,6 +1506,7 @@ proof fn lemma_pop_frame<T>(
         empty_pub(cells, c, hc + c.cap, h0 + k + c.cap),
 {
     reveal(same_outside);
+    lemma_holds_values_elim(cells, f, h0 + c.cap, h0 + k + c.cap);
     let nq = old_q.subrange(k as int, old_q.len() as int);
     assert forall|p: nat| tc <= p < tail implies {
         &&& #[trigger] cells.dom().contains(p)
@@ -1777,10 +1809,6 @@ impl<T: Copy> Producer<T> {
                 // The batch's cells, in the form `lemma_push_frame` takes.
                 let ghost kn = k as nat;
                 assert(hi == t0 + kn);
-                assert forall|p: nat| t0 <= p < t0 + kn implies #[trigger] s.cells.dom().contains(p) && s.cells[p].value() == w[p] by {
-                    assert(p < hi);
-                    assert(s.cells.dom().contains(p));
-                }
                 lemma_push_frame(c, s.cells, old_cells, w, values@, old_q, cg.tail_cache, cg.head, pg.head_cache, t0, kn);
             }
             let tracked au = au_opt.tracked_take();
@@ -1925,11 +1953,6 @@ impl<T> Consumer<T> {
                 lemma_publish_head(old_cells, s.cells, hh, s.head.msgs(), pg.head_cache + c.cap, h0, k as nat, c.cap, cg.hview, self.tid@.view());
                 let ghost cells1 = s.cells;
                 let ghost kn = k as nat;
-                assert forall|p: nat| #![trigger cells1.dom().contains(p)] h0 + c.cap <= p < h0 + kn + c.cap implies cells1.dom().contains(p) && cells1[p].value() == f[p] by {
-                    assert(lo <= p < hi);
-                    assert(s.cells.dom().contains(p));
-                    assert(s.cells[p].value() == f[p]);
-                }
                 assert(same_outside(cells1, old_cells, h0 + c.cap, h0 + kn + c.cap));
                 lemma_pop_frame(c, cells1, old_cells, f, old_q, cg.tail_cache, pg.tail, pg.head_cache, h0, kn);
                 assert(old_q.subrange(0, k as int) =~= held.subrange(0, k as int));

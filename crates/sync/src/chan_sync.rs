@@ -51,7 +51,7 @@ broadcast use {vstd::set_lib::range_set_properties, vstd::set::lemma_set_contain
 pub open spec const CHAN_NS: int = 0x6368;
 
 /// The number of threads in each model: any number (see
-/// `chan_model::Model::pool_nonempty`).
+/// `model::Model::pool_nonempty`).
 pub uninterp spec fn model_threads() -> nat;
 
 /// How many times a call snoozes before it registers and parks: what

@@ -11,10 +11,9 @@
 //! (`trace::fair`). Nothing else is assumed about timing.
 //!
 //! Each module models one protocol at the granularity of its atomic
-//! accesses, including the global parking lot (`src/parking.rs`) or the
-//! channel's waiter lists, which is the code the safety proofs treat as
-//! unverified. `TRUST.md` ("Progress") maps every model step to the line of
-//! code it stands for and explains why one step per access is faithful.
+//! accesses, including the global parking lot (`src/lot.rs`) or the
+//! channel's waiter lists. `TRUST.md` ("Progress") maps every model step
+//! to the code it stands for and explains why one step per access is faithful.
 //! Everything here is spec and proof code: it compiles to nothing.
 pub mod channel;
 pub mod mutex;
