@@ -272,6 +272,23 @@ A TLS 1.3 server answers a client's Finished with nothing when it sends no
 ticket, so a client with Nagle on would hold its request for the kernel's
 40 ms delayed ACK: the server sets `TCP_QUICKACK` while handshaking.
 
+TLS 1.3 0-RTT (`--early-data N`, off by default): a client resuming a
+session sends its request with the ClientHello and gets the response with
+the server's flight, one round trip sooner. Through a proxy adding 20 ms
+of round trip, the first response byte of a resumed connection came after
+42.5 ms without 0-RTT and **21.7 ms** with it (50 ms: 102.8 against
+51.6 ms; `bench/server/zero-rtt`, `results/2026-11-26-cloud-0rtt`).
+Early data can be replayed by an attacker, so the server takes it only as
+verilith-tls proves (a resumption, the ticket's suite and ALPN, within
+the size it advertised) and only once: verilith-tls-aws-lc keeps a
+single-use register of ClientHellos and a 10 s freshness window on the
+ticket's age (RFC 8446 §8). A request read from early data has
+`Request::early()` set, and any method but GET, HEAD and OPTIONS is
+answered 425 Too Early (RFC 8470) without calling the handler; the
+client sends it again after the handshake. The register is per process,
+so servers on several machines sharing ticket keys should leave 0-RTT
+off.
+
 Connection setup (`h1-close`): accepting with `TCP_DEFER_ACCEPT` (the
 request arrives with the connection, one wakeup instead of two),
 TCP_NODELAY inherited from the listener, and no epoll removal before

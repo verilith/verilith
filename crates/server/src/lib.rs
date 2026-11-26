@@ -57,6 +57,7 @@ mod api {
         pub(crate) headers: &'a [Header],
         /// The whole body, decoded if it was chunked.
         pub body: &'a [u8],
+        pub(crate) early: bool,
     }
 
     impl<'a> Request<'a> {
@@ -71,6 +72,15 @@ mod api {
         pub fn header(&self, name: &[u8]) -> Option<&'a [u8]> {
             let buf = self.buf;
             self.headers.iter().find(|h| h.name.of(buf).eq_ignore_ascii_case(name)).map(|h| h.value.of(buf))
+        }
+
+        /// Whether the request came in TLS 1.3 0-RTT data, before the
+        /// handshake was confirmed (RFC 8470 §5.1). Such a request may be a
+        /// replay: the server answers 425 (Too Early) to any method but
+        /// GET, HEAD and OPTIONS without calling the handler, and a handler
+        /// should do nothing for an early GET that it would not repeat.
+        pub fn early(&self) -> bool {
+            self.early
         }
 
         /// The target's path, before any `?`.
@@ -92,6 +102,12 @@ mod api {
         pub(crate) head: bool,
         /// Set on HTTP/2 streams: the response is encoded here.
         pub(crate) h2: Option<&'a mut crate::h2::Reply>,
+    }
+
+    /// Whether a request with this method may be answered from 0-RTT
+    /// data: the safe methods (RFC 9110 §9.2.1) that browsers send early.
+    pub(crate) fn early_ok(method: &[u8]) -> bool {
+        matches!(method, b"GET" | b"HEAD" | b"OPTIONS")
     }
 
     /// Request handling. Called on the worker thread that owns the

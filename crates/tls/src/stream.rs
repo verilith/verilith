@@ -65,7 +65,7 @@ impl<P: Provider> ServerStream<P> {
             match ev? {
                 Event::Nothing => {}
                 Event::HandshakeDone => self.handshake_done = true,
-                Event::Data(n) => {
+                Event::Data(n) | Event::EarlyData(n) => {
                     if self.plain_start == self.plain.len() {
                         self.plain.clear();
                         self.plain_start = 0;
@@ -119,6 +119,13 @@ impl<P: Provider> ServerStream<P> {
     /// caller takes them without a copy and lends its buffer back.
     pub fn swap_pending(&mut self, v: &mut Vec<u8>) {
         core::mem::swap(&mut self.out, v)
+    }
+
+    /// 0-RTT data was taken and the handshake is not yet confirmed: the
+    /// plaintext so far may be a replay (RFC 8446 §8), and whoever acts on
+    /// it should do only what is safe to repeat (RFC 8470).
+    pub fn in_early_data(&self) -> bool {
+        self.conn.early_accepted() && !self.handshake_done
     }
 
     pub fn is_handshaking(&self) -> bool {

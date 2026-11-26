@@ -84,6 +84,16 @@ fn base64(s: &str) -> Option<Vec<u8>> {
 /// A configuration from a certificate chain (DER, leaf first) and a
 /// PKCS#8 key (DER): ECDSA P-256/P-384, Ed25519 or RSA.
 pub fn config_der(chain: Vec<Vec<u8>>, key_pkcs8: &[u8]) -> std::io::Result<Arc<Config>> {
+    config_der_early(chain, key_pkcs8, 0)
+}
+
+/// [`config_der`], taking up to `max_early` bytes of 0-RTT data on a
+/// resumption (0 for none). Requests in early data reach the handler
+/// with [`crate::Request::early`] set, and any method but GET, HEAD and
+/// OPTIONS is answered 425 (Too Early) without it. Replays are refused
+/// by a single-use register in this process (verilith-tls-aws-lc):
+/// servers on several machines that share ticket keys must not enable it.
+pub fn config_der_early(chain: Vec<Vec<u8>>, key_pkcs8: &[u8], max_early: u32) -> std::io::Result<Arc<Config>> {
     let key = SigningKey::from_pkcs8(key_pkcs8).ok_or_else(|| bad("the key is not PKCS#8 ECDSA, Ed25519 or RSA"))?;
     let mut cfg = verilith_tls::server::Config::new(SUITES.to_vec(), GROUPS.to_vec(), key.schemes().to_vec(), ALPN.to_vec(), &chain)
         .ok_or_else(|| bad("the certificate chain is empty or too long"))?;
@@ -91,6 +101,7 @@ pub fn config_der(chain: Vec<Vec<u8>>, key_pkcs8: &[u8]) -> std::io::Result<Arc<
     // (6 h).
     const TICKET_LIFETIME: u32 = 6 * 3600;
     cfg.set_tickets(2, TICKET_LIFETIME);
+    cfg.set_early_data(max_early);
     let tickets = Arc::new(TicketKeys::new(TICKET_LIFETIME as u64));
     Ok(Arc::new(Config::Verilith { cfg: Arc::new(cfg), key: Arc::new(key), tickets }))
 }
@@ -98,10 +109,15 @@ pub fn config_der(chain: Vec<Vec<u8>>, key_pkcs8: &[u8]) -> std::io::Result<Arc<
 /// A configuration for `cert`/`key` (PEM files; the key "PRIVATE KEY",
 /// that is PKCS#8).
 pub fn config(cert: &str, key: &str) -> std::io::Result<Arc<Config>> {
+    config_early(cert, key, 0)
+}
+
+/// [`config`], with 0-RTT data as [`config_der_early`] takes it.
+pub fn config_early(cert: &str, key: &str, max_early: u32) -> std::io::Result<Arc<Config>> {
     let chain = pem_blocks(&std::fs::read(cert)?, "CERTIFICATE");
     let keys = pem_blocks(&std::fs::read(key)?, "PRIVATE KEY");
     let key = keys.first().ok_or_else(|| bad("no PKCS#8 \"PRIVATE KEY\" block in the key file"))?;
-    config_der(chain, key)
+    config_der_early(chain, key, max_early)
 }
 
 /// The same with rustls, with ALPN offering h2 and http/1.1.
@@ -231,6 +247,15 @@ impl Session {
             Session::V(s) => s.is_handshaking(),
             #[cfg(feature = "tls-rustls")]
             Session::R(s) => s.is_handshaking(),
+        }
+    }
+
+    /// 0-RTT data was taken and the handshake is not yet confirmed.
+    fn early(&self) -> bool {
+        match self {
+            Session::V(s) => s.in_early_data(),
+            #[cfg(feature = "tls-rustls")]
+            Session::R(_) => false,
         }
     }
 
@@ -477,13 +502,19 @@ impl TlsConn {
                 self.closing = true;
                 return Next::Close;
             }
-            if self.inner.is_none() && !self.tls.handshaking() {
+            // With 0-RTT data, HTTP starts before the handshake is done.
+            let early = self.tls.early();
+            if self.inner.is_none() && (!self.tls.handshaking() || early) {
                 self.inner = Some(if self.tls.h2() { Inner::H2(Box::new(Conn2::new(self.limits2))) } else { Inner::H1(Conn::new(self.limits)) });
                 if self.eof {
                     inner!(self.inner.as_mut().unwrap(), c => c.eof());
                 }
             }
             if let Some(i) = self.inner.as_mut() {
+                match i {
+                    Inner::H1(c) => c.early = early,
+                    Inner::H2(c) => c.early = early,
+                }
                 // Plaintext in.
                 let mut peer_closed = false;
                 loop {
