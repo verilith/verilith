@@ -227,11 +227,11 @@ the tests check.
 ## What is proven
 
 Everything in `src/spec.rs`, `src/parser.rs`, `src/index.rs`,
-`src/stage2.rs`, `src/ondemand.rs`, `src/protocol.rs`, `src/utf8.rs`, `src/write.rs`, `src/simd.rs`, `src/float.rs`
-and `src/lemmas.rs` is checked by Verus (`./scripts/verify.sh`, which runs `cargo verus verify`,
-833 items, 0 errors). The proofs are checked once per pointer width:
+`src/stage2.rs`, `src/ondemand.rs`, `src/protocol.rs`, `src/utf8.rs`, `src/write.rs`, `src/simd.rs`, `src/float.rs`,
+`src/diag.rs` and `src/lemmas.rs` is checked by Verus (`./scripts/verify.sh`, which runs `cargo verus verify`,
+880 items, 0 errors). The proofs are checked once per pointer width:
 also for `wasm32-unknown-unknown` at a 32-bit `usize`
-(`./scripts/verify-narrow.sh`, 747 items, without the x86 and Arm
+(`./scripts/verify-narrow.sh`, 794 items, without the x86 and Arm
 kernels, which that build does not have).
 The trusted base is listed under [What is not proven](#what-is-not-proven).
 
@@ -248,6 +248,16 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   to read the spec's tokens through that windowed index. This holds for accepted and rejected
   inputs, and covers the decoded string bytes (UTF-8 for `\u` escapes and
   surrogate pairs), the byte range of each number, and the end position.
+* **Error reasons and positions.** `doc_fail` in `src/diag.rs` says what
+  error a rejected text gets: it reads the text with the grammar, rule for
+  rule, and reports the first byte where no rule applies (or the end of the
+  input, if more was needed), with the reason; ill-formed UTF-8 at or before
+  that byte wins, reported at its first ill-formed sequence.
+  `lemma_doc_fail` proves that it reports an error exactly when `document`
+  rejects the text. `explain` is proven to return `doc_fail`'s error and
+  `line_col` its line and column, so the `Error` that `parse` and
+  `parse_prefix` return is the specified one. (`cJSON_GetErrorPtr` keeps
+  cJSON's own idea of the error position, which is not specified.)
 * **Numbers, from text to `f64`.** `number_value` in `src/spec.rs` says
   what a number lexeme means, as integers: a sign, a significand (every
   digit of the integer and fraction parts read as one integer) and a power
@@ -518,11 +528,10 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   output is checked against the verified grammar before it is written.
 * `src/value.rs`, the Rust API, is ordinary Rust over the tape; its
   unchecked accesses rely only on the proven facts above.
-* Error reasons and positions (`src/error.rs`, and `cJSON_GetErrorPtr`) are
-  diagnostics outside the spec. The verified parser decides whether the text
-  is JSON; `src/error.rs` then rescans the input up to the reported failure
-  to say why. It is tested on every JSONTestSuite `n_` file and on random
-  inputs, but not proven.
+* `cJSON_GetErrorPtr`'s position is the one the parser reports, as in
+  cJSON, and is not specified. The `Error` of the Rust and native C APIs is
+  (see "Error reasons and positions" above); `src/error.rs` only converts
+  it to the public types.
 
 ## How verilith-json reads RFC 8259
 
@@ -1048,7 +1057,8 @@ src/utf8.rs      verified SIMD UTF-8 validation (the UTF-8 spec, its local
 src/lemmas.rs    proofs about the spec
 src/value.rs     Rust API over the tape
 src/native.rs    native C API over src/value.rs (unverified, feature `capi`; include/vjson.h)
-src/error.rs     error reasons and positions (unverified)
+src/diag.rs      error reasons and positions (verified)
+src/error.rs     the public error types
 src/write.rs     verified string escaping and number checks for the writer
 src/writer.rs    Writer (unverified state machine over src/write.rs)
 src/serde_support.rs  serde Serializer/Deserializer (feature `serde`)

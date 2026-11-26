@@ -26,6 +26,8 @@
 //   feature.
 
 #[doc(hidden)]
+pub mod diag;
+#[doc(hidden)]
 pub mod error;
 #[doc(hidden)]
 pub mod float;
