@@ -23,7 +23,7 @@ let k = verilith_checksum::crc32c(b"123456789");       // 0xe306_9283
 run time (`cpu`). `crc32_update`, `adler32_update` and `crc32c_update` are
 the portable verified kernels, and take a running register for streaming.
 
-`cargo verus verify` checks 386 functions with no errors.
+`cargo verus verify` checks 391 functions with no errors.
 
 ## What is proven
 
