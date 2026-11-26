@@ -553,7 +553,7 @@ impl Decoder {
     }
 
     /// Removes `stream` from the blocked streams.
-    fn unblock(&mut self, stream: u64)
+    pub(crate) fn unblock(&mut self, stream: u64)
         requires
             old(self).inv(),
         ensures

@@ -9,6 +9,8 @@ pub mod henc;
 pub mod table;
 pub mod lemmas;
 pub mod decoder;
+pub mod fields;
+pub mod section;
 pub mod strings;
 
 #[cfg(verus_only)]

@@ -73,6 +73,18 @@ pub proof fn lemma_tsize_push(s: Seq<Entry>, e: Entry)
     assert(s.push(e).drop_last() =~= s);
 }
 
+pub proof fn lemma_tsize_entry(s: Seq<Entry>, j: int)
+    requires
+        0 <= j < s.len(),
+    ensures
+        esize(s[j]) <= tsize(s),
+    decreases s.len(),
+{
+    if j < s.len() - 1 {
+        lemma_tsize_entry(s.drop_last(), j);
+    }
+}
+
 pub proof fn lemma_tsize_bound(s: Seq<Entry>)
     ensures
         tsize(s) >= 32 * s.len(),

@@ -494,6 +494,7 @@ pub open spec fn dref_ok(t: Table, ric: nat, a: int) -> bool {
 /// The field line representation at `b[pos]`, and where it ends. `None`
 /// is QPACK_DECOMPRESSION_FAILED (the section is whole, so a
 /// representation cut short is an error too).
+#[verifier::opaque]
 pub open spec fn line(t: Table, ric: nat, base: nat, b: Seq<u8>, pos: int) -> Option<(Field, int)> {
     let lim = b.len() as nat;
     let c = b[pos];

@@ -84,7 +84,7 @@ pub fn read(b: &[u8], pos: usize, n: u8, limit: u64, out: &mut Vec<u8>, t: &[u32
             (StrE::Ok(e), StrR::Ok(s, se)) => e as int == se && final(out)@ == s && pos < e <= b@.len(),
             _ => false,
         },
-        r.0 matches StrE::Ok(e) ==> r.1@ <= 4 * (e - pos) + 4,
+        r.0 matches StrE::Ok(e) ==> r.1@ <= 4 * (e - pos) + 4 && final(out)@.len() <= 2 * b@.len() + 2,
         r.1@ <= 4 * b@.len() + 4,
 {
     match integer::decode(b, pos, n - 1) {
