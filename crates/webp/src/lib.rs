@@ -39,6 +39,8 @@ pub mod vp8tables;
 #[doc(hidden)]
 pub mod vp8spec;
 #[doc(hidden)]
+pub mod vp8order;
+#[doc(hidden)]
 pub mod vp8bool;
 #[doc(hidden)]
 pub mod vp8parse;

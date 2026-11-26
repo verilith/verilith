@@ -24,11 +24,17 @@ verus! {
 pub struct Tiff {
     /// Whether the file is little-endian ("II").
     pub le: bool,
+    /// Image width, in pixels.
     pub width: u32,
+    /// Image height, in pixels.
     pub height: u32,
+    /// Bits per sample.
     pub bits_per_sample: u32,
+    /// Samples per pixel.
     pub samples_per_pixel: u32,
+    /// The Compression tag: 1 none, 5 LZW, 8 Deflate, 32773 PackBits.
     pub compression: u32,
+    /// The PhotometricInterpretation tag.
     pub photometric: u32,
     /// 1 unsigned, 2 signed, 3 floating point, 4 undefined.
     pub sample_format: u32,

@@ -16,6 +16,10 @@
 use crate::index::*;
 use crate::parser::*;
 #[allow(unused_imports)]
+use crate::lemmas::*;
+pub use crate::protocol::{AFTER, KEY, START, VALUE};
+use crate::protocol::*;
+#[allow(unused_imports)]
 use crate::spec::*;
 use crate::stage2::*;
 #[allow(unused_imports)]
@@ -288,7 +292,8 @@ pub open spec fn skipped(s: Seq<u8>, st: int, p: int, e: int) -> bool {
     }
 }
 
-proof fn lemma_trans(s: Seq<u8>, idx: Seq<int>, a: int, b: int, c: int)
+/// Transparency composes.
+pub proof fn lemma_trans(s: Seq<u8>, idx: Seq<int>, a: int, b: int, c: int)
     requires
         transparent(s, idx, a, b),
         transparent(s, idx, b, c),
@@ -609,7 +614,9 @@ pub proof fn lemma_skip_value(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq
     }
 }
 
-proof fn lemma_sv_array(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
+/// The rest of an array, read from just after its `[`, ends with its `]`
+/// at the depth the walk started at.
+pub proof fn lemma_sv_array(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
     requires
         0 <= st <= s.len(),
         st <= p <= s.len(),
@@ -631,7 +638,9 @@ proof fn lemma_sv_array(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>
     }
 }
 
-proof fn lemma_sv_elements(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
+/// `lemma_sv_array` from just after a `[` or a `,` that is followed by an
+/// element.
+pub proof fn lemma_sv_elements(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
     requires
         0 <= st <= s.len(),
         st <= p <= s.len(),
@@ -667,7 +676,7 @@ proof fn lemma_sv_elements(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<ST
 }
 
 /// One structural byte that is not a bracket is transparent.
-proof fn lemma_step(s: Seq<u8>, st: int, q: int)
+pub proof fn lemma_step(s: Seq<u8>, st: int, q: int)
     requires
         0 <= st <= q < s.len(),
         structural(s, st, q),
@@ -681,7 +690,9 @@ proof fn lemma_step(s: Seq<u8>, st: int, q: int)
     lemma_at(s, st, q);
 }
 
-proof fn lemma_sv_object(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
+/// The rest of an object, read from just after its `{`, ends with its `}`
+/// at the depth the walk started at.
+pub proof fn lemma_sv_object(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
     requires
         0 <= st <= s.len(),
         st <= p <= s.len(),
@@ -703,7 +714,9 @@ proof fn lemma_sv_object(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok
     }
 }
 
-proof fn lemma_sv_members(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
+/// `lemma_sv_object` from just after a `{` or a `,` that is followed by a
+/// member.
+pub proof fn lemma_sv_members(s: Seq<u8>, st: int, p: int, depth: nat, tape: Seq<STok>)
     requires
         0 <= st <= s.len(),
         st <= p <= s.len(),
@@ -1437,6 +1450,8 @@ impl<'a> Cursor<'a> {
     /// closes it, wherever in it the cursor is. Nothing passed over is
     /// validated. False (and the cursor stays) if no bracket closes it.
     #[inline(always)]
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(100)]
     pub fn leave(&mut self) -> (r: bool)
         requires
             old(self).wf(),
@@ -1496,18 +1511,21 @@ pub fn index_start(s: &[u8]) -> (r: Option<usize>)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Mismatch;
 
-/// What the reader expects next.
-const VALUE: u8 = 0;
-
-const AFTER: u8 = 1;
-
-const START: u8 = 2;
-
-const KEY: u8 = 3;
-
 /// The on-demand reader: a `Cursor` and what the caller may read next (a
 /// value, a key, or a separator after a value). Every call is safe in any
 /// state and on any input; a call that does not fit returns `Mismatch`.
+///
+/// On a JSON text (`document(s, true)` accepts it) the reader also follows
+/// the tape: `synced` says its place corresponds to index `pos()` of the
+/// document's tape `doc()`, inside the containers whose start tokens are at
+/// `opens()`, expecting `want()` next (`VALUE`, `AFTER`, `START` or `KEY`).
+/// Each method's contract says, for a synced reader, which call succeeds
+/// there, that what it returns is the tape's token at `pos()`, and where it
+/// leaves the reader, which is synced again. A call that does not fit
+/// returns `Mismatch` and leaves the reader where it was, except that
+/// `arr_next` inside an object, `obj_next` inside an array and `leave` at
+/// the top are not covered: the reader stays safe but no longer follows the
+/// tape.
 pub struct Reader<'a> {
     c: Cursor<'a>,
     state: u8,
@@ -1515,9 +1533,14 @@ pub struct Reader<'a> {
     /// Where the index window's buffer goes back to when the reader is
     /// dropped.
     home: &'a mut Vec<u32>,
+    /// The containers the cursor is in, outermost first.
+    fs: Ghost<Seq<Frame>>,
+    /// The tape of everything before the cursor.
+    tp: Ghost<Seq<STok>>,
 }
 
 impl<'a> Reader<'a> {
+    /// The cursor is between two tokens of the input.
     pub closed spec fn inv(&self) -> bool {
         self.c.wf()
     }
@@ -1532,13 +1555,122 @@ impl<'a> Reader<'a> {
         self.c.s@
     }
 
+    /// The input is a JSON text, and the reader stands where index `pos()`
+    /// of its tape begins: reading on from here the way the grammar does
+    /// gives exactly the document's tape.
+    pub closed spec fn synced(&self) -> bool {
+        &&& self.c.wf()
+        &&& document(self.c.s@, true) is Some
+        &&& frames_ok(self.fs@, self.tp@)
+        &&& finish(self.c.s@, self.fs@, self.state, self.c.p@, self.tp@) == Some(document(self.c.s@, true).unwrap().0)
+    }
+
+    /// The document's tape.
+    pub open spec fn doc(&self) -> Seq<STok> {
+        document(self.src(), true).unwrap().0
+    }
+
+    /// The index on the tape of the next token.
+    pub closed spec fn pos(&self) -> int {
+        self.tp@.len() as int
+    }
+
+    /// What the reader expects next: `VALUE`, `AFTER`, `START` or `KEY`.
+    pub closed spec fn want(&self) -> u8 {
+        self.state
+    }
+
+    /// The indices on the tape of the start tokens of the containers the
+    /// reader is in, outermost first.
+    pub closed spec fn opens(&self) -> Seq<int> {
+        starts(self.fs@)
+    }
+
+    /// Synced, on the same input as `old`, at tape index `pos`, expecting
+    /// `want`, inside the containers `opens`.
+    pub open spec fn moved_to(&self, old: &Self, pos: int, want: u8, opens: Seq<int>) -> bool {
+        &&& self.synced()
+        &&& self.src() == old.src()
+        &&& self.pos() == pos
+        &&& self.want() == want
+        &&& self.opens() == opens
+    }
+
+    /// Unchanged: still synced, at the same place.
+    pub open spec fn kept(&self, old: &Self) -> bool {
+        self.moved_to(old, old.pos(), old.want(), old.opens())
+    }
+
+    /// The innermost open container is an array.
+    pub open spec fn in_arr(&self) -> bool {
+        self.opens().len() > 0 && self.doc()[self.opens().last()] is ArrStart
+    }
+
+    /// The innermost open container is an object.
+    pub open spec fn in_obj(&self) -> bool {
+        self.opens().len() > 0 && self.doc()[self.opens().last()] is ObjStart
+    }
+
+    /// The innermost container's kind on the tape is its frame's.
+    proof fn lemma_kind(&self)
+        requires
+            self.synced(),
+            self.fs@.len() > 0,
+        ensures
+            self.opens().len() == self.fs@.len(),
+            self.opens().last() == self.fs@.last().start,
+            (self.doc()[self.opens().last()] is ObjStart) == self.fs@.last().obj,
+            (self.doc()[self.opens().last()] is ArrStart) == !self.fs@.last().obj,
+    {
+        lemma_leave_step(self.c.s@, self.fs@, self.state, self.c.p@, self.tp@);
+        lemma_starts(self.fs@, self.fs@.last());
+    }
+
+    /// At a value: what the grammar reads there, and what the reader is
+    /// after it.
+    proof fn lemma_value(&self)
+        requires
+            self.synced(),
+            self.state == VALUE,
+        ensures
+            ({
+                let s = self.c.s@;
+                let j = skip_ws(s, self.c.p@);
+                let (t1, k) = value(s, j, vdepth(self.fs@), self.tp@).unwrap();
+                &&& value(s, j, vdepth(self.fs@), self.tp@) is Some
+                &&& j == self.c.tok()
+                &&& j < s.len()
+                &&& finish(s, self.fs@, AFTER, k, t1) == Some(self.doc())
+                &&& frames_ok(self.fs@, t1)
+                &&& self.pos() < t1.len()
+                &&& self.doc()[self.pos()] == t1[self.pos()]
+                &&& next_val(self.doc(), self.pos()) == t1.len()
+                &&& self.c.st@ <= k
+                &&& bnd(s, self.c.st@, k)
+                &&& skipped(s, self.c.st@, self.c.p@, k)
+            }),
+    {
+        let s = self.c.s@;
+        let st = self.c.st@;
+        let p = self.c.p@;
+        let j = skip_ws(s, p);
+        lemma_value_step(s, self.fs@, p, self.tp@);
+        lemma_value_head(s, j, vdepth(self.fs@), self.tp@);
+        let (t1, k) = value(s, j, vdepth(self.fs@), self.tp@).unwrap();
+        lemma_close(s, st, p);
+        lemma_after_bnd(s, st, self.fs@, k, t1);
+        lemma_skip_value(s, st, p, vdepth(self.fs@), self.tp@);
+    }
+
     /// Stands at the document's value in `s`, indexing it a window at a
     /// time into `idx`'s buffer, which is given back when the reader is
     /// dropped. `None` if `s` is not UTF-8 (see `index_start`).
     pub fn new(s: &'a [u8], idx: &'a mut Vec<u32>) -> (r: Option<Self>)
         ensures
-            r matches Some(rd) ==> rd.inv(),
+            r matches Some(rd) ==> rd.inv() && rd.src() == s@,
             r is None && s@.len() <= isize::MAX ==> !utf8_from(s@, bom_end(s@)),
+            document(s@, true) is Some ==> (r matches Some(rd) && rd.synced() && rd.pos() == 0 && rd.want()
+                == VALUE && rd.opens().len() == 0),
     {
         Self::with_window(s, idx, WINDOW)
     }
@@ -1547,12 +1679,19 @@ impl<'a> Reader<'a> {
     /// up to 2^30 (for tests; `None` otherwise).
     pub fn with_window(s: &'a [u8], idx: &'a mut Vec<u32>, win: usize) -> (r: Option<Self>)
         ensures
-            r matches Some(rd) ==> rd.inv(),
+            r matches Some(rd) ==> rd.inv() && rd.src() == s@,
             r is None && 128 <= win <= 0x4000_0000 && win % 128 == 0 && s@.len() <= isize::MAX ==> !utf8_from(
                 s@,
                 bom_end(s@),
             ),
+            document(s@, true) is Some && 128 <= win <= 0x4000_0000 && win % 128 == 0 ==> (r matches Some(rd)
+                && rd.synced() && rd.pos() == 0 && rd.want() == VALUE && rd.opens().len() == 0),
     {
+        proof {
+            if document(s@, true) is Some {
+                lemma_start(s@);
+            }
+        }
         // No slice is longer than `isize::MAX` bytes; the proofs need it
         // said.
         if win < 128 || win > 0x4000_0000 || win % 128 != 0 || s.len() > isize::MAX as usize {
@@ -1563,7 +1702,18 @@ impl<'a> Reader<'a> {
                 let mut buf = Vec::new();
                 std::mem::swap(idx, &mut buf);
                 let w = Win::new(s, st, win, buf);
-                Some(Reader { c: Cursor::new(s, w, Ghost(st as int)), state: VALUE, scratch: Vec::new(), home: idx })
+                let rd = Reader {
+                    c: Cursor::new(s, w, Ghost(st as int)),
+                    state: VALUE,
+                    scratch: Vec::new(),
+                    home: idx,
+                    fs: Ghost(Seq::empty()),
+                    tp: Ghost(Seq::empty()),
+                };
+                proof {
+                    assert(rd.opens() =~= Seq::<int>::empty());
+                }
+                Some(rd)
             },
             None => None,
         }
@@ -1588,26 +1738,66 @@ impl<'a> Reader<'a> {
         self.c.offset()
     }
 
-    /// Whether a complete value has been read and nothing follows it.
-    pub fn at_end(&self) -> bool
+    /// Whether a complete value has been read and nothing follows it. On a
+    /// synced reader: exactly when the document's value has been read,
+    /// and then the whole tape has.
+    pub fn at_end(&self) -> (r: bool)
         requires
             self.inv(),
+        ensures
+            self.synced() ==> (r <==> (self.want() == AFTER && self.opens().len() == 0)),
+            self.synced() && r ==> self.pos() == self.doc().len(),
     {
+        proof {
+            if self.synced() && self.fs@.len() > 0 && self.state == AFTER {
+                assert(after(self.c.s@, self.c.p@, self.fs@.last(), self.tp@) is Some);
+            }
+        }
         self.state == AFTER && self.c.done()
     }
 
-    /// Passes over the value at the cursor without validating it.
+    /// Passes over the value at the cursor without validating it. Synced:
+    /// succeeds exactly where a value is expected, and moves past it on
+    /// the tape.
     #[inline(always)]
     pub fn skip(&mut self) -> (r: Result<(), Mismatch>)
         requires
             old(self).inv(),
         ensures
             final(self).inv(),
+            final(self).src() == old(self).src(),
+            old(self).synced() ==> if old(self).want() == VALUE {
+                r is Ok && final(self).moved_to(
+                    old(self),
+                    next_val(old(self).doc(), old(self).pos()),
+                    AFTER,
+                    old(self).opens(),
+                )
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
-        if self.state != VALUE || !self.c.skip() {
+        if self.state != VALUE {
+            return Err(Mismatch);
+        }
+        let ghost sy = self.synced();
+        let ghost s = self.c.s@;
+        let ghost vr = value(s, skip_ws(s, self.c.p@), vdepth(self.fs@), self.tp@).unwrap();
+        proof {
+            if sy {
+                self.lemma_value();
+            }
+        }
+        if !self.c.skip() {
             return Err(Mismatch);
         }
         self.state = AFTER;
+        self.tp = Ghost(vr.0);
+        proof {
+            if sy {
+                lemma_after_ws(s, self.fs@, self.c.p@, vr.1, vr.0);
+            }
+        }
         Ok(())
     }
 
@@ -1615,63 +1805,235 @@ impl<'a> Reader<'a> {
     fn open(&mut self, c: u8) -> (r: Result<(), Mismatch>)
         requires
             old(self).inv(),
-            is_op(c),
+            c == 0x5B || c == 0x7B,
         ensures
             final(self).inv(),
+            final(self).src() == old(self).src(),
+            old(self).synced() ==> if old(self).want() == VALUE && (if c == 0x7B {
+                old(self).doc()[old(self).pos()] is ObjStart
+            } else {
+                old(self).doc()[old(self).pos()] is ArrStart
+            }) {
+                r is Ok && final(self).moved_to(
+                    old(self),
+                    old(self).pos() + 1,
+                    START,
+                    old(self).opens().push(old(self).pos()),
+                )
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
-        if self.state != VALUE || !self.c.eat(c) {
+        if self.state != VALUE {
             return Err(Mismatch);
         }
+        let ghost sy = self.synced();
+        let ghost s = self.c.s@;
+        let ghost p0 = self.c.p@;
+        let ghost fs0 = self.fs@;
+        let ghost t0 = self.tp@;
+        let ghost j = skip_ws(s, p0);
+        proof {
+            if sy {
+                self.lemma_value();
+                lemma_value_head(s, j, vdepth(fs0), t0);
+            }
+        }
+        if !self.c.eat(c) {
+            return Err(Mismatch);
+        }
+        proof {
+            if sy {
+                lemma_open_step(s, fs0, p0, t0);
+            }
+        }
+        let ghost f = Frame { obj: c == 0x7B, depth: vdepth(fs0), start: t0.len() as int };
+        let ghost x = if c == 0x7B {
+            STok::ObjStart { end: 0 }
+        } else {
+            STok::ArrStart { end: 0 }
+        };
+        self.fs = Ghost(fs0.push(f));
+        self.tp = Ghost(t0.push(x));
         self.state = START;
+        proof {
+            lemma_starts(fs0, f);
+        }
         Ok(())
     }
 
+    /// Steps to the next element or key. The shared body of `arr_next`
+    /// and `obj_next`.
     #[inline(always)]
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(200)]
     fn step(&mut self, close: u8, to: u8) -> (r: Result<bool, Mismatch>)
         requires
             old(self).inv(),
-            is_op(close),
+            (close == 0x5D && to == VALUE) || (close == 0x7D && to == KEY),
         ensures
             final(self).inv(),
             final(self).left() <= old(self).left(),
+            final(self).src() == old(self).src(),
+            old(self).synced() && old(self).opens().len() > 0 && (old(self).doc()[old(self).opens().last()] is ObjStart)
+                == (close == 0x7D) ==> {
+                let d = old(self).doc();
+                let i0 = if old(self).want() == VALUE {
+                    next_val(d, old(self).pos())
+                } else {
+                    old(self).pos()
+                };
+                &&& old(self).want() == KEY ==> close == 0x7D && r is Err && final(self).kept(old(self))
+                &&& old(self).want() != KEY && d[i0] == end_tok(close == 0x7D) ==> r == Ok(false) && i0 == link(
+                    d[old(self).opens().last()],
+                ) && final(self).moved_to(old(self), i0 + 1, AFTER, old(self).opens().drop_last())
+                &&& old(self).want() != KEY && d[i0] != end_tok(close == 0x7D) ==> r == Ok(true) && final(self).moved_to(old(self), i0, to, old(self).opens())
+            },
     {
+        let ghost s = self.c.s@;
+        let ghost st = self.c.st@;
+        let ghost sy = self.synced() && self.fs@.len() > 0 && (self.doc()[self.opens().last()] is ObjStart) == (close
+            == 0x7D);
+        proof {
+            if sy {
+                self.lemma_kind();
+                if self.state == KEY {
+                    assert(rest(s, KEY, self.c.p@, self.fs@.last(), self.tp@) is Some);
+                }
+            }
+        }
         if self.state == VALUE {
+            let ghost vr = value(s, skip_ws(s, self.c.p@), vdepth(self.fs@), self.tp@).unwrap();
+            proof {
+                if sy {
+                    self.lemma_value();
+                }
+            }
             if !self.c.skip() {
                 return Err(Mismatch);
             }
             self.state = AFTER;
+            self.tp = Ghost(vr.0);
+            proof {
+                if sy {
+                    lemma_after_ws(s, self.fs@, self.c.p@, vr.1, vr.0);
+                }
+            }
         }
         if self.state == KEY {
             return Err(Mismatch);
         }
+        let ghost p0 = self.c.p@;
+        let ghost t0 = self.tp@;
+        let ghost fs0 = self.fs@;
+        let ghost w0 = self.state;
+        let ghost f = fs0.last();
+        let ghost j = skip_ws(s, p0);
+        proof {
+            if sy {
+                assert(self.synced());
+                assert(self.opens() == old(self).opens());
+                lemma_close(s, st, p0);
+                lemma_skip(s, st, p0);
+                lemma_skip_ws_bounds(s, p0);
+                self.c.lemma_tok();
+                assert(rest(s, w0, p0, f, t0) is Some);
+            }
+        }
         if self.c.eat(close) {
+            let ghost t3 = close_at(t0.push(end_tok(f.obj)), f.start);
+            proof {
+                if sy {
+                    assert(rest(s, w0, p0, f, t0) == Some((t0.push(end_tok(f.obj)), j + 1)));
+                    lemma_leave_step(s, fs0, w0, p0, t0);
+                    assert forall|a: int| 0 <= a < fs0.drop_last().len() implies #[trigger] fs0.drop_last()[a].start
+                        < t0.len() by {
+                        assert(fs0.drop_last()[a] == fs0[a]);
+                    }
+                    lemma_finish_keeps(s, fs0.drop_last(), AFTER, j + 1, t3, t0.len() as int);
+                    lemma_ext_push(t0, end_tok(f.obj));
+                }
+            }
             self.state = AFTER;
+            self.fs = Ghost(fs0.drop_last());
+            self.tp = Ghost(t3);
+            proof {
+                lemma_starts(fs0, f);
+            }
             return Ok(false);
         }
         if self.state == START {
+            proof {
+                if sy {
+                    lemma_start_step(s, fs0, p0, t0);
+                }
+            }
             self.state = to;
+            proof {
+                if sy {
+                    if to == VALUE {
+                        lemma_value_step(s, fs0, p0, t0);
+                        lemma_value_head(s, j, vdepth(fs0), t0);
+                    } else {
+                        lemma_key_step(s, fs0, p0, t0);
+                    }
+                }
+            }
             return Ok(true);
         }
         if self.c.eat(0x2C) {
+            proof {
+                if sy {
+                    lemma_comma_step(s, fs0, p0, t0);
+                }
+            }
             self.state = to;
+            proof {
+                if sy {
+                    lemma_skip_ws_bounds(s, j + 1);
+                    if to == VALUE {
+                        lemma_value_step(s, fs0, j + 1, t0);
+                        lemma_value_head(s, skip_ws(s, j + 1), vdepth(fs0), t0);
+                    } else {
+                        lemma_key_step(s, fs0, j + 1, t0);
+                    }
+                }
+            }
             return Ok(true);
+        }
+        proof {
+            if sy {
+                assert(after(s, p0, f, t0) is None);
+            }
         }
         Err(Mismatch)
     }
 
-    /// Enters the array at the cursor.
+    /// Enters the array at the cursor. Synced: succeeds exactly where the
+    /// tape has an array.
     #[inline(always)]
     pub fn arr_begin(&mut self) -> (r: Result<(), Mismatch>)
         requires
             old(self).inv(),
         ensures
             final(self).inv(),
+            old(self).synced() ==> if old(self).want() == VALUE && old(self).doc()[old(self).pos()] is ArrStart {
+                r is Ok && final(self).moved_to(
+                    old(self),
+                    old(self).pos() + 1,
+                    START,
+                    old(self).opens().push(old(self).pos()),
+                )
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
         self.open(0x5B)
     }
 
     /// Steps to the next element, passing over the current one if it was
-    /// not read. `false` once the array is closed.
+    /// not read. `false` once the array is closed. Synced, in an array:
+    /// `false` exactly at the array's end token.
     #[inline(always)]
     pub fn arr_next(&mut self) -> (r: Result<bool, Mismatch>)
         requires
@@ -1679,23 +2041,53 @@ impl<'a> Reader<'a> {
         ensures
             final(self).inv(),
             final(self).left() <= old(self).left(),
+            old(self).synced() && old(self).in_arr() ==> old(self).want() != KEY && {
+                let d = old(self).doc();
+                let i0 = if old(self).want() == VALUE {
+                    next_val(d, old(self).pos())
+                } else {
+                    old(self).pos()
+                };
+                if d[i0] is ArrEnd {
+                    r == Ok(false) && i0 == link(d[old(self).opens().last()]) && final(self).moved_to(
+                        old(self),
+                        i0 + 1,
+                        AFTER,
+                        old(self).opens().drop_last(),
+                    )
+                } else {
+                    r == Ok(true) && final(self).moved_to(old(self), i0, VALUE, old(self).opens())
+                }
+            },
     {
         self.step(0x5D, VALUE)
     }
 
-    /// Enters the object at the cursor.
+    /// Enters the object at the cursor. Synced: succeeds exactly where the
+    /// tape has an object.
     #[inline(always)]
     pub fn obj_begin(&mut self) -> (r: Result<(), Mismatch>)
         requires
             old(self).inv(),
         ensures
             final(self).inv(),
+            old(self).synced() ==> if old(self).want() == VALUE && old(self).doc()[old(self).pos()] is ObjStart {
+                r is Ok && final(self).moved_to(
+                    old(self),
+                    old(self).pos() + 1,
+                    START,
+                    old(self).opens().push(old(self).pos()),
+                )
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
         self.open(0x7B)
     }
 
     /// Steps to the next key, passing over the current value if it was
-    /// not read. `false` once the object is closed.
+    /// not read. `false` once the object is closed. Synced, in an object
+    /// and not at a key: `false` exactly at the object's end token.
     #[inline(always)]
     pub fn obj_next(&mut self) -> (r: Result<bool, Mismatch>)
         requires
@@ -1703,23 +2095,73 @@ impl<'a> Reader<'a> {
         ensures
             final(self).inv(),
             final(self).left() <= old(self).left(),
+            old(self).synced() && old(self).in_obj() ==> if old(self).want() == KEY {
+                r is Err && final(self).kept(old(self))
+            } else {
+                let d = old(self).doc();
+                let i0 = if old(self).want() == VALUE {
+                    next_val(d, old(self).pos())
+                } else {
+                    old(self).pos()
+                };
+                if d[i0] is ObjEnd {
+                    r == Ok(false) && i0 == link(d[old(self).opens().last()]) && final(self).moved_to(
+                        old(self),
+                        i0 + 1,
+                        AFTER,
+                        old(self).opens().drop_last(),
+                    )
+                } else {
+                    r == Ok(true) && final(self).moved_to(old(self), i0, KEY, old(self).opens())
+                }
+            },
     {
         self.step(0x7D, KEY)
     }
 
     /// Leaves the innermost container the cursor is in, from anywhere in
-    /// it, without validating the rest of it.
+    /// it, without validating the rest of it. Synced, in a container: to
+    /// just after its end token.
     #[inline(always)]
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(100)]
     pub fn leave(&mut self) -> (r: Result<(), Mismatch>)
         requires
             old(self).inv(),
         ensures
             final(self).inv(),
+            old(self).synced() && old(self).opens().len() > 0 ==> r is Ok && final(self).moved_to(
+                old(self),
+                link(old(self).doc()[old(self).opens().last()]) + 1,
+                AFTER,
+                old(self).opens().drop_last(),
+            ),
     {
+        let ghost s = self.c.s@;
+        let ghost st = self.c.st@;
+        let ghost p0 = self.c.p@;
+        let ghost fs0 = self.fs@;
+        let ghost t0 = self.tp@;
+        let ghost f = fs0.last();
+        let ghost sy = self.synced() && fs0.len() > 0;
+        let ghost rr = rest(s, self.state, p0, f, t0).unwrap();
+        proof {
+            if sy {
+                self.lemma_kind();
+                lemma_leave_step(s, fs0, self.state, p0, t0);
+                lemma_rest_body(s, st, self.state, p0, f, t0);
+                lemma_body_close(s, st, p0, rr.1, close_byte(f.obj));
+            }
+        }
         if !self.c.leave() {
             return Err(Mismatch);
         }
         self.state = AFTER;
+        self.fs = Ghost(fs0.drop_last());
+        self.tp = Ghost(close_at(rr.0, f.start));
+        proof {
+            lemma_starts(fs0, f);
+        }
         Ok(())
     }
 
@@ -1736,6 +2178,15 @@ impl<'a> Reader<'a> {
             r is Ok ==> final(self).left() < old(self).left(),
             r matches Ok((a, b, _)) ==> a <= b <= final(self).src().len(),
             final(self).src() == old(self).src(),
+            old(self).synced() ==> if old(self).want() == KEY {
+                r matches Ok((a, b, esc)) && old(self).doc()[old(self).pos()] == (STok::Key {
+                    start: a as int,
+                    end: b as int,
+                    escaped: esc,
+                }) && (esc ==> final(self).scratch@ == decode(old(self).src(), a as int, b as int)) && final(self).moved_to(old(self), old(self).pos() + 1, VALUE, old(self).opens())
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
         if self.state != KEY {
             return Err(Mismatch);
@@ -1743,8 +2194,17 @@ impl<'a> Reader<'a> {
         self.scratch.clear();
         let ghost g = self.c.s@;
         let ghost j = self.c.tok();
+        let ghost sy = self.synced();
+        let ghost p0 = self.c.p@;
+        let ghost fs0 = self.fs@;
+        let ghost t0 = self.tp@;
         proof {
             crate::lemmas::lemma_string_body_advances(g, j + 1, false);
+            if sy {
+                assert(fs0.len() > 0);
+                lemma_key_step(g, fs0, p0, t0);
+                self.c.lemma_tok();
+            }
         }
         match self.c.string(&mut self.scratch) {
             Some((a, b, esc)) => {
@@ -1752,6 +2212,12 @@ impl<'a> Reader<'a> {
                     return Err(Mismatch);
                 }
                 self.state = VALUE;
+                self.tp = Ghost(t0.push(STok::Key { start: a as int, end: b as int, escaped: esc }));
+                proof {
+                    if sy {
+                        assert(self.scratch@ =~= Seq::<u8>::empty() + self.scratch@);
+                    }
+                }
                 Ok((a, b, esc))
             },
             None => Err(Mismatch),
@@ -1765,6 +2231,16 @@ impl<'a> Reader<'a> {
             old(self).inv(),
         ensures
             final(self).inv(),
+            old(self).synced() ==> if old(self).want() == KEY {
+                r is Ok && old(self).doc()[old(self).pos()] is Key && final(self).moved_to(
+                    old(self),
+                    old(self).pos() + 1,
+                    VALUE,
+                    old(self).opens(),
+                )
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
         match self.key_raw() {
             Ok(_) => Ok(()),
@@ -1773,7 +2249,8 @@ impl<'a> Reader<'a> {
     }
 
     /// Whether the key at the cursor is `key` (compared decoded); moves to
-    /// its value either way.
+    /// its value either way. Synced: the comparison is with the tape's
+    /// key.
     #[inline(always)]
     pub fn key_is(&mut self, key: &[u8]) -> (r: Result<bool, Mismatch>)
         requires
@@ -1781,13 +2258,31 @@ impl<'a> Reader<'a> {
         ensures
             final(self).inv(),
             r is Ok ==> final(self).left() < old(self).left(),
+            old(self).synced() ==> if old(self).want() == KEY {
+                &&& old(self).doc()[old(self).pos()] is Key
+                &&& r == Ok(key_bytes(old(self).src(), old(self).doc()[old(self).pos()]) == key@)
+                &&& final(self).moved_to(old(self), old(self).pos() + 1, VALUE, old(self).opens())
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
         match self.key_raw() {
             Ok((a, b, esc)) => {
+                let ghost s = self.c.s@;
                 if esc {
-                    Ok(self.scratch.len() == key.len() && ex_has_lit(self.scratch.as_slice(), 0, key))
+                    let r = self.scratch.len() == key.len() && ex_has_lit(self.scratch.as_slice(), 0, key);
+                    proof {
+                        assert(self.scratch@.subrange(0, self.scratch@.len() as int) =~= self.scratch@);
+                    }
+                    Ok(r)
                 } else {
-                    Ok(b - a == key.len() && ex_has_lit(self.c.s, a, key))
+                    let r = b - a == key.len() && ex_has_lit(self.c.s, a, key);
+                    proof {
+                        if s.subrange(a as int, b as int) == key@ {
+                            assert(s.subrange(a as int, b as int).len() == b - a);
+                        }
+                    }
+                    Ok(r)
                 }
             },
             Err(e) => Err(e),
@@ -1796,29 +2291,95 @@ impl<'a> Reader<'a> {
 
     /// Moves to the value of the next field named `key`, searching
     /// forward only. `false` (and the object is closed) if there is none.
+    /// Synced, in an object and not at a key: `true` at a member of this
+    /// object with that key, `false` just after its end token.
     #[inline(always)]
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(300)]
     pub fn find(&mut self, key: &[u8]) -> (r: Result<bool, Mismatch>)
         requires
             old(self).inv(),
         ensures
             final(self).inv(),
+            old(self).synced() && old(self).in_obj() && old(self).want() != KEY ==> {
+                &&& r is Ok
+                &&& r == Ok(true) ==> {
+                    &&& final(self).moved_to(old(self), final(self).pos(), VALUE, old(self).opens())
+                    &&& final(self).doc()[final(self).pos() - 1] is Key
+                    &&& key_bytes(final(self).src(), final(self).doc()[final(self).pos() - 1]) == key@
+                }
+                &&& r == Ok(false) ==> final(self).moved_to(
+                    old(self),
+                    link(old(self).doc()[old(self).opens().last()]) + 1,
+                    AFTER,
+                    old(self).opens().drop_last(),
+                )
+            },
     {
+        hide(Reader::synced);
+        hide(document);
+        hide(next_val);
+        hide(key_bytes);
+        let ghost sy = self.synced() && self.in_obj() && self.state != KEY;
+        let ghost src0 = self.src();
+        let ghost opens0 = self.opens();
+        let ghost d0 = self.doc();
         loop
             invariant
                 self.inv(),
+                sy ==> self.synced() && self.src() == src0 && self.opens() == opens0 && self.want() != KEY,
+                sy ==> old(self).src() == src0 && old(self).opens() == opens0 && d0 == old(self).doc(),
+                sy ==> opens0.len() > 0 && d0[opens0.last()] is ObjStart,
+                sy == (old(self).synced() && old(self).in_obj() && old(self).want() != KEY),
             decreases self.left(),
         {
+            let ghost i0 = if self.want() == VALUE {
+                next_val(d0, self.pos())
+            } else {
+                self.pos()
+            };
+            proof {
+                if sy {
+                    assert(self.doc() == d0);
+                    assert(self.in_obj());
+                }
+            }
+            let ghost pre_sy = self.synced() && self.in_obj() && self.want() != KEY;
+            proof {
+                assert(sy ==> pre_sy);
+            }
             match self.obj_next() {
                 Ok(true) => {},
                 Ok(false) => {
+                    proof {
+                        if sy {
+                            assert(i0 == link(d0[opens0.last()]));
+                            assert(self.moved_to(old(self), i0 + 1, AFTER, opens0.drop_last()));
+                        }
+                    }
                     return Ok(false);
                 },
                 Err(e) => {
+                    proof {
+                        assert(!pre_sy);
+                    }
                     return Err(e);
                 },
             }
+            proof {
+                if sy {
+                    assert(self.synced() && self.want() == KEY && self.opens() == opens0 && self.src() == src0);
+                }
+            }
+            let ghost pos2 = self.pos();
             match self.key_is(key) {
                 Ok(true) => {
+                    proof {
+                        if sy {
+                            assert(self.pos() - 1 == pos2);
+                            assert(self.doc() == d0);
+                        }
+                    }
                     return Ok(true);
                 },
                 Ok(false) => {
@@ -1835,6 +2396,8 @@ impl<'a> Reader<'a> {
 
     /// Reads the string at the cursor: its raw body `s[a..b]` and whether
     /// it has escapes; if it has, the decoded string is appended to `dst`.
+    /// Synced: succeeds exactly where the tape has a string, and returns
+    /// that token.
     #[inline(always)]
     pub fn str_raw(&mut self, dst: &mut Vec<u8>) -> (r: Result<(usize, usize, bool), Mismatch>)
         requires
@@ -1843,16 +2406,38 @@ impl<'a> Reader<'a> {
             final(self).inv(),
             r matches Ok((a, b, _)) ==> a <= b <= final(self).src().len(),
             final(self).src() == old(self).src(),
+            old(self).synced() ==> if old(self).want() == VALUE && old(self).doc()[old(self).pos()] is Str {
+                &&& r matches Ok((a, b, esc)) && old(self).doc()[old(self).pos()] == (STok::Str {
+                    start: a as int,
+                    end: b as int,
+                    escaped: esc,
+                }) && final(dst)@ == if esc {
+                    old(dst)@ + decode(old(self).src(), a as int, b as int)
+                } else {
+                    old(dst)@
+                }
+                &&& final(self).moved_to(old(self), old(self).pos() + 1, AFTER, old(self).opens())
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
         if self.state != VALUE {
             return Err(Mismatch);
         }
+        let ghost sy = self.synced();
+        let ghost s = self.c.s@;
+        let ghost vr = value(s, skip_ws(s, self.c.p@), vdepth(self.fs@), self.tp@).unwrap();
         proof {
             crate::lemmas::lemma_string_body_advances(self.c.s@, self.c.tok() + 1, false);
+            if sy {
+                self.lemma_value();
+                lemma_value_head(s, self.c.tok(), vdepth(self.fs@), self.tp@);
+            }
         }
         match self.c.string(dst) {
             Some(r) => {
                 self.state = AFTER;
+                self.tp = Ghost(vr.0);
                 Ok(r)
             },
             None => Err(Mismatch),
@@ -1860,7 +2445,9 @@ impl<'a> Reader<'a> {
     }
 
     /// Reads the number at the cursor: its lexeme `s[a..b]`, and its
-    /// significand and power of ten with whether those are exact.
+    /// significand and power of ten with whether those are exact. Synced:
+    /// succeeds exactly where the tape has a number, and returns that
+    /// token.
     #[inline(always)]
     pub fn num_raw(&mut self) -> (r: Result<(usize, usize, NumVal, bool), Mismatch>)
         requires
@@ -1869,17 +2456,34 @@ impl<'a> Reader<'a> {
             final(self).inv(),
             r matches Ok((a, b, _, _)) ==> a <= b <= final(self).src().len(),
             final(self).src() == old(self).src(),
+            old(self).synced() ==> if old(self).want() == VALUE && old(self).doc()[old(self).pos()] is Num {
+                &&& r matches Ok((a, b, v, ok)) && old(self).doc()[old(self).pos()] == (STok::Num {
+                    start: a as int,
+                    end: b as int,
+                }) && (ok ==> number_value(old(self).src(), a as int) == (v.neg, v.w as int, v.q as int))
+                &&& final(self).moved_to(old(self), old(self).pos() + 1, AFTER, old(self).opens())
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
         if self.state != VALUE {
             return Err(Mismatch);
         }
+        let ghost sy = self.synced();
+        let ghost s = self.c.s@;
+        let ghost vr = value(s, skip_ws(s, self.c.p@), vdepth(self.fs@), self.tp@).unwrap();
         proof {
             crate::lemmas::lemma_skip_ws_bounds(self.c.s@, self.c.p@);
             lemma_number_lexeme(self.c.s@, self.c.tok());
+            if sy {
+                self.lemma_value();
+                lemma_value_head(s, self.c.tok(), vdepth(self.fs@), self.tp@);
+            }
         }
         match self.c.num() {
             Some(r) => {
                 self.state = AFTER;
+                self.tp = Ghost(vr.0);
                 Ok(r)
             },
             None => Err(Mismatch),
@@ -1887,47 +2491,102 @@ impl<'a> Reader<'a> {
     }
 
     #[inline(always)]
-    fn lit(&mut self, lit: &[u8]) -> (r: bool)
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(200)]
+    fn lit(&mut self, lit: &[u8], Ghost(x): Ghost<STok>) -> (r: bool)
         requires
             old(self).inv(),
-            lit@.len() > 0,
-            forall|m: int| 0 <= m < lit@.len() ==> lexeme(#[trigger] lit@[m]),
+            (lit@ == seq![0x74u8, 0x72, 0x75, 0x65] && x == STok::True) || (lit@ == seq![0x66u8, 0x61, 0x6C, 0x73, 0x65]
+                && x == STok::False) || (lit@ == seq![0x6Eu8, 0x75, 0x6C, 0x6C] && x == STok::Null),
         ensures
             final(self).inv(),
+            old(self).synced() ==> if old(self).want() == VALUE && old(self).doc()[old(self).pos()] == x {
+                r && final(self).moved_to(old(self), old(self).pos() + 1, AFTER, old(self).opens())
+            } else {
+                !r && final(self).kept(old(self))
+            },
     {
-        if self.state == VALUE && self.c.lit(lit) {
+        hide(finish);
+        hide(document);
+        hide(value);
+        proof {
+            assert forall|m: int| 0 <= m < lit@.len() implies lexeme(#[trigger] lit@[m]) by {}
+        }
+        if self.state != VALUE {
+            return false;
+        }
+        let ghost sy = self.synced();
+        let ghost s = self.c.s@;
+        let ghost j = self.c.tok();
+        let ghost vr = value(s, skip_ws(s, self.c.p@), vdepth(self.fs@), self.tp@).unwrap();
+        proof {
+            if sy {
+                self.lemma_value();
+                lemma_value_head(s, j, vdepth(self.fs@), self.tp@);
+                if has_lit(s, j, lit@) {
+                    assert(s.subrange(j, j + lit@.len())[0] == s[j]);
+                }
+            }
+        }
+        if self.c.lit(lit) {
             self.state = AFTER;
+            self.tp = Ghost(vr.0);
             true
         } else {
             false
         }
     }
 
-    /// Reads `null` if it is the value at the cursor.
+    /// Reads `null` if it is the value at the cursor. Synced: exactly
+    /// where the tape has `null`.
     #[inline(always)]
     pub fn null(&mut self) -> (r: bool)
         requires
             old(self).inv(),
         ensures
             final(self).inv(),
+            old(self).synced() ==> if old(self).want() == VALUE && old(self).doc()[old(self).pos()] is Null {
+                r && final(self).moved_to(old(self), old(self).pos() + 1, AFTER, old(self).opens())
+            } else {
+                !r && final(self).kept(old(self))
+            },
     {
         let l = [0x6Eu8, 0x75, 0x6C, 0x6C];
-        self.lit(&l)
+        proof {
+            assert(l@ == seq![0x6Eu8, 0x75, 0x6C, 0x6C]);
+        }
+        self.lit(&l, Ghost(STok::Null))
     }
 
-    /// Reads the `true` or `false` at the cursor.
+    /// Reads the `true` or `false` at the cursor. Synced: exactly where
+    /// the tape has one, and it is that one.
     #[inline(always)]
     pub fn bool(&mut self) -> (r: Result<bool, Mismatch>)
         requires
             old(self).inv(),
         ensures
             final(self).inv(),
+            old(self).synced() ==> if old(self).want() == VALUE && (old(self).doc()[old(self).pos()] is True
+                || old(self).doc()[old(self).pos()] is False) {
+                r == Ok(old(self).doc()[old(self).pos()] is True) && final(self).moved_to(
+                    old(self),
+                    old(self).pos() + 1,
+                    AFTER,
+                    old(self).opens(),
+                )
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
         let t = [0x74u8, 0x72, 0x75, 0x65];
         let f = [0x66u8, 0x61, 0x6C, 0x73, 0x65];
-        if self.lit(&t) {
+        proof {
+            assert(t@ == seq![0x74u8, 0x72, 0x75, 0x65]);
+            assert(f@ == seq![0x66u8, 0x61, 0x6C, 0x73, 0x65]);
+        }
+        if self.lit(&t, Ghost(STok::True)) {
             Ok(true)
-        } else if self.lit(&f) {
+        } else if self.lit(&f, Ghost(STok::False)) {
             Ok(false)
         } else {
             Err(Mismatch)

@@ -18,6 +18,8 @@
 // * `tape`    - the tokens the parser writes.
 // * `pe_spec`, `pe` - the DTD read whole: parameter entities, conditional
 //   sections, the external subset (`parse_with`), verified.
+// * `stream_spec`, `stream`, `push`, `reader` - the push parser, verified;
+//   `items_spec` - what it emits, proven to be the whole parse's tape.
 #![cfg_attr(not(verus_keep_ghost), allow(unused_imports, unused_variables))]
 #[doc(hidden)]
 pub mod chars;
@@ -35,6 +37,8 @@ pub mod enc;
 pub mod fix;
 #[doc(hidden)]
 pub mod index;
+#[doc(hidden)]
+pub mod items_spec;
 #[doc(hidden)]
 pub mod ent;
 #[doc(hidden)]

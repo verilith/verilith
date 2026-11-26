@@ -9,21 +9,37 @@ verus! {
 /// the file.
 #[derive(Clone, Copy)]
 pub struct ParamsX {
+    /// Whether the file is little-endian ("II").
     pub le: bool,
+    /// Image width, in pixels.
     pub width: u32,
+    /// Image height, in pixels.
     pub height: u32,
+    /// Bits per sample.
     pub bps: u32,
+    /// Samples per pixel.
     pub spp: u32,
+    /// The Compression tag.
     pub compression: u32,
+    /// The PhotometricInterpretation tag.
     pub photometric: u32,
+    /// 1 unsigned, 2 signed, 3 floating point, 4 undefined.
     pub sample_format: u32,
+    /// 1: the samples of a pixel are together; 2: one plane per sample.
     pub planar: u32,
+    /// 2 for horizontal differencing, else 1.
     pub predictor: u32,
+    /// Whether the image is in tiles rather than strips.
     pub tiled: bool,
+    /// Rows per strip.
     pub rps: u32,
+    /// Tile width, in pixels.
     pub tw: u32,
+    /// Tile height, in pixels.
     pub th: u32,
+    /// The StripOffsets or TileOffsets field.
     pub offsets: Field,
+    /// The StripByteCounts or TileByteCounts field.
     pub counts: Field,
 }
 

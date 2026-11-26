@@ -16,6 +16,7 @@ use crate::dtd::*;
 use crate::enc::*;
 use crate::ent::push_utf8;
 use crate::lex::*;
+use crate::items_spec::*;
 use crate::push::*;
 use crate::spec::*;
 use crate::stable_pro::*;
@@ -591,6 +592,7 @@ impl Reader {
 
     pub open spec fn inv(&self) -> bool {
         &&& self.st.inv()
+        &&& self.st.items_ok()
         &&& self.kind <= K_DONE
         &&& self.fed == self.seen@.len()
         &&& self.fed <= isize::MAX
@@ -641,6 +643,12 @@ impl Reader {
             old(self).over() ==> r == R_ERR && final(self).seen@ == old(self).seen@,
             r != R_LIMIT && !old(self).over() ==> final(self).seen@ == old(self).seen@ + data@,
             r == R_OK ==> last && parse(final(self).seen@) is Some,
+            // Accepted: what the stream emitted, at positions in the
+            // text, is the whole parse's tape.
+            r == R_OK ==> final(self).st.seen() == parse(final(self).seen@).unwrap().0 && items(
+                final(self).st.emitted(),
+                parse(final(self).seen@).unwrap().1,
+            ),
             r == R_ERR && !old(self).over() ==> fails_parse(final(self).seen@, last),
             r == R_MORE ==> !last,
             r == R_WHOLE ==> final(self).kind == K_WHOLE && final(self).head@ == final(self).seen@,
@@ -668,6 +676,11 @@ impl Reader {
             self.fed = self.fed + data.len();
             proof {
                 self.seen@ = self.seen@ + data@;
+                if r == R_OK {
+                    // UTF-8: the text is the input.
+                    lemma_ext_refl(self.seen@);
+                    lemma_parse_utf8(self.seen@);
+                }
             }
             if r != R_WHOLE {
                 return r;
@@ -729,6 +742,12 @@ impl Reader {
             final(self).seen@ == old(self).seen@,
             r <= R_LIMIT,
             r == R_OK ==> last && parse(final(self).seen@) is Some,
+            // Accepted: what the stream emitted, at positions in the
+            // text, is the whole parse's tape.
+            r == R_OK ==> final(self).st.seen() == parse(final(self).seen@).unwrap().0 && items(
+                final(self).st.emitted(),
+                parse(final(self).seen@).unwrap().1,
+            ),
             r == R_ERR ==> fails_parse(final(self).seen@, last),
             r == R_MORE ==> !last,
             r == R_WHOLE ==> final(self).kind == K_WHOLE && final(self).head@ == final(self).seen@,
@@ -785,6 +804,12 @@ impl Reader {
             final(self).seen@ == old(self).seen@,
             r <= R_LIMIT,
             r == R_OK ==> last && parse(final(self).seen@) is Some,
+            // Accepted: what the stream emitted, at positions in the
+            // text, is the whole parse's tape.
+            r == R_OK ==> final(self).st.seen() == parse(final(self).seen@).unwrap().0 && items(
+                final(self).st.emitted(),
+                parse(final(self).seen@).unwrap().1,
+            ),
             r == R_ERR ==> fails_parse(final(self).seen@, last),
             r == R_MORE ==> !last,
             r == R_WHOLE ==> final(self).kind == K_WHOLE && final(self).head@ == final(self).seen@,
@@ -893,6 +918,8 @@ impl Reader {
                     lemma_ext_refl(text);
                     lemma_ext_refl(seen);
                     assert(decode_input(seen) == Some(text));
+                    assert(document(text, self.st.enc) == docx(text));
+                    assert(parse(seen) == Some((text, docx(text).unwrap())));
                 }
                 if r == R_ERR {
                     assert forall|s: Seq<u8>| #[trigger] ext(seen, s) && (last ==> s == seen) implies parse(s) is None by {

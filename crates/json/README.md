@@ -160,6 +160,9 @@ be skipped as an array. `Reader::new` checks that the whole input is
 UTF-8 before the first read. A string is checked to be terminated when
 the reader reaches it, and to be free of control characters when it is
 read. Use `verilith_json::parse` when the whole text must be valid.
+On a valid text, the reader is proven to read what the tape parser
+would: each value, key and container end it returns is the tape's token
+at the same place (see [What is proven](#what-is-proven)).
 
 ### C API (native)
 
@@ -224,11 +227,11 @@ the tests check.
 ## What is proven
 
 Everything in `src/spec.rs`, `src/parser.rs`, `src/index.rs`,
-`src/stage2.rs`, `src/ondemand.rs`, `src/utf8.rs`, `src/write.rs`, `src/simd.rs`, `src/float.rs`
+`src/stage2.rs`, `src/ondemand.rs`, `src/protocol.rs`, `src/utf8.rs`, `src/write.rs`, `src/simd.rs`, `src/float.rs`
 and `src/lemmas.rs` is checked by Verus (`./scripts/verify.sh`, which runs `cargo verus verify`,
-807 items, 0 errors). The proofs are checked once per pointer width:
+833 items, 0 errors). The proofs are checked once per pointer width:
 also for `wasm32-unknown-unknown` at a 32-bit `usize`
-(`./scripts/verify-narrow.sh`, 721 items, without the x86 and Arm
+(`./scripts/verify-narrow.sh`, 747 items, without the x86 and Arm
 kernels, which that build does not have).
 The trusted base is listed under [What is not proven](#what-is-not-proven).
 
@@ -367,6 +370,38 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   ends. `leave` is the same walk started inside a container. The walk
   that looks at eight entries at a time is proven equal to the one that
   looks at one (`lemma_block`).
+* **The on-demand protocol.** `src/protocol.rs` and `Reader`'s contracts
+  prove that the reader's sequencing of those operations reads a JSON text
+  the way the tape does. The reader carries, as ghost state, the tape of
+  everything before the cursor and the containers it is in, and on any
+  input that `document(s, true)` accepts it is `synced`: finishing the
+  parse from its place the grammar's way (`finish`, a continuation made of
+  what is left of the innermost container, `rest`, then of each one around
+  it, `unwind`) gives exactly the document's tape. `Reader::new` is synced
+  at tape index 0. Each call is then specified against the tape token at
+  the reader's index `pos()`: `null`, `bool`, `num_raw`, `str_raw`,
+  `arr_begin` and `obj_begin` succeed exactly when a value is expected and
+  the tape has that kind of token there, and return its contents (the
+  string's range and escape flag and decoded bytes, the number's lexeme
+  and exact value); `key_is` compares with the tape's key and `key_skip`
+  passes it; `skip` moves to the index after the value
+  (`next_val`, through the start token's link); `arr_next` and `obj_next`
+  pass over an unread value, then return `false` exactly at the innermost
+  container's end token, the one its start token links to, and `true`
+  otherwise; `leave` moves past that end token from anywhere in the
+  container; `find` stops at a member of the same object with the key
+  asked for, or past the object's end; `at_end` holds exactly once the
+  document's value has been read, and then the reader is at the tape's
+  end. Each leaves the reader synced at the place it says, so by induction
+  any sequence of calls that fits reads what the tape holds, in order. A
+  call that does not fit (a number where the tape has a string, a key
+  where a value is expected) returns `Mismatch` and changes nothing. The
+  lemmas say that each move leaves `finish` unchanged
+  (`lemma_value_step`, `lemma_open_step`, `lemma_key_step`,
+  `lemma_comma_step`, `lemma_start_step`, `lemma_leave_step`), that tokens
+  already on the tape stay there (`lemma_finish_keeps`), and that the
+  bracket walk `leave` does stops where the grammar ends the container
+  (`lemma_rest_body`).
 
 ### What is not proven
 
@@ -404,17 +439,21 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   vstd's spec of `get_unchecked_mut` and need no trust. A unit test checks each
   kernel against a scalar version, and another checks that the scalar,
   AVX2 and AVX-512 stage 1 kernels agree.
-* **The on-demand protocol.** The proofs above are about the cursor's
-  operations one at a time. That `Reader`'s sequencing of them (which call
-  is allowed after which, `find`'s loop) reads a valid document the way
-  the tape does is tested, not proven: `tests/ondemand.rs` and the
-  `ondemand` fuzz target read every accepted text in full through the
-  reader and compare each value with the tape's, and check that partial
-  reads of an accepted text end at its end. Skipped parts are not
-  validated, by design. `Reader::new` is proven to return `None` only
-  for input that is not UTF-8. The scalar conversions
-  `Reader::f64` and `i64` are the same unverified glue over the verified
-  scanner and `src/float.rs` that `Value` uses.
+* **The on-demand reader, outside the protocol.** The protocol proof
+  covers calls that fit where the reader is. `arr_next` inside an object,
+  `obj_next` inside an array and `leave` at the top level have no tape
+  contract: they stay safe (proof (1) above), but the reader may then
+  read a key as a value and no longer follows the tape. `find` is proven
+  to stop at a member with the key asked for, not that it is the first
+  such member after the cursor. On input the grammar rejects nothing is
+  claimed beyond safety, and skipped parts are not validated, by design.
+  `tests/ondemand.rs` and the `ondemand` fuzz target still read every
+  accepted text through the reader and compare it with the tape, and
+  check that partial reads end at its end. `Reader::new` is proven to
+  return `None` only for input that is not UTF-8. The scalar conversions
+  `Reader::f64` and `i64`, and the slice-returning `str` and `key`, are
+  the same unverified glue over the verified scanner and `src/float.rs`
+  that `Value` uses.
 * **NEON specs** come from verilith-simd (`verilith_simd::neon`), on the same footing:
   each intrinsic is a one-line wrapper with a trusted spec, checked against
   the real instructions by verilith-simd's `tests/neon.rs` on AArch64. The NEON
@@ -997,6 +1036,7 @@ src/parser.rs    verified one-pass parser and the Sink trait
 src/index.rs     verified stage 1: the structural index
 src/stage2.rs    verified stage 2: parsing through the index
 src/ondemand.rs  verified on-demand cursor and the Reader over it
+src/protocol.rs  the Reader's protocol against the tape (verified)
 src/lanes.rs     single-instruction SIMD wrappers, verified over verilith-simd (the 16-byte SSE2 ones are
                  verilith_simd::sse2, shared with verilith-xml); the trusted Vec-capacity model
 src/simd.rs      verified classification and bit-mask kernels built from them

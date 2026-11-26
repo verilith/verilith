@@ -159,12 +159,15 @@ pub struct St {
     pub n: usize,
     /// The code width.
     pub w: u64,
+    /// Whether there is a previous code (not the first code after a clear code).
     pub has_prev: bool,
+    /// The previous code, if `has_prev`.
     pub prev: usize,
     /// Where the previous code's string starts in the output.
     pub last: usize,
     /// Bytes output so far.
     pub pos: usize,
+    /// The specification's state.
     pub s: Ghost<Lzw>,
 }
 
