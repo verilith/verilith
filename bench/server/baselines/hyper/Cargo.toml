@@ -1,0 +1,24 @@
+[package]
+name = "hyper-hello"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# The hyper baseline for bench/server: hyper 1.x on tokio, HTTP/1.1 and
+# HTTP/2 (h2c by prior knowledge, and h2 over TLS with rustls), serving the
+# same routes as every other server in the comparison.
+
+[dependencies]
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto", "http1", "http2"] }
+http-body-util = "0.1"
+bytes = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "fs", "io-util"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs", "tls12"] }
+rustls-pemfile = "2"
+httpdate = "1"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+panic = "abort"
