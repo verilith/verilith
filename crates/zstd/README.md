@@ -5,7 +5,7 @@ A verified Zstandard (RFC 8878) decompressor in Rust, proven with
 C API. It is meant to replace libzstd's decoder in hardened builds (Node.js
 first), alongside libzstd's compressor.
 
-`cargo verus verify` (or `scripts/verify.sh`) checks 293 functions and
+`cargo verus verify` (or `scripts/verify.sh`) checks 334 functions and
 lemmas with no errors and no `assume`; the only `external_body` functions
 in this crate are the seven small copy primitives in
 `src/prims.rs` and the three CPU-feature wrappers in `src/cpu.rs`.
@@ -52,6 +52,9 @@ libzstd's decompression API.
 | Streaming memory: the output kept is at most two windows (each with the dictionary's size added) and three blocks, and a unit being collected at most one block | `stream::Stream::inv` (`mem_ok`, `need`) |
 | Dictionaries, loaded: a formatted dictionary (magic number, ID, Huffman table, offset, match length and literals length FSE tables, three repeat offsets, content) is accepted exactly when the spec accepts it, with the spec's tables and offsets; anything shorter than 8 bytes or without the magic number is raw content | `dict::load_dict` against `spec::dict_load`, `dict::raw_dict_exec` against `spec::raw_dict` |
 | Decompression with a dictionary, one-shot: `Ok(v)` exactly when every frame is valid with the dictionary's content as the history before it and its tables and repeat offsets as the starting state, and no frame names another dictionary; the same `Err` cases as without one. The decoder keeps the dictionary's content between calls (a type invariant), so a call copies only the frames' content | `dict::DictDecoder::decompress` against `spec::decompress_d` |
+
+| Linear work, one-shot: at most `6537·n + 10·v + 1` steps for `n` bytes of input and `v` of output; a failure takes at most `6537·n + 10·limit + 1179648` | `frame::decompress_metered` (`BYTE_WORK`, `BLOCK_FAIL_WORK`) |
+| Linear work with a dictionary: loading takes at most `19546 + 26·d` steps for `d` bytes; decompressing at most `6537·n + 12·v + 1`, and a failure at most `6537·n + 12·limit + 1179648 + c` for `c` bytes of content | `dict::DictDecoder::load_metered`, `DictDecoder::decompress_metered` |
 
 The output limit is checked as the output grows, so a decompression bomb
 stops at the limit, not after.
@@ -105,7 +108,36 @@ is neither kind of frame, a skippable frame too large, a header the spec
 rejects, the wrong dictionary, a block header or block the spec rejects,
 a content size that does not match, and a checksum that does not match.
 
-Not yet proven: bounds on work.
+### Work
+
+The one-shot decoder is proven to run in time linear in its input and
+output. The `_metered` functions carry a ghost step counter
+(`work::Meter`), erased at compile time. It ticks once per turn of every
+loop, however small its bound, and once per byte that a library or
+trusted copy moves (`extend_from_slice`, `resize`, a `Tail` append, the
+copies in `prims`) or that the checksum hashes. The bound is assembled
+from the inside out:
+
+- FSE: reading a table description takes at most `3·maxsv + 8·len + 6`
+  steps, and building the table `3·symbols + 3·2^log`. The spread's walk
+  is proven to visit each row at most once: the step is odd, so `size`
+  steps reach `size` distinct rows (`fse::lemma_walk_inj`), and the
+  probabilities read always sum to `2^log` (`fse::lemma_nc_run_psum`).
+- Huffman: a tree description takes at most `HUF_DESC_WORK` (12400)
+  steps, and decoding a literals section at most that plus 6 a literal.
+- Sequences: each sequence writes at least 3 bytes (`seq::lemma_ml_base_min`),
+  so its fixed cost is paid by the output; a compressed block takes at
+  most `CBLOCK_WORK + 24·size + 9·growth` (`CBLOCK_WORK` is 19603).
+- Blocks and frames: the three bytes of a block's header pay for its
+  fixed cost (`frame::BLOCK_BYTE_WORK`, 6535 a byte), one more step a byte
+  of output hashes it, and the four bytes of a frame's magic number pay
+  for copying a dictionary's tables.
+
+A step is a loop turn or a byte moved, not an instruction. The bound
+also takes allocation and `Vec::push` to be amortized O(1), and the
+XXH64 update (verified in verilith-xxhash, not metered) to be linear in
+the bytes it is given. The streaming decoder (`Stream`) is not metered:
+its work per call is not bounded yet.
 
 ## Departures from libzstd
 
