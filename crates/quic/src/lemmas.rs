@@ -257,6 +257,7 @@ proof fn rt_padding(b: Seq<u8>, p: int, n: nat, rest: Seq<u8>)
     lemma_zeros_run(b, p, n);
 }
 
+#[verifier::rlimit(40)]
 proof fn rt_ack(b: Seq<u8>, p: int, f: Fr)
     requires
         f is Ack,
@@ -627,5 +628,354 @@ pub proof fn lemma_ack_wf_tail(rs: Seq<(u64, u64)>, i: int, s: u64)
         let (gap, len) = rs[0];
         lemma_ack_wf_tail(rs.drop_first(), i - 1, (s - gap - 2 - len) as u64);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Headers
+// ---------------------------------------------------------------------------
+
+pub proof fn lemma_pow2_bytes()
+    ensures
+        pow2(8) == 0x100,
+        pow2(16) == 0x1_0000,
+        pow2(24) == 0x100_0000,
+        pow2(32) == 0x1_0000_0000,
+{
+    reveal_with_fuel(pow2, 33);
+}
+
+/// `n` `u32`s parse the same from a copy of their bytes.
+pub proof fn lemma_u32s_frame(b: Seq<u8>, q: int, n: nat)
+    requires
+        0 <= q,
+        q + 4 * n == b.len(),
+    ensures
+        u32s(b, q, n) == u32s(b.subrange(q, b.len() as int), 0, n),
+    decreases n,
+{
+    if n > 0 {
+        let c = b.subrange(q, b.len() as int);
+        assert(c[0] == b[q] && c[1] == b[q + 1] && c[2] == b[q + 2] && c[3] == b[q + 3]);
+        lemma_u32s_frame(b, q + 4, (n - 1) as nat);
+        lemma_u32s_frame(c, 4, (n - 1) as nat);
+        assert(c.subrange(4, c.len() as int) =~= b.subrange(q + 4, b.len() as int));
+    }
+}
+
+/// Dropping the bytes before the `u32`s.
+pub proof fn lemma_u32s_shift(c: Seq<u8>, k: int, n: nat)
+    requires
+        0 <= k,
+        k + 4 * n == c.len(),
+    ensures
+        u32s(c, k, n) == u32s(c.subrange(k, c.len() as int), 0, n),
+{
+    lemma_u32s_frame(c, k, n);
+}
+
+/// A `u32` reads back.
+pub proof fn lemma_u32_roundtrip(v: u32)
+    ensures
+        u32be(u32_enc(v), 0) == v,
+        u32_enc(v).len() == 4,
+{
+    let e = u32_enc(v);
+    assert(e[0] == (v >> 24) as u8 && e[1] == (v >> 16) as u8 && e[2] == (v >> 8) as u8 && e[3] == v as u8);
+    assert(((((v >> 24) as u8) as u32) << 24) | ((((v >> 16) as u8) as u32) << 16) | ((((v >> 8) as u8) as u32)
+        << 8) | ((v as u8) as u32) == v) by (bit_vector);
+}
+
+pub broadcast proof fn lemma_at_u32(b: Seq<u8>, p: int, v: u32)
+    requires
+        #[trigger] at(b, p, u32_enc(v)),
+    ensures
+        p + 4 <= b.len(),
+        u32be(b, p) == v,
+{
+    lemma_u32_roundtrip(v);
+    let e = u32_enc(v);
+    assert(b.subrange(p, p + 4)[0] == b[p] && b.subrange(p, p + 4)[1] == b[p + 1]);
+    assert(b.subrange(p, p + 4)[2] == b[p + 2] && b.subrange(p, p + 4)[3] == b[p + 3]);
+}
+
+/// Bytes that are whole `u32`s are the encoding of the `u32`s they hold.
+pub proof fn lemma_u32s_raw(raw: Seq<u8>)
+    requires
+        raw.len() % 4 == 0,
+    ensures
+        u32s_enc(u32s(raw, 0, (raw.len() / 4) as nat)) == raw,
+    decreases raw.len(),
+{
+    if raw.len() > 0 {
+        let tl = raw.subrange(4, raw.len() as int);
+        lemma_u32s_raw(tl);
+        lemma_u32s_shift(raw, 4, ((raw.len() / 4) - 1) as nat);
+        let vs = u32s(raw, 0, (raw.len() / 4) as nat);
+        assert(vs.drop_first() =~= u32s(raw, 4, ((raw.len() / 4) - 1) as nat));
+        let v = u32be(raw, 0);
+        assert(u32_enc(v) =~= raw.subrange(0, 4)) by {
+            let (a, b1, c, d) = (raw[0], raw[1], raw[2], raw[3]);
+            assert((((((a as u32) << 24) | ((b1 as u32) << 16) | ((c as u32) << 8) | (d as u32)) >> 24) as u8 == a
+                && ((((a as u32) << 24) | ((b1 as u32) << 16) | ((c as u32) << 8) | (d as u32)) >> 16) as u8 == b1
+                && ((((a as u32) << 24) | ((b1 as u32) << 16) | ((c as u32) << 8) | (d as u32)) >> 8) as u8 == c
+                && (((a as u32) << 24) | ((b1 as u32) << 16) | ((c as u32) << 8) | (d as u32)) as u8 == d)) by (bit_vector);
+        }
+        assert(raw =~= raw.subrange(0, 4) + tl);
+    }
+}
+
+/// `u32`s read back.
+pub proof fn lemma_u32s_roundtrip(b: Seq<u8>, p: int, vs: Seq<u32>)
+    requires
+        at(b, p, u32s_enc(vs)),
+    ensures
+        u32s(b, p, vs.len()) == vs,
+        u32s_enc(vs).len() == 4 * vs.len(),
+    decreases vs.len(),
+{
+    broadcast use lemma_at_split, lemma_at_u32;
+
+    if vs.len() == 0 {
+        assert(vs =~= Seq::<u32>::empty());
+    } else {
+        lemma_u32_roundtrip(vs[0]);
+        assert(u32s_enc(vs) == u32_enc(vs[0]) + u32s_enc(vs.drop_first()));
+        lemma_u32s_roundtrip(b, p + 4, vs.drop_first());
+        assert(seq![vs[0]] + vs.drop_first() =~= vs);
+    }
+}
+
+#[verifier::rlimit(40)]
+proof fn hrt_long(h: Hdr, cid_len: nat, b: Seq<u8>, p: int, rest: Seq<u8>)
+    requires
+        h is Long,
+        header_wf(h, cid_len),
+        header_rest_ok(h, rest),
+        at(b, p, header_enc(h)),
+        b.len() == p + header_enc(h).len() + rest.len(),
+    ensures
+        header(b, p, cid_len) == Some((h, p + header_enc(h).len())),
+{
+    broadcast use lemma_at_split, lemma_at_varint, lemma_varint_size, lemma_at_byte, lemma_at_take, lemma_at_bytes_len, lemma_at_u32;
+
+    let enc = header_enc(h);
+    match h {
+        Hdr::Long { first, dcid, scid, token, len } => {
+            assert(first & 0xc0 == 0xc0 ==> first & 0x80 != 0 && first & 0x40 != 0) by (bit_vector);
+            let te: Seq<u8> = if (first >> 4) & 3 == 0 { bytes_len_enc(token) } else { Seq::empty() };
+            assert(at(b, p, seq![first] + u32_enc(VERSION_1) + seq![dcid.len() as u8] + dcid + seq![scid.len() as u8]
+                + scid + te + varint_enc(len)));
+            let q = p + 5 + 1 + dcid.len() + 1 + scid.len();
+            assert(at(b, q, te));
+            assert(at(b, q + te.len(), varint_enc(len)));
+            lemma_u32_roundtrip(VERSION_1);
+            assert(at(b, p + 5, seq![dcid.len() as u8]));
+            assert(at(b, p + 6, dcid));
+            assert(at(b, p + 6 + dcid.len(), seq![scid.len() as u8]));
+            assert(at(b, p + 7 + dcid.len(), scid));
+            assert(cids(b, p + 5, MAX_CID_LEN as int) == Some((dcid, scid, q)));
+            assert(u32be(b, p + 1) == VERSION_1);
+            let ty = (first >> 4) & 3;
+            if ty == 0 {
+                assert(bytes_len(b, q) == Some((token, q + te.len())));
+            } else {
+                assert(token =~= Seq::<u8>::empty());
+                assert(te.len() == 0);
+            }
+            assert(varint(b, q + te.len()) == Some((len, q + te.len() + varint_size(len))));
+            assert(enc.len() == q + te.len() + varint_size(len) - p);
+            assert(b.len() == p + enc.len() + rest.len());
+        },
+        _ => {},
+    }
+}
+
+#[verifier::rlimit(40)]
+proof fn hrt_retry(h: Hdr, cid_len: nat, b: Seq<u8>, p: int, rest: Seq<u8>)
+    requires
+        h is Retry,
+        header_wf(h, cid_len),
+        header_rest_ok(h, rest),
+        at(b, p, header_enc(h)),
+        b.len() == p + header_enc(h).len() + rest.len(),
+    ensures
+        header(b, p, cid_len) == Some((h, p + header_enc(h).len())),
+{
+    broadcast use lemma_at_split, lemma_at_varint, lemma_varint_size, lemma_at_byte, lemma_at_take, lemma_at_bytes_len, lemma_at_u32;
+
+    let enc = header_enc(h);
+    match h {
+        Hdr::Retry { first, dcid, scid, token, tag } => {
+            assert(first & 0xc0 == 0xc0 ==> first & 0x80 != 0 && first & 0x40 != 0) by (bit_vector);
+            assert(at(b, p, seq![first] + u32_enc(VERSION_1) + seq![dcid.len() as u8] + dcid + seq![scid.len() as u8]
+                + scid + token + tag));
+            lemma_u32_roundtrip(VERSION_1);
+            assert(b.len() == p + enc.len());
+        },
+        _ => {},
+    }
+}
+
+#[verifier::rlimit(40)]
+proof fn hrt_version_negotiation(h: Hdr, cid_len: nat, b: Seq<u8>, p: int, rest: Seq<u8>)
+    requires
+        h is VersionNegotiation,
+        header_wf(h, cid_len),
+        header_rest_ok(h, rest),
+        at(b, p, header_enc(h)),
+        b.len() == p + header_enc(h).len() + rest.len(),
+    ensures
+        header(b, p, cid_len) == Some((h, p + header_enc(h).len())),
+{
+    broadcast use lemma_at_split, lemma_at_varint, lemma_varint_size, lemma_at_byte, lemma_at_take, lemma_at_bytes_len, lemma_at_u32;
+
+    let enc = header_enc(h);
+    match h {
+        Hdr::VersionNegotiation { first, dcid, scid, versions } => {
+            assert(at(b, p, seq![first] + u32_enc(0) + seq![dcid.len() as u8] + dcid + seq![scid.len() as u8] + scid
+                + u32s_enc(versions)));
+            let q = p + 5 + 1 + dcid.len() + 1 + scid.len();
+            lemma_u32s_roundtrip(b, q, versions);
+            assert(b.len() == q + 4 * versions.len());
+            assert((4 * versions.len()) % 4 == 0 && (4 * versions.len()) / 4 == versions.len()) by (nonlinear_arith);
+        },
+        _ => {},
+    }
+}
+
+#[verifier::rlimit(40)]
+proof fn hrt_other_version(h: Hdr, cid_len: nat, b: Seq<u8>, p: int, rest: Seq<u8>)
+    requires
+        h is OtherVersion,
+        header_wf(h, cid_len),
+        header_rest_ok(h, rest),
+        at(b, p, header_enc(h)),
+        b.len() == p + header_enc(h).len() + rest.len(),
+    ensures
+        header(b, p, cid_len) == Some((h, p + header_enc(h).len())),
+{
+    broadcast use lemma_at_split, lemma_at_varint, lemma_varint_size, lemma_at_byte, lemma_at_take, lemma_at_bytes_len, lemma_at_u32;
+
+    let enc = header_enc(h);
+    match h {
+        Hdr::OtherVersion { first, version, dcid, scid } => {
+            assert(at(b, p, seq![first] + u32_enc(version) + seq![dcid.len() as u8] + dcid + seq![scid.len() as u8]
+                + scid));
+        },
+        _ => {},
+    }
+}
+
+#[verifier::rlimit(40)]
+proof fn hrt_short(h: Hdr, cid_len: nat, b: Seq<u8>, p: int, rest: Seq<u8>)
+    requires
+        h is Short,
+        header_wf(h, cid_len),
+        header_rest_ok(h, rest),
+        at(b, p, header_enc(h)),
+        b.len() == p + header_enc(h).len() + rest.len(),
+    ensures
+        header(b, p, cid_len) == Some((h, p + header_enc(h).len())),
+{
+    broadcast use lemma_at_split, lemma_at_varint, lemma_varint_size, lemma_at_byte, lemma_at_take, lemma_at_bytes_len, lemma_at_u32;
+
+    let enc = header_enc(h);
+    match h {
+        Hdr::Short { first, dcid } => {
+            assert(first & 0xc0 == 0x40 ==> first & 0x80 == 0 && first & 0x40 != 0) by (bit_vector);
+            assert(at(b, p, seq![first] + dcid));
+        },
+        _ => {},
+    }
+}
+
+/// Round trip: a valid header, followed by what may follow it, parses
+/// back, ending where its encoding ends.
+pub proof fn lemma_header_roundtrip(h: Hdr, cid_len: nat, pre: Seq<u8>, rest: Seq<u8>)
+    requires
+        header_wf(h, cid_len),
+        header_rest_ok(h, rest),
+    ensures
+        header(pre + header_enc(h) + rest, pre.len() as int, cid_len) == Some(
+            (h, (pre.len() + header_enc(h).len()) as int),
+        ),
+{
+    let enc = header_enc(h);
+    let b = pre + enc + rest;
+    let p = pre.len() as int;
+    lemma_at_whole(pre, enc, rest);
+    match h {
+        Hdr::Long { .. } => hrt_long(h, cid_len, b, p, rest),
+        Hdr::Retry { .. } => hrt_retry(h, cid_len, b, p, rest),
+        Hdr::VersionNegotiation { .. } => hrt_version_negotiation(h, cid_len, b, p, rest),
+        Hdr::OtherVersion { .. } => hrt_other_version(h, cid_len, b, p, rest),
+        Hdr::Short { .. } => hrt_short(h, cid_len, b, p, rest),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Packet numbers
+// ---------------------------------------------------------------------------
+
+/// Appendix A.3 recovers every packet number within half a window of the
+/// one expected.
+pub proof fn lemma_decode_pn(expected: int, pn: int, nbits: nat)
+    requires
+        nbits == 8 || nbits == 16 || nbits == 24 || nbits == 32,
+        0 <= expected,
+        0 <= pn < VARINT_LIMIT,
+        expected - pow2(nbits) / 2 < pn <= expected + pow2(nbits) / 2,
+    ensures
+        decode_pn(expected, pn % (pow2(nbits) as int), nbits) == pn,
+{
+    lemma_pow2_bytes();
+    let win = pow2(nbits) as int;
+    let hwin = win / 2;
+    let t = pn % win;
+    let base = expected - expected % win;
+    let candidate = base + t;
+    assert(0 <= expected % win < win);
+    assert(0 <= t < win);
+    // pn and candidate differ by a multiple of win.
+    assert(pn == (pn / win) * win + t) by (nonlinear_arith)
+        requires win > 0, t == pn % win;
+    assert(base == (expected / win) * win) by (nonlinear_arith)
+        requires win > 0, base == expected - expected % win;
+    let k = pn / win - expected / win;
+    assert(pn - candidate == k * win) by (nonlinear_arith)
+        requires pn == (pn / win) * win + t, base == (expected / win) * win, candidate == base + t, k == pn / win
+            - expected / win;
+    // |pn - expected| <= hwin, |candidate - expected| < win, so k is -1, 0 or 1.
+    assert(-2 * win < k * win < 2 * win);
+    assert(-2 < k < 2) by (nonlinear_arith)
+        requires -2 * win < k * win < 2 * win, win > 0;
+    if k == 0 {
+        assert(candidate == pn);
+    } else if k == 1 {
+        assert(candidate == pn - win);
+    } else {
+        assert(candidate == pn + win);
+    }
+}
+
+/// Appendix A.2 and A.3 together: a packet number encoded with
+/// `pn_len(pn, largest_acked)` bytes is recovered by a receiver whose
+/// largest received packet number `largest` is at least `largest_acked`
+/// (both -1 before any) and below `pn`, with at most `2^31` packets not
+/// yet acknowledged.
+pub proof fn lemma_pn_roundtrip(pn: int, largest_acked: int, largest: int)
+    requires
+        0 <= pn < VARINT_LIMIT,
+        -1 <= largest_acked <= largest < pn,
+        pn - largest_acked <= 0x8000_0000,
+    ensures
+        ({
+            let nbits = (8 * pn_len(pn, largest_acked)) as nat;
+            decode_pn(largest + 1, pn % (pow2(nbits) as int), nbits) == pn
+        }),
+{
+    lemma_pow2_bytes();
+    let n = pn_len(pn, largest_acked);
+    lemma_decode_pn(largest + 1, pn, (8 * n) as nat);
 }
 } // verus!

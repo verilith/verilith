@@ -4,6 +4,7 @@
 pub mod frame;
 #[doc(hidden)]
 pub mod lemmas;
+pub mod packet;
 #[doc(hidden)]
 pub mod spec;
 pub mod varint;

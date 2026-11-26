@@ -581,4 +581,261 @@ pub open spec fn frame_rest_ok(f: Fr, rest: Seq<u8>) -> bool {
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// Packet headers (§17), before header protection is removed
+// ---------------------------------------------------------------------------
+
+/// QUIC version 1 (RFC 9000).
+pub const VERSION_1: u32 = 1;
+
+/// The big-endian `u32` at `b[p]`.
+pub open spec fn u32be(b: Seq<u8>, p: int) -> u32 {
+    ((b[p] as u32) << 24) | ((b[p + 1] as u32) << 16) | ((b[p + 2] as u32) << 8) | (b[p + 3] as u32)
+}
+
+/// The big-endian encoding of `v`.
+pub open spec fn u32_enc(v: u32) -> Seq<u8> {
+    seq![(v >> 24) as u8, (v >> 16) as u8, (v >> 8) as u8, v as u8]
+}
+
+/// The concatenated encodings of `vs`.
+pub open spec fn u32s_enc(vs: Seq<u32>) -> Seq<u8>
+    decreases vs.len(),
+{
+    if vs.len() == 0 {
+        Seq::empty()
+    } else {
+        u32_enc(vs[0]) + u32s_enc(vs.drop_first())
+    }
+}
+
+/// `n` big-endian `u32`s from `p`.
+pub open spec fn u32s(b: Seq<u8>, p: int, n: nat) -> Seq<u32>
+    decreases n,
+{
+    if n == 0 {
+        Seq::empty()
+    } else {
+        seq![u32be(b, p)] + u32s(b, p + 4, (n - 1) as nat)
+    }
+}
+
+/// A packet header (§17), as it is before header protection is removed:
+/// the low bits of `first` and the packet number are still masked.
+pub enum Hdr {
+    /// An Initial (type 0), 0-RTT (1) or Handshake (2) packet of version 1
+    /// (§17.2.2 to §17.2.4). `token` is empty except for Initial packets.
+    /// `len` is the Length field: the packet number and payload that
+    /// follow.
+    Long { first: u8, dcid: Seq<u8>, scid: Seq<u8>, token: Seq<u8>, len: u64 },
+    /// A Retry packet (§17.2.5): the token, and the 16-byte integrity tag
+    /// at the end of the datagram.
+    Retry { first: u8, dcid: Seq<u8>, scid: Seq<u8>, token: Seq<u8>, tag: Seq<u8> },
+    /// A Version Negotiation packet (§17.2.1): version 0, and the versions
+    /// that fill the rest of the datagram.
+    VersionNegotiation { first: u8, dcid: Seq<u8>, scid: Seq<u8>, versions: Seq<u32> },
+    /// A long header of another version: only the version-independent
+    /// fields (RFC 8999 §5.1), connection IDs of up to 255 bytes.
+    OtherVersion { first: u8, version: u32, dcid: Seq<u8>, scid: Seq<u8> },
+    /// A 1-RTT packet (§17.3.1): the destination connection ID, whose
+    /// length the receiver chose.
+    Short { first: u8, dcid: Seq<u8> },
+}
+
+/// The two connection IDs of a long header at `p` (after the first byte
+/// and the version), each at most `max` bytes.
+pub open spec fn cids(b: Seq<u8>, p: int, max: int) -> Option<(Seq<u8>, Seq<u8>, int)> {
+    if p < 0 || p >= b.len() || b[p] > max {
+        None
+    } else {
+        match take(b, p + 1, b[p] as int) {
+            None => None,
+            Some((dcid, p1)) => if p1 >= b.len() || b[p1] > max {
+                None
+            } else {
+                match take(b, p1 + 1, b[p1] as int) {
+                    None => None,
+                    Some((scid, p2)) => Some((dcid, scid, p2)),
+                }
+            },
+        }
+    }
+}
+
+/// The header of the packet at `b[p]` and the position after it, where
+/// the datagram `b` ends at `b.len()` and 1-RTT packets carry destination
+/// connection IDs of `cid_len` bytes. `None` means the packet is to be
+/// discarded (§5.2, §17): too short, a fixed bit of 0, a connection ID too
+/// long for version 1, a Length past the end of the datagram, a Retry
+/// without a token, or a Version Negotiation packet whose versions are not
+/// a whole number of `u32`s.
+pub open spec fn header(b: Seq<u8>, p: int, cid_len: nat) -> Option<(Hdr, int)> {
+    if p < 0 || p >= b.len() {
+        None
+    } else if b[p] & 0x80 == 0 {
+        if b[p] & 0x40 == 0 {
+            None
+        } else {
+            match take(b, p + 1, cid_len as int) {
+                None => None,
+                Some((dcid, e)) => Some((Hdr::Short { first: b[p], dcid }, e)),
+            }
+        }
+    } else if p + 5 > b.len() {
+        None
+    } else {
+        let first = b[p];
+        let version = u32be(b, p + 1);
+        if version == 0 {
+            match cids(b, p + 5, 255) {
+                None => None,
+                Some((dcid, scid, q)) => if (b.len() - q) % 4 != 0 {
+                    None
+                } else {
+                    Some((Hdr::VersionNegotiation { first, dcid, scid, versions: u32s(b, q, ((b.len() - q) / 4) as nat) }, b.len() as int))
+                },
+            }
+        } else if version != VERSION_1 {
+            match cids(b, p + 5, 255) {
+                None => None,
+                Some((dcid, scid, q)) => Some((Hdr::OtherVersion { first, version, dcid, scid }, q)),
+            }
+        } else if first & 0x40 == 0 {
+            None
+        } else {
+            match cids(b, p + 5, MAX_CID_LEN as int) {
+                None => None,
+                Some((dcid, scid, q)) => {
+                    let ty = (first >> 4) & 3;
+                    if ty == 3 {
+                        if b.len() - q < 17 {
+                            None
+                        } else {
+                            Some((Hdr::Retry {
+                                first,
+                                dcid,
+                                scid,
+                                token: b.subrange(q, b.len() - 16),
+                                tag: b.subrange(b.len() - 16, b.len() as int),
+                            }, b.len() as int))
+                        }
+                    } else {
+                        let tok = if ty == 0 { bytes_len(b, q) } else { Some((Seq::empty(), q)) };
+                        match tok {
+                            None => None,
+                            Some((token, q1)) => match varint(b, q1) {
+                                None => None,
+                                Some((len, e)) => if len as int > b.len() - e {
+                                    None
+                                } else {
+                                    Some((Hdr::Long { first, dcid, scid, token, len }, e))
+                                },
+                            },
+                        }
+                    }
+                },
+            }
+        }
+    }
+}
+
+/// Where the packet whose header `h` ends at `e` ends, in a datagram that
+/// ends at `n` (§12.2): long headers with a Length field end after it,
+/// the others at the end of the datagram.
+pub open spec fn packet_end(h: Hdr, e: int, n: int) -> int {
+    match h {
+        Hdr::Long { len, .. } => e + len,
+        _ => n,
+    }
+}
+
+/// The encoding of a header (§17), with the shortest integers.
+pub open spec fn header_enc(h: Hdr) -> Seq<u8> {
+    match h {
+        Hdr::Long { first, dcid, scid, token, len } => seq![first] + u32_enc(VERSION_1) + seq![dcid.len() as u8] + dcid
+            + seq![scid.len() as u8] + scid + (if (first >> 4) & 3 == 0 { bytes_len_enc(token) } else { Seq::empty() })
+            + varint_enc(len),
+        Hdr::Retry { first, dcid, scid, token, tag } => seq![first] + u32_enc(VERSION_1) + seq![dcid.len() as u8] + dcid
+            + seq![scid.len() as u8] + scid + token + tag,
+        Hdr::VersionNegotiation { first, dcid, scid, versions } => seq![first] + u32_enc(0) + seq![dcid.len() as u8]
+            + dcid + seq![scid.len() as u8] + scid + u32s_enc(versions),
+        Hdr::OtherVersion { first, version, dcid, scid } => seq![first] + u32_enc(version) + seq![dcid.len() as u8]
+            + dcid + seq![scid.len() as u8] + scid,
+        Hdr::Short { first, dcid } => seq![first] + dcid,
+    }
+}
+
+/// The headers that can be encoded and parse back.
+pub open spec fn header_wf(h: Hdr, cid_len: nat) -> bool {
+    match h {
+        Hdr::Long { first, dcid, scid, token, len } => first & 0xc0 == 0xc0 && (first >> 4) & 3 != 3 && dcid.len()
+            <= MAX_CID_LEN && scid.len() <= MAX_CID_LEN && ((first >> 4) & 3 != 0 ==> token.len() == 0)
+            && token.len() < VARINT_LIMIT && vi(len),
+        Hdr::Retry { first, dcid, scid, token, tag } => first & 0xc0 == 0xc0 && (first >> 4) & 3 == 3 && dcid.len()
+            <= MAX_CID_LEN && scid.len() <= MAX_CID_LEN && token.len() > 0 && tag.len() == 16,
+        Hdr::VersionNegotiation { first, dcid, scid, versions } => first & 0x80 != 0 && dcid.len() <= 255
+            && scid.len() <= 255,
+        Hdr::OtherVersion { first, version, dcid, scid } => first & 0x80 != 0 && version != 0 && version
+            != VERSION_1 && dcid.len() <= 255 && scid.len() <= 255,
+        Hdr::Short { first, dcid } => first & 0xc0 == 0x40 && dcid.len() == cid_len,
+    }
+}
+
+/// What may follow an encoded header for it to parse back: at least the
+/// Length's bytes after a long header, and nothing after a Retry or
+/// Version Negotiation packet, which run to the end of the datagram.
+pub open spec fn header_rest_ok(h: Hdr, rest: Seq<u8>) -> bool {
+    match h {
+        Hdr::Long { len, .. } => len <= rest.len(),
+        Hdr::Retry { .. } => rest.len() == 0,
+        Hdr::VersionNegotiation { .. } => rest.len() == 0,
+        _ => true,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Packet numbers (§17.1, Appendix A)
+// ---------------------------------------------------------------------------
+
+/// `2^n`.
+pub open spec fn pow2(n: nat) -> nat
+    decreases n,
+{
+    if n == 0 { 1 } else { 2 * pow2((n - 1) as nat) }
+}
+
+/// The packet number recovered from its `nbits` least significant bits
+/// `truncated`, when the next packet number expected is `expected` (the
+/// largest received, plus one; 0 before any): Appendix A.3, the candidate
+/// closest to `expected`.
+pub open spec fn decode_pn(expected: int, truncated: int, nbits: nat) -> int {
+    let win = pow2(nbits) as int;
+    let hwin = win / 2;
+    let candidate = expected - expected % win + truncated;
+    if candidate <= expected - hwin && candidate < VARINT_LIMIT - win {
+        candidate + win
+    } else if candidate > expected + hwin && candidate >= win {
+        candidate - win
+    } else {
+        candidate
+    }
+}
+
+/// The number of bytes to encode packet number `pn` with, when the peer
+/// has acknowledged packets up to `largest_acked` (-1 before any)
+/// (Appendix A.2): enough for twice the packets not yet acknowledged.
+pub open spec fn pn_len(pn: int, largest_acked: int) -> int {
+    let unacked = pn - largest_acked;
+    if unacked <= 0x80 {
+        1
+    } else if unacked <= 0x8000 {
+        2
+    } else if unacked <= 0x80_0000 {
+        3
+    } else {
+        4
+    }
+}
+
 } // verus!

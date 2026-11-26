@@ -248,8 +248,8 @@ pub fn lo8(x: u64) -> (r: u8)
     ensures
         r == b8(x),
 {
-    #[verifier::truncate]
-    (x as u8)
+    assert(x & 0xff <= 0xff && (x & 0xff) as u8 == x as u8) by (bit_vector);
+    (x & 0xff) as u8
 }
 
 } // verus!
