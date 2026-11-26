@@ -315,4 +315,90 @@ pub open spec fn record_nonce(iv: Seq<u8>, seq: u64) -> Seq<u8> {
     Seq::new(12, |i: int| iv[i] ^ seq_byte(seq, i))
 }
 
+
+// ---------------------------------------------------------------------------
+// QUIC (RFC 9001 §5): the Initial secrets, and the packet protection keys
+// and key updates of a TLS traffic secret.
+// ---------------------------------------------------------------------------
+
+/// `initial_salt` of QUIC version 1 (§5.2).
+pub open spec fn quic_v1_salt() -> Seq<u8> {
+    seq![0x38u8, 0x76u8, 0x2cu8, 0xf7u8, 0xf5u8, 0x59u8, 0x34u8, 0xb3u8, 0x4du8, 0x17u8, 0x9au8, 0xe6u8, 0xa4u8, 0xc8u8, 0x0cu8, 0xadu8, 0xccu8, 0xbbu8, 0x7fu8, 0x0au8]
+}
+
+/// `"client in"`
+pub open spec fn l_client_in() -> Seq<u8> {
+    seq![99u8, 108u8, 105u8, 101u8, 110u8, 116u8, 32u8, 105u8, 110u8]
+}
+
+/// `"server in"`
+pub open spec fn l_server_in() -> Seq<u8> {
+    seq![115u8, 101u8, 114u8, 118u8, 101u8, 114u8, 32u8, 105u8, 110u8]
+}
+
+/// `"quic key"`
+pub open spec fn l_quic_key() -> Seq<u8> {
+    seq![113u8, 117u8, 105u8, 99u8, 32u8, 107u8, 101u8, 121u8]
+}
+
+/// `"quic iv"`
+pub open spec fn l_quic_iv() -> Seq<u8> {
+    seq![113u8, 117u8, 105u8, 99u8, 32u8, 105u8, 118u8]
+}
+
+/// `"quic hp"`
+pub open spec fn l_quic_hp() -> Seq<u8> {
+    seq![113u8, 117u8, 105u8, 99u8, 32u8, 104u8, 112u8]
+}
+
+/// `"quic ku"`
+pub open spec fn l_quic_ku() -> Seq<u8> {
+    seq![113u8, 117u8, 105u8, 99u8, 32u8, 107u8, 117u8]
+}
+
+/// `initial_secret = HKDF-Extract(initial_salt, client_dst_connection_id)`.
+pub open spec fn initial_secret(dcid: Seq<u8>) -> Seq<u8> {
+    hkdf_extract(HashAlg::Sha256, quic_v1_salt(), dcid)
+}
+
+/// `client_initial_secret = HKDF-Expand-Label(initial_secret, "client in", "", 32)`.
+pub open spec fn client_initial_secret(dcid: Seq<u8>) -> Seq<u8> {
+    expand_label(HashAlg::Sha256, initial_secret(dcid), l_client_in(), Seq::empty(), 32)
+}
+
+pub open spec fn server_initial_secret(dcid: Seq<u8>) -> Seq<u8> {
+    expand_label(HashAlg::Sha256, initial_secret(dcid), l_server_in(), Seq::empty(), 32)
+}
+
+/// The packet protection key of a secret (§5.1), `key_len` bytes.
+pub open spec fn quic_key(a: HashAlg, secret: Seq<u8>, key_len: nat) -> Seq<u8> {
+    expand_label(a, secret, l_quic_key(), Seq::empty(), key_len)
+}
+
+/// The packet protection IV (§5.1).
+pub open spec fn quic_iv(a: HashAlg, secret: Seq<u8>) -> Seq<u8> {
+    expand_label(a, secret, l_quic_iv(), Seq::empty(), 12)
+}
+
+/// The header protection key (§5.1), as long as the AEAD key.
+pub open spec fn quic_hp(a: HashAlg, secret: Seq<u8>, key_len: nat) -> Seq<u8> {
+    expand_label(a, secret, l_quic_hp(), Seq::empty(), key_len)
+}
+
+/// The next secret of a key update (§6.1): "quic ku".
+pub open spec fn quic_next(a: HashAlg, secret: Seq<u8>) -> Seq<u8> {
+    expand_label(a, secret, l_quic_ku(), Seq::empty(), hash_len(a))
+}
+
+/// The secret after `n` key updates.
+pub open spec fn quic_updated(a: HashAlg, s: Seq<u8>, n: nat) -> Seq<u8>
+    decreases n,
+{
+    if n == 0 {
+        s
+    } else {
+        quic_next(a, quic_updated(a, s, (n - 1) as nat))
+    }
+}
+
 } // verus!
