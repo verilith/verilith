@@ -585,7 +585,7 @@ impl Conn2 {
         let mut reply = s.reply.take().unwrap_or(Reply { status: 0, fields: HList::default(), body: ReplyBody::None, sent_headers: false, off: 0 });
         reply.sent_headers = false;
         reply.off = 0;
-        let mut scratch = Out::new();
+        let mut scratch = crate::out::Wire::empty();
         let mut res = Response { out: &mut scratch, ctx, sent: false, close: false, head: method == b"HEAD", h2: Some(&mut reply) };
         if self.early && !crate::early_ok(method) {
             res.too_early();
