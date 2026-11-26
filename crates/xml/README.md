@@ -183,7 +183,7 @@ Everything in `src/spec.rs`, `src/chars.rs`, `src/lex.rs`, `src/dtd.rs`,
 `src/uniq.rs`, `src/index.rs`, `src/atts.rs`, `src/reach.rs`, `src/scan.rs`, `src/lanes.rs`,
 `src/tape.rs`, `src/pe_spec.rs`, `src/pe.rs`, and of the push parser `src/stream_spec.rs`,
 `src/items_spec.rs`, `src/stream.rs`, `src/push.rs` and `src/reader.rs`, is checked by Verus (`./scripts/verify.sh`, which runs
-`cargo verus verify`: 2152 verified, 0 errors, in a few minutes on x86-64;
+`cargo verus verify`: 2168 verified, 0 errors, in a few minutes on x86-64;
 fewer for an AArch64 target, which has no SSE2 code. The SSE2 wrappers are
 verified in verilith-simd). The trusted base is listed under
 [What is not proven](#what-is-not-proven).
