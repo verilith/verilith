@@ -46,6 +46,7 @@ fn main() {
         port: arg(&args, "--http").map_or(8080, |p| p.parse().unwrap()),
         h2c_port: arg(&args, "--h2c").map(|p| p.parse().unwrap()),
         threads: arg(&args, "--threads").map_or(0, |t| t.parse().unwrap()),
+        spin: arg(&args, "--spin").map_or(0, |t| t.parse().unwrap()),
         ..Config::default()
     };
     let files = Arc::new(files);

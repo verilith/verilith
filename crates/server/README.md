@@ -126,7 +126,13 @@ h2load is then the bottleneck), h2o 440–530k (225–270k), nginx 315k (159k),
 hyper 259k (140k). Header bytes on the wire are 90% smaller than
 uncompressed, as with h2o.
 
-Still behind: nginx's `sendfile` on large files, and connection setup in
-`h1-close`, where verilith-server uses its CPU most efficiently but leaves
-some idle. Both are next. nginx's low pipelined number is how it works:
+Connection setup (`h1-close`): accepting with `TCP_DEFER_ACCEPT` (the
+request arrives with the connection, one wakeup instead of two),
+TCP_NODELAY inherited from the listener, and no epoll removal before
+`close` took it from 63k to **88k** req/s (84k per CPU-second) in a quick
+run, against hyper 73k (42k), h2o 74k (54k) and nginx 68k (62k).
+`Config::spin` (`--spin N`) polls N times before sleeping, for more
+throughput at more CPU; it is off by default and in the benchmarks.
+
+Still behind: nginx's `sendfile` on large files, next. nginx's low pipelined number is how it works:
 it writes each pipelined response with its own system call.

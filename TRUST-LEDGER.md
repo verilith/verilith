@@ -58,7 +58,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  |  |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **652** | **35** | **274** | **5** | **16** | **12** | **116** |
+| **total** | **652** | **35** | **274** | **5** | **16** | **12** | **117** |
 
 ## Items
 
