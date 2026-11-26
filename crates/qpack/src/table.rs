@@ -222,6 +222,54 @@ impl DynTable {
         Ghost(steps)
     }
 
+    /// How many entries would have been evicted after making room for
+    /// `room` more bytes: `evict`'s `dropped`, without evicting.
+    pub fn dropped_after(&self, room: u64) -> (d: u64)
+        requires
+            self.inv(),
+            room <= 2 * CAP_LIMIT,
+        ensures
+            d as nat == evict(self.view(), room as nat, self.cap as nat).dropped,
+    {
+        let ghost v = self.view();
+        let ghost n = v.ents.len() as int;
+        let mut k: usize = 0;
+        let mut size = self.size;
+        proof {
+            assert(v.ents.subrange(0, n) =~= v.ents);
+        }
+        while k < self.ents.len() && size + room > self.cap
+            invariant
+                self.inv(),
+                v == self.view(),
+                n == v.ents.len(),
+                room <= 2 * CAP_LIMIT,
+                k <= n,
+                size as nat == tsize(v.ents.subrange(k as int, n)),
+                size <= self.size,
+                evict(v, room as nat, v.cap) == evict(Table { ents: v.ents.subrange(k as int, n), dropped: (v.dropped + k) as nat, cap: v.cap }, room as nat, v.cap),
+            decreases n - k,
+        {
+            let ghost sub = v.ents.subrange(k as int, n);
+            proof {
+                lemma_tsize_first(sub);
+                assert(sub.drop_first() =~= v.ents.subrange(k + 1, n));
+                assert(sub[0] == v.ents[k as int]);
+            }
+            let e = &self.ents[k];
+            proof {
+                assert(e.view() == v.ents[k as int]);
+            }
+            let es = e.name.len() as u64 + e.value.len() as u64 + 32;
+            size = size - es;
+            k = k + 1;
+        }
+        proof {
+            lemma_tsize_bound(v.ents);
+        }
+        self.dropped + k as u64
+    }
+
     /// Inserts `e`, evicting first (`spec::insert`); false, with the table
     /// unchanged, if `insert` is `None`. The second result counts the
     /// entries evicted.

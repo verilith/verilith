@@ -13,6 +13,8 @@ pub mod fields;
 pub mod section;
 pub mod strings;
 pub mod rt;
+pub mod encoder;
+mod hints;
 
 #[cfg(verus_only)]
 vstd::prelude::verus! {

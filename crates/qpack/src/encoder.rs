@@ -1,0 +1,389 @@
+//! The verified encoder: field sections (`encode`), the encoder stream it
+//! writes (`take_output`), and the decoder stream it reads
+//! (`feed_decoder`).
+//!
+//! What is proven (see `Encoder::inv`): the encoder stream written so far,
+//! run by the spec decoder from an empty table, gives exactly the
+//! encoder's table; each field section, decoded by the spec with that
+//! table, gives back the fields encoded; and the encoder keeps the
+//! obligations of RFC 9204 to the decoder (`spec::enc_ok`): the capacity
+//! limit, no eviction of an entry that is unacknowledged or that an
+//! unacknowledged section references, and the blocked-stream limit.
+//!
+//! Which representation to use is decided with hints (`Hints`,
+//! `static_find`): hash lookups that are not verified and need not be
+//! right, since every hint is checked, byte for byte, before it is used.
+use crate::fields::Fields;
+use crate::henc;
+use crate::integer::{self, P2};
+#[cfg(verus_only)]
+use crate::integer::lemma_pows;
+use crate::rt::*;
+use crate::spec::*;
+use crate::table::*;
+use crate::lemmas::*;
+use std::rc::Rc;
+use verilith_core::prims::extend;
+use vstd::prelude::*;
+
+verus! {
+
+/// `a == b`.
+pub fn bytes_eq(a: &[u8], b: &[u8]) -> (r: bool)
+    ensures
+        r == (a@ == b@),
+{
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < a.len()
+        invariant
+            i <= a@.len(),
+            a@.len() == b@.len(),
+            forall|j: int| 0 <= j < i ==> a@[j] == b@[j],
+        decreases a@.len() - i,
+    {
+        if a[i] != b[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    proof {
+        assert(a@ =~= b@);
+    }
+    true
+}
+
+/// Writes the `n`-bit prefix string literal of `s` under `flags`,
+/// Huffman-coding it when that is shorter.
+pub fn write_str(out: &mut Vec<u8>, flags: u8, n: u8, s: &[u8]) -> (r: (Ghost<bool>, Ghost<Seq<u8>>))
+    requires
+        2 <= n <= 8,
+        (flags as nat) % p2(n as nat) == 0,
+        henc::code_ok(),
+        s@.len() <= 0x1000_0000,
+    ensures
+        final(out)@.len() >= old(out)@.len(),
+        final(out)@.subrange(0, old(out)@.len() as int) == old(out)@,
+        str_ok(final(out)@.subrange(old(out)@.len() as int, final(out)@.len() as int), flags as nat, n as nat, s@, r.0@, r.1@),
+        r.1@.len() <= s@.len(),
+{
+    let ghost o0 = out@;
+    let ghost z = o0.len() as int;
+    proof {
+        henc::lemma_hval_bound(s@);
+        lemma_pows();
+        lemma_p2_vals();
+    }
+    let bits = henc::bits_of(s);
+    let hl = (bits + 7) / 8;
+    let m = n - 1;
+    proof {
+        assert(P2@[m as int] as nat == p2(m as nat));
+        assert(p2(n as nat) == 2 * p2(m as nat));
+        assert(p2(m as nat) > 0);
+    }
+    if hl < s.len() as u64 {
+        let hf = P2[m as usize] as u8;
+        proof {
+            lemma_half_mod(flags as nat, p2(m as nat), p2(m as nat));
+            integer::lemma_flags(flags as nat, n as nat, p2(m as nat));
+        }
+        let fl = flags + hf;
+        integer::encode(out, fl, m, hl);
+        let ghost o1 = out@;
+        henc::encode(s, out);
+        proof {
+            let o2 = out@;
+            let ix = int_enc(fl as nat, m as nat, hl as nat);
+            let raw = o2.subrange(o1.len() as int, o2.len() as int);
+            assert(o1 == o0 + ix);
+            assert(o2.subrange(z, o2.len() as int) =~= ix + raw) by {
+                assert(o2.subrange(0, o1.len() as int) == o1);
+                assert forall|j: int| 0 <= j < ix.len() implies o2[z + j] == ix[j] by {
+                    assert(o2[z + j] == o2.subrange(0, o1.len() as int)[z + j]);
+                }
+            }
+            assert(o2.subrange(0, z) =~= o0) by {
+                assert(o2.subrange(0, o1.len() as int) == o1);
+                assert forall|j: int| 0 <= j < z implies o2[j] == o0[j] by {
+                    assert(o2[j] == o2.subrange(0, o1.len() as int)[j]);
+                }
+            }
+            assert(raw.len() == hl);
+            assert(fl as nat == flags as nat + p2(m as nat));
+        }
+        (Ghost(true), Ghost(out@.subrange((o0.len() + int_enc(fl as nat, m as nat, hl as nat).len()) as int, out@.len() as int)))
+    } else {
+        proof {
+            lemma_half_mod(flags as nat, p2(m as nat), 0);
+        }
+        integer::encode(out, flags, m, s.len() as u64);
+        extend(out, s);
+        proof {
+            let ix = int_enc(flags as nat, m as nat, s@.len());
+            assert(out@ == o0 + ix + s@);
+            assert(out@.subrange(z, out@.len() as int) =~= ix + s@);
+            assert(out@.subrange(0, z) =~= o0);
+        }
+        (Ghost(false), Ghost(s@))
+    }
+}
+
+/// Where the static table has `name: value` (the first result) and
+/// `name` (the second), as hints: 99 for none.
+#[verifier::external_body]
+pub fn static_find(name: &[u8], value: &[u8]) -> (usize, usize) {
+    crate::hints::static_find(name, value)
+}
+
+/// Lookups in the dynamic table, by hash: hints only.
+#[verifier::external_body]
+pub struct Hints {
+    pub h: crate::hints::Index,
+}
+
+impl Hints {
+    #[verifier::external_body]
+    pub fn new() -> Hints {
+        Hints { h: crate::hints::Index::new() }
+    }
+
+    /// The newest entry that may be `name: value`.
+    #[verifier::external_body]
+    pub fn find(&self, name: &[u8], value: &[u8]) -> Option<u64> {
+        self.h.find(name, value)
+    }
+
+    /// Whether `name: value` is worth inserting.
+    #[verifier::external_body]
+    pub fn worth(&mut self, name: &[u8], value: &[u8]) -> bool {
+        self.h.worth(name, value)
+    }
+
+    /// Entry `a` is `name: value`; entries below `dropped` are gone.
+    #[verifier::external_body]
+    pub fn add(&mut self, name: &[u8], value: &[u8], a: u64, dropped: u64) {
+        self.h.add(name, value, a, dropped)
+    }
+}
+
+/// A section not yet acknowledged.
+#[derive(Clone, Copy)]
+pub struct SentX {
+    pub stream: u64,
+    pub ric: u64,
+    pub min_ref: u64,
+}
+
+pub open spec fn sview(v: Seq<SentX>) -> Seq<Sent> {
+    Seq::new(v.len(), |i: int| Sent { stream: v[i].stream as nat, ric: v[i].ric as nat, min_ref: v[i].min_ref as nat })
+}
+
+pub open spec fn nats(v: Seq<u64>) -> Seq<nat> {
+    Seq::new(v.len(), |i: int| v[i] as nat)
+}
+
+/// The dynamic table references of the field lines written so far in a
+/// section: whether there are any, the lowest and the highest.
+#[derive(Clone, Copy)]
+pub struct Refs {
+    pub has: bool,
+    pub min: u64,
+    pub max: u64,
+}
+
+/// The items written so far in a section, with Base `base`, are right for
+/// table `t`, and refer only to entries from `r.min` to `r.max`.
+pub open spec fn sec_ok(t: Table, base: nat, r: Refs, its: Seq<Item>) -> bool {
+    &&& r.has ==> t.dropped <= r.min <= r.max < icount(t)
+    &&& forall|k: int| 0 <= k < its.len() ==> {
+        &&& item_ok(t, base, #[trigger] its[k])
+        &&& (iref(its[k]) matches Some(a) ==> r.has && r.min <= a <= r.max)
+    }
+}
+
+/// Largest Insert Count the encoder goes to, short of `MAX_INT`.
+pub const MAX_INSERTS: u64 = 0x3FFF_FFFF_FFFF_FF00;
+
+/// A QPACK encoder (one per HTTP/3 connection): it writes field sections
+/// and the encoder stream, and reads the peer's decoder stream.
+pub struct Encoder {
+    pub table: DynTable,
+    /// The peer decoder's SETTINGS_QPACK_MAX_TABLE_CAPACITY.
+    pub max_cap: u64,
+    /// The peer decoder's SETTINGS_QPACK_BLOCKED_STREAMS.
+    pub max_blocked: u64,
+    /// The Known Received Count.
+    pub krc: u64,
+    /// The sections not yet acknowledged, oldest first.
+    pub sent: Vec<SentX>,
+    /// Streams that may have a section that could block: at most
+    /// `max_blocked`, and every such stream is here.
+    pub risky: Vec<u64>,
+    /// Encoder stream bytes not yet taken.
+    pub es: Vec<u8>,
+    /// The start of a decoder instruction that has not fully arrived.
+    pub held: Vec<u8>,
+    pub hints: Hints,
+    /// The whole encoder stream so far, and the part taken.
+    pub es_all: Ghost<Seq<u8>>,
+    pub taken: Ghost<Seq<u8>>,
+}
+
+impl Encoder {
+    pub open spec fn state(&self) -> EncState {
+        EncState {
+            table: self.table.view(),
+            max_cap: self.max_cap as nat,
+            max_blocked: self.max_blocked as nat,
+            krc: self.krc as nat,
+            sent: sview(self.sent@),
+        }
+    }
+
+    /// The invariant: the encoder's obligations (`enc_ok`), and the
+    /// encoder stream so far, run from an empty table, gives its table.
+    pub open spec fn inv(&self) -> bool {
+        &&& self.table.inv()
+        &&& self.max_cap <= CAP_LIMIT
+        &&& henc::code_ok()
+        &&& enc_ok(self.state())
+        &&& self.risky@.len() <= self.max_blocked
+        &&& covers(nats(self.risky@), sview(self.sent@), self.krc as nat)
+        &&& icount(self.table.view()) <= MAX_INSERTS
+        &&& erun(empty_table(), self.max_cap as nat, self.es_all@) == Run::Ok(self.table.view(), self.es_all@.len() as int)
+        &&& self.es_all@ == self.taken@ + self.es@
+        &&& dframe(self.held@) is Short
+    }
+
+    /// An encoder for a peer that sent `max_cap` and `max_blocked`, using
+    /// a table of `cap` bytes (at most `max_cap`; 0 for no dynamic table).
+    pub fn new(max_cap: u64, max_blocked: u64, cap: u64) -> (r: Option<Encoder>)
+        ensures
+            r matches Some(e) ==> e.inv() && e.max_cap == max_cap && e.max_blocked == max_blocked
+                && e.taken@ == Seq::<u8>::empty() && e.state().sent.len() == 0,
+    {
+        if max_cap > CAP_LIMIT || cap > max_cap || !henc::check() {
+            return None;
+        }
+        let mut e = Encoder {
+            table: DynTable::new(),
+            max_cap,
+            max_blocked,
+            krc: 0,
+            sent: Vec::new(),
+            risky: Vec::new(),
+            es: Vec::new(),
+            held: Vec::new(),
+            hints: Hints::new(),
+            es_all: Ghost(Seq::empty()),
+            taken: Ghost(Seq::empty()),
+        };
+        proof {
+            reveal(dframe);
+            reveal(eframe);
+            assert(erun(empty_table(), max_cap as nat, Seq::<u8>::empty()) == Run::Ok(empty_table(), 0));
+            assert(covers(nats(e.risky@), sview(e.sent@), 0));
+            assert(e.es_all@ =~= e.taken@ + e.es@);
+        }
+        if cap > 0 {
+            proof {
+                lemma_p2_vals();
+            }
+            integer::encode(&mut e.es, 0x20, 5, cap);
+            let ghost t0 = e.table.view();
+            e.table.set_cap(cap);
+            proof {
+                lemma_p2_vals();
+                let x = Ins { bytes: e.es@, kind: IKind::SetCap(cap as nat), entry: (Seq::empty(), Seq::empty()) };
+                assert(e.es@ =~= int_enc(0x20, 5, cap as nat));
+                lemma_erun_ins(t0, max_cap as nat, x);
+                lemma_evict(t0, 0, cap as nat);
+            }
+            e.es_all = Ghost(e.es@);
+            proof {
+                assert(e.es_all@ =~= e.taken@ + e.es@);
+            }
+        }
+        proof {
+            assert(covers(nats(e.risky@), sview(e.sent@), 0));
+        }
+        Some(e)
+    }
+
+    /// Hands over the encoder stream bytes written so far.
+    pub fn take_output(&mut self, dst: &mut Vec<u8>)
+        requires
+            old(self).inv(),
+        ensures
+            final(self).inv(),
+            final(dst)@ == old(dst)@ + old(self).es@,
+            final(self).taken@ == old(self).taken@ + old(self).es@,
+            final(self).es_all@ == old(self).es_all@,
+            final(self).state() == old(self).state(),
+    {
+        extend(dst, self.es.as_slice());
+        self.taken = Ghost(self.taken@ + self.es@);
+        self.es.clear();
+        proof {
+            assert(self.es_all@ =~= self.taken@ + self.es@);
+        }
+    }
+
+    /// Whether a section on `stream` may block (§2.1.2).
+    fn can_block(&self, stream: u64) -> (r: bool)
+        ensures
+            r == (nats(self.risky@).contains(stream as nat) || self.risky@.len() < self.max_blocked),
+    {
+        if (self.risky.len() as u64) < self.max_blocked {
+            return true;
+        }
+        let mut i: usize = 0;
+        while i < self.risky.len()
+            invariant
+                i <= self.risky@.len(),
+                forall|j: int| 0 <= j < i ==> self.risky@[j] != stream,
+            decreases self.risky@.len() - i,
+        {
+            if self.risky[i] == stream {
+                proof {
+                    assert(nats(self.risky@)[i as int] == stream as nat);
+                }
+                return true;
+            }
+            i = i + 1;
+        }
+        proof {
+            if nats(self.risky@).contains(stream as nat) {
+                let j = choose|j: int| 0 <= j < nats(self.risky@).len() && nats(self.risky@)[j] == stream as nat;
+                assert(self.risky@[j] == stream);
+            }
+        }
+        false
+    }
+
+    /// The lowest entry an unacknowledged section references (or more).
+    fn min_sent(&self) -> (r: u64)
+        ensures
+            forall|i: int| 0 <= i < self.sent@.len() ==> r <= #[trigger] self.sent@[i].min_ref,
+    {
+        let mut m: u64 = u64::MAX;
+        let mut i: usize = 0;
+        while i < self.sent.len()
+            invariant
+                i <= self.sent@.len(),
+                forall|j: int| 0 <= j < i ==> m <= #[trigger] self.sent@[j].min_ref,
+            decreases self.sent@.len() - i,
+        {
+            if self.sent[i].min_ref < m {
+                m = self.sent[i].min_ref;
+            }
+            i = i + 1;
+        }
+        m
+    }
+}
+
+} // verus!

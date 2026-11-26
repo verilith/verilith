@@ -84,6 +84,7 @@ impl Fields {
             r.0@ == self.view()[i as int].name,
             r.1@ == self.view()[i as int].value,
             r.2 == self.view()[i as int].never,
+            r.0@.len() + r.1@.len() <= self.buf@.len(),
     {
         let l = self.lines[i];
         let _bl = self.buf.len();

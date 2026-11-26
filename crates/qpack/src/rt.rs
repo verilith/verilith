@@ -36,7 +36,7 @@ pub proof fn lemma_p2_vals()
     assert(p2(8) == 256) by (compute);
 }
 
-proof fn lemma_half_mod(flags: nat, q: nat, hf: nat)
+pub proof fn lemma_half_mod(flags: nat, q: nat, hf: nat)
     requires
         q > 0,
         flags % (2 * q) == 0,
@@ -732,6 +732,53 @@ pub proof fn lemma_item_keeps(t: Table, t2: Table, base: nat, it: Item)
         Kind::IdxPost(a) => { assert(abs(t2, a) == abs(t, a)); },
         _ => {},
     }
+}
+
+// ---------------------------------------------------------------------------
+// Sizes, and sections without dynamic references
+// ---------------------------------------------------------------------------
+
+/// The sum of the fields' sizes (RFC 9114 §4.2.2).
+pub open spec fn fsizes(fs: Seq<Field>) -> nat
+    decreases fs.len(),
+{
+    if fs.len() == 0 { 0 } else { fsize(fs[0]) + fsizes(fs.drop_first()) }
+}
+
+pub proof fn lemma_fsum(its: Seq<Item>)
+    ensures
+        fsum(its) == fsizes(flds(its)),
+    decreases its.len(),
+{
+    if its.len() > 0 {
+        lemma_fsum(its.drop_first());
+        assert(flds(its).drop_first() =~= flds(its.drop_first()));
+    }
+}
+
+/// Literal and static items do not depend on Base.
+pub proof fn lemma_item_base(t: Table, base: nat, base2: nat, it: Item)
+    requires
+        item_ok(t, base, it),
+        iref(it) is None,
+    ensures
+        item_ok(t, base2, it),
+{
+}
+
+/// The entries fit MaxEntries (§4.5.1.1).
+pub proof fn lemma_max_entries(t: Table, mc: nat)
+    requires
+        tsize(t.ents) <= t.cap,
+        t.cap <= mc,
+    ensures
+        t.ents.len() <= max_entries(mc),
+        t.ents.len() > 0 ==> max_entries(mc) > 0,
+{
+    crate::table::lemma_tsize_bound(t.ents);
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(mc as int, 32);
+    assert(t.ents.len() <= mc / 32) by (nonlinear_arith)
+        requires 32 * t.ents.len() <= mc, mc == 32 * (mc / 32) + mc % 32, mc % 32 < 32;
 }
 
 } // verus!
