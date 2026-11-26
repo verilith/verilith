@@ -20,6 +20,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use aws_lc_rs::aead::quic::{self as quic_hp, HeaderProtectionKey};
 use verilith_tls::crypto::{AeadKey, HpKey, Provider};
 
+pub mod hpke;
+
 pub const TLS_AES_128_GCM_SHA256: u16 = 0x1301;
 pub const TLS_AES_256_GCM_SHA384: u16 = 0x1302;
 pub const TLS_CHACHA20_POLY1305_SHA256: u16 = 0x1303;
@@ -338,22 +340,30 @@ pub struct AwsLc {
     rng: SystemRandom,
     key: Option<Arc<SigningKey>>,
     tickets: Option<Arc<TicketKeys>>,
+    ech: Option<Arc<hpke::EchKeys>>,
 }
 
 impl AwsLc {
     pub fn new(key: Option<SigningKey>) -> AwsLc {
-        AwsLc { rng: SystemRandom::new(), key: key.map(Arc::new), tickets: None }
+        AwsLc { rng: SystemRandom::new(), key: key.map(Arc::new), tickets: None, ech: None }
     }
 
     /// With a key shared by many connections (a server's), parsed once.
     pub fn shared(key: Arc<SigningKey>) -> AwsLc {
-        AwsLc { rng: SystemRandom::new(), key: Some(key), tickets: None }
+        AwsLc { rng: SystemRandom::new(), key: Some(key), tickets: None, ech: None }
     }
 
     /// And session tickets sealed with `keys`, which every connection that
     /// should resume each other's sessions shares.
     pub fn with_tickets(mut self, keys: Arc<TicketKeys>) -> AwsLc {
         self.tickets = Some(keys);
+        self
+    }
+
+    /// And Encrypted Client Hello with `keys` (give the server's
+    /// `Config::set_ech` their `config_list`).
+    pub fn with_ech(mut self, keys: Arc<hpke::EchKeys>) -> AwsLc {
+        self.ech = Some(keys);
         self
     }
 
@@ -490,6 +500,16 @@ impl Provider for AwsLc {
 
     fn now(&mut self) -> u64 {
         unix_now()
+    }
+
+    fn ech_open(&mut self, config_id: u8, kdf: u16, aead: u16, enc: &[u8], aad: &[u8], payload: &[u8], out: &mut Vec<u8>) -> bool {
+        match self.ech.as_ref().and_then(|k| k.open(config_id, kdf, aead, enc, aad, payload)) {
+            Some(pt) => {
+                *out = pt;
+                true
+            }
+            None => false,
+        }
     }
 
     fn claim_early(&mut self, _ch: &[u8], binder: &[u8], obfuscated_age: u32, issued: u64, age_add: u32) -> bool {

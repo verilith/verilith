@@ -11,6 +11,8 @@ publish = false
 [dependencies]
 verilith-quic = { path = "../quic", version = "0.1.0" }
 verilith-tls = { path = "../tls", version = "0.1.0" }
+# Shared send buffers: a large write is kept, not copied (buf.rs).
+bytes = "1.9"
 
 [dev-dependencies]
 verilith-tls-aws-lc = { path = "../tls-aws-lc", version = "0.1.0" }
