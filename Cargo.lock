@@ -1547,6 +1547,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "verilith-quic"
+version = "0.1.0"
+dependencies = [
+ "verilith-core",
+ "vstd",
+]
+
+[[package]]
 name = "verilith-regex"
 version = "0.1.0"
 dependencies = [
