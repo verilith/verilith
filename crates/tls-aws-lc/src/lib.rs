@@ -16,7 +16,8 @@ use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use aws_lc_rs::signature::{self, EcdsaKeyPair, Ed25519KeyPair, KeyPair, RsaKeyPair};
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-use verilith_tls::crypto::{AeadKey, Provider};
+use aws_lc_rs::aead::quic::{self as quic_hp, HeaderProtectionKey};
+use verilith_tls::crypto::{AeadKey, HpKey, Provider};
 
 pub const TLS_AES_128_GCM_SHA256: u16 = 0x1301;
 pub const TLS_AES_256_GCM_SHA384: u16 = 0x1302;
@@ -59,6 +60,34 @@ impl AeadKey for Key {
             Ok(pt) => Some(pt.len()),
             Err(_) => None,
         }
+    }
+
+    fn seal_after(&self, nonce: &[u8; 12], buf: &mut Vec<u8>, aad_start: usize, start: usize) {
+        let (head, body) = buf.split_at_mut(start);
+        let tag = self
+            .key
+            .seal_in_place_separate_tag(Nonce::assume_unique_for_key(*nonce), Aad::from(&head[aad_start..]), body)
+            .expect("seal fails only past the AEAD's length limit, far above a packet's");
+        buf.extend_from_slice(tag.as_ref());
+    }
+
+    fn open_after(&self, nonce: &[u8; 12], buf: &mut [u8], start: usize) -> Option<usize> {
+        let (head, body) = buf.split_at_mut(start);
+        match self.key.open_in_place(Nonce::assume_unique_for_key(*nonce), Aad::from(&*head), body) {
+            Ok(pt) => Some(pt.len()),
+            Err(_) => None,
+        }
+    }
+}
+
+/// A QUIC header protection key of one of the three suites.
+pub struct Hp {
+    key: HeaderProtectionKey,
+}
+
+impl HpKey for Hp {
+    fn mask(&self, sample: &[u8]) -> [u8; 5] {
+        self.key.new_mask(sample).expect("the sample is 16 bytes")
     }
 }
 
@@ -301,6 +330,16 @@ fn ecdh(
 
 impl Provider for AwsLc {
     type Key = Key;
+    type Hp = Hp;
+
+    fn hp_key(&self, suite: u16, key: &[u8]) -> Hp {
+        let alg = match suite {
+            TLS_AES_128_GCM_SHA256 => &quic_hp::AES_128,
+            TLS_AES_256_GCM_SHA384 => &quic_hp::AES_256,
+            _ => &quic_hp::CHACHA20,
+        };
+        Hp { key: HeaderProtectionKey::new(alg, key).expect("key length is the suite's") }
+    }
 
     fn aead_key(&self, suite: u16, key: &[u8]) -> Key {
         let alg = match suite {

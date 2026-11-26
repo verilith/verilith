@@ -194,6 +194,20 @@ definition names its section. The proofs show:
   `spec_keys.rs`'s HKDF-Expand-Label. QUIC's AEAD nonce is TLS's record
   nonce with the packet number (§5.3), so `record_nonce_x` and
   `lemma_nonce_injective` serve both.
+- **QUIC packet protection** (`quic_packet.rs`, RFC 9001 §5.3, §5.4,
+  §6): `Aead::seal` turns a header and payload in place into exactly
+  `quic_packet::protected`: the payload sealed with the packet number's
+  nonce and the header as additional data, then the first byte's low bits
+  (four in a long header, five in a short one) and the packet number
+  masked with the header protection mask of the 16-byte sample four
+  bytes after the packet number's start. `unmask` removes header
+  protection in place and returns the packet number's length and
+  truncated value; masking twice is the identity and leaves the sample
+  alone (`lemma_mask_twice`), so on a packet `seal` made it restores the
+  header (`lemma_unmask_protected`). `Aead::open` decrypts with the full
+  packet number. `keys` derives a secret's AEAD key, IV and header
+  protection key, and `update` the next key phase's (the header
+  protection key is not updated).
 - **Record and handshake headers** (`record.rs`) read exactly
   `spec::record_header` and `spec::handshake_message`.
 - No panics, no overflow, no out-of-bounds access, in all of the above. No
@@ -209,8 +223,9 @@ definition names its section. The proofs show:
   `spec_server.rs`). Read them against the RFCs.
 - **The cryptography** (`crypto.rs`): the AEADs, key exchange, signatures
   and random numbers are uninterpreted functions, and the proofs assume the
-  provider's implementation meets the contracts on the `AeadKey` and
-  `Provider` traits. That includes session tickets: `ticket_issued` says a
+  provider's implementation meets the contracts on the `AeadKey`,
+  `HpKey` and `Provider` traits (QUIC header protection is the
+  uninterpreted `hp_mask`). That includes session tickets: `ticket_issued` says a
   ticket is one the server sealed, holding a given state, and the proofs
   assume `open_ticket` opens only those (an AEAD under keys only the
   server has), and the clock (`now`) used for ticket lifetimes. [`verilith-tls-aws-lc`](../tls-aws-lc) implements them
@@ -244,6 +259,12 @@ Each handshake checks the transport parameters both ways and that packet
 and header protection keys derived from the exposed Handshake and 1-RTT
 secrets seal and open packets with rustls's. `tests/quic_keys.rs` checks
 the Initial keys and a ChaCha20 key update against RFC 9001 Appendix A.
+`../tls-aws-lc/tests/quic_packet.rs` checks packet protection against
+RFC 9001's ChaCha20 short header example (A.5), and, for every suite,
+900 random long and short header packets against a reference written
+directly on aws-lc, unmasked and opened back, with any flipped bit
+rejected; and that a key update changes the packet keys but not header
+protection.
 `../tls-aws-lc/tests/protect.rs` checks record protection against the AEAD
 called directly with §5.3's nonce, with padding and each error.
 
