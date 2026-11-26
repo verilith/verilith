@@ -86,6 +86,7 @@ unsafe extern "C" {
     fn read(fd: c_int, buf: *mut u8, n: usize) -> isize;
     fn writev(fd: c_int, iov: *const iovec, n: c_int) -> isize;
     fn sendmsg(fd: c_int, msg: *const msghdr, flags: c_int) -> isize;
+    fn recvmsg(fd: c_int, msg: *mut msghdr, flags: c_int) -> isize;
     fn recvfrom(fd: c_int, buf: *mut u8, n: usize, flags: c_int, addr: *mut sockaddr_in, len: *mut socklen_t) -> isize;
     fn close(fd: c_int) -> c_int;
     fn openat(dir: c_int, path: *const std::ffi::c_char, flags: c_int, ...) -> c_int;
@@ -161,6 +162,11 @@ pub fn bind_udp(addr: [u8; 4], port: u16, reuseport: bool) -> io::Result<i32> {
             close(fd);
             return Err(e);
         }
+        // Generic receive offload: the kernel may hand over several
+        // datagrams of one flow in one read (see `recv_gro`).
+        if let Some(opt) = UDP_GRO {
+            setsockopt(fd, SOL_UDP, opt, &one as *const c_int as *const u8, 4);
+        }
         Ok(fd)
     }
 }
@@ -183,6 +189,68 @@ pub fn recv_from(fd: i32, buf: &mut [u8]) -> Option<(usize, [u8; 4], u16)> {
         if io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
             return None;
         }
+    }
+}
+
+/// One read from a UDP socket with receive offload: `Some((n, ip, port,
+/// seg))` wrote `buf[..n]`, which holds datagrams of `seg` bytes back to
+/// back from one sender (the last may be shorter; `seg == n` for a single
+/// datagram). The memory may be uninitialized (a `BytesMut`'s spare
+/// capacity); the first `n` bytes are initialized on return.
+#[inline]
+pub fn recv_gro(fd: i32, buf: &mut [std::mem::MaybeUninit<u8>]) -> Option<(usize, [u8; 4], u16, usize)> {
+    loop {
+        let mut sa: sockaddr_in = unsafe { std::mem::zeroed() };
+        let iov = iovec { iov_base: buf.as_mut_ptr() as *const u8, iov_len: buf.len() };
+        let mut cmsg = [0u64; 8];
+        let mut m = msghdr {
+            msg_name: &mut sa as *mut sockaddr_in as *mut u8,
+            msg_namelen: std::mem::size_of::<sockaddr_in>() as socklen_t,
+            msg_iov: &iov,
+            msg_iovlen: 1,
+            msg_control: cmsg.as_mut_ptr() as *mut u8,
+            msg_controllen: std::mem::size_of_val(&cmsg) as _,
+            msg_flags: 0,
+        };
+        let r = unsafe { recvmsg(fd, &mut m, 0) };
+        if r < 0 {
+            if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return None;
+        }
+        if sa.sin_family as c_int != AF_INET {
+            continue;
+        }
+        let n = (r as usize).min(buf.len());
+        let mut seg = n;
+        // Walk the control messages: { size_t len; int level; int type; data }.
+        if let Some(opt) = UDP_GRO {
+            let base = cmsg.as_ptr() as *const u8;
+            let total = (m.msg_controllen as usize).min(std::mem::size_of_val(&cmsg));
+            let hdr = std::mem::size_of::<usize>() + 8;
+            let mut at = 0usize;
+            while at + hdr <= total {
+                let (len, level, ty) = unsafe {
+                    (
+                        *(base.add(at) as *const usize),
+                        *(base.add(at + std::mem::size_of::<usize>()) as *const c_int),
+                        *(base.add(at + std::mem::size_of::<usize>() + 4) as *const c_int),
+                    )
+                };
+                if len < hdr || at + len > total {
+                    break;
+                }
+                if level == SOL_UDP && ty == opt && len >= hdr + 2 {
+                    let v = unsafe { std::ptr::read_unaligned(base.add(at + hdr) as *const u16) } as usize;
+                    if v > 0 {
+                        seg = v;
+                    }
+                }
+                at += (len + 7) & !7;
+            }
+        }
+        return Some((n, sa.sin_addr.to_ne_bytes(), u16::from_be(sa.sin_port), seg));
     }
 }
 

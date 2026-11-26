@@ -274,13 +274,23 @@ impl H3 {
             if self.rbuf.capacity() - self.rbuf.len() < RECV_ROOM {
                 self.rbuf = BytesMut::with_capacity(16 * RECV_ROOM);
             }
-            let Some((n, ip, port)) = sys::recv_from_uninit(self.fd, &mut self.rbuf.spare_capacity_mut()[..RECV_ROOM]) else {
+            let Some((n, ip, port, seg)) = sys::recv_gro(self.fd, &mut self.rbuf.spare_capacity_mut()[..RECV_ROOM]) else {
                 break;
             };
-            // SAFETY: recv_from_uninit initialized the first `n` bytes.
+            // SAFETY: recv_gro initialized the first `n` bytes.
             unsafe { self.rbuf.set_len(n) };
-            let data = self.rbuf.split_to(n);
+            let mut all = self.rbuf.split_to(n);
             let remote = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(ip), port));
+            while !all.is_empty() {
+                let data = all.split_to(seg.min(all.len()));
+                self.on_datagram(now, remote, data);
+            }
+        }
+        self.drive_dirty(h, ctx, now);
+    }
+
+    fn on_datagram(&mut self, now: Instant, remote: SocketAddr, data: BytesMut) {
+        {
             self.sbuf.clear();
             match self.endpoint.handle(now, remote, None, None, data, &mut self.sbuf) {
                 Some(DatagramEvent::NewConnection(incoming)) => {
@@ -324,7 +334,6 @@ impl H3 {
                 None => {}
             }
         }
-        self.drive_dirty(h, ctx, now);
     }
 
     fn transmit(&mut self, t: &quinn_proto::Transmit) {

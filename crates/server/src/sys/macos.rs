@@ -7,6 +7,7 @@ pub const AF_INET: c_int = 2;
 pub const SOCK_STREAM: c_int = 1;
 pub const SOCK_DGRAM: c_int = 2;
 pub const SOL_UDP: c_int = 17;
+pub const UDP_GRO: Option<c_int> = None;
 pub const UDP_SEGMENT: Option<c_int> = None;
 pub const UDP_REUSEPORT_BALANCES: bool = false;
 pub const SOCK_NONBLOCK_FLAG: c_int = 0;
