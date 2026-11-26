@@ -9,6 +9,7 @@ use crate::predict::unpredict_exec;
 use crate::prims::alloc_zeroed;
 use crate::spec;
 use crate::spec::*;
+use crate::work::*;
 use verilith_core::prims::{alloc_u32, copy_in, get};
 #[cfg(verus_only)]
 use vstd::arithmetic::div_mod::*;
@@ -242,7 +243,7 @@ fn chunk_size_exec(p: &ParamsX, k: u32, Ghost(b): Ghost<Seq<u8>>) -> (r: (u128, 
 }
 
 /// `post`, in place.
-fn post_exec(v: &mut Vec<u8>, p: &ParamsX, rows: u64, crb: u128, Ghost(b): Ghost<Seq<u8>>)
+fn post_exec(v: &mut Vec<u8>, p: &ParamsX, rows: u64, crb: u128, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>)
     requires
         p.view(b).wf(),
         crb as nat == p.view(b).chunk_row_bytes(),
@@ -250,6 +251,7 @@ fn post_exec(v: &mut Vec<u8>, p: &ParamsX, rows: u64, crb: u128, Ghost(b): Ghost
         old(v)@.len() == rows * crb,
     ensures
         final(v)@ == post(p.view(b), old(v)@),
+        final(m).n <= old(m).n + 15 * old(v)@.len(),
 {
     let ghost pv = p.view(b);
     let ghost d0 = v@;
@@ -262,7 +264,7 @@ fn post_exec(v: &mut Vec<u8>, p: &ParamsX, rows: u64, crb: u128, Ghost(b): Ghost
             lemma_whole_samples(pv);
             lemma_mod_mul(rows as int, crb as int, (p.bps / 8) as int);
         }
-        swap_exec(v.as_mut_slice(), (p.bps / 8) as usize);
+        swap_exec(v.as_mut_slice(), (p.bps / 8) as usize, Tracked(m));
     }
     proof {
         assert(v@ =~= to_le(pv, d0));
@@ -273,7 +275,7 @@ fn post_exec(v: &mut Vec<u8>, p: &ParamsX, rows: u64, crb: u128, Ghost(b): Ghost
             lemma_mod_mul(rows as int, crb as int, (p.bps / 8) as int);
         }
         let sc: usize = if p.planar == 2 { 1 } else { p.spp as usize };
-        unpredict_exec(v.as_mut_slice(), crb as usize, (p.bps / 8) as usize, sc);
+        unpredict_exec(v.as_mut_slice(), crb as usize, (p.bps / 8) as usize, sc, Tracked(m));
     }
 }
 
@@ -296,6 +298,47 @@ pub fn chunk_exec(b: &[u8], p: &ParamsX, k: u32, limit: usize, off: &mut [u32], 
             Err(_) => true,
         },
 {
+    let tracked mut m = Meter { n: 0 };
+    chunk_counted(b, p, k, limit, off, len, Tracked(&mut m))
+}
+
+/// Whether strip or tile `k` is inside the file and within `limit`, which
+/// `chunk_exec` checks before it decodes anything.
+pub open spec fn chunk_fits(b: Seq<u8>, p: Params, k: nat, limit: nat) -> bool {
+    p.offsets[k as int] + p.counts[k as int] <= b.len() && p.chunk_size(k) <= limit
+}
+
+/// The work charged for decoding a strip or tile of `c` bytes that
+/// decodes to `s`, made little-endian, with its predictor undone, and
+/// placed in the output.
+pub open spec fn place_work(c: nat, s: nat) -> nat {
+    chunk_work(c, s) + 17 * s + 20
+}
+
+/// `chunk_exec`, counting its steps: at most `place_work` (less the
+/// placing) for a strip or tile that fits, and 20 for one that does not.
+pub fn chunk_counted(b: &[u8], p: &ParamsX, k: u32, limit: usize, off: &mut [u32], len: &mut [u32], Tracked(m): Tracked<&mut Meter>) -> (r: Result<Vec<u8>, Error>)
+    requires
+        p.view(b@).wf(),
+        p.ok(b@),
+        k < p.offsets.count,
+        k < p.counts.count,
+        old(off)@.len() == STORED,
+        old(len)@.len() == STORED,
+    ensures
+        final(off)@.len() == STORED,
+        final(len)@.len() == STORED,
+        match r {
+            Ok(v) => chunk(b@, p.view(b@), k as nat) == Some(v@) && v@.len() == p.view(b@).chunk_size(k as nat),
+            Err(Error::Invalid) => chunk(b@, p.view(b@), k as nat) is None,
+            Err(Error::Unsupported) => false,
+            Err(_) => true,
+        },
+        r is Ok ==> chunk_fits(b@, p.view(b@), k as nat, limit as nat),
+        chunk_fits(b@, p.view(b@), k as nat, limit as nat) ==> final(m).n <= old(m).n
+            + chunk_work(p.view(b@).counts[k as int], p.view(b@).chunk_size(k as nat)) + 15 * p.view(b@).chunk_size(k as nat) + 20,
+        !chunk_fits(b@, p.view(b@), k as nat, limit as nat) ==> final(m).n <= old(m).n + 20,
+{
     let ghost pv = p.view(b@);
     proof {
         lemma_chunk(b@, pv, k as nat);
@@ -315,11 +358,11 @@ pub fn chunk_exec(b: &[u8], p: &ParamsX, k: u32, limit: usize, off: &mut [u32], 
         lemma_mul_inequality(1, rows as int, crb as int);
         lemma_mod_multiples_basic(rows as int, crb as int);
     }
-    let mut v = match decompress_exec(p.compression, data, size as usize, crb as usize, off, len) {
+    let mut v = match decompress_exec(p.compression, data, size as usize, crb as usize, off, len, Tracked(m)) {
         Ok(v) => v,
         Err(e) => return Err(e),
     };
-    post_exec(&mut v, p, rows, crb, Ghost(b@));
+    post_exec(&mut v, p, rows, crb, Ghost(b@), Tracked(m));
     Ok(v)
 }
 
@@ -416,7 +459,7 @@ fn strip_start_exec(p: &ParamsX, k: u32, Ghost(b): Ghost<Seq<u8>>) -> (r: u128)
 }
 
 /// Copies strip `k` into the output.
-fn place_strip(out: &mut [u8], v: &[u8], p: &ParamsX, k: u32, Ghost(b): Ghost<Seq<u8>>)
+fn place_strip(out: &mut [u8], v: &[u8], p: &ParamsX, k: u32, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>)
     requires
         p.view(b).wf(),
         !p.tiled,
@@ -429,6 +472,7 @@ fn place_strip(out: &mut [u8], v: &[u8], p: &ParamsX, k: u32, Ghost(b): Ghost<Se
     ensures
         final(out)@.len() == old(out)@.len(),
         placed(b, p.view(b), final(out)@, k + 1),
+        final(m).n <= old(m).n + 2 * v@.len(),
 {
     let ghost pv = p.view(b);
     let ghost o = out@;
@@ -441,6 +485,7 @@ fn place_strip(out: &mut [u8], v: &[u8], p: &ParamsX, k: u32, Ghost(b): Ghost<Se
     let ol = out.len();
     copy_at(out, start as usize, v, 0, n);
     proof {
+        m.n = (m.n + n) as nat;
         assert forall|i: int|
             0 <= i < pv.image_size() && #[trigger] owner(pv, i).0 < k + 1 implies out@[i] == chunk(b, pv, owner(pv, i).0 as nat)->Some_0[owner(pv, i).1] by {
             if start <= i < start + n {
@@ -525,7 +570,7 @@ fn tile_geom_exec(p: &ParamsX, k: u32, Ghost(b): Ghost<Seq<u8>>) -> (r: (u128, u
 }
 
 /// Copies tile `k` into the output, a row at a time.
-fn place_tile(out: &mut [u8], v: &[u8], p: &ParamsX, k: u32, Ghost(b): Ghost<Seq<u8>>)
+fn place_tile(out: &mut [u8], v: &[u8], p: &ParamsX, k: u32, Ghost(b): Ghost<Seq<u8>>, Tracked(m): Tracked<&mut Meter>)
     requires
         p.view(b).wf(),
         p.tiled,
@@ -538,7 +583,9 @@ fn place_tile(out: &mut [u8], v: &[u8], p: &ParamsX, k: u32, Ghost(b): Ghost<Seq
     ensures
         final(out)@.len() == old(out)@.len(),
         placed(b, p.view(b), final(out)@, k + 1),
+        final(m).n <= old(m).n + 2 * v@.len(),
 {
+    let ghost m0 = m.n;
     let ghost pv = p.view(b);
     let (base, ystep, y0, tlen, rb) = tile_geom_exec(p, k, Ghost(b));
     let trb = chunk_row_bytes_exec(p, Ghost(b));
@@ -574,6 +621,7 @@ fn place_tile(out: &mut [u8], v: &[u8], p: &ParamsX, k: u32, Ghost(b): Ghost<Seq
             forall|i: int|
                 0 <= i < pv.image_size() && #[trigger] owner(pv, i).0 < k + 1 && (owner(pv, i).0 < k
                     || (0 <= owner(pv, i).1 && owner(pv, i).1 / (trb as int) < yy)) ==> out@[i] == chunk(b, pv, owner(pv, i).0 as nat)->Some_0[owner(pv, i).1],
+            m.n <= m0 + yy + yy * trb,
         decreases th - yy,
     {
         let ghost o = out@;
@@ -592,6 +640,12 @@ fn place_tile(out: &mut [u8], v: &[u8], p: &ParamsX, k: u32, Ghost(b): Ghost<Seq
         let dst = base + (y0 + yy) * rb;
         let src = yy * trb;
         copy_at(out, dst as usize, v, src as usize, tlen as usize);
+        proof {
+            m.n = (m.n + 1 + tlen) as nat;
+            lemma_mul_is_distributive_add_other_way(trb as int, yy as int, 1);
+            lemma_mul_is_commutative(trb as int, yy as int);
+            lemma_mul_is_commutative(trb as int, yy as int + 1);
+        }
         proof {
             let trbi = trb as int;
             assert forall|i: int|
@@ -619,11 +673,14 @@ fn place_tile(out: &mut [u8], v: &[u8], p: &ParamsX, k: u32, Ghost(b): Ghost<Seq
                 lemma_tile_b(pv, i);
             }
         }
+        lemma_mul_inequality(yy as int, th as int, trb as int);
+        lemma_mul_inequality(1, trb as int, th as int);
+        lemma_mul_is_commutative(trb as int, th as int);
     }
 }
 
 /// `spec::first` of a field.
-fn first_exec(b: &[u8], le: bool, o: usize, n: usize, tag: u16) -> (r: Option<u32>)
+fn first_exec(b: &[u8], le: bool, o: usize, n: usize, tag: u16, Tracked(m): Tracked<&mut Meter>) -> (r: Option<u32>)
     requires
         ifd_ok(b@, o as nat, n as nat),
     ensures
@@ -631,8 +688,9 @@ fn first_exec(b: &[u8], le: bool, o: usize, n: usize, tag: u16) -> (r: Option<u3
             Some(x) => r == Some(x as u32) && x <= u32::MAX,
             None => r is None,
         },
+        final(m).n <= old(m).n + unit(b@.len()),
 {
-    match field_exec(b, le, o, n, tag) {
+    match field_counted(b, le, o, n, tag, Tracked(m)) {
         Ok(Some(f)) => if f.count >= 1 {
             Some(value_exec(b, le, f, 0))
         } else {
@@ -643,22 +701,23 @@ fn first_exec(b: &[u8], le: bool, o: usize, n: usize, tag: u16) -> (r: Option<u3
 }
 
 /// `spec::unsupported_ifd`.
-fn unsupported_ifd_exec(b: &[u8], le: bool, o: usize, n: usize) -> (r: bool)
+fn unsupported_ifd_exec(b: &[u8], le: bool, o: usize, n: usize, Tracked(m): Tracked<&mut Meter>) -> (r: bool)
     requires
         ifd_ok(b@, o as nat, n as nat),
     ensures
         r == unsupported_ifd(b@, le, o as nat, n as nat),
+        final(m).n <= old(m).n + 8 * unit(b@.len()),
 {
-    let comp = first_exec(b, le, o, n, 259);
-    let pred = first_exec(b, le, o, n, 317);
+    let comp = first_exec(b, le, o, n, 259, Tracked(m));
+    let pred = first_exec(b, le, o, n, 317, Tracked(m));
     let ghost bv = match field(b@, le, o as nat, n as nat, BITS_PER_SAMPLE) {
         Some(Some(v)) => if v.len() >= 1 { Some(v) } else { None },
         Some(None) => Some(seq![1nat]),
         None => None,
     };
-    let (has_bits, same, b0): (bool, bool, u32) = match field_exec(b, le, o, n, 258) {
+    let (has_bits, same, b0): (bool, bool, u32) = match field_counted(b, le, o, n, 258, Tracked(m)) {
         Ok(Some(f)) => if f.count >= 1 {
-            (true, same_exec(b, le, f), value_exec(b, le, f, 0))
+            (true, same_exec(b, le, f, Tracked(m)), value_exec(b, le, f, 0))
         } else {
             (false, true, 0)
         },
@@ -674,11 +733,11 @@ fn unsupported_ifd_exec(b: &[u8], le: bool, o: usize, n: usize) -> (r: bool)
         Some(c) => c == 2 || c == 3 || c == 4 || c == 6 || c == 7,
         None => false,
     };
-    let c2 = first_exec(b, le, o, n, 262) == Some(6u32);
-    let c3 = first_exec(b, le, o, n, 266) == Some(2u32);
+    let c2 = first_exec(b, le, o, n, 262, Tracked(m)) == Some(6u32);
+    let c3 = first_exec(b, le, o, n, 266, Tracked(m)) == Some(2u32);
     let c4 = has_bits && (!same || b0 > 32);
-    let c5 = match field_exec(b, le, o, n, 339) {
-        Ok(Some(f)) => f.count >= 1 && !same_exec(b, le, f),
+    let c5 = match field_counted(b, le, o, n, 339, Tracked(m)) {
+        Ok(Some(f)) => f.count >= 1 && !same_exec(b, le, f, Tracked(m)),
         _ => false,
     };
     let c6 = match comp {
@@ -690,9 +749,10 @@ fn unsupported_ifd_exec(b: &[u8], le: bool, o: usize, n: usize) -> (r: bool)
 }
 
 /// `spec::unsupported`.
-fn unsupported_exec(b: &[u8]) -> (r: bool)
+fn unsupported_exec(b: &[u8], Tracked(m): Tracked<&mut Meter>) -> (r: bool)
     ensures
         r == unsupported(b@),
+        final(m).n <= old(m).n + 8 * unit(b@.len()),
 {
     if bigtiff_exec(b) {
         return true;
@@ -707,7 +767,7 @@ fn unsupported_exec(b: &[u8]) -> (r: bool)
             if n == 0 || o as u64 + 2 + 12 * n as u64 > b.len() as u64 {
                 false
             } else {
-                unsupported_ifd_exec(b, le, o as usize, n)
+                unsupported_ifd_exec(b, le, o as usize, n, Tracked(m))
             }
         },
     }
@@ -729,21 +789,54 @@ pub fn decode(b: &[u8], limit: usize) -> (r: Result<Tiff, Error>)
             Err(_) => !spec::unsupported(b@),
         },
 {
-    if unsupported_exec(b) {
-        return Err(Error::Unsupported);
+    decode_counted(b, limit).0
+}
+
+/// The bound on `decode`'s work for an `n`-byte file that allocates `px`
+/// bytes for the image and its strips or tiles: linear in both. The
+/// constants are mostly verilith-zlib's bound for Deflate
+/// (`wrap::work_bound`), paid for every byte a strip or tile reads and for
+/// the fixed cost of every one.
+pub open spec fn tiff_work(n: nat, px: nat) -> nat {
+    50_000 * n + 10_000 * px + 50_000
+}
+
+/// `decode`, also returning the work done and `px`, the bytes allocated
+/// for the image and its strips or tiles (`(work, px)`). The work is at
+/// most `tiff_work(b.len(), px)`, and `px` at most twice `limit`: the
+/// image may take `limit` bytes, and so may its strips or tiles together.
+///
+/// To keep the work linear in the file, `TooLarge` is also returned when
+/// the strips or tiles, decoded, would take more than `limit` bytes in all,
+/// or would read more bytes of the file than the file has and they decode
+/// to, together; only strips or tiles that share their data can.
+pub fn decode_counted(b: &[u8], limit: usize) -> (r: (Result<Tiff, Error>, Ghost<(nat, nat)>))
+    ensures
+        match r.0 {
+            Ok(t) => spec::decode(b@) == Some(t.view()),
+            Err(Error::Invalid) => spec::decode(b@) is None && !spec::unsupported(b@),
+            Err(Error::Unsupported) => spec::decode(b@) is None && spec::unsupported(b@),
+            Err(_) => !spec::unsupported(b@),
+        },
+        r.1@.1 <= 2 * limit,
+        r.1@.0 <= tiff_work(b@.len(), r.1@.1),
+{
+    let tracked mut m = Meter { n: 0 };
+    if unsupported_exec(b, Tracked(&mut m)) {
+        return (Err(Error::Unsupported), Ghost((m.n, 0)));
     }
     let (le, o) = match header_exec(b) {
         Some(x) => x,
-        None => return Err(Error::Invalid),
+        None => return (Err(Error::Invalid), Ghost((m.n, 0))),
     };
-    let p = match params_exec(b, le, o) {
+    let p = match params_counted(b, le, o, Tracked(&mut m)) {
         Some(p) => p,
-        None => return Err(Error::Invalid),
+        None => return (Err(Error::Invalid), Ghost((m.n, 0))),
     };
     let ghost pv = p.view(b@);
     let rb = row_bytes_exec(&p, Ghost(b@));
     if rb > limit as u128 {
-        return Err(Error::TooLarge);
+        return (Err(Error::TooLarge), Ghost((m.n, 0)));
     }
     proof {
         lemma_mul_inequality(p.height as int, u32::MAX as int, rb as int);
@@ -752,7 +845,7 @@ pub fn decode(b: &[u8], limit: usize) -> (r: Result<Tiff, Error>)
     }
     let ps = p.height as u128 * rb;
     if ps > limit as u128 {
-        return Err(Error::TooLarge);
+        return (Err(Error::TooLarge), Ghost((m.n, 0)));
     }
     let planes: u128 = if p.planar == 2 { p.spp as u128 } else { 1 };
     proof {
@@ -762,22 +855,33 @@ pub fn decode(b: &[u8], limit: usize) -> (r: Result<Tiff, Error>)
     }
     let size = planes * ps;
     if size > limit as u128 {
-        return Err(Error::TooLarge);
+        return (Err(Error::TooLarge), Ghost((m.n, 0)));
     }
     let mut out = match alloc_zeroed(size as usize) {
         Some(v) => v,
-        None => return Err(Error::OutOfMemory),
+        None => return (Err(Error::OutOfMemory), Ghost((m.n, 0))),
     };
+    proof {
+        m.n = (m.n + size + 2 * 4096) as nat;
+    }
     let mut off = match alloc_u32(4096) {
         Some(v) => v,
-        None => return Err(Error::OutOfMemory),
+        None => return (Err(Error::OutOfMemory), Ghost((m.n, size as nat))),
     };
     let mut len = match alloc_u32(4096) {
         Some(v) => v,
-        None => return Err(Error::OutOfMemory),
+        None => return (Err(Error::OutOfMemory), Ghost((m.n, size as nat))),
     };
     let n = p.offsets.count;
     let mut k: u32 = 0;
+    // What the strips or tiles decoded so far read and decode to.
+    let mut used_in: u128 = 0;
+    let mut used_out: u128 = 0;
+    let ghost m0 = m.n;
+    proof {
+        lemma_count_le(b@, p.offsets);
+        assert(m0 <= 38 * unit(b@.len()) + size + 2 * 4096);
+    }
     proof {
         assert forall|i: int|
             0 <= i < pv.image_size() && #[trigger] owner(pv, i).0 < 0 implies out@[i] == chunk(b@, pv, owner(pv, i).0 as nat)->Some_0[owner(pv, i).1] by {
@@ -805,24 +909,55 @@ pub fn decode(b: &[u8], limit: usize) -> (r: Result<Tiff, Error>)
             k <= n,
             forall|j: nat| j < k ==> #[trigger] chunk(b@, pv, j) is Some,
             placed(b@, pv, out@, k as int),
+            n <= b@.len(),
+            used_out <= limit,
+            size <= limit,
+            used_in <= b@.len() + used_out,
+            m0 <= 38 * unit(b@.len()) + size + 2 * 4096,
+            m.n <= m0 + chunk_step(used_in as nat, used_out as nat, k as nat),
         decreases n - k,
     {
-        let v = match chunk_exec(b, &p, k, limit, off.as_mut_slice(), len.as_mut_slice()) {
+        let o1 = value_exec(b, p.le, p.offsets, k) as u128;
+        let c1 = value_exec(b, p.le, p.counts, k) as u128;
+        let (s1, _, _) = chunk_size_exec(&p, k, Ghost(b@));
+        let fits = o1 + c1 <= b.len() as u128 && s1 <= limit as u128;
+        if fits && (s1 > limit as u128 - used_out || c1 > b.len() as u128 + used_out + s1 - used_in) {
+            // The strips or tiles would decode to more than `limit`, or
+            // read more than the file and what they decode to.
+            proof {
+                lemma_tiff_work(m.n, m0, b@.len(), size as nat, used_in as nat, used_out as nat, k as nat);
+            }
+            return (Err(Error::TooLarge), Ghost((m.n, (size + used_out) as nat)));
+        }
+        let ghost mk = m.n;
+        let v = match chunk_counted(b, &p, k, limit, off.as_mut_slice(), len.as_mut_slice(), Tracked(&mut m)) {
             Ok(v) => v,
             Err(e) => {
                 proof {
                     if e == Error::Invalid {
                         assert(k < pv.chunks() && chunk(b@, pv, k as nat) is None);
                     }
+                    if fits {
+                        lemma_chunk_step(mk, m.n, m0, used_in as nat, used_out as nat, k as nat, c1 as nat, s1 as nat);
+                        lemma_tiff_work(m.n, m0, b@.len(), size as nat, (used_in + c1) as nat, (used_out + s1) as nat, k as nat + 1);
+                    } else {
+                        lemma_tiff_work(m.n, m0, b@.len(), size as nat, used_in as nat, used_out as nat, k as nat + 1);
+                    }
                 }
-                return Err(e);
+                let ghost px = if fits { (size + used_out + s1) as nat } else { (size + used_out) as nat };
+                return (Err(e), Ghost((m.n, px)));
             },
         };
         if p.tiled {
-            place_tile(out.as_mut_slice(), v.as_slice(), &p, k, Ghost(b@));
+            place_tile(out.as_mut_slice(), v.as_slice(), &p, k, Ghost(b@), Tracked(&mut m));
         } else {
-            place_strip(out.as_mut_slice(), v.as_slice(), &p, k, Ghost(b@));
+            place_strip(out.as_mut_slice(), v.as_slice(), &p, k, Ghost(b@), Tracked(&mut m));
         }
+        proof {
+            lemma_chunk_step(mk, m.n, m0, used_in as nat, used_out as nat, k as nat, c1 as nat, s1 as nat);
+        }
+        used_in = used_in + c1;
+        used_out = used_out + s1;
         k = k + 1;
     }
     let t = Tiff {
@@ -848,8 +983,38 @@ pub fn decode(b: &[u8], limit: usize) -> (r: Result<Tiff, Error>)
             }
         }
         assert(t.pixels@ =~= Seq::new(pv.image_size(), |i: int| pixel(pv, cs, i)));
+        lemma_tiff_work(m.n, m0, b@.len(), size as nat, used_in as nat, used_out as nat, k as nat);
     }
-    Ok(t)
+    (Ok(t), Ghost((m.n, (size + used_out) as nat)))
+}
+
+/// The work charged for `k` strips or tiles that read `cin` bytes and
+/// decode to `cout`.
+pub open spec fn chunk_step(cin: nat, cout: nat, k: nat) -> nat {
+    9600 * cin + 150 * cout + 36_600 * k
+}
+
+/// One strip or tile's work fits `chunk_step`.
+proof fn lemma_chunk_step(mk: nat, m1: nat, m0: nat, cin: nat, cout: nat, k: nat, c: nat, s: nat)
+    requires
+        mk <= m0 + chunk_step(cin, cout, k),
+        m1 <= mk + chunk_work(c, s) + 15 * s + 20 + 2 * s,
+    ensures
+        m1 <= m0 + chunk_step(cin + c, cout + s, k + 1),
+{
+    lemma_chunk_work(c, s);
+}
+
+/// The work so far fits `tiff_work`.
+proof fn lemma_tiff_work(w: nat, m0: nat, n: nat, size: nat, cin: nat, cout: nat, k: nat)
+    requires
+        m0 <= 38 * unit(n) + size + 2 * 4096,
+        w <= m0 + chunk_step(cin, cout, k),
+        cin <= n + cout,
+        k <= n + 1,
+    ensures
+        w <= tiff_work(n, size + cout),
+{
 }
 
 } // verus!

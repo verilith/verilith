@@ -140,7 +140,7 @@ pub open spec fn plus_has(p: Seq<SInst>, x: Re, g: bool, b: int, e: int, f: int)
     &&& has(p, l + 1 + lz(x), code_z(x, l + 1 + lz(x), e, b, l, f))
 }
 
-proof fn lemma_plus_parts(p: Seq<SInst>, x: Re, g: bool, b: int, e: int, f: int)
+pub proof fn lemma_plus_parts(p: Seq<SInst>, x: Re, g: bool, b: int, e: int, f: int)
     requires
         has(p, b, code_n(Re::Plus(Box::new(x), g), b, e, f)),
     ensures

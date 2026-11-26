@@ -1,6 +1,6 @@
 //! Says where vzstd rejects the frames named in VZSTD_DIAG (a directory).
 //! Only for single-frame inputs; a diagnostic, not a test of anything.
-use vstd::prelude::Ghost;
+use vstd::prelude::{Ghost, Tracked};
 use verilith_zstd::bits::{bstart_exec, rd};
 use verilith_zstd::frame::{frame_header_exec, le_at};
 use verilith_zstd::huf::*;
@@ -34,7 +34,7 @@ fn diag(c: &[u8]) -> String {
                 return format!("block {k}: truncated");
             }
             let blk = &c[p..p + size];
-            let used = match lit_section_exec(blk, bmax, &mut d.huf, &mut d.lits) {
+            let used = match lit_section_exec(blk, bmax, &mut d.huf, &mut d.lits, Tracked::assume_new()) {
                 None => return format!("block {k}: literals section (type {}): {}", blk[0] & 3, lit_diag(blk, bmax)),
                 Some(u) => u,
             };
@@ -50,7 +50,7 @@ fn diag(c: &[u8]) -> String {
                 return format!("block {k}: reserved bits in modes byte {:02x}", sec[hh]);
             }
             if n > 0 {
-                let (tabs, a3) = match seq_hdr_exec(sec, hh, &d.seqt, Ghost::assume_new()) {
+                let (tabs, a3) = match seq_hdr_exec(sec, hh, &d.seqt, Ghost::assume_new(), Tracked::assume_new()) {
                     None => return format!("block {k}: sequence tables (modes {:02x})", sec[hh]),
                     Some(x) => x,
                 };
@@ -74,7 +74,7 @@ fn diag(c: &[u8]) -> String {
                     // room reserved, and 64 bytes more.
                     let lim = d.out.len() + (1 << 19);
                     let mut w = verilith_core::tail::Tail::take(&mut d.out, (1 << 19) + 64);
-                    let step = seq_step_exec(&tabs, s, &lits, h.window, q, sll, sof, sml, r1, r2, r3, li, &mut w, 0, lim, Ghost::assume_new());
+                    let step = seq_step_exec(&tabs, s, &lits, h.window, q, sll, sof, sml, r1, r2, r3, li, &mut w, 0, lim, Ghost::assume_new(), Tracked::assume_new());
                     w.put_back(&mut d.out);
                     let o = match step {
                         Err(_) => return format!("block {k}: sequence {i}/{n} step (p={q}, li={li}, lits={}, out={})", lits.len(), d.out.len()),
@@ -144,14 +144,14 @@ fn lit_diag(b: &[u8], bmax: usize) -> String {
         return format!("sizes n={n} c={c} lh={lh} len={}", b.len());
     }
     let region = &b[lh..lh + c];
-    let (t, u) = match huf_desc_exec(region) {
+    let (t, u) = match huf_desc_exec(region, Tracked::assume_new()) {
         None => return format!("tree description (header byte {})", region[0]),
         Some(x) => x,
     };
     let streams = &region[u..];
     let mut out = vec![];
     if sf == 0 {
-        format!("1 stream n={n} ok={}", huf_stream_exec(&t, streams, n, &mut out))
+        format!("1 stream n={n} ok={}", huf_stream_exec(&t, streams, n, &mut out, Tracked::assume_new()))
     } else {
         // Per-stream detail.
         let l1 = streams[0] as usize | (streams[1] as usize) << 8;
@@ -167,7 +167,7 @@ fn lit_diag(b: &[u8], bmax: usize) -> String {
             }
             let want = if i < 3 { seg } else { n - 3 * seg };
             let mut o = vec![];
-            v.push(format!("s{i}:{}", huf_stream_exec(&t, &streams[at..at + l], want, &mut o)));
+            v.push(format!("s{i}:{}", huf_stream_exec(&t, &streams[at..at + l], want, &mut o, Tracked::assume_new())));
             at += l;
         }
         format!("4 streams n={n} log={} {}", t.log, v.join(" "))

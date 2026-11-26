@@ -6,6 +6,9 @@ use crate::fse::*;
 use crate::huf::*;
 use crate::seq::*;
 use crate::spec::*;
+use crate::work::Meter;
+#[cfg(verus_only)]
+use crate::bits::lemma_pow2_le;
 #[cfg(verus_only)]
 use crate::stream::{lemma_prefix_append, lemma_prefix_trans, lemma_seq_section_prefix, prefix};
 use verilith_xxhash::Xxh64;
@@ -59,9 +62,10 @@ impl DDict {
 // Copies of the tables, for each frame to start from
 // ---------------------------------------------------------------------------
 
-fn copy_vec<T: Copy>(v: &Vec<T>) -> (r: Vec<T>)
+fn copy_vec<T: Copy>(v: &Vec<T>, Tracked(m): Tracked<&mut Meter>) -> (r: Vec<T>)
     ensures
         r@ == v@,
+        final(m).n == old(m).n + v@.len(),
 {
     let n = v.len();
     let mut r: Vec<T> = Vec::with_capacity(n);
@@ -71,10 +75,12 @@ fn copy_vec<T: Copy>(v: &Vec<T>) -> (r: Vec<T>)
             n == v@.len(),
             i <= n,
             r@ == v@.subrange(0, i as int),
+            m.n == old(m).n + i,
         decreases n - i,
     {
         r.push(v[i]);
         proof {
+            m.n = m.n + 1;
             assert(r@ =~= v@.subrange(0, i + 1));
         }
         i = i + 1;
@@ -85,18 +91,60 @@ fn copy_vec<T: Copy>(v: &Vec<T>) -> (r: Vec<T>)
     r
 }
 
-fn copy_huf(t: &HufTab) -> (r: HufTab)
+/// The steps copying a dictionary's Huffman table takes.
+pub open spec fn huf_size(t: Option<HufTab>) -> nat {
+    match t {
+        None => 0,
+        Some(tt) => tt.w@.len() + tt.x2@.len() + tt.x1@.len(),
+    }
+}
+
+/// The steps copying a dictionary's sequence tables takes.
+pub open spec fn seqt_size(t: Option<SeqTabs>) -> nat {
+    match t {
+        None => 0,
+        Some(tt) => tt.ll.rows@.len() + tt.of.rows@.len() + tt.ml.rows@.len() + tt.dl@.len() + tt.dof@.len()
+            + tt.dml@.len(),
+    }
+}
+
+/// The most steps copying a dictionary's tables takes: 256 weights, two
+/// Huffman tables of `2^12` entries, and six FSE tables of `2^9`.
+pub spec const TABLE_COPY_WORK: nat = 11520;
+
+proof fn lemma_table_size(d: &DDict, g: Dict)
+    requires
+        d.is(g),
+    ensures
+        huf_size(d.huf) + seqt_size(d.seqt) <= TABLE_COPY_WORK,
+{
+    reveal(DDict::is);
+    assert(pow2(12) == 4096 && pow2(9) == 512) by {
+        lemma2_to64();
+    }
+    if let Some(t) = d.huf {
+        lemma_pow2_le(t.log as nat, 12);
+    }
+    if let Some(t) = d.seqt {
+        lemma_pow2_le(t.ll.log as nat, 9);
+        lemma_pow2_le(t.of.log as nat, 9);
+        lemma_pow2_le(t.ml.log as nat, 9);
+    }
+}
+
+fn copy_huf(t: &HufTab, Tracked(m): Tracked<&mut Meter>) -> (r: HufTab)
     ensures
         huf_code_of(&r) == huf_code_of(t),
         huf_wf(t) ==> huf_wf(&r),
+        final(m).n == old(m).n + huf_size(Some(*t)),
 {
     let r = HufTab {
         log: t.log,
-        w: copy_vec(&t.w),
+        w: copy_vec(&t.w, Tracked(m)),
         syms: Ghost(t.syms@),
         lens: Ghost(t.lens@),
-        x2: copy_vec(&t.x2),
-        x1: copy_vec(&t.x1),
+        x2: copy_vec(&t.x2, Tracked(m)),
+        x1: copy_vec(&t.x1, Tracked(m)),
     };
     proof {
         assert(huf_code_of(&r) =~= huf_code_of(t));
@@ -104,45 +152,49 @@ fn copy_huf(t: &HufTab) -> (r: HufTab)
     r
 }
 
-fn copy_tab(t: &FseTab) -> (r: FseTab)
+fn copy_tab(t: &FseTab, Tracked(m): Tracked<&mut Meter>) -> (r: FseTab)
     ensures
         r.log == t.log,
         r.rows@ == t.rows@,
+        final(m).n == old(m).n + t.rows@.len(),
 {
-    FseTab { log: t.log, rows: copy_vec(&t.rows) }
+    FseTab { log: t.log, rows: copy_vec(&t.rows, Tracked(m)) }
 }
 
-fn copy_seqt(t: &SeqTabs) -> (r: SeqTabs)
+fn copy_seqt(t: &SeqTabs, Tracked(m): Tracked<&mut Meter>) -> (r: SeqTabs)
     ensures
         forall|s: SeqTables| seqtabs_is(t, s) ==> seqtabs_is(&r, s),
+        final(m).n == old(m).n + seqt_size(Some(*t)),
 {
     SeqTabs {
-        ll: copy_tab(&t.ll),
-        of: copy_tab(&t.of),
-        ml: copy_tab(&t.ml),
-        dl: copy_vec(&t.dl),
-        dof: copy_vec(&t.dof),
-        dml: copy_vec(&t.dml),
+        ll: copy_tab(&t.ll, Tracked(m)),
+        of: copy_tab(&t.of, Tracked(m)),
+        ml: copy_tab(&t.ml, Tracked(m)),
+        dl: copy_vec(&t.dl, Tracked(m)),
+        dof: copy_vec(&t.dof, Tracked(m)),
+        dml: copy_vec(&t.dml, Tracked(m)),
     }
 }
 
-pub fn copy_huf_opt(t: &Option<HufTab>) -> (r: Option<HufTab>)
+pub fn copy_huf_opt(t: &Option<HufTab>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<HufTab>)
     ensures
         forall|c: Option<HufCode>| huf_opt_is(*t, c) ==> huf_opt_is(r, c),
+        final(m).n == old(m).n + huf_size(*t),
 {
     match t {
         None => None,
-        Some(tt) => Some(copy_huf(tt)),
+        Some(tt) => Some(copy_huf(tt, Tracked(m))),
     }
 }
 
-pub fn copy_seqt_opt(t: &Option<SeqTabs>) -> (r: Option<SeqTabs>)
+pub fn copy_seqt_opt(t: &Option<SeqTabs>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<SeqTabs>)
     ensures
         forall|s: Option<SeqTables>| seqt_opt_is(*t, s) ==> seqt_opt_is(r, s),
+        final(m).n == old(m).n + seqt_size(*t),
 {
     match t {
         None => None,
-        Some(tt) => Some(copy_seqt(tt)),
+        Some(tt) => Some(copy_seqt(tt, Tracked(m))),
     }
 }
 
@@ -151,15 +203,17 @@ pub fn copy_seqt_opt(t: &Option<SeqTabs>) -> (r: Option<SeqTabs>)
 // ---------------------------------------------------------------------------
 
 /// A copy of `d[i..]`.
-fn tail_copy(d: &[u8], i: usize) -> (r: Vec<u8>)
+fn tail_copy(d: &[u8], i: usize, Tracked(m): Tracked<&mut Meter>) -> (r: Vec<u8>)
     requires
         i <= d@.len(),
     ensures
         r@ == d@.subrange(i as int, d@.len() as int),
+        final(m).n == old(m).n + (d@.len() - i),
 {
     let mut v: Vec<u8> = Vec::new();
     verilith_core::prims::extend(&mut v, slice_subrange(d, i, d.len()));
     proof {
+        m.n = (m.n + (d@.len() - i)) as nat;
         assert(v@ =~= d@.subrange(i as int, d@.len() as int));
     }
     v
@@ -167,13 +221,15 @@ fn tail_copy(d: &[u8], i: usize) -> (r: Vec<u8>)
 
 /// The raw-content dictionary `d` (`spec::raw_dict`), as
 /// `ZSTD_DCtx_refPrefix` uses it.
-pub fn raw_dict_exec(d: &[u8]) -> (r: DDict)
+pub fn raw_dict_exec(d: &[u8], Tracked(m): Tracked<&mut Meter>) -> (r: DDict)
     requires
         d@.len() < DICT_MAX,
     ensures
         r.is(raw_dict(d@)),
+        r.content@.len() == d@.len(),
+        final(m).n == old(m).n + d@.len(),
 {
-    let content = tail_copy(d, 0);
+    let content = tail_copy(d, 0, Tracked(m));
     proof {
         reveal(DDict::is);
         assert(d@.subrange(0, d@.len() as int) =~= d@);
@@ -184,8 +240,12 @@ pub fn raw_dict_exec(d: &[u8]) -> (r: DDict)
 /// The dictionary `d` as `ZSTD_DCtx_loadDictionary` reads it
 /// (`spec::dict_load`): formatted, or raw content. `None`: it is
 /// corrupted.
+/// The most steps loading a dictionary takes besides 25 a byte: its
+/// Huffman description, three FSE descriptions and three baked tables.
+pub spec const DICT_LOAD_WORK: nat = 19546;
+
 #[verifier::rlimit(40)]
-pub fn load_dict(d: &[u8]) -> (r: Option<DDict>)
+pub fn load_dict(d: &[u8], Tracked(m): Tracked<&mut Meter>) -> (r: Option<DDict>)
     requires
         d@.len() < DICT_MAX,
     ensures
@@ -193,42 +253,54 @@ pub fn load_dict(d: &[u8]) -> (r: Option<DDict>)
             None => r is None,
             Some(g) => r is Some && r.unwrap().is(g),
         },
+        final(m).n <= old(m).n + DICT_LOAD_WORK + 25 * d@.len(),
+        r is Some ==> r.unwrap().content@.len() <= d@.len(),
 {
     let n = d.len();
     if n < 8 || le_at(d, 0, 4) != 0xEC30A437 {
-        return Some(raw_dict_exec(d));
+        return Some(raw_dict_exec(d, Tracked(m)));
     }
     if n == 8 {
         return None;
     }
     let id = le_at(d, 4, 4) as u32;
     let e = slice_subrange(d, 8, n);
-    let (huf, a0) = match huf_desc_exec(e) {
+    let ghost m0 = m.n;
+    let (huf, a0) = match huf_desc_exec(e, Tracked(m)) {
         None => {
             return None;
         },
         Some(x) => x,
     };
-    let (of, u1) = match seq_table_exec(slice_subrange(e, a0, e.len()), 1, 2, None, Ghost(None)) {
+    let (of, u1) = match seq_table_exec(slice_subrange(e, a0, e.len()), 1, 2, None, Ghost(None), Tracked(m)) {
         None => {
             return None;
         },
         Some(x) => x,
     };
+    proof {
+        assert(m.n <= m0 + HUF_DESC_WORK + 8 * (n - 8) + 1870);
+    }
     let a1 = a0 + u1;
-    let (ml, u2) = match seq_table_exec(slice_subrange(e, a1, e.len()), 2, 2, None, Ghost(None)) {
+    let (ml, u2) = match seq_table_exec(slice_subrange(e, a1, e.len()), 2, 2, None, Ghost(None), Tracked(m)) {
         None => {
             return None;
         },
         Some(x) => x,
     };
+    proof {
+        assert(m.n <= m0 + HUF_DESC_WORK + 16 * (n - 8) + 3740);
+    }
     let a2 = a1 + u2;
-    let (ll, u3) = match seq_table_exec(slice_subrange(e, a2, e.len()), 0, 2, None, Ghost(None)) {
+    let (ll, u3) = match seq_table_exec(slice_subrange(e, a2, e.len()), 0, 2, None, Ghost(None), Tracked(m)) {
         None => {
             return None;
         },
         Some(x) => x,
     };
+    proof {
+        assert(m.n <= m0 + HUF_DESC_WORK + 24 * (n - 8) + 5610);
+    }
     let a = 8 + a2 + u3;
     if a + 12 > n {
         return None;
@@ -240,11 +312,20 @@ pub fn load_dict(d: &[u8]) -> (r: Option<DDict>)
     if r1 == 0 || r1 > csize || r2 == 0 || r2 > csize || r3 == 0 || r3 > csize {
         return None;
     }
-    let content = tail_copy(d, a + 12);
-    let dl = bake(&ll, 0);
-    let dof = bake(&of, 1);
-    let dml = bake(&ml, 2);
+    let content = tail_copy(d, a + 12, Tracked(m));
     proof {
+        assert(pow2(9) == 512) by {
+            lemma2_to64();
+        }
+        lemma_pow2_le(ll.log as nat, 9);
+        lemma_pow2_le(of.log as nat, 9);
+        lemma_pow2_le(ml.log as nat, 9);
+    }
+    let dl = bake(&ll, 0, Tracked(m));
+    let dof = bake(&of, 1, Tracked(m));
+    let dml = bake(&ml, 2, Tracked(m));
+    proof {
+        assert(m.n <= m0 + HUF_DESC_WORK + 25 * n + 5610 + 1536);
         reveal(DDict::is);
         assert(e@ =~= d@.subrange(8, n as int));
         assert(id as nat == le(d@, 4, 4));
@@ -360,10 +441,15 @@ proof fn lemma_frames_d_grows(b: Seq<u8>, i: int, out: Seq<u8>, g: Dict)
 /// `d.out` holds the dictionary's content, and the frame's is appended
 /// to it.
 #[verifier::rlimit(40)]
-fn frame_d_exec(b: &[u8], i: usize, dict: &DDict, d: &mut FrameDec, olimit: usize, Ghost(g): Ghost<Dict>) -> (r: (
-    Step,
-    usize,
-))
+fn frame_d_exec(
+    b: &[u8],
+    i: usize,
+    dict: &DDict,
+    d: &mut FrameDec,
+    olimit: usize,
+    Ghost(g): Ghost<Dict>,
+    Tracked(m): Tracked<&mut Meter>,
+) -> (r: (Step, usize))
     requires
         b@.len() < MAX_LIMIT,
         i + 4 <= b@.len(),
@@ -371,6 +457,14 @@ fn frame_d_exec(b: &[u8], i: usize, dict: &DDict, d: &mut FrameDec, olimit: usiz
         old(d).out@ == g.st.out,
         g.st.out.len() <= olimit <= MAX_LIMIT,
     ensures
+        // Work: as `frame_exec`, with the tables' copies paid for by the
+        // magic number, and one step a byte to hash the frame's content.
+        old(d).out@.len() <= final(d).out@.len() <= olimit,
+        r.0 is Done ==> i < r.1 <= b@.len(),
+        r.0 is Done ==> final(m).n <= old(m).n + (BLOCK_BYTE_WORK + 1) * (r.1 - i) + 11 * (final(d).out@.len()
+            - old(d).out@.len()),
+        final(m).n <= old(m).n + (BLOCK_BYTE_WORK + 1) * (b@.len() - i) + 11 * (final(d).out@.len() - old(d).out@.len())
+            + BLOCK_FAIL_WORK,
         match frame_d(b@, i as int, g) {
             None => !(r.0 is Done),
             Some((j, o)) => match r.0 {
@@ -425,15 +519,22 @@ fn frame_d_exec(b: &[u8], i: usize, dict: &DDict, d: &mut FrameDec, olimit: usiz
     d.r1 = dict.r1;
     d.r2 = dict.r2;
     d.r3 = dict.r3;
-    d.huf = copy_huf_opt(&dict.huf);
-    d.seqt = copy_seqt_opt(&dict.seqt);
+    d.huf = copy_huf_opt(&dict.huf, Tracked(m));
+    d.seqt = copy_seqt_opt(&dict.seqt, Tracked(m));
     proof {
         assert(fout(d.out@, 0) =~= g.st.out);
+        lemma_table_size(dict, g);
     }
     let reach = h.window + dl as u64;
     let mut hash = Xxh64::new();
-    let (res, j) = blocks_exec(b, i + 4 + h.size, h.window, reach, d, olimit, &mut hash, false, Ghost(g.st));
+    let (res, j) = blocks_exec(b, i + 4 + h.size, h.window, reach, d, olimit, &mut hash, false, Ghost(g.st), Tracked(m));
     proof {
+        let i1 = i + 4 + h.size;
+        lemma_work_add(BLOCK_BYTE_WORK + 1int, i1 - i, b@.len() - i1);
+        if res is Done {
+            lemma_work_add(BLOCK_BYTE_WORK + 1int, i1 - i, j - i1);
+            lemma_work_add(BLOCK_BYTE_WORK + 1int, j - i, 4);
+        }
         lemma_blocks_grows(b@, i + 4 + h.size, h.window as nat, reach as nat, g.st);
         lemma_blocks_r_prefix(b@, i + 4 + h.size, h.window as nat, reach as nat, g.st);
     }
@@ -465,9 +566,13 @@ fn frame_d_exec(b: &[u8], i: usize, dict: &DDict, d: &mut FrameDec, olimit: usiz
         let mut hh = Xxh64::new();
         hh.update(content, Ghost(Seq::empty()));
         proof {
+            m.n = m.n + content@.len();
             assert(Seq::<u8>::empty() + content@ =~= content@);
         }
         let x = hh.digest(Ghost(content@));
+        proof {
+            m.n = m.n + 32;
+        }
         let want = le_at(b, j, 4);
         let lo = x & 0xFFFF_FFFF;
         proof {
@@ -505,13 +610,17 @@ impl DictDecoder {
         self.g@
     }
 
-    fn new(dict: DDict, Ghost(g): Ghost<Dict>) -> (r: DictDecoder)
+    fn new(dict: DDict, Ghost(g): Ghost<Dict>, Tracked(m): Tracked<&mut Meter>) -> (r: DictDecoder)
         requires
             dict.is(g),
         ensures
             r@ == g,
+            final(m).n == old(m).n + g.st.out.len(),
     {
-        let work = copy_vec(&dict.content);
+        proof {
+            reveal(DDict::is);
+        }
+        let work = copy_vec(&dict.content, Tracked(m));
         proof {
             reveal(DDict::is);
         }
@@ -529,9 +638,29 @@ impl DictDecoder {
                 Some(g) => r is Some && r.unwrap()@ == g,
             },
     {
-        match load_dict(d) {
+        let tracked mut m = Meter { n: 0 };
+        DictDecoder::load_metered(d, Tracked(&mut m))
+    }
+
+    /// `load`, counting its steps in `m`: linear in the dictionary.
+    pub fn load_metered(d: &[u8], Tracked(m): Tracked<&mut Meter>) -> (r: Option<DictDecoder>)
+        requires
+            d@.len() < DICT_MAX,
+        ensures
+            match dict_load(d@) {
+                None => r is None,
+                Some(g) => r is Some && r.unwrap()@ == g,
+            },
+            final(m).n <= old(m).n + DICT_LOAD_WORK + 26 * d@.len(),
+    {
+        match load_dict(d, Tracked(m)) {
             None => None,
-            Some(dd) => Some(DictDecoder::new(dd, Ghost(dict_load(d@).unwrap()))),
+            Some(dd) => {
+                proof {
+                    reveal(DDict::is);
+                }
+                Some(DictDecoder::new(dd, Ghost(dict_load(d@).unwrap()), Tracked(m)))
+            },
         }
     }
 
@@ -543,7 +672,8 @@ impl DictDecoder {
         ensures
             r@ == raw_dict(d@),
     {
-        DictDecoder::new(raw_dict_exec(d), Ghost(raw_dict(d@)))
+        let tracked mut m = Meter { n: 0 };
+        DictDecoder::new(raw_dict_exec(d, Tracked(&mut m)), Ghost(raw_dict(d@)), Tracked(&mut m))
     }
 
     /// Another decoder with the same dictionary, for another context.
@@ -555,16 +685,17 @@ impl DictDecoder {
             use_type_invariant(self);
             reveal(DDict::is);
         }
+        let tracked mut m = Meter { n: 0 };
         let dd = DDict {
             id: self.dict.id,
-            content: copy_vec(&self.dict.content),
+            content: copy_vec(&self.dict.content, Tracked(&mut m)),
             r1: self.dict.r1,
             r2: self.dict.r2,
             r3: self.dict.r3,
-            huf: copy_huf_opt(&self.dict.huf),
-            seqt: copy_seqt_opt(&self.dict.seqt),
+            huf: copy_huf_opt(&self.dict.huf, Tracked(&mut m)),
+            seqt: copy_seqt_opt(&self.dict.seqt, Tracked(&mut m)),
         };
-        DictDecoder::new(dd, Ghost(self.g@))
+        DictDecoder::new(dd, Ghost(self.g@), Tracked(&mut m))
     }
 
     /// A copy of the loaded dictionary, for a decoder that keeps its own
@@ -577,14 +708,15 @@ impl DictDecoder {
             use_type_invariant(self);
             reveal(DDict::is);
         }
+        let tracked mut m = Meter { n: 0 };
         DDict {
             id: self.dict.id,
-            content: copy_vec(&self.dict.content),
+            content: copy_vec(&self.dict.content, Tracked(&mut m)),
             r1: self.dict.r1,
             r2: self.dict.r2,
             r3: self.dict.r3,
-            huf: copy_huf_opt(&self.dict.huf),
-            seqt: copy_seqt_opt(&self.dict.seqt),
+            huf: copy_huf_opt(&self.dict.huf, Tracked(&mut m)),
+            seqt: copy_seqt_opt(&self.dict.seqt, Tracked(&mut m)),
         }
     }
 
@@ -631,18 +763,53 @@ impl DictDecoder {
         proof {
             use_type_invariant(&self);
         }
+        let tracked mut m = Meter { n: 0 };
+        self.decompress_metered(b, limit, Tracked(&mut m))
+    }
+
+    /// `decompress`, counting its steps in `m`: linear, as
+    /// `frame::decompress_metered`, with one step more a byte of output to
+    /// move it out of the buffer, and a failure refilling the buffer.
+    pub fn decompress_metered(self, b: &[u8], limit: usize, Tracked(m): Tracked<&mut Meter>) -> (r: (
+        DictDecoder,
+        Result<Vec<u8>, Error>,
+    ))
+        requires
+            b@.len() < MAX_LIMIT,
+            limit <= DICT_LIMIT,
+        ensures
+            r.0@ == self@,
+            match r.1 {
+                Ok(v) => decompress_d(b@, self@) == Some(v@) && v@.len() <= limit,
+                Err(Error::Corrupt) => decompress_d(b@, self@) is None,
+                Err(Error::TooLarge) => decompress_d(b@, self@) is None || decompress_d(b@, self@).unwrap().len()
+                    > limit,
+            },
+            match r.1 {
+                Ok(v) => final(m).n <= old(m).n + BYTE_WORK * b@.len() + 12 * v@.len() + 1,
+                Err(_) => final(m).n <= old(m).n + BYTE_WORK * b@.len() + 12 * limit + BLOCK_FAIL_WORK
+                    + self@.st.out.len(),
+            },
+    {
+        proof {
+            use_type_invariant(&self);
+        }
         let ghost gd = self.g@;
         let dict = self.dict;
         let work = self.work;
-        decompress_with(dict, work, b, limit, Ghost(gd))
+        decompress_with(dict, work, b, limit, Ghost(gd), Tracked(m))
     }
 }
 
 /// `DictDecoder::decompress`, on the decoder's parts.
-fn decompress_with(dict: DDict, work: Vec<u8>, b: &[u8], limit: usize, Ghost(gd): Ghost<Dict>) -> (r: (
-    DictDecoder,
-    Result<Vec<u8>, Error>,
-))
+fn decompress_with(
+    dict: DDict,
+    work: Vec<u8>,
+    b: &[u8],
+    limit: usize,
+    Ghost(gd): Ghost<Dict>,
+    Tracked(mt): Tracked<&mut Meter>,
+) -> (r: (DictDecoder, Result<Vec<u8>, Error>))
     requires
         b@.len() < MAX_LIMIT,
         limit <= DICT_LIMIT,
@@ -654,6 +821,10 @@ fn decompress_with(dict: DDict, work: Vec<u8>, b: &[u8], limit: usize, Ghost(gd)
             Ok(v) => decompress_d(b@, gd) == Some(v@) && v@.len() <= limit,
             Err(Error::Corrupt) => decompress_d(b@, gd) is None,
             Err(Error::TooLarge) => decompress_d(b@, gd) is None || decompress_d(b@, gd).unwrap().len() > limit,
+        },
+        match r.1 {
+            Ok(v) => final(mt).n <= old(mt).n + BYTE_WORK * b@.len() + 12 * v@.len() + 1,
+            Err(_) => final(mt).n <= old(mt).n + BYTE_WORK * b@.len() + 12 * limit + BLOCK_FAIL_WORK + gd.st.out.len(),
         },
 {
     let mut out: Vec<u8> = Vec::new();
@@ -668,15 +839,27 @@ fn decompress_with(dict: DDict, work: Vec<u8>, b: &[u8], limit: usize, Ghost(gd)
             d.out@ == gd.st.out,
             i <= b@.len(),
             out@.len() <= limit,
+            mt.n <= old(mt).n + BYTE_WORK * i + 12 * out@.len(),
             full == decompress_d(b@, gd),
             frames_d(b@, i as int, out@, gd) == full,
         decreases b@.len() - i,
     {
+        proof {
+            mt.n = mt.n + 1;
+            lemma_work_add(BYTE_WORK as int, i as int, b@.len() - i);
+            lemma_work_add(BLOCK_BYTE_WORK + 1int, i as int, b@.len() - i);
+            assert(BYTE_WORK == BLOCK_BYTE_WORK + 2);
+        }
         if i == b.len() {
             return (DictDecoder { dict, work: d.out, g: Ghost(gd) }, Ok(out));
         }
-        match next_frame(b, i, &dict, &mut d, &mut out, limit, Ghost(gd)) {
+        let ghost o0 = out@.len();
+        match next_frame(b, i, &dict, &mut d, &mut out, limit, Ghost(gd), Tracked(mt)) {
             Ok(j) => {
+                proof {
+                    lemma_work_add(BYTE_WORK as int, i as int, j - i);
+                    lemma_work_add(BLOCK_BYTE_WORK + 1int, i as int, j - i);
+                }
                 i = j;
             },
             Err(e) => {
@@ -696,6 +879,7 @@ fn next_frame(
     out: &mut Vec<u8>,
     limit: usize,
     Ghost(gd): Ghost<Dict>,
+    Tracked(mt): Tracked<&mut Meter>,
 ) -> (r: Result<usize, Error>)
     requires
         b@.len() < MAX_LIMIT,
@@ -706,6 +890,13 @@ fn next_frame(
         old(out)@.len() <= limit,
     ensures
         final(d).out@ == gd.st.out,
+        // Work: a frame's, and one step a byte to move its content to
+        // `out`; a failure also refills the buffer with the content.
+        old(out)@.len() <= final(out)@.len(),
+        r is Ok ==> final(mt).n <= old(mt).n + (BLOCK_BYTE_WORK + 1) * (r.unwrap() - i) + 12 * (final(out)@.len()
+            - old(out)@.len()),
+        r is Err ==> final(mt).n <= old(mt).n + (BLOCK_BYTE_WORK + 1) * (b@.len() - i) + 12 * (limit - old(out)@.len())
+            + BLOCK_FAIL_WORK + gd.st.out.len(),
         match r {
             Ok(j) => i < j <= b@.len() && final(out)@.len() <= limit && frames_d(b@, i as int, old(out)@, gd)
                 == frames_d(b@, j as int, final(out)@, gd),
@@ -741,7 +932,7 @@ fn next_frame(
     }
     let ghost o0 = out@;
     let room = limit - out.len();
-    let (step, j) = frame_d_exec(b, i, dict, d, dlen + room, Ghost(gd));
+    let (step, j) = frame_d_exec(b, i, dict, d, dlen + room, Ghost(gd), Tracked(mt));
     match step {
         Step::Done => {},
         _ => {
@@ -758,6 +949,7 @@ fn next_frame(
             d.out.clear();
             verilith_core::prims::extend(&mut d.out, dict.content.as_slice());
             proof {
+                mt.n = mt.n + dict.content@.len();
                 assert(d.out@ =~= gd.st.out);
             }
             return match step {
@@ -770,6 +962,7 @@ fn next_frame(
     crate::prims::extend_from(out, d.out.as_slice(), dlen, d.out.len() - dlen);
     d.out.truncate(dlen);
     proof {
+        mt.n = mt.n + o.len();
         let (j2, fo) = frame_d(b@, i as int, gd).unwrap();
         assert(o =~= fo);
         assert(d.out@ =~= gd.st.out);

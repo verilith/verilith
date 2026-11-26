@@ -33,6 +33,7 @@ use crate::chan_core::*;
 use crate::chan_model::*;
 #[allow(unused_imports)]
 use crate::progress::channel::*;
+use crate::progress::handles;
 use crate::util::*;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -69,6 +70,8 @@ pub ghost struct DirK {
     pub model: Loc,
     pub empty: AtomicCellId,
     pub alive: AtomicCellId,
+    /// The handle count's progress model's.
+    pub hmodel: Loc,
     pub handles: Loc,
     pub ids: Loc,
     pub list: Loc,
@@ -77,6 +80,12 @@ pub ghost struct DirK {
 /// One handle on the side that direction's model counts in `alive`.
 pub type HandleTok = GhostPointsTo<nat, ()>;
 
+/// The progress model of one side's handle count.
+pub type HandleModel = crate::model::Model<handles::P>;
+
+/// A thread of a [`HandleModel`].
+pub type HandleThreadTok = crate::model::Tok<handles::P>;
+
 /// One direction's shared ghost state and permissions.
 pub tracked struct DirG {
     pub model: Model,
@@ -84,6 +93,9 @@ pub tracked struct DirG {
     pub empty: PermissionBool,
     /// The count of handles on the giving side.
     pub alive: PermissionUsize,
+    /// The handle count's progress model (`progress::handles`), which
+    /// `add_handle` and `drop_handle` follow.
+    pub hmodel: HandleModel,
     pub handles: GhostMapAuth<nat, ()>,
     pub ghost hnext: nat,
     /// Every waiter's `notified` flag, by ticket.
@@ -103,6 +115,10 @@ pub open spec fn dir_inv(k: DirK, g: DirG) -> bool {
     &&& g.empty.value() ==> s.list.is_empty()
     &&& g.alive.id() == k.alive
     &&& g.alive.value() == s.alive
+    &&& g.hmodel.wf()
+    &&& g.hmodel.loc() == k.hmodel
+    &&& g.hmodel.n() == model_threads()
+    &&& g.hmodel@.count == s.alive
     &&& g.handles.id() == k.handles
     &&& g.handles@.dom().len() == s.alive
     &&& forall|h: nat| #[trigger] g.handles@.contains_key(h) ==> h < g.hnext
@@ -304,6 +320,7 @@ impl LockInv<DirK, WaitList> for ListPred {
 /// condition, then parks; a notifier changes the state, then reads `empty`.
 /// A notified waiter is taken off the list at once, so notifiers stop
 /// paying for it while it wakes up.
+#[repr(align(128))]
 pub struct Waiters {
     pub empty: PAtomicBool,
     pub lock: Lock<DirK, WaitList, ListPred>,
@@ -313,6 +330,7 @@ impl Waiters {
     pub open spec fn wf(&self, k: DirK) -> bool {
         &&& self.empty.id() == k.empty
         &&& self.lock.k() == k
+        &&& self.lock.wf()
     }
 }
 
@@ -535,6 +553,7 @@ impl<T> Chan<T> {
             final(dv).model@ == (St { c: old(dv).model@.c + 1, ..go(old(dv).model@, old(gtok).key(), Ph::GNotify) }),
             final(dv).empty == old(dv).empty,
             final(dv).alive == old(dv).alive,
+            final(dv).hmodel == old(dv).hmodel,
             final(dv).handles == old(dv).handles,
             final(dv).hnext == old(dv).hnext,
             final(dv).flags == old(dv).flags,
@@ -953,6 +972,23 @@ impl<T> Chan<T> {
         });
     }
 
+    /// A clone is done with its thread of direction `d`'s handle model.
+    #[inline(always)]
+    fn leave_handles(&self, d: bool, Tracked(htok): Tracked<HandleThreadTok>)
+        requires
+            self.wf(),
+            htok.id() == self.k().dir(d).hmodel,
+            htok.value().ph == handles::Ph::Idle,
+    {
+        open_atomic_invariant!(self.inv.borrow() => g => {
+            proof {
+                let tracked mut dg = g.d.tracked_remove(d);
+                dg.hmodel.leave(htok);
+                g.d.tracked_insert(d, dg);
+            }
+        });
+    }
+
     /// A take starts in direction `d`: one thread of that model starts a
     /// take, and one of the other model stands by for the give.
     #[inline(always)]
@@ -1212,11 +1248,19 @@ impl<T> Chan<T> {
         let Tracked(tok) = self.enter(d);
         let tracked mut tok = tok;
         let tracked mut new: Option<HandleTok> = None;
+        let tracked mut htok: HandleThreadTok;
         let mut c: usize;
         open_atomic_invariant!(self.inv.borrow() => g => {
-            let tracked dg = g.d.tracked_remove(d);
+            let tracked mut dg = g.d.tracked_remove(d);
             c = count.load(Tracked(&dg.alive));
             proof {
+                htok = dg.hmodel.enter();
+                dg.hmodel.agree(&htok);
+                let hs = dg.hmodel@;
+                let ht = htok.key();
+                let hs2 = handles::go(hs, ht, handles::Ph::Cas { seen: hs.count });
+                assert(handles::step(hs, ht, hs2));
+                dg.hmodel.step(&mut htok, hs2);
                 g.d.tracked_insert(d, dg);
             }
         });
@@ -1225,6 +1269,8 @@ impl<T> Chan<T> {
                 self.wf(),
                 count.id() == self.k().dir(d).alive,
                 tok_at(tok, self.k().dir(d), Ph::Idle),
+                htok.id() == self.k().dir(d).hmodel,
+                htok.value().ph == (handles::Ph::Cas { seen: c as nat }),
                 h.id() == self.k().dir(d).handles,
                 new is None,
         {
@@ -1236,6 +1282,18 @@ impl<T> Chan<T> {
                 let tracked mut dg = g.d.tracked_remove(d);
                 r = count.compare_exchange(Tracked(&mut dg.alive), c, c + 1);
                 proof {
+                    dg.hmodel.agree(&htok);
+                    let hs = dg.hmodel@;
+                    let ht = htok.key();
+                    if r is Ok {
+                        let hs2 = handles::St { count: hs.count + 1, done: hs.done + 1, ..handles::go(hs, ht, handles::Ph::Idle) };
+                        assert(handles::step(hs, ht, hs2));
+                        dg.hmodel.step(&mut htok, hs2);
+                    } else {
+                        let hs2 = handles::go(hs, ht, handles::Ph::Cas { seen: hs.count });
+                        assert(handles::step(hs, ht, hs2));
+                        dg.hmodel.step(&mut htok, hs2);
+                    }
                     if r is Ok {
                         dg.model.agree(&tok);
                         h.agree(&dg.handles);
@@ -1252,6 +1310,7 @@ impl<T> Chan<T> {
             match r {
                 Ok(_) => {
                     self.leave(d, Tracked(tok));
+                    self.leave_handles(d, Tracked(htok));
                     return Tracked(new.tracked_unwrap());
                 },
                 Err(v) => {
@@ -1280,6 +1339,13 @@ impl<T> Chan<T> {
             }
             old = count.fetch_sub(Tracked(&mut dg.alive), 1);
             proof {
+                let tracked mut htok = dg.hmodel.enter();
+                dg.hmodel.agree(&htok);
+                let hs = dg.hmodel@;
+                let hs2 = handles::St { count: (hs.count - 1) as nat, done: hs.done + 1, ..hs };
+                assert(handles::step(hs, htok.key(), hs2));
+                dg.hmodel.step(&mut htok, hs2);
+                dg.hmodel.leave(htok);
                 dg.model.agree(&tok);
                 let s = dg.model@;
                 let t = tok.key();
@@ -1330,14 +1396,16 @@ impl<T> Chan<T> {
                 next_tk: 0,
             };
             let tracked model = Model::new(s0, n);
+            let hs0 = handles::St { count: 1, done: 0, th: Seq::new(n, |i: int| handles::Th { ph: handles::Ph::Idle }) };
+            let tracked hmodel = HandleModel::new(hs0, n);
             let tracked (mut handles, _hs) = GhostMapAuth::<nat, ()>::new(Map::empty());
             h = handles.insert(0, ());
             let tracked (ia, isub) = GhostMapAuth::<nat, AtomicCellId>::new(Map::empty());
             let tracked ids = isub.persist();
             let tracked (la, lv) = GhostVarAuth::new(ListG { list: Set::empty(), next: 0 });
-            k = DirK { model: model.loc(), empty: ep.id(), alive: alive.id(), handles: handles.id(), ids: ia.id(), list: la.id() };
+            k = DirK { model: model.loc(), empty: ep.id(), alive: alive.id(), hmodel: hmodel.loc(), handles: handles.id(), ids: ia.id(), list: la.id() };
             assert(handles@.dom() =~= set![0nat]);
-            g = DirG { model, empty: ep, alive, handles, hnext: 1, flags: Map::tracked_empty(), ids, list: la };
+            g = DirG { model, empty: ep, alive, hmodel, handles, hnext: 1, flags: Map::tracked_empty(), ids, list: la };
             ids_auth = ia;
             list_var = lv;
         }
