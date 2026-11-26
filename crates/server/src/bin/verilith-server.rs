@@ -64,7 +64,22 @@ fn main() {
             let (cert, key) = (arg(&args, "--cert").expect("--cert"), arg(&args, "--key").expect("--key"));
             let c = match arg(&args, "--tls-backend").as_deref() {
                 // `--early-data N`: take up to N bytes of 0-RTT data.
-                None | Some("verilith") => verilith_server::tls::config_early(&cert, &key, arg(&args, "--early-data").map_or(0, |n| n.parse().unwrap())),
+                // `--ech PUBLIC_NAME [--ech-key FILE]`: Encrypted Client
+                // Hello under PUBLIC_NAME (the certificate must cover it),
+                // the X25519 key the 32 bytes of FILE (else a fresh one).
+                None | Some("verilith") => {
+                    let ech = arg(&args, "--ech").map(|name| {
+                        let k = match arg(&args, "--ech-key") {
+                            Some(f) => verilith_server::tls::EchKeys::from_private_key(1, &std::fs::read(&f).expect("--ech-key"), &name),
+                            None => verilith_server::tls::EchKeys::generate(1, &name),
+                        }
+                        .expect("--ech: a public name of 1 to 255 bytes, and a 32-byte key");
+                        eprintln!("ECHConfigList (DNS HTTPS record ech=): {}", verilith_server::tls::base64_encode(k.config_list()));
+                        std::sync::Arc::new(k)
+                    });
+                    let opts = verilith_server::tls::TlsOptions { max_early: arg(&args, "--early-data").map_or(0, |n| n.parse().unwrap()), ech };
+                    verilith_server::tls::config_opts(&cert, &key, &opts)
+                }
                 #[cfg(feature = "tls-rustls")]
                 Some("rustls") => verilith_server::tls::rustls_config(&cert, &key),
                 Some(b) => panic!("unknown --tls-backend {b}"),
