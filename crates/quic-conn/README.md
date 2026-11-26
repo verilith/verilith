@@ -71,13 +71,20 @@ and the plumbing between those decisions.
 - **Version Negotiation** for unknown versions.
 - **Segmentation offload.** `poll_transmit` writes up to `max` datagrams of
   one size for GSO.
+- **Path MTU discovery** (§14.3, in the simplest form of RFC 8899):
+  - it starts at 1200 bytes;
+  - once the handshake is confirmed it sends one probe padded to
+    `probe_datagram` (1452 by default), up to three times;
+  - if acknowledged, that becomes the datagram size and the congestion
+    controller's (verified `raise_mds`);
+  - a lost probe is not treated as congestion (§14.4).
 
 Not yet supported:
 
 - Retry and address-validation tokens.
 - Starting a key update itself.
 - Issuing more than one connection ID, migration, and stateless reset.
-- Pacing, ECN, path MTU discovery, and 0-RTT.
+- Pacing, ECN, 0-RTT, and noticing a path MTU that shrinks later.
 
 ## Tests
 
@@ -94,6 +101,8 @@ in memory with a virtual clock.
 - **Stop and reset:** STOP_SENDING answered with RESET_STREAM; a request
   reset by the client.
 - **Closing:** a close by the server; the idle timeout.
+- **Path MTU:** probing up to 1452 bytes, and a path that drops
+  datagrams over 1300 bytes, where the server stays at 1200.
 
 `src/buf.rs` has unit tests for the stream buffers.
 
@@ -109,10 +118,21 @@ in memory with a virtual clock.
 
 | case | verilith-quic-conn | quinn-proto 0.11.19 |
 |---|---:|---:|
-| bulk: 1 connection, 4 x 64 MiB | **123 ms** | 152 ms |
-| requests: 1 connection, 20000 x 1 KiB, 50 at a time | **14.8 ms** | 20.5 ms |
-| requests: 10 connections, 2000 x 16 KiB each, 20 at a time | **135 ms** | 190 ms |
-| handshakes: 500 connections, 1 x 1 KiB | **34.2 ms** | 86.6 ms |
+| bulk: 1 connection, 4 x 64 MiB | **124 ms** | 149 ms |
+| requests: 1 connection, 20000 x 1 KiB, 50 at a time | **14.7 ms** | 20.7 ms |
+| requests: 10 connections, 2000 x 16 KiB each, 20 at a time | **122 ms** | 191 ms |
+| handshakes: 500 connections, 1 x 1 KiB | **33.4 ms** | 84.5 ms |
+
+End to end, verilith-server's HTTP/3 on this crate (`--h3-backend verilith`)
+against the same server on quinn-proto, with h2load over loopback
+([report](../../bench/server/results/2026-11-26-cloud-h3-vq/report.md)),
+in requests per server CPU-second:
+
+| case | on verilith-quic-conn | on quinn-proto |
+|---|---:|---:|
+| h3-plaintext | **605k** | 375k |
+| h3-static-64k | **23k** | 21k |
+| h3-static-1m | **1481** | 1255 |
 
 Neither server issues session tickets or accepts 0-RTT. quinn-proto paces
 its sending; this crate does not yet, which a real network may reward

@@ -51,6 +51,7 @@ The HTTP/3 servers:
 
 | Server | What it is |
 |---|---|
+| `verilith-vq` | verilith-server with `--h3-backend verilith`: the same HTTP/3 code on verilith-quic-conn instead of quinn-proto (`verilith` rows are quinn-proto). h3 cases only |
 | `h3-quinn` | `baselines/h3-quinn`: the h3 crate on quinn 0.11 (quinn-udp with GSO), rustls on aws-lc-rs. One current-thread runtime and one endpoint per worker thread on `SO_REUSEPORT` sockets, since a quinn endpoint is driven by a single task |
 | `nginx-quic` | nginx mainline with `--with-http_v3_module` on BoringSSL, `quic_gso on`, `reuseport`, one worker per thread (`conf/nginx-quic.conf.in`) |
 | `h2o-quic` | h2o master with quicly and picotls on OpenSSL, `num-threads` workers (`conf/h2o-quic.conf.in`) |

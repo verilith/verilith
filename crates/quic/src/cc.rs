@@ -161,6 +161,31 @@ impl NewReno {
         }
     }
 
+    /// A larger max_datagram_size, once path MTU discovery found the path
+    /// carries it (§14.3): the window and ssthresh are raised to at least
+    /// the new minimum; nothing else changes.
+    pub fn raise_mds(&mut self, mds: u64)
+        requires
+            old(self).inv(),
+            old(self).mds <= mds <= 65527,
+        ensures
+            final(self).inv(),
+            final(self).mds == mds,
+            final(self).cwnd == if old(self).cwnd < min_window(mds) { min_window(mds) as u64 } else { old(self).cwnd },
+            final(self).recovery == old(self).recovery,
+            final(self).acc == old(self).acc,
+    {
+        self.mds = mds;
+        if self.cwnd < 2 * mds {
+            self.cwnd = 2 * mds;
+        }
+        if let Some(s) = self.ssthresh {
+            if s < 2 * mds {
+                self.ssthresh = Some(2 * mds);
+            }
+        }
+    }
+
     /// A loss, or an increase in ECN-CE (§7.1), for a packet sent at `sent`,
     /// seen at `now`.
     pub fn on_congestion(&mut self, sent: u64, now: u64)

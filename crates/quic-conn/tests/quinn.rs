@@ -63,6 +63,10 @@ pub struct Net {
     to_server: Vec<(Instant, Vec<u8>)>,
     to_client: Vec<(Instant, Vec<u8>)>,
     pub server_bytes: usize,
+    /// Server datagrams larger than this are dropped (a path MTU).
+    pub mtu: usize,
+    /// The largest server datagram delivered.
+    pub largest: usize,
 }
 
 pub struct Pair {
@@ -85,7 +89,7 @@ impl Pair {
         let client_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 2), 5000));
         let (ch, c) = client.connect(now, client_config(), server_addr, "localhost").unwrap();
         Pair {
-            net: Net { now, epoch: now, delay, loss, reorder: 0, rng: Rng(seed | 1), to_server: Vec::new(), to_client: Vec::new(), server_bytes: 0 },
+            net: Net { now, epoch: now, delay, loss, reorder: 0, rng: Rng(seed | 1), to_server: Vec::new(), to_client: Vec::new(), server_bytes: 0, mtu: usize::MAX, largest: 0 },
             client,
             ch,
             c,
@@ -162,6 +166,10 @@ impl Pair {
                 self.net.server_bytes += t.size;
                 for d in buf[..t.size].chunks(seg) {
                     assert!(d.len() <= 1452);
+                    if d.len() > self.net.mtu {
+                        continue;
+                    }
+                    self.net.largest = self.net.largest.max(d.len());
                     if !self.lose() {
                         let at = self.net.now + self.net.delay + self.jitter();
                         self.net.to_client.push((at, d.to_vec()));
@@ -387,6 +395,20 @@ fn many_requests_and_large_responses() {
     let mut p = Pair::new(server_config(|c| c.max_datagram = 1452), Duration::from_millis(5), 0, 2);
     let reqs: Vec<(Vec<u8>, usize)> = (0..300).map(|k| (format!("req {k}").into_bytes(), if k % 50 == 0 { 3_000_000 } else { k * 37 })).collect();
     assert!(exchange(&mut p, &reqs, Duration::from_secs(120)));
+}
+
+#[test]
+fn path_mtu_discovery() {
+    // From 1200 bytes, the server finds the path carries 1452.
+    let mut p = Pair::new(server_config(|_| {}), Duration::from_millis(10), 0, 7);
+    assert!(exchange(&mut p, &[(b"x".to_vec(), 2_000_000)], Duration::from_secs(60)));
+    assert_eq!(p.net.largest, 1452);
+    // A path that drops what is over 1300 bytes: the probes are lost, and
+    // the server keeps to 1200 without treating their loss as congestion.
+    let mut p = Pair::new(server_config(|_| {}), Duration::from_millis(10), 0, 8);
+    p.net.mtu = 1300;
+    assert!(exchange(&mut p, &[(b"x".to_vec(), 2_000_000)], Duration::from_secs(60)));
+    assert_eq!(p.net.largest, 1200);
 }
 
 #[test]
