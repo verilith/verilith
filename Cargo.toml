@@ -21,6 +21,7 @@ members = [
     "crates/sync",
     "crates/text",
     "crates/tiff",
+    "crates/tls",
     "crates/url",
     "crates/verilith",
     "crates/wasm",

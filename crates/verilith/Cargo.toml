@@ -33,6 +33,7 @@ snappy = ["dep:verilith-snappy"]
 sync = ["dep:verilith-sync"]
 text = ["dep:verilith-text"]
 tiff = ["dep:verilith-tiff"]
+tls = ["dep:verilith-tls"]
 url = ["dep:verilith-url"]
 wasm = ["dep:verilith-wasm"]
 webp = ["dep:verilith-webp"]
@@ -62,6 +63,7 @@ verilith-snappy = { path = "../snappy", version = "0.1.0", optional = true }
 verilith-sync = { path = "../sync", version = "0.1.0", optional = true }
 verilith-text = { path = "../text", version = "0.1.0", optional = true }
 verilith-tiff = { path = "../tiff", version = "0.1.0", optional = true }
+verilith-tls = { path = "../tls", version = "0.1.0", optional = true }
 verilith-url = { path = "../url", version = "0.1.0", optional = true }
 verilith-wasm = { path = "../wasm", version = "0.1.0", optional = true }
 verilith-webp = { path = "../webp", version = "0.1.0", optional = true }
