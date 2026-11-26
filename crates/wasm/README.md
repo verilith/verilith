@@ -74,11 +74,10 @@ What the proofs assume rather than prove:
   rounding, the trapping and saturating truncations) matches IEEE 754 and
   WebAssembly is checked by the spec tests (`f32`, `f64`, `conversions`,
   `float_exprs`, `float_misc` all pass).
-- `src/sint.rs`: `popcnt32` and `popcnt64` (vstd has no spec of
-  `count_ones`), with the spec from `src/num.rs`. The rest of `sint.rs`
-  (signed division and remainder, arithmetic shifts, signed comparison,
-  sign extension, `clz` and `ctz`) is verified against `src/num.rs` and
-  vstd's specs of `leading_zeros`/`trailing_zeros`. `tests/sint.rs` checks
+- `src/sint.rs`: nothing of its own. Signed division and remainder,
+  arithmetic shifts, signed comparison, sign extension, `clz`, `ctz` and
+  `popcnt` are verified against `src/num.rs` and vstd's specs of
+  `leading_zeros`, `trailing_zeros` and `count_ones`. `tests/sint.rs` checks
   every function against an independent evaluation of the spec.
 - `src/prims.rs`: unchecked copies, fills, loads and stores on linear
   memory and the value stack; each `requires` is the bounds check Verus

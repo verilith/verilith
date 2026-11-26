@@ -1,0 +1,16 @@
+# The SHA-2 specification run on NIST's CAVP vectors (scripts/spec-tests.sh).
+# A separate project, outside the workspace: it is only ever verified.
+[package]
+name = "verilith-sha2-spec-tests"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+verilith-sha2 = { path = ".." }
+vstd = { version = "=0.0.0-2026-11-22-0344", default-features = false, features = ["std"] }
+
+[package.metadata.verus]
+verify = true
+
+[workspace]

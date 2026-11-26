@@ -5,6 +5,7 @@ use crate::scan::*;
 use crate::spec::*;
 use crate::stream::*;
 use crate::types::*;
+use crate::work::*;
 use vstd::prelude::*;
 
 verus! {
@@ -25,6 +26,8 @@ pub struct DecX {
     pub ql: [[u16; 64]; 3],
     pub qset: [bool; 3],
     pub co: Coefs,
+    /// The scans decoded so far, for the work bound.
+    pub nscan: Ghost<nat>,
 }
 
 pub open spec fn color_v(c: u8) -> Color {
@@ -123,6 +126,7 @@ pub fn dec_new() -> (r: DecX)
     ensures
         r@ == dec_init(),
         r.wf(),
+        r.nscan@ == 0,
 {
     let none = HuffTab { counts: [0; 16], vals: [0; 256] };
     let c0 = Comp { id: 0, h: 1, v: 1, tq: 0 };
@@ -147,6 +151,7 @@ pub fn dec_new() -> (r: DecX)
         color: 0,
         ql: [[0; 64]; 3],
         qset: [false; 3],
+        nscan: Ghost(0),
         co: Coefs {
             a0: Vec::new(),
             a1: Vec::new(),
@@ -185,7 +190,7 @@ pub fn dec_new() -> (r: DecX)
 }
 
 /// The DQT segment whose contents start at `p` and are `rem` bytes long.
-pub fn dqt_x(data: &[u8], p: usize, rem: i32, t: &mut Tabs) -> (ok: bool)
+pub fn dqt_x(data: &[u8], p: usize, rem: i32, t: &mut Tabs, Tracked(mt): Tracked<&mut Meter>) -> (ok: bool)
     requires
         len_ok(data@),
         p <= data@.len() + 16,
@@ -193,6 +198,8 @@ pub fn dqt_x(data: &[u8], p: usize, rem: i32, t: &mut Tabs) -> (ok: bool)
     ensures
         ok == dqt(data@, p as int, rem as int, old(t)@) is Some,
         ok ==> final(t)@ == dqt(data@, p as int, rem as int, old(t)@)->0,
+        final(mt).n <= old(mt).n + rem + 130,
+        ok ==> final(mt).n <= old(mt).n + rem,
 {
     let ghost d = data@;
     let ghost t0 = t@;
@@ -207,6 +214,8 @@ pub fn dqt_x(data: &[u8], p: usize, rem: i32, t: &mut Tabs) -> (ok: bool)
             rr <= rem <= 65535,
             t0 == old(t)@,
             dqt(d, pp as int, rr as int, t@) == dqt(d, p as int, rem as int, t0),
+            mt.n + rr <= old(mt).n + rem,
+            rr >= -130,
         decreases rr + 200,
     {
         let ghost t1 = t@;
@@ -255,12 +264,15 @@ pub fn dqt_x(data: &[u8], p: usize, rem: i32, t: &mut Tabs) -> (ok: bool)
         }
         pp += size;
         rr -= size as i32;
+        proof {
+            mt.n = mt.n + 1;
+        }
     }
     rr == 0
 }
 
 /// The DHT segment whose contents start at `p` and are `rem` bytes long.
-pub fn dht_x(data: &[u8], p: usize, rem: i32, t: &mut Tabs) -> (ok: bool)
+pub fn dht_x(data: &[u8], p: usize, rem: i32, t: &mut Tabs, Tracked(mt): Tracked<&mut Meter>) -> (ok: bool)
     requires
         len_ok(data@),
         p <= data@.len() + 16,
@@ -268,6 +280,7 @@ pub fn dht_x(data: &[u8], p: usize, rem: i32, t: &mut Tabs) -> (ok: bool)
     ensures
         ok == dht(data@, p as int, rem as int, old(t)@) is Some,
         ok ==> final(t)@ == dht(data@, p as int, rem as int, old(t)@)->0,
+        final(mt).n <= old(mt).n + rem + 2,
 {
     let ghost d = data@;
     let ghost t0 = t@;
@@ -282,6 +295,8 @@ pub fn dht_x(data: &[u8], p: usize, rem: i32, t: &mut Tabs) -> (ok: bool)
             rr <= rem <= 65535,
             t0 == old(t)@,
             dht(d, pp as int, rr as int, t@) == dht(d, p as int, rem as int, t0),
+            mt.n + rr <= old(mt).n + rem,
+            rr >= -2,
         decreases rr,
     {
         let ghost t1 = t@;
@@ -360,6 +375,9 @@ pub fn dht_x(data: &[u8], p: usize, rem: i32, t: &mut Tabs) -> (ok: bool)
         }
         pp += 17 + total;
         rr -= 17 + total as i32;
+        proof {
+            mt.n = mt.n + 1;
+        }
     }
     rr == 0
 }
@@ -663,11 +681,12 @@ pub fn alloc_u8(n: usize) -> (r: Option<Vec<u8>>)
 }
 
 /// The zeroed coefficient array of component `c`.
-fn alloc_coef(g: &Geom, c: usize, Ghost(f): Ghost<Frame>) -> (r: Option<Vec<i16>>)
+fn alloc_coef(g: &Geom, c: usize, Ghost(f): Ghost<Frame>, Tracked(mt): Tracked<&mut Meter>) -> (r: Option<Vec<i16>>)
     requires
         g.wf(f),
         c < f.nc <= 3,
     ensures
+        final(mt).n <= old(mt).n + 64 * (cw(f, c as int) * ch(f, c as int)),
         r matches Some(v) ==> v@ == Seq::new((64 * cw(f, c as int) * ch(f, c as int)) as nat, |j: int| 0i16) && v.len()
             == csize(f, c as int),
 {
@@ -683,6 +702,9 @@ fn alloc_coef(g: &Geom, c: usize, Ghost(f): Ghost<Frame>) -> (r: Option<Vec<i16>
     let n = a * b * 64;
     if n > usize::MAX as u64 {
         return None;
+    }
+    proof {
+        mt.n = mt.n + n as nat;
     }
     alloc_i16(n as usize)
 }
@@ -817,29 +839,30 @@ pub open spec fn zero_coefs(f: Frame) -> Seq<Seq<i16>> {
 }
 
 /// Allocates the coefficient arrays. Returns false if there is no memory.
-fn alloc_all(g: &Geom, f: &FrameX, co: &mut Coefs) -> (ok: bool)
+fn alloc_all(g: &Geom, f: &FrameX, co: &mut Coefs, Tracked(mt): Tracked<&mut Meter>) -> (ok: bool)
     requires
         frame_basic(f@),
         g.wf(f@),
         !old(co).stream,
     ensures
+        final(mt).n <= old(mt).n + 64 * fblk(f@),
         !final(co).stream,
         ok ==> final(co).wf(f@) && final(co).view(f@.nc) == zero_coefs(f@),
 {
-    co.a0 = match alloc_coef(g, 0, Ghost(f@)) {
+    co.a0 = match alloc_coef(g, 0, Ghost(f@), Tracked(mt)) {
         Some(v) => v,
         None => {
             return false;
         },
     };
     if f.nc == 3 {
-        co.a1 = match alloc_coef(g, 1, Ghost(f@)) {
+        co.a1 = match alloc_coef(g, 1, Ghost(f@), Tracked(mt)) {
             Some(v) => v,
             None => {
                 return false;
             },
         };
-        co.a2 = match alloc_coef(g, 2, Ghost(f@)) {
+        co.a2 = match alloc_coef(g, 2, Ghost(f@), Tracked(mt)) {
             Some(v) => v,
             None => {
                 return false;
@@ -853,9 +876,14 @@ fn alloc_all(g: &Geom, f: &FrameX, co: &mut Coefs) -> (ok: bool)
 }
 
 /// The window and the plane of component `c` for a streamed scan.
-fn alloc_win(g: &Geom, c: usize, vr: usize, Ghost(f): Ghost<Frame>, Ghost(q): Ghost<Seq<u16>>) -> (r: Option<
-    (Vec<i16>, Vec<u8>),
->)
+fn alloc_win(
+    g: &Geom,
+    c: usize,
+    vr: usize,
+    Ghost(f): Ghost<Frame>,
+    Ghost(q): Ghost<Seq<u16>>,
+    Tracked(mt): Tracked<&mut Meter>,
+) -> (r: Option<(Vec<i16>, Vec<u8>)>)
     requires
         frame_ok(f),
         frame_basic(f),
@@ -863,6 +891,7 @@ fn alloc_win(g: &Geom, c: usize, vr: usize, Ghost(f): Ghost<Frame>, Ghost(q): Gh
         c < f.nc,
         vr == srows(f, c as int),
     ensures
+        final(mt).n <= old(mt).n + 128 * (cw(f, c as int) * ch(f, c as int)),
         r matches Some(w) ==> {
             &&& 64 * cw(f, c as int) * ch(f, c as int) <= usize::MAX
             &&& win_ok(
@@ -918,12 +947,24 @@ fn alloc_win(g: &Geom, c: usize, vr: usize, Ghost(f): Ghost<Frame>, Ghost(q): Gh
     if 64 * cwc * chc > usize::MAX as u64 || (8 * wbc) * (8 * hbc) > usize::MAX as u64 {
         return None;
     }
+    assert((8 * wbc) * (8 * hbc) <= 64 * (cwc * chc) && 64 * (cwc * v) <= 64 * (cwc * chc)) by (nonlinear_arith)
+        requires
+            1 <= wbc <= cwc,
+            1 <= hbc <= chc,
+            1 <= v <= chc,
+    ;
+    proof {
+        mt.n = mt.n + (64 * (cwc * v)) as nat;
+    }
     let a = match alloc_i16((64 * (cwc * v)) as usize) {
         Some(a) => a,
         None => {
             return None;
         },
     };
+    proof {
+        mt.n = mt.n + ((8 * wbc) * (8 * hbc)) as nat;
+    }
     let pl = match alloc_u8(((8 * wbc) * (8 * hbc)) as usize) {
         Some(p) => p,
         None => {
@@ -957,13 +998,14 @@ fn alloc_win(g: &Geom, c: usize, vr: usize, Ghost(f): Ghost<Frame>, Ghost(q): Gh
 /// Sets up streaming for the one scan of a sequential file: windows and
 /// planes instead of whole coefficient arrays. Returns false if there is
 /// no memory.
-fn begin_stream(g: &Geom, f: &FrameX, ql: &[[u16; 64]; 3], co: &mut Coefs) -> (ok: bool)
+fn begin_stream(g: &Geom, f: &FrameX, ql: &[[u16; 64]; 3], co: &mut Coefs, Tracked(mt): Tracked<&mut Meter>) -> (ok: bool)
     requires
         frame_ok(f@),
         frame_basic(f@),
         g.wf(f@),
         !old(co).stream,
     ensures
+        final(mt).n <= old(mt).n + 128 * fblk(f@),
         ok ==> {
             &&& final(co).wf(f@)
             &&& final(co).stream
@@ -983,7 +1025,7 @@ fn begin_stream(g: &Geom, f: &FrameX, ql: &[[u16; 64]; 3], co: &mut Coefs) -> (o
     } else {
         f.comps[0].v as usize
     };
-    let w0 = match alloc_win(g, 0, vr0, Ghost(fv), Ghost(ql[0]@)) {
+    let w0 = match alloc_win(g, 0, vr0, Ghost(fv), Ghost(ql[0]@), Tracked(mt)) {
         Some(w) => w,
         None => {
             return false;
@@ -994,13 +1036,13 @@ fn begin_stream(g: &Geom, f: &FrameX, ql: &[[u16; 64]; 3], co: &mut Coefs) -> (o
     co.g0 = Ghost(Seq::new((64 * cw(fv, 0) * ch(fv, 0)) as nat, |j: int| 0i16));
     if nc == 3 {
         assert(fv.comps[1] == f.comps[1] && fv.comps[2] == f.comps[2]);
-        let w1 = match alloc_win(g, 1, f.comps[1].v as usize, Ghost(fv), Ghost(ql[1]@)) {
+        let w1 = match alloc_win(g, 1, f.comps[1].v as usize, Ghost(fv), Ghost(ql[1]@), Tracked(mt)) {
             Some(w) => w,
             None => {
                 return false;
             },
         };
-        let w2 = match alloc_win(g, 2, f.comps[2].v as usize, Ghost(fv), Ghost(ql[2]@)) {
+        let w2 = match alloc_win(g, 2, f.comps[2].v as usize, Ghost(fv), Ghost(ql[2]@), Tracked(mt)) {
             Some(w) => w,
             None => {
                 return false;
@@ -1024,14 +1066,32 @@ fn begin_stream(g: &Geom, f: &FrameX, ql: &[[u16; 64]; 3], co: &mut Coefs) -> (o
     true
 }
 
+/// The blocks of the file's frame, once it has one.
+pub open spec fn blk(st: DecX) -> int {
+    if st.has_f {
+        fblk(st.f@)
+    } else {
+        0
+    }
+}
+
 /// The scan whose header is at `q`. Returns a position from which the
 /// next marker is the one after the scan.
-pub fn do_scan_x(data: &[u8], q: usize, st: &mut DecX) -> (r: Result<usize, Error>)
+pub fn do_scan_x(data: &[u8], q: usize, st: &mut DecX, Tracked(mt): Tracked<&mut Meter>) -> (r: Result<usize, Error>)
     requires
         len_ok(data@),
         q <= data@.len() + 2,
         old(st).wf(),
     ensures
+        final(st).has_f == old(st).has_f,
+        final(st).f == old(st).f,
+        blk(*old(st)) >= 0,
+        final(mt).n + 4 * q <= old(mt).n + 4 * (match r {
+            Ok(p) => p as int,
+            Err(_) => data@.len() + 0x1_0020int,
+        }) + scan_cost(blk(*old(st))),
+        final(st).nscan@ == old(st).nscan@ + (if r is Ok { 1int } else { 0int }),
+        r is Ok ==> blk(*old(st)) > 0,
         match r {
             Ok(p) => {
                 &&& do_scan(data@, q as int, old(st)@) is Some
@@ -1049,6 +1109,10 @@ pub fn do_scan_x(data: &[u8], q: usize, st: &mut DecX) -> (r: Result<usize, Erro
     let ghost s0 = st@;
     if !st.has_f {
         return Err(Error::Invalid);
+    }
+    let ghost m0 = mt.n;
+    proof {
+        lemma_fblk(st.f@, st.g);
     }
     let f = st.f;
     let g = st.g;
@@ -1090,10 +1154,10 @@ pub fn do_scan_x(data: &[u8], q: usize, st: &mut DecX) -> (r: Result<usize, Erro
         // The one scan of a sequential file is streamed; anything else
         // needs the whole coefficient arrays.
         if !f.prog && s.ns == f.nc {
-            if !begin_stream(&g, &f, &st.ql, &mut st.co) {
+            if !begin_stream(&g, &f, &st.ql, &mut st.co, Tracked(mt)) {
                 return Err(Error::OutOfMemory);
             }
-        } else if !alloc_all(&g, &f, &mut st.co) {
+        } else if !alloc_all(&g, &f, &mut st.co, Tracked(mt)) {
             return Err(Error::OutOfMemory);
         }
     }
@@ -1104,9 +1168,16 @@ pub fn do_scan_x(data: &[u8], q: usize, st: &mut DecX) -> (r: Result<usize, Erro
         s0.a
     });
     let p0 = q + rd16(data, q) as usize;
-    match scan_x(data, &f, &g, &st.t, &s, &mut st.co, p0) {
+    let ghost m1 = mt.n;
+    let ghost stream = st.co.stream;
+    proof {
+        lemma_sw_le(fv, g, sv, stream);
+        assert(m1 <= m0 + 128 * fblk(fv));
+    }
+    match scan_x(data, &f, &g, &st.t, &s, &mut st.co, p0, Tracked(mt)) {
         Some(p) => {
             st.started = true;
+            st.nscan = Ghost(st.nscan@ + 1);
             proof {
                 let want = (do_scan(d, q as int, s0)->0).0;
                 assert(st@.ql =~= want.ql);
@@ -1160,13 +1231,14 @@ pub proof fn lemma_run_marker(d: Seq<u8>, st: Dec, p: int, p2: int)
 }
 
 /// Whether the `n` bytes at `p` are a well-formed DAC payload.
-pub fn dac_x(data: &[u8], p: usize, n: isize) -> (r: bool)
+pub fn dac_x(data: &[u8], p: usize, n: isize, Tracked(mt): Tracked<&mut Meter>) -> (r: bool)
     requires
         len_ok(data@),
         p <= data@.len() + 0x8000,
         -2 <= n <= 0xFFFF,
     ensures
         r == dac(data@, p as int, n as int),
+        final(mt).n <= old(mt).n + n + 2,
 {
     let mut k: isize = n;
     let mut i: usize = p;
@@ -1178,6 +1250,7 @@ pub fn dac_x(data: &[u8], p: usize, n: isize) -> (r: bool)
             i as int + k as int <= p as int + n as int + 1,
             -2 <= k <= 0xFFFF,
             dac(data@, p as int, n as int) == dac(data@, i as int, k as int),
+            mt.n + k <= old(mt).n + n,
         decreases k + 2,
     {
         let t = rd(data, i);
@@ -1187,6 +1260,9 @@ pub fn dac_x(data: &[u8], p: usize, n: isize) -> (r: bool)
         }
         i = i + 2;
         k = k - 2;
+        proof {
+            mt.n = mt.n + 1;
+        }
     }
     k == 0
 }
@@ -1194,13 +1270,28 @@ pub fn dac_x(data: &[u8], p: usize, n: isize) -> (r: bool)
 /// One marker segment at `p`. Returns the position after it, or `None` at
 /// EOI.
 #[verifier::spinoff_prover]
-#[verifier::rlimit(40)]
-pub fn step_x(data: &[u8], st: &mut DecX, p: usize) -> (r: Result<Option<usize>, Error>)
+#[verifier::rlimit(150)]
+pub fn step_x(data: &[u8], st: &mut DecX, p: usize, Tracked(mt): Tracked<&mut Meter>) -> (r: Result<Option<usize>, Error>)
     requires
         len_ok(data@),
         p <= data@.len() + 0x1_0010,
         old(st).wf(),
     ensures
+        0 <= blk(*old(st)) <= blk(*final(st)),
+        blk(*old(st)) > 0 ==> blk(*final(st)) == blk(*old(st)),
+        r is Err ==> blk(*final(st)) == blk(*old(st)),
+        old(st).nscan@ <= final(st).nscan@ <= old(st).nscan@ + 1,
+        final(st).nscan@ > old(st).nscan@ ==> blk(*old(st)) > 0,
+        r is Ok && r->Ok_0 is None ==> final(st).nscan == old(st).nscan,
+        r is Err ==> final(st).nscan == old(st).nscan,
+        final(mt).n + 4 * p <= old(mt).n + 4 * (match r {
+            Ok(Some(p2)) => p2 as int,
+            _ => data@.len() + 0x1_0020int,
+        }) + (final(st).nscan@ - old(st).nscan@) * scan_cost(blk(*old(st))) + (if r is Err {
+            scan_cost(blk(*old(st))) + 200
+        } else {
+            0int
+        }),
         match r {
             Ok(None) => run(data@, old(st)@, p as int) == Some(final(st)@) && final(st).wf() && final(st).started,
             Ok(Some(p2)) => {
@@ -1218,15 +1309,32 @@ pub fn step_x(data: &[u8], st: &mut DecX, p: usize) -> (r: Result<Option<usize>,
     proof {
         lemma_marker_after(d, p as int);
     }
-    let (m, q) = marker_after_x(data, p);
-    if p >= data.len() || m == 0xD9 {
+    proof {
+        if st.has_f {
+            lemma_fblk(st.f@, st.g);
+        }
+    }
+    let ghost m0 = mt.n;
+    let ghost n1 = st.nscan@;
+    let ghost sc = scan_cost(blk(*st));
+    let (m, q) = marker_after_x(data, p, Tracked(mt));
+    proof {
+        mt.n = mt.n + 1;
+    }
+    proof {
+        assert(mt.n + 2 * p <= m0 + 2 * q + 1);
+        if p < data.len() {
+            assert(q <= data.len() + 2);
+        }
+    }
+    let r = if p >= data.len() || m == 0xD9 {
         if st.started {
             Ok(None)
         } else {
             Err(Error::Invalid)
         }
     } else if m == 0xDA {
-        match do_scan_x(data, q, st) {
+        match do_scan_x(data, q, st, Tracked(mt)) {
             Ok(p2) => {
                 proof {
                     let (st2, sp) = do_scan(d, q as int, s0)->0;
@@ -1236,16 +1344,86 @@ pub fn step_x(data: &[u8], st: &mut DecX, p: usize) -> (r: Result<Option<usize>,
             },
             Err(e) => Err(e),
         }
-    } else if m == 0xDB {
+    } else {
+        let r = seg_x(data, st, p, m, q, Tracked(mt));
+        proof {
+            if let Ok(Some(p2)) = r {
+                assert(mt.n + 2 * p <= m0 + 2 * p2 + 1);
+            }
+        }
+        r
+    };
+    proof {
+        let dn = st.nscan@ - n1;
+        assert(sc >= 10);
+        if dn == 0 {
+            assert(dn * sc == 0) by (nonlinear_arith)
+                requires
+                    dn == 0,
+            ;
+        } else {
+            assert(dn == 1);
+            assert(dn * sc == sc) by (nonlinear_arith)
+                requires
+                    dn == 1,
+            ;
+        }
+    }
+    r
+}
+
+/// A marker segment other than SOS and EOI: marker `m` at `p`, its
+/// payload at `q`.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(60)]
+fn seg_x(data: &[u8], st: &mut DecX, p: usize, m: u8, q: usize, Tracked(mt): Tracked<&mut Meter>) -> (r: Result<Option<usize>, Error>)
+    requires
+        len_ok(data@),
+        p < data@.len(),
+        old(st).wf(),
+        (m, q as int) == marker_after(data@, p as int),
+        q <= data@.len() + 2,
+        m != 0xD9,
+        m != 0xDA,
+    ensures
+        final(st).nscan == old(st).nscan,
+        0 <= blk(*old(st)) <= blk(*final(st)),
+        blk(*old(st)) > 0 ==> blk(*final(st)) == blk(*old(st)),
+        r is Err ==> blk(*final(st)) == blk(*old(st)),
+        final(mt).n <= old(mt).n + (match r {
+            Ok(Some(p2)) => p2 - q,
+            _ => 0x2_0000int,
+        }),
+        match r {
+            Ok(None) => false,
+            Ok(Some(p2)) => {
+                &&& run(data@, old(st)@, p as int) == run(data@, final(st)@, p2 as int)
+                &&& final(st).wf()
+                &&& q <= p2 <= data@.len() + 0x1_0010
+                &&& p < p2
+            },
+            Err(Error::Invalid) => run(data@, old(st)@, p as int) is None,
+            Err(Error::OutOfMemory) => true,
+        },
+{
+    let ghost d = data@;
+    let ghost s0 = st@;
+    proof {
+        lemma_marker_after(d, p as int);
+        if st.has_f {
+            lemma_fblk(st.f@, st.g);
+        }
+    }
+    if m == 0xDB {
         let len = rd16(data, q);
-        if dqt_x(data, q + 2, len as i32 - 2, &mut st.t) {
+        if dqt_x(data, q + 2, len as i32 - 2, &mut st.t, Tracked(mt)) {
             Ok(Some(q + len as usize))
         } else {
             Err(Error::Invalid)
         }
     } else if m == 0xC4 {
         let len = rd16(data, q);
-        if dht_x(data, q + 2, len as i32 - 2, &mut st.t) {
+        if dht_x(data, q + 2, len as i32 - 2, &mut st.t, Tracked(mt)) {
             Ok(Some(q + len as usize))
         } else {
             Err(Error::Invalid)
@@ -1272,6 +1450,9 @@ pub fn step_x(data: &[u8], st: &mut DecX, p: usize) -> (r: Result<Option<usize>,
                     st.has_f = true;
                     st.f = f;
                     st.g = geom(&f);
+                    proof {
+                        lemma_fblk(st.f@, st.g);
+                    }
                     Ok(Some(q + rd16(data, q) as usize))
                 }
             },
@@ -1297,7 +1478,7 @@ pub fn step_x(data: &[u8], st: &mut DecX, p: usize) -> (r: Result<Option<usize>,
         Ok(Some(q + if len < 2 { 2 } else { len as usize }))
     } else if m == 0xCC {
         let len = rd16(data, q);
-        if dac_x(data, q + 2, len as isize - 2) {
+        if dac_x(data, q + 2, len as isize - 2, Tracked(mt)) {
             Ok(Some(q + if len < 2 { 2 } else { len as usize }))
         } else {
             Err(Error::Invalid)
@@ -1312,36 +1493,123 @@ pub fn step_x(data: &[u8], st: &mut DecX, p: usize) -> (r: Result<Option<usize>,
     }
 }
 
+/// Scan costs grow with the frame's blocks.
+pub proof fn lemma_cost_mono(k: int, b1: int, b2: int)
+    requires
+        k >= 0,
+        0 <= b1 <= b2,
+    ensures
+        k * scan_cost(b1) <= k * scan_cost(b2),
+        k * scan_cost(b2) >= 0,
+        scan_cost(b1) >= 10,
+        scan_cost(b2) >= 10,
+{
+    let (c1, c2) = (scan_cost(b1), scan_cost(b2));
+    assert(k * c1 <= k * c2) by (nonlinear_arith)
+        requires
+            k >= 0,
+            c1 <= c2,
+    ;
+    assert(k * c2 >= 0) by (nonlinear_arith)
+        requires
+            k >= 0,
+            c2 >= 0,
+    ;
+}
+
+pub proof fn lemma_cost_dist(k: int, d: int, c: int)
+    ensures
+        (k + d) * c == k * c + d * c,
+{
+    assert((k + d) * c == k * c + d * c) by (nonlinear_arith);
+}
+
 /// All the marker segments from `p` to EOI.
-pub fn run_x(data: &[u8], st: &mut DecX, p: usize) -> (r: Result<(), Error>)
+#[verifier::spinoff_prover]
+#[verifier::rlimit(100)]
+pub fn run_x(data: &[u8], st: &mut DecX, p: usize, Tracked(mt): Tracked<&mut Meter>) -> (r: Result<(), Error>)
     requires
         len_ok(data@),
         p <= data@.len() + 0x1_0010,
         old(st).wf(),
     ensures
+        old(st).nscan@ <= final(st).nscan@,
+        final(st).nscan@ - old(st).nscan@ <= data@.len() + 0x1_0010 - p,
+        0 <= blk(*final(st)),
+        final(mt).n + 4 * p <= old(mt).n + 4 * (data@.len() + 0x1_0020) + (final(st).nscan@ - old(st).nscan@ + 1)
+            * scan_cost(blk(*final(st))) + 200,
         match r {
             Ok(()) => run(data@, old(st)@, p as int) == Some(final(st)@) && final(st).wf() && final(st).started,
             Err(Error::Invalid) => run(data@, old(st)@, p as int) is None,
             Err(Error::OutOfMemory) => true,
         },
 {
+    hide(scan_cost);
     let mut pp = p;
+    let ghost m0 = mt.n;
+    let ghost n0 = st.nscan@;
+    proof {
+        if st.has_f {
+            lemma_fblk(st.f@, st.g);
+        }
+    }
     loop
         invariant
             len_ok(data@),
             pp <= data@.len() + 0x1_0010,
             st.wf(),
             run(data@, st@, pp as int) == run(data@, old(st)@, p as int),
+            m0 == old(mt).n,
+            n0 == old(st).nscan@,
+            n0 <= st.nscan@,
+            0 <= blk(*old(st)) <= blk(*st),
+            p <= pp,
+            mt.n + 4 * p <= m0 + 4 * pp + (st.nscan@ - n0) * scan_cost(blk(*st)),
+            st.nscan@ - n0 <= pp - p,
         decreases left(data@, pp as int),
     {
-        match step_x(data, st, pp) {
+        let ghost s1 = *st;
+        let ghost k = (st.nscan@ - n0) as int;
+        let ghost mm = mt.n;
+        let r = step_x(data, st, pp, Tracked(mt));
+        let ghost b1 = blk(s1);
+        let ghost b2 = blk(*st);
+        let ghost d = st.nscan@ - s1.nscan@;
+        let ghost c1 = scan_cost(b1);
+        let ghost c2 = scan_cost(b2);
+        proof {
+            lemma_cost_mono(k, b1, b2);
+            lemma_cost_dist(k, d, c2);
+            lemma_cost_dist(k, 1, c2);
+            if d == 0 {
+                assert(d * c1 == 0);
+                assert(d * c2 == 0);
+            } else {
+                assert(d == 1 && b1 == b2);
+                assert(d * c1 == c1);
+            }
+            assert(d * c1 <= d * c2);
+            assert(mm + 4 * p <= m0 + 4 * pp + k * c1);
+        }
+        match r {
             Err(e) => {
+                proof {
+                    assert(d == 0 && c1 == c2);
+                    assert(mt.n + 4 * p <= m0 + 4 * (data@.len() + 0x1_0020) + (k + 1) * c2 + 200);
+                }
                 return Err(e);
             },
             Ok(None) => {
+                proof {
+                    assert(d == 0);
+                    assert(mt.n + 4 * p <= m0 + 4 * (data@.len() + 0x1_0020) + (k + 1) * c2 + 200);
+                }
                 return Ok(());
             },
             Ok(Some(p2)) => {
+                proof {
+                    assert(mt.n + 4 * p <= m0 + 4 * p2 + (k + d) * c2);
+                }
                 pp = p2;
             },
         }
