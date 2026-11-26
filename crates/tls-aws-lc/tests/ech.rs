@@ -181,3 +181,56 @@ fn malformed_ech_is_refused() {
     s.read_tls(&ch);
     assert!(s.process().is_err());
 }
+
+/// The server's CPU time for a full handshake, with and without ECH
+/// (`cargo test --release --test ech -- --ignored --nocapture`).
+#[test]
+#[ignore]
+fn ech_server_cost() {
+    use std::time::{Duration, Instant};
+    let ech = Arc::new(EchKeys::generate(1, PUBLIC).unwrap());
+    let tickets = Arc::new(TicketKeys::new(3600));
+    let sc = server_config(&ech);
+    let mut roots = RootCertStore::empty();
+    roots.add(CertificateDer::from(CA.to_vec())).unwrap();
+    let mut plain = ClientConfig::builder_with_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    plain.alpn_protocols = vec![b"h2".to_vec()];
+    plain.resumption = rustls::client::Resumption::disabled();
+    let plain = Arc::new(plain);
+    let mut with = (*client_config(enable(ech.config_list()))).clone();
+    with.resumption = rustls::client::Resumption::disabled();
+    let with = Arc::new(with);
+    let n = 2000;
+    for (name, cc) in [("plain", &plain), ("ech", &with), ("plain", &plain), ("ech", &with)] {
+        let mut t = Duration::ZERO;
+        for _ in 0..n {
+            let mut s = server(&sc, &ech, &tickets);
+            let mut c = ClientConnection::new(cc.clone(), ServerName::try_from("localhost").unwrap()).unwrap();
+            for _ in 0..20 {
+                let mut buf = Vec::new();
+                while c.wants_write() {
+                    c.write_tls(&mut buf).unwrap();
+                }
+                let t0 = Instant::now();
+                s.read_tls(&buf);
+                let _ = s.process();
+                let out = s.take_pending();
+                t += t0.elapsed();
+                if buf.is_empty() && out.is_empty() {
+                    break;
+                }
+                let mut rd = &out[..];
+                while !rd.is_empty() {
+                    c.read_tls(&mut rd).unwrap();
+                    c.process_new_packets().unwrap();
+                }
+            }
+            assert!(!s.is_handshaking());
+        }
+        println!("{name}: {:.1} us per handshake (server)", t.as_secs_f64() * 1e6 / n as f64);
+    }
+}

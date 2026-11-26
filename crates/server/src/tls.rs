@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use verilith_tls::stream::ServerStream;
 use verilith_tls_aws_lc::{AwsLc, SigningKey, TicketKeys, GROUPS, SUITES};
+pub use verilith_tls_aws_lc::hpke::EchKeys;
 
 use crate::h1::{Conn, Ctx, Limits, Next};
 use crate::h2::{Conn2, Limits2};
@@ -22,7 +23,8 @@ const ALPN: &[u8] = b"\x02h2\x08http/1.1";
 pub enum Config {
     /// `tickets`: the session-ticket keys every worker shares, so a
     /// ticket from one resumes on any.
-    Verilith { cfg: Arc<verilith_tls::server::Config>, key: Arc<SigningKey>, tickets: Arc<TicketKeys> },
+    /// `ech`: the Encrypted Client Hello keys, if the server takes ECH.
+    Verilith { cfg: Arc<verilith_tls::server::Config>, key: Arc<SigningKey>, tickets: Arc<TicketKeys>, ech: Option<Arc<EchKeys>> },
     #[cfg(feature = "tls-rustls")]
     Rustls(Arc<rustls::ServerConfig>),
 }
@@ -94,6 +96,25 @@ pub fn config_der(chain: Vec<Vec<u8>>, key_pkcs8: &[u8]) -> std::io::Result<Arc<
 /// by a single-use register in this process (verilith-tls-aws-lc):
 /// servers on several machines that share ticket keys must not enable it.
 pub fn config_der_early(chain: Vec<Vec<u8>>, key_pkcs8: &[u8], max_early: u32) -> std::io::Result<Arc<Config>> {
+    config_der_opts(chain, key_pkcs8, &TlsOptions { max_early, ..TlsOptions::default() })
+}
+
+/// What a TLS configuration takes beyond its certificate and key.
+#[derive(Clone, Default)]
+pub struct TlsOptions {
+    /// Bytes of 0-RTT data to take on a resumption ([`config_der_early`]).
+    pub max_early: u32,
+    /// Encrypted Client Hello (RFC 9849): the keys whose
+    /// [`EchKeys::config_list`] is published in the name's DNS HTTPS
+    /// record. Clients send their real ClientHello (server name, ALPN)
+    /// encrypted to it, under the outer name the keys were made for; a
+    /// client with stale keys gets the current ones (retry_configs) in a
+    /// handshake that must authenticate as that outer name.
+    pub ech: Option<Arc<EchKeys>>,
+}
+
+/// [`config_der`] with `opts`.
+pub fn config_der_opts(chain: Vec<Vec<u8>>, key_pkcs8: &[u8], opts: &TlsOptions) -> std::io::Result<Arc<Config>> {
     let key = SigningKey::from_pkcs8(key_pkcs8).ok_or_else(|| bad("the key is not PKCS#8 ECDSA, Ed25519 or RSA"))?;
     let mut cfg = verilith_tls::server::Config::new(SUITES.to_vec(), GROUPS.to_vec(), key.schemes().to_vec(), ALPN.to_vec(), &chain)
         .ok_or_else(|| bad("the certificate chain is empty or too long"))?;
@@ -101,9 +122,14 @@ pub fn config_der_early(chain: Vec<Vec<u8>>, key_pkcs8: &[u8], max_early: u32) -
     // (6 h).
     const TICKET_LIFETIME: u32 = 6 * 3600;
     cfg.set_tickets(2, TICKET_LIFETIME);
-    cfg.set_early_data(max_early);
+    cfg.set_early_data(opts.max_early);
+    if let Some(e) = &opts.ech {
+        if !cfg.set_ech(e.config_list().to_vec()) {
+            return Err(bad("the ECHConfigList is too long"));
+        }
+    }
     let tickets = Arc::new(TicketKeys::new(TICKET_LIFETIME as u64));
-    Ok(Arc::new(Config::Verilith { cfg: Arc::new(cfg), key: Arc::new(key), tickets }))
+    Ok(Arc::new(Config::Verilith { cfg: Arc::new(cfg), key: Arc::new(key), tickets, ech: opts.ech.clone() }))
 }
 
 /// A configuration for `cert`/`key` (PEM files; the key "PRIVATE KEY",
@@ -114,10 +140,32 @@ pub fn config(cert: &str, key: &str) -> std::io::Result<Arc<Config>> {
 
 /// [`config`], with 0-RTT data as [`config_der_early`] takes it.
 pub fn config_early(cert: &str, key: &str, max_early: u32) -> std::io::Result<Arc<Config>> {
+    config_opts(cert, key, &TlsOptions { max_early, ..TlsOptions::default() })
+}
+
+/// [`config`] with `opts`.
+pub fn config_opts(cert: &str, key: &str, opts: &TlsOptions) -> std::io::Result<Arc<Config>> {
     let chain = pem_blocks(&std::fs::read(cert)?, "CERTIFICATE");
     let keys = pem_blocks(&std::fs::read(key)?, "PRIVATE KEY");
     let key = keys.first().ok_or_else(|| bad("no PKCS#8 \"PRIVATE KEY\" block in the key file"))?;
-    config_der_early(chain, key, max_early)
+    config_der_opts(chain, key, opts)
+}
+
+/// Standard base64 with padding, as DNS tools take an ECHConfigList.
+pub fn base64_encode(b: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut s = String::with_capacity(b.len().div_ceil(3) * 4);
+    for c in b.chunks(3) {
+        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        for i in 0..4 {
+            if i <= c.len() {
+                s.push(A[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                s.push('=');
+            }
+        }
+    }
+    s
 }
 
 /// The same with rustls, with ALPN offering h2 and http/1.1.
@@ -330,8 +378,12 @@ pub struct TlsConn {
 impl TlsConn {
     pub fn new(cfg: Arc<Config>, limits: Limits, limits2: Limits2) -> Option<TlsConn> {
         let tls = match &*cfg {
-            Config::Verilith { cfg, key, tickets } => {
-                Session::V(Box::new(ServerStream::new(cfg.clone(), AwsLc::shared(key.clone()).with_tickets(tickets.clone()))))
+            Config::Verilith { cfg, key, tickets, ech } => {
+                let mut p = AwsLc::shared(key.clone()).with_tickets(tickets.clone());
+                if let Some(e) = ech {
+                    p = p.with_ech(e.clone());
+                }
+                Session::V(Box::new(ServerStream::new(cfg.clone(), p)))
             }
             #[cfg(feature = "tls-rustls")]
             Config::Rustls(c) => Session::R(Box::new(rustls::ServerConnection::new(c.clone()).ok()?)),
