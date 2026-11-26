@@ -772,6 +772,7 @@ impl Core {
             final(self).rbuf@.len() == old(self).rbuf@.len(),
             r == Ev::Ready <==> final(self).phase is Ready,
             r is Bad || r == Ev::Closed ==> final(self).phase is Closed,
+            r == Ev::Need ==> !(final(self).phase is Closed) && !(final(self).phase is Ready),
     {
         if matches!(self.phase, Phase::Head) {
             match self.step_head() {

@@ -504,7 +504,11 @@ in `bench/server/results`, and a merge.
    `crates/h2`, with the round trip and its benchmark against h2 and
    nghttp2 in its README)*
 6. **HTTP/2 connection**: streams, flow control, scheduling, the resource
-   bounds; h2c and h2 benchmarks against h2o.
+   bounds; h2c and h2 benchmarks against h2o. *(done: `h2core.rs`, every
+   frame decision verified, with the stream table, SETTINGS, GOAWAY and
+   the flood budget, at the old engine's speed; left: the work bound per
+   input byte as a theorem (the budget bounds frames, not cycles), RFC
+   9218 priorities)*
 7. **io_uring and kTLS** backends, if the benchmarks show they are needed
    for parity.
 8. **HTTP/3**: QPACK and HTTP/3 framing on quinn-proto, then verified

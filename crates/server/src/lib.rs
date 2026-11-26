@@ -15,6 +15,7 @@ pub mod range;
 pub mod persist;
 pub mod flow;
 pub mod streams;
+pub mod out;
 pub mod h2core;
 
 #[cfg(not(verus_keep_ghost))]
@@ -96,7 +97,7 @@ mod api {
 
     /// Where a handler writes its response. See [`Response::send`].
     pub struct Response<'a> {
-        pub(crate) out: &'a mut crate::h1::Out,
+        pub(crate) out: &'a mut crate::out::Wire,
         pub(crate) ctx: &'a crate::h1::Ctx,
         pub(crate) sent: bool,
         pub(crate) close: bool,

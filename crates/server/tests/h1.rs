@@ -261,3 +261,102 @@ fn alt_svc_on_every_response() {
     assert_eq!(out.matches("Alt-Svc: h3=\":443\"; ma=86400\r\n").count(), 2, "{out}");
     assert!(Ctx::with_alt_svc(b"t", b"d", Some(b"bad\r\nX: y")).is_none());
 }
+
+/// Feeds `input` in one read to a connection with handler `h`; returns
+/// what was written and whether the connection is closing.
+fn run_h<H: verilith_server::Handler>(h: &H, input: &[u8]) -> (Vec<u8>, bool) {
+    let mut c = Conn::new(Limits::default());
+    let ctx = Ctx::new(b"t", b"Thu, 01 Jan 1970 00:00:00 GMT").unwrap();
+    let b = c.read_buf();
+    b[..input.len()].copy_from_slice(input);
+    c.filled(input.len());
+    c.process(h, &ctx);
+    (drain(&mut c), c.closing())
+}
+
+const TWO: &[u8] = b"GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n";
+
+fn interim_as_final(_: &Request, res: &mut Response) {
+    assert!(res.send(100, &[], b"").is_err());
+    assert!(res.send(199, &[], b"").is_err());
+}
+
+fn says_close(_: &Request, res: &mut Response) {
+    let _ = res.send(200, &[Field { name: b"connection", value: b"keep-alive, Close" }], b"x");
+}
+
+fn close_before(_: &Request, res: &mut Response) {
+    res.close_after();
+    let _ = res.send(200, &[], b"x");
+}
+
+fn close_late(_: &Request, res: &mut Response) {
+    let _ = res.send(200, &[], b"x");
+    res.close_after();
+}
+
+fn twice(_: &Request, res: &mut Response) {
+    assert!(res.send(200, &[], b"one").is_ok());
+    assert_eq!(res.send(200, &[], b"two"), Err(verilith_server::SendError::AlreadySent));
+}
+
+fn silent(_: &Request, _: &mut Response) {}
+
+/// The rules the verified ledger (out.rs) enforces, seen from outside.
+#[test]
+fn response_ledger_rules() {
+    // A 1xx is not a final response (it would answer the wrong request
+    // after it): refused, and the request gets a 500.
+    let (out, _) = run_h(&interim_as_final, TWO);
+    assert_eq!(count(&out, b"HTTP/1.1 500 "), 2);
+    assert!(out.starts_with(b"HTTP/1.1 500 "));
+    // A handler's own `Connection: close` (any case, in a list) ends the
+    // connection after its response: the second request is not answered.
+    let (out, closing) = run_h(&says_close, TWO);
+    assert_eq!(count(&out, b"HTTP/1.1 200 OK"), 1);
+    assert!(closing);
+    // close_after before sending: the head says so.
+    let (out, closing) = run_h(&close_before, TWO);
+    assert_eq!(count(&out, b"HTTP/1.1 200 OK"), 1);
+    assert_eq!(count(&out, b"Connection: close\r\n"), 1);
+    assert!(closing);
+    // close_after after sending: the connection still ends there.
+    let (out, closing) = run_h(&close_late, TWO);
+    assert_eq!(count(&out, b"HTTP/1.1 200 OK"), 1);
+    assert!(closing);
+    // One response per request.
+    let (out, _) = run_h(&twice, TWO);
+    assert_eq!(count(&out, b"HTTP/1.1 200 OK"), 2);
+    assert_eq!(count(&out, b"two"), 0);
+    // A handler that sends nothing gets a 500, in its place.
+    let (out, closing) = run_h(&silent, TWO);
+    assert_eq!(count(&out, b"HTTP/1.1 500 "), 2);
+    assert!(!closing);
+}
+
+/// `100 Continue` comes before the final response of the request that
+/// asked for it, once, and the responses stay in request order.
+#[test]
+fn continue_then_in_order() {
+    let mut c = Conn::new(Limits::default());
+    let ctx = Ctx::new(b"t", b"Thu, 01 Jan 1970 00:00:00 GMT").unwrap();
+    let mut out = Vec::new();
+    for piece in [
+        &b"GET /a HTTP/1.1\r\nHost: x\r\n\r\nPOST /b HTTP/1.1\r\nHost: x\r\nExpect: 100-Continue\r\nContent-Length: 4\r\n\r\nab"[..],
+        b"c",
+        b"dGET /c HTTP/1.1\r\nHost: x\r\n\r\n",
+    ] {
+        let b = c.read_buf();
+        b[..piece.len()].copy_from_slice(piece);
+        c.filled(piece.len());
+        c.process(&handler, &ctx);
+        out.extend_from_slice(&drain(&mut c));
+    }
+    let s = String::from_utf8_lossy(&out);
+    let a = s.find("GET /a").unwrap();
+    let k = s.find("HTTP/1.1 100 Continue\r\n\r\n").unwrap();
+    let b = s.find("POST /b abcd").unwrap();
+    let cc = s.find("GET /c").unwrap();
+    assert!(a < k && k < b && b < cc, "{s}");
+    assert_eq!(count(&out, b"100 Continue"), 1);
+}

@@ -18,6 +18,7 @@
 //! encoded when its HEADERS frame is written (`schedule`), not when the
 //! handler answers: a stream reset in between never touches the table.
 use std::collections::VecDeque;
+use std::hash::Hasher;
 use std::sync::Arc;
 
 use verilith_h2::{Frame, Parsed};
@@ -349,7 +350,7 @@ impl Conn2 {
         let mut reply = s.reply.take().unwrap_or(Reply { status: 0, fields: HList::default(), body: ReplyBody::None, sent_headers: false, off: 0 });
         reply.sent_headers = false;
         reply.off = 0;
-        let mut scratch = Out::empty();
+        let mut scratch = crate::out::Wire::empty();
         let mut res = Response { out: &mut scratch, ctx, sent: false, close: false, head: method == b"HEAD", h2: Some(&mut reply) };
         if early && !crate::early_ok(method) {
             res.too_early();
@@ -619,6 +620,31 @@ impl HList {
             at = v as usize;
             r
         })
+    }
+}
+
+/// The hash of HTTP/3's stream maps (HTTP/2's streams are in the core's
+/// sorted table): stream IDs are small integers chosen by the peer, few of
+/// them live, so a multiply-and-fold suffices; SipHash cost 6% of the CPU
+/// in h2c-plaintext.
+#[derive(Default)]
+pub(crate) struct IdHash(u64);
+
+impl Hasher for IdHash {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, b: &[u8]) {
+        for &x in b {
+            self.write_u64(x as u64);
+        }
+    }
+    fn write_u32(&mut self, x: u32) {
+        self.write_u64(x as u64);
+    }
+    fn write_u64(&mut self, x: u64) {
+        let h = (self.0 ^ x).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        self.0 = h ^ (h >> 29);
     }
 }
 
