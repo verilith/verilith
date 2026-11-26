@@ -1,0 +1,1111 @@
+{
+ "meta": {
+  "date": "2026-11-26T19:37",
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+  "ncpu": 4,
+  "server_cpus": "0-1",
+  "client_cpus": "2-3",
+  "rounds": 3,
+  "duration": 5.0,
+  "versions": {
+   "verilith": "48d8257",
+   "hyper": "1.13.0",
+   "nginx": "1.24.0 (Ubuntu)",
+   "h2o": "2.2.5",
+   "h3-quinn": "h3 0.0.8 quinn 0.11.12",
+   "nginx-quic": "1.31.10",
+   "h2o-quic": "2.3.0-DEV@d3e43fc",
+   "h2load (h3)": "nghttp2/1.71.0"
+  }
+ },
+ "results": {
+  "h1-plaintext": {
+   "verilith": [
+    {
+     "rps": 284762.37,
+     "requests": 1436508,
+     "p50": 0.00042699999999999997,
+     "p90": 0.0008179999999999999,
+     "p99": 0.00451,
+     "errors": 0,
+     "raw": "Running 5s test @ http://127.0.0.1:18080/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency   634.59us    1.23ms  32.92ms   97.38%\n    Req/Sec   144.40k    20.95k  188.08k    61.00%\n  Latency Distribution\n     50%  427.00us\n     75%  608.00us\n     90%  818.00us\n     99%    4.51ms\n  1436508 requests in 5.04s, 182.20MB read\nRequests/sec: 284762.37\nTransfer/sec:     36.12MB\n",
+     "server_cpu_s": 7.8100000000000005,
+     "wall_s": 5.05407452583313,
+     "req_per_cpu_s": 183931.88220230473
+    },
+    {
+     "rps": 321668.92,
+     "requests": 1623795,
+     "p50": 0.000379,
+     "p90": 0.000712,
+     "p99": 0.00109,
+     "errors": 0,
+     "raw": "Running 5s test @ http://127.0.0.1:18080/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency   455.91us  201.15us   3.98ms   82.45%\n    Req/Sec   163.15k    18.57k  191.37k    83.00%\n  Latency Distribution\n     50%  379.00us\n     75%  549.00us\n     90%  712.00us\n     99%    1.09ms\n  1623795 requests in 5.05s, 205.96MB read\nRequests/sec: 321668.92\nTransfer/sec:     40.80MB\n",
+     "server_cpu_s": 8.36,
+     "wall_s": 5.056199073791504,
+     "req_per_cpu_s": 194233.85167464116
+    },
+    {
+     "rps": 272430.78,
+     "requests": 1374862,
+     "p50": 0.0005059999999999999,
+     "p90": 0.000801,
+     "p99": 0.00122,
+     "errors": 0,
+     "raw": "Running 5s test @ http://127.0.0.1:18080/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency   545.52us  236.84us   5.55ms   81.64%\n    Req/Sec   138.20k    18.86k  189.01k    62.00%\n  Latency Distribution\n     50%  506.00us\n     75%  636.00us\n     90%  801.00us\n     99%    1.22ms\n  1374862 requests in 5.05s, 174.39MB read\nRequests/sec: 272430.78\nTransfer/sec:     34.55MB\n",
+     "server_cpu_s": 8.17,
+     "wall_s": 5.057457685470581,
+     "req_per_cpu_s": 168281.76254589963
+    }
+   ],
+   "hyper": [
+    {
+     "rps": 227370.31,
+     "requests": 1148914,
+     "p50": 0.00103,
+     "p90": 0.00161,
+     "p99": 0.0027300000000000002,
+     "errors": 0,
+     "raw": "Running 5s test @ http://127.0.0.1:18080/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     1.10ms  640.30us  17.70ms   87.97%\n    Req/Sec   115.57k    13.41k  145.61k    69.00%\n  Latency Distribution\n     50%    1.03ms\n     75%    1.32ms\n     90%    1.61ms\n     99%    2.73ms\n  1148914 requests in 5.05s, 142.44MB read\nRequests/sec: 227370.31\nTransfer/sec:     28.19MB\n",
+     "server_cpu_s": 9.6,
+     "wall_s": 5.062886953353882,
+     "req_per_cpu_s": 119678.54166666667
+    },
+    {
+     "rps": 213878.99,
+     "requests": 1077403,
+     "p50": 0.0011200000000000001,
+     "p90": 0.00175,
+     "p99": 0.0029900000000000005,
+     "errors": 0,
+     "raw": "Running 5s test @ http://127.0.0.1:18080/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     1.18ms  530.30us   8.21ms   78.92%\n    Req/Sec   108.52k    18.30k  162.61k    76.00%\n  Latency Distribution\n     50%    1.12ms\n     75%    1.42ms\n     90%    1.75ms\n     99%    2.99ms\n  1077403 requests in 5.04s, 133.57MB read\nRequests/sec: 213878.99\nTransfer/sec:     26.52MB\n",
+     "server_cpu_s": 9.66,
+     "wall_s": 5.044912099838257,
+     "req_per_cpu_s": 111532.4016563147
+    },
+    {
+     "rps": 199827.21,
+     "requests": 1007273,
+     "p50": 0.00121,
+     "p90": 0.0018700000000000001,
+     "p99": 0.0024,
+     "errors": 0,
+     "raw": "Running 5s test @ http://127.0.0.1:18080/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     1.25ms  496.25us   7.72ms   72.08%\n    Req/Sec   101.41k    13.17k  137.55k    73.00%\n  Latency Distribution\n     50%    1.21ms\n     75%    1.56ms\n     90%    1.87ms\n     99%    2.40ms\n  1007273 requests in 5.04s, 124.88MB read\nRequests/sec: 199827.21\nTransfer/sec:     24.77MB\n",
+     "server_cpu_s": 9.7,
+     "wall_s": 5.0486907958984375,
+     "req_per_cpu_s": 103842.57731958764
+    }
+   ],
+   "nginx": [
+    {
+     "rps": 270185.59,
+     "requests": 1371799,
+     "p50": 0.000731,
+     "p90": 0.00114,
+     "p99": 0.00398,
+     "errors": 0,
+     "raw": "Running 5s test @ http://127.0.0.1:18080/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency   823.78us  764.83us  19.77ms   97.02%\n    Req/Sec   137.87k    18.24k  189.21k    73.00%\n  Latency Distribution\n     50%  731.00us\n     75%    0.95ms\n     90%    1.14ms\n     99%    3.98ms\n  1371799 requests in 5.08s, 201.47MB read\nRequests/sec: 270185.59\nTransfer/sec:     39.68MB\n",
+     "server_cpu_s": 9.27,
+     "wall_s": 5.087787389755249,
+     "req_per_cpu_s": 147982.63214670983
+    },
+    {
+     "rps": 301712.92,
+     "requests": 1527479,
+     "p50": 0.0006309999999999999,
+     "p90": 0.00108,
+     "p99": 0.0018700000000000001,
+     "errors": 0,
+     "raw": "Running 5s test @ http://127.0.0.1:18080/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency   672.87us  393.96us   9.09ms   86.75%\n    Req/Sec   153.70k    21.60k  190.69k    69.00%\n  Latency Distribution\n     50%  631.00us\n     75%  798.00us\n     90%    1.08ms\n     99%    1.87ms\n  1527479 requests in 5.06s, 224.33MB read\nRequests/sec: 301712.92\nTransfer/sec:     44.31MB\n",
+     "server_cpu_s": 9.55,
+     "wall_s": 5.071494102478027,
+     "req_per_cpu_s": 159945.445026178
+    },
+    {
+     "rps": 275329.21,
+     "requests": 1389138,
+     "p50": 0.0007689999999999999,
+     "p90": 0.0011899999999999999,
+     "p99": 0.0015,
+     "errors": 0,
+     "raw": "Running 5s test @ http://127.0.0.1:18080/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency   789.75us  304.38us   4.20ms   66.02%\n    Req/Sec   139.81k    17.78k  179.37k    64.00%\n  Latency Distribution\n     50%  769.00us\n     75%    0.99ms\n     90%    1.19ms\n     99%    1.50ms\n  1389138 requests in 5.05s, 204.02MB read\nRequests/sec: 275329.21\nTransfer/sec:     40.44MB\n",
+     "server_cpu_s": 9.79,
+     "wall_s": 5.053786754608154,
+     "req_per_cpu_s": 141893.5648621042
+    }
+   ],
+   "h2o": [
+    {
+     "rps": 154382.04,
+     "requests": 785466,
+     "p50": 0.00096,
+     "p90": 0.00357,
+     "p99": 0.00583,
+     "errors": 0,
+     "raw": "Running 5s test @ http://127.0.0.1:18080/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     1.43ms    1.40ms  14.46ms   85.24%\n    Req/Sec    79.14k    20.36k  140.61k    66.67%\n  Latency Distribution\n     50%    0.96ms\n     75%    1.62ms\n     90%    3.57ms\n     99%    5.83ms\n  785466 requests in 5.09s, 118.35MB read\nRequests/sec: 154382.04\nTransfer/sec:     23.26MB\n",
+     "server_cpu_s": 7.7,
+     "wall_s": 5.0958781242370605,
+     "req_per_cpu_s": 102008.57142857142
+    },
+    {
+     "rps": 193963.57,
+     "requests": 980738,
+     "p50": 0.00123,
+     "p90": 0.0017,
+     "p99": 0.00279,
+     "errors": 0,
+     "raw": "Running 5s test @ http://127.0.0.1:18080/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     1.30ms  447.28us  17.98ms   87.21%\n    Req/Sec    98.66k     9.17k  113.72k    69.00%\n  Latency Distribution\n     50%    1.23ms\n     75%    1.40ms\n     90%    1.70ms\n     99%    2.79ms\n  980738 requests in 5.06s, 147.78MB read\nRequests/sec: 193963.57\nTransfer/sec:     29.23MB\n",
+     "server_cpu_s": 9.9,
+     "wall_s": 5.064488172531128,
+     "req_per_cpu_s": 99064.44444444444
+    },
+    {
+     "rps": 188418.02,
+     "requests": 949962,
+     "p50": 0.0012,
+     "p90": 0.00196,
+     "p99": 0.0030299999999999997,
+     "errors": 0,
+     "raw": "Running 5s test @ http://127.0.0.1:18080/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     1.33ms  538.78us  10.11ms   82.10%\n    Req/Sec    95.62k    15.48k  124.87k    63.00%\n  Latency Distribution\n     50%    1.20ms\n     75%    1.58ms\n     90%    1.96ms\n     99%    3.03ms\n  949962 requests in 5.04s, 143.14MB read\nRequests/sec: 188418.02\nTransfer/sec:     28.39MB\n",
+     "server_cpu_s": 9.9,
+     "wall_s": 5.0520570278167725,
+     "req_per_cpu_s": 95955.75757575757
+    }
+   ]
+  },
+  "h1-tls-plaintext": {
+   "verilith": [
+    {
+     "rps": 198439.45,
+     "requests": 1000568,
+     "p50": 0.000593,
+     "p90": 0.0010400000000000001,
+     "p99": 0.01208,
+     "errors": 0,
+     "raw": "Running 5s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     0.99ms    2.92ms  80.66ms   98.17%\n    Req/Sec   100.56k    22.28k  133.54k    78.00%\n  Latency Distribution\n     50%  593.00us\n     75%  786.00us\n     90%    1.04ms\n     99%   12.08ms\n  1000568 requests in 5.04s, 157.45MB read\nRequests/sec: 198439.45\nTransfer/sec:     31.23MB\n",
+     "server_cpu_s": 6.880000000000001,
+     "wall_s": 5.054107427597046,
+     "req_per_cpu_s": 145431.3953488372
+    },
+    {
+     "rps": 183988.72,
+     "requests": 929403,
+     "p50": 0.000655,
+     "p90": 0.001,
+     "p99": 0.00304,
+     "errors": 0,
+     "raw": "Running 5s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency   848.37us    2.02ms  63.18ms   98.94%\n    Req/Sec    93.43k    19.69k  130.09k    66.00%\n  Latency Distribution\n     50%  655.00us\n     75%  820.00us\n     90%    1.00ms\n     99%    3.04ms\n  929403 requests in 5.05s, 146.25MB read\nRequests/sec: 183988.72\nTransfer/sec:     28.95MB\n",
+     "server_cpu_s": 6.78,
+     "wall_s": 5.064065933227539,
+     "req_per_cpu_s": 137080.0884955752
+    },
+    {
+     "rps": 196855.1,
+     "requests": 992244,
+     "p50": 0.0005909999999999999,
+     "p90": 0.00099,
+     "p99": 0.0022,
+     "errors": 0,
+     "raw": "Running 5s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency   846.65us    2.57ms  77.51ms   99.26%\n    Req/Sec    99.72k    22.09k  146.38k    77.00%\n  Latency Distribution\n     50%  591.00us\n     75%  783.00us\n     90%    0.99ms\n     99%    2.20ms\n  992244 requests in 5.04s, 156.14MB read\nRequests/sec: 196855.10\nTransfer/sec:     30.98MB\n",
+     "server_cpu_s": 6.870000000000001,
+     "wall_s": 5.05401611328125,
+     "req_per_cpu_s": 144431.4410480349
+    }
+   ],
+   "hyper": [
+    {
+     "rps": 196281.52,
+     "requests": 994088,
+     "p50": 0.00108,
+     "p90": 0.00166,
+     "p99": 0.00408,
+     "errors": 0,
+     "raw": "Running 5s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     1.28ms    2.29ms  81.07ms   98.86%\n    Req/Sec    99.95k    18.38k  128.37k    75.00%\n  Latency Distribution\n     50%    1.08ms\n     75%    1.37ms\n     90%    1.66ms\n     99%    4.08ms\n  994088 requests in 5.06s, 123.24MB read\nRequests/sec: 196281.52\nTransfer/sec:     24.33MB\n",
+     "server_cpu_s": 9.440000000000001,
+     "wall_s": 5.0775275230407715,
+     "req_per_cpu_s": 105305.93220338982
+    },
+    {
+     "rps": 189834.33,
+     "requests": 959163,
+     "p50": 0.0011200000000000001,
+     "p90": 0.00172,
+     "p99": 0.004370000000000001,
+     "errors": 0,
+     "raw": "Running 5s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     1.32ms    2.38ms  79.46ms   98.77%\n    Req/Sec    96.41k    16.31k  124.81k    80.00%\n  Latency Distribution\n     50%    1.12ms\n     75%    1.41ms\n     90%    1.72ms\n     99%    4.37ms\n  959163 requests in 5.05s, 118.91MB read\nRequests/sec: 189834.33\nTransfer/sec:     23.54MB\n",
+     "server_cpu_s": 9.34,
+     "wall_s": 5.063544273376465,
+     "req_per_cpu_s": 102694.11134903641
+    },
+    {
+     "rps": 183034.58,
+     "requests": 925287,
+     "p50": 0.0010500000000000002,
+     "p90": 0.0017900000000000001,
+     "p99": 0.00545,
+     "errors": 0,
+     "raw": "Running 5s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     1.38ms    3.16ms  87.84ms   98.46%\n    Req/Sec    93.58k    17.91k  127.66k    73.74%\n  Latency Distribution\n     50%    1.05ms\n     75%    1.39ms\n     90%    1.79ms\n     99%    5.45ms\n  925287 requests in 5.06s, 114.71MB read\nRequests/sec: 183034.58\nTransfer/sec:     22.69MB\n",
+     "server_cpu_s": 9.17,
+     "wall_s": 5.066972732543945,
+     "req_per_cpu_s": 100903.70774263905
+    }
+   ],
+   "nginx": [
+    {
+     "rps": 186819.89,
+     "requests": 948510,
+     "p50": 0.00091,
+     "p90": 0.00168,
+     "p99": 0.00545,
+     "errors": 0,
+     "raw": "Running 5s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     1.22ms    2.82ms  81.02ms   98.41%\n    Req/Sec    95.21k    22.72k  137.23k    71.00%\n  Latency Distribution\n     50%    0.91ms\n     75%    1.20ms\n     90%    1.68ms\n     99%    5.45ms\n  948510 requests in 5.08s, 139.30MB read\nRequests/sec: 186819.89\nTransfer/sec:     27.44MB\n",
+     "server_cpu_s": 9.14,
+     "wall_s": 5.090252637863159,
+     "req_per_cpu_s": 103775.71115973742
+    },
+    {
+     "rps": 195311.9,
+     "requests": 987653,
+     "p50": 0.00102,
+     "p90": 0.00175,
+     "p99": 0.00321,
+     "errors": 0,
+     "raw": "Running 5s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     1.23ms    2.09ms  69.97ms   99.05%\n    Req/Sec    99.28k    20.86k  131.24k    75.00%\n  Latency Distribution\n     50%    1.02ms\n     75%    1.30ms\n     90%    1.75ms\n     99%    3.21ms\n  987653 requests in 5.06s, 145.05MB read\nRequests/sec: 195311.90\nTransfer/sec:     28.68MB\n",
+     "server_cpu_s": 9.69,
+     "wall_s": 5.070509672164917,
+     "req_per_cpu_s": 101924.9742002064
+    },
+    {
+     "rps": 179225.77,
+     "requests": 910996,
+     "p50": 0.00111,
+     "p90": 0.00182,
+     "p99": 0.00337,
+     "errors": 0,
+     "raw": "Running 5s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     1.38ms    3.20ms  86.65ms   99.13%\n    Req/Sec    92.11k    17.68k  129.39k    76.77%\n  Latency Distribution\n     50%    1.11ms\n     75%    1.43ms\n     90%    1.82ms\n     99%    3.37ms\n  910996 requests in 5.08s, 133.79MB read\nRequests/sec: 179225.77\nTransfer/sec:     26.32MB\n",
+     "server_cpu_s": 9.51,
+     "wall_s": 5.095828533172607,
+     "req_per_cpu_s": 95793.48054679285
+    }
+   ],
+   "h2o": [
+    {
+     "rps": 128249.4,
+     "requests": 651697,
+     "p50": 0.00168,
+     "p90": 0.00272,
+     "p99": 0.00775,
+     "errors": 0,
+     "raw": "Running 5s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     2.20ms    4.64ms 114.14ms   98.89%\n    Req/Sec    66.18k    11.99k   95.95k    70.41%\n  Latency Distribution\n     50%    1.68ms\n     75%    2.19ms\n     90%    2.72ms\n     99%    7.75ms\n  651697 requests in 5.08s, 98.21MB read\nRequests/sec: 128249.40\nTransfer/sec:     19.33MB\n",
+     "server_cpu_s": 9.5,
+     "wall_s": 5.097086668014526,
+     "req_per_cpu_s": 68599.68421052632
+    },
+    {
+     "rps": 146153.9,
+     "requests": 738854,
+     "p50": 0.0015600000000000002,
+     "p90": 0.0023,
+     "p99": 0.00423,
+     "errors": 0,
+     "raw": "Running 5s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     1.73ms    1.87ms  60.61ms   98.56%\n    Req/Sec    74.29k    12.69k  106.66k    78.00%\n  Latency Distribution\n     50%    1.56ms\n     75%    1.84ms\n     90%    2.30ms\n     99%    4.23ms\n  738854 requests in 5.06s, 111.34MB read\nRequests/sec: 146153.90\nTransfer/sec:     22.02MB\n",
+     "server_cpu_s": 9.81,
+     "wall_s": 5.068238019943237,
+     "req_per_cpu_s": 75316.4118246687
+    },
+    {
+     "rps": 140044.89,
+     "requests": 708748,
+     "p50": 0.00161,
+     "p90": 0.00242,
+     "p99": 0.004690000000000001,
+     "errors": 0,
+     "raw": "Running 5s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     1.93ms    3.71ms  99.51ms   99.32%\n    Req/Sec    72.16k    15.36k  109.10k    75.51%\n  Latency Distribution\n     50%    1.61ms\n     75%    2.02ms\n     90%    2.42ms\n     99%    4.69ms\n  708748 requests in 5.06s, 106.81MB read\nRequests/sec: 140044.89\nTransfer/sec:     21.10MB\n",
+     "server_cpu_s": 9.83,
+     "wall_s": 5.074115753173828,
+     "req_per_cpu_s": 72100.50864699898
+    }
+   ]
+  },
+  "h2c-plaintext": {
+   "verilith": [
+    {
+     "rps": 1362336.0,
+     "requests": 6811680,
+     "errors": 0,
+     "mean": 0.000803,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #0.\nWarm-up started for thread #1.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nApplication protocol: h2c\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.02s, 1362336.00 req/s, 51.97MB/s\nrequests: 6811680 total, 6813728 started, 6811680 done, 6811680 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 6811680 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 259.86MB (272480512) total, 58.47MB (61315296) headers (space savings 90.52%), 84.45MB (88551840) data\n                     min         max         mean         sd        +/- sd\ntime for request:      126us     64.67ms       803us       523us    98.22%\ntime for connect:       44us       751us       394us       202us    60.94%\ntime to 1st byte:     1.68ms      3.18ms      2.30ms       417us    62.50%\nreq/s           :   20182.21    22377.83    21283.53      689.39    59.38%\n",
+     "server_cpu_s": 5.0,
+     "wall_s": 5.062307119369507,
+     "req_per_cpu_s": 1362336.0
+    },
+    {
+     "rps": 1331545.6,
+     "requests": 6657728,
+     "errors": 0,
+     "mean": 0.000774,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #0.\nWarm-up started for thread #1.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nWarm-up phase is over for thread #1.\nprogress: Main benchmark duration is started for thread #84% of clients started1\n.\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nApplication protocol: h2c\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.02s, 1331545.60 req/s, 50.80MB/s\nrequests: 6657728 total, 6659776 started, 6657728 done, 6657728 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 6657728 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 253.98MB (266322304) total, 57.15MB (59929600) headers (space savings 90.52%), 82.54MB (86550464) data\n                     min         max         mean         sd        +/- sd\ntime for request:      171us     14.94ms       774us       249us    87.83%\ntime for connect:       35us       742us       334us       184us    57.81%\ntime to 1st byte:     1.33ms      3.10ms      2.18ms       537us    57.81%\nreq/s           :   20030.31    21629.30    20802.14      721.16    56.25%\n",
+     "server_cpu_s": 5.42,
+     "wall_s": 5.052274465560913,
+     "req_per_cpu_s": 1228363.0996309964
+    },
+    {
+     "rps": 1445267.2,
+     "requests": 7226336,
+     "errors": 0,
+     "mean": 0.0007369999999999999,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nApplication protocol: h2c\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.02s, 1445267.20 req/s, 55.14MB/s\nrequests: 7226336 total, 7228384 started, 7226336 done, 7226336 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 7226336 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 275.68MB (289066560) total, 62.03MB (65047008) headers (space savings 90.52%), 89.59MB (93942368) data\n                     min         max         mean         sd        +/- sd\ntime for request:      147us      7.95ms       737us       221us    84.13%\ntime for connect:       42us       810us       376us       205us    56.25%\ntime to 1st byte:     1.89ms      4.60ms      2.70ms       553us    70.31%\nreq/s           :   21116.52    24041.91    22579.66     1423.71    56.25%\n",
+     "server_cpu_s": 5.4,
+     "wall_s": 5.055557012557983,
+     "req_per_cpu_s": 1338210.3703703703
+    }
+   ],
+   "hyper": [
+    {
+     "rps": 241261.2,
+     "requests": 1206306,
+     "errors": 0,
+     "mean": 0.00847,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #0.\nWarm-up started for thread #1.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nApplication protocol: h2c\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\n\nfinished in 5.02s, 241261.20 req/s, 9.21MB/s\nrequests: 1206306 total, 1208354 started, 1206306 done, 1206306 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 1206306 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 46.03MB (48265808) total, 10.36MB (10866802) headers (space savings 90.21%), 14.96MB (15681978) data\n                     min         max         mean         sd        +/- sd\ntime for request:       17us    102.80ms      8.47ms     13.18ms    84.96%\ntime for connect:       35us       642us       347us       163us    60.94%\ntime to 1st byte:     1.38ms      4.99ms      2.73ms       993us    62.50%\nreq/s           :    3125.23     4295.20     3769.45      256.23    65.63%\n",
+     "server_cpu_s": 9.270000000000001,
+     "wall_s": 5.047379970550537,
+     "req_per_cpu_s": 130130.09708737863
+    },
+    {
+     "rps": 236952.8,
+     "requests": 1184764,
+     "errors": 0,
+     "mean": 0.00864,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nApplication protocol: h2c\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.02s, 236952.80 req/s, 9.04MB/s\nrequests: 1184764 total, 1186812 started, 1184764 done, 1184764 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 1184765 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 45.21MB (47404146) total, 10.18MB (10672933) headers (space savings 90.21%), 14.69MB (15401932) data\n                     min         max         mean         sd        +/- sd\ntime for request:       16us    118.84ms      8.64ms     13.32ms    84.10%\ntime for connect:       33us       587us       304us       160us    54.69%\ntime to 1st byte:     1.23ms      6.09ms      3.33ms      1.50ms    65.63%\nreq/s           :    3218.98     4231.65     3702.14      235.60    65.63%\n",
+     "server_cpu_s": 9.280000000000001,
+     "wall_s": 5.051363945007324,
+     "req_per_cpu_s": 127668.53448275861
+    },
+    {
+     "rps": 236405.8,
+     "requests": 1182029,
+     "errors": 0,
+     "mean": 0.00867,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #0.\nWarm-up started for thread #1.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nApplication protocol: h2c\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\n\nfinished in 5.01s, 236405.80 req/s, 9.02MB/s\nrequests: 1182029 total, 1184077 started, 1182029 done, 1182029 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 1182029 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 45.10MB (47294536) total, 10.15MB (10648117) headers (space savings 90.21%), 14.65MB (15366377) data\n                     min         max         mean         sd        +/- sd\ntime for request:       14us     94.31ms      8.67ms     13.35ms    84.26%\ntime for connect:       54us       826us       415us       214us    59.38%\ntime to 1st byte:     1.48ms      4.94ms      2.91ms       867us    68.75%\nreq/s           :    3179.91     4370.06     3693.54      231.73    76.56%\n",
+     "server_cpu_s": 9.260000000000002,
+     "wall_s": 5.0504469871521,
+     "req_per_cpu_s": 127648.92008639306
+    }
+   ],
+   "nginx": [
+    {
+     "rps": 316397.6,
+     "requests": 1581988,
+     "errors": 0,
+     "mean": 0.00625,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nApplication protocol: h2c\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.02s, 316397.60 req/s, 22.93MB/s\nrequests: 1581988 total, 1584036 started, 1581988 done, 1581988 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 1581988 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 114.66MB (120234224) total, 67.89MB (71189460) headers (space savings 51.09%), 19.61MB (20565844) data\n                     min         max         mean         sd        +/- sd\ntime for request:       35us     30.99ms      6.25ms      2.59ms    76.52%\ntime for connect:       22us       464us       231us       125us    57.81%\ntime to 1st byte:      974us      8.54ms      3.27ms      2.33ms    71.88%\nreq/s           :    4364.46     5676.16     4942.74      623.87    56.25%\n",
+     "server_cpu_s": 9.82,
+     "wall_s": 5.056173801422119,
+     "req_per_cpu_s": 161098.57433808554
+    },
+    {
+     "rps": 316300.6,
+     "requests": 1581503,
+     "errors": 0,
+     "mean": 0.006240000000000001,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nApplication protocol: h2c\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.02s, 316300.60 req/s, 22.62MB/s\nrequests: 1581503 total, 1583551 started, 1581503 done, 1581503 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 1581505 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 113.12MB (118615967) total, 66.36MB (69586220) headers (space savings 52.17%), 19.61MB (20559539) data\n                     min         max         mean         sd        +/- sd\ntime for request:       38us     22.72ms      6.24ms      1.84ms    78.96%\ntime for connect:       38us       771us       380us       192us    65.63%\ntime to 1st byte:     1.40ms      6.81ms      3.07ms      1.30ms    75.00%\nreq/s           :    4505.89     5544.07     4940.75      465.76    56.25%\n",
+     "server_cpu_s": 9.86,
+     "wall_s": 5.056662321090698,
+     "req_per_cpu_s": 160395.84178498987
+    },
+    {
+     "rps": 283842.8,
+     "requests": 1419214,
+     "errors": 0,
+     "mean": 0.0073,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nApplication protocol: h2c\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.02s, 283842.80 req/s, 20.57MB/s\nrequests: 1419214 total, 1421262 started, 1419214 done, 1419214 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 1419215 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 102.87MB (107863454) total, 60.91MB (63864675) headers (space savings 51.09%), 17.60MB (18449782) data\n                     min         max         mean         sd        +/- sd\ntime for request:       50us     22.56ms      7.30ms      2.32ms    71.09%\ntime for connect:       29us       739us       395us       205us    59.38%\ntime to 1st byte:     1.74ms      9.85ms      4.02ms      2.29ms    84.38%\nreq/s           :    4336.09     4521.38     4433.39       69.24    54.69%\n",
+     "server_cpu_s": 9.87,
+     "wall_s": 5.06413459777832,
+     "req_per_cpu_s": 143790.6788247214
+    }
+   ],
+   "h2o": [
+    {
+     "rps": 476902.4,
+     "requests": 2384512,
+     "errors": 0,
+     "mean": 0.00435,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nWarm-up phase is over for thread #1.\nprogress: Main benchmark duration is started for thread #84% of clients started\n1.\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nApplication protocol: h2c\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.01s, 476902.40 req/s, 18.19MB/s\nrequests: 2384512 total, 2386560 started, 2384512 done, 2384512 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 2384512 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 90.97MB (95392640) total, 20.48MB (21470848) headers (space savings 90.62%), 29.56MB (30998656) data\n                     min         max         mean         sd        +/- sd\ntime for request:      174us     16.80ms      4.35ms      1.89ms    65.02%\ntime for connect:       44us       738us       390us       201us    56.25%\ntime to 1st byte:     1.83ms      6.95ms      3.84ms      1.54ms    56.25%\nreq/s           :    5516.07    11794.36     7450.91     2847.30    68.75%\n",
+     "server_cpu_s": 9.9,
+     "wall_s": 5.05258846282959,
+     "req_per_cpu_s": 240859.79797979796
+    },
+    {
+     "rps": 465708.8,
+     "requests": 2328544,
+     "errors": 0,
+     "mean": 0.00432,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nApplication protocol: h2c\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.02s, 465708.80 req/s, 17.77MB/s\nrequests: 2328544 total, 2330592 started, 2328544 done, 2328544 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 2328544 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 88.84MB (93153536) total, 20.00MB (20966752) headers (space savings 90.62%), 28.87MB (30271072) data\n                     min         max         mean         sd        +/- sd\ntime for request:      169us     32.28ms      4.32ms      1.17ms    83.75%\ntime for connect:       21us       529us       276us       148us    57.81%\ntime to 1st byte:     1.62ms      6.30ms      3.25ms      1.25ms    65.63%\nreq/s           :    7193.10     7519.32     7276.25       84.77    92.19%\n",
+     "server_cpu_s": 9.950000000000001,
+     "wall_s": 5.05226469039917,
+     "req_per_cpu_s": 234024.5226130653
+    },
+    {
+     "rps": 442316.8,
+     "requests": 2211584,
+     "errors": 0,
+     "mean": 0.00488,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nApplication protocol: h2c\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.02s, 442316.80 req/s, 16.88MB/s\nrequests: 2211584 total, 2213632 started, 2211584 done, 2211584 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 2211584 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 84.38MB (88475520) total, 18.99MB (19914496) headers (space savings 90.62%), 27.42MB (28750592) data\n                     min         max         mean         sd        +/- sd\ntime for request:      193us     16.44ms      4.88ms      2.13ms    56.15%\ntime for connect:       33us       731us       369us       197us    59.38%\ntime to 1st byte:     1.70ms      8.24ms      4.53ms      2.06ms    56.25%\nreq/s           :    4934.06    11225.06     6910.70     2918.97    68.75%\n",
+     "server_cpu_s": 9.93,
+     "wall_s": 5.061371803283691,
+     "req_per_cpu_s": 222717.42195367574
+    }
+   ]
+  },
+  "h2-tls-plaintext": {
+   "verilith": [
+    {
+     "rps": 1212390.4,
+     "requests": 6061952,
+     "errors": 0,
+     "mean": 0.00086,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #0.\nWarm-up started for thread #1.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.02s, 1212390.40 req/s, 47.41MB/s\nrequests: 6061952 total, 6064000 started, 6061952 done, 6061952 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 6061952 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 237.04MB (248554688) total, 57.82MB (60631040) headers (space savings 91.87%), 75.15MB (78805376) data\n                     min         max         mean         sd        +/- sd\ntime for request:      168us      7.13ms       860us       229us    78.80%\ntime for connect:     5.25ms     28.64ms     16.47ms      6.71ms    59.38%\ntime to 1st byte:    28.62ms     32.53ms     30.56ms      1.28ms    56.25%\nreq/s           :   18627.64    19252.83    18938.18      273.68    54.69%\n",
+     "server_cpu_s": 5.0200000000000005,
+     "wall_s": 5.052309513092041,
+     "req_per_cpu_s": 1207560.1593625497
+    },
+    {
+     "rps": 1173011.2,
+     "requests": 5865056,
+     "errors": 0,
+     "mean": 0.000868,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.03s, 1173011.20 req/s, 45.87MB/s\nrequests: 5865056 total, 5867104 started, 5865056 done, 5865056 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 5865056 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 229.34MB (240481952) total, 55.94MB (58662080) headers (space savings 91.87%), 72.71MB (76245728) data\n                     min         max         mean         sd        +/- sd\ntime for request:      190us      5.82ms       868us       261us    83.08%\ntime for connect:     2.86ms     26.25ms     12.64ms      6.29ms    70.31%\ntime to 1st byte:    16.39ms     28.73ms     22.48ms      5.74ms    53.13%\nreq/s           :   17255.61    19438.79    18322.59      987.89    54.69%\n",
+     "server_cpu_s": 5.16,
+     "wall_s": 5.059594631195068,
+     "req_per_cpu_s": 1136638.7596899224
+    },
+    {
+     "rps": 957452.8,
+     "requests": 4787264,
+     "errors": 0,
+     "mean": 0.0010600000000000002,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.03s, 957452.80 req/s, 37.44MB/s\nrequests: 4787264 total, 4789312 started, 4787264 done, 4787264 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 4787264 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 187.20MB (196292672) total, 45.67MB (47884352) headers (space savings 91.87%), 59.35MB (62234432) data\n                     min         max         mean         sd        +/- sd\ntime for request:      217us     10.01ms      1.06ms       242us    84.01%\ntime for connect:     5.11ms     27.22ms     15.76ms      5.96ms    59.38%\ntime to 1st byte:    25.76ms     30.86ms     28.23ms      1.92ms    56.25%\nreq/s           :   14363.20    15522.79    14956.08      540.33    48.44%\n",
+     "server_cpu_s": 4.7,
+     "wall_s": 5.064189434051514,
+     "req_per_cpu_s": 1018566.8085106383
+    }
+   ],
+   "hyper": [
+    {
+     "rps": 237536.0,
+     "requests": 1187680,
+     "errors": 0,
+     "mean": 0.00853,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.01s, 237536.00 req/s, 9.06MB/s\nrequests: 1187680 total, 1189728 started, 1187680 done, 1187680 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 1187680 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 45.32MB (47520640) total, 10.20MB (10699040) headers (space savings 90.21%), 14.72MB (15439840) data\n                     min         max         mean         sd        +/- sd\ntime for request:       19us    100.05ms      8.53ms     13.06ms    83.75%\ntime for connect:     4.65ms     26.40ms     14.91ms      6.07ms    60.94%\ntime to 1st byte:    24.26ms     48.06ms     33.01ms      8.25ms    48.44%\nreq/s           :    3067.01     4530.92     3710.87      292.36    68.75%\n",
+     "server_cpu_s": 9.25,
+     "wall_s": 5.045533180236816,
+     "req_per_cpu_s": 128397.83783783784
+    },
+    {
+     "rps": 224057.6,
+     "requests": 1120288,
+     "errors": 0,
+     "mean": 0.00906,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.02s, 224057.60 req/s, 8.55MB/s\nrequests: 1120288 total, 1122336 started, 1120288 done, 1120288 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 1120288 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 42.75MB (44825088) total, 9.63MB (10092640) headers (space savings 90.21%), 13.89MB (14563744) data\n                     min         max         mean         sd        +/- sd\ntime for request:       17us    121.15ms      9.06ms     13.95ms    84.27%\ntime for connect:     3.13ms     29.01ms     16.75ms      7.12ms    59.38%\ntime to 1st byte:    30.10ms     57.31ms     34.92ms      6.02ms    82.81%\nreq/s           :    2814.48     4061.59     3500.54      257.77    70.31%\n",
+     "server_cpu_s": 9.219999999999999,
+     "wall_s": 5.056874513626099,
+     "req_per_cpu_s": 121506.29067245121
+    },
+    {
+     "rps": 221217.4,
+     "requests": 1106087,
+     "errors": 0,
+     "mean": 0.009130000000000001,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.03s, 221217.40 req/s, 8.44MB/s\nrequests: 1106087 total, 1108135 started, 1106087 done, 1106087 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 1106087 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 42.21MB (44257048) total, 9.50MB (9964831) headers (space savings 90.21%), 13.71MB (14379131) data\n                     min         max         mean         sd        +/- sd\ntime for request:       23us     98.42ms      9.13ms     13.75ms    84.06%\ntime for connect:     2.84ms     16.14ms     10.05ms      3.62ms    64.06%\ntime to 1st byte:    16.01ms     32.89ms     22.06ms      6.52ms    65.63%\nreq/s           :    2730.38     3967.98     3455.96      247.00    75.00%\n",
+     "server_cpu_s": 9.32,
+     "wall_s": 5.066594839096069,
+     "req_per_cpu_s": 118678.8626609442
+    }
+   ],
+   "nginx": [
+    {
+     "rps": 363831.2,
+     "requests": 1819156,
+     "errors": 0,
+     "mean": 0.00485,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.02s, 363831.20 req/s, 26.37MB/s\nrequests: 1819156 total, 1821204 started, 1819156 done, 1819156 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 1819156 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 131.85MB (138258992) total, 78.07MB (81862020) headers (space savings 51.09%), 22.55MB (23649028) data\n                     min         max         mean         sd        +/- sd\ntime for request:       71us     16.00ms      4.85ms      1.82ms    63.62%\ntime for connect:     3.00ms     27.32ms     13.73ms      6.92ms    68.75%\ntime to 1st byte:    20.81ms     39.89ms     30.19ms      4.49ms    70.31%\nreq/s           :    5476.83     5880.82     5683.35      136.12    42.19%\n",
+     "server_cpu_s": 9.809999999999999,
+     "wall_s": 5.0568811893463135,
+     "req_per_cpu_s": 185438.9398572885
+    },
+    {
+     "rps": 303797.8,
+     "requests": 1518989,
+     "errors": 0,
+     "mean": 0.00621,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.02s, 303797.80 req/s, 21.95MB/s\nrequests: 1518989 total, 1521037 started, 1518989 done, 1518989 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 1518989 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 109.76MB (115094960) total, 64.85MB (68003165) headers (space savings 51.34%), 18.83MB (19746857) data\n                     min         max         mean         sd        +/- sd\ntime for request:       62us     30.26ms      6.21ms      2.26ms    71.17%\ntime for connect:     4.87ms     32.15ms     18.59ms      8.46ms    54.69%\ntime to 1st byte:    33.50ms     38.72ms     35.94ms      1.33ms    68.75%\nreq/s           :    4422.22     5078.67     4745.02      228.59    50.00%\n",
+     "server_cpu_s": 9.819999999999999,
+     "wall_s": 5.061568021774292,
+     "req_per_cpu_s": 154683.19755600818
+    },
+    {
+     "rps": 343844.8,
+     "requests": 1719224,
+     "errors": 0,
+     "mean": 0.00522,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.03s, 343844.80 req/s, 24.92MB/s\nrequests: 1719224 total, 1721272 started, 1719224 done, 1719224 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 1719224 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 124.61MB (130664160) total, 73.78MB (77365080) headers (space savings 51.09%), 21.31MB (22349912) data\n                     min         max         mean         sd        +/- sd\ntime for request:       49us     17.50ms      5.22ms      2.14ms    66.30%\ntime for connect:     4.66ms     25.23ms     14.41ms      5.64ms    59.38%\ntime to 1st byte:    24.18ms     31.83ms     28.09ms      2.19ms    60.94%\nreq/s           :    4520.76     6584.72     5370.24      895.53    59.38%\n",
+     "server_cpu_s": 9.71,
+     "wall_s": 5.069809675216675,
+     "req_per_cpu_s": 177057.0545829042
+    }
+   ],
+   "h2o": [
+    {
+     "rps": 479718.4,
+     "requests": 2398592,
+     "errors": 0,
+     "mean": 0.00429,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #0.\nWarm-up started for thread #1.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\n\nfinished in 5.02s, 479718.40 req/s, 18.30MB/s\nrequests: 2398592 total, 2400640 started, 2398592 done, 2398592 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 2398592 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 91.51MB (95955648) total, 20.60MB (21597376) headers (space savings 90.62%), 29.74MB (31181696) data\n                     min         max         mean         sd        +/- sd\ntime for request:      199us     12.14ms      4.29ms      1.10ms    74.66%\ntime for connect:     3.55ms     19.43ms     11.35ms      3.94ms    64.06%\ntime to 1st byte:    17.36ms     24.19ms     20.81ms      2.28ms    54.69%\nreq/s           :    6737.67     8531.01     7494.79      838.26    56.25%\n",
+     "server_cpu_s": 9.92,
+     "wall_s": 5.049339056015015,
+     "req_per_cpu_s": 241793.5483870968
+    },
+    {
+     "rps": 464012.8,
+     "requests": 2320064,
+     "errors": 0,
+     "mean": 0.00439,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.02s, 464012.80 req/s, 17.70MB/s\nrequests: 2320064 total, 2322112 started, 2320064 done, 2320064 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 2320064 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 88.51MB (92814528) total, 19.92MB (20890624) headers (space savings 90.62%), 28.76MB (30160832) data\n                     min         max         mean         sd        +/- sd\ntime for request:      208us     16.06ms      4.39ms      1.27ms    75.72%\ntime for connect:     4.62ms     25.86ms     14.99ms      5.69ms    57.81%\ntime to 1st byte:    24.00ms     29.60ms     27.08ms      1.71ms    64.06%\nreq/s           :    6501.44     8255.68     7249.21      855.51    57.81%\n",
+     "server_cpu_s": 9.919999999999998,
+     "wall_s": 5.054783821105957,
+     "req_per_cpu_s": 233877.41935483876
+    },
+    {
+     "rps": 396460.8,
+     "requests": 1982304,
+     "errors": 0,
+     "mean": 0.00504,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.02s, 396460.80 req/s, 15.13MB/s\nrequests: 1982304 total, 1984352 started, 1982304 done, 1982304 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 1982304 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 75.63MB (79304128) total, 17.02MB (17850784) headers (space savings 90.62%), 24.58MB (25769952) data\n                     min         max         mean         sd        +/- sd\ntime for request:      442us     13.78ms      5.04ms      1.08ms    70.61%\ntime for connect:     5.19ms     26.00ms     14.67ms      5.36ms    62.50%\ntime to 1st byte:    24.76ms     32.64ms     28.77ms      2.17ms    64.06%\nreq/s           :    5930.86     6475.28     6193.62      254.28    51.56%\n",
+     "server_cpu_s": 9.91,
+     "wall_s": 5.064215421676636,
+     "req_per_cpu_s": 200030.67608476288
+    }
+   ]
+  },
+  "h2-tls-static-64k": {
+   "verilith": [
+    {
+     "rps": 70627.8,
+     "requests": 353139,
+     "errors": 0,
+     "mean": 0.00252,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.00s, 70627.80 req/s, 4.32GB/s\nrequests: 353139 total, 353395 started, 353139 done, 353139 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 353140 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 21.58GB (23169503336) total, 9.77MB (10244596) headers (space savings 86.81%), 21.55GB (23143366656) data\n                     min         max         mean         sd        +/- sd\ntime for request:      211us     33.36ms      2.52ms      1.30ms    81.00%\ntime for connect:     2.40ms      9.53ms      5.44ms      2.13ms    62.50%\ntime to 1st byte:     7.72ms     18.03ms     13.03ms      3.04ms    62.50%\nreq/s           :    3930.26     5048.08     4412.15      531.04    62.50%\n",
+     "server_cpu_s": 9.26,
+     "wall_s": 5.0234057903289795,
+     "req_per_cpu_s": 38135.96112311015
+    },
+    {
+     "rps": 59193.0,
+     "requests": 295965,
+     "errors": 0,
+     "mean": 0.00278,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.01s, 59193.00 req/s, 3.62GB/s\nrequests: 295965 total, 296221 started, 295965 done, 295965 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 295966 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 18.08GB (19418317196) total, 8.19MB (8586550) headers (space savings 86.81%), 18.06GB (19396411392) data\n                     min         max         mean         sd        +/- sd\ntime for request:      275us     20.45ms      2.78ms      1.31ms    77.13%\ntime for connect:     1.99ms     14.59ms      8.00ms      3.21ms    75.00%\ntime to 1st byte:    11.76ms     22.44ms     17.24ms      3.45ms    62.50%\nreq/s           :    3608.67     3772.13     3697.81       40.88    75.00%\n",
+     "server_cpu_s": 9.06,
+     "wall_s": 5.024307727813721,
+     "req_per_cpu_s": 32667.218543046354
+    },
+    {
+     "rps": 63123.4,
+     "requests": 315617,
+     "errors": 0,
+     "mean": 0.00264,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.01s, 63123.40 req/s, 3.86GB/s\nrequests: 315617 total, 315873 started, 315617 done, 315617 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 315618 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 19.29GB (20707684868) total, 8.73MB (9156410) headers (space savings 86.81%), 19.26GB (20684324864) data\n                     min         max         mean         sd        +/- sd\ntime for request:      293us     18.24ms      2.64ms      1.34ms    76.71%\ntime for connect:     1.81ms     13.79ms      6.00ms      4.26ms    75.00%\ntime to 1st byte:     9.41ms     27.88ms     18.49ms      5.40ms    62.50%\nreq/s           :    3478.31     4776.59     3943.66      597.22    62.50%\n",
+     "server_cpu_s": 9.05,
+     "wall_s": 5.02691912651062,
+     "req_per_cpu_s": 34874.80662983425
+    }
+   ],
+   "hyper": [
+    {
+     "rps": 57238.0,
+     "requests": 286190,
+     "errors": 0,
+     "mean": 0.00311,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #0.\nWarm-up started for thread #1.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.01s, 57238.00 req/s, 3.50GB/s\nrequests: 286190 total, 286446 started, 286190 done, 286190 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 286191 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 17.48GB (18771794429) total, 3.00MB (3150757) headers (space savings 89.90%), 17.47GB (18755764224) data\n                     min         max         mean         sd        +/- sd\ntime for request:       70us     15.15ms      3.11ms      1.49ms    72.45%\ntime for connect:     2.52ms      8.18ms      5.05ms      1.75ms    62.50%\ntime to 1st byte:     6.42ms     12.23ms      8.52ms      1.90ms    62.50%\nreq/s           :    3477.47     3676.63     3575.63       69.50    56.25%\n",
+     "server_cpu_s": 9.29,
+     "wall_s": 5.023745059967041,
+     "req_per_cpu_s": 30806.243272335847
+    },
+    {
+     "rps": 51074.0,
+     "requests": 255370,
+     "errors": 0,
+     "mean": 0.0035099999999999997,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\n\nfinished in 5.00s, 51074.00 req/s, 3.12GB/s\nrequests: 255370 total, 255626 started, 255370 done, 255370 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 255373 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 15.60GB (16750380173) total, 2.68MB (2811759) headers (space savings 89.90%), 15.59GB (16736075776) data\n                     min         max         mean         sd        +/- sd\ntime for request:       78us     19.89ms      3.51ms      1.75ms    72.99%\ntime for connect:     1.89ms      7.35ms      4.20ms      1.62ms    62.50%\ntime to 1st byte:     5.72ms     13.67ms      8.46ms      1.80ms    75.00%\nreq/s           :    3012.28     3371.48     3191.42      158.60    62.50%\n",
+     "server_cpu_s": 9.219999999999999,
+     "wall_s": 5.019590139389038,
+     "req_per_cpu_s": 27697.396963123647
+    },
+    {
+     "rps": 51097.8,
+     "requests": 255489,
+     "errors": 0,
+     "mean": 0.00354,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #0.\nWarm-up started for thread #1.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.01s, 51097.80 req/s, 3.12GB/s\nrequests: 255489 total, 255745 started, 255489 done, 255489 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 255489 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 15.61GB (16758038024) total, 2.68MB (2813035) headers (space savings 89.90%), 15.59GB (16743727104) data\n                     min         max         mean         sd        +/- sd\ntime for request:       62us     17.23ms      3.54ms      1.81ms    72.99%\ntime for connect:     1.90ms      5.51ms      3.72ms      1.14ms    62.50%\ntime to 1st byte:     5.41ms      7.60ms      6.56ms       644us    75.00%\nreq/s           :    3090.33     3284.92     3191.62       66.34    62.50%\n",
+     "server_cpu_s": 9.4,
+     "wall_s": 5.021965265274048,
+     "req_per_cpu_s": 27179.68085106383
+    }
+   ],
+   "nginx": [
+    {
+     "rps": 42484.8,
+     "requests": 212424,
+     "errors": 0,
+     "mean": 0.00481,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #1. Stopping all clients.\nMain benchmark duration is over for thread #Stopped all clients for thread #1\n0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.00s, 42484.80 req/s, 2.60GB/s\nrequests: 212424 total, 212680 started, 212424 done, 212424 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 212424 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 13.00GB (13963267576) total, 23.50MB (24641184) headers (space savings 38.62%), 12.97GB (13921419264) data\n                     min         max         mean         sd        +/- sd\ntime for request:      111us     21.05ms      4.81ms      2.41ms    69.10%\ntime for connect:     1.92ms      5.15ms      3.61ms      1.09ms    50.00%\ntime to 1st byte:     5.50ms     10.86ms      7.82ms      1.55ms    68.75%\nreq/s           :    2379.56     2992.59     2654.72      248.44    50.00%\n",
+     "server_cpu_s": 9.61,
+     "wall_s": 5.017281532287598,
+     "req_per_cpu_s": 22104.474505723207
+    },
+    {
+     "rps": 36655.4,
+     "requests": 183277,
+     "errors": 0,
+     "mean": 0.006200000000000001,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.01s, 36655.40 req/s, 2.24GB/s\nrequests: 183277 total, 183533 started, 183277 done, 183277 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 183278 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 11.22GB (12047364209) total, 20.28MB (21260248) headers (space savings 38.62%), 11.19GB (12011257713) data\n                     min         max         mean         sd        +/- sd\ntime for request:      111us     25.00ms      6.20ms      2.60ms    65.72%\ntime for connect:     1.16ms      8.85ms      3.38ms      2.20ms    81.25%\ntime to 1st byte:     4.63ms     15.53ms      9.46ms      3.75ms    68.75%\nreq/s           :    2079.41     2561.47     2289.90      205.95    75.00%\n",
+     "server_cpu_s": 9.850000000000001,
+     "wall_s": 5.02615213394165,
+     "req_per_cpu_s": 18606.80203045685
+    },
+    {
+     "rps": 45641.8,
+     "requests": 228209,
+     "errors": 0,
+     "mean": 0.0043,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #0.\nWarm-up started for thread #1.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\n\nfinished in 5.01s, 45641.80 req/s, 2.79GB/s\nrequests: 228209 total, 228465 started, 228209 done, 228209 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 228209 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 13.97GB (15000818706) total, 25.20MB (26427969) headers (space savings 38.73%), 13.93GB (14955905024) data\n                     min         max         mean         sd        +/- sd\ntime for request:      112us     32.69ms      4.30ms      2.12ms    71.44%\ntime for connect:     1.69ms      6.43ms      3.88ms      1.46ms    62.50%\ntime to 1st byte:     4.87ms     12.13ms      8.10ms      1.95ms    68.75%\nreq/s           :    2418.73     3622.45     2851.30      544.22    62.50%\n",
+     "server_cpu_s": 9.530000000000001,
+     "wall_s": 5.024343967437744,
+     "req_per_cpu_s": 23946.379853095485
+    }
+   ],
+   "h2o": [
+    {
+     "rps": 68041.6,
+     "requests": 340208,
+     "errors": 0,
+     "mean": 0.00363,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.00s, 68041.60 req/s, 4.16GB/s\nrequests: 340208 total, 340464 started, 340208 done, 340208 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 340448 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 20.79GB (22325416464) total, 4.87MB (5110096) headers (space savings 92.22%), 20.77GB (22303172426) data\n                     min         max         mean         sd        +/- sd\ntime for request:      109us     23.45ms      3.63ms      2.07ms    68.53%\ntime for connect:     1.83ms     10.04ms      5.76ms      2.51ms    62.50%\ntime to 1st byte:     3.41ms     15.06ms     10.78ms      3.53ms    68.75%\nreq/s           :    2887.58     8911.70     4252.25     2396.81    75.00%\n",
+     "server_cpu_s": 9.77,
+     "wall_s": 5.019115447998047,
+     "req_per_cpu_s": 34821.69907881269
+    },
+    {
+     "rps": 55644.0,
+     "requests": 278220,
+     "errors": 0,
+     "mean": 0.00446,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.00s, 55644.00 req/s, 3.40GB/s\nrequests: 278220 total, 278476 started, 278220 done, 278220 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 278456 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 17.00GB (18258469624) total, 3.99MB (4180168) headers (space savings 92.22%), 16.99GB (18240293688) data\n                     min         max         mean         sd        +/- sd\ntime for request:      311us     17.64ms      4.46ms      1.85ms    68.38%\ntime for connect:     1.25ms      7.81ms      4.77ms      2.08ms    62.50%\ntime to 1st byte:     5.94ms     15.47ms      9.24ms      3.18ms    68.75%\nreq/s           :    2823.32     4499.44     3477.58      800.07    62.50%\n",
+     "server_cpu_s": 9.77,
+     "wall_s": 5.0180134773254395,
+     "req_per_cpu_s": 28476.97031729785
+    },
+    {
+     "rps": 64234.2,
+     "requests": 321171,
+     "errors": 0,
+     "mean": 0.00383,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nServer Temp Key: X25519 253 bits\nApplication protocol: h2\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.00s, 64234.20 req/s, 3.93GB/s\nrequests: 321171 total, 321427 started, 321171 done, 321171 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 321377 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 19.63GB (21076086209) total, 4.60MB (4824031) headers (space savings 92.22%), 19.61GB (21055100470) data\n                     min         max         mean         sd        +/- sd\ntime for request:      390us     15.05ms      3.83ms       933us    68.02%\ntime for connect:     2.04ms     14.34ms      7.89ms      3.43ms    68.75%\ntime to 1st byte:    10.82ms     21.00ms     14.96ms      2.74ms    68.75%\nreq/s           :    3998.61     4035.55     4013.59       10.26    68.75%\n",
+     "server_cpu_s": 9.89,
+     "wall_s": 5.023492336273193,
+     "req_per_cpu_s": 32474.31749241658
+    }
+   ]
+  },
+  "h3-plaintext": {
+   "verilith": [
+    {
+     "rps": 605580.8,
+     "requests": 3027904,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\n\nfinished in 5.05s, 605580.80 req/s, 33.94MB/s\nrequests: 3027904 total, 3029952 started, 3027904 done, 3027904 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 3027904 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 169.69MB (177934592) total, 120.63MB (126484640) headers (space savings 56.04%), 37.55MB (39370656) data\nUDP datagram: 189552 sent, 189347 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :      450us     18.34ms      3.14ms      5.56ms      6.58ms      3.33ms      1.22ms    69.11%\nconnect     :     4.17ms     12.59ms      8.29ms     11.71ms     12.59ms      8.05ms      2.34ms    57.81%\nTTFB        :    12.68ms     20.15ms     14.87ms     19.98ms     20.15ms     15.91ms      2.59ms    57.81%\nreq/s       :    8692.16    10225.69     9292.15    10142.87    10225.69     9455.01      487.48    54.69%\nmin RTT     :      152us       704us       457us       650us       704us       454us       132us    60.94%\nsmoothed RTT:     1.60ms      2.66ms      2.18ms      2.55ms      2.66ms      2.19ms       222us    68.75%\npackets sent:       2724        3206        2913        3181        3206     2963.75      152.41    54.69%\npackets recv:       2720        3202        2909        3176        3202     2959.55      152.17    53.13%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1           2           2           2           2        2.00        0.05    99.80%\n",
+     "server_cpu_s": 7.010000000000001,
+     "wall_s": 5.156776666641235,
+     "req_per_cpu_s": 431940.6562054208
+    },
+    {
+     "rps": 648825.6,
+     "requests": 3244128,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #0.\nWarm-up started for thread #1.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\n\nfinished in 5.05s, 648825.60 req/s, 36.14MB/s\nrequests: 3244128 total, 3246176 started, 3244128 done, 3244128 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 3244128 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 180.69MB (189470048) total, 128.12MB (134342208) headers (space savings 56.42%), 40.23MB (42180736) data\nUDP datagram: 203052 sent, 202856 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :      302us     14.12ms      2.99ms      5.40ms      6.36ms      3.18ms      1.14ms    69.18%\nconnect     :     2.44ms     11.96ms      6.32ms     10.93ms     11.96ms      6.57ms      2.52ms    62.50%\nTTFB        :    10.11ms     17.54ms     13.29ms     17.30ms     17.54ms     13.97ms      2.16ms    60.94%\nreq/s       :    8847.44    12025.76     9841.52    11849.97    12025.76    10133.31     1202.14    56.25%\nmin RTT     :      158us       715us       457us       686us       715us       461us       127us    64.06%\nsmoothed RTT:     1.36ms      2.85ms      1.99ms      2.67ms      2.85ms      2.04ms       446us    57.81%\npackets sent:       2772        3766        3083        3710        3766     3174.69      375.37    57.81%\npackets recv:       2768        3762        3079        3706        3762     3170.62      375.42    57.81%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1           2           2           2           2        2.00        0.04    99.81%\n",
+     "server_cpu_s": 7.18,
+     "wall_s": 5.164695501327515,
+     "req_per_cpu_s": 451828.41225626745
+    },
+    {
+     "rps": 604409.6,
+     "requests": 3022048,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.06s, 604409.60 req/s, 34.01MB/s\nrequests: 3022048 total, 3024096 started, 3022048 done, 3022048 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 3022048 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 170.04MB (178301344) total, 121.06MB (126944832) headers (space savings 55.79%), 37.47MB (39292448) data\nUDP datagram: 189165 sent, 188970 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :      611us     14.67ms      3.11ms      5.64ms      6.47ms      3.33ms      1.21ms    66.79%\nconnect     :     3.76ms     12.70ms      8.21ms     12.04ms     12.70ms      8.18ms      2.60ms    59.38%\nTTFB        :    14.17ms     18.76ms     16.59ms     18.35ms     18.76ms     16.49ms      1.19ms    60.94%\nreq/s       :    8995.33     9855.72     9450.32     9811.15     9855.72     9436.84      277.67    57.81%\nmin RTT     :      192us       769us       552us       703us       769us       529us       129us    65.63%\nsmoothed RTT:     1.38ms      2.27ms      1.75ms      2.16ms      2.27ms      1.81ms       232us    60.94%\npackets sent:       2820        3091        2962        3076        3091     2957.70       86.51    59.38%\npackets recv:       2816        3086        2958        3072        3086     2953.66       86.50    59.38%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1           2           2           2           2        2.00        0.05    99.80%\n",
+     "server_cpu_s": 6.73,
+     "wall_s": 5.168553829193115,
+     "req_per_cpu_s": 449041.3075780089
+    }
+   ],
+   "h3-quinn": [
+    {
+     "rps": 251283.2,
+     "requests": 1256416,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.06s, 251283.20 req/s, 13.90MB/s\nrequests: 1256416 total, 1258464 started, 1256416 done, 1256416 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 1256416 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 69.50MB (72876928) total, 49.13MB (51520928) headers (space savings 56.84%), 15.58MB (16335904) data\nUDP datagram: 98647 sent, 118301 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :     2.15ms     29.28ms      7.80ms     11.34ms     12.66ms      8.21ms      1.68ms    75.27%\nconnect     :     1.91ms     13.63ms      7.22ms     12.68ms     13.63ms      7.53ms      3.60ms    56.25%\nTTFB        :    12.80ms     29.84ms     20.38ms     29.62ms     29.84ms     20.24ms      5.54ms    56.25%\nreq/s       :    3647.04     4242.79     3672.43     4235.96     4242.79     3925.47      282.82    53.13%\nmin RTT     :      255us      1.36ms       851us      1.24ms      1.36ms       841us       232us    70.31%\nsmoothed RTT:      783us      2.92ms      1.55ms      2.21ms      2.92ms      1.57ms       429us    71.88%\npackets sent:       1436        1667        1445        1665        1667     1543.36      109.95    54.69%\npackets recv:       1720        1998        1731        1995        1998     1849.45      132.43    53.13%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1           2           1           2           2        1.50        0.50    50.31%\n",
+     "server_cpu_s": 9.95,
+     "wall_s": 5.152995586395264,
+     "req_per_cpu_s": 126272.96482412062
+    },
+    {
+     "rps": 252537.6,
+     "requests": 1262688,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.05s, 252537.60 req/s, 14.08MB/s\nrequests: 1262688 total, 1264736 started, 1262688 done, 1262688 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 1262688 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 70.39MB (73810366) total, 49.92MB (52343902) headers (space savings 56.37%), 15.66MB (16416192) data\nUDP datagram: 99117 sent, 118897 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :     1.53ms     24.84ms      7.78ms     14.96ms     16.05ms      8.10ms      3.18ms    68.44%\nconnect     :     2.13ms     16.29ms      8.35ms     15.06ms     16.29ms      8.58ms      3.73ms    64.06%\nTTFB        :    10.24ms     31.61ms     17.82ms     31.41ms     31.61ms     20.04ms      7.40ms    54.69%\nreq/s       :    2923.42     5553.16     2943.22     5535.27     5553.16     3944.96     1268.41    60.94%\nmin RTT     :      273us      1.45ms       922us      1.30ms      1.45ms       835us       332us    57.81%\nsmoothed RTT:      979us      2.86ms      2.36ms      2.81ms      2.86ms      2.00ms       696us    53.13%\npackets sent:       1154        2174        1161        2170        2174     1550.70      492.83    60.94%\npackets recv:       1381        2615        1389        2604        2615     1858.77      594.31    60.94%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1           2           1           2           2        1.50        0.50    50.32%\n",
+     "server_cpu_s": 9.98,
+     "wall_s": 5.158533334732056,
+     "req_per_cpu_s": 126521.84368737474
+    },
+    {
+     "rps": 216537.6,
+     "requests": 1082688,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #0.\nWarm-up started for thread #1.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\n\nfinished in 5.05s, 216537.60 req/s, 12.18MB/s\nrequests: 1082688 total, 1084736 started, 1082688 done, 1082688 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 1082688 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 60.92MB (63883392) total, 43.37MB (45480960) headers (space savings 55.79%), 13.43MB (14077440) data\nUDP datagram: 85156 sent, 102025 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :     4.08ms     30.80ms      8.57ms     13.94ms     14.80ms      9.45ms      2.35ms    78.85%\nconnect     :     1.92ms     13.00ms      7.79ms     12.26ms     13.00ms      7.64ms      3.09ms    59.38%\nTTFB        :     6.87ms     27.78ms     16.72ms     26.93ms     27.78ms     17.87ms      5.16ms    76.56%\nreq/s       :    2885.31     4102.08     2898.91     4100.73     4102.08     3382.50      591.82    59.38%\nmin RTT     :      275us      2.05ms      1.47ms      1.82ms      2.05ms      1.30ms       455us    70.31%\nsmoothed RTT:      947us      3.49ms      2.40ms      3.40ms      3.49ms      2.32ms       636us    65.63%\npackets sent:       1137        1612        1146        1612        1612     1332.56      230.32    59.38%\npackets recv:       1363        1934        1369        1931        1934     1595.14      277.58    59.38%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1           2           1           2           2        1.50        0.50    50.37%\n",
+     "server_cpu_s": 9.950000000000001,
+     "wall_s": 5.148807525634766,
+     "req_per_cpu_s": 108812.86432160802
+    }
+   ],
+   "nginx-quic": [
+    {
+     "rps": 473056.0,
+     "requests": 2365280,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\n\nfinished in 5.05s, 473056.00 req/s, 31.08MB/s\nrequests: 2365280 total, 2367328 started, 2365280 done, 2365280 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 2365280 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 155.38MB (162932576) total, 108.31MB (113567232) headers (space savings 47.83%), 29.33MB (30757792) data\nUDP datagram: 83275 sent, 79859 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :      579us     24.89ms      4.21ms      7.29ms      9.57ms      4.32ms      1.81ms    69.63%\nconnect     :     4.19ms     18.87ms      9.37ms     18.08ms     18.87ms     10.44ms      4.42ms    62.50%\nTTFB        :     8.92ms     33.25ms     21.19ms     31.82ms     33.25ms     21.84ms      6.58ms    54.69%\nreq/s       :    6045.15    10395.63     6290.80    10372.94    10395.63     7387.65     1700.36    67.19%\nmin RTT     :      241us      1.34ms       985us      1.24ms      1.34ms       891us       313us    65.63%\nsmoothed RTT:     1.83ms      3.46ms      2.70ms      3.23ms      3.46ms      2.70ms       344us    67.19%\npackets sent:       1075        1831        1119        1815        1831     1303.17      283.94    67.19%\npackets recv:       1017        1751        1049        1745        1751     1248.80      300.45    67.19%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1           1           1           1           1        1.00        0.00   100.00%\n",
+     "server_cpu_s": 8.68,
+     "wall_s": 5.143353462219238,
+     "req_per_cpu_s": 272497.69585253455
+    },
+    {
+     "rps": 412640.0,
+     "requests": 2063200,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\n\nfinished in 5.06s, 412640.00 req/s, 27.49MB/s\nrequests: 2063200 total, 2065248 started, 2063200 done, 2063200 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 2063200 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 137.47MB (144152256) total, 96.43MB (101115616) headers (space savings 46.74%), 25.58MB (26826592) data\nUDP datagram: 72048 sent, 69683 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :      957us     23.02ms      4.77ms      7.66ms      9.47ms      4.92ms      1.67ms    70.41%\nconnect     :     5.98ms     13.60ms      9.66ms     12.90ms     13.60ms      9.65ms      2.10ms    59.38%\nTTFB        :    14.59ms     22.36ms     19.10ms     22.03ms     22.36ms     19.11ms      1.93ms    65.63%\nreq/s       :    6136.46     6964.10     6300.65     6899.90     6964.10     6444.49      267.93    71.88%\nmin RTT     :      485us      1.11ms       793us      1.04ms      1.11ms       798us       150us    64.06%\nsmoothed RTT:     2.28ms      5.17ms      3.75ms      5.03ms      5.17ms      3.79ms       833us    56.25%\npackets sent:       1065        1246        1114        1222        1246     1127.75       51.31    67.19%\npackets recv:       1038        1177        1065        1168        1177     1089.80       45.02    70.31%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1           1           1           1           1        1.00        0.00   100.00%\n",
+     "server_cpu_s": 8.719999999999999,
+     "wall_s": 5.149654150009155,
+     "req_per_cpu_s": 236605.504587156
+    },
+    {
+     "rps": 425363.2,
+     "requests": 2126816,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.07s, 425363.20 req/s, 28.34MB/s\nrequests: 2126816 total, 2128864 started, 2126816 done, 2126816 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 2126816 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 141.72MB (148605376) total, 99.41MB (104239072) headers (space savings 46.74%), 26.37MB (27655264) data\nUDP datagram: 73106 sent, 72043 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :     1.21ms     15.58ms      4.58ms      7.33ms      8.83ms      4.76ms      1.49ms    67.77%\nconnect     :     6.08ms     14.94ms     10.15ms     14.06ms     14.94ms     10.17ms      2.37ms    60.94%\nTTFB        :    15.15ms     25.84ms     20.58ms     24.73ms     25.84ms     19.98ms      3.14ms    57.81%\nreq/s       :    6095.90     7334.58     6463.83     7264.43     7334.58     6638.45      431.71    46.88%\nmin RTT     :      661us      1.15ms       904us      1.07ms      1.15ms       909us       117us    64.06%\nsmoothed RTT:     2.34ms      3.86ms      3.29ms      3.76ms      3.86ms      3.23ms       372us    68.75%\npackets sent:       1042        1274        1132        1264        1274     1144.28       79.59    45.31%\npackets recv:       1052        1225        1092        1215        1225     1126.67       62.44    56.25%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1           1           1           1           1        1.00        0.00   100.00%\n",
+     "server_cpu_s": 8.799999999999999,
+     "wall_s": 5.186962842941284,
+     "req_per_cpu_s": 241683.63636363638
+    }
+   ],
+   "h2o-quic": [
+    {
+     "rps": 85900.8,
+     "requests": 429504,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.05s, 85900.80 req/s, 6.23MB/s\nrequests: 429504 total, 431552 started, 429504 done, 429504 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 431488 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 31.17MB (32687872) total, 21.40MB (22437376) headers (space savings 51.85%), 5.35MB (5609344) data\nUDP datagram: 40337 sent, 59113 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :      322us     33.21ms     25.42ms     26.68ms     28.29ms     23.74ms      6.26ms    91.10%\nconnect     :     4.69ms     15.28ms     10.44ms     14.82ms     15.28ms     10.14ms      2.87ms    64.06%\nTTFB        :     8.83ms     30.01ms     17.52ms     29.80ms     30.01ms     19.19ms      6.05ms    65.63%\nreq/s       :    1247.48     3755.72     1260.53     1580.71     3755.72     1341.81      363.77    95.31%\nmin RTT     :       28us      6.99ms       648us      5.71ms      6.99ms      1.43ms      1.73ms    82.81%\nsmoothed RTT:      149us     11.81ms      4.12ms     10.62ms     11.81ms      4.59ms      2.74ms    71.88%\npackets sent:        589        1762         595         743        1762      632.28      170.13    95.31%\npackets recv:        853        2810         863        1111        2810      925.66      283.60    95.31%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1           3           1           3           3        1.48        0.73    86.13%\n",
+     "server_cpu_s": 4.430000000000001,
+     "wall_s": 5.080353736877441,
+     "req_per_cpu_s": 96953.49887133182
+    },
+    {
+     "rps": 93561.6,
+     "requests": 467808,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.04s, 93561.60 req/s, 6.89MB/s\nrequests: 467808 total, 469856 started, 467808 done, 467808 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 469824 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 34.44MB (36109696) total, 23.75MB (24900672) headers (space savings 50.93%), 5.82MB (6107712) data\nUDP datagram: 43979 sent, 65232 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :      408us     31.60ms     25.26ms     26.41ms     27.37ms     21.78ms      8.52ms    83.93%\nconnect     :     4.54ms     19.46ms     10.72ms     16.27ms     19.46ms     10.51ms      3.74ms    57.81%\nTTFB        :     7.47ms     30.30ms     20.76ms     29.39ms     30.30ms     21.12ms      5.33ms    62.50%\nreq/s       :    1247.43     4471.61     1266.94     3654.08     4471.61     1461.44      666.72    92.19%\nmin RTT     :       26us      4.31ms       692us      3.97ms      4.31ms      1.19ms      1.22ms    81.25%\nsmoothed RTT:      142us      9.51ms      3.49ms      6.53ms      9.51ms      3.53ms      1.78ms    75.00%\npackets sent:        591        2099         599        1721        2099      689.44      312.56    92.19%\npackets recv:        855        3374         870        2734        3374     1021.53      520.64    92.19%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1           3           1           3           3        1.49        0.75    84.27%\n",
+     "server_cpu_s": 5.08,
+     "wall_s": 5.081299543380737,
+     "req_per_cpu_s": 92088.18897637795
+    },
+    {
+     "rps": 102425.6,
+     "requests": 512128,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 32 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 9% of clients started\nprogress: 18% of clients started\nprogress: 28% of clients started\nprogress: 37% of clients started\nprogress: 46% of clients started\nprogress: 56% of clients started\nprogress: 65% of clients started\nprogress: 75% of clients started\nprogress: 84% of clients started\nprogress: 93% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\n\nfinished in 5.06s, 102425.60 req/s, 7.48MB/s\nrequests: 512128 total, 514176 started, 512128 done, 512128 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 514048 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 37.42MB (39233312) total, 25.67MB (26921952) headers (space savings 51.51%), 6.37MB (6683456) data\nUDP datagram: 48092 sent, 72124 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :      330us     34.67ms     25.17ms     27.05ms     29.52ms     19.91ms      9.33ms    74.27%\nconnect     :     3.72ms     14.54ms      8.52ms     13.22ms     14.54ms      8.70ms      2.82ms    60.94%\nTTFB        :    11.55ms     24.30ms     17.06ms     24.01ms     24.30ms     17.81ms      3.56ms    56.25%\nreq/s       :    1247.30     3410.49     1433.06     2604.07     3410.49     1599.83      453.53    84.38%\nmin RTT     :       23us      3.61ms       135us      1.00ms      3.61ms       324us       571us    93.75%\nsmoothed RTT:      193us      8.53ms      1.86ms      6.15ms      8.53ms      2.40ms      1.80ms    73.44%\npackets sent:        589        1603         676        1225        1603      753.58      213.17    84.38%\npackets recv:        855        2546        1000        1914        2546     1129.28      354.79    84.38%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1           3           1           3           3        1.51        0.77    82.77%\n",
+     "server_cpu_s": 5.58,
+     "wall_s": 5.103718996047974,
+     "req_per_cpu_s": 91779.21146953404
+    }
+   ]
+  },
+  "h3-static-64k": {
+   "verilith": [
+    {
+     "rps": 41413.2,
+     "requests": 207066,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.03s, 41413.20 req/s, 2.53GB/s\nrequests: 207066 total, 207322 started, 207066 done, 207066 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 207279 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 12.66GB (13598351817) total, 19.97MB (20935785) headers (space savings 47.40%), 12.64GB (13576702785) data\nUDP datagram: 105707 sent, 9707702 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :      215us       1.03s      5.31ms      8.95ms     11.28ms      6.18ms     23.86ms    99.95%\nconnect     :     1.24ms      3.27ms      2.10ms      3.27ms      3.27ms      2.11ms       564us    68.75%\nTTFB        :     2.78ms      4.50ms      3.32ms      4.50ms      4.50ms      3.43ms       609us    75.00%\nreq/s       :    1855.34     3525.58     2538.78     3525.58     3525.58     2587.90      514.79    62.50%\nmin RTT     :       26us       102us        52us       102us       102us        52us        18us    75.00%\nsmoothed RTT:      289us       776us       534us       776us       776us       535us       150us    62.50%\npackets sent:       4673        9056        6519        9056        9056     6608.69     1348.87    56.25%\npackets recv:     435228      826563      595221      826563      826563   606732.38   120694.13    62.50%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1          16          16          16          16       14.76        3.48    89.05%\n",
+     "server_cpu_s": 8.690000000000001,
+     "wall_s": 5.0595152378082275,
+     "req_per_cpu_s": 23828.07825086306
+    },
+    {
+     "rps": 36309.6,
+     "requests": 181548,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.03s, 36309.60 req/s, 2.22GB/s\nrequests: 181548 total, 181804 started, 181548 done, 181548 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 181783 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 11.11GB (11928216427) total, 17.68MB (18543600) headers (space savings 46.88%), 11.09GB (11908866612) data\nUDP datagram: 92616 sent, 8515586 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :      185us       1.03s      6.57ms     10.53ms     12.78ms      6.96ms     13.74ms    99.97%\nconnect     :     1.55ms      5.18ms      2.56ms      5.18ms      5.18ms      2.94ms      1.15ms    62.50%\nTTFB        :     3.97ms      6.07ms      5.34ms      6.07ms      6.07ms      5.12ms       846us    56.25%\nreq/s       :    1607.29     3001.21     2243.26     3001.21     3001.21     2269.10      356.11    68.75%\nmin RTT     :       14us       108us        49us       108us       108us        53us        23us    75.00%\nsmoothed RTT:      285us       617us       459us       617us       617us       446us       103us    56.25%\npackets sent:       4016        7677        5725        7677        7677     5790.50      925.91    75.00%\npackets recv:     377057      704011      526108      704011      704011   532225.13    83442.81    68.75%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1          16          16          16          16       14.74        3.51    88.96%\n",
+     "server_cpu_s": 8.4,
+     "wall_s": 5.072401285171509,
+     "req_per_cpu_s": 21612.85714285714
+    },
+    {
+     "rps": 35208.6,
+     "requests": 176043,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #0.\nWarm-up started for thread #1.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.03s, 35208.60 req/s, 2.15GB/s\nrequests: 176043 total, 176299 started, 176043 done, 176043 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 176281 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 10.77GB (11566567173) total, 17.13MB (17956875) headers (space savings 46.95%), 10.75GB (11547825690) data\nUDP datagram: 89290 sent, 8256335 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :      291us       1.03s      6.68ms     10.79ms     13.00ms      7.26ms     19.60ms    99.96%\nconnect     :     1.55ms      2.90ms      2.25ms      2.90ms      2.90ms      2.25ms       429us    56.25%\nTTFB        :     3.41ms      4.23ms      3.80ms      4.23ms      4.23ms      3.82ms       255us    56.25%\nreq/s       :    1300.42     3153.59     2211.14     3153.59     3153.59     2200.34      463.94    68.75%\nmin RTT     :       41us       158us        69us       158us       158us        80us        34us    75.00%\nsmoothed RTT:      523us      1.26ms       868us      1.26ms      1.26ms       854us       220us    68.75%\npackets sent:       3309        8211        5534        8211        8211     5582.63     1213.68    68.75%\npackets recv:     305299      739214      518976      739214      739214   516021.94   108632.99    68.75%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1          16          16          16          16       14.78        3.44    89.18%\n",
+     "server_cpu_s": 9.01,
+     "wall_s": 5.061517715454102,
+     "req_per_cpu_s": 19538.62375138735
+    }
+   ],
+   "h3-quinn": [
+    {
+     "rps": 19717.6,
+     "requests": 98588,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.03s, 19717.60 req/s, 1.21GB/s\nrequests: 98588 total, 98844 started, 98588 done, 98588 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 98796 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 6.03GB (6476452219) total, 5.83MB (6108236) headers (space savings 44.80%), 6.03GB (6469877912) data\nUDP datagram: 209879 sent, 4573161 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :      503us     49.18ms     12.98ms     17.84ms     28.48ms     12.96ms      3.98ms    86.99%\nconnect     :     1.62ms      3.14ms      2.39ms      3.14ms      3.14ms      2.36ms       440us    68.75%\nTTFB        :     3.86ms     11.07ms      9.96ms     11.07ms     11.07ms      8.95ms      2.52ms    75.00%\nreq/s       :    1075.13     1501.32     1116.57     1501.32     1501.32     1232.25      164.73    81.25%\nmin RTT     :       43us       133us        96us       133us       133us        91us        25us    81.25%\nsmoothed RTT:      247us       724us       437us       724us       724us       451us       123us    75.00%\npackets sent:      11703       15193       11995       15193       15193    13119.44     1469.84    68.75%\npackets recv:     249563      348498      258975      348498      348498   285823.56    38232.44    81.25%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1          10          10          10          10        9.85        1.13    98.24%\n",
+     "server_cpu_s": 9.78,
+     "wall_s": 5.055457592010498,
+     "req_per_cpu_s": 10080.572597137016
+    },
+    {
+     "rps": 19657.0,
+     "requests": 98285,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.05s, 19657.00 req/s, 1.20GB/s\nrequests: 98285 total, 98541 started, 98285 done, 98285 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 98461 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 6.01GB (6452092424) total, 5.82MB (6104582) headers (space savings 44.64%), 6.00GB (6445297415) data\nUDP datagram: 194548 sent, 4555677 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :     1.04ms     51.42ms     13.14ms     17.50ms     24.44ms     13.00ms      3.49ms    79.54%\nconnect     :     1.87ms      4.07ms      3.05ms      4.07ms      4.07ms      3.01ms       735us    50.00%\nTTFB        :     4.25ms     12.54ms     11.01ms     12.54ms     12.54ms     10.12ms      2.86ms    81.25%\nreq/s       :    1052.74     1495.49     1075.05     1495.49     1495.49     1228.49      192.12    81.25%\nmin RTT     :       36us       139us        93us       139us       139us        93us        26us    81.25%\nsmoothed RTT:      296us       811us       589us       811us       811us       573us       146us    68.75%\npackets sent:      10534       14977       11357       14977       14977    12161.25     1438.40    68.75%\npackets recv:     244046      346611      249197      346611      346611   284730.81    44439.35    81.25%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1          10          10          10          10        9.84        1.15    98.07%\n",
+     "server_cpu_s": 9.83,
+     "wall_s": 5.078461408615112,
+     "req_per_cpu_s": 9998.474059003052
+    },
+    {
+     "rps": 17130.0,
+     "requests": 85650,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\n\nfinished in 5.03s, 17130.00 req/s, 1.05GB/s\nrequests: 85650 total, 85906 started, 85650 done, 85650 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 85906 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 5.24GB (5623772490) total, 5.07MB (5319590) headers (space savings 44.71%), 5.23GB (5618133953) data\nUDP datagram: 196026 sent, 3970355 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :     1.07ms     50.29ms     13.64ms     19.88ms     25.59ms     14.92ms      3.63ms    75.79%\nconnect     :     1.62ms      3.96ms      2.72ms      3.96ms      3.96ms      2.71ms       710us    62.50%\nTTFB        :     2.49ms     12.94ms      8.49ms     12.94ms     12.94ms      8.62ms      3.42ms    50.00%\nreq/s       :    1004.76     1154.14     1072.75     1154.14     1154.14     1070.55       50.72    68.75%\nmin RTT     :       44us       158us       107us       158us       158us       106us        31us    62.50%\nsmoothed RTT:      281us       542us       491us       542us       542us       462us        78us    62.50%\npackets sent:      11683       12773       12343       12773       12773    12253.62      361.42    68.75%\npackets recv:     232938      267406      248620      267406      267406   248148.19    11706.42    68.75%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1          10          10          10          10        9.88        1.04    98.61%\n",
+     "server_cpu_s": 9.89,
+     "wall_s": 5.0542683601379395,
+     "req_per_cpu_s": 8660.262891809909
+    }
+   ],
+   "nginx-quic": [
+    {
+     "rps": 46061.2,
+     "requests": 230306,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\n\nfinished in 5.03s, 46061.20 req/s, 2.82GB/s\nrequests: 230306 total, 230562 started, 230306 done, 230306 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 230333 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 14.09GB (15124133225) total, 26.01MB (27269894) headers (space savings 37.36%), 14.06GB (15094494302) data\nUDP datagram: 74814 sent, 589627 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :      631us     67.45ms      4.79ms     11.15ms     18.47ms      5.55ms      3.97ms    90.08%\nconnect     :     2.19ms      6.01ms      2.87ms      6.01ms      6.01ms      3.94ms      1.63ms    56.25%\nTTFB        :     4.97ms     13.30ms      8.63ms     13.30ms     13.30ms      8.93ms      2.34ms    68.75%\nreq/s       :    2451.46     3374.78     2612.06     3374.78     3374.78     2878.53      387.75    50.00%\nmin RTT     :       88us       182us       125us       182us       182us       126us        26us    68.75%\nsmoothed RTT:      609us       943us       866us       943us       943us       789us       136us    56.25%\npackets sent:       4033        5521        4283        5521        5521     4677.87      615.17    62.50%\npackets recv:      29041       46265       35623       46265       46265    36852.69     5080.15    62.50%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1          55           1           7          37        2.44        6.30    95.44%\n",
+     "server_cpu_s": 9.780000000000001,
+     "wall_s": 5.060945987701416,
+     "req_per_cpu_s": 23548.670756646214
+    },
+    {
+     "rps": 49139.4,
+     "requests": 245697,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.03s, 49139.40 req/s, 3.01GB/s\nrequests: 245697 total, 245953 started, 245697 done, 245697 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 245726 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 15.03GB (16135060905) total, 27.87MB (29225966) headers (space savings 37.07%), 15.00GB (16103443276) data\nUDP datagram: 78002 sent, 662697 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :      458us     77.25ms      4.42ms     10.78ms     17.58ms      5.20ms      3.86ms    90.30%\nconnect     :     1.46ms      3.52ms      2.56ms      3.52ms      3.52ms      2.46ms       648us    56.25%\nTTFB        :     3.65ms     12.30ms      6.84ms     12.30ms     12.30ms      7.58ms      2.82ms    62.50%\nreq/s       :    2257.11     4307.19     2589.69     4307.19     4307.19     3070.96      816.33    75.00%\nmin RTT     :       55us       191us       111us       191us       191us       112us        40us    62.50%\nsmoothed RTT:      695us       982us       845us       982us       982us       814us        93us    56.25%\npackets sent:       3803        6558        4018        6558        6558     4877.13     1243.84    62.50%\npackets recv:      28337       59331       36129       59331       59331    41419.56    11103.50    50.00%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1          55           1           8          47        2.57        6.74    95.14%\n",
+     "server_cpu_s": 9.829999999999998,
+     "wall_s": 5.058642387390137,
+     "req_per_cpu_s": 24994.60834181079
+    },
+    {
+     "rps": 45159.0,
+     "requests": 225795,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #0.\nWarm-up started for thread #1.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\n\nfinished in 5.03s, 45159.00 req/s, 2.76GB/s\nrequests: 225795 total, 226051 started, 225795 done, 225795 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 225828 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 13.81GB (14828327015) total, 25.50MB (26738299) headers (space savings 37.35%), 13.78GB (14799143090) data\nUDP datagram: 71366 sent, 588417 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :      440us     74.25ms      3.60ms     14.43ms     24.00ms      5.66ms      5.32ms    88.09%\nconnect     :     1.22ms      4.51ms      3.43ms      4.51ms      4.51ms      3.28ms       871us    75.00%\nTTFB        :     2.55ms     15.28ms     10.51ms     15.28ms     15.28ms      9.84ms      4.01ms    62.50%\nreq/s       :    1548.88     8111.28     1729.43     8111.28     8111.28     2822.21     2450.40    81.25%\nmin RTT     :       16us       487us       243us       487us       487us       238us       140us    68.75%\nsmoothed RTT:      396us      2.18ms      2.01ms      2.18ms      2.18ms      1.74ms       648us    81.25%\npackets sent:       2579       12754        2657       12754       12754     4462.38     3915.66    81.25%\npackets recv:      19200      106637       21742      106637      106637    36777.06    32042.37    81.25%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1          55           1           7          37        2.47        6.37    95.31%\n",
+     "server_cpu_s": 9.68,
+     "wall_s": 5.067924737930298,
+     "req_per_cpu_s": 23325.929752066117
+    }
+   ],
+   "h2o-quic": [
+    {
+     "rps": 29262.2,
+     "requests": 146311,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.03s, 29262.20 req/s, 1.79GB/s\nrequests: 146311 total, 146567 started, 146311 done, 146311 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 146327 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 8.95GB (9607763382) total, 15.72MB (16482543) headers (space savings 45.06%), 8.93GB (9589736319) data\nUDP datagram: 294827 sent, 7720585 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :     1.62ms    323.90ms      7.40ms     16.25ms     24.03ms      8.74ms      5.60ms    91.20%\nconnect     :     2.24ms      4.03ms      2.96ms      4.03ms      4.03ms      3.03ms       533us    62.50%\nTTFB        :     3.25ms      4.81ms      4.30ms      4.81ms      4.81ms      4.19ms       415us    68.75%\nreq/s       :    1175.91     2672.22     1572.65     2672.22     2672.22     1828.62      568.10    50.00%\nmin RTT     :       19us       310us       164us       310us       310us       165us       115us    50.00%\nsmoothed RTT:      378us      2.95ms      2.70ms      2.95ms      2.95ms      1.91ms      1.19ms    62.50%\npackets sent:      14014       26238       15416       26238       26238    18428.69     4796.57    81.25%\npackets recv:     310090      705254      415017      705254      705254   482538.56   149951.80    50.00%\npackets lost:         17         176         147         176         176      109.94       67.05    62.50%\nGRO packets :          1          10          10          10          10        9.28        2.26    90.53%\n",
+     "server_cpu_s": 9.74,
+     "wall_s": 5.068693161010742,
+     "req_per_cpu_s": 15021.663244353182
+    },
+    {
+     "rps": 28372.0,
+     "requests": 141860,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.03s, 28372.00 req/s, 1.74GB/s\nrequests: 141860 total, 142116 started, 141860 done, 141860 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 141876 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 8.68GB (9315498496) total, 15.28MB (16025611) headers (space savings 44.90%), 8.66GB (9298029430) data\nUDP datagram: 297179 sent, 7491875 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :     1.46ms    137.98ms      8.07ms     15.37ms     22.80ms      9.01ms      4.33ms    87.69%\nconnect     :     2.30ms      3.73ms      3.01ms      3.73ms      3.73ms      3.02ms       424us    68.75%\nTTFB        :     3.42ms      4.54ms      4.02ms      4.54ms      4.54ms      4.06ms       266us    81.25%\nreq/s       :    1376.39     2225.29     1756.59     2225.29     2225.29     1772.85      299.00    50.00%\nmin RTT     :       42us       296us       104us       296us       296us       128us        75us    68.75%\nsmoothed RTT:     1.30ms      1.97ms      1.81ms      1.97ms      1.97ms      1.68ms       259us    62.50%\npackets sent:      14374       22533       18468       22533       22533    18575.69     2878.00    56.25%\npackets recv:     363458      588012      464170      588012      588012   468244.19    78938.90    56.25%\npackets lost:        126         221         181         221         221      178.56       28.33    62.50%\nGRO packets :          1          10          10          10          10        9.33        2.20    91.32%\n",
+     "server_cpu_s": 9.850000000000001,
+     "wall_s": 5.067962884902954,
+     "req_per_cpu_s": 14402.03045685279
+    },
+    {
+     "rps": 27760.4,
+     "requests": 138802,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\n\nfinished in 5.03s, 27760.40 req/s, 1.70GB/s\nrequests: 138802 total, 139058 started, 138802 done, 138802 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 138818 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 8.49GB (9114755286) total, 14.96MB (15687225) headers (space savings 44.88%), 8.47GB (9097511791) data\nUDP datagram: 204169 sent, 7323555 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :     1.50ms    609.10ms      7.57ms     18.54ms     22.97ms      9.21ms      8.07ms    92.48%\nconnect     :     2.49ms      5.53ms      4.69ms      5.53ms      5.53ms      4.23ms      1.13ms    56.25%\nTTFB        :     3.46ms      6.52ms      5.70ms      6.52ms      6.52ms      5.27ms      1.10ms    56.25%\nreq/s       :    1122.48     2903.88     1271.08     2903.88     2903.88     1734.73      794.11    68.75%\nmin RTT     :       18us       365us       164us       365us       365us       154us       103us    50.00%\nsmoothed RTT:      240us      1.95ms      1.88ms      1.95ms      1.95ms      1.39ms       758us    68.75%\npackets sent:       9249       19170       10653       19170       19170    12762.56     3954.50    68.75%\npackets recv:     295929      766402      335307      766402      766402   457724.19   209625.14    68.75%\npackets lost:         16          97          82          97          97       66.19       33.58    68.75%\nGRO packets :          1          10          10          10          10        9.42        2.03    92.24%\n",
+     "server_cpu_s": 9.57,
+     "wall_s": 5.067220687866211,
+     "req_per_cpu_s": 14503.866248693834
+    }
+   ]
+  },
+  "h3-static-1m": {
+   "verilith": [
+    {
+     "rps": 2698.6,
+     "requests": 13493,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #0.\nWarm-up started for thread #1.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\n\nfinished in 5.03s, 2698.60 req/s, 2.64GB/s\nrequests: 13493 total, 13509 started, 13493 done, 13493 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 13509 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 13.19GB (14161711898) total, 1.34MB (1404936) headers (space savings 46.67%), 13.19GB (14160490533) data\nUDP datagram: 113631 sent, 10097944 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :     1.35ms       1.03s      4.58ms      8.20ms     10.64ms      5.66ms     29.24ms    99.92%\nconnect     :     1.41ms      2.75ms      2.11ms      2.75ms      2.75ms      2.09ms       401us    62.50%\nTTFB        :     2.98ms      3.18ms      3.07ms      3.18ms      3.18ms      3.08ms        57us    62.50%\nreq/s       :     119.79      201.58      176.19      201.58      201.58      168.65       24.70    56.25%\nmin RTT     :       15us        54us        34us        54us        54us        34us        12us    56.25%\nsmoothed RTT:      132us      1.01ms       257us      1.01ms      1.01ms       401us       286us    87.50%\npackets sent:       5009        8432        7452        8432        8432     7103.94     1040.86    56.25%\npackets recv:     448568      754185      659271      754185      754185   631122.50    92344.90    56.25%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1          16          16          16          16       14.74        3.47    88.88%\n",
+     "server_cpu_s": 8.75,
+     "wall_s": 5.051542043685913,
+     "req_per_cpu_s": 1542.057142857143
+    },
+    {
+     "rps": 2517.2,
+     "requests": 12586,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.03s, 2517.20 req/s, 2.46GB/s\nrequests: 12586 total, 12602 started, 12586 done, 12586 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 12601 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 12.30GB (13210177215) total, 1.25MB (1308887) headers (space savings 46.73%), 12.30GB (13209537472) data\nUDP datagram: 105856 sent, 9420408 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :     1.43ms       1.03s      5.43ms      9.30ms     12.34ms      6.15ms     22.42ms    99.95%\nconnect     :     1.92ms      3.58ms      2.84ms      3.58ms      3.58ms      2.81ms       524us    50.00%\nTTFB        :     3.94ms      4.21ms      4.04ms      4.21ms      4.21ms      4.04ms        66us    68.75%\nreq/s       :      99.98      248.35      150.47      248.35      248.35      157.30       43.82    62.50%\nmin RTT     :        7us        72us        37us        72us        72us        39us        18us    62.50%\nsmoothed RTT:      270us       581us       399us       581us       581us       408us        88us    62.50%\npackets sent:       4195       11009        6122       11009       11009     6618.00     1997.32    68.75%\npackets recv:     374720      929044      563225      929044      929044   588776.50   163832.76    62.50%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1          16          16          16          16       14.77        3.44    89.01%\n",
+     "server_cpu_s": 8.889999999999999,
+     "wall_s": 5.055457353591919,
+     "req_per_cpu_s": 1415.7480314960633
+    },
+    {
+     "rps": 2499.0,
+     "requests": 12495,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.03s, 2499.00 req/s, 2.44GB/s\nrequests: 12495 total, 12511 started, 12495 done, 12495 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 12509 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 12.21GB (13113129150) total, 1.24MB (1301040) headers (space savings 46.67%), 12.21GB (13112192054) data\nUDP datagram: 105108 sent, 9350251 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :     1.62ms       1.03s      5.62ms      9.34ms     11.25ms      6.38ms     24.27ms    99.94%\nconnect     :     1.44ms      2.96ms      2.16ms      2.96ms      2.96ms      2.19ms       446us    62.50%\nTTFB        :     3.11ms      3.61ms      3.35ms      3.61ms      3.61ms      3.35ms       181us    50.00%\nreq/s       :     104.39      233.77      150.38      233.77      233.77      156.17       36.34    68.75%\nmin RTT     :       14us       105us        39us       105us       105us        46us        26us    68.75%\nsmoothed RTT:      329us       705us       415us       705us       705us       444us       112us    62.50%\npackets sent:       4330        9967        6351        9967        9967     6571.25     1574.78    68.75%\npackets recv:     390940      874458      562620      874458      874458   584391.69   135788.49    68.75%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1          16          16          16          16       14.74        3.49    88.81%\n",
+     "server_cpu_s": 8.950000000000001,
+     "wall_s": 5.056613206863403,
+     "req_per_cpu_s": 1396.0893854748601
+    }
+   ],
+   "h3-quinn": [
+    {
+     "rps": 1427.6,
+     "requests": 7138,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.03s, 1427.60 req/s, 1.40GB/s\nrequests: 7138 total, 7154 started, 7138 done, 7138 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 7148 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 6.98GB (7492988975) total, 432.79KB (443176) headers (space savings 45.61%), 6.98GB (7492749963) data\nUDP datagram: 242127 sent, 5292155 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :     1.40ms     49.46ms      9.31ms     18.60ms     22.32ms     11.19ms      4.87ms    75.71%\nconnect     :      747us      3.72ms      1.92ms      3.72ms      3.72ms      2.04ms       908us    68.75%\nTTFB        :     4.76ms     11.99ms      6.04ms     11.99ms     11.99ms      7.95ms      3.14ms    62.50%\nreq/s       :      64.00      131.99       65.40      131.99      131.99       89.22       32.72    62.50%\nmin RTT     :       75us       163us       102us       163us       163us       107us        24us    62.50%\nsmoothed RTT:      292us       587us       422us       587us       587us       424us        94us    56.25%\npackets sent:      11662       21383       11906       21383       21383    15134.94     4462.50    62.50%\npackets recv:     237513      489206      242406      489206      489206   330760.69   121119.32    62.50%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1          10          10          10          10        9.91        0.89    98.75%\n",
+     "server_cpu_s": 9.92,
+     "wall_s": 5.048900365829468,
+     "req_per_cpu_s": 719.5564516129032
+    },
+    {
+     "rps": 1261.4,
+     "requests": 6307,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.04s, 1261.40 req/s, 1.23GB/s\nrequests: 6307 total, 6323 started, 6307 done, 6307 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 6322 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 6.17GB (6620505377) total, 385.46KB (394715) headers (space savings 45.23%), 6.17GB (6620207108) data\nUDP datagram: 199682 sent, 4674922 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :     1.66ms     57.58ms     12.59ms     17.59ms     19.58ms     12.66ms      3.79ms    75.33%\nconnect     :     1.47ms      3.72ms      2.47ms      3.72ms      3.72ms      2.48ms       675us    56.25%\nTTFB        :     3.90ms     11.18ms      9.25ms     11.18ms     11.18ms      8.09ms      2.70ms    43.75%\nreq/s       :      75.20       82.59       78.80       82.59       82.59       78.83        1.91    62.50%\nmin RTT     :       30us       144us        83us       144us       144us        89us        31us    68.75%\nsmoothed RTT:      291us       563us       390us       563us       563us       388us        72us    75.00%\npackets sent:      12049       12783       12607       12783       12783    12482.13      253.64    62.50%\npackets recv:     278968      306186      292239      306186      306186   292183.62     7093.09    62.50%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1          10          10          10          10        9.88        0.97    98.30%\n",
+     "server_cpu_s": 9.93,
+     "wall_s": 5.053056955337524,
+     "req_per_cpu_s": 635.1460221550856
+    },
+    {
+     "rps": 1222.2,
+     "requests": 6111,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.03s, 1222.20 req/s, 1.20GB/s\nrequests: 6111 total, 6127 started, 6111 done, 6111 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 6125 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 5.98GB (6419003843) total, 376.83KB (385875) headers (space savings 44.74%), 5.98GB (6418659015) data\nUDP datagram: 217155 sent, 4533109 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :     1.29ms     55.40ms     12.27ms     19.25ms     22.02ms     13.06ms      3.92ms    74.57%\nconnect     :     1.66ms      4.08ms      2.57ms      4.08ms      4.08ms      2.67ms       708us    68.75%\nTTFB        :     3.71ms     10.42ms      6.97ms     10.42ms     10.42ms      7.52ms      2.28ms    62.50%\nreq/s       :      65.40       91.40       66.40       91.40       91.40       76.38       12.29    62.50%\nmin RTT     :       64us       149us       109us       149us       149us       112us        21us    68.75%\nsmoothed RTT:      338us       686us       395us       686us       686us       440us        97us    81.25%\npackets sent:      11353       16551       12390       16551       16551    13574.19     2011.53    56.25%\npackets recv:     242701      339149      246210      339149      339149   283320.31    45483.79    62.50%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1          10          10          10          10        9.93        0.80    99.14%\n",
+     "server_cpu_s": 9.87,
+     "wall_s": 5.049788236618042,
+     "req_per_cpu_s": 619.1489361702128
+    }
+   ],
+   "nginx-quic": [
+    {
+     "rps": 3359.6,
+     "requests": 16798,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.03s, 3359.60 req/s, 3.28GB/s\nrequests: 16798 total, 16814 started, 16798 done, 16798 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 16813 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 16.42GB (17628431593) total, 1.94MB (2034373) headers (space savings 36.98%), 16.42GB (17626606249) data\nUDP datagram: 110446 sent, 718456 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :      495us     98.18ms      2.99ms      9.22ms     48.56ms      4.75ms      7.60ms    95.90%\nconnect     :     1.74ms      3.36ms      2.49ms      3.36ms      3.36ms      2.50ms       490us    56.25%\nTTFB        :     4.03ms     10.39ms      6.95ms     10.39ms     10.39ms      6.97ms      1.93ms    62.50%\nreq/s       :     163.59      244.98      220.88      244.98      244.98      209.95       28.56    62.50%\nmin RTT     :        5us        41us        20us        41us        41us        19us        13us    50.00%\nsmoothed RTT:      323us      3.60ms       546us      3.60ms      3.60ms      1.16ms      1.10ms    81.25%\npackets sent:       5411        8108        7297        8108        8108     6904.88      916.73    62.50%\npackets recv:      39131       50525       45072       50525       50525    44904.50     3679.07    68.75%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1          55           1           7          30        2.40        6.20    95.56%\n",
+     "server_cpu_s": 9.59,
+     "wall_s": 5.043769121170044,
+     "req_per_cpu_s": 1751.6162669447342
+    },
+    {
+     "rps": 2903.6,
+     "requests": 14518,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #0.\nWarm-up started for thread #1.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\n\nfinished in 5.04s, 2903.60 req/s, 2.84GB/s\nrequests: 14518 total, 14534 started, 14518 done, 14518 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 14531 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 14.19GB (15233856837) total, 1.69MB (1772782) headers (space savings 36.46%), 14.19GB (15232121896) data\nUDP datagram: 95168 sent, 630648 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :      506us     55.45ms      3.13ms     33.47ms     49.38ms      5.49ms      9.04ms    94.38%\nconnect     :     2.07ms      3.64ms      2.84ms      3.64ms      3.64ms      2.84ms       463us    68.75%\nTTFB        :     4.52ms     10.81ms      7.67ms     10.81ms     10.81ms      7.66ms      1.80ms    68.75%\nreq/s       :     160.59      212.39      178.29      212.39      212.39      181.46       14.29    68.75%\nmin RTT     :        6us        45us        19us        45us        45us        20us        12us    62.50%\nsmoothed RTT:      246us      1.46ms       701us      1.46ms      1.46ms       702us       294us    81.25%\npackets sent:       5390        6667        5877        6667        6667     5950.00      422.94    62.50%\npackets recv:      32895       42738       39932       42738       42738    39416.50     2956.18    75.00%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1          55           1           7          35        2.43        6.30    95.49%\n",
+     "server_cpu_s": 9.459999999999999,
+     "wall_s": 5.054892063140869,
+     "req_per_cpu_s": 1534.6723044397465
+    },
+    {
+     "rps": 2865.0,
+     "requests": 14325,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\n\nfinished in 5.05s, 2865.00 req/s, 2.80GB/s\nrequests: 14325 total, 14341 started, 14325 done, 14325 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 14340 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 14.00GB (15034201833) total, 1.67MB (1749480) headers (space savings 36.46%), 14.00GB (15032557719) data\nUDP datagram: 91330 sent, 625913 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :      512us     87.56ms      3.27ms     15.29ms     48.07ms      5.56ms      9.11ms    94.97%\nconnect     :     2.33ms      4.14ms      3.26ms      4.14ms      4.14ms      3.24ms       552us    62.50%\nTTFB        :     5.49ms     11.45ms      8.21ms     11.45ms     11.45ms      8.29ms      1.87ms    56.25%\nreq/s       :     136.38      225.95      182.29      225.95      225.95      179.04       26.58    62.50%\nmin RTT     :        5us        44us        18us        44us        44us        22us        14us    56.25%\nsmoothed RTT:      264us      2.79ms       561us      2.79ms      2.79ms       812us       766us    87.50%\npackets sent:       4525        7088        5786        7088        7088     5710.12      733.92    62.50%\npackets recv:      30784       48378       38715       48378       48378    39120.56     4438.99    68.75%\npackets lost:          0           0           0           0           0        0.00        0.00   100.00%\nGRO packets :          1          55           1           7          34        2.44        6.27    95.41%\n",
+     "server_cpu_s": 9.34,
+     "wall_s": 5.06221342086792,
+     "req_per_cpu_s": 1533.7259100642398
+    }
+   ],
+   "h2o-quic": [
+    {
+     "rps": 2044.8,
+     "requests": 10224,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\n\nfinished in 5.03s, 2044.80 req/s, 2.00GB/s\nrequests: 10224 total, 10240 started, 10224 done, 10224 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 10238 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 9.99GB (10728422949) total, 1.11MB (1167132) headers (space savings 45.19%), 9.99GB (10726531933) data\nUDP datagram: 290266 sent, 8616811 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :     1.52ms    113.12ms      6.82ms     15.11ms     20.40ms      7.81ms      4.36ms    83.36%\nconnect     :     3.03ms      4.20ms      3.66ms      4.20ms      4.20ms      3.64ms       385us    62.50%\nTTFB        :     4.32ms      4.87ms      4.64ms      4.87ms      4.87ms      4.62ms       160us    75.00%\nreq/s       :      80.40      219.79       97.59      219.79      219.79      127.79       56.16    68.75%\nmin RTT     :        5us       243us       110us       243us       243us       111us        75us    62.50%\nsmoothed RTT:      475us      2.77ms      2.42ms      2.77ms      2.77ms      1.92ms       969us    68.75%\npackets sent:      10878       32230       15594       32230       32230    18143.63     7390.07    75.00%\npackets recv:     338653      925905      411320      925905      925905   538552.69   236540.55    68.75%\npackets lost:          0           7           3           7           7        3.00        2.48    50.00%\nGRO packets :          1          10          10          10          10        9.55        1.81    94.00%\n",
+     "server_cpu_s": 9.739999999999998,
+     "wall_s": 5.060900926589966,
+     "req_per_cpu_s": 1049.6919917864477
+    },
+    {
+     "rps": 1828.8,
+     "requests": 9144,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.03s, 1828.80 req/s, 1.79GB/s\nrequests: 9144 total, 9160 started, 9144 done, 9144 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 9156 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 8.94GB (9595940101) total, 1.00MB (1053055) headers (space savings 44.71%), 8.94GB (9594609356) data\nUDP datagram: 288423 sent, 7707632 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :     1.48ms     71.66ms      8.11ms     15.53ms     20.06ms      8.73ms      3.98ms    69.42%\nconnect     :     2.03ms     11.08ms      3.79ms     11.08ms     11.08ms      5.15ms      3.49ms    75.00%\nTTFB        :     2.46ms     14.37ms      4.32ms     14.37ms     14.37ms      6.46ms      4.73ms    75.00%\nreq/s       :      81.59      179.57       88.98      179.57      179.57      114.28       42.01    68.75%\nmin RTT     :       13us       315us       169us       315us       315us       141us       102us    50.00%\nsmoothed RTT:      611us      1.87ms      1.74ms      1.87ms      1.87ms      1.47ms       498us    68.75%\npackets sent:      12223       29276       14909       29276       29276    18028.69     6393.71    68.75%\npackets recv:     343697      756657      375197      756657      756657   481729.25   176965.84    68.75%\npackets lost:          0           3           1           3           3        1.06        0.85    50.00%\nGRO packets :          1          10          10          10          10        9.49        1.92    93.29%\n",
+     "server_cpu_s": 9.82,
+     "wall_s": 5.0530335903167725,
+     "req_per_cpu_s": 931.1608961303463
+    },
+    {
+     "rps": 1778.8,
+     "requests": 8894,
+     "errors": 0,
+     "mean": null,
+     "raw": "starting benchmark...\nspawning thread #0: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nspawning thread #1: 8 total client(s). Timing-based test with 0s of warm-up time and 5s of main duration for measurements.\nWarm-up started for thread #1.\nWarm-up started for thread #0.\nprogress: 12% of clients started\nprogress: 25% of clients started\nprogress: 37% of clients started\nprogress: 50% of clients started\nprogress: 62% of clients started\nprogress: 75% of clients started\nprogress: 87% of clients started\nWarm-up phase is over for thread #1.\nMain benchmark duration is started for thread #1.\nprogress: 100% of clients started\nWarm-up phase is over for thread #0.\nMain benchmark duration is started for thread #0.\nTLS Protocol: TLSv1.3\nCipher: TLS_AES_128_GCM_SHA256\nCertificate: ECDSA P-256 256 bits\nNegotiated Group: X25519\nResumption: no\nApplication protocol: h3\nMain benchmark duration is over for thread #1. Stopping all clients.\nStopped all clients for thread #1\nMain benchmark duration is over for thread #0. Stopping all clients.\nStopped all clients for thread #0\n\nfinished in 5.03s, 1778.80 req/s, 1.74GB/s\nrequests: 8894 total, 8910 started, 8894 done, 8894 succeeded, 0 failed, 0 errored, 0 timeout\nstatus codes: 8906 2xx, 0 3xx, 0 4xx, 0 5xx\ntraffic: 8.69GB (9333815494) total, 998.38KB (1022346) headers (space savings 44.81%), 8.69GB (9332257179) data\nUDP datagram: 325298 sent, 7497513 received\n                 min         max         median      p95         p99         mean        sd         +/- sd\nrequest     :     3.77ms     70.73ms      8.34ms     13.55ms     17.47ms      8.98ms      3.07ms    85.46%\nconnect     :     3.44ms      5.12ms      4.33ms      5.12ms      5.12ms      4.29ms       485us    62.50%\nTTFB        :     4.70ms      5.88ms      5.27ms      5.88ms      5.88ms      5.29ms       393us    62.50%\nreq/s       :      97.39      119.00      111.39      119.00      119.00      111.17        5.12    75.00%\nmin RTT     :       58us       162us        97us       162us       162us       104us        29us    75.00%\nsmoothed RTT:     1.72ms      2.56ms      2.07ms      2.56ms      2.56ms      2.08ms       168us    87.50%\npackets sent:      17965       21324       20600       21324       21324    20333.13      882.43    75.00%\npackets recv:     410256      501541      469622      501541      501541   468596.56    21618.71    75.00%\npackets lost:          2          12           6          12          12        6.31        2.91    68.75%\nGRO packets :          1          10          10          10          10        9.49        1.93    93.33%\n",
+     "server_cpu_s": 9.91,
+     "wall_s": 5.056006669998169,
+     "req_per_cpu_s": 897.4772956609485
+    }
+   ]
+  }
+ }
+}

@@ -621,6 +621,9 @@ impl<P: Provider> QuicServer<P> {
             Ghost(resumed),
             Some(self.tp.as_slice()),
             false,
+            Ghost(None),
+            false,
+            false,
         ) {
             Ok(p) => p,
             Err(code) => return Err(self.fail(code)),

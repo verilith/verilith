@@ -165,7 +165,7 @@ proof fn lemma_trim(v: Seq<u8>, s: int, e: int)
 }
 
 /// The options of `v`, added to `acc`: exactly [`opts`] from 0.
-fn opts_exec(v: &[u8], acc: (bool, bool)) -> (r: (bool, bool))
+pub fn opts_exec(v: &[u8], acc: (bool, bool)) -> (r: (bool, bool))
     ensures r == opts(v@, 0, acc),
 {
     let n = v.len();
@@ -272,6 +272,65 @@ pub fn persists_exec(b: &[u8], hs: &[Header], minor: u8) -> (r: bool)
     }
     assert(headers_view(hs@).subrange(0, hs@.len() as int) =~= headers_view(hs@));
     !acc.0 && (minor >= 1 || acc.1)
+}
+
+/// Whether response field lines `fs` list the connection option `close`
+/// (RFC 9112 §9.6): a server that sends it must close after the response.
+pub open spec fn fields_close(fs: Seq<(Seq<u8>, Seq<u8>)>) -> bool
+    decreases fs.len(),
+{
+    if fs.len() == 0 {
+        false
+    } else {
+        fields_close(fs.drop_last()) || (ci_eq(fs.last().0, name_connection()) && opts(fs.last().1, 0, (false, false)).0)
+    }
+}
+
+pub proof fn lemma_fields_close_concat(a: Seq<(Seq<u8>, Seq<u8>)>, b: Seq<(Seq<u8>, Seq<u8>)>)
+    ensures
+        fields_close(a + b) == (fields_close(a) || fields_close(b)),
+    decreases b.len(),
+{
+    if b.len() == 0 {
+        assert(a + b =~= a);
+    } else {
+        lemma_fields_close_concat(a, b.drop_last());
+        assert((a + b).drop_last() =~= a + b.drop_last());
+        assert((a + b).last() == b.last());
+    }
+}
+
+/// [`fields_close`] of response field lines.
+pub fn fields_close_exec(fs: &[crate::respond::Field]) -> (r: bool)
+    ensures
+        r == fields_close(crate::respond::fields_view(fs@)),
+{
+    let mut k: usize = 0;
+    let mut acc = false;
+    proof {
+        assert(crate::respond::fields_view(fs@).take(0) =~= Seq::<(Seq<u8>, Seq<u8>)>::empty());
+    }
+    while k < fs.len()
+        invariant
+            k <= fs@.len(),
+            acc == fields_close(crate::respond::fields_view(fs@).take(k as int)),
+        decreases fs@.len() - k,
+    {
+        let f = &fs[k];
+        let conn: [u8; 10] = [0x63u8, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74, 0x69, 0x6f, 0x6e];
+        assert(conn@ =~= name_connection());
+        let this = ci_eq_exec(f.name, conn.as_slice()) && opts_exec(f.value, (false, false)).0;
+        proof {
+            let fv = crate::respond::fields_view(fs@);
+            assert(fv.take(k + 1).drop_last() =~= fv.take(k as int));
+            assert(fv.take(k + 1).last() == fv[k as int]);
+            assert(fv[k as int] == crate::respond::field_view(fs@[k as int]));
+        }
+        acc = acc || this;
+        k += 1;
+    }
+    assert(crate::respond::fields_view(fs@).take(fs@.len() as int) =~= crate::respond::fields_view(fs@));
+    acc
 }
 
 } // verus!

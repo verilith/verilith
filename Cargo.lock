@@ -1898,6 +1898,7 @@ version = "0.1.0"
 dependencies = [
  "aws-lc-rs",
  "verilith-tls",
+ "verilith-x509",
 ]
 
 [[package]]

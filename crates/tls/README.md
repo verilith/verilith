@@ -12,8 +12,10 @@ handshake state machine, all proven, and talks to rustls clients with every
 TLS 1.3 cipher suite and X25519, P-256, P-384 and X25519MLKEM768. It does a
 full handshake with a certificate, issues session tickets, and resumes
 sessions from them (psk_dhe_ke), with 0-RTT data if the server allows it,
-over TCP or, without records, for a QUIC transport (RFC 9001); no client
-certificates yet ([plan](#plan)). The cryptography, ticket keys included, is
+takes Encrypted Client Hello (RFC 9849) if it has ECH keys, and asks
+for and checks client certificates (mutual TLS) if configured, over TCP
+or, without records, for a QUIC transport (RFC 9001; no client
+certificates there). The cryptography, ticket keys included, is
 [`verilith-tls-aws-lc`](../tls-aws-lc), a separate crate.
 
 ```rust,ignore
@@ -167,6 +169,54 @@ definition names its section. The proofs show:
     (`SpecHs::th_eoed`). The server may answer early data before the
     client's Finished (0.5-RTT, §4.4.4), sealed under its application
     keys, but only when it took early data;
+  - **Encrypted Client Hello** (`spec_ech.rs`, RFC 9849 §7): with an
+    ECHConfigList (`Config::set_ech`), a ClientHelloOuter whose
+    encrypted_client_hello the provider opens (`crypto::ech_opened`, over
+    `spec_ech::outer_aad`, the outer body with the payload zeroed) is
+    replaced by ClientHelloInner, exactly `spec_ech::decode_inner` of the
+    plaintext: the outer's legacy_session_id put back,
+    ech_outer_extensions expanded from the outer's extensions in order
+    (never encrypted_client_hello itself), the padding all zeros, else
+    illegal_parameter (`ech.rs`, `decode_inner_x`). The inner must carry
+    encrypted_client_hello of type inner, and an outer one of type inner
+    is illegal_parameter. The handshake is then ClientHelloInner's, and
+    ServerHello.random's last 8 bytes are the acceptance confirmation
+    (`spec_ech::ech_confirm`, §7.2) over ClientHelloInner and that
+    ServerHello with them zero (`SpecHs::ech_ok`). When the server
+    declines (no key opens it, or the inner would need a
+    HelloRetryRequest), the handshake is ClientHelloOuter's and
+    EncryptedExtensions carries retry_configs (the server's
+    ECHConfigList);
+  - **client authentication** (`spec_client.rs`, `client.rs`, RFC 8446
+    §4.3.2, §4.4.2, §4.4.3, RFC 5280 §6): with `Config::set_client_auth`
+    the flight carries a CertificateRequest (`cr_msg`, empty context,
+    signature_algorithms) between EncryptedExtensions and Certificate.
+    In `WaitFinished` the server then reads the client's Certificate,
+    parsed exactly as `parse_client_certificate` (empty context, entries
+    with no extensions), and if it is not empty a CertificateVerify whose
+    scheme is one the server takes and whose signature is the provider's
+    `tls_signed` by the leaf's key over `client_cv_content` (the client
+    label) of the transcript through the Certificate, then the Finished,
+    over a transcript that includes them (`SpecHs::th_client`); the
+    resumption master secret covers them too. The chain must pass
+    `check_chain`, proven sound against `spec_client::chain_ok`: taken in
+    the order sent, at most 8 certificates, each parsing
+    (verilith-x509), valid at the provider's clock (`now_utc`), with no
+    critical extension but keyUsage, basicConstraints, extendedKeyUsage
+    and subjectAltName; each for client authentication (EKU clientAuth
+    or anyExtendedKeyUsage, if present); the leaf not a CA, with
+    digitalSignature if it has keyUsage; each next one a CA
+    (basicConstraints, keyCertSign if it has keyUsage) within its
+    pathLenConstraint, named as the issuer (DER bytes) and whose key
+    signed it (`crypto::x509_signed`); and the last one reached signed by
+    a trust anchor named as its issuer. A client with no certificate is
+    certificate_required when one is required, else connects without
+    one. `lemma_connected` gives `SpecHs::client_ok` and that
+    `peer_certificates` is the chain the client sent, so a connection
+    with a client identity is one where all this held. Client
+    authentication turns resumption, tickets and 0-RTT off, so the
+    identity is always this handshake's; `QuicServer` refuses such a
+    configuration;
   - the transcript hash is over exactly the messages §4.4.1 says, and every
     secret and key is the key schedule's for it;
   - `lemma_connected`: once Connected, the client's Finished was exactly
@@ -236,7 +286,10 @@ definition names its section. The proofs show:
 ## Trusted base
 
 - **The spec** (`spec.rs`, `spec_keys.rs`, `spec_record.rs`,
-  `spec_server.rs`). Read them against the RFCs.
+  `spec_server.rs`, `spec_ech.rs`, `spec_client.rs`). Read them against
+  the RFCs. `spec_client::chain_ok` is a narrower path validation than
+  RFC 5280's: no name constraints, policies or revocation, and names are
+  compared as DER bytes.
 - **The cryptography** (`crypto.rs`): the AEADs, key exchange, signatures
   and random numbers are uninterpreted functions, and the proofs assume the
   provider's implementation meets the contracts on the `AeadKey`,
@@ -249,7 +302,17 @@ definition names its section. The proofs show:
   the proofs assume `claim_early` says yes at most once per ClientHello
   within its freshness window. verilith-tls-aws-lc keeps a single-use
   register of binders in the process, with a 10 s window on the ticket's
-  age; it does not span machines. [`verilith-tls-aws-lc`](../tls-aws-lc) implements them
+  age; it does not span machines. For ECH, `ech_opened` is HPKE
+  (RFC 9180) base mode under the server's ECH key: the proofs assume
+  `ech_open` returns only a plaintext the client sealed to that key
+  with that additional data. verilith-tls-aws-lc's `hpke.rs` is
+  DHKEM(X25519, HKDF-SHA256) with AES-128-GCM, AES-256-GCM or
+  ChaCha20-Poly1305 over aws-lc, checked against rustls's HPKE. For
+  client certificates, `x509_signed` and `tls_signed` are signature
+  verification with a certificate's or a CertificateVerify's algorithm
+  (verilith-tls-aws-lc: ECDSA P-256/P-384, Ed25519, RSA PKCS #1 v1.5 for
+  certificates and RSA-PSS for CertificateVerify), and `now_utc` is the
+  clock. [`verilith-tls-aws-lc`](../tls-aws-lc) implements them
   over aws-lc; it is a separate crate, outside the workspace and Buck,
   because aws-lc is C.
 - `stream.rs`, a byte-stream adapter that frames records and buffers
@@ -277,6 +340,13 @@ answered before the client's Finished, refused when the same flight is
 replayed to another connection (the handshake goes on at 1-RTT), not
 offered when tickets do not allow it, and skipped when the server turned
 it off after issuing the ticket.
+`../tls-aws-lc/tests/ech.rs` runs rustls's ECH client: accepted (data
+both ways, three handshakes in a row), resumption with 0-RTT data under
+ECH, a client with another server's keys getting the current
+retry_configs, GREASE ECH (declined, an ordinary handshake), and an
+inner ECHClientHello in ClientHelloOuter refused.
+`../tls-aws-lc/tests/hpke.rs` checks the HPKE receiver against rustls's
+sender for each AEAD.
 `../tls-aws-lc/tests/quic.rs` runs `QuicServer` against rustls's QUIC
 client: every suite with X25519, P-256 and X25519MLKEM768, a
 HelloRetryRequest, resumption from a ticket sent at 1-RTT, ClientHello one
@@ -379,7 +449,7 @@ still does the key exchange (psk_dhe_ke keeps forward secrecy).
    signature scheme, ALPN choice, and server name validation. *(done)*
 3. The server handshake state machine (§2, §4, Appendix A.2). *(done for
    the full handshake, HelloRetryRequest, session tickets and psk_dhe_ke
-   resumption, and 0-RTT; client certificates next)*
+   resumption, 0-RTT, Encrypted Client Hello and client certificates)*
 4. The key schedule (§7). *(done, over verilith-sha2's proven HMAC, so
    no HKDF is trusted)*
 5. Record protection (§5.2, §5.3). *(done)*

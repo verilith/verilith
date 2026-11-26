@@ -19,6 +19,9 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use aws_lc_rs::aead::quic::{self as quic_hp, HeaderProtectionKey};
 use verilith_tls::crypto::{AeadKey, HpKey, Provider};
+use verilith_x509::{AlgId, Spki, Time};
+
+pub mod hpke;
 
 pub const TLS_AES_128_GCM_SHA256: u16 = 0x1301;
 pub const TLS_AES_256_GCM_SHA384: u16 = 0x1302;
@@ -338,22 +341,30 @@ pub struct AwsLc {
     rng: SystemRandom,
     key: Option<Arc<SigningKey>>,
     tickets: Option<Arc<TicketKeys>>,
+    ech: Option<Arc<hpke::EchKeys>>,
 }
 
 impl AwsLc {
     pub fn new(key: Option<SigningKey>) -> AwsLc {
-        AwsLc { rng: SystemRandom::new(), key: key.map(Arc::new), tickets: None }
+        AwsLc { rng: SystemRandom::new(), key: key.map(Arc::new), tickets: None, ech: None }
     }
 
     /// With a key shared by many connections (a server's), parsed once.
     pub fn shared(key: Arc<SigningKey>) -> AwsLc {
-        AwsLc { rng: SystemRandom::new(), key: Some(key), tickets: None }
+        AwsLc { rng: SystemRandom::new(), key: Some(key), tickets: None, ech: None }
     }
 
     /// And session tickets sealed with `keys`, which every connection that
     /// should resume each other's sessions shares.
     pub fn with_tickets(mut self, keys: Arc<TicketKeys>) -> AwsLc {
         self.tickets = Some(keys);
+        self
+    }
+
+    /// And Encrypted Client Hello with `keys` (give the server's
+    /// `Config::set_ech` their `config_list`).
+    pub fn with_ech(mut self, keys: Arc<hpke::EchKeys>) -> AwsLc {
+        self.ech = Some(keys);
         self
     }
 
@@ -385,6 +396,114 @@ fn ecdh(
     }
     share.extend_from_slice(public.as_ref());
     Some(n)
+}
+
+// Algorithm identifiers (RFC 5758, RFC 8017, RFC 8410), OID contents octets.
+const OID_EC_KEY: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
+const OID_P256: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
+const OID_P384: &[u8] = &[0x2b, 0x81, 0x04, 0x00, 0x22];
+const OID_RSA_KEY: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
+const OID_ED25519: &[u8] = &[0x2b, 0x65, 0x70];
+const OID_ECDSA_SHA256: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02];
+const OID_ECDSA_SHA384: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x03];
+const OID_RSA_SHA256: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b];
+const OID_RSA_SHA384: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0c];
+const OID_RSA_SHA512: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0d];
+
+/// A public key's type, from its SubjectPublicKeyInfo algorithm.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KeyType {
+    P256,
+    P384,
+    Rsa,
+    Ed25519,
+}
+
+fn key_type(key: &Spki) -> Option<KeyType> {
+    let curve = |oid: &[u8]| match key.alg.params {
+        Some(p) => p.tag == [0x06] && p.content == oid,
+        None => false,
+    };
+    if key.alg.oid == OID_EC_KEY {
+        if curve(OID_P256) {
+            Some(KeyType::P256)
+        } else if curve(OID_P384) {
+            Some(KeyType::P384)
+        } else {
+            None
+        }
+    } else if key.alg.oid == OID_RSA_KEY {
+        Some(KeyType::Rsa)
+    } else if key.alg.oid == OID_ED25519 && key.alg.params.is_none() {
+        Some(KeyType::Ed25519)
+    } else {
+        None
+    }
+}
+
+fn verify_with(alg: &'static dyn signature::VerificationAlgorithm, key: &[u8], msg: &[u8], sig: &[u8]) -> bool {
+    signature::UnparsedPublicKey::new(alg, key).verify(msg, sig).is_ok()
+}
+
+/// The certificate signature algorithm `alg` (RFC 5280 §4.1.1.2) with a key
+/// of type `kt`, if aws-lc does it. RSASSA-PSS certificate signatures are
+/// not taken.
+fn cert_alg(alg: &AlgId, kt: KeyType) -> Option<&'static dyn signature::VerificationAlgorithm> {
+    // ECDSA and Ed25519 identifiers have no parameters; RSA ones have NULL.
+    let none = alg.params.is_none();
+    let null = matches!(alg.params, Some(p) if p.tag == [0x05] && p.content.is_empty());
+    let a: &'static dyn signature::VerificationAlgorithm = match (alg.oid, kt) {
+        (o, KeyType::P256) if o == OID_ECDSA_SHA256 && none => &signature::ECDSA_P256_SHA256_ASN1,
+        (o, KeyType::P256) if o == OID_ECDSA_SHA384 && none => &signature::ECDSA_P256_SHA384_ASN1,
+        (o, KeyType::P384) if o == OID_ECDSA_SHA256 && none => &signature::ECDSA_P384_SHA256_ASN1,
+        (o, KeyType::P384) if o == OID_ECDSA_SHA384 && none => &signature::ECDSA_P384_SHA384_ASN1,
+        (o, KeyType::Rsa) if o == OID_RSA_SHA256 && (none || null) => &signature::RSA_PKCS1_2048_8192_SHA256,
+        (o, KeyType::Rsa) if o == OID_RSA_SHA384 && (none || null) => &signature::RSA_PKCS1_2048_8192_SHA384,
+        (o, KeyType::Rsa) if o == OID_RSA_SHA512 && (none || null) => &signature::RSA_PKCS1_2048_8192_SHA512,
+        (o, KeyType::Ed25519) if o == OID_ED25519 && none => &signature::ED25519,
+        _ => return None,
+    };
+    Some(a)
+}
+
+/// The TLS 1.3 signature scheme `scheme` (RFC 8446 §4.2.3) with a key of
+/// type `kt`, if it is one for that key. PKCS #1 v1.5 schemes are not
+/// defined for handshake signatures, so not taken.
+fn tls_alg(scheme: u16, kt: KeyType) -> Option<&'static dyn signature::VerificationAlgorithm> {
+    let a: &'static dyn signature::VerificationAlgorithm = match (scheme, kt) {
+        (ECDSA_SECP256R1_SHA256, KeyType::P256) => &signature::ECDSA_P256_SHA256_ASN1,
+        (ECDSA_SECP384R1_SHA384, KeyType::P384) => &signature::ECDSA_P384_SHA384_ASN1,
+        (RSA_PSS_RSAE_SHA256, KeyType::Rsa) => &signature::RSA_PSS_2048_8192_SHA256,
+        (RSA_PSS_RSAE_SHA384, KeyType::Rsa) => &signature::RSA_PSS_2048_8192_SHA384,
+        (RSA_PSS_RSAE_SHA512, KeyType::Rsa) => &signature::RSA_PSS_2048_8192_SHA512,
+        (ED25519, KeyType::Ed25519) => &signature::ED25519,
+        _ => return None,
+    };
+    Some(a)
+}
+
+/// The civil date and time, UTC, `secs` seconds after the Unix epoch
+/// (proleptic Gregorian calendar; H. Hinnant's `civil_from_days`).
+pub fn utc_time(secs: u64) -> Time {
+    let days = (secs / 86400) as i64;
+    let rem = secs % 86400;
+    let z = days + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z.rem_euclid(146097);
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u8;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u8;
+    let year = yoe + era * 400 + if month <= 2 { 1 } else { 0 };
+    Time {
+        year: year.clamp(0, 9999) as u16,
+        month,
+        day,
+        hour: (rem / 3600) as u8,
+        minute: ((rem / 60) % 60) as u8,
+        second: (rem % 60) as u8,
+    }
 }
 
 impl Provider for AwsLc {
@@ -492,10 +611,38 @@ impl Provider for AwsLc {
         unix_now()
     }
 
+    fn ech_open(&mut self, config_id: u8, kdf: u16, aead: u16, enc: &[u8], aad: &[u8], payload: &[u8], out: &mut Vec<u8>) -> bool {
+        match self.ech.as_ref().and_then(|k| k.open(config_id, kdf, aead, enc, aad, payload)) {
+            Some(pt) => {
+                *out = pt;
+                true
+            }
+            None => false,
+        }
+    }
+
     fn claim_early(&mut self, _ch: &[u8], binder: &[u8], obfuscated_age: u32, issued: u64, age_add: u32) -> bool {
         match &self.tickets {
             Some(t) => t.claim_early(binder, obfuscated_age, issued, age_add),
             None => false,
         }
+    }
+
+    fn verify_cert_sig(&self, alg: &AlgId, key: &Spki, msg: &[u8], sig: &[u8]) -> bool {
+        match key_type(key).and_then(|kt| cert_alg(alg, kt)) {
+            Some(a) => verify_with(a, key.key, msg, sig),
+            None => false,
+        }
+    }
+
+    fn verify_tls_sig(&self, scheme: u16, key: &Spki, msg: &[u8], sig: &[u8]) -> bool {
+        match key_type(key).and_then(|kt| tls_alg(scheme, kt)) {
+            Some(a) => verify_with(a, key.key, msg, sig),
+            None => false,
+        }
+    }
+
+    fn now_utc(&mut self) -> Time {
+        utc_time(unix_now())
     }
 }

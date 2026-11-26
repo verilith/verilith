@@ -110,7 +110,7 @@ for when it is faster and when not).
 
 ## What is proven
 
-`scripts/verify.sh` (Verus): 148 verified, 0 errors.
+`scripts/verify.sh` (Verus): 223 verified, 0 errors.
 
 - **Requests are exactly the specification's, in order** (`conn.rs`,
   the invariant of `Core`). `first` is the request at the front of a byte
@@ -124,6 +124,29 @@ for when it is faster and when not).
   where a body ends, including chunked bodies decoded in place across
   reads and buffer moves. Request smuggling and desynchronization within a
   connection are ruled out by the theorem.
+- **Responses go out once each, in request order** (`out.rs`, the
+  invariant of `Engine`). The bytes queued on a connection are its
+  responses back to back: exactly one per request the core has handed to a
+  handler, in that order, plus at most one error response at the end for a
+  request the core rejected. Only `Wire::answer` adds a response, only for
+  the open request, and only once (a second send is `AlreadySent`; a
+  handler that sends nothing gets a 500 in its place). Every response is
+  final (a 1xx from a handler is refused: a client would read it as interim
+  and pair every later response with the wrong request), its head is one
+  `theorem_head_parses` covers, and it is framed by its true body length,
+  with no body for HEAD, 1xx, 204 and 304. A response that lists the
+  connection option `close` anywhere in its fields, the server's own or the
+  handler's, in any case and in any list, is the last one (RFC 9112 §9.6:
+  the server must close after it), and every close the server decides
+  itself is announced: the response before it says `Connection: close`
+  (unless the handler called `close_after` after sending, which still
+  closes). `100 Continue` is sent at most once per request, before its
+  final response, only when it asked with `Expect: 100-continue`.
+- **The output queue hands the event loop exactly the queued bytes, in
+  order** (`out.rs`, `Out`): `slices` and `slices_io` return the start of
+  the unwritten bytes (all of them if the slices fit), a `sendfile` range
+  is the sealed file's copy of exactly the next bytes, and `advance` moves
+  past exactly what was written, across owned bytes and shared bodies.
 - **Persistence is RFC 9112 §9.3's** (`persist.rs`, `Core::done`). A
   request persists unless a `Connection` field lists `close`; an
   HTTP/1.0 request only if one lists `keep-alive`; options are the list's
@@ -190,10 +213,6 @@ deviations reads the same head end and framing), and the chunked decoder.
 
 ## What is not proven yet
 
-- **Response order** (`h1.rs`): that each request's response is queued
-  once, in request order, and that a closing response says
-  `Connection: close`. Plain Rust around the verified core (one handler
-  call per request the core hands out); tested in `tests/h1.rs`.
 - **The HTTP/2 engine** (`h2.rs`) around the proven flow-control and
   stream-state modules: SETTINGS,
   PING/GOAWAY and the control-frame flood limit. It only reads frames
@@ -209,8 +228,11 @@ deviations reads the same head end and framing), and the chunked decoder.
   a PING flood end in GOAWAY.
 - **The event loop and the OS shim** (`worker.rs`, `sys/`): trusted, as
   in every server. See [TRUST.md](TRUST.md).
-- `Connection` and `Expect` handling, the `Date` formatter, and the
-  reason-phrase table are plain Rust.
+- The `Date` formatter and the reason-phrase table are plain Rust (both
+  pass the verified checks before they reach the wire, so a bug there
+  cannot split a response). PEM decoding of the TLS certificate and key
+  uses verilith-text's verified base64 decoder; finding the PEM blocks is
+  plain Rust.
 - The static file server around the two proofs (`files.rs`: the
   per-worker cache, Content-Type, ETag and Last-Modified, 304, If-Range,
   301 to a directory's `/`) is plain Rust, tested in `tests/files.rs`
@@ -288,6 +310,36 @@ answered 425 Too Early (RFC 8470) without calling the handler; the
 client sends it again after the handshake. The register is per process,
 so servers on several machines sharing ticket keys should leave 0-RTT
 off.
+
+Encrypted Client Hello (`--ech PUBLIC_NAME [--ech-key FILE]`, off by
+default; RFC 9849): the client encrypts its real ClientHello (server name,
+ALPN) to a key the server publishes, so an on-path observer sees only
+PUBLIC_NAME. The server prints the ECHConfigList to put in the name's DNS
+HTTPS record (`ech=`); FILE holds the 32-byte X25519 key
+(`head -c 32 /dev/urandom > ech.key`) so the record outlives restarts, and
+the certificate must also be valid for PUBLIC_NAME, which a client with
+stale keys authenticates to fetch the new ones. verilith-tls proves how
+ClientHelloInner is rebuilt from the decrypted bytes and the outer one
+and the acceptance signal in ServerHello; HPKE is aws-lc's, trusted. An
+ECH handshake costs the server about 30 µs more (one X25519 and the
+decryption: 77 against 107 µs of server CPU per full handshake, in
+memory, `tls-aws-lc/tests/ech.rs` `ech_server_cost`); GREASE ECH from
+clients with no keys costs nothing measurable.
+
+Client certificates (mutual TLS; `--client-ca PEM
+[--client-cert-required]`, or `TlsOptions::client_auth` with
+`tls::ClientAuth`): the server sends a CertificateRequest and checks the
+chain the client sends against PEM's CAs, and that the client signed the
+handshake with the leaf's key. verilith-tls proves the check: each
+certificate parses, is valid now and fit for client authentication, each
+is issued (names and signature) by the next, the last by a configured CA,
+within 8 certificates (verilith-tls README, "client authentication");
+signature verification and the clock are aws-lc's and the system's,
+trusted. A handler sees the leaf in `Request::client_certificate()` (DER;
+`None` for a client that sent none, when certificates are optional). With
+client certificates on, connections are never resumed and take no 0-RTT
+data, so every request's identity is from its own connection's
+handshake. HTTP/3 does not ask for client certificates.
 
 Connection setup (`h1-close`): accepting with `TCP_DEFER_ACCEPT` (the
 request arrives with the connection, one wakeup instead of two),

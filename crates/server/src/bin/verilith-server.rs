@@ -2,6 +2,7 @@
 //!
 //!   verilith-server --threads N --http PORT [--h2c PORT] [--root DIR] [--protocols]
 //!                   [--tls PORT --cert PEM --key PEM]   (built with --features tls)
+//!                   [--client-ca PEM [--client-cert-required]]  (mutual TLS)
 //!                   [--tls-backend verilith|rustls]     (rustls: --features tls-rustls)
 //!                   [--h3 PORT --cert PEM --key PEM]    (UDP; built with --features h3)
 //!                   [--h3-backend verilith|quinn]       (QUIC: verilith-quic-conn, or quinn-proto)
@@ -64,7 +65,32 @@ fn main() {
             let (cert, key) = (arg(&args, "--cert").expect("--cert"), arg(&args, "--key").expect("--key"));
             let c = match arg(&args, "--tls-backend").as_deref() {
                 // `--early-data N`: take up to N bytes of 0-RTT data.
-                None | Some("verilith") => verilith_server::tls::config_early(&cert, &key, arg(&args, "--early-data").map_or(0, |n| n.parse().unwrap())),
+                // `--ech PUBLIC_NAME [--ech-key FILE]`: Encrypted Client
+                // Hello under PUBLIC_NAME (the certificate must cover it),
+                // the X25519 key the 32 bytes of FILE (else a fresh one).
+                None | Some("verilith") => {
+                    let ech = arg(&args, "--ech").map(|name| {
+                        let k = match arg(&args, "--ech-key") {
+                            Some(f) => verilith_server::tls::EchKeys::from_private_key(1, &std::fs::read(&f).expect("--ech-key"), &name),
+                            None => verilith_server::tls::EchKeys::generate(1, &name),
+                        }
+                        .expect("--ech: a public name of 1 to 255 bytes, and a 32-byte key");
+                        eprintln!("ECHConfigList (DNS HTTPS record ech=): {}", verilith_server::tls::base64_encode(k.config_list()));
+                        std::sync::Arc::new(k)
+                    });
+                    // `--client-ca PEM [--client-cert-required]`: ask clients
+                    // for certificates and check them against PEM's CAs.
+                    let client_auth = arg(&args, "--client-ca").map(|ca| {
+                        let required = args.iter().any(|a| a == "--client-cert-required");
+                        verilith_server::tls::ClientAuth::from_pem(&ca, required).expect("--client-ca")
+                    });
+                    let opts = verilith_server::tls::TlsOptions {
+                        max_early: arg(&args, "--early-data").map_or(0, |n| n.parse().unwrap()),
+                        ech,
+                        client_auth,
+                    };
+                    verilith_server::tls::config_opts(&cert, &key, &opts)
+                }
                 #[cfg(feature = "tls-rustls")]
                 Some("rustls") => verilith_server::tls::rustls_config(&cert, &key),
                 Some(b) => panic!("unknown --tls-backend {b}"),

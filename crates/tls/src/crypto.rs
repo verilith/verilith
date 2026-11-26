@@ -163,6 +163,10 @@ pub uninterp spec fn x509_signed(alg: SpecAlgId, key: SpecSpki, msg: Seq<u8>, si
 /// Whether `sig` is a TLS 1.3 signature with `scheme` (§4.2.3) of `msg` by
 /// the public key `key`, of a type `scheme` allows.
 pub uninterp spec fn tls_signed(scheme: u16, key: SpecSpki, msg: Seq<u8>, sig: Seq<u8>) -> bool;
+/// Whether `pt` is what the server's ECH key for `config_id` opens from
+/// `payload` with HPKE suite `kdf`/`aead`, encapsulated key `enc` and
+/// additional data `aad` (RFC 9849 §7.1, RFC 9180 §5.2).
+pub uninterp spec fn ech_opened(config_id: u8, kdf: u16, aead: u16, enc: Seq<u8>, aad: Seq<u8>, payload: Seq<u8>, pt: Seq<u8>) -> bool;
 
 /// The cryptography a server needs, and its keys.
 pub trait Provider {
@@ -264,6 +268,15 @@ pub trait Provider {
 
     /// The time now, in UTC, for certificate validity periods.
     fn now_utc(&mut self) -> Time;
+    /// ECH (RFC 9849 §7.1): opens `payload` with the server's ECH key for
+    /// `config_id` and HPKE suite `kdf`/`aead` (RFC 9180 SetupBaseR with
+    /// `enc` and the ECHConfig as info, then Open with `aad`), the
+    /// plaintext into `out` (empty); `false` if there is no such key or it
+    /// does not open.
+    fn ech_open(&mut self, config_id: u8, kdf: u16, aead: u16, enc: &[u8], aad: &[u8], payload: &[u8], out: &mut Vec<u8>) -> (r: bool)
+        ensures
+            r ==> ech_opened(config_id, kdf, aead, enc@, aad@, payload@, final(out)@),
+    ;
 }
 
 } // verus!
