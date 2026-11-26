@@ -1,4 +1,5 @@
-//! Trusted primitives (with the CPU-feature wrappers in `cpu.rs`, the only `external_body` functions in this crate):
+//! Primitives. The trusted ones (with the CPU-feature wrappers in `cpu.rs`, the only `external_body` functions in this crate)
+//! are the wild copies `put4`, `put_pairs4` and `extend_from`:
 //! each `ensures` is the spec of the code under it. They copy 16 bytes at a
 //! time where there is room, which may write past the new end of the vector
 //! into its spare capacity and read up to 15 bytes past the end of the
@@ -59,7 +60,6 @@ pub proof fn lemma_kept_refl(a: Seq<u8>, lo: int, hi: int)
 }
 
 /// Grows `v` by `n` bytes (zeros; the spec leaves them unknown).
-#[verifier::external_body]
 #[inline(always)]
 pub fn grow(v: &mut Vec<u8>, n: usize)
     requires
@@ -68,11 +68,13 @@ pub fn grow(v: &mut Vec<u8>, n: usize)
         final(v)@.len() == old(v)@.len() + n,
         final(v)@.subrange(0, old(v)@.len() as int) == old(v)@,
 {
-    v.resize(v.len() + n, 0);
+    v.resize(v.len() + n, 0u8);
+    proof {
+        assert(v@.subrange(0, old(v)@.len() as int) =~= old(v)@);
+    }
 }
 
 /// Writes `src[from..from + n]` at `v[at..at + n]`.
-#[verifier::external_body]
 #[inline(always)]
 pub fn put(v: &mut Vec<u8>, at: usize, src: &[u8], from: usize, n: usize)
     requires
@@ -83,7 +85,14 @@ pub fn put(v: &mut Vec<u8>, at: usize, src: &[u8], from: usize, n: usize)
         kept(old(v)@, final(v)@, at as int, at + n),
         final(v)@.subrange(at as int, at + n) == src@.subrange(from as int, from + n),
 {
-    v[at..at + n].copy_from_slice(&src[from..from + n]);
+    let vl = v.len();
+    let sl = src.len();
+    assert(at + n <= vl && from + n <= sl);
+    v.as_mut_slice()[at..at + n].copy_from_slice(&src[from..from + n]);
+    proof {
+        reveal(kept);
+        assert(v@.subrange(at as int, at + n) =~= src@.subrange(from as int, from + n));
+    }
 }
 
 /// Writes four bytes at `at` with one store.
@@ -138,8 +147,8 @@ pub fn put_pairs4(v: &mut Vec<u8>, at: usize, e: [(u8, u8, u8); 4])
     }
 }
 
-/// Drops the first `cut` bytes of `v`, keeping its buffer.
-#[verifier::external_body]
+/// Drops the first `cut` bytes of `v`, keeping its buffer (what
+/// `drain(..cut)` does: a move down, then a shorter length).
 #[inline(always)]
 pub fn drop_front(v: &mut Vec<u8>, cut: usize)
     requires
@@ -147,7 +156,12 @@ pub fn drop_front(v: &mut Vec<u8>, cut: usize)
     ensures
         final(v)@ == old(v)@.subrange(cut as int, old(v)@.len() as int),
 {
-    v.drain(..cut);
+    let len = v.len();
+    v.as_mut_slice().copy_within(cut..len, 0);
+    v.truncate(len - cut);
+    proof {
+        assert(v@ =~= old(v)@.subrange(cut as int, old(v)@.len() as int));
+    }
 }
 
 /// Appends `s[i..i + n]` to `v`.

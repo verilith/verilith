@@ -18,10 +18,11 @@ at 0.81 to 1.03 times wasmi's time and 1.04 to 1.47 times wasm3's on the
 benchmarks below (the stack interpreter it replaced took 2.5 to 3.4 times
 wasmi's, in an earlier run).
 
-**Verification status.** `cargo verus verify` checks 744 functions with
+**Verification status.** `cargo verus verify` checks 755 functions with
 no errors (about 5 minutes with two threads on a 4-core Linux VM, for
-both a 64-bit and a 32-bit target). The translation to register form (`src/reg.rs`) is marked
-`external_body`: it is untrusted, and only the checker's verdict on its
+both a 64-bit and a 32-bit target). The translation to register form (`src/reg.rs`) is mostly marked
+`external_body` (its small leaf helpers are verified for panics and
+overflow): it is untrusted, and only the checker's verdict on its
 output matters.
 
 ## What is proven

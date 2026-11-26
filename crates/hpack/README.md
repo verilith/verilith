@@ -155,11 +155,11 @@ What the proofs do not cover, and what is done about each:
   and that every symbol round-trips.
 - **`table::static_entry`**: it returns `stable.rs`'s entry `i`, which
   the spec names `static_name(i)` and `static_value(i)`.
-- **The encoder's two `external_body` functions**: `encoder::bytes_eq`
-  (`a == b` on byte slices, a `memcmp`) and `hencode::ready` (a `OnceLock`
-  returns what `hencode::check` computed), the same pattern as the
-  decoder's `huffman::dtab`. The hash index reads 8 bytes at a time with
-  verilith-core's `load_u64_le`.
+- **The encoder's `external_body` function** `hencode::ready` (a
+  `OnceLock` returns what `hencode::check` computed), the same pattern as
+  the decoder's `huffman::dtab`. `encoder::bytes_eq` is verified: it
+  compares 8 bytes at a time with verilith-core's `load_u64_le`, as the
+  hash index reads them.
 - **The statement `spec::block`**, which strings `spec::rep` together over
   a block. It is what `Decoder::feed` computes, but that is not itself a
   theorem here: `feed` is proven against `rep` one representation at a

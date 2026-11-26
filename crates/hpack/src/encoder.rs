@@ -23,6 +23,9 @@ use crate::hencode::enc_ok;
 use crate::sindex::*;
 use crate::spec::*;
 use crate::table::*;
+use verilith_core::prims::load_u64_le;
+#[cfg(verus_only)]
+use verilith_core::prims::le_bytes;
 use vstd::prelude::*;
 
 verus! {
@@ -65,14 +68,71 @@ pub open spec fn fits<'a>(hs: Seq<Header<'a>>) -> bool {
     forall|i: int| 0 <= i < hs.len() ==> #[trigger] hs[i].name@.len() <= MAX_STR && hs[i].value@.len() <= MAX_STR
 }
 
-/// `a == b`. Trusted: slice equality is what it says (a `memcmp`).
-#[verifier::external_body]
+proof fn lemma_le_eq(a: Seq<u8>, b: Seq<u8>, i: int, n: nat)
+    requires
+        0 <= i,
+        i + n <= a.len(),
+        i + n <= b.len(),
+        le_bytes(a, i, n) == le_bytes(b, i, n),
+    ensures
+        forall|j: int| i <= j < i + n ==> a[j] == b[j],
+    decreases n,
+{
+    if n > 0 {
+        let ra = le_bytes(a, i + 1, (n - 1) as nat);
+        let rb = le_bytes(b, i + 1, (n - 1) as nat);
+        let x = a[i] as int;
+        let y = b[i] as int;
+        assert(x == y && ra == rb) by (nonlinear_arith)
+            requires x + 256 * ra == y + 256 * rb, 0 <= x < 256, 0 <= y < 256, ra >= 0, rb >= 0;
+        lemma_le_eq(a, b, i + 1, (n - 1) as nat);
+    }
+}
+
+/// `a == b`, eight bytes at a time (the same code as verilith-qpack's).
 #[inline(always)]
 pub fn bytes_eq(a: &[u8], b: &[u8]) -> (r: bool)
     ensures
         r == (a@ == b@),
 {
-    a == b
+    if a.len() != b.len() {
+        return false;
+    }
+    let n = a.len();
+    let mut i: usize = 0;
+    while n - i >= 8
+        invariant
+            i <= n,
+            n == a@.len(),
+            a@.len() == b@.len(),
+            forall|j: int| 0 <= j < i ==> a@[j] == b@[j],
+        decreases n - i,
+    {
+        if load_u64_le(a, i) != load_u64_le(b, i) {
+            return false;
+        }
+        proof {
+            lemma_le_eq(a@, b@, i as int, 8);
+        }
+        i = i + 8;
+    }
+    while i < n
+        invariant
+            i <= n,
+            n == a@.len(),
+            a@.len() == b@.len(),
+            forall|j: int| 0 <= j < i ==> a@[j] == b@[j],
+        decreases n - i,
+    {
+        if a[i] != b[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    proof {
+        assert(a@ =~= b@);
+    }
+    true
 }
 
 /// Checks `fits`.
