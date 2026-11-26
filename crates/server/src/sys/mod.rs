@@ -86,6 +86,7 @@ unsafe extern "C" {
     fn read(fd: c_int, buf: *mut u8, n: usize) -> isize;
     fn writev(fd: c_int, iov: *const iovec, n: c_int) -> isize;
     fn sendmsg(fd: c_int, msg: *const msghdr, flags: c_int) -> isize;
+    fn recvfrom(fd: c_int, buf: *mut u8, n: usize, flags: c_int, addr: *mut sockaddr_in, len: *mut socklen_t) -> isize;
     fn close(fd: c_int) -> c_int;
     fn openat(dir: c_int, path: *const std::ffi::c_char, flags: c_int, ...) -> c_int;
     fn clock_gettime(clk: c_int, ts: *mut timespec) -> c_int;
@@ -129,6 +130,142 @@ pub fn listen_tcp(addr: [u8; 4], port: u16, reuseport: bool, backlog: i32) -> io
         cvt(listen(fd, backlog))?;
         Ok(fd)
     }
+}
+
+/// A nonblocking UDP socket bound to `addr:port`, with SO_REUSEPORT if
+/// `reuseport` (one per worker on Linux), and large kernel buffers.
+pub fn bind_udp(addr: [u8; 4], port: u16, reuseport: bool) -> io::Result<i32> {
+    unsafe {
+        let fd = cvt(socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK_FLAG | SOCK_CLOEXEC_FLAG, 0))?;
+        set_nonblocking_cloexec(fd)?;
+        let one: c_int = 1;
+        cvt(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one as *const c_int as *const u8, 4))?;
+        if reuseport {
+            cvt(setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &one as *const c_int as *const u8, 4))?;
+        }
+        // Best effort: SO_RCVBUF and SO_SNDBUF, 4 MiB (capped by the
+        // kernel's rmem_max and wmem_max).
+        let big: c_int = 4 << 20;
+        setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &big as *const c_int as *const u8, 4);
+        setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &big as *const c_int as *const u8, 4);
+        let sa = sockaddr_in {
+            #[cfg(target_os = "macos")]
+            sin_len: std::mem::size_of::<sockaddr_in>() as u8,
+            sin_family: AF_INET as _,
+            sin_port: port.to_be(),
+            sin_addr: u32::from_ne_bytes(addr),
+            sin_zero: [0; 8],
+        };
+        if bind(fd, &sa, std::mem::size_of::<sockaddr_in>() as socklen_t) < 0 {
+            let e = io::Error::last_os_error();
+            close(fd);
+            return Err(e);
+        }
+        Ok(fd)
+    }
+}
+
+/// `recvfrom(2)`: one datagram into `buf`, and its sender. Contract: on
+/// `Some((n, ip, port))`, `n <= buf.len()` and `buf[..n]` holds it (cut
+/// short if it was longer). `None`: nothing more to read now.
+#[inline]
+pub fn recv_from(fd: i32, buf: &mut [u8]) -> Option<(usize, [u8; 4], u16)> {
+    loop {
+        let mut sa: sockaddr_in = unsafe { std::mem::zeroed() };
+        let mut len = std::mem::size_of::<sockaddr_in>() as socklen_t;
+        let r = unsafe { recvfrom(fd, buf.as_mut_ptr(), buf.len(), 0, &mut sa, &mut len) };
+        if r >= 0 {
+            if sa.sin_family as c_int != AF_INET {
+                continue;
+            }
+            return Some(((r as usize).min(buf.len()), sa.sin_addr.to_ne_bytes(), u16::from_be(sa.sin_port)));
+        }
+        if io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
+            return None;
+        }
+    }
+}
+
+/// [`recv_from`] into memory not yet initialized (a `BytesMut`'s spare
+/// capacity). Contract: on `Some((n, ..))` the first `n` bytes are
+/// initialized and hold the datagram.
+#[inline]
+pub fn recv_from_uninit(fd: i32, buf: &mut [std::mem::MaybeUninit<u8>]) -> Option<(usize, [u8; 4], u16)> {
+    // SAFETY: recvfrom only writes to the buffer, and `u8` has no
+    // invalid values; nothing reads the bytes past what it wrote.
+    let b = unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len()) };
+    recv_from(fd, b)
+}
+
+/// Sends `buf` to `ip:port` as datagrams of `segment` bytes (the last may
+/// be shorter): one `sendmsg` with UDP_SEGMENT where the kernel has it
+/// and `*gso` is still true, else one per datagram. A kernel that refuses
+/// segmentation turns `*gso` off. Datagrams the socket has no room for are
+/// dropped, as a network would: QUIC recovers them. Returns false if any
+/// was dropped.
+pub fn send_to(fd: i32, buf: &[u8], ip: [u8; 4], port: u16, segment: usize, gso: &mut bool) -> bool {
+    let sa = sockaddr_in {
+        #[cfg(target_os = "macos")]
+        sin_len: std::mem::size_of::<sockaddr_in>() as u8,
+        sin_family: AF_INET as _,
+        sin_port: port.to_be(),
+        sin_addr: u32::from_ne_bytes(ip),
+        sin_zero: [0; 8],
+    };
+    let segment = segment.max(1);
+    let send = |b: &[u8], seg: Option<u16>| -> isize {
+        let iov = iovec { iov_base: b.as_ptr(), iov_len: b.len() };
+        // struct cmsghdr { size_t len; int level; int type; } + a u16,
+        // padded to CMSG_SPACE(2) = 24 bytes on 64-bit Linux.
+        let mut cmsg = [0u64; 3];
+        let mut m = msghdr {
+            msg_name: &sa as *const sockaddr_in as *mut u8,
+            msg_namelen: std::mem::size_of::<sockaddr_in>() as socklen_t,
+            msg_iov: &iov,
+            msg_iovlen: 1,
+            msg_control: std::ptr::null_mut(),
+            msg_controllen: 0,
+            msg_flags: 0,
+        };
+        if let (Some(s), Some(opt)) = (seg, UDP_SEGMENT) {
+            let p = cmsg.as_mut_ptr() as *mut u8;
+            unsafe {
+                *(p as *mut usize) = std::mem::size_of::<usize>() + 8 + 2;
+                *(p.add(std::mem::size_of::<usize>()) as *mut c_int) = SOL_UDP;
+                *(p.add(std::mem::size_of::<usize>() + 4) as *mut c_int) = opt;
+                *(p.add(std::mem::size_of::<usize>() + 8) as *mut u16) = s;
+            }
+            m.msg_control = p;
+            m.msg_controllen = (std::mem::size_of::<usize>() + 16) as _;
+        }
+        loop {
+            let r = unsafe { sendmsg(fd, &m, 0) };
+            if r >= 0 || io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
+                return r;
+            }
+        }
+    };
+    if buf.len() > segment && *gso && UDP_SEGMENT.is_some() && segment <= u16::MAX as usize && std::mem::size_of::<usize>() == 8 {
+        if send(buf, Some(segment as u16)) >= 0 {
+            return true;
+        }
+        let e = io::Error::last_os_error();
+        if e.kind() == io::ErrorKind::WouldBlock {
+            return false;
+        }
+        // EIO or EINVAL: no segmentation offload on this path.
+        *gso = false;
+    }
+    let mut ok = true;
+    for b in buf.chunks(segment) {
+        if send(b, None) < 0 {
+            ok = false;
+            if io::Error::last_os_error().kind() == io::ErrorKind::WouldBlock {
+                break;
+            }
+        }
+    }
+    ok
 }
 
 /// Disables Nagle's algorithm: responses are written whole, once per batch.

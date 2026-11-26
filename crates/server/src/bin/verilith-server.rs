@@ -3,6 +3,7 @@
 //!   verilith-server --threads N --http PORT [--h2c PORT] [--root DIR] [--protocols]
 //!                   [--tls PORT --cert PEM --key PEM]   (built with --features tls)
 //!                   [--tls-backend verilith|rustls]     (rustls: --features tls-rustls)
+//!                   [--h3 PORT --cert PEM --key PEM]    (UDP; built with --features h3)
 //!
 //!   GET /plaintext       "Hello, World!", text/plain
 //!   GET /static/<name>   a file under DIR, read at start; sent with
@@ -31,7 +32,17 @@ fn arg(args: &[String], k: &str) -> Option<String> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--protocols") {
-        println!("{}", if cfg!(feature = "tls-rustls") { "http h2c tls tls-rustls" } else if cfg!(feature = "tls") { "http h2c tls" } else { "http h2c" });
+        let mut p = vec!["http", "h2c"];
+        if cfg!(feature = "tls") {
+            p.push("tls");
+        }
+        if cfg!(feature = "tls-rustls") {
+            p.push("tls-rustls");
+        }
+        if cfg!(feature = "h3") {
+            p.push("h3");
+        }
+        println!("{}", p.join(" "));
         return;
     }
     // `--root DIR` is served under /static/ (verified path resolution,
@@ -52,6 +63,12 @@ fn main() {
                 Some(b) => panic!("unknown --tls-backend {b}"),
             }
             .expect("TLS configuration");
+            (p.parse().unwrap(), c)
+        }),
+        #[cfg(feature = "h3")]
+        h3: arg(&args, "--h3").map(|p| {
+            let (cert, key) = (arg(&args, "--cert").expect("--cert"), arg(&args, "--key").expect("--key"));
+            let c = verilith_server::h3::server_config(&cert, &key, Default::default()).expect("QUIC configuration");
             (p.parse().unwrap(), c)
         }),
         ..Config::default()

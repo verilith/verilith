@@ -708,7 +708,7 @@ enum Action {
 /// `:method`, `:scheme` and `:path` (`:authority` optional; CONNECT is not
 /// supported), no other pseudo-headers, no uppercase names, and no
 /// connection-specific fields (§8.2.2).
-fn request_fields_ok(a: &[u8], fields: &[Header]) -> bool {
+pub(crate) fn request_fields_ok(a: &[u8], fields: &[Header]) -> bool {
     let (mut m, mut s, mut p, mut au) = (0, 0, 0, 0);
     let mut regular = false;
     for f in fields {

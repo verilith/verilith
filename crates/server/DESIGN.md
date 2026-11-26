@@ -287,7 +287,9 @@ in. HTTP/3's own layer is small (frames on QUIC streams, and QPACK, RFC
    the same split-invariance and linear-work theorems, plus QPACK's
    blocked-stream rules), on **quinn-proto** as the QUIC transport.
    quinn-proto is sans I/O, so it slots in as rustls does: trusted, not
-   verified.
+   verified. *(done: `src/h3.rs`, one quinn-proto endpoint per worker on
+   its own SO_REUSEPORT UDP socket, sending with GSO; QPACK without a
+   dynamic table, so no stream ever blocks)*
 2. **Verified QUIC parsing and state**: packet headers, varints, the
    frame types, transport parameters, stream and connection flow control,
    and the stream state machines (RFC 9000 §3), with the same resource
@@ -494,7 +496,8 @@ in `bench/server/results`, and a merge.
 7. **io_uring and kTLS** backends, if the benchmarks show they are needed
    for parity.
 8. **HTTP/3**: QPACK and HTTP/3 framing on quinn-proto, then verified
-   QUIC parsing and state, then GSO/GRO (see [HTTP/3](#http3)).
+   QUIC parsing and state, then GSO/GRO (see [HTTP/3](#http3)). *(first
+   step done; GSO done, GRO and `recvmmsg` left)*
 9. **Reverse proxy.** Upstream HTTP/1.1 with verilith-http's response
    parser: here the smuggling theorem is about two hops of the same
    connection, which is the case it was written for.

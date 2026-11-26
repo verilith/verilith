@@ -5,11 +5,17 @@ use std::io;
 
 pub const AF_INET: c_int = 2;
 pub const SOCK_STREAM: c_int = 1;
+pub const SOCK_DGRAM: c_int = 2;
+pub const SOL_UDP: c_int = 17;
+pub const UDP_SEGMENT: Option<c_int> = None;
+pub const UDP_REUSEPORT_BALANCES: bool = false;
 pub const SOCK_NONBLOCK_FLAG: c_int = 0;
 pub const SOCK_CLOEXEC_FLAG: c_int = 0;
 pub const SOL_SOCKET: c_int = 0xffff;
 pub const SO_REUSEADDR: c_int = 0x4;
 pub const SO_REUSEPORT: c_int = 0x200;
+pub const SO_SNDBUF: c_int = 0x1001;
+pub const SO_RCVBUF: c_int = 0x1002;
 pub const IPPROTO_TCP: c_int = 6;
 pub const TCP_NODELAY: c_int = 1;
 const SO_NOSIGPIPE: c_int = 0x1022;

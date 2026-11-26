@@ -30,6 +30,11 @@ pub struct Config {
     /// A TLS port (h2 and http/1.1 by ALPN), with its configuration.
     #[cfg(feature = "tls")]
     pub tls: Option<(u16, Arc<crate::tls::Config>)>,
+    /// An HTTP/3 port (UDP), with its QUIC configuration.
+    #[cfg(feature = "h3")]
+    pub h3: Option<(u16, Arc<quinn_proto::ServerConfig>)>,
+    #[cfg(feature = "h3")]
+    pub limits3: crate::h3::Limits3,
     /// The `Server` field value.
     pub server: &'static [u8],
     /// Empty polls before a worker sleeps. 0 (the default) sleeps at once;
@@ -50,6 +55,10 @@ impl Default for Config {
             limits: Limits::default(),
             #[cfg(feature = "tls")]
             tls: None,
+            #[cfg(feature = "h3")]
+            h3: None,
+            #[cfg(feature = "h3")]
+            limits3: crate::h3::Limits3::default(),
             server: b"verilith",
             spin: 0,
         }
@@ -58,6 +67,9 @@ impl Default for Config {
 
 /// Listener tokens count down from here; connection tokens are slot indices.
 const LISTENER: u64 = u64::MAX;
+/// The HTTP/3 UDP socket's token.
+#[cfg(feature = "h3")]
+const UDP: u64 = LISTENER - 15;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Proto {
@@ -93,6 +105,13 @@ pub fn serve<H: Handler>(cfg: Config, handler: Arc<H>) -> io::Result<()> {
             Some(v) => v.clone(),
             None => ports.iter().map(|&(p, k)| sys::listen_tcp(cfg.addr, p, true, 65535).map(|fd| (fd, k))).collect::<io::Result<_>>()?,
         };
+        // HTTP/3: a UDP socket per worker where the kernel keeps each
+        // client on one socket; elsewhere worker 0 serves it alone.
+        #[cfg(feature = "h3")]
+        let udp = match &cfg.h3 {
+            Some((p, _)) if sys::UDP_REUSEPORT_BALANCES || i == 0 => Some(sys::bind_udp(cfg.addr, *p, sys::UDP_REUSEPORT_BALANCES)?),
+            _ => None,
+        };
         let cfg = cfg.clone();
         let h = handler.clone();
         let cpu = if cpus.is_empty() { i } else { cpus[i % cpus.len()] };
@@ -100,7 +119,14 @@ pub fn serve<H: Handler>(cfg: Config, handler: Arc<H>) -> io::Result<()> {
             if cfg.pin {
                 sys::pin_to_cpu(cpu);
             }
-            Worker::new(lfd, cfg).and_then(|mut w| w.run(&*h))
+            #[allow(unused_mut)]
+            let mut w = Worker::new(lfd, cfg)?;
+            #[cfg(feature = "h3")]
+            if let (Some(fd), Some((_, qc))) = (udp, &w.cfg.h3) {
+                w.poll.add(fd, UDP, false)?;
+                w.h3 = Some(crate::h3::H3::new(fd, qc.clone(), w.cfg.limits3));
+            }
+            w.run(&*h)
         })?);
     }
     for j in joins {
@@ -189,6 +215,8 @@ struct Worker {
     cfg: Config,
     now: i64,
     ctx: Ctx,
+    #[cfg(feature = "h3")]
+    h3: Option<crate::h3::H3>,
 }
 
 impl Worker {
@@ -200,7 +228,18 @@ impl Worker {
         let now = sys::unix_time();
         let ctx = Ctx::new(cfg.server, &crate::date::imf_fixdate(now))
             .ok_or_else(|| io::Error::other("the Server value is not a valid field value"))?;
-        Ok(Worker { lfds, poll, slots: Vec::new(), free: Vec::new(), spare: Vec::new(), cfg, now, ctx })
+        Ok(Worker {
+            lfds,
+            poll,
+            slots: Vec::new(),
+            free: Vec::new(),
+            spare: Vec::new(),
+            cfg,
+            now,
+            ctx,
+            #[cfg(feature = "h3")]
+            h3: None,
+        })
     }
 
     fn run<H: Handler + ?Sized>(&mut self, h: &H) -> io::Result<()> {
@@ -209,7 +248,15 @@ impl Worker {
         let mut idle = 0u32;
         loop {
             evs.clear();
-            let n = self.poll.wait(if idle < spin { 0 } else { 1000 }, |e| evs.push(e));
+            #[allow(unused_mut)]
+            let mut timeout = if idle < spin { 0 } else { 1000 };
+            #[cfg(feature = "h3")]
+            if let Some(q) = self.h3.as_mut() {
+                if let Some(t) = q.timeout_ms(std::time::Instant::now()) {
+                    timeout = timeout.min(t);
+                }
+            }
+            let n = self.poll.wait(timeout, |e| evs.push(e));
             idle = if n == 0 { idle.saturating_add(1) } else { 0 };
             let t = sys::unix_time();
             if t != self.now {
@@ -219,11 +266,22 @@ impl Worker {
                 }
             }
             for e in &evs {
+                #[cfg(feature = "h3")]
+                if e.token == UDP {
+                    if let Some(q) = self.h3.as_mut() {
+                        q.on_readable(h, &self.ctx);
+                    }
+                    continue;
+                }
                 if e.token > LISTENER - 16 {
                     self.accept_all(h, (LISTENER - e.token) as usize);
                 } else {
                     self.on_event(h, e.token as usize, e.readable, e.writable);
                 }
+            }
+            #[cfg(feature = "h3")]
+            if let Some(q) = self.h3.as_mut() {
+                q.on_timers(h, &self.ctx);
             }
         }
     }
