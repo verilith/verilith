@@ -486,10 +486,10 @@ pub(crate) fn request_fields_ok(a: &[u8], fields: &[Header]) -> bool {
     for f in fields {
         let n = f.name.of(a);
         let v = f.value.of(a);
-        if n.is_empty() || any_word(n, has_upper) {
+        if n.is_empty() || verilith_core::scan::any_upper(n) {
             return false;
         }
-        if any_word(v, has_nul_cr_lf) {
+        if verilith_core::scan::any_nul_cr_lf(v) {
             return false;
         }
         if n[0] == b':' {
@@ -519,66 +519,6 @@ pub(crate) fn request_fields_ok(a: &[u8], fields: &[Header]) -> bool {
         }
     }
     m == 1 && s == 1 && p == 1 && au <= 1
-}
-
-/// Whether `test` finds a byte it looks for in `b`, eight bytes at a time.
-/// `test` is given words of eight bytes (little-endian, the last word
-/// overlapping the one before it), or, when `b` is shorter than eight
-/// bytes, one word of its bytes padded with bytes `test` never matches.
-#[inline(always)]
-fn any_word(b: &[u8], test: fn(u64) -> bool) -> bool {
-    let n = b.len();
-    if n < 8 {
-        // Built in registers (a copy to the stack and a wide load back
-        // stalls store forwarding), padded with 'a': neither uppercase nor
-        // NUL, CR or LF.
-        let pad = (LO * b'a' as u64) << (8 * n);
-        let w = if n >= 4 {
-            let lo = u32::from_le_bytes(b[..4].try_into().unwrap()) as u64;
-            let hi = u32::from_le_bytes(b[n - 4..].try_into().unwrap()) as u64;
-            lo | (hi << (8 * (n - 4)))
-        } else if n > 0 {
-            b[0] as u64 | (b[n / 2] as u64) << (8 * (n / 2)) | (b[n - 1] as u64) << (8 * (n - 1))
-        } else {
-            0
-        };
-        return test(w | pad);
-    }
-    let mut i = 0;
-    while i + 8 < n {
-        if test(u64::from_le_bytes(b[i..i + 8].try_into().unwrap())) {
-            return true;
-        }
-        i += 8;
-    }
-    test(u64::from_le_bytes(b[n - 8..].try_into().unwrap()))
-}
-
-const LO: u64 = 0x0101_0101_0101_0101;
-const HI: u64 = 0x8080_8080_8080_8080;
-
-/// Whether some byte of `x` is zero.
-#[inline(always)]
-fn zero_byte(x: u64) -> bool {
-    x.wrapping_sub(LO) & !x & HI != 0
-}
-
-/// Whether some byte of `w` is NUL, CR or LF (RFC 9113 §8.2.1).
-#[inline(always)]
-fn has_nul_cr_lf(w: u64) -> bool {
-    zero_byte(w) || zero_byte(w ^ (LO * b'\r' as u64)) || zero_byte(w ^ (LO * b'\n' as u64))
-}
-
-/// Whether some byte of `w` is an ASCII uppercase letter: with the top bit
-/// of each byte cleared (so no addition carries into the next byte), a byte
-/// is in `A..=Z` exactly when adding `0x80 - b'A'` sets its top bit and
-/// adding `0x80 - b'Z' - 1` does not; bytes of 0x80 and above are excluded.
-#[inline(always)]
-fn has_upper(w: u64) -> bool {
-    let y = w & !HI;
-    let ge_a = y + LO * (0x80 - b'A' as u64);
-    let gt_z = y + LO * (0x80 - b'Z' as u64 - 1);
-    ge_a & !gt_z & !w & HI != 0
 }
 
 /// Header fields, owned: lowercased names (RFC 9113 §8.2.1) and values,
@@ -645,31 +585,5 @@ impl Hasher for IdHash {
     fn write_u64(&mut self, x: u64) {
         let h = (self.0 ^ x).wrapping_mul(0x9E37_79B9_7F4A_7C15);
         self.0 = h ^ (h >> 29);
-    }
-}
-
-#[cfg(test)]
-mod word_tests {
-    use super::*;
-
-    /// The word-at-a-time scans against byte-at-a-time ones: every byte
-    /// value at every position of every length up to 20, over a background
-    /// of each byte that matches nothing.
-    #[test]
-    fn scans_match_bytewise() {
-        for len in 1..=20usize {
-            // (lengths below 8 take the register path, the rest the word loop)
-            for bg in [b'a', b'-', 0x7f, 0xff, b'0'] {
-                for pos in 0..len {
-                    for c in 0..=255u8 {
-                        let mut b = vec![bg; len];
-                        b[pos] = c;
-                        assert_eq!(any_word(&b, has_upper), b.iter().any(|x| x.is_ascii_uppercase()), "{b:?}");
-                        assert_eq!(any_word(&b, has_nul_cr_lf), b.iter().any(|&x| x == 0 || x == b'\r' || x == b'\n'), "{b:?}");
-                    }
-                }
-            }
-        }
-        assert!(!any_word(b"", has_upper) && !any_word(b"", has_nul_cr_lf));
     }
 }
