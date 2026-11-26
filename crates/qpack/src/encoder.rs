@@ -16,7 +16,8 @@
 use crate::decoder::to_vec;
 use crate::fields::Fields;
 use crate::henc;
-use crate::integer::{self, P2};
+use crate::integer::{self, IntE, P2};
+use crate::strings::EndE;
 #[cfg(verus_only)]
 use crate::integer::lemma_pows;
 use crate::rt::*;
@@ -233,6 +234,117 @@ fn emit_idx(lines: &mut Vec<u8>, base: u64, a: u64, Ghost(t): Ghost<Table>) -> (
     }
 }
 
+/// Every element of `a` is one of `b`.
+pub open spec fn sub(a: Seq<Sent>, b: Seq<Sent>) -> bool {
+    forall|j: int| 0 <= j < a.len() ==> b.contains(#[trigger] a[j])
+}
+
+pub proof fn lemma_drop_stream_sub(sent: Seq<Sent>, s: nat)
+    ensures
+        sub(drop_stream(sent, s), sent),
+    decreases sent.len(),
+{
+    if sent.len() > 0 {
+        let p = sent.drop_last();
+        lemma_drop_stream_sub(p, s);
+        let r = drop_stream(p, s);
+        let r2 = drop_stream(sent, s);
+        assert forall|j: int| 0 <= j < r2.len() implies sent.contains(#[trigger] r2[j]) by {
+            if j < r.len() {
+                assert(p.contains(r[j]));
+                let k = choose|k: int| 0 <= k < p.len() && p[k] == r[j];
+                assert(r2[j] == r[j]);
+                assert(p[k] == sent[k]);
+            } else {
+                assert(r2[j] == sent[sent.len() - 1]);
+            }
+        }
+    }
+}
+
+pub proof fn lemma_remove_sub(sent: Seq<Sent>, i: int)
+    requires
+        0 <= i < sent.len(),
+    ensures
+        sub(sent.remove(i), sent),
+{
+    let r = sent.remove(i);
+    assert forall|j: int| 0 <= j < r.len() implies sent.contains(#[trigger] r[j]) by {
+        let k = if j < i { j } else { j + 1 };
+        assert(r[j] == sent[k]);
+        assert(0 <= k < sent.len());
+        assert(r[j] == sent[k]);
+    }
+}
+
+/// `enc_ok`, and its witness, carry over to fewer sections and a higher
+/// Known Received Count.
+pub proof fn lemma_enc_ok_sub(st: EncState, sent2: Seq<Sent>, krc2: nat, ss: Seq<nat>)
+    requires
+        enc_ok(st),
+        ss.len() <= st.max_blocked,
+        covers(ss, st.sent, st.krc),
+        sub(sent2, st.sent),
+        st.krc <= krc2 <= icount(st.table),
+    ensures
+        enc_ok(EncState { sent: sent2, krc: krc2, ..st }),
+        covers(ss, sent2, krc2),
+{
+    let st2 = EncState { sent: sent2, krc: krc2, ..st };
+    assert forall|j: int| 0 <= j < sent2.len() implies {
+        &&& st.table.dropped <= #[trigger] sent2[j].min_ref
+        &&& 0 < sent2[j].ric <= icount(st.table)
+        &&& (sent2[j].ric > krc2 ==> ss.contains(sent2[j].stream))
+    } by {
+        assert(st.sent.contains(sent2[j]));
+        let k = choose|k: int| 0 <= k < st.sent.len() && st.sent[k] == sent2[j];
+        assert(st.sent[k].min_ref >= st.table.dropped);
+        assert(0 < st.sent[k].ric <= icount(st.table));
+    }
+    assert(covers(ss, sent2, krc2));
+}
+
+pub proof fn lemma_first_of(sent: Seq<Sent>, s: nat, i: int)
+    requires
+        0 <= i < sent.len(),
+        sent[i].stream == s,
+        forall|j: int| 0 <= j < i ==> #[trigger] sent[j].stream != s,
+    ensures
+        first_of(sent, s) == Some(i),
+{
+    let c = choose|c: int| 0 <= c < sent.len() && #[trigger] sent[c].stream == s
+        && forall|j: int| 0 <= j < c ==> #[trigger] sent[j].stream != s;
+    if c < i {
+        assert(sent[c].stream != s);
+    } else if c > i {
+        assert(sent[i].stream != s);
+    }
+}
+
+/// Frames the decoder instruction at the start of `b`.
+fn dframe_x(b: &[u8]) -> (r: EndE)
+    ensures
+        match (r, dframe(b@)) {
+            (EndE::Short, EndR::Short) => true,
+            (EndE::Bad, EndR::Bad) => true,
+            (EndE::Ok(e), EndR::Ok(se)) => e as int == se && 0 < e <= b@.len(),
+            _ => false,
+        },
+{
+    proof {
+        reveal(dframe);
+    }
+    if b.len() == 0 {
+        return EndE::Short;
+    }
+    let n: u8 = if b[0] >= 0x80 { 7 } else { 6 };
+    match integer::decode(b, 0, n) {
+        IntE::Short => EndE::Short,
+        IntE::Bad => EndE::Bad,
+        IntE::Ok(_, e) => EndE::Ok(e),
+    }
+}
+
 /// A QPACK encoder (one per HTTP/3 connection): it writes field sections
 /// and the encoder stream, and reads the peer's decoder stream.
 pub struct Encoder {
@@ -334,7 +446,13 @@ impl Encoder {
             }
         }
         proof {
-            assert(covers(nats(e.risky@), sview(e.sent@), 0));
+            assert(covers(nats(e.risky@), e.state().sent, e.state().krc));
+            assert(e.table.inv());
+            assert(enc_ok(e.state()));
+            assert(erun(empty_table(), e.max_cap as nat, e.es_all@) == Run::Ok(e.table.view(), e.es_all@.len() as int));
+            assert(e.es_all@ == e.taken@ + e.es@);
+            assert(dframe(e.held@) is Short);
+            assert(icount(e.table.view()) <= MAX_INSERTS);
         }
         Some(e)
     }
@@ -527,7 +645,7 @@ impl Encoder {
             assert forall|i: int| 0 <= i < st.sent.len() implies st.table.dropped <= #[trigger] st.sent[i].min_ref by {
                 assert(limit <= old(self).sent@[i].min_ref);
             }
-            assert(covers(nats(self.risky@), sview(self.sent@), self.krc as nat));
+            assert(covers(nats(self.risky@), self.state().sent, self.state().krc));
         }
         true
     }
@@ -866,6 +984,274 @@ impl Encoder {
             }
         }
         false
+    }
+
+    /// Everything but the unacknowledged sections and the Known Received
+    /// Count is as in `o`.
+    pub open spec fn same_but_acks(&self, o: &Encoder) -> bool {
+        &&& self.table.view() == o.table.view()
+        &&& self.table.inv() == o.table.inv()
+        &&& self.max_cap == o.max_cap
+        &&& self.max_blocked == o.max_blocked
+        &&& self.es@ == o.es@
+        &&& self.es_all@ == o.es_all@
+        &&& self.taken@ == o.taken@
+        &&& self.held@ == o.held@
+    }
+
+    /// Applies the decoder instruction `b` (all of it).
+    fn dapply(&mut self, b: &[u8]) -> (r: bool)
+        requires
+            old(self).inv(),
+        ensures
+            match dinst(old(self).state(), b@) {
+                None => !r,
+                Some(st) => r && final(self).state() == st && final(self).inv() && final(self).same_but_acks(old(self)),
+            },
+    {
+        proof {
+            reveal(dinst);
+        }
+        if b.len() == 0 {
+            return false;
+        }
+        let ghost st0 = self.state();
+        let ghost ss = nats(self.risky@);
+        if b[0] >= 0x80 {
+            match integer::decode(b, 0, 7) {
+                IntE::Ok(s, _) => {
+                    let mut i: usize = 0;
+                    let mut found = false;
+                    while i < self.sent.len() && !found
+                        invariant
+                            i <= self.sent@.len(),
+                            found ==> i < self.sent@.len() && self.sent@[i as int].stream == s,
+                            forall|j: int| 0 <= j < i ==> #[trigger] self.sent@[j].stream != s,
+                        decreases self.sent@.len() - i + (if found { 0int } else { 1int }),
+                    {
+                        if self.sent[i].stream == s {
+                            found = true;
+                        } else {
+                            i = i + 1;
+                        }
+                    }
+                    if !found {
+                        proof {
+                            if exists|k: int| 0 <= k < st0.sent.len() && #[trigger] st0.sent[k].stream == s as nat {
+                                let k = choose|k: int| 0 <= k < st0.sent.len() && #[trigger] st0.sent[k].stream == s as nat;
+                                assert(self.sent@[k].stream != s);
+                            }
+                        }
+                        return false;
+                    }
+                    proof {
+                        assert forall|j: int| 0 <= j < i implies #[trigger] st0.sent[j].stream != s as nat by {
+                            assert(self.sent@[j].stream != s);
+                        }
+                        lemma_first_of(st0.sent, s as nat, i as int);
+                        lemma_remove_sub(st0.sent, i as int);
+                    }
+                    let ric = self.sent[i].ric;
+                    let ghost sv = self.sent@;
+                    self.sent.remove(i);
+                    if ric > self.krc {
+                        self.krc = ric;
+                    }
+                    proof {
+                        assert(sview(self.sent@) =~= st0.sent.remove(i as int));
+                        lemma_enc_ok_sub(st0, st0.sent.remove(i as int), self.krc as nat, ss);
+                    }
+                    true
+                },
+                _ => false,
+            }
+        } else if b[0] >= 0x40 {
+            match integer::decode(b, 0, 6) {
+                IntE::Ok(s, _) => {
+                    let mut kept: Vec<SentX> = Vec::new();
+                    let mut i: usize = 0;
+                    proof {
+                        assert(st0.sent.take(0).len() == 0);
+                        assert(sview(kept@) =~= drop_stream(st0.sent.take(0), s as nat));
+                    }
+                    while i < self.sent.len()
+                        invariant
+                            i <= self.sent@.len(),
+                            st0 == old(self).state(),
+                            self.sent@ == old(self).sent@,
+                            sview(kept@) == drop_stream(st0.sent.take(i as int), s as nat),
+                        decreases self.sent@.len() - i,
+                    {
+                        let x = self.sent[i];
+                        proof {
+                            let p = st0.sent.take(i + 1);
+                            assert(p.drop_last() =~= st0.sent.take(i as int));
+                            assert(p.last() == sview(self.sent@)[i as int]);
+                        }
+                        if x.stream != s {
+                            let ghost k0 = kept@;
+                            kept.push(x);
+                            proof {
+                                assert(sview(kept@) =~= sview(k0).push(sview(self.sent@)[i as int]));
+                            }
+                        }
+                        i = i + 1;
+                    }
+                    proof {
+                        assert(st0.sent.take(i as int) =~= st0.sent);
+                        lemma_drop_stream_sub(st0.sent, s as nat);
+                        lemma_enc_ok_sub(st0, drop_stream(st0.sent, s as nat), self.krc as nat, ss);
+                    }
+                    self.sent = kept;
+                    true
+                },
+                _ => false,
+            }
+        } else {
+            match integer::decode(b, 0, 6) {
+                IntE::Ok(n, _) => {
+                    let ic = self.table.icount();
+                    if n == 0 || n > ic - self.krc {
+                        return false;
+                    }
+                    self.krc = self.krc + n;
+                    proof {
+                        assert(sub(st0.sent, st0.sent));
+                        lemma_enc_ok_sub(st0, st0.sent, self.krc as nat, ss);
+                    }
+                    true
+                },
+                _ => false,
+            }
+        }
+    }
+
+    /// Runs the decoder stream `b` (`spec::drun`): the bytes consumed.
+    fn drun_x(&mut self, b: &[u8]) -> (r: Option<usize>)
+        requires
+            old(self).inv(),
+        ensures
+            match drun(old(self).state(), b@) {
+                Run::Bad => r is None,
+                Run::Ok(st, k) => r == Some(k as usize) && final(self).state() == st && final(self).inv()
+                    && final(self).same_but_acks(old(self)),
+            },
+    {
+        let ghost st0 = self.state();
+        let mut pos: usize = 0;
+        proof {
+            assert(b@.subrange(0, b@.len() as int) =~= b@);
+        }
+        loop
+            invariant
+                pos <= b@.len(),
+                self.inv(),
+                self.same_but_acks(old(self)),
+                st0 == old(self).state(),
+                drun(st0, b@) == shift(drun(self.state(), b@.subrange(pos as int, b@.len() as int)), pos as int),
+            decreases b@.len() - pos,
+        {
+            let rest = vstd::slice::slice_subrange(b, pos, b.len());
+            proof {
+                assert(rest@ == b@.subrange(pos as int, b@.len() as int));
+            }
+            match dframe_x(rest) {
+                EndE::Short => {
+                    return Some(pos);
+                },
+                EndE::Bad => {
+                    return None;
+                },
+                EndE::Ok(e) => {
+                    let ins = vstd::slice::slice_subrange(rest, 0, e);
+                    proof {
+                        assert(ins@ == rest@.subrange(0, e as int));
+                    }
+                    if !self.dapply(ins) {
+                        return None;
+                    }
+                    proof {
+                        let r2 = rest@.subrange(e as int, rest@.len() as int);
+                        assert(r2 =~= b@.subrange(pos + e, b@.len() as int));
+                        match drun(self.state(), r2) {
+                            Run::Bad => {},
+                            Run::Ok(_, _) => {},
+                        }
+                    }
+                    pos = pos + e;
+                },
+            }
+        }
+    }
+
+    /// Reads the decoder stream: `input` is its next bytes, after `held`
+    /// (`spec::drun`, from the bytes not yet consumed). By split invariance
+    /// (`lemmas::lemma_drun_split`), however the stream is cut into
+    /// pieces, the encoder ends in the same state. False is
+    /// QPACK_DECODER_STREAM_ERROR.
+    pub fn feed_decoder(&mut self, input: &[u8]) -> (ok: bool)
+        requires
+            old(self).inv(),
+        ensures
+            match drun(old(self).state(), old(self).held@ + input@) {
+                Run::Bad => !ok,
+                Run::Ok(st, k) => ok && final(self).inv() && final(self).state() == st
+                    && final(self).held@ == (old(self).held@ + input@).subrange(k, (old(self).held@.len() + input@.len()) as int)
+                    && final(self).es@ == old(self).es@ && final(self).es_all@ == old(self).es_all@
+                    && final(self).taken@ == old(self).taken@,
+            },
+    {
+        let ghost st0 = self.state();
+        let ghost h0 = self.held@;
+        let ghost all = h0 + input@;
+        if self.held.len() == 0 {
+            proof {
+                assert(all =~= input@);
+            }
+            let k = match self.drun_x(input) {
+                Some(k) => k,
+                None => {
+                    return false;
+                },
+            };
+            proof {
+                lemma_drun_rest(st0, input@);
+            }
+            let rest = vstd::slice::slice_subrange(input, k, input.len());
+            extend(&mut self.held, rest);
+            proof {
+                assert(self.held@ =~= all.subrange(k as int, all.len() as int));
+            }
+        } else {
+            let ghost hl = h0.len();
+            let mut buf: Vec<u8> = Vec::new();
+            core::mem::swap(&mut buf, &mut self.held);
+            proof {
+                reveal(dframe);
+                assert(dframe(self.held@) is Short);
+            }
+            extend(&mut buf, input);
+            proof {
+                assert(buf@ =~= all);
+            }
+            let k = match self.drun_x(buf.as_slice()) {
+                Some(k) => k,
+                None => {
+                    return false;
+                },
+            };
+            proof {
+                lemma_drun_rest(st0, all);
+                lemma_drun_first(st0, all);
+                assert(all.subrange(0, hl as int) =~= h0);
+                lemma_dframe_short_prefix(all, hl as int);
+            }
+            self.held = to_vec(vstd::slice::slice_subrange(buf.as_slice(), k, buf.len()));
+        }
+        proof {
+            assert(dframe(self.held@) is Short);
+        }
+        true
     }
 }
 

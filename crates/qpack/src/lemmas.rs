@@ -408,4 +408,48 @@ pub proof fn lemma_drun_split(st: EncState, a: Seq<u8>, c: Seq<u8>)
     }
 }
 
+pub proof fn lemma_dframe_trunc(x: Seq<u8>, m: int)
+    requires
+        dframe(x) is Ok,
+        dframe(x)->Ok_0 <= m <= x.len(),
+    ensures
+        dframe(x.subrange(0, m)) == dframe(x),
+{
+    reveal(dframe);
+    let y = x.subrange(0, m);
+    lemma_dframe_ext(x, Seq::empty());
+    assert(y[0] == x[0]);
+    let n: nat = if x[0] >= 0x80 { 7 } else { 6 };
+    lemma_int_pos(x, 0, n);
+    lemma_int_trunc(x, m, 0, n);
+}
+
+pub proof fn lemma_dframe_short_prefix(x: Seq<u8>, m: int)
+    requires
+        0 <= m <= x.len(),
+        dframe(x.subrange(0, m)) is Short,
+    ensures
+        dframe(x) matches EndR::Ok(e) ==> e > m,
+{
+    if dframe(x) is Ok && dframe(x)->Ok_0 <= m {
+        lemma_dframe_trunc(x, m);
+    }
+}
+
+pub proof fn lemma_drun_first(st: EncState, b: Seq<u8>)
+    ensures
+        drun(st, b) matches Run::Ok(_, k) ==> (k > 0 ==> (dframe(b) matches EndR::Ok(e) && e <= k)),
+{
+    match dframe(b) {
+        EndR::Ok(e) => {
+            if 0 < e <= b.len() {
+                if let Some(s2) = dinst(st, b.subrange(0, e)) {
+                    lemma_drun_rest(s2, b.subrange(e, b.len() as int));
+                }
+            }
+        },
+        _ => {},
+    }
+}
+
 } // verus!
