@@ -16,6 +16,7 @@ verus_library(
     deps = [
         "//crates/core:core",
         "//crates/h2:h2",
+        "//crates/h3:h3",
         "//crates/hpack:hpack",
         "//crates/http:http",
         "//crates/text:text",

@@ -151,7 +151,15 @@ impl Client {
     /// Sends a request with these fields and body on a new stream, using
     /// `frames` to build its bytes (to send malformed ones).
     fn send_raw(&mut self, bytes: &[u8]) -> StreamId {
-        let id = self.q.streams().open(Dir::Bi).unwrap();
+        let t = Instant::now();
+        let id = loop {
+            if let Some(id) = self.q.streams().open(Dir::Bi) {
+                break id;
+            }
+            // Out of stream credit: wait for the server to grant more.
+            assert!(t.elapsed() < Duration::from_secs(5) && self.lost.is_none(), "no stream credit");
+            self.step();
+        };
         let mut s = self.q.send_stream(id);
         let mut off = 0;
         while off < bytes.len() {
@@ -375,6 +383,111 @@ fn sequential_requests_reuse_stream_state(b: Backend) {
     }
 }
 
+impl Client {
+    /// Opens a unidirectional stream with these bytes; finishes it if
+    /// `fin`.
+    fn send_uni(&mut self, bytes: &[u8], fin: bool) -> StreamId {
+        let id = self.q.streams().open(Dir::Uni).unwrap();
+        assert_eq!(self.q.send_stream(id).write(bytes).unwrap(), bytes.len());
+        if fin {
+            self.q.send_stream(id).finish().unwrap();
+        }
+        id
+    }
+
+    /// Waits for the server to close the connection; its error code.
+    fn closed(&mut self) -> u64 {
+        let t = Instant::now();
+        while self.lost.is_none() {
+            self.step();
+            assert!(t.elapsed() < Duration::from_secs(5), "not closed");
+        }
+        match self.lost.take().unwrap() {
+            quinn_proto::ConnectionError::ApplicationClosed(a) => a.error_code.into_inner(),
+            e => panic!("{e:?}"),
+        }
+    }
+}
+
+/// Content-Length must match the DATA (RFC 9114 §4.1.2), and be a
+/// length.
+fn content_length_checked(b: Backend) {
+    let mut c = Client::connect(b);
+    for (cl, body) in [("5", &b"abc"[..]), ("2", b"abc"), ("x", b"abc"), ("3, 3", b"abc"), ("1", b"")] {
+        let req = c.request_bytes("POST", "/echo", &[("content-length", cl)], body);
+        let id = c.send_raw(&req);
+        assert!(matches!(c.response(id), Got::Reset(0x10e)), "content-length {cl:?} with {} bytes", body.len());
+    }
+    // Two that agree, and one that matches.
+    let req = c.request_bytes("POST", "/echo", &[("content-length", "3"), ("content-length", "3")], b"abc");
+    let id = c.send_raw(&req);
+    assert_eq!(ok(c.response(id)).2, b"abc");
+    let req = c.request_bytes("POST", "/echo", &[("content-length", "3")], b"abc");
+    let id = c.send_raw(&req);
+    assert_eq!(ok(c.response(id)).2, b"abc");
+}
+
+/// Trailers are decoded (for their errors) and not passed on.
+fn trailers_ignored(b: Backend) {
+    let mut c = Client::connect(b);
+    let mut req = c.request_bytes("POST", "/echo", &[], b"hi");
+    let mut f = Fields::new();
+    f.push(b"x-trailer", b"1", false);
+    let mut sec = Vec::new();
+    c.enc.encode(0, &f, &mut sec);
+    req.extend_from_slice(&frames(&sec, &[]));
+    let id = c.send_raw(&req);
+    assert_eq!(ok(c.response(id)).2, b"hi");
+}
+
+/// A second control stream (§6.2.1): H3_STREAM_CREATION_ERROR.
+fn second_control_stream(b: Backend) {
+    let mut c = Client::connect(b);
+    c.send_uni(&[0x00, 0x04, 0x00], false);
+    c.send_uni(&[0x00, 0x04, 0x00], false);
+    assert_eq!(c.closed(), 0x103);
+}
+
+/// The control stream or a QPACK stream ending (§6.2.1, RFC 9204 §4.2):
+/// H3_CLOSED_CRITICAL_STREAM.
+fn critical_stream_closed(b: Backend) {
+    for bytes in [&[0x00u8, 0x04, 0x00][..], &[0x02], &[0x03]] {
+        let mut c = Client::connect(b);
+        c.send_uni(bytes, true);
+        assert_eq!(c.closed(), 0x104, "{bytes:?}");
+    }
+}
+
+/// A stream of an unknown type is ignored (§6.2.3), and the connection
+/// still works.
+fn unknown_uni_stream(b: Backend) {
+    let mut c = Client::connect(b);
+    c.send_uni(&[0x21, 1, 2, 3], true);
+    assert_eq!(ok(c.get("/after")).2, b"GET /after");
+}
+
+/// A client that only sends requests the server refuses is cut off: at
+/// most `2 * max_streams` plus 100 per completed request
+/// (H3_EXCESSIVE_LOAD).
+fn abandoned_requests_flood(b: Backend) {
+    let mut c = Client::connect(b);
+    assert_eq!(ok(c.get("/first")).0, 200);
+    let bad = c.request_bytes("GET", "/", &[("X-Upper", "1")], &[]);
+    for _ in 0..(2 * 256 + 100) {
+        c.send_raw(&bad);
+        c.step();
+    }
+    // Over the budget: the next refusal closes the connection.
+    for _ in 0..16 {
+        if c.lost.is_some() {
+            break;
+        }
+        c.send_raw(&bad);
+        c.step();
+    }
+    assert_eq!(c.closed(), 0x107);
+}
+
 /// Each test, on each backend.
 macro_rules! on {
     ($m:ident, $b:expr, $($t:ident),*) => {
@@ -384,5 +497,5 @@ macro_rules! on {
         }
     };
 }
-on!(quinn, Backend::Quinn, get_and_head, many_streams_one_connection, large_response_body, request_bodies, malformed_requests_are_reset, frame_errors_close_the_connection, sequential_requests_reuse_stream_state);
-on!(verilith, Backend::Verilith, get_and_head, many_streams_one_connection, large_response_body, request_bodies, malformed_requests_are_reset, frame_errors_close_the_connection, sequential_requests_reuse_stream_state);
+on!(quinn, Backend::Quinn, get_and_head, many_streams_one_connection, large_response_body, request_bodies, malformed_requests_are_reset, frame_errors_close_the_connection, sequential_requests_reuse_stream_state, content_length_checked, trailers_ignored, second_control_stream, critical_stream_closed, unknown_uni_stream, abandoned_requests_flood);
+on!(verilith, Backend::Verilith, get_and_head, many_streams_one_connection, large_response_body, request_bodies, malformed_requests_are_reset, frame_errors_close_the_connection, sequential_requests_reuse_stream_state, content_length_checked, trailers_ignored, second_control_stream, critical_stream_closed, unknown_uni_stream, abandoned_requests_flood);
