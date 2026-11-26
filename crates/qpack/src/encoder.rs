@@ -13,6 +13,7 @@
 //! Which representation to use is decided with hints (`Hints`,
 //! `static_find`): hash lookups that are not verified and need not be
 //! right, since every hint is checked, byte for byte, before it is used.
+use crate::decoder::to_vec;
 use crate::fields::Fields;
 use crate::henc;
 use crate::integer::{self, P2};
@@ -207,6 +208,31 @@ pub open spec fn sec_ok(t: Table, base: nat, r: Refs, its: Seq<Item>) -> bool {
 /// Largest Insert Count the encoder goes to, short of `MAX_INT`.
 pub const MAX_INSERTS: u64 = 0x3FFF_FFFF_FFFF_FF00;
 
+/// Writes the Indexed Field Line for entry `a` of `t` (by relative index
+/// below Base, post-base at or above it).
+fn emit_idx(lines: &mut Vec<u8>, base: u64, a: u64, Ghost(t): Ghost<Table>) -> (it: Ghost<Item>)
+    requires
+        abs_ok(t, a as nat),
+        base <= icount(t),
+    ensures
+        item_ok(t, base as nat, it@),
+        iref(it@) == Some(a as nat),
+        it@.field == (Field { name: abs(t, a as nat).0, value: abs(t, a as nat).1, never: false }),
+        final(lines)@ == old(lines)@ + it@.bytes,
+{
+    proof {
+        lemma_p2_vals();
+    }
+    let f = Ghost(Field { name: abs(t, a as nat).0, value: abs(t, a as nat).1, never: false });
+    if a < base {
+        integer::encode(lines, 0x80, 6, base - 1 - a);
+        Ghost(Item { bytes: int_enc(0x80, 6, (base - 1 - a) as nat), field: f@, kind: Kind::IdxRel(a as nat) })
+    } else {
+        integer::encode(lines, 0x10, 4, a - base);
+        Ghost(Item { bytes: int_enc(0x10, 4, (a - base) as nat), field: f@, kind: Kind::IdxPost(a as nat) })
+    }
+}
+
 /// A QPACK encoder (one per HTTP/3 connection): it writes field sections
 /// and the encoder stream, and reads the peer's decoder stream.
 pub struct Encoder {
@@ -383,6 +409,127 @@ impl Encoder {
             i = i + 1;
         }
         m
+    }
+
+    /// The obligations an insert must keep: entry `d` and above stay.
+    pub open spec fn same_but_table(&self, o: &Encoder) -> bool {
+        &&& self.max_cap == o.max_cap
+        &&& self.max_blocked == o.max_blocked
+        &&& self.krc == o.krc
+        &&& self.sent@ == o.sent@
+        &&& self.risky@ == o.risky@
+        &&& self.taken@ == o.taken@
+        &&& self.held@ == o.held@
+    }
+
+    /// Inserts `name: value` (by static name reference `sn`, or with a
+    /// literal name if `sn` is 99), writing the instruction, if it fits and
+    /// evicts nothing at or above `limit` nor anything unacknowledged.
+    fn insert_field(&mut self, name: &[u8], value: &[u8], sn: usize, limit: u64) -> (r: bool)
+        requires
+            old(self).inv(),
+            sn < 99 ==> static_name(sn as int) == name@,
+            name@.len() + value@.len() <= 0x1000_0000,
+            forall|i: int| 0 <= i < old(self).sent@.len() ==> limit <= #[trigger] old(self).sent@[i].min_ref,
+        ensures
+            final(self).inv(),
+            final(self).same_but_table(old(self)),
+            keeps(old(self).table.view(), final(self).table.view()),
+            final(self).table.view().dropped <= limit || final(self).table.view() == old(self).table.view(),
+            r ==> icount(final(self).table.view()) == icount(old(self).table.view()) + 1
+                && abs(final(self).table.view(), icount(old(self).table.view())) == (name@, value@)
+                && final(self).table.view().dropped <= limit,
+            !r ==> final(self).table.view() == old(self).table.view(),
+    {
+        let ghost t0 = self.table.view();
+        proof {
+            assert(keeps(t0, t0));
+        }
+        let es_sz = name.len() as u64 + value.len() as u64 + 32;
+        if es_sz > self.table.cap || self.table.icount() >= MAX_INSERTS {
+            return false;
+        }
+        let d = self.table.dropped_after(es_sz);
+        if d > self.krc || d > limit {
+            return false;
+        }
+        let ghost e0 = self.es@;
+        let ghost mc = self.max_cap as nat;
+        let ghost ent: Entry = (name@, value@);
+        proof {
+            lemma_p2_vals();
+        }
+        let ghost x: Ins;
+        if sn < 99 {
+            integer::encode(&mut self.es, 0xC0, 6, sn as u64);
+            let ghost e1 = self.es@;
+            let (h, raw) = write_str(&mut self.es, 0, 8, value);
+            proof {
+                let ix = int_enc(0xC0, 6, sn as nat);
+                let e2 = self.es@;
+                let bytes = e2.subrange(e0.len() as int, e2.len() as int);
+                assert(e1 == e0 + ix);
+                assert(bytes.subrange(0, ix.len() as int) =~= ix) by {
+                    assert forall|j: int| 0 <= j < ix.len() implies bytes[j] == ix[j] by {
+                        assert(e2.subrange(0, e1.len() as int)[e0.len() + j] == e1[e0.len() + j]);
+                    }
+                }
+                assert(bytes.subrange(ix.len() as int, bytes.len() as int) =~= e2.subrange(e1.len() as int, e2.len() as int));
+                x = Ins { bytes, kind: IKind::InsStatic(sn as nat, h@, raw@), entry: ent };
+                assert(raw@.len() <= str_limit(mc));
+                assert(e2 =~= e0 + bytes) by {
+                    assert forall|j: int| 0 <= j < e0.len() implies e2[j] == e0[j] by {
+                        assert(e2.subrange(0, e1.len() as int)[j] == e1[j]);
+                    }
+                }
+            }
+        } else {
+            let (hn, rn) = write_str(&mut self.es, 0x40, 6, name);
+            let ghost e1 = self.es@;
+            let (hv, rv) = write_str(&mut self.es, 0, 8, value);
+            proof {
+                let e2 = self.es@;
+                let bytes = e2.subrange(e0.len() as int, e2.len() as int);
+                let k = e1.len() - e0.len();
+                assert(bytes.subrange(0, k) =~= e1.subrange(e0.len() as int, e1.len() as int)) by {
+                    assert forall|j: int| 0 <= j < k implies bytes[j] == e1[e0.len() + j] by {
+                        assert(e2.subrange(0, e1.len() as int)[e0.len() + j] == e1[e0.len() + j]);
+                    }
+                }
+                assert(bytes.subrange(k, bytes.len() as int) =~= e2.subrange(e1.len() as int, e2.len() as int));
+                x = Ins { bytes, kind: IKind::InsLit(hn@, rn@, hv@, rv@), entry: ent };
+                assert(str_ok(x.bytes.subrange(0, k), 0x40, 6, x.entry.0, hn@, rn@));
+                assert(e2 =~= e0 + bytes) by {
+                    assert forall|j: int| 0 <= j < e0.len() implies e2[j] == e0[j] by {
+                        assert(e2.subrange(0, e1.len() as int)[j] == e1[j]);
+                    }
+                }
+            }
+        }
+        let ent_x = Ent { name: Rc::new(to_vec(name)), value: Rc::new(to_vec(value)) };
+        proof {
+            assert(ent_x.view() == ent);
+            assert(ins_ok(t0, mc, x));
+            assert(insert(t0, ent) is Some);
+        }
+        let (ok, _) = self.table.insert(ent_x);
+        proof {
+            assert(ok);
+            lemma_erun_ins(t0, mc, x);
+            lemma_erun_cat(empty_table(), mc, self.es_all@, x.bytes, t0, self.table.view());
+            lemma_keeps_apply(t0, x);
+            lemma_evict(t0, esize(ent), t0.cap);
+        }
+        self.es_all = Ghost(self.es_all@ + x.bytes);
+        proof {
+            assert(self.es_all@ =~= self.taken@ + self.es@);
+            let st = self.state();
+            assert forall|i: int| 0 <= i < st.sent.len() implies st.table.dropped <= #[trigger] st.sent[i].min_ref by {
+                assert(limit <= old(self).sent@[i].min_ref);
+            }
+            assert(covers(nats(self.risky@), sview(self.sent@), self.krc as nat));
+        }
+        true
     }
 }
 
