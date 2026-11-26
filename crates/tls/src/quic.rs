@@ -602,7 +602,7 @@ impl<P: Provider> QuicServer<P> {
             Err(code) => return Err(self.fail(code)),
         };
         let (psk, Ghost(resumed)) = match rs {
-            Some((k, g)) => (Some(k), Ghost(Some(g@))),
+            Some((k, g, _)) => (Some(k), Ghost(Some(g@))),
             None => (None, Ghost(None)),
         };
         let p = match prepare(
@@ -618,11 +618,12 @@ impl<P: Provider> QuicServer<P> {
             psk,
             Ghost(resumed),
             Some(self.tp.as_slice()),
+            false,
         ) {
             Ok(p) => p,
             Err(code) => return Err(self.fail(code)),
         };
-        let Prep { sh, fl, c_hs, s_hs, expect, c_ap, s_ap, res, hs: Ghost(hsv) } = p;
+        let Prep { sh, fl, c_hs, s_hs, expect, c_ap, s_ap, res, c_early: _, hs: Ghost(hsv) } = p;
         proof {
             reveal(prep_ok);
         }
@@ -800,14 +801,14 @@ impl<P: Provider> QuicServer<P> {
                             invariant
                                 rm.wf(),
                                 o.len() <= usize::MAX / 4,
-                                out.one_rtt@.len() <= o.len() + 256 * (i as int),
+                                out.one_rtt@.len() <= o.len() + 512 * (i as int),
                                 prefix(o, out.one_rtt@),
                                 out.initial@ == old(out).initial@,
                                 out.handshake@ == old(out).handshake@,
                             decreases k - i,
                         {
                             let ghost o2 = out.one_rtt@;
-                            match make_ticket(&mut self.prov, suite, lifetime, i, &rm) {
+                            match make_ticket(&mut self.prov, suite, lifetime, i, &rm, 0, &[]) {
                                 Some((nst, _)) => {
                                     put(&mut out.one_rtt, nst.as_slice());
                                 },

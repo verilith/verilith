@@ -150,6 +150,8 @@ pub struct Conn2 {
     requests: u64,
     closing: bool,
     limits: Limits2,
+    /// Requests are being read from 0-RTT data (set by the TLS layer).
+    pub(crate) early: bool,
 }
 
 impl Conn2 {
@@ -177,6 +179,7 @@ impl Conn2 {
             requests: 0,
             closing: false,
             limits,
+            early: false,
         };
         // Our SETTINGS, then a connection WINDOW_UPDATE up to our window.
         let params = [
@@ -577,14 +580,18 @@ impl Conn2 {
         };
         let method = get(b":method");
         let target = get(b":path");
-        let request = Request { method, target, minor: 1, buf: a, headers: &s.fields, body: &s.body };
+        let request = Request { method, target, minor: 1, buf: a, headers: &s.fields, body: &s.body, early: self.early };
         // A reused stream keeps its reply's buffers (cleared on close).
         let mut reply = s.reply.take().unwrap_or(Reply { status: 0, fields: HList::default(), body: ReplyBody::None, sent_headers: false, off: 0 });
         reply.sent_headers = false;
         reply.off = 0;
         let mut scratch = Out::new();
         let mut res = Response { out: &mut scratch, ctx, sent: false, close: false, head: method == b"HEAD", h2: Some(&mut reply) };
-        h.handle(&request, &mut res);
+        if self.early && !crate::early_ok(method) {
+            res.too_early();
+        } else {
+            h.handle(&request, &mut res);
+        }
         if !res.sent {
             res.error(500);
         }
