@@ -496,11 +496,15 @@ unsafe fn fill_record(m: &crate::Message, b: &[u8], rec: *mut Rec, flags: c_uint
         let ext_raw = flags & (1 << (sect + 2)) != 0;
         for r in m.records(s) {
             k += 1;
+            // `rdata_spans` walks the message outside the proof. On a
+            // message vdns parsed it finds every record, so these lookups
+            // succeed; if one did not, the call fails with ARES_EBADRESP
+            // instead of panicking across the C ABI.
             let span = |spans: &mut Vec<(usize, usize)>| {
                 if spans.is_empty() {
                     *spans = rdata_spans(b);
                 }
-                spans[k - 1]
+                spans.get(k - 1).copied()
             };
             let raw = !cares_knows(r.rtype) || if base_type(r.rtype) { base_raw } else { ext_raw };
             let t = if raw { RAW_RR } else { r.rtype as c_int };
@@ -520,8 +524,14 @@ unsafe fn fill_record(m: &crate::Message, b: &[u8], rec: *mut Rec, flags: c_uint
             ));
             if raw {
                 check!(ares_dns_rr_set_u16(rr, RAW_RR * 100 + 1, r.rtype));
-                let (off, len) = span(&mut spans);
-                check!(set_bin(rr, RAW_RR * 100 + 2, &b[off..off + len]));
+                let raw_data = match span(&mut spans) {
+                    Some((off, len)) => off.checked_add(len).and_then(|end| b.get(off..end)),
+                    None => None,
+                };
+                match raw_data {
+                    Some(d) => check!(set_bin(rr, RAW_RR * 100 + 2, d)),
+                    None => return ARES_EBADRESP,
+                }
                 continue;
             }
             if opt {
@@ -531,7 +541,7 @@ unsafe fn fill_record(m: &crate::Message, b: &[u8], rec: *mut Rec, flags: c_uint
             }
             match r.data() {
                 Some(d) => check!(fill(rr, t, &d)),
-                None if !rdata_names_ok(b, r.rtype, span(&mut spans).0) => return ARES_EBADNAME,
+                None if span(&mut spans).is_some_and(|(off, _)| !rdata_names_ok(b, r.rtype, off)) => return ARES_EBADNAME,
                 None => return ARES_EBADRESP,
             }
         }
