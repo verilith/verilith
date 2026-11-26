@@ -22,6 +22,7 @@ use verilith_hpack::{Decoder, Encoder, Feed, Header as HHeader};
 use verilith_http::Header;
 use verilith_http::parse::Span;
 
+use crate::flow::{take_data, RecvWindow, SendWindow, MAX_WINDOW};
 use crate::h1::{Ctx, Next, Out};
 use crate::{Handler, Request, Response};
 
@@ -45,7 +46,6 @@ const S_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const S_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const S_MAX_FRAME_SIZE: u16 = 0x5;
 
-const MAX_WINDOW: i64 = (1 << 31) - 1;
 
 /// Limits on one HTTP/2 connection.
 #[derive(Clone, Copy, Debug)]
@@ -86,9 +86,9 @@ struct Stream {
     fields: Vec<Header>,
     body: Vec<u8>,
     /// What we may still send on this stream.
-    send_window: i64,
-    /// Bytes received on this stream since our last WINDOW_UPDATE for it.
-    unacked: u32,
+    send: SendWindow,
+    /// What the peer may still send on this stream.
+    recv: RecvWindow,
     /// The response: an encoded header block, and a body to send.
     reply: Option<Reply>,
 }
@@ -148,11 +148,11 @@ pub struct Conn2 {
     block: Option<Block>,
     /// Peer settings.
     peer_max_frame: u32,
-    peer_initial_window: i64,
+    peer_initial_window: u32,
     /// What we may still send on the connection.
-    conn_send_window: i64,
+    conn_send: SendWindow,
     /// Received on the connection since our last WINDOW_UPDATE.
-    conn_unacked: u32,
+    conn_recv: RecvWindow,
     /// Flood accounting: control frames received, and requests handled.
     control: u64,
     requests: u64,
@@ -162,6 +162,7 @@ pub struct Conn2 {
 
 impl Conn2 {
     pub fn new(limits: Limits2) -> Conn2 {
+        let limits = Limits2 { window: limits.window.min(MAX_WINDOW as u32), ..limits };
         let mut c = Conn2 {
             rbuf: vec![0; 64 * 1024],
             start: 0,
@@ -178,8 +179,8 @@ impl Conn2 {
             block: None,
             peer_max_frame: 16384,
             peer_initial_window: 65535,
-            conn_send_window: 65535,
-            conn_unacked: 0,
+            conn_send: SendWindow::new(65535),
+            conn_recv: RecvWindow::new(limits.window),
             control: 0,
             requests: 0,
             closing: false,
@@ -353,11 +354,13 @@ impl Conn2 {
                     let p = params.get(i);
                     match p.id {
                         S_INITIAL_WINDOW_SIZE => {
-                            let delta = p.value as i64 - self.peer_initial_window;
-                            self.peer_initial_window = p.value as i64;
+                            if p.value as i64 > MAX_WINDOW {
+                                return Action::Conn(FLOW_CONTROL_ERROR); // §6.5.2
+                            }
+                            let delta = p.value as i64 - self.peer_initial_window as i64;
+                            self.peer_initial_window = p.value;
                             for s in self.streams.values_mut() {
-                                s.send_window += delta;
-                                if s.send_window > MAX_WINDOW {
+                                if !s.send.shift(delta) {
                                     return Action::Conn(FLOW_CONTROL_ERROR);
                                 }
                             }
@@ -382,13 +385,11 @@ impl Conn2 {
             Frame::WindowUpdate { stream, increment } => {
                 self.control += 1;
                 if stream == 0 {
-                    self.conn_send_window += increment as i64;
-                    if self.conn_send_window > MAX_WINDOW {
+                    if !self.conn_send.grant(increment) {
                         return Action::Conn(FLOW_CONTROL_ERROR);
                     }
                 } else if let Some(s) = self.streams.get_mut(&stream) {
-                    s.send_window += increment as i64;
-                    if s.send_window > MAX_WINDOW {
+                    if !s.send.grant(increment) {
                         return Action::Rst(stream, FLOW_CONTROL_ERROR);
                     }
                 } else if stream > self.last_stream {
@@ -444,8 +445,8 @@ impl Conn2 {
                     let s = match self.pool.pop() {
                         Some(mut s) => {
                             s.st = St::Open;
-                            s.send_window = self.peer_initial_window;
-                            s.unacked = 0;
+                            s.send = SendWindow::new(self.peer_initial_window);
+                            s.recv = RecvWindow::new(self.limits.window);
                             s
                         }
                         None => Box::new(Stream {
@@ -453,8 +454,8 @@ impl Conn2 {
                             arena: Vec::new(),
                             fields: Vec::new(),
                             body: Vec::new(),
-                            send_window: self.peer_initial_window,
-                            unacked: 0,
+                            send: SendWindow::new(self.peer_initial_window),
+                            recv: RecvWindow::new(self.limits.window),
                             reply: None,
                         }),
                     };
@@ -474,14 +475,10 @@ impl Conn2 {
             }
             Frame::Data { stream, end_stream, pad, data } => {
                 let flow = data.len() as u32 + pad.map_or(0, |p| p as u32 + 1);
-                self.conn_unacked += flow;
-                if self.conn_unacked > self.limits.window {
-                    return Action::Conn(FLOW_CONTROL_ERROR);
-                }
-                if self.conn_unacked >= self.limits.window / 2 {
-                    let inc = self.conn_unacked;
-                    self.conn_unacked = 0;
-                    self.frame(&Frame::WindowUpdate { stream: 0, increment: inc });
+                match self.conn_recv.receive(flow) {
+                    Err(()) => return Action::Conn(FLOW_CONTROL_ERROR),
+                    Ok(Some(inc)) => self.frame(&Frame::WindowUpdate { stream: 0, increment: inc }),
+                    Ok(None) => {}
                 }
                 if flow == 0 && !end_stream {
                     self.control += 1;
@@ -494,10 +491,10 @@ impl Conn2 {
                 if s.st != St::Open {
                     return Action::Rst(stream, STREAM_CLOSED);
                 }
-                s.unacked += flow;
-                if s.unacked > window {
-                    return Action::Rst(stream, FLOW_CONTROL_ERROR);
-                }
+                let update = match s.recv.receive(flow) {
+                    Err(()) => return Action::Rst(stream, FLOW_CONTROL_ERROR),
+                    Ok(u) => u,
+                };
                 if s.body.len() + data.len() > max_body {
                     return Action::Rst(stream, REFUSED_STREAM);
                 }
@@ -506,9 +503,7 @@ impl Conn2 {
                     s.st = St::HalfClosed;
                     return Action::Dispatch(stream);
                 }
-                if s.unacked >= window / 2 {
-                    let inc = s.unacked;
-                    s.unacked = 0;
+                if let Some(inc) = update {
                     self.frame(&Frame::WindowUpdate { stream, increment: inc });
                 }
                 Action::None
@@ -660,7 +655,7 @@ impl Conn2 {
             // DATA frames, as many as the windows allow now.
             loop {
                 let left = body_len - r.off;
-                let n = left.min(max).min(self.conn_send_window.max(0) as usize).min(s.send_window.max(0) as usize);
+                let n = take_data(&mut self.conn_send, &mut s.send, left, max);
                 if n == 0 {
                     break;
                 }
@@ -676,20 +671,18 @@ impl Conn2 {
                     }
                 }
                 r.off += n;
-                self.conn_send_window -= n as i64;
-                s.send_window -= n as i64;
                 if end {
                     break;
                 }
             }
             if r.off == body_len {
                 self.close_stream(id);
-            } else if s.send_window > 0 && self.conn_send_window > 0 {
+            } else if s.send.avail() > 0 && self.conn_send.avail() > 0 {
                 self.ready.push_back(id);
             } else {
                 // Blocked on a window: retried when a WINDOW_UPDATE arrives.
                 self.ready.push_back(id);
-                if self.conn_send_window <= 0 {
+                if self.conn_send.avail() == 0 {
                     break;
                 }
             }

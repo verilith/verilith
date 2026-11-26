@@ -13,6 +13,7 @@ pub mod conn;
 pub mod path;
 pub mod range;
 pub mod persist;
+pub mod flow;
 
 #[cfg(not(verus_keep_ghost))]
 pub mod date;

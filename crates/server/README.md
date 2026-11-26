@@ -43,7 +43,7 @@ worker and get a zero-copy view of the request.
 
 ## What is proven
 
-`scripts/verify.sh` (Verus): 129 verified, 0 errors.
+`scripts/verify.sh` (Verus): 137 verified, 0 errors.
 
 - **Requests are exactly the specification's, in order** (`conn.rs`,
   the invariant of `Core`). `first` is the request at the front of a byte
@@ -64,6 +64,13 @@ worker and get a zero-copy view of the request.
   `persists_exec` computes that exactly, and `Core::done` calls it
   itself: the core reads a next request only if the one answered
   persists, whatever the plain Rust around it asks.
+- **HTTP/2 flow control** (`flow.rs`). A send window is always what the
+  peer granted minus what was sent, within ±(2^31 − 1); credit past that
+  is refused (FLOW_CONTROL_ERROR, RFC 9113 §6.9.1), and `take_data`, the
+  only way to spend it, sizes each DATA frame to at most what both the
+  stream's and the connection's windows allow. A receive window catches a
+  peer sending past what we advertised (`unacked <= window` always) and
+  says when a WINDOW_UPDATE is due.
 - **Responses parse back exactly** (`respond::theorem_head_parses`). For
   any status, reason phrase, field lines and framing that pass the checks
   in `respond.rs`, the head `write_head` writes, followed by any bytes at
@@ -114,7 +121,7 @@ deviations reads the same head end and framing), and the chunked decoder.
   once, in request order, and that a closing response says
   `Connection: close`. Plain Rust around the verified core (one handler
   call per request the core hands out); tested in `tests/h1.rs`.
-- **The HTTP/2 engine** (`h2.rs`): stream states, flow control, SETTINGS,
+- **The HTTP/2 engine** (`h2.rs`): stream states, SETTINGS,
   PING/GOAWAY and the control-frame flood limit. It only reads frames
   through verilith-h2's verified parser and header blocks through
   verilith-hpack's verified decoder, and it writes frames with verilith-h2's
