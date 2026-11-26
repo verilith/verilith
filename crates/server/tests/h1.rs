@@ -245,3 +245,19 @@ fn static_bodies_by_file_match_memory() {
         assert!(files > 0);
     }
 }
+
+#[test]
+fn alt_svc_on_every_response() {
+    fn h(_: &Request, res: &mut Response) {
+        let _ = res.send(200, &[], b"ok");
+    }
+    let mut c = Conn::new(Limits::default());
+    let ctx = Ctx::with_alt_svc(b"t", b"d", Some(b"h3=\":443\"; ma=86400")).unwrap();
+    let m = b"GET / HTTP/1.1\r\nHost: x\r\n\r\nGET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+    c.read_buf()[..m.len()].copy_from_slice(m);
+    c.filled(m.len());
+    c.process(&h, &ctx);
+    let out = String::from_utf8(drain(&mut c)).unwrap();
+    assert_eq!(out.matches("Alt-Svc: h3=\":443\"; ma=86400\r\n").count(), 2, "{out}");
+    assert!(Ctx::with_alt_svc(b"t", b"d", Some(b"bad\r\nX: y")).is_none());
+}
