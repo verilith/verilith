@@ -287,15 +287,51 @@ pub fn image_exec(b: &[u8], p: usize, gce: Option<Gce>, room: usize, off: &mut [
             Err(_) => true,
         },
 {
+    image_exec_counted(b, p, gce, room, off, len).0
+}
+
+/// The fixed part of the work charged for one image: zeroing the LZW
+/// decoder's slack twice over (`SLACK`, once allocated and once possibly
+/// written), copying a local colour table, and the header.
+pub open spec fn image_fixed() -> nat {
+    (2 * SLACK + 1000) as nat
+}
+
+/// `image_exec`, also returning the work done and the pixel bytes it
+/// allocated (`(work, px)`): at most `12 * (e - p) + 5 * px +
+/// image_fixed()` for an image that ends at `e`, and `px` is at most
+/// `room`, and is the image's size when it decodes.
+pub fn image_exec_counted(b: &[u8], p: usize, gce: Option<Gce>, room: usize, off: &mut [u32], len: &mut [u32]) -> (r: (Result<(Frame, usize), Error>, Ghost<(nat, nat)>))
+    requires
+        p <= b@.len(),
+        old(off)@.len() == MAX_CODES,
+        old(len)@.len() == MAX_CODES,
+    ensures
+        final(off)@.len() == MAX_CODES,
+        final(len)@.len() == MAX_CODES,
+        match r.0 {
+            Ok((f, e)) => image_at(b@, p as int, gce_view(gce)) == Some((f.view(), e as int))
+                && f.pixels@.len() <= room && p < e <= b@.len(),
+            Err(Error::Invalid) => image_at(b@, p as int, gce_view(gce)) is None,
+            Err(_) => true,
+        },
+        r.1@.1 <= room,
+        r.1@.0 <= 12 * (b@.len() - p) + 5 * r.1@.1 + image_fixed(),
+        r.0 matches Ok((f, e)) ==> {
+            &&& r.1@.0 <= 12 * (e - p) + 5 * r.1@.1 + image_fixed()
+            &&& r.1@.1 == f.pixels@.len()
+            &&& p + 11 <= e
+        },
+{
     if b.len() - p < 9 {
-        return Err(Error::Invalid);
+        return (Err(Error::Invalid), Ghost((0, 0)));
     }
     let w = le16_exec(b, p + 4);
     let h = le16_exec(b, p + 6);
     let flags = get(b, p + 8);
     let n = flagged_table_len(flags);
     if w == 0 || h == 0 {
-        return Err(Error::Invalid);
+        return (Err(Error::Invalid), Ghost((0, 0)));
     }
     proof {
         lemma_mul_inequality(w as int, 65535, h as int);
@@ -304,41 +340,49 @@ pub fn image_exec(b: &[u8], p: usize, gce: Option<Gce>, room: usize, off: &mut [
     }
     let px = w as u64 * h as u64;
     if px > 0x7fff_ffff {
-        return Err(Error::Invalid);
+        return (Err(Error::Invalid), Ghost((0, 0)));
     }
     let need = px as usize;
     if b.len() - p - 9 <= n {
-        return Err(Error::Invalid);
+        return (Err(Error::Invalid), Ghost((0, 0)));
     }
     let c = p + 9 + n;
     let m = get(b, c);
     if m < 2 || m > 8 {
-        return Err(Error::Invalid);
+        return (Err(Error::Invalid), Ghost((0, 0)));
     }
-    let e = match skip_blocks(b, c + 1) {
-        Some(e) => e,
-        None => return Err(Error::Invalid),
+    let (e, Ghost(w1)) = match skip_blocks(b, c + 1) {
+        (Some(e), g) => (e, g),
+        (None, g) => return (Err(Error::Invalid), Ghost((g@, 0))),
     };
     if need > room {
-        return Err(Error::TooLarge);
+        return (Err(Error::TooLarge), Ghost((w1, 0)));
     }
     proof {
         lemma_sub_blocks_end(b@, c + 1);
         lemma_mul_inequality(1, w as int, h as int);
     }
-    let data = gather(b, c + 1, e);
+    let (data, Ghost(w2)) = gather(b, c + 1, e);
     let mut out = match alloc_zeroed(need + SLACK) {
         Some(v) => v,
-        None => return Err(Error::OutOfMemory),
+        None => return (Err(Error::OutOfMemory), Ghost((w1 + w2, need as nat))),
     };
-    if !lzw_exec(data.as_slice(), m, need, out.as_mut_slice(), off, len) {
-        return Err(Error::Invalid);
+    let ghost w3: nat = (w1 + w2 + need + SLACK) as nat;
+    let (ok, Ghost(w4)) = lzw_exec(data.as_slice(), m, need, out.as_mut_slice(), off, len);
+    if !ok {
+        return (Err(Error::Invalid), Ghost((w3 + w4, need as nat)));
     }
     out.truncate(need);
+    let ghost mut w5: nat = 0;
     let pixels = if flags & 0x40 != 0 {
         match deinterlace_exec(out.as_slice(), w as usize, h as usize) {
-            Some(v) => v,
-            None => return Err(Error::OutOfMemory),
+            (Some(v), g) => {
+                proof {
+                    w5 = g@;
+                }
+                v
+            },
+            (None, g) => return (Err(Error::OutOfMemory), Ghost((w3 + w4 + g@, need as nat))),
         }
     } else {
         out
@@ -366,7 +410,7 @@ pub fn image_exec(b: &[u8], p: usize, gce: Option<Gce>, room: usize, off: &mut [
         let d = deinterlace(out@, w as nat, h as nat);
         assert(f.view().pixels.len() == need);
     }
-    Ok((f, e))
+    (Ok((f, e)), Ghost(((w3 + w4 + w5 + n) as nat, need as nat)))
 }
 
 /// Decodes a GIF file. The images' pixels may take at most `limit` bytes
@@ -383,24 +427,84 @@ pub fn decode(b: &[u8], limit: usize) -> (r: Result<Gif, Error>)
             Err(_) => true,
         },
 {
+    decode_counted(b, limit).0
+}
+
+/// The pixel bytes of the images `f`.
+pub open spec fn pixel_total(f: Seq<Frame>) -> nat
+    decreases f.len(),
+{
+    if f.len() == 0 {
+        0
+    } else {
+        pixel_total(f.drop_last()) + f.last().pixels@.len()
+    }
+}
+
+/// The bound on `decode`'s work for an `n`-byte file whose images take
+/// `px` bytes of pixels: linear in both. The `800 * n` is mostly the fixed
+/// cost of an image (`image_fixed`), which takes at least 12 bytes of the
+/// file.
+pub open spec fn gif_work(n: nat, px: nat) -> nat {
+    800 * n + 5 * px + 2 * image_fixed()
+}
+
+/// The fixed cost of `k` images that take at least 12 bytes each, out of
+/// `n`, is linear in `n`.
+proof fn lemma_gif_work(w: nat, n: nat, px: nat, k: nat)
+    requires
+        12 * k <= n,
+        w <= 12 * n + 5 * px + image_fixed() * k + image_fixed() + 800 + 2 * 4096,
+    ensures
+        w <= gif_work(n, px),
+{
+    assert(image_fixed() == 9192) by (compute_only);
+    assert(9192 * k <= 766 * n) by (nonlinear_arith)
+        requires
+            12 * k <= n,
+    ;
+}
+
+/// `decode`, also returning the work done and the pixel bytes allocated
+/// for images (`(work, px)`). `px` is at most `limit`, and is the size of
+/// the images when the file decodes; the work is at most
+/// `gif_work(b.len(), px)`.
+///
+/// A step is a loop turn or a byte copied, compared or zeroed. The
+/// counters are ghost state, erased at compile time.
+pub fn decode_counted(b: &[u8], limit: usize) -> (r: (Result<Gif, Error>, Ghost<(nat, nat)>))
+    ensures
+        match r.0 {
+            Ok(g) => spec::decode(b@) == Some(g.view()),
+            Err(Error::Invalid) => spec::decode(b@) is None,
+            Err(_) => true,
+        },
+        r.1@.1 <= limit,
+        r.1@.0 <= gif_work(b@.len(), r.1@.1),
+        r.0 matches Ok(g) ==> r.1@.1 == pixel_total(g.frames@),
+{
     let (mut gif, start) = match screen_exec(b) {
         Some(x) => x,
-        None => return Err(Error::Invalid),
+        None => return (Err(Error::Invalid), Ghost((0, 0))),
     };
     let mut off = match alloc_u32(4096) {
         Some(v) => v,
-        None => return Err(Error::OutOfMemory),
+        None => return (Err(Error::OutOfMemory), Ghost((800, 0))),
     };
     let mut len = match alloc_u32(4096) {
         Some(v) => v,
-        None => return Err(Error::OutOfMemory),
+        None => return (Err(Error::OutOfMemory), Ghost((800 + 4096, 0))),
     };
     let ghost s = gif.screen_view();
     let mut p = start;
     let mut gce: Option<Option<Gce>> = None;
     let mut room = limit;
+    // The table colours copied, and the two tables zeroed.
+    let ghost mut work: nat = 800 + 2 * 4096;
+    let ghost mut px: nat = 0;
     proof {
         assert(frames_view(gif.frames@) =~= Seq::empty());
+        assert(start >= 13);
     }
     while p < b.len()
         invariant
@@ -418,6 +522,10 @@ pub fn decode(b: &[u8], limit: usize) -> (r: Result<Gif, Error>)
                 },
                 frames_view(gif.frames@),
             ),
+            px + room == limit,
+            px == pixel_total(gif.frames@),
+            12 * gif.frames@.len() <= p,
+            work <= 12 * p + 5 * px + image_fixed() * gif.frames@.len() + 800 + 2 * 4096,
         decreases b@.len() - p,
     {
         let ghost gv = match gce {
@@ -427,17 +535,28 @@ pub fn decode(b: &[u8], limit: usize) -> (r: Result<Gif, Error>)
         let ghost fv = frames_view(gif.frames@);
         let t = get(b, p);
         if t == 0x3B {
-            if gif.frames.len() > 0 {
-                return Ok(gif);
+            proof {
+                lemma_gif_work(work, b@.len(), px, gif.frames@.len());
             }
-            return Err(Error::Invalid);
+            if gif.frames.len() > 0 {
+                return (Ok(gif), Ghost((work, px)));
+            }
+            return (Err(Error::Invalid), Ghost((work, px)));
         } else if t == 0x21 {
             if b.len() - p <= 2 {
-                return Err(Error::Invalid);
+                proof {
+                    lemma_gif_work(work, b@.len(), px, gif.frames@.len());
+                }
+                return (Err(Error::Invalid), Ghost((work, px)));
             }
-            let e = match skip_blocks(b, p + 2) {
-                Some(e) => e,
-                None => return Err(Error::Invalid),
+            let (e, Ghost(w1)) = match skip_blocks(b, p + 2) {
+                (Some(e), g) => (e, g),
+                (None, g) => {
+                    proof {
+                        lemma_gif_work(work + g@, b@.len(), px, gif.frames@.len());
+                    }
+                    return (Err(Error::Invalid), Ghost((work + g@, px)));
+                },
             };
             proof {
                 lemma_sub_blocks_end(b@, p + 2);
@@ -445,28 +564,54 @@ pub fn decode(b: &[u8], limit: usize) -> (r: Result<Gif, Error>)
             if gce.is_none() && get(b, p + 1) == 0xF9 && get(b, p + 2) != 0 {
                 gce = Some(gce_exec(b, p + 2));
             }
+            proof {
+                work = work + w1 + 10;
+            }
             p = e;
         } else if t == 0x2C {
             let g = match gce {
                 Some(g) => g,
                 None => None,
             };
-            let (f, e) = match image_exec(b, p + 1, g, room, off.as_mut_slice(), len.as_mut_slice()) {
+            let (r1, gw) = image_exec_counted(b, p + 1, g, room, off.as_mut_slice(), len.as_mut_slice());
+            let ghost w1 = gw@.0;
+            let ghost px1 = gw@.1;
+            let (f, e) = match r1 {
                 Ok(x) => x,
-                Err(err) => return Err(err),
+                Err(err) => {
+                    proof {
+                        lemma_gif_work(work + w1, b@.len(), px + px1, gif.frames@.len());
+                    }
+                    return (Err(err), Ghost((work + w1, px + px1)));
+                },
             };
             proof {
                 assert(frames_view(gif.frames@.push(f)) =~= fv.push(f.view()));
+                assert(gif.frames@.push(f).drop_last() =~= gif.frames@);
             }
+            let ghost k = gif.frames@.len();
             room = room - f.pixels.len();
             gif.frames.push(f);
+            proof {
+                assert(image_fixed() * (k + 1) == image_fixed() * k + image_fixed()) by (nonlinear_arith);
+            }
             gce = None;
+            proof {
+                work = work + w1;
+                px = px + px1;
+            }
             p = e;
         } else {
-            return Err(Error::Invalid);
+            proof {
+                lemma_gif_work(work, b@.len(), px, gif.frames@.len());
+            }
+            return (Err(Error::Invalid), Ghost((work, px)));
         }
     }
-    Err(Error::Invalid)
+    proof {
+        lemma_gif_work(work, b@.len(), px, gif.frames@.len());
+    }
+    (Err(Error::Invalid), Ghost((work, px)))
 }
 
 } // verus!
