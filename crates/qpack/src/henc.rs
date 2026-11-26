@@ -23,6 +23,7 @@ use vstd::arithmetic::mul::*;
 use vstd::arithmetic::power2::*;
 #[cfg(verus_only)]
 use vstd::bits::*;
+use verilith_core::prims::extend;
 use vstd::prelude::*;
 
 verus! {
@@ -403,6 +404,104 @@ pub proof fn lemma_dec(b: Seq<u8>, s: Seq<u8>, p: int, pad: nat)
 // The encoder
 // ---------------------------------------------------------------------------
 
+/// Entry `p` of the pair table, for the bytes `a = p % 256` then
+/// `b = p / 256`: 0, or their two codes as one, `c * 32 + l`, when the two
+/// take `l <= 26` bits.
+pub open spec fn pentry(p: int, e: u32) -> bool {
+    let a = p % 256;
+    let b = p / 256;
+    let l = (e % 32) as nat;
+    let c = (e / 32) as nat;
+    e == 0 || {
+        &&& l == hlen(a) + hlen(b)
+        &&& 1 <= l <= 26
+        &&& c == hcode(a) * pow2(hlen(b)) + hcode(b)
+        &&& c < pow2(l)
+    }
+}
+
+pub open spec fn ptab_ok(t: Seq<u32>) -> bool {
+    &&& t.len() == 65536
+    &&& forall|p: int| 0 <= p < 65536 ==> pentry(p, #[trigger] t[p])
+}
+
+fn pentry_for(p: u64) -> (e: u32)
+    requires
+        code_ok(),
+        p < 65536,
+    ensures
+        pentry(p as int, e),
+{
+    let a = (p % 256) as usize;
+    let b = (p / 256) as usize;
+    let la = HUFF_LEN[a] as u64;
+    let lb = HUFF_LEN[b] as u64;
+    let ca = HUFF_CODE[a] as u64;
+    let cb = HUFF_CODE[b] as u64;
+    proof {
+        lemma_sym(a as int);
+        lemma_sym(b as int);
+    }
+    if la + lb > 26 {
+        return 0;
+    }
+    proof {
+        lemma2_to64();
+        lemma_pow2_adds(la as nat, lb as nat);
+        lemma_pow2_strictly_increases((la + lb) as nat, 27);
+        lemma_mul_inequality((ca + 1) as int, pow2(la as nat) as int, pow2(lb as nat) as int);
+        lemma_mul_is_distributive_add_other_way(pow2(lb as nat) as int, ca as int, 1);
+        lemma_u64_shl_is_mul(ca, lb);
+    }
+    let c = (ca << lb) + cb;
+    let l = la + lb;
+    proof {
+        assert(c < 0x400_0000);
+        assert(c * 32 + l < 0x1_0000_0000);
+    }
+    let e = (c * 32 + l) as u32;
+    proof {
+        assert((e as nat) % 32 == l as nat);
+        assert((e as nat) / 32 == c as nat);
+    }
+    e
+}
+
+/// Builds the pair table.
+pub fn build_ptab() -> (t: Vec<u32>)
+    requires
+        code_ok(),
+    ensures
+        ptab_ok(t@),
+{
+    let mut t: Vec<u32> = Vec::with_capacity(65536);
+    let mut p: u64 = 0;
+    while p < 65536
+        invariant
+            p <= 65536,
+            t@.len() == p,
+            code_ok(),
+            forall|q: int| 0 <= q < p ==> pentry(q, #[trigger] t@[q]),
+        decreases 65536 - p,
+    {
+        let e = pentry_for(p);
+        t.push(e);
+        p = p + 1;
+    }
+    t
+}
+
+/// The pair table, built once, or `None` if `check` fails (it does not:
+/// see tests). Trusted: that `OnceLock` returns what the closure computed.
+#[verifier::external_body]
+pub fn ptab() -> (r: Option<&'static [u32]>)
+    ensures
+        r matches Some(t) ==> ptab_ok(t@) && code_ok(),
+{
+    static T: std::sync::OnceLock<Option<Vec<u32>>> = std::sync::OnceLock::new();
+    T.get_or_init(|| if check() { Some(build_ptab()) } else { None }).as_deref()
+}
+
 /// The length of the Huffman encoding of `s`, in bits.
 pub fn bits_of(s: &[u8]) -> (n: u64)
     requires
@@ -522,12 +621,111 @@ fn take_byte(acc: u64, nb: u64) -> (r: (u8, u64))
     (top as u8, acc - (top << rest))
 }
 
+/// Takes the top 32 bits of a window of `nb >= 32` bits.
+#[inline(always)]
+fn take_word(acc: u64, nb: u64) -> (r: (u64, u64))
+    requires
+        32 <= nb < 64,
+        acc < pow2(nb as nat),
+    ensures
+        acc == r.0 as nat * pow2((nb - 32) as nat) + r.1,
+        r.1 < pow2((nb - 32) as nat),
+        r.0 < 0x1_0000_0000,
+{
+    let rest = nb - 32;
+    let top = acc >> rest;
+    let ghost an = acc as nat;
+    let ghost d = pow2(rest as nat);
+    proof {
+        lemma2_to64();
+        lemma_u64_shr_is_div(acc, rest);
+        lemma_pow2_adds(rest as nat, 32);
+        lemma_pow2_pos(rest as nat);
+        lemma_fundamental_div_mod(an as int, d as int);
+        lemma_div_by_multiple_is_strongly_ordered(an as int, (d * 0x1_0000_0000) as int, 0x1_0000_0000, d as int);
+        lemma_mul_is_commutative(d as int, 0x1_0000_0000);
+        lemma_div_multiples_vanish(0x1_0000_0000, d as int);
+        lemma_pow2_strictly_increases(rest as nat, 64);
+        lemma_u64_shl_is_mul(top, rest);
+        lemma_mul_is_commutative(d as int, top as int);
+    }
+    (top, acc - (top << rest))
+}
+
+/// Writes the top four bytes of the `nb`-bit window `acc` (one append),
+/// keeping the encoder's invariant; the result is the window left.
+#[inline(always)]
+fn put_word(out: &mut Vec<u8>, acc: u64, nb: u64, Ghost(z): Ghost<int>, Ghost(o0): Ghost<Seq<u8>>, Ghost(tv): Ghost<nat>, Ghost(tb): Ghost<nat>) -> (r: u64)
+    requires
+        32 <= nb < 64,
+        acc < pow2(nb as nat),
+        z == o0.len(),
+        z <= old(out)@.len(),
+        old(out)@.subrange(0, z) == o0,
+        val(tail(old(out)@, z)) * pow2(nb as nat) + acc == tv,
+        8 * tail(old(out)@, z).len() + nb == tb,
+    ensures
+        z <= final(out)@.len(),
+        final(out)@.subrange(0, z) == o0,
+        r < pow2((nb - 32) as nat),
+        val(tail(final(out)@, z)) * pow2((nb - 32) as nat) + r == tv,
+        8 * tail(final(out)@, z).len() + (nb - 32) == tb,
+{
+    let ghost e0 = tail(out@, z);
+    let ghost o1 = out@;
+    let (w, low) = take_word(acc, nb);
+    let b0 = (w >> 24) as u8;
+    let b1 = ((w >> 16) & 0xff) as u8;
+    let b2 = ((w >> 8) & 0xff) as u8;
+    let b3 = (w & 0xff) as u8;
+    proof {
+        assert(w == (b0 as u64) * 0x100_0000 + (b1 as u64) * 0x1_0000 + (b2 as u64) * 0x100 + (b3 as u64)) by (bit_vector)
+            requires
+                w < 0x1_0000_0000,
+                b0 == (w >> 24) as u8,
+                b1 == ((w >> 16) & 0xff) as u8,
+                b2 == ((w >> 8) & 0xff) as u8,
+                b3 == (w & 0xff) as u8;
+    }
+    let arr: [u8; 4] = [b0, b1, b2, b3];
+    extend(out, &arr);
+    proof {
+        let q = seq![b0, b1, b2, b3];
+        assert(arr@ =~= q);
+        let e1 = e0.push(b0);
+        let e2 = e1.push(b1);
+        let e3 = e2.push(b2);
+        let e4 = e3.push(b3);
+        lemma_val_push(e0, b0);
+        lemma_val_push(e1, b1);
+        lemma_val_push(e2, b2);
+        lemma_val_push(e3, b3);
+        assert(tail(out@, z) =~= e4);
+        assert(out@.subrange(0, z) =~= o0) by {
+            assert forall|j: int| 0 <= j < z implies out@[j] == o0[j] by {
+                assert(out@[j] == o1[j]);
+                assert(o1.subrange(0, z)[j] == o1[j]);
+            }
+        }
+        let r = (nb - 32) as nat;
+        let v0 = val(e0);
+        lemma2_to64();
+        lemma_pow2_adds(r, 32);
+        assert(val(e4) == v0 * 0x1_0000_0000 + w);
+        lemma_mul_is_associative(v0 as int, 0x1_0000_0000, pow2(r) as int);
+        lemma_mul_is_commutative(0x1_0000_0000, pow2(r) as int);
+        lemma_mul_is_distributive_add_other_way(pow2(r) as int, (v0 * 0x1_0000_0000) as int, w as int);
+    }
+    low
+}
+
 /// Appends the Huffman encoding of `s` to `out`: `(hbits(s) + 7) / 8`
 /// bytes that decode to `s`.
 #[verifier::spinoff_prover]
-pub fn encode(s: &[u8], out: &mut Vec<u8>)
+pub fn encode(s: &[u8], out: &mut Vec<u8>, pt: &[u32])
     requires
         code_ok(),
+        ptab_ok(pt@),
         s@.len() <= 0x1_0000_0000,
     ensures
         final(out)@.len() == old(out)@.len() + (hbits(s@) + 7) / 8,
@@ -549,6 +747,7 @@ pub fn encode(s: &[u8], out: &mut Vec<u8>)
         invariant
             i <= s@.len(),
             code_ok(),
+            ptab_ok(pt@),
             z == o0.len(),
             z <= out@.len(),
             out@.subrange(0, z) == o0,
@@ -558,16 +757,50 @@ pub fn encode(s: &[u8], out: &mut Vec<u8>)
             8 * tail(out@, z).len() + nb == hbits(s@.subrange(0, i as int)),
         decreases s@.len() - i,
     {
+        let ghost p0 = s@.subrange(0, i as int);
         let x = s[i];
-        let c = HUFF_CODE[x as usize] as u64;
-        let l = HUFF_LEN[x as usize] as u64;
+        // Two bytes at once when their codes fit the pair table.
+        let mut e: u32 = 0;
+        if s.len() - i >= 2 {
+            let idx = x as usize + 256 * (s[i + 1] as usize);
+            proof {
+                assert(pentry(idx as int, pt@[idx as int]));
+            }
+            e = pt[idx];
+        }
+        let c: u64;
+        let l: u64;
+        let step: usize;
+        if e != 0 {
+            c = (e / 32) as u64;
+            l = (e % 32) as u64;
+            step = 2;
+            proof {
+                let y = s[i + 1];
+                let idx = x as int + 256 * (y as int);
+                assert(idx % 256 == x as int && idx / 256 == y as int);
+                assert(s@.subrange(0, i + 2) =~= p0.push(x).push(y));
+                lemma_push(p0, x);
+                lemma_push(p0.push(x), y);
+                lemma_push_arith(hval(p0), hlen(x as int), hlen(y as int), hcode(x as int), hcode(y as int));
+            }
+        } else {
+            c = HUFF_CODE[x as usize] as u64;
+            l = HUFF_LEN[x as usize] as u64;
+            step = 1;
+            proof {
+                assert(s@.subrange(0, i + 1) =~= p0.push(x));
+                lemma_push(p0, x);
+                lemma_sym(x as int);
+            }
+        }
+        let ghost k = i + step;
+        proof {
+            assert(hval(s@.subrange(0, k as int)) == hval(p0) * pow2(l as nat) + c);
+            assert(hbits(s@.subrange(0, k as int)) == hbits(p0) + l);
+        }
         let ghost a0 = acc as nat;
         let ghost n0 = nb as nat;
-        proof {
-            assert(s@.subrange(0, i + 1) =~= s@.subrange(0, i as int).push(x));
-            lemma_push(s@.subrange(0, i as int), x);
-            lemma_sym(x as int);
-        }
         acc = add_code(acc, nb, c, l);
         nb = nb + l;
         proof {
@@ -576,44 +809,15 @@ pub fn encode(s: &[u8], out: &mut Vec<u8>)
             lemma_mul_is_associative(v0 as int, pow2(n0) as int, pow2(l as nat) as int);
             lemma_mul_is_distributive_add_other_way(pow2(l as nat) as int, (v0 * pow2(n0)) as int, a0 as int);
         }
-        // Bytes go out four or more at a time.
+        // Four bytes go out at a time, a fixed count so the branch
+        // predicts well.
         if nb >= 32 {
-            while nb >= 8
-                invariant
-                    i < s@.len(),
-                    nb < 62,
-                    code_ok(),
-                    z == o0.len(),
-                    z <= out@.len(),
-                    out@.subrange(0, z) == o0,
-                    acc < pow2(nb as nat),
-                    val(tail(out@, z)) * pow2(nb as nat) + acc == hval(s@.subrange(0, i + 1)),
-                    8 * tail(out@, z).len() + nb == hbits(s@.subrange(0, i + 1)),
-                decreases nb,
-            {
-                let ghost e0 = tail(out@, z);
-                let ghost an = acc as nat;
-                let (top, low) = take_byte(acc, nb);
-                proof {
-                    lemma_tail_push(out@, z, top);
-                    lemma_val_push(e0, top);
-                }
-                out.push(top);
-                proof {
-                    let r = (nb - 8) as nat;
-                    lemma_pow2_adds(r, 8);
-                    lemma2_to64();
-                    let v0 = val(e0);
-                    // v0 * 2^nb + acc == (v0 * 256 + top) * 2^r + low
-                    lemma_mul_is_associative(v0 as int, 256, pow2(r) as int);
-                    lemma_mul_is_commutative(256, pow2(r) as int);
-                    lemma_mul_is_distributive_add_other_way(pow2(r) as int, (v0 * 256) as int, top as int);
-                }
-                acc = low;
-                nb = nb - 8;
-            }
+            let ghost tv = hval(s@.subrange(0, k as int));
+            let ghost tb = hbits(s@.subrange(0, k as int));
+            acc = put_word(out, acc, nb, Ghost(z), Ghost(o0), Ghost(tv), Ghost(tb));
+            nb = nb - 32;
         }
-        i = i + 1;
+        i = i + step;
     }
     proof {
         assert(s@.subrange(0, s@.len() as int) =~= s@);

@@ -100,11 +100,12 @@ pub fn bytes_eq(a: &[u8], b: &[u8]) -> (r: bool)
 
 /// Writes the `n`-bit prefix string literal of `s` under `flags`,
 /// Huffman-coding it when that is shorter.
-pub fn write_str(out: &mut Vec<u8>, flags: u8, n: u8, s: &[u8]) -> (r: (Ghost<bool>, Ghost<Seq<u8>>))
+pub fn write_str(out: &mut Vec<u8>, flags: u8, n: u8, s: &[u8], pt: &[u32]) -> (r: (Ghost<bool>, Ghost<Seq<u8>>))
     requires
         2 <= n <= 8,
         (flags as nat) % p2(n as nat) == 0,
         henc::code_ok(),
+        henc::ptab_ok(pt@),
         s@.len() <= 0x1000_0000,
     ensures
         final(out)@.len() >= old(out)@.len(),
@@ -136,7 +137,7 @@ pub fn write_str(out: &mut Vec<u8>, flags: u8, n: u8, s: &[u8]) -> (r: (Ghost<bo
         let fl = flags + hf;
         integer::encode(out, fl, m, hl);
         let ghost o1 = out@;
-        henc::encode(s, out);
+        henc::encode(s, out, pt);
         proof {
             let o2 = out@;
             let ix = int_enc(fl as nat, m as nat, hl as nat);
@@ -396,6 +397,101 @@ fn dframe_x(b: &[u8]) -> (r: EndE)
     }
 }
 
+/// Writes a Literal Field Line with Name Reference to static entry `sn`.
+fn emit_lit_static(lines: &mut Vec<u8>, sn: usize, never: bool, value: &[u8], pt: &[u32], base: u64, Ghost(t0): Ghost<Table>, Ghost(f): Ghost<Field>) -> (it: Ghost<Item>)
+    requires
+        sn < 99,
+        static_name(sn as int) == f.name,
+        f.value == value@,
+        f.never == never,
+        henc::code_ok(),
+        henc::ptab_ok(pt@),
+        value@.len() <= 0x1000_0000,
+    ensures
+        item_ok(t0, base as nat, it@),
+        iref(it@) is None,
+        it@.field == f,
+        final(lines)@ == old(lines)@ + it@.bytes,
+{
+    proof {
+        lemma_p2_vals();
+    }
+    let ghost l0 = lines@;
+        let fl: u8 = if never { 0x70 } else { 0x50 };
+        integer::encode(lines, fl, 4, sn as u64);
+        let ghost l1 = lines@;
+        let (h, raw) = write_str(lines, 0, 8, value, pt);
+        let ghost it: Item;
+        proof {
+            let ix = int_enc(fl as nat, 4, sn as nat);
+            let l2 = lines@;
+            let bytes = l2.subrange(l0.len() as int, l2.len() as int);
+            assert(l1 == l0 + ix);
+            assert(bytes.subrange(0, ix.len() as int) =~= ix) by {
+                assert forall|j: int| 0 <= j < ix.len() implies bytes[j] == ix[j] by {
+                    assert(l2.subrange(0, l1.len() as int)[l0.len() + j] == l1[l0.len() + j]);
+                }
+            }
+            assert(bytes.subrange(ix.len() as int, bytes.len() as int) =~= l2.subrange(l1.len() as int, l2.len() as int));
+            assert(l2 =~= l0 + bytes) by {
+                assert forall|j: int| 0 <= j < l0.len() implies l2[j] == l0[j] by {
+                    assert(l2.subrange(0, l1.len() as int)[j] == l1[j]);
+                }
+            }
+            assert(fl as nat == 0x50 + never_bits(never, 0x20));
+            it = Item { bytes, field: f, kind: Kind::LitStatic(sn as nat, h@, raw@) };
+            assert(item_ok(t0, base as nat, it));
+        }
+        Ghost(it)
+}
+
+/// Writes a Literal Field Line with Literal Name.
+fn emit_lit_lit(lines: &mut Vec<u8>, name: &[u8], never: bool, value: &[u8], pt: &[u32], base: u64, Ghost(t0): Ghost<Table>, Ghost(f): Ghost<Field>) -> (it: Ghost<Item>)
+    requires
+        f.name == name@,
+        f.value == value@,
+        f.never == never,
+        henc::code_ok(),
+        henc::ptab_ok(pt@),
+        name@.len() + value@.len() <= 0x1000_0000,
+    ensures
+        item_ok(t0, base as nat, it@),
+        iref(it@) is None,
+        it@.field == f,
+        final(lines)@ == old(lines)@ + it@.bytes,
+{
+    proof {
+        lemma_p2_vals();
+    }
+    let ghost l0 = lines@;
+        let fl: u8 = if never { 0x30 } else { 0x20 };
+        let (hn, rn) = write_str(lines, fl, 4, name, pt);
+        let ghost l1 = lines@;
+        let (hv, rv) = write_str(lines, 0, 8, value, pt);
+        let ghost it: Item;
+        proof {
+            let l2 = lines@;
+            let bytes = l2.subrange(l0.len() as int, l2.len() as int);
+            let k = l1.len() - l0.len();
+            assert(bytes.subrange(0, k) =~= l1.subrange(l0.len() as int, l1.len() as int)) by {
+                assert forall|j: int| 0 <= j < k implies bytes[j] == l1[l0.len() + j] by {
+                    assert(l2.subrange(0, l1.len() as int)[l0.len() + j] == l1[l0.len() + j]);
+                }
+            }
+            assert(bytes.subrange(k, bytes.len() as int) =~= l2.subrange(l1.len() as int, l2.len() as int));
+            assert(l2 =~= l0 + bytes) by {
+                assert forall|j: int| 0 <= j < l0.len() implies l2[j] == l0[j] by {
+                    assert(l2.subrange(0, l1.len() as int)[j] == l1[j]);
+                }
+            }
+            assert(fl as nat == 0x20 + never_bits(never, 0x10));
+            it = Item { bytes, field: f, kind: Kind::LitLit(hn@, rn@, hv@, rv@) };
+            assert(str_ok(it.bytes.subrange(0, k), 0x20 + never_bits(it.field.never, 0x10), 4, it.field.name, hn@, rn@));
+            assert(item_ok(t0, base as nat, it));
+        }
+        Ghost(it)
+}
+
 /// A QPACK encoder (one per HTTP/3 connection): it writes field sections
 /// and the encoder stream, and reads the peer's decoder stream.
 pub struct Encoder {
@@ -416,6 +512,8 @@ pub struct Encoder {
     /// The start of a decoder instruction that has not fully arrived.
     pub held: Vec<u8>,
     pub hints: Hints,
+    /// The Huffman pair table.
+    pub pt: &'static [u32],
     /// A buffer for field lines, kept between sections.
     pub scratch: Vec<u8>,
     /// The whole encoder stream so far, and the part taken.
@@ -440,6 +538,7 @@ impl Encoder {
         &&& self.table.inv()
         &&& self.max_cap <= CAP_LIMIT
         &&& henc::code_ok()
+        &&& henc::ptab_ok(self.pt@)
         &&& enc_ok(self.state())
         &&& self.risky@.len() <= self.max_blocked
         &&& covers(nats(self.risky@), sview(self.sent@), self.krc as nat)
@@ -456,9 +555,15 @@ impl Encoder {
             r matches Some(e) ==> e.inv() && e.max_cap == max_cap && e.max_blocked == max_blocked
                 && e.taken@ == Seq::<u8>::empty() && e.state().sent.len() == 0,
     {
-        if max_cap > CAP_LIMIT || cap > max_cap || !henc::check() {
+        if max_cap > CAP_LIMIT || cap > max_cap {
             return None;
         }
+        let pt = match henc::ptab() {
+            Some(t) => t,
+            None => {
+                return None;
+            },
+        };
         let mut e = Encoder {
             table: DynTable::new(),
             max_cap,
@@ -469,6 +574,7 @@ impl Encoder {
             es: Vec::new(),
             held: Vec::new(),
             hints: Hints::new(cap),
+            pt,
             scratch: Vec::new(),
             es_all: Ghost(Seq::empty()),
             taken: Ghost(Seq::empty()),
@@ -614,6 +720,7 @@ impl Encoder {
             !r ==> final(self).table.view() == old(self).table.view(),
     {
         let ghost t0 = self.table.view();
+        let pt = self.pt;
         proof {
             assert(keeps(t0, t0));
         }
@@ -635,7 +742,7 @@ impl Encoder {
         if sn < 99 {
             integer::encode(&mut self.es, 0xC0, 6, sn as u64);
             let ghost e1 = self.es@;
-            let (h, raw) = write_str(&mut self.es, 0, 8, value);
+            let (h, raw) = write_str(&mut self.es, 0, 8, value, pt);
             proof {
                 let ix = int_enc(0xC0, 6, sn as nat);
                 let e2 = self.es@;
@@ -656,9 +763,9 @@ impl Encoder {
                 }
             }
         } else {
-            let (hn, rn) = write_str(&mut self.es, 0x40, 6, name);
+            let (hn, rn) = write_str(&mut self.es, 0x40, 6, name, pt);
             let ghost e1 = self.es@;
-            let (hv, rv) = write_str(&mut self.es, 0, 8, value);
+            let (hv, rv) = write_str(&mut self.es, 0, 8, value, pt);
             proof {
                 let e2 = self.es@;
                 let bytes = e2.subrange(e0.len() as int, e2.len() as int);
@@ -729,6 +836,7 @@ impl Encoder {
             final(lines)@ == old(lines)@ + r.1@.bytes,
     {
         let ghost t0 = self.table.view();
+        let pt = self.pt;
         let ghost f = Field { name: name@, value: value@, never };
         proof {
             lemma_p2_vals();
@@ -780,61 +888,12 @@ impl Encoder {
                 return (r2, it);
             }
         }
-        let ghost l0 = lines@;
         if sn < 99 {
-            let fl: u8 = if never { 0x70 } else { 0x50 };
-            integer::encode(lines, fl, 4, sn as u64);
-            let ghost l1 = lines@;
-            let (h, raw) = write_str(lines, 0, 8, value);
-            let ghost it: Item;
-            proof {
-                let ix = int_enc(fl as nat, 4, sn as nat);
-                let l2 = lines@;
-                let bytes = l2.subrange(l0.len() as int, l2.len() as int);
-                assert(l1 == l0 + ix);
-                assert(bytes.subrange(0, ix.len() as int) =~= ix) by {
-                    assert forall|j: int| 0 <= j < ix.len() implies bytes[j] == ix[j] by {
-                        assert(l2.subrange(0, l1.len() as int)[l0.len() + j] == l1[l0.len() + j]);
-                    }
-                }
-                assert(bytes.subrange(ix.len() as int, bytes.len() as int) =~= l2.subrange(l1.len() as int, l2.len() as int));
-                assert(l2 =~= l0 + bytes) by {
-                    assert forall|j: int| 0 <= j < l0.len() implies l2[j] == l0[j] by {
-                        assert(l2.subrange(0, l1.len() as int)[j] == l1[j]);
-                    }
-                }
-                assert(fl as nat == 0x50 + never_bits(never, 0x20));
-                it = Item { bytes, field: f, kind: Kind::LitStatic(sn as nat, h@, raw@) };
-                assert(item_ok(t0, base as nat, it));
-            }
-            (refs, Ghost(it))
+            let it = emit_lit_static(lines, sn, never, value, pt, base, Ghost(t0), Ghost(f));
+            (refs, it)
         } else {
-            let fl: u8 = if never { 0x30 } else { 0x20 };
-            let (hn, rn) = write_str(lines, fl, 4, name);
-            let ghost l1 = lines@;
-            let (hv, rv) = write_str(lines, 0, 8, value);
-            let ghost it: Item;
-            proof {
-                let l2 = lines@;
-                let bytes = l2.subrange(l0.len() as int, l2.len() as int);
-                let k = l1.len() - l0.len();
-                assert(bytes.subrange(0, k) =~= l1.subrange(l0.len() as int, l1.len() as int)) by {
-                    assert forall|j: int| 0 <= j < k implies bytes[j] == l1[l0.len() + j] by {
-                        assert(l2.subrange(0, l1.len() as int)[l0.len() + j] == l1[l0.len() + j]);
-                    }
-                }
-                assert(bytes.subrange(k, bytes.len() as int) =~= l2.subrange(l1.len() as int, l2.len() as int));
-                assert(l2 =~= l0 + bytes) by {
-                    assert forall|j: int| 0 <= j < l0.len() implies l2[j] == l0[j] by {
-                        assert(l2.subrange(0, l1.len() as int)[j] == l1[j]);
-                    }
-                }
-                assert(fl as nat == 0x20 + never_bits(never, 0x10));
-                it = Item { bytes, field: f, kind: Kind::LitLit(hn@, rn@, hv@, rv@) };
-                assert(str_ok(it.bytes.subrange(0, k), 0x20 + never_bits(it.field.never, 0x10), 4, it.field.name, hn@, rn@));
-                assert(item_ok(t0, base as nat, it));
-            }
-            (refs, Ghost(it))
+            let it = emit_lit_lit(lines, name, never, value, pt, base, Ghost(t0), Ghost(f));
+            (refs, it)
         }
     }
 

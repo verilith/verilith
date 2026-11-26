@@ -391,6 +391,18 @@ fn main() {
     let reps: usize = std::env::var("BENCH_REPS").ok().and_then(|r| r.parse().ok()).unwrap_or(200);
     let loads = [("requests", requests(n)), ("responses", responses(n))];
     let settings = [(4096u64, 100u64), (0, 0)];
+    // Warm up (CPU frequency, caches, the Huffman tables) on the first workload.
+    {
+        let secs = &loads[0].1;
+        let vr = v_record(secs, 4096, 100);
+        let lr = l_record(secs, 4096, 100);
+        let fs: Vec<Fields> = secs.iter().map(fields).collect();
+        let flats: Vec<Flat> = secs.iter().map(flat).collect();
+        for _ in 0..reps {
+            black_box(v_time_encode(&fs, &vr, 4096, 100) + v_time_decode(&vr, 4096, 100));
+            black_box(l_time_encode(&flats, &lr, 4096, 100) + l_time_decode(&lr, 4096, 100));
+        }
+    }
     println!("workload\ttable\tlibrary\tbytes/section\tencode ns/section\tdecode ns/section");
     for (name, secs) in &loads {
         let raw: usize = secs.iter().map(|s| s.iter().map(|(n, v)| n.len() + v.len()).sum::<usize>()).sum();
