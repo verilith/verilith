@@ -30,6 +30,17 @@ pub mod spec512;
 pub mod compress512;
 #[doc(hidden)]
 pub mod cpu;
+#[doc(hidden)]
+pub mod isa;
+#[doc(hidden)]
+pub mod isa_ref;
+#[doc(hidden)]
+pub mod sha_lemmas;
+#[doc(hidden)]
+pub mod armv8;
+#[cfg(target_arch = "x86_64")]
+#[doc(hidden)]
+pub mod shani;
 #[cfg(target_arch = "x86_64")]
 #[doc(hidden)]
 pub mod avx2;
