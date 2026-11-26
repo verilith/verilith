@@ -6,8 +6,10 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 //
 // - [`prims`]: the memory primitives with hand-written specs. This one file
-//   (with [`checksum::cpu`] and three wrappers in [`binary64`]) is the
+//   (with three wrappers in [`binary64`]) is the
 //   trusted base; everything else is proven.
+// - [`spare`]: a `Vec`'s spare capacity, and stores into it without a
+//   capacity check (trusted).
 // - [`tail`]: `Tail`, a byte vector appended to without capacity tests,
 //   the room being reserved once and proven enough (trusted).
 // - [`bytes`] and [`cursor`]: fixed-width integers in byte strings, and a
@@ -22,14 +24,12 @@
 // - [`num`]: decimal digits and numbers.
 // - [`binary64`]: IEEE 754 doubles as a model in spec integers, round to
 //   nearest even, and the hardware `*`, `/` and `u64 as f64` (trusted).
-// - [`checksum`]: Adler-32, CRC-32 and CRC-32C.
 // - [`sort`]: a merge sort of positions by a caller's comparison.
 extern crate alloc;
 
 pub mod binary64;
 pub mod bits;
 pub mod bytes;
-pub mod checksum;
 pub mod cursor;
 pub mod htable;
 pub mod huffman;
@@ -37,5 +37,6 @@ pub mod lz;
 pub mod num;
 pub mod prims;
 pub mod sort;
+pub mod spare;
 pub mod tail;
 pub mod utf8;

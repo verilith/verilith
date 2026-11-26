@@ -19,7 +19,8 @@
 // * `lanes`  - single-instruction SIMD specs (the trusted base).
 // * `simd`   - verified byte classification built from them.
 // * `lemmas` - proofs about the spec.
-// * `number` - number conversion (not verified).
+// * `number` - number conversion (verified, with `f64::from_str` for
+//   lexemes of more than 19 significant digits).
 // * `ffi`    - the cJSON-compatible C ABI (not verified), behind the
 //   `cjson` feature.
 // * `native` - the native C API (not verified), behind the `capi`

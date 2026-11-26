@@ -1,0 +1,23 @@
+[package]
+name = "verilith-tls-aws-lc"
+version = "0.1.0"
+edition = "2024"
+description = "The cryptography of verilith-tls (AEAD, key exchange, signatures, random numbers), over aws-lc. Trusted."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/verilith/verilith"
+publish = false
+
+# Not a member of the workspace: aws-lc is C, and the workspace (and Buck)
+# build only Rust. verilith-tls is verified without it.
+[workspace]
+
+[dependencies]
+verilith-tls = { path = "../tls" }
+aws-lc-rs = "1.19"
+
+[dev-dependencies]
+rustls = "0.23"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1

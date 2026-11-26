@@ -1,0 +1,46 @@
+# nginx with HTTP/3 for bench/server (built by h3/build.sh). @VARS@ are
+# filled in by run.py. The same server block as nginx.conf.in, on UDP.
+daemon off;
+master_process on;
+worker_processes @THREADS@;
+worker_cpu_affinity auto;
+pid @RUN@/nginx-quic.pid;
+error_log @RUN@/nginx-quic.error.log error;
+events {
+    worker_connections 65536;
+    use epoll;
+    multi_accept on;
+}
+http {
+    access_log off;
+    server_tokens off;
+    client_body_temp_path @RUN@/body;
+    proxy_temp_path @RUN@/proxy;
+    fastcgi_temp_path @RUN@/fastcgi;
+    uwsgi_temp_path @RUN@/uwsgi;
+    scgi_temp_path @RUN@/scgi;
+    ssl_certificate @CERT@;
+    ssl_certificate_key @KEY@;
+    ssl_protocols TLSv1.3;
+    keepalive_requests 10000000;
+    keepalive_timeout 300s;
+    # GSO batches outgoing datagrams, as quinn and h2o do; no Retry
+    # round trip, as with the others.
+    quic_gso on;
+    quic_retry off;
+    http3_max_concurrent_streams 256;
+    http3_stream_buffer_size 1m;
+    server {
+        # reuseport gives every worker its own socket; the kernel spreads
+        # clients across them by 4-tuple.
+        listen 127.0.0.1:@H3@ quic reuseport;
+        location = /plaintext {
+            default_type text/plain;
+            return 200 "Hello, World!";
+        }
+        location /static/ {
+            alias @ROOT@/;
+            default_type application/octet-stream;
+        }
+    }
+}

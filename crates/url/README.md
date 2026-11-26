@@ -29,10 +29,13 @@ fn main() -> Result<(), verilith_url::compat::ParseError> {
 }
 ```
 
-The verified parser decides whether an input is accepted. When it is
-rejected, the `ParseError` reason comes from a separate diagnostic pass in
-plain Rust: the reason is best effort, the rejection is not. It matches the
-`url` crate's reason on 262 of the 269 WPT inputs both crates reject.
+The verified parser decides whether an input is accepted, and when it is
+rejected, why: the `ParseError` reason is proven to be `spec::parse_why`,
+the branch of the state machine that returned failure (no base URL, an
+empty host, a bad port, or the host parser's IPv6, opaque-host, UTS #46 or
+IPv4 step). It matches the `url` crate's reason on all 269 WPT inputs both
+crates reject. The setters' errors (`set_host` and friends) are still a
+best-effort diagnosis.
 
 The lower-level `verilith_url::Url` exposes the URL Standard's getters (`href`,
 `protocol`, `hostname`, `search`, ...) directly.
@@ -89,6 +92,11 @@ that verilith-url itself produced:
   `try_parse_simple_absolute`): the proof shows that the machine would
   have reached the same record, so the fast path is not trusted, only
   shortcut.
+- **Error reasons.** When parsing fails, `api::explain` returns exactly
+  `spec::parse_why`: the state handlers record why they returned failure
+  (`parse::Fault`), proven to match `spec::run_r`, and `why::host_why_exec`
+  recomputes the host parser's failing step for a rejected host. The
+  `compat` API's `ParseError` is this reason.
 - **Setters.** Each of the Standard's setters (protocol, username,
   password, host, hostname, port, pathname, search, hash) is proven to
   leave exactly the record that the Standard's setter leaves
@@ -145,7 +153,7 @@ that verilith-url itself produced:
   iteration, not a machine instruction: the bound also assumes `Vec::push`
   is amortized O(1) and that the IDNA call is linear (see below).
 
-`cargo verus focus` reports 595 verified, 0 errors. The crates it builds on,
+`cargo verus focus` reports 611 verified, 0 errors. The crates it builds on,
 [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core) and
 [verilith-text](https://github.com/verilith/verilith/tree/main/crates/text), are verified
 as their own crates in this repository. CI (`.github/workflows/ci.yml` at the repository root) verifies the proofs and runs `ci.sh` on every pull request and push to `main` that touches this crate or a crate it depends on.
@@ -157,7 +165,7 @@ as their own crates in this repository. CI (`.github/workflows/ci.yml` at the re
 | Input is a string of Unicode scalar values. | Input is its UTF-8 bytes, one per step. | Every parser decision compares against ASCII, and every percent-encode set contains all non-ASCII code points, so the two agree on valid UTF-8 (argued at the top of `spec.rs`). The Rust API takes `&str`. Through the C API or `parse_bytes`, invalid UTF-8 has no counterpart in the Standard; verilith-url gives the model's bytewise result. |
 | UTS #46 (`domain to ASCII`) for non-ASCII domains, after UTF-8 decode without BOM. | verilith-text's specification of UTS #46 (`spec::domain_to_ascii`), applied to `spec::utf8_decode`: each well-formed sequence becomes its scalar and each maximal subpart of ill-formed UTF-8 becomes U+FFFD, as the Encoding Standard's decoder does. | verilith-text's spec transliterates UTS #46 and is part of verilith-text's trusted base. The decode step is proven: ill-formed input goes to UTS #46 with its U+FFFDs in place, so it fails because verilith-text's table says U+FFFD is disallowed, not because the model says so (tested: `ill_formed_host`). ASCII domains never reach UTS #46 and are fully specified. Passes WPT `toascii.json`. |
 | ToASCII's result may be any length. | A result over 8 bytes per input byte fails (`spec::domain_to_ascii`). | Keeps the parser's output, and so its running time, linear without assuming anything about verilith-text. No input is known to reach the limit: over every code point the largest ratio is 5.67 (U+337F, 3 bytes, becomes 17). |
-| Validation errors are reported. | Not modelled. | They never change the result. |
+| Validation errors are reported. | Not modelled. Instead, when parsing fails, `spec::parse_why` gives the reason, grouped as the `url` crate's `ParseError` (`spec::Why`): `spec::run_r` is `run` with the failing state's reason (`fail_why`, and `host_why` for the host parser), and `why::lemma_run_r` proves the two agree. | Validation errors never change the result. The reasons are this crate's grouping, not the Standard's names. |
 | Non-UTF-8 query encodings (HTML documents in legacy encodings). | The query is always UTF-8. | Matches every non-HTML caller; a browser would need its own query encoder. |
 | Blob URL entries. | Not modelled. | They are a lookup outside URL parsing. |
 | The setters change the URL in place, and keep what the parser changed even when it then returns failure. | `spec::run_url` returns the URL as the failing state found it. | Exact: no state changes the URL in the step that returns failure. |
@@ -186,7 +194,8 @@ as their own crates in this repository. CI (`.github/workflows/ci.yml` at the re
   - `searchparams.rs`: URLSearchParams's list edits (`append`, `set`,
     `remove`, ...) and `sort`. Its parser and serializer are verified.
   - `capi.rs`: the C ABI.
-  - `compat.rs`: the `url`-crate-shaped API and its error diagnosis.
+  - `compat.rs`: the `url`-crate-shaped API. A parse error's reason is
+    the verified `api::explain`; a setter's is a best-effort diagnosis.
 
 ## Testing
 

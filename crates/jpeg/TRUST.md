@@ -152,6 +152,16 @@ about when. In the code it is returned when an allocation fails or when a
 size does not fit in `usize`. A decoder that always returned `OutOfMemory`
 would satisfy the theorem, so that it does not is checked only by tests.
 
+## 6a. The work bound's unit
+
+`decode::decode_counted` bounds the decoder's steps with a ghost counter
+(`work::Meter`). What is assumed is the unit: that a zeroed allocation of
+`n` elements (`alloc_i16`, `alloc_u8`) costs on the order of `n` steps,
+and that a loop whose length the format fixes (64 coefficients, 16 code
+lengths, the rows of one inverse DCT) costs a constant per turn of the
+loop around it. The counter counts
+what the verified loops do; the primitives' cost is assumed.
+
 ## 7. The toolchain
 
 - Verus (`0.2026.11.22.1ce6a59`) and Z3: that a proof Verus accepts is a

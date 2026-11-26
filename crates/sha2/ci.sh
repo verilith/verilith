@@ -11,10 +11,17 @@ test() {
   cargo test --profile "$P"
   cargo test --profile "$P" --features openssl-abi --test openssl --test openssl512
   cargo test --profile "$P" --features digest,digest010,oid --test digest
-  # no_std, on a target with no std at all (the rlib: the staticlib needs a
-  # panic handler), with the digest traits.
-  rustup target add thumbv7em-none-eabihf
-  cargo rustc --lib --crate-type rlib --no-default-features --features digest,digest010,oid --target thumbv7em-none-eabihf
+  # no_std, on targets with no std at all (the rlib: the staticlib needs a
+  # panic handler), with the digest traits. Each in the release profile and
+  # in dev: dev compiles every function, including kernels a release build
+  # drops as dead code, so it is what catches an intrinsic LLVM cannot lower
+  # on a target (x86_64-unknown-none has no SSE registers; see src/cpu.rs).
+  for t in thumbv7em-none-eabihf aarch64-unknown-none x86_64-unknown-none; do
+    rustup target add "$t"
+    for p in "$P" dev; do
+      cargo rustc --profile "$p" --lib --crate-type rlib --no-default-features --features digest,digest010,oid --target "$t"
+    done
+  done
   # The ARMv8 SHA2 kernel, on emulated AArch64 (on an x86 runner; the Arm
   # runner runs it natively above).
   if [ -n "${CI:-}" ] && [ "$(uname -m)" = x86_64 ]; then

@@ -7,15 +7,18 @@
 //! against. The AVX2 and AVX-512 ones require vsimd's CPU-feature
 //! predicate.
 //!
-//! What this file still trusts (`external_body`): the model of a `Vec`'s
-//! capacity, which vstd lacks, with the stores into reserved space
-//! (`append16_spare` among them), and `opaque64`.
+//! What this file still trusts (`external_body`): the two stores of a
+//! vector register into a `Vec`'s reserved space (`append16_spare`,
+//! `append16_spare_neon`), stated with verilith-core's model of capacity
+//! (`verilith_core::spare`), and `opaque64`.
 #[allow(unused_imports)]
 use crate::spec::*;
 use vstd::prelude::*;
 
 // The 16-byte SSE2 wrappers and `bit`, shared with verilith-xml.
 pub use verilith_simd::sse2::*;
+// The model of a `Vec`'s spare capacity, and the stores into it.
+pub use verilith_core::spare::*;
 
 #[cfg(target_arch = "x86_64")]
 use verilith_simd::arch::*;
@@ -158,13 +161,9 @@ pub fn opaque64(x: u64) -> (r: u64)
 }
 
 // ---------------------------------------------------------------------------
-// Vec capacity
+// Vec capacity: verilith-core's model (`verilith_core::spare`), and the
+// two stores of a vector register into reserved space
 // ---------------------------------------------------------------------------
-
-/// How many more elements `v` takes without reallocating. vstd does not
-/// model capacity, so this is left uninterpreted; the three functions
-/// below are its whole contract.
-pub uninterp spec fn spare<T>(v: Vec<T>) -> int;
 
 /// A 16-byte store of the NEON vector `a` into reserved space, keeping the
 /// first `n` bytes. (Off AArch64, where `uint8x16_t` is vsimd's emulation,
@@ -191,124 +190,6 @@ pub fn append16_spare_neon(v: &mut Vec<u8>, a: verilith_simd::neon::uint8x16_t, 
         verilith_simd::neon::vst1q_u8_at(&mut t, 0, a);
         v.extend_from_slice(&t[..n]);
     }
-}
-
-/// `Vec::capacity`: the length plus the spare room.
-#[verifier::external_body]
-#[inline(always)]
-pub fn len_spare<T>(v: &Vec<T>) -> (n: usize)
-    ensures
-        n == v@.len() + spare(*v),
-{
-    v.capacity()
-}
-
-/// `Vec::reserve`.
-#[verifier::external_body]
-#[inline]
-pub fn reserve_spare<T>(v: &mut Vec<T>, n: usize)
-    ensures
-        final(v)@ == old(v)@,
-        spare(*final(v)) >= n,
-{
-    v.reserve(n)
-}
-
-/// `Vec::reserve` of `n + extra` (which panics, like `reserve` itself
-/// past `isize::MAX`, if the sum overflows).
-#[verifier::external_body]
-#[inline]
-pub fn reserve_spare_plus<T>(v: &mut Vec<T>, n: usize, extra: usize)
-    ensures
-        final(v)@ == old(v)@,
-        spare(*final(v)) >= n + extra,
-{
-    v.reserve(n.checked_add(extra).expect("capacity overflow"))
-}
-
-/// `Vec::push` into reserved space: no capacity check, no reallocation.
-#[verifier::external_body]
-#[inline(always)]
-pub fn push_spare<T>(v: &mut Vec<T>, x: T)
-    requires
-        spare(*old(v)) > 0,
-    ensures
-        final(v)@ == old(v)@.push(x),
-        spare(*final(v)) == spare(*old(v)) - 1,
-{
-    let l = v.len();
-    unsafe {
-        v.as_mut_ptr().add(l).write(x);
-        v.set_len(l + 1);
-    }
-}
-
-/// The four bytes of `x`, least significant first.
-pub open spec fn le4(x: u32) -> Seq<u8> {
-    seq![x as u8, (x >> 8u32) as u8, (x >> 16u32) as u8, (x >> 24u32) as u8]
-}
-
-/// A four-byte store of `x` (little endian) into reserved space, keeping
-/// the first `n` bytes.
-#[verifier::external_body]
-#[inline(always)]
-pub fn append4_spare(v: &mut Vec<u8>, x: u32, n: usize)
-    requires
-        spare(*old(v)) >= 4,
-        n <= 4,
-    ensures
-        final(v)@ == old(v)@ + le4(x).subrange(0, n as int),
-        spare(*final(v)) == spare(*old(v)) - n,
-{
-    let l = v.len();
-    unsafe {
-        (v.as_mut_ptr().add(l) as *mut [u8; 4]).write_unaligned(x.to_le_bytes());
-        v.set_len(l + n);
-    }
-}
-
-/// `s[a..b]` appended into reserved space (a `memcpy`).
-#[verifier::external_body]
-#[inline(always)]
-pub fn append_slice_spare(v: &mut Vec<u8>, s: &[u8], a: usize, b: usize)
-    requires
-        a <= b <= s@.len(),
-        spare(*old(v)) >= b - a,
-    ensures
-        final(v)@ == old(v)@ + s@.subrange(a as int, b as int),
-        spare(*final(v)) == spare(*old(v)) - (b - a),
-{
-    let l = v.len();
-    unsafe {
-        std::ptr::copy_nonoverlapping(s.as_ptr().add(a), v.as_mut_ptr().add(l), b - a);
-        v.set_len(l + (b - a));
-    }
-}
-
-/// `Vec::truncate`, which leaves the spare capacity at least as large.
-#[verifier::external_body]
-#[inline(always)]
-pub fn truncate_spare<T>(v: &mut Vec<T>, n: usize)
-    requires
-        n <= old(v)@.len(),
-    ensures
-        final(v)@ == old(v)@.subrange(0, n as int),
-        spare(*final(v)) >= spare(*old(v)),
-{
-    v.truncate(n)
-}
-
-/// `v[i] = x`, which leaves the capacity alone.
-#[verifier::external_body]
-#[inline(always)]
-pub fn set_spare<T>(v: &mut Vec<T>, i: usize, x: T)
-    requires
-        i < old(v)@.len(),
-    ensures
-        final(v)@ == old(v)@.update(i as int, x),
-        spare(*final(v)) == spare(*old(v)),
-{
-    v[i] = x;
 }
 
 } // verus!

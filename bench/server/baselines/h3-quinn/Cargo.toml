@@ -1,0 +1,26 @@
+[package]
+name = "h3-quinn-hello"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# The HTTP/3 baseline for bench/server written in Rust: the h3 crate on
+# quinn (quinn-proto and quinn-udp, with GSO/GRO), rustls on aws-lc-rs,
+# serving the same routes as every other server in the comparison.
+
+[dependencies]
+h3 = "0.0.8"
+h3-quinn = "0.0.10"
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
+rustls-pemfile = "2"
+http = "1"
+bytes = "1"
+tokio = { version = "1", features = ["rt", "net", "macros", "time"] }
+socket2 = "0.6"
+httpdate = "1"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+panic = "abort"

@@ -34,6 +34,13 @@ use crate::spec;
 // Run-time CPU feature detection needs `std`; a `no_std` build uses only
 // the features the target is compiled for, as in verilith-core. (For the
 // test helpers below; the dispatch uses the `has_*` functions.)
+//
+// The SHA-NI and AVX2 kernels are compiled only where the target has SSE
+// registers (`target_feature = "sse2"`, true of every x86-64 target with
+// an OS). Soft-float targets such as `x86_64-unknown-none` have none, and
+// LLVM cannot lower vector intrinsics there; without `std` those kernels
+// could never be selected on them anyway. The BMI2 build of the portable
+// kernel is scalar and stays.
 #[cfg(all(feature = "std", target_arch = "x86_64"))]
 macro_rules! x86_has { ($f:tt) => { std::is_x86_feature_detected!($f) }; }
 #[cfg(all(not(feature = "std"), target_arch = "x86_64"))]
@@ -48,7 +55,7 @@ pub fn compress_blocks(st: &mut [u32; 8], p: &[u8])
     ensures
         final(st)@ == spec::hash_blocks(old(st)@, p@, (p@.len() / 64) as nat),
 {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
         if crate::shani::has_shani() {
             crate::shani::compress_blocks(st, p);
@@ -59,12 +66,15 @@ pub fn compress_blocks(st: &mut [u32; 8], p: &[u8])
         crate::armv8::compress_blocks(st, p);
         return;
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
         if verilith_simd::cpu::has_avx2() && verilith_simd::cpu::has_bmi2() {
             avx2_256(st, p);
             return;
         }
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
         if verilith_simd::cpu::has_bmi2() {
             bmi2_256(st, p);
             return;
@@ -84,12 +94,15 @@ pub fn compress512_blocks(st: &mut [u64; 8], p: &[u8])
         crate::armv8::compress512_blocks(st, p);
         return;
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
         if verilith_simd::cpu::has_avx2() && verilith_simd::cpu::has_bmi2() {
             avx2_512(st, p);
             return;
         }
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
         if verilith_simd::cpu::has_bmi2() {
             bmi2_512(st, p);
             return;
@@ -127,7 +140,7 @@ fn bmi2_512(st: &mut [u64; 8], p: &[u8])
 }
 
 /// [`crate::compress::compress_blocks_pipe`] compiled with AVX2 and BMI2.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[verifier::external_body]
 #[inline]
 fn avx2_256(st: &mut [u32; 8], p: &[u8])
@@ -142,7 +155,7 @@ fn avx2_256(st: &mut [u32; 8], p: &[u8])
 }
 
 /// [`crate::compress512::compress_blocks_pipe`] compiled with AVX2 and BMI2.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[verifier::external_body]
 #[inline]
 fn avx2_512(st: &mut [u64; 8], p: &[u8])
@@ -158,7 +171,7 @@ fn avx2_512(st: &mut [u64; 8], p: &[u8])
 
 /// [`crate::compress::pair_kw`], compiled with AVX2 and BMI2 and out of
 /// line (see [`pair_avx2`]).
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[verifier::external_body]
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
@@ -193,7 +206,7 @@ pub fn pair256_avx2(
 /// [`crate::compress512::pair_kw`], compiled with AVX2 and BMI2 and out of
 /// line, so that the pipelined loop calls one copy of it. Trusted only to
 /// be that function: its contract is the verified function's.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[verifier::external_body]
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
@@ -233,11 +246,14 @@ pub fn kernel512() -> &'static str {
     if crate::armv8::has_sha512() {
         return "armv8-sha512";
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
         if x86_has!("avx2") && x86_has!("bmi2") {
             return "avx2 schedule";
         }
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
         if x86_has!("bmi2") {
             return "portable (bmi2)";
         }
@@ -248,7 +264,7 @@ pub fn kernel512() -> &'static str {
 /// Which kernel [`compress_blocks`] runs on this CPU: `"sha-ni"`,
 /// `"armv8-sha2"` or `"portable"`.
 pub fn kernel() -> &'static str {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
         if crate::shani::has_shani() {
             return "sha-ni";
@@ -257,11 +273,14 @@ pub fn kernel() -> &'static str {
     if crate::armv8::has_sha2() {
         return "armv8-sha2";
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
         if x86_has!("avx2") && x86_has!("bmi2") {
             return "avx2 schedule";
         }
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
         if x86_has!("bmi2") {
             return "portable (bmi2)";
         }
@@ -287,12 +306,14 @@ pub(crate) mod bmi2 {
     /// The verified rounds over the AVX2 schedule (`crate::avx2`), which
     /// needs AVX2 enabled for its intrinsics to be inlined.
     /// SHA-256's pipelined kernel, for CPUs with AVX2 and no SHA-NI.
+    #[cfg(target_feature = "sse2")]
     #[target_feature(enable = "avx2,bmi2")]
     pub unsafe fn compress_blocks_avx2(st: &mut [u32; 8], p: &[u8]) {
         crate::compress::compress_blocks_pipe(st, p)
     }
 
     /// One pair of SHA-256's pipelined loop (see `cpu::pair256_avx2`).
+    #[cfg(target_feature = "sse2")]
     #[target_feature(enable = "avx2,bmi2")]
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
@@ -311,12 +332,14 @@ pub(crate) mod bmi2 {
         crate::compress::pair_kw(st, cur0, cur1, b0, b1, p, o0, o1, nxt0, nxt1)
     }
 
+    #[cfg(target_feature = "sse2")]
     #[target_feature(enable = "avx2,bmi2")]
     pub unsafe fn compress512_blocks_avx2(st: &mut [u64; 8], p: &[u8]) {
         crate::compress512::compress_blocks_pipe(st, p)
     }
 
     /// One pair of the pipelined loop (see `cpu::pair_avx2`).
+    #[cfg(target_feature = "sse2")]
     #[target_feature(enable = "avx2,bmi2")]
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
@@ -363,7 +386,7 @@ pub fn bmi2_kernels() -> Option<(Kernel256, Kernel512)> {
 /// SHA-256 one.
 #[doc(hidden)]
 pub fn avx2_kernels() -> Option<(Kernel256, Kernel512)> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
         if x86_has!("avx2") && x86_has!("bmi2") {
             // SAFETY: only returned when the CPU has AVX2 and BMI2.

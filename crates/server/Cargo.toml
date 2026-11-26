@@ -1,0 +1,60 @@
+[package]
+name = "verilith-server"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "A formally verified (Verus) HTTP server built from the Verilith parsers"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/verilith/verilith"
+keywords = ["http", "server", "verified", "verus"]
+categories = ["network-programming", "web-programming::http-server"]
+publish = false
+
+[lib]
+crate-type = ["rlib"]
+
+[[bin]]
+name = "verilith-server"
+path = "src/bin/verilith-server.rs"
+
+[dependencies]
+verilith-core = { path = "../core", version = "0.1.0" }
+verilith-http = { path = "../http", version = "0.1.0" }
+verilith-h2 = { path = "../h2", version = "0.1.0" }
+verilith-hpack = { path = "../hpack", version = "0.1.0" }
+verilith-text = { path = "../text", version = "0.1.0" }
+vstd = { workspace = true, features = ["std"] }
+# TLS (`--features tls`): verilith-tls's record layer and handshake
+# (verified) with aws-lc's cryptography (verilith-tls-aws-lc, trusted;
+# TRUST.md). `tls-rustls` adds rustls as a second backend to compare.
+verilith-tls = { path = "../tls", version = "0.1.0", optional = true }
+verilith-tls-aws-lc = { path = "../tls-aws-lc", version = "0.1.0", optional = true }
+rustls = { version = "0.23", optional = true, default-features = false, features = ["aws_lc_rs", "std"] }
+# HTTP/3 (`--features h3`): verilith-h3's framing and verilith-qpack
+# (verified) over QUIC: quinn-proto with rustls (trusted; TRUST.md), the
+# default, or verilith-quic-conn (verified wire format, recovery,
+# handshake and packet protection; plain-Rust connection logic).
+verilith-h3 = { path = "../h3", version = "0.1.0", optional = true }
+verilith-qpack = { path = "../qpack", version = "0.1.0", optional = true }
+quinn-proto = { version = "0.11.19", optional = true, default-features = false, features = ["rustls-aws-lc-rs"] }
+bytes = { version = "1.9", optional = true }
+verilith-quic-conn = { path = "../quic-conn", version = "0.1.0", optional = true }
+
+[dev-dependencies]
+rcgen = "0.14"
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
+quinn-proto = { version = "0.11.19", default-features = false, features = ["rustls-aws-lc-rs"] }
+bytes = "1.9"
+verilith-h3 = { path = "../h3", version = "0.1.0" }
+verilith-qpack = { path = "../qpack", version = "0.1.0" }
+
+[features]
+tls = ["dep:verilith-tls", "dep:verilith-tls-aws-lc"]
+tls-rustls = ["tls", "dep:rustls"]
+h3 = ["tls", "dep:rustls", "dep:verilith-h3", "dep:verilith-qpack", "dep:quinn-proto", "dep:bytes", "dep:verilith-quic-conn"]
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(verus_only)'] }

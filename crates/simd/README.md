@@ -90,10 +90,11 @@ its own trusted base.
 - `src/lanes.rs`: the byte model of `__m128i`/`__m256i` (an uninterpreted
   `b128`/`b256` of length 16/32).
 - `src/sse2.rs`: verified wrappers over the SSE2 instructions byte scanners
-  use (`load16`, `splat16`, `eq16`, `or16`, `min16`, `movemask16`, on x86-64
-  only), each with a contract on the 16 bytes `b16` and the mask bits
-  `bit` proven from the specifications here, and `first_set16`. Shared by
-  verilith-json and verilith-xml.
+  use (`load16`, `splat16`, `eq16`, `subs16`, `or16`, `min16`,
+  `movemask16`), each with a contract on the 16 bytes `b16` and the mask
+  bits `bit` proven from the specifications here, and `first_set16`.
+  Off x86-64 they build on the emulation, as `arch` does. Shared by
+  verilith-json, verilith-xml, verilith-http and verilith-regex.
 - `src/avx512.rs` (x86-64 only): safe wrappers, with specifications, for 17
   AVX-512 intrinsics (F, BW and VBMI2: bitwise ops, `shuffle_epi8`,
   `subs_epu8`, `srli_epi16`, `add_epi32`, the byte compares and `test` into
@@ -104,6 +105,21 @@ its own trusted base.
   `avx512vbmi2()`, which `has_avx512bw()` and `has_avx512vbmi2()` ensure,
   with the axiom that VBMI2 implies BW, BW implies F and F implies AVX2.
 - `src/scalar.rs`: `popcnt64`, specified as the number of set bits.
+- `src/clmul.rs` (wrappers x86-64 only): carry-less multiplication as
+  verilith-checksum's CRC-32 folding kernels use it, one safe wrapper each
+  with a contract on a vector's 128-bit blocks (`xv`, `yl`, `zl`): 16-,
+  32- and 64-byte loads, XOR, AND, byte shifts, broadcasts, extracting a
+  block, and the products of `pclmulqdq`/`vpclmulqdq` (immediates 0x00 and
+  0x11), stated with the spec `clmul`; `pclmul()`, `vpclmul256()`,
+  `vpclmul()` and their detection. verilith-checksum's `tests/vclmul.rs`
+  checks every one against a verified scalar reference.
+- `src/vdot.rs` (x86-64 only) and `src/vudot.rs`: byte dot products as
+  verilith-checksum's Adler-32 kernels use them: `vpdpbusd` (AVX-512 VNNI),
+  `vpmaddubsw`/`vpmaddwd` (AVX2) and `udot` (AArch64, as inline assembly),
+  with loads, zero, add and store, stated with the spec `dot::dot4`; the
+  feature predicates and their detection. Off AArch64 `vudot` runs
+  plain-Rust stand-ins and its detection is false. verilith-checksum's
+  `tests/vdot.rs` and `tests/vudot.rs` check them.
 - `src/neon.rs`: the NEON wrappers' specifications (84: loads and
   stores on `u8`, `u16`, `i16` and `u32` slices, bitwise ops, add,
   saturating subtract, compare, `ushr`, `tbl`, `ext`, `zip1`/`zip2` at 8,

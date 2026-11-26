@@ -3,24 +3,32 @@ resolver = "3"
 members = [
     "crates/archive",
     "crates/bind",
+    "crates/checksum",
     "crates/brotli",
     "crates/core",
     "crates/dns",
     "crates/font",
     "crates/gif",
+    "crates/h2",
+    "crates/h3",
     "crates/hpack",
     "crates/http",
     "crates/jpeg",
     "crates/json",
     "crates/lz4",
     "crates/png",
+    "crates/qpack",
+    "crates/quic",
+    "crates/quic-conn",
     "crates/regex",
+    "crates/server",
     "crates/sha2",
     "crates/simd",
     "crates/snappy",
     "crates/sync",
     "crates/text",
     "crates/tiff",
+    "crates/tls",
     "crates/url",
     "crates/verilith",
     "crates/wasm",
@@ -37,7 +45,7 @@ members = [
 # projects, are separate Cargo projects with their own lockfiles. So is the
 # Node.js source crates/bind/scripts/build-node.sh unpacks under a target/
 # directory: Node builds its own Rust crates there (deps/crates).
-exclude = ["bench", "target", "crates/bind/target"]
+exclude = ["bench", "target", "crates/bind/target", "crates/tls-aws-lc"]
 
 [workspace.dependencies]
 # The one Verus release every crate is verified with. The verifier itself is

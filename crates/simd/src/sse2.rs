@@ -5,14 +5,16 @@
 //! specification of it (`ops`, `x86`), the contract the callers are
 //! verified against: `b16(r)` of the result as a sequence of 16 bytes, and
 //! `bit(m, k)` of a mask. Nothing here is trusted beyond what the
-//! specifications already assume. verilith-json and verilith-xml use them.
-//! SSE2 is part of x86-64, so no feature detection is needed; the
-//! register functions exist on x86-64 only.
+//! specifications already assume. verilith-json, verilith-xml,
+//! verilith-http and verilith-regex use them. SSE2 is part of x86-64, so
+//! no feature detection is needed. Off x86-64 they build on the portable
+//! emulation `crate::emu` (as `crate::arch` does), so a scanner written
+//! against them verifies everywhere; there it is meant for code that
+//! does not run (the NEON scanners do), and `tests/emu.rs` checks the
+//! emulation against the CPU.
 use vstd::prelude::*;
 
-#[cfg(target_arch = "x86_64")]
 use crate::arch::*;
-#[cfg(target_arch = "x86_64")]
 use crate::mem::*;
 #[allow(unused_imports)]
 use crate::lanes::*;
@@ -78,7 +80,6 @@ pub proof fn lemma_top_or(a: u8, b: u8)
 
 } // verus!
 
-#[cfg(target_arch = "x86_64")]
 verus! {
 
 broadcast use crate::lanes::group_lanes;
@@ -190,6 +191,19 @@ pub fn min16(a: __m128i, b: __m128i) -> (r: __m128i)
     let r = _mm_min_epu8(a, b);
     proof {
         assert(b16(r) =~= Seq::new(16, |k: int| if b16(a)[k] <= b16(b)[k] { b16(a)[k] } else { b16(b)[k] }));
+    }
+    r
+}
+
+/// `psubusb`: each lane of `a` less the lane of `b`, stopping at 0.
+#[inline(always)]
+pub fn subs16(a: __m128i, b: __m128i) -> (r: __m128i)
+    ensures
+        b16(r) == Seq::new(16, |k: int| if b16(a)[k] < b16(b)[k] { 0u8 } else { (b16(a)[k] - b16(b)[k]) as u8 }),
+{
+    let r = _mm_subs_epu8(a, b);
+    proof {
+        assert(b16(r) =~= Seq::new(16, |k: int| if b16(a)[k] < b16(b)[k] { 0u8 } else { (b16(a)[k] - b16(b)[k]) as u8 }));
     }
     r
 }

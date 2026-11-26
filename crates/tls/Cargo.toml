@@ -1,0 +1,29 @@
+[package]
+name = "verilith-tls"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "TLS 1.3 (RFC 8446) message parsing, handshake state machine and key schedule, formally verified with Verus"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/verilith/verilith"
+readme = "README.md"
+keywords = ["tls", "tls13", "verified", "verus", "parser"]
+categories = ["network-programming", "cryptography", "parser-implementations"]
+exclude = ["bench/", "scripts/"]
+
+[dependencies]
+verilith-core = { path = "../core", version = "0.1.0" }
+verilith-sha2 = { path = "../sha2", version = "0.1.0" }
+vstd = { workspace = true, features = ["std"] }
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(verus_only)'] }
+
+[dev-dependencies]
+# An independent HKDF (RustCrypto) to check the key schedule against.
+hkdf = "0.12"
+hmac = "0.12"
+sha2 = "0.10"

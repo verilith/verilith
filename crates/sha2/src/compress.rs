@@ -603,7 +603,7 @@ pub fn compress_block_kw(st: &mut [u32; 8], wk: &[u32; 64], Ghost(blk): Ghost<Se
 /// H(n) from H(0) = `st` over the whole blocks of `p`, two blocks' schedules
 /// at a time from the AVX2 kernel (`crate::avx2::schedule256x2`), and a last
 /// odd block by the scalar rounds. To be called only where the CPU has AVX2.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline(always)]
 pub fn compress_blocks_x2(st: &mut [u32; 8], p: &[u8])
     requires
@@ -648,7 +648,7 @@ pub fn compress_blocks_x2(st: &mut [u32; 8], p: &[u8])
 
 /// Rounds t to t + 7 from the precomputed schedule `wk`, and, if `step`,
 /// step `s` of another schedule.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[verifier::spinoff_prover]
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
@@ -690,7 +690,7 @@ fn group_kw_step(
 
 /// The 64 rounds from the precomputed schedule `wk`, with `k`
 /// steps of another schedule (from step `s0`) between the round groups.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[verifier::spinoff_prover]
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
@@ -743,7 +743,7 @@ fn rounds64_kw_steps(
 
 /// One block's rounds from its precomputed schedule `wk`, with `k`
 /// steps of another schedule (from step `s0`) between the round groups.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[verifier::spinoff_prover]
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
@@ -804,7 +804,7 @@ proof fn lemma_kw_all(wk: Seq<u32>, m: Seq<u32>)
 /// The rounds of blocks `b0` and `b1` from their schedules, and the whole
 /// schedule of the blocks at `o0` and `o1` of `p`, interleaved with them:
 /// 8 steps during the first block, 4 during the second.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 pub fn pair_kw(
@@ -845,7 +845,7 @@ pub fn pair_kw(
 /// of blocks is compressed (by `cpu::pair256_avx2`, which is [`pair_kw`]
 /// compiled with AVX2) while the next pair's schedule is computed. To be
 /// called only where the CPU has AVX2.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline(always)]
 pub fn compress_blocks_pipe(st: &mut [u32; 8], p: &[u8])
     requires

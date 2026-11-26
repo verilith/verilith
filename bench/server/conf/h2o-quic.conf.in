@@ -1,0 +1,32 @@
+# h2o with HTTP/3 (master, built by h3/build.sh) for bench/server. @VARS@
+# are filled in by run.py. The same paths as h2o.conf.in, on UDP.
+num-threads: @THREADS@
+user: @USER@
+error-log: @RUN@/h2o-quic.error.log
+pid-file: @RUN@/h2o-quic.pid
+listen:
+  host: 127.0.0.1
+  port: @H3@
+  type: quic
+  quic:
+    # The same stream limit as the other servers (quicly's default is 100).
+    max-streams-bidi: 256
+  ssl:
+    certificate-file: @CERT@
+    key-file: @KEY@
+    minimum-version: TLSv1.3
+http3-max-concurrent-streaming-requests-per-connection: 256
+# A 1 MiB stream window like the others, and no ACK_FREQUENCY request asking
+# the client to acknowledge less often: on one host that only adds delay.
+http3-input-window-size: 1048576
+http3-ack-frequency: 0
+hosts:
+  default:
+    paths:
+      /plaintext:
+        mruby.handler: |
+          Proc.new do |env|
+            [200, {"content-type" => "text/plain"}, ["Hello, World!"]]
+          end
+      /static:
+        file.dir: @ROOT@

@@ -382,7 +382,7 @@ impl Deflater {
                         lv <= 3,
                 ;
             }
-            let (a, b) = verilith_core::checksum::cpu::adler32_update(1, 0, dict);
+            let (a, b) = verilith_checksum::cpu::adler32_update(1, 0, dict);
             proof {
                 lemma_adler_closed(1, 0, dict@);
                 lemma_adler_from(dict@);
@@ -453,14 +453,14 @@ impl Deflater {
     {
         let ghost all0 = self.all@;
         let ghost w0 = self.win@;
-        let (a, b) = verilith_core::checksum::cpu::adler32_update(self.a, self.b, chunk);
+        let (a, b) = verilith_checksum::cpu::adler32_update(self.a, self.b, chunk);
         proof {
             lemma_adler_closed(self.a as nat, self.b as nat, chunk@);
             lemma_adler_append(1, 0, all0, chunk@);
         }
         self.a = a;
         self.b = b;
-        self.crc = verilith_core::checksum::cpu::crc32_update(self.crc, chunk);
+        self.crc = verilith_checksum::cpu::crc32_update(self.crc, chunk);
         proof {
             lemma_crc_append(0xffff_ffff, all0, chunk@);
             vstd::arithmetic::div_mod::lemma_add_mod_noop(all0.len() as int, chunk@.len() as int, 0x1_0000_0000);

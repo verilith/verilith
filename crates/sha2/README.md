@@ -205,7 +205,10 @@ allocator. Run-time CPU detection needs `std`, so without it the kernel is
 chosen at compile time from the target's features: build with
 `-C target-feature=+sha,+sse4.1` (or `target-cpu=native`) to get the
 SHA-NI kernel, `+sha2` on AArch64. Without them the verified portable
-kernel runs. CI builds the `no_std` library for `thumbv7em-none-eabihf`.
+kernel runs. CI builds the `no_std` library for `thumbv7em-none-eabihf`,
+`aarch64-unknown-none` and `x86_64-unknown-none`. On `x86_64-unknown-none`,
+which has no SSE registers, the SHA-NI and AVX2 kernels are not compiled at
+all; the portable kernel runs there (with BMI2 if the target enables it).
 
 Cargo builds every crate type a library lists, and this one lists
 `staticlib` (for the C API), which needs a panic handler. So a `no_std`
@@ -237,6 +240,27 @@ The inherent methods keep their names, so with `Digest` imported,
 `h.finalize()` on a hasher calls `Digest::finalize` (which consumes it and
 returns `Output<Self>`), and `h.update(x)` the inherent `update`, which
 takes `&[u8]` rather than `impl AsRef<[u8]>`.
+
+## The specification on NIST's vectors
+
+The tests below run the code, which is proven to compute `spec.rs` and
+`spec512.rs`, so they speak for the specification only through the
+proofs. `spec-tests/` checks the specification on its own, with no code
+and no proof in between: each message of NIST's CAVP SHA-2 ShortMsg
+vectors becomes an `assert(sha256(msg) == digest) by (compute_only)`,
+which Verus proves by evaluating the spec function on the message.
+
+- SHA-224 and SHA-256: all 65 ShortMsg messages each, every length from
+  0 to 64 bytes, so the padding is checked at every length, including the
+  ones that need a second block. All agree with NIST.
+- SHA-384, SHA-512, SHA-512/224 and SHA-512/256: the empty message only,
+  which checks each one's initial value, rounds and truncation. All agree.
+  Verus's evaluator takes about six minutes per SHA-512 block (against
+  about twelve seconds per SHA-256 block), too long to run all 129
+  lengths of each in CI.
+
+Run it with `scripts/spec-tests.sh sha2` from the repository root; CI
+runs it too.
 
 ## C API
 

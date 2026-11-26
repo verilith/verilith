@@ -14,7 +14,7 @@ cover. This file lists everything that is assumed rather than proven.
 - **The extraction model and policy**, `src/policy.rs`: `comps_from`,
   `resolve` and `plan_safe`. The containment theorem is about this model of
   the file system.
-- **verilith-zlib, verilith-zstd and verilith-core**: their specifications of DEFLATE, Zstandard
+- **verilith-zlib, verilith-zstd and verilith-checksum**: their specifications of DEFLATE, Zstandard
   and CRC-32 are part of ours (`unpack`, `entry_data`), and whatever their
   own TRUST files list is trusted here too.
 - **Two unverified sorts**, whose results are checked by verified code.

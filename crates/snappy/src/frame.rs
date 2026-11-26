@@ -7,7 +7,7 @@ use crate::compress::compress_into;
 use crate::decode::lemma_elems_len;
 use crate::decode::{decompress_into, read_le, Error};
 use crate::spec::*;
-use verilith_core::checksum::crc32c as crc_exec;
+use verilith_checksum::crc32c as crc_exec;
 use vstd::prelude::*;
 use vstd::slice::slice_subrange;
 

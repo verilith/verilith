@@ -54,7 +54,7 @@ compresses in pieces, and the static library exports zlib's C API.
 | Compression round trip: for every input and level, the compressor's raw, zlib and gzip output decompresses, under the same spec, to exactly the input, using all of the output | `deflate::compress_raw`, `deflate::zlib_compress`, `deflate::gzip_compress` against `spec::inflate`, `spec::zlib_decompress`, `spec::gzip_decompress` |
 | Streaming compression: input in pieces of any size, with any sequence of `Block`, `Sync` and `Full` flushes and level changes, in bounded memory (a window of at most 384 KiB); everything handed out, once finished, decompresses to all the input | `dstream::Deflater::finish` against `wrap::spec_decompress`; the window lemma `dlemmas::lemma_expand_shift` |
 | Compression window: every match the streaming compressor emits reaches back at most `2^windowBits` bytes, the window its zlib header declares | `deflate::Matcher::fill` ensures (`tok_within`), with the `Deflater` invariant tying the matcher's window to `Deflater::window_bits` |
-| C ABI bookkeeping: `deflate()` hands the caller exactly the compressor's output, in order, none lost or repeated, whatever the output buffer sizes; `inflateSync` stops only just after a `00 00 FF FF` marker, which may span calls; `adler32_combine` of the checksums of A and B (and B's length) is the checksum of A followed by B | `glue::Pending`, `glue::SyncSearch`, `glue::adler32_combine` against verilith-core's `checksum::spec::adler32` |
+| C ABI bookkeeping: `deflate()` hands the caller exactly the compressor's output, in order, none lost or repeated, whatever the output buffer sizes; `inflateSync` stops only just after a `00 00 FF FF` marker, which may span calls; `adler32_combine` of the checksums of A and B (and B's length) is the checksum of A followed by B | `glue::Pending`, `glue::SyncSearch`, `glue::adler32_combine` against verilith-checksum's `spec::adler32` |
 | Compression with a preset dictionary (raw or zlib): the same theorem, against the spec with that dictionary. Matches may refer back into the dictionary's last 32 KiB, and a zlib header sets FDICT and names the dictionary's Adler-32 | `dstream::Deflater::new_with_dict`, `Deflater::finish` against `dstream::spec_decompress_dict` (`spec::inflate_dict`, `spec::zlib_decompress_dict`) |
 | Parallel compression: the input cut into chunks, each compressed on its own thread after the 32 KiB before it, the pieces joined into one stream. The same theorem as the serial compressor: the raw, zlib or gzip output decompresses to exactly the input, using all of it, whichever thread did which chunk and whether or not any thread ran | `par::compress` against `wrap::spec_decompress`; `Deflater::piece` (a piece adds its chunk to any output that ends with its window), `par::lemma_piece_join`, `par::lemma_joined` |
 | Streaming foundations: decoding with the first bytes dropped is a shift of decoding the whole stream, and decoding after output `P ++ w` is `P ++` decoding after `w` once `w` holds the 32 KiB window | `slemmas::lemma_shift_rest`, `slemmas::lemma_win_rest` |
@@ -99,13 +99,15 @@ What the proofs assume rather than prove:
 - [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core)'s trusted base:
   the memory primitives in `verilith_core::prims` (unaligned loads, 8-byte copies
   and fills, slice copies; each `requires` is the bounds check that Verus
-  proves at the call site), the checksum CPU dispatch in
-  `verilith_core::checksum::cpu` (Adler-32 rerun with AVX2; the PCLMULQDQ CRC-32
-  is unverified, tested against the verified table-driven one), and the
-  specs of bits, canonical Huffman codes, Adler-32 and CRC-32, which
-  `src/spec.rs` re-exports.
-- `src/prims.rs`: `push_word` (append the low bytes of a word with one
-  8-byte store); its `requires` is proven at the call site.
+  proves at the call site), and the specs of bits and canonical Huffman
+  codes, which `src/spec.rs` re-exports.
+- [verilith-checksum](https://github.com/verilith/verilith/tree/main/crates/checksum)'s
+  trusted base (its CPU dispatch, and the vector instructions it takes from
+  verilith-simd), and its specs of Adler-32 and CRC-32, which `src/spec.rs`
+  also re-exports.
+- verilith-core's `spare` (`reserve_spare`, and `append8_spare`, which
+  `src/prims.rs`'s `push_word` uses to append the low bytes of a word with
+  one 8-byte store); its `requires` is proven at the call site.
 - `src/par.rs`: `run`, 25 lines of safe Rust (no `unsafe`) that hand the
   compression jobs to scoped threads and collect what they return. Its
   one assumption is that the bytes it stores in slot `k` are the ones the
@@ -158,9 +160,9 @@ the RFCs alone imply, or from zlib:
 - `src/inflate.rs`: a fast loop (8-byte refills, packed table entries, up to
   three literals per refill, 8-byte match copies) and a careful loop for the
   tail. The decoder can stop when the output buffer is full and resume.
-- `src/checksum.rs`: re-exports `verilith_core::checksum`: Adler-32 in 32
-  vectorizable lanes, CRC-32 by slicing-by-16, run with AVX2 and PCLMULQDQ
-  when available. `src/simd.rs` (trusted) runs the decoder with BMI2.
+- `src/checksum.rs`: re-exports `verilith_checksum`: Adler-32 and CRC-32,
+  with the verified vector kernels (dot products for Adler-32, carry-less
+  multiplication for CRC-32) when the CPU has them. `src/simd.rs` (trusted) runs the decoder with BMI2.
 - `src/stream.rs`: streaming (input and output in pieces of any size) on
   top of the resumable decoder, with incremental header and trailer
   parsing and a 32 KiB sliding window. A byte the decoder has only partly
@@ -187,8 +189,9 @@ the RFCs alone imply, or from zlib:
   `inflateSync` the rest is decoded as raw DEFLATE. On the compression
   side `deflateSetDictionary` works for zlib and raw streams before the
   first `deflate()` (zlib also allows it later on raw streams; verilith-zlib
-  returns `Z_STREAM_ERROR` there), and `deflateSetHeader` (custom gzip
-  headers) and `deflatePrime` are not supported (`Z_STREAM_ERROR`); the strategy
+  returns `Z_STREAM_ERROR` there); `deflateSetHeader` works before the
+  first `deflate()` (zlib also allows it later, until the header is
+  written); `deflatePrime` is not supported (`Z_STREAM_ERROR`); the strategy
   and `deflateTune` parameters are accepted and not used; `deflate()` may
   hold up to a few hundred KiB of output internally when the caller's
   output buffer is small, and `deflateBound` is a little larger than
