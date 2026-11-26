@@ -5,6 +5,7 @@
 use crate::integer::*;
 use crate::lemmas::*;
 use crate::spec::*;
+use crate::table::lemma_evict;
 use verilith_hpack::spec::hdec;
 use vstd::prelude::*;
 
@@ -480,6 +481,257 @@ pub proof fn lemma_section_rt(t: Table, max_cap: nat, max_size: nat, ric: nat, b
     assert(base2 == base);
     lemma_lines_items(t, ric, base, max_size, b, e2, 0, Seq::empty(), its);
     assert(Seq::<Field>::empty() + flds(its) =~= flds(its));
+}
+
+// ---------------------------------------------------------------------------
+// Encoder instructions
+// ---------------------------------------------------------------------------
+
+/// What an encoder instruction is.
+pub enum IKind {
+    /// Set Dynamic Table Capacity.
+    SetCap(nat),
+    /// Insert with Name Reference to static entry `i`; the value literal.
+    InsStatic(nat, bool, Seq<u8>),
+    /// Insert with Literal Name: the name's and value's literals.
+    InsLit(bool, Seq<u8>, bool, Seq<u8>),
+    /// Duplicate, by relative index.
+    Dup(nat),
+}
+
+/// An encoder instruction: its bytes, how it is encoded, and (for an
+/// insert) the entry it adds.
+pub struct Ins {
+    pub bytes: Seq<u8>,
+    pub kind: IKind,
+    pub entry: Entry,
+}
+
+/// `x` is a correct encoding, in table `t` under the decoder's maximum
+/// capacity `mc`.
+pub open spec fn ins_ok(t: Table, mc: nat, x: Ins) -> bool {
+    let lim = str_limit(mc);
+    match x.kind {
+        IKind::SetCap(c) => {
+            &&& c <= mc
+            &&& c <= MAX_INT
+            &&& x.bytes == int_enc(0x20, 5, c)
+        },
+        IKind::InsStatic(i, h, raw) => {
+            let ix = int_enc(0xC0, 6, i);
+            &&& i < STATIC_LEN
+            &&& x.entry.0 == static_name(i as int)
+            &&& raw.len() <= lim
+            &&& x.bytes.len() >= ix.len()
+            &&& x.bytes.subrange(0, ix.len() as int) == ix
+            &&& str_ok(x.bytes.subrange(ix.len() as int, x.bytes.len() as int), 0, 8, x.entry.1, h, raw)
+        },
+        IKind::InsLit(hn, rn, hv, rv) => {
+            &&& rn.len() <= lim
+            &&& rv.len() <= lim
+            &&& exists|k: int| 0 <= k <= x.bytes.len()
+                && str_ok(#[trigger] x.bytes.subrange(0, k), 0x40, 6, x.entry.0, hn, rn)
+                && str_ok(x.bytes.subrange(k, x.bytes.len() as int), 0, 8, x.entry.1, hv, rv)
+        },
+        IKind::Dup(r) => {
+            &&& rel_ok(t, r)
+            &&& x.entry == rel(t, r)
+            &&& r <= MAX_INT
+            &&& x.bytes == int_enc(0, 5, r)
+        },
+    }
+}
+
+/// The table after `x`.
+pub open spec fn ins_apply(t: Table, x: Ins) -> Option<Table> {
+    match x.kind {
+        IKind::SetCap(c) => Some(set_cap(t, c)),
+        _ => insert(t, x.entry),
+    }
+}
+
+#[verifier::spinoff_prover]
+proof fn lemma_einst_ins_static(t: Table, mc: nat, x: Ins, i: nat, h: bool, raw: Seq<u8>)
+    requires
+        ins_ok(t, mc, x),
+        x.kind == IKind::InsStatic(i, h, raw),
+    ensures
+        eframe(x.bytes, mc) == EndR::Ok(x.bytes.len() as int),
+        einst(t, mc, x.bytes) == ins_apply(t, x),
+{
+    lemma_p2_vals();
+    let b = x.bytes;
+    let lim = str_limit(mc);
+    let ix = int_enc(0xC0, 6, i);
+    assert(b.subrange(0, ix.len() as int) =~= ix);
+    lemma_int_at(b, 0, 0xC0, 6, i);
+    lemma_int_first(0xC0, 6, i);
+    let vx = b.subrange(ix.len() as int, b.len() as int);
+    let e = ix.len() as int;
+    assert(b.subrange(e, e + vx.len()) =~= vx);
+    lemma_str_at(b, e, vx, 0, 8, x.entry.1, h, raw, lim);
+    assert(x.entry == (static_name(i as int), x.entry.1));
+    reveal(eframe);
+    reveal(einst);
+}
+
+#[verifier::spinoff_prover]
+proof fn lemma_einst_ins_lit(t: Table, mc: nat, x: Ins, hn: bool, rn: Seq<u8>, hv: bool, rv: Seq<u8>)
+    requires
+        ins_ok(t, mc, x),
+        x.kind == IKind::InsLit(hn, rn, hv, rv),
+    ensures
+        eframe(x.bytes, mc) == EndR::Ok(x.bytes.len() as int),
+        einst(t, mc, x.bytes) == ins_apply(t, x),
+{
+    lemma_p2_vals();
+    let b = x.bytes;
+    let lim = str_limit(mc);
+    let k = choose|k: int| 0 <= k <= b.len()
+        && str_ok(#[trigger] b.subrange(0, k), 0x40, 6, x.entry.0, hn, rn)
+        && str_ok(b.subrange(k, b.len() as int), 0, 8, x.entry.1, hv, rv);
+    let nx = b.subrange(0, k);
+    let vx = b.subrange(k, b.len() as int);
+    assert(b.subrange(0, nx.len() as int) =~= nx);
+    assert(b.subrange(k, k + vx.len()) =~= vx);
+    lemma_str_at(b, 0, nx, 0x40, 6, x.entry.0, hn, rn, lim);
+    lemma_str_at(b, k, vx, 0, 8, x.entry.1, hv, rv, lim);
+    assert(x.entry == (x.entry.0, x.entry.1));
+    reveal(eframe);
+    reveal(einst);
+}
+
+#[verifier::spinoff_prover]
+proof fn lemma_einst_small(t: Table, mc: nat, x: Ins)
+    requires
+        ins_ok(t, mc, x),
+        x.kind is SetCap || x.kind is Dup,
+    ensures
+        eframe(x.bytes, mc) == EndR::Ok(x.bytes.len() as int),
+        einst(t, mc, x.bytes) == ins_apply(t, x),
+{
+    lemma_p2_vals();
+    let b = x.bytes;
+    assert(b.subrange(0, b.len() as int) =~= b);
+    match x.kind {
+        IKind::SetCap(c) => {
+            lemma_int_at(b, 0, 0x20, 5, c);
+            lemma_int_first(0x20, 5, c);
+        },
+        IKind::Dup(r) => {
+            lemma_int_at(b, 0, 0, 5, r);
+            lemma_int_first(0, 5, r);
+        },
+        _ => {},
+    }
+    reveal(eframe);
+    reveal(einst);
+}
+
+/// One whole instruction, on its own, is the encoder stream that applies it.
+pub proof fn lemma_erun_ins(t: Table, mc: nat, x: Ins)
+    requires
+        ins_ok(t, mc, x),
+        ins_apply(t, x) is Some,
+    ensures
+        erun(t, mc, x.bytes) == Run::Ok(ins_apply(t, x)->Some_0, x.bytes.len() as int),
+{
+    match x.kind {
+        IKind::InsStatic(i, h, raw) => lemma_einst_ins_static(t, mc, x, i, h, raw),
+        IKind::InsLit(hn, rn, hv, rv) => lemma_einst_ins_lit(t, mc, x, hn, rn, hv, rv),
+        _ => lemma_einst_small(t, mc, x),
+    }
+    let b = x.bytes;
+    assert(b.subrange(0, b.len() as int) =~= b);
+    let r = b.subrange(b.len() as int, b.len() as int);
+    assert(r =~= Seq::<u8>::empty());
+    reveal(eframe);
+    assert(eframe(r, mc) is Short);
+    let t2 = ins_apply(t, x)->Some_0;
+    assert(erun(t2, mc, r) == Run::Ok(t2, 0));
+    reveal_with_fuel(erun, 2);
+}
+
+/// Encoder streams run one after another.
+pub proof fn lemma_erun_cat(t: Table, mc: nat, a: Seq<u8>, c: Seq<u8>, t1: Table, t2: Table)
+    requires
+        erun(t, mc, a) == Run::Ok(t1, a.len() as int),
+        erun(t1, mc, c) == Run::Ok(t2, c.len() as int),
+    ensures
+        erun(t, mc, a + c) == Run::Ok(t2, (a.len() + c.len()) as int),
+{
+    lemma_erun_split(t, mc, a, c);
+    assert(a.subrange(a.len() as int, a.len() as int) + c =~= c);
+}
+
+// ---------------------------------------------------------------------------
+// Entries stay put
+// ---------------------------------------------------------------------------
+
+/// Evicting, inserting or setting the capacity keeps every entry from
+/// `t2.dropped` on where it was.
+pub open spec fn keeps(t: Table, t2: Table) -> bool {
+    &&& t2.dropped >= t.dropped
+    &&& icount(t2) >= icount(t)
+    &&& forall|a: nat| t2.dropped <= a < icount(t) ==> #[trigger] abs(t2, a) == abs(t, a)
+}
+
+pub proof fn lemma_keeps_apply(t: Table, x: Ins)
+    requires
+        ins_apply(t, x) is Some,
+    ensures
+        keeps(t, ins_apply(t, x)->Some_0),
+        icount(ins_apply(t, x)->Some_0) == icount(t) + (if x.kind is SetCap { 0nat } else { 1nat }),
+        x.kind !is SetCap ==> abs(ins_apply(t, x)->Some_0, icount(t)) == x.entry,
+{
+    match x.kind {
+        IKind::SetCap(c) => {
+            lemma_evict(t, 0, c);
+            let t2 = set_cap(t, c);
+            assert forall|a: nat| t2.dropped <= a < icount(t) implies #[trigger] abs(t2, a) == abs(t, a) by {
+                assert(t2.ents[a - t2.dropped] == t.ents[(t2.dropped - t.dropped) + (a - t2.dropped)]);
+            }
+        },
+        _ => {
+            lemma_evict(t, esize(x.entry), t.cap);
+            let t1 = evict(t, esize(x.entry), t.cap);
+            let t2 = ins_apply(t, x)->Some_0;
+            assert(t2.ents == t1.ents.push(x.entry));
+            assert forall|a: nat| t2.dropped <= a < icount(t) implies #[trigger] abs(t2, a) == abs(t, a) by {
+                assert(t2.ents[a - t2.dropped] == t1.ents[a - t1.dropped]);
+                assert(t1.ents[a - t1.dropped] == t.ents[(t1.dropped - t.dropped) + (a - t1.dropped)]);
+            }
+            assert(abs(t2, icount(t)) == t2.ents[t1.ents.len() as int]);
+        },
+    }
+}
+
+pub proof fn lemma_keeps_trans(t: Table, t2: Table, t3: Table)
+    requires
+        keeps(t, t2),
+        keeps(t2, t3),
+    ensures
+        keeps(t, t3),
+{
+    assert forall|a: nat| t3.dropped <= a < icount(t) implies #[trigger] abs(t3, a) == abs(t, a) by {
+        assert(abs(t3, a) == abs(t2, a));
+    }
+}
+
+/// An item stays correct while the entry it refers to stays.
+pub proof fn lemma_item_keeps(t: Table, t2: Table, base: nat, it: Item)
+    requires
+        item_ok(t, base, it),
+        keeps(t, t2),
+        iref(it) matches Some(a) ==> t2.dropped <= a,
+    ensures
+        item_ok(t2, base, it),
+{
+    match it.kind {
+        Kind::IdxRel(a) => { assert(abs(t2, a) == abs(t, a)); },
+        Kind::IdxPost(a) => { assert(abs(t2, a) == abs(t, a)); },
+        _ => {},
+    }
 }
 
 } // verus!
