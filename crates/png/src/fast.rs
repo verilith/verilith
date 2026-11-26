@@ -8,6 +8,7 @@ use crate::output::*;
 use crate::passes::*;
 use crate::prims::*;
 use crate::spec::*;
+use crate::work::Meter;
 use vstd::prelude::*;
 
 verus! {
@@ -162,11 +163,12 @@ pub open spec fn ent(png: Png, v: nat, j: nat) -> u8 {
 }
 
 /// The RGBA values of all 256 sample values, `ent(v, j)` at `4 * v + j`.
-fn table(png: &PngX) -> (r: Vec<u8>)
+fn table(png: &PngX, Tracked(m): Tracked<&mut Meter>) -> (r: Vec<u8>)
     requires
         png.wf(),
         png.hdr.color_type == 0 || png.hdr.color_type == 3,
     ensures
+        final(m).n <= old(m).n + 256,
         r@.len() == 1024,
         forall|v: int, j: int| 0 <= v < 256 && 0 <= j < 4 ==> #[trigger] quad(r@, v, j) == ent(png.view(), v as nat, j as nat),
 {
@@ -185,8 +187,11 @@ fn table(png: &PngX) -> (r: Vec<u8>)
         crate::output::lemma_pow2_shift(8);
     }
     let mut v: usize = 0;
+    let ghost m0 = m.n;
     while v < 256
         invariant
+            m0 == old(m).n,
+            m.n <= m0 + v,
             png.wf(),
             pv == png.view(),
             ct == png.hdr.color_type,
@@ -243,26 +248,33 @@ fn table(png: &PngX) -> (r: Vec<u8>)
                 }
             }
         }
+        proof {
+            m.n = m.n + 1;
+        }
         v = v + 1;
     }
     tab
 }
 
 /// `out[4i..4i+4] = tab[4 src[i]..]` for `i < n`.
-fn expand_indexed(src: &[u8], n: usize, tab: &[u8], out: &mut [u8])
+fn expand_indexed(src: &[u8], n: usize, tab: &[u8], out: &mut [u8], Tracked(m): Tracked<&mut Meter>)
     requires
         n <= src@.len(),
         tab@.len() == 1024,
         old(out)@.len() == 4 * n,
     ensures
+        final(m).n <= old(m).n + n,
         final(out)@.len() == 4 * n,
         forall|i: int, j: int| 0 <= i < n && 0 <= j < 4 ==> #[trigger] quad(final(out)@, i, j) == quad(tab@, src@[i] as int, j),
 {
     let _ = out.len();
     let mut i: usize = 0;
     let mut o: usize = 0;
+    let ghost m0 = m.n;
     while i < n
         invariant
+            m0 == old(m).n,
+            m.n <= m0 + i,
             n <= src@.len(),
             tab@.len() == 1024,
             out@.len() == 4 * n,
@@ -285,6 +297,9 @@ fn expand_indexed(src: &[u8], n: usize, tab: &[u8], out: &mut [u8])
                 }
             }
         }
+        proof {
+            m.n = m.n + 1;
+        }
         i = i + 1;
         o = o + 4;
     }
@@ -303,11 +318,12 @@ pub open spec fn alpha3(key: Option<(u8, u8, u8)>, r: u8, g: u8, b: u8) -> u8 {
 }
 
 /// `src`'s `n` RGB pixels as RGBA.
-fn expand_rgb(src: &[u8], n: usize, key: Option<(u8, u8, u8)>, out: &mut [u8])
+fn expand_rgb(src: &[u8], n: usize, key: Option<(u8, u8, u8)>, out: &mut [u8], Tracked(m): Tracked<&mut Meter>)
     requires
         3 * n <= src@.len(),
         old(out)@.len() == 4 * n,
     ensures
+        final(m).n <= old(m).n + n,
         final(out)@.len() == 4 * n,
         forall|i: int, j: int| 0 <= i < n && 0 <= j < 4 ==> #[trigger] quad(final(out)@, i, j) == if j < 3 {
             src@[3 * i + j]
@@ -323,8 +339,11 @@ fn expand_rgb(src: &[u8], n: usize, key: Option<(u8, u8, u8)>, out: &mut [u8])
     let mut i: usize = 0;
     let mut s: usize = 0;
     let mut o: usize = 0;
+    let ghost m0 = m.n;
     while i < n
         invariant
+            m0 == old(m).n,
+            m.n <= m0 + i,
             3 * n <= src@.len(),
             out@.len() == 4 * n,
             4 * n <= usize::MAX,
@@ -364,6 +383,9 @@ fn expand_rgb(src: &[u8], n: usize, key: Option<(u8, u8, u8)>, out: &mut [u8])
                 }
             }
         }
+        proof {
+            m.n = m.n + 1;
+        }
         i = i + 1;
         s = s + 3;
         o = o + 4;
@@ -371,11 +393,12 @@ fn expand_rgb(src: &[u8], n: usize, key: Option<(u8, u8, u8)>, out: &mut [u8])
 }
 
 /// `src`'s `n` grey-alpha pixels as RGBA.
-fn expand_ga(src: &[u8], n: usize, out: &mut [u8])
+fn expand_ga(src: &[u8], n: usize, out: &mut [u8], Tracked(m): Tracked<&mut Meter>)
     requires
         2 * n <= src@.len(),
         old(out)@.len() == 4 * n,
     ensures
+        final(m).n <= old(m).n + n,
         final(out)@.len() == 4 * n,
         forall|i: int, j: int| 0 <= i < n && 0 <= j < 4 ==> #[trigger] quad(final(out)@, i, j) == if j < 3 {
             src@[2 * i]
@@ -387,8 +410,11 @@ fn expand_ga(src: &[u8], n: usize, out: &mut [u8])
     let mut i: usize = 0;
     let mut s: usize = 0;
     let mut o: usize = 0;
+    let ghost m0 = m.n;
     while i < n
         invariant
+            m0 == old(m).n,
+            m.n <= m0 + i,
             2 * n <= src@.len(),
             out@.len() == 4 * n,
             4 * n <= usize::MAX,
@@ -419,6 +445,9 @@ fn expand_ga(src: &[u8], n: usize, out: &mut [u8])
                     assert(quad(o0, k, j) == quad(out@, k, j));
                 }
             }
+        }
+        proof {
+            m.n = m.n + 1;
         }
         i = i + 1;
         s = s + 2;
@@ -526,12 +555,13 @@ pub open spec fn px16(src: Seq<u8>, ch: nat, key: Option<(u16, u16, u16)>, i: in
 
 /// `src`'s `n` 16-bit pixels of `ch` channels as 8-bit RGBA (`px16`).
 #[verifier::rlimit(20)]
-fn expand16(src: &[u8], n: usize, ch: usize, key: Option<(u16, u16, u16)>, out: &mut [u8])
+fn expand16(src: &[u8], n: usize, ch: usize, key: Option<(u16, u16, u16)>, out: &mut [u8], Tracked(m): Tracked<&mut Meter>)
     requires
         1 <= ch <= 4,
         2 * ch * n <= src@.len(),
         old(out)@.len() == 4 * n,
     ensures
+        final(m).n <= old(m).n + n,
         final(out)@.len() == 4 * n,
         forall|i: int, j: int| 0 <= i < n && 0 <= j < 4 ==> #[trigger] quad(final(out)@, i, j) == px16(src@, ch as nat, key, i, j),
 {
@@ -545,8 +575,11 @@ fn expand16(src: &[u8], n: usize, ch: usize, key: Option<(u16, u16, u16)>, out: 
     let mut i: usize = 0;
     let mut s: usize = 0;
     let mut o: usize = 0;
+    let ghost m0 = m.n;
     while i < n
         invariant
+            m0 == old(m).n,
+            m.n <= m0 + i,
             1 <= ch <= 4,
             step == 2 * ch,
             2 * ch * n <= src@.len(),
@@ -607,6 +640,9 @@ fn expand16(src: &[u8], n: usize, ch: usize, key: Option<(u16, u16, u16)>, out: 
         proof {
             assert(step * i + step == step * (i + 1)) by (nonlinear_arith);
         }
+        proof {
+            m.n = m.n + 1;
+        }
         i = i + 1;
         s = s + step;
         o = o + 4;
@@ -616,7 +652,7 @@ fn expand16(src: &[u8], n: usize, ch: usize, key: Option<(u16, u16, u16)>, out: 
 /// `spec::rgba8` of a non-interlaced 16-bit image.
 #[verifier::spinoff_prover]
 #[verifier::rlimit(40)]
-pub fn rgba8_flat16(png: &PngX, buf: &[u8], off: &[usize; 8], limit: usize) -> (r: Result<Vec<u8>, crate::decode::Error>)
+pub fn rgba8_flat16(png: &PngX, buf: &[u8], off: &[usize; 8], limit: usize, Tracked(m): Tracked<&mut Meter>, Tracked(a): Tracked<&mut Meter>) -> (r: Result<Vec<u8>, crate::decode::Error>)
     requires
         png.wf(),
         bufs_ok(png.hdr.view(), buf@, off@),
@@ -625,6 +661,8 @@ pub fn rgba8_flat16(png: &PngX, buf: &[u8], off: &[usize; 8], limit: usize) -> (
     ensures
         r matches Ok(v) ==> v@ == rgba8(png.view(), imgs_of(png.hdr.view(), buf@, off@)),
         r matches Err(e) ==> e != crate::decode::Error::Invalid,
+        old(a).n <= final(a).n <= old(a).n + limit,
+        final(m).n + 12 * old(a).n <= old(m).n + 12 * final(a).n + 1000,
 {
     let h = &png.hdr;
     let ghost hv = h.view();
@@ -668,6 +706,10 @@ pub fn rgba8_flat16(png: &PngX, buf: &[u8], off: &[usize; 8], limit: usize) -> (
         Some(v) => v,
         None => return Err(crate::decode::Error::OutOfMemory),
     };
+    proof {
+        a.n = (a.n + 4 * n) as nat;
+        m.n = (m.n + 4 * n) as nat;
+    }
     let key: Option<(u16, u16, u16)> = match &png.trns {
         Some(t) => if ct == 2 {
             Some(
@@ -685,7 +727,7 @@ pub fn rgba8_flat16(png: &PngX, buf: &[u8], off: &[usize; 8], limit: usize) -> (
         },
         None => None,
     };
-    expand16(buf, n, ch, key, out.as_mut_slice());
+    expand16(buf, n, ch, key, out.as_mut_slice(), Tracked(m));
     proof {
         assert forall|i: int, j: int| 0 <= i < n && 0 <= j < 4 implies #[trigger] quad(out@, i, j) == rgba_byte(
             pv,
@@ -725,7 +767,7 @@ pub open spec fn flat8(h: Ihdr) -> bool {
 /// buffer and, for RGBA images, returns it as the result.
 #[verifier::spinoff_prover]
 #[verifier::rlimit(40)]
-pub fn rgba8_flat(png: &PngX, buf: Vec<u8>, off: &[usize; 8], limit: usize) -> (r: Result<Vec<u8>, crate::decode::Error>)
+pub fn rgba8_flat(png: &PngX, buf: Vec<u8>, off: &[usize; 8], limit: usize, Tracked(m): Tracked<&mut Meter>, Tracked(a): Tracked<&mut Meter>) -> (r: Result<Vec<u8>, crate::decode::Error>)
     requires
         png.wf(),
         bufs_ok(png.hdr.view(), buf@, off@),
@@ -733,6 +775,8 @@ pub fn rgba8_flat(png: &PngX, buf: Vec<u8>, off: &[usize; 8], limit: usize) -> (
     ensures
         r matches Ok(v) ==> v@ == rgba8(png.view(), imgs_of(png.hdr.view(), buf@, off@)),
         r matches Err(e) ==> e != crate::decode::Error::Invalid,
+        old(a).n <= final(a).n <= old(a).n + limit,
+        final(m).n + 12 * old(a).n <= old(m).n + 12 * final(a).n + 1000,
 {
     let h = &png.hdr;
     let ghost hv = h.view();
@@ -786,6 +830,10 @@ pub fn rgba8_flat(png: &PngX, buf: Vec<u8>, off: &[usize; 8], limit: usize) -> (
         Some(v) => v,
         None => return Err(crate::decode::Error::OutOfMemory),
     };
+    proof {
+        a.n = (a.n + 4 * n) as nat;
+        m.n = (m.n + 4 * n) as nat;
+    }
     if ct == 2 {
         let key = match &png.trns {
             Some(t) => Some(
@@ -797,7 +845,7 @@ pub fn rgba8_flat(png: &PngX, buf: Vec<u8>, off: &[usize; 8], limit: usize) -> (
             ),
             None => None,
         };
-        expand_rgb(buf.as_slice(), n, key, out.as_mut_slice());
+        expand_rgb(buf.as_slice(), n, key, out.as_mut_slice(), Tracked(m));
         proof {
             assert forall|i: int, j: int| 0 <= i < n && 0 <= j < 4 implies #[trigger] quad(out@, i, j) == rgba_byte(
                 pv,
@@ -813,7 +861,7 @@ pub fn rgba8_flat(png: &PngX, buf: Vec<u8>, off: &[usize; 8], limit: usize) -> (
             }
         }
     } else if ct == 4 {
-        expand_ga(buf.as_slice(), n, out.as_mut_slice());
+        expand_ga(buf.as_slice(), n, out.as_mut_slice(), Tracked(m));
         proof {
             assert forall|i: int, j: int| 0 <= i < n && 0 <= j < 4 implies #[trigger] quad(out@, i, j) == rgba_byte(
                 pv,
@@ -828,8 +876,8 @@ pub fn rgba8_flat(png: &PngX, buf: Vec<u8>, off: &[usize; 8], limit: usize) -> (
             }
         }
     } else {
-        let tab = table(png);
-        expand_indexed(buf.as_slice(), n, tab.as_slice(), out.as_mut_slice());
+        let tab = table(png, Tracked(m));
+        expand_indexed(buf.as_slice(), n, tab.as_slice(), out.as_mut_slice(), Tracked(m));
         proof {
             assert forall|i: int, j: int| 0 <= i < n && 0 <= j < 4 implies #[trigger] quad(out@, i, j) == rgba_byte(
                 pv,

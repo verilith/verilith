@@ -389,13 +389,22 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   pass over an unread value, then return `false` exactly at the innermost
   container's end token, the one its start token links to, and `true`
   otherwise; `leave` moves past that end token from anywhere in the
-  container; `find` stops at a member of the same object with the key
-  asked for, or past the object's end; `at_end` holds exactly once the
+  container; `find` stops at the first member of the same object from the
+  cursor on with the key asked for (`none_before`: every key it passed
+  differs), or past the object's end when none has it; `at_end` holds exactly once the
   document's value has been read, and then the reader is at the tape's
   end. Each leaves the reader synced at the place it says, so by induction
   any sequence of calls that fits reads what the tape holds, in order. A
   call that does not fit (a number where the tape has a string, a key
-  where a value is expected) returns `Mismatch` and changes nothing. The
+  where a value is expected, `arr_next` in an object, `obj_next` or
+  `find` in an array, `leave` at the top) returns `Mismatch` and changes
+  nothing: the reader keeps the kinds of the containers it is in, and
+  checks them. The scalar readers are verified too: `str` and `key` give
+  the token's bytes (`str_bytes`, `key_bytes`: the body, decoded if it
+  has escapes); `i64` gives the number's value exactly when the lexeme is
+  an integer that fits (`int_value`); `num_bits`, under `f64`, gives the
+  bits of the nearest double, ties to even (`float::is_round` of the
+  lexeme's exact `number_value`), with its sign. The
   lemmas say that each move leaves `finish` unchanged
   (`lemma_value_step`, `lemma_open_step`, `lemma_key_step`,
   `lemma_comma_step`, `lemma_start_step`, `lemma_leave_step`), that tokens
@@ -439,21 +448,15 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   vstd's spec of `get_unchecked_mut` and need no trust. A unit test checks each
   kernel against a scalar version, and another checks that the scalar,
   AVX2 and AVX-512 stage 1 kernels agree.
-* **The on-demand reader, outside the protocol.** The protocol proof
-  covers calls that fit where the reader is. `arr_next` inside an object,
-  `obj_next` inside an array and `leave` at the top level have no tape
-  contract: they stay safe (proof (1) above), but the reader may then
-  read a key as a value and no longer follows the tape. `find` is proven
-  to stop at a member with the key asked for, not that it is the first
-  such member after the cursor. On input the grammar rejects nothing is
-  claimed beyond safety, and skipped parts are not validated, by design.
+* **The on-demand reader, outside the protocol.** On input the grammar
+  rejects nothing is claimed beyond safety, and skipped parts are not
+  validated, by design.
   `tests/ondemand.rs` and the `ondemand` fuzz target still read every
   accepted text through the reader and compare it with the tape, and
   check that partial reads end at its end. `Reader::new` is proven to
-  return `None` only for input that is not UTF-8. The scalar conversions
-  `Reader::f64` and `i64`, and the slice-returning `str` and `key`, are
-  the same unverified glue over the verified scanner and `src/float.rs`
-  that `Value` uses.
+  return `None` only for input that is not UTF-8. `Reader::f64` is two
+  lines of glue over the verified `num_bits`: `f64::from_bits` of its bits,
+  or, for more than 19 significant digits, `f64::from_str` of the lexeme.
 * **NEON specs** come from verilith-simd (`verilith_simd::neon`), on the same footing:
   each intrinsic is a one-line wrapper with a trusted spec, checked against
   the real instructions by verilith-simd's `tests/neon.rs` on AArch64. The NEON

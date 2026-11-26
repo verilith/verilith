@@ -1,6 +1,7 @@
 //! The header and IFD fields (§2), proven against `spec::header`,
 //! `spec::find`, `spec::field` and `spec::scalar`.
 use crate::spec::*;
+use crate::work::*;
 use verilith_core::prims::get;
 use vstd::prelude::*;
 
@@ -80,11 +81,12 @@ pub fn bigtiff_exec(b: &[u8]) -> (r: bool)
 
 /// Whether the IFD's entries are in ascending order of tag
 /// (`spec::sorted`).
-pub fn sorted_exec(b: &[u8], le: bool, o: usize, n: usize) -> (r: bool)
+pub fn sorted_exec(b: &[u8], le: bool, o: usize, n: usize, Tracked(m): Tracked<&mut Meter>) -> (r: bool)
     requires
         ifd_ok(b@, o as nat, n as nat),
     ensures
         r == sorted(b@, le, o as nat, n as nat),
+        final(m).n <= old(m).n + unit(b@.len()),
 {
     let l = b.len();
     let mut i: usize = 0;
@@ -94,8 +96,12 @@ pub fn sorted_exec(b: &[u8], le: bool, o: usize, n: usize) -> (r: bool)
             ifd_ok(b@, o as nat, n as nat),
             i <= n,
             forall|j: int| 0 <= j < i ==> #[trigger] tag_at(b@, le, o as nat, j) < tag_at(b@, le, o as nat, j + 1),
+            m.n <= old(m).n + i,
         decreases n - i,
     {
+        proof {
+            m.n = m.n + 1;
+        }
         let e = o + 2 + 12 * i;
         if u16_exec(b, le, e) >= u16_exec(b, le, e + 12) {
             assert(!(tag_at(b@, le, o as nat, i as int) < tag_at(b@, le, o as nat, i + 1)));
@@ -107,14 +113,15 @@ pub fn sorted_exec(b: &[u8], le: bool, o: usize, n: usize) -> (r: bool)
 }
 
 /// `spec::present`.
-pub fn present_exec(b: &[u8], le: bool, o: usize, n: usize, tag: u16) -> (r: bool)
+pub fn present_exec(b: &[u8], le: bool, o: usize, n: usize, tag: u16, Tracked(m): Tracked<&mut Meter>) -> (r: bool)
     requires
         ifd_ok(b@, o as nat, n as nat),
     ensures
         r == present(b@, le, o as nat, n as nat, tag as nat),
+        final(m).n <= old(m).n + unit(b@.len()),
 {
     let l = b.len();
-    match find_exec(b, le, o, n, tag) {
+    match find_exec(b, le, o, n, tag, Tracked(m)) {
         None => false,
         Some(i) => {
             let ty = u16_exec(b, le, o + 2 + 12 * i + 2);
@@ -139,7 +146,7 @@ pub proof fn lemma_find_range(b: Seq<u8>, le: bool, o: nat, n: nat, tag: nat, i:
 }
 
 /// The first entry with tag `tag` (`spec::find`).
-pub fn find_exec(b: &[u8], le: bool, o: usize, n: usize, tag: u16) -> (r: Option<usize>)
+pub fn find_exec(b: &[u8], le: bool, o: usize, n: usize, tag: u16, Tracked(m): Tracked<&mut Meter>) -> (r: Option<usize>)
     requires
         ifd_ok(b@, o as nat, n as nat),
     ensures
@@ -147,6 +154,7 @@ pub fn find_exec(b: &[u8], le: bool, o: usize, n: usize, tag: u16) -> (r: Option
             Some(i) => r == Some(i as usize) && i < n,
             None => r is None,
         },
+        final(m).n <= old(m).n + b@.len() + 1,
 {
     proof {
         lemma_find_range(b@, le, o as nat, n as nat, tag as nat, 0);
@@ -159,8 +167,12 @@ pub fn find_exec(b: &[u8], le: bool, o: usize, n: usize, tag: u16) -> (r: Option
             ifd_ok(b@, o as nat, n as nat),
             i <= n,
             find(b@, le, o as nat, n as nat, tag as nat, 0) == find(b@, le, o as nat, n as nat, tag as nat, i as nat),
+            m.n <= old(m).n + i,
         decreases n - i,
     {
+        proof {
+            m.n = m.n + 1;
+        }
         let e = o + 2 + 12 * i;
         if u16_exec(b, le, e) == tag {
             return Some(i);
@@ -204,11 +216,27 @@ pub fn field_exec(b: &[u8], le: bool, o: usize, n: usize, tag: u16) -> (r: Resul
             Some(Some(v)) => r matches Ok(Some(f)) && f.ok(b@) && f.values(b@, le) == v,
         },
 {
+    let tracked mut m = Meter { n: 0 };
+    field_counted(b, le, o, n, tag, Tracked(&mut m))
+}
+
+/// `field_exec`, counting its steps.
+pub fn field_counted(b: &[u8], le: bool, o: usize, n: usize, tag: u16, Tracked(m): Tracked<&mut Meter>) -> (r: Result<Option<Field>, ()>)
+    requires
+        ifd_ok(b@, o as nat, n as nat),
+    ensures
+        match field(b@, le, o as nat, n as nat, tag as nat) {
+            None => r is Err,
+            Some(None) => r == Ok::<Option<Field>, ()>(None),
+            Some(Some(v)) => r matches Ok(Some(f)) && f.ok(b@) && f.values(b@, le) == v,
+        },
+        final(m).n <= old(m).n + b@.len() + 1,
+{
     proof {
         reveal(field);
     }
     let l = b.len();
-    let i = match find_exec(b, le, o, n, tag) {
+    let i = match find_exec(b, le, o, n, tag, Tracked(m)) {
         None => return Ok(None),
         Some(i) => i,
     };
@@ -254,7 +282,7 @@ pub fn value_exec(b: &[u8], le: bool, f: Field, k: u32) -> (r: u32)
 }
 
 /// A field with one value, or `default` (`spec::scalar`).
-pub fn scalar_exec(b: &[u8], le: bool, o: usize, n: usize, tag: u16, default: u32) -> (r: Option<u32>)
+pub fn scalar_exec(b: &[u8], le: bool, o: usize, n: usize, tag: u16, default: u32, Tracked(m): Tracked<&mut Meter>) -> (r: Option<u32>)
     requires
         ifd_ok(b@, o as nat, n as nat),
     ensures
@@ -262,11 +290,12 @@ pub fn scalar_exec(b: &[u8], le: bool, o: usize, n: usize, tag: u16, default: u3
             Some(x) => r == Some(x as u32) && x <= u32::MAX,
             None => r is None,
         },
+        final(m).n <= old(m).n + unit(b@.len()),
 {
     proof {
         reveal(scalar);
     }
-    match field_exec(b, le, o, n, tag) {
+    match field_counted(b, le, o, n, tag, Tracked(m)) {
         Err(()) => None,
         Ok(None) => Some(default),
         Ok(Some(f)) => if f.count == 1 {

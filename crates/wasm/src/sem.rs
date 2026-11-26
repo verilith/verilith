@@ -70,6 +70,11 @@ pub enum Step {
     /// with the arguments popped and the caller still at the `call`;
     /// `resume` continues it with the host's results.
     Host { func: nat, args: Seq<u64>, cfg: Config },
+    /// A `memory.grow` within the maximum, which may succeed (`ok`) or
+    /// fail (`fail`, pushing -1): the spec (§4.4.7) lets it fail whenever
+    /// the host cannot provide the memory. The run's [`HostResp::Grow`]
+    /// says which.
+    Grow { ok: Config, fail: Config },
     /// No rule applies (never reached from a validated module).
     Stuck,
 }
@@ -680,13 +685,16 @@ pub open spec fn step_instr(m: &Module, c: Config, f: Frame, i: Instr) -> Step {
                 if old + n > s.mem_max {
                     next(c, adv(push(popn(f, 1), 0xffff_ffff)))
                 } else {
-                    Step::Next(with_top(
-                        Config {
-                            store: Store { mem: s.mem + Seq::new(n * PAGE as nat, |_i| 0u8), ..s },
-                            ..c
-                        },
-                        adv(push(popn(f, 1), old as u64)),
-                    ))
+                    Step::Grow {
+                        ok: with_top(
+                            Config {
+                                store: Store { mem: s.mem + Seq::new(n * PAGE as nat, |_i| 0u8), ..s },
+                                ..c
+                            },
+                            adv(push(popn(f, 1), old as u64)),
+                        ),
+                        fail: with_top(c, adv(push(popn(f, 1), 0xffff_ffff))),
+                    }
                 }
             },
             Instr::MemoryFill => if h < 3 {
@@ -752,6 +760,8 @@ verus! {
 pub enum HostResp {
     Ok(Store, Seq<u64>),
     Trap(Store),
+    /// Whether a `memory.grow` ([`Step::Grow`]) got its memory.
+    Grow(bool),
 }
 
 pub enum Outcome {
@@ -778,6 +788,15 @@ pub open spec fn run(m: &Module, c: Config, hs: Seq<HostResp>, n: nat) -> Outcom
                 match hs[0] {
                     HostResp::Ok(s, res) => run(m, resume(cfg, s, res), hs.drop_first(), (n - 1) as nat),
                     HostResp::Trap(s) => Outcome::Trap(Trap::Host, s),
+                    HostResp::Grow(_) => Outcome::Stuck,
+                }
+            },
+            Step::Grow { ok, fail } => if hs.len() == 0 {
+                Outcome::Stuck
+            } else {
+                match hs[0] {
+                    HostResp::Grow(b) => run(m, if b { ok } else { fail }, hs.drop_first(), (n - 1) as nat),
+                    _ => Outcome::Stuck,
                 }
             },
             Step::Trap(t, s) => Outcome::Trap(t, s),
@@ -807,6 +826,11 @@ pub proof fn lemma_run_step(m: &Module, c0: Config, hs: Seq<HostResp>, n: nat, c
                     lemma_run_step(m, resume(cfg, s, res), hs.drop_first(), (n - 1) as nat, c);
                 }
             },
+            Step::Grow { ok, fail } => {
+                if let HostResp::Grow(b) = hs[0] {
+                    lemma_run_step(m, if b { ok } else { fail }, hs.drop_first(), (n - 1) as nat, c);
+                }
+            },
             _ => {},
         }
     } else {
@@ -824,6 +848,7 @@ pub proof fn lemma_run_host(m: &Module, c0: Config, hs: Seq<HostResp>, n: nat, c
             HostResp::Ok(s, res) => run(m, c0, hs.push(r), n + 1)
                 == Outcome::Running(resume(step(m, c)->cfg, s, res)),
             HostResp::Trap(s) => run(m, c0, hs.push(r), n + 1) == Outcome::Trap(Trap::Host, s),
+            HostResp::Grow(_) => true,
         },
     decreases n,
 {
@@ -834,6 +859,47 @@ pub proof fn lemma_run_host(m: &Module, c0: Config, hs: Seq<HostResp>, n: nat, c
                 if let HostResp::Ok(s, res) = hs[0] {
                     assert(hs.push(r).drop_first() == hs.drop_first().push(r));
                     lemma_run_host(m, resume(cfg, s, res), hs.drop_first(), (n - 1) as nat, c, r);
+                }
+            },
+            Step::Grow { ok, fail } => {
+                if let HostResp::Grow(b) = hs[0] {
+                    assert(hs.push(r).drop_first() == hs.drop_first().push(r));
+                    lemma_run_host(m, if b { ok } else { fail }, hs.drop_first(), (n - 1) as nat, c, r);
+                }
+            },
+            _ => {},
+        }
+    } else {
+        reveal_with_fuel(run, 2);
+        assert(hs.push(r) =~= seq![r]);
+        assert(seq![r].drop_first() =~= Seq::<HostResp>::empty());
+    }
+}
+
+/// A `memory.grow` after a run that is still going, with outcome `b`.
+pub proof fn lemma_run_grow(m: &Module, c0: Config, hs: Seq<HostResp>, n: nat, c: Config, b: bool)
+    requires
+        run(m, c0, hs, n) == Outcome::Running(c),
+        step(m, c) is Grow,
+    ensures
+        run(m, c0, hs.push(HostResp::Grow(b)), n + 1)
+            == Outcome::Running(if b { step(m, c)->ok } else { step(m, c)->fail }),
+    decreases n,
+{
+    let r = HostResp::Grow(b);
+    if n > 0 {
+        match step(m, c0) {
+            Step::Next(c2) => lemma_run_grow(m, c2, hs, (n - 1) as nat, c, b),
+            Step::Host { func, args, cfg } => {
+                if let HostResp::Ok(s, res) = hs[0] {
+                    assert(hs.push(r).drop_first() == hs.drop_first().push(r));
+                    lemma_run_grow(m, resume(cfg, s, res), hs.drop_first(), (n - 1) as nat, c, b);
+                }
+            },
+            Step::Grow { ok, fail } => {
+                if let HostResp::Grow(b2) = hs[0] {
+                    assert(hs.push(r).drop_first() == hs.drop_first().push(r));
+                    lemma_run_grow(m, if b2 { ok } else { fail }, hs.drop_first(), (n - 1) as nat, c, b);
                 }
             },
             _ => {},

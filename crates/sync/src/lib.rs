@@ -17,6 +17,8 @@ pub mod chan_model;
 #[doc(hidden)]
 pub mod chan_sync;
 #[doc(hidden)]
+pub mod fair;
+#[doc(hidden)]
 pub mod lot;
 #[doc(hidden)]
 pub mod model;

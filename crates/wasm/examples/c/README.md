@@ -6,3 +6,6 @@ files) are unmodified copies of the examples in
 commit 9d6b93764ac96cdd9db51081c363e09d2d488b4d (Apache-2.0), as is
 `include/wasm.h`. `scripts/capi.sh` builds each against `libverilith_wasm.a` and
 checks that it runs to completion.
+
+`limits.c` is ours: it uses the fuel and memory limits that
+`include/verilith.h` adds to the API.

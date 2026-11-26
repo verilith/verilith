@@ -491,6 +491,12 @@ pub fn {name}({GP}    Ghost(rpc): Ghost<usize>, stack: &mut Vec<u64>, fp: usize,
     }}
 }}
 """)
+# `execute` gets `a`; `execute_metered` gets `M`, whose value arms also
+# return the fuel left.
+M = []
+def marm(code, call):
+    M.append(f'            OpCode::{code} => {call}')
+OK_ERR_M = OK_ERR.replace(', n2) }', ', n2, fl) }')
 for k, (kind, codes) in enumerate([('val', VALS), ('st', STS), ('br', BRS)]):
     for j, grp in enumerate(groups(codes)):
         name = f'd_{kind}{j}'
@@ -499,9 +505,55 @@ for k, (kind, codes) in enumerate([('val', VALS), ('st', STS), ('br', BRS)]):
             arm(pat(grp).removeprefix('OpCode::'), br_d(name))
         else:
             arm(pat(grp).removeprefix('OpCode::'), val_d(name))
+            marm(pat(grp).removeprefix('OpCode::'), val_d(name).replace(OK_ERR, OK_ERR_M))
+
+# In `execute_metered` every branch, the hand-written ones too, goes
+# through one arm, which charges one unit of fuel and then dispatches again
+# (`s_branch`): one exit for running out of fuel, not one per arm.
+CHARGE = ('if fl == 0 { proof { lemma_out_of_fuel(m, cs, codes@, c0, g, stack@, calls@, d, rpc, fp, st); } '
+          'return (Err(Trap::Exhausted), Ghost(g.hs), Ghost(g.n), 0); } fl = fl - 1; ')
+HAND_BR = ['BrIf', 'A_BrIf', 'BrIfZ', 'A_BrIfZ', 'Br', 'BrIfRRG', 'BrIfRIG']
+S.append(f"""/// Every branch code (see `execute_metered`, which runs them all in one arm).
+#[inline(always)]
+pub fn s_branch<'a>({GP}    rpc: usize, stack: &Vec<u64>, fp: usize, st: &Store, code: &Code, r: &ROp,
+    rops: &'a [ROp], cur: Cur<'a>, acc: u64) -> (res: (usize, Cur<'a>, Ghost<GS>))
+    requires
+        rinv(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st),
+        *code == codes[d as int],
+        *r == codes[d as int].rops@[rpc as int],
+        rops@ == codes[d as int].rops@, cur.seq() == rops@, cur.idx() == rpc as int,
+        acc_ok(codes, d, rpc, acc, stack@, fp),
+    ensures
+        rinv(m, cs, codes, c0, res.2@, stack@, calls, d, res.0, fp, st), res.2@.hs == g.hs,
+        res.1.idx() == res.0 as int, res.1.seq() == rops@,
+        acc_ok(codes, d, res.0, acc, stack@, fp),
+{{
+    proof {{ lemma_rpc(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st); lemma_pre_hand(); }}
+    match r.op {{
+        OpCode::BrIf | OpCode::A_BrIf => r_brif({GA}, rpc, stack, fp, st, r, false, rops, cur, acc),
+        OpCode::BrIfZ | OpCode::A_BrIfZ => r_brif({GA}, rpc, stack, fp, st, r, true, rops, cur, acc),
+        OpCode::Br => r_br({GA}, rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRRG => {{
+            let op = r_instr({GA}, Ghost(rpc), stack, fp, st, code, r);
+            r_brif_rr({GA}, rpc, op, stack, fp, st, r, rops, cur, acc)
+        }},
+        OpCode::BrIfRIG => {{
+            let op = r_instr({GA}, Ghost(rpc), stack, fp, st, code, r);
+            r_brif_ri({GA}, rpc, op, stack, fp, st, r, rops, cur, acc)
+        }},
+""" + ''.join(f"        OpCode::{c} => s_{c}({GA}, rpc, stack, fp, st, r, rops, cur, acc),\n" for c in BRS) + """        _ => (rpc, cur, Ghost(g)),
+    }
+}
+""")
+M.append('            ' + ' | '.join(f'OpCode::{c}' for c in HAND_BR + BRS) + ' => { ' + CHARGE
+  + f'let (rpc2, cur2, g2) = s_branch({G}, rpc, stack, fp, st, code, r, rops, cur, acc); rpc = rpc2; cur = cur2; proof {{ g = g2@; }} }},')
 
 open('src/rsteps.rs','w').write(SH + '\n'.join(S) + '\n} // verus!\n')
+def splice(src, tag, arms):
+    b = src.index(f'            // BEGIN {tag}\n') + len(f'            // BEGIN {tag}\n')
+    e = src.index(f'            // END {tag}\n')
+    return src[:b] + '\n'.join(arms) + '\n' + src[e:]
 src = open('src/run.rs').read()
-b = src.index('            // BEGIN GENERATED ARMS\n') + len('            // BEGIN GENERATED ARMS\n')
-e = src.index('            // END GENERATED ARMS\n')
-open('src/run.rs','w').write(src[:b] + '\n'.join(a) + '\n' + src[e:])
+src = splice(src, 'GENERATED ARMS', a)
+src = splice(src, 'GENERATED METERED ARMS', M)
+open('src/run.rs','w').write(src)

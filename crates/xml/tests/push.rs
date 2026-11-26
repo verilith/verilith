@@ -8,7 +8,7 @@
 use std::path::Path;
 use verilith_xml::push::{R_ERR, R_LIMIT, R_MORE, R_OK, R_WHOLE};
 use verilith_xml::reader::Reader;
-use verilith_xml::stream::{P_FIRST, P_LAST};
+use verilith_xml::stream::{P_CR, P_FIRST, P_LAST};
 use verilith_xml::tape::{Kind, Tape, Tok};
 
 /// An item, without positions: what both parses must agree on.
@@ -68,6 +68,12 @@ fn pushed(doc: &[u8], cut: &mut dyn FnMut() -> usize) -> (u8, Vec<Ev>, usize) {
         let w = st.window();
         max = max.max(w.len());
         for t in &tape.toks {
+            if matches!(t.kind, Kind::Text | Kind::CData) {
+                // The flags the proof is about: P_CR exactly when the piece
+                // has a carriage return, P_FIRST and P_LAST only on CDATA.
+                assert_eq!(t.f & P_CR != 0, w[t.a()..t.b()].contains(&b'\r'));
+                assert!(t.f < 8 && (t.kind == Kind::CData || t.f & (P_FIRST | P_LAST) == 0));
+            }
             match t.kind {
                 Kind::Text => match out.last_mut() {
                     Some(Ev::Text(v)) => v.extend_from_slice(&w[t.a()..t.b()]),

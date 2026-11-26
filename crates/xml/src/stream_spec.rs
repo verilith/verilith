@@ -1054,6 +1054,8 @@ pub proof fn lemma_cdata_tail(x: Seq<u8>, y: Seq<u8>, lo: int, d: int, m: int)
 
 /// An item that the window, which is all that remains, does not read: it
 /// fails on `y`, or it is text that runs to the end.
+#[verifier::rlimit(150)]
+#[verifier::spinoff_prover]
 pub proof fn lemma_item_flip(
     x: Seq<u8>,
     y: Seq<u8>,

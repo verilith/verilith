@@ -421,13 +421,20 @@ impl View for Tape {
 }
 
 impl Tape {
+    /// The tokens' flag bytes (for the push parser's proof).
+    pub open spec fn fl(&self) -> Seq<u8> {
+        self.toks@.map_values(|t: Tok| t.f)
+    }
+
     /// An empty tape.
     pub fn new() -> (r: Tape)
         ensures
             r@ == Seq::<XTok>::empty(),
+            r.fl() == Seq::<u8>::empty(),
     {
         let r = Tape { toks: Vec::new(), err: 0 };
         assert(r@ =~= Seq::<XTok>::empty());
+        assert(r.fl() =~= Seq::<u8>::empty());
         r
     }
 
@@ -435,10 +442,12 @@ impl Tape {
     pub fn clear(&mut self)
         ensures
             final(self)@ == Seq::<XTok>::empty(),
+            final(self).fl() == Seq::<u8>::empty(),
     {
         self.toks.clear();
         self.err = 0;
         assert(self@ =~= Seq::<XTok>::empty());
+        assert(self.fl() =~= Seq::<u8>::empty());
     }
 
     /// Records a failure at `pos` (diagnostic only).
@@ -474,10 +483,13 @@ impl Tape {
     pub fn push(&mut self, t: Tok)
         ensures
             final(self)@ == old(self)@.push(t@),
+            final(self).fl() == old(self).fl().push(t.f),
     {
         let ghost tv = t@;
+        let ghost tf = t.f;
         self.toks.push(t);
         assert(final(self)@ =~= old(self)@.push(tv));
+        assert(final(self).fl() =~= old(self).fl().push(tf));
     }
 
     /// `close_at`: links the start tag at `k` to the last token.

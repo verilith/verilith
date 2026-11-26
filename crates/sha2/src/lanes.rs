@@ -575,4 +575,162 @@ pub proof fn lemma_bswap32(src: Seq<u8>, m: Seq<u8>)
     }
 }
 
+// ---------------------------------------------------------------------------
+// 128-bit vectors (the SHA instruction kernels)
+// ---------------------------------------------------------------------------
+
+/// `alignr` by 4 bytes of 16-byte vectors: words 1 to 3 of `lo`, then word 0
+/// of `hi`.
+pub proof fn lemma_alignr4_x4(hi: Seq<u8>, lo: Seq<u8>)
+    requires
+        hi.len() == 16,
+        lo.len() == 16,
+    ensures
+        u32s(alignr_lanes(hi, lo, 4)) == seq![u32s(lo)[1], u32s(lo)[2], u32s(lo)[3], u32s(hi)[0]],
+{
+    let r = alignr_lanes(hi, lo, 4);
+    let (p0, p1) = (lo.subrange(4, 16), hi.subrange(0, 4));
+    assert(r =~= p0 + p1);
+    lemma_u32s_concat(p0, p1);
+    lemma_u32s_sub(lo, 1, 4);
+    lemma_u32s_sub(hi, 0, 1);
+    assert(u32s(r) =~= seq![u32s(lo)[1], u32s(lo)[2], u32s(lo)[3], u32s(hi)[0]]);
+}
+
+/// `alignr` by 8 bytes of 16-byte vectors: words 2 and 3 of `lo`, then words
+/// 0 and 1 of `hi`; as 64-bit lanes, lane 1 of `lo` then lane 0 of `hi`.
+pub proof fn lemma_alignr8_x4(hi: Seq<u8>, lo: Seq<u8>)
+    requires
+        hi.len() == 16,
+        lo.len() == 16,
+    ensures
+        u32s(alignr_lanes(hi, lo, 8)) == seq![u32s(lo)[2], u32s(lo)[3], u32s(hi)[0], u32s(hi)[1]],
+        u64s(alignr_lanes(hi, lo, 8)) == seq![u64s(lo)[1], u64s(hi)[0]],
+{
+    let r = alignr_lanes(hi, lo, 8);
+    let (p0, p1) = (lo.subrange(8, 16), hi.subrange(0, 8));
+    assert(r =~= p0 + p1);
+    lemma_u32s_concat(p0, p1);
+    lemma_u32s_sub(lo, 2, 4);
+    lemma_u32s_sub(hi, 0, 2);
+    assert(u32s(r) =~= seq![u32s(lo)[2], u32s(lo)[3], u32s(hi)[0], u32s(hi)[1]]);
+    lemma_u64s_concat(p0, p1);
+    lemma_u64s_sub(lo, 1, 2);
+    lemma_u64s_sub(hi, 0, 1);
+    assert(u64s(r) =~= seq![u64s(lo)[1], u64s(hi)[0]]);
+}
+
+/// `pblendw` with 0xf0: words 0 and 1 of `a`, then words 2 and 3 of `b`.
+pub proof fn lemma_blend_f0(a: Seq<u8>, b: Seq<u8>)
+    requires
+        a.len() == 16,
+        b.len() == 16,
+    ensures
+        u32s(crate::isa::blend16(a, b, 0xf0)) == seq![u32s(a)[0], u32s(a)[1], u32s(b)[2], u32s(b)[3]],
+{
+    let r = crate::isa::blend16(a, b, 0xf0);
+    vstd::arithmetic::power2::lemma2_to64();
+    assert forall|i: int| 0 <= i < 16 implies #[trigger] r[i] == (if i < 8 { a[i] } else { b[i] }) by {
+        let k = i / 2;
+        assert(0 <= k < 8);
+        if k == 0 { assert((0xf0int / 1) % 2 == 0); }
+        else if k == 1 { assert((0xf0int / 2) % 2 == 0); }
+        else if k == 2 { assert((0xf0int / 4) % 2 == 0); }
+        else if k == 3 { assert((0xf0int / 8) % 2 == 0); }
+        else if k == 4 { assert((0xf0int / 16) % 2 == 1); }
+        else if k == 5 { assert((0xf0int / 32) % 2 == 1); }
+        else if k == 6 { assert((0xf0int / 64) % 2 == 1); }
+        else { assert((0xf0int / 128) % 2 == 1); }
+    }
+    let (p0, p1) = (a.subrange(0, 8), b.subrange(8, 16));
+    assert(r =~= p0 + p1);
+    lemma_u32s_concat(p0, p1);
+    lemma_u32s_sub(a, 0, 2);
+    lemma_u32s_sub(b, 2, 4);
+    assert(u32s(r) =~= seq![u32s(a)[0], u32s(a)[1], u32s(b)[2], u32s(b)[3]]);
+}
+
+/// `pshufd` on one 128-bit vector, with the controls the SHA-NI kernel uses.
+pub proof fn lemma_shuffle32_consts(a: Seq<u32>)
+    requires
+        a.len() == 4,
+    ensures
+        shuffle32_lanes(a, 0x0e) == seq![a[2], a[3], a[0], a[0]],
+        shuffle32_lanes(a, 0xb1) == seq![a[1], a[0], a[3], a[2]],
+        shuffle32_lanes(a, 0x1b) == seq![a[3], a[2], a[1], a[0]],
+{
+    assert((0int / 4) * 4 + (14int / pow2_spec((2 * (0int % 4)) as nat) as int) % 4 == 2) by (compute_only);
+    assert((1int / 4) * 4 + (14int / pow2_spec((2 * (1int % 4)) as nat) as int) % 4 == 3) by (compute_only);
+    assert((2int / 4) * 4 + (14int / pow2_spec((2 * (2int % 4)) as nat) as int) % 4 == 0) by (compute_only);
+    assert((3int / 4) * 4 + (14int / pow2_spec((2 * (3int % 4)) as nat) as int) % 4 == 0) by (compute_only);
+    assert((0int / 4) * 4 + (177int / pow2_spec((2 * (0int % 4)) as nat) as int) % 4 == 1) by (compute_only);
+    assert((1int / 4) * 4 + (177int / pow2_spec((2 * (1int % 4)) as nat) as int) % 4 == 0) by (compute_only);
+    assert((2int / 4) * 4 + (177int / pow2_spec((2 * (2int % 4)) as nat) as int) % 4 == 3) by (compute_only);
+    assert((3int / 4) * 4 + (177int / pow2_spec((2 * (3int % 4)) as nat) as int) % 4 == 2) by (compute_only);
+    assert((0int / 4) * 4 + (27int / pow2_spec((2 * (0int % 4)) as nat) as int) % 4 == 3) by (compute_only);
+    assert((1int / 4) * 4 + (27int / pow2_spec((2 * (1int % 4)) as nat) as int) % 4 == 2) by (compute_only);
+    assert((2int / 4) * 4 + (27int / pow2_spec((2 * (2int % 4)) as nat) as int) % 4 == 1) by (compute_only);
+    assert((3int / 4) * 4 + (27int / pow2_spec((2 * (3int % 4)) as nat) as int) % 4 == 0) by (compute_only);
+    assert(shuffle32_lanes(a, 14) =~= seq![a[2], a[3], a[0], a[0]]);
+    assert(shuffle32_lanes(a, 177) =~= seq![a[1], a[0], a[3], a[2]]);
+    assert(shuffle32_lanes(a, 27) =~= seq![a[3], a[2], a[1], a[0]]);
+}
+
+/// The 16-byte `shuffle_epi8` control that reverses the bytes of each
+/// 32-bit lane.
+pub open spec fn bswap32_mask16() -> Seq<u8> {
+    Seq::new(16, |i: int| (4 * (i / 4) + 3 - i % 4) as u8)
+}
+
+/// Shuffling 16 bytes with [`bswap32_mask16`] reads each 32-bit lane
+/// big-endian.
+pub proof fn lemma_bswap32_x4(src: Seq<u8>, m: Seq<u8>)
+    requires
+        src.len() == 16,
+        m == bswap32_mask16(),
+    ensures
+        forall|j: int| 0 <= j < 4 ==> #[trigger] u32s(shuffle8_lanes(src, m))[j] == crate::spec::be32(src, 4 * j),
+{
+    let r = shuffle8_lanes(src, m);
+    assert forall|i: int| 0 <= i < 16 implies #[trigger] r[i] == src[4 * (i / 4) + 3 - i % 4] by {}
+    assert forall|j: int| 0 <= j < 4 implies #[trigger] u32s(r)[j] == crate::spec::be32(src, 4 * j) by {
+        let k = 4 * j;
+        assert(r[k] == src[k + 3] && r[k + 1] == src[k + 2] && r[k + 2] == src[k + 1] && r[k + 3] == src[k]);
+        lemma_be32_bytes(src[k], src[k + 1], src[k + 2], src[k + 3]);
+    }
+}
+
+/// `rev32` reads each 32-bit lane big-endian.
+pub proof fn lemma_rev32(src: Seq<u8>)
+    requires
+        src.len() == 16,
+    ensures
+        forall|j: int| 0 <= j < 4 ==> #[trigger] u32s(crate::isa::rev32(src))[j] == crate::spec::be32(src, 4 * j),
+{
+    let r = crate::isa::rev32(src);
+    assert forall|j: int| 0 <= j < 4 implies #[trigger] u32s(r)[j] == crate::spec::be32(src, 4 * j) by {
+        let k = 4 * j;
+        assert(r[k] == src[k + 3] && r[k + 1] == src[k + 2] && r[k + 2] == src[k + 1] && r[k + 3] == src[k]);
+        lemma_be32_bytes(src[k], src[k + 1], src[k + 2], src[k + 3]);
+    }
+}
+
+/// `rev64` reads each 64-bit lane big-endian.
+pub proof fn lemma_rev64(src: Seq<u8>)
+    requires
+        src.len() == 16,
+    ensures
+        forall|j: int| 0 <= j < 2 ==> #[trigger] u64s(crate::isa::rev64(src))[j] == crate::spec512::be64_at(src, 8 * j),
+{
+    let r = crate::isa::rev64(src);
+    assert forall|j: int| 0 <= j < 2 implies #[trigger] u64s(r)[j] == crate::spec512::be64_at(src, 8 * j) by {
+        let k = 8 * j;
+        assert(r[k] == src[k + 7] && r[k + 1] == src[k + 6] && r[k + 2] == src[k + 5] && r[k + 3] == src[k + 4]);
+        assert(r[k + 4] == src[k + 3] && r[k + 5] == src[k + 2] && r[k + 6] == src[k + 1] && r[k + 7] == src[k]);
+        assert(u32s(r)[2 * j] == le32(r[k], r[k + 1], r[k + 2], r[k + 3]));
+        assert(u32s(r)[2 * j + 1] == le32(r[k + 4], r[k + 5], r[k + 6], r[k + 7]));
+        lemma_be64_bytes(src[k], src[k + 1], src[k + 2], src[k + 3], src[k + 4], src[k + 5], src[k + 6], src[k + 7]);
+    }
+}
+
 } // verus!

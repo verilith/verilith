@@ -6,7 +6,9 @@ reach its own linear memory, globals, tables and value stack, and every
 step the interpreter takes is the step a formal semantics of WebAssembly
 takes. Neither fact depends on the binary decoder, the validator or the
 linker being correct: their output is checked by verified code before
-anything runs.
+anything runs. An embedder can bound how long a guest runs (fuel) and how
+much memory it takes (a cap), so an untrusted module can neither hang the
+host nor exhaust its memory ([Resource limits](#resource-limits)).
 
 The WebAssembly 2.0 spec tests pass where verilith-wasm implements the feature
 (24,295 of 24,721 directives), and differential testing against wasmi on
@@ -16,9 +18,9 @@ at 0.81 to 1.03 times wasmi's time and 1.04 to 1.47 times wasm3's on the
 benchmarks below (the stack interpreter it replaced took 2.5 to 3.4 times
 wasmi's, in an earlier run).
 
-**Verification status.** `cargo verus verify` checks 737 functions with
-no errors (about 19 minutes on an Apple M-series laptop and 42 on a 4-core Linux VM, most of it on the
-interpreter loop, `execute`). The translation to register form (`src/reg.rs`) is marked
+**Verification status.** `cargo verus verify` checks 744 functions with
+no errors (about 5 minutes with two threads on a 4-core Linux VM, for
+both a 64-bit and a 32-bit target). The translation to register form (`src/reg.rs`) is marked
 `external_body`: it is untrusted, and only the checker's verdict on its
 output matters.
 
@@ -29,7 +31,7 @@ output matters.
 | Memory safety of the interpreter: every access to linear memory, the value stack, globals, tables and code is in bounds; no overflow, no panics | every verified function (Verus checks all indexing and arithmetic; raw accesses go through `src/prims.rs`, whose `requires` is the bounds check) |
 | Checker soundness: if `check_certs` accepts a module's stack-height certificates, every function satisfies `func_cert_ok` | `check::check_certs` |
 | Progress and preservation: from any configuration satisfying the invariant, the semantics never gets stuck, and the next configuration satisfies the invariant again (or is a host call with well-typed arguments, which resumes to one) | `preserve::lemma_step`, `preserve::lemma_resume` |
-| Refinement: the interpreter computes what the semantics computes. `execute` returns ghost `(hs, n)` such that running the semantics for `n` steps, with `hs` the host's responses (the store each host call left behind), ends with exactly the interpreter's result values or trap and exactly its store. If the interpreter stops with `Exhausted` (call depth or stack limit), the semantics is still running with that store | `run::execute`, against `sem::run` (`run::executed`) |
+| Refinement: the interpreter computes what the semantics computes. `execute` returns ghost `(hs, n)` such that running the semantics for `n` steps, with `hs` the host's responses (the store each host call left behind), ends with exactly the interpreter's result values or trap and exactly its store. `hs` also records whether each `memory.grow` got its memory. If the interpreter stops with `Exhausted` (call depth, stack limit or fuel), the semantics is still running with that store | `run::execute`, against `sem::run` (`run::executed`) |
 | Branch resolution: the compiled code's precomputed branch targets, frame sizes and arities are the certificate's | `compile::compile_all` ensures `interp::codes_ok` |
 | Register form: every operation computes, on every value stack, what the run of instructions it stands for computes on the flat machine; runs partition the body and start at every branch target | `rcheck::check_rcode` ensures `rcheck::rcode_ok` (part of `codes_ok`); `mach::lemma_msteps` carries the flat machine over to the semantics |
 | The boundary holds for any caller: a `Checked` instance can only be built by `Checked::new`, which runs the checker, compiles, and checks the initial store; its type invariant (checked certificates, compiled code, a well-formed store, a fixed-size value stack) is what `execute` requires, so every call from unverified code runs under the theorems above | `instance::Checked` (`#[verifier::type_invariant]`) |
@@ -38,7 +40,11 @@ The semantics (`src/sem.rs`) is a small-step machine over the decoded
 module: per-frame operand stacks and label stacks, untyped 64-bit value
 slots (an `i32` is the low half of its slot), structured control with
 `end`/`else` positions resolved by the decoder, and host calls as a step
-that waits for the embedder. It follows the WebAssembly 2.0 core
+that waits for the embedder. A `memory.grow` within the maximum is a
+step with two outcomes, the grown memory or -1, because the
+specification (§4.4.7) lets it fail whenever the host cannot provide the
+memory; the interpreter takes the second when allocation fails, and the
+run's `hs` records which one each grow took. It follows the WebAssembly 2.0 core
 specification (§4) for the instructions verilith-wasm implements. It is written
 for this project and is not mechanically related to the official
 specification or to WasmCert; the spec tests are what tie it to the
@@ -77,7 +83,9 @@ What the proofs assume rather than prove:
 - `src/prims.rs`: unchecked copies, fills, loads and stores on linear
   memory and the value stack; each `requires` is the bounds check Verus
   proves at the call site. (The single-element reads and writes are
-  verified against vstd's spec of `get_unchecked`.)
+  verified against vstd's spec of `get_unchecked`.) `try_grow` appends
+  zeroed pages, or reports that the allocation failed and leaves the
+  memory unchanged.
 - `interp::call_host` (it calls the embedder's host function, catching a
   panic as a trap, and is trusted to leave the lengths of the result
   buffer and memory unchanged, which a `&mut [T]` guarantees) and
@@ -134,6 +142,63 @@ the second. A 32-bit host has room for at most `interp::MAX_PAGES`
 rather than the 65536 a 64-bit one allows: past that, instantiation
 fails and `memory.grow` returns -1, as WebAssembly lets a host do.
 
+### Resource limits
+
+By default a guest may run forever and grow its memory to 4 GiB (2 GiB
+on a 32-bit host). To run
+untrusted code, set limits on the linker:
+
+```rust
+# use verilith_wasm::{Error, Instance, Linker, Module, ast::Trap};
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+# // (module (func (export "run") (loop br 0)))
+# let module = Module::new(&[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+#     0x03, 0x02, 0x01, 0x00, 0x07, 0x07, 0x01, 0x03, b'r', b'u', b'n', 0x00, 0x00,
+#     0x0a, 0x09, 0x01, 0x07, 0x00, 0x03, 0x40, 0x0c, 0x00, 0x0b, 0x0b])?;
+let mut linker = Linker::new();
+linker.fuel(10_000_000);     // each instance starts with this much fuel
+linker.max_memory(64 << 20); // and gets at most 64 MiB of memory
+let mut instance = Instance::new(module, &linker)?;
+let r = instance.call("run", &[]); // an infinite loop
+assert_eq!(r, Err(Error::Trap(Trap::Exhausted)));
+assert_eq!(instance.fuel(), Some(0));
+instance.set_fuel(Some(1_000_000)); // refuel (None: unmetered)
+# Ok(())
+# }
+```
+
+- **Fuel.** Each branch, call and return costs one unit; straight-line
+  code between them is free. Every loop iteration and every call pays, so
+  a metered call always ends. When a call runs out it traps with
+  `Trap::Exhausted` and the fuel is 0; the instance stays usable, and
+  fuel left over carries into the next call. The start function is
+  metered too. The proof covers this: stopping for lack of fuel is one of
+  the outcomes `run::executed` allows, with the semantics still running
+  and the store as the interpreter left it.
+
+  Unmetered instances pay nothing for this: they run `run::execute`, the
+  loop without fuel, and metered ones run `run::execute_metered` (both
+  proven). The metered loop checks fuel on each branch, call and return,
+  and sends every branch code through one arm that charges and then
+  dispatches again (`rsteps::s_branch`). On the benchmarks below that
+  costs nothing measurable: metered runs execute 1 to 13% fewer
+  instructions than unmetered ones (`fib` 7%, `sieve` 13%, `matmul` 5%,
+  `sort` 5%, `crc32` 1%, `sha256` 4%; `runner vwasm-fuel` in `bench/`),
+  as the shared arm compiles to tighter code, and take about the same
+  time. A charge in each branch arm instead proves in 13 minutes rather
+  than under 5 and executes 1 to 5% more instructions than unmetered
+  runs. Checking fuel before every operation made the benchmarks up to
+  1.65 times slower.
+- **Memory cap.** `max_memory(bytes)` caps every instance's memory
+  (rounded down to whole pages). A module whose memory starts above the
+  cap fails to instantiate, and `memory.grow` past the cap returns -1, as
+  it does past the module's own maximum.
+- **Allocation failure.** If the host cannot allocate the pages a
+  `memory.grow` asks for, the grow returns -1 instead of aborting the
+  process. (On Linux with overcommit, allocation rarely fails; the
+  process can still be killed later when the pages are touched. Use the
+  memory cap to bound what a guest can take.)
+
 ### C API
 
 `include/wasm.h` is the standard [wasm-c-api](https://github.com/WebAssembly/wasm-c-api)
@@ -141,7 +206,13 @@ header; `libverilith_wasm.a` implements the part of it needed to load modules,
 provide host functions (`wasm_func_new`, `wasm_func_new_with_env`),
 instantiate, call exports, read exported memories and globals, and
 report traps. The upstream `hello`, `callback`, `multi` and `trap`
-examples build and run unmodified (`scripts/capi.sh`). Not implemented:
+examples build and run unmodified (`scripts/capi.sh`).
+`include/verilith.h` adds the resource limits:
+`verilith_store_set_fuel` and `verilith_store_limit_memory` set them for
+instances created in a store, and `verilith_instance_set_fuel` and
+`verilith_instance_get_fuel` refuel an instance and read what it has
+left; a call that runs out of fuel traps with "all fuel consumed"
+(`examples/c/limits.c`). Not implemented:
 tables and references as externs, global and memory objects created by
 the embedder, trap traces, serialization, and import/export type
 reflection.
@@ -168,7 +239,8 @@ the exporting instance. Implementation limits: 100,000 nested calls,
 - `cargo test --release`: the spec tests (after
   `scripts/fetch-testsuite.sh`, which checks out WebAssembly/testsuite at
   a pinned commit) compared against `tests/spec-expected.txt`, and the
-  trusted integer primitives (`tests/sint.rs`).
+  trusted integer primitives (`tests/sint.rs`), and the resource limits
+  (`tests/limits.rs`).
 
   | spec test files | result |
   | --- | --- |
@@ -186,7 +258,7 @@ the exporting instance. Implementation limits: 100,000 nested calls,
   and exported globals after every call. 100,000 seeds (register
   interpreter): 87,380 modules run, 192,963 calls compared, no
   differences.
-- `scripts/capi.sh`: the C API examples.
+- `scripts/capi.sh`: the C API examples, and `examples/c/limits.c`.
 
 ## Performance
 

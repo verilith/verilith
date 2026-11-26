@@ -321,6 +321,17 @@ verified in verilith-simd). The trusted base is listed under
   of 1, 2, 3, 7, 64 and 4096 bytes, whole, and in three runs of random
   sizes, and compares the verdicts and the items with the whole parse's,
   and checks that the window stays small.
+* **The flags on pieces.** With the items, `feed` proves their flag bytes
+  (`Stream::flags`, one per emitted token) right (`items_spec::items_fl`):
+  from the token after the root element's start tag on, every piece of
+  character data or of a CDATA section has `P_CR` exactly when its span
+  has a carriage return, `P_FIRST` exactly when it is a CDATA section's
+  first piece, `P_LAST` exactly when it is its last, and no other bit.
+  The tokens before (the prolog's and the root start tag's) hold no
+  character data. When the document is decided while the prolog is still
+  being read (`pieces_from()` is then the number of tokens), the content's
+  tokens come whole, with the tape's flags, and nothing is claimed about
+  them as pieces. `tests/push.rs` checks `P_CR` on every piece too.
 * **Reading back.** `decode::eol` (line ends, §2.11) and
   `decode::att_norm` (the normalized value of an attribute, §3.3.3, with
   entity references expanded) state what the text means, and the
@@ -375,12 +386,9 @@ verified in verilith-simd). The trusted base is listed under
   trusts every pointer the caller passes. It is tested by libxml2's own
   regression tests under ASan and UBSan (see
   [The libxml2 C ABI](#the-libxml2-c-abi)).
-* **The push parser's flags on pieces** (`P_CR`, `P_FIRST`, `P_LAST`:
-  a carriage return in the piece, the first and the last piece of a CDATA
-  section) are not part of what is proven of its items: the pieces of one
-  section are proven to follow one another, and its first piece to start
-  where the section's text starts. The C ABIs' handlers built on the items
-  are ordinary Rust (above).
+* **The C ABIs' handlers on the push parser's pieces** are ordinary Rust
+  (above): the flags they read (`P_CR`, `P_FIRST`, `P_LAST`) are proven
+  (see "The flags on pieces"), what they do with them is not.
 * **Error positions** (`Tape::err`, and the line and column in `Error`)
   are diagnostics outside the spec: the verified parser decides whether
   the document is well-formed, and records where the step that failed

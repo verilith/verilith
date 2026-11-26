@@ -2,6 +2,7 @@
 //! IDAT run, proven to compute `spec::chunk_at`, `spec::parse_ihdr` and
 //! `spec::walk`.
 use crate::spec::*;
+use crate::work::Meter;
 use vstd::prelude::*;
 #[cfg(verus_only)]
 use verilith_zlib::spec as z;
@@ -182,6 +183,12 @@ pub open spec fn concat(b: Seq<u8>, rs: Seq<(usize, usize)>, n: nat) -> Seq<u8>
     }
 }
 
+/// The IDAT data gathered so far, plus 12 for each chunk: at most the
+/// bytes of the file the walk has passed.
+pub open spec fn idat_cost(b: Seq<u8>, rs: Seq<(usize, usize)>) -> nat {
+    concat(b, rs, rs.len()).len() + 12 * rs.len()
+}
+
 pub open spec fn ranges_ok(b: Seq<u8>, rs: Seq<(usize, usize)>) -> bool {
     forall|i: int| 0 <= i < rs.len() ==> #[trigger] rs[i].0 + rs[i].1 <= b.len()
 }
@@ -215,7 +222,7 @@ impl WalkX {
 /// state, or returns `Err(true)` at IEND (leaving it unchanged) and
 /// `Err(false)` on an error.
 #[verifier::rlimit(40)]
-fn step_exec(b: &[u8], h: &Header, p: usize, len: u32, ty: u32, st: &mut WalkX) -> (r: Result<
+fn step_exec(b: &[u8], h: &Header, p: usize, len: u32, ty: u32, st: &mut WalkX, Tracked(m): Tracked<&mut Meter>) -> (r: Result<
     (),
     bool,
 >)
@@ -224,6 +231,8 @@ fn step_exec(b: &[u8], h: &Header, p: usize, len: u32, ty: u32, st: &mut WalkX) 
         old(st).wf(b@),
         depth_ok(h.view().ct, h.view().depth),
     ensures
+        final(m).n <= old(m).n + len + 8,
+        idat_cost(b@, final(st).idat@) <= idat_cost(b@, old(st).idat@) + 12 + len,
         final(st).wf(b@),
         match step(b@, h.view(), p as int, chunk_at(b@, p as int).unwrap(), old(st).view(b@)) {
             Ok(s2) => r == Ok::<(), bool>(()) && final(st).view(b@) == s2,
@@ -235,6 +244,10 @@ fn step_exec(b: &[u8], h: &Header, p: usize, len: u32, ty: u32, st: &mut WalkX) 
     let _n = b.len();
     let ds = p + 8;
     let dl = len as usize;
+    // The CRC, over the type and the data, and a step for the rest.
+    proof {
+        m.n = (m.n + len + 8) as nat;
+    }
     proof {
         assert(range(b@, (ds, dl)) == chunk_data(b@, p as int, len as nat));
     }
@@ -271,6 +284,7 @@ fn step_exec(b: &[u8], h: &Header, p: usize, len: u32, ty: u32, st: &mut WalkX) 
             proof {
                 assert(st.idat@.len() == 1);
                 reveal_with_fuel(concat, 2);
+                assert(concat(b@, st.idat@, 1).len() == dl);
                 assert(concat(b@, st.idat@, 0) =~= Seq::<u8>::empty());
                 assert(st.view(b@).idat =~= chunk_data(b@, p as int, len as nat));
             }
@@ -281,6 +295,7 @@ fn step_exec(b: &[u8], h: &Header, p: usize, len: u32, ty: u32, st: &mut WalkX) 
             proof {
                 assert(st.idat@.subrange(0, old_idat.len() as int) =~= old_idat);
                 lemma_concat_prefix(b@, st.idat@, old_idat, old_idat.len());
+                assert(concat(b@, st.idat@, st.idat@.len()).len() == concat(b@, old_idat, old_idat.len()).len() + dl);
                 assert(ranges_ok(b@, st.idat@)) by {
                     assert forall|i: int| 0 <= i < st.idat@.len() implies #[trigger] st.idat@[i].0
                         + st.idat@[i].1 <= b@.len() by {
@@ -394,7 +409,8 @@ pub proof fn lemma_concat_prefix(b: Seq<u8>, rs: Seq<(usize, usize)>, qs: Seq<(u
 }
 
 /// Walks the chunks from `p` to IEND (`spec::walk`).
-pub fn walk_exec(b: &[u8], h: &Header, p: usize) -> (r: Option<WalkX>)
+/// Counts at most a step for each byte from `p` on.
+pub fn walk_exec(b: &[u8], h: &Header, p: usize, Tracked(m): Tracked<&mut Meter>) -> (r: Option<WalkX>)
     requires
         depth_ok(h.view().ct, h.view().depth),
     ensures
@@ -402,7 +418,10 @@ pub fn walk_exec(b: &[u8], h: &Header, p: usize) -> (r: Option<WalkX>)
             Some(s) => r matches Some(x) && x.wf(b@) && x.view(b@) == s,
             None => r is None,
         },
+        final(m).n <= old(m).n + b@.len(),
+        r matches Some(x) ==> idat_cost(b@, x.idat@) <= b@.len(),
 {
+    let ghost m0 = m.n;
     let mut st = WalkX { plte: None, trns: None, idat: Vec::new(), phase: 0, bkgd: false };
     let mut q = p;
     proof {
@@ -415,6 +434,11 @@ pub fn walk_exec(b: &[u8], h: &Header, p: usize) -> (r: Option<WalkX>)
             depth_ok(h.view().ct, h.view().depth),
             goal == walk(b@, h.view(), p as int, walk_start()),
             walk(b@, h.view(), q as int, st.view(b@)) == goal,
+            p <= q,
+            q <= b@.len() || q == p,
+            m.n + p <= m0 + q,
+            m0 == old(m).n,
+            idat_cost(b@, st.idat@) + p <= q,
         decreases b@.len() - q,
     {
         let (len, ty) = match frame(b, q) {
@@ -426,7 +450,7 @@ pub fn walk_exec(b: &[u8], h: &Header, p: usize) -> (r: Option<WalkX>)
             },
         };
         let _n = b.len();
-        match step_exec(b, h, q, len, ty, &mut st) {
+        match step_exec(b, h, q, len, ty, &mut st, Tracked(m)) {
             Err(true) => return Some(st),
             Err(false) => return None,
             Ok(()) => {

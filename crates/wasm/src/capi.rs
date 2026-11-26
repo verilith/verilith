@@ -11,7 +11,7 @@
 #![allow(non_camel_case_types, clippy::missing_safety_doc)]
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::rc::Rc;
 
@@ -114,7 +114,12 @@ macro_rules! ptr_vec {
 // ---------------------------------------------------------------------------
 
 pub struct wasm_engine_t;
-pub struct wasm_store_t;
+/// The limits new instances in this store get (see `verilith.h`).
+#[derive(Default)]
+pub struct wasm_store_t {
+    max_memory: Cell<Option<u64>>,
+    fuel: Cell<Option<u64>>,
+}
 pub struct wasm_config_t;
 
 #[unsafe(no_mangle)]
@@ -149,13 +154,31 @@ pub unsafe extern "C" fn wasm_engine_delete(e: *mut wasm_engine_t) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn wasm_store_new(_: *mut wasm_engine_t) -> *mut wasm_store_t {
-    Box::into_raw(Box::new(wasm_store_t))
+    Box::into_raw(Box::new(wasm_store_t::default()))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wasm_store_delete(s: *mut wasm_store_t) {
     if !s.is_null() {
         drop(Box::from_raw(s));
+    }
+}
+
+/// Caps the linear memory of instances created in `s` from now on at
+/// `bytes`, rounded down to whole pages.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn verilith_store_limit_memory(s: *mut wasm_store_t, bytes: u64) {
+    if let Some(s) = s.as_ref() {
+        s.max_memory.set(Some(bytes));
+    }
+}
+
+/// Meters instances created in `s` from now on: each starts with `fuel`
+/// units.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn verilith_store_set_fuel(s: *mut wasm_store_t, fuel: u64) {
+    if let Some(s) = s.as_ref() {
+        s.fuel.set(Some(fuel));
     }
 }
 
@@ -367,7 +390,7 @@ fn trap_message(t: Trap) -> &'static str {
         Trap::TableOutOfBounds => "undefined element",
         Trap::UninitializedElement => "uninitialized element",
         Trap::IndirectCallTypeMismatch => "indirect call type mismatch",
-        Trap::Exhausted => "call stack exhausted",
+        Trap::Exhausted => "call stack exhausted or all fuel consumed",
         Trap::Host => "host trap",
     }
 }
@@ -615,6 +638,7 @@ pub unsafe extern "C" fn wasm_func_call(f: *const wasm_func_t, args: *const wasm
         }
         Ext::Func { inst, name, .. } => match inst.try_borrow_mut() {
             Ok(mut i) => i.call(name, &a).map_err(|e| match e {
+                Error::Trap(Trap::Exhausted) if i.fuel() == Some(0) => "all fuel consumed".to_string(),
                 Error::Trap(t) => trap_message(t).to_string(),
                 e => e.to_string(),
             }),
@@ -699,7 +723,7 @@ pub struct wasm_instance_t {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn wasm_instance_new(_: *mut wasm_store_t, m: *const wasm_module_t,
+pub unsafe extern "C" fn wasm_instance_new(store: *mut wasm_store_t, m: *const wasm_module_t,
     imports: *const wasm_extern_vec_t, trap_out: *mut *mut wasm_trap_t) -> *mut wasm_instance_t
 {
     let fail = |msg: String| {
@@ -713,6 +737,14 @@ pub unsafe extern "C" fn wasm_instance_new(_: *mut wasm_store_t, m: *const wasm_
         return fail("wrong number of imports".into());
     }
     let mut linker = Linker::new();
+    if let Some(s) = store.as_ref() {
+        if let Some(b) = s.max_memory.get() {
+            linker.max_memory(b);
+        }
+        if let Some(f) = s.fuel.get() {
+            linker.fuel(f);
+        }
+    }
     for ((module, name, desc), &e) in (*m).imports.iter().zip(externs) {
         let (module, name) = (String::from_utf8_lossy(module), String::from_utf8_lossy(name));
         if e.is_null() {
@@ -766,6 +798,31 @@ pub unsafe extern "C" fn wasm_instance_new(_: *mut wasm_store_t, m: *const wasm_
 pub unsafe extern "C" fn wasm_instance_delete(i: *mut wasm_instance_t) {
     if !i.is_null() {
         drop(Box::from_raw(i));
+    }
+}
+
+/// Sets the fuel `i` has left. `false` if a call into it is running.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn verilith_instance_set_fuel(i: *const wasm_instance_t, fuel: u64) -> bool {
+    match (*i).inst.try_borrow_mut() {
+        Ok(mut i) => {
+            i.set_fuel(Some(fuel));
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// Stores the fuel `i` has left in `*out`. `false` if `i` is unmetered or
+/// a call into it is running.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn verilith_instance_get_fuel(i: *const wasm_instance_t, out: *mut u64) -> bool {
+    match (*i).inst.try_borrow().ok().and_then(|i| i.fuel()) {
+        Some(f) => {
+            *out = f;
+            true
+        }
+        None => false,
     }
 }
 

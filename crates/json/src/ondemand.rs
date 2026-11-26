@@ -24,7 +24,12 @@ use crate::spec::*;
 use crate::stage2::*;
 #[allow(unused_imports)]
 use crate::simd::*;
+#[cfg(verus_keep_ghost)]
+use crate::float::is_round;
+#[cfg(verus_keep_ghost)]
+use verilith_core::num::{all_digits, dec_value, is_digit};
 use vstd::prelude::*;
+use vstd::slice::slice_subrange;
 
 verus! {
 
@@ -1511,6 +1516,45 @@ pub fn index_start(s: &[u8]) -> (r: Option<usize>)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Mismatch;
 
+/// Walking an object's members on its tape `d` from index `i` (a key, or
+/// the object's end), member by member, reaches index `e` exactly, and no
+/// key before it is `key`.
+pub open spec fn none_before(s: Seq<u8>, d: Seq<STok>, i: int, e: int, key: Seq<u8>) -> bool
+    decreases e - i,
+{
+    if i >= e {
+        i == e
+    } else if !(d[i] is Key) || key_bytes(s, d[i]) == key {
+        false
+    } else {
+        let n = next_val(d, i + 1);
+        if n <= i || n > e {
+            false
+        } else {
+            none_before(s, d, n, e, key)
+        }
+    }
+}
+
+/// One more member whose key is not `key`.
+pub proof fn lemma_none_ext(s: Seq<u8>, d: Seq<STok>, a: int, b: int, key: Seq<u8>)
+    requires
+        none_before(s, d, a, b, key),
+        d[b] is Key,
+        key_bytes(s, d[b]) != key,
+        next_val(d, b + 1) > b,
+    ensures
+        none_before(s, d, a, next_val(d, b + 1), key),
+    decreases b - a,
+{
+    if a < b {
+        lemma_none_ext(s, d, next_val(d, a + 1), b, key);
+    } else {
+        let c = next_val(d, b + 1);
+        assert(none_before(s, d, c, c, key));
+    }
+}
+
 /// The on-demand reader: a `Cursor` and what the caller may read next (a
 /// value, a key, or a separator after a value). Every call is safe in any
 /// state and on any input; a call that does not fit returns `Mismatch`.
@@ -1522,13 +1566,15 @@ pub struct Mismatch;
 /// Each method's contract says, for a synced reader, which call succeeds
 /// there, that what it returns is the tape's token at `pos()`, and where it
 /// leaves the reader, which is synced again. A call that does not fit
-/// returns `Mismatch` and leaves the reader where it was, except that
+/// returns `Mismatch` and leaves the reader where it was, including
 /// `arr_next` inside an object, `obj_next` inside an array and `leave` at
-/// the top are not covered: the reader stays safe but no longer follows the
-/// tape.
+/// the top.
 pub struct Reader<'a> {
     c: Cursor<'a>,
     state: u8,
+    /// The kinds of the containers the cursor is in, outermost first
+    /// (`true`: an object).
+    kinds: Vec<bool>,
     scratch: Vec<u8>,
     /// Where the index window's buffer goes back to when the reader is
     /// dropped.
@@ -1542,7 +1588,9 @@ pub struct Reader<'a> {
 impl<'a> Reader<'a> {
     /// The cursor is between two tokens of the input.
     pub closed spec fn inv(&self) -> bool {
-        self.c.wf()
+        &&& self.c.wf()
+        &&& self.kinds@.len() == self.fs@.len()
+        &&& forall|a: int| 0 <= a < self.fs@.len() ==> #[trigger] self.kinds@[a] == self.fs@[a].obj
     }
 
     /// Index entries not yet read.
@@ -1705,6 +1753,7 @@ impl<'a> Reader<'a> {
                 let rd = Reader {
                     c: Cursor::new(s, w, Ghost(st as int)),
                     state: VALUE,
+                    kinds: Vec::new(),
                     scratch: Vec::new(),
                     home: idx,
                     fs: Ghost(Seq::empty()),
@@ -1856,8 +1905,14 @@ impl<'a> Reader<'a> {
         self.fs = Ghost(fs0.push(f));
         self.tp = Ghost(t0.push(x));
         self.state = START;
+        self.kinds.push(c == 0x7B);
         proof {
             lemma_starts(fs0, f);
+            assert forall|a: int| 0 <= a < self.fs@.len() implies #[trigger] self.kinds@[a] == self.fs@[a].obj by {
+                if a < fs0.len() {
+                    assert(self.fs@[a] == fs0[a]);
+                }
+            }
         }
         Ok(())
     }
@@ -1875,6 +1930,8 @@ impl<'a> Reader<'a> {
             final(self).inv(),
             final(self).left() <= old(self).left(),
             final(self).src() == old(self).src(),
+            old(self).synced() && !(old(self).opens().len() > 0 && (old(self).doc()[old(self).opens().last()] is ObjStart)
+                == (close == 0x7D)) ==> r is Err && final(self).kept(old(self)),
             old(self).synced() && old(self).opens().len() > 0 && (old(self).doc()[old(self).opens().last()] is ObjStart)
                 == (close == 0x7D) ==> {
                 let d = old(self).doc();
@@ -1895,8 +1952,27 @@ impl<'a> Reader<'a> {
         let ghost sy = self.synced() && self.fs@.len() > 0 && (self.doc()[self.opens().last()] is ObjStart) == (close
             == 0x7D);
         proof {
-            if sy {
+            lemma_starts(self.fs@, Frame { obj: false, depth: 0, start: 0 });
+            if self.synced() && self.fs@.len() > 0 {
                 self.lemma_kind();
+            }
+        }
+        // Only in a container of the kind `close` closes.
+        let nk = self.kinds.len();
+        if nk == 0 || self.kinds[nk - 1] != (close == 0x7D) {
+            proof {
+                if self.synced() && nk > 0 {
+                    assert(self.kinds@[nk - 1] == self.fs@.last().obj);
+                }
+            }
+            return Err(Mismatch);
+        }
+        proof {
+            if self.synced() {
+                assert(self.kinds@[nk - 1] == self.fs@.last().obj);
+                assert(sy);
+            }
+            if sy {
                 if self.state == KEY {
                     assert(rest(s, KEY, self.c.p@, self.fs@.last(), self.tp@) is Some);
                 }
@@ -1957,8 +2033,12 @@ impl<'a> Reader<'a> {
             self.state = AFTER;
             self.fs = Ghost(fs0.drop_last());
             self.tp = Ghost(t3);
+            self.kinds.pop();
             proof {
                 lemma_starts(fs0, f);
+                assert forall|a: int| 0 <= a < self.fs@.len() implies #[trigger] self.kinds@[a] == self.fs@[a].obj by {
+                    assert(self.fs@[a] == fs0[a]);
+                }
             }
             return Ok(false);
         }
@@ -2059,7 +2139,14 @@ impl<'a> Reader<'a> {
                     r == Ok(true) && final(self).moved_to(old(self), i0, VALUE, old(self).opens())
                 }
             },
+            // Not in an array: refused.
+            old(self).synced() && !old(self).in_arr() ==> r is Err && final(self).kept(old(self)),
     {
+        proof {
+            if old(self).synced() && old(self).opens().len() > 0 {
+                old(self).lemma_kind();
+            }
+        }
         self.step(0x5D, VALUE)
     }
 
@@ -2115,7 +2202,14 @@ impl<'a> Reader<'a> {
                     r == Ok(true) && final(self).moved_to(old(self), i0, KEY, old(self).opens())
                 }
             },
+            // Not in an object: refused.
+            old(self).synced() && !old(self).in_obj() ==> r is Err && final(self).kept(old(self)),
     {
+        proof {
+            if old(self).synced() && old(self).opens().len() > 0 {
+                old(self).lemma_kind();
+            }
+        }
         self.step(0x7D, KEY)
     }
 
@@ -2136,7 +2230,14 @@ impl<'a> Reader<'a> {
                 AFTER,
                 old(self).opens().drop_last(),
             ),
+            old(self).synced() && old(self).opens().len() == 0 ==> r is Err && final(self).kept(old(self)),
     {
+        proof {
+            lemma_starts(self.fs@, Frame { obj: false, depth: 0, start: 0 });
+        }
+        if self.kinds.len() == 0 {
+            return Err(Mismatch);
+        }
         let ghost s = self.c.s@;
         let ghost st = self.c.st@;
         let ghost p0 = self.c.p@;
@@ -2159,8 +2260,12 @@ impl<'a> Reader<'a> {
         self.state = AFTER;
         self.fs = Ghost(fs0.drop_last());
         self.tp = Ghost(close_at(rr.0, f.start));
+        self.kinds.pop();
         proof {
             lemma_starts(fs0, f);
+            assert forall|a: int| 0 <= a < self.fs@.len() implies #[trigger] self.kinds@[a] == self.fs@[a].obj by {
+                assert(self.fs@[a] == fs0[a]);
+            }
         }
         Ok(())
     }
@@ -2291,8 +2396,10 @@ impl<'a> Reader<'a> {
 
     /// Moves to the value of the next field named `key`, searching
     /// forward only. `false` (and the object is closed) if there is none.
-    /// Synced, in an object and not at a key: `true` at a member of this
-    /// object with that key, `false` just after its end token.
+    /// Synced, in an object and not at a key: `true` at the first member
+    /// of this object from the cursor on with that key, `false` just after
+    /// its end token when no member from the cursor on has it; anywhere
+    /// else, `Mismatch`, and the reader stays where it was.
     #[inline(always)]
     #[verifier::spinoff_prover]
     #[verifier::rlimit(300)]
@@ -2302,19 +2409,28 @@ impl<'a> Reader<'a> {
         ensures
             final(self).inv(),
             old(self).synced() && old(self).in_obj() && old(self).want() != KEY ==> {
+                let d = old(self).doc();
+                let i0 = if old(self).want() == VALUE {
+                    next_val(d, old(self).pos())
+                } else {
+                    old(self).pos()
+                };
                 &&& r is Ok
                 &&& r == Ok(true) ==> {
                     &&& final(self).moved_to(old(self), final(self).pos(), VALUE, old(self).opens())
                     &&& final(self).doc()[final(self).pos() - 1] is Key
                     &&& key_bytes(final(self).src(), final(self).doc()[final(self).pos() - 1]) == key@
+                    &&& none_before(old(self).src(), d, i0, final(self).pos() - 1, key@)
                 }
                 &&& r == Ok(false) ==> final(self).moved_to(
                     old(self),
                     link(old(self).doc()[old(self).opens().last()]) + 1,
                     AFTER,
                     old(self).opens().drop_last(),
-                )
+                ) && none_before(old(self).src(), d, i0, link(d[old(self).opens().last()]), key@)
             },
+            old(self).synced() && !(old(self).in_obj() && old(self).want() != KEY) ==> r is Err
+                && final(self).kept(old(self)),
     {
         hide(Reader::synced);
         hide(document);
@@ -2324,6 +2440,21 @@ impl<'a> Reader<'a> {
         let ghost src0 = self.src();
         let ghost opens0 = self.opens();
         let ghost d0 = self.doc();
+        let ghost first = if self.want() == VALUE {
+            next_val(d0, self.pos())
+        } else {
+            self.pos()
+        };
+        let ghost mut once = false;
+        proof {
+            if sy {
+                assert(first == (if old(self).want() == VALUE {
+                    next_val(old(self).doc(), old(self).pos())
+                } else {
+                    old(self).pos()
+                }));
+            }
+        }
         loop
             invariant
                 self.inv(),
@@ -2331,6 +2462,18 @@ impl<'a> Reader<'a> {
                 sy ==> old(self).src() == src0 && old(self).opens() == opens0 && d0 == old(self).doc(),
                 sy ==> opens0.len() > 0 && d0[opens0.last()] is ObjStart,
                 sy == (old(self).synced() && old(self).in_obj() && old(self).want() != KEY),
+                sy ==> none_before(src0, d0, first, if self.want() == VALUE {
+                    next_val(d0, self.pos())
+                } else {
+                    self.pos()
+                }, key@),
+                !once && old(self).synced() ==> self.kept(old(self)),
+                sy ==> first == (if old(self).want() == VALUE {
+                    next_val(old(self).doc(), old(self).pos())
+                } else {
+                    old(self).pos()
+                }),
+                old(self).synced() && !sy ==> !once,
             decreases self.left(),
         {
             let ghost i0 = if self.want() == VALUE {
@@ -2353,7 +2496,10 @@ impl<'a> Reader<'a> {
                 Ok(false) => {
                     proof {
                         if sy {
+                            assert(none_before(src0, d0, first, i0, key@));
                             assert(i0 == link(d0[opens0.last()]));
+                            assert(d0[opens0.last()] == old(self).doc()[old(self).opens().last()]);
+                            assert(none_before(old(self).src(), old(self).doc(), first, link(old(self).doc()[old(self).opens().last()]), key@));
                             assert(self.moved_to(old(self), i0 + 1, AFTER, opens0.drop_last()));
                         }
                     }
@@ -2378,6 +2524,8 @@ impl<'a> Reader<'a> {
                         if sy {
                             assert(self.pos() - 1 == pos2);
                             assert(self.doc() == d0);
+                            assert(pos2 == i0);
+                            assert(none_before(src0, d0, first, pos2, key@));
                         }
                     }
                     return Ok(true);
@@ -2385,6 +2533,14 @@ impl<'a> Reader<'a> {
                 Ok(false) => {
                     proof {
                         self.c.lemma_bound();
+                        if sy {
+                            reveal(Reader::synced);
+                            self.lemma_value();
+                            assert(self.doc() == d0);
+                            assert(self.pos() == pos2 + 1);
+                            lemma_none_ext(src0, d0, first, pos2, key@);
+                        }
+                        once = true;
                     }
                 },
                 Err(e) => {
@@ -2594,61 +2750,337 @@ impl<'a> Reader<'a> {
     }
 }
 
-} // verus!
+/// The bytes of a string token: its body, decoded if it has escapes.
+pub open spec fn str_bytes(s: Seq<u8>, x: STok) -> Seq<u8> {
+    match x {
+        STok::Str { start, end, escaped } => if escaped {
+            decode(s, start, end)
+        } else {
+            s.subrange(start, end)
+        },
+        _ => Seq::empty(),
+    }
+}
+
+/// The lexeme of a number token.
+pub open spec fn num_lex(s: Seq<u8>, x: STok) -> Seq<u8> {
+    match x {
+        STok::Num { start, end } => s.subrange(start, end),
+        _ => Seq::empty(),
+    }
+}
+
+/// The value of an integer lexeme: an optional `-` and digits, and nothing
+/// else (no fraction, no exponent).
+pub open spec fn int_value(lex: Seq<u8>) -> Option<int> {
+    let neg = lex.len() > 0 && lex[0] == 0x2D;
+    let d = if neg {
+        lex.subrange(1, lex.len() as int)
+    } else {
+        lex
+    };
+    if d.len() > 0 && all_digits(d) {
+        Some(
+            if neg {
+                -(dec_value(d) as int)
+            } else {
+                dec_value(d) as int
+            },
+        )
+    } else {
+        None
+    }
+}
+
+/// The lexeme as an `i64`, if it is an integer lexeme that fits.
+pub fn parse_i64(lex: &[u8]) -> (r: Option<i64>)
+    ensures
+        r == (match int_value(lex@) {
+            Some(v) => if i64::MIN <= v <= i64::MAX {
+                Some(v as i64)
+            } else {
+                None
+            },
+            None => None,
+        }),
+{
+    let n = lex.len();
+    let neg = n > 0 && lex[0] == 0x2D;
+    let i0: usize = if neg {
+        1
+    } else {
+        0
+    };
+    let ghost d = if neg {
+        lex@.subrange(1, n as int)
+    } else {
+        lex@
+    };
+    proof {
+        assert(d =~= lex@.subrange(i0 as int, n as int));
+    }
+    if i0 == n {
+        return None;
+    }
+    let mut v: i64 = 0;
+    let mut i = i0;
+    // `v` is the digits so far, negated if `neg`; `big` once they no
+    // longer fit (the rest is still checked to be digits).
+    let mut big = false;
+    while i < n
+        invariant
+            i0 <= i <= n,
+            n == lex@.len(),
+            d == lex@.subrange(i0 as int, n as int),
+            d == (if neg {
+                lex@.subrange(1, n as int)
+            } else {
+                lex@
+            }),
+            neg == (n > 0 && lex@[0] == 0x2D),
+            i0 == (if neg {
+                1usize
+            } else {
+                0usize
+            }),
+            all_digits(lex@.subrange(i0 as int, i as int)),
+            !big ==> v as int == if neg {
+                -(dec_value(lex@.subrange(i0 as int, i as int)) as int)
+            } else {
+                dec_value(lex@.subrange(i0 as int, i as int)) as int
+            },
+            big ==> dec_value(lex@.subrange(i0 as int, i as int)) > i64::MAX as int + 1 || (!neg
+                && dec_value(lex@.subrange(i0 as int, i as int)) > i64::MAX as int),
+        decreases n - i,
+    {
+        let c = lex[i];
+        let ghost p = lex@.subrange(i0 as int, i as int);
+        let ghost p2 = lex@.subrange(i0 as int, i + 1);
+        proof {
+            assert(p2.drop_last() =~= p);
+            assert(p2.last() == c);
+        }
+        if c < 0x30 || c > 0x39 {
+            proof {
+                assert(d[i - i0] == c);
+                assert(!is_digit(d[i - i0]));
+                assert(!all_digits(d));
+                assert(int_value(lex@) is None);
+            }
+            return None;
+        }
+        proof {
+            assert forall|k: int| 0 <= k < p2.len() implies is_digit(#[trigger] p2[k]) by {
+                if k < p.len() {
+                    assert(p2[k] == p[k]);
+                }
+            }
+            assert(dec_value(p2) == dec_value(p) * 10 + (c - 0x30) as nat);
+        }
+        if !big {
+            let dg = (c - 0x30) as i64;
+            match v.checked_mul(10) {
+                Some(v10) => {
+                    let nv = if neg {
+                        v10.checked_sub(dg)
+                    } else {
+                        v10.checked_add(dg)
+                    };
+                    match nv {
+                        Some(x) => {
+                            v = x;
+                        },
+                        None => {
+                            big = true;
+                        },
+                    }
+                },
+                None => {
+                    big = true;
+                },
+            }
+        } else {
+            proof {
+                assert(dec_value(p2) >= dec_value(p)) by (nonlinear_arith)
+                    requires
+                        dec_value(p2) == dec_value(p) * 10 + (c - 0x30) as nat,
+                ;
+            }
+        }
+        i = i + 1;
+    }
+    proof {
+        assert(lex@.subrange(i0 as int, n as int) == d);
+    }
+    if big {
+        None
+    } else {
+        Some(v)
+    }
+}
 
 impl<'a> Reader<'a> {
     /// Reads the string at the cursor, decoded. Borrows the input unless
-    /// the string has escapes; then it is decoded into `buf`.
+    /// the string has escapes; then it is decoded into `buf`. Synced:
+    /// succeeds exactly where the tape has a string, and gives its bytes.
     #[inline(always)]
-    pub fn str<'b>(&mut self, buf: &'b mut Vec<u8>) -> Result<&'b [u8], Mismatch>
-    where
-        'a: 'b,
+    pub fn str<'b>(&mut self, buf: &'b mut Vec<u8>) -> (r: Result<&'b [u8], Mismatch>)
+        where
+            'a: 'b,
+        requires
+            old(self).inv(),
+        ensures
+            final(self).inv(),
+            old(self).synced() ==> if old(self).want() == VALUE && old(self).doc()[old(self).pos()] is Str {
+                &&& r matches Ok(v) && v@ == str_bytes(old(self).src(), old(self).doc()[old(self).pos()])
+                &&& final(self).moved_to(old(self), old(self).pos() + 1, AFTER, old(self).opens())
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
     {
         buf.clear();
-        let (a, b, esc) = self.str_raw(buf)?;
-        if esc {
-            Ok(&buf[..])
-        } else {
-            let s: &'a [u8] = self.c.s;
-            Ok(&s[a..b])
+        match self.str_raw(buf) {
+            Ok((a, b, esc)) => {
+                if esc {
+                    proof {
+                        assert(buf@ =~= Seq::<u8>::empty() + buf@);
+                    }
+                    Ok(buf.as_slice())
+                } else {
+                    let s: &'a [u8] = self.c.s;
+                    Ok(slice_subrange(s, a, b))
+                }
+            },
+            Err(e) => Err(e),
         }
-    }
-
-    /// Reads the number at the cursor as the nearest double.
-    #[inline(always)]
-    pub fn f64(&mut self) -> Result<f64, Mismatch> {
-        let (a, b, v, ok) = self.num_raw()?;
-        if ok {
-            if let Some(x) = crate::number::from_parts(v.neg, v.w, v.q as i64) {
-                return Ok(x);
-            }
-        }
-        Ok(crate::number::parse_f64_at(self.c.s, a, b))
-    }
-
-    /// Reads the number at the cursor if it is an integer (no fraction or
-    /// exponent) that fits in `i64`.
-    #[inline(always)]
-    pub fn i64(&mut self) -> Result<i64, Mismatch> {
-        let (a, b, v, ok) = self.num_raw()?;
-        let lex = &self.c.s[a..b];
-        // An exact significand with no fraction or exponent is the integer.
-        if ok && v.q == 0 && v.w <= i64::MAX as u64 && !lex.iter().any(|&c| c == b'.' || c | 0x20 == b'e') {
-            return Ok(if v.neg { -(v.w as i64) } else { v.w as i64 });
-        }
-        crate::number::parse_i64(lex).ok_or(Mismatch)
     }
 
     /// Reads the key at the cursor, decoded, and moves to its value. The
-    /// slice is valid until the reader is used again.
+    /// slice is valid until the reader is used again. Synced: succeeds
+    /// exactly at a key, and gives its bytes.
     #[inline(always)]
-    pub fn key(&mut self) -> Result<&[u8], Mismatch> {
-        let (a, b, esc) = self.key_raw()?;
-        if esc {
-            Ok(&self.scratch[..])
-        } else {
-            Ok(&self.c.s[a..b])
+    pub fn key(&mut self) -> (r: Result<&[u8], Mismatch>)
+        requires
+            old(self).inv(),
+        ensures
+            final(self).inv(),
+            old(self).synced() ==> if old(self).want() == KEY {
+                &&& old(self).doc()[old(self).pos()] is Key
+                &&& r matches Ok(v) && v@ == key_bytes(old(self).src(), old(self).doc()[old(self).pos()])
+                &&& final(self).moved_to(old(self), old(self).pos() + 1, VALUE, old(self).opens())
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
+    {
+        match self.key_raw() {
+            Ok((a, b, esc)) => {
+                if esc {
+                    Ok(self.scratch.as_slice())
+                } else {
+                    Ok(slice_subrange(self.c.s, a, b))
+                }
+            },
+            Err(e) => Err(e),
         }
+    }
+
+    /// Reads the number at the cursor if it is an integer (no fraction or
+    /// exponent) that fits in `i64`. Synced, at a number: passes it either
+    /// way, and gives its value exactly when it is such an integer.
+    #[inline(always)]
+    pub fn i64(&mut self) -> (r: Result<i64, Mismatch>)
+        requires
+            old(self).inv(),
+        ensures
+            final(self).inv(),
+            old(self).synced() ==> if old(self).want() == VALUE && old(self).doc()[old(self).pos()] is Num {
+                &&& r == (match int_value(num_lex(old(self).src(), old(self).doc()[old(self).pos()])) {
+                    Some(v) => if i64::MIN <= v <= i64::MAX {
+                        Ok(v as i64)
+                    } else {
+                        Err(Mismatch)
+                    },
+                    None => Err(Mismatch),
+                })
+                &&& final(self).moved_to(old(self), old(self).pos() + 1, AFTER, old(self).opens())
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
+    {
+        match self.num_raw() {
+            Ok((a, b, _v, _ok)) => {
+                match parse_i64(slice_subrange(self.c.s, a, b)) {
+                    Some(x) => Ok(x),
+                    None => Err(Mismatch),
+                }
+            },
+            Err(e) => Err(e),
+        }
+    }
+
+    /// The number at the cursor as the bits of a double, where the
+    /// verified conversion decides it: `Some(bits)` is the nearest double
+    /// to the number's exact value, ties to even, with its sign; `None`
+    /// for more than 19 significant digits, or a case `to_bits` leaves
+    /// undecided. Also the lexeme's range, for the fallback.
+    pub fn num_bits(&mut self) -> (r: Result<(Option<u64>, usize, usize), Mismatch>)
+        requires
+            old(self).inv(),
+        ensures
+            final(self).inv(),
+            r matches Ok((_, a, b)) ==> a <= b <= final(self).src().len(),
+            final(self).src() == old(self).src(),
+            old(self).synced() ==> if old(self).want() == VALUE && old(self).doc()[old(self).pos()] is Num {
+                &&& r matches Ok((bits, a, b)) && old(self).doc()[old(self).pos()] == (STok::Num {
+                    start: a as int,
+                    end: b as int,
+                }) && (bits matches Some(x) ==> {
+                    let (neg, w, q) = number_value(old(self).src(), a as int);
+                    &&& is_round(w, q, (x % 0x8000_0000_0000_0000) as u64)
+                    &&& (x >= 0x8000_0000_0000_0000) == neg
+                })
+                &&& final(self).moved_to(old(self), old(self).pos() + 1, AFTER, old(self).opens())
+            } else {
+                r is Err && final(self).kept(old(self))
+            },
+    {
+        match self.num_raw() {
+            Ok((a, b, v, ok)) => {
+                if ok {
+                    match crate::float::to_bits(v.w, v.q as i64) {
+                        Some(x) => {
+                            if x < 0x8000_0000_0000_0000 {
+                                let bits = if v.neg {
+                                    x + 0x8000_0000_0000_0000
+                                } else {
+                                    x
+                                };
+                                return Ok((Some(bits), a, b));
+                            }
+                        },
+                        None => {},
+                    }
+                }
+                Ok((None, a, b))
+            },
+            Err(e) => Err(e),
+        }
+    }
+}
+
+} // verus!
+
+impl<'a> Reader<'a> {
+    /// Reads the number at the cursor as the nearest double. Where
+    /// `num_bits` decides it, these are its proven bits; otherwise (more
+    /// than 19 significant digits) `f64::from_str` reads the lexeme.
+    #[inline(always)]
+    pub fn f64(&mut self) -> Result<f64, Mismatch> {
+        let (bits, a, b) = self.num_bits()?;
+        Ok(match bits {
+            Some(x) => f64::from_bits(x),
+            None => crate::number::parse_f64_at(self.c.s, a, b),
+        })
     }
 
     /// The input.

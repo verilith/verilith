@@ -346,3 +346,76 @@ fn corpora() {
         }
     }
 }
+
+/// Calls that do not fit where the reader is are refused, and the reader
+/// stays where it was.
+#[test]
+fn misuse_is_refused() {
+    let s = br#"{"a": [1, 2], "b": {"c": 3}}"#;
+    let mut idx = Vec::new();
+    let mut r = Reader::new(s, &mut idx).unwrap();
+    assert!(r.leave().is_err(), "leave at the top");
+    assert!(r.arr_next().is_err() && r.obj_next().is_err(), "next outside a container");
+    r.obj_begin().unwrap();
+    assert!(r.arr_next().is_err(), "arr_next in an object");
+    assert_eq!(r.obj_next(), Ok(true));
+    assert_eq!(r.key().unwrap(), b"a");
+    r.arr_begin().unwrap();
+    assert!(r.obj_next().is_err(), "obj_next in an array");
+    assert!(r.find(b"x").is_err(), "find in an array");
+    assert_eq!(r.arr_next(), Ok(true));
+    assert_eq!(r.i64(), Ok(1));
+    r.leave().unwrap();
+    // Back in the object, after "a"'s value, as if nothing went wrong.
+    assert_eq!(r.find(b"b"), Ok(true));
+    r.obj_begin().unwrap();
+    assert_eq!(r.find(b"c"), Ok(true));
+    assert_eq!(r.f64(), Ok(3.0));
+    assert_eq!(r.obj_next(), Ok(false));
+    assert_eq!(r.obj_next(), Ok(false));
+    assert!(r.at_end());
+    assert!(r.leave().is_err(), "leave at the top, at the end");
+}
+
+/// `find` stops at the first member with the key, from the cursor on.
+#[test]
+fn find_first() {
+    let s = br#"{"k": 1, "x": 0, "k": 2, "k": 3}"#;
+    let mut idx = Vec::new();
+    let mut r = Reader::new(s, &mut idx).unwrap();
+    r.obj_begin().unwrap();
+    assert_eq!(r.find(b"k"), Ok(true));
+    assert_eq!(r.i64(), Ok(1));
+    assert_eq!(r.find(b"k"), Ok(true));
+    assert_eq!(r.i64(), Ok(2));
+    assert_eq!(r.find(b"x"), Ok(false));
+}
+
+/// The scalar readers.
+#[test]
+fn scalars() {
+    let s = br#"[-9223372036854775808, 9223372036854775807, 9223372036854775808, 1.0, 1e2, -0, "ab", 0.1, 123456789012345678901234567890]"#;
+    let mut idx = Vec::new();
+    let mut r = Reader::new(s, &mut idx).unwrap();
+    let mut buf = Vec::new();
+    r.arr_begin().unwrap();
+    let mut next = |r: &mut Reader| assert_eq!(r.arr_next(), Ok(true));
+    next(&mut r);
+    assert_eq!(r.i64(), Ok(i64::MIN));
+    next(&mut r);
+    assert_eq!(r.i64(), Ok(i64::MAX));
+    next(&mut r);
+    assert!(r.i64().is_err());
+    next(&mut r);
+    assert!(r.i64().is_err());
+    next(&mut r);
+    assert!(r.i64().is_err());
+    next(&mut r);
+    assert_eq!(r.i64(), Ok(0));
+    next(&mut r);
+    assert_eq!(r.str(&mut buf).unwrap(), b"ab");
+    next(&mut r);
+    assert_eq!(r.f64().unwrap().to_bits(), 0.1f64.to_bits());
+    next(&mut r);
+    assert_eq!(r.f64().unwrap(), 123456789012345678901234567890f64);
+}

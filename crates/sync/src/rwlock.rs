@@ -1818,6 +1818,9 @@ impl<T> RwLock<T> {
             }
             let tracked (_, Tracked(mut p), Tracked(_h)) = self.inst.borrow().acquire_write(&mut s.exc, &s.rc);
             let v = self.data.take(Tracked(&mut p));
+            // Mark the lock taken, so a second call (`drop` after
+            // `into_inner`) finds it held and leaves the empty cell alone.
+            self.state.store(Tracked(&mut s.state), WRITER);
             Some(v)
         } else {
             None

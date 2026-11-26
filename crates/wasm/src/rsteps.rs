@@ -5713,4 +5713,88 @@ pub fn d_br1<'a>(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghos
     }
 }
 
+/// Every branch code (see `execute_metered`, which runs them all in one arm).
+#[inline(always)]
+pub fn s_branch<'a>(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<Seq<Code>>,
+    Ghost(calls): Ghost<Seq<CallFrame>>, Ghost(c0): Ghost<Config>, Ghost(g): Ghost<GS>, Ghost(d): Ghost<usize>,
+    rpc: usize, stack: &Vec<u64>, fp: usize, st: &Store, code: &Code, r: &ROp,
+    rops: &'a [ROp], cur: Cur<'a>, acc: u64) -> (res: (usize, Cur<'a>, Ghost<GS>))
+    requires
+        rinv(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st),
+        *code == codes[d as int],
+        *r == codes[d as int].rops@[rpc as int],
+        rops@ == codes[d as int].rops@, cur.seq() == rops@, cur.idx() == rpc as int,
+        acc_ok(codes, d, rpc, acc, stack@, fp),
+    ensures
+        rinv(m, cs, codes, c0, res.2@, stack@, calls, d, res.0, fp, st), res.2@.hs == g.hs,
+        res.1.idx() == res.0 as int, res.1.seq() == rops@,
+        acc_ok(codes, d, res.0, acc, stack@, fp),
+{
+    proof { lemma_rpc(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st); lemma_pre_hand(); }
+    match r.op {
+        OpCode::BrIf | OpCode::A_BrIf => r_brif(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, false, rops, cur, acc),
+        OpCode::BrIfZ | OpCode::A_BrIfZ => r_brif(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, true, rops, cur, acc),
+        OpCode::Br => r_br(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRRG => {
+            let op = r_instr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, code, r);
+            r_brif_rr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, op, stack, fp, st, r, rops, cur, acc)
+        },
+        OpCode::BrIfRIG => {
+            let op = r_instr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, code, r);
+            r_brif_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, op, stack, fp, st, r, rops, cur, acc)
+        },
+        OpCode::BrIfRR_I32Eq => s_BrIfRR_I32Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I32Eq => s_BrIfRI_I32Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::A_BrIfRR_I32Eq => s_A_BrIfRR_I32Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::A_BrIfRI_I32Eq => s_A_BrIfRI_I32Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I32Ne => s_BrIfRR_I32Ne(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I32Ne => s_BrIfRI_I32Ne(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::A_BrIfRR_I32Ne => s_A_BrIfRR_I32Ne(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::A_BrIfRI_I32Ne => s_A_BrIfRI_I32Ne(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I32LtS => s_BrIfRR_I32LtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I32LtS => s_BrIfRI_I32LtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::A_BrIfRR_I32LtS => s_A_BrIfRR_I32LtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::A_BrIfRI_I32LtS => s_A_BrIfRI_I32LtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I32LtU => s_BrIfRR_I32LtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I32LtU => s_BrIfRI_I32LtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::A_BrIfRR_I32LtU => s_A_BrIfRR_I32LtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::A_BrIfRI_I32LtU => s_A_BrIfRI_I32LtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I32GtS => s_BrIfRR_I32GtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I32GtS => s_BrIfRI_I32GtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I32GtU => s_BrIfRR_I32GtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I32GtU => s_BrIfRI_I32GtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I32LeS => s_BrIfRR_I32LeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I32LeS => s_BrIfRI_I32LeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I32LeU => s_BrIfRR_I32LeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I32LeU => s_BrIfRI_I32LeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I32GeS => s_BrIfRR_I32GeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I32GeS => s_BrIfRI_I32GeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::A_BrIfRR_I32GeS => s_A_BrIfRR_I32GeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I32GeU => s_BrIfRR_I32GeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I32GeU => s_BrIfRI_I32GeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::A_BrIfRR_I32GeU => s_A_BrIfRR_I32GeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I64Eq => s_BrIfRR_I64Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I64Eq => s_BrIfRI_I64Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I64Ne => s_BrIfRR_I64Ne(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I64Ne => s_BrIfRI_I64Ne(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I64LtS => s_BrIfRR_I64LtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I64LtS => s_BrIfRI_I64LtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I64LtU => s_BrIfRR_I64LtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I64LtU => s_BrIfRI_I64LtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I64GtS => s_BrIfRR_I64GtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I64GtS => s_BrIfRI_I64GtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I64GtU => s_BrIfRR_I64GtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I64GtU => s_BrIfRI_I64GtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I64LeS => s_BrIfRR_I64LeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I64LeS => s_BrIfRI_I64LeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I64LeU => s_BrIfRR_I64LeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I64LeU => s_BrIfRI_I64LeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I64GeS => s_BrIfRR_I64GeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I64GeS => s_BrIfRI_I64GeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I64GeU => s_BrIfRR_I64GeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I64GeU => s_BrIfRI_I64GeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        _ => (rpc, cur, Ghost(g)),
+    }
+}
+
 } // verus!
