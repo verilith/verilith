@@ -104,6 +104,22 @@ its own trusted base.
   uses them is x86-64 only. Each requires `avx512f()`, `avx512bw()` or
   `avx512vbmi2()`, which `has_avx512bw()` and `has_avx512vbmi2()` ensure,
   with the axiom that VBMI2 implies BW, BW implies F and F implies AVX2.
+- `src/scalar.rs`: `popcnt64`, specified as the number of set bits.
+- `src/clmul.rs` (wrappers x86-64 only): carry-less multiplication as
+  verilith-checksum's CRC-32 folding kernels use it, one safe wrapper each
+  with a contract on a vector's 128-bit blocks (`xv`, `yl`, `zl`): 16-,
+  32- and 64-byte loads, XOR, AND, byte shifts, broadcasts, extracting a
+  block, and the products of `pclmulqdq`/`vpclmulqdq` (immediates 0x00 and
+  0x11), stated with the spec `clmul`; `pclmul()`, `vpclmul256()`,
+  `vpclmul()` and their detection. verilith-checksum's `tests/vclmul.rs`
+  checks every one against a verified scalar reference.
+- `src/vdot.rs` (x86-64 only) and `src/vudot.rs`: byte dot products as
+  verilith-checksum's Adler-32 kernels use them: `vpdpbusd` (AVX-512 VNNI),
+  `vpmaddubsw`/`vpmaddwd` (AVX2) and `udot` (AArch64, as inline assembly),
+  with loads, zero, add and store, stated with the spec `dot::dot4`; the
+  feature predicates and their detection. Off AArch64 `vudot` runs
+  plain-Rust stand-ins and its detection is false. verilith-checksum's
+  `tests/vdot.rs` and `tests/vudot.rs` check them.
 - `src/neon.rs`: the NEON wrappers' specifications (84: loads and
   stores on `u8`, `u16`, `i16` and `u32` slices, bitwise ops, add,
   saturating subtract, compare, `ushr`, `tbl`, `ext`, `zip1`/`zip2` at 8,

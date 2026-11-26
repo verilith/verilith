@@ -33,9 +33,9 @@ trusted](#what-is-proven-and-what-is-trusted) before relying on any of it.
   interpreter loop, which runs as long as the guest program does.
 - **More, crate by crate.** Many crates prove further properties: bounds on
   work or on output size (zlib, lz4, snappy, webp, gif, tiff, png, brotli, jpeg,
-  http, url, xml, hpack, regex, dns, x509), that compression round-trips (zlib,
-  lz4, snappy), that a stream split into pieces anywhere
-  decodes the same (zlib, zstd, brotli, hpack, http), linearizability of
+  http, url, xml, hpack, qpack, h3, regex, dns, x509), that compression round-trips (zlib,
+  lz4, snappy) or that an encoder's output reads back (h3, qpack), that a stream split into pieces anywhere
+  decodes the same (zlib, zstd, brotli, hpack, qpack, h3, http), linearizability of
   the queues and deadlock-freedom of the locks, checked against the code
   (sync). Each crate's README has a "What is proven" section
   that names the theorem and the function it is stated on.
@@ -70,7 +70,7 @@ date, so a change to what is trusted shows up in the pull request that makes it.
   c-ares, mbedTLS, nghttp2 and llhttp. All of
   [`verilith-bind`](crates/bind#what-is-not-verified) is unverified.
 - **A few unverified fast paths**, each tested against a verified one, such
-  as the carry-less-multiply CRC-32 in `verilith-core`.
+  as the AVX2 base64 and hex kernels in `verilith-text`.
 - **A memory model, for concurrency.** The queue proofs in `verilith-sync`
   hold under a release/acquire model of atomics that the crate states and
   does not derive from the hardware.
@@ -93,17 +93,20 @@ not proofs.
 | [`verilith-archive`](crates/archive) | Formally verified (Verus) zip and tar readers with proven extraction safety, behind libarchive's read API | [proven](crates/archive#what-is-proven), [trusted](crates/archive/TRUST.md) |
 | [`verilith-bind`](crates/bind) | One native library and C ABI for the Verilith parsers, with C++, Python and Node.js bindings on top | [not verified](crates/bind#what-is-not-verified) |
 | [`verilith-brotli`](crates/brotli) | A formally verified (Verus) Brotli (RFC 7932) decompressor with google/brotli's decoder C API | [proven](crates/brotli#what-is-proven), [trusted](crates/brotli#trusted) |
-| [`verilith-core`](crates/core) | Formally verified (Verus) building blocks shared by the Verilith libraries: trusted memory primitives, byte and bit readers, canonical Huffman tables, UTF-8 validation, CRC-32, CRC-32C and Adler-32 | [trusted](crates/core#trusted-base) |
+| [`verilith-checksum`](crates/checksum) | Formally verified (Verus) CRC-32, CRC-32C and Adler-32, with verified carry-less-multiply (PCLMULQDQ, VPCLMULQDQ) and dot-product (AVX-512 VNNI, AVX2, NEON udot) kernels | [proven](crates/checksum#what-is-proven), [trusted](crates/checksum#trusted-base) |
+| [`verilith-core`](crates/core) | Formally verified (Verus) building blocks shared by the Verilith libraries: trusted memory primitives, byte and bit readers, canonical Huffman tables and UTF-8 validation | [trusted](crates/core#trusted-base) |
 | [`verilith-dns`](crates/dns) | A formally verified (Verus) DNS message parser and serializer, and a drop-in parser for c-ares | [proven](crates/dns#what-is-proven), [trusted](crates/dns#trusted-computing-base) |
 | [`verilith-font`](crates/font) | A formally verified (Verus) OpenType font sanitizer | [proven](crates/font#what-is-proven), [trusted](crates/font/TRUST.md) |
 | [`verilith-gif`](crates/gif) | A formally verified (Verus) GIF decoder: LZW, interlacing and graphic control, checked against giflib, with giflib's decoding C API | [proven](crates/gif#what-is-proven), [trusted](crates/gif#trusted-base) |
 | [`verilith-h2`](crates/h2) | An HTTP/2 (RFC 9113) frame parser and serializer formally verified with Verus, sans I/O, proven to round-trip | [proven](crates/h2#what-is-proven), [trusted](crates/h2#trusted-computing-base) |
+| [`verilith-h3`](crates/h3) | Sans-I/O HTTP/3 (RFC 9114) framing formally verified with Verus: varints, frames, stream types and the frame-order rules | [proven](crates/h3#what-is-proven), [trusted](crates/h3#trusted-computing-base) |
 | [`verilith-hpack`](crates/hpack) | An HPACK (RFC 7541) header decoder formally verified with Verus, with nghttp2's inflater API | [proven](crates/hpack#what-is-proven), [trusted](crates/hpack#trusted-computing-base) |
 | [`verilith-http`](crates/http) | A fast HTTP/1.1 parser formally verified with Verus | [proven](crates/http#what-is-proven), [trusted](crates/http#trusted-computing-base) |
 | [`verilith-jpeg`](crates/jpeg) | A formally verified (Verus) JPEG decoder: baseline and progressive Huffman | [proven](crates/jpeg#what-is-proven), [trusted](crates/jpeg/TRUST.md) |
 | [`verilith-json`](crates/json) | A fast JSON parser, proven correct with Verus: exactly RFC 8259, no panics, bounded recursion. Includes serde support and a cJSON-compatible C ABI. | [proven](crates/json#what-is-proven), [trusted](crates/json#what-is-not-proven) |
 | [`verilith-lz4`](crates/lz4) | A formally verified (Verus) LZ4 compressor and decompressor (block and frame formats) with liblz4's C API | [proven](crates/lz4#what-is-proven), [trusted](crates/lz4/TRUST.md) |
 | [`verilith-png`](crates/png) | A formally verified (Verus) PNG decoder | [proven](crates/png#what-is-proven), [trusted](crates/png#trusted-base) |
+| [`verilith-qpack`](crates/qpack) | A sans-I/O QPACK (RFC 9204) encoder and decoder for HTTP/3, formally verified with Verus, faster than ls-qpack | [proven](crates/qpack#what-is-proven), [trusted](crates/qpack#trusted-computing-base) |
 | [`verilith-quic`](crates/quic) | The QUIC (RFC 9000) wire format and transport state machines, formally verified with Verus: packet headers, frames, transport parameters, flow control, stream states and the anti-amplification limit | [proven](crates/quic#what-is-proven), [trusted](crates/quic#trusted-base) |
 | [`verilith-regex`](crates/regex) | A linear-time regular expression engine (RE2 syntax and semantics) formally verified with Verus | [proven](crates/regex#what-is-proven), [trusted](crates/regex/TRUST.md) |
 | [`verilith-server`](crates/server) | A formally verified (Verus) HTTP server built from the Verilith parsers: HTTP/1.1 today, with responses proven to parse back exactly; HTTP/2, TLS and HTTP/3 planned in its DESIGN.md | [proven](crates/server#what-is-proven), [trusted](crates/server/TRUST.md) |
@@ -294,7 +297,7 @@ the one `scripts/profile <name>` prints:
 |---|---|---|
 | `release` | 1 codegen unit, thin LTO | every crate not listed below |
 | `release-fat` | 1 codegen unit, fat LTO | text, url, x509 |
-| `release-abort` | 1 codegen unit, fat LTO, `panic = "abort"` | json, http, hpack, h2, regex, bind, xml |
+| `release-abort` | 1 codegen unit, fat LTO, `panic = "abort"` | json, http, hpack, h2, h3, regex, bind, xml |
 
 So the drop-in JSON library is built with
 `cargo build --profile release-abort --features cjson` and lands in

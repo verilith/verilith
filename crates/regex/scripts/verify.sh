@@ -13,7 +13,7 @@ if grep -nE '\b(assume|admit)\s*\(' src/*.rs; then
   exit 1
 fi
 if grep -nE 'external_body|verifier::external|axiom fn' src/*.rs | grep -vE '^src/data.rs:'; then
-  echo "error: trusted code outside src/data.rs and src/lanes.rs" >&2
+  echo "error: trusted code outside src/data.rs" >&2
   exit 1
 fi
 cargo verus "${VERUS_CMD:-verify}" -- "$@"

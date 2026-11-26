@@ -533,7 +533,7 @@ fn run_sums(inf: &mut Inflater, fmt: Format, input: &[u8], out: &mut [u8], a: u3
                 assert(out@.subrange(0, n as int) =~= prev + chunk@);
             }
             if fmt == Format::Zlib {
-                let (a2, b2) = verilith_core::checksum::cpu::adler32_update(a, b, chunk);
+                let (a2, b2) = verilith_checksum::cpu::adler32_update(a, b, chunk);
                 proof {
                     lemma_adler_closed(a as nat, b as nat, chunk@);
                     lemma_adler_append(1, 0, prev, chunk@);
@@ -541,7 +541,7 @@ fn run_sums(inf: &mut Inflater, fmt: Format, input: &[u8], out: &mut [u8], a: u3
                 a = a2;
                 b = b2;
             } else {
-                crc = verilith_core::checksum::cpu::crc32_update(crc, chunk);
+                crc = verilith_checksum::cpu::crc32_update(crc, chunk);
                 proof {
                     lemma_crc_append(0xffff_ffff, prev, chunk@);
                 }

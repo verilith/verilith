@@ -1,13 +1,11 @@
-//! Memory primitives vzlib needs beyond `verilith_core::prims`. Trusted: each is
-//! `#[verifier::external_body]`, and its `requires` clause is the fact Verus
-//! proves at every call site.
+//! Memory primitives vzlib needs beyond `verilith_core::prims`, verified
+//! against vstd's specs and verilith-core's trusted `spare` stores.
 use vstd::prelude::*;
 
 verus! {
 
 /// Appends the low `k` bytes of `w`, least significant first, with one
-/// unaligned 8-byte store.
-#[verifier::external_body]
+/// unaligned 8-byte store (verilith-core's `spare::append8_spare`).
 #[inline(always)]
 pub fn push_word(v: &mut Vec<u8>, w: u64, k: usize)
     requires
@@ -15,14 +13,8 @@ pub fn push_word(v: &mut Vec<u8>, w: u64, k: usize)
     ensures
         final(v)@ == old(v)@ + Seq::new(k as nat, |j: int| ((w >> (8 * j) as u64) & 0xff) as u8),
 {
-    v.reserve(8);
-    // SAFETY: `reserve` made room for 8 more bytes; `k <= 8` of them are
-    // kept, and they are initialized by the store.
-    unsafe {
-        let n = v.len();
-        std::ptr::write_unaligned(v.as_mut_ptr().add(n) as *mut u64, w.to_le());
-        v.set_len(n + k);
-    }
+    verilith_core::spare::reserve_spare(v, 8);
+    verilith_core::spare::append8_spare(v, w, k);
 }
 
 #[inline(always)]

@@ -1,0 +1,22 @@
+[package]
+name = "verilith-qpack"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "A sans-I/O QPACK (RFC 9204) encoder and decoder for HTTP/3, formally verified with Verus"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/verilith/verilith"
+keywords = ["qpack", "http3", "verified", "verus", "quic"]
+categories = ["network-programming", "web-programming", "parser-implementations"]
+exclude = ["scripts/", "tools/", "bench/"]
+
+[dependencies]
+verilith-core = { path = "../core", version = "0.1.0" }
+verilith-hpack = { path = "../hpack", version = "0.1.0" }
+vstd = { workspace = true, features = ["std"] }
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(verus_only)'] }

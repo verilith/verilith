@@ -16,11 +16,13 @@ keywords = ["verified", "verus", "parser", "compression"]
 default = []
 archive = ["dep:verilith-archive"]
 brotli = ["dep:verilith-brotli"]
+checksum = ["dep:verilith-checksum"]
 core = ["dep:verilith-core"]
 dns = ["dep:verilith-dns"]
 font = ["dep:verilith-font"]
 gif = ["dep:verilith-gif"]
 h2 = ["dep:verilith-h2"]
+h3 = ["dep:verilith-h3"]
 hpack = ["dep:verilith-hpack"]
 http = ["dep:verilith-http"]
 jpeg = ["dep:verilith-jpeg"]
@@ -48,11 +50,13 @@ zstd = ["dep:verilith-zstd"]
 [dependencies]
 verilith-archive = { path = "../archive", version = "0.1.0", optional = true }
 verilith-brotli = { path = "../brotli", version = "0.1.0", optional = true }
+verilith-checksum = { path = "../checksum", version = "0.1.0", optional = true }
 verilith-core = { path = "../core", version = "0.1.0", optional = true }
 verilith-dns = { path = "../dns", version = "0.1.0", optional = true }
 verilith-font = { path = "../font", version = "0.1.0", optional = true }
 verilith-gif = { path = "../gif", version = "0.1.0", optional = true }
 verilith-h2 = { path = "../h2", version = "0.1.0", optional = true }
+verilith-h3 = { path = "../h3", version = "0.1.0", optional = true }
 verilith-hpack = { path = "../hpack", version = "0.1.0", optional = true }
 verilith-http = { path = "../http", version = "0.1.0", optional = true }
 verilith-jpeg = { path = "../jpeg", version = "0.1.0", optional = true }

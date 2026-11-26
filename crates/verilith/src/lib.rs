@@ -20,7 +20,10 @@ pub use verilith_archive as archive;
 /// `verilith-brotli`: Brotli.
 #[cfg(feature = "brotli")]
 pub use verilith_brotli as brotli;
-/// `verilith-core`: shared verified building blocks (bit readers, Huffman tables, CRC-32, UTF-8).
+/// `verilith-checksum`: CRC-32, CRC-32C and Adler-32.
+#[cfg(feature = "checksum")]
+pub use verilith_checksum as checksum;
+/// `verilith-core`: shared verified building blocks (bit readers, Huffman tables, UTF-8).
 #[cfg(feature = "core")]
 pub use verilith_core as core;
 /// `verilith-dns`: DNS message parser and serializer.
@@ -35,6 +38,9 @@ pub use verilith_gif as gif;
 /// `verilith-h2`: HTTP/2 frames.
 #[cfg(feature = "h2")]
 pub use verilith_h2 as h2;
+/// `verilith-h3`: HTTP/3 framing.
+#[cfg(feature = "h3")]
+pub use verilith_h3 as h3;
 /// `verilith-hpack`: HPACK header compression.
 #[cfg(feature = "hpack")]
 pub use verilith_hpack as hpack;
