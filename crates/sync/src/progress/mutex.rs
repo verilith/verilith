@@ -233,7 +233,7 @@ pub open spec fn inv(s: St, n: nat) -> bool {
     &&& !s.list.is_empty() ==> s.word == 2 || exists|u: nat| u < n && #[trigger] committed(s, u)
 }
 
-proof fn lemma_init(s: St, n: nat)
+pub proof fn lemma_init(s: St, n: nat)
     requires
         init(s, n),
     ensures
@@ -246,7 +246,7 @@ proof fn lemma_init(s: St, n: nat)
 
 /// Only `t`'s own step changes `t`'s phase, and nothing changes the
 /// thread count.
-proof fn lemma_step_frame(s: St, n: nat, t: nat, s2: St)
+pub proof fn lemma_step_frame(s: St, n: nat, t: nat, s2: St)
     requires
         inv(s, n),
         t < n,
@@ -261,7 +261,7 @@ proof fn lemma_step_frame(s: St, n: nat, t: nat, s2: St)
 {
 }
 
-proof fn lemma_step(s: St, n: nat, t: nat, s2: St)
+pub proof fn lemma_step(s: St, n: nat, t: nat, s2: St)
     requires
         inv(s, n),
         t < n,
@@ -805,6 +805,51 @@ pub proof fn lemma_nonvacuous(s0: St, n: nat)
     assert forall|i: nat| #[trigger] sched(i) < n && step(ex(i), sched(i), ex(i + 1)) by {
         let t = i % n;
         assert(s0.th[t as int].ph == Ph::Idle);
+    }
+}
+
+/// The model as `crate::model::Model` takes it: `src/mutex.rs` holds one
+/// and is verified to follow it.
+pub struct P;
+
+impl crate::model::Protocol for P {
+    type St = St;
+    type Th = Th;
+
+    open spec fn init(s: St, n: nat) -> bool {
+        init(s, n)
+    }
+
+    open spec fn step(s: St, t: nat, s2: St) -> bool {
+        step(s, t, s2)
+    }
+
+    open spec fn inv(s: St, n: nat) -> bool {
+        inv(s, n)
+    }
+
+    open spec fn threads(s: St) -> Seq<Th> {
+        s.th
+    }
+
+    open spec fn idle(th: Th) -> bool {
+        th.ph == Ph::Idle
+    }
+
+    proof fn lemma_init(s: St, n: nat) {
+        lemma_init(s, n);
+        assert forall|t: int| 0 <= t < n implies (#[trigger] s.th[t]).ph == Ph::Idle by {}
+    }
+
+    proof fn lemma_step(s: St, n: nat, t: nat, s2: St) {
+        lemma_step(s, n, t, s2);
+        lemma_step_frame(s, n, t, s2);
+        assert forall|u: int| 0 <= u < n && u != t implies #[trigger] s2.th[u] == s.th[u] by {
+            assert(s2.th[(u as nat) as int] == s.th[(u as nat) as int]);
+        }
+    }
+
+    proof fn lemma_len(s: St, n: nat) {
     }
 }
 

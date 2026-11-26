@@ -17,6 +17,10 @@ pub mod chan_model;
 #[doc(hidden)]
 pub mod chan_sync;
 #[doc(hidden)]
+pub mod lot;
+#[doc(hidden)]
+pub mod model;
+#[doc(hidden)]
 pub mod mono;
 pub mod mutex;
 #[doc(hidden)]
