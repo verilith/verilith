@@ -278,9 +278,23 @@ impl Stream {
         self.w.emitted()
     }
 
+    /// The flag bytes of the tokens emitted so far, one each.
+    pub open spec fn flags(&self) -> Seq<u8> {
+        self.w.flags()
+    }
+
+    /// The first token whose flags `items_fl` proves right: the one after
+    /// the root element's start tag, when the window read the content; all
+    /// of the tokens (none proven) when the document was decided in the
+    /// prolog and its content's tokens came whole, with the tape's flags.
+    pub open spec fn pieces_from(&self) -> int {
+        self.w.ge@.k0
+    }
+
     /// What has been emitted: before the root element, the prolog's tokens
     /// up to `pmark`; from it on, the tokens read so far (`Win::emits`).
     pub open spec fn items_ok(&self) -> bool {
+        &&& self.w.ge@.pfl.len() == self.w.ge@.prev.len()
         &&& (self.phase == PH_HEAD || self.phase == PH_M1 || self.phase == PH_M2) ==> self.w.base == 0 && self.pmark
             <= self.ptape@.len() && self.emitted() == self.ptape@.subrange(0, self.pmark as int)
         &&& self.phase == PH_WHOLE ==> self.emitted().len() == 0
@@ -333,7 +347,17 @@ pub fn stream_new(enc: Enc) -> (r: Stream)
             gst: Ghost(Seq::empty()),
             gt: Ghost(Seq::empty()),
             gts: Ghost(0),
-            ge: Ghost(Emitted { prev: Seq::empty(), groups: Seq::empty(), open: Seq::empty() }),
+            ge: Ghost(
+                Emitted {
+                    prev: Seq::empty(),
+                    groups: Seq::empty(),
+                    open: Seq::empty(),
+                    pfl: Seq::empty(),
+                    gfl: Seq::empty(),
+                    ofl: Seq::empty(),
+                    k0: 0,
+                },
+            ),
         },
         phase: PH_HEAD,
         ptape: Tape::new(),
@@ -1629,8 +1653,21 @@ fn m2_root(st: &mut Stream) -> (r: u8)
                 lemma_sing(sing(t, 0), t, u, 0, t.len() as int);
                 lemma_mv_zero(u);
                 assert(added(Seq::<XTok>::empty(), u) =~= u);
-                st.w.ge@ = Emitted { prev: g0.prev, groups: sing(t, 0) + sing(u, 0), open: Seq::empty() };
+                let fl = st.w.flags();
+                assert(fl.len() == (t + u).len());
+                st.w.ge@ = Emitted {
+                    groups: sing(t, 0) + sing(u, 0),
+                    open: Seq::empty(),
+                    gfl: sing8(fl),
+                    ofl: Seq::empty(),
+                    k0: (t + u).len() as int,
+                    ..g0
+                };
                 assert(st.w.emitted() =~= flat(st.w.ge@.groups) + st.w.ge@.open);
+                lemma_flat8_sing(fl);
+                assert(st.w.flags() =~= flat8(st.w.ge@.gfl) + st.w.ge@.ofl);
+                assert(sing(t, 0) + sing(u, 0) =~= sing(t + u, 0));
+                assert(fls(st.w.seen@, st.w.ge@.groups, st.w.ge@.gfl, st.w.ge@.k0));
                 if sx.len() > 0 {
                     assert(sc@[0].2 < u.len());
                 }
@@ -2147,6 +2184,15 @@ impl Stream {
             // Accepted: all that was emitted, chunk by chunk, is the
             // whole parse's tape.
             r == R_OK ==> items(final(self).emitted(), docx(final(self).seen()).unwrap()),
+            // ... and the flags on its pieces are right, from the token
+            // after the root element's start tag on.
+            r == R_OK ==> items_fl(
+                final(self).seen(),
+                final(self).emitted(),
+                final(self).flags(),
+                docx(final(self).seen()).unwrap(),
+                final(self).pieces_from(),
+            ),
             r == R_WHOLE ==> final(self).emitted().len() == 0,
             r <= R_LIMIT,
             (old(self).phase == PH_FAILED || old(self).phase == PH_DONE) ==> r == R_ERR && final(self).seen()
@@ -2172,11 +2218,13 @@ impl Stream {
         hide(parse);
         // What the last chunk emitted is kept in the proof's account.
         proof {
-            self.w.ge@ = Emitted { prev: self.emitted(), groups: self.w.ge@.groups, open: self.w.ge@.open };
+            self.w.ge@ = Emitted { prev: self.emitted(), pfl: self.w.flags(), ..self.w.ge@ };
         }
+        let ghost fl0 = old(self).w.flags();
         self.w.out.clear();
         proof {
             assert(self.emitted() =~= old(self).emitted());
+            assert(self.w.flags() =~= fl0);
         }
         if self.phase == PH_FAILED || self.phase == PH_DONE {
             return R_ERR;
@@ -2189,12 +2237,18 @@ impl Stream {
             return R_LIMIT;
         }
         let ghost s0 = self.seen();
+        let ghost w0 = self.w;
         win_append(&mut self.w, data);
         proof {
             lemma_stream_fed(old(self), self, data@);
         }
         let ghost seen = self.seen();
         proof {
+            assert(seen.subrange(0, s0.len() as int) =~= s0);
+            if self.phase == PH_BODY {
+                lemma_fls_ext(s0, seen, self.w.ge@.groups, self.w.ge@.gfl, self.w.ge@.k0);
+                lemma_open_fl_ext(s0, seen, self.w.ge@.open, self.w.ge@.ofl, self.w.mode == M_CDATA);
+            }
             assert(self.items_ok());
         }
         if self.phase == PH_BODY {
@@ -2449,6 +2503,9 @@ impl Stream {
             // The tokens read are the document's, each with its group.
             assert(self.w.emitted() =~= flat(self.w.ge@.groups));
             lemma_items(self.w.ge@.groups, self.w.gt@);
+            assert(self.w.ge@.ofl =~= Seq::<u8>::empty());
+            assert(self.flags() =~= flat8(self.w.ge@.gfl));
+            assert(grps(self.w.ge@.groups, self.w.gt@) && fls(self.seen(), self.w.ge@.groups, self.w.ge@.gfl, self.w.ge@.k0));
         }
         self.phase = PH_DONE;
         R_OK
@@ -2466,12 +2523,13 @@ impl Stream {
             old(self).items_ok() ==> final(self).items_ok(),
     {
         proof {
-            self.w.ge@ = Emitted { prev: self.emitted(), groups: self.w.ge@.groups, open: self.w.ge@.open };
+            self.w.ge@ = Emitted { prev: self.emitted(), pfl: self.w.flags(), ..self.w.ge@ };
         }
         let mut r = Tape::new();
         std::mem::swap(&mut r, &mut self.w.out);
         proof {
             assert(self.emitted() =~= old(self).emitted());
+            assert(self.w.flags() =~= old(self).w.flags());
         }
         r
     }
@@ -2490,6 +2548,15 @@ impl Stream {
             final(self).inv(),
             final(self).items_ok(),
             r == R_OK ==> items(final(self).emitted(), docx(final(self).seen()).unwrap()),
+            // ... and the flags on its pieces are right, from the token
+            // after the root element's start tag on.
+            r == R_OK ==> items_fl(
+                final(self).seen(),
+                final(self).emitted(),
+                final(self).flags(),
+                docx(final(self).seen()).unwrap(),
+                final(self).pieces_from(),
+            ),
             final(self).seen() == old(self).seen(),
             final(self).enc == old(self).enc,
             final(self).phase != PH_HEAD && final(self).phase != PH_WHOLE,
@@ -2551,6 +2618,14 @@ impl Stream {
                 lemma_mv_zero(b);
                 assert(t1.subrange(0, pm) + b =~= t1);
                 lemma_items(sing(a, 0) + sing(b, 0), t1);
+                // The content's tokens came whole: no flags are claimed.
+                let fl = self.w.flags();
+                let g = sing(a, 0) + sing(b, 0);
+                self.w.ge@ = Emitted { k0: g.len() as int, ..self.w.ge@ };
+                assert(fl.len() == g.len());
+                lemma_flat8_sing(fl);
+                assert(fls(self.seen(), g, sing8(fl), g.len() as int));
+                assert(grps(g, t1) && flat(g) == self.emitted());
             }
             R_OK
         } else {
