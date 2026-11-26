@@ -35,7 +35,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | hpack | 2 |  |  |  |  |  | 3 |
 | http | 6 |  |  |  |  |  | 7 |
 | jpeg | 2 |  |  |  |  |  | 3 |
-| json | 31 |  |  |  | 2 |  | 7 |
+| json | 26 |  |  |  | 2 |  | 7 |
 | lz4 |  |  |  |  |  |  | 1 |
 | png | 2 |  |  |  |  |  | 7 |
 | regex | 7 |  |  |  |  |  | 2 |
@@ -54,7 +54,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  | 2 |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **671** | **35** | **274** | **5** | **34** | **12** | **104** |
+| **total** | **666** | **35** | **274** | **5** | **34** | **12** | **104** |
 
 ## Items
 
@@ -148,7 +148,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/json/src/native.rs`: plain Rust
 - `crates/json/src/number.rs`: plain Rust
 - `crates/json/src/serde_support.rs`: plain Rust
-- `crates/json/src/simd.rs`: external_body: `load4`, `copy_plain16`, `classify_special`, `classify_non_ws`, `classify_non_digit`, `digit_run_acc16`
+- `crates/json/src/simd.rs`: external_body: `load4`
 - `crates/json/src/utf8.rs`: external_body: `utf8_avx512`, `utf8_avx2`
 - `crates/json/src/value.rs`: plain Rust
 - `crates/json/src/writer.rs`: plain Rust

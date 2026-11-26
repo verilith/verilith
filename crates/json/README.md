@@ -476,6 +476,11 @@ The trusted base is listed under [What is not proven](#what-is-not-proven).
   high 64-bit lane), added to verilith-simd for it. Off AArch64 the wrappers run an
   emulation, so the NEON kernels are also tested on x86
   (`cargo test neon`) and, under qemu, on AArch64.
+  Off x86-64 the 16-byte scans (`classify_special`, `classify_non_ws`,
+  `classify_non_digit`, `digit_run_acc16`, `copy_plain16`) choose, in
+  verified code, between the NEON kernels and verified scalar loops (for
+  WebAssembly without SIMD128); `cargo test portable_kernels` runs the
+  scalar loops on x86-64.
 * **Vec capacity.** vstd does not model a `Vec`'s capacity, so
   `src/lanes.rs` declares it as an uninterpreted `spare` and wraps
   `reserve`, a `push` into reserved space without the capacity check, and
