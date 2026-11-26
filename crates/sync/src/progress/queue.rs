@@ -13,12 +13,15 @@
 //! `2(t - cap) + 1`, `stamp == head + 1` is rank `2h + 1`, and
 //! `stamp == head` is rank `2h`.
 //!
-//! The model is sequentially consistent. The code's loads are relaxed or
-//! acquire, so a thread can read an old value of head, tail or a stamp;
-//! that only makes it retry, and once no thread writes any more it reads
-//! the last values, which is what fairness of the memory system (every
-//! store eventually becomes visible to every thread, as on all hardware
-//! Rust targets) gives. `TRUST.md` ("Progress") discusses this.
+//! The code's loads are relaxed or acquire, so a thread can read an old
+//! value of head, tail or a stamp, and a failed CAS can see an old value
+//! too. The model allows that: `step` is a sequentially consistent step
+//! (`sc_step`) or a stale one (`stale_step`), which reads any earlier
+//! value. A stale read only makes the thread retry, and once no thread
+//! writes any more, fairness of the memory system (`mfair`: every store
+//! eventually becomes visible to every thread, as on all hardware Rust
+//! targets) says each thread's reads become current. `theorem_lock_free`
+//! takes `mfair` as a hypothesis; `TRUST.md` ("Progress") discusses it.
 //!
 //! `len` is modeled too: it loads the tail, the head and the tail again,
 //! and retries only if the tail moved in between.

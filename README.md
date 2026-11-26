@@ -26,16 +26,17 @@ trusted](#what-is-proven-and-what-is-trusted) before relying on any of it.
   decision and the same output.
 - **No memory errors and no crashes in the verified code.** No
   out-of-bounds read or write, no integer overflow, no panic, and every
-  loop terminates, except in the twelve functions that are exempt from
+  loop terminates, except in the ten functions that are exempt from
   the termination check by design: the blocking calls in `verilith-sync`
-  (`lock`, `read`, `write` and their slow paths, the MPMC queue's
-  `push`/`pop`/`len`, the channel's wait loop) and `verilith-wasm`'s
+  (the locks' slow paths and the RwLock's sleep loop, the MPMC queue's
+  `push`/`pop`/`len`, the channel's wait loop and handle clone) and `verilith-wasm`'s
   interpreter loop, which runs as long as the guest program does.
 - **More, crate by crate.** Many crates prove further properties: bounds on
   work or on output size (zlib, http, regex, dns), that compression
   round-trips (zlib, lz4, snappy), that a stream split into pieces anywhere
   decodes the same (zlib, zstd, brotli, hpack, http), linearizability of
-  the queues (sync). Each crate's README has a "What is proven" section
+  the queues and deadlock-freedom of the locks, checked against the code
+  (sync). Each crate's README has a "What is proven" section
   that names the theorem and the function it is stated on.
 
 No crate's source contains `assume(...)` or `admit()`. Everything a proof

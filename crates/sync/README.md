@@ -81,12 +81,12 @@ assert_eq!(c.pop(), Some(1));
 
 ## What is proven
 
-Checked by Verus: `cargo verus verify` reports 350 items verified, 0
+Checked by Verus: `cargo verus verify` reports 418 items verified, 0
 errors, with no `assume` or `admit` anywhere in the crate. The queue rows
 hold under the release/acquire model of `src/ra.rs`; the lock rows under
 vstd's sequentially consistent atomics. The progress rows at the end are
-proved about models of the protocols, as explained below the table; for
-the channel, the code is verified to follow its model.
+proved about models of the protocols, and for every one of them the code
+is verified to follow its model, as explained below the table.
 
 | Property | Where |
 | --- | --- |
@@ -101,29 +101,39 @@ the channel, the code is verified to follow its model.
 | **RwLock excludes**: one 32-bit word holds the writer bit, two parking hints and the reader count. A tokenized state machine (writer token, reader tokens, data in storage) proves a writer holds the data alone and readers borrow it shared, and that the bits always match the tokens. `downgrade` turns a write lock into a read lock in one atomic step | `src/rwlock.rs` |
 | **Locks drop the data exactly once**, and `into_inner` returns it | `Mutex::take_inner`, `RwLock::take_inner` |
 | **SPSC is wait-free**: every SPSC function passes Verus's termination check, so each call returns after a bounded number of its own steps whatever the other side does. So do `try_lock`, `try_read`, `try_write`, the unlocks and `downgrade` | `src/spsc.rs` (no loop is exempt) |
-| **Mutex never deadlocks**: while a thread waits in `lock()`, some thread holds the lock later. No lost wakeups: while anyone sleeps in the parking lot, the word says "contended" or some thread is committed to waking a sleeper or re-marking the word | `progress::mutex` |
-| **RwLock never deadlocks**: likewise for `read()` and `write()`. The parking hints are never left set with nobody to clear them, and a sleeper is never left with "parked" clear and nobody to wake it | `progress::rwlock` |
+| **Mutex never deadlocks**: while a thread waits in `lock()`, some thread holds the lock later. No lost wakeups: while anyone sleeps in the parking lot, the word says "contended" or some thread is committed to waking a sleeper or re-marking the word | `progress::mutex`, and `src/mutex.rs` and `src/lot.rs` for the code following the model |
+| **RwLock never deadlocks**: likewise for `read()` and `write()`. The parking hints are never left set with nobody to clear them, and a sleeper is never left with "parked" clear and nobody to wake it | `progress::rwlock`, and `src/rwlock.rs` for the code following the model |
 | **Channel waiters are never stranded**: if a message is queued while a receiver waits (or a slot is free while a sender waits), some receiver (sender) takes it, unless the waiter returns or the other side disconnects; and once the other side is gone, every waiter returns | `progress::channel`, and `src/chan_sync.rs` for the code following the model |
-| **MPMC queue is lock-free under fair scheduling**: while a thread is in `push`, `pop` or `len`, some call returns | `progress::queue` |
+| **MPMC queue is lock-free under fair scheduling**: while a thread is in `push`, `pop` or `len`, some call returns. Its relaxed loads may read old values; this needs only that, once nothing is written any more, each thread's loads eventually read the latest values | `progress::queue`, and `src/array_queue.rs` for the code following the model |
 
 The progress rows hold in every execution in which each thread keeps
 getting scheduled; nothing else is assumed about timing. Each blocking
-protocol is modeled one step per atomic access. For the locks and the
-queue, `TRUST.md` ("Progress") maps the model to the code line by line,
-by hand. For the channel the mapping is checked by Verus: the channel's
-blocking code (`src/chan_sync.rs`: the handle counts, the waiter lists,
-the send and receive loops, clone and drop) holds the model's state as a
-ghost resource that can only change by a step of the model, inside an
-invariant that ties it to the real atomics and the queue, so every access
-the code makes to shared state has to be a step of the model. What that
-still assumes is listed in `TRUST.md` ("The channel"): mainly that
-SeqCst operations interleave, that `std`'s mutex excludes, and that a
-bounded number of calls run at once. These are deadlock-freedom results, not fairness ones: a
-particular thread can still lose every race, as with parking_lot and
-crossbeam. Writing the channel proof found a real lost-wakeup bug that the
-move to release/acquire had introduced (a receiver could park next to a
-message, on ARM or under Miri), now fixed and covered by
-`tests/lost_wakeup.rs`.
+protocol is modeled one step per atomic access, and the code is checked
+by Verus to take exactly those steps. Each primitive holds the model's
+state as a ghost resource (`src/model.rs`) that can only change by a
+proven step of the model, inside the invariant that ties it to the real
+atomics, so every access the code makes to shared state has to come with
+the model step it stands for. The locks also do this for their sleeping:
+the parking lot they use (`src/lot.rs`) is verified, and its buckets hand
+each lock the ghost list of its waiters while the bucket is locked.
+
+What the match still assumes is in `TRUST.md`: for the locks, that the
+parking lot hands each lock its own list (it rests on two live lock
+words never sharing an address); for the queue, that stores become
+visible eventually; for the channel, that SeqCst operations interleave,
+that `std`'s mutex excludes, and that a bounded number of calls run at
+once. These are deadlock-freedom results, not fairness ones: a particular
+thread can still lose every race, as with parking_lot and crossbeam.
+
+Writing these proofs found two real bugs, both fixed and covered by
+tests. The channel proof found a lost wakeup that the move to
+release/acquire had introduced (a receiver could park next to a message,
+on ARM or under Miri; `tests/lost_wakeup.rs`). The mutex proof found that
+a lock nested at offset 0 of another lock's data, as in
+`RwLock<Mutex<T>>`, parked under the same key as the outer lock, so the
+mutex's unlock could wake the RwLock's waiter instead of its own, which
+then slept forever next to an unlocked mutex (`tests/nested_locks.rs`).
+Locks are now keyed by their lock word's address.
 
 ## Trusted computing base
 
@@ -140,20 +150,21 @@ argues for each item. In short:
 - The specs: read `QueueView`, the `atomically` blocks on the queue
   operations, and the `RwToks` state machine to check that they say what
   you expect.
-- Unverified, with no access to the data: `src/util.rs`, `src/parking.rs`
-  (which now includes thin wrappers around `std`'s mutex, park/unpark and
-  clock for the channel) and the locks' park/unpark wrappers, the
-  channel's public shell in `src/channel.rs`, which only forwards to the
-  verified `src/chan_sync.rs`, and the one-line `Send`, `Sync`, `Deref`
-  and `Drop` impls. The tests run under Miri in CI, with its weak-memory
-  emulation.
-- The progress models. For the mutex, the RwLock and the queue, their
-  match with the code is argued, not proven. For the channel it is
-  proven, up to the assumptions `TRUST.md` lists under "The channel": one
-  axiom (boundedly many calls in progress at once), sequentially
-  consistent interleaving of the SeqCst operations the proof relies on,
-  mutual exclusion from `std::sync::Mutex`, and, for progress only, that
-  `unpark` wakes a parked thread and the mutex is eventually acquired.
+- Unverified, with no access to the data: `src/util.rs` (backoff,
+  padding, and thin wrappers around `std`'s mutex, park/unpark and
+  clock), the channel's public shell in `src/channel.rs`, which only
+  forwards to the verified `src/chan_sync.rs`, and the one-line `Send`,
+  `Sync`, `Deref` and `Drop` impls. The tests run under Miri in CI, with
+  its weak-memory emulation.
+- The progress models' match with the code is proven, up to the
+  assumptions `TRUST.md` lists: one axiom (boundedly many calls in
+  progress at once, in `src/model.rs`); for the locks, the parking lot's
+  hand-over of a lock's waiter list (`lock_bucket`, `unlock_bucket`, and
+  each lock's `key`); for the queue, that stores become visible
+  eventually; for the channel, sequentially consistent interleaving of
+  the SeqCst operations it relies on and mutual exclusion from
+  `std::sync::Mutex`; and, for progress only, that `unpark` wakes a
+  parked thread and a `std` mutex is eventually acquired.
 
 ## The memory model
 
