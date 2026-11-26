@@ -844,4 +844,102 @@ pub open spec fn frame_ok(f: Frame) -> bool {
     &&& payload_enc(f).len() <= MAX_VARINT
 }
 
+/// A whole frame at the start of `s`, its payload read by type, with no
+/// order rules: what a frame means on its own (and what the encoder's round
+/// trip is stated against). `None` if `s` ends inside it or its payload is
+/// malformed.
+pub open spec fn frame_dec(s: Seq<u8>) -> Option<(Frame, nat)> {
+    match hdr_dec(s) {
+        Hdr::Short => None,
+        Hdr::Ok(t, len, h) => {
+            if s.len() < h + len {
+                None
+            } else {
+                let p = s.subrange(h as int, (h + len) as int);
+                let f = match kind(t) {
+                    Kind::Data => Some(Frame::Data(p)),
+                    Kind::Headers => Some(Frame::Headers(p)),
+                    Kind::CancelPush => match single(p) {
+                        Some(v) => Some(Frame::CancelPush(v)),
+                        None => None,
+                    },
+                    Kind::Goaway => match single(p) {
+                        Some(v) => Some(Frame::Goaway(v)),
+                        None => None,
+                    },
+                    Kind::MaxPushId => match single(p) {
+                        Some(v) => Some(Frame::MaxPushId(v)),
+                        None => None,
+                    },
+                    Kind::Settings => match settings_dec(p) {
+                        Ok(x) => Some(Frame::Settings(x)),
+                        Err(_) => None,
+                    },
+                    Kind::PushPromise => match var_dec(p) {
+                        Var::Ok(id, n) => Some(Frame::PushPromise(id, p.skip(n as int))),
+                        Var::Short => None,
+                    },
+                    _ => Some(Frame::Other(t, p)),
+                };
+                match f {
+                    Some(f) => Some((f, h + len)),
+                    None => None,
+                }
+            }
+        },
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Streams the peer opens (§6)
+// ---------------------------------------------------------------------------
+
+/// The critical unidirectional streams the peer has opened.
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub struct UniSeen {
+    pub control: bool,
+    pub encoder: bool,
+    pub decoder: bool,
+}
+
+/// The peer opens a unidirectional stream of kind `k`: only one control
+/// stream (§6.2.1) and one of each QPACK stream (RFC 9204 §4.2) are
+/// allowed.
+pub open spec fn uni_open(s: UniSeen, k: UniKind) -> Result<UniSeen, u64> {
+    match k {
+        UniKind::Control => if s.control { Err(H3_STREAM_CREATION_ERROR) } else { Ok(UniSeen { control: true, ..s }) },
+        UniKind::QpackEncoder => if s.encoder { Err(H3_STREAM_CREATION_ERROR) } else { Ok(UniSeen { encoder: true, ..s }) },
+        UniKind::QpackDecoder => if s.decoder { Err(H3_STREAM_CREATION_ERROR) } else { Ok(UniSeen { decoder: true, ..s }) },
+        _ => Ok(s),
+    }
+}
+
+/// A unidirectional stream of kind `k` the peer opened has ended or been
+/// reset: the control and QPACK streams must not (§6.2.1, RFC 9204 §4.2).
+pub open spec fn uni_closed(k: UniKind) -> Result<(), u64> {
+    match k {
+        UniKind::Control | UniKind::QpackEncoder | UniKind::QpackDecoder => Err(H3_CLOSED_CRITICAL_STREAM),
+        _ => Ok(()),
+    }
+}
+
+/// The peer opens a bidirectional stream: only clients do (§6.1).
+pub open spec fn bidi_open(server: bool) -> Result<(), u64> {
+    if server {
+        Ok(())
+    } else {
+        Err(H3_STREAM_CREATION_ERROR)
+    }
+}
+
+/// The DATA payload bytes of the stream `s` so far, including those of a
+/// DATA frame that has not fully arrived.
+pub open spec fn content(server: bool, limit: nat, s: Seq<u8>, st: RSt) -> Seq<u8> {
+    let r = run(server, limit, s, st);
+    match r.tail {
+        Tail::At(st1, q) => r.body + partial_data(server, limit, s.skip(q as int), st1),
+        _ => r.body,
+    }
+}
+
 } // verus!

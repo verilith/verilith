@@ -162,6 +162,40 @@ impl Reader {
         self.buf@
     }
 
+    /// Whether the stream can still be read (it has not failed, ended or
+    /// been handed off).
+    pub closed spec fn live(&self) -> bool {
+        self.mode is Unit || self.mode is Payload
+    }
+
+    /// The DATA reported so far is all of the stream's content so far.
+    pub proof fn lemma_content(&self)
+        requires
+            self.wf(),
+            self.live(),
+        ensures
+            self.body() == content(self.is_server(), self.lim(), self.seen(), self.st_start()),
+            self.events() == self.spec_out().ev,
+    {
+        let srv = self.server;
+        let lim = self.limit as nat;
+        let s = self.seen@;
+        let q = self.q@;
+        let b = s.take(q as int);
+        let w = s.skip(q as int);
+        let stt = start(self.uni@, self.server);
+        assert(b + w =~= s);
+        if self.mode is Unit {
+            assert(unit(srv, lim, w, self.st) is Incomplete);
+            lemma_stay(srv, lim, b, w, stt, self.st);
+            assert(self.body@ + seq![] =~= self.body@);
+        } else {
+            lemma_hdr_ok(w);
+            assert(unit(srv, lim, w, self.st0@) is Incomplete);
+            lemma_stay(srv, lim, b, w, stt, self.st0@);
+        }
+    }
+
     /// What the stream so far means, by the spec.
     pub open spec fn spec_out(&self) -> Out {
         run(self.is_server(), self.lim(), self.seen(), self.st_start())
@@ -328,6 +362,7 @@ impl Reader {
     /// copied. Over any sequence of calls the potential (`pot`) starts at 0
     /// and stays nonnegative, so the total is at most 4 per input byte plus
     /// 64 per call.
+    #[inline(always)]
     pub fn next_metered(&mut self, input: &[u8], fin: bool) -> (r: (Event, usize, Ghost<nat>))
         requires
             old(self).wf(),
@@ -413,8 +448,7 @@ impl Reader {
             proof {
                 steps = steps + 1;
             }
-            let st = self.st;
-            match st {
+            match self.st {
                 RSt::Frames(_) => {
                     match read_hdr(input, pos) {
                         None => {
@@ -524,6 +558,7 @@ proof fn lemma_short_len(w: Seq<u8>)
 
 /// The event for a completed buffered frame whose payload is `input[a..b]`
 /// (`inp`) or the whole buffer.
+#[inline(always)]
 fn mk_event(c: CEv, inp: bool, a: usize, b: usize, Ghost(input): Ghost<Seq<u8>>, Ghost(buf): Ghost<Seq<u8>>) -> (r: Event)
     requires
         inp ==> a <= b <= input.len(),
@@ -612,6 +647,7 @@ impl Reader {
     /// A frame header has been read: `t`, `flen`, and `h` bytes, the last of
     /// them `input[..e]`.
     #[verifier::rlimit(80)]
+    #[inline(always)]
     fn on_hdr(&mut self, input: &[u8], e: usize, t: u64, flen: u64, Ghost(h): Ghost<nat>, Ghost(o): Ghost<Reader>, Ghost(steps): Ghost<nat>, fin: bool) -> (r: (Step, Ghost<nat>))
         requires
             pre(*old(self), o, input@, e as nat),
@@ -667,6 +703,7 @@ impl Reader {
 
     /// A frame whose payload is all in `input`.
     #[verifier::rlimit(80)]
+    #[inline(always)]
     fn whole(&mut self, input: &[u8], e: usize, t: u64, flen: u64, o2: Order, Ghost(h): Ghost<nat>, Ghost(o): Ghost<Reader>, Ghost(steps): Ghost<nat>, fin: bool) -> (r: (Step, Ghost<nat>))
         requires
             pre(*old(self), o, input@, e as nat),
@@ -775,6 +812,7 @@ impl Reader {
 
     /// A frame whose payload goes on past `input`.
     #[verifier::rlimit(80)]
+    #[inline(always)]
     fn part(&mut self, input: &[u8], e: usize, t: u64, flen: u64, o2: Order, Ghost(h): Ghost<nat>, Ghost(o): Ghost<Reader>, Ghost(steps): Ghost<nat>, fin: bool) -> (r: (Step, Ghost<nat>))
         requires
             pre(*old(self), o, input@, e as nat),
@@ -856,6 +894,7 @@ impl Reader {
 
     /// A varint unit (stream type or push ID) has been read: `v`, the
     /// last of its bytes `input[..e]`.
+    #[inline(always)]
     fn on_var(&mut self, input: &[u8], e: usize, v: u64, Ghost(o): Ghost<Reader>, Ghost(steps): Ghost<nat>, fin: bool) -> (r: (Event, usize, Ghost<nat>))
         requires
             pre(*old(self), o, input@, e as nat),
@@ -942,6 +981,7 @@ impl Reader {
     }
 
     /// The input ran out with the stream's next unit incomplete.
+    #[inline(always)]
     fn short(&mut self, input: &[u8], pos: usize, fin: bool, Ghost(o): Ghost<Reader>, Ghost(steps): Ghost<nat>) -> (r: (Event, usize, Ghost<nat>))
         requires
             old(self).wf(),
@@ -993,6 +1033,7 @@ impl Reader {
     }
 
     /// All the input has been used.
+    #[inline(always)]
     fn finish(&mut self, input: &[u8], fin: bool, Ghost(o): Ghost<Reader>, Ghost(steps): Ghost<nat>) -> (r: (Event, usize, Ghost<nat>))
         requires
             old(self).wf(),

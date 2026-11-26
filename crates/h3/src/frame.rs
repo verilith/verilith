@@ -339,6 +339,7 @@ fn single_x(p: &[u8]) -> (r: Option<u64>)
 }
 
 /// `complete`, in code; the ghost result counts loop turns (SETTINGS').
+#[inline]
 pub fn complete_x(o: Order, server: bool, k: Kind, p: &[u8]) -> (r: (Result<(Order, CEv), u64>, Ghost<nat>))
     requires
         buffered(k),
@@ -397,6 +398,42 @@ pub fn complete_x(o: Order, server: bool, k: Kind, p: &[u8]) -> (r: (Result<(Ord
                 _ => (Err(H3_FRAME_UNEXPECTED), Ghost(0)),
             }
         },
+    }
+}
+
+/// `uni_open`, in code.
+pub fn uni_open_x(s: UniSeen, k: UniKind) -> (r: Result<UniSeen, u64>)
+    ensures
+        r == uni_open(s, k),
+{
+    match k {
+        UniKind::Control => if s.control { Err(H3_STREAM_CREATION_ERROR) } else { Ok(UniSeen { control: true, ..s }) },
+        UniKind::QpackEncoder => if s.encoder { Err(H3_STREAM_CREATION_ERROR) } else { Ok(UniSeen { encoder: true, ..s }) },
+        UniKind::QpackDecoder => if s.decoder { Err(H3_STREAM_CREATION_ERROR) } else { Ok(UniSeen { decoder: true, ..s }) },
+        _ => Ok(s),
+    }
+}
+
+/// `uni_closed`, in code.
+pub fn uni_closed_x(k: UniKind) -> (r: Result<(), u64>)
+    ensures
+        r == uni_closed(k),
+{
+    match k {
+        UniKind::Control | UniKind::QpackEncoder | UniKind::QpackDecoder => Err(H3_CLOSED_CRITICAL_STREAM),
+        _ => Ok(()),
+    }
+}
+
+/// `bidi_open`, in code.
+pub fn bidi_open_x(server: bool) -> (r: Result<(), u64>)
+    ensures
+        r == bidi_open(server),
+{
+    if server {
+        Ok(())
+    } else {
+        Err(H3_STREAM_CREATION_ERROR)
     }
 }
 

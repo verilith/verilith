@@ -32,6 +32,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | dns |  |  |  |  |  |  | 6 |
 | font |  |  |  |  |  |  | 1 |
 | gif | 1 |  |  |  |  |  | 2 |
+| h3 |  |  |  |  |  |  | 1 |
 | hpack | 2 |  |  |  |  |  | 3 |
 | http | 6 |  |  |  |  |  | 7 |
 | jpeg | 2 |  |  |  |  |  | 3 |
@@ -54,7 +55,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  | 2 |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **666** | **35** | **274** | **5** | **34** | **12** | **104** |
+| **total** | **666** | **35** | **274** | **5** | **34** | **12** | **105** |
 
 ## Items
 
@@ -111,6 +112,10 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/gif/src/capi.rs`: plain Rust
 - `crates/gif/src/lib.rs`: plain Rust
 - `crates/gif/src/prims.rs`: external_body: `alloc_zeroed`
+
+### h3
+
+- `crates/h3/src/lib.rs`: plain Rust
 
 ### hpack
 

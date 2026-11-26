@@ -32,6 +32,9 @@ pub use verilith_font as font;
 /// `verilith-gif`: GIF decoder.
 #[cfg(feature = "gif")]
 pub use verilith_gif as gif;
+/// `verilith-h3`: HTTP/3 framing.
+#[cfg(feature = "h3")]
+pub use verilith_h3 as h3;
 /// `verilith-hpack`: HPACK header compression.
 #[cfg(feature = "hpack")]
 pub use verilith_hpack as hpack;

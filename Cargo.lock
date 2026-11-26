@@ -1388,6 +1388,7 @@ dependencies = [
  "verilith-dns",
  "verilith-font",
  "verilith-gif",
+ "verilith-h3",
  "verilith-hpack",
  "verilith-http",
  "verilith-jpeg",
