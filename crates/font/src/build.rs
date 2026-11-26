@@ -737,7 +737,7 @@ fn copy_layout(t: &[u8], gdef: bool) -> (v: Vec<u8>) {
         v.set(at + 3, 0);
     }
     if !gdef {
-        repair_default_langsys(&mut v);
+        repair_default_langsys(&mut v, t);
     }
     v
 }
@@ -748,26 +748,34 @@ fn copy_layout(t: &[u8], gdef: bool) -> (v: Vec<u8>) {
 /// be repaired in place: a non-null lookup order offset is cleared, and a
 /// required feature that does not exist becomes "none". A default
 /// language system that is still not well formed is removed.
-fn repair_default_langsys(v: &mut Vec<u8>) {
+///
+/// Where the fields are is read from `t`, the table as the font had it,
+/// so that one repair cannot move another: `check_same` holds the output
+/// to exactly those places.
+fn repair_default_langsys(v: &mut Vec<u8>, t: &[u8])
+    requires
+        old(v)@.len() == t.len(),
+{
     let len = v.len();
     if len < 10 || len > TABLE_MAX {
         return;
     }
-    let sl = rd16(v.as_slice(), 4) as usize;
-    let fl = rd16(v.as_slice(), 6) as usize;
-    if sl == 0 || !room(v.as_slice(), sl, 2) {
+    let sl = rd16(t, 4) as usize;
+    let fl = rd16(t, 6) as usize;
+    if sl == 0 || !room(t, sl, 2) {
         return;
     }
-    let nf: usize = if fl != 0 && room(v.as_slice(), fl, 2) {
-        rd16(v.as_slice(), fl) as usize
+    let nf: usize = if fl != 0 && room(t, fl, 2) {
+        rd16(t, fl) as usize
     } else {
         0
     };
-    let n = rd16(v.as_slice(), sl) as usize;
+    let n = rd16(t, sl) as usize;
     let mut i: usize = 0;
     while i < n
         invariant
             v@.len() == len,
+            t.len() == len,
             len <= TABLE_MAX,
             sl + 2 <= len,
             n <= 65535,
@@ -775,19 +783,19 @@ fn repair_default_langsys(v: &mut Vec<u8>) {
     {
         let r = sl + 2 + 6 * i;
         i += 1;
-        if !room(v.as_slice(), r, 6) {
+        if !room(t, r, 6) {
             return;
         }
-        let so = sl + rd16(v.as_slice(), r + 4) as usize;
-        if !room(v.as_slice(), so, 2) {
+        let so = sl + rd16(t, r + 4) as usize;
+        if !room(t, so, 2) {
             continue;
         }
-        let d = rd16(v.as_slice(), so) as usize;
+        let d = rd16(t, so) as usize;
         if d == 0 {
             continue;
         }
         let l = so + d;
-        if !room(v.as_slice(), l, 6) {
+        if !room(t, l, 6) {
             set16(v, so, 0);
             continue;
         }

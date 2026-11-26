@@ -110,6 +110,20 @@ pub open spec fn is_ttc(s: Seq<u8>) -> bool {
     s.len() >= 4 && u32_at(s, 0) == 0x7474_6366
 }
 
+/// The table set of font `index` of the input, for the containers this
+/// specification describes: a plain sfnt file (`index` ignored) or a
+/// TrueType Collection. `None` for WOFF and WOFF2, whose decoding is not
+/// specified here, and for files the reader refuses.
+pub open spec fn input_tables(s: Seq<u8>, index: int) -> Option<Tables> {
+    if is_ttc(s) {
+        ttc_tables(s, index)
+    } else if is_plain_sfnt(s) {
+        sfnt_tables(s, 0)
+    } else {
+        None
+    }
+}
+
 // ---------------------------------------------------------------------
 // Draws the same
 // ---------------------------------------------------------------------
