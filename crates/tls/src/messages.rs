@@ -8,6 +8,14 @@ use vstd::prelude::*;
 
 verus! {
 
+/// The bytes of an optional slice.
+pub open spec fn opt_view(x: Option<&[u8]>) -> Option<Seq<u8>> {
+    match x {
+        Some(p) => Some(p@),
+        None => None,
+    }
+}
+
 pub fn put1(out: &mut Vec<u8>, v: u8)
     ensures
         final(out)@ == old(out)@ + seq![v],
@@ -162,43 +170,62 @@ pub fn hello_retry_request_x(out: &mut Vec<u8>, sid: &[u8], suite: u16, group: u
     }
 }
 
-/// Appends EncryptedExtensions.
+/// Appends EncryptedExtensions: ALPN's choice, if any, then the
+/// transport parameters `tp` over QUIC.
 #[verifier::spinoff_prover]
 #[verifier::rlimit(40)]
-pub fn encrypted_extensions_x(out: &mut Vec<u8>, alpn: Option<&[u8]>)
+pub fn encrypted_extensions_x(out: &mut Vec<u8>, alpn: Option<&[u8]>, tp: Option<&[u8]>)
     requires
         alpn matches Some(p) ==> p@.len() <= 255,
+        tp matches Some(t) ==> t@.len() <= 60000,
     ensures
         final(out)@ == old(out)@ + encrypted_extensions(
-            match alpn {
-                Some(p) => Some(p@),
-                None => None,
-            },
+            opt_view(alpn),
+            opt_view(tp),
         ),
 {
+    let na: usize = match alpn {
+        None => 0,
+        Some(p) => p.len() + 7,
+    };
+    let nt: usize = match tp {
+        None => 0,
+        Some(t) => t.len() + 4,
+    };
+    let ghost o = out@;
+    put1(out, 8);
+    put3(out, na + nt + 2);
+    put2(out, na + nt);
+    let ghost o1 = out@;
     match alpn {
-        None => {
-            put1(out, 8);
-            put3(out, 2);
-            put2(out, 0);
-            assert(final(out)@ =~= old(out)@ + encrypted_extensions(None));
-        },
+        None => {},
         Some(p) => {
             let n = p.len();
-            put1(out, 8);
-            put3(out, n + 9);
-            put2(out, n + 7);
             put2(out, 16);
             put2(out, n + 3);
             put2(out, n + 1);
             put1(out, n as u8);
             put(out, p);
-            proof {
-                let e = ext(16, be2(p@.len() + 1) + seq![p@.len() as u8] + p@);
-                assert(e.len() == n + 7);
-                assert(final(out)@ =~= old(out)@ + encrypted_extensions(Some(p@)));
-            }
         },
+    }
+    let ghost o2 = out@;
+    match tp {
+        None => {},
+        Some(t) => {
+            put2(out, 57);
+            put2(out, t.len());
+            put(out, t);
+        },
+    }
+    proof {
+        let av = opt_view(alpn);
+        let tv = opt_view(tp);
+        assert(o2.skip(o1.len() as int) =~= alpn_ext(av));
+        assert(out@.skip(o2.len() as int) =~= tp_ext(tv));
+        let e = alpn_ext(av) + tp_ext(tv);
+        assert(e.len() == na + nt);
+        assert(out@ =~= o + (seq![8u8] + be3(e.len() + 2) + (be2(e.len()) + e)));
+        assert(hs_msg(8, be2(e.len()) + e) =~= seq![8u8] + be3(e.len() + 2) + (be2(e.len()) + e));
     }
 }
 

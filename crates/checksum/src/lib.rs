@@ -993,7 +993,7 @@ proof fn lemma_crc16(c: u32, d: Seq<u8>, w: u32)
 /// The register `c` stepped past four zero bytes, with four tables
 /// (slicing-by-4 with no data).
 #[inline(always)]
-#[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
+#[cfg_attr(not(all(target_arch = "x86_64", target_feature = "sse2")), allow(dead_code))]
 pub(crate) fn crc_shift32(c: u32) -> (r: u32)
     ensures
         r == spec::crc_steps(c, 32),

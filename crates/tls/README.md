@@ -11,7 +11,8 @@ parser, negotiation, the key schedule, record protection and the server
 handshake state machine, all proven, and talks to rustls clients with every
 TLS 1.3 cipher suite and X25519, P-256, P-384 and X25519MLKEM768. It does a
 full handshake with a certificate, issues session tickets, and resumes
-sessions from them (psk_dhe_ke); no 0-RTT and no client certificates yet
+sessions from them (psk_dhe_ke), over TCP or, without records, for a QUIC
+transport (RFC 9001); no 0-RTT and no client certificates yet
 ([plan](#plan)). The cryptography, ticket keys included, is
 [`verilith-tls-aws-lc`](../tls-aws-lc), a separate crate.
 
@@ -164,6 +165,35 @@ definition names its section. The proofs show:
     handshake messages may span records but not a change of keys; refused
     0-RTT data is skipped up to a bound (§4.2.10). Anything else is the
     alert §6 gives.
+- **QUIC** (`quic.rs`, RFC 9001 §4 and §8): `QuicServer` is the same
+  server handshake without TLS records, for a QUIC transport. It shares
+  `ServerConn`'s negotiation, resumption, flight and key schedule, so it is
+  proven against the same `SpecHs`, which now carries the server's QUIC
+  transport parameters (`SpecHs::tp`) into EncryptedExtensions
+  (`spec_server::encrypted_extensions`, extension 57; nothing over TCP).
+  Handshake bytes come in and go out per encryption level, and the proofs
+  show `read` only moves forward along Appendix A.2 (`quic::step_ok`) and
+  writes exactly ServerHello (or a HelloRetryRequest) at Initial, exactly
+  `SpecHs::flight` at Handshake, and session tickets at 1-RTT
+  (`quic::out_ok`). The secrets it exposes (`hs_secrets`, `ap_secrets`) are
+  the key schedule's, and the client's 1-RTT secret is only marked usable
+  once its Finished checked out (`lemma_connected`). What QUIC adds is
+  checked: the client's quic_transport_parameters must be present
+  (`missing_extension`) and `peer_params` is exactly that extension's data
+  (`quic_tp_of`); ALPN is required (`no_application_protocol`); a
+  non-empty legacy_session_id is PROTOCOL_VIOLATION (§8.4), so no
+  ChangeCipherSpec is ever sent; no 0-RTT; no KeyUpdate message (key
+  updates are the transport's, §6). Each message must arrive at its level
+  (ClientHello at Initial, Finished at Handshake), and alerts become
+  CRYPTO_ERROR, 0x100 plus the alert (§4.8).
+- **QUIC keys** (`keys.rs`, RFC 9001 §5): `initial_secrets_x` is §5.2's
+  Initial secrets from the client's Destination Connection ID and the
+  version 1 salt, `quic_keys_x` the packet protection key, IV and header
+  protection key of a secret ("quic key", "quic iv", "quic hp"), and
+  `quic_next_x` a key update's next secret ("quic ku"), each exactly
+  `spec_keys.rs`'s HKDF-Expand-Label. QUIC's AEAD nonce is TLS's record
+  nonce with the packet number (§5.3), so `record_nonce_x` and
+  `lemma_nonce_injective` serve both.
 - **Record and handshake headers** (`record.rs`) read exactly
   `spec::record_header` and `spec::handshake_message`.
 - No panics, no overflow, no out-of-bounds access, in all of the above. No
@@ -206,6 +236,14 @@ resumption with each suite (several in a row, each on a ticket the last
 one issued, with KeyUpdates), after a HelloRetryRequest, with a ticket
 from other keys, with no ticket keys or tickets turned off (full
 handshakes), a wrong binder (`decrypt_error`), and ticket key rotation.
+`../tls-aws-lc/tests/quic.rs` runs `QuicServer` against rustls's QUIC
+client: every suite with X25519, P-256 and X25519MLKEM768, a
+HelloRetryRequest, resumption from a ticket sent at 1-RTT, ClientHello one
+byte at a time, a message at the wrong level, and missing or unknown ALPN.
+Each handshake checks the transport parameters both ways and that packet
+and header protection keys derived from the exposed Handshake and 1-RTT
+secrets seal and open packets with rustls's. `tests/quic_keys.rs` checks
+the Initial keys and a ChaCha20 key update against RFC 9001 Appendix A.
 `../tls-aws-lc/tests/protect.rs` checks record protection against the AEAD
 called directly with §5.3's nonce, with padding and each error.
 

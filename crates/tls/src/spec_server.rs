@@ -98,16 +98,32 @@ pub open spec fn message_hash(a: HashAlg, ch1: Seq<u8>) -> Seq<u8> {
     hs_msg(254, hash(a, ch1))
 }
 
-/// EncryptedExtensions (§4.3.1), with application_layer_protocol_negotiation
-/// holding the one protocol chosen (RFC 7301 §3.1), if one was.
-pub open spec fn encrypted_extensions(alpn: Option<Seq<u8>>) -> Seq<u8> {
+/// The application_layer_protocol_negotiation extension holding the one
+/// protocol chosen (RFC 7301 §3.1), or nothing if none was.
+pub open spec fn alpn_ext(alpn: Option<Seq<u8>>) -> Seq<u8> {
     match alpn {
-        None => hs_msg(8, be2(0)),
-        Some(p) => {
-            let e = ext(16, be2(p.len() + 1) + seq![p.len() as u8] + p);
-            hs_msg(8, be2(e.len()) + e)
-        },
+        None => Seq::empty(),
+        Some(p) => ext(16, be2(p.len() + 1) + seq![p.len() as u8] + p),
     }
+}
+
+/// quic_transport_parameters (RFC 9001 §8.2), extension 57.
+pub const EXT_QUIC_TP: u16 = 57;
+
+/// The quic_transport_parameters extension holding the server's encoded
+/// transport parameters, over QUIC; nothing over TCP.
+pub open spec fn tp_ext(tp: Option<Seq<u8>>) -> Seq<u8> {
+    match tp {
+        None => Seq::empty(),
+        Some(t) => ext(EXT_QUIC_TP, t),
+    }
+}
+
+/// EncryptedExtensions (§4.3.1): ALPN's choice, if one was made, then over
+/// QUIC the server's transport parameters.
+pub open spec fn encrypted_extensions(alpn: Option<Seq<u8>>, tp: Option<Seq<u8>>) -> Seq<u8> {
+    let e = alpn_ext(alpn) + tp_ext(tp);
+    hs_msg(8, be2(e.len()) + e)
 }
 
 /// The `certificate_list` entries (§4.4.2) of a chain of DER
@@ -327,6 +343,9 @@ pub struct SpecHs {
     pub sig: Seq<u8>,
     /// A PSK resumption (psk_dhe_ke), if it was one.
     pub resumed: Option<SpecResume>,
+    /// Over QUIC, the server's transport parameters (RFC 9001 §8.2), sent
+    /// in EncryptedExtensions.
+    pub tp: Option<Seq<u8>>,
 }
 
 impl SpecHs {
@@ -380,7 +399,7 @@ impl SpecHs {
     /// ..Certificate.
     #[verifier::opaque]
     pub open spec fn th_cert(self, c: SpecCfg) -> Seq<u8> {
-        self.th_sh() + encrypted_extensions(self.alpn(c)) + certificate(c.chain)
+        self.th_sh() + encrypted_extensions(self.alpn(c), self.tp) + certificate(c.chain)
     }
 
     pub open spec fn certificate_verify(self) -> Seq<u8> {
@@ -392,7 +411,7 @@ impl SpecHs {
     #[verifier::opaque]
     pub open spec fn th_cv(self, c: SpecCfg) -> Seq<u8> {
         if self.resumed is Some {
-            self.th_sh() + encrypted_extensions(self.alpn(c))
+            self.th_sh() + encrypted_extensions(self.alpn(c), self.tp)
         } else {
             self.th_cert(c) + self.certificate_verify()
         }
@@ -426,9 +445,9 @@ impl SpecHs {
     #[verifier::opaque]
     pub open spec fn flight(self, c: SpecCfg) -> Seq<u8> {
         if self.resumed is Some {
-            encrypted_extensions(self.alpn(c)) + self.server_finished(c)
+            encrypted_extensions(self.alpn(c), self.tp) + self.server_finished(c)
         } else {
-            encrypted_extensions(self.alpn(c)) + certificate(c.chain) + self.certificate_verify()
+            encrypted_extensions(self.alpn(c), self.tp) + certificate(c.chain) + self.certificate_verify()
                 + self.server_finished(c)
         }
     }

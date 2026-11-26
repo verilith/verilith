@@ -1228,7 +1228,7 @@ pub proof fn lemma_prefix(reg: u32, d: Seq<u8>, i: int, m: int)
 
 } // verus!
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 verus! {
 
 use verilith_simd::clmul::*;

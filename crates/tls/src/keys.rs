@@ -650,4 +650,96 @@ pub fn record_nonce_x(iv: &[u8; 12], seq: u64) -> (r: [u8; 12])
     out
 }
 
+
+// ---------------------------------------------------------------------------
+// QUIC (RFC 9001 §5)
+// ---------------------------------------------------------------------------
+
+/// `initial_salt` of QUIC version 1.
+pub const QUIC_V1_SALT: [u8; 20] = [0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3, 0x4d, 0x17, 0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad, 0xcc, 0xbb, 0x7f, 0x0a];
+
+/// `"client in"`
+pub const L_CLIENT_IN: [u8; 9] = [99, 108, 105, 101, 110, 116, 32, 105, 110];
+
+/// `"server in"`
+pub const L_SERVER_IN: [u8; 9] = [115, 101, 114, 118, 101, 114, 32, 105, 110];
+
+/// `"quic key"`
+pub const L_QUIC_KEY: [u8; 8] = [113, 117, 105, 99, 32, 107, 101, 121];
+
+/// `"quic iv"`
+pub const L_QUIC_IV: [u8; 7] = [113, 117, 105, 99, 32, 105, 118];
+
+/// `"quic hp"`
+pub const L_QUIC_HP: [u8; 7] = [113, 117, 105, 99, 32, 104, 112];
+
+/// `"quic ku"`
+pub const L_QUIC_KU: [u8; 7] = [113, 117, 105, 99, 32, 107, 117];
+
+/// The client's and the server's Initial secrets for the Destination
+/// Connection ID of the client's first Initial packet (§5.2).
+pub fn initial_secrets_x(dcid: &[u8]) -> (r: (Secret, Secret))
+    ensures
+        r.0.wf() && r.0@ == client_initial_secret(dcid@) && r.0@.len() == 32,
+        r.1.wf() && r.1@ == server_initial_secret(dcid@) && r.1@.len() == 32,
+{
+    let salt = QUIC_V1_SALT;
+    let e: [u8; 0] = [];
+    let es = vstd::array::array_as_slice(&e);
+    proof {
+        assert(salt@ =~= quic_v1_salt());
+        assert(L_CLIENT_IN@ =~= l_client_in());
+        assert(L_SERVER_IN@ =~= l_server_in());
+        assert(es@ =~= Seq::<u8>::empty());
+    }
+    let init = hmac_x(HashAlg::Sha256, vstd::array::array_as_slice(&salt), dcid);
+    let c = expand_label_x(HashAlg::Sha256, init.as_slice(), &L_CLIENT_IN, es, 32);
+    let s = expand_label_x(HashAlg::Sha256, init.as_slice(), &L_SERVER_IN, es, 32);
+    (c, s)
+}
+
+/// The packet protection key (`key_len`: 16 or 32 bytes), IV and header
+/// protection key of a secret (§5.1).
+pub fn quic_keys_x(a: HashAlg, s: &Secret, key_len: usize) -> (r: (Secret, Secret, Secret))
+    requires
+        s.wf(),
+        key_len == 16 || key_len == 32,
+    ensures
+        r.0.wf() && r.1.wf() && r.2.wf(),
+        r.0@.len() == key_len && r.0@ == quic_key(a, s@, key_len as nat),
+        r.1@.len() == 12 && r.1@ == quic_iv(a, s@),
+        r.2@.len() == key_len && r.2@ == quic_hp(a, s@, key_len as nat),
+{
+    let e: [u8; 0] = [];
+    let es = vstd::array::array_as_slice(&e);
+    proof {
+        assert(L_QUIC_KEY@ =~= l_quic_key());
+        assert(L_QUIC_IV@ =~= l_quic_iv());
+        assert(L_QUIC_HP@ =~= l_quic_hp());
+        assert(es@ =~= Seq::<u8>::empty());
+    }
+    let k = expand_label_x(a, s.as_slice(), &L_QUIC_KEY, es, key_len);
+    let iv = expand_label_x(a, s.as_slice(), &L_QUIC_IV, es, 12);
+    let hp = expand_label_x(a, s.as_slice(), &L_QUIC_HP, es, key_len);
+    (k, iv, hp)
+}
+
+/// The next secret of a key update (§6.1).
+pub fn quic_next_x(a: HashAlg, s: &Secret) -> (r: Secret)
+    requires
+        s.wf(),
+    ensures
+        r.wf(),
+        r@.len() == hash_len(a),
+        r@ == quic_next(a, s@),
+{
+    let e: [u8; 0] = [];
+    let es = vstd::array::array_as_slice(&e);
+    proof {
+        assert(L_QUIC_KU@ =~= l_quic_ku());
+        assert(es@ =~= Seq::<u8>::empty());
+    }
+    expand_label_x(a, s.as_slice(), &L_QUIC_KU, es, hash_len_x(a))
+}
+
 } // verus!

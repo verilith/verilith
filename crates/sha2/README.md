@@ -205,7 +205,10 @@ allocator. Run-time CPU detection needs `std`, so without it the kernel is
 chosen at compile time from the target's features: build with
 `-C target-feature=+sha,+sse4.1` (or `target-cpu=native`) to get the
 SHA-NI kernel, `+sha2` on AArch64. Without them the verified portable
-kernel runs. CI builds the `no_std` library for `thumbv7em-none-eabihf`.
+kernel runs. CI builds the `no_std` library for `thumbv7em-none-eabihf`,
+`aarch64-unknown-none` and `x86_64-unknown-none`. On `x86_64-unknown-none`,
+which has no SSE registers, the SHA-NI and AVX2 kernels are not compiled at
+all; the portable kernel runs there (with BMI2 if the target enables it).
 
 Cargo builds every crate type a library lists, and this one lists
 `staticlib` (for the C API), which needs a panic handler. So a `no_std`

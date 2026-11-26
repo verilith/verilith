@@ -504,7 +504,14 @@ in `bench/server/results`, and a merge.
    for parity.
 8. **HTTP/3**: QPACK and HTTP/3 framing on quinn-proto, then verified
    QUIC parsing and state, then GSO/GRO (see [HTTP/3](#http3)). *(first
-   step done; GSO and GRO done, `recvmmsg` and connection-ID steering left)*
+   step done; GSO and GRO done, `recvmmsg` and connection-ID steering left.
+   First results, `bench/server/results/2026-11-26-cloud-h3`, in requests
+   per server CPU-second: h3-plaintext 292k against nginx-quic's 262k,
+   h2o's 114k and quinn's 132k; but h3-static-64k 17k against nginx-quic's
+   26k, and h3-static-1m 1.1k against 1.7k. Large bodies are about 45%
+   AES-GCM and most of the rest is quinn-proto's packet building and ACK
+   processing: the next step, a verified QUIC transport of our own, is
+   also where those numbers move)*
 9. **Reverse proxy.** Upstream HTTP/1.1 with verilith-http's response
    parser: here the smuggling theorem is about two hops of the same
    connection, which is the case it was written for.
