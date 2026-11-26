@@ -9,6 +9,7 @@ pub mod crypto;
 pub mod hello;
 pub mod protect;
 pub mod quic;
+pub mod quic_packet;
 pub mod keys;
 pub mod messages;
 pub mod negotiate;

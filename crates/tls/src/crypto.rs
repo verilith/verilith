@@ -62,6 +62,77 @@ pub trait AeadKey: Sized {
             },
             final(buf)@.len() == old(buf)@.len(),
     ;
+
+    /// QUIC packet protection (RFC 9001 §5.3): encrypts `buf[start..]` in
+    /// place with `buf[aad_start..start]` (the header) as the additional
+    /// data, and appends the tag.
+    fn seal_after(&self, nonce: &[u8; 12], buf: &mut Vec<u8>, aad_start: usize, start: usize)
+        requires
+            aad_start <= start <= old(buf)@.len(),
+        ensures
+            final(buf)@ == old(buf)@.take(start as int) + aead_seal(
+                self.suite(),
+                self.key(),
+                nonce@,
+                old(buf)@.subrange(aad_start as int, start as int),
+                old(buf)@.skip(start as int),
+            ),
+            aead_seal(
+                self.suite(),
+                self.key(),
+                nonce@,
+                old(buf)@.subrange(aad_start as int, start as int),
+                old(buf)@.skip(start as int),
+            ).len() == old(buf)@.len() - start + TAG_LEN,
+    ;
+
+    /// Removes QUIC packet protection: decrypts `buf[start..]` (ciphertext
+    /// and tag) in place with `buf[..start]` as the additional data.
+    /// `Some(n)`: the plaintext is `buf[start..start + n]`, and the header
+    /// is unchanged.
+    fn open_after(&self, nonce: &[u8; 12], buf: &mut [u8], start: usize) -> (r: Option<usize>)
+        requires
+            start <= old(buf)@.len(),
+        ensures
+            final(buf)@.len() == old(buf)@.len(),
+            final(buf)@.take(start as int) == old(buf)@.take(start as int),
+            match r {
+                Some(n) => start + n <= final(buf)@.len() && aead_open(
+                    self.suite(),
+                    self.key(),
+                    nonce@,
+                    old(buf)@.take(start as int),
+                    old(buf)@.skip(start as int),
+                ) == Some(final(buf)@.subrange(start as int, start + n)),
+                None => aead_open(
+                    self.suite(),
+                    self.key(),
+                    nonce@,
+                    old(buf)@.take(start as int),
+                    old(buf)@.skip(start as int),
+                ) is None,
+            },
+    ;
+}
+
+/// QUIC header protection (RFC 9001 §5.4): the five mask bytes from
+/// `sample` with the header protection key `key` of `suite` (AES-ECB for
+/// the AES suites, ChaCha20 for ChaCha20-Poly1305).
+pub uninterp spec fn hp_mask(suite: u16, key: Seq<u8>, sample: Seq<u8>) -> Seq<u8>;
+
+/// A QUIC header protection key, ready to use.
+pub trait HpKey: Sized {
+    spec fn suite(&self) -> u16;
+
+    spec fn key(&self) -> Seq<u8>;
+
+    /// The mask for a 16-byte sample.
+    fn mask(&self, sample: &[u8]) -> (r: [u8; 5])
+        requires
+            sample@.len() == 16,
+        ensures
+            r@ == hp_mask(self.suite(), self.key(), sample@),
+    ;
 }
 
 /// Whether `shared` is the key exchange's shared secret for `group`, the
@@ -81,6 +152,16 @@ pub uninterp spec fn ticket_issued(ticket: Seq<u8>, state: Seq<u8>) -> bool;
 /// The cryptography a server needs, and its keys.
 pub trait Provider {
     type Key: AeadKey;
+
+    /// A QUIC header protection key.
+    type Hp: HpKey;
+
+    /// The header protection of `suite` with `key` (16 or 32 bytes).
+    fn hp_key(&self, suite: u16, key: &[u8]) -> (r: Self::Hp)
+        ensures
+            r.suite() == suite,
+            r.key() == key@,
+    ;
 
     /// The AEAD of `suite` with `key` (16 or 32 bytes).
     fn aead_key(&self, suite: u16, key: &[u8]) -> (r: Self::Key)
