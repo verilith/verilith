@@ -460,6 +460,40 @@ pub open spec fn upd(st: DState, b: Seq<u8>, n: int) -> Option<DState>
     }
 }
 
+/// A whole header block `b` decoded from state `st`: its fields, in
+/// order, and the state after its last representation. `None` if a
+/// representation is invalid or the block ends inside one. This is what
+/// `Decoder::feed` computes over a block, however it is split (each of its
+/// steps is `rep`); the encoder is proven against it.
+pub open spec fn block(st: DState, b: Seq<u8>) -> Option<(Seq<Field>, DState)>
+    decreases b.len(),
+{
+    if b.len() == 0 {
+        Some((Seq::empty(), st))
+    } else {
+        match rep(st, b) {
+            Rep::Field(f, s2, e) => {
+                if 0 < e <= b.len() {
+                    match block(s2, b.subrange(e, b.len() as int)) {
+                        Some((fs, s3)) => Some((seq![f] + fs, s3)),
+                        None => None,
+                    }
+                } else {
+                    None
+                }
+            },
+            Rep::Update(s2, e) => {
+                if 0 < e <= b.len() {
+                    block(s2, b.subrange(e, b.len() as int))
+                } else {
+                    None
+                }
+            },
+            _ => None,
+        }
+    }
+}
+
 /// SETTINGS_HEADER_TABLE_SIZE changed (`nghttp2_hd_inflate_change_table_size`):
 /// if the new limit is below the current maximum, the table shrinks to it
 /// and the next block must start with a size update no larger than it.
