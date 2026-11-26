@@ -20,7 +20,6 @@ use crate::idna::{self, Options};
 use crate::unicode::{self, Form};
 use std::borrow::Cow;
 use core::ffi::c_char;
-use vstd::prelude::Ghost;
 
 pub type UChar = u16;
 pub type UErrorCode = i32;
@@ -524,10 +523,9 @@ unsafe fn idna_utf8(
     }
     // An ASCII name that passes every check is only lowercased, which
     // `to_ascii_fast` proves for both ToASCII and ToUnicode.
-    // `ascii_checked` requires UTF-8 (the ghost scalars `s` encodes), which
-    // bytes from C need not be; ASCII is, and only ASCII can pass it.
-    if s.is_ascii()
-        && idna::uts46::ascii_checked(s, idna_options((*idna).options, to_ascii), Ghost::assume_new())
+    // `ascii_checked_bytes` is false unless the bytes are ASCII, so the
+    // `from_utf8_unchecked` below is of ASCII.
+    if idna::strs::ascii_checked_bytes(s, idna_options((*idna).options, to_ascii))
         && (to_ascii || !has_empty_label(core::str::from_utf8_unchecked(s)))
     {
         if !fill_info(info, 0, false) {
@@ -574,7 +572,7 @@ unsafe fn idna_utf16(
             *d = u as u8;
         }
         let b = &b[..s.len()];
-        if idna::uts46::ascii_checked(b, idna_options((*idna).options, to_ascii), Ghost::assume_new())
+        if idna::strs::ascii_checked_bytes(b, idna_options((*idna).options, to_ascii))
             && (to_ascii || !has_empty_label(core::str::from_utf8_unchecked(b)))
         {
             if !fill_info(info, 0, false) {

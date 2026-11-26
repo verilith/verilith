@@ -533,4 +533,56 @@ pub open spec fn u8_state(s: Seq<u8>, st: int, uj: int, ok: bool) -> bool {
     &&& ok == all_loc(s, st, st, uj)
 }
 
+// ---------------------------------------------------------------------------
+// vstd's model of `str`
+// ---------------------------------------------------------------------------
+
+/// A `char` is a Unicode scalar value.
+pub proof fn lemma_char_scalar(c: char)
+    ensures
+        c as u32 <= 0x10FFFF,
+        !(0xD800 <= c as u32 <= 0xDFFF),
+{
+}
+
+/// `utf8_encode` is vstd's `encode_scalar` on scalar values, so what
+/// vstd says of a `str`'s bytes (`as_bytes`) is said in these terms.
+pub proof fn lemma_utf8_encode_vstd(c: u32)
+    requires
+        c <= 0x10FFFF,
+        !(0xD800 <= c <= 0xDFFF),
+    ensures
+        utf8_encode(c) == vstd::utf8::encode_scalar(c),
+{
+    if c < 0x80 {
+        assert((c & 0x7F) == c) by (bit_vector)
+            requires
+                c < 0x80,
+        ;
+        assert(utf8_encode(c) =~= vstd::utf8::encode_scalar(c));
+    } else if c < 0x800 {
+        assert((0xC0 + c / 64) as u8 == (0xC0u8 | ((c >> 6u32) & 0x1F) as u8) && (0x80 + c % 64) as u8 == (0x80u8
+            | (c & 0x3F) as u8)) by (bit_vector)
+            requires
+                0x80 <= c < 0x800,
+        ;
+        assert(utf8_encode(c) =~= vstd::utf8::encode_scalar(c));
+    } else if c < 0x10000 {
+        assert((0xE0 + c / 4096) as u8 == (0xE0u8 | ((c >> 12u32) & 0x0F) as u8) && (0x80 + (c / 64) % 64) as u8 == (
+        0x80u8 | ((c >> 6u32) & 0x3F) as u8) && (0x80 + c % 64) as u8 == (0x80u8 | (c & 0x3F) as u8)) by (bit_vector)
+            requires
+                0x800 <= c < 0x10000,
+        ;
+        assert(utf8_encode(c) =~= vstd::utf8::encode_scalar(c));
+    } else {
+        assert((0xF0 + c / 262144) as u8 == (0xF0u8 | ((c >> 18u32) & 0x7) as u8) && (0x80 + (c / 4096) % 64) as u8 == (
+        0x80u8 | ((c >> 12u32) & 0x3F) as u8) && (0x80 + (c / 64) % 64) as u8 == (0x80u8 | ((c >> 6u32) & 0x3F) as u8)
+            && (0x80 + c % 64) as u8 == (0x80u8 | (c & 0x3F) as u8)) by (bit_vector)
+            requires
+                0x10000 <= c <= 0x10FFFF,
+        ;
+        assert(utf8_encode(c) =~= vstd::utf8::encode_scalar(c));
+    }
+}
+
 } // verus!

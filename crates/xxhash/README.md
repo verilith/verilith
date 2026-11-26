@@ -61,7 +61,12 @@ showing, for callers that are verified with Verus themselves
 - `src/spec.rs`: the specification. `tests/vectors.rs` checks the code,
   and so the specification, against published values and against an
   independent implementation (xxhash-rust) on every length up to 600
-  bytes and on streamed input split every way.
+  bytes and on streamed input split every way. `spec-tests/` checks the
+  specification on its own, with no code and no proof in between: Verus
+  evaluates `spec::xxh32` and `spec::xxh64` on xxHash's sanity test
+  vectors (`tests/sanity_test_vectors.h`, seed 0, every length up to 256
+  bytes: 514 cases), and every one agrees
+  (`scripts/spec-tests.sh xxhash`, run in CI).
 - From [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core#trusted-base): `load_u64_le`, an unaligned
   8-byte load (`external_body`). `load32` and `get` are verified in
   verilith-core.
@@ -78,6 +83,7 @@ showing, for callers that are verified with Verus themselves
 ```sh
 cargo test --release
 ./ci.sh
+../../scripts/spec-tests.sh xxhash   # the spec itself on xxHash's sanity vectors
 ```
 
 ## License

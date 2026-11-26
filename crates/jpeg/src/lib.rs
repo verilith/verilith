@@ -6,6 +6,8 @@
 #[doc(hidden)]
 pub mod spec;
 #[doc(hidden)]
+pub mod work;
+#[doc(hidden)]
 pub mod types;
 #[doc(hidden)]
 pub mod bits;

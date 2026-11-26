@@ -7,6 +7,7 @@ use crate::scan::*;
 use crate::spec::*;
 use crate::stream::*;
 use crate::types::*;
+use crate::work::*;
 #[cfg(verus_only)]
 use vstd::arithmetic::div_mod::*;
 use vstd::prelude::*;
@@ -35,31 +36,50 @@ pub open spec fn coded(st: DecX) -> Coded {
     Coded { f: st.f@, a: st.co.view(st.f@.nc), ql: qlv(st.ql), color: color_v(st.color) }
 }
 
-/// Reads a whole file's marker segments and scans.
-pub fn decode_coefs(data: &[u8]) -> (r: Result<DecX, Error>)
+/// Reads a whole file's marker segments and scans. The ghost result is
+/// the number of scans decoded and the blocks of the frame (0 if none).
+pub fn decode_coefs(data: &[u8], Tracked(mt): Tracked<&mut Meter>) -> (r: (Result<DecX, Error>, Ghost<(nat, int)>))
     ensures
-        match r {
+        match r.0 {
             Ok(st) => jpeg_coded(data@) == Some(coded(st)) && st.wf() && st.started,
             Err(Error::Invalid) => jpeg_coded(data@) is None,
             Err(Error::OutOfMemory) => true,
         },
+        r.0 matches Ok(st) ==> r.1@.0 == st.nscan@ && r.1@.1 == fblk(st.f@),
+        r.1@.1 >= 0,
+        r.1@.0 <= data@.len() + 0x1_0010,
+        final(mt).n <= old(mt).n + 4 * (data@.len() + 0x1_0020) + (r.1@.0 + 1) * scan_cost(r.1@.1) + 200,
 {
     if data.len() >= usize::MAX - 0x2_0000 {
-        return Err(Error::OutOfMemory);
+        return (Err(Error::OutOfMemory), Ghost((0, 0)));
     }
     if rd(data, 0) != 0xFF || rd(data, 1) != 0xD8 {
-        return Err(Error::Invalid);
+        return (Err(Error::Invalid), Ghost((0, 0)));
     }
     let mut st = dec_new();
-    match run_x(data, &mut st, 2) {
+    let r = run_x(data, &mut st, 2, Tracked(mt));
+    let ghost g = (st.nscan@, blk(st));
+    match r {
         Ok(()) => {
             proof {
+                assert(st.has_f);
                 assert(st@.ql =~= qlv(st.ql));
             }
-            Ok(st)
+            (Ok(st), Ghost(g))
         },
-        Err(e) => Err(e),
+        Err(e) => (Err(e), Ghost(g)),
     }
+}
+
+/// The bound on `decode`'s work for an `n`-byte file of `s` scans whose
+/// frame is stored in `b` blocks and has `px` pixels.
+pub open spec fn jpeg_work(n: int, s: int, b: int, px: int) -> int {
+    4 * (n + 0x1_0020) + (s + 1) * scan_cost(b) + render_cost_of(b, px) + 200
+}
+
+/// `work::render_cost` from the counts.
+pub open spec fn render_cost_of(b: int, px: int) -> int {
+    66 * b + 110 * px + 8
 }
 
 /// What the segments before the first scan say about a file.
@@ -89,6 +109,7 @@ pub fn read_header(data: &[u8]) -> (r: Result<Header, Error>) {
     }
     let mut st = dec_new();
     let mut p: usize = 2;
+    let tracked mut wm = Meter { n: 0 };
     loop
         invariant
             len_ok(data@),
@@ -96,7 +117,7 @@ pub fn read_header(data: &[u8]) -> (r: Result<Header, Error>) {
             st.wf(),
         decreases data@.len() + 0x1_0010 - p,
     {
-        let (m, _q) = marker_after_x(data, p);
+        let (m, _q) = marker_after_x(data, p, Tracked(&mut wm));
         if p < data.len() && m == 0xDA {
             if !st.has_f {
                 return Err(Error::Invalid);
@@ -129,7 +150,7 @@ pub fn read_header(data: &[u8]) -> (r: Result<Header, Error>) {
                 },
             );
         }
-        match step_x(data, &mut st, p) {
+        match step_x(data, &mut st, p, Tracked(&mut wm)) {
             Ok(Some(p2)) => {
                 p = p2;
             },
@@ -307,18 +328,29 @@ proof fn lemma_stream_pl(a: Seq<i16>, pl: Seq<u8>, k: Coded, c: int, vr: int, ro
 
 /// The samples of component `c` when its scans were not streamed (when
 /// they were, the samples exist already and nothing is computed).
-fn comp_buf(st: &DecX, c: usize) -> (r: Option<Vec<u8>>)
+fn comp_buf(st: &DecX, c: usize, Tracked(mt): Tracked<&mut Meter>) -> (r: Option<Vec<u8>>)
     requires
         st.wf(),
         st.started,
         c < st.f.nc,
     ensures
+        final(mt).n <= old(mt).n + 66 * cblk(st.f@, c as int),
         r matches Some(pl) ==> (!st.co.stream ==> pl_ok(pl@, coded(*st), c as int)),
 {
     hide(psample);
     hide(wb);
     hide(hb);
+    reveal(cblk);
     if st.co.stream {
+        proof {
+            crate::scan::lemma_cw_pos(st.f@, st.g, c as int);
+            let (a, b) = (cw(st.f@, c as int), ch(st.f@, c as int));
+            assert(a * b >= 0) by (nonlinear_arith)
+                requires
+                    a >= 1,
+                    b >= 1,
+            ;
+        }
         return Some(Vec::new());
     }
     let ghost f = st.f@;
@@ -333,11 +365,11 @@ fn comp_buf(st: &DecX, c: usize) -> (r: Option<Vec<u8>>)
     }
     let kt = crate::idct16::idct_consts();
     if c == 0 {
-        plane_x(&st.co.a0, &st.ql[0], &kt, g.cw[0], g.wb[0], g.hb[0], Ghost(g.ch[0] as int))
+        plane_x(&st.co.a0, &st.ql[0], &kt, g.cw[0], g.wb[0], g.hb[0], Ghost(g.ch[0] as int), Tracked(mt))
     } else if c == 1 {
-        plane_x(&st.co.a1, &st.ql[1], &kt, g.cw[1], g.wb[1], g.hb[1], Ghost(g.ch[1] as int))
+        plane_x(&st.co.a1, &st.ql[1], &kt, g.cw[1], g.wb[1], g.hb[1], Ghost(g.ch[1] as int), Tracked(mt))
     } else {
-        plane_x(&st.co.a2, &st.ql[2], &kt, g.cw[2], g.wb[2], g.hb[2], Ghost(g.ch[2] as int))
+        plane_x(&st.co.a2, &st.ql[2], &kt, g.cw[2], g.wb[2], g.hb[2], Ghost(g.ch[2] as int), Tracked(mt))
     }
 }
 
@@ -441,19 +473,20 @@ fn f_v(st: &DecX, c: usize) -> (r: u8)
 }
 
 /// Row `y` of component `c` at the frame's resolution.
-fn prow(p: &Plane, y: usize, w: usize, out: &mut Vec<u8>, Ghost(k): Ghost<Coded>, Ghost(c): Ghost<int>)
+fn prow(p: &Plane, y: usize, w: usize, out: &mut Vec<u8>, Ghost(k): Ghost<Coded>, Ghost(c): Ghost<int>, Tracked(mt): Tracked<&mut Meter>)
     requires
         p.ok(k, c),
         w == k.f.w,
         y < k.f.h,
         old(out).len() == w,
     ensures
+        final(mt).n <= old(mt).n + 2 * w + 32,
         final(out).len() == w,
         forall|x: int| 0 <= x < w ==> (#[trigger] final(out)[x]) as int == upsampled(k, c, y as int, x),
 {
     hide(upsampled);
     hide(plane_is);
-    up_row(p.pl, p.stride, p.pw, p.ph, p.hs, p.vs, y, w, out, Ghost(p.rows@), Ghost(k), Ghost(c));
+    up_row(p.pl, p.stride, p.pw, p.ph, p.hs, p.vs, y, w, out, Ghost(p.rows@), Ghost(k), Ghost(c), Tracked(mt));
 }
 
 /// Byte `i` of the image a decoder's coefficients give.
@@ -499,7 +532,7 @@ pub proof fn lemma_pix_idx(y: int, w: int, nc: int, t: int)
 }
 
 /// Row `y` of a grayscale image into `px`.
-fn emit_gray(p0: &Plane, y: usize, w: usize, r0: &mut Vec<u8>, px: &mut [u8], Ghost(k): Ghost<Coded>)
+fn emit_gray(p0: &Plane, y: usize, w: usize, r0: &mut Vec<u8>, px: &mut [u8], Ghost(k): Ghost<Coded>, Tracked(mt): Tracked<&mut Meter>)
     requires
         p0.ok(k, 0),
         k.f.nc == 1,
@@ -510,6 +543,7 @@ fn emit_gray(p0: &Plane, y: usize, w: usize, r0: &mut Vec<u8>, px: &mut [u8], Gh
         old(r0).len() == w,
         y * w + w <= old(px)@.len(),
     ensures
+        final(mt).n <= old(mt).n + 3 * w + 32,
         final(r0).len() == w,
         final(px)@.len() == old(px)@.len(),
         forall|i: int| y * w <= i < y * w + w ==> (#[trigger] final(px)@[i]) == pix(k, i),
@@ -517,14 +551,14 @@ fn emit_gray(p0: &Plane, y: usize, w: usize, r0: &mut Vec<u8>, px: &mut [u8], Gh
 {
     hide(upsampled);
     let _ = px.len();
-    prow(p0, y, w, r0, Ghost(k), Ghost(0));
+    prow(p0, y, w, r0, Ghost(k), Ghost(0), Tracked(mt));
     assert(0 <= y * w) by (nonlinear_arith)
         requires
             y >= 0,
             w >= 0,
     ;
     let o = y * w;
-    gray_row(r0, w, px, o);
+    gray_row(r0, w, px, o, Tracked(mt));
     proof {
         assert forall|i: int| y * w <= i < y * w + w implies (#[trigger] px@[i]) == pix(k, i) by {
             let t = i - o;
@@ -548,6 +582,7 @@ fn emit_color(
     r2: &mut Vec<u8>,
     px: &mut [u8],
     Ghost(k): Ghost<Coded>,
+    Tracked(mt): Tracked<&mut Meter>,
 )
     requires
         p0.ok(k, 0),
@@ -567,6 +602,7 @@ fn emit_color(
         old(r2).len() == w,
         y * (w * 3) + w * 3 <= old(px)@.len(),
     ensures
+        final(mt).n <= old(mt).n + 7 * w + 96,
         final(r0).len() == w,
         final(r1).len() == w,
         final(r2).len() == w,
@@ -577,9 +613,9 @@ fn emit_color(
 {
     hide(upsampled);
     let _ = px.len();
-    prow(p0, y, w, r0, Ghost(k), Ghost(0));
-    prow(p1, y, w, r1, Ghost(k), Ghost(1));
-    prow(p2, y, w, r2, Ghost(k), Ghost(2));
+    prow(p0, y, w, r0, Ghost(k), Ghost(0), Tracked(mt));
+    prow(p1, y, w, r1, Ghost(k), Ghost(1), Tracked(mt));
+    prow(p2, y, w, r2, Ghost(k), Ghost(2), Tracked(mt));
     assert(0 <= y * (w * 3)) by (nonlinear_arith)
         requires
             y >= 0,
@@ -587,9 +623,9 @@ fn emit_color(
     ;
     let o = y * (w * 3);
     if ycc {
-        ycc_row(r0.as_slice(), r1.as_slice(), r2.as_slice(), w, px, o);
+        ycc_row(r0.as_slice(), r1.as_slice(), r2.as_slice(), w, px, o, Tracked(mt));
     } else {
-        rgb_row(r0, r1, r2, w, px, o);
+        rgb_row(r0, r1, r2, w, px, o, Tracked(mt));
     }
     proof {
         assert forall|i: int| o <= i < o + w * 3 implies (#[trigger] px@[i]) == pix(k, i) by {
@@ -605,13 +641,239 @@ fn emit_color(
     }
 }
 
+/// The rows of a grey picture.
+fn gray_rows(p0: &Plane, w: usize, h: usize, r0: &mut Vec<u8>, px: &mut [u8], Ghost(k): Ghost<Coded>, Ghost(wn): Ghost<int>, Tracked(mt): Tracked<&mut Meter>)
+    requires
+        w == k.f.w,
+        h == k.f.h,
+        w >= 1,
+        k.f.nc == 1,
+        wn == w,
+        k.color == Color::Gray,
+        old(px)@.len() == h * wn,
+        old(r0).len() == w,
+        p0.ok(k, 0),
+    ensures
+        final(mt).n <= old(mt).n + h * (3 * w + 33),
+        final(px)@.len() == old(px)@.len(),
+        forall|i: int| 0 <= i < h * wn ==> (#[trigger] final(px)@[i]) == pix(k, i),
+{
+    hide(pix);
+    hide(Plane::ok);
+    let ghost m1 = mt.n;
+    let mut y: usize = 0;
+    while y < h
+        invariant
+            y <= h,
+            mt.n <= m1 + y * (3 * w + 33),
+            w == k.f.w,
+            h == k.f.h,
+            w >= 1,
+            k.f.nc == 1,
+            wn == w,
+            k.color == Color::Gray,
+            px@.len() == h * wn,
+            r0.len() == w,
+            p0.ok(k, 0),
+            forall|i: int| 0 <= i < y * wn ==> (#[trigger] px@[i]) == pix(k, i),
+        decreases h - y,
+    {
+        assert(0 <= y * wn && y * wn + wn <= h * wn && (y + 1) * wn == y * wn + wn) by (nonlinear_arith)
+            requires
+                0 <= y < h,
+                wn >= 0,
+        ;
+        emit_gray(p0, y, w, r0, px, Ghost(k), Tracked(mt));
+        y += 1;
+        proof {
+            mt.n = mt.n + 1;
+            assert(y * (3 * w + 33) == (y - 1) * (3 * w + 33) + 3 * w + 33) by (nonlinear_arith);
+        }
+    }
+}
+
+/// The rows of a colour picture.
+fn color_rows(
+    p0: &Plane,
+    p1: &Plane,
+    p2: &Plane,
+    ycc: bool,
+    w: usize,
+    h: usize,
+    r0: &mut Vec<u8>,
+    r1: &mut Vec<u8>,
+    r2: &mut Vec<u8>,
+    px: &mut [u8],
+    Ghost(k): Ghost<Coded>,
+    Ghost(wn): Ghost<int>,
+    Tracked(mt): Tracked<&mut Meter>,
+)
+    requires
+        w == k.f.w,
+        h == k.f.h,
+        w >= 1,
+        k.f.nc == 3,
+        wn == w * 3,
+        k.color == if ycc {
+            Color::YCbCr
+        } else {
+            Color::Rgb
+        },
+        old(px)@.len() == h * wn,
+        old(r0).len() == w,
+        old(r1).len() == w,
+        old(r2).len() == w,
+        p0.ok(k, 0),
+        p1.ok(k, 1),
+        p2.ok(k, 2),
+    ensures
+        final(mt).n <= old(mt).n + h * (7 * w + 97),
+        final(px)@.len() == old(px)@.len(),
+        forall|i: int| 0 <= i < h * wn ==> (#[trigger] final(px)@[i]) == pix(k, i),
+{
+    hide(pix);
+    hide(Plane::ok);
+    let ghost m1 = mt.n;
+    let mut y: usize = 0;
+    while y < h
+        invariant
+            y <= h,
+            mt.n <= m1 + y * (7 * w + 97),
+            w == k.f.w,
+            h == k.f.h,
+            w >= 1,
+            k.f.nc == 3,
+            wn == w * 3,
+            k.color == if ycc {
+                Color::YCbCr
+            } else {
+                Color::Rgb
+            },
+            px@.len() == h * wn,
+            r0.len() == w,
+            r1.len() == w,
+            r2.len() == w,
+            p0.ok(k, 0),
+            p1.ok(k, 1),
+            p2.ok(k, 2),
+            forall|i: int| 0 <= i < y * wn ==> (#[trigger] px@[i]) == pix(k, i),
+        decreases h - y,
+    {
+        assert(0 <= y * wn && y * wn + wn <= h * wn && (y + 1) * wn == y * wn + wn) by (nonlinear_arith)
+            requires
+                0 <= y < h,
+                wn >= 0,
+        ;
+        emit_color(p0, p1, p2, ycc, y, w, r0, r1, r2, px, Ghost(k), Tracked(mt));
+        y += 1;
+        proof {
+            mt.n = mt.n + 1;
+            assert(y * (7 * w + 97) == (y - 1) * (7 * w + 97) + 7 * w + 97) by (nonlinear_arith);
+        }
+    }
+}
+
+/// The rows `render_to` writes are the specification's picture.
+proof fn lemma_render_px(k: Coded, px: Seq<u8>, w: int, h: int, nc: int, wn: int)
+    requires
+        k.f.w == w,
+        k.f.h == h,
+        k.f.nc == nc,
+        wn == w * nc,
+        px.len() == h * wn,
+        forall|i: int| 0 <= i < h * wn ==> (#[trigger] px[i]) == pix(k, i),
+    ensures
+        px == render(k).px,
+{
+    reveal(pix);
+    let im = render(k);
+    assert(k.f.w * k.f.h * k.f.nc == h * wn) by (nonlinear_arith)
+        requires
+            k.f.w == w,
+            k.f.h == h,
+            k.f.nc == nc,
+            wn == w * nc,
+    ;
+    assert forall|i: int| 0 <= i < h * wn implies px[i] == im.px[i] by {
+        assert(px[i] == pix(k, i));
+    }
+    assert(px =~= im.px);
+}
+
+/// The row loops' work fits in `render_to`'s bound.
+proof fn lemma_render_rows(w: int, h: int, pp: int)
+    requires
+        w >= 1,
+        h >= 1,
+        pp == w * h,
+    ensures
+        3 * w + h * (7 * w + 97) <= 107 * pp,
+        w + h * (3 * w + 33) <= 107 * pp,
+{
+    assert(3 * w + h * (7 * w + 97) <= 107 * (w * h)) by (nonlinear_arith)
+        requires
+            w >= 1,
+            h >= 1,
+    ;
+    assert(w + h * (3 * w + 33) <= 107 * (w * h)) by (nonlinear_arith)
+        requires
+            w >= 1,
+            h >= 1,
+    ;
+}
+
+/// The parts of `render_to`'s work bound.
+proof fn lemma_render_cost(f: Frame, g: Geom)
+    requires
+        g.wf(f),
+        frame_basic(f),
+    ensures
+        f.nc == 1 ==> 66 * cblk(f, 0) == 66 * fblk(f),
+        f.nc == 3 ==> 66 * cblk(f, 0) + 66 * cblk(f, 1) + 66 * cblk(f, 2) == 66 * fblk(f),
+        cblk(f, 0) >= 0,
+        f.nc == 3 ==> cblk(f, 1) >= 0 && cblk(f, 2) >= 0,
+        f.w <= npx(f),
+        f.h <= npx(f),
+        npx(f) == f.w * f.h,
+{
+    reveal(cblk);
+    crate::scan::lemma_cw_pos(f, g, 0);
+    let (c0, h0) = (cw(f, 0), ch(f, 0));
+    assert(c0 * h0 >= 1) by (nonlinear_arith)
+        requires
+            c0 >= 1,
+            h0 >= 1,
+    ;
+    if f.nc == 3 {
+        crate::scan::lemma_cw_pos(f, g, 1);
+        crate::scan::lemma_cw_pos(f, g, 2);
+        let (c1, h1, c2, h2) = (cw(f, 1), ch(f, 1), cw(f, 2), ch(f, 2));
+        assert(c1 * h1 >= 1 && c2 * h2 >= 1) by (nonlinear_arith)
+            requires
+                c1 >= 1,
+                h1 >= 1,
+                c2 >= 1,
+                h2 >= 1,
+        ;
+    }
+    let (w, h) = (f.w, f.h);
+    assert(w <= w * h && h <= w * h) by (nonlinear_arith)
+        requires
+            w >= 1,
+            h >= 1,
+    ;
+}
+
 /// The pixels a decoded file's coefficients give, into `px`.
-pub fn render_to(st: &DecX, px: &mut [u8]) -> (r: Result<(), Error>)
+#[verifier::spinoff_prover]
+#[verifier::rlimit(60)]
+pub fn render_to(st: &DecX, px: &mut [u8], Tracked(mt): Tracked<&mut Meter>) -> (r: Result<(), Error>)
     requires
         st.wf(),
         st.started,
         old(px)@.len() == st.f@.w * st.f@.h * st.f@.nc,
     ensures
+        final(mt).n <= old(mt).n + 66 * fblk(st.f@) + 107 * npx(st.f@),
         final(px)@.len() == old(px)@.len(),
         match r {
             Ok(()) => final(px)@ == render(coded(*st)).px,
@@ -622,6 +884,8 @@ pub fn render_to(st: &DecX, px: &mut [u8]) -> (r: Result<(), Error>)
     hide(pix);
     hide(pl_ok);
     hide(Plane::ok);
+    hide(fblk);
+    hide(npx);
     let ghost k = coded(*st);
     let f = st.f;
     let w = f.w as usize;
@@ -643,13 +907,23 @@ pub fn render_to(st: &DecX, px: &mut [u8]) -> (r: Result<(), Error>)
             plen == w * h * nc,
             wn == w * nc,
     ;
-    let b0 = match comp_buf(st, 0) {
+    let ghost m0 = mt.n;
+    let ghost fv = st.f@;
+    let ghost bb = fblk(fv);
+    let ghost pp = npx(fv);
+    proof {
+        lemma_render_cost(fv, st.g);
+    }
+    let b0 = match comp_buf(st, 0, Tracked(mt)) {
         Some(v) => v,
         None => {
             return Err(Error::OutOfMemory);
         },
     };
     let p0 = comp_plane(st, &b0, 0);
+    proof {
+        mt.n = mt.n + w as nat;
+    }
     let mut r0 = match alloc_u8(w) {
         Some(v) => v,
         None => {
@@ -662,38 +936,16 @@ pub fn render_to(st: &DecX, px: &mut [u8]) -> (r: Result<(), Error>)
                 nc == 1,
                 wn == w * nc,
         ;
-        let mut y: usize = 0;
-        while y < h
-            invariant
-                y <= h,
-                w == k.f.w,
-                h == k.f.h,
-                w >= 1,
-                k.f.nc == 1,
-                wn == w,
-                k.color == Color::Gray,
-                px@.len() == h * wn,
-                r0.len() == w,
-                p0.ok(k, 0),
-                forall|i: int| 0 <= i < y * wn ==> (#[trigger] px@[i]) == pix(k, i),
-            decreases h - y,
-        {
-            assert(0 <= y * wn && y * wn + wn <= h * wn && (y + 1) * wn == y * wn + wn) by (nonlinear_arith)
-                requires
-                    0 <= y < h,
-                    wn >= 0,
-            ;
-            emit_gray(&p0, y, w, &mut r0, px, Ghost(k));
-            y += 1;
-        }
+        let ghost m1 = mt.n;
+        gray_rows(&p0, w, h, &mut r0, px, Ghost(k), Ghost(wn), Tracked(mt));
     } else {
-        let b1 = match comp_buf(st, 1) {
+        let b1 = match comp_buf(st, 1, Tracked(mt)) {
             Some(v) => v,
             None => {
                 return Err(Error::OutOfMemory);
             },
         };
-        let b2 = match comp_buf(st, 2) {
+        let b2 = match comp_buf(st, 2, Tracked(mt)) {
             Some(v) => v,
             None => {
                 return Err(Error::OutOfMemory);
@@ -701,12 +953,18 @@ pub fn render_to(st: &DecX, px: &mut [u8]) -> (r: Result<(), Error>)
         };
         let p1 = comp_plane(st, &b1, 1);
         let p2 = comp_plane(st, &b2, 2);
+        proof {
+            mt.n = mt.n + w as nat;
+        }
         let mut r1 = match alloc_u8(w) {
             Some(v) => v,
             None => {
                 return Err(Error::OutOfMemory);
             },
         };
+        proof {
+            mt.n = mt.n + w as nat;
+        }
         let mut r2 = match alloc_u8(w) {
             Some(v) => v,
             None => {
@@ -714,53 +972,12 @@ pub fn render_to(st: &DecX, px: &mut [u8]) -> (r: Result<(), Error>)
             },
         };
         let ycc = st.color == 1;
-        let mut y: usize = 0;
-        while y < h
-            invariant
-                y <= h,
-                w == k.f.w,
-                h == k.f.h,
-                w >= 1,
-                k.f.nc == 3,
-                wn == w * 3,
-                k.color == if ycc {
-                    Color::YCbCr
-                } else {
-                    Color::Rgb
-                },
-                px@.len() == h * wn,
-                r0.len() == w,
-                r1.len() == w,
-                r2.len() == w,
-                p0.ok(k, 0),
-                p1.ok(k, 1),
-                p2.ok(k, 2),
-                forall|i: int| 0 <= i < y * wn ==> (#[trigger] px@[i]) == pix(k, i),
-            decreases h - y,
-        {
-            assert(0 <= y * wn && y * wn + wn <= h * wn && (y + 1) * wn == y * wn + wn) by (nonlinear_arith)
-                requires
-                    0 <= y < h,
-                    wn >= 0,
-            ;
-            emit_color(&p0, &p1, &p2, ycc, y, w, &mut r0, &mut r1, &mut r2, px, Ghost(k));
-            y += 1;
-        }
+        let ghost m1 = mt.n;
+        color_rows(&p0, &p1, &p2, ycc, w, h, &mut r0, &mut r1, &mut r2, px, Ghost(k), Ghost(wn), Tracked(mt));
     }
     proof {
-        reveal(pix);
-        let im = render(k);
-        assert(k.f.w * k.f.h * k.f.nc == h * wn) by (nonlinear_arith)
-            requires
-                k.f.w == w,
-                k.f.h == h,
-                k.f.nc == nc,
-                wn == w * nc,
-        ;
-        assert forall|i: int| 0 <= i < h * wn implies px@[i] == im.px[i] by {
-            assert(px@[i] == pix(k, i));
-        }
-        assert(px@ =~= im.px);
+        lemma_render_px(k, px@, w as int, h as int, nc as int, wn);
+        lemma_render_rows(w as int, h as int, pp);
     }
     Ok(())
 }
@@ -792,11 +1009,13 @@ pub fn pic_len(st: &DecX) -> (r: Option<usize>)
 }
 
 /// The picture a decoded file's coefficients give.
-pub fn render_x(st: &DecX) -> (r: Result<Picture, Error>)
+pub fn render_x(st: &DecX, Tracked(mt): Tracked<&mut Meter>) -> (r: Result<Picture, Error>)
     requires
         st.wf(),
         st.started,
     ensures
+        final(mt).n <= old(mt).n + render_cost_of(fblk(st.f@), npx(st.f@)),
+        r matches Ok(pic) ==> pic.w == st.f@.w && pic.h == st.f@.h,
         match r {
             Ok(pic) => pic@ == render(coded(*st)),
             Err(Error::Invalid) => false,
@@ -809,13 +1028,24 @@ pub fn render_x(st: &DecX) -> (r: Result<Picture, Error>)
             return Err(Error::OutOfMemory);
         },
     };
+    proof {
+        mt.n = mt.n + total as nat;
+        let (w, h, nc) = (st.f@.w as int, st.f@.h as int, st.f@.nc as int);
+        assert(w * h * nc <= 3 * (w * h)) by (nonlinear_arith)
+            requires
+                w >= 0,
+                h >= 0,
+                nc <= 3,
+        ;
+        assert(npx(st.f@) == w * h);
+    }
     let mut px = match alloc_u8(total) {
         Some(v) => v,
         None => {
             return Err(Error::OutOfMemory);
         },
     };
-    match render_to(st, px.as_mut_slice()) {
+    match render_to(st, px.as_mut_slice(), Tracked(mt)) {
         Ok(()) => Ok(Picture { w: st.f.w as u32, h: st.f.h as u32, nc: st.f.nc, px }),
         Err(e) => Err(e),
     }
@@ -831,9 +1061,44 @@ pub fn decode(data: &[u8]) -> (r: Result<Picture, Error>)
             Err(Error::OutOfMemory) => true,
         },
 {
-    match decode_coefs(data) {
-        Ok(st) => render_x(&st),
-        Err(e) => Err(e),
+    decode_counted(data).0
+}
+
+/// `decode`, counting its steps: at most `jpeg_work(n, s, b, px)` for an
+/// `n`-byte file with `s` scans (at most `n + 65552`) whose frame is
+/// stored in `b` blocks and has `px` pixels (`b` and `px` are 0 when the
+/// file has no frame). The ghost result is `(steps, s, b, px)`.
+pub fn decode_counted(data: &[u8]) -> (r: (Result<Picture, Error>, Ghost<(nat, nat, int, int)>))
+    ensures
+        match r.0 {
+            Ok(pic) => jpeg_decode(data@) == Some(pic@),
+            Err(Error::Invalid) => jpeg_decode(data@) is None,
+            Err(Error::OutOfMemory) => true,
+        },
+        r.1@.0 <= jpeg_work(data@.len() as int, r.1@.1 as int, r.1@.2, r.1@.3),
+        r.1@.1 <= data@.len() + 0x1_0010,
+        r.0 matches Ok(pic) ==> r.1@.3 == pic.w * pic.h,
+{
+    let tracked mut mt = Meter { n: 0 };
+    let (c, Ghost(g)) = decode_coefs(data, Tracked(&mut mt));
+    match c {
+        Ok(st) => {
+            let ghost px = npx(st.f@);
+            proof {
+                assert(px >= 0) by (nonlinear_arith)
+                    requires
+                        px == st.f@.w * st.f@.h,
+                ;
+            }
+            let r = render_x(&st, Tracked(&mut mt));
+            (r, Ghost((mt.n, g.0, g.1, px)))
+        },
+        Err(e) => {
+            proof {
+                assert(render_cost_of(g.1, 0) >= 0);
+            }
+            (Err(e), Ghost((mt.n, g.0, g.1, 0)))
+        },
     }
 }
 
@@ -853,7 +1118,8 @@ pub fn decode_to(data: &[u8], out: &mut [u8]) -> (r: Result<Option<(u32, u32, u8
             Err(Error::OutOfMemory) => true,
         },
 {
-    match decode_coefs(data) {
+    let tracked mut mt = Meter { n: 0 };
+    match decode_coefs(data, Tracked(&mut mt)).0 {
         Ok(st) => {
             let total = match pic_len(&st) {
                 Some(n) => n,
@@ -864,7 +1130,7 @@ pub fn decode_to(data: &[u8], out: &mut [u8]) -> (r: Result<Option<(u32, u32, u8
             if out.len() != total {
                 return Ok(None);
             }
-            match render_to(&st, out) {
+            match render_to(&st, out, Tracked(&mut mt)) {
                 Ok(()) => Ok(Some((st.f.w as u32, st.f.h as u32, st.f.nc))),
                 Err(e) => Err(e),
             }

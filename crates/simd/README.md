@@ -90,10 +90,10 @@ its own trusted base.
 - `src/lanes.rs`: the byte model of `__m128i`/`__m256i` (an uninterpreted
   `b128`/`b256` of length 16/32).
 - `src/sse2.rs`: verified wrappers over the SSE2 instructions byte scanners
-  use (`load16`, `splat16`, `eq16`, `or16`, `min16`, `subs16`, `movemask16`,
-  on x86-64, and on AArch64 over the emulation so that one scanner verifies
-  for both), each with a contract on the 16 bytes `b16` and the mask bits
-  `bit` proven from the specifications here, and `first_set16`. Shared by
+  use (`load16`, `splat16`, `eq16`, `subs16`, `or16`, `min16`,
+  `movemask16`), each with a contract on the 16 bytes `b16` and the mask
+  bits `bit` proven from the specifications here, and `first_set16`.
+  Off x86-64 they build on the emulation, as `arch` does. Shared by
   verilith-json, verilith-xml, verilith-http and verilith-regex.
 - `src/avx512.rs` (x86-64 only): safe wrappers, with specifications, for 17
   AVX-512 intrinsics (F, BW and VBMI2: bitwise ops, `shuffle_epi8`,

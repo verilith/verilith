@@ -9,6 +9,7 @@ members = [
     "crates/dns",
     "crates/font",
     "crates/gif",
+    "crates/h2",
     "crates/hpack",
     "crates/http",
     "crates/jpeg",
