@@ -41,6 +41,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | json | 18 |  |  |  |  |  | 6 |
 | lz4 |  |  |  |  |  |  | 1 |
 | png | 2 |  |  |  |  |  | 7 |
+| qpack | 9 |  |  |  |  |  | 2 |
 | quic |  |  |  |  |  |  | 1 |
 | regex | 1 |  |  |  |  |  | 3 |
 | server |  |  |  |  |  |  | 9 |
@@ -60,7 +61,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 3 |  |  |  |  |  | 3 |
 | zstd | 9 |  |  |  |  |  | 1 |
-| **total** | **651** | **35** | **274** | **5** | **16** | **12** | **118** |
+| **total** | **660** | **35** | **274** | **5** | **16** | **12** | **120** |
 
 ## Items
 
@@ -182,6 +183,14 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/png/src/libpng/read.rs`: plain Rust
 - `crates/png/src/libpng/stubs.rs`: plain Rust
 - `crates/png/src/libpng/xform.rs`: plain Rust
+
+### qpack
+
+- `crates/qpack/src/encoder.rs`: external_body: `static_find`, `field_hash`, `new`, `new`, `find`, `worth`, `add`
+- `crates/qpack/src/henc.rs`: external_body: `ptab`
+- `crates/qpack/src/hints.rs`: plain Rust
+- `crates/qpack/src/stable.rs`: plain Rust
+- `crates/qpack/src/table.rs`: external_body: `static_entry`
 
 ### quic
 

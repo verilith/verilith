@@ -1584,6 +1584,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "verilith-qpack"
+version = "0.1.0"
+dependencies = [
+ "verilith-core",
+ "verilith-hpack",
+ "vstd",
+]
+
+[[package]]
 name = "verilith-quic"
 version = "0.1.0"
 dependencies = [

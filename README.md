@@ -33,9 +33,9 @@ trusted](#what-is-proven-and-what-is-trusted) before relying on any of it.
   interpreter loop, which runs as long as the guest program does.
 - **More, crate by crate.** Many crates prove further properties: bounds on
   work or on output size (zlib, lz4, snappy, webp, gif, tiff, png, brotli, jpeg,
-  http, url, xml, hpack, h3, regex, dns, x509), that compression round-trips (zlib,
-  lz4, snappy) or that an encoder's output reads back (h3), that a stream split into pieces anywhere
-  decodes the same (zlib, zstd, brotli, hpack, h3, http), linearizability of
+  http, url, xml, hpack, qpack, h3, regex, dns, x509), that compression round-trips (zlib,
+  lz4, snappy) or that an encoder's output reads back (h3, qpack), that a stream split into pieces anywhere
+  decodes the same (zlib, zstd, brotli, hpack, qpack, h3, http), linearizability of
   the queues and deadlock-freedom of the locks, checked against the code
   (sync). Each crate's README has a "What is proven" section
   that names the theorem and the function it is stated on.
@@ -106,6 +106,7 @@ not proofs.
 | [`verilith-json`](crates/json) | A fast JSON parser, proven correct with Verus: exactly RFC 8259, no panics, bounded recursion. Includes serde support and a cJSON-compatible C ABI. | [proven](crates/json#what-is-proven), [trusted](crates/json#what-is-not-proven) |
 | [`verilith-lz4`](crates/lz4) | A formally verified (Verus) LZ4 compressor and decompressor (block and frame formats) with liblz4's C API | [proven](crates/lz4#what-is-proven), [trusted](crates/lz4/TRUST.md) |
 | [`verilith-png`](crates/png) | A formally verified (Verus) PNG decoder | [proven](crates/png#what-is-proven), [trusted](crates/png#trusted-base) |
+| [`verilith-qpack`](crates/qpack) | A sans-I/O QPACK (RFC 9204) encoder and decoder for HTTP/3, formally verified with Verus, faster than ls-qpack | [proven](crates/qpack#what-is-proven), [trusted](crates/qpack#trusted-computing-base) |
 | [`verilith-quic`](crates/quic) | The QUIC (RFC 9000) wire format and transport state machines, formally verified with Verus: packet headers, frames, transport parameters, flow control, stream states and the anti-amplification limit | [proven](crates/quic#what-is-proven), [trusted](crates/quic#trusted-base) |
 | [`verilith-regex`](crates/regex) | A linear-time regular expression engine (RE2 syntax and semantics) formally verified with Verus | [proven](crates/regex#what-is-proven), [trusted](crates/regex/TRUST.md) |
 | [`verilith-server`](crates/server) | A formally verified (Verus) HTTP server built from the Verilith parsers: HTTP/1.1 today, with responses proven to parse back exactly; HTTP/2, TLS and HTTP/3 planned in its DESIGN.md | [proven](crates/server#what-is-proven), [trusted](crates/server/TRUST.md) |

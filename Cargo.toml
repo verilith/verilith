@@ -17,6 +17,7 @@ members = [
     "crates/json",
     "crates/lz4",
     "crates/png",
+    "crates/qpack",
     "crates/quic",
     "crates/regex",
     "crates/server",
