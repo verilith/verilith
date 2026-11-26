@@ -33,9 +33,9 @@ trusted](#what-is-proven-and-what-is-trusted) before relying on any of it.
   interpreter loop, which runs as long as the guest program does.
 - **More, crate by crate.** Many crates prove further properties: bounds on
   work or on output size (zlib, lz4, snappy, webp, gif, tiff, png, brotli, jpeg,
-  http, url, xml, hpack, regex, dns, x509), that compression round-trips (zlib,
-  lz4, snappy), that a stream split into pieces anywhere
-  decodes the same (zlib, zstd, brotli, hpack, http), linearizability of
+  http, url, xml, hpack, qpack, regex, dns, x509), that compression round-trips (zlib,
+  lz4, snappy) and that encoded headers decode back (qpack), that a stream split into pieces anywhere
+  decodes the same (zlib, zstd, brotli, hpack, qpack, http), linearizability of
   the queues and deadlock-freedom of the locks, checked against the code
   (sync). Each crate's README has a "What is proven" section
   that names the theorem and the function it is stated on.
@@ -103,6 +103,7 @@ not proofs.
 | [`verilith-json`](crates/json) | A fast JSON parser, proven correct with Verus: exactly RFC 8259, no panics, bounded recursion. Includes serde support and a cJSON-compatible C ABI. | [proven](crates/json#what-is-proven), [trusted](crates/json#what-is-not-proven) |
 | [`verilith-lz4`](crates/lz4) | A formally verified (Verus) LZ4 compressor and decompressor (block and frame formats) with liblz4's C API | [proven](crates/lz4#what-is-proven), [trusted](crates/lz4/TRUST.md) |
 | [`verilith-png`](crates/png) | A formally verified (Verus) PNG decoder | [proven](crates/png#what-is-proven), [trusted](crates/png#trusted-base) |
+| [`verilith-qpack`](crates/qpack) | A sans-I/O QPACK (RFC 9204) encoder and decoder for HTTP/3, formally verified with Verus, faster than ls-qpack | [proven](crates/qpack#what-is-proven), [trusted](crates/qpack#trusted-computing-base) |
 | [`verilith-regex`](crates/regex) | A linear-time regular expression engine (RE2 syntax and semantics) formally verified with Verus | [proven](crates/regex#what-is-proven), [trusted](crates/regex/TRUST.md) |
 | [`verilith-sha2`](crates/sha2) | Formally verified (Verus) SHA-2 (FIPS 180-4): SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224 and SHA-512/256, with SHA-NI and ARMv8 kernels, behind OpenSSL's `SHA*` C API | [proven](crates/sha2#what-is-proven), [trusted](crates/sha2#trusted-base) |
 | [`verilith-simd`](crates/simd) | Verus specifications for x86 SIMD intrinsics (SSE2..AVX2, some AVX-512) and AArch64 NEON, differentially tested against the CPU | [trusted](crates/simd#trusted-base) |
