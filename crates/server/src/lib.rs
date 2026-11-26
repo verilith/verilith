@@ -15,6 +15,7 @@ pub mod range;
 pub mod persist;
 pub mod flow;
 pub mod streams;
+pub mod h2core;
 
 #[cfg(not(verus_keep_ghost))]
 pub mod date;
