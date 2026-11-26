@@ -38,10 +38,10 @@ pub mod isa_ref;
 pub mod sha_lemmas;
 #[doc(hidden)]
 pub mod armv8;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[doc(hidden)]
 pub mod shani;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[doc(hidden)]
 pub mod avx2;
 mod store;
