@@ -212,6 +212,9 @@ pub open spec fn slot_inv<T>(c: Consts, s: Shared<T>, i: nat) -> bool {
     &&& s.stamps[i].loc() == c.stamp_ids[i as int]
     &&& s.stamps[i].msgs().len() > 0
     &&& forall|k: int| 0 <= k < s.stamps[i].msgs().len() ==> #[trigger] s.stamps[i].msgs()[k].val <= st
+    // Only the last message holds the current stamp, so a thread that
+    // read it has seen the last message.
+    &&& forall|k: int| 0 <= k < s.stamps[i].msgs().len() - 1 ==> #[trigger] s.stamps[i].msgs()[k].val < st
     &&& s.sm[i].wf()
     &&& s.sm[i].loc() == c.stamp_mono[i as int]
     &&& s.sm[i]@ == st
@@ -291,6 +294,9 @@ impl<T> InvariantPredicate<Consts, Shared<T>> for QueuePred {
         &&& s.tail.loc() == c.tail_id
         &&& pos_hist(c, s.head, h)
         &&& pos_hist(c, s.tail, t)
+        // Only read-modify-writes write `head` and `tail`.
+        &&& s.head.rmw_only()
+        &&& s.tail.rmw_only()
         &&& s.hm.wf()
         &&& s.hm.loc() == c.head_mono
         &&& s.hm@ == pk(c, h)
@@ -975,6 +981,7 @@ impl<T> ArrayQueue<T> {
             r.2@.msgs()[r.3@ as int].val == r.0,
             r.2@.msgs()[r.3@ as int].view.le(final(tid).view()),
             old(tid).view().le(final(tid).view()),
+            final(tid).view().at(self.consts().stamp_ids[index as int]) >= r.3@,
             tok_at(*final(tok), self.consts(), stamp_next(self.consts(), old(tok).value(), r.0 as nat)),
     {
         let ghost c = self.consts();
@@ -996,6 +1003,8 @@ impl<T> ArrayQueue<T> {
                 k = kk;
                 let ghost m0 = s.stamps[i].msgs()[kk as int];
                 lemma_acquired(tid0, m0.view, c.stamp_ids[i as int], kk, tid.view());
+                lemma_view_join(tid0.join(m0.view), RaView::single(c.stamp_ids[i as int], kk));
+                assert(RaView::single(c.stamp_ids[i as int], kk).at(c.stamp_ids[i as int]) == kk);
                 lb = s.sm.tracked_borrow(i).lb().weaken(v as nat);
                 hl = s.stamps.tracked_borrow(i).lb();
                 s.model.agree(tok);
@@ -1074,6 +1083,7 @@ impl<T> ArrayQueue<T> {
             };
             let ghost i = index as nat;
             let (stamp, Tracked(slb), Tracked(shl), Ghost(sk)) = self.load_stamp_at(index, Tracked(&mut tid), Tracked(&mut tok), Ghost(t));
+            let ghost v_load = tid.view();
             if tail == stamp {
                 let res;
                 let tracked mut claim: Option<(PointsTo<T>, GhostPointsTo<nat, Ticket<T>>)> = None;
@@ -1189,6 +1199,18 @@ impl<T> ArrayQueue<T> {
                             }
                             let tracked mut sh = s.stamps.tracked_remove(i);
                             let ghost h0 = sh;
+                            proof {
+                                // The thread read the only message holding the
+                                // current stamp, so it has seen the last one.
+                                sh.lb_prefix(&shl);
+                                sh.bounded_lemma(&tid);
+                                assert(h0.msgs()[sk as int] == shl.msgs()[sk as int]);
+                                assert(v_load.at(c.stamp_ids[i as int]) <= tid.view().at(c.stamp_ids[i as int]));
+                                if sk < h0.msgs().len() - 1 {
+                                    assert(h0.msgs()[sk as int].val < h0.last().val);
+                                }
+                                assert(sh.seen_last(&tid));
+                            }
                             slot.stamp.store_release(Tracked(&mut sh), Tracked(&mut tid), tail + 1);
                             proof {
                                 lemma_stamp_store(h0, sh, pk(c, t), (tail + 1) as u64, tid.view());
@@ -1355,6 +1377,7 @@ impl<T> ArrayQueue<T> {
             };
             let ghost i = index as nat;
             let (stamp, Tracked(slb), Tracked(shl), Ghost(sk)) = self.load_stamp_at(index, Tracked(&mut tid), Tracked(&mut tok), Ghost(h));
+            let ghost v_load = tid.view();
             if head + 1 == stamp {
                 let res;
                 let tracked mut claim: Option<(PointsTo<T>, GhostPointsTo<nat, Ticket<T>>)> = None;
@@ -1462,6 +1485,18 @@ impl<T> ArrayQueue<T> {
                             }
                             let tracked mut sh = s.stamps.tracked_remove(i);
                             let ghost h0 = sh;
+                            proof {
+                                // The thread read the only message holding the
+                                // current stamp, so it has seen the last one.
+                                sh.lb_prefix(&shl);
+                                sh.bounded_lemma(&tid);
+                                assert(h0.msgs()[sk as int] == shl.msgs()[sk as int]);
+                                assert(v_load.at(c.stamp_ids[i as int]) <= tid.view().at(c.stamp_ids[i as int]));
+                                if sk < h0.msgs().len() - 1 {
+                                    assert(h0.msgs()[sk as int].val < h0.last().val);
+                                }
+                                assert(sh.seen_last(&tid));
+                            }
                             slot.stamp.store_release(Tracked(&mut sh), Tracked(&mut tid), released);
                             proof {
                                 lemma_stamp_store(h0, sh, (pk(c, h) + 1) as nat, released, tid.view());
@@ -1811,7 +1846,7 @@ impl<T> ArrayQueue<T> {
                 &&& forall|j: nat| j < cap ==> {
                     &&& #[trigger] stamps@.contains_key(j)
                     &&& stamps@[j].loc() == stamp_ids[j as int]
-                    &&& stamps@[j].msgs().len() > 0
+                    &&& stamps@[j].msgs().len() == 1
                     &&& forall|k: int| 0 <= k < stamps@[j].msgs().len() ==> #[trigger] stamps@[j].msgs()[k].val <= j
                     &&& stamp_hist(stamps@[j], j, cells@[j].view())
                     &&& sm@.contains_key(j)
@@ -1844,7 +1879,7 @@ impl<T> ArrayQueue<T> {
                 forall|j: nat| j < i ==> {
                     &&& #[trigger] stamps.contains_key(j)
                     &&& stamps[j].loc() == stamp_ids[j as int]
-                    &&& stamps[j].msgs().len() > 0
+                    &&& stamps[j].msgs().len() == 1
                     &&& forall|k: int| 0 <= k < stamps[j].msgs().len() ==> #[trigger] stamps[j].msgs()[k].val <= j
                     &&& stamp_hist(stamps[j], j, cells[j].view())
                     &&& sm.contains_key(j)
@@ -1880,7 +1915,7 @@ impl<T> ArrayQueue<T> {
                 assert forall|j: nat| j < i + 1 implies {
                     &&& #[trigger] stamps.contains_key(j)
                     &&& stamps[j].loc() == stamp_ids[j as int]
-                    &&& stamps[j].msgs().len() > 0
+                    &&& stamps[j].msgs().len() == 1
                     &&& forall|k: int| 0 <= k < stamps[j].msgs().len() ==> #[trigger] stamps[j].msgs()[k].val <= j
                     &&& stamp_hist(stamps[j], j, cells[j].view())
                     &&& sm.contains_key(j)
@@ -1982,6 +2017,8 @@ impl<T> ArrayQueue<T> {
             assert forall|j: nat| j < c.cap implies #[trigger] slot_inv(c, s, j) by {
                 lemma_pk_small(c, j);
                 vstd::arithmetic::div_mod::lemma_small_mod(j, c.cap);
+                assert(s.stamps.contains_key(j));
+                assert(s.stamps[j].msgs().len() == 1);
             }
         }
         let tracked inv = ObjInvariant::<_, _, QueuePred>::new(c, s, QUEUE_NS);

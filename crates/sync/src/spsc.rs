@@ -577,7 +577,7 @@ impl<T> Producer<T> {
                     s.head.nonempty_lemma();
                     s.prod.agree(self.g.borrow());
                 }
-                head = self.rb.head.0.fetch_add_acqrel(Tracked(&mut s.head), Tracked(self.tid.borrow_mut()), 0);
+                head = self.rb.head.0.fetch_add_acqrel_sra(Tracked(&mut s.head), Tracked(self.tid.borrow_mut()), 0);
                 proof {
                     let ghost pg = s.prod@;
                     let ghost cg = s.cons@;
@@ -649,7 +649,7 @@ impl<T> Producer<T> {
             proof {
                 s.prod.agree(self.g.borrow());
             }
-            self.rb.tail.0.store_release(Tracked(&mut s.tail), Tracked(self.tid.borrow_mut()), next);
+            self.rb.tail.0.store_release_sra(Tracked(&mut s.tail), Tracked(self.tid.borrow_mut()), next);
             let ghost old_cells = s.cells;
             let ghost old_q = s.q@;
             let ghost pg = s.prod@;
@@ -890,7 +890,7 @@ impl<T> Consumer<T> {
                     s.tail.nonempty_lemma();
                     s.cons.agree(self.g.borrow());
                 }
-                tail = self.rb.tail.0.fetch_add_acqrel(Tracked(&mut s.tail), Tracked(self.tid.borrow_mut()), 0);
+                tail = self.rb.tail.0.fetch_add_acqrel_sra(Tracked(&mut s.tail), Tracked(self.tid.borrow_mut()), 0);
                 proof {
                     let ghost last = th.last();
                     lemma_acquired(tid0, last.view, c.tail_id, th.len(), self.tid@.view());
@@ -936,7 +936,7 @@ impl<T> Consumer<T> {
             proof {
                 s.cons.agree(self.g.borrow());
             }
-            self.rb.head.0.store_release(Tracked(&mut s.head), Tracked(self.tid.borrow_mut()), next);
+            self.rb.head.0.store_release_sra(Tracked(&mut s.head), Tracked(self.tid.borrow_mut()), next);
             let ghost old_cells = s.cells;
             let ghost old_q = s.q@;
             let ghost pg = s.prod@;
@@ -1671,7 +1671,7 @@ impl<T: Copy> Producer<T> {
                     s.head.nonempty_lemma();
                     s.prod.agree(self.g.borrow());
                 }
-                head = self.rb.head.0.fetch_add_acqrel(Tracked(&mut s.head), Tracked(self.tid.borrow_mut()), 0);
+                head = self.rb.head.0.fetch_add_acqrel_sra(Tracked(&mut s.head), Tracked(self.tid.borrow_mut()), 0);
                 proof {
                     let ghost pg = s.prod@;
                     let ghost cg = s.cons@;
@@ -1788,7 +1788,7 @@ impl<T: Copy> Producer<T> {
             proof {
                 s.prod.agree(self.g.borrow());
             }
-            self.rb.tail.0.store_release(Tracked(&mut s.tail), Tracked(self.tid.borrow_mut()), next);
+            self.rb.tail.0.store_release_sra(Tracked(&mut s.tail), Tracked(self.tid.borrow_mut()), next);
             let ghost old_cells = s.cells;
             let ghost old_q = s.q@;
             let ghost pg = s.prod@;
@@ -1878,7 +1878,7 @@ impl<T> Consumer<T> {
                     s.tail.nonempty_lemma();
                     s.cons.agree(self.g.borrow());
                 }
-                tail = self.rb.tail.0.fetch_add_acqrel(Tracked(&mut s.tail), Tracked(self.tid.borrow_mut()), 0);
+                tail = self.rb.tail.0.fetch_add_acqrel_sra(Tracked(&mut s.tail), Tracked(self.tid.borrow_mut()), 0);
                 proof {
                     let ghost last = th.last();
                     lemma_acquired(tid0, last.view, c.tail_id, th.len(), self.tid@.view());
@@ -1926,7 +1926,7 @@ impl<T> Consumer<T> {
             proof {
                 s.cons.agree(self.g.borrow());
             }
-            self.rb.head.0.store_release(Tracked(&mut s.head), Tracked(self.tid.borrow_mut()), next);
+            self.rb.head.0.store_release_sra(Tracked(&mut s.head), Tracked(self.tid.borrow_mut()), next);
             let ghost old_cells = s.cells;
             let ghost old_q = s.q@;
             let ghost pg = s.prod@;
@@ -2124,7 +2124,7 @@ impl<T> Producer<T> {
                 s.refs.nonempty_lemma();
                 s.prod.agree(&g);
             }
-            old = self.rb.refs.fetch_sub_acqrel(Tracked(&mut s.refs), Tracked(&mut tid), 1);
+            old = self.rb.refs.fetch_sub_acqrel_sra(Tracked(&mut s.refs), Tracked(&mut tid), 1);
             proof {
                 let ghost pg = s.prod@;
                 let ghost cg = s.cons@;
@@ -2217,7 +2217,7 @@ impl<T> Consumer<T> {
                 s.refs.nonempty_lemma();
                 s.cons.agree(&g);
             }
-            old = self.rb.refs.fetch_sub_acqrel(Tracked(&mut s.refs), Tracked(&mut tid), 1);
+            old = self.rb.refs.fetch_sub_acqrel_sra(Tracked(&mut s.refs), Tracked(&mut tid), 1);
             proof {
                 let ghost pg = s.prod@;
                 let ghost cg = s.cons@;

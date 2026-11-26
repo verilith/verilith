@@ -1,6 +1,7 @@
 //! The image parameters from IFD 0, proven against `spec::params`.
 use crate::ifd::*;
 use crate::spec::*;
+use crate::work::*;
 use vstd::prelude::*;
 
 verus! {
@@ -125,14 +126,33 @@ pub fn chunks_exec(p: &ParamsX) -> (r: u128)
     }
 }
 
+/// A field inside the file has at most one value per byte of it.
+pub proof fn lemma_count_le(b: Seq<u8>, f: Field)
+    requires
+        f.ok(b),
+    ensures
+        f.count <= b.len(),
+{
+    let ts = type_size(f.ty as nat);
+    assert(ts >= 1);
+    assert(f.count <= f.count * ts) by (nonlinear_arith)
+        requires
+            ts >= 1,
+    ;
+}
+
 /// Whether every value of `f` equals its first (`spec::all_same`).
-pub fn same_exec(b: &[u8], le: bool, f: Field) -> (r: bool)
+pub fn same_exec(b: &[u8], le: bool, f: Field, Tracked(m): Tracked<&mut Meter>) -> (r: bool)
     requires
         f.ok(b@),
         f.count >= 1,
     ensures
         r == all_same(f.values(b@, le)),
+        final(m).n <= old(m).n + unit(b@.len()),
 {
+    proof {
+        lemma_count_le(b@, f);
+    }
     let ghost v = f.values(b@, le);
     let v0 = value_exec(b, le, f, 0);
     let mut k: u32 = 1;
@@ -143,8 +163,12 @@ pub fn same_exec(b: &[u8], le: bool, f: Field) -> (r: bool)
             1 <= k <= f.count,
             v0 == v[0],
             forall|j: int| 0 <= j < k ==> #[trigger] v[j] == v[0],
+            m.n <= old(m).n + k,
         decreases f.count - k,
     {
+        proof {
+            m.n = m.n + 1;
+        }
         if value_exec(b, le, f, k) != v0 {
             assert(v[k as int] != v[0]);
             return false;
@@ -155,7 +179,7 @@ pub fn same_exec(b: &[u8], le: bool, f: Field) -> (r: bool)
 }
 
 /// `spec::bits_per_sample`.
-fn bits_exec(b: &[u8], le: bool, f: Option<Field>, spp: u32) -> (r: Option<u32>)
+fn bits_exec(b: &[u8], le: bool, f: Option<Field>, spp: u32, Tracked(m): Tracked<&mut Meter>) -> (r: Option<u32>)
     requires
         f matches Some(f) ==> f.ok(b@),
     ensures
@@ -163,12 +187,13 @@ fn bits_exec(b: &[u8], le: bool, f: Option<Field>, spp: u32) -> (r: Option<u32>)
             Some(x) => r == Some(x as u32) && 1 <= x <= 32,
             None => r is None,
         },
+        final(m).n <= old(m).n + unit(b@.len()),
 {
     let f = match f {
         None => return Some(1),
         Some(f) => f,
     };
-    if f.count == 0 || f.count != spp || !same_exec(b, le, f) {
+    if f.count == 0 || f.count != spp || !same_exec(b, le, f, Tracked(m)) {
         return None;
     }
     let v0 = value_exec(b, le, f, 0);
@@ -195,6 +220,20 @@ pub fn params_exec(b: &[u8], le: bool, o: u32) -> (r: Option<ParamsX>)
             None => r is None,
         },
 {
+    let tracked mut m = Meter { n: 0 };
+    params_counted(b, le, o, Tracked(&mut m))
+}
+
+/// `params_exec`, counting its steps: at most 30 walks of the IFD or of
+/// a field's values.
+pub fn params_counted(b: &[u8], le: bool, o: u32, Tracked(m): Tracked<&mut Meter>) -> (r: Option<ParamsX>)
+    ensures
+        match params(b@, le, o as nat) {
+            Some(p) => r matches Some(x) && x.view(b@) == p && x.ok(b@) && x.le == le && p.wf(),
+            None => r is None,
+        },
+        final(m).n <= old(m).n + 30 * unit(b@.len()),
+{
     let l = b.len();
     if (o as u64) + 2 > l as u64 {
         return None;
@@ -204,53 +243,53 @@ pub fn params_exec(b: &[u8], le: bool, o: u32) -> (r: Option<ParamsX>)
     if n == 0 || (o as u64) + 2 + 12 * (n as u64) > l as u64 {
         return None;
     }
-    if !sorted_exec(b, le, o, n) {
+    if !sorted_exec(b, le, o, n, Tracked(m)) {
         return None;
     }
     let ghost bb = b@;
     let ghost on = o as nat;
     let ghost nn = n as nat;
-    let wf = match field_exec(b, le, o, n, 256) {
+    let wf = match field_counted(b, le, o, n, 256, Tracked(m)) {
         Ok(Some(f)) => f,
         _ => return None,
     };
-    let hf = match field_exec(b, le, o, n, 257) {
+    let hf = match field_counted(b, le, o, n, 257, Tracked(m)) {
         Ok(Some(f)) => f,
         _ => return None,
     };
-    let spp = match scalar_exec(b, le, o, n, 277, 1) {
+    let spp = match scalar_exec(b, le, o, n, 277, 1, Tracked(m)) {
         Some(x) => x,
         None => return None,
     };
-    let comp = match scalar_exec(b, le, o, n, 259, 1) {
+    let comp = match scalar_exec(b, le, o, n, 259, 1, Tracked(m)) {
         Some(x) => x,
         None => return None,
     };
-    let planar = match scalar_exec(b, le, o, n, 284, 1) {
+    let planar = match scalar_exec(b, le, o, n, 284, 1, Tracked(m)) {
         Some(x) => x,
         None => return None,
     };
-    let pred = match scalar_exec(b, le, o, n, 317, 1) {
+    let pred = match scalar_exec(b, le, o, n, 317, 1, Tracked(m)) {
         Some(x) => x,
         None => return None,
     };
-    let fill = match scalar_exec(b, le, o, n, 266, 1) {
+    let fill = match scalar_exec(b, le, o, n, 266, 1, Tracked(m)) {
         Some(x) => x,
         None => return None,
     };
-    let rps = match scalar_exec(b, le, o, n, 278, 0xffff_ffff) {
+    let rps = match scalar_exec(b, le, o, n, 278, 0xffff_ffff, Tracked(m)) {
         Some(x) => x,
         None => return None,
     };
-    let ph = match field_exec(b, le, o, n, 262) {
+    let ph = match field_counted(b, le, o, n, 262, Tracked(m)) {
         Ok(x) => x,
         Err(()) => return None,
     };
-    let bf = match field_exec(b, le, o, n, 258) {
+    let bf = match field_counted(b, le, o, n, 258, Tracked(m)) {
         Ok(x) => x,
         Err(()) => return None,
     };
-    let bps = match bits_exec(b, le, bf, spp) {
+    let bps = match bits_exec(b, le, bf, spp, Tracked(m)) {
         Some(x) => x,
         None => return None,
     };
@@ -260,7 +299,7 @@ pub fn params_exec(b: &[u8], le: bool, o: u32) -> (r: Option<ParamsX>)
         assert(params(bb, le, on) == params2(bb, le, on, nn, wv, hv, spp as nat, comp as nat, planar as nat,
             pred as nat, fill as nat, rps as nat, fview(bb, le, ph), bps as nat));
     }
-    params2_exec(b, le, o, n, wf, hf, spp, comp, planar, pred, fill, rps, ph, bps)
+    params2_exec(b, le, o, n, wf, hf, spp, comp, planar, pred, fill, rps, ph, bps, Tracked(m))
 }
 
 /// The rest of `params_exec` (`spec::params2`).
@@ -279,6 +318,7 @@ fn params2_exec(
     rps: u32,
     ph: Option<Field>,
     bps: u32,
+    Tracked(m): Tracked<&mut Meter>,
 ) -> (r: Option<ParamsX>)
     requires
         ifd_ok(b@, o as nat, n as nat),
@@ -292,6 +332,7 @@ fn params2_exec(
             Some(p) => r matches Some(x) && x.view(b@) == p && x.ok(b@) && x.le == le && p.wf(),
             None => r is None,
         },
+        final(m).n <= old(m).n + 15 * unit(b@.len()),
 {
     let ghost bb = b@;
     let uses = comp == 5 || comp == 8;
@@ -320,15 +361,15 @@ fn params2_exec(
         },
         None => return None,
     };
-    let twf = match field_exec(b, le, o, n, 322) {
+    let twf = match field_counted(b, le, o, n, 322, Tracked(m)) {
         Ok(x) => x,
         Err(()) => return None,
     };
-    let thf = match field_exec(b, le, o, n, 323) {
+    let thf = match field_counted(b, le, o, n, 323, Tracked(m)) {
         Ok(x) => x,
         Err(()) => return None,
     };
-    let fmt = match extras_exec(b, le, o, n, spp, bps, photometric) {
+    let fmt = match extras_exec(b, le, o, n, spp, bps, photometric, Tracked(m)) {
         Some(f) => f,
         None => return None,
     };
@@ -355,7 +396,7 @@ fn params2_exec(
         assert(none.values(bb, le) =~= Seq::<nat>::empty());
         assert(base.view(bb).offsets =~= Seq::<nat>::empty());
     }
-    layout_exec(b, le, o, n, base, twf, thf)
+    layout_exec(b, le, o, n, base, twf, thf, Tracked(m))
 }
 
 /// `spec::colours_ok`.
@@ -384,14 +425,15 @@ fn colours_exec(ph: u32, spp: u32, bps: u32, m: Option<u32>, inks: u32) -> (r: b
 }
 
 /// SMinSampleValue or SMaxSampleValue (`spec::sample_values_ok`).
-fn sample_values_exec(b: &[u8], le: bool, o: usize, n: usize, tag: u16, spp: u32) -> (r: bool)
+fn sample_values_exec(b: &[u8], le: bool, o: usize, n: usize, tag: u16, spp: u32, Tracked(m): Tracked<&mut Meter>) -> (r: bool)
     requires
         ifd_ok(b@, o as nat, n as nat),
     ensures
         r == sample_values_ok(b@, le, o as nat, n as nat, tag as nat, spp as nat),
+        final(m).n <= old(m).n + unit(b@.len()),
 {
     let l = b.len();
-    let i = match find_exec(b, le, o, n, tag) {
+    let i = match find_exec(b, le, o, n, tag, Tracked(m)) {
         None => return true,
         Some(i) => i,
     };
@@ -423,7 +465,7 @@ fn sample_values_exec(b: &[u8], le: bool, o: usize, n: usize, tag: u16, spp: u32
 
 /// `spec::extras`.
 #[verifier::loop_isolation(false)]
-fn extras_exec(b: &[u8], le: bool, o: usize, n: usize, spp: u32, bps: u32, photometric: u32) -> (r: Option<u32>)
+fn extras_exec(b: &[u8], le: bool, o: usize, n: usize, spp: u32, bps: u32, photometric: u32, Tracked(m): Tracked<&mut Meter>) -> (r: Option<u32>)
     requires
         ifd_ok(b@, o as nat, n as nat),
         1 <= bps <= 32,
@@ -432,27 +474,29 @@ fn extras_exec(b: &[u8], le: bool, o: usize, n: usize, spp: u32, bps: u32, photo
             Some(f) => r == Some(f as u32),
             None => r is None,
         },
+        final(m).n <= old(m).n + 8 * unit(b@.len()),
 {
+    let ghost m0 = m.n;
     let inks = if photometric == 5 {
-        match scalar_exec(b, le, o, n, 334, 4) {
+        match scalar_exec(b, le, o, n, 334, 4, Tracked(m)) {
             Some(x) => x,
             None => return None,
         }
     } else {
         4
     };
-    let sf = match field_exec(b, le, o, n, 339) {
+    let sf = match field_counted(b, le, o, n, 339, Tracked(m)) {
         Ok(x) => x,
         Err(()) => return None,
     };
-    let es = match field_exec(b, le, o, n, 338) {
+    let es = match field_counted(b, le, o, n, 338, Tracked(m)) {
         Ok(x) => x,
         Err(()) => return None,
     };
     let fmt = match sf {
         None => 1,
         Some(f) => {
-            if f.count == 0 || f.count != spp || !same_exec(b, le, f) {
+            if f.count == 0 || f.count != spp || !same_exec(b, le, f, Tracked(m)) {
                 return None;
             }
             value_exec(b, le, f, 0)
@@ -461,12 +505,16 @@ fn extras_exec(b: &[u8], le: bool, o: usize, n: usize, spp: u32, bps: u32, photo
     if !(1 <= fmt && fmt <= 4) {
         return None;
     }
-    let m: Option<u32> = match es {
+    let mx: Option<u32> = match es {
         None => None,
         Some(f) => Some(f.count),
     };
     if let Some(f) = es {
         let ghost v = f.values(b@, le);
+        let ghost m1 = m.n;
+        proof {
+            lemma_count_le(b@, f);
+        }
         let mut k: u32 = 0;
         while k < f.count
             invariant
@@ -474,8 +522,12 @@ fn extras_exec(b: &[u8], le: bool, o: usize, n: usize, spp: u32, bps: u32, photo
                 v == f.values(b@, le),
                 k <= f.count,
                 forall|j: int| 0 <= j < k ==> #[trigger] v[j] <= 2,
+                m.n <= m1 + k,
             decreases f.count - k,
         {
+            proof {
+                m.n = m.n + 1;
+            }
             if value_exec(b, le, f, k) > 2 {
                 assert(!(v[k as int] <= 2));
                 assert(!extra_values_ok(v));
@@ -484,7 +536,7 @@ fn extras_exec(b: &[u8], le: bool, o: usize, n: usize, spp: u32, bps: u32, photo
             k = k + 1;
         }
     }
-    if !colours_exec(photometric, spp, bps, m, inks) {
+    if !colours_exec(photometric, spp, bps, mx, inks) {
         return None;
     }
     if photometric == 3 {
@@ -494,7 +546,7 @@ fn extras_exec(b: &[u8], le: bool, o: usize, n: usize, spp: u32, bps: u32, photo
             vstd::arithmetic::power2::lemma2_to64();
         }
         let need = 3 * (1u64 << bps as u64);
-        match field_exec(b, le, o, n, 320) {
+        match field_counted(b, le, o, n, 320, Tracked(m)) {
             Ok(Some(f)) => if f.count as u64 != need {
                 return None;
             },
@@ -502,14 +554,14 @@ fn extras_exec(b: &[u8], le: bool, o: usize, n: usize, spp: u32, bps: u32, photo
         }
     }
     let blen = b.len();
-    if !sample_values_exec(b, le, o, n, 340, spp) || !sample_values_exec(b, le, o, n, 341, spp) {
+    if !sample_values_exec(b, le, o, n, 340, spp, Tracked(m)) || !sample_values_exec(b, le, o, n, 341, spp, Tracked(m)) {
         return None;
     }
     Some(fmt)
 }
 
 /// Where the strips or tiles are (`spec::layout`).
-fn layout_exec(b: &[u8], le: bool, o: usize, n: usize, base: ParamsX, twf: Option<Field>, thf: Option<Field>) -> (r: Option<ParamsX>)
+fn layout_exec(b: &[u8], le: bool, o: usize, n: usize, base: ParamsX, twf: Option<Field>, thf: Option<Field>, Tracked(m): Tracked<&mut Meter>) -> (r: Option<ParamsX>)
     requires
         ifd_ok(b@, o as nat, n as nat),
         twf matches Some(f) ==> f.ok(b@),
@@ -529,28 +581,29 @@ fn layout_exec(b: &[u8], le: bool, o: usize, n: usize, base: ParamsX, twf: Optio
             Some(p) => r matches Some(x) && x.view(b@) == p && x.ok(b@) && x.le == le && p.wf(),
             None => r is None,
         },
+        final(m).n <= old(m).n + 5 * unit(b@.len()),
 {
     let ghost bb = b@;
     let (tiled, offt, cntt): (bool, u16, u16) = match (twf, thf) {
         (None, None) => {
-            if present_exec(b, le, o, n, 324) || present_exec(b, le, o, n, 325) {
+            if present_exec(b, le, o, n, 324, Tracked(m)) || present_exec(b, le, o, n, 325, Tracked(m)) {
                 return None;
             }
             (false, 273, 279)
         },
         (Some(_), Some(_)) => {
-            if present_exec(b, le, o, n, 273) || present_exec(b, le, o, n, 279) || present_exec(b, le, o, n, 278) {
+            if present_exec(b, le, o, n, 273, Tracked(m)) || present_exec(b, le, o, n, 279, Tracked(m)) || present_exec(b, le, o, n, 278, Tracked(m)) {
                 return None;
             }
             (true, 324, 325)
         },
         _ => return None,
     };
-    let offs = match field_exec(b, le, o, n, offt) {
+    let offs = match field_counted(b, le, o, n, offt, Tracked(m)) {
         Ok(Some(f)) => f,
         _ => return None,
     };
-    let cnts = match field_exec(b, le, o, n, cntt) {
+    let cnts = match field_counted(b, le, o, n, cntt, Tracked(m)) {
         Ok(Some(f)) => f,
         _ => return None,
     };

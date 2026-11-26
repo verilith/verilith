@@ -127,12 +127,7 @@ impl Regex {
             return Err(Error::TooBig);
         }
         let ghost re = p.ast.re(p.classes@);
-        let prog = match compile::compile(&p.ast, p.classes, p.ngroups) {
-            Some(p) => p,
-            None => {
-                return Err(Error::TooBig);
-            },
-        };
+        let prog = compile::compile(&p.ast, p.classes, p.ngroups);
         Ok(Regex { prog: prog, names: p.names, re: Ghost(re) })
     }
 
