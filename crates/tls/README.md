@@ -11,9 +11,9 @@ parser, negotiation, the key schedule, record protection and the server
 handshake state machine, all proven, and talks to rustls clients with every
 TLS 1.3 cipher suite and X25519, P-256, P-384 and X25519MLKEM768. It does a
 full handshake with a certificate, issues session tickets, and resumes
-sessions from them (psk_dhe_ke), over TCP or, without records, for a QUIC
-transport (RFC 9001); no 0-RTT and no client certificates yet
-([plan](#plan)). The cryptography, ticket keys included, is
+sessions from them (psk_dhe_ke), with 0-RTT data if the server allows it,
+over TCP or, without records, for a QUIC transport (RFC 9001); no client
+certificates yet ([plan](#plan)). The cryptography, ticket keys included, is
 [`verilith-tls-aws-lc`](../tls-aws-lc), a separate crate.
 
 ```rust,ignore
@@ -150,7 +150,23 @@ definition names its section. The proofs show:
     server's application keys, and its ticket is one the provider sealed
     (`ticket_issued`) over this crate's ticket state holding the suite,
     the time, the `ticket_age_add` and the PSK RFC 8446 derives from this
-    connection's resumption_master_secret and the ticket's nonce;
+    connection's resumption_master_secret and the ticket's nonce; a
+    ticket also holds the ALPN protocol, and the `max_early_data_size`
+    its early_data extension advertises (only when the server takes
+    0-RTT data, `Config::set_early_data`);
+  - **0-RTT** (`spec_server::early_allowed`, §4.2.10, §8): the server
+    takes early data only on a resumption with no HelloRetryRequest,
+    when the ClientHello has early_data, the ticket allows it and was
+    issued for the same cipher suite and ALPN protocol, and the
+    provider's anti-replay accepted this ClientHello
+    (`crypto::early_claimed`). Then EncryptedExtensions carries
+    early_data, early records are opened (`Event::EarlyData`) only under
+    the key from `client_early_traffic_secret` over the ClientHello
+    (`SpecHs::c_early`), at most the advertised size in total, and only
+    until EndOfEarlyData; the client's Finished covers EndOfEarlyData
+    (`SpecHs::th_eoed`). The server may answer early data before the
+    client's Finished (0.5-RTT, §4.4.4), sealed under its application
+    keys, but only when it took early data;
   - the transcript hash is over exactly the messages §4.4.1 says, and every
     secret and key is the key schedule's for it;
   - `lemma_connected`: once Connected, the client's Finished was exactly
@@ -228,7 +244,12 @@ definition names its section. The proofs show:
   uninterpreted `hp_mask`). That includes session tickets: `ticket_issued` says a
   ticket is one the server sealed, holding a given state, and the proofs
   assume `open_ticket` opens only those (an AEAD under keys only the
-  server has), and the clock (`now`) used for ticket lifetimes. [`verilith-tls-aws-lc`](../tls-aws-lc) implements them
+  server has), and the clock (`now`) used for ticket lifetimes. For
+  0-RTT, `early_claimed` is the provider's anti-replay (RFC 8446 §8):
+  the proofs assume `claim_early` says yes at most once per ClientHello
+  within its freshness window. verilith-tls-aws-lc keeps a single-use
+  register of binders in the process, with a 10 s window on the ticket's
+  age; it does not span machines. [`verilith-tls-aws-lc`](../tls-aws-lc) implements them
   over aws-lc; it is a separate crate, outside the workspace and Buck,
   because aws-lc is C.
 - `stream.rs`, a byte-stream adapter that frames records and buffers
@@ -251,6 +272,11 @@ resumption with each suite (several in a row, each on a ticket the last
 one issued, with KeyUpdates), after a HelloRetryRequest, with a ticket
 from other keys, with no ticket keys or tickets turned off (full
 handshakes), a wrong binder (`decrypt_error`), and ticket key rotation.
+`../tls-aws-lc/tests/early.rs` sends 0-RTT data from rustls: taken and
+answered before the client's Finished, refused when the same flight is
+replayed to another connection (the handshake goes on at 1-RTT), not
+offered when tickets do not allow it, and skipped when the server turned
+it off after issuing the ticket.
 `../tls-aws-lc/tests/quic.rs` runs `QuicServer` against rustls's QUIC
 client: every suite with X25519, P-256 and X25519MLKEM768, a
 HelloRetryRequest, resumption from a ticket sent at 1-RTT, ClientHello one
@@ -353,7 +379,7 @@ still does the key exchange (psk_dhe_ke keeps forward secrecy).
    signature scheme, ALPN choice, and server name validation. *(done)*
 3. The server handshake state machine (§2, §4, Appendix A.2). *(done for
    the full handshake, HelloRetryRequest, session tickets and psk_dhe_ke
-   resumption; client certificates and 0-RTT next)*
+   resumption, and 0-RTT; client certificates next)*
 4. The key schedule (§7). *(done, over verilith-sha2's proven HMAC, so
    no HKDF is trusted)*
 5. Record protection (§5.2, §5.3). *(done)*
