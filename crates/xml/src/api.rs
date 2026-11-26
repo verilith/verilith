@@ -83,26 +83,6 @@ fn error_at(kind: ErrorKind, text: &[u8], offset: usize) -> Error {
     Error { kind, offset, line, column }
 }
 
-/// Where the first character that is not allowed is (diagnostic only).
-fn bad_char_at(s: &[u8]) -> usize {
-    let mut i = 0;
-    while i < s.len() {
-        let b = s[i];
-        if b < 0x80 {
-            if b < 0x20 && b != 0x09 && b != 0x0A && b != 0x0D {
-                return i;
-            }
-            i += 1;
-        } else {
-            match crate::chars::ex_cp_at_hi(s, i) {
-                Some((c, l)) if crate::lex::ex_is_char(c) => i += l,
-                _ => return i,
-            }
-        }
-    }
-    i
-}
-
 /// The declarations a document's content refers to: its own, or those of
 /// a stream's prolog (`Document::chunk`).
 #[cfg_attr(not(any(feature = "expat-abi", feature = "libxml2-abi")), allow(dead_code))]
@@ -195,16 +175,17 @@ fn parse_x<'a>(input: &'a [u8], load: bool, loader: &mut crate::pe::Loader, gene
             return Err(error_at(ErrorKind::Limit, text, doctype_at(&tape)));
         }
         Some((owned, _)) => {
-            let e = diagnose(input, &tape);
-            if e.kind == ErrorKind::Syntax && e.offset == 0 {
+            return Err(match diagnose(input) {
+                Some(e) => e,
                 // Rejected for what the DTD read whole holds: at the
                 // document type declaration.
-                let text: &[u8] = owned.as_deref().unwrap_or(input);
-                return Err(error_at(ErrorKind::Syntax, text, doctype_at(&tape)));
-            }
-            return Err(e);
+                None => {
+                    let text: &[u8] = owned.as_deref().unwrap_or(input);
+                    error_at(ErrorKind::Syntax, text, doctype_at(&tape))
+                }
+            });
         }
-        None => return Err(diagnose(input, &tape)),
+        None => return Err(rejected(input)),
     };
     if general {
         doc.read_external(loader)?;
@@ -217,29 +198,31 @@ fn doctype_at(tape: &Tape) -> usize {
     tape.toks.iter().find(|t| t.kind == Kind::Doctype).map_or(0, |t| t.a())
 }
 
-fn diagnose(input: &[u8], tape: &Tape) -> Error {
+/// Why `input` is not a well-formed document, and where: `None` if it is
+/// one as `parse` reads it (so the cause is elsewhere: what an external
+/// subset or parameter entity brought in). Decoding fails at offset 0;
+/// after it, the reason and offset are `diag::document_fail`'s, computed by
+/// the verified `diag::explain`, with `diag::line_col`'s line and column.
+fn diagnose(input: &[u8]) -> Option<Error> {
     let enc = crate::enc::ex_input_enc(input);
     let decoded = match crate::enc::ex_decode_input(input, enc) {
-        None => return error_at(ErrorKind::Encoding, input, 0),
+        None => return Some(Error { kind: ErrorKind::Encoding, offset: 0, line: 1, column: 1 }),
         Some(d) => d,
     };
     let text: &[u8] = decoded.as_deref().unwrap_or(input);
-    if text.len() as u64 > crate::tape::MAX_POS {
-        return error_at(ErrorKind::TooLarge, text, 0);
-    }
-    if !crate::chars::ex_doc_chars(text) {
-        return error_at(ErrorKind::Encoding, text, bad_char_at(text));
-    }
-    // The tape of the failed run is the decoded text's when the input was
-    // already UTF-8; otherwise run it again on the decoded text.
-    let err = if decoded.is_none() {
-        tape.err
-    } else {
-        let mut t = Tape::new();
-        let _ = crate::doc::ex_document(text, &mut t, enc);
-        t.err
+    let (offset, why) = crate::diag::explain(text, enc).err()?;
+    let kind = match why {
+        crate::diag::Why::Encoding => ErrorKind::Encoding,
+        crate::diag::Why::Syntax => ErrorKind::Syntax,
+        crate::diag::Why::TooLarge => ErrorKind::TooLarge,
     };
-    error_at(ErrorKind::Syntax, text, err)
+    let (line, column) = crate::diag::line_col(text, offset);
+    Some(Error { kind, offset, line, column })
+}
+
+/// `diagnose`, for input that `parse` rejects.
+pub(crate) fn rejected(input: &[u8]) -> Error {
+    diagnose(input).unwrap_or(Error { kind: ErrorKind::Syntax, offset: 0, line: 1, column: 1 })
 }
 
 fn utf8(b: &[u8]) -> &str {

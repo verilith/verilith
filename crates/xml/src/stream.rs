@@ -1787,7 +1787,7 @@ proof fn lemma_epilog_stop(b: Seq<u8>, seen: Seq<u8>, base: int, j: int, gt: Seq
 /// After the root element: white space, comments and processing
 /// instructions to the end.
 #[verifier::spinoff_prover]
-#[verifier::rlimit(100)]
+#[verifier::rlimit(200)]
 fn step_epilog(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
     requires
         old(w).inv(env_view(env)),

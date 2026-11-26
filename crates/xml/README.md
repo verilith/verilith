@@ -181,9 +181,9 @@ assert_eq!(texts.concat(), b"Hello");
 Everything in `src/spec.rs`, `src/chars.rs`, `src/lex.rs`, `src/dtd.rs`,
 `src/content.rs`, `src/doc.rs`, `src/ent.rs`, `src/enc.rs`, `src/decode.rs`,
 `src/uniq.rs`, `src/index.rs`, `src/atts.rs`, `src/reach.rs`, `src/scan.rs`, `src/lanes.rs`,
-`src/tape.rs`, `src/pe_spec.rs`, `src/pe.rs`, and of the push parser `src/stream_spec.rs`,
+`src/tape.rs`, `src/diag.rs`, `src/pe_spec.rs`, `src/pe.rs`, and of the push parser `src/stream_spec.rs`,
 `src/items_spec.rs`, `src/stream.rs`, `src/push.rs` and `src/reader.rs`, is checked by Verus (`./scripts/verify.sh`, which runs
-`cargo verus verify`: 2168 verified, 0 errors, in a few minutes on x86-64;
+`cargo verus verify`: 2202 verified, 0 errors, in a few minutes on x86-64;
 fewer for an AArch64 target, which has no SSE2 code. The SSE2 wrappers are
 verified in verilith-simd). The trusted base is listed under
 [What is not proven](#what-is-not-proven).
@@ -332,6 +332,23 @@ verified in verilith-simd). The trusted base is listed under
   being read (`pieces_from()` is then the number of tokens), the content's
   tokens come whole, with the tape's flags, and nothing is claimed about
   them as pieces. `tests/push.rs` checks `P_CR` on every piece too.
+* **Error reasons and positions.** `document_fail` in `src/diag.rs`
+  says which error a rejected text gets and where: it reads the text as
+  `document` does, item by item, and the error is at the first item that
+  is not well-formed. That is the first byte that is not part of a `Char`
+  (`Encoding`), the XML declaration, a comment or processing instruction,
+  the failing declaration of the internal subset (or the document type
+  declaration), or the failing item of content at its first byte, except
+  that in a start tag it is the attribute, `=`, quote or value that fails.
+  It is the end of the input when the input ends inside the root element
+  or the internal subset, and the first thing after the root element that
+  is not markup or white space. `lemma_document_fail` proves that it
+  reports an error exactly when `document` rejects the text. `explain` is
+  proven to return its error and `line_col` the line and column, so the
+  `Error` that `parse` returns for a document it rejects is that one.
+  The exception is an input that does not decode, which fails at offset 0.
+  When only what an external subset brought in is wrong (`parse_with`),
+  the error is at the document type declaration.
 * **Reading back.** `decode::eol` (line ends, §2.11) and
   `decode::att_norm` (the normalized value of an attribute, §3.3.3, with
   entity references expanded) state what the text means, and the
@@ -389,10 +406,9 @@ verified in verilith-simd). The trusted base is listed under
 * **The C ABIs' handlers on the push parser's pieces** are ordinary Rust
   (above): the flags they read (`P_CR`, `P_FIRST`, `P_LAST`) are proven
   (see "The flags on pieces"), what they do with them is not.
-* **Error positions** (`Tape::err`, and the line and column in `Error`)
-  are diagnostics outside the spec: the verified parser decides whether
-  the document is well-formed, and records where the step that failed
-  started.
+* **The C ABIs' error codes** (expat's `XML_Error`, libxml2's
+  `xmlParserErrors`) are worked out in plain Rust from the proven offset
+  (above) and the text around it.
 * **The spec itself.** Read it against the Recommendation; the W3C suite
   checks it (below).
 * **The trusted base:** verilith-simd's specifications of the six SSE2
@@ -978,6 +994,7 @@ src/lex.rs       white space, literals, references, values, comments, PIs, CDATA
 src/dtd.rs       the XML declaration and the document type declaration
 src/content.rs   start tags, the content loop, replacement text as content
 src/doc.rs       the prolog, attribute defaults, the document
+src/diag.rs      why and where a document is rejected
 src/ent.rs       replacement text, and which entities may be referred to where
 src/fix.rs       the least fixed point of Horn clauses, with a worklist
 src/enc.rs       encodings: choosing, UTF-16 and ISO-8859-1 decoders, parse
