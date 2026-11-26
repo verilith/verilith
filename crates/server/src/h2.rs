@@ -23,6 +23,7 @@ use verilith_http::Header;
 use verilith_http::parse::Span;
 
 use crate::flow::{take_data, RecvWindow, SendWindow, MAX_WINDOW};
+use crate::streams::{classify, Kind, St, Verdict};
 use crate::h1::{Ctx, Next, Out};
 use crate::{Handler, Request, Response};
 
@@ -68,15 +69,6 @@ impl Default for Limits2 {
     fn default() -> Self {
         Limits2 { max_streams: 256, window: 1 << 20, max_header_block: 64 * 1024, max_body: 1 << 20, control_per_request: 100 }
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum St {
-    /// Receiving the request (open).
-    Open,
-    /// The request is complete (half-closed remote); the response is
-    /// being sent.
-    HalfClosed,
 }
 
 struct Stream {
@@ -269,6 +261,11 @@ impl Conn2 {
     }
 
     /// Forgets a stream, keeping its buffers for reuse.
+    /// A stream's state, if it is open or half-closed.
+    fn state(&self, id: u32) -> Option<St> {
+        self.streams.get(&id).map(|s| s.st)
+    }
+
     fn close_stream(&mut self, id: u32) {
         if let Some(mut s) = self.streams.remove(&id) {
             if self.pool.len() < 64 {
@@ -388,29 +385,36 @@ impl Conn2 {
                     if !self.conn_send.grant(increment) {
                         return Action::Conn(FLOW_CONTROL_ERROR);
                     }
-                } else if let Some(s) = self.streams.get_mut(&stream) {
-                    if !s.send.grant(increment) {
-                        return Action::Rst(stream, FLOW_CONTROL_ERROR);
-                    }
-                } else if stream > self.last_stream {
-                    return Action::Conn(PROTOCOL_ERROR); // idle stream (§5.1)
+                    return Action::None;
                 }
-                Action::None
+                match classify(stream, self.last_stream, self.state(stream), Kind::WindowUpdate) {
+                    Verdict::Accept => {
+                        if let Some(s) = self.streams.get_mut(&stream) {
+                            if !s.send.grant(increment) {
+                                return Action::Rst(stream, FLOW_CONTROL_ERROR);
+                            }
+                        }
+                        Action::None
+                    }
+                    v => verdict_action(stream, v),
+                }
             }
             Frame::Priority { stream, prio } => {
                 self.control += 1;
                 if prio.dependency == stream {
                     return Action::Rst(stream, PROTOCOL_ERROR); // §5.3.1
                 }
-                Action::None
+                verdict_action(stream, classify(stream, self.last_stream, self.state(stream), Kind::Priority))
             }
             Frame::RstStream { stream, .. } => {
                 self.control += 1;
-                if stream > self.last_stream {
-                    return Action::Conn(PROTOCOL_ERROR);
+                match classify(stream, self.last_stream, self.state(stream), Kind::RstStream) {
+                    Verdict::Accept => {
+                        self.close_stream(stream);
+                        Action::None
+                    }
+                    v => verdict_action(stream, v),
                 }
-                self.close_stream(stream);
-                Action::None
             }
             Frame::GoAway { .. } => {
                 self.closing = true;
@@ -419,25 +423,20 @@ impl Conn2 {
             Frame::PushPromise { .. } => Action::Conn(PROTOCOL_ERROR), // §8.4: clients don't push
             Frame::Unknown { .. } => Action::None,
             Frame::Headers { stream, end_stream, end_headers, priority, fragment, .. } => {
-                if stream % 2 == 0 {
-                    return Action::Conn(PROTOCOL_ERROR);
+                let v = classify(stream, self.last_stream, self.state(stream), Kind::Headers { end_stream });
+                if !matches!(v, Verdict::Open | Verdict::Trailers) {
+                    return verdict_action(stream, v);
                 }
                 if let Some(p) = priority {
                     if p.dependency == stream {
                         return Action::Rst(stream, PROTOCOL_ERROR);
                     }
                 }
-                if stream <= self.last_stream {
-                    // Trailers on an open stream, or a reused ID.
-                    return match self.streams.get(&stream) {
-                        Some(s) if s.st == St::Open && end_stream => {
-                            self.block = Some(Block { stream, end_stream, len: 0 });
-                            self.header_fragment(fragment, end_headers, true)
-                        }
-                        Some(_) => Action::Conn(PROTOCOL_ERROR),
-                        None => Action::Conn(STREAM_CLOSED),
-                    };
+                if v == Verdict::Trailers {
+                    self.block = Some(Block { stream, end_stream, len: 0 });
+                    return self.header_fragment(fragment, end_headers, true);
                 }
+                // Verdict::Open: `stream` is odd and above every ID before it.
                 self.last_stream = stream;
                 self.block = Some(Block { stream, end_stream, len: 0 });
                 let refuse = self.streams.len() as u32 >= self.limits.max_streams;
@@ -485,12 +484,11 @@ impl Conn2 {
                 }
                 let max_body = self.limits.max_body;
                 let window = self.limits.window;
-                let Some(s) = self.streams.get_mut(&stream) else {
-                    return if stream > self.last_stream { Action::Conn(PROTOCOL_ERROR) } else { Action::Rst(stream, STREAM_CLOSED) };
-                };
-                if s.st != St::Open {
-                    return Action::Rst(stream, STREAM_CLOSED);
+                match classify(stream, self.last_stream, self.state(stream), Kind::Data) {
+                    Verdict::Accept => {}
+                    v => return verdict_action(stream, v),
                 }
+                let Some(s) = self.streams.get_mut(&stream) else { return Action::Rst(stream, STREAM_CLOSED) };
                 let update = match s.recv.receive(flow) {
                     Err(()) => return Action::Rst(stream, FLOW_CONTROL_ERROR),
                     Ok(u) => u,
@@ -687,6 +685,15 @@ impl Conn2 {
                 }
             }
         }
+    }
+}
+
+/// What a verdict other than Accept, Open or Trailers asks.
+fn verdict_action(stream: u32, v: Verdict) -> Action {
+    match v {
+        Verdict::Conn(c) => Action::Conn(c),
+        Verdict::Stream(c) => Action::Rst(stream, c),
+        _ => Action::None,
     }
 }
 

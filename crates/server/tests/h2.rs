@@ -280,3 +280,57 @@ fn reset_before_headers_keeps_table_in_step() {
     let (rs, _) = responses(&run(&c, &[]));
     assert_eq!(rs.last().unwrap().2, b"GET /b ");
 }
+
+/// The stream-state table (streams.rs) as the engine applies it.
+#[test]
+fn stream_states() {
+    let start = || {
+        let mut c = PREFACE.to_vec();
+        serialize(&Frame::Settings { ack: false, params: Params::new(&[]).unwrap() }, 16384, &mut c).unwrap();
+        c
+    };
+    let get = |c: &mut Vec<u8>, id: u32| {
+        let b = block(b"GET", b"/a");
+        serialize(&Frame::Headers { stream: id, end_stream: true, end_headers: true, pad: None, priority: None, fragment: &b }, 16384, c).unwrap();
+    };
+    // DATA, RST_STREAM and WINDOW_UPDATE on an idle stream: PROTOCOL_ERROR.
+    for f in [
+        Frame::Data { stream: 5, end_stream: false, pad: None, data: b"x" },
+        Frame::RstStream { stream: 5, code: 0 },
+        Frame::WindowUpdate { stream: 5, increment: 1 },
+        Frame::WindowUpdate { stream: 2, increment: 1 },
+    ] {
+        let mut c = start();
+        serialize(&f, 16384, &mut c).unwrap();
+        let (_, ctl) = responses(&run(&c, &[]));
+        assert!(ctl.contains(&"goaway 1".to_string()), "{f:?}: {ctl:?}");
+    }
+    // A finished stream's ID again: STREAM_CLOSED; and a lower new ID too.
+    for again in [1u32, 1] {
+        let mut c = start();
+        get(&mut c, 3);
+        get(&mut c, again);
+        let (rs, ctl) = responses(&run(&c, &[]));
+        assert_eq!(rs.len(), 1);
+        assert!(ctl.contains(&"goaway 5".to_string()), "{ctl:?}");
+    }
+    // WINDOW_UPDATE on a half-closed stream is fine; DATA there is a
+    // stream error (the stream is reset, its response dropped), and the
+    // connection goes on.
+    let mut c = start();
+    get(&mut c, 1);
+    serialize(&Frame::WindowUpdate { stream: 1, increment: 10 }, 16384, &mut c).unwrap();
+    serialize(&Frame::Data { stream: 1, end_stream: false, pad: None, data: b"x" }, 16384, &mut c).unwrap();
+    get(&mut c, 3);
+    let (rs, ctl) = responses(&run(&c, &[]));
+    assert_eq!(rs.iter().map(|r| r.0).collect::<Vec<_>>(), vec![3], "{ctl:?}");
+    assert!(ctl.contains(&"rst 1 5".to_string()), "{ctl:?}");
+    assert!(!ctl.iter().any(|l| l.starts_with("goaway")), "{ctl:?}");
+    // HEADERS without END_STREAM on an open stream (not trailers).
+    let mut c = start();
+    let b = block(b"POST", b"/a");
+    serialize(&Frame::Headers { stream: 1, end_stream: false, end_headers: true, pad: None, priority: None, fragment: &b }, 16384, &mut c).unwrap();
+    serialize(&Frame::Headers { stream: 1, end_stream: false, end_headers: true, pad: None, priority: None, fragment: &b }, 16384, &mut c).unwrap();
+    let (_, ctl) = responses(&run(&c, &[]));
+    assert!(ctl.contains(&"goaway 1".to_string()), "{ctl:?}");
+}
