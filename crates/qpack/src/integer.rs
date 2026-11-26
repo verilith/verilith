@@ -222,7 +222,7 @@ proof fn lemma_tail_rt(v: nat, rest: Seq<u8>, i: nat, acc: nat)
 }
 
 /// `int_tail` reads only from `pos` on.
-proof fn lemma_tail_shift(b: Seq<u8>, pos: int, i: nat, acc: nat)
+pub proof fn lemma_tail_shift(b: Seq<u8>, pos: int, i: nat, acc: nat)
     requires
         0 <= pos <= b.len(),
     ensures
@@ -345,6 +345,73 @@ proof fn lemma_tail_len_k(v: nat, k: nat)
             lemma_tail_len_k(v / 128, (k - 1) as nat);
         }
     }
+}
+
+} // verus!
+
+verus! {
+
+/// `int_dec` reads only from `pos` on.
+pub proof fn lemma_int_shift(b: Seq<u8>, pos: int, n: nat)
+    requires
+        0 <= pos <= b.len(),
+    ensures
+        int_dec(b, pos, n) == match int_dec(b.subrange(pos, b.len() as int), 0, n) {
+            IntR::Ok(v, e) => IntR::Ok(v, e + pos),
+            r => r,
+        },
+{
+    let c = b.subrange(pos, b.len() as int);
+    if pos < b.len() {
+        assert(c[0] == b[pos]);
+        let k = (p2(n) - 1) as nat;
+        if !((b[pos] as nat) % p2(n) < k) {
+            lemma_tail_shift(b, pos + 1, 0, k);
+            lemma_tail_shift(c, 1, 0, k);
+            assert(c.subrange(1, c.len() as int) =~= b.subrange(pos + 1, b.len() as int));
+        }
+    }
+}
+
+/// The first byte of an encoded integer: the flags plus a prefix value.
+pub proof fn lemma_int_first(flags: nat, n: nat, v: nat)
+    requires
+        1 <= n <= 8,
+        flags % p2(n) == 0,
+        flags < 256,
+    ensures
+        int_enc(flags, n, v)[0] as nat == flags + (if v < (p2(n) - 1) as nat { v } else { (p2(n) - 1) as nat }),
+        (if v < (p2(n) - 1) as nat { v } else { (p2(n) - 1) as nat }) < p2(n),
+        flags + (p2(n) - 1) < 256,
+{
+    lemma_pows();
+    assert(P2@[n as int] as nat == p2(n));
+    let k = (p2(n) - 1) as nat;
+    lemma_flags(flags, n, k);
+}
+
+/// An encoded integer at `b[pos]` decodes.
+pub proof fn lemma_int_at(b: Seq<u8>, pos: int, flags: nat, n: nat, v: nat)
+    requires
+        1 <= n <= 8,
+        flags % p2(n) == 0,
+        flags < 256,
+        v <= MAX_INT,
+        0 <= pos,
+        pos + int_enc(flags, n, v).len() <= b.len(),
+        b.subrange(pos, pos + int_enc(flags, n, v).len()) == int_enc(flags, n, v),
+    ensures
+        int_dec(b, pos, n) == IntR::Ok(v, pos + int_enc(flags, n, v).len()),
+        b[pos] as nat == int_enc(flags, n, v)[0] as nat,
+        1 <= int_enc(flags, n, v).len() <= 10,
+{
+    let x = int_enc(flags, n, v);
+    let c = b.subrange(pos, b.len() as int);
+    let rest = c.subrange(x.len() as int, c.len() as int);
+    lemma_int_rt(flags, n, v, rest);
+    assert(c =~= x + rest);
+    lemma_int_shift(b, pos, n);
+    assert(b[pos] == x[0]);
 }
 
 } // verus!

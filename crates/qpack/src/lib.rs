@@ -12,6 +12,7 @@ pub mod decoder;
 pub mod fields;
 pub mod section;
 pub mod strings;
+pub mod rt;
 
 #[cfg(verus_only)]
 vstd::prelude::verus! {
