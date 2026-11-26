@@ -16,3 +16,4 @@ pub mod spec;
 pub mod spec_keys;
 pub mod spec_record;
 pub mod spec_server;
+pub mod stream;

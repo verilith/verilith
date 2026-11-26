@@ -40,7 +40,7 @@ members = [
 # projects, are separate Cargo projects with their own lockfiles. So is the
 # Node.js source crates/bind/scripts/build-node.sh unpacks under a target/
 # directory: Node builds its own Rust crates there (deps/crates).
-exclude = ["bench", "target", "crates/bind/target"]
+exclude = ["bench", "target", "crates/bind/target", "crates/tls-aws-lc"]
 
 [workspace.dependencies]
 # The one Verus release every crate is verified with. The verifier itself is

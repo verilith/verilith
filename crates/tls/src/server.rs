@@ -143,6 +143,7 @@ impl Config {
 }
 
 /// Where a connection is (Appendix A.2).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Phase {
     /// Waiting for the ClientHello.
     Start,
@@ -165,6 +166,7 @@ enum State<K: AeadKey> {
 }
 
 /// What a record from the client came to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Event {
     /// Nothing for the caller.
     Nothing,
@@ -176,6 +178,7 @@ pub enum Event {
     Closed,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Error {
     /// The server sent this alert (it is at the end of `out`) and closed.
     Sent(u8),
