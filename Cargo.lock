@@ -1765,6 +1765,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "verilith-quic-conn"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "quinn-proto",
+ "rustls",
+ "verilith-quic",
+ "verilith-tls",
+ "verilith-tls-aws-lc",
+]
+
+[[package]]
 name = "verilith-regex"
 version = "0.1.0"
 dependencies = [

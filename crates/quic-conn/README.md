@@ -1,0 +1,119 @@
+# verilith-quic-conn
+
+A sans-I/O QUIC version 1 server (RFC 9000, RFC 9001, RFC 9002). Datagrams
+go in, datagrams come out, and the caller owns the socket and the clock.
+It is built to replace quinn-proto under Verilith's HTTP/3 server.
+
+## What is verified, and what is not
+
+Every step that has a specification is done by a verified component:
+
+- **`verilith-quic`**:
+  - packet headers and packet numbers;
+  - all frame types and transport parameters;
+  - flow control and stream ID limits, and the stream state machines;
+  - the anti-amplification limit;
+  - sent-packet tracking, ACK processing and loss detection;
+  - the RTT estimator and PTO, and NewReno congestion control;
+  - received-packet tracking and the ACK frames built from it.
+- **`verilith-tls`**:
+  - the TLS 1.3 handshake for QUIC;
+  - Initial secrets;
+  - packet and header protection;
+  - key updates.
+
+This crate is the glue between them, and it is **plain Rust**, not verified
+yet. It covers:
+
+- routing datagrams to connections;
+- the three packet number spaces and when their keys are installed and
+  discarded;
+- dispatching frames to the components;
+- stream buffers (`buf.rs`);
+- what goes into each packet;
+- timers;
+- closing.
+
+It has no `unsafe`. Verifying it is the next step: its decisions are
+already made by verified code, so what remains to prove is panic freedom
+and the plumbing between those decisions.
+
+## What it does
+
+- **Handshake.** It runs the TLS 1.3 handshake at the Initial and Handshake
+  levels, with coalesced packets.
+  - Datagrams carrying ack-eliciting Initial packets are padded to 1200
+    bytes.
+  - Initial keys are discarded on the client's first Handshake packet.
+    The client's address is validated at the same point.
+  - Handshake keys are discarded once the handshake completes, and
+    HANDSHAKE_DONE is sent then.
+  - 1-RTT packets that arrive before the handshake completes are kept,
+    four at most, and processed once it does.
+- **Transport parameters.** It checks the client's transport parameters,
+  including initial_source_connection_id (§7.3).
+- **Streams.**
+  - Bidirectional and unidirectional streams can be opened by either side.
+  - Stream and connection flow control raise MAX_STREAM_DATA and MAX_DATA
+    as data is read.
+  - MAX_STREAMS is raised as the peer's streams close.
+  - RESET_STREAM and STOP_SENDING are supported both ways.
+- **Loss recovery.**
+  - It retransmits the frames of lost packets (data, CRYPTO and control
+    frames).
+  - On a PTO it sends two probe packets, with outstanding data sent again.
+  - It follows the congestion window, and ACK-only packets are exempt.
+- **Key updates** started by the peer (RFC 9001 §6).
+- **Connection lifetime.**
+  - Idle timeout.
+  - Closing and draining states.
+  - CONNECTION_CLOSE in every space that has keys.
+- **Version Negotiation** for unknown versions.
+- **Segmentation offload.** `poll_transmit` writes up to `max` datagrams of
+  one size for GSO.
+
+Not yet supported:
+
+- Retry and address-validation tokens.
+- Starting a key update itself.
+- Issuing more than one connection ID, migration, and stateless reset.
+- Pacing, ECN, path MTU discovery, and 0-RTT.
+
+## Tests
+
+`tests/quinn.rs` runs the server against quinn-proto's client. Everything is
+in memory with a virtual clock.
+
+- **Handshakes:** one request; 29 seeds with 30% loss in each direction.
+- **Volume:** 300 requests on one connection, including 3 MB responses.
+- **Lossy path:** 5% loss with reordering, over 5 seeds.
+- **Flow control:** stream windows of 4000 bytes and a connection window of
+  10,000, with more requests than allowed streams.
+- **Key updates:** three updates started by the client.
+- **Server-opened streams:** a unidirectional stream opened by the server.
+- **Stop and reset:** STOP_SENDING answered with RESET_STREAM; a request
+  reset by the client.
+- **Closing:** a close by the server; the idle timeout.
+
+`src/buf.rs` has unit tests for the stream buffers.
+
+## Performance
+
+`cargo run --release --example bench` measures server CPU time only:
+
+- each server is driven by quinn-proto's client over an in-memory network
+  with no delay and no loss;
+- both servers use 1452-byte datagrams and the same flow control windows;
+- both use aws-lc for cryptography;
+- each figure is the fastest of three runs, on a 4-vCPU cloud x86 VM.
+
+| case | verilith-quic-conn | quinn-proto 0.11.19 |
+|---|---:|---:|
+| bulk: 1 connection, 4 x 64 MiB | **123 ms** | 152 ms |
+| requests: 1 connection, 20000 x 1 KiB, 50 at a time | **14.8 ms** | 20.5 ms |
+| requests: 10 connections, 2000 x 16 KiB each, 20 at a time | **135 ms** | 190 ms |
+| handshakes: 500 connections, 1 x 1 KiB | **34.2 ms** | 86.6 ms |
+
+Neither server issues session tickets or accepts 0-RTT. quinn-proto paces
+its sending; this crate does not yet, which a real network may reward
+differently from this in-memory one.

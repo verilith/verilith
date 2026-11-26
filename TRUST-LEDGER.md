@@ -43,6 +43,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | png | 2 |  |  |  |  |  | 7 |
 | qpack | 9 |  |  |  |  |  | 2 |
 | quic |  |  |  |  |  |  | 1 |
+| quic-conn |  |  |  |  |  |  | 3 |
 | regex | 1 |  |  |  |  |  | 3 |
 | server | 5 |  |  |  | 1 |  | 14 |
 | sha2 | 34 |  |  |  |  |  | 3 |
@@ -62,7 +63,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 3 |  |  |  |  |  | 3 |
 | zstd | 9 |  |  |  |  |  | 1 |
-| **total** | **665** | **35** | **274** | **5** | **17** | **12** | **127** |
+| **total** | **665** | **35** | **274** | **5** | **17** | **12** | **130** |
 
 ## Items
 
@@ -196,6 +197,12 @@ not occur in any crate's `src/` (the script fails if one appears).
 ### quic
 
 - `crates/quic/src/lib.rs`: plain Rust
+
+### quic-conn
+
+- `crates/quic-conn/src/buf.rs`: plain Rust
+- `crates/quic-conn/src/conn.rs`: plain Rust
+- `crates/quic-conn/src/lib.rs`: plain Rust
 
 ### regex
 
