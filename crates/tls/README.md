@@ -7,9 +7,9 @@ primitives (AEAD, HKDF, signatures, key exchange) stay in aws-lc and are
 trusted; everything that decides what a byte from the peer means is proven.
 
 **Status: first parts.** This release has the ClientHello parser, the
-record and handshake message headers, and negotiation (what a server
-chooses from a ClientHello). The server handshake state machine and the
-key schedule come next ([plan](#plan)).
+record and handshake message headers, negotiation (what a server chooses
+from a ClientHello), and the key schedule. The server handshake state
+machine and record protection come next ([plan](#plan)).
 
 ClientHello parsing is the part of a TLS server an unauthenticated peer
 reaches first, with the most structure: nested length-prefixed vectors,
@@ -73,6 +73,19 @@ definition names its section. The proofs show:
   63 letters, digits, hyphens and underscores, not starting or ending with
   a hyphen, at most 253 bytes, no final dot), with no IPv4 or IPv6
   literals.
+- **The key schedule** (`keys.rs`) computes exactly `spec_keys.rs`, which
+  is RFC 8446 §7 written over HKDF (RFC 5869) and HMAC: HKDF-Extract,
+  HKDF-Expand with its T(i) blocks, the `HkdfLabel` encoding,
+  HKDF-Expand-Label and Derive-Secret; the Early, Handshake and Master
+  Secrets for a handshake without a PSK; the handshake and application
+  traffic secrets, the exporter and resumption master secrets; traffic
+  keys and IVs (§7.3); Finished's `verify_data` (§4.4.4); the next
+  traffic secret of a KeyUpdate (§7.2); and the per-record nonce (§5.3),
+  the IV XORed with the left-padded sequence number. The transcript hash
+  is a running SHA-256 or SHA-384, proven to be the hash of every message
+  given to it. HMAC and SHA-2 are verilith-sha2's, which are proven too
+  (against FIPS 198-1 and FIPS 180-4), so the key schedule assumes nothing
+  of its own. It does not allocate.
 - **Record and handshake headers** (`record.rs`) read exactly
   `spec::record_header` and `spec::handshake_message`.
 - No panics, no overflow, no out-of-bounds access, in all of the above. No
@@ -84,15 +97,18 @@ definition names its section. The proofs show:
 
 ## Trusted base
 
-- **The spec** (`spec.rs`). Read it against the RFCs.
-- Verus, vstd, Z3, rustc; and verilith-core's `bytes::be16`, a spec
-  function.
+- **The spec** (`spec.rs`, `spec_keys.rs`). Read them against the RFCs.
+- Verus, vstd, Z3, rustc; verilith-core's `bytes::be16`, a spec function;
+  and verilith-sha2's specifications of SHA-2 and HMAC (and its own
+  trusted base: the SHA instructions' specifications and CPU detection).
 
 There is no `external_body` in this crate.
 
 ## Tests
 
-`tests/negotiate.rs` negotiates with the real ClientHellos under several
+`tests/keys.rs` checks the key schedule against RFC 8448's early and
+derived secrets and, for both hashes and 100 random handshakes, against
+a schedule built on RustCrypto's `hkdf` crate. `tests/negotiate.rs` negotiates with the real ClientHellos under several
 server preferences (server preference wins, HelloRetryRequest, each
 alert) and checks host names. `tests/hello.rs` parses real ClientHellos (`tests/data`, captured by
 `tools/gen_hellos.py` from Python's OpenSSL, which offers X25519MLKEM768,
@@ -142,11 +158,12 @@ returns spans.
    handshake, HelloRetryRequest, PSK resumption, proven to send and accept
    messages only in the order the RFC allows, with the transcript hash over
    exactly the messages §4.4.1 says.
-4. The key schedule (§7.1) and record protection (§5.2, §5.3): the
-   HKDF-Expand-Label inputs and the derivation order proven against the
-   RFC, nonces proven never to repeat, with HKDF, HMAC and the AEADs from
-   aws-lc, trusted.
-5. A drop-in under rustls's server API where the server needs it, and
+4. The key schedule (§7). *(done, over verilith-sha2's proven HMAC, so
+   no HKDF is trusted)*
+5. Record protection (§5.2, §5.3): TLSInnerPlaintext framing and
+   padding, sequence numbers proven never to repeat under one key, with
+   the AEADs from aws-lc, trusted.
+6. A drop-in under rustls's server API where the server needs it, and
    benchmarks of full handshakes against rustls.
 
 ## Licence
