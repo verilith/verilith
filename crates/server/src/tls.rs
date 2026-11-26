@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use verilith_tls::stream::ServerStream;
-use verilith_tls_aws_lc::{AwsLc, SigningKey, GROUPS, SUITES};
+use verilith_tls_aws_lc::{AwsLc, SigningKey, TicketKeys, GROUPS, SUITES};
 
 use crate::h1::{Conn, Ctx, Limits, Next};
 use crate::h2::{Conn2, Limits2};
@@ -20,7 +20,9 @@ const ALPN: &[u8] = b"\x02h2\x08http/1.1";
 
 /// A server's TLS configuration: certificate chain and key.
 pub enum Config {
-    Verilith { cfg: Arc<verilith_tls::server::Config>, key: Arc<SigningKey> },
+    /// `tickets`: the session-ticket keys every worker shares, so a
+    /// ticket from one resumes on any.
+    Verilith { cfg: Arc<verilith_tls::server::Config>, key: Arc<SigningKey>, tickets: Arc<TicketKeys> },
     #[cfg(feature = "tls-rustls")]
     Rustls(Arc<rustls::ServerConfig>),
 }
@@ -83,9 +85,14 @@ fn base64(s: &str) -> Option<Vec<u8>> {
 /// PKCS#8 key (DER): ECDSA P-256/P-384, Ed25519 or RSA.
 pub fn config_der(chain: Vec<Vec<u8>>, key_pkcs8: &[u8]) -> std::io::Result<Arc<Config>> {
     let key = SigningKey::from_pkcs8(key_pkcs8).ok_or_else(|| bad("the key is not PKCS#8 ECDSA, Ed25519 or RSA"))?;
-    let cfg = verilith_tls::server::Config::new(SUITES.to_vec(), GROUPS.to_vec(), key.schemes().to_vec(), ALPN.to_vec(), &chain)
+    let mut cfg = verilith_tls::server::Config::new(SUITES.to_vec(), GROUPS.to_vec(), key.schemes().to_vec(), ALPN.to_vec(), &chain)
         .ok_or_else(|| bad("the certificate chain is empty or too long"))?;
-    Ok(Arc::new(Config::Verilith { cfg: Arc::new(cfg), key: Arc::new(key) }))
+    // Two tickets per connection, valid as long as the ticket keys rotate
+    // (6 h).
+    const TICKET_LIFETIME: u32 = 6 * 3600;
+    cfg.set_tickets(2, TICKET_LIFETIME);
+    let tickets = Arc::new(TicketKeys::new(TICKET_LIFETIME as u64));
+    Ok(Arc::new(Config::Verilith { cfg: Arc::new(cfg), key: Arc::new(key), tickets }))
 }
 
 /// A configuration for `cert`/`key` (PEM files; the key "PRIVATE KEY",
@@ -112,8 +119,10 @@ pub fn rustls_config(cert: &str, key: &str) -> std::io::Result<Arc<Config>> {
         .with_single_cert(certs, key)
         .map_err(|e| std::io::Error::other(e.to_string()))?;
     c.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-    // Like verilith-tls: full handshakes, no tickets.
-    c.send_tls13_tickets = 0;
+    // Like verilith-tls: two tickets, resumed on any worker (rustls's
+    // default ticketer is process-wide).
+    c.send_tls13_tickets = 2;
+    c.ticketer = rustls::crypto::aws_lc_rs::Ticketer::new().map_err(|e| std::io::Error::other(e.to_string()))?;
     Ok(Arc::new(Config::Rustls(Arc::new(c))))
 }
 
@@ -296,7 +305,9 @@ pub struct TlsConn {
 impl TlsConn {
     pub fn new(cfg: Arc<Config>, limits: Limits, limits2: Limits2) -> Option<TlsConn> {
         let tls = match &*cfg {
-            Config::Verilith { cfg, key } => Session::V(Box::new(ServerStream::new(cfg.clone(), AwsLc::shared(key.clone())))),
+            Config::Verilith { cfg, key, tickets } => {
+                Session::V(Box::new(ServerStream::new(cfg.clone(), AwsLc::shared(key.clone()).with_tickets(tickets.clone()))))
+            }
             #[cfg(feature = "tls-rustls")]
             Config::Rustls(c) => Session::R(Box::new(rustls::ServerConnection::new(c.clone()).ok()?)),
         };

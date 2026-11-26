@@ -1,0 +1,164 @@
+{
+ "meta": {
+  "date": "2026-11-26T08:58",
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+  "ncpu": 4,
+  "server_cpus": "0-1",
+  "client_cpus": "2-3",
+  "rounds": 1,
+  "duration": 3.0,
+  "versions": {
+   "verilith": "843851b",
+   "verilith-rustls": "843851b",
+   "nginx": "1.24.0 (Ubuntu)",
+   "hyper": "1.13.0",
+   "h2o": "2.2.5"
+  }
+ },
+ "results": {
+  "h1-tls-close": {
+   "verilith": [
+    {
+     "rps": 5557.25,
+     "requests": 17031,
+     "p50": 0.00284,
+     "p90": 0.00461,
+     "p99": 0.006019999999999999,
+     "errors": 0,
+     "raw": "Running 3s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 64 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     3.00ms    1.57ms  20.45ms   77.89%\n    Req/Sec     2.80k   533.07     4.52k    85.00%\n  Latency Distribution\n     50%    2.84ms\n     75%    3.80ms\n     90%    4.61ms\n     99%    6.02ms\n  17031 requests in 3.06s, 2.47MB read\nRequests/sec:   5557.25\nTransfer/sec:    824.90KB\n",
+     "server_cpu_s": 2.0700000000000003,
+     "wall_s": 3.074960708618164,
+     "req_per_cpu_s": 8227.536231884056
+    }
+   ],
+   "verilith-rustls": [
+    {
+     "rps": 5221.18,
+     "requests": 15955,
+     "p50": 0.00285,
+     "p90": 0.00461,
+     "p99": 0.006019999999999999,
+     "errors": 0,
+     "raw": "Running 3s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 64 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     3.03ms    1.26ms  19.22ms   72.15%\n    Req/Sec     2.63k   529.01     4.04k    66.67%\n  Latency Distribution\n     50%    2.85ms\n     75%    3.76ms\n     90%    4.61ms\n     99%    6.02ms\n  15955 requests in 3.06s, 2.31MB read\nRequests/sec:   5221.18\nTransfer/sec:    775.02KB\n",
+     "server_cpu_s": 3.02,
+     "wall_s": 3.0667643547058105,
+     "req_per_cpu_s": 5283.112582781457
+    }
+   ],
+   "nginx": [
+    {
+     "rps": 5976.8,
+     "requests": 18136,
+     "p50": 0.0029700000000000004,
+     "p90": 0.00811,
+     "p99": 0.01161,
+     "errors": 0,
+     "raw": "Running 3s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 64 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     3.87ms    2.96ms  24.98ms   68.89%\n    Req/Sec     3.02k   434.26     3.76k    65.00%\n  Latency Distribution\n     50%    2.97ms\n     75%    5.85ms\n     90%    8.11ms\n     99%   11.61ms\n  18136 requests in 3.03s, 2.58MB read\nRequests/sec:   5976.80\nTransfer/sec:    869.67KB\n",
+     "server_cpu_s": 5.380000000000001,
+     "wall_s": 3.0439252853393555,
+     "req_per_cpu_s": 3371.0037174721183
+    }
+   ],
+   "hyper": [
+    {
+     "rps": 6390.87,
+     "requests": 19502,
+     "p50": 0.00223,
+     "p90": 0.0035099999999999997,
+     "p99": 0.005240000000000001,
+     "errors": 0,
+     "raw": "Running 3s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 64 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     2.39ms    0.92ms  17.28ms   76.99%\n    Req/Sec     3.23k   649.76     4.29k    60.00%\n  Latency Distribution\n     50%    2.23ms\n     75%    2.80ms\n     90%    3.51ms\n     99%    5.24ms\n  19502 requests in 3.05s, 2.77MB read\nRequests/sec:   6390.87\nTransfer/sec:      0.91MB\n",
+     "server_cpu_s": 3.98,
+     "wall_s": 3.062180995941162,
+     "req_per_cpu_s": 4900.0
+    }
+   ],
+   "h2o": [
+    {
+     "rps": 4031.96,
+     "requests": 12375,
+     "p50": 0.00561,
+     "p90": 0.010140000000000001,
+     "p99": 0.0156,
+     "errors": 0,
+     "raw": "Running 3s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 64 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     6.10ms    3.04ms  26.11ms   70.66%\n    Req/Sec     2.05k   443.96     2.97k    68.33%\n  Latency Distribution\n     50%    5.61ms\n     75%    7.77ms\n     90%   10.14ms\n     99%   15.60ms\n  12375 requests in 3.07s, 1.81MB read\nRequests/sec:   4031.96\nTransfer/sec:    603.01KB\n",
+     "server_cpu_s": 4.9799999999999995,
+     "wall_s": 3.0795674324035645,
+     "req_per_cpu_s": 2484.939759036145
+    }
+   ]
+  },
+  "h1-tls-plaintext": {
+   "verilith": [
+    {
+     "rps": 215978.0,
+     "requests": 659256,
+     "p50": 0.000554,
+     "p90": 0.00093,
+     "p99": 0.00316,
+     "errors": 0,
+     "raw": "Running 3s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency   768.90us    1.81ms  50.42ms   98.84%\n    Req/Sec   110.44k    21.35k  143.85k    75.00%\n  Latency Distribution\n     50%  554.00us\n     75%  743.00us\n     90%    0.93ms\n     99%    3.16ms\n  659256 requests in 3.05s, 83.62MB read\nRequests/sec: 215978.00\nTransfer/sec:     27.39MB\n",
+     "server_cpu_s": 4.26,
+     "wall_s": 3.0634870529174805,
+     "req_per_cpu_s": 154754.9295774648
+    }
+   ],
+   "verilith-rustls": [
+    {
+     "rps": 215299.53,
+     "requests": 657846,
+     "p50": 0.00054,
+     "p90": 0.00093,
+     "p99": 0.00204,
+     "errors": 0,
+     "raw": "Running 3s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency   715.64us    1.61ms  59.75ms   99.13%\n    Req/Sec   110.14k    20.87k  146.56k    81.67%\n  Latency Distribution\n     50%  540.00us\n     75%  712.00us\n     90%    0.93ms\n     99%    2.04ms\n  657846 requests in 3.06s, 83.44MB read\nRequests/sec: 215299.53\nTransfer/sec:     27.31MB\n",
+     "server_cpu_s": 4.420000000000001,
+     "wall_s": 3.066770076751709,
+     "req_per_cpu_s": 148833.93665158367
+    }
+   ],
+   "nginx": [
+    {
+     "rps": 191898.52,
+     "requests": 588623,
+     "p50": 0.00113,
+     "p90": 0.0016899999999999999,
+     "p99": 0.00696,
+     "errors": 0,
+     "raw": "Running 3s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     1.43ms    3.21ms  76.76ms   98.71%\n    Req/Sec    98.64k    23.64k  135.77k    85.00%\n  Latency Distribution\n     50%    1.13ms\n     75%    1.39ms\n     90%    1.69ms\n     99%    6.96ms\n  588623 requests in 3.07s, 86.45MB read\nRequests/sec: 191898.52\nTransfer/sec:     28.18MB\n",
+     "server_cpu_s": 5.78,
+     "wall_s": 3.0798840522766113,
+     "req_per_cpu_s": 101837.8892733564
+    }
+   ],
+   "hyper": [
+    {
+     "rps": 187307.01,
+     "requests": 577109,
+     "p50": 0.00111,
+     "p90": 0.00176,
+     "p99": 0.00265,
+     "errors": 0,
+     "raw": "Running 3s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     1.18ms    1.38ms  97.44ms   98.78%\n    Req/Sec    97.74k    20.50k  135.14k    84.75%\n  Latency Distribution\n     50%    1.11ms\n     75%    1.41ms\n     90%    1.76ms\n     99%    2.65ms\n  577109 requests in 3.08s, 71.55MB read\nRequests/sec: 187307.01\nTransfer/sec:     23.22MB\n",
+     "server_cpu_s": 5.67,
+     "wall_s": 3.094074010848999,
+     "req_per_cpu_s": 101782.89241622575
+    }
+   ],
+   "h2o": [
+    {
+     "rps": 151061.59,
+     "requests": 463358,
+     "p50": 0.0015,
+     "p90": 0.00227,
+     "p99": 0.00649,
+     "errors": 0,
+     "raw": "Running 3s test @ https://127.0.0.1:18443/plaintext\n  2 threads and 256 connections\n  Thread Stats   Avg      Stdev     Max   +/- Stdev\n    Latency     1.75ms    2.10ms  71.99ms   98.03%\n    Req/Sec    77.70k    15.05k   92.87k    95.00%\n  Latency Distribution\n     50%    1.50ms\n     75%    1.82ms\n     90%    2.27ms\n     99%    6.49ms\n  463358 requests in 3.07s, 69.82MB read\nRequests/sec: 151061.59\nTransfer/sec:     22.76MB\n",
+     "server_cpu_s": 5.8500000000000005,
+     "wall_s": 3.079594612121582,
+     "req_per_cpu_s": 79206.49572649572
+    }
+   ]
+  }
+ }
+}
