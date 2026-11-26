@@ -41,8 +41,20 @@ worker and get a zero-copy view of the request.
 
 ## What is proven
 
-`scripts/verify.sh` (Verus): 48 verified, 0 errors.
+`scripts/verify.sh` (Verus): 87 verified, 0 errors.
 
+- **Requests are exactly the specification's, in order** (`conn.rs`,
+  the invariant of `Core`). `first` is the request at the front of a byte
+  stream by verilith-http's specification: `spec::parse_request` for the
+  head, `spec::request_body` for the framing, `chunked::run` for a chunked
+  body. At every moment, the requests the server has handed to handlers
+  are the stream's first requests back to back (`prefix_ok` of every byte
+  received), whatever the bytes are and however they were split into
+  reads: the server never acts on a request the specification does not
+  see at that place, never skips one, and never disagrees with it about
+  where a body ends, including chunked bodies decoded in place across
+  reads and buffer moves. Request smuggling and desynchronization within a
+  connection are ruled out by the theorem.
 - **Responses parse back exactly** (`respond::theorem_head_parses`). For
   any status, reason phrase, field lines and framing that pass the checks
   in `respond.rs`, the head `write_head` writes, followed by any bytes at
@@ -72,16 +84,10 @@ deviations reads the same head end and framing), and the chunked decoder.
 
 ## What is not proven yet
 
-- **The connection engine** (`h1.rs`): where each next request starts
-  (head length plus the framing's body), when to close (RFC 9112 §9.3),
-  and that responses go out in request order. It is a few hundred lines of
-  glue that only calls the verified parser, decoder and writer, and is
-  tested in `tests/h1.rs`: every split of a pipelined stream (each single
-  and double cut, and one byte at a time) gives the same output, every
-  response parses back with verilith-http, and the smuggling shapes
-  (CL+TE, differing Content-Lengths, bare LF in chunks, obsolete folding)
-  get one 400 and a closed connection. Verifying it is the next proof
-  milestone in DESIGN.md.
+- **Persistence and response order** (`h1.rs`): when to close (RFC 9112
+  §9.3: `Connection: close`, HTTP/1.0 without keep-alive, a handler's
+  choice) and that responses are queued in request order. Plain Rust
+  around the verified core; tested in `tests/h1.rs`.
 - **The HTTP/2 engine** (`h2.rs`): stream states, flow control, SETTINGS,
   PING/GOAWAY and the control-frame flood limit. It only reads frames
   through verilith-h2's verified parser and header blocks through
