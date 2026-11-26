@@ -9,6 +9,7 @@
 use crate::chars::*;
 use crate::content::*;
 use crate::doc::*;
+use crate::items_spec::*;
 use crate::dtd::*;
 use crate::lex::*;
 use crate::spec::*;
@@ -169,6 +170,16 @@ pub const P_FIRST: u8 = 2;
 /// The last piece of a CDATA section.
 pub const P_LAST: u8 = 4;
 
+/// What the window has emitted, in the spec's terms (for the proof only).
+pub struct Emitted {
+    /// What the chunks before this one emitted, at positions in the input.
+    pub prev: Seq<XTok>,
+    /// What was emitted for each token of `Win::gt`.
+    pub groups: Seq<Seq<XTok>>,
+    /// The pieces emitted of the text or CDATA section being read.
+    pub open: Seq<XTok>,
+}
+
 /// The window the parser reads the root element through: the input it has not finished with, and the open elements.
 pub struct Win {
     /// The input from `base`.
@@ -202,6 +213,8 @@ pub struct Win {
     pub gt: Ghost<Seq<XTok>>,
     /// Where the text or CDATA section being read starts, in the input.
     pub gts: Ghost<int>,
+    /// What has been emitted.
+    pub ge: Ghost<Emitted>,
 }
 
 impl Win {
@@ -295,6 +308,28 @@ impl Win {
             2int
         } else {
             0int
+        }
+    }
+
+    /// Every token emitted so far, at positions in the input: the earlier
+    /// chunks', then this chunk's.
+    pub open spec fn emitted(&self) -> Seq<XTok> {
+        self.ge@.prev + mv(self.out@, -(self.base as int), 0)
+    }
+
+    /// What has been emitted is the tokens so far (`gt`), each as its
+    /// group, then the pieces of the text or CDATA section being read.
+    pub open spec fn emits(&self) -> bool {
+        let o = self.ge@.open;
+        &&& grps(self.ge@.groups, self.gt@)
+        &&& self.emitted() == flat(self.ge@.groups) + o
+        &&& opens_in(self.gst@, self.gt@.len() as int)
+        &&& self.mode == M_ITEM ==> o.len() == 0
+        &&& self.mode == M_TEXT ==> run(o, false, self.gts@, self.base + self.tem)
+        &&& self.mode == M_CDATA ==> if self.tfirst {
+            o.len() == 0 && self.base + self.tem == self.gts@ + 9
+        } else {
+            o.len() > 0 && run(o, true, self.gts@ + 9, self.base + self.tem)
         }
     }
 
@@ -448,6 +483,8 @@ pub fn win_push_name(w: &mut Win, a: usize, e: usize, Ghost(p): Ghost<Open>)
         final(w).gt == old(w).gt,
         final(w).gts == old(w).gts,
         final(w).out == old(w).out,
+        final(w).ge == old(w).ge,
+        final(w).tfirst == old(w).tfirst,
 {
     let ghost names0 = w.names@;
     let ghost ends0 = w.ends@;
@@ -506,9 +543,71 @@ pub proof fn lemma_ext_span(seen: Seq<u8>, s: Seq<u8>, a: int, b: int)
     assert(s.subrange(a, b) =~= seen.subrange(a, b));
 }
 
+/// `Win::names_ok` for the names, their ends and the open elements, as
+/// plain sequences.
+pub open spec fn names_rel(names: Seq<u8>, ends: Seq<usize>, gst: Seq<Open>, seen: Seq<u8>) -> bool {
+    &&& ends.len() == gst.len()
+    &&& ends.len() == 0 ==> names.len() == 0
+    &&& ends.len() > 0 ==> ends.last() == names.len()
+    &&& forall|q1: int, q2: int| 0 <= q1 <= q2 < ends.len() ==> #[trigger] ends[q1] <= #[trigger] ends[q2]
+    &&& forall|q: int|
+        0 <= q < ends.len() ==> (if q == 0 { 0 } else { ends[q - 1] as int }) <= #[trigger] ends[q]
+            <= names.len() && 0 <= gst[q].0 <= gst[q].1 <= seen.len() && names.subrange(
+            if q == 0 { 0 } else { ends[q - 1] as int },
+            ends[q] as int,
+        ) == seen.subrange(gst[q].0, gst[q].1)
+}
+
+/// Closing the innermost element keeps the names' layout: drop its name
+/// and its end.
+#[verifier::spinoff_prover]
+proof fn lemma_pop_name(names: Seq<u8>, ends: Seq<usize>, gst: Seq<Open>, seen: Seq<u8>)
+    requires
+        names_rel(names, ends, gst, seen),
+        ends.len() > 0,
+    ensures
+        ({
+            let k = ends.len() - 1;
+            let a = if k == 0 { 0 } else { ends[k - 1] as int };
+            names_rel(names.subrange(0, a), ends.drop_last(), gst.drop_last(), seen)
+        }),
+{
+    let k = ends.len() - 1;
+    let a = if k == 0 { 0 } else { ends[k - 1] as int };
+    let names2 = names.subrange(0, a);
+    let ends2 = ends.drop_last();
+    let gst2 = gst.drop_last();
+    if k > 0 {
+        assert(ends[k - 1] <= ends[k]);
+        assert(ends[k] <= names.len());
+    }
+    assert(names2.len() == a);
+    assert forall|q1: int, q2: int| 0 <= q1 <= q2 < ends2.len() implies #[trigger] ends2[q1]
+        <= #[trigger] ends2[q2] by {
+        assert(ends2[q1] == ends[q1]);
+        assert(ends2[q2] == ends[q2]);
+    }
+    assert forall|q: int| 0 <= q < ends2.len() implies (if q == 0 { 0 } else { ends2[q - 1] as int })
+        <= #[trigger] ends2[q] <= names2.len() && 0 <= gst2[q].0 <= gst2[q].1 <= seen.len()
+        && names2.subrange(if q == 0 { 0 } else { ends2[q - 1] as int }, ends2[q] as int)
+        == seen.subrange(gst2[q].0, gst2[q].1) by {
+        assert(ends2[q] == ends[q]);
+        if q > 0 {
+            assert(ends2[q - 1] == ends[q - 1]);
+        }
+        assert(ends[q] <= ends[k - 1]);
+        assert(gst2[q] == gst[q]);
+        let lo = if q == 0 { 0 } else { ends[q - 1] as int };
+        assert(names2.subrange(lo, ends2[q] as int) =~= names.subrange(lo, ends[q] as int));
+    }
+    if ends2.len() > 0 {
+        assert(ends2.last() == ends[k - 1]);
+    }
+    assert(names_rel(names2, ends2, gst2, seen));
+}
+
 /// Closes the innermost element.
 #[verifier::spinoff_prover]
-#[verifier::rlimit(100)]
 fn win_pop_name(w: &mut Win)
     requires
         old(w).names_ok(),
@@ -527,6 +626,8 @@ fn win_pop_name(w: &mut Win)
         final(w).gt == old(w).gt,
         final(w).gts == old(w).gts,
         final(w).out == old(w).out,
+        final(w).ge == old(w).ge,
+        final(w).tfirst == old(w).tfirst,
 {
     let ghost names0 = w.names@;
     let ghost ends0 = w.ends@;
@@ -545,30 +646,9 @@ fn win_pop_name(w: &mut Win)
     w.ends.pop();
     proof {
         w.gst@ = gst.drop_last();
-        let gst2 = w.gst@;
-        let seen = w.seen@;
-        assert forall|q1: int, q2: int| 0 <= q1 <= q2 < w.ends@.len() implies #[trigger] w.ends@[q1]
-            <= #[trigger] w.ends@[q2] by {
-            assert(w.ends@[q1] == ends0[q1]);
-            assert(w.ends@[q2] == ends0[q2]);
-        }
-        assert forall|q: int| 0 <= q < w.ends@.len() implies w.nstart(q) <= #[trigger] w.ends@[q] <= w.names@.len()
-            && 0 <= gst2[q].0 <= gst2[q].1 <= seen.len() && w.names@.subrange(w.nstart(q), w.ends@[q] as int)
-            == seen.subrange(gst2[q].0, gst2[q].1) by {
-            assert(w.ends@[q] == ends0[q]);
-            if q > 0 {
-                assert(w.ends@[q - 1] == ends0[q - 1]);
-            }
-            assert(ends0[q] <= ends0[k as int - 1]);
-            assert(gst2[q] == gst[q]);
-            assert(w.names@.subrange(w.nstart(q), w.ends@[q] as int) =~= names0.subrange(
-                w.nstart(q),
-                w.ends@[q] as int,
-            ));
-        }
-        if w.ends@.len() > 0 {
-            assert(w.ends@.last() == ends0[k as int - 1]);
-        }
+        assert(w.names@ == names0.subrange(0, a as int));
+        assert(w.ends@ == ends0.drop_last());
+        lemma_pop_name(names0, ends0, gst, w.seen@);
     }
 }
 
@@ -714,7 +794,9 @@ fn step_etag(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
         old(w).pos + 1 < old(w).buf@.len(),
         old(w).buf@[old(w).pos as int] == 0x3C,
         old(w).buf@[old(w).pos as int + 1] == 0x2F,
+        old(w).emits(),
     ensures
+        r == S_ON || r == S_WAIT ==> final(w).emits(),
         final(w).same_win(old(w)),
         r == S_ON ==> final(w).inv(env_view(env)) && final(w).left() < old(w).left(),
         r == S_WAIT ==> !last && final(w).inv(env_view(env)),
@@ -729,6 +811,7 @@ fn step_etag(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
     let ghost base = w.base as int;
     let ghost gst = w.gst@;
     let ghost gt = w.gt@;
+    let ghost out0 = w.out@;
     let j = w.pos;
     let n = w.buf.len();
     let n2 = ex_name_end(w.buf.as_slice(), j + 2);
@@ -779,6 +862,21 @@ fn step_etag(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
     // none).
     w.out.push(tok(Kind::ETag, j, e + 1, 0));
     w.pos = e + 1;
+    proof {
+        // The end tag is its own group; linking its start tag changes none.
+        let g0 = w.ge@.groups;
+        let k = gst.last().2;
+        assert(gst[gst.len() - 1] == gst.last());
+        assert(grp(seq![XTok::ETag], XTok::ETag));
+        lemma_grps_push(g0, gt, seq![XTok::ETag], XTok::ETag);
+        lemma_grps_close(g0.push(seq![XTok::ETag]), gt.push(XTok::ETag), k);
+        lemma_mv_push(out0, XTok::ETag, -base, 0);
+        w.ge@ = Emitted { prev: w.ge@.prev, groups: g0.push(seq![XTok::ETag]), open: w.ge@.open };
+        assert(w.emitted() =~= flat(w.ge@.groups) + w.ge@.open);
+        assert forall|q: int| 0 <= q < w.gst@.len() implies 0 <= #[trigger] w.gst@[q].2 < w.gt@.len() by {
+            assert(w.gst@[q] == gst[q]);
+        }
+    }
     S_ON
 }
 
@@ -795,7 +893,9 @@ fn step_item(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
         old(w).pos < old(w).buf@.len(),
         !is_etag(old(w).buf@, old(w).pos as int),
         old(w).buf@[old(w).pos as int] == 0x3C || old(w).buf@[old(w).pos as int] == 0x26,
+        old(w).emits(),
     ensures
+        r == S_ON || r == S_WAIT ==> final(w).emits(),
         final(w).same_win(old(w)),
         r == S_ON ==> final(w).inv(env_view(env)) && final(w).left() < old(w).left(),
         r == S_WAIT ==> !last && final(w).inv(env_view(env)),
@@ -812,6 +912,7 @@ fn step_item(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
     let ghost n = w.buf@.len() as int;
     let ghost gst = w.gst@;
     let ghost gt = w.gt@;
+    let ghost out0 = w.out@;
     slice_len_bound(w.buf.as_slice());
     let j = w.pos;
     let mut sc: Vec<(usize, usize, usize)> = Vec::new();
@@ -858,6 +959,22 @@ fn step_item(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
                 w.gst@ = gst2;
                 w.gt@ = gt2;
                 assert(w.gst@.len() == w.ends@.len());
+                // The item's tokens, each its own group.
+                let g0 = w.ge@.groups;
+                assert(added(Seq::<XTok>::empty(), u) =~= u);
+                assert(w.out@ =~= out0 + u);
+                assert(mv(out0 + u, -base, 0) =~= mv(out0, -base, 0) + mv(u, -base, 0));
+                lemma_sing(g0, gt, u, -base, gt.len() as int);
+                w.ge@ = Emitted { prev: w.ge@.prev, groups: g0 + sing(u, -base), open: w.ge@.open };
+                assert(w.emitted() =~= flat(w.ge@.groups) + w.ge@.open);
+                if sx.len() > 0 {
+                    assert(sc@[0].2 < u.len());
+                }
+                assert forall|q: int| 0 <= q < w.gst@.len() implies 0 <= #[trigger] w.gst@[q].2 < w.gt@.len() by {
+                    if q < gst.len() {
+                        assert(w.gst@[q] == gst[q]);
+                    }
+                }
             }
             S_ON
         },
@@ -902,10 +1019,11 @@ fn ex_any_cr(b: &[u8], a: usize, e: usize) -> (r: bool)
 }
 
 /// Emits the text or CDATA section read so far, up to `e`.
-fn win_emit(w: &mut Win, kind: Kind, e: usize, flags: u8)
+fn win_emit(w: &mut Win, kind: Kind, e: usize, flags: u8, Ghost(a): Ghost<int>)
     requires
         old(w).tem <= e <= old(w).buf@.len(),
         old(w).buf@.len() <= MAX_POS,
+        kind is Text || kind is CData,
     ensures
         final(w).buf == old(w).buf,
         final(w).seen == old(w).seen,
@@ -920,14 +1038,43 @@ fn win_emit(w: &mut Win, kind: Kind, e: usize, flags: u8)
         final(w).gts == old(w).gts,
         final(w).names == old(w).names,
         final(w).ends == old(w).ends,
+        !final(w).tfirst,
+        // The piece is emitted, and joins the text's.
+        final(w).ge@.prev == old(w).ge@.prev,
+        final(w).ge@.groups == old(w).ge@.groups,
+        final(w).ge@.open.len() > 0,
+        old(w).emitted() == flat(old(w).ge@.groups) + old(w).ge@.open ==> final(w).emitted() == flat(
+            final(w).ge@.groups,
+        ) + final(w).ge@.open,
+        run(old(w).ge@.open, kind is CData, a, old(w).base + old(w).tem) ==> run(
+            final(w).ge@.open,
+            kind is CData,
+            a,
+            old(w).base + e,
+        ),
 {
+    let ghost o0 = w.out@;
+    let ghost base = w.base as int;
+    let ghost g0 = w.ge@;
     let cr = ex_any_cr(w.buf.as_slice(), w.tem, e);
     let f = if cr {
         flags | P_CR
     } else {
         flags
     };
-    w.out.push(tok(kind, w.tem, e, f));
+    let t = tok(kind, w.tem, e, f);
+    proof {
+        let x = mv_tok(t@, -base, 0);
+        assert(piece(x, kind is CData) && pa(x) == base + w.tem && pb(x) == base + e);
+        if run(g0.open, kind is CData, a, base + w.tem) {
+            lemma_run_push(g0.open, kind is CData, a, x);
+        }
+        lemma_mv_push(o0, t@, -base, 0);
+        w.ge@ = Emitted { prev: g0.prev, groups: g0.groups, open: g0.open.push(x) };
+        assert((flat(g0.groups) + g0.open).push(x) =~= flat(g0.groups) + g0.open.push(x));
+        assert((g0.prev + mv(o0, -base, 0)).push(x) =~= g0.prev + mv(o0, -base, 0).push(x));
+    }
+    w.out.push(t);
     w.tem = e;
     w.tfirst = false;
 }
@@ -1110,7 +1257,9 @@ fn step_text(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
     requires
         old(w).inv(env_view(env)),
         old(w).mode == M_TEXT,
+        old(w).emits(),
     ensures
+        r == S_ON || r == S_WAIT ==> final(w).emits(),
         final(w).same_win(old(w)),
         r == S_ON ==> final(w).inv(env_view(env)) && final(w).left() < old(w).left(),
         r == S_WAIT ==> !last && final(w).inv(env_view(env)),
@@ -1133,6 +1282,7 @@ fn step_text(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
     loop
         invariant
             w.inv(envv),
+            w.emits(),
             w.mode == M_TEXT,
             old(w).mode == M_TEXT,
             seen == w.seen@,
@@ -1164,12 +1314,21 @@ fn step_text(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
                 lemma_text_commit(w.buf@, seen, base, m as int, ts, gst, gt, envv, cr);
             }
             if m > w.tem {
-                win_emit(w, Kind::Text, m, 0);
+                win_emit(w, Kind::Text, m, 0, Ghost(ts));
             }
             w.mode = M_ITEM;
             w.pos = m;
             proof {
                 w.gt@ = t2;
+                // The text's pieces are its group.
+                let o = w.ge@.open;
+                let g0 = w.ge@.groups;
+                assert(w.buf@[m as int] == seen[k]);
+                lemma_run_nonempty(o, false, ts, k);
+                lemma_grps_push(g0, gt, o, XTok::Text { start: ts, end: k, cr: cr });
+                w.ge@ = Emitted { prev: w.ge@.prev, groups: g0.push(o), open: Seq::empty() };
+                assert(w.emitted() =~= flat(w.ge@.groups) + w.ge@.open);
+                assert forall|q: int| 0 <= q < w.gst@.len() implies 0 <= #[trigger] w.gst@[q].2 < w.gt@.len() by {}
             }
             return S_ON;
         }
@@ -1179,7 +1338,7 @@ fn step_text(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
             }
             // The text before `]]>` is reported, then the error.
             if m > w.tem {
-                win_emit(w, Kind::Text, m, 0);
+                win_emit(w, Kind::Text, m, 0, Ghost(ts));
             }
             return S_FAIL;
         }
@@ -1214,7 +1373,7 @@ fn step_text(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
         }
         // The text up to the end is reported, then the error.
         if n > w.tem {
-            win_emit(w, Kind::Text, n, 0);
+            win_emit(w, Kind::Text, n, 0, Ghost(ts));
         }
         return S_FAIL;
     }
@@ -1222,7 +1381,7 @@ fn step_text(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
     w.tcr = cr;
     let e = piece_end(w, m);
     if e > w.tem {
-        win_emit(w, Kind::Text, e, 0);
+        win_emit(w, Kind::Text, e, 0, Ghost(ts));
     }
     S_WAIT
 }
@@ -1237,7 +1396,9 @@ fn step_cdata(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
     requires
         old(w).inv(env_view(env)),
         old(w).mode == M_CDATA,
+        old(w).emits(),
     ensures
+        r == S_ON || r == S_WAIT ==> final(w).emits(),
         final(w).same_win(old(w)),
         r == S_ON ==> final(w).inv(env_view(env)) && final(w).left() < old(w).left(),
         r == S_WAIT ==> !last && final(w).inv(env_view(env)),
@@ -1260,6 +1421,7 @@ fn step_cdata(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
     loop
         invariant
             w.inv(envv),
+            w.emits(),
             w.mode == M_CDATA,
             old(w).mode == M_CDATA,
             seen == w.seen@,
@@ -1305,11 +1467,23 @@ fn step_cdata(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
             } else {
                 P_LAST
             };
-            win_emit(w, Kind::CData, m, f);
+            proof {
+                if w.tfirst {
+                    lemma_run_empty(true, ts + 9);
+                }
+            }
+            win_emit(w, Kind::CData, m, f, Ghost(ts + 9));
             w.mode = M_ITEM;
             w.pos = m + 3;
             proof {
                 w.gt@ = t2;
+                // The section's pieces are its group.
+                let o = w.ge@.open;
+                let g0 = w.ge@.groups;
+                lemma_grps_push(g0, gt, o, XTok::CData { start: ts + 9, end: k, cr: cr });
+                w.ge@ = Emitted { prev: w.ge@.prev, groups: g0.push(o), open: Seq::empty() };
+                assert(w.emitted() =~= flat(w.ge@.groups) + w.ge@.open);
+                assert forall|q: int| 0 <= q < w.gst@.len() implies 0 <= #[trigger] w.gst@[q].2 < w.gt@.len() by {}
             }
             return S_ON;
         }
@@ -1352,7 +1526,7 @@ fn step_cdata(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
             } else {
                 0
             };
-            win_emit(w, Kind::CData, n, f);
+            win_emit(w, Kind::CData, n, f, Ghost(ts + 9));
         }
         return S_FAIL;
     }
@@ -1365,7 +1539,12 @@ fn step_cdata(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
         } else {
             0
         };
-        win_emit(w, Kind::CData, e, f);
+        proof {
+            if w.tfirst {
+                lemma_run_empty(true, ts + 9);
+            }
+        }
+        win_emit(w, Kind::CData, e, f, Ghost(ts + 9));
     }
     S_WAIT
 }
@@ -1502,7 +1681,10 @@ fn step_epilog(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
         old(w).mode == M_ITEM,
         old(w).gst@.len() == 0,
         last ==> old(w).cpos == old(w).buf@.len(),
+        old(w).emits(),
     ensures
+        r == S_ON || r == S_WAIT || r == S_DONE ==> final(w).emits(),
+        r == S_DONE ==> final(w).mode == M_ITEM,
         final(w).same_win(old(w)),
         r == S_ON ==> final(w).inv(env_view(env)) && final(w).left() < old(w).left(),
         r == S_WAIT ==> !last && final(w).inv(env_view(env)),
@@ -1519,6 +1701,7 @@ fn step_epilog(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
     let ghost seen = w.seen@;
     let ghost base = w.base as int;
     let ghost gt = w.gt@;
+    let ghost out0 = w.out@;
     slice_len_bound(w.buf.as_slice());
     proof {
         lemma_lits_stable();
@@ -1595,6 +1778,17 @@ fn step_epilog(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
             }
             w.out.toks.append(&mut tp.toks);
             w.pos = e;
+            proof {
+                // The comment's or processing instruction's tokens, each
+                // its own group.
+                let g0 = w.ge@.groups;
+                assert(added(Seq::<XTok>::empty(), u) =~= u);
+                assert(w.out@ =~= out0 + u);
+                assert(mv(out0 + u, -base, 0) =~= mv(out0, -base, 0) + mv(u, -base, 0));
+                lemma_sing(g0, gt, u, -base, gt.len() as int);
+                w.ge@ = Emitted { prev: w.ge@.prev, groups: g0 + sing(u, -base), open: w.ge@.open };
+                assert(w.emitted() =~= flat(w.ge@.groups) + w.ge@.open);
+            }
             S_ON
         },
         None => {
@@ -1644,7 +1838,9 @@ fn start_cdata(w: &mut Win, Ghost(envv): Ghost<Env>)
         old(w).gst@.len() > 0,
         old(w).pos + 9 <= old(w).buf@.len(),
         has_lit(old(w).buf@, old(w).pos as int, lit_cdata()),
+        old(w).emits(),
     ensures
+        final(w).emits(),
         final(w).same_win(old(w)),
         final(w).inv(envv),
         final(w).left() < old(w).left(),
@@ -1682,7 +1878,9 @@ fn start_text(w: &mut Win, Ghost(envv): Ghost<Env>)
         old(w).pos < old(w).buf@.len(),
         old(w).buf@[old(w).pos as int] != 0x3C,
         old(w).buf@[old(w).pos as int] != 0x26,
+        old(w).emits(),
     ensures
+        final(w).emits(),
         final(w).same_win(old(w)),
         final(w).inv(envv),
         final(w).left() < old(w).left(),
@@ -1697,6 +1895,9 @@ fn start_text(w: &mut Win, Ghost(envv): Ghost<Env>)
     w.mode = M_TEXT;
     w.tem = w.pos;
     w.tcr = false;
+    proof {
+        lemma_run_empty(false, w.gts@);
+    }
 }
 
 /// Reads the window as far as it decides the document. At the end
@@ -1708,7 +1909,10 @@ pub fn content_run(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
         old(w).inv(env_view(env)),
         env_wf(env),
         last ==> old(w).cpos == old(w).buf@.len(),
+        old(w).emits(),
     ensures
+        r == S_WAIT || r == S_DONE ==> final(w).emits(),
+        r == S_DONE ==> final(w).mode == M_ITEM,
         final(w).same_win(old(w)),
         r == S_WAIT || r == S_FAIL || r == S_DONE,
         r == S_WAIT ==> !last && final(w).inv(env_view(env)),
@@ -1725,6 +1929,7 @@ pub fn content_run(w: &mut Win, env: &XEnv, last: bool) -> (r: u8)
     loop
         invariant
             w.inv(envv),
+            w.emits(),
             w.same_win(old(w)),
             envv == env_view(env),
             env_wf(env),

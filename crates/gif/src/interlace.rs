@@ -78,14 +78,16 @@ pub fn interlaced_row_exec(h: usize, y: usize) -> (r: usize)
 }
 
 /// The rows of `px`, an interlaced image, in order, or `None` if the
-/// allocation fails.
-pub fn deinterlace_exec(px: &[u8], w: usize, h: usize) -> (r: Option<Vec<u8>>)
+/// allocation fails. Also returns the work done: the bytes zeroed and
+/// copied and a step per row, at most `3 * w * h`.
+pub fn deinterlace_exec(px: &[u8], w: usize, h: usize) -> (r: (Option<Vec<u8>>, Ghost<nat>))
     requires
         1 <= w <= 65535,
         1 <= h <= 65535,
         px@.len() == w * h,
     ensures
-        r matches Some(v) ==> v@ == deinterlace(px@, w as nat, h as nat),
+        r.0 matches Some(v) ==> v@ == deinterlace(px@, w as nat, h as nat),
+        r.1@ <= 3 * px@.len(),
 {
     proof {
         lemma_mul_inequality(w as int, 65535, h as int);
@@ -95,9 +97,10 @@ pub fn deinterlace_exec(px: &[u8], w: usize, h: usize) -> (r: Option<Vec<u8>>)
     let n = w * h;
     let mut out = match alloc_zeroed(n) {
         Some(v) => v,
-        None => return None,
+        None => return (None, Ghost(0)),
     };
     let ghost want = deinterlace(px@, w as nat, h as nat);
+    let ghost mut work: nat = n as nat;
     let mut y: usize = 0;
     while y < h
         invariant
@@ -108,6 +111,7 @@ pub fn deinterlace_exec(px: &[u8], w: usize, h: usize) -> (r: Option<Vec<u8>>)
             out@.len() == n,
             want == deinterlace(px@, w as nat, h as nat),
             forall|i: int| 0 <= i < y * w ==> #[trigger] out@[i] == want[i],
+            work <= n + y * w + y,
         decreases h - y,
     {
         let s = interlaced_row_exec(h, y);
@@ -130,13 +134,17 @@ pub fn deinterlace_exec(px: &[u8], w: usize, h: usize) -> (r: Option<Vec<u8>>)
                 }
             }
         }
+        proof {
+            work = (work + w + 1) as nat;
+        }
         y = y + 1;
     }
     proof {
         lemma_mul_is_commutative(w as int, h as int);
+        lemma_mul_inequality(1, w as int, h as int);
         assert(out@ =~= want);
     }
-    Some(out)
+    (Some(out), Ghost(work))
 }
 
 } // verus!

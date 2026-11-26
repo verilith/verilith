@@ -25,7 +25,7 @@ See [C API](#c-api).
 The IFD reader, the image parameters, each of the four compression
 schemes, the byte swap, the predictor, and where each strip or tile lands
 in the output are proven against a specification of the format, written
-from the standard. `cargo verus focus` checks 138 functions with no
+from the standard. `cargo verus focus` checks 140 functions with no
 errors.
 
 libtiff's long CVE list is mostly memory-safety bugs in exactly these

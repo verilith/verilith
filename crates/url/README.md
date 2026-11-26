@@ -176,7 +176,7 @@ as their own crates in this repository. CI (`.github/workflows/ci.yml` at the re
 - **verilith-text's trusted base** for UTS #46: its specification, the Unicode
   tables and the axioms about them (see verilith-text's README).
 - **Verus, Z3, rustc,** and the `vstd` library (the published
-  `vstd = "=0.0.0-2026-11-01-0251"` crate, matching Verus commit `8bf68ee7`).
+  `vstd = "=0.0.0-2026-11-22-0344"` crate, matching Verus commit `1ce6a59b`).
 - **Glue outside the proof**, plain Rust:
   - `public.rs`: getters that slice the verified `href` at the verified
     offsets.

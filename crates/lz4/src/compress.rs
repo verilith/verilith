@@ -690,6 +690,7 @@ proof fn lemma_load_eq(s: Seq<u8>, a: int, b: int)
 }
 
 /// The low half of an 8-byte load is the 4-byte load.
+#[verifier::spinoff_prover]
 proof fn lemma_low32(s: Seq<u8>, i: int, w: u64)
     requires
         0 <= i,
@@ -703,6 +704,11 @@ proof fn lemma_low32(s: Seq<u8>, i: int, w: u64)
     let b = le_bytes(s, i + 4, 4);
     assert(le_bytes(s, i, 8) == a + 0x1_0000_0000 * b);
     assert(a < 0x1_0000_0000);
+    assert((a + 0x1_0000_0000 * b) % 0x1_0000_0000 == a) by (nonlinear_arith)
+        requires
+            0 <= a < 0x1_0000_0000,
+            0 <= b,
+    ;
     assert(w & 0xffff_ffff == w % 0x1_0000_0000) by (bit_vector);
 }
 

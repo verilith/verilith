@@ -74,11 +74,17 @@ for a real extraction under these assumptions, which are not proven:
    be a regular file created earlier by the same plan, which is under the
    root by the theorem.
 
-`plan_safe` is the policy; README.md states it in words. The planner is
-proven to return only plans that satisfy it. It is not proven to accept
-every plan that does, and its error values (`Why`) carry no proof.
-`Why::Internal` is returned only if the unverified sort below returns
-something that is not a sorted permutation.
+`plan_safe` is the policy; README.md states it in words. `plan_of`
+(also in `src/policy.rs`) says which plan an archive has, so it is trusted
+in the same way: one step per member not of kind `Other`, in member order,
+each `item_of` its member. The planner is proven to return that plan when
+it exists and satisfies `plan_safe`, and to refuse otherwise: every
+refusal except `Why::Internal` comes with a proof that the archive has no
+plan satisfying the policy. `Why::Internal` is returned only if the
+unverified sort below returns something that is not a sorted permutation,
+so completeness rests on that sort being correct. Which of the other `Why`
+values is returned, and for which member, is not proven: it names the
+check that failed first.
 
 ## The two sorts
 

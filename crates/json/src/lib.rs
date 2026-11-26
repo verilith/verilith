@@ -40,6 +40,8 @@ pub mod minify;
 #[doc(hidden)]
 pub mod number;
 pub mod ondemand;
+#[doc(hidden)]
+pub mod protocol;
 mod pow5;
 #[doc(hidden)]
 pub mod parser;

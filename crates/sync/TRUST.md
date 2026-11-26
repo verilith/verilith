@@ -15,9 +15,12 @@ assumption. The most important one is the release/acquire memory model in
 - **`src/ra.rs`**: the release/acquire model. Every `axiom fn` and
   `external_body` function in it is an assumption. Most of this file is
   about them.
-- **One more axiom**, `Model::pool_nonempty` in `src/chan_model.rs`:
-  boundedly many channel calls are in progress at once (see "The
-  channel" at the end).
+- **One more axiom**, `Model::pool_nonempty` in `src/model.rs`:
+  boundedly many calls are in progress at once on one lock, queue or
+  channel (see "Progress").
+- **The parking lot's hand-over** in `src/lot.rs`: `lock_bucket` and
+  `unlock_bucket`, and each lock's `key`, are trusted to give a lock the
+  ghost list of its own waiters (see "The parking lot").
 - **`impl Objective`**: a trusted claim per type (see below). There are
   four: `Hist`, `HistLb`, `spsc::Shared`, `array_queue::Shared`.
 - **Specifications**: `QueueView` and the `atomically` blocks on the queue
@@ -26,18 +29,21 @@ assumption. The most important one is the release/acquire memory model in
 - **Unverified code with no access to the data**: `src/util.rs`
   (`CachePadded`, `Backoff`, `arc_clone`, `exhausted`, `leaked_guard`,
   and the wrappers around `std`'s mutex, `park`/`unpark` and `Instant`
-  that the channel uses), `src/parking.rs` and the `park`/`unpark`
-  wrappers in the locks that call it, the public shell of the channel in
-  `src/channel.rs`, and the one-line `Send`, `Sync`, `Deref` and `Drop`
-  impls. CI runs the tests under Miri, whose weak-memory emulation
+  that the channel and the parking lot use), the public shell of the channel in
+  `src/channel.rs`, the one-line `Send`, `Sync`, `Deref` and `Drop`
+  impls, and the plain-Rust queue methods (`ArrayQueue::push`, `pop`,
+  `confirm_empty`, `confirm_full`; `Producer::push`, `push_slice`;
+  `Consumer::pop`, `pop_into`). Each calls its verified `*_atomic` form
+  with `Tracked::assume_new()` for the atomic update, a ghost argument
+  that is erased at run time and assumes nothing about the data. CI runs the tests under Miri, whose weak-memory emulation
   exercises release/acquire behaviour too.
 - **The progress models** in `src/progress/`: each is a hand-written
   transition system for one protocol, and the progress theorems are about
-  the model. For the mutex, the RwLock and the queue, that the model
-  matches the code is argued in "Progress" below, step by step, not
-  proven. For the channel it is proven: `src/chan_sync.rs` is verified
-  against the model, and what that proof still assumes is listed under
-  "The channel: what is still assumed".
+  the model. That the code follows its model is proven for all four (the
+  mutex, the RwLock, the MPMC queue and the channel), as "Progress"
+  explains. What those proofs still assume is the axiom and the hand-over
+  above, fairness of scheduling and of the memory system, and for the
+  channel the items under "The channel: what is still assumed".
 
 CI greps for `assume` and `admit` and fails if either appears, and for
 any `axiom fn` outside `src/ra.rs` other than that one.
@@ -226,64 +232,94 @@ its functions is exempt from Verus's termination check, so each `push`,
 own steps whatever the other side does, which is wait-freedom. The same
 holds for `try_lock`, `try_read`, `try_write`, every unlock and
 `downgrade`. `exec_allows_no_decreases_clause`, which turns the
-termination check off, appears on eleven looping functions:
-`ArrayQueue::{push, pop, len}`, `Mutex::{lock, lock_slow}`,
-`RwLock::{read, write, read_slow, write_slow}`, the channel's `Chan::slow`
-and `Chan::add_handle` (see "The channel", item 6). The repository's
+termination check off, appears on nine looping functions:
+`ArrayQueue::{push_atomic, pop_atomic, len}`, `Mutex::lock_slow`,
+`RwLock::{read_slow, write_slow, park}`, the channel's `Chan::slow`
+and `Chan::add_handle` (see "The channel", item 6). `lock`, `read` and
+`write` call their slow paths without a deadline, which are proven to
+return the lock then. The repository's
 [trust ledger](../../TRUST-LEDGER.md), which CI keeps up to date, lists
-them by name, so a twelfth would show up in review.
+them by name, so a tenth would show up in review.
 
-### Why the models match the code
+### How the code is checked against the models
+
+Each primitive keeps, inside the invariant that holds its atomics, a
+ghost `model::Model` (`src/model.rs`): a state of its protocol's model
+and the execution so far. The only way to change it is `Model::step`,
+which demands a proof that the change is a step of the model by the
+thread whose token (`Tok`) the caller holds. The invariant ties the
+model's state to the real one (the lock word, the waiters' flags, the
+queue's head, tail and stamps), so every access the code makes to shared
+state has to come with the model step it stands for, and a call that
+returned has taken a path through the model. A call takes an idle model
+thread when it starts and gives it back when it returns, so the axiom
+`pool_nonempty` (some model thread is free) says only that boundedly
+many calls are in progress on one object at once; the number of model
+threads is uninterpreted and the theorems hold for every number.
 
 **One step per access.** Each model step is one atomic access to shared
 state, or one critical section of a mutex that every other access to the
-same data also takes (a parking-lot bucket, a channel waiter list). A
-critical section touches its protected data plus at most one other
-atomic, read once (`park`'s `validate`), so running it as one step changes
-no outcome. Purely local work between accesses (computing an index,
-backing off) is folded into the neighbouring step. `Backoff` is modeled as
-a counter of snoozes left, chosen freely when a call starts: the model
-allows every number of snoozes, which covers whatever `Backoff` does.
+same data also takes (a parking-lot bucket, a channel waiter list).
+Purely local work between accesses (computing an index, backing off) is
+folded into the neighbouring step. Thread-local choices are
+nondeterministic in the model: calls with a deadline may time out
+wherever the code checks the deadline, and any thread may start any call
+at any time. Allowing more behaviour than the code has only makes the
+theorems stronger.
 
-**Thread-local choices are nondeterministic.** Calls with a deadline may
-time out wherever the code checks the deadline; any thread may start any
-call at any time; the channel model lets any thread act on either side.
-Allowing more behaviour than the code has only makes the theorems
-stronger, since they hold for every execution of the model.
+**Mutex** (`src/mutex.rs`, model `src/progress/mutex.rs`):
 
-**Mapping.** Mutex (`src/progress/mutex.rs`): `Fast` is the `cas(0, 1)`
-in `lock`/`try_lock_until_deadline`; `Spin`/`SpinCas` are `lock_slow`'s
-spin loop (`load`, then `cas(0, 1)`); `Swap` is `swap_contended`; `Check`
-is `parking::park`'s bucket section with `validate = is_contended`;
-`Asleep` is the `while !notified` loop, including the deadline branch;
-`Crit` to `Unpark` is `unlock`'s swap to 0; `Unpark` is `parking::unpark`'s
-bucket section and `Notify` the `notified` store after it. RwLock
-(`src/progress/rwlock.rs`): the word is kept as its fields (bit 0 `w`,
-bit 1 `pk`, bit 2 `ww`, bits 3 and up `rc`); `Load`/`Cas`/`Flag`/`Check`
-are the branches of `read_slow` and `write_slow` (`cas_read`, `cas_write`,
-`cas_flags`, `park`), with `write`'s fast-path `cas_write(0)` as a `Cas`
-from 0; `RCrit` is `unlock_read` (`fetch_sub`, then `clear_flags` and
-`unpark_all` if it was the last reader with a hint set), `WCrit` is
-`unlock_write` (swap 0, then `unpark_all` if a hint was set) or
-`downgrade` (`fetch_add(ONE_READER - WRITER)`, then `unpark_all` if
-parked), and `Unpark`/`Notify` are `unpark_all`'s bucket section and its
-loop of `notified` stores. The channel's mapping is not argued here: it
-is proven (next section). Queue
-(`src/progress/queue.rs`): one phase per atomic access of `push`, `pop`
-and `len`, with the stamp comparisons translated to ranks as its module
-comment explains.
+| Code | Model step |
+| --- | --- |
+| `cas_lock`: the `cas(0, 1)` in `try_lock`, `lock_slow` and its spin loop | `Fast`, `SpinCas` |
+| `load_spin`, `spun_out`: the spin loop's load, with its count | `Spin` |
+| `swap_contended` | `Swap` |
+| `check`: the bucket section that parks if the word is still 2 | `Check` |
+| `wait_flag`: load of the waiter's `notified` | `Asleep` |
+| `timeout`: the bucket section of a waiter past its deadline | `Asleep` (gives up, or was woken) |
+| `unlock`: the swap to 0 | `Crit` |
+| `unpark_one`: the bucket section that takes a waiter off and sets its flag | `Unpark`, `Notify` |
 
-**Memory model.** The models are sequentially consistent.
+**RwLock** (`src/rwlock.rs`, model `src/progress/rwlock.rs`):
+
+| Code | Model step |
+| --- | --- |
+| `load_at`: a load of the word in `read_slow` or `write_slow`, which decides what comes next: CAS, snooze (counted down as the model's `left`), set a hint, or sleep (`wait`) | `Load` |
+| `cas_read`, `cas_write`: the CAS that takes a read or write lock, including the fast paths (`write` starts with a CAS from 0) | `Cas` |
+| `cas_flags`: the CAS that sets a parking hint | `Flag` |
+| `check`: the bucket section that parks if the word still blocks and the hint is set | `Check` |
+| `wait_flag`, `timeout` | `Asleep` |
+| `unlock_read`: the `fetch_sub`; `clear_flags` | `RCrit`, `Clear` |
+| `unlock_write`: the swap to 0; `downgrade_lock`: the `fetch_add` | `WCrit` |
+| `unpark_all`: the bucket section that empties the list, then one `notified` store per waiter | `Unpark`, `Notify` |
+
+**MPMC queue** (`src/array_queue.rs`, model `src/progress/queue.rs`):
+
+| Code | Model step |
+| --- | --- |
+| `push_atomic`'s load of `tail`, of the slot's stamp, its CAS on `tail`, its load of `head`, the confirming `fetch_add(0)`, and the stamp store | `PLoad`, `PStamp`, `PCas`, `PHead`, `PConfirm`, `PWrite` |
+| `pop_atomic`'s, likewise on `head` and `tail` | `QLoad`, `QStamp`, `QCas`, `QTail`, `QConfirm`, `QRead` |
+| `len`'s loads of `tail`, `head` and `tail` again | `LTail`, `LHead`, `LTail2` |
+
+The queue's model is kept on unpacked positions and stamp ranks; the
+invariant ties the model's slot ranks to the stamps' ghost phases
+(`model_ok` in `src/array_queue.rs`).
+
+**Memory model.**
 
 - The locks and the parking lot use only SeqCst atomics and mutexes, so
-  for them the models are exact.
-- The channel is covered in the next section.
-- The queue's loads are relaxed or acquire and can return an older value.
-  That only adds failed attempts, after which the loop reloads; the model
-  shows that once nobody makes progress, nothing changes, so the next
-  attempt that reads the final values succeeds. Reading them needs the
-  stores to become visible eventually, which C++ only encourages
-  ([intro.progress]: "should") but every hardware target provides.
+  their models are sequentially consistent and exact.
+- The channel is covered in the last section.
+- The queue's loads are relaxed or acquire and can return an older
+  value, and so can a failed CAS. The model allows exactly that: a step
+  of a thread is either the sequentially consistent one (`sc_step`) or a
+  load that read an older value (`stale_step`), which only sends the
+  thread round its loop again. Lock-freedom then needs the memory system
+  to be fair: once nothing is written any more, each thread's loads
+  eventually read the latest values (`mfair`, a hypothesis of
+  `theorem_lock_free`, shown satisfiable in `lemma_nonvacuous`). C++
+  only encourages this ([intro.progress]: stores "should" become visible
+  in a finite period of time); every hardware target provides it.
 
 **Scheduling.** Fairness is weak: it does not say how often or in what
 order threads run, only that none stops for good. A thread that never
@@ -294,12 +330,48 @@ holder unlocks (its next step is the unlock), and that each thread does
 one lock operation at a time, so a thread waiting for a lock it already
 holds is outside the theorems, as it deadlocks in parking_lot too.
 
+## The parking lot
+
+`src/lot.rs` is the global parking lot the mutex and the RwLock sleep in,
+as parking_lot_core is for parking_lot: 64 buckets, each a list of
+waiters behind a `std` mutex, shared by every lock whose key hashes to
+it. Its list operations (search, push, removal) are verified. What the
+locks' proofs need from it is the link between a bucket's contents and
+their own ghost state, and that link is trusted:
+
+- **`lock_bucket(key, k)`** locks the bucket and returns, besides the
+  list, the lot's half of the asking lock's ghost `list` (the tickets of
+  its waiters, which the lock's invariant holds the other half of),
+  with `listed`: the waiters under `key` are this lock's and their
+  tickets are exactly that list. It also returns the bucket's ghost map
+  of the ids it has handed out (`bids`), so that a waiter that times out
+  and finds an entry with its id knows the entry is its own.
+- **`unlock_bucket`** takes both back and requires `listed` and `bids_ok`
+  again, plus that waiters under other keys are as they were, so a
+  critical section can change only its own lock's waiters, and only in
+  step with its list.
+- **Each lock's `key()`** returns the address of its lock word with a
+  `KeyOf` that names the lock's ghost locations.
+
+Why this is sound: the ghost halves are created out of nothing
+(`Tracked::assume_new`) and taken back at unlock, so the claim is that at
+most one of them is outstanding per lock (the bucket mutex ensures this)
+and that it is the asking lock's. That rests on keys: a lock's waiters
+each hold a borrow of the lock, so while any are listed the lock word
+cannot move or be freed, and no other live lock word has the same
+address. (Keying by the lock's address, as before, broke this: a lock at
+offset 0 of another's data shares its address. That was a real bug, now
+fixed and covered by `tests/nested_locks.rs`.) The `bids` map is one per
+bucket (`bucket_loc`), so keys that share a bucket share it, and a
+bucket hands out each id once.
+
 ## The channel: what is proven, and what is still assumed
 
 The channel's progress theorems used to be about a model that was matched
-to the code by hand. Now Verus checks the match.
+to the code by hand. Now Verus checks the match, as it does for the
+locks and the queue.
 
-**How.** `src/chan_model.rs` wraps a state of the model
+**How.** `src/model.rs` wraps a state of the model
 (`progress::channel::St`) in a ghost resource, `Model`, that can only be
 changed by `Model::step`, and `step` demands a proof that the change is a
 `step` of the model by the thread whose token the caller holds. The
@@ -359,7 +431,7 @@ the call. The fence is gone.
 **What is still assumed.** Exactly this:
 
 1. **Boundedly many calls at once** (`Model::pool_nonempty`, the one
-   axiom outside `src/ra.rs`). The model has `n` threads, and a call acts
+   axiom outside `src/ra.rs`, shared with the locks and the queue). The model has `n` threads, and a call acts
    as one of them from start to return, so some model thread must be free
    whenever a call starts. `n` is not a number in the program (it is
    `chan_sync::model_threads()`, uninterpreted) and the theorems hold for

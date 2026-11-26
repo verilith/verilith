@@ -51,7 +51,7 @@ broadcast use {vstd::set_lib::range_set_properties, vstd::set::lemma_set_contain
 pub open spec const CHAN_NS: int = 0x6368;
 
 /// The number of threads in each model: any number (see
-/// `chan_model::Model::pool_nonempty`).
+/// `model::Model::pool_nonempty`).
 pub uninterp spec fn model_threads() -> nat;
 
 /// How many times a call snoozes before it registers and parks: what
@@ -454,10 +454,10 @@ impl<T> Chan<T> {
             final(tok).value().timed == old(tok).value().timed,
             tok_at(*final(gtok), self.k().s, if r is Some { Ph::GNotify } else { Ph::Idle }),
     {
-        let Tracked(credit) = vstd::invariant::create_open_invariant_credit();
+        let tracked credit = vstd::invariant::create_open_invariant_credit();
         let ghost mut flag = false;
         let ghost pc = Pc::Take { gone };
-        let r = self.queue.pop() atomically |update| {
+        let r = self.queue.pop_atomic() atomically |update| {
             open_atomic_invariant!(credit => self.inv.borrow() => g => {
                 let tracked ChanG { d: mut dm, q } = g;
                 flag = q@.len() > 0;
@@ -494,10 +494,10 @@ impl<T> Chan<T> {
             final(tok).value().timed == old(tok).value().timed,
             tok_at(*final(gtok), self.k().r, if r is Ok { Ph::GNotify } else { Ph::Idle }),
     {
-        let Tracked(credit) = vstd::invariant::create_open_invariant_credit();
+        let tracked credit = vstd::invariant::create_open_invariant_credit();
         let ghost mut flag = false;
         let ghost pc = Pc::Take { gone };
-        let r = self.queue.push(value) atomically |update| {
+        let r = self.queue.push_atomic(value) atomically |update| {
             open_atomic_invariant!(credit => self.inv.borrow() => g => {
                 let tracked ChanG { d: mut dm, q } = g;
                 flag = q@.len() < self.k().cap;
@@ -624,9 +624,9 @@ impl<T> Chan<T> {
             tok_at(*final(tok), self.k().dir(d), abs(next_spec(Pc::Ready2, cfg, flag, false), tk, 0)),
             final(tok).value().timed == old(tok).value().timed,
     {
-        let Tracked(credit) = vstd::invariant::create_open_invariant_credit();
+        let tracked credit = vstd::invariant::create_open_invariant_credit();
         let nothing = if d {
-            self.queue.confirm_empty() atomically |update| {
+            self.queue.confirm_empty_atomic() atomically |update| {
                 open_atomic_invariant!(credit => self.inv.borrow() => g => {
                     let tracked ChanG { d: mut dm, q } = g;
                     let tracked Commit(ye): Commit<(QueueView<T>, Ghost<bool>)> = update(q);
@@ -639,7 +639,7 @@ impl<T> Chan<T> {
                 });
             }
         } else {
-            self.queue.confirm_full() atomically |update| {
+            self.queue.confirm_full_atomic() atomically |update| {
                 open_atomic_invariant!(credit => self.inv.borrow() => g => {
                     let tracked ChanG { d: mut dm, q } = g;
                     let tracked Commit(ye): Commit<(QueueView<T>, Ghost<bool>)> = update(q);

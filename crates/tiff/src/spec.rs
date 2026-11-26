@@ -296,12 +296,19 @@ pub open spec fn div_up(a: nat, d: nat) -> nat {
 
 /// What the IFD says about the image.
 pub struct Params {
+    /// Whether the file is little-endian ("II").
     pub le: bool,
+    /// Image width, in pixels.
     pub width: nat,
+    /// Image height, in pixels.
     pub height: nat,
+    /// Bits per sample.
     pub bps: nat,
+    /// Samples per pixel.
     pub spp: nat,
+    /// The Compression tag.
     pub compression: nat,
+    /// The PhotometricInterpretation tag.
     pub photometric: nat,
     /// 1 unsigned, 2 signed, 3 floating point, 4 undefined.
     pub sample_format: nat,
@@ -309,12 +316,17 @@ pub struct Params {
     pub planar: nat,
     /// 2 for horizontal differencing, else 1.
     pub predictor: nat,
+    /// Whether the image is in tiles rather than strips.
     pub tiled: bool,
     /// Rows per strip, or the tile size.
     pub rps: nat,
+    /// Tile width, in pixels.
     pub tw: nat,
+    /// Tile height, in pixels.
     pub th: nat,
+    /// The strip or tile offsets.
     pub offsets: Seq<nat>,
+    /// The strip or tile byte counts.
     pub counts: Seq<nat>,
 }
 
@@ -737,16 +749,19 @@ pub spec const EOI: nat = 257;
 /// would add a 4097th entry is an error.
 pub spec const TABLE_MAX: nat = 4096;
 
+/// The LZW decoder's state (§13).
 pub struct Lzw {
     /// The strings of the codes: 256 roots, the clear and end codes (empty),
     /// then the entries added.
     pub dict: Seq<Seq<u8>>,
+    /// The code width, 9 to 12.
     pub width: nat,
     /// The previous code, unless this is the first code after a clear code.
     pub prev: Option<nat>,
     /// Whether a clear code has been seen: "each strip begins with a
     /// ClearCode" (§13).
     pub started: bool,
+    /// The bytes output so far.
     pub out: Seq<u8>,
 }
 
@@ -977,13 +992,21 @@ pub open spec fn pixel(p: Params, cs: Seq<Seq<u8>>, i: int) -> u8 {
 pub struct Image {
     /// Whether the file is little-endian ("II").
     pub le: bool,
+    /// Image width, in pixels.
     pub width: nat,
+    /// Image height, in pixels.
     pub height: nat,
+    /// Bits per sample.
     pub bits_per_sample: nat,
+    /// Samples per pixel.
     pub samples_per_pixel: nat,
+    /// The Compression tag.
     pub compression: nat,
+    /// The PhotometricInterpretation tag.
     pub photometric: nat,
+    /// 1 unsigned, 2 signed, 3 floating point, 4 undefined.
     pub sample_format: nat,
+    /// 1 (samples of a pixel together) or 2 (one plane per sample).
     pub planar: nat,
     /// The output: each plane in turn (one, or one per sample if `planar`
     /// is 2), each `height` rows of `ceil(width * samples * bits / 8)`

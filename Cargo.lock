@@ -462,9 +462,9 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.17.1"
+version = "0.17.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+checksum = "735eaa21a6a5ffb2e84362faaeb90c05ba8e19797ca30428478cb6ea3a4921bc"
 
 [[package]]
 name = "heck"
@@ -688,9 +688,9 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "napi"
-version = "3.16.2"
+version = "3.16.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "567c62b9c2d0fae123713f766686ad66a2c75b45ba3ee01ed8b06a7e99bc435b"
+checksum = "3638796ff28754eaeca96cda32e0c4e2e30b83d0e53f32a4537d6a8bcf15f532"
 dependencies = [
  "bitflags",
  "ctor",
@@ -704,29 +704,29 @@ dependencies = [
 
 [[package]]
 name = "napi-build"
-version = "2.6.0"
+version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b899b545d3aa6dca985939059f258c5488d34e4ecf39c274e20009748f4b846d"
+checksum = "adb4c45ca811160461dba7eccc68b66702ddb5c9f30afb16007caac3c0eb6e2a"
 
 [[package]]
 name = "napi-derive"
-version = "3.7.1"
+version = "3.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94c8098ed9d61a1bbd019519c637817531b0e24023ef4b5678f2f0cbe24bed9c"
+checksum = "d3f284288c8a2a4a66519e24dcc0cbfa1b7e0abc37bdd073185c68276f08f3d3"
 dependencies = [
  "convert_case 0.12.0",
- "ctor",
  "napi-derive-backend",
  "proc-macro2",
  "quote",
  "syn 3.0.10",
+ "unicode-ident",
 ]
 
 [[package]]
 name = "napi-derive-backend"
-version = "7.0.1"
+version = "8.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "314cd6ca42bd978fd8bae84b4137e1322bbf3e83552fca8dbd7d18034188ff3a"
+checksum = "32477ed34450779386e6aaa3b33bcf3916035b7de0fee68b73716f65a3894003"
 dependencies = [
  "convert_case 0.12.0",
  "proc-macro2",
@@ -1712,15 +1712,15 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "verus_builtin"
-version = "0.0.0-2026-11-01-0251"
+version = "0.0.0-2026-11-22-0344"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5cecde3e49b95f670dee0000707b0fe24d3894ffec56d9e6c49f404878b30e9"
+checksum = "dd4bce6a5fe5fb9bfca2949a689a7b92e80d35f50e2ba3e9ba87dfb63f2337e1"
 
 [[package]]
 name = "verus_builtin_macros"
-version = "0.0.0-2026-11-01-0251"
+version = "0.0.0-2026-11-22-0344"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94dbd5043818524d73436d4dd20a8f67f8f8c13dc00d2662d643ce994ff2dbb5"
+checksum = "1aa86fd414dfa7694a49811c7b907a7500d129d2a5b4c3a6c0671af0defec2a0"
 dependencies = [
  "convert_case 0.4.0",
  "proc-macro2",
@@ -1743,9 +1743,9 @@ dependencies = [
 
 [[package]]
 name = "verus_state_machines_macros"
-version = "0.0.0-2026-11-01-0251"
+version = "0.0.0-2026-11-22-0344"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36b7a87f62a49719385cad07ad58ad9d17af29642dd331a5cdc25eba2423b716"
+checksum = "eed47dcce51e4881a43825d2fab07089bf90a3df53ec887be86171a0114abb61"
 dependencies = [
  "indexmap",
  "proc-macro2",
@@ -1766,9 +1766,9 @@ dependencies = [
 
 [[package]]
 name = "vstd"
-version = "0.0.0-2026-11-01-0251"
+version = "0.0.0-2026-11-22-0344"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7cfcc2fc379ffbcda31111f1a7da2a34d00bd984407cfa85d1edcf64da38dbd2"
+checksum = "66760ffdbcefb8a21dd2fb99d72c4bad27b4bd3217bcab50f36dc9f6b7dbe330"
 dependencies = [
  "verus_builtin",
  "verus_builtin_macros",

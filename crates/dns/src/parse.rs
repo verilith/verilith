@@ -746,9 +746,83 @@ fn read_records(
     Some((p, Ghost(g)))
 }
 
+/// What `parse_with` has once every section is read: the message the
+/// spec decodes, laid out in the final arena and entry table. Proved apart
+/// from the exec body, whose many buffer snapshots make this expensive there.
+#[verifier::spinoff_prover]
+proof fn lemma_parse_with_parts(
+    b: Seq<u8>,
+    m: SpecMessage,
+    qd: u16,
+    an: u16,
+    ns: u16,
+    ar: u16,
+    p1: int,
+    p2: int,
+    p3: int,
+    a1: Seq<u8>,
+    a2: Seq<u8>,
+    a3: Seq<u8>,
+    a: Seq<u8>,
+    e1: Seq<Entry>,
+    e2: Seq<Entry>,
+    e3: Seq<Entry>,
+    e: Seq<Entry>,
+)
+    requires
+        b.len() >= 12,
+        parse_u16(b, 0) == Some((m.id, 2int)),
+        parse_u16(b, 2) == Some((m.flags, 4int)),
+        parse_u16(b, 4) == Some((qd, 6int)),
+        parse_u16(b, 6) == Some((an, 8int)),
+        parse_u16(b, 8) == Some((ns, 10int)),
+        parse_u16(b, 10) == Some((ar, 12int)),
+        parse_questions(b, 12, qd as nat) == Some((m.questions, p1)),
+        parse_records(b, p1, an as nat) == Some((m.answers, p2)),
+        parse_records(b, p2, ns as nat) == Some((m.authorities, p3)),
+        parse_records(b, p3, ar as nat) == Some((m.additionals, b.len() as int)),
+        is_prefix(b, a1),
+        is_prefix(a1, a2),
+        is_prefix(a2, a3),
+        is_prefix(a3, a),
+        is_prefix(e1, e2),
+        is_prefix(e2, e3),
+        is_prefix(e3, e),
+        e1.len() == qd,
+        e2.len() == e1.len() + an,
+        e3.len() == e2.len() + ns,
+        e.len() == e3.len() + ar,
+        questions_at(a1, e1, 0, m.questions),
+        records_at(a2, e2, qd as int, m.answers),
+        records_at(a3, e3, qd + an, m.authorities),
+        records_at(a, e, qd + an + ns, m.additionals),
+    ensures
+        parse_message(b) == Some(m),
+        parts_ok(m.id, m.flags, a, e, qd as usize, an as usize, ns as usize, m),
+        b.len() <= a.len(),
+        a.subrange(0, b.len() as int) == b,
+{
+    theorem_parse_valid(b);
+    lemma_prefix_trans(b, a1, a2);
+    lemma_prefix_trans(b, a2, a3);
+    lemma_prefix_trans(b, a3, a);
+    lemma_prefix_trans(a1, a2, a3);
+    lemma_prefix_trans(a1, a3, a);
+    lemma_prefix_trans(a2, a3, a);
+    lemma_prefix_trans(e1, e2, e3);
+    lemma_prefix_trans(e1, e3, e);
+    lemma_prefix_trans(e2, e3, e);
+    lemma_questions_at_grow(a1, a, e1, e, 0, m.questions);
+    lemma_records_at_grow(a2, a, e2, e, qd as int, m.answers);
+    lemma_records_at_grow(a3, a, e3, e, qd + an, m.authorities);
+    lemma_parse_questions_valid(b, 12, qd as nat);
+    lemma_parse_records_valid(b, p1, an as nat);
+    lemma_parse_records_valid(b, p2, ns as nat);
+    lemma_parse_records_valid(b, p3, ar as nat);
+}
+
 /// Parses `b` using the given (empty) buffers. On failure, hands the buffers
 /// back so their capacity can be reused.
-#[verifier::rlimit(120)]
 #[verifier::spinoff_prover]
 fn parse_with(b: &[u8], arena: Vec<u8>, entries: Vec<Entry>) -> (r: Result<
     Message,
@@ -853,9 +927,6 @@ fn parse_with(b: &[u8], arena: Vec<u8>, entries: Vec<Entry>) -> (r: Result<
     if end != b.len() {
         return Err((arena, entries));
     }
-    proof {
-        lemma_prefix_trans(b@, a3, arena@);
-    }
     let ghost spec = SpecMessage {
         id,
         flags,
@@ -865,20 +936,25 @@ fn parse_with(b: &[u8], arena: Vec<u8>, entries: Vec<Entry>) -> (r: Result<
         additionals: gar@,
     };
     proof {
-        theorem_parse_valid(b@);
-        lemma_prefix_trans(a1, a2, a3);
-        lemma_prefix_trans(a1, a3, arena@);
-        lemma_prefix_trans(a2, a3, arena@);
-        lemma_prefix_trans(e1, e2, e3);
-        lemma_prefix_trans(e1, e3, entries@);
-        lemma_prefix_trans(e2, e3, entries@);
-        lemma_questions_at_grow(a1, arena@, e1, entries@, 0, gq@);
-        lemma_records_at_grow(a2, arena@, e2, entries@, qd as int, gan@);
-        lemma_records_at_grow(a3, arena@, e3, entries@, qd + an, gns@);
-        lemma_parse_questions_valid(b@, 12, qd as nat);
-        lemma_parse_records_valid(b@, p1 as int, an as nat);
-        lemma_parse_records_valid(b@, p2 as int, ns as nat);
-        lemma_parse_records_valid(b@, p3 as int, ar as nat);
+        lemma_parse_with_parts(
+            b@,
+            spec,
+            qd,
+            an,
+            ns,
+            ar,
+            p1 as int,
+            p2 as int,
+            p3 as int,
+            a1,
+            a2,
+            a3,
+            arena@,
+            e1,
+            e2,
+            e3,
+            entries@,
+        );
     }
     Ok(
         Message::from_parts(

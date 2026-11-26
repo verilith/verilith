@@ -799,6 +799,7 @@ pub open spec fn has_decl(x: Seq<u8>, p0: int) -> bool {
 /// The window has decided the head, in UTF-8: `parse` reads the document
 /// as UTF-8, and the head is what it is in the window.
 #[verifier::spinoff_prover]
+#[verifier::rlimit(30)]
 pub proof fn lemma_head_utf8(x: Seq<u8>, y: Seq<u8>, hi: int)
     requires
         ag(x, y, hi),

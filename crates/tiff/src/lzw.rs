@@ -260,17 +260,23 @@ pub proof fn lemma_copy_new(a: Seq<u8>, b: Seq<u8>, pos: int, last: int)
 // The decoder's state
 // ---------------------------------------------------------------------------
 
+/// The decoder's state between codes, and the specification's state (`s`) it stands for.
 pub struct St {
     /// Entries in the table: `s.dict.len()`, up to 4096.
     pub n: usize,
+    /// The code width, 9 to 12.
     pub w: u64,
+    /// Whether a clear code has been seen.
     pub started: bool,
+    /// Whether there is a previous code (not the first code after a clear code).
     pub has_prev: bool,
+    /// The previous code, if `has_prev`.
     pub prev: usize,
     /// Where the previous code's string starts in the output.
     pub last: usize,
     /// Bytes output so far.
     pub pos: usize,
+    /// The specification's state.
     pub s: Ghost<Lzw>,
 }
 

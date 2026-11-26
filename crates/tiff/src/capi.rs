@@ -32,14 +32,23 @@ use crate::params::{params_exec, ParamsX};
 use core::ffi::{c_char, c_int, c_void};
 use std::ffi::{CStr, CString};
 
+/// libtiff's signed size type.
 pub type tmsize_t = isize;
+/// libtiff's file offset type.
 pub type toff_t = u64;
+/// The client's handle, passed back to each of the client's procedures.
 pub type thandle_t = *mut c_void;
+/// Reads up to the given number of bytes into the buffer; returns the number read, or -1.
 pub type ReadProc = Option<unsafe extern "C" fn(thandle_t, *mut c_void, tmsize_t) -> tmsize_t>;
+/// Moves to an offset (whence: 0 start, 1 current, 2 end); returns the new offset.
 pub type SeekProc = Option<unsafe extern "C" fn(thandle_t, toff_t, c_int) -> toff_t>;
+/// Closes the handle; returns 0 on success.
 pub type CloseProc = Option<unsafe extern "C" fn(thandle_t) -> c_int>;
+/// Returns the size of the file, in bytes.
 pub type SizeProc = Option<unsafe extern "C" fn(thandle_t) -> toff_t>;
+/// Maps the file into memory; returns nonzero on success. Not used by this decoder.
 pub type MapProc = Option<unsafe extern "C" fn(thandle_t, *mut *mut c_void, *mut toff_t) -> c_int>;
+/// Unmaps a region mapped by a `MapProc`. Not used by this decoder.
 pub type UnmapProc = Option<unsafe extern "C" fn(thandle_t, *mut c_void, toff_t)>;
 
 unsafe extern "C" {
@@ -916,6 +925,7 @@ pub unsafe extern "C" fn vtiff_TIFFFdOpen(fd: c_int, name: *const c_char, mode: 
     open_bytes(name, mode, data, core::ptr::null_mut(), None, None, fd)
 }
 
+/// libtiff's name for `vtiff_TIFFFdOpen`.
 #[cfg(all(unix, feature = "tiff-abi"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TIFFFdOpen(fd: c_int, name: *const c_char, mode: *const c_char) -> *mut c_void {

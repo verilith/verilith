@@ -5090,7 +5090,630 @@ pub fn s_BrIfRI_I64GeU<'a>(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCe
     r_brif_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, Instr::I64GeU, stack, fp, st, r, rops, cur, acc)
 }
 
-/// Every branch code (see `execute`, which runs them all in one arm).
+/// Whether `op` is one of the codes `d_val0` runs.
+pub open spec fn d_val0_op(op: OpCode) -> bool {
+    match op {
+        OpCode::Un_I32Eqz | OpCode::P_Un_I32Eqz | OpCode::Un_I64Eqz | OpCode::P_Un_I64Eqz | OpCode::Un_I32Clz | OpCode::Un_I32Ctz | OpCode::Un_I32WrapI64 | OpCode::P_Un_I32WrapI64 | OpCode::Un_I64ExtendI32S | OpCode::P_Un_I64ExtendI32S | OpCode::Un_I64ExtendI32U | OpCode::P_Un_I64ExtendI32U | OpCode::Un_I32Extend8S | OpCode::Un_I32Extend16S | OpCode::Un_F64Neg | OpCode::Un_F64Abs | OpCode::Un_F64Sqrt | OpCode::BinRR_I32Eq | OpCode::P_BinRR_I32Eq | OpCode::BinRI_I32Eq | OpCode::P_BinRI_I32Eq | OpCode::BinRR_I32Ne | OpCode::P_BinRR_I32Ne | OpCode::BinRI_I32Ne | OpCode::P_BinRI_I32Ne | OpCode::BinRR_I32LtS | OpCode::P_BinRR_I32LtS | OpCode::BinRI_I32LtS | OpCode::P_BinRI_I32LtS | OpCode::BinRR_I32LtU | OpCode::P_BinRR_I32LtU | OpCode::BinRI_I32LtU => true,
+        _ => false,
+    }
+}
+
+/// Runs one of the value codes in `d_val0_op`.
+#[verifier::spinoff_prover]
+pub fn d_val0(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<Seq<Code>>,
+    Ghost(calls): Ghost<Seq<CallFrame>>, Ghost(c0): Ghost<Config>, Ghost(g): Ghost<GS>, Ghost(d): Ghost<usize>,
+    Ghost(rpc): Ghost<usize>, stack: &mut Vec<u64>, fp: usize, st: &Store, r: &ROp, acc: &mut u64) -> (res: RRes)
+    requires
+        rinv(m, cs, codes, c0, g, old(stack)@, calls, d, rpc, fp, st),
+        *r == codes[d as int].rops@[rpc as int],
+        d_val0_op(r.op),
+        acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
+    ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, st, res, *final(acc)),
+{
+    match r.op {
+        OpCode::Un_I32Eqz => s_Un_I32Eqz(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_Un_I32Eqz => s_P_Un_I32Eqz(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::Un_I64Eqz => s_Un_I64Eqz(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_Un_I64Eqz => s_P_Un_I64Eqz(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::Un_I32Clz => s_Un_I32Clz(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::Un_I32Ctz => s_Un_I32Ctz(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::Un_I32WrapI64 => s_Un_I32WrapI64(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_Un_I32WrapI64 => s_P_Un_I32WrapI64(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::Un_I64ExtendI32S => s_Un_I64ExtendI32S(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_Un_I64ExtendI32S => s_P_Un_I64ExtendI32S(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::Un_I64ExtendI32U => s_Un_I64ExtendI32U(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_Un_I64ExtendI32U => s_P_Un_I64ExtendI32U(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::Un_I32Extend8S => s_Un_I32Extend8S(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::Un_I32Extend16S => s_Un_I32Extend16S(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::Un_F64Neg => s_Un_F64Neg(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::Un_F64Abs => s_Un_F64Abs(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::Un_F64Sqrt => s_Un_F64Sqrt(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I32Eq => s_BinRR_I32Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I32Eq => s_P_BinRR_I32Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I32Eq => s_BinRI_I32Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I32Eq => s_P_BinRI_I32Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I32Ne => s_BinRR_I32Ne(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I32Ne => s_P_BinRR_I32Ne(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I32Ne => s_BinRI_I32Ne(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I32Ne => s_P_BinRI_I32Ne(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I32LtS => s_BinRR_I32LtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I32LtS => s_P_BinRR_I32LtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I32LtS => s_BinRI_I32LtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I32LtS => s_P_BinRI_I32LtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I32LtU => s_BinRR_I32LtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I32LtU => s_P_BinRR_I32LtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        _ => s_BinRI_I32LtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+    }
+}
+
+/// Whether `op` is one of the codes `d_val1` runs.
+pub open spec fn d_val1_op(op: OpCode) -> bool {
+    match op {
+        OpCode::P_BinRI_I32LtU | OpCode::BinRR_I32GtS | OpCode::P_BinRR_I32GtS | OpCode::BinRI_I32GtS | OpCode::P_BinRI_I32GtS | OpCode::BinRR_I32GtU | OpCode::P_BinRR_I32GtU | OpCode::BinRI_I32GtU | OpCode::P_BinRI_I32GtU | OpCode::BinRR_I32LeS | OpCode::P_BinRR_I32LeS | OpCode::BinRI_I32LeS | OpCode::P_BinRI_I32LeS | OpCode::BinRR_I32LeU | OpCode::P_BinRR_I32LeU | OpCode::BinRI_I32LeU | OpCode::P_BinRI_I32LeU | OpCode::BinRR_I32GeS | OpCode::P_BinRR_I32GeS | OpCode::BinRI_I32GeS | OpCode::P_BinRI_I32GeS | OpCode::BinRR_I32GeU | OpCode::P_BinRR_I32GeU | OpCode::BinRI_I32GeU | OpCode::P_BinRI_I32GeU | OpCode::BinRR_I64Eq | OpCode::P_BinRR_I64Eq | OpCode::BinRI_I64Eq | OpCode::P_BinRI_I64Eq | OpCode::BinRR_I64Ne | OpCode::P_BinRR_I64Ne | OpCode::BinRI_I64Ne => true,
+        _ => false,
+    }
+}
+
+/// Runs one of the value codes in `d_val1_op`.
+#[verifier::spinoff_prover]
+pub fn d_val1(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<Seq<Code>>,
+    Ghost(calls): Ghost<Seq<CallFrame>>, Ghost(c0): Ghost<Config>, Ghost(g): Ghost<GS>, Ghost(d): Ghost<usize>,
+    Ghost(rpc): Ghost<usize>, stack: &mut Vec<u64>, fp: usize, st: &Store, r: &ROp, acc: &mut u64) -> (res: RRes)
+    requires
+        rinv(m, cs, codes, c0, g, old(stack)@, calls, d, rpc, fp, st),
+        *r == codes[d as int].rops@[rpc as int],
+        d_val1_op(r.op),
+        acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
+    ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, st, res, *final(acc)),
+{
+    match r.op {
+        OpCode::P_BinRI_I32LtU => s_P_BinRI_I32LtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I32GtS => s_BinRR_I32GtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I32GtS => s_P_BinRR_I32GtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I32GtS => s_BinRI_I32GtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I32GtS => s_P_BinRI_I32GtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I32GtU => s_BinRR_I32GtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I32GtU => s_P_BinRR_I32GtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I32GtU => s_BinRI_I32GtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I32GtU => s_P_BinRI_I32GtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I32LeS => s_BinRR_I32LeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I32LeS => s_P_BinRR_I32LeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I32LeS => s_BinRI_I32LeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I32LeS => s_P_BinRI_I32LeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I32LeU => s_BinRR_I32LeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I32LeU => s_P_BinRR_I32LeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I32LeU => s_BinRI_I32LeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I32LeU => s_P_BinRI_I32LeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I32GeS => s_BinRR_I32GeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I32GeS => s_P_BinRR_I32GeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I32GeS => s_BinRI_I32GeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I32GeS => s_P_BinRI_I32GeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I32GeU => s_BinRR_I32GeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I32GeU => s_P_BinRR_I32GeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I32GeU => s_BinRI_I32GeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I32GeU => s_P_BinRI_I32GeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I64Eq => s_BinRR_I64Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I64Eq => s_P_BinRR_I64Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I64Eq => s_BinRI_I64Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I64Eq => s_P_BinRI_I64Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I64Ne => s_BinRR_I64Ne(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I64Ne => s_P_BinRR_I64Ne(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        _ => s_BinRI_I64Ne(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+    }
+}
+
+/// Whether `op` is one of the codes `d_val2` runs.
+pub open spec fn d_val2_op(op: OpCode) -> bool {
+    match op {
+        OpCode::P_BinRI_I64Ne | OpCode::BinRR_I64LtS | OpCode::P_BinRR_I64LtS | OpCode::BinRI_I64LtS | OpCode::P_BinRI_I64LtS | OpCode::BinRR_I64LtU | OpCode::P_BinRR_I64LtU | OpCode::BinRI_I64LtU | OpCode::P_BinRI_I64LtU | OpCode::BinRR_I64GtS | OpCode::P_BinRR_I64GtS | OpCode::BinRI_I64GtS | OpCode::P_BinRI_I64GtS | OpCode::BinRR_I64GtU | OpCode::P_BinRR_I64GtU | OpCode::BinRI_I64GtU | OpCode::P_BinRI_I64GtU | OpCode::BinRR_I64LeS | OpCode::BinRI_I64LeS | OpCode::BinRR_I64LeU | OpCode::BinRI_I64LeU | OpCode::BinRR_I64GeS | OpCode::BinRI_I64GeS | OpCode::BinRR_I64GeU | OpCode::BinRI_I64GeU | OpCode::BinRR_I32Add | OpCode::P_BinRR_I32Add | OpCode::A_BinRR_I32Add | OpCode::BinRI_I32Add | OpCode::P_BinRI_I32Add | OpCode::A_BinRI_I32Add | OpCode::BinRR_I32Sub => true,
+        _ => false,
+    }
+}
+
+/// Runs one of the value codes in `d_val2_op`.
+#[verifier::spinoff_prover]
+pub fn d_val2(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<Seq<Code>>,
+    Ghost(calls): Ghost<Seq<CallFrame>>, Ghost(c0): Ghost<Config>, Ghost(g): Ghost<GS>, Ghost(d): Ghost<usize>,
+    Ghost(rpc): Ghost<usize>, stack: &mut Vec<u64>, fp: usize, st: &Store, r: &ROp, acc: &mut u64) -> (res: RRes)
+    requires
+        rinv(m, cs, codes, c0, g, old(stack)@, calls, d, rpc, fp, st),
+        *r == codes[d as int].rops@[rpc as int],
+        d_val2_op(r.op),
+        acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
+    ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, st, res, *final(acc)),
+{
+    match r.op {
+        OpCode::P_BinRI_I64Ne => s_P_BinRI_I64Ne(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I64LtS => s_BinRR_I64LtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I64LtS => s_P_BinRR_I64LtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I64LtS => s_BinRI_I64LtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I64LtS => s_P_BinRI_I64LtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I64LtU => s_BinRR_I64LtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I64LtU => s_P_BinRR_I64LtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I64LtU => s_BinRI_I64LtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I64LtU => s_P_BinRI_I64LtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I64GtS => s_BinRR_I64GtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I64GtS => s_P_BinRR_I64GtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I64GtS => s_BinRI_I64GtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I64GtS => s_P_BinRI_I64GtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I64GtU => s_BinRR_I64GtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I64GtU => s_P_BinRR_I64GtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I64GtU => s_BinRI_I64GtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I64GtU => s_P_BinRI_I64GtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I64LeS => s_BinRR_I64LeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I64LeS => s_BinRI_I64LeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I64LeU => s_BinRR_I64LeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I64LeU => s_BinRI_I64LeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I64GeS => s_BinRR_I64GeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I64GeS => s_BinRI_I64GeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I64GeU => s_BinRR_I64GeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I64GeU => s_BinRI_I64GeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I32Add => s_BinRR_I32Add(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I32Add => s_P_BinRR_I32Add(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_BinRR_I32Add => s_A_BinRR_I32Add(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I32Add => s_BinRI_I32Add(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I32Add => s_P_BinRI_I32Add(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_BinRI_I32Add => s_A_BinRI_I32Add(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        _ => s_BinRR_I32Sub(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+    }
+}
+
+/// Whether `op` is one of the codes `d_val3` runs.
+pub open spec fn d_val3_op(op: OpCode) -> bool {
+    match op {
+        OpCode::P_BinRR_I32Sub | OpCode::A_BinRR_I32Sub | OpCode::BinRI_I32Sub | OpCode::P_BinRI_I32Sub | OpCode::A_BinRI_I32Sub | OpCode::BinRR_I32Mul | OpCode::P_BinRR_I32Mul | OpCode::A_BinRR_I32Mul | OpCode::BinRI_I32Mul | OpCode::P_BinRI_I32Mul | OpCode::A_BinRI_I32Mul | OpCode::BinRR_I32And | OpCode::P_BinRR_I32And | OpCode::A_BinRR_I32And | OpCode::BinRI_I32And | OpCode::P_BinRI_I32And | OpCode::A_BinRI_I32And | OpCode::BinRR_I32Or | OpCode::P_BinRR_I32Or | OpCode::A_BinRR_I32Or | OpCode::BinRI_I32Or | OpCode::P_BinRI_I32Or | OpCode::A_BinRI_I32Or | OpCode::BinRR_I32Xor | OpCode::P_BinRR_I32Xor | OpCode::A_BinRR_I32Xor | OpCode::BinRI_I32Xor | OpCode::P_BinRI_I32Xor | OpCode::A_BinRI_I32Xor | OpCode::BinRR_I32Shl | OpCode::P_BinRR_I32Shl | OpCode::BinRI_I32Shl => true,
+        _ => false,
+    }
+}
+
+/// Runs one of the value codes in `d_val3_op`.
+#[verifier::spinoff_prover]
+pub fn d_val3(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<Seq<Code>>,
+    Ghost(calls): Ghost<Seq<CallFrame>>, Ghost(c0): Ghost<Config>, Ghost(g): Ghost<GS>, Ghost(d): Ghost<usize>,
+    Ghost(rpc): Ghost<usize>, stack: &mut Vec<u64>, fp: usize, st: &Store, r: &ROp, acc: &mut u64) -> (res: RRes)
+    requires
+        rinv(m, cs, codes, c0, g, old(stack)@, calls, d, rpc, fp, st),
+        *r == codes[d as int].rops@[rpc as int],
+        d_val3_op(r.op),
+        acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
+    ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, st, res, *final(acc)),
+{
+    match r.op {
+        OpCode::P_BinRR_I32Sub => s_P_BinRR_I32Sub(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_BinRR_I32Sub => s_A_BinRR_I32Sub(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I32Sub => s_BinRI_I32Sub(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I32Sub => s_P_BinRI_I32Sub(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_BinRI_I32Sub => s_A_BinRI_I32Sub(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I32Mul => s_BinRR_I32Mul(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I32Mul => s_P_BinRR_I32Mul(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_BinRR_I32Mul => s_A_BinRR_I32Mul(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I32Mul => s_BinRI_I32Mul(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I32Mul => s_P_BinRI_I32Mul(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_BinRI_I32Mul => s_A_BinRI_I32Mul(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I32And => s_BinRR_I32And(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I32And => s_P_BinRR_I32And(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_BinRR_I32And => s_A_BinRR_I32And(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I32And => s_BinRI_I32And(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I32And => s_P_BinRI_I32And(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_BinRI_I32And => s_A_BinRI_I32And(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I32Or => s_BinRR_I32Or(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I32Or => s_P_BinRR_I32Or(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_BinRR_I32Or => s_A_BinRR_I32Or(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I32Or => s_BinRI_I32Or(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I32Or => s_P_BinRI_I32Or(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_BinRI_I32Or => s_A_BinRI_I32Or(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I32Xor => s_BinRR_I32Xor(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I32Xor => s_P_BinRR_I32Xor(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_BinRR_I32Xor => s_A_BinRR_I32Xor(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I32Xor => s_BinRI_I32Xor(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I32Xor => s_P_BinRI_I32Xor(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_BinRI_I32Xor => s_A_BinRI_I32Xor(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I32Shl => s_BinRR_I32Shl(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I32Shl => s_P_BinRR_I32Shl(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        _ => s_BinRI_I32Shl(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+    }
+}
+
+/// Whether `op` is one of the codes `d_val4` runs.
+pub open spec fn d_val4_op(op: OpCode) -> bool {
+    match op {
+        OpCode::P_BinRI_I32Shl | OpCode::A_BinRI_I32Shl | OpCode::BinRR_I32ShrS | OpCode::P_BinRR_I32ShrS | OpCode::BinRI_I32ShrS | OpCode::P_BinRI_I32ShrS | OpCode::A_BinRI_I32ShrS | OpCode::BinRR_I32ShrU | OpCode::P_BinRR_I32ShrU | OpCode::BinRI_I32ShrU | OpCode::P_BinRI_I32ShrU | OpCode::A_BinRI_I32ShrU | OpCode::BinRR_I32Rotl | OpCode::P_BinRR_I32Rotl | OpCode::BinRI_I32Rotl | OpCode::P_BinRI_I32Rotl | OpCode::A_BinRI_I32Rotl | OpCode::BinRR_I32Rotr | OpCode::P_BinRR_I32Rotr | OpCode::BinRI_I32Rotr | OpCode::P_BinRI_I32Rotr | OpCode::A_BinRI_I32Rotr | OpCode::BinRR_I64Add | OpCode::P_BinRR_I64Add | OpCode::BinRI_I64Add | OpCode::P_BinRI_I64Add | OpCode::A_BinRI_I64Add | OpCode::BinRR_I64Sub | OpCode::P_BinRR_I64Sub | OpCode::BinRI_I64Sub | OpCode::P_BinRI_I64Sub | OpCode::BinRR_I64Mul => true,
+        _ => false,
+    }
+}
+
+/// Runs one of the value codes in `d_val4_op`.
+#[verifier::spinoff_prover]
+pub fn d_val4(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<Seq<Code>>,
+    Ghost(calls): Ghost<Seq<CallFrame>>, Ghost(c0): Ghost<Config>, Ghost(g): Ghost<GS>, Ghost(d): Ghost<usize>,
+    Ghost(rpc): Ghost<usize>, stack: &mut Vec<u64>, fp: usize, st: &Store, r: &ROp, acc: &mut u64) -> (res: RRes)
+    requires
+        rinv(m, cs, codes, c0, g, old(stack)@, calls, d, rpc, fp, st),
+        *r == codes[d as int].rops@[rpc as int],
+        d_val4_op(r.op),
+        acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
+    ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, st, res, *final(acc)),
+{
+    match r.op {
+        OpCode::P_BinRI_I32Shl => s_P_BinRI_I32Shl(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_BinRI_I32Shl => s_A_BinRI_I32Shl(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I32ShrS => s_BinRR_I32ShrS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I32ShrS => s_P_BinRR_I32ShrS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I32ShrS => s_BinRI_I32ShrS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I32ShrS => s_P_BinRI_I32ShrS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_BinRI_I32ShrS => s_A_BinRI_I32ShrS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I32ShrU => s_BinRR_I32ShrU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I32ShrU => s_P_BinRR_I32ShrU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I32ShrU => s_BinRI_I32ShrU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I32ShrU => s_P_BinRI_I32ShrU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_BinRI_I32ShrU => s_A_BinRI_I32ShrU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I32Rotl => s_BinRR_I32Rotl(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I32Rotl => s_P_BinRR_I32Rotl(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I32Rotl => s_BinRI_I32Rotl(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I32Rotl => s_P_BinRI_I32Rotl(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_BinRI_I32Rotl => s_A_BinRI_I32Rotl(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I32Rotr => s_BinRR_I32Rotr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I32Rotr => s_P_BinRR_I32Rotr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I32Rotr => s_BinRI_I32Rotr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I32Rotr => s_P_BinRI_I32Rotr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_BinRI_I32Rotr => s_A_BinRI_I32Rotr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I64Add => s_BinRR_I64Add(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I64Add => s_P_BinRR_I64Add(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I64Add => s_BinRI_I64Add(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I64Add => s_P_BinRI_I64Add(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_BinRI_I64Add => s_A_BinRI_I64Add(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I64Sub => s_BinRR_I64Sub(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I64Sub => s_P_BinRR_I64Sub(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I64Sub => s_BinRI_I64Sub(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I64Sub => s_P_BinRI_I64Sub(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        _ => s_BinRR_I64Mul(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+    }
+}
+
+/// Whether `op` is one of the codes `d_val5` runs.
+pub open spec fn d_val5_op(op: OpCode) -> bool {
+    match op {
+        OpCode::P_BinRR_I64Mul | OpCode::BinRI_I64Mul | OpCode::P_BinRI_I64Mul | OpCode::BinRR_I64And | OpCode::P_BinRR_I64And | OpCode::BinRI_I64And | OpCode::P_BinRI_I64And | OpCode::BinRR_I64Or | OpCode::P_BinRR_I64Or | OpCode::BinRI_I64Or | OpCode::P_BinRI_I64Or | OpCode::BinRR_I64Xor | OpCode::P_BinRR_I64Xor | OpCode::BinRI_I64Xor | OpCode::P_BinRI_I64Xor | OpCode::BinRR_I64Shl | OpCode::P_BinRR_I64Shl | OpCode::BinRI_I64Shl | OpCode::P_BinRI_I64Shl | OpCode::BinRR_I64ShrS | OpCode::P_BinRR_I64ShrS | OpCode::BinRI_I64ShrS | OpCode::P_BinRI_I64ShrS | OpCode::BinRR_I64ShrU | OpCode::P_BinRR_I64ShrU | OpCode::BinRI_I64ShrU | OpCode::P_BinRI_I64ShrU | OpCode::BinRR_I64Rotl | OpCode::BinRI_I64Rotl | OpCode::BinRR_I64Rotr | OpCode::BinRI_I64Rotr | OpCode::BinRR_F32Add => true,
+        _ => false,
+    }
+}
+
+/// Runs one of the value codes in `d_val5_op`.
+#[verifier::spinoff_prover]
+pub fn d_val5(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<Seq<Code>>,
+    Ghost(calls): Ghost<Seq<CallFrame>>, Ghost(c0): Ghost<Config>, Ghost(g): Ghost<GS>, Ghost(d): Ghost<usize>,
+    Ghost(rpc): Ghost<usize>, stack: &mut Vec<u64>, fp: usize, st: &Store, r: &ROp, acc: &mut u64) -> (res: RRes)
+    requires
+        rinv(m, cs, codes, c0, g, old(stack)@, calls, d, rpc, fp, st),
+        *r == codes[d as int].rops@[rpc as int],
+        d_val5_op(r.op),
+        acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
+    ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, st, res, *final(acc)),
+{
+    match r.op {
+        OpCode::P_BinRR_I64Mul => s_P_BinRR_I64Mul(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I64Mul => s_BinRI_I64Mul(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I64Mul => s_P_BinRI_I64Mul(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I64And => s_BinRR_I64And(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I64And => s_P_BinRR_I64And(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I64And => s_BinRI_I64And(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I64And => s_P_BinRI_I64And(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I64Or => s_BinRR_I64Or(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I64Or => s_P_BinRR_I64Or(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I64Or => s_BinRI_I64Or(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I64Or => s_P_BinRI_I64Or(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I64Xor => s_BinRR_I64Xor(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I64Xor => s_P_BinRR_I64Xor(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I64Xor => s_BinRI_I64Xor(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I64Xor => s_P_BinRI_I64Xor(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I64Shl => s_BinRR_I64Shl(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I64Shl => s_P_BinRR_I64Shl(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I64Shl => s_BinRI_I64Shl(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I64Shl => s_P_BinRI_I64Shl(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I64ShrS => s_BinRR_I64ShrS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I64ShrS => s_P_BinRR_I64ShrS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I64ShrS => s_BinRI_I64ShrS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I64ShrS => s_P_BinRI_I64ShrS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I64ShrU => s_BinRR_I64ShrU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_I64ShrU => s_P_BinRR_I64ShrU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I64ShrU => s_BinRI_I64ShrU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_I64ShrU => s_P_BinRI_I64ShrU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I64Rotl => s_BinRR_I64Rotl(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I64Rotl => s_BinRI_I64Rotl(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_I64Rotr => s_BinRR_I64Rotr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_I64Rotr => s_BinRI_I64Rotr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        _ => s_BinRR_F32Add(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+    }
+}
+
+/// Whether `op` is one of the codes `d_val6` runs.
+pub open spec fn d_val6_op(op: OpCode) -> bool {
+    match op {
+        OpCode::BinRI_F32Add | OpCode::BinRR_F32Sub | OpCode::BinRI_F32Sub | OpCode::BinRR_F32Mul | OpCode::BinRI_F32Mul | OpCode::BinRR_F32Div | OpCode::BinRI_F32Div | OpCode::BinRR_F64Add | OpCode::P_BinRR_F64Add | OpCode::BinRI_F64Add | OpCode::P_BinRI_F64Add | OpCode::BinRR_F64Sub | OpCode::P_BinRR_F64Sub | OpCode::BinRI_F64Sub | OpCode::P_BinRI_F64Sub | OpCode::BinRR_F64Mul | OpCode::P_BinRR_F64Mul | OpCode::BinRI_F64Mul | OpCode::P_BinRI_F64Mul | OpCode::BinRR_F64Div | OpCode::P_BinRR_F64Div | OpCode::BinRI_F64Div | OpCode::P_BinRI_F64Div | OpCode::Load_I32Load | OpCode::P_Load_I32Load | OpCode::A_Load_I32Load | OpCode::Load_I64Load | OpCode::P_Load_I64Load | OpCode::A_Load_I64Load | OpCode::Load_F32Load | OpCode::P_Load_F32Load | OpCode::Load_F64Load => true,
+        _ => false,
+    }
+}
+
+/// Runs one of the value codes in `d_val6_op`.
+#[verifier::spinoff_prover]
+pub fn d_val6(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<Seq<Code>>,
+    Ghost(calls): Ghost<Seq<CallFrame>>, Ghost(c0): Ghost<Config>, Ghost(g): Ghost<GS>, Ghost(d): Ghost<usize>,
+    Ghost(rpc): Ghost<usize>, stack: &mut Vec<u64>, fp: usize, st: &Store, r: &ROp, acc: &mut u64) -> (res: RRes)
+    requires
+        rinv(m, cs, codes, c0, g, old(stack)@, calls, d, rpc, fp, st),
+        *r == codes[d as int].rops@[rpc as int],
+        d_val6_op(r.op),
+        acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
+    ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, st, res, *final(acc)),
+{
+    match r.op {
+        OpCode::BinRI_F32Add => s_BinRI_F32Add(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_F32Sub => s_BinRR_F32Sub(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_F32Sub => s_BinRI_F32Sub(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_F32Mul => s_BinRR_F32Mul(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_F32Mul => s_BinRI_F32Mul(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_F32Div => s_BinRR_F32Div(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_F32Div => s_BinRI_F32Div(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_F64Add => s_BinRR_F64Add(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_F64Add => s_P_BinRR_F64Add(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_F64Add => s_BinRI_F64Add(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_F64Add => s_P_BinRI_F64Add(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_F64Sub => s_BinRR_F64Sub(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_F64Sub => s_P_BinRR_F64Sub(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_F64Sub => s_BinRI_F64Sub(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_F64Sub => s_P_BinRI_F64Sub(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_F64Mul => s_BinRR_F64Mul(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_F64Mul => s_P_BinRR_F64Mul(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_F64Mul => s_BinRI_F64Mul(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_F64Mul => s_P_BinRI_F64Mul(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRR_F64Div => s_BinRR_F64Div(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRR_F64Div => s_P_BinRR_F64Div(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::BinRI_F64Div => s_BinRI_F64Div(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_BinRI_F64Div => s_P_BinRI_F64Div(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::Load_I32Load => s_Load_I32Load(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_Load_I32Load => s_P_Load_I32Load(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_Load_I32Load => s_A_Load_I32Load(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::Load_I64Load => s_Load_I64Load(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_Load_I64Load => s_P_Load_I64Load(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_Load_I64Load => s_A_Load_I64Load(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::Load_F32Load => s_Load_F32Load(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_Load_F32Load => s_P_Load_F32Load(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        _ => s_Load_F64Load(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+    }
+}
+
+/// Whether `op` is one of the codes `d_val7` runs.
+pub open spec fn d_val7_op(op: OpCode) -> bool {
+    match op {
+        OpCode::P_Load_F64Load | OpCode::A_Load_F64Load | OpCode::Load_I32Load8S | OpCode::P_Load_I32Load8S | OpCode::Load_I32Load8U | OpCode::P_Load_I32Load8U | OpCode::A_Load_I32Load8U | OpCode::Load_I32Load16S | OpCode::P_Load_I32Load16S | OpCode::Load_I32Load16U | OpCode::P_Load_I32Load16U | OpCode::Load_I64Load8U | OpCode::P_Load_I64Load8U | OpCode::Load_I64Load32U | OpCode::P_Load_I64Load32U => true,
+        _ => false,
+    }
+}
+
+/// Runs one of the value codes in `d_val7_op`.
+#[verifier::spinoff_prover]
+pub fn d_val7(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<Seq<Code>>,
+    Ghost(calls): Ghost<Seq<CallFrame>>, Ghost(c0): Ghost<Config>, Ghost(g): Ghost<GS>, Ghost(d): Ghost<usize>,
+    Ghost(rpc): Ghost<usize>, stack: &mut Vec<u64>, fp: usize, st: &Store, r: &ROp, acc: &mut u64) -> (res: RRes)
+    requires
+        rinv(m, cs, codes, c0, g, old(stack)@, calls, d, rpc, fp, st),
+        *r == codes[d as int].rops@[rpc as int],
+        d_val7_op(r.op),
+        acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
+    ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, st, res, *final(acc)),
+{
+    match r.op {
+        OpCode::P_Load_F64Load => s_P_Load_F64Load(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_Load_F64Load => s_A_Load_F64Load(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::Load_I32Load8S => s_Load_I32Load8S(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_Load_I32Load8S => s_P_Load_I32Load8S(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::Load_I32Load8U => s_Load_I32Load8U(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_Load_I32Load8U => s_P_Load_I32Load8U(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_Load_I32Load8U => s_A_Load_I32Load8U(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::Load_I32Load16S => s_Load_I32Load16S(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_Load_I32Load16S => s_P_Load_I32Load16S(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::Load_I32Load16U => s_Load_I32Load16U(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_Load_I32Load16U => s_P_Load_I32Load16U(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::Load_I64Load8U => s_Load_I64Load8U(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_Load_I64Load8U => s_P_Load_I64Load8U(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::Load_I64Load32U => s_Load_I64Load32U(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        _ => s_P_Load_I64Load32U(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+    }
+}
+
+/// Whether `op` is one of the codes `d_st0` runs.
+pub open spec fn d_st0_op(op: OpCode) -> bool {
+    match op {
+        OpCode::StoreRR_I32Store | OpCode::P_StoreRR_I32Store | OpCode::A_StoreRR_I32Store | OpCode::StoreRI_I32Store | OpCode::P_StoreRI_I32Store | OpCode::A_StoreRI_I32Store | OpCode::StoreRR_I64Store | OpCode::P_StoreRR_I64Store | OpCode::StoreRI_I64Store | OpCode::P_StoreRI_I64Store | OpCode::StoreRR_F32Store | OpCode::P_StoreRR_F32Store | OpCode::StoreRI_F32Store | OpCode::P_StoreRI_F32Store | OpCode::StoreRR_F64Store | OpCode::P_StoreRR_F64Store | OpCode::A_StoreRR_F64Store | OpCode::StoreRI_F64Store | OpCode::P_StoreRI_F64Store | OpCode::StoreRR_I32Store8 | OpCode::P_StoreRR_I32Store8 | OpCode::StoreRI_I32Store8 | OpCode::P_StoreRI_I32Store8 | OpCode::A_StoreRI_I32Store8 | OpCode::StoreRR_I32Store16 | OpCode::P_StoreRR_I32Store16 | OpCode::StoreRI_I32Store16 | OpCode::P_StoreRI_I32Store16 | OpCode::StoreRR_I64Store8 | OpCode::P_StoreRR_I64Store8 | OpCode::StoreRI_I64Store8 | OpCode::P_StoreRI_I64Store8 => true,
+        _ => false,
+    }
+}
+
+/// Runs one of the value codes in `d_st0_op`.
+#[verifier::spinoff_prover]
+pub fn d_st0(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<Seq<Code>>,
+    Ghost(calls): Ghost<Seq<CallFrame>>, Ghost(c0): Ghost<Config>, Ghost(g): Ghost<GS>, Ghost(d): Ghost<usize>,
+    Ghost(rpc): Ghost<usize>, stack: &mut Vec<u64>, fp: usize, st: &mut Store, r: &ROp, acc: &mut u64) -> (res: RRes)
+    requires
+        rinv(m, cs, codes, c0, g, old(stack)@, calls, d, rpc, fp, old(st)),
+        *r == codes[d as int].rops@[rpc as int],
+        d_st0_op(r.op),
+        acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
+    ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+{
+    match r.op {
+        OpCode::StoreRR_I32Store => s_StoreRR_I32Store(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_StoreRR_I32Store => s_P_StoreRR_I32Store(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_StoreRR_I32Store => s_A_StoreRR_I32Store(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::StoreRI_I32Store => s_StoreRI_I32Store(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_StoreRI_I32Store => s_P_StoreRI_I32Store(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_StoreRI_I32Store => s_A_StoreRI_I32Store(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::StoreRR_I64Store => s_StoreRR_I64Store(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_StoreRR_I64Store => s_P_StoreRR_I64Store(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::StoreRI_I64Store => s_StoreRI_I64Store(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_StoreRI_I64Store => s_P_StoreRI_I64Store(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::StoreRR_F32Store => s_StoreRR_F32Store(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_StoreRR_F32Store => s_P_StoreRR_F32Store(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::StoreRI_F32Store => s_StoreRI_F32Store(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_StoreRI_F32Store => s_P_StoreRI_F32Store(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::StoreRR_F64Store => s_StoreRR_F64Store(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_StoreRR_F64Store => s_P_StoreRR_F64Store(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_StoreRR_F64Store => s_A_StoreRR_F64Store(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::StoreRI_F64Store => s_StoreRI_F64Store(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_StoreRI_F64Store => s_P_StoreRI_F64Store(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::StoreRR_I32Store8 => s_StoreRR_I32Store8(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_StoreRR_I32Store8 => s_P_StoreRR_I32Store8(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::StoreRI_I32Store8 => s_StoreRI_I32Store8(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_StoreRI_I32Store8 => s_P_StoreRI_I32Store8(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::A_StoreRI_I32Store8 => s_A_StoreRI_I32Store8(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::StoreRR_I32Store16 => s_StoreRR_I32Store16(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_StoreRR_I32Store16 => s_P_StoreRR_I32Store16(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::StoreRI_I32Store16 => s_StoreRI_I32Store16(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_StoreRI_I32Store16 => s_P_StoreRI_I32Store16(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::StoreRR_I64Store8 => s_StoreRR_I64Store8(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_StoreRR_I64Store8 => s_P_StoreRR_I64Store8(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::StoreRI_I64Store8 => s_StoreRI_I64Store8(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        _ => s_P_StoreRI_I64Store8(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+    }
+}
+
+/// Whether `op` is one of the codes `d_st1` runs.
+pub open spec fn d_st1_op(op: OpCode) -> bool {
+    match op {
+        OpCode::StoreRR_I64Store32 | OpCode::P_StoreRR_I64Store32 | OpCode::StoreRI_I64Store32 | OpCode::P_StoreRI_I64Store32 => true,
+        _ => false,
+    }
+}
+
+/// Runs one of the value codes in `d_st1_op`.
+#[verifier::spinoff_prover]
+pub fn d_st1(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<Seq<Code>>,
+    Ghost(calls): Ghost<Seq<CallFrame>>, Ghost(c0): Ghost<Config>, Ghost(g): Ghost<GS>, Ghost(d): Ghost<usize>,
+    Ghost(rpc): Ghost<usize>, stack: &mut Vec<u64>, fp: usize, st: &mut Store, r: &ROp, acc: &mut u64) -> (res: RRes)
+    requires
+        rinv(m, cs, codes, c0, g, old(stack)@, calls, d, rpc, fp, old(st)),
+        *r == codes[d as int].rops@[rpc as int],
+        d_st1_op(r.op),
+        acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
+    ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+{
+    match r.op {
+        OpCode::StoreRR_I64Store32 => s_StoreRR_I64Store32(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::P_StoreRR_I64Store32 => s_P_StoreRR_I64Store32(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        OpCode::StoreRI_I64Store32 => s_StoreRI_I64Store32(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+        _ => s_P_StoreRI_I64Store32(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
+    }
+}
+
+/// Whether `op` is one of the codes `d_br0` runs.
+pub open spec fn d_br0_op(op: OpCode) -> bool {
+    match op {
+        OpCode::BrIfRR_I32Eq | OpCode::BrIfRI_I32Eq | OpCode::A_BrIfRR_I32Eq | OpCode::A_BrIfRI_I32Eq | OpCode::BrIfRR_I32Ne | OpCode::BrIfRI_I32Ne | OpCode::A_BrIfRR_I32Ne | OpCode::A_BrIfRI_I32Ne | OpCode::BrIfRR_I32LtS | OpCode::BrIfRI_I32LtS | OpCode::A_BrIfRR_I32LtS | OpCode::A_BrIfRI_I32LtS | OpCode::BrIfRR_I32LtU | OpCode::BrIfRI_I32LtU | OpCode::A_BrIfRR_I32LtU | OpCode::A_BrIfRI_I32LtU | OpCode::BrIfRR_I32GtS | OpCode::BrIfRI_I32GtS | OpCode::BrIfRR_I32GtU | OpCode::BrIfRI_I32GtU | OpCode::BrIfRR_I32LeS | OpCode::BrIfRI_I32LeS | OpCode::BrIfRR_I32LeU | OpCode::BrIfRI_I32LeU | OpCode::BrIfRR_I32GeS | OpCode::BrIfRI_I32GeS | OpCode::A_BrIfRR_I32GeS | OpCode::BrIfRR_I32GeU | OpCode::BrIfRI_I32GeU | OpCode::A_BrIfRR_I32GeU | OpCode::BrIfRR_I64Eq | OpCode::BrIfRI_I64Eq => true,
+        _ => false,
+    }
+}
+
+/// Runs one of the branch codes in `d_br0_op`.
+#[verifier::spinoff_prover]
+pub fn d_br0<'a>(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<Seq<Code>>,
+    Ghost(calls): Ghost<Seq<CallFrame>>, Ghost(c0): Ghost<Config>, Ghost(g): Ghost<GS>, Ghost(d): Ghost<usize>,
+    rpc: usize, stack: &Vec<u64>, fp: usize, st: &Store, r: &ROp,
+    rops: &'a [ROp], cur: Cur<'a>, acc: u64) -> (res: (usize, Cur<'a>, Ghost<GS>))
+    requires
+        rinv(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st),
+        *r == codes[d as int].rops@[rpc as int],
+        d_br0_op(r.op),
+        rops@ == codes[d as int].rops@, cur.seq() == rops@, cur.idx() == rpc as int,
+        acc_ok(codes, d, rpc, acc, stack@, fp),
+    ensures
+        rinv(m, cs, codes, c0, res.2@, stack@, calls, d, res.0, fp, st), res.2@.hs == g.hs,
+        res.1.idx() == res.0 as int, res.1.seq() == rops@,
+        acc_ok(codes, d, res.0, acc, stack@, fp),
+{
+    match r.op {
+        OpCode::BrIfRR_I32Eq => s_BrIfRR_I32Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I32Eq => s_BrIfRI_I32Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::A_BrIfRR_I32Eq => s_A_BrIfRR_I32Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::A_BrIfRI_I32Eq => s_A_BrIfRI_I32Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I32Ne => s_BrIfRR_I32Ne(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I32Ne => s_BrIfRI_I32Ne(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::A_BrIfRR_I32Ne => s_A_BrIfRR_I32Ne(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::A_BrIfRI_I32Ne => s_A_BrIfRI_I32Ne(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I32LtS => s_BrIfRR_I32LtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I32LtS => s_BrIfRI_I32LtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::A_BrIfRR_I32LtS => s_A_BrIfRR_I32LtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::A_BrIfRI_I32LtS => s_A_BrIfRI_I32LtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I32LtU => s_BrIfRR_I32LtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I32LtU => s_BrIfRI_I32LtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::A_BrIfRR_I32LtU => s_A_BrIfRR_I32LtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::A_BrIfRI_I32LtU => s_A_BrIfRI_I32LtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I32GtS => s_BrIfRR_I32GtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I32GtS => s_BrIfRI_I32GtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I32GtU => s_BrIfRR_I32GtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I32GtU => s_BrIfRI_I32GtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I32LeS => s_BrIfRR_I32LeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I32LeS => s_BrIfRI_I32LeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I32LeU => s_BrIfRR_I32LeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I32LeU => s_BrIfRI_I32LeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I32GeS => s_BrIfRR_I32GeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I32GeS => s_BrIfRI_I32GeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::A_BrIfRR_I32GeS => s_A_BrIfRR_I32GeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I32GeU => s_BrIfRR_I32GeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I32GeU => s_BrIfRI_I32GeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::A_BrIfRR_I32GeU => s_A_BrIfRR_I32GeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I64Eq => s_BrIfRR_I64Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        _ => s_BrIfRI_I64Eq(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+    }
+}
+
+/// Whether `op` is one of the codes `d_br1` runs.
+pub open spec fn d_br1_op(op: OpCode) -> bool {
+    match op {
+        OpCode::BrIfRR_I64Ne | OpCode::BrIfRI_I64Ne | OpCode::BrIfRR_I64LtS | OpCode::BrIfRI_I64LtS | OpCode::BrIfRR_I64LtU | OpCode::BrIfRI_I64LtU | OpCode::BrIfRR_I64GtS | OpCode::BrIfRI_I64GtS | OpCode::BrIfRR_I64GtU | OpCode::BrIfRI_I64GtU | OpCode::BrIfRR_I64LeS | OpCode::BrIfRI_I64LeS | OpCode::BrIfRR_I64LeU | OpCode::BrIfRI_I64LeU | OpCode::BrIfRR_I64GeS | OpCode::BrIfRI_I64GeS | OpCode::BrIfRR_I64GeU | OpCode::BrIfRI_I64GeU => true,
+        _ => false,
+    }
+}
+
+/// Runs one of the branch codes in `d_br1_op`.
+#[verifier::spinoff_prover]
+pub fn d_br1<'a>(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<Seq<Code>>,
+    Ghost(calls): Ghost<Seq<CallFrame>>, Ghost(c0): Ghost<Config>, Ghost(g): Ghost<GS>, Ghost(d): Ghost<usize>,
+    rpc: usize, stack: &Vec<u64>, fp: usize, st: &Store, r: &ROp,
+    rops: &'a [ROp], cur: Cur<'a>, acc: u64) -> (res: (usize, Cur<'a>, Ghost<GS>))
+    requires
+        rinv(m, cs, codes, c0, g, stack@, calls, d, rpc, fp, st),
+        *r == codes[d as int].rops@[rpc as int],
+        d_br1_op(r.op),
+        rops@ == codes[d as int].rops@, cur.seq() == rops@, cur.idx() == rpc as int,
+        acc_ok(codes, d, rpc, acc, stack@, fp),
+    ensures
+        rinv(m, cs, codes, c0, res.2@, stack@, calls, d, res.0, fp, st), res.2@.hs == g.hs,
+        res.1.idx() == res.0 as int, res.1.seq() == rops@,
+        acc_ok(codes, d, res.0, acc, stack@, fp),
+{
+    match r.op {
+        OpCode::BrIfRR_I64Ne => s_BrIfRR_I64Ne(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I64Ne => s_BrIfRI_I64Ne(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I64LtS => s_BrIfRR_I64LtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I64LtS => s_BrIfRI_I64LtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I64LtU => s_BrIfRR_I64LtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I64LtU => s_BrIfRI_I64LtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I64GtS => s_BrIfRR_I64GtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I64GtS => s_BrIfRI_I64GtS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I64GtU => s_BrIfRR_I64GtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I64GtU => s_BrIfRI_I64GtU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I64LeS => s_BrIfRR_I64LeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I64LeS => s_BrIfRI_I64LeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I64LeU => s_BrIfRR_I64LeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I64LeU => s_BrIfRI_I64LeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I64GeS => s_BrIfRR_I64GeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRI_I64GeS => s_BrIfRI_I64GeS(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        OpCode::BrIfRR_I64GeU => s_BrIfRR_I64GeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+        _ => s_BrIfRI_I64GeU(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), rpc, stack, fp, st, r, rops, cur, acc),
+    }
+}
+
+/// Every branch code (see `execute_metered`, which runs them all in one arm).
 #[inline(always)]
 pub fn s_branch<'a>(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<Seq<Code>>,
     Ghost(calls): Ghost<Seq<CallFrame>>, Ghost(c0): Ghost<Config>, Ghost(g): Ghost<GS>, Ghost(d): Ghost<usize>,

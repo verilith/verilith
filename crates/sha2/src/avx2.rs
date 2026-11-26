@@ -704,6 +704,31 @@ fn sigma1_256(x: __m256i) -> (r: __m256i)
     r
 }
 
+/// `kw256_upto` grows by the four words a 128-bit store writes at `t`,
+/// when they are the next four.
+proof fn lemma_kw_store(w: Seq<u32>, w2: Seq<u32>, m: Seq<u32>, t: int, x: Seq<u32>)
+    requires
+        0 <= t,
+        t + 4 <= w.len(),
+        x.len() == 4,
+        w2 == w.subrange(0, t) + x + w.subrange(t + 4, w.len() as int),
+        crate::compress::kw256_upto(w, m, t),
+        w2[t + 0] == crate::spec::add(crate::spec::K[t + 0], crate::spec::schedule(m, t + 0)),
+        w2[t + 1] == crate::spec::add(crate::spec::K[t + 1], crate::spec::schedule(m, t + 1)),
+        w2[t + 2] == crate::spec::add(crate::spec::K[t + 2], crate::spec::schedule(m, t + 2)),
+        w2[t + 3] == crate::spec::add(crate::spec::K[t + 3], crate::spec::schedule(m, t + 3)),
+    ensures
+        crate::compress::kw256_upto(w2, m, t + 4),
+{
+    assert forall|i: int| 0 <= i < t + 4 implies w2[i] == #[trigger] crate::spec::add(crate::spec::K[i], crate::spec::schedule(m, i)) by {
+        if i < t {
+            assert(w2[i] == w[i]);
+        } else {
+            assert(i == t + (i - t));
+        }
+    }
+}
+
 /// Stores K + W for words 4s to 4s + 4 of both blocks, from `v`, which
 /// holds W_{4s} to W_{4s+3}.
 #[verifier::spinoff_prover]
@@ -743,16 +768,8 @@ fn store256(v: __m256i, s: usize, w0: &mut [u32; 64], w1: &mut [u32; 64], Ghost(
         assert(w1@[t + 2] == crate::spec::add(crate::spec::K[t + 2], crate::spec::schedule(m1, t + 2)));
         assert(w0@[t + 3] == crate::spec::add(crate::spec::K[t + 3], crate::spec::schedule(m0, t + 3)));
         assert(w1@[t + 3] == crate::spec::add(crate::spec::K[t + 3], crate::spec::schedule(m1, t + 3)));
-        assert forall|i: int| 0 <= i < t + 4 implies #[trigger] w0@[i] == crate::spec::add(crate::spec::K[i], crate::spec::schedule(m0, i)) by {
-            if i < t {
-                assert(w0@[i] == old(w0)@[i]);
-            }
-        }
-        assert forall|i: int| 0 <= i < t + 4 implies #[trigger] w1@[i] == crate::spec::add(crate::spec::K[i], crate::spec::schedule(m1, i)) by {
-            if i < t {
-                assert(w1@[i] == old(w1)@[i]);
-            }
-        }
+        lemma_kw_store(old(w0)@, w0@, m0, t, u32x4(lo));
+        lemma_kw_store(old(w1)@, w1@, m1, t, u32x4(hi));
     }
 }
 

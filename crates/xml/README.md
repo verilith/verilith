@@ -182,8 +182,8 @@ Everything in `src/spec.rs`, `src/chars.rs`, `src/lex.rs`, `src/dtd.rs`,
 `src/content.rs`, `src/doc.rs`, `src/ent.rs`, `src/enc.rs`, `src/decode.rs`,
 `src/uniq.rs`, `src/index.rs`, `src/scan.rs`, `src/lanes.rs`,
 `src/tape.rs`, `src/pe_spec.rs`, `src/pe.rs`, and of the push parser `src/stream_spec.rs`,
-`src/stream.rs`, `src/push.rs` and `src/reader.rs`, is checked by Verus (`./scripts/verify.sh`, which runs
-`cargo verus verify`: 2030 verified, 0 errors, in a few minutes on x86-64;
+`src/items_spec.rs`, `src/stream.rs`, `src/push.rs` and `src/reader.rs`, is checked by Verus (`./scripts/verify.sh`, which runs
+`cargo verus verify`: 2055 verified, 0 errors, in a few minutes on x86-64;
 fewer for an AArch64 target, which has no SSE2 code. The SSE2 wrappers are
 verified in verilith-simd). The trusted base is listed under
 [What is not proven](#what-is-not-proven).
@@ -281,12 +281,23 @@ verified in verilith-simd). The trusted base is listed under
   what was fed (`push::verdict`). The reader adds the encodings: after
   every chunk the input decodes to the text the stream has seen followed
   by the decoding of the rest (`Reader::dec_ok`), so its `R_OK` and `R_ERR`
-  are `spec::parse`'s, in every encoding. The items it writes are tested,
-  not proven, to be the whole parse's: `tests/push.rs` feeds every file of
-  the W3C suite (up to 64 KiB) in chunks of 1, 2, 3, 7, 64 and 4096 bytes,
-  whole, and in three runs of random sizes, and compares the verdicts and
-  the items with the whole parse's, and checks that the window stays
-  small.
+  are `spec::parse`'s, in every encoding.
+* **The items, chunk by chunk.** When `feed` accepts the document, the
+  items the chunks emitted, one chunk after another (`Stream::emitted`:
+  each chunk's tape, which `take_out` hands over, moved by `base()` to
+  positions in the text), are the whole parse's tape (`items_spec::items`):
+  every token of `parse`'s tape is emitted once, in order, at its
+  position, but for a start tag's index of its end tag, which has not
+  come when the start tag is emitted, and character data and CDATA
+  sections may come in pieces that cover the token's span end to end.
+  `Reader::feed` carries this to every encoding: the text the items are in
+  is `parse`'s decoded text. Before the root element the tokens are the
+  prolog's as each is read, and a prolog read whole at the last chunk
+  keeps those already emitted (`lemma_after_m1_pre`, `lemma_after_m2_pre`). `tests/push.rs` also
+  tests it: it feeds every file of the W3C suite (up to 64 KiB) in chunks
+  of 1, 2, 3, 7, 64 and 4096 bytes, whole, and in three runs of random
+  sizes, and compares the verdicts and the items with the whole parse's,
+  and checks that the window stays small.
 * **Reading back.** `decode::eol` (line ends, §2.11) and
   `decode::att_norm` (the normalized value of an attribute, §3.3.3, with
   entity references expanded) state what the text means, and the
@@ -332,6 +343,12 @@ verified in verilith-simd). The trusted base is listed under
   trusts every pointer the caller passes. It is tested by libxml2's own
   regression tests under ASan and UBSan (see
   [The libxml2 C ABI](#the-libxml2-c-abi)).
+* **The push parser's flags on pieces** (`P_CR`, `P_FIRST`, `P_LAST`:
+  a carriage return in the piece, the first and the last piece of a CDATA
+  section) are not part of what is proven of its items: the pieces of one
+  section are proven to follow one another, and its first piece to start
+  where the section's text starts. The C ABIs' handlers built on the items
+  are ordinary Rust (above).
 * **Error positions** (`Tape::err`, and the line and column in `Error`)
   are diagnostics outside the spec: the verified parser decides whether
   the document is well-formed, and records where the step that failed
@@ -840,7 +857,7 @@ and column kept up to date for every item. That pass is kept cheap by:
 `bench/` (a separate project) times verilith-xml against the Rust XML
 parsers on the same thirteen files, in one process: best of 15 timings,
 MB/s, the same VM and day. roxmltree 0.21 builds its tree and counts the
-nodes; quick-xml 0.38 reads every event (it checks end tag names, and does
+nodes; quick-xml 0.38 (`bench/` now builds against 0.42) reads every event (it checks end tag names, and does
 not check characters, names or references, nor expand references); xml-rs 1
 reads every event.
 
