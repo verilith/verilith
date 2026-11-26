@@ -53,7 +53,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | text | 18 | 13 |  |  |  |  | 9 |
 | tiff |  |  |  |  |  |  | 2 |
 | tls |  |  |  |  |  |  | 2 |
-| tls-aws-lc |  |  |  |  |  |  | 1 |
+| tls-aws-lc |  |  |  |  |  |  | 2 |
 | url | 1 |  |  |  |  |  | 5 |
 | verilith |  |  |  |  |  |  | 1 |
 | wasm | 26 |  |  |  |  | 2 | 4 |
@@ -63,7 +63,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 |
 | zstd | 6 |  |  |  |  |  | 1 |
-| **total** | **641** | **35** | **274** | **5** | **17** | **12** | **130** |
+| **total** | **641** | **35** | **274** | **5** | **17** | **12** | **131** |
 
 ## Items
 
@@ -301,6 +301,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### tls-aws-lc
 
+- `crates/tls-aws-lc/src/hpke.rs`: plain Rust
 - `crates/tls-aws-lc/src/lib.rs`: plain Rust
 
 ### url
