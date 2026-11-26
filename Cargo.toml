@@ -15,6 +15,7 @@ members = [
     "crates/lz4",
     "crates/png",
     "crates/regex",
+    "crates/server",
     "crates/sha2",
     "crates/simd",
     "crates/snappy",
