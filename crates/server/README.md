@@ -79,9 +79,9 @@ step (each a separate crate with its own proofs):
 | Encryption | verilith-tls (TLS 1.3 handshake, record layer), crypto from verilith-tls-aws-lc (trusted) | same | verilith-quic-conn (QUIC transport) on verilith-quic (packets, frames, loss recovery) and verilith-tls's QUIC mode |
 | Framing | verilith-http (request parser, body framing: the smuggling theorems) | verilith-h2 (frames) | verilith-h3 (frames, stream rules) |
 | Field compression | — | verilith-hpack | verilith-qpack |
-| Connection logic | `conn.rs` + `persist.rs` (verified: requests exactly the spec's, in order) | `h2.rs` with `flow.rs`, `streams.rs` (verified flow control and stream states) | `h3.rs` |
+| Connection logic | `conn.rs` + `persist.rs` (verified: requests exactly the spec's, in order) | `h2.rs` with `flow.rs`, `streams.rs` (verified flow control and stream states) | `h3core.rs` (verified: request lifecycle, Content-Length, critical streams, SETTINGS, response framing, flood budget) driven by `h3.rs` |
 | Handler | your code: `Request` in, `Response` out | same | same |
-| Response | `respond.rs` (verified: the head parses back exactly) | HPACK-encoded fields | QPACK-encoded fields |
+| Response | `respond.rs` (verified: the head parses back exactly) | HPACK-encoded fields | QPACK-encoded fields, framed by `h3core.rs` (verified: reads back as exactly HEADERS then the body) |
 | Static files | `path.rs` (verified: never leaves the root), `range.rs` (verified), verilith-text (percent-decoding), `files.rs` | same | same |
 
 Where the proofs meet: each crate proves its piece against an RFC
