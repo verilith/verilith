@@ -6,3 +6,19 @@ pub mod spec;
 mod stable;
 pub mod integer;
 pub mod henc;
+pub mod table;
+pub mod lemmas;
+pub mod decoder;
+pub mod strings;
+
+#[cfg(verus_only)]
+vstd::prelude::verus! {
+
+// The proofs are checked once per pointer width.
+#[cfg(target_pointer_width = "64")]
+global size_of usize == 8;
+
+#[cfg(target_pointer_width = "32")]
+global size_of usize == 4;
+
+} // verus!

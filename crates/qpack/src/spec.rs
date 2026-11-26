@@ -259,9 +259,10 @@ pub open spec fn evict(t: Table, room: nat, cap: nat) -> Table
 }
 
 /// Adds an entry, evicting first. An entry larger than the capacity is an
-/// error (§3.2.2).
+/// error (§3.2.2), and so (the spec's own limit) is an insert past
+/// `MAX_INT` inserts, which no Required Insert Count could refer to.
 pub open spec fn insert(t: Table, e: Entry) -> Option<Table> {
-    if esize(e) > t.cap {
+    if esize(e) > t.cap || icount(t) >= MAX_INT {
         None
     } else {
         let t2 = evict(t, esize(e), t.cap);
@@ -317,6 +318,7 @@ pub open spec fn str_limit(max_cap: nat) -> nat {
 /// integers and string lengths alone (no string is decoded). A decoder
 /// waits for a whole instruction before decoding any of it, so an error
 /// inside one is reported once all of it has arrived.
+#[verifier::opaque]
 pub open spec fn eframe(b: Seq<u8>, max_cap: nat) -> EndR {
     let lim = str_limit(max_cap);
     if b.len() == 0 {
@@ -347,6 +349,7 @@ pub open spec fn eframe(b: Seq<u8>, max_cap: nat) -> EndR {
 
 /// Applies the encoder instruction `b` (all of it, as framed by `eframe`)
 /// to the table. `None` is QPACK_ENCODER_STREAM_ERROR.
+#[verifier::opaque]
 pub open spec fn einst(t: Table, max_cap: nat, b: Seq<u8>) -> Option<Table> {
     let lim = str_limit(max_cap);
     if b.len() == 0 {
@@ -687,8 +690,15 @@ pub open spec fn has_stream(bl: Seq<(nat, nat)>, s: nat) -> bool {
 }
 
 /// `bl` without stream `s`.
-pub open spec fn without(bl: Seq<(nat, nat)>, s: nat) -> Seq<(nat, nat)> {
-    bl.filter(|x: (nat, nat)| x.0 != s)
+pub open spec fn without(bl: Seq<(nat, nat)>, s: nat) -> Seq<(nat, nat)>
+    decreases bl.len(),
+{
+    if bl.len() == 0 {
+        bl
+    } else {
+        let r = without(bl.drop_last(), s);
+        if bl.last().0 != s { r.push(bl.last()) } else { r }
+    }
 }
 
 pub open spec fn max(a: nat, b: nat) -> nat {
@@ -744,12 +754,26 @@ pub open spec fn dec_section(st: DecState, stream: nat, b: Seq<u8>) -> (Decoded,
 
 /// After the encoder stream advanced the table: the streams it unblocked
 /// (Required Insert Count reached), in the order they blocked.
-pub open spec fn unblocked(bl: Seq<(nat, nat)>, count: nat) -> Seq<(nat, nat)> {
-    bl.filter(|x: (nat, nat)| x.1 <= count)
+pub open spec fn unblocked(bl: Seq<(nat, nat)>, count: nat) -> Seq<(nat, nat)>
+    decreases bl.len(),
+{
+    if bl.len() == 0 {
+        bl
+    } else {
+        let r = unblocked(bl.drop_last(), count);
+        if bl.last().1 <= count { r.push(bl.last()) } else { r }
+    }
 }
 
-pub open spec fn still_blocked(bl: Seq<(nat, nat)>, count: nat) -> Seq<(nat, nat)> {
-    bl.filter(|x: (nat, nat)| x.1 > count)
+pub open spec fn still_blocked(bl: Seq<(nat, nat)>, count: nat) -> Seq<(nat, nat)>
+    decreases bl.len(),
+{
+    if bl.len() == 0 {
+        bl
+    } else {
+        let r = still_blocked(bl.drop_last(), count);
+        if bl.last().1 > count { r.push(bl.last()) } else { r }
+    }
 }
 
 /// The decoder state after the encoder stream bytes `input`, with `held`
@@ -816,6 +840,7 @@ pub struct EncState {
 
 /// The decoder instruction at the start of `b`: one integer, with a 7-bit
 /// prefix (Section Acknowledgment, 1...) or a 6-bit one (01... and 00...).
+#[verifier::opaque]
 pub open spec fn dframe(b: Seq<u8>) -> EndR {
     if b.len() == 0 {
         EndR::Short
@@ -838,8 +863,21 @@ pub open spec fn first_of(sent: Seq<Sent>, s: nat) -> Option<int> {
     }
 }
 
+/// `sent` without the sections of stream `s`.
+pub open spec fn drop_stream(sent: Seq<Sent>, s: nat) -> Seq<Sent>
+    decreases sent.len(),
+{
+    if sent.len() == 0 {
+        sent
+    } else {
+        let r = drop_stream(sent.drop_last(), s);
+        if sent.last().stream != s { r.push(sent.last()) } else { r }
+    }
+}
+
 /// Applies the decoder instruction `b` (all of it) on the encoder's side.
 /// `None` is QPACK_DECODER_STREAM_ERROR.
+#[verifier::opaque]
 pub open spec fn dinst(st: EncState, b: Seq<u8>) -> Option<EncState> {
     if b.len() == 0 {
         None
@@ -860,7 +898,7 @@ pub open spec fn dinst(st: EncState, b: Seq<u8>) -> Option<EncState> {
     } else if b[0] >= 0x40 {
         // §4.4.2 Stream Cancellation.
         match int_dec(b, 0, 6) {
-            IntR::Ok(s, _) => Some(EncState { sent: st.sent.filter(|x: Sent| x.stream != s), ..st }),
+            IntR::Ok(s, _) => Some(EncState { sent: drop_stream(st.sent, s), ..st }),
             _ => None,
         }
     } else {

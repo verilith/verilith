@@ -57,7 +57,7 @@ pub fn decode(b: &[u8], pos: usize, n: u8) -> (r: IntE)
         1 <= n <= 8,
     ensures
         int_matches(r, int_dec(b@, pos as int, n as nat)),
-        r matches IntE::Ok(v, e) ==> pos < e <= b@.len() && v <= MAX_INT,
+        r matches IntE::Ok(v, e) ==> pos < e <= b@.len() && e <= pos + 10 && v <= MAX_INT,
 {
     proof {
         lemma_pows();
@@ -77,6 +77,7 @@ pub fn decode(b: &[u8], pos: usize, n: u8) -> (r: IntE)
         invariant
             pos < p <= b@.len(),
             i <= 9,
+            p == pos + 1 + i,
             acc <= MAX_INT,
             int_dec(b@, pos as int, n as nat) == int_tail(b@, p as int, i as nat, acc as nat),
             forall|j: int| 0 <= j < 9 ==> #[trigger] P128@[j] as nat == p128(j as nat),
