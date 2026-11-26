@@ -6,6 +6,8 @@
 //! `verilith-tls-aws-lc`, over aws-lc; any type that implements these
 //! traits with these contracts can stand in for it.
 use alloc::vec::Vec;
+use verilith_x509::spec::{SpecAlgId, SpecSpki};
+use verilith_x509::{AlgId, Spki, Time};
 use vstd::prelude::*;
 
 verus! {
@@ -154,6 +156,14 @@ pub uninterp spec fn ticket_issued(ticket: Seq<u8>, state: Seq<u8>) -> bool;
 /// and this ClientHello has not had its 0-RTT data taken before.
 pub uninterp spec fn early_claimed(ch: Seq<u8>) -> bool;
 
+/// Whether `sig` is a signature, with a certificate's signature algorithm
+/// `alg` (RFC 5280 §4.1.1.2), of `msg` by the public key `key`.
+pub uninterp spec fn x509_signed(alg: SpecAlgId, key: SpecSpki, msg: Seq<u8>, sig: Seq<u8>) -> bool;
+
+/// Whether `sig` is a TLS 1.3 signature with `scheme` (§4.2.3) of `msg` by
+/// the public key `key`, of a type `scheme` allows.
+pub uninterp spec fn tls_signed(scheme: u16, key: SpecSpki, msg: Seq<u8>, sig: Seq<u8>) -> bool;
+
 /// The cryptography a server needs, and its keys.
 pub trait Provider {
     type Key: AeadKey;
@@ -235,6 +245,25 @@ pub trait Provider {
         ensures
             r ==> early_claimed(ch@),
     ;
+
+    /// Checks a certificate's signature (client authentication): `sig`
+    /// over `msg` with signature algorithm `alg` by `key`. `false` for a
+    /// wrong signature or an algorithm or key the provider does not take.
+    fn verify_cert_sig(&self, alg: &AlgId, key: &Spki, msg: &[u8], sig: &[u8]) -> (r: bool)
+        ensures
+            r ==> x509_signed(alg@, key@, msg@, sig@),
+    ;
+
+    /// Checks a CertificateVerify signature (§4.4.3): `sig` over `msg`
+    /// with `scheme` by `key`. `false` for a wrong signature, or a scheme
+    /// that does not fit the key.
+    fn verify_tls_sig(&self, scheme: u16, key: &Spki, msg: &[u8], sig: &[u8]) -> (r: bool)
+        ensures
+            r ==> tls_signed(scheme, key@, msg@, sig@),
+    ;
+
+    /// The time now, in UTC, for certificate validity periods.
+    fn now_utc(&mut self) -> Time;
 }
 
 } // verus!
