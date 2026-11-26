@@ -8,6 +8,7 @@ pub mod server;
 pub mod crypto;
 pub mod hello;
 pub mod protect;
+pub mod quic;
 pub mod keys;
 pub mod messages;
 pub mod negotiate;
