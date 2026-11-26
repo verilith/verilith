@@ -357,7 +357,8 @@ impl Quic for vq::Connection<AwsLc> {
     fn write(&mut self, id: u64, out: &mut [Bytes]) -> Result<(usize, usize), bool> {
         let (mut chunks, mut bytes) = (0, 0);
         for b in out.iter_mut() {
-            match vq::Connection::write(self, id, b) {
+            // Shared, not copied, when large: the response body.
+            match vq::Connection::write_bytes(self, id, b) {
                 Ok(n) => {
                     bytes += n;
                     if n < b.len() {
