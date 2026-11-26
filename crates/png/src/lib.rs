@@ -22,6 +22,8 @@ global size_of usize == 4;
 #[doc(hidden)]
 pub mod spec;
 #[doc(hidden)]
+pub mod work;
+#[doc(hidden)]
 pub mod prims;
 #[doc(hidden)]
 pub mod chunks;
