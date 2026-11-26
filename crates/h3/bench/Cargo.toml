@@ -1,0 +1,16 @@
+[package]
+name = "h3bench"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+verilith-h3 = { path = ".." }
+h3 = { version = "=0.0.8", features = ["i-implement-a-third-party-backend-and-opt-into-breaking-changes"] }
+bytes = "1"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+debug = 1
+
+[workspace]

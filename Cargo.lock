@@ -1398,6 +1398,7 @@ dependencies = [
  "verilith-font",
  "verilith-gif",
  "verilith-h2",
+ "verilith-h3",
  "verilith-hpack",
  "verilith-http",
  "verilith-jpeg",
@@ -1507,6 +1508,14 @@ dependencies = [
 name = "verilith-h2"
 version = "0.1.0"
 dependencies = [
+ "vstd",
+]
+
+[[package]]
+name = "verilith-h3"
+version = "0.1.0"
+dependencies = [
+ "verilith-core",
  "vstd",
 ]
 

@@ -35,6 +35,9 @@ pub use verilith_gif as gif;
 /// `verilith-h2`: HTTP/2 frames.
 #[cfg(feature = "h2")]
 pub use verilith_h2 as h2;
+/// `verilith-h3`: HTTP/3 framing.
+#[cfg(feature = "h3")]
+pub use verilith_h3 as h3;
 /// `verilith-hpack`: HPACK header compression.
 #[cfg(feature = "hpack")]
 pub use verilith_hpack as hpack;
