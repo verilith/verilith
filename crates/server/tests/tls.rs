@@ -245,3 +245,42 @@ fn early_data_h2() {
     assert!(c2.is_early_data_accepted());
     assert!(got.windows(9).any(|w| w == b"/ (early)"), "{:?}", String::from_utf8_lossy(&got));
 }
+
+/// Encrypted Client Hello: a rustls client with the server's
+/// ECHConfigList has its real ClientHello accepted, and HTTP/1.1 works
+/// over the handshake.
+#[test]
+fn ech_http11() {
+    use rustls::client::{EchConfig, EchMode, EchStatus};
+    use rustls::crypto::aws_lc_rs::hpke::ALL_SUPPORTED_SUITES;
+    use rustls::pki_types::EchConfigListBytes;
+    use verilith_server::tls::{EchKeys, TlsOptions};
+    let c = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+    let keys = Arc::new(EchKeys::generate(1, "localhost").unwrap());
+    let opts = TlsOptions { ech: Some(keys.clone()), ..TlsOptions::default() };
+    let sc = verilith_server::tls::config_der_opts(vec![c.cert.der().to_vec()], &c.signing_key.serialize_der(), &opts).unwrap();
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(CertificateDer::from(c.cert.der().to_vec())).unwrap();
+    let mode = EchMode::Enable(EchConfig::new(EchConfigListBytes::from(keys.config_list().to_vec()), ALL_SUPPORTED_SUITES).unwrap());
+    let mut cl = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
+        .with_ech(mode)
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    cl.alpn_protocols = vec![b"http/1.1".to_vec()];
+    for chunk in [1usize, 7, 1 << 20] {
+        let (got, cli) = talk_with(sc.clone(), Arc::new(cl.clone()), b"GET /ech HTTP/1.1\r\nHost: localhost\r\n\r\n", chunk);
+        assert_eq!(cli.ech_status(), EchStatus::Accepted, "{chunk}");
+        assert!(String::from_utf8_lossy(&got).contains("/ech"), "{chunk}");
+    }
+}
+
+#[test]
+fn base64_encodes() {
+    use verilith_server::tls::base64_encode as b;
+    assert_eq!(b(b""), "");
+    assert_eq!(b(b"f"), "Zg==");
+    assert_eq!(b(b"fo"), "Zm8=");
+    assert_eq!(b(b"foo"), "Zm9v");
+    assert_eq!(b(b"foobar"), "Zm9vYmFy");
+}

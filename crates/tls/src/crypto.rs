@@ -154,6 +154,11 @@ pub uninterp spec fn ticket_issued(ticket: Seq<u8>, state: Seq<u8>) -> bool;
 /// and this ClientHello has not had its 0-RTT data taken before.
 pub uninterp spec fn early_claimed(ch: Seq<u8>) -> bool;
 
+/// Whether `pt` is what the server's ECH key for `config_id` opens from
+/// `payload` with HPKE suite `kdf`/`aead`, encapsulated key `enc` and
+/// additional data `aad` (RFC 9849 §7.1, RFC 9180 §5.2).
+pub uninterp spec fn ech_opened(config_id: u8, kdf: u16, aead: u16, enc: Seq<u8>, aad: Seq<u8>, payload: Seq<u8>, pt: Seq<u8>) -> bool;
+
 /// The cryptography a server needs, and its keys.
 pub trait Provider {
     type Key: AeadKey;
@@ -234,6 +239,16 @@ pub trait Provider {
     fn claim_early(&mut self, ch: &[u8], binder: &[u8], obfuscated_age: u32, issued: u64, age_add: u32) -> (r: bool)
         ensures
             r ==> early_claimed(ch@),
+    ;
+
+    /// ECH (RFC 9849 §7.1): opens `payload` with the server's ECH key for
+    /// `config_id` and HPKE suite `kdf`/`aead` (RFC 9180 SetupBaseR with
+    /// `enc` and the ECHConfig as info, then Open with `aad`), the
+    /// plaintext into `out` (empty); `false` if there is no such key or it
+    /// does not open.
+    fn ech_open(&mut self, config_id: u8, kdf: u16, aead: u16, enc: &[u8], aad: &[u8], payload: &[u8], out: &mut Vec<u8>) -> (r: bool)
+        ensures
+            r ==> ech_opened(config_id, kdf, aead, enc@, aad@, payload@, final(out)@),
     ;
 }
 

@@ -168,6 +168,9 @@ pub const EXT_PRE_SHARED_KEY: u16 = 41;
 
 pub const EXT_EARLY_DATA: u16 = 42;
 
+/// encrypted_client_hello (RFC 9849 §5).
+pub const EXT_ECH: u16 = 0xfe0d;
+
 pub const EXT_SUPPORTED_VERSIONS: u16 = 43;
 
 pub const EXT_COOKIE: u16 = 44;
@@ -604,6 +607,9 @@ pub struct SpecHello {
     pub pre_shared_key: Option<((int, int), (int, int))>,
     pub cookie: Option<(int, int)>,
     pub early_data: bool,
+    /// The data of encrypted_client_hello, uninterpreted: ECH is the
+    /// server's to decide on (`spec_ech`).
+    pub ech: Option<(int, int)>,
 }
 
 /// The alert a malformed ClientHello is rejected with (§6.2).
@@ -676,6 +682,7 @@ pub open spec fn parse_client_hello(b: Seq<u8>) -> Result<SpecHello, SpecAlert> 
                         pre_shared_key: psk.unwrap(),
                         cookie: ck.unwrap(),
                         early_data: ed is Some,
+                        ech: find_ext(x, EXT_ECH),
                     },
                 )
             }
