@@ -28,7 +28,7 @@ pub use api::*;
 mod api {
     use verilith_http::Header;
 
-    pub use crate::h1::{Fields, Limits, SendError};
+    pub use crate::h1::{Fields, Limits, SendError, StaticBody};
     pub use crate::h2::Limits2;
     pub use crate::respond::{Field, Prepared};
     pub use crate::worker::{serve, Config};

@@ -142,3 +142,62 @@ impl Poller {
         n as usize
     }
 }
+
+unsafe extern "C" {
+    fn sendfile(out_fd: c_int, in_fd: c_int, offset: *mut i64, count: usize) -> isize;
+    fn memfd_create(name: *const u8, flags: u32) -> c_int;
+    fn fcntl(fd: c_int, cmd: c_int, arg: c_int) -> c_int;
+    fn pwrite(fd: c_int, buf: *const u8, n: usize, off: i64) -> isize;
+}
+
+/// The kernel sends file pages to the socket without copying them through
+/// user memory.
+pub const HAS_SENDFILE: bool = true;
+pub const MSG_MORE: c_int = 0x8000;
+
+/// `sendfile(2)` of `file[off..off + len]` to `sock`. Contract: on
+/// `Done(n)`, the next `n` bytes written to the socket are `file[off..off + n]`.
+pub fn sendfile_nb(sock: i32, file: i32, off: usize, len: usize) -> super::IoResult {
+    let mut o = off as i64;
+    let r = unsafe { sendfile(sock, file, &mut o, len) };
+    if r >= 0 {
+        super::IoResult::Done(r as usize)
+    } else {
+        match std::io::Error::last_os_error().kind() {
+            std::io::ErrorKind::WouldBlock => super::IoResult::WouldBlock,
+            std::io::ErrorKind::Interrupted => super::IoResult::Done(0),
+            _ => super::IoResult::Closed,
+        }
+    }
+}
+
+/// An in-memory file holding exactly `bytes`, sealed so that nothing,
+/// in this process or any other, can change, grow or shrink it: what
+/// `sendfile` sends from it is what the Content-Length was computed from.
+pub fn sealed_memfd(bytes: &[u8]) -> Option<super::Fd> {
+    const MFD_CLOEXEC: u32 = 1;
+    const MFD_ALLOW_SEALING: u32 = 2;
+    const F_ADD_SEALS: c_int = 1033;
+    const F_SEAL_SEAL: c_int = 1;
+    const F_SEAL_SHRINK: c_int = 2;
+    const F_SEAL_GROW: c_int = 4;
+    const F_SEAL_WRITE: c_int = 8;
+    let fd = unsafe { memfd_create(b"verilith-body\0".as_ptr(), MFD_CLOEXEC | MFD_ALLOW_SEALING) };
+    if fd < 0 {
+        return None;
+    }
+    let fd = super::Fd(fd);
+    let mut at = 0;
+    while at < bytes.len() {
+        let r = unsafe { pwrite(fd.0, bytes[at..].as_ptr(), bytes.len() - at, at as i64) };
+        if r <= 0 {
+            return None;
+        }
+        at += r as usize;
+    }
+    let seals = F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE;
+    if unsafe { fcntl(fd.0, F_ADD_SEALS, seals) } < 0 {
+        return None;
+    }
+    Some(fd)
+}

@@ -134,5 +134,12 @@ run, against hyper 73k (42k), h2o 74k (54k) and nginx 68k (62k).
 `Config::spin` (`--spin N`) polls N times before sleeping, for more
 throughput at more CPU; it is off by default and in the benchmarks.
 
-Still behind: nginx's `sendfile` on large files, next. nginx's low pipelined number is how it works:
+Static files (`StaticBody`): bodies of 16 to 112 KiB are sent with
+`sendfile` from a sealed memory file (`memfd` with write, grow and shrink
+seals), so the bytes sent are always the ones the Content-Length counted,
+even if the file on disk changes; head and body go out in one packet
+(MSG_MORE). Larger bodies are faster by `writev` from memory on loopback
+(measured: `sendfile` is 10-37% slower from 128 KiB up), so they stay
+there. Quick run, requests per server CPU-second: `h1-static-64k` 76k
+against nginx's 73k, `h1-static-1m` 4.8k against 2.5k. nginx's low pipelined number is how it works:
 it writes each pipelined response with its own system call.
