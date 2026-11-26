@@ -9,6 +9,7 @@
 // - [`worker`]: the thread-per-core event loop.
 #![cfg_attr(not(verus_keep_ghost), allow(unused_variables, unused_imports, dead_code))]
 pub mod respond;
+pub mod conn;
 
 #[cfg(not(verus_keep_ghost))]
 pub mod date;

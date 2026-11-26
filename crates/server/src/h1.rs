@@ -2,17 +2,18 @@
 //!
 //! [`Conn`] owns a connection's read and write buffers. The event loop puts
 //! bytes into [`Conn::read_buf`], calls [`Conn::process`], and writes what
-//! [`Conn::pending`] returns. Every decision about what the bytes mean is
-//! made by verified code: verilith-http's head parser, framing decision and
-//! chunked decoder, and [`crate::respond`]'s response writer. This file is
-//! the glue that sequences them over a connection: where the next request
-//! starts, when the connection must close, and in what order responses go
-//! out. That sequencing is not yet verified (DESIGN.md, milestone 2); it is
-//! tested in `tests/h1.rs` against every way of splitting the input.
+//! [`Conn::pending`] returns. Where each request starts and ends is decided
+//! by the verified core in [`crate::conn`], whose invariant is that every
+//! request handed to a handler is the specification's next request in the
+//! byte stream. The response heads are written by [`crate::respond`]'s
+//! verified writer. This file runs the handler between the two, decides
+//! persistence (RFC 9112 §9.3), and keeps the output queue.
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use verilith_http::{Body, Chunked, ChunkedDecoder, Header, Status};
+use verilith_http::Header;
+
+use crate::conn::{Core, Ev, Phase};
 
 use crate::respond::{self, Field, Framing, Prepared};
 use crate::{Handler, Request, Response};
@@ -37,27 +38,6 @@ impl Default for Limits {
     }
 }
 
-/// Where a parsed head's parts are, relative to the request's start.
-#[derive(Clone, Copy)]
-struct HeadInfo {
-    method: (usize, usize),
-    target: (usize, usize),
-    minor: u8,
-    head_len: usize,
-}
-
-enum Phase {
-    /// Waiting for (more of) a head at `start`.
-    Head,
-    /// A head is parsed; waiting for `need` body bytes after it.
-    Length { hd: HeadInfo, need: usize },
-    /// A chunked body: `out` decoded bytes after the head, and the decoder
-    /// has consumed everything up to `end`.
-    Chunked { hd: HeadInfo, out: usize, dec: ChunkedDecoder },
-    /// The connection is closing once the write buffer drains.
-    Closing,
-}
-
 /// What the event loop should do next with this connection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Next {
@@ -70,14 +50,8 @@ pub enum Next {
 }
 
 pub struct Conn {
-    rbuf: Vec<u8>,
-    /// The unprocessed bytes are `rbuf[start..end]`.
-    start: usize,
-    end: usize,
-    /// Length of `rbuf[start..end]` at the last Partial parse.
-    last_len: usize,
-    phase: Phase,
-    headers: Vec<Header>,
+    /// The read buffer and the verified request sequencing.
+    core: Core,
     wbuf: Out,
     sent_continue: bool,
     limits: Limits,
@@ -107,67 +81,52 @@ impl Ctx {
 
 impl Conn {
     pub fn new(limits: Limits) -> Conn {
-        Conn {
-            rbuf: vec![0; limits.max_head],
-            start: 0,
-            end: 0,
-            last_len: 0,
-            phase: Phase::Head,
-            headers: Vec::with_capacity(16),
-            wbuf: Out::new(),
-            sent_continue: false,
-            limits,
-        }
+        Conn { core: Core::new(limits.max_head, limits.max_headers, limits.max_body), wbuf: Out::new(), sent_continue: false, limits }
     }
 
     /// Makes the connection new again, keeping its buffers.
     pub fn reset(&mut self) {
-        if self.rbuf.len() > self.limits.max_head {
-            self.rbuf.truncate(self.limits.max_head);
-            self.rbuf.shrink_to_fit();
-        }
-        self.start = 0;
-        self.end = 0;
-        self.last_len = 0;
-        self.phase = Phase::Head;
-        self.headers.clear();
+        self.core.reset(self.limits.max_head);
         self.wbuf.clear();
         self.sent_continue = false;
     }
 
     /// Room to read into. Empty when the connection should not read now.
+    ///
+    /// Trusted (TRUST.md): the event loop writes only into the slice this
+    /// returns, `rbuf[end..]`, which the core's invariant says nothing
+    /// about; [`Conn::filled`] then adds those bytes to the core's stream.
     pub fn read_buf(&mut self) -> &mut [u8] {
-        if matches!(self.phase, Phase::Closing) || self.wbuf.queued > self.limits.write_high {
+        if matches!(self.core.phase, Phase::Closed) || self.wbuf.queued > self.limits.write_high {
             return &mut [];
         }
-        if self.end == self.rbuf.len() && self.start > 0 {
-            self.rbuf.copy_within(self.start..self.end, 0);
-            self.end -= self.start;
-            self.start = 0;
+        if self.core.end == self.core.rbuf.len() && self.core.start > 0 {
+            self.core.compact();
         }
-        if self.end == self.rbuf.len() {
+        if self.core.end == self.core.rbuf.len() {
             // A body larger than the head buffer, buffered for the handler.
-            let want = match self.phase {
-                Phase::Length { hd, need } => self.start + hd.head_len + need,
-                Phase::Chunked { .. } => self.rbuf.len() * 2,
-                _ => self.rbuf.len(),
+            let want = match self.core.phase {
+                Phase::Length { hd, need } => self.core.start + hd.head_len + need,
+                Phase::Chunked { .. } => self.core.rbuf.len() * 2,
+                _ => self.core.rbuf.len(),
             };
             let cap = self.limits.max_head + self.limits.max_body;
-            if want > self.rbuf.len() && self.rbuf.len() < cap {
-                self.rbuf.resize(want.min(cap).max(self.rbuf.len()), 0);
+            if want > self.core.rbuf.len() && self.core.rbuf.len() < cap {
+                self.core.grow(want.min(cap));
             }
         }
-        &mut self.rbuf[self.end..]
+        let end = self.core.end;
+        &mut self.core.rbuf[end..]
     }
 
     /// `n` bytes were read into [`Conn::read_buf`].
     pub fn filled(&mut self, n: usize) {
-        self.end += n;
+        self.core.filled(n);
     }
 
     /// The peer closed its side: nothing more will arrive.
     pub fn eof(&mut self) {
-        self.phase = Phase::Closing;
+        self.core.close();
     }
 
     /// The bytes waiting to be written, as up to `out.len()` slices in
@@ -193,112 +152,37 @@ impl Conn {
     }
 
     pub fn closing(&self) -> bool {
-        matches!(self.phase, Phase::Closing)
+        matches!(self.core.phase, Phase::Closed)
     }
 
     /// Handles every complete request in the read buffer, appending the
     /// responses, in order, to the write buffer.
     pub fn process<H: Handler + ?Sized>(&mut self, h: &H, ctx: &Ctx) -> Next {
         loop {
-            match self.phase {
-                Phase::Closing => return Next::Close,
-                Phase::Head => {
-                    if self.start == self.end {
-                        self.start = 0;
-                        self.end = 0;
-                        self.last_len = 0;
-                        return self.next();
-                    }
-                    let buf = &self.rbuf[self.start..self.end];
-                    let last = if self.last_len <= buf.len() { self.last_len } else { 0 };
-                    match verilith_http::parse_request_with(buf, last, self.limits.max_headers, &mut self.headers) {
-                        Ok(Status::Partial) => {
-                            self.last_len = buf.len();
-                            if self.start == 0 && self.end == self.rbuf.len() {
-                                self.error(ctx, 431, b"Request Header Fields Too Large");
-                            }
-                            return self.next();
-                        }
-                        Err(_) => {
-                            self.error(ctx, 400, b"Bad Request");
-                            return Next::Close;
-                        }
-                        Ok(Status::Complete(req)) => {
-                            self.last_len = 0;
-                            let base = buf.as_ptr() as usize;
-                            let span = |s: &[u8]| {
-                                let a = s.as_ptr() as usize - base;
-                                (a, a + s.len())
-                            };
-                            let hd = HeadInfo {
-                                method: span(req.method()),
-                                target: span(req.target()),
-                                minor: req.minor_version(),
-                                head_len: req.head_len,
-                            };
-                            match req.body {
-                                Body::Empty => self.dispatch(h, ctx, hd, 0),
-                                Body::Length(n) => {
-                                    if n > self.limits.max_body as u64 {
-                                        self.error(ctx, 413, b"Content Too Large");
-                                        return Next::Close;
-                                    }
-                                    self.phase = Phase::Length { hd, need: n as usize };
-                                }
-                                Body::Chunked => {
-                                    self.phase = Phase::Chunked { hd, out: 0, dec: ChunkedDecoder::new() };
-                                }
-                                Body::Close => unreachable!("requests are never close-delimited"),
-                            }
-                        }
-                    }
-                }
-                Phase::Length { hd, need } => {
-                    let have = self.end - self.start - hd.head_len;
-                    if have < need {
+            match self.core.step() {
+                Ev::Ready => self.dispatch(h, ctx),
+                Ev::Need => {
+                    if matches!(self.core.phase, Phase::Length { .. } | Phase::Chunked { .. }) {
                         self.maybe_continue(ctx);
-                        return self.next();
                     }
-                    self.dispatch(h, ctx, hd, need);
+                    return self.next();
                 }
-                Phase::Chunked { hd, out, mut dec } => {
-                    let from = self.start + hd.head_len + out;
-                    if from == self.end {
-                        self.maybe_continue(ctx);
-                        return self.next();
-                    }
-                    match dec.decode(&mut self.rbuf[from..self.end]) {
-                        Err(_) => {
-                            self.error(ctx, 400, b"Bad Request");
-                            return Next::Close;
-                        }
-                        Ok(Chunked::More { out: o }) => {
-                            // Everything read was consumed; new bytes go right after.
-                            self.end = from + o;
-                            let out = out + o;
-                            if out > self.limits.max_body {
-                                self.error(ctx, 413, b"Content Too Large");
-                                return Next::Close;
-                            }
-                            self.phase = Phase::Chunked { hd, out, dec };
-                            self.maybe_continue(ctx);
-                            return self.next();
-                        }
-                        Ok(Chunked::Done { out: o, rest }) => {
-                            // The body is rbuf[start+head_len..][..out+o]; the
-                            // next message's `rest` bytes follow it.
-                            let body = out + o;
-                            self.end = from + o + rest;
-                            self.dispatch(h, ctx, hd, body);
-                        }
-                    }
+                Ev::Bad(status) => {
+                    let reason: &[u8] = match status {
+                        413 => b"Content Too Large",
+                        431 => b"Request Header Fields Too Large",
+                        _ => b"Bad Request",
+                    };
+                    self.error(ctx, status, reason);
+                    return Next::Close;
                 }
+                Ev::Closed => return Next::Close,
             }
         }
     }
 
     fn next(&self) -> Next {
-        if matches!(self.phase, Phase::Closing) {
+        if matches!(self.core.phase, Phase::Closed) {
             Next::Close
         } else if self.wbuf.queued > self.limits.write_high {
             Next::Write
@@ -313,9 +197,9 @@ impl Conn {
         if self.sent_continue {
             return;
         }
-        let buf = &self.rbuf[self.start..self.end];
+        let buf = &self.core.rbuf[self.core.start..self.core.end];
         let mut expect = false;
-        for hd in &self.headers {
+        for hd in &self.core.headers {
             if hd.name.of(buf).eq_ignore_ascii_case(b"expect") && hd.value.of(buf).eq_ignore_ascii_case(b"100-continue") {
                 expect = true;
             }
@@ -326,20 +210,21 @@ impl Conn {
         }
     }
 
-    /// Runs the handler on the request at `start` (with a body of
-    /// `body_len` bytes right after its head), writes its response, and
+    /// Runs the handler on the ready request, writes its response, and
     /// moves past it.
-    fn dispatch<H: Handler + ?Sized>(&mut self, h: &H, ctx: &Ctx, hd: HeadInfo, body_len: usize) {
-        let buf = &self.rbuf[self.start..self.end];
-        let keep = keep_alive(hd.minor, buf, &self.headers);
-        let method = &buf[hd.method.0..hd.method.1];
+    fn dispatch<H: Handler + ?Sized>(&mut self, h: &H, ctx: &Ctx) {
+        let Phase::Ready { hd, body } = self.core.phase else { return };
+        let c = &self.core;
+        let buf = &c.rbuf[c.start..c.end];
+        let keep = keep_alive(hd.minor, buf, &c.headers);
+        let method = &buf[hd.method.start..hd.method.end];
         let request = Request {
             method,
-            target: &buf[hd.target.0..hd.target.1],
+            target: &buf[hd.target.start..hd.target.end],
             minor: hd.minor,
             buf,
-            headers: &self.headers,
-            body: &buf[hd.head_len..hd.head_len + body_len],
+            headers: &c.headers,
+            body: &buf[hd.head_len..hd.head_len + body],
         };
         let mut res = Response { out: &mut self.wbuf, ctx, sent: false, close: !keep, head: method == b"HEAD", h2: None };
         h.handle(&request, &mut res);
@@ -347,9 +232,8 @@ impl Conn {
             res.error(500);
         }
         let close = res.close;
-        self.start += hd.head_len + body_len;
         self.sent_continue = false;
-        self.phase = if close { Phase::Closing } else { Phase::Head };
+        self.core.done(!close);
     }
 
     /// Writes an error response and marks the connection to close: after a
@@ -357,7 +241,7 @@ impl Conn {
     fn error(&mut self, ctx: &Ctx, status: u16, reason: &[u8]) {
         let mut res = Response { out: &mut self.wbuf, ctx, sent: false, close: true, head: false, h2: None };
         res.send_reason(status, reason, &[], reason).ok();
-        self.phase = Phase::Closing;
+        self.core.close();
     }
 }
 

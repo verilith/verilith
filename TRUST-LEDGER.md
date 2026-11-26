@@ -44,7 +44,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | qpack | 9 |  |  |  |  |  | 2 |
 | quic |  |  |  |  |  |  | 1 |
 | regex | 1 |  |  |  |  |  | 3 |
-| server |  |  |  |  |  |  | 10 |
+| server | 5 |  |  |  | 1 |  | 10 |
 | sha2 | 34 |  |  |  |  |  | 3 |
 | simd | 413 | 11 | 274 | 4 |  |  | 3 |
 | snappy |  |  |  |  |  |  | 1 |
@@ -62,7 +62,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 3 |  |  |  |  |  | 3 |
 | zstd | 9 |  |  |  |  |  | 1 |
-| **total** | **660** | **35** | **274** | **5** | **16** | **12** | **123** |
+| **total** | **665** | **35** | **274** | **5** | **17** | **12** | **123** |
 
 ## Items
 
@@ -206,6 +206,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### server
 
+- `crates/server/src/conn.rs`: external_body: `decode_in`, `truncate_to`, `grow_zeros`, `shift_down`, `vec_zeros`; 1 assume_new
 - `crates/server/src/date.rs`: plain Rust
 - `crates/server/src/h1.rs`: plain Rust
 - `crates/server/src/h2.rs`: plain Rust
