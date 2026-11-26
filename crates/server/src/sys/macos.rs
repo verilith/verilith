@@ -19,6 +19,15 @@ pub const NODELAY_INHERITED: bool = false;
 pub const TCP_QUICKACK: Option<c_int> = None;
 pub const TCP_DEFER_ACCEPT: Option<c_int> = None;
 
+pub const O_CLOEXEC: c_int = 0x1000000;
+pub const O_NOFOLLOW: c_int = 0x100;
+pub const O_DIRECTORY: c_int = 0x100000;
+
+/// No openat2 here: [`super::open_beneath`] walks the components.
+pub fn openat2_beneath(_dir: c_int, _path: &std::ffi::CStr) -> Option<io::Result<c_int>> {
+    None
+}
+
 const EVFILT_READ: i16 = -1;
 const EVFILT_WRITE: i16 = -2;
 const EV_ADD: u16 = 0x1;

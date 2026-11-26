@@ -6,8 +6,10 @@ is in [DESIGN.md](DESIGN.md). This README describes what exists today.
 
 **Status: HTTP/1.1, HTTP/2 over cleartext with prior knowledge (h2c,
 `--h2c PORT`), and TLS with h2 or http/1.1 by ALPN (`--features tls`,
-`--tls PORT --cert PEM --key PEM`; TLS 1.3 on the verified verilith-tls).** Static files from
-disk with a proven path check, and HTTP/3, are next. The API will change.
+`--tls PORT --cert PEM --key PEM`; TLS 1.3 on the verified verilith-tls),
+and static files from disk with a proven path check (`files::Files`;
+`--root DIR`, served under `/static/`).** HTTP/3 is next. The API will
+change.
 
 ```rust,no_run
 use std::sync::Arc;
@@ -41,7 +43,7 @@ worker and get a zero-copy view of the request.
 
 ## What is proven
 
-`scripts/verify.sh` (Verus): 87 verified, 0 errors.
+`scripts/verify.sh` (Verus): 113 verified, 0 errors.
 
 - **Requests are exactly the specification's, in order** (`conn.rs`,
   the invariant of `Core`). `first` is the request at the front of a byte
@@ -75,6 +77,23 @@ worker and get a zero-copy view of the request.
   server writes the framing itself.
 - **Content-Length is written correctly** (`push_dec`, `lemma_dec_digits`):
   the digits read back, under the spec's `decimal`, as the body length.
+- **Static files never leave the root** (`path.rs`,
+  `lemma_resolve_safe`). A request path becomes a file path only through
+  `resolve_exec`, which computes `resolve` exactly: segments split at `/`,
+  each percent-decoded by verilith-text's verified decoder, then applied
+  to a stack (empty and `.` do nothing, `..` pops and is an error at the
+  root, never a clamp). A decoded segment holding `/`, `\\` or NUL is an
+  error, so `%2f`, `%5c` and `%00` cannot make a separator or end a C
+  string. The theorem: every component of a resolved path is non-empty,
+  not `.` or `..`, and has none of those bytes, and `join_to` writes
+  exactly those components joined by `/`. The file is then opened with
+  `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)` (trusted: the
+  kernel's guarantee that no symlink leads out), or one component at a
+  time with `O_NOFOLLOW` where there is no openat2. Hidden files (a
+  component starting with `.`, except `.well-known`) are not served.
+- **Ranges lie inside the file** (`range.rs`, `lemma_part_ok`):
+  `parse_range` computes `range_of` exactly for `Range: bytes=…`, and a
+  range it serves is non-empty and ends within the file's length.
 - No panics, overflow or out-of-bounds access in the above.
 
 Everything about reading a request is verilith-http's, verified there:
@@ -104,6 +123,11 @@ deviations reads the same head end and framing), and the chunked decoder.
   in every server. See [TRUST.md](TRUST.md).
 - `Connection` and `Expect` handling, the `Date` formatter, and the
   reason-phrase table are plain Rust.
+- The static file server around the two proofs (`files.rs`: the
+  per-worker cache, Content-Type, ETag and Last-Modified, 304, If-Range,
+  301 to a directory's `/`) is plain Rust, tested in `tests/files.rs`
+  (escapes by `..`, encoded `..`, `%2f`, `%5c`, `%00`, symlinks and hidden
+  files are all 404s).
 
 ## Performance
 
@@ -124,6 +148,14 @@ figure least disturbed by a shared machine:
 | `h1-static-1k` | 303k (**172k**) | 199k (103k) | **310k** (162k) | 184k (94k) | 305k (162k) |
 | `h1-static-64k` | **119k** (**74k**) | 90k (46k) | 84k (43k) | 118k (63k) | 99k (51k) |
 | `h1-static-1m` | **9.7k** (**5.0k**) | 6.4k (3.3k) | 5.4k (2.7k) | 5.2k (2.7k) | 5.0k (2.6k) |
+
+Static files there were held in memory by the benchmark binary. Served
+from disk by `files::Files` (verified path resolution, openat2, checked
+against the disk once a second per worker), a quick run gives the same:
+`h1-static-1k` 272k (166k) against h2o 270k (146k) and nginx 173k (89k);
+`h1-static-64k` 121k (81k) against nginx 109k (58k); `h1-static-1m` 9.5k
+(4.9k) against h2o 5.1k (2.6k); `h2-tls-static-64k` 69k (36k) against h2o
+64k (34k).
 | `h1-close` (new connection per request) | 76k (**76k**) | **78k** (44k) | n/a* | 62k (59k) | 75k (50k) |
 | `h2c-plaintext` (h2load, 64 conns × 32 streams) | **1.54M** (**1.15M**) | 248k (134k) | no h2 | 321k (163k) | 502k (254k) |
 

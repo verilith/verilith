@@ -18,6 +18,7 @@ verus_library(
         "//crates/h2:h2",
         "//crates/hpack:hpack",
         "//crates/http:http",
+        "//crates/text:text",
     ],
     visibility = ["PUBLIC"],
 )

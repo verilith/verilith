@@ -330,6 +330,13 @@ impl Out {
         self.segs.push_back((self.buf.len(), Seg { a: body.bytes.clone(), off: 0, len, file: body.file.clone() }));
     }
 
+    /// `len` bytes of a static body from `off`, with its file if it has
+    /// one (the file holds the same bytes at the same offsets).
+    pub(crate) fn share_file_range(&mut self, body: &StaticBody, off: usize, len: usize) {
+        self.queued += len;
+        self.segs.push_back((self.buf.len(), Seg { a: body.bytes.clone(), off, len, file: body.file.clone() }));
+    }
+
     /// [`Out::slices`], stopping before a file-backed body: the event loop
     /// writes those with `sendfile`. `more` is set when slices stop at one
     /// (more bytes follow at once: MSG_MORE).
@@ -682,6 +689,28 @@ impl<'a> Response<'a> {
         self.head_only(status, reason(status), Some(fields), &[], body.len())?;
         if !no_body(status) && !self.head {
             self.out.share_file(body);
+        }
+        Ok(())
+    }
+
+    /// `len` bytes of a static body from `off` (all of it, or one range
+    /// of a range request), with the prepared `fields` and then `extra`.
+    pub fn send_static_part(&mut self, status: u16, fields: &Fields, extra: &[Field], body: &StaticBody, off: usize, len: usize) -> Result<(), SendError> {
+        if off > body.len() || len > body.len() - off {
+            return Err(SendError::Invalid);
+        }
+        self.head_only(status, reason(status), Some(fields), extra, len)?;
+        if no_body(status) || self.head {
+            return Ok(());
+        }
+        let whole = off == 0 && len == body.len();
+        match self.h2.as_deref_mut() {
+            Some(r) => {
+                r.body = if whole { crate::h2::ReplyBody::Shared(body.bytes.clone()) } else { crate::h2::ReplyBody::Slice(body.bytes.clone(), off, len) }
+            }
+            None if body.file.is_some() => self.out.share_file_range(body, off, len),
+            None if len < SHARE_MIN => self.out.extend(&body.bytes[off..off + len]),
+            None => self.out.share_range(body.bytes.clone(), off, len),
         }
         Ok(())
     }

@@ -106,6 +106,8 @@ pub(crate) enum ReplyBody {
     None,
     Owned(Vec<u8>),
     Shared(Arc<[u8]>),
+    /// `len` bytes of a shared body from `start` (a range request).
+    Slice(Arc<[u8]>, usize, usize),
 }
 
 impl ReplyBody {
@@ -114,6 +116,7 @@ impl ReplyBody {
             ReplyBody::None => &[],
             ReplyBody::Owned(v) => v,
             ReplyBody::Shared(a) => a,
+            ReplyBody::Slice(a, start, len) => &a[*start..*start + *len],
         }
     }
 }
@@ -666,6 +669,7 @@ impl Conn2 {
                 self.out.extend(&head);
                 match &r.body {
                     ReplyBody::Shared(a) if n >= 1024 => self.out.share_range(a.clone(), r.off, n),
+                    ReplyBody::Slice(a, start, _) if n >= 1024 => self.out.share_range(a.clone(), start + r.off, n),
                     b => {
                         let bytes = &b.bytes()[r.off..r.off + n];
                         self.out.extend(bytes);
