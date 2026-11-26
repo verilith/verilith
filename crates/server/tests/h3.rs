@@ -364,3 +364,17 @@ fn frame_errors_close_the_connection() {
     }
     let _ = c.server;
 }
+
+/// Requests one after another on one connection reuse the server's stream
+/// state: each response has its own fields, once.
+#[test]
+fn sequential_requests_reuse_stream_state() {
+    let mut c = Client::connect();
+    for i in 0..20 {
+        let (s, f, b) = ok(c.get(&format!("/seq{i}")));
+        assert_eq!((s, b), (200, format!("GET /seq{i}").into_bytes()));
+        for name in [&b"content-length"[..], b"x-test", b"server", b"date", b"content-type"] {
+            assert!(f.iter().filter(|(n, _)| n == name).count() <= 1, "{i}: {f:?}");
+        }
+    }
+}
