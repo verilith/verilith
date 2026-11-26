@@ -103,28 +103,30 @@ deviations reads the same head end and framing), and the chunked decoder.
 cloud VM (server on 2 CPUs, wrk on the other 2). These are noisy numbers;
 the full report is in `bench/server/results/`.
 
-Requests per second, median of 3 rounds of 10 s
-(`bench/server/results/2026-11-26-cloud-h1`), and in brackets requests
-per server CPU-second, the figure least disturbed by a shared machine:
+Requests per second, median of 3 rounds of 10 s, after the HTTP/2,
+connection-setup and sendfile work
+(`bench/server/results/2026-11-26-cloud-all`, which also has Bun, the TLS
+cases and latencies), and in brackets requests per server CPU-second, the
+figure least disturbed by a shared machine:
 
-| case | verilith | hyper | nginx | h2o |
-|---|---:|---:|---:|---:|
-| `h1-plaintext` | **315k** (192k) | 223k (116k) | 299k (156k) | 202k (103k) |
-| `h1-plaintext-pipe` (16 deep) | **3.04M** (1.88M) | 1.34M (681k) | 333k (170k) | 198k (100k) |
-| `h1-static-1k` | **316k** (185k) | 203k (106k) | 168k (85k) | 306k (161k) |
-| `h1-static-64k` | 105k (55k) | 88k (45k) | **131k** (70k) | 103k (53k) |
-| `h1-static-1m` | **6.6k** (3.4k) | 6.4k (3.3k) | 5.3k (2.7k) | 5.0k (2.6k) |
-| `h1-close` (new connection per request) | 63k (**59k**) | **78k** (44k) | 65k (59k) | 78k (53k) |
+| case | verilith | hyper | may-minihttp | nginx | h2o |
+|---|---:|---:|---:|---:|---:|
+| `h1-plaintext` | 297k (**184k**) | 231k (120k) | **305k** (167k) | 303k (160k) | 192k (98k) |
+| `h1-plaintext-pipe` (16 deep) | 3.00M (**2.07M**) | 1.29M (654k) | **3.05M** (1.81M) | 352k (179k) | 199k (100k) |
+| `h1-static-1k` | 303k (**172k**) | 199k (103k) | **310k** (162k) | 184k (94k) | 305k (162k) |
+| `h1-static-64k` | **119k** (**74k**) | 90k (46k) | 84k (43k) | 118k (63k) | 99k (51k) |
+| `h1-static-1m` | **9.7k** (**5.0k**) | 6.4k (3.3k) | 5.4k (2.7k) | 5.2k (2.7k) | 5.0k (2.6k) |
+| `h1-close` (new connection per request) | 76k (**76k**) | **78k** (44k) | n/a* | 62k (59k) | 75k (50k) |
+| `h2c-plaintext` (h2load, 64 conns × 32 streams) | **1.54M** (**1.15M**) | 248k (134k) | no h2 | 321k (163k) | 502k (254k) |
 
-Since that run, bodies of 8 KiB and more are written from the shared
-buffer by `writev` instead of being copied (`Response::send_shared`):
-`h1-static-64k` in a quick run is 119k (70k) against nginx's 124k (69k).
-HTTP/2 over cleartext (`h2c-plaintext`, h2load, 64 connections, 32
-streams each), in quick runs: verilith-server **1.29–1.50M** req/s
-(1.17M per CPU-second with the HPACK dynamic table and pooled streams;
-h2load is then the bottleneck), h2o 440–530k (225–270k), nginx 315k (159k),
-hyper 259k (140k). Header bytes on the wire are 90% smaller than
-uncompressed, as with h2o.
+\* may-minihttp ignores `Connection: close`, so its 311k there is a
+keep-alive figure. Where it is close in raw req/s, verilith-server does the same work on less CPU.
+
+Where the numbers come from: bodies of 8 KiB and more are written from a
+shared buffer by `writev`, not copied. HTTP/2 heads go through the
+verified HPACK encoder with its dynamic table (header bytes on the wire
+90% smaller than uncompressed, as with h2o), and streams are pooled; in
+`h2c-plaintext`, h2load is the bottleneck.
 
 Connection setup (`h1-close`): accepting with `TCP_DEFER_ACCEPT` (the
 request arrives with the connection, one wakeup instead of two),
