@@ -531,6 +531,140 @@ impl Encoder {
         }
         true
     }
+
+    /// Writes one field line of a section with Base `base`, inserting the
+    /// field first when that is allowed and worth it. `refs` are the
+    /// section's references so far; the result adds this line's.
+    fn line(&mut self, name: &[u8], value: &[u8], never: bool, base: u64, can_block: bool, min_sent: u64, refs: Refs, lines: &mut Vec<u8>) -> (r: (Refs, Ghost<Item>))
+        requires
+            old(self).inv(),
+            base <= icount(old(self).table.view()),
+            forall|i: int| 0 <= i < old(self).sent@.len() ==> min_sent <= #[trigger] old(self).sent@[i].min_ref,
+            refs.has ==> old(self).table.view().dropped <= refs.min <= refs.max < icount(old(self).table.view()),
+            refs.has && refs.max >= old(self).krc ==> can_block,
+            name@.len() + value@.len() <= 0x1000_0000,
+        ensures
+            final(self).inv(),
+            final(self).same_but_table(old(self)),
+            keeps(old(self).table.view(), final(self).table.view()),
+            refs.has ==> final(self).table.view().dropped <= refs.min,
+            r.0.has ==> final(self).table.view().dropped <= r.0.min <= r.0.max < icount(final(self).table.view()),
+            refs.has ==> r.0.has && r.0.min <= refs.min && r.0.max >= refs.max,
+            r.0.has && r.0.max >= old(self).krc ==> can_block,
+            item_ok(final(self).table.view(), base as nat, r.1@),
+            iref(r.1@) matches Some(a) ==> r.0.has && r.0.min <= a <= r.0.max,
+            r.1@.field == (Field { name: name@, value: value@, never }),
+            final(lines)@ == old(lines)@ + r.1@.bytes,
+    {
+        let ghost t0 = self.table.view();
+        let ghost f = Field { name: name@, value: value@, never };
+        proof {
+            lemma_p2_vals();
+            assert(keeps(t0, t0));
+        }
+        let (si, sn0) = static_find(name, value);
+        let mut sn: usize = 99;
+        if sn0 < 99 {
+            let (n2, _) = static_entry(sn0);
+            if bytes_eq(n2, name) {
+                sn = sn0;
+            }
+        }
+        if !never && si < 99 {
+            let (n2, v2) = static_entry(si);
+            if bytes_eq(n2, name) && bytes_eq(v2, value) {
+                integer::encode(lines, 0xC0, 6, si as u64);
+                return (refs, Ghost(Item { bytes: int_enc(0xC0, 6, si as nat), field: f, kind: Kind::IdxStatic(si as nat) }));
+            }
+        }
+        if !never {
+            match self.hints.find(name, value) {
+                Some(a) => {
+                    if a >= self.table.dropped && a < self.table.icount() && (a < self.krc || can_block) {
+                        let e = self.table.abs(a);
+                        if bytes_eq(e.name.as_slice(), name) && bytes_eq(e.value.as_slice(), value) {
+                            let r2 = Refs {
+                                has: true,
+                                min: if refs.has && refs.min < a { refs.min } else { a },
+                                max: if refs.has && refs.max > a { refs.max } else { a },
+                            };
+                            let it = emit_idx(lines, base, a, Ghost(t0));
+                            return (r2, it);
+                        }
+                    }
+                },
+                None => {},
+            }
+        }
+        if !never && can_block && self.hints.worth(name, value) {
+            let limit = if refs.has && refs.min < min_sent { refs.min } else { min_sent };
+            let a = self.table.icount();
+            if self.insert_field(name, value, sn, limit) {
+                let ghost t1 = self.table.view();
+                let d = self.table.dropped;
+                self.hints.add(name, value, a, d);
+                let r2 = Refs { has: true, min: if refs.has { refs.min } else { a }, max: a };
+                let it = emit_idx(lines, base, a, Ghost(t1));
+                return (r2, it);
+            }
+        }
+        let ghost l0 = lines@;
+        if sn < 99 {
+            let fl: u8 = if never { 0x70 } else { 0x50 };
+            integer::encode(lines, fl, 4, sn as u64);
+            let ghost l1 = lines@;
+            let (h, raw) = write_str(lines, 0, 8, value);
+            let ghost it: Item;
+            proof {
+                let ix = int_enc(fl as nat, 4, sn as nat);
+                let l2 = lines@;
+                let bytes = l2.subrange(l0.len() as int, l2.len() as int);
+                assert(l1 == l0 + ix);
+                assert(bytes.subrange(0, ix.len() as int) =~= ix) by {
+                    assert forall|j: int| 0 <= j < ix.len() implies bytes[j] == ix[j] by {
+                        assert(l2.subrange(0, l1.len() as int)[l0.len() + j] == l1[l0.len() + j]);
+                    }
+                }
+                assert(bytes.subrange(ix.len() as int, bytes.len() as int) =~= l2.subrange(l1.len() as int, l2.len() as int));
+                assert(l2 =~= l0 + bytes) by {
+                    assert forall|j: int| 0 <= j < l0.len() implies l2[j] == l0[j] by {
+                        assert(l2.subrange(0, l1.len() as int)[j] == l1[j]);
+                    }
+                }
+                assert(fl as nat == 0x50 + never_bits(never, 0x20));
+                it = Item { bytes, field: f, kind: Kind::LitStatic(sn as nat, h@, raw@) };
+                assert(item_ok(t0, base as nat, it));
+            }
+            (refs, Ghost(it))
+        } else {
+            let fl: u8 = if never { 0x30 } else { 0x20 };
+            let (hn, rn) = write_str(lines, fl, 4, name);
+            let ghost l1 = lines@;
+            let (hv, rv) = write_str(lines, 0, 8, value);
+            let ghost it: Item;
+            proof {
+                let l2 = lines@;
+                let bytes = l2.subrange(l0.len() as int, l2.len() as int);
+                let k = l1.len() - l0.len();
+                assert(bytes.subrange(0, k) =~= l1.subrange(l0.len() as int, l1.len() as int)) by {
+                    assert forall|j: int| 0 <= j < k implies bytes[j] == l1[l0.len() + j] by {
+                        assert(l2.subrange(0, l1.len() as int)[l0.len() + j] == l1[l0.len() + j]);
+                    }
+                }
+                assert(bytes.subrange(k, bytes.len() as int) =~= l2.subrange(l1.len() as int, l2.len() as int));
+                assert(l2 =~= l0 + bytes) by {
+                    assert forall|j: int| 0 <= j < l0.len() implies l2[j] == l0[j] by {
+                        assert(l2.subrange(0, l1.len() as int)[j] == l1[j]);
+                    }
+                }
+                assert(fl as nat == 0x20 + never_bits(never, 0x10));
+                it = Item { bytes, field: f, kind: Kind::LitLit(hn@, rn@, hv@, rv@) };
+                assert(str_ok(it.bytes.subrange(0, k), 0x20 + never_bits(it.field.never, 0x10), 4, it.field.name, hn@, rn@));
+                assert(item_ok(t0, base as nat, it));
+            }
+            (refs, Ghost(it))
+        }
+    }
 }
 
 } // verus!
