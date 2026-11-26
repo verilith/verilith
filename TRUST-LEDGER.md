@@ -25,22 +25,22 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 | Crate | external_body | axioms | assume_spec | ext. types | assume_new | no termination check | plain-Rust files |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| archive | 2 |  |  |  |  |  | 3 |
+| archive |  |  |  |  |  |  | 3 |
 | bind |  |  |  |  |  |  | 2 |
 | brotli | 1 |  |  |  |  |  | 4 |
 | checksum | 12 |  |  |  |  |  |  |
-| core | 32 |  |  |  |  |  | 1 |
+| core | 34 |  |  |  |  |  | 1 |
 | dns |  |  |  |  |  |  | 6 |
 | font |  |  |  |  |  |  | 1 |
-| gif | 1 |  |  |  |  |  | 2 |
+| gif |  |  |  |  |  |  | 2 |
 | h2 |  |  |  |  |  |  | 1 |
 | h3 |  |  |  |  |  |  | 1 |
 | hpack | 4 |  |  |  |  |  | 3 |
 | http |  |  |  |  |  |  | 8 |
-| jpeg | 2 |  |  |  |  |  | 3 |
+| jpeg |  |  |  |  |  |  | 3 |
 | json | 18 |  |  |  |  |  | 6 |
 | lz4 |  |  |  |  |  |  | 1 |
-| png | 2 |  |  |  |  |  | 7 |
+| png |  |  |  |  |  |  | 7 |
 | qpack | 9 |  |  |  |  |  | 2 |
 | quic |  |  |  |  |  |  | 1 |
 | quic-conn |  |  |  |  |  |  | 3 |
@@ -51,19 +51,19 @@ not occur in any crate's `src/` (the script fails if one appears).
 | snappy |  |  |  |  |  |  | 1 |
 | sync | 45 | 11 |  | 1 | 16 | 10 | 2 |
 | text | 18 | 13 |  |  |  |  | 9 |
-| tiff | 1 |  |  |  |  |  | 2 |
+| tiff |  |  |  |  |  |  | 2 |
 | tls |  |  |  |  |  |  | 2 |
 | tls-aws-lc |  |  |  |  |  |  | 1 |
 | url | 1 |  |  |  |  |  | 5 |
 | verilith |  |  |  |  |  |  | 1 |
 | wasm | 33 |  |  |  |  | 2 | 4 |
-| webp | 10 |  |  |  |  |  | 3 |
+| webp | 9 |  |  |  |  |  | 3 |
 | x509 |  |  |  |  |  |  | 6 |
 | xml | 9 |  |  |  |  |  | 12 |
 | xxhash |  |  |  |  |  |  |  |
-| zlib | 3 |  |  |  |  |  | 3 |
+| zlib | 2 |  |  |  |  |  | 3 |
 | zstd | 9 |  |  |  |  |  | 1 |
-| **total** | **665** | **35** | **274** | **5** | **17** | **12** | **130** |
+| **total** | **657** | **35** | **274** | **5** | **17** | **12** | **130** |
 
 ## Items
 
@@ -72,8 +72,6 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/archive/src/api.rs`: plain Rust
 - `crates/archive/src/capi.rs`: plain Rust
 - `crates/archive/src/extract.rs`: plain Rust
-- `crates/archive/src/plan.rs`: external_body: `order_by_path`
-- `crates/archive/src/zip.rs`: external_body: `order_by_offset`
 
 ### bind
 
@@ -98,7 +96,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 - `crates/core/src/binary64.rs`: external_body: `mul`, `div`, `from_u64`
 - `crates/core/src/lib.rs`: plain Rust
-- `crates/core/src/prims.rs`: external_body: `load_u64_le`, `copy8`, `copy16`, `move8`, `copy16_in`, `pick`, `copy16_pick`, `fill8`, `copy_in`, `copy_to_front`, `copy_within`, `alloc_u32`
+- `crates/core/src/prims.rs`: external_body: `load_u64_le`, `copy8`, `copy16`, `move8`, `copy16_in`, `pick`, `copy16_pick`, `fill8`, `copy_in`, `copy_to_front`, `copy_within`, `alloc_u32`, `alloc_u8`, `alloc_i16`
 - `crates/core/src/spare.rs`: external_body: `len_spare`, `reserve_spare`, `reserve_spare_plus`, `push_spare`, `append4_spare`, `append_slice_spare`, `truncate_spare`, `set_spare`, `append8_spare`
 - `crates/core/src/tail.rs`: external_body: `view`, `take`, `put_back`, `len`, `append_from`, `append_from32`, `append_within`, `append_within32`
 
@@ -119,7 +117,6 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 - `crates/gif/src/capi.rs`: plain Rust
 - `crates/gif/src/lib.rs`: plain Rust
-- `crates/gif/src/prims.rs`: external_body: `alloc_zeroed`
 
 ### h2
 
@@ -154,7 +151,6 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 - `crates/jpeg/src/capi.rs`: plain Rust
 - `crates/jpeg/src/lib.rs`: plain Rust
-- `crates/jpeg/src/parse.rs`: external_body: `alloc_i16`, `alloc_u8`
 - `crates/jpeg/src/tj.rs`: plain Rust
 
 ### json
@@ -177,7 +173,6 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### png
 
-- `crates/png/src/prims.rs`: external_body: `copy`, `alloc_zeroed`
 - `crates/png/src/libpng/err.rs`: plain Rust
 - `crates/png/src/libpng/info.rs`: plain Rust
 - `crates/png/src/libpng/mem.rs`: plain Rust
@@ -300,7 +295,6 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 - `crates/tiff/src/capi.rs`: plain Rust
 - `crates/tiff/src/lib.rs`: plain Rust
-- `crates/tiff/src/prims.rs`: external_body: `alloc_zeroed`
 
 ### tls
 
@@ -343,7 +337,6 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/webp/src/huffman.rs`: plain Rust
 - `crates/webp/src/lib.rs`: plain Rust
 - `crates/webp/src/pxops.rs`: external_body: `opaque32`
-- `crates/webp/src/vp8frame.rs`: external_body: `alloc_u8`
 - `crates/webp/src/vp8tables.rs`: external_body: `coeffs_proba0`, `coeffs_update_proba`, `bmodes_proba`, `dc_table`, `ac_table`
 - `crates/webp/src/vpred.rs`: external_body: `unpredict_avx2`
 - `crates/webp/src/vx.rs`: external_body: `undo_sg_avx2`, `uncolor_run_avx2`
@@ -379,7 +372,6 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 - `crates/zlib/src/capi.rs`: plain Rust
 - `crates/zlib/src/checksum.rs`: plain Rust
-- `crates/zlib/src/deflate.rs`: external_body: `sort_keys`
 - `crates/zlib/src/lib.rs`: plain Rust
 - `crates/zlib/src/par.rs`: external_body: `run`
 - `crates/zlib/src/simd.rs`: external_body: `run`

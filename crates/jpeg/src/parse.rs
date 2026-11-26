@@ -5,6 +5,7 @@ use crate::scan::*;
 use crate::spec::*;
 use crate::stream::*;
 use crate::types::*;
+pub use verilith_core::prims::{alloc_i16, alloc_u8};
 use crate::work::*;
 use vstd::prelude::*;
 
@@ -627,56 +628,6 @@ pub fn scan_params_ok(f: &FrameX, s: &ScanX) -> (ok: bool)
         s.se == 0 && s.al <= 13 && (s.ah == 0 || s.al == s.ah - 1)
     } else {
         s.ss <= s.se && s.se < 64 && s.ns == 1 && s.al <= 13 && (s.ah == 0 || s.al == s.ah - 1)
-    }
-}
-
-/// A vector of `n` zeros, or `None` if there is no memory for it. This and
-/// `alloc_u8` are trusted: large allocations come from `calloc`, which maps
-/// zeroed pages lazily, and Verus has no specification for that.
-#[verifier::external_body]
-pub fn alloc_i16(n: usize) -> (r: Option<Vec<i16>>)
-    ensures
-        r matches Some(v) ==> v@ == Seq::new(n as nat, |i: int| 0i16),
-{
-    if n == 0 {
-        return Some(Vec::new());
-    }
-    let layout = match std::alloc::Layout::array::<i16>(n) {
-        Ok(l) => l,
-        Err(_) => return None,
-    };
-    // SAFETY: `layout` has non-zero size. On success the block holds `n`
-    // initialised (zero) values allocated by the global allocator with the
-    // layout `Vec<i16>` uses for capacity `n`.
-    unsafe {
-        let p = std::alloc::alloc_zeroed(layout) as *mut i16;
-        if p.is_null() {
-            return None;
-        }
-        Some(Vec::from_raw_parts(p, n, n))
-    }
-}
-
-/// A vector of `n` zero bytes, or `None` if there is no memory for it.
-#[verifier::external_body]
-pub fn alloc_u8(n: usize) -> (r: Option<Vec<u8>>)
-    ensures
-        r matches Some(v) ==> v@ == Seq::new(n as nat, |i: int| 0u8),
-{
-    if n == 0 {
-        return Some(Vec::new());
-    }
-    let layout = match std::alloc::Layout::array::<u8>(n) {
-        Ok(l) => l,
-        Err(_) => return None,
-    };
-    // SAFETY: as in `alloc_i16`.
-    unsafe {
-        let p = std::alloc::alloc_zeroed(layout);
-        if p.is_null() {
-            return None;
-        }
-        Some(Vec::from_raw_parts(p, n, n))
     }
 }
 

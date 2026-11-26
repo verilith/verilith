@@ -451,4 +451,46 @@ pub fn alloc_u32(n: usize) -> (r: Option<Vec<u32>>)
     Some(unsafe { Vec::from_raw_parts(p, n, n) })
 }
 
+/// A vector of `n` zero bytes, or `None` if the allocation fails.
+#[verifier::external_body]
+pub fn alloc_u8(n: usize) -> (r: Option<Vec<u8>>)
+    ensures
+        r matches Some(v) ==> v@ == Seq::new(n as nat, |i: int| 0u8),
+{
+    // As in `alloc_u32`: large allocations come from `calloc`, which maps
+    // zeroed pages lazily.
+    if n == 0 {
+        return Some(Vec::new());
+    }
+    let layout = match alloc::alloc::Layout::array::<u8>(n) {
+        Ok(l) => l,
+        Err(_) => return None,
+    };
+    let p = unsafe { alloc::alloc::alloc_zeroed(layout) };
+    if p.is_null() {
+        return None;
+    }
+    Some(unsafe { Vec::from_raw_parts(p, n, n) })
+}
+
+/// A vector of `n` zeros, or `None` if the allocation fails.
+#[verifier::external_body]
+pub fn alloc_i16(n: usize) -> (r: Option<Vec<i16>>)
+    ensures
+        r matches Some(v) ==> v@ == Seq::new(n as nat, |i: int| 0i16),
+{
+    if n == 0 {
+        return Some(Vec::new());
+    }
+    let layout = match alloc::alloc::Layout::array::<i16>(n) {
+        Ok(l) => l,
+        Err(_) => return None,
+    };
+    let p = unsafe { alloc::alloc::alloc_zeroed(layout) } as *mut i16;
+    if p.is_null() {
+        return None;
+    }
+    Some(unsafe { Vec::from_raw_parts(p, n, n) })
+}
+
 } // verus!

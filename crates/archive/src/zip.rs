@@ -1,5 +1,6 @@
 //! The verified zip reader: `parse_zip` computes `spec::zip` exactly.
 use crate::spec::*;
+use verilith_core::sort::order_by;
 use vstd::prelude::*;
 use vstd::slice::slice_subrange;
 
@@ -458,16 +459,18 @@ proof fn lemma_chain(s: Seq<int>, e: Seq<int>, a: int, c: int)
     }
 }
 
-/// An order to visit the members in, hoped to be by header offset. This is
-/// plain Rust that Verus does not look inside. Nothing is assumed about
-/// what it returns: `check_order` checks that it is a sorted permutation
-/// before using it, and the reader falls back to comparing every pair when
-/// it is not.
-#[verifier::external_body]
+/// The members' positions, sorted by header offset (verilith-core's merge
+/// sort). `check_order` checks it again, in linear time, as it decides
+/// whether the members overlap.
 fn order_by_offset(es: &Vec<Entry>) -> (r: Vec<usize>) {
-    let mut v: Vec<usize> = (0..es.len()).collect();
-    v.sort_unstable_by_key(|&i| es[i].hdr_off);
-    v
+    let le = |i: usize, j: usize| -> (r: bool)
+        requires
+            i < es@.len(),
+            j < es@.len(),
+        ensures
+            r == (es@[i as int].hdr_off <= es@[j as int].hdr_off),
+        { es[i].hdr_off <= es[j].hdr_off };
+    order_by(es.len(), &le, Ghost(|i: usize, j: usize| es@[i as int].hdr_off <= es@[j as int].hdr_off))
 }
 
 enum Order {

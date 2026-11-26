@@ -13,6 +13,9 @@ verus_library(
     srcs = glob(["src/**"]) + ["README.md"],
     features = [],
     vstd = "//third-party:vstd-alloc-std",
-    deps = ["//crates/zlib:zlib"],
+    deps = [
+        "//crates/core:core",
+        "//crates/zlib:zlib",
+    ],
     visibility = ["PUBLIC"],
 )

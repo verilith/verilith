@@ -18,6 +18,7 @@ turbojpeg-abi = []
 
 [dependencies]
 vstd = { workspace = true, features = ["std"] }
+verilith-core = { path = "../core", version = "0.1.0" }
 verilith-simd = { path = "../simd", version = "0.1.0" }
 
 [package.metadata.verus]

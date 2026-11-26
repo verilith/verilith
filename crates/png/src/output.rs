@@ -520,7 +520,7 @@ pub fn to_rgba8(png: &PngX, buf: &[u8], off: &[usize; 8], limit: usize, Tracked(
         return Err(crate::decode::Error::TooLarge);
     }
     let n = (4 * w * hh) as usize;
-    let mut out = match alloc_zeroed(n) {
+    let mut out = match alloc_u8(n) {
         Some(v) => v,
         None => return Err(crate::decode::Error::OutOfMemory),
     };
@@ -994,7 +994,7 @@ pub fn to_native(h: &Header, buf: &[u8], off: &[usize; 8], limit: usize, Tracked
         return Err(crate::decode::Error::TooLarge);
     }
     let n = (rb * hh) as usize;
-    let mut out = match alloc_zeroed(n) {
+    let mut out = match alloc_u8(n) {
         Some(v) => v,
         None => return Err(crate::decode::Error::OutOfMemory),
     };

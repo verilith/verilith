@@ -18,6 +18,7 @@ libarchive-abi = []
 
 [dependencies]
 verilith-checksum = { path = "../checksum", version = "0.1.0" }
+verilith-core = { path = "../core", version = "0.1.0" }
 verilith-zlib = { path = "../zlib", version = "0.1.0" }
 verilith-zstd = { path = "../zstd", version = "0.1.0" }
 vstd = { workspace = true, features = ["std"] }

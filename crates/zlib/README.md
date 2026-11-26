@@ -108,10 +108,6 @@ What the proofs assume rather than prove:
 - verilith-core's `spare` (`reserve_spare`, and `append8_spare`, which
   `src/prims.rs`'s `push_word` uses to append the low bytes of a word with
   one 8-byte store); its `requires` is proven at the call site.
-- `src/deflate.rs`: `sort_keys`, which calls the standard library's
-  `sort_unstable` to order symbols by frequency. Nothing is assumed about
-  its result: `huff_lens` bounds-checks every symbol it reads back, and the
-  code lengths are checked afterwards as before.
 - `src/par.rs`: `run`, 25 lines of safe Rust (no `unsafe`) that hand the
   compression jobs to scoped threads and collect what they return. Its
   one assumption is that the bytes it stores in slot `k` are the ones the

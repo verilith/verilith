@@ -18,6 +18,7 @@ use crate::tar::find_byte_exec;
 use crate::zip::{copy_range, Entry};
 #[cfg(verus_only)]
 use crate::zip::views;
+use verilith_core::sort::order_by;
 use vstd::prelude::*;
 
 verus! {
@@ -691,14 +692,50 @@ fn build_items(b: &[u8], es: &Vec<Entry>) -> (r: Result<Vec<Item>, Rejected>)
 // ---------------------------------------------------------------------
 // Sorting, checked.
 // ---------------------------------------------------------------------
-/// The items' positions in an order hoped to be sorted by path. Plain Rust
-/// that Verus does not look inside; nothing is assumed about the result,
-/// which `check_sorted` validates.
-#[verifier::external_body]
+/// Two paths are not each before the other.
+proof fn lemma_plt_asym(p: Path, q: Path)
+    ensures
+        !(plt(p, q) && plt(q, p)),
+{
+    if plt(p, q) && plt(q, p) {
+        lemma_plt_trans(p, q, p, 0);
+        lemma_plt_irrefl(p, 0);
+    }
+}
+
+/// The items' positions, sorted by path (verilith-core's merge sort).
+/// `check_sorted` then checks that no two paths are equal, and computes the
+/// inverse.
 fn order_by_path(items: &Vec<Item>) -> (r: Vec<usize>) {
-    let mut v: Vec<usize> = (0..items.len()).collect();
-    v.sort_unstable_by(|&i, &j| items[i].path.cmp(&items[j].path));
-    v
+    let le =|i: usize, j: usize| -> (r: bool)
+        requires
+            i < items@.len(),
+            j < items@.len(),
+        ensures
+            r == !plt(pv(items@[j as int].path@), pv(items@[i as int].path@)),
+        {
+            let c = cmp_path(&items[i].path, &items[j].path);
+            proof {
+                lemma_plt_asym(pv(items@[i as int].path@), pv(items@[j as int].path@));
+                if c == 0 {
+                    lemma_plt_irrefl(pv(items@[i as int].path@), 0);
+                }
+            }
+            c <= 0
+        };
+    proof {
+        assert forall|i: usize, j: usize| i < items@.len() && j < items@.len() implies !plt(
+            pv(items@[j as int].path@),
+            pv(items@[i as int].path@),
+        ) || !plt(pv(items@[i as int].path@), pv(items@[j as int].path@)) by {
+            lemma_plt_asym(pv(items@[i as int].path@), pv(items@[j as int].path@));
+        }
+    }
+    order_by(
+        items.len(),
+        &le,
+        Ghost(|i: usize, j: usize| !plt(pv(items@[j as int].path@), pv(items@[i as int].path@))),
+    )
 }
 
 /// The paths in the order `ord`.

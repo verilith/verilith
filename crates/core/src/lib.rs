@@ -24,6 +24,7 @@
 // - [`num`]: decimal digits and numbers.
 // - [`binary64`]: IEEE 754 doubles as a model in spec integers, round to
 //   nearest even, and the hardware `*`, `/` and `u64 as f64` (trusted).
+// - [`sort`]: a merge sort of positions by a caller's comparison.
 extern crate alloc;
 
 pub mod binary64;
@@ -35,6 +36,7 @@ pub mod huffman;
 pub mod lz;
 pub mod num;
 pub mod prims;
+pub mod sort;
 pub mod spare;
 pub mod tail;
 pub mod utf8;

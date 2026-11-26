@@ -132,20 +132,6 @@ pub const SCAN: [usize; 16] = [
     12 + 12 * BPS,
 ];
 
-/// A zeroed byte vector, or `None` if the allocation fails.
-#[verifier::external_body]
-pub fn alloc_u8(n: usize) -> (r: Option<Vec<u8>>)
-    ensures
-        r matches Some(v) ==> v@ == Seq::new(n as nat, |i: int| 0u8),
-{
-    let mut v: Vec<u8> = Vec::new();
-    if v.try_reserve_exact(n).is_err() {
-        return None;
-    }
-    v.resize(n, 0);
-    Some(v)
-}
-
 /// `CheckMode`: the DC mode variant for macroblocks on the top or left
 /// edge.
 #[inline(always)]

@@ -1594,6 +1594,7 @@ name = "verilith-archive"
 version = "0.1.0"
 dependencies = [
  "verilith-checksum",
+ "verilith-core",
  "verilith-zlib",
  "verilith-zstd",
  "vstd",
@@ -1714,6 +1715,7 @@ dependencies = [
 name = "verilith-jpeg"
 version = "0.1.0"
 dependencies = [
+ "verilith-core",
  "verilith-simd",
  "vstd",
 ]
@@ -1743,6 +1745,7 @@ dependencies = [
 name = "verilith-png"
 version = "0.1.0"
 dependencies = [
+ "verilith-core",
  "verilith-zlib",
  "vstd",
 ]

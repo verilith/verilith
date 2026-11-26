@@ -131,7 +131,7 @@ pub fn gather_counted(b: &[u8], rs: &Vec<(usize, usize)>, Tracked(m): Tracked<&m
         total = total + l;
         i = i + 1;
     }
-    let mut v = match alloc_zeroed(total) {
+    let mut v = match alloc_u8(total) {
         Some(v) => v,
         None => return Err(Error::OutOfMemory),
     };
@@ -233,7 +233,7 @@ fn to_vec(b: &[u8], s: usize, l: usize, Tracked(m): Tracked<&mut Meter>) -> (r: 
     proof {
         m.n = (m.n + 2 * l) as nat;
     }
-    let mut v = match alloc_zeroed(l) {
+    let mut v = match alloc_u8(l) {
         Some(v) => v,
         None => return Err(Error::OutOfMemory),
     };
@@ -357,7 +357,7 @@ pub fn inflate_exec(idat: &[u8], rs: u128, limit: usize, tail: &mut Tail, Tracke
         return Err(Error::TooLarge);
     }
     let n = rs as usize;
-    let mut raw = match alloc_zeroed(n + 1) {
+    let mut raw = match alloc_u8(n + 1) {
         Some(v) => v,
         None => return Err(Error::OutOfMemory),
     };

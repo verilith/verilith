@@ -1,5 +1,5 @@
 //! Interlaced images (Appendix E), proven against `spec::deinterlace`.
-use crate::prims::alloc_zeroed;
+use verilith_core::prims::alloc_u8;
 use crate::spec::*;
 use verilith_core::prims::copy_in;
 #[cfg(verus_only)]
@@ -95,7 +95,7 @@ pub fn deinterlace_exec(px: &[u8], w: usize, h: usize) -> (r: (Option<Vec<u8>>, 
         lemma_mul_is_commutative(w as int, h as int);
     }
     let n = w * h;
-    let mut out = match alloc_zeroed(n) {
+    let mut out = match alloc_u8(n) {
         Some(v) => v,
         None => return (None, Ghost(0)),
     };

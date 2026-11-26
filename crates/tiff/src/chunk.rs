@@ -5,7 +5,7 @@ use crate::lzw::{lzw_exec, SLACK};
 #[cfg(verus_only)]
 use crate::lzw::STORED;
 use crate::packbits::packbits_exec;
-use crate::prims::alloc_zeroed;
+use verilith_core::prims::alloc_u8;
 use crate::spec::*;
 use crate::work::Meter;
 #[cfg(verus_only)]
@@ -87,7 +87,7 @@ fn deflate_exec(d: &[u8], need: usize, Tracked(m): Tracked<&mut Meter>) -> (r: R
         return Err(Error::TooLarge);
     }
     // One byte more than the strip: a stream that fills it is too long.
-    let mut raw = match alloc_zeroed(need + 1) {
+    let mut raw = match alloc_u8(need + 1) {
         Some(v) => v,
         None => return Err(Error::OutOfMemory),
     };
@@ -152,7 +152,7 @@ pub fn decompress_exec(comp: u32, d: &[u8], need: usize, rb: usize, off: &mut [u
         }
         Ok(slice_to_vec(d))
     } else if comp == 32773 {
-        let mut out = match alloc_zeroed(need) {
+        let mut out = match alloc_u8(need) {
             Some(v) => v,
             None => return Err(Error::OutOfMemory),
         };
@@ -170,7 +170,7 @@ pub fn decompress_exec(comp: u32, d: &[u8], need: usize, rb: usize, off: &mut [u
         if need > u32::MAX as usize - SLACK {
             return Err(Error::TooLarge);
         }
-        let mut out = match alloc_zeroed(need + SLACK) {
+        let mut out = match alloc_u8(need + SLACK) {
             Some(v) => v,
             None => return Err(Error::OutOfMemory),
         };

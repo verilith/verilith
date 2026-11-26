@@ -55,16 +55,11 @@ agreement on which of 900 damaged files to reject, and differential fuzzing
 
 ## 2. Trusted code inside the verified crate
 
-Two functions are marked `#[verifier::external_body]`, so Verus takes their
-contracts on faith. Both are in `src/parse.rs`:
-
-- `alloc_i16(n)` and `alloc_u8(n)`: return `None`, or a vector of exactly
-  `n` zeros. They call `std::alloc::alloc_zeroed` and build the `Vec` with
-  `Vec::from_raw_parts`, so that large buffers come from `calloc` and are
-  not written twice. About 15 lines each; the trust is that the layout
-  matches what `Vec` expects and that the allocator returns zeroed memory.
-
-Nothing else in `src/` uses `external_body`, `assume` or `admit`.
+Nothing in `src/` uses `external_body`, `assume` or `admit`. The zeroed
+allocations, `alloc_i16(n)` and `alloc_u8(n)` (`None`, or a vector of
+exactly `n` zeros, from `calloc` for large buffers), are verilith-core's,
+re-exported from `src/parse.rs`, and are trusted there: see
+[verilith-core's trusted base](../core#trusted-base).
 
 ## 2a. NEON intrinsics, through verilith-simd (AArch64 only)
 

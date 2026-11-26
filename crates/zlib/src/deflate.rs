@@ -20,6 +20,9 @@ use crate::huffman::*;
 use crate::ilemmas::*;
 #[cfg(verus_only)]
 use verilith_core::bits::*;
+use verilith_core::sort::order_by;
+#[cfg(verus_only)]
+use verilith_core::sort::below;
 #[cfg(verus_only)]
 use crate::spec::*;
 #[cfg(verus_only)]
@@ -2273,13 +2276,6 @@ impl Matcher {
 /// Huffman code lengths of at most `maxbits` bits for the frequencies
 /// `freq`: a Huffman tree, then lengths over `maxbits` shortened as miniz
 /// does. Only the ratio depends on this; the caller checks the lengths.
-/// Sorts `v` ascending. Nothing about the result is assumed: the caller
-/// checks what it reads back.
-#[verifier::external_body]
-fn sort_keys(v: &mut Vec<u64>) {
-    v.sort_unstable();
-}
-
 pub fn huff_lens(freq: &[u32], maxbits: usize) -> (r: Vec<u8>)
     requires
         freq@.len() <= 320,
@@ -2306,19 +2302,28 @@ pub fn huff_lens(freq: &[u32], maxbits: usize) -> (r: Vec<u8>)
         }
         s = s + 1;
     }
-    sort_keys(&mut keys);
+    let by_key = |a: usize, b: usize| -> (r: bool)
+        requires
+            a < keys@.len(),
+            b < keys@.len(),
+        ensures
+            r == (keys@[a as int] <= keys@[b as int]),
+        { keys[a] <= keys[b] };
+    let ord = order_by(keys.len(), &by_key, Ghost(|a: usize, b: usize| keys@[a as int] <= keys@[b as int]));
     let mut syms: Vec<usize> = Vec::with_capacity(keys.len());
     let mut i: usize = 0;
-    while i < keys.len()
+    while i < ord.len()
         invariant
-            i <= keys@.len(),
+            i <= ord@.len(),
+            ord@.len() == keys@.len(),
+            below(ord@, keys@.len()),
             nsym == freq@.len(),
             lens@.len() == nsym,
             syms@.len() <= i,
             forall|k: int| 0 <= k < syms@.len() ==> #[trigger] syms@[k] < nsym,
-        decreases keys@.len() - i,
+        decreases ord@.len() - i,
     {
-        let sym = (keys[i] & 511) as usize;
+        let sym = (keys[ord[i]] & 511) as usize;
         if sym >= nsym {
             return lens;
         }

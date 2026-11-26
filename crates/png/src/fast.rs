@@ -702,7 +702,7 @@ pub fn rgba8_flat16(png: &PngX, buf: &[u8], off: &[usize; 8], limit: usize, Trac
     if 4 * n as u128 > limit as u128 {
         return Err(crate::decode::Error::TooLarge);
     }
-    let mut out = match alloc_zeroed(4 * n) {
+    let mut out = match alloc_u8(4 * n) {
         Some(v) => v,
         None => return Err(crate::decode::Error::OutOfMemory),
     };
@@ -826,7 +826,7 @@ pub fn rgba8_flat(png: &PngX, buf: Vec<u8>, off: &[usize; 8], limit: usize, Trac
     if 4 * n as u128 > limit as u128 {
         return Err(crate::decode::Error::TooLarge);
     }
-    let mut out = match alloc_zeroed(4 * n) {
+    let mut out = match alloc_u8(4 * n) {
         Some(v) => v,
         None => return Err(crate::decode::Error::OutOfMemory),
     };

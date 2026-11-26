@@ -86,8 +86,6 @@ What the proofs assume rather than prove:
   the choice is marked `choice:` in a comment. `difftest/rules.py` is a
   second, independent reading of the standard, which the differential
   tests check the spec against.
-- `src/prims.rs`: one `#[verifier::external_body]` primitive, a zeroed
-  allocation.
 - The work bound's unit: that a verilith-core copy, a zeroed allocation
   and `slice_to_vec` of `n` bytes cost on the order of `n` steps, that
   `Decompressor::new` costs at most 4096, and verilith-zlib's own count of
@@ -96,7 +94,7 @@ What the proofs assume rather than prove:
 - verilith-zlib's trusted base (its specification of zlib and DEFLATE and
   its own primitives), and verilith-core's (the memory primitives used
   here: unchecked loads and stores, `copy_in`, `copy_match`'s chunks,
-  `alloc_u32`).
+  and the zeroed allocations `alloc_u8` and `alloc_u32`).
 - Verus, Z3 and the Rust compiler.
 
 - `src/capi.rs` and `capi/tiffshim.c`: libtiff's C API. Unverified glue:

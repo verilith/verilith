@@ -18,7 +18,7 @@ gzip), [verilith-zstd](https://github.com/verilith/verilith/tree/main/crates/zst
 ## What is proven
 
 Everything below is checked by Verus on every build of the proofs
-(`scripts/verify.sh`: 136 verified, 0 errors), once per pointer width:
+(`scripts/verify.sh`: 146 verified, 0 errors), once per pointer width:
 CI also runs Verus compiling for `wasm32-unknown-unknown`, where `usize`
 is 32 bits (`scripts/verify-narrow.sh`), so the crate builds for wasm32
 and is proven as built there, and its tests pass on `wasm32-wasip1` under
@@ -95,7 +95,7 @@ link's target is a regular file that an earlier member creates.
 The planner is sound and complete for this policy: it accepts exactly the
 archives whose plan satisfies `plan_safe`. A refusal is proven to mean the
 policy is broken, with one exception, `Why::Internal`, returned only if the
-standard library's sort misbehaves (see TRUST.md). The policy itself refuses
+check after the (verified) sort rejects its result (see TRUST.md). The policy itself refuses
 some harmless archives on purpose (a member stored twice, a file written
 through a symbolic link that points inside the tree, a symbolic link target
 longer than 4096 bytes, which `symlink` would refuse anyway).
