@@ -153,7 +153,7 @@ allocation counted through `ares_malloc`.
 
 ## What is proven
 
-Everything below is checked by Verus (`cargo verus verify`: 355 items, 0 errors).
+Everything below is checked by Verus (`cargo verus verify`: 366 items, 0 errors).
 
 | Property | Where |
 | --- | --- |
@@ -162,6 +162,7 @@ Everything below is checked by Verus (`cargo verus verify`: 355 items, 0 errors)
 | **Bounded output**: a decoded name never exceeds 255 wire octets, however it is assembled from pointers | `parse::read_name_into` |
 | **No pointer is followed twice** (RFC 9267 §2): the locations of the pointers followed are pairwise distinct | loop invariant of `parse::read_name_into` |
 | **Bounded work per name**: pointers never outnumber labels, so decoding one name takes at most 256 loop steps and copies at most 255 bytes | loop invariant of `parse::read_name_into` |
+| **Linear work for the whole message**: parsing an `n`-byte message takes at most `parse_cost(n) = 163n + 3066` steps, whatever it holds and whether or not it parses. A step is a turn of the question or record loop, a byte copied into the arena, or one of the 256 turns a name decode may take (charged in full for every name, including those inside RDATA). Each question costs at most 512 and takes at least 5 bytes; each record costs at most 1534 plus its RDATA's length and takes at least 11 bytes plus that RDATA, so the 128-fold expansion a 2-byte pointer allows is paid for by the bytes around it | `parse::parse_metered`, `parse_with_metered`, `read_records` |
 | **Up-front count check is sound** (RFC 9267 §6): rejecting counts that cannot fit the message never rejects a message the spec accepts | `lemmas::lemma_counts_fit` |
 | **Functional correctness of parsing**: `parse` and `Message::parse_into` compute exactly `spec::parse_message` | `src/parse.rs` |
 | **Every `Message` is well-formed** (type invariant): its arena and entry table encode a `SpecMessage` satisfying `valid_message`. Parsing establishes it; every builder call preserves it or is refused and leaves the message unchanged | `Message::inv`, `src/message.rs` |
@@ -190,6 +191,16 @@ canonicalization theorem is the strongest round trip available.
   [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core) (`verilith_core::bytes`,
   `verilith_core::num`).
 - Verus, Z3 and the Rust compiler.
+- **What a step costs.** The parse work bound counts loop turns and bytes
+  copied, not instructions. It assumes `Vec` pushes and appends cost
+  constant time per element or byte (amortized) and that `reserve`
+  allocates in constant time. The typed RDATA decoders (`read_rdata`,
+  behind `RecordRef::data`) are not metered: each runs a constant number
+  of loops over its RDATA, none nested, and each loop's termination
+  measure (`decreases end - q`) drops by at least one byte per turn, so
+  they are linear in the RDATA's length by that argument rather than by a
+  stated theorem. The serializers, including the compressing one, have no
+  work bound.
 - vstd's `external_body` specs for `slice_subrange` and `Vec`.
 - Unverified, and never handed untrusted bytes except through the verified
   code: `src/name.rs` (the `Name` view and iterators, written with checked
@@ -315,6 +326,7 @@ canonicalization theorem is the strongest round trip available.
 | §4 do not rely on NUL-terminated input | the parser works on length-delimited slices only |
 | §5 RDLENGTH matches the bytes available | spec `parse_record` |
 | §5 RDATA conforms to TYPE | spec `parse_rdata`: each type's RDATA must decode and be consumed exactly (raw for unknown types, RFC 3597); for types with names this is checked while parsing, so a message with malformed name-bearing RDATA is dropped |
+| §2, §6 bounded work on crafted messages | proven: parsing is linear in the message's length, decompressed names included (`parse::parse_metered`) |
 | §6 counts checked before parsing and must match the data | up-front size check, exact parse, trailing bytes rejected |
 | §1, §6 drop malformed replies | every violation makes `parse` return `None` |
 
