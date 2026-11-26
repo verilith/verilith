@@ -875,7 +875,7 @@ impl HList {
 /// peer, at most `max_streams` of them live, so a multiply-and-fold
 /// suffices; SipHash cost 6% of the CPU in h2c-plaintext.
 #[derive(Default)]
-struct IdHash(u64);
+pub(crate) struct IdHash(u64);
 
 impl Hasher for IdHash {
     fn finish(&self) -> u64 {

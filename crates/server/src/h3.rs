@@ -27,6 +27,8 @@
 //! the peer chooses to send on them.
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
+
+type IdHasher = std::hash::BuildHasherDefault<crate::h2::IdHash>;
 use std::hash::Hash;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
@@ -462,8 +464,10 @@ struct App<Id> {
     seen: UniSeen,
     /// Our control stream, once opened.
     ctrl: Option<Id>,
-    uni: HashMap<Id, Uni>,
-    reqs: HashMap<Id, Box<Req>>,
+    /// Keyed by stream ID with h2's multiply-and-fold hash: SipHash
+    /// cost 2% of the CPU in h3-plaintext.
+    uni: HashMap<Id, Uni, IdHasher>,
+    reqs: HashMap<Id, Box<Req>, IdHasher>,
     pool: Vec<Box<Req>>,
     /// Scratch for decoded field lines.
     lines: Fields,
@@ -482,8 +486,8 @@ impl<Id> App<Id> {
             enc: Encoder::new(0, 0, 0).expect("QPACK encoder"),
             seen: UniSeen { control: false, encoder: false, decoder: false },
             ctrl: None,
-            uni: HashMap::new(),
-            reqs: HashMap::new(),
+            uni: HashMap::default(),
+            reqs: HashMap::default(),
             pool: Vec::new(),
             lines: Fields::new(),
             section: Vec::new(),
