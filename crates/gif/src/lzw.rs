@@ -249,6 +249,7 @@ pub fn code_first(st: &mut St, m: u8, clear: usize, need: usize, out: &mut [u8],
         ok == lzw_code(m as nat, old(st).s@, c as nat) is Some,
         ok ==> final(st).ok(m as nat, need as nat, final(out)@, off@, len@)
             && final(st).s@ == lzw_code(m as nat, old(st).s@, c as nat)->Some_0,
+        ok ==> final(st).pos > old(st).pos,
 {
     let ghost mm = m as nat;
     let ghost s = st.s@;
@@ -349,6 +350,7 @@ pub fn code_next(st: &mut St, m: u8, clear: usize, need: usize, out: &mut [u8], 
         ok == lzw_code(m as nat, old(st).s@, c as nat) is Some,
         ok ==> final(st).ok(m as nat, need as nat, final(out)@, final(off)@, final(len)@)
             && final(st).s@ == lzw_code(m as nat, old(st).s@, c as nat)->Some_0,
+        ok ==> final(st).pos > old(st).pos,
 {
     let ghost mm = m as nat;
     let ghost s = st.s@;
@@ -397,8 +399,12 @@ pub fn code_next(st: &mut St, m: u8, clear: usize, need: usize, out: &mut [u8], 
 /// size `m`, into `out[..need]`. Returns whether `spec::lzw` accepts the
 /// data; `out` from `need` on is scratch space. `off` and `len` are the
 /// table, scratch space too.
+///
+/// Also returns the work done: one step for each code and each byte of
+/// `data` read, and one for each byte of output written, so at most
+/// `9 * data.len() + need + SLACK` (`lzw_work`).
 #[verifier::loop_isolation(false)]
-pub fn lzw_exec(data: &[u8], m: u8, need: usize, out: &mut [u8], off: &mut [u32], len: &mut [u32]) -> (r: bool)
+pub fn lzw_exec(data: &[u8], m: u8, need: usize, out: &mut [u8], off: &mut [u32], len: &mut [u32]) -> (r: (bool, Ghost<nat>))
     requires
         m <= 8,
         1 <= need,
@@ -409,8 +415,9 @@ pub fn lzw_exec(data: &[u8], m: u8, need: usize, out: &mut [u8], off: &mut [u32]
         final(out)@.len() == old(out)@.len(),
         final(off)@.len() == MAX_CODES,
         final(len)@.len() == MAX_CODES,
-        r == lzw(data@, m as nat, need as nat) is Some,
-        r ==> lzw(data@, m as nat, need as nat) == Some(final(out)@.subrange(0, need as int)),
+        r.0 == lzw(data@, m as nat, need as nat) is Some,
+        r.0 ==> lzw(data@, m as nat, need as nat) == Some(final(out)@.subrange(0, need as int)),
+        r.1@ <= lzw_work(data@.len(), need as nat),
 {
     let ghost dd = data@;
     let ghost mm = m as nat;
@@ -425,6 +432,7 @@ pub fn lzw_exec(data: &[u8], m: u8, need: usize, out: &mut [u8], off: &mut [u32]
     let mut buf: u64 = 0;
     let mut cnt: u64 = 0;
     let mut ip: usize = 0;
+    let ghost mut work: nat = 0;
     proof {
         let s = st.s@;
         assert(s.out =~= out@.subrange(0, 0));
@@ -441,9 +449,11 @@ pub fn lzw_exec(data: &[u8], m: u8, need: usize, out: &mut [u8], off: &mut [u32]
             cnt < 20,
             buf as nat == bits(dd, 8 * ip - cnt, cnt as nat),
             lzw(dd, mm, need as nat) == lzw_run(dd, mm, need as nat, st.s@, 8 * ip - cnt),
+            work + cnt <= 9 * ip + st.pos,
         decreases 8 * data@.len() - (8 * ip - cnt),
     {
         let ghost q = 8 * ip - cnt;
+        let ghost pos0 = st.pos;
         let w = st.w;
         // Enough bits for a code.
         while cnt < w
@@ -453,10 +463,12 @@ pub fn lzw_exec(data: &[u8], m: u8, need: usize, out: &mut [u8], off: &mut [u32]
                 cnt < 20,
                 8 * ip - cnt == q,
                 buf as nat == bits(dd, q, cnt as nat),
+                work + cnt <= 9 * ip + st.pos,
+                st.pos == pos0,
             decreases data@.len() - ip,
         {
             if ip >= data.len() {
-                return false;
+                return (false, Ghost(work));
             }
             let byte = get(data, ip) as u64;
             proof {
@@ -469,6 +481,9 @@ pub fn lzw_exec(data: &[u8], m: u8, need: usize, out: &mut [u8], off: &mut [u32]
             buf = buf | (byte << cnt);
             cnt = cnt + 8;
             ip = ip + 1;
+            proof {
+                work = work + 1;
+            }
         }
         proof {
             lemma_mask(w);
@@ -487,21 +502,30 @@ pub fn lzw_exec(data: &[u8], m: u8, need: usize, out: &mut [u8], off: &mut [u32]
             }
             st = st_reset(m, clear, st.pos, Ghost(st.s@.out));
         } else if c == clear + 1 {
-            return false;
+            return (false, Ghost(work));
         } else if !st.has_prev {
             if !code_first(&mut st, m, clear, need, out, off, len, c) {
-                return false;
+                return (false, Ghost(work));
             }
         } else {
             if !code_next(&mut st, m, clear, need, out, off, len, c) {
-                return false;
+                return (false, Ghost(work));
             }
+        }
+        proof {
+            work = (work + 1 + (st.pos - pos0)) as nat;
         }
     }
     proof {
         assert(out@.subrange(0, st.pos as int).subrange(0, need as int) =~= out@.subrange(0, need as int));
     }
-    true
+    (true, Ghost(work))
+}
+
+/// The bound on `lzw_exec`'s work, for `n` bytes of data and `need` bytes
+/// of output.
+pub open spec fn lzw_work(n: nat, need: nat) -> nat {
+    (9 * n + need + SLACK) as nat
 }
 
 } // verus!

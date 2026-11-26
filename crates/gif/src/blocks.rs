@@ -14,46 +14,58 @@ pub open spec fn end_of(r: Option<(Seq<u8>, int)>) -> Option<int> {
     }
 }
 
-/// The position after the chain of sub-blocks at `p`.
-pub fn skip_blocks(b: &[u8], p: usize) -> (r: Option<usize>)
+/// The position after the chain of sub-blocks at `p`. Also returns the
+/// work done, one step per sub-block: at most the chain's length in bytes,
+/// and at most the bytes after `p` if there is no chain.
+pub fn skip_blocks(b: &[u8], p: usize) -> (r: (Option<usize>, Ghost<nat>))
     ensures
         match sub_blocks(b@, p as int) {
-            Some((_, e)) => r == Some(e as usize),
-            None => r is None,
+            Some((_, e)) => r.0 == Some(e as usize),
+            None => r.0 is None,
         },
+        r.0 matches Some(e) ==> r.1@ <= e - p,
+        p <= b@.len() ==> r.1@ <= b@.len() - p,
 {
     proof {
         lemma_sub_blocks_end(b@, p as int);
     }
     if p >= b.len() {
-        return None;
+        return (None, Ghost(0));
     }
     let mut q = p;
+    let ghost mut work: nat = 0;
     while q < b.len()
         invariant
-            q <= b@.len(),
+            p <= q <= b@.len(),
             end_of(sub_blocks(b@, p as int)) == end_of(sub_blocks(b@, q as int)),
+            work <= q - p,
         decreases b@.len() - q,
     {
         let n = get(b, q) as usize;
         if n == 0 {
-            return Some(q + 1);
+            return (Some(q + 1), Ghost(work + 1));
         }
         if b.len() - q - 1 < n {
-            return None;
+            return (None, Ghost(work));
         }
         q = q + 1 + n;
+        proof {
+            work = work + 1;
+        }
     }
-    None
+    (None, Ghost(work))
 }
 
 /// The data of the chain of sub-blocks at `p`, which `skip_blocks` has
-/// found to end at `e`.
-pub fn gather(b: &[u8], p: usize, e: usize) -> (r: Vec<u8>)
+/// found to end at `e`. Also returns the work done, a step for each
+/// sub-block and each byte copied: at most `2 * (e - p)`.
+pub fn gather(b: &[u8], p: usize, e: usize) -> (r: (Vec<u8>, Ghost<nat>))
     requires
         sub_blocks(b@, p as int) matches Some((_, x)) && x == e,
     ensures
-        sub_blocks(b@, p as int) == Some((r@, e as int)),
+        sub_blocks(b@, p as int) == Some((r.0@, e as int)),
+        r.1@ <= 2 * (e - p),
+        r.0@.len() <= e - p,
 {
     proof {
         lemma_sub_blocks_end(b@, p as int);
@@ -61,20 +73,26 @@ pub fn gather(b: &[u8], p: usize, e: usize) -> (r: Vec<u8>)
     let blen = b.len();
     let mut out: Vec<u8> = Vec::with_capacity(e - p);
     let mut q = p;
+    let ghost mut work: nat = 0;
     loop
         invariant
-            q < b@.len(),
+            p <= q < b@.len(),
+            q < e,
             blen == b@.len(),
             sub_blocks(b@, q as int) is Some,
+            sub_blocks(b@, q as int)->Some_0.1 == e,
             sub_blocks(b@, p as int) == Some((out@ + sub_blocks(b@, q as int)->Some_0.0, e as int)),
+            work <= 2 * (q - p),
+            out@.len() <= q - p,
         decreases b@.len() - q,
     {
         let n = get(b, q) as usize;
         if n == 0 {
             proof {
                 assert(out@ + Seq::<u8>::empty() =~= out@);
+                reveal_with_fuel(sub_blocks, 1);
             }
-            return out;
+            return (out, Ghost(work + 1));
         }
         proof {
             reveal_with_fuel(sub_blocks, 1);
@@ -87,6 +105,8 @@ pub fn gather(b: &[u8], p: usize, e: usize) -> (r: Vec<u8>)
         proof {
             assert(o + (b@.subrange(q + 1, q + 1 + n) + rest) =~= out@ + rest);
             lemma_sub_blocks_end(b@, q + 1 + n);
+            reveal_with_fuel(sub_blocks, 1);
+            work = (work + 1 + n) as nat;
         }
         q = q + 1 + n;
     }
