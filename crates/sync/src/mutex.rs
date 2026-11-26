@@ -78,10 +78,12 @@ pub tracked struct MutexShared<T> {
     /// The data and the other half of `locked`, while unlocked; a guard
     /// holds them while locked.
     pub held: Option<(PointsTo<T>, GhostVar<bool>)>,
+    /// The progress model, which the code follows step by step.
     pub model: Model<P>,
     /// The model's list, with each ticket's waiter id; the parking lot
     /// holds the other half.
     pub list: GhostVarAuth<Map<nat, u64>>,
+    /// Every waiter's record, by ticket: the authority.
     pub recs_auth: GhostMapAuth<nat, Rec>,
     /// Every waiter's record, by ticket.
     pub recs: GhostPersistentSubmap<nat, Rec>,
@@ -645,8 +647,9 @@ impl<T> Mutex<T> {
     {
         let (key, Tracked(kf)) = self.key();
         let (notified, Tracked(perm)) = PAtomicBool::new(false);
-        let (g, mut l, Tracked(half)) = lock_bucket(key, Tracked(&kf));
+        let (g, mut l, Tracked(half), Tracked(bids)) = lock_bucket(key, Tracked(&kf));
         let tracked mut half = half;
+        let tracked mut bids = bids;
         if l.next == u64::MAX {
             exhausted();
         }
@@ -711,6 +714,8 @@ impl<T> Mutex<T> {
             }
         });
         if v == CONTENDED {
+            let ghost b0 = bids;
+            let tracked brec = bids.insert(id, (self.lot(), tk, key)).persist();
             let me = Arc::new(Waiter {
                 key,
                 id,
@@ -719,6 +724,7 @@ impl<T> Mutex<T> {
                 lot: Ghost(self.lot()),
                 tk: Ghost(tk),
                 rec: Tracked(rec.tracked_unwrap()),
+                brec: Tracked(brec),
             });
             let w = arc_clone(&me);
             let ghost l0 = l;
@@ -727,11 +733,13 @@ impl<T> Mutex<T> {
             proof {
                 lemma_push(q0, key, self.lot(), half0, w);
                 lemma_push_wf(l0, w);
+                assert(bids@.dom() =~= b0@.dom().insert(id));
+                lemma_bids_push(q0, id, b0, bids, w);
             }
-            unlock_bucket(g, l, Tracked(half), Tracked(&kf));
+            unlock_bucket(g, l, Tracked(half), Tracked(bids), Tracked(&kf));
             Some(me)
         } else {
-            unlock_bucket(g, l, Tracked(half), Tracked(&kf));
+            unlock_bucket(g, l, Tracked(half), Tracked(bids), Tracked(&kf));
             None
         }
     }
@@ -797,8 +805,9 @@ impl<T> Mutex<T> {
     {
         let ghost tk = me.tk@;
         let (key, Tracked(kf)) = self.key();
-        let (g, mut l, Tracked(half)) = lock_bucket(key, Tracked(&kf));
+        let (g, mut l, Tracked(half), Tracked(bids)) = lock_bucket(key, Tracked(&kf));
         let tracked mut half = half;
+        let tracked mut bids = bids;
         let ghost q0 = l.q@;
         let ghost half0 = half@;
         let i = find_id(&l, me.id);
@@ -854,9 +863,10 @@ impl<T> Mutex<T> {
             proof {
                 lemma_remove(q0, key, self.lot(), half0, i as int);
                 lemma_remove_wf(l0, l.q@, i as int);
+                lemma_bids_remove(q0, l.next, bids, i as int);
             }
         }
-        unlock_bucket(g, l, Tracked(half), Tracked(&kf));
+        unlock_bucket(g, l, Tracked(half), Tracked(bids), Tracked(&kf));
         flag
     }
 
@@ -929,8 +939,9 @@ impl<T> Mutex<T> {
             tok_at(*final(tok), self.consts(), Ph::Idle),
     {
         let (key, Tracked(kf)) = self.key();
-        let (g, mut l, Tracked(half)) = lock_bucket(key, Tracked(&kf));
+        let (g, mut l, Tracked(half), Tracked(bids)) = lock_bucket(key, Tracked(&kf));
         let tracked mut half = half;
+        let tracked mut bids = bids;
         let ghost q0 = l.q@;
         let ghost half0 = half@;
         let i = find_key(&l, key);
@@ -941,6 +952,7 @@ impl<T> Mutex<T> {
             proof {
                 lemma_remove(q0, key, self.lot(), half0, i as int);
                 lemma_remove_wf(l0, l.q@, i as int);
+                lemma_bids_remove(q0, l.next, bids, i as int);
             }
             open_atomic_invariant!(self.inv.borrow().tracked_borrow() => s => {
                 proof {
@@ -980,7 +992,7 @@ impl<T> Mutex<T> {
                     }
                 }
             });
-            unlock_bucket(g, l, Tracked(half), Tracked(&kf));
+            unlock_bucket(g, l, Tracked(half), Tracked(bids), Tracked(&kf));
             w.thread.unpark();
         } else {
             open_atomic_invariant!(self.inv.borrow().tracked_borrow() => s => {
@@ -1008,7 +1020,7 @@ impl<T> Mutex<T> {
                     }
                 }
             });
-            unlock_bucket(g, l, Tracked(half), Tracked(&kf));
+            unlock_bucket(g, l, Tracked(half), Tracked(bids), Tracked(&kf));
         }
     }
 

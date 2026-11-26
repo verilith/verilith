@@ -50,6 +50,15 @@ pub ghost struct LotId {
 /// id in the bucket.
 pub type Rec = (AtomicCellId, u64);
 
+/// A waiter's record in its bucket's ghost state, by id: its lock, its
+/// ticket and its key. A bucket hands out each id once, so two waiters
+/// with the same id in one bucket are the same waiter.
+pub type Bid = (LotId, nat, usize);
+
+/// The location of the ghost map of the ids a bucket has handed out: one
+/// for each bucket, so the same for keys that share one.
+pub uninterp spec fn bucket_loc(key: usize) -> Loc;
+
 /// A thread parked, or about to park, in a bucket.
 pub struct Waiter {
     /// The key it parked under.
@@ -64,6 +73,8 @@ pub struct Waiter {
     /// Its ticket in its lock's progress model.
     pub tk: Ghost<nat>,
     pub rec: Tracked<GhostPersistentPointsTo<nat, Rec>>,
+    /// Its record in the bucket.
+    pub brec: Tracked<GhostPersistentPointsTo<u64, Bid>>,
 }
 
 impl Waiter {
@@ -71,6 +82,8 @@ impl Waiter {
         &&& self.rec@.id() == self.lot@.recs
         &&& self.rec@.key() == self.tk@
         &&& self.rec@.value() == (self.notified.id(), self.id)
+        &&& self.brec@.key() == self.id
+        &&& self.brec@.value() == (self.lot@, self.tk@, self.key)
     }
 }
 
@@ -85,6 +98,52 @@ impl BucketList {
     pub open spec fn wf(&self) -> bool {
         &&& forall|j: int| 0 <= j < self.q@.len() ==> (#[trigger] self.q@[j]).wf() && self.q@[j].id < self.next
         &&& forall|i: int, j: int| 0 <= i < self.q@.len() && 0 <= j < self.q@.len() && i != j ==> (#[trigger] self.q@[i]).id != (#[trigger] self.q@[j]).id
+    }
+}
+
+/// The ids `bids` has handed out are below `next`, and the waiters in `q`
+/// have their records in it.
+pub open spec fn bids_ok(q: Seq<Arc<Waiter>>, next: u64, bids: GhostMapAuth<u64, Bid>) -> bool {
+    &&& forall|id: u64| #[trigger] bids@.contains_key(id) ==> id < next
+    &&& forall|j: int| 0 <= j < q.len() ==> (#[trigger] q[j]).brec@.id() == bids.id()
+}
+
+/// A new waiter with the next id, its record just added, keeps `bids_ok`.
+pub proof fn lemma_bids_push(q: Seq<Arc<Waiter>>, next: u64, bids: GhostMapAuth<u64, Bid>, bids2: GhostMapAuth<u64, Bid>, w: Arc<Waiter>)
+    requires
+        bids_ok(q, next, bids),
+        bids2.id() == bids.id(),
+        bids2@.dom() == bids@.dom().insert(next),
+        w.brec@.id() == bids.id(),
+        next < u64::MAX,
+    ensures
+        bids_ok(q.push(w), (next + 1) as u64, bids2),
+{
+    let q1 = q.push(w);
+    assert forall|j: int| 0 <= j < q1.len() implies (#[trigger] q1[j]).brec@.id() == bids2.id() by {
+        if j < q.len() {
+            assert(q1[j] == q[j]);
+        }
+    }
+    assert forall|id: u64| #[trigger] bids2@.contains_key(id) implies id < next + 1 by {
+        if id != next {
+            assert(bids@.contains_key(id));
+        }
+    }
+}
+
+/// Taking a waiter off keeps `bids_ok`.
+pub proof fn lemma_bids_remove(q: Seq<Arc<Waiter>>, next: u64, bids: GhostMapAuth<u64, Bid>, i: int)
+    requires
+        bids_ok(q, next, bids),
+        0 <= i < q.len(),
+    ensures
+        bids_ok(q.remove(i), next, bids),
+{
+    let q1 = q.remove(i);
+    assert forall|j: int| 0 <= j < q1.len() implies (#[trigger] q1[j]).brec@.id() == bids.id() by {
+        let j0 = if j < i { j } else { j + 1 };
+        assert(q1[j] == q[j0]);
     }
 }
 
@@ -146,7 +205,7 @@ impl BucketGuard {
 /// TRUSTED. Locks the bucket of `key` and hands over the lot's half of the
 /// lock's list, with what ties it to the bucket (see the module comment).
 #[verifier::external_body]
-pub fn lock_bucket(key: usize, Tracked(k): Tracked<&KeyOf>) -> (r: (BucketGuard, BucketList, Tracked<GhostVar<Map<nat, u64>>>))
+pub fn lock_bucket(key: usize, Tracked(k): Tracked<&KeyOf>) -> (r: (BucketGuard, BucketList, Tracked<GhostVar<Map<nat, u64>>>, Tracked<GhostMapAuth<u64, Bid>>))
     requires
         k.key() == key,
     ensures
@@ -155,19 +214,23 @@ pub fn lock_bucket(key: usize, Tracked(k): Tracked<&KeyOf>) -> (r: (BucketGuard,
         r.1.wf(),
         r.2@.id() == k.lot().list,
         listed(r.1.q@, key, k.lot(), r.2@@),
+        r.3@.id() == bucket_loc(key),
+        bids_ok(r.1.q@, r.1.next, r.3@),
 {
     let mut g = bucket(key).list.lock().unwrap_or_else(|e| e.into_inner());
     let l = g.take().unwrap();
-    (BucketGuard { g: Some(g) }, l, Tracked::assume_new())
+    (BucketGuard { g: Some(g) }, l, Tracked::assume_new(), Tracked::assume_new())
 }
 
 /// TRUSTED. Unlocks the bucket and gives the half back. Checks that the
 /// list still matches it and that other keys' waiters are as they were.
 #[verifier::external_body]
-pub fn unlock_bucket(g: BucketGuard, l: BucketList, Tracked(half): Tracked<GhostVar<Map<nat, u64>>>, Tracked(k): Tracked<&KeyOf>)
+pub fn unlock_bucket(g: BucketGuard, l: BucketList, Tracked(half): Tracked<GhostVar<Map<nat, u64>>>, Tracked(bids): Tracked<GhostMapAuth<u64, Bid>>, Tracked(k): Tracked<&KeyOf>)
     requires
         g.key() == k.key(),
         l.wf(),
+        bids.id() == bucket_loc(k.key()),
+        bids_ok(l.q@, l.next, bids),
         half.id() == k.lot().list,
         listed(l.q@, k.key(), k.lot(), half@),
         same_others(l.q@, g.got(), k.key()),

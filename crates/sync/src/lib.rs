@@ -24,8 +24,6 @@ pub mod model;
 pub mod mono;
 pub mod mutex;
 #[doc(hidden)]
-pub mod parking;
-#[doc(hidden)]
 pub mod progress;
 #[doc(hidden)]
 pub mod ra;
