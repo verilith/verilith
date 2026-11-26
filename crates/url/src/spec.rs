@@ -243,10 +243,35 @@ pub tracked struct Meter {
     pub ghost n: nat,
 }
 
-/// The scalars that the well-formed UTF-8 in `s[i..]` encodes (vcore's
-/// `utf8_len` gives each one's length, Table 3-7, and vtext's `dec8_at`
-/// its value, Table 3-6).
-pub open spec fn utf8_scalars(s: Seq<u8>, i: int) -> Seq<u32>
+/// The length of the maximal subpart (Unicode 3.9, D93b) of the ill-formed
+/// UTF-8 at `s[i]`: the longest prefix of a well-formed sequence that it
+/// starts with, and at least one byte. The Encoding Standard's UTF-8
+/// decoder replaces each maximal subpart with one U+FFFD.
+pub open spec fn utf8_subpart(s: Seq<u8>, i: int) -> int {
+    let b = s[i];
+    if 0xE0 <= b <= 0xEF {
+        let lo: u8 = if b == 0xE0 { 0xA0 } else { 0x80 };
+        let hi: u8 = if b == 0xED { 0x9F } else { 0xBF };
+        if verilith_core::utf8::byte_in(s, i + 1, lo, hi) { 2 } else { 1 }
+    } else if 0xF0 <= b <= 0xF4 {
+        let lo: u8 = if b == 0xF0 { 0x90 } else { 0x80 };
+        let hi: u8 = if b == 0xF4 { 0x8F } else { 0xBF };
+        if verilith_core::utf8::byte_in(s, i + 1, lo, hi) {
+            if verilith_core::utf8::byte_in(s, i + 2, 0x80, 0xBF) { 3 } else { 2 }
+        } else {
+            1
+        }
+    } else {
+        1
+    }
+}
+
+/// "UTF-8 decode without BOM" (Encoding Standard) of `s[i..]`: each
+/// well-formed sequence (vcore's `utf8_len` gives its length, Table 3-7,
+/// and vtext's `dec8_at` its value, Table 3-6) becomes its scalar, and each
+/// maximal subpart of ill-formed UTF-8 becomes U+FFFD. The URL Standard
+/// strips no BOM here.
+pub open spec fn utf8_decode(s: Seq<u8>, i: int) -> Seq<u32>
     decreases s.len() - i,
 {
     if i < 0 || i >= s.len() {
@@ -254,11 +279,11 @@ pub open spec fn utf8_scalars(s: Seq<u8>, i: int) -> Seq<u32>
     } else {
         match verilith_core::utf8::utf8_len(s, i) {
             Some(l) => if l > 0 {
-                seq![verilith_text::utf::spec::dec8_at(s, i, l)] + utf8_scalars(s, i + l)
+                seq![verilith_text::utf::spec::dec8_at(s, i, l)] + utf8_decode(s, i + l)
             } else {
                 Seq::empty()
             },
-            None => Seq::empty(),
+            None => seq![0xFFFDu32] + utf8_decode(s, i + utf8_subpart(s, i)),
         }
     }
 }
@@ -286,24 +311,17 @@ pub open spec fn url_domain_to_ascii_url(cs: Seq<u32>) -> Option<Seq<u8>> {
 
 /// "Let asciiDomain be the result of running domain to ASCII with domain"
 /// on "the result of running UTF-8 decode without BOM on the
-/// percent-decoding of input". The model takes the bytes before decoding:
-/// well-formed UTF-8 decodes to its scalars, and anything else fails,
-/// because UTF-8 decode without BOM turns each ill-formed sequence into
-/// U+FFFD, which UTS #46's mapping table marks disallowed, so ToASCII
-/// records an error and fails. A result more than 8 bytes per input byte
-/// also fails: a limit the Standard does not have, which keeps the
+/// percent-decoding of input": the decoding, with U+FFFD for ill-formed
+/// UTF-8, goes to UTS #46 as it is. A result more than 8 bytes per input
+/// byte also fails: a limit the Standard does not have, which keeps the
 /// parser's output linear. No domain is known to reach it; over every code
 /// point the largest ratio is 5.67 (U+337F). (Opaque: the parser's proofs
 /// treat it as a black box, and only `idna.rs` looks inside.)
 #[verifier::opaque]
 pub open spec fn domain_to_ascii(domain: Seq<u8>) -> Option<Seq<u8>> {
-    if verilith_core::utf8::utf8_from(domain, 0) {
-        match url_domain_to_ascii_url(utf8_scalars(domain, 0)) {
-            Some(v) if v.len() <= 8 * domain.len() => Some(v),
-            _ => None,
-        }
-    } else {
-        None
+    match url_domain_to_ascii_url(utf8_decode(domain, 0)) {
+        Some(v) if v.len() <= 8 * domain.len() => Some(v),
+        _ => None,
     }
 }
 

@@ -19,34 +19,48 @@ use verilith_text::utf::spec::dec8_at;
 
 verus! {
 
-/// `utf8_scalars` is the decoding of well-formed UTF-8: its encoding is the
-/// input, and it is made of scalars.
-pub proof fn lemma_utf8_scalars(s: Seq<u8>, i: int)
+/// `utf8_decode` is made of scalars, and on well-formed UTF-8 its
+/// encoding is the input.
+pub proof fn lemma_utf8_decode(s: Seq<u8>, i: int)
     requires
         0 <= i <= s.len(),
-        utf8_from(s, i),
     ensures
-        enc(utf8_scalars(s, i)) == s.subrange(i, s.len() as int),
-        scalars(utf8_scalars(s, i)),
+        utf8_from(s, i) ==> enc(utf8_decode(s, i)) == s.subrange(i, s.len() as int),
+        scalars(utf8_decode(s, i)),
     decreases s.len() - i,
 {
     if i < s.len() {
-        let l = utf8_len(s, i)->0;
-        verilith_text::utf::spec::lemma_dec8_roundtrip(s, i);
-        let c = dec8_at(s, i, l);
-        lemma_utf8_scalars(s, i + l);
-        let rest = utf8_scalars(s, i + l);
-        lemma_enc_append(seq![c], rest);
-        lemma_enc_one(c);
-        assert(s.subrange(i, s.len() as int) =~= s.subrange(i, i + l) + s.subrange(i + l, s.len() as int));
-        assert(utf8_scalars(s, i) == seq![c] + rest);
-        assert forall|k: int| 0 <= k < utf8_scalars(s, i).len() implies is_scalar(#[trigger] utf8_scalars(s, i)[k]) by {
-            if k > 0 {
-                assert(utf8_scalars(s, i)[k] == rest[k - 1]);
-            }
+        let d = utf8_decode(s, i);
+        match utf8_len(s, i) {
+            Some(l) => {
+                verilith_text::utf::spec::lemma_dec8_roundtrip(s, i);
+                let c = dec8_at(s, i, l);
+                lemma_utf8_decode(s, i + l);
+                let rest = utf8_decode(s, i + l);
+                lemma_enc_append(seq![c], rest);
+                lemma_enc_one(c);
+                assert(s.subrange(i, s.len() as int) =~= s.subrange(i, i + l) + s.subrange(i + l, s.len() as int));
+                assert(d == seq![c] + rest);
+                assert forall|k: int| 0 <= k < d.len() implies is_scalar(#[trigger] d[k]) by {
+                    if k > 0 {
+                        assert(d[k] == rest[k - 1]);
+                    }
+                }
+            },
+            None => {
+                let j = i + utf8_subpart(s, i);
+                lemma_utf8_decode(s, j);
+                let rest = utf8_decode(s, j);
+                assert(d == seq![0xFFFDu32] + rest);
+                assert forall|k: int| 0 <= k < d.len() implies is_scalar(#[trigger] d[k]) by {
+                    if k > 0 {
+                        assert(d[k] == rest[k - 1]);
+                    }
+                }
+            },
         }
     } else {
-        assert(utf8_scalars(s, i) =~= Seq::<u32>::empty());
+        assert(utf8_decode(s, i) =~= Seq::<u32>::empty());
         assert(enc(Seq::<u32>::empty()) =~= Seq::<u8>::empty());
         assert(s.subrange(i, s.len() as int) =~= Seq::<u8>::empty());
     }
@@ -84,6 +98,107 @@ fn utf8_len_exec(s: &[u8], i: usize) -> (r: usize)
     } else {
         0
     }
+}
+
+/// The length of the maximal subpart of the ill-formed UTF-8 at `i`.
+fn utf8_subpart_exec(s: &[u8], i: usize) -> (r: usize)
+    requires
+        i < s.len(),
+        utf8_len(s@, i as int) is None,
+    ensures
+        r == utf8_subpart(s@, i as int),
+        1 <= r <= s.len() - i,
+{
+    let n = s.len();
+    let b = s[i];
+    if 0xE0 <= b && b <= 0xEF {
+        let lo: u8 = if b == 0xE0 { 0xA0 } else { 0x80 };
+        let hi: u8 = if b == 0xED { 0x9F } else { 0xBF };
+        if n - i > 1 && lo <= s[i + 1] && s[i + 1] <= hi { 2 } else { 1 }
+    } else if 0xF0 <= b && b <= 0xF4 {
+        let lo: u8 = if b == 0xF0 { 0x90 } else { 0x80 };
+        let hi: u8 = if b == 0xF4 { 0x8F } else { 0xBF };
+        if n - i > 1 && lo <= s[i + 1] && s[i + 1] <= hi {
+            if n - i > 2 && 0x80 <= s[i + 2] && s[i + 2] <= 0xBF { 3 } else { 2 }
+        } else {
+            1
+        }
+    } else {
+        1
+    }
+}
+
+/// The UTF-8 encoding of `utf8_decode(s, 0)`: `s` with each maximal
+/// subpart of ill-formed UTF-8 replaced by U+FFFD's three bytes.
+fn utf8_lossy(s: &[u8]) -> (v: Vec<u8>)
+    ensures
+        v@ == enc(utf8_decode(s@, 0)),
+{
+    let n = s.len();
+    let mut v: Vec<u8> = Vec::new();
+    let mut i: usize = 0;
+    proof {
+        assert(enc(Seq::<u32>::empty()) =~= Seq::<u8>::empty());
+        assert(v@ + enc(utf8_decode(s@, 0)) =~= enc(utf8_decode(s@, 0)));
+    }
+    while i < n
+        invariant
+            i <= n == s@.len(),
+            enc(utf8_decode(s@, 0)) == v@ + enc(utf8_decode(s@, i as int)),
+        decreases n - i,
+    {
+        let ghost v0 = v@;
+        let l = utf8_len_exec(s, i);
+        if l == 0 {
+            let j = utf8_subpart_exec(s, i);
+            v.push(0xEF);
+            v.push(0xBF);
+            v.push(0xBD);
+            proof {
+                let rest = utf8_decode(s@, (i + j) as int);
+                assert(utf8_decode(s@, i as int) == seq![0xFFFDu32] + rest);
+                lemma_enc_append(seq![0xFFFDu32], rest);
+                lemma_enc_one(0xFFFDu32);
+                assert(utf8_encode(0xFFFDu32) =~= seq![0xEFu8, 0xBF, 0xBD]);
+                assert(v@ =~= v0 + seq![0xEFu8, 0xBF, 0xBD]);
+                assert(v0 + (seq![0xEFu8, 0xBF, 0xBD] + enc(rest)) =~= v@ + enc(rest));
+            }
+            i += j;
+        } else {
+            proof {
+                verilith_text::utf::spec::lemma_dec8_roundtrip(s@, i as int);
+            }
+            let mut k: usize = 0;
+            while k < l
+                invariant
+                    i + l <= n == s@.len(),
+                    k <= l,
+                    v@ == v0 + s@.subrange(i as int, (i + k) as int),
+                decreases l - k,
+            {
+                v.push(s[i + k]);
+                proof {
+                    assert(v@ =~= v0 + s@.subrange(i as int, (i + k + 1) as int));
+                }
+                k += 1;
+            }
+            proof {
+                let c = dec8_at(s@, i as int, l as int);
+                let rest = utf8_decode(s@, (i + l) as int);
+                assert(utf8_decode(s@, i as int) == seq![c] + rest);
+                lemma_enc_append(seq![c], rest);
+                lemma_enc_one(c);
+                assert(v0 + (s@.subrange(i as int, (i + l) as int) + enc(rest)) =~= v@ + enc(rest));
+            }
+            i += l;
+        }
+    }
+    proof {
+        assert(utf8_decode(s@, n as int) =~= Seq::<u32>::empty());
+        assert(enc(Seq::<u32>::empty()) =~= Seq::<u8>::empty());
+        assert(v@ + Seq::<u8>::empty() =~= v@);
+    }
+    v
 }
 
 /// Whether `s` is well-formed UTF-8, one sequence at a time.
@@ -124,14 +239,20 @@ pub fn domain_to_ascii_into(domain: &[u8], map: &mut Vec<u32>, out: &mut Vec<u8>
         cost.n = (cost.n + domain.len()) as nat;
         reveal(crate::spec::domain_to_ascii);
     }
-    if !utf8_ok(domain) {
-        return false;
-    }
-    let ghost cs = utf8_scalars(domain@, 0);
+    let ghost cs = utf8_decode(domain@, 0);
     proof {
-        lemma_utf8_scalars(domain@, 0);
+        lemma_utf8_decode(domain@, 0);
         assert(domain@.subrange(0, domain@.len() as int) =~= domain@);
     }
+    // Ill-formed UTF-8 goes to UTS #46 with U+FFFD in place of each maximal
+    // subpart, as the Standard says. (U+FFFD is disallowed, so it fails.)
+    let fixed: Vec<u8>;
+    let text: &[u8] = if utf8_ok(domain) {
+        domain
+    } else {
+        fixed = utf8_lossy(domain);
+        fixed.as_slice()
+    };
     let o = verilith_text::idna::spec::Options {
         check_hyphens: false,
         check_bidi: true,
@@ -141,7 +262,7 @@ pub fn domain_to_ascii_into(domain: &[u8], map: &mut Vec<u32>, out: &mut Vec<u8>
         verify_dns_length: false,
     };
     let before = out.len();
-    if !verilith_text::idna::uts46::url_domain_to_ascii_into(domain, o, Ghost(cs), map, out) {
+    if !verilith_text::idna::uts46::url_domain_to_ascii_into(text, o, Ghost(cs), map, out) {
         return false;
     }
     // At most 8 bytes per input byte: `v <= 8 n` exactly when
