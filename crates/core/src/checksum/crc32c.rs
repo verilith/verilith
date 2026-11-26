@@ -1,8 +1,13 @@
 //! CRC-32C, proven to compute `spec::crc32c`.
 //!
 //! [`crc32c_update`] is the portable verified kernel (a table lookup per
-//! byte). [`crc32c`] uses the CPU's own CRC-32C instruction where there
-//! is one (`checksum::cpu::crc32c_update`, part of the trusted base).
+//! byte). [`crc32c_words`] is the verified kernel for CPUs with a CRC-32C
+//! instruction (SSE4.2's `crc32` on x86-64, `crc32cx` on AArch64): one
+//! instruction per eight bytes, then the table for the rest. What it
+//! trusts is [`crc32c_word`] and [`crc32c_byte_hw`], the claim that the
+//! instruction computes this CRC over its eight bytes or one byte, and
+//! [`has_crc32c`], the CPU check.
+//! [`crc32c`] picks between them (`checksum::cpu::crc32c_update`).
 #[cfg(verus_only)]
 use super::spec::{crc32c_byte, crc32c_reg, crc32c_step, crc32c_steps};
 use vstd::prelude::*;
@@ -216,6 +221,175 @@ pub fn crc32c_update(reg: u32, d: &[u8]) -> (r: u32)
             assert(((c ^ x as u32) & 0xff) < 256) by (bit_vector);
         }
         c = (c >> 8) ^ T[((c ^ x as u32) & 0xff) as usize];
+        i = i + 1;
+    }
+    proof {
+        assert(d@.subrange(0, n as int) =~= d@);
+    }
+    c
+}
+
+/// `crc32c_from` over a concatenation is the register after the first
+/// part, continued over the second.
+pub proof fn lemma_crc32c_append(c: u32, a: Seq<u8>, b: Seq<u8>)
+    ensures
+        crc32c_from(c, a + b) == crc32c_from(crc32c_from(c, a), b),
+    decreases b.len(),
+{
+    if b.len() == 0 {
+        assert(a + b =~= a);
+    } else {
+        assert((a + b).drop_last() =~= a + b.drop_last());
+        assert((a + b).last() == b.last());
+        lemma_crc32c_append(c, a, b.drop_last());
+    }
+}
+
+/// The CPU has a CRC-32C instruction: SSE4.2 on x86-64, the CRC
+/// extension on AArch64. Only [`has_crc32c`] establishes it.
+pub uninterp spec fn crc32c_cpu() -> bool;
+
+/// Whether this CPU has a CRC-32C instruction (trusted: run-time
+/// detection, or without `std` the target's compile-time features).
+/// Always false on other architectures.
+#[verifier::external_body]
+#[inline]
+pub fn has_crc32c() -> (r: bool)
+    ensures
+        r ==> crc32c_cpu(),
+{
+    #[cfg(all(feature = "std", target_arch = "x86_64"))]
+    return std::is_x86_feature_detected!("sse4.2");
+    #[cfg(all(not(feature = "std"), target_arch = "x86_64"))]
+    return cfg!(target_feature = "sse4.2");
+    #[cfg(all(feature = "std", target_arch = "aarch64"))]
+    return std::arch::is_aarch64_feature_detected!("crc");
+    #[cfg(all(not(feature = "std"), target_arch = "aarch64"))]
+    return cfg!(target_feature = "crc");
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    return false;
+}
+
+/// **The CRC-32C instruction** (trusted): the register after the eight
+/// bytes of `d` at `i`. On x86-64 this is SSE4.2's `crc32` with a 64-bit
+/// operand, on AArch64 `crc32cx`; both are defined (Intel SDM, "CRC32";
+/// Arm ARM, "CRC32CX") as this CRC (polynomial 0x1EDC6F41, bit
+/// reflected, no pre- or post-inversion) over the operand taken little
+/// endian. Elsewhere, where `has_crc32c` is false and this never runs,
+/// it is the verified table code. `tests/crc32c.rs` checks the
+/// instruction against the table code on random registers and words.
+#[verifier::external_body]
+#[inline(always)]
+pub fn crc32c_word(c: u64, d: &[u8], i: usize) -> (r: u64)
+    requires
+        crc32c_cpu(),
+        c < 0x1_0000_0000,
+        i + 8 <= d@.len(),
+    ensures
+        r < 0x1_0000_0000,
+        r as u32 == crc32c_from(c as u32, d@.subrange(i as int, i + 8)),
+{
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: `i + 8 <= d.len()` (the precondition), and `crc32c_cpu()`
+        // means the CPU has SSE4.2. The register is kept 64 bits wide, as
+        // the instruction takes and returns it, so that no zero extension
+        // sits on the dependency chain.
+        unsafe {
+            let w = u64::from_le(core::ptr::read_unaligned(d.as_ptr().add(i) as *const u64));
+            core::arch::x86_64::_mm_crc32_u64(c, w)
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: as above; `crc32c_cpu()` means the CPU has the CRC
+        // extension.
+        unsafe {
+            let w = u64::from_le(core::ptr::read_unaligned(d.as_ptr().add(i) as *const u64));
+            core::arch::aarch64::__crc32cd(c as u32, w) as u64
+        }
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        crc32c_update(c as u32, &d[i..i + 8]) as u64
+    }
+}
+
+/// **The CRC-32C instruction on one byte** (trusted): `crc32c_byte`. On
+/// x86-64 SSE4.2's `crc32` with an 8-bit operand, on AArch64 `crc32cb`,
+/// defined as `crc32c_word` is; elsewhere the verified table step.
+#[verifier::external_body]
+#[inline(always)]
+pub fn crc32c_byte_hw(c: u32, x: u8) -> (r: u32)
+    requires
+        crc32c_cpu(),
+    ensures
+        r == crc32c_byte(c, x),
+{
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: `crc32c_cpu()` means the CPU has SSE4.2.
+        unsafe { core::arch::x86_64::_mm_crc32_u8(c, x) }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: `crc32c_cpu()` means the CPU has the CRC extension.
+        unsafe { core::arch::aarch64::__crc32cb(c, x) }
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        (c >> 8) ^ T[((c ^ x as u32) & 0xff) as usize]
+    }
+}
+
+/// Continues a CRC-32C register over `d` with the CPU's instruction,
+/// eight bytes at a time, then a byte at a time. Call it
+/// compiled with the instruction enabled (`checksum::cpu` does).
+#[inline(always)]
+pub fn crc32c_words(reg: u32, d: &[u8]) -> (r: u32)
+    requires
+        crc32c_cpu(),
+    ensures
+        r == crc32c_from(reg, d@),
+{
+    let n = d.len();
+    let mut w = reg as u64;
+    let mut i: usize = 0;
+    proof {
+        assert(d@.subrange(0, 0) =~= Seq::<u8>::empty());
+    }
+    while n - i >= 8
+        invariant
+            n == d@.len(),
+            i <= n,
+            crc32c_cpu(),
+            w < 0x1_0000_0000,
+            w as u32 == crc32c_from(reg, d@.subrange(0, i as int)),
+        decreases n - i,
+    {
+        let w2 = crc32c_word(w, d, i);
+        proof {
+            lemma_crc32c_append(reg, d@.subrange(0, i as int), d@.subrange(i as int, i + 8));
+            assert(d@.subrange(0, i as int) + d@.subrange(i as int, i + 8) =~= d@.subrange(0, i + 8));
+        }
+        w = w2;
+        i = i + 8;
+    }
+    let mut c = w as u32;
+    while i < n
+        invariant
+            n == d@.len(),
+            i <= n,
+            crc32c_cpu(),
+            c == crc32c_from(reg, d@.subrange(0, i as int)),
+        decreases n - i,
+    {
+        let x = d[i];
+        proof {
+            assert(d@.subrange(0, i + 1).drop_last() =~= d@.subrange(0, i as int));
+            assert(d@.subrange(0, i + 1).last() == d@[i as int]);
+        }
+        c = crc32c_byte_hw(c, x);
         i = i + 1;
     }
     proof {

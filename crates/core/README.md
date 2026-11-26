@@ -26,7 +26,7 @@ once, and the libraries import it.
 | `utf8` | well-formed UTF-8 (Unicode Table 3-7), the three-byte local condition SIMD validators check, its proof, and a verified scalar validator | verilith-json |
 | `num` | decimal digits: `is_digit`, `digits_end`, `dec_value`, `decimal`; `parse_u64_dec` (checked) and `push_decimal` | verilith-json, verilith-url, verilith-dns |
 | `binary64` | IEEE 754 binary64 as a model in spec integers (in the style of Coq's Flocq): what each bit pattern is worth as an exact rational, round to nearest, ties to even (`rne`), proofs that rounding depends only on the value and that exact products and quotients of equal values are equal, that `u64 as f64` is exact below `2^53`, and `P10`, the exact doubles `10^0..=10^22`; `mul`, `div` and `from_u64` on bit patterns | verilith-json |
-| `checksum` | Adler-32 and CRC-32 (slicing-by-16), and CRC-32C (`checksum::crc32c`, a table per byte), proven against the RFC definitions in `checksum::spec`; `checksum::cpu` picks, for Adler-32, the verified dot-product kernels in `checksum::adlerv` (AVX-512 VNNI or AVX2, or `udot` on AArch64) and, for CRC-32, the verified carry-less-multiply folding kernels in `checksum::fold` (VPCLMULQDQ on 512- or 256-bit vectors, or PCLMULQDQ), on AArch64 the verified three-lane `crc32x` kernel in `checksum::lanes`, and for CRC-32C the SSE4.2 or AArch64 CRC-32C instruction | verilith-zlib, verilith-snappy |
+| `checksum` | Adler-32 and CRC-32 (slicing-by-16), and CRC-32C (`checksum::crc32c`, a table per byte), proven against the RFC definitions in `checksum::spec`; `checksum::cpu` picks, for Adler-32, the verified dot-product kernels in `checksum::adlerv` (AVX-512 VNNI or AVX2, or `udot` on AArch64) and, for CRC-32, the verified carry-less-multiply folding kernels in `checksum::fold` (VPCLMULQDQ on 512- or 256-bit vectors, or PCLMULQDQ), on AArch64 the verified three-lane `crc32x` kernel in `checksum::lanes`, and for CRC-32C the verified kernel `checksum::crc32c::crc32c_words`, one SSE4.2 or AArch64 CRC-32C instruction per eight bytes | verilith-zlib, verilith-snappy |
 
 verilith-webp and verilith-brotli share the table builder in `htable`. verilith-zlib keeps its own:
 it builds a different layout (DEFLATE's flagged length/distance entries) on
@@ -76,12 +76,19 @@ What the proofs here assume rather than prove:
   kernels (`checksum::adlerv`, `checksum::fold`, `checksum::lanes`) with
   the target features their instructions need. The AArch64 Adler-32
   kernel needs none: NEON is baseline and its `udot` names the
-  dot-product extension in the assembly. `crc32c_update` runs the CPU's CRC-32C instruction (SSE4.2's
-  `crc32` on x86-64, `crc32cb`/`crc32cd` on AArch64) eight bytes at a
-  time: trusted is that the instruction computes this CRC on the raw
-  register, as it is defined to, and the eight-line loops around it.
-  `tests/crc32c.rs` compares it with the verified table kernel at every
-  length up to 300 and at eight alignments, and the table kernel with a
+  dot-product extension in the assembly. `crc32c_update` is verified
+  too; trusted is the trampoline that compiles the verified
+  `crc32c::crc32c_words` with SSE4.2 or the CRC extension enabled.
+- `src/checksum/crc32c.rs`, the three `external_body` functions
+  `crc32c_word`, `crc32c_byte_hw` and `has_crc32c`: that the CPU's
+  CRC-32C instruction (SSE4.2's `crc32` with a 64- or 8-bit operand on
+  x86-64, `crc32cx`/`crc32cb` on AArch64) computes this CRC over its
+  eight bytes or one byte, as both vendors define it, and the run-time
+  check for it. The loop around the instructions is proven.
+  `tests/crc32c.rs` runs the eight-byte instruction on 1,000,000 random
+  registers and words against the verified table kernel, and the whole kernel against
+  the table kernel at every length up to 300 and at eight alignments
+  (on x86-64, and on AArch64 under qemu), and the table kernel against a
   bit-at-a-time reference.
 - `src/checksum/vclmul.rs` (x86-64 only): the instructions the CRC-32
   folding kernels use, one safe wrapper each with a contract on the
