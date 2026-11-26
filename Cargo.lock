@@ -1565,6 +1565,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "verilith-server"
+version = "0.1.0"
+dependencies = [
+ "verilith-core",
+ "verilith-http",
+ "vstd",
+]
+
+[[package]]
 name = "verilith-sha2"
 version = "0.1.0"
 dependencies = [
