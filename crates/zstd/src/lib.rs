@@ -21,6 +21,8 @@ global size_of usize == 4;
 } // verus!
 
 #[doc(hidden)]
+pub mod work;
+#[doc(hidden)]
 pub mod prims;
 #[doc(hidden)]
 pub mod bits;
