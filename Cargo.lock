@@ -1393,6 +1393,7 @@ version = "0.1.0"
 dependencies = [
  "verilith-archive",
  "verilith-brotli",
+ "verilith-checksum",
  "verilith-core",
  "verilith-dns",
  "verilith-font",
@@ -1428,7 +1429,7 @@ dependencies = [
 name = "verilith-archive"
 version = "0.1.0"
 dependencies = [
- "verilith-core",
+ "verilith-checksum",
  "verilith-zlib",
  "verilith-zstd",
  "vstd",
@@ -1469,6 +1470,14 @@ name = "verilith-brotli"
 version = "0.1.0"
 dependencies = [
  "verilith-core",
+ "vstd",
+]
+
+[[package]]
+name = "verilith-checksum"
+version = "0.1.0"
+dependencies = [
+ "verilith-simd",
  "vstd",
 ]
 
@@ -1630,6 +1639,7 @@ name = "verilith-snappy"
 version = "0.1.0"
 dependencies = [
  "snap",
+ "verilith-checksum",
  "verilith-core",
  "vstd",
 ]
@@ -1750,6 +1760,7 @@ dependencies = [
 name = "verilith-zlib"
 version = "0.1.0"
 dependencies = [
+ "verilith-checksum",
  "verilith-core",
  "vstd",
 ]

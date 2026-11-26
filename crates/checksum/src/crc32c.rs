@@ -7,7 +7,7 @@
 //! trusts is [`crc32c_word`] and [`crc32c_byte_hw`], the claim that the
 //! instruction computes this CRC over its eight bytes or one byte, and
 //! [`has_crc32c`], the CPU check.
-//! [`crc32c`] picks between them (`checksum::cpu::crc32c_update`).
+//! [`crc32c`] picks between them (`cpu::crc32c_update`).
 #[cfg(verus_only)]
 use super::spec::{crc32c_byte, crc32c_reg, crc32c_step, crc32c_steps};
 use vstd::prelude::*;
@@ -344,7 +344,7 @@ pub fn crc32c_byte_hw(c: u32, x: u8) -> (r: u32)
 
 /// Continues a CRC-32C register over `d` with the CPU's instruction,
 /// eight bytes at a time, then a byte at a time. Call it
-/// compiled with the instruction enabled (`checksum::cpu` does).
+/// compiled with the instruction enabled (`cpu` does).
 #[inline(always)]
 pub fn crc32c_words(reg: u32, d: &[u8]) -> (r: u32)
     requires

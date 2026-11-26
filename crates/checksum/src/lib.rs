@@ -1,24 +1,24 @@
-//! Adler-32 (RFC 1950), CRC-32 (RFC 1952) and CRC-32C (RFC 3720), proven
-//! to compute `spec::adler32`, `spec::crc32` and `spec::crc32c`.
-//!
-//! [`adler32`], [`crc32`] and [`crc32c()`] pick the fastest kernel this CPU
-//! has (see [`cpu`]); [`adler32_update`], [`crc32_update`] and
-//! [`crc32c_update`] are the portable verified kernels.
+#![doc = include_str!("../README.md")]
+#![cfg_attr(not(verus_only), allow(unused_variables, unused_imports))]
+#![cfg_attr(not(feature = "std"), no_std)]
+// Adler-32 (RFC 1950), CRC-32 (RFC 1952) and CRC-32C (RFC 3720), proven
+// to compute `spec::adler32`, `spec::crc32` and `spec::crc32c`.
+//
+// [`adler32`], [`crc32`] and [`crc32c()`] pick the fastest kernel this CPU
+// has (see [`cpu`]); [`adler32_update`], [`crc32_update`] and
+// [`crc32c_update`] are the portable verified kernels.
 pub mod adlerv;
 pub mod cpu;
 pub mod fold;
 pub mod crc32c;
 pub mod lanes;
 pub mod spec;
-#[cfg(target_arch = "x86_64")]
-pub mod vclmul;
-#[cfg(target_arch = "x86_64")]
-pub mod vdot;
-pub mod vudot;
 mod tables;
 
 pub use crc32c::{crc32c, crc32c_update};
 use tables::*;
+#[cfg(verus_only)]
+pub use verilith_simd::dot::add32 as vdot_add32;
 use vstd::prelude::*;
 
 verus! {
@@ -70,10 +70,6 @@ pub proof fn lemma_crc_from(d: Seq<u8>)
 /// The Adler-32 modulus: the largest prime below 2^16.
 pub const ADLER_MOD: u32 = 65521;
 
-/// `a + b` in a 32-bit lane, wrapping (what the vector adds compute).
-pub open spec fn vdot_add32(a: int, b: int) -> u32 {
-    ((a + b) % 0x1_0000_0000) as u32
-}
 
 /// Most bytes that can be summed before the sums must be reduced: the
 /// largest `n` with `255 * n * (n + 1) / 2 + (n + 1) * (ADLER_MOD - 1)`
@@ -371,7 +367,7 @@ pub fn adler32_block(a: u32, b: u32, d: &[u8], i: usize, rows: usize) -> (r: (u3
                 forall|k: int| 0 <= k < 32 ==> #[trigger] t0[k] <= 261120 * r,
             decreases 32 - j,
         {
-            let x = crate::prims::get(d, row + j);
+            let x = d[row + j];
             proof {
                 assert(rw[j as int] == x);
             }

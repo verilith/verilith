@@ -130,8 +130,9 @@ the encoders.
 
 - `valid8::utf8_valid` is proven to return exactly whether the input is
   UTF-8. Its AVX2 kernel is the three-table lookup validator that simdjson
-  and simdutf use, proven against verilith-simd's intrinsic specs (`lemma_lookup`
-  ties the tables to the byte classes of Table 3-7).
+  and simdutf use, proven against verilith-simd's intrinsic specs
+  (verilith-core's `utf8::lemma_lookup`, shared with verilith-json, ties the
+  tables to the byte classes of Table 3-7).
 - `conv::utf8_to_utf16`, `utf16_to_utf8`, `utf8_to_latin1`, `latin1_to_utf8`,
   `latin1_to_utf16` and `utf16_to_latin1` are proven to fail exactly on
   invalid input and otherwise to write exactly the spec's output, given an

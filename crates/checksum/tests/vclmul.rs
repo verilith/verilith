@@ -1,13 +1,13 @@
-//! The trusted carry-less-multiply contracts (`checksum::vclmul`) against
+//! The trusted carry-less-multiply contracts (`vclmul`) against
 //! the verified reference (`fold::clmul_ref`), and the CRC-32 kernels
 //! against the table code, on random inputs. The 512-bit checks need a
 //! CPU with AVX-512F and VPCLMULQDQ and are skipped, with a message, on
 //! one without.
 #![cfg(target_arch = "x86_64")]
 #![allow(unsafe_op_in_unsafe_fn)]
-use verilith_core::checksum::fold::*;
-use verilith_core::checksum::vclmul::*;
-use verilith_core::checksum::{cpu, crc32_update};
+use verilith_checksum::fold::*;
+use verilith_simd::clmul::*;
+use verilith_checksum::{cpu, crc32_update};
 
 struct Rng(u64);
 impl Rng {

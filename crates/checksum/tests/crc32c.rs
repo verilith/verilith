@@ -2,9 +2,9 @@
 //! reference written from the definition, the CPU's instruction (the
 //! trusted `crc32c::crc32c_word`) against the table kernel on random
 //! registers and words, and the verified instruction kernel
-//! (`checksum::cpu`) against the table kernel.
-use verilith_core::checksum::crc32c::{crc32c_word, has_crc32c};
-use verilith_core::checksum::{cpu, crc32c, crc32c_update};
+//! (`cpu`) against the table kernel.
+use verilith_checksum::crc32c::{crc32c_word, has_crc32c};
+use verilith_checksum::{cpu, crc32c, crc32c_update};
 
 /// The register update one bit at a time (RFC 3720 appendix B.4).
 fn reference(mut c: u32, d: &[u8]) -> u32 {

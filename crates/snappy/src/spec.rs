@@ -141,7 +141,7 @@ pub open spec fn decompress(s: Seq<u8>) -> Option<Seq<u8>> {
 
 /// CRC-32C (RFC 3720), from verilith-core's `checksum::spec`.
 #[cfg(verus_only)]
-pub use verilith_core::checksum::spec::crc32c;
+pub use verilith_checksum::spec::crc32c;
 
 /// How the framing format stores a checksum: rotated right by 15 bits,
 /// plus a constant (modulo 2^32).

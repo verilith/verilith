@@ -3,9 +3,9 @@
 //! compressed output waiting to be copied to `next_out`, the search for
 //! `inflateSync`'s flush marker, and `adler32_combine`.
 #[cfg(verus_only)]
-use verilith_core::checksum::{lemma_adler_append, lemma_adler_closed, lemma_adler_from, sum, wsum};
+use verilith_checksum::{lemma_adler_append, lemma_adler_closed, lemma_adler_from, sum, wsum};
 #[cfg(verus_only)]
-use verilith_core::checksum::spec::{adler32, adler_a, adler_b, ADLER_MOD};
+use verilith_checksum::spec::{adler32, adler_a, adler_b, ADLER_MOD};
 use verilith_core::prims::{copy_in, extend};
 use vstd::prelude::*;
 

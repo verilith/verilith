@@ -1,13 +1,14 @@
-//! Byte dot products for the AArch64 Adler-32 kernel (TRUSTED).
+//! Byte dot products on AArch64, as verilith-checksum's Adler-32 kernel
+//! uses them (TRUSTED).
 //!
 //! The Armv8.4 dot-product extension's `udot` adds, to each 32-bit lane,
 //! the dot product of that lane's four unsigned bytes of two vectors. A
 //! row here is 64 bytes, four NEON registers (`NB`), with sixteen 32-bit
-//! lanes (`ND`), so the verified kernel `adlerv::adler32_udot` has the
+//! lanes (`ND`), so verilith-checksum's verified kernel `adlerv::adler32_udot` has the
 //! same shape as the AVX-512 one. Each function below is the same NEON
 //! instruction on each of the four registers, with an `ensures` on the
-//! row's bytes (`nb`) or lanes (`nd`) in terms of `adlerv::dot4`. Verus
-//! takes these on trust. `tests/vudot.rs` checks each against a plain
+//! row's bytes (`nb`) or lanes (`nd`) in terms of `dot::dot4`. Verus
+//! takes these on trust. verilith-checksum's `tests/vudot.rs` checks each against a plain
 //! reference on random inputs.
 //!
 //! Each requires `dotprod()`, which `has_dotprod()` ensures after
@@ -16,7 +17,7 @@
 //! still compiles, and the tests run it, everywhere.
 #![allow(unused_imports, unused_unsafe, unsafe_op_in_unsafe_fn)]
 #[cfg(verus_only)]
-use super::adlerv::dot4;
+use crate::dot::dot4;
 use vstd::prelude::*;
 
 #[cfg(target_arch = "aarch64")]
@@ -114,7 +115,7 @@ pub fn nd_add(a: &ND, b: &ND) -> (r: ND)
     requires
         dotprod(),
     ensures
-        nd(r) == Seq::new(16, |j: int| super::vdot_add32(nd(*a)[j] as int, nd(*b)[j] as int)),
+        nd(r) == Seq::new(16, |j: int| crate::dot::add32(nd(*a)[j] as int, nd(*b)[j] as int)),
 {
     ND(unsafe { raw::add(&a.0, &b.0) })
 }
@@ -127,7 +128,7 @@ pub fn nd_dot(acc: &ND, x: &NB, w: &NB) -> (r: ND)
     requires
         dotprod(),
     ensures
-        nd(r) == Seq::new(16, |j: int| super::vdot_add32(nd(*acc)[j] as int, dot4(nb(*x), nb(*w), j) as int)),
+        nd(r) == Seq::new(16, |j: int| crate::dot::add32(nd(*acc)[j] as int, dot4(nb(*x), nb(*w), j) as int)),
 {
     ND(unsafe { raw::dot(&acc.0, &x.0, &w.0) })
 }

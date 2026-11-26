@@ -1,12 +1,12 @@
-//! The trusted `udot` contracts (`checksum::vudot`) against a plain
+//! The trusted `udot` contracts (`vudot`) against a plain
 //! reference, and the AArch64 Adler-32 kernel against the portable code,
 //! on random inputs. On a CPU without the dot-product extension (and on
 //! every non-AArch64 CPU) the wrappers are the plain-Rust stand-ins, so
 //! this still checks the verified kernel's arithmetic, and says so.
-use verilith_core::checksum::adlerv::udot::adler32_udot;
-use verilith_core::checksum::adlerv::{DESC64, ONES64};
-use verilith_core::checksum::vudot::*;
-use verilith_core::checksum::{adler32_update, cpu};
+use verilith_checksum::adlerv::udot::adler32_udot;
+use verilith_checksum::adlerv::{DESC64, ONES64};
+use verilith_simd::vudot::*;
+use verilith_checksum::{adler32_update, cpu};
 
 struct Rng(u64);
 impl Rng {
