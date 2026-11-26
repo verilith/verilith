@@ -1492,6 +1492,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "verilith-h3"
+version = "0.1.0"
+dependencies = [
+ "verilith-core",
+ "vstd",
+]
+
+[[package]]
 name = "verilith-hpack"
 version = "0.1.0"
 dependencies = [
