@@ -40,7 +40,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | lz4 |  |  |  |  |  |  | 1 |
 | png | 2 |  |  |  |  |  | 7 |
 | regex | 1 |  |  |  |  |  | 3 |
-| server |  |  |  |  |  |  | 8 |
+| server |  |  |  |  |  |  | 9 |
 | sha2 | 34 |  |  |  |  |  | 3 |
 | simd | 361 | 6 | 274 | 4 |  |  | 3 |
 | snappy |  |  |  |  |  |  | 1 |
@@ -57,7 +57,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 4 |  |  |  |  |  | 3 |
 | zstd | 10 |  |  |  |  |  | 1 |
-| **total** | **652** | **35** | **274** | **5** | **16** | **12** | **115** |
+| **total** | **652** | **35** | **274** | **5** | **16** | **12** | **116** |
 
 ## Items
 
@@ -186,6 +186,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 - `crates/server/src/date.rs`: plain Rust
 - `crates/server/src/h1.rs`: plain Rust
+- `crates/server/src/h2.rs`: plain Rust
 - `crates/server/src/lib.rs`: plain Rust
 - `crates/server/src/worker.rs`: plain Rust
 - `crates/server/src/bin/verilith-server.rs`: plain Rust

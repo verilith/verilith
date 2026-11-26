@@ -20,6 +20,8 @@ path = "src/bin/verilith-server.rs"
 [dependencies]
 verilith-core = { path = "../core", version = "0.1.0" }
 verilith-http = { path = "../http", version = "0.1.0" }
+verilith-h2 = { path = "../h2", version = "0.1.0" }
+verilith-hpack = { path = "../hpack", version = "0.1.0" }
 vstd = { workspace = true, features = ["std"] }
 
 [package.metadata.verus]

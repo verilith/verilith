@@ -1579,6 +1579,8 @@ name = "verilith-server"
 version = "0.1.0"
 dependencies = [
  "verilith-core",
+ "verilith-h2",
+ "verilith-hpack",
  "verilith-http",
  "vstd",
 ]

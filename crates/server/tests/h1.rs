@@ -15,7 +15,7 @@ fn handler(req: &Request, res: &mut Response) {
 
 fn run(input: &[u8], cuts: &[usize]) -> Vec<u8> {
     let mut c = Conn::new(Limits::default());
-    let ctx = Ctx { date: b"Thu, 01 Jan 1970 00:00:00 GMT", server: b"t" };
+    let ctx = Ctx::new(b"t", b"Thu, 01 Jan 1970 00:00:00 GMT").unwrap();
     let mut out = Vec::new();
     let mut at = 0;
     for &cut in cuts.iter().chain(std::iter::once(&input.len())) {
@@ -146,7 +146,7 @@ fn handler_cannot_split_a_response() {
         assert!(res.send(200, &[], b"ok").is_ok());
     }
     let mut c = Conn::new(Limits::default());
-    let ctx = Ctx { date: b"d", server: b"t" };
+    let ctx = Ctx::new(b"t", b"d").unwrap();
     let m = b"GET / HTTP/1.1\r\nHost: x\r\n\r\n";
     c.read_buf()[..m.len()].copy_from_slice(m);
     c.filled(m.len());
