@@ -133,7 +133,7 @@ pub open spec fn step(s: St, t: nat, s2: St) -> bool {
         } else {
             s2 == (St { word: 2, ..go(s, t, Ph::Check) })
         },
-        // `parking::park`'s bucket section with `validate = is_contended`.
+        // `Mutex::check`'s bucket section (park if the word is still 2).
         // If the check fails, `park` returns and `lock_slow` loops (or,
         // past the deadline, gives up).
         Ph::Check => if s.word == 2 {
@@ -165,7 +165,7 @@ pub open spec fn step(s: St, t: nat, s2: St) -> bool {
         } else {
             s2 == (St { word: 0, ..go(s, t, Ph::Idle) })
         },
-        // `parking::unpark(key, 1)`'s bucket section.
+        // `Mutex::unpark_one`'s bucket section.
         Ph::Unpark => if s.list.is_empty() {
             s2 == go(s, t, Ph::Idle)
         } else {

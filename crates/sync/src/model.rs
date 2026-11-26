@@ -15,8 +15,10 @@
 //! takes an idle model thread from a pool when it starts ([`Model::enter`])
 //! and gives it back when it returns ([`Model::leave`]). The model has a
 //! fixed number of threads, so this is where the one assumption of this
-//! module is: [`Model::pool_nonempty`]. `src/chan_model.rs` is the same
-//! resource, written for the channel before this generic one.
+//! module is: [`Model::pool_nonempty`].
+//!
+//! The channel (`src/chan_sync.rs`, through `src/chan_model.rs`), the
+//! mutex, the RwLock and the MPMC queue each keep one.
 // Some parameters and imports are used only in specifications and proofs.
 #![allow(unused_variables, unused_imports, unused_mut)]
 use vstd::prelude::*;

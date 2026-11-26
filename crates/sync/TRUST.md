@@ -258,9 +258,9 @@ stronger, since they hold for every execution of the model.
 **Mapping.** Mutex (`src/progress/mutex.rs`): `Fast` is the `cas(0, 1)`
 in `lock`/`try_lock_until_deadline`; `Spin`/`SpinCas` are `lock_slow`'s
 spin loop (`load`, then `cas(0, 1)`); `Swap` is `swap_contended`; `Check`
-is `parking::park`'s bucket section with `validate = is_contended`;
+is `Mutex::check`'s bucket section (park if the word is still 2);
 `Asleep` is the `while !notified` loop, including the deadline branch;
-`Crit` to `Unpark` is `unlock`'s swap to 0; `Unpark` is `parking::unpark`'s
+`Crit` to `Unpark` is `unlock`'s swap to 0; `Unpark` is `Mutex::unpark_one`'s
 bucket section and `Notify` the `notified` store after it. RwLock
 (`src/progress/rwlock.rs`): the word is kept as its fields (bit 0 `w`,
 bit 1 `pk`, bit 2 `ww`, bits 3 and up `rc`); `Load`/`Cas`/`Flag`/`Check`

@@ -626,7 +626,7 @@ impl<T> Mutex<T> {
         }
     }
 
-    /// The model's `Check`: `parking::park`'s critical section with the
+    /// The model's `Check`: the bucket critical section with the
     /// re-check `is_contended`. If the word is still contended the thread
     /// goes on the list and gets its waiter; if not, it loops, or gives up
     /// if it is `late`.
@@ -927,8 +927,8 @@ impl<T> Mutex<T> {
         self.leave(Tracked(tok));
     }
 
-    /// The model's `Unpark` and `Notify`: `parking::unpark(key, 1)`'s
-    /// critical section, which takes one waiter off the list and sets its
+    /// The model's `Unpark` and `Notify`: the bucket critical section,
+    /// which takes one waiter off the list and sets its
     /// flag, then wakes its thread.
     #[cold]
     fn unpark_one(&self, Tracked(tok): Tracked<&mut Tok<P>>)

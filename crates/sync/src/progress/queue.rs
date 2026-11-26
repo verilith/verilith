@@ -108,7 +108,9 @@ pub open spec fn ret(s: St, t: nat) -> St {
     St { done: s.done + 1, ..go(s, t, Ph::Idle) }
 }
 
-pub open spec fn step(s: St, t: nat, s2: St) -> bool {
+/// One step of thread `t` that reads the latest value of what it reads:
+/// a sequentially consistent step.
+pub open spec fn sc_step(s: St, t: nat, s2: St) -> bool {
     match ph(s, t) {
         Ph::Idle => s2 == s || s2 == go(s, t, Ph::PLoad) || s2 == go(s, t, Ph::QLoad) || s2 == go(s, t, Ph::LTail),
         Ph::LTail => s2 == go(s, t, Ph::LHead { a: s.tail }),
@@ -163,6 +165,70 @@ pub open spec fn step(s: St, t: nat, s2: St) -> bool {
         },
         Ph::QRead { a } => s2 == (St { st: s.st.update((a % s.cap) as int, 2 * (a + s.cap)), ..ret(s, t) }),
     }
+}
+
+/// A load that reads an old value. Head, tail and the stamps' ranks only
+/// grow, so an old value is a smaller one: a load of the tail may see any
+/// position up to the tail, and a load of a stamp may see any rank up to
+/// the slot's. A failed CAS is a load too, and returns some position up
+/// to the current one. The read-modify-writes (a successful CAS, and the
+/// confirming `fetch_add(0)`s) always read the latest value.
+pub open spec fn stale_step(s: St, t: nat, s2: St) -> bool {
+    match ph(s, t) {
+        Ph::LTail => exists|a: nat| a <= s.tail && #[trigger] go(s, t, Ph::LHead { a }) == s2,
+        Ph::LTail2 { a } => s2 == go(s, t, Ph::LTail) || (a <= s.tail && s2 == ret(s, t)),
+        Ph::PLoad => exists|a: nat| a <= s.tail && #[trigger] go(s, t, Ph::PStamp { a }) == s2,
+        Ph::PStamp { a } => {
+            ||| s2 == go(s, t, Ph::PLoad)
+            ||| rank(s, a) >= 2 * a && s2 == go(s, t, Ph::PCas { a })
+            ||| a >= s.cap && rank(s, a) >= 2 * (a - s.cap) + 1 && s2 == go(s, t, Ph::PHead { a })
+        },
+        Ph::PHead { a } => s2 == go(s, t, Ph::PLoad) || (a <= s.head + s.cap && s2 == go(s, t, Ph::PConfirm { a })),
+        Ph::QLoad => exists|a: nat| a <= s.head && #[trigger] go(s, t, Ph::QStamp { a }) == s2,
+        Ph::QStamp { a } => {
+            ||| s2 == go(s, t, Ph::QLoad)
+            ||| rank(s, a) >= 2 * a + 1 && s2 == go(s, t, Ph::QCas { a })
+            ||| rank(s, a) >= 2 * a && s2 == go(s, t, Ph::QTail { a })
+        },
+        Ph::QTail { a } => s2 == go(s, t, Ph::QLoad) || (a <= s.tail && s2 == go(s, t, Ph::QConfirm { a })),
+        Ph::PCas { .. } => exists|a: nat| a <= s.tail && #[trigger] go(s, t, Ph::PStamp { a }) == s2,
+        Ph::QCas { .. } => exists|a: nat| a <= s.head && #[trigger] go(s, t, Ph::QStamp { a }) == s2,
+        _ => false,
+    }
+}
+
+/// One step of thread `t`: the code's loads are relaxed or acquire, so a
+/// load may read an old value.
+pub open spec fn step(s: St, t: nat, s2: St) -> bool {
+    sc_step(s, t, s2) || stale_step(s, t, s2)
+}
+
+/// Head, tail and the stamps keep their values from `i` on.
+pub open spec fn frozen_from(ex: spec_fn(nat) -> St, i: nat) -> bool {
+    forall|j: nat| j >= i ==> {
+        &&& #[trigger] ex(j).head == ex(i).head
+        &&& ex(j).tail == ex(i).tail
+        &&& ex(j).st == ex(i).st
+    }
+}
+
+/// Fairness of the memory system: once nothing is written any more, every
+/// thread's loads eventually read the latest values. (Every store becomes
+/// visible to every thread in finite time, as on all hardware Rust
+/// targets; Rust's memory model itself guarantees it only "in a finite
+/// period of time" as a should.)
+pub open spec fn mfair(ex: spec_fn(nat) -> St, sched: spec_fn(nat) -> nat, n: nat) -> bool {
+    forall|t: nat, i: nat| #![trigger settles(ex, sched, t, i)] t < n && frozen_from(ex, i) ==> settles(ex, sched, t, i)
+}
+
+/// From some step at or after `i` on, `t` reads the latest values.
+pub open spec fn settles(ex: spec_fn(nat) -> St, sched: spec_fn(nat) -> nat, t: nat, i: nat) -> bool {
+    exists|k: nat| k >= i && #[trigger] reads_latest_from(ex, sched, t, k)
+}
+
+/// Every step of `t` from `k` on is sequentially consistent.
+pub open spec fn reads_latest_from(ex: spec_fn(nat) -> St, sched: spec_fn(nat) -> nat, t: nat, k: nat) -> bool {
+    forall|m: nat| m >= k && sched(m) == t ==> #[trigger] sc_step(ex(m), t, ex(m + 1))
 }
 
 pub open spec fn run(ex: spec_fn(nat) -> St, sched: spec_fn(nat) -> nat, n: nat) -> bool {
@@ -273,7 +339,7 @@ proof fn lemma_window_pos(s: St, n: nat, a: nat) -> (p: nat)
 // ---------------------------------------------------------------------
 // The invariant.
 
-proof fn lemma_init(s: St, n: nat)
+pub proof fn lemma_init(s: St, n: nat)
     requires
         init(s, n),
     ensures
@@ -288,7 +354,7 @@ proof fn lemma_init(s: St, n: nat)
     }
 }
 
-proof fn lemma_step(s: St, n: nat, t: nat, s2: St)
+pub proof fn lemma_step(s: St, n: nat, t: nat, s2: St)
     requires
         inv(s, n),
         t < n,
@@ -303,6 +369,11 @@ proof fn lemma_step(s: St, n: nat, t: nat, s2: St)
 {
     let cap = s.cap;
     assert forall|u: nat| u < n && u != t implies #[trigger] ph(s2, u) == ph(s, u) by {}
+    if !sc_step(s, t, s2) {
+        // An old value read: only the thread's phase changes.
+        lemma_local(s, n, t, s2);
+        return;
+    }
     match ph(s, t) {
         Ph::PCas { a } => {
             if s.tail == a {
@@ -814,11 +885,13 @@ pub open spec fn fuel(s: St, p: Ph) -> nat {
     }
 }
 
-proof fn lemma_finishes(ex: spec_fn(nat) -> St, sched: spec_fn(nat) -> nat, n: nat, i: nat, t: nat, j: nat)
+proof fn lemma_finishes(ex: spec_fn(nat) -> St, sched: spec_fn(nat) -> nat, n: nat, i: nat, t: nat, k0: nat, j: nat)
     requires
         ctx(ex, sched, n, i),
         t < n,
-        j >= i,
+        k0 >= i,
+        reads_latest_from(ex, sched, t, k0),
+        j >= k0,
         !(ph(ex(j), t) is Idle),
     ensures
         false,
@@ -826,6 +899,7 @@ proof fn lemma_finishes(ex: spec_fn(nat) -> St, sched: spec_fn(nat) -> nat, n: n
 {
     let k = lemma_until_step(ex, sched, n, t, j);
     lemma_at(ex, sched, n, k);
+    assert(sc_step(ex(k), t, ex(k + 1)));
     lemma_frozen(ex, sched, n, i, k);
     lemma_frozen(ex, sched, n, i, k + 1);
     let s = ex(k);
@@ -869,15 +943,36 @@ proof fn lemma_finishes(ex: spec_fn(nat) -> St, sched: spec_fn(nat) -> nat, n: n
         },
         _ => {},
     }
-    lemma_finishes(ex, sched, n, i, t, k + 1);
+    lemma_finishes(ex, sched, n, i, t, k0, k + 1);
 }
 
-/// Lock-freedom under fair scheduling: if a thread is in `push` or `pop`
-/// at time `i`, some call returns at some step `j >= i`.
+/// Without returns, a thread in a call stays in it.
+proof fn lemma_busy(ex: spec_fn(nat) -> St, sched: spec_fn(nat) -> nat, n: nat, i: nat, t: nat, j: nat)
+    requires
+        ctx(ex, sched, n, i),
+        t < n,
+        j >= i,
+        !(ph(ex(i), t) is Idle),
+    ensures
+        !(ph(ex(j), t) is Idle),
+    decreases j - i,
+{
+    if j > i {
+        let m = (j - 1) as nat;
+        lemma_busy(ex, sched, n, i, t, m);
+        lemma_at(ex, sched, n, m);
+        assert(!returns(ex, m));
+    }
+}
+
+/// Lock-freedom under fair scheduling and fair memory: if a thread is in
+/// `push`, `pop` or `len` at time `i`, some call returns at some step
+/// `j >= i`.
 pub proof fn theorem_lock_free(ex: spec_fn(nat) -> St, sched: spec_fn(nat) -> nat, n: nat, i: nat, t0: nat)
     requires
         run(ex, sched, n),
         fair(sched, n),
+        mfair(ex, sched, n),
         t0 < n,
         !(ph(ex(i), t0) is Idle),
     ensures
@@ -885,7 +980,18 @@ pub proof fn theorem_lock_free(ex: spec_fn(nat) -> St, sched: spec_fn(nat) -> na
 {
     if !exists|j: nat| j >= i && #[trigger] returns(ex, j) {
         assert(none_after(ex, i));
-        lemma_finishes(ex, sched, n, i, t0, i);
+        assert forall|j: nat| j >= i implies {
+            &&& #[trigger] ex(j).head == ex(i).head
+            &&& ex(j).tail == ex(i).tail
+            &&& ex(j).st == ex(i).st
+        } by {
+            lemma_frozen(ex, sched, n, i, j);
+        }
+        assert(frozen_from(ex, i));
+        assert(settles(ex, sched, t0, i));
+        let k0 = choose|k: nat| k >= i && #[trigger] reads_latest_from(ex, sched, t0, k);
+        lemma_busy(ex, sched, n, i, t0, k0);
+        lemma_finishes(ex, sched, n, i, t0, k0, k0);
     }
 }
 
@@ -897,6 +1003,7 @@ pub proof fn lemma_nonvacuous(s0: St, n: nat)
     ensures
         run(|i: nat| s0, |i: nat| i % n, n),
         fair(|i: nat| i % n, n),
+        mfair(|i: nat| s0, |i: nat| i % n, n),
 {
     lemma_round_robin_fair(n);
     let ex = |i: nat| s0;
@@ -904,6 +1011,54 @@ pub proof fn lemma_nonvacuous(s0: St, n: nat)
     assert forall|i: nat| #[trigger] sched(i) < n && step(ex(i), sched(i), ex(i + 1)) by {
         let t = i % n;
         assert(s0.th[t as int] == Ph::Idle);
+    }
+    assert forall|t: nat, i: nat| t < n && frozen_from(ex, i) implies #[trigger] settles(ex, sched, t, i) by {
+        assert forall|m: nat| m >= i && sched(m) == t implies #[trigger] sc_step(ex(m), t, ex(m + 1)) by {
+            assert(s0.th[t as int] == Ph::Idle);
+        }
+        assert(reads_latest_from(ex, sched, t, i));
+    }
+}
+
+/// The protocol, for `model::Model`.
+pub struct P;
+
+impl crate::model::Protocol for P {
+    type St = St;
+    type Th = Ph;
+
+    open spec fn init(s: St, n: nat) -> bool {
+        init(s, n)
+    }
+
+    open spec fn step(s: St, t: nat, s2: St) -> bool {
+        step(s, t, s2)
+    }
+
+    open spec fn inv(s: St, n: nat) -> bool {
+        inv(s, n)
+    }
+
+    open spec fn threads(s: St) -> Seq<Ph> {
+        s.th
+    }
+
+    open spec fn idle(th: Ph) -> bool {
+        th == Ph::Idle
+    }
+
+    proof fn lemma_init(s: St, n: nat) {
+        lemma_init(s, n);
+    }
+
+    proof fn lemma_step(s: St, n: nat, t: nat, s2: St) {
+        lemma_step(s, n, t, s2);
+        assert forall|u: int| 0 <= u < n && u != t implies #[trigger] s2.th[u] == s.th[u] by {
+            assert(ph(s2, u as nat) == ph(s, u as nat));
+        }
+    }
+
+    proof fn lemma_len(s: St, n: nat) {
     }
 }
 
