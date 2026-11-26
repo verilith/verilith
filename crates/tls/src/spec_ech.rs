@@ -186,8 +186,9 @@ pub open spec fn decode_inner(x: Seq<u8>, ob: Seq<u8>, oexts: Seq<SpecExt>, sid:
 
 /// ClientHelloInner `ch` (a message) is what the server's ECH key opened
 /// from ClientHelloOuter `outer` (`pt`, `crypto::ech_opened`), decoded
-/// (§5.1), and it carries encrypted_client_hello of type inner.
-pub open spec fn ech_decrypted(outer: Seq<u8>, pt: Seq<u8>, ch: Seq<u8>) -> bool {
+/// (§5.1).
+#[verifier::opaque]
+pub open spec fn ech_unsealed(outer: Seq<u8>, pt: Seq<u8>, ch: Seq<u8>) -> bool {
     let ob = outer.skip(4);
     &&& is_msg(outer, 1)
     &&& parse_client_hello(ob) matches Ok(so) && so.ech matches Some((es, ee)) && ech_outer(ob, es, ee) matches Some(eo) && {
@@ -195,6 +196,13 @@ pub open spec fn ech_decrypted(outer: Seq<u8>, pt: Seq<u8>, ch: Seq<u8>) -> bool
         &&& decode_inner(pt, ob, so.outer.exts, so.outer.session_id) == Some(ch.skip(4))
     }
     &&& ch == hs_msg(1, ch.skip(4))
+}
+
+/// `ech_unsealed`, and ClientHelloInner carries encrypted_client_hello
+/// of type inner (§7.1).
+#[verifier::opaque]
+pub open spec fn ech_decrypted(outer: Seq<u8>, pt: Seq<u8>, ch: Seq<u8>) -> bool {
+    &&& ech_unsealed(outer, pt, ch)
     &&& parse_client_hello(ch.skip(4)) matches Ok(si) && si.ech matches Some((is_, ie)) && ech_inner(ch.skip(4), is_, ie)
 }
 

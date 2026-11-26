@@ -310,6 +310,26 @@ pub(crate) proof fn lemma_be3(m: Seq<u8>)
     assert(m =~= hs_msg(m[0], m.skip(4)));
 }
 
+/// A handshake message of a short enough body is one.
+pub(crate) proof fn lemma_is_msg(t: u8, b: Seq<u8>)
+    requires
+        b.len() < 0x100_0000,
+    ensures
+        is_msg(hs_msg(t, b), t),
+{
+    let n = b.len();
+    let m = hs_msg(t, b);
+    let (x, y, z) = ((n / 65536) % 256, (n / 256) % 256, n % 256);
+    assert((x * 256 + y) * 256 + z == n) by (nonlinear_arith)
+        requires
+            n < 0x100_0000,
+            x == (n / 65536) % 256,
+            y == (n / 256) % 256,
+            z == n % 256,
+    ;
+    assert(m[1] as nat == x && m[2] as nat == y && m[3] as nat == z);
+}
+
 /// The handshake traffic secrets and keys for PSK `psk`, shared secret
 /// `dhe` and transcript `th_sh` (ClientHello..ServerHello), whose hash is
 /// `th`.
@@ -774,6 +794,18 @@ fn late_keys(
     (c_ap, s_ap, expect, rm)
 }
 
+/// ClientHelloInner says it is one: it was decrypted (§7.1).
+proof fn lemma_ech_inner(m: Seq<u8>, pt: Seq<u8>, im: Seq<u8>, s: SpecHello)
+    requires
+        ech_unsealed(m, pt, im),
+        parse_client_hello(im.skip(4)) == Ok::<SpecHello, SpecAlert>(s),
+        s.ech matches Some((a, b)) && ech_inner(im.skip(4), a, b),
+    ensures
+        ech_decrypted(m, pt, im),
+{
+    reveal(ech_decrypted);
+}
+
 proof fn lemma_ech_ok(cc: SpecCfg, hsv: SpecHs, m: Seq<u8>, random0: Seq<u8>, sh0: Seq<u8>, sid: Seq<u8>)
     requires
         hsv.ch == m,
@@ -845,6 +877,71 @@ fn ech_finish(a: HashAlg, m: &[u8], random: [u8; 32], sh: &Vec<u8>, sid: &[u8], 
     let mut sh2: Vec<u8> = Vec::new();
     server_hello_x(&mut sh2, &r2, sid, suite, group, share, psk);
     Some((r2, sh2))
+}
+
+/// ECH (RFC 9849 §7.1) on ClientHelloOuter `body`: `Ok(None)` if the
+/// server's keys do not open it (ECH declined), else ClientHelloInner
+/// (a message) and the EncodedClientHelloInner it was decoded from;
+/// `Err` with the alert for a malformed extension or inner.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(60)]
+fn open_ech<P: Provider>(prov: &mut P, m: &[u8], body: &[u8], h: &ClientHello, Ghost(s): Ghost<SpecHello>) -> (r: Result<Option<(Vec<u8>, Ghost<Seq<u8>>)>, u8>)
+    requires
+        is_msg(m@, 1),
+        body@ == m@.skip(4),
+        parse_client_hello(body@) == Ok::<SpecHello, SpecAlert>(s),
+        h.models(s),
+    ensures
+        r matches Ok(Some((inner, pt))) ==> ech_unsealed(m@, pt@, inner@) && is_msg(inner@, 1),
+{
+    let sp = match h.ech {
+        Some(sp) => sp,
+        None => return Err(INTERNAL_ERROR),
+    };
+    if !(sp.start < sp.end && sp.end <= body.len()) {
+        return Err(DECODE_ERROR);
+    }
+    let xs = h.extensions;
+    let sid = h.session_id;
+    if !(xs.start <= xs.end && xs.end <= body.len() && sid.start <= sid.end && sid.end <= body.len()) {
+        return Err(INTERNAL_ERROR);
+    }
+    if body[sp.start] != 0 {
+        // An inner ECHClientHello in ClientHelloOuter (§7.1).
+        return Err(ILLEGAL_PARAMETER);
+    }
+    let eo = match ech_outer_x(body, sp.start, sp.end) {
+        Some(x) => x,
+        None => return Err(DECODE_ERROR),
+    };
+    let aad = outer_aad_x(body, eo.payload);
+    let mut pt: Vec<u8> = Vec::new();
+    if !prov.ech_open(eo.config_id, eo.kdf, eo.aead, eo.enc.of(body), aad.as_slice(), eo.payload.of(body), &mut pt) {
+        return Ok(None);
+    }
+    proof {
+        assert(parse_exts(body@, xs.start as int, xs.end as int) == Some(s.outer.exts));
+    }
+    let ib = match decode_inner_x(pt.as_slice(), body, xs.start, xs.end, sid, Ghost(s.outer.exts)) {
+        Some(v) => v,
+        None => return Err(ILLEGAL_PARAMETER),
+    };
+    if ib.len() >= 0x10000 {
+        return Err(ILLEGAL_PARAMETER);
+    }
+    let mut inner: Vec<u8> = Vec::with_capacity(ib.len() + 4);
+    put1(&mut inner, 1);
+    put3(&mut inner, ib.len());
+    put(&mut inner, ib.as_slice());
+    proof {
+        assert(inner@ =~= hs_msg(1, ib@));
+        assert(inner@.skip(4) =~= ib@);
+        lemma_is_msg(1, ib@);
+        reveal(ech_unsealed);
+    }
+    // The inner must say it is one (§7.1), else illegal_parameter;
+    // checked by the caller once it is parsed.
+    Ok(Some((inner, Ghost(pt@))))
 }
 
 #[verifier::spinoff_prover]
@@ -1760,7 +1857,8 @@ impl<P: Provider> ServerConn<P> {
             final(self).phase() == Phase::WaitFinished || final(self).phase() == Phase::Closed,
             final(out)@.take(old(out)@.len() as int) == old(out)@,
             r matches Ok(e) ==> e is Nothing,
-            final(self).phase() == Phase::WaitFinished ==> final(self).handshake().retry == retry && final(self).handshake().ch == m@,
+            final(self).phase() == Phase::WaitFinished ==> final(self).handshake().retry == retry && final(self).handshake().ch == m@
+                && final(self).handshake().ech == ech,
     {
         let rs = match try_resume(&mut self.prov, cfg, m, body, h, Ghost(s), c.suite, &tr) {
             Ok(x) => x,
@@ -1897,73 +1995,12 @@ impl<P: Provider> ServerConn<P> {
         self.state = State::WaitFinished { suite, rx, tx, early, expect, c_ap, s_ap, res };
     }
 
-    /// A ClientHello message `m`, in `Start` or `Retried`.
-    #[verifier::spinoff_prover]
-    #[verifier::rlimit(60)]
-    /// ECH (RFC 9849 §7.1) on ClientHelloOuter `body`: `Ok(None)` if the
-    /// server's keys do not open it (ECH declined), else ClientHelloInner
-    /// (a message) and the EncodedClientHelloInner it was decoded from;
-    /// `Err` with the alert for a malformed extension or inner.
-    fn open_ech(&mut self, cfg: &Config, body: &[u8], h: &ClientHello, Ghost(s): Ghost<SpecHello>) -> (r: Result<Option<(Vec<u8>, Ghost<Seq<u8>>)>, u8>)
-        requires
-            parse_client_hello(body@) == Ok::<SpecHello, SpecAlert>(s),
-            h.models(s),
-            h.ext_spans_ok(body@.len()),
-            h.session_id.start <= h.session_id.end <= body@.len(),
-            h.extensions.start <= h.extensions.end <= body@.len(),
-            h.ech is Some,
-        ensures
-            final(self).wf() == old(self).wf(),
-            final(self).state == old(self).state,
-            final(self).cfg == old(self).cfg,
-            final(self).buf == old(self).buf,
-            r matches Ok(Some((inner, pt))) ==> ech_decrypted(hs_msg(1, body@), pt@, inner@),
-    {
-        let sp = h.ech.unwrap();
-        if !(sp.start < sp.end) {
-            return Err(DECODE_ERROR);
-        }
-        if body[sp.start] != 0 {
-            // An inner ECHClientHello in ClientHelloOuter (§7.1).
-            return Err(ILLEGAL_PARAMETER);
-        }
-        let eo = match ech_outer_x(body, sp.start, sp.end) {
-            Some(x) => x,
-            None => return Err(DECODE_ERROR),
-        };
-        let aad = outer_aad_x(body, eo.payload);
-        let mut pt: Vec<u8> = Vec::new();
-        if !self.prov.ech_open(eo.config_id, eo.kdf, eo.aead, eo.enc.of(body), aad.as_slice(), eo.payload.of(body), &mut pt) {
-            return Ok(None);
-        }
-        proof {
-            assert(parse_exts(body@, h.extensions.start as int, h.extensions.end as int) == Some(s.outer.exts));
-        }
-        let ib = match decode_inner_x(pt.as_slice(), body, h.extensions.start, h.extensions.end, h.session_id, Ghost(s.outer.exts)) {
-            Some(v) => v,
-            None => return Err(ILLEGAL_PARAMETER),
-        };
-        if ib.len() >= 0x10000 {
-            return Err(ILLEGAL_PARAMETER);
-        }
-        let mut inner: Vec<u8> = Vec::with_capacity(ib.len() + 4);
-        put1(&mut inner, 1);
-        put3(&mut inner, ib.len());
-        put(&mut inner, ib.as_slice());
-        proof {
-            assert(inner@ =~= hs_msg(1, ib@));
-            assert(inner@.skip(4) =~= ib@);
-            assert(hs_msg(1, body@).skip(4) =~= body@);
-        }
-        // The inner must say it is one (§7.1), else illegal_parameter;
-        // checked by the caller once it is parsed.
-        Ok(Some((inner, Ghost(pt@))))
-    }
-
     /// The handshake on ClientHelloInner `im`, decrypted from
     /// ClientHelloOuter `m`. `None`: it would need a HelloRetryRequest,
     /// which this server does not do under ECH, so ECH is declined and
     /// nothing has changed.
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(100)]
     fn on_inner_hello(&mut self, cfg: &Config, m: &[u8], im: &[u8], Ghost(pt): Ghost<Seq<u8>>, out: &mut Vec<u8>) -> (r: Option<Result<Event, Error>>)
         requires
             old(self).wf(),
@@ -1973,16 +2010,17 @@ impl<P: Provider> ServerConn<P> {
             cfg@.ech_list.len() > 0,
             old(out)@.len() <= usize::MAX / 2,
             is_msg(m@, 1),
-            ech_decrypted(m@, pt, im@),
+            ech_unsealed(m@, pt, im@),
+            is_msg(im@, 1),
         ensures
-            r is None ==> final(self) == old(self) && final(out)@ == old(out)@,
+            r is None ==> *final(self) == *old(self) && final(out)@ == old(out)@,
             r is Some ==> {
                 &&& final(self).wf()
                 &&& final(self).config() == old(self).config()
                 &&& final(out)@.take(old(out)@.len() as int) == old(out)@
                 &&& r matches Some(Ok(e)) ==> e is Nothing
                 &&& final(self).phase() == Phase::WaitFinished || final(self).phase() == Phase::Closed
-                &&& final(self).phase() == Phase::WaitFinished ==> final(self).handshake().ech matches Some((o, _)) && o == m@
+                &&& final(self).phase() == Phase::WaitFinished ==> (final(self).handshake().ech matches Some((o, _)) && o == m@)
             },
     {
         if im.len() < 4 {
@@ -2003,6 +2041,9 @@ impl<P: Provider> ServerConn<P> {
         };
         if !inner_ok {
             return Some(Err(self.fail(ILLEGAL_PARAMETER, out)));
+        }
+        proof {
+            lemma_ech_inner(m@, pt, im@, s);
         }
         let o = crate::negotiate::negotiate(body, &h, cfg.suites.as_slice(), cfg.groups.as_slice(), cfg.sigs.as_slice(), cfg.alpn.as_slice());
         proof {
@@ -2037,6 +2078,9 @@ impl<P: Provider> ServerConn<P> {
         Some(self.accept(cfg, im, body, sid, c, tr, false, Ghost(None), Ghost(choice), &h, Ghost(s), Ghost(Some((m@, pt))), true, false, out))
     }
 
+    /// A ClientHello message `m`, in `Start` or `Retried`.
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(100)]
     fn on_client_hello(&mut self, m: &[u8], out: &mut Vec<u8>) -> (r: Result<Event, Error>)
         requires
             old(self).wf(),
@@ -2089,13 +2133,10 @@ impl<P: Provider> ServerConn<P> {
                 // ECH opens, the handshake is ClientHelloInner's.
                 let ech_cfg = cfg.ech_list.len() > 0;
                 if ech_cfg && h.ech.is_some() {
-                    match self.open_ech(cfg, body, &h, Ghost(s)) {
+                    match open_ech(&mut self.prov, m, body, &h, Ghost(s)) {
                         Err(code) => return Err(self.fail(code, out)),
                         Ok(Some((inner, gpt))) => {
                             let ghost pt = gpt@;
-                            proof {
-                                assert(ech_decrypted(m@, pt, inner@));
-                            }
                             match self.on_inner_hello(cfg, m, inner.as_slice(), Ghost(pt), out) {
                                 Some(r) => return r,
                                 // ClientHelloInner would need a
