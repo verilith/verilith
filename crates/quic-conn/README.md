@@ -123,16 +123,22 @@ in memory with a virtual clock.
 | requests: 10 connections, 2000 x 16 KiB each, 20 at a time | **122 ms** | 191 ms |
 | handshakes: 500 connections, 1 x 1 KiB | **33.4 ms** | 84.5 ms |
 
-End to end, verilith-server's HTTP/3 on this crate (`--h3-backend verilith`)
-against the same server on quinn-proto, with h2load over loopback
-([report](../../bench/server/results/2026-11-26-cloud-h3-vq/report.md)),
+This crate is verilith-server's default QUIC. End to end, with h2load over
+loopback ([report](../../bench/server/results/2026-11-26-cloud-h3-default/report.md)),
 in requests per server CPU-second:
 
-| case | on verilith-quic-conn | on quinn-proto |
-|---|---:|---:|
-| h3-plaintext | **605k** | 375k |
-| h3-static-64k | **23k** | 21k |
-| h3-static-1m | **1481** | 1255 |
+| case | verilith-server on this crate | on quinn-proto | nginx-quic |
+|---|---:|---:|---:|
+| h3-plaintext | **546k** | 359k | 296k |
+| h3-static-64k | 22k | 20k | **27k** |
+| h3-static-1m | 1517 | 1251 | **1947** |
+
+nginx still sends large bodies with less CPU.
+
+Interop: besides quinn-proto's client (`tests/quinn.rs`, and the server's
+`tests/h3.rs`), ngtcp2 (h2load) and aioquic
+(`bench/server/h3/interop/aioquic_client.py`: 32 requests and three key
+updates started by the client) work against it.
 
 Neither server issues session tickets or accepts 0-RTT. quinn-proto paces
 its sending; this crate does not yet, which a real network may reward

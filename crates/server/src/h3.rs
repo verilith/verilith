@@ -3,12 +3,14 @@
 //! QUIC itself (packets, TLS 1.3, loss recovery, congestion control) comes
 //! from one of two sans-I/O backends, picked by the [`QuicConfig`]:
 //!
-//! - quinn-proto with rustls, trusted (TRUST.md). The default.
-//! - verilith-quic-conn: its wire format, flow control, stream states,
-//!   loss recovery and congestion control are verilith-quic's (verified),
-//!   and its handshake and packet protection are verilith-tls's (verified),
-//!   with aws-lc's cryptography. The connection logic joining them is
-//!   plain Rust for now (that crate's README).
+//! - verilith-quic-conn, the default: its wire format, flow control,
+//!   stream states, loss recovery and congestion control are
+//!   verilith-quic's (verified), and its handshake and packet protection
+//!   are verilith-tls's (verified), with aws-lc's cryptography. The
+//!   connection logic joining them is plain Rust for now (that crate's
+//!   README).
+//! - quinn-proto with rustls, trusted (TRUST.md), kept to compare
+//!   (`--h3-backend quinn`).
 //!
 //! Everything HTTP/3 is verified: each stream's bytes go through
 //! verilith-h3's `Reader` (frame syntax and order, with the RFC's error
@@ -93,9 +95,10 @@ impl Default for Limits3 {
 }
 
 /// Which QUIC implementation serves HTTP/3.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Backend {
     Quinn,
+    #[default]
     Verilith,
 }
 
@@ -116,9 +119,10 @@ impl std::fmt::Debug for QuicConfig {
 }
 
 /// The QUIC server configuration (TLS 1.3, ALPN `h3`) for this
-/// certificate chain and key, PEM files (the key PKCS#8), on quinn.
+/// certificate chain and key, PEM files (the key PKCS#8), on the default
+/// backend (verilith-quic-conn).
 pub fn server_config(cert: &str, key: &str, limits: Limits3) -> std::io::Result<QuicConfig> {
-    server_config_on(Backend::Quinn, cert, key, limits)
+    server_config_on(Backend::default(), cert, key, limits)
 }
 
 /// [`server_config`], on `backend`.
@@ -137,7 +141,7 @@ pub fn server_config_der(
     key: rustls::pki_types::PrivateKeyDer<'static>,
     limits: Limits3,
 ) -> std::io::Result<QuicConfig> {
-    server_config_der_on(Backend::Quinn, certs, key, limits)
+    server_config_der_on(Backend::default(), certs, key, limits)
 }
 
 /// [`server_config_der`], on `backend`.

@@ -1,0 +1,1 @@
+nginx: [alert] could not open error log file: open() "/tmp/vserver-bench-wsot2dpg/logs/error.log" failed (2: No such file or directory)
