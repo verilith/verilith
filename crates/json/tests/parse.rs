@@ -206,6 +206,19 @@ fn error_reasons() {
         (b"{} x", 3, TrailingData),
         (b"[\"\xC0\x80\"]", 2, InvalidUtf8),
         (b"[1,\n  2,\n  ]", 11, UnexpectedByte(b']')),
+        (b"[1,]", 3, UnexpectedByte(b']')),
+        (b"01", 0, InvalidNumber),
+        (b"[1e5e]", 1, InvalidNumber),
+        (b"-", 0, InvalidNumber),
+        (b"[tr", 3, UnexpectedEnd),
+        (b"{\"a\" 1}", 5, UnexpectedByte(b'1')),
+        (b"{1:2}", 1, UnexpectedByte(b'1')),
+        (b"{\"a\":1,}", 7, UnexpectedByte(b'}')),
+        (b"[\"\\", 3, UnterminatedString),
+        (b"[\xFF, x]", 1, InvalidUtf8),
+        (b"[1, x] \xFF", 4, UnexpectedByte(b'x')),
+        (b"", 0, UnexpectedEnd),
+        (b"\xEF\xBB\xBF ", 4, UnexpectedEnd),
     ];
     for &(text, offset, kind) in cases {
         let e = verilith_json::parse(text).unwrap_err();
