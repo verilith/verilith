@@ -1,6 +1,7 @@
 //! Byte-stream buffers for CRYPTO and STREAM data: [`Assembler`] puts
 //! received frames back in order, [`SendBuf`] keeps what was written until
 //! it is acknowledged and knows what to send or resend next.
+use bytes::{Buf, Bytes, BytesMut};
 use std::collections::{BTreeMap, VecDeque};
 
 /// Disjoint half-open ranges `[start, end)`, keyed by start.
@@ -179,12 +180,21 @@ impl Assembler {
     }
 }
 
+/// Writes at least this long are kept as the writer's shared buffer
+/// ([`SendBuf::write_bytes`]); shorter ones are copied.
+pub const SHARE_MIN: usize = 4096;
+
 /// Data written to a stream (or CRYPTO at one level), kept until
 /// acknowledged.
 #[derive(Default)]
 pub struct SendBuf {
-    /// Bytes from `base` on.
-    data: VecDeque<u8>,
+    /// Bytes from `base` on: buffers shared with the writer (large writes,
+    /// kept without copying), then `tail`.
+    chunks: VecDeque<Bytes>,
+    /// The bytes in `chunks`.
+    chunked: usize,
+    /// Small writes, copied, after `chunks`.
+    tail: BytesMut,
     /// The offset of `data[0]`: everything before is acknowledged.
     base: u64,
     /// The offset of the next byte never sent.
@@ -204,16 +214,47 @@ pub struct SendBuf {
 impl SendBuf {
     /// The offset after the last byte written.
     pub fn end(&self) -> u64 {
-        self.base + self.data.len() as u64
+        self.base + self.unacked() as u64
     }
 
     /// Bytes written and not yet acknowledged.
     pub fn unacked(&self) -> usize {
-        self.data.len()
+        self.chunked + self.tail.len()
     }
 
     pub fn write(&mut self, b: &[u8]) {
-        self.data.extend(b);
+        self.tail.extend_from_slice(b);
+    }
+
+    /// Writes `b`, keeping a large buffer as it is (shared, not copied).
+    pub fn write_bytes(&mut self, b: Bytes) {
+        if b.len() < SHARE_MIN {
+            self.tail.extend_from_slice(&b);
+            return;
+        }
+        if !self.tail.is_empty() {
+            let t = self.tail.split().freeze();
+            self.chunked += t.len();
+            self.chunks.push_back(t);
+        }
+        self.chunked += b.len();
+        self.chunks.push_back(b);
+    }
+
+    /// Drops the first `k` bytes (acknowledged).
+    fn drop_front(&mut self, mut k: usize) {
+        while k > 0 {
+            let Some(c) = self.chunks.front_mut() else { break };
+            let m = k.min(c.len());
+            self.chunked -= m;
+            k -= m;
+            if m == c.len() {
+                self.chunks.pop_front();
+            } else {
+                c.advance(m);
+            }
+        }
+        self.tail.advance(k);
     }
 
     /// Whether anything (data or the FIN) is waiting to be sent.
@@ -249,17 +290,22 @@ impl SendBuf {
     }
 
     /// Copies `[off, off + n)` into `out`.
-    pub fn get(&self, off: u64, n: usize, out: &mut Vec<u8>) {
-        let i = (off - self.base) as usize;
-        let (a, b) = self.data.as_slices();
-        if i + n <= a.len() {
-            out.extend_from_slice(&a[i..i + n]);
-        } else if i >= a.len() {
-            out.extend_from_slice(&b[i - a.len()..i - a.len() + n]);
-        } else {
-            out.extend_from_slice(&a[i..]);
-            out.extend_from_slice(&b[..n - (a.len() - i)]);
+    pub fn get(&self, off: u64, mut n: usize, out: &mut Vec<u8>) {
+        let mut i = (off - self.base) as usize;
+        for c in &self.chunks {
+            if n == 0 {
+                return;
+            }
+            if i >= c.len() {
+                i -= c.len();
+                continue;
+            }
+            let m = n.min(c.len() - i);
+            out.extend_from_slice(&c[i..i + m]);
+            n -= m;
+            i = 0;
         }
+        out.extend_from_slice(&self.tail[i..i + n]);
     }
 
     /// `[off, off + n)` (and the FIN if `fin`) went out in a packet.
@@ -289,7 +335,7 @@ impl SendBuf {
         if let Some((s, e)) = self.acked.first() {
             if s == self.base {
                 let k = (e - self.base) as usize;
-                self.data.drain(..k);
+                self.drop_front(k);
                 self.base = e;
                 self.acked.remove(s, e);
             }
@@ -331,13 +377,15 @@ impl SendBuf {
 
     /// Everything written, and the FIN, is acknowledged.
     pub fn all_acked(&self) -> bool {
-        self.data.is_empty() && (!self.fin || self.fin_acked)
+        self.unacked() == 0 && (!self.fin || self.fin_acked)
     }
 
     /// Drops everything (a reset stream).
     pub fn clear(&mut self) {
         self.base = self.end();
-        self.data.clear();
+        self.chunks.clear();
+        self.chunked = 0;
+        self.tail.clear();
         self.unsent = self.base;
         self.acked.clear();
         self.lost.clear();
@@ -397,5 +445,37 @@ mod tests {
         s.sent(0, 4, false);
         s.on_ack(0, 4, false);
         assert!(s.all_acked());
+    }
+
+    /// Shared chunks and copied writes interleaved: every range reads back
+    /// the bytes written, across chunk boundaries, as acknowledgments drop
+    /// the front.
+    #[test]
+    fn send_buf_chunks() {
+        let mut s = SendBuf::default();
+        let mut all = Vec::new();
+        for (i, len) in [3usize, 5000, 7, 9000, 4096, 1, 12000].into_iter().enumerate() {
+            let b: Vec<u8> = (0..len).map(|j| (j * 7 + i * 13) as u8).collect();
+            all.extend_from_slice(&b);
+            if i % 2 == 1 {
+                s.write_bytes(Bytes::from(b));
+            } else {
+                s.write(&b);
+            }
+        }
+        assert_eq!(s.end(), all.len() as u64);
+        let mut acked = 0u64;
+        for step in [1u64, 4999, 3, 2, 9001, 100, 4000] {
+            for (off, n) in [(acked, 1usize), (acked, 5003), (acked + 2, 9000), (acked, (all.len() as u64 - acked) as usize)] {
+                let n = n.min((all.len() as u64 - off) as usize);
+                let mut out = Vec::new();
+                s.get(off, n, &mut out);
+                assert_eq!(out, &all[off as usize..off as usize + n], "off {off} n {n}");
+            }
+            s.sent(acked, step as usize, false);
+            s.on_ack(acked, step as usize, false);
+            acked += step;
+            assert_eq!(s.unacked() as u64, all.len() as u64 - acked);
+        }
     }
 }

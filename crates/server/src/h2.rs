@@ -130,6 +130,9 @@ pub struct Conn2 {
     enc: Encoder,
     /// Scratch for one encoded header block.
     hbuf: Vec<u8>,
+    /// The allocation of the field list handed to the HPACK encoder, kept
+    /// empty between responses so that framing one allocates nothing.
+    hs_spare: Vec<HHeader<'static>>,
     streams: HashMap<u32, Box<Stream>, BuildHasherDefault<IdHash>>,
     /// Closed streams, kept with their buffers for the next ones.
     pool: Vec<Box<Stream>>,
@@ -166,6 +169,7 @@ impl Conn2 {
             dec: Decoder::new().expect("HPACK tables"),
             enc: Encoder::new().expect("HPACK tables"),
             hbuf: Vec::new(),
+            hs_spare: Vec::new(),
             streams: HashMap::default(),
             pool: Vec::new(),
             ready: VecDeque::new(),
@@ -277,7 +281,11 @@ impl Conn2 {
                 s.body.clear();
                 if let Some(r) = s.reply.as_mut() {
                     r.fields.clear();
-                    r.body = ReplyBody::None;
+                    // An owned body keeps its buffer for the next reply.
+                    match &mut r.body {
+                        ReplyBody::Owned(v) if v.capacity() <= 16 * 1024 => v.clear(),
+                        b => *b = ReplyBody::None,
+                    }
                 }
                 self.pool.push(s);
             }
@@ -522,6 +530,9 @@ impl Conn2 {
         }
         let stream = b.stream;
         let end_stream = b.end_stream;
+        let max_block = self.limits.max_header_block;
+        // The stream the fields go to, looked up once per fragment.
+        let mut to = if trailers { None } else { self.streams.get_mut(&stream) };
         loop {
             match self.dec.feed(frag, end_headers) {
                 Feed::Bad => return Action::Conn(COMPRESSION_ERROR),
@@ -529,13 +540,10 @@ impl Conn2 {
                 Feed::Final => break,
                 Feed::Field(n, _never) => {
                     frag = &frag[n..];
-                    if trailers {
-                        continue;
-                    }
-                    if let Some(s) = self.streams.get_mut(&stream) {
+                    if let Some(s) = to.as_deref_mut() {
                         let name = self.dec.name();
                         let value = self.dec.value();
-                        if s.arena.len() + name.len() + value.len() > self.limits.max_header_block {
+                        if s.arena.len() + name.len() + value.len() > max_block {
                             return Action::Conn(ENHANCE_YOUR_CALM);
                         }
                         let ns = s.arena.len();
@@ -550,6 +558,7 @@ impl Conn2 {
                 }
             }
         }
+        drop(to);
         if !end_headers {
             return Action::None;
         }
@@ -613,7 +622,10 @@ impl Conn2 {
             if !r.sent_headers {
                 let end_stream = body_len == 0;
                 let st = [b'0' + (r.status / 100) as u8, b'0' + (r.status / 10 % 10) as u8, b'0' + (r.status % 10) as u8];
-                let mut hs: Vec<HHeader> = Vec::with_capacity(r.fields.len() + ctx.own_h2.len() + 1);
+                // The spare allocation, retyped for this block's borrows
+                // (an empty Vec collected in place keeps its buffer).
+                let mut hs: Vec<HHeader> = std::mem::take(&mut self.hs_spare).into_iter().collect();
+                hs.reserve(r.fields.len() + ctx.own_h2.len() + 1);
                 hs.push(HHeader { name: b":status", value: &st, sensitive: false });
                 for (n, v) in r.fields.iter().chain(ctx.own_h2.iter()) {
                     // A cookie is a secret an attacker could probe by
@@ -621,15 +633,16 @@ impl Conn2 {
                     hs.push(HHeader { name: n, value: v, sensitive: n == b"set-cookie" });
                 }
                 self.hbuf.clear();
-                if !self.enc.encode(&hs, &mut self.hbuf) {
+                let ok = self.enc.encode(&hs, &mut self.hbuf);
+                hs.clear();
+                self.hs_spare = hs.into_iter().map(|_| HHeader { name: b"", value: b"", sensitive: false }).collect();
+                if !ok {
                     // A name or value over 64 KiB: nothing was encoded, the
                     // table is unchanged.
-                    drop(hs);
                     self.close_stream(id);
                     self.rst(id, INTERNAL_ERROR);
                     continue;
                 }
-                drop(hs);
                 let before = self.out.buf.len();
                 // HEADERS, then CONTINUATION, within the peer's frame size.
                 let mut frag: &[u8] = &self.hbuf;
@@ -721,10 +734,10 @@ pub(crate) fn request_fields_ok(a: &[u8], fields: &[Header]) -> bool {
     for f in fields {
         let n = f.name.of(a);
         let v = f.value.of(a);
-        if n.is_empty() || n.iter().any(|c| c.is_ascii_uppercase()) {
+        if n.is_empty() || any_word(n, has_upper) {
             return false;
         }
-        if v.iter().any(|&c| c == 0 || c == b'\r' || c == b'\n') {
+        if any_word(v, has_nul_cr_lf) {
             return false;
         }
         if n[0] == b':' {
@@ -754,6 +767,66 @@ pub(crate) fn request_fields_ok(a: &[u8], fields: &[Header]) -> bool {
         }
     }
     m == 1 && s == 1 && p == 1 && au <= 1
+}
+
+/// Whether `test` finds a byte it looks for in `b`, eight bytes at a time.
+/// `test` is given words of eight bytes (little-endian, the last word
+/// overlapping the one before it), or, when `b` is shorter than eight
+/// bytes, one word of its bytes padded with bytes `test` never matches.
+#[inline(always)]
+fn any_word(b: &[u8], test: fn(u64) -> bool) -> bool {
+    let n = b.len();
+    if n < 8 {
+        // Built in registers (a copy to the stack and a wide load back
+        // stalls store forwarding), padded with 'a': neither uppercase nor
+        // NUL, CR or LF.
+        let pad = (LO * b'a' as u64) << (8 * n);
+        let w = if n >= 4 {
+            let lo = u32::from_le_bytes(b[..4].try_into().unwrap()) as u64;
+            let hi = u32::from_le_bytes(b[n - 4..].try_into().unwrap()) as u64;
+            lo | (hi << (8 * (n - 4)))
+        } else if n > 0 {
+            b[0] as u64 | (b[n / 2] as u64) << (8 * (n / 2)) | (b[n - 1] as u64) << (8 * (n - 1))
+        } else {
+            0
+        };
+        return test(w | pad);
+    }
+    let mut i = 0;
+    while i + 8 < n {
+        if test(u64::from_le_bytes(b[i..i + 8].try_into().unwrap())) {
+            return true;
+        }
+        i += 8;
+    }
+    test(u64::from_le_bytes(b[n - 8..].try_into().unwrap()))
+}
+
+const LO: u64 = 0x0101_0101_0101_0101;
+const HI: u64 = 0x8080_8080_8080_8080;
+
+/// Whether some byte of `x` is zero.
+#[inline(always)]
+fn zero_byte(x: u64) -> bool {
+    x.wrapping_sub(LO) & !x & HI != 0
+}
+
+/// Whether some byte of `w` is NUL, CR or LF (RFC 9113 §8.2.1).
+#[inline(always)]
+fn has_nul_cr_lf(w: u64) -> bool {
+    zero_byte(w) || zero_byte(w ^ (LO * b'\r' as u64)) || zero_byte(w ^ (LO * b'\n' as u64))
+}
+
+/// Whether some byte of `w` is an ASCII uppercase letter: with the top bit
+/// of each byte cleared (so no addition carries into the next byte), a byte
+/// is in `A..=Z` exactly when adding `0x80 - b'A'` sets its top bit and
+/// adding `0x80 - b'Z' - 1` does not; bytes of 0x80 and above are excluded.
+#[inline(always)]
+fn has_upper(w: u64) -> bool {
+    let y = w & !HI;
+    let ge_a = y + LO * (0x80 - b'A' as u64);
+    let gt_z = y + LO * (0x80 - b'Z' as u64 - 1);
+    ge_a & !gt_z & !w & HI != 0
 }
 
 /// Header fields, owned: lowercased names (RFC 9113 §8.2.1) and values,
@@ -802,7 +875,7 @@ impl HList {
 /// peer, at most `max_streams` of them live, so a multiply-and-fold
 /// suffices; SipHash cost 6% of the CPU in h2c-plaintext.
 #[derive(Default)]
-struct IdHash(u64);
+pub(crate) struct IdHash(u64);
 
 impl Hasher for IdHash {
     fn finish(&self) -> u64 {
@@ -819,5 +892,31 @@ impl Hasher for IdHash {
     fn write_u64(&mut self, x: u64) {
         let h = (self.0 ^ x).wrapping_mul(0x9E37_79B9_7F4A_7C15);
         self.0 = h ^ (h >> 29);
+    }
+}
+
+#[cfg(test)]
+mod word_tests {
+    use super::*;
+
+    /// The word-at-a-time scans against byte-at-a-time ones: every byte
+    /// value at every position of every length up to 20, over a background
+    /// of each byte that matches nothing.
+    #[test]
+    fn scans_match_bytewise() {
+        for len in 1..=20usize {
+            // (lengths below 8 take the register path, the rest the word loop)
+            for bg in [b'a', b'-', 0x7f, 0xff, b'0'] {
+                for pos in 0..len {
+                    for c in 0..=255u8 {
+                        let mut b = vec![bg; len];
+                        b[pos] = c;
+                        assert_eq!(any_word(&b, has_upper), b.iter().any(|x| x.is_ascii_uppercase()), "{b:?}");
+                        assert_eq!(any_word(&b, has_nul_cr_lf), b.iter().any(|&x| x == 0 || x == b'\r' || x == b'\n'), "{b:?}");
+                    }
+                }
+            }
+        }
+        assert!(!any_word(b"", has_upper) && !any_word(b"", has_nul_cr_lf));
     }
 }
