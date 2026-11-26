@@ -2901,6 +2901,33 @@ impl Stream {
             }
             ip = nip;
             if st == Status::Truncated && ip == inp.len() {
+                // Out of input: hand out what this step decoded before
+                // stopping, so a flushed block's bytes are not held back
+                // until more input comes.
+                if self.out_read < self.inf.out_pos && *op < output.len() {
+                    let ghost o1 = output@;
+                    let ghost op1 = *op;
+                    self.deliver(output, op);
+                    proof {
+                        assert(output@.subrange(0, *old(op) as int) =~= o1.subrange(0, *old(op) as int)) by {
+                            assert(output@.subrange(0, op1 as int).subrange(0, *old(op) as int) =~= output@.subrange(0, *old(op) as int));
+                            assert(o1.subrange(0, op1 as int).subrange(0, *old(op) as int) =~= o1.subrange(0, *old(op) as int));
+                        }
+                        assert(output@.subrange(*old(op) as int, *op as int) =~= o1.subrange(*old(op) as int, op1 as int)
+                            + output@.subrange(op1 as int, *op as int)) by {
+                            assert forall|i: int| *old(op) <= i < op1 implies output@[i] == o1[i] by {
+                                assert(output@.subrange(0, op1 as int)[i] == o1.subrange(0, op1 as int)[i]);
+                            }
+                        }
+                        assert(old(self).delivered@ + (o1.subrange(*old(op) as int, op1 as int) + output@.subrange(
+                            op1 as int,
+                            *op as int,
+                        )) =~= old(self).delivered@ + o1.subrange(*old(op) as int, op1 as int) + output@.subrange(
+                            op1 as int,
+                            *op as int,
+                        ));
+                    }
+                }
                 break;
             }
         }
