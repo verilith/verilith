@@ -8,8 +8,9 @@ is in [DESIGN.md](DESIGN.md). This README describes what exists today.
 `--h2c PORT`), and TLS with h2 or http/1.1 by ALPN (`--features tls`,
 `--tls PORT --cert PEM --key PEM`; TLS 1.3 on the verified verilith-tls),
 and static files from disk with a proven path check (`files::Files`;
-`--root DIR`, served under `/static/`).** HTTP/3 is next. The API will
-change.
+`--root DIR`, served under `/static/`), and HTTP/3 (`--features h3`,
+`--h3 PORT --cert PEM --key PEM`, UDP): the verified verilith-h3 framing
+and verilith-qpack on quinn-proto's QUIC.** The API will change.
 
 ```rust,no_run
 use std::sync::Arc;

@@ -44,7 +44,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | qpack | 9 |  |  |  |  |  | 2 |
 | quic |  |  |  |  |  |  | 1 |
 | regex | 1 |  |  |  |  |  | 3 |
-| server | 5 |  |  |  | 1 |  | 11 |
+| server | 5 |  |  |  | 1 |  | 12 |
 | sha2 | 34 |  |  |  |  |  | 3 |
 | simd | 413 | 11 | 274 | 4 |  |  | 3 |
 | snappy |  |  |  |  |  |  | 1 |
@@ -62,7 +62,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 3 |  |  |  |  |  | 3 |
 | zstd | 9 |  |  |  |  |  | 1 |
-| **total** | **665** | **35** | **274** | **5** | **17** | **12** | **124** |
+| **total** | **665** | **35** | **274** | **5** | **17** | **12** | **125** |
 
 ## Items
 
@@ -211,6 +211,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/server/src/files.rs`: plain Rust
 - `crates/server/src/h1.rs`: plain Rust
 - `crates/server/src/h2.rs`: plain Rust
+- `crates/server/src/h3.rs`: plain Rust
 - `crates/server/src/lib.rs`: plain Rust
 - `crates/server/src/tls.rs`: plain Rust
 - `crates/server/src/worker.rs`: plain Rust
