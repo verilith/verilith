@@ -356,7 +356,7 @@ impl Conn2 {
         reply.off = 0;
         let mut scratch = crate::out::Wire::empty();
         let mut res = Response { out: &mut scratch, ctx, sent: false, close: false, head: method == b"HEAD", h2: Some(&mut reply) };
-        if early && !crate::early_ok(method) {
+        if crate::early::too_early(early, method) {
             res.too_early();
         } else {
             h.handle(&request, &mut res);

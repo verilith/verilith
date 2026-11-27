@@ -206,7 +206,7 @@ impl Conn {
             peer: self.peer.as_deref(),
         };
         let mut res = Response { out: &mut self.eng.wire, ctx, sent: false, close: false, head: method == b"HEAD", h2: None };
-        if self.early && !crate::early_ok(method) {
+        if crate::early::too_early(self.early, method) {
             res.too_early();
         } else {
             h.handle(&request, &mut res);

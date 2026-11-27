@@ -300,9 +300,14 @@ definition names its section. The proofs show:
   server has), and the clock (`now`) used for ticket lifetimes. For
   0-RTT, `early_claimed` is the provider's anti-replay (RFC 8446 §8):
   the proofs assume `claim_early` says yes at most once per ClientHello
-  within its freshness window. verilith-tls-aws-lc keeps a single-use
-  register of binders in the process, with a 10 s window on the ticket's
-  age; it does not span machines. For ECH, `ech_opened` is HPKE
+  within its freshness window. verilith-tls-aws-lc meets this with
+  `antireplay::Register` from this crate, verified: a claim says yes
+  only if the ticket's age is within 10 s of the client's view of it
+  (§8.3), never for a key (the binder's first 16 bytes) taken in the
+  21 s before, and so never twice for the same ClientHello (§8.1;
+  `antireplay.rs`). What stays trusted there is the clock, the lock
+  around the register and reading the binder; the register is the
+  process's and does not span machines. For ECH, `ech_opened` is HPKE
   (RFC 9180) base mode under the server's ECH key: the proofs assume
   `ech_open` returns only a plaintext the client sealed to that key
   with that additional data. verilith-tls-aws-lc's `hpke.rs` is
