@@ -84,7 +84,11 @@ pub struct Pair {
 impl Pair {
     pub fn new(cfg: Arc<Config<AwsLc>>, delay: Duration, loss: u64, seed: u64) -> Pair {
         let now = Instant::now();
-        let mut client = Endpoint::new(Arc::new(EndpointConfig::default()), None, true, None);
+        // quinn takes datagrams up to 1472 bytes by default; up to the
+        // largest, so that path MTU discovery is the network's to bound.
+        let mut ec = EndpointConfig::default();
+        ec.max_udp_payload_size(65527).unwrap();
+        let mut client = Endpoint::new(Arc::new(ec), None, true, None);
         let server_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 1), 443));
         let client_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 2), 5000));
         let (ch, c) = client.connect(now, client_config(), server_addr, "localhost").unwrap();
@@ -165,7 +169,7 @@ impl Pair {
                 let seg = t.segment_size.unwrap_or(t.size);
                 self.net.server_bytes += t.size;
                 for d in buf[..t.size].chunks(seg) {
-                    assert!(d.len() <= 1452);
+                    assert!(d.len() <= 65527);
                     if d.len() > self.net.mtu {
                         continue;
                     }
@@ -409,6 +413,16 @@ fn path_mtu_discovery() {
     p.net.mtu = 1300;
     assert!(exchange(&mut p, &[(b"x".to_vec(), 2_000_000)], Duration::from_secs(60)));
     assert_eq!(p.net.largest, 1200);
+    // Jumbo frames: up the steps to 8952, where a probe for more is lost.
+    let big = || server_config(|c| c.probe_datagram = 65487);
+    let mut p = Pair::new(big(), Duration::from_millis(10), 0, 9);
+    p.net.mtu = 9000;
+    assert!(exchange(&mut p, &[(b"x".to_vec(), 2_000_000)], Duration::from_secs(60)));
+    assert_eq!(p.net.largest, 8952);
+    // Loopback: all the way to the configured size.
+    let mut p = Pair::new(big(), Duration::from_millis(1), 0, 10);
+    assert!(exchange(&mut p, &[(b"x".to_vec(), 4_000_000)], Duration::from_secs(60)));
+    assert_eq!(p.net.largest, 65487);
 }
 
 #[test]

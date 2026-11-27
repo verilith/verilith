@@ -23,6 +23,11 @@ pub const SO_REUSEPORT: c_int = 15;
 pub const SO_SNDBUF: c_int = 7;
 pub const SO_RCVBUF: c_int = 8;
 pub const IPPROTO_TCP: c_int = 6;
+pub const IPPROTO_IP: c_int = 0;
+/// IP_MTU_DISCOVER = IP_PMTUDISC_PROBE: every datagram goes with DF set
+/// and is never fragmented; one larger than the interface's MTU fails
+/// with EMSGSIZE. Path MTU discovery's probes need it (RFC 8899 §3).
+pub const DONT_FRAGMENT: Option<(c_int, c_int)> = Some((10, 3));
 pub const TCP_NODELAY: c_int = 1;
 /// The kernel spreads connections across SO_REUSEPORT sockets.
 pub const REUSEPORT_BALANCES: bool = true;
@@ -44,6 +49,7 @@ pub const O_NOFOLLOW: c_int = 0o400000;
 pub const O_DIRECTORY: c_int = 0o200000;
 
 const SYS_OPENAT2: std::ffi::c_long = 437;
+const SYS_EPOLL_PWAIT2: std::ffi::c_long = 441;
 const RESOLVE_NO_MAGICLINKS: u64 = 0x02;
 const RESOLVE_BENEATH: u64 = 0x08;
 
@@ -180,8 +186,40 @@ impl Poller {
 
     /// Waits up to `timeout_ms` (-1: forever) and calls `f` for each event.
     #[inline]
-    pub fn wait(&mut self, timeout_ms: i32, mut f: impl FnMut(Event)) -> usize {
+    pub fn wait(&mut self, timeout_ms: i32, f: impl FnMut(Event)) -> usize {
         let n = unsafe { epoll_wait(self.ep, self.evs.as_mut_ptr(), self.evs.len() as c_int, timeout_ms) };
+        self.deliver(n, f)
+    }
+
+    /// Waits up to `timeout_us` microseconds and calls `f` for each event:
+    /// with epoll_pwait2 (Linux 5.11) to the microsecond, else rounded up
+    /// to a millisecond.
+    #[inline]
+    pub fn wait_us(&mut self, timeout_us: u64, f: impl FnMut(Event)) -> usize {
+        static PWAIT2: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+        if !timeout_us.is_multiple_of(1000) && PWAIT2.load(std::sync::atomic::Ordering::Relaxed) {
+            let ts = super::timespec { tv_sec: (timeout_us / 1_000_000) as i64, tv_nsec: (timeout_us % 1_000_000) as i64 * 1000 };
+            let r = unsafe {
+                syscall(
+                    SYS_EPOLL_PWAIT2,
+                    self.ep as std::ffi::c_long,
+                    self.evs.as_mut_ptr(),
+                    self.evs.len() as std::ffi::c_long,
+                    &ts as *const super::timespec,
+                    std::ptr::null::<u8>(),
+                    0 as std::ffi::c_long,
+                )
+            };
+            if r >= 0 || io::Error::last_os_error().raw_os_error() != Some(38) {
+                return self.deliver(r as c_int, f);
+            }
+            PWAIT2.store(false, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.wait(timeout_us.div_ceil(1000).min(i32::MAX as u64) as i32, f)
+    }
+
+    #[inline]
+    fn deliver(&mut self, n: c_int, mut f: impl FnMut(Event)) -> usize {
         if n <= 0 {
             return 0;
         }

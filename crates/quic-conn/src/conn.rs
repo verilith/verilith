@@ -74,11 +74,13 @@ pub struct Config<P> {
     /// The largest UDP payload sent at first. Paths must carry 1200 bytes
     /// (§14); more is found by probing.
     pub max_datagram: usize,
-    /// Path MTU discovery (§14.3, DPLPMTUD of RFC 8899 in its simplest
-    /// form): once the handshake is confirmed, one PING padded to this
-    /// size is sent (up to three times if lost); when acknowledged, it
-    /// becomes the largest payload sent. Not above the peer's
-    /// max_udp_payload_size; 0 turns it off.
+    /// Path MTU discovery (§14.3, DPLPMTUD of RFC 8899 in a simple form):
+    /// once the handshake is confirmed, a PING padded to the next size of
+    /// [`PROBE_STEPS`] is sent (up to three times if lost); when
+    /// acknowledged, it becomes the largest payload sent, and the next
+    /// step is probed, up to this size. Not above the peer's
+    /// max_udp_payload_size; 0 turns it off. The socket must not fragment
+    /// (DF set), or a probe the path cannot carry arrives in fragments.
     pub probe_datagram: usize,
     /// Bytes written to streams and not yet acknowledged, across the
     /// connection.
@@ -149,6 +151,12 @@ pub struct Transmit {
     /// size. `None` for a single datagram.
     pub segment_size: Option<usize>,
 }
+
+/// The sizes path MTU discovery probes on its way to
+/// [`Config::probe_datagram`]: a 1500-byte Ethernet MTU and a 9000-byte
+/// jumbo frame, less IPv6 and UDP headers. Then the configured size
+/// itself (on loopback, 65487 fits Linux's 65536-byte MTU).
+pub const PROBE_STEPS: [usize; 2] = [1452, 8952];
 
 /// Path MTU discovery's state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -815,7 +823,8 @@ impl<P: Provider> Connection<P> {
                 if size as u64 > self.cc.mds() {
                     self.cc.raise_mds(size as u64);
                 }
-                self.pmtu = Pmtu::Done;
+                // On to the next step (Done if there is none).
+                self.pmtu = Pmtu::Due { fails: 0 };
                 trace(format_args!("mtu {size}"));
             }
             if d.packet.in_flight {
@@ -1578,9 +1587,11 @@ impl<P: Provider> Connection<P> {
         (self.mtu as u64).min(self.peer_max_udp).max(1200) as usize
     }
 
-    /// The size path MTU discovery probes.
+    /// The size path MTU discovery probes next: the first step above
+    /// what the path is known to carry, or the configured size.
     fn probe_size(&self) -> usize {
-        (self.cfg.probe_datagram as u64).min(self.peer_max_udp).min(65527) as usize
+        let cap = (self.cfg.probe_datagram as u64).min(self.peer_max_udp).min(65527) as usize;
+        PROBE_STEPS.iter().copied().find(|&s| s > self.mtu && s < cap).unwrap_or(cap)
     }
 
     /// Sends the path MTU probe as a datagram of its own, if it is due and

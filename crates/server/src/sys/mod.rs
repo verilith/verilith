@@ -149,6 +149,12 @@ pub fn bind_udp(addr: [u8; 4], port: u16, reuseport: bool) -> io::Result<i32> {
         let big: c_int = 4 << 20;
         setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &big as *const c_int as *const u8, 4);
         setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &big as *const c_int as *const u8, 4);
+        // Never fragment: a datagram the path cannot carry is lost, so
+        // QUIC's path MTU probes find what the path carries (RFC 9000
+        // §14.1, RFC 8899 §3).
+        if let Some((opt, v)) = DONT_FRAGMENT {
+            cvt(setsockopt(fd, IPPROTO_IP, opt, &v as *const c_int as *const u8, 4))?;
+        }
         let sa = sockaddr_in {
             #[cfg(target_os = "macos")]
             sin_len: std::mem::size_of::<sockaddr_in>() as u8,
