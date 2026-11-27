@@ -31,6 +31,27 @@ pub struct Mf {
     pub depth: u32,
     pub lazy: bool,
     pub wmax: usize,
+    /// Four recent positions per hash of seven bytes (no chains).
+    pub quick: bool,
+    /// Positions per hash in quick mode: 4, 8, 16 or 32, the most recent
+    /// kept in a ring (`num` counts the insertions per hash).
+    pub ways: usize,
+    pub num: Vec<u32>,
+    /// Hash seven bytes, not four.
+    pub h7: bool,
+}
+
+#[inline(always)]
+fn hash7(data: &[u8], i: usize) -> (r: usize)
+    requires
+        i + 8 <= data@.len(),
+    ensures
+        r < 0x10_0000,
+{
+    let x = verilith_core::prims::load_u64_le(data, i);
+    let y = (x << 8u64).wrapping_mul(0x1FE3_5A7B_D357_9BD3);
+    assert((y >> 44u64) < 0x10_0000) by (bit_vector);
+    (y >> 44u64) as usize
 }
 
 #[inline(always)]
@@ -38,30 +59,35 @@ fn hash4(data: &[u8], i: usize) -> (r: usize)
     requires
         i + 4 <= data@.len(),
     ensures
-        r < 0x2_0000,
+        r < 0x10_0000,
 {
     let x = load32(data, i);
     let y = x.wrapping_mul(0x1E35_A7BD);
-    assert((y >> 15u32) < 0x2_0000) by (bit_vector);
-    (y >> 15u32) as usize
+    assert((y >> 12u32) < 0x10_0000) by (bit_vector);
+    (y >> 12u32) as usize
 }
 
 impl Mf {
-    pub fn new(n: usize, depth: u32, lazy: bool, wmax: usize) -> (r: Mf)
+    pub fn new(n: usize, depth: u32, lazy: bool, quick: bool, ways: usize, h7: bool, wmax: usize) -> (r: Mf)
+        requires
+            n < 0xFFFF_FFFF,
+            ways == 4 || ways == 8 || ways == 16 || ways == 32,
         ensures
-            r.head@.len() == 0x2_0000,
-            r.prev@.len() == n,
+            r.wf(n as nat),
             r.wmax == wmax,
     {
-        let head = vec![NONE; 0x2_0000];
-        let prev = vec![NONE; n];
-        Mf { head, prev, depth, lazy, wmax }
+        let head = vec![NONE; 0x10_0000];
+        let prev = if quick { Vec::new() } else { vec![NONE; n] };
+        let num = vec![0u32; 0x10_0000];
+        Mf { head, prev, depth, lazy, wmax, quick, ways, num, h7 }
     }
 
     pub open spec fn wf(&self, n: nat) -> bool {
-        &&& self.head@.len() == 0x2_0000
-        &&& self.prev@.len() == n
+        &&& self.head@.len() == 0x10_0000
+        &&& !self.quick ==> self.prev@.len() == n
         &&& n < 0xFFFF_FFFF
+        &&& (self.ways == 4 || self.ways == 8 || self.ways == 16 || self.ways == 32)
+        &&& self.num@.len() == 0x10_0000
     }
 
     #[inline(always)]
@@ -72,34 +98,92 @@ impl Mf {
             final(self).wf(data@.len()),
             final(self).wmax == old(self).wmax,
     {
-        if i < data.len() && data.len() - i >= 4 {
+        if self.quick {
+            if i < data.len() && data.len() - i >= 8 {
+                let w = self.ways;
+                let h = if self.h7 { hash7(data, i) } else { hash4(data, i) };
+                let kx = h / w;
+                let c = self.num[kx];
+                self.head.set(kx * w + (c as usize) % w, i as u32);
+                self.num.set(kx, c.wrapping_add(1));
+            }
+        } else if i < data.len() && data.len() - i >= 4 {
             let h = hash4(data, i);
             self.prev.set(i, self.head[h]);
             self.head.set(h, i as u32);
         }
     }
 
-    /// The longest match for `i`, at most `max` long, as (length, distance).
-    fn find(&self, data: &[u8], i: usize, max: usize, last: usize) -> (r: (usize, usize))
+    /// The best match for `i`, at most `max` long, as (length, distance,
+    /// score). The score is google/brotli's: bytes covered against the
+    /// bits of the distance.
+    fn find(&self, data: &[u8], i: usize, max: usize, last: usize) -> (r: (usize, usize, u64))
         requires
             self.wf(data@.len()),
             i + max <= data@.len(),
+            max <= 0xFFFF,
         ensures
             r.0 <= max,
             r.0 > 0 ==> 1 <= r.1 <= i,
     {
         let mut best: usize = 0;
         let mut bd: usize = 0;
+        let mut bs: u64 = MIN_SCORE;
         // The last distance first: it is cheap to write.
         if last >= 1 && last <= i && last <= self.wmax && max >= 2 {
             let k = eq_len(data, i - last, i, max);
-            if k >= 2 {
+            if k >= 3 {
                 best = k;
                 bd = last;
+                bs = 1935 + 135 * k as u64;
             }
         }
         if max < 4 {
-            return (best, bd);
+            return (best, bd, bs);
+        }
+        if self.quick {
+            if data.len() - i < 8 {
+                return (best, bd, bs);
+            }
+            let w = self.ways;
+            let h = if self.h7 { hash7(data, i) } else { hash4(data, i) };
+            let kx = h / w;
+            let key = kx * w;
+            let top = self.num[kx] as usize;
+            let mut j: usize = 0;
+            while j < w
+                invariant
+                    self.wf(data@.len()),
+                    i + max <= data@.len(),
+                    max <= 0xFFFF,
+                    best <= max,
+                    best > 0 ==> 1 <= bd <= i,
+                    w == self.ways,
+                    w <= 32,
+                    key + w <= 0x10_0000,
+                decreases w - j,
+            {
+                let c = self.head[key + (top + w - 1 - j) % w];
+                j = j + 1;
+                if c == NONE || c as usize >= i {
+                    continue;
+                }
+                let cu = c as usize;
+                let dist = i - cu;
+                if dist > self.wmax || best >= max || data[cu + best] != data[i + best] {
+                    continue;
+                }
+                let k = eq_len(data, cu, i, max);
+                if k >= 4 {
+                    let sc = 1920 + 135 * k as u64 - 30 * log2_floor(dist as u32) as u64;
+                    if sc > bs {
+                        best = k;
+                        bd = dist;
+                        bs = sc;
+                    }
+                }
+            }
+            return (best, bd, bs);
         }
         let h = hash4(data, i);
         let mut c = self.head[h];
@@ -108,6 +192,7 @@ impl Mf {
             invariant
                 self.wf(data@.len()),
                 i + max <= data@.len(),
+                max <= 0xFFFF,
                 best <= max,
                 best > 0 ==> 1 <= bd <= i,
             decreases self.depth - d,
@@ -119,21 +204,40 @@ impl Mf {
             }
             if best < max && data[cu + best] == data[i + best] {
                 let k = eq_len(data, cu, i, max);
-                if k > best && (k >= 4) {
-                    // A longer match is worth it only if it pays for a
-                    // longer distance (roughly).
-                    best = k;
-                    bd = dist;
-                    if k == max {
-                        break;
+                if k >= 4 {
+                    let sc = 1920 + 135 * k as u64 - 30 * log2_floor(dist as u32) as u64;
+                    if sc > bs {
+                        best = k;
+                        bd = dist;
+                        bs = sc;
+                        if k == max {
+                            break;
+                        }
                     }
                 }
             }
             c = self.prev[cu];
             d = d + 1;
         }
-        (best, bd)
+        (best, bd, bs)
     }
+}
+
+const MIN_SCORE: u64 = 2020;
+
+#[inline(always)]
+fn log2_floor(x: u32) -> (r: u32)
+    ensures
+        r <= 31,
+{
+    if x == 0 {
+        return 0;
+    }
+    let b = crate::pcode::bitlen_exec(x);
+    proof {
+        crate::pcode::lemma_bitlen_bound(x as nat);
+    }
+    if b == 0 { 0 } else if b > 32 { 31 } else { b - 1 }
 }
 
 /// The parse of `data[start..end]`.
@@ -157,39 +261,68 @@ pub fn parse(mf: &mut Mf, data: &[u8], start: usize, end: usize, last0: usize) -
         decreases end - i,
     {
         let max = if end - i > 0xFFFF { 0xFFFF } else { end - i };
-        let (mut len, mut dist) = mf.find(data, i, max, last);
-        if len >= 4 || (len >= 2 && dist == last && i > lit) {
-            if mf.lazy && len < 32 && i + 1 < end {
+        let (mut len, mut dist, mut sc) = mf.find(data, i, max, last);
+        if len >= 3 && sc > MIN_SCORE {
+            // Lazy matching: a later start that scores clearly better wins.
+            let mut tries: u32 = 0;
+            while mf.lazy && tries < 4 && i + 1 < end && len < 256
+                invariant
+                    mf.wf(data@.len()),
+                    mf.wmax == old(mf).wmax,
+                    start <= lit <= i < end <= data@.len(),
+                    len <= end - i,
+                    len >= 3,
+                    1 <= dist <= i,
+                decreases 4 - tries,
+            {
                 let max1 = if end - i - 1 > 0xFFFF { 0xFFFF } else { end - i - 1 };
-                mf.insert(data, i);
-                let (l1, d1) = mf.find(data, i + 1, max1, last);
-                if l1 > len + 1 || (l1 > len && d1 <= dist) {
+                let (l1, d1, s1) = mf.find(data, i + 1, max1, last);
+                if l1 >= 3 && s1 >= sc + 175 {
+                    mf.insert(data, i);
                     i = i + 1;
                     len = l1;
                     dist = d1;
+                    sc = s1;
+                    tries = tries + 1;
+                } else {
+                    break;
                 }
             }
-            if len >= 2 && i + len <= end {
-                let ins = (i - lit) as u32;
-                out.push(Lz { ins, clen: len as u32, dist: dist as u32 });
-                let stop = i + len;
-                while i < stop
+            let ins = (i - lit) as u32;
+            out.push(Lz { ins, clen: len as u32, dist: dist as u32 });
+            let stop = i + len;
+            while i < stop
+                invariant
+                    mf.wf(data@.len()),
+                    mf.wmax == old(mf).wmax,
+                    i <= stop <= end <= data@.len(),
+                decreases stop - i,
+            {
+                mf.insert(data, i);
+                i = i + 1;
+            }
+            lit = i;
+            last = dist;
+        } else {
+            mf.insert(data, i);
+            i = i + 1;
+            // Long runs of literals: probably incompressible, look less
+            // (google/brotli's "random heuristics").
+            if i - lit > 128 && i < end {
+                let step = if i - lit > 512 { 4 } else { 2 };
+                let mut j: usize = 1;
+                while j < step && i < end
                     invariant
                         mf.wf(data@.len()),
                         mf.wmax == old(mf).wmax,
-                        i <= stop <= end <= data@.len(),
-                    decreases stop - i,
+                        start <= lit <= i <= end <= data@.len(),
+                    decreases step - j,
                 {
-                    mf.insert(data, i);
                     i = i + 1;
+                    j = j + 1;
                 }
-                lit = i;
-                last = dist;
-                continue;
             }
         }
-        mf.insert(data, i);
-        i = i + 1;
     }
     if lit < end {
         out.push(Lz { ins: (end - lit) as u32, clen: 0, dist: 0 });
@@ -332,23 +465,27 @@ fn cost(f: &[u32], l: &[u8]) -> (r: u64)
 pub struct Params {
     pub depth: u32,
     pub lazy: bool,
+    pub quick: bool,
+    pub ways: usize,
+    pub h7: bool,
     pub block: usize,
 }
 
 pub fn params(quality: u32) -> (r: Params)
     ensures
         1 <= r.block <= 0x100_0000,
+        r.ways == 4 || r.ways == 8 || r.ways == 16 || r.ways == 32,
 {
     if quality <= 2 {
-        Params { depth: 1, lazy: false, block: 0x1_0000 }
+        Params { depth: 1, lazy: false, quick: true, ways: 4, h7: true, block: 0x1_0000 }
     } else if quality <= 4 {
-        Params { depth: 4, lazy: false, block: 0x2_0000 }
+        Params { depth: 8, lazy: true, quick: true, ways: 4, h7: true, block: 0x20_0000 }
     } else if quality <= 6 {
-        Params { depth: 16, lazy: true, block: 0x2_0000 }
+        Params { depth: 32, lazy: true, quick: true, ways: 32, h7: false, block: 0x10_0000 }
     } else if quality <= 9 {
-        Params { depth: 64, lazy: true, block: 0x4_0000 }
+        Params { depth: 64, lazy: true, quick: false, ways: 4, h7: true, block: 0x4_0000 }
     } else {
-        Params { depth: 256, lazy: true, block: 0x4_0000 }
+        Params { depth: 256, lazy: true, quick: false, ways: 4, h7: true, block: 0x4_0000 }
     }
 }
 
@@ -464,7 +601,7 @@ pub fn compress(data: &[u8], quality: u32, lgwin: u32) -> (r: Vec<u8>)
         crate::elemmas::lemma_pow2_small();
     }
     let wmax = (shl1(wb) - 16) as usize;
-    let mut mf = Mf::new(n, p.depth, p.lazy, wmax);
+    let mut mf = Mf::new(n, p.depth, p.lazy, p.quick, p.ways, p.h7, wmax);
     let mut i: usize = 0;
     let mut last: usize = 4;
     proof {

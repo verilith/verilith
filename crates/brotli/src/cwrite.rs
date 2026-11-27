@@ -619,21 +619,16 @@ pub fn check_cmds(data: &[u8], start: usize, end: usize, cmds: &[Cmd], dr0: [u32
             if clen as usize > end - p {
                 return None;
             }
-            let mut k: usize = 0;
             let cl = clen as usize;
             let ds_ = dist as usize;
-            while k < cl
-                invariant
-                    p + cl <= end <= data@.len(),
-                    1 <= ds_ <= p,
-                    k <= cl,
-                    matches(data@, p as int, ds_ as int, k as int),
-                decreases cl - k,
-            {
-                if data[p + k] != data[p + k - ds_] {
-                    return None;
+            let k = verilith_core::lz::eq_len(data, p - ds_, p, cl);
+            if k != cl {
+                return None;
+            }
+            proof {
+                assert forall|j: int| p <= j < p + cl implies #[trigger] data@[j] == data@[j - ds_] by {
+                    assert(data@[(p - ds_) + (j - p)] == data@[p + (j - p)]);
                 }
-                k = k + 1;
             }
             if x.sym >= 128 && x.dcode != 0 {
                 dr = [dist, dr[0], dr[1], dr[2]];
