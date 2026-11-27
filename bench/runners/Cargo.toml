@@ -2,7 +2,7 @@
 # is not a C ABI swap. Dependencies are the crates of this checkout. A
 # workspace of its own, so the runners keep their own profile and lockfile.
 [workspace]
-members = ["vbrun", "vdns-run", "vhttp-run", "vjson-run", "vpng-run", "vx509-run", "vxml-run"]
+members = ["vbrun", "varchive-run", "vbrotli-run", "vdns-run", "vfont-run", "vhttp-run", "vjpeg-run", "vjson-run", "vlz4-run", "vpng-run", "vregex-run", "vsnappy-run", "vurl-run", "vwebp-run", "vx509-run", "vxml-run", "vzlib-run"]
 # Its own project: Verdict pins an older toolchain and its own vstd.
 exclude = ["verdict-run"]
 resolver = "2"

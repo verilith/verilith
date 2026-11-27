@@ -88,3 +88,30 @@ pub fn list_dir(dir: &str) -> Vec<String> {
     v.sort();
     v
 }
+
+/// The drivers' cheap digest (`mix` in suites/*/*.c): about 64 bytes spread
+/// over `p`, so a check value depends on the bytes and not only their count.
+pub fn mix(mut h: u64, p: &[u8]) -> u64 {
+    let step = p.len() / 64 + 1;
+    let mut i = 0;
+    while i < p.len() {
+        h = (h ^ p[i] as u64).wrapping_mul(0x100000001b3);
+        i += step;
+    }
+    h
+}
+
+/// The image drivers' check value (`strided_sum` in suites/webp/webp.c and
+/// suites/jpeg/jpeg.c).
+pub fn strided_sum(p: &[u8]) -> u64 {
+    let mut s = p.len() as u64;
+    for i in (0..p.len()).step_by(61) {
+        s = s.wrapping_mul(31).wrapping_add(p[i] as u64);
+    }
+    s
+}
+
+/// The `mode` argument (argv[1]), or `default`.
+pub fn mode(default: &str) -> String {
+    std::env::args().nth(1).unwrap_or_else(|| default.into())
+}

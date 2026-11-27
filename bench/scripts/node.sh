@@ -69,14 +69,20 @@ build_node() {
     say "Node $name: already built"
     return
   fi
-  say "Node $name: unpack"
-  rm -rf "$dir"; mkdir -p "$dir"
-  tar xJf "$tarball" -C "$dir" --strip-components 1
-  if [ "$name" = hardened ] && has llhttp; then
-    "$(ours vhttp)/compat/llhttp/node.sh" "$dir"
+  # A build that was interrupted after configure picks up where it stopped.
+  if [ -n "$ninja" ] && [ -f "$dir/out/Release/build.ninja" ] && [ "$(cat "$dir/.vbench-configured" 2>/dev/null)" = "$stamp" ]; then
+    say "Node $name: resume the interrupted build"
+  else
+    say "Node $name: unpack"
+    rm -rf "$dir"; mkdir -p "$dir"
+    tar xJf "$tarball" -C "$dir" --strip-components 1
+    if [ "$name" = hardened ] && has llhttp; then
+      "$(ours vhttp)/compat/llhttp/node.sh" "$dir"
+    fi
+    say "Node $name: configure ${*}"
+    (cd "$dir" && CFLAGS="$CPUFLAG" CXXFLAGS="$CPUFLAG" python3 configure.py $ninja "$@" > "$NW/$name.configure.log")
+    echo "$stamp" > "$dir/.vbench-configured"
   fi
-  say "Node $name: configure ${*}"
-  (cd "$dir" && CFLAGS="$CPUFLAG" CXXFLAGS="$CPUFLAG" python3 configure.py $ninja "$@" > "$NW/$name.configure.log")
   say "Node $name: build (log: $NW/$name.build.log)"
   if [ -n "$ninja" ]; then
     (cd "$dir" && ninja -C out/Release -j "$NPROC" node > "$NW/$name.build.log" 2>&1) || { tail -30 "$NW/$name.build.log"; die "Node $name failed to build"; }

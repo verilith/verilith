@@ -54,6 +54,7 @@ build_zlib() {
   cc_runner zlib-vzlib -I"$z" "$S/zlib/zlib.c" "$lib" $RUST_LIBS
   # The compressed inputs, made once by zlib itself.
   "$BIN/zlib-zlib" prepare "$DATA/zlib"
+  rust_runner vzlib-run zlib-native
 }
 
 build_dns() {
@@ -103,6 +104,9 @@ build_url() {
   $CXX "$BUILD/url.o" "$BUILD/ada.o" "$BUILD/runner.o" "$BUILD/counters.o" -o "$BIN/url-ada"
   local lib; lib=$(rust_lib vurl ada-abi)
   $CC "$BUILD/url.o" "$BUILD/runner.o" "$BUILD/counters.o" "$lib" $RUST_LIBS -o "$BIN/url-vurl"
+  # Native: ada's C++ API against vurl's Rust API.
+  $CXX $CFLAGS_BENCH -std=c++20 -I"$H" -I"$sh" "$S/url/ada.cpp" "$BUILD/ada.o" "$BUILD/runner.o" "$BUILD/counters.o" -o "$BIN/url-ada-cpp"
+  rust_runner vurl-run url-native
 }
 
 build_json() {
@@ -200,6 +204,7 @@ build_webp() {
     [ -f "$DATA/webp/$b.webp" ] || "$BUILD/mkwebp" "$f" "$DATA/webp/$b.webp"
     [ -f "$DATA/webp-lossy/$b.webp" ] || "$BUILD/mkwebp" "$f" "$DATA/webp-lossy/$b.webp" 75
   done
+  rust_runner vwebp-run webp-native
 }
 
 # google/brotli's decoder API: libbrotlidec against vbrotli (brotli-abi).
@@ -221,6 +226,7 @@ build_brotli() {
       [ -f "$DATA/brotli/br/$n.q$q.br" ] || "$BUILD/mkbr" "$f" "$DATA/brotli/br/$n.q$q.br" $q
     done
   done
+  rust_runner vbrotli-run brotli-native
 }
 
 # libjpeg-turbo as it ships: with its SIMD code (NEON on AArch64; on x86-64
@@ -247,6 +253,7 @@ build_jpeg() {
     [ -f "$DATA/jpeg-prog/$b.jpg" ] || "$BUILD/mkjpeg" "$f" "$DATA/jpeg-prog/$b.jpg" 75 420 progressive
     [ -f "$DATA/jpeg-444/$b.jpg" ] || "$BUILD/mkjpeg" "$f" "$DATA/jpeg-444/$b.jpg" 90 444
   done
+  rust_runner vjpeg-run jpeg-native
 }
 
 # OTS's API: OTS against vfont's headers of the same names over its C ABI.
@@ -272,6 +279,7 @@ build_font() {
     "$BUILD/brotli/libbrotlidec.a" "$BUILD/brotli/libbrotlicommon.a" -lz
   local lib; lib=$(rust_lib vfont "")
   cxx_runner font-vfont -I"$(ours vfont)/include" "$S/font/font.cpp" "$lib" $RUST_LIBS
+  rust_runner vfont-run font-native
 }
 
 # liblz4's API (lz4.h, lz4frame.h): liblz4 against vlz4 (lz4-abi).
@@ -282,6 +290,7 @@ build_lz4() {
   cc_runner lz4-vlz4 -I"$l" "$S/lz4/lz4.c" "$lib" $RUST_LIBS
   # The compressed inputs, made once by liblz4 itself.
   "$BIN/lz4-lz4" prepare "$DATA/lz4"
+  rust_runner vlz4-run lz4-native
 }
 
 # snappy's C API (snappy-c.h): libsnappy against vsnappy (snappy-abi).
@@ -297,6 +306,7 @@ build_snappy() {
   cc_runner snappy-vsnappy -I"$s" "$S/snappy/snappy.c" "$lib" $RUST_LIBS
   # The compressed inputs, made once by libsnappy itself.
   "$BIN/snappy-snappy" prepare "$DATA/snappy"
+  rust_runner vsnappy-run snappy-native
 }
 
 # libarchive's read API: libarchive against varchive (libarchive-abi).
@@ -340,6 +350,7 @@ build_archive() {
       && $bsdtar --format zip -cf "$d/small.zip" small)
     touch "$BUILD/archive-inputs-v2"
   fi
+  rust_runner varchive-run archive-native
 }
 
 build_regex() {
@@ -371,6 +382,7 @@ build_regex() {
   fi
   local lib; lib=$(rust_lib vregex cre2-abi)
   $CC $objs "$lib" $RUST_LIBS -o "$BIN/regex-vregex"
+  rust_runner vregex-run regex-native
 }
 
 # XML: expat's and libxml2's SAX APIs, drop-in (the same drivers linked

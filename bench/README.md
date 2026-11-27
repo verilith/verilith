@@ -124,11 +124,16 @@ so under the table (`note` in `harness/suites.py`).
 | --- | --- | --- | --- | --- | --- |
 | zlib-inflate | drop-in | verilith-zlib (zlib ABI) | zlib 1.4 | `inflate` a whole stream | 5 Silesia files + 4 KiB and 64 KiB pieces |
 | zlib-deflate | drop-in | verilith-zlib (zlib ABI) | zlib 1.4 | `deflate` at levels 1, 6, 9 | same |
+| zlib-inflate-native, zlib-deflate-native | native | verilith-zlib (`Decompressor::decompress_into`, `stream::Stream`, `zlib_compress`) | zlib 1.4 | the zlib-inflate and zlib-deflate tasks | same |
 | brotli-decode | drop-in | verilith-brotli (brotli decoder ABI) | brotli 1.2.1 | `BrotliDecoderDecompress`, and `BrotliDecoderDecompressStream` fed 1 KiB at a time | the same files, compressed by brotli at quality 5 and 11 |
+| brotli-decode-native | native | verilith-brotli (`Stream`) | brotli 1.2.1 | the brotli-decode task | same |
 | lz4-decompress, lz4-compress | drop-in | verilith-lz4 (lz4 ABI) | lz4 1.11.1 | `LZ4_decompress_safe`, `LZ4_compress_default` of a whole file as one block | 5 Silesia files + 4 KiB and 64 KiB pieces |
 | lz4-frame-decompress, lz4-frame-compress | drop-in | verilith-lz4 (lz4 ABI) | lz4 1.11.1 | `LZ4F_decompress`, `LZ4F_compressFrame` of a whole file as one frame | same |
+| lz4-*-native | native | verilith-lz4 (`decompress_block`, `compress_block`, `frame::decode_frame_into`, `fcompress::compress_into`) | lz4 1.11.1 | the four lz4 tasks | same |
 | snappy-uncompress, snappy-validate, snappy-compress | drop-in | verilith-snappy (snappy-c ABI) | snappy 1.3.1 | `snappy_uncompress`, `snappy_validate_compressed_buffer`, `snappy_compress` | same |
+| snappy-*-native | native | verilith-snappy (`decompress_into`, `validate`, `compress_into`) | snappy 1.3.1 | the three snappy tasks | same |
 | archive-read | drop-in | verilith-archive (libarchive read ABI) | libarchive 3.8.11 (with zlib 1.4) | open from memory, then `read/`: every header and all data (`archive_read_data_block`); `list/`: every header, data skipped | tar, zip (deflate and stored) and tar.gz of the 5 Silesia files and of 2000 files of 4 KiB, made by libarchive's bsdtar |
+| archive-read-native | native | verilith-archive (`Archive::open`, `entries`, `read_ref`) | libarchive 3.8.11 | the archive-read task | same |
 | dns-parse | drop-in | c-ares + verilith-dns patch | c-ares | `ares_dns_parse` + destroy | 4 responses (data/dns) |
 | dns-write | drop-in | c-ares + verilith-dns patch | c-ares | `ares_dns_write` | same |
 | dns-read | drop-in | c-ares + verilith-dns patch | c-ares | `ares_dns_parse`, read every question and record down to each RDATA field, destroy | same |
@@ -138,6 +143,7 @@ so under the table (`note` in `harness/suites.py`).
 | http-pico | drop-in | verilith-http (phr ABI) | picohttpparser | `phr_parse_request`/`_response` | same |
 | http-pico-native | native | verilith-http (`parse_request`/`parse_response`) | picohttpparser | the http-pico task: a head into a reused header array | same |
 | url-ada | drop-in | verilith-url (ada C ABI) | ada 4.1.1 | parse every URL, read href | ada's URL dataset (100k URLs) and its first 1k |
+| url-ada-native | native | verilith-url (`Url::parse_bytes`, `href`) | ada 4.1.1, C++ API (`ada::parse<url_aggregator>`) | the url-ada task | same |
 | json-cjson-parse | drop-in | verilith-json (cJSON ABI) | cJSON 1.7.19 | parse, visit every value, delete | simdjson's examples |
 | json-cjson-native | native | verilith-json (`Parser`) | cJSON 1.7.19 | the json-cjson-parse task | same |
 | json-cjson-print | drop-in | verilith-json (cJSON ABI) | cJSON 1.7.19 | `cJSON_PrintUnformatted` | same |
@@ -150,11 +156,15 @@ so under the table (`note` in `harness/suites.py`).
 | png-libpng | native | verilith-png (Rust API) | libpng 1.6.59 | decode to RGBA8 | the 24 Kodak photos |
 | webp-lossless | drop-in | verilith-webp (libwebp ABI) | libwebp 1.6.0 | `WebPDecodeRGBAInto` | the Kodak photos, lossless WebP |
 | webp-lossy | drop-in | verilith-webp (libwebp ABI) | libwebp 1.6.0 | `WebPDecodeRGBAInto` | the Kodak photos, lossy WebP at quality 75 |
+| webp-lossless-native, webp-lossy-native | native | verilith-webp (`decode_to`) | libwebp 1.6.0 | the webp tasks | same |
 | jpeg-baseline | drop-in | verilith-jpeg (TurboJPEG ABI) | libjpeg-turbo 3.2.1 | `tj3Decompress8` to RGB | the Kodak photos, baseline JPEG, 4:2:0 at quality 75 |
 | jpeg-progressive | drop-in | verilith-jpeg (TurboJPEG ABI) | libjpeg-turbo 3.2.1 | `tj3Decompress8` to RGB | the same as progressive JPEG |
 | jpeg-444 | drop-in | verilith-jpeg (TurboJPEG ABI) | libjpeg-turbo 3.2.1 | `tj3Decompress8` to RGB | the Kodak photos, baseline JPEG, 4:4:4 at quality 90 |
+| jpeg-*-native | native | verilith-jpeg (`decode::decode_to`) | libjpeg-turbo 3.2.1 | the three jpeg tasks | same |
 | font-sanitize | drop-in | verilith-font (OTS's C++ API) | OTS ([khaledhosny/ots](https://github.com/khaledhosny/ots), 2026-11) | `ots::OTSContext::Process` into a memory stream | Source Serif 4 Regular as OTF, TTF, WOFF and WOFF2 |
+| font-sanitize-native | native | verilith-font (`sanitize`) | OTS (2026-11) | the font-sanitize task | same |
 | regex-re2 | drop-in | verilith-regex (cre2 C ABI) | RE2 2025-11-05 under cre2 | find every match of a pattern, with its groups (`cre2_match` in a loop) | 12 patterns over 64 KiB and 1 MiB of dickens and 1k URLs |
+| regex-re2-native | native | verilith-regex (`Regex::search_with`) | RE2 2025-11-05 under cre2 | the regex-re2 task | same |
 | xml-expat-dropin-read | drop-in | verilith-xml (expat ABI) | expat 2.10.0 | the xml-expat-read task, through the same SAX driver | 6 of Silesia's XML files and the 7 files of roxmltree's benchmarks |
 | xml-expat-dropin-check | drop-in | verilith-xml (expat ABI) | expat 2.10.0 | `XML_Parse` with no handlers | same |
 | xml-expat-read | native | verilith-xml (`parse`, `Element::attrs`, `children`) | expat 2.10.0 (SAX) | parse, visit every element, attribute (normalized value) and run of character data | 6 of Silesia's XML files and the 7 files of roxmltree's benchmarks |
@@ -170,10 +180,13 @@ In archive-read the two libraries do not do quite the same work: verilith-archiv
 parses and checks the whole archive when it is opened and checks a member's
 length and CRC-32 before it returns any of its data, where libarchive streams.
 
-Ten tasks are measured both ways (against c-ares, llhttp, picohttpparser,
-cJSON, mbedTLS, libpng, and expat's and libxml2's read and check), and the report prints those side by side, case by case,
-under "Drop-in and native, side by side". Three things to know when reading
-the native column:
+Every task with a drop-in number is also measured natively, through our
+library's own Rust API, except SHA-2 (verilith-sha2's API is the same one-shot
+and streaming calls): against c-ares, llhttp, picohttpparser, cJSON, mbedTLS,
+libpng, expat and libxml2, zlib, brotli, lz4, snappy, libarchive, ada,
+libwebp, libjpeg-turbo, OTS and RE2. The report prints each pair side by
+side, case by case, under "Drop-in and native, side by side". Things to know
+when reading the native column:
 
 - **mbedTLS.** `mbedtls_x509_crt_parse_der_nocopy` also decodes the public
   key and allocates the name and extension lists, which its API does not let
@@ -184,10 +197,20 @@ the native column:
   into buffers the caller reuses.
 - **picohttpparser** already has a flat API that copies nothing, so its two
   columns are close, as they should be.
+- **zlib, brotli, lz4, snappy, JPEG, fonts.** Their C ABIs are thin layers
+  over the same Rust calls the native runners make (into the same kind of
+  reused buffer), so the two columns differ only by that layer and should
+  be close. `zlib_compress` and WebP's `decode_to` return a new `Vec` each
+  call where the original writes into the caller's buffer.
+- **ada.** The native rival is ada's own C++ API (`ada::parse` into an
+  `url_aggregator`, by value), not its C API, which also allocates each URL.
+- **RE2** is still reached through cre2, its C wrapper: RE2's C++ API would
+  save one thin call per match.
+- **libarchive.** `Archive::open` parses and checks the whole index up
+  front, and `read_ref` borrows a stored member from the archive once its
+  CRC-32 checks out, where libarchive copies data out in blocks.
 
-simdjson and Verdict are compared core against core, so those have a native number only. zlib, brotli, lz4, snappy, archives, WebP, JPEG, fonts, regex
-and URL have a drop-in number only: their own APIs do the same work as the
-originals' (verilith-url's Rust API against ada's C++ API is not measured yet).
+simdjson and Verdict are compared core against core, so those have a native number only.
 Native comparisons use Rust runners (`runners/`) against C/C++ runners, with
 the same timer and counters. They will move to C drivers as our libraries
 gain C entry points for their own APIs.
