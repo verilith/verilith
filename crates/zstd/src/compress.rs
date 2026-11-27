@@ -16,6 +16,7 @@ use crate::frame::*;
 use crate::seq::*;
 #[cfg(verus_only)]
 use crate::huf::huf_opt_is;
+#[cfg(verus_only)]
 use crate::stream::{block_step, body_len, lemma_block_step_local, lemma_blocks_unfold, lemma_le_local, prefix};
 #[cfg(verus_only)]
 use crate::bits::lemma_pow2_le;
@@ -518,6 +519,32 @@ fn same(x: &[u8], a: usize, y: &[u8], b: usize, n: usize) -> (r: bool)
     let xl = x.len();
     let yl = y.len();
     let mut i: usize = 0;
+    while n - i >= 8
+        invariant
+            i <= n,
+            xl == x@.len(),
+            yl == y@.len(),
+            a + n <= x@.len(),
+            b + n <= y@.len(),
+            forall|k: int| 0 <= k < i ==> #[trigger] x@[a + k] == y@[b + k],
+        decreases n - i,
+    {
+        let u = verilith_core::prims::load_u64_le(x, a + i);
+        let v = verilith_core::prims::load_u64_le(y, b + i);
+        if u != v {
+            return false;
+        }
+        proof {
+            assert forall|k: int| 0 <= k < i + 8 implies #[trigger] x@[a + k] == y@[b + k] by {
+                if k >= i {
+                    let q = (k - i) as u64;
+                    verilith_core::lz::lemma_word_byte(x@, (a + i) as int, u, q);
+                    verilith_core::lz::lemma_word_byte(y@, (b + i) as int, v, q);
+                }
+            }
+        }
+        i = i + 8;
+    }
     while i < n
         invariant
             i <= n,
@@ -660,6 +687,7 @@ fn comp_block(
     Tracked(m): Tracked<&mut Meter>,
 ) -> (r: (bool, bool, Ghost<FrameState>))
     requires
+        old(enc).wf(),
         pos < end <= src@.len(),
         end <= IN_MAX,
         end - pos <= min(window as int, BLOCK_MAX as int),
@@ -668,6 +696,7 @@ fn comp_block(
         old(d).out@.len() == pos,
         cur.out == src@.subrange(0, pos as int),
     ensures
+        final(enc).wf(),
         r.0 ==> stepped(old(out)@, final(out)@, window as nat, cur, r.2@, last),
         r.0 ==> r.2@.out == src@.subrange(0, end as int),
         r.0 ==> dec_is(final(d), r.2@) && final(d).fstart == 0 && final(d).out@.len() == end,
@@ -821,6 +850,7 @@ pub fn compress_exec(src: &[u8], p: Params) -> (r: Vec<u8>)
             hsize <= 14,
             hb.len() == h0,
             le(hb, 0, 4) == MAGIC,
+            enc.wf(),
         ensures
             forall|t: Seq<u8>| #[trigger] blocks_r(out@ + t, h0 as int, w, w, initial_state()) == Some((out@.len() as int, fin)),
             fin.out == src@,
@@ -940,6 +970,18 @@ pub fn compress_exec(src: &[u8], p: Params) -> (r: Vec<u8>)
         lemma_one_frame(b, src@);
     }
     out
+}
+
+/// Compresses `src` at a zstd compression `level` (1 to 22; lower is
+/// faster, higher is smaller), with libzstd's window size for that level.
+pub fn compress(src: &[u8], level: i32, checksum: bool) -> (r: Vec<u8>)
+    requires
+        src@.len() <= IN_MAX,
+    ensures
+        decompress(r@) == Some(src@),
+{
+    let lp = crate::enc::level_params(level);
+    compress_exec(src, Params { wlog: lp.0, checksum, level })
 }
 
 } // verus!

@@ -34,7 +34,7 @@ trusted](#what-is-proven-and-what-is-trusted) before relying on any of it.
 - **More, crate by crate.** Many crates prove further properties: bounds on
   work or on output size (zlib, lz4, snappy, webp, gif, tiff, png, brotli, jpeg,
   http, url, xml, hpack, qpack, h3, regex, dns, x509), that compression round-trips (zlib,
-  lz4, snappy) or that an encoder's output reads back (h3, qpack), that a stream split into pieces anywhere
+  lz4, snappy, zstd) or that an encoder's output reads back (h3, qpack), that a stream split into pieces anywhere
   decodes the same (zlib, zstd, brotli, hpack, qpack, h3, http), linearizability of
   the queues and deadlock-freedom of the locks, checked against the code
   (sync). Each crate's README has a "What is proven" section
@@ -128,7 +128,7 @@ not proofs.
 | [`verilith-xml`](crates/xml) | A fast XML 1.0 parser formally verified with Verus: exactly the well-formedness rules, no panics, no recursion | [proven](crates/xml#what-is-proven), [trusted](crates/xml#what-is-not-proven) |
 | [`verilith-xxhash`](crates/xxhash) | Formally verified (Verus) XXH32 and XXH64, the checksums of the LZ4 and Zstandard frame formats | [proven](crates/xxhash#what-is-proven), [trusted](crates/xxhash#trusted-base) |
 | [`verilith-zlib`](crates/zlib) | A formally verified (Verus) DEFLATE, zlib and gzip decompressor and compressor, with zlib's C API | [proven](crates/zlib#what-is-proven), [trusted](crates/zlib#trusted-base) |
-| [`verilith-zstd`](crates/zstd) | A formally verified (Verus) Zstandard (RFC 8878) decompressor with libzstd's C API | [proven](crates/zstd#what-is-proven), [trusted](crates/zstd#trusted-base) |
+| [`verilith-zstd`](crates/zstd) | A formally verified (Verus) Zstandard (RFC 8878) decompressor and compressor with libzstd's C API | [proven](crates/zstd#what-is-proven), [trusted](crates/zstd#trusted-base) |
 
 `verilith` is a front door only: it re-exports the others behind features,
 none on by default, and has no code of its own.

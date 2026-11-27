@@ -18,3 +18,9 @@ name = "c_abi_bytes"
 path = "fuzz_targets/c_abi_bytes.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "compress"
+path = "fuzz_targets/compress.rs"
+test = false
+doc = false
