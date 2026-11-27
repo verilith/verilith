@@ -16,6 +16,16 @@ fn handler(req: &Request, res: &mut Response) {
     if req.target == b"/big" {
         body.resize(100_000, b'x');
     }
+    if req.target == b"/bighead" {
+        // A head over one frame: HEADERS, then CONTINUATION.
+        let v = vec![b'v'; 40_000];
+        let _ = res.send(200, &[Field { name: b"X-Big", value: &v }], &body);
+        return;
+    }
+    if req.target == b"/empty" {
+        let _ = res.send(204, &[], b"");
+        return;
+    }
     let _ = res.send(200, &[Field { name: b"X-Test", value: b"1" }], &body);
 }
 
@@ -106,12 +116,26 @@ fn responses_with(out: &[u8], table: Option<u32>) -> (Vec<(u32, Vec<(Vec<u8>, Ve
     let mut rest = out;
     while !rest.is_empty() {
         match verilith_h2::parse(rest, 1 << 20) {
-            Parsed::Frame(f, n) => {
+            Parsed::Frame(f, mut n) => {
                 match f {
                     Frame::Headers { stream, fragment, end_headers, .. } => {
-                        assert!(end_headers);
+                        // The block, with the CONTINUATION frames that follow.
+                        let mut whole = fragment.to_vec();
+                        let mut eh = end_headers;
+                        while !eh {
+                            rest = &rest[n..];
+                            match verilith_h2::parse(rest, 1 << 20) {
+                                Parsed::Frame(Frame::Continuation { stream: s2, end_headers, fragment }, m) => {
+                                    assert_eq!(s2, stream);
+                                    whole.extend_from_slice(fragment);
+                                    eh = end_headers;
+                                    n = m;
+                                }
+                                other => panic!("expected CONTINUATION, got {other:?}"),
+                            }
+                        }
                         let mut fields = Vec::new();
-                        let mut fr = fragment;
+                        let mut fr = &whole[..];
                         loop {
                             match dec.feed(fr, true) {
                                 Feed::Field(k, _) => {
@@ -529,5 +553,92 @@ fn content_length_checked() {
             assert_eq!(ids, vec![3], "case {i}: {ctl:?}");
             assert!(ctl.contains(&"rst 1 1".to_string()), "case {i}: {ctl:?}");
         }
+    }
+}
+
+/// Every frame the server writes: (type, flags, stream, payload length).
+fn frames(out: &[u8]) -> Vec<(u8, u8, u32, usize)> {
+    let mut v = Vec::new();
+    let mut rest = out;
+    while rest.len() >= 9 {
+        let len = (rest[0] as usize) << 16 | (rest[1] as usize) << 8 | rest[2] as usize;
+        let stream = u32::from_be_bytes([rest[5], rest[6], rest[7], rest[8]]) & 0x7fff_ffff;
+        v.push((rest[3], rest[4], stream, len));
+        rest = &rest[9 + len..];
+    }
+    assert!(rest.is_empty());
+    v
+}
+
+/// Response framing (h2wire.rs, h2core.rs): a head over 16 KiB goes out
+/// as HEADERS then CONTINUATION, END_HEADERS on the last only; a body as
+/// DATA frames of at most 16 KiB with END_STREAM on the last only; an
+/// empty body as END_STREAM on HEADERS.
+#[test]
+fn response_framing() {
+    let mut c = settings_frame();
+    for (id, path) in [(1u32, &b"/bighead"[..]), (3, b"/big"), (5, b"/empty")] {
+        let b = block(b"GET", path);
+        serialize(&Frame::Headers { stream: id, end_stream: true, end_headers: true, pad: None, priority: None, fragment: &b }, 16384, &mut c).unwrap();
+    }
+    serialize(&Frame::WindowUpdate { stream: 0, increment: 1 << 20 }, 16384, &mut c).unwrap();
+    serialize(&Frame::WindowUpdate { stream: 3, increment: 1 << 20 }, 16384, &mut c).unwrap();
+    let out = run(&c, &[]);
+    let fs = frames(&out);
+    assert!(fs.iter().all(|f| f.3 <= 16384), "{fs:?}");
+    for id in [1u32, 3, 5] {
+        let mine: Vec<_> = fs.iter().filter(|f| f.2 == id && (f.0 == 0 || f.0 == 1 || f.0 == 9)).collect();
+        assert_eq!(mine[0].0, 1, "HEADERS first on {id}: {mine:?}");
+        let k = mine.iter().position(|f| f.1 & 4 != 0).expect("END_HEADERS");
+        assert!(mine[1..=k].iter().all(|f| f.0 == 9), "{mine:?}");
+        assert!(mine[k + 1..].iter().all(|f| f.0 == 0), "{mine:?}");
+        let ends: Vec<_> = mine.iter().enumerate().filter(|(i, f)| (f.0 == 0 || *i == 0) && f.1 & 1 != 0).map(|(i, _)| i).collect();
+        let last = if mine.len() == k + 1 { 0 } else { mine.len() - 1 };
+        assert_eq!(ends, vec![last], "END_STREAM on {id}: {mine:?}");
+    }
+    let (rs, _) = responses(&out);
+    let big = rs.iter().find(|r| r.0 == 1).unwrap();
+    assert!(big.1.iter().any(|(n, v)| n == b"x-big" && v.len() == 40_000));
+    assert_eq!(rs.iter().find(|r| r.0 == 3).unwrap().2.len(), 100_000);
+    assert!(rs.iter().find(|r| r.0 == 5).unwrap().2.is_empty());
+}
+
+/// RFC 9113 §8.3 and §8.2 (h2wire.rs `request_fields`): requests whose
+/// fields break the rules are reset with PROTOCOL_ERROR and never reach
+/// the handler; the connection goes on.
+#[test]
+fn request_field_rules() {
+    let lit = |n: &[u8], v: &[u8]| -> Vec<u8> {
+        let mut b = vec![0, n.len() as u8];
+        b.extend_from_slice(n);
+        b.push(v.len() as u8);
+        b.extend_from_slice(v);
+        b
+    };
+    let base = block(b"GET", b"/a");
+    let cases: Vec<(Vec<u8>, bool)> = vec![
+        (base.clone(), true),
+        ([base.clone(), lit(b"te", b"trailers")].concat(), true),
+        ([base.clone(), lit(b":authority", b"x")].concat(), true),
+        ([base.clone(), lit(b"X-Up", b"1")].concat(), false),
+        ([base.clone(), lit(b"connection", b"close")].concat(), false),
+        ([base.clone(), lit(b"upgrade", b"h2c")].concat(), false),
+        ([base.clone(), lit(b"te", b"gzip")].concat(), false),
+        ([base.clone(), lit(b"x", b"a\rb")].concat(), false),
+        ([base.clone(), lit(b"x", b"1"), lit(b":authority", b"x")].concat(), false),
+        ([base.clone(), lit(b":path", b"/b")].concat(), false),
+        ([base.clone(), lit(b":status", b"200")].concat(), false),
+        ([lit(b":method", b"GET"), lit(b":path", b"/a")].concat(), false),
+        ([lit(b":method", b"GET"), lit(b":scheme", b"http"), lit(b":path", b"")].concat(), false),
+    ];
+    for (i, (b, ok)) in cases.iter().enumerate() {
+        let mut c = settings_frame();
+        serialize(&Frame::Headers { stream: 1, end_stream: true, end_headers: true, pad: None, priority: None, fragment: b }, 16384, &mut c).unwrap();
+        let g = block(b"GET", b"/z");
+        serialize(&Frame::Headers { stream: 3, end_stream: true, end_headers: true, pad: None, priority: None, fragment: &g }, 16384, &mut c).unwrap();
+        let (rs, ctl) = responses(&run(&c, &[]));
+        assert_eq!(rs.iter().any(|r| r.0 == 1), *ok, "case {i}: {ctl:?}");
+        assert_eq!(ctl.contains(&"rst 1 1".to_string()), !*ok, "case {i}: {ctl:?}");
+        assert!(rs.iter().any(|r| r.0 == 3), "case {i}: the connection goes on");
     }
 }
