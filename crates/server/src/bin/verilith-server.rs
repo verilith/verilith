@@ -6,6 +6,8 @@
 //!                   [--tls-backend verilith|rustls]     (rustls: --features tls-rustls)
 //!                   [--h3 PORT --cert PEM --key PEM]    (UDP; built with --features h3)
 //!                   [--io-uring]                        (Linux: io_uring instead of epoll)
+//!                   [--ktls]                            (Linux: kTLS after the handshake, epoll only)
+//!                   [--sendfile MIN-MAX]                (sendfile files of these lengths; default 16384-114688)
 //!
 //!   GET /plaintext       "Hello, World!", text/plain
 //!   GET /static/<name>   a file under DIR, read at start; sent with
@@ -47,18 +49,31 @@ fn main() {
         if cfg!(target_os = "linux") {
             p.push("io-uring");
         }
+        if cfg!(all(target_os = "linux", feature = "tls")) {
+            p.push("ktls");
+        }
         println!("{}", p.join(" "));
         return;
     }
     // `--root DIR` is served under /static/ (verified path resolution,
     // openat2 beneath DIR; see files.rs).
-    let files = arg(&args, "--root").map(|r| verilith_server::files::Files::new(&r).expect("--root"));
+    let mut files = arg(&args, "--root").map(|r| verilith_server::files::Files::new(&r).expect("--root"));
+    if let (Some(f), Some(r)) = (files.as_mut(), arg(&args, "--sendfile")) {
+        let (a, b) = r.split_once('-').expect("--sendfile MIN-MAX");
+        f.sendfile = a.parse().expect("--sendfile MIN")..=b.parse().expect("--sendfile MAX");
+    }
+    let ktls = args.iter().any(|a| a == "--ktls");
+    if ktls && args.iter().any(|a| a == "--io-uring") {
+        eprintln!("verilith-server: --ktls is for epoll workers; io_uring workers keep TLS in userspace");
+    }
     let cfg = Config {
         port: arg(&args, "--http").map_or(8080, |p| p.parse().unwrap()),
         h2c_port: arg(&args, "--h2c").map(|p| p.parse().unwrap()),
         threads: arg(&args, "--threads").map_or(0, |t| t.parse().unwrap()),
         spin: arg(&args, "--spin").map_or(0, |t| t.parse().unwrap()),
         io_uring: args.iter().any(|a| a == "--io-uring"),
+        #[cfg(feature = "tls")]
+        ktls,
         #[cfg(feature = "tls")]
         tls: arg(&args, "--tls").map(|p| {
             let (cert, key) = (arg(&args, "--cert").expect("--cert"), arg(&args, "--key").expect("--key"));

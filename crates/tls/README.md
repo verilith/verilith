@@ -226,6 +226,10 @@ definition names its section. The proofs show:
     only from a record that `spec_record::open_record` opens under the
     client's application traffic keys (after however many KeyUpdates);
     `write` seals under the server's;
+  - `tx_keys`, for a caller that hands sending to the kernel (kTLS), is
+    exactly the key and IV `write` would seal with (the server's current
+    application traffic secret, after its KeyUpdates) and the sequence
+    number of its next record, and is there only once Connected;
   - change_cipher_spec records are dropped only between the ClientHello and
     the client's Finished, and only when they are the single byte 1;
     handshake messages may span records but not a change of keys; refused

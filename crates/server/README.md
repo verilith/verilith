@@ -59,8 +59,8 @@ https://localhost:8443/static/index.html` (h2), or a browser at
 `https://localhost:8443/static/` (it moves to HTTP/3 after the first
 response). `GET /plaintext` answers "Hello, World!". Other flags:
 `--threads N` (default: one per CPU), `--h2c PORT` (cleartext HTTP/2 with
-prior knowledge), `--io-uring` (Linux), and `--tls-backend rustls` (the trusted library, to
-compare).
+prior knowledge), `--io-uring` (Linux), `--ktls` (Linux: kTLS, below), and
+`--tls-backend rustls` (the trusted library, to compare).
 
 The binary is the benchmark server; for your own routes, use the library
 (the example above): `serve(Config, handler)`, where the handler gets a
@@ -108,9 +108,29 @@ worker and get a zero-copy view of the request. On Linux, `--io-uring`
 engines, one `io_uring_enter` per loop turn (see DESIGN.md, "I/O model",
 for when it is faster and when not).
 
+`--ktls` (`Config::ktls`, Linux, epoll workers) hands record protection
+of what the server sends to the kernel once a TLS handshake is over:
+verilith-tls exports the server's traffic key, IV and next sequence
+number (`ServerConn::tx_keys`, verified to be the ones its own records
+would use), the server attaches the kernel's TLS layer (`TCP_ULP "tls"`,
+`TLS_TX`), and from then on HTTP/1.1 static bodies go out with
+`sendfile` under TLS as on plaintext, the first response included (it
+waits for the session tickets to be written). Everything the client
+sends is still opened by verilith-tls in userspace. A client's KeyUpdate
+is answered through the kernel, which then takes the new keys (Linux
+6.14+; on older kernels the connection ends); close_notify goes out as a
+kernel alert record. Where the kernel has no kTLS (no `tls` module) the
+first connection says so on stderr and every connection stays in
+userspace; a key the kernel refuses (a cipher it lacks) keeps that one
+connection in userspace. `tests/ktls.rs` runs both ways; with
+`VERILITH_REQUIRE_KTLS=1` it fails unless `/proc/net/tls_stat` shows the
+kernel took the connections. `--sendfile MIN-MAX` sets which file
+lengths go out with `sendfile` (default 16384-114688; see below), to
+measure where kTLS moves that line.
+
 ## What is proven
 
-`scripts/verify.sh` (Verus): 288 verified, 0 errors.
+`scripts/verify.sh` (Verus): 315 verified, 0 errors.
 
 - **Requests are exactly the specification's, in order** (`conn.rs`,
   the invariant of `Core`). `first` is the request at the front of a byte
