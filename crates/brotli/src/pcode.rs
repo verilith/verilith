@@ -1096,7 +1096,7 @@ proof fn lemma_pad_lens_eq(lens: Seq<u8>, target: Seq<u8>, alpha: int)
 }
 
 /// `2^k`.
-pub fn p2(k: u32) -> (r: i64)
+pub fn pow2_exec(k: u32) -> (r: i64)
     requires
         k <= 30,
     ensures
@@ -1193,7 +1193,7 @@ fn check_items(t: &[u8], items: &[(u8, u8)], lens: &[u8]) -> (r: bool)
             m.lens.push(c);
             m.rep = 0;
             if c != 0 {
-                let sh = p2((15 - c) as u32);
+                let sh = pow2_exec((15 - c) as u32);
                 proof {
                     vstd::arithmetic::power2::lemma_pow2_strictly_increases((15 - c) as nat, 15);
                     assert(sh <= 16384) by {
@@ -1213,7 +1213,7 @@ fn check_items(t: &[u8], items: &[(u8, u8)], lens: &[u8]) -> (r: bool)
             }
         } else {
             let x: u32 = if c == 16 { 2 } else { 3 };
-            let px = p2(x);
+            let px = pow2_exec(x);
             proof {
                 lemma_pow2_small();
                 assert(px <= 8);
@@ -1264,7 +1264,7 @@ fn check_items(t: &[u8], items: &[(u8, u8)], lens: &[u8]) -> (r: bool)
             m.rep = rep1;
             m.replen = newlen;
             if newlen != 0 {
-                let sh = p2((15 - newlen) as u32);
+                let sh = pow2_exec((15 - newlen) as u32);
                 proof {
                     assert(sh <= 16384) by {
                         if newlen > 1 {
@@ -1356,7 +1356,7 @@ fn check_head(t: &[u8], hskip: usize) -> (r: Option<usize>)
         }
         cl.set(o, v);
         if v != 0 {
-            let sh = p2((5 - v) as u32);
+            let sh = pow2_exec((5 - v) as u32);
             proof {
                 if v > 1 {
                     vstd::arithmetic::power2::lemma_pow2_strictly_increases((5 - v) as nat, 4);

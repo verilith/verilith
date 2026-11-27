@@ -40,6 +40,8 @@ pub mod encoder;
 pub mod pcode;
 #[doc(hidden)]
 pub mod ehuff;
+#[doc(hidden)]
+pub mod cmeta;
 
 pub use api::{decompress, Error};
 pub use stream::{Result as StreamResult, Stream};
