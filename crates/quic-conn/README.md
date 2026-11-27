@@ -22,7 +22,8 @@ Every step that has a specification is done by a verified component:
   - every frame written, within the datagram and the congestion window,
     and the padding (`pktbuf`);
   - the timers: idle timeout, loss timers and PTO, and which one fires
-    (`timers`).
+    (`timers`);
+  - which frames each packet type may carry (`allowed`).
 - **`verilith-tls`**:
   - the TLS 1.3 handshake for QUIC;
   - Initial secrets;

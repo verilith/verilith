@@ -155,6 +155,9 @@ Loss recovery (RFC 9002), for one packet number space each:
   `due` picks what fires (idle, then the first loss timer due, then the
   PTO), and at the time `next` returns something is due unless only a
   delayed ACK is.
+- **Frames per packet type** (§12.4, Table 3, `allowed`): `allowed` is
+  Table 3 written column by column, `ack_eliciting` is §13.2's rule, and
+  `server_receives` refuses NEW_TOKEN and HANDSHAKE_DONE (§19.7, §19.20).
 
 Every loop in a parser consumes input, so parsing is linear in the input;
 the PADDING scan reads eight bytes at a time.
