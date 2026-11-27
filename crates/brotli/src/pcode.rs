@@ -2,6 +2,7 @@
 //! reads them, their canonical codes, and what the spec reads when a
 //! symbol's code is written.
 use crate::bitwriter::*;
+use crate::spec::{CL_ORDER, St};
 #[cfg(verus_only)]
 use crate::elemmas::*;
 #[cfg(verus_only)]

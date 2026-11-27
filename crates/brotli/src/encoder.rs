@@ -74,7 +74,7 @@ impl Enc {
     }
 
     /// Writes `MNIBBLES - 4` and `MLEN - 1`.
-    fn put_mlen(&mut self, len: usize)
+    pub fn put_mlen(&mut self, len: usize)
         requires
             old(self).bw.wf(),
             1 <= len <= 0x1000000,

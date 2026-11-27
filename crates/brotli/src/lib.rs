@@ -42,6 +42,12 @@ pub mod pcode;
 pub mod ehuff;
 #[doc(hidden)]
 pub mod cmeta;
+#[doc(hidden)]
+pub mod mblock;
+#[doc(hidden)]
+pub mod cwrite;
+#[doc(hidden)]
+pub mod compress;
 
 pub use api::{decompress, Error};
 pub use stream::{Result as StreamResult, Stream};
