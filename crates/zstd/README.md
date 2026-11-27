@@ -432,19 +432,24 @@ binaries; geometric means; every frame checked by libzstd's decoder):
 
 | level | ratio vs libzstd | speed vs libzstd |
 | --- | --- | --- |
-| 1 | 0.96× | 0.35× |
-| 3 | 0.98× | 0.40× |
+| 1 | 0.96× | 0.43× |
+| 3 | 0.98× | 0.49× |
+| 5 | 0.99× | 0.59× |
+| 7 | 0.99× | 0.52× |
+| 9 | 0.99× | 0.57× |
 | 16 | 1.02× | 0.71× |
 | 19 | 0.99× | 0.92× |
 
 Levels 16 to 22 use an optimal parser (`src/opt.rs`, as libzstd's btopt
 and btultra): matches from a binary tree, then the cheapest path through
 each stretch of up to 4096 positions by bit prices from literal, length
-and offset statistics carried from block to block. Levels 1 to 9 come
-within 2 to 8% of libzstd's ratio; their speed is where the gap is.
-About a quarter of the time at level 1 goes to checking each compressed
-block with the proven decoder; the rest is spread over the match finder
-and the sequence encoder (about 240 instructions a sequence).
+and offset statistics carried from block to block. At level 1, about a
+quarter of the time goes to checking each compressed block with the
+proven decoder (the check is what lets the encoder go unproven beyond
+memory safety; making it cheaper means proving the entropy coders). At
+levels 5 to 9, libzstd 1.5.5 uses its row-hash match finder, which this
+crate does not have yet; the hash chains here do about as many
+instructions but miss the cache more.
 
 ## License
 

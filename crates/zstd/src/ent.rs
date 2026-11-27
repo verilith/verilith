@@ -2294,6 +2294,10 @@ fn choose_kind(
             return Some(KindEnc { mode: 0, sym: 0 });
         }
         push(out, mx as u8);
+        // An RLE kind writes no state bits: a table of accuracy 0 makes
+        // every step write none, so the sequence loop needs no branch.
+        ct.log = 0;
+        ct.mask = 0;
         return Some(KindEnc { mode: 1, sym: mx as u8 });
     }
     let dcost: Option<u64> = if mx < def.len() {
@@ -2494,9 +2498,6 @@ pub fn put_seqs(out: &mut Vec<u8>, ll: &[u32], ml: &[u32], ob: &[u32], sc: &mut 
     let llc = sc.llc.as_slice();
     let mlc = sc.mlc.as_slice();
     let ofc = sc.ofc.as_slice();
-    let lm = lle.mode != 1;
-    let om = ofe.mode != 1;
-    let mm = mle.mode != 1;
     let mut i = last;
     while i > 0
         invariant
@@ -2514,18 +2515,12 @@ pub fn put_seqs(out: &mut Vec<u8>, ll: &[u32], ml: &[u32], ob: &[u32], sc: &mut 
         // libzstd's order: offset, match length, literals length states,
         // then the literals length, match length and offset extra bits.
         bw.flush_s(out);
-        if om {
-            let (v, nb) = fse_step(&sc.oct, &mut sof, ofc[i]);
-            bw.put(v, nb);
-        }
-        if mm {
-            let (v, nb) = fse_step(&sc.mct, &mut sml, mlc[i]);
-            bw.put(v, nb);
-        }
-        if lm {
-            let (v, nb) = fse_step(&sc.lct, &mut sll, llc[i]);
-            bw.put(v, nb);
-        }
+        let (v, nb) = fse_step(&sc.oct, &mut sof, ofc[i]);
+        bw.put(v, nb);
+        let (v, nb) = fse_step(&sc.mct, &mut sml, mlc[i]);
+        bw.put(v, nb);
+        let (v, nb) = fse_step(&sc.lct, &mut sll, llc[i]);
+        bw.put(v, nb);
         let lc = llc[i] as usize;
         let mc = mlc[i] as usize;
         let lc = if lc < 36 { lc } else { 35 };
