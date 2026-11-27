@@ -20,7 +20,9 @@ Every step that has a specification is done by a verified component:
   - what each send buffer sends, resends and frees (`sendq`);
   - which frames an acknowledged or lost packet carried (`reclog`);
   - every frame written, within the datagram and the congestion window,
-    and the padding (`pktbuf`).
+    and the padding (`pktbuf`);
+  - the timers: idle timeout, loss timers and PTO, and which one fires
+    (`timers`).
 - **`verilith-tls`**:
   - the TLS 1.3 handshake for QUIC;
   - Initial secrets;
@@ -37,7 +39,6 @@ yet. It covers:
 - storing the bytes of send buffers (`buf.rs`);
 - choosing what goes into each packet (each frame is written by verified
   `put_frame`, and only payload bytes it reserved are copied after it);
-- timers;
 - closing.
 
 It has no `unsafe`. Verifying it is the next step: its decisions are

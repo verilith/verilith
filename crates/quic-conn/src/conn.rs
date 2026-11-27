@@ -24,6 +24,7 @@ use verilith_quic::reclog::{self, RecLog};
 use verilith_quic::recv::Received;
 use verilith_quic::rtt::Rtt;
 use verilith_quic::sent::{Done, Sent};
+use verilith_quic::timers::{self, Due, Timers};
 use verilith_quic::streams::{RecvState, RecvStream, SendState, SendStream, StreamIds, Use};
 use verilith_tls::crypto::Provider;
 use verilith_tls::keys::{initial_secrets_x, Secret};
@@ -1420,7 +1421,7 @@ impl<P: Provider> Connection<P> {
 
     fn enter_closing(&mut self, now: u64) {
         let pto = self.pto_duration(2);
-        self.state = State::Closing(now + 3 * pto);
+        self.state = State::Closing(timers::add_sat(now, 3 * pto));
         self.close_owed = true;
     }
 
@@ -1433,70 +1434,51 @@ impl<P: Provider> Connection<P> {
         self.rtt.pto(mad)
     }
 
+    /// The idle timeout (§10.1), verified `timers::idle_timeout`.
     fn idle_timeout(&self) -> Option<u64> {
-        let ours = self.cfg.idle_timeout_ms;
-        let t = match (ours, self.peer_idle) {
-            (0, 0) => return None,
-            (0, p) => p,
-            (o, 0) => o,
-            (o, p) => o.min(p),
-        };
-        // §10.1: at least three PTOs.
-        Some((t * 1000).max(3 * self.pto_duration(2)))
+        timers::idle_timeout(self.cfg.idle_timeout_ms, self.peer_idle, self.pto_duration(2))
     }
 
     /// When the PTO fires, and for which space (§6.2.1).
     fn pto_time(&self) -> Option<(u64, usize)> {
-        let mut best: Option<(u64, usize)> = None;
+        let mut last = [None; 3];
+        let mut dur = [0; 3];
         for s in 0..3 {
             let sp = &self.spaces[s];
-            if sp.discarded || sp.tx.is_none() {
+            if sp.discarded || sp.tx.is_none() || (s == 2 && !self.handshake_done) {
                 continue;
             }
-            if s == 2 && !self.handshake_done {
-                continue;
-            }
-            let Some(t) = sp.sent.eliciting_in_flight() else { continue };
-            let d = verilith_quic::rtt::backoff(self.pto_duration(s), self.pto_count);
-            let at = t.saturating_add(d);
-            if best.map_or(true, |(b, _)| at < b) {
-                best = Some((at, s));
-            }
+            last[s] = sp.sent.eliciting_in_flight();
+            dur[s] = self.pto_duration(s);
         }
-        best
+        timers::pto_deadline(&last, &dur, self.pto_count)
+    }
+
+    /// The armed timers.
+    fn timers(&self) -> Timers {
+        let sp = &self.spaces[2];
+        Timers {
+            idle: self.idle_timeout().map(|d| timers::add_sat(self.idle_from, d)),
+            loss: [self.spaces[0].loss_time, self.spaces[1].loss_time, self.spaces[2].loss_time],
+            pto: self.pto_time(),
+            // The amplification limit blocks probes too (§6.2.2.1).
+            can_send: self.budget.allowance() > 0,
+            // A delayed ACK (§13.2.1).
+            ack: if sp.ack_owed && sp.recv.ack_pending() {
+                Some(timers::add_sat(sp.recv.largest_time(), self.cfg.max_ack_delay_ms.saturating_mul(1000)))
+            } else {
+                None
+            },
+        }
     }
 
     /// The next time `handle_timeout` must be called.
     pub fn poll_timeout(&self) -> Option<u64> {
         match self.state {
-            State::Closed => return None,
-            State::Closing(t) | State::Draining(t) => return Some(t),
-            _ => {}
+            State::Closed => None,
+            State::Closing(t) | State::Draining(t) => Some(t),
+            _ => timers::next(&self.timers()),
         }
-        let mut t: Option<u64> = None;
-        let mut min = |x: u64| t = Some(t.map_or(x, |y: u64| y.min(x)));
-        if let Some(d) = self.idle_timeout() {
-            min(self.idle_from.saturating_add(d));
-        }
-        let mut loss = false;
-        for sp in &self.spaces {
-            if let Some(l) = sp.loss_time {
-                min(l);
-                loss = true;
-            }
-        }
-        // The amplification limit blocks probes too (§6.2.2.1).
-        if !loss && self.budget.allowance() > 0 {
-            if let Some((p, _)) = self.pto_time() {
-                min(p);
-            }
-        }
-        // A delayed ACK (§13.2.1).
-        let sp = &self.spaces[2];
-        if sp.ack_owed && sp.recv.ack_pending() {
-            min(sp.recv.largest_time().saturating_add(self.cfg.max_ack_delay_ms * 1000));
-        }
-        t
     }
 
     /// Runs the timers due at `now`.
@@ -1512,23 +1494,14 @@ impl<P: Provider> Connection<P> {
             }
             _ => {}
         }
-        if let Some(d) = self.idle_timeout() {
-            if now >= self.idle_from.saturating_add(d) {
+        match timers::due(&self.timers(), now) {
+            Due::Nothing => {}
+            Due::Idle => {
                 self.state = State::Closed;
                 self.events.push_back(Event::Closed { code: NO_ERROR, app: false, remote: false });
-                return;
             }
-        }
-        for s in 0..3 {
-            if let Some(l) = self.spaces[s].loss_time {
-                if now >= l {
-                    self.detect_lost(now, s);
-                    return;
-                }
-            }
-        }
-        if let Some((p, s)) = self.pto_time() {
-            if now >= p && self.budget.allowance() > 0 {
+            Due::Loss(s) => self.detect_lost(now, s),
+            Due::Pto(s) => {
                 self.pto_count = self.pto_count.saturating_add(1);
                 // Send two probes; data still unacknowledged goes again
                 // (§6.2.4).
