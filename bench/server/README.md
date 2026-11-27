@@ -7,8 +7,10 @@ The design and the reasons for each case are in
 [crates/server/DESIGN.md](../../crates/server/DESIGN.md#benchmarks).
 
 ```sh
-# Linux (Debian/Ubuntu): the servers and load generators
-sudo apt-get install nginx-light h2o wrk nghttp2-client
+# Linux (Ubuntu): everything below, the HTTP/3 tools included, in one go
+../scripts/setup-ubuntu.sh
+# or by hand: the servers and load generators
+sudo apt-get install nginx-light h2o wrk nghttp2-client   # no h2o on Ubuntu 26.04: see below
 (cd baselines/hyper && cargo build --release)    # the hyper baseline
 cargo build --release -p verilith-server --features tls   # from the repo root
 
@@ -27,6 +29,10 @@ h3/build.sh                                       # h2load (HTTP/3), nginx-quic,
 (cd baselines/h3-quinn && cargo build --release)  # the h3 + quinn baseline
 ./run.py --cases h3-plaintext,h3-static-64k,h3-static-1m
 ```
+
+Ubuntu 26.04 no longer packages h2o. Where no `h2o` is on PATH, run.py
+uses the h2o that `h3/build.sh` builds (master, with mruby) for the TCP
+cases too, and the report's versions line says which h2o ran.
 
 The report is `results/<date>-<host>/report.md`, with `raw.json` (every
 load generator's full output) beside it.
@@ -71,8 +77,10 @@ a fixed body.
 ## How it measures
 
 - The server runs under `taskset` on `--server-cpus` (default the first half
-  of the CPUs) with that many worker threads; wrk and h2load run on
-  `--client-cpus` (the second half) with one thread per CPU.
+  of the physical cores, both hyperthreads of each) with that many worker
+  threads; wrk and h2load run on `--client-cpus` (the other half) with one
+  thread per CPU, but no more threads than the case has connections.
+  `./run.py --help` prints the split it picked.
 - Each case starts the server fresh, warms up for 2 s, then measures for
   10 s. Servers take turns within a case, and the order reverses each
   round.

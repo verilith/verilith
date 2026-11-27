@@ -138,6 +138,8 @@ if [ ! -x "$PREFIX/bin/h2o" ]; then
 fi
 
 step "done"
-"$PREFIX/bin/h2load" --version | head -1
-"$PREFIX/nginx/sbin/nginx" -V 2>&1 | head -2
-"$PREFIX/bin/h2o" --version | head -1
+# sed, not head: head exits after its lines, and with pipefail the
+# writer's SIGPIPE would fail the build.
+"$PREFIX/bin/h2load" --version | sed -n 1p
+"$PREFIX/nginx/sbin/nginx" -V 2>&1 | sed -n 1,2p
+"$PREFIX/bin/h2o" --version | sed -n 1p

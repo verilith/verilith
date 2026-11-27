@@ -148,13 +148,16 @@ csv=$OUT/compare.csv
 : > "$csv"
 cd "$NW/official"
 bench_lock node compare.js
+# On a quieted Linux machine, on the same CPU as the library benchmarks.
+pin=""
+[ "$OS" = Linux ] && [ -n "${VBENCH_CPU:-}" ] && pin="taskset -c $VBENCH_CPU"
 for spec in $NODE_BENCHES; do
   file=${spec%%:*}
   sets=""
   if [ "$spec" != "$file" ]; then for s in $(echo "${spec#*:}" | tr ',' ' '); do sets="$sets --set $s"; done; fi
   cat=${file%%/*}; base=$(basename "$file" .js)
   say "  $file $sets"
-  "$OFF" benchmark/compare.js --old "$OFF" --new "$HRD" --runs "$NODE_RUNS" --filter "$base.js" $sets "$cat" > "$OUT/part.csv"
+  $pin "$OFF" benchmark/compare.js --old "$OFF" --new "$HRD" --runs "$NODE_RUNS" --filter "$base.js" $sets "$cat" > "$OUT/part.csv"
   if [ -s "$csv" ]; then tail -n +2 "$OUT/part.csv" >> "$csv"; else cat "$OUT/part.csv" > "$csv"; fi
 done
 rm -f "$OUT/part.csv"

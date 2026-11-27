@@ -70,16 +70,29 @@ the host, the CPU's frequency moves, and most VMs expose no performance
 counters. For numbers worth publishing, use a dedicated (bare-metal) x86-64
 machine, by the hour or the month, and quiet it first:
 
+On a fresh Ubuntu (24.04 or later, x86-64 or arm64), one script installs
+everything, for these benchmarks and for `server/` (apt packages, Rust and
+the toolchain Verdict pins, the server baselines and the HTTP/3 tools):
+
 ```sh
+scripts/setup-ubuntu.sh              # everything (sudo for apt); --no-server
+                                     # for only what run.sh needs
+source ~/.cargo/env                  # if Rust was just installed
 sudo scripts/linux-quiet.sh on 7     # CPU 7: boost off, governor performance,
-                                     # its hyperthread offline, interrupts elsewhere
-VBENCH_CPU=7 ./run.sh                # every runner pinned to CPU 7
+                                     # its hyperthread offline, interrupts elsewhere,
+                                     # perf counters allowed
+VBENCH_CPU=7 ./run.sh                # every runner (and Node's compare.js) on CPU 7
 sudo scripts/linux-quiet.sh off      # put the settings back
 ```
 
+Without a CPU, `linux-quiet.sh on` takes the last one. `run.sh` warns if
+`VBENCH_CPU` is unset or if the kernel refuses perf counters (Ubuntu's
+default `perf_event_paranoid` is 4; `on` sets 1), and `machine.json` records
+the governor, turbo, pinned CPU and whether quiet mode was on.
 `scripts/linux-quiet.sh status` shows the current settings and whether the
 machine is a VM. Booting with `isolcpus=7 nohz_full=7` (and stopping cron and
-automatic updates) removes most of what is left.
+automatic updates) removes most of what is left. Run `server/run.py` after
+`linux-quiet.sh off`: it wants every CPU, hyperthreads included.
 
 What to trust from which machine: the speedups are a property of one machine
 and are reported with the machine they came from. Instruction counts per call

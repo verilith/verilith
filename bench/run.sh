@@ -19,7 +19,7 @@ cd "$(dirname "$0")"
 quick=0 node=1 only="" pairs=31 out=""
 while [ $# -gt 0 ]; do
   case $1 in
-    --quick) quick=1; node=0 ;;
+    --quick) quick=1; node=0; pairs=5 ;;
     --skip-node) node=0 ;;
     --only) only=$2; node=0; shift ;;
     --pairs) pairs=$2; shift ;;
@@ -33,14 +33,29 @@ done
 
 # --- Preflight -------------------------------------------------------------
 missing=""
-for t in git cargo rustc python3 cmake unzip curl "$CC" "$CXX"; do command -v "$t" >/dev/null || missing="$missing $t"; done
+tools="git cargo rustc python3 cmake unzip curl patch perl $CC $CXX"
+[ "$OS" = Linux ] && tools="$tools xz taskset"
+[ "$OS" = Linux ] && [ "$(uname -m)" = x86_64 ] && tools="$tools nasm"
+for t in $tools; do command -v "$t" >/dev/null || missing="$missing $t"; done
 if [ -n "$missing" ]; then
   if [ "$OS" = Darwin ]; then
     die "missing:$missing. Install with: xcode-select --install (compilers, git); brew install cmake ninja; curl https://sh.rustup.rs -sSf | sh"
   fi
+  if command -v apt-get >/dev/null; then die "missing:$missing. Install everything with: scripts/setup-ubuntu.sh --no-server"; fi
   die "missing:$missing"
 fi
-command -v ninja >/dev/null || warn "ninja not found: Node will build with make, which is slower (brew install ninja)"
+if ! command -v ninja >/dev/null; then
+  if [ "$OS" = Darwin ]; then warn "ninja not found: Node will build with make, which is slower (brew install ninja)"
+  else warn "ninja not found: Node will build with make, which is slower (sudo apt-get install ninja-build)"; fi
+fi
+if [ "$OS" = Linux ]; then
+  # Instruction counts need perf_event_open: Ubuntu's kernels default to
+  # perf_event_paranoid 4, which refuses it without root.
+  p=$(cat /proc/sys/kernel/perf_event_paranoid 2>/dev/null || echo 0)
+  [ "$p" -le 2 ] || warn "kernel.perf_event_paranoid is $p: instruction counts will be n/a (sudo scripts/linux-quiet.sh on sets it to 1)"
+  [ -n "${VBENCH_CPU:-}" ] || warn "VBENCH_CPU is not set: runners are not pinned to a CPU (see scripts/linux-quiet.sh)"
+  if [ -n "${VBENCH_CPU:-}" ] && ! taskset -c "$VBENCH_CPU" true 2>/dev/null; then die "VBENCH_CPU=$VBENCH_CPU is not a CPU this process can run on"; fi
+fi
 if [ "$OS" = Darwin ]; then
   src=$(pmset -g batt | head -1)
   case $src in *"AC Power"*) ;; *) warn "on battery: plug in the charger, battery power throttles the CPU ($src)" ;; esac

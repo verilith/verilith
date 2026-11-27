@@ -47,8 +47,26 @@ def main():
             m["memory"] = f"{int(kb) / 2**20:.0f} GiB"
         except OSError:
             pass
-        gov = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"
-        m["power"] = "governor " + open(gov).read().strip() if os.path.exists(gov) else ""
+        def read(path):
+            try:
+                return open(path).read().strip()
+            except OSError:
+                return None
+        # What scripts/linux-quiet.sh sets, as it was during this run.
+        cpu = os.environ.get("VBENCH_CPU")
+        gov = read("/sys/devices/system/cpu/cpu%s/cpufreq/scaling_governor" % (cpu or 0))
+        nt, boost = read("/sys/devices/system/cpu/intel_pstate/no_turbo"), read("/sys/devices/system/cpu/cpufreq/boost")
+        p = ["governor " + gov] if gov else []
+        if nt is not None:
+            p.append("turbo " + ("off" if nt == "1" else "on"))
+        elif boost is not None:
+            p.append("boost " + ("off" if boost == "0" else "on"))
+        m["power"] = ", ".join(p)
+        m["pinned_cpu"] = cpu
+        m["online_cpus"] = read("/sys/devices/system/cpu/online")
+        m["quiet"] = os.path.exists("/run/vbench-quiet.state")
+        m["virtual_machine"] = "hypervisor" in (read("/proc/cpuinfo") or "")
+        m["perf_event_paranoid"] = read("/proc/sys/kernel/perf_event_paranoid")
     m["rustc"] = sh("rustc", "-V")
     m["cc"] = first(sh(os.environ.get("CC", "cc"), "--version"))
     m["developer_dir"] = os.environ.get("DEVELOPER_DIR") or first(sh("xcode-select", "-p")) if sys.platform == "darwin" else None

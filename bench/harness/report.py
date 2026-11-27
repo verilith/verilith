@@ -202,7 +202,7 @@ def write_md(path, summary, machine, notes):
     L.append("# vbench results\n")
     if machine:
         L.append("## Machine\n")
-        for k in ("date", "host", "os", "cpu", "cores", "memory", "power", "rustc", "cc", "node", "counters"):
+        for k in ("date", "host", "os", "cpu", "cores", "memory", "power", "pinned_cpu", "quiet", "virtual_machine", "rustc", "cc", "node", "counters"):
             if machine.get(k):
                 L.append(f"- **{k}**: {machine[k]}")
         L.append("")

@@ -59,6 +59,9 @@ status() {
         echo "  governors:$(cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor | sort | uniq -c | tr -s ' ' | tr '\n' ' ')"
     fi
     echo "  online CPUs: $(cat /sys/devices/system/cpu/online)"
+    if command -v systemctl >/dev/null; then
+        echo "  irqbalance: $(systemctl is-active irqbalance 2>/dev/null || true)"
+    fi
     if grep -q hypervisor /proc/cpuinfo; then
         echo "  note: this is a virtual machine; timings share the host with other tenants"
     fi
@@ -74,6 +77,10 @@ on)
         exit 1
     fi
     cpu=${2:-$(($(nproc --all) - 1))}
+    if [ ! -d "/sys/devices/system/cpu/cpu$cpu" ]; then
+        echo "no CPU $cpu (CPUs: $(cat /sys/devices/system/cpu/possible))" >&2
+        exit 2
+    fi
     : > "$STATE"
     echo "quieting the machine for CPU $cpu"
     set_knob /sys/devices/system/cpu/intel_pstate/no_turbo 1
@@ -90,12 +97,21 @@ on)
         done
     fi
     # Interrupts on every CPU but this one, where the kernel allows it.
-    n=$(nproc --all)
-    mask=$(python3 -c "print(format(((1 << $n) - 1) & ~(1 << $cpu), 'x'))")
-    for irq in /proc/irq/*/smp_affinity; do
-        echo "$mask" > "$irq" 2>/dev/null || true
+    # irqbalance would move them back within seconds: stop it first.
+    if command -v systemctl >/dev/null && systemctl is-active --quiet irqbalance 2>/dev/null; then
+        systemctl stop irqbalance && printf 'service\tirqbalance\n' >> "$STATE" && echo "  set:  stopped irqbalance"
+    fi
+    # As a CPU list (smp_affinity_list): a hex smp_affinity mask must be
+    # split by commas every 32 CPUs, and a 96-CPU machine needs that.
+    last=$(($(nproc --all) - 1))
+    others=""
+    [ "$cpu" -gt 0 ] && others="0-$((cpu - 1))"
+    [ "$cpu" -lt "$last" ] && others="${others:+$others,}$((cpu + 1))-$last"
+    moved=0 kept=0
+    for irq in /proc/irq/*/smp_affinity_list; do
+        if echo "$others" > "$irq" 2>/dev/null; then moved=$((moved + 1)); else kept=$((kept + 1)); fi
     done
-    echo "  set:  interrupt affinity away from CPU $cpu (not restored by 'off')"
+    echo "  set:  $moved interrupts steered to CPUs $others, $kept the kernel would not move (not restored by 'off')"
     echo
     echo "now: VBENCH_CPU=$cpu ./run.sh"
     echo "for the cleanest numbers also boot with isolcpus=$cpu nohz_full=$cpu, and stop"
@@ -109,6 +125,10 @@ off)
     fi
     # Restore in reverse order, so CPUs come back online before anything else.
     tac "$STATE" | while IFS=$'\t' read -r file old; do
+        if [ "$file" = service ]; then
+            systemctl start "$old" && echo "  restored: started $old" || echo "  fail:     start $old"
+            continue
+        fi
         if echo "$old" > "$file" 2>/dev/null; then
             echo "  restored: $file = $old"
         else
