@@ -18,6 +18,7 @@ use verilith_quic::cc::NewReno;
 use verilith_quic::cubic::Cubic;
 use verilith_quic::flow::{RecvCredit, SendCredit};
 use verilith_quic::frame::{self, Frame};
+use verilith_quic::keyphase::{Gen, KeyPhase};
 use verilith_quic::packet::{self, Header};
 use verilith_quic::params::{self, TransportParameters};
 use verilith_quic::pktbuf::{self, put_frame};
@@ -334,9 +335,10 @@ pub struct Connection<P: Provider> {
     buffered: usize,
     /// 1-RTT key phase: our current phase bit; the next receive keys and
     /// both secrets.
-    key_phase: bool,
+    /// The 1-RTT key generation (verified `keyphase`).
+    kp: KeyPhase,
     rx_next: Option<Aead<P::Key>>,
-    rx_prev: Option<(Aead<P::Key>, u64)>,
+    rx_prev: Option<Aead<P::Key>>,
     secrets: Option<(Secret, Secret)>,
     suite: u16,
     /// Idle timer: the last packet received, or first ack-eliciting sent
@@ -470,7 +472,7 @@ impl<P: Provider> Connection<P> {
             path_response: None,
             events: VecDeque::new(),
             buffered: 0,
-            key_phase: false,
+            kp: KeyPhase::new(),
             rx_next: None,
             rx_prev: None,
             secrets: None,
@@ -577,29 +579,27 @@ impl<P: Provider> Connection<P> {
         let pn = packet::decode_pn(expected.min(verilith_quic::recv::PN_LIMIT - 1), t, n);
         let hdr = pn_off + n;
         let first = pkt[0];
-        let res = if s == 2 && (first & 0x04 != 0) != self.key_phase {
-            // The previous phase, for packets before the update; else the
-            // next phase (§6.3 of RFC 9001).
-            match &self.rx_prev {
-                Some((prev, from)) if pn < *from => prev.open(pn, pkt, hdr),
-                _ => {
-                    if self.rx_next.is_none() {
-                        self.prepare_next();
-                    }
-                    let r = match &self.rx_next {
-                        Some(next) => next.open(pn, pkt, hdr),
-                        None => None,
-                    };
-                    if r.is_some() {
-                        self.on_peer_key_update(pn);
-                    }
-                    r
-                }
-            }
-        } else {
-            match self.spaces[s].rx.as_ref() {
+        let bit = first & 0x04 != 0;
+        // Which generation's keys (§6.3 of RFC 9001, verified `keyphase`).
+        let g = if s == 2 { self.kp.select(bit, pn) } else { Gen::Current };
+        let res = match g {
+            Gen::Current => match self.spaces[s].rx.as_ref() {
                 Some((aead, _)) => aead.open(pn, pkt, hdr),
                 None => None,
+            },
+            Gen::Prev => self.rx_prev.as_ref().and_then(|prev| prev.open(pn, pkt, hdr)),
+            Gen::Next => {
+                if self.rx_next.is_none() {
+                    self.prepare_next();
+                }
+                let r = match &self.rx_next {
+                    Some(next) => next.open(pn, pkt, hdr),
+                    None => None,
+                };
+                if r.is_some() {
+                    self.on_peer_key_update(bit, pn);
+                }
+                r
             }
         };
         let Some(len) = res else { trace(format_args!("rx s{s} pn{pn} undecryptable")); return };
@@ -649,7 +649,10 @@ impl<P: Provider> Connection<P> {
 
     /// The peer moved to the next key phase with packet `pn` (§6.2): we
     /// follow, for receiving and sending.
-    fn on_peer_key_update(&mut self, pn: u64) {
+    fn on_peer_key_update(&mut self, bit: bool, pn: u64) {
+        if self.secrets.is_none() || !self.kp.on_update(bit, pn) {
+            return;
+        }
         let Some((c, sv)) = self.secrets.take() else { return };
         let (c2, _) = update(&self.prov, self.suite, &c);
         let (s2, tx) = update(&self.prov, self.suite, &sv);
@@ -657,12 +660,14 @@ impl<P: Provider> Connection<P> {
         let sp = &mut self.spaces[2];
         let (old, hp) = sp.rx.take().expect("1-RTT keys");
         sp.rx = Some((next, hp));
-        self.rx_prev = Some((old, pn));
+        self.rx_prev = Some(old);
         if let Some((_, hp)) = sp.tx.take() {
             sp.tx = Some((tx, hp));
         }
-        self.key_phase = !self.key_phase;
         self.secrets = Some((c2, s2));
+        // The generation after, ready before the peer uses it, so that
+        // opening a packet takes the same time either way (§6.3, §9.5).
+        self.prepare_next();
     }
 
     /// Discards a space's keys and state (§4.9 of RFC 9001, §6.4 of RFC
@@ -1748,7 +1753,7 @@ impl<P: Provider> Connection<P> {
             len_pos = Some(buf.len());
             buf.extend_from_slice(&[0x40, 0]);
         } else {
-            buf.push(0x40 | if self.key_phase { 0x04 } else { 0 } | (pn_len as u8 - 1));
+            buf.push(0x40 | if self.kp.phase() { 0x04 } else { 0 } | (pn_len as u8 - 1));
             buf.extend_from_slice(&self.remote_cid);
         }
         let pn_off = buf.len();
@@ -2019,7 +2024,7 @@ impl<P: Provider> Connection<P> {
                 len_pos = Some(buf.len());
                 buf.extend_from_slice(&[0x40, 0]);
             } else {
-                buf.push(0x40 | if self.key_phase { 0x04 } else { 0 } | (pn_len as u8 - 1));
+                buf.push(0x40 | if self.kp.phase() { 0x04 } else { 0 } | (pn_len as u8 - 1));
                 buf.extend_from_slice(&self.remote_cid);
             }
             let pn_off = buf.len();

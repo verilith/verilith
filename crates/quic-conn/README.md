@@ -23,7 +23,8 @@ Every step that has a specification is done by a verified component:
     and the padding (`pktbuf`);
   - the timers: idle timeout, loss timers and PTO, and which one fires
     (`timers`);
-  - which frames each packet type may carry (`allowed`).
+  - which frames each packet type may carry (`allowed`);
+  - which 1-RTT keys open a packet through key updates (`keyphase`).
 - **`verilith-tls`**:
   - the TLS 1.3 handshake for QUIC;
   - Initial secrets;
