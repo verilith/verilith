@@ -48,6 +48,9 @@ if ! command -v ninja >/dev/null; then
   if [ "$OS" = Darwin ]; then warn "ninja not found: Node will build with make, which is slower (brew install ninja)"
   else warn "ninja not found: Node will build with make, which is slower (sudo apt-get install ninja-build)"; fi
 fi
+need=15; [ $node = 1 ] && need=45
+free=$(df -Pk "$ROOT" | awk 'NR==2 {print int($4 / 1048576)}')
+[ "$free" -ge "$need" ] || warn "only ${free} GB free for work/; this run needs about $need GB"
 if [ "$OS" = Linux ]; then
   # Instruction counts need perf_event_open: Ubuntu's kernels default to
   # perf_event_paranoid 4, which refuses it without root.

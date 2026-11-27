@@ -29,6 +29,13 @@ say() { printf '\033[1m==> %s\033[0m\n' "$*" >&2; }
 warn() { printf '\033[33mwarning: %s\033[0m\n' "$*" >&2; }
 [ "$(uname -s)" = Linux ] || { echo "this script is for Ubuntu; on a Mac see bench/README.md" >&2; exit 1; }
 command -v apt-get >/dev/null || { echo "no apt-get: this script is for Ubuntu or Debian" >&2; exit 1; }
+# Disk: the originals, their builds and two Node.js builds come to about
+# 40 GB under bench/work, the server tools to a few more. AWS's Ubuntu
+# images start with an 8 GB root volume.
+free=$(df -Pk "$REPO" | awk 'NR==2 {print int($4 / 1048576)}')
+if [ "$free" -lt 60 ]; then
+  warn "only ${free} GB free on the disk holding $REPO; a full run needs about 60 GB (grow the volume, or use the instance's NVMe disk)"
+fi
 SUDO=""
 [ "$(id -u)" = 0 ] || SUDO=sudo
 apt_install() { $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends "$@"; }
