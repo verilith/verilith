@@ -8,3 +8,5 @@ __pycache__/
 Cargo.lock
 !/Cargo.lock
 buck-out/
+# bench/run.sh writes results/<date>-<hostname>/ here; keep machine names out of git.
+/bench/results/
