@@ -1,16 +1,11 @@
 //! HTTP/3 (RFC 9114), one QUIC endpoint per worker (DESIGN.md, "HTTP/3").
 //!
-//! QUIC itself (packets, TLS 1.3, loss recovery, congestion control) comes
-//! from one of two sans-I/O backends, picked by the [`QuicConfig`]:
-//!
-//! - verilith-quic-conn, the default: its wire format, flow control,
-//!   stream states, loss recovery and congestion control are
-//!   verilith-quic's (verified), and its handshake and packet protection
-//!   are verilith-tls's (verified), with aws-lc's cryptography. The
-//!   connection logic joining them is plain Rust for now (that crate's
-//!   README).
-//! - quinn-proto with rustls, trusted (TRUST.md), kept to compare
-//!   (`--h3-backend quinn`).
+//! QUIC itself is verilith-quic-conn, sans I/O: its wire format, flow
+//! control, stream states, loss recovery and congestion control are
+//! verilith-quic's (verified), and its handshake and packet protection are
+//! verilith-tls's (verified), with aws-lc's cryptography. The connection
+//! logic joining them is that crate's (its README says what of it is
+//! verified).
 //!
 //! Everything HTTP/3 is verified: what each stream's bytes mean is
 //! [`crate::h3core`]'s (on verilith-h3's `Reader`: frame syntax and order,
@@ -20,9 +15,8 @@
 //! budget is `h3core::Budget`. This file connects them: it accepts
 //! streams, hands their bytes to the core, decodes the sections the core
 //! points at, dispatches requests to the handler like HTTP/2 does, and
-//! writes the responses, over either backend through the [`Quic`] trait.
-//! It is trusted for that plumbing (TRUST.md) and tested in `tests/h3.rs`,
-//! on both backends.
+//! writes the responses, through the [`Quic`] trait. It is
+//! trusted for that plumbing (TRUST.md) and tested in `tests/h3.rs`.
 //!
 //! QPACK runs without a dynamic table in either direction (our SETTINGS
 //! advertise capacity 0 and no blocked streams, and our encoder uses none),
@@ -38,10 +32,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::{Buf, Bytes, BytesMut};
-use quinn_proto::{
-    ConnectionHandle, DatagramEvent, Dir, Endpoint, EndpointConfig, ReadError, ServerConfig, StreamEvent, StreamId,
-    TransportConfig, VarInt, WriteError,
-};
 use verilith_h3::consts::*;
 use verilith_h3::{Src, UniKind, UniSeen};
 use verilith_http::Header;
@@ -85,9 +75,11 @@ pub struct Limits3 {
     pub abandoned_per_request: u32,
     /// The largest UDP payload the verilith backend probes for: it starts
     /// at 1200, the minimum QUIC requires of paths (RFC 9000 §14), and
-    /// moves up to this once a probe of this size is acknowledged. 1452
-    /// fills a 1500-byte Ethernet MTU over IPv6, quinn's default upper
-    /// bound too.
+    /// steps up through 1452 (a 1500-byte Ethernet MTU over IPv6) and 8952
+    /// (a 9000-byte jumbo frame) to this, as each probe is acknowledged.
+    /// The socket sets DF, so a probe the path cannot carry is lost, not
+    /// fragmented. 65487 fits loopback's 65536-byte MTU over IPv6: there,
+    /// as with nginx, a 64 KiB response is one datagram, not 45.
     pub max_udp_payload: u16,
 }
 
@@ -101,114 +93,36 @@ impl Default for Limits3 {
             window: 8 << 20,
             send_window: 8 << 20,
             abandoned_per_request: 100,
-            max_udp_payload: 1452,
+            max_udp_payload: 65487,
         }
     }
 }
 
-/// Which QUIC implementation serves HTTP/3.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum Backend {
-    Quinn,
-    #[default]
-    Verilith,
-}
-
-/// A QUIC server configuration, for one backend.
+/// A QUIC server configuration.
 #[derive(Clone)]
-pub enum QuicConfig {
-    Quinn(Arc<ServerConfig>),
-    Verilith(Arc<vq::Config<AwsLc>>),
-}
+pub struct QuicConfig(Arc<vq::Config<AwsLc>>);
 
 impl std::fmt::Debug for QuicConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            QuicConfig::Quinn(_) => "QuicConfig::Quinn",
-            QuicConfig::Verilith(_) => "QuicConfig::Verilith",
-        })
+        f.write_str("QuicConfig")
     }
 }
 
 /// The QUIC server configuration (TLS 1.3, ALPN `h3`) for this
-/// certificate chain and key, PEM files (the key PKCS#8), on the default
-/// backend (verilith-quic-conn).
+/// certificate chain and key, PEM files (the key PKCS#8).
 pub fn server_config(cert: &str, key: &str, limits: Limits3) -> std::io::Result<QuicConfig> {
-    server_config_on(Backend::default(), cert, key, limits)
+    use crate::tls::pem_blocks;
+    let chain = pem_blocks(&std::fs::read(cert)?, "CERTIFICATE");
+    let keys = pem_blocks(&std::fs::read(key)?, "PRIVATE KEY");
+    let key = keys.first().ok_or_else(|| std::io::Error::other("no PKCS#8 \"PRIVATE KEY\" block in the key file"))?;
+    server_config_der(chain, key, limits)
 }
 
-/// [`server_config`], on `backend`.
-pub fn server_config_on(backend: Backend, cert: &str, key: &str, limits: Limits3) -> std::io::Result<QuicConfig> {
-    use rustls::pki_types::pem::PemObject;
-    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-    let e = |e: rustls::pki_types::pem::Error| std::io::Error::other(e.to_string());
-    let certs = CertificateDer::pem_file_iter(cert).map_err(e)?.collect::<Result<Vec<_>, _>>().map_err(e)?;
-    let key = PrivateKeyDer::from_pem_file(key).map_err(e)?;
-    server_config_der_on(backend, certs, key, limits)
-}
-
-/// [`server_config`], from DER.
-pub fn server_config_der(
-    certs: Vec<rustls::pki_types::CertificateDer<'static>>,
-    key: rustls::pki_types::PrivateKeyDer<'static>,
-    limits: Limits3,
-) -> std::io::Result<QuicConfig> {
-    server_config_der_on(Backend::default(), certs, key, limits)
-}
-
-/// [`server_config_der`], on `backend`.
-pub fn server_config_der_on(
-    backend: Backend,
-    certs: Vec<rustls::pki_types::CertificateDer<'static>>,
-    key: rustls::pki_types::PrivateKeyDer<'static>,
-    limits: Limits3,
-) -> std::io::Result<QuicConfig> {
-    match backend {
-        Backend::Quinn => quinn_config(certs, key, limits),
-        Backend::Verilith => verilith_config(certs, key, limits),
-    }
-}
-
-fn quinn_config(
-    certs: Vec<rustls::pki_types::CertificateDer<'static>>,
-    key: rustls::pki_types::PrivateKeyDer<'static>,
-    limits: Limits3,
-) -> std::io::Result<QuicConfig> {
-    let o = |e: &dyn std::fmt::Display| std::io::Error::other(e.to_string());
-    let mut c = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .map_err(|e| o(&e))?
-        .with_no_client_auth()
-        .with_single_cert(certs, key)
-        .map_err(|e| o(&e))?;
-    c.alpn_protocols = vec![b"h3".to_vec()];
-    c.send_tls13_tickets = 2;
-    c.ticketer = rustls::crypto::aws_lc_rs::Ticketer::new().map_err(|e| o(&e))?;
-    let q = quinn_proto::crypto::rustls::QuicServerConfig::try_from(c).map_err(|e| o(&e))?;
-    let mut s = ServerConfig::with_crypto(Arc::new(q));
-    let mut t = TransportConfig::default();
-    t.max_concurrent_bidi_streams(VarInt::from_u32(limits.max_streams))
-        // Control, QPACK encoder and decoder, and a few the peer may add.
-        .max_concurrent_uni_streams(VarInt::from_u32(8))
-        .stream_receive_window(VarInt::from_u32(limits.stream_window))
-        .receive_window(VarInt::from_u32(limits.window))
-        .send_window(limits.send_window)
-        .max_idle_timeout(Some(VarInt::from_u32(30_000).into()))
-        // Datagrams are not used (no SETTINGS_H3_DATAGRAM).
-        .datagram_receive_buffer_size(None);
-    s.transport_config(Arc::new(t));
-    Ok(QuicConfig::Quinn(Arc::new(s)))
-}
-
-fn verilith_config(
-    certs: Vec<rustls::pki_types::CertificateDer<'static>>,
-    key: rustls::pki_types::PrivateKeyDer<'static>,
-    limits: Limits3,
-) -> std::io::Result<QuicConfig> {
+/// [`server_config`], from a certificate chain (DER, leaf first) and a
+/// PKCS#8 key (DER).
+pub fn server_config_der(chain: Vec<Vec<u8>>, key_pkcs8: &[u8], limits: Limits3) -> std::io::Result<QuicConfig> {
     let bad = |m: &str| std::io::Error::new(std::io::ErrorKind::InvalidInput, m.to_string());
-    let rustls::pki_types::PrivateKeyDer::Pkcs8(k) = key else { return Err(bad("the key is not PKCS#8")) };
-    let key = SigningKey::from_pkcs8(k.secret_pkcs8_der()).ok_or_else(|| bad("the key is not PKCS#8 ECDSA, Ed25519 or RSA"))?;
-    let chain: Vec<Vec<u8>> = certs.iter().map(|c| c.to_vec()).collect();
+    let key = SigningKey::from_pkcs8(key_pkcs8).ok_or_else(|| bad("the key is not PKCS#8 ECDSA, Ed25519 or RSA"))?;
     let tls = verilith_tls::server::Config::new(SUITES.to_vec(), GROUPS.to_vec(), key.schemes().to_vec(), b"\x02h3".to_vec(), &chain)
         .ok_or_else(|| bad("the certificate chain is empty or too long"))?;
     let key = Arc::new(key);
@@ -221,7 +135,7 @@ fn verilith_config(
     c.send_buffer = limits.send_window as usize;
     c.max_datagram = 1200;
     c.probe_datagram = usize::from(limits.max_udp_payload);
-    Ok(QuicConfig::Verilith(Arc::new(c)))
+    Ok(QuicConfig(Arc::new(c)))
 }
 
 // ---------------------------------------------------------------------
@@ -269,67 +183,6 @@ trait Quic {
 
 fn is_bidi(id: u64) -> bool {
     id & 2 == 0
-}
-
-impl Quic for quinn_proto::Connection {
-    type Id = StreamId;
-
-    fn next_event(&mut self) -> Option<QEv<StreamId>> {
-        Some(match self.poll()? {
-            quinn_proto::Event::Stream(StreamEvent::Opened { dir }) => QEv::Opened { bidi: dir == Dir::Bi },
-            quinn_proto::Event::Stream(StreamEvent::Readable { id }) => QEv::Readable(id),
-            quinn_proto::Event::Stream(StreamEvent::Writable { id }) => QEv::Writable(id),
-            quinn_proto::Event::Stream(StreamEvent::Stopped { id, .. }) => QEv::Stopped(id),
-            _ => QEv::Other,
-        })
-    }
-
-    fn accept(&mut self, bidi: bool) -> Option<StreamId> {
-        self.streams().accept(if bidi { Dir::Bi } else { Dir::Uni })
-    }
-
-    fn open_uni(&mut self) -> Option<StreamId> {
-        self.streams().open(Dir::Uni)
-    }
-
-    fn read(&mut self, id: StreamId, out: &mut Vec<u8>) -> Read {
-        let mut rs = self.recv_stream(id);
-        let Ok(mut chunks) = rs.read(true) else { return Read::Gone };
-        let r = loop {
-            match chunks.next(usize::MAX) {
-                Ok(Some(ch)) => out.extend_from_slice(&ch.bytes),
-                Ok(None) => break Read::Fin,
-                Err(ReadError::Blocked) => break Read::Open,
-                Err(ReadError::Reset(_)) => break Read::Reset,
-            }
-        };
-        let _ = chunks.finalize();
-        r
-    }
-
-    fn write(&mut self, id: StreamId, out: &mut [Bytes]) -> Result<(usize, usize), bool> {
-        match self.send_stream(id).write_chunks(out) {
-            Ok(w) => Ok((w.chunks, w.bytes)),
-            Err(WriteError::Blocked) => Err(true),
-            Err(_) => Err(false),
-        }
-    }
-
-    fn finish(&mut self, id: StreamId) {
-        let _ = self.send_stream(id).finish();
-    }
-
-    fn reset(&mut self, id: StreamId, code: u64) {
-        let _ = self.send_stream(id).reset(VarInt::from_u64(code).unwrap_or(VarInt::from_u32(0)));
-    }
-
-    fn stop(&mut self, id: StreamId, code: u64) {
-        let _ = self.recv_stream(id).stop(VarInt::from_u64(code).unwrap_or(VarInt::from_u32(0)));
-    }
-
-    fn handshaking(&self) -> bool {
-        self.is_handshaking()
-    }
 }
 
 impl Quic for vq::Connection<AwsLc> {
@@ -499,27 +352,16 @@ struct Close(u64);
 /// connections on it.
 pub struct H3 {
     pub(crate) fd: i32,
-    back: Back,
+    server: vq::Server<AwsLc, VConn>,
+    /// The connections' clock starts here.
+    epoch: Instant,
     timers: BinaryHeap<Reverse<(Instant, usize)>>,
     limits: Limits3,
-    /// Datagrams are received into the spare capacity of this buffer and
-    /// split off it, so quinn holds them without a copy.
+    /// Datagrams are received into the spare capacity of this buffer.
     rbuf: BytesMut,
     sbuf: Vec<u8>,
     dirty: Vec<usize>,
     gso: bool,
-}
-
-enum Back {
-    Quinn { endpoint: Endpoint, conns: Vec<Option<Box<QConn>>> },
-    Verilith { server: vq::Server<AwsLc, VConn>, epoch: Instant },
-}
-
-struct QConn {
-    q: quinn_proto::Connection,
-    app: App<StreamId>,
-    /// The timer last scheduled for this connection.
-    deadline: Option<Instant>,
 }
 
 struct VConn {
@@ -530,21 +372,27 @@ struct VConn {
     deadline: Option<Instant>,
 }
 
-/// Datagrams per `sendmsg` with segmentation offload.
-const BATCH: usize = 16;
+/// Datagrams per `sendmsg` with segmentation offload: Linux's limit
+/// (UDP_MAX_SEGMENTS), and verilith-quic-conn also keeps a batch within
+/// one UDP payload. 16 sent a 64 KiB response in three or four batches,
+/// against nginx-quic's one or two, and the extra sends and receives
+/// left the server waiting on the client.
+const BATCH: usize = 64;
 const RECV_ROOM: usize = 64 * 1024;
+/// Bytes one connection sends at a time, before it next hears from its
+/// peer (RFC 9002 §7.7: a sender should limit bursts; it does not pace).
+/// Linux gives a socket 208 KiB of receive buffer by default, and h2load,
+/// like most clients, keeps it: a 1 MiB window sent at once in 64 KiB
+/// datagrams lost its tail there, and each such loss waited for a probe
+/// timeout. 128 KiB stays within it.
+const BURST: usize = 128 * 1024;
 
 impl H3 {
     pub fn new(fd: i32, cfg: QuicConfig, limits: Limits3) -> H3 {
-        let back = match cfg {
-            QuicConfig::Quinn(cfg) => {
-                Back::Quinn { endpoint: Endpoint::new(Arc::new(EndpointConfig::default()), Some(cfg), true, None), conns: Vec::new() }
-            }
-            QuicConfig::Verilith(cfg) => Back::Verilith { server: vq::Server::new(cfg), epoch: Instant::now() },
-        };
         H3 {
             fd,
-            back,
+            server: vq::Server::new(cfg.0),
+            epoch: Instant::now(),
             timers: BinaryHeap::new(),
             limits,
             rbuf: BytesMut::new(),
@@ -555,22 +403,27 @@ impl H3 {
     }
 
     fn deadline(&mut self, ch: usize) -> Option<Instant> {
-        match &mut self.back {
-            Back::Quinn { conns, .. } => conns.get(ch)?.as_ref()?.deadline,
-            Back::Verilith { server, .. } => server.get(ch)?.1.deadline,
-        }
+        self.server.get(ch)?.1.deadline
     }
 
-    /// Milliseconds to the next timer, if any.
+    /// Milliseconds to the next timer, if any, rounded up.
     pub fn timeout_ms(&mut self, now: Instant) -> Option<i32> {
+        self.timeout_us(now).map(|us| us.div_ceil(1000) as i32)
+    }
+
+    /// Microseconds to the next timer, if any (at most a second), rounded
+    /// up: waking early only to sleep again costs a poll. Loss detection
+    /// on a fast path waits a fraction of a millisecond (RFC 9002 §6.1.2:
+    /// 9/8 of the RTT), so rounding to milliseconds would leave the
+    /// connection idle for most of that millisecond.
+    pub fn timeout_us(&mut self, now: Instant) -> Option<u64> {
         while let Some(Reverse((t, ch))) = self.timers.peek().copied() {
             if self.deadline(ch) != Some(t) {
                 self.timers.pop();
                 continue;
             }
             let d = t.saturating_duration_since(now);
-            // Round up: waking early only to sleep again costs a poll.
-            return Some(d.as_millis().min(1000) as i32 + (d.subsec_nanos() % 1_000_000 != 0) as i32);
+            return Some((d.as_micros() as u64 + !d.subsec_nanos().is_multiple_of(1000) as u64).min(1_000_000));
         }
         None
     }
@@ -586,20 +439,10 @@ impl H3 {
             if self.deadline(ch) != Some(t) {
                 continue;
             }
-            match &mut self.back {
-                Back::Quinn { conns, .. } => {
-                    if let Some(Some(c)) = conns.get_mut(ch) {
-                        c.deadline = None;
-                        c.q.handle_timeout(now);
-                    }
-                }
-                Back::Verilith { server, epoch } => {
-                    let us = micros(*epoch, now);
-                    if let Some((q, c)) = server.get(ch) {
-                        c.deadline = None;
-                        q.handle_timeout(us);
-                    }
-                }
+            let us = micros(self.epoch, now);
+            if let Some((q, c)) = self.server.get(ch) {
+                c.deadline = None;
+                q.handle_timeout(us);
             }
             self.dirty.push(ch);
         }
@@ -631,48 +474,12 @@ impl H3 {
 
     fn on_datagram(&mut self, now: Instant, remote: SocketAddrV4, mut data: BytesMut) {
         self.sbuf.clear();
-        match &mut self.back {
-            Back::Quinn { endpoint, conns } => match endpoint.handle(now, SocketAddr::V4(remote), None, None, data, &mut self.sbuf) {
-                Some(DatagramEvent::NewConnection(incoming)) => {
-                    self.sbuf.clear();
-                    match endpoint.accept(incoming, now, &mut self.sbuf, None) {
-                        Ok((ch, q)) => {
-                            let i = ch.0;
-                            if conns.len() <= i {
-                                conns.resize_with(i + 1, || None);
-                            }
-                            conns[i] = Some(Box::new(QConn { q, app: App::new(&self.limits), deadline: None }));
-                            self.dirty.push(i);
-                        }
-                        Err(e) => {
-                            if let Some(t) = e.response {
-                                send(self.fd, &self.sbuf[..t.size], t.destination, t.segment_size, &mut self.gso);
-                            }
-                        }
-                    }
-                }
-                Some(DatagramEvent::ConnectionEvent(ch, ev)) => {
-                    if let Some(Some(c)) = conns.get_mut(ch.0) {
-                        c.q.handle_event(ev);
-                        self.dirty.push(ch.0);
-                    }
-                }
-                Some(DatagramEvent::Response(t)) => {
-                    send(self.fd, &self.sbuf[..t.size], t.destination, t.segment_size, &mut self.gso)
-                }
-                None => {}
-            },
-            Back::Verilith { server, epoch } => {
-                let limits = &self.limits;
-                let make = || VConn { app: App::new(limits), peer: remote, deadline: None };
-                match server.handle_with(micros(*epoch, now), &mut data, &mut self.sbuf, make) {
-                    vq::Datagram::Conn(i) => self.dirty.push(i),
-                    vq::Datagram::Response(n) => {
-                        send(self.fd, &self.sbuf[..n], SocketAddr::V4(remote), None, &mut self.gso)
-                    }
-                    vq::Datagram::Dropped => {}
-                }
-            }
+        let limits = &self.limits;
+        let make = || VConn { app: App::new(limits), peer: remote, deadline: None };
+        match self.server.handle_with(micros(self.epoch, now), &mut data, &mut self.sbuf, make) {
+            vq::Datagram::Conn(i) => self.dirty.push(i),
+            vq::Datagram::Response(n) => send(self.fd, &self.sbuf[..n], SocketAddr::V4(remote), None, &mut self.gso),
+            vq::Datagram::Dropped => {}
         }
     }
 
@@ -688,59 +495,37 @@ impl H3 {
     }
 
     /// Everything a connection has to do after its state changed: the
-    /// application events, the packets to send, and its timer (and for
-    /// quinn, its endpoint events).
+    /// application events, the packets to send, and its timer.
     fn drive<H: Handler + ?Sized>(&mut self, ch: usize, h: &H, ctx: &Ctx, now: Instant) {
         let limits = self.limits;
         let max = if self.gso { BATCH } else { 1 };
-        let deadline = match &mut self.back {
-            Back::Quinn { endpoint, conns } => {
-                let Some(Some(c)) = conns.get_mut(ch) else { return };
-                if exchange(endpoint, ch, &mut c.q) {
-                    conns[ch] = None;
-                    return;
-                }
-                if let Err(Close(code)) = app_events(&mut c.q, &mut c.app, h, ctx, &limits) {
-                    c.q.close(now, VarInt::from_u64(code).unwrap_or(VarInt::from_u32(0x101)), Bytes::new());
-                }
-                loop {
-                    self.sbuf.clear();
-                    let Some(t) = c.q.poll_transmit(now, max, &mut self.sbuf) else { break };
-                    send(self.fd, &self.sbuf[..t.size], t.destination, t.segment_size, &mut self.gso);
-                }
-                if exchange(endpoint, ch, &mut c.q) {
-                    conns[ch] = None;
-                    return;
-                }
-                let d = c.q.poll_timeout();
-                if d == c.deadline {
-                    return;
-                }
-                c.deadline = d;
-                d
+        let deadline = {
+            let (server, epoch) = (&mut self.server, self.epoch);
+            let us = micros(epoch, now);
+            let Some((q, c)) = server.get(ch) else { return };
+            if let Err(Close(code)) = app_events(q, &mut c.app, h, ctx, &limits) {
+                q.close(us, code);
             }
-            Back::Verilith { server, epoch } => {
-                let us = micros(*epoch, now);
-                let Some((q, c)) = server.get(ch) else { return };
-                if let Err(Close(code)) = app_events(q, &mut c.app, h, ctx, &limits) {
-                    q.close(us, code);
-                }
-                loop {
-                    self.sbuf.clear();
-                    let Some(t) = q.poll_transmit(us, max, &mut self.sbuf) else { break };
-                    send(self.fd, &self.sbuf[..t.size], SocketAddr::V4(c.peer), t.segment_size, &mut self.gso);
-                }
-                if q.is_closed() {
-                    server.reap(ch);
-                    return;
-                }
-                let d = q.poll_timeout().map(|t| *epoch + Duration::from_micros(t));
-                if d == c.deadline {
-                    return;
-                }
-                c.deadline = d;
-                d
+            // At most BURST bytes now: the rest goes as acknowledgments
+            // arrive (or a timer fires), so that a burst of a whole
+            // window does not overflow the client's socket buffer.
+            let mut burst = 0;
+            while burst < BURST {
+                self.sbuf.clear();
+                let Some(t) = q.poll_transmit(us, max, &mut self.sbuf) else { break };
+                burst += t.size;
+                send(self.fd, &self.sbuf[..t.size], SocketAddr::V4(c.peer), t.segment_size, &mut self.gso);
             }
+            if q.is_closed() {
+                server.reap(ch);
+                return;
+            }
+            let d = q.poll_timeout().map(|t| epoch + Duration::from_micros(t));
+            if d == c.deadline {
+                return;
+            }
+            c.deadline = d;
+            d
         };
         if let Some(t) = deadline {
             self.timers.push(Reverse((t, ch)));
@@ -755,21 +540,6 @@ fn micros(epoch: Instant, now: Instant) -> u64 {
 fn send(fd: i32, buf: &[u8], to: SocketAddr, segment: Option<usize>, gso: &mut bool) {
     let SocketAddr::V4(d) = to else { return };
     sys::send_to(fd, buf, d.ip().octets(), d.port(), segment.unwrap_or(buf.len()), gso);
-}
-
-/// Passes events between a quinn connection and its endpoint. True once
-/// the connection is drained (gone).
-fn exchange(endpoint: &mut Endpoint, ch: usize, q: &mut quinn_proto::Connection) -> bool {
-    while let Some(ev) = q.poll_endpoint_events() {
-        let drained = ev.is_drained();
-        if let Some(back) = endpoint.handle_event(ConnectionHandle(ch), ev) {
-            q.handle_event(back);
-        }
-        if drained {
-            return true;
-        }
-    }
-    false
 }
 
 // ---------------------------------------------------------------------
@@ -1013,7 +783,7 @@ fn dispatch<Id: Copy + Eq + Hash + Into<u64>, H: Handler + ?Sized>(c: &mut App<I
     let get = |n: &[u8]| req.fields.iter().find(|f| f.name.of(a) == n).map(|f| f.value.of(a)).unwrap_or(b"");
     let method = get(b":method");
     let target = get(b":path");
-    let request = Request { method, target, minor: 1, buf: a, headers: &req.fields, body: req.core.body(), early: false };
+    let request = Request { method, target, minor: 1, buf: a, headers: &req.fields, body: req.core.body(), early: false, peer: None };
     let mut reply = req.reply.take().unwrap_or(Reply { status: 0, fields: HList::default(), body: ReplyBody::None, sent_headers: false, off: 0 });
     // A reused stream's reply keeps its buffers, not its fields.
     reply.fields.clear();

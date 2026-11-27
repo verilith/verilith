@@ -1,7 +1,8 @@
 //! Variable-length integers (RFC 9000 §16): the verified decoder and
 //! encoder, and the round trip.
 use crate::spec::*;
-use verilith_core::prims::{get, set};
+#[cfg(verus_only)]
+use verilith_core::varint::{b8, varint, varint_enc, varint_size, vlen};
 use vstd::prelude::*;
 
 verus! {
@@ -198,7 +199,140 @@ pub open spec fn var_at(b: Seq<u8>, p: int) -> Var {
     var_dec(b.skip(p))
 }
 
-/// Reads the varint at `b[p..]`: `None` if `b` ends inside it.
+/// One step of a big-endian value: `x * 256 + c` is `x` shifted up a byte
+/// with `c` in the low byte.
+proof fn lemma_step(x: u64, c: u64)
+    requires
+        x < 0x100_0000_0000_0000,
+        c < 256,
+    ensures
+        (x * 256 + c) as nat == x as nat * 256 + c as nat,
+        ((x << 8u64) | c) == (x * 256 + c) as u64,
+        x * 256 + c < 0x1_0000_0000_0000_0000,
+{
+    assert(((x << 8u64) | c) == (x * 256 + c) as u64) by (bit_vector)
+        requires
+            x < 0x100_0000_0000_0000,
+            c < 256,
+    ;
+    assert(x * 256 + c < 0x1_0000_0000_0000_0000) by (nonlinear_arith)
+        requires
+            x < 0x100_0000_0000_0000,
+            c < 256,
+    ;
+}
+
+/// `var_dec` (this crate's statement, in arithmetic) and verilith-core's
+/// `varint` (RFC 9000's, in bit operations) read the same varint.
+pub proof fn lemma_var_core(b: Seq<u8>, p: int)
+    requires
+        0 <= p <= b.len(),
+    ensures
+        match var_dec(b.skip(p)) {
+            Var::Short => varint(b, p) is None,
+            Var::Ok(v, n) => varint(b, p) matches Some((x, e)) && x as nat == v && e == p + n,
+        },
+{
+    let s = b.skip(p);
+    if p == b.len() {
+        assert(s.len() == 0);
+        return;
+    }
+    assert(s[0] == b[p]);
+    let n = var_len(s[0]);
+    assert(n == vlen(b[p]));
+    if s.len() < n {
+        return;
+    }
+    let su = s.update(0, s[0] % 64);
+    reveal_with_fuel(be, 9);
+    let c0 = b[p];
+    let x0 = (c0 as u64) & 0x3f;
+    assert(x0 == (c0 % 64) as u64 && x0 < 64) by (bit_vector)
+        requires
+            x0 == (c0 as u64) & 0x3f,
+    ;
+    assert(su[0] as nat == x0 as nat);
+    if n == 1 {
+        return;
+    }
+    assert(forall|k: int| 1 <= k < n ==> #[trigger] su[k] == b[p + k]);
+    let x1 = b[p + 1] as u64;
+    lemma_step(x0, x1);
+    let y1 = (x0 * 256 + x1) as u64;
+    assert(be(su, 2) == y1 as nat);
+    if n == 2 {
+        return;
+    }
+    let x2 = b[p + 2] as u64;
+    let x3 = b[p + 3] as u64;
+    lemma_step(y1, x2);
+    let y2 = (y1 * 256 + x2) as u64;
+    lemma_step(y2, x3);
+    let y3 = (y2 * 256 + x3) as u64;
+    assert(be(su, 4) == y3 as nat);
+    if n == 4 {
+        assert(y3 == (x0 << 24u64) | (x1 << 16u64) | (x2 << 8u64) | x3) by (bit_vector)
+            requires
+                x0 < 64 && x1 < 256 && x2 < 256 && x3 < 256,
+                y1 == (x0 << 8u64) | x1,
+                y2 == (y1 << 8u64) | x2,
+                y3 == (y2 << 8u64) | x3,
+        ;
+        return;
+    }
+    let x4 = b[p + 4] as u64;
+    let x5 = b[p + 5] as u64;
+    let x6 = b[p + 6] as u64;
+    let x7 = b[p + 7] as u64;
+    assert(y3 < 0x4000_0000) by (bit_vector)
+        requires
+            x0 < 64 && x1 < 256 && x2 < 256 && x3 < 256,
+            y1 == (x0 << 8u64) | x1,
+            y2 == (y1 << 8u64) | x2,
+            y3 == (y2 << 8u64) | x3,
+    ;
+    lemma_step(y3, x4);
+    let y4 = (y3 * 256 + x4) as u64;
+    assert(y4 < 0x40_0000_0000) by (bit_vector)
+        requires
+            y3 < 0x4000_0000 && x4 < 256,
+            y4 == (y3 << 8u64) | x4,
+    ;
+    lemma_step(y4, x5);
+    let y5 = (y4 * 256 + x5) as u64;
+    assert(y5 < 0x4000_0000_0000) by (bit_vector)
+        requires
+            y4 < 0x40_0000_0000 && x5 < 256,
+            y5 == (y4 << 8u64) | x5,
+    ;
+    lemma_step(y5, x6);
+    let y6 = (y5 * 256 + x6) as u64;
+    assert(y6 < 0x40_0000_0000_0000) by (bit_vector)
+        requires
+            y5 < 0x4000_0000_0000 && x6 < 256,
+            y6 == (y5 << 8u64) | x6,
+    ;
+    lemma_step(y6, x7);
+    let y7 = (y6 * 256 + x7) as u64;
+    assert(be(su, 8) == y7 as nat);
+    assert(y7 == (x0 << 56u64) | (x1 << 48u64) | (x2 << 40u64) | (x3 << 32u64) | (x4 << 24u64) | (x5
+        << 16u64) | (x6 << 8u64) | x7) by (bit_vector)
+        requires
+            x0 < 64 && x1 < 256 && x2 < 256 && x3 < 256 && x4 < 256 && x5 < 256 && x6 < 256 && x7
+                < 256,
+            y1 == (x0 << 8u64) | x1,
+            y2 == (y1 << 8u64) | x2,
+            y3 == (y2 << 8u64) | x3,
+            y4 == (y3 << 8u64) | x4,
+            y5 == (y4 << 8u64) | x5,
+            y6 == (y5 << 8u64) | x6,
+            y7 == (y6 << 8u64) | x7,
+    ;
+}
+
+/// Reads the varint at `b[p..]`: `None` if `b` ends inside it. The reader
+/// is verilith-core's, shared with QUIC.
 #[inline(always)]
 pub fn read_var(b: &[u8], p: usize) -> (r: Option<(u64, usize)>)
     requires
@@ -210,87 +344,12 @@ pub fn read_var(b: &[u8], p: usize) -> (r: Option<(u64, usize)>)
         },
         r matches Some((v, e)) ==> v <= MAX_VARINT && p < e <= b@.len() && e <= p + 8,
 {
-    let ghost s = b@.skip(p as int);
-    let len = b.len();
-    if p >= len {
-        return None;
-    }
-    let first = get(b, p);
-    let x = (first % 64) as u64;
-    let ghost su = s.update(0, s[0] % 64);
-    assert(s[0] == first);
+    let r = verilith_core::varint::read(b, p);
     proof {
-        reveal_with_fuel(be, 9);
-        lemma_p256(0);
+        lemma_var_core(b@, p as int);
+        verilith_core::varint::lemma_varint_bound(b@, p as int);
     }
-    if first < 0x40 {
-        assert(be(su, 1) == x);
-        return Some((x, p + 1));
-    }
-    if first < 0x80 {
-        if b.len() - p < 2 {
-            return None;
-        }
-        let v = x * 256 + get(b, p + 1) as u64;
-        assert(su[1] == b@[p + 1]);
-        assert(be(su, 2) == v);
-        return Some((v, p + 2));
-    }
-    if first < 0xc0 {
-        if b.len() - p < 4 {
-            return None;
-        }
-        let b1 = get(b, p + 1) as u64;
-        let b2 = get(b, p + 2) as u64;
-        let b3 = get(b, p + 3) as u64;
-        assert(x * 256 + b1 < 16384) by (nonlinear_arith) requires x < 64, b1 < 256;
-        assert((x * 256 + b1) * 256 + b2 < 4194304) by (nonlinear_arith) requires x * 256 + b1 < 16384, b2 < 256;
-        let v = ((x * 256 + b1) * 256 + b2) * 256 + b3;
-        assert(v < 0x4000_0000) by (nonlinear_arith) requires v == ((x * 256 + b1) * 256 + b2) * 256 + b3, (x * 256 + b1) * 256 + b2 < 4194304, b3 < 256;
-        assert(su[1] == b@[p + 1] && su[2] == b@[p + 2] && su[3] == b@[p + 3]);
-        assert(be(su, 4) == v);
-        return Some((v, p + 4));
-    }
-    if b.len() - p < 8 {
-        return None;
-    }
-    let mut v = x;
-    let mut i: usize = 1;
-    while i < 8
-        invariant
-            1 <= i <= 8,
-            p + 8 <= b@.len(),
-            len == b@.len(),
-            s == b@.skip(p as int),
-            su == s.update(0, s[0] % 64),
-            x == su[0],
-            v as nat == be(su, i as nat),
-            v < 64 * p256((i - 1) as nat),
-        decreases 8 - i,
-    {
-        let c = get(b, p + i) as u64;
-        assert(su[i as int] == b@[p + i]);
-        proof {
-            lemma_p256((i - 1) as nat);
-            assert(p256(i as nat) == 256 * p256((i - 1) as nat));
-            assert(64 * p256(i as nat) <= 64 * p256(7)) by {
-                lemma_p256_mono(i as nat, 7);
-            }
-            lemma_p256(7);
-            assert(v * 256 + c < 64 * p256(i as nat)) by (nonlinear_arith)
-                requires
-                    v < 64 * p256((i - 1) as nat),
-                    c < 256,
-                    p256(i as nat) == 256 * p256((i - 1) as nat),
-            ;
-        }
-        v = v * 256 + c;
-        i = i + 1;
-    }
-    proof {
-        lemma_p256(7);
-    }
-    Some((v, p + 8))
+    r
 }
 
 pub proof fn lemma_p256_mono(a: nat, b: nat)
@@ -306,24 +365,88 @@ pub proof fn lemma_p256_mono(a: nat, b: nat)
     }
 }
 
+/// Byte `k` of `v` (from the least significant) by shifts and by division.
+proof fn lemma_b8(v: u64)
+    ensures
+        b8(v) as nat == v as nat % 256,
+        b8(v >> 8u64) as nat == (v as nat / 0x100) % 256,
+        b8(v >> 16u64) as nat == (v as nat / 0x1_0000) % 256,
+        b8(v >> 24u64) as nat == (v as nat / 0x100_0000) % 256,
+        b8(v >> 32u64) as nat == (v as nat / 0x1_0000_0000) % 256,
+        b8(v >> 40u64) as nat == (v as nat / 0x100_0000_0000) % 256,
+        b8(v >> 48u64) as nat == (v as nat / 0x1_0000_0000_0000) % 256,
+        b8(v >> 56u64) as nat == (v as nat / 0x100_0000_0000_0000) % 256,
+{
+    assert(v as u8 == (v % 256) as u8 && (v >> 8u64) as u8 == ((v / 0x100) % 256) as u8 && (v
+        >> 16u64) as u8 == ((v / 0x1_0000) % 256) as u8 && (v >> 24u64) as u8 == ((v / 0x100_0000)
+        % 256) as u8 && (v >> 32u64) as u8 == ((v / 0x1_0000_0000) % 256) as u8 && (v >> 40u64) as u8
+        == ((v / 0x100_0000_0000) % 256) as u8 && (v >> 48u64) as u8 == ((v / 0x1_0000_0000_0000)
+        % 256) as u8 && (v >> 56u64) as u8 == ((v / 0x100_0000_0000_0000) % 256) as u8)
+        by (bit_vector);
+}
+
+/// This crate's encoding of `v` is verilith-core's.
+pub proof fn lemma_enc_core(v: u64)
+    requires
+        v <= MAX_VARINT,
+    ensures
+        var_size(v as nat) == varint_size(v),
+        var_enc(v as nat) == varint_enc(v),
+{
+    let x = v as nat;
+    let n = var_size(x);
+    lemma_var_enc(x);
+    lemma_size(x);
+    lemma_b8(v);
+    reveal_with_fuel(p256, 9);
+    assert(p256(0) == 1 && p256(1) == 0x100 && p256(2) == 0x1_0000 && p256(3) == 0x100_0000) by (compute);
+    assert(p256(4) == 0x1_0000_0000 && p256(5) == 0x100_0000_0000 && p256(6) == 0x1_0000_0000_0000
+        && p256(7) == 0x100_0000_0000_0000) by (compute);
+    let be = be_enc(x, n);
+    let e = var_enc(x);
+    let c = varint_enc(v);
+    assert forall|i: int| 0 <= i < n implies #[trigger] be[i] as nat == (x / p256((n - 1 - i) as nat)) % 256 by {
+        lemma_be_enc_byte(x, n, i as nat);
+    }
+    // The first byte: the tag, then the top bits, which are below 64.
+    let top = x / p256((n - 1) as nat);
+    assert(top < 64) by {
+        vstd::arithmetic::div_mod::lemma_multiply_divide_lt(x as int, p256((n - 1) as nat) as int, 64);
+    }
+    vstd::arithmetic::div_mod::lemma_small_mod(top, 256);
+    assert(e[0] == (be[0] + var_tag(n)) as u8);
+    if n == 1 {
+        assert(v < 0x40);
+        assert(e =~= c);
+    } else if n == 2 {
+        assert(b8(0x40 | (v >> 8u64)) == ((v >> 8u64) + 0x40) as u8 && (v >> 8u64) as nat == x / 0x100) by {
+            assert(0x40 <= v < 0x4000 ==> b8(0x40 | (v >> 8u64)) == ((v >> 8u64) + 0x40) as u8 && v >> 8u64 == v / 0x100) by (bit_vector);
+        }
+        assert(e =~= c);
+    } else if n == 4 {
+        assert(b8(0x80 | (v >> 24u64)) == ((v >> 24u64) + 0x80) as u8 && (v >> 24u64) as nat == x / 0x100_0000) by {
+            assert(0x4000 <= v < 0x4000_0000 ==> b8(0x80 | (v >> 24u64)) == ((v >> 24u64) + 0x80) as u8 && v >> 24u64 == v / 0x100_0000) by (bit_vector);
+        }
+        assert(e =~= c);
+    } else {
+        assert(b8(0xc0 | (v >> 56u64)) == ((v >> 56u64) + 0xc0) as u8 && (v >> 56u64) as nat == x / 0x100_0000_0000_0000) by {
+            assert(0x4000_0000 <= v < 0x4000_0000_0000_0000 ==> b8(0xc0 | (v >> 56u64)) == ((v >> 56u64) + 0xc0) as u8 && v >> 56u64 == v / 0x100_0000_0000_0000) by (bit_vector);
+        }
+        assert(e =~= c);
+    }
+}
+
 /// The length of `v`'s encoding.
 #[inline(always)]
 pub fn var_size_of(v: u64) -> (r: usize)
     ensures
         r == var_size(v as nat),
 {
-    if v < 0x40 {
-        1
-    } else if v < 0x4000 {
-        2
-    } else if v < 0x4000_0000 {
-        4
-    } else {
-        8
-    }
+    verilith_core::varint::size(v)
 }
 
-/// Writes `v`'s encoding at `out[at..]`; returns its end.
+/// Writes `v`'s encoding at `out[at..]`; returns its end. The writer is
+/// verilith-core's, shared with QUIC.
 #[inline(always)]
 pub fn put_var(out: &mut [u8], at: usize, v: u64) -> (r: usize)
     requires
@@ -336,93 +459,10 @@ pub fn put_var(out: &mut [u8], at: usize, v: u64) -> (r: usize)
         final(out)@.subrange(0, at as int) == old(out)@.subrange(0, at as int),
         final(out)@.subrange(r as int, final(out)@.len() as int) == old(out)@.subrange(r as int, old(out)@.len() as int),
 {
-    let n = var_size_of(v);
-    let len = out.len();
-    let ghost e = var_enc(v as nat);
     proof {
-        lemma_var_enc(v as nat);
-        lemma_be_enc(v as nat, n as nat);
-        reveal_with_fuel(be_enc, 9);
-        lemma_p256(0);
-        lemma_p256(1);
-        lemma_p256(2);
-        lemma_p256(3);
+        lemma_enc_core(v);
     }
-    if n == 1 {
-        set(out, at, v as u8);
-        assert(final(out)@.subrange(at as int, at + 1) =~= e);
-    } else if n == 2 {
-        let b0 = (v / 256) as u8 + 0x40;
-        set(out, at, b0);
-        set(out, at + 1, (v % 256) as u8);
-        assert(e[0] == b0 && e[1] == (v % 256) as u8);
-        assert(final(out)@.subrange(at as int, at + 2) =~= e);
-    } else if n == 4 {
-        assert(v / 16777216 < 64);
-        let b0 = (v / 16777216) as u8 + 0x80;
-        set(out, at, b0);
-        set(out, at + 1, (v / 65536 % 256) as u8);
-        set(out, at + 2, (v / 256 % 256) as u8);
-        set(out, at + 3, (v % 256) as u8);
-        proof {
-            let r = be_enc(v as nat, 4);
-            assert(be_enc(v as nat, 4) == be_enc((v / 256) as nat, 3).push((v % 256) as u8));
-            assert(be_enc((v / 256) as nat, 3) == be_enc((v / 256 / 256) as nat, 2).push((v / 256 % 256) as u8));
-            assert(be_enc((v / 256 / 256) as nat, 2) == be_enc((v / 256 / 256 / 256) as nat, 1).push((v / 256 / 256 % 256) as u8));
-            assert(v / 256 / 256 == v / 65536) by {
-                vstd::arithmetic::div_mod::lemma_div_denominator(v as int, 256, 256);
-            }
-            assert(v / 65536 / 256 == v / 16777216) by {
-                vstd::arithmetic::div_mod::lemma_div_denominator(v as int, 65536, 256);
-            }
-            assert(e[1] == r[1] && e[2] == r[2] && e[3] == r[3]);
-        }
-        assert(final(out)@.subrange(at as int, at + 4) =~= e);
-    } else {
-        let mut i: usize = 8;
-        let mut w = v;
-        proof {
-            lemma_be_enc(v as nat, 8);
-            assert(v as nat / 1 == v as nat);
-        }
-        let ghost o = out@;
-        while i > 1
-            invariant
-                1 <= i <= 8,
-                at + 8 <= out@.len(),
-                len == out@.len(),
-                be_enc(v as nat, 8).len() == 8,
-                out@.len() == o.len(),
-                w as nat == v as nat / p256((8 - i) as nat),
-                forall|j: int| at + i <= j < at + 8 ==> #[trigger] out@[j] == be_enc(v as nat, 8)[j - at],
-                forall|j: int| 0 <= j < at + 1 || at + 8 <= j < o.len() ==> #[trigger] out@[j] == o[j],
-            decreases i,
-        {
-            i = i - 1;
-            set(out, at + i, (w % 256) as u8);
-            proof {
-                lemma_be_enc_byte(v as nat, 8, i as nat);
-                lemma_p256((7 - i) as nat);
-                vstd::arithmetic::div_mod::lemma_div_denominator(v as int, p256((7 - i) as nat) as int, 256);
-                assert(p256((8 - i) as nat) == p256((7 - i) as nat) * 256) by {
-                    lemma_p256((8 - i) as nat);
-                }
-            }
-            w = w / 256;
-        }
-        proof {
-            lemma_be_enc_byte(v as nat, 8, 0);
-            lemma_p256(7);
-            vstd::arithmetic::div_mod::lemma_multiply_divide_lt(v as int, p256(7) as int, 64);
-            vstd::arithmetic::div_mod::lemma_small_mod(w as nat, 256);
-        }
-        assert(w < 64);
-        set(out, at, w as u8 + 0xc0);
-        assert(final(out)@.subrange(at as int, at + 8) =~= e);
-    }
-    assert(final(out)@.subrange(0, at as int) =~= old(out)@.subrange(0, at as int));
-    assert(final(out)@.subrange((at + n) as int, final(out)@.len() as int) =~= old(out)@.subrange((at + n) as int, old(out)@.len() as int));
-    at + n
+    verilith_core::varint::put(out, at, v)
 }
 
 /// Byte `i` of the `n`-byte big-endian encoding of `v`.

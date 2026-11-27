@@ -285,14 +285,14 @@ impl Worker {
         loop {
             evs.clear();
             #[allow(unused_mut)]
-            let mut timeout = if idle < spin { 0 } else { 1000 };
+            let mut timeout_us: u64 = if idle < spin { 0 } else { 1_000_000 };
             #[cfg(feature = "h3")]
             if let Some(q) = self.h3.as_mut() {
-                if let Some(t) = q.timeout_ms(std::time::Instant::now()) {
-                    timeout = timeout.min(t);
+                if let Some(t) = q.timeout_us(std::time::Instant::now()) {
+                    timeout_us = timeout_us.min(t);
                 }
             }
-            let n = self.poll.wait(timeout, |e| evs.push(e));
+            let n = self.poll.wait_us(timeout_us, |e| evs.push(e));
             idle = if n == 0 { idle.saturating_add(1) } else { 0 };
             let t = sys::unix_time();
             if t != self.now {

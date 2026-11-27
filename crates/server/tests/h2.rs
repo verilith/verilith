@@ -334,3 +334,200 @@ fn stream_states() {
     let (_, ctl) = responses(&run(&c, &[]));
     assert!(ctl.contains(&"goaway 1".to_string()), "{ctl:?}");
 }
+
+fn settings_frame() -> Vec<u8> {
+    let mut c = PREFACE.to_vec();
+    serialize(&Frame::Settings { ack: false, params: Params::new(&[]).unwrap() }, 16384, &mut c).unwrap();
+    c
+}
+
+/// HEADERS (END_STREAM) then RST_STREAM, over and over: each reset costs
+/// budget and no response completes, so the connection is closed long
+/// before the handler has run for every request (CVE-2023-44487).
+#[test]
+fn rapid_reset_is_stopped() {
+    let mut c = settings_frame();
+    for i in 0..5000u32 {
+        let b = block(b"GET", b"/a");
+        let id = 2 * i + 1;
+        serialize(&Frame::Headers { stream: id, end_stream: true, end_headers: true, pad: None, priority: None, fragment: &b }, 16384, &mut c).unwrap();
+        serialize(&Frame::RstStream { stream: id, code: 8 }, 16384, &mut c).unwrap();
+    }
+    let (rs, ctl) = responses(&run(&c, &[]));
+    assert!(ctl.contains(&"goaway 11".to_string()), "{ctl:?}");
+    assert!(rs.len() < 1100, "{}", rs.len());
+}
+
+/// Empty CONTINUATION frames never end a header block, and carry no
+/// bytes for the block limit to count; each costs budget.
+#[test]
+fn empty_continuation_flood_is_stopped() {
+    let mut c = settings_frame();
+    let b = block(b"GET", b"/a");
+    serialize(&Frame::Headers { stream: 1, end_stream: true, end_headers: false, pad: None, priority: None, fragment: &b }, 16384, &mut c).unwrap();
+    for _ in 0..5000 {
+        serialize(&Frame::Continuation { stream: 1, end_headers: false, fragment: &[] }, 16384, &mut c).unwrap();
+    }
+    let (_, ctl) = responses(&run(&c, &[]));
+    assert!(ctl.contains(&"goaway 11".to_string()), "{ctl:?}");
+}
+
+/// A stream over SETTINGS_MAX_CONCURRENT_STREAMS is refused once its
+/// block, CONTINUATION included, is decoded; the next request still works,
+/// so the HPACK tables stayed in step.
+#[test]
+fn refused_stream_with_continuation() {
+    let limits = Limits2 { max_streams: 1, ..Limits2::default() };
+    let mut c = settings_frame();
+    // Stream 1 stays open (no END_STREAM), so stream 3 is one too many.
+    let b = block(b"POST", b"/a");
+    serialize(&Frame::Headers { stream: 1, end_stream: false, end_headers: true, pad: None, priority: None, fragment: &b }, 16384, &mut c).unwrap();
+    let b = block(b"GET", b"/b");
+    let (x, y) = b.split_at(4);
+    serialize(&Frame::Headers { stream: 3, end_stream: true, end_headers: false, pad: None, priority: None, fragment: x }, 16384, &mut c).unwrap();
+    serialize(&Frame::Continuation { stream: 3, end_headers: true, fragment: y }, 16384, &mut c).unwrap();
+    serialize(&Frame::Data { stream: 1, end_stream: true, pad: None, data: b"x" }, 16384, &mut c).unwrap();
+    // In a later read, after stream 1's response has gone out.
+    let cut = c.len();
+    let b = block(b"GET", b"/c");
+    serialize(&Frame::Headers { stream: 5, end_stream: true, end_headers: true, pad: None, priority: None, fragment: &b }, 16384, &mut c).unwrap();
+    let out = run_with(limits, &c, &[cut]);
+    let (rs, ctl) = responses(&out);
+    assert!(ctl.contains(&"rst 3 7".to_string()), "{ctl:?}");
+    let bodies: Vec<_> = rs.iter().map(|r| (r.0, r.2.clone())).collect();
+    assert_eq!(bodies, vec![(1, b"POST /a x".to_vec()), (5, b"GET /c ".to_vec())]);
+}
+
+/// A peer's GOAWAY(NO_ERROR) lets open streams finish (here, one blocked on
+/// flow control until a WINDOW_UPDATE), refuses new ones, then closes.
+#[test]
+fn goaway_from_peer_drains() {
+    let mut c = settings_frame();
+    let b = block(b"GET", b"/big");
+    serialize(&Frame::Headers { stream: 1, end_stream: true, end_headers: true, pad: None, priority: None, fragment: &b }, 16384, &mut c).unwrap();
+    serialize(&Frame::GoAway { last_stream: 0, code: 0, debug: &[] }, 16384, &mut c).unwrap();
+    let b = block(b"GET", b"/late");
+    serialize(&Frame::Headers { stream: 3, end_stream: true, end_headers: true, pad: None, priority: None, fragment: &b }, 16384, &mut c).unwrap();
+    let mid = c.len();
+    serialize(&Frame::WindowUpdate { stream: 0, increment: 1 << 20 }, 16384, &mut c).unwrap();
+    serialize(&Frame::WindowUpdate { stream: 1, increment: 1 << 20 }, 16384, &mut c).unwrap();
+    let (rs, ctl) = responses(&run(&c, &[mid]));
+    assert_eq!(rs.len(), 1);
+    assert_eq!(rs[0].2.len(), 100_000);
+    assert!(ctl.contains(&"rst 3 7".to_string()), "{ctl:?}");
+    assert_eq!(ctl.last().map(|s| s.as_str()), Some("goaway 0"), "{ctl:?}");
+}
+
+/// Frames other than CONTINUATION inside a header block, and HEADERS
+/// depending on its own stream, are connection errors.
+#[test]
+fn header_block_interleaving_is_an_error() {
+    let mut c = settings_frame();
+    let b = block(b"GET", b"/a");
+    serialize(&Frame::Headers { stream: 1, end_stream: true, end_headers: false, pad: None, priority: None, fragment: &b }, 16384, &mut c).unwrap();
+    serialize(&Frame::Ping { ack: false, opaque: 1 }, 16384, &mut c).unwrap();
+    let (_, ctl) = responses(&run(&c, &[]));
+    assert!(ctl.contains(&"goaway 1".to_string()), "{ctl:?}");
+    assert!(!ctl.iter().any(|s| s.starts_with("ping")), "{ctl:?}");
+
+    let mut c = settings_frame();
+    let prio = verilith_h2::Priority { exclusive: false, dependency: 1, weight: 0 };
+    serialize(&Frame::Headers { stream: 1, end_stream: true, end_headers: true, pad: None, priority: Some(prio), fragment: &b }, 16384, &mut c).unwrap();
+    let (rs, ctl) = responses(&run(&c, &[]));
+    assert!(rs.is_empty());
+    assert!(ctl.contains(&"goaway 1".to_string()), "{ctl:?}");
+}
+
+/// `run` with these limits.
+fn run_with(limits: Limits2, input: &[u8], cuts: &[usize]) -> Vec<u8> {
+    let mut c = Conn2::new(limits);
+    let ctx = Ctx::new(b"t", b"Thu, 01 Jan 1970 00:00:00 GMT").unwrap();
+    let mut out = Vec::new();
+    let mut at = 0;
+    for &cut in cuts.iter().chain(std::iter::once(&input.len())) {
+        let mut p = &input[at..cut];
+        at = cut;
+        while !p.is_empty() {
+            let b = c.read_buf();
+            if b.is_empty() {
+                return out;
+            }
+            let n = b.len().min(p.len());
+            b[..n].copy_from_slice(&p[..n]);
+            c.filled(n);
+            p = &p[n..];
+            c.process(&handler, &ctx);
+            drain(&mut c, &mut out);
+        }
+    }
+    out
+}
+
+/// `block`, then each of `extra` as a literal field without indexing with a
+/// new name (RFC 7541 §6.2.2).
+fn block_with(method: &[u8], path: &[u8], extra: &[(&[u8], &[u8])]) -> Vec<u8> {
+    let mut b = block(method, path);
+    for (n, v) in extra {
+        b.push(0);
+        b.push(n.len() as u8);
+        b.extend_from_slice(n);
+        b.push(v.len() as u8);
+        b.extend_from_slice(v);
+    }
+    b
+}
+
+/// RFC 9113 §8.1.1: a request whose DATA does not add up to its
+/// Content-Length is malformed: the stream is reset with PROTOCOL_ERROR,
+/// the handler does not see it, and the connection goes on.
+#[test]
+fn content_length_checked() {
+    // (Content-Length fields, DATA frames, trailers, whether it is answered)
+    let cases: &[(&[&[u8]], &[&[u8]], bool, bool)] = &[
+        (&[b"5"], &[b"hel", b"lo"], false, true),
+        (&[b"5"], &[b"hello"], true, true),
+        (&[b"0"], &[], false, true),
+        (&[b"5", b"5"], &[b"hello"], false, true),
+        (&[], &[b"hello"], false, true),
+        // Less DATA than declared, at END_STREAM or at the trailers.
+        (&[b"5"], &[b"hel"], false, false),
+        (&[b"5"], &[b"hel"], true, false),
+        (&[b"3"], &[], false, false),
+        // More DATA than declared.
+        (&[b"2"], &[b"hello"], false, false),
+        (&[b"4"], &[b"hel", b"lo"], false, false),
+        // Lengths that disagree, or are not lengths.
+        (&[b"5", b"4"], &[b"hello"], false, false),
+        (&[b"abc"], &[b"abc"], false, false),
+        (&[b"-1"], &[], false, false),
+        (&[b""], &[], false, false),
+    ];
+    for (i, &(cls, data, trailers, answered)) in cases.iter().enumerate() {
+        let mut c = settings_frame();
+        let extra: Vec<(&[u8], &[u8])> = cls.iter().map(|v| (&b"content-length"[..], *v)).collect();
+        let b = block_with(b"POST", b"/b", &extra);
+        let only_headers = data.is_empty() && !trailers;
+        serialize(&Frame::Headers { stream: 1, end_stream: only_headers, end_headers: true, pad: None, priority: None, fragment: &b }, 16384, &mut c).unwrap();
+        for (k, d) in data.iter().enumerate() {
+            let end = k + 1 == data.len() && !trailers;
+            serialize(&Frame::Data { stream: 1, end_stream: end, pad: None, data: d }, 16384, &mut c).unwrap();
+        }
+        if trailers {
+            let t = [0u8, 3, b'x', b'-', b't', 1, b'1'];
+            serialize(&Frame::Headers { stream: 1, end_stream: true, end_headers: true, pad: None, priority: None, fragment: &t }, 16384, &mut c).unwrap();
+        }
+        let g = block(b"GET", b"/a");
+        serialize(&Frame::Headers { stream: 3, end_stream: true, end_headers: true, pad: None, priority: None, fragment: &g }, 16384, &mut c).unwrap();
+        let (rs, ctl) = responses(&run(&c, &[]));
+        assert!(!ctl.iter().any(|l| l.starts_with("goaway")), "case {i}: {ctl:?}");
+        let ids: Vec<u32> = rs.iter().map(|r| r.0).collect();
+        if answered {
+            assert_eq!(ids, vec![1, 3], "case {i}: {ctl:?}");
+            let body: Vec<u8> = data.concat();
+            assert_eq!(rs[0].2, [&b"POST /b "[..], &body].concat(), "case {i}");
+        } else {
+            assert_eq!(ids, vec![3], "case {i}: {ctl:?}");
+            assert!(ctl.contains(&"rst 1 1".to_string()), "case {i}: {ctl:?}");
+        }
+    }
+}

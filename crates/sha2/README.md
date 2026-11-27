@@ -169,8 +169,8 @@ What the proofs here assume rather than prove:
 - `src/store.rs`: `put_u32_be` and `put_u64_be`, one line each
   (`to_be_bytes` copied into place), whose `ensures` are the bytes
   written. LLVM does not merge the verified form's byte stores.
-- From [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core): `prims::copy_in` (trusted, one
-  `copy_nonoverlapping`). `prims::get` is verified there.
+- From [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core): nothing trusted. `prims::copy_in`
+  and `prims::get` are verified there.
 - vstd's specifications of `slice_subrange`, `wrapping_add` and
   `wrapping_mul`.
 - `src/capi.rs`: the C API is not verified. It converts pointers to slices

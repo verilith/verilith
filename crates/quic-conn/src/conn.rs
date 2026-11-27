@@ -13,6 +13,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use verilith_quic::amplification::Budget;
 use verilith_quic::cc::NewReno;
+use verilith_quic::cubic::Cubic;
 use verilith_quic::flow::{RecvCredit, SendCredit};
 use verilith_quic::frame::{self, Frame};
 use verilith_quic::packet::{self, Header};
@@ -47,6 +48,10 @@ const MAX_CRYPTO_BUFFER: usize = 64 * 1024;
 /// Frames recorded per packet are packed in a token with the count in the
 /// low byte.
 const MAX_FRAMES: usize = 255;
+/// The most bytes one batch for segmentation offload may hold: a UDP
+/// payload's maximum over IPv4.
+pub const GSO_BYTES: usize = 65507;
+
 /// A datagram this close to full still starts a batch for segmentation
 /// offload.
 const BATCH_SLACK: usize = 32;
@@ -69,17 +74,22 @@ pub struct Config<P> {
     /// The largest UDP payload sent at first. Paths must carry 1200 bytes
     /// (§14); more is found by probing.
     pub max_datagram: usize,
-    /// Path MTU discovery (§14.3, DPLPMTUD of RFC 8899 in its simplest
-    /// form): once the handshake is confirmed, one PING padded to this
-    /// size is sent (up to three times if lost); when acknowledged, it
-    /// becomes the largest payload sent. Not above the peer's
-    /// max_udp_payload_size; 0 turns it off.
+    /// Path MTU discovery (§14.3, DPLPMTUD of RFC 8899 in a simple form):
+    /// once the handshake is confirmed, a PING padded to the next size of
+    /// [`PROBE_STEPS`] is sent (up to three times if lost); when
+    /// acknowledged, it becomes the largest payload sent, and the next
+    /// step is probed, up to this size. Not above the peer's
+    /// max_udp_payload_size; 0 turns it off. The socket must not fragment
+    /// (DF set), or a probe the path cannot carry arrives in fragments.
     pub probe_datagram: usize,
     /// Bytes written to streams and not yet acknowledged, across the
     /// connection.
     pub send_buffer: usize,
     /// max_ack_delay, milliseconds.
     pub max_ack_delay_ms: u64,
+    /// The congestion controller: CUBIC (RFC 9438) when true, else NewReno
+    /// (RFC 9002 §7).
+    pub cubic: bool,
 }
 
 impl<P> Config<P> {
@@ -96,6 +106,7 @@ impl<P> Config<P> {
             probe_datagram: 1452,
             send_buffer: 8 << 20,
             max_ack_delay_ms: 25,
+            cubic: true,
         }
     }
 }
@@ -140,6 +151,12 @@ pub struct Transmit {
     /// size. `None` for a single datagram.
     pub segment_size: Option<usize>,
 }
+
+/// The sizes path MTU discovery probes on its way to
+/// [`Config::probe_datagram`]: a 1500-byte Ethernet MTU and a 9000-byte
+/// jumbo frame, less IPv6 and UDP headers. Then the configured size
+/// itself (on loopback, 65487 fits Linux's 65536-byte MTU).
+pub const PROBE_STEPS: [usize; 2] = [1452, 8952];
 
 /// Path MTU discovery's state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -280,7 +297,7 @@ pub struct Connection<P: Provider> {
     pub(crate) odcid: Vec<u8>,
     budget: Budget,
     rtt: Rtt,
-    cc: NewReno,
+    cc: Cc,
     pto_count: u32,
     /// The peer's transport parameters, once known.
     peer_max_ack_delay: u64,
@@ -429,7 +446,7 @@ impl<P: Provider> Connection<P> {
             odcid: odcid.to_vec(),
             budget: Budget::new(false),
             rtt: Rtt::new(),
-            cc: NewReno::new(mds),
+            cc: if cfg.cubic { Cc::Cubic(Cubic::new(mds)) } else { Cc::Reno(NewReno::new(mds)) },
             pto_count: 0,
             peer_max_ack_delay: 25_000,
             peer_ack_exponent: 3,
@@ -803,14 +820,15 @@ impl<P: Provider> Connection<P> {
                 // The path carries the probe's size.
                 let size = (d.packet.size as usize).clamp(self.mtu, 65527);
                 self.mtu = size;
-                if size as u64 > self.cc.mds {
+                if size as u64 > self.cc.mds() {
                     self.cc.raise_mds(size as u64);
                 }
-                self.pmtu = Pmtu::Done;
+                // On to the next step (Done if there is none).
+                self.pmtu = Pmtu::Due { fails: 0 };
                 trace(format_args!("mtu {size}"));
             }
             if d.packet.in_flight {
-                self.cc.on_ack(d.packet.time, (d.packet.size as u64).min(self.cc.mds), false);
+                self.cc.on_ack(d.packet.time, (d.packet.size as u64).min(self.cc.mds()), now, self.rtt.smoothed);
             }
             self.on_recs(s, d.packet.token, true);
         }
@@ -849,7 +867,7 @@ impl<P: Provider> Connection<P> {
         self.scratch_done = lost;
         if let Some(t) = latest_lost {
             self.cc.on_congestion(t, now);
-            trace(format_args!("congestion cwnd{}", self.cc.cwnd));
+            trace(format_args!("congestion cwnd{}", self.cc.cwnd()));
         }
         if r.persistent && self.rtt.sampled {
             self.cc.on_persistent();
@@ -1569,9 +1587,11 @@ impl<P: Provider> Connection<P> {
         (self.mtu as u64).min(self.peer_max_udp).max(1200) as usize
     }
 
-    /// The size path MTU discovery probes.
+    /// The size path MTU discovery probes next: the first step above
+    /// what the path is known to carry, or the configured size.
     fn probe_size(&self) -> usize {
-        (self.cfg.probe_datagram as u64).min(self.peer_max_udp).min(65527) as usize
+        let cap = (self.cfg.probe_datagram as u64).min(self.peer_max_udp).min(65527) as usize;
+        PROBE_STEPS.iter().copied().find(|&s| s > self.mtu && s < cap).unwrap_or(cap)
     }
 
     /// Sends the path MTU probe as a datagram of its own, if it is due and
@@ -1627,6 +1647,11 @@ impl<P: Provider> Connection<P> {
         let mut count = 0;
         while count < max.max(1) {
             let limit = seg.unwrap_or(mds);
+            // A batch for segmentation offload is one UDP payload of at
+            // most 65507 bytes (Linux: and at most 64 segments).
+            if count > 0 && buf.len() + limit > GSO_BYTES {
+                break;
+            }
             let n = self.build_datagram(now, buf, limit, seg);
             if n == 0 {
                 break;
@@ -2106,5 +2131,71 @@ fn trace(a: std::fmt::Arguments) {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *ON.get_or_init(|| std::env::var_os("VQ_TRACE").is_some()) {
         eprintln!("{a}");
+    }
+}
+
+/// The congestion controller, either verified one.
+#[derive(Debug, Clone, Copy)]
+enum Cc {
+    Reno(NewReno),
+    Cubic(Cubic),
+}
+
+impl Cc {
+    fn mds(&self) -> u64 {
+        match self {
+            Cc::Reno(c) => c.mds,
+            Cc::Cubic(c) => c.mds,
+        }
+    }
+
+    fn cwnd(&self) -> u64 {
+        match self {
+            Cc::Reno(c) => c.cwnd,
+            Cc::Cubic(c) => c.cwnd,
+        }
+    }
+
+    fn can_send(&self, in_flight: u64, size: u64) -> bool {
+        match self {
+            Cc::Reno(c) => c.can_send(in_flight, size),
+            Cc::Cubic(c) => c.can_send(in_flight, size),
+        }
+    }
+
+    fn room(&self, in_flight: u64) -> u64 {
+        match self {
+            Cc::Reno(c) => c.room(in_flight),
+            Cc::Cubic(c) => c.room(in_flight),
+        }
+    }
+
+    /// `size` is at most the max_datagram_size; `srtt` in microseconds.
+    fn on_ack(&mut self, sent: u64, size: u64, now: u64, srtt: u64) {
+        match self {
+            Cc::Reno(c) => c.on_ack(sent, size, false),
+            Cc::Cubic(c) => c.on_ack(sent, size, false, now, srtt.min(0xFFFF_FFFF)),
+        }
+    }
+
+    fn on_congestion(&mut self, sent: u64, now: u64) {
+        match self {
+            Cc::Reno(c) => c.on_congestion(sent, now),
+            Cc::Cubic(c) => c.on_congestion(sent, now),
+        }
+    }
+
+    fn on_persistent(&mut self) {
+        match self {
+            Cc::Reno(c) => c.on_persistent(),
+            Cc::Cubic(c) => c.on_persistent(),
+        }
+    }
+
+    fn raise_mds(&mut self, mds: u64) {
+        match self {
+            Cc::Reno(c) => c.raise_mds(mds),
+            Cc::Cubic(c) => c.raise_mds(mds),
+        }
     }
 }

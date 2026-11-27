@@ -87,8 +87,6 @@ RustCrypto's `sha2` (`tests/kernels.rs`, `tests/kernels512.rs`).
 - `src/store.rs`: `put_u32_be` and `put_u64_be`, one line each
   (`to_be_bytes` copied into place), whose `ensures` are the bytes
   written. LLVM does not merge the verified form's byte stores.
-- From [verilith-core](../core): `prims::copy_in` (one
-  `copy_nonoverlapping`).
 - vstd's specifications of `slice_subrange`, `wrapping_add` and
   `wrapping_mul`.
 

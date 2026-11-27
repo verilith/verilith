@@ -3,9 +3,13 @@
 //! Frames are read by verilith-h2's verified parser and written by its
 //! verified serializer; header blocks are decoded by verilith-hpack's
 //! verified decoder, whose split-invariance theorem is what CONTINUATION
-//! needs. This file is the connection layer on top: stream states,
-//! flow control, SETTINGS, and scheduling. It is not yet verified (that is
-//! DESIGN.md's milestone 6); it is tested in `tests/h2.rs`.
+//! needs. Every decision about a frame is made by the verified core in
+//! `h2core.rs`: stream states and the stream table, flow control, SETTINGS,
+//! GOAWAY, header block sequencing and the flood budget, with the control
+//! frames they call for. This file is the plain-Rust part around it: the
+//! read buffer, feeding fragments to the HPACK decoder and collecting the
+//! fields, buffering bodies, running handlers, and framing responses
+//! (`schedule`). It is tested in `tests/h2.rs`.
 //!
 //! Response heads are encoded by verilith-hpack's verified encoder, with
 //! its dynamic table: its theorem is that each block decodes, from the
@@ -13,8 +17,8 @@
 //! blocks reach the peer in the order they were encoded, so a head is
 //! encoded when its HEADERS frame is written (`schedule`), not when the
 //! handler answers: a stream reset in between never touches the table.
-use std::collections::{HashMap, VecDeque};
-use std::hash::{BuildHasherDefault, Hasher};
+use std::collections::VecDeque;
+use std::hash::Hasher;
 use std::sync::Arc;
 
 use verilith_h2::{Frame, Parsed};
@@ -22,67 +26,41 @@ use verilith_hpack::{Decoder, Encoder, Feed, Header as HHeader};
 use verilith_http::Header;
 use verilith_http::parse::Span;
 
-use crate::flow::{take_data, RecvWindow, SendWindow, MAX_WINDOW};
-use crate::streams::{classify, Kind, St, Verdict};
+pub use crate::h2core::Limits2;
+use crate::h2core::{Core, Step, Store, COMPRESSION_ERROR, ENHANCE_YOUR_CALM, INTERNAL_ERROR, PROTOCOL_ERROR, S_HEADER_TABLE_SIZE};
 use crate::h1::{Ctx, Next, Out};
 use crate::{Handler, Request, Response};
 
 pub const PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
-// Error codes (§7).
-const NO_ERROR: u32 = 0x0;
-const PROTOCOL_ERROR: u32 = 0x1;
-const INTERNAL_ERROR: u32 = 0x2;
-const FLOW_CONTROL_ERROR: u32 = 0x3;
-const STREAM_CLOSED: u32 = 0x5;
-const FRAME_SIZE_ERROR: u32 = 0x6;
-const REFUSED_STREAM: u32 = 0x7;
-const COMPRESSION_ERROR: u32 = 0x9;
-const ENHANCE_YOUR_CALM: u32 = 0xb;
-
-// Settings (§6.5.2).
-const S_HEADER_TABLE_SIZE: u16 = 0x1;
-const S_ENABLE_PUSH: u16 = 0x2;
-const S_MAX_CONCURRENT_STREAMS: u16 = 0x3;
-const S_INITIAL_WINDOW_SIZE: u16 = 0x4;
-const S_MAX_FRAME_SIZE: u16 = 0x5;
-
-
-/// Limits on one HTTP/2 connection.
-#[derive(Clone, Copy, Debug)]
-pub struct Limits2 {
-    pub max_streams: u32,
-    /// The receive window advertised for each stream, and for the
-    /// connection.
-    pub window: u32,
-    /// Largest header block (all its fragments, and decoded fields).
-    pub max_header_block: usize,
-    /// Largest request body buffered for a handler.
-    pub max_body: usize,
-    /// Control frames (PING, SETTINGS, RST_STREAM, empty frames) a peer may
-    /// send per request before the connection is closed with
-    /// ENHANCE_YOUR_CALM: the flood defences of DESIGN.md.
-    pub control_per_request: u32,
-}
-
-impl Default for Limits2 {
-    fn default() -> Self {
-        Limits2 { max_streams: 256, window: 1 << 20, max_header_block: 64 * 1024, max_body: 1 << 20, control_per_request: 100 }
-    }
-}
-
+/// A stream's buffers; its state and windows are the core's.
 struct Stream {
-    st: St,
     /// The decoded header fields, as spans into `arena`.
     arena: Vec<u8>,
     fields: Vec<Header>,
     body: Vec<u8>,
-    /// What we may still send on this stream.
-    send: SendWindow,
-    /// What the peer may still send on this stream.
-    recv: RecvWindow,
     /// The response: an encoded header block, and a body to send.
     reply: Option<Reply>,
+}
+
+impl Store for Box<Stream> {
+    fn fresh() -> Self {
+        Box::new(Stream { arena: Vec::new(), fields: Vec::new(), body: Vec::new(), reply: None })
+    }
+
+    fn recycle(&mut self) {
+        self.arena.clear();
+        self.fields.clear();
+        self.body.clear();
+        if let Some(r) = self.reply.as_mut() {
+            r.fields.clear();
+            // An owned body keeps its buffer for the next reply.
+            match &mut r.body {
+                ReplyBody::Owned(v) if v.capacity() <= 16 * 1024 => v.clear(),
+                b => *b = ReplyBody::None,
+            }
+        }
+    }
 }
 
 /// A response waiting to be framed.
@@ -113,13 +91,6 @@ impl ReplyBody {
     }
 }
 
-/// A header block being received (HEADERS then CONTINUATION).
-struct Block {
-    stream: u32,
-    end_stream: bool,
-    len: usize,
-}
-
 pub struct Conn2 {
     rbuf: Vec<u8>,
     start: usize,
@@ -133,79 +104,45 @@ pub struct Conn2 {
     /// The allocation of the field list handed to the HPACK encoder, kept
     /// empty between responses so that framing one allocates nothing.
     hs_spare: Vec<HHeader<'static>>,
-    streams: HashMap<u32, Box<Stream>, BuildHasherDefault<IdHash>>,
-    /// Closed streams, kept with their buffers for the next ones.
-    pool: Vec<Box<Stream>>,
-    /// Streams with a response to send, in round-robin order.
-    ready: VecDeque<u32>,
-    /// The highest client stream opened.
-    last_stream: u32,
-    block: Option<Block>,
-    /// Peer settings.
-    peer_max_frame: u32,
-    peer_initial_window: u32,
-    /// What we may still send on the connection.
-    conn_send: SendWindow,
-    /// Received on the connection since our last WINDOW_UPDATE.
-    conn_recv: RecvWindow,
-    /// Flood accounting: control frames received, and requests handled.
-    control: u64,
-    requests: u64,
-    closing: bool,
-    limits: Limits2,
+    /// The verified connection state: streams, windows, settings, budget.
+    core: Core<Box<Stream>>,
+    /// Streams with a response to send, in round-robin order, with the
+    /// slot each was in (a hint: slots move when the table is compacted).
+    ready: VecDeque<(u32, usize)>,
+    max_header_block: usize,
     /// Requests are being read from 0-RTT data (set by the TLS layer).
     pub(crate) early: bool,
+    /// The TLS client's certificate (DER), if it authenticated.
+    pub(crate) peer: Option<std::sync::Arc<[u8]>>,
 }
 
 impl Conn2 {
     pub fn new(limits: Limits2) -> Conn2 {
-        let limits = Limits2 { window: limits.window.min(MAX_WINDOW as u32), ..limits };
-        let mut c = Conn2 {
+        let mut out = Out::new();
+        let before = out.buf.len();
+        // Our SETTINGS, then a connection WINDOW_UPDATE up to our window.
+        let core = Core::new(limits, &mut out.buf);
+        out.grew(before);
+        Conn2 {
             rbuf: vec![0; 64 * 1024],
             start: 0,
             end: 0,
             preface: false,
-            out: Out::new(),
+            out,
             dec: Decoder::new().expect("HPACK tables"),
             enc: Encoder::new().expect("HPACK tables"),
             hbuf: Vec::new(),
             hs_spare: Vec::new(),
-            streams: HashMap::default(),
-            pool: Vec::new(),
+            core,
             ready: VecDeque::new(),
-            last_stream: 0,
-            block: None,
-            peer_max_frame: 16384,
-            peer_initial_window: 65535,
-            conn_send: SendWindow::new(65535),
-            conn_recv: RecvWindow::new(limits.window),
-            control: 0,
-            requests: 0,
-            closing: false,
-            limits,
+            max_header_block: limits.max_header_block,
             early: false,
-        };
-        // Our SETTINGS, then a connection WINDOW_UPDATE up to our window.
-        let params = [
-            verilith_h2::Setting { id: S_MAX_CONCURRENT_STREAMS, value: limits.max_streams },
-            verilith_h2::Setting { id: S_INITIAL_WINDOW_SIZE, value: limits.window },
-            verilith_h2::Setting { id: S_ENABLE_PUSH, value: 0 },
-        ];
-        let before = c.out.buf.len();
-        let _ = verilith_h2::serialize_settings(&params, 16384, &mut c.out.buf);
-        if limits.window > 65535 {
-            let _ = verilith_h2::serialize(
-                &Frame::WindowUpdate { stream: 0, increment: limits.window - 65535 },
-                16384,
-                &mut c.out.buf,
-            );
+            peer: None,
         }
-        c.out.grew(before);
-        c
     }
 
     pub fn read_buf(&mut self) -> &mut [u8] {
-        if self.closing || self.out.queued > 1 << 20 {
+        if self.core.closing() || self.out.queued > 1 << 20 {
             return &mut [];
         }
         if self.start > 0 && (self.end == self.rbuf.len() || self.start == self.end) {
@@ -224,11 +161,11 @@ impl Conn2 {
     }
 
     pub fn eof(&mut self) {
-        self.closing = true;
+        self.core.eof();
     }
 
     pub fn closing(&self) -> bool {
-        self.closing
+        self.core.closing()
     }
 
     pub fn pending<'a>(&'a self, out: &mut [&'a [u8]]) -> usize {
@@ -247,54 +184,10 @@ impl Conn2 {
         self.out.advance(n);
     }
 
-    fn goaway(&mut self, code: u32) {
-        if self.closing {
-            return;
-        }
+    fn conn_error(&mut self, code: u32) {
         let before = self.out.buf.len();
-        let _ = verilith_h2::serialize(
-            &Frame::GoAway { last_stream: self.last_stream, code, debug: &[] },
-            16384,
-            &mut self.out.buf,
-        );
+        self.core.conn_error(code, &mut self.out.buf);
         self.out.grew(before);
-        self.closing = true;
-    }
-
-    fn frame(&mut self, f: &Frame) {
-        let before = self.out.buf.len();
-        let _ = verilith_h2::serialize(f, self.peer_max_frame, &mut self.out.buf);
-        self.out.grew(before);
-    }
-
-    /// Forgets a stream, keeping its buffers for reuse.
-    /// A stream's state, if it is open or half-closed.
-    fn state(&self, id: u32) -> Option<St> {
-        self.streams.get(&id).map(|s| s.st)
-    }
-
-    fn close_stream(&mut self, id: u32) {
-        if let Some(mut s) = self.streams.remove(&id) {
-            if self.pool.len() < 64 {
-                s.arena.clear();
-                s.fields.clear();
-                s.body.clear();
-                if let Some(r) = s.reply.as_mut() {
-                    r.fields.clear();
-                    // An owned body keeps its buffer for the next reply.
-                    match &mut r.body {
-                        ReplyBody::Owned(v) if v.capacity() <= 16 * 1024 => v.clear(),
-                        b => *b = ReplyBody::None,
-                    }
-                }
-                self.pool.push(s);
-            }
-        }
-    }
-
-    fn rst(&mut self, stream: u32, code: u32) {
-        self.frame(&Frame::RstStream { stream, code });
-        self.close_stream(stream);
     }
 
     /// Handles every complete frame read, then frames as much response data
@@ -304,7 +197,7 @@ impl Conn2 {
             let have = self.end - self.start;
             let n = have.min(PREFACE.len());
             if self.rbuf[self.start..self.start + n] != PREFACE[..n] {
-                self.goaway(PROTOCOL_ERROR);
+                self.conn_error(PROTOCOL_ERROR);
                 return Next::Close;
             }
             if have < PREFACE.len() {
@@ -313,229 +206,94 @@ impl Conn2 {
             self.start += PREFACE.len();
             self.preface = true;
         }
-        while !self.closing {
+        while !self.core.closing() {
             // The frame borrows the read buffer, which the frame handlers
             // never touch: take it out of `self` meanwhile.
             let rbuf = std::mem::take(&mut self.rbuf);
-            let r = match verilith_h2::parse(&rbuf[self.start..self.end], 16384) {
+            let consumed = match verilith_h2::parse(&rbuf[self.start..self.end], 16384) {
                 Parsed::Incomplete(_) => None,
-                Parsed::ConnError(code) => Some((0, Action::Conn(code))),
-                Parsed::StreamError { stream, code, len } => Some((len, Action::Rst(stream, code))),
-                Parsed::Frame(f, len) => Some((len, self.on_frame(f, ctx))),
+                Parsed::ConnError(code) => {
+                    self.conn_error(code);
+                    Some(0)
+                }
+                Parsed::StreamError { stream, code, len } => {
+                    let before = self.out.buf.len();
+                    self.core.stream_error(stream, code, &mut self.out.buf);
+                    self.out.grew(before);
+                    Some(len)
+                }
+                Parsed::Frame(f, len) => {
+                    self.frame(&f, h, ctx);
+                    Some(len)
+                }
             };
             self.rbuf = rbuf;
-            let Some((consumed, action)) = r else { break };
+            let Some(consumed) = consumed else { break };
             self.start += consumed;
-            match action {
-                Action::None => {}
-                Action::Conn(code) => self.goaway(code),
-                Action::Rst(s, code) => self.rst(s, code),
-                Action::Dispatch(s) => self.dispatch(h, ctx, s),
-            }
-            if self.control > 1000 + self.requests * self.limits.control_per_request as u64 {
-                self.goaway(ENHANCE_YOUR_CALM);
-            }
         }
         if self.start == self.end {
             self.start = 0;
             self.end = 0;
         }
         self.schedule(ctx);
-        if self.closing { Next::Close } else if self.out.queued > 1 << 20 { Next::Write } else { Next::Read }
+        if self.core.closing() { Next::Close } else if self.out.queued > 1 << 20 { Next::Write } else { Next::Read }
     }
 
-    fn on_frame(&mut self, f: Frame, _ctx: &Ctx) -> Action {
-        // Inside a header block only its CONTINUATION may come (§6.10).
-        if let Some(b) = &self.block {
-            match f {
-                Frame::Continuation { stream, .. } if stream == b.stream => {}
-                _ => return Action::Conn(PROTOCOL_ERROR),
-            }
-        }
-        match f {
-            Frame::Settings { ack, params } => {
-                self.control += 1;
-                if ack {
-                    return Action::None;
-                }
-                for i in 0..params.len() {
-                    let p = params.get(i);
-                    match p.id {
-                        S_INITIAL_WINDOW_SIZE => {
-                            if p.value as i64 > MAX_WINDOW {
-                                return Action::Conn(FLOW_CONTROL_ERROR); // §6.5.2
-                            }
-                            let delta = p.value as i64 - self.peer_initial_window as i64;
-                            self.peer_initial_window = p.value;
-                            for s in self.streams.values_mut() {
-                                if !s.send.shift(delta) {
-                                    return Action::Conn(FLOW_CONTROL_ERROR);
-                                }
-                            }
+    /// One frame: the core's decision, then what it leaves to do.
+    fn frame<H: Handler + ?Sized>(&mut self, f: &Frame, h: &H, ctx: &Ctx) {
+        let before = self.out.buf.len();
+        let step = self.core.on_frame(f, &mut self.out.buf);
+        self.out.grew(before);
+        match step {
+            Step::None => {}
+            Step::Settings => {
+                if let Frame::Settings { params, .. } = f {
+                    for i in 0..params.len() {
+                        let p = params.get(i);
+                        // The encoder keeps to min(this, its 4096-byte
+                        // target) and signals any shrink at the next block
+                        // (RFC 7541 §4.2).
+                        if p.id == S_HEADER_TABLE_SIZE {
+                            self.enc.change_settings(p.value);
                         }
-                        S_MAX_FRAME_SIZE => self.peer_max_frame = p.value,
-                        // The encoder keeps to min(this, its 4096-byte target)
-                        // and signals any shrink at the next block (§4.2).
-                        S_HEADER_TABLE_SIZE => self.enc.change_settings(p.value),
-                        _ => {}
                     }
                 }
-                self.frame(&Frame::Settings { ack: true, params: verilith_h2::Params::new(&[]).unwrap() });
-                Action::None
             }
-            Frame::Ping { ack, opaque } => {
-                self.control += 1;
-                if !ack {
-                    self.frame(&Frame::Ping { ack: true, opaque });
-                }
-                Action::None
-            }
-            Frame::WindowUpdate { stream, increment } => {
-                self.control += 1;
-                if stream == 0 {
-                    if !self.conn_send.grant(increment) {
-                        return Action::Conn(FLOW_CONTROL_ERROR);
-                    }
-                    return Action::None;
-                }
-                match classify(stream, self.last_stream, self.state(stream), Kind::WindowUpdate) {
-                    Verdict::Accept => {
-                        if let Some(s) = self.streams.get_mut(&stream) {
-                            if !s.send.grant(increment) {
-                                return Action::Rst(stream, FLOW_CONTROL_ERROR);
-                            }
-                        }
-                        Action::None
-                    }
-                    v => verdict_action(stream, v),
+            Step::Fragment { frag, end_headers, keep } => {
+                if let Some(at) = self.header_fragment(frag, end_headers, keep) {
+                    self.dispatch(h, ctx, at);
                 }
             }
-            Frame::Priority { stream, prio } => {
-                self.control += 1;
-                if prio.dependency == stream {
-                    return Action::Rst(stream, PROTOCOL_ERROR); // §5.3.1
+            Step::Data { at, data, end } => {
+                if let Some(s) = self.core.val(at) {
+                    s.body.extend_from_slice(data);
                 }
-                verdict_action(stream, classify(stream, self.last_stream, self.state(stream), Kind::Priority))
-            }
-            Frame::RstStream { stream, .. } => {
-                self.control += 1;
-                match classify(stream, self.last_stream, self.state(stream), Kind::RstStream) {
-                    Verdict::Accept => {
-                        self.close_stream(stream);
-                        Action::None
-                    }
-                    v => verdict_action(stream, v),
+                if end {
+                    self.dispatch(h, ctx, at);
                 }
             }
-            Frame::GoAway { .. } => {
-                self.closing = true;
-                Action::None
-            }
-            Frame::PushPromise { .. } => Action::Conn(PROTOCOL_ERROR), // §8.4: clients don't push
-            Frame::Unknown { .. } => Action::None,
-            Frame::Headers { stream, end_stream, end_headers, priority, fragment, .. } => {
-                let v = classify(stream, self.last_stream, self.state(stream), Kind::Headers { end_stream });
-                if !matches!(v, Verdict::Open | Verdict::Trailers) {
-                    return verdict_action(stream, v);
-                }
-                if let Some(p) = priority {
-                    if p.dependency == stream {
-                        return Action::Rst(stream, PROTOCOL_ERROR);
-                    }
-                }
-                if v == Verdict::Trailers {
-                    self.block = Some(Block { stream, end_stream, len: 0 });
-                    return self.header_fragment(fragment, end_headers, true);
-                }
-                // Verdict::Open: `stream` is odd and above every ID before it.
-                self.last_stream = stream;
-                self.block = Some(Block { stream, end_stream, len: 0 });
-                let refuse = self.streams.len() as u32 >= self.limits.max_streams;
-                if !refuse {
-                    let s = match self.pool.pop() {
-                        Some(mut s) => {
-                            s.st = St::Open;
-                            s.send = SendWindow::new(self.peer_initial_window);
-                            s.recv = RecvWindow::new(self.limits.window);
-                            s
-                        }
-                        None => Box::new(Stream {
-                            st: St::Open,
-                            arena: Vec::new(),
-                            fields: Vec::new(),
-                            body: Vec::new(),
-                            send: SendWindow::new(self.peer_initial_window),
-                            recv: RecvWindow::new(self.limits.window),
-                            reply: None,
-                        }),
-                    };
-                    self.streams.insert(stream, s);
-                }
-                let a = self.header_fragment(fragment, end_headers, false);
-                if refuse && matches!(a, Action::None | Action::Dispatch(_)) && self.block.is_none() {
-                    return Action::Rst(stream, REFUSED_STREAM);
-                }
-                a
-            }
-            Frame::Continuation { end_headers, fragment, stream } => {
-                if self.block.as_ref().map(|b| b.stream) != Some(stream) {
-                    return Action::Conn(PROTOCOL_ERROR);
-                }
-                self.header_fragment(fragment, end_headers, false)
-            }
-            Frame::Data { stream, end_stream, pad, data } => {
-                let flow = data.len() as u32 + pad.map_or(0, |p| p as u32 + 1);
-                match self.conn_recv.receive(flow) {
-                    Err(()) => return Action::Conn(FLOW_CONTROL_ERROR),
-                    Ok(Some(inc)) => self.frame(&Frame::WindowUpdate { stream: 0, increment: inc }),
-                    Ok(None) => {}
-                }
-                if flow == 0 && !end_stream {
-                    self.control += 1;
-                }
-                let max_body = self.limits.max_body;
-                let window = self.limits.window;
-                match classify(stream, self.last_stream, self.state(stream), Kind::Data) {
-                    Verdict::Accept => {}
-                    v => return verdict_action(stream, v),
-                }
-                let Some(s) = self.streams.get_mut(&stream) else { return Action::Rst(stream, STREAM_CLOSED) };
-                let update = match s.recv.receive(flow) {
-                    Err(()) => return Action::Rst(stream, FLOW_CONTROL_ERROR),
-                    Ok(u) => u,
-                };
-                if s.body.len() + data.len() > max_body {
-                    return Action::Rst(stream, REFUSED_STREAM);
-                }
-                s.body.extend_from_slice(data);
-                if end_stream {
-                    s.st = St::HalfClosed;
-                    return Action::Dispatch(stream);
-                }
-                if let Some(inc) = update {
-                    self.frame(&Frame::WindowUpdate { stream, increment: inc });
-                }
-                Action::None
-            }
+            Step::Dispatch { at } => self.dispatch(h, ctx, at),
         }
     }
 
-    /// Feeds a header block fragment to the decoder; at the block's end,
-    /// checks the fields (§8.3) and, with END_STREAM, dispatches.
-    fn header_fragment(&mut self, mut frag: &[u8], end_headers: bool, trailers: bool) -> Action {
-        let Some(b) = &mut self.block else { return Action::Conn(PROTOCOL_ERROR) };
-        b.len += frag.len();
-        if b.len > self.limits.max_header_block {
-            return Action::Conn(ENHANCE_YOUR_CALM);
-        }
-        let stream = b.stream;
-        let end_stream = b.end_stream;
-        let max_block = self.limits.max_header_block;
+    /// Feeds a header block fragment to the decoder, keeping the fields on
+    /// the stream in slot `keep`; at the block's end, checks them (§8.3)
+    /// and tells the core, which may complete the request: the slot of a
+    /// request to dispatch.
+    fn header_fragment(&mut self, mut frag: &[u8], end_headers: bool, keep: Option<usize>) -> Option<usize> {
+        let max_block = self.max_header_block;
         // The stream the fields go to, looked up once per fragment.
-        let mut to = if trailers { None } else { self.streams.get_mut(&stream) };
+        let mut to = match keep {
+            Some(at) => self.core.val(at),
+            None => None,
+        };
+        let mut err = 0;
         loop {
             match self.dec.feed(frag, end_headers) {
-                Feed::Bad => return Action::Conn(COMPRESSION_ERROR),
+                Feed::Bad => {
+                    err = COMPRESSION_ERROR;
+                    break;
+                }
                 Feed::More => break,
                 Feed::Final => break,
                 Feed::Field(n, _never) => {
@@ -544,7 +302,8 @@ impl Conn2 {
                         let name = self.dec.name();
                         let value = self.dec.value();
                         if s.arena.len() + name.len() + value.len() > max_block {
-                            return Action::Conn(ENHANCE_YOUR_CALM);
+                            err = ENHANCE_YOUR_CALM;
+                            break;
                         }
                         let ns = s.arena.len();
                         s.arena.extend_from_slice(name);
@@ -558,45 +317,49 @@ impl Conn2 {
                 }
             }
         }
-        drop(to);
+        let (ok, cl) = match (end_headers, to) {
+            (true, Some(s)) => match request_fields(&s.arena, &s.fields) {
+                Some(cl) => (true, cl),
+                None => (false, None),
+            },
+            _ => (true, None),
+        };
+        if err != 0 {
+            self.conn_error(err);
+            return None;
+        }
         if !end_headers {
-            return Action::None;
+            return None;
         }
         self.dec.end_block();
-        self.block = None;
-        let Some(s) = self.streams.get_mut(&stream) else { return Action::None };
-        if trailers {
-            s.st = St::HalfClosed;
-            return Action::Dispatch(stream);
-        }
-        if !request_fields_ok(&s.arena, &s.fields) {
-            return Action::Rst(stream, PROTOCOL_ERROR);
-        }
-        if end_stream {
-            s.st = St::HalfClosed;
-            Action::Dispatch(stream)
-        } else {
-            Action::None
+        let before = self.out.buf.len();
+        let step = self.core.end_block(ok, cl, &mut self.out.buf);
+        self.out.grew(before);
+        match step {
+            Step::Dispatch { at } => Some(at),
+            _ => None,
         }
     }
 
-    fn dispatch<H: Handler + ?Sized>(&mut self, h: &H, ctx: &Ctx, id: u32) {
-        let Some(s) = self.streams.get_mut(&id) else { return };
-        self.requests += 1;
+    fn dispatch<H: Handler + ?Sized>(&mut self, h: &H, ctx: &Ctx, at: usize) {
+        let id = self.core.id(at);
+        let early = self.early;
+        let peer = self.peer.as_deref();
+        let Some(s) = self.core.val(at) else { return };
         let a = &s.arena;
         let get = |n: &[u8]| {
             s.fields.iter().find(|f| f.name.of(a) == n).map(|f| f.value.of(a)).unwrap_or(b"")
         };
         let method = get(b":method");
         let target = get(b":path");
-        let request = Request { method, target, minor: 1, buf: a, headers: &s.fields, body: &s.body, early: self.early };
+        let request = Request { method, target, minor: 1, buf: a, headers: &s.fields, body: &s.body, early, peer };
         // A reused stream keeps its reply's buffers (cleared on close).
         let mut reply = s.reply.take().unwrap_or(Reply { status: 0, fields: HList::default(), body: ReplyBody::None, sent_headers: false, off: 0 });
         reply.sent_headers = false;
         reply.off = 0;
         let mut scratch = crate::out::Wire::empty();
         let mut res = Response { out: &mut scratch, ctx, sent: false, close: false, head: method == b"HEAD", h2: Some(&mut reply) };
-        if self.early && !crate::early_ok(method) {
+        if crate::early::too_early(early, method) {
             res.too_early();
         } else {
             h.handle(&request, &mut res);
@@ -605,19 +368,28 @@ impl Conn2 {
             res.error(500);
         }
         s.reply = Some(reply);
-        self.ready.push_back(id);
+        self.ready.push_back((id, at));
+    }
+
+    fn finish(&mut self, at: usize) {
+        let before = self.out.buf.len();
+        self.core.finish(at, &mut self.out.buf);
+        self.out.grew(before);
     }
 
     /// Frames responses: HEADERS, then DATA within the windows, round robin
-    /// over the streams that have something to send.
+    /// over the streams that have something to send. The reply stays in
+    /// its stream (moving it costs store-forwarding stalls); it is looked
+    /// up again around each charge to the core's windows.
     fn schedule(&mut self, ctx: &Ctx) {
-        let max = self.peer_max_frame.min(16384) as usize;
+        let peer_max = self.core.max_frame();
+        let max = peer_max.min(16384) as usize;
         let mut rounds = self.ready.len();
         while rounds > 0 {
             rounds -= 1;
-            let Some(id) = self.ready.pop_front() else { break };
-            let Some(s) = self.streams.get_mut(&id) else { continue };
-            let Some(r) = s.reply.as_mut() else { continue };
+            let Some((id, hint)) = self.ready.pop_front() else { break };
+            let Some(at) = self.core.locate(id, hint) else { continue };
+            let Some(r) = self.core.val(at).and_then(|s| s.reply.as_mut()) else { continue };
             let body_len = r.body.bytes().len();
             if !r.sent_headers {
                 let end_stream = body_len == 0;
@@ -636,11 +408,13 @@ impl Conn2 {
                 let ok = self.enc.encode(&hs, &mut self.hbuf);
                 hs.clear();
                 self.hs_spare = hs.into_iter().map(|_| HHeader { name: b"", value: b"", sensitive: false }).collect();
+                r.sent_headers = true;
                 if !ok {
                     // A name or value over 64 KiB: nothing was encoded, the
                     // table is unchanged.
-                    self.close_stream(id);
-                    self.rst(id, INTERNAL_ERROR);
+                    let before = self.out.buf.len();
+                    self.core.reset(at, INTERNAL_ERROR, &mut self.out.buf);
+                    self.out.grew(before);
                     continue;
                 }
                 let before = self.out.buf.len();
@@ -656,7 +430,7 @@ impl Conn2 {
                     } else {
                         Frame::Continuation { stream: id, end_headers: last, fragment: a }
                     };
-                    let _ = verilith_h2::serialize(&f, self.peer_max_frame, &mut self.out.buf);
+                    let _ = verilith_h2::serialize(&f, peer_max, &mut self.out.buf);
                     first = false;
                     frag = b;
                     if last {
@@ -664,19 +438,21 @@ impl Conn2 {
                     }
                 }
                 self.out.grew(before);
-                r.sent_headers = true;
                 if end_stream {
-                    self.close_stream(id);
+                    self.finish(at);
                     continue;
                 }
             }
             // DATA frames, as many as the windows allow now.
+            let mut done = false;
             loop {
+                let Some(r) = self.core.val(at).and_then(|s| s.reply.as_mut()) else { break };
                 let left = body_len - r.off;
-                let n = take_data(&mut self.conn_send, &mut s.send, left, max);
+                let n = self.core.take(at, left, max);
                 if n == 0 {
                     break;
                 }
+                let Some(r) = self.core.val(at).and_then(|s| s.reply.as_mut()) else { break };
                 let end = n == left;
                 let head = verilith_h2::encode_head(n as u32, 0, if end { 1 } else { 0 }, id).unwrap();
                 self.out.extend(&head);
@@ -690,38 +466,21 @@ impl Conn2 {
                 }
                 r.off += n;
                 if end {
+                    done = true;
                     break;
                 }
             }
-            if r.off == body_len {
-                self.close_stream(id);
-            } else if s.send.avail() > 0 && self.conn_send.avail() > 0 {
-                self.ready.push_back(id);
+            if done {
+                self.finish(at);
             } else {
                 // Blocked on a window: retried when a WINDOW_UPDATE arrives.
-                self.ready.push_back(id);
-                if self.conn_send.avail() == 0 {
+                self.ready.push_back((id, at));
+                if self.core.conn_avail() == 0 {
                     break;
                 }
             }
         }
     }
-}
-
-/// What a verdict other than Accept, Open or Trailers asks.
-fn verdict_action(stream: u32, v: Verdict) -> Action {
-    match v {
-        Verdict::Conn(c) => Action::Conn(c),
-        Verdict::Stream(c) => Action::Rst(stream, c),
-        _ => Action::None,
-    }
-}
-
-enum Action {
-    None,
-    Conn(u32),
-    Rst(u32, u32),
-    Dispatch(u32),
 }
 
 /// RFC 9113 §8.3: pseudo-header fields first, exactly one each of
@@ -729,104 +488,62 @@ enum Action {
 /// supported), no other pseudo-headers, no uppercase names, and no
 /// connection-specific fields (§8.2.2).
 pub(crate) fn request_fields_ok(a: &[u8], fields: &[Header]) -> bool {
+    request_fields(a, fields).is_some()
+}
+
+/// [`request_fields_ok`], and the Content-Length the fields declare: None
+/// if they are not a valid request, or a Content-Length is not a decimal
+/// length or differs from another (RFC 9110 §8.6, RFC 9113 §8.1.1);
+/// otherwise the length, if one is declared. verilith-h2's core checks the
+/// stream's DATA against it.
+#[inline]
+pub(crate) fn request_fields(a: &[u8], fields: &[Header]) -> Option<Option<u64>> {
     let (mut m, mut s, mut p, mut au) = (0, 0, 0, 0);
+    let mut cl: Option<u64> = None;
     let mut regular = false;
     for f in fields {
         let n = f.name.of(a);
         let v = f.value.of(a);
-        if n.is_empty() || any_word(n, has_upper) {
-            return false;
+        if n.is_empty() || verilith_core::scan::any_upper(n) {
+            return None;
         }
-        if any_word(v, has_nul_cr_lf) {
-            return false;
+        if verilith_core::scan::any_nul_cr_lf(v) {
+            return None;
         }
         if n[0] == b':' {
             if regular {
-                return false;
+                return None;
             }
             match n {
                 b":method" => m += 1,
                 b":scheme" => s += 1,
                 b":path" => {
                     if v.is_empty() {
-                        return false;
+                        return None;
                     }
                     p += 1
                 }
                 b":authority" => au += 1,
-                _ => return false,
+                _ => return None,
             }
         } else {
             regular = true;
             if matches!(n, b"connection" | b"keep-alive" | b"proxy-connection" | b"transfer-encoding" | b"upgrade") {
-                return false;
+                return None;
             }
             if n == b"te" && v != b"trailers" {
-                return false;
+                return None;
+            }
+            if n == b"content-length" {
+                let len = verilith_http::framing::content_length_exec(v)?;
+                if cl.is_some_and(|c| c != len) {
+                    return None;
+                }
+                cl = Some(len);
             }
         }
     }
-    m == 1 && s == 1 && p == 1 && au <= 1
-}
-
-/// Whether `test` finds a byte it looks for in `b`, eight bytes at a time.
-/// `test` is given words of eight bytes (little-endian, the last word
-/// overlapping the one before it), or, when `b` is shorter than eight
-/// bytes, one word of its bytes padded with bytes `test` never matches.
-#[inline(always)]
-fn any_word(b: &[u8], test: fn(u64) -> bool) -> bool {
-    let n = b.len();
-    if n < 8 {
-        // Built in registers (a copy to the stack and a wide load back
-        // stalls store forwarding), padded with 'a': neither uppercase nor
-        // NUL, CR or LF.
-        let pad = (LO * b'a' as u64) << (8 * n);
-        let w = if n >= 4 {
-            let lo = u32::from_le_bytes(b[..4].try_into().unwrap()) as u64;
-            let hi = u32::from_le_bytes(b[n - 4..].try_into().unwrap()) as u64;
-            lo | (hi << (8 * (n - 4)))
-        } else if n > 0 {
-            b[0] as u64 | (b[n / 2] as u64) << (8 * (n / 2)) | (b[n - 1] as u64) << (8 * (n - 1))
-        } else {
-            0
-        };
-        return test(w | pad);
-    }
-    let mut i = 0;
-    while i + 8 < n {
-        if test(u64::from_le_bytes(b[i..i + 8].try_into().unwrap())) {
-            return true;
-        }
-        i += 8;
-    }
-    test(u64::from_le_bytes(b[n - 8..].try_into().unwrap()))
-}
-
-const LO: u64 = 0x0101_0101_0101_0101;
-const HI: u64 = 0x8080_8080_8080_8080;
-
-/// Whether some byte of `x` is zero.
-#[inline(always)]
-fn zero_byte(x: u64) -> bool {
-    x.wrapping_sub(LO) & !x & HI != 0
-}
-
-/// Whether some byte of `w` is NUL, CR or LF (RFC 9113 §8.2.1).
-#[inline(always)]
-fn has_nul_cr_lf(w: u64) -> bool {
-    zero_byte(w) || zero_byte(w ^ (LO * b'\r' as u64)) || zero_byte(w ^ (LO * b'\n' as u64))
-}
-
-/// Whether some byte of `w` is an ASCII uppercase letter: with the top bit
-/// of each byte cleared (so no addition carries into the next byte), a byte
-/// is in `A..=Z` exactly when adding `0x80 - b'A'` sets its top bit and
-/// adding `0x80 - b'Z' - 1` does not; bytes of 0x80 and above are excluded.
-#[inline(always)]
-fn has_upper(w: u64) -> bool {
-    let y = w & !HI;
-    let ge_a = y + LO * (0x80 - b'A' as u64);
-    let gt_z = y + LO * (0x80 - b'Z' as u64 - 1);
-    ge_a & !gt_z & !w & HI != 0
+    if m == 1 && s == 1 && p == 1 && au <= 1 { Some(cl) } else { None }
 }
 
 /// Header fields, owned: lowercased names (RFC 9113 §8.2.1) and values,
@@ -871,9 +588,10 @@ impl HList {
     }
 }
 
-/// The stream map's hash: stream IDs are small integers chosen by the
-/// peer, at most `max_streams` of them live, so a multiply-and-fold
-/// suffices; SipHash cost 6% of the CPU in h2c-plaintext.
+/// The hash of HTTP/3's stream maps (HTTP/2's streams are in the core's
+/// sorted table): stream IDs are small integers chosen by the peer, few of
+/// them live, so a multiply-and-fold suffices; SipHash cost 6% of the CPU
+/// in h2c-plaintext.
 #[derive(Default)]
 pub(crate) struct IdHash(u64);
 
@@ -892,31 +610,5 @@ impl Hasher for IdHash {
     fn write_u64(&mut self, x: u64) {
         let h = (self.0 ^ x).wrapping_mul(0x9E37_79B9_7F4A_7C15);
         self.0 = h ^ (h >> 29);
-    }
-}
-
-#[cfg(test)]
-mod word_tests {
-    use super::*;
-
-    /// The word-at-a-time scans against byte-at-a-time ones: every byte
-    /// value at every position of every length up to 20, over a background
-    /// of each byte that matches nothing.
-    #[test]
-    fn scans_match_bytewise() {
-        for len in 1..=20usize {
-            // (lengths below 8 take the register path, the rest the word loop)
-            for bg in [b'a', b'-', 0x7f, 0xff, b'0'] {
-                for pos in 0..len {
-                    for c in 0..=255u8 {
-                        let mut b = vec![bg; len];
-                        b[pos] = c;
-                        assert_eq!(any_word(&b, has_upper), b.iter().any(|x| x.is_ascii_uppercase()), "{b:?}");
-                        assert_eq!(any_word(&b, has_nul_cr_lf), b.iter().any(|&x| x == 0 || x == b'\r' || x == b'\n'), "{b:?}");
-                    }
-                }
-            }
-        }
-        assert!(!any_word(b"", has_upper) && !any_word(b"", has_nul_cr_lf));
     }
 }

@@ -11,7 +11,7 @@ pub mod decoder;
 pub mod emit;
 pub mod encoder;
 #[doc(hidden)]
-pub mod hencode;
+pub mod henc;
 #[doc(hidden)]
 pub mod htables;
 #[doc(hidden)]

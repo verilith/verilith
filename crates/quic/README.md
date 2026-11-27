@@ -23,6 +23,8 @@ proofs show, with no panics and no unproven arithmetic anywhere:
 
 - **Variable-length integers** (§16, `varint`): `read` is `spec::varint`,
   `write` is `spec::varint_enc`, and every value below `2^62` reads back.
+  The code and these specs are verilith-core's (`verilith_core::varint`),
+  shared with verilith-h3.
 - **Frames** (§12.4, §19, `frame`): `parse` is `spec::frame` for all
   twenty frame types, and `encode` is `spec::frame_enc`. The round trip
   (`lemmas::lemma_frame_roundtrip`): the encoding of every valid frame,
@@ -117,8 +119,9 @@ the PADDING scan reads eight bytes at a time.
 
 - `src/spec.rs`: the specification. Reading it against RFC 9000 is what
   the proofs cannot do for you.
-- `verilith-core`'s `extend` (a `memcpy` into a `Vec`) and `load_u64_le`,
-  and vstd's `slice_subrange`.
+- `verilith-core`'s `extend` (a `memcpy` into a `Vec`) and `load_u64_le`
+  (both verified there against vstd's specs of `extend_from_slice` and
+  `get_unchecked`), and vstd's `slice_subrange`.
 - Verus, Z3 and rustc.
 
 There is no `external_body`, `assume` or `unsafe` in this crate.

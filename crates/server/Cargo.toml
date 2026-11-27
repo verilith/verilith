@@ -33,12 +33,9 @@ vstd = { workspace = true, features = ["std"] }
 verilith-tls = { path = "../tls", version = "0.1.0", optional = true }
 verilith-tls-aws-lc = { path = "../tls-aws-lc", version = "0.1.0", optional = true }
 rustls = { version = "0.23", optional = true, default-features = false, features = ["aws_lc_rs", "std"] }
-# HTTP/3 (`--features h3`): verilith-qpack (verified) over QUIC, on
-# verilith-quic-conn by default (verified wire format, recovery, handshake
-# and packet protection; plain-Rust connection logic) or quinn-proto with
-# rustls (trusted; TRUST.md).
+# HTTP/3 (`--features h3`): verilith-qpack (verified) over verilith-quic-conn's
+# QUIC (verified wire format, recovery, handshake and packet protection).
 verilith-qpack = { path = "../qpack", version = "0.1.0", optional = true }
-quinn-proto = { version = "0.11.19", optional = true, default-features = false, features = ["rustls-aws-lc-rs"] }
 bytes = { version = "1.9", optional = true }
 verilith-quic-conn = { path = "../quic-conn", version = "0.1.0", optional = true }
 
@@ -52,7 +49,7 @@ verilith-qpack = { path = "../qpack", version = "0.1.0" }
 [features]
 tls = ["dep:verilith-tls", "dep:verilith-tls-aws-lc"]
 tls-rustls = ["tls", "dep:rustls"]
-h3 = ["tls", "dep:rustls", "dep:verilith-qpack", "dep:quinn-proto", "dep:bytes", "dep:verilith-quic-conn"]
+h3 = ["tls", "dep:verilith-qpack", "dep:bytes", "dep:verilith-quic-conn"]
 
 [package.metadata.verus]
 verify = true

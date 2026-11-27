@@ -55,6 +55,8 @@ pub struct Conn {
     limits: Limits,
     /// Requests are being read from 0-RTT data (set by the TLS layer).
     pub(crate) early: bool,
+    /// The TLS client's certificate (DER), if it authenticated.
+    pub(crate) peer: Option<std::sync::Arc<[u8]>>,
 }
 
 /// The server's own field lines, checked once and rebuilt when `Date`
@@ -89,13 +91,14 @@ impl Ctx {
 
 impl Conn {
     pub fn new(limits: Limits) -> Conn {
-        Conn { eng: Engine::new(limits.max_head, limits.max_headers, limits.max_body), limits, early: false }
+        Conn { eng: Engine::new(limits.max_head, limits.max_headers, limits.max_body), limits, early: false, peer: None }
     }
 
     /// Makes the connection new again, keeping its buffers.
     pub fn reset(&mut self) {
         self.eng.reset(self.limits.max_head);
         self.early = false;
+        self.peer = None;
     }
 
     /// Room to read into. Empty when the connection should not read now.
@@ -200,9 +203,10 @@ impl Conn {
             headers: &c.headers,
             body: &buf[hd.head_len..hd.head_len + body],
             early: self.early,
+            peer: self.peer.as_deref(),
         };
         let mut res = Response { out: &mut self.eng.wire, ctx, sent: false, close: false, head: method == b"HEAD", h2: None };
-        if self.early && !crate::early_ok(method) {
+        if crate::early::too_early(self.early, method) {
             res.too_early();
         } else {
             h.handle(&request, &mut res);

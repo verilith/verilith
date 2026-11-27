@@ -18,6 +18,10 @@ pub const SO_REUSEPORT: c_int = 0x200;
 pub const SO_SNDBUF: c_int = 0x1001;
 pub const SO_RCVBUF: c_int = 0x1002;
 pub const IPPROTO_TCP: c_int = 6;
+pub const IPPROTO_IP: c_int = 0;
+/// IP_DONTFRAG: datagrams go with DF set, never fragmented, as path MTU
+/// discovery's probes need (RFC 8899 §3).
+pub const DONT_FRAGMENT: Option<(c_int, c_int)> = Some((28, 1));
 pub const TCP_NODELAY: c_int = 1;
 const SO_NOSIGPIPE: c_int = 0x1022;
 /// SO_REUSEPORT on macOS sends every connection to the last socket bound.
@@ -132,6 +136,12 @@ impl Poller {
 
     pub fn remove(&self, _fd: i32) {
         // Closing the descriptor removes its kevents.
+    }
+
+    /// Waits up to `timeout_us` microseconds, rounded up to a millisecond.
+    #[inline]
+    pub fn wait_us(&mut self, timeout_us: u64, f: impl FnMut(Event)) -> usize {
+        self.wait(timeout_us.div_ceil(1000).min(i32::MAX as u64) as i32, f)
     }
 
     #[inline]

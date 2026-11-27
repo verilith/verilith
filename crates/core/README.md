@@ -11,7 +11,7 @@ blocks shared by the Verilith libraries
 live, with its proofs, in one or two of those crates; it now lives here
 once, and the libraries import it.
 
-`cargo verus verify` checks 272 functions with no errors.
+`cargo verus verify` checks 355 functions with no errors.
 
 | module | what it has | used by |
 | --- | --- | --- |
@@ -28,6 +28,9 @@ once, and the libraries import it.
 | `num` | decimal digits: `is_digit`, `digits_end`, `dec_value`, `decimal`; `parse_u64_dec` (checked) and `push_decimal` | verilith-json, verilith-url, verilith-dns |
 | `binary64` | IEEE 754 binary64 as a model in spec integers (in the style of Coq's Flocq): what each bit pattern is worth as an exact rational, round to nearest, ties to even (`rne`), proofs that rounding depends only on the value and that exact products and quotients of equal values are equal, that `u64 as f64` is exact below `2^53`, and `P10`, the exact doubles `10^0..=10^22`; `mul`, `div` and `from_u64` on bit patterns | verilith-json |
 | `sort` | `order_by`: a stable merge sort of the positions `0..n` by a caller's comparison closure, proven to return a permutation (as multisets) in which each position compares `le` the next; the comparison need only be total | verilith-archive, verilith-zlib |
+| `clen` | `BodyLen`: a message body counted against its declared Content-Length (RFC 9110 §8.6, RFC 9113 §8.1.1, RFC 9114 §4.1.2). `declare` refuses a length below the bytes already received or unlike an earlier one, `add` refuses bytes past it, `complete` says whether they are equal; the invariant is that the bytes never pass the length | verilith-server (HTTP/2; HTTP/3) |
+| `scan` | byte-class tests eight bytes at a time (SWAR): `any_upper` (an ASCII uppercase letter) and `any_nul_cr_lf`, the HTTP/2 and HTTP/3 field checks; each word test is proven bit by bit, and each slice test equal to the byte-by-byte statement, short strings built into one word in registers | verilith-server |
+| `varint` | QUIC variable-length integers (RFC 9000 §16): the spec (`varint`, `varint_enc`), the verified reader (`read`) and writers into a `Vec` (`write`) and a slice (`put`), and the round trip | verilith-quic, verilith-h3 |
 
 verilith-webp and verilith-brotli share the table builder in `htable`. verilith-zlib keeps its own:
 it builds a different layout (DEFLATE's flagged length/distance entries) on
@@ -56,15 +59,18 @@ they are now their own crate,
 
 What the proofs here assume rather than prove:
 
-- `src/prims.rs`, the `external_body` functions only: `load_u64_le`,
-  `copy8`, `copy16`, `move8` (an 8-byte load then store, so its ranges
-  may overlap), `copy16_in`, `fill8`, `copy_in`, `copy_to_front`, `copy_within`,
+- `src/prims.rs`, the `external_body` functions only:
   `alloc_u8`, `alloc_i16`, `alloc_u32`, `pick` (one of two numbers, chosen without a branch) and
   `copy16_pick` (`copy16_in` or `copy16`, with the source chosen without a
   branch). Each is one line whose effect its `ensures` states, except
   `copy16_pick`, which is six.
   (`get`, `get16`, `get32`, `set`, `set16`, `set32`, `store_at` and `extend` are verified
-  against vstd's specs of `get_unchecked` and `extend_from_slice`.)
+  against vstd's specs of `get_unchecked` and `extend_from_slice`. So are
+  the loads and copies `load_u64_le`, `copy8`, `copy16`, `move8`,
+  `copy16_in`, `fill8`, `copy_in`, `copy_to_front` and `copy_within`,
+  against its specs of `get_unchecked`, `get_unchecked_mut`,
+  `copy_from_slice` and `copy_within`; each still compiles to one
+  unaligned load or store, or one `memcpy`/`memmove`.)
 - `src/spare.rs`, all of it: the uninterpreted `spare` and its nine
   functions (`len_spare`, `reserve_spare`, `reserve_spare_plus`,
   `push_spare`, `append4_spare`, `append8_spare`, `append_slice_spare`,

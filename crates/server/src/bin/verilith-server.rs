@@ -2,9 +2,9 @@
 //!
 //!   verilith-server --threads N --http PORT [--h2c PORT] [--root DIR] [--protocols]
 //!                   [--tls PORT --cert PEM --key PEM]   (built with --features tls)
+//!                   [--client-ca PEM [--client-cert-required]]  (mutual TLS)
 //!                   [--tls-backend verilith|rustls]     (rustls: --features tls-rustls)
 //!                   [--h3 PORT --cert PEM --key PEM]    (UDP; built with --features h3)
-//!                   [--h3-backend verilith|quinn]       (QUIC: verilith-quic-conn, or quinn-proto)
 //!                   [--io-uring]                        (Linux: io_uring instead of epoll)
 //!
 //!   GET /plaintext       "Hello, World!", text/plain
@@ -77,7 +77,17 @@ fn main() {
                         eprintln!("ECHConfigList (DNS HTTPS record ech=): {}", verilith_server::tls::base64_encode(k.config_list()));
                         std::sync::Arc::new(k)
                     });
-                    let opts = verilith_server::tls::TlsOptions { max_early: arg(&args, "--early-data").map_or(0, |n| n.parse().unwrap()), ech };
+                    // `--client-ca PEM [--client-cert-required]`: ask clients
+                    // for certificates and check them against PEM's CAs.
+                    let client_auth = arg(&args, "--client-ca").map(|ca| {
+                        let required = args.iter().any(|a| a == "--client-cert-required");
+                        verilith_server::tls::ClientAuth::from_pem(&ca, required).expect("--client-ca")
+                    });
+                    let opts = verilith_server::tls::TlsOptions {
+                        max_early: arg(&args, "--early-data").map_or(0, |n| n.parse().unwrap()),
+                        ech,
+                        client_auth,
+                    };
                     verilith_server::tls::config_opts(&cert, &key, &opts)
                 }
                 #[cfg(feature = "tls-rustls")]
@@ -90,13 +100,7 @@ fn main() {
         #[cfg(feature = "h3")]
         h3: arg(&args, "--h3").map(|p| {
             let (cert, key) = (arg(&args, "--cert").expect("--cert"), arg(&args, "--key").expect("--key"));
-            use verilith_server::h3::Backend;
-            let b = match arg(&args, "--h3-backend").as_deref() {
-                None | Some("verilith") => Backend::Verilith,
-                Some("quinn") => Backend::Quinn,
-                Some(b) => panic!("unknown --h3-backend {b}"),
-            };
-            let c = verilith_server::h3::server_config_on(b, &cert, &key, Default::default()).expect("QUIC configuration");
+            let c = verilith_server::h3::server_config(&cert, &key, Default::default()).expect("QUIC configuration");
             (p.parse().unwrap(), c)
         }),
         ..Config::default()

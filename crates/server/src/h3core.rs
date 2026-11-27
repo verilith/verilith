@@ -33,6 +33,7 @@ use verilith_h3::spec::*;
 #[cfg(verus_keep_ghost)]
 use verilith_h3::encode::{wrote, lemma_unit_rt, frame_ev, frame_data};
 use verilith_core::prims::extend;
+use verilith_core::clen::BodyLen;
 use vstd::slice::slice_subrange;
 
 verus! {
@@ -286,10 +287,9 @@ pub struct Req3 {
     body: Vec<u8>,
     too_big: bool,
     got_headers: bool,
-    /// The Content-Length the request declared.
-    cl: Option<u64>,
-    /// DATA payload bytes received.
-    total: u64,
+    /// DATA payload bytes received, against the Content-Length declared
+    /// (verilith-core's shared check, as HTTP/2's).
+    len: BodyLen,
     ended: bool,
     /// The stream failed (a connection error or a malformed request was
     /// reported): it is not read again.
@@ -337,7 +337,7 @@ impl Req3 {
     }
 
     pub closed spec fn cl_s(&self) -> Option<u64> {
-        self.cl
+        self.len.declared()
     }
 
     pub closed spec fn wf(&self) -> bool {
@@ -349,9 +349,9 @@ impl Req3 {
             &&& (!self.too_big ==> self.body@ == self.data@)
             &&& (self.too_big ==> self.data@.len() > self.max_body)
             &&& (self.got_headers ==> self.r.events().len() > 0 && self.r.events()[0] == Ev::Headers(self.head@))
-            &&& self.total as nat == self.data@.len()
+            &&& self.len.got() == self.data@.len()
             &&& (!self.got_headers ==> self.r.events().len() == 0)
-            &&& (self.cl matches Some(n) ==> self.total <= n)
+            &&& self.len.inv()
         }
         &&& self.ended ==> {
             &&& end_of(true, self.r.lim(), self.r.seen(), start(false, true)) == Ok::<(), u64>(())
@@ -387,8 +387,7 @@ impl Req3 {
             body: Vec::new(),
             too_big: false,
             got_headers: false,
-            cl: None,
-            total: 0,
+            len: BodyLen::new(),
             ended: false,
             dead: false,
             max_body,
@@ -408,8 +407,7 @@ impl Req3 {
         self.body.clear();
         self.too_big = false;
         self.got_headers = false;
-        self.cl = None;
-        self.total = 0;
+        self.len = BodyLen::new();
         self.ended = false;
         self.dead = false;
         self.max_body = max_body;
@@ -471,19 +469,7 @@ impl Req3 {
             Some(n) => n,
             None => return false,
         };
-        match self.cl {
-            Some(c) => {
-                if c != n {
-                    return false;
-                }
-            },
-            None => {},
-        }
-        if self.total > n {
-            return false;
-        }
-        self.cl = Some(n);
-        true
+        self.len.declare(n)
     }
 
     /// Reads on from `input[*at..]`, which (with `fin`, the end of the
@@ -556,14 +542,10 @@ impl Req3 {
                         self.dead = true;
                         return Act::Malformed;
                     }
-                    match self.cl {
-                        Some(n) => {
-                            if n != self.total {
-                                self.dead = true;
-                                return Act::Malformed;
-                            }
-                        },
-                        None => {},
+                    if !self.len.complete() {
+                        // Less DATA than the Content-Length.
+                        self.dead = true;
+                        return Act::Malformed;
                     }
                     self.ended = true;
                     return Act::Ready;
@@ -605,20 +587,11 @@ impl Req3 {
                     let n = y - x;
                     let ghost d0 = self.data@;
                     self.data = Ghost(d0 + rest@.subrange(x as int, y as int));
-                    if self.total > u64::MAX - n as u64 {
+                    if !self.len.add(n as u64) {
+                        // More DATA than the Content-Length (or than
+                        // 2^64 - 1 bytes).
                         self.dead = true;
-                        return Act::Close(H3_EXCESSIVE_LOAD);
-                    }
-                    self.total = self.total + n as u64;
-                    match self.cl {
-                        Some(c) => {
-                            if self.total > c {
-                                // More DATA than the Content-Length.
-                                self.dead = true;
-                                return Act::Malformed;
-                            }
-                        },
-                        None => {},
+                        return Act::Malformed;
                     }
                     if n > self.max_body - self.body.len() {
                         self.too_big = true;

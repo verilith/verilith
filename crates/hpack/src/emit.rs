@@ -6,9 +6,8 @@
 //! The encodings are spec functions (`int_enc`, `str_enc`, `lit_enc`);
 //! the `put_*` functions write them, and the `lemma_rep_*` lemmas say what
 //! `rep` makes of them.
-use crate::hencode;
+use crate::henc;
 #[cfg(verus_keep_ghost)]
-use crate::hencode::enc_ok;
 use crate::lemmas::*;
 use crate::spec::*;
 use vstd::prelude::*;
@@ -243,9 +242,10 @@ pub proof fn lemma_str_dec(b: Seq<u8>, pos: int, h: bool, raw: Seq<u8>, s: Seq<u
 /// Appends `s` as a string literal, Huffman-coded when that is shorter.
 /// The result is the H bit and the bytes after the length.
 #[inline]
-pub fn put_str(out: &mut Vec<u8>, s: &[u8]) -> (r: Ghost<(bool, Seq<u8>)>)
+pub fn put_str(out: &mut Vec<u8>, s: &[u8], pt: &[u32]) -> (r: Ghost<(bool, Seq<u8>)>)
     requires
-        enc_ok(),
+        henc::code_ok(),
+        henc::ptab_ok(pt@),
         s@.len() <= MAX_STR,
     ensures
         final(out)@ == old(out)@ + str_enc(r@.0, r@.1),
@@ -259,7 +259,7 @@ pub fn put_str(out: &mut Vec<u8>, s: &[u8]) -> (r: Ghost<(bool, Seq<u8>)>)
         let m = out.len();
         out.push(0);
         let ghost o1 = out@;
-        hencode::encode(s, out);
+        henc::encode(s, out, pt);
         let hl = out.len() - m - 1;
         let ghost raw = out@.subrange(o1.len() as int, out@.len() as int);
         proof {
@@ -284,12 +284,15 @@ pub fn put_str(out: &mut Vec<u8>, s: &[u8]) -> (r: Ghost<(bool, Seq<u8>)>)
         }
         return Ghost((false, s@));
     }
-    let hl = hencode::encoded_len(s);
+    proof {
+        henc::lemma_hval_bound(s@);
+    }
+    let hl = ((henc::bits_of(s) + 7) / 8) as usize;
     if hl < s.len() {
         put_int(out, 0x80, 7, hl as u32);
         out.reserve(hl);
         let ghost o1 = out@;
-        hencode::encode(s, out);
+        henc::encode(s, out, pt);
         let ghost raw = out@.subrange(o1.len() as int, out@.len() as int);
         proof {
             assert(out@ =~= o1 + raw);

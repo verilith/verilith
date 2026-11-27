@@ -17,9 +17,7 @@
 //! literal with or without indexing, Huffman or not) is a policy and is
 //! not part of the theorem: every choice is proven.
 use crate::emit::*;
-use crate::hencode;
-#[cfg(verus_keep_ghost)]
-use crate::hencode::enc_ok;
+use crate::henc;
 use crate::sindex::*;
 use crate::spec::*;
 use crate::table::*;
@@ -229,6 +227,8 @@ pub struct Encoder {
     /// was added. Only a hint: a candidate it gives is compared with the
     /// entry.
     pub ix: Vec<u16>,
+    /// The Huffman byte-pair table (`henc::ptab`).
+    pub pt: &'static [u32],
 }
 
 /// The index's size.
@@ -302,7 +302,8 @@ impl Encoder {
 
     pub open spec fn inv(&self) -> bool {
         &&& self.table.inv()
-        &&& enc_ok()
+        &&& henc::code_ok()
+        &&& henc::ptab_ok(self.pt@)
         &&& self.ix@.len() == IX
     }
 
@@ -313,9 +314,10 @@ impl Encoder {
         ensures
             r matches Some(e) ==> e.inv() && e.state() == initial() && e.target == 4096,
     {
-        if !hencode::ready() {
-            return None;
-        }
+        let pt = match henc::ptab() {
+            Some(t) => t,
+            None => return None,
+        };
         let e = Encoder {
             table: Table::with_capacity(4096, 32),
             settings: 4096,
@@ -323,6 +325,7 @@ impl Encoder {
             expect: false,
             target: 4096,
             ix: vec![0u16; IX],
+            pt,
         };
         proof {
             assert(e.state().table =~= initial().table);
@@ -519,7 +522,7 @@ impl Encoder {
     {
         hide(rep);
         hide(block);
-        hide(enc_ok);
+        hide(henc::ptab_ok);
         let ghost o0 = out@;
         let (full, nidx, hname, hfull) = self.find(h.name, h.value);
         if !h.sensitive && full != 0 {
@@ -551,13 +554,13 @@ impl Encoder {
         let ghost mut hn = false;
         let ghost mut rawn = Seq::<u8>::empty();
         if nidx == 0 {
-            let g = put_str(out, h.name);
+            let g = put_str(out, h.name, self.pt);
             proof {
                 hn = g@.0;
                 rawn = g@.1;
             }
         }
-        let gv = put_str(out, h.value);
+        let gv = put_str(out, h.value, self.pt);
         if kind == INCR {
             self.table.insert_copy(h.name, h.value);
             let (f1, f2, n1, n2) = slots(hname, hfull);
@@ -598,7 +601,7 @@ impl Encoder {
     {
         hide(rep);
         hide(block);
-        hide(enc_ok);
+        hide(henc::ptab_ok);
         hide(evict);
         let ghost o0 = out@;
         let ghost st0 = self.state();
@@ -683,7 +686,7 @@ impl Encoder {
     {
         hide(rep);
         hide(block);
-        hide(enc_ok);
+        hide(henc::ptab_ok);
         hide(evict);
         hide(insert);
         if !check_fits(hs) {
