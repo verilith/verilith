@@ -245,6 +245,7 @@ pub trait Provider {
     /// the ticket was issued and its `ticket_age_add`. `true` at most once
     /// for a binder within the freshness window, and only if the
     /// client's view of the ticket's age agrees with the server's.
+    /// `antireplay::Register::claim` is a verified implementation.
     fn claim_early(&mut self, ch: &[u8], binder: &[u8], obfuscated_age: u32, issued: u64, age_add: u32) -> (r: bool)
         ensures
             r ==> early_claimed(ch@),

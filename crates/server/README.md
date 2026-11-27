@@ -110,7 +110,7 @@ for when it is faster and when not).
 
 ## What is proven
 
-`scripts/verify.sh` (Verus): 286 verified, 0 errors.
+`scripts/verify.sh` (Verus): 288 verified, 0 errors.
 
 - **Requests are exactly the specification's, in order** (`conn.rs`,
   the invariant of `Core`). `first` is the request at the front of a byte
@@ -330,11 +330,13 @@ of round trip, the first response byte of a resumed connection came after
 51.6 ms; `bench/server/zero-rtt`, `results/2026-11-26-cloud-0rtt`).
 Early data can be replayed by an attacker, so the server takes it only as
 verilith-tls proves (a resumption, the ticket's suite and ALPN, within
-the size it advertised) and only once: verilith-tls-aws-lc keeps a
-single-use register of ClientHellos and a 10 s freshness window on the
-ticket's age (RFC 8446 §8). A request read from early data has
+the size it advertised) and only once: a single-use register of
+ClientHellos and a 10 s freshness window on the ticket's age (RFC 8446
+§8), proven to take no ClientHello twice (verilith-tls's
+`antireplay.rs`). A request read from early data has
 `Request::early()` set, and any method but GET, HEAD and OPTIONS is
-answered 425 Too Early (RFC 8470) without calling the handler; the
+answered 425 Too Early (RFC 8470) without calling the handler (the
+decision is `early::too_early`, verified); the
 client sends it again after the handshake. The register is per process,
 so servers on several machines sharing ticket keys should leave 0-RTT
 off.

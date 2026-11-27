@@ -3,6 +3,7 @@
 extern crate alloc;
 
 #[doc(hidden)]
+pub mod antireplay;
 pub mod seen;
 pub mod server;
 pub mod client;
