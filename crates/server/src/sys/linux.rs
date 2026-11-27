@@ -309,6 +309,39 @@ const TLS_CIPHER_AES_GCM_128: u16 = 51;
 const TLS_CIPHER_AES_GCM_256: u16 = 52;
 const TLS_CIPHER_CHACHA20_POLY1305: u16 = 54;
 
+/// The kernel's `struct tls12_crypto_info_*` for these keys, in `info`;
+/// its length, or `None` for a suite or key length the kernel has no
+/// cipher for. The key and IV are secret: they are only copied, at offsets
+/// that depend on the suite and the key's length, which are public
+/// (`scripts/ctcheck.py` checks the machine code; see TRUST.md).
+#[inline(never)]
+pub fn ktls_crypto_info(suite: u16, key: &[u8], iv: &[u8; 12], seq: u64, info: &mut [u8; 56]) -> Option<usize> {
+    // struct tls12_crypto_info_*: version, cipher, then (AES-GCM) the
+    // explicit IV (the last 8 IV bytes), key, salt (the first 4), record
+    // sequence; (ChaCha20-Poly1305) the 12-byte IV, key, record sequence.
+    let cipher = match (suite, key.len()) {
+        (0x1301, 16) => TLS_CIPHER_AES_GCM_128,
+        (0x1302, 32) => TLS_CIPHER_AES_GCM_256,
+        (0x1303, 32) => TLS_CIPHER_CHACHA20_POLY1305,
+        _ => return None,
+    };
+    info[0..2].copy_from_slice(&TLS_1_3_VERSION.to_ne_bytes());
+    info[2..4].copy_from_slice(&cipher.to_ne_bytes());
+    Some(if cipher == TLS_CIPHER_CHACHA20_POLY1305 {
+        info[4..16].copy_from_slice(iv);
+        info[16..48].copy_from_slice(key);
+        info[48..56].copy_from_slice(&seq.to_be_bytes());
+        56
+    } else {
+        let k = key.len();
+        info[4..12].copy_from_slice(&iv[4..]);
+        info[12..12 + k].copy_from_slice(key);
+        info[12 + k..16 + k].copy_from_slice(&iv[..4]);
+        info[16 + k..24 + k].copy_from_slice(&seq.to_be_bytes());
+        24 + k
+    })
+}
+
 /// Gives the kernel TLS 1.3 record protection of what is sent on `sock`
 /// from now on: cipher suite `suite` (0x1301-0x1303), traffic key `key`,
 /// IV `iv`, the next record's sequence number `seq`. `ulp`: first attach
@@ -325,30 +358,10 @@ pub fn ktls_tx(sock: i32, suite: u16, key: &[u8], iv: &[u8; 12], seq: u64, ulp: 
     unsafe extern "C" {
         fn setsockopt(fd: c_int, level: c_int, name: c_int, val: *const u8, len: u32) -> c_int;
     }
-    // struct tls12_crypto_info_*: version, cipher, then (AES-GCM) the
-    // explicit IV (the last 8 IV bytes), key, salt (the first 4), record
-    // sequence; (ChaCha20-Poly1305) the 12-byte IV, key, record sequence.
     let mut info = [0u8; 56];
-    let cipher = match (suite, key.len()) {
-        (0x1301, 16) => TLS_CIPHER_AES_GCM_128,
-        (0x1302, 32) => TLS_CIPHER_AES_GCM_256,
-        (0x1303, 32) => TLS_CIPHER_CHACHA20_POLY1305,
-        _ => return Err((false, io::Error::from(io::ErrorKind::Unsupported))),
-    };
-    info[0..2].copy_from_slice(&TLS_1_3_VERSION.to_ne_bytes());
-    info[2..4].copy_from_slice(&cipher.to_ne_bytes());
-    let n = if cipher == TLS_CIPHER_CHACHA20_POLY1305 {
-        info[4..16].copy_from_slice(iv);
-        info[16..48].copy_from_slice(key);
-        info[48..56].copy_from_slice(&seq.to_be_bytes());
-        56
-    } else {
-        let k = key.len();
-        info[4..12].copy_from_slice(&iv[4..]);
-        info[12..12 + k].copy_from_slice(key);
-        info[12 + k..16 + k].copy_from_slice(&iv[..4]);
-        info[16 + k..24 + k].copy_from_slice(&seq.to_be_bytes());
-        24 + k
+    let n = match ktls_crypto_info(suite, key, iv, seq, &mut info) {
+        Some(n) => n,
+        None => return Err((false, io::Error::from(io::ErrorKind::Unsupported))),
     };
     let r = (|| {
         if ulp && unsafe { setsockopt(sock, IPPROTO_TCP, TCP_ULP, b"tls".as_ptr(), 3) } < 0 {

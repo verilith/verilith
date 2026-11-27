@@ -27,6 +27,7 @@
 //! else is `unexpected_message`. TLS alerts become CRYPTO_ERROR
 //! (0x100 + alert, §4.8).
 use crate::crypto::*;
+use crate::ct::{ct_eq, declassify};
 use crate::hello::*;
 use crate::keys::*;
 use crate::messages::*;
@@ -789,7 +790,7 @@ impl<P: Provider> QuicServer<P> {
                     return Err(self.fail(DECODE_ERROR));
                 }
                 let got = vstd::slice::slice_subrange(m, 4, m.len());
-                if !ct_eq(got, expect.as_slice()) {
+                if !declassify(ct_eq(got, expect.as_slice())) {
                     return Err(self.fail(DECRYPT_ERROR));
                 }
                 proof {

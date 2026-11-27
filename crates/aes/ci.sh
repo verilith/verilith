@@ -59,7 +59,7 @@ ct() {
 # reported, or the check is not seeing what it should.
 ctstatic() {
   if [ -n "${CI:-}" ]; then python3 -m pip install -q capstone==5.0.7 pyelftools==0.33; fi
-  local t="$T/ctcheck"
+  local t="$T/ctcheck-$crate"
   # The remarks come only from a build that compiles the crate, so clean it.
   CARGO_TARGET_DIR="$t" cargo clean -q -p verilith-aes
   RUSTFLAGS="-C remark=stack-frame-layout" CARGO_TARGET_DIR="$t" \

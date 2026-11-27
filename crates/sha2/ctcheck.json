@@ -1,0 +1,63 @@
+{
+ "_comment": "The functions scripts/ctcheck.py checks in examples/ctcheck's binary: every kernel, and (x86-64) the hashers. The MACs, and the hashers on AArch64, are checked under Valgrind (examples/ctgrind.rs): the static check cannot tell the public length fields of a hasher's state from its secret bytes there. 'expect' other than pass marks a control that must be reported.",
+ "functions": [
+  {
+   "name": "ctcheck_leak_branch",
+   "expect": "any"
+  },
+  {
+   "name": "ctcheck_leak_index",
+   "expect": "any"
+  },
+  {
+   "name": "ctcheck_portable256"
+  },
+  {
+   "name": "ctcheck_portable512"
+  },
+  {
+   "name": "ctcheck_dispatch256",
+   "arch": "x86_64"
+  },
+  {
+   "name": "ctcheck_dispatch512",
+   "arch": "x86_64"
+  },
+  {
+   "name": "verilith_sha2::cpu::bmi2::compress_blocks",
+   "arch": "x86_64"
+  },
+  {
+   "name": "verilith_sha2::cpu::bmi2::compress512_blocks",
+   "arch": "x86_64"
+  },
+  {
+   "name": "verilith_sha2::cpu::bmi2::compress_blocks_avx2",
+   "arch": "x86_64"
+  },
+  {
+   "name": "verilith_sha2::cpu::bmi2::compress512_blocks_avx2",
+   "arch": "x86_64"
+  },
+  {
+   "name": "verilith_sha2::shani::tf::compress_blocks",
+   "arch": "x86_64"
+  },
+  {
+   "name": "verilith_sha2::armv8::tf::compress_blocks",
+   "arch": "aarch64"
+  },
+  {
+   "name": "verilith_sha2::armv8::tf::compress512_blocks",
+   "arch": "aarch64"
+  },
+  {
+   "name": "ctcheck_sha256",
+   "arch": "x86_64"
+  },
+  {
+   "name": "ctcheck_sha512",
+   "arch": "x86_64"
+  }
+ ]
+}

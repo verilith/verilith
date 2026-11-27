@@ -453,10 +453,15 @@ impl<K: AeadKey> Protect<K> {
         if n > 16385 {
             return Err(RecErr::Overflow);
         }
-        // The last non-zero byte is the type.
+        // The last non-zero byte is the type. Where it is (the length of
+        // the padding, so of the content) and the type itself are what the
+        // record delivers, public from here (RFC 8446 §5.4 notes that the
+        // scan's time shows the padding's length); each step's decision goes
+        // through `declassify`, so that the record's bytes are otherwise
+        // never branched on.
         let ghost inner = body@.take(n as int);
         let mut k = n;
-        while k > 0 && body[k - 1] == 0
+        while k > 0 && crate::ct::declassify(body[k - 1] == 0)
             invariant
                 k <= n,
                 n <= body@.len(),

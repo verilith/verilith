@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # What CI runs for this crate, besides Verus (scripts/verify.sh).
 #   ./ci.sh           the tests, then the constant-time check
-#   ./ci.sh ct        the constant-time check only (needs Valgrind, x86-64)
+#   ./ci.sh ct        the Valgrind constant-time check only (x86-64)
+#   ./ci.sh ctstatic  the static constant-time check of the machine code only
+#                     (x86-64 and AArch64; needs Python with capstone and
+#                     pyelftools)
 # Runs anywhere; with CI set it also installs the system packages it needs.
 . "$(dirname "$0")/../../scripts/ci-lib.sh"
 
@@ -32,6 +35,7 @@ test() {
       cargo test --profile "$P" --target aarch64-unknown-linux-gnu --test isa --test kernels --test vectors --test kernels512 --test vectors512
   fi
   ct
+  ctstatic
 }
 
 # The constant-time check (examples/ctgrind.rs): Valgrind's memcheck, with
@@ -63,6 +67,27 @@ ct() {
   fi
   grep -B2 -E '\sj[a-z]+ ' <<< "$f"
   echo "ct: no secret-dependent branches or addresses"
+}
+
+# The static constant-time check (../../scripts/ctcheck.py): a taint
+# analysis of the machine code of every kernel (portable, BMI2, AVX2,
+# SHA-NI, ARMv8, and the dispatch) and, on x86-64, of SHA-256 and SHA-512
+# (examples/ctcheck.rs), for every input, on the binary as this profile
+# builds it for x86-64 and for AArch64, as in ../aes/ci.sh. Each control
+# must be reported. The MACs are left to `ct` (see the example).
+ctstatic() {
+  if [ -n "${CI:-}" ]; then python3 -m pip install -q capstone==5.0.7 pyelftools==0.33; fi
+  local t="$T/ctcheck-$crate"
+  CARGO_TARGET_DIR="$t" cargo clean -q -p verilith-sha2
+  RUSTFLAGS="-C remark=stack-frame-layout" CARGO_TARGET_DIR="$t" \
+    cargo build --profile "$P" --example ctcheck 2> "$t-x86.frames" || { cat "$t-x86.frames"; exit 1; }
+  python3 ../../scripts/ctcheck.py ctcheck.json "$t/$P/examples/ctcheck" --frames "$t-x86.frames"
+  rustup target add aarch64-unknown-linux-musl
+  RUSTFLAGS="-C remark=stack-frame-layout -C linker=rust-lld" CARGO_TARGET_DIR="$t" \
+    cargo build --profile "$P" --example ctcheck --target aarch64-unknown-linux-musl 2> "$t-a64.frames" \
+    || { cat "$t-a64.frames"; exit 1; }
+  python3 ../../scripts/ctcheck.py ctcheck.json "$t/aarch64-unknown-linux-musl/$P/examples/ctcheck" --frames "$t-a64.frames"
+  echo "ctstatic: no secret-dependent branches, addresses or variable-time instructions"
 }
 
 "${1:-test}"
