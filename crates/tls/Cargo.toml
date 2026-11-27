@@ -14,6 +14,8 @@ exclude = ["bench/", "scripts/"]
 [dependencies]
 verilith-core = { path = "../core", version = "0.1.0" }
 verilith-sha2 = { path = "../sha2", version = "0.1.0" }
+# Client certificates: parsing (verified) for the path check in spec_client.rs.
+verilith-x509 = { path = "../x509", version = "0.1.0" }
 vstd = { workspace = true, features = ["std"] }
 
 [package.metadata.verus]

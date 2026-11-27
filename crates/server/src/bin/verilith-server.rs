@@ -2,6 +2,7 @@
 //!
 //!   verilith-server --threads N --http PORT [--h2c PORT] [--root DIR] [--protocols]
 //!                   [--tls PORT --cert PEM --key PEM]   (built with --features tls)
+//!                   [--client-ca PEM [--client-cert-required]]  (mutual TLS)
 //!                   [--tls-backend verilith|rustls]     (rustls: --features tls-rustls)
 //!                   [--h3 PORT --cert PEM --key PEM]    (UDP; built with --features h3)
 //!                   [--h3-backend verilith|quinn]       (QUIC: verilith-quic-conn, or quinn-proto)
@@ -77,7 +78,17 @@ fn main() {
                         eprintln!("ECHConfigList (DNS HTTPS record ech=): {}", verilith_server::tls::base64_encode(k.config_list()));
                         std::sync::Arc::new(k)
                     });
-                    let opts = verilith_server::tls::TlsOptions { max_early: arg(&args, "--early-data").map_or(0, |n| n.parse().unwrap()), ech };
+                    // `--client-ca PEM [--client-cert-required]`: ask clients
+                    // for certificates and check them against PEM's CAs.
+                    let client_auth = arg(&args, "--client-ca").map(|ca| {
+                        let required = args.iter().any(|a| a == "--client-cert-required");
+                        verilith_server::tls::ClientAuth::from_pem(&ca, required).expect("--client-ca")
+                    });
+                    let opts = verilith_server::tls::TlsOptions {
+                        max_early: arg(&args, "--early-data").map_or(0, |n| n.parse().unwrap()),
+                        ech,
+                        client_auth,
+                    };
                     verilith_server::tls::config_opts(&cert, &key, &opts)
                 }
                 #[cfg(feature = "tls-rustls")]

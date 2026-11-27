@@ -1,13 +1,14 @@
 //! The specification of what a TLS 1.3 server sends (RFC 8446 §4), and of
 //! its record framing (§5). Trusted: read it against the RFC.
 //!
-//! The server this crate implements does a full handshake with a
-//! certificate, no PSK, no 0-RTT and no client certificate. What it sends:
+//! What a server sends in a full handshake (resumption and 0-RTT are
+//! below, client authentication in `spec_client.rs`):
 //!
 //! ```text
 //!   [HelloRetryRequest]   if no key share fits (§4.1.4)
 //!   ServerHello
 //!   {EncryptedExtensions} under the server handshake keys
+//!   {CertificateRequest}  with client authentication
 //!   {Certificate}
 //!   {CertificateVerify}
 //!   {Finished}
@@ -16,6 +17,7 @@
 //! ```
 use crate::crypto::*;
 use crate::spec::*;
+use crate::spec_client::*;
 use crate::spec_keys::*;
 use crate::spec_ech::*;
 use vstd::prelude::*;
@@ -252,13 +254,15 @@ pub open spec fn alert_body(code: u8) -> Seq<u8> {
 // ---------------------------------------------------------------------------
 
 /// A server's configuration: its preferences (as `spec::negotiate` takes
-/// them) and its certificate chain.
+/// them), its certificate chain, and client authentication, if it asks
+/// clients for certificates (`spec_client.rs`).
 pub struct SpecCfg {
     pub suites: Seq<u16>,
     pub groups: Seq<u16>,
     pub sigs: Seq<u16>,
     pub alpn: Seq<u8>,
     pub chain: Seq<Seq<u8>>,
+    pub client: Option<SpecClientCfg>,
     /// The ECHConfigList (RFC 9849 §4), length prefix included, that the
     /// provider has keys for; empty when the server does no ECH.
     pub ech_list: Seq<u8>,
@@ -417,6 +421,9 @@ pub struct SpecHs {
     pub tp: Option<Seq<u8>>,
     /// The server took the client's 0-RTT data (§4.2.10).
     pub early: bool,
+    /// With client authentication, what the client answered the
+    /// CertificateRequest with, once it has (`spec_client.rs`).
+    pub client: Option<SpecClientAuth>,
     /// The server accepted ECH (RFC 9849): ClientHelloOuter, and the
     /// EncodedClientHelloInner it decrypted; `ch` is ClientHelloInner.
     pub ech: Option<(Seq<u8>, Seq<u8>)>,
@@ -514,10 +521,11 @@ impl SpecHs {
         self.prefix() + self.ch + self.server_hello()
     }
 
-    /// ..Certificate.
+    /// ..Certificate, with the CertificateRequest before it if the server
+    /// asks for client certificates.
     #[verifier::opaque]
     pub open spec fn th_cert(self, c: SpecCfg) -> Seq<u8> {
-        self.th_sh() + self.ee(c) + certificate(c.chain)
+        self.th_sh() + self.ee(c) + cr_msg(c.client) + certificate(c.chain)
     }
 
     pub open spec fn certificate_verify(self) -> Seq<u8> {
@@ -558,14 +566,15 @@ impl SpecHs {
     }
 
     /// What the server sends under its handshake keys:
-    /// EncryptedExtensions, Certificate, CertificateVerify, Finished; or
+    /// EncryptedExtensions, CertificateRequest (with client
+    /// authentication), Certificate, CertificateVerify, Finished; or
     /// EncryptedExtensions and Finished when resuming.
     #[verifier::opaque]
     pub open spec fn flight(self, c: SpecCfg) -> Seq<u8> {
         if self.resumed is Some {
             self.ee(c) + self.server_finished(c)
         } else {
-            self.ee(c) + certificate(c.chain) + self.certificate_verify()
+            self.ee(c) + cr_msg(c.client) + certificate(c.chain) + self.certificate_verify()
                 + self.server_finished(c)
         }
     }
@@ -581,10 +590,38 @@ impl SpecHs {
         }
     }
 
+    /// The client's Certificate and CertificateVerify, with client
+    /// authentication; nothing otherwise.
+    pub open spec fn client_msgs(self) -> Seq<u8> {
+        match self.client {
+            Some(a) => a.msgs(),
+            None => Seq::empty(),
+        }
+    }
+
+    /// What the client's Finished covers: ..EndOfEarlyData, then the
+    /// client's Certificate and CertificateVerify (§4.4.1).
+    #[verifier::opaque]
+    pub open spec fn th_client(self, c: SpecCfg) -> Seq<u8> {
+        self.th_eoed(c) + self.client_msgs()
+    }
+
     /// The client's Finished, as it must be.
     #[verifier::opaque]
     pub open spec fn client_finished(self, c: SpecCfg) -> Seq<u8> {
-        finished(verify_data(self.alg(), self.c_hs(), self.th_eoed(c)))
+        finished(verify_data(self.alg(), self.c_hs(), self.th_client(c)))
+    }
+
+    /// Client authentication went as `spec_client.rs` says: the server
+    /// asked for a certificate exactly when the configuration says to,
+    /// and the client's answer is one it takes (`SpecClientAuth::ok`).
+    #[verifier::opaque]
+    pub open spec fn client_ok(self, c: SpecCfg) -> bool {
+        match (c.client, self.client) {
+            (Some(cc), Some(a)) => a.ok(cc, self.alg(), self.th_eoed(c)),
+            (None, None) => true,
+            _ => false,
+        }
     }
 
     /// client_early_traffic_secret: the 0-RTT key, over the ClientHello.
@@ -606,7 +643,7 @@ impl SpecHs {
     /// resumption_master_secret, the client's Finished included.
     #[verifier::opaque]
     pub open spec fn res_master(self, c: SpecCfg) -> Seq<u8> {
-        resumption_master(self.alg(), self.psk(), self.dhe, self.th_eoed(c) + self.client_finished(c))
+        resumption_master(self.alg(), self.psk(), self.dhe, self.th_client(c) + self.client_finished(c))
     }
 
     /// The resumption, if any, is one `resumption_ok` allows.
@@ -635,7 +672,9 @@ impl SpecHs {
     ///   group and the server's share (`crypto::key_exchange`);
     /// - a full handshake's CertificateVerify signature is over §4.4.3's
     ///   content for the transcript through Certificate (`crypto::signed`);
-    ///   a resumption is `resume_ok`.
+    ///   a resumption is `resume_ok`;
+    /// - with client authentication, a full handshake (no resumption, so no
+    ///   0-RTT data either).
     #[verifier::opaque]
     pub open spec fn valid(self, c: SpecCfg) -> bool {
         &&& self.random.len() == 32
@@ -655,6 +694,7 @@ impl SpecHs {
         )
         &&& self.resume_ok()
         &&& self.early_ok(c)
+        &&& c.client is Some ==> self.resumed is None
         &&& self.ech_ok(c)
     }
 }

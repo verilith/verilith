@@ -59,6 +59,7 @@ mod api {
         /// The whole body, decoded if it was chunked.
         pub body: &'a [u8],
         pub(crate) early: bool,
+        pub(crate) peer: Option<&'a [u8]>,
     }
 
     impl<'a> Request<'a> {
@@ -82,6 +83,16 @@ mod api {
         /// should do nothing for an early GET that it would not repeat.
         pub fn early(&self) -> bool {
             self.early
+        }
+
+        /// The client's certificate (DER), if the connection is TLS with
+        /// client authentication ([`crate::tls::ClientAuth`]) and the client
+        /// sent one. verilith-tls checked, with proof, that its chain leads
+        /// to one of the configured trust anchors, that it is valid now and
+        /// for client authentication, and that the client signed the
+        /// handshake with its key (verilith-tls `spec_client.rs`).
+        pub fn client_certificate(&self) -> Option<&'a [u8]> {
+            self.peer
         }
 
         /// The target's path, before any `?`.

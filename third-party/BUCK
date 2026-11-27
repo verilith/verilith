@@ -14,14 +14,6 @@ http_archive(
 )
 
 verus_vstd(
-    name = "vstd-alloc",
-    archive = ":vstd-0.0.0-2026-11-22-0344.crate",
-    edition = "2021",
-    features = ["alloc"],
-    visibility = ["PUBLIC"],
-)
-
-verus_vstd(
     name = "vstd-alloc-std",
     archive = ":vstd-0.0.0-2026-11-22-0344.crate",
     edition = "2021",

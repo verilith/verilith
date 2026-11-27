@@ -16,7 +16,7 @@ verus_library(
         "default",
         "std",
     ],
-    vstd = "//third-party:vstd-alloc",
+    vstd = "//third-party:vstd-alloc-std",
     deps = [],
     visibility = ["PUBLIC"],
 )

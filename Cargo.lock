@@ -1888,6 +1888,7 @@ dependencies = [
  "sha2 0.10.9",
  "verilith-core",
  "verilith-sha2",
+ "verilith-x509",
  "vstd",
 ]
 
@@ -1897,6 +1898,7 @@ version = "0.1.0"
 dependencies = [
  "aws-lc-rs",
  "verilith-tls",
+ "verilith-x509",
 ]
 
 [[package]]

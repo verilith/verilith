@@ -16,6 +16,7 @@ verus_library(
     deps = [
         "//crates/core:core",
         "//crates/sha2:sha2",
+        "//crates/x509:x509",
     ],
     visibility = ["PUBLIC"],
 )

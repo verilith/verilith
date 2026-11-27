@@ -155,6 +155,8 @@ pub struct Conn2 {
     limits: Limits2,
     /// Requests are being read from 0-RTT data (set by the TLS layer).
     pub(crate) early: bool,
+    /// The TLS client's certificate (DER), if it authenticated.
+    pub(crate) peer: Option<std::sync::Arc<[u8]>>,
 }
 
 impl Conn2 {
@@ -184,6 +186,7 @@ impl Conn2 {
             closing: false,
             limits,
             early: false,
+            peer: None,
         };
         // Our SETTINGS, then a connection WINDOW_UPDATE up to our window.
         let params = [
@@ -589,7 +592,7 @@ impl Conn2 {
         };
         let method = get(b":method");
         let target = get(b":path");
-        let request = Request { method, target, minor: 1, buf: a, headers: &s.fields, body: &s.body, early: self.early };
+        let request = Request { method, target, minor: 1, buf: a, headers: &s.fields, body: &s.body, early: self.early, peer: self.peer.as_deref() };
         // A reused stream keeps its reply's buffers (cleared on close).
         let mut reply = s.reply.take().unwrap_or(Reply { status: 0, fields: HList::default(), body: ReplyBody::None, sent_headers: false, off: 0 });
         reply.sent_headers = false;

@@ -16,6 +16,7 @@
 //!   schedule (§7) gives for that transcript;
 //! - application data is delivered only once `Connected`, and only from a
 //!   record that opened under the client's application traffic keys.
+use crate::client::*;
 use crate::crypto::*;
 use crate::ech::*;
 use crate::hello::*;
@@ -25,6 +26,8 @@ use crate::negotiate::*;
 use crate::protect::*;
 use crate::record::*;
 use crate::spec::*;
+use crate::spec_client::*;
+use verilith_x509::spec::SpecTime;
 use crate::spec_keys::*;
 use crate::spec_ech::*;
 use crate::spec_record::*;
@@ -95,8 +98,35 @@ pub struct Config {
     pub(crate) lifetime: u32,
     /// The most 0-RTT data a ticket allows (0: no 0-RTT).
     pub(crate) max_early: u32,
+    /// Client authentication, if the server asks for client certificates.
+    pub(crate) client: Option<ClientAuth>,
+    /// The CertificateRequest it sends then (empty otherwise).
+    pub(crate) cr: Vec<u8>,
     /// The ECHConfigList the provider has keys for (empty: no ECH).
     pub(crate) ech_list: Vec<u8>,
+}
+
+/// What a server asks of clients' certificates (`spec_client.rs`).
+pub struct ClientAuth {
+    /// The signature schemes taken in a client's CertificateVerify.
+    pub(crate) sigs: Vec<u16>,
+    /// The trust anchors, DER certificates.
+    pub(crate) roots: Vec<Vec<u8>>,
+    /// Whether a client must send a certificate.
+    pub(crate) required: bool,
+}
+
+impl ClientAuth {
+    pub closed spec fn view(&self) -> SpecClientCfg {
+        SpecClientCfg { sigs: self.sigs@, roots: chain_view(self.roots@), required: self.required }
+    }
+}
+
+pub closed spec fn client_view(c: Option<ClientAuth>) -> Option<SpecClientCfg> {
+    match c {
+        Some(a) => Some(a.view()),
+        None => None,
+    }
 }
 
 impl Config {
@@ -107,6 +137,7 @@ impl Config {
             sigs: self.sigs@,
             alpn: self.alpn@,
             chain: self.chain@,
+            client: client_view(self.client),
             ech_list: self.ech_list@,
         }
     }
@@ -115,7 +146,17 @@ impl Config {
         &&& forall|i: int| 0 <= i < self.suites@.len() ==> known_suite(#[trigger] self.suites@[i])
         &&& self.cert@ == certificate(self.chain@)
         &&& self.cert@.len() < 0x100_0000
+        &&& self.cr@ == cr_msg(self@.client)
+        &&& self.cr@.len() < 0x1_0000
         &&& self.ech_list@.len() <= 4096
+    }
+
+    /// Whether the server asks clients for certificates.
+    pub fn has_client_auth(&self) -> (r: bool)
+        ensures
+            r == (self@.client is Some),
+    {
+        self.client.is_some()
     }
 
     /// The view, field by field (for the QUIC handshake in `quic.rs`).
@@ -142,6 +183,7 @@ impl Config {
                 sigs: sigs@,
                 alpn: alpn@,
                 chain: chain_view(chain@),
+                client: None,
                 ech_list: Seq::empty(),
             }),
     {
@@ -162,7 +204,58 @@ impl Config {
             Some(c) => c,
             None => return None,
         };
-        Some(Config { suites, groups, sigs, alpn, cert, chain: Ghost(chain_view(chain@)), tickets: 2, lifetime: 21600, max_early: 0, ech_list: Vec::new() })
+        proof {
+            reveal(cr_msg);
+        }
+        Some(Config {
+            suites,
+            groups,
+            sigs,
+            alpn,
+            cert,
+            chain: Ghost(chain_view(chain@)),
+            tickets: 2,
+            lifetime: 21600,
+            max_early: 0,
+            client: None,
+            cr: Vec::new(),
+            ech_list: Vec::new(),
+        })
+    }
+
+    /// Asks every client for a certificate (RFC 8446 §4.3.2) and checks the
+    /// chain it sends against the trust anchors `roots` (DER certificates;
+    /// `spec_client::chain_ok`) and its CertificateVerify against `sigs`,
+    /// the signature schemes taken, most preferred first. With `required`,
+    /// a client that sends no certificate is refused (certificate_required);
+    /// without, it connects unauthenticated. While client authentication is
+    /// on, the server neither resumes sessions nor issues tickets, so it
+    /// takes no 0-RTT data either. `false` (and nothing changes) if `sigs`
+    /// is empty or longer than 1000.
+    pub fn set_client_auth(&mut self, sigs: Vec<u16>, roots: Vec<Vec<u8>>, required: bool) -> (r: bool)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).wf(),
+            r ==> final(self)@ == (SpecCfg {
+                client: Some(SpecClientCfg { sigs: sigs@, roots: chain_view(roots@), required }),
+                ..old(self)@
+            }),
+            !r ==> final(self)@ == old(self)@,
+    {
+        if sigs.len() == 0 || sigs.len() > 1000 {
+            return false;
+        }
+        let mut cr: Vec<u8> = Vec::new();
+        certificate_request_x(&mut cr, sigs.as_slice());
+        assert(cr@ =~= certificate_request(sigs@));
+        proof {
+            reveal(cr_msg);
+        }
+        self.client = Some(ClientAuth { sigs, roots, required });
+        self.cr = cr;
+        assert(self.suites@ == old(self).suites@);
+        true
     }
 
     /// How many session tickets to send after each handshake (2 unless
@@ -244,6 +337,20 @@ enum State<K: AeadKey> {
         /// resumption_master_secret, if the server will send tickets.
         res: Option<Secret>,
     },
+    /// The server asked for a certificate (client authentication): waiting
+    /// for the client's Certificate, then (`got_cert`, the chain checked)
+    /// its CertificateVerify. `tr` is the transcript so far; `tx` is under
+    /// the server's application key, as in WaitFinished.
+    WaitClientAuth {
+        suite: u16,
+        rx: Protect<K>,
+        tx: Protect<K>,
+        tr: Transcript,
+        c_hs: Secret,
+        c_ap: Secret,
+        s_ap: Secret,
+        got_cert: bool,
+    },
     Connected { suite: u16, rx: Protect<K>, tx: Protect<K>, c_sec: Secret, s_sec: Secret },
     Closed,
 }
@@ -308,6 +415,96 @@ pub(crate) proof fn lemma_be3(m: Seq<u8>)
             n == (a * 256 + b) * 256 + c,
     ;
     assert(m =~= hs_msg(m[0], m.skip(4)));
+}
+
+/// A CertificateVerify message read as its scheme and signature.
+proof fn lemma_cv_msg(m: Seq<u8>, scheme: u16, sig: Seq<u8>)
+    requires
+        is_msg(m, 15),
+        m.len() >= 8,
+        scheme as nat == m[4] as nat * 256 + m[5] as nat,
+        m[6] as nat * 256 + m[7] as nat == m.len() - 8,
+        sig == m.skip(8),
+    ensures
+        m == certificate_verify(scheme, sig),
+{
+    lemma_be3(m);
+    let (a, b) = (m[4] as nat, m[5] as nat);
+    let (c, d) = (m[6] as nat, m[7] as nat);
+    assert(((a * 256 + b) / 256) % 256 == a && (a * 256 + b) % 256 == b) by (nonlinear_arith)
+        requires
+            a < 256,
+            b < 256,
+    ;
+    assert(((c * 256 + d) / 256) % 256 == c && (c * 256 + d) % 256 == d) by (nonlinear_arith)
+        requires
+            c < 256,
+            d < 256,
+    ;
+    assert(sig.len() == c * 256 + d);
+    assert(m.skip(4) =~= be2(scheme as nat) + be2(sig.len()) + sig);
+}
+
+/// `x` is in `s`.
+fn has_u16(s: &[u16], x: u16) -> (r: bool)
+    ensures
+        r == s@.contains(x),
+{
+    let mut i: usize = 0;
+    while i < s.len()
+        invariant
+            i <= s@.len(),
+            forall|j: int| 0 <= j < i ==> s@[j] != x,
+        decreases s@.len() - i,
+    {
+        if s[i] == x {
+            assert(s@[i as int] == x);
+            return true;
+        }
+        i = i + 1;
+    }
+    false
+}
+
+/// A handshake with the client's answer to the CertificateRequest added:
+/// everything up to the server's Finished is the same, and the client's
+/// Finished covers the answer.
+proof fn lemma_with_client(h: SpecHs, a: SpecClientAuth, c: SpecCfg)
+    ensures
+        ({
+            let h2 = SpecHs { client: Some(a), ..h };
+            &&& h2.valid(c) == h.valid(c)
+            &&& h2.alg() == h.alg()
+            &&& h2.c_hs() == h.c_hs()
+            &&& h2.s_hs() == h.s_hs()
+            &&& h2.c_ap(c) == h.c_ap(c)
+            &&& h2.s_ap(c) == h.s_ap(c)
+            &&& h2.c_early() == h.c_early()
+            &&& h2.th_sfin(c) == h.th_sfin(c)
+            &&& h2.th_eoed(c) == h.th_eoed(c)
+            &&& h2.client_finished(c) == finished(verify_data(h.alg(), h.c_hs(), h.th_eoed(c) + a.msgs()))
+            &&& h2.client_ok(c) == (c.client matches Some(cc) && a.ok(cc, h.alg(), h.th_eoed(c)))
+        }),
+{
+    reveal(SpecHs::early_ok);
+    reveal(SpecHs::th_eoed);
+    reveal(SpecHs::c_early);
+    reveal(SpecHs::valid);
+    reveal(SpecHs::resume_ok);
+    reveal(SpecHs::server_hello);
+    reveal(SpecHs::th_sh);
+    reveal(SpecHs::th_cert);
+    reveal(SpecHs::th_cv);
+    reveal(SpecHs::c_hs);
+    reveal(SpecHs::s_hs);
+    reveal(SpecHs::server_finished);
+    reveal(SpecHs::th_sfin);
+    reveal(SpecHs::client_finished);
+    reveal(SpecHs::th_client);
+    reveal(SpecHs::client_ok);
+    reveal(SpecHs::c_ap);
+    reveal(SpecHs::s_ap);
+    reveal(SpecHs::ech_ok);
 }
 
 /// A handshake message of a short enough body is one.
@@ -402,14 +599,15 @@ fn server_flight<P: Provider>(
                 early,
                 opt_view(retry),
             );
+            let cr = cr_msg(cfg@.client);
             let cert = certificate(cfg@.chain);
-            let th_cert = old(tr).data() + ee + cert;
+            let th_cert = old(tr).data() + ee + cr + cert;
             let cv = certificate_verify(scheme, sig@);
             let sf = finished(verify_data(a, s_hs@, th_cert + cv));
             &&& signed(scheme, cv_content(hash(a, th_cert)), sig@)
-            &&& fl@ == ee + cert + cv + sf
+            &&& fl@ == ee + cr + cert + cv + sf
             &&& final(tr).data() == th_cert + cv + sf
-            &&& fl@.len() < 0x100_0000 + 0x3_0000
+            &&& fl@.len() < 0x100_0000 + 0x4_0000
         },
 {
     let a = tr.alg_x();
@@ -417,6 +615,12 @@ fn server_flight<P: Provider>(
     let mut fl: Vec<u8> = Vec::new();
     encrypted_extensions_x(&mut fl, alpn, tp, early, retry);
     let ghost ee = fl@;
+    if cfg.cr.len() > 0 {
+        put(&mut fl, cfg.cr.as_slice());
+    }
+    proof {
+        assert(fl@ =~= ee + cfg.cr@);
+    }
     put(&mut fl, cfg.cert.as_slice());
     tr.update(fl.as_slice());
     let ghost th_cert = tr.data();
@@ -432,7 +636,7 @@ fn server_flight<P: Provider>(
     }
     proof {
         assert(sig@.skip(0) =~= sig@);
-        assert(th_cert =~= t0 + ee + cfg.cert@);
+        assert(th_cert =~= t0 + ee + cfg.cr@ + cfg.cert@);
     }
     let mut cv: Vec<u8> = Vec::new();
     certificate_verify_x(&mut cv, scheme, sig.as_slice());
@@ -446,7 +650,7 @@ fn server_flight<P: Provider>(
     put(&mut fl, cv.as_slice());
     put(&mut fl, sf.as_slice());
     proof {
-        assert(fl@ =~= ee + cfg.cert@ + cv@ + sf@);
+        assert(fl@ =~= ee + cfg.cr@ + cfg.cert@ + cv@ + sf@);
         assert(tr.data() =~= th_cert + cv@ + sf@);
     }
     Some((fl, Ghost(sig@)))
@@ -496,6 +700,85 @@ fn resumed_flight(alpn: Option<&[u8]>, tp: Option<&[u8]>, early: bool, retry: Op
     fl
 }
 
+/// The resumed handshake's flight `fl`, as `resumed_flight` makes it.
+#[verifier::opaque]
+pub open spec fn short_flight(a: HashAlg, th_sh: Seq<u8>, th_sfin: Seq<u8>, fl: Seq<u8>, ee: Seq<u8>, s_hs: Seq<u8>) -> bool {
+    let sf = finished(verify_data(a, s_hs, th_sh + ee));
+    &&& fl == ee + sf
+    &&& th_sfin == th_sh + ee + sf
+}
+
+proof fn lemma_short_flight(cc: SpecCfg, h: SpecHs, a: HashAlg, th_sh: Seq<u8>, th_sfin: Seq<u8>, fl: Seq<u8>, ee: Seq<u8>, s_hs: Seq<u8>)
+    requires
+        a == h.alg(),
+        ee == h.ee(cc),
+        s_hs == server_hs_traffic(h.alg(), h.psk(), h.dhe, th_sh),
+        short_flight(a, th_sh, th_sfin, fl, ee, s_hs),
+    ensures
+        ({
+            let a = h.alg();
+            let ee = h.ee(cc);
+            let sf = finished(verify_data(a, server_hs_traffic(a, h.psk(), h.dhe, th_sh), th_sh + ee));
+            &&& fl == ee + sf
+            &&& th_sfin == th_sh + ee + sf
+        }),
+{
+    reveal(short_flight);
+}
+
+/// The full handshake's flight `fl`, as `server_flight` makes it: after
+/// `th_sh`, EncryptedExtensions `ee`, the CertificateRequest if any,
+/// Certificate, CertificateVerify (`sig` with `scheme`) and Finished, the
+/// transcript then `th_sfin`.
+#[verifier::opaque]
+pub open spec fn full_flight(cc: SpecCfg, a: HashAlg, scheme: u16, sig: Seq<u8>, th_sh: Seq<u8>, th_sfin: Seq<u8>, fl: Seq<u8>, ee: Seq<u8>, s_hs: Seq<u8>) -> bool {
+    let cr = cr_msg(cc.client);
+    let cert = certificate(cc.chain);
+    let th_cert = th_sh + ee + cr + cert;
+    let cv = certificate_verify(scheme, sig);
+    let sf = finished(verify_data(a, s_hs, th_cert + cv));
+    &&& signed(scheme, cv_content(hash(a, th_cert)), sig)
+    &&& fl == ee + cr + cert + cv + sf
+    &&& th_sfin == th_cert + cv + sf
+}
+
+/// The full handshake's flight, as `server_flight` made it, in the terms
+/// of the handshake `h` (kept apart from `prepare`, whose context is large).
+proof fn lemma_full_flight(
+    cc: SpecCfg,
+    h: SpecHs,
+    a: HashAlg,
+    scheme: u16,
+    sig: Seq<u8>,
+    th_sh: Seq<u8>,
+    th_sfin: Seq<u8>,
+    fl: Seq<u8>,
+    ee: Seq<u8>,
+    s_hs: Seq<u8>,
+)
+    requires
+        a == h.alg(),
+        scheme == h.choice.signature_scheme,
+        sig == h.sig,
+        ee == h.ee(cc),
+        s_hs == server_hs_traffic(h.alg(), h.psk(), h.dhe, th_sh),
+        full_flight(cc, a, scheme, sig, th_sh, th_sfin, fl, ee, s_hs),
+    ensures
+        ({
+            let a = h.alg();
+            let ee = h.ee(cc);
+            let cert = certificate(cc.chain);
+            let th_cert = th_sh + ee + cr_msg(cc.client) + cert;
+            let cv = certificate_verify(h.choice.signature_scheme, h.sig);
+            let sf = finished(verify_data(a, server_hs_traffic(a, h.psk(), h.dhe, th_sh), th_cert + cv));
+            &&& signed(h.choice.signature_scheme, cv_content(hash(a, th_cert)), h.sig)
+            &&& fl == ee + cr_msg(cc.client) + cert + cv + sf
+            &&& th_sfin == th_cert + cv + sf
+        }),
+{
+    reveal(full_flight);
+}
+
 /// The handshake `accept` made is valid, and its messages and secrets are
 /// `SpecHs`'s.
 #[verifier::spinoff_prover]
@@ -538,16 +821,18 @@ proof fn lemma_accept_spec(
         th_sh == pre + m + sh,
         hsv.alpn(cc) == opt_view(alpn),
         hsv.early ==> early_allowed(cc, m, hsv.retry, hsv.choice, hsv.resumed),
+        hsv.client is None,
+        cc.client is Some ==> hsv.resumed is None,
         hsv.ech_ok(cc),
         hsv.resumed is None ==> ({
             let a = hsv.alg();
             let ee = hsv.ee(cc);
             let cert = certificate(cc.chain);
-            let th_cert = th_sh + ee + cert;
+            let th_cert = th_sh + ee + cr_msg(cc.client) + cert;
             let cv = certificate_verify(hsv.choice.signature_scheme, hsv.sig);
             let sf = finished(verify_data(a, server_hs_traffic(a, hsv.psk(), hsv.dhe, th_sh), th_cert + cv));
             &&& signed(hsv.choice.signature_scheme, cv_content(hash(a, th_cert)), hsv.sig)
-            &&& fl == ee + cert + cv + sf
+            &&& fl == ee + cr_msg(cc.client) + cert + cv + sf
             &&& th_sfin == th_cert + cv + sf
         }),
         hsv.resumed is Some ==> ({
@@ -566,6 +851,8 @@ proof fn lemma_accept_spec(
         hsv.c_hs() == client_hs_traffic(hsv.alg(), hsv.psk(), hsv.dhe, th_sh),
         hsv.s_hs() == server_hs_traffic(hsv.alg(), hsv.psk(), hsv.dhe, th_sh),
         hsv.th_eoed(cc) == (if hsv.early { th_sfin + end_of_early_data() } else { th_sfin }),
+        hsv.th_client(cc) == hsv.th_eoed(cc),
+        hsv.client_ok(cc) == (cc.client is None),
         hsv.client_finished(cc) == finished(verify_data(hsv.alg(), client_hs_traffic(hsv.alg(), hsv.psk(), hsv.dhe, th_sh), hsv.th_eoed(cc))),
         hsv.c_ap(cc) == client_ap_traffic(hsv.alg(), hsv.psk(), hsv.dhe, th_sfin),
         hsv.s_ap(cc) == server_ap_traffic(hsv.alg(), hsv.psk(), hsv.dhe, th_sfin),
@@ -590,10 +877,14 @@ proof fn lemma_accept_spec(
     reveal(SpecHs::c_ap);
     reveal(SpecHs::s_ap);
     reveal(SpecHs::res_master);
+    reveal(SpecHs::th_client);
+    reveal(SpecHs::client_ok);
+    assert(hsv.client_msgs() =~= Seq::<u8>::empty());
+    assert(hsv.th_client(cc) =~= hsv.th_eoed(cc));
     assert(th_sh == hsv.th_sh());
     assert(pre == hsv.prefix());
     if hsv.resumed is None {
-        let th_cert = th_sh + hsv.ee(cc) + certificate(cc.chain);
+        let th_cert = th_sh + hsv.ee(cc) + cr_msg(cc.client) + certificate(cc.chain);
         assert(th_cert == hsv.th_cert(cc));
         assert(th_cert + hsv.certificate_verify() == hsv.th_cv(cc));
     } else {
@@ -616,6 +907,9 @@ pub(crate) struct Prep {
     pub(crate) res: Option<Secret>,
     /// client_early_traffic_secret, when 0-RTT data is taken.
     pub(crate) c_early: Option<Secret>,
+    /// The transcript through the server's Finished, for the client's
+    /// Certificate and CertificateVerify to follow.
+    pub(crate) tr: Transcript,
     pub(crate) hs: Ghost<SpecHs>,
 }
 
@@ -644,10 +938,12 @@ pub(crate) open spec fn prep_ok(
     &&& h.ch == m
     &&& h.choice == choice
     &&& h.tp == tp
+    &&& h.client is None
+    &&& p.tr.wf() && p.tr.alg() == suite_hash(choice.suite) && p.tr.data() == h.th_sfin(cc)
     &&& p.sh@ == h.server_hello()
     &&& p.sh@.len() < 65536
     &&& p.fl@ == h.flight(cc)
-    &&& p.fl@.len() < 0x100_0000 + 0x3_0000
+    &&& p.fl@.len() < 0x100_0000 + 0x4_0000
     &&& p.c_hs.wf() && p.c_hs@ == h.c_hs()
     &&& p.s_hs.wf() && p.s_hs@ == h.s_hs()
     &&& p.expect.wf() && finished(p.expect@) == h.client_finished(cc)
@@ -991,6 +1287,7 @@ pub(crate) fn prepare<P: Provider>(
             resumed matches Some(rs) ==> resumption_ok(m@, tr.data(), suite_hash(c.suite), rs),
             tp matches Some(t) ==> t@.len() <= 60000,
             early ==> early_allowed(cfg@, m@, retry, choice, resumed),
+            resumed is Some ==> cfg@.client is None,
             ech_on == ech is Some,
             ech matches Some((outer, pt)) ==> retry is None && ech_decrypted(outer, pt, m@) && cfg@.ech_list.len() > 0 && !ech_retry,
             ech_retry ==> ech is None && cfg@.ech_list.len() > 0 && (parse_client_hello(m@.skip(4)) matches Ok(s) && s.ech is Some),
@@ -1047,19 +1344,35 @@ pub(crate) fn prepare<P: Provider>(
         let th = tr.hash();
         let (hs, c_hs, s_hs) = hs_keys(suite, pk.as_slice(), dhe, &th, Ghost(th_sh));
         let (fl, Ghost(sig)) = if resuming {
-            (resumed_flight(alpn, tp, early, retry_l, &mut tr, &s_hs), Ghost(Seq::<u8>::empty()))
+            let f = resumed_flight(alpn, tp, early, retry_l, &mut tr, &s_hs);
+            proof {
+                reveal(short_flight);
+                assert(short_flight(suite_hash(c.suite), th_sh, tr.data(), f@,
+                    encrypted_extensions(opt_view(alpn), opt_view(tp), early, opt_view(retry_l)), s_hs@));
+            }
+            (f, Ghost(Seq::<u8>::empty()))
         } else {
             match server_flight(prov, cfg, c.signature_scheme, alpn, tp, early, retry_l, &mut tr, &s_hs) {
-                Some(x) => x,
+                Some(x) => {
+                    proof {
+                        reveal(full_flight);
+                        assert(full_flight(cfg@, suite_hash(c.suite), c.signature_scheme, x.1@, th_sh, tr.data(), x.0@,
+                            encrypted_extensions(opt_view(alpn), opt_view(tp), early, opt_view(retry_l)), s_hs@));
+                    }
+                    x
+                },
                 None => return Err(INTERNAL_ERROR),
             }
         };
         let ghost th_sfin = tr.data();
-        let want_res = cfg.tickets > 0 && prov.tickets();
+        let tr_sfin = tr;
+        // No tickets with client authentication: a resumption would have no
+        // certificate to show.
+        let want_res = cfg.tickets > 0 && prov.tickets() && !cfg.has_client_auth();
         let (c_ap, s_ap, expect, res) = late_keys(a, &hs, &c_hs, Ghost(pk@), Ghost(dhe@), tr, early, want_res);
         let ghost th_eoed = if early { th_sfin + end_of_early_data() } else { th_sfin };
         let ghost tpv = opt_view(tp);
-        let ghost hsv = SpecHs { retry, ch: m@, choice, random: random@, share: share@, dhe: dhe@, sig, resumed, tp: tpv, early, ech, ech_retry };
+        let ghost hsv = SpecHs { retry, ch: m@, choice, random: random@, share: share@, dhe: dhe@, sig, resumed, tp: tpv, early, ech, ech_retry, client: None };
         proof {
             assert(hsv.ee(cfg@) == encrypted_extensions(opt_view(alpn), opt_view(tp), early, opt_view(retry_l)));
             lemma_ech_ok(cfg@, hsv, m@, random0, sh0, sid@);
@@ -1070,6 +1383,13 @@ pub(crate) fn prepare<P: Provider>(
             assert(early ==> retry is None && pre == Seq::<u8>::empty() && th_ch =~= m@);
             assert(hsv.tp == opt_view(tp));
             assert(hsv.alpn(cfg@) == opt_view(alpn));
+            assert(hsv.client is None);
+            assert(cfg@.client is Some ==> hsv.resumed is None);
+            if resumed is None {
+                lemma_full_flight(cfg@, hsv, suite_hash(c.suite), c.signature_scheme, sig, th_sh, th_sfin, fl@, encrypted_extensions(opt_view(alpn), opt_view(tp), early, opt_view(retry_l)), s_hs@);
+            } else {
+                lemma_short_flight(cfg@, hsv, suite_hash(c.suite), th_sh, th_sfin, fl@, encrypted_extensions(opt_view(alpn), opt_view(tp), early, opt_view(retry_l)), s_hs@);
+            }
             lemma_accept_spec(cfg@, hsv, m@, pre, sh@, th_sh, th_sfin, fl@, peer@, alpn, sid@);
             assert(cfg.cert@ == certificate(cfg@.chain));
         }
@@ -1083,10 +1403,11 @@ pub(crate) fn prepare<P: Provider>(
             assert(s_ap@ == hsv.s_ap(cfg@));
         }
         proof {
+            assert(tr_sfin.data() == hsv.th_sfin(cfg@));
             reveal(prep_ok);
             assert(sh@.len() < 65536);
         }
-        Ok(Prep { sh, fl, c_hs, s_hs, expect, c_ap, s_ap, res, c_early, hs: Ghost(hsv) })
+        Ok(Prep { sh, fl, c_hs, s_hs, expect, c_ap, s_ap, res, c_early, tr: tr_sfin, hs: Ghost(hsv) })
 }
 
 /// The next traffic secret after `sec` (§7.2) and its protection.
@@ -1250,9 +1571,11 @@ pub(crate) fn try_resume<P: Provider>(
             &&& ticket_suite_psk(g@.state) matches Some((ts, _)) && ts == suite
             &&& info.max_early as nat == ticket_early(g@.state).0
             &&& info.alpn@ == ticket_early(g@.state).1
+            &&& cfg@.client is None
         },
 {
-    if cfg.tickets == 0 || !prov.tickets() {
+    // With client authentication every handshake is a full one.
+    if cfg.tickets == 0 || !prov.tickets() || cfg.has_client_auth() {
         return Ok(None);
     }
     let mp = match h.psk_modes {
@@ -1481,6 +1804,13 @@ pub struct ServerConn<P: Provider> {
     early_taken: bool,
     /// The ALPN protocol chosen, a span of the configuration's list.
     alpn_sel: Option<Span>,
+    /// With client authentication, the client's certificates, leaf first,
+    /// once its chain checked out (empty if it sent none).
+    peer: Vec<Vec<u8>>,
+    /// The client's Certificate message, and the time its chain was checked
+    /// at.
+    cmsg: Ghost<Seq<u8>>,
+    cnow: Ghost<SpecTime>,
     hs: Ghost<SpecHs>,
     ch1: Ghost<Seq<u8>>,
     hrr: Ghost<Seq<u8>>,
@@ -1499,9 +1829,28 @@ impl<P: Provider> ServerConn<P> {
             State::Start => Phase::Start,
             State::WaitCh2 { .. } => Phase::Retried,
             State::WaitFinished { .. } => Phase::WaitFinished,
+            State::WaitClientAuth { .. } => Phase::WaitFinished,
             State::Connected { .. } => Phase::Connected,
             State::Closed => Phase::Closed,
         }
+    }
+
+    /// Waiting for the client's Certificate or CertificateVerify.
+    pub closed spec fn in_client_auth(&self) -> bool {
+        self.state is WaitClientAuth
+    }
+
+    /// The client's Certificate has come (and its chain checked out).
+    pub closed spec fn got_cert(&self) -> bool {
+        match self.state {
+            State::WaitClientAuth { got_cert, .. } => got_cert,
+            _ => false,
+        }
+    }
+
+    /// The client's certificates, leaf first, once checked.
+    pub closed spec fn peer_chain(&self) -> Seq<Seq<u8>> {
+        chain_view(self.peer@)
     }
 
     /// The handshake, once the server has sent its flight.
@@ -1539,6 +1888,7 @@ impl<P: Provider> ServerConn<P> {
         match self.state {
             State::Connected { s_sec, .. } => s_sec@,
             State::WaitFinished { s_ap, .. } => s_ap@,
+            State::WaitClientAuth { s_ap, .. } => s_ap@,
             _ => Seq::empty(),
         }
     }
@@ -1547,6 +1897,7 @@ impl<P: Provider> ServerConn<P> {
         match self.state {
             State::Connected { tx, .. } => tx.seq(),
             State::WaitFinished { tx, .. } => tx.seq(),
+            State::WaitClientAuth { tx, .. } => tx.seq(),
             _ => 0,
         }
     }
@@ -1569,6 +1920,13 @@ impl<P: Provider> ServerConn<P> {
 
     pub closed spec fn tx_updates(&self) -> nat {
         self.ntx@
+    }
+
+    /// Client authentication, if on, is over and went as `spec_client.rs`
+    /// says, and `peer` is the client's chain.
+    pub closed spec fn client_done(&self) -> bool {
+        &&& self.hs@.client_ok(self.config())
+        &&& self.hs@.client matches Some(a) ==> chain_view(self.peer@) == a.chain
     }
 
     pub closed spec fn hs_ok(&self) -> bool {
@@ -1604,12 +1962,38 @@ impl<P: Provider> ServerConn<P> {
                 &&& c_ap.wf() && c_ap@ == h.c_ap(c)
                 &&& s_ap.wf() && s_ap@ == h.s_ap(c)
                 &&& res matches Some(rm) ==> rm.wf() && rm@ == h.res_master(c)
+                &&& self.client_done()
+            },
+            State::WaitClientAuth { suite, rx, tx, tr, c_hs, c_ap, s_ap, got_cert } => {
+                let h = self.hs@;
+                let c = self.config();
+                &&& self.hs_ok()
+                &&& suite == h.choice.suite
+                &&& c.client is Some
+                &&& h.client is None
+                &&& !h.early
+                &&& !self.early_taken
+                &&& keys_are(rx, suite, h.c_hs())
+                &&& keys_are(tx, suite, h.s_ap(c))
+                &&& c_hs.wf() && c_hs@ == h.c_hs()
+                &&& c_ap.wf() && c_ap@ == h.c_ap(c)
+                &&& s_ap.wf() && s_ap@ == h.s_ap(c)
+                &&& tr.wf() && tr.alg() == suite_hash(suite)
+                &&& !got_cert ==> tr.data() == h.th_eoed(c)
+                &&& got_cert ==> {
+                    &&& tr.data() == h.th_eoed(c) + self.cmsg@
+                    &&& is_msg(self.cmsg@, 11)
+                    &&& parse_client_certificate(self.cmsg@.skip(4)) == Ok::<Seq<Seq<u8>>, u8>(chain_view(self.peer@))
+                    &&& self.peer@.len() > 0
+                    &&& chain_ok(chain_view(self.peer@), c.client.unwrap().roots, self.cnow@)
+                }
             },
             State::Connected { suite, rx, tx, c_sec, s_sec } => {
                 let h = self.hs@;
                 let c = self.config();
                 &&& self.hs_ok()
                 &&& suite == h.choice.suite
+                &&& self.client_done()
                 &&& self.fin@ == h.client_finished(c)
                 &&& c_sec.wf() && c_sec@ == updated(suite_hash(suite), h.c_ap(c), self.nrx@)
                 &&& s_sec.wf() && s_sec@ == updated(suite_hash(suite), h.s_ap(c), self.ntx@)
@@ -1634,6 +2018,8 @@ impl<P: Provider> ServerConn<P> {
                 self.handshake().c_ap(self.config()),
                 self.rx_updates(),
             ),
+            self.handshake().client_ok(self.config()),
+            self.handshake().client matches Some(a) ==> self.peer_chain() == a.chain,
     {
     }
 
@@ -1654,6 +2040,9 @@ impl<P: Provider> ServerConn<P> {
             early_left: 0,
             early_taken: false,
             alpn_sel: None,
+            peer: Vec::new(),
+            cmsg: Ghost(Seq::empty()),
+            cnow: Ghost(arbitrary()),
             hs: Ghost(arbitrary()),
             ch1: Ghost(Seq::empty()),
             hrr: Ghost(Seq::empty()),
@@ -1688,10 +2077,16 @@ impl<P: Provider> ServerConn<P> {
     {
         let mut st = State::Closed;
         core::mem::swap(&mut self.state, &mut st);
+        // A refused client has no identity (its certificates are kept from
+        // its Certificate on, before its CertificateVerify is checked).
+        self.peer = Vec::new();
         let body: [u8; 2] = [2, code];
         let ghost o = out@;
         match st {
             State::WaitFinished { mut tx, .. } => {
+                tx.seal(21, &body, out);
+            },
+            State::WaitClientAuth { mut tx, .. } => {
                 tx.seal(21, &body, out);
             },
             State::Connected { mut tx, .. } => {
@@ -1885,7 +2280,8 @@ impl<P: Provider> ServerConn<P> {
             assert(chosen@ == alpn_or_empty(cfg@, choice));
         }
         let mut early = false;
-        if h.early_data && !retried && cfg.max_early > 0 {
+        // Never with client authentication (no resumption then either).
+        if h.early_data && !retried && cfg.max_early > 0 && !cfg.has_client_auth() {
             match &info {
                 Some(i) => {
                     if i.max_early > 0 && ct_eq(i.alpn.as_slice(), chosen) {
@@ -1908,7 +2304,8 @@ impl<P: Provider> ServerConn<P> {
             Ok(p) => p,
             Err(code) => return Err(self.fail(code, out)),
         };
-        let Prep { sh, fl, c_hs, s_hs, expect, c_ap, s_ap, res, c_early, hs: Ghost(hsv) } = p;
+        let Prep { sh, fl, c_hs, s_hs, expect, c_ap, s_ap, res, c_early, tr, hs: Ghost(hsv) } = p;
+        let tr_sfin = tr;
         proof {
             reveal(prep_ok);
         }
@@ -1953,8 +2350,278 @@ impl<P: Provider> ServerConn<P> {
             Some(k) => Some(protect_of(&self.prov, suite, &k)),
             None => None,
         };
-        self.enter_wait_finished(Ghost(hsv), suite, rx, tx_ap, ep, expect, c_ap, s_ap, res);
+        if cfg.has_client_auth() {
+            proof {
+                reveal(SpecHs::th_eoed);
+            }
+            self.enter_wait_client_auth(Ghost(hsv), suite, rx, tx_ap, tr_sfin, c_hs, c_ap, s_ap);
+        } else {
+            proof {
+                reveal(SpecHs::client_ok);
+            }
+            self.enter_wait_finished(Ghost(hsv), suite, rx, tx_ap, ep, expect, c_ap, s_ap, res);
+        }
         Ok(Event::Nothing)
+    }
+
+    fn enter_wait_client_auth(
+        &mut self,
+        Ghost(hsv): Ghost<SpecHs>,
+        suite: u16,
+        rx: Protect<P::Key>,
+        tx: Protect<P::Key>,
+        tr: Transcript,
+        c_hs: Secret,
+        c_ap: Secret,
+        s_ap: Secret,
+    )
+        requires
+            (*old(self).cfg).wf(),
+            old(self).buf@.len() <= MAX_MESSAGE + 4,
+            hsv.valid(old(self).config()),
+            known_suite(suite),
+            suite == hsv.choice.suite,
+            old(self).config().client is Some,
+            hsv.client is None,
+            !hsv.early,
+            !old(self).early_taken,
+            keys_are(rx, suite, hsv.c_hs()),
+            keys_are(tx, suite, hsv.s_ap(old(self).config())),
+            c_hs.wf() && c_hs@ == hsv.c_hs(),
+            c_ap.wf() && c_ap@ == hsv.c_ap(old(self).config()),
+            s_ap.wf() && s_ap@ == hsv.s_ap(old(self).config()),
+            tr.wf() && tr.alg() == suite_hash(suite),
+            tr.data() == hsv.th_eoed(old(self).config()),
+        ensures
+            final(self).wf(),
+            final(self).phase() == Phase::WaitFinished,
+            final(self).in_client_auth(),
+            final(self).handshake() == hsv,
+            final(self).config() == old(self).config(),
+    {
+        self.hs = Ghost(hsv);
+        self.state = State::WaitClientAuth { suite, rx, tx, tr, c_hs, c_ap, s_ap, got_cert: false };
+    }
+
+    /// Where client authentication is: 0 not waiting for it, 1 waiting for
+    /// the client's Certificate, 2 for its CertificateVerify.
+    fn client_stage_x(&self) -> (r: u8)
+        ensures
+            r == 0 <==> !self.in_client_auth(),
+            r == 1 <==> self.in_client_auth() && !self.got_cert(),
+            r == 2 <==> self.in_client_auth() && self.got_cert(),
+    {
+        match self.state {
+            State::WaitClientAuth { got_cert, .. } => if got_cert { 2 } else { 1 },
+            _ => 0,
+        }
+    }
+
+    fn in_client_auth_x(&self) -> (r: bool)
+        ensures
+            r == self.in_client_auth(),
+    {
+        match self.state {
+            State::WaitClientAuth { .. } => true,
+            _ => false,
+        }
+    }
+
+    /// The client's Certificate `m` (§4.4.2), answering the
+    /// CertificateRequest: an empty one, if a certificate is not required,
+    /// ends client authentication; otherwise its chain must check out
+    /// (`check_chain`), and its CertificateVerify comes next.
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(80)]
+    fn on_client_certificate(&mut self, m: &[u8], out: &mut Vec<u8>) -> (r: Result<Event, Error>)
+        requires
+            old(self).wf(),
+            old(self).in_client_auth(),
+            !old(self).got_cert(),
+            old(out)@.len() <= usize::MAX / 2,
+            is_msg(m@, 11),
+        ensures
+            final(self).wf(),
+            final(self).config() == old(self).config(),
+            final(out)@.take(old(out)@.len() as int) == old(out)@,
+            final(self).phase() == Phase::WaitFinished || final(self).phase() == Phase::Closed,
+            r matches Ok(e) ==> e is Nothing,
+    {
+        let cfa = self.cfg.clone();
+        let cfg: &Config = &*cfa;
+        let ca = match &cfg.client {
+            Some(a) => a,
+            None => {
+                proof {
+                    assert(false);
+                }
+                return Err(self.fail(INTERNAL_ERROR, out));
+            },
+        };
+        let ghost cc = ca.view();
+        assert(self.config().client == Some(cc));
+        let body = vstd::slice::slice_subrange(m, 4, m.len());
+        assert(body@ =~= m@.skip(4));
+        let chain = match parse_client_certificate_x(body) {
+            Ok(v) => v,
+            Err(a) => return Err(self.fail(a, out)),
+        };
+        if chain.len() == 0 && ca.required {
+            return Err(self.fail(CERTIFICATE_REQUIRED, out));
+        }
+        let now = self.prov.now_utc();
+        if chain.len() > 0 {
+            match check_chain(&self.prov, &chain, &ca.roots, &now) {
+                Ok(()) => {},
+                Err(a) => return Err(self.fail(a, out)),
+            }
+        }
+        let mut st = State::Closed;
+        core::mem::swap(&mut self.state, &mut st);
+        match st {
+            State::WaitClientAuth { suite, rx, tx, mut tr, c_hs, c_ap, s_ap, got_cert } => {
+                let ghost h = self.hs@;
+                let ghost c = self.config();
+                tr.update(m);
+                if chain.len() == 0 {
+                    // No certificate, and none required: no CertificateVerify
+                    // follows, and the client's Finished is next.
+                    let a = suite_hash_x(suite);
+                    let th = tr.hash();
+                    let expect = verify_data_x(a, &c_hs, &th, Ghost(tr.data()));
+                    let ghost ca_s = SpecClientAuth { cert_msg: m@, chain: Seq::empty(), scheme: 0, sig: Seq::empty(), now: now@ };
+                    let ghost h2 = SpecHs { client: Some(ca_s), ..h };
+                    proof {
+                        lemma_with_client(h, ca_s, c);
+                        assert(chain_view(chain@) =~= Seq::<Seq<u8>>::empty());
+                        assert(ca_s.msgs() == m@);
+                        assert(ca_s.ok(cc, h.alg(), h.th_eoed(c)));
+                        assert(tr.data() == h.th_eoed(c) + ca_s.msgs());
+                    }
+                    self.peer = chain;
+                    self.enter_wait_finished(Ghost(h2), suite, rx, tx, None, expect, c_ap, s_ap, None);
+                    Ok(Event::Nothing)
+                } else {
+                    self.peer = chain;
+                    self.cmsg = Ghost(m@);
+                    self.cnow = Ghost(now@);
+                    self.state = State::WaitClientAuth { suite, rx, tx, tr, c_hs, c_ap, s_ap, got_cert: true };
+                    assert(out@.take(out@.len() as int) =~= out@);
+                    Ok(Event::Nothing)
+                }
+            },
+            _ => {
+                proof {
+                    assert(false);
+                }
+                Err(Error::Closed)
+            },
+        }
+    }
+
+    /// The client's CertificateVerify `m` (§4.4.3): a scheme the server
+    /// asked for, and the leaf's key's signature over the transcript
+    /// through the client's Certificate; then the client's Finished is
+    /// next.
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(80)]
+    fn on_client_cv(&mut self, m: &[u8], out: &mut Vec<u8>) -> (r: Result<Event, Error>)
+        requires
+            old(self).wf(),
+            old(self).in_client_auth(),
+            old(self).got_cert(),
+            old(out)@.len() <= usize::MAX / 2,
+            is_msg(m@, 15),
+        ensures
+            final(self).wf(),
+            final(self).config() == old(self).config(),
+            final(out)@.take(old(out)@.len() as int) == old(out)@,
+            final(self).phase() == Phase::WaitFinished || final(self).phase() == Phase::Closed,
+            r matches Ok(e) ==> e is Nothing,
+    {
+        let cfa = self.cfg.clone();
+        let cfg: &Config = &*cfa;
+        let ca = match &cfg.client {
+            Some(a) => a,
+            None => {
+                proof {
+                    assert(false);
+                }
+                return Err(self.fail(INTERNAL_ERROR, out));
+            },
+        };
+        let ghost cc = ca.view();
+        assert(self.config().client == Some(cc));
+        let n = m.len();
+        if n < 8 {
+            return Err(self.fail(DECODE_ERROR, out));
+        }
+        let scheme = (m[4] as u16) * 256 + m[5] as u16;
+        let sl = (m[6] as usize) * 256 + m[7] as usize;
+        if sl != n - 8 {
+            return Err(self.fail(DECODE_ERROR, out));
+        }
+        if !has_u16(ca.sigs.as_slice(), scheme) {
+            return Err(self.fail(ILLEGAL_PARAMETER, out));
+        }
+        if self.peer.len() == 0 {
+            return Err(self.fail(INTERNAL_ERROR, out));
+        }
+        let sig = vstd::slice::slice_subrange(m, 8, n);
+        let mut st = State::Closed;
+        core::mem::swap(&mut self.state, &mut st);
+        match st {
+            State::WaitClientAuth { suite, rx, tx, mut tr, c_hs, c_ap, s_ap, got_cert } => {
+                let ghost h = self.hs@;
+                let ghost c = self.config();
+                let th = tr.hash();
+                let mut content: Vec<u8> = Vec::new();
+                client_cv_content_x(&mut content, &th);
+                let ok = match verilith_x509::parse(self.peer[0].as_slice()) {
+                    Some(leaf) => {
+                        let v = self.prov.verify_tls_sig(scheme, &leaf.tbs.spki, content.as_slice(), sig);
+                        proof {
+                            lemma_cert_of(self.peer@[0]@, leaf@);
+                            assert(v ==> tls_signed(scheme, cert_of(self.peer@[0]@).tbs.spki, content@, sig@));
+                        }
+                        v
+                    },
+                    None => false,
+                };
+                if !ok {
+                    self.state = State::WaitClientAuth { suite, rx, tx, tr, c_hs, c_ap, s_ap, got_cert };
+                    return Err(self.fail(DECRYPT_ERROR, out));
+                }
+                tr.update(m);
+                let a = suite_hash_x(suite);
+                let th2 = tr.hash();
+                let expect = verify_data_x(a, &c_hs, &th2, Ghost(tr.data()));
+                let ghost ca_s = SpecClientAuth {
+                    cert_msg: self.cmsg@,
+                    chain: chain_view(self.peer@),
+                    scheme,
+                    sig: sig@,
+                    now: self.cnow@,
+                };
+                let ghost h2 = SpecHs { client: Some(ca_s), ..h };
+                proof {
+                    lemma_cv_msg(m@, scheme, sig@);
+                    lemma_with_client(h, ca_s, c);
+                    assert(chain_view(self.peer@)[0] == self.peer@[0]@);
+                    assert(ca_s.msgs() == self.cmsg@ + m@);
+                    assert(ca_s.ok(cc, h.alg(), h.th_eoed(c)));
+                    assert(tr.data() =~= h.th_eoed(c) + ca_s.msgs());
+                }
+                self.enter_wait_finished(Ghost(h2), suite, rx, tx, None, expect, c_ap, s_ap, None);
+                Ok(Event::Nothing)
+            },
+            _ => {
+                proof {
+                    assert(false);
+                }
+                Err(Error::Closed)
+            },
+        }
     }
 
 
@@ -1985,6 +2652,8 @@ impl<P: Provider> ServerConn<P> {
             expect@.len() == hash_len(suite_hash(suite)),
             c_ap.wf() && c_ap@ == hsv.c_ap(old(self).config()),
             s_ap.wf() && s_ap@ == hsv.s_ap(old(self).config()),
+            hsv.client_ok(old(self).config()),
+            hsv.client matches Some(a) ==> chain_view(old(self).peer@) == a.chain,
         ensures
             final(self).wf(),
             final(self).phase() == Phase::WaitFinished,
@@ -2220,6 +2889,7 @@ impl<P: Provider> ServerConn<P> {
             State::Start => 0,
             State::WaitCh2 { .. } => 1,
             State::WaitFinished { .. } => 2,
+            State::WaitClientAuth { .. } => 2,
             State::Connected { .. } => 3,
             State::Closed => 4,
         }
@@ -2231,6 +2901,7 @@ impl<P: Provider> ServerConn<P> {
         requires
             old(self).wf(),
             old(self).phase() == Phase::WaitFinished,
+            !old(self).in_client_auth(),
             old(out)@.len() <= usize::MAX / 2,
             is_msg(m@, 20),
         ensures
@@ -2402,7 +3073,7 @@ impl<P: Provider> ServerConn<P> {
             final(self).phase() == Phase::Connected ==> old(self).phase() == Phase::Connected
                 || old(self).phase() == Phase::WaitFinished,
             final(self).phase() == Phase::WaitFinished ==> old(self).phase() == Phase::Start
-                || old(self).phase() == Phase::Retried,
+                || old(self).phase() == Phase::Retried || old(self).phase() == Phase::WaitFinished,
             final(self).phase() == Phase::Retried ==> old(self).phase() == Phase::Start,
             final(self).phase() == Phase::Start ==> false,
             r matches Ok(e) ==> (e is Nothing || (e is HandshakeDone && old(self).phase()
@@ -2410,10 +3081,15 @@ impl<P: Provider> ServerConn<P> {
     {
         let t = m[0];
         let ph = self.phase_x();
+        let stage = self.client_stage_x();
         if ph <= 1 && t == 1 {
             self.on_client_hello(m, out)
-        } else if ph == 2 && t == 20 {
+        } else if ph == 2 && stage == 0 && t == 20 {
             self.on_finished(m, out)
+        } else if ph == 2 && stage == 1 && t == 11 {
+            self.on_client_certificate(m, out)
+        } else if ph == 2 && stage == 2 && t == 15 {
+            self.on_client_cv(m, out)
         } else if ph == 3 && t == 24 {
             self.on_key_update(m, out)
         } else {
@@ -2422,8 +3098,10 @@ impl<P: Provider> ServerConn<P> {
     }
 
     /// A fragment of handshake messages (§5.1: they may span records, but
-    /// not a change of keys, and every message this server takes is
-    /// followed by one, or by its answer).
+    /// not a change of keys). Every message this server takes is followed
+    /// by a change of keys, or by its answer, except the client's
+    /// Certificate and CertificateVerify, which may share a record with
+    /// what follows them.
     fn on_handshake(&mut self, frag: &[u8], out: &mut Vec<u8>) -> (r: Result<Event, Error>)
         requires
             old(self).wf(),
@@ -2449,7 +3127,7 @@ impl<P: Provider> ServerConn<P> {
                     if l <= MAX_MESSAGE && l == frag.len() - 4 {
                         return self.dispatch(frag, out);
                     }
-                    if l <= MAX_MESSAGE && l < frag.len() - 4 {
+                    if l <= MAX_MESSAGE && l < frag.len() - 4 && !self.in_client_auth_x() {
                         return Err(self.fail(UNEXPECTED_MESSAGE, out));
                     }
                     if l > MAX_MESSAGE {
@@ -2463,24 +3141,119 @@ impl<P: Provider> ServerConn<P> {
             return Err(self.fail(UNEXPECTED_MESSAGE, out));
         }
         put(&mut self.buf, frag);
-        match handshake_length(self.buf.as_slice()) {
-            None => {
-                assert(out@.take(out@.len() as int) =~= out@);
-                Ok(Event::Nothing)
-            },
-            Some(l) => {
-                if l > MAX_MESSAGE || l < self.buf.len() - 4 {
-                    return Err(self.fail(UNEXPECTED_MESSAGE, out));
-                }
-                if l > self.buf.len() - 4 {
-                    assert(out@.take(out@.len() as int) =~= out@);
+        self.drain(out)
+    }
+
+    /// The whole handshake messages at the front of `buf`, in order.
+    fn drain(&mut self, out: &mut Vec<u8>) -> (r: Result<Event, Error>)
+        requires
+            old(self).wf(),
+            old(self).phase() != Phase::Closed,
+            old(out)@.len() <= usize::MAX / 2,
+        ensures
+            final(self).wf(),
+            final(self).config() == old(self).config(),
+            final(out)@.take(old(out)@.len() as int) == old(out)@,
+            final(self).phase() == Phase::Connected ==> old(self).phase() == Phase::Connected
+                || old(self).phase() == Phase::WaitFinished,
+            final(self).phase() == Phase::WaitFinished ==> old(self).phase() == Phase::Start
+                || old(self).phase() == Phase::Retried || old(self).phase() == Phase::WaitFinished,
+            final(self).phase() == Phase::Retried ==> old(self).phase() == Phase::Start
+                || old(self).phase() == Phase::Retried,
+            final(self).phase() == Phase::Start ==> old(self).phase() == Phase::Start,
+            r matches Ok(e) ==> (e is Nothing || (e is HandshakeDone && old(self).phase()
+                == Phase::WaitFinished && final(self).phase() == Phase::Connected)),
+    {
+        let ghost p0 = self.phase();
+        let ghost o = out@;
+        // Whether a message of this record has been taken already; then
+        // what is sent goes through `tmp`, so that `out` only grows.
+        let mut again = false;
+        loop
+            invariant
+                self.wf(),
+                self.config() == old(self).config(),
+                p0 == old(self).phase(),
+                p0 != Phase::Closed,
+                o == old(out)@,
+                o.len() <= usize::MAX / 2,
+                o.len() <= out@.len(),
+                out@.take(o.len() as int) == o,
+                !again ==> out@ == o,
+                again ==> p0 == Phase::WaitFinished && self.phase() == Phase::WaitFinished,
+                !again ==> self.phase() == p0,
+            decreases self.buf@.len(),
+        {
+            match handshake_length(self.buf.as_slice()) {
+                None => {
                     return Ok(Event::Nothing);
-                }
-                let mut m: Vec<u8> = Vec::new();
-                core::mem::swap(&mut m, &mut self.buf);
-                self.dispatch(m.as_slice(), out)
-            },
+                },
+                Some(l) => {
+                    if l > MAX_MESSAGE || l < self.buf.len() - 4 && !self.in_client_auth_x() {
+                        return Err(self.fail_append(UNEXPECTED_MESSAGE, out));
+                    }
+                    if l > self.buf.len() - 4 {
+                        return Ok(Event::Nothing);
+                    }
+                    let mut m: Vec<u8> = Vec::new();
+                    core::mem::swap(&mut m, &mut self.buf);
+                    let k = 4 + l;
+                    let more = k < m.len();
+                    let mut rest: Vec<u8> = Vec::new();
+                    if more {
+                        put(&mut rest, vstd::slice::slice_subrange(m.as_slice(), k, m.len()));
+                    }
+                    let msg = vstd::slice::slice_subrange(m.as_slice(), 0, k);
+                    assert(msg@.len() == k);
+                    assert(be24(msg@, 1) == be24(m@, 1));
+                    if !more && !again {
+                        return self.dispatch(msg, out);
+                    }
+                    let mut tmp: Vec<u8> = Vec::new();
+                    let r = self.dispatch(msg, &mut tmp);
+                    let ghost o2 = out@;
+                    put(out, tmp.as_slice());
+                    proof {
+                        assert(out@.take(o.len() as int) =~= o2.take(o.len() as int));
+                    }
+                    if !more {
+                        return r;
+                    }
+                    match r {
+                        Err(e) => return Err(e),
+                        Ok(_) => {},
+                    }
+                    // More follows in this record: only after the client's
+                    // Certificate or CertificateVerify, which leave the
+                    // server waiting for more.
+                    if self.phase_x() != 2 {
+                        return Err(self.fail_append(UNEXPECTED_MESSAGE, out));
+                    }
+                    self.buf = rest;
+                    again = true;
+                },
+            }
         }
+    }
+
+    /// `fail`, its alert appended to `out` whatever its length.
+    fn fail_append(&mut self, code: u8, out: &mut Vec<u8>) -> (r: Error)
+        requires
+            old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).phase() == Phase::Closed,
+            final(self).config() == old(self).config(),
+            final(out)@.len() >= old(out)@.len(),
+            final(out)@.take(old(out)@.len() as int) == old(out)@,
+            r == Error::Sent(code),
+    {
+        let mut tmp: Vec<u8> = Vec::new();
+        let e = self.fail(code, &mut tmp);
+        let ghost o = out@;
+        put(out, tmp.as_slice());
+        assert(out@.take(o.len() as int) =~= o);
+        e
     }
 
     /// Opens a protected record under the client's current keys.
@@ -2523,6 +3296,11 @@ impl<P: Provider> ServerConn<P> {
             State::Connected { suite, mut rx, tx, c_sec, s_sec } => {
                 let r = rx.open(hdr, body);
                 self.state = State::Connected { suite, rx, tx, c_sec, s_sec };
+                r
+            },
+            State::WaitClientAuth { suite, mut rx, tx, tr, c_hs, c_ap, s_ap, got_cert } => {
+                let r = rx.open(hdr, body);
+                self.state = State::WaitClientAuth { suite, rx, tx, tr, c_hs, c_ap, s_ap, got_cert };
                 r
             },
             _ => {
@@ -2851,11 +3629,25 @@ impl<P: Provider> ServerConn<P> {
             State::WaitFinished { mut tx, .. } => {
                 tx.seal(21, &body, out);
             },
+            State::WaitClientAuth { mut tx, .. } => {
+                tx.seal(21, &body, out);
+            },
             _ => {
                 plain_header_x(out, 21, 2);
                 put(out, &body);
             },
         }
+    }
+
+    /// With client authentication, the client's certificates, leaf first,
+    /// once its chain and CertificateVerify checked out (empty if it sent
+    /// none, or before). Once connected, `lemma_connected` says what they
+    /// are.
+    pub fn peer_certificates(&self) -> (r: &[Vec<u8>])
+        ensures
+            chain_view(r@) == self.peer_chain(),
+    {
+        self.peer.as_slice()
     }
 
     /// Whether this handshake took the client's 0-RTT data.
