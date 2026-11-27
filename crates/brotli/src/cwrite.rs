@@ -440,6 +440,29 @@ pub open spec fn links(qs: Seq<int>, ds: Seq<Seq<int>>, cs: Seq<Cmd>, end: int, 
     forall|k: int| 0 <= k < i ==> qs[k + 1] == #[trigger] nq(qs[k], cs[k], end) && ds[k + 1] == ndr(qs[k], cs[k], end, ds[k])
 }
 
+proof fn lemma_links_push(qs: Seq<int>, ds: Seq<Seq<int>>, cs: Seq<Cmd>, end: int, i: int, q2: int, d2: Seq<int>)
+    requires
+        links(qs, ds, cs, end, i),
+        0 <= i < cs.len(),
+        qs.len() == i + 1,
+        ds.len() == i + 1,
+        q2 == nq(qs[i], cs[i], end),
+        d2 == ndr(qs[i], cs[i], end, ds[i]),
+    ensures
+        links(qs.push(q2), ds.push(d2), cs, end, i + 1),
+{
+    let qn = qs.push(q2);
+    let dn = ds.push(d2);
+    assert forall|k: int| 0 <= k < i + 1 implies qn[k + 1] == #[trigger] nq(qn[k], cs[k], end) && dn[k + 1] == ndr(qn[k], cs[k], end, dn[k]) by {
+        if k < i {
+            assert(qn[k] == qs[k] && qn[k + 1] == qs[k + 1] && dn[k] == ds[k] && dn[k + 1] == ds[k + 1]);
+            assert(qs[k + 1] == nq(qs[k], cs[k], end));
+        } else {
+            assert(qn[k] == qs[i] && dn[k] == ds[i]);
+        }
+    }
+}
+
 pub open spec fn ok_at(data: Seq<u8>, q: int, end: int, cs: Seq<Cmd>, k: int, dr: Seq<int>, wb: int, l: Seq<u8>, c: Seq<u8>, d: Seq<u8>) -> bool {
     one_ok(data, q, end, cs[k], dr, k + 1 == cs.len(), wb, l, c, d)
 }
@@ -656,21 +679,10 @@ pub fn check_cmds(data: &[u8], start: usize, end: usize, cmds: &[Cmd], dr0: [u32
             }
             assert(one_ok(data@, q as int, end as int, cs[i as int], dri, i + 1 == n, wb as int, l, c, d));
             assert(ok_at(data@, q as int, end as int, cs, i as int, dri, wb as int, l, c, d));
-            let qs0 = qs;
-            let ds0 = ds;
+            assert(cs[i as int] == *x);
+            lemma_links_push(qs, ds, cs, end as int, i as int, q2 as int, drs(dr));
             qs = qs.push(q2 as int);
             ds = ds.push(drs(dr));
-            assert(cs[i as int] == *x);
-            assert(qs[i + 1] == nq(qs[i as int], cs[i as int], end as int));
-            assert(ds[i + 1] == ndr(qs[i as int], cs[i as int], end as int, ds[i as int]));
-            assert forall|k: int| 0 <= k < i + 1 implies qs[k + 1] == #[trigger] nq(qs[k], cs[k], end as int) && ds[k + 1] == ndr(qs[k], cs[k], end as int, ds[k]) by {
-                if k < i {
-                    assert(links(qs0, ds0, cs, end as int, i as int));
-                    assert(qs[k] == qs0[k] && qs[k + 1] == qs0[k + 1] && ds[k] == ds0[k] && ds[k + 1] == ds0[k + 1]);
-                    assert(qs0[k + 1] == nq(qs0[k], cs[k], end as int));
-                }
-            }
-            assert(links(qs, ds, cs, end as int, i + 1));
         }
         q = q2;
         i = i + 1;

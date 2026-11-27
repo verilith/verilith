@@ -35,3 +35,36 @@ fn compressed_round_trip() {
         }
     }
 }
+
+#[test]
+fn streamed_with_flushes() {
+    use verilith_brotli::estream::Compressor;
+    for d in inputs() {
+        for q in [4u32, 6] {
+            let mut c = Compressor::new(q, 22);
+            let mut out = Vec::new();
+            let mut pos = 0;
+            let mut k = 0;
+            while pos < d.len() {
+                let n = (d.len() - pos).min(1000 + 7919 * k % 50_000);
+                c.push(&d[pos..pos + n]);
+                pos += n;
+                k += 1;
+                if k % 3 == 0 {
+                    out.extend(c.flush());
+                    // Everything so far decodes, with the stream not ended.
+                    let mut s = verilith_brotli::Stream::open();
+                    let mut buf = vec![0u8; pos + 1];
+                    let (_, used, made) = s.decompress(&out, &mut buf);
+                    assert_eq!(used, out.len());
+                    assert_eq!(&buf[..made], &d[..pos]);
+                } else {
+                    c.compress_pending(false);
+                    out.extend(c.take());
+                }
+            }
+            out.extend(c.finish());
+            assert_eq!(decompress(&out, 1 << 30).unwrap(), d, "quality {q}");
+        }
+    }
+}

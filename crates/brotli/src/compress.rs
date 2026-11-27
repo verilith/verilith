@@ -21,7 +21,6 @@ pub struct Lz {
     pub dist: u32,
 }
 
-const HBITS: u32 = 17;
 const NONE: u32 = 0xFFFF_FFFF;
 
 /// Hash chains over the whole input.
@@ -90,6 +89,21 @@ impl Mf {
         &&& self.num@.len() == 0x10_0000
     }
 
+    /// Room in the chains for an input of `n` bytes.
+    pub fn grow(&mut self, n: usize)
+        requires
+            old(self).wf((n - 1) as nat),
+            n >= 1,
+            n < 0xFFFF_FFFF,
+        ensures
+            final(self).wf(n as nat),
+            final(self).wmax == old(self).wmax,
+    {
+        if !self.quick {
+            self.prev.push(NONE);
+        }
+    }
+
     #[inline(always)]
     fn insert(&mut self, data: &[u8], i: usize)
         requires
@@ -103,8 +117,12 @@ impl Mf {
                 let w = self.ways;
                 let h = if self.h7 { hash7(data, i) } else { hash4(data, i) };
                 let kx = h / w;
+                assert(kx * w <= 0x10_0000 * 32) by (nonlinear_arith) requires kx <= 0x10_0000, w <= 32;
                 let c = self.num[kx];
-                self.head.set(kx * w + (c as usize) % w, i as u32);
+                let idx = kx * w + (c as usize) % w;
+                if idx < self.head.len() {
+                    self.head.set(idx, i as u32);
+                }
                 self.num.set(kx, c.wrapping_add(1));
             }
         } else if i < data.len() && data.len() - i >= 4 {
@@ -125,6 +143,7 @@ impl Mf {
         ensures
             r.0 <= max,
             r.0 > 0 ==> 1 <= r.1 <= i,
+            r.2 < 0x1_0000_0000,
     {
         let mut best: usize = 0;
         let mut bd: usize = 0;
@@ -148,7 +167,11 @@ impl Mf {
             let w = self.ways;
             let h = if self.h7 { hash7(data, i) } else { hash4(data, i) };
             let kx = h / w;
+            assert(kx * w <= 0x10_0000 * 32) by (nonlinear_arith) requires kx <= 0x10_0000, w <= 32;
             let key = kx * w;
+            if key + w > self.head.len() {
+                return (best, bd, bs);
+            }
             let top = self.num[kx] as usize;
             let mut j: usize = 0;
             while j < w
@@ -158,12 +181,13 @@ impl Mf {
                     max <= 0xFFFF,
                     best <= max,
                     best > 0 ==> 1 <= bd <= i,
+                    bs < 0x1_0000_0000,
                     w == self.ways,
                     w <= 32,
                     key + w <= 0x10_0000,
                 decreases w - j,
             {
-                let c = self.head[key + (top + w - 1 - j) % w];
+                let c = self.head[key + (top % w + w - 1 - j) % w];
                 j = j + 1;
                 if c == NONE || c as usize >= i {
                     continue;
@@ -195,6 +219,8 @@ impl Mf {
                 max <= 0xFFFF,
                 best <= max,
                 best > 0 ==> 1 <= bd <= i,
+                bs < 0x1_0000_0000,
+                !self.quick,
             decreases self.depth - d,
         {
             let cu = c as usize;
@@ -265,6 +291,7 @@ pub fn parse(mf: &mut Mf, data: &[u8], start: usize, end: usize, last0: usize) -
         if len >= 3 && sc > MIN_SCORE {
             // Lazy matching: a later start that scores clearly better wins.
             let mut tries: u32 = 0;
+            let ghost i0 = i;
             while mf.lazy && tries < 4 && i + 1 < end && len < 256
                 invariant
                     mf.wf(data@.len()),
@@ -273,6 +300,8 @@ pub fn parse(mf: &mut Mf, data: &[u8], start: usize, end: usize, last0: usize) -
                     len <= end - i,
                     len >= 3,
                     1 <= dist <= i,
+                    i >= i0,
+                    sc < 0x1_0000_0000,
                 decreases 4 - tries,
             {
                 let max1 = if end - i - 1 > 0xFFFF { 0xFFFF } else { end - i - 1 };
@@ -311,11 +340,13 @@ pub fn parse(mf: &mut Mf, data: &[u8], start: usize, end: usize, last0: usize) -
             if i - lit > 128 && i < end {
                 let step = if i - lit > 512 { 4 } else { 2 };
                 let mut j: usize = 1;
+                let ghost i1 = i;
                 while j < step && i < end
                     invariant
                         mf.wf(data@.len()),
                         mf.wmax == old(mf).wmax,
                         start <= lit <= i <= end <= data@.len(),
+                        i >= i1,
                     decreases step - j,
                 {
                     i = i + 1;
@@ -518,7 +549,7 @@ pub fn window_bits(n: usize, lgwin: u32) -> (r: u32)
 
 /// One meta-block, compressed if the commands check out and it is smaller,
 /// stored otherwise.
-fn put_block(e: &mut Enc, dr: &mut [u32; 4], wb: u32, data: &[u8], start: usize, end: usize, lz: &[Lz])
+pub fn put_block(e: &mut Enc, dr: &mut [u32; 4], wb: u32, data: &[u8], start: usize, end: usize, lz: &[Lz])
     requires
         old(e).ok(),
         old(e).st@.phase is MetaHeader,
@@ -631,7 +662,11 @@ pub fn compress(data: &[u8], quality: u32, lgwin: u32) -> (r: Vec<u8>)
     proof {
         assert(data@.subrange(0, n as int) =~= data@);
     }
-    e.finish()
+    let r = e.finish();
+    proof {
+        assert(Seq::<u8>::empty() + r@ =~= r@);
+    }
+    r
 }
 
 } // verus!

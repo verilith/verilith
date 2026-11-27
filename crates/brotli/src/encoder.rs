@@ -14,7 +14,7 @@ use vstd::prelude::*;
 verus! {
 
 /// Zeros written by `align` reach the next byte boundary.
-proof fn lemma_align_k(old: int, new: int)
+pub proof fn lemma_align_k(old: int, new: int)
     requires
         0 <= old <= new < old + 8,
         new % 8 == 0,
@@ -151,14 +151,14 @@ impl Enc {
         self.st = Ghost(St { phase: Phase::MetaHeader, ..s3 });
     }
 
-    /// Ends the stream with an empty last meta-block and returns it.
+    /// Ends the stream with an empty last meta-block and returns the bytes
+    /// not yet handed out.
     pub fn finish(mut self) -> (r: Vec<u8>)
         requires
             self.ok(),
             self.st@.phase is MetaHeader,
-            self.bw.sent() == Seq::<u8>::empty(),
         ensures
-            decodes(r@, self.st@.out, r@.len() as int),
+            decodes(self.bw.sent() + r@, self.st@.out, (self.bw.sent() + r@).len() as int),
     {
         let ghost w0 = self.bw.bits();
         let ghost s0 = self.st@;
@@ -181,11 +181,11 @@ impl Enc {
             lemma_good_moves(w0, end_bits(s0.pos), s0, t);
         }
         let ghost wl = self.bw.bits();
+        let ghost sent0 = self.bw.sent();
         let (out, wf) = self.bw.finish();
         proof {
-            assert(Seq::<u8>::empty() + out@ =~= out@);
             assert(wf@ =~= wl);
-            lemma_good_decodes(out@, wl, t);
+            lemma_good_decodes(sent0 + out@, wl, t);
         }
         out
     }
@@ -221,7 +221,11 @@ pub fn compress_stored(data: &[u8]) -> (r: Vec<u8>)
     proof {
         assert(data@.subrange(0, n as int) =~= data@);
     }
-    e.finish()
+    let r = e.finish();
+    proof {
+        assert(Seq::<u8>::empty() + r@ =~= r@);
+    }
+    r
 }
 
 } // verus!
