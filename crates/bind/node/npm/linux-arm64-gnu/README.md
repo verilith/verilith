@@ -1,3 +1,3 @@
-# `verilith-bind-linux-arm64-gnu`
+# `verilith-linux-arm64-gnu`
 
-This is the **aarch64-unknown-linux-gnu** binary for `verilith-bind`
+This is the **aarch64-unknown-linux-gnu** binary for `verilith`

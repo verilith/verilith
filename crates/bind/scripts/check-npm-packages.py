@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Checks the npm packages under node/ before they are published: every
 version matches Cargo.toml's, there is one platform package per napi target,
-each holds its binary, and verilith-bind lists each as an optional
+each holds its binary, and verilith lists each as an optional
 dependency. Run in node/ after `napi artifacts` (.github/workflows/publish-npm.yml).
 To move to a new version: `npx napi version` after setting it in package.json,
 then the optionalDependencies by hand."""
@@ -33,4 +33,4 @@ for extra in set(root.get("optionalDependencies", {})) - names:
     bad.append(f"package.json's optionalDependencies name {extra}, which has no package")
 if bad:
     sys.exit("\n".join(bad))
-print(f"verilith-bind {version}, platform packages: {' '.join(dirs)}")
+print(f"verilith {version}, platform packages: {' '.join(dirs)}")

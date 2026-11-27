@@ -1,4 +1,4 @@
-# verilith-bind
+# verilith (Node.js)
 
 Node.js bindings for [Verilith](https://github.com/verilith/verilith)'s
 formally verified parsers: a WHATWG URL parser (verilith-url) and a JSON
@@ -7,11 +7,11 @@ The addon only converts types; every parsing decision is made by the
 verified Rust code.
 
 ```
-npm install verilith-bind
+npm install verilith
 ```
 
 ```js
-const vbind = require('verilith-bind');
+const vbind = require('verilith');
 new vbind.URL('../d', 'https://example.org/a/b/c').href;
 vbind.URL.canParse('/x', 'http://a');
 vbind.parseJSON('{"a":1}');   // SyntaxError on invalid JSON, like JSON.parse

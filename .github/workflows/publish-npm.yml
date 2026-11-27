@@ -3,8 +3,8 @@ name: Publish to npm
 # Run by hand (Actions > Publish to npm > Run workflow). Builds the Node.js
 # addon (crates/bind/node) for every platform, tests each build it can run,
 # and publishes it as napi-rs does: one package per platform holding that
-# platform's prebuilt binary (verilith-bind-linux-x64-gnu, ...), and the
-# package verilith-bind, whose loader (index.js) picks the right one; npm
+# platform's prebuilt binary (verilith-linux-x64-gnu, ...), and the
+# package verilith, whose loader (index.js) picks the right one; npm
 # installs only the one that matches, as an optional dependency. A dry run
 # (npm publish --dry-run) unless "dry_run" is unticked. A publish is
 # permanent: npm never lets a version be published twice.
@@ -24,7 +24,7 @@ name: Publish to npm
 #   access to packages and "bypass two-factor authentication" ticked. The
 #   first publish of each package always needs it: Trusted Publishing can
 #   only be set up for a package that exists.
-# The platform packages are published before verilith-bind, and a package
+# The platform packages are published before verilith, and a package
 # whose version is already on npm is skipped, so rerunning after a partial
 # publish is safe.
 on:
@@ -187,7 +187,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: npm
-      url: https://www.npmjs.com/package/verilith-bind
+      url: https://www.npmjs.com/package/verilith
     permissions:
       contents: read
       id-token: write

@@ -143,7 +143,7 @@ running it again.
 ## npm and PyPI
 
 The Python and Node.js bindings (`crates/bind/python`, `crates/bind/node`)
-are published as `verilith-bind` on PyPI (imported as `vbind`; the name
+are published as `verilith` on PyPI (imported as `vbind`; the name
 `vbind` is taken there) and on npm, at the same version as the crates. Each
 has a workflow run by hand, a dry run unless "dry_run" is unticked:
 
@@ -153,7 +153,7 @@ has a workflow run by hand, a dry run unless "dry_run" is unticked:
   is installed and tested before anything is uploaded.
 - **Publish to npm** (`.github/workflows/publish-npm.yml`): the same seven
   platforms, napi-rs style. Each binary is its own package
-  (`verilith-bind-linux-x64-gnu`, ...), and `verilith-bind` lists them as
+  (`verilith-linux-x64-gnu`, ...), and `verilith` lists them as
   optional dependencies, so npm installs only the one that matches. Each
   binary is tested before anything is published.
 
@@ -167,7 +167,7 @@ fails if any of them disagree. The PyPI version is read from `Cargo.toml`.
 
 - **PyPI: Trusted Publishing only**, no token. Before the first publish,
   add a pending publisher (pypi.org > Account settings > Publishing): PyPI
-  project `verilith-bind`, owner `verilith`, repository `verilith`,
+  project `verilith`, owner `verilith`, repository `verilith`,
   workflow `publish-pypi.yml`, environment `pypi`. The first publish
   creates the project and turns it into an ordinary trusted publisher.
 - **npm: a token the first time, then Trusted Publishing.** The first
