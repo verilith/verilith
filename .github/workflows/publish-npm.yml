@@ -174,6 +174,7 @@ jobs:
       - name: Put each binary in its package
         run: |
           napi artifacts -d artifacts
+          for d in npm/*/; do cp LICENSE-MIT LICENSE-APACHE "$d"; done
           python3 ../scripts/check-npm-packages.py
       - name: npm publish --dry-run
         run: |
@@ -224,13 +225,18 @@ jobs:
           # Provenance needs a public repository. Trusted Publishing adds it
           # on its own; this asks for it when the token is used.
           NPM_CONFIG_PROVENANCE: ${{ !github.event.repository.private }}
+        # A pause after each publish: a burst of new packages from one
+        # account is what npm's spam detection looks for.
         run: |
+          published=0
           for d in npm/*/ .; do
             name=$(node -p "require('./$d/package.json').name")
             version=$(node -p "require('./$d/package.json').version")
             if npm view "$name@$version" version >/dev/null 2>&1; then
               echo "$name@$version is already on npm"
             else
+              if [ "$published" -gt 0 ]; then sleep 60; fi
               (cd "$d" && npm publish --access public)
+              published=$((published + 1))
             fi
           done

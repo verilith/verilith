@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Checks the npm packages under node/ before they are published: every
 version matches Cargo.toml's, there is one platform package per napi target,
-each holds its binary, and verilith lists each as an optional
+each holds its binary, README and licence files and has the
+metadata npm shows (a bare package is what npm's spam filter flags), and
+verilith lists each as an optional
 dependency. Run in node/ after `napi artifacts` (.github/workflows/publish-npm.yml).
 To move to a new version: `npx napi version` after setting it in package.json,
 then the optionalDependencies by hand."""
@@ -29,6 +31,14 @@ for d in dirs:
         bad.append(f"package.json's optionalDependencies lack {p['name']} {version}")
     if not os.path.isfile(f"npm/{d}/{p['main']}"):
         bad.append(f"no binary for {p['name']} (npm/{d}/{p['main']})")
+    for key in ("description", "keywords", "author", "license", "homepage", "repository"):
+        if not p.get(key):
+            bad.append(f"{p['name']}'s package.json has no {key}")
+    for f in ("README.md", "LICENSE-MIT", "LICENSE-APACHE"):
+        if not os.path.isfile(f"npm/{d}/{f}") or f not in p.get("files", []):
+            bad.append(f"{p['name']} lacks {f}, or its package.json's files does")
+    if "npmjs.com/package/verilith)" not in open(f"npm/{d}/README.md").read():
+        bad.append(f"npm/{d}/README.md does not point to the verilith package")
 for extra in set(root.get("optionalDependencies", {})) - names:
     bad.append(f"package.json's optionalDependencies name {extra}, which has no package")
 if bad:

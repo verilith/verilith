@@ -1,14 +1,7 @@
 {
   "name": "verilith-linux-x64-gnu",
   "version": "0.1.0",
-  "cpu": [
-    "x64"
-  ],
-  "main": "vbind.linux-x64-gnu.node",
-  "files": [
-    "vbind.linux-x64-gnu.node"
-  ],
-  "description": "Formally verified (Verus) WHATWG URL and JSON parsers for Node.js",
+  "description": "Prebuilt Linux x64 (glibc) binary (x86_64-unknown-linux-gnu) for verilith, formally verified (Verus) WHATWG URL and JSON parsers for Node.js",
   "keywords": [
     "url",
     "whatwg",
@@ -16,12 +9,20 @@
     "parser",
     "verified",
     "verus",
-    "napi"
+    "napi",
+    "prebuilt",
+    "binary",
+    "linux",
+    "x64"
   ],
-  "homepage": "https://github.com/verilith/verilith/tree/main/crates/bind#nodejs-addon",
+  "author": {
+    "name": "Verilith contributors",
+    "url": "https://github.com/verilith/verilith"
+  },
   "license": "MIT OR Apache-2.0",
-  "engines": {
-    "node": ">= 18.17"
+  "homepage": "https://github.com/verilith/verilith/tree/main/crates/bind#nodejs-addon",
+  "bugs": {
+    "url": "https://github.com/verilith/verilith/issues"
   },
   "repository": {
     "type": "git",
@@ -31,7 +32,20 @@
   "os": [
     "linux"
   ],
+  "cpu": [
+    "x64"
+  ],
   "libc": [
     "glibc"
-  ]
+  ],
+  "main": "vbind.linux-x64-gnu.node",
+  "files": [
+    "vbind.linux-x64-gnu.node",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "engines": {
+    "node": ">= 18.17"
+  }
 }
