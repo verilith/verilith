@@ -422,6 +422,26 @@ loop is close to what its dependency chain allows (a shift, a table
 load and a shift per symbol, four streams interleaved), so what remains
 is the sequence loop and table building.
 
+### Compression
+
+The first version of the compressor, against libzstd 1.5.5's
+`ZSTD_compress` at the same level (Linux x86-64 cloud VM, `bench/`'s
+`cbench`, one-shot, seven compressible files from 1.6 to 35 MB: docs,
+Rust source, JSON, text, low-entropy bytes, two binaries; geometric
+means; every frame checked by libzstd's decoder):
+
+| level | ratio vs libzstd | speed vs libzstd |
+| --- | --- | --- |
+| 1 | 0.96× | 0.33× |
+| 3 | 0.98× | 0.39× |
+| 19 | 0.87× | 0.50× |
+
+Levels 1 to 9 come within 2 to 8% of libzstd's ratio. About a third of
+the time goes to checking each compressed block with the proven decoder;
+the rest is the match finders and the sequence encoder, not yet tuned.
+Levels 16 to 22 use lazy2 matching where libzstd uses its optimal
+parsers (btopt, btultra), hence the larger gap there.
+
 ## License
 
 Licensed under either of the [Apache License, Version 2.0](https://github.com/verilith/verilith/blob/main/crates/zstd/LICENSE-APACHE)
