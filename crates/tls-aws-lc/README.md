@@ -12,13 +12,20 @@ it, `ticket_issued`). This crate is where that assumption is kept, in about
 400 lines. It is not verified, and it is its own Cargo
 project, outside the workspace and the Buck build, because aws-lc is C.
 
+Not all of it is aws-lc. [CRYPTO.md](CRYPTO.md) lists every primitive
+this crate calls, what proof stands behind each, and the benchmarks behind
+the choice: HPKE's HMAC-SHA-256 is verilith-sha2's (Verus), and the
+ChaCha20-Poly1305 that seals session tickets and opens ChaCha20 ECH
+payloads is libcrux's (HACL*). The rest is aws-lc, where the verified
+alternatives are several times slower.
+
 - Cipher suites: TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384,
   TLS_CHACHA20_POLY1305_SHA256.
 - Groups: X25519MLKEM768, x25519, secp256r1, secp384r1. An all-zero X25519
   output is refused (§7.4.2).
 - Server keys (PKCS#8): ECDSA P-256 and P-384, Ed25519, RSA (PSS).
 - Session tickets: `TicketKeys`, shared by a server's connections and
-  threads (`Arc`), seal ticket state with ChaCha20-Poly1305 under a random
+  threads (`Arc`), seal ticket state with ChaCha20-Poly1305 (libcrux's) under a random
   key, as `name(4) | nonce(12) | ciphertext | tag(16)` with the name as
   associated data. The key changes every `period` seconds and the previous
   one still opens, so a ticket opens for at least `period` seconds. Give

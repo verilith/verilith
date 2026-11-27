@@ -1,0 +1,23 @@
+[package]
+name = "cryptobench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Each primitive aws-lc gives verilith-tls, against its formally verified
+# alternative (CRYPTO.md): libcrux (HACL*) and verilith-sha2.
+#     cargo run --release
+[dependencies]
+aws-lc-rs = "1.19"
+verilith-sha2 = { path = "../../sha2" }
+libcrux-chacha20poly1305 = "=0.0.11"
+libcrux-ml-kem = "=0.0.12"
+libcrux-ed25519 = "=0.0.11"
+libcrux-p256 = { version = "=0.0.10", features = ["expose-hacl"] }
+libcrux-curve25519 = "=0.0.10"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
+[workspace]

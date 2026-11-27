@@ -5,7 +5,7 @@
 //! rustls's HPKE.
 use aws_lc_rs::aead::{self, Aad, LessSafeKey, Nonce, UnboundKey};
 use aws_lc_rs::agreement::{self, PrivateKey, UnparsedPublicKey};
-use aws_lc_rs::hmac;
+use verilith_sha2::HmacSha256;
 
 pub const KEM_X25519_SHA256: u16 = 0x0020;
 pub const KDF_SHA256: u16 = 0x0001;
@@ -16,29 +16,26 @@ pub const AEAD_CHACHA20_POLY1305: u16 = 0x0003;
 fn extract(salt: &[u8], ikm: &[&[u8]]) -> [u8; 32] {
     // An empty salt is HashLen zeros (RFC 5869 §2.2); HMAC pads keys with
     // zeros, so the two are the same key.
-    let k = hmac::Key::new(hmac::HMAC_SHA256, salt);
-    let mut c = hmac::Context::with_key(&k);
+    let mut c = HmacSha256::new(salt);
     for p in ikm {
         c.update(p);
     }
-    let mut out = [0u8; 32];
-    out.copy_from_slice(c.sign().as_ref());
-    out
+    c.finalize()
 }
 
 fn expand(prk: &[u8; 32], info: &[&[u8]], out: &mut [u8]) {
-    let k = hmac::Key::new(hmac::HMAC_SHA256, prk);
+    let k = HmacSha256::new(prk);
     let mut t: Vec<u8> = Vec::new();
     let mut done = 0;
     let mut i = 1u8;
     while done < out.len() {
-        let mut c = hmac::Context::with_key(&k);
+        let mut c = k.clone();
         c.update(&t);
         for p in info {
             c.update(p);
         }
         c.update(&[i]);
-        t = c.sign().as_ref().to_vec();
+        t = c.finalize().to_vec();
         let n = (out.len() - done).min(32);
         out[done..done + n].copy_from_slice(&t[..n]);
         done += n;
@@ -89,10 +86,12 @@ impl HpkeKey {
         if kdf != KDF_SHA256 || enc.len() != 32 {
             return None;
         }
-        let (alg, nk): (&'static aead::Algorithm, usize) = match aead_id {
-            AEAD_AES_128_GCM => (&aead::AES_128_GCM, 16),
-            AEAD_AES_256_GCM => (&aead::AES_256_GCM, 32),
-            AEAD_CHACHA20_POLY1305 => (&aead::CHACHA20_POLY1305, 32),
+        // AES-GCM is aws-lc's; ChaCha20-Poly1305 libcrux's (HACL*,
+        // verified; CRYPTO.md).
+        let (alg, nk): (Option<&'static aead::Algorithm>, usize) = match aead_id {
+            AEAD_AES_128_GCM => (Some(&aead::AES_128_GCM), 16),
+            AEAD_AES_256_GCM => (Some(&aead::AES_256_GCM), 32),
+            AEAD_CHACHA20_POLY1305 => (None, 32),
             _ => return None,
         };
         // DHKEM Decap (§4.1).
@@ -124,6 +123,14 @@ impl HpkeKey {
         labeled_expand(&suite, &secret, b"key", &ksc, &mut key[..nk]);
         let mut nonce = [0u8; 12];
         labeled_expand(&suite, &secret, b"base_nonce", &ksc, &mut nonce);
+        let Some(alg) = alg else {
+            if ct.len() < 16 {
+                return None;
+            }
+            let mut pt = vec![0u8; ct.len() - 16];
+            libcrux_chacha20poly1305::decrypt(&key, &mut pt, ct, aad, &nonce).ok()?;
+            return Some(pt);
+        };
         let k = LessSafeKey::new(UnboundKey::new(alg, &key[..nk]).ok()?);
         let mut buf = ct.to_vec();
         let n = k.open_in_place(Nonce::assume_unique_for_key(nonce), Aad::from(aad), &mut buf).ok()?.len();
