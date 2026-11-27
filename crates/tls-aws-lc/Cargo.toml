@@ -15,6 +15,11 @@ publish = false
 verilith-tls = { path = "../tls" }
 verilith-x509 = { path = "../x509" }
 aws-lc-rs = "1.19"
+# Verified replacements for parts of aws-lc (CRYPTO.md): HMAC-SHA-256 for
+# HPKE from verilith-sha2, ChaCha20-Poly1305 for tickets and HPKE from
+# libcrux (HACL*).
+verilith-sha2 = { path = "../sha2" }
+libcrux-chacha20poly1305 = "=0.0.11"
 
 [dev-dependencies]
 rustls = "0.23"

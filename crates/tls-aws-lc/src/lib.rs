@@ -9,6 +9,10 @@
 //! x25519, secp256r1, secp384r1 and X25519MLKEM768, and server keys for
 //! ecdsa_secp256r1_sha256, ecdsa_secp384r1_sha384, ed25519 and
 //! rsa_pss_rsae_sha256/384/512.
+//!
+//! Session tickets and HPKE's ChaCha20-Poly1305 are libcrux's (HACL*,
+//! verified), and HPKE's HMAC is verilith-sha2's (Verus): CRYPTO.md lists
+//! every primitive, its proofs, and why the rest is aws-lc.
 use aws_lc_rs::aead::{self, Aad, LessSafeKey, Nonce, UnboundKey};
 use aws_lc_rs::agreement::{self, EphemeralPrivateKey, UnparsedPublicKey};
 use aws_lc_rs::kem::{EncapsulationKey, ML_KEM_768};
@@ -148,10 +152,11 @@ fn unix_now() -> u64 {
 }
 
 /// One ticket key: a name (the first 4 bytes of every ticket it seals)
-/// and a ChaCha20-Poly1305 key.
+/// and a ChaCha20-Poly1305 key, used with libcrux's ChaCha20-Poly1305
+/// (HACL*, verified; CRYPTO.md).
 struct TicketKey {
     name: [u8; 4],
-    key: LessSafeKey,
+    key: [u8; 32],
 }
 
 impl TicketKey {
@@ -160,8 +165,7 @@ impl TicketKey {
         let mut name = [0u8; 4];
         rng.fill(&mut k).expect("the system's random number generator works");
         rng.fill(&mut name).expect("the system's random number generator works");
-        let key = UnboundKey::new(&aead::CHACHA20_POLY1305, &k).expect("a 32-byte key");
-        TicketKey { name, key: LessSafeKey::new(key) }
+        TicketKey { name, key: k }
     }
 }
 
@@ -287,18 +291,14 @@ impl TicketKeys {
         out.reserve(state.len() + TICKET_OVERHEAD);
         out.extend_from_slice(&k.name);
         out.extend_from_slice(&nonce);
-        out.extend_from_slice(state);
-        let at = start + 16;
-        match k.key.seal_in_place_separate_tag(Nonce::assume_unique_for_key(nonce), Aad::from(k.name), &mut out[at..]) {
-            Ok(tag) => {
-                out.extend_from_slice(tag.as_ref());
-                true
-            }
-            Err(_) => {
-                out.truncate(start);
-                false
-            }
+        out.resize(start + TICKET_OVERHEAD + state.len(), 0);
+        let (ct, tag) = out[start + 16..].split_at_mut(state.len());
+        let tag: &mut [u8; 16] = tag.try_into().expect("16 bytes are left for the tag");
+        if libcrux_chacha20poly1305::encrypt_detached(&k.key, state, ct, tag, &k.name, &nonce).is_err() {
+            out.truncate(start);
+            return false;
         }
+        true
     }
 
     /// Opens a ticket these keys sealed into `out`.
@@ -319,20 +319,13 @@ impl TicketKeys {
         let mut nonce = [0u8; 12];
         nonce.copy_from_slice(&ticket[4..16]);
         let start = out.len();
-        out.extend_from_slice(&ticket[16..]);
-        let mut name4 = [0u8; 4];
-        name4.copy_from_slice(name);
-        match k.key.open_in_place(Nonce::assume_unique_for_key(nonce), Aad::from(name4), &mut out[start..]) {
-            Ok(pt) => {
-                let n = pt.len();
-                out.truncate(start + n);
-                true
-            }
-            Err(_) => {
-                out.truncate(start);
-                false
-            }
+        let ct = &ticket[16..];
+        out.resize(start + ct.len() - 16, 0);
+        if libcrux_chacha20poly1305::decrypt(&k.key, &mut out[start..], ct, name, &nonce).is_err() {
+            out.truncate(start);
+            return false;
         }
+        true
     }
 }
 
