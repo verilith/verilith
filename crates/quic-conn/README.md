@@ -15,7 +15,9 @@ Every step that has a specification is done by a verified component:
   - the anti-amplification limit;
   - sent-packet tracking, ACK processing and loss detection;
   - the RTT estimator and PTO, and NewReno congestion control;
-  - received-packet tracking and the ACK frames built from it.
+  - received-packet tracking and the ACK frames built from it;
+  - stream and CRYPTO reassembly (`reasm`), with its memory bound;
+  - what each send buffer sends, resends and frees (`sendq`).
 - **`verilith-tls`**:
   - the TLS 1.3 handshake for QUIC;
   - Initial secrets;
@@ -29,7 +31,7 @@ yet. It covers:
 - the three packet number spaces and when their keys are installed and
   discarded;
 - dispatching frames to the components;
-- stream buffers (`buf.rs`);
+- storing the bytes of send buffers (`buf.rs`);
 - what goes into each packet;
 - timers;
 - closing.
@@ -104,7 +106,7 @@ in memory with a virtual clock.
 - **Path MTU:** probing up to 1452 bytes, and a path that drops
   datagrams over 1300 bytes, where the server stays at 1200.
 
-`src/buf.rs` has unit tests for the stream buffers.
+`src/buf.rs` has unit tests for the send buffers' byte storage.
 
 ## Performance
 
