@@ -528,6 +528,320 @@ fn dfast_run(
     (t1, t2, anchor, r1, r2)
 }
 
+/// The fixed parameters of a hash-chain search over one block.
+pub struct Hc {
+    pub base: usize,
+    /// The lowest position a match may come from.
+    pub low: usize,
+    pub hlog: u32,
+    pub mls: u32,
+    pub slog: u32,
+}
+
+impl Hc {
+    pub open spec fn wf(&self, t1: Seq<u32>, t2: Seq<u32>) -> bool {
+        &&& self.base <= self.low
+        &&& 1 <= self.hlog <= 30
+        &&& 4 <= self.mls <= 8
+        &&& self.slog <= 16
+        &&& t1.len() == (1usize << self.hlog)
+        &&& t2.len() >= 2
+    }
+}
+
+/// Adds positions `next..ip` to the hash chains; returns `ip`.
+#[inline(always)]
+fn hc_insert(t1: &mut Vec<u32>, t2: &mut Vec<u32>, p: &Hc, src: &[u8], next: usize, ip: usize) -> (r: usize)
+    requires
+        p.wf(old(t1)@, old(t2)@),
+        ip + 8 <= src@.len(),
+        p.base <= next,
+        p.base <= ip,
+        ip - p.base < 0xC002_0000,
+    ensures
+        final(t1)@.len() == old(t1)@.len(),
+        final(t2)@.len() == old(t2)@.len(),
+        r == ip,
+{
+    let cmask = t2.len() - 1;
+    let mut q = next;
+    while q < ip
+        invariant
+            p.wf(t1@, t2@),
+            t1@.len() == old(t1)@.len(),
+            t2@.len() == old(t2)@.len(),
+            p.base <= q,
+            ip + 8 <= src@.len(),
+            ip - p.base < 0xC002_0000,
+            cmask == t2@.len() - 1,
+        decreases ip - q,
+    {
+        let h = hash(src, q, p.mls, p.hlog);
+        let ci = q & cmask;
+        proof {
+            assert(q & cmask <= cmask) by (bit_vector);
+        }
+        t2.set(ci, t1[h]);
+        t1.set(h, (q - p.base) as u32);
+        q = q + 1;
+    }
+    ip
+}
+
+/// The longest match at `ip` along the hash chain, after adding the
+/// positions before it: (length, offset); length 0 if none of at least
+/// 4. Returns the next position to add as well.
+#[inline(always)]
+fn hc_find(t1: &mut Vec<u32>, t2: &mut Vec<u32>, p: &Hc, src: &[u8], next: usize, ip: usize, end: usize) -> (r: (usize, usize, usize))
+    requires
+        p.wf(old(t1)@, old(t2)@),
+        ip + 8 <= end <= src@.len(),
+        p.base <= next,
+        p.base <= ip,
+        ip - p.base < 0xC002_0000,
+    ensures
+        final(t1)@.len() == old(t1)@.len(),
+        final(t2)@.len() == old(t2)@.len(),
+        r.0 > 0 ==> 1 <= r.1 && p.low <= ip - r.1 && r.0 <= end - ip && r.0 >= 4,
+        r.2 == ip,
+{
+    let nx = if next <= ip { hc_insert(t1, t2, p, src, next, ip) } else { ip };
+    let cmask = t2.len() - 1;
+    let h = hash(src, ip, p.mls, p.hlog);
+    let mut cand = p.base.wrapping_add(t1[h] as usize);
+    let mut best: usize = 3;
+    let mut boff: usize = 0;
+    let mut attempts: u32 = 1u32 << p.slog;
+    let csize = t2.len();
+    let lim = end - ip;
+    // The head may be older than the chain table reaches; the links after
+    // it are followed only while they are not (libzstd's `minChain`).
+    while attempts > 0 && cand < ip && cand >= p.low
+        invariant
+            p.wf(t1@, t2@),
+            cmask == t2@.len() - 1,
+            3 <= best <= lim,
+            lim == end - ip,
+            ip + 8 <= end <= src@.len(),
+            best > 3 ==> 1 <= boff && p.low <= ip - boff,
+        decreases attempts,
+    {
+        if best < lim && src[cand + best] == src[ip + best] {
+            let l = eq_len(src, ip, cand, lim);
+            if l > best {
+                best = l;
+                boff = ip - cand;
+                if l == lim {
+                    break;
+                }
+            }
+        }
+        if ip - cand >= csize {
+            break;
+        }
+        let ci = cand & cmask;
+        proof {
+            assert(cand & cmask <= cmask) by (bit_vector);
+        }
+        let nc = p.base.wrapping_add(t2[ci] as usize);
+        if nc >= cand {
+            break;
+        }
+        cand = nc;
+        attempts = attempts - 1;
+    }
+    if best > 3 {
+        (best, boff, nx)
+    } else {
+        (0, 0, nx)
+    }
+}
+
+/// The loop of `Enc::lazy`. Returns the tables, the last anchor, the next
+/// position to add to the chains and the repeat offsets.
+#[verifier::loop_isolation(false)]
+fn lazy_run(
+    t1: Vec<u32>,
+    t2: Vec<u32>,
+    st: &mut Store,
+    src: &[u8],
+    pos: usize,
+    end: usize,
+    p: &Hc,
+    next: usize,
+    depth: u32,
+    rep1: usize,
+    rep2: usize,
+) -> (r: (Vec<u32>, Vec<u32>, usize, usize, usize, usize))
+    requires
+        pos < end <= src@.len(),
+        end - pos >= 16,
+        p.base <= pos,
+        p.base <= next,
+        end - p.base < 0xC002_0000,
+        p.wf(t1@, t2@),
+        old(st).wf(),
+        room(old(st), pos, end),
+    ensures
+        r.0@.len() == t1@.len(),
+        r.1@.len() == t2@.len(),
+        pos <= r.2 <= end,
+        p.base <= r.3,
+        final(st).wf(),
+{
+    let mut t1 = t1;
+    let mut t2 = t2;
+    let ghost tl1 = t1@.len();
+    let ghost tl2 = t2@.len();
+    let low = p.low;
+    let base = p.base;
+    let mut nxt = next;
+    let mut anchor = pos;
+    let mut ip = if pos == 0 { 1 } else { pos };
+    let mut r1 = if ip >= low && rep1 <= ip - low { rep1 } else { 0 };
+    let mut r2 = if ip >= low && rep2 <= ip - low { rep2 } else { 0 };
+    let ilimit = end - 8;
+    while ip < ilimit
+        invariant
+            anchor <= ip,
+            ip <= end,
+            pos <= anchor,
+            ilimit == end - 8,
+            p.base <= nxt,
+            t1@.len() == tl1,
+            t2@.len() == tl2,
+            p.wf(t1@, t2@),
+            st.wf(),
+            room(st, anchor, end),
+            r1 == 0 || (ip >= low && r1 <= ip - low),
+            r2 == 0 || (ip >= low && r2 <= ip - low),
+        decreases end - ip,
+    {
+        let ghost ip0 = ip;
+        let mut m: usize = 0;
+        let mut off: usize = 0;
+        let mut start = ip + 1;
+        // A repeat offset one byte ahead.
+        if r1 != 0 && load32(src, ip + 1) == load32(src, ip + 1 - r1) {
+            m = 4 + eq_len(src, ip + 5, ip + 5 - r1, end - (ip + 5));
+            off = r1;
+        }
+        if depth > 0 || m == 0 {
+            let (m2, o2, n2) = hc_find(&mut t1, &mut t2, p, src, nxt, ip, end);
+            nxt = n2;
+            if m2 > m {
+                m = m2;
+                off = o2;
+                start = ip;
+            }
+        }
+        if m < 4 {
+            let stp = (ip - anchor) / 256 + 1;
+            ip = if ilimit - ip > stp { ip + stp } else { ilimit };
+            continue;
+        }
+        // Look ahead for something better.
+        let mut d: u32 = 0;
+        let mut cur = start;
+        while d < depth && cur + 1 < ilimit
+            invariant
+                p.wf(t1@, t2@),
+                t1@.len() == tl1,
+                t2@.len() == tl2,
+                p.base <= nxt,
+                anchor <= start <= cur,
+                ip <= start,
+                cur <= ilimit,
+                m >= 4,
+                m <= end - start,
+                1 <= off <= start,
+                start - off >= low,
+                r1 == 0 || (ip >= low && r1 <= ip - low),
+            decreases depth - d,
+        {
+            cur = cur + 1;
+            d = d + 1;
+            let mut better = false;
+            if r1 != 0 && load32(src, cur) == load32(src, cur - r1) {
+                let mr = 4 + eq_len(src, cur + 4, cur + 4 - r1, end - (cur + 4));
+                let g2 = (mr as i64).wrapping_mul(4);
+                let g1 = (m as i64).wrapping_mul(4) - hbit(lo32((off + 1) as u64)) as i64 + 1;
+                if g2 > g1 {
+                    m = mr;
+                    off = r1;
+                    start = cur;
+                    better = true;
+                }
+            }
+            let (m2, o2, n2) = hc_find(&mut t1, &mut t2, p, src, nxt, cur, end);
+            nxt = n2;
+            if m2 >= 4 {
+                let g2 = (m2 as i64).wrapping_mul(4) - hbit(lo32((o2 + 1) as u64)) as i64;
+                let g1 = (m as i64).wrapping_mul(4) - hbit(lo32((off + 1) as u64)) as i64 + if d == 1 { 4 } else { 7 };
+                if g2 > g1 {
+                    m = m2;
+                    off = o2;
+                    start = cur;
+                    better = true;
+                }
+            }
+            if !better {
+                break;
+            }
+        }
+        // Extend backwards.
+        let mut s = start;
+        let mut c = start - off;
+        while s > anchor && c > base && src[s - 1] == src[c - 1]
+            invariant
+                anchor <= s <= start,
+                c < s,
+                s - c == off,
+                m <= end - s,
+                s + m >= ip + 4,
+                s + m >= start,
+            decreases s,
+        {
+            s = s - 1;
+            c = c - 1;
+            m = m + 1;
+        }
+        emit_s(st, src, anchor, s, off, m, end);
+        if off != r1 {
+            r2 = r1;
+            r1 = off;
+        }
+        ip = s + m;
+        anchor = ip;
+        while ip < ilimit && r2 != 0 && load32(src, ip) == load32(src, ip - r2)
+            invariant
+                anchor == ip,
+                ip <= end,
+                pos <= anchor,
+                ilimit == end - 8,
+                p.base <= nxt,
+                t1@.len() == tl1,
+                t2@.len() == tl2,
+                p.wf(t1@, t2@),
+                st.wf(),
+                room(st, anchor, end),
+                r1 == 0 || (ip >= low && r1 <= ip - low),
+                r2 == 0 || (ip >= low && r2 <= ip - low),
+                ip > ip0,
+            decreases end - ip,
+        {
+            let q = r2;
+            let m2 = 4 + eq_len(src, ip + 4, ip + 4 - q, end - (ip + 4));
+            r2 = r1;
+            r1 = q;
+            emit_s(st, src, ip, ip, q, m2, end);
+            ip = ip + m2;
+            anchor = ip;
+        }
+    }
+    (t1, t2, anchor, nxt, r1, r2)
+}
+
 impl Enc {
     pub open spec fn wf(&self) -> bool {
         &&& 1 <= self.hlog <= 30
@@ -729,108 +1043,9 @@ impl Enc {
         self.st.lits.extend_from_slice(slice_subrange(src, anchor, end));
     }
 
-    /// Adds positions up to `ip` (exclusive) to the hash chains.
-    #[verifier::loop_isolation(false)]
-    fn hc_insert(&mut self, src: &[u8], ip: usize)
-        requires
-            old(self).wf(),
-            ip + 8 <= src@.len(),
-            old(self).base <= ip,
-            ip - old(self).base < 0xC002_0000,
-        ensures
-            final(self).wf(),
-            final(self).base == old(self).base,
-    {
-        let hlog = self.hlog;
-        let cmask = self.t2.len() - 1;
-        if self.next < self.base || self.next > ip {
-            self.next = if ip > self.base { ip } else { self.base };
-        }
-        let mut p = self.next;
-        while p < ip
-            invariant
-                self.wf(),
-                hlog == self.hlog,
-                self.base <= p <= ip,
-                cmask == self.t2@.len() - 1,
-            decreases ip - p,
-        {
-            let h = hash(src, p, self.mls, hlog);
-            let ci = p & cmask;
-            proof {
-                assert(p & cmask <= cmask) by (bit_vector);
-            }
-            self.t2.set(ci, self.t1[h]);
-            self.t1.set(h, (p - self.base) as u32);
-            p = p + 1;
-        }
-        self.next = ip;
-    }
-
-    /// The longest match at `ip` along the hash chain: (length, offset);
-    /// length 0 if none of at least 4.
-    #[verifier::loop_isolation(false)]
-    fn hc_find(&mut self, src: &[u8], ip: usize, end: usize) -> (r: (usize, usize))
-        requires
-            old(self).wf(),
-            ip + 8 <= end <= src@.len(),
-            old(self).base <= ip,
-            ip - old(self).base < 0xC002_0000,
-        ensures
-            final(self).wf(),
-            final(self).base == old(self).base,
-            r.0 > 0 ==> 1 <= r.1 <= ip && r.0 <= end - ip,
-    {
-        self.hc_insert(src, ip);
-        let cmask = self.t2.len() - 1;
-        let h = hash(src, ip, self.mls, self.hlog);
-        let mut cand = self.base.wrapping_add(self.t1[h] as usize);
-        let mut best: usize = 3;
-        let mut boff: usize = 0;
-        let mut attempts: u32 = 1u32 << self.slog;
-        let csize = self.t2.len();
-        let lim = end - ip;
-        while attempts > 0 && cand < ip && self.off_ok(ip, ip - cand) && ip - cand < csize
-            invariant
-                self.wf(),
-                cmask == self.t2@.len() - 1,
-                3 <= best <= lim,
-                lim == end - ip,
-                boff <= ip,
-                best > 3 ==> boff >= 1,
-            decreases attempts,
-        {
-            if best < lim && src[cand + best] == src[ip + best] {
-                let l = eq_len(src, ip, cand, lim);
-                if l > best {
-                    best = l;
-                    boff = ip - cand;
-                    if l == lim {
-                        break;
-                    }
-                }
-            }
-            let ci = cand & cmask;
-            proof {
-                assert(cand & cmask <= cmask) by (bit_vector);
-            }
-            let nx = self.base.wrapping_add(self.t2[ci] as usize);
-            if nx >= cand {
-                break;
-            }
-            cand = nx;
-            attempts = attempts - 1;
-        }
-        if best > 3 {
-            (best, boff)
-        } else {
-            (0, 0)
-        }
-    }
-
     /// Greedy and lazy matching on hash chains (libzstd's
     /// `ZSTD_compressBlock_lazy_generic`), looking `depth` positions ahead
-    /// for a better match.
+    /// for a better match. Like `fast`, the loop runs on locals.
     #[verifier::loop_isolation(false)]
     pub fn lazy(&mut self, src: &[u8], pos: usize, end: usize, depth: u32)
         requires
@@ -843,135 +1058,23 @@ impl Enc {
             final(self).wf(),
     {
         let mut anchor = pos;
-        let mut ip = if pos == 0 { 1 } else { pos };
         if end - pos >= 16 {
-            let ilimit = end - 8;
-            let base0 = self.base;
-            while ip < ilimit
-                invariant
-                    self.wf(),
-                    self.base == base0,
-                    anchor <= ip,
-                    ip <= end,
-                    pos <= anchor,
-                    ilimit == end - 8,
-                    self.base <= pos,
-                    end - self.base < 0xC002_0000,
-                decreases end - ip,
-            {
-                let ghost ip0 = ip;
-                let mut m: usize = 0;
-                let mut off: usize = 0;
-                let mut start = ip + 1;
-                // A repeat offset one byte ahead.
-                let r = self.rep1;
-                if self.off_ok(ip + 1, r) && load32(src, ip + 1) == load32(src, ip + 1 - r) {
-                    m = 4 + eq_len(src, ip + 5, ip + 5 - r, end - (ip + 5));
-                    off = r;
-                }
-                if depth > 0 || m == 0 {
-                    let (m2, o2) = self.hc_find(src, ip, end);
-                    if m2 > m {
-                        m = m2;
-                        off = o2;
-                        start = ip;
-                    }
-                }
-                if m < 4 {
-                    let stp = (ip - anchor) / 256 + 1;
-                    ip = if ilimit - ip > stp { ip + stp } else { ilimit };
-                    continue;
-                }
-                // Look ahead for something better.
-                let mut d: u32 = 0;
-                let mut cur = start;
-                while d < depth && cur + 1 < ilimit
-                    invariant
-                        self.wf(),
-                        self.base == base0,
-                        anchor <= start <= cur,
-                        ip <= start,
-                        cur <= ilimit,
-                        m >= 4,
-                        m <= end - start,
-                        1 <= off <= start,
-                    decreases depth - d,
-                {
-                    cur = cur + 1;
-                    d = d + 1;
-                    let mut better = false;
-                    let r1 = self.rep1;
-                    if self.off_ok(cur, r1) && load32(src, cur) == load32(src, cur - r1) {
-                        let mr = 4 + eq_len(src, cur + 4, cur + 4 - r1, end - (cur + 4));
-                        let g2 = (mr * 4) as i64;
-                        let g1 = (m * 4) as i64 - hbit(lo32((off + 1) as u64)) as i64 + 1;
-                        if g2 > g1 {
-                            m = mr;
-                            off = r1;
-                            start = cur;
-                            better = true;
-                        }
-                    }
-                    let (m2, o2) = self.hc_find(src, cur, end);
-                    if m2 >= 4 {
-                        let g2 = (m2 * 4) as i64 - hbit(lo32((o2 + 1) as u64)) as i64;
-                        let g1 = (m * 4) as i64 - hbit(lo32((off + 1) as u64)) as i64 + if d == 1 { 4 } else { 7 };
-                        if g2 > g1 {
-                            m = m2;
-                            off = o2;
-                            start = cur;
-                            better = true;
-                        }
-                    }
-                    if !better {
-                        break;
-                    }
-                }
-                // Extend backwards.
-                let mut s = start;
-                let mut c = start - off;
-                while s > anchor && c > self.base && src[s - 1] == src[c - 1]
-                    invariant
-                        anchor <= s <= start,
-                        c < s,
-                        s - c == off,
-                        m <= end - s,
-                        s + m >= ip + 4,
-                    decreases s,
-                {
-                    s = s - 1;
-                    c = c - 1;
-                    m = m + 1;
-                }
-                emit(&mut self.st, src, anchor, s, off, m);
-                if off != self.rep1 {
-                    self.rep2 = self.rep1;
-                    self.rep1 = off;
-                }
-                ip = s + m;
-                anchor = ip;
-                while ip < ilimit && self.off_ok(ip, self.rep2) && load32(src, ip) == load32(src, ip - self.rep2)
-                    invariant
-                        self.wf(),
-                        self.base == base0,
-                        anchor == ip,
-                        ip <= end,
-                        pos <= anchor,
-                        ilimit == end - 8,
-                        self.base <= pos,
-                        end - self.base < 0xC002_0000,
-                        ip > ip0,
-                    decreases end - ip,
-                {
-                    let r2 = self.rep2;
-                    let m2 = 4 + eq_len(src, ip + 4, ip + 4 - r2, end - (ip + 4));
-                    self.rep2 = self.rep1;
-                    self.rep1 = r2;
-                    emit(&mut self.st, src, ip, ip, r2, m2);
-                    ip = ip + m2;
-                    anchor = ip;
-                }
-            }
+            reserve_room(&mut self.st, anchor, end);
+            let base = self.base;
+            let low = if end - base > self.window { end - self.window } else { base };
+            let mut t1: Vec<u32> = Vec::new();
+            let mut t2: Vec<u32> = Vec::new();
+            core::mem::swap(&mut t1, &mut self.t1);
+            core::mem::swap(&mut t2, &mut self.t2);
+            let p = Hc { base, low, hlog: self.hlog, mls: self.mls, slog: self.slog };
+            let next = if self.next < base || self.next > pos { pos } else { self.next };
+            let (u1, u2, a, nx, q1, q2) = lazy_run(t1, t2, &mut self.st, src, pos, end, &p, next, depth, self.rep1, self.rep2);
+            self.t1 = u1;
+            self.t2 = u2;
+            self.next = nx;
+            self.rep1 = q1;
+            self.rep2 = q2;
+            anchor = a;
         }
         self.st.lits.extend_from_slice(slice_subrange(src, anchor, end));
     }
