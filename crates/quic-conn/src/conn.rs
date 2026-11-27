@@ -25,6 +25,7 @@ use verilith_quic::pktbuf::{self, put_frame};
 use verilith_quic::reclog::{self, RecLog};
 use verilith_quic::recv::Received;
 use verilith_quic::rtt::Rtt;
+use verilith_quic::schedule::KeySchedule;
 use verilith_quic::sent::{Done, Sent};
 use verilith_quic::timers::{self, Due, Timers};
 use verilith_quic::streams::{RecvState, RecvStream, SendState, SendStream, StreamIds, Use};
@@ -207,8 +208,6 @@ struct Space<P: Provider> {
     ack_owed: bool,
     /// The loss timer (§6.1.2).
     loss_time: Option<u64>,
-    /// Keys are gone for good.
-    discarded: bool,
 }
 
 impl<P: Provider> Space<P> {
@@ -224,7 +223,6 @@ impl<P: Provider> Space<P> {
             probes: 0,
             ack_owed: false,
             loss_time: None,
-            discarded: false,
         }
     }
 
@@ -349,7 +347,9 @@ pub struct Connection<P: Provider> {
     close_owed: bool,
     /// When an ack-eliciting packet last went out.
     last_eliciting: u64,
-    handshake_done: bool,
+    /// Which spaces' keys are installed and discarded (verified
+    /// `schedule`).
+    ks: KeySchedule,
     /// Bytes of the client's first Initial's Source Connection ID, for
     /// checking initial_source_connection_id (§7.3).
     client_scid: Vec<u8>,
@@ -481,7 +481,7 @@ impl<P: Provider> Connection<P> {
             close: None,
             close_owed: false,
             last_eliciting: now,
-            handshake_done: false,
+            ks: KeySchedule::new(),
             client_scid: scid.to_vec(),
             early: Vec::new(),
             replay_early: false,
@@ -491,7 +491,7 @@ impl<P: Provider> Connection<P> {
 
     /// The handshake has not completed.
     pub fn is_handshaking(&self) -> bool {
-        !self.handshake_done
+        !self.ks.complete()
     }
 
     /// The connection is gone: drop it.
@@ -562,12 +562,15 @@ impl<P: Provider> Connection<P> {
     }
 
     fn handle_packet(&mut self, now: u64, s: usize, pkt: &mut [u8], pn_off: usize) {
-        if s == 2 && !self.handshake_done {
+        if s == 2 && !self.ks.complete() {
             // §5.7 of RFC 9001: no 1-RTT before the handshake completes;
             // a few are kept to process once it does.
             if self.early.len() < 4 {
                 self.early.push((pkt.to_vec(), pn_off));
             }
+            return;
+        }
+        if !self.ks.may_open(s) {
             return;
         }
         let Some((_, hp)) = self.spaces[s].rx.as_ref() else { return };
@@ -613,7 +616,7 @@ impl<P: Provider> Connection<P> {
         if self.spaces[s].recv.is_dup(pn) {
             return;
         }
-        if s == 1 && !self.spaces[0].discarded {
+        if s == 1 && self.ks.on_handshake_packet() {
             // §4.9.1 of RFC 9001: the server discards Initial keys on its
             // first Handshake packet, and the address is validated (§8.1).
             self.discard(0);
@@ -628,7 +631,7 @@ impl<P: Provider> Connection<P> {
                 return;
             }
         };
-        if self.spaces[s].discarded && s != 2 {
+        if self.ks.discarded(s) {
             return;
         }
         self.spaces[s].recv.insert(pn, now, eliciting);
@@ -674,10 +677,6 @@ impl<P: Provider> Connection<P> {
     /// 9002).
     fn discard(&mut self, s: usize) {
         let sp = &mut self.spaces[s];
-        if sp.discarded {
-            return;
-        }
-        sp.discarded = true;
         sp.rx = None;
         sp.tx = None;
         sp.sent.discard();
@@ -807,7 +806,7 @@ impl<P: Provider> Connection<P> {
                 if let Some(d) = done.iter().find(|d| d.pn == largest) {
                     let sample = now.saturating_sub(d.packet.time);
                     let max_delay = if s == 2 { self.peer_max_ack_delay } else { 0 };
-                    self.rtt.update(sample, delay, max_delay, self.handshake_done);
+                    self.rtt.update(sample, delay, max_delay, self.ks.complete());
                 }
             }
         }
@@ -995,7 +994,7 @@ impl<P: Provider> Connection<P> {
             let r = self.tls.read(level, chunk, &mut out);
             self.spaces[s].crypto_in.consume(n);
             for (i, d) in [&out.initial, &out.handshake, &out.one_rtt].into_iter().enumerate() {
-                if !d.is_empty() && !self.spaces[i].discarded {
+                if !d.is_empty() && !self.ks.discarded(i) {
                     self.spaces[i].crypto_out.write(d);
                 }
             }
@@ -1012,6 +1011,9 @@ impl<P: Provider> Connection<P> {
     /// The server's flight is written: Handshake keys, the server's 1-RTT
     /// keys, and the client's transport parameters.
     fn on_accepted(&mut self) -> Result<(), u64> {
+        if !self.ks.on_server_flight() {
+            return Err(INTERNAL_ERROR);
+        }
         let suite = self.tls.suite().ok_or(INTERNAL_ERROR)?;
         self.suite = suite;
         let (c, s) = self.tls.hs_secrets().ok_or(INTERNAL_ERROR)?;
@@ -1059,11 +1061,13 @@ impl<P: Provider> Connection<P> {
     }
 
     fn on_done(&mut self, now: u64) {
-        self.handshake_done = true;
-        self.state = State::Established;
-        self.send_handshake_done = true;
         // §4.9.2 of RFC 9001: the server's handshake is confirmed now, and
         // Handshake keys are discarded.
+        if !self.ks.on_complete() {
+            return;
+        }
+        self.state = State::Established;
+        self.send_handshake_done = true;
         self.discard(1);
         self.events.push_back(Event::Connected);
         self.replay_early = true;
@@ -1451,7 +1455,7 @@ impl<P: Provider> Connection<P> {
         let mut dur = [0; 3];
         for s in 0..3 {
             let sp = &self.spaces[s];
-            if sp.discarded || sp.tx.is_none() || (s == 2 && !self.handshake_done) {
+            if !self.ks.may_send(s) || sp.tx.is_none() || (s == 2 && !self.ks.complete()) {
                 continue;
             }
             last[s] = sp.sent.eliciting_in_flight();
@@ -1516,7 +1520,7 @@ impl<P: Provider> Connection<P> {
                 // Before the handshake completes, probe both handshake
                 // spaces (§6.2.4: "an endpoint MAY send ... in other
                 // packet number spaces").
-                if s == 0 && self.spaces[1].tx.is_some() && !self.spaces[1].discarded {
+                if s == 0 && self.ks.may_send(1) && self.spaces[1].tx.is_some() {
                     self.spaces[1].probes = 1;
                     self.requeue(1);
                 }
@@ -1568,7 +1572,7 @@ impl<P: Provider> Connection<P> {
             self.pmtu = Pmtu::Done;
             return 0;
         }
-        if !self.handshake_done || self.state != State::Established || self.spaces[2].tx.is_none() {
+        if !self.ks.complete() || self.state != State::Established || self.spaces[2].tx.is_none() {
             return 0;
         }
         let inflight: u64 = self.spaces.iter().map(|s| s.sent.bytes_in_flight()).sum();
@@ -1667,7 +1671,7 @@ impl<P: Provider> Connection<P> {
         let mut has_initial_eliciting = false;
         let mut any_eliciting = false;
         for s in 0..3 {
-            if self.spaces[s].tx.is_none() || self.spaces[s].discarded {
+            if !self.ks.may_send(s) || self.spaces[s].tx.is_none() {
                 continue;
             }
             if !self.wants_send(now, s) {
@@ -1997,10 +2001,10 @@ impl<P: Provider> Connection<P> {
         let start = buf.len();
         let Some((code, app)) = self.close else { return 0 };
         for s in 0..3 {
-            if self.spaces[s].tx.is_none() || self.spaces[s].discarded {
+            if !self.ks.may_send(s) || self.spaces[s].tx.is_none() {
                 continue;
             }
-            if s == 2 && !self.handshake_done {
+            if s == 2 && !self.ks.complete() {
                 continue;
             }
             if room - (buf.len() - start) < 80 {

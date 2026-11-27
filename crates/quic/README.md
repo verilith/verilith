@@ -165,6 +165,12 @@ Loss recovery (RFC 9002), for one packet number space each:
   the next only for those at or above it. `on_update` moves on only for a
   packet sent to the next generation, and `phase` (the bit to send with)
   follows the generation.
+- **Key installation and discard** (RFC 9001 §4.9, §5.7, `schedule`):
+  each space's keys go from absent to installed to discarded and never
+  back; Initial keys are discarded on the first Handshake packet
+  processed, Handshake keys only once the handshake is complete
+  (confirmed, for a server), and 1-RTT packets are opened only after
+  that.
 
 Every loop in a parser consumes input, so parsing is linear in the input;
 the PADDING scan reads eight bytes at a time.

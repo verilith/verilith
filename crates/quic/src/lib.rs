@@ -17,6 +17,7 @@ pub mod reasm;
 pub mod ranges;
 pub mod reclog;
 pub mod recv;
+pub mod schedule;
 pub mod sendq;
 pub mod rtt;
 pub mod sent;
