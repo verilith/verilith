@@ -1,0 +1,7 @@
+{
+ "_comment": "The functions scripts/ctcheck.py checks in examples/ctcheck's binary: the kTLS key layout. 'expect' other than pass marks a control that must be reported.",
+ "functions": [
+  {"name": "verilith_server::sys::linux::ktls_crypto_info"},
+  {"name": "ctcheck_leak_key", "expect": "any"}
+ ]
+}

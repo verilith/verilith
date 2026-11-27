@@ -11,6 +11,11 @@ keywords = ["tls", "tls13", "verified", "verus", "parser"]
 categories = ["network-programming", "cryptography", "parser-implementations"]
 exclude = ["bench/", "scripts/"]
 
+[features]
+# For examples/ctgrind.rs only: `ct::declassify` tells Valgrind that what it
+# returns is defined.
+ctgrind = []
+
 [dependencies]
 verilith-core = { path = "../core", version = "0.1.0" }
 verilith-sha2 = { path = "../sha2", version = "0.1.0" }
@@ -29,3 +34,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(v
 hkdf = "0.12"
 hmac = "0.12"
 sha2 = "0.10"
+
+[[example]]
+name = "ctgrind"
+required-features = ["ctgrind"]
