@@ -10,6 +10,12 @@ pub mod gf;
 pub mod isa;
 #[doc(hidden)]
 pub mod lemmas;
+#[doc(hidden)]
+pub mod arch;
+#[doc(hidden)]
+pub mod kernels;
+#[doc(hidden)]
+pub mod gcm;
 #[cfg(target_arch = "x86_64")]
 #[doc(hidden)]
 pub mod x86;
@@ -18,11 +24,8 @@ pub mod x86;
 pub mod ni;
 #[cfg(target_arch = "x86_64")]
 #[doc(hidden)]
-pub mod gcm;
+pub mod vaes;
 #[cfg(target_arch = "x86_64")]
 mod aead;
 #[cfg(target_arch = "x86_64")]
 pub use aead::AesGcm;
-#[cfg(target_arch = "x86_64")]
-#[doc(hidden)]
-pub mod vaes;

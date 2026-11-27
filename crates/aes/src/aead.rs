@@ -199,34 +199,35 @@ fn open_vaes(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &[u8; 16])
 
 mod tf {
     use crate::gcm::Gcm;
+    use crate::ni::Ni;
 
     #[target_feature(enable = "aes,pclmulqdq,ssse3,sse4.1")]
     #[inline(never)]
     pub(super) unsafe fn new(key: &[u8]) -> Gcm {
-        Gcm::new(key)
+        Gcm::new::<Ni>(key)
     }
 
     #[target_feature(enable = "aes,pclmulqdq,ssse3,sse4.1")]
     #[inline(never)]
     pub(super) unsafe fn seal(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &mut [u8; 16]) {
-        g.seal(iv, aad, buf, tag, false)
+        g.seal::<Ni>(iv, aad, buf, tag, false)
     }
 
     #[target_feature(enable = "aes,pclmulqdq,ssse3,sse4.1")]
     #[inline(never)]
     pub(super) unsafe fn open(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &[u8; 16]) -> bool {
-        g.open(iv, aad, buf, tag, false)
+        g.open::<Ni>(iv, aad, buf, tag, false)
     }
 
     #[target_feature(enable = "aes,pclmulqdq,ssse3,sse4.1,avx2,avx512f,avx512bw,avx512vl,vaes,vpclmulqdq")]
     #[inline(never)]
     pub(super) unsafe fn seal_vaes(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &mut [u8; 16]) {
-        g.seal(iv, aad, buf, tag, true)
+        g.seal::<Ni>(iv, aad, buf, tag, true)
     }
 
     #[target_feature(enable = "aes,pclmulqdq,ssse3,sse4.1,avx2,avx512f,avx512bw,avx512vl,vaes,vpclmulqdq")]
     #[inline(never)]
     pub(super) unsafe fn open_vaes(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &[u8; 16]) -> bool {
-        g.open(iv, aad, buf, tag, true)
+        g.open::<Ni>(iv, aad, buf, tag, true)
     }
 }

@@ -5,7 +5,9 @@
 use crate::gf::*;
 use crate::isa::*;
 use crate::lemmas::*;
-use crate::ni::*;
+use crate::arch::Isa;
+use crate::kernels::*;
+use crate::ni::Ni;
 use crate::spec::*;
 use crate::x86::*;
 use vstd::prelude::*;
@@ -193,7 +195,7 @@ pub fn ks16_z(rk: &[u128; 15], nr: usize, ctr: X128, Ghost(key): Ghost<Seq<u8>>,
         forall|l: int| 0 <= l < 4 ==> #[trigger] zb(r.2, l) == cipher(key, ins4(iv, c, 2)[l]),
         forall|l: int| 0 <= l < 4 ==> #[trigger] zb(r.3, l) == cipher(key, ins4(iv, c, 3)[l]),
 {
-    let m = z_bcast_x(ctr_x());
+    let m = z_bcast_x(ctr_x::<Ni>());
     let (z0, four) = ctrs_z(ctr, Ghost(iv), Ghost(c));
     let z1 = next_z(z0, four, Ghost(iv), Ghost(c));
     let z2 = next_z(z1, four, Ghost(iv), Ghost(c + 4));
@@ -359,12 +361,6 @@ pub fn ctr16_z(
 }
 
 
-/// `hr[m]` is H^(16 - m): register q of `hr` holds the powers for blocks
-/// 4q .. 4q + 3 of sixteen.
-pub open spec fn rpowers_ok(h: u128, hr: Seq<u128>) -> bool {
-    hr.len() == 16 && forall|m: int| 0 <= m < 16 ==> #[trigger] hr[m] == pow(h, (16 - m) as nat)
-}
-
 /// The three parts of the four lanes' products.
 #[inline(always)]
 pub fn prod_z(a: Z512, b: Z512) -> (r: (Z512, Z512, Z512))
@@ -481,7 +477,7 @@ pub fn ghash16_z(acc: u128, d: &[u8], i: usize, hr: &[u128; 16], Ghost(h): Ghost
 {
     let ghost xs = blocks_at(d@, i as int, 16);
     let ghost ys = xs.update(0, acc ^ xs[0]);
-    let rz = z_bcast_x(rev_x());
+    let rz = z_bcast_x(rev_x::<Ni>());
     let _len = d.len();
     let x0a = load_be_z(d, i, rz);
     let x1 = load_be_z(d, i + 64, rz);
@@ -503,8 +499,8 @@ pub fn ghash16_z(acc: u128, d: &[u8], i: usize, hr: &[u128; 16], Ghost(h): Ghost
     let lx = fold_z(lz);
     let mx = fold_z(mz);
     let gx = fold_z(gz);
-    let (lo, hi) = join_x(lx, mx, gx);
-    let r = red_x(lo, hi);
+    let (lo, hi) = join_x::<Ni>(lx, mx, gx);
+    let r = red_x::<Ni>(lo, hi);
     proof {
         let pw = |b: int| pow(h, (16 - b) as nat);
         let ls = Seq::new(16, |b: int| clmul(lo64(ys[b]), lo64(pow(h, (16 - b) as nat))));

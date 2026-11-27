@@ -9,7 +9,7 @@
 //! (also AVX-512F/BW/VL, VAES and VPCLMULQDQ), which [`has_ni`] and
 //! [`has_vaes`] ensure after run-time detection, so verified code reaches
 //! them only on a CPU that has them.
-#![allow(unused_imports, unused_unsafe)]
+#![allow(unused_imports, unused_unsafe, unused_parens)]
 use crate::gf::*;
 use crate::isa::*;
 use core::arch::x86_64::*;
