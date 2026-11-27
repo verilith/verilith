@@ -171,6 +171,13 @@ Loss recovery (RFC 9002), for one packet number space each:
   processed, Handshake keys only once the handshake is complete
   (confirmed, for a server), and 1-RTT packets are opened only after
   that.
+- **Routing** (§5.2, §6, §7.2, §14.1, §17.2.1, `route`): a connection ID
+  from `make_cid` names its slot (`cid_slot` gives it back); `may_start`
+  opens a connection only for an Initial in a datagram of at least 1200
+  bytes with a Destination Connection ID of at least 8; and
+  `version_negotiation` writes a Version Negotiation packet echoing the
+  client's connection IDs swapped and listing version 1, proven to parse
+  back as exactly that, only for datagrams of at least 1200 bytes.
 
 Every loop in a parser consumes input, so parsing is linear in the input;
 the PADDING scan reads eight bytes at a time.
@@ -200,9 +207,9 @@ frame encoded and parsed in between, and checks that only received
 packets are acknowledged, no packet is acknowledged or lost twice, and
 the bytes in flight match a model; and RFC 9002's arithmetic on known
 values. `tests/reasm.rs`, `tests/sendq.rs`, `tests/reclog.rs`,
-`tests/pktbuf.rs` and `tests/timers.rs` check reassembly, `RangeSet`,
-`SendState`, `RecLog`, `put_frame` and the timers against simple
-references.
+`tests/pktbuf.rs`, `tests/timers.rs` and `tests/route.rs` check
+reassembly, `RangeSet`, `SendState`, `RecLog`, `put_frame`, the timers
+and routing against simple references.
 
 `bench/` compares verilith-quic with quinn-proto 0.11.19 and quiche
 0.24.9 (`bench/setup.sh` copies them from crates.io and makes their frame

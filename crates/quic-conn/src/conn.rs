@@ -35,7 +35,7 @@ use verilith_tls::quic::{Event as TlsEvent, Out, QuicServer, HANDSHAKE, INITIAL,
 use verilith_tls::quic_packet::{keys, unmask, update, Aead};
 
 /// The length of the connection IDs this server issues.
-pub const CID_LEN: usize = 8;
+pub const CID_LEN: usize = verilith_quic::route::CID_LEN;
 
 // Transport error codes (RFC 9000 §20.1).
 pub const NO_ERROR: u64 = 0x00;
