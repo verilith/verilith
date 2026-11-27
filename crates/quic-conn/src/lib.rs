@@ -14,6 +14,7 @@ pub use conn::{Config, Connection, Event, StreamError, Transmit, CID_LEN};
 use std::collections::HashMap;
 use std::sync::Arc;
 use verilith_quic::packet::{self, Header};
+use verilith_quic::route;
 use verilith_tls::crypto::Provider;
 
 /// What a datagram did.
@@ -92,8 +93,9 @@ impl<P: Provider, T> Server<P, T> {
                     Some(i)
                 } else if (first >> 4) & 3 == 0 {
                     // A new connection: the Initial must fill a datagram of
-                    // 1200 bytes (§14.1).
-                    if data.len() < 1200 || dcid.len() < 8 {
+                    // 1200 bytes (§14.1), with a Destination Connection ID
+                    // of at least 8 (§7.2).
+                    if !route::may_start(true, data.len(), dcid.len()) {
                         return Datagram::Dropped;
                     }
                     let i = match self.free.pop() {
@@ -105,9 +107,12 @@ impl<P: Provider, T> Server<P, T> {
                     };
                     let mut rnd = [0u8; 32];
                     self.prov.random(&mut rnd);
+                    let Ok(slot) = u32::try_from(i) else {
+                        self.free.push(i);
+                        return Datagram::Dropped;
+                    };
                     let mut cid = [0u8; CID_LEN];
-                    cid[..4].copy_from_slice(&(i as u32).to_be_bytes());
-                    cid[4..].copy_from_slice(&rnd[..CID_LEN - 4]);
+                    cid.copy_from_slice(&route::make_cid(slot, &rnd));
                     let Some(c) = Connection::new(self.cfg.clone(), now, dcid, scid, cid) else {
                         self.free.push(i);
                         return Datagram::Dropped;
@@ -122,19 +127,14 @@ impl<P: Provider, T> Server<P, T> {
             Header::OtherVersion { dcid, scid, .. } => {
                 // Version Negotiation (§6, §17.2.1), for datagrams big
                 // enough to be a client's first.
-                if data.len() < 1200 {
+                if !route::may_negotiate(data.len()) {
                     return Datagram::Dropped;
                 }
-                out.clear();
                 let mut r = [0u8; 32];
                 self.prov.random(&mut r);
-                out.push(0x80 | (r[0] & 0x7f));
-                out.extend_from_slice(&0u32.to_be_bytes());
-                out.push(scid.len() as u8);
-                out.extend_from_slice(scid);
-                out.push(dcid.len() as u8);
-                out.extend_from_slice(dcid);
-                out.extend_from_slice(&1u32.to_be_bytes());
+                if !route::version_negotiation(dcid, scid, r[0], out) {
+                    return Datagram::Dropped;
+                }
                 return Datagram::Response(out.len());
             }
             _ => None,
@@ -150,10 +150,7 @@ impl<P: Provider, T> Server<P, T> {
     }
 
     fn slot_of(&self, dcid: &[u8]) -> Option<usize> {
-        if dcid.len() != CID_LEN {
-            return None;
-        }
-        let i = u32::from_be_bytes([dcid[0], dcid[1], dcid[2], dcid[3]]) as usize;
+        let i = route::cid_slot(dcid)? as usize;
         match self.conns.get(i) {
             Some(Some((c, _))) if c.local_cid[..] == *dcid => Some(i),
             _ => None,

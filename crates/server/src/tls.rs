@@ -12,7 +12,7 @@ use verilith_tls::stream::ServerStream;
 use verilith_tls_aws_lc::{AwsLc, SigningKey, TicketKeys, GROUPS, SUITES};
 pub use verilith_tls_aws_lc::hpke::EchKeys;
 
-use crate::h1::{Conn, Ctx, Limits, Next};
+use crate::h1::{Conn, Ctx, Io, Limits, Next};
 use crate::h2::{Conn2, Limits2};
 use crate::Handler;
 
@@ -357,6 +357,33 @@ impl Session {
         }
     }
 
+    /// The sending keys, for kTLS: verilith-tls only.
+    fn tx_keys(&self) -> Option<KtlsKeys> {
+        match self {
+            Session::V(s) => {
+                let (suite, k, iv, seq) = s.tx_keys()?;
+                let mut keys = KtlsKeys { suite, key: [0; 32], key_len: k.len(), iv: [0; 12], seq };
+                keys.key[..k.len()].copy_from_slice(k.as_slice());
+                keys.iv.copy_from_slice(iv.as_slice());
+                Some(keys)
+            }
+            #[cfg(feature = "tls-rustls")]
+            Session::R(_) => None,
+        }
+    }
+
+    /// Drops the ciphertext the session holds.
+    fn discard_held(&mut self) {
+        match self {
+            Session::V(s) => {
+                let n = s.pending().len();
+                s.consume_pending(n);
+            }
+            #[cfg(feature = "tls-rustls")]
+            Session::R(_) => {}
+        }
+    }
+
     fn h2(&self) -> bool {
         match self {
             Session::V(s) => s.alpn() == Some(b"h2"),
@@ -406,8 +433,47 @@ const COUT_HIGH: usize = 1 << 20;
 /// Plaintext gathered into one write (one or a few records).
 const GATHER: usize = 16 * 1024;
 
+/// TLS 1.3 sending keys handed to the kernel (kTLS): the suite, the
+/// traffic key (`key[..key_len]`) and IV, and the sequence number of the
+/// next record. Zeroed on drop.
+pub struct KtlsKeys {
+    pub suite: u16,
+    pub key: [u8; 32],
+    pub key_len: usize,
+    pub iv: [u8; 12],
+    pub seq: u64,
+}
+
+impl Drop for KtlsKeys {
+    fn drop(&mut self) {
+        for b in self.key.iter_mut().chain(self.iv.iter_mut()) {
+            // SAFETY: a valid, aligned byte of `self`.
+            unsafe { std::ptr::write_volatile(b, 0) };
+        }
+    }
+}
+
+/// Where record protection for what the server sends happens.
+enum Tx {
+    /// In verilith-tls (userspace), for the whole connection.
+    User,
+    /// In verilith-tls until the handshake is over and its last records
+    /// are written; then in the kernel, if it takes the keys.
+    WantKernel,
+    /// In the kernel (kTLS). The session still opens what the client
+    /// sends; nothing it seals is sent. `key` is the key the kernel has,
+    /// to notice a KeyUpdate the session answered.
+    Kernel { key: KtlsKeys },
+}
+
 pub struct TlsConn {
     tls: Session,
+    tx: Tx,
+    /// Under kTLS: a record of another content type than application data
+    /// to send before anything else (type, bytes, bytes sent), and keys
+    /// to give the kernel once it is sent (a KeyUpdate).
+    ctrl: Option<(u8, [u8; 5], usize, usize)>,
+    rekey: Option<KtlsKeys>,
     inner: Option<Inner>,
     limits: Limits,
     limits2: Limits2,
@@ -440,6 +506,9 @@ impl TlsConn {
         };
         Some(TlsConn {
             tls,
+            tx: Tx::User,
+            ctrl: None,
+            rekey: None,
             inner: None,
             limits,
             limits2,
@@ -453,6 +522,110 @@ impl TlsConn {
             eof: false,
             blocked: false,
         })
+    }
+
+    /// Hands record protection for what the server sends to the kernel
+    /// (kTLS) once the handshake is over: the event loop takes the keys
+    /// from [`TlsConn::ktls_keys`] and reports back with
+    /// [`TlsConn::ktls_installed`].
+    pub fn want_ktls(&mut self) {
+        // verilith-tls only: rustls's keys stay in rustls.
+        if matches!(self.tx, Tx::User) && matches!(self.tls, Session::V(_)) {
+            self.tx = Tx::WantKernel;
+        }
+    }
+
+    /// Whether the kernel protects what the server sends.
+    pub fn ktls(&self) -> bool {
+        matches!(self.tx, Tx::Kernel { .. })
+    }
+
+    /// The keys to give the kernel, when kTLS is wanted and this is the
+    /// moment: the handshake (and any 0-RTT data) is over and every record
+    /// sealed here has been written, so the kernel's first record follows
+    /// the last one sent.
+    pub fn ktls_keys(&self) -> Option<KtlsKeys> {
+        if !matches!(self.tx, Tx::WantKernel) || self.inner.is_none() || self.closing {
+            return None;
+        }
+        if self.tls.handshaking() || self.tls.early() || self.cout_pos != self.cout.len() || !self.gather.is_empty() || self.tls.held() > 0 {
+            return None;
+        }
+        self.tls.tx_keys()
+    }
+
+    /// Whether the kernel took the keys of [`TlsConn::ktls_keys`]: if not,
+    /// the connection stays in userspace.
+    pub fn ktls_installed(&mut self, ok: bool) {
+        self.tx = match (ok, self.tls.tx_keys()) {
+            (true, Some(key)) => Tx::Kernel { key },
+            _ => Tx::User,
+        };
+        if !self.ktls() {
+            // What the engine has, held for the kernel, is sealed here.
+            match self.plaintext_out() {
+                Ok(_) => {
+                    let done = self.inner.as_ref().is_some_and(|i| inner!(i, c => c.closing() && c.pending_len() == 0)) && self.gather.is_empty();
+                    if done && !self.closing {
+                        self.tls.close();
+                        self.closing = true;
+                    }
+                }
+                Err(()) => self.closing = true,
+            }
+            self.put_ciphertext();
+        }
+    }
+
+    /// kTLS is wanted and the handshake is over: the engine's output waits
+    /// for the kernel to take the keys (or refuse them), so that even the
+    /// first response can go out with `sendfile`.
+    fn ktls_waiting(&self) -> bool {
+        matches!(self.tx, Tx::WantKernel) && self.inner.is_some() && !self.tls.handshaking() && !self.tls.early()
+    }
+
+    /// Under kTLS: a record that is not application data, to send before
+    /// anything else with its content type (`sys::send_record`).
+    pub fn ktls_ctrl(&self) -> Option<(u8, &[u8])> {
+        self.ctrl.as_ref().map(|(t, b, len, sent)| (*t, &b[*sent..*len]))
+    }
+
+    /// `n` bytes of [`TlsConn::ktls_ctrl`] were sent. Once all are, the
+    /// keys the kernel is to switch to, if any (after a KeyUpdate).
+    pub fn ktls_ctrl_sent(&mut self, n: usize) -> Option<KtlsKeys> {
+        if let Some((_, _, len, sent)) = self.ctrl.as_mut() {
+            *sent += n;
+            if *sent >= *len {
+                self.ctrl = None;
+                let k = self.rekey.take();
+                if let (Some(k), Tx::Kernel { key }) = (&k, &mut self.tx) {
+                    key.key = k.key;
+                    key.seq = k.seq;
+                }
+                return k;
+            }
+        }
+        None
+    }
+
+    /// Under kTLS, what the session sealed (it is not sent): the answer
+    /// to a KeyUpdate that asked for one goes to the kernel as a record
+    /// of its own with the new keys after it. Anything else is an alert,
+    /// on a connection that closes.
+    fn ktls_held(&mut self) {
+        if self.tls.held() == 0 {
+            return;
+        }
+        self.tls.discard_held();
+        let Tx::Kernel { key } = &self.tx else { return };
+        match self.tls.tx_keys() {
+            Some(k) if k.key[..k.key_len] != key.key[..key.key_len] && self.ctrl.is_none() && self.rekey.is_none() => {
+                // KeyUpdate, update_not_requested (RFC 8446 §4.6.3).
+                self.ctrl = Some((22, [24, 0, 0, 1, 0], 5, 0));
+                self.rekey = Some(k);
+            }
+            _ => self.closing = true,
+        }
     }
 
     pub fn read_buf(&mut self) -> &mut [u8] {
@@ -488,6 +661,12 @@ impl TlsConn {
     }
 
     pub fn pending<'a>(&'a self, out: &mut [&'a [u8]]) -> usize {
+        if self.ktls() {
+            return match self.inner.as_ref() {
+                Some(i) if self.ctrl.is_none() => inner!(i, c => c.pending(out)),
+                _ => 0,
+            };
+        }
         if self.cout_pos == self.cout.len() || out.is_empty() {
             return 0;
         }
@@ -495,11 +674,36 @@ impl TlsConn {
         1
     }
 
+    /// [`TlsConn::pending`] for the event loop: under kTLS, file-backed
+    /// bodies come as file ranges, for `sendfile`.
+    pub fn pending_io<'a>(&'a self, out: &mut [&'a [u8]], more: &mut bool) -> Io<'a> {
+        if self.ktls() {
+            if let (Some(i), None) = (self.inner.as_ref(), &self.ctrl) {
+                return inner!(i, c => c.pending_io(out, more));
+            }
+        }
+        Io::Slices(self.pending(out), Default::default())
+    }
+
     pub fn pending_len(&self) -> usize {
+        if self.ktls() {
+            let c = self.ctrl.as_ref().map_or(0, |(_, _, len, sent)| len - sent);
+            return c + self.inner.as_ref().map_or(0, |i| inner!(i, c => c.pending_len()));
+        }
         self.cout.len() - self.cout_pos
     }
 
     pub fn wrote(&mut self, n: usize) {
+        if self.ktls() {
+            if let Some(i) = self.inner.as_mut() {
+                inner!(i, c => c.wrote(n));
+                if inner!(i, c => c.closing() && c.pending_len() == 0) && !self.closing && self.ctrl.is_none() {
+                    self.ctrl = Some((21, [1, 0, 0, 0, 0], 2, 0));
+                    self.closing = true;
+                }
+            }
+            return;
+        }
         self.cout_pos += n;
         if self.cout_pos == self.cout.len() {
             self.cout.clear();
@@ -532,6 +736,10 @@ impl TlsConn {
     }
 
     fn put_ciphertext(&mut self) {
+        if self.ktls() {
+            self.ktls_held();
+            return;
+        }
         self.tls.put(&mut self.cout, &mut self.cout_pos);
     }
 
@@ -539,6 +747,10 @@ impl TlsConn {
     /// Plaintext out of the engine, as far as the session and `cout`
     /// take it: whether any moved, or Err on a TLS error.
     fn plaintext_out(&mut self) -> Result<bool, ()> {
+        if self.ktls() || self.ktls_waiting() {
+            // The event loop writes the engine's output to the socket.
+            return Ok(false);
+        }
         let Some(i) = self.inner.as_mut() else { return Ok(false) };
         let mut progress = false;
         // Bytes left in `gather` from a short write go first.
@@ -604,6 +816,7 @@ impl TlsConn {
 
     pub fn process<H: Handler + ?Sized>(&mut self, h: &H, ctx: &Ctx) -> Next {
         // Each pass moves bytes one stage on; stop once none moved.
+        let mut inner_next = Next::Read;
         for _ in 0..64 {
             let (ok, mut progress) = self.take_ciphertext();
             if !ok {
@@ -649,7 +862,7 @@ impl TlsConn {
                         break;
                     }
                 }
-                let _ = inner!(i, c => c.process(h, ctx));
+                inner_next = inner!(i, c => c.process(h, ctx));
                 if peer_closed {
                     inner!(i, c => c.eof());
                 }
@@ -664,7 +877,15 @@ impl TlsConn {
                 let i = self.inner.as_mut().unwrap();
                 let done = inner!(i, c => c.closing() && c.pending_len() == 0) && self.gather.is_empty();
                 if done && !self.closing {
-                    self.tls.close();
+                    if self.ktls() {
+                        // close_notify, through the kernel (it has the
+                        // keys); after a KeyUpdate still being sent, none.
+                        if self.ctrl.is_none() {
+                            self.ctrl = Some((21, [1, 0, 0, 0, 0], 2, 0));
+                        }
+                    } else {
+                        self.tls.close();
+                    }
                     self.closing = true;
                 }
             } else if self.eof {
@@ -681,6 +902,15 @@ impl TlsConn {
         }
         if self.closing {
             Next::Close
+        } else if self.ktls() {
+            // The engine's output goes to the socket directly, as on a
+            // plaintext connection; once written, `wrote` queues the
+            // close_notify if the engine is closing.
+            match inner_next {
+                Next::Close | Next::Write if self.pending_len() > 0 => inner_next,
+                _ if self.blocked && self.pending_len() > 0 => Next::Write,
+                _ => Next::Read,
+            }
         } else if self.pending_len() > 0 && (self.blocked || self.pending_len() >= COUT_HIGH) {
             Next::Write
         } else {

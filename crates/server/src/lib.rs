@@ -18,6 +18,7 @@ pub mod streams;
 pub mod out;
 pub mod h3core;
 pub mod h2core;
+pub mod h2wire;
 pub mod early;
 
 #[cfg(not(verus_keep_ghost))]

@@ -18,6 +18,7 @@
 //!   record that opened under the client's application traffic keys.
 use crate::client::*;
 use crate::crypto::*;
+use crate::ct::{ct_eq, declassify};
 use crate::ech::*;
 use crate::hello::*;
 use crate::keys::*;
@@ -389,13 +390,6 @@ pub open spec fn keys_are<K: AeadKey>(p: Protect<K>, suite: u16, secret: Seq<u8>
     &&& p.suite() == suite
     &&& p.key() == traffic_key(suite_hash(suite), secret, suite_key_len(suite))
     &&& p.iv() == traffic_iv(suite_hash(suite), secret)
-}
-
-proof fn lemma_or_xor(acc: u8, x: u8, y: u8)
-    ensures
-        ((acc | (x ^ y)) == 0) == (acc == 0 && x == y),
-{
-    assert(((acc | (x ^ y)) == 0) == (acc == 0 && x == y)) by (bit_vector);
 }
 
 pub(crate) proof fn lemma_be3(m: Seq<u8>)
@@ -1427,39 +1421,6 @@ fn rekey<P: Provider>(prov: &P, suite: u16, sec: &Secret) -> (r: (Secret, Protec
     (s2, p)
 }
 
-/// Whether `a` and `b` are equal, in time that depends only on their
-/// lengths.
-pub(crate) fn ct_eq(a: &[u8], b: &[u8]) -> (r: bool)
-    ensures
-        r == (a@ == b@),
-{
-    let n = a.len();
-    if b.len() != n {
-        return false;
-    }
-    let mut acc: u8 = 0;
-    let mut i: usize = 0;
-    while i < n
-        invariant
-            i <= n,
-            n == a@.len(),
-            n == b@.len(),
-            (acc == 0) == (forall|j: int| 0 <= j < i ==> a@[j] == b@[j]),
-        decreases n - i,
-    {
-        proof {
-            lemma_or_xor(acc, a@[i as int], b@[i as int]);
-        }
-        acc = acc | (a[i] ^ b[i]);
-        i = i + 1;
-    }
-    proof {
-        if acc == 0 {
-            assert(a@ =~= b@);
-        }
-    }
-    acc == 0
-}
 
 /// Whether `b[s..e]` holds byte `v`.
 fn has_byte(b: &[u8], s: usize, e: usize, v: u8) -> (r: bool)
@@ -1648,7 +1609,7 @@ pub(crate) fn try_resume<P: Provider>(
     let th = t2.hash();
     let bk = binder_key_x(a, psk.as_slice());
     let vd = verify_data_x(a, &bk, &th, Ghost(t2.data()));
-    if !ct_eq(vd.as_slice(), bd.of(body)) {
+    if !declassify(ct_eq(vd.as_slice(), bd.of(body))) {
         return Err(DECRYPT_ERROR);
     }
     let ghost g = SpecResume { identity: ident@, state: st@, psk: psk@ };
@@ -2059,6 +2020,39 @@ impl<P: Provider> ServerConn<P> {
         match self.state {
             State::Connected { .. } => true,
             _ => false,
+        }
+    }
+
+    /// The server's sending keys once connected, for a caller that hands
+    /// record protection to the kernel (kTLS): the suite, the traffic key
+    /// and IV of the server's current traffic secret, and the sequence
+    /// number of its next record. Records sealed with them from that
+    /// number on are the ones `write` would make from here. A caller that
+    /// hands them over must send nothing more this connection protects
+    /// with the same keys (`write`, `close`, or what `read_record` answers
+    /// with), since its sequence numbers no longer count what was sent.
+    pub fn tx_keys(&self) -> (r: Option<(u16, Secret, Secret, u64)>)
+        requires
+            self.wf(),
+        ensures
+            r is Some <==> self.phase() == Phase::Connected,
+            r matches Some((s, k, iv, seq)) ==> {
+                &&& s == self.handshake().choice.suite
+                &&& known_suite(s)
+                &&& k.wf() && iv.wf()
+                &&& k@ == traffic_key(suite_hash(s), self.tx_secret(), suite_key_len(s))
+                &&& k@.len() == suite_key_len(s)
+                &&& iv@ == traffic_iv(suite_hash(s), self.tx_secret())
+                &&& iv@.len() == 12
+                &&& seq == self.tx_seq()
+            },
+    {
+        match &self.state {
+            State::Connected { suite, tx, s_sec, .. } => {
+                let (k, iv) = traffic_keys_x(suite_hash_x(*suite), s_sec, suite_key_len_x(*suite));
+                Some((*suite, k, iv, tx.seq_x()))
+            },
+            _ => None,
         }
     }
 
@@ -2922,7 +2916,7 @@ impl<P: Provider> ServerConn<P> {
                     return Err(self.fail(DECODE_ERROR, out));
                 }
                 let got = vstd::slice::slice_subrange(m, 4, m.len());
-                if !ct_eq(got, expect.as_slice()) {
+                if !declassify(ct_eq(got, expect.as_slice())) {
                     self.state = State::WaitFinished { suite, rx, tx, early, expect, c_ap, s_ap, res };
                     return Err(self.fail(DECRYPT_ERROR, out));
                 }

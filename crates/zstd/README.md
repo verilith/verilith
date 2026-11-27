@@ -1,9 +1,9 @@
 # verilith-zstd
 
-A verified Zstandard (RFC 8878) decompressor in Rust, proven with
-[Verus](https://github.com/verus-lang/verus), with libzstd's decompression
-C API. It is meant to replace libzstd's decoder in hardened builds (Node.js
-first), alongside libzstd's compressor.
+A verified Zstandard (RFC 8878) decompressor and compressor in Rust,
+proven with [Verus](https://github.com/verus-lang/verus), with libzstd's C
+API. It is meant to replace libzstd in hardened builds (Node.js first):
+the decoder on its own alongside libzstd's compressor, or both.
 
 `cargo verus verify` (or `scripts/verify.sh`) checks 338 functions and
 lemmas with no errors and no `assume`; the only `external_body` functions
@@ -30,9 +30,18 @@ fn main() -> Result<(), verilith_zstd::Error> {
 }
 ```
 
+Compressing, at a libzstd level (1 to 22):
+
+```rust
+let text = b"the more it repeats, the more it repeats, the smaller it gets".repeat(100);
+let frame = verilith_zstd::compress(&text, 3, true); // level 3, with a checksum
+assert!(frame.len() < text.len() / 10);
+assert_eq!(verilith_zstd::decompress(&frame, 1 << 30).unwrap(), text);
+```
+
 `DictDecoder` decompresses with a dictionary, `Stream` decompresses in
 pieces, and with the feature `zstd-abi` the static library exports
-libzstd's decompression API.
+libzstd's decompression API (`zstd-abi-compress`: the compression API).
 
 ## What is proven
 
@@ -58,6 +67,28 @@ libzstd's decompression API.
 
 The output limit is checked as the output grows, so a decompression bomb
 stops at the limit, not after.
+
+### The compressor
+
+| property | where it is stated |
+| --- | --- |
+| Round trip: the specification decodes every frame the compressor makes back to its input, at every level and window size, with or without a checksum | `compress::compress_exec` (`decompress(r@) == Some(src@)`, against `spec::decompress`) |
+| Memory safety: no out-of-bounds access, no overflow, no panics, in the match finders (including the optimal parser), the entropy coders (FSE tables and states, Huffman code lengths and codes, bit writer) and the frame writer | every function in `compress`, `enc`, `opt`, `ent` |
+| Termination of every loop | every function (`decreases`) |
+
+The frame header, block headers, raw and RLE blocks and the checksum are
+proven correct as they are written. A compressed block is checked
+instead: the match finder and entropy coders are proven safe but not
+correct, and each compressed block they make is decoded by the proven
+`frame::block_exec`, from the decoder state the frame has reached, and
+compared with the input. A block that does not decode to its input is
+stored raw, and the rest of the frame is written raw too. So a bug in the
+encoder can make the output larger, never wrong. libzstd's decoder is
+then only a second check: the tests decode every frame with it as well.
+
+Work is not bounded by a proof for the compressor yet: the match finders
+look at a fixed number of candidates per position (the level's search
+depth), but the work per candidate is not metered.
 
 ### Trusted base
 
@@ -101,6 +132,11 @@ What the proofs assume rather than prove:
   prefix for the next call or frame only) is the adapter's. It also maps
   rejections to libzstd's error codes and handles the parameters. It is
   tested against libzstd's own decoders.
+- `src/ccapi.rs`: an unverified adapter for the compression C API. Every
+  frame comes from the proven `compress_exec`; the adapter maps
+  parameters, copies frames into the caller's buffer, and in streaming
+  collects input and makes a frame on each flush, at the end, and every
+  eight windows of input.
 - Verus, Z3 and the Rust compiler.
 
 Each of the stream's failures is proven to be the spec's, from the bytes
@@ -168,6 +204,16 @@ so streaming keeps the window plus the dictionary's size.
 - `src/stream.rs`: streaming decompression, input and output in pieces.
 - `src/dict.rs`: dictionaries, loaded, and decompression with one.
 - `src/capi.rs`: the C API (unverified adapter, above).
+- `src/compress.rs`: the frame writer, `compress_exec` and its round-trip
+  proof.
+- `src/enc.rs`: the match finders (fast, double fast, greedy, lazy and
+  lazy2 on hash chains) and libzstd's level parameters.
+- `src/opt.rs`: the optimal parser on a binary tree, for levels 16 to 22.
+- `src/ent.rs`: the entropy coders: FSE normalization (libzstd's two
+  methods), table descriptions and encoding tables, Huffman code lengths
+  and tree descriptions (direct or FSE-compressed weights), the literals
+  and sequences sections.
+- `src/ccapi.rs`: the compression C API (unverified adapter, above).
 
 ## C API
 
@@ -186,15 +232,34 @@ so streaming keeps the window plus the dictionary's size.
 `ZSTD_createDDict`, `ZSTD_createDDict_byReference`, `ZSTD_freeDDict`,
 `ZSTD_sizeof_DDict`, `ZSTD_decompress_usingDDict`, `ZSTD_DCtx_refDDict`,
 `ZSTD_getDictID_fromDict`, `ZSTD_getDictID_fromDDict`,
-`ZSTD_initDStream_usingDict`, `ZSTD_initDStream_usingDDict`; and from libzstd's `common/`:
+`ZSTD_initDStream_usingDict`, `ZSTD_initDStream_usingDDict`; for
+compression, `ZSTD_compress`, `ZSTD_compressBound`, `ZSTD_compressCCtx`,
+`ZSTD_compress2`, `ZSTD_createCCtx`, `ZSTD_freeCCtx`, `ZSTD_sizeof_CCtx`,
+`ZSTD_CCtx_setParameter` / `ZSTD_CCtx_getParameter`, `ZSTD_cParam_getBounds`,
+`ZSTD_CCtx_setPledgedSrcSize`, `ZSTD_CCtx_reset`, `ZSTD_createCStream`,
+`ZSTD_freeCStream`, `ZSTD_initCStream`, `ZSTD_compressStream`,
+`ZSTD_compressStream2`, `ZSTD_compressStream2_simpleArgs`,
+`ZSTD_flushStream`, `ZSTD_endStream`, `ZSTD_CStreamInSize`,
+`ZSTD_CStreamOutSize`, `ZSTD_maxCLevel`, `ZSTD_minCLevel`,
+`ZSTD_defaultCLevel`; and from libzstd's `common/`:
 `ZSTD_isError`, `ZSTD_getErrorCode`, `ZSTD_getErrorName`,
 `ZSTD_getErrorString`, `ZSTD_versionNumber`, `ZSTD_versionString`.
 
 They are exported as `vzstd_*`. With the `zstd-abi` feature the
 decompression functions take libzstd's names, so a libzstd built without
 its decompressor (`ZSTD_LIB_DECOMPRESSION=0`) can be linked alongside for
-compression. `zstd-abi-common` also exports the `common/` functions under
-libzstd's names, for builds with no libzstd at all. Error codes follow
+compression. `zstd-abi-compress` gives the compression functions
+libzstd's names, and `zstd-abi-common` the `common/` functions; with all
+three, no libzstd is needed at all.
+
+The compressor takes the level, the window log and the checksum flag.
+Levels below 1 compress as level 1, and 0 is the default (3). The
+content size is always written, and the other parameters (match finder
+details, long-distance matching, workers) are accepted and left to the
+level. A stream is written as a series of whole frames, one per flush,
+one at the end, and one every eight windows of input (at least 1 MiB);
+zstd decoders decode the series to the whole input. Dictionaries are not
+supported for compression yet. Error codes follow
 `zstd_errors.h`; on corrupt input the code can differ from libzstd's, since
 libzstd's depends on how far its decoder got (`DEPARTURES.md`).
 
@@ -227,8 +292,16 @@ libzstd's depends on how far its decoder got (`DEPARTURES.md`).
   corrupted frames, none is accepted that libzstd rejects (90 are
   accepted by libzstd only: 85 are departures, 81 of them Huffman literal
   streams not consumed exactly, and 5 are empty input, below).
+- `tests/compress.rs`: the compressor at levels -5 to 22, window logs 10
+  to 31, with and without checksums, on empty, tiny, block-boundary,
+  run, random, text-like and 1.2 MB inputs: every frame decodes to its
+  input with the proven decoder and with libzstd's, and fits
+  `ZSTD_compressBound`; the C API one-shot, with parameters, and
+  streaming in random pieces with random flushes; and the compression
+  fuzz target's checks.
 - `tests/stress.rs` (`--ignored`): the fuzz target's checks on random and
-  mutated inputs; `fuzz/` has the same as a cargo-fuzz target for runs
+  mutated inputs; `fuzz/` has the same as a cargo-fuzz target (and the
+  compressor's checks as a second one, `compress`) for runs
   under AddressSanitizer.
 - `tests/diag.rs`: says where verilith-zstd rejects the frames in a directory
   (`VZSTD_DIAG=dir`), to classify differences from libzstd.
@@ -349,6 +422,34 @@ mozilla.3 is at 779M instructions against libzstd's 642M. The Huffman
 loop is close to what its dependency chain allows (a shift, a table
 load and a shift per symbol, four streams interleaved), so what remains
 is the sequence loop and table building.
+
+### Compression
+
+Against libzstd 1.5.5's `ZSTD_compress` at the same level (Linux x86-64
+cloud VM, `bench/`'s `cbench`, one-shot, seven compressible files from
+1.6 to 35 MB: docs, Rust source, JSON, text, low-entropy bytes, two
+binaries; geometric means; every frame checked by libzstd's decoder):
+
+| level | ratio vs libzstd | speed vs libzstd |
+| --- | --- | --- |
+| 1 | 0.96× | 0.43× |
+| 3 | 0.98× | 0.49× |
+| 5 | 0.99× | 0.59× |
+| 7 | 0.99× | 0.52× |
+| 9 | 0.99× | 0.57× |
+| 16 | 1.02× | 0.71× |
+| 19 | 0.99× | 0.92× |
+
+Levels 16 to 22 use an optimal parser (`src/opt.rs`, as libzstd's btopt
+and btultra): matches from a binary tree, then the cheapest path through
+each stretch of up to 4096 positions by bit prices from literal, length
+and offset statistics carried from block to block. At level 1, about a
+quarter of the time goes to checking each compressed block with the
+proven decoder (the check is what lets the encoder go unproven beyond
+memory safety; making it cheaper means proving the entropy coders). At
+levels 5 to 9, libzstd 1.5.5 uses its row-hash match finder, which this
+crate does not have yet; the hash chains here do about as many
+instructions but miss the cache more.
 
 ## License
 

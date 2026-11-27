@@ -86,7 +86,8 @@ impl HpkeKey {
         if kdf != KDF_SHA256 || enc.len() != 32 {
             return None;
         }
-        // AES-GCM is aws-lc's; ChaCha20-Poly1305 libcrux's (HACL*,
+        // AES-GCM is verilith-aes's (Verus) where the CPU has the
+        // instructions, else aws-lc's; ChaCha20-Poly1305 libcrux's (HACL*,
         // verified; CRYPTO.md).
         let (alg, nk): (Option<&'static aead::Algorithm>, usize) = match aead_id {
             AEAD_AES_128_GCM => (Some(&aead::AES_128_GCM), 16),
@@ -131,6 +132,12 @@ impl HpkeKey {
             libcrux_chacha20poly1305::decrypt(&key, &mut pt, ct, aad, &nonce).ok()?;
             return Some(pt);
         };
+        if let Some(k) = verilith_aes::AesGcm::new(&key[..nk]) {
+            let n = ct.len().checked_sub(16)?;
+            let mut buf = ct[..n].to_vec();
+            let tag: [u8; 16] = ct[n..].try_into().unwrap();
+            return k.open(&nonce, aad, &mut buf, &tag).then_some(buf);
+        }
         let k = LessSafeKey::new(UnboundKey::new(alg, &key[..nk]).ok()?);
         let mut buf = ct.to_vec();
         let n = k.open_in_place(Nonce::assume_unique_for_key(nonce), Aad::from(aad), &mut buf).ok()?.len();

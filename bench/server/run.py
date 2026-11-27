@@ -50,6 +50,10 @@ CASES = {
     "h1-close":          dict(tool="wrk", port="HTTP", path="/plaintext", conns=64, close=True),
     "h1-tls-plaintext":  dict(tool="wrk", port="TLS", path="/plaintext", conns=256, tls=True),
     "h1-tls-close":      dict(tool="wrk", port="TLS", path="/plaintext", conns=64, close=True, tls=True),
+    # Static files over TLS: what kTLS with sendfile is for.
+    "h1-tls-static-1k":  dict(tool="wrk", port="TLS", path="/static/1k.bin", conns=256, tls=True),
+    "h1-tls-static-64k": dict(tool="wrk", port="TLS", path="/static/64k.bin", conns=64, tls=True),
+    "h1-tls-static-1m":  dict(tool="wrk", port="TLS", path="/static/1m.bin", conns=16, tls=True),
     "h2c-plaintext":     dict(tool="h2load", port="H2C", path="/plaintext", conns=64, streams=32),
     "h2-tls-plaintext":  dict(tool="h2load", port="TLS", path="/plaintext", conns=64, streams=32, tls=True),
     "h2-tls-static-64k": dict(tool="h2load", port="TLS", path="/static/64k.bin", conns=16, streams=16, tls=True),
@@ -136,6 +140,14 @@ def server_cmds(env):
         # The same server on its io_uring event loop (Linux).
         if "io-uring" in p:
             out["verilith-uring"] = out["verilith"] + ["--io-uring"]
+        # kTLS (Linux): the kernel seals what the server sends once the
+        # handshake is over, and static files go out with sendfile, by
+        # default those of 16-112 KiB; "-sendfile-all" sends every file
+        # from 16 KiB up that way. TLS cases only. Where the kernel has no
+        # kTLS these run in userspace, and say so in their log.
+        if "ktls" in p:
+            out["verilith-ktls"] = out["verilith"] + ["--ktls"]
+            out["verilith-ktls-sendfile-all"] = out["verilith"] + ["--ktls", "--sendfile", "16384-1073741824"]
     b = hyper_bin()
     if b:
         out["hyper"] = [b, "--threads", str(env["threads"]), "--http", str(PORTS["HTTP"]), "--h2c", str(PORTS["H2C"]),
@@ -282,6 +294,7 @@ def protocols(name, cmd):
     here, or a verilith-server build that says otherwise with --protocols
     (one line: http, h2c, tls, h3)."""
     fixed = {"bun": {"HTTP", "TLS"}, "may-minihttp": {"HTTP"}, "verilith-rustls": {"TLS"},
+             "verilith-ktls": {"TLS"}, "verilith-ktls-sendfile-all": {"TLS"},
              "h3-quinn": {"H3"}, "nginx-quic": {"H3"}, "h2o-quic": {"H3"}}
     tcp = set(PORTS) - UDP
     if name in fixed:

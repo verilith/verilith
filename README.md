@@ -34,7 +34,7 @@ trusted](#what-is-proven-and-what-is-trusted) before relying on any of it.
 - **More, crate by crate.** Many crates prove further properties: bounds on
   work or on output size (zlib, lz4, snappy, webp, gif, tiff, png, brotli, jpeg,
   http, url, xml, hpack, qpack, h3, regex, dns, x509), that compression round-trips (zlib,
-  lz4, snappy) or that an encoder's output reads back (h3, qpack), that a stream split into pieces anywhere
+  lz4, snappy, zstd) or that an encoder's output reads back (h3, qpack), that a stream split into pieces anywhere
   decodes the same (zlib, zstd, brotli, hpack, qpack, h3, http), linearizability of
   the queues and deadlock-freedom of the locks, checked against the code
   (sync). Each crate's README has a "What is proven" section
@@ -79,7 +79,14 @@ The exact list differs per crate, and each crate gives its own, in a
 `TRUST.md` or in a "Trusted base" section of its README (linked in the
 table below).
 
-**Not claimed at all:** constant-time behaviour or any other resistance to
+**Constant time** is claimed only where a crate's README says so and
+states the model: `verilith-aes` (AES-GCM), `verilith-sha2` and
+`verilith-tls` check their code on secrets with a taint analysis of the
+compiled machine code ([`scripts/ctcheck.py`](scripts/ctcheck.py)) and
+under Valgrind. Nothing else is claimed to resist timing or other side
+channels.
+
+**Not claimed at all:** power, electromagnetic and speculative-execution
 side channels, and bug-for-bug agreement with the library a crate
 replaces. Where a crate is stricter than the original, or differs from it,
 its README lists how. The tests, fuzzers and differential tests against
@@ -90,6 +97,7 @@ not proofs.
 
 | Crate | What it is | Proof notes |
 |---|---|---|
+| [`verilith-aes`](crates/aes) | Formally verified (Verus) AES-128-GCM and AES-256-GCM (NIST SP 800-38D) and the AES block cipher, with AES-NI, VAES/AVX-512 and ARMv8 AES kernels | [proven](crates/aes#what-is-proven), [trusted](crates/aes#trusted-base) |
 | [`verilith-archive`](crates/archive) | Formally verified (Verus) zip and tar readers with proven extraction safety, behind libarchive's read API | [proven](crates/archive#what-is-proven), [trusted](crates/archive/TRUST.md) |
 | [`verilith-bind`](crates/bind) | One native library and C ABI for the Verilith parsers, with C++, Python and Node.js bindings on top | [not verified](crates/bind#what-is-not-verified) |
 | [`verilith-brotli`](crates/brotli) | A formally verified (Verus) Brotli (RFC 7932) decompressor with google/brotli's decoder C API | [proven](crates/brotli#what-is-proven), [trusted](crates/brotli#trusted) |
@@ -110,7 +118,7 @@ not proofs.
 | [`verilith-quic`](crates/quic) | The QUIC (RFC 9000) wire format and transport state machines, formally verified with Verus: packet headers, frames, transport parameters, flow control, stream states, the anti-amplification limit, and loss recovery and congestion control (RFC 9002, with CUBIC from RFC 9438 as the default) | [proven](crates/quic#what-is-proven), [trusted](crates/quic#trusted-base) |
 | [`verilith-quic-conn`](crates/quic-conn) | A sans-I/O QUIC server connection (RFC 9000, 9001, 9002), the default QUIC under verilith-server's HTTP/3: plain-Rust glue over verilith-quic's verified wire format and recovery and verilith-tls's verified handshake and packet protection | [not verified yet](crates/quic-conn#what-is-verified-and-what-is-not) |
 | [`verilith-regex`](crates/regex) | A linear-time regular expression engine (RE2 syntax and semantics) formally verified with Verus | [proven](crates/regex#what-is-proven), [trusted](crates/regex/TRUST.md) |
-| [`verilith-server`](crates/server) | A formally verified (Verus) HTTP server built from the Verilith parsers: HTTP/1.1, HTTP/2 (h2c, and h2 over TLS 1.3 on verilith-tls) and HTTP/3 (on verilith-quic-conn), with no request smuggling, responses proven to parse back exactly, a proven HTTP/2 flood budget, and static files that never leave the root | [proven](crates/server#what-is-proven), [trusted](crates/server/TRUST.md) |
+| [`verilith-server`](crates/server) | A formally verified (Verus) HTTP server built from the Verilith parsers: HTTP/1.1, HTTP/2 (h2c, and h2 over TLS 1.3 on verilith-tls) and HTTP/3 (on verilith-quic-conn), with no request smuggling, responses proven to parse back exactly, a proven HTTP/2 flood budget, and static files that never leave the root. The protocol cores are verified; the HTTP/2 and HTTP/3 glue around them (`h2.rs`, `h3.rs`), the QUIC connection layer, the event loop and the crypto are not | [proven](crates/server#what-is-proven), [trusted](crates/server/TRUST.md) |
 | [`verilith-sha2`](crates/sha2) | Formally verified (Verus) SHA-2 (FIPS 180-4): SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224 and SHA-512/256, with SHA-NI and ARMv8 kernels, behind OpenSSL's `SHA*` C API | [proven](crates/sha2#what-is-proven), [trusted](crates/sha2#trusted-base) |
 | [`verilith-simd`](crates/simd) | Verus specifications for x86 SIMD intrinsics (SSE2..AVX2, some AVX-512) and AArch64 NEON, differentially tested against the CPU | [trusted](crates/simd#trusted-base) |
 | [`verilith-snappy`](crates/snappy) | A formally verified (Verus) Snappy compressor and decompressor with the snappy-c API | [proven](crates/snappy#what-is-proven), [trusted](crates/snappy/TRUST.md) |
@@ -127,7 +135,7 @@ not proofs.
 | [`verilith-xml`](crates/xml) | A fast XML 1.0 parser formally verified with Verus: exactly the well-formedness rules, no panics, no recursion | [proven](crates/xml#what-is-proven), [trusted](crates/xml#what-is-not-proven) |
 | [`verilith-xxhash`](crates/xxhash) | Formally verified (Verus) XXH32 and XXH64, the checksums of the LZ4 and Zstandard frame formats | [proven](crates/xxhash#what-is-proven), [trusted](crates/xxhash#trusted-base) |
 | [`verilith-zlib`](crates/zlib) | A formally verified (Verus) DEFLATE, zlib and gzip decompressor and compressor, with zlib's C API | [proven](crates/zlib#what-is-proven), [trusted](crates/zlib#trusted-base) |
-| [`verilith-zstd`](crates/zstd) | A formally verified (Verus) Zstandard (RFC 8878) decompressor with libzstd's C API | [proven](crates/zstd#what-is-proven), [trusted](crates/zstd#trusted-base) |
+| [`verilith-zstd`](crates/zstd) | A formally verified (Verus) Zstandard (RFC 8878) decompressor and compressor with libzstd's C API | [proven](crates/zstd#what-is-proven), [trusted](crates/zstd#trusted-base) |
 
 `verilith` is a front door only: it re-exports the others behind features,
 none on by default, and has no code of its own.

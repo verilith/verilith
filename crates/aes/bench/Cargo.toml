@@ -1,0 +1,19 @@
+[package]
+name = "aesbench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# verilith-aes against aws-lc's AES-GCM (through aws-lc-rs) and
+# RustCrypto's.
+#     cargo run --release
+[dependencies]
+verilith-aes = { path = ".." }
+aws-lc-rs = "1.19"
+aes-gcm = "0.10"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
+[workspace]

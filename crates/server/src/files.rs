@@ -28,6 +28,10 @@ pub struct Files {
     pub max_cached: usize,
     /// The bytes of files each worker keeps, at most.
     pub cache_budget: usize,
+    /// Files whose length is in this range are sent with `sendfile` on
+    /// HTTP/1.1 (plaintext, or TLS under kTLS) where the platform has it;
+    /// by default [`crate::h1::SENDFILE_MIN`] to [`crate::h1::SENDFILE_MAX`].
+    pub sendfile: std::ops::RangeInclusive<usize>,
 }
 
 struct Entry {
@@ -130,7 +134,10 @@ impl Files {
         if !f.metadata()?.is_dir() {
             return Err(std::io::Error::other(format!("{root} is not a directory")));
         }
-        Ok(Files { root: f, id: NEXT_ID.fetch_add(1, Ordering::Relaxed), max_cached: 16 << 20, cache_budget: 256 << 20 })
+        Ok(Files { root: f, id: NEXT_ID.fetch_add(1, Ordering::Relaxed), max_cached: 16 << 20,
+            cache_budget: 256 << 20,
+            sendfile: crate::h1::SENDFILE_MIN..=crate::h1::SENDFILE_MAX,
+        })
     }
 
     /// Serves the file `path` (a request path, `/` first) names, answering
@@ -271,7 +278,7 @@ impl Files {
         let len = bytes.len();
         let e = Rc::new(Entry {
             rel,
-            body: StaticBody::new(bytes),
+            body: StaticBody::with_sendfile(bytes, self.sendfile.contains(&len)),
             fields,
             etag,
             last_modified,

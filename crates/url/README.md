@@ -59,12 +59,13 @@ or SSRF filter reads a URL with one standard and the code that fetches it
 uses the other, inputs like these get past the check. If part of your
 stack follows RFC 3986, either parse with the same library on both sides
 or accept only URLs on which both standards agree.
-[vuri](https://github.com/verilith/vuri) is a verified
-RFC 3986 parser that proves such a class: for `http` and `https` URIs with
+vuri, a verified RFC 3986 parser that is not public yet, proves such a
+class: for `http` and `https` URIs with
 a lowercase ASCII domain, no userinfo, no dot segments and a port up to
 65535, it proves that RFC 3986 and verilith-url's model of the WHATWG parser give
-the same scheme, host, port, path, query and fragment. Its README gives
-the exact conditions and an example of each class of disagreement.
+the same scheme, host, port, path, query and fragment. Its README, once
+it is published, gives the exact conditions and an example of each
+class of disagreement.
 
 ## What is proven
 

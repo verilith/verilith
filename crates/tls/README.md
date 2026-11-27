@@ -226,6 +226,10 @@ definition names its section. The proofs show:
     only from a record that `spec_record::open_record` opens under the
     client's application traffic keys (after however many KeyUpdates);
     `write` seals under the server's;
+  - `tx_keys`, for a caller that hands sending to the kernel (kTLS), is
+    exactly the key and IV `write` would seal with (the server's current
+    application traffic secret, after its KeyUpdates) and the sequence
+    number of its next record, and is there only once Connected;
   - change_cipher_spec records are dropped only between the ClientHello and
     the client's Finished, and only when they are the single byte 1;
     handshake messages may span records but not a change of keys; refused
@@ -283,6 +287,52 @@ definition names its section. The proofs show:
 (`negotiate` does), or whether its server name is a valid host name
 (`valid_host_name_x` does). A valid TLS 1.2 ClientHello parses.
 
+## Constant time
+
+What this crate does with secrets (the key schedule, traffic keys and IVs,
+Finished and binder MACs, record bodies) must not show in its timing. It is
+checked at two levels; neither is a Verus proof, and what they cannot see
+is listed below.
+
+- **The key schedule** is HKDF and HMAC, computed by verilith-sha2.
+  `examples/ctgrind.rs` (`./ci.sh ct`, x86-64) runs every schedule (both
+  hashes, handshake and application traffic, QUIC keys and header
+  protection keys, the record nonce, Finished and binder MACs, every
+  `expand_label` length) under Valgrind's memcheck with the secrets marked
+  undefined: memcheck reports any branch or address that depends on them,
+  and reports nothing. A control (an early-exit compare) must be reported,
+  and is.
+- **This crate's own code on secrets** (`examples/ctcheck.rs`, `./ci.sh
+  ctstatic`): `scripts/ctcheck.py`, a taint analysis of the machine code
+  for every input, as built for x86-64 and for AArch64, finds no branch,
+  address or variable-time instruction that depends on a secret in the
+  record nonce, in copying secrets, and in `ct::ct_eq`. A control must be
+  reported, on each, and is.
+- **What a secret may decide.** The handshake learns from a secret only
+  whether the client's Finished (§4.4.4) and a PSK binder (§4.2.11) match.
+  Each is compared with `ct::ct_eq` (proven equal to `==`, in time that
+  depends only on the lengths) and its result passes through
+  `ct::declassify`, which the static check treats as the one place a
+  secret becomes public. The other decision is opening a record: the
+  AEAD's tag check, and then the scan for the inner content type
+  (`protect.rs`), whose time depends on the padding's length. RFC 8446
+  §5.4 makes the content type and the length of the content public
+  outputs, so the scan declassifies each byte it reads. (So a peer's
+  padding hides its lengths on the wire, not from this side's timing;
+  verilith-tls sends no padding.)
+- **0-RTT anti-replay** (`antireplay.rs`) is keyed on the binder's first
+  16 bytes, which the client sends in clear, so its table index is public.
+- **Not here.** The AEADs, X25519 and the other key exchanges, signatures
+  and header protection are the provider's (verilith-tls-aws-lc):
+  AES-GCM and AES header protection are verilith-aes, whose constant time
+  is checked at the source level in Verus and in the machine code (see
+  its README); ChaCha20-Poly1305 is libcrux's (HACL*, written with secret
+  integers); the rest is aws-lc's own, trusted. The checks say nothing
+  about power, electromagnetic emanations or other physical leaks,
+  speculative execution (Spectre), the cache effects of where buffers sit,
+  or CPUs whose instructions do not take the time Intel's DOIT and Arm's
+  DIT lists say they do.
+
 ## Trusted base
 
 - **The spec** (`spec.rs`, `spec_keys.rs`, `spec_record.rs`,
@@ -327,7 +377,8 @@ definition names its section. The proofs show:
   and verilith-sha2's specifications of SHA-2 and HMAC (and its own
   trusted base: the SHA instructions' specifications and CPU detection).
 
-There is no `external_body` in this crate.
+The one `external_body` is `ct::declassify`, which returns its argument
+(see Constant time).
 
 ## Tests
 

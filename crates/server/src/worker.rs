@@ -7,6 +7,8 @@
 //! all the responses with one call.
 use std::io;
 use std::sync::Arc;
+#[cfg(feature = "tls")]
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::h1::{Conn, Ctx, Io, Limits, Next};
 use crate::h2::{Conn2, Limits2};
@@ -34,6 +36,12 @@ pub struct Config {
     /// A TLS port (h2 and http/1.1 by ALPN), with its configuration.
     #[cfg(feature = "tls")]
     pub tls: Option<(u16, Arc<crate::tls::Config>)>,
+    /// Linux, epoll workers: once a TLS handshake is over, hand record
+    /// protection of what the server sends to the kernel (kTLS), so that
+    /// static files go out with `sendfile`. Connections stay in userspace
+    /// where the kernel has no kTLS (no `tls` module) or refuses the keys.
+    #[cfg(feature = "tls")]
+    pub ktls: bool,
     /// An HTTP/3 port (UDP), with its QUIC configuration.
     #[cfg(feature = "h3")]
     pub h3: Option<(u16, crate::h3::QuicConfig)>,
@@ -62,6 +70,8 @@ impl Default for Config {
             limits: Limits::default(),
             #[cfg(feature = "tls")]
             tls: None,
+            #[cfg(feature = "tls")]
+            ktls: false,
             #[cfg(feature = "h3")]
             h3: None,
             #[cfg(feature = "h3")]
@@ -209,7 +219,7 @@ impl Any {
             Any::H1(c) => c.pending_io(out, more),
             Any::H2(c) => c.pending_io(out, more),
             #[cfg(feature = "tls")]
-            Any::Tls(c) => Io::Slices(c.pending(out), Default::default()),
+            Any::Tls(c) => c.pending_io(out, more),
         }
     }
     fn pending_len(&self) -> usize {
@@ -340,7 +350,12 @@ impl Worker {
                 Proto::H2 => Any::H2(Box::new(Conn2::new(self.cfg.limits2))),
                 #[cfg(feature = "tls")]
                 Proto::Tls => match crate::tls::TlsConn::new(self.cfg.tls.as_ref().unwrap().1.clone(), self.cfg.limits, self.cfg.limits2) {
-                    Some(t) => Any::Tls(Box::new(t)),
+                    Some(mut t) => {
+                        if self.cfg.ktls && sys::HAS_KTLS && !KTLS_MISSING.load(Ordering::Relaxed) {
+                            t.want_ktls();
+                        }
+                        Any::Tls(Box::new(t))
+                    }
                     None => {
                         sys::close_fd(fd);
                         continue;
@@ -472,11 +487,72 @@ fn read_process_write<H: Handler + ?Sized>(s: &mut Slot, h: &H, ctx: &Ctx) -> bo
     }
 }
 
+/// The kernel has no kTLS (found by the first connection that tried):
+/// later connections do not ask.
+#[cfg(feature = "tls")]
+static KTLS_MISSING: AtomicBool = AtomicBool::new(false);
+
+/// kTLS: gives the kernel the connection's sending keys once it wants
+/// them, and sends the records that are not application data. Returns
+/// whether the connection is broken (`Err`), else whether it has bytes
+/// to write now that it did not have before (`Ok(true)`).
+#[cfg(feature = "tls")]
+fn ktls_step(s: &mut Slot) -> Result<bool, ()> {
+    let Any::Tls(c) = &mut s.conn else { return Ok(false) };
+    if let Some(k) = c.ktls_keys() {
+        let before = c.pending_len();
+        match sys::ktls_tx(s.fd, k.suite, &k.key[..k.key_len], &k.iv, k.seq, true) {
+            Ok(()) => c.ktls_installed(true),
+            Err((attach, e)) => {
+                c.ktls_installed(false);
+                // The TLS layer would not attach (no `tls` module, or no
+                // TLS in the kernel): no connection will get one. Keys
+                // refused (a cipher the kernel lacks) concern this one.
+                if attach && !KTLS_MISSING.swap(true, Ordering::Relaxed) {
+                    eprintln!("verilith-server: no kTLS in this kernel ({e}); TLS stays in userspace");
+                }
+            }
+        }
+        return Ok(c.pending_len() > before);
+    }
+    while let Some((ty, b)) = c.ktls_ctrl() {
+        match sys::send_record(s.fd, ty, b) {
+            IoResult::Done(n) => {
+                if let Some(k) = c.ktls_ctrl_sent(n) {
+                    // After a KeyUpdate: the kernel's new keys. A kernel
+                    // that cannot change them (before Linux 6.14) ends the
+                    // connection.
+                    if sys::ktls_tx(s.fd, k.suite, &k.key[..k.key_len], &k.iv, k.seq, false).is_err() {
+                        return Err(());
+                    }
+                }
+            }
+            IoResult::WouldBlock => return Ok(false),
+            IoResult::Closed => return Err(()),
+        }
+    }
+    Ok(false)
+}
+
 /// Writes what is pending. Returns whether the connection is broken, or
 /// closing with nothing left to write.
 #[inline]
 fn flush(s: &mut Slot) -> bool {
     loop {
+        #[cfg(feature = "tls")]
+        if matches!(s.conn, Any::Tls(_)) {
+            match ktls_step(s) {
+                Err(()) => return true,
+                Ok(true) => continue,
+                Ok(false) => {}
+            }
+            if let Any::Tls(c) = &s.conn {
+                if c.ktls_ctrl().is_some() {
+                    // A record that must go first is waiting for room.
+                    return false;
+                }
+            }
+        }
         if s.conn.pending_len() == 0 {
             return s.conn.closing();
         }

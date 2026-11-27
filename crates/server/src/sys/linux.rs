@@ -295,3 +295,125 @@ pub fn sealed_memfd(bytes: &[u8]) -> Option<super::Fd> {
     }
     Some(fd)
 }
+
+/// kTLS: the kernel protects what is written to a TCP socket as TLS
+/// records (Linux 4.13+, TLS 1.3 from 5.1, its key updates from 6.14),
+/// with the `tls` module.
+pub const HAS_KTLS: bool = true;
+const SOL_TLS: c_int = 282;
+const TLS_TX: c_int = 1;
+const TCP_ULP: c_int = 31;
+const TLS_SET_RECORD_TYPE: c_int = 1;
+const TLS_1_3_VERSION: u16 = 0x0304;
+const TLS_CIPHER_AES_GCM_128: u16 = 51;
+const TLS_CIPHER_AES_GCM_256: u16 = 52;
+const TLS_CIPHER_CHACHA20_POLY1305: u16 = 54;
+
+/// The kernel's `struct tls12_crypto_info_*` for these keys, in `info`;
+/// its length, or `None` for a suite or key length the kernel has no
+/// cipher for. The key and IV are secret: they are only copied, at offsets
+/// that depend on the suite and the key's length, which are public
+/// (`scripts/ctcheck.py` checks the machine code; see TRUST.md).
+#[inline(never)]
+pub fn ktls_crypto_info(suite: u16, key: &[u8], iv: &[u8; 12], seq: u64, info: &mut [u8; 56]) -> Option<usize> {
+    // struct tls12_crypto_info_*: version, cipher, then (AES-GCM) the
+    // explicit IV (the last 8 IV bytes), key, salt (the first 4), record
+    // sequence; (ChaCha20-Poly1305) the 12-byte IV, key, record sequence.
+    let cipher = match (suite, key.len()) {
+        (0x1301, 16) => TLS_CIPHER_AES_GCM_128,
+        (0x1302, 32) => TLS_CIPHER_AES_GCM_256,
+        (0x1303, 32) => TLS_CIPHER_CHACHA20_POLY1305,
+        _ => return None,
+    };
+    info[0..2].copy_from_slice(&TLS_1_3_VERSION.to_ne_bytes());
+    info[2..4].copy_from_slice(&cipher.to_ne_bytes());
+    Some(if cipher == TLS_CIPHER_CHACHA20_POLY1305 {
+        info[4..16].copy_from_slice(iv);
+        info[16..48].copy_from_slice(key);
+        info[48..56].copy_from_slice(&seq.to_be_bytes());
+        56
+    } else {
+        let k = key.len();
+        info[4..12].copy_from_slice(&iv[4..]);
+        info[12..12 + k].copy_from_slice(key);
+        info[12 + k..16 + k].copy_from_slice(&iv[..4]);
+        info[16 + k..24 + k].copy_from_slice(&seq.to_be_bytes());
+        24 + k
+    })
+}
+
+/// Gives the kernel TLS 1.3 record protection of what is sent on `sock`
+/// from now on: cipher suite `suite` (0x1301-0x1303), traffic key `key`,
+/// IV `iv`, the next record's sequence number `seq`. `ulp`: first attach
+/// the kernel's TLS layer to the socket (the first call on a socket;
+/// later calls change the keys, after a KeyUpdate). Contract: on Ok, every
+/// byte later written to `sock` (`writev`, `sendfile`) goes out in
+/// application-data records sealed with these keys, numbered from `seq`;
+/// on Err from the first call the socket sends plaintext as before (an
+/// attached TLS layer without keys passes it through). The error says
+/// whether attaching the TLS layer failed (`true`: the kernel has no kTLS,
+/// for instance no `tls` module) or the keys were refused (`false`: say,
+/// a cipher the kernel lacks).
+pub fn ktls_tx(sock: i32, suite: u16, key: &[u8], iv: &[u8; 12], seq: u64, ulp: bool) -> Result<(), (bool, io::Error)> {
+    unsafe extern "C" {
+        fn setsockopt(fd: c_int, level: c_int, name: c_int, val: *const u8, len: u32) -> c_int;
+    }
+    let mut info = [0u8; 56];
+    let n = match ktls_crypto_info(suite, key, iv, seq, &mut info) {
+        Some(n) => n,
+        None => return Err((false, io::Error::from(io::ErrorKind::Unsupported))),
+    };
+    let r = (|| {
+        if ulp && unsafe { setsockopt(sock, IPPROTO_TCP, TCP_ULP, b"tls".as_ptr(), 3) } < 0 {
+            return Err((true, io::Error::last_os_error()));
+        }
+        if unsafe { setsockopt(sock, SOL_TLS, TLS_TX, info.as_ptr(), n as u32) } < 0 {
+            return Err((false, io::Error::last_os_error()));
+        }
+        Ok(())
+    })();
+    for b in info.iter_mut() {
+        // SAFETY: a valid byte of `info`.
+        unsafe { std::ptr::write_volatile(b, 0) };
+    }
+    r
+}
+
+/// Under kTLS: sends `data` as a record of content type `ty` (an alert or
+/// a handshake message) instead of application data. Contract: on
+/// `Done(n)`, the first `n` bytes of `data` were sent, in a record of
+/// that type.
+pub fn send_record(sock: i32, ty: u8, data: &[u8]) -> super::IoResult {
+    #[repr(C)]
+    struct Cmsg {
+        len: usize,
+        level: c_int,
+        ty: c_int,
+        data: [u8; 8],
+    }
+    let mut c = Cmsg { len: std::mem::size_of::<usize>() + 8 + 1, level: SOL_TLS, ty: TLS_SET_RECORD_TYPE, data: [0; 8] };
+    c.data[0] = ty;
+    let iov = super::iovec { iov_base: data.as_ptr(), iov_len: data.len() };
+    let m = super::msghdr {
+        msg_name: std::ptr::null_mut(),
+        msg_namelen: 0,
+        msg_iov: &iov,
+        msg_iovlen: 1,
+        msg_control: &mut c as *mut Cmsg as *mut u8,
+        msg_controllen: std::mem::size_of::<Cmsg>(),
+        msg_flags: 0,
+    };
+    unsafe extern "C" {
+        fn sendmsg(fd: c_int, msg: *const super::msghdr, flags: c_int) -> isize;
+    }
+    let r = unsafe { sendmsg(sock, &m, 0) };
+    if r >= 0 {
+        super::IoResult::Done(r as usize)
+    } else {
+        match io::Error::last_os_error().kind() {
+            io::ErrorKind::WouldBlock => super::IoResult::WouldBlock,
+            io::ErrorKind::Interrupted => super::IoResult::Done(0),
+            _ => super::IoResult::Closed,
+        }
+    }
+}

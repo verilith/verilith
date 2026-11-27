@@ -144,6 +144,12 @@ impl<P: Provider> ServerStream<P> {
         self.conn.close(&mut self.out)
     }
 
+    /// The server's sending keys, once the handshake is done:
+    /// [`ServerConn::tx_keys`] as (suite, key, IV, next sequence number).
+    pub fn tx_keys(&self) -> Option<(u16, crate::keys::Secret, crate::keys::Secret, u64)> {
+        self.conn.tx_keys()
+    }
+
     pub fn conn(&self) -> &ServerConn<P> {
         &self.conn
     }

@@ -1,0 +1,9 @@
+{
+ "_comment": "The functions scripts/ctcheck.py checks in examples/ctcheck's binary: verilith-tls's own code on secrets. The key schedule goes through verilith-sha2 (checked under Valgrind by examples/ctgrind.rs, and by sha2's own checks). 'expect' other than pass marks a control that must be reported.",
+ "functions": [
+  {"name": "ctcheck_ct_eq"},
+  {"name": "ctcheck_record_nonce"},
+  {"name": "ctcheck_secret_copy"},
+  {"name": "ctcheck_leak_compare", "expect": "any"}
+ ]
+}

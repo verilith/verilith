@@ -178,3 +178,14 @@ pub fn sendfile_nb(_sock: i32, _file: i32, _off: usize, _len: usize) -> super::I
 pub fn sealed_memfd(_bytes: &[u8]) -> Option<super::Fd> {
     None
 }
+
+/// No kTLS on macOS.
+pub const HAS_KTLS: bool = false;
+
+pub fn ktls_tx(_sock: i32, _suite: u16, _key: &[u8], _iv: &[u8; 12], _seq: u64, _ulp: bool) -> Result<(), (bool, std::io::Error)> {
+    Err((true, std::io::Error::from(std::io::ErrorKind::Unsupported)))
+}
+
+pub fn send_record(_sock: i32, _ty: u8, _data: &[u8]) -> super::IoResult {
+    super::IoResult::Closed
+}

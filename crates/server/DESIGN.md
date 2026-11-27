@@ -134,8 +134,8 @@ because a worker's state is never shared.
   responses never cost a syscall each. Under HTTP/2 the same holds for all
   the streams of a connection.
 - **Large bodies.** Static files go out with `sendfile` on plaintext
-  connections (and with kTLS later), after the head; under TLS without kTLS
-  they are read in 16 KiB pieces into the record layer.
+  connections and, with `--ktls`, under TLS, after the head; under TLS
+  without kTLS they are read in 16 KiB pieces into the record layer.
 - **Blocking work.** Handlers that block (a file read on a slow disk, a
   database call) run on a pool fed by a `verilith-sync` MPMC channel;
   completions come back over a per-worker channel and an `eventfd` (Linux)
@@ -357,9 +357,12 @@ What Verilith adds at the boundary:
   16 KiB writes so each produces full records, and the first records
   of a response are kept small (one MSS) while the connection is new, as
   h2o does, for time to first byte.
-- **kTLS** on Linux, after the handshake, for `sendfile` of static files
-  under TLS: the kernel encrypts, verilith-tls exports the traffic secrets.
-  Phase two.
+- **kTLS** on Linux (`--ktls`), after the handshake, for `sendfile` of
+  static files under TLS: the kernel seals what the server sends,
+  verilith-tls exports the sending key, IV and sequence number
+  (`ServerConn::tx_keys`) and keeps opening what the client sends. Done
+  for the epoll loop; TX only, so the verified record layer still checks
+  every byte that comes in.
 
 ## Static files, compression and the rest of the request path
 
@@ -511,8 +514,8 @@ in `bench/server/results`, and a merge.
 4. **TLS.** ALPN, certificates through verilith-x509. *(done on
    verilith-tls, with rustls kept to compare, session tickets, and 0-RTT
    behind `--early-data` (425 Too Early for unsafe methods), and
-   Encrypted Client Hello behind `--ech`; left: verilith-x509 at load,
-   kTLS)*
+   Encrypted Client Hello behind `--ech`, kTLS sending behind `--ktls`;
+   left: verilith-x509 at load)*
 5. **HPACK encoder** in verilith-hpack, and **verilith-h2 frames**. These
    two do not depend on milestones 2 to 4 and can run in parallel threads.
    *(encoder done: `crates/hpack/src/encoder.rs`, the per-connection cache
@@ -522,7 +525,11 @@ in `bench/server/results`, and a merge.
 6. **HTTP/2 connection**: streams, flow control, scheduling, the resource
    bounds; h2c and h2 benchmarks against h2o. *(done: `h2core.rs`, every
    frame decision verified, with the stream table, SETTINGS, GOAWAY and
-   the flood budget, at the old engine's speed; left: the work bound per
+   the flood budget, at the old engine's speed; then the rest of the
+   engine's decisions: the preface, the request field rules (shared with
+   HTTP/3), Content-Length, and every response's framing, HEADERS and
+   CONTINUATION then DATA within the windows, read back exactly
+   (`h2wire.rs`); `h2.rs` is glue like `h3.rs`; left: the work bound per
    input byte as a theorem (the budget bounds frames, not cycles), RFC
    9218 priorities)*
 7. **io_uring and kTLS** backends, if the benchmarks show they are needed
