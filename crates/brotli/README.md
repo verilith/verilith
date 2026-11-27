@@ -1,9 +1,14 @@
 # verilith-brotli
 
-A Brotli (RFC 7932) decompressor written in Rust and verified with
-[Verus](https://github.com/verus-lang/verus), with a C ABI that matches
-google/brotli's decoder (`brotli/decode.h`), so that programs such as
-Node.js can link it in place of `libbrotlidec`.
+A Brotli (RFC 7932) decompressor and compressor written in Rust and
+verified with [Verus](https://github.com/verus-lang/verus), with C ABIs
+that match google/brotli's decoder (`brotli/decode.h`) and encoder
+(`brotli/encode.h`), so that programs such as Node.js can link it in
+place of `libbrotlidec` and `libbrotlienc`.
+
+The compressor is proven against the same specification as the
+decompressor: whatever it writes, the spec decodes to exactly its input
+([The compressor](#the-compressor)).
 
 It follows the layout of [verilith-zlib](https://github.com/verilith/verilith/tree/main/crates/zlib)
 and reuses [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core) (bit
@@ -142,6 +147,104 @@ the lookup (`sym_winf`) is proven to read the same entry as the lookup in
 the tree's own table. The loop body is written once, with the choice of
 lookup as a parameter, and compiled for each choice.
 
+## The compressor
+
+```rust
+let data = b"hello hello hello hello".repeat(100);
+let c = verilith_brotli::compress::compress(&data, 6, 22); // quality 0-11, window 2^22
+assert_eq!(verilith_brotli::decompress(&c, 1 << 30).unwrap(), data);
+```
+
+`estream::Compressor` takes input in pieces (`push`), hands out output
+whenever asked (`take`), flushes (`flush`) and finishes (`finish`). The C
+adapter (`src/capi_enc.rs`) puts google/brotli's encoder API on it:
+`BrotliEncoderCompress`, `BrotliEncoderMaxCompressedSize`, and the
+instance API with `BrotliEncoderCompressStream` (process, flush, finish),
+`BrotliEncoderTakeOutput` and the rest.
+
+### What is proven
+
+- `compress::compress(data, quality, lgwin)` ensures
+  `spec::decodes(r, data, r.len())`: the spec machine, run on the output,
+  ends having produced exactly `data` and used every byte.
+- `estream::Compressor`: the bytes handed out by `take`, `flush` and
+  `finish`, in order, decode to all the input pushed (`finish` ensures
+  `decodes(sent + r, input)`). After `flush`, every stream that starts with
+  the bytes handed out so far takes the spec to a state whose output is
+  exactly the input so far, so a decoder can emit all of it before the
+  stream goes on.
+- Memory safety and the absence of panics, overflow and out-of-bounds
+  indexing in everything above the C adapter; every loop has a
+  termination measure. (Unlike the decoder, the compressor has no proven
+  bound on its work.)
+
+How: the encoder carries the spec machine's state as ghost state next to
+the bits it has written (`encoder::Enc`, `elemmas::good`: every stream
+that starts with these bits takes the spec from its initial state to this
+one). Each thing written comes with a lemma that it moves the spec from
+one state to the next: the stream header and window, meta-block headers
+(`elemmas.rs`), stored meta-blocks, the empty metadata block a flush
+pads with (`eflush.rs`), block types, distance parameters, context modes
+and maps (`cmeta.rs`), prefix codes in both forms, simple and complex,
+with run-length coded lengths (`pcode.rs`: the header is planned first,
+checked against an exec mirror of how the spec reads code lengths, then
+written), and commands, literals, distances and copies (`cmeta.rs`,
+`cwrite.rs`).
+
+The LZ77 parse (`compress::parse`) is not trusted. Its commands are
+turned into symbols, counted and given prefix codes, and then
+`cwrite::check_cmds` checks every command against the codes and the data
+before a bit is written: the symbol covers the lengths, every symbol has
+a code, the distance is what the spec computes from the last distances,
+within the window, and the copied bytes match. Only then does
+`put_compressed` write the meta-block; if the check fails, or the
+compressed form would be larger, the block is stored instead. So a bug in
+the match finder or the heuristics can cost compression, never
+correctness.
+
+### What it writes
+
+Each meta-block (up to 2 MiB) has one block type per category, one
+literal context (mode LSB6, one tree), and one prefix code each for
+literals, insert-and-copy lengths and distances (`NPOSTFIX = NDIRECT =
+0`). Commands use the implicit last distance and the four short codes for
+recent distances. Quality picks the parse, scored like google/brotli's
+(bytes covered against distance bits, with its lazy matching and its
+skipping through data that does not match):
+
+- q 0-4: a hash of seven bytes with four recent positions per bucket.
+- q 5-6: a hash of five bytes with 32.
+- q 7-9: hash chains, 64 candidates.
+- q 10-11: optimal parsing (`optparse.rs`). Binary trees of earlier
+  positions (like google/brotli's H10) give every match at each position
+  that is longer than the ones before it; a shortest path over the block,
+  in bits from the symbol counts of the previous pass, picks literals and
+  copies, three passes. Matches of 325 bytes or more are taken whole.
+
+Not yet used: context modeling, block splitting and the static
+dictionary, which is most of what google/brotli still gains (below).
+
+### Compression and speed
+
+`tests/c/bench_enc.c`, whole Silesia files in memory, best of 3 runs (1 at
+q11), against google/brotli 1.2.1 linked statically, on one core of a cloud
+x86-64 VM (2026-11-27). Size is vbrotli's output against google/brotli's;
+speed above 1 means vbrotli is faster.
+
+| File | q4 size | q4 speed | q6 size | q6 speed | q11 size | q11 speed |
+|---|---|---|---|---|---|---|
+| dickens | -2.7% | 0.65x | +0.6% | 0.68x | +1.8% | 1.56x |
+| samba | +1.0% | 0.58x | +3.9% | 0.55x | +5.1% | 2.08x |
+| x-ray | +2.6% | 0.64x | +0.1% | 0.27x | +12.9% | 3.48x |
+| xml | +0.0% | 0.49x | +5.5% | 0.60x | +7.4% | 1.68x |
+| mozilla | -0.5% | 0.57x | +5.0% | 0.39x | | |
+
+### Trusted (compressor)
+
+- `src/capi_enc.rs`, the C adapter.
+- The decoder's trusted base (below: the spec, `tables.rs`), and
+  `slice_subrange`.
+
 ## Trusted
 
 - `src/spec.rs`, the specification.
@@ -173,13 +276,26 @@ lookup as a parameter, and compiled for each choice.
   as not used, so the caller passes it again. If a stream ends inside
   bytes held back from an earlier call, those bytes still count as used.
 
+The encoder:
+
+- The streaming encoder keeps all of its input in memory until the
+  instance is destroyed; google/brotli keeps a window.
+- `BROTLI_PARAM_MODE`, `LGBLOCK`, `DISABLE_LITERAL_CONTEXT_MODELING`,
+  `SIZE_HINT`, `NPOSTFIX` and `NDIRECT` are accepted and ignored. Windows
+  under 2^16 are written as 2^16. Large windows, stream offsets,
+  `BROTLI_OPERATION_EMIT_METADATA` and prepared dictionaries are not
+  supported.
+- `alloc_func`/`free_func` are accepted but not called.
+- The output is not byte-for-byte google/brotli's.
+
 ## Building and testing
 
 ```sh
 cargo build --release                 # target/release/libverilith_brotli.a
-cargo build --release --features brotli-abi   # export BrotliDecoder* names
-cargo test --release                  # google/brotli's test vectors
+cargo build --release --features brotli-abi   # export BrotliDecoder* and BrotliEncoder* names
+cargo test --release                  # google/brotli's test vectors, compressor round trips
 tests/c/run.sh 1000                   # differential test (needs google/brotli built with cmake)
+tests/c/run_enc.sh 300                # encoder C API, streamed with flushes, decoded by google/brotli
 scripts/verify.sh                     # the proofs
 ```
 

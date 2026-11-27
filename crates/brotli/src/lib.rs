@@ -30,6 +30,32 @@ pub mod codes;
 pub mod words;
 #[doc(hidden)]
 pub mod work;
+#[doc(hidden)]
+pub mod bitwriter;
+#[doc(hidden)]
+pub mod elemmas;
+#[doc(hidden)]
+pub mod encoder;
+#[doc(hidden)]
+pub mod pcode;
+#[doc(hidden)]
+pub mod ehuff;
+#[doc(hidden)]
+pub mod cmeta;
+#[doc(hidden)]
+pub mod mblock;
+#[doc(hidden)]
+pub mod cwrite;
+#[doc(hidden)]
+pub mod compress;
+#[doc(hidden)]
+pub mod optparse;
+#[doc(hidden)]
+pub mod eflush;
+#[doc(hidden)]
+pub mod estream;
+#[doc(hidden)]
+pub mod capi_enc;
 
 pub use api::{decompress, Error};
 pub use stream::{Result as StreamResult, Stream};
