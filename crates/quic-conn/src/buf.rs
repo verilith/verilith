@@ -1,86 +1,11 @@
 //! Send buffers for CRYPTO and STREAM data: [`SendBuf`] keeps what was
-//! written until it is acknowledged and knows what to send or resend next.
-//! (Received data is put back in order by verilith-quic's verified
-//! `reasm::Reassembly`.)
+//! written until it is acknowledged. Which offsets to send, resend and free
+//! is decided by verilith-quic's verified `sendq::SendState`; this file
+//! only stores the bytes. (Received data is put back in order by the
+//! verified `reasm::Reassembly`.)
 use bytes::{Buf, Bytes, BytesMut};
-use std::collections::{BTreeMap, VecDeque};
-
-/// Disjoint half-open ranges `[start, end)`, keyed by start.
-#[derive(Default, Debug, Clone)]
-pub struct Ranges {
-    m: BTreeMap<u64, u64>,
-}
-
-impl Ranges {
-    pub fn is_empty(&self) -> bool {
-        self.m.is_empty()
-    }
-
-    /// Adds `[a, b)`, merging with any range it touches.
-    pub fn insert(&mut self, mut a: u64, mut b: u64) {
-        if a >= b {
-            return;
-        }
-        // A range starting at or before `a` that reaches it.
-        if let Some((&s, &e)) = self.m.range(..=a).next_back() {
-            if e >= a {
-                if e >= b {
-                    return;
-                }
-                a = s;
-                self.m.remove(&s);
-            }
-        }
-        // Ranges starting inside [a, b].
-        while let Some((&s, &e)) = self.m.range(a..=b).next() {
-            self.m.remove(&s);
-            if e > b {
-                b = e;
-            }
-        }
-        self.m.insert(a, b);
-    }
-
-    /// Removes `[a, b)`.
-    pub fn remove(&mut self, a: u64, b: u64) {
-        if a >= b {
-            return;
-        }
-        if let Some((&s, &e)) = self.m.range(..a).next_back() {
-            if e > a {
-                self.m.insert(s, a);
-                if e > b {
-                    self.m.insert(b, e);
-                    return;
-                }
-            }
-        }
-        while let Some((&s, &e)) = self.m.range(a..b).next() {
-            self.m.remove(&s);
-            if e > b {
-                self.m.insert(b, e);
-                break;
-            }
-        }
-    }
-
-    /// The first range.
-    pub fn first(&self) -> Option<(u64, u64)> {
-        self.m.iter().next().map(|(&a, &b)| (a, b))
-    }
-
-    /// Whether `[a, b)` is covered.
-    pub fn contains(&self, a: u64, b: u64) -> bool {
-        match self.m.range(..=a).next_back() {
-            Some((_, &e)) => e >= b,
-            None => false,
-        }
-    }
-
-    pub fn clear(&mut self) {
-        self.m.clear();
-    }
-}
+use std::collections::VecDeque;
+use verilith_quic::sendq::SendState;
 
 /// Writes at least this long are kept as the writer's shared buffer
 /// ([`SendBuf::write_bytes`]); shorter ones are copied.
@@ -88,35 +13,28 @@ pub const SHARE_MIN: usize = 4096;
 
 /// Data written to a stream (or CRYPTO at one level), kept until
 /// acknowledged.
-#[derive(Default)]
 pub struct SendBuf {
-    /// Bytes from `base` on: buffers shared with the writer (large writes,
-    /// kept without copying), then `tail`.
+    /// Bytes from `st.base()` on: buffers shared with the writer (large
+    /// writes, kept without copying), then `tail`.
     chunks: VecDeque<Bytes>,
     /// The bytes in `chunks`.
     chunked: usize,
     /// Small writes, copied, after `chunks`.
     tail: BytesMut,
-    /// The offset of `data[0]`: everything before is acknowledged.
-    base: u64,
-    /// The offset of the next byte never sent.
-    unsent: u64,
-    /// Acknowledged ranges past `base`.
-    acked: Ranges,
-    /// Ranges sent, declared lost, and not yet resent.
-    lost: Ranges,
-    /// The stream ends after the data written.
-    pub fin: bool,
-    /// The FIN has been sent (and not declared lost since).
-    pub fin_sent: bool,
-    /// The FIN has been acknowledged.
-    pub fin_acked: bool,
+    /// The offsets: verified.
+    st: SendState,
+}
+
+impl Default for SendBuf {
+    fn default() -> Self {
+        SendBuf { chunks: VecDeque::new(), chunked: 0, tail: BytesMut::new(), st: SendState::new() }
+    }
 }
 
 impl SendBuf {
     /// The offset after the last byte written.
     pub fn end(&self) -> u64 {
-        self.base + self.unacked() as u64
+        self.st.end()
     }
 
     /// Bytes written and not yet acknowledged.
@@ -124,14 +42,28 @@ impl SendBuf {
         self.chunked + self.tail.len()
     }
 
+    /// Whether the stream ends after the data written.
+    pub fn fin(&self) -> bool {
+        self.st.fin()
+    }
+
+    /// The stream ends after the data written.
+    pub fn set_fin(&mut self) {
+        self.st.set_fin();
+    }
+
     pub fn write(&mut self, b: &[u8]) {
-        self.tail.extend_from_slice(b);
+        if self.st.write(b.len() as u64) {
+            self.tail.extend_from_slice(b);
+        }
     }
 
     /// Writes `b`, keeping a large buffer as it is (shared, not copied).
     pub fn write_bytes(&mut self, b: Bytes) {
         if b.len() < SHARE_MIN {
-            self.tail.extend_from_slice(&b);
+            return self.write(&b);
+        }
+        if !self.st.write(b.len() as u64) {
             return;
         }
         if !self.tail.is_empty() {
@@ -161,12 +93,12 @@ impl SendBuf {
 
     /// Whether anything (data or the FIN) is waiting to be sent.
     pub fn has_pending(&self) -> bool {
-        !self.lost.is_empty() || self.unsent < self.end() || (self.fin && !self.fin_sent)
+        self.st.has_pending()
     }
 
-    /// Whether only new data (not retransmissions) is pending.
+    /// Bytes written and never sent.
     pub fn new_pending(&self) -> u64 {
-        self.end() - self.unsent
+        self.st.new_pending()
     }
 
     /// The next chunk to send, at most `max` bytes: lost data first, then
@@ -174,26 +106,12 @@ impl SendBuf {
     /// `(offset, len, fin)`; the caller reads the bytes with `get` and then
     /// calls `sent`.
     pub fn next(&self, max: usize, limit: u64) -> Option<(u64, usize, bool)> {
-        if let Some((a, b)) = self.lost.first() {
-            let n = ((b - a) as usize).min(max);
-            let fin = self.fin && a + n as u64 == self.end() && !self.fin_sent;
-            return Some((a, n, fin));
-        }
-        let lim = limit.min(self.end());
-        if self.unsent < lim && max > 0 {
-            let n = ((lim - self.unsent) as usize).min(max);
-            let fin = self.fin && self.unsent + n as u64 == self.end();
-            return Some((self.unsent, n, fin));
-        }
-        if self.fin && !self.fin_sent && self.unsent == self.end() {
-            return Some((self.end(), 0, true));
-        }
-        None
+        self.st.next(max as u64, limit).map(|(o, n, f)| (o, n as usize, f))
     }
 
     /// Copies `[off, off + n)` into `out`.
     pub fn get(&self, off: u64, mut n: usize, out: &mut Vec<u8>) {
-        let mut i = (off - self.base) as usize;
+        let mut i = (off - self.st.base()) as usize;
         for c in &self.chunks {
             if n == 0 {
                 return;
@@ -212,85 +130,31 @@ impl SendBuf {
 
     /// `[off, off + n)` (and the FIN if `fin`) went out in a packet.
     pub fn sent(&mut self, off: u64, n: usize, fin: bool) {
-        let end = off + n as u64;
-        self.lost.remove(off, end);
-        if end > self.unsent {
-            self.unsent = end;
-        }
-        if fin {
-            self.fin_sent = true;
-        }
+        self.st.sent(off, n as u64, fin);
     }
 
     /// `[off, off + n)` was acknowledged.
     pub fn on_ack(&mut self, off: u64, n: usize, fin: bool) {
-        let end = off + n as u64;
-        if fin {
-            self.fin_acked = true;
-        }
-        if end <= self.base {
-            return;
-        }
-        let a = off.max(self.base);
-        self.acked.insert(a, end);
-        self.lost.remove(a, end);
-        if let Some((s, e)) = self.acked.first() {
-            if s == self.base {
-                let k = (e - self.base) as usize;
-                self.drop_front(k);
-                self.base = e;
-                self.acked.remove(s, e);
-            }
-        }
+        let k = self.st.on_ack(off, n as u64, fin);
+        self.drop_front(k as usize);
     }
 
     /// `[off, off + n)` was lost: resend what of it is not acknowledged.
     pub fn on_lost(&mut self, off: u64, n: usize, fin: bool) {
-        let end = off + n as u64;
-        if fin && !self.fin_acked {
-            self.fin_sent = false;
-        }
-        let a = off.max(self.base);
-        if a >= end {
-            return;
-        }
-        // Add [a, end) minus the acknowledged parts.
-        let mut x = a;
-        let start = match self.acked.m.range(..=a).next_back() {
-            Some((&s, &e)) if e > a => s,
-            _ => a,
-        };
-        let covered: Vec<(u64, u64)> = self.acked.m.range(start..end).map(|(&s, &e)| (s, e)).collect();
-        for (s, e) in covered {
-            if s > x {
-                self.lost.insert(x, s.min(end));
-            }
-            if e > x {
-                x = e;
-            }
-            if x >= end {
-                return;
-            }
-        }
-        if x < end {
-            self.lost.insert(x, end);
-        }
+        self.st.on_lost(off, n as u64, fin);
     }
 
     /// Everything written, and the FIN, is acknowledged.
     pub fn all_acked(&self) -> bool {
-        self.unacked() == 0 && (!self.fin || self.fin_acked)
+        self.st.all_acked()
     }
 
     /// Drops everything (a reset stream).
     pub fn clear(&mut self) {
-        self.base = self.end();
+        self.st.clear();
         self.chunks.clear();
         self.chunked = 0;
         self.tail.clear();
-        self.unsent = self.base;
-        self.acked.clear();
-        self.lost.clear();
     }
 }
 
@@ -299,23 +163,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ranges() {
-        let mut r = Ranges::default();
-        r.insert(10, 20);
-        r.insert(30, 40);
-        r.insert(20, 30);
-        assert_eq!(r.first(), Some((10, 40)));
-        r.remove(15, 25);
-        assert!(r.contains(10, 15) && r.contains(25, 40) && !r.contains(14, 16));
-        r.insert(0, 100);
-        assert_eq!(r.first(), Some((0, 100)));
-    }
-
-    #[test]
     fn send_buf() {
         let mut s = SendBuf::default();
         s.write(b"0123456789");
-        s.fin = true;
+        s.set_fin();
         let (o, n, f) = s.next(4, u64::MAX).unwrap();
         assert_eq!((o, n, f), (0, 4, false));
         s.sent(o, n, f);

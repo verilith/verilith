@@ -1287,7 +1287,7 @@ impl<P: Provider> Connection<P> {
         if let Some(code) = snd.stopped {
             return Err(StreamError::Reset(code));
         }
-        if snd.reset.is_some() || snd.buf.fin {
+        if snd.reset.is_some() || snd.buf.fin() {
             return Err(StreamError::Closed);
         }
         let n = data.len().min(room);
@@ -1314,7 +1314,7 @@ impl<P: Provider> Connection<P> {
         if let Some(code) = snd.stopped {
             return Err(StreamError::Reset(code));
         }
-        if snd.reset.is_some() || snd.buf.fin {
+        if snd.reset.is_some() || snd.buf.fin() {
             return Err(StreamError::Closed);
         }
         let n = data.len().min(room);
@@ -1335,10 +1335,10 @@ impl<P: Provider> Connection<P> {
     /// Ends stream `id` after the data written.
     pub fn finish(&mut self, id: u64) -> Result<(), StreamError> {
         let Some(Stream { send: Some(snd), .. }) = self.streams.get_mut(&id) else { return Err(StreamError::Unknown) };
-        if snd.reset.is_some() || snd.buf.fin {
+        if snd.reset.is_some() || snd.buf.fin() {
             return Err(StreamError::Closed);
         }
-        snd.buf.fin = true;
+        snd.buf.set_fin();
         queue!(self, id);
         Ok(())
     }
@@ -2004,7 +2004,7 @@ impl<P: Provider> Connection<P> {
                         if let Some((off, n0, _)) = snd.buf.next(avail - hmax, limit) {
                             let hl = 1 + vlen(id) + if off > 0 { vlen(off) } else { 0 } + vlen(n0 as u64);
                             let n = n0.min(avail - hl);
-                            let fin = snd.buf.fin && off + n as u64 == snd.buf.end();
+                            let fin = snd.buf.fin() && off + n as u64 == snd.buf.end();
                             let new = (off + n as u64).saturating_sub(snd.sent_new);
                             if new > 0 || n > 0 || fin {
                                 buf.push(0x08 | if off > 0 { 0x04 } else { 0 } | 0x02 | if fin { 1 } else { 0 });
