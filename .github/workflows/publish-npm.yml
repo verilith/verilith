@@ -56,16 +56,16 @@ jobs:
     name: Build Linux binaries
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Rust
         run: |
           rustup toolchain install stable --profile minimal \
             --target x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu,x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
           rustup default stable
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - run: pip install "$ZIG" "$ZIGBUILD"
@@ -78,7 +78,7 @@ jobs:
           ls -l *.node
       - name: The committed loader and types are current
         run: git diff --exit-code index.js index.d.ts
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: bindings-linux
           path: crates/bind/node/*.node
@@ -95,12 +95,12 @@ jobs:
           - { runner: ubuntu-latest, arch: x64 }
           - { runner: ubuntu-24.04-arm, arch: arm64 }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: bindings-linux
           path: crates/bind/node
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       - name: glibc
@@ -126,12 +126,12 @@ jobs:
           - { runner: macos-15-intel, name: macOS x86_64 }
           - { runner: windows-latest, name: Windows x64 }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Rust
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       - run: npm ci
@@ -141,7 +141,7 @@ jobs:
           ls -l *.node
       - name: Test
         run: VBIND_NODE=../../node/index.js node --test ../tests/node/test.js
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: bindings-${{ runner.os }}-${{ runner.arch }}
           path: crates/bind/node/*.node
@@ -152,12 +152,12 @@ jobs:
     needs: [test-linux, native]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
       - run: npm ci
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: bindings-*
           path: crates/bind/node/artifacts
@@ -168,7 +168,7 @@ jobs:
       - name: npm publish --dry-run
         run: |
           for d in npm/*/ .; do (cd "$d" && npm publish --access public --dry-run); done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: npm-packages
           path: |
@@ -196,11 +196,11 @@ jobs:
       run:
         working-directory: packages
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: npm-packages
           path: packages
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
