@@ -63,6 +63,7 @@ fn mul_sat(a: u64, b: u64) -> (r: u64)
     }
 }
 
+/// `a + b`, or `u64::MAX` if larger.
 pub fn add_sat(a: u64, b: u64) -> (r: u64)
     ensures
         r == sat_add(a, b),
@@ -304,6 +305,7 @@ pub fn next(t: &Timers) -> (r: Option<u64>)
 
 /// The timer that fires at `now`.
 pub enum Due {
+    /// No timer is due.
     Nothing,
     /// The idle timeout: close silently (§10.1).
     Idle,

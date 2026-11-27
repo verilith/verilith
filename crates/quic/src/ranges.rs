@@ -358,6 +358,7 @@ impl RangeSet {
         ISet::new(|x: int| covers(self.ranges(), x))
     }
 
+    /// The empty set.
     pub fn new() -> (r: RangeSet)
         ensures
             r.wf(),
@@ -368,6 +369,7 @@ impl RangeSet {
         r
     }
 
+    /// Whether the set is empty.
     pub fn is_empty(&self) -> (r: bool)
         requires
             self.wf(),
@@ -719,6 +721,7 @@ impl RangeSet {
         }
     }
 
+    /// Empties the set.
     pub fn clear(&mut self)
         ensures
             final(self).wf(),

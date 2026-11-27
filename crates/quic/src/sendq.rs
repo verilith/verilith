@@ -30,6 +30,7 @@ pub open spec fn span(a: int, b: int) -> ISet<int> {
     ISet::new(|x: int| a <= x < b)
 }
 
+/// One stream's (or CRYPTO level's) sending offsets.
 pub struct SendState {
     /// The first offset not done.
     base: u64,
@@ -94,6 +95,7 @@ impl SendState {
         &&& self.fin_acked ==> self.fin
     }
 
+    /// Nothing written yet.
     pub fn new() -> (r: SendState)
         ensures
             r.inv(),
@@ -133,6 +135,7 @@ impl SendState {
         self.end
     }
 
+    /// Whether the stream ends after what was written.
     #[verifier::when_used_as_spec(spec_fin)]
     pub fn fin(&self) -> (r: bool)
         ensures
@@ -141,6 +144,7 @@ impl SendState {
         self.fin
     }
 
+    /// Whether the FIN was acknowledged.
     #[verifier::when_used_as_spec(spec_fin_acked)]
     pub fn fin_acked(&self) -> (r: bool)
         ensures

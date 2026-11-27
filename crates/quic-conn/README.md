@@ -24,7 +24,9 @@ Every step that has a specification is done by a verified component:
   - the timers: idle timeout, loss timers and PTO, and which one fires
     (`timers`);
   - which frames each packet type may carry (`allowed`);
-  - which 1-RTT keys open a packet through key updates (`keyphase`).
+  - which 1-RTT keys open a packet through key updates (`keyphase`);
+  - when each space's keys are installed, used and discarded
+    (`schedule`).
 - **`verilith-tls`**:
   - the TLS 1.3 handshake for QUIC;
   - Initial secrets;
@@ -35,8 +37,6 @@ This crate is the glue between them, and it is **plain Rust**, not verified
 yet. It covers:
 
 - routing datagrams to connections;
-- the three packet number spaces and when their keys are installed and
-  discarded;
 - dispatching frames to the components;
 - storing the bytes of send buffers (`buf.rs`);
 - choosing what goes into each packet (each frame is written by verified
