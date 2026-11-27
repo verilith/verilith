@@ -208,12 +208,36 @@ Each meta-block (up to 2 MiB) has one block type per category, one
 literal context (mode LSB6, one tree), and one prefix code each for
 literals, insert-and-copy lengths and distances (`NPOSTFIX = NDIRECT =
 0`). Commands use the implicit last distance and the four short codes for
-recent distances. Quality picks the match finder: a hash of seven bytes
-with four (q 3-4) recent positions per bucket, a hash of four bytes with 32
-(q 5-6), or hash chains (q 7-11, 64 or 256 candidates); quality 5 and up
-match lazily. Not yet used: context modeling, block splitting, the static
-dictionary and quality 10-11's optimal parsing, so at quality 11 the output
-is larger than google/brotli's (see below).
+recent distances. Quality picks the parse, scored like google/brotli's
+(bytes covered against distance bits, with its lazy matching and its
+skipping through data that does not match):
+
+- q 0-4: a hash of seven bytes with four recent positions per bucket.
+- q 5-6: a hash of five bytes with 32.
+- q 7-9: hash chains, 64 candidates.
+- q 10-11: optimal parsing (`optparse.rs`). Binary trees of earlier
+  positions (like google/brotli's H10) give every match at each position
+  that is longer than the ones before it; a shortest path over the block,
+  in bits from the symbol counts of the previous pass, picks literals and
+  copies, three passes. Matches of 325 bytes or more are taken whole.
+
+Not yet used: context modeling, block splitting and the static
+dictionary, which is most of what google/brotli still gains (below).
+
+### Compression and speed
+
+`tests/c/bench_enc.c`, whole Silesia files in memory, best of 3 runs (1 at
+q11), against google/brotli 1.2.1 linked statically, on one core of a cloud
+x86-64 VM (2026-11-27). Size is vbrotli's output against google/brotli's;
+speed above 1 means vbrotli is faster.
+
+| File | q4 size | q4 speed | q6 size | q6 speed | q11 size | q11 speed |
+|---|---|---|---|---|---|---|
+| dickens | -2.7% | 0.65x | +0.6% | 0.68x | +1.8% | 1.56x |
+| samba | +1.0% | 0.58x | +3.9% | 0.55x | +5.1% | 2.08x |
+| x-ray | +2.6% | 0.64x | +0.1% | 0.27x | +12.9% | 3.48x |
+| xml | +0.0% | 0.49x | +5.5% | 0.60x | +7.4% | 1.68x |
+| mozilla | -0.5% | 0.57x | +5.0% | 0.39x | | |
 
 ### Trusted (compressor)
 

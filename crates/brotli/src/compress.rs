@@ -8,6 +8,7 @@ use crate::pcode::{make_code, make_plan};
 #[cfg(verus_only)]
 use crate::spec::*;
 use verilith_core::lz::{eq_len, load32};
+use verilith_core::prims::{get, get32, store_at};
 use vstd::prelude::*;
 
 verus! {
@@ -36,25 +37,31 @@ pub struct Mf {
     /// kept in a ring (`num` counts the insertions per hash).
     pub ways: usize,
     pub num: Vec<u32>,
-    /// Hash seven bytes, not four.
-    pub h7: bool,
+    /// Bytes hashed in quick mode: 4, 5 or 7.
+    pub hlen: u32,
+    /// Binary trees instead of chains (`prev` holds the left children,
+    /// `right` the right ones), for optimal parsing.
+    pub bt: bool,
+    pub right: Vec<u32>,
 }
 
+/// A hash of the `len` (5 or 7) bytes at `i`.
 #[inline(always)]
-fn hash7(data: &[u8], i: usize) -> (r: usize)
+fn hash_n(data: &[u8], i: usize, len: u64) -> (r: usize)
     requires
         i + 8 <= data@.len(),
+        len == 5 || len == 7,
     ensures
         r < 0x10_0000,
 {
     let x = verilith_core::prims::load_u64_le(data, i);
-    let y = (x << 8u64).wrapping_mul(0x1FE3_5A7B_D357_9BD3);
+    let y = (x << (64 - 8 * len)).wrapping_mul(0x1FE3_5A7B_D357_9BD3);
     assert((y >> 44u64) < 0x10_0000) by (bit_vector);
     (y >> 44u64) as usize
 }
 
 #[inline(always)]
-fn hash4(data: &[u8], i: usize) -> (r: usize)
+pub fn hash4(data: &[u8], i: usize) -> (r: usize)
     requires
         i + 4 <= data@.len(),
     ensures
@@ -67,7 +74,7 @@ fn hash4(data: &[u8], i: usize) -> (r: usize)
 }
 
 impl Mf {
-    pub fn new(n: usize, depth: u32, lazy: bool, quick: bool, ways: usize, h7: bool, wmax: usize) -> (r: Mf)
+    pub fn new(n: usize, depth: u32, lazy: bool, quick: bool, ways: usize, hlen: u32, wmax: usize, bt: bool) -> (r: Mf)
         requires
             n < 0xFFFF_FFFF,
             ways == 4 || ways == 8 || ways == 16 || ways == 32,
@@ -78,7 +85,9 @@ impl Mf {
         let head = vec![NONE; 0x10_0000];
         let prev = if quick { Vec::new() } else { vec![NONE; n] };
         let num = vec![0u32; 0x10_0000];
-        Mf { head, prev, depth, lazy, wmax, quick, ways, num, h7 }
+        let bt = bt && !quick;
+        let right = if bt { vec![NONE; n] } else { Vec::new() };
+        Mf { head, prev, depth, lazy, wmax, quick, ways, num, hlen, bt, right }
     }
 
     pub open spec fn wf(&self, n: nat) -> bool {
@@ -87,6 +96,23 @@ impl Mf {
         &&& n < 0xFFFF_FFFF
         &&& (self.ways == 4 || self.ways == 8 || self.ways == 16 || self.ways == 32)
         &&& self.num@.len() == 0x10_0000
+        &&& self.bt ==> !self.quick && self.right@.len() == n
+    }
+
+    #[inline(always)]
+    fn hash(&self, data: &[u8], i: usize) -> (r: usize)
+        requires
+            i + 8 <= data@.len(),
+        ensures
+            r < 0x10_0000,
+    {
+        if self.hlen == 5 {
+            hash_n(data, i, 5)
+        } else if self.hlen == 7 {
+            hash_n(data, i, 7)
+        } else {
+            hash4(data, i)
+        }
     }
 
     /// Room in the chains for an input of `n` bytes.
@@ -102,10 +128,13 @@ impl Mf {
         if !self.quick {
             self.prev.push(NONE);
         }
+        if self.bt {
+            self.right.push(NONE);
+        }
     }
 
     #[inline(always)]
-    fn insert(&mut self, data: &[u8], i: usize)
+    pub fn insert(&mut self, data: &[u8], i: usize)
         requires
             old(self).wf(data@.len()),
         ensures
@@ -114,21 +143,26 @@ impl Mf {
     {
         if self.quick {
             if i < data.len() && data.len() - i >= 8 {
-                let w = self.ways;
-                let h = if self.h7 { hash7(data, i) } else { hash4(data, i) };
-                let kx = h / w;
-                assert(kx * w <= 0x10_0000 * 32) by (nonlinear_arith) requires kx <= 0x10_0000, w <= 32;
-                let c = self.num[kx];
-                let idx = kx * w + (c as usize) % w;
-                if idx < self.head.len() {
-                    self.head.set(idx, i as u32);
-                }
-                self.num.set(kx, c.wrapping_add(1));
+                let m = self.ways - 1;
+                let h = self.hash(data, i);
+                let key = h & !m;
+                assert(h & !m < 0x10_0000) by (bit_vector) requires h < 0x10_0000;
+                let c = get32(self.num.as_slice(), key);
+                let cu = c as usize;
+                let idx = key | (cu & m);
+                assert((h & !m) | (cu & m) < 0x10_0000) by (bit_vector)
+                    requires
+                        h < 0x10_0000,
+                        m < 32,
+                ;
+                store_at(&mut self.head, idx, i as u32);
+                store_at(&mut self.num, key, c.wrapping_add(1));
             }
         } else if i < data.len() && data.len() - i >= 4 {
             let h = hash4(data, i);
-            self.prev.set(i, self.head[h]);
-            self.head.set(h, i as u32);
+            let hd = get32(self.head.as_slice(), h);
+            store_at(&mut self.prev, i, hd);
+            store_at(&mut self.head, h, i as u32);
         }
     }
 
@@ -165,14 +199,11 @@ impl Mf {
                 return (best, bd, bs);
             }
             let w = self.ways;
-            let h = if self.h7 { hash7(data, i) } else { hash4(data, i) };
-            let kx = h / w;
-            assert(kx * w <= 0x10_0000 * 32) by (nonlinear_arith) requires kx <= 0x10_0000, w <= 32;
-            let key = kx * w;
-            if key + w > self.head.len() {
-                return (best, bd, bs);
-            }
-            let top = self.num[kx] as usize;
+            let m = w - 1;
+            let h = self.hash(data, i);
+            let key = h & !m;
+            assert(h & !m < 0x10_0000) by (bit_vector) requires h < 0x10_0000;
+            let top = get32(self.num.as_slice(), key) as usize;
             let mut j: usize = 0;
             while j < w
                 invariant
@@ -184,17 +215,27 @@ impl Mf {
                     bs < 0x1_0000_0000,
                     w == self.ways,
                     w <= 32,
-                    key + w <= 0x10_0000,
+                    m == w - 1,
+                    key == h & !m,
+                    h < 0x10_0000,
                 decreases w - j,
             {
-                let c = self.head[key + (top % w + w - 1 - j) % w];
+                let t = top.wrapping_sub(1 + j);
+                let slot = key | (t & m);
+                assert(key | (t & m) < 0x10_0000) by (bit_vector)
+                    requires
+                        key == h & !m,
+                        h < 0x10_0000,
+                        m < 32,
+                ;
+                let c = get32(self.head.as_slice(), slot);
                 j = j + 1;
                 if c == NONE || c as usize >= i {
                     continue;
                 }
                 let cu = c as usize;
                 let dist = i - cu;
-                if dist > self.wmax || best >= max || data[cu + best] != data[i + best] {
+                if dist > self.wmax || best >= max || get(data, cu + best) != get(data, i + best) {
                     continue;
                 }
                 let k = eq_len(data, cu, i, max);
@@ -210,7 +251,7 @@ impl Mf {
             return (best, bd, bs);
         }
         let h = hash4(data, i);
-        let mut c = self.head[h];
+        let mut c = get32(self.head.as_slice(), h);
         let mut d: u32 = 0;
         while d < self.depth && c != NONE && (c as usize) < i
             invariant
@@ -228,7 +269,7 @@ impl Mf {
             if dist > self.wmax {
                 break;
             }
-            if best < max && data[cu + best] == data[i + best] {
+            if best < max && get(data, cu + best) == get(data, i + best) {
                 let k = eq_len(data, cu, i, max);
                 if k >= 4 {
                     let sc = 1920 + 135 * k as u64 - 30 * log2_floor(dist as u32) as u64;
@@ -242,7 +283,7 @@ impl Mf {
                     }
                 }
             }
-            c = self.prev[cu];
+            c = get32(self.prev.as_slice(), cu);
             d = d + 1;
         }
         (best, bd, bs)
@@ -256,14 +297,8 @@ fn log2_floor(x: u32) -> (r: u32)
     ensures
         r <= 31,
 {
-    if x == 0 {
-        return 0;
-    }
-    let b = crate::pcode::bitlen_exec(x);
-    proof {
-        crate::pcode::lemma_bitlen_bound(x as nat);
-    }
-    if b == 0 { 0 } else if b > 32 { 31 } else { b - 1 }
+    let z = x.leading_zeros();
+    if z >= 31 { 0 } else { 31 - z }
 }
 
 /// The parse of `data[start..end]`.
@@ -279,6 +314,9 @@ pub fn parse(mf: &mut Mf, data: &[u8], start: usize, end: usize, last0: usize) -
     let mut i = start;
     let mut lit = start;
     let mut last = last0;
+    // Past `rh` with no match, look less often (google/brotli's "random
+    // heuristics": that data is probably not compressible).
+    let mut rh = if start < usize::MAX - 64 { start + 64 } else { start };
     while i < end
         invariant
             mf.wf(data@.len()),
@@ -320,37 +358,45 @@ pub fn parse(mf: &mut Mf, data: &[u8], start: usize, end: usize, last0: usize) -
             let ins = (i - lit) as u32;
             out.push(Lz { ins, clen: len as u32, dist: dist as u32 });
             let stop = i + len;
-            while i < stop
+            rh = if len <= usize::MAX - 64 && stop <= usize::MAX - len - 64 { stop + len + 64 } else { stop };
+            mf.insert(data, i);
+            // A long copy from close by: only its end is worth hashing.
+            let mut k = i + 1;
+            if dist < len / 4 && stop - k > 4 * dist {
+                k = stop - 4 * dist;
+            }
+            while k < stop
                 invariant
                     mf.wf(data@.len()),
                     mf.wmax == old(mf).wmax,
-                    i <= stop <= end <= data@.len(),
-                decreases stop - i,
+                    k <= stop <= end <= data@.len(),
+                decreases stop - k,
             {
-                mf.insert(data, i);
-                i = i + 1;
+                mf.insert(data, k);
+                k = k + 1;
             }
+            i = stop;
             lit = i;
             last = dist;
         } else {
             mf.insert(data, i);
             i = i + 1;
-            // Long runs of literals: probably incompressible, look less
-            // (google/brotli's "random heuristics").
-            if i - lit > 128 && i < end {
-                let step = if i - lit > 512 { 4 } else { 2 };
-                let mut j: usize = 1;
+            if i > rh {
+                let far = rh < usize::MAX - 256 && i > rh + 256;
+                let (span, every): (usize, usize) = if far { (16, 4) } else { (8, 2) };
+                let jump = if end - i > span + 8 { i + span } else { i };
                 let ghost i1 = i;
-                while j < step && i < end
+                while i < jump
                     invariant
                         mf.wf(data@.len()),
                         mf.wmax == old(mf).wmax,
-                        start <= lit <= i <= end <= data@.len(),
+                        start <= lit <= i <= jump <= end <= data@.len(),
                         i >= i1,
-                    decreases step - j,
+                        every >= 2,
+                    decreases jump - i,
                 {
-                    i = i + 1;
-                    j = j + 1;
+                    mf.insert(data, i);
+                    i = if jump - i > every { i + every } else { jump };
                 }
             }
         }
@@ -498,8 +544,10 @@ pub struct Params {
     pub lazy: bool,
     pub quick: bool,
     pub ways: usize,
-    pub h7: bool,
+    pub hlen: u32,
     pub block: usize,
+    /// Optimal parsing (`optparse`).
+    pub opt: bool,
 }
 
 pub fn params(quality: u32) -> (r: Params)
@@ -508,15 +556,15 @@ pub fn params(quality: u32) -> (r: Params)
         r.ways == 4 || r.ways == 8 || r.ways == 16 || r.ways == 32,
 {
     if quality <= 2 {
-        Params { depth: 1, lazy: false, quick: true, ways: 4, h7: true, block: 0x1_0000 }
+        Params { depth: 1, lazy: false, quick: true, ways: 4, hlen: 7, block: 0x1_0000, opt: false }
     } else if quality <= 4 {
-        Params { depth: 8, lazy: true, quick: true, ways: 4, h7: true, block: 0x20_0000 }
+        Params { depth: 8, lazy: true, quick: true, ways: 4, hlen: 7, block: 0x20_0000, opt: false }
     } else if quality <= 6 {
-        Params { depth: 32, lazy: true, quick: true, ways: 32, h7: false, block: 0x10_0000 }
+        Params { depth: 32, lazy: true, quick: true, ways: 32, hlen: 5, block: 0x10_0000, opt: false }
     } else if quality <= 9 {
-        Params { depth: 64, lazy: true, quick: false, ways: 4, h7: true, block: 0x4_0000 }
+        Params { depth: 64, lazy: true, quick: false, ways: 4, hlen: 7, block: 0x4_0000, opt: false }
     } else {
-        Params { depth: 256, lazy: true, quick: false, ways: 4, h7: true, block: 0x4_0000 }
+        Params { depth: if quality == 10 { 32 } else { 64 }, lazy: true, quick: false, ways: 4, hlen: 7, block: 0x4_0000, opt: true }
     }
 }
 
@@ -632,7 +680,7 @@ pub fn compress(data: &[u8], quality: u32, lgwin: u32) -> (r: Vec<u8>)
         crate::elemmas::lemma_pow2_small();
     }
     let wmax = (shl1(wb) - 16) as usize;
-    let mut mf = Mf::new(n, p.depth, p.lazy, p.quick, p.ways, p.h7, wmax);
+    let mut mf = Mf::new(n, p.depth, p.lazy, p.quick, p.ways, p.hlen, wmax, p.opt);
     let mut i: usize = 0;
     let mut last: usize = 4;
     proof {
@@ -654,7 +702,7 @@ pub fn compress(data: &[u8], quality: u32, lgwin: u32) -> (r: Vec<u8>)
         decreases n - i,
     {
         let k = if n - i > p.block { p.block } else { n - i };
-        let lz = parse(&mut mf, data, i, i + k, last);
+        let lz = if p.opt { crate::optparse::parse_opt(&mut mf, data, i, i + k, dr) } else { parse(&mut mf, data, i, i + k, last) };
         put_block(&mut e, &mut dr, wb, data, i, i + k, &lz);
         last = dr[0] as usize;
         i = i + k;

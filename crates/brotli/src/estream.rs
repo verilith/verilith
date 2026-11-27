@@ -65,7 +65,7 @@ impl Compressor {
             crate::elemmas::lemma_pow2_small();
         }
         let wmax = (shl1(wb) - 16) as usize;
-        let mf = Mf::new(0, p.depth, p.lazy, p.quick, p.ways, p.h7, wmax);
+        let mf = Mf::new(0, p.depth, p.lazy, p.quick, p.ways, p.hlen, wmax, p.opt);
         let r = Compressor { e, data: Vec::new(), done: 0, mf, dr: [4, 11, 15, 16], p, wb, last: 4 };
         proof {
             assert(drs(r.dr) =~= seq![4int, 11, 15, 16]);
@@ -141,7 +141,11 @@ impl Compressor {
             let k = if rest > self.p.block { self.p.block } else { rest };
             let i = self.done;
             if n < LIMIT {
-                let lz = parse(&mut self.mf, self.data.as_slice(), i, i + k, self.last);
+                let lz = if self.p.opt {
+                    crate::optparse::parse_opt(&mut self.mf, self.data.as_slice(), i, i + k, self.dr)
+                } else {
+                    parse(&mut self.mf, self.data.as_slice(), i, i + k, self.last)
+                };
                 put_block(&mut self.e, &mut self.dr, self.wb, self.data.as_slice(), i, i + k, &lz);
                 self.last = self.dr[0] as usize;
             } else {

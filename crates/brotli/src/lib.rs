@@ -49,6 +49,8 @@ pub mod cwrite;
 #[doc(hidden)]
 pub mod compress;
 #[doc(hidden)]
+pub mod optparse;
+#[doc(hidden)]
 pub mod eflush;
 #[doc(hidden)]
 pub mod estream;
