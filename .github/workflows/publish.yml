@@ -4,14 +4,15 @@ name: Publish to crates.io
 # scripts/publish.py: a dry run unless "dry_run" is unticked. A publish is
 # permanent (RELEASING.md).
 #
-# Authentication, for a real publish:
+# Authentication, for a real publish (both live in the crates-io
+# environment, which only main can deploy to):
 # - Trusted Publishing (no token): for crates that already exist on
-#   crates.io and have this repository and this workflow file (publish.yml)
-#   added under Settings > Trusted Publishing on crates.io.
-# - Otherwise the CARGO_REGISTRY_TOKEN repository secret, a crates.io API
-#   token with the publish-new and publish-update scopes. The first publish
-#   of a crate always needs it: Trusted Publishing can only be set up for a
-#   crate that exists.
+#   crates.io and have this repository, this workflow file (publish.yml)
+#   and environment crates-io added under Settings > Trusted Publishing.
+# - Otherwise the environment's CARGO_REGISTRY_TOKEN secret, a crates.io
+#   API token with the publish-new and publish-update scopes. The first
+#   publish of a crate always needs it: Trusted Publishing can only be set
+#   up for a crate that exists.
 # With auth "trusted-publishing" (the default), Trusted Publishing is tried
 # first, and if crates.io refuses it (as it does before any crate is set up
 # for it) the secret is used. With auth "token" only the secret is used:
@@ -43,6 +44,7 @@ jobs:
     # A first publish of every crate can wait out crates.io's rate limit
     # for new crates for hours; the script resumes if this runs out.
     timeout-minutes: 360
+    environment: crates-io
     permissions:
       contents: read
       id-token: write

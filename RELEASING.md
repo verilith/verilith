@@ -130,11 +130,15 @@ running it again.
 
 - **The first publish** of a crate needs a crates.io API token: on
   crates.io, Account Settings > API Tokens, with the `publish-new` and
-  `publish-update` scopes, saved as the `CARGO_REGISTRY_TOKEN` repository
-  secret (Settings > Secrets and variables > Actions).
+  `publish-update` scopes, saved as the `CARGO_REGISTRY_TOKEN` secret of
+  the `crates-io` environment: in the repository, Settings > Environments >
+  New environment `crates-io`, then under Deployment branches and tags
+  pick "Selected branches and tags" and add `main`, then Add environment
+  secret.
 - **After that, Trusted Publishing** (no token): on each crate's page on
   crates.io, Settings > Trusted Publishing > Add, with owner `verilith`,
-  repository `verilith` and workflow `publish.yml` (no environment). The
+  repository `verilith`, workflow `publish.yml` and environment
+  `crates-io`. The
   workflow then gets a short-lived token from crates.io itself. Once every
   crate has it, the secret is only needed for new crates.
 - A release that adds a crate needs the token again for that crate: run
