@@ -10,6 +10,8 @@
 //! ecdsa_secp256r1_sha256, ecdsa_secp384r1_sha384, ed25519 and
 //! rsa_pss_rsae_sha256/384/512.
 //!
+//! AES-GCM and QUIC's AES header protection are verilith-aes's (Verus)
+//! where the CPU has AES and carry-less multiplication instructions.
 //! Session tickets and HPKE's ChaCha20-Poly1305 are libcrux's (HACL*,
 //! verified), and HPKE's HMAC is verilith-sha2's (Verus): CRYPTO.md lists
 //! every primitive, its proofs, and why the rest is aws-lc.
@@ -49,53 +51,115 @@ pub const SUITES: [u16; 3] = [TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384, TL
 /// The groups, in this crate's order of preference.
 pub const GROUPS: [u16; 4] = [X25519MLKEM768, X25519, SECP256R1, SECP384R1];
 
-/// An AEAD key of one of the three suites.
+/// An AEAD key of one of the three suites: AES-GCM is verilith-aes's
+/// (verified) where the CPU has the instructions its kernels use (AES-NI
+/// and PCLMULQDQ on x86-64, FEAT_AES and FEAT_PMULL on AArch64), else
+/// aws-lc's, as is ChaCha20-Poly1305.
 pub struct Key {
-    key: LessSafeKey,
+    key: KeyImpl,
+}
+
+enum KeyImpl {
+    Aes(verilith_aes::AesGcm),
+    AwsLc(LessSafeKey),
+}
+
+const TAG: usize = 16;
+
+/// verilith-aes's GCM-AE on `body`, the tag appended to `buf`.
+fn aes_seal(k: &verilith_aes::AesGcm, nonce: &[u8; 12], aad: &[u8], body: &mut [u8]) -> [u8; TAG] {
+    let mut tag = [0u8; TAG];
+    // `seal` fails only past SP 800-38D's limits (2^36 - 32 bytes of
+    // text), far above a record's or a packet's.
+    assert!(k.seal(nonce, aad, body, &mut tag), "AES-GCM length limit");
+    tag
+}
+
+/// verilith-aes's GCM-AD on `ct` (ciphertext and tag): the plaintext's
+/// length.
+fn aes_open(k: &verilith_aes::AesGcm, nonce: &[u8; 12], aad: &[u8], ct: &mut [u8]) -> Option<usize> {
+    let n = ct.len().checked_sub(TAG)?;
+    let (body, tag) = ct.split_at_mut(n);
+    let tag: &[u8; TAG] = (&*tag).try_into().unwrap();
+    k.open(nonce, aad, body, tag).then_some(n)
 }
 
 impl AeadKey for Key {
     fn seal_in_place(&self, nonce: &[u8; 12], aad: &[u8; 5], buf: &mut Vec<u8>, start: usize) {
-        let tag = self
-            .key
-            .seal_in_place_separate_tag(Nonce::assume_unique_for_key(*nonce), Aad::from(aad), &mut buf[start..])
-            .expect("seal fails only past the AEAD's length limit, far above a record's");
-        buf.extend_from_slice(tag.as_ref());
+        match &self.key {
+            KeyImpl::Aes(k) => {
+                let tag = aes_seal(k, nonce, aad, &mut buf[start..]);
+                buf.extend_from_slice(&tag);
+            }
+            KeyImpl::AwsLc(k) => {
+                let tag = k
+                    .seal_in_place_separate_tag(Nonce::assume_unique_for_key(*nonce), Aad::from(aad), &mut buf[start..])
+                    .expect("seal fails only past the AEAD's length limit, far above a record's");
+                buf.extend_from_slice(tag.as_ref());
+            }
+        }
     }
 
     fn open_in_place(&self, nonce: &[u8; 12], aad: &[u8; 5], buf: &mut [u8]) -> Option<usize> {
-        match self.key.open_in_place(Nonce::assume_unique_for_key(*nonce), Aad::from(aad), buf) {
-            Ok(pt) => Some(pt.len()),
-            Err(_) => None,
+        match &self.key {
+            KeyImpl::Aes(k) => aes_open(k, nonce, aad, buf),
+            KeyImpl::AwsLc(k) => match k.open_in_place(Nonce::assume_unique_for_key(*nonce), Aad::from(aad), buf) {
+                Ok(pt) => Some(pt.len()),
+                Err(_) => None,
+            },
         }
     }
 
     fn seal_after(&self, nonce: &[u8; 12], buf: &mut Vec<u8>, aad_start: usize, start: usize) {
         let (head, body) = buf.split_at_mut(start);
-        let tag = self
-            .key
-            .seal_in_place_separate_tag(Nonce::assume_unique_for_key(*nonce), Aad::from(&head[aad_start..]), body)
-            .expect("seal fails only past the AEAD's length limit, far above a packet's");
-        buf.extend_from_slice(tag.as_ref());
+        match &self.key {
+            KeyImpl::Aes(k) => {
+                let tag = aes_seal(k, nonce, &head[aad_start..], body);
+                buf.extend_from_slice(&tag);
+            }
+            KeyImpl::AwsLc(k) => {
+                let tag = k
+                    .seal_in_place_separate_tag(Nonce::assume_unique_for_key(*nonce), Aad::from(&head[aad_start..]), body)
+                    .expect("seal fails only past the AEAD's length limit, far above a packet's");
+                buf.extend_from_slice(tag.as_ref());
+            }
+        }
     }
 
     fn open_after(&self, nonce: &[u8; 12], buf: &mut [u8], start: usize) -> Option<usize> {
         let (head, body) = buf.split_at_mut(start);
-        match self.key.open_in_place(Nonce::assume_unique_for_key(*nonce), Aad::from(&*head), body) {
-            Ok(pt) => Some(pt.len()),
-            Err(_) => None,
+        match &self.key {
+            KeyImpl::Aes(k) => aes_open(k, nonce, head, body),
+            KeyImpl::AwsLc(k) => match k.open_in_place(Nonce::assume_unique_for_key(*nonce), Aad::from(&*head), body) {
+                Ok(pt) => Some(pt.len()),
+                Err(_) => None,
+            },
         }
     }
 }
 
-/// A QUIC header protection key of one of the three suites.
+/// A QUIC header protection key of one of the three suites: AES-ECB is
+/// verilith-aes's where the CPU has the instructions, as for [`Key`].
 pub struct Hp {
-    key: HeaderProtectionKey,
+    key: HpImpl,
+}
+
+enum HpImpl {
+    Aes(verilith_aes::Aes),
+    AwsLc(HeaderProtectionKey),
 }
 
 impl HpKey for Hp {
     fn mask(&self, sample: &[u8]) -> [u8; 5] {
-        self.key.new_mask(sample).expect("the sample is 16 bytes")
+        match &self.key {
+            // RFC 9001 §5.4.3: mask = AES-ECB(hp_key, sample)[..5].
+            HpImpl::Aes(k) => {
+                let mut b: [u8; 16] = sample.try_into().expect("the sample is 16 bytes");
+                k.encrypt_block(&mut b);
+                [b[0], b[1], b[2], b[3], b[4]]
+            }
+            HpImpl::AwsLc(k) => k.new_mask(sample).expect("the sample is 16 bytes"),
+        }
     }
 }
 
@@ -482,22 +546,32 @@ impl Provider for AwsLc {
     type Hp = Hp;
 
     fn hp_key(&self, suite: u16, key: &[u8]) -> Hp {
+        if suite != TLS_CHACHA20_POLY1305_SHA256 {
+            if let Some(k) = verilith_aes::Aes::new(key) {
+                return Hp { key: HpImpl::Aes(k) };
+            }
+        }
         let alg = match suite {
             TLS_AES_128_GCM_SHA256 => &quic_hp::AES_128,
             TLS_AES_256_GCM_SHA384 => &quic_hp::AES_256,
             _ => &quic_hp::CHACHA20,
         };
-        Hp { key: HeaderProtectionKey::new(alg, key).expect("key length is the suite's") }
+        Hp { key: HpImpl::AwsLc(HeaderProtectionKey::new(alg, key).expect("key length is the suite's")) }
     }
 
     fn aead_key(&self, suite: u16, key: &[u8]) -> Key {
+        if suite != TLS_CHACHA20_POLY1305_SHA256 {
+            if let Some(k) = verilith_aes::AesGcm::new(key) {
+                return Key { key: KeyImpl::Aes(k) };
+            }
+        }
         let alg = match suite {
             TLS_AES_128_GCM_SHA256 => &aead::AES_128_GCM,
             TLS_AES_256_GCM_SHA384 => &aead::AES_256_GCM,
             _ => &aead::CHACHA20_POLY1305,
         };
         let key = UnboundKey::new(alg, key).expect("key length is the suite's");
-        Key { key: LessSafeKey::new(key) }
+        Key { key: KeyImpl::AwsLc(LessSafeKey::new(key)) }
     }
 
     fn key_exchange(&mut self, group: u16, peer: &[u8], share: &mut Vec<u8>, shared: &mut [u8; 64]) -> Option<usize> {
