@@ -317,9 +317,12 @@ impl Conn2 {
                 }
             }
         }
-        let ok = match (end_headers, to) {
-            (true, Some(s)) => request_fields_ok(&s.arena, &s.fields),
-            _ => true,
+        let (ok, cl) = match (end_headers, to) {
+            (true, Some(s)) => match request_fields(&s.arena, &s.fields) {
+                Some(cl) => (true, cl),
+                None => (false, None),
+            },
+            _ => (true, None),
         };
         if err != 0 {
             self.conn_error(err);
@@ -330,7 +333,7 @@ impl Conn2 {
         }
         self.dec.end_block();
         let before = self.out.buf.len();
-        let step = self.core.end_block(ok, &mut self.out.buf);
+        let step = self.core.end_block(ok, cl, &mut self.out.buf);
         self.out.grew(before);
         match step {
             Step::Dispatch { at } => Some(at),
@@ -485,44 +488,62 @@ impl Conn2 {
 /// supported), no other pseudo-headers, no uppercase names, and no
 /// connection-specific fields (§8.2.2).
 pub(crate) fn request_fields_ok(a: &[u8], fields: &[Header]) -> bool {
+    request_fields(a, fields).is_some()
+}
+
+/// [`request_fields_ok`], and the Content-Length the fields declare: None
+/// if they are not a valid request, or a Content-Length is not a decimal
+/// length or differs from another (RFC 9110 §8.6, RFC 9113 §8.1.1);
+/// otherwise the length, if one is declared. verilith-h2's core checks the
+/// stream's DATA against it.
+#[inline]
+pub(crate) fn request_fields(a: &[u8], fields: &[Header]) -> Option<Option<u64>> {
     let (mut m, mut s, mut p, mut au) = (0, 0, 0, 0);
+    let mut cl: Option<u64> = None;
     let mut regular = false;
     for f in fields {
         let n = f.name.of(a);
         let v = f.value.of(a);
         if n.is_empty() || verilith_core::scan::any_upper(n) {
-            return false;
+            return None;
         }
         if verilith_core::scan::any_nul_cr_lf(v) {
-            return false;
+            return None;
         }
         if n[0] == b':' {
             if regular {
-                return false;
+                return None;
             }
             match n {
                 b":method" => m += 1,
                 b":scheme" => s += 1,
                 b":path" => {
                     if v.is_empty() {
-                        return false;
+                        return None;
                     }
                     p += 1
                 }
                 b":authority" => au += 1,
-                _ => return false,
+                _ => return None,
             }
         } else {
             regular = true;
             if matches!(n, b"connection" | b"keep-alive" | b"proxy-connection" | b"transfer-encoding" | b"upgrade") {
-                return false;
+                return None;
             }
             if n == b"te" && v != b"trailers" {
-                return false;
+                return None;
+            }
+            if n == b"content-length" {
+                let len = verilith_http::framing::content_length_exec(v)?;
+                if cl.is_some_and(|c| c != len) {
+                    return None;
+                }
+                cl = Some(len);
             }
         }
     }
-    m == 1 && s == 1 && p == 1 && au <= 1
+    if m == 1 && s == 1 && p == 1 && au <= 1 { Some(cl) } else { None }
 }
 
 /// Header fields, owned: lowercased names (RFC 9113 §8.2.1) and values,

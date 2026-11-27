@@ -185,7 +185,12 @@ for when it is faster and when not).
   every open stream's send window (§6.9.2); RST_STREAM is sent only for a
   stream that is not idle (§5.1); GOAWAY names the highest stream opened
   and is sent at most once; a peer's GOAWAY(NO_ERROR) drains (open
-  streams finish, then GOAWAY and close). **Flood budget:** while the
+  streams finish, then GOAWAY and close). **Content-Length (§8.1.1):**
+  each live stream counts its DATA bytes against the Content-Length its
+  fields declared (verilith-core's `BodyLen`), never more than declared;
+  a request is handed to the handler (`Step::Dispatch`, or `Step::Data`
+  with END_STREAM) only when a declared length equals the DATA it
+  carried, and otherwise the stream is reset with PROTOCOL_ERROR. **Flood budget:** while the
   connection is open, budget units spent never exceed 1000 plus
   `control_per_request` per response sent in full, and every frame that
   costs nothing carries at least one byte of a header block or body or
