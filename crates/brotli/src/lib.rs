@@ -38,6 +38,8 @@ pub mod elemmas;
 pub mod encoder;
 #[doc(hidden)]
 pub mod pcode;
+#[doc(hidden)]
+pub mod ehuff;
 
 pub use api::{decompress, Error};
 pub use stream::{Result as StreamResult, Stream};

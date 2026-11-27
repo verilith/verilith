@@ -1214,11 +1214,22 @@ fn check_items(t: &[u8], items: &[(u8, u8)], lens: &[u8]) -> (r: bool)
         } else {
             let x: u32 = if c == 16 { 2 } else { 3 };
             let px = p2(x);
+            proof {
+                lemma_pow2_small();
+                assert(px <= 8);
+            }
             if delta as i64 >= px {
                 return false;
             }
             let newlen: i64 = if c == 16 { m.prev } else { 0 };
             let rep0: i64 = if m.replen != newlen { 0 } else { m.rep };
+            proof {
+                assert(0 <= rep0 <= 1024);
+                assert((rep0 - 2) * px <= 1024 * 8) by (nonlinear_arith)
+                    requires rep0 <= 1024, 1 <= px <= 8;
+                assert((rep0 - 2) * px >= -16) by (nonlinear_arith)
+                    requires rep0 >= 0, 1 <= px <= 8;
+            }
             let rep1: i64 = (if rep0 > 0 { (rep0 - 2) * px } else { 0 }) + delta as i64 + 3;
             let d = rep1 - rep0;
             if d < 0 || m.lens.len() as i64 + d > alpha as i64 {
@@ -1300,6 +1311,777 @@ fn check_items(t: &[u8], items: &[(u8, u8)], lens: &[u8]) -> (r: bool)
         lemma_valid_fwd(pc0, its, alpha as int);
     }
     true
+}
+
+/// Checks the code length code header: `read_cl` from `hskip`, reading
+/// `t`, gets back exactly `t`, and accepts it. Returns where it stops.
+fn check_head(t: &[u8], hskip: usize) -> (r: Option<usize>)
+    requires
+        t@.len() == 18,
+        hskip <= 18,
+    ensures
+        r matches Some(j) ==> cx_head(t@, hskip as int).0 == t@ && (cx_head(t@, hskip as int).1 == 1 || cx_head(t@, hskip as int).2 == 0)
+            && cx_head(t@, hskip as int).3 == j && j <= 18 && forall|k: int| 0 <= k < 18 ==> #[trigger] t@[k] <= 5,
+{
+    let ghost h = cx_head(t@, hskip as int);
+    let mut cl: Vec<u8> = vec![0u8; 18];
+    let mut num: i64 = 0;
+    let mut space: i64 = 32;
+    let mut i = hskip;
+    let mut stopped = false;
+    proof {
+        assert(cl@ =~= Seq::new(18, |i: int| 0u8));
+        lemma_pow2_small();
+    }
+    while i < 18 && !stopped
+        invariant
+            hskip <= i <= 18,
+            t@.len() == 18,
+            cl@.len() == 18,
+            0 <= num <= i,
+            -32 <= space <= 32,
+            forall|k: int| 0 <= k < 18 ==> #[trigger] cl@[k] <= 5,
+            !stopped ==> space > 0,
+            !stopped ==> rcl(t@, i as int, cl@, num as int, space as int) == h,
+            stopped ==> h == (cl@, num as int, space as int, i as int),
+        decreases 18 - i + if stopped { 0int } else { 1int },
+    {
+        proof {
+            assert(forall|k: int| 0 <= k < 18 ==> #[trigger] CL_ORDER[k] < 18) by (compute);
+        }
+        let o = CL_ORDER[i] as usize;
+        let v = t[o];
+        if v > 5 {
+            return None;
+        }
+        cl.set(o, v);
+        if v != 0 {
+            let sh = p2((5 - v) as u32);
+            proof {
+                if v > 1 {
+                    vstd::arithmetic::power2::lemma_pow2_strictly_increases((5 - v) as nat, 4);
+                }
+                lemma_pow2_small();
+                assert(sh <= 16);
+            }
+            num = num + 1;
+            space = space - sh;
+            if space <= 0 {
+                stopped = true;
+            }
+        }
+        i = i + 1;
+    }
+    if num != 1 && space != 0 {
+        return None;
+    }
+    proof {
+        if !stopped {
+            assert(rcl(t@, i as int, cl@, num as int, space as int) == (cl@, num as int, space as int, i as int));
+        }
+    }
+    // The lengths read must be `t`: none left unread.
+    let mut k: usize = 0;
+    while k < 18
+        invariant
+            k <= 18,
+            cl@.len() == 18,
+            t@.len() == 18,
+            forall|j: int| 0 <= j < k ==> cl@[j] == #[trigger] t@[j],
+            forall|k: int| 0 <= k < 18 ==> #[trigger] cl@[k] <= 5,
+        decreases 18 - k,
+    {
+        if cl[k] != t[k] {
+            return None;
+        }
+        k = k + 1;
+    }
+    proof {
+        assert(cl@ =~= t@);
+    }
+    Some(i)
+}
+
+/// A code length code length as a number and a bit count.
+fn clcl_put(v: u8) -> (r: (u32, u32))
+    requires
+        v <= 5,
+    ensures
+        r.1 <= 4,
+        (r.0 as nat) < pow2(r.1 as nat),
+        bits_of(r.0 as nat, r.1 as nat) == clcl_code(v as int),
+{
+    proof {
+        lemma_pow2_small();
+        reveal_with_fuel(bits_of, 5);
+    }
+    if v == 0 {
+        (0, 2)
+    } else if v == 4 {
+        (1, 2)
+    } else if v == 3 {
+        (2, 2)
+    } else if v == 2 {
+        proof {
+            assert(bits_of(3, 3) =~= fld(3, 2) + fld(0, 1));
+        }
+        (3, 3)
+    } else if v == 1 {
+        proof {
+            assert(bits_of(7, 4) =~= fld(3, 2) + (fld(1, 1) + fld(0, 1)));
+        }
+        (7, 4)
+    } else {
+        proof {
+            assert(bits_of(15, 4) =~= fld(3, 2) + (fld(1, 1) + fld(1, 1)));
+        }
+        (15, 4)
+    }
+}
+
+proof fn lemma_clcl_bits_push(t: Seq<u8>, i: int, j: int)
+    requires
+        0 <= i <= j < 18,
+    ensures
+        clcl_bits(t, i, j + 1) == clcl_bits(t, i, j) + clcl_code(t[CL_ORDER[j] as int] as int),
+    decreases j - i,
+{
+    if i == j {
+        assert(clcl_bits(t, i + 1, j + 1) =~= Seq::<nat>::empty());
+        assert(clcl_bits(t, i, j) =~= Seq::<nat>::empty());
+        assert(clcl_code(t[CL_ORDER[j] as int] as int) + Seq::<nat>::empty() =~= clcl_code(t[CL_ORDER[j] as int] as int));
+        assert(Seq::<nat>::empty() + clcl_code(t[CL_ORDER[j] as int] as int) =~= clcl_code(t[CL_ORDER[j] as int] as int));
+    } else {
+        lemma_clcl_bits_push(t, i + 1, j);
+        assert(clcl_code(t[CL_ORDER[i] as int] as int) + (clcl_bits(t, i + 1, j) + clcl_code(t[CL_ORDER[j] as int] as int))
+            =~= (clcl_code(t[CL_ORDER[i] as int] as int) + clcl_bits(t, i + 1, j)) + clcl_code(t[CL_ORDER[j] as int] as int));
+    }
+}
+
+proof fn lemma_items_bits_push(cl: Seq<u8>, its: Seq<(int, int)>, it: (int, int))
+    ensures
+        items_bits(cl, its.push(it)) == items_bits(cl, its) + item_bits(cl, it),
+    decreases its.len(),
+{
+    assert(its.push(it)[0] == if its.len() == 0 { it } else { its[0] });
+    assert(items_bits(cl, its.push(it)) == item_bits(cl, its.push(it)[0]) + items_bits(cl, its.push(it).subrange(1, (its.len() + 1) as int)));
+    if its.len() == 0 {
+        assert(its.push(it).subrange(1, 1) =~= Seq::<(int, int)>::empty());
+        assert(items_bits(cl, its) == Seq::<nat>::empty());
+        assert(item_bits(cl, it) + Seq::<nat>::empty() =~= item_bits(cl, it));
+        assert(Seq::<nat>::empty() + item_bits(cl, it) =~= item_bits(cl, it));
+    } else {
+        let r = its.subrange(1, its.len() as int);
+        assert(its.push(it).subrange(1, (its.len() + 1) as int) =~= r.push(it));
+        lemma_items_bits_push(cl, r, it);
+        assert(item_bits(cl, its[0]) + (items_bits(cl, r) + item_bits(cl, it)) =~= (item_bits(cl, its[0]) + items_bits(cl, r)) + item_bits(cl, it));
+    }
+}
+
+proof fn lemma_syms_bits_push(syms: Seq<int>, x: int, n: nat)
+    ensures
+        syms_bits(syms.push(x), n) == syms_bits(syms, n) + fld(x as nat, n),
+    decreases syms.len(),
+{
+    assert(syms.push(x)[0] == if syms.len() == 0 { x } else { syms[0] });
+    assert(syms_bits(syms.push(x), n) == fld(syms.push(x)[0] as nat, n) + syms_bits(syms.push(x).subrange(1, (syms.len() + 1) as int), n));
+    if syms.len() == 0 {
+        assert(syms.push(x).subrange(1, 1) =~= Seq::<int>::empty());
+        assert(syms_bits(syms, n) == Seq::<nat>::empty());
+        assert(fld(x as nat, n) + Seq::<nat>::empty() =~= fld(x as nat, n));
+        assert(Seq::<nat>::empty() + fld(x as nat, n) =~= fld(x as nat, n));
+    } else {
+        let r = syms.subrange(1, syms.len() as int);
+        assert(syms.push(x).subrange(1, (syms.len() + 1) as int) =~= r.push(x));
+        lemma_syms_bits_push(r, x, n);
+        assert(fld(syms[0] as nat, n) + (syms_bits(r, n) + fld(x as nat, n)) =~= (fld(syms[0] as nat, n) + syms_bits(r, n)) + fld(x as nat, n));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Building a plan
+// ---------------------------------------------------------------------------
+
+/// Code length symbols for `lens[..n]`, with runs as repeat codes (google/
+/// brotli's `WriteHuffmanTree`). Only the size of the header depends on
+/// this: `check_items` checks what it gives.
+fn rle_items(lens: &[u8], n: usize, rle: bool) -> (r: Vec<(u8, u8)>)
+    requires
+        n <= lens@.len(),
+{
+    let mut out: Vec<(u8, u8)> = Vec::new();
+    let mut prev: u8 = 8;
+    let mut i: usize = 0;
+    while i < n
+        invariant
+            i <= n <= lens@.len(),
+        decreases n - i,
+    {
+        let v = lens[i];
+        let mut k = i + 1;
+        while k < n && lens[k] == v
+            invariant
+                i < k <= n,
+                n <= lens@.len(),
+            decreases n - k,
+        {
+            k = k + 1;
+        }
+        let mut reps = k - i;
+        if !rle {
+            let mut q = 0;
+            while q < reps
+                invariant q <= reps,
+                decreases reps - q,
+            {
+                out.push((v, 0));
+                q = q + 1;
+            }
+        } else if v == 0 {
+            if reps == 11 {
+                out.push((0, 0));
+                reps = reps - 1;
+            }
+            if reps < 3 {
+                let mut q = 0;
+                while q < reps
+                    invariant q <= reps,
+                    decreases reps - q,
+                {
+                    out.push((0, 0));
+                    q = q + 1;
+                }
+            } else {
+                let start = out.len();
+                let mut r = reps - 3;
+                loop
+                    invariant start <= out@.len(),
+                    decreases r,
+                {
+                    out.push((17, (r % 8) as u8));
+                    r = r / 8;
+                    if r == 0 {
+                        break;
+                    }
+                    r = r - 1;
+                }
+                reverse_from(&mut out, start);
+            }
+        } else {
+            if prev != v {
+                out.push((v, 0));
+                reps = reps - 1;
+            }
+            if reps == 7 {
+                out.push((v, 0));
+                reps = reps - 1;
+            }
+            if reps < 3 {
+                let mut q = 0;
+                while q < reps
+                    invariant q <= reps,
+                    decreases reps - q,
+                {
+                    out.push((v, 0));
+                    q = q + 1;
+                }
+            } else {
+                let start = out.len();
+                let mut r = reps - 3;
+                loop
+                    invariant start <= out@.len(),
+                    decreases r,
+                {
+                    out.push((16, (r % 4) as u8));
+                    r = r / 4;
+                    if r == 0 {
+                        break;
+                    }
+                    r = r - 1;
+                }
+                reverse_from(&mut out, start);
+            }
+            prev = v;
+        }
+        i = k;
+    }
+    out
+}
+
+fn reverse_from(v: &mut Vec<(u8, u8)>, start: usize)
+    requires
+        start <= old(v)@.len(),
+    ensures
+        final(v)@.len() == old(v)@.len(),
+{
+    let n = v.len();
+    let mut a = start;
+    let mut b = n;
+    while b - a > 1
+        invariant
+            start <= a <= b <= n,
+            v@.len() == n,
+        decreases b - a,
+    {
+        let x = v[a];
+        let y = v[b - 1];
+        v.set(a, y);
+        v.set(b - 1, x);
+        a = a + 1;
+        b = b - 1;
+    }
+}
+
+/// `simple_lens`, built.
+fn build_simple(alpha: usize, syms: &[u16; 4], ls: &[u8; 4], n: usize) -> (r: Vec<u8>)
+    requires
+        1 <= n <= 4,
+        forall|i: int| 0 <= i < n ==> (#[trigger] syms@[i] as int) < alpha,
+    ensures
+        r@ == simple_lens(alpha as int, Seq::new(n as nat, |i: int| syms@[i] as int), ls@.subrange(0, n as int)),
+{
+    let mut v: Vec<u8> = vec![0u8; alpha];
+    let ghost ss = Seq::new(n as nat, |i: int| syms@[i] as int);
+    let mut i: usize = 0;
+    proof {
+        assert(v@ =~= simple_lens(alpha as int, ss.subrange(0, 0), ls@.subrange(0, 0)));
+    }
+    while i < n
+        invariant
+            i <= n <= 4,
+            ss == Seq::new(n as nat, |i: int| syms@[i] as int),
+            forall|i: int| 0 <= i < n ==> (#[trigger] syms@[i] as int) < alpha,
+            v@ == simple_lens(alpha as int, ss.subrange(0, i as int), ls@.subrange(0, i as int)),
+            v@.len() == alpha,
+        decreases n - i,
+    {
+        v.set(syms[i] as usize, ls[i]);
+        proof {
+            let a = ss.subrange(0, i + 1);
+            let l = ls@.subrange(0, i + 1);
+            assert(a.drop_last() =~= ss.subrange(0, i as int));
+            assert(l.drop_last() =~= ls@.subrange(0, i as int));
+            assert(a.last() == syms@[i as int] as int);
+            assert(l.last() == ls@[i as int]);
+            assert(v@ =~= simple_lens(alpha as int, a, l));
+        }
+        i = i + 1;
+    }
+    proof {
+        assert(ss.subrange(0, n as int) =~= ss);
+    }
+    v
+}
+
+proof fn lemma_simple_lens_len(alpha: int, syms: Seq<int>, ls: Seq<u8>)
+    requires
+        alpha >= 0,
+    ensures
+        simple_lens(alpha, syms, ls).len() == alpha,
+    decreases syms.len(),
+{
+    if syms.len() > 0 {
+        lemma_simple_lens_len(alpha, syms.drop_last(), ls.drop_last());
+    }
+}
+
+fn eq_bytes(a: &[u8], b: &[u8]) -> (r: bool)
+    ensures
+        r == (a@ == b@),
+{
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < a.len()
+        invariant
+            i <= a@.len() == b@.len(),
+            forall|j: int| 0 <= j < i ==> a@[j] == b@[j],
+        decreases a@.len() - i,
+    {
+        if a[i] != b[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    proof {
+        assert(a@ =~= b@);
+    }
+    true
+}
+
+/// A simple code for `lens`, if it has one: up to four symbols with the
+/// lengths of one of the RFC's shapes.
+fn plan_simple(lens: &[u8]) -> (r: Option<Plan>)
+    requires
+        2 <= lens@.len() <= 1024,
+    ensures
+        r matches Some(p) ==> p.ok(lens@, lens@.len() as int),
+{
+    let alpha = lens.len();
+    let mut syms: [u16; 4] = [0; 4];
+    let mut n: usize = 0;
+    let mut i: usize = 0;
+    while i < alpha
+        invariant
+            i <= alpha == lens@.len() <= 1024,
+            n <= 4,
+            forall|k: int| 0 <= k < n ==> (#[trigger] syms@[k] as int) < i,
+            forall|k: int, j: int| 0 <= k < j < n ==> syms@[k] < syms@[j],
+        decreases alpha - i,
+    {
+        if lens[i] != 0 {
+            if n == 4 {
+                return None;
+            }
+            syms[n] = i as u16;
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    if n == 0 {
+        return None;
+    }
+    // Order by length, then symbol.
+    let mut a: usize = 0;
+    while a < n
+        invariant
+            a <= n <= 4,
+            alpha == lens@.len(),
+            forall|k: int| 0 <= k < n ==> (#[trigger] syms@[k] as int) < alpha,
+            forall|k: int, j: int| 0 <= k < j < n ==> syms@[k] != syms@[j],
+        decreases n - a,
+    {
+        let mut b = a + 1;
+        while b < n
+            invariant
+                a < b <= n <= 4,
+                alpha == lens@.len(),
+                forall|k: int| 0 <= k < n ==> (#[trigger] syms@[k] as int) < alpha,
+                forall|k: int, j: int| 0 <= k < j < n ==> syms@[k] != syms@[j],
+            decreases n - b,
+        {
+            if lens[syms[b] as usize] < lens[syms[a] as usize] {
+                let t = syms[a];
+                syms[a] = syms[b];
+                syms[b] = t;
+            }
+            b = b + 1;
+        }
+        a = a + 1;
+    }
+    let tsel: u8 = if n == 4 && lens[syms[0] as usize] == 1 { 1 } else { 0 };
+    let ls: [u8; 4] = if n == 1 {
+        [1, 0, 0, 0]
+    } else if n == 2 {
+        [1, 1, 0, 0]
+    } else if n == 3 {
+        [1, 2, 2, 0]
+    } else if tsel == 0 {
+        [2, 2, 2, 2]
+    } else {
+        [1, 2, 3, 3]
+    };
+    let v = build_simple(alpha, &syms, &ls, n);
+    if !eq_bytes(v.as_slice(), lens) {
+        return None;
+    }
+    let wb = bitlen_exec((alpha - 1) as u32);
+    let p = Plan { simple: true, syms, nsym: n, tsel, wb, hskip: 0, cl: HCode { lens: Vec::new(), codes: Vec::new(), nused: 0, one: 0 }, jend: 0, items: Vec::new() };
+    proof {
+        let ss = p.syms_seq();
+        assert(ss =~= Seq::new(n as nat, |i: int| syms@[i] as int));
+        assert(ls@.subrange(0, n as int) =~= simple_ls(n as int, tsel as int));
+        lemma_bitlen_bound((alpha - 1) as nat);
+        assert(distinct(ss));
+    }
+    Some(p)
+}
+
+/// A complex code for `lens`, with repeat codes or without.
+fn plan_complex(lens: &[u8], n: usize, rle: bool) -> (r: Option<Plan>)
+    requires
+        lens@.len() <= 1024,
+        n <= lens@.len(),
+    ensures
+        r matches Some(p) ==> p.ok(lens@, lens@.len() as int),
+{
+    let items = rle_items(lens, n, rle);
+    let mut hist: Vec<u32> = vec![0u32; 18];
+    let mut i: usize = 0;
+    while i < items.len()
+        invariant
+            i <= items@.len(),
+            hist@.len() == 18,
+        decreases items@.len() - i,
+    {
+        let c = items[i].0 as usize;
+        if c >= 18 || hist[c] == u32::MAX {
+            return None;
+        }
+        hist.set(c, hist[c] + 1);
+        i = i + 1;
+    }
+    let cll = crate::ehuff::huff_lens(hist.as_slice(), 5);
+    let mut hskip: usize = 0;
+    if cll[1] == 0 && cll[2] == 0 {
+        hskip = if cll[3] == 0 { 3 } else { 2 };
+    }
+    let jend = match check_head(cll.as_slice(), hskip) {
+        Some(j) => j,
+        None => return None,
+    };
+    if !check_items(cll.as_slice(), items.as_slice(), lens) {
+        return None;
+    }
+    let cl = match make_code(cll) {
+        Some(c) => c,
+        None => return None,
+    };
+    // With a single code length symbol, every item must be it.
+    if cl.nused == 1 {
+        let mut k: usize = 0;
+        while k < items.len()
+            invariant
+                k <= items@.len(),
+                forall|j: int| 0 <= j < k ==> (#[trigger] items@[j]).0 == cl.one,
+            decreases items@.len() - k,
+        {
+            if items[k].0 as usize != cl.one {
+                return None;
+            }
+            k = k + 1;
+        }
+    }
+    let p = Plan { simple: false, syms: [0; 4], nsym: 0, tsel: 0, wb: 0, hskip, cl, jend, items };
+    proof {
+        let t = p.cl.lens@;
+        let its = items_seq(p.items@);
+        assert forall|k: int| 0 <= k < 18 implies #[trigger] t[k] <= 5 by {
+        }
+        assert forall|i: int| 0 <= i < its.len() implies {
+            let c = #[trigger] its[i].0;
+            &&& 0 <= c < t.len()
+            &&& 1 <= t[c]
+            &&& (used(t) == 1 ==> first_used(t, 0) == c)
+        } by {
+            assert(its[i].0 == p.items@[i].0 as int);
+        }
+    }
+    Some(p)
+}
+
+/// The header for a code with lengths `lens` (a simple code when it can
+/// be one, else a complex one).
+pub fn make_plan(lens: &[u8]) -> (r: Option<Plan>)
+    requires
+        2 <= lens@.len() <= 1024,
+    ensures
+        r matches Some(p) ==> p.ok(lens@, lens@.len() as int),
+{
+    if let Some(p) = plan_simple(lens) {
+        return Some(p);
+    }
+    // Up to the last symbol with a code.
+    let mut n = lens.len();
+    while n > 0 && lens[n - 1] == 0
+        invariant
+            n <= lens@.len(),
+        decreases n,
+    {
+        n = n - 1;
+    }
+    if let Some(p) = plan_complex(lens, n, true) {
+        return Some(p);
+    }
+    plan_complex(lens, n, false)
+}
+
+// ---------------------------------------------------------------------------
+// Writing a code's header
+// ---------------------------------------------------------------------------
+
+/// Writes the header `p` plans, read in `Trees(g)` from state `s`.
+pub fn put_tree(bw: &mut BitWriter, p: &Plan, alpha: usize, Ghost(s): Ghost<St>, Ghost(g): Ghost<int>, Ghost(lens): Ghost<Seq<u8>>)
+    requires
+        old(bw).wf(),
+        p.ok(lens, alpha as int),
+        tree_phase(s, g, alpha as int),
+        s.pos == old(bw).bits().len(),
+        s.pc == pc_init(),
+        2 <= alpha <= 1024,
+    ensures
+        final(bw).wf(),
+        final(bw).sent() == old(bw).sent(),
+        final(bw).bits().len() >= old(bw).bits().len(),
+        moves(old(bw).bits(), final(bw).bits().subrange(old(bw).bits().len() as int, final(bw).bits().len() as int), s,
+            tree_fin(s, g, lens, final(bw).bits().len() as int)),
+        final(bw).bits() == old(bw).bits() + final(bw).bits().subrange(old(bw).bits().len() as int, final(bw).bits().len() as int),
+{
+    let ghost w0 = bw.bits();
+    proof {
+        lemma_pow2_small();
+    }
+    if p.simple {
+        let ghost ss = p.syms_seq();
+        bw.put(1, 2);
+        bw.put((p.nsym - 1) as u32, 2);
+        let ghost w1 = bw.bits();
+        let mut i: usize = 0;
+        proof {
+            assert(ss.subrange(0, 0) =~= Seq::<int>::empty());
+            assert(w1 =~= w1 + syms_bits(ss.subrange(0, 0), p.wb as nat));
+            lemma_bitlen_bound((alpha - 1) as nat);
+        }
+        while i < p.nsym
+            invariant
+                bw.wf(),
+                bw.sent() == old(bw).sent(),
+                i <= p.nsym <= 4,
+                ss == p.syms_seq(),
+                p.ok(lens, alpha as int),
+                p.simple,
+                bw.bits() == w1 + syms_bits(ss.subrange(0, i as int), p.wb as nat),
+                (alpha - 1) < pow2(p.wb as nat),
+                p.wb <= 32,
+            decreases p.nsym - i,
+        {
+            proof {
+                assert(0 <= ss[i as int] < alpha);
+                assert(p.syms@[i as int] as int == ss[i as int]);
+                lemma_bitlen_bound((alpha - 1) as nat);
+            }
+            bw.put(p.syms[i] as u32, p.wb);
+            proof {
+                lemma_syms_bits_push(ss.subrange(0, i as int), ss[i as int], p.wb as nat);
+                assert(ss.subrange(0, i as int).push(ss[i as int]) =~= ss.subrange(0, i + 1));
+            }
+            i = i + 1;
+        }
+        if p.nsym == 4 {
+            bw.put(p.tsel as u32, 1);
+        }
+        proof {
+            assert(ss.subrange(0, p.nsym as int) =~= ss);
+            let u = simple_bits(alpha as int, ss, p.tsel as int);
+            assert(bw.bits() =~= w0 + u);
+            lemma_simple(w0, s, g, alpha as int, ss, p.tsel as int);
+            assert(bw.bits().subrange(w0.len() as int, bw.bits().len() as int) =~= u);
+        }
+    } else {
+        let ghost t = p.cl.lens@;
+        let ghost its = items_seq(p.items@);
+        bw.put(p.hskip as u32, 2);
+        let ghost w1 = bw.bits();
+        let mut k = p.hskip;
+        proof {
+            assert(clcl_bits(t, p.hskip as int, p.hskip as int) =~= Seq::<nat>::empty());
+            assert(w1 =~= w1 + clcl_bits(t, p.hskip as int, p.hskip as int));
+            lemma_rcl_end(t, p.hskip as int, Seq::new(18, |i: int| 0u8), 0, 32);
+        }
+        while k < p.jend
+            invariant
+                bw.wf(),
+                bw.sent() == old(bw).sent(),
+                p.hskip <= k <= p.jend <= 18,
+                t == p.cl.lens@,
+                t.len() == 18,
+                forall|q: int| 0 <= q < 18 ==> #[trigger] t[q] <= 5,
+                bw.bits() == w1 + clcl_bits(t, p.hskip as int, k as int),
+            decreases p.jend - k,
+        {
+            proof {
+                assert(forall|q: int| 0 <= q < 18 ==> #[trigger] CL_ORDER[q] < 18) by (compute);
+            }
+            let o = CL_ORDER[k] as usize;
+            let v = verilith_core::prims::get(p.cl.lens.as_slice(), o);
+            let (c, n) = clcl_put(v);
+            bw.put(c, n);
+            proof {
+                lemma_clcl_bits_push(t, p.hskip as int, k as int);
+            }
+            k = k + 1;
+        }
+        let ghost w2 = bw.bits();
+        let ghost s2 = St { pos: w2.len() as int, pc: cx_started(cx_head(t, p.hskip as int).0), ..s };
+        proof {
+            assert(w2 =~= w0 + cx_head_bits(t, p.hskip as int));
+            lemma_cx_head(w0, s, g, alpha as int, t, p.hskip as int);
+            assert(s2.pc == cx_started(t));
+            assert(items_bits(t, its.subrange(0, 0)) =~= Seq::<nat>::empty()) by {
+                assert(its.subrange(0, 0).len() == 0);
+            }
+            assert(w2 =~= w2 + items_bits(t, its.subrange(0, 0)));
+        }
+        let mut i: usize = 0;
+        while i < p.items.len()
+            invariant
+                bw.wf(),
+                bw.sent() == old(bw).sent(),
+                i <= p.items@.len(),
+                its == items_seq(p.items@),
+                t == p.cl.lens@,
+                p.cl.ok(),
+                p.ok(lens, alpha as int),
+                !p.simple,
+                bw.bits() == w2 + items_bits(t, its.subrange(0, i as int)),
+            decreases p.items@.len() - i,
+        {
+            let (c, d) = p.items[i];
+            proof {
+                assert(its[i as int] == (c as int, d as int));
+                assert(items_coded(t, its));
+                let _ = its[i as int].0;
+                assert(0 <= c < 18 && 1 <= t[c as int]);
+                if p.cl.nused == 1 {
+                    assert(first_used(t, 0) == c as int);
+                    assert(first_used(t, 0) == p.cl.one as int);
+                }
+            }
+            let (code, len) = p.cl.sym(c as usize);
+            bw.put64(code, len);
+            let x: u32 = if c == 16 { 2 } else if c == 17 { 3 } else { 0 };
+            proof {
+                assert(x as nat == xb(c as int));
+                // pc_ok1 bounds the extra bits.
+                lemma_items_valid_ok(cx_started(t), its, alpha as int, i as int);
+            }
+            bw.put(d as u32, x);
+            proof {
+                lemma_items_bits_push(t, its.subrange(0, i as int), its[i as int]);
+                assert(its.subrange(0, i as int).push(its[i as int]) =~= its.subrange(0, i + 1));
+            }
+            i = i + 1;
+        }
+        proof {
+            assert(its.subrange(0, p.items@.len() as int) =~= its);
+            let s2p = St { pos: w2.len() as int, pc: cx_started(t), ..s };
+            assert(s2 == s2p);
+            lemma_items(w2, s2, g, its, alpha as int);
+            let u1 = cx_head_bits(t, p.hskip as int);
+            let u2 = items_bits(t, its);
+            assert(w2 == w0 + u1);
+            lemma_moves_trans(w0, u1, u2, s, s2, tree_fin(s2, g, pad_lens(pc_run(s2.pc, its).lens, alpha as int), (w2.len() + u2.len()) as int));
+            assert(bw.bits() =~= w0 + (u1 + u2));
+            assert(bw.bits().subrange(w0.len() as int, bw.bits().len() as int) =~= u1 + u2);
+        }
+    }
+}
+
+/// Each item of a valid list fits its extra bits.
+proof fn lemma_items_valid_ok(pc: Pc, its: Seq<(int, int)>, alpha: int, i: int)
+    requires
+        items_valid(pc, its, alpha),
+        0 <= i < its.len(),
+    ensures
+        0 <= its[i].1 < pow2(xb(its[i].0)),
+    decreases its.len(),
+{
+    if i > 0 {
+        let r = its.subrange(1, its.len() as int);
+        assert(r[i - 1] == its[i]);
+        lemma_items_valid_ok(pc_tr(pc, its[0].0, its[0].1), r, alpha, i - 1);
+    }
 }
 
 } // verus!
