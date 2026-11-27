@@ -57,5 +57,12 @@
     "verilith-darwin-x64": "0.1.0",
     "verilith-darwin-arm64": "0.1.0",
     "verilith-win32-x64-msvc": "0.1.0"
+  },
+  "author": {
+    "name": "Verilith contributors",
+    "url": "https://github.com/verilith/verilith"
+  },
+  "bugs": {
+    "url": "https://github.com/verilith/verilith/issues"
   }
 }

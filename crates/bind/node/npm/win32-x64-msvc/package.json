@@ -1,14 +1,7 @@
 {
   "name": "verilith-win32-x64-msvc",
   "version": "0.1.0",
-  "cpu": [
-    "x64"
-  ],
-  "main": "vbind.win32-x64-msvc.node",
-  "files": [
-    "vbind.win32-x64-msvc.node"
-  ],
-  "description": "Formally verified (Verus) WHATWG URL and JSON parsers for Node.js",
+  "description": "Prebuilt Windows x64 binary (x86_64-pc-windows-msvc) for verilith, formally verified (Verus) WHATWG URL and JSON parsers for Node.js",
   "keywords": [
     "url",
     "whatwg",
@@ -16,12 +9,20 @@
     "parser",
     "verified",
     "verus",
-    "napi"
+    "napi",
+    "prebuilt",
+    "binary",
+    "win32",
+    "x64"
   ],
-  "homepage": "https://github.com/verilith/verilith/tree/main/crates/bind#nodejs-addon",
+  "author": {
+    "name": "Verilith contributors",
+    "url": "https://github.com/verilith/verilith"
+  },
   "license": "MIT OR Apache-2.0",
-  "engines": {
-    "node": ">= 18.17"
+  "homepage": "https://github.com/verilith/verilith/tree/main/crates/bind#nodejs-addon",
+  "bugs": {
+    "url": "https://github.com/verilith/verilith/issues"
   },
   "repository": {
     "type": "git",
@@ -30,5 +31,18 @@
   },
   "os": [
     "win32"
-  ]
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "vbind.win32-x64-msvc.node",
+  "files": [
+    "vbind.win32-x64-msvc.node",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "engines": {
+    "node": ">= 18.17"
+  }
 }
