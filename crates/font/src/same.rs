@@ -43,6 +43,31 @@ pub fn eq_range(a: &[u8], ai: usize, b: &[u8], bi: usize, n: usize) -> (r: bool)
         r == (forall|j: int| 0 <= j < n ==> #[trigger] eq_at(a@, ai as int, b@, bi as int, j)),
 {
     let mut j: usize = 0;
+    // Eight bytes at a time, as two big-endian words: equal words have
+    // equal bytes.
+    while n - j >= 8
+        invariant
+            j <= n,
+            ai + n <= a.len(),
+            bi + n <= b.len(),
+            forall|k: int| 0 <= k < j ==> #[trigger] eq_at(a@, ai as int, b@, bi as int, k),
+        decreases n - j,
+    {
+        if rd32(a, ai + j) != rd32(b, bi + j) || rd32(a, ai + j + 4) != rd32(b, bi + j + 4) {
+            break;
+        }
+        proof {
+            assert forall|k: int| j <= k < j + 8 implies #[trigger] eq_at(a@, ai as int, b@, bi as int, k) by {
+                let x = ai + j;
+                let y = bi + j;
+                assert(a@[x] as int * 256 + a@[x + 1] as int == b@[y] as int * 256 + b@[y + 1] as int);
+                assert(a@[x + 2] as int * 256 + a@[x + 3] as int == b@[y + 2] as int * 256 + b@[y + 3] as int);
+                assert(a@[x + 4] as int * 256 + a@[x + 5] as int == b@[y + 4] as int * 256 + b@[y + 5] as int);
+                assert(a@[x + 6] as int * 256 + a@[x + 7] as int == b@[y + 6] as int * 256 + b@[y + 7] as int);
+            }
+        }
+        j += 8;
+    }
     while j < n
         invariant
             j <= n,
@@ -256,6 +281,42 @@ pub fn outline_of(glyf: &[u8], loca: &[u8], fmt: u16, g: usize, ng: u16) -> (r: 
     }
 }
 
+/// Glyph `g`'s slot in `glyf`, from `loca`: where it starts and ends.
+fn slot_of(glyf: &[u8], loca: &[u8], fmt: u16, g: usize) -> (r: Option<(usize, usize)>)
+    requires
+        g < 0x10000,
+    ensures
+        r matches Some((a, b)) ==> {
+            &&& fmt <= 1
+            &&& loca.len() >= (g + 2) * (if fmt == 0 {
+                2int
+            } else {
+                4
+            })
+            &&& a == loca_at(loca@, fmt as int, g as int)
+            &&& b == loca_at(loca@, fmt as int, g + 1)
+            &&& a <= b <= glyf.len()
+        },
+{
+    if fmt > 1 {
+        return None;
+    }
+    let w: usize = if fmt == 0 {
+        2
+    } else {
+        4
+    };
+    if loca.len() < (g + 2) * w {
+        return None;
+    }
+    let a = loca_get(loca, fmt, g);
+    let b = loca_get(loca, fmt, g + 1);
+    if a > b || b > glyf.len() {
+        return None;
+    }
+    Some((a, b))
+}
+
 /// Whether glyph `g` has the same outline in both fonts.
 fn same_glyph(
     ig: &[u8],
@@ -278,6 +339,22 @@ fn same_glyph(
             ng as int,
         )),
 {
+    // Usually the glyph was copied as it was, padding and all: then the
+    // two slots are the same bytes, and so are the outlines read from them,
+    // without finding where each ends.
+    if let (Some((a, b)), Some((c, d))) = (slot_of(ig, il, ifmt, g), slot_of(og, ol, ofmt, g)) {
+        if b - a == d - c && eq_range(ig, a, og, c, b - a) {
+            proof {
+                let x1 = ig@.subrange(a as int, b as int);
+                let x2 = og@.subrange(c as int, d as int);
+                assert forall|j: int| 0 <= j < b - a implies #[trigger] x1[j] == x2[j] by {
+                    assert(eq_at(ig@, a as int, og@, c as int, j));
+                }
+                assert(x1 =~= x2);
+            }
+            return true;
+        }
+    }
     match (outline_of(ig, il, ifmt, g, ng), outline_of(og, ol, ofmt, g, ng)) {
         (None, None) => true,
         (Some((a, e)), Some((c, f))) => {
@@ -835,6 +912,15 @@ fn check_layout_same(i: &[u8], o: &[u8], gdef: bool) -> (r: bool)
         return false;
     }
     let n = i.len();
+    // Usually the table was kept byte for byte.
+    if eq_range(o, 0, i, 0, n) {
+        proof {
+            assert forall|j: int| 0 <= j < o@.len() implies #[trigger] o@[j] == i@[j] by {
+                assert(eq_at(o@, 0, i@, 0, j));
+            }
+        }
+        return true;
+    }
     let mut m0: Vec<bool> = Vec::new();
     let mut mf: Vec<bool> = Vec::new();
     let mut q: usize = 0;

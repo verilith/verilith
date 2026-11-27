@@ -647,6 +647,40 @@ fn check_value(t: &[u8], base: usize, p: usize, f: u16) -> (b: bool)
         || check_dev(t, base, p6)) && (!hasx(f, 128) || check_dev(t, base, p7))
 }
 
+/// A value record of format `f` with no device tables needs only its bytes.
+proof fn lemma_value_plain(t: Seq<u8>, base: int, p: int, f: u16)
+    requires
+        f & 0xF0 == 0,
+        p + vsize(f as int) <= t.len(),
+    ensures
+        wf_value(t, base, p, f as int),
+{
+    assert(f & 0xF0 == 0 ==> (f / 16) % 2 == 0 && (f / 32) % 2 == 0 && (f / 64) % 2 == 0 && (f / 128) % 2 == 0)
+        by (bit_vector);
+}
+
+/// `check_value`, given the record's size `v`, with the usual case (no
+/// device tables, so nothing past the record's bytes to check) inline.
+#[inline(always)]
+fn check_value_v(t: &[u8], base: usize, p: usize, f: u16, v: usize) -> (b: bool)
+    requires
+        small(t),
+        base <= t.len(),
+        v == vsize(f as int),
+    ensures
+        b == wf_value(t@, base as int, p as int, f as int),
+{
+    if f & 0xF0 == 0 {
+        proof {
+            if p + v <= t.len() {
+                lemma_value_plain(t@, base as int, p as int, f);
+            }
+        }
+        return room(t, p, v);
+    }
+    check_value(t, base, p, f)
+}
+
 fn check_single_pos(t: &[u8], o: usize, ng: usize) -> (b: bool)
     requires
         small(t),
@@ -727,7 +761,8 @@ fn check_pairset(t: &[u8], o: usize, f1: u16, f2: u16, ng: usize) -> (b: bool)
     }
     let n = rd16(t, o) as usize;
     let v1 = vsize_x(f1);
-    let w = 2 + v1 + vsize_x(f2);
+    let v2 = vsize_x(f2);
+    let w = 2 + v1 + v2;
     let mut i: usize = 0;
     let mut r: usize = o + 2;
     while i < n
@@ -737,6 +772,7 @@ fn check_pairset(t: &[u8], o: usize, f1: u16, f2: u16, ng: usize) -> (b: bool)
             small(t),
             o + 2 <= t.len(),
             v1 == vsize(f1 as int),
+            v2 == vsize(f2 as int),
             w == 2 + vsize(f1 as int) + vsize(f2 as int),
             w <= 34,
             r == o + 2 + w * i,
@@ -745,12 +781,8 @@ fn check_pairset(t: &[u8], o: usize, f1: u16, f2: u16, ng: usize) -> (b: bool)
                 0 <= k < i ==> #[trigger] pair_rec_ok(t@, o as int, k, f1 as int, f2 as int, ng as int),
         decreases n - i,
     {
-        if !room(t, r, 2) || rd16(t, r) as usize >= ng || !check_value(t, o, r + 2, f1) || !check_value(
-            t,
-            o,
-            r + 2 + v1,
-            f2,
-        ) {
+        if !room(t, r, 2) || rd16(t, r) as usize >= ng || !check_value_v(t, o, r + 2, f1, v1)
+            || !check_value_v(t, o, r + 2 + v1, f2, v2) {
             assert(!pair_rec_ok(t@, o as int, i as int, f1 as int, f2 as int, ng as int));
             return false;
         }
@@ -811,7 +843,8 @@ fn check_pair_pos(t: &[u8], o: usize, ng: usize) -> (b: bool)
         return false;
     }
     let v1 = vsize_x(f1);
-    let w = v1 + vsize_x(f2);
+    let v2 = vsize_x(f2);
+    let w = v1 + v2;
     let c1 = rd16(t, o + 12) as usize;
     let c2 = rd16(t, o + 14) as usize;
     assert(c1 * c2 <= 65535 * 65535) by (nonlinear_arith)
@@ -870,6 +903,7 @@ fn check_pair_pos(t: &[u8], o: usize, ng: usize) -> (b: bool)
             f2 == u16_at(t@, o + 6),
             u16_at(t@, o as int) == 2,
             v1 == vsize(f1 as int),
+            v2 == vsize(f2 as int),
             w == vsize(f1 as int) + vsize(f2 as int),
             0 < w <= 32,
             r == o + 16 + w * k,
@@ -880,7 +914,7 @@ fn check_pair_pos(t: &[u8], o: usize, ng: usize) -> (b: bool)
             forall|j: int| 0 <= j < k ==> #[trigger] class_pair_ok(t@, o as int, j, f1 as int, f2 as int),
         decreases cells - k,
     {
-        if !check_value(t, o, r, f1) || !check_value(t, o, r + v1, f2) {
+        if !check_value_v(t, o, r, f1, v1) || !check_value_v(t, o, r + v1, f2, v2) {
             assert(!class_pair_ok(t@, o as int, k as int, f1 as int, f2 as int));
             return false;
         }
