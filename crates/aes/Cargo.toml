@@ -1,0 +1,34 @@
+[package]
+name = "verilith-aes"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+description = "Formally verified (Verus) AES-128 and AES-256 (FIPS 197) and AES-GCM (NIST SP 800-38D), with AES-NI, VAES and ARMv8 AES kernels"
+edition = "2024"
+rust-version = "1.89"
+repository = "https://github.com/verilith/verilith"
+keywords = ["verified", "verus", "aes", "gcm", "aead"]
+categories = ["cryptography", "no-std"]
+
+[features]
+default = ["std"]
+# Without `std` the crate is `no_std`; the kernels are then chosen from
+# the CPU features the target is compiled for instead of detected at run
+# time.
+std = ["vstd/std"]
+
+[dependencies]
+vstd = { workspace = true, features = ["alloc"] }
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+# Verus erases ghost code during a normal `cargo build`; ghost-only imports
+# are guarded by `verus_only`, which Verus turns on during verification.
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(verus_only)',
+] }
+
+[dev-dependencies]
+# An independent implementation (RustCrypto's) to compare with.
+aes-gcm = "0.10"

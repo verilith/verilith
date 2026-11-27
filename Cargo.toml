@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/aes",
     "crates/archive",
     "crates/bind",
     "crates/checksum",
