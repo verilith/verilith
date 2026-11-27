@@ -12,6 +12,7 @@ pub mod packet;
 pub mod params;
 pub mod reasm;
 pub mod ranges;
+pub mod reclog;
 pub mod recv;
 pub mod sendq;
 pub mod rtt;

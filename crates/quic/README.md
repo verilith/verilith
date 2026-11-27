@@ -131,6 +131,12 @@ Loss recovery (RFC 9002), for one packet number space each:
   written. Inputs are checked, so offsets never sent change nothing.
   `RangeSet` (sorted, merged ranges) is proven to be set union and
   difference.
+- **Per-packet records** (§13.3, `reclog`): `RecLog` holds what each sent
+  packet carried, one record per frame, and a packet's token (`pack`)
+  names its first record and count. `unpack` gives back exactly that
+  packet's records, `take` returns each record once however often its
+  packet is reported acknowledged or lost, and only the record pushed at
+  that index, and `trim` frees the taken records at the front.
 
 Every loop in a parser consumes input, so parsing is linear in the input;
 the PADDING scan reads eight bytes at a time.
@@ -159,8 +165,9 @@ parsers. `tests/recovery.rs` runs a sender's `Sent` and a receiver's
 frame encoded and parsed in between, and checks that only received
 packets are acknowledged, no packet is acknowledged or lost twice, and
 the bytes in flight match a model; and RFC 9002's arithmetic on known
-values. `tests/reasm.rs` and `tests/sendq.rs` check reassembly, `RangeSet`
-and `SendState` against simple references.
+values. `tests/reasm.rs`, `tests/sendq.rs` and `tests/reclog.rs` check
+reassembly, `RangeSet`, `SendState` and `RecLog` against simple
+references.
 
 `bench/` compares verilith-quic with quinn-proto 0.11.19 and quiche
 0.24.9 (`bench/setup.sh` copies them from crates.io and makes their frame

@@ -17,7 +17,8 @@ Every step that has a specification is done by a verified component:
   - the RTT estimator and PTO, and NewReno congestion control;
   - received-packet tracking and the ACK frames built from it;
   - stream and CRYPTO reassembly (`reasm`), with its memory bound;
-  - what each send buffer sends, resends and frees (`sendq`).
+  - what each send buffer sends, resends and frees (`sendq`);
+  - which frames an acknowledged or lost packet carried (`reclog`).
 - **`verilith-tls`**:
   - the TLS 1.3 handshake for QUIC;
   - Initial secrets;
