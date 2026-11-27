@@ -814,7 +814,10 @@ pub fn compress_exec(src: &[u8], p: Params) -> (r: Vec<u8>)
         131072
     };
     let mut enc = Enc::new(src, window, p.level);
-    let mut d = FrameDec { out: Vec::new(), fstart: 0, r1: 1, r2: 4, r3: 8, huf: None, seqt: None, lits: Vec::new() };
+    // The decoder's copy of the output, with room for all of it and the
+    // 64 bytes the sequence loop reserves past a block, so it is never
+    // copied as it grows.
+    let mut d = FrameDec { out: Vec::with_capacity(n + 64), fstart: 0, r1: 1, r2: 4, r3: 8, huf: None, seqt: None, lits: Vec::new() };
     let mut valid = true;
     let ghost mut cur = initial_state();
     let ghost mut fin = initial_state();

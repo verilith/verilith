@@ -433,12 +433,22 @@ binaries; geometric means; every frame checked by libzstd's decoder):
 | level | ratio vs libzstd | speed vs libzstd |
 | --- | --- | --- |
 | 1 | 0.96× | 0.43× |
-| 3 | 0.98× | 0.49× |
+| 3 | 1.00× | 0.53× |
 | 5 | 0.99× | 0.59× |
 | 7 | 0.99× | 0.52× |
 | 9 | 0.99× | 0.57× |
 | 16 | 1.02× | 0.71× |
 | 19 | 0.99× | 0.92× |
+
+Levels 3 and 4 use libzstd 1.5's double-fast loop (`enc::dfast_search`):
+the long-hash candidate of the next position is read before the tests on
+this one, a short match is taken on 4 bytes and then tried as a long match
+one position on, and after each match two of its positions go into both
+tables. That brought their ratio level with libzstd's and their speed from
+0.48× to 0.53× (level 3) and 0.51× to 0.56× (level 4). The verified
+decoder's copy of the output, which the check of each block decodes into,
+is now reserved once for the whole input, so it is never copied as it
+grows.
 
 Levels 16 to 22 use an optimal parser (`src/opt.rs`, as libzstd's btopt
 and btultra): matches from a binary tree, then the cheapest path through
