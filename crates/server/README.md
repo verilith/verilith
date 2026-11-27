@@ -78,9 +78,9 @@ step (each a separate crate with its own proofs):
 | Encryption | verilith-tls (TLS 1.3 handshake, record layer), crypto from verilith-tls-aws-lc (trusted) | same | verilith-quic-conn (QUIC transport) on verilith-quic (packets, frames, loss recovery) and verilith-tls's QUIC mode |
 | Framing | verilith-http (request parser, body framing: the smuggling theorems) | verilith-h2 (frames) | verilith-h3 (frames, stream rules) |
 | Field compression | — | verilith-hpack | verilith-qpack |
-| Connection logic | `conn.rs` + `persist.rs` (verified: requests exactly the spec's, in order) | `h2core.rs` with `flow.rs`, `streams.rs` (verified: every frame decision, the stream table, SETTINGS, GOAWAY, the flood budget), driven by `h2.rs` | `h3core.rs` (verified: request lifecycle, Content-Length, critical streams, SETTINGS, response framing, flood budget), driven by `h3.rs` |
+| Connection logic | `conn.rs` + `persist.rs` (verified: requests exactly the spec's, in order) | `h2core.rs` with `flow.rs`, `streams.rs`, `h2wire.rs` (verified: every frame decision, the stream table, SETTINGS, GOAWAY, the preface, request fields, Content-Length, response framing, flood budget), driven by `h2.rs` | `h3core.rs` (verified: request lifecycle, Content-Length, critical streams, SETTINGS, response framing, flood budget), driven by `h3.rs` |
 | Handler | your code: `Request` in, `Response` out | same | same |
-| Response | `respond.rs` (verified: the head parses back exactly) | HPACK-encoded fields | QPACK-encoded fields, framed by `h3core.rs` (verified: reads back as exactly HEADERS then the body) |
+| Response | `respond.rs` (verified: the head parses back exactly) | HPACK-encoded fields, framed by `h2core.rs` and `h2wire.rs` (verified: reads back as exactly HEADERS and CONTINUATION with the block, then DATA with the body) | QPACK-encoded fields, framed by `h3core.rs` (verified: reads back as exactly HEADERS then the body) |
 | Static files | `path.rs` (verified: never leaves the root), `range.rs` (verified), verilith-text (percent-decoding), `files.rs` | same | same |
 
 Where the proofs meet: each crate proves its piece against an RFC
@@ -90,8 +90,8 @@ invariant is stated with verilith-http's `spec::parse_request`, and
 `respond.rs`'s theorem with its `spec::parse_response`, so "the server
 hands the handler exactly the request the parser's spec sees" and "the
 response the client parses is exactly what the handler sent" are one
-chain. The plain-Rust glue (event loops, the buffer and handler side of
-`h2.rs`, `h3.rs`, the trusted
+chain. The plain-Rust glue (event loops, the buffer, HPACK and handler
+side of `h2.rs`, `h3.rs`, the trusted
 OS and crypto calls) is listed in [TRUST.md](TRUST.md) with what each
 piece is assumed to do.
 
@@ -199,7 +199,24 @@ for when it is faster and when not).
   streams and frames on closed streams all cost a unit, so Rapid Reset
   (CVE-2023-44487), PING and SETTINGS floods and the empty-CONTINUATION
   flood end in GOAWAY(ENHANCE_YOUR_CALM) after a bounded number of
-  frames.
+  frames. **Responses** (`Core::send_headers`, `send_data`, `sent`): a
+  stream's response starts at most once, as HEADERS and CONTINUATION
+  frames that a receiver following verilith-h2's specification reads
+  back as exactly the encoded block (`h2wire::lemma_header_frames`); its
+  body follows in DATA frames of at most 16 KiB, each within both
+  windows and starting where the last ended, END_STREAM on the one that
+  reaches the end (on HEADERS for an empty body) and nothing after it
+  (`h2wire::lemma_response_rt`). The budget grows only for a response
+  framed in full.
+- **HTTP/2 and HTTP/3 request fields** (`h2wire::request_fields`, against
+  the fold `fields_seen`): a request reaches a handler only if every name
+  is non-empty and lowercase, no value holds NUL, CR or LF, the
+  pseudo-header fields come first and are exactly one `:method`, one
+  `:scheme`, one non-empty `:path` and at most one `:authority`, no
+  connection-specific field is present, `te` is only `trailers`, and
+  every Content-Length is a decimal length, all equal (RFC 9113 §8.2 and
+  §8.3, RFC 9114 §4.3, RFC 9110 §8.6). The connection preface is checked
+  byte for byte (`h2wire::check_preface`, §3.4).
 - **Responses parse back exactly** (`respond::theorem_head_parses`). For
   any status, reason phrase, field lines and framing that pass the checks
   in `respond.rs`, the head `write_head` writes, followed by any bytes at
@@ -246,19 +263,20 @@ deviations reads the same head end and framing), and the chunked decoder.
 
 ## What is not proven yet
 
-- **The plain-Rust half of the HTTP/2 engine** (`h2.rs`): the read
-  buffer, feeding each fragment the core hands back to verilith-hpack's
-  verified decoder and collecting the fields (the decoded-size limit is
-  checked here), buffering bodies, running handlers, and framing
-  responses (`schedule`), which encodes heads with verilith-hpack's
-  verified encoder (dynamic table included) when their HEADERS frame is
-  written, so blocks reach the peer in the order they were encoded, and
-  sizes DATA with the core's `take` (verified `take_data`). Tested in
-  `tests/h2.rs`: every split of a request stream gives the same
-  responses, read back with the verified parser and decoder; DATA stops
-  at the peer's window; protocol errors, a PING flood, Rapid Reset and
-  an empty-CONTINUATION flood end in GOAWAY; a refused stream's
-  CONTINUATION is decoded and the stream reset; a peer's GOAWAY drains.
+- **The HTTP/2 glue** (`h2.rs`): the read buffer, feeding each fragment
+  the core hands back to verilith-hpack's verified decoder and collecting
+  the fields (the decoded-size limit is checked here), buffering bodies,
+  running handlers, encoding heads with verilith-hpack's verified encoder
+  (dynamic table included) just before the core writes their HEADERS, so
+  blocks reach the peer in the order they were encoded, appending each
+  DATA frame's body bytes after the header the core gives, and choosing
+  which stream to frame next (round robin). Tested in `tests/h2.rs`:
+  every split of a request stream gives the same responses, read back
+  with the verified parser and decoder; DATA stops at the peer's window;
+  heads over 16 KiB go out in CONTINUATION; bad request fields are reset;
+  protocol errors, a PING flood, Rapid Reset and an empty-CONTINUATION
+  flood end in GOAWAY; a refused stream's CONTINUATION is decoded and the
+  stream reset; a peer's GOAWAY drains.
 - **The event loop and the OS shim** (`worker.rs`, `sys/`): trusted, as
   in every server. See [TRUST.md](TRUST.md).
 - The `Date` formatter and the reason-phrase table are plain Rust (both

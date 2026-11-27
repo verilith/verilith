@@ -522,7 +522,11 @@ in `bench/server/results`, and a merge.
 6. **HTTP/2 connection**: streams, flow control, scheduling, the resource
    bounds; h2c and h2 benchmarks against h2o. *(done: `h2core.rs`, every
    frame decision verified, with the stream table, SETTINGS, GOAWAY and
-   the flood budget, at the old engine's speed; left: the work bound per
+   the flood budget, at the old engine's speed; then the rest of the
+   engine's decisions: the preface, the request field rules (shared with
+   HTTP/3), Content-Length, and every response's framing, HEADERS and
+   CONTINUATION then DATA within the windows, read back exactly
+   (`h2wire.rs`); `h2.rs` is glue like `h3.rs`; left: the work bound per
    input byte as a theorem (the budget bounds frames, not cycles), RFC
    9218 priorities)*
 7. **io_uring and kTLS** backends, if the benchmarks show they are needed

@@ -6,10 +6,14 @@
 //! needs. Every decision about a frame is made by the verified core in
 //! `h2core.rs`: stream states and the stream table, flow control, SETTINGS,
 //! GOAWAY, header block sequencing and the flood budget, with the control
-//! frames they call for. This file is the plain-Rust part around it: the
-//! read buffer, feeding fragments to the HPACK decoder and collecting the
-//! fields, buffering bodies, running handlers, and framing responses
-//! (`schedule`). It is tested in `tests/h2.rs`.
+//! frames they call for, and every response's framing (HEADERS and
+//! CONTINUATION, then DATA within the windows, END_STREAM on the last).
+//! The preface check and the request field rules are verified too
+//! (`h2wire.rs`). This file is the plain-Rust glue around them: the read
+//! buffer, feeding fragments to the HPACK decoder and collecting the
+//! fields, buffering bodies, running handlers, HPACK-encoding response
+//! heads, and choosing which stream to frame next (`schedule`). It is
+//! tested in `tests/h2.rs`.
 //!
 //! Response heads are encoded by verilith-hpack's verified encoder, with
 //! its dynamic table: its theorem is that each block decodes, from the
@@ -28,6 +32,7 @@ use verilith_http::parse::Span;
 
 pub use crate::h2core::Limits2;
 use crate::h2core::{Core, Step, Store, COMPRESSION_ERROR, ENHANCE_YOUR_CALM, INTERNAL_ERROR, PROTOCOL_ERROR, S_HEADER_TABLE_SIZE};
+use crate::h2wire::{check_preface, Pre};
 use crate::h1::{Ctx, Next, Out};
 use crate::{Handler, Request, Response};
 
@@ -194,14 +199,13 @@ impl Conn2 {
     /// as the flow-control windows allow.
     pub fn process<H: Handler + ?Sized>(&mut self, h: &H, ctx: &Ctx) -> Next {
         if !self.preface {
-            let have = self.end - self.start;
-            let n = have.min(PREFACE.len());
-            if self.rbuf[self.start..self.start + n] != PREFACE[..n] {
-                self.conn_error(PROTOCOL_ERROR);
-                return Next::Close;
-            }
-            if have < PREFACE.len() {
-                return Next::Read;
+            match check_preface(&self.rbuf[self.start..self.end]) {
+                Pre::Bad => {
+                    self.conn_error(PROTOCOL_ERROR);
+                    return Next::Close;
+                }
+                Pre::More => return Next::Read,
+                Pre::Done => {}
             }
             self.start += PREFACE.len();
             self.preface = true;
@@ -318,7 +322,7 @@ impl Conn2 {
             }
         }
         let (ok, cl) = match (end_headers, to) {
-            (true, Some(s)) => match request_fields(&s.arena, &s.fields) {
+            (true, Some(s)) => match crate::h2wire::request_fields(&s.arena, &s.fields) {
                 Some(cl) => (true, cl),
                 None => (false, None),
             },
@@ -371,107 +375,76 @@ impl Conn2 {
         self.ready.push_back((id, at));
     }
 
-    fn finish(&mut self, at: usize) {
-        let before = self.out.buf.len();
-        self.core.finish(at, &mut self.out.buf);
-        self.out.grew(before);
-    }
-
-    /// Frames responses: HEADERS, then DATA within the windows, round robin
-    /// over the streams that have something to send. The reply stays in
-    /// its stream (moving it costs store-forwarding stalls); it is looked
-    /// up again around each charge to the core's windows.
+    /// Frames responses, round robin over the streams that have something
+    /// to send: the core writes HEADERS (and CONTINUATION) once, then
+    /// hands out DATA frames within the windows, in order through the
+    /// body; this appends each frame's body bytes after its header. The
+    /// reply stays in its stream (moving it costs store-forwarding
+    /// stalls); it is looked up again after each call to the core.
     fn schedule(&mut self, ctx: &Ctx) {
-        let peer_max = self.core.max_frame();
-        let max = peer_max.min(16384) as usize;
         let mut rounds = self.ready.len();
         while rounds > 0 {
             rounds -= 1;
             let Some((id, hint)) = self.ready.pop_front() else { break };
             let Some(at) = self.core.locate(id, hint) else { continue };
-            let Some(r) = self.core.val(at).and_then(|s| s.reply.as_mut()) else { continue };
-            let body_len = r.body.bytes().len();
-            if !r.sent_headers {
-                let end_stream = body_len == 0;
-                let st = [b'0' + (r.status / 100) as u8, b'0' + (r.status / 10 % 10) as u8, b'0' + (r.status % 10) as u8];
-                // The spare allocation, retyped for this block's borrows
-                // (an empty Vec collected in place keeps its buffer).
-                let mut hs: Vec<HHeader> = std::mem::take(&mut self.hs_spare).into_iter().collect();
-                hs.reserve(r.fields.len() + ctx.own_h2.len() + 1);
-                hs.push(HHeader { name: b":status", value: &st, sensitive: false });
-                for (n, v) in r.fields.iter().chain(ctx.own_h2.iter()) {
-                    // A cookie is a secret an attacker could probe by
-                    // compression (RFC 7541 §7.1.3): never indexed.
-                    hs.push(HHeader { name: n, value: v, sensitive: n == b"set-cookie" });
-                }
-                self.hbuf.clear();
-                let ok = self.enc.encode(&hs, &mut self.hbuf);
-                hs.clear();
-                self.hs_spare = hs.into_iter().map(|_| HHeader { name: b"", value: b"", sensitive: false }).collect();
-                r.sent_headers = true;
-                if !ok {
-                    // A name or value over 64 KiB: nothing was encoded, the
-                    // table is unchanged.
-                    let before = self.out.buf.len();
-                    self.core.reset(at, INTERNAL_ERROR, &mut self.out.buf);
-                    self.out.grew(before);
-                    continue;
-                }
-                let before = self.out.buf.len();
-                // HEADERS, then CONTINUATION, within the peer's frame size.
-                let mut frag: &[u8] = &self.hbuf;
-                let mut first = true;
-                loop {
-                    let k = frag.len().min(max);
-                    let (a, b) = frag.split_at(k);
-                    let last = b.is_empty();
-                    let f = if first {
-                        Frame::Headers { stream: id, end_stream, end_headers: last, pad: None, priority: None, fragment: a }
-                    } else {
-                        Frame::Continuation { stream: id, end_headers: last, fragment: a }
-                    };
-                    let _ = verilith_h2::serialize(&f, peer_max, &mut self.out.buf);
-                    first = false;
-                    frag = b;
-                    if last {
-                        break;
+            match self.core.started(at) {
+                None => continue,
+                Some(true) => {}
+                Some(false) => {
+                    let Some(r) = self.core.val(at).and_then(|s| s.reply.as_mut()) else { continue };
+                    let body_len = r.body.bytes().len();
+                    let st = [b'0' + (r.status / 100) as u8, b'0' + (r.status / 10 % 10) as u8, b'0' + (r.status % 10) as u8];
+                    // The spare allocation, retyped for this block's borrows
+                    // (an empty Vec collected in place keeps its buffer).
+                    let mut hs: Vec<HHeader> = std::mem::take(&mut self.hs_spare).into_iter().collect();
+                    hs.reserve(r.fields.len() + ctx.own_h2.len() + 1);
+                    hs.push(HHeader { name: b":status", value: &st, sensitive: false });
+                    for (n, v) in r.fields.iter().chain(ctx.own_h2.iter()) {
+                        // A cookie is a secret an attacker could probe by
+                        // compression (RFC 7541 §7.1.3): never indexed.
+                        hs.push(HHeader { name: n, value: v, sensitive: n == b"set-cookie" });
                     }
-                }
-                self.out.grew(before);
-                if end_stream {
-                    self.finish(at);
-                    continue;
+                    self.hbuf.clear();
+                    // Encoded only now, as the block is written: blocks reach
+                    // the peer in the order they change the dynamic table.
+                    let ok = self.enc.encode(&hs, &mut self.hbuf);
+                    hs.clear();
+                    self.hs_spare = hs.into_iter().map(|_| HHeader { name: b"", value: b"", sensitive: false }).collect();
+                    let before = self.out.buf.len();
+                    if !ok {
+                        // A name or value over 64 KiB: nothing was encoded, the
+                        // table is unchanged.
+                        self.core.reset(at, INTERNAL_ERROR, &mut self.out.buf);
+                        self.out.grew(before);
+                        continue;
+                    }
+                    self.core.send_headers(at, &self.hbuf, body_len, &mut self.out.buf);
+                    self.out.grew(before);
+                    if body_len == 0 {
+                        // END_STREAM was on HEADERS: the core closed the stream.
+                        continue;
+                    }
                 }
             }
             // DATA frames, as many as the windows allow now.
             let mut done = false;
-            loop {
+            while let Some(d) = self.core.send_data(at, &mut self.out.buf) {
+                self.out.extend(&d.head);
                 let Some(r) = self.core.val(at).and_then(|s| s.reply.as_mut()) else { break };
-                let left = body_len - r.off;
-                let n = self.core.take(at, left, max);
-                if n == 0 {
-                    break;
-                }
-                let Some(r) = self.core.val(at).and_then(|s| s.reply.as_mut()) else { break };
-                let end = n == left;
-                let head = verilith_h2::encode_head(n as u32, 0, if end { 1 } else { 0 }, id).unwrap();
-                self.out.extend(&head);
                 match &r.body {
-                    ReplyBody::Shared(a) if n >= 1024 => self.out.share_range(a.clone(), r.off, n),
-                    ReplyBody::Slice(a, start, _) if n >= 1024 => self.out.share_range(a.clone(), start + r.off, n),
-                    b => {
-                        let bytes = &b.bytes()[r.off..r.off + n];
-                        self.out.extend(bytes);
-                    }
+                    ReplyBody::Shared(a) if d.n >= 1024 => self.out.share_range(a.clone(), d.off, d.n),
+                    ReplyBody::Slice(a, start, _) if d.n >= 1024 => self.out.share_range(a.clone(), start + d.off, d.n),
+                    b => self.out.extend(&b.bytes()[d.off..d.off + d.n]),
                 }
-                r.off += n;
-                if end {
+                if d.end {
                     done = true;
                     break;
                 }
             }
             if done {
-                self.finish(at);
+                let before = self.out.buf.len();
+                self.core.sent(at, &mut self.out.buf);
+                self.out.grew(before);
             } else {
                 // Blocked on a window: retried when a WINDOW_UPDATE arrives.
                 self.ready.push_back((id, at));
@@ -483,67 +456,10 @@ impl Conn2 {
     }
 }
 
-/// RFC 9113 §8.3: pseudo-header fields first, exactly one each of
-/// `:method`, `:scheme` and `:path` (`:authority` optional; CONNECT is not
-/// supported), no other pseudo-headers, no uppercase names, and no
-/// connection-specific fields (§8.2.2).
+/// RFC 9113 §8.3 (and RFC 9114 §4.3, for `h3.rs`): the decoded fields
+/// are a valid request. Verified: `h2wire::request_fields`.
 pub(crate) fn request_fields_ok(a: &[u8], fields: &[Header]) -> bool {
-    request_fields(a, fields).is_some()
-}
-
-/// [`request_fields_ok`], and the Content-Length the fields declare: None
-/// if they are not a valid request, or a Content-Length is not a decimal
-/// length or differs from another (RFC 9110 §8.6, RFC 9113 §8.1.1);
-/// otherwise the length, if one is declared. verilith-h2's core checks the
-/// stream's DATA against it.
-#[inline]
-pub(crate) fn request_fields(a: &[u8], fields: &[Header]) -> Option<Option<u64>> {
-    let (mut m, mut s, mut p, mut au) = (0, 0, 0, 0);
-    let mut cl: Option<u64> = None;
-    let mut regular = false;
-    for f in fields {
-        let n = f.name.of(a);
-        let v = f.value.of(a);
-        if n.is_empty() || verilith_core::scan::any_upper(n) {
-            return None;
-        }
-        if verilith_core::scan::any_nul_cr_lf(v) {
-            return None;
-        }
-        if n[0] == b':' {
-            if regular {
-                return None;
-            }
-            match n {
-                b":method" => m += 1,
-                b":scheme" => s += 1,
-                b":path" => {
-                    if v.is_empty() {
-                        return None;
-                    }
-                    p += 1
-                }
-                b":authority" => au += 1,
-                _ => return None,
-            }
-        } else {
-            regular = true;
-            if matches!(n, b"connection" | b"keep-alive" | b"proxy-connection" | b"transfer-encoding" | b"upgrade") {
-                return None;
-            }
-            if n == b"te" && v != b"trailers" {
-                return None;
-            }
-            if n == b"content-length" {
-                let len = verilith_http::framing::content_length_exec(v)?;
-                if cl.is_some_and(|c| c != len) {
-                    return None;
-                }
-                cl = Some(len);
-            }
-        }
-    }
-    if m == 1 && s == 1 && p == 1 && au <= 1 { Some(cl) } else { None }
+    crate::h2wire::request_fields(a, fields).is_some()
 }
 
 /// Header fields, owned: lowercased names (RFC 9113 §8.2.1) and values,

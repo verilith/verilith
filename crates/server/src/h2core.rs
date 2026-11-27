@@ -39,6 +39,15 @@
 //!   complete (`Step::Dispatch`, or `Step::Data` with END_STREAM) only if
 //!   a declared length equals its DATA ([`Core::body_ok`]); otherwise it
 //!   is malformed, and the stream is reset with PROTOCOL_ERROR.
+//! - **Responses** ([`Core::send_headers`], [`Core::send_data`],
+//!   [`Core::sent`]). A stream's response starts at most once: its header
+//!   block goes out as `h2wire::header_frames` (HEADERS then CONTINUATION,
+//!   which the peer reads back as exactly that block: `h2wire.rs`). Its
+//!   body then goes out in DATA frames of at most `h2wire::CHUNK` bytes,
+//!   each within both send windows, each starting where the last ended,
+//!   with END_STREAM on the one that reaches the body's end (or on HEADERS
+//!   for an empty body), and nothing after it: the stream closes. Only
+//!   then does the response count as sent in full, for the budget below.
 //! - **Flood budget.** Frames that carry no request bytes cost a unit of
 //!   budget: PING, SETTINGS (and each parameter), WINDOW_UPDATE, PRIORITY,
 //!   RST_STREAM (rapid reset), GOAWAY, unknown frames, empty DATA,
@@ -57,6 +66,9 @@ use verilith_h2::spec;
 use crate::flow::{take_data, RecvWindow, SendWindow, MAX_WINDOW};
 use verilith_core::clen::BodyLen;
 use crate::streams::{classify, Kind, St, Verdict};
+use crate::h2wire::{write_headers, data_head, CHUNK};
+#[cfg(verus_keep_ghost)]
+use crate::h2wire::{header_frames, ser_all};
 #[cfg(verus_keep_ghost)]
 use crate::streams::{idle, verdict};
 
@@ -125,7 +137,46 @@ pub struct Live<V> {
     /// Request body bytes received, and the Content-Length the request
     /// declared (§8.1.1).
     pub len: BodyLen,
+    /// Our response on the stream.
+    pub resp: Resp,
     pub v: V,
+}
+
+/// Where our response on a stream is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Resp {
+    /// Nothing sent yet.
+    Waiting,
+    /// HEADERS sent; `off` of the body's `len` bytes sent in DATA (all of
+    /// them: waiting for [`Core::sent`]).
+    Body { len: usize, off: usize },
+}
+
+/// What [`Core::send_data`] asks `h2.rs` to send: `head`, then the
+/// body's bytes `off..off + n`.
+pub struct DataOut {
+    pub head: [u8; 9],
+    pub off: usize,
+    pub n: usize,
+    pub end: bool,
+}
+
+/// `a` is how `b` begins.
+pub open spec fn extends(a: Seq<u8>, b: Seq<u8>) -> bool {
+    a.len() <= b.len() && b.take(a.len() as int) == a
+}
+
+pub proof fn lemma_extends_refl(a: Seq<u8>)
+    ensures extends(a, a),
+{
+    assert(a.take(a.len() as int) =~= a);
+}
+
+pub proof fn lemma_extends_trans(a: Seq<u8>, b: Seq<u8>, c: Seq<u8>)
+    requires extends(a, b), extends(b, c),
+    ensures extends(a, c),
+{
+    assert(c.take(a.len() as int) =~= c.take(b.len() as int).take(a.len() as int));
 }
 
 /// A stream that has been opened: live, or closed (`None`).
@@ -284,6 +335,7 @@ pub open spec fn slot_ok<V>(x: Slot<V>, last: u32) -> bool {
     &&& x.id % 2 == 1
     &&& x.id <= last
     &&& x.live matches Some(l) ==> l.send.inv() && l.recv.inv() && l.len.inv()
+        && (l.resp matches Resp::Body { len, off } ==> off <= len)
 }
 
 /// The same IDs, live in the same places.
@@ -596,6 +648,7 @@ impl<V: Store> Core<V> {
     /// The ID of the stream in slot `at` (0 if there is none).
     pub fn id(&self, at: usize) -> (r: u32)
         requires self.wf(),
+        ensures r == self.id_of(at),
     {
         if at < self.slots.len() { self.slots[at].id } else { 0 }
     }
@@ -687,11 +740,23 @@ impl<V: Store> Core<V> {
             final(self).max_frame == old(self).max_frame,
             final(self).limits == old(self).limits,
             old(self).goaway_sent ==> final(out)@ == old(out)@,
+            extends(old(out)@, final(out)@),
     {
         if !self.goaway_sent {
             let e: [u8; 0] = [];
-            let _ = verilith_h2::serialize(&Frame::GoAway { last_stream: self.last, code, debug: &e }, 16384, out);
+            let ghost o = out@;
+            let r = verilith_h2::serialize(&Frame::GoAway { last_stream: self.last, code, debug: &e }, 16384, out);
+            proof {
+                let f = spec::Frame::GoAway { last_stream: self.last, code, debug: e@ };
+                assert(spec::payload_of(f).len() == 8);
+                assert(r is Ok);
+                assert(out@.take(o.len() as int) =~= o);
+            }
             self.goaway_sent = true;
+        } else {
+            proof {
+                lemma_extends_refl(out@);
+            }
         }
         self.closing = true;
     }
@@ -734,8 +799,13 @@ impl<V: Store> Core<V> {
             final(self).limits == old(self).limits,
             final(self).block is Some == old(self).block is Some,
             old(self).closing ==> final(self).closing,
+            extends(old(out)@, final(out)@),
     {
         let ghost s0 = self.slots@;
+        let ghost o = out@;
+        proof {
+            lemma_extends_refl(o);
+        }
         let gone = self.slots[at].live.take();
         match gone {
             Some(l) => {
@@ -889,7 +959,7 @@ impl<V: Store> Core<V> {
             Some(v) => v,
             None => V::fresh(),
         };
-        let l = Live { st: St::Open, send: SendWindow::new(self.initial_window), recv: RecvWindow::new(self.limits.window), len: BodyLen::new(), v };
+        let l = Live { st: St::Open, send: SendWindow::new(self.initial_window), recv: RecvWindow::new(self.limits.window), len: BodyLen::new(), resp: Resp::Waiting, v };
         let ghost s0 = self.slots@;
         proof {
             if s0.len() > 0 {
@@ -1550,56 +1620,25 @@ impl<V: Store> Core<V> {
         }
     }
 
-    /// How much of the next DATA frame of the stream in slot `at` may be
-    /// sent: at most `left` and `max`, and within both windows, which are
-    /// charged.
-    pub fn take(&mut self, at: usize, left: usize, max: usize) -> (n: usize)
-        requires old(self).wf(),
-        ensures
-            final(self).wf(),
-            n <= left,
-            n <= max,
-            final(self).is_closing() == old(self).is_closing(),
-            final(self).last_id() == old(self).last_id(),
-            final(self).open_streams() == old(self).open_streams(),
-            final(self).in_block() == old(self).in_block(),
-    {
-        if at >= self.slots.len() {
-            return 0;
-        }
-        proof {
-            Self::lemma_shape(self.slots@);
-        }
-        match self.slots[at].live.as_mut() {
-            Some(l) => take_data(&mut self.conn_send, &mut l.send, left, max),
-            None => 0,
-        }
-    }
-
-    /// What the stream in slot `at` may send now.
-    pub fn stream_avail(&self, at: usize) -> usize
-        requires self.wf(),
-    {
-        if at >= self.slots.len() {
-            return 0;
-        }
-        match &self.slots[at].live {
-            Some(l) => l.send.avail(),
-            None => 0,
-        }
-    }
-
     /// The response on the stream in slot `at` was sent in full: the
     /// stream closes, and the budget grows by `control_per_request`.
-    pub fn finish(&mut self, at: usize, out: &mut Vec<u8>)
+    fn finish(&mut self, at: usize, out: &mut Vec<u8>)
         requires old(self).wf(),
         ensures
             final(self).wf(),
+            at < old(self).slots@.len() ==> final(self).slots@.len() == old(self).slots@.len()
+                && final(self).slots@[at as int].live is None
+                && final(self).slots@[at as int].id == old(self).slots@[at as int].id,
+            extends(old(out)@, final(out)@),
+            old(self).is_closing() ==> final(self).is_closing(),
             final(self).last_id() == old(self).last_id(),
             final(self).open_streams() <= old(self).open_streams(),
             final(self).in_block() == old(self).in_block() || final(self).is_closing(),
     {
         if at >= self.slots.len() {
+            proof {
+                lemma_extends_refl(out@);
+            }
             return;
         }
         let k = self.limits.control_per_request as u64;
@@ -1607,6 +1646,200 @@ impl<V: Store> Core<V> {
             self.credit = if self.credit > u64::MAX - k { u64::MAX } else { self.credit + k };
         }
         self.close(at, out);
+    }
+
+    /// The ID of the stream in slot `at` (0 if there is none).
+    pub closed spec fn id_of(&self, at: usize) -> u32 {
+        if at < self.slots@.len() { self.slots@[at as int].id } else { 0 }
+    }
+
+    /// Our response on the live stream in slot `at`; None if the slot
+    /// holds no live stream.
+    pub closed spec fn resp_of(&self, at: usize) -> Option<Resp> {
+        if at < self.slots@.len() {
+            match self.slots@[at as int].live {
+                Some(l) => Some(l.resp),
+                None => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Whether the live stream in slot `at` has its response's HEADERS
+    /// sent; None if the slot holds no live stream.
+    pub fn started(&self, at: usize) -> (r: Option<bool>)
+        requires self.wf(),
+        ensures
+            r == match self.resp_of(at) {
+                Some(Resp::Waiting) => Some(false),
+                Some(_) => Some(true),
+                None => None::<bool>,
+            },
+    {
+        if at >= self.slots.len() {
+            return None;
+        }
+        match &self.slots[at].live {
+            Some(l) => match l.resp {
+                Resp::Waiting => Some(false),
+                Resp::Body { .. } => Some(true),
+            },
+            None => None,
+        }
+    }
+
+    /// Starts the response on the live stream in slot `at`, if it has
+    /// none yet: appends the HEADERS and CONTINUATION frames of `block`
+    /// ([`header_frames`], END_STREAM if `body_len` is 0), and then
+    /// expects `body_len` bytes of body. An empty body completes the
+    /// response: the stream closes and the budget grows.
+    pub fn send_headers(&mut self, at: usize, block: &[u8], body_len: usize, out: &mut Vec<u8>) -> (r: bool)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r == (old(self).resp_of(at) == Some(Resp::Waiting)),
+            !r ==> final(out)@ == old(out)@ && final(self).resp_of(at) == old(self).resp_of(at),
+            r ==> extends(
+                old(out)@ + ser_all(header_frames(old(self).id_of(at), block@, body_len == 0, CHUNK as nat)),
+                final(out)@,
+            ),
+            r && body_len > 0 ==> final(self).resp_of(at) == Some(Resp::Body { len: body_len, off: 0 }),
+            r && body_len == 0 ==> final(self).resp_of(at) is None,
+            final(self).id_of(at) == old(self).id_of(at),
+            final(self).last_id() == old(self).last_id(),
+            final(self).open_streams() <= old(self).open_streams(),
+            old(self).is_closing() ==> final(self).is_closing(),
+            final(self).in_block() == old(self).in_block() || final(self).is_closing(),
+    {
+        if at >= self.slots.len() {
+            return false;
+        }
+        proof {
+            Self::lemma_shape(self.slots@);
+        }
+        let id = self.slots[at].id;
+        let max = self.max_frame;
+        match self.slots[at].live.as_mut() {
+            Some(l) => {
+                match l.resp {
+                    Resp::Body { .. } => return false,
+                    Resp::Waiting => {},
+                }
+                if body_len > 0 {
+                    l.resp = Resp::Body { len: body_len, off: 0 };
+                }
+            },
+            None => return false,
+        }
+        proof {
+            assert(self.slots@[at as int].id == id);
+        }
+        let ghost o = out@;
+        write_headers(id, block, body_len == 0, max, out);
+        if body_len == 0 {
+            let ghost o1 = out@;
+            self.finish(at, out);
+            proof {
+                assert(out@.take(o1.len() as int).take(o1.len() as int) =~= out@.take(o1.len() as int));
+            }
+        } else {
+            proof {
+                assert(out@.take(out@.len() as int) =~= out@);
+            }
+        }
+        true
+    }
+
+    /// The next DATA frame of the response on the live stream in slot
+    /// `at`, as much as the windows allow now, at most [`CHUNK`] bytes:
+    /// `head`, for `h2.rs` to send followed by the body's bytes
+    /// `off..off + n`. Frames follow one another through the body (each
+    /// `off` is where the last ended), and END_STREAM is set on the one
+    /// that reaches its end; once its bytes are written, [`Core::sent`]
+    /// completes the response. None if the stream has no response under
+    /// way, its body is all sent, or a window is spent.
+    pub fn send_data(&mut self, at: usize, out: &mut Vec<u8>) -> (r: Option<DataOut>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).id_of(at) == old(self).id_of(at),
+            r is None ==> final(out)@ == old(out)@ && final(self).resp_of(at) == old(self).resp_of(at),
+            r matches Some(d) ==> {
+                &&& old(self).resp_of(at) matches Some(Resp::Body { len, off })
+                &&& d.off == off
+                &&& 0 < d.n <= CHUNK
+                &&& d.off + d.n <= len
+                &&& d.end == (d.off + d.n == len)
+                &&& d.head@ == spec::enc_head(d.n as u32, spec::DATA, if d.end { 1u8 } else { 0u8 }, old(self).id_of(at))
+                &&& 1 <= old(self).id_of(at) <= spec::MAX_31
+                &&& final(self).resp_of(at) == Some(Resp::Body { len, off: (off + d.n) as usize })
+            },
+            final(out)@ == old(out)@,
+            final(self).last_id() == old(self).last_id(),
+            final(self).open_streams() <= old(self).open_streams(),
+            old(self).is_closing() ==> final(self).is_closing(),
+            final(self).in_block() == old(self).in_block() || final(self).is_closing(),
+    {
+        if at >= self.slots.len() {
+            return None;
+        }
+        proof {
+            Self::lemma_shape(self.slots@);
+        }
+        let id = self.slots[at].id;
+        let d = match self.slots[at].live.as_mut() {
+            Some(l) => match l.resp {
+                Resp::Body { len, off } => {
+                    if off == len {
+                        return None;
+                    }
+                    let n = take_data(&mut self.conn_send, &mut l.send, len - off, CHUNK);
+                    if n == 0 {
+                        return None;
+                    }
+                    let end = n == len - off;
+                    l.resp = Resp::Body { len, off: off + n };
+                    DataOut { head: data_head(id, n, end), off, n, end }
+                },
+                Resp::Waiting => return None,
+            },
+            None => return None,
+        };
+        Some(d)
+    }
+
+    /// The response on the live stream in slot `at` is sent in full (its
+    /// last DATA frame is written): the stream closes, and the budget grows
+    /// by `control_per_request`. Nothing for a stream whose response is
+    /// not all framed.
+    pub fn sent(&mut self, at: usize, out: &mut Vec<u8>) -> (r: bool)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r == (old(self).resp_of(at) matches Some(Resp::Body { len, off }) && off == len),
+            r ==> final(self).resp_of(at) is None && extends(old(out)@, final(out)@),
+            !r ==> final(out)@ == old(out)@ && final(self).resp_of(at) == old(self).resp_of(at),
+            final(self).id_of(at) == old(self).id_of(at),
+            final(self).last_id() == old(self).last_id(),
+            final(self).open_streams() <= old(self).open_streams(),
+            old(self).is_closing() ==> final(self).is_closing(),
+            final(self).in_block() == old(self).in_block() || final(self).is_closing(),
+    {
+        if at >= self.slots.len() {
+            return false;
+        }
+        let done = match &self.slots[at].live {
+            Some(l) => match l.resp {
+                Resp::Body { len, off } => off == len,
+                Resp::Waiting => false,
+            },
+            None => false,
+        };
+        if done {
+            self.finish(at, out);
+        }
+        done
     }
 
     /// RST_STREAM(`code`) for the live stream in slot `at` (a response
