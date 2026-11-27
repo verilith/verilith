@@ -19,6 +19,7 @@ use verilith_quic::flow::{RecvCredit, SendCredit};
 use verilith_quic::frame::{self, Frame};
 use verilith_quic::packet::{self, Header};
 use verilith_quic::params::{self, TransportParameters};
+use verilith_quic::reclog::{self, RecLog};
 use verilith_quic::recv::Received;
 use verilith_quic::rtt::Rtt;
 use verilith_quic::sent::{Done, Sent};
@@ -172,7 +173,6 @@ enum Pmtu {
 /// What a sent packet carried, to act on when it is acknowledged or lost.
 #[derive(Clone, Copy, Debug)]
 enum Rec {
-    Done,
     Ack,
     Ping,
     Crypto { off: u64, len: u32 },
@@ -196,9 +196,8 @@ struct Space<P: Provider> {
     recv: Received,
     crypto_out: SendBuf,
     crypto_in: Reassembly,
-    /// The records of packets sent, by index from `rec_base`.
-    recs: VecDeque<Rec>,
-    rec_base: u64,
+    /// The records of packets sent (verified `reclog`).
+    recs: RecLog<Rec>,
     /// Probe packets to send (§6.2.4).
     probes: u8,
     /// An ACK frame is owed.
@@ -218,8 +217,7 @@ impl<P: Provider> Space<P> {
             recv: Received::new(),
             crypto_out: SendBuf::default(),
             crypto_in: Reassembly::new(MAX_CRYPTO_BUFFER as u64),
-            recs: VecDeque::new(),
-            rec_base: 0,
+            recs: RecLog::new(),
             probes: 0,
             ack_owed: false,
             loss_time: None,
@@ -228,14 +226,7 @@ impl<P: Provider> Space<P> {
     }
 
     fn rec_index(&self) -> u64 {
-        self.rec_base + self.recs.len() as u64
-    }
-
-    fn trim_recs(&mut self) {
-        while let Some(Rec::Done) = self.recs.front() {
-            self.recs.pop_front();
-            self.rec_base += 1;
-        }
+        self.recs.next_index()
     }
 }
 
@@ -684,7 +675,6 @@ impl<P: Provider> Connection<P> {
         sp.tx = None;
         sp.sent.discard();
         sp.recs.clear();
-        sp.rec_base = 0;
         sp.loss_time = None;
         sp.probes = 0;
         sp.ack_owed = false;
@@ -878,24 +868,17 @@ impl<P: Provider> Connection<P> {
 
     /// A packet's frames were acknowledged (`acked`) or lost.
     fn on_recs(&mut self, s: usize, token: u64, acked: bool) {
-        let start = token >> 8;
-        let count = token & 0xff;
+        let (start, count) = reclog::unpack(token);
         for k in start..start + count {
-            let sp = &mut self.spaces[s];
-            if k < sp.rec_base {
-                continue;
-            }
-            let i = (k - sp.rec_base) as usize;
-            let Some(r) = sp.recs.get_mut(i) else { continue };
-            let rec = std::mem::replace(r, Rec::Done);
+            let Some(rec) = self.spaces[s].recs.take(k) else { continue };
             self.on_rec(s, rec, acked);
         }
-        self.spaces[s].trim_recs();
+        self.spaces[s].recs.trim();
     }
 
     fn on_rec(&mut self, s: usize, rec: Rec, acked: bool) {
         match rec {
-            Rec::Done | Rec::Ack | Rec::Ping | Rec::Close => {}
+            Rec::Ack | Rec::Ping | Rec::Close => {}
             Rec::Crypto { off, len } => {
                 let sp = &mut self.spaces[s];
                 if acked {
@@ -1568,14 +1551,9 @@ impl<P: Provider> Connection<P> {
         let mut tokens = Vec::new();
         self.spaces[s].sent.outstanding(64, &mut tokens);
         for token in tokens {
-            let start = token >> 8;
-            let count = token & 0xff;
+            let (start, count) = reclog::unpack(token);
             for k in start..start + count {
-                let sp = &self.spaces[s];
-                if k < sp.rec_base {
-                    continue;
-                }
-                let Some(&r) = sp.recs.get((k - sp.rec_base) as usize) else { continue };
+                let Some(r) = self.spaces[s].recs.get(k) else { continue };
                 // Requeue as if lost; the record stays for the packet's ACK.
                 match r {
                     Rec::Crypto { .. } | Rec::Stream { .. } | Rec::HandshakeDone | Rec::MaxData | Rec::MaxStreamData { .. } => {
@@ -1826,7 +1804,7 @@ impl<P: Provider> Connection<P> {
         // ACK.
         if self.spaces[s].ack_owed && self.spaces[s].recv.largest().is_some() {
             if self.write_ack(now, s, buf, end) {
-                self.spaces[s].recs.push_back(Rec::Ack);
+                self.spaces[s].recs.push(Rec::Ack);
                 nrec += 1;
                 self.spaces[s].ack_owed = false;
                 self.spaces[s].recv.on_ack_sent();
@@ -1838,7 +1816,7 @@ impl<P: Provider> Connection<P> {
                 if self.send_handshake_done && end_e.saturating_sub(buf.len()) >= 1 {
                     buf.push(0x1e);
                     self.send_handshake_done = false;
-                    self.spaces[2].recs.push_back(Rec::HandshakeDone);
+                    self.spaces[2].recs.push(Rec::HandshakeDone);
                     nrec += 1;
                     eliciting = true;
                 }
@@ -1847,7 +1825,7 @@ impl<P: Provider> Connection<P> {
                         buf.push(0x1b);
                         buf.extend_from_slice(&d);
                         self.path_response = None;
-                        self.spaces[2].recs.push_back(Rec::Ping);
+                        self.spaces[2].recs.push(Rec::Ping);
                         nrec += 1;
                         eliciting = true;
                     }
@@ -1856,7 +1834,7 @@ impl<P: Provider> Connection<P> {
                     buf.push(0x10);
                     varint::write(buf, self.rx_advertised);
                     self.send_max_data = false;
-                    self.spaces[2].recs.push_back(Rec::MaxData);
+                    self.spaces[2].recs.push(Rec::MaxData);
                     nrec += 1;
                     eliciting = true;
                 }
@@ -1865,7 +1843,7 @@ impl<P: Provider> Connection<P> {
                         buf.push(if k == 0 { 0x12 } else { 0x13 });
                         varint::write(buf, self.streams_allowed[k]);
                         self.send_max_streams[k] = false;
-                        self.spaces[2].recs.push_back(Rec::MaxStreams { bidi: k == 0 });
+                        self.spaces[2].recs.push(Rec::MaxStreams { bidi: k == 0 });
                         nrec += 1;
                         eliciting = true;
                     }
@@ -1890,7 +1868,7 @@ impl<P: Provider> Connection<P> {
                 sp.crypto_out.get(off, n, buf);
                 let sp = &mut self.spaces[s];
                 sp.crypto_out.sent(off, n, false);
-                sp.recs.push_back(Rec::Crypto { off, len: n as u32 });
+                sp.recs.push(Rec::Crypto { off, len: n as u32 });
                 nrec += 1;
                 eliciting = true;
             }
@@ -1903,7 +1881,7 @@ impl<P: Provider> Connection<P> {
         if self.spaces[s].probes > 0 {
             if !eliciting && end - buf.len() >= 1 {
                 buf.push(0x01);
-                self.spaces[s].recs.push_back(Rec::Ping);
+                self.spaces[s].recs.push(Rec::Ping);
                 nrec += 1;
                 eliciting = true;
             }
@@ -1917,7 +1895,7 @@ impl<P: Provider> Connection<P> {
         while buf.len() - pn_off < 4 {
             buf.push(0);
         }
-        Some(Pending { s, pn, hdr_start, pn_off, payload_start, len_pos, token: (rec_start << 8) | nrec as u64, eliciting })
+        Some(Pending { s, pn, hdr_start, pn_off, payload_start, len_pos, token: reclog::pack(rec_start, nrec as u64), eliciting })
     }
 
     fn write_ack(&mut self, now: u64, s: usize, buf: &mut Vec<u8>, end: usize) -> bool {
@@ -1965,7 +1943,7 @@ impl<P: Provider> Connection<P> {
                     varint::write(buf, id);
                     varint::write(buf, code);
                     r.stop = Some((code, true));
-                    self.spaces[2].recs.push_back(Rec::Stop { id });
+                    self.spaces[2].recs.push(Rec::Stop { id });
                     *nrec += 1;
                     *eliciting = true;
                 }
@@ -1974,7 +1952,7 @@ impl<P: Provider> Connection<P> {
                     varint::write(buf, id);
                     varint::write(buf, r.advertised);
                     r.send_max = false;
-                    self.spaces[2].recs.push_back(Rec::MaxStreamData { id });
+                    self.spaces[2].recs.push(Rec::MaxStreamData { id });
                     *nrec += 1;
                     *eliciting = true;
                 }
@@ -1987,7 +1965,7 @@ impl<P: Provider> Connection<P> {
                         varint::write(buf, code);
                         varint::write(buf, fs);
                         snd.reset = Some((code, fs, true));
-                        self.spaces[2].recs.push_back(Rec::Reset { id });
+                        self.spaces[2].recs.push(Rec::Reset { id });
                         *nrec += 1;
                         *eliciting = true;
                     } else {
@@ -2020,7 +1998,7 @@ impl<P: Provider> Connection<P> {
                                     snd.st.send(&mut self.tx_credit, new, fin && off + n as u64 == snd.buf.end());
                                     snd.sent_new += new;
                                 }
-                                self.spaces[2].recs.push_back(Rec::Stream { id, off, len: n as u32, fin });
+                                self.spaces[2].recs.push(Rec::Stream { id, off, len: n as u32, fin });
                                 *nrec += 1;
                                 *eliciting = true;
                             }
@@ -2108,11 +2086,11 @@ impl<P: Provider> Connection<P> {
             }
             varint::write(buf, 0);
             let rec_start = self.spaces[s].rec_index();
-            self.spaces[s].recs.push_back(Rec::Close);
+            self.spaces[s].recs.push(Rec::Close);
             while buf.len() - pn_off < 4 {
                 buf.push(0);
             }
-            let p = Pending { s, pn, hdr_start, pn_off, payload_start, len_pos, token: (rec_start << 8) | 1, eliciting: false };
+            let p = Pending { s, pn, hdr_start, pn_off, payload_start, len_pos, token: reclog::pack(rec_start, 1), eliciting: false };
             self.seal(now, buf, p, 0);
         }
         let n = buf.len() - start;
