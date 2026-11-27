@@ -18,12 +18,15 @@ use verilith_quic::cc::NewReno;
 use verilith_quic::cubic::Cubic;
 use verilith_quic::flow::{RecvCredit, SendCredit};
 use verilith_quic::frame::{self, Frame};
+use verilith_quic::handle;
+use verilith_quic::keyphase::{Gen, KeyPhase};
 use verilith_quic::packet::{self, Header};
 use verilith_quic::params::{self, TransportParameters};
 use verilith_quic::pktbuf::{self, put_frame};
 use verilith_quic::reclog::{self, RecLog};
 use verilith_quic::recv::Received;
 use verilith_quic::rtt::Rtt;
+use verilith_quic::schedule::KeySchedule;
 use verilith_quic::sent::{Done, Sent};
 use verilith_quic::timers::{self, Due, Timers};
 use verilith_quic::streams::{RecvState, RecvStream, SendState, SendStream, StreamIds, Use};
@@ -33,7 +36,7 @@ use verilith_tls::quic::{Event as TlsEvent, Out, QuicServer, HANDSHAKE, INITIAL,
 use verilith_tls::quic_packet::{keys, unmask, update, Aead};
 
 /// The length of the connection IDs this server issues.
-pub const CID_LEN: usize = 8;
+pub const CID_LEN: usize = verilith_quic::route::CID_LEN;
 
 // Transport error codes (RFC 9000 §20.1).
 pub const NO_ERROR: u64 = 0x00;
@@ -206,8 +209,6 @@ struct Space<P: Provider> {
     ack_owed: bool,
     /// The loss timer (§6.1.2).
     loss_time: Option<u64>,
-    /// Keys are gone for good.
-    discarded: bool,
 }
 
 impl<P: Provider> Space<P> {
@@ -223,7 +224,6 @@ impl<P: Provider> Space<P> {
             probes: 0,
             ack_owed: false,
             loss_time: None,
-            discarded: false,
         }
     }
 
@@ -334,9 +334,10 @@ pub struct Connection<P: Provider> {
     buffered: usize,
     /// 1-RTT key phase: our current phase bit; the next receive keys and
     /// both secrets.
-    key_phase: bool,
+    /// The 1-RTT key generation (verified `keyphase`).
+    kp: KeyPhase,
     rx_next: Option<Aead<P::Key>>,
-    rx_prev: Option<(Aead<P::Key>, u64)>,
+    rx_prev: Option<Aead<P::Key>>,
     secrets: Option<(Secret, Secret)>,
     suite: u16,
     /// Idle timer: the last packet received, or first ack-eliciting sent
@@ -347,7 +348,9 @@ pub struct Connection<P: Provider> {
     close_owed: bool,
     /// When an ack-eliciting packet last went out.
     last_eliciting: u64,
-    handshake_done: bool,
+    /// Which spaces' keys are installed and discarded (verified
+    /// `schedule`).
+    ks: KeySchedule,
     /// Bytes of the client's first Initial's Source Connection ID, for
     /// checking initial_source_connection_id (§7.3).
     client_scid: Vec<u8>,
@@ -470,7 +473,7 @@ impl<P: Provider> Connection<P> {
             path_response: None,
             events: VecDeque::new(),
             buffered: 0,
-            key_phase: false,
+            kp: KeyPhase::new(),
             rx_next: None,
             rx_prev: None,
             secrets: None,
@@ -479,7 +482,7 @@ impl<P: Provider> Connection<P> {
             close: None,
             close_owed: false,
             last_eliciting: now,
-            handshake_done: false,
+            ks: KeySchedule::new(),
             client_scid: scid.to_vec(),
             early: Vec::new(),
             replay_early: false,
@@ -489,7 +492,7 @@ impl<P: Provider> Connection<P> {
 
     /// The handshake has not completed.
     pub fn is_handshaking(&self) -> bool {
-        !self.handshake_done
+        !self.ks.complete()
     }
 
     /// The connection is gone: drop it.
@@ -560,12 +563,15 @@ impl<P: Provider> Connection<P> {
     }
 
     fn handle_packet(&mut self, now: u64, s: usize, pkt: &mut [u8], pn_off: usize) {
-        if s == 2 && !self.handshake_done {
+        if s == 2 && !self.ks.complete() {
             // §5.7 of RFC 9001: no 1-RTT before the handshake completes;
             // a few are kept to process once it does.
             if self.early.len() < 4 {
                 self.early.push((pkt.to_vec(), pn_off));
             }
+            return;
+        }
+        if !self.ks.may_open(s) {
             return;
         }
         let Some((_, hp)) = self.spaces[s].rx.as_ref() else { return };
@@ -577,29 +583,27 @@ impl<P: Provider> Connection<P> {
         let pn = packet::decode_pn(expected.min(verilith_quic::recv::PN_LIMIT - 1), t, n);
         let hdr = pn_off + n;
         let first = pkt[0];
-        let res = if s == 2 && (first & 0x04 != 0) != self.key_phase {
-            // The previous phase, for packets before the update; else the
-            // next phase (§6.3 of RFC 9001).
-            match &self.rx_prev {
-                Some((prev, from)) if pn < *from => prev.open(pn, pkt, hdr),
-                _ => {
-                    if self.rx_next.is_none() {
-                        self.prepare_next();
-                    }
-                    let r = match &self.rx_next {
-                        Some(next) => next.open(pn, pkt, hdr),
-                        None => None,
-                    };
-                    if r.is_some() {
-                        self.on_peer_key_update(pn);
-                    }
-                    r
-                }
-            }
-        } else {
-            match self.spaces[s].rx.as_ref() {
+        let bit = first & 0x04 != 0;
+        // Which generation's keys (§6.3 of RFC 9001, verified `keyphase`).
+        let g = if s == 2 { self.kp.select(bit, pn) } else { Gen::Current };
+        let res = match g {
+            Gen::Current => match self.spaces[s].rx.as_ref() {
                 Some((aead, _)) => aead.open(pn, pkt, hdr),
                 None => None,
+            },
+            Gen::Prev => self.rx_prev.as_ref().and_then(|prev| prev.open(pn, pkt, hdr)),
+            Gen::Next => {
+                if self.rx_next.is_none() {
+                    self.prepare_next();
+                }
+                let r = match &self.rx_next {
+                    Some(next) => next.open(pn, pkt, hdr),
+                    None => None,
+                };
+                if r.is_some() {
+                    self.on_peer_key_update(bit, pn);
+                }
+                r
             }
         };
         let Some(len) = res else { trace(format_args!("rx s{s} pn{pn} undecryptable")); return };
@@ -613,7 +617,7 @@ impl<P: Provider> Connection<P> {
         if self.spaces[s].recv.is_dup(pn) {
             return;
         }
-        if s == 1 && !self.spaces[0].discarded {
+        if s == 1 && self.ks.on_handshake_packet() {
             // §4.9.1 of RFC 9001: the server discards Initial keys on its
             // first Handshake packet, and the address is validated (§8.1).
             self.discard(0);
@@ -628,7 +632,7 @@ impl<P: Provider> Connection<P> {
                 return;
             }
         };
-        if self.spaces[s].discarded && s != 2 {
+        if self.ks.discarded(s) {
             return;
         }
         self.spaces[s].recv.insert(pn, now, eliciting);
@@ -649,7 +653,10 @@ impl<P: Provider> Connection<P> {
 
     /// The peer moved to the next key phase with packet `pn` (§6.2): we
     /// follow, for receiving and sending.
-    fn on_peer_key_update(&mut self, pn: u64) {
+    fn on_peer_key_update(&mut self, bit: bool, pn: u64) {
+        if self.secrets.is_none() || !self.kp.on_update(bit, pn) {
+            return;
+        }
         let Some((c, sv)) = self.secrets.take() else { return };
         let (c2, _) = update(&self.prov, self.suite, &c);
         let (s2, tx) = update(&self.prov, self.suite, &sv);
@@ -657,22 +664,20 @@ impl<P: Provider> Connection<P> {
         let sp = &mut self.spaces[2];
         let (old, hp) = sp.rx.take().expect("1-RTT keys");
         sp.rx = Some((next, hp));
-        self.rx_prev = Some((old, pn));
+        self.rx_prev = Some(old);
         if let Some((_, hp)) = sp.tx.take() {
             sp.tx = Some((tx, hp));
         }
-        self.key_phase = !self.key_phase;
         self.secrets = Some((c2, s2));
+        // The generation after, ready before the peer uses it, so that
+        // opening a packet takes the same time either way (§6.3, §9.5).
+        self.prepare_next();
     }
 
     /// Discards a space's keys and state (§4.9 of RFC 9001, §6.4 of RFC
     /// 9002).
     fn discard(&mut self, s: usize) {
         let sp = &mut self.spaces[s];
-        if sp.discarded {
-            return;
-        }
-        sp.discarded = true;
         sp.rx = None;
         sp.tx = None;
         sp.sent.discard();
@@ -713,7 +718,8 @@ impl<P: Provider> Connection<P> {
                     while let Some(r) = it.next() {
                         rs.push(r);
                     }
-                    let delay = if s == 2 { a.delay.checked_shl(self.peer_ack_exponent as u32).unwrap_or(u64::MAX) } else { 0 };
+                    // Scaled without losing high bits (verified `handle::ack_delay`).
+                    let delay = if s == 2 { handle::ack_delay(a.delay, self.peer_ack_exponent) } else { 0 };
                     let r = self.on_ack(now, s, &rs, delay);
                     self.scratch_rs = rs;
                     r?;
@@ -759,11 +765,15 @@ impl<P: Provider> Connection<P> {
                     if retire > seq {
                         return Err(FRAME_ENCODING_ERROR);
                     }
+                    // §19.15: not when we send to an empty connection ID.
+                    if !handle::new_cid_allowed(self.remote_cid.len()) {
+                        return Err(PROTOCOL_VIOLATION);
+                    }
                 }
                 Frame::RetireConnectionId(seq) => {
                     // We issued only sequence number 0, which the peer is
                     // using (§19.16).
-                    if seq > 0 {
+                    if !handle::retire_allowed(seq, 0) {
                         return Err(PROTOCOL_VIOLATION);
                     }
                 }
@@ -775,7 +785,7 @@ impl<P: Provider> Connection<P> {
                 Frame::PathResponse(_) => {}
                 Frame::ConnectionClose { app, err, .. } => {
                     let pto = self.pto_duration(2);
-                    self.state = State::Draining(now + 3 * pto);
+                    self.state = State::Draining(timers::add_sat(now, 3 * pto));
                     self.events.push_back(Event::Closed { code: err, app, remote: true });
                     return Ok(false);
                 }
@@ -802,7 +812,7 @@ impl<P: Provider> Connection<P> {
                 if let Some(d) = done.iter().find(|d| d.pn == largest) {
                     let sample = now.saturating_sub(d.packet.time);
                     let max_delay = if s == 2 { self.peer_max_ack_delay } else { 0 };
-                    self.rtt.update(sample, delay, max_delay, self.handshake_done);
+                    self.rtt.update(sample, delay, max_delay, self.ks.complete());
                 }
             }
         }
@@ -990,7 +1000,7 @@ impl<P: Provider> Connection<P> {
             let r = self.tls.read(level, chunk, &mut out);
             self.spaces[s].crypto_in.consume(n);
             for (i, d) in [&out.initial, &out.handshake, &out.one_rtt].into_iter().enumerate() {
-                if !d.is_empty() && !self.spaces[i].discarded {
+                if !d.is_empty() && !self.ks.discarded(i) {
                     self.spaces[i].crypto_out.write(d);
                 }
             }
@@ -1007,6 +1017,9 @@ impl<P: Provider> Connection<P> {
     /// The server's flight is written: Handshake keys, the server's 1-RTT
     /// keys, and the client's transport parameters.
     fn on_accepted(&mut self) -> Result<(), u64> {
+        if !self.ks.on_server_flight() {
+            return Err(INTERNAL_ERROR);
+        }
         let suite = self.tls.suite().ok_or(INTERNAL_ERROR)?;
         self.suite = suite;
         let (c, s) = self.tls.hs_secrets().ok_or(INTERNAL_ERROR)?;
@@ -1054,11 +1067,13 @@ impl<P: Provider> Connection<P> {
     }
 
     fn on_done(&mut self, now: u64) {
-        self.handshake_done = true;
-        self.state = State::Established;
-        self.send_handshake_done = true;
         // §4.9.2 of RFC 9001: the server's handshake is confirmed now, and
         // Handshake keys are discarded.
+        if !self.ks.on_complete() {
+            return;
+        }
+        self.state = State::Established;
+        self.send_handshake_done = true;
         self.discard(1);
         self.events.push_back(Event::Connected);
         self.replay_early = true;
@@ -1446,7 +1461,7 @@ impl<P: Provider> Connection<P> {
         let mut dur = [0; 3];
         for s in 0..3 {
             let sp = &self.spaces[s];
-            if sp.discarded || sp.tx.is_none() || (s == 2 && !self.handshake_done) {
+            if !self.ks.may_send(s) || sp.tx.is_none() || (s == 2 && !self.ks.complete()) {
                 continue;
             }
             last[s] = sp.sent.eliciting_in_flight();
@@ -1511,7 +1526,7 @@ impl<P: Provider> Connection<P> {
                 // Before the handshake completes, probe both handshake
                 // spaces (§6.2.4: "an endpoint MAY send ... in other
                 // packet number spaces").
-                if s == 0 && self.spaces[1].tx.is_some() && !self.spaces[1].discarded {
+                if s == 0 && self.ks.may_send(1) && self.spaces[1].tx.is_some() {
                     self.spaces[1].probes = 1;
                     self.requeue(1);
                 }
@@ -1563,7 +1578,7 @@ impl<P: Provider> Connection<P> {
             self.pmtu = Pmtu::Done;
             return 0;
         }
-        if !self.handshake_done || self.state != State::Established || self.spaces[2].tx.is_none() {
+        if !self.ks.complete() || self.state != State::Established || self.spaces[2].tx.is_none() {
             return 0;
         }
         let inflight: u64 = self.spaces.iter().map(|s| s.sent.bytes_in_flight()).sum();
@@ -1662,7 +1677,7 @@ impl<P: Provider> Connection<P> {
         let mut has_initial_eliciting = false;
         let mut any_eliciting = false;
         for s in 0..3 {
-            if self.spaces[s].tx.is_none() || self.spaces[s].discarded {
+            if !self.ks.may_send(s) || self.spaces[s].tx.is_none() {
                 continue;
             }
             if !self.wants_send(now, s) {
@@ -1748,7 +1763,7 @@ impl<P: Provider> Connection<P> {
             len_pos = Some(buf.len());
             buf.extend_from_slice(&[0x40, 0]);
         } else {
-            buf.push(0x40 | if self.key_phase { 0x04 } else { 0 } | (pn_len as u8 - 1));
+            buf.push(0x40 | if self.kp.phase() { 0x04 } else { 0 } | (pn_len as u8 - 1));
             buf.extend_from_slice(&self.remote_cid);
         }
         let pn_off = buf.len();
@@ -1992,10 +2007,10 @@ impl<P: Provider> Connection<P> {
         let start = buf.len();
         let Some((code, app)) = self.close else { return 0 };
         for s in 0..3 {
-            if self.spaces[s].tx.is_none() || self.spaces[s].discarded {
+            if !self.ks.may_send(s) || self.spaces[s].tx.is_none() {
                 continue;
             }
-            if s == 2 && !self.handshake_done {
+            if s == 2 && !self.ks.complete() {
                 continue;
             }
             if room - (buf.len() - start) < 80 {
@@ -2019,7 +2034,7 @@ impl<P: Provider> Connection<P> {
                 len_pos = Some(buf.len());
                 buf.extend_from_slice(&[0x40, 0]);
             } else {
-                buf.push(0x40 | if self.key_phase { 0x04 } else { 0 } | (pn_len as u8 - 1));
+                buf.push(0x40 | if self.kp.phase() { 0x04 } else { 0 } | (pn_len as u8 - 1));
                 buf.extend_from_slice(&self.remote_cid);
             }
             let pn_off = buf.len();

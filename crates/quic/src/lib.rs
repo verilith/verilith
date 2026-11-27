@@ -8,6 +8,8 @@ pub mod cubic;
 pub mod flow;
 pub mod frame;
 #[doc(hidden)]
+pub mod handle;
+pub mod keyphase;
 pub mod lemmas;
 pub mod packet;
 pub mod params;
@@ -16,7 +18,9 @@ pub mod reasm;
 pub mod ranges;
 pub mod reclog;
 pub mod recv;
+pub mod schedule;
 pub mod sendq;
+pub mod route;
 pub mod rtt;
 pub mod sent;
 pub mod streams;

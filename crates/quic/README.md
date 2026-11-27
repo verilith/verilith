@@ -158,6 +158,31 @@ Loss recovery (RFC 9002), for one packet number space each:
 - **Frames per packet type** (§12.4, Table 3, `allowed`): `allowed` is
   Table 3 written column by column, `ack_eliciting` is §13.2's rule, and
   `server_receives` refuses NEW_TOKEN and HANDSHAKE_DONE (§19.7, §19.20).
+- **Key updates** (RFC 9001 §6, `keyphase`): `KeyPhase::select` picks
+  the previous, current or next generation's keys for a 1-RTT packet,
+  only ever one whose phase matches the Key Phase bit; the previous only
+  for packets numbered below the first of the current generation, and
+  the next only for those at or above it. `on_update` moves on only for a
+  packet sent to the next generation, and `phase` (the bit to send with)
+  follows the generation.
+- **Key installation and discard** (RFC 9001 §4.9, §5.7, `schedule`):
+  each space's keys go from absent to installed to discarded and never
+  back; Initial keys are discarded on the first Handshake packet
+  processed, Handshake keys only once the handshake is complete
+  (confirmed, for a server), and 1-RTT packets are opened only after
+  that.
+- **Routing** (§5.2, §6, §7.2, §14.1, §17.2.1, `route`): a connection ID
+  from `make_cid` names its slot (`cid_slot` gives it back); `may_start`
+  opens a connection only for an Initial in a datagram of at least 1200
+  bytes with a Destination Connection ID of at least 8; and
+  `version_negotiation` writes a Version Negotiation packet echoing the
+  client's connection IDs swapped and listing version 1, proven to parse
+  back as exactly that, only for datagrams of at least 1200 bytes.
+- **Frame handling checks** (§19.3, §19.15, §19.16, `handle`):
+  `ack_delay` scales an ACK Delay by `2^ack_delay_exponent` and saturates
+  rather than losing high bits; a NEW_CONNECTION_ID is refused when we
+  send to an empty connection ID, and RETIRE_CONNECTION_ID may only name a
+  sequence number we issued.
 
 Every loop in a parser consumes input, so parsing is linear in the input;
 the PADDING scan reads eight bytes at a time.
@@ -187,9 +212,9 @@ frame encoded and parsed in between, and checks that only received
 packets are acknowledged, no packet is acknowledged or lost twice, and
 the bytes in flight match a model; and RFC 9002's arithmetic on known
 values. `tests/reasm.rs`, `tests/sendq.rs`, `tests/reclog.rs`,
-`tests/pktbuf.rs` and `tests/timers.rs` check reassembly, `RangeSet`,
-`SendState`, `RecLog`, `put_frame` and the timers against simple
-references.
+`tests/pktbuf.rs`, `tests/timers.rs` and `tests/route.rs` check
+reassembly, `RangeSet`, `SendState`, `RecLog`, `put_frame`, the timers
+and routing against simple references.
 
 `bench/` compares verilith-quic with quinn-proto 0.11.19 and quiche
 0.24.9 (`bench/setup.sh` copies them from crates.io and makes their frame

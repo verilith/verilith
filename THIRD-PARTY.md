@@ -12,6 +12,8 @@ generated tables and the Brotli dictionary, as noted.
 | `crates/dns/fuzz/seeds/` | Fuzzing seed inputs | [c-ares](https://github.com/c-ares/c-ares) `test/fuzzinput` | MIT, [LICENSE-c-ares](crates/dns/LICENSE-c-ares) |
 | `crates/dns/cares/c-ares-use-vdns.patch` | A patch to c-ares, with lines of its source as context | [c-ares](https://github.com/c-ares/c-ares) | MIT, [LICENSE-c-ares](crates/dns/LICENSE-c-ares) |
 | `crates/http/compat/llhttp/include/llhttp.h`, `crates/http/compat/llhttp/src/` | llhttp's public header and its API layer (`api.c`, `http.c`, `lenient.c`) | [nodejs/llhttp](https://github.com/nodejs/llhttp) 9.4.3 | MIT, [LICENSE-llhttp](crates/http/compat/llhttp/LICENSE-llhttp) |
+| `crates/bind/include/ada_url_pattern.h` | ada 4.0.0's URLPattern implementation (and Sy Brand's tl::expected), copied by `crates/bind/scripts/vendor-ada-url-pattern.py` | [ada-url/ada](https://github.com/ada-url/ada) | Apache-2.0 OR MIT (tl::expected: CC0), notice at the top of the file |
+| `crates/png/include/png.h`, `pngconf.h`, `pnglibconf.h` | libpng's public headers, so C callers compile unchanged | [libpng](https://github.com/pnggroup/libpng) 1.6.59 | libpng license, in full in `png.h` |
 | `crates/json/include/cJSON.h`, `crates/json/tests/c/cjson_tests/common.h` | cJSON's public header and a test helper; the tree-building functions in `crates/json/src/ffi.rs` are ported from cJSON 1.7.19 | [DaveGamble/cJSON](https://github.com/DaveGamble/cJSON) | MIT, notice at the top of each header |
 | `crates/regex/src/tables.rs` | Unicode tables generated from RE2's (compiled into the library) | [google/re2](https://github.com/google/re2) | BSD-3-Clause, [LICENSE-re2](crates/regex/LICENSE-re2) |
 | `crates/text/tests/data/`, `crates/text/src/unicode/tables.rs`, `crates/text/src/idna/tables.rs` | Unicode Character Database and IDNA files, and the tables generated from them (compiled into the library) | [Unicode, Inc.](https://www.unicode.org/) | Unicode-3.0, [LICENSE-UNICODE](crates/text/LICENSE-UNICODE) |
@@ -20,7 +22,7 @@ generated tables and the Brotli dictionary, as noted.
 | `crates/x509/mbedtls/mbedtls-use-vx509.patch` | A patch to mbedTLS, with lines of its source as context | [Mbed-TLS/mbedtls](https://github.com/Mbed-TLS/mbedtls) 3.6.4 | Apache-2.0 OR GPL-2.0-or-later (the patch's own additions are MIT) |
 | `crates/x509/bench/data/`, `crates/x509/fuzz/seeds/` | Three public certificates: ISRG Root X1 and X2, and a leaf certificate issued to www.cryptography.io | Their issuers | Published certificates |
 
-Headers that give one of our libraries another library's API
+Other headers that give one of our libraries another library's API
 (`crates/bind/include/ada.h`, `simdjson.h` and `simdutf.h`,
 `crates/font/include/opentype-sanitiser.h`,
 `crates/http/include/picohttpparser.h`, `crates/text/include/vtext_icu.h`)

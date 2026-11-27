@@ -54,6 +54,7 @@ pub fn unpack(t: u64) -> (r: (u64, u64))
     (t >> 8u64, t & 0xffu64)
 }
 
+/// The records of the packets sent, by index.
 pub struct RecLog<T> {
     /// Records from index `base` on, at `data[head..]`; `None` once taken.
     data: Vec<Option<T>>,
@@ -95,6 +96,7 @@ impl<T: Copy> RecLog<T> {
             }
     }
 
+    /// An empty log.
     pub fn new() -> (r: RecLog<T>)
         ensures
             r.inv(),
