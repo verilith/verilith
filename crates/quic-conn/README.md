@@ -18,7 +18,9 @@ Every step that has a specification is done by a verified component:
   - received-packet tracking and the ACK frames built from it;
   - stream and CRYPTO reassembly (`reasm`), with its memory bound;
   - what each send buffer sends, resends and frees (`sendq`);
-  - which frames an acknowledged or lost packet carried (`reclog`).
+  - which frames an acknowledged or lost packet carried (`reclog`);
+  - every frame written, within the datagram and the congestion window,
+    and the padding (`pktbuf`).
 - **`verilith-tls`**:
   - the TLS 1.3 handshake for QUIC;
   - Initial secrets;
@@ -33,7 +35,8 @@ yet. It covers:
   discarded;
 - dispatching frames to the components;
 - storing the bytes of send buffers (`buf.rs`);
-- what goes into each packet;
+- choosing what goes into each packet (each frame is written by verified
+  `put_frame`, and only payload bytes it reserved are copied after it);
 - timers;
 - closing.
 

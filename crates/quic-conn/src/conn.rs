@@ -19,12 +19,12 @@ use verilith_quic::flow::{RecvCredit, SendCredit};
 use verilith_quic::frame::{self, Frame};
 use verilith_quic::packet::{self, Header};
 use verilith_quic::params::{self, TransportParameters};
+use verilith_quic::pktbuf::{self, put_frame};
 use verilith_quic::reclog::{self, RecLog};
 use verilith_quic::recv::Received;
 use verilith_quic::rtt::Rtt;
 use verilith_quic::sent::{Done, Sent};
 use verilith_quic::streams::{RecvState, RecvStream, SendState, SendStream, StreamIds, Use};
-use verilith_quic::varint;
 use verilith_tls::crypto::Provider;
 use verilith_tls::keys::{initial_secrets_x, Secret};
 use verilith_tls::quic::{Event as TlsEvent, Out, QuicServer, HANDSHAKE, INITIAL, ONE_RTT};
@@ -1606,7 +1606,7 @@ impl<P: Provider> Connection<P> {
             buf.truncate(start);
             return 0;
         };
-        let pad = size.saturating_sub(buf.len() - start + 16);
+        let pad = pktbuf::pad(buf.len() - start + 16, size, false, Some(size), size);
         let pn = p.pn;
         self.seal(now, buf, p, pad);
         self.pmtu = Pmtu::Sent { pn, fails };
@@ -1717,14 +1717,7 @@ impl<P: Provider> Connection<P> {
         let Some(p) = pending else { return buf.len() - start };
         // §14.1: a datagram with an ack-eliciting Initial is padded to 1200.
         let size = buf.len() - start + 16;
-        let pad = if has_initial_eliciting {
-            1200usize.saturating_sub(size).min(allowance.saturating_sub(size))
-        } else {
-            match fill {
-                Some(f) if size < f && f - size <= BATCH_SLACK => (f - size).min(allowance.saturating_sub(size)),
-                _ => 0,
-            }
-        };
+        let pad = pktbuf::pad(size, allowance, has_initial_eliciting, fill, BATCH_SLACK);
         self.seal(now, buf, p, pad);
         if any_eliciting {
             if self.last_eliciting <= self.idle_from {
@@ -1787,8 +1780,14 @@ impl<P: Provider> Connection<P> {
         let pn_off = buf.len();
         buf.extend_from_slice(&pn.to_be_bytes()[8 - pn_len..]);
         let payload_start = buf.len();
-        // The payload may use what is left, less the tag.
-        let end = hdr_start + room - 16;
+        // The payload may use what is left, less the tag; ack-eliciting
+        // frames also only what congestion control allows (§7), unless
+        // probing (verified `packet_ends`).
+        let probing = self.spaces[s].probes > 0;
+        let Some((end, end_e)) = pktbuf::packet_ends(hdr_start, room, cwnd_room, probing, 16) else {
+            buf.truncate(hdr_start);
+            return None;
+        };
         if end <= payload_start + 4 {
             buf.truncate(hdr_start);
             return None;
@@ -1798,9 +1797,7 @@ impl<P: Provider> Connection<P> {
         let mut eliciting = false;
         // Congestion control limits ack-eliciting packets (§7): a full
         // window leaves room only for ACKs.
-        let probing = self.spaces[s].probes > 0;
         let may_elicit = probing || cwnd_room >= 100;
-        let end_e = if probing { end } else { end.min(hdr_start + cwnd_room.saturating_sub(16)) };
         // ACK.
         if self.spaces[s].ack_owed && self.spaces[s].recv.largest().is_some() {
             if self.write_ack(now, s, buf, end) {
@@ -1813,16 +1810,14 @@ impl<P: Provider> Connection<P> {
         if may_elicit {
             // HANDSHAKE_DONE and flow control.
             if s == 2 {
-                if self.send_handshake_done && end_e.saturating_sub(buf.len()) >= 1 {
-                    buf.push(0x1e);
+                if self.send_handshake_done && put_frame(buf, end_e, 0x1e, &[], 0) {
                     self.send_handshake_done = false;
                     self.spaces[2].recs.push(Rec::HandshakeDone);
                     nrec += 1;
                     eliciting = true;
                 }
                 if let Some(d) = self.path_response {
-                    if end_e.saturating_sub(buf.len()) >= 9 {
-                        buf.push(0x1b);
+                    if put_frame(buf, end_e, 0x1b, &[], 8) {
                         buf.extend_from_slice(&d);
                         self.path_response = None;
                         self.spaces[2].recs.push(Rec::Ping);
@@ -1830,18 +1825,16 @@ impl<P: Provider> Connection<P> {
                         eliciting = true;
                     }
                 }
-                if self.send_max_data && end_e.saturating_sub(buf.len()) >= 9 {
-                    buf.push(0x10);
-                    varint::write(buf, self.rx_advertised);
+                if self.send_max_data && put_frame(buf, end_e, 0x10, &[self.rx_advertised], 0) {
                     self.send_max_data = false;
                     self.spaces[2].recs.push(Rec::MaxData);
                     nrec += 1;
                     eliciting = true;
                 }
                 for k in 0..2 {
-                    if self.send_max_streams[k] && end_e.saturating_sub(buf.len()) >= 9 {
-                        buf.push(if k == 0 { 0x12 } else { 0x13 });
-                        varint::write(buf, self.streams_allowed[k]);
+                    if self.send_max_streams[k]
+                        && put_frame(buf, end_e, if k == 0 { 0x12 } else { 0x13 }, &[self.streams_allowed[k]], 0)
+                    {
                         self.send_max_streams[k] = false;
                         self.spaces[2].recs.push(Rec::MaxStreams { bidi: k == 0 });
                         nrec += 1;
@@ -1859,12 +1852,9 @@ impl<P: Provider> Connection<P> {
                     break;
                 }
                 let n = n0.min(avail - hl);
-                if n == 0 {
+                if n == 0 || !put_frame(buf, end_e, 0x06, &[off, n as u64], n) {
                     break;
                 }
-                buf.push(0x06);
-                varint::write(buf, off);
-                varint::write(buf, n as u64);
                 sp.crypto_out.get(off, n, buf);
                 let sp = &mut self.spaces[s];
                 sp.crypto_out.sent(off, n, false);
@@ -1879,8 +1869,7 @@ impl<P: Provider> Connection<P> {
         }
         // A probe with nothing to send: PING (§6.2.4).
         if self.spaces[s].probes > 0 {
-            if !eliciting && end - buf.len() >= 1 {
-                buf.push(0x01);
+            if !eliciting && put_frame(buf, end, 0x01, &[], 0) {
                 self.spaces[s].recs.push(Rec::Ping);
                 nrec += 1;
                 eliciting = true;
@@ -1916,16 +1905,13 @@ impl<P: Provider> Connection<P> {
         if buf.len() + need > end {
             return false;
         }
-        buf.push(0x02);
-        varint::write(buf, largest);
-        varint::write(buf, delay);
-        varint::write(buf, k as u64);
-        varint::write(buf, first);
-        for &(g, l) in &gaps[..k] {
-            varint::write(buf, g);
-            varint::write(buf, l);
+        let mut f = [0u64; 4 + 2 * 32];
+        f[..4].copy_from_slice(&[largest, delay, k as u64, first]);
+        for (j, &(g, l)) in gaps[..k.min(32)].iter().enumerate() {
+            f[4 + 2 * j] = g;
+            f[5 + 2 * j] = l;
         }
-        true
+        put_frame(buf, end, 0x02, &f[..4 + 2 * k.min(32)], 0)
     }
 
     fn write_streams(&mut self, buf: &mut Vec<u8>, end: usize, nrec: &mut usize, eliciting: &mut bool) {
@@ -1939,18 +1925,16 @@ impl<P: Provider> Connection<P> {
             // Receive-side control frames.
             if let Some(r) = &mut st.recv {
                 if let Some((code, false)) = r.stop {
-                    buf.push(0x05);
-                    varint::write(buf, id);
-                    varint::write(buf, code);
-                    r.stop = Some((code, true));
-                    self.spaces[2].recs.push(Rec::Stop { id });
-                    *nrec += 1;
-                    *eliciting = true;
+                    if put_frame(buf, end, 0x05, &[id, code], 0) {
+                        r.stop = Some((code, true));
+                        self.spaces[2].recs.push(Rec::Stop { id });
+                        *nrec += 1;
+                        *eliciting = true;
+                    } else {
+                        again = true;
+                    }
                 }
-                if r.send_max && end - buf.len() > 18 {
-                    buf.push(0x11);
-                    varint::write(buf, id);
-                    varint::write(buf, r.advertised);
+                if r.send_max && put_frame(buf, end, 0x11, &[id, r.advertised], 0) {
                     r.send_max = false;
                     self.spaces[2].recs.push(Rec::MaxStreamData { id });
                     *nrec += 1;
@@ -1959,11 +1943,7 @@ impl<P: Provider> Connection<P> {
             }
             if let Some(snd) = &mut st.send {
                 if let Some((code, fs, false)) = snd.reset {
-                    if end - buf.len() > 26 {
-                        buf.push(0x04);
-                        varint::write(buf, id);
-                        varint::write(buf, code);
-                        varint::write(buf, fs);
+                    if put_frame(buf, end, 0x04, &[id, code, fs], 0) {
                         snd.reset = Some((code, fs, true));
                         self.spaces[2].recs.push(Rec::Reset { id });
                         *nrec += 1;
@@ -1984,13 +1964,10 @@ impl<P: Provider> Connection<P> {
                             let n = n0.min(avail - hl);
                             let fin = snd.buf.fin() && off + n as u64 == snd.buf.end();
                             let new = (off + n as u64).saturating_sub(snd.sent_new);
-                            if new > 0 || n > 0 || fin {
-                                buf.push(0x08 | if off > 0 { 0x04 } else { 0 } | 0x02 | if fin { 1 } else { 0 });
-                                varint::write(buf, id);
-                                if off > 0 {
-                                    varint::write(buf, off);
-                                }
-                                varint::write(buf, n as u64);
+                            let ty = 0x08 | if off > 0 { 0x04 } else { 0 } | 0x02 | if fin { 1 } else { 0 };
+                            let f = [id, off, n as u64];
+                            let f = if off > 0 { &f[..] } else { &[id, n as u64][..] };
+                            if (new > 0 || n > 0 || fin) && put_frame(buf, end, ty, f, n) {
                                 snd.buf.get(off, n, buf);
                                 snd.buf.sent(off, n, fin);
                                 let state = snd.st.get_state();
@@ -2076,15 +2053,17 @@ impl<P: Provider> Connection<P> {
             let payload_start = buf.len();
             // §10.2.3: an application close outside 1-RTT becomes
             // APPLICATION_ERROR.
-            if app && s == 2 {
-                buf.push(0x1d);
-                varint::write(buf, code);
+            // The frame, with an empty reason phrase, before the tag.
+            let end = start + room - 16;
+            let ok = if app && s == 2 {
+                put_frame(buf, end, 0x1d, &[code, 0], 0)
             } else {
-                buf.push(0x1c);
-                varint::write(buf, if app { APPLICATION_ERROR } else { code });
-                varint::write(buf, 0);
+                put_frame(buf, end, 0x1c, &[if app { APPLICATION_ERROR } else { code }, 0, 0], 0)
+            };
+            if !ok {
+                buf.truncate(hdr_start);
+                break;
             }
-            varint::write(buf, 0);
             let rec_start = self.spaces[s].rec_index();
             self.spaces[s].recs.push(Rec::Close);
             while buf.len() - pn_off < 4 {
