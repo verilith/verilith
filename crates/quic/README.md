@@ -158,6 +158,13 @@ Loss recovery (RFC 9002), for one packet number space each:
 - **Frames per packet type** (§12.4, Table 3, `allowed`): `allowed` is
   Table 3 written column by column, `ack_eliciting` is §13.2's rule, and
   `server_receives` refuses NEW_TOKEN and HANDSHAKE_DONE (§19.7, §19.20).
+- **Key updates** (RFC 9001 §6, `keyphase`): `KeyPhase::select` picks
+  the previous, current or next generation's keys for a 1-RTT packet,
+  only ever one whose phase matches the Key Phase bit; the previous only
+  for packets numbered below the first of the current generation, and
+  the next only for those at or above it. `on_update` moves on only for a
+  packet sent to the next generation, and `phase` (the bit to send with)
+  follows the generation.
 
 Every loop in a parser consumes input, so parsing is linear in the input;
 the PADDING scan reads eight bytes at a time.
