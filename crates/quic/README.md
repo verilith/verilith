@@ -119,6 +119,18 @@ Loss recovery (RFC 9002), for one packet number space each:
   window plus 16 KiB however the peer splits, repeats or overlaps its
   frames, since data past `read_offset + window` is refused. In-order data
   is appended with one copy.
+- **Send bookkeeping** (§2.2, §3.1, §13.3, `sendq`, `ranges`): `SendState`
+  tracks one stream's offsets for the sender (the caller keeps the
+  bytes). Against a ghost set of the offsets that need nothing more
+  (acknowledged, or given up on a reset), `next` returns only offsets
+  written and not done, lost ones first and then new data within the flow
+  control limit; `base` is exactly the first offset not done, so the
+  bytes `on_ack` lets the caller free are all acknowledged and none is
+  kept longer; `on_lost` queues again exactly the lost offsets that were
+  sent and are not done; and the FIN goes only at the end of what was
+  written. Inputs are checked, so offsets never sent change nothing.
+  `RangeSet` (sorted, merged ranges) is proven to be set union and
+  difference.
 
 Every loop in a parser consumes input, so parsing is linear in the input;
 the PADDING scan reads eight bytes at a time.
@@ -147,7 +159,8 @@ parsers. `tests/recovery.rs` runs a sender's `Sent` and a receiver's
 frame encoded and parsed in between, and checks that only received
 packets are acknowledged, no packet is acknowledged or lost twice, and
 the bytes in flight match a model; and RFC 9002's arithmetic on known
-values.
+values. `tests/reasm.rs` and `tests/sendq.rs` check reassembly, `RangeSet`
+and `SendState` against simple references.
 
 `bench/` compares verilith-quic with quinn-proto 0.11.19 and quiche
 0.24.9 (`bench/setup.sh` copies them from crates.io and makes their frame
