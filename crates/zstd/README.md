@@ -436,8 +436,8 @@ means; every frame checked by libzstd's decoder):
 | 3 | 0.98× | 0.39× |
 | 19 | 0.87× | 0.50× |
 
-Levels 1 to 9 come within 2 to 8% of libzstd's ratio. About a third of
-the time goes to checking each compressed block with the proven decoder;
+Levels 1 to 9 come within 2 to 8% of libzstd's ratio. About a quarter of
+the time (level 1) goes to checking each compressed block with the proven decoder;
 the rest is the match finders and the sequence encoder, not yet tuned.
 Levels 16 to 22 use lazy2 matching where libzstd uses its optimal
 parsers (btopt, btultra), hence the larger gap there.
