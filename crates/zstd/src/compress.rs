@@ -14,6 +14,9 @@ use crate::spec::*;
 use crate::enc::Enc;
 use crate::frame::*;
 use crate::seq::*;
+use crate::check::check_cblock;
+#[cfg(verus_only)]
+use crate::check::chk_is;
 #[cfg(verus_only)]
 use crate::huf::huf_opt_is;
 #[cfg(verus_only)]
@@ -669,10 +672,12 @@ fn rle_block(out: &mut Vec<u8>, x: u8, size: usize, last: bool, Ghost(w): Ghost<
     }
 }
 
-/// A compressed block of `src[pos..end]` from the encoder, checked with
-/// the verified decoder `d`. On `Some(st2)`: the block was added and `d`
-/// decoded it to `st2`; on `None`, `out` is as it was, and `d` is still in
-/// `cur` if the second value is true.
+/// A compressed block of `src[pos..end]` from the encoder, checked
+/// against the input (`check::check_cblock`) from the decoder state `cur`,
+/// which `d` holds but for the output `src[0..pos]`. On `Some(st2)`: the
+/// block was added, it steps from `cur` to `st2`, and `d` is in `st2`; on
+/// `None`, `out` is as it was, and `d` is still in `cur` if the second
+/// value is true.
 #[verifier::rlimit(40)]
 fn comp_block(
     out: &mut Vec<u8>,
@@ -691,15 +696,12 @@ fn comp_block(
         pos < end <= src@.len(),
         end <= IN_MAX,
         end - pos <= min(window as int, BLOCK_MAX as int),
-        dec_is(old(d), cur),
-        old(d).fstart == 0,
-        old(d).out@.len() == pos,
-        cur.out == src@.subrange(0, pos as int),
+        chk_is(old(d), cur, src@, pos as int),
     ensures
         final(enc).wf(),
         r.0 ==> stepped(old(out)@, final(out)@, window as nat, cur, r.2@, last),
         r.0 ==> r.2@.out == src@.subrange(0, end as int),
-        r.0 ==> dec_is(final(d), r.2@) && final(d).fstart == 0 && final(d).out@.len() == end,
+        r.0 ==> chk_is(final(d), r.2@, src@, end as int),
         !r.0 ==> final(out)@ == old(out)@,
         !r.0 && r.1 ==> *final(d) == *old(d),
 {
@@ -731,39 +733,63 @@ fn comp_block(
     proof {
         assert(out@.subrange(0, at as int) =~= o1);
     }
-    let olimit = end;
-    let ghost dout0 = d.out@;
-    let u = slice_subrange(out.as_slice(), at, out.len());
-    let (res, j, lst) = block_exec(u, 0, window, window, d, olimit, Ghost(cur), Tracked(m));
-    let good = match res {
-        Step::Done => j == u.len() && lst == last && d.out.len() == end && same(d.out.as_slice(), pos, src, pos, size),
-        _ => false,
+    let bmax: usize = if window < 131072 {
+        window as usize
+    } else {
+        131072
     };
-    if !good {
-        out.truncate(at);
-        proof {
-            assert(out@ =~= o1);
-        }
-        return (false, false, Ghost(cur));
-    }
-    let ghost st2 = block_step(u@, 0, w, w, cur).unwrap().1;
+    let body = slice_subrange(out.as_slice(), at + 3, out.len());
+    let st2 = match check_cblock(body, window, bmax, d, src, pos, end, Ghost(cur), Tracked(m)) {
+        Some(g) => g,
+        None => {
+            out.truncate(at);
+            proof {
+                assert(out@ =~= o1);
+            }
+            return (false, false, Ghost(cur));
+        },
+    };
     proof {
-        let uu = u@;
-        assert(out@.subrange(at as int, out@.len() as int) == uu);
-        let bs = block_step(uu, 0, w, w, cur);
-        assert(bs is Some);
-        let (jj, s2, l2) = bs.unwrap();
-        assert(jj == uu.len());
-        assert(l2 == last);
-        assert(dec_is(d, s2));
-        assert(fout(d.out@, 0) =~= d.out@);
-        lemma_step_prefix(uu, w, cur);
-        assert(d.out@ =~= d.out@.subrange(0, pos as int) + d.out@.subrange(pos as int, end as int));
-        assert(src@.subrange(0, end as int) =~= src@.subrange(0, pos as int) + src@.subrange(pos as int, end as int));
-        assert(s2.out =~= src@.subrange(0, end as int));
-        assert(3 + body_len(uu) <= uu.len());
+        let u = out@.subrange(at as int, out@.len() as int);
+        assert(u.subrange(3, u.len() as int) =~= body@);
+        lemma_cblock_step(u, body@, bh, bsize as nat, last, w, cur, st2@);
     }
-    (true, false, Ghost(st2))
+    (true, false, st2)
+}
+
+/// A block whose header is `bh` (type 2, `size` bytes) and whose body the
+/// spec decodes (`compressed_block`) steps from `cur` to `st2`.
+proof fn lemma_cblock_step(u: Seq<u8>, body: Seq<u8>, bh: u64, size: nat, last: bool, w: nat, cur: FrameState, st2: FrameState)
+    requires
+        u.len() == 3 + size,
+        u.subrange(3, u.len() as int) == body,
+        size < 131072,
+        size <= min(w as int, BLOCK_MAX as int),
+        bh == size * 8 + 4 + (if last { 1int } else { 0int }),
+        u[0] == (bh % 256) as u8,
+        u[1] == ((bh / 256) % 256) as u8,
+        u[2] == ((bh / 65536) % 256) as u8,
+        compressed_block(body, w, min(w as int, BLOCK_MAX as int) as nat, cur) == Some(st2),
+    ensures
+        3 + body_len(u) <= u.len(),
+        block_step(u, 0, w, w, cur) == Some((u.len() as int, st2, last)),
+{
+    reveal_with_fuel(le, 4);
+    assert(le(u, 0, 3) == bh) by (nonlinear_arith)
+        requires
+            le(u, 0, 3) == u[0] as nat + 256 * (u[1] as nat + 256 * (u[2] as nat + 256 * 0)),
+            u[0] == (bh % 256) as u8,
+            u[1] == ((bh / 256) % 256) as u8,
+            u[2] == ((bh / 65536) % 256) as u8,
+            bh < 0x100_0000,
+    ;
+    assert(bh % 2 == 1 <==> last) by (nonlinear_arith)
+        requires bh == size * 8 + 4 + (if last { 1int } else { 0int });
+    assert((bh / 2) % 4 == 2) by (nonlinear_arith)
+        requires bh == size * 8 + 4 + (if last { 1int } else { 0int });
+    assert(bh / 8 == size) by (nonlinear_arith)
+        requires bh == size * 8 + 4 + (if last { 1int } else { 0int });
+    assert(u.subrange(3, 3 + size as int) == body);
 }
 
 /// Compresses `src` into one frame.
@@ -814,29 +840,26 @@ pub fn compress_exec(src: &[u8], p: Params) -> (r: Vec<u8>)
         131072
     };
     let mut enc = Enc::new(src, window, p.level);
-    // The decoder's copy of the output, with room for all of it and the
-    // 64 bytes the sequence loop reserves past a block, so it is never
-    // copied as it grows.
-    let mut d = FrameDec { out: Vec::with_capacity(n + 64), fstart: 0, r1: 1, r2: 4, r3: 8, huf: None, seqt: None, lits: Vec::new() };
+    // The decoder's state but for its output, which is the input's start
+    // (`chk_is`).
+    let mut d = FrameDec { out: Vec::new(), fstart: 0, r1: 1, r2: 4, r3: 8, huf: None, seqt: None, lits: Vec::new() };
     let mut valid = true;
     let ghost mut cur = initial_state();
     let ghost mut fin = initial_state();
     let mut pos: usize = 0;
     let tracked mut m = Meter { n: 0 };
     proof {
-        assert(d.out@ =~= Seq::<u8>::empty());
         assert(src@.subrange(0, 0) =~= Seq::<u8>::empty());
-        assert(fout(d.out@, 0) =~= Seq::<u8>::empty());
         assert(huf_opt_is(d.huf, None));
         assert(seqt_opt_is(d.seqt, None));
-        assert(dec_is(&d, cur));
+        assert(chk_is(&d, cur, src@, 0));
     }
     loop
         invariant_except_break
             pos <= n,
             chain(out@, h0 as int, w, cur),
             cur.out == src@.subrange(0, pos as int),
-            valid ==> dec_is(&d, cur) && d.fstart == 0 && d.out@.len() == pos,
+            valid ==> chk_is(&d, cur, src@, pos as int),
         invariant
             n == src@.len(),
             n <= IN_MAX,
@@ -881,12 +904,6 @@ pub fn compress_exec(src: &[u8], p: Params) -> (r: Vec<u8>)
             proof {
                 assert(Seq::new(size as nat, |k: int| x) =~= data);
             }
-            if valid {
-                d.out.extend_from_slice(slice_subrange(src, pos, end));
-                proof {
-                    assert(fout(d.out@, 0) =~= nxt.out);
-                }
-            }
             done = true;
         } else if valid && size >= 16 {
             let (ok, still, Ghost(st2)) = comp_block(&mut out, &mut enc, &mut d, src, pos, end, last, window, Ghost(cur), Tracked(&mut m));
@@ -901,12 +918,6 @@ pub fn compress_exec(src: &[u8], p: Params) -> (r: Vec<u8>)
         }
         if !done {
             raw_block(&mut out, src, pos, end, last, Ghost(w), Ghost(cur));
-            if valid {
-                d.out.extend_from_slice(slice_subrange(src, pos, end));
-                proof {
-                    assert(fout(d.out@, 0) =~= nxt.out);
-                }
-            }
         }
         proof {
             let u = out@.subrange(o1.len() as int, out@.len() as int);

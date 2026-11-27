@@ -8,7 +8,7 @@ the decoder on its own alongside libzstd's compressor, or both.
 `cargo verus verify` (or `scripts/verify.sh`) checks 338 functions and
 lemmas with no errors and no `assume`; the only `external_body` functions
 in this crate are the three wild-copy primitives in
-`src/prims.rs` and the three CPU-feature wrappers in `src/cpu.rs`.
+`src/prims.rs` and the four CPU-feature wrappers in `src/cpu.rs`.
 
 The proofs are checked once per pointer width: CI also runs Verus
 compiling for `wasm32-unknown-unknown`, where `usize` is 32 bits
@@ -115,8 +115,9 @@ What the proofs assume rather than prove:
   of `get_unchecked`. Copying a range into the caller's output buffer is
   verilith-core's `prims::copy_in`, and `load_u64_le` is verilith-core's
   too; both are verified there.
-- `src/cpu.rs`: `run_seqs`, `run_huf4` and `run_huf1` call the verified
-  `seq_run_exec`, `huf_4streams_exec` and `huf_stream_exec`, through a copy
+- `src/cpu.rs`: `run_seqs`, `run_check`, `run_huf4` and `run_huf1` call
+  the verified `seq_run_exec`, `check::check_run` (the compressor's block
+  check), `huf_4streams_exec` and `huf_stream_exec`, through a copy
   compiled with BMI2 when the CPU has it (Verus rejects `#[target_feature]`
   on verified code, so the dispatch sits outside it). Each wrapper's
   contract is a copy of its target's; trusted is that the copy is exact
@@ -432,11 +433,11 @@ binaries; geometric means; every frame checked by libzstd's decoder):
 
 | level | ratio vs libzstd | speed vs libzstd |
 | --- | --- | --- |
-| 1 | 0.96× | 0.43× |
-| 3 | 1.00× | 0.53× |
-| 5 | 0.99× | 0.59× |
-| 7 | 0.99× | 0.52× |
-| 9 | 0.99× | 0.57× |
+| 1 | 0.96× | 0.46× |
+| 3 | 1.00× | 0.57× |
+| 5 | 0.99× | 0.64× |
+| 7 | 0.99× | 0.54× |
+| 9 | 0.99× | 0.58× |
 | 16 | 1.02× | 0.71× |
 | 19 | 0.99× | 0.92× |
 
@@ -445,10 +446,18 @@ the long-hash candidate of the next position is read before the tests on
 this one, a short match is taken on 4 bytes and then tried as a long match
 one position on, and after each match two of its positions go into both
 tables. That brought their ratio level with libzstd's and their speed from
-0.48× to 0.53× (level 3) and 0.51× to 0.56× (level 4). The verified
-decoder's copy of the output, which the check of each block decodes into,
-is now reserved once for the whole input, so it is never copied as it
-grows.
+0.48× to 0.53× (level 3) and 0.51× to 0.56× (level 4).
+
+Each compressed block is still accepted only if the spec decoder's
+`compressed_block` turns it into the input, but the check
+(`src/check.rs`) no longer decodes into a second copy of the output. It
+decodes the block's sequences exactly as the verified decoder does and
+compares each literal run and each match with the input bytes it should
+produce, eight or sixteen bytes at a time (`check::same`), proving that
+the output so far is always `src[0..q]`. Raw and RLE blocks need no
+work at all. That saves a copy of the input in memory and took level 3
+from 0.53× to 0.57×, level 4 to 0.61× and level 1 from 0.43× to 0.46×
+(levels 16 and 19 were not measured again).
 
 Levels 16 to 22 use an optimal parser (`src/opt.rs`, as libzstd's btopt
 and btultra): matches from a binary tree, then the cheapest path through

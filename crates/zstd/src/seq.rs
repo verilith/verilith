@@ -807,7 +807,7 @@ pub fn seq_table_exec(b: &[u8], k: u8, mode: u8, prev: Option<&FseTab>, Ghost(gp
 
 /// The repeat offsets resolved for one sequence (`resolve_offset`).
 #[inline(always)]
-fn resolve_offset_exec(ov: u64, ll0: bool, r1: u64, r2: u64, r3: u64) -> (r: Option<(u64, u64, u64, u64)>)
+pub fn resolve_offset_exec(ov: u64, ll0: bool, r1: u64, r2: u64, r3: u64) -> (r: Option<(u64, u64, u64, u64)>)
     requires
         ov < 0x1_0000_0000,
     ensures

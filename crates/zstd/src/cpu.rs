@@ -1,7 +1,8 @@
 //! CPU-specific code paths (part of the trusted base).
 //!
 //! Each function here is one of the verified decoding loops
-//! (`seq::seq_run_exec`, `huf::huf_4streams_exec`, `huf::huf_stream_exec`),
+//! (`seq::seq_run_exec`, `check::check_run`, `huf::huf_4streams_exec`,
+//! `huf::huf_stream_exec`),
 //! compiled a second time with BMI2 enabled and run when the CPU has it.
 //! Its `requires` and `ensures` are copied from the verified function; the
 //! body only chooses which compilation of that function to call.
@@ -12,6 +13,11 @@ use crate::huf::{huf_4streams_exec, huf_stream_exec, HufTab};
 #[cfg(verus_only)]
 use crate::huf::{huf_code_of, huf_wf};
 use crate::bits::BITS_MAX;
+use crate::check::{check_run, ChkOut};
+#[cfg(verus_only)]
+use crate::check::run_ok;
+#[cfg(verus_only)]
+use crate::spec::SeqState;
 use crate::seq::{seq_run_exec, SeqOut, SeqTabs, MAX_LIMIT};
 #[cfg(verus_only)]
 use crate::seq::{seqtabs_is, sstate};
@@ -91,6 +97,56 @@ pub fn run_seqs(
     seq_run_exec(t, s, lits, window, n, p0, sll0, sof0, sml0, r10, r20, r30, out, fstart, olimit, Ghost(ts), Tracked(m))
 }
 
+/// `check_run`, with BMI2 when the CPU has it.
+#[verifier::external_body]
+pub fn run_check(
+    t: &SeqTabs,
+    s: &[u8],
+    lits: &[u8],
+    window: u64,
+    n: usize,
+    p0: usize,
+    sll0: u32,
+    sof0: u32,
+    sml0: u32,
+    r10: u64,
+    r20: u64,
+    r30: u64,
+    src: &[u8],
+    q0: usize,
+    qlim: usize,
+    Ghost(ts): Ghost<SeqTables>,
+) -> (r: Option<ChkOut>)
+    requires
+        seqtabs_is(t, ts),
+        s@.len() < BITS_MAX,
+        lits@.len() <= 131072,
+        p0 <= 8 * s@.len(),
+        (sll0 as int) < t.ll.rows@.len(),
+        (sof0 as int) < t.of.rows@.len(),
+        (sml0 as int) < t.ml.rows@.len(),
+        q0 <= qlim <= src@.len(),
+    ensures
+        r matches Some(o) ==> run_ok(ts, s@, lits@, window as nat, n as nat, SeqState {
+            p: p0 as int,
+            sll: sll0 as nat,
+            sof: sof0 as nat,
+            sml: sml0 as nat,
+            reps: Reps { r1: r10 as nat, r2: r20 as nat, r3: r30 as nat },
+            li: 0,
+            out: src@.subrange(0, q0 as int),
+        }, o, src@, q0 as int, qlim as int),
+{
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::is_x86_feature_detected!("bmi2") {
+            // SAFETY: the CPU supports BMI2.
+            return unsafe { bmi2::check(t, s, lits, window, n, p0, sll0, sof0, sml0, r10, r20, r30, src, q0, qlim, Ghost(ts)) };
+        }
+    }
+    check_run(t, s, lits, window, n, p0, sll0, sof0, sml0, r10, r20, r30, src, q0, qlim, Ghost(ts))
+}
+
 /// `huf_4streams_exec`, with BMI2 when the CPU has it.
 #[verifier::external_body]
 pub fn run_huf4(t: &HufTab, b: &[u8], n: usize, out: &mut Vec<u8>, Tracked(m): Tracked<&mut Meter>) -> (ok: bool)
@@ -166,6 +222,28 @@ mod bmi2 {
         m: Tracked<&mut Meter>,
     ) -> Result<SeqOut, bool> {
         seq_run_exec(t, s, lits, window, n, p0, sll0, sof0, sml0, r10, r20, r30, out, fstart, olimit, ts, m)
+    }
+
+    #[target_feature(enable = "bmi2")]
+    pub(super) unsafe fn check(
+        t: &SeqTabs,
+        s: &[u8],
+        lits: &[u8],
+        window: u64,
+        n: usize,
+        p0: usize,
+        sll0: u32,
+        sof0: u32,
+        sml0: u32,
+        r10: u64,
+        r20: u64,
+        r30: u64,
+        src: &[u8],
+        q0: usize,
+        qlim: usize,
+        ts: Ghost<SeqTables>,
+    ) -> Option<ChkOut> {
+        check_run(t, s, lits, window, n, p0, sll0, sof0, sml0, r10, r20, r30, src, q0, qlim, ts)
     }
 
     #[target_feature(enable = "bmi2")]
