@@ -28,8 +28,9 @@ own verilith-sha2 (Verus).
 | ChaCha20-Poly1305 | Session tickets (`TicketKeys`) | **libcrux** (was aws-lc) | HACL* |
 | ChaCha20-Poly1305 | HPKE suite 0x0003, ECH | **libcrux** (was aws-lc) | HACL* |
 | ChaCha20-Poly1305 | TLS records, QUIC packets | aws-lc | None: OpenSSL-derived assembly |
-| AES-128-GCM, AES-256-GCM | TLS records, QUIC packets, HPKE suites 0x0001 and 0x0002 | aws-lc | None in practice. The SAW proof covers AES-256-GCM only, on x86-64 Sandy Bridge to Skylake without AVX-512, for whole blocks, with additional data not verified. TLS always has additional data, and AVX-512 x86-64, Apple silicon and Graviton run other code |
-| AES, ChaCha20 (raw) | QUIC header protection | aws-lc | None |
+| AES-128-GCM, AES-256-GCM | TLS records, QUIC packets, HPKE suites 0x0001 and 0x0002 | **verilith-aes** (was aws-lc); aws-lc on a CPU without AES and carry-less multiply instructions | Verus, this repository: GCM-AE and GCM-AD of SP 800-38D with additional data, every length, both key sizes, for the kernels that run: x86-64 AES-NI and PCLMULQDQ, the 16-block VAES and VPCLMULQDQ kernel on AVX-512 CPUs, and AArch64 FEAT_AES and FEAT_PMULL. aws-lc's SAW proof covers AES-256-GCM only, on x86-64 Sandy Bridge to Skylake without AVX-512, for whole blocks, with additional data not verified |
+| AES (raw) | QUIC header protection, AES suites | **verilith-aes** (was aws-lc), with the same fallback | Verus, this repository (FIPS 197 Cipher) |
+| ChaCha20 (raw) | QUIC header protection, ChaCha20-Poly1305 suite | aws-lc | None |
 | X25519 | Key share, the X25519 half of X25519MLKEM768, HPKE's DHKEM | aws-lc | s2n-bignum (`curve25519_x25519`, HOL Light) on x86-64 and AArch64 Linux and macOS; the C around it (clamping, the all-zero check) is not proven |
 | ML-KEM-768 | X25519MLKEM768 | aws-lc (mlkem-native) | Partly: CBMC proves memory and type safety of the C, HOL Light proves the AArch64 and x86-64 assembly (NTT and friends) correct. The C is not proven functionally correct |
 | P-256 ECDH | secp256r1 key share | aws-lc | Partly: s2n-bignum's scalar multiplication (`p256_montjscalarmul`) and inversion; the field arithmetic and base-point multiplication are OpenSSL's nistz256 assembly, unproven |
@@ -47,11 +48,21 @@ and are outside this list: they are off unless chosen.
 
 Each line is aws-lc against the verified alternative, measured with
 `bench/` (`cargo run --release` there): best of 7 runs of 200 ms on a cloud
-x86-64 (Xeon, 2.1 GHz, AVX-512, VAES), 2026-11-27.
+x86-64 (Xeon, 2.1 GHz, AVX-512, VAES), 2026-11-27. The AES-GCM rows are
+from a later run on the same kind of machine (2.3 GHz), the same day.
 
 | Operation | aws-lc | Verified alternative | Ratio | Decision |
 |---|---:|---:|---:|---|
 | HMAC-SHA-256, 100 B | 0.44 us | 0.28 us (verilith-sha2) | 0.6x | Swapped (HPKE) |
+| AES-128-GCM seal, 16 KiB (TLS record) | 0.98 us, 16.7 GB/s | 1.21 us, 13.6 GB/s (verilith-aes) | 1.23x | Swapped: about 0.2 us more per full record, against an unproven kernel replaced by a proven one. aws-lc's lead is its stitched AVX-512 assembly |
+| AES-128-GCM open, 16 KiB (with a copy) | 1.14 us, 14.4 GB/s | 1.30 us, 12.6 GB/s | 1.14x | Swapped |
+| AES-128-GCM seal, 1200 B (QUIC packet) | 0.193 us | 0.188 us | 0.97x | Swapped |
+| AES-128-GCM open, 1200 B (with a copy) | 0.229 us | 0.192 us | 0.84x | Swapped |
+| AES-128-GCM seal, 256 B | 0.139 us | 0.074 us | 0.53x | Swapped |
+| AES-128-GCM seal, 64 B | 0.123 us | 0.080 us | 0.65x | Swapped |
+| AES-256-GCM seal, 16 KiB | 1.18 us, 13.9 GB/s | 1.34 us, 12.2 GB/s | 1.14x | Swapped |
+| AES-256-GCM seal, 1200 B | 0.214 us | 0.207 us | 0.97x | Swapped |
+| AES-128 header protection mask | 0.036 us | 0.034 us | 0.94x | Swapped |
 | ChaCha20-Poly1305 seal, 256 B | 0.32 us | 0.77 us (libcrux) | 2.4x | Swapped for tickets and HPKE: once or twice per handshake, about 1 us of a 50 to 100 us handshake. Handshake times before and after are within run-to-run noise (below) |
 | ChaCha20-Poly1305 seal, 1200 B (QUIC packet) | 0.75 us | 3.01 us | 4.0x | Kept: per packet |
 | ChaCha20-Poly1305 seal, 16 KiB (TLS record) | 8.1 us, 2.0 GB/s | 34.7 us, 0.47 GB/s | 4.3x | Kept: per record. libcrux's ChaCha20-Poly1305 is HACL*'s portable code; HACL*'s vectorised versions are not in libcrux's Rust |
@@ -65,8 +76,6 @@ x86-64 (Xeon, 2.1 GHz, AVX-512, VAES), 2026-11-27.
 
 Not benchmarked, and kept:
 
-- AES-GCM and AES header protection: libcrux's AES is marked
-  pre-verification, so there is no verified alternative to move to.
 - Raw ChaCha20 for QUIC header protection: libcrux does not export it.
 - RSA: libcrux-rsa (HACL*) does PSS only, not the PKCS #1 v1.5 that
   certificate signatures use, and signs from (n, d) without the CRT, which
@@ -88,10 +97,14 @@ one opens one:
 
 ## Where the remaining gaps are
 
-The unproven code that carries the most traffic is the record and packet
-AEAD: AES-GCM and ChaCha20-Poly1305. Neither has a verified implementation
-within reach of aws-lc's speed today. The candidates to watch are a
-verified, vectorised ChaCha20-Poly1305 in libcrux (HACL* has one in C)
-and libcrux's AES-GCM once it leaves pre-verification. ML-KEM is the one
-case where moving would trade a partial proof for a fuller one at a
-measurable cost (about 7 us per hybrid handshake on this machine).
+The unproven code that carries the most traffic is now ChaCha20-Poly1305
+for records and packets, when a client prefers it: there is no verified
+implementation within reach of aws-lc's speed (libcrux's is HACL*'s
+portable code, 4x slower; HACL* has vectorised C that libcrux does not
+export). AES-GCM is verilith-aes's wherever the CPU has the instructions
+(every x86-64 server CPU since 2010 and every ARMv8 server core); on a CPU
+without them it falls back to aws-lc, whose code there is unproven. Its
+AArch64 kernels are proven and tested under qemu but not yet benchmarked on
+Arm hardware. ML-KEM is the one case where moving would trade a partial
+proof for a fuller one at a measurable cost (about 7 us per hybrid
+handshake on this machine).

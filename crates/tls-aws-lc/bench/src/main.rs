@@ -22,6 +22,39 @@ fn time<F: FnMut()>(name: &str, bytes: usize, mut f: F) -> f64 {
 fn main() {
     let rng = SystemRandom::new();
     let key = [7u8; 32]; let nonce = [1u8; 12]; let aad = [0x17u8, 3, 3, 0x40, 0x11];
+    for (name, alg, kl) in [("aes-128-gcm", &aead::AES_128_GCM, 16), ("aes-256-gcm", &aead::AES_256_GCM, 32)] {
+        for &len in &[16384usize, 1200, 256, 64] {
+            let k = aead::LessSafeKey::new(aead::UnboundKey::new(alg, &key[..kl]).unwrap());
+            let v = verilith_aes::AesGcm::new(&key[..kl]).expect("AES instructions");
+            let mut buf = vec![0u8; len];
+            time(&format!("{name} seal {len}B aws-lc"), len, || {
+                let t = k.seal_in_place_separate_tag(aead::Nonce::assume_unique_for_key(nonce), aead::Aad::from(aad), &mut buf).unwrap(); let _ = bb(t);
+            });
+            let mut tag = [0u8; 16];
+            time(&format!("{name} seal {len}B verilith-aes"), len, || {
+                assert!(v.seal(&nonce, &aad, &mut buf, &mut tag)); bb(&tag);
+            });
+            let pt = vec![0u8; len];
+            let mut sealed = pt.clone(); let t = k.seal_in_place_separate_tag(aead::Nonce::assume_unique_for_key(nonce), aead::Aad::from(aad), &mut sealed).unwrap(); sealed.extend_from_slice(t.as_ref());
+            time(&format!("{name} open {len}B aws-lc (incl. a copy)"), len, || {
+                let mut b = sealed.clone(); let r = k.open_in_place(aead::Nonce::assume_unique_for_key(nonce), aead::Aad::from(aad), &mut b).unwrap().len(); bb(r);
+            });
+            let tag: [u8; 16] = sealed[len..].try_into().unwrap();
+            time(&format!("{name} open {len}B verilith-aes (incl. a copy)"), len, || {
+                let mut b = sealed[..len].to_vec(); assert!(v.open(&nonce, &aad, &mut b, &tag)); bb(&b);
+            });
+        }
+    }
+    {
+        use aws_lc_rs::aead::quic;
+        let sample = [0x5au8; 16];
+        let k = quic::HeaderProtectionKey::new(&quic::AES_128, &key[..16]).unwrap();
+        time("aes-128 header protection mask aws-lc", 0, || { bb(k.new_mask(&sample).unwrap()); });
+        let v = verilith_aes::Aes::new(&key[..16]).unwrap();
+        time("aes-128 header protection mask verilith-aes", 0, || { let mut b = sample; v.encrypt_block(&mut b); bb(&b[..5]); });
+        let mut b = sample; v.encrypt_block(&mut b);
+        assert_eq!(k.new_mask(&sample).unwrap(), b[..5]);
+    }
     for &len in &[16384usize, 1200, 256, 64] {
         let k = aead::LessSafeKey::new(aead::UnboundKey::new(&aead::CHACHA20_POLY1305, &key).unwrap());
         let mut buf = vec![0u8; len];

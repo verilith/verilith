@@ -5,11 +5,12 @@ edition = "2024"
 publish = false
 
 # Each primitive aws-lc gives verilith-tls, against its formally verified
-# alternative (CRYPTO.md): libcrux (HACL*) and verilith-sha2.
+# alternative (CRYPTO.md): libcrux (HACL*), verilith-aes and verilith-sha2.
 #     cargo run --release
 [dependencies]
 aws-lc-rs = "1.19"
 verilith-sha2 = { path = "../../sha2" }
+verilith-aes = { path = "../../aes" }
 libcrux-chacha20poly1305 = "=0.0.11"
 libcrux-ml-kem = "=0.0.12"
 libcrux-ed25519 = "=0.0.11"

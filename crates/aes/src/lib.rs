@@ -1,4 +1,4 @@
-//! AES-128, AES-256 and AES-GCM, proven with Verus.
+#![doc = include_str!("../README.md")]
 #![cfg_attr(not(verus_only), allow(unused_variables, unused_imports))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -18,22 +18,20 @@ pub mod arch;
 pub mod kernels;
 #[doc(hidden)]
 pub mod gcm;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[doc(hidden)]
 pub mod x86;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[doc(hidden)]
 pub mod ni;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[doc(hidden)]
 pub mod vaes;
-#[cfg(any(all(target_arch = "aarch64", target_endian = "little"), verus_only))]
+#[cfg(any(target_endian = "little", verus_only))]
 #[doc(hidden)]
 pub mod neon;
-#[cfg(any(all(target_arch = "aarch64", target_endian = "little"), verus_only))]
+#[cfg(any(target_endian = "little", verus_only))]
 #[doc(hidden)]
 pub mod arm;
-#[cfg(any(target_arch = "x86_64", all(target_arch = "aarch64", target_endian = "little")))]
 mod aead;
-#[cfg(any(target_arch = "x86_64", all(target_arch = "aarch64", target_endian = "little")))]
 pub use aead::{Aes, AesGcm};

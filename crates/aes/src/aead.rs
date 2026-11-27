@@ -14,27 +14,27 @@
 use crate::gcm::Gcm;
 use crate::lemmas::*;
 use crate::spec::*;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 use crate::x86::*;
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", target_endian = "little"))]
 use crate::neon::*;
 use vstd::prelude::*;
 
 verus! {
 
 /// The CPU has the instructions of the 128-bit kernels.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub open spec fn cpu_ok() -> bool {
     ni()
 }
 
 /// The CPU also has those of the 16-block path.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub open spec fn cpu_wide() -> bool {
     vaes()
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 fn detect() -> (r: (bool, bool))
     ensures
         r.0 ==> cpu_ok(),
@@ -46,23 +46,44 @@ fn detect() -> (r: (bool, bool))
     (true, has_vaes())
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", target_endian = "little"))]
 pub open spec fn cpu_ok() -> bool {
     arm_aes()
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", target_endian = "little"))]
 pub open spec fn cpu_wide() -> bool {
     false
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", target_endian = "little"))]
 fn detect() -> (r: (bool, bool))
     ensures
         r.0 ==> cpu_ok(),
         r.1 ==> r.0 && cpu_wide(),
 {
     (has_arm_aes(), false)
+}
+
+/// Elsewhere there are no kernels: [`AesGcm::new`] and [`Aes::new`] return
+/// `None`.
+#[cfg(not(any(all(target_arch = "x86_64", target_feature = "sse2"), all(target_arch = "aarch64", target_endian = "little"))))]
+pub open spec fn cpu_ok() -> bool {
+    false
+}
+
+#[cfg(not(any(all(target_arch = "x86_64", target_feature = "sse2"), all(target_arch = "aarch64", target_endian = "little"))))]
+pub open spec fn cpu_wide() -> bool {
+    false
+}
+
+#[cfg(not(any(all(target_arch = "x86_64", target_feature = "sse2"), all(target_arch = "aarch64", target_endian = "little"))))]
+fn detect() -> (r: (bool, bool))
+    ensures
+        r.0 ==> cpu_ok(),
+        r.1 ==> r.0 && cpu_wide(),
+{
+    (false, false)
 }
 
 /// An AES-GCM key, expanded.
@@ -244,7 +265,7 @@ fn enc_tf(rk: &[u128; 15], nr: usize, b: &mut [u8; 16], key: Ghost<Seq<u8>>)
         final(b)@ == cipher(key@, old(b)@),
 {
     // SAFETY: as in `expand_tf`.
-    unsafe { tf::enc(rk, nr, b) }
+    unsafe { tf::enc(rk, nr, b, key) }
 }
 
 /// [`Gcm::new`], compiled as [`expand_tf`] is.
@@ -300,11 +321,11 @@ fn open_tf(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &[u8; 16], w
 
 } // verus!
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 mod tf {
     use crate::gcm::{self, Gcm};
     use crate::ni::Ni;
-    use vstd::prelude::Ghost;
+    use vstd::prelude::{Ghost, Seq};
 
     #[target_feature(enable = "aes,pclmulqdq,ssse3,sse4.1")]
     #[inline(never)]
@@ -314,8 +335,8 @@ mod tf {
 
     #[target_feature(enable = "aes,pclmulqdq,ssse3,sse4.1")]
     #[inline(never)]
-    pub(super) unsafe fn enc(rk: &[u128; 15], nr: usize, b: &mut [u8; 16]) {
-        gcm::encrypt_block::<Ni>(rk, nr, b, Ghost::assume_new())
+    pub(super) unsafe fn enc(rk: &[u128; 15], nr: usize, b: &mut [u8; 16], key: Ghost<Seq<u8>>) {
+        gcm::encrypt_block::<Ni>(rk, nr, b, key)
     }
 
     #[target_feature(enable = "aes,pclmulqdq,ssse3,sse4.1")]
@@ -359,11 +380,11 @@ mod tf {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", target_endian = "little"))]
 mod tf {
     use crate::arm::Arm;
     use crate::gcm::{self, Gcm};
-    use vstd::prelude::Ghost;
+    use vstd::prelude::{Ghost, Seq};
 
     #[target_feature(enable = "neon,aes")]
     #[inline(never)]
@@ -373,8 +394,8 @@ mod tf {
 
     #[target_feature(enable = "neon,aes")]
     #[inline(never)]
-    pub(super) unsafe fn enc(rk: &[u128; 15], nr: usize, b: &mut [u8; 16]) {
-        gcm::encrypt_block::<Arm>(rk, nr, b, Ghost::assume_new())
+    pub(super) unsafe fn enc(rk: &[u128; 15], nr: usize, b: &mut [u8; 16], key: Ghost<Seq<u8>>) {
+        gcm::encrypt_block::<Arm>(rk, nr, b, key)
     }
 
     #[target_feature(enable = "neon,aes")]
@@ -393,5 +414,28 @@ mod tf {
     #[inline(never)]
     pub(super) unsafe fn open(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &[u8; 16], _wide: bool) -> bool {
         g.open::<Arm>(iv, aad, buf, tag, false)
+    }
+}
+
+#[cfg(not(any(all(target_arch = "x86_64", target_feature = "sse2"), all(target_arch = "aarch64", target_endian = "little"))))]
+mod tf {
+    use crate::gcm::Gcm;
+    use vstd::prelude::{Ghost, Seq};
+
+    // Never called: each needs `cpu_ok()`, which is false here.
+    pub(super) unsafe fn expand(_: &[u8]) -> ([u128; 15], usize) {
+        unreachable!()
+    }
+    pub(super) unsafe fn enc(_: &[u128; 15], _: usize, _: &mut [u8; 16], _: Ghost<Seq<u8>>) {
+        unreachable!()
+    }
+    pub(super) unsafe fn new(_: &[u8]) -> Gcm {
+        unreachable!()
+    }
+    pub(super) unsafe fn seal(_: &Gcm, _: &[u8; 12], _: &[u8], _: &mut [u8], _: &mut [u8; 16], _: bool) {
+        unreachable!()
+    }
+    pub(super) unsafe fn open(_: &Gcm, _: &[u8; 12], _: &[u8], _: &mut [u8], _: &[u8; 16], _: bool) -> bool {
+        unreachable!()
     }
 }

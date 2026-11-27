@@ -50,7 +50,7 @@ fn le(b: [u8; 16]) -> u128 {
     u128::from_le_bytes(b)
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 mod x86 {
     use super::*;
     use verilith_aes::x86::*;

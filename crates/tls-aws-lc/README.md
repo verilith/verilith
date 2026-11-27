@@ -14,10 +14,12 @@ project, outside the workspace and the Buck build, because aws-lc is C.
 
 Not all of it is aws-lc. [CRYPTO.md](CRYPTO.md) lists every primitive
 this crate calls, what proof stands behind each, and the benchmarks behind
-the choice: HPKE's HMAC-SHA-256 is verilith-sha2's (Verus), and the
-ChaCha20-Poly1305 that seals session tickets and opens ChaCha20 ECH
-payloads is libcrux's (HACL*). The rest is aws-lc, where the verified
-alternatives are several times slower.
+the choice: AES-GCM (records, QUIC packets, HPKE) and AES header
+protection are verilith-aes's (Verus) on CPUs with AES instructions,
+HPKE's HMAC-SHA-256 is verilith-sha2's (Verus), and the ChaCha20-Poly1305
+that seals session tickets and opens ChaCha20 ECH payloads is libcrux's
+(HACL*). The rest is aws-lc, where the verified alternatives are several
+times slower.
 
 - Cipher suites: TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384,
   TLS_CHACHA20_POLY1305_SHA256.
