@@ -608,12 +608,15 @@ pub fn load32(b: &[u8], i: usize) -> (r: u32)
     ensures
         r as nat == le_bytes(b@, i as int, 4),
 {
-    let n = b.len();
-    let b0 = get(b, i) as u32;
-    let b1 = get(b, i + 1) as u32;
-    let b2 = get(b, i + 2) as u32;
-    let b3 = get(b, i + 3) as u32;
+    // One copy that LLVM turns into a single 4-byte load (byte loads
+    // get merged piecewise with the caller's other loads).
+    let w = crate::prims::bytes4(b, i);
+    let b0 = w[0] as u32;
+    let b1 = w[1] as u32;
+    let b2 = w[2] as u32;
+    let b3 = w[3] as u32;
     proof {
+        assert(w@[0] == b@[i as int] && w@[1] == b@[i + 1] && w@[2] == b@[i + 2] && w@[3] == b@[i + 3]);
         reveal_with_fuel(le_bytes, 5);
         assert((b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)) == b0 + 256 * (b1 + 256 * (b2 + 256 * b3))) by (bit_vector)
             requires

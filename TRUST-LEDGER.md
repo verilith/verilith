@@ -30,7 +30,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | bind |  |  |  |  |  |  | 2 |
 | brotli | 1 |  |  |  |  |  | 4 |
 | checksum | 12 |  |  |  |  |  |  |
-| core | 25 |  |  |  |  |  | 1 |
+| core | 26 |  |  |  |  |  | 1 |
 | dns |  |  |  |  |  |  | 6 |
 | font |  |  |  |  |  |  | 1 |
 | gif |  |  |  |  |  |  | 2 |
@@ -64,7 +64,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 |
 | zstd | 5 |  |  |  |  |  | 2 |
-| **total** | **685** | **36** | **274** | **7** | **17** | **12** | **133** |
+| **total** | **686** | **36** | **274** | **7** | **17** | **12** | **133** |
 
 ## Items
 
@@ -106,7 +106,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/core/src/binary64.rs`: external_body: `mul`, `div`, `from_u64`
 - `crates/core/src/lib.rs`: plain Rust
 - `crates/core/src/prims.rs`: external_body: `pick`, `copy16_pick`, `alloc_u32`, `alloc_u8`, `alloc_i16`
-- `crates/core/src/spare.rs`: external_body: `len_spare`, `reserve_spare`, `reserve_spare_plus`, `push_spare`, `append4_spare`, `append_slice_spare`, `truncate_spare`, `set_spare`, `append8_spare`
+- `crates/core/src/spare.rs`: external_body: `len_spare`, `reserve_spare`, `reserve_spare_plus`, `push_spare`, `append4_spare`, `append_slice_spare`, `append_wild_spare`, `truncate_spare`, `set_spare`, `append8_spare`
 - `crates/core/src/tail.rs`: external_body: `view`, `take`, `put_back`, `len`, `append_from`, `append_from32`, `append_within`, `append_within32`
 
 ### dns

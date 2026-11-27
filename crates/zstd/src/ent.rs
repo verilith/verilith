@@ -3,6 +3,7 @@
 //! sequences sections. Only memory safety is proven here: `compress` keeps
 //! a block only after the verified decoder has decoded it back.
 use vstd::prelude::*;
+use verilith_core::spare::{push_spare, reserve_spare};
 
 verus! {
 
@@ -60,6 +61,20 @@ pub fn lo16(x: u64) -> u16 {
     y as u16
 }
 
+/// The low 12 bits of `x`: an index into an FSE table.
+#[inline(always)]
+pub fn lo12(x: u32) -> (r: usize)
+    ensures
+        r < 4096,
+{
+    let y = x & 0xFFF;
+    proof {
+        assert(y < 4096) by (bit_vector)
+            requires y == x & 0xFFF;
+    }
+    y as usize
+}
+
 /// The low 32 bits of `x`.
 #[inline(always)]
 pub fn lo32(x: u64) -> u32 {
@@ -113,6 +128,59 @@ impl Bits {
         let sh = (8 * k) as u64;
         self.acc = self.acc >> sh;
         self.n = self.n - 8 * k;
+    }
+
+    /// `flush` into room the caller reserved: one store, no capacity
+    /// check.
+    #[inline(always)]
+    pub fn flush_s(&mut self, out: &mut Vec<u8>)
+        requires
+            old(self).n < 64,
+            verilith_core::spare::spare(*old(out)) >= 8,
+        ensures
+            final(self).n < 8,
+            grew(old(out)@, final(out)@),
+            verilith_core::spare::spare(*final(out)) >= verilith_core::spare::spare(*old(out)) - 7,
+    {
+        let k = self.n / 8;
+        let ghost o0 = out@;
+        verilith_core::spare::append8_spare(out, self.acc, k as usize);
+        proof {
+            assert(out@.subrange(0, o0.len() as int) =~= o0);
+        }
+        let sh = (8 * k) as u64;
+        self.acc = self.acc >> sh;
+        self.n = self.n - 8 * k;
+    }
+
+    /// Adds the low `nb` bits of `v`, which fit without a flush.
+    #[inline(always)]
+    pub fn put(&mut self, v: u64, nb: u32)
+        requires
+            old(self).n + nb <= 63,
+        ensures
+            final(self).n == old(self).n + nb,
+    {
+        assert((1u64 << nb) >= 1) by (bit_vector)
+            requires
+                nb <= 63,
+        ;
+        let mask = (1u64 << nb) - 1;
+        self.acc = self.acc | ((v & mask) << self.n);
+        self.n = self.n + nb;
+    }
+
+    /// Adds `v`, which the caller has made less than `2^nb`, and which
+    /// fits without a flush.
+    #[inline(always)]
+    pub fn put_raw(&mut self, v: u64, nb: u32)
+        requires
+            old(self).n + nb <= 63,
+        ensures
+            final(self).n == old(self).n + nb,
+    {
+        self.acc = self.acc | (v << self.n);
+        self.n = self.n + nb;
     }
 
     /// Adds the low `nb` bits of `v`.
@@ -793,35 +861,45 @@ pub fn write_ncount(out: &mut Vec<u8>, norm: &[i16], log: u32) -> (ok: bool)
     true
 }
 
-/// An FSE encoding table (libzstd's `FSE_CTable`).
+/// An FSE encoding table (libzstd's `FSE_CTable`), in fixed-size
+/// arrays so that a byte or a masked state indexes them without a check.
 pub struct FseC {
     pub log: u32,
+    /// `2^log - 1`.
+    pub mask: u32,
     /// The next state for each (symbol, row) pair, in symbol order.
-    pub next: Vec<u16>,
-    /// Per symbol: `deltaNbBits` and `deltaFindState`.
-    pub dnb: Vec<u32>,
-    pub dfs: Vec<i32>,
+    pub next: [u16; 4096],
+    /// Per symbol: `deltaNbBits` (low half) and `deltaFindState` (high
+    /// half, as a two's complement `u32`).
+    pub sym: [u64; 256],
 }
 
 impl FseC {
     pub open spec fn wf(&self) -> bool {
         &&& 0 <= self.log <= 12
-        &&& self.next@.len() == (1u32 << self.log)
-        &&& self.dnb@.len() == self.dfs@.len()
-        &&& self.dnb@.len() <= 256
+    }
+
+    pub fn new() -> (r: FseC)
+        ensures
+            r.wf(),
+    {
+        FseC { log: 5, mask: 31, next: [0u16; 4096], sym: [0u64; 256] }
     }
 }
 
-/// The encoding table of `norm` at accuracy `log`.
-pub fn build_ctable(norm: &[i16], log: u32) -> (r: Option<FseC>)
+/// The encoding table of `norm` at accuracy `log`, built in place (false
+/// if `norm` is not a distribution at that accuracy).
+pub fn build_ctable(norm: &[i16], log: u32, t: &mut FseC) -> (ok: bool)
     requires
         5 <= log <= 12,
         1 <= norm@.len() <= 256,
     ensures
-        r matches Some(t) ==> t.wf() && t.dnb@.len() == norm@.len() && t.log == log,
+        final(t).wf(),
+        ok ==> final(t).log == log,
 {
+    t.log = log;
     if !norm_ok(norm, log) {
-        return None;
+        return false;
     }
     let n = norm.len();
     let size: usize = 1usize << log;
@@ -838,6 +916,8 @@ pub fn build_ctable(norm: &[i16], log: u32) -> (r: Option<FseC>)
     let mut u: usize = 1;
     while u <= n
         invariant
+            t.log == log,
+            log <= 12,
             1 <= u <= n + 1,
             n == norm@.len(),
             cumul@.len() == n + 1,
@@ -854,12 +934,12 @@ pub fn build_ctable(norm: &[i16], log: u32) -> (r: Option<FseC>)
             cumul.set(u, prev + 1);
             tab.set(high, (u - 1) as u8);
             if high == 0 {
-                return None;
+                return false;
             }
             high = high - 1;
         } else {
             if v < 0 || v > 4096 {
-                return None;
+                return false;
             }
             cumul.set(u, prev + v as u32);
         }
@@ -876,6 +956,8 @@ pub fn build_ctable(norm: &[i16], log: u32) -> (r: Option<FseC>)
     let mut s: usize = 0;
     while s < n
         invariant
+            t.log == log,
+            log <= 12,
             s <= n,
             n == norm@.len(),
             tab@.len() == size,
@@ -890,6 +972,8 @@ pub fn build_ctable(norm: &[i16], log: u32) -> (r: Option<FseC>)
         let mut i: i16 = 0;
         while i < v
             invariant
+                t.log == log,
+            log <= 12,
                 tab@.len() == size,
                 pos < size,
                 mask == size - 1,
@@ -908,6 +992,8 @@ pub fn build_ctable(norm: &[i16], log: u32) -> (r: Option<FseC>)
             let mut guard: usize = 0;
             while pos > high && guard < size
                 invariant
+                    t.log == log,
+            log <= 12,
                     pos < size,
                     mask == size - 1,
                     step < size,
@@ -926,13 +1012,13 @@ pub fn build_ctable(norm: &[i16], log: u32) -> (r: Option<FseC>)
         s = s + 1;
     }
     // The next-state table, in symbol order.
-    let mut next: Vec<u16> = vec![0u16; size];
     let mut u: usize = 0;
     while u < size
         invariant
+            t.log == log,
+            log <= 12,
             u <= size,
             size <= 4096,
-            next@.len() == size,
             tab@.len() == size,
             cumul@.len() == n + 1,
             n == norm@.len(),
@@ -942,24 +1028,22 @@ pub fn build_ctable(norm: &[i16], log: u32) -> (r: Option<FseC>)
         if sym < n {
             let c = cumul[sym] as usize;
             if c < size {
-                next.set(c, (size + u) as u16);
+                t.next[c] = (size + u) as u16;
                 cumul.set(sym, cumul[sym] + 1);
             }
         }
         u = u + 1;
     }
     // Symbol transformations.
-    let mut dnb: Vec<u32> = Vec::with_capacity(n);
-    let mut dfs: Vec<i32> = Vec::with_capacity(n);
     let mut total: i32 = 0;
     let mut s: usize = 0;
     while s < n
         invariant
+            t.log == log,
+            log <= 12,
             s <= n,
             n == norm@.len(),
             n <= 256,
-            dnb@.len() == s,
-            dfs@.len() == s,
             5 <= log <= 12,
             -0x10000 <= total <= 0x10000,
         decreases n - s,
@@ -971,33 +1055,30 @@ pub fn build_ctable(norm: &[i16], log: u32) -> (r: Option<FseC>)
                 requires 5 <= log <= 12, l1 == log + 1;
         }
         if v == 0 {
-            dnb.push(((log + 1) << 16) - (1u32 << log));
-            dfs.push(0);
+            t.sym[s] = pack(((log + 1) << 16) - (1u32 << log), 0);
         } else if v == -1 || v == 1 {
-            dnb.push((log << 16) - (1u32 << log));
-            dfs.push(total - 1);
+            t.sym[s] = pack((log << 16) - (1u32 << log), total - 1);
             if total < 0x10000 {
                 total = total + 1;
             }
         } else {
             if v < 0 || v > 4096 {
-                return None;
+                return false;
             }
             let hb = hbit((v - 1) as u32);
             if hb > log {
-                return None;
+                return false;
             }
             let mbo = log - hb;
             if mbo > 12 {
-                return None;
+                return false;
             }
             let msp = (v as u32) << mbo;
             let d = (mbo << 16) as u64;
             if d < msp as u64 {
-                return None;
+                return false;
             }
-            dnb.push((d - msp as u64) as u32);
-            dfs.push(total - v);
+            t.sym[s] = pack((d - msp as u64) as u32, total - v);
             if total <= 0x10000 - v {
                 total = total + v;
             }
@@ -1008,7 +1089,15 @@ pub fn build_ctable(norm: &[i16], log: u32) -> (r: Option<FseC>)
         assert((1u32 << log) as usize == size) by (bit_vector)
             requires size == 1usize << log, log <= 12;
     }
-    Some(FseC { log, next, dnb, dfs })
+    let mask = (size - 1) as u32;
+    t.mask = mask;
+    true
+}
+
+/// One `FseC::sym` entry.
+#[inline(always)]
+fn pack(dnb: u32, dfs: i32) -> u64 {
+    (dnb as u64) | ((dfs as u32 as u64) << 32)
 }
 
 /// An FSE encoder state.
@@ -1022,25 +1111,33 @@ pub fn fse_init(t: &FseC, s: u8) -> (r: FseState)
     requires
         t.wf(),
 {
-    let size = 1u32 << t.log;
-    let si = s as usize;
-    if si >= t.dnb.len() {
-        return FseState { v: size };
-    }
-    let dnb = t.dnb[si];
+    let e = t.sym[s as usize];
+    let dnb = lo32(e);
+    let dfs = lo32(e >> 32);
     let nbo = lo32(((dnb as u64 + 0x8000) >> 16) as u64);
-    if nbo > 31 {
-        return FseState { v: size };
-    }
-    let st = (nbo as i64) * 0x1_0000 - dnb as i64;
-    if st < 0 {
-        return FseState { v: size };
-    }
-    let idx = (st >> nbo).wrapping_add(t.dfs[si] as i64);
-    if idx < 0 || idx as usize >= t.next.len() {
-        return FseState { v: size };
-    }
-    FseState { v: t.next[idx as usize] as u32 }
+    let nbo = if nbo > 31 { 31 } else { nbo };
+    let st = ((nbo as u64) << 16).wrapping_sub(dnb as u64);
+    let x = lo32(st >> nbo).wrapping_add(dfs);
+    FseState { v: t.next[lo12(x)] as u32 }
+}
+
+/// One step of `FSE_encodeSymbol`: the bits to write (the state's low
+/// `nb` bits) and the next state. No branches: the shift is clamped to
+/// the table's accuracy and the next index is masked into the table.
+#[inline(always)]
+pub fn fse_step(t: &FseC, st: &mut FseState, s: u8) -> (r: (u64, u32))
+    requires
+        t.wf(),
+    ensures
+        r.1 <= t.log,
+{
+    let e = t.sym[s as usize];
+    let nb0 = lo32((st.v as u64 + lo32(e) as u64) >> 16);
+    let nb = if nb0 > t.log { t.log } else { nb0 };
+    let v = st.v as u64;
+    let x = (st.v >> nb).wrapping_add(lo32(e >> 32)) & t.mask;
+    st.v = t.next[lo12(x)] as u32;
+    (v, nb)
 }
 
 /// `FSE_encodeSymbol`.
@@ -1053,25 +1150,8 @@ pub fn fse_enc(t: &FseC, st: &mut FseState, s: u8, bw: &mut Bits, out: &mut Vec<
         final(bw).n < 64,
         grew(old(out)@, final(out)@),
 {
-    let si = s as usize;
-    if si >= t.dnb.len() {
-        proof {
-            lemma_grew_refl(out@);
-        }
-        return;
-    }
-    let nbo = ((st.v as u64 + t.dnb[si] as u64) >> 16) as u32;
-    if nbo > 16 {
-        proof {
-            lemma_grew_refl(out@);
-        }
-        return;
-    }
-    bw.add(out, st.v as u64, nbo);
-    let idx = ((st.v >> nbo) as i64) + t.dfs[si] as i64;
-    if idx >= 0 && (idx as usize) < t.next.len() {
-        st.v = t.next[idx as usize] as u32;
-    }
+    let (v, nb) = fse_step(t, st, s);
+    bw.add(out, v, nb);
 }
 
 /// `FSE_flushCState`.
@@ -1702,10 +1782,10 @@ pub fn huf_fse_weights(c: &HufC, out: &mut Vec<u8>) -> (ok: bool)
         Some(v) => v,
         None => return false,
     };
-    let ct = match build_ctable(&norm, log) {
-        Some(t) => t,
-        None => return false,
-    };
+    let mut ct = FseC::new();
+    if !build_ctable(&norm, log, &mut ct) {
+        return false;
+    }
     if !write_ncount(out, &norm, log) {
         return false;
     }
@@ -2108,11 +2188,11 @@ pub fn put_lits(out: &mut Vec<u8>, lits: &[u8], sc: &mut LitScratch, maxbits: us
 // ---------------------------------------------------------------------------
 
 /// How one kind of code (literals lengths, offsets, match lengths) is
-/// coded: mode 0 predefined, 1 RLE, 2 an FSE table.
+/// coded: mode 0 predefined, 1 RLE, 2 an FSE table (the table itself is
+/// in `SeqScratch`).
 pub struct KindEnc {
     pub mode: u8,
     pub sym: u8,
-    pub ct: FseC,
 }
 
 /// Counts codes `c` into `hist` (cleared first, `nmax` long). Returns the
@@ -2186,6 +2266,7 @@ fn choose_kind(
     maxlog: u32,
     out: &mut Vec<u8>,
     tmp: &mut Vec<u8>,
+    ct: &mut FseC,
 ) -> (r: Option<KindEnc>)
     requires
         1 <= nmax <= 256,
@@ -2196,7 +2277,8 @@ fn choose_kind(
         5 <= maxlog <= 12,
     ensures
         grew(old(out)@, final(out)@),
-        r matches Some(k) ==> k.ct.wf() && (k.mode != 1 ==> k.ct.log >= 5),
+        final(ct).wf(),
+        r matches Some(k) ==> (k.mode != 1 ==> final(ct).log >= 5),
 {
     let ghost o0 = out@;
     proof {
@@ -2204,16 +2286,15 @@ fn choose_kind(
     }
     let n = codes.len();
     let (mx, most) = count_codes(codes, hist, nmax);
-    let defc = match build_ctable(def, dlog) {
-        Some(t) => t,
-        None => return None,
-    };
+    if !build_ctable(def, dlog, ct) {
+        return None;
+    }
     if most as usize == n {
         if n <= 2 && mx < def.len() {
-            return Some(KindEnc { mode: 0, sym: 0, ct: defc });
+            return Some(KindEnc { mode: 0, sym: 0 });
         }
         push(out, mx as u8);
-        return Some(KindEnc { mode: 1, sym: mx as u8, ct: defc });
+        return Some(KindEnc { mode: 1, sym: mx as u8 });
     }
     let dcost: Option<u64> = if mx < def.len() {
         fse_cost(hist.as_slice(), mx, def, dlog)
@@ -2228,7 +2309,7 @@ fn choose_kind(
         Some(v) => v,
         None => {
             if dcost.is_some() {
-                return Some(KindEnc { mode: 0, sym: 0, ct: defc });
+                return Some(KindEnc { mode: 0, sym: 0 });
             }
             return None;
         },
@@ -2236,7 +2317,7 @@ fn choose_kind(
     tmp.clear();
     if !write_ncount(tmp, norm.as_slice(), log) {
         if dcost.is_some() {
-            return Some(KindEnc { mode: 0, sym: 0, ct: defc });
+            return Some(KindEnc { mode: 0, sym: 0 });
         }
         return None;
     }
@@ -2247,18 +2328,17 @@ fn choose_kind(
     let hcost = (tmp.len() as u64).wrapping_mul(2048);
     if let Some(dc) = dcost {
         if dc <= ccost.wrapping_add(hcost) {
-            return Some(KindEnc { mode: 0, sym: 0, ct: defc });
+            return Some(KindEnc { mode: 0, sym: 0 });
         }
     }
-    let ct = match build_ctable(norm.as_slice(), log) {
-        Some(t) => t,
-        None => return None,
-    };
+    if !build_ctable(norm.as_slice(), log, ct) {
+        return None;
+    }
     out.extend_from_slice(tmp.as_slice());
     proof {
         assert(out@.subrange(0, o0.len() as int) =~= o0);
     }
-    Some(KindEnc { mode: 2, sym: 0, ct })
+    Some(KindEnc { mode: 2, sym: 0 })
 }
 
 /// Scratch space for the sequences section.
@@ -2268,11 +2348,24 @@ pub struct SeqScratch {
     pub ofc: Vec<u8>,
     pub hist: Vec<u32>,
     pub tmp: Vec<u8>,
+    /// The tables of the literals lengths, offsets and match lengths.
+    pub lct: FseC,
+    pub oct: FseC,
+    pub mct: FseC,
 }
 
 impl SeqScratch {
     pub fn new() -> (r: SeqScratch) {
-        SeqScratch { llc: Vec::new(), mlc: Vec::new(), ofc: Vec::new(), hist: Vec::new(), tmp: Vec::new() }
+        SeqScratch {
+            llc: Vec::new(),
+            mlc: Vec::new(),
+            ofc: Vec::new(),
+            hist: Vec::new(),
+            tmp: Vec::new(),
+            lct: FseC::new(),
+            oct: FseC::new(),
+            mct: FseC::new(),
+        }
     }
 }
 
@@ -2308,6 +2401,9 @@ pub fn put_seqs(out: &mut Vec<u8>, ll: &[u32], ml: &[u32], ob: &[u32], sc: &mut 
     sc.llc.clear();
     sc.mlc.clear();
     sc.ofc.clear();
+    reserve_spare(&mut sc.llc, n);
+    reserve_spare(&mut sc.mlc, n);
+    reserve_spare(&mut sc.ofc, n);
     let mut i: usize = 0;
     while i < n
         invariant
@@ -2315,11 +2411,14 @@ pub fn put_seqs(out: &mut Vec<u8>, ll: &[u32], ml: &[u32], ob: &[u32], sc: &mut 
             sc.llc@.len() == i,
             sc.mlc@.len() == i,
             sc.ofc@.len() == i,
+            verilith_core::spare::spare(sc.llc) >= n - i,
+            verilith_core::spare::spare(sc.mlc) >= n - i,
+            verilith_core::spare::spare(sc.ofc) >= n - i,
         decreases n - i,
     {
-        sc.llc.push(ll_code(ll[i]));
-        sc.mlc.push(ml_code(ml[i]));
-        sc.ofc.push(hbit(ob[i]) as u8);
+        push_spare(&mut sc.llc, ll_code(ll[i]));
+        push_spare(&mut sc.mlc, ml_code(ml[i]));
+        push_spare(&mut sc.ofc, hbit(ob[i]) as u8);
         i = i + 1;
     }
     // The modes byte is written once the modes are known.
@@ -2329,7 +2428,7 @@ pub fn put_seqs(out: &mut Vec<u8>, ll: &[u32], ml: &[u32], ob: &[u32], sc: &mut 
     proof {
         lemma_grew_trans(o0, o1, o2);
     }
-    let lle = match choose_kind(sc.llc.as_slice(), &mut sc.hist, 36, &LL_DEF, 6, 9, out, &mut sc.tmp) {
+    let lle = match choose_kind(sc.llc.as_slice(), &mut sc.hist, 36, &LL_DEF, 6, 9, out, &mut sc.tmp, &mut sc.lct) {
         Some(k) => k,
         None => {
             proof {
@@ -2342,7 +2441,7 @@ pub fn put_seqs(out: &mut Vec<u8>, ll: &[u32], ml: &[u32], ob: &[u32], sc: &mut 
     proof {
         lemma_grew_trans(o0, o2, o3);
     }
-    let ofe = match choose_kind(sc.ofc.as_slice(), &mut sc.hist, 32, &OF_DEF, 5, 8, out, &mut sc.tmp) {
+    let ofe = match choose_kind(sc.ofc.as_slice(), &mut sc.hist, 32, &OF_DEF, 5, 8, out, &mut sc.tmp, &mut sc.oct) {
         Some(k) => k,
         None => {
             proof {
@@ -2355,7 +2454,7 @@ pub fn put_seqs(out: &mut Vec<u8>, ll: &[u32], ml: &[u32], ob: &[u32], sc: &mut 
     proof {
         lemma_grew_trans(o0, o3, o4);
     }
-    let mle = match choose_kind(sc.mlc.as_slice(), &mut sc.hist, 53, &ML_DEF, 6, 9, out, &mut sc.tmp) {
+    let mle = match choose_kind(sc.mlc.as_slice(), &mut sc.hist, 53, &ML_DEF, 6, 9, out, &mut sc.tmp, &mut sc.mct) {
         Some(k) => k,
         None => {
             proof {
@@ -2380,36 +2479,77 @@ pub fn put_seqs(out: &mut Vec<u8>, ll: &[u32], ml: &[u32], ob: &[u32], sc: &mut 
     // The bitstream: the last sequence first.
     let mut bw = Bits::new();
     let last = n - 1;
-    let mut sll = fse_init(&lle.ct, sc.llc[last]);
-    let mut sof = fse_init(&ofe.ct, sc.ofc[last]);
-    let mut sml = fse_init(&mle.ct, sc.mlc[last]);
+    let mut sll = fse_init(&sc.lct, sc.llc[last]);
+    let mut sof = fse_init(&sc.oct, sc.ofc[last]);
+    let mut sml = fse_init(&sc.mct, sc.mlc[last]);
     proof {
         lemma_grew_refl(out@);
     }
     extra_bits(&mut bw, out, sc.llc[last], sc.mlc[last], sc.ofc[last], ll[last], ml[last], ob[last]);
+    let ghost o7 = out@;
+    // Room for every sequence: two stores of at most 7 bytes each, so no
+    // capacity check in the loop.
+    reserve_spare(out, 16 * last + 8);
+    assert(out@ == o7);
+    let llc = sc.llc.as_slice();
+    let mlc = sc.mlc.as_slice();
+    let ofc = sc.ofc.as_slice();
+    let lm = lle.mode != 1;
+    let om = ofe.mode != 1;
+    let mm = mle.mode != 1;
     let mut i = last;
     while i > 0
         invariant
             i <= last,
             bw.n < 64,
-            lle.ct.wf(),
-            ofe.ct.wf(),
-            mle.ct.wf(),
+            sc.lct.wf(),
+            sc.oct.wf(),
+            sc.mct.wf(),
             grew(o6, out@),
+            verilith_core::spare::spare(*out) >= 16 * i + 8,
         decreases i,
     {
         i = i - 1;
         let ghost a = out@;
-        seq_states(&mut bw, out, &lle, &ofe, &mle, &mut sll, &mut sof, &mut sml, sc.llc[i], sc.ofc[i], sc.mlc[i]);
+        // libzstd's order: offset, match length, literals length states,
+        // then the literals length, match length and offset extra bits.
+        bw.flush_s(out);
+        if om {
+            let (v, nb) = fse_step(&sc.oct, &mut sof, ofc[i]);
+            bw.put(v, nb);
+        }
+        if mm {
+            let (v, nb) = fse_step(&sc.mct, &mut sml, mlc[i]);
+            bw.put(v, nb);
+        }
+        if lm {
+            let (v, nb) = fse_step(&sc.lct, &mut sll, llc[i]);
+            bw.put(v, nb);
+        }
+        let lc = llc[i] as usize;
+        let mc = mlc[i] as usize;
+        let lc = if lc < 36 { lc } else { 35 };
+        let mc = if mc < 53 { mc } else { 52 };
+        let lb = LL_BASE[lc];
+        let mb = ML_BASE[mc];
+        let lbn = LL_BITS[lc] as u32;
+        let mbn = ML_BITS[mc] as u32;
+        let lbn = if lbn > 16 { 16 } else { lbn };
+        let mbn = if mbn > 16 { 16 } else { mbn };
+        bw.put_raw(ll[i].wrapping_sub(lb) as u64, lbn);
         let ghost a2 = out@;
-        extra_bits(&mut bw, out, sc.llc[i], sc.mlc[i], sc.ofc[i], ll[i], ml[i], ob[i]);
+        bw.flush_s(out);
+        bw.put_raw(ml[i].wrapping_sub(mb) as u64, mbn);
+        let oc = ofc[i] as u32;
+        let oc = if oc <= 31 { oc } else { 31 };
+        bw.put(ob[i] as u64, oc);
         proof {
             lemma_grew_trans(a, a2, out@);
             lemma_grew_trans(o6, a, out@);
         }
     }
     let ghost b = out@;
-    flush3(&mut bw, out, &lle, &ofe, &mle, &sll, &sof, &sml);
+    flush3(&mut bw, out, &lle, &ofe, &mle, &sc.lct, &sc.oct, &sc.mct, &sll, &sof, &sml);
     let ghost b2 = out@;
     bw.close(out);
     proof {
@@ -2420,62 +2560,26 @@ pub fn put_seqs(out: &mut Vec<u8>, ll: &[u32], ml: &[u32], ob: &[u32], sc: &mut 
     true
 }
 
-/// The state updates of one sequence: offset, match length, literals
-/// length.
+/// The final states: match length, offset, literals length.
 #[inline(always)]
-fn seq_states(
+fn flush3(
     bw: &mut Bits,
     out: &mut Vec<u8>,
     lle: &KindEnc,
     ofe: &KindEnc,
     mle: &KindEnc,
-    sll: &mut FseState,
-    sof: &mut FseState,
-    sml: &mut FseState,
-    llc: u8,
-    ofc: u8,
-    mlc: u8,
+    lct: &FseC,
+    oct: &FseC,
+    mct: &FseC,
+    sll: &FseState,
+    sof: &FseState,
+    sml: &FseState,
 )
     requires
         old(bw).n < 64,
-        lle.ct.wf(),
-        ofe.ct.wf(),
-        mle.ct.wf(),
-    ensures
-        final(bw).n < 64,
-        grew(old(out)@, final(out)@),
-{
-    let ghost o0 = out@;
-    proof {
-        lemma_grew_refl(out@);
-    }
-    if ofe.mode != 1 {
-        fse_enc(&ofe.ct, sof, ofc, bw, out);
-    }
-    let ghost o1 = out@;
-    if mle.mode != 1 {
-        fse_enc(&mle.ct, sml, mlc, bw, out);
-    }
-    let ghost o2 = out@;
-    if lle.mode != 1 {
-        fse_enc(&lle.ct, sll, llc, bw, out);
-    }
-    proof {
-        lemma_grew_refl(o1);
-        lemma_grew_refl(o2);
-        lemma_grew_trans(o0, o1, o2);
-        lemma_grew_trans(o0, o2, out@);
-    }
-}
-
-/// The final states: match length, offset, literals length.
-#[inline(always)]
-fn flush3(bw: &mut Bits, out: &mut Vec<u8>, lle: &KindEnc, ofe: &KindEnc, mle: &KindEnc, sll: &FseState, sof: &FseState, sml: &FseState)
-    requires
-        old(bw).n < 64,
-        lle.ct.wf(),
-        ofe.ct.wf(),
-        mle.ct.wf(),
+        lct.wf(),
+        oct.wf(),
+        mct.wf(),
     ensures
         final(bw).n < 64,
         grew(old(out)@, final(out)@),
@@ -2485,15 +2589,15 @@ fn flush3(bw: &mut Bits, out: &mut Vec<u8>, lle: &KindEnc, ofe: &KindEnc, mle: &
         lemma_grew_refl(out@);
     }
     if mle.mode != 1 {
-        fse_flush(&mle.ct, sml, bw, out);
+        fse_flush(&mct, sml, bw, out);
     }
     let ghost o1 = out@;
     if ofe.mode != 1 {
-        fse_flush(&ofe.ct, sof, bw, out);
+        fse_flush(&oct, sof, bw, out);
     }
     let ghost o2 = out@;
     if lle.mode != 1 {
-        fse_flush(&lle.ct, sll, bw, out);
+        fse_flush(&lct, sll, bw, out);
     }
     proof {
         lemma_grew_refl(o1);
