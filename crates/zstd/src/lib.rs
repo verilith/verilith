@@ -42,6 +42,10 @@ pub mod dict;
 pub mod stream;
 #[doc(hidden)]
 pub mod capi;
+#[doc(hidden)]
+pub mod enc;
+#[doc(hidden)]
+pub mod compress;
 
 pub use dict::DictDecoder;
 pub use frame::{decompress_exec as decompress, Error};
