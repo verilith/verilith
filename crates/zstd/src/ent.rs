@@ -92,18 +92,48 @@ impl Bits {
         Bits { acc: 0, n: 0 }
     }
 
+    /// Moves the whole bytes of the accumulator to `out` (one 8-byte
+    /// store).
+    #[inline(always)]
+    pub fn flush(&mut self, out: &mut Vec<u8>)
+        requires
+            old(self).n < 64,
+        ensures
+            final(self).n == old(self).n % 8,
+            grew(old(out)@, final(out)@),
+            final(out)@.len() == old(out)@.len() + old(self).n / 8,
+    {
+        let k = self.n / 8;
+        let ghost o0 = out@;
+        verilith_core::spare::reserve_spare(out, 8);
+        verilith_core::spare::append8_spare(out, self.acc, k as usize);
+        proof {
+            assert(out@.subrange(0, o0.len() as int) =~= o0);
+        }
+        let sh = (8 * k) as u64;
+        self.acc = self.acc >> sh;
+        self.n = self.n - 8 * k;
+    }
+
     /// Adds the low `nb` bits of `v`.
     #[inline(always)]
     pub fn add(&mut self, out: &mut Vec<u8>, v: u64, nb: u32)
         requires
-            old(self).n < 32,
+            old(self).n < 64,
             nb <= 32,
         ensures
-            final(self).n < 32,
+            final(self).n < 64,
+            final(self).n >= 1 || nb == 0 || old(self).n + nb > 63,
+            old(self).n + nb <= 63 ==> final(self).n == old(self).n + nb && final(out)@ == old(out)@,
             grew(old(out)@, final(out)@),
-            old(self).n + nb >= 32 ==> final(self).n == old(self).n + nb - 32 && final(out)@.len() == old(out)@.len() + 4,
-            old(self).n + nb < 32 ==> final(self).n == old(self).n + nb && final(out)@.len() == old(out)@.len(),
     {
+        if self.n + nb > 63 {
+            self.flush(out);
+        } else {
+            proof {
+                lemma_grew_refl(out@);
+            }
+        }
         assert((1u64 << nb) >= 1) by (bit_vector)
             requires
                 nb <= 32,
@@ -111,57 +141,65 @@ impl Bits {
         let mask = (1u64 << nb) - 1;
         self.acc = self.acc | ((v & mask) << self.n);
         self.n = self.n + nb;
-        if self.n >= 32 {
-            let a = self.acc;
-            let ghost o0 = out@;
-            out.push(a as u8);
-            out.push((a >> 8) as u8);
-            out.push((a >> 16) as u8);
-            out.push((a >> 24) as u8);
-            proof {
-                assert(out@.subrange(0, o0.len() as int) =~= o0);
-            }
-            self.acc = a >> 32;
-            self.n = self.n - 32;
+    }
+
+    /// Adds `v`, which the caller has made less than `2^nb` (larger
+    /// values only spoil the stream, which the decoder's check rejects).
+    #[inline(always)]
+    pub fn add_raw(&mut self, out: &mut Vec<u8>, v: u64, nb: u32)
+        requires
+            old(self).n < 64,
+            nb <= 32,
+        ensures
+            final(self).n < 64,
+            grew(old(out)@, final(out)@),
+    {
+        if self.n + nb > 63 {
+            self.flush(out);
         } else {
             proof {
                 lemma_grew_refl(out@);
             }
         }
+        self.acc = self.acc | (v << self.n);
+        self.n = self.n + nb;
     }
 
     /// The end marker, then the last bits.
     pub fn close(&mut self, out: &mut Vec<u8>)
         requires
-            old(self).n < 32,
+            old(self).n < 64,
         ensures
             grew(old(out)@, final(out)@),
             final(out)@.len() > old(out)@.len(),
     {
         let ghost o0 = out@;
-        self.add(out, 1, 1);
-        let ghost o1 = out@;
-        let mut k: u32 = 0;
-        let nbytes = (self.n + 7) / 8;
-        proof {
-            lemma_grew_refl(out@);
-        }
-        while k < nbytes
-            invariant
-                k <= nbytes <= 4,
-                grew(o1, out@),
-                out@.len() == o1.len() + k,
-            decreases nbytes - k,
-        {
-            let ghost o2 = out@;
-            push(out, lo8(self.acc >> (8 * k)));
+        if self.n == 63 {
+            self.flush(out);
+        } else {
             proof {
-                lemma_grew_trans(o1, o2, out@);
+                lemma_grew_refl(out@);
             }
-            k = k + 1;
+        }
+        let ghost o1 = out@;
+        self.add(out, 1, 1);
+        let ghost o2 = out@;
+        let n1 = self.n;
+        self.flush(out);
+        let ghost o3 = out@;
+        if self.n > 0 {
+            push(out, lo8(self.acc));
+        } else {
+            proof {
+                lemma_grew_refl(out@);
+            }
         }
         proof {
-            lemma_grew_trans(o0, o1, out@);
+            lemma_grew_trans(o0, o1, o2);
+            lemma_grew_trans(o0, o2, o3);
+            lemma_grew_trans(o0, o3, out@);
+            assert(n1 >= 1);
+            assert(n1 / 8 >= 1 || n1 % 8 >= 1);
         }
         self.acc = 0;
         self.n = 0;
@@ -1010,9 +1048,9 @@ pub fn fse_init(t: &FseC, s: u8) -> (r: FseState)
 pub fn fse_enc(t: &FseC, st: &mut FseState, s: u8, bw: &mut Bits, out: &mut Vec<u8>)
     requires
         t.wf(),
-        old(bw).n < 32,
+        old(bw).n < 64,
     ensures
-        final(bw).n < 32,
+        final(bw).n < 64,
         grew(old(out)@, final(out)@),
 {
     let si = s as usize;
@@ -1041,9 +1079,9 @@ pub fn fse_enc(t: &FseC, st: &mut FseState, s: u8, bw: &mut Bits, out: &mut Vec<
 pub fn fse_flush(t: &FseC, st: &FseState, bw: &mut Bits, out: &mut Vec<u8>)
     requires
         t.wf(),
-        old(bw).n < 32,
+        old(bw).n < 64,
     ensures
-        final(bw).n < 32,
+        final(bw).n < 64,
         grew(old(out)@, final(out)@),
 {
     bw.add(out, st.v as u64, t.log);
@@ -1686,7 +1724,7 @@ pub fn huf_fse_weights(c: &HufC, out: &mut Vec<u8>) -> (ok: bool)
     while i > 0
         invariant
             i <= n,
-            bw.n < 32,
+            bw.n < 64,
             ct.wf(),
             grew(o1, out@),
         decreases i,
@@ -1808,14 +1846,14 @@ pub fn huf_stream(c: &HufC, lits: &[u8], a: usize, b: usize, out: &mut Vec<u8>)
     while i > a
         invariant
             a <= i <= b,
-            bw.n < 32,
+            bw.n < 64,
             grew(o0, out@),
         decreases i,
     {
         i = i - 1;
         let s = lits[i] as usize;
         let ghost o1 = out@;
-        bw.add(out, c.codes[s] as u64, c.lens[s] as u32);
+        bw.add_raw(out, c.codes[s] as u64, c.lens[s] as u32);
         proof {
             lemma_grew_trans(o0, o1, out@);
         }
@@ -2353,7 +2391,7 @@ pub fn put_seqs(out: &mut Vec<u8>, ll: &[u32], ml: &[u32], ob: &[u32], sc: &mut 
     while i > 0
         invariant
             i <= last,
-            bw.n < 32,
+            bw.n < 64,
             lle.ct.wf(),
             ofe.ct.wf(),
             mle.ct.wf(),
@@ -2399,12 +2437,12 @@ fn seq_states(
     mlc: u8,
 )
     requires
-        old(bw).n < 32,
+        old(bw).n < 64,
         lle.ct.wf(),
         ofe.ct.wf(),
         mle.ct.wf(),
     ensures
-        final(bw).n < 32,
+        final(bw).n < 64,
         grew(old(out)@, final(out)@),
 {
     let ghost o0 = out@;
@@ -2434,12 +2472,12 @@ fn seq_states(
 #[inline(always)]
 fn flush3(bw: &mut Bits, out: &mut Vec<u8>, lle: &KindEnc, ofe: &KindEnc, mle: &KindEnc, sll: &FseState, sof: &FseState, sml: &FseState)
     requires
-        old(bw).n < 32,
+        old(bw).n < 64,
         lle.ct.wf(),
         ofe.ct.wf(),
         mle.ct.wf(),
     ensures
-        final(bw).n < 32,
+        final(bw).n < 64,
         grew(old(out)@, final(out)@),
 {
     let ghost o0 = out@;
@@ -2469,9 +2507,9 @@ fn flush3(bw: &mut Bits, out: &mut Vec<u8>, lle: &KindEnc, ofe: &KindEnc, mle: &
 #[inline(always)]
 fn extra_bits(bw: &mut Bits, out: &mut Vec<u8>, llc: u8, mlc: u8, ofc: u8, ll: u32, ml: u32, ob: u32)
     requires
-        old(bw).n < 32,
+        old(bw).n < 64,
     ensures
-        final(bw).n < 32,
+        final(bw).n < 64,
         grew(old(out)@, final(out)@),
 {
     let ghost o0 = out@;
@@ -2479,9 +2517,9 @@ fn extra_bits(bw: &mut Bits, out: &mut Vec<u8>, llc: u8, mlc: u8, ofc: u8, ll: u
     let mc = if (mlc as usize) < 53 { mlc as usize } else { 52 };
     let lb = LL_BASE[lc];
     let mb = ML_BASE[mc];
-    bw.add(out, (if ll >= lb { ll - lb } else { 0 }) as u64, LL_BITS[lc] as u32);
+    bw.add_raw(out, (if ll >= lb { ll - lb } else { 0 }) as u64, LL_BITS[lc] as u32);
     let ghost o1 = out@;
-    bw.add(out, (if ml >= mb { ml - mb } else { 0 }) as u64, ML_BITS[mc] as u32);
+    bw.add_raw(out, (if ml >= mb { ml - mb } else { 0 }) as u64, ML_BITS[mc] as u32);
     let ghost o2 = out@;
     let oc = if ofc <= 31 { ofc as u32 } else { 31 };
     bw.add(out, ob as u64, oc);
