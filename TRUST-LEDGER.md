@@ -25,7 +25,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 | Crate | external_body | axioms | assume_spec | ext. types | assume_new | no termination check | plain-Rust files |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| aes | 60 | 1 |  | 2 |  |  | 1 |
+| aes | 61 | 1 |  | 2 |  |  | 1 |
 | archive |  |  |  |  |  |  | 3 |
 | bind |  |  |  |  |  |  | 2 |
 | brotli | 1 |  |  |  |  |  | 4 |
@@ -64,13 +64,14 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 |
 | zstd | 5 |  |  |  |  |  | 2 |
-| **total** | **684** | **36** | **274** | **7** | **17** | **12** | **133** |
+| **total** | **685** | **36** | **274** | **7** | **17** | **12** | **133** |
 
 ## Items
 
 ### aes
 
 - `crates/aes/src/aead.rs`: external_body: `expand_tf`, `enc_tf`, `new_tf`, `seal_tf`, `open_tf`
+- `crates/aes/src/ct.rs`: external_body: `declassify`
 - `crates/aes/src/lib.rs`: plain Rust
 - `crates/aes/src/neon.rs`: external_body: `has_arm_aes`, `clone`, `clone`, `n_load`, `n_store`, `n_load16`, `n_store16`, `n_load_u128`, `n_set`, `n_get`, `n_xor`, `n_aese`, `n_aesmc`, `n_clmul`, `n_tbl`, `n_add32`, `n_sll64`, `n_srl64`, `n_bsll8`, `n_bsrl8`
 - `crates/aes/src/x86.rs`: external_body: `has_ni`, `has_vaes`, `xv`, `x_load`, `x_store`, `x_load16`, `x_store16`, `x_load_u128`, `x_set`, `x_get`, `x_xor`, `x_aesenc`, `x_aesenclast`, `x_clmul`, `x_pshufb`, `x_add32`, `x_sll64`, `x_srl64`, `x_bsll8`, `x_bsrl8`, `zl`, `z_load`, `z_store`, `z_load_u128`, `z_bcast`, `z_bcast_x`, `z_from_x`, `z_lane`, `z_xor`, `z_aesenc`, `z_aesenclast`, `z_clmul`, `z_pshufb`, `z_add32`, `z_xor3`; axioms: `axiom_zl_len`; ext. types: `ExM128i`, `ExM512i`

@@ -11,10 +11,10 @@ cut from that release's commit. Both are pinned exactly:
 
 | | Where | Now |
 |---|---|---|
-| Verus release | `scripts/verus-version` (`VERUS_RELEASE`) | `0.2026.11.02.8bf68ee` |
-| Verus commit | `scripts/verus-version` (`VERUS_COMMIT`) | `8bf68ee741df833ea5d0fe6a2255126fdea87e47` |
-| Rust toolchain Verus is built with | `scripts/verus-version` (`VERUS_TOOLCHAIN`) | `1.99.1` |
-| `vstd`, `verus_builtin`, `verus_builtin_macros`, `verus_state_machines_macros` | `[workspace.dependencies]` in `Cargo.toml` | `=0.0.0-2026-11-01-0251` |
+| Verus release | `scripts/verus-version` (`VERUS_RELEASE`) | `0.2026.11.22.1ce6a59` |
+| Verus commit | `scripts/verus-version` (`VERUS_COMMIT`) | `1ce6a59bd72713cf486a7660097fe5ac57519617` |
+| Rust toolchain Verus is built with | `scripts/verus-version` (`VERUS_TOOLCHAIN`) | `1.100.0` |
+| `vstd`, `verus_builtin`, `verus_builtin_macros`, `verus_state_machines_macros` | `[workspace.dependencies]` in `Cargo.toml` | `=0.0.0-2026-11-22-0344` |
 
 The Rust toolchain above is only for running Verus. Building the crates
 needs Rust 1.89 or later (the `rust-version` in each `Cargo.toml`).
@@ -108,12 +108,80 @@ needed for it:
    the requirements between them.
 2. `scripts/package.sh`, `scripts/trust-ledger.py --check`, and a fresh run
    of every proof on the release commit.
-3. Publish in dependency order (`cargo publish --workspace` orders them),
-   and tag the commit `v<version>`.
+3. `scripts/publish.py` (a dry run), then publish: run the "Publish to
+   crates.io" workflow with "dry_run" unticked, or `scripts/publish.py
+   --publish` after `cargo login`. Then tag the commit `v<version>`.
 4. Add a row to the table below.
+
+## What is published
+
+Every workspace member without `publish = false`, and `crates/tls-aws-lc`
+(outside the workspace only because aws-lc is C and the workspace builds
+only Rust). `scripts/publish.py --list` prints them in the order they are
+published. Not published: `verilith-bind` and its Node.js and Python
+crates, which ship through npm and PyPI.
+
+`scripts/publish.py` skips a crate whose version is already on crates.io,
+so a publish that stopped part way (a failure, or crates.io's limit on new
+crates, about one every 10 minutes after the first 5) is finished by
+running it again.
+
+### Authentication
+
+- **The first publish** of a crate needs a crates.io API token: on
+  crates.io, Account Settings > API Tokens, with the `publish-new` and
+  `publish-update` scopes, saved as the `CARGO_REGISTRY_TOKEN` repository
+  secret (Settings > Secrets and variables > Actions).
+- **After that, Trusted Publishing** (no token): on each crate's page on
+  crates.io, Settings > Trusted Publishing > Add, with owner `verilith`,
+  repository `verilith` and workflow `publish.yml` (no environment). The
+  workflow then gets a short-lived token from crates.io itself. Once every
+  crate has it, the secret is only needed for new crates.
+- A release that adds a crate needs the token again for that crate: run
+  the workflow with auth "token".
+
+## npm and PyPI
+
+The Python and Node.js bindings (`crates/bind/python`, `crates/bind/node`)
+are published as `verilith` on PyPI (imported as `vbind`; the name
+`vbind` is taken there) and on npm, at the same version as the crates. Each
+has a workflow run by hand, a dry run unless "dry_run" is unticked:
+
+- **Publish to PyPI** (`.github/workflows/publish-pypi.yml`): seven abi3
+  wheels (CPython 3.11 and later) for Linux x86_64 and aarch64 (glibc and
+  musl), macOS arm64 and x86_64 and Windows x64, and the sdist. Each wheel
+  is installed and tested before anything is uploaded.
+- **Publish to npm** (`.github/workflows/publish-npm.yml`): the same seven
+  platforms, napi-rs style. Each binary is its own package
+  (`verilith-linux-x64-gnu`, ...), and `verilith` lists them as
+  optional dependencies, so npm installs only the one that matches. Each
+  binary is tested before anything is published.
+
+A new version also needs, besides the `Cargo.toml`s: `version` in
+`crates/bind/node/package.json` and its `optionalDependencies`, and
+`npx napi version` in `crates/bind/node` for the platform packages.
+`crates/bind/scripts/check-npm-packages.py` (which the npm workflow runs)
+fails if any of them disagree. The PyPI version is read from `Cargo.toml`.
+
+### Authentication
+
+- **PyPI: Trusted Publishing only**, no token. Before the first publish,
+  add a pending publisher (pypi.org > Account settings > Publishing): PyPI
+  project `verilith`, owner `verilith`, repository `verilith`,
+  workflow `publish-pypi.yml`, environment `pypi`. The first publish
+  creates the project and turns it into an ordinary trusted publisher.
+- **npm: a token the first time, then Trusted Publishing.** The first
+  publish of each of the eight packages needs an npm granular access token
+  (npmjs.com > Access Tokens > Generate New Token, read and write on
+  packages, "bypass two-factor authentication" ticked), saved as the
+  `NPM_TOKEN` repository secret. Then on each package's page, Settings >
+  Trusted Publisher > GitHub Actions: owner `verilith`, repository
+  `verilith`, workflow `publish-npm.yml`, environment `npm`. npm uses
+  Trusted Publishing whenever it is set up, so the secret can then be
+  deleted. A release that adds a platform needs it again for that package.
 
 ## Releases and their pins
 
 | verilith | Verus release | `vstd` |
 |---|---|---|
-| unreleased (main) | `0.2026.11.02.8bf68ee` | `=0.0.0-2026-11-01-0251` |
+| unreleased (main) | `0.2026.11.22.1ce6a59` | `=0.0.0-2026-11-01-0251` |

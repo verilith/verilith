@@ -8,7 +8,6 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/verilith/verilith"
 keywords = ["http", "server", "verified", "verus"]
 categories = ["network-programming", "web-programming::http-server"]
-publish = false
 
 [lib]
 crate-type = ["rlib"]

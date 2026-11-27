@@ -62,8 +62,13 @@ impl Isa for Ni {
     }
 
     #[inline(always)]
-    fn get(x: X128) -> (r: u128) {
-        x_get(x)
+    fn store_u128(a: &mut [u128; 16], i: usize, x: X128) {
+        a[i] = x_get(x);
+    }
+
+    #[inline(always)]
+    fn is_zero(x: X128) -> (r: bool) {
+        x_get(x) == 0
     }
 
     #[inline(always)]
@@ -175,7 +180,7 @@ impl Wide for Ni {
     }
 
     #[inline(always)]
-    fn ghash16(acc: u128, d: &[u8], i: usize, hr: &[u128; 16], h: Ghost<u128>) -> (r: u128) {
+    fn ghash16(acc: X128, d: &[u8], i: usize, hr: &[u128; 16], h: Ghost<u128>) -> (r: X128) {
         crate::vaes::ghash16_z(acc, d, i, hr, h)
     }
 

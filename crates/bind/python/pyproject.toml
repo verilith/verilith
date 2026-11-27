@@ -2,12 +2,30 @@
 requires = ["maturin>=1.5,<2"]
 build-backend = "maturin"
 
+# Published to PyPI as verilith (the name vbind is someone else's
+# there); the module is still imported as vbind. The version comes from
+# Cargo.toml. .github/workflows/publish-pypi.yml builds and publishes it.
 [project]
-name = "vbind"
-version = "0.1.0"
+name = "verilith"
+dynamic = ["version"]
 description = "Formally verified (Verus) URL and JSON parsers for Python"
+readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT OR Apache-2.0" }
+license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
+keywords = ["url", "whatwg", "json", "parser", "verified", "verus"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Text Processing",
+]
+
+[project.urls]
+Repository = "https://github.com/verilith/verilith"
+Documentation = "https://github.com/verilith/verilith/tree/main/crates/bind#python"
 
 [tool.maturin]
 module-name = "vbind"

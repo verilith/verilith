@@ -466,15 +466,16 @@ proof fn lemma_xsum16(s: Seq<u128>)
 /// four lanes of products with H^16 .. H^1, summed, folded, reduced.
 #[verifier::spinoff_prover]
 #[inline(always)]
-pub fn ghash16_z(acc: u128, d: &[u8], i: usize, hr: &[u128; 16], Ghost(h): Ghost<u128>) -> (r: u128)
+pub fn ghash16_z(accr: X128, d: &[u8], i: usize, hr: &[u128; 16], Ghost(h): Ghost<u128>) -> (r: X128)
     requires
         vaes(),
         ni(),
         i + 256 <= d@.len(),
         rpowers_ok(h, hr@),
     ensures
-        r == ghash_from(h, acc, blocks_at(d@, i as int, 16)),
+        xv(r) == ghash_from(h, xv(accr), blocks_at(d@, i as int, 16)),
 {
+    let ghost acc = xv(accr);
     let ghost xs = blocks_at(d@, i as int, 16);
     let ghost ys = xs.update(0, acc ^ xs[0]);
     let rz = z_bcast_x(rev_x::<Ni>());
@@ -483,7 +484,7 @@ pub fn ghash16_z(acc: u128, d: &[u8], i: usize, hr: &[u128; 16], Ghost(h): Ghost
     let x1 = load_be_z(d, i + 64, rz);
     let x2 = load_be_z(d, i + 128, rz);
     let x3 = load_be_z(d, i + 192, rz);
-    let az = z_from_x(x_set(acc));
+    let az = z_from_x(accr);
     let x0 = z_xor(x0a, az);
     let h0 = z_load_u128(hr, 0);
     let h1 = z_load_u128(hr, 4);
@@ -544,7 +545,7 @@ pub fn ghash16_z(acc: u128, d: &[u8], i: usize, hr: &[u128; 16], Ghost(h): Ghost
         lemma_ghash_dsum(h, ys);
         lemma_ghash_from_first(h, acc, xs);
     }
-    x_get(r)
+    r
 }
 
 } // verus!
