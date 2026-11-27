@@ -33,6 +33,12 @@
 //!   server has handled is at or below it (§6.8); it is sent at most once,
 //!   and after it the core does nothing. A peer's GOAWAY(NO_ERROR) drains:
 //!   no new streams, the open ones finish, then GOAWAY and close.
+//! - **Content-Length** (§8.1.1). Each live stream counts its DATA bytes
+//!   against the Content-Length its fields declared (verilith-core's
+//!   `BodyLen`, whose invariant is that they never pass it). A request is
+//!   complete (`Step::Dispatch`, or `Step::Data` with END_STREAM) only if
+//!   a declared length equals its DATA ([`Core::body_ok`]); otherwise it
+//!   is malformed, and the stream is reset with PROTOCOL_ERROR.
 //! - **Flood budget.** Frames that carry no request bytes cost a unit of
 //!   budget: PING, SETTINGS (and each parameter), WINDOW_UPDATE, PRIORITY,
 //!   RST_STREAM (rapid reset), GOAWAY, unknown frames, empty DATA,
@@ -49,6 +55,7 @@ use verilith_h2::{Frame, Params};
 #[cfg(verus_keep_ghost)]
 use verilith_h2::spec;
 use crate::flow::{take_data, RecvWindow, SendWindow, MAX_WINDOW};
+use verilith_core::clen::BodyLen;
 use crate::streams::{classify, Kind, St, Verdict};
 #[cfg(verus_keep_ghost)]
 use crate::streams::{idle, verdict};
@@ -115,8 +122,9 @@ pub struct Live<V> {
     pub send: SendWindow,
     /// What the peer may still send on the stream.
     pub recv: RecvWindow,
-    /// Request body bytes received.
-    pub body: usize,
+    /// Request body bytes received, and the Content-Length the request
+    /// declared (§8.1.1).
+    pub len: BodyLen,
     pub v: V,
 }
 
@@ -275,7 +283,7 @@ pub struct Core<V> {
 pub open spec fn slot_ok<V>(x: Slot<V>, last: u32) -> bool {
     &&& x.id % 2 == 1
     &&& x.id <= last
-    &&& x.live matches Some(l) ==> l.send.inv() && l.recv.inv()
+    &&& x.live matches Some(l) ==> l.send.inv() && l.recv.inv() && l.len.inv()
 }
 
 /// The same IDs, live in the same places.
@@ -387,6 +395,25 @@ impl<V: Store> Core<V> {
 
     pub closed spec fn in_block(&self) -> bool {
         self.block is Some
+    }
+
+    /// The body count of the live stream in slot `at`: the DATA bytes it
+    /// carried and the Content-Length it declared.
+    pub closed spec fn body_len(&self, at: usize) -> Option<BodyLen> {
+        if at < self.slots@.len() {
+            match self.slots@[at as int].live {
+                Some(l) => Some(l.len),
+                None => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    /// A request complete as RFC 9113 §8.1.1 asks: its stream is live, and
+    /// a Content-Length it declared is the length of its DATA.
+    pub open spec fn body_ok(&self, at: usize) -> bool {
+        self.body_len(at) matches Some(b) && b.inv() && b.complete_s()
     }
 
     /// The theorems that hold in every state: while the connection is
@@ -862,7 +889,7 @@ impl<V: Store> Core<V> {
             Some(v) => v,
             None => V::fresh(),
         };
-        let l = Live { st: St::Open, send: SendWindow::new(self.initial_window), recv: RecvWindow::new(self.limits.window), body: 0, v };
+        let l = Live { st: St::Open, send: SendWindow::new(self.initial_window), recv: RecvWindow::new(self.limits.window), len: BodyLen::new(), v };
         let ghost s0 = self.slots@;
         proof {
             if s0.len() > 0 {
@@ -938,6 +965,7 @@ impl<V: Store> Core<V> {
             old(self).block is None,
         ensures final(self).wf(), final(self).same_conn(old(self)),
             same_shape(final(self).slots@, old(self).slots@),
+            final(self).body_len(at) == old(self).body_len(at),
     {
         proof {
             Self::lemma_shape(self.slots@);
@@ -1011,9 +1039,50 @@ impl<V: Store> Core<V> {
         Step::Fragment { frag, end_headers, keep }
     }
 
+    /// The Content-Length `n` that the request on the live stream in slot
+    /// `at` declares: false if the stream's body already rules it out.
+    fn declare_len(&mut self, at: usize, n: u64) -> (ok: bool)
+        requires old(self).wf(), at < old(self).slots@.len(),
+        ensures final(self).wf(), final(self).same_conn(old(self)),
+            same_shape(final(self).slots@, old(self).slots@),
+            final(self).body_len(at) matches Some(b) ==> (ok ==> b.declared() == Some(n)),
+            !ok ==> final(self).body_len(at) == old(self).body_len(at),
+    {
+        proof {
+            Self::lemma_shape(self.slots@);
+        }
+        match self.slots[at].live.as_mut() {
+            Some(l) => {
+                l.len.declare(n)
+            },
+            None => false,
+        }
+    }
+
+    /// Whether the stream in slot `at` is live and its body is complete
+    /// as declared ([`Self::body_ok`]).
+    fn len_complete(&self, at: usize) -> (r: bool)
+        requires self.wf(),
+        ensures r == self.body_ok(at),
+    {
+        if at >= self.slots.len() {
+            return false;
+        }
+        match &self.slots[at].live {
+            Some(l) => {
+                proof {
+                    assert(slot_ok(self.slots@[at as int], self.last));
+                }
+                l.len.complete()
+            },
+            None => false,
+        }
+    }
+
     /// The header block ended (its last fragment decoded): `fields_ok` if
-    /// its fields are a valid request (§8.3).
-    pub fn end_block<'a>(&mut self, fields_ok: bool, out: &mut Vec<u8>) -> (r: Step<'a>)
+    /// its fields are a valid request (§8.3), and `cl` the Content-Length
+    /// they declare, parsed (§8.1.1).
+    pub fn end_block<'a>(&mut self, fields_ok: bool, cl: Option<u64>, out: &mut Vec<u8>) -> (r: Step<'a>)
         requires old(self).wf(),
         ensures
             final(self).wf(),
@@ -1021,6 +1090,7 @@ impl<V: Store> Core<V> {
             final(self).last_id() == old(self).last_id(),
             final(self).open_streams() <= old(self).open_streams(),
             r is None || r is Dispatch,
+            r matches Step::Dispatch { at } ==> final(self).body_ok(at),
     {
         if self.closing {
             return Step::None;
@@ -1032,10 +1102,19 @@ impl<V: Store> Core<V> {
         self.block = None;
         match b.mode {
             Mode::Request => {
-                if !fields_ok {
+                let declared = match cl {
+                    Some(n) => self.declare_len(b.at, n),
+                    None => true,
+                };
+                if !fields_ok || !declared {
                     self.rst(b.stream, PROTOCOL_ERROR, out);
                     Step::None
                 } else if b.end_stream {
+                    // No DATA follows: a Content-Length must be 0.
+                    if !self.len_complete(b.at) {
+                        self.rst(b.stream, PROTOCOL_ERROR, out);
+                        return Step::None;
+                    }
                     self.half_close(b.at);
                     Step::Dispatch { at: b.at }
                 } else {
@@ -1043,6 +1122,12 @@ impl<V: Store> Core<V> {
                 }
             },
             Mode::Trailers => {
+                // The body ends here: its DATA must add up to the
+                // Content-Length (§8.1.1).
+                if !self.len_complete(b.at) {
+                    self.rst(b.stream, PROTOCOL_ERROR, out);
+                    return Step::None;
+                }
                 self.half_close(b.at);
                 Step::Dispatch { at: b.at }
             },
@@ -1109,14 +1194,17 @@ impl<V: Store> Core<V> {
         }
     }
 
-    /// Flow control and the body limit for `n` flow-controlled bytes, `len`
-    /// of them body, on the open stream in slot `at`: the stream
+    /// Flow control, the body limit and the Content-Length (§8.1.1) for
+    /// `n` flow-controlled bytes, `len` of them body, on the open stream
+    /// in slot `at`; `end` if the body ends with them: the stream
     /// WINDOW_UPDATE due, or the stream error.
     fn stream_data(&mut self, at: usize, n: u32, len: usize, end: bool) -> (r: Result<Option<u32>, u32>)
         requires old(self).wf(), at < old(self).slots@.len(), old(self).slots@[at as int].live is Some,
             old(self).block is None,
         ensures final(self).wf(), final(self).same_conn(old(self)),
             same_shape(final(self).slots@, old(self).slots@),
+            r is Ok ==> (final(self).body_len(at) matches Some(b) && old(self).body_len(at) matches Some(b0)
+                && b.got() == b0.got() + len && b.declared() == b0.declared() && (end ==> b.complete_s())),
     {
         proof {
             Self::lemma_shape(self.slots@);
@@ -1128,11 +1216,18 @@ impl<V: Store> Core<V> {
                     Err(()) => return Err(FLOW_CONTROL_ERROR),
                     Ok(u) => u,
                 };
-                if len > max_body || l.body > max_body - len {
+                if len > max_body || l.len.received() > (max_body - len) as u64 {
                     return Err(REFUSED_STREAM);
                 }
-                l.body = l.body + len;
+                // More DATA than the Content-Length, or (at the end) less,
+                // makes the request malformed (§8.1.1).
+                if !l.len.add(len as u64) {
+                    return Err(PROTOCOL_ERROR);
+                }
                 if end {
+                    if !l.len.complete() {
+                        return Err(PROTOCOL_ERROR);
+                    }
                     l.st = St::HalfClosed;
                 }
                 Ok(u)
@@ -1159,6 +1254,11 @@ impl<V: Store> Core<V> {
             *f matches Frame::Ping { ack: false, opaque } ==> (!final(self).is_closing() ==> final(out)@ == old(out)@
                 + spec::serialize(spec::Frame::Ping { ack: true, opaque })),
             r is Data ==> *f is Data,
+            // A request's DATA: counted on its live stream, and at the end
+            // of the body equal to any Content-Length declared (§8.1.1).
+            r matches Step::Data { at, data, end } ==> (final(self).body_len(at) matches Some(b) && b.inv()
+                && (old(self).body_len(at) matches Some(b0) && b.got() == b0.got() + data@.len())
+                && (end ==> b.complete_s())),
             old(self).is_closing() ==> final(self).is_closing() && r is None,
     {
         if self.closing {

@@ -462,3 +462,72 @@ fn run_with(limits: Limits2, input: &[u8], cuts: &[usize]) -> Vec<u8> {
     }
     out
 }
+
+/// `block`, then each of `extra` as a literal field without indexing with a
+/// new name (RFC 7541 §6.2.2).
+fn block_with(method: &[u8], path: &[u8], extra: &[(&[u8], &[u8])]) -> Vec<u8> {
+    let mut b = block(method, path);
+    for (n, v) in extra {
+        b.push(0);
+        b.push(n.len() as u8);
+        b.extend_from_slice(n);
+        b.push(v.len() as u8);
+        b.extend_from_slice(v);
+    }
+    b
+}
+
+/// RFC 9113 §8.1.1: a request whose DATA does not add up to its
+/// Content-Length is malformed: the stream is reset with PROTOCOL_ERROR,
+/// the handler does not see it, and the connection goes on.
+#[test]
+fn content_length_checked() {
+    // (Content-Length fields, DATA frames, trailers, whether it is answered)
+    let cases: &[(&[&[u8]], &[&[u8]], bool, bool)] = &[
+        (&[b"5"], &[b"hel", b"lo"], false, true),
+        (&[b"5"], &[b"hello"], true, true),
+        (&[b"0"], &[], false, true),
+        (&[b"5", b"5"], &[b"hello"], false, true),
+        (&[], &[b"hello"], false, true),
+        // Less DATA than declared, at END_STREAM or at the trailers.
+        (&[b"5"], &[b"hel"], false, false),
+        (&[b"5"], &[b"hel"], true, false),
+        (&[b"3"], &[], false, false),
+        // More DATA than declared.
+        (&[b"2"], &[b"hello"], false, false),
+        (&[b"4"], &[b"hel", b"lo"], false, false),
+        // Lengths that disagree, or are not lengths.
+        (&[b"5", b"4"], &[b"hello"], false, false),
+        (&[b"abc"], &[b"abc"], false, false),
+        (&[b"-1"], &[], false, false),
+        (&[b""], &[], false, false),
+    ];
+    for (i, &(cls, data, trailers, answered)) in cases.iter().enumerate() {
+        let mut c = settings_frame();
+        let extra: Vec<(&[u8], &[u8])> = cls.iter().map(|v| (&b"content-length"[..], *v)).collect();
+        let b = block_with(b"POST", b"/b", &extra);
+        let only_headers = data.is_empty() && !trailers;
+        serialize(&Frame::Headers { stream: 1, end_stream: only_headers, end_headers: true, pad: None, priority: None, fragment: &b }, 16384, &mut c).unwrap();
+        for (k, d) in data.iter().enumerate() {
+            let end = k + 1 == data.len() && !trailers;
+            serialize(&Frame::Data { stream: 1, end_stream: end, pad: None, data: d }, 16384, &mut c).unwrap();
+        }
+        if trailers {
+            let t = [0u8, 3, b'x', b'-', b't', 1, b'1'];
+            serialize(&Frame::Headers { stream: 1, end_stream: true, end_headers: true, pad: None, priority: None, fragment: &t }, 16384, &mut c).unwrap();
+        }
+        let g = block(b"GET", b"/a");
+        serialize(&Frame::Headers { stream: 3, end_stream: true, end_headers: true, pad: None, priority: None, fragment: &g }, 16384, &mut c).unwrap();
+        let (rs, ctl) = responses(&run(&c, &[]));
+        assert!(!ctl.iter().any(|l| l.starts_with("goaway")), "case {i}: {ctl:?}");
+        let ids: Vec<u32> = rs.iter().map(|r| r.0).collect();
+        if answered {
+            assert_eq!(ids, vec![1, 3], "case {i}: {ctl:?}");
+            let body: Vec<u8> = data.concat();
+            assert_eq!(rs[0].2, [&b"POST /b "[..], &body].concat(), "case {i}");
+        } else {
+            assert_eq!(ids, vec![3], "case {i}: {ctl:?}");
+            assert!(ctl.contains(&"rst 1 1".to_string()), "case {i}: {ctl:?}");
+        }
+    }
+}
