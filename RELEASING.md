@@ -140,6 +140,46 @@ running it again.
 - A release that adds a crate needs the token again for that crate: run
   the workflow with auth "token".
 
+## npm and PyPI
+
+The Python and Node.js bindings (`crates/bind/python`, `crates/bind/node`)
+are published as `verilith-bind` on PyPI (imported as `vbind`; the name
+`vbind` is taken there) and on npm, at the same version as the crates. Each
+has a workflow run by hand, a dry run unless "dry_run" is unticked:
+
+- **Publish to PyPI** (`.github/workflows/publish-pypi.yml`): seven abi3
+  wheels (CPython 3.11 and later) for Linux x86_64 and aarch64 (glibc and
+  musl), macOS arm64 and x86_64 and Windows x64, and the sdist. Each wheel
+  is installed and tested before anything is uploaded.
+- **Publish to npm** (`.github/workflows/publish-npm.yml`): the same seven
+  platforms, napi-rs style. Each binary is its own package
+  (`verilith-bind-linux-x64-gnu`, ...), and `verilith-bind` lists them as
+  optional dependencies, so npm installs only the one that matches. Each
+  binary is tested before anything is published.
+
+A new version also needs, besides the `Cargo.toml`s: `version` in
+`crates/bind/node/package.json` and its `optionalDependencies`, and
+`npx napi version` in `crates/bind/node` for the platform packages.
+`crates/bind/scripts/check-npm-packages.py` (which the npm workflow runs)
+fails if any of them disagree. The PyPI version is read from `Cargo.toml`.
+
+### Authentication
+
+- **PyPI: Trusted Publishing only**, no token. Before the first publish,
+  add a pending publisher (pypi.org > Account settings > Publishing): PyPI
+  project `verilith-bind`, owner `verilith`, repository `verilith`,
+  workflow `publish-pypi.yml`, environment `pypi`. The first publish
+  creates the project and turns it into an ordinary trusted publisher.
+- **npm: a token the first time, then Trusted Publishing.** The first
+  publish of each of the eight packages needs an npm granular access token
+  (npmjs.com > Access Tokens > Generate New Token, read and write on
+  packages, "bypass two-factor authentication" ticked), saved as the
+  `NPM_TOKEN` repository secret. Then on each package's page, Settings >
+  Trusted Publisher > GitHub Actions: owner `verilith`, repository
+  `verilith`, workflow `publish-npm.yml`, environment `npm`. npm uses
+  Trusted Publishing whenever it is set up, so the secret can then be
+  deleted. A release that adds a platform needs it again for that package.
+
 ## Releases and their pins
 
 | verilith | Verus release | `vstd` |
