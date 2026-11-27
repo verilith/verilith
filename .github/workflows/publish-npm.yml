@@ -1,0 +1,225 @@
+name: Publish to npm
+
+# Run by hand (Actions > Publish to npm > Run workflow). Builds the Node.js
+# addon (crates/bind/node) for every platform, tests each build it can run,
+# and publishes it as napi-rs does: one package per platform holding that
+# platform's prebuilt binary (verilith-bind-linux-x64-gnu, ...), and the
+# package verilith-bind, whose loader (index.js) picks the right one; npm
+# installs only the one that matches, as an optional dependency. A dry run
+# (npm publish --dry-run) unless "dry_run" is unticked. A publish is
+# permanent: npm never lets a version be published twice.
+#
+# Binaries:
+# - Linux x86_64 and aarch64, glibc and musl, all cross-built on one x86_64
+#   runner with cargo-zigbuild (napi build -x); each is then tested on a
+#   runner of its own architecture, the musl ones in an Alpine container.
+# - macOS arm64 and x86_64, and Windows x64, each built and tested natively.
+#
+# Authentication, for a real publish. npm tries Trusted Publishing first,
+# then the NPM_TOKEN repository secret:
+# - Trusted Publishing (no token): for packages that already exist on npm
+#   and list this repository, this workflow file (publish-npm.yml) and the
+#   environment "npm" under Settings > Trusted Publisher on npmjs.com.
+# - Otherwise NPM_TOKEN, an npm granular access token with read and write
+#   access to packages and "bypass two-factor authentication" ticked. The
+#   first publish of each package always needs it: Trusted Publishing can
+#   only be set up for a package that exists.
+# The platform packages are published before verilith-bind, and a package
+# whose version is already on npm is skipped, so rerunning after a partial
+# publish is safe.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Dry run (build and test every binary, publish nothing)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+    working-directory: crates/bind/node
+
+env:
+  ZIG: ziglang==0.17.1
+  ZIGBUILD: cargo-zigbuild==0.24.1
+
+jobs:
+  linux:
+    name: Build Linux binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal \
+            --target x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu,x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+          rustup default stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "$ZIG" "$ZIGBUILD"
+      - run: npm ci
+      - name: Build
+        run: |
+          for t in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            npx napi build --platform --release -x --target "$t"
+          done
+          ls -l *.node
+      - name: The committed loader and types are current
+        run: git diff --exit-code index.js index.d.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bindings-linux
+          path: crates/bind/node/*.node
+          if-no-files-found: error
+
+  test-linux:
+    name: Test Linux binaries (${{ matrix.arch }})
+    needs: linux
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, arch: x64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: bindings-linux
+          path: crates/bind/node
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: glibc
+        run: |
+          ls -l *.node
+          VBIND_NODE=../../node/index.js node --test ../tests/node/test.js
+          node -e "require('./vbind.linux-${{ matrix.arch }}-gnu.node')"
+      - name: musl
+        working-directory: .
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w/crates/bind/node node:22-alpine sh -ec '
+            VBIND_NODE=../../node/index.js node --test ../tests/node/test.js
+            node -e "require(\"./vbind.linux-${{ matrix.arch }}-musl.node\")"'
+
+  native:
+    name: Build and test ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-latest, name: macOS arm64 }
+          - { runner: macos-15-intel, name: macOS x86_64 }
+          - { runner: windows-latest, name: Windows x64 }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Build
+        run: |
+          npx napi build --platform --release
+          ls -l *.node
+      - name: Test
+        run: VBIND_NODE=../../node/index.js node --test ../tests/node/test.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bindings-${{ runner.os }}-${{ runner.arch }}
+          path: crates/bind/node/*.node
+          if-no-files-found: error
+
+  package:
+    name: Assemble the packages
+    needs: [test-linux, native]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bindings-*
+          path: crates/bind/node/artifacts
+      - name: Put each binary in its package
+        run: |
+          npx napi artifacts -d artifacts
+          python3 ../scripts/check-npm-packages.py
+      - name: npm publish --dry-run
+        run: |
+          for d in npm/*/ .; do (cd "$d" && npm publish --access public --dry-run); done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-packages
+          path: |
+            crates/bind/node/npm
+            crates/bind/node/package.json
+            crates/bind/node/index.js
+            crates/bind/node/index.d.ts
+            crates/bind/node/README.md
+            crates/bind/node/LICENSE-*
+          if-no-files-found: error
+
+  publish:
+    name: Publish to npm
+    needs: package
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/verilith-bind
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: packages
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-packages
+          path: packages
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: npm with Trusted Publishing (11.5.1 or later)
+        run: |
+          npm install -g npm@11.21.2
+          npm --version
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Provenance needs a public repository. Trusted Publishing adds it
+          # on its own; this asks for it when the token is used.
+          NPM_CONFIG_PROVENANCE: ${{ !github.event.repository.private }}
+        run: |
+          for d in npm/*/ .; do
+            name=$(node -p "require('./$d/package.json').name")
+            version=$(node -p "require('./$d/package.json').version")
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "$name@$version is already on npm"
+            else
+              (cd "$d" && npm publish --access public)
+            fi
+          done

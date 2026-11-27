@@ -1,0 +1,37 @@
+{
+  "name": "verilith-bind-linux-x64-musl",
+  "version": "0.1.0",
+  "cpu": [
+    "x64"
+  ],
+  "main": "vbind.linux-x64-musl.node",
+  "files": [
+    "vbind.linux-x64-musl.node"
+  ],
+  "description": "Formally verified (Verus) WHATWG URL and JSON parsers for Node.js",
+  "keywords": [
+    "url",
+    "whatwg",
+    "json",
+    "parser",
+    "verified",
+    "verus",
+    "napi"
+  ],
+  "homepage": "https://github.com/verilith/verilith/tree/main/crates/bind#nodejs-addon",
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "node": ">= 18.17"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/verilith/verilith.git",
+    "directory": "crates/bind/node"
+  },
+  "os": [
+    "linux"
+  ],
+  "libc": [
+    "musl"
+  ]
+}

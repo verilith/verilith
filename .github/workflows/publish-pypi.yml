@@ -1,0 +1,218 @@
+name: Publish to PyPI
+
+# Run by hand (Actions > Publish to PyPI > Run workflow). Builds the Python
+# bindings (crates/bind/python) as the PyPI package verilith-bind, imported
+# as vbind, tests every wheel it can run, and checks them all with twine. A
+# dry run unless "dry_run" is unticked. A publish is permanent: PyPI never
+# lets a version be uploaded twice, even after it is deleted.
+#
+# Wheels (one abi3 wheel per platform, for CPython 3.11 and later):
+# - Linux x86_64 and aarch64, glibc (manylinux2014) and musl (musllinux_1_2),
+#   all cross-built on one x86_64 runner with maturin --zig; each is then
+#   installed and tested on a runner of its own architecture, the musl ones
+#   in an Alpine container.
+# - macOS arm64 and x86_64, and Windows x64, each built and tested natively.
+# - The source distribution, so that other platforms can build from source.
+#
+# Authentication, for a real publish: Trusted Publishing only, no token.
+# PyPI must list this repository, this workflow file (publish-pypi.yml) and
+# the environment "pypi" as a publisher of verilith-bind: before the first
+# publish, as a "pending publisher" (pypi.org > Account > Publishing).
+# Rerunning after a partial upload is safe: files already on PyPI are
+# skipped.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Dry run (build and test every wheel, publish nothing)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-pypi
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  MATURIN: maturin==1.16.0
+  ZIG: ziglang==0.17.1
+  MANIFEST: crates/bind/python/Cargo.toml
+
+jobs:
+  linux:
+    name: Build Linux wheels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal \
+            --target x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu,x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+          rustup default stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "$MATURIN" "$ZIG"
+      - name: Build
+        run: |
+          for t in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+            maturin build --release --zig -m "$MANIFEST" --target "$t" --compatibility manylinux2014 -o dist
+          done
+          for t in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            maturin build --release --zig -m "$MANIFEST" --target "$t" --compatibility musllinux_1_2 -o dist
+          done
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux
+          path: dist/*.whl
+          if-no-files-found: error
+
+  test-linux:
+    name: Test Linux wheels (${{ matrix.arch }})
+    needs: linux
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, arch: aarch64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels-linux
+          path: dist
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: glibc wheel
+        run: |
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install dist/*manylinux*_${{ matrix.arch }}.whl
+          cd crates/bind
+          URLTESTDATA=../url/tests/data/urltestdata.json \
+            /tmp/venv/bin/python -m unittest -v tests/python/test_vbind.py
+      - name: musl wheel
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w python:3.13-alpine sh -ec '
+            pip install --root-user-action=ignore dist/*musllinux*_${{ matrix.arch }}.whl
+            cd crates/bind
+            URLTESTDATA=../url/tests/data/urltestdata.json python -m unittest -v tests/python/test_vbind.py'
+
+  native:
+    name: Build and test ${{ matrix.name }} wheel
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-latest, name: macOS arm64 }
+          - { runner: macos-15-intel, name: macOS x86_64 }
+          - { runner: windows-latest, name: Windows x64 }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build
+        run: |
+          pip install "$MATURIN"
+          maturin build --release -m "$MANIFEST" -o dist
+          ls -l dist
+      - name: Test
+        run: |
+          python -m venv venv
+          if [ -d venv/Scripts ]; then py=venv/Scripts/python; else py=venv/bin/python; fi
+          "$py" -m pip install dist/*.whl
+          cd crates/bind
+          URLTESTDATA=../url/tests/data/urltestdata.json \
+            "../../$py" -m unittest -v tests/python/test_vbind.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ runner.os }}-${{ runner.arch }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  sdist:
+    name: Build and test the source distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: |
+          pip install "$MATURIN"
+          maturin sdist -m "$MANIFEST" -o dist
+      - name: Test (pip builds it from source)
+        run: |
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install --no-binary :all: dist/*.tar.gz
+          cd crates/bind
+          URLTESTDATA=../url/tests/data/urltestdata.json \
+            /tmp/venv/bin/python -m unittest -v tests/python/test_vbind.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  check:
+    name: Check every file
+    needs: [test-linux, native, sdist]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - name: Check
+        run: |
+          ls -l dist
+          # 7 wheels and the sdist.
+          test "$(ls dist/*.whl | wc -l)" = 7
+          test "$(ls dist/*.tar.gz | wc -l)" = 1
+          pip install twine==6.2.0
+          twine check --strict dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pypi-dist
+          path: dist
+
+  publish:
+    name: Publish to PyPI
+    needs: check
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/verilith-bind/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pypi-dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
