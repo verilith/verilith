@@ -79,7 +79,7 @@ step (each a separate crate with its own proofs):
 | Encryption | verilith-tls (TLS 1.3 handshake, record layer), crypto from verilith-tls-aws-lc (trusted) | same | verilith-quic-conn (QUIC transport) on verilith-quic (packets, frames, loss recovery) and verilith-tls's QUIC mode |
 | Framing | verilith-http (request parser, body framing: the smuggling theorems) | verilith-h2 (frames) | verilith-h3 (frames, stream rules) |
 | Field compression | — | verilith-hpack | verilith-qpack |
-| Connection logic | `conn.rs` + `persist.rs` (verified: requests exactly the spec's, in order) | `h2.rs` with `flow.rs`, `streams.rs` (verified flow control and stream states) | `h3.rs` |
+| Connection logic | `conn.rs` + `persist.rs` (verified: requests exactly the spec's, in order) | `h2core.rs` with `flow.rs`, `streams.rs` (verified: every frame decision, the stream table, SETTINGS, GOAWAY, the flood budget), driven by `h2.rs` | `h3.rs` |
 | Handler | your code: `Request` in, `Response` out | same | same |
 | Response | `respond.rs` (verified: the head parses back exactly) | HPACK-encoded fields | QPACK-encoded fields |
 | Static files | `path.rs` (verified: never leaves the root), `range.rs` (verified), verilith-text (percent-decoding), `files.rs` | same | same |
@@ -91,7 +91,8 @@ invariant is stated with verilith-http's `spec::parse_request`, and
 `respond.rs`'s theorem with its `spec::parse_response`, so "the server
 hands the handler exactly the request the parser's spec sees" and "the
 response the client parses is exactly what the handler sent" are one
-chain. The plain-Rust glue (event loops, `h2.rs`, `h3.rs`, the trusted
+chain. The plain-Rust glue (event loops, the buffer and handler side of
+`h2.rs`, `h3.rs`, the trusted
 OS and crypto calls) is listed in [TRUST.md](TRUST.md) with what each
 piece is assumed to do.
 
@@ -110,7 +111,7 @@ for when it is faster and when not).
 
 ## What is proven
 
-`scripts/verify.sh` (Verus): 223 verified, 0 errors.
+`scripts/verify.sh` (Verus): 286 verified, 0 errors.
 
 - **Requests are exactly the specification's, in order** (`conn.rs`,
   the invariant of `Core`). `first` is the request at the front of a byte
@@ -167,6 +168,34 @@ for when it is faster and when not).
   half-closed (remote), closed). Only HEADERS opens a stream, only on an
   odd ID above every ID opened before (§5.1.1), and DATA is taken only on
   an open stream.
+- **The HTTP/2 connection** (`h2core.rs`, the invariant of `Core` and
+  `Core::on_frame`'s postconditions). Every frame goes through the
+  verified core, which keeps the stream table, the peer's SETTINGS, both
+  connection windows, the header block in progress and the flood budget,
+  and writes the control frames the RFC asks for. Proven: streams are
+  kept in ID order, every ID odd and at most the highest opened, which
+  never goes down; a frame opens at most one stream, only HEADERS on a
+  new ID, never after the peer's GOAWAY, and never more than
+  `max_streams` at once (§5.1.2: past that, RST_STREAM(REFUSED_STREAM)
+  once the block, CONTINUATION included, is decoded); inside a header
+  block any frame but its CONTINUATION is a connection error (§6.10), and
+  a block is decoded even for a refused or reset stream so the HPACK
+  tables stay in step; every SETTINGS is acknowledged once applied
+  (§6.5.3) and every PING answered with its own payload (the exact bytes,
+  by verilith-h2's serializer spec); SETTINGS_INITIAL_WINDOW_SIZE shifts
+  every open stream's send window (§6.9.2); RST_STREAM is sent only for a
+  stream that is not idle (§5.1); GOAWAY names the highest stream opened
+  and is sent at most once; a peer's GOAWAY(NO_ERROR) drains (open
+  streams finish, then GOAWAY and close). **Flood budget:** while the
+  connection is open, budget units spent never exceed 1000 plus
+  `control_per_request` per response sent in full, and every frame that
+  costs nothing carries at least one byte of a header block or body or
+  completes a request. PING, SETTINGS (per parameter), WINDOW_UPDATE,
+  PRIORITY, RST_STREAM, GOAWAY, unknown and empty frames, refused
+  streams and frames on closed streams all cost a unit, so Rapid Reset
+  (CVE-2023-44487), PING and SETTINGS floods and the empty-CONTINUATION
+  flood end in GOAWAY(ENHANCE_YOUR_CALM) after a bounded number of
+  frames.
 - **Responses parse back exactly** (`respond::theorem_head_parses`). For
   any status, reason phrase, field lines and framing that pass the checks
   in `respond.rs`, the head `write_head` writes, followed by any bytes at
@@ -213,19 +242,19 @@ deviations reads the same head end and framing), and the chunked decoder.
 
 ## What is not proven yet
 
-- **The HTTP/2 engine** (`h2.rs`) around the proven flow-control and
-  stream-state modules: SETTINGS,
-  PING/GOAWAY and the control-frame flood limit. It only reads frames
-  through verilith-h2's verified parser and header blocks through
-  verilith-hpack's verified decoder, and it writes frames with verilith-h2's
-  serializer, and encodes response heads with verilith-hpack's verified
-  encoder (dynamic table included), whose theorem is that each block
-  decodes to exactly the fields given. That needs blocks to reach the peer
-  in the order they were encoded, so a head is encoded only when its
-  HEADERS frame is written. Tested in `tests/h2.rs`: every split of a
-  request stream gives the same responses, read back with the verified
-  parser and decoder; DATA stops at the peer's window; protocol errors and
-  a PING flood end in GOAWAY.
+- **The plain-Rust half of the HTTP/2 engine** (`h2.rs`): the read
+  buffer, feeding each fragment the core hands back to verilith-hpack's
+  verified decoder and collecting the fields (the decoded-size limit is
+  checked here), buffering bodies, running handlers, and framing
+  responses (`schedule`), which encodes heads with verilith-hpack's
+  verified encoder (dynamic table included) when their HEADERS frame is
+  written, so blocks reach the peer in the order they were encoded, and
+  sizes DATA with the core's `take` (verified `take_data`). Tested in
+  `tests/h2.rs`: every split of a request stream gives the same
+  responses, read back with the verified parser and decoder; DATA stops
+  at the peer's window; protocol errors, a PING flood, Rapid Reset and
+  an empty-CONTINUATION flood end in GOAWAY; a refused stream's
+  CONTINUATION is decoded and the stream reset; a peer's GOAWAY drains.
 - **The event loop and the OS shim** (`worker.rs`, `sys/`): trusted, as
   in every server. See [TRUST.md](TRUST.md).
 - The `Date` formatter and the reason-phrase table are plain Rust (both
