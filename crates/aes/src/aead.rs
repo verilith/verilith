@@ -1,8 +1,11 @@
 //! The public API: [`AesGcm`] (AES-128-GCM and AES-256-GCM) and [`Aes`]
 //! (the block cipher alone, as QUIC header protection uses it), proven
-//! against [`crate::spec`], over the kernel this CPU has.
+//! against [`crate::spec`], over the kernels this CPU has: AES-NI and
+//! PCLMULQDQ (with VAES and VPCLMULQDQ where there are) on x86-64, FEAT_AES
+//! and FEAT_PMULL on AArch64.
 //!
-//! Trusted here: run-time CPU detection ([`crate::x86::has_ni`]), and the
+//! Trusted here: run-time CPU detection ([`crate::x86::has_ni`],
+//! [`crate::x86::has_vaes`], [`crate::neon::has_arm_aes`]), and the
 //! trampolines in `tf` that compile each verified function with the
 //! target features its instructions need (Verus does not accept
 //! `#[target_feature]` on verified code); each is one call of that
@@ -11,10 +14,56 @@
 use crate::gcm::Gcm;
 use crate::lemmas::*;
 use crate::spec::*;
+#[cfg(target_arch = "x86_64")]
 use crate::x86::*;
+#[cfg(target_arch = "aarch64")]
+use crate::neon::*;
 use vstd::prelude::*;
 
 verus! {
+
+/// The CPU has the instructions of the 128-bit kernels.
+#[cfg(target_arch = "x86_64")]
+pub open spec fn cpu_ok() -> bool {
+    ni()
+}
+
+/// The CPU also has those of the 16-block path.
+#[cfg(target_arch = "x86_64")]
+pub open spec fn cpu_wide() -> bool {
+    vaes()
+}
+
+#[cfg(target_arch = "x86_64")]
+fn detect() -> (r: (bool, bool))
+    ensures
+        r.0 ==> cpu_ok(),
+        r.1 ==> r.0 && cpu_wide(),
+{
+    if !has_ni() {
+        return (false, false);
+    }
+    (true, has_vaes())
+}
+
+#[cfg(target_arch = "aarch64")]
+pub open spec fn cpu_ok() -> bool {
+    arm_aes()
+}
+
+#[cfg(target_arch = "aarch64")]
+pub open spec fn cpu_wide() -> bool {
+    false
+}
+
+#[cfg(target_arch = "aarch64")]
+fn detect() -> (r: (bool, bool))
+    ensures
+        r.0 ==> cpu_ok(),
+        r.1 ==> r.0 && cpu_wide(),
+{
+    (has_arm_aes(), false)
+}
 
 /// An AES-GCM key, expanded.
 pub struct AesGcm {
@@ -29,7 +78,7 @@ impl AesGcm {
     }
 
     pub closed spec fn wf(&self) -> bool {
-        self.g.wf() && ni() && (self.wide ==> vaes())
+        self.g.wf() && cpu_ok() && (self.wide ==> cpu_wide())
     }
 
     /// The key, expanded; `None` unless it is 16 or 32 bytes and the CPU
@@ -42,11 +91,29 @@ impl AesGcm {
         if key.len() != 16 && key.len() != 32 {
             return None;
         }
-        if !has_ni() {
+        let (ok, wide) = detect();
+        if !ok {
             return None;
         }
-        let wide = has_vaes();
         Some(AesGcm { g: new_tf(key), wide })
+    }
+
+    /// As [`AesGcm::new`], but never taking the 16-block path (for tests
+    /// of the 128-bit kernels on a CPU that has it).
+    #[doc(hidden)]
+    pub fn new_narrow(key: &[u8]) -> (r: Option<Self>)
+        ensures
+            r matches Some(k) ==> k.wf() && k.key() == key@,
+            r is Some ==> key_ok(key@),
+    {
+        if key.len() != 16 && key.len() != 32 {
+            return None;
+        }
+        let (ok, _) = detect();
+        if !ok {
+            return None;
+        }
+        Some(AesGcm { g: new_tf(key), wide: false })
     }
 
     /// GCM-AE_K(IV, P, A): encrypts `buf` in place and writes the tag to
@@ -63,11 +130,7 @@ impl AesGcm {
         if buf.len() as u64 > 0xf_ffff_ffe0u64 || aad.len() as u64 >= 0x2000_0000_0000_0000u64 {
             return false;
         }
-        if self.wide {
-            seal_vaes(&self.g, iv, aad, buf, tag);
-        } else {
-            seal_tf(&self.g, iv, aad, buf, tag);
-        }
+        seal_tf(&self.g, iv, aad, buf, tag, self.wide);
         true
     }
 
@@ -104,49 +167,124 @@ impl AesGcm {
             assert(buf@ =~= zeros(n as nat));
             return false;
         }
-        if self.wide {
-            open_vaes(&self.g, iv, aad, buf, tag)
-        } else {
-            open_tf(&self.g, iv, aad, buf, tag)
-        }
+        open_tf(&self.g, iv, aad, buf, tag, self.wide)
     }
 }
 
-/// [`Gcm::new`] compiled with AES-NI, PCLMULQDQ, SSSE3 and SSE4.1
-/// (trusted only to be that function).
+/// An AES key, expanded, for the block cipher alone.
+#[allow(dead_code)]
+pub struct Aes {
+    rk: [u128; 15],
+    nr: usize,
+    key: Ghost<Seq<u8>>,
+}
+
+impl Aes {
+    /// The key it was made from.
+    pub closed spec fn key(&self) -> Seq<u8> {
+        self.key@
+    }
+
+    pub closed spec fn wf(&self) -> bool {
+        rk_ok(self.key@, self.rk@) && self.nr == nr(self.key@) && cpu_ok()
+    }
+
+    /// The key, expanded; `None` unless it is 16 or 32 bytes and the CPU
+    /// has the instructions.
+    pub fn new(key: &[u8]) -> (r: Option<Self>)
+        ensures
+            r matches Some(k) ==> k.wf() && k.key() == key@,
+            r is Some ==> key_ok(key@),
+    {
+        if key.len() != 16 && key.len() != 32 {
+            return None;
+        }
+        let (ok, _) = detect();
+        if !ok {
+            return None;
+        }
+        let (rk, nr) = expand_tf(key);
+        Some(Aes { rk, nr, key: Ghost(key@) })
+    }
+
+    /// CIPHER(block), in place.
+    pub fn encrypt_block(&self, block: &mut [u8; 16])
+        requires
+            self.wf(),
+        ensures
+            final(block)@ == cipher(self.key(), old(block)@),
+    {
+        enc_tf(&self.rk, self.nr, block, Ghost(self.key@))
+    }
+}
+
+/// [`crate::gcm::expand`] compiled with the target features (trusted
+/// only to be that function).
+#[verifier::external_body]
+fn expand_tf(key: &[u8]) -> (r: ([u128; 15], usize))
+    requires
+        cpu_ok(),
+        key@.len() == 16 || key@.len() == 32,
+    ensures
+        rk_ok(key@, r.0@),
+        r.1 == nr(key@),
+{
+    // SAFETY: the CPU has the features (the precondition).
+    unsafe { tf::expand(key) }
+}
+
+/// [`crate::gcm::encrypt_block`], compiled as [`expand_tf`] is.
+#[verifier::external_body]
+fn enc_tf(rk: &[u128; 15], nr: usize, b: &mut [u8; 16], key: Ghost<Seq<u8>>)
+    requires
+        cpu_ok(),
+        rk_ok(key@, rk@),
+        nr == crate::spec::nr(key@),
+    ensures
+        final(b)@ == cipher(key@, old(b)@),
+{
+    // SAFETY: as in `expand_tf`.
+    unsafe { tf::enc(rk, nr, b) }
+}
+
+/// [`Gcm::new`], compiled as [`expand_tf`] is.
 #[verifier::external_body]
 fn new_tf(key: &[u8]) -> (r: Gcm)
     requires
-        ni(),
+        cpu_ok(),
         key@.len() == 16 || key@.len() == 32,
     ensures
         r.wf(),
         r.key@ == key@,
 {
-    // SAFETY: the CPU has the features (the precondition).
+    // SAFETY: as in `expand_tf`.
     unsafe { tf::new(key) }
 }
 
-/// [`Gcm::seal`], compiled as [`new_tf`] is.
+/// [`Gcm::seal`], compiled as [`expand_tf`] is, or with the 16-block
+/// path's features as well if `wide`.
 #[verifier::external_body]
-fn seal_tf(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &mut [u8; 16])
+fn seal_tf(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &mut [u8; 16], wide: bool)
     requires
-        ni(),
+        cpu_ok(),
+        wide ==> cpu_wide(),
         g.wf(),
         gcm_ok(g.key@, iv@, aad@, old(buf)@.len()),
     ensures
         final(buf)@ + final(tag)@ == gcm_seal(g.key@, iv@, aad@, old(buf)@),
         final(buf)@ == gctr(g.key@, iv@, old(buf)@),
 {
-    // SAFETY: as in `new_tf`.
-    unsafe { tf::seal(g, iv, aad, buf, tag) }
+    // SAFETY: as in `expand_tf`, and `wide` only if the CPU has the
+    // 16-block path's features.
+    unsafe { tf::seal(g, iv, aad, buf, tag, wide) }
 }
 
-/// [`Gcm::open`], compiled as [`new_tf`] is.
+/// [`Gcm::open`], compiled as [`seal_tf`] is.
 #[verifier::external_body]
-fn open_tf(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &[u8; 16]) -> (r: bool)
+fn open_tf(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &[u8; 16], wide: bool) -> (r: bool)
     requires
-        ni(),
+        cpu_ok(),
+        wide ==> cpu_wide(),
         g.wf(),
         gcm_ok(g.key@, iv@, aad@, old(buf)@.len()),
     ensures
@@ -156,50 +294,29 @@ fn open_tf(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &[u8; 16]) -
         !r ==> gcm_open(g.key@, iv@, aad@, old(buf)@ + tag@) is None,
         !r ==> final(buf)@ == zeros(old(buf)@.len()),
 {
-    // SAFETY: as in `new_tf`.
-    unsafe { tf::open(g, iv, aad, buf, tag) }
-}
-
-/// [`Gcm::seal`], compiled with AVX-512, VAES and VPCLMULQDQ as well.
-#[verifier::external_body]
-fn seal_vaes(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &mut [u8; 16])
-    requires
-        ni(),
-        vaes(),
-        g.wf(),
-        gcm_ok(g.key@, iv@, aad@, old(buf)@.len()),
-    ensures
-        final(buf)@ + final(tag)@ == gcm_seal(g.key@, iv@, aad@, old(buf)@),
-        final(buf)@ == gctr(g.key@, iv@, old(buf)@),
-{
-    // SAFETY: as in `new_tf`.
-    unsafe { tf::seal_vaes(g, iv, aad, buf, tag) }
-}
-
-/// [`Gcm::open`], compiled with AVX-512, VAES and VPCLMULQDQ as well.
-#[verifier::external_body]
-fn open_vaes(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &[u8; 16]) -> (r: bool)
-    requires
-        ni(),
-        vaes(),
-        g.wf(),
-        gcm_ok(g.key@, iv@, aad@, old(buf)@.len()),
-    ensures
-        r == (gcm_tag(g.key@, iv@, aad@, old(buf)@) == tag@),
-        r ==> final(buf)@ == gctr(g.key@, iv@, old(buf)@),
-        r ==> gcm_open(g.key@, iv@, aad@, old(buf)@ + tag@) == Some(final(buf)@),
-        !r ==> gcm_open(g.key@, iv@, aad@, old(buf)@ + tag@) is None,
-        !r ==> final(buf)@ == zeros(old(buf)@.len()),
-{
-    // SAFETY: as in `new_tf`.
-    unsafe { tf::open_vaes(g, iv, aad, buf, tag) }
+    // SAFETY: as in `seal_tf`.
+    unsafe { tf::open(g, iv, aad, buf, tag, wide) }
 }
 
 } // verus!
 
+#[cfg(target_arch = "x86_64")]
 mod tf {
-    use crate::gcm::Gcm;
+    use crate::gcm::{self, Gcm};
     use crate::ni::Ni;
+    use vstd::prelude::Ghost;
+
+    #[target_feature(enable = "aes,pclmulqdq,ssse3,sse4.1")]
+    #[inline(never)]
+    pub(super) unsafe fn expand(key: &[u8]) -> ([u128; 15], usize) {
+        gcm::expand::<Ni>(key)
+    }
+
+    #[target_feature(enable = "aes,pclmulqdq,ssse3,sse4.1")]
+    #[inline(never)]
+    pub(super) unsafe fn enc(rk: &[u128; 15], nr: usize, b: &mut [u8; 16]) {
+        gcm::encrypt_block::<Ni>(rk, nr, b, Ghost::assume_new())
+    }
 
     #[target_feature(enable = "aes,pclmulqdq,ssse3,sse4.1")]
     #[inline(never)]
@@ -207,27 +324,74 @@ mod tf {
         Gcm::new::<Ni>(key)
     }
 
+    #[inline(always)]
+    pub(super) unsafe fn seal(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &mut [u8; 16], wide: bool) {
+        unsafe { if wide { seal_vaes(g, iv, aad, buf, tag) } else { seal_ni(g, iv, aad, buf, tag) } }
+    }
+
+    #[inline(always)]
+    pub(super) unsafe fn open(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &[u8; 16], wide: bool) -> bool {
+        unsafe { if wide { open_vaes(g, iv, aad, buf, tag) } else { open_ni(g, iv, aad, buf, tag) } }
+    }
+
     #[target_feature(enable = "aes,pclmulqdq,ssse3,sse4.1")]
     #[inline(never)]
-    pub(super) unsafe fn seal(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &mut [u8; 16]) {
+    unsafe fn seal_ni(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &mut [u8; 16]) {
         g.seal::<Ni>(iv, aad, buf, tag, false)
     }
 
     #[target_feature(enable = "aes,pclmulqdq,ssse3,sse4.1")]
     #[inline(never)]
-    pub(super) unsafe fn open(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &[u8; 16]) -> bool {
+    unsafe fn open_ni(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &[u8; 16]) -> bool {
         g.open::<Ni>(iv, aad, buf, tag, false)
     }
 
     #[target_feature(enable = "aes,pclmulqdq,ssse3,sse4.1,avx2,avx512f,avx512bw,avx512vl,vaes,vpclmulqdq")]
     #[inline(never)]
-    pub(super) unsafe fn seal_vaes(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &mut [u8; 16]) {
+    unsafe fn seal_vaes(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &mut [u8; 16]) {
         g.seal::<Ni>(iv, aad, buf, tag, true)
     }
 
     #[target_feature(enable = "aes,pclmulqdq,ssse3,sse4.1,avx2,avx512f,avx512bw,avx512vl,vaes,vpclmulqdq")]
     #[inline(never)]
-    pub(super) unsafe fn open_vaes(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &[u8; 16]) -> bool {
+    unsafe fn open_vaes(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &[u8; 16]) -> bool {
         g.open::<Ni>(iv, aad, buf, tag, true)
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+mod tf {
+    use crate::arm::Arm;
+    use crate::gcm::{self, Gcm};
+    use vstd::prelude::Ghost;
+
+    #[target_feature(enable = "neon,aes")]
+    #[inline(never)]
+    pub(super) unsafe fn expand(key: &[u8]) -> ([u128; 15], usize) {
+        gcm::expand::<Arm>(key)
+    }
+
+    #[target_feature(enable = "neon,aes")]
+    #[inline(never)]
+    pub(super) unsafe fn enc(rk: &[u128; 15], nr: usize, b: &mut [u8; 16]) {
+        gcm::encrypt_block::<Arm>(rk, nr, b, Ghost::assume_new())
+    }
+
+    #[target_feature(enable = "neon,aes")]
+    #[inline(never)]
+    pub(super) unsafe fn new(key: &[u8]) -> Gcm {
+        Gcm::new::<Arm>(key)
+    }
+
+    #[target_feature(enable = "neon,aes")]
+    #[inline(never)]
+    pub(super) unsafe fn seal(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &mut [u8; 16], _wide: bool) {
+        g.seal::<Arm>(iv, aad, buf, tag, false)
+    }
+
+    #[target_feature(enable = "neon,aes")]
+    #[inline(never)]
+    pub(super) unsafe fn open(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &[u8; 16], _wide: bool) -> bool {
+        g.open::<Arm>(iv, aad, buf, tag, false)
     }
 }

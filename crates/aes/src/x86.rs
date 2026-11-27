@@ -59,6 +59,7 @@ pub fn has_vaes() -> (r: bool)
 /// seen through [`xv`].
 #[verifier::external_type_specification]
 #[verifier::external_body]
+#[allow(dead_code)]
 pub struct ExM128i(__m128i);
 
 /// A 128-bit register.
@@ -302,6 +303,7 @@ pub fn x_bsrl8(a: X128) -> (r: X128)
 /// seen through [`zl`].
 #[verifier::external_type_specification]
 #[verifier::external_body]
+#[allow(dead_code)]
 pub struct ExM512i(__m512i);
 
 /// A 512-bit register.

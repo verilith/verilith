@@ -955,4 +955,23 @@ impl Gcm {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The block cipher alone
+// ---------------------------------------------------------------------------
+
+/// `b := CIPHER(b)` with the round keys `rk`.
+#[inline(always)]
+pub fn encrypt_block<A: Wide>(rk: &[u128; 15], nr: usize, b: &mut [u8; 16], key: Ghost<Seq<u8>>)
+    requires
+        A::ok(),
+        rk_ok(key@, rk@),
+        nr == crate::spec::nr(key@),
+    ensures
+        final(b)@ == cipher(key@, old(b)@),
+{
+    let x = A::load16(b);
+    let e = enc_x::<A>(rk, nr, x, key);
+    A::store16(b, e);
+}
+
 } // verus!

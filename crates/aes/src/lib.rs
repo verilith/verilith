@@ -11,6 +11,8 @@ pub mod isa;
 #[doc(hidden)]
 pub mod lemmas;
 #[doc(hidden)]
+pub mod isa_ref;
+#[doc(hidden)]
 pub mod arch;
 #[doc(hidden)]
 pub mod kernels;
@@ -25,7 +27,13 @@ pub mod ni;
 #[cfg(target_arch = "x86_64")]
 #[doc(hidden)]
 pub mod vaes;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(all(target_arch = "aarch64", target_endian = "little"), verus_only))]
+#[doc(hidden)]
+pub mod neon;
+#[cfg(any(all(target_arch = "aarch64", target_endian = "little"), verus_only))]
+#[doc(hidden)]
+pub mod arm;
+#[cfg(any(target_arch = "x86_64", all(target_arch = "aarch64", target_endian = "little")))]
 mod aead;
-#[cfg(target_arch = "x86_64")]
-pub use aead::AesGcm;
+#[cfg(any(target_arch = "x86_64", all(target_arch = "aarch64", target_endian = "little")))]
+pub use aead::{Aes, AesGcm};

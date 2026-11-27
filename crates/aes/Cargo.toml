@@ -32,3 +32,4 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 [dev-dependencies]
 # An independent implementation (RustCrypto's) to compare with.
 aes-gcm = "0.10"
+aes = "0.8"

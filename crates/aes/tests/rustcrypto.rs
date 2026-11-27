@@ -28,13 +28,13 @@ fn reference(key: &[u8], iv: &[u8; 12], aad: &[u8], pt: &[u8]) -> (Vec<u8>, [u8;
     (buf, tag.into())
 }
 
-fn check(rng: &mut Rng, klen: usize, alen: usize, plen: usize) {
+fn check(rng: &mut Rng, narrow: bool, klen: usize, alen: usize, plen: usize) {
     let key = rng.bytes(klen);
     let iv: [u8; 12] = rng.bytes(12).try_into().unwrap();
     let aad = rng.bytes(alen);
     let pt = rng.bytes(plen);
     let (ct, tag) = reference(&key, &iv, &aad, &pt);
-    let k = AesGcm::new(&key).expect("AES-NI");
+    let k = if narrow { AesGcm::new_narrow(&key) } else { AesGcm::new(&key) }.unwrap();
     let mut buf = pt.clone();
     let mut t = [0u8; 16];
     assert!(k.seal(&iv, &aad, &mut buf, &mut t));
@@ -61,21 +61,55 @@ fn check(rng: &mut Rng, klen: usize, alen: usize, plen: usize) {
     }
 }
 
-#[test]
-fn every_length() {
-    if !std::is_x86_feature_detected!("aes") {
+fn lengths(narrow: bool) {
+    if AesGcm::new(&[0; 16]).is_none() {
+        eprintln!("skipped: the CPU lacks the AES instructions");
         return;
     }
     let mut rng = Rng(0x9e3779b97f4a7c15);
     for klen in [16, 32] {
         for plen in 0..600 {
-            check(&mut rng, klen, plen % 37, plen);
+            check(&mut rng, narrow, klen, plen % 37, plen);
         }
         for alen in 0..300 {
-            check(&mut rng, klen, alen, 64);
+            check(&mut rng, narrow, klen, alen, 64);
         }
         for plen in [1024, 4096, 16384, 16384 + 17, 65536 + 5] {
-            check(&mut rng, klen, 13, plen);
+            check(&mut rng, narrow, klen, 13, plen);
+        }
+    }
+}
+
+/// Every length, on the widest path the CPU has.
+#[test]
+fn every_length() {
+    lengths(false);
+}
+
+/// Every length, on the 128-bit kernels.
+#[test]
+fn every_length_narrow() {
+    lengths(true);
+}
+
+/// The block cipher alone, against RustCrypto's.
+#[test]
+fn block() {
+    use aes::cipher::{BlockEncrypt, KeyInit};
+    let mut rng = Rng(7);
+    for klen in [16, 32] {
+        for _ in 0..1000 {
+            let key = rng.bytes(klen);
+            let Some(k) = verilith_aes::Aes::new(&key) else { return };
+            let mut b: [u8; 16] = rng.bytes(16).try_into().unwrap();
+            let mut r = aes::Block::clone_from_slice(&b);
+            if klen == 16 {
+                aes::Aes128::new_from_slice(&key).unwrap().encrypt_block(&mut r);
+            } else {
+                aes::Aes256::new_from_slice(&key).unwrap().encrypt_block(&mut r);
+            }
+            k.encrypt_block(&mut b);
+            assert_eq!(&b[..], &r[..]);
         }
     }
 }
