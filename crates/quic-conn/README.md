@@ -2,7 +2,7 @@
 
 A sans-I/O QUIC version 1 server (RFC 9000, RFC 9001, RFC 9002). Datagrams
 go in, datagrams come out, and the caller owns the socket and the clock.
-It is built to replace quinn-proto under Verilith's HTTP/3 server.
+It is the QUIC under Verilith's HTTP/3 server, in place of quinn-proto.
 
 ## What is verified, and what is not
 
