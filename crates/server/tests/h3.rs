@@ -13,7 +13,7 @@ use verilith_h3::consts::{DATA, HEADERS};
 use verilith_h3::{Event as Ev, Reader, Src};
 use verilith_qpack::encoder::Encoder;
 use verilith_qpack::{Decoder, Fields, Res};
-use verilith_server::h3::{Backend, Limits3};
+use verilith_server::h3::Limits3;
 use verilith_server::{serve, Config, Field, Request, Response};
 
 fn handler(req: &Request, res: &mut Response) {
@@ -40,15 +40,13 @@ struct Server {
 }
 
 /// A server on each QUIC backend.
-fn server(b: Backend) -> &'static Server {
-    static Q: OnceLock<Server> = OnceLock::new();
-    static V: OnceLock<Server> = OnceLock::new();
-    let s = if b == Backend::Quinn { &Q } else { &V };
-    s.get_or_init(|| {
+fn server() -> &'static Server {
+    static S: OnceLock<Server> = OnceLock::new();
+    S.get_or_init(|| {
         let c = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
         let cert = CertificateDer::from(c.cert.der().to_vec());
-        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(c.signing_key.serialize_der()));
-        let qc = verilith_server::h3::server_config_der_on(b, vec![cert.clone()], key, Limits3 { max_body: 100_000, ..Limits3::default() }).unwrap();
+        let key_der = c.signing_key.serialize_der();
+        let qc = verilith_server::h3::server_config_der(vec![cert.to_vec()], &key_der, Limits3 { max_body: 100_000, ..Limits3::default() }).unwrap();
         let port = UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let cfg = Config {
@@ -87,8 +85,8 @@ struct Client {
 }
 
 impl Client {
-    fn connect(b: Backend) -> Client {
-        let s = server(b);
+    fn connect() -> Client {
+        let s = server();
         let mut cl = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
             .with_protocol_versions(&[&rustls::version::TLS13])
             .unwrap()
@@ -277,8 +275,9 @@ fn ok(g: Got) -> (u16, Vec<(Vec<u8>, Vec<u8>)>, Vec<u8>) {
     }
 }
 
-fn get_and_head(b: Backend) {
-    let mut c = Client::connect(b);
+#[test]
+fn get_and_head() {
+    let mut c = Client::connect();
     let (s, f, b) = ok(c.get("/a?b"));
     assert_eq!((s, &b[..]), (200, &b"GET /a?b"[..]));
     assert!(f.iter().any(|(n, v)| n == b"x-test" && v == b"1"), "{f:?}");
@@ -291,8 +290,9 @@ fn get_and_head(b: Backend) {
     assert!(f.iter().any(|(n, v)| n == b"content-length" && v == b"7"));
 }
 
-fn many_streams_one_connection(b: Backend) {
-    let mut c = Client::connect(b);
+#[test]
+fn many_streams_one_connection() {
+    let mut c = Client::connect();
     let ids: Vec<_> = (0..200).map(|i| {
         let b = c.request_bytes("GET", &format!("/{i}"), &[], &[]);
         (i, c.send_raw(&b))
@@ -303,16 +303,18 @@ fn many_streams_one_connection(b: Backend) {
     }
 }
 
-fn large_response_body(b: Backend) {
-    let mut c = Client::connect(b);
+#[test]
+fn large_response_body() {
+    let mut c = Client::connect();
     let (s, _, b) = ok(c.get("/big"));
     assert_eq!(s, 200);
     assert_eq!(b.len(), 3_000_000);
     assert!(b.iter().enumerate().all(|(i, &x)| x == (i % 251) as u8));
 }
 
-fn request_bodies(b: Backend) {
-    let mut c = Client::connect(b);
+#[test]
+fn request_bodies() {
+    let mut c = Client::connect();
     let body: Vec<u8> = (0..50_000u32).map(|i| i as u8).collect();
     let req = c.request_bytes("POST", "/echo", &[("content-type", "x/y")], &body);
     let id = c.send_raw(&req);
@@ -326,8 +328,9 @@ fn request_bodies(b: Backend) {
     assert_eq!(ok(c.response(id)).0, 413);
 }
 
-fn malformed_requests_are_reset(b: Backend) {
-    let mut c = Client::connect(b);
+#[test]
+fn malformed_requests_are_reset() {
+    let mut c = Client::connect();
     // No :path.
     let mut f = Fields::new();
     f.push(b":method", b"GET", false);
@@ -346,8 +349,9 @@ fn malformed_requests_are_reset(b: Backend) {
     assert_eq!(ok(c.get("/after")).2, b"GET /after");
 }
 
-fn frame_errors_close_the_connection(b: Backend) {
-    let mut c = Client::connect(b);
+#[test]
+fn frame_errors_close_the_connection() {
+    let mut c = Client::connect();
     // DATA before HEADERS: H3_FRAME_UNEXPECTED (§4.1).
     c.send_raw(&[0x00, 0x01, b'x']);
     let t = Instant::now();
@@ -364,8 +368,9 @@ fn frame_errors_close_the_connection(b: Backend) {
 
 /// Requests one after another on one connection reuse the server's stream
 /// state: each response has its own fields, once.
-fn sequential_requests_reuse_stream_state(b: Backend) {
-    let mut c = Client::connect(b);
+#[test]
+fn sequential_requests_reuse_stream_state() {
+    let mut c = Client::connect();
     for i in 0..20 {
         let (s, f, b) = ok(c.get(&format!("/seq{i}")));
         assert_eq!((s, b), (200, format!("GET /seq{i}").into_bytes()));
@@ -375,14 +380,3 @@ fn sequential_requests_reuse_stream_state(b: Backend) {
     }
 }
 
-/// Each test, on each backend.
-macro_rules! on {
-    ($m:ident, $b:expr, $($t:ident),*) => {
-        mod $m {
-            use super::*;
-            $(#[test] fn $t() { super::$t($b) })*
-        }
-    };
-}
-on!(quinn, Backend::Quinn, get_and_head, many_streams_one_connection, large_response_body, request_bodies, malformed_requests_are_reset, frame_errors_close_the_connection, sequential_requests_reuse_stream_state);
-on!(verilith, Backend::Verilith, get_and_head, many_streams_one_connection, large_response_body, request_bodies, malformed_requests_are_reset, frame_errors_close_the_connection, sequential_requests_reuse_stream_state);

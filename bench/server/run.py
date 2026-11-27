@@ -115,10 +115,6 @@ def server_cmds(env):
             p = []
         if "h3" in p:
             out["verilith"] += ["--h3", str(PORTS["H3"])]
-        # HTTP/3 on quinn-proto instead of verilith-quic-conn: h3 cases
-        # only.
-        if "h3" in p:
-            out["verilith-quinn"] = out["verilith"] + ["--h3-backend", "quinn"]
         if "tls-rustls" in p:
             out["verilith-rustls"] = out["verilith"] + ["--tls-backend", "rustls"]
         # The same server on its io_uring event loop (Linux).
@@ -232,7 +228,7 @@ def protocols(name, cmd):
     here, or a verilith-server build that says otherwise with --protocols
     (one line: http, h2c, tls, h3)."""
     fixed = {"bun": {"HTTP", "TLS"}, "may-minihttp": {"HTTP"}, "verilith-rustls": {"TLS"},
-             "verilith-quinn": {"H3"}, "h3-quinn": {"H3"}, "nginx-quic": {"H3"}, "h2o-quic": {"H3"}}
+             "h3-quinn": {"H3"}, "nginx-quic": {"H3"}, "h2o-quic": {"H3"}}
     tcp = set(PORTS) - UDP
     if name in fixed:
         return fixed[name]
@@ -453,7 +449,7 @@ def versions(cmds):
                 lock = open(os.path.join(HERE, "baselines/may-minihttp/Cargo.lock")).read()
                 m = re.search(r'name = "may_minihttp"\nversion = "([^"]+)"', lock)
                 v[name] = m.group(1) if m else "?"
-            elif name in ("verilith", "verilith-rustls", "verilith-uring", "verilith-quinn"):
+            elif name in ("verilith", "verilith-rustls", "verilith-uring"):
                 v[name] = subprocess.run(["git", "-C", ROOT, "rev-parse", "--short", "HEAD"], capture_output=True,
                                          text=True).stdout.strip()
         except Exception:
