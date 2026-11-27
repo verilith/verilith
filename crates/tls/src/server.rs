@@ -2062,6 +2062,39 @@ impl<P: Provider> ServerConn<P> {
         }
     }
 
+    /// The server's sending keys once connected, for a caller that hands
+    /// record protection to the kernel (kTLS): the suite, the traffic key
+    /// and IV of the server's current traffic secret, and the sequence
+    /// number of its next record. Records sealed with them from that
+    /// number on are the ones `write` would make from here. A caller that
+    /// hands them over must send nothing more this connection protects
+    /// with the same keys (`write`, `close`, or what `read_record` answers
+    /// with), since its sequence numbers no longer count what was sent.
+    pub fn tx_keys(&self) -> (r: Option<(u16, Secret, Secret, u64)>)
+        requires
+            self.wf(),
+        ensures
+            r is Some <==> self.phase() == Phase::Connected,
+            r matches Some((s, k, iv, seq)) ==> {
+                &&& s == self.handshake().choice.suite
+                &&& known_suite(s)
+                &&& k.wf() && iv.wf()
+                &&& k@ == traffic_key(suite_hash(s), self.tx_secret(), suite_key_len(s))
+                &&& k@.len() == suite_key_len(s)
+                &&& iv@ == traffic_iv(suite_hash(s), self.tx_secret())
+                &&& iv@.len() == 12
+                &&& seq == self.tx_seq()
+            },
+    {
+        match &self.state {
+            State::Connected { suite, tx, s_sec, .. } => {
+                let (k, iv) = traffic_keys_x(suite_hash_x(*suite), s_sec, suite_key_len_x(*suite));
+                Some((*suite, k, iv, tx.seq_x()))
+            },
+            _ => None,
+        }
+    }
+
     /// Sends alert `code` (under the server's current keys once it has
     /// some) and closes.
     fn fail(&mut self, code: u8, out: &mut Vec<u8>) -> (r: Error)
