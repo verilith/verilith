@@ -146,6 +146,15 @@ Loss recovery (RFC 9002), for one packet number space each:
   allowance (the datagram size and the anti-amplification limit), and
   pads one carrying an ack-eliciting Initial to 1200 bytes when the
   allowance permits.
+- **Timers** (RFC 9000 §10.1, RFC 9002 §6.1.2, §6.2.1, A.8, `timers`):
+  `idle_timeout` is the smaller nonzero advertised idle timeout, at least
+  three PTOs, without overflow for any peer value; `pto_deadline` is the
+  earliest backed-off PTO over the spaces with ack-eliciting data in
+  flight; `next` is the earliest armed timer, with the PTO armed only
+  when no loss timer is and the anti-amplification limit allows sending;
+  `due` picks what fires (idle, then the first loss timer due, then the
+  PTO), and at the time `next` returns something is due unless only a
+  delayed ACK is.
 
 Every loop in a parser consumes input, so parsing is linear in the input;
 the PADDING scan reads eight bytes at a time.
@@ -174,9 +183,10 @@ parsers. `tests/recovery.rs` runs a sender's `Sent` and a receiver's
 frame encoded and parsed in between, and checks that only received
 packets are acknowledged, no packet is acknowledged or lost twice, and
 the bytes in flight match a model; and RFC 9002's arithmetic on known
-values. `tests/reasm.rs`, `tests/sendq.rs`, `tests/reclog.rs` and
-`tests/pktbuf.rs` check reassembly, `RangeSet`, `SendState`, `RecLog`
-and `put_frame` against simple references.
+values. `tests/reasm.rs`, `tests/sendq.rs`, `tests/reclog.rs`,
+`tests/pktbuf.rs` and `tests/timers.rs` check reassembly, `RangeSet`,
+`SendState`, `RecLog`, `put_frame` and the timers against simple
+references.
 
 `bench/` compares verilith-quic with quinn-proto 0.11.19 and quiche
 0.24.9 (`bench/setup.sh` copies them from crates.io and makes their frame

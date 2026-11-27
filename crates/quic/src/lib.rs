@@ -19,6 +19,7 @@ pub mod sendq;
 pub mod rtt;
 pub mod sent;
 pub mod streams;
+pub mod timers;
 #[doc(hidden)]
 pub mod spec;
 pub mod varint;
