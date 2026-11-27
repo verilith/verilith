@@ -11,8 +11,7 @@ and static files from disk with a proven path check (`files::Files`;
 `--root DIR`, served under `/static/`), and HTTP/3 (`--features h3`,
 `--h3 PORT --cert PEM --key PEM`, UDP): the verified verilith-h3 framing
 and verilith-qpack on verilith-quic-conn's QUIC (verified wire format,
-recovery, handshake and packet protection), or with `--h3-backend quinn`
-on quinn-proto.** The API will change.
+recovery, handshake and packet protection).** The API will change.
 
 ```rust,no_run
 use std::sync::Arc;
@@ -60,8 +59,8 @@ https://localhost:8443/static/index.html` (h2), or a browser at
 `https://localhost:8443/static/` (it moves to HTTP/3 after the first
 response). `GET /plaintext` answers "Hello, World!". Other flags:
 `--threads N` (default: one per CPU), `--h2c PORT` (cleartext HTTP/2 with
-prior knowledge), `--io-uring` (Linux), `--tls-backend rustls` and
-`--h3-backend quinn` (the trusted libraries, to compare).
+prior knowledge), `--io-uring` (Linux), and `--tls-backend rustls` (the trusted library, to
+compare).
 
 The binary is the benchmark server; for your own routes, use the library
 (the example above): `serve(Config, handler)`, where the handler gets a
