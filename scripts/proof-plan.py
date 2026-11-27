@@ -95,6 +95,15 @@ class Cargo:
         for d in ws["workspace"]["members"]:
             with open(os.path.join(root, d, "Cargo.toml"), "rb") as f:
                 self.dirs[tomllib.load(f)["package"]["name"]] = d
+        # Crates kept out of the workspace (crates/tls-aws-lc) can still be
+        # path dependencies of a member, and so appear in Cargo.lock.
+        for d in sorted(os.listdir(os.path.join(root, "crates"))):
+            m = os.path.join(root, "crates", d, "Cargo.toml")
+            if os.path.isfile(m):
+                with open(m, "rb") as f:
+                    pkg = tomllib.load(f).get("package")
+                if pkg:
+                    self.dirs.setdefault(pkg["name"], f"crates/{d}")
         # The root manifest without the list of crates in the workspace
         # (adding a crate changes no other crate's build).
         ws["workspace"].pop("members", None)
