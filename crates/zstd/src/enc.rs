@@ -2,6 +2,7 @@
 //! memory safety is proven here; `compress` keeps a block only after the
 //! verified decoder has decoded it back to its input.
 use crate::ent::*;
+use crate::opt::OptState;
 use verilith_core::lz::{eq_len, load32};
 use verilith_core::prims::load_u64_le;
 use vstd::prelude::*;
@@ -15,14 +16,16 @@ pub const DFAST: u8 = 2;
 pub const GREEDY: u8 = 3;
 pub const LAZY: u8 = 4;
 pub const LAZY2: u8 = 5;
+/// The optimal parser on a binary tree (libzstd's btopt / btultra).
+pub const OPT: u8 = 6;
 
 /// The parameters of a level: window log, chain log, hash log, search
 /// log, minimum match, strategy (libzstd's table for large inputs).
 pub fn level_params(level: i32) -> (r: (u32, u32, u32, u32, u32, u8))
     ensures
         10 <= r.0 <= 27,
-        6 <= r.1 <= 24,
-        6 <= r.2 <= 24,
+        6 <= r.1 <= 27,
+        6 <= r.2 <= 25,
         r.3 <= 10,
         4 <= r.4 <= 7,
 {
@@ -57,13 +60,40 @@ pub fn level_params(level: i32) -> (r: (u32, u32, u32, u32, u32, u8))
     } else if level == 15 {
         (22, 23, 23, 8, 5, LAZY2)
     } else if level == 16 {
-        (22, 22, 22, 8, 4, LAZY2)
+        (22, 22, 22, 5, 4, OPT)
     } else if level == 17 {
-        (23, 23, 22, 8, 4, LAZY2)
+        (23, 23, 22, 5, 4, OPT)
     } else if level == 18 {
-        (23, 23, 22, 9, 4, LAZY2)
+        (23, 23, 22, 6, 4, OPT)
+    } else if level == 19 {
+        (23, 24, 22, 7, 4, OPT)
+    } else if level == 20 {
+        (25, 25, 23, 7, 4, OPT)
+    } else if level == 21 {
+        (26, 26, 24, 7, 4, OPT)
     } else {
-        (23, 24, 22, 10, 4, LAZY2)
+        (27, 27, 25, 9, 4, OPT)
+    }
+}
+
+/// The optimal parser's "sufficient length": a match this long is taken
+/// at once (libzstd's target length for the level).
+pub fn target_len(level: i32) -> (r: usize)
+    ensures
+        r >= 16,
+{
+    if level <= 16 {
+        48
+    } else if level == 17 {
+        64
+    } else if level == 18 {
+        128
+    } else if level <= 20 {
+        256
+    } else if level == 21 {
+        512
+    } else {
+        999
     }
 }
 
@@ -102,11 +132,13 @@ pub struct Enc {
     pub ob: Vec<u32>,
     pub lsc: LitScratch,
     pub ssc: SeqScratch,
+    /// The optimal parser's statistics and nodes.
+    pub op: OptState,
 }
 
 /// The table index of the `mls` bytes at `ip`.
 #[inline(always)]
-fn hash(src: &[u8], ip: usize, mls: u32, hlog: u32) -> (h: usize)
+pub fn hash(src: &[u8], ip: usize, mls: u32, hlog: u32) -> (h: usize)
     requires
         ip + 8 <= src@.len(),
         4 <= mls <= 8,
@@ -147,7 +179,7 @@ fn eq_mls(src: &[u8], a: usize, b: usize, mls: u32) -> bool
 /// Adds a sequence: the literals `src[anchor..ip]`, then a match of `m`
 /// bytes from `off` back.
 #[inline(always)]
-fn emit(st: &mut Store, src: &[u8], anchor: usize, ip: usize, off: usize, m: usize)
+pub fn emit(st: &mut Store, src: &[u8], anchor: usize, ip: usize, off: usize, m: usize)
     requires
         anchor <= ip <= src@.len(),
         old(st).wf(),
@@ -172,6 +204,7 @@ impl Enc {
         &&& self.t2@.len() >= 2
         &&& self.st.wf()
         &&& self.lsc.cnt@.len() == 256
+        &&& self.op.wf()
     }
 
     pub fn new(src: &[u8], window: u64, level: i32) -> (r: Enc)
@@ -202,10 +235,10 @@ impl Enc {
             clog = 6;
         }
         proof {
-            assert((1usize << hlog) <= 0x100_0000 && (1usize << hlog) >= 2) by (bit_vector)
-                requires 1 <= hlog <= 24;
-            assert((1usize << clog) <= 0x100_0000 && (1usize << clog) >= 2) by (bit_vector)
-                requires 1 <= clog <= 24;
+            assert((1usize << hlog) <= 0x800_0000 && (1usize << hlog) >= 2) by (bit_vector)
+                requires 1 <= hlog <= 27;
+            assert((1usize << clog) <= 0x800_0000 && (1usize << clog) >= 2) by (bit_vector)
+                requires 1 <= clog <= 27;
         }
         let t1: Vec<u32> = vec![0u32; 1usize << hlog];
         let t2: Vec<u32> = vec![0u32; 1usize << clog];
@@ -227,12 +260,13 @@ impl Enc {
             ob: Vec::new(),
             lsc: LitScratch::new(),
             ssc: SeqScratch::new(),
+            op: OptState::new(target_len(level)),
         }
     }
 
     /// Is `off` a usable offset for a match at `ip`?
     #[inline(always)]
-    fn off_ok(&self, ip: usize, off: usize) -> (r: bool)
+    pub fn off_ok(&self, ip: usize, off: usize) -> (r: bool)
         ensures
             r ==> 1 <= off <= ip,
     {
@@ -306,17 +340,19 @@ impl Enc {
                 decreases end - ip,
             {
                 let ghost ip0 = ip;
+                // The lowest position a match may come from.
+                let low = if ip - self.base > self.window { ip - self.window } else { self.base };
                 let h = hash(src, ip, mls, hlog);
                 let cand = self.base.wrapping_add(self.t1[h] as usize);
                 self.t1.set(h, (ip - self.base) as u32);
                 let r = self.rep1;
                 let ip1 = ip + 1;
-                if self.off_ok(ip1, r) && load32(src, ip1) == load32(src, ip1 - r) {
+                if r >= 1 && r <= ip - low && load32(src, ip1) == load32(src, ip1 - r) {
                     let m = 4 + eq_len(src, ip1 + 4, ip1 + 4 - r, end - (ip1 + 4));
                     emit(&mut self.st, src, anchor, ip1, r, m);
                     ip = ip1 + m;
                     anchor = ip;
-                } else if cand < ip && self.off_ok(ip, ip - cand) && eq_mls(src, ip, cand, mls) {
+                } else if cand < ip && cand >= low && eq_mls(src, ip, cand, mls) {
                     let off = ip - cand;
                     let mut m = mls as usize + eq_len(src, ip + mls as usize, cand + mls as usize, end - (ip + mls as usize));
                     let mut s = ip;
@@ -790,8 +826,10 @@ impl Enc {
             self.lazy(src, pos, end, 0);
         } else if self.strat == LAZY {
             self.lazy(src, pos, end, 1);
-        } else {
+        } else if self.strat == LAZY2 {
             self.lazy(src, pos, end, 2);
+        } else {
+            self.opt(src, pos, end, r1, r2, r3);
         }
         // Offsets to offset values, with the repeat offsets as the
         // decoder keeps them.

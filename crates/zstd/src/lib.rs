@@ -47,6 +47,8 @@ pub mod ent;
 #[doc(hidden)]
 pub mod enc;
 #[doc(hidden)]
+pub mod opt;
+#[doc(hidden)]
 pub mod compress;
 #[doc(hidden)]
 pub mod ccapi;

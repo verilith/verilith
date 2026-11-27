@@ -73,7 +73,7 @@ stops at the limit, not after.
 | property | where it is stated |
 | --- | --- |
 | Round trip: the specification decodes every frame the compressor makes back to its input, at every level and window size, with or without a checksum | `compress::compress_exec` (`decompress(r@) == Some(src@)`, against `spec::decompress`) |
-| Memory safety: no out-of-bounds access, no overflow, no panics, in the match finders, the entropy coders (FSE tables and states, Huffman code lengths and codes, bit writer) and the frame writer | every function in `compress`, `enc`, `ent` |
+| Memory safety: no out-of-bounds access, no overflow, no panics, in the match finders (including the optimal parser), the entropy coders (FSE tables and states, Huffman code lengths and codes, bit writer) and the frame writer | every function in `compress`, `enc`, `opt`, `ent` |
 | Termination of every loop | every function (`decreases`) |
 
 The frame header, block headers, raw and RLE blocks and the checksum are
@@ -208,6 +208,7 @@ so streaming keeps the window plus the dictionary's size.
   proof.
 - `src/enc.rs`: the match finders (fast, double fast, greedy, lazy and
   lazy2 on hash chains) and libzstd's level parameters.
+- `src/opt.rs`: the optimal parser on a binary tree, for levels 16 to 22.
 - `src/ent.rs`: the entropy coders: FSE normalization (libzstd's two
   methods), table descriptions and encoding tables, Huffman code lengths
   and tree descriptions (direct or FSE-compressed weights), the literals
@@ -424,23 +425,26 @@ is the sequence loop and table building.
 
 ### Compression
 
-The first version of the compressor, against libzstd 1.5.5's
-`ZSTD_compress` at the same level (Linux x86-64 cloud VM, `bench/`'s
-`cbench`, one-shot, seven compressible files from 1.6 to 35 MB: docs,
-Rust source, JSON, text, low-entropy bytes, two binaries; geometric
-means; every frame checked by libzstd's decoder):
+Against libzstd 1.5.5's `ZSTD_compress` at the same level (Linux x86-64
+cloud VM, `bench/`'s `cbench`, one-shot, seven compressible files from
+1.6 to 35 MB: docs, Rust source, JSON, text, low-entropy bytes, two
+binaries; geometric means; every frame checked by libzstd's decoder):
 
 | level | ratio vs libzstd | speed vs libzstd |
 | --- | --- | --- |
-| 1 | 0.96× | 0.33× |
-| 3 | 0.98× | 0.39× |
-| 19 | 0.87× | 0.50× |
+| 1 | 0.96× | 0.35× |
+| 3 | 0.98× | 0.40× |
+| 16 | 1.02× | 0.71× |
+| 19 | 0.99× | 0.92× |
 
-Levels 1 to 9 come within 2 to 8% of libzstd's ratio. About a quarter of
-the time (level 1) goes to checking each compressed block with the proven decoder;
-the rest is the match finders and the sequence encoder, not yet tuned.
-Levels 16 to 22 use lazy2 matching where libzstd uses its optimal
-parsers (btopt, btultra), hence the larger gap there.
+Levels 16 to 22 use an optimal parser (`src/opt.rs`, as libzstd's btopt
+and btultra): matches from a binary tree, then the cheapest path through
+each stretch of up to 4096 positions by bit prices from literal, length
+and offset statistics carried from block to block. Levels 1 to 9 come
+within 2 to 8% of libzstd's ratio; their speed is where the gap is.
+About a quarter of the time at level 1 goes to checking each compressed
+block with the proven decoder; the rest is spread over the match finder
+and the sequence encoder (about 240 instructions a sequence).
 
 ## License
 
