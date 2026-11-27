@@ -33,5 +33,15 @@ pub mod neon;
 #[cfg(any(target_endian = "little", verus_only))]
 #[doc(hidden)]
 pub mod arm;
+#[doc(hidden)]
+pub mod ct;
 mod aead;
 pub use aead::{Aes, AesGcm};
+
+/// What `examples/ctcheck.rs` tells the static constant-time check.
+#[doc(hidden)]
+pub mod layout {
+    /// The offset of `Gcm::nr`, the one field of an expanded key that is
+    /// public (the number of rounds).
+    pub const NR_OFFSET: usize = core::mem::offset_of!(crate::gcm::Gcm, nr);
+}

@@ -8,7 +8,7 @@ FEAT_PMULL kernels, with additional data, every length, and the partial
 last block. The AES block cipher alone is there too, for QUIC header
 protection.
 
-`cargo verus verify` (or `scripts/verify.sh`) checks 332 functions and
+`cargo verus verify` (or `scripts/verify.sh`) checks 335 functions and
 lemmas with no errors and no `assume`. What is assumed instead is listed
 under [Trusted base](#trusted-base) and in full in [TRUST.md](https://github.com/verilith/verilith/blob/main/crates/aes/TRUST.md):
 the specifications, one-line wrappers of the instructions, CPU detection,
@@ -100,12 +100,71 @@ are tested under qemu and not yet measured on Arm hardware.
 
 ## Constant time
 
-There are no table lookups: AES is the AES instructions, and GHASH is
-carry-less multiplication. `./ci.sh ct` runs `examples/ctgrind.rs` under
-Valgrind's memcheck with the key, plaintext, additional data and blocks
-marked secret, and fails on any branch or address that depends on them
-(the 128-bit path: Valgrind's CPU has AES-NI and PCLMULQDQ, not AVX-512).
-`open` compares tags without branching, then branches once on the result.
+Proven at two levels, and checked a third way. What counts as a leak is
+the usual model for this: a branch, or a memory address, that depends on a
+secret, or a secret operand of an instruction whose time depends on its
+data. The secrets are the key, the IV, the plaintext, the additional data,
+the block given to the block cipher, and everything computed from them;
+the lengths, and whether `open`'s tag matched, are public.
+
+- **In the source, by the type checker.** The kernels and GCM
+  (`kernels.rs`, `gcm.rs`) are generic over the `Isa` trait, and hold
+  every secret as `A::R`, an associated type with no operations but the
+  trait's: an `if`, a comparison or an index on it does not compile. No
+  trait method turns a register into anything code can branch on, except
+  `is_zero`, called once, on whether the tag matched, through
+  `ct::declassify`. There are no table lookups: AES is the AES
+  instructions, GHASH is carry-less multiplication.
+- **In the machine code, by a static check.** `./ci.sh ctstatic` runs
+  [`scripts/ctcheck.py`](https://github.com/verilith/verilith/blob/main/scripts/ctcheck.py)
+  on the compiled entry points (key expansion, H, the block cipher, and
+  sealing and opening on the AES-NI, VAES and AArch64 paths), built as
+  this crate's release profile builds them for x86-64 and AArch64. It is
+  a taint analysis over every path to a fixpoint, so it holds for every
+  input, not the ones a test ran: everything the function reads from
+  memory it was handed is secret (except the round count), and it fails
+  on any conditional branch or address that depends on a secret, and on a
+  secret operand of any instruction not on Intel's or Arm's lists of
+  data-independent-timing instructions. This is the check that matters,
+  because the compiler can turn branch-free source into a branch: one of
+  the controls in `examples/ctcheck.rs` is a select written with masks,
+  which LLVM compiles to a conditional jump, and which the check reports.
+  Nine controls (a branch, an index, a division, a branch on a value moved
+  out of a vector register, that select, and the sealing paths with the
+  round count marked secret) must each be reported, or the check fails.
+- **Dynamically, by Valgrind.** `./ci.sh ct` runs `examples/ctgrind.rs`
+  under memcheck with the secrets marked undefined (the 128-bit path:
+  Valgrind's CPU has AES-NI and PCLMULQDQ, not AVX-512).
+
+`open` compares the tags without branching, then branches once, on the
+result, which is public (the caller learns it). The kernel's one decision
+goes through `ct::declassify`, a function the compiler keeps as a call, so
+the binary check sees exactly that value made public and no other.
+
+What this does not cover, and cannot:
+
+- The CPU keeping its promise. That the listed instructions take the same
+  time for any data is Intel's DOIT guarantee and Arm's FEAT_DIT, not
+  something a program can show. On Arm the guarantee holds only with
+  PSTATE.DIT set, which this crate does not yet set (on Apple's M-series
+  DIT also turns off the data memory-dependent prefetcher that the GoFetch
+  attack used); on Intel, from Ice Lake on, the DOITM mode that makes it
+  architectural is the kernel's to enable.
+- Power and electromagnetic side channels, fault injection, and
+  speculative execution (Spectre): these are properties of the hardware
+  and what else runs on it, and the leakage model above does not see
+  them. The code has no secret-indexed memory to leak speculatively, but
+  that is not a proof against Spectre.
+- Other compilers, other optimization levels and other targets: the
+  check is of the code this profile builds, for x86-64 Linux and AArch64
+  Linux (macOS AArch64 is the same LLVM back end but its Mach-O binary is
+  not checked). A caller who builds the crate differently gets different
+  code; `./ci.sh ctstatic` checks a build, and can be pointed at another.
+- What the check trusts (TRUST.md): capstone's decoding and its lists of
+  the registers and flags each instruction reads and writes; LLVM's
+  stack-frame-layout remark, to tell variables from spill slots; summaries
+  of memcpy, memset and memmove (their time depends only on their
+  pointers and length); and the transcription of the two vendors' lists.
 
 ## Layout
 
