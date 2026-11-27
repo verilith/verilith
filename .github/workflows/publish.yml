@@ -1,0 +1,73 @@
+name: Publish to crates.io
+
+# Run by hand (Actions > Publish to crates.io > Run workflow). It runs
+# scripts/publish.py: a dry run unless "dry_run" is unticked. A publish is
+# permanent (RELEASING.md).
+#
+# Authentication, for a real publish:
+# - Trusted Publishing (no token): for crates that already exist on
+#   crates.io and have this repository and this workflow file (publish.yml)
+#   added under Settings > Trusted Publishing on crates.io.
+# - Otherwise the CARGO_REGISTRY_TOKEN repository secret, a crates.io API
+#   token with the publish-new and publish-update scopes. The first publish
+#   of a crate always needs it: Trusted Publishing can only be set up for a
+#   crate that exists.
+# With auth "trusted-publishing" (the default), Trusted Publishing is tried
+# first, and if crates.io refuses it (as it does before any crate is set up
+# for it) the secret is used. With auth "token" only the secret is used:
+# pick it for a release that adds a new crate, since a Trusted Publishing
+# token cannot create one.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Dry run (package and build every crate, publish nothing)
+        type: boolean
+        default: true
+      auth:
+        description: How to authenticate a real publish
+        type: choice
+        options: [trusted-publishing, token]
+        default: trusted-publishing
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # A first publish of every crate can wait out crates.io's rate limit
+    # for new crates for hours; the script resumes if this runs out.
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          cargo --version
+      - name: Trusted Publishing token
+        id: auth
+        if: ${{ !inputs.dry_run && inputs.auth == 'trusted-publishing' }}
+        continue-on-error: true
+        uses: rust-lang/crates-io-auth-action@v1
+      - name: Dry run
+        if: ${{ inputs.dry_run }}
+        run: python3 scripts/publish.py
+      - name: Publish
+        if: ${{ !inputs.dry_run }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "No token: set up Trusted Publishing or add the CARGO_REGISTRY_TOKEN secret" >&2
+            exit 1
+          fi
+          python3 scripts/publish.py --publish

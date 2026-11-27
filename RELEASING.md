@@ -11,10 +11,10 @@ cut from that release's commit. Both are pinned exactly:
 
 | | Where | Now |
 |---|---|---|
-| Verus release | `scripts/verus-version` (`VERUS_RELEASE`) | `0.2026.11.02.8bf68ee` |
-| Verus commit | `scripts/verus-version` (`VERUS_COMMIT`) | `8bf68ee741df833ea5d0fe6a2255126fdea87e47` |
-| Rust toolchain Verus is built with | `scripts/verus-version` (`VERUS_TOOLCHAIN`) | `1.99.1` |
-| `vstd`, `verus_builtin`, `verus_builtin_macros`, `verus_state_machines_macros` | `[workspace.dependencies]` in `Cargo.toml` | `=0.0.0-2026-11-01-0251` |
+| Verus release | `scripts/verus-version` (`VERUS_RELEASE`) | `0.2026.11.22.1ce6a59` |
+| Verus commit | `scripts/verus-version` (`VERUS_COMMIT`) | `1ce6a59bd72713cf486a7660097fe5ac57519617` |
+| Rust toolchain Verus is built with | `scripts/verus-version` (`VERUS_TOOLCHAIN`) | `1.100.0` |
+| `vstd`, `verus_builtin`, `verus_builtin_macros`, `verus_state_machines_macros` | `[workspace.dependencies]` in `Cargo.toml` | `=0.0.0-2026-11-22-0344` |
 
 The Rust toolchain above is only for running Verus. Building the crates
 needs Rust 1.89 or later (the `rust-version` in each `Cargo.toml`).
@@ -108,12 +108,40 @@ needed for it:
    the requirements between them.
 2. `scripts/package.sh`, `scripts/trust-ledger.py --check`, and a fresh run
    of every proof on the release commit.
-3. Publish in dependency order (`cargo publish --workspace` orders them),
-   and tag the commit `v<version>`.
+3. `scripts/publish.py` (a dry run), then publish: run the "Publish to
+   crates.io" workflow with "dry_run" unticked, or `scripts/publish.py
+   --publish` after `cargo login`. Then tag the commit `v<version>`.
 4. Add a row to the table below.
+
+## What is published
+
+Every workspace member without `publish = false`, and `crates/tls-aws-lc`
+(outside the workspace only because aws-lc is C and the workspace builds
+only Rust). `scripts/publish.py --list` prints them in the order they are
+published. Not published: `verilith-bind` and its Node.js and Python
+crates, which ship through npm and PyPI.
+
+`scripts/publish.py` skips a crate whose version is already on crates.io,
+so a publish that stopped part way (a failure, or crates.io's limit on new
+crates, about one every 10 minutes after the first 5) is finished by
+running it again.
+
+### Authentication
+
+- **The first publish** of a crate needs a crates.io API token: on
+  crates.io, Account Settings > API Tokens, with the `publish-new` and
+  `publish-update` scopes, saved as the `CARGO_REGISTRY_TOKEN` repository
+  secret (Settings > Secrets and variables > Actions).
+- **After that, Trusted Publishing** (no token): on each crate's page on
+  crates.io, Settings > Trusted Publishing > Add, with owner `verilith`,
+  repository `verilith` and workflow `publish.yml` (no environment). The
+  workflow then gets a short-lived token from crates.io itself. Once every
+  crate has it, the secret is only needed for new crates.
+- A release that adds a crate needs the token again for that crate: run
+  the workflow with auth "token".
 
 ## Releases and their pins
 
 | verilith | Verus release | `vstd` |
 |---|---|---|
-| unreleased (main) | `0.2026.11.02.8bf68ee` | `=0.0.0-2026-11-01-0251` |
+| unreleased (main) | `0.2026.11.22.1ce6a59` | `=0.0.0-2026-11-01-0251` |
