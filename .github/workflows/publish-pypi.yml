@@ -200,7 +200,8 @@ jobs:
   publish:
     name: Publish to PyPI
     needs: check
-    if: ${{ !inputs.dry_run }}
+    # A real publish only from main; the environment should also allow only main.
+    if: ${{ !inputs.dry_run && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -213,6 +214,6 @@ jobs:
         with:
           name: pypi-dist
           path: dist
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           skip-existing: true
