@@ -76,9 +76,11 @@ pub struct Limits3 {
     pub send_window: u64,
     /// The largest UDP payload the verilith backend probes for: it starts
     /// at 1200, the minimum QUIC requires of paths (RFC 9000 §14), and
-    /// moves up to this once a probe of this size is acknowledged. 1452
-    /// fills a 1500-byte Ethernet MTU over IPv6, quinn's default upper
-    /// bound too.
+    /// steps up through 1452 (a 1500-byte Ethernet MTU over IPv6) and 8952
+    /// (a 9000-byte jumbo frame) to this, as each probe is acknowledged.
+    /// The socket sets DF, so a probe the path cannot carry is lost, not
+    /// fragmented. 65487 fits loopback's 65536-byte MTU over IPv6: there,
+    /// as with nginx, a 64 KiB response is one datagram, not 45.
     pub max_udp_payload: u16,
 }
 
@@ -91,7 +93,7 @@ impl Default for Limits3 {
             stream_window: 1 << 20,
             window: 8 << 20,
             send_window: 8 << 20,
-            max_udp_payload: 1452,
+            max_udp_payload: 65487,
         }
     }
 }
@@ -545,6 +547,13 @@ struct VConn {
 /// left the server waiting on the client.
 const BATCH: usize = 64;
 const RECV_ROOM: usize = 64 * 1024;
+/// Bytes one connection sends at a time, before it next hears from its
+/// peer (RFC 9002 §7.7: a sender should limit bursts; it does not pace).
+/// Linux gives a socket 208 KiB of receive buffer by default, and h2load,
+/// like most clients, keeps it: a 1 MiB window sent at once in 64 KiB
+/// datagrams lost its tail there, and each such loss waited for a probe
+/// timeout. 128 KiB stays within it.
+const BURST: usize = 128 * 1024;
 
 impl H3 {
     pub fn new(fd: i32, cfg: QuicConfig, limits: Limits3) -> H3 {
@@ -573,16 +582,24 @@ impl H3 {
         }
     }
 
-    /// Milliseconds to the next timer, if any.
+    /// Milliseconds to the next timer, if any, rounded up.
     pub fn timeout_ms(&mut self, now: Instant) -> Option<i32> {
+        self.timeout_us(now).map(|us| us.div_ceil(1000) as i32)
+    }
+
+    /// Microseconds to the next timer, if any (at most a second), rounded
+    /// up: waking early only to sleep again costs a poll. Loss detection
+    /// on a fast path waits a fraction of a millisecond (RFC 9002 §6.1.2:
+    /// 9/8 of the RTT), so rounding to milliseconds would leave the
+    /// connection idle for most of that millisecond.
+    pub fn timeout_us(&mut self, now: Instant) -> Option<u64> {
         while let Some(Reverse((t, ch))) = self.timers.peek().copied() {
             if self.deadline(ch) != Some(t) {
                 self.timers.pop();
                 continue;
             }
             let d = t.saturating_duration_since(now);
-            // Round up: waking early only to sleep again costs a poll.
-            return Some(d.as_millis().min(1000) as i32 + (d.subsec_nanos() % 1_000_000 != 0) as i32);
+            return Some((d.as_micros() as u64 + !d.subsec_nanos().is_multiple_of(1000) as u64).min(1_000_000));
         }
         None
     }
@@ -737,9 +754,14 @@ impl H3 {
                 if let Err(Close(code)) = app_events(q, &mut c.app, h, ctx, &limits) {
                     q.close(us, code);
                 }
-                loop {
+                // At most BURST bytes now: the rest goes as acknowledgments
+                // arrive (or a timer fires), so that a burst of a whole
+                // window does not overflow the client's socket buffer.
+                let mut burst = 0;
+                while burst < BURST {
                     self.sbuf.clear();
                     let Some(t) = q.poll_transmit(us, max, &mut self.sbuf) else { break };
+                    burst += t.size;
                     send(self.fd, &self.sbuf[..t.size], SocketAddr::V4(c.peer), t.segment_size, &mut self.gso);
                 }
                 if q.is_closed() {
