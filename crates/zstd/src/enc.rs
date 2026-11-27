@@ -4,7 +4,7 @@
 use crate::ent::*;
 use crate::opt::OptState;
 use verilith_core::lz::{eq_len, load32};
-use verilith_core::prims::load_u64_le;
+use verilith_core::prims::{get, get32, load_u64_le, store_at};
 use vstd::prelude::*;
 use vstd::slice::slice_subrange;
 
@@ -369,6 +369,94 @@ fn fast_run(
     (t1, anchor, r1, r2)
 }
 
+/// One search of `dfast_run`, from `ip0` (libzstd 1.5's double-fast inner
+/// loop): each position's long-hash candidate is read one step ahead, so
+/// the next table load overlaps the tests on this one. Both tables get the
+/// position. Returns `(kind, ip, ip1, hl1, cl1, c)`: kind 0, no match before
+/// `ilimit`; 1, the first repeat offset matches at `ip + 1`; 2, a long
+/// match at `ip` from `c`; 3, a short (4-byte) match at `ip` from `c`, with
+/// the long candidate `cl1` of the next position `ip1`, whose long-hash
+/// row is `hl1`.
+#[inline(always)]
+fn dfast_search(
+    t1: &mut Vec<u32>,
+    t2: &mut Vec<u32>,
+    src: &[u8],
+    ip0: usize,
+    ilimit: usize,
+    base: usize,
+    low: usize,
+    hlog: u32,
+    clog: u32,
+    mls: u32,
+    r1: usize,
+) -> (r: (u8, usize, usize, usize, usize, usize))
+    requires
+        base <= ip0,
+        ip0 < ilimit,
+        ilimit + 8 <= src@.len(),
+        ilimit - base < 0xC002_0000,
+        old(t1)@.len() == (1usize << hlog),
+        old(t2)@.len() == (1usize << clog),
+        1 <= hlog <= 30,
+        1 <= clog <= 30,
+        4 <= mls <= 8,
+        r1 == 0 || (ip0 >= low && r1 <= ip0 - low),
+    ensures
+        final(t1)@.len() == old(t1)@.len(),
+        final(t2)@.len() == old(t2)@.len(),
+        ip0 <= r.1 < r.2 <= ilimit,
+        r.0 == 1 ==> r1 != 0,
+        r.0 >= 2 ==> r.5 < r.1 && r.5 >= low && r.3 < (1usize << hlog),
+{
+    let mut ip = ip0;
+    let mut ip1 = ip0 + 1;
+    let mut hl0 = hash(src, ip, 8, hlog);
+    let mut cl0 = base.wrapping_add(get32(t1.as_slice(), hl0) as usize);
+    loop
+        invariant
+            ip0 <= ip < ip1 <= ilimit,
+            base <= ip0,
+            ilimit + 8 <= src@.len(),
+            ilimit - base < 0xC002_0000,
+            t1@.len() == (1usize << hlog),
+            t2@.len() == (1usize << clog),
+            hl0 < (1usize << hlog),
+            old(t1)@.len() == (1usize << hlog),
+            old(t2)@.len() == (1usize << clog),
+            1 <= hlog <= 30,
+            1 <= clog <= 30,
+            4 <= mls <= 8,
+            r1 == 0 || (ip0 >= low && r1 <= ip0 - low),
+        decreases ilimit - ip,
+    {
+        let hs0 = hash(src, ip, mls, clog);
+        let cs = base.wrapping_add(get32(t2.as_slice(), hs0) as usize);
+        store_at(t1, hl0, (ip - base) as u32);
+        store_at(t2, hs0, (ip - base) as u32);
+        if r1 != 0 && load32(src, ip + 1) == load32(src, ip + 1 - r1) {
+            return (1, ip, ip1, 0, 0, 0);
+        }
+        let hl1 = hash(src, ip1, 8, hlog);
+        if cl0 < ip && cl0 >= low && eq_mls(src, ip, cl0, 8) {
+            return (2, ip, ip1, hl1, 0, cl0);
+        }
+        let cl1 = base.wrapping_add(get32(t1.as_slice(), hl1) as usize);
+        if cs < ip && cs >= low && load32(src, cs) == load32(src, ip) {
+            return (3, ip, ip1, hl1, cl1, cs);
+        }
+        // One more byte of step per 256 without a match.
+        let step = (ip1 - ip0) / 256 + 1;
+        if ilimit - ip1 < step {
+            return (0, ip, ip1, 0, 0, 0);
+        }
+        ip = ip1;
+        ip1 = ip1 + step;
+        hl0 = hl1;
+        cl0 = cl1;
+    }
+}
+
 /// The loop of `Enc::dfast`. Returns the tables, the last anchor and the
 /// repeat offsets.
 #[inline(always)]
@@ -421,6 +509,7 @@ fn dfast_run(
             anchor <= ip,
             ip <= end,
             pos <= anchor,
+            base <= ip,
             ilimit == end - 8,
             t1@.len() == tl1,
             t2@.len() == tl2,
@@ -431,76 +520,74 @@ fn dfast_run(
         decreases end - ip,
     {
         let ghost ip0 = ip;
-        let hl = hash(src, ip, 8, hlog);
-        let hs = hash(src, ip, mls, clog);
-        let cl = base.wrapping_add(t1[hl] as usize);
-        let cs = base.wrapping_add(t2[hs] as usize);
-        t1.set(hl, (ip - base) as u32);
-        t2.set(hs, (ip - base) as u32);
-        let ip1 = ip + 1;
-        if r1 != 0 && load32(src, ip1) == load32(src, ip1 - r1) {
-            let m = 4 + eq_len(src, ip1 + 4, ip1 + 4 - r1, end - (ip1 + 4));
-            emit_s(st, src, anchor, ip1, r1, m, end);
-            ip = ip1 + m;
-            anchor = ip;
+        let (kind, curr, ip1, hl1, cl1, c) = dfast_search(&mut t1, &mut t2, src, ip, ilimit, base, low, hlog, clog, mls, r1);
+        if kind == 0 {
+            break;
+        }
+        if kind == 1 {
+            let s = curr + 1;
+            let m = 4 + eq_len(src, s + 4, s + 4 - r1, end - (s + 4));
+            emit_s(st, src, anchor, s, r1, m, end);
+            ip = s + m;
         } else {
-            let mut start = ip;
-            let mut off: usize = 0;
-            let mut m: usize = 0;
-            if cl < ip && cl >= low && eq_mls(src, ip, cl, 8) {
-                off = ip - cl;
-                m = 8 + eq_len(src, ip + 8, cl + 8, end - (ip + 8));
-            } else if cs < ip && cs >= low && eq_mls(src, ip, cs, mls) {
-                // A long match one byte later?
-                let h3 = hash(src, ip1, 8, hlog);
-                let c3 = base.wrapping_add(t1[h3] as usize);
-                t1.set(h3, (ip1 - base) as u32);
-                if c3 < ip1 && c3 >= low && eq_mls(src, ip1, c3, 8) {
-                    off = ip1 - c3;
-                    start = ip1;
-                    m = 8 + eq_len(src, ip1 + 8, c3 + 8, end - (ip1 + 8));
-                } else {
-                    off = ip - cs;
-                    m = mls as usize + eq_len(src, ip + mls as usize, cs + mls as usize, end - (ip + mls as usize));
-                }
+            let mut start = curr;
+            let mut cand = c;
+            let mut m: usize;
+            if kind == 2 {
+                m = 8 + eq_len(src, curr + 8, c + 8, end - (curr + 8));
+            } else if cl1 < ip1 && cl1 >= low && eq_mls(src, ip1, cl1, 8) {
+                // A long match one position on.
+                start = ip1;
+                cand = cl1;
+                m = 8 + eq_len(src, ip1 + 8, cl1 + 8, end - (ip1 + 8));
+            } else {
+                m = 4 + eq_len(src, curr + 4, c + 4, end - (curr + 4));
             }
-            if off == 0 {
-                let stp = (ip - anchor) / 256 + 1;
-                ip = if ilimit - ip > stp { ip + stp } else { ilimit };
-                continue;
-            }
+            let off = start - cand;
+            let ghost m0 = m;
             let mut s = start;
-            let mut c = start - off;
-            while s > anchor && c > base && src[s - 1] == src[c - 1]
+            let mut q = cand;
+            while s > anchor && q > base && get(src, s - 1) == get(src, q - 1)
                 invariant
                     anchor <= s <= start,
-                    c < s,
-                    s - c == off,
+                    q < s,
+                    s - q == off,
+                    q + m == cand + m0,
                     m <= end - s,
-                    s + m >= ip + 4,
+                    s + m >= start + 4,
                 decreases s,
             {
                 s = s - 1;
-                c = c - 1;
+                q = q - 1;
                 m = m + 1;
+            }
+            // libzstd's test for `ip1` being before the match's end.
+            if ip1 - curr < 4 {
+                store_at(&mut t1, hl1, (ip1 - base) as u32);
             }
             emit_s(st, src, anchor, s, off, m, end);
             r2 = r1;
             r1 = off;
             ip = s + m;
-            anchor = ip;
         }
-        if ip < ilimit && ip >= base + 2 {
-            let p = ip - 2;
-            let h4 = hash(src, p, 8, hlog);
-            t1.set(h4, (p - base) as u32);
-            let h5 = hash(src, p, mls, clog);
-            t2.set(h5, (p - base) as u32);
-            while ip < ilimit && r2 != 0 && load32(src, ip) == load32(src, ip - r2)
+        anchor = ip;
+        if ip <= ilimit {
+            // Complementary insertion: two positions of the match.
+            let p = curr + 2;
+            let h1 = hash(src, p, 8, hlog);
+            store_at(&mut t1, h1, (p - base) as u32);
+            let h2 = hash(src, ip - 2, 8, hlog);
+            store_at(&mut t1, h2, (ip - 2 - base) as u32);
+            let h3 = hash(src, p, mls, clog);
+            store_at(&mut t2, h3, (p - base) as u32);
+            let h4 = hash(src, ip - 1, mls, clog);
+            store_at(&mut t2, h4, (ip - 1 - base) as u32);
+            while ip <= ilimit && r2 != 0 && load32(src, ip) == load32(src, ip - r2)
                 invariant
                     anchor == ip,
                     ip <= end,
                     pos <= anchor,
+                    base <= ip,
                     ilimit == end - 8,
                     t1@.len() == tl1,
                     t2@.len() == tl2,
@@ -517,9 +604,9 @@ fn dfast_run(
                 r1 = q;
                 emit_s(st, src, ip, ip, q, m2, end);
                 let h6 = hash(src, ip, 8, hlog);
-                t1.set(h6, (ip - base) as u32);
+                store_at(&mut t1, h6, (ip - base) as u32);
                 let h7 = hash(src, ip, mls, clog);
-                t2.set(h7, (ip - base) as u32);
+                store_at(&mut t2, h7, (ip - base) as u32);
                 ip = ip + m2;
                 anchor = ip;
             }
@@ -660,6 +747,7 @@ fn hc_find(t1: &mut Vec<u32>, t2: &mut Vec<u32>, p: &Hc, src: &[u8], next: usize
 /// The loop of `Enc::lazy`. Returns the tables, the last anchor, the next
 /// position to add to the chains and the repeat offsets.
 #[verifier::loop_isolation(false)]
+#[verifier::rlimit(40)]
 fn lazy_run(
     t1: Vec<u32>,
     t2: Vec<u32>,
