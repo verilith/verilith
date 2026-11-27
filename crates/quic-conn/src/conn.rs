@@ -12,6 +12,7 @@ use verilith_quic::reasm::{Reassembly, MAX_WINDOW};
 use bytes::Bytes;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use verilith_quic::allowed::{self, Level};
 use verilith_quic::amplification::Budget;
 use verilith_quic::cc::NewReno;
 use verilith_quic::cubic::Cubic;
@@ -693,14 +694,13 @@ impl<P: Provider> Connection<P> {
             let Some((f, next)) = frame::parse(payload, p) else { return Err(FRAME_ENCODING_ERROR) };
             trace(format_args!("  frame 0x{:02x}", payload[p]));
             p = next;
-            let hs_ok = matches!(
-                f,
-                Frame::Padding(_) | Frame::Ping | Frame::Ack(_) | Frame::Crypto { .. } | Frame::ConnectionClose { app: false, .. }
-            );
-            if s != 2 && !hs_ok {
+            // Table 3 (§12.4), and the frames only a server sends (verified
+            // `allowed`).
+            let level = [Level::Initial, Level::Handshake, Level::OneRtt][s];
+            if !allowed::allowed(&f, level) || !allowed::server_receives(&f) {
                 return Err(PROTOCOL_VIOLATION);
             }
-            if !matches!(f, Frame::Padding(_) | Frame::Ack(_) | Frame::ConnectionClose { .. }) {
+            if allowed::ack_eliciting(&f) {
                 eliciting = true;
             }
             match f {
@@ -779,6 +779,7 @@ impl<P: Provider> Connection<P> {
                     self.events.push_back(Event::Closed { code: err, app, remote: true });
                     return Ok(false);
                 }
+                // Refused above.
                 Frame::NewToken(_) | Frame::HandshakeDone => return Err(PROTOCOL_VIOLATION),
             }
         }
