@@ -48,6 +48,7 @@ defaults:
     working-directory: crates/bind/node
 
 env:
+  NAPI_CLI: "@napi-rs/cli@3.10.12"
   ZIG: ziglang==0.17.1
   ZIGBUILD: cargo-zigbuild==0.24.1
 
@@ -69,11 +70,14 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install "$ZIG" "$ZIGBUILD"
-      - run: npm ci
+      # Only the napi CLI, not the package's own dependencies: those are its
+      # platform packages, which npm ci (npm 11) refuses while they are not
+      # on npm.
+      - run: npm install -g "$NAPI_CLI"
       - name: Build
         run: |
           for t in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
-            npx napi build --platform --release -x --target "$t"
+            napi build --platform --release -x --target "$t"
           done
           ls -l *.node
       - name: The committed loader and types are current
@@ -134,10 +138,13 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-      - run: npm ci
+      # Only the napi CLI, not the package's own dependencies: those are its
+      # platform packages, which npm ci (npm 11) refuses while they are not
+      # on npm.
+      - run: npm install -g "$NAPI_CLI"
       - name: Build
         run: |
-          npx napi build --platform --release
+          napi build --platform --release
           ls -l *.node
       - name: Test
         run: VBIND_NODE=../../node/index.js node --test ../tests/node/test.js
@@ -156,14 +163,17 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
-      - run: npm ci
+      # Only the napi CLI, not the package's own dependencies: those are its
+      # platform packages, which npm ci (npm 11) refuses while they are not
+      # on npm.
+      - run: npm install -g "$NAPI_CLI"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: bindings-*
           path: crates/bind/node/artifacts
       - name: Put each binary in its package
         run: |
-          npx napi artifacts -d artifacts
+          napi artifacts -d artifacts
           python3 ../scripts/check-npm-packages.py
       - name: npm publish --dry-run
         run: |
