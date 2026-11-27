@@ -10,6 +10,7 @@ pub mod frame;
 pub mod lemmas;
 pub mod packet;
 pub mod params;
+pub mod reasm;
 pub mod recv;
 pub mod rtt;
 pub mod sent;

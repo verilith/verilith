@@ -1,6 +1,7 @@
-//! Byte-stream buffers for CRYPTO and STREAM data: [`Assembler`] puts
-//! received frames back in order, [`SendBuf`] keeps what was written until
-//! it is acknowledged and knows what to send or resend next.
+//! Send buffers for CRYPTO and STREAM data: [`SendBuf`] keeps what was
+//! written until it is acknowledged and knows what to send or resend next.
+//! (Received data is put back in order by verilith-quic's verified
+//! `reasm::Reassembly`.)
 use bytes::{Buf, Bytes, BytesMut};
 use std::collections::{BTreeMap, VecDeque};
 
@@ -78,105 +79,6 @@ impl Ranges {
 
     pub fn clear(&mut self) {
         self.m.clear();
-    }
-}
-
-/// Received data put back in order.
-#[derive(Default)]
-pub struct Assembler {
-    /// Bytes from `read` on, contiguous, not yet read.
-    ready: VecDeque<u8>,
-    /// The offset of `ready[0]`.
-    read: u64,
-    /// Out-of-order segments past the contiguous data, by offset.
-    pending: BTreeMap<u64, Vec<u8>>,
-    /// Bytes buffered in `pending`.
-    pending_len: usize,
-}
-
-impl Assembler {
-    /// The offset up to which data is contiguous.
-    pub fn contiguous(&self) -> u64 {
-        self.read + self.ready.len() as u64
-    }
-
-    /// The offset of the next byte to read.
-    pub fn read_offset(&self) -> u64 {
-        self.read
-    }
-
-    /// Buffers `data` at `offset`; bytes already held are dropped.
-    pub fn insert(&mut self, offset: u64, data: &[u8]) {
-        let end = offset + data.len() as u64;
-        let have = self.contiguous();
-        if end <= have {
-            return;
-        }
-        if offset <= have {
-            let skip = (have - offset) as usize;
-            self.ready.extend(&data[skip..]);
-            self.drain_pending();
-        } else {
-            match self.pending.get(&offset) {
-                Some(v) if v.len() >= data.len() => {}
-                _ => {
-                    if let Some(old) = self.pending.insert(offset, data.to_vec()) {
-                        self.pending_len -= old.len();
-                    }
-                    self.pending_len += data.len();
-                }
-            }
-        }
-    }
-
-    fn drain_pending(&mut self) {
-        while let Some((&off, _)) = self.pending.iter().next() {
-            let have = self.contiguous();
-            if off > have {
-                break;
-            }
-            let v = self.pending.remove(&off).unwrap();
-            self.pending_len -= v.len();
-            let end = off + v.len() as u64;
-            if end > have {
-                self.ready.extend(&v[(have - off) as usize..]);
-            }
-        }
-    }
-
-    /// The contiguous unread bytes, in up to two slices.
-    pub fn peek(&self) -> (&[u8], &[u8]) {
-        self.ready.as_slices()
-    }
-
-    /// Bytes available to read.
-    pub fn available(&self) -> usize {
-        self.ready.len()
-    }
-
-    /// Consumes `n` bytes.
-    pub fn consume(&mut self, n: usize) {
-        self.ready.drain(..n);
-        self.read += n as u64;
-    }
-
-    /// Reads up to `out.len()` bytes.
-    pub fn read_into(&mut self, out: &mut Vec<u8>, max: usize) -> usize {
-        let n = max.min(self.ready.len());
-        let (a, b) = self.ready.as_slices();
-        if n <= a.len() {
-            out.extend_from_slice(&a[..n]);
-        } else {
-            out.extend_from_slice(a);
-            out.extend_from_slice(&b[..n - a.len()]);
-        }
-        self.consume(n);
-        n
-    }
-
-    /// Bytes buffered out of order.
-    pub fn buffered(&self) -> usize {
-        self.pending_len + self.ready.len()
     }
 }
 
@@ -407,21 +309,6 @@ mod tests {
         assert!(r.contains(10, 15) && r.contains(25, 40) && !r.contains(14, 16));
         r.insert(0, 100);
         assert_eq!(r.first(), Some((0, 100)));
-    }
-
-    #[test]
-    fn assembler() {
-        let mut a = Assembler::default();
-        a.insert(5, b"fgh");
-        a.insert(0, b"abc");
-        assert_eq!(a.available(), 3);
-        a.insert(2, b"cde");
-        assert_eq!(a.available(), 8);
-        let mut out = Vec::new();
-        a.read_into(&mut out, 100);
-        assert_eq!(out, b"abcdefgh");
-        a.insert(0, b"zz");
-        assert_eq!(a.available(), 0);
     }
 
     #[test]
