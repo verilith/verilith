@@ -19,6 +19,7 @@ pub mod reclog;
 pub mod recv;
 pub mod schedule;
 pub mod sendq;
+pub mod route;
 pub mod rtt;
 pub mod sent;
 pub mod streams;

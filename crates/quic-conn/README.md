@@ -26,7 +26,9 @@ Every step that has a specification is done by a verified component:
   - which frames each packet type may carry (`allowed`);
   - which 1-RTT keys open a packet through key updates (`keyphase`);
   - when each space's keys are installed, used and discarded
-    (`schedule`).
+    (`schedule`);
+  - connection IDs, when a datagram may start a connection, and Version
+    Negotiation (`route`).
 - **`verilith-tls`**:
   - the TLS 1.3 handshake for QUIC;
   - Initial secrets;
@@ -36,7 +38,7 @@ Every step that has a specification is done by a verified component:
 This crate is the glue between them, and it is **plain Rust**, not verified
 yet. It covers:
 
-- routing datagrams to connections;
+- looking up the connection a datagram is for;
 - dispatching frames to the components;
 - storing the bytes of send buffers (`buf.rs`);
 - choosing what goes into each packet (each frame is written by verified
