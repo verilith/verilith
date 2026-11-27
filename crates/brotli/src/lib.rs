@@ -30,6 +30,12 @@ pub mod codes;
 pub mod words;
 #[doc(hidden)]
 pub mod work;
+#[doc(hidden)]
+pub mod bitwriter;
+#[doc(hidden)]
+pub mod elemmas;
+#[doc(hidden)]
+pub mod encoder;
 
 pub use api::{decompress, Error};
 pub use stream::{Result as StreamResult, Stream};
