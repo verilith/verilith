@@ -40,8 +40,11 @@ has no `external_body` function of its own.
 ## verilith-core's trusted primitives
 
 From [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core)
-(`src/prims.rs`), each one line whose `requires` is its bounds check,
-proven here at every call:
+(`src/prims.rs`), each with a `requires` that is its bounds check,
+proven here at every call. `load_u64_le`, `copy8`, `copy16`, `move8`,
+`copy16_in` and `copy_in` are verified in verilith-core, against vstd's
+specs of `get_unchecked`, `get_unchecked_mut` and `copy_from_slice`;
+`pick` and `copy16_pick` are trusted:
 
 - `load_u64_le`: an unaligned 8-byte load.
 - `copy8`, `copy16`: copy 8 or 16 bytes forward inside one slice, from a
@@ -60,8 +63,8 @@ proven here at every call:
   output may overlap the destination, since the bytes are read before
   any is written.
 
-Trusted is that each does what its `ensures` says within the bounds its
-`requires` gives. `get` and `set` (unchecked indexing) are verified in
+Trusted is that `pick` and `copy16_pick` each do what their `ensures`
+says within the bounds their `requires` gives. `get` and `set` (unchecked indexing) are verified in
 verilith-core against vstd's specs of `get_unchecked`.
 
 ## The C API adapter

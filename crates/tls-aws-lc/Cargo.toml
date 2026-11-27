@@ -13,10 +13,12 @@ publish = false
 
 [dependencies]
 verilith-tls = { path = "../tls" }
+verilith-x509 = { path = "../x509" }
 aws-lc-rs = "1.19"
 
 [dev-dependencies]
 rustls = "0.23"
+rcgen = { version = "0.13", default-features = false, features = ["aws_lc_rs", "pem"] }
 
 [profile.release]
 lto = "fat"

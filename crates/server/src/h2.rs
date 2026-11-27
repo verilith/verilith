@@ -112,6 +112,8 @@ pub struct Conn2 {
     max_header_block: usize,
     /// Requests are being read from 0-RTT data (set by the TLS layer).
     pub(crate) early: bool,
+    /// The TLS client's certificate (DER), if it authenticated.
+    pub(crate) peer: Option<std::sync::Arc<[u8]>>,
 }
 
 impl Conn2 {
@@ -135,6 +137,7 @@ impl Conn2 {
             ready: VecDeque::new(),
             max_header_block: limits.max_header_block,
             early: false,
+            peer: None,
         }
     }
 
@@ -338,6 +341,7 @@ impl Conn2 {
     fn dispatch<H: Handler + ?Sized>(&mut self, h: &H, ctx: &Ctx, at: usize) {
         let id = self.core.id(at);
         let early = self.early;
+        let peer = self.peer.as_deref();
         let Some(s) = self.core.val(at) else { return };
         let a = &s.arena;
         let get = |n: &[u8]| {
@@ -345,7 +349,7 @@ impl Conn2 {
         };
         let method = get(b":method");
         let target = get(b":path");
-        let request = Request { method, target, minor: 1, buf: a, headers: &s.fields, body: &s.body, early };
+        let request = Request { method, target, minor: 1, buf: a, headers: &s.fields, body: &s.body, early, peer };
         // A reused stream keeps its reply's buffers (cleared on close).
         let mut reply = s.reply.take().unwrap_or(Reply { status: 0, fields: HList::default(), body: ReplyBody::None, sent_headers: false, off: 0 });
         reply.sent_headers = false;

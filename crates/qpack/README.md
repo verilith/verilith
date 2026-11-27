@@ -124,7 +124,7 @@ What the proofs do not cover, and what is done about each:
   functions (`static_find`, `field_hash`, `Hints`) whose contracts promise
   nothing about their results. The code is safe Rust.
 - **Shared primitives** from `verilith-core`: `extend` and
-  `load_u64_le`, both `external_body` with stated contracts.
+  `load_u64_le`, both verified there against vstd's specs.
 - **Verus and Z3**, and the Rust compiler.
 
 ## Performance

@@ -56,12 +56,12 @@ What the proofs assume rather than prove:
   standard; if the spec is wrong, the proofs still hold, against the wrong
   thing. Every place it follows libpng rather than a strict reading of the
   standard is marked `libpng:` in a comment.
-- verilith-core's trusted base, for two of its memory primitives: a
-  non-overlapping copy (`copy_in`, which `src/prims.rs`'s `copy` is
-  verified against) and a zeroed allocation (`alloc_u8`). Each `requires`
-  clause is the bounds fact Verus proves at every call site. (The
-  unchecked byte get and set in `src/prims.rs` are verified against
-  vstd's spec of `get_unchecked`.)
+- verilith-core's trusted base, for one of its memory primitives: a
+  zeroed allocation (`alloc_u8`). Its `requires` clause is the size fact
+  Verus proves at every call site. (The non-overlapping copy `copy_in`,
+  which `src/prims.rs`'s `copy` is verified against, is verified in
+  verilith-core, and the unchecked byte get and set in `src/prims.rs`
+  against vstd's spec of `get_unchecked`.)
 - The work bound's unit: that a non-overlapping copy, a zeroed allocation,
   a CRC and `slice_to_vec` of `n` bytes cost on the order of `n` steps,
   that a `Vec` push is amortized constant, that `Decompressor::new` costs

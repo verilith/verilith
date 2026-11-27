@@ -67,9 +67,9 @@ showing, for callers that are verified with Verus themselves
   vectors (`tests/sanity_test_vectors.h`, seed 0, every length up to 256
   bytes: 514 cases), and every one agrees
   (`scripts/spec-tests.sh xxhash`, run in CI).
-- From [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core#trusted-base): `load_u64_le`, an unaligned
-  8-byte load (`external_body`). `load32` and `get` are verified in
-  verilith-core.
+- From [verilith-core](https://github.com/verilith/verilith/tree/main/crates/core#trusted-base): nothing trusted.
+  `load_u64_le` (an unaligned 8-byte load), `load32` and `get` are
+  verified in verilith-core.
 - Verus, vstd, Z3, and the Rust compiler.
 
 ## Not here yet

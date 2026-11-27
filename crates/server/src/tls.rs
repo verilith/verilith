@@ -101,7 +101,44 @@ pub struct TlsOptions {
     /// client with stale keys gets the current ones (retry_configs) in a
     /// handshake that must authenticate as that outer name.
     pub ech: Option<Arc<EchKeys>>,
+    /// Client authentication (mutual TLS): ask clients for certificates
+    /// and check them against these trust anchors. Handlers see a
+    /// client's certificate in [`crate::Request::client_certificate`].
+    pub client_auth: Option<ClientAuth>,
 }
+
+/// What the server asks of clients' certificates (RFC 8446 §4.3.2). The
+/// check is verilith-tls's, verified: the chain the client sends, leaf
+/// first, must lead to one of `roots` with each certificate issued by the
+/// next, every one valid now, the leaf for client authentication
+/// (extendedKeyUsage clientAuth or anyExtendedKeyUsage, if present), the
+/// others CAs (basicConstraints, keyCertSign) within their path length;
+/// and the client must sign the handshake with the leaf's key. With client
+/// authentication on, connections neither resume nor take 0-RTT data.
+#[derive(Clone, Default)]
+pub struct ClientAuth {
+    /// The trust anchors, DER certificates.
+    pub roots: Vec<Vec<u8>>,
+    /// Whether a client must send a certificate: if not, a client that
+    /// sends none connects without one (and one that sends a bad one is
+    /// still refused).
+    pub required: bool,
+}
+
+impl ClientAuth {
+    /// The trust anchors in PEM file `ca` ("CERTIFICATE" blocks).
+    pub fn from_pem(ca: &str, required: bool) -> std::io::Result<ClientAuth> {
+        let roots = pem_blocks(&std::fs::read(ca)?, "CERTIFICATE");
+        if roots.is_empty() {
+            return Err(bad("no \"CERTIFICATE\" block in the CA file"));
+        }
+        Ok(ClientAuth { roots, required })
+    }
+}
+
+/// The signature schemes taken in a client's CertificateVerify: ECDSA
+/// P-256 and P-384, Ed25519, RSA-PSS.
+const CLIENT_SIGS: [u16; 6] = [0x0403, 0x0503, 0x0807, 0x0804, 0x0805, 0x0806];
 
 /// [`config_der`] with `opts`.
 pub fn config_der_opts(chain: Vec<Vec<u8>>, key_pkcs8: &[u8], opts: &TlsOptions) -> std::io::Result<Arc<Config>> {
@@ -116,6 +153,11 @@ pub fn config_der_opts(chain: Vec<Vec<u8>>, key_pkcs8: &[u8], opts: &TlsOptions)
     if let Some(e) = &opts.ech {
         if !cfg.set_ech(e.config_list().to_vec()) {
             return Err(bad("the ECHConfigList is too long"));
+        }
+    }
+    if let Some(a) = &opts.client_auth {
+        if !cfg.set_client_auth(CLIENT_SIGS.to_vec(), a.roots.clone(), a.required) {
+            return Err(bad("client authentication"));
         }
     }
     let tickets = Arc::new(TicketKeys::new(TICKET_LIFETIME as u64));
@@ -303,6 +345,15 @@ impl Session {
             Session::V(s) => s.in_early_data(),
             #[cfg(feature = "tls-rustls")]
             Session::R(_) => false,
+        }
+    }
+
+    /// The client's certificate, once the handshake checked it.
+    fn peer(&self) -> Option<Arc<[u8]>> {
+        match self {
+            Session::V(s) => s.conn().peer_certificates().first().map(|c| Arc::from(&c[..])),
+            #[cfg(feature = "tls-rustls")]
+            Session::R(s) => s.peer_certificates().and_then(|c| c.first()).map(|c| Arc::from(c.as_ref())),
         }
     }
 
@@ -564,6 +615,12 @@ impl TlsConn {
             let early = self.tls.early();
             if self.inner.is_none() && (!self.tls.handshaking() || early) {
                 self.inner = Some(if self.tls.h2() { Inner::H2(Box::new(Conn2::new(self.limits2))) } else { Inner::H1(Conn::new(self.limits)) });
+                // With client authentication there is no 0-RTT data, so the
+                // handshake, and the client's certificate, are done here.
+                let peer = self.tls.peer();
+                if peer.is_some() {
+                    inner!(self.inner.as_mut().unwrap(), c => c.peer = peer);
+                }
                 if self.eof {
                     inner!(self.inner.as_mut().unwrap(), c => c.eof());
                 }

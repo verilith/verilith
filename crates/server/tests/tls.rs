@@ -284,3 +284,127 @@ fn base64_encodes() {
     assert_eq!(b(b"foo"), "Zm9v");
     assert_eq!(b(b"foobar"), "Zm9vYmFy");
 }
+
+/// Mutual TLS: the handler sees the client's certificate, over HTTP/1.1
+/// and h2; a client without one connects only if certificates are
+/// optional, and one from another CA is refused.
+#[test]
+fn client_certificates() {
+    use rcgen::{BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair, KeyUsagePurpose};
+    use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
+    use verilith_server::tls::{ClientAuth, TlsOptions};
+
+    fn handler(req: &Request, res: &mut Response) {
+        let body = match req.client_certificate() {
+            Some(c) => format!("client certificate, {} bytes", c.len()),
+            None => "anonymous".to_string(),
+        };
+        let _ = res.send(200, &[], body.as_bytes());
+    }
+    fn ca() -> (Vec<u8>, Issuer<'static, KeyPair>) {
+        let key = KeyPair::generate().unwrap();
+        let mut p = CertificateParams::new(Vec::<String>::new()).unwrap();
+        p.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        p.key_usages = vec![KeyUsagePurpose::KeyCertSign];
+        let der = p.self_signed(&key).unwrap().der().to_vec();
+        (der, Issuer::new(p, key))
+    }
+    fn client(issuer: &Issuer<'static, KeyPair>) -> (Vec<u8>, Vec<u8>) {
+        let key = KeyPair::generate().unwrap();
+        let mut p = CertificateParams::new(Vec::<String>::new()).unwrap();
+        p.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+        (p.signed_by(&key, issuer).unwrap().der().to_vec(), key.serialize_der())
+    }
+
+    let server = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+    let (ca_der, issuer) = ca();
+    let (_, other) = ca();
+    let sc = |required| {
+        let opts = TlsOptions { client_auth: Some(ClientAuth { roots: vec![ca_der.clone()], required }), ..TlsOptions::default() };
+        verilith_server::tls::config_der_opts(vec![server.cert.der().to_vec()], &server.signing_key.serialize_der(), &opts).unwrap()
+    };
+    let cc = |alpn: &[u8], cert: Option<(Vec<u8>, Vec<u8>)>| {
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(CertificateDer::from(server.cert.der().to_vec())).unwrap();
+        let b = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(roots);
+        let mut c = match cert {
+            Some((der, key)) => b.with_client_auth_cert(vec![CertificateDer::from(der)], PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key))).unwrap(),
+            None => b.with_no_client_auth(),
+        };
+        c.alpn_protocols = vec![alpn.to_vec()];
+        Arc::new(c)
+    };
+    let run = |sc: Arc<Config>, cc: Arc<rustls::ClientConfig>, h2: bool| -> String {
+        let mut srv = TlsConn::new(sc, Limits::default(), Limits2::default()).unwrap();
+        let mut cli = rustls::ClientConnection::new(cc, ServerName::try_from("localhost").unwrap()).unwrap();
+        if h2 {
+            let mut req = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".to_vec();
+            req.extend_from_slice(&[0, 0, 0, 4, 0, 0, 0, 0, 0]);
+            let block = [0x82, 0x87, 0x84, 0x41, 0x01, b'x'];
+            req.extend_from_slice(&[0, 0, block.len() as u8, 1, 5, 0, 0, 0, 1]);
+            req.extend_from_slice(&block);
+            cli.writer().write_all(&req).unwrap();
+        } else {
+            cli.writer().write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+        }
+        let ctx = Ctx::new(b"t", b"Thu, 01 Jan 1970 00:00:00 GMT").unwrap();
+        let mut got = Vec::new();
+        for _ in 0..50 {
+            let mut buf = Vec::new();
+            while cli.wants_write() {
+                cli.write_tls(&mut buf).unwrap();
+            }
+            let mut rd = &buf[..];
+            while !rd.is_empty() {
+                let b = srv.read_buf();
+                let n = b.len().min(rd.len());
+                if n == 0 {
+                    srv.process(&handler, &ctx);
+                    continue;
+                }
+                b[..n].copy_from_slice(&rd[..n]);
+                srv.filled(n);
+                rd = &rd[n..];
+                srv.process(&handler, &ctx);
+            }
+            srv.process(&handler, &ctx);
+            let mut out = Vec::new();
+            loop {
+                let mut parts: [&[u8]; 8] = [&[]; 8];
+                let k = srv.pending(&mut parts);
+                if k == 0 {
+                    break;
+                }
+                let part = parts[..k].concat();
+                srv.wrote(part.len());
+                out.extend_from_slice(&part);
+            }
+            if out.is_empty() && buf.is_empty() {
+                break;
+            }
+            let mut rd = &out[..];
+            while !rd.is_empty() {
+                cli.read_tls(&mut rd).unwrap();
+                if cli.process_new_packets().is_err() {
+                    return "refused".to_string();
+                }
+                let _ = cli.reader().read_to_end(&mut got);
+            }
+        }
+        String::from_utf8_lossy(&got).into_owned()
+    };
+    for (alpn, h2) in [(&b"http/1.1"[..], false), (&b"h2"[..], true)] {
+        let mine = client(&issuer);
+        let n = mine.0.len();
+        for required in [true, false] {
+            let got = run(sc(required), cc(alpn, Some(mine.clone())), h2);
+            assert!(got.contains(&format!("client certificate, {n} bytes")), "{got}");
+        }
+        assert!(run(sc(false), cc(alpn, None), h2).contains("anonymous"));
+        assert_eq!(run(sc(true), cc(alpn, None), h2), "refused");
+        assert_eq!(run(sc(false), cc(alpn, Some(client(&other))), h2), "refused");
+    }
+}

@@ -355,6 +355,21 @@ decryption: 77 against 107 µs of server CPU per full handshake, in
 memory, `tls-aws-lc/tests/ech.rs` `ech_server_cost`); GREASE ECH from
 clients with no keys costs nothing measurable.
 
+Client certificates (mutual TLS; `--client-ca PEM
+[--client-cert-required]`, or `TlsOptions::client_auth` with
+`tls::ClientAuth`): the server sends a CertificateRequest and checks the
+chain the client sends against PEM's CAs, and that the client signed the
+handshake with the leaf's key. verilith-tls proves the check: each
+certificate parses, is valid now and fit for client authentication, each
+is issued (names and signature) by the next, the last by a configured CA,
+within 8 certificates (verilith-tls README, "client authentication");
+signature verification and the clock are aws-lc's and the system's,
+trusted. A handler sees the leaf in `Request::client_certificate()` (DER;
+`None` for a client that sent none, when certificates are optional). With
+client certificates on, connections are never resumed and take no 0-RTT
+data, so every request's identity is from its own connection's
+handshake. HTTP/3 does not ask for client certificates.
+
 Connection setup (`h1-close`): accepting with `TCP_DEFER_ACCEPT` (the
 request arrives with the connection, one wakeup instead of two),
 TCP_NODELAY inherited from the listener, and no epoll removal before

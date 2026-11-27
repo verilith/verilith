@@ -361,8 +361,10 @@ impl<P: Provider> QuicServer<P> {
         ensures
             r matches Some(q) ==> q.wf() && q.phase() == Phase::Start && q.config() == (*cfg)@ && q.params()
                 == tp@,
+            r is Some ==> (*cfg)@.client is None,
     {
-        if tp.len() > 60000 {
+        // No client authentication over QUIC.
+        if tp.len() > 60000 || cfg.has_client_auth() {
             return None;
         }
         Some(
@@ -626,7 +628,7 @@ impl<P: Provider> QuicServer<P> {
             Ok(p) => p,
             Err(code) => return Err(self.fail(code)),
         };
-        let Prep { sh, fl, c_hs, s_hs, expect, c_ap, s_ap, res, c_early: _, hs: Ghost(hsv) } = p;
+        let Prep { sh, fl, c_hs, s_hs, expect, c_ap, s_ap, res, c_early: _, tr: _, hs: Ghost(hsv) } = p;
         proof {
             reveal(prep_ok);
         }

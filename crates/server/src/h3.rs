@@ -538,8 +538,12 @@ struct VConn {
     deadline: Option<Instant>,
 }
 
-/// Datagrams per `sendmsg` with segmentation offload.
-const BATCH: usize = 16;
+/// Datagrams per `sendmsg` with segmentation offload: Linux's limit
+/// (UDP_MAX_SEGMENTS), and verilith-quic-conn also keeps a batch within
+/// one UDP payload. 16 sent a 64 KiB response in three or four batches,
+/// against nginx-quic's one or two, and the extra sends and receives
+/// left the server waiting on the client.
+const BATCH: usize = 64;
 const RECV_ROOM: usize = 64 * 1024;
 
 impl H3 {
@@ -1056,7 +1060,7 @@ fn dispatch<Id: Copy + Eq + Hash + Into<u64>, H: Handler + ?Sized>(c: &mut App<I
     let get = |n: &[u8]| req.fields.iter().find(|f| f.name.of(a) == n).map(|f| f.value.of(a)).unwrap_or(b"");
     let method = get(b":method");
     let target = get(b":path");
-    let request = Request { method, target, minor: 1, buf: a, headers: &req.fields, body: &req.body, early: false };
+    let request = Request { method, target, minor: 1, buf: a, headers: &req.fields, body: &req.body, early: false, peer: None };
     let mut reply = req.reply.take().unwrap_or(Reply { status: 0, fields: HList::default(), body: ReplyBody::None, sent_headers: false, off: 0 });
     // A reused stream's reply keeps its buffers, not its fields.
     reply.fields.clear();

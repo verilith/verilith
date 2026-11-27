@@ -18,7 +18,7 @@ at 0.81 to 1.03 times wasmi's time and 1.04 to 1.47 times wasm3's on the
 benchmarks below (the stack interpreter it replaced took 2.5 to 3.4 times
 wasmi's, in an earlier run).
 
-**Verification status.** `cargo verus verify` checks 755 functions with
+**Verification status.** `cargo verus verify` checks 763 functions with
 no errors (about 5 minutes with two threads on a 4-core Linux VM, for
 both a 64-bit and a 32-bit target). The translation to register form (`src/reg.rs`) is mostly marked
 `external_body` (its small leaf helpers are verified for panics and
@@ -80,12 +80,15 @@ What the proofs assume rather than prove:
   `popcnt` are verified against `src/num.rs` and vstd's specs of
   `leading_zeros`, `trailing_zeros` and `count_ones`. `tests/sint.rs` checks
   every function against an independent evaluation of the spec.
-- `src/prims.rs`: unchecked copies, fills, loads and stores on linear
-  memory and the value stack; each `requires` is the bounds check Verus
-  proves at the call site. (The single-element reads and writes are
-  verified against vstd's spec of `get_unchecked`.) `try_grow` appends
-  zeroed pages, or reports that the allocation failed and leaves the
-  memory unchanged.
+- `src/prims.rs`: unchecked loads and stores on linear memory (`load`,
+  `store`, 1 to 8 bytes little-endian); each `requires` is the bounds
+  check Verus proves at the call site. (The single-element reads and
+  writes are verified against vstd's spec of `get_unchecked`; the copies
+  and fills `scopy_down`, `szero`, `fill`, `copy_within` and `copy_in`
+  against its specs of `copy_within`, `copy_from_slice` and
+  `get_unchecked_mut`; and `try_grow`, which appends zeroed pages or
+  reports that the allocation failed and leaves the memory unchanged,
+  against its specs of `try_reserve_exact` and `resize`.)
 - `interp::call_host` (it calls the embedder's host function, catching a
   panic as a trap, and is trusted to leave the lengths of the result
   buffer and memory unchanged, which a `&mut [T]` guarantees) and

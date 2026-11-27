@@ -16,7 +16,7 @@ crate-type = ["rlib", "staticlib"]
 
 [features]
 default = ["std"]
-std = ["alloc"]
+std = ["alloc", "vstd/std"]
 # oid_to_string, and the sorting duplicate-extension check (dedup.rs), which
 # allocates only for more than eight extensions outside the low id-ce arcs.
 alloc = ["vstd/alloc"]
