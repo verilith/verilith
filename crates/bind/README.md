@@ -228,7 +228,9 @@ vbind.URL.can_parse("/x", "http://a")
 vbind.loads('{"a": [1, 2.5, null]}')                   # json.loads' output types
 ```
 
-Errors raise `ValueError`. Build with `maturin build` (in `python/`), or run
+Errors raise `ValueError`. On PyPI as `verilith` (`pip install
+verilith`, then `import vbind`), with wheels for Linux, macOS and
+Windows (`python/README.md`). Build with `maturin build` (in `python/`), or run
 `scripts/test-python.sh`, which builds the module and runs its tests,
 including all of WPT's `urltestdata.json`.
 
@@ -241,6 +243,9 @@ vbind.URL.canParse('/x', 'http://a');
 vbind.parseJSON('{"a":1}');   // SyntaxError on invalid JSON, like JSON.parse
 ```
 
+On npm as `verilith` (`require('verilith')`), with prebuilt
+binaries for Linux, macOS and Windows (`node/README.md`); `npx napi build
+--platform --release` in `node/` builds it for this machine.
 `scripts/test-node.sh` builds it and checks it against the built-in `URL` and
 `JSON.parse`. The addon is for runtimes that ship their own URL and JSON
 (Bun, Electron, older Node) or that want the verified parser explicitly;

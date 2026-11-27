@@ -5,7 +5,7 @@
 //!
 //! This file is part of the trusted base: `spare` is uninterpreted, and
 //! every function is `external_body`, its `ensures` the spec of the lines
-//! under it. verilith-json and verilith-zlib use it (json adds two stores
+//! under it. verilith-json, verilith-zlib and verilith-zstd use it (json adds two stores
 //! of vector registers, stated with the same `spare`). To audit: check
 //! each store against its `requires`, taking `spare(v)` to be
 //! `v.capacity() - v.len()`.
@@ -108,6 +108,39 @@ pub fn append_slice_spare(v: &mut Vec<u8>, s: &[u8], a: usize, b: usize)
     unsafe {
         core::ptr::copy_nonoverlapping(s.as_ptr().add(a), v.as_mut_ptr().add(l), b - a);
         v.set_len(l + (b - a));
+    }
+}
+
+/// `s[a..b]` appended into reserved space in 8-byte copies (libzstd's
+/// wildcopy): it may write up to 8 bytes past the new length, inside the
+/// reserved room, and read up to 8 bytes past `b`, inside `s`. Short
+/// copies take no `memcpy` call.
+#[verifier::external_body]
+#[inline(always)]
+pub fn append_wild_spare(v: &mut Vec<u8>, s: &[u8], a: usize, b: usize)
+    requires
+        a <= b,
+        b + 8 <= s@.len(),
+        spare(*old(v)) >= b - a + 8,
+    ensures
+        final(v)@ == old(v)@ + s@.subrange(a as int, b as int),
+        spare(*final(v)) == spare(*old(v)) - (b - a),
+{
+    let l = v.len();
+    let n = b - a;
+    // SAFETY: each 8-byte read starts below `b`, so ends by `b + 8 <=
+    // s.len()`; each write starts below `l + n`, so ends by `l + n + 8`,
+    // inside the reserved `n + 8`. The first `n` bytes written are
+    // `s[a..b]`, and `set_len` covers only them.
+    unsafe {
+        let src = s.as_ptr().add(a);
+        let dst = v.as_mut_ptr().add(l);
+        let mut k = 0;
+        while k < n {
+            core::ptr::write_unaligned(dst.add(k) as *mut u64, core::ptr::read_unaligned(src.add(k) as *const u64));
+            k += 8;
+        }
+        v.set_len(l + n);
     }
 }
 

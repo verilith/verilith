@@ -297,6 +297,12 @@ deviations reads the same head end and framing), and the chunked decoder.
   protocol errors, a PING flood, Rapid Reset and an empty-CONTINUATION
   flood end in GOAWAY; a refused stream's CONTINUATION is decoded and the
   stream reset; a peer's GOAWAY drains.
+- **The HTTP/3 glue** (`h3.rs`): accepting QUIC streams, feeding their
+  bytes to the verified core (`h3core.rs`), QPACK-decoding the sections
+  the core points at and encoding responses with verilith-qpack,
+  running handlers and writing responses. Tested in `tests/h3.rs`. What
+  it must do is listed in [TRUST.md](TRUST.md). The QUIC connection
+  under it, verilith-quic-conn, is plain Rust too (its README).
 - **The event loop and the OS shim** (`worker.rs`, `sys/`): trusted, as
   in every server. See [TRUST.md](TRUST.md).
 - The `Date` formatter and the reason-phrase table are plain Rust (both

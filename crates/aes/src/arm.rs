@@ -63,8 +63,13 @@ impl Isa for Arm {
     }
 
     #[inline(always)]
-    fn get(x: N128) -> (r: u128) {
-        n_get(x)
+    fn store_u128(a: &mut [u128; 16], i: usize, x: N128) {
+        a[i] = n_get(x);
+    }
+
+    #[inline(always)]
+    fn is_zero(x: N128) -> (r: bool) {
+        n_get(x) == 0
     }
 
     #[inline(always)]
@@ -158,24 +163,38 @@ impl Isa for Arm {
         let s = n_aese(x, z);
         let r = n_get(s) as u32;
         proof {
-            assert(v == bcast(w));
-            lemma_bcast(w);
-            lemma_zero_bytes();
-            let b = bytes16(v);
-            assert forall|i: int| 0 <= i < 16 implies #[trigger] add_round_key(b, bytes16(0))[i] == b[i] by {
-                let y = b[i];
-                assert(y ^ 0u8 == y) by (bit_vector);
-            };
-            assert(add_round_key(b, bytes16(0)) =~= b);
-            reveal(aese);
-            let o = nb(s);
-            assert forall|i: int| 0 <= i < 4 implies #[trigger] o[i] == sbox(wbyte(w, i)) by {
-                assert(o[i] == sbox(shift_rows(b)[i]));
-            };
-            lemma_low_word(nv(s));
+            lemma_sub_word_aese(w, v, x, z, s);
         }
         r
     }
+}
+
+/// The proof of [`Arm::sub_word`], apart from the trait implementation so
+/// that its context is only what it needs.
+proof fn lemma_sub_word_aese(w: u32, v: u128, x: N128, z: N128, s: N128)
+    requires
+    v == (w as u128) | (w as u128) << 32 | (w as u128) << 64 | (w as u128) << 96,
+    nv(x) == v,
+    nv(z) == 0,
+    nb(s) == aese(nb(x), nb(z)),
+    ensures
+    nv(s) as u32 == sub_word(w),
+{
+    assert(v == bcast(w));
+    lemma_bcast(w);
+    lemma_zero_bytes();
+    let b = bytes16(v);
+    assert forall|i: int| 0 <= i < 16 implies #[trigger] add_round_key(b, bytes16(0))[i] == b[i] by {
+        let y = b[i];
+        assert(y ^ 0u8 == y) by (bit_vector);
+    };
+    assert(add_round_key(b, bytes16(0)) =~= b);
+    reveal(aese);
+    let o = nb(s);
+    assert forall|i: int| 0 <= i < 4 implies #[trigger] o[i] == sbox(wbyte(w, i)) by {
+        assert(o[i] == sbox(shift_rows(b)[i]));
+    };
+    lemma_low_word(nv(s));
 }
 
 impl Wide for Arm {
@@ -184,7 +203,7 @@ impl Wide for Arm {
     }
 
     #[inline(always)]
-    fn ghash16(acc: u128, d: &[u8], i: usize, hr: &[u128; 16], h: Ghost<u128>) -> (r: u128) {
+    fn ghash16(acc: N128, d: &[u8], i: usize, hr: &[u128; 16], h: Ghost<u128>) -> (r: N128) {
         acc
     }
 

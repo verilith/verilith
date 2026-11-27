@@ -75,7 +75,7 @@ jobs:
       narrow: ${{ steps.plan.outputs.narrow }}
       spec: ${{ steps.plan.outputs.spec }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - id: plan
@@ -173,7 +173,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/verus
 
   verify:
@@ -187,7 +187,7 @@ jobs:
       matrix:
         proof: ${{ fromJSON(needs.plan.outputs.proofs) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/verus
       - uses: ./.github/actions/buck2
       - name: Verify
@@ -195,7 +195,7 @@ jobs:
         # each is its own proof, with its own job whenever it changes.
         run: PROVE_OUT="$RUNNER_TEMP/proved" scripts/prove.sh '${{ matrix.proof.target }}'
       - name: Record that it passed
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/proved
           key: ${{ matrix.proof.key }}
@@ -214,7 +214,7 @@ jobs:
       matrix:
         crate: ${{ fromJSON(needs.plan.outputs.all-verified) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/verus
       - uses: ./.github/actions/buck2
       - name: Compare
@@ -239,7 +239,7 @@ jobs:
       matrix:
         crate: ${{ fromJSON(needs.plan.outputs.narrow) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/verus
       - name: Verify
         run: |
@@ -253,7 +253,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/verus
 
   verify-arm:
@@ -274,7 +274,7 @@ jobs:
       matrix:
         proof: ${{ fromJSON(needs.plan.outputs.arm-proofs) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/verus
       - name: Verify
         run: VERUS_CMD=focus scripts/verify.sh ${{ matrix.proof.crate }}
@@ -283,7 +283,7 @@ jobs:
         run: cat target/verify/${{ matrix.proof.crate }}.log
       - name: Record that it passed
         run: mkdir -p "$RUNNER_TEMP/proved" && touch "$RUNNER_TEMP/proved/${{ matrix.proof.crate }}"
-      - uses: actions/cache/save@v6
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/proved
           key: ${{ matrix.proof.key }}
@@ -301,7 +301,7 @@ jobs:
       matrix:
         crate: ${{ fromJSON(needs.plan.outputs.test) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Tests
         run: crates/${{ matrix.crate }}/ci.sh
       - name: mbedTLS's test suites (x509)
@@ -328,7 +328,7 @@ jobs:
       matrix:
         crate: ${{ fromJSON(needs.plan.outputs.spec) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/verus
       - name: Evaluate the spec on the suite
         run: scripts/spec-tests.sh ${{ matrix.crate }}
@@ -348,7 +348,7 @@ jobs:
       matrix:
         crate: ${{ fromJSON(needs.plan.outputs.arm-tests) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Tests
         run: crates/${{ matrix.crate }}/ci.sh
 
@@ -362,9 +362,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The latest wasmtime release (WASI preview 1 is stable in all of them).
-      - uses: bytecodealliance/actions/wasmtime/setup@v1
+      - uses: bytecodealliance/actions/wasmtime/setup@9152e710e9f7182e4c29ad218e4f335a7b203613 # v1.1.3
       - name: Build and test
         run: scripts/wasm32.sh
 
@@ -377,7 +377,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Package and document
         run: scripts/package.sh
 
@@ -392,7 +392,7 @@ jobs:
       matrix:
         crate: ${{ fromJSON(needs.plan.outputs.fuzz) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Fuzz
         run: crates/${{ matrix.crate }}/ci.sh fuzz
 

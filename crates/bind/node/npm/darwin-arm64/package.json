@@ -1,0 +1,34 @@
+{
+  "name": "verilith-darwin-arm64",
+  "version": "0.1.0",
+  "cpu": [
+    "arm64"
+  ],
+  "main": "vbind.darwin-arm64.node",
+  "files": [
+    "vbind.darwin-arm64.node"
+  ],
+  "description": "Formally verified (Verus) WHATWG URL and JSON parsers for Node.js",
+  "keywords": [
+    "url",
+    "whatwg",
+    "json",
+    "parser",
+    "verified",
+    "verus",
+    "napi"
+  ],
+  "homepage": "https://github.com/verilith/verilith/tree/main/crates/bind#nodejs-addon",
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "node": ">= 18.17"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/verilith/verilith.git",
+    "directory": "crates/bind/node"
+  },
+  "os": [
+    "darwin"
+  ]
+}

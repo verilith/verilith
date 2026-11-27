@@ -5,7 +5,20 @@
 //! these `ensures`; each implementation is proven to meet them from its
 //! instruction wrappers.
 //!
-//! A register is a 128-bit integer ([`Isa::v`]), byte 0 in bits 7:0. The
+//! A register is a 128-bit integer ([`Isa::v`]), byte 0 in bits 7:0.
+//!
+//! The trait is also how the generic code keeps secrets secret. In
+//! `kernels.rs` and `gcm.rs` every secret (the round keys, H and its
+//! powers, the counter blocks, the keystream, the GHASH state, the tag) is
+//! an `A::R` from the moment it is loaded, and `A::R` is an associated
+//! type with no operations but the trait's: the compiler rejects an `if`,
+//! a `match`, a comparison or an index on it. No method returns anything
+//! computed from a register's value except [`Isa::is_zero`], called once,
+//! through [`crate::ct::declassify`]. The type check is the proof that the
+//! generic code cannot branch on or index memory with a secret held in a
+//! register. (It does not cover the bytes copied for a partial block,
+//! the key schedule's words, or the instruction sets' implementations of
+//! the trait; `scripts/ctcheck.py` checks all of it on the machine code.) The
 //! one place the two instruction sets differ in shape is the AES round:
 //! x86's `AESENC` ends a round with the round key, Arm's `AESE` starts one
 //! with it. So the state between rounds is left to each implementation
@@ -90,11 +103,24 @@ pub trait Isa {
             Self::v(r) == v,
     ;
 
-    fn get(x: Self::R) -> (r: u128)
+    /// `a[i] := x`: a register stored in an expanded key's table.
+    fn store_u128(a: &mut [u128; 16], i: usize, x: Self::R)
+        requires
+            Self::ok(),
+            i < 16,
+        ensures
+            final(a)@ == old(a)@.update(i as int, Self::v(x)),
+    ;
+
+    /// Whether the register is zero: the one method that turns a register
+    /// into something code can branch on. Its one caller (`Gcm::open`,
+    /// on whether the tag matched) passes the result straight to
+    /// [`crate::ct::declassify`].
+    fn is_zero(x: Self::R) -> (r: bool)
         requires
             Self::ok(),
         ensures
-            r == Self::v(x),
+            r == (Self::v(x) == 0),
     ;
 
     fn xor(a: Self::R, b: Self::R) -> (r: Self::R)
@@ -206,14 +232,14 @@ pub trait Wide: Isa {
     spec fn wide() -> bool;
 
     /// GHASH of the 16 blocks at `d[i..i + 256]`, from `acc`.
-    fn ghash16(acc: u128, d: &[u8], i: usize, hr: &[u128; 16], h: Ghost<u128>) -> (r: u128)
+    fn ghash16(acc: Self::R, d: &[u8], i: usize, hr: &[u128; 16], h: Ghost<u128>) -> (r: Self::R)
         requires
             Self::ok(),
             Self::wide(),
             i + 256 <= d@.len(),
             rpowers_ok(h@, hr@),
         ensures
-            r == ghash_from(h@, acc, blocks_at(d@, i as int, 16)),
+            Self::v(r) == ghash_from(h@, Self::v(acc), blocks_at(d@, i as int, 16)),
     ;
 
     /// 16 blocks of CTR: `buf[i..i + 256]` XOR the keystream from counter c.

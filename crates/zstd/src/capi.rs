@@ -46,11 +46,11 @@ pub const ERR_SRC_SIZE_WRONG: usize = 72;
 pub const ERR_DST_BUFFER_NULL: usize = 74;
 pub const ERR_MAX_CODE: usize = 120;
 
-const fn err(code: usize) -> usize {
+pub(crate) const fn err(code: usize) -> usize {
     code.wrapping_neg()
 }
 
-fn is_error(r: usize) -> bool {
+pub(crate) fn is_error(r: usize) -> bool {
     r > err(ERR_MAX_CODE)
 }
 

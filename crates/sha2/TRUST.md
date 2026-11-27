@@ -116,15 +116,30 @@ What it does not cover:
   checked on its machine code instead: `ci.sh ct` requires that it has
   exactly two conditional jumps (on the length: is there a block, is there
   another) and no calls; its loads and stores are at the state, the round
-  constants and the block offset. The ARMv8 kernels are not checked
-  mechanically; like the SHA-NI one they are written straight-line within
-  a block, with every load at the state or the block offset.
+  constants and the block offset. `ci.sh ctstatic` checks it, and the
+  ARMv8 kernels, on their machine code by taint analysis (below).
 - That an instruction takes the same time for any operands is the CPU's
   promise (Intel's data-operand-independent timing, Arm's FEAT_DIT), not
   something a test of the program can show.
 - It checks the code built for x86-64 by this compiler, at the
   optimization level `ci.sh` uses. Other targets and compilers build other
   code.
+
+`./ci.sh ctstatic` adds a static check of the machine code
+(`scripts/ctcheck.py`, shared with verilith-aes): a taint analysis over
+every path, for every input, of every kernel (portable, BMI2, AVX2,
+SHA-NI, the dispatch, and the portable and ARMv8 kernels on AArch64) and,
+on x86-64, of SHA-256 and SHA-512, on the binaries as built for x86-64 and
+AArch64. It reports no branch, memory address or instruction outside
+Intel's and Arm's data-independent-timing lists that depends on the
+message or the state, and it reports both controls. Its own trusted base
+is its model of each instruction, the two vendor lists as written into
+it, and the summaries of `memcpy`, `memmove` and `memset`. The MACs, and
+the hashers on AArch64, are checked by Valgrind only: the static check
+cannot tell the public buffered length in a hasher's state from the
+secret bytes beside it once the state is in memory, and reports leaks
+that are not there. The CPU's promise and what neither check covers are
+as above.
 
 ## Unverified adapters
 

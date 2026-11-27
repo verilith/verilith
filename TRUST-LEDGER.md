@@ -25,12 +25,12 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 | Crate | external_body | axioms | assume_spec | ext. types | assume_new | no termination check | plain-Rust files |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| aes | 60 | 1 |  | 2 |  |  | 1 |
+| aes | 61 | 1 |  | 2 |  |  | 1 |
 | archive |  |  |  |  |  |  | 3 |
 | bind |  |  |  |  |  |  | 2 |
 | brotli | 1 |  |  |  |  |  | 4 |
 | checksum | 12 |  |  |  |  |  |  |
-| core | 25 |  |  |  |  |  | 1 |
+| core | 26 |  |  |  |  |  | 1 |
 | dns |  |  |  |  |  |  | 6 |
 | font |  |  |  |  |  |  | 1 |
 | gif |  |  |  |  |  |  | 2 |
@@ -53,7 +53,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | sync | 45 | 11 |  | 1 | 16 | 10 | 2 |
 | text | 18 | 13 |  |  |  |  | 9 |
 | tiff |  |  |  |  |  |  | 2 |
-| tls |  |  |  |  |  |  | 2 |
+| tls | 1 |  |  |  |  |  | 2 |
 | tls-aws-lc |  |  |  |  |  |  | 2 |
 | url | 1 |  |  |  |  |  | 5 |
 | verilith |  |  |  |  |  |  | 1 |
@@ -63,14 +63,15 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xml | 9 |  |  |  |  |  | 12 |
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 |
-| zstd | 5 |  |  |  |  |  | 1 |
-| **total** | **684** | **36** | **274** | **7** | **17** | **12** | **132** |
+| zstd | 5 |  |  |  |  |  | 2 |
+| **total** | **687** | **36** | **274** | **7** | **17** | **12** | **133** |
 
 ## Items
 
 ### aes
 
 - `crates/aes/src/aead.rs`: external_body: `expand_tf`, `enc_tf`, `new_tf`, `seal_tf`, `open_tf`
+- `crates/aes/src/ct.rs`: external_body: `declassify`
 - `crates/aes/src/lib.rs`: plain Rust
 - `crates/aes/src/neon.rs`: external_body: `has_arm_aes`, `clone`, `clone`, `n_load`, `n_store`, `n_load16`, `n_store16`, `n_load_u128`, `n_set`, `n_get`, `n_xor`, `n_aese`, `n_aesmc`, `n_clmul`, `n_tbl`, `n_add32`, `n_sll64`, `n_srl64`, `n_bsll8`, `n_bsrl8`
 - `crates/aes/src/x86.rs`: external_body: `has_ni`, `has_vaes`, `xv`, `x_load`, `x_store`, `x_load16`, `x_store16`, `x_load_u128`, `x_set`, `x_get`, `x_xor`, `x_aesenc`, `x_aesenclast`, `x_clmul`, `x_pshufb`, `x_add32`, `x_sll64`, `x_srl64`, `x_bsll8`, `x_bsrl8`, `zl`, `z_load`, `z_store`, `z_load_u128`, `z_bcast`, `z_bcast_x`, `z_from_x`, `z_lane`, `z_xor`, `z_aesenc`, `z_aesenclast`, `z_clmul`, `z_pshufb`, `z_add32`, `z_xor3`; axioms: `axiom_zl_len`; ext. types: `ExM128i`, `ExM512i`
@@ -105,7 +106,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/core/src/binary64.rs`: external_body: `mul`, `div`, `from_u64`
 - `crates/core/src/lib.rs`: plain Rust
 - `crates/core/src/prims.rs`: external_body: `pick`, `copy16_pick`, `alloc_u32`, `alloc_u8`, `alloc_i16`
-- `crates/core/src/spare.rs`: external_body: `len_spare`, `reserve_spare`, `reserve_spare_plus`, `push_spare`, `append4_spare`, `append_slice_spare`, `truncate_spare`, `set_spare`, `append8_spare`
+- `crates/core/src/spare.rs`: external_body: `len_spare`, `reserve_spare`, `reserve_spare_plus`, `push_spare`, `append4_spare`, `append_slice_spare`, `append_wild_spare`, `truncate_spare`, `set_spare`, `append8_spare`
 - `crates/core/src/tail.rs`: external_body: `view`, `take`, `put_back`, `len`, `append_from`, `append_from32`, `append_within`, `append_within32`
 
 ### dns
@@ -303,6 +304,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### tls
 
+- `crates/tls/src/ct.rs`: external_body: `declassify`
 - `crates/tls/src/lib.rs`: plain Rust
 - `crates/tls/src/stream.rs`: plain Rust
 
@@ -385,5 +387,6 @@ not occur in any crate's `src/` (the script fails if one appears).
 ### zstd
 
 - `crates/zstd/src/capi.rs`: plain Rust
+- `crates/zstd/src/ccapi.rs`: plain Rust
 - `crates/zstd/src/cpu.rs`: external_body: `run_seqs`, `run_huf4`, `run_huf1`
 - `crates/zstd/src/prims.rs`: external_body: `put_pairs4`, `extend_from`

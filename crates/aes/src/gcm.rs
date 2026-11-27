@@ -221,7 +221,7 @@ impl Gcm {
         }
         let ghost h = A::v(hx);
         let mut hp = [0u128; 16];
-        hp[0] = A::get(hx);
+        A::store_u128(&mut hp, 0, hx);
         let mut m: usize = 1;
         while m < 16
             invariant
@@ -231,8 +231,8 @@ impl Gcm {
                 forall|q: int| 0 <= q < m ==> #[trigger] hp@[q] == pow(h, (q + 1) as nat),
             decreases 16 - m,
         {
-            let p = mul_x::<A>(A::set(hp[m - 1]), hx);
-            hp[m] = A::get(p);
+            let p = mul_x::<A>(A::load_u128(&hp, m - 1), hx);
+            A::store_u128(&mut hp, m, p);
             m = m + 1;
         }
         let mut hr = [0u128; 16];
@@ -304,12 +304,12 @@ pub proof fn lemma_ghash_more(h: u128, a: u128, xs: Seq<u128>, q: int, m: int)
 
 /// GHASH_H of `d` padded to whole blocks, from `acc`.
 #[inline(always)]
-pub fn ghash_bytes<A: Wide>(g: &Gcm, acc: u128, d: &[u8]) -> (r: u128)
+pub fn ghash_bytes<A: Wide>(g: &Gcm, acc: A::R, d: &[u8]) -> (r: A::R)
     requires
         A::ok(),
         g.wf(),
     ensures
-        r == ghash_from(g.h@, acc, pad_blocks(d@)),
+        A::v(r) == ghash_from(g.h@, A::v(acc), pad_blocks(d@)),
 {
     let ghost h = g.h@;
     let ghost xs = pad_blocks(d@);
@@ -318,7 +318,7 @@ pub fn ghash_bytes<A: Wide>(g: &Gcm, acc: u128, d: &[u8]) -> (r: u128)
     }
     let len = d.len();
     let mut acc = acc;
-    let ghost a0 = acc;
+    let ghost a0 = A::v(acc);
     let mut i: usize = 0;
     while len - i >= 128
         invariant
@@ -330,7 +330,7 @@ pub fn ghash_bytes<A: Wide>(g: &Gcm, acc: u128, d: &[u8]) -> (r: u128)
             len == d@.len(),
             i % 16 == 0,
             i <= len,
-            acc == ghash_from(h, a0, xs.take(i as int / 16)),
+            A::v(acc) == ghash_from(h, a0, xs.take(i as int / 16)),
         decreases len - i,
     {
         proof {
@@ -380,12 +380,12 @@ pub fn ghash_bytes<A: Wide>(g: &Gcm, acc: u128, d: &[u8]) -> (r: u128)
             t[q] = d[i + q];
             q = q + 1;
         }
-        let ghost old_acc = acc;
+        let ghost old_acc = A::v(acc);
         let rev = rev_x::<A>();
         let tx = A::load16(&t);
         let x = A::pshufb(tx, rev);
         let hx = A::load_u128(&g.hp, 0);
-        let y = mul_x::<A>(A::xor(A::set(acc), x), hx);
+        let y = mul_x::<A>(A::xor(acc, x), hx);
         proof {
             lemma_rev(A::v(tx), A::v(x));
             assert(t@ =~= chunk(d@, i as int / 16));
@@ -402,10 +402,10 @@ pub fn ghash_bytes<A: Wide>(g: &Gcm, acc: u128, d: &[u8]) -> (r: u128)
             assert(seq![A::v(x)].drop_first() =~= Seq::<u128>::empty());
             assert(pow(h, 1) == h);
         }
-        acc = A::get(y);
+        acc = y;
         assert(ghash_from(h, gf_mul(old_acc ^ A::v(x), h), Seq::<u128>::empty()) == gf_mul(old_acc ^ A::v(x), h));
         assert(ghash_from(h, old_acc, seq![A::v(x)]) == gf_mul(old_acc ^ A::v(x), h));
-        assert(acc == ghash_from(h, a0, xs));
+        assert(A::v(acc) == ghash_from(h, a0, xs));
     } else {
         proof {
             assert((len + 15) / 16 == i as int / 16) by (nonlinear_arith)
@@ -415,7 +415,7 @@ pub fn ghash_bytes<A: Wide>(g: &Gcm, acc: u128, d: &[u8]) -> (r: u128)
             ;
             assert(xs.take(i as int / 16) =~= xs);
         }
-        assert(acc == ghash_from(h, a0, xs));
+        assert(A::v(acc) == ghash_from(h, a0, xs));
     }
     acc
 }
@@ -503,14 +503,14 @@ fn tail_x<A: Wide>(
     i: usize,
     ctr: A::R,
     cmask: A::R,
-    acc: u128,
+    acc: A::R,
     dec: bool,
     Ghost(p): Ghost<Seq<u8>>,
     Ghost(cc): Ghost<Seq<u8>>,
     Ghost(gs): Ghost<Seq<u8>>,
     Ghost(xs): Ghost<Seq<u128>>,
     Ghost(a0): Ghost<u128>,
-) -> (r: u128)
+) -> (r: A::R)
     requires
         A::ok(),
         g.wf(),
@@ -527,10 +527,10 @@ fn tail_x<A: Wide>(
         forall|k: int| 0 <= k < i ==> #[trigger] old(buf)@[k] == cc[k],
         forall|k: int| i <= k < p.len() ==> #[trigger] old(buf)@[k] == p[k],
         ctr_reg_ok(A::v(ctr), iv@, 2 + i / 16),
-        acc == ghash_from(g.h@, a0, xs.take(i as int / 16)),
+        A::v(acc) == ghash_from(g.h@, a0, xs.take(i as int / 16)),
     ensures
         final(buf)@ == cc,
-        r == ghash_from(g.h@, a0, xs),
+        A::v(r) == ghash_from(g.h@, a0, xs),
 {
     let ghost key = g.key@;
     let ghost h = g.h@;
@@ -626,8 +626,8 @@ fn tail_x<A: Wide>(
             assert(seq![A::v(y)].drop_first() =~= Seq::<u128>::empty());
         }
         let hx = A::load_u128(&g.hp, 0);
-        let z = mul_x::<A>(A::xor(A::set(acc), y), hx);
-        acc = A::get(z);
+        let z = mul_x::<A>(A::xor(acc, y), hx);
+        acc = z;
         proof {
             assert(ghash_from(h, gf_mul((acc_before(a0, h, xs, q)) ^ A::v(y), h), Seq::<u128>::empty()) == gf_mul(
                 acc_before(a0, h, xs, q) ^ A::v(y),
@@ -652,7 +652,7 @@ fn tail_x<A: Wide>(
 
 /// GHASH of the n <= 16 blocks of `d` at i.
 #[inline(always)]
-fn ghash_chunk<A: Wide>(g: &Gcm, acc: u128, d: &[u8], i: usize, n: usize, wide: bool) -> (r: u128)
+fn ghash_chunk<A: Wide>(g: &Gcm, acc: A::R, d: &[u8], i: usize, n: usize, wide: bool) -> (r: A::R)
     requires
         A::ok(),
         g.wf(),
@@ -661,7 +661,7 @@ fn ghash_chunk<A: Wide>(g: &Gcm, acc: u128, d: &[u8], i: usize, n: usize, wide: 
         wide ==> A::wide(),
         i + 16 * n <= d@.len(),
     ensures
-        r == ghash_from(g.h@, acc, blocks_at(d@, i as int, n as int)),
+        A::v(r) == ghash_from(g.h@, A::v(acc), blocks_at(d@, i as int, n as int)),
 {
     if n == 16 {
         A::ghash16(acc, d, i, &g.hr, Ghost(g.h@))
@@ -675,7 +675,7 @@ fn ghash_chunk<A: Wide>(g: &Gcm, acc: u128, d: &[u8], i: usize, n: usize, wide: 
 /// chunk behind it when encrypting.
 #[verifier::spinoff_prover]
 #[inline(always)]
-fn crypt<A: Wide>(g: &Gcm, iv: &[u8; 12], buf: &mut [u8], acc: u128, dec: bool, wide: bool) -> (r: u128)
+fn crypt<A: Wide>(g: &Gcm, iv: &[u8; 12], buf: &mut [u8], acc: A::R, dec: bool, wide: bool) -> (r: A::R)
     requires
         A::ok(),
         wide ==> A::wide(),
@@ -683,7 +683,7 @@ fn crypt<A: Wide>(g: &Gcm, iv: &[u8; 12], buf: &mut [u8], acc: u128, dec: bool, 
         old(buf)@.len() <= max_len(),
     ensures
         final(buf)@ == gctr(g.key@, iv@, old(buf)@),
-        r == ghash_from(g.h@, acc, pad_blocks(if dec { old(buf)@ } else { final(buf)@ })),
+        A::v(r) == ghash_from(g.h@, A::v(acc), pad_blocks(if dec { old(buf)@ } else { final(buf)@ })),
 {
     let ghost key = g.key@;
     let ghost h = g.h@;
@@ -698,7 +698,7 @@ fn crypt<A: Wide>(g: &Gcm, iv: &[u8; 12], buf: &mut [u8], acc: u128, dec: bool, 
     let cmask = ctr_x::<A>();
     let mut ctr = ctr_reg::<A>(iv, 2);
     let mut acc = acc;
-    let ghost a0 = acc;
+    let ghost a0 = A::v(acc);
     let mut i: usize = 0;
     // When encrypting, GHASH runs one chunk behind CTR (blocks gi..i are
     // ciphertext still to hash), so the two are independent work.
@@ -728,7 +728,7 @@ fn crypt<A: Wide>(g: &Gcm, iv: &[u8; 12], buf: &mut [u8], acc: u128, dec: bool, 
             pend <= 16,
             pend == 16 ==> wide,
             dec ==> pend == 0,
-            acc == ghash_from(h, a0, xs.take(gi as int / 16)),
+            A::v(acc) == ghash_from(h, a0, xs.take(gi as int / 16)),
             wide ==> A::wide(),
         decreases len - i,
     {
@@ -821,17 +821,18 @@ proof fn lemma_rev_bytes(v: u128)
 
 /// The tag from S: CIPHER(J0) XOR S.
 #[inline(always)]
-fn tag_x<A: Wide>(g: &Gcm, iv: &[u8; 12], s: u128) -> (r: A::R)
+fn tag_x<A: Wide>(g: &Gcm, iv: &[u8; 12], sr: A::R) -> (r: A::R)
     requires
         A::ok(),
         g.wf(),
     ensures
-        xb::<A>(r) == xor_bytes(cipher(g.key@, counter_block(iv@, 1)), be_bytes(s)),
+        xb::<A>(r) == xor_bytes(cipher(g.key@, counter_block(iv@, 1)), be_bytes(A::v(sr))),
 {
+    let ghost s = A::v(sr);
     let cmask = ctr_x::<A>();
     let j0 = ctr_reg::<A>(iv, 1);
     let e = enc_x::<A>(&g.rk, g.nr, A::pshufb(j0, cmask), Ghost(g.key@));
-    let sv = A::pshufb(A::set(s), rev_x::<A>());
+    let sv = A::pshufb(sr, rev_x::<A>());
     proof {
         lemma_ctr_block(A::v(j0), iv@, 1);
         lemma_rev_bytes(s);
@@ -843,7 +844,7 @@ fn tag_x<A: Wide>(g: &Gcm, iv: &[u8; 12], s: u128) -> (r: A::R)
 /// GHASH's last block and the tag: S from the GHASH state after the
 /// additional data and the ciphertext.
 #[inline(always)]
-fn finish_x<A: Wide>(g: &Gcm, iv: &[u8; 12], acc: u128, alen: usize, clen: usize, Ghost(aad): Ghost<Seq<u8>>, Ghost(c): Ghost<Seq<u8>>) -> (r: A::R)
+fn finish_x<A: Wide>(g: &Gcm, iv: &[u8; 12], accr: A::R, alen: usize, clen: usize, Ghost(aad): Ghost<Seq<u8>>, Ghost(c): Ghost<Seq<u8>>) -> (r: A::R)
     requires
         A::ok(),
         g.wf(),
@@ -851,15 +852,17 @@ fn finish_x<A: Wide>(g: &Gcm, iv: &[u8; 12], acc: u128, alen: usize, clen: usize
         clen == c.len(),
         aad.len() < 0x2000_0000_0000_0000,
         c.len() <= max_len(),
-        acc == ghash_from(g.h@, ghash(g.h@, pad_blocks(aad)), pad_blocks(c)),
+        A::v(accr) == ghash_from(g.h@, ghash(g.h@, pad_blocks(aad)), pad_blocks(c)),
     ensures
         xb::<A>(r) == gcm_tag(g.key@, iv@, aad, c),
 {
+    let ghost acc = A::v(accr);
     let ghost h = g.h@;
     let lb: u128 = ((alen as u64 * 8) as u128) << 64 | ((clen as u64 * 8) as u128);
     let hx = A::load_u128(&g.hp, 0);
-    let sx = mul_x::<A>(A::set(acc ^ lb), hx);
-    let s = A::get(sx);
+    let lbx = A::set(lb);
+    let sx = mul_x::<A>(A::xor(accr, lbx), hx);
+    let ghost s = A::v(sx);
     proof {
         assert(lb == len_block(aad.len(), c.len()));
         let xa = pad_blocks(aad);
@@ -874,7 +877,7 @@ fn finish_x<A: Wide>(g: &Gcm, iv: &[u8; 12], acc: u128, alen: usize, clen: usize
         assert(s == ghash_from(h, acc, seq![lb]));
         assert(s == gcm_s(h, aad, c));
     }
-    tag_x::<A>(g, iv, s)
+    tag_x::<A>(g, iv, sx)
 }
 
 impl Gcm {
@@ -891,7 +894,7 @@ impl Gcm {
             final(buf)@ == gctr(self.key@, iv@, old(buf)@),
     {
         let ghost p = buf@;
-        let a = ghash_bytes::<A>(self, 0, aad);
+        let a = ghash_bytes::<A>(self, A::set(0), aad);
         let acc = crypt::<A>(self, iv, buf, a, false, wide);
         let t = finish_x::<A>(self, iv, acc, aad.len(), buf.len(), Ghost(aad@), Ghost(buf@));
         A::store16(tag, t);
@@ -914,14 +917,17 @@ impl Gcm {
             !r ==> final(buf)@ == zeros(old(buf)@.len()),
     {
         let ghost c = buf@;
-        let a = ghash_bytes::<A>(self, 0, aad);
+        let a = ghash_bytes::<A>(self, A::set(0), aad);
         let acc = crypt::<A>(self, iv, buf, a, true, wide);
         let t = finish_x::<A>(self, iv, acc, aad.len(), buf.len(), Ghost(aad@), Ghost(c));
         let given = A::load16(tag);
-        let d = A::get(A::xor(t, given));
-        let ok = d == 0;
+        let d = A::xor(t, given);
+        // The one decision on a secret: whether the tag matched, which the
+        // caller learns anyway. Everything before it is branch-free.
+        let ok = crate::ct::declassify(A::is_zero(d));
         proof {
             let (tv, gv) = (A::v(t), A::v(given));
+            assert(A::v(d) == tv ^ gv);
             assert(tv ^ gv == 0 <==> tv == gv) by (bit_vector);
             if tv == gv {
                 assert(xb::<A>(t) == xb::<A>(given));

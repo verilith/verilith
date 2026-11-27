@@ -195,6 +195,15 @@ Two leaking controls (an early-exit compare, a lookup at a secret index)
 must be reported first, so a check that saw nothing would fail. Lengths
 are public. Valgrind's CPU has no SHA-NI, so that kernel's machine code is
 checked instead: two conditional jumps, both on the length, and no calls.
+
+`./ci.sh ctstatic` reads the machine code itself, for every input, with
+`scripts/ctcheck.py` (the check verilith-aes uses): every kernel (portable,
+BMI2, AVX2, SHA-NI and the dispatch on x86-64, portable and ARMv8 on
+AArch64) and SHA-256 and SHA-512 on x86-64 have no branch, address or variable-time instruction that
+depends on the message or the state. Two controls must be reported, and
+are. The MACs are not in it: the check cannot keep a MAC's public
+buffered length apart from its secret bytes, and reports leaks that are
+not there, so they are left to Valgrind.
 [TRUST.md](https://github.com/verilith/verilith/blob/main/crates/sha2/TRUST.md#constant-time) says what this does not
 cover.
 
