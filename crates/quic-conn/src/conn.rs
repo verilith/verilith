@@ -13,6 +13,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use verilith_quic::amplification::Budget;
 use verilith_quic::cc::NewReno;
+use verilith_quic::cubic::Cubic;
 use verilith_quic::flow::{RecvCredit, SendCredit};
 use verilith_quic::frame::{self, Frame};
 use verilith_quic::packet::{self, Header};
@@ -84,6 +85,9 @@ pub struct Config<P> {
     pub send_buffer: usize,
     /// max_ack_delay, milliseconds.
     pub max_ack_delay_ms: u64,
+    /// The congestion controller: CUBIC (RFC 9438) when true, else NewReno
+    /// (RFC 9002 §7).
+    pub cubic: bool,
 }
 
 impl<P> Config<P> {
@@ -100,6 +104,7 @@ impl<P> Config<P> {
             probe_datagram: 1452,
             send_buffer: 8 << 20,
             max_ack_delay_ms: 25,
+            cubic: true,
         }
     }
 }
@@ -284,7 +289,7 @@ pub struct Connection<P: Provider> {
     pub(crate) odcid: Vec<u8>,
     budget: Budget,
     rtt: Rtt,
-    cc: NewReno,
+    cc: Cc,
     pto_count: u32,
     /// The peer's transport parameters, once known.
     peer_max_ack_delay: u64,
@@ -433,7 +438,7 @@ impl<P: Provider> Connection<P> {
             odcid: odcid.to_vec(),
             budget: Budget::new(false),
             rtt: Rtt::new(),
-            cc: NewReno::new(mds),
+            cc: if cfg.cubic { Cc::Cubic(Cubic::new(mds)) } else { Cc::Reno(NewReno::new(mds)) },
             pto_count: 0,
             peer_max_ack_delay: 25_000,
             peer_ack_exponent: 3,
@@ -807,14 +812,14 @@ impl<P: Provider> Connection<P> {
                 // The path carries the probe's size.
                 let size = (d.packet.size as usize).clamp(self.mtu, 65527);
                 self.mtu = size;
-                if size as u64 > self.cc.mds {
+                if size as u64 > self.cc.mds() {
                     self.cc.raise_mds(size as u64);
                 }
                 self.pmtu = Pmtu::Done;
                 trace(format_args!("mtu {size}"));
             }
             if d.packet.in_flight {
-                self.cc.on_ack(d.packet.time, (d.packet.size as u64).min(self.cc.mds), false);
+                self.cc.on_ack(d.packet.time, (d.packet.size as u64).min(self.cc.mds()), now, self.rtt.smoothed);
             }
             self.on_recs(s, d.packet.token, true);
         }
@@ -853,7 +858,7 @@ impl<P: Provider> Connection<P> {
         self.scratch_done = lost;
         if let Some(t) = latest_lost {
             self.cc.on_congestion(t, now);
-            trace(format_args!("congestion cwnd{}", self.cc.cwnd));
+            trace(format_args!("congestion cwnd{}", self.cc.cwnd()));
         }
         if r.persistent && self.rtt.sampled {
             self.cc.on_persistent();
@@ -2115,5 +2120,71 @@ fn trace(a: std::fmt::Arguments) {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *ON.get_or_init(|| std::env::var_os("VQ_TRACE").is_some()) {
         eprintln!("{a}");
+    }
+}
+
+/// The congestion controller, either verified one.
+#[derive(Debug, Clone, Copy)]
+enum Cc {
+    Reno(NewReno),
+    Cubic(Cubic),
+}
+
+impl Cc {
+    fn mds(&self) -> u64 {
+        match self {
+            Cc::Reno(c) => c.mds,
+            Cc::Cubic(c) => c.mds,
+        }
+    }
+
+    fn cwnd(&self) -> u64 {
+        match self {
+            Cc::Reno(c) => c.cwnd,
+            Cc::Cubic(c) => c.cwnd,
+        }
+    }
+
+    fn can_send(&self, in_flight: u64, size: u64) -> bool {
+        match self {
+            Cc::Reno(c) => c.can_send(in_flight, size),
+            Cc::Cubic(c) => c.can_send(in_flight, size),
+        }
+    }
+
+    fn room(&self, in_flight: u64) -> u64 {
+        match self {
+            Cc::Reno(c) => c.room(in_flight),
+            Cc::Cubic(c) => c.room(in_flight),
+        }
+    }
+
+    /// `size` is at most the max_datagram_size; `srtt` in microseconds.
+    fn on_ack(&mut self, sent: u64, size: u64, now: u64, srtt: u64) {
+        match self {
+            Cc::Reno(c) => c.on_ack(sent, size, false),
+            Cc::Cubic(c) => c.on_ack(sent, size, false, now, srtt.min(0xFFFF_FFFF)),
+        }
+    }
+
+    fn on_congestion(&mut self, sent: u64, now: u64) {
+        match self {
+            Cc::Reno(c) => c.on_congestion(sent, now),
+            Cc::Cubic(c) => c.on_congestion(sent, now),
+        }
+    }
+
+    fn on_persistent(&mut self) {
+        match self {
+            Cc::Reno(c) => c.on_persistent(),
+            Cc::Cubic(c) => c.on_persistent(),
+        }
+    }
+
+    fn raise_mds(&mut self, mds: u64) {
+        match self {
+            Cc::Reno(c) => c.raise_mds(mds),
+            Cc::Cubic(c) => c.raise_mds(mds),
+        }
     }
 }
