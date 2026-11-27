@@ -35,6 +35,7 @@ pub mod neon;
 pub mod arm;
 #[doc(hidden)]
 pub mod ct;
+mod dit;
 mod aead;
 pub use aead::{Aes, AesGcm};
 

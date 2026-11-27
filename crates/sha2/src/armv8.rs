@@ -1523,11 +1523,13 @@ pub fn compress512_blocks(st: &mut [u64; 8], p: &[u8])
 mod tf {
     #[target_feature(enable = "sha2")]
     pub(super) unsafe fn compress_blocks(st: &mut [u32; 8], p: &[u8]) {
+        let _dit = crate::dit::Dit::on();
         super::compress_blocks_body(st, p)
     }
 
     #[target_feature(enable = "sha3")]
     pub(super) unsafe fn compress512_blocks(st: &mut [u64; 8], p: &[u8]) {
+        let _dit = crate::dit::Dit::on();
         super::compress512_blocks_body(st, p)
     }
 }

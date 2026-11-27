@@ -432,6 +432,11 @@ CALLS = {"memcpy", "memmove", "memset"}
 # A crate's declassification point: its result is public.
 DECLASSIFY = re.compile(r"^verilith_\w+::ct::declassify$")
 DECL = "declassify"
+# Functions of no secret input whose result is public: the standard
+# library's CPU-feature detection (on AArch64 it reads the auxiliary
+# vector), which the dispatch calls once to fill its cache.
+# (It takes no arguments, so none is checked.)
+PUBLIC_CALLS = {"std_detect::detect::cache::detect_and_initialize"}
 
 
 def callee_kind(name):
@@ -442,6 +447,8 @@ def callee_kind(name):
         return base
     if DECLASSIFY.match(base):
         return DECL
+    if base in PUBLIC_CALLS:
+        return "public"
     if NORETURN.search(base):
         return "noreturn"
     return None
@@ -708,7 +715,7 @@ def x86_check(elf, fn, public, verbose, entry_stack_args):
                     pass
                 else:
                     for r in ("rdi", "rsi", "rdx"):
-                        if st.get(r) == S and kind != DECL:
+                        if st.get(r) == S and kind not in (DECL, "public"):
                             chk.bad(insn, "call", f"{kind} with secret {r}")
                     dst = st.get("rdi")
                     if kind in ("memcpy", "memmove", "memset"):
@@ -865,6 +872,11 @@ for i in range(32):
         A64_CANON[f"{p}{i}"] = (f"v{i}", w)
 A64_CANON["nzcv"] = ("flags", 4)
 
+# Aliases of UBFM/SBFM/EXTR that capstone reports as reading their
+# destination, which they only write.
+A64_PURE_DEST = {"lsr", "lsl", "asr", "ror", "ubfx", "sbfx", "ubfiz", "sbfiz",
+                 "uxtb", "uxth", "uxtw", "sxtb", "sxth", "sxtw"}
+
 A64_CALLER_SAVED = [f"x{i}" for i in range(19)] + ["flags"] + [f"v{i}" for i in list(range(8)) + list(range(16, 32))]
 
 # Arm's list of instructions with data-independent timing (FEAT_DIT), and
@@ -999,6 +1011,8 @@ def a64_check(elf, fn, public, verbose, entry_stack_args):
             if insn is None:
                 continue
             st = states[a].copy()
+            if TRACE and a in TRACE:
+                print(f"trace {a:#x} depth {depth} {insn.mnemonic} {insn.op_str}: " + ", ".join(f"{k}={v}" for k, v in sorted(st.regs.items()) if not k.startswith("v")), file=sys.stderr)
             succ = []
             mn = insn.mnemonic
             ops = insn.operands
@@ -1056,7 +1070,7 @@ def a64_check(elf, fn, public, verbose, entry_stack_args):
                         succ.append((fall, out))
                 elif kind != "noreturn":
                     for r in ("x0", "x1", "x2"):
-                        if st.get(r) == S and kind != DECL:
+                        if st.get(r) == S and kind not in (DECL, "public"):
                             chk.bad(insn, "call", f"{kind} with secret {r}")
                     dst = st.get("x0")
                     if kind in ("memcpy", "memmove", "memset"):
@@ -1070,6 +1084,8 @@ def a64_check(elf, fn, public, verbose, entry_stack_args):
                 loads = []
                 stores = []
                 for k, op in enumerate(ops):
+                    if k == 0 and mn in A64_PURE_DEST and op.access & capstone.CS_AC_WRITE:
+                        continue  # capstone marks these aliases' destination as read too
                     if op.type == A64.ARM64_OP_REG and op.access & capstone.CS_AC_READ:
                         srcs.append(rv(st, op.reg))
                     elif op.type == A64.ARM64_OP_REG and mn.startswith("st") and not (op.access & capstone.CS_AC_WRITE):
@@ -1157,9 +1173,17 @@ def a64_check(elf, fn, public, verbose, entry_stack_args):
                         special = P
                     if mn == "adrp" or mn == "adr":
                         pass
+                    written = False
                     for op in ops:
                         if op.type == A64.ARM64_OP_REG and op.access & capstone.CS_AC_WRITE:
                             wr(st, op.reg, special if special is not None else res, insn)
+                            written = True
+                    # Capstone gives some aliases (LSR, LSL, ... of UBFM) no operand
+                    # access: their destination is still written.
+                    if not written:
+                        for r in wrt:
+                            if cs.reg_name(r) != "nzcv":
+                                wr(st, r, special if special is not None else res, insn)
                     if mn in ("add",) and special is not None and is_ptr(special) and special[1] == "got":
                         pass
                     if writes_flags:

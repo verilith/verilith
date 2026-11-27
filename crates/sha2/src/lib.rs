@@ -45,6 +45,7 @@ pub mod shani;
 #[doc(hidden)]
 pub mod avx2;
 mod store;
+mod dit;
 #[doc(hidden)]
 pub mod lanes;
 #[doc(hidden)]

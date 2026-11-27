@@ -389,30 +389,35 @@ mod tf {
     #[target_feature(enable = "neon,aes")]
     #[inline(never)]
     pub(super) unsafe fn expand(key: &[u8]) -> ([u128; 15], usize) {
+        let _dit = crate::dit::Dit::on();
         gcm::expand::<Arm>(key)
     }
 
     #[target_feature(enable = "neon,aes")]
     #[inline(never)]
     pub(super) unsafe fn enc(rk: &[u128; 15], nr: usize, b: &mut [u8; 16], key: Ghost<Seq<u8>>) {
+        let _dit = crate::dit::Dit::on();
         gcm::encrypt_block::<Arm>(rk, nr, b, key)
     }
 
     #[target_feature(enable = "neon,aes")]
     #[inline(never)]
     pub(super) unsafe fn new(key: &[u8]) -> Gcm {
+        let _dit = crate::dit::Dit::on();
         Gcm::new::<Arm>(key)
     }
 
     #[target_feature(enable = "neon,aes")]
     #[inline(never)]
     pub(super) unsafe fn seal(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &mut [u8; 16], _wide: bool) {
+        let _dit = crate::dit::Dit::on();
         g.seal::<Arm>(iv, aad, buf, tag, false)
     }
 
     #[target_feature(enable = "neon,aes")]
     #[inline(never)]
     pub(super) unsafe fn open(g: &Gcm, iv: &[u8; 12], aad: &[u8], buf: &mut [u8], tag: &[u8; 16], _wide: bool) -> bool {
+        let _dit = crate::dit::Dit::on();
         g.open::<Arm>(iv, aad, buf, tag, false)
     }
 }
