@@ -11,6 +11,7 @@
 #![allow(unused_unsafe, non_snake_case)]
 use core::arch::x86_64::*;
 use verilith_simd::refs::*;
+use verilith_simd::refs_neon::{ref_abs16, ref_adds_u16, ref_max_u16, ref_mullo32};
 
 fn iters() -> usize {
     std::env::var("VSIMD_ITERS").ok().and_then(|s| s.parse().ok()).unwrap_or(1_000_000)
@@ -23407,6 +23408,157 @@ fn mm256_alignr_epi8_255() {
         let got = bytes256(unsafe { go(a, b) });
         let want: Vec<u8> = ref_alignr_lanes(&bytes256(a), &bytes256(b), 255);
         if got != want { fail("_mm256_alignr_epi8::<255>", &bytes256(a), &bytes256(b), &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_adds_epu16() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i, b: __m128i) -> __m128i { _mm_adds_epu16(a, b) }
+    let mut rng = Rng::new(0x250843c5d60b220d);
+    for it in 0..ITERS {
+        let a = rng.v128();
+        let b = if it % 7 == 0 { a } else if it % 11 == 0 { rng.near128(a) } else { rng.v128() };
+        let got = u16s128(unsafe { go(a, b) });
+        let want: Vec<u16> = ref_adds_u16(&u16s128(a), &u16s128(b));
+        if got != want { fail("_mm_adds_epu16", &bytes128(a), &bytes128(b), &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_max_epu16() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse4.1")]
+    fn go(a: __m128i, b: __m128i) -> __m128i { _mm_max_epu16(a, b) }
+    let mut rng = Rng::new(0x3a1845a0f2fddd0d);
+    for it in 0..ITERS {
+        let a = rng.v128();
+        let b = if it % 7 == 0 { a } else if it % 11 == 0 { rng.near128(a) } else { rng.v128() };
+        let got = u16s128(unsafe { go(a, b) });
+        let want: Vec<u16> = ref_max_u16(&u16s128(a), &u16s128(b));
+        if got != want { fail("_mm_max_epu16", &bytes128(a), &bytes128(b), &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_mullo_epi32() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse4.1")]
+    fn go(a: __m128i, b: __m128i) -> __m128i { _mm_mullo_epi32(a, b) }
+    let mut rng = Rng::new(0x3be18baa8c14411f);
+    for it in 0..ITERS {
+        let a = rng.v128();
+        let b = if it % 7 == 0 { a } else if it % 11 == 0 { rng.near128(a) } else { rng.v128() };
+        let got = u32s128(unsafe { go(a, b) });
+        let want: Vec<u32> = ref_mullo32(&u32s128(a), &u32s128(b));
+        if got != want { fail("_mm_mullo_epi32", &bytes128(a), &bytes128(b), &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_abs_epi16() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "ssse3")]
+    fn go(a: __m128i) -> __m128i { _mm_abs_epi16(a) }
+    let mut rng = Rng::new(0x326badd2244e22ad);
+    for _ in 0..ITERS {
+        let a = rng.v128();
+        let got = u16s128(unsafe { go(a) });
+        let want = ref_abs16(&u16s128(a));
+        if got != want { fail("_mm_abs_epi16", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_sll_epi16() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i, c: __m128i) -> __m128i { _mm_sll_epi16(a, c) }
+    let mut rng = Rng::new(0x33e108ea15f26b18);
+    for it in 0..ITERS {
+        let a = rng.v128();
+        let n = (it % 16) as u32;
+        let got = u16s128(unsafe { go(a, _mm_cvtsi32_si128(n as i32)) });
+        let want = ref_slli16(&u16s128(a), n);
+        if got != want { fail("_mm_sll_epi16", &bytes128(a), &[], &format!("{n}: {:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_sra_epi16() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i, c: __m128i) -> __m128i { _mm_sra_epi16(a, c) }
+    let mut rng = Rng::new(0x31d8985c0df96933);
+    for it in 0..ITERS {
+        let a = rng.v128();
+        let n = (it % 16) as u32;
+        let got = u16s128(unsafe { go(a, _mm_cvtsi32_si128(n as i32)) });
+        let want = ref_srai16(&u16s128(a), n);
+        if got != want { fail("_mm_sra_epi16", &bytes128(a), &[], &format!("{n}: {:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_sll_epi32() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i, c: __m128i) -> __m128i { _mm_sll_epi32(a, c) }
+    let mut rng = Rng::new(0x3eb7e14cf9709f11);
+    for it in 0..ITERS {
+        let a = rng.v128();
+        let n = (it % 32) as u32;
+        let got = u32s128(unsafe { go(a, _mm_cvtsi32_si128(n as i32)) });
+        let want = ref_slli32(&u32s128(a), n);
+        if got != want { fail("_mm_sll_epi32", &bytes128(a), &[], &format!("{n}: {:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm_sra_epi32() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i, c: __m128i) -> __m128i { _mm_sra_epi32(a, c) }
+    let mut rng = Rng::new(0x3c8e71fae17b9d3a);
+    for it in 0..ITERS {
+        let a = rng.v128();
+        let n = (it % 32) as u32;
+        let got = u32s128(unsafe { go(a, _mm_cvtsi32_si128(n as i32)) });
+        let want = ref_srai32(&u32s128(a), n);
+        if got != want { fail("_mm_sra_epi32", &bytes128(a), &[], &format!("{n}: {:?} vs {:?}", got, want)); }
     }
     }
     unsafe { body(iters()) }

@@ -768,11 +768,30 @@ pub fn extend_x(v: i32, s: u32) -> (r: i32)
         lemma_pow2_strictly_increases(s as nat, 31);
         assert(half == pow2((s - 1) as nat) && full == pow2(s as nat));
     }
-    if v < half {
-        v - full + 1
+    // Without a branch: the sign of a coefficient is a coin toss, so a
+    // branch here would be mispredicted half the time. `m` is all ones
+    // exactly when `v < half`.
+    let d = v - half;
+    let m = d >> 31;
+    let k = 1 - full;
+    let a = m & k;
+    assert(a == (if v < half {
+        k
     } else {
-        v
-    }
+        0i32
+    })) by (bit_vector)
+        requires
+            0 <= v < full,
+            1 <= half,
+            full == add(half, half),
+            full <= 0x1_0000,
+            d == sub(v, half),
+            m == d >> 31,
+            k == sub(1i32, full),
+            a == m & k,
+    ;
+    let r = v + a;
+    r
 }
 
 /// A DC difference.

@@ -1271,6 +1271,89 @@ pub fn ref_srai16(a: &[u16], n: u32) -> (r: Vec<u16>)
     r
 }
 
+/// Floor division of a value in `[-2^31, 2^31)` by `p` in `[1, 2^31]`.
+fn floor_div32(x: i64, p: i64) -> (r: i64)
+    requires
+        -0x8000_0000 <= x < 0x8000_0000,
+        1 <= p <= 0x8000_0000,
+    ensures
+        r == x / p,
+{
+    let k: i64 = 0x8000_0000;
+    proof {
+        assert(0 <= x + k * p) by (nonlinear_arith)
+            requires
+                -0x8000_0000 <= x,
+                p >= 1,
+                k == 0x8000_0000,
+        ;
+        assert(x + k * p <= 0x8000_0000 * 0x8000_0001) by (nonlinear_arith)
+            requires
+                x < 0x8000_0000,
+                p <= 0x8000_0000,
+                k == 0x8000_0000,
+        ;
+    }
+    let q = (x + k * p) / p;
+    proof {
+        lemma_div_plus_multiple(x as int, k as int, p as int);
+    }
+    q - k
+}
+
+/// The verified scalar reference for `srai32`.
+///
+/// ```text
+/// requires n <= 255
+/// ensures  r@ == srai32(a@, n as int)
+/// ```
+pub fn ref_srai32(a: &[u32], n: u32) -> (r: Vec<u32>)
+    requires
+        n <= 255,
+    ensures
+        r@ == srai32(a@, n as int),
+{
+    let mut r: Vec<u32> = Vec::new();
+    let mut i: usize = 0;
+    while i < a.len()
+        invariant
+            n <= 255,
+            i <= a@.len(),
+            r@.len() == i,
+            forall|j: int| 0 <= j < i ==> r@[j] == #[trigger] srai32(a@, n as int)[j],
+        decreases a.len() - i,
+    {
+        let m = if n > 31 {
+            31
+        } else {
+            n
+        };
+        let p = pow2e(m);
+        proof {
+            lemma_pow2_spec_le(0, m as nat);
+            reveal_with_fuel(pow2_spec, 1);
+        }
+        let q = floor_div32(s32e(a[i]), p as i64);
+        proof {
+            lemma_div_is_ordered(-0x8000_0000, s32(a[i as int]), p as int);
+            lemma_div_is_ordered(s32(a[i as int]), 0x8000_0000, p as int);
+            lemma_div_is_ordered_by_denominator(0x8000_0000, 1, p as int);
+            assert(-0x8000_0000 / (p as int) >= -0x8000_0000) by {
+                assert(-0x8000_0000 * p as int <= -0x8000_0000) by (nonlinear_arith)
+                    requires
+                        p >= 1,
+                ;
+                lemma_div_is_ordered(-0x8000_0000 * p as int, -0x8000_0000, p as int);
+                lemma_div_multiples_vanish(-0x8000_0000, p as int);
+            }
+        }
+        r.push(wrap32(q));
+        i = i + 1;
+    }
+    assert(r@ =~= srai32(a@, n as int));
+    r
+}
+
 /// The verified scalar reference for `madd16`.
 ///
 /// ```text

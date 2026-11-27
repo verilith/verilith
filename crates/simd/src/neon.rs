@@ -32,13 +32,13 @@ pub use core::arch::aarch64::uint8x16_t;
 #[cfg(not(target_arch = "aarch64"))]
 pub use crate::emu_neon::uint8x16_t;
 
-/// On WebAssembly with SIMD128, the verified implementation of the same
-/// contract in `crate::wasm_neon`; elsewhere, the intrinsic.
+/// On WebAssembly with SIMD128 and on x86-64, the verified implementation
+/// of the same contract in `crate::wasm_neon`; elsewhere, the intrinsic.
 macro_rules! wasm_or {
     ($w:expr, $n:expr) => {{
-        #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+        #[cfg(any(target_arch = "x86_64", all(target_arch = "wasm32", target_feature = "simd128")))]
         let r = $w;
-        #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+        #[cfg(not(any(target_arch = "x86_64", all(target_arch = "wasm32", target_feature = "simd128"))))]
         #[allow(unused_unsafe)]
         let r = $n;
         r
@@ -76,6 +76,39 @@ pub fn has_neon() -> (r: bool)
         r ==> neon(),
 {
     cfg!(any(target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128")))
+}
+
+/// Whether the NEON wrappers can run here: `has_neon` on AArch64 and
+/// WebAssembly; on x86-64, whether the CPU has SSE4.1 and SSSE3, which
+/// the wrappers' SSE implementation (`crate::wasm_x86`, through
+/// `crate::wasm_neon`) needs. Its intrinsics need those features enabled
+/// where they are inlined, so a kernel selected by this function carries
+/// `#[target_feature(enable = "sse4.1,ssse3")]` on x86-64. `has_neon` stays
+/// false on x86-64, so kernels that test it keep their own x86 paths.
+#[verifier::external_body]
+#[inline(always)]
+pub fn has_neon_sse() -> (r: bool)
+    ensures
+        r ==> neon(),
+{
+    #[cfg(target_arch = "x86_64")]
+    let r = crate::cpu::has_sse41() && crate::cpu::has_ssse3();
+    #[cfg(not(target_arch = "x86_64"))]
+    let r = has_neon();
+    r
+}
+
+/// On x86-64, `neon()` is established only by `has_neon_sse`, which
+/// checks for SSE4.1 and SSSE3 (`has_neon` is false there).
+#[cfg(target_arch = "x86_64")]
+#[verifier::external_body]
+pub proof fn axiom_neon_x86()
+    requires
+        neon(),
+    ensures
+        crate::cpu::sse41(),
+        crate::cpu::ssse3(),
+{
 }
 
 // ---------------------------------------------------------------------------

@@ -178,6 +178,38 @@ fn h2v1_mid(row: &[u8], m: usize, out: &mut [u8], Tracked(mt): Tracked<&mut Mete
         forall|j: int|
             0 <= j < final(out)@.len() && (j == 0 || j > 2 * m) ==> (#[trigger] final(out)@[j]) == old(out)@[j],
 {
+    // `h2v1_mid_avx2` enables AVX2, which makes it unsafe to call, on x86-64;
+    // `has_avx2` checked that the CPU has it.
+    if verilith_simd::cpu::has_avx2() {
+        #[cfg_attr(any(verus_only, not(target_arch = "x86_64")), allow(unused_unsafe))]
+        unsafe { h2v1_mid_avx2(row, m, out, Tracked(mt)) };
+        return ;
+    }
+    if m < 16 {
+        h2v1_run(row, 0, m, out, Tracked(mt));
+        return ;
+    }
+    let whole = m - m % 16;
+    h2v1_run(row, 0, whole, out, Tracked(mt));
+    if whole < m {
+        h2v1_run(row, m - 16, 16, out, Tracked(mt));
+    }
+}
+
+/// `h2v1_mid` compiled for AVX2, which vectorizes its loop twice as wide.
+#[cfg_attr(all(not(verus_only), target_arch = "x86_64"), target_feature(enable = "avx2"))]
+#[cfg_attr(not(target_arch = "x86_64"), inline(always))]
+fn h2v1_mid_avx2(row: &[u8], m: usize, out: &mut [u8], Tracked(mt): Tracked<&mut Meter>)
+    requires
+        m < row@.len(),
+        2 * m < old(out)@.len(),
+    ensures
+        final(mt).n <= old(mt).n + m + 16,
+        final(out)@.len() == old(out)@.len(),
+        forall|j: int| 1 <= j <= 2 * m ==> (#[trigger] final(out)@[j]) as int == h2v1_at(row@, j),
+        forall|j: int|
+            0 <= j < final(out)@.len() && (j == 0 || j > 2 * m) ==> (#[trigger] final(out)@[j]) == old(out)@[j],
+{
     if m < 16 {
         h2v1_run(row, 0, m, out, Tracked(mt));
         return ;
@@ -264,6 +296,39 @@ fn h2v2_run(nr: &[u8], fr: &[u8], i0: usize, cnt: usize, out: &mut [u8], Tracked
 /// time.
 #[inline(never)]
 fn h2v2_mid(nr: &[u8], fr: &[u8], m: usize, out: &mut [u8], Tracked(mt): Tracked<&mut Meter>)
+    requires
+        nr@.len() == fr@.len(),
+        m < nr@.len(),
+        2 * m < old(out)@.len(),
+    ensures
+        final(mt).n <= old(mt).n + m + 16,
+        final(out)@.len() == old(out)@.len(),
+        forall|j: int| 1 <= j <= 2 * m ==> (#[trigger] final(out)@[j]) as int == h2v2_at(nr@, fr@, j),
+        forall|j: int|
+            0 <= j < final(out)@.len() && (j == 0 || j > 2 * m) ==> (#[trigger] final(out)@[j]) == old(out)@[j],
+{
+    // `h2v2_mid_avx2` enables AVX2, which makes it unsafe to call, on x86-64;
+    // `has_avx2` checked that the CPU has it.
+    if verilith_simd::cpu::has_avx2() {
+        #[cfg_attr(any(verus_only, not(target_arch = "x86_64")), allow(unused_unsafe))]
+        unsafe { h2v2_mid_avx2(nr, fr, m, out, Tracked(mt)) };
+        return ;
+    }
+    if m < 16 {
+        h2v2_run(nr, fr, 0, m, out, Tracked(mt));
+        return ;
+    }
+    let whole = m - m % 16;
+    h2v2_run(nr, fr, 0, whole, out, Tracked(mt));
+    if whole < m {
+        h2v2_run(nr, fr, m - 16, 16, out, Tracked(mt));
+    }
+}
+
+/// `h2v2_mid` compiled for AVX2, which vectorizes its loop twice as wide.
+#[cfg_attr(all(not(verus_only), target_arch = "x86_64"), target_feature(enable = "avx2"))]
+#[cfg_attr(not(target_arch = "x86_64"), inline(always))]
+fn h2v2_mid_avx2(nr: &[u8], fr: &[u8], m: usize, out: &mut [u8], Tracked(mt): Tracked<&mut Meter>)
     requires
         nr@.len() == fr@.len(),
         m < nr@.len(),
@@ -753,6 +818,85 @@ pub open spec fn chan(color: Color, l: int, cb: int, cr: int, ch: int) -> int {
     }
 }
 
+/// `ycc_row`'s first pixels, sixteen at a time with NEON (on x86-64, with
+/// the SSE implementation of the NEON wrappers, for which this function
+/// enables SSE4.1 and SSSE3): returns how many it converted, all but the
+/// last `w % 16`.
+#[cfg_attr(all(not(verus_only), target_arch = "x86_64"), target_feature(enable = "sse4.1,ssse3"))]
+#[cfg_attr(not(target_arch = "x86_64"), inline(always))]
+fn ycc_run(yr: &[u8], cbr: &[u8], crr: &[u8], w: usize, out: &mut [u8], o: usize, Tracked(mt): Tracked<&mut Meter>) -> (x: usize)
+    requires
+        verilith_simd::neon::neon(),
+        yr@.len() == w,
+        cbr@.len() == w,
+        crr@.len() == w,
+        o + 3 * w <= old(out)@.len(),
+    ensures
+        x <= w,
+        final(mt).n <= old(mt).n + x,
+        final(out)@.len() == old(out)@.len(),
+        forall|i: int|
+            o <= i < o + 3 * x ==> (#[trigger] final(out)@[i]) as int == chan(
+                Color::YCbCr,
+                yr@[(i - o) / 3] as int,
+                cbr@[(i - o) / 3] as int,
+                crr@[(i - o) / 3] as int,
+                (i - o) % 3,
+            ),
+        forall|i: int| 0 <= i < o || o + 3 * x <= i < final(out)@.len() ==> (#[trigger] final(out)@[i]) == old(out)@[i],
+{
+    let n = out.len();
+    let mut x: usize = 0;
+    while w - x >= 16
+        invariant
+            x <= w,
+            mt.n <= old(mt).n + x,
+            verilith_simd::neon::neon(),
+            yr@.len() == w,
+            cbr@.len() == w,
+            crr@.len() == w,
+            o + 3 * w <= out@.len(),
+            out@.len() == n,
+            out@.len() == old(out)@.len(),
+            forall|i: int|
+                o <= i < o + 3 * x ==> (#[trigger] out@[i]) as int == chan(
+                    Color::YCbCr,
+                    yr@[(i - o) / 3] as int,
+                    cbr@[(i - o) / 3] as int,
+                    crr@[(i - o) / 3] as int,
+                    (i - o) % 3,
+                ),
+            forall|i: int| 0 <= i < o || o + 3 * x <= i < out@.len() ==> (#[trigger] out@[i]) == old(out)@[i],
+        decreases w - x,
+    {
+        let ghost out0 = out@;
+        let p = o + 3 * x;
+        crate::color_neon::ycc16(yr, cbr, crr, x, out, p);
+        proof {
+            assert forall|i: int| o <= i < o + 3 * (x + 16) implies (#[trigger] out@[i]) as int == chan(
+                Color::YCbCr,
+                yr@[(i - o) / 3] as int,
+                cbr@[(i - o) / 3] as int,
+                crr@[(i - o) / 3] as int,
+                (i - o) % 3,
+            ) by {
+                if i < p {
+                    assert(out@[i] == out0[i]);
+                } else {
+                    let j = i - p;
+                    assert(i - o == 3 * x + j);
+                    assert((i - o) / 3 == x + j / 3 && (i - o) % 3 == j % 3);
+                }
+            }
+        }
+        x += 16;
+        proof {
+            mt.n = mt.n + 1;
+        }
+    }
+    x
+}
+
 /// A row of YCbCr to red, green, blue at `out[o..]`. The slices do not
 /// overlap, so compilers vectorize the loop.
 #[inline(never)]
@@ -776,61 +920,89 @@ pub fn ycc_row(yr: &[u8], cbr: &[u8], crr: &[u8], w: usize, out: &mut [u8], o: u
         forall|i: int|
             0 <= i < o || o + 3 * w <= i < final(out)@.len() ==> (#[trigger] final(out)@[i]) == old(out)@[i],
 {
-    let n = out.len();
-    let mut x: usize = 0;
-    if verilith_simd::neon::has_neon() {
-        while w - x >= 16
-            invariant
-                x <= w,
-                mt.n <= old(mt).n + x,
-                verilith_simd::neon::neon(),
-                yr@.len() == w,
-                cbr@.len() == w,
-                crr@.len() == w,
-                o + 3 * w <= out@.len(),
-                out@.len() == n,
-                out@.len() == old(out)@.len(),
-                forall|i: int|
-                    o <= i < o + 3 * x ==> (#[trigger] out@[i]) as int == chan(
-                        Color::YCbCr,
-                        yr@[(i - o) / 3] as int,
-                        cbr@[(i - o) / 3] as int,
-                        crr@[(i - o) / 3] as int,
-                        (i - o) % 3,
-                    ),
-                forall|i: int| 0 <= i < o || o + 3 * x <= i < out@.len() ==> (#[trigger] out@[i]) == old(out)@[i],
-            decreases w - x,
-        {
-            let ghost out0 = out@;
-            let p = o + 3 * x;
-            crate::color_neon::ycc16(yr, cbr, crr, x, out, p);
-            proof {
-                assert forall|i: int| o <= i < o + 3 * (x + 16) implies (#[trigger] out@[i]) as int == chan(
-                    Color::YCbCr,
-                    yr@[(i - o) / 3] as int,
-                    cbr@[(i - o) / 3] as int,
-                    crr@[(i - o) / 3] as int,
-                    (i - o) % 3,
-                ) by {
-                    if i < p {
-                        assert(out@[i] == out0[i]);
-                    } else {
-                        let j = i - p;
-                        assert(i - o == 3 * x + j);
-                        assert((i - o) / 3 == x + j / 3 && (i - o) % 3 == j % 3);
-                    }
-                }
-            }
-            x += 16;
-            proof {
-                mt.n = mt.n + 1;
-            }
-        }
+    // With AVX2 the compiler's vectorized loop beats the 16-pixel kernel.
+    // `ycc_row_avx2` enables AVX2, which makes it unsafe to call, on
+    // x86-64; `has_avx2` checked that the CPU has it.
+    if verilith_simd::cpu::has_avx2() {
+        #[cfg_attr(any(verus_only, not(target_arch = "x86_64")), allow(unused_unsafe))]
+        unsafe { ycc_row_avx2(yr, cbr, crr, w, out, o, Tracked(mt)) };
+        return ;
     }
+    let mut x: usize = 0;
+    // `ycc_run` enables SSE4.1 and SSSE3, which makes it unsafe to call, on
+    // x86-64; `has_neon_sse` checked that the CPU has them.
+    if verilith_simd::neon::has_neon_sse() {
+        #[cfg_attr(any(verus_only, not(target_arch = "x86_64")), allow(unused_unsafe))]
+        let k = unsafe { ycc_run(yr, cbr, crr, w, out, o, Tracked(mt)) };
+        x = k;
+    }
+    ycc_from(yr, cbr, crr, w, out, o, x, Tracked(mt));
+}
+
+/// `ycc_from` from the start of the row, compiled for AVX2.
+#[cfg_attr(all(not(verus_only), target_arch = "x86_64"), target_feature(enable = "avx2"))]
+#[cfg_attr(not(target_arch = "x86_64"), inline(always))]
+fn ycc_row_avx2(yr: &[u8], cbr: &[u8], crr: &[u8], w: usize, out: &mut [u8], o: usize, Tracked(mt): Tracked<&mut Meter>)
+    requires
+        yr@.len() == w,
+        cbr@.len() == w,
+        crr@.len() == w,
+        o + 3 * w <= old(out)@.len(),
+    ensures
+        final(mt).n <= old(mt).n + w,
+        final(out)@.len() == old(out)@.len(),
+        forall|i: int|
+            o <= i < o + 3 * w ==> (#[trigger] final(out)@[i]) as int == chan(
+                Color::YCbCr,
+                yr@[(i - o) / 3] as int,
+                cbr@[(i - o) / 3] as int,
+                crr@[(i - o) / 3] as int,
+                (i - o) % 3,
+            ),
+        forall|i: int|
+            0 <= i < o || o + 3 * w <= i < final(out)@.len() ==> (#[trigger] final(out)@[i]) == old(out)@[i],
+{
+    ycc_from(yr, cbr, crr, w, out, o, 0, Tracked(mt));
+}
+
+/// The rest of `ycc_row`, from pixel `x0` on, the pixels before it done.
+#[inline(always)]
+fn ycc_from(yr: &[u8], cbr: &[u8], crr: &[u8], w: usize, out: &mut [u8], o: usize, x0: usize, Tracked(mt): Tracked<&mut Meter>)
+    requires
+        yr@.len() == w,
+        cbr@.len() == w,
+        crr@.len() == w,
+        o + 3 * w <= old(out)@.len(),
+        x0 <= w,
+        forall|i: int|
+            o <= i < o + 3 * x0 ==> (#[trigger] old(out)@[i]) as int == chan(
+                Color::YCbCr,
+                yr@[(i - o) / 3] as int,
+                cbr@[(i - o) / 3] as int,
+                crr@[(i - o) / 3] as int,
+                (i - o) % 3,
+            ),
+    ensures
+        final(mt).n <= old(mt).n + (w - x0),
+        final(out)@.len() == old(out)@.len(),
+        forall|i: int|
+            o <= i < o + 3 * w ==> (#[trigger] final(out)@[i]) as int == chan(
+                Color::YCbCr,
+                yr@[(i - o) / 3] as int,
+                cbr@[(i - o) / 3] as int,
+                crr@[(i - o) / 3] as int,
+                (i - o) % 3,
+            ),
+        forall|i: int|
+            0 <= i < o || o + 3 * w <= i < final(out)@.len() ==> (#[trigger] final(out)@[i]) == old(out)@[i],
+{
+    let n = out.len();
+    let mut x = x0;
     while x < w
         invariant
             x <= w,
-            mt.n <= old(mt).n + x,
+            x0 <= x,
+            mt.n <= old(mt).n + (x - x0),
             yr@.len() == w,
             cbr@.len() == w,
             crr@.len() == w,

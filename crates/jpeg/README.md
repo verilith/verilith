@@ -40,8 +40,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | The coefficients after all scans are the specification's | `decode::decode_coefs` against `spec::jpeg_coded` |
 | Each scan type writes exactly the coefficients T.81 says: baseline, DC first and refinement, AC first and refinement, with end-of-band runs | `block::*` against `spec::base_block`, `dc_first`, `ac_first`, `ac_refine` |
 | The Huffman decoder, with its 10-bit lookahead table and 16-bit window, returns the symbol of T.81's DECODE procedure | `huff::decode` against `spec::huff` |
-| The inverse DCT equals the specification's (libjpeg's `jidctint.c`) on all its paths: on AArch64, NEON intrinsics in 16-bit lanes for blocks whose magnitudes sum to at most 2120 (nearly every block of a photograph) and in 32-bit lanes for the others whose dequantized values fit in 15 bits; elsewhere 32-bit arithmetic that compilers vectorize; and 64-bit arithmetic for the rest | `idct::idct_into`, `idct16::idct16_neon`, `idct_neon::idct_neon` against `spec::idct` |
-| Upsampling and colour conversion equal the specification's, including the branch-free kernels compilers vectorize and, on AArch64, colour conversion with NEON intrinsics | `render::up_row`, `render::ycc_row`, `color_neon::ycc16` |
+| The inverse DCT equals the specification's (libjpeg's `jidctint.c`) on all its paths: on AArch64 (and on x86-64 with SSE4.1, and WebAssembly with SIMD128, through verilith-simd's proven translations), NEON intrinsics in 16-bit lanes for blocks whose magnitudes sum to at most 2120 (nearly every block of a photograph) and in 32-bit lanes for the others whose dequantized values fit in 15 bits; elsewhere 32-bit arithmetic that compilers vectorize; and 64-bit arithmetic for the rest | `idct::idct_into`, `idct16::idct16_neon`, `idct_neon::idct_neon` against `spec::idct` |
+| Upsampling and colour conversion equal the specification's, including the branch-free kernels compilers vectorize and, on AArch64 (and on x86-64 without AVX2), colour conversion with NEON intrinsics | `render::up_row`, `render::ycc_row`, `color_neon::ycc16` |
 | Work: at most `jpeg_work(n, s, b, px) = 4n + (s + 1)(300b + 10) + 66b + 110px + 262,480` steps for an `n`-byte file with `s` scans, whose frame is stored in `b` blocks of 8x8 coefficients and has `px` pixels; `s` is at most `n + 65,552` | `decode::decode_counted` ensures (`decode` is the same code without the count) |
 | Work per stage: the marker segments, entropy decoding and restart searches at most `4(n + 65,568) + (s + 1)(300b + 10) + 200` steps; the inverse DCT and upsampling at most 66 steps per block and 110 per pixel | `parse::run_x`, `scan::scan_x`, `decode::render_x` |
 
@@ -71,8 +71,9 @@ safety and termination only; it reuses the verified segment parser.
 
 [TRUST.md](https://github.com/verilith/verilith/blob/main/crates/jpeg/TRUST.md) lists everything the proofs assume rather than prove.
 In short: the specification (`src/spec.rs`), two allocation primitives, the
-specifications of 35 NEON intrinsics in
-[verilith-simd](https://github.com/verilith/verilith/tree/main/crates/simd) (AArch64 only), the
+specifications of 46 NEON intrinsics in
+[verilith-simd](https://github.com/verilith/verilith/tree/main/crates/simd) (AArch64; on x86-64,
+the SSE intrinsic specifications those are proven from there), the
 unverified C glue (`src/capi.rs`, `src/tj.rs`), and Verus, vstd, Z3 and the
 Rust compiler.
 
@@ -190,6 +191,15 @@ conversion on AArch64 is NEON too (`src/color_neon.rs`), sixteen pixels at a
 time in 16-bit lanes, with the same branch-free Rust loop for the last
 pixels of a row and for other targets. The upsampling kernels are
 branch-free loops over slices that the compiler vectorizes on every target.
+
+On x86-64 the same NEON code runs on SSE when the CPU has SSE4.1 and SSSE3
+(`has_neon_sse`): verilith-simd proves each SIMD128 instruction the NEON
+wrappers are built from on SSE intrinsics (its `src/wasm_x86.rs`), so the
+proofs above hold there unchanged, on the strength of the Intel intrinsic
+specifications. The kernels are compiled with SSE4.1 and SSSE3 enabled.
+When the CPU has AVX2, the colour conversion loop and the upsampling
+kernels are instead compiled a second time with AVX2 enabled and the
+compiler's wider vectors are used; the inverse DCT keeps the SSE path.
 
 ## Tests
 

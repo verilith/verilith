@@ -232,6 +232,22 @@ spec("_mm256_testz_si256", None, [("a", "__m256i"), ("b", "__m256i")], "i32", ["
 spec("_mm_clmulepi64_si128", ["IMM8"], [("a", "__m128i"), ("b", "__m128i")], "__m128i", ["pclmul()", "IMM8 == 0"],
      ["u64x2(r)[0] == clmul_lo(u64x2(a)[0], u64x2(b)[0], 64)"])
 
+# 128-bit only, used by the SSE backend of the NEON wrappers (`crate::wasm_x86`).
+spec("_mm_abs_epi16", None, [("a", "__m128i")], "__m128i", ["ssse3()"], ["u16x8(r) == abs16(u16x8(a))"])
+spec("_mm_adds_epu16", None, [("a", "__m128i"), ("b", "__m128i")], "__m128i", [], ["u16x8(r) == adds_u16(u16x8(a), u16x8(b))"])
+spec("_mm_max_epu16", None, [("a", "__m128i"), ("b", "__m128i")], "__m128i", ["sse41()"], ["u16x8(r) == max_u16(u16x8(a), u16x8(b))"])
+spec("_mm_mullo_epi32", None, [("a", "__m128i"), ("b", "__m128i")], "__m128i", ["sse41()"], ["u32x4(r) == mullo32(u32x4(a), u32x4(b))"])
+# Shifts by the count in the low 64 bits of `count`, stated for counts below
+# the lane width (the only ones these specs allow).
+spec("_mm_sll_epi16", None, [("a", "__m128i"), ("count", "__m128i")], "__m128i", ["u64x2(count)[0] < 16"],
+     ["u16x8(r) == slli16(u16x8(a), u64x2(count)[0] as int)"])
+spec("_mm_sra_epi16", None, [("a", "__m128i"), ("count", "__m128i")], "__m128i", ["u64x2(count)[0] < 16"],
+     ["u16x8(r) == srai16(u16x8(a), u64x2(count)[0] as int)"])
+spec("_mm_sll_epi32", None, [("a", "__m128i"), ("count", "__m128i")], "__m128i", ["u64x2(count)[0] < 32"],
+     ["u32x4(r) == slli32(u32x4(a), u64x2(count)[0] as int)"])
+spec("_mm_sra_epi32", None, [("a", "__m128i"), ("count", "__m128i")], "__m128i", ["u64x2(count)[0] < 32"],
+     ["u32x4(r) == srai32(u32x4(a), u64x2(count)[0] as int)"])
+
 P("/// The 16-byte half selected by `sel` (0, 1: halves of `a`; 2, 3: of\n/// `b`; bit 3 zeroes it), as `vperm2i128` picks each half.")
 P("""pub open spec fn half128(a: Seq<u8>, b: Seq<u8>, sel: int) -> Seq<u8> {
     if sel % 16 >= 8 {

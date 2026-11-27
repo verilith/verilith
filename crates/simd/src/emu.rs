@@ -549,6 +549,73 @@ pub fn _mm256_set_m128i(hi: __m128i, lo: __m128i) -> __m256i {
     __m256i(r)
 }
 
+// 128-bit only: what the SSE backend of the NEON wrappers uses.
+
+/// `_mm_abs_epi16`, emulated.
+#[inline]
+pub fn _mm_abs_epi16(a: __m128i) -> __m128i {
+    let mut r = [0u8; 16];
+    for i in 0..8 {
+        s16(&mut r, i, (g16(&a.0, i) as i16).wrapping_abs() as u16);
+    }
+    __m128i(r)
+}
+/// `_mm_adds_epu16`, emulated.
+#[inline]
+pub fn _mm_adds_epu16(a: __m128i, b: __m128i) -> __m128i {
+    __m128i(map16(a.0, b.0, u16::saturating_add))
+}
+/// `_mm_max_epu16`, emulated.
+#[inline]
+pub fn _mm_max_epu16(a: __m128i, b: __m128i) -> __m128i {
+    __m128i(map16(a.0, b.0, u16::max))
+}
+/// `_mm_mullo_epi32`, emulated.
+#[inline]
+pub fn _mm_mullo_epi32(a: __m128i, b: __m128i) -> __m128i {
+    __m128i(map32(a.0, b.0, u32::wrapping_mul))
+}
+/// `_mm_sll_epi16`, emulated: by the low 64 bits of `count`.
+#[inline]
+pub fn _mm_sll_epi16(a: __m128i, count: __m128i) -> __m128i {
+    let n = g64(&count.0, 0);
+    let mut r = [0u8; 16];
+    for i in 0..8 {
+        s16(&mut r, i, if n > 15 { 0 } else { g16(&a.0, i) << n });
+    }
+    __m128i(r)
+}
+/// `_mm_sra_epi16`, emulated: by the low 64 bits of `count`.
+#[inline]
+pub fn _mm_sra_epi16(a: __m128i, count: __m128i) -> __m128i {
+    let n = g64(&count.0, 0).min(15);
+    let mut r = [0u8; 16];
+    for i in 0..8 {
+        s16(&mut r, i, ((g16(&a.0, i) as i16) >> n) as u16);
+    }
+    __m128i(r)
+}
+/// `_mm_sll_epi32`, emulated: by the low 64 bits of `count`.
+#[inline]
+pub fn _mm_sll_epi32(a: __m128i, count: __m128i) -> __m128i {
+    let n = g64(&count.0, 0);
+    let mut r = [0u8; 16];
+    for i in 0..4 {
+        s32(&mut r, i, if n > 31 { 0 } else { g32(&a.0, i) << n });
+    }
+    __m128i(r)
+}
+/// `_mm_sra_epi32`, emulated: by the low 64 bits of `count`.
+#[inline]
+pub fn _mm_sra_epi32(a: __m128i, count: __m128i) -> __m128i {
+    let n = g64(&count.0, 0).min(31);
+    let mut r = [0u8; 16];
+    for i in 0..4 {
+        s32(&mut r, i, ((g32(&a.0, i) as i32) >> n) as u32);
+    }
+    __m128i(r)
+}
+
 /// The 16-bit lanes `e0` (lowest) to `e7`.
 #[allow(clippy::too_many_arguments)]
 #[inline]
