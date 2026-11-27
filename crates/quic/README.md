@@ -111,6 +111,14 @@ Loss recovery (RFC 9002), for one packet number space each:
   decode, through the same `frame::AckRanges` a peer uses, back to
   exactly those ranges. When a 33rd range is needed the oldest is dropped
   and everything below it is treated as a duplicate from then on.
+- **Stream reassembly** (§2.2, `reasm`): `Reassembly` puts STREAM and
+  CRYPTO data back in order. Against a ghost map of every byte received
+  (the first copy of each offset), the application reads exactly those
+  bytes, from `read_offset` on, in order and once; `contiguous` is exactly
+  where they stop being contiguous; and the buffer stays below twice the
+  window plus 16 KiB however the peer splits, repeats or overlaps its
+  frames, since data past `read_offset + window` is refused. In-order data
+  is appended with one copy.
 
 Every loop in a parser consumes input, so parsing is linear in the input;
 the PADDING scan reads eight bytes at a time.

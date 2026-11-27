@@ -7,7 +7,8 @@
 //! congestion control (`sent`, `recv`, `rtt`, `cc`), flow control and
 //! stream states (`flow`, `streams`) and the anti-amplification limit
 //! (`amplification`). This file connects them.
-use crate::buf::{Assembler, SendBuf};
+use crate::buf::SendBuf;
+use verilith_quic::reasm::{Reassembly, MAX_WINDOW};
 use bytes::Bytes;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -194,7 +195,7 @@ struct Space<P: Provider> {
     sent: Sent,
     recv: Received,
     crypto_out: SendBuf,
-    crypto_in: Assembler,
+    crypto_in: Reassembly,
     /// The records of packets sent, by index from `rec_base`.
     recs: VecDeque<Rec>,
     rec_base: u64,
@@ -216,7 +217,7 @@ impl<P: Provider> Space<P> {
             sent: Sent::new(),
             recv: Received::new(),
             crypto_out: SendBuf::default(),
-            crypto_in: Assembler::default(),
+            crypto_in: Reassembly::new(MAX_CRYPTO_BUFFER as u64),
             recs: VecDeque::new(),
             rec_base: 0,
             probes: 0,
@@ -254,7 +255,7 @@ struct SendSide {
 
 struct RecvSide {
     st: RecvStream,
-    asm: Assembler,
+    asm: Reassembly,
     /// The limit last advertised (initial or MAX_STREAM_DATA).
     advertised: u64,
     /// A MAX_STREAM_DATA is owed.
@@ -420,9 +421,10 @@ impl<P: Provider> Connection<P> {
         tp.initial_scid = Some(&local_cid);
         tp.max_idle_timeout = Some(cfg.idle_timeout_ms);
         tp.initial_max_data = Some(cfg.max_data);
-        tp.initial_max_stream_data_bidi_remote = Some(cfg.stream_window);
-        tp.initial_max_stream_data_bidi_local = Some(cfg.stream_window);
-        tp.initial_max_stream_data_uni = Some(cfg.stream_window);
+        let w = cfg.stream_window.clamp(1, MAX_WINDOW);
+        tp.initial_max_stream_data_bidi_remote = Some(w);
+        tp.initial_max_stream_data_bidi_local = Some(w);
+        tp.initial_max_stream_data_uni = Some(w);
         tp.initial_max_streams_bidi = Some(cfg.max_streams_bidi);
         tp.initial_max_streams_uni = Some(cfg.max_streams_uni);
         tp.max_ack_delay = Some(cfg.max_ack_delay_ms);
@@ -988,18 +990,16 @@ impl<P: Provider> Connection<P> {
     fn on_crypto(&mut self, now: u64, s: usize, offset: u64, data: &[u8]) -> Result<(), u64> {
         {
             let sp = &mut self.spaces[s];
-            sp.crypto_in.insert(offset, data);
-            if sp.crypto_in.buffered() > MAX_CRYPTO_BUFFER {
+            if offset + data.len() as u64 > verilith_quic::reasm::OFFSET_LIMIT || !sp.crypto_in.insert(offset, data) {
                 return Err(CRYPTO_BUFFER_EXCEEDED);
             }
         }
         let level = LEVELS[s];
         loop {
-            let (a, b) = self.spaces[s].crypto_in.peek();
-            if a.is_empty() {
+            let chunk = self.spaces[s].crypto_in.peek();
+            if chunk.is_empty() {
                 break;
             }
-            let chunk = if a.is_empty() { b } else { a };
             let n = chunk.len();
             let mut out = Out::new();
             let r = self.tls.read(level, chunk, &mut out);
@@ -1104,11 +1104,16 @@ impl<P: Provider> Connection<P> {
         Ok(())
     }
 
+    /// Each stream's receive window (at most [`MAX_WINDOW`]).
+    fn stream_window(&self) -> u64 {
+        self.cfg.stream_window.clamp(1, MAX_WINDOW)
+    }
+
     fn create_peer_stream(&mut self, id: u64, bidi: bool) {
-        let w = self.cfg.stream_window;
+        let w = self.stream_window();
         let recv = Some(RecvSide {
             st: RecvStream::new(w),
-            asm: Assembler::default(),
+            asm: Reassembly::new(w),
             advertised: w,
             send_max: false,
             reset: None,
@@ -1149,7 +1154,10 @@ impl<P: Provider> Connection<P> {
             return Ok(());
         }
         let before = r.asm.contiguous();
-        r.asm.insert(offset, data);
+        // Flow control (above) keeps the data within the window.
+        if !r.asm.insert(offset, data) {
+            return Err(FLOW_CONTROL_ERROR);
+        }
         let size_known_all = matches!(r.st.get_final_size(), Some(f) if r.asm.contiguous() == f);
         if size_known_all && r.st.get_state() == RecvState::SizeKnown {
             r.st.on_all_received();
@@ -1204,8 +1212,8 @@ impl<P: Provider> Connection<P> {
         let (_, remote, uni) = self.peer_stream_data;
         let send = Some(self.new_send(if bidi { remote } else { uni }));
         let recv = if bidi {
-            let w = self.cfg.stream_window;
-            Some(RecvSide { st: RecvStream::new(w), asm: Assembler::default(), advertised: w, send_max: false, reset: None, stop: None, done: false })
+            let w = self.stream_window();
+            Some(RecvSide { st: RecvStream::new(w), asm: Reassembly::new(w), advertised: w, send_max: false, reset: None, stop: None, done: false })
         } else {
             None
         };
@@ -1216,6 +1224,7 @@ impl<P: Provider> Connection<P> {
     /// Reads up to `max` bytes of stream `id` into `out`. `Ok((n, fin))`:
     /// `n` bytes, and `fin` once the stream's end is reached.
     pub fn read(&mut self, id: u64, out: &mut Vec<u8>, max: usize) -> Result<(usize, bool), StreamError> {
+        let w = self.stream_window();
         let Some(Stream { recv: Some(r), .. }) = self.streams.get_mut(&id) else { return Err(StreamError::Unknown) };
         if r.done {
             return Err(StreamError::Closed);
@@ -1235,7 +1244,6 @@ impl<P: Provider> Connection<P> {
         }
         // Flow control credit: raise the stream's limit, and the
         // connection's, once half the window is consumed (§4.2).
-        let w = self.cfg.stream_window;
         if !fin && r.st.get_state() == RecvState::Recv && r.asm.read_offset() + w - r.advertised >= w / 2 {
             let m = r.asm.read_offset() + w;
             if m < verilith_quic::spec::VARINT_LIMIT {
