@@ -1,0 +1,127 @@
+{
+ "functions": [
+  {
+   "name": "ctcheck_clean"
+  },
+  {
+   "name": "ctcheck_leak_branch",
+   "expect": "branch"
+  },
+  {
+   "name": "ctcheck_leak_index",
+   "expect": "address"
+  },
+  {
+   "name": "ctcheck_leak_divide",
+   "expect": "variable-time"
+  },
+  {
+   "name": "ctcheck_leak_vector",
+   "expect": "branch"
+  },
+  {
+   "name": "ctcheck_leak_select",
+   "expect": "branch"
+  },
+  {
+   "name": "verilith_aes::aead::tf::expand"
+  },
+  {
+   "name": "verilith_aes::aead::tf::enc"
+  },
+  {
+   "name": "verilith_aes::aead::tf::new"
+  },
+  {
+   "name": "verilith_aes::aead::tf::seal_ni",
+   "arch": "x86_64",
+   "public": [
+    [
+     0,
+     "${CTCHECK_NR_OFFSET}",
+     8
+    ]
+   ],
+   "stack_args": 1
+  },
+  {
+   "name": "verilith_aes::aead::tf::open_ni",
+   "arch": "x86_64",
+   "public": [
+    [
+     0,
+     "${CTCHECK_NR_OFFSET}",
+     8
+    ]
+   ],
+   "stack_args": 1
+  },
+  {
+   "name": "verilith_aes::aead::tf::seal_vaes",
+   "arch": "x86_64",
+   "public": [
+    [
+     0,
+     "${CTCHECK_NR_OFFSET}",
+     8
+    ]
+   ],
+   "stack_args": 1
+  },
+  {
+   "name": "verilith_aes::aead::tf::open_vaes",
+   "arch": "x86_64",
+   "public": [
+    [
+     0,
+     "${CTCHECK_NR_OFFSET}",
+     8
+    ]
+   ],
+   "stack_args": 1
+  },
+  {
+   "name": "verilith_aes::aead::tf::seal",
+   "arch": "aarch64",
+   "public": [
+    [
+     0,
+     "${CTCHECK_NR_OFFSET}",
+     8
+    ]
+   ]
+  },
+  {
+   "name": "verilith_aes::aead::tf::open",
+   "arch": "aarch64",
+   "public": [
+    [
+     0,
+     "${CTCHECK_NR_OFFSET}",
+     8
+    ]
+   ]
+  },
+  {
+   "name": "verilith_aes::aead::tf::seal_ni",
+   "arch": "x86_64",
+   "stack_args": 1,
+   "expect": "any",
+   "note": "control: with the round count secret too, its use in a branch or an address must be reported"
+  },
+  {
+   "name": "verilith_aes::aead::tf::seal_vaes",
+   "arch": "x86_64",
+   "stack_args": 1,
+   "expect": "any",
+   "note": "control: as above"
+  },
+  {
+   "name": "verilith_aes::aead::tf::seal",
+   "arch": "aarch64",
+   "expect": "any",
+   "note": "control: as above"
+  }
+ ],
+ "_comment": "The functions tools/ctcheck.py (scripts/ctcheck.py) checks in examples/ctcheck's binary. 'public' lists [argument, offset, length] ranges of memory the function may treat as public (all other memory it is handed is secret); argument 0 of seal and open is the Gcm, whose nr field is the round count. 'expect' other than pass marks a control that must be reported."
+}

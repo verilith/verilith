@@ -361,15 +361,16 @@ pub fn acc_x<A: Isa>(l: A::R, m: A::R, h: A::R, x: A::R, k: A::R) -> (r: (A::R, 
 /// GHASH of n <= 8 blocks at `d[i..]`, from `acc`, with one reduction:
 /// the sum of the blocks times H^n .. H^1 (the first with `acc` added).
 #[inline(always)]
-pub fn ghash_x<A: Isa>(acc: u128, d: &[u8], i: usize, n: usize, hp: &[u128; 16], Ghost(h): Ghost<u128>) -> (r: u128)
+pub fn ghash_x<A: Isa>(accr: A::R, d: &[u8], i: usize, n: usize, hp: &[u128; 16], Ghost(h): Ghost<u128>) -> (r: A::R)
     requires
         A::ok(),
         1 <= n <= 16,
         i + 16 * n <= d@.len(),
         powers_ok(h, hp@),
     ensures
-        r == ghash_from(h, acc, blocks_at(d@, i as int, n as int)),
+        A::v(r) == ghash_from(h, A::v(accr), blocks_at(d@, i as int, n as int)),
 {
+    let ghost acc = A::v(accr);
     let ghost xs = blocks_at(d@, i as int, n as int);
     let ghost ys = xs.update(0, acc ^ xs[0]);
     let _len = d.len();
@@ -394,6 +395,7 @@ pub fn ghash_x<A: Isa>(acc: u128, d: &[u8], i: usize, n: usize, hp: &[u128; 16],
             xb::<A>(rev) == rev_mask(),
             xs == blocks_at(d@, i as int, n as int),
             ys == xs.update(0, acc ^ xs[0]),
+            acc == A::v(accr),
             j <= n,
             d@.len() <= usize::MAX,
             o == i + 16 * j,
@@ -408,7 +410,7 @@ pub fn ghash_x<A: Isa>(acc: u128, d: &[u8], i: usize, n: usize, hp: &[u128; 16],
         ;
         let mut x = load_be::<A>(d, o, rev);
         if j == 0 {
-            x = A::xor(x, A::set(acc));
+            x = A::xor(x, accr);
             proof {
                 let a = xs[0];
                 assert(a ^ acc == acc ^ a) by (bit_vector);
@@ -435,7 +437,7 @@ pub fn ghash_x<A: Isa>(acc: u128, d: &[u8], i: usize, n: usize, hp: &[u128; 16],
         lemma_ghash_from_first(h, acc, xs);
     }
     let (lo, hi) = join_x::<A>(l, m, hh);
-    A::get(red_x::<A>(lo, hi))
+    red_x::<A>(lo, hi)
 }
 
 /// `buf` is `b0` with `buf[i..i + 16 m]` encrypted from counter c.

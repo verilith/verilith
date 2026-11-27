@@ -60,9 +60,29 @@ Each `requires` that the CPU has the extension (`ni()`, `vaes()`,
   function. The choice between the 128-bit and 16-block kernels is
   verified (`AesGcm::new`).
 
+## The constant-time check
+
+- `src/ct.rs`: `declassify`, an `external_body` identity on `bool`, kept
+  out of line so that `open`'s one decision (whether the tag matched) is
+  on its result. The binary check treats that result, and only it, as
+  public.
+- `scripts/ctcheck.py` (the static check of the machine code) trusts:
+  capstone 5.0.7's decoding, and its lists of the registers and flags
+  each instruction reads and writes; LLVM's stack-frame-layout remark, for
+  which stack slots are variables (a store through an index or a pointer
+  can reach only those, since the code is memory safe; spill slots are
+  addressed only at fixed offsets); its summaries of `memcpy`, `memmove`
+  and `memset` (time independent of the bytes) and the rule that a
+  function whose name says it panics does not return; and its
+  transcription of Intel's data-operand-independent-timing list and Arm's
+  FEAT_DIT list. `ctcheck.json` says which memory is public: an expanded
+  key's round count, nothing else.
+- `examples/ctcheck.rs`: the controls, which must be reported.
+
 ## Not covered
 
-- Timing: proofs say nothing about it. There are no secret-indexed tables
-  (AES and GHASH are instructions), and `ci.sh ct` checks the compiled
-  sealing path and block cipher under Valgrind (see the README).
+- Timing: Verus proves what the code computes, not how long it takes. That
+  no branch, address or variable-time instruction depends on a secret is
+  shown instead by the type of the generic code (secrets are `A::R`) and,
+  on the machine code, by `ci.sh ctstatic` (see the README).
 - The Rust compiler and LLVM, as for all of this repository.
