@@ -69,14 +69,20 @@ build_node() {
     say "Node $name: already built"
     return
   fi
-  say "Node $name: unpack"
-  rm -rf "$dir"; mkdir -p "$dir"
-  tar xJf "$tarball" -C "$dir" --strip-components 1
-  if [ "$name" = hardened ] && has llhttp; then
-    "$(ours vhttp)/compat/llhttp/node.sh" "$dir"
+  # A build that was interrupted after configure picks up where it stopped.
+  if [ -n "$ninja" ] && [ -f "$dir/out/Release/build.ninja" ] && [ "$(cat "$dir/.vbench-configured" 2>/dev/null)" = "$stamp" ]; then
+    say "Node $name: resume the interrupted build"
+  else
+    say "Node $name: unpack"
+    rm -rf "$dir"; mkdir -p "$dir"
+    tar xJf "$tarball" -C "$dir" --strip-components 1
+    if [ "$name" = hardened ] && has llhttp; then
+      "$(ours vhttp)/compat/llhttp/node.sh" "$dir"
+    fi
+    say "Node $name: configure ${*}"
+    (cd "$dir" && CFLAGS="$CPUFLAG" CXXFLAGS="$CPUFLAG" python3 configure.py $ninja "$@" > "$NW/$name.configure.log")
+    echo "$stamp" > "$dir/.vbench-configured"
   fi
-  say "Node $name: configure ${*}"
-  (cd "$dir" && CFLAGS="$CPUFLAG" CXXFLAGS="$CPUFLAG" python3 configure.py $ninja "$@" > "$NW/$name.configure.log")
   say "Node $name: build (log: $NW/$name.build.log)"
   if [ -n "$ninja" ]; then
     (cd "$dir" && ninja -C out/Release -j "$NPROC" node > "$NW/$name.build.log" 2>&1) || { tail -30 "$NW/$name.build.log"; die "Node $name failed to build"; }
@@ -148,13 +154,16 @@ csv=$OUT/compare.csv
 : > "$csv"
 cd "$NW/official"
 bench_lock node compare.js
+# On a quieted Linux machine, on the same CPU as the library benchmarks.
+pin=""
+[ "$OS" = Linux ] && [ -n "${VBENCH_CPU:-}" ] && pin="taskset -c $VBENCH_CPU"
 for spec in $NODE_BENCHES; do
   file=${spec%%:*}
   sets=""
   if [ "$spec" != "$file" ]; then for s in $(echo "${spec#*:}" | tr ',' ' '); do sets="$sets --set $s"; done; fi
   cat=${file%%/*}; base=$(basename "$file" .js)
   say "  $file $sets"
-  "$OFF" benchmark/compare.js --old "$OFF" --new "$HRD" --runs "$NODE_RUNS" --filter "$base.js" $sets "$cat" > "$OUT/part.csv"
+  $pin "$OFF" benchmark/compare.js --old "$OFF" --new "$HRD" --runs "$NODE_RUNS" --filter "$base.js" $sets "$cat" > "$OUT/part.csv"
   if [ -s "$csv" ]; then tail -n +2 "$OUT/part.csv" >> "$csv"; else cat "$OUT/part.csv" > "$csv"; fi
 done
 rm -f "$OUT/part.csv"

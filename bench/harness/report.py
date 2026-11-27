@@ -176,8 +176,13 @@ def side_by_side(by_comp):
     L.append("")
     L.append("\\* The two sides differ in more than the parser; see the note under that table below.\n")
     for key, v in pairs.items():
-        d = {s["case"].split("/", 1)[-1]: s for s in by_comp[v["drop-in"]["id"]]}
-        n = {s["case"].split("/", 1)[-1]: s for s in by_comp[v["native"]["id"]]}
+        # Cases match by name; where the two runners name them differently
+        # (a different prefix), by the name after the first "/".
+        d = {s["case"]: s for s in by_comp[v["drop-in"]["id"]]}
+        n = {s["case"]: s for s in by_comp[v["native"]["id"]]}
+        if not set(d) & set(n):
+            d = {k.split("/", 1)[-1]: s for k, s in d.items()}
+            n = {k.split("/", 1)[-1]: s for k, s in n.items()}
         any_n = next(iter(n.values()))
         any_d = next(iter(d.values()))
         L.append(f"### {any_d['original']}: {v['native']['task']}\n")
@@ -202,7 +207,7 @@ def write_md(path, summary, machine, notes):
     L.append("# vbench results\n")
     if machine:
         L.append("## Machine\n")
-        for k in ("date", "host", "os", "cpu", "cores", "memory", "power", "rustc", "cc", "node", "counters"):
+        for k in ("date", "host", "os", "cpu", "cores", "memory", "power", "pinned_cpu", "quiet", "virtual_machine", "rustc", "cc", "node", "counters"):
             if machine.get(k):
                 L.append(f"- **{k}**: {machine[k]}")
         L.append("")

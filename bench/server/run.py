@@ -96,11 +96,27 @@ def h2load_h3():
     return h3_tool("H2LOAD_H3", "bin", "h2load")
 
 
-def fill(src, dst, vars):
+def fill(src, dst, vars, drop=()):
+    """Fills @VARS@ in a config template; drops lines whose first word is in drop."""
     s = open(src).read()
     for k, v in vars.items():
         s = s.replace("@%s@" % k, str(v))
+    s = "".join(l for l in s.splitlines(True) if not (l.split() and l.split()[0] in drop))
     open(dst, "w").write(s)
+
+
+def h2o_drop(b):
+    """Config lines an h2o build would refuse. `user:` makes h2o switch user,
+    which only root may do (and h2o master tries even when not root); h2o
+    master no longer takes `reuseport` on a listener (it always reuses)."""
+    drop = [] if os.geteuid() == 0 else ["user:"]
+    try:
+        v = subprocess.run([b, "--version"], capture_output=True, text=True, timeout=10).stdout.split()
+    except Exception:
+        v = []
+    if not any(w.startswith("2.2.") for w in v):
+        drop.append("reuseport:")
+    return drop
 
 
 def server_cmds(env):
@@ -155,19 +171,57 @@ def server_cmds(env):
     b = h3_tool("H2O_H3", "bin", "h2o")
     if b:
         conf = os.path.join(env["run"], "h2o-quic.conf")
-        fill(os.path.join(HERE, "conf/h2o-quic.conf.in"), conf, v)
+        fill(os.path.join(HERE, "conf/h2o-quic.conf.in"), conf, v, h2o_drop(b))
         out["h2o-quic"] = [b, "-c", conf]
     b = which("nginx")
     if b:
         conf = os.path.join(env["run"], "nginx.conf")
         fill(os.path.join(HERE, "conf/nginx.conf.in"), conf, v)
         out["nginx"] = [b, "-c", conf, "-p", env["run"]]
-    b = which("h2o")
+    # h2o as the distribution ships it (2.2 on Debian and Ubuntu up to
+    # 24.04). Ubuntu 26.04 has no h2o package: there the h2o master that
+    # h3/build.sh builds (with mruby, like the package) serves TCP too.
+    b = which("h2o") or h3_tool("H2O_H3", "bin", "h2o")
     if b:
         conf = os.path.join(env["run"], "h2o.conf")
-        fill(os.path.join(HERE, "conf/h2o.conf.in"), conf, v)
+        fill(os.path.join(HERE, "conf/h2o.conf.in"), conf, v, h2o_drop(b))
         out["h2o"] = [b, "-c", conf]
     return out
+
+
+def cpu_list(cpus):
+    """[0, 1, 2, 5] -> "0-2,5", for taskset -c."""
+    out, cpus = [], sorted(cpus)
+    i = 0
+    while i < len(cpus):
+        j = i
+        while j + 1 < len(cpus) and cpus[j + 1] == cpus[j] + 1:
+            j += 1
+        out.append(str(cpus[i]) if i == j else "%d-%d" % (cpus[i], cpus[j]))
+        i = j + 1
+    return ",".join(out)
+
+
+def default_cpus():
+    """(server CPUs, client CPUs): the online CPUs split in half by physical
+    core, so that the two hyperthreads of a core are on the same side. A
+    plain split of 0..n-1 would give the server one thread of every core and
+    the load generator the other (Linux numbers siblings n/2 apart on most
+    x86 machines), and the two would share every core."""
+    cpus = sorted(os.sched_getaffinity(0))
+    cores = {}
+    for c in cpus:
+        t = "/sys/devices/system/cpu/cpu%d/topology/" % c
+        try:
+            key = (open(t + "physical_package_id").read().strip(), open(t + "core_id").read().strip())
+        except OSError:
+            key = ("", str(c))
+        cores.setdefault(key, []).append(c)
+    groups = sorted(cores.values(), key=min)
+    if len(groups) < 2:
+        return cpu_list(cpus[:max(1, len(cpus) // 2)]), cpu_list(cpus[len(cpus) // 2:] or cpus)
+    half = len(groups) // 2
+    return cpu_list(sum(groups[:half], [])), cpu_list(sum(groups[half:], []))
 
 
 def make_env(run, threads):
@@ -375,6 +429,9 @@ def run_h2load(case, cpus, threads, dur, run):
 
 def measure(srv, case, ccpus, cthreads, dur, warm, run):
     f = run_wrk if CASES[case]["tool"] == "wrk" else run_h2load
+    # wrk and h2load refuse more threads than connections (on a big machine
+    # the client side has more CPUs than some cases have connections).
+    cthreads = min(cthreads, CASES[case]["conns"])
     if warm:
         f(case, ccpus, cthreads, warm, run)
     c0, t0 = srv.cpu(), time.time()
@@ -440,7 +497,7 @@ def versions(cmds):
     for name in cmds:
         try:
             if name == "nginx":
-                v[name] = subprocess.run(["nginx", "-v"], capture_output=True, text=True).stderr.strip().split("/")[-1]
+                v[name] = subprocess.run([cmds[name][0], "-v"], capture_output=True, text=True).stderr.strip().split("/")[-1]
             elif name == "nginx-quic":
                 v[name] = subprocess.run([cmds[name][0], "-v"], capture_output=True, text=True).stderr.strip().split("/")[-1]
             elif name == "h2o-quic":
@@ -450,7 +507,7 @@ def versions(cmds):
                 v[name] = " ".join("%s %s" % (c, re.search(r'name = "%s"\nversion = "([^"]+)"' % c, lock).group(1))
                                    for c in ["h3", "quinn"])
             elif name == "h2o":
-                v[name] = subprocess.run(["h2o", "--version"], capture_output=True, text=True).stdout.split("\n")[0].split()[-1]
+                v[name] = subprocess.run([cmds[name][0], "--version"], capture_output=True, text=True).stdout.split("\n")[0].split()[-1]
             elif name == "hyper":
                 lock = open(os.path.join(HERE, "baselines/hyper/Cargo.lock")).read()
                 m = re.search(r'name = "hyper"\nversion = "([^"]+)"', lock)
@@ -472,14 +529,15 @@ def versions(cmds):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    n = os.cpu_count()
+    n = len(os.sched_getaffinity(0))
+    scpus, ccpus = default_cpus()
     ap.add_argument("--servers", help="comma-separated (default: every one found)")
     ap.add_argument("--cases", help="comma-separated (default: all)")
     ap.add_argument("--rounds", type=int, default=3)
     ap.add_argument("--duration", type=float, default=10.0)
     ap.add_argument("--warmup", type=float, default=2.0)
-    ap.add_argument("--server-cpus", default="0-%d" % (n // 2 - 1))
-    ap.add_argument("--client-cpus", default="%d-%d" % (n // 2, n - 1))
+    ap.add_argument("--server-cpus", default=scpus, help="default: the first half of the cores (%(default)s)")
+    ap.add_argument("--client-cpus", default=ccpus, help="default: the other half (%(default)s)")
     ap.add_argument("--quick", action="store_true")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--out")
