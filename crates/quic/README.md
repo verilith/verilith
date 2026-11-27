@@ -137,6 +137,15 @@ Loss recovery (RFC 9002), for one packet number space each:
   packet's records, `take` returns each record once however often its
   packet is reported acknowledged or lost, and only the record pushed at
   that index, and `trim` frees the taken records at the front.
+- **Writing packets** (§12.4, §14, RFC 9002 §7, `pktbuf`): `put_frame`
+  writes a frame (its type and varint fields) only if it, and the payload
+  bytes reserved after it, fit before the packet's end, and otherwise
+  writes nothing. `packet_ends` gives those ends: the datagram's room
+  less the AEAD tag, and for ack-eliciting frames also the congestion
+  window's room, except for probes. `pad` never takes a datagram past its
+  allowance (the datagram size and the anti-amplification limit), and
+  pads one carrying an ack-eliciting Initial to 1200 bytes when the
+  allowance permits.
 
 Every loop in a parser consumes input, so parsing is linear in the input;
 the PADDING scan reads eight bytes at a time.
@@ -165,9 +174,9 @@ parsers. `tests/recovery.rs` runs a sender's `Sent` and a receiver's
 frame encoded and parsed in between, and checks that only received
 packets are acknowledged, no packet is acknowledged or lost twice, and
 the bytes in flight match a model; and RFC 9002's arithmetic on known
-values. `tests/reasm.rs`, `tests/sendq.rs` and `tests/reclog.rs` check
-reassembly, `RangeSet`, `SendState` and `RecLog` against simple
-references.
+values. `tests/reasm.rs`, `tests/sendq.rs`, `tests/reclog.rs` and
+`tests/pktbuf.rs` check reassembly, `RangeSet`, `SendState`, `RecLog`
+and `put_frame` against simple references.
 
 `bench/` compares verilith-quic with quinn-proto 0.11.19 and quiche
 0.24.9 (`bench/setup.sh` copies them from crates.io and makes their frame

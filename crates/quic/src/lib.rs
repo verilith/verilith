@@ -10,6 +10,7 @@ pub mod frame;
 pub mod lemmas;
 pub mod packet;
 pub mod params;
+pub mod pktbuf;
 pub mod reasm;
 pub mod ranges;
 pub mod reclog;
