@@ -414,6 +414,15 @@ pub open spec fn srai16(a: Seq<u16>, n: int) -> Seq<u16> {
     Seq::new(a.len(), |i: int| ((s16(a[i]) / pow2_spec(if n > 15 { 15 } else { n as nat }) as int) % 0x10000) as u16)
 }
 
+/// `psrad`: each 32-bit lane shifted right arithmetically by `n` (31 for
+/// counts past 31).
+pub open spec fn srai32(a: Seq<u32>, n: int) -> Seq<u32> {
+    Seq::new(
+        a.len(),
+        |i: int| ((s32(a[i]) / pow2_spec(if n > 31 { 31 } else { n as nat }) as int) % 0x1_0000_0000) as u32,
+    )
+}
+
 /// Multiply signed 16-bit lanes and add adjacent pairs into 32-bit lanes
 /// (`madd_epi16`).
 pub open spec fn madd16(a: Seq<u16>, b: Seq<u16>) -> Seq<u32> {

@@ -173,6 +173,28 @@ fn extras() {
             c128(unsafe { x::_mm_setr_epi16(w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]) })
         );
     }
+    // The 128-bit intrinsics the SSE backend of the NEON wrappers adds.
+    bin!(r, _mm_adds_epu16);
+    #[target_feature(enable = "sse4.1,ssse3")]
+    fn sse41(a: x::__m128i, b: x::__m128i) -> [x::__m128i; 3] {
+        [x::_mm_abs_epi16(a), x::_mm_max_epu16(a, b), x::_mm_mullo_epi32(a, b)]
+    }
+    for _ in 0..N {
+        let (a, b) = (r.b16(), r.b16());
+        let want = unsafe { sse41(x128(a), x128(b)) };
+        assert_eq!(e::_mm_abs_epi16(e::__m128i(a)).0, c128(want[0]), "_mm_abs_epi16");
+        assert_eq!(e::_mm_max_epu16(e::__m128i(a), e::__m128i(b)).0, c128(want[1]), "_mm_max_epu16");
+        assert_eq!(e::_mm_mullo_epi32(e::__m128i(a), e::__m128i(b)).0, c128(want[2]), "_mm_mullo_epi32");
+        // Counts up to past the lane width, and with high bits set.
+        let k = r.next();
+        let n = if k % 8 == 0 { k >> 3 } else { (k >> 3) % 40 };
+        let c = e::_mm_cvtsi64_si128(n as i64);
+        let cx = x128(c.0);
+        assert_eq!(e::_mm_sll_epi16(e::__m128i(a), c).0, c128(unsafe { x::_mm_sll_epi16(x128(a), cx) }), "_mm_sll_epi16 {n}");
+        assert_eq!(e::_mm_sra_epi16(e::__m128i(a), c).0, c128(unsafe { x::_mm_sra_epi16(x128(a), cx) }), "_mm_sra_epi16 {n}");
+        assert_eq!(e::_mm_sll_epi32(e::__m128i(a), c).0, c128(unsafe { x::_mm_sll_epi32(x128(a), cx) }), "_mm_sll_epi32 {n}");
+        assert_eq!(e::_mm_sra_epi32(e::__m128i(a), c).0, c128(unsafe { x::_mm_sra_epi32(x128(a), cx) }), "_mm_sra_epi32 {n}");
+    }
     if std::is_x86_feature_detected!("pclmulqdq") {
         #[target_feature(enable = "pclmulqdq")]
         fn go<const K: i32>(a: x::__m128i, b: x::__m128i) -> x::__m128i {

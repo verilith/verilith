@@ -896,6 +896,60 @@ pub assume_specification<const IMM8: i32>[ core::arch::x86_64::_mm_clmulepi64_si
         u64x2(r)[0] == clmul_lo(u64x2(a)[0], u64x2(b)[0], 64),
 ;
 
+pub assume_specification[ core::arch::x86_64::_mm_abs_epi16 ](a: __m128i) -> (r: __m128i)
+    requires
+        ssse3(),
+    ensures
+        u16x8(r) == abs16(u16x8(a)),
+;
+
+pub assume_specification[ core::arch::x86_64::_mm_adds_epu16 ](a: __m128i, b: __m128i) -> (r: __m128i)
+    ensures
+        u16x8(r) == adds_u16(u16x8(a), u16x8(b)),
+;
+
+pub assume_specification[ core::arch::x86_64::_mm_max_epu16 ](a: __m128i, b: __m128i) -> (r: __m128i)
+    requires
+        sse41(),
+    ensures
+        u16x8(r) == max_u16(u16x8(a), u16x8(b)),
+;
+
+pub assume_specification[ core::arch::x86_64::_mm_mullo_epi32 ](a: __m128i, b: __m128i) -> (r: __m128i)
+    requires
+        sse41(),
+    ensures
+        u32x4(r) == mullo32(u32x4(a), u32x4(b)),
+;
+
+pub assume_specification[ core::arch::x86_64::_mm_sll_epi16 ](a: __m128i, count: __m128i) -> (r: __m128i)
+    requires
+        u64x2(count)[0] < 16,
+    ensures
+        u16x8(r) == slli16(u16x8(a), u64x2(count)[0] as int),
+;
+
+pub assume_specification[ core::arch::x86_64::_mm_sra_epi16 ](a: __m128i, count: __m128i) -> (r: __m128i)
+    requires
+        u64x2(count)[0] < 16,
+    ensures
+        u16x8(r) == srai16(u16x8(a), u64x2(count)[0] as int),
+;
+
+pub assume_specification[ core::arch::x86_64::_mm_sll_epi32 ](a: __m128i, count: __m128i) -> (r: __m128i)
+    requires
+        u64x2(count)[0] < 32,
+    ensures
+        u32x4(r) == slli32(u32x4(a), u64x2(count)[0] as int),
+;
+
+pub assume_specification[ core::arch::x86_64::_mm_sra_epi32 ](a: __m128i, count: __m128i) -> (r: __m128i)
+    requires
+        u64x2(count)[0] < 32,
+    ensures
+        u32x4(r) == srai32(u32x4(a), u64x2(count)[0] as int),
+;
+
 /// The 16-byte half selected by `sel` (0, 1: halves of `a`; 2, 3: of
 /// `b`; bit 3 zeroes it), as `vperm2i128` picks each half.
 pub open spec fn half128(a: Seq<u8>, b: Seq<u8>, sel: int) -> Seq<u8> {

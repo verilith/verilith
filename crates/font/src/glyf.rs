@@ -21,13 +21,46 @@ fn coord_sz(short: bool, same: bool) -> (r: usize)
     }
 }
 
+/// The coordinate bytes of flag `f`, both coordinates in one word: bits
+/// 1 and 2 say which are short (one byte), bits 4 and 5 which of the
+/// others repeat the last value (no bytes); the rest take two. (Written
+/// this way, and not as two `coord_size`s, so that compilers do not pair
+/// the two halves into a vector instruction on the loop's critical path.)
 #[inline(always)]
 fn flag_sz(f: u8) -> (r: usize)
     ensures
         r as int == flag_coord_size(f),
         r <= 4,
 {
-    coord_sz(f & 0x02 != 0, f & 0x10 != 0) + coord_sz(f & 0x04 != 0, f & 0x20 != 0)
+    let a = f as u32;
+    let sh = (a >> 1) & 3;
+    let z = (a >> 4) & !sh & 3;
+    assert(sh >> 1 <= sh && z >> 1 <= z && (sh - (sh >> 1)) + 2 * (z - (z >> 1)) <= 4) by (bit_vector)
+        requires
+            sh == (a >> 1) & 3,
+            z == (a >> 4) & !sh & 3,
+    ;
+    let r = 4 - (sh - (sh >> 1)) - 2 * (z - (z >> 1));
+    assert(r == (if f & 0x02 != 0 {
+        1u32
+    } else if f & 0x10 != 0 {
+        0u32
+    } else {
+        2u32
+    }) + (if f & 0x04 != 0 {
+        1u32
+    } else if f & 0x20 != 0 {
+        0u32
+    } else {
+        2u32
+    }) && r <= 4) by (bit_vector)
+        requires
+            a == f as u32,
+            sh == (a >> 1) & 3,
+            z == (a >> 4) & !sh & 3,
+            r == 4 - (sh - (sh >> 1)) - 2 * (z - (z >> 1)),
+    ;
+    r as usize
 }
 
 /// `flags_end` from `p`, with `acc` coordinate bytes already counted.

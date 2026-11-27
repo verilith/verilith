@@ -127,6 +127,34 @@ for w in (128, 256):
     for imm in list(range(0, 34)) + [255]:
         binop_imm(w, p + "alignr_epi8", imm, "ref_alignr_lanes({a}, {b}, {imm})", "ssse3")
 
+# 128-bit only: what the SSE backend of the NEON wrappers adds.
+binop(128, "_mm_adds_epu16", "ref_adds_u16({a}, {b})", "U16", "U16")
+binop(128, "_mm_max_epu16", "ref_max_u16({a}, {b})", "U16", "U16", "sse4.1")
+binop(128, "_mm_mullo_epi32", "ref_mullo32({a}, {b})", "U32", "U32", "sse4.1")
+cases.append(("_mm_abs_epi16", f"""
+    #[target_feature(enable = "ssse3")]
+    fn go(a: __m128i) -> __m128i {{ _mm_abs_epi16(a) }}
+    let mut rng = Rng::new(0x{seed("_mm_abs_epi16"):x});
+    for _ in 0..{N} {{
+        let a = rng.v128();
+        let got = u16s128(unsafe {{ go(a) }});
+        let want = ref_abs16(&u16s128(a));
+        if got != want {{ fail("_mm_abs_epi16", &bytes128(a), &[], &format!("{{:?}} vs {{:?}}", got, want)); }}
+    }}"""))
+for intr, ref, view, lim in [("_mm_sll_epi16", "ref_slli16", "u16s", 16), ("_mm_sra_epi16", "ref_srai16", "u16s", 16),
+                             ("_mm_sll_epi32", "ref_slli32", "u32s", 32), ("_mm_sra_epi32", "ref_srai32", "u32s", 32)]:
+    cases.append((intr, f"""
+    #[target_feature(enable = "sse2")]
+    fn go(a: __m128i, c: __m128i) -> __m128i {{ {intr}(a, c) }}
+    let mut rng = Rng::new(0x{seed(intr):x});
+    for it in 0..{N} {{
+        let a = rng.v128();
+        let n = (it % {lim}) as u32;
+        let got = {view}128(unsafe {{ go(a, _mm_cvtsi32_si128(n as i32)) }});
+        let want = {ref}(&{view}128(a), n);
+        if got != want {{ fail("{intr}", &bytes128(a), &[], &format!("{{n}}: {{:?}} vs {{:?}}", got, want)); }}
+    }}"""))
+
 # constructors and moves, checked directly against the spec's meaning
 cases.append(("constructors", f"""
     let mut rng = Rng::new(0xc0c0);
@@ -227,6 +255,7 @@ out = ["""//! Differential test of every trusted intrinsic specification.
 #![allow(unused_unsafe, non_snake_case)]
 use core::arch::x86_64::*;
 use verilith_simd::refs::*;
+use verilith_simd::refs_neon::{ref_abs16, ref_adds_u16, ref_max_u16, ref_mullo32};
 
 fn iters() -> usize {
     std::env::var("VSIMD_ITERS").ok().and_then(|s| s.parse().ok()).unwrap_or(1_000_000)

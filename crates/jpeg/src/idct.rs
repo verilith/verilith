@@ -1089,13 +1089,18 @@ pub fn idct_into(out: &mut Vec<u8>, a: &Vec<i16>, o: usize, q: &[u16; 64], rl: &
                 old(out)[j]
             },
 {
-    if verilith_simd::neon::has_neon() {
-        let r = crate::idct16::idct16_neon(a.as_slice(), o, q, kt, out.as_mut_slice(), row0, col0, stride);
+    // On x86-64 the NEON transforms enable SSE4.1 and SSSE3 (for the SSE
+    // implementation of the NEON wrappers), which makes them unsafe to
+    // call; `has_neon_sse` checked that the CPU has both.
+    if verilith_simd::neon::has_neon_sse() {
+        #[cfg_attr(any(verus_only, not(target_arch = "x86_64")), allow(unused_unsafe))]
+        let r = unsafe { crate::idct16::idct16_neon(a.as_slice(), o, q, kt, out.as_mut_slice(), row0, col0, stride) };
         if r.0 == 0 {
             return r.1;
         }
         if r.0 == 2 {
-            let r = crate::idct_neon::idct_neon(a.as_slice(), o, q, out.as_mut_slice(), row0, col0, stride);
+            #[cfg_attr(any(verus_only, not(target_arch = "x86_64")), allow(unused_unsafe))]
+            let r = unsafe { crate::idct_neon::idct_neon(a.as_slice(), o, q, out.as_mut_slice(), row0, col0, stride) };
             if r.0 {
                 return r.1;
             }

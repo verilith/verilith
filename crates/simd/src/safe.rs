@@ -2364,4 +2364,145 @@ pub fn _mm_clmulepi64_si128<const IMM8: i32>(a: __m128i, b: __m128i) -> (r: __m1
     unsafe { core::arch::x86_64::_mm_clmulepi64_si128::<IMM8>(a, b) }
 }
 
+/// [`_mm_abs_epi16`](core::arch::x86_64::_mm_abs_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires ssse3()
+/// ensures  u16x8(r) == abs16(u16x8(a))
+/// ```
+#[verifier::external_body]
+#[inline(always)]
+pub fn _mm_abs_epi16(a: __m128i) -> (r: __m128i)
+    requires
+        ssse3(),
+    ensures
+        u16x8(r) == abs16(u16x8(a)),
+{
+    unsafe { core::arch::x86_64::_mm_abs_epi16(a) }
+}
+
+/// [`_mm_adds_epu16`](core::arch::x86_64::_mm_adds_epu16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// ensures  u16x8(r) == adds_u16(u16x8(a), u16x8(b))
+/// ```
+#[verifier::external_body]
+#[inline(always)]
+pub fn _mm_adds_epu16(a: __m128i, b: __m128i) -> (r: __m128i)
+    ensures
+        u16x8(r) == adds_u16(u16x8(a), u16x8(b)),
+{
+    unsafe { core::arch::x86_64::_mm_adds_epu16(a, b) }
+}
+
+/// [`_mm_max_epu16`](core::arch::x86_64::_mm_max_epu16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires sse41()
+/// ensures  u16x8(r) == max_u16(u16x8(a), u16x8(b))
+/// ```
+#[verifier::external_body]
+#[inline(always)]
+pub fn _mm_max_epu16(a: __m128i, b: __m128i) -> (r: __m128i)
+    requires
+        sse41(),
+    ensures
+        u16x8(r) == max_u16(u16x8(a), u16x8(b)),
+{
+    unsafe { core::arch::x86_64::_mm_max_epu16(a, b) }
+}
+
+/// [`_mm_mullo_epi32`](core::arch::x86_64::_mm_mullo_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires sse41()
+/// ensures  u32x4(r) == mullo32(u32x4(a), u32x4(b))
+/// ```
+#[verifier::external_body]
+#[inline(always)]
+pub fn _mm_mullo_epi32(a: __m128i, b: __m128i) -> (r: __m128i)
+    requires
+        sse41(),
+    ensures
+        u32x4(r) == mullo32(u32x4(a), u32x4(b)),
+{
+    unsafe { core::arch::x86_64::_mm_mullo_epi32(a, b) }
+}
+
+/// [`_mm_sll_epi16`](core::arch::x86_64::_mm_sll_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires u64x2(count)[0] < 16
+/// ensures  u16x8(r) == slli16(u16x8(a), u64x2(count)[0] as int)
+/// ```
+#[verifier::external_body]
+#[inline(always)]
+pub fn _mm_sll_epi16(a: __m128i, count: __m128i) -> (r: __m128i)
+    requires
+        u64x2(count)[0] < 16,
+    ensures
+        u16x8(r) == slli16(u16x8(a), u64x2(count)[0] as int),
+{
+    unsafe { core::arch::x86_64::_mm_sll_epi16(a, count) }
+}
+
+/// [`_mm_sra_epi16`](core::arch::x86_64::_mm_sra_epi16) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires u64x2(count)[0] < 16
+/// ensures  u16x8(r) == srai16(u16x8(a), u64x2(count)[0] as int)
+/// ```
+#[verifier::external_body]
+#[inline(always)]
+pub fn _mm_sra_epi16(a: __m128i, count: __m128i) -> (r: __m128i)
+    requires
+        u64x2(count)[0] < 16,
+    ensures
+        u16x8(r) == srai16(u16x8(a), u64x2(count)[0] as int),
+{
+    unsafe { core::arch::x86_64::_mm_sra_epi16(a, count) }
+}
+
+/// [`_mm_sll_epi32`](core::arch::x86_64::_mm_sll_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires u64x2(count)[0] < 32
+/// ensures  u32x4(r) == slli32(u32x4(a), u64x2(count)[0] as int)
+/// ```
+#[verifier::external_body]
+#[inline(always)]
+pub fn _mm_sll_epi32(a: __m128i, count: __m128i) -> (r: __m128i)
+    requires
+        u64x2(count)[0] < 32,
+    ensures
+        u32x4(r) == slli32(u32x4(a), u64x2(count)[0] as int),
+{
+    unsafe { core::arch::x86_64::_mm_sll_epi32(a, count) }
+}
+
+/// [`_mm_sra_epi32`](core::arch::x86_64::_mm_sra_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires u64x2(count)[0] < 32
+/// ensures  u32x4(r) == srai32(u32x4(a), u64x2(count)[0] as int)
+/// ```
+#[verifier::external_body]
+#[inline(always)]
+pub fn _mm_sra_epi32(a: __m128i, count: __m128i) -> (r: __m128i)
+    requires
+        u64x2(count)[0] < 32,
+    ensures
+        u32x4(r) == srai32(u32x4(a), u64x2(count)[0] as int),
+{
+    unsafe { core::arch::x86_64::_mm_sra_epi32(a, count) }
+}
+
 } // verus!

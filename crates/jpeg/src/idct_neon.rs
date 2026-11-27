@@ -3218,7 +3218,8 @@ pub(crate) fn emit_rows(r0: uint8x16_t, r1: uint8x16_t, r2: uint8x16_t, r3: uint
 /// `row0`, column `col0` of the plane `out` with rows of `stride`. Returns
 /// false, with `out` untouched, when the cheap test for that fails;
 /// otherwise the ghost result is the block that was stored.
-#[inline(always)]
+#[cfg_attr(not(target_arch = "x86_64"), inline(always))]
+#[cfg_attr(all(not(verus_only), target_arch = "x86_64"), target_feature(enable = "sse4.1,ssse3"))]
 pub fn idct_neon(a: &[i16], o: usize, q: &[u16; 64], out: &mut [u8], row0: usize, col0: usize, stride: usize) -> (r: (bool, Ghost<Seq<u8>>))
     requires
         neon(),

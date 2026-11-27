@@ -61,7 +61,7 @@ exactly `n` zeros, from `calloc` for large buffers), are verilith-core's,
 re-exported from `src/parse.rs`, and are trusted there: see
 [verilith-core's trusted base](../core#trusted-base).
 
-## 2a. NEON intrinsics, through verilith-simd (AArch64 only)
+## 2a. NEON intrinsics, through verilith-simd (AArch64, and x86-64 through SSE)
 
 `src/idct_neon.rs`, `src/idct16.rs` and `src/color_neon.rs` are verified, but
 they call 46 NEON intrinsics through
@@ -92,10 +92,28 @@ specification on random and edge inputs. The ones verilith-jpeg uses:
   `vsubq_s16`, `vdupq_n_s16`, `vqdmulhq_s16` (`sqdmulh`), `vqshrun2_n_s16`
   (`sqshrun`, `sqshrun2`) and the interleaved store `vst3q_u8_at` (`st3`);
 
-and `has_neon()`, which is true exactly on AArch64, with verilith-simd's byte model
-of a vector (`n8`, sixteen bytes). On other targets none of this runs:
-`has_neon()` is false and the decoder takes `idct::idct_fast` and the plain
-loop of `render::ycc_row`, which use no intrinsics.
+and `has_neon_sse()`, which is true on AArch64 and, on x86-64, when the CPU
+has SSE4.1 and SSSE3, with verilith-simd's byte model of a vector (`n8`,
+sixteen bytes).
+
+On x86-64 these wrappers are not trusted on their own: each forwards to
+verilith-simd's `src/wasm_neon.rs`, proven on its SIMD128 contracts, and
+the 48 SIMD128 instructions those use forward to `src/wasm_x86.rs`, proven
+from the specifications of the SSE2, SSSE3 and SSE4.1 intrinsics it calls
+(verilith-simd's `src/x86.rs`, the same ones the crates' AVX2 kernels rely
+on). What x86-64 trusts instead is those intrinsic specifications, the
+16- and 8-byte loads and stores, two transmutes between `uint8x16_t` and
+`__m128i`, `axiom_neon_x86` and `has_neon_sse()`'s CPU check: see
+[verilith-simd's trusted base](../simd#trusted-base).
+`tools/check_wasm_neon.py` there checks that each proven contract is word for
+word the one the wrapper states. On other targets none of this runs:
+`has_neon_sse()` is false and the decoder takes `idct::idct_fast` and the
+plain loop of `render::ycc_row`, which use no intrinsics.
+
+`render::ycc_row`, `h2v1_mid` and `h2v2_mid` also call a copy of themselves
+compiled with AVX2 enabled (`#[target_feature]`) when `has_avx2()` says the
+CPU has it. Those copies are verified like the originals, use no
+intrinsics, and are `unsafe` to call only because of the attribute.
 
 ## 3. Unchecked indexing, verified against vstd
 

@@ -2802,7 +2802,8 @@ proof fn lemma_hi64_zero(b: Seq<u8>)
 /// result is that block. Otherwise `out` is untouched: 1 is a hint that
 /// the block has nothing but its first coefficient, and 2 says that it
 /// has more and was not shown to be small.
-#[inline(always)]
+#[cfg_attr(not(target_arch = "x86_64"), inline(always))]
+#[cfg_attr(all(not(verus_only), target_arch = "x86_64"), target_feature(enable = "sse4.1,ssse3"))]
 pub fn idct16_neon(a: &[i16], o: usize, q: &[u16; 64], kt: &[i16; 24], out: &mut [u8], row0: usize, col0: usize, stride: usize) -> (r: (u8, Ghost<Seq<u8>>))
     requires
         neon(),

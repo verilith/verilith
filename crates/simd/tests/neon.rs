@@ -3,8 +3,10 @@
 //! the real instructions (the trusted specs). On `wasm32-wasip1` built
 //! with `simd128`, run under a WebAssembly engine, it checks the
 //! SIMD128 instructions (`verilith_simd::wasm`) through the verified
-//! `verilith_simd::wasm_neon`. Elsewhere it checks the emulation the
-//! wrappers call there.
+//! `verilith_simd::wasm_neon`. On x86-64 it checks the same path, with
+//! the SIMD128 instructions run as the SSE code of `verilith_simd::wasm_x86`
+//! where there is some (which needs a CPU with SSE4.1 and SSSE3).
+//! Elsewhere it checks the emulation the wrappers call there.
 //!
 //! `VSIMD_ITERS` sets the number of random inputs per wrapper (default
 //! 200,000).

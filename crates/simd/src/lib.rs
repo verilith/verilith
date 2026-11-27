@@ -20,7 +20,9 @@
 //   (16-byte loads, compares, `pmovmskb`) and their 16-bit masks.
 // - `cpu` (trusted): CPU-feature predicates and run-time detection.
 // - `neon` (trusted): wrappers over the AArch64 NEON intrinsics, with
-//   specs in terms of `ops`; off AArch64 they call `emu_neon`.
+//   specs in terms of `ops`; on WebAssembly and x86-64 they call the
+//   proven `wasm_neon`, elsewhere `emu_neon`.
+// - `wasm_x86`: the SIMD128 instructions `wasm_neon` uses, proven on SSE.
 // - `clmul` (trusted, wrappers on x86-64 only): carry-less multiplication
 //   (`pclmulqdq`, `vpclmulqdq` on 256 and 512 bits) as the CRC-32 folding
 //   kernels in verilith-checksum use it, with its spec `clmul`.
@@ -56,6 +58,10 @@ pub mod emu_neon;
 pub mod wasm;
 #[cfg(not(target_arch = "aarch64"))]
 pub mod wasm_neon;
+// The SSE implementation of the SIMD128 instructions `wasm_neon` uses, on
+// x86-64.
+#[cfg(target_arch = "x86_64")]
+pub mod wasm_x86;
 pub mod neon_mask;
 
 /// The x86 vector types and intrinsics: `core::arch::x86_64` on x86-64,

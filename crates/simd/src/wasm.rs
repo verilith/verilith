@@ -20,7 +20,9 @@
 //! and in the body side by side.
 //!
 //! On `wasm32` with `simd128` each body is the `core::arch::wasm32`
-//! intrinsic; elsewhere (`imp` below) the same operation in plain Rust,
+//! intrinsic. On x86-64 the ones the NEON kernels use call the SSE
+//! implementations proven against the x86 intrinsic specifications in
+//! `crate::wasm_x86`. Elsewhere (`imp` below) the same operation in plain Rust,
 //! so the verified code above it builds and its proofs are checked on any
 //! machine. `tests/neon.rs`, run on `wasm32-wasip1` under a WebAssembly
 //! engine, checks the NEON contracts built on these against the verified
@@ -35,6 +37,18 @@ use crate::neon::{n8, neon};
 use crate::neon::uint8x16_t;
 use crate::ops::*;
 use vstd::prelude::*;
+
+/// On x86-64, the SSE implementation of the same contract, proven in
+/// `crate::wasm_x86`; elsewhere, `imp` below.
+macro_rules! x86_or {
+    ($x:expr, $n:expr) => {{
+        #[cfg(target_arch = "x86_64")]
+        let r = $x;
+        #[cfg(not(target_arch = "x86_64"))]
+        let r = $n;
+        r
+    }};
+}
 
 verus! {
 
@@ -132,7 +146,7 @@ pub fn w_splat8(x: u8) -> (r: uint8x16_t)
     ensures
         n8(r) == Seq::new(16, |i: int| x),
 {
-    imp::splat8(x)
+    x86_or!(crate::wasm_x86::w_splat8(x), imp::splat8(x))
 }
 
 /// `v128.and`.
@@ -168,7 +182,7 @@ pub fn w_xor(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == Seq::new(16, |i: int| n8(a)[i] ^ n8(b)[i]),
 {
-    imp::xor(a, b)
+    x86_or!(crate::wasm_x86::w_xor(a, b), imp::xor(a, b))
 }
 
 /// `i8x16.add`: modulo 256.
@@ -280,7 +294,7 @@ pub fn w_zip_lo8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == shuf(n8(a), n8(b), seq![0int, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23]),
 {
-    imp::zip_lo8(a, b)
+    x86_or!(crate::wasm_x86::w_zip_lo8(a, b), imp::zip_lo8(a, b))
 }
 
 /// Indices 8, 24, 9, 25, ..., 15, 31.
@@ -292,7 +306,7 @@ pub fn w_zip_hi8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == shuf(n8(a), n8(b), seq![8int, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31]),
 {
-    imp::zip_hi8(a, b)
+    x86_or!(crate::wasm_x86::w_zip_hi8(a, b), imp::zip_hi8(a, b))
 }
 
 /// Indices 0, 2, 4, ..., 30: the even bytes of `a`, then of `b`.
@@ -370,7 +384,7 @@ pub fn w_max_u16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == Seq::new(8, |i: int| if u16s(n8(a))[i] >= u16s(n8(b))[i] { u16s(n8(a))[i] } else { u16s(n8(b))[i] }),
 {
-    imp::max_u16(a, b)
+    x86_or!(crate::wasm_x86::w_max_u16(a, b), imp::max_u16(a, b))
 }
 
 /// `i16x8.shuffle` (as `i8x16.shuffle` on lane pairs): `a` rotated down by
@@ -400,7 +414,7 @@ pub fn w_extract16_0(a: uint8x16_t) -> (r: u16)
     ensures
         r == u16s(n8(a))[0],
 {
-    imp::extract16_0(a)
+    x86_or!(crate::wasm_x86::w_extract16_0(a), imp::extract16_0(a))
 }
 
 /// `i16x8.mul`: the low 16 bits of each product.
@@ -412,7 +426,7 @@ pub fn w_mul16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == Seq::new(8, |i: int| ((u16s(n8(a))[i] * u16s(n8(b))[i]) % 0x10000) as u16),
 {
-    imp::mul16(a, b)
+    x86_or!(crate::wasm_x86::w_mul16(a, b), imp::mul16(a, b))
 }
 
 /// `i32x4.mul`: the low 32 bits of each product.
@@ -424,7 +438,7 @@ pub fn w_mul32(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == Seq::new(4, |i: int| ((u32s(n8(a))[i] * u32s(n8(b))[i]) % 0x1_0000_0000) as u32),
 {
-    imp::mul32(a, b)
+    x86_or!(crate::wasm_x86::w_mul32(a, b), imp::mul32(a, b))
 }
 
 /// `i16x8.extadd_pairwise_i8x16_u`: sums of adjacent byte pairs.
@@ -448,7 +462,7 @@ pub fn w_extadd16(a: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == Seq::new(4, |i: int| (u16s(n8(a))[2 * i] + u16s(n8(a))[2 * i + 1]) as u32),
 {
-    imp::extadd16(a)
+    x86_or!(crate::wasm_x86::w_extadd16(a), imp::extadd16(a))
 }
 
 /// `i32x4.shuffle` (as `i8x16.shuffle` on lane quads) with lanes 0, 2, 1, 3.
@@ -509,7 +523,7 @@ pub fn w_extract64<const L: u32>(a: uint8x16_t) -> (r: u64)
     ensures
         r == u64s(n8(a))[L as int],
 {
-    imp::extract64::<L>(a)
+    x86_or!(crate::wasm_x86::w_extract64::<L>(a), imp::extract64::<L>(a))
 }
 
 // ---------------------------------------------------------------------------
@@ -609,7 +623,7 @@ pub fn w_add16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == Seq::new(8, |i: int| ((u16s(n8(a))[i] + u16s(n8(b))[i]) % 0x10000) as u16),
 {
-    imp::w_add16(a, b)
+    x86_or!(crate::wasm_x86::w_add16(a, b), imp::w_add16(a, b))
 }
 
 /// `i16x8.sub`: modulo 2^16.
@@ -621,7 +635,7 @@ pub fn w_sub16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == Seq::new(8, |i: int| ((u16s(n8(a))[i] - u16s(n8(b))[i] + 0x10000) % 0x10000) as u16),
 {
-    imp::w_sub16(a, b)
+    x86_or!(crate::wasm_x86::w_sub16(a, b), imp::w_sub16(a, b))
 }
 
 /// `i16x8.add_sat_u`.
@@ -633,7 +647,7 @@ pub fn w_add_sat_u16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == Seq::new(8, |i: int| if u16s(n8(a))[i] + u16s(n8(b))[i] > 0xffff { 0xffffu16 } else { (u16s(n8(a))[i] + u16s(n8(b))[i]) as u16 }),
 {
-    imp::w_add_sat_u16(a, b)
+    x86_or!(crate::wasm_x86::w_add_sat_u16(a, b), imp::w_add_sat_u16(a, b))
 }
 
 /// `i16x8.sub_sat_u`.
@@ -657,7 +671,7 @@ pub fn w_abs16(a: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == Seq::new(8, |i: int| if u16s(n8(a))[i] <= 0x8000 { u16s(n8(a))[i] } else { (0x10000 - u16s(n8(a))[i]) as u16 }),
 {
-    imp::w_abs16(a)
+    x86_or!(crate::wasm_x86::w_abs16(a), imp::w_abs16(a))
 }
 
 /// `i16x8.shr_s`: arithmetic, the count modulo 16.
@@ -669,7 +683,7 @@ pub fn w_shr_s16(a: uint8x16_t, n: u32) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == Seq::new(8, |i: int| ((s16(u16s(n8(a))[i]) / pow2_spec((n % 16) as nat) as int) % 0x10000) as u16),
 {
-    imp::w_shr_s16(a, n)
+    x86_or!(crate::wasm_x86::w_shr_s16(a, n), imp::w_shr_s16(a, n))
 }
 
 /// `i16x8.shl`: the count modulo 16.
@@ -681,7 +695,7 @@ pub fn w_shl16(a: uint8x16_t, n: u32) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == Seq::new(8, |i: int| ((u16s(n8(a))[i] as nat * pow2_spec((n % 16) as nat)) % 0x10000) as u16),
 {
-    imp::w_shl16(a, n)
+    x86_or!(crate::wasm_x86::w_shl16(a, n), imp::w_shl16(a, n))
 }
 
 /// `i16x8.splat`.
@@ -693,7 +707,7 @@ pub fn w_splat16(x: u16) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == Seq::new(8, |i: int| x),
 {
-    imp::w_splat16(x)
+    x86_or!(crate::wasm_x86::w_splat16(x), imp::w_splat16(x))
 }
 
 /// `i16x8.extend_low_i8x16_u`: bytes 0..8, zero-extended.
@@ -705,7 +719,7 @@ pub fn w_extend_lo8(a: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == Seq::new(8, |i: int| n8(a)[i] as u16),
 {
-    imp::w_extend_lo8(a)
+    x86_or!(crate::wasm_x86::w_extend_lo8(a), imp::w_extend_lo8(a))
 }
 
 /// `i16x8.extend_high_i8x16_u`: bytes 8..16, zero-extended.
@@ -717,7 +731,7 @@ pub fn w_extend_hi8(a: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == Seq::new(8, |i: int| n8(a)[8 + i] as u16),
 {
-    imp::w_extend_hi8(a)
+    x86_or!(crate::wasm_x86::w_extend_hi8(a), imp::w_extend_hi8(a))
 }
 
 /// `i8x16.narrow_i16x8_s`: `a`'s then `b`'s signed lanes, clamped to [-128, 127].
@@ -729,7 +743,7 @@ pub fn w_narrow_s16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == Seq::new(16, |i: int| if i < 8 { (sat_s8(s16(u16s(n8(a))[i])) % 256) as u8 } else { (sat_s8(s16(u16s(n8(b))[i - 8])) % 256) as u8 }),
 {
-    imp::w_narrow_s16(a, b)
+    x86_or!(crate::wasm_x86::w_narrow_s16(a, b), imp::w_narrow_s16(a, b))
 }
 
 /// `i8x16.narrow_i16x8_u`: `a`'s then `b`'s signed lanes, clamped to [0, 255].
@@ -741,7 +755,7 @@ pub fn w_narrow_u16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == Seq::new(16, |i: int| if i < 8 { sat_u8(s16(u16s(n8(a))[i])) } else { sat_u8(s16(u16s(n8(b))[i - 8])) }),
 {
-    imp::w_narrow_u16(a, b)
+    x86_or!(crate::wasm_x86::w_narrow_u16(a, b), imp::w_narrow_u16(a, b))
 }
 
 /// `i32x4.add`: modulo 2^32.
@@ -753,7 +767,7 @@ pub fn w_add32(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == Seq::new(4, |i: int| ((u32s(n8(a))[i] + u32s(n8(b))[i]) % 0x1_0000_0000) as u32),
 {
-    imp::w_add32(a, b)
+    x86_or!(crate::wasm_x86::w_add32(a, b), imp::w_add32(a, b))
 }
 
 /// `i32x4.sub`: modulo 2^32.
@@ -765,7 +779,7 @@ pub fn w_sub32(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == Seq::new(4, |i: int| ((u32s(n8(a))[i] - u32s(n8(b))[i] + 0x1_0000_0000) % 0x1_0000_0000) as u32),
 {
-    imp::w_sub32(a, b)
+    x86_or!(crate::wasm_x86::w_sub32(a, b), imp::w_sub32(a, b))
 }
 
 /// `i32x4.shl`: the count modulo 32.
@@ -777,7 +791,7 @@ pub fn w_shl32(a: uint8x16_t, n: u32) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == Seq::new(4, |i: int| ((u32s(n8(a))[i] as nat * pow2_spec((n % 32) as nat)) % 0x1_0000_0000) as u32),
 {
-    imp::w_shl32(a, n)
+    x86_or!(crate::wasm_x86::w_shl32(a, n), imp::w_shl32(a, n))
 }
 
 /// `i32x4.shr_s`: arithmetic, the count modulo 32.
@@ -789,7 +803,7 @@ pub fn w_shr_s32(a: uint8x16_t, n: u32) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == Seq::new(4, |i: int| ((s32(u32s(n8(a))[i]) / pow2_spec((n % 32) as nat) as int) % 0x1_0000_0000) as u32),
 {
-    imp::w_shr_s32(a, n)
+    x86_or!(crate::wasm_x86::w_shr_s32(a, n), imp::w_shr_s32(a, n))
 }
 
 /// `i32x4.splat`.
@@ -801,7 +815,7 @@ pub fn w_splat32(x: u32) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == Seq::new(4, |i: int| x),
 {
-    imp::w_splat32(x)
+    x86_or!(crate::wasm_x86::w_splat32(x), imp::w_splat32(x))
 }
 
 /// `i32x4.extract_lane 0`.
@@ -813,7 +827,7 @@ pub fn w_extract32_0(a: uint8x16_t) -> (r: u32)
     ensures
         r == u32s(n8(a))[0],
 {
-    imp::w_extract32_0(a)
+    x86_or!(crate::wasm_x86::w_extract32_0(a), imp::w_extract32_0(a))
 }
 
 /// `i32x4.extmul_low_i16x8_s`: products of signed 16-bit lanes 0..4.
@@ -825,7 +839,7 @@ pub fn w_extmul_lo16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == Seq::new(4, |i: int| ((s16(u16s(n8(a))[i]) * s16(u16s(n8(b))[i])) % 0x1_0000_0000) as u32),
 {
-    imp::w_extmul_lo16(a, b)
+    x86_or!(crate::wasm_x86::w_extmul_lo16(a, b), imp::w_extmul_lo16(a, b))
 }
 
 /// `i32x4.extmul_high_i16x8_s`: products of signed 16-bit lanes 4..8.
@@ -837,7 +851,7 @@ pub fn w_extmul_hi16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == Seq::new(4, |i: int| ((s16(u16s(n8(a))[4 + i]) * s16(u16s(n8(b))[4 + i])) % 0x1_0000_0000) as u32),
 {
-    imp::w_extmul_hi16(a, b)
+    x86_or!(crate::wasm_x86::w_extmul_hi16(a, b), imp::w_extmul_hi16(a, b))
 }
 
 /// `i16x8.narrow_i32x4_s`: `a`'s then `b`'s signed lanes, clamped to 16 bits.
@@ -849,7 +863,7 @@ pub fn w_narrow_s32(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == Seq::new(8, |i: int| if i < 4 { (sat_s16(s32(u32s(n8(a))[i])) % 0x10000) as u16 } else { (sat_s16(s32(u32s(n8(b))[i - 4])) % 0x10000) as u16 }),
 {
-    imp::w_narrow_s32(a, b)
+    x86_or!(crate::wasm_x86::w_narrow_s32(a, b), imp::w_narrow_s32(a, b))
 }
 
 /// `i64x2(lo, hi)` (`i64x2.splat` and `replace_lane`).
@@ -899,7 +913,7 @@ pub fn w_st3_ab0(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == shuf(n8(a), n8(b), seq![0int, 16, 0, 1, 17, 0, 2, 18, 0, 3, 19, 0, 4, 20, 0, 5]),
 {
-    imp::w_st3_ab0(a, b)
+    x86_or!(crate::wasm_x86::w_st3_ab0(a, b), imp::w_st3_ab0(a, b))
 }
 
 /// Block 0 of a three-way interleave: those, with `b`'s bytes from `c` (`i8x16.shuffle` with indices 0, 1, 16, 3, 4, 17, 6, 7, 18, 9, 10, 19, 12, 13, 20, 15).
@@ -911,7 +925,7 @@ pub fn w_st3_c0(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == shuf(n8(a), n8(b), seq![0int, 1, 16, 3, 4, 17, 6, 7, 18, 9, 10, 19, 12, 13, 20, 15]),
 {
-    imp::w_st3_c0(a, b)
+    x86_or!(crate::wasm_x86::w_st3_c0(a, b), imp::w_st3_c0(a, b))
 }
 
 /// Bytes of `a` and `b` for block 1 of a three-way interleave (`i8x16.shuffle` with indices 21, 0, 6, 22, 0, 7, 23, 0, 8, 24, 0, 9, 25, 0, 10, 26).
@@ -923,7 +937,7 @@ pub fn w_st3_ab1(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == shuf(n8(a), n8(b), seq![21int, 0, 6, 22, 0, 7, 23, 0, 8, 24, 0, 9, 25, 0, 10, 26]),
 {
-    imp::w_st3_ab1(a, b)
+    x86_or!(crate::wasm_x86::w_st3_ab1(a, b), imp::w_st3_ab1(a, b))
 }
 
 /// Block 1 of a three-way interleave: those, with `b`'s bytes from `c` (`i8x16.shuffle` with indices 0, 21, 2, 3, 22, 5, 6, 23, 8, 9, 24, 11, 12, 25, 14, 15).
@@ -935,7 +949,7 @@ pub fn w_st3_c1(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == shuf(n8(a), n8(b), seq![0int, 21, 2, 3, 22, 5, 6, 23, 8, 9, 24, 11, 12, 25, 14, 15]),
 {
-    imp::w_st3_c1(a, b)
+    x86_or!(crate::wasm_x86::w_st3_c1(a, b), imp::w_st3_c1(a, b))
 }
 
 /// Bytes of `a` and `b` for block 2 of a three-way interleave (`i8x16.shuffle` with indices 0, 11, 27, 0, 12, 28, 0, 13, 29, 0, 14, 30, 0, 15, 31, 0).
@@ -947,7 +961,7 @@ pub fn w_st3_ab2(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == shuf(n8(a), n8(b), seq![0int, 11, 27, 0, 12, 28, 0, 13, 29, 0, 14, 30, 0, 15, 31, 0]),
 {
-    imp::w_st3_ab2(a, b)
+    x86_or!(crate::wasm_x86::w_st3_ab2(a, b), imp::w_st3_ab2(a, b))
 }
 
 /// Block 2 of a three-way interleave: those, with `b`'s bytes from `c` (`i8x16.shuffle` with indices 26, 1, 2, 27, 4, 5, 28, 7, 8, 29, 10, 11, 30, 13, 14, 31).
@@ -959,7 +973,7 @@ pub fn w_st3_c2(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == shuf(n8(a), n8(b), seq![26int, 1, 2, 27, 4, 5, 28, 7, 8, 29, 10, 11, 30, 13, 14, 31]),
 {
-    imp::w_st3_c2(a, b)
+    x86_or!(crate::wasm_x86::w_st3_c2(a, b), imp::w_st3_c2(a, b))
 }
 
 /// 16-bit lanes 0..4 of `a` and `b`, alternating (`i16x8.shuffle` with lanes 0, 8, 1, 9, 2, 10, 3, 11).
@@ -971,7 +985,7 @@ pub fn w_zip_lo16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == seq![u16s(n8(a))[0], u16s(n8(b))[0], u16s(n8(a))[1], u16s(n8(b))[1], u16s(n8(a))[2], u16s(n8(b))[2], u16s(n8(a))[3], u16s(n8(b))[3]],
 {
-    imp::w_zip_lo16(a, b)
+    x86_or!(crate::wasm_x86::w_zip_lo16(a, b), imp::w_zip_lo16(a, b))
 }
 
 /// 16-bit lanes 4..8 of `a` and `b`, alternating (`i16x8.shuffle` with lanes 4, 12, 5, 13, 6, 14, 7, 15).
@@ -983,7 +997,7 @@ pub fn w_zip_hi16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == seq![u16s(n8(a))[4], u16s(n8(b))[4], u16s(n8(a))[5], u16s(n8(b))[5], u16s(n8(a))[6], u16s(n8(b))[6], u16s(n8(a))[7], u16s(n8(b))[7]],
 {
-    imp::w_zip_hi16(a, b)
+    x86_or!(crate::wasm_x86::w_zip_hi16(a, b), imp::w_zip_hi16(a, b))
 }
 
 /// The even 16-bit lanes of `a`, then of `b` (`i16x8.shuffle` with lanes 0, 2, 4, 6, 8, 10, 12, 14).
@@ -995,7 +1009,7 @@ pub fn w_even16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == seq![u16s(n8(a))[0], u16s(n8(a))[2], u16s(n8(a))[4], u16s(n8(a))[6], u16s(n8(b))[0], u16s(n8(b))[2], u16s(n8(b))[4], u16s(n8(b))[6]],
 {
-    imp::w_even16(a, b)
+    x86_or!(crate::wasm_x86::w_even16(a, b), imp::w_even16(a, b))
 }
 
 /// The odd 16-bit lanes of `a`, then of `b` (`i16x8.shuffle` with lanes 1, 3, 5, 7, 9, 11, 13, 15).
@@ -1007,7 +1021,7 @@ pub fn w_odd16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == seq![u16s(n8(a))[1], u16s(n8(a))[3], u16s(n8(a))[5], u16s(n8(a))[7], u16s(n8(b))[1], u16s(n8(b))[3], u16s(n8(b))[5], u16s(n8(b))[7]],
 {
-    imp::w_odd16(a, b)
+    x86_or!(crate::wasm_x86::w_odd16(a, b), imp::w_odd16(a, b))
 }
 
 /// 32-bit lanes 0, 1 of `a` and `b`, alternating (`i32x4.shuffle` with lanes 0, 4, 1, 5).
@@ -1019,7 +1033,7 @@ pub fn w_zip_lo32(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == seq![u32s(n8(a))[0], u32s(n8(b))[0], u32s(n8(a))[1], u32s(n8(b))[1]],
 {
-    imp::w_zip_lo32(a, b)
+    x86_or!(crate::wasm_x86::w_zip_lo32(a, b), imp::w_zip_lo32(a, b))
 }
 
 /// 32-bit lanes 2, 3 of `a` and `b`, alternating (`i32x4.shuffle` with lanes 2, 6, 3, 7).
@@ -1031,7 +1045,7 @@ pub fn w_zip_hi32(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == seq![u32s(n8(a))[2], u32s(n8(b))[2], u32s(n8(a))[3], u32s(n8(b))[3]],
 {
-    imp::w_zip_hi32(a, b)
+    x86_or!(crate::wasm_x86::w_zip_hi32(a, b), imp::w_zip_hi32(a, b))
 }
 
 /// `a`'s 32-bit lanes rotated by 2 (`i32x4.shuffle` with lanes 2, 3, 0, 1).
@@ -1043,7 +1057,7 @@ pub fn w_rot32_2(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == seq![u32s(n8(a))[2], u32s(n8(a))[3], u32s(n8(a))[0], u32s(n8(a))[1]],
 {
-    imp::w_rot32_2(a, b)
+    x86_or!(crate::wasm_x86::w_rot32_2(a, b), imp::w_rot32_2(a, b))
 }
 
 /// `a`'s 32-bit lanes rotated by 1 (`i32x4.shuffle` with lanes 1, 2, 3, 0).
@@ -1055,7 +1069,7 @@ pub fn w_rot32_1(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u32s(n8(r)) == seq![u32s(n8(a))[1], u32s(n8(a))[2], u32s(n8(a))[3], u32s(n8(a))[0]],
 {
-    imp::w_rot32_1(a, b)
+    x86_or!(crate::wasm_x86::w_rot32_1(a, b), imp::w_rot32_1(a, b))
 }
 
 /// 32-bit lane 3 of `a`, four times (`i32x4.shuffle` with lanes 3, 3, 3, 3).
@@ -1079,7 +1093,7 @@ pub fn w_zip_lo64(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u64s(n8(r)) == seq![u64s(n8(a))[0], u64s(n8(b))[0]],
 {
-    imp::w_zip_lo64(a, b)
+    x86_or!(crate::wasm_x86::w_zip_lo64(a, b), imp::w_zip_lo64(a, b))
 }
 
 /// 64-bit lane 1 of `a`, then of `b` (`i64x2.shuffle` with lanes 1, 3).
@@ -1091,7 +1105,7 @@ pub fn w_zip_hi64(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u64s(n8(r)) == seq![u64s(n8(a))[1], u64s(n8(b))[1]],
 {
-    imp::w_zip_hi64(a, b)
+    x86_or!(crate::wasm_x86::w_zip_hi64(a, b), imp::w_zip_hi64(a, b))
 }
 
 /// `v128.store` of four `u32`s to `s[i..i + 4]`.
@@ -1165,7 +1179,7 @@ pub fn w_ext<const N: i32>(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     ensures
         n8(r) == shuf(n8(a), n8(b), Seq::new(16, |i: int| i + N)),
 {
-    imp::ext::<N>(a, b)
+    x86_or!(crate::wasm_x86::w_ext::<N>(a, b), imp::ext::<N>(a, b))
 }
 
 /// `i16x8.shuffle` with every lane `L`: 16-bit lane `L` of `a`, eight times.
@@ -1178,7 +1192,7 @@ pub fn w_dup16<const L: i32>(a: uint8x16_t) -> (r: uint8x16_t)
     ensures
         u16s(n8(r)) == Seq::new(8, |i: int| u16s(n8(a))[L as int]),
 {
-    imp::dup16::<L>(a)
+    x86_or!(crate::wasm_x86::w_dup16::<L>(a), imp::dup16::<L>(a))
 }
 
 } // verus!
@@ -1610,9 +1624,11 @@ mod imp {
         uint8x16_t(core::array::from_fn(|i| x[i / 8].to_le_bytes()[i % 8]))
     }
 
+    #[inline(always)]
     pub unsafe fn load(p: *const u8) -> uint8x16_t {
         core::ptr::read_unaligned(p as *const uint8x16_t)
     }
+    #[inline(always)]
     pub unsafe fn store(p: *mut u8, a: uint8x16_t) {
         core::ptr::write_unaligned(p as *mut uint8x16_t, a)
     }
@@ -1905,7 +1921,9 @@ mod imp {
     #[inline(always)]
     pub fn w_zip_hi64(a: uint8x16_t, b: uint8x16_t) -> uint8x16_t {
         shufl::<u64, 2>(a, b, [1, 3])
-    }    pub unsafe fn store64_lo(p: *mut u8, a: uint8x16_t) {
+    }
+    #[inline(always)]
+    pub unsafe fn store64_lo(p: *mut u8, a: uint8x16_t) {
         core::ptr::copy_nonoverlapping(a.0.as_ptr(), p, 8)
     }
     pub unsafe fn store32_lane<const N: i32>(p: *mut u8, a: uint8x16_t) {
