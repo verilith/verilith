@@ -8,6 +8,7 @@ pub mod cubic;
 pub mod flow;
 pub mod frame;
 #[doc(hidden)]
+pub mod handle;
 pub mod keyphase;
 pub mod lemmas;
 pub mod packet;

@@ -18,6 +18,7 @@ use verilith_quic::cc::NewReno;
 use verilith_quic::cubic::Cubic;
 use verilith_quic::flow::{RecvCredit, SendCredit};
 use verilith_quic::frame::{self, Frame};
+use verilith_quic::handle;
 use verilith_quic::keyphase::{Gen, KeyPhase};
 use verilith_quic::packet::{self, Header};
 use verilith_quic::params::{self, TransportParameters};
@@ -717,7 +718,8 @@ impl<P: Provider> Connection<P> {
                     while let Some(r) = it.next() {
                         rs.push(r);
                     }
-                    let delay = if s == 2 { a.delay.checked_shl(self.peer_ack_exponent as u32).unwrap_or(u64::MAX) } else { 0 };
+                    // Scaled without losing high bits (verified `handle::ack_delay`).
+                    let delay = if s == 2 { handle::ack_delay(a.delay, self.peer_ack_exponent) } else { 0 };
                     let r = self.on_ack(now, s, &rs, delay);
                     self.scratch_rs = rs;
                     r?;
@@ -763,11 +765,15 @@ impl<P: Provider> Connection<P> {
                     if retire > seq {
                         return Err(FRAME_ENCODING_ERROR);
                     }
+                    // §19.15: not when we send to an empty connection ID.
+                    if !handle::new_cid_allowed(self.remote_cid.len()) {
+                        return Err(PROTOCOL_VIOLATION);
+                    }
                 }
                 Frame::RetireConnectionId(seq) => {
                     // We issued only sequence number 0, which the peer is
                     // using (§19.16).
-                    if seq > 0 {
+                    if !handle::retire_allowed(seq, 0) {
                         return Err(PROTOCOL_VIOLATION);
                     }
                 }
@@ -779,7 +785,7 @@ impl<P: Provider> Connection<P> {
                 Frame::PathResponse(_) => {}
                 Frame::ConnectionClose { app, err, .. } => {
                     let pto = self.pto_duration(2);
-                    self.state = State::Draining(now + 3 * pto);
+                    self.state = State::Draining(timers::add_sat(now, 3 * pto));
                     self.events.push_back(Event::Closed { code: err, app, remote: true });
                     return Ok(false);
                 }

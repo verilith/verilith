@@ -28,26 +28,29 @@ Every step that has a specification is done by a verified component:
   - when each space's keys are installed, used and discarded
     (`schedule`);
   - connection IDs, when a datagram may start a connection, and Version
-    Negotiation (`route`).
+    Negotiation (`route`);
+  - the checks on ACK Delay and connection ID frames (`handle`).
 - **`verilith-tls`**:
   - the TLS 1.3 handshake for QUIC;
   - Initial secrets;
   - packet and header protection;
   - key updates.
 
-This crate is the glue between them, and it is **plain Rust**, not verified
-yet. It covers:
+What is left in this crate is the glue that wires those decisions
+together, in **plain Rust** (not verified, and with no `unsafe`):
 
-- looking up the connection a datagram is for;
-- dispatching frames to the components;
+- the connection table: looking up the connection a datagram is for;
+- calling each frame's component, and turning its errors into
+  CONNECTION_CLOSE codes;
 - storing the bytes of send buffers (`buf.rs`);
-- choosing what goes into each packet (each frame is written by verified
-  `put_frame`, and only payload bytes it reserved are copied after it);
+- choosing which frames go into each packet, and in which order (each
+  frame is written by verified `put_frame`, and only the payload bytes it
+  reserved are copied after it);
+- holding the keys that `keyphase` and `schedule` say to use;
 - closing.
 
-It has no `unsafe`. Verifying it is the next step: its decisions are
-already made by verified code, so what remains to prove is panic freedom
-and the plumbing between those decisions.
+Proving this glue panic-free, and that it follows each component's
+answer, is what would remain.
 
 ## What it does
 
