@@ -40,6 +40,9 @@ concurrency:
 
 jobs:
   publish:
+    # Publishes only from main (a dry run works from any branch); the
+    # crates-io environment allows only main too.
+    if: ${{ inputs.dry_run || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     # A first publish of every crate can wait out crates.io's rate limit
     # for new crates for hours; the script resumes if this runs out.
@@ -59,7 +62,7 @@ jobs:
         id: auth
         if: ${{ !inputs.dry_run && inputs.auth == 'trusted-publishing' }}
         continue-on-error: true
-        uses: rust-lang/crates-io-auth-action@v1
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
       - name: Dry run
         if: ${{ inputs.dry_run }}
         run: python3 scripts/publish.py
