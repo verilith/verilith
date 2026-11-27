@@ -53,30 +53,40 @@ pub fn load_u64_le(b: &[u8], i: usize) -> (r: u64)
     ensures
         r as nat == le_word(b@, i as int),
 {
-    // Eight byte loads that LLVM combines into one unaligned load.
+    // `u64::from_le_bytes` of a copy: one unaligned load, which LLVM does
+    // not split even when the caller needs only some of the bytes.
     let w = bytes8(b, i);
-    let x7 = w[7] as u64;
-    assert(x7 * 256 < 0x1_0000) by (nonlinear_arith) requires x7 < 256;
-    let x6 = w[6] as u64 + x7 * 256;
-    assert(x6 * 256 < 0x100_0000) by (nonlinear_arith) requires x6 < 0x1_0000;
-    let x5 = w[5] as u64 + x6 * 256;
-    assert(x5 * 256 < 0x1_0000_0000) by (nonlinear_arith) requires x5 < 0x100_0000;
-    let x4 = w[4] as u64 + x5 * 256;
-    assert(x4 * 256 < 0x100_0000_0000) by (nonlinear_arith) requires x4 < 0x1_0000_0000;
-    let x3 = w[3] as u64 + x4 * 256;
-    assert(x3 * 256 < 0x1_0000_0000_0000) by (nonlinear_arith) requires x3 < 0x100_0000_0000;
-    let x2 = w[2] as u64 + x3 * 256;
-    assert(x2 * 256 < 0x100_0000_0000_0000) by (nonlinear_arith) requires x2 < 0x1_0000_0000_0000;
-    let x1 = w[1] as u64 + x2 * 256;
-    assert(x1 * 256 <= 0xFFFF_FFFF_FFFF_FF00) by (nonlinear_arith) requires x1 < 0x100_0000_0000_0000;
-    let x0 = w[0] as u64 + x1 * 256;
+    let x = u64::from_le_bytes(w);
     proof {
+        vstd::bytes::lemma_auto_spec_u64_to_from_le_bytes();
+        vstd::bytes::spec_u64_to_le_bytes_to_open(x);
+        assert(vstd::bytes::spec_u64_to_le_bytes(vstd::bytes::spec_u64_from_le_bytes(w@)) == w@);
+        let o = vstd::bytes::spec_u64_to_le_bytes_open(x);
+        assert(w@ == o);
+        let c0 = (x & 0xff) as u64;
+        let c1 = ((x >> 8) & 0xff) as u64;
+        let c2 = ((x >> 16) & 0xff) as u64;
+        let c3 = ((x >> 24) & 0xff) as u64;
+        let c4 = ((x >> 32) & 0xff) as u64;
+        let c5 = ((x >> 40) & 0xff) as u64;
+        let c6 = ((x >> 48) & 0xff) as u64;
+        let c7 = ((x >> 56) & 0xff) as u64;
+        assert(c0 < 256 && c1 < 256 && c2 < 256 && c3 < 256 && c4 < 256 && c5 < 256 && c6 < 256 && c7 < 256) by (bit_vector)
+            requires
+                c0 == x & 0xff, c1 == (x >> 8) & 0xff, c2 == (x >> 16) & 0xff, c3 == (x >> 24) & 0xff,
+                c4 == (x >> 32) & 0xff, c5 == (x >> 40) & 0xff, c6 == (x >> 48) & 0xff, c7 == (x >> 56) & 0xff;
+        assert(x == c0 + 256 * (c1 + 256 * (c2 + 256 * (c3 + 256 * (c4 + 256 * (c5 + 256 * (c6 + 256 * c7))))))) by (bit_vector)
+            requires
+                c0 == x & 0xff, c1 == (x >> 8) & 0xff, c2 == (x >> 16) & 0xff, c3 == (x >> 24) & 0xff,
+                c4 == (x >> 32) & 0xff, c5 == (x >> 40) & 0xff, c6 == (x >> 48) & 0xff, c7 == (x >> 56) & 0xff;
+        assert(w@[0] == c0 as u8 && w@[1] == c1 as u8 && w@[2] == c2 as u8 && w@[3] == c3 as u8);
+        assert(w@[4] == c4 as u8 && w@[5] == c5 as u8 && w@[6] == c6 as u8 && w@[7] == c7 as u8);
         reveal_with_fuel(le_bytes, 9);
         assert(w@ == b@.subrange(i as int, i + 8));
         assert(w@[0] == b@[i as int] && w@[1] == b@[i + 1] && w@[2] == b@[i + 2] && w@[3] == b@[i + 3]);
         assert(w@[4] == b@[i + 4] && w@[5] == b@[i + 5] && w@[6] == b@[i + 6] && w@[7] == b@[i + 7]);
     }
-    x0
+    x
 }
 
 /// `b[i]`.
@@ -213,6 +223,19 @@ fn get_range(b: &[u8], i: usize, n: usize) -> (r: &[u8])
     let _ = b.len();  // bounds `i + n` by `usize::MAX` for Verus
     // SAFETY: in bounds by the precondition.
     unsafe { b.get_unchecked(i..i + n) }
+}
+
+/// The 4 bytes at `i`.
+#[inline(always)]
+pub fn bytes4(b: &[u8], i: usize) -> (r: [u8; 4])
+    requires
+        i + 4 <= b@.len(),
+    ensures
+        r@ == b@.subrange(i as int, i + 4),
+{
+    let mut w = [0u8; 4];
+    w.copy_from_slice(get_range(b, i, 4));
+    w
 }
 
 /// The 8 bytes at `i`.

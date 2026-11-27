@@ -192,6 +192,342 @@ pub fn emit(st: &mut Store, src: &[u8], anchor: usize, ip: usize, off: usize, m:
     st.off.push(off as u32);
 }
 
+/// Is there room in `st` for literals up to `end` from `anchor` and a
+/// sequence per 4 of those bytes? (Every match is at least 4 bytes.)
+pub open spec fn room(st: &Store, anchor: usize, end: usize) -> bool {
+    &&& verilith_core::spare::spare(st.lits) >= end - anchor + 8
+    &&& 4 * verilith_core::spare::spare(st.ll) >= end - anchor + 4
+    &&& 4 * verilith_core::spare::spare(st.ml) >= end - anchor + 4
+    &&& 4 * verilith_core::spare::spare(st.off) >= end - anchor + 4
+}
+
+/// Reserves `room(st, pos, end)`.
+pub fn reserve_room(st: &mut Store, pos: usize, end: usize)
+    requires
+        pos <= end,
+        end - pos <= 0x20000,
+        old(st).wf(),
+    ensures
+        final(st).wf(),
+        final(st).lits@ == old(st).lits@,
+        room(final(st), pos, end),
+{
+    let n = (end - pos) / 4 + 2;
+    proof {
+        let x = (end - pos) as int;
+        assert(4 * (x / 4 + 2) >= x + 4) by (nonlinear_arith);
+    }
+    verilith_core::spare::reserve_spare(&mut st.lits, end - pos + 8);
+    verilith_core::spare::reserve_spare(&mut st.ll, n);
+    verilith_core::spare::reserve_spare(&mut st.ml, n);
+    verilith_core::spare::reserve_spare(&mut st.off, n);
+}
+
+/// `emit` into reserved room: a sequence ending at `ip + m`, at least 4
+/// bytes past `anchor`. No capacity checks, and short literal runs take
+/// no `memcpy` call.
+#[inline(always)]
+pub fn emit_s(st: &mut Store, src: &[u8], anchor: usize, ip: usize, off: usize, m: usize, end: usize)
+    requires
+        anchor <= ip,
+        ip + 8 <= src@.len(),
+        ip + m <= end,
+        ip + m >= anchor + 4,
+        old(st).wf(),
+        room(old(st), anchor, end),
+    ensures
+        final(st).wf(),
+        room(final(st), (ip + m) as usize, end),
+{
+    verilith_core::spare::append_wild_spare(&mut st.lits, src, anchor, ip);
+    verilith_core::spare::push_spare(&mut st.ll, (ip - anchor) as u32);
+    verilith_core::spare::push_spare(&mut st.ml, m as u32);
+    verilith_core::spare::push_spare(&mut st.off, off as u32);
+}
+
+/// The loop of `Enc::fast`. Returns the table, the last anchor and the
+/// repeat offsets.
+#[inline(always)]
+#[verifier::loop_isolation(false)]
+fn fast_run(
+    t1: Vec<u32>,
+    st: &mut Store,
+    src: &[u8],
+    pos: usize,
+    end: usize,
+    base: usize,
+    low: usize,
+    hlog: u32,
+    mls: u32,
+    rep1: usize,
+    rep2: usize,
+) -> (r: (Vec<u32>, usize, usize, usize))
+    requires
+        pos < end <= src@.len(),
+        end - pos >= 16,
+        base <= pos,
+        base <= low,
+        end - base < 0xC002_0000,
+        t1@.len() == (1usize << hlog),
+        1 <= hlog <= 30,
+        4 <= mls <= 8,
+        old(st).wf(),
+        room(old(st), pos, end),
+    ensures
+        r.0@.len() == t1@.len(),
+        pos <= r.1 <= end,
+        final(st).wf(),
+{
+    let mut t1 = t1;
+    let ghost tl = t1@.len();
+    let mut anchor = pos;
+    let mut ip = if pos == 0 { 1 } else { pos };
+    // Repeat offsets reach back no further than `low`.
+    let mut r1 = if ip >= low && rep1 <= ip - low { rep1 } else { 0 };
+    let mut r2 = if ip >= low && rep2 <= ip - low { rep2 } else { 0 };
+    let ilimit = end - 8;
+    while ip < ilimit
+        invariant
+            anchor <= ip,
+            ip <= end,
+            pos <= anchor,
+            ilimit == end - 8,
+            t1@.len() == tl,
+            st.wf(),
+            room(st, anchor, end),
+            r1 == 0 || (ip >= low && r1 <= ip - low),
+            r2 == 0 || (ip >= low && r2 <= ip - low),
+        decreases end - ip,
+    {
+        let ghost ip0 = ip;
+        let h = hash(src, ip, mls, hlog);
+        let cand = base.wrapping_add(t1[h] as usize);
+        t1.set(h, (ip - base) as u32);
+        let ip1 = ip + 1;
+        if r1 != 0 && load32(src, ip1) == load32(src, ip1 - r1) {
+            let m = 4 + eq_len(src, ip1 + 4, ip1 + 4 - r1, end - (ip1 + 4));
+            emit_s(st, src, anchor, ip1, r1, m, end);
+            ip = ip1 + m;
+            anchor = ip;
+        } else if cand < ip && cand >= low && eq_mls(src, ip, cand, mls) {
+            let off = ip - cand;
+            let mut m = mls as usize + eq_len(src, ip + mls as usize, cand + mls as usize, end - (ip + mls as usize));
+            let mut s = ip;
+            let mut c = cand;
+            while s > anchor && c > base && src[s - 1] == src[c - 1]
+                invariant
+                    anchor <= s <= ip,
+                    c < s,
+                    s - c == off,
+                    m <= end - s,
+                    s + m >= ip + 4,
+                decreases s,
+            {
+                s = s - 1;
+                c = c - 1;
+                m = m + 1;
+            }
+            emit_s(st, src, anchor, s, off, m, end);
+            r2 = r1;
+            r1 = off;
+            ip = s + m;
+            anchor = ip;
+        } else {
+            let stp = (ip - anchor) / 256 + 1;
+            ip = if ilimit - ip > stp { ip + stp } else { ilimit };
+            continue;
+        }
+        if ip < ilimit && ip >= base + 2 {
+            let h2 = hash(src, ip - 2, mls, hlog);
+            t1.set(h2, (ip - 2 - base) as u32);
+            while ip < ilimit && r2 != 0 && load32(src, ip) == load32(src, ip - r2)
+                invariant
+                    anchor == ip,
+                    ip <= end,
+                    pos <= anchor,
+                    ilimit == end - 8,
+                    t1@.len() == tl,
+                    st.wf(),
+                    room(st, anchor, end),
+                    r1 == 0 || (ip >= low && r1 <= ip - low),
+                    r2 == 0 || (ip >= low && r2 <= ip - low),
+                    ip > ip0,
+                decreases end - ip,
+            {
+                let q = r2;
+                let m = 4 + eq_len(src, ip + 4, ip + 4 - q, end - (ip + 4));
+                r2 = r1;
+                r1 = q;
+                emit_s(st, src, ip, ip, q, m, end);
+                let h3 = hash(src, ip, mls, hlog);
+                t1.set(h3, (ip - base) as u32);
+                ip = ip + m;
+                anchor = ip;
+            }
+        }
+    }
+    (t1, anchor, r1, r2)
+}
+
+/// The loop of `Enc::dfast`. Returns the tables, the last anchor and the
+/// repeat offsets.
+#[inline(always)]
+#[verifier::loop_isolation(false)]
+fn dfast_run(
+    t1: Vec<u32>,
+    t2: Vec<u32>,
+    st: &mut Store,
+    src: &[u8],
+    pos: usize,
+    end: usize,
+    base: usize,
+    low: usize,
+    hlog: u32,
+    clog: u32,
+    mls: u32,
+    rep1: usize,
+    rep2: usize,
+) -> (r: (Vec<u32>, Vec<u32>, usize, usize, usize))
+    requires
+        pos < end <= src@.len(),
+        end - pos >= 16,
+        base <= pos,
+        base <= low,
+        end - base < 0xC002_0000,
+        t1@.len() == (1usize << hlog),
+        t2@.len() == (1usize << clog),
+        1 <= hlog <= 30,
+        1 <= clog <= 30,
+        4 <= mls <= 8,
+        old(st).wf(),
+        room(old(st), pos, end),
+    ensures
+        r.0@.len() == t1@.len(),
+        r.1@.len() == t2@.len(),
+        pos <= r.2 <= end,
+        final(st).wf(),
+{
+    let mut t1 = t1;
+    let mut t2 = t2;
+    let ghost tl1 = t1@.len();
+    let ghost tl2 = t2@.len();
+    let mut anchor = pos;
+    let mut ip = if pos == 0 { 1 } else { pos };
+    let mut r1 = if ip >= low && rep1 <= ip - low { rep1 } else { 0 };
+    let mut r2 = if ip >= low && rep2 <= ip - low { rep2 } else { 0 };
+    let ilimit = end - 8;
+    while ip < ilimit
+        invariant
+            anchor <= ip,
+            ip <= end,
+            pos <= anchor,
+            ilimit == end - 8,
+            t1@.len() == tl1,
+            t2@.len() == tl2,
+            st.wf(),
+            room(st, anchor, end),
+            r1 == 0 || (ip >= low && r1 <= ip - low),
+            r2 == 0 || (ip >= low && r2 <= ip - low),
+        decreases end - ip,
+    {
+        let ghost ip0 = ip;
+        let hl = hash(src, ip, 8, hlog);
+        let hs = hash(src, ip, mls, clog);
+        let cl = base.wrapping_add(t1[hl] as usize);
+        let cs = base.wrapping_add(t2[hs] as usize);
+        t1.set(hl, (ip - base) as u32);
+        t2.set(hs, (ip - base) as u32);
+        let ip1 = ip + 1;
+        if r1 != 0 && load32(src, ip1) == load32(src, ip1 - r1) {
+            let m = 4 + eq_len(src, ip1 + 4, ip1 + 4 - r1, end - (ip1 + 4));
+            emit_s(st, src, anchor, ip1, r1, m, end);
+            ip = ip1 + m;
+            anchor = ip;
+        } else {
+            let mut start = ip;
+            let mut off: usize = 0;
+            let mut m: usize = 0;
+            if cl < ip && cl >= low && eq_mls(src, ip, cl, 8) {
+                off = ip - cl;
+                m = 8 + eq_len(src, ip + 8, cl + 8, end - (ip + 8));
+            } else if cs < ip && cs >= low && eq_mls(src, ip, cs, mls) {
+                // A long match one byte later?
+                let h3 = hash(src, ip1, 8, hlog);
+                let c3 = base.wrapping_add(t1[h3] as usize);
+                t1.set(h3, (ip1 - base) as u32);
+                if c3 < ip1 && c3 >= low && eq_mls(src, ip1, c3, 8) {
+                    off = ip1 - c3;
+                    start = ip1;
+                    m = 8 + eq_len(src, ip1 + 8, c3 + 8, end - (ip1 + 8));
+                } else {
+                    off = ip - cs;
+                    m = mls as usize + eq_len(src, ip + mls as usize, cs + mls as usize, end - (ip + mls as usize));
+                }
+            }
+            if off == 0 {
+                let stp = (ip - anchor) / 256 + 1;
+                ip = if ilimit - ip > stp { ip + stp } else { ilimit };
+                continue;
+            }
+            let mut s = start;
+            let mut c = start - off;
+            while s > anchor && c > base && src[s - 1] == src[c - 1]
+                invariant
+                    anchor <= s <= start,
+                    c < s,
+                    s - c == off,
+                    m <= end - s,
+                    s + m >= ip + 4,
+                decreases s,
+            {
+                s = s - 1;
+                c = c - 1;
+                m = m + 1;
+            }
+            emit_s(st, src, anchor, s, off, m, end);
+            r2 = r1;
+            r1 = off;
+            ip = s + m;
+            anchor = ip;
+        }
+        if ip < ilimit && ip >= base + 2 {
+            let p = ip - 2;
+            let h4 = hash(src, p, 8, hlog);
+            t1.set(h4, (p - base) as u32);
+            let h5 = hash(src, p, mls, clog);
+            t2.set(h5, (p - base) as u32);
+            while ip < ilimit && r2 != 0 && load32(src, ip) == load32(src, ip - r2)
+                invariant
+                    anchor == ip,
+                    ip <= end,
+                    pos <= anchor,
+                    ilimit == end - 8,
+                    t1@.len() == tl1,
+                    t2@.len() == tl2,
+                    st.wf(),
+                    room(st, anchor, end),
+                    r1 == 0 || (ip >= low && r1 <= ip - low),
+                    r2 == 0 || (ip >= low && r2 <= ip - low),
+                    ip > ip0,
+                decreases end - ip,
+            {
+                let q = r2;
+                let m2 = 4 + eq_len(src, ip + 4, ip + 4 - q, end - (ip + 4));
+                r2 = r1;
+                r1 = q;
+                emit_s(st, src, ip, ip, q, m2, end);
+                let h6 = hash(src, ip, 8, hlog);
+                t1.set(h6, (ip - base) as u32);
+                let h7 = hash(src, ip, mls, clog);
+                t2.set(h7, (ip - base) as u32);
+                ip = ip + m2;
+                anchor = ip;
+            }
+        }
+    }
+    (t1, t2, anchor, r1, r2)
+}
+
 impl Enc {
     pub open spec fn wf(&self) -> bool {
         &&& 1 <= self.hlog <= 30
@@ -307,8 +643,10 @@ impl Enc {
         self.next = pos;
     }
 
-    /// The fast strategy: one hash table, a repeat offset check one byte
-    /// ahead, skipping faster through data that does not match.
+    /// The fast strategy: one hash table of `mls`-byte hashes, the
+    /// repeat offset tried one byte ahead. The loop runs on locals (the
+    /// table moved out of `self`), with one `low` for the whole block and
+    /// a copy per match length so the hash shifts are constants.
     #[verifier::loop_isolation(false)]
     pub fn fast(&mut self, src: &[u8], pos: usize, end: usize)
         requires
@@ -321,100 +659,36 @@ impl Enc {
             final(self).wf(),
     {
         let mut anchor = pos;
-        let mut ip = if pos == 0 { 1 } else { pos };
-        let hlog = self.hlog;
-        let mls = self.mls;
         if end - pos >= 16 {
-            let ilimit = end - 8;
-            while ip < ilimit
-                invariant
-                    self.wf(),
-                    anchor <= ip,
-                    ip <= end,
-                    pos <= anchor,
-                    ilimit == end - 8,
-                    self.base <= pos,
-                    end - self.base < 0xC002_0000,
-                    hlog == self.hlog,
-                    mls == self.mls,
-                decreases end - ip,
-            {
-                let ghost ip0 = ip;
-                // The lowest position a match may come from.
-                let low = if ip - self.base > self.window { ip - self.window } else { self.base };
-                let h = hash(src, ip, mls, hlog);
-                let cand = self.base.wrapping_add(self.t1[h] as usize);
-                self.t1.set(h, (ip - self.base) as u32);
-                let r = self.rep1;
-                let ip1 = ip + 1;
-                if r >= 1 && r <= ip - low && load32(src, ip1) == load32(src, ip1 - r) {
-                    let m = 4 + eq_len(src, ip1 + 4, ip1 + 4 - r, end - (ip1 + 4));
-                    emit(&mut self.st, src, anchor, ip1, r, m);
-                    ip = ip1 + m;
-                    anchor = ip;
-                } else if cand < ip && cand >= low && eq_mls(src, ip, cand, mls) {
-                    let off = ip - cand;
-                    let mut m = mls as usize + eq_len(src, ip + mls as usize, cand + mls as usize, end - (ip + mls as usize));
-                    let mut s = ip;
-                    let mut c = cand;
-                    while s > anchor && c > self.base && src[s - 1] == src[c - 1]
-                        invariant
-                            anchor <= s <= ip,
-                            c < s,
-                            s - c == off,
-                            m <= end - s,
-                            s + m >= ip + 4,
-                        decreases s,
-                    {
-                        s = s - 1;
-                        c = c - 1;
-                        m = m + 1;
-                    }
-                    emit(&mut self.st, src, anchor, s, off, m);
-                    self.rep2 = self.rep1;
-                    self.rep1 = off;
-                    ip = s + m;
-                    anchor = ip;
-                } else {
-                    let stp = (ip - anchor) / 256 + 1;
-                    ip = if ilimit - ip > stp { ip + stp } else { ilimit };
-                    continue;
-                }
-                if ip < ilimit && ip >= self.base + 2 {
-                    let h2 = hash(src, ip - 2, mls, hlog);
-                    self.t1.set(h2, (ip - 2 - self.base) as u32);
-                    while ip < ilimit && self.off_ok(ip, self.rep2) && load32(src, ip) == load32(src, ip - self.rep2)
-                        invariant
-                            self.wf(),
-                            anchor == ip,
-                            ip <= end,
-                            pos <= anchor,
-                            ilimit == end - 8,
-                            self.base <= pos,
-                            end - self.base < 0xC002_0000,
-                            hlog == self.hlog,
-                            mls == self.mls,
-                            ip > ip0,
-                        decreases end - ip,
-                    {
-                        let r2 = self.rep2;
-                        let m = 4 + eq_len(src, ip + 4, ip + 4 - r2, end - (ip + 4));
-                        self.rep2 = self.rep1;
-                        self.rep1 = r2;
-                        emit(&mut self.st, src, ip, ip, r2, m);
-                        let h3 = hash(src, ip, mls, hlog);
-                        self.t1.set(h3, (ip - self.base) as u32);
-                        ip = ip + m;
-                        anchor = ip;
-                    }
-                }
-            }
+            reserve_room(&mut self.st, anchor, end);
+            let base = self.base;
+            let low = if end - base > self.window { end - self.window } else { base };
+            let mut t1: Vec<u32> = Vec::new();
+            core::mem::swap(&mut t1, &mut self.t1);
+            let hlog = self.hlog;
+            let (r1, r2) = (self.rep1, self.rep2);
+            let (t, a, q1, q2) = if self.mls == 4 {
+                fast_run(t1, &mut self.st, src, pos, end, base, low, hlog, 4, r1, r2)
+            } else if self.mls == 5 {
+                fast_run(t1, &mut self.st, src, pos, end, base, low, hlog, 5, r1, r2)
+            } else if self.mls == 6 {
+                fast_run(t1, &mut self.st, src, pos, end, base, low, hlog, 6, r1, r2)
+            } else if self.mls == 7 {
+                fast_run(t1, &mut self.st, src, pos, end, base, low, hlog, 7, r1, r2)
+            } else {
+                fast_run(t1, &mut self.st, src, pos, end, base, low, hlog, 8, r1, r2)
+            };
+            self.t1 = t;
+            self.rep1 = q1;
+            self.rep2 = q2;
+            anchor = a;
         }
         self.st.lits.extend_from_slice(slice_subrange(src, anchor, end));
     }
 
     /// The double-fast strategy: a table of 8-byte hashes for long
-    /// matches and one of `mls`-byte hashes for short ones.
+    /// matches and one of `mls`-byte hashes for short ones. Like `fast`,
+    /// the loop runs on locals.
     #[verifier::loop_isolation(false)]
     pub fn dfast(&mut self, src: &[u8], pos: usize, end: usize)
         requires
@@ -427,122 +701,30 @@ impl Enc {
             final(self).wf(),
     {
         let mut anchor = pos;
-        let mut ip = if pos == 0 { 1 } else { pos };
-        let hlog = self.hlog;
-        let clog = self.clog;
-        let mls = self.mls;
         if end - pos >= 16 {
-            let ilimit = end - 8;
-            while ip < ilimit
-                invariant
-                    self.wf(),
-                    anchor <= ip,
-                    ip <= end,
-                    pos <= anchor,
-                    ilimit == end - 8,
-                    self.base <= pos,
-                    end - self.base < 0xC002_0000,
-                    hlog == self.hlog,
-                    clog == self.clog,
-                    mls == self.mls,
-                decreases end - ip,
-            {
-                let ghost ip0 = ip;
-                let hl = hash(src, ip, 8, hlog);
-                let hs = hash(src, ip, mls, clog);
-                let cl = self.base.wrapping_add(self.t1[hl] as usize);
-                let cs = self.base.wrapping_add(self.t2[hs] as usize);
-                self.t1.set(hl, (ip - self.base) as u32);
-                self.t2.set(hs, (ip - self.base) as u32);
-                let r = self.rep1;
-                let ip1 = ip + 1;
-                let mut start = ip;
-                let mut off: usize = 0;
-                let mut m: usize = 0;
-                if self.off_ok(ip1, r) && load32(src, ip1) == load32(src, ip1 - r) {
-                    m = 4 + eq_len(src, ip1 + 4, ip1 + 4 - r, end - (ip1 + 4));
-                    emit(&mut self.st, src, anchor, ip1, r, m);
-                    ip = ip1 + m;
-                    anchor = ip;
-                } else {
-                    if cl < ip && self.off_ok(ip, ip - cl) && eq_mls(src, ip, cl, 8) {
-                        off = ip - cl;
-                        m = 8 + eq_len(src, ip + 8, cl + 8, end - (ip + 8));
-                    } else if cs < ip && self.off_ok(ip, ip - cs) && eq_mls(src, ip, cs, mls) {
-                        // A long match one byte later?
-                        let h3 = hash(src, ip1, 8, hlog);
-                        let c3 = self.base.wrapping_add(self.t1[h3] as usize);
-                        self.t1.set(h3, (ip1 - self.base) as u32);
-                        if c3 < ip1 && self.off_ok(ip1, ip1 - c3) && eq_mls(src, ip1, c3, 8) {
-                            off = ip1 - c3;
-                            start = ip1;
-                            m = 8 + eq_len(src, ip1 + 8, c3 + 8, end - (ip1 + 8));
-                        } else {
-                            off = ip - cs;
-                            m = mls as usize + eq_len(src, ip + mls as usize, cs + mls as usize, end - (ip + mls as usize));
-                        }
-                    }
-                    if off == 0 {
-                        let stp = (ip - anchor) / 256 + 1;
-                        ip = if ilimit - ip > stp { ip + stp } else { ilimit };
-                        continue;
-                    }
-                    let mut s = start;
-                    let mut c = start - off;
-                    while s > anchor && c > self.base && src[s - 1] == src[c - 1]
-                        invariant
-                            anchor <= s <= start,
-                            c < s,
-                            s - c == off,
-                            m <= end - s,
-                            s + m >= ip + 4,
-                        decreases s,
-                    {
-                        s = s - 1;
-                        c = c - 1;
-                        m = m + 1;
-                    }
-                    emit(&mut self.st, src, anchor, s, off, m);
-                    self.rep2 = self.rep1;
-                    self.rep1 = off;
-                    ip = s + m;
-                    anchor = ip;
-                }
-                if ip < ilimit && ip >= self.base + 2 {
-                    let p = ip - 2;
-                    let h4 = hash(src, p, 8, hlog);
-                    self.t1.set(h4, (p - self.base) as u32);
-                    let h5 = hash(src, p, mls, clog);
-                    self.t2.set(h5, (p - self.base) as u32);
-                    while ip < ilimit && self.off_ok(ip, self.rep2) && load32(src, ip) == load32(src, ip - self.rep2)
-                        invariant
-                            self.wf(),
-                            anchor == ip,
-                            ip <= end,
-                            pos <= anchor,
-                            ilimit == end - 8,
-                            self.base <= pos,
-                            end - self.base < 0xC002_0000,
-                            hlog == self.hlog,
-                            clog == self.clog,
-                            mls == self.mls,
-                            ip > ip0,
-                        decreases end - ip,
-                    {
-                        let r2 = self.rep2;
-                        let m2 = 4 + eq_len(src, ip + 4, ip + 4 - r2, end - (ip + 4));
-                        self.rep2 = self.rep1;
-                        self.rep1 = r2;
-                        emit(&mut self.st, src, ip, ip, r2, m2);
-                        let h6 = hash(src, ip, 8, hlog);
-                        self.t1.set(h6, (ip - self.base) as u32);
-                        let h7 = hash(src, ip, mls, clog);
-                        self.t2.set(h7, (ip - self.base) as u32);
-                        ip = ip + m2;
-                        anchor = ip;
-                    }
-                }
-            }
+            reserve_room(&mut self.st, anchor, end);
+            let base = self.base;
+            let low = if end - base > self.window { end - self.window } else { base };
+            let mut t1: Vec<u32> = Vec::new();
+            let mut t2: Vec<u32> = Vec::new();
+            core::mem::swap(&mut t1, &mut self.t1);
+            core::mem::swap(&mut t2, &mut self.t2);
+            let (hlog, clog) = (self.hlog, self.clog);
+            let (r1, r2) = (self.rep1, self.rep2);
+            let (u1, u2, a, q1, q2) = if self.mls == 4 {
+                dfast_run(t1, t2, &mut self.st, src, pos, end, base, low, hlog, clog, 4, r1, r2)
+            } else if self.mls == 5 {
+                dfast_run(t1, t2, &mut self.st, src, pos, end, base, low, hlog, clog, 5, r1, r2)
+            } else if self.mls == 6 {
+                dfast_run(t1, t2, &mut self.st, src, pos, end, base, low, hlog, clog, 6, r1, r2)
+            } else {
+                dfast_run(t1, t2, &mut self.st, src, pos, end, base, low, hlog, clog, self.mls, r1, r2)
+            };
+            self.t1 = u1;
+            self.t2 = u2;
+            self.rep1 = q1;
+            self.rep2 = q2;
+            anchor = a;
         }
         self.st.lits.extend_from_slice(slice_subrange(src, anchor, end));
     }
