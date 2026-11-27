@@ -1,5 +1,5 @@
 {
-  "name": "verilith-bind-linux-x64-gnu",
+  "name": "verilith-linux-x64-gnu",
   "version": "0.1.0",
   "cpu": [
     "x64"

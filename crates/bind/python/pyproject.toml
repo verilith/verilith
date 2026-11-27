@@ -2,11 +2,11 @@
 requires = ["maturin>=1.5,<2"]
 build-backend = "maturin"
 
-# Published to PyPI as verilith-bind (the name vbind is someone else's
+# Published to PyPI as verilith (the name vbind is someone else's
 # there); the module is still imported as vbind. The version comes from
 # Cargo.toml. .github/workflows/publish-pypi.yml builds and publishes it.
 [project]
-name = "verilith-bind"
+name = "verilith"
 dynamic = ["version"]
 description = "Formally verified (Verus) URL and JSON parsers for Python"
 readme = "README.md"

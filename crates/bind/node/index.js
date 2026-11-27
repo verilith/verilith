@@ -92,8 +92,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('verilith-bind-android-arm64')
-        const bindingPackageVersion = require('verilith-bind-android-arm64/package.json').version
+        const binding = require('verilith-android-arm64')
+        const bindingPackageVersion = require('verilith-android-arm64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -108,8 +108,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('verilith-bind-android-arm-eabi')
-        const bindingPackageVersion = require('verilith-bind-android-arm-eabi/package.json').version
+        const binding = require('verilith-android-arm-eabi')
+        const bindingPackageVersion = require('verilith-android-arm-eabi/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -129,8 +129,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('verilith-bind-win32-x64-gnu')
-          const bindingPackageVersion = require('verilith-bind-win32-x64-gnu/package.json').version
+          const binding = require('verilith-win32-x64-gnu')
+          const bindingPackageVersion = require('verilith-win32-x64-gnu/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -145,8 +145,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('verilith-bind-win32-x64-msvc')
-          const bindingPackageVersion = require('verilith-bind-win32-x64-msvc/package.json').version
+          const binding = require('verilith-win32-x64-msvc')
+          const bindingPackageVersion = require('verilith-win32-x64-msvc/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -162,8 +162,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('verilith-bind-win32-ia32-msvc')
-        const bindingPackageVersion = require('verilith-bind-win32-ia32-msvc/package.json').version
+        const binding = require('verilith-win32-ia32-msvc')
+        const bindingPackageVersion = require('verilith-win32-ia32-msvc/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -178,8 +178,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('verilith-bind-win32-arm64-msvc')
-        const bindingPackageVersion = require('verilith-bind-win32-arm64-msvc/package.json').version
+        const binding = require('verilith-win32-arm64-msvc')
+        const bindingPackageVersion = require('verilith-win32-arm64-msvc/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -197,8 +197,8 @@ function requireNative() {
       loadErrors.push(e)
     }
     try {
-      const binding = require('verilith-bind-darwin-universal')
-      const bindingPackageVersion = require('verilith-bind-darwin-universal/package.json').version
+      const binding = require('verilith-darwin-universal')
+      const bindingPackageVersion = require('verilith-darwin-universal/package.json').version
       if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
         throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
       }
@@ -213,8 +213,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('verilith-bind-darwin-x64')
-        const bindingPackageVersion = require('verilith-bind-darwin-x64/package.json').version
+        const binding = require('verilith-darwin-x64')
+        const bindingPackageVersion = require('verilith-darwin-x64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -229,8 +229,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('verilith-bind-darwin-arm64')
-        const bindingPackageVersion = require('verilith-bind-darwin-arm64/package.json').version
+        const binding = require('verilith-darwin-arm64')
+        const bindingPackageVersion = require('verilith-darwin-arm64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -249,8 +249,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('verilith-bind-freebsd-x64')
-        const bindingPackageVersion = require('verilith-bind-freebsd-x64/package.json').version
+        const binding = require('verilith-freebsd-x64')
+        const bindingPackageVersion = require('verilith-freebsd-x64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -265,8 +265,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('verilith-bind-freebsd-arm64')
-        const bindingPackageVersion = require('verilith-bind-freebsd-arm64/package.json').version
+        const binding = require('verilith-freebsd-arm64')
+        const bindingPackageVersion = require('verilith-freebsd-arm64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -281,8 +281,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('verilith-bind-freebsd-ppc64')
-        const bindingPackageVersion = require('verilith-bind-freebsd-ppc64/package.json').version
+        const binding = require('verilith-freebsd-ppc64')
+        const bindingPackageVersion = require('verilith-freebsd-ppc64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -302,8 +302,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('verilith-bind-linux-x64-musl')
-          const bindingPackageVersion = require('verilith-bind-linux-x64-musl/package.json').version
+          const binding = require('verilith-linux-x64-musl')
+          const bindingPackageVersion = require('verilith-linux-x64-musl/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -318,8 +318,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('verilith-bind-linux-x64-gnu')
-          const bindingPackageVersion = require('verilith-bind-linux-x64-gnu/package.json').version
+          const binding = require('verilith-linux-x64-gnu')
+          const bindingPackageVersion = require('verilith-linux-x64-gnu/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -336,8 +336,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('verilith-bind-linux-arm64-musl')
-          const bindingPackageVersion = require('verilith-bind-linux-arm64-musl/package.json').version
+          const binding = require('verilith-linux-arm64-musl')
+          const bindingPackageVersion = require('verilith-linux-arm64-musl/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -352,8 +352,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('verilith-bind-linux-arm64-gnu')
-          const bindingPackageVersion = require('verilith-bind-linux-arm64-gnu/package.json').version
+          const binding = require('verilith-linux-arm64-gnu')
+          const bindingPackageVersion = require('verilith-linux-arm64-gnu/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -370,8 +370,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('verilith-bind-linux-arm-musleabihf')
-          const bindingPackageVersion = require('verilith-bind-linux-arm-musleabihf/package.json').version
+          const binding = require('verilith-linux-arm-musleabihf')
+          const bindingPackageVersion = require('verilith-linux-arm-musleabihf/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -386,8 +386,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('verilith-bind-linux-arm-gnueabihf')
-          const bindingPackageVersion = require('verilith-bind-linux-arm-gnueabihf/package.json').version
+          const binding = require('verilith-linux-arm-gnueabihf')
+          const bindingPackageVersion = require('verilith-linux-arm-gnueabihf/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -404,8 +404,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('verilith-bind-linux-loong64-musl')
-          const bindingPackageVersion = require('verilith-bind-linux-loong64-musl/package.json').version
+          const binding = require('verilith-linux-loong64-musl')
+          const bindingPackageVersion = require('verilith-linux-loong64-musl/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -420,8 +420,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('verilith-bind-linux-loong64-gnu')
-          const bindingPackageVersion = require('verilith-bind-linux-loong64-gnu/package.json').version
+          const binding = require('verilith-linux-loong64-gnu')
+          const bindingPackageVersion = require('verilith-linux-loong64-gnu/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -438,8 +438,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('verilith-bind-linux-riscv64-musl')
-          const bindingPackageVersion = require('verilith-bind-linux-riscv64-musl/package.json').version
+          const binding = require('verilith-linux-riscv64-musl')
+          const bindingPackageVersion = require('verilith-linux-riscv64-musl/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -454,8 +454,8 @@ function requireNative() {
           loadErrors.push(e)
         }
         try {
-          const binding = require('verilith-bind-linux-riscv64-gnu')
-          const bindingPackageVersion = require('verilith-bind-linux-riscv64-gnu/package.json').version
+          const binding = require('verilith-linux-riscv64-gnu')
+          const bindingPackageVersion = require('verilith-linux-riscv64-gnu/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -471,8 +471,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('verilith-bind-linux-ppc64-gnu')
-        const bindingPackageVersion = require('verilith-bind-linux-ppc64-gnu/package.json').version
+        const binding = require('verilith-linux-ppc64-gnu')
+        const bindingPackageVersion = require('verilith-linux-ppc64-gnu/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -487,8 +487,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('verilith-bind-linux-s390x-gnu')
-        const bindingPackageVersion = require('verilith-bind-linux-s390x-gnu/package.json').version
+        const binding = require('verilith-linux-s390x-gnu')
+        const bindingPackageVersion = require('verilith-linux-s390x-gnu/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -507,8 +507,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('verilith-bind-openharmony-arm64')
-        const bindingPackageVersion = require('verilith-bind-openharmony-arm64/package.json').version
+        const binding = require('verilith-openharmony-arm64')
+        const bindingPackageVersion = require('verilith-openharmony-arm64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -523,8 +523,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('verilith-bind-openharmony-x64')
-        const bindingPackageVersion = require('verilith-bind-openharmony-x64/package.json').version
+        const binding = require('verilith-openharmony-x64')
+        const bindingPackageVersion = require('verilith-openharmony-x64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -539,8 +539,8 @@ function requireNative() {
         loadErrors.push(e)
       }
       try {
-        const binding = require('verilith-bind-openharmony-arm')
-        const bindingPackageVersion = require('verilith-bind-openharmony-arm/package.json').version
+        const binding = require('verilith-openharmony-arm')
+        const bindingPackageVersion = require('verilith-openharmony-arm/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -678,16 +678,16 @@ if (!nativeBinding || forceWasi) {
     let candidateError = null
     let candidateFailed = false
     try {
-      candidateError = __napiWasiResolveCandidate('verilith-bind-wasm32-wasi', true, undefined)
+      candidateError = __napiWasiResolveCandidate('verilith-wasm32-wasi', true, undefined)
       candidateFailed = candidateError !== null
       if (!candidateFailed) {
         if (process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-          const bindingPackageVersion = require('verilith-bind-wasm32-wasi/package.json').version
+          const bindingPackageVersion = require('verilith-wasm32-wasi/package.json').version
           if (bindingPackageVersion !== '0.1.0') {
             throw new Error(`WASI binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
         }
-        wasiBinding = require('verilith-bind-wasm32-wasi')
+        wasiBinding = require('verilith-wasm32-wasi')
         nativeBinding = wasiBinding
         __napiLoadedBindingTarget = 'wasm32-wasi'
         wasiBindingLoaded = true

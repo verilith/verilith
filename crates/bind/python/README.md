@@ -1,4 +1,4 @@
-# verilith-bind
+# verilith (Python)
 
 Python bindings for [Verilith](https://github.com/verilith/verilith)'s
 formally verified parsers: a WHATWG URL parser (verilith-url) and a JSON
@@ -7,7 +7,7 @@ The module only converts types; every parsing decision is made by the
 verified Rust code.
 
 ```
-pip install verilith-bind
+pip install verilith
 ```
 
 ```python

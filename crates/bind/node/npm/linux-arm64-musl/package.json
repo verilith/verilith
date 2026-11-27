@@ -1,5 +1,5 @@
 {
-  "name": "verilith-bind-linux-arm64-musl",
+  "name": "verilith-linux-arm64-musl",
   "version": "0.1.0",
   "cpu": [
     "arm64"

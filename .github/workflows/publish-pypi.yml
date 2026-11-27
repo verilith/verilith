@@ -1,7 +1,7 @@
 name: Publish to PyPI
 
 # Run by hand (Actions > Publish to PyPI > Run workflow). Builds the Python
-# bindings (crates/bind/python) as the PyPI package verilith-bind, imported
+# bindings (crates/bind/python) as the PyPI package verilith, imported
 # as vbind, tests every wheel it can run, and checks them all with twine. A
 # dry run unless "dry_run" is unticked. A publish is permanent: PyPI never
 # lets a version be uploaded twice, even after it is deleted.
@@ -16,7 +16,7 @@ name: Publish to PyPI
 #
 # Authentication, for a real publish: Trusted Publishing only, no token.
 # PyPI must list this repository, this workflow file (publish-pypi.yml) and
-# the environment "pypi" as a publisher of verilith-bind: before the first
+# the environment "pypi" as a publisher of verilith: before the first
 # publish, as a "pending publisher" (pypi.org > Account > Publishing).
 # Rerunning after a partial upload is safe: files already on PyPI are
 # skipped.
@@ -204,7 +204,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/verilith-bind/
+      url: https://pypi.org/project/verilith/
     permissions:
       contents: read
       id-token: write
