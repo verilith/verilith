@@ -32,6 +32,7 @@ pub enum Gen {
     Next,
 }
 
+/// The 1-RTT key generation in use.
 pub struct KeyPhase {
     generation: u64,
     /// The first packet number opened with the current generation's keys,
@@ -63,6 +64,7 @@ impl KeyPhase {
         }
     }
 
+    /// The first 1-RTT keys.
     pub fn new() -> (r: KeyPhase)
         ensures
             r.inv(),

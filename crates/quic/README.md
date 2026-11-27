@@ -178,6 +178,11 @@ Loss recovery (RFC 9002), for one packet number space each:
   `version_negotiation` writes a Version Negotiation packet echoing the
   client's connection IDs swapped and listing version 1, proven to parse
   back as exactly that, only for datagrams of at least 1200 bytes.
+- **Frame handling checks** (§19.3, §19.15, §19.16, `handle`):
+  `ack_delay` scales an ACK Delay by `2^ack_delay_exponent` and saturates
+  rather than losing high bits; a NEW_CONNECTION_ID is refused when we
+  send to an empty connection ID, and RETIRE_CONNECTION_ID may only name a
+  sequence number we issued.
 
 Every loop in a parser consumes input, so parsing is linear in the input;
 the PADDING scan reads eight bytes at a time.
