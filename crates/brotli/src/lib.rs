@@ -36,6 +36,8 @@ pub mod bitwriter;
 pub mod elemmas;
 #[doc(hidden)]
 pub mod encoder;
+#[doc(hidden)]
+pub mod pcode;
 
 pub use api::{decompress, Error};
 pub use stream::{Result as StreamResult, Stream};
