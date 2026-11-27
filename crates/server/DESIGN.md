@@ -308,6 +308,22 @@ in. HTTP/3's own layer is small (frames on QUIC streams, and QPACK, RFC
    verilith-quic and verilith-tls's verified QUIC handshake and packet
    protection, and `src/h3.rs` runs on it. quinn-proto is no longer a
    dependency of the server; it stays only as the client in tests.)*
+
+   The HTTP/3 connection layer above QUIC is verified too:
+   `src/h3core.rs` holds what each stream's bytes mean, on verilith-h3's
+   `Reader` and its specification. A request reaches the handler at most
+   once per stream, only after its stream ended well formed, with its body
+   exactly the stream's DATA content (or over `max_body` and answered
+   413), and with any Content-Length equal to that length (§4.1.2). Every
+   response's bytes read back, under the same specification at the
+   client, as one HEADERS frame with the encoded section and then the
+   body (`lemma_response_rt`). Our control stream is its type and our
+   SETTINGS. The peer gets one control stream and one of each QPACK
+   stream, none of which may end, and QPACK is fed exactly the bytes after
+   a QPACK stream's type. Requests the peer abandons or has refused are
+   bounded by `2 * max_streams` plus `abandoned_per_request` per completed
+   request (`Budget`, the HTTP/3 form of the Rapid Reset defence).
+   `src/h3.rs` is the glue between QUIC, QPACK and the core (TRUST.md).
 3. **UDP speed**: GSO and GRO, `sendmmsg`/`recvmmsg`, and one socket per
    worker with connection IDs routed to the worker that owns them (a BPF
    steering program on Linux). Without these every HTTP/3 server loses to

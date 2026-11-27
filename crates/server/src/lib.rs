@@ -16,6 +16,7 @@ pub mod persist;
 pub mod flow;
 pub mod streams;
 pub mod out;
+pub mod h3core;
 pub mod h2core;
 pub mod early;
 

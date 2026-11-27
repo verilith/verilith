@@ -7,13 +7,16 @@
 //! logic joining them is that crate's (its README says what of it is
 //! verified).
 //!
-//! Everything HTTP/3 is verified: each stream's bytes go through
-//! verilith-h3's `Reader` (frame syntax and order, with the RFC's error
-//! codes), field sections through verilith-qpack's decoder and encoder, and
-//! frames are written by verilith-h3's encoders. This file connects them:
-//! it accepts streams, dispatches requests to the handler like HTTP/2 does,
-//! and writes the responses, through the [`Quic`] trait. It is not
-//! verified; it is tested in `tests/h3.rs`.
+//! Everything HTTP/3 is verified: what each stream's bytes mean is
+//! [`crate::h3core`]'s (on verilith-h3's `Reader`: frame syntax and order,
+//! with the RFC's error codes; the request lifecycle, Content-Length, the
+//! critical streams, the response framing and our SETTINGS), field
+//! sections go through verilith-qpack's decoder and encoder, and the flood
+//! budget is `h3core::Budget`. This file connects them: it accepts
+//! streams, hands their bytes to the core, decodes the sections the core
+//! points at, dispatches requests to the handler like HTTP/2 does, and
+//! writes the responses, through the [`Quic`] trait. It is
+//! trusted for that plumbing (TRUST.md) and tested in `tests/h3.rs`.
 //!
 //! QPACK runs without a dynamic table in either direction (our SETTINGS
 //! advertise capacity 0 and no blocked streams, and our encoder uses none),
@@ -30,7 +33,7 @@ use std::time::{Duration, Instant};
 
 use bytes::{Buf, Bytes, BytesMut};
 use verilith_h3::consts::*;
-use verilith_h3::{Event as Ev, Reader, Settings, Src, UniKind, UniSeen};
+use verilith_h3::{Src, UniKind, UniSeen};
 use verilith_http::Header;
 use verilith_http::parse::Span;
 use verilith_qpack::encoder::Encoder;
@@ -38,7 +41,8 @@ use verilith_qpack::{Decoder, Fields, Res};
 use verilith_quic_conn as vq;
 use verilith_tls_aws_lc::{AwsLc, SigningKey, GROUPS, SUITES};
 
-use crate::h1::{Ctx, Out};
+use crate::h1::Ctx;
+use crate::h3core::{self, Act, Budget, Req3, UAct, Uni3};
 use crate::h2::{request_fields_ok, HList, Reply, ReplyBody};
 use crate::sys;
 use crate::{Handler, Request, Response};
@@ -64,6 +68,11 @@ pub struct Limits3 {
     pub window: u32,
     /// Bytes QUIC may hold unacknowledged for one connection.
     pub send_window: u64,
+    /// Request streams a client may abandon (reset before their end, or
+    /// have refused) for each request it completes, beyond `2 *
+    /// max_streams`; past that the connection is closed with
+    /// H3_EXCESSIVE_LOAD (`h3core::Budget`).
+    pub abandoned_per_request: u32,
     /// The largest UDP payload the verilith backend probes for: it starts
     /// at 1200, the minimum QUIC requires of paths (RFC 9000 §14), and
     /// steps up through 1452 (a 1500-byte Ethernet MTU over IPv6) and 8952
@@ -83,6 +92,7 @@ impl Default for Limits3 {
             stream_window: 1 << 20,
             window: 8 << 20,
             send_window: 8 << 20,
+            abandoned_per_request: 100,
             max_udp_payload: 65487,
         }
     }
@@ -253,14 +263,11 @@ impl Quic for vq::Connection<AwsLc> {
 
 /// A request stream.
 struct Req {
-    r: Reader,
+    /// What the stream's bytes mean (verified).
+    core: Req3,
     /// The decoded field section, as spans into `arena`.
     arena: Vec<u8>,
     fields: Vec<Header>,
-    body: Vec<u8>,
-    got_headers: bool,
-    /// The body went over the limit: answer 413 once it ends.
-    too_big: bool,
     reply: Option<Reply>,
     /// The response's frames, not yet all taken by QUIC: the HEADERS frame
     /// and DATA frame header, then the body.
@@ -275,12 +282,9 @@ struct Req {
 impl Req {
     fn new(limits: &Limits3) -> Box<Req> {
         Box::new(Req {
-            r: Reader::new_request(true, limits.max_field_section),
+            core: Req3::new(limits.max_field_section, limits.max_body),
             arena: Vec::new(),
             fields: Vec::new(),
-            body: Vec::new(),
-            got_headers: false,
-            too_big: false,
             reply: None,
             out: [Bytes::new(), Bytes::new()],
             next: 0,
@@ -289,25 +293,13 @@ impl Req {
     }
 
     fn reset(&mut self, limits: &Limits3) {
-        self.r = Reader::new_request(true, limits.max_field_section);
+        self.core.reset(limits.max_field_section, limits.max_body);
         self.arena.clear();
         self.fields.clear();
-        self.body.clear();
-        self.got_headers = false;
-        self.too_big = false;
         self.out = [Bytes::new(), Bytes::new()];
         self.next = 0;
         self.answered = false;
     }
-}
-
-/// A unidirectional stream the peer opened.
-struct Uni {
-    r: Reader,
-    kind: Option<UniKind>,
-    /// Past the stream type of a QPACK or unknown stream: the bytes are
-    /// QPACK instructions (or discarded).
-    raw: bool,
 }
 
 /// One connection's HTTP/3 state.
@@ -319,7 +311,7 @@ struct App<Id> {
     ctrl: Option<Id>,
     /// Keyed by stream ID with h2's multiply-and-fold hash: SipHash
     /// cost 2% of the CPU in h3-plaintext.
-    uni: HashMap<Id, Uni, IdHasher>,
+    uni: HashMap<Id, Uni3, IdHasher>,
     reqs: HashMap<Id, Box<Req>, IdHasher>,
     pool: Vec<Box<Req>>,
     /// Scratch for decoded field lines.
@@ -328,8 +320,8 @@ struct App<Id> {
     section: Vec<u8>,
     /// Scratch for a stream's bytes.
     input: Vec<u8>,
-    /// The highest request stream accepted, for GOAWAY.
-    requests: u64,
+    /// Requests abandoned against requests completed.
+    budget: Budget,
 }
 
 impl<Id> App<Id> {
@@ -345,7 +337,7 @@ impl<Id> App<Id> {
             lines: Fields::new(),
             section: Vec::new(),
             input: Vec::new(),
-            requests: 0,
+            budget: Budget::new(2 * u64::from(limits.max_streams), u64::from(limits.abandoned_per_request)),
         }
     }
 }
@@ -574,6 +566,9 @@ fn app_events<Q: Quic, H: Handler + ?Sized>(q: &mut Q, c: &mut App<Q::Id>, h: &H
                 if let Some(mut r) = c.reqs.remove(&id) {
                     r.reset(limits);
                     c.pool.push(r);
+                    if !c.budget.spend() {
+                        return Err(Close(H3_EXCESSIVE_LOAD));
+                    }
                 }
             }
             QEv::Other => {}
@@ -585,20 +580,16 @@ fn app_events<Q: Quic, H: Handler + ?Sized>(q: &mut Q, c: &mut App<Q::Id>, h: &H
     Ok(())
 }
 
-/// Our control stream: its type, then SETTINGS (§6.2.1).
+/// Our control stream: its type, then SETTINGS (§6.2.1), as
+/// `h3core::control_preamble` proves.
 fn open_control<Q: Quic>(q: &mut Q, c: &mut App<Q::Id>, limits: &Limits3) -> Result<(), Close> {
     let Some(id) = q.open_uni() else { return Ok(()) };
     c.ctrl = Some(id);
-    let s = Settings {
-        qpack_max_table_capacity: None,
-        max_field_section_size: Some(limits.max_field_section),
-        qpack_blocked_streams: None,
-        enable_connect_protocol: None,
-        h3_datagram: None,
-    };
     let mut b = [0u8; 64];
-    let at = verilith_h3::write_var(&mut b, 0, STREAM_CONTROL).expect("fits");
-    let end = verilith_h3::write_settings(&mut b, at, &s).expect("fits");
+    let end = h3core::control_preamble(limits.max_field_section, &mut b);
+    if end == 0 {
+        return Err(Close(H3_INTERNAL_ERROR));
+    }
     // A new stream's send buffer always takes a few bytes; if it did not,
     // the peer would never see our SETTINGS.
     match q.write(id, &mut [Bytes::copy_from_slice(&b[..end])]) {
@@ -609,16 +600,10 @@ fn open_control<Q: Quic>(q: &mut Q, c: &mut App<Q::Id>, limits: &Limits3) -> Res
 
 fn accept_uni<Q: Quic>(q: &mut Q, c: &mut App<Q::Id>, limits: &Limits3) -> Result<(), Close> {
     while let Some(id) = q.accept(false) {
-        c.uni.insert(id, Uni { r: Reader::new_uni(true, limits.max_field_section), kind: None, raw: false });
+        c.uni.insert(id, Uni3::new(limits.max_field_section));
         read_uni(q, c, id)?;
     }
     Ok(())
-}
-
-/// The pieces a read is handled in: what was read, then (at the end) the
-/// end of the stream.
-fn pieces(input: &[u8], fin: bool) -> impl Iterator<Item = (&[u8], bool)> {
-    [(input, false), (&[][..], true)].into_iter().take(1 + fin as usize)
 }
 
 fn read_uni<Q: Quic>(q: &mut Q, c: &mut App<Q::Id>, id: Q::Id) -> Result<(), Close> {
@@ -629,77 +614,34 @@ fn read_uni<Q: Quic>(q: &mut Q, c: &mut App<Q::Id>, id: Q::Id) -> Result<(), Clo
         return Ok(());
     }
     // A reset QPACK or control stream ends like a finished one.
-    let mut res = Ok(());
-    let mut discard = false;
-    for (mut input, fin) in pieces(&c.input, got != Read::Open) {
-        while !u.raw {
-            let (ev, used) = u.r.next(input, fin);
-            match ev {
-                Ev::Need | Ev::End => break,
-                Ev::Error(code) => {
-                    res = Err(Close(code));
-                    break;
-                }
-                Ev::StreamType(t) => {
-                    let k = verilith_h3::uni_kind(t);
-                    match verilith_h3::uni_open(c.seen, k) {
-                        Ok(s) => c.seen = s,
-                        Err(code) => {
-                            res = Err(Close(code));
-                            break;
-                        }
-                    }
-                    u.kind = Some(k);
-                }
-                Ev::Handoff => u.raw = true,
-                // SETTINGS: ours use no dynamic table and no extensions, so
-                // nothing the client says changes what we send. GOAWAY,
-                // MAX_PUSH_ID, CANCEL_PUSH: no server push, nothing to do.
-                _ => {}
-            }
-            input = &input[used..];
+    match u.step(&mut c.seen, &c.input, got != Read::Open) {
+        UAct::Need => Ok(()),
+        UAct::Close(code) => Err(Close(code)),
+        UAct::Discard => {
+            // An unknown stream type: abort reading (§6.2).
+            q.stop(id, H3_STREAM_CREATION_ERROR);
+            c.uni.remove(&id);
+            Ok(())
         }
-        if res.is_err() {
-            break;
-        }
-        if u.raw {
-            let ok = match u.kind {
+        UAct::Raw(from) => {
+            let input = &c.input[from..];
+            match u.kind() {
                 Some(UniKind::QpackEncoder) => {
                     let mut ready = Vec::new();
-                    c.dec.feed_encoder(input, &mut ready) || {
-                        res = Err(Close(QPACK_ENCODER_STREAM_ERROR));
-                        false
+                    if !c.dec.feed_encoder(input, &mut ready) {
+                        return Err(Close(QPACK_ENCODER_STREAM_ERROR));
                     }
                 }
                 Some(UniKind::QpackDecoder) => {
-                    c.enc.feed_decoder(input) || {
-                        res = Err(Close(QPACK_DECODER_STREAM_ERROR));
-                        false
+                    if !c.enc.feed_decoder(input) {
+                        return Err(Close(QPACK_DECODER_STREAM_ERROR));
                     }
                 }
-                _ => {
-                    discard = true;
-                    false
-                }
-            };
-            if !ok {
-                break;
+                _ => {}
             }
-            if fin {
-                if let Some(k) = u.kind {
-                    if let Err(code) = verilith_h3::uni_closed(k) {
-                        res = Err(Close(code));
-                    }
-                }
-            }
+            Ok(())
         }
     }
-    if discard {
-        // An unknown stream type: abort reading (§6.2).
-        q.stop(id, H3_STREAM_CREATION_ERROR);
-        c.uni.remove(&id);
-    }
-    res
 }
 
 fn accept_requests<Q: Quic, H: Handler + ?Sized>(q: &mut Q, c: &mut App<Q::Id>, h: &H, ctx: &Ctx, limits: &Limits3) -> Result<(), Close> {
@@ -709,10 +651,19 @@ fn accept_requests<Q: Quic, H: Handler + ?Sized>(q: &mut Q, c: &mut App<Q::Id>, 
             None => Req::new(limits),
         };
         c.reqs.insert(id, r);
-        c.requests = c.requests.max(id.into());
         read_request(q, c, id, h, ctx, limits)?;
     }
     Ok(())
+}
+
+/// How a read of a request stream ended.
+enum Verdict {
+    /// More is to come.
+    Wait,
+    /// The request is complete.
+    Ready,
+    /// Refuse the stream with this code (reset and stop reading it).
+    Refuse(u64),
 }
 
 fn read_request<Q: Quic, H: Handler + ?Sized>(
@@ -729,104 +680,110 @@ fn read_request<Q: Quic, H: Handler + ?Sized>(
     if got == Read::Gone {
         return Ok(());
     }
-    let mut ended = false;
-    let mut reset = got == Read::Reset;
-    let mut res = Ok(());
-    if !reset {
-        'pieces: for (mut input, fin) in pieces(&c.input, got == Read::Fin) {
-            loop {
-                let (ev, used) = req.r.next(input, fin);
-                match ev {
-                    Ev::Need => break,
-                    Ev::End => {
-                        ended = true;
-                        break 'pieces;
-                    }
-                    Ev::Error(code) => {
-                        res = Err(Close(code));
-                        break 'pieces;
-                    }
-                    Ev::Headers(src) => {
-                        let sec: &[u8] = match src {
-                            Src::Input(a, b) => &input[a..b],
-                            Src::Buf(off) => &req.r.buffered()[off..],
-                        };
-                        match c.dec.decode(id.into(), sec, &mut c.lines) {
-                            Res::Done => {}
-                            // A field section over our SETTINGS: refuse the
-                            // request (§4.2.2).
-                            Res::TooBig => {
-                                reset = true;
-                                break 'pieces;
-                            }
-                            Res::Blocked | Res::Bad => {
-                                res = Err(Close(QPACK_DECOMPRESSION_FAILED));
-                                break 'pieces;
-                            }
-                        }
-                        if !req.got_headers {
-                            req.got_headers = true;
-                            for i in 0..c.lines.len() {
-                                let (n, v, _) = c.lines.get(i);
-                                let ns = req.arena.len();
-                                req.arena.extend_from_slice(n);
-                                let vs = req.arena.len();
-                                req.arena.extend_from_slice(v);
-                                req.fields.push(Header { name: Span { start: ns, end: vs }, value: Span { start: vs, end: req.arena.len() } });
-                            }
-                        }
-                        // A second HEADERS frame is the trailers: ignored.
-                    }
-                    Ev::Data(a, b) => {
-                        if req.body.len() + (b - a) > limits.max_body {
-                            req.too_big = true;
-                        } else if !req.too_big {
-                            req.body.extend_from_slice(&input[a..b]);
-                        }
-                    }
-                    _ => {}
+    let mut verdict = Verdict::Wait;
+    if got == Read::Reset {
+        verdict = Verdict::Refuse(H3_REQUEST_REJECTED);
+    } else {
+        let fin = got == Read::Fin;
+        let mut at = 0;
+        'steps: loop {
+            let trailers = match req.core.step(&c.input, &mut at, fin) {
+                Act::Need | Act::Done => break,
+                Act::Close(code) => return Err(Close(code)),
+                // Malformed (§4.1.2): a stream error.
+                Act::Malformed => {
+                    verdict = Verdict::Refuse(H3_MESSAGE_ERROR);
+                    break;
                 }
-                input = &input[used..];
+                Act::Ready => {
+                    verdict = Verdict::Ready;
+                    break;
+                }
+                Act::Headers(src) => (false, src),
+                Act::Trailers(src) => (true, src),
+            };
+            let sec: &[u8] = match trailers.1 {
+                Src::Input(a, b) => &c.input[a..b],
+                Src::Buf(off) => &req.core.buffered()[off..],
+            };
+            match c.dec.decode(id.into(), sec, &mut c.lines) {
+                Res::Done => {}
+                // A field section over our SETTINGS: refuse the request
+                // (§4.2.2).
+                Res::TooBig => {
+                    verdict = Verdict::Refuse(H3_REQUEST_REJECTED);
+                    break;
+                }
+                Res::Blocked | Res::Bad => return Err(Close(QPACK_DECOMPRESSION_FAILED)),
+            }
+            if trailers.0 {
+                // Decoded for their errors; not passed on.
+                continue;
+            }
+            for i in 0..c.lines.len() {
+                let (n, v, _) = c.lines.get(i);
+                if n == b"content-length" && !req.core.declare_cl(v) {
+                    verdict = Verdict::Refuse(H3_MESSAGE_ERROR);
+                    break 'steps;
+                }
+                let ns = req.arena.len();
+                req.arena.extend_from_slice(n);
+                let vs = req.arena.len();
+                req.arena.extend_from_slice(v);
+                req.fields.push(Header { name: Span { start: ns, end: vs }, value: Span { start: vs, end: req.arena.len() } });
             }
         }
     }
-    if res.is_err() {
-        return res;
-    }
-    if reset {
-        q.reset(id, H3_REQUEST_REJECTED);
-        q.stop(id, H3_REQUEST_REJECTED);
-        if let Some(mut r) = c.reqs.remove(&id) {
-            r.reset(limits);
-            c.pool.push(r);
-        }
-        return Ok(());
-    }
-    if ended {
-        if !request_fields_ok(&req.arena, &req.fields) {
-            // Malformed (§4.1.2): a stream error.
-            q.reset(id, H3_MESSAGE_ERROR);
-            if let Some(mut r) = c.reqs.remove(&id) {
-                r.reset(limits);
-                c.pool.push(r);
+    match verdict {
+        Verdict::Wait => Ok(()),
+        Verdict::Refuse(code) => refuse(q, c, id, code, limits),
+        Verdict::Ready => {
+            if !request_fields_ok(&req.arena, &req.fields) {
+                // Malformed (§4.1.2): a stream error.
+                return refuse(q, c, id, H3_MESSAGE_ERROR, limits);
             }
-            return Ok(());
+            c.budget.earn();
+            if !dispatch(c, id, h, ctx) {
+                q.reset(id, H3_INTERNAL_ERROR);
+                drop_req(c, id, limits);
+                return Ok(());
+            }
+            write_out(q, c, id, limits);
+            Ok(())
         }
-        dispatch(c, id, h, ctx);
-        write_out(q, c, id, limits);
+    }
+}
+
+/// Resets a request stream and stops reading it, as a stream error; the
+/// peer's budget pays for it.
+fn refuse<Q: Quic>(q: &mut Q, c: &mut App<Q::Id>, id: Q::Id, code: u64, limits: &Limits3) -> Result<(), Close> {
+    q.reset(id, code);
+    q.stop(id, code);
+    drop_req(c, id, limits);
+    if !c.budget.spend() {
+        return Err(Close(H3_EXCESSIVE_LOAD));
     }
     Ok(())
 }
 
+fn drop_req<Id: Eq + Hash>(c: &mut App<Id>, id: Id, limits: &Limits3) {
+    if let Some(mut r) = c.reqs.remove(&id) {
+        r.reset(limits);
+        if c.pool.len() < 64 {
+            c.pool.push(r);
+        }
+    }
+}
+
 /// Calls the handler and frames its response: HEADERS (the QPACK-encoded
 /// section), then one DATA frame with the body.
-fn dispatch<Id: Copy + Eq + Hash + Into<u64>, H: Handler + ?Sized>(c: &mut App<Id>, id: Id, h: &H, ctx: &Ctx) {
-    let Some(req) = c.reqs.get_mut(&id) else { return };
+fn dispatch<Id: Copy + Eq + Hash + Into<u64>, H: Handler + ?Sized>(c: &mut App<Id>, id: Id, h: &H, ctx: &Ctx) -> bool {
+    let Some(req) = c.reqs.get_mut(&id) else { return false };
     let a = &req.arena;
     let get = |n: &[u8]| req.fields.iter().find(|f| f.name.of(a) == n).map(|f| f.value.of(a)).unwrap_or(b"");
     let method = get(b":method");
     let target = get(b":path");
-    let request = Request { method, target, minor: 1, buf: a, headers: &req.fields, body: &req.body, early: false, peer: None };
+    let request = Request { method, target, minor: 1, buf: a, headers: &req.fields, body: req.core.body(), early: false, peer: None };
     let mut reply = req.reply.take().unwrap_or(Reply { status: 0, fields: HList::default(), body: ReplyBody::None, sent_headers: false, off: 0 });
     // A reused stream's reply keeps its buffers, not its fields.
     reply.fields.clear();
@@ -835,7 +792,7 @@ fn dispatch<Id: Copy + Eq + Hash + Into<u64>, H: Handler + ?Sized>(c: &mut App<I
     reply.off = 0;
     let mut scratch = crate::out::Wire::empty();
     let mut res = Response { out: &mut scratch, ctx, sent: false, close: false, head: method == b"HEAD", h2: Some(&mut reply) };
-    if req.too_big {
+    if req.core.too_big() {
         res.error(413);
     } else {
         h.handle(&request, &mut res);
@@ -858,19 +815,18 @@ fn dispatch<Id: Copy + Eq + Hash + Into<u64>, H: Handler + ?Sized>(c: &mut App<I
         ReplyBody::Shared(a) => Bytes::from_owner(a),
         ReplyBody::Slice(a, s, n) => Bytes::from_owner(a).slice(s..s + n),
     };
+    // HEADERS, then one DATA frame with the body: `h3core::frame_head`
+    // and `lemma_response_rt`.
     let mut head = Vec::with_capacity(c.section.len() + 16);
-    let mut b = [0u8; 16];
-    let n = verilith_h3::write_header(&mut b, 0, HEADERS, c.section.len() as u64).expect("fits");
-    head.extend_from_slice(&b[..n]);
-    head.extend_from_slice(&c.section);
-    if !body.is_empty() {
-        let n = verilith_h3::write_header(&mut b, 0, DATA, body.len() as u64).expect("fits");
-        head.extend_from_slice(&b[..n]);
+    let framed = h3core::frame_head(&mut head, &c.section, body.len());
+    req.reply = Some(reply);
+    if !framed {
+        return false;
     }
     req.out = [Bytes::from(head), body];
     req.next = 0;
     req.answered = true;
-    req.reply = Some(reply);
+    true
 }
 
 /// Gives QUIC what it will take of a response; finishes the stream once
@@ -897,10 +853,5 @@ fn write_out<Q: Quic>(q: &mut Q, c: &mut App<Q::Id>, id: Q::Id, limits: &Limits3
         }
     }
     q.finish(id);
-    if let Some(mut r) = c.reqs.remove(&id) {
-        r.reset(limits);
-        if c.pool.len() < 64 {
-            c.pool.push(r);
-        }
-    }
+    drop_req(c, id, limits);
 }
