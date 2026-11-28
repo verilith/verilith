@@ -39,8 +39,8 @@ not occur in any crate's `src/` (the script fails if one appears).
 | h3 |  |  |  |  |  |  | 1 | 33 |
 | hpack | 3 |  |  |  |  |  | 3 | 203 |
 | http |  |  |  |  |  |  | 8 | 2725 |
-| imgproxy |  |  |  |  |  |  | 3 | 703 |
-| jpeg |  |  |  |  |  |  | 3 | 763 |
+| imgproxy |  |  |  |  |  |  | 3 | 800 |
+| jpeg |  |  |  |  |  |  | 3 | 808 |
 | json | 17 |  |  |  |  |  | 6 | 1853 |
 | lz4 |  |  |  |  |  |  | 1 | 584 |
 | png |  |  |  |  |  |  | 7 | 4807 |
@@ -51,15 +51,15 @@ not occur in any crate's `src/` (the script fails if one appears).
 | regex | 1 |  |  |  |  |  | 3 | 1969 |
 | resolver | 7 |  |  |  |  |  | 4 | 496 |
 | server | 1 |  |  |  | 1 |  | 15 | 5352 |
-| serverless |  |  |  |  |  |  | 2 | 259 |
+| serverless |  |  |  |  |  |  | 2 | 256 |
 | sha2 | 14 |  |  |  |  |  | 3 | 362 |
 | simd | 456 | 11 | 294 | 4 |  |  | 3 | 1027 |
 | snappy |  |  |  |  |  |  | 1 | 85 |
 | sync | 45 | 11 |  | 1 | 16 | 10 | 2 | 321 |
 | text | 18 | 13 |  |  |  |  | 9 | 1576 |
 | tiff |  |  |  |  |  |  | 2 | 1157 |
-| tls | 1 |  |  |  |  |  | 2 | 140 |
-| tls-aws-lc |  |  |  |  |  |  | 2 | 707 |
+| tls | 1 |  |  |  |  |  | 2 | 254 |
+| tls-aws-lc |  |  |  |  |  |  | 3 | 901 |
 | url | 1 |  |  |  |  |  | 5 | 1311 |
 | verilith |  |  |  |  |  |  | 1 | 67 |
 | wasm | 20 |  |  |  |  | 2 | 4 | 2340 |
@@ -69,7 +69,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 | 1354 |
 | zstd | 6 |  |  |  |  |  | 2 | 1331 |
-| **total** | **713** | **36** | **294** | **7** | **17** | **12** | **148** | **59653** |
+| **total** | **713** | **36** | **294** | **7** | **17** | **12** | **149** | **60100** |
 
 ## Items
 
@@ -162,13 +162,13 @@ not occur in any crate's `src/` (the script fails if one appears).
 ### imgproxy
 
 - `crates/imgproxy/src/handler.rs`: plain Rust, 83 lines
-- `crates/imgproxy/src/proxy.rs`: plain Rust, 551 lines
+- `crates/imgproxy/src/proxy.rs`: plain Rust, 648 lines
 - `crates/imgproxy/src/bin/verilith-imgproxy.rs`: plain Rust, 69 lines
 
 ### jpeg
 
-- `crates/jpeg/src/capi.rs`: plain Rust, 30 lines
-- `crates/jpeg/src/lib.rs`: plain Rust, 47 lines
+- `crates/jpeg/src/capi.rs`: plain Rust, 55 lines
+- `crates/jpeg/src/lib.rs`: plain Rust, 67 lines
 - `crates/jpeg/src/tj.rs`: plain Rust, 686 lines
 
 ### json
@@ -258,7 +258,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### serverless
 
-- `crates/serverless/src/lib.rs`: plain Rust, 203 lines
+- `crates/serverless/src/lib.rs`: plain Rust, 200 lines
 - `crates/serverless/src/bin/verilith-serverless.rs`: plain Rust, 56 lines
 
 ### sha2
@@ -340,13 +340,14 @@ not occur in any crate's `src/` (the script fails if one appears).
 ### tls
 
 - `crates/tls/src/ct.rs`: external_body: `declassify`
-- `crates/tls/src/lib.rs`: plain Rust, 26 lines
-- `crates/tls/src/stream.rs`: plain Rust, 114 lines
+- `crates/tls/src/lib.rs`: plain Rust, 31 lines
+- `crates/tls/src/stream.rs`: plain Rust, 223 lines
 
 ### tls-aws-lc
 
+- `crates/tls-aws-lc/src/client.rs`: plain Rust, 119 lines
 - `crates/tls-aws-lc/src/hpke.rs`: plain Rust, 171 lines
-- `crates/tls-aws-lc/src/lib.rs`: plain Rust, 536 lines
+- `crates/tls-aws-lc/src/lib.rs`: plain Rust, 611 lines
 
 ### url
 

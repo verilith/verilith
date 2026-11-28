@@ -241,6 +241,37 @@ fn no_state_between_requests() {
     }
 }
 
+/// Writes in several 4 KiB chunks of a memory that does not grow: a
+/// store across a chunk boundary, the last byte, `memory.fill`,
+/// `memory.copy` and the host's `req_read`. Each request reports what it
+/// found before writing, so a chunk not put back shows on the next one.
+const SCATTER: &str = r#"
+  (memory 2)
+  (data (i32.const 8000) "abcd")
+  (func (export "handle")
+    (i32.store8 (i32.const 60000) (i32.add (i32.const 48) (i32.load8_u (i32.const 19999))))
+    (i32.store8 (i32.const 60001) (i32.add (i32.const 48) (i32.load8_u (i32.const 40003))))
+    (i32.store8 (i32.const 60002) (i32.add (i32.const 48) (i32.load8_u (i32.const 100000))))
+    (i32.store (i32.const 4094) (i32.add (i32.load (i32.const 4094)) (i32.const 0x01010101)))
+    (i32.store8 (i32.const 60003) (i32.add (i32.const 48) (i32.load8_u (i32.const 4097))))
+    (i32.store8 (i32.const 131071) (i32.add (i32.load8_u (i32.const 131071)) (i32.const 1)))
+    (i32.store8 (i32.const 60004) (i32.add (i32.const 48) (i32.load8_u (i32.const 131071))))
+    (memory.fill (i32.const 12000) (i32.const 1) (i32.const 8000))
+    (memory.copy (i32.const 40000) (i32.const 8000) (i32.const 4))
+    (drop (call $read (i32.const 3) (i32.const 0) (i32.const 100000) (i32.const 16)))
+    (drop (call $write (i32.const 60000) (i32.const 5))))
+"#;
+
+#[test]
+fn no_state_between_requests_in_any_chunk() {
+    let mut f = load(&guest(SCATTER), &opts()).unwrap();
+    for _ in 0..4 {
+        let (g, r) = call(f, req(b"\x05"));
+        f = g;
+        assert_eq!(r.unwrap().body, b"00011");
+    }
+}
+
 #[test]
 fn state_from_the_start_function_is_kept() {
     // What instantiation leaves is the snapshot every request starts from.

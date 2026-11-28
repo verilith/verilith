@@ -18,6 +18,7 @@ use crate::run::*;
 use crate::compile::*;
 use crate::prims::*;
 use crate::interp::Store;
+use crate::mem::Mem;
 
 verus! {
 
@@ -191,6 +192,95 @@ fn copy_tables(src: &Vec<Vec<u32>>) -> (r: Vec<Vec<u32>>)
     v
 }
 
+/// `dst` made equal to `src`, in place when the lengths agree.
+fn copy_u64s_into(dst: &mut Vec<u64>, src: &Vec<u64>)
+    ensures final(dst)@ == src@,
+{
+    if dst.len() != src.len() {
+        *dst = copy_u64s(src);
+        return;
+    }
+    let mut i = 0;
+    while i < dst.len()
+        invariant
+            dst@.len() == src@.len(),
+            0 <= i <= dst@.len(),
+            forall|j: int| 0 <= j < i ==> #[trigger] dst@[j] == src@[j],
+        decreases dst@.len() - i,
+    {
+        dst.set(i, src[i]);
+        i += 1;
+    }
+    proof { assert(dst@ =~= src@); }
+}
+
+fn copy_u32s_into(dst: &mut Vec<u32>, src: &Vec<u32>)
+    ensures final(dst)@ == src@,
+{
+    if dst.len() != src.len() {
+        *dst = copy_u32s(src);
+        return;
+    }
+    let mut i = 0;
+    while i < dst.len()
+        invariant
+            dst@.len() == src@.len(),
+            0 <= i <= dst@.len(),
+            forall|j: int| 0 <= j < i ==> #[trigger] dst@[j] == src@[j],
+        decreases dst@.len() - i,
+    {
+        dst.set(i, src[i]);
+        i += 1;
+    }
+    proof { assert(dst@ =~= src@); }
+}
+
+fn copy_bools_into(dst: &mut Vec<bool>, src: &Vec<bool>)
+    ensures final(dst)@ == src@,
+{
+    if dst.len() != src.len() {
+        *dst = copy_bools(src);
+        return;
+    }
+    let mut i = 0;
+    while i < dst.len()
+        invariant
+            dst@.len() == src@.len(),
+            0 <= i <= dst@.len(),
+            forall|j: int| 0 <= j < i ==> #[trigger] dst@[j] == src@[j],
+        decreases dst@.len() - i,
+    {
+        dst.set(i, src[i]);
+        i += 1;
+    }
+    proof { assert(dst@ =~= src@); }
+}
+
+fn copy_tables_into(dst: &mut Vec<Vec<u32>>, src: &Vec<Vec<u32>>)
+    ensures
+        final(dst)@.len() == src@.len(),
+        forall|t: int| 0 <= t < src@.len() ==> (#[trigger] final(dst)@[t])@ == src@[t]@,
+{
+    if dst.len() != src.len() {
+        *dst = copy_tables(src);
+        return;
+    }
+    let mut i = 0;
+    while i < dst.len()
+        invariant
+            dst@.len() == src@.len(),
+            0 <= i <= dst@.len(),
+            forall|t: int| 0 <= t < i ==> (#[trigger] dst@[t])@ == src@[t]@,
+        decreases dst@.len() - i,
+    {
+        let mut row = Vec::new();
+        core::mem::swap(&mut row, &mut dst[i]);
+        copy_u32s_into(&mut row, &src[i]);
+        dst.set(i, row);
+        i += 1;
+    }
+}
+
 /// A copy of `st`, with the same view.
 fn copy_store(st: &Store) -> (r: Store)
     ensures
@@ -198,7 +288,7 @@ fn copy_store(st: &Store) -> (r: Store)
         r.mem_max == st.mem_max,
 {
     let r = Store {
-        mem: copy_bytes(&st.mem),
+        mem: Mem::new(copy_bytes(st.mem.vec())),
         mem_max: st.mem_max,
         globals: copy_u64s(&st.globals),
         tables: copy_tables(&st.tables),
@@ -278,6 +368,66 @@ impl Checked {
         Snapshot { st: copy_store(&self.st) }
     }
 
+    /// The memory as it was when last made clean ([`Checked::snapshot_clean`],
+    /// [`Checked::reset`]): what [`Checked::reset`] copies back from.
+    pub closed spec fn mem_base(&self) -> Seq<u8> {
+        self.st.mem.base()
+    }
+
+    /// A copy of the store as it is now, with the memory made clean
+    /// against it, so that [`Checked::reset`] to this snapshot copies back
+    /// only what was written since.
+    pub fn snapshot_clean(self) -> (r: (Checked, Snapshot))
+        ensures r.0.view() == self.view(), r.1.view() == self.view(), r.0.mem_base() == r.1.view().mem,
+    {
+        proof { use_type_invariant(&self); }
+        let Checked { m, cs, codes, mut st, stack, calls } = self;
+        let ghost v0 = store_view(&st);
+        st.mem.rebase();
+        proof { assert(store_view(&st) =~= v0); }
+        let snap = Snapshot { st: copy_store(&st) };
+        (Checked { m, cs, codes, st, stack, calls }, snap)
+    }
+
+    /// [`Checked::restore`] for a snapshot the memory is clean against
+    /// (from [`Checked::snapshot_clean`]): memory is put back by copying
+    /// only the 4 KiB chunks written since, unless it grew. Globals,
+    /// tables and dropped segments are copied in place. On `true` the
+    /// store is exactly the snapshot's, and the memory clean against it
+    /// again; on `false` (a snapshot that does not fit this module)
+    /// nothing changed.
+    pub fn reset(self, snap: &Snapshot) -> (r: (Checked, bool))
+        requires self.mem_base() == snap.view().mem,
+        ensures
+            r.1 ==> r.0.view() == snap.view(),
+            !r.1 ==> r.0.view() == self.view(),
+            r.0.mem_base() == snap.view().mem,
+    {
+        proof { use_type_invariant(&self); }
+        let Checked { m, cs, codes, st, stack, calls } = self;
+        let s = &snap.st;
+        if !check_store(&m, s) {
+            return (Checked { m, cs, codes, st, stack, calls }, false);
+        }
+        let Store { mut mem, mem_max: _, mut globals, mut tables, mut dropped } = st;
+        mem.reset(s.mem.as_slice());
+        copy_u64s_into(&mut globals, &s.globals);
+        copy_tables_into(&mut tables, &s.tables);
+        copy_bools_into(&mut dropped, &s.dropped);
+        let st2 = Store { mem, mem_max: s.mem_max, globals, tables, dropped };
+        proof {
+            let a = store_view(&st2);
+            let b = store_view(s);
+            assert(a.tables =~= b.tables) by {
+                assert forall|t: int| 0 <= t < a.tables.len() implies a.tables[t] == b.tables[t] by {
+                    assert(st2.tables@[t]@ == s.tables@[t]@);
+                }
+            }
+            assert(a =~= b);
+        }
+        (Checked { m, cs, codes, st: st2, stack, calls }, true)
+    }
+
     /// Puts the store back to `snap`: memory (contents and size), globals,
     /// tables and dropped data segments. On `true` the store is exactly
     /// the snapshot's; on `false` (a snapshot that does not fit this
@@ -297,10 +447,10 @@ impl Checked {
         let mut mem = st.mem;
         if mem.len() == s.mem.len() {
             let n = mem.len();
-            copy_in(&mut mem, 0, s.mem.as_slice(), 0, n);
+            mem.copy_in(0, s.mem.as_slice(), 0, n);
             proof { assert(mem@ =~= s.mem@); }
         } else {
-            mem = copy_bytes(&s.mem);
+            mem = Mem::new(copy_bytes(s.mem.vec()));
         }
         let mut globals = st.globals;
         if globals.len() == s.globals.len() {
@@ -351,7 +501,7 @@ impl Checked {
     /// through the slice, and the invariant does not depend on contents.
     #[verifier::external_body]
     pub fn memory_mut(&mut self) -> &mut [u8] {
-        self.st.mem.as_mut_slice()
+        self.st.mem.all_mut()
     }
 
     pub fn globals(&self) -> &[u64] {
@@ -365,7 +515,7 @@ impl Checked {
         if offset > st.mem.len() || bytes.len() > st.mem.len() - offset {
             return (Checked { m, cs, codes, st, stack, calls }, false);
         }
-        copy_in(&mut st.mem, offset, bytes, 0, bytes.len());
+        st.mem.copy_in(offset, bytes, 0, bytes.len());
         (Checked { m, cs, codes, st, stack, calls }, true)
     }
 
@@ -376,6 +526,7 @@ impl Checked {
     /// wrong number of arguments traps with `Unreachable`.
     pub fn invoke<H: Host>(self, func: u32, args: &[u64], host: &mut H, metered: bool, fuel: &mut u64)
         -> (r: (Checked, Result<Vec<u64>, Trap>))
+        ensures r.0.mem_base() == self.mem_base(),
     {
         proof { use_type_invariant(&self); }
         let Checked { m, cs, codes, mut st, mut stack, mut calls } = self;

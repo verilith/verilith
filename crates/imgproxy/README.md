@@ -2,16 +2,15 @@
 
 An image proxy and thumbnailer that answers [imgproxy](https://imgproxy.net)'s
 URLs, built from the Verilith crates: images are decoded by the verified
-JPEG, PNG, WebP and GIF decoders, resized and encoded as PNG by code
-verified here, and served by [verilith-server](../server). Parsing
+JPEG, PNG, WebP and GIF decoders, resized by code verified here, encoded as
+PNG (verified here) or JPEG (verilith-jpeg's verified encoder), and served by [verilith-server](../server). Parsing
 untrusted images is where image servers have had their worst bugs
 (ImageTragick, the libwebp heap overflow CVE-2023-4863, libpng's and
 libjpeg's long lists); here the decoders, the resizer and the encoder are
 proven free of memory errors, overflows and panics, and proven to compute
 their specifications.
 
-**Status: pre-release.** PNG output only (no verified JPEG or WebP encoder
-yet), `local://`, `http://` and uploaded sources (no HTTPS client yet), and
+**Status: pre-release.** PNG and JPEG output (no WebP encoder yet), `local://`, `http://` and uploaded sources (no HTTPS client yet), and
 an area-average (box) resampler rather than imgproxy's Lanczos.
 
 ## What is proven
@@ -24,8 +23,10 @@ an area-average (box) resampler rather than imgproxy's Lanczos.
 | The row pass's values stay below 255 × 256 and the column pass's below 256, so the narrowing casts are exact (the weights of each output cell add up to the source length: `lemma_osum`) | `lemma_hpx_bound`, `lemma_opx_bound` |
 | Cropping returns exactly `spec::crop` | `resize::crop_rgba` |
 | **PNG round trip:** for every RGBA image, the file `encode_rgba` writes decodes, under verilith-png's specification of PNG decoding, to exactly that image and header. The proof goes through every layer of the specification: the signature, IHDR, the chunk walk with its CRCs (computed by verilith-checksum, verified), the zlib stream (verilith-zlib's compressor, proven to round-trip), and the five row filters, each row filtered with whichever filter libpng's heuristic picks | `pngenc::encode_rgba` against `verilith_png::spec::decode` |
+| **JPEG output:** the file verilith-jpeg's `encode_rgb` writes decodes, under verilith-jpeg's specification, to the coefficients libjpeg-turbo computes for the image with its default settings (and is byte-identical to libjpeg-turbo's file in its differential tests) | verilith-jpeg's `encode::encode_rgb` (verified there) |
 | The output size: `plan_x` computes `fit::plan` (imgproxy's `fit`, `fill` and `force`, with and without `enlarge`), and the result is never empty, never larger than 65535 on a side or than the pixel limit, and the crop is inside the resized image | `fit::plan_x` |
 | Grey, RGB, ARGB and palette pixels are converted to RGBA byte for byte as specified; alpha is flattened onto a background colour as specified | `pixels::expand`, `from_argb`, `from_indexed`, `flatten` |
+| JPEG shrink-on-load: the reduced-size image is exactly libjpeg-turbo's scaled decode, as verilith-jpeg's `spec_scaled` states it | verilith-jpeg's `scaled::decode_scaled` (verified there) |
 | URL signatures are checked with HMAC-SHA256 in constant time | verilith-sha2's `HmacSha256::verify` (verified there) |
 | `local://` paths never leave the root | verilith-server's `path::resolve_exec` (verified there), then `openat2(RESOLVE_BENEATH)` |
 
@@ -60,8 +61,9 @@ imgproxy.
 Processing options: `resize`/`rs` (`fit`, `fill`, `force`, width, height,
 enlarge), `size`/`s`, `resizing_type`/`rt`, `width`/`w`, `height`/`h`,
 `enlarge`/`el`, `background`/`bg` (flattens alpha), `gravity`/`g` (`ce`
-only), `format`/`f` (`png` only); `quality`, `strip_metadata` and
-`cachebuster` are accepted and ignored. Anything else is answered 400, as
+only), `format`/`f` or the URL's extension (`png`, `jpg`/`jpeg`; PNG when
+none is given), `quality`/`q` (JPEG, 1 to 100, default 80);
+`strip_metadata` and `cachebuster` are accepted and ignored. Anything else is answered 400, as
 imgproxy does. Settings: `IMGPROXY_KEY`, `IMGPROXY_SALT`, `IMGPROXY_BIND`,
 `IMGPROXY_LOCAL_FILESYSTEM_ROOT`, `IMGPROXY_ALLOWED_SOURCES`,
 `IMGPROXY_MAX_SRC_RESOLUTION` (default 50 megapixels, checked from the
@@ -75,7 +77,13 @@ does not decode or is over the limits, 502 for an origin that fails.
 
 ## Departures from imgproxy
 
-- PNG output only: `@jpg`, `@webp` and `@avif` are answered 422.
+- PNG and JPEG output only: `@webp` and `@avif` are answered 422. With no
+  extension the result is PNG, where imgproxy keeps the source's format.
+- JPEG is written as libvips writes it by default: baseline, 4:2:0 chroma
+  below quality 90 and 4:4:4 from 90, typical (not optimized) Huffman
+  tables, alpha flattened onto the background or white. The quantization
+  tables are libjpeg's for the quality; imgproxy's libvips uses the same
+  ones.
 - Box (area-average) resampling instead of Lanczos 3. It is exact for
   downscaling, has no ringing, and is softer than Lanczos.
 - Alpha is resampled straight, not premultiplied.
@@ -106,13 +114,17 @@ Cloud x86-64 (Intel Xeon, 2.1 GHz), median of 15, in milliseconds
 The output is 20 to 30% smaller than libvips's (libvips writes RGB without
 row filters by default; this writes RGBA with libpng's filter choice).
 
-Where the time goes, on the 4000x3000 JPEG: about 60 ms decoding at full
-size, 30 ms expanding RGB to RGBA, 37 ms resizing, 11 ms encoding. The
-large gap to `vips_thumbnail` is shrink-on-load: libjpeg decodes at 1/8
-size from the DC coefficients and never builds the full image. A verified
-reduced-size decode in verilith-jpeg is the next step for speed; it needs
-a specification of its own, since a DC-only decode is not the full decode
-averaged (the full decode clamps and rounds each pixel).
+JPEG sources are now decoded at reduced size, as imgproxy does
+(`calcJpegShink`: 1/8, 1/4 or 1/2, the largest the scale allows), by
+verilith-jpeg's verified `decode_scaled`, which goes from the coefficients
+straight to the small image with libjpeg's reduced inverse DCTs and gives
+libjpeg-turbo's pixels. The table above is from before that change. On
+the same kind of machine, with a noisier 4000x3000 photograph (more
+entropy-coded data than the table's), the 300x300 thumbnail went from
+166 ms to 57 ms, and a 1920x1280 one from 33 ms to 21 ms (baseline) and
+57 ms to 34 ms (progressive). What is left of the 12-megapixel case is
+nearly all entropy decoding, which libjpeg-turbo does in about half the
+time.
 
 ## Tests
 
