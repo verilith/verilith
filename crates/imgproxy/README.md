@@ -16,13 +16,15 @@ sources. Resampling is Lanczos 3 by default, as in imgproxy.
 
 ## What is proven
 
-`cargo verus focus` checks 240 functions with no errors.
+`cargo verus focus` checks 361 functions with no errors.
 
 | Property | Where it is stated |
 |---|---|
 | The resizer computes exactly `spec::resize`: each output pixel is the area-weighted average of the source pixels its cell covers, rows then columns, rounded to nearest, with 8 bits of fraction kept between the passes. No overflow, no out-of-bounds access, for every size up to 65535 by 65535 | `resize::resize_rgba` (with `resize::rows`, `resize::cols`) against `spec::resize` |
 | The row pass's values stay below 255 × 256 and the column pass's below 256, so the narrowing casts are exact (the weights of each output cell add up to the source length: `lemma_osum`) | `lemma_hpx_bound`, `lemma_opx_bound` |
 | The thumbnailer computes exactly `spec_lanczos::thumb` for every kernel table (Lanczos 3, Lanczos 2, cubic, linear, or any other of up to 4 units' support): a box shrink by half the ratio rounded down, as `vips_resize` does, then the kernel stretched over each output sample, edges repeated, weights normalized by their sum, rows then columns with 8 bits of fraction kept and each pass clamped. No overflow, no out-of-bounds access, for every size up to 65535 by 65535 | `lanczos::thumb_rgba` (with `lanczos::taps`, `krows`, `kcols`) against `spec_lanczos::thumb` |
+| URLs: `url::parse_x` refuses a path exactly when `spec_url::parse` gives none, and otherwise returns its signature span, options and source. The specification states imgproxy's grammar (signature, `name:arg` options applied in order, `plain/` sources percent-decoded with verilith-text's verified decoder, base64url sources with its verified decoder, `upload`, the `@`/`.` extension) | `url::parse_x` against `spec_url::parse` |
+| Choosing a decoder: `url::kind_x` names the format exactly as `spec_url::kind` does from the first bytes (JPEG, PNG, WebP, GIF), and `jpeg_shrink_x` computes imgproxy's shrink-on-load factor | `url::kind_x`, `url::jpeg_shrink_x` |
 | Cropping returns exactly `spec::crop` | `resize::crop_rgba` |
 | **PNG round trip:** for every RGBA image, the file `encode_rgba` writes decodes, under verilith-png's specification of PNG decoding, to exactly that image and header. The proof goes through every layer of the specification: the signature, IHDR, the chunk walk with its CRCs (computed by verilith-checksum, verified), the zlib stream (verilith-zlib's compressor, proven to round-trip), and the five row filters, each row filtered with whichever filter libpng's heuristic picks | `pngenc::encode_rgba` against `verilith_png::spec::decode` |
 | **JPEG output:** the file verilith-jpeg's `encode_rgb` writes decodes, under verilith-jpeg's specification, to the coefficients libjpeg-turbo computes for the image with its default settings (and is byte-identical to libjpeg-turbo's file in its differential tests) | verilith-jpeg's `encode::encode_rgb` (verified there) |
