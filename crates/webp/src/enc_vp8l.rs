@@ -494,7 +494,7 @@ proof fn lemma_ext_more(b: Seq<u8>, e: Seq<u8>, w: Seq<nat>)
     }
 }
 
-fn push_le32(v: &mut Vec<u8>, x: u32)
+pub fn push_le32(v: &mut Vec<u8>, x: u32)
     ensures
         final(v)@.len() == old(v)@.len() + 4,
         final(v)@ == old(v)@ + seq![(x & 0xff) as u8, ((x >> 8) & 0xff) as u8, ((x >> 16) & 0xff) as u8, (x >> 24) as u8],
@@ -1220,7 +1220,7 @@ fn encode_with(px: &[u32], w: u32, h: u32, sg: bool, pbits: u32) -> (r: Option<V
         }
         i = i + 1;
     }
-    let (mut bw, Ghost(pr), Ghost(mc)) = match stream(main, modes.as_slice(), w, h, a, sg, pbits) {
+    let (bw, Ghost(pr), Ghost(mc)) = match stream(main, modes.as_slice(), w, h, a, sg, pbits) {
         Some(t) => t,
         None => return None,
     };

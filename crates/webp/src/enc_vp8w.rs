@@ -13,6 +13,8 @@ use crate::enc_vp8tok::*;
 use crate::vp8tables::*;
 #[cfg(verus_only)]
 use crate::vp8spec::*;
+use crate::enc_vp8res::EncRes;
+use crate::vp8spec::FrameHeader;
 use vstd::prelude::*;
 
 verus! {
@@ -779,6 +781,8 @@ pub fn put_mb(w: &mut EncW, probs: &[u8], lv: &[i16], top: &mut Vec<bool>, left:
             &&& final(w).want@ == old(w).want@ + r.1
             &&& final(top)@ == r.0.top
             &&& final(left)@ == r.0.left
+            &&& final(top)@.len() == 9
+            &&& final(left)@.len() == 9
         }),
 {
     hide(tok_ws);
@@ -816,6 +820,7 @@ pub fn put_mb(w: &mut EncW, probs: &[u8], lv: &[i16], top: &mut Vec<bool>, left:
     put_plane(w, probs, lv, 2, 0, 20, 6, 2, 4, top, left, Ghost(ru.0), Ghost(q.4), Ghost(q.5));
     let ghost rv = pb(pp, ru.0, lvs, 2, 0, q.4, q.5, 20, 6, 2, 4);
     proof {
+        lemma_pb_ok(pp, ru.0, lvs, 2, 0, q.4, q.5, 20, 6, 2, 4);
         let r = mb_res(pp, q, false, c0.top, c0.left, lvs);
         assert(r.0 == rv.0);
         assert(r.1 == r1.1 + (ry.1 + (ru.1 + rv.1)));
