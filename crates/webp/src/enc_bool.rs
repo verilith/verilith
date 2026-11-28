@@ -330,6 +330,194 @@ pub proof fn lemma_read(data: Seq<u8>, e: EncState, ws: Seq<(int, bool)>, k: int
 }
 
 
+
+// ---------------------------------------------------------------------------
+// Reading back what was written
+// ---------------------------------------------------------------------------
+/// The writes `ws` from encoder state `e` read back from `data`.
+pub open spec fn good(data: Seq<u8>, e: EncState, ws: Seq<(int, bool)>) -> bool {
+    &&& enc_wf(e)
+    &&& probs_ok(ws)
+    &&& covers(data, enc_run(e, ws))
+}
+
+pub proof fn lemma_good_split(data: Seq<u8>, e: EncState, a: Seq<(int, bool)>, b: Seq<(int, bool)>)
+    requires
+        good(data, e, a + b),
+    ensures
+        good(data, e, a),
+        good(data, enc_run(e, a), b),
+{
+    let ab = a + b;
+    assert(probs_ok(a)) by {
+        assert forall|k: int| 0 <= k < a.len() implies 0 <= (#[trigger] a[k]).0 <= 255 by {
+            assert(ab[k] == a[k]);
+        }
+    }
+    assert(probs_ok(b)) by {
+        assert forall|k: int| 0 <= k < b.len() implies 0 <= (#[trigger] b[k]).0 <= 255 by {
+            assert(ab[k + a.len()] == b[k]);
+        }
+    }
+    lemma_covers_take(data, e, ab, a.len() as int);
+    assert(ab.take(a.len() as int) =~= a);
+    lemma_run_wf(e, a);
+    lemma_run_concat(e, a, b);
+}
+
+pub proof fn lemma_good_join(data: Seq<u8>, e: EncState, a: Seq<(int, bool)>, b: Seq<(int, bool)>)
+    requires
+        good(data, e, a),
+        good(data, enc_run(e, a), b),
+    ensures
+        good(data, e, a + b),
+{
+    let ab = a + b;
+    assert(probs_ok(ab)) by {
+        assert forall|k: int| 0 <= k < ab.len() implies 0 <= (#[trigger] ab[k]).0 <= 255 by {
+            if k < a.len() {
+                assert(ab[k] == a[k]);
+            } else {
+                assert(ab[k] == b[k - a.len()]);
+            }
+        }
+    }
+    lemma_run_concat(e, a, b);
+}
+
+/// One write read back.
+pub proof fn lemma_bit(data: Seq<u8>, e: EncState, p: int, b: bool, rest: Seq<(int, bool)>)
+    requires
+        good(data, e, seq![(p, b)] + rest),
+    ensures
+        bool_bit(dst(data, e), p) == b,
+        bool_next(data, dst(data, e), p) == dst(data, enc_put(e, p, b)),
+        good(data, enc_put(e, p, b), rest),
+        enc_run(e, seq![(p, b)]) == enc_put(e, p, b),
+{
+    lemma_good_split(data, e, seq![(p, b)], rest);
+    let w = seq![(p, b)];
+    assert(w.drop_last() =~= Seq::<(int, bool)>::empty());
+    assert(w.last() == (p, b));
+    assert(enc_run(e, Seq::<(int, bool)>::empty()) == e);
+    assert(enc_run(e, w) == enc_put(enc_run(e, w.drop_last()), w.last().0, w.last().1));
+    assert(enc_run(e, w) == enc_put(e, p, b));
+    assert(w[0] == (p, b));
+    lemma_step(data, e, p, b);
+}
+
+/// `n` bits of `v` at probability 128, the most significant first: what
+/// `bool_literal` reads.
+pub open spec fn lit_ws(v: nat, n: nat) -> Seq<(int, bool)>
+    decreases n,
+{
+    if n == 0 {
+        Seq::empty()
+    } else {
+        lit_ws(v / 2, (n - 1) as nat).push((128int, v % 2 == 1))
+    }
+}
+
+pub proof fn lemma_lit(data: Seq<u8>, e: EncState, v: nat, n: nat, rest: Seq<(int, bool)>)
+    requires
+        v < pow2(n),
+        good(data, e, lit_ws(v, n) + rest),
+    ensures
+        bool_literal(data, dst(data, e), n) == (dst(data, enc_run(e, lit_ws(v, n))), v as int),
+        good(data, enc_run(e, lit_ws(v, n)), rest),
+    decreases n,
+{
+    lemma2_to64();
+    if n == 0 {
+        assert(lit_ws(v, n) + rest =~= rest);
+    } else {
+        let n1 = (n - 1) as nat;
+        let b = v % 2 == 1;
+        let l1 = lit_ws(v / 2, n1);
+        lemma_pow2_unfold(n);
+        assert(lit_ws(v, n) + rest =~= l1 + (seq![(128int, b)] + rest));
+        lemma_lit(data, e, v / 2, n1, seq![(128int, b)] + rest);
+        let e1 = enc_run(e, l1);
+        lemma_bit(data, e1, 128, b, rest);
+        assert(lit_ws(v, n).drop_last() =~= l1);
+        assert(lit_ws(v, n).last() == (128int, b));
+    }
+}
+
+/// A flag: one bit at probability 128.
+pub open spec fn flag_ws(b: bool) -> Seq<(int, bool)> {
+    seq![(128int, b)]
+}
+
+pub proof fn lemma_flag(data: Seq<u8>, e: EncState, b: bool, rest: Seq<(int, bool)>)
+    requires
+        good(data, e, flag_ws(b) + rest),
+    ensures
+        rd_flag(data, dst(data, e)) == (dst(data, enc_run(e, flag_ws(b))), b),
+        good(data, enc_run(e, flag_ws(b)), rest),
+{
+    lemma_bit(data, e, 128, b, rest);
+}
+
+/// A magnitude in `n` bits and its sign: what `rd_signed` reads.
+pub open spec fn signed_ws(x: int, n: nat) -> Seq<(int, bool)> {
+    lit_ws((if x < 0 {
+        -x
+    } else {
+        x
+    }) as nat, n).push((128int, x < 0))
+}
+
+pub proof fn lemma_signed(data: Seq<u8>, e: EncState, x: int, n: nat, rest: Seq<(int, bool)>)
+    requires
+        -pow2(n) < x < pow2(n),
+        good(data, e, signed_ws(x, n) + rest),
+    ensures
+        rd_signed(data, dst(data, e), n) == (dst(data, enc_run(e, signed_ws(x, n))), x),
+        good(data, enc_run(e, signed_ws(x, n)), rest),
+{
+    let m = (if x < 0 {
+        -x
+    } else {
+        x
+    }) as nat;
+    let l = lit_ws(m, n);
+    assert(signed_ws(x, n) + rest =~= l + (seq![(128int, x < 0)] + rest));
+    lemma_lit(data, e, m, n, seq![(128int, x < 0)] + rest);
+    lemma_bit(data, enc_run(e, l), 128, x < 0, rest);
+    assert(signed_ws(x, n).drop_last() =~= l);
+}
+
+/// A flag, then the value if it is not zero: what `rd_opt_signed` reads.
+pub open spec fn opt_signed_ws(x: int, n: nat) -> Seq<(int, bool)> {
+    if x == 0 {
+        flag_ws(false)
+    } else {
+        flag_ws(true) + signed_ws(x, n)
+    }
+}
+
+pub proof fn lemma_opt_signed(data: Seq<u8>, e: EncState, x: int, n: nat, rest: Seq<(int, bool)>)
+    requires
+        -pow2(n) < x < pow2(n),
+        good(data, e, opt_signed_ws(x, n) + rest),
+    ensures
+        rd_opt_signed(data, dst(data, e), n) == (dst(data, enc_run(e, opt_signed_ws(x, n))), x),
+        good(data, enc_run(e, opt_signed_ws(x, n)), rest),
+{
+    if x == 0 {
+        lemma_bit(data, e, 128, false, rest);
+    } else {
+        let f = flag_ws(true);
+        let sw = signed_ws(x, n);
+        assert(opt_signed_ws(x, n) + rest =~= f + (sw + rest));
+        lemma_bit(data, e, 128, true, sw + rest);
+        let e1 = enc_put(e, 128, true);
+        lemma_signed(data, e1, x, n, rest);
+        lemma_run_concat(e, f, sw);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Bytes
 // ---------------------------------------------------------------------------
@@ -513,6 +701,7 @@ impl BoolWriter {
     }
 
     /// Writes `bit` at probability `prob` (of a zero, out of 256).
+    #[verifier::spinoff_prover]
     pub fn put(&mut self, prob: u8, bit: bool)
         requires
             old(self).wf(),
@@ -662,9 +851,17 @@ impl BoolWriter {
             proof {
                 lemma_pow2_strictly_increases(sh as nat, 16);
                 assert((byte as u64) * pow2(sh as nat) <= self.acc) by {
-                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(self.acc as int, pow2(sh as nat) as int);
+                    let q = pow2(sh as nat) as int;
+                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(self.acc as int, q);
                     lemma_pow2_pos(sh as nat);
-                    vstd::arithmetic::div_mod::lemma_mod_pos_bound(self.acc as int, pow2(sh as nat) as int);
+                    vstd::arithmetic::div_mod::lemma_mod_pos_bound(self.acc as int, q);
+                    let d = self.acc as int / q;
+                    assert(byte as int == d);
+                    assert(d * q <= self.acc as int) by (nonlinear_arith)
+                        requires
+                            self.acc as int == q * d + (self.acc as int % q),
+                            0 <= self.acc as int % q,
+                    ;
                 }
                 lemma_u64_shl_is_mul(byte as u64, sh as u64);
             }
@@ -683,10 +880,23 @@ impl BoolWriter {
                 let b0 = be(o) as int;
                 assert(b0 * (q * 256) + byte * q + self.acc == (256 * b0 + byte) * q + self.acc) by (nonlinear_arith);
                 assert(8 * self.out@.len() + sh == 8 * o.len() + sh + 8);
+                assert(self.acc == a0 as int % q) by (nonlinear_arith)
+                    requires
+                        self.acc == a0 - byte * q,
+                        byte as int == a0 as int / q,
+                        a0 as int == q * (a0 as int / q) + (a0 as int % q),
+                ;
+                assert(self.acc < pow2(self.nacc as nat));
             }
         }
         proof {
             self.ws = Ghost(ws1);
+            assert(128 <= self.range <= 255);
+            assert(8 <= self.nacc <= 15);
+            assert(self.acc < pow2(self.nacc as nat));
+            assert(probs_ok(self.ws@));
+            assert(self.st() == enc_run(enc_init(), self.ws@));
+            assert(self.out@.len() <= 0x1000_0000);
         }
     }
 
