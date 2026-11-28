@@ -1,11 +1,11 @@
 //! Verified content-coding negotiation (RFC 9110 §12.5.3, §12.4.2).
 //!
 //! The proxy compresses a response only with a coding the request
-//! accepts: [`accept_q`] is the weight `Accept-Encoding` gives a coding
+//! accepts: `accept_q` is the weight `Accept-Encoding` gives a coding
 //! (its own element, else `*`, else 0), with q-values read as thousandths
 //! (`q=0.5` is 500, `q=0` excludes). [`choose`] picks, among Brotli,
 //! Zstandard and gzip, one with the highest positive weight (ties in that
-//! order), or none: [`chosen_ok`] is the property, and it is proven for
+//! order), or none: `chosen_ok` is the property, and it is proven for
 //! every header value. So `gzip;q=0` is never answered with gzip, and a
 //! request that names no supported coding gets the representation
 //! uncompressed.
@@ -176,7 +176,7 @@ fn is_digit_exec(c: u8) -> (r: bool)
     c >= 0x30 && c <= 0x39
 }
 
-/// [`qvalue`].
+/// `qvalue`.
 pub fn qvalue_exec(s: &[u8]) -> (r: Option<u32>)
     ensures
         match qvalue(s@) {
@@ -297,7 +297,7 @@ fn weight_exec(v: &[u8], s: usize, e: usize) -> (r: u32)
     }
 }
 
-/// [`find_q`] from 0, as a weight in thousandths.
+/// `find_q` from 0, as a weight in thousandths.
 pub fn find_q_exec(v: &[u8], name: &[u8]) -> (r: Option<u32>)
     ensures
         match find_q(v@, 0, name@) {
@@ -356,7 +356,7 @@ pub fn find_q_exec(v: &[u8], name: &[u8]) -> (r: Option<u32>)
     }
 }
 
-/// [`accept_q`], in thousandths.
+/// `accept_q`, in thousandths.
 pub fn accept_q_exec(v: &[u8], name: &[u8]) -> (r: u32)
     ensures
         r as nat == accept_q(v@, name@),
@@ -376,7 +376,7 @@ pub fn accept_q_exec(v: &[u8], name: &[u8]) -> (r: u32)
 }
 
 /// The coding to compress with for `Accept-Encoding: v`, among those
-/// allowed (`br`, `zstd`, `gzip`): [`chosen_ok`].
+/// allowed (`br`, `zstd`, `gzip`): `chosen_ok`.
 pub fn choose(v: &[u8], br: bool, zstd: bool, gzip: bool) -> (r: Option<Coding>)
     ensures
         chosen_ok(v@, |c: Coding| match c {

@@ -283,6 +283,67 @@ pub fn narrow32(s: &[u16], i: usize, out: &mut [u8], o: usize)
     store256_u8(out, o, p);
 }
 
+/// A lane of `cmpeq16(subs_u16(sub16(a, 0xD800), 0x7FF), 0)` is 0xFFFF
+/// exactly at a surrogate; a lane whose low byte is below 0x80 is none.
+proof fn lemma_sur_lane(u: u16, t: u16, d: u16, e: u16)
+    requires
+        t == ((u - 0xD800u16 + 0x10000) % 0x10000) as u16,
+        d == (if t < 0x7FFu16 { 0u16 } else { (t - 0x7FFu16) as u16 }),
+        e == (if d == 0u16 { 0xffffu16 } else { 0u16 }),
+        byte16(e, 0) < 128,
+    ensures
+        !(0xD800u16 <= u && u <= 0xDFFFu16),
+{
+    assert(byte16(0xffffu16, 0) == 0xFF) by (bit_vector);
+    assert(e != 0xffffu16);
+    assert(d != 0);
+    assert(t > 0x7FFu16);
+}
+
+/// Whether none of the 32 units at `s[i..]` is a surrogate (0xD800 to
+/// 0xDFFF): each unit minus 0xD800, wrapping, saturating-minus 0x7FF, is
+/// zero exactly for a surrogate.
+#[inline(always)]
+pub fn no_sur32(s: &[u16], i: usize) -> (r: bool)
+    requires
+        avx2(),
+        i + 32 <= s.len(),
+    ensures
+        r ==> forall|k: int| i <= k < i + 32 ==> !(0xD800u16 <= #[trigger] s@[k] && s@[k] <= 0xDFFFu16),
+{
+    let a = load256_u16(s, i);
+    let b = load256_u16(s, i + 16);
+    let base = _mm256_set1_epi16(-10240i16);
+    let lim = _mm256_set1_epi16(0x7FF);
+    let zero = _mm256_set1_epi16(0);
+    let za = _mm256_cmpeq_epi16(_mm256_subs_epu16(_mm256_sub_epi16(a, base), lim), zero);
+    let zb = _mm256_cmpeq_epi16(_mm256_subs_epu16(_mm256_sub_epi16(b, base), lim), zero);
+    let ma = _mm256_movemask_epi8(za);
+    let mb = _mm256_movemask_epi8(zb);
+    let r = ma == 0 && mb == 0;
+    proof {
+        assert(u16_of_i16(-10240i16) == 0xD800u16);
+        assert(u16_of_i16(0x7FFi16) == 0x7FFu16);
+        assert(u16_of_i16(0i16) == 0u16);
+        if r {
+            lemma_movemask_zero(b256(za));
+            lemma_movemask_zero(b256(zb));
+            assert forall|k: int| i <= k < i + 32 implies !(0xD800u16 <= #[trigger] s@[k] && s@[k] <= 0xDFFFu16) by {
+                let l = if k < i + 16 { k - i } else { k - i - 16 };
+                let src = if k < i + 16 { a } else { b };
+                let z = if k < i + 16 { za } else { zb };
+                assert(u16x16(src)[l] == s@[k]);
+                lemma_u16_lane_bytes(b256(z), l);
+                assert(b256(z)[2 * l] < 128);
+                let t = sub16(u16x16(src), splat16(0xD800u16, 16))[l];
+                let d = subs_u16(sub16(u16x16(src), splat16(0xD800u16, 16)), splat16(0x7FFu16, 16))[l];
+                lemma_sur_lane(s@[k], t, d, u16x16(z)[l]);
+            }
+        }
+    }
+    r
+}
+
 /// Whether the 32 units at `s[i..]` are all below `lim` (0x80 or 0x100).
 #[inline(always)]
 pub fn below32(s: &[u16], i: usize, ascii_only: bool) -> (r: bool)

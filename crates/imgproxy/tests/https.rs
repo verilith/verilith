@@ -53,6 +53,7 @@ fn proxy_trusting(roots: Vec<Vec<u8>>) -> Proxy {
         tls: Some(proxy::tls_config(roots)),
         allowed: Vec::new(),
         ttl: 60,
+        watermark: None,
     }
 }
 
@@ -60,7 +61,7 @@ fn proxy_trusting(roots: Vec<Vec<u8>>) -> Proxy {
 fn fetches_https_source() {
     let (port, der) = origin().clone();
     let p = proxy_trusting(vec![der]);
-    let (out, _) = p.answer(b"GET", format!("/x/rs:fit:16:16/plain/https://localhost:{port}/img.png").as_bytes(), b"").unwrap();
+    let out = p.answer(b"GET", format!("/x/rs:fit:16:16/plain/https://localhost:{port}/img.png").as_bytes(), b"").unwrap().body;
     let d = png::Decoder::new(std::io::Cursor::new(out)).read_info().unwrap();
     assert_eq!((d.info().width, d.info().height), (16, 12));
     assert_eq!(

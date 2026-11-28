@@ -1,0 +1,17 @@
+[package]
+name = "crossover"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Not part of the workspace: a tool that runs one kernel call so that
+# `trace.py` can record the instructions it executes (see README.md).
+[workspace]
+
+[dependencies]
+verilith-checksum = { path = "../../crates/checksum" }
+verilith-core = { path = "../../crates/core" }
+verilith-lz4 = { path = "../../crates/lz4" }
+
+[profile.release]
+debug = 1

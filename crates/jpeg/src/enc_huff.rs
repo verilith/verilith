@@ -1084,6 +1084,8 @@ pub proof fn lemma_ac_zeros(co: Seq<u16>, si: Seq<u8>, b: Seq<i16>, k0: int, k1:
 /// coefficients in zigzag order (`encode_one_block`). `m` is the mask of
 /// the nonzero AC coefficients (`mask_ok(m, b, 1)`), so only those are
 /// visited, as libjpeg-turbo does with its bit map.
+// The default budget is too small for z3's Arm build here; x86 needs less.
+#[verifier::spinoff_prover]
 #[verifier::rlimit(40)]
 pub fn encode_block_m(
     w: &mut BitWriter,

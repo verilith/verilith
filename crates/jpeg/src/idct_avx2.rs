@@ -1766,6 +1766,9 @@ fn row_st(out: &mut [u8], v: __m128i, base: usize, stride: usize, y: usize, Ghos
 /// The two vectors of rows stored as the 8 by 8 block at row `row0`,
 /// column `col0` of a plane with rows of `stride`.
 #[inline(always)]
+// The default budget is too small for z3's Arm build here; x86 needs less.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(40)]
 fn st8(out: &mut [u8], lo: __m256i, hi: __m256i, row0: usize, col0: usize, stride: usize, Ghost(blk): Ghost<Seq<u8>>)
     requires
         avx2(),

@@ -6,6 +6,41 @@
 //! check of that function's `requires` clause (Verus does not check the
 //! callers that are not verified), marked "pre:" below.
 use crate::fit::{plan_x, Mode};
+pub use crate::spec_geom::{GKind, Geo, Gravity};
+pub use crate::spec_url::{Filter, Format, Kind, Options};
+
+/// `spec_url::geo`: the geometry options.
+pub fn geo(o: &Options) -> Geo {
+    Geo {
+        mode: o.mode,
+        w: o.w,
+        h: o.h,
+        enlarge: o.enlarge,
+        gravity: o.gravity,
+        crop_w: o.crop_w,
+        crop_h: o.crop_h,
+        crop_g: o.crop_g,
+        extend: o.extend,
+        extend_g: o.extend_g,
+        pad: o.pad,
+        dpr: o.dpr,
+    }
+}
+
+/// `geom::geo_ok`, checked at run time.
+pub fn geo_ok(g: &Geo) -> bool {
+    let off = |g: &Gravity| (-65535..=65535).contains(&g.x) && (-65535..=65535).contains(&g.y);
+    g.w <= MAX_DIM
+        && g.h <= MAX_DIM
+        && (1..=80000).contains(&g.dpr)
+        && g.crop_w <= 655_359_999
+        && g.crop_h <= 655_359_999
+        && off(&g.gravity)
+        && g.crop_g.as_ref().map_or(true, off)
+        && g.extend_g.as_ref().map_or(true, off)
+        && g.pad.iter().all(|&v| v <= MAX_DIM)
+}
+pub use crate::url::{jpeg_shrink_x as jpeg_shrink, Fail, Source};
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
@@ -13,29 +48,12 @@ use std::time::Duration;
 /// The largest width or height anything here handles (`spec::MAX_DIM`).
 pub const MAX_DIM: u32 = 65535;
 
-/// Why a request failed, with the status it is answered with.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Fail {
-    /// 400: the URL is not one we understand.
-    BadUrl(&'static str),
-    /// 403: the signature is wrong.
-    Forbidden,
-    /// 404: no such source.
-    NotFound,
-    /// 415: the source is not JPEG, PNG, WebP or GIF.
-    Unsupported,
-    /// 422: the source does not decode, or is larger than the limits.
-    Unprocessable(&'static str),
-    /// 502: the origin failed.
-    BadGateway(&'static str),
-}
-
 impl Fail {
     pub fn status(&self) -> u16 {
         match self {
             Fail::BadUrl(_) => 400,
             Fail::Forbidden => 403,
-            Fail::NotFound => 404,
+            Fail::NotFound | Fail::Expired => 404,
             Fail::Unsupported => 415,
             Fail::Unprocessable(_) => 422,
             Fail::BadGateway(_) => 502,
@@ -46,6 +64,7 @@ impl Fail {
             Fail::BadUrl(m) | Fail::Unprocessable(m) | Fail::BadGateway(m) => m,
             Fail::Forbidden => "Invalid signature",
             Fail::NotFound => "Source not found",
+            Fail::Expired => "Expired URL",
             Fail::Unsupported => "Source image type not supported",
         }
     }
@@ -55,58 +74,218 @@ impl Fail {
 // URLs
 // ---------------------------------------------------------------------------
 
-/// What to do to the image.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Options {
-    pub mode: Mode,
-    pub w: u32,
-    pub h: u32,
-    pub enlarge: bool,
-    pub background: Option<[u8; 3]>,
-    /// The output format; PNG when the URL names none.
-    pub format: Format,
-    /// JPEG quality, 1 to 100 (0: the default, 80).
-    pub quality: u32,
+/// Fixed-point (`KONE` = 16384) samples of `f` every 1/256 over `[0, a)`.
+fn table(a: usize, f: impl Fn(f64) -> f64) -> Vec<i32> {
+    (0..a * 256).map(|j| (f(j as f64 / 256.0) * 16384.0).round().clamp(-32768.0, 32768.0) as i32).collect()
+}
+
+fn sinc(x: f64) -> f64 {
+    if x == 0.0 {
+        1.0
+    } else {
+        let p = std::f64::consts::PI * x;
+        p.sin() / p
+    }
+}
+
+/// The kernel table for a filter (`None` for `Area`). The tables only
+/// decide how the result looks: `lanczos::thumb_rgba` is proven to compute
+/// `spec_lanczos::thumb` for every table.
+pub fn kernel(f: Filter) -> Option<&'static [i32]> {
+    use std::sync::OnceLock;
+    static T: [OnceLock<Vec<i32>>; 5] = [OnceLock::new(), OnceLock::new(), OnceLock::new(), OnceLock::new(), OnceLock::new()];
+    let (i, a, k): (usize, usize, fn(f64) -> f64) = match f {
+        Filter::Lanczos3 => (0, 3, |x| sinc(x) * sinc(x / 3.0)),
+        Filter::Lanczos2 => (1, 2, |x| sinc(x) * sinc(x / 2.0)),
+        Filter::Cubic => (2, 2, |x| {
+            if x < 1.0 {
+                1.5 * x * x * x - 2.5 * x * x + 1.0
+            } else {
+                -0.5 * x * x * x + 2.5 * x * x - 4.0 * x + 2.0
+            }
+        }),
+        Filter::Linear => (3, 1, |x| 1.0 - x),
+        Filter::Nearest => (4, 1, |x| if x < 0.5 { 1.0 } else if x == 0.5 { 0.5 } else { 0.0 }),
+        Filter::Area => return None,
+    };
+    Some(T[i].get_or_init(|| table(a, k)).as_slice())
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { mode: Mode::Fit, w: 0, h: 0, enlarge: false, background: None, format: Format::Png, quality: 0 }
+        crate::url::defaults_x()
     }
-}
-
-/// An output format: each made by a verified encoder.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Format {
-    Png,
-    Jpeg,
-    /// Lossless WebP (VP8L).
-    Webp,
 }
 
 impl Format {
     pub fn mime(self) -> &'static [u8] {
+        self.kind().mime()
+    }
+    pub fn kind(self) -> Kind {
         match self {
-            Format::Png => b"image/png",
-            Format::Jpeg => b"image/jpeg",
-            Format::Webp => b"image/webp",
+            Format::Png => Kind::Png,
+            Format::Jpeg => Kind::Jpeg,
+            Format::Webp => Kind::Webp,
         }
     }
 }
 
+impl Kind {
+    pub fn mime(self) -> &'static [u8] {
+        match self {
+            Kind::Png => b"image/png",
+            Kind::Jpeg => b"image/jpeg",
+            Kind::Webp => b"image/webp",
+            Kind::Gif => b"image/gif",
+        }
+    }
+    pub fn ext(self) -> &'static [u8] {
+        match self {
+            Kind::Png => b"png",
+            Kind::Jpeg => b"jpg",
+            Kind::Webp => b"webp",
+            Kind::Gif => b"gif",
+        }
+    }
+    /// `spec_url::kind_bit`: its bit in `Options::skip`.
+    pub fn bit(self) -> u32 {
+        crate::url::kind_bit_x(self)
+    }
+}
+
+/// The `Content-Disposition` value: `inline` (or `attachment` with
+/// `return_attachment`), and a file name, as imgproxy gives it: the
+/// `filename` option's, else the source's last path segment without its
+/// extension, else `image`; then the result's extension. The name is made
+/// safe for a header: control bytes are dropped, and `"`, `\`, `%` and
+/// non-ASCII bytes are percent-encoded.
+pub fn disposition(filename: Option<&[u8]>, source: &Source, attachment: bool, k: Option<Kind>) -> Vec<u8> {
+    let from_source = |u: &[u8]| -> Vec<u8> {
+        let u = u.split(|&c| c == b'?' || c == b'#').next().unwrap_or(&[]);
+        let last = u.rsplit(|&c| c == b'/').next().unwrap_or(&[]);
+        let stem = match last.iter().rposition(|&c| c == b'.') {
+            Some(i) => &last[..i],
+            None => last,
+        };
+        let mut d = Vec::new();
+        verilith_text::percent::decode_to(stem, &mut d);
+        d
+    };
+    let name = match (filename, source) {
+        (Some(f), _) if !f.is_empty() => f.to_vec(),
+        (_, Source::Local(p)) => from_source(p),
+        (_, Source::Http(u)) => from_source(u.splitn(4, |&c| c == b'/').nth(3).unwrap_or(&[])),
+        (_, Source::Upload) => Vec::new(),
+    };
+    let name = if name.is_empty() { b"image".to_vec() } else { name };
+    let mut v: Vec<u8> = Vec::new();
+    v.extend_from_slice(if attachment { b"attachment" } else { b"inline" });
+    v.extend_from_slice(b"; filename=\"");
+    for &c in &name {
+        match c {
+            0..=0x1f | 0x7f => {}
+            b'"' | b'\\' | b'%' | 0x80..=0xff => v.extend_from_slice(format!("%{c:02X}").as_bytes()),
+            _ => v.push(c),
+        }
+    }
+    if let Some(k) = k {
+        v.push(b'.');
+        v.extend_from_slice(k.ext());
+    }
+    v.push(b'"');
+    v
+}
+
+/// Lays the watermark over the `w` by `h` result: scaled to `wm_scale` of
+/// the result's width if asked, and down to fit inside it if larger
+/// (keeping its shape, with the verified thumbnailer), then placed at
+/// `wm_g` (offsets times `dpr`) or tiled (`wm_g`'s offsets, times `dpr`,
+/// as the spacing), at `wm_op` opacity, by `geom::watermark_rgba`.
+fn watermark(px: Vec<u8>, w: u32, h: u32, wm: &Rgba, o: &Options) -> Result<Vec<u8>, Fail> {
+    let bad = Fail::Unprocessable("Watermark is invalid");
+    // pre: thumb_rgba, wm_at_x and watermark_rgba (sizes in 1..=MAX_DIM,
+    // whole pixels; offsets within 65535 and dpr at most 80000, as geo_ok
+    // checks; opacity at most F1).
+    if wm.w == 0 || wm.h == 0 || wm.w > MAX_DIM || wm.h > MAX_DIM || wm.px.len() != wm.w as usize * wm.h as usize * 4 {
+        return Err(bad);
+    }
+    if !(1..=80000).contains(&o.dpr) || o.wm_g.x.unsigned_abs() > 65535 || o.wm_g.y.unsigned_abs() > 65535 || o.wm_op > 10000 {
+        return Err(bad);
+    }
+    let (mut ww, mut wh) = (wm.w as u64, wm.h as u64);
+    if o.wm_scale > 0 {
+        let tw = ((w as u64 * o.wm_scale as u64 + 5000) / 10000).max(1);
+        wh = ((wh * tw + ww / 2) / ww).max(1);
+        ww = tw;
+    }
+    if ww > w as u64 || wh > h as u64 {
+        // Down to fit, keeping the shape: the smaller of the two ratios.
+        if ww * h as u64 > wh * w as u64 {
+            wh = ((wh * w as u64 + ww / 2) / ww).max(1);
+            ww = w as u64;
+        } else {
+            ww = ((ww * h as u64 + wh / 2) / wh).max(1);
+            wh = h as u64;
+        }
+    }
+    let (ww, wh) = (ww.clamp(1, MAX_DIM as u64) as u32, wh.clamp(1, MAX_DIM as u64) as u32);
+    let img = if (ww, wh) == (wm.w, wm.h) {
+        std::borrow::Cow::Borrowed(&wm.px)
+    } else {
+        let kt = kernel(Filter::Lanczos3).ok_or(bad.clone())?;
+        std::borrow::Cow::Owned(crate::lanczos::thumb_rgba(kt, &wm.px, wm.w as usize, wm.h as usize, ww as usize, wh as usize))
+    };
+    let (ww, wh) = (ww.min(w), wh.min(h));
+    let dmul = |v: i32| ((2 * v.max(0) as i64 * o.dpr as i64 + 10000) / 20000) as usize;
+    let (x, y, pw, ph) = if o.wm_tile {
+        (0, 0, (ww as usize + dmul(o.wm_g.x)).min(2 * MAX_DIM as usize), (wh as usize + dmul(o.wm_g.y)).min(2 * MAX_DIM as usize))
+    } else {
+        let (x, y) = crate::geom::wm_at_x(w, h, ww, wh, o.wm_g, o.dpr);
+        (x as usize, y as usize, 1, 1)
+    };
+    Ok(crate::geom::watermark_rgba(&px, w as usize, h as usize, &img, ww as usize, wh as usize, x, y, o.wm_tile, pw, ph, o.wm_op))
+}
+
+/// The point smart gravity centres on, as fractions (`F1` units) of the
+/// `w` by `h` image: `smart::smart_x` on a copy area-averaged to at most
+/// 256 on its longer side, its scores blurred with a sigma of a sixteenth
+/// of that side.
+fn smart_point(px: &[u8], w: usize, h: usize) -> (i32, i32) {
+    let long = w.max(h);
+    let (aw, ah) = if long > 256 { ((w * 256 / long).max(1), (h * 256 / long).max(1)) } else { (w, h) };
+    // pre: resize_rgba and smart_x (sizes in 1..=MAX_DIM, a whole number
+    // of pixels; gauss's tables are what blur_rgba takes).
+    let small = if (aw, ah) == (w, h) { px.to_vec() } else { crate::resize::resize_rgba(px, w, h, aw, ah) };
+    let (bx, by) = match gauss((aw.max(ah) * 10000 / 16) as u32) {
+        Some(g) => crate::smart::smart_x(&g, &small, aw, ah),
+        None => crate::smart::smart_x(&[1], &small, aw, ah),
+    };
+    let f = |b: usize, n: usize| ((2 * b + 1) * 10000 / (2 * n)) as i32;
+    (f(bx, aw), f(by, ah))
+}
+
+/// A Gaussian's weights for `sigma` (`F1` units), sampled at whole
+/// distances out to three sigma (at most 1024), 65536 at the centre; `None`
+/// for a sigma too small to change anything. Sampled in floating point:
+/// `filter`'s proofs hold for every table, so a wrong value changes how
+/// the image looks, never what the code may do.
+pub fn gauss(sigma: u32) -> Option<Vec<u32>> {
+    let s = sigma as f64 / 10000.0;
+    if s < 0.05 {
+        return None;
+    }
+    let r = ((3.0 * s).ceil() as usize).clamp(1, 1024);
+    let g: Vec<u32> = (0..2 * r + 1)
+        .map(|i| {
+            let d = i as f64 - r as f64;
+            ((-(d * d) / (2.0 * s * s)).exp() * 65536.0).round().clamp(0.0, 65536.0) as u32
+        })
+        .collect();
+    Some(g)
+}
+
 /// imgproxy's `IMGPROXY_QUALITY` default.
 pub const DEFAULT_QUALITY: u32 = 80;
-
-/// Where the image comes from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Source {
-    /// `local:///path`, under the configured root.
-    Local(Vec<u8>),
-    /// `http://...` or `https://...`.
-    Http(Vec<u8>),
-    /// The request body (`POST .../upload`).
-    Upload,
-}
 
 /// A parsed request URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,195 +295,17 @@ pub struct Parsed<'a> {
     pub signed: &'a [u8],
     pub opts: Options,
     pub source: Source,
-}
-
-fn num(s: &[u8]) -> Result<u32, Fail> {
-    if s.is_empty() {
-        return Ok(0);
-    }
-    let mut v: u32 = 0;
-    for &c in s {
-        if !c.is_ascii_digit() {
-            return Err(Fail::BadUrl("Invalid number"));
-        }
-        v = v.checked_mul(10).and_then(|v| v.checked_add((c - b'0') as u32)).ok_or(Fail::BadUrl("Number too large"))?;
-    }
-    if v > MAX_DIM {
-        return Err(Fail::BadUrl("Size too large"));
-    }
-    Ok(v)
-}
-
-fn boolean(s: &[u8]) -> Result<bool, Fail> {
-    match s {
-        b"1" | b"t" | b"true" => Ok(true),
-        b"0" | b"f" | b"false" | b"" => Ok(false),
-        _ => Err(Fail::BadUrl("Invalid boolean")),
-    }
-}
-
-fn mode(s: &[u8]) -> Result<Mode, Fail> {
-    match s {
-        b"fit" => Ok(Mode::Fit),
-        b"fill" => Ok(Mode::Fill),
-        b"force" => Ok(Mode::Force),
-        _ => Err(Fail::BadUrl("Unsupported resizing type")),
-    }
-}
-
-fn hexbyte(s: &[u8]) -> Option<u8> {
-    let d = |c: u8| (c as char).to_digit(16);
-    match s {
-        [a, b] => Some((d(*a)? * 16 + d(*b)?) as u8),
-        _ => None,
-    }
-}
-
-fn background(args: &[&[u8]]) -> Result<Option<[u8; 3]>, Fail> {
-    match args {
-        [] | [b""] => Ok(None),
-        [hex] if hex.len() == 6 => {
-            match (hexbyte(&hex[0..2]), hexbyte(&hex[2..4]), hexbyte(&hex[4..6])) {
-                (Some(r), Some(g), Some(b)) => Ok(Some([r, g, b])),
-                _ => Err(Fail::BadUrl("Invalid background")),
-            }
-        }
-        [r, g, b] => {
-            let c = |s: &[u8]| -> Result<u8, Fail> {
-                let v = num(s)?;
-                if v > 255 || s.is_empty() { Err(Fail::BadUrl("Invalid background")) } else { Ok(v as u8) }
-            };
-            Ok(Some([c(r)?, c(g)?, c(b)?]))
-        }
-        _ => Err(Fail::BadUrl("Invalid background")),
-    }
-}
-
-/// Applies one processing option (`name:arg:arg...`).
-fn option(o: &mut Options, seg: &[u8]) -> Result<(), Fail> {
-    let mut parts = seg.split(|&c| c == b':');
-    let name = parts.next().unwrap_or(b"");
-    let args: Vec<&[u8]> = parts.collect();
-    let arg = |i: usize| args.get(i).copied().unwrap_or(b"");
-    match name {
-        b"resize" | b"rs" => {
-            if !arg(0).is_empty() {
-                o.mode = mode(arg(0))?;
-            }
-            o.w = num(arg(1))?;
-            o.h = num(arg(2))?;
-            o.enlarge = boolean(arg(3))?;
-        }
-        b"size" | b"s" => {
-            o.w = num(arg(0))?;
-            o.h = num(arg(1))?;
-            o.enlarge = boolean(arg(2))?;
-        }
-        b"resizing_type" | b"rt" => o.mode = mode(arg(0))?,
-        b"width" | b"w" => o.w = num(arg(0))?,
-        b"height" | b"h" => o.h = num(arg(0))?,
-        b"enlarge" | b"el" => o.enlarge = boolean(arg(0))?,
-        b"background" | b"bg" => o.background = background(&args)?,
-        b"quality" | b"q" => {
-            let q = num(arg(0))?;
-            if q > 100 {
-                return Err(Fail::BadUrl("Invalid quality"));
-            }
-            o.quality = q;
-        }
-        // Accepted and ignored: the encoders write no metadata.
-        b"strip_metadata" | b"sm" | b"cachebuster" | b"cb" => {}
-        b"format" | b"f" | b"ext" => format(o, arg(0))?,
-        // Only centred crops (`ce`, the default) are implemented.
-        b"gravity" | b"g" => {
-            if !matches!(arg(0), b"" | b"ce") {
-                return Err(Fail::Unprocessable("Only centre gravity is supported"));
-            }
-        }
-        _ => return Err(Fail::BadUrl("Unknown processing option")),
-    }
-    Ok(())
-}
-
-/// The output format an extension names: PNG, JPEG or WebP (the encoders
-/// this workspace verifies). No extension leaves the format as it is.
-fn format(o: &mut Options, ext: &[u8]) -> Result<(), Fail> {
-    match ext {
-        b"" => {}
-        b"png" | b"best" => o.format = Format::Png,
-        b"jpg" | b"jpeg" => o.format = Format::Jpeg,
-        b"webp" => o.format = Format::Webp,
-        _ => return Err(Fail::Unprocessable("Only PNG, JPEG and WebP output are supported")),
-    }
-    Ok(())
-}
-
-fn percent_decode(s: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(s.len());
-    verilith_text::percent::decode_to(s, &mut out);
-    out
-}
-
-fn source(url: Vec<u8>) -> Result<Source, Fail> {
-    if let Some(p) = url.strip_prefix(b"local://") {
-        Ok(Source::Local(p.to_vec()))
-    } else if url.starts_with(b"http://") || url.starts_with(b"https://") {
-        Ok(Source::Http(url))
-    } else {
-        Err(Fail::BadUrl("Unsupported source URL scheme"))
-    }
+    /// `filename`, decoded.
+    pub filename: Option<Vec<u8>>,
 }
 
 /// Parses `/%signature/%options/plain/%url[@%ext]`,
 /// `/%signature/%options/%base64_url[.%ext]` or
-/// `/%signature/%options/upload[@%ext]`.
+/// `/%signature/%options/upload[@%ext]`: `url::parse_x`, which is proven
+/// to compute `spec_url::parse`.
 pub fn parse(path: &[u8]) -> Result<Parsed<'_>, Fail> {
-    let rest = path.strip_prefix(b"/").ok_or(Fail::BadUrl("Invalid path"))?;
-    let slash = rest.iter().position(|&c| c == b'/').ok_or(Fail::BadUrl("Invalid path"))?;
-    let signature = &rest[..slash];
-    let signed = &rest[slash..];
-    let mut opts = Options::default();
-    let mut segs = signed[1..].split(|&c| c == b'/').peekable();
-    while let Some(seg) = segs.peek() {
-        if seg.contains(&b':') && !seg.starts_with(b"http") && !seg.starts_with(b"local") {
-            option(&mut opts, seg)?;
-            segs.next();
-        } else {
-            break;
-        }
-    }
-    let first = segs.next().ok_or(Fail::BadUrl("Missing source URL"))?;
-    let source = if first == b"plain" {
-        let joined: Vec<&[u8]> = segs.collect();
-        let mut url = joined.join(&b'/');
-        if let Some(at) = url.iter().rposition(|&c| c == b'@') {
-            format(&mut opts, &url[at + 1..])?;
-            url.truncate(at);
-        }
-        source(percent_decode(&url))?
-    } else if first.starts_with(b"upload") && segs.peek().is_none() {
-        if let Some(ext) = first.strip_prefix(b"upload@") {
-            format(&mut opts, ext)?;
-        } else if first != b"upload" {
-            return Err(Fail::BadUrl("Invalid upload path"));
-        }
-        Source::Upload
-    } else {
-        let mut enc: Vec<u8> = first.to_vec();
-        for s in segs {
-            enc.extend_from_slice(s);
-        }
-        if let Some(dot) = enc.iter().position(|&c| c == b'.') {
-            format(&mut opts, &enc[dot + 1..])?;
-            enc.truncate(dot);
-        }
-        let url = verilith_text::base64::URL_SAFE_NO_PAD
-            .decode(enc.strip_suffix(b"=").unwrap_or(&enc))
-            .or_else(|_| verilith_text::base64::URL_SAFE.decode(&enc))
-            .map_err(|_| Fail::BadUrl("Invalid base64 source URL"))?;
-        source(url)?
-    };
-    Ok(Parsed { signature, signed, opts, source })
+    let u = crate::url::parse_x(path)?;
+    Ok(Parsed { signature: &path[1..u.sig_end], signed: &path[u.sig_end..], opts: u.opts, source: u.source, filename: u.filename })
 }
 
 // ---------------------------------------------------------------------------
@@ -324,7 +325,8 @@ pub fn unhex(s: &str) -> Option<Vec<u8>> {
     if b.len() % 2 != 0 {
         return None;
     }
-    b.chunks(2).map(hexbyte).collect()
+    let h = |c: u8| crate::url::hexv_x(c);
+    b.chunks(2).map(|p| if h(p[0]) < 0 || h(p[1]) < 0 { None } else { Some((16 * h(p[0]) + h(p[1])) as u8) }).collect()
 }
 
 /// Whether `sig` is base64url(HMAC-SHA256(key, salt || signed)), compared
@@ -375,35 +377,19 @@ fn size_ok(w: u64, h: u64, max_px: u64) -> Result<(), Fail> {
     Ok(())
 }
 
-/// imgproxy's shrink-on-load factor for a JPEG (`calcJpegShink`): the
-/// largest of 8, 4 and 2 that the scale down to `rw` by `rh` allows, or 1.
-/// The decoder then gives the image at 1/8, 1/4 or 1/2 of its size,
-/// straight from the coefficients (verilith-jpeg's `decode_scaled`).
-pub fn jpeg_shrink(sw: u32, sh: u32, rw: u32, rh: u32) -> u32 {
-    let s = (sw / rw.max(1)).min(sh / rh.max(1));
-    if s >= 8 {
-        8
-    } else if s >= 4 {
-        4
-    } else if s >= 2 {
-        2
-    } else {
-        1
-    }
-}
-
 /// The width and height a file's header gives, if it is a JPEG, PNG, WebP
 /// or GIF file whose header can be read.
 pub fn dims(data: &[u8]) -> Option<(u32, u32)> {
-    if data.starts_with(&[0xff, 0xd8, 0xff]) {
+    let k = crate::url::kind_x(data);
+    if k == Some(Kind::Jpeg) {
         let hd = verilith_jpeg::decode::read_header(data).ok()?;
         Some((hd.w as u32, hd.h as u32))
-    } else if data.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
+    } else if k == Some(Kind::Png) {
         Some((be32(data, 16)?, be32(data, 20)?))
-    } else if data.len() >= 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+    } else if k == Some(Kind::Webp) {
         let f = verilith_webp::capi::get_features(data).ok()?;
         Some((f.width as u32, f.height as u32))
-    } else if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
+    } else if k == Some(Kind::Gif) {
         Some((u16::from_le_bytes([*data.get(6)?, *data.get(7)?]) as u32, u16::from_le_bytes([*data.get(8)?, *data.get(9)?]) as u32))
     } else {
         None
@@ -420,7 +406,10 @@ pub fn decode(data: &[u8], max_px: u64) -> Result<Rgba, Fail> {
 /// 2, 4 or 8; other formats ignore it).
 pub fn decode_shrunk(data: &[u8], max_px: u64, shrink: u32) -> Result<Rgba, Fail> {
     let bad = Fail::Unprocessable("Source image is invalid");
-    if data.starts_with(&[0xff, 0xd8, 0xff]) {
+    // The format, from the first bytes: `url::kind_x`, proven to compute
+    // `spec_url::kind`.
+    let k = crate::url::kind_x(data);
+    if k == Some(Kind::Jpeg) {
         let hd = verilith_jpeg::decode::read_header(data).map_err(|_| bad.clone())?;
         size_ok(hd.w as u64, hd.h as u64, max_px)?;
         let pic = match shrink {
@@ -438,7 +427,7 @@ pub fn decode_shrunk(data: &[u8], max_px: u64, shrink: u32) -> Result<Rgba, Fail
         }
         let px = crate::pixels::expand(&pic.px, nc).ok_or(Fail::Unprocessable("Out of memory"))?;
         Ok(Rgba { w: pic.w, h: pic.h, px })
-    } else if data.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
+    } else if k == Some(Kind::Png) {
         let (w, h) = (be32(data, 16).ok_or(bad.clone())?, be32(data, 20).ok_or(bad.clone())?);
         size_ok(w as u64, h as u64, max_px)?;
         let limit = (max_px as usize).saturating_mul(8).saturating_add(1 << 20);
@@ -447,14 +436,14 @@ pub fn decode_shrunk(data: &[u8], max_px: u64, shrink: u32) -> Result<Rgba, Fail
             _ => bad.clone(),
         })?;
         Ok(Rgba { w: hd.width, h: hd.height, px })
-    } else if data.len() >= 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+    } else if k == Some(Kind::Webp) {
         let f = verilith_webp::capi::get_features(data).map_err(|_| bad.clone())?;
         size_ok(f.width as u64, f.height as u64, max_px)?;
         let img = verilith_webp::capi::decode(data).map_err(|_| bad.clone())?;
         // pre: from_argb (a Vec's length times 4 fits in usize: it is a u32 vector)
         let px = crate::pixels::from_argb(&img.argb);
         Ok(Rgba { w: img.width as u32, h: img.height as u32, px })
-    } else if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
+    } else if k == Some(Kind::Gif) {
         let w = u16::from_le_bytes([data.get(6).copied().ok_or(bad.clone())?, data.get(7).copied().ok_or(bad.clone())?]);
         let h = u16::from_le_bytes([data.get(8).copied().ok_or(bad.clone())?, data.get(9).copied().ok_or(bad.clone())?]);
         size_ok(w as u64, h as u64, max_px)?;
@@ -500,40 +489,115 @@ impl Default for Limits {
 
 /// Decodes, resizes, crops, flattens and encodes: the image to send.
 pub fn process(data: &[u8], o: &Options, lim: &Limits) -> Result<Vec<u8>, Fail> {
+    process_with(data, o, lim, None)
+}
+
+/// `process`, with the watermark image (`IMGPROXY_WATERMARK_PATH`) that
+/// the `watermark` option lays over the result.
+pub fn process_with(data: &[u8], o: &Options, lim: &Limits, wm: Option<&Rgba>) -> Result<Vec<u8>, Fail> {
+    let too_big = Fail::Unprocessable("Result image is too big");
     // The plan is made from the size the header gives, so that shrinking a
     // JPEG on load changes only how the pixels are computed, not the
-    // result's size.
+    // result's size. The plan is on the image as rotated (odd quarter
+    // turns swap the sides), as the URL's sizes are.
+    // `auto_rotate`: the EXIF orientation turns the image upright first,
+    // then `rotate` and `flip` apply.
     let (w0, h0) = dims(data).ok_or(Fail::Unsupported)?;
-    // pre: plan_x (sizes at most MAX_DIM).
-    if w0 == 0 || h0 == 0 || w0 > MAX_DIM || h0 > MAX_DIM || o.w > MAX_DIM || o.h > MAX_DIM {
+    let orient = if o.auto_rotate { crate::exif::orientation_x(data) } else { 1 };
+    let (eq, efh, efv) = crate::exif::upright_x(orient);
+    let turned = o.rotate != 0 || o.flip_h || o.flip_v;
+    let odd = (eq + o.rotate) % 2 == 1;
+    let (ow0, oh0) = if odd { (h0, w0) } else { (w0, h0) };
+    let g = geo(o);
+    // pre: geom_x (sizes at most MAX_DIM; geo_ok holds for whatever
+    // url::parse_x returns, and is checked here for other callers).
+    if w0 == 0 || h0 == 0 || w0 > MAX_DIM || h0 > MAX_DIM || !geo_ok(&g) || o.rotate > 3 {
         return Err(Fail::Unprocessable("Source image size not supported"));
     }
-    let mut p = plan_x(w0, h0, o.w, o.h, o.mode, o.enlarge, lim.max_out_px)
-        .ok_or(Fail::Unprocessable("Result image is too big"))?;
-    let shrink = jpeg_shrink(w0, h0, p.rw, p.rh);
+    let mut p = crate::geom::geom_x(ow0, oh0, g, lim.max_out_px).ok_or(too_big.clone())?;
+    let full = (p.x0, p.y0, p.cw0, p.ch0) == (0, 0, ow0, oh0);
+    let shrink = if full { jpeg_shrink(ow0, oh0, p.rw, p.rh) } else { 1 };
     let img = decode_shrunk(data, lim.max_src_px, shrink)?;
-    // pre: resize_rgba and plan_x (the decoded image's sizes in 1..=MAX_DIM).
-    if img.w == 0 || img.h == 0 || img.w > MAX_DIM || img.h > MAX_DIM {
-        return Err(Fail::Unprocessable("Source image size not supported"));
-    }
-    // A GIF's first frame can be smaller than its screen: plan from the frame.
-    if shrink == 1 && (img.w, img.h) != (w0, h0) {
-        p = plan_x(img.w, img.h, o.w, o.h, o.mode, o.enlarge, lim.max_out_px)
-            .ok_or(Fail::Unprocessable("Result image is too big"))?;
-    }
-    if img.px.len() != img.w as usize * img.h as usize * 4 {
+    // pre: turn_rgba, geom_x and the resizers (sizes in 1..=MAX_DIM, a
+    // whole number of pixels).
+    if img.w == 0 || img.h == 0 || img.w > MAX_DIM || img.h > MAX_DIM || img.px.len() != img.w as usize * img.h as usize * 4 {
         return Err(Fail::Unprocessable("Source image is invalid"));
     }
-    let (sw, sh) = (img.w as usize, img.h as usize);
+    let (iw, ih) = (img.w as usize, img.h as usize);
+    // pre: turn_rgba (q at most 3: upright_x and the check above).
+    let px = if orient != 1 { crate::geom::turn_rgba(&img.px, iw, ih, eq, efh, efv) } else { img.px };
+    let (iw, ih) = if eq % 2 == 1 { (ih, iw) } else { (iw, ih) };
+    let px = if turned { crate::geom::turn_rgba(&px, iw, ih, o.rotate, o.flip_h, o.flip_v) } else { px };
+    let (sw, sh) = if o.rotate % 2 == 1 { (ih, iw) } else { (iw, ih) };
+    // A GIF's first frame can be smaller than its screen: plan from the frame.
+    if shrink == 1 && (sw as u32, sh as u32) != (ow0, oh0) {
+        p = crate::geom::geom_x(sw as u32, sh as u32, g, lim.max_out_px).ok_or(too_big.clone())?;
+    }
+    // Smart gravity: find the point on the image as decoded and turned,
+    // then plan again with it as a focus point (the sizes do not depend on
+    // the gravity, so the shrink on load still holds).
+    let sm = |g: &Gravity| g.kind == GKind::Sm;
+    if sm(&g.gravity) || g.crop_g.as_ref().is_some_and(sm) {
+        let (fx, fy) = smart_point(&px, sw, sh);
+        let focus = Gravity { kind: GKind::Fp, x: fx, y: fy };
+        let mut g2 = g;
+        if sm(&g.gravity) {
+            g2.gravity = focus;
+        }
+        if g.crop_g.as_ref().is_some_and(sm) {
+            g2.crop_g = Some(focus);
+        }
+        let (pw0, ph0) = if shrink == 1 { (sw as u32, sh as u32) } else { (ow0, oh0) };
+        p = crate::geom::geom_x(pw0, ph0, g2, lim.max_out_px).ok_or(too_big.clone())?;
+    }
+    // Shrunk on load (only when the crop is the whole image): the crop is
+    // the whole of what was decoded.
+    let (x0, y0, cw0, ch0) =
+        if shrink == 1 { (p.x0 as usize, p.y0 as usize, p.cw0 as usize, p.ch0 as usize) } else { (0, 0, sw, sh) };
+    // pre: crop_rgba (geom_x ensures the rectangle is inside).
+    let px = if (x0, y0, cw0, ch0) == (0, 0, sw, sh) { px } else { crate::resize::crop_rgba(&px, sw, sh, x0, y0, cw0, ch0) };
     let (rw, rh) = (p.rw as usize, p.rh as usize);
-    // pre: resize_rgba (all sizes in 1..=MAX_DIM, ensured by plan_x; the
-    // products are below 2^34 on a 64-bit target).
-    let px = if (rw, rh) == (sw, sh) { img.px } else { crate::resize::resize_rgba(&img.px, sw, sh, rw, rh) };
-    // pre: crop_rgba (plan_x ensures the rectangle is inside).
+    // pre: resize_rgba and thumb_rgba (all sizes in 1..=MAX_DIM, ensured
+    // by geom_x; the products are below 2^34 on a 64-bit target; kernel's
+    // tables are 256 to 768 entries of at most 32768 in size).
+    let px = if (rw, rh) == (cw0, ch0) {
+        px
+    } else {
+        match kernel(o.filter) {
+            Some(kt) => crate::lanczos::thumb_rgba(kt, &px, cw0, ch0, rw, rh),
+            None => crate::resize::resize_rgba(&px, cw0, ch0, rw, rh),
+        }
+    };
+    // pre: crop_rgba (geom_x ensures the rectangle is inside).
     let px = if (p.cx, p.cy, p.cw, p.ch) == (0, 0, p.rw, p.rh) {
         px
     } else {
         crate::resize::crop_rgba(&px, rw, rh, p.cx as usize, p.cy as usize, p.cw as usize, p.ch as usize)
+    };
+    // `blur` and `sharpen`, on the cropped image, before `extend` and
+    // `padding`, as imgproxy applies its filters.
+    // pre: blur_rgba and sharpen_rgba (gauss's tables are 1 to 2049
+    // entries, odd, each at most 65536; sizes in 1..=MAX_DIM).
+    let (fw, fh) = (p.cw as usize, p.ch as usize);
+    let px = match gauss(o.blur) {
+        Some(g) => crate::filter::blur_rgba(&g, &px, fw, fh),
+        None => px,
+    };
+    let px = match gauss(o.sharpen) {
+        Some(g) => crate::filter::sharpen_rgba(&g, &px, fw, fh),
+        None => px,
+    };
+    // pre: embed_rgba (geom_x ensures the image is inside the canvas).
+    // `extend` and `padding` fill with the background, or transparency.
+    let (cw, ch) = (p.canvas_w, p.canvas_h);
+    let px = if (cw, ch) == (p.cw, p.ch) {
+        px
+    } else {
+        let fill = match o.background {
+            Some([r, g, b]) => [r, g, b, 255],
+            None => [0, 0, 0, 0],
+        };
+        crate::geom::embed_rgba(&px, p.cw as usize, p.ch as usize, cw as usize, ch as usize, p.ax as usize, p.ay as usize, fill)
     };
     // pre: flatten (a whole number of pixels). JPEG has no alpha: it is
     // flattened onto the background, white by default, as imgproxy does.
@@ -545,16 +609,21 @@ pub fn process(data: &[u8], o: &Options, lim: &Limits) -> Result<Vec<u8>, Fail> 
         Some(bg) => crate::pixels::flatten(&px, bg),
         None => px,
     };
+    // `watermark`, last, as imgproxy lays it.
+    let px = match wm {
+        Some(wm) if o.wm_op > 0 => watermark(px, cw, ch, wm, o)?,
+        _ => px,
+    };
     match o.format {
         // pre: encode_rgba (sizes at most MAX_DIM).
         Format::Png => {
-            crate::pngenc::encode_rgba(&px, p.cw, p.ch, lim.level).ok_or(Fail::Unprocessable("Result image is too big"))
+            crate::pngenc::encode_rgba(&px, cw, ch, lim.level).ok_or(Fail::Unprocessable("Result image is too big"))
         }
         // encode_rgb checks its input itself. Chroma is subsampled below
         // quality 90, as libvips (imgproxy's encoder) does by default.
         Format::Jpeg => {
             let q = if o.quality == 0 { DEFAULT_QUALITY } else { o.quality };
-            verilith_jpeg::encode::encode_rgb(&px, p.cw as usize, p.ch as usize, 4, q as u8, q < 90)
+            verilith_jpeg::encode::encode_rgb(&px, cw as usize, ch as usize, 4, q as u8, q < 90)
                 .ok_or(Fail::Unprocessable("Result image is too big for JPEG"))
         }
         // encode_lossless checks its sizes itself (1 to 16384 each way).
@@ -860,6 +929,56 @@ fn read_body<S: Read>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn more_urls() {
+        let p = parse(b"/sig/bg:ff8000/q:90/f:jpg/upload").unwrap();
+        assert_eq!((p.signature, p.signed), (&b"sig"[..], &b"/bg:ff8000/q:90/f:jpg/upload"[..]));
+        assert_eq!((p.opts.background, p.opts.quality, p.opts.format), (Some([255, 128, 0]), 90, Format::Jpeg));
+        assert_eq!(parse(b"/x/bg:1:2:3/upload@png").unwrap().opts.background, Some([1, 2, 3]));
+        assert_eq!(parse(b"/x/upload@jpeg").unwrap().opts.format, Format::Jpeg);
+        let enc = verilith_text::base64::URL_SAFE.encode(b"http://a.b/c.png");
+        let path = format!("/x/rs:fill:10:20:1/{}.png", enc);
+        let p = parse(path.as_bytes()).unwrap();
+        assert_eq!(p.source, Source::Http(b"http://a.b/c.png".to_vec()));
+        assert_eq!((p.opts.mode, p.opts.w, p.opts.h, p.opts.enlarge), (Mode::Fill, 10, 20, true));
+        for bad in [
+            &b"x/plain/local:///a"[..],
+            b"/x",
+            b"/x/w:10",
+            b"/x/w:65536/plain/local:///a",
+            b"/x/w:1a/plain/local:///a",
+            b"/x/bg:zz0000/plain/local:///a",
+            b"/x/bg:256:0:0/plain/local:///a",
+            b"/x/q:101/plain/local:///a",
+            b"/x/g:up/plain/local:///a",
+            b"/x/g:fp:2:0/plain/local:///a",
+            b"/x/rot:45/plain/local:///a",
+            b"/x/dpr:0/plain/local:///a",
+            b"/x/plain/ftp://a/b",
+            b"/x/plain/local:///a@gif",
+            b"/x/uploadx",
+            b"/x/upload/more",
+            b"/x/!!!",
+        ] {
+            assert!(parse(bad).is_err(), "{}", String::from_utf8_lossy(bad));
+        }
+    }
+
+    #[test]
+    fn resizing_algorithms() {
+        assert_eq!(parse(b"/x/ra:cubic/plain/local:///a.png").unwrap().opts.filter, Filter::Cubic);
+        assert_eq!(parse(b"/x/plain/local:///a.png").unwrap().opts.filter, Filter::Lanczos3);
+        assert!(parse(b"/x/ra:bogus/plain/local:///a.png").is_err());
+        for f in [Filter::Lanczos3, Filter::Lanczos2, Filter::Cubic, Filter::Linear, Filter::Nearest] {
+            let kt = kernel(f).unwrap();
+            // pre: thumb_rgba's kt_ok.
+            assert!(kt.len() >= 256 && kt.len() <= 1024 && kt.len() % 256 == 0);
+            assert!(kt.iter().all(|&v| (-32768..=32768).contains(&v)));
+            assert_eq!(kt[0], 16384);
+        }
+        assert!(kernel(Filter::Area).is_none());
+    }
 
     #[test]
     fn origins() {

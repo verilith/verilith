@@ -7,7 +7,7 @@
 //! that `/api/../admin`, `/%61dmin` and `/admin` are the same path to the
 //! router, and the prefix is matched component by component, never in the
 //! middle of a segment (`/api` does not match `/apix`). [`choose`] picks
-//! [`best`]: among the matching routes, one that names the host before one
+//! `best`: among the matching routes, one that names the host before one
 //! that does not, then the longest prefix, then the first listed.
 use vstd::prelude::*;
 use crate::hop::same_ci_exec;
@@ -150,7 +150,7 @@ fn better_exec(a: &Route, b: &Route) -> (r: bool)
 }
 
 /// The route for a request to `host` whose resolved path is `comps`:
-/// exactly [`best`].
+/// exactly `best`.
 pub fn choose(rs: &Vec<Route>, host: &[u8], comps: &Vec<Vec<u8>>) -> (r: Option<usize>)
     ensures
         best(routes_view(rs@), host@, comps_view(comps@), r),

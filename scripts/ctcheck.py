@@ -43,6 +43,7 @@ import argparse
 import glob
 import json
 import re
+import shutil
 import subprocess
 import sys
 
@@ -388,10 +389,7 @@ class Elf:
     def demangle(self, name):
         if not (name.startswith("_ZN") or name.startswith("_R")):
             return name
-        try:
-            return subprocess.run(["llvm-cxxfilt", name], capture_output=True, text=True).stdout.strip() or name
-        except OSError:
-            return name
+        return demangle_all([name])[name]
 
     def section_of(self, a):
         for lo, hi, s in self.sections:
@@ -1219,12 +1217,21 @@ def a64_check(elf, fn, public, verbose, entry_stack_args):
 
 
 def demangle_all(names):
-    """Demangles Rust symbols, in one call of llvm-cxxfilt."""
+    """Demangles Rust symbols, in one call of llvm-cxxfilt (or binutils'
+    c++filt, which also reads Rust's v0 symbols but keeps each crate's
+    disambiguator, `alloc[2a0a..]`, which is dropped here, as llvm-cxxfilt
+    does)."""
     names = list(names)
-    try:
-        out = subprocess.run(["llvm-cxxfilt"], input="\n".join(names), capture_output=True, text=True).stdout.split("\n")
-    except OSError:
-        out = names
+    # As for nm: ubuntu-24.04 has only the versioned LLVM tools. Without a
+    # demangler no remark matches its function, and every function is
+    # checked as if its stack held no variables, so fail instead.
+    cands = ["llvm-cxxfilt"] + sorted(glob.glob("/usr/lib/llvm-*/bin/llvm-cxxfilt"), reverse=True) + ["c++filt"]
+    tool = next((c for c in cands if shutil.which(c)), None)
+    if tool is None:
+        raise SystemExit("ctcheck: no demangler (llvm-cxxfilt or c++filt) for the stack-frame-layout remarks")
+    out = subprocess.run([tool], input="\n".join(names), capture_output=True, text=True, check=True).stdout.split("\n")
+    # c++filt also types const generic arguments ("8: usize").
+    out = [re.sub(r"\b(\d+): [iu](?:size|8|16|32|64|128)\b", r"\1", re.sub(r"(?<=\w)\[[0-9a-f]{1,16}\]", "", o)) for o in out]
     return {n: re.sub(r"::h[0-9a-f]{16}$", "", (out[i] if i < len(out) and out[i] else n)) for i, n in enumerate(names)}
 
 

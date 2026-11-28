@@ -1,7 +1,9 @@
-//! A formally verified image proxy and thumbnailer: imgproxy-style URLs,
-//! decoding with the Verilith decoders, area-average resizing and PNG
-//! output, served by verilith-server.
-#![cfg_attr(not(verus_only), allow(unused_variables, unused_imports))]
+//! A formally verified image proxy and thumbnailer: imgproxy-style URLs (parsed by verified code),
+//! decoding with the Verilith decoders, cropping, rotating and placing on a
+//! canvas (upright, as the EXIF orientation says), Lanczos (or area-average)
+//! resizing, blurring, sharpening, watermarks, smart gravity,
+//! and PNG or JPEG output, served by verilith-server.
+#![cfg_attr(not(verus_only), allow(unused_variables, unused_imports, unused_braces))]
 #[cfg(not(target_pointer_width = "64"))]
 compile_error!("verilith-imgproxy is verified for 64-bit targets only");
 
@@ -14,6 +16,18 @@ global size_of usize == 8;
 
 pub mod spec;
 pub mod resize;
+pub mod spec_lanczos;
+pub mod spec_geom;
+pub mod geom;
+pub mod spec_exif;
+pub mod exif;
+pub mod spec_url;
+pub mod url;
+pub mod lanczos;
+pub mod spec_filter;
+pub mod filter;
+pub mod spec_smart;
+pub mod smart;
 pub mod pngenc;
 pub mod fit;
 pub mod pixels;

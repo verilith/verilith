@@ -67,6 +67,16 @@ and splits the text into segments at boundary characters. The theorem that
 makes that sound is `lemma_nf_split`: `nf(x + y) == nf(x) + nf(y)` when `y`
 starts with a boundary character, proven from the spec.
 
+`norm16` is the same scan over UTF-16 code units, for the ICU-shaped C API:
+`normalize16_into` is proven to append `enc16s(nf(cs, compose, compat))`
+where `enc16s` is the UTF-16 encoding of the scalars. A unit below
+U+0300 (NFC), U+00C0 (NFD) or U+00A0 (NFKC, NFKD) is a fast character on
+its own, so skipping is one comparison per unit. `valid16_prefix` finds the
+longest well-formed prefix and its scalars, 32 units at a time with AVX2
+or NEON while no surrogate is in sight (`no_sur32`, `no_sur32_neon`), and
+`fast_prefix16` the prefix of fast characters that the output starts with
+unchanged, cut where the rest begins at a boundary.
+
 **Punycode** (`src/idna/punycode.rs`). The spec is RFC 3492 sections 6.2 and
 6.3. Integers are bounded by `u32::MAX`, as in the `idna` crate: any step
 that would overflow fails. `decode_into` and `encode_into` are proven equal
@@ -204,18 +214,21 @@ below):
 | `uidna_nameToASCII_UTF8` `www.example.com` | 42 ns | 49 ns |
 | `uidna_nameToASCII_UTF8` `münchen.de` | 429 ns | 391 ns |
 | `uidna_nameToASCII_UTF8` `例子.测试` | 468 ns | 437 ns |
-| `unorm2_normalize` NFC, French, 64 KB | 4.66 GB/s | 3.85 GB/s |
-| `unorm2_normalize` NFC, Vietnamese | 3.76 GB/s | 0.91 GB/s |
-| `unorm2_normalize` NFC, Greek | 0.70 GB/s | 0.28 GB/s |
-| `unorm2_normalize` NFD, French | 0.86 GB/s | 0.30 GB/s |
-| `unorm2_normalize` NFD, Korean | 0.21 GB/s | 0.08 GB/s |
+| `unorm2_normalize` NFC, French, 64 KB | 5.83 GB/s | 5.89 GB/s |
+| `unorm2_normalize` NFC, Vietnamese | 3.79 GB/s | 3.65 GB/s |
+| `unorm2_normalize` NFC, Greek | 0.93 GB/s | 0.85 GB/s |
+| `unorm2_normalize` NFC, Korean | 1.58 GB/s | 2.92 GB/s |
+| `unorm2_normalize` NFD, French | 0.88 GB/s | 0.92 GB/s |
+| `unorm2_normalize` NFD, Vietnamese | 0.64 GB/s | 0.66 GB/s |
+| `unorm2_normalize` NFD, Greek | 0.54 GB/s | 0.49 GB/s |
+| `unorm2_normalize` NFD, Korean | 0.26 GB/s | 0.29 GB/s |
 
-IDNA is level with ICU. UTF-16 normalization is 2.5 to 4 times slower,
-because the verified code works on UTF-8 and the C layer converts in both
-directions. Those conversions are now the verified transcoders above, with
-AVX2 for ASCII runs, instead of hand-written loops; the figures are from
-before that change. Through the C API,
-UTF-8 normalization is the faster option, as the Rust table below shows.
+The normalization figures are medians of 5 runs. IDNA is level with ICU,
+and so is UTF-16 normalization: from 0.9 times ICU's speed (Greek) to 1.85
+times (Korean NFC). The C layer hands UTF-16 straight to the verified
+UTF-16 normalizer; text before `fast_prefix16`'s cut is copied to the output
+once, and only the rest is normalized. Before `norm16`, the layer converted
+to UTF-8 and back, and was 2.5 to 4 times slower than ICU.
 
 ### The simdutf API
 
@@ -295,7 +308,8 @@ These are what the proofs take on trust:
   verified code (verus-lang/verus#3362). Each AVX2 entry point (the
   `*_avx2` transcoders and counters in `utf/conv.rs`, `utf8_avx2` in
   `utf/valid8.rs`, and `encode_bulk`/`decode_bulk` in `base64/avx2.rs` and
-  `hex/avx2.rs`) is an `external_body` wrapper that, on x86-64, calls a
+  `hex/avx2.rs`, and `no_sur32_avx2` in `unicode/norm16.rs`) is an
+  `external_body` wrapper that, on x86-64, calls a
   one-line `unsafe` trampoline in its file's `mod tf`, which carries the
   attribute and calls the verified `*_body` function. The contract is
   `*_body`'s, checked by Verus, and requires `avx2()`, so callers prove the
@@ -307,8 +321,10 @@ These are what the proofs take on trust:
 
 `cargo test --profile release-fat` runs:
 
-- `tests/normalization.rs`: all of NormalizationTest.txt, through both the
-  fast implementation and the reference one. It also diffs against
+- `tests/normalization.rs`: all of NormalizationTest.txt, through the fast
+  implementation, the reference one and the UTF-16 one. The UTF-16 one is
+  also diffed against the UTF-8 one on 200k random texts with unpaired
+  surrogates. It also diffs against
   `unicode-normalization` (300k random strings, all four forms and the
   `is_*` checks) and `icu_normalizer` (100k strings).
 - `tests/idna.rs`: all of IdnaTestV2.txt, twice:

@@ -100,6 +100,14 @@ is §4.2's `current_age < freshness_lifetime`, and `bypass_exec` says a
 request's `no-cache`, `no-store`, `max-age=0` or `Pragma: no-cache` is
 not answered from the cache.
 
+**The proxy's own fields replace the client's** (`fields.rs`).
+`request_fields` returns exactly the client's fields minus every one the
+proxy sets (X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host,
+Forwarded, Via, Expect, Cookie, Accept-Encoding), in order, followed by
+the proxy's own; `response_fields` drops Date, Server and Age, which the
+server and cache write. So a client cannot smuggle a second
+X-Forwarded-For or Via past the proxy.
+
 **What the client is sent** is verilith-server's: its verified engines
 write every response (status line, fields, Content-Length, framing), so a
 bad field from an upstream cannot split a response (`SendError::Invalid`
@@ -107,9 +115,7 @@ becomes 502).
 
 ## What is not proven
 
-The glue in `proxy.rs`, `cache.rs` and the binary is plain Rust:
-assembling the forwarded fields (dropping X-Forwarded-*, Forwarded, Via,
-Expect, Cookie and Accept-Encoding to set them itself), the upstream
+The glue in `proxy.rs`, `cache.rs` and the binary is plain Rust: the upstream
 connection state machine (connect, write, read, timeouts, retries),
 buffering the body with verilith-http's verified chunked decoder, the
 cache's storage and eviction, which media types are compressed, and
@@ -141,8 +147,8 @@ lists each piece and what the rest assumes of it; `tests/proxy.rs` and
   on, the upstream is asked for identity bodies. A cached body is
   compressed once per coding (Brotli at quality 6); one compressed for a
   single client gets Zstandard or gzip if the client takes either, since
-  verilith-brotli spends about half a millisecond setting up its match
-  finder whatever the input's length. `Vary: Accept-Encoding` is added,
+  Brotli at quality 2 takes about twice as long as Zstandard level 3 on
+  a page and its output is larger. `Vary: Accept-Encoding` is added,
   and a strong ETag weakened.
 
 ## Performance
@@ -150,20 +156,22 @@ lists each piece and what the rest assumes of it; `tests/proxy.rs` and
 `bench/proxy/run.sh`: one upstream (verilith-server, one CPU), each proxy
 with one worker on one CPU, wrk or h2load with 64 connections on two
 more; nginx 1.24 with `proxy_pass`, an upstream keepalive pool and gzip
-level 6. Requests per second on a 4-vCPU Xeon @ 2.30 GHz VM:
+level 6. Requests per second on a 4-vCPU Xeon @ 2.30 GHz VM, the mean of
+two 10-second runs:
 
 | | verilith-proxy | nginx |
 |---|---:|---:|
-| HTTP/1.1, 13-byte body | 78,000 | 62,200 |
-| HTTP/1.1, 16 KiB HTML | 57,100 | 47,600 |
-| HTTP/1.1, 16 KiB HTML, gzip | 12,600 | 13,900 |
-| HTTP/1.1, 16 KiB HTML, Zstandard | 16,800 | (no module) |
-| HTTP/1.1, 16 KiB HTML, Brotli only, uncached | 390 | (no module) |
-| h2c, 10 streams per connection | 50,100 | 32,500 |
+| HTTP/1.1, 13-byte body | 65,400 | 48,500 |
+| HTTP/1.1, 16 KiB HTML | 42,000 | 37,000 |
+| HTTP/1.1, 16 KiB HTML, gzip | 11,900 | 11,200 |
+| HTTP/1.1, 16 KiB HTML, Zstandard | 13,800 | (no module) |
+| HTTP/1.1, 16 KiB HTML, Brotli only, uncached | 6,400 | (no module) |
+| h2c, 10 streams per connection | 54,900 | 35,800 |
 
-verilith-zlib's gzip is about 10% behind zlib's here. Brotli per request
-is slow for the reason above; cached responses are compressed once
-(`cargo run --release --example codec_speed` times each compressor).
+On this page verilith-zlib's level 6 output is 18% smaller than zlib's
+(722 bytes against 879) and takes about 20% longer. Cached responses are
+compressed once (`cargo run --release --example codec_speed` times each
+compressor).
 
 ## License
 

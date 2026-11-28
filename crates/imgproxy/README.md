@@ -12,16 +12,25 @@ their specifications.
 
 **Status: pre-release.** PNG and JPEG output (no WebP encoder yet),
 `local://`, `http://`, `https://` (with `--features tls`) and uploaded
-sources, and an area-average (box) resampler rather than imgproxy's Lanczos.
+sources. Resampling is Lanczos 3 by default, as in imgproxy.
 
 ## What is proven
 
-`cargo verus focus` checks 154 functions with no errors.
+`cargo verus focus` checks 560 functions with no errors.
 
 | Property | Where it is stated |
 |---|---|
 | The resizer computes exactly `spec::resize`: each output pixel is the area-weighted average of the source pixels its cell covers, rows then columns, rounded to nearest, with 8 bits of fraction kept between the passes. No overflow, no out-of-bounds access, for every size up to 65535 by 65535 | `resize::resize_rgba` (with `resize::rows`, `resize::cols`) against `spec::resize` |
 | The row pass's values stay below 255 × 256 and the column pass's below 256, so the narrowing casts are exact (the weights of each output cell add up to the source length: `lemma_osum`) | `lemma_hpx_bound`, `lemma_opx_bound` |
+| The thumbnailer computes exactly `spec_lanczos::thumb` for every kernel table (Lanczos 3, Lanczos 2, cubic, linear, or any other of up to 4 units' support): a box shrink by half the ratio rounded down, as `vips_resize` does, then the kernel stretched over each output sample, edges repeated, weights normalized by their sum, rows then columns with 8 bits of fraction kept and each pass clamped. No overflow, no out-of-bounds access, for every size up to 65535 by 65535 | `lanczos::thumb_rgba` (with `lanczos::taps`, `krows`, `kcols`) against `spec_lanczos::thumb` |
+| URLs: `url::parse_x` refuses a path exactly when `spec_url::parse` gives none, and otherwise returns its signature span, options and source. The specification states imgproxy's grammar (signature, `name:arg` options applied in order, `plain/` sources percent-decoded with verilith-text's verified decoder, base64url sources with its verified decoder, `upload`, the `@`/`.` extension) | `url::parse_x` against `spec_url::parse` |
+| Choosing a decoder: `url::kind_x` names the format exactly as `spec_url::kind` does from the first bytes (JPEG, PNG, WebP, GIF), and `jpeg_shrink_x` computes imgproxy's shrink-on-load factor | `url::kind_x`, `url::jpeg_shrink_x` |
+| Geometry: `geom::geom_x` computes `spec_geom::geom`, imgproxy's `crop` (pixels or fractions, at its own gravity), resize (times `dpr`), the `fill` crop at `gravity` (compass offsets or a focus point, as `calcPosition`), `extend` and `padding`, and proves every rectangle is inside the one it is cut from or placed on, and the canvas within 65535 on a side and the pixel limit | `geom::geom_x` against `spec_geom::geom` |
+| Rotating and flipping return exactly `spec_geom::turn` (clockwise quarter turns, then mirror), and placing on a canvas exactly `spec_geom::embed` | `geom::turn_rgba`, `geom::embed_rgba` |
+| EXIF orientation: `exif::orientation_x` reads exactly `spec_exif::orientation` from any bytes (JPEG's first `Exif` APP1 before the scan, WebP's `EXIF` chunk, PNG's `eXIf` before `IDAT`; the IFD0 entry 0x0112 of type SHORT, 1 to 8, else 1), in bounds and without overflow, with loops (no recursion depth an input controls); `upright_x` gives each orientation's turn | `exif::orientation_x`, `exif::upright_x` |
+| `blur` and `sharpen` compute exactly `spec_filter::blur` (a separable convolution with any table of up to 2049 non-negative weights, edges repeated, normalized, 8 bits of fraction kept between the passes) and `spec_filter::sharpen` (an unsharp mask), for every size up to 65535 by 65535 | `filter::blur_rgba`, `filter::sharpen_rgba` |
+| Watermarks: `geom::watermark_rgba` computes exactly `spec_geom::watermark` (Porter-Duff "over" with straight alpha at the given opacity, rounded to nearest, once at a gravity or tiled), and `wm_at_x` places it inside the image as `calcPosition` does | `geom::watermark_rgba`, `geom::wm_at_x` |
+| Smart gravity: `smart::smart_x` computes exactly `spec_smart::smart`: scores for edges (a Laplacian of the luminance), skin and saturation, blurred, and the first pixel with the highest score | `smart::smart_x` |
 | Cropping returns exactly `spec::crop` | `resize::crop_rgba` |
 | **PNG round trip:** for every RGBA image, the file `encode_rgba` writes decodes, under verilith-png's specification of PNG decoding, to exactly that image and header. The proof goes through every layer of the specification: the signature, IHDR, the chunk walk with its CRCs (computed by verilith-checksum, verified), the zlib stream (verilith-zlib's compressor, proven to round-trip), and the five row filters, each row filtered with whichever filter libpng's heuristic picks | `pngenc::encode_rgba` against `verilith_png::spec::decode` |
 | **JPEG output:** the file verilith-jpeg's `encode_rgb` writes decodes, under verilith-jpeg's specification, to the coefficients libjpeg-turbo computes for the image with its default settings (and is byte-identical to libjpeg-turbo's file in its differential tests) | verilith-jpeg's `encode::encode_rgb` (verified there) |
@@ -31,8 +40,8 @@ sources, and an area-average (box) resampler rather than imgproxy's Lanczos.
 | URL signatures are checked with HMAC-SHA256 in constant time | verilith-sha2's `HmacSha256::verify` (verified there) |
 | `local://` paths never leave the root | verilith-server's `path::resolve_exec` (verified there), then `openat2(RESOLVE_BENEATH)` |
 
-What is not proven: the glue in `src/proxy.rs` and `src/handler.rs` (URL
-parsing, choosing a decoder, the HTTP client's sockets); see
+What is not proven: the glue in `src/proxy.rs` and `src/handler.rs` (the
+order of the pipeline's steps, the HTTP client's sockets); see
 [TRUST.md](TRUST.md). It calls each verified function only after checking
 that function's precondition at run time.
 
@@ -60,11 +69,24 @@ signature. With no `IMGPROXY_KEY`, any signature is accepted, as in
 imgproxy.
 
 Processing options: `resize`/`rs` (`fit`, `fill`, `force`, width, height,
-enlarge), `size`/`s`, `resizing_type`/`rt`, `width`/`w`, `height`/`h`,
-`enlarge`/`el`, `background`/`bg` (flattens alpha), `gravity`/`g` (`ce`
-only), `format`/`f` or the URL's extension (`png`, `jpg`/`jpeg`; PNG when
+enlarge, extend), `size`/`s`, `resizing_type`/`rt`, `width`/`w`, `height`/`h`,
+`enlarge`/`el`, `resizing_algorithm`/`ra` (`lanczos3`, the default,
+`lanczos2`, `cubic`, `linear`, `nearest`, and `area` for the exact area
+average), `background`/`bg` (flattens alpha, and fills `extend` and
+`padding`), `gravity`/`g` (`ce`, `no`, `so`, `ea`, `we`, `noea`, `nowe`,
+`soea`, `sowe` with offsets, `fp` with a focus point, `sm`), `crop`/`c` (width,
+height, gravity), `extend`/`ex` (with gravity), `padding`/`pd`, `dpr`,
+`rotate`/`rot` (multiples of 90), `flip`/`fl`, `auto_rotate`/`ar` (EXIF
+orientation, on by default), `blur`/`bl`, `sharpen`/`sh`,
+`watermark`/`wm` (opacity, position or `re` to tile, offsets, scale; the
+image from `--watermark`, `IMGPROXY_WATERMARK_PATH` or
+`IMGPROXY_WATERMARK_DATA`), `format`/`f` or the URL's extension (`png`, `jpg`/`jpeg`; PNG when
 none is given), `quality`/`q` (JPEG, 1 to 100, default 80);
-`strip_metadata` and `cachebuster` are accepted and ignored. Anything else is answered 400, as
+`expires`/`exp` (404 once past), `filename`/`fn` (plain or base64url)
+and `return_attachment`/`att` (the `Content-Disposition` header),
+`raw` and `skip_processing`/`skp` (`jpg`, `png`, `webp`, `gif`: the
+source is sent as it is); `strip_metadata` and `cachebuster` are accepted
+and ignored. Anything else is answered 400, as
 imgproxy does. Settings: `IMGPROXY_KEY`, `IMGPROXY_SALT`, `IMGPROXY_BIND`,
 `IMGPROXY_LOCAL_FILESYSTEM_ROOT`, `IMGPROXY_ALLOWED_SOURCES`,
 `IMGPROXY_MAX_SRC_RESOLUTION` (default 50 megapixels, checked from the
@@ -86,11 +108,19 @@ does not decode or is over the limits, 502 for an origin that fails.
   tables, alpha flattened onto the background or white. The quantization
   tables are libjpeg's for the quality; imgproxy's libvips uses the same
   ones.
-- Box (area-average) resampling instead of Lanczos 3. It is exact for
-  downscaling, has no ringing, and is softer than Lanczos.
+- Resampling follows libvips's design (box pre-shrink, then a
+  normalized kernel, 8-bit clamping between passes) but is not
+  bit-identical to it: the kernel tables are 1/256-step samples in 14-bit
+  fixed point, and `nearest` is a one-sample box (an average over each
+  output pixel's cell when downscaling), not a pick of one pixel.
 - Alpha is resampled straight, not premultiplied.
-- Centre gravity only; no smart crop, watermarks, blur, sharpening,
-  rotation or EXIF orientation.
+- Smart gravity scores edges, skin and saturation as libvips's
+  "attention" strategy does, with this crate's own weights, so it can
+  pick a different spot. `sharpen` is an unsharp mask on the RGB
+  channels, not libvips's sharpen on the L channel of Lab. `blur` and
+  `sharpen` sigmas above 341 are cut to a 2049-sample kernel. No
+  `pixelate`. Gravity offsets are whole pixels. `skip_processing` knows
+  only the four formats decoded here.
 - GIF: the first frame, at its own size.
 - No redirects from an origin. `https://` sources need `--features tls`;
   they go through verilith-tls's verified TLS 1.3 client (TLS 1.2-only
@@ -134,7 +164,8 @@ time.
 ## Tests
 
 `cargo test -p verilith-imgproxy` reads the encoder's output back with
-the `png` crate and with verilith-png at every level, compares the resizer
-with a direct floating-point computation of the area average on random
-sizes, runs the pipeline on JPEG and PNG files the `image` crate writes,
+the `png` crate and with verilith-png at every level, compares the
+area-average resizer with a direct floating-point computation of the area
+average on random sizes and the Lanczos resampler with a floating-point
+Lanczos 3 (`tests/lanczos.rs`: at most 2 levels apart), runs the pipeline on JPEG and PNG files the `image` crate writes,
 and checks URL parsing and imgproxy's documented signature example.
