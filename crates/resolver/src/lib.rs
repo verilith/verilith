@@ -21,15 +21,6 @@ pub mod cache;
 pub mod reply;
 pub mod resolve;
 
-/// The shard of the shared cache a name's entries live in (any function
-/// of the lowercased name would do).
-pub(crate) fn shared_shard(n: usize, name: &[u8]) -> usize {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for &c in name {
-        h = (h ^ c.to_ascii_lowercase() as u64).wrapping_mul(0x100_0000_01b3);
-    }
-    (h % n as u64) as usize
-}
 pub mod frontend;
 #[cfg(not(verus_keep_ghost))]
 pub mod net;

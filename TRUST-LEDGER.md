@@ -49,7 +49,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | quic |  |  |  |  |  |  | 1 | 30 |
 | quic-conn |  |  |  |  |  |  | 3 | 2091 |
 | regex | 1 |  |  |  |  |  | 3 | 1969 |
-| resolver | 7 |  |  |  |  |  | 4 | 496 |
+| resolver | 7 |  |  |  |  |  | 4 | 551 |
 | server | 1 |  |  |  | 1 |  | 15 | 5352 |
 | serverless |  |  |  |  |  |  | 2 | 259 |
 | sha2 | 34 |  |  |  |  |  | 3 | 362 |
@@ -69,7 +69,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 | 1354 |
 | zstd | 6 |  |  |  |  |  | 2 | 1331 |
-| **total** | **707** | **36** | **290** | **7** | **17** | **12** | **148** | **59731** |
+| **total** | **707** | **36** | **290** | **7** | **17** | **12** | **148** | **59786** |
 
 ## Items
 
@@ -233,11 +233,13 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### resolver
 
-- `crates/resolver/src/lib.rs`: plain Rust, 22 lines
+- `crates/resolver/src/crypto.rs`: external_body: `verify_sig`
+- `crates/resolver/src/lib.rs`: plain Rust, 23 lines
 - `crates/resolver/src/net.rs`: plain Rust, 98 lines
-- `crates/resolver/src/resolve.rs`: external_body: `exchange`, `exchange`, `now`, `random`, `lookup`, `lookup`, `insert`
-- `crates/resolver/src/service.rs`: plain Rust, 297 lines
-- `crates/resolver/src/bin/verilith-resolver.rs`: plain Rust, 79 lines
+- `crates/resolver/src/resolve.rs`: external_body: `exchange`, `exchange`, `now`, `random`, `wall`
+- `crates/resolver/src/service.rs`: plain Rust, 338 lines
+- `crates/resolver/src/trust.rs`: external_body: `anchors_x`
+- `crates/resolver/src/bin/verilith-resolver.rs`: plain Rust, 92 lines
 
 ### server
 

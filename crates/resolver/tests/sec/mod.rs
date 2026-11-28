@@ -773,6 +773,12 @@ pub const ED: [u8; 4] = [127, 0, 1, 11];
 /// - `n3` (P-384, NSEC3, 5 iterations, salted): `deep.n3`, a wildcard,
 ///   and `unsigned.n3` (no DS).
 pub fn start(port: u16) -> Vec<u8> {
+    start_with(port, 0)
+}
+
+/// `start`, with `hosts` more names in example.com (h0 to h`hosts`-1,
+/// one A record each), for benchmarks.
+pub fn start_with(port: u16, hosts: u32) -> Vec<u8> {
     let t = now();
     let ok = (t - 3600, t + 30 * 86400);
     let root_k = SigningKey::new(8, 257);
@@ -843,7 +849,10 @@ pub fn start(port: u16) -> Vec<u8> {
             a("*.wild.example.com", [192, 0, 2, 7]),
             a("host.wild.example.com", [192, 0, 2, 8]),
             a("a.b.c.example.com", [192, 0, 2, 9]),
-        ]),
+        ])
+        .into_iter()
+        .chain((0..hosts).map(|i| a(&format!("h{i}.example.com"), [10, (i >> 16) as u8, (i >> 8) as u8, i as u8])))
+        .collect(),
         ksk: ex_ksk,
         zsk: Some(ex_zsk),
         nsec3: None,

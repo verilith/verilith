@@ -40,6 +40,11 @@ default = []
 tls = ["dep:verilith-tls", "dep:verilith-tls-aws-lc", "dep:verilith-server", "verilith-server/tls", "dep:verilith-text"]
 h3 = ["tls", "verilith-server/h3"]
 
+[package.metadata.verilith]
+# The signature arithmetic (src/crypto.rs, trusted) is compiled only without
+# Verus.
+unverified-deps = ["aws-lc-rs"]
+
 [package.metadata.verus]
 verify = true
 

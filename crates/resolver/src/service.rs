@@ -99,7 +99,6 @@ impl Resolver {
         let roots: Vec<Vec<u8>> = o.roots.iter().filter(|a| a.len() == 4 || a.len() == 16).cloned().collect();
         assert!(!roots.is_empty(), "no root server addresses");
         let sets = o.sets.clamp(1, 0x1000_0000);
-        let shards = (0..o.shards.max(1)).map(|_| Mutex::new(Cache::new(sets))).collect();
         assert!(
             crate::trust::set_anchors(o.trust_anchors.clone()),
             "trust anchors are fixed for the process, and differ from those already in force"
@@ -107,7 +106,7 @@ impl Resolver {
         Resolver {
             roots,
             net: Net { t: Arc::new(Upstream::new(o.upstream_port, o.timeout)) },
-            cache: Shared { shards },
+            cache: Shared::new(o.shards.max(1), sets),
         }
     }
 

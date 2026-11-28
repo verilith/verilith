@@ -83,31 +83,81 @@ impl Net {
     }
 }
 
-/// The cache, shared by every thread: `Cache`s behind locks. The contracts
-/// below are the verified `Cache::lookup` and `Cache::insert`'s; the
-/// bodies only pick a shard and lock it.
-#[verifier::external_body]
+/// The cache, shared by every thread: `Cache`s, each behind a reader-writer
+/// lock (vstd's, verified). Lookups take a shard's read lock, so they run
+/// in parallel; inserts take its write lock.
 pub struct Shared {
-    pub(crate) shards: Vec<std::sync::Mutex<Cache>>,
+    pub(crate) shards: Vec<vstd::rwlock::RwLock<Cache, AnyCache>>,
+}
+
+/// The lock invariant: none beyond `Cache`'s own (a type invariant).
+pub struct AnyCache;
+
+impl vstd::rwlock::RwLockPredicate<Cache> for AnyCache {
+    open spec fn inv(self, c: Cache) -> bool {
+        true
+    }
+}
+
+/// The shard of `n` shards a name's entries live in: any function of the
+/// lowercased name would do.
+fn shard_of(n: usize, name: &[u8]) -> (i: usize)
+    requires
+        n > 0,
+    ensures
+        i < n,
+{
+    let l = lowered(name);
+    (hash(&l, 0) % (n as u64)) as usize
 }
 
 impl Shared {
-    #[verifier::external_body]
+    /// `shards` caches of `sets` sets each.
+    pub fn new(shards: usize, sets: usize) -> (s: Shared)
+        requires
+            0 < sets <= 0x1000_0000,
+    {
+        let mut v: Vec<vstd::rwlock::RwLock<Cache, AnyCache>> = Vec::new();
+        let n = if shards == 0 { 1 } else { shards };
+        let mut i: usize = 0;
+        while i < n
+            invariant
+                0 < sets <= 0x1000_0000,
+            decreases n - i,
+        {
+            v.push(vstd::rwlock::RwLock::new(Cache::new(sets), Ghost(AnyCache)));
+            i = i + 1;
+        }
+        Shared { shards: v }
+    }
+
     pub fn lookup(&self, name: &[u8], qtype: u16, now: u64) -> (r: Option<Hit>)
         ensures
             r matches Some(h) ==> hit_ok(h, name@, qtype),
     {
-        let s = &self.shards[crate::shared_shard(self.shards.len(), name)];
-        s.lock().unwrap_or_else(|e| e.into_inner()).lookup(name, qtype, now)
+        let n = self.shards.len();
+        if n == 0 {
+            return None;
+        }
+        let lock = &self.shards[shard_of(n, name)];
+        let h = lock.acquire_read();
+        let r = h.borrow().lookup(name, qtype, now);
+        h.release_read();
+        r
     }
 
-    #[verifier::external_body]
     pub fn insert(&self, name: &[u8], qtype: u16, now: u64, ttl: u32, data: Data)
         requires
             data_ok(data, name@, qtype),
     {
-        let s = &self.shards[crate::shared_shard(self.shards.len(), name)];
-        s.lock().unwrap_or_else(|e| e.into_inner()).insert(name, qtype, now, ttl, data)
+        let n = self.shards.len();
+        if n == 0 {
+            return;
+        }
+        let lock = &self.shards[shard_of(n, name)];
+        let (mut c, w) = lock.acquire_write();
+        c.insert(name, qtype, now, ttl, data);
+        w.release_write(c);
     }
 }
 

@@ -170,7 +170,29 @@ pub proof fn lemma_same_but_ttl_sym(a: Seq<RrS>, b: Seq<RrS>)
 {
 }
 
+/// A copy of a list of addresses.
+fn copy_addrs(a: &Vec<Vec<u8>>) -> (out: Vec<Vec<u8>>)
+    ensures
+        out@.len() == a@.len(),
+        forall|j: int| 0 <= j < a@.len() ==> (#[trigger] out@[j])@ == a@[j]@,
+{
+    let mut out: Vec<Vec<u8>> = Vec::with_capacity(a.len());
+    let mut i: usize = 0;
+    while i < a.len()
+        invariant
+            i <= a@.len(),
+            out@.len() == i,
+            forall|j: int| 0 <= j < i ==> (#[trigger] out@[j])@ == a@[j]@,
+        decreases a@.len() - i,
+    {
+        out.push(to_vec(&a[i]));
+        i = i + 1;
+    }
+    out
+}
+
 /// The data with TTLs at most `t`, still for the same question.
+#[verifier::rlimit(30)]
 pub fn clamp_data(d: &Data, name: Ghost<Seq<u8>>, qtype: u16, t: u32) -> (r: Data)
     requires
         data_ok(*d, name@, qtype),
@@ -210,18 +232,7 @@ pub fn clamp_data(d: &Data, name: Ghost<Seq<u8>>, qtype: u16, t: u32) -> (r: Dat
         },
         Data::Cut(cut, u) => Data::Cut(to_vec(cut), Ghost(u@)),
         Data::Deleg(a) => {
-            let mut out: Vec<Vec<u8>> = Vec::with_capacity(a.len());
-            let mut i: usize = 0;
-            while i < a.len()
-                invariant
-                    i <= a@.len(),
-                    out@.len() == i,
-                    forall|j: int| 0 <= j < i ==> (#[trigger] out@[j])@ == a@[j]@,
-                decreases a@.len() - i,
-            {
-                out.push(to_vec(&a[i]));
-                i = i + 1;
-            }
+            let out = copy_addrs(a);
             proof {
                 assert forall|j: int| 0 <= j < out@.len() implies (#[trigger] out@[j])@.len() == 4
                     || out@[j]@.len() == 16 by {
