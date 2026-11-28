@@ -6,6 +6,9 @@ use crate::enc_img::*;
 #[cfg(verus_only)]
 use crate::enc_lem::*;
 use crate::enc_lz::tokenize;
+use crate::enc_pred::{choose_modes, pow2_x, residuals};
+#[cfg(verus_only)]
+use crate::enc_pred::modes_fit;
 use crate::enc_tok::*;
 #[cfg(verus_only)]
 use crate::spec::*;
@@ -25,12 +28,75 @@ pub open spec fn hdr_bits(w: nat, h: nat, a: nat) -> Seq<nat> {
     fld(0x2f, 8) + (fld((w - 1) as nat, 14) + (fld((h - 1) as nat, 14) + (fld(a, 1) + fld(0, 3))))
 }
 
-/// The transform list: subtract green alone if `sg`, else none.
-pub open spec fn tr_bits(sg: bool) -> Seq<nat> {
+/// An entropy-coded image as the encoder writes it: its prefix code
+/// lengths `g`, sent with the code-length codes `cls`, then its tokens.
+pub struct ImgCode {
+    pub cls: Seq<Seq<u8>>,
+    pub g: Seq<Seq<u8>>,
+    pub toks: Seq<Tok>,
+}
+
+/// The image's codes and tokens, without color cache or meta codes.
+pub open spec fn img_bits(c: ImgCode) -> Seq<nat> {
+    gbits(c.cls, c.g, 5) + tbits(c.g, c.toks, 0)
+}
+
+/// What the readback of an `ImgCode` of width `w` needs.
+pub open spec fn img_ok(w: nat, c: ImgCode) -> bool {
+    &&& gfits(c.cls, c.g)
+    &&& group_ok(c.g)
+    &&& toks_ok(w, c.toks)
+    &&& forall|j: int| 0 <= j < c.toks.len() ==> tok_fits(c.g, #[trigger] c.toks[j])
+}
+
+/// A predictor transform: block size `2^tb` and the coded mode image.
+pub struct PredCode {
+    pub tb: nat,
+    pub c: ImgCode,
+}
+
+pub open spec fn sg_bits(sg: bool) -> Seq<nat> {
     if sg {
-        fld(1, 1) + (fld(2, 2) + fld(0, 1))
+        fld(1, 1) + fld(2, 2)
     } else {
-        fld(0, 1)
+        Seq::empty()
+    }
+}
+
+pub open spec fn pr_bits(pr: Option<PredCode>) -> Seq<nat> {
+    match pr {
+        None => Seq::empty(),
+        Some(p) => fld(1, 1) + (fld(0, 2) + (fld((p.tb - 2) as nat, 3) + (fld(0, 1) + img_bits(p.c)))),
+    }
+}
+
+/// The transform list: subtract green if `sg`, then the predictor if any.
+pub open spec fn tr_bits(sg: bool, pr: Option<PredCode>) -> Seq<nat> {
+    sg_bits(sg) + (pr_bits(pr) + fld(0, 1))
+}
+
+pub open spec fn pr_ok(w: nat, h: nat, pr: Option<PredCode>) -> bool {
+    match pr {
+        None => true,
+        Some(p) => {
+            &&& 2 <= p.tb <= 9
+            &&& subsample(w, p.tb) >= 1
+            &&& img_ok(subsample(w, p.tb), p.c)
+            &&& play(subsample(w, p.tb), p.c.toks).len() == subsample(w, p.tb) * subsample(h, p.tb)
+        },
+    }
+}
+
+/// The transforms `tr_bits(sg, pr)` reads back as.
+pub open spec fn tlist(w: nat, sg: bool, pr: Option<PredCode>) -> Seq<Transform> {
+    let s = if sg {
+        seq![Transform::SubtractGreen]
+    } else {
+        Seq::<Transform>::empty()
+    };
+    match pr {
+        None => s,
+        Some(p) => s.push(Transform::Predictor { bits: p.tb, w, data: play(subsample(w, p.tb), p.c.toks) }),
     }
 }
 
@@ -43,43 +109,302 @@ pub open spec fn undo_sg(sg: bool, p: Seq<u32>) -> Seq<u32> {
     }
 }
 
-/// An image with at most the subtract-green transform, and without color
-/// cache or meta prefix codes.
-pub open spec fn plain_bits(w: nat, h: nat, a: nat, sg: bool, cls: Seq<Seq<u8>>, g: Seq<Seq<u8>>, toks: Seq<Tok>) -> Seq<nat> {
-    hdr_bits(w, h, a) + (tr_bits(sg) + (fld(0, 1) + (fld(0, 1) + (gbits(cls, g, 5) + tbits(g, toks, 0)))))
+/// The pixels decoded after undoing the transforms `tr_bits(sg, pr)` names.
+pub open spec fn undo_pl(w: nat, sg: bool, pr: Option<PredCode>, p: Seq<u32>) -> Seq<u32> {
+    undo_sg(
+        sg,
+        match pr {
+            None => p,
+            Some(q) => unpredict(p, w, q.tb, play(subsample(w, q.tb), q.c.toks), p.len()),
+        },
+    )
 }
 
-/// `tr_bits` reads back as its transforms.
-proof fn lemma_tr(b: Seq<u8>, hd: Seq<nat>, w: nat, h: nat, sg: bool, rest: Seq<nat>)
+/// An image with at most subtract green and the predictor, and without
+/// color cache or meta prefix codes.
+pub open spec fn plain_bits(w: nat, h: nat, a: nat, sg: bool, pr: Option<PredCode>, c: ImgCode) -> Seq<nat> {
+    hdr_bits(w, h, a) + (tr_bits(sg, pr) + (fld(0, 1) + (fld(0, 1) + img_bits(c))))
+}
+
+/// `img_bits` reads back as one group of codes, then the pixels.
+proof fn lemma_img(b: Seq<u8>, u: Seq<nat>, w: nat, h: nat, c: ImgCode, rest: Seq<nat>)
     requires
-        hd.len() == 40,
-        ext(b, hd + (tr_bits(sg) + rest)),
+        img_ok(w, c),
+        play(w, c.toks).len() == w * h,
+        ext(b, u + (img_bits(c) + rest)),
     ensures
-        read_transforms(b, 40, w, h, seq![]) == Some((if sg { seq![Transform::SubtractGreen] } else { Seq::<Transform>::empty() }, w, (40 + tr_bits(sg).len()) as int)),
-        tr_bits(sg).len() == if sg { 4int } else { 1int },
+        read_groups(b, u.len() as int, 0, 1) == Some((seq![c.g], (u.len() + gbits(c.cls, c.g, 5).len()) as int)),
+        decode_with(b, (u.len() + gbits(c.cls, c.g, 5).len()) as int, w, h, 0, seq![c.g], 0, seq![]) == Some(
+            (play(w, c.toks), (u.len() + img_bits(c).len()) as int),
+        ),
+{
+    hide(ext);
+    hide(gfits);
+    hide(group_ok);
+    hide(decode_pixels);
+    hide(read_group_codes);
+    let gb = gbits(c.cls, c.g, 5);
+    let tb = tbits(c.g, c.toks, 0);
+    assert(u + (img_bits(c) + rest) =~= u + (gb + (tb + rest)));
+    lemma_group(b, u, c.cls, c.g, 5, tb + rest);
+    assert(c.g.take(5) =~= c.g) by {
+        reveal(gfits);
+    }
+    assert(read_groups(b, u.len() as int, 0, 1) == Some((seq![c.g], (u.len() + gb.len()) as int))) by {
+        reveal_with_fuel(read_groups, 2);
+        assert(Seq::<Seq<Seq<u8>>>::empty().push(c.g) =~= seq![c.g]);
+    }
+    let u4 = u + gb;
+    assert(u + (gb + (tb + rest)) =~= u4 + (tb + rest));
+    assert(c.toks.take(0) =~= Seq::<Tok>::empty());
+    let cache = Seq::new(cache_size(0), |i: int| 0u32);
+    lemma_toks(b, u4, w, c.g, c.toks, 0, cache, rest);
+    assert(img_of(w, play(w, c.toks).len(), c.g) == Img {
+        w,
+        npix: w * h,
+        cb: 0,
+        groups: seq![c.g],
+        hb: 0,
+        hx: 0,
+        meta: seq![],
+    });
+}
+
+/// A subresolution image: no color cache, then `img_bits`.
+proof fn lemma_sub(b: Seq<u8>, u: Seq<nat>, w: nat, h: nat, c: ImgCode, rest: Seq<nat>)
+    requires
+        img_ok(w, c),
+        play(w, c.toks).len() == w * h,
+        ext(b, u + (fld(0, 1) + (img_bits(c) + rest))),
+    ensures
+        decode_sub(b, u.len() as int, w, h) == Some((play(w, c.toks), (u.len() + 1 + img_bits(c).len()) as int)),
+{
+    hide(ext);
+    hide(fld);
+    hide(rd);
+    hide(img_bits);
+    hide(img_ok);
+    hide(decode_with);
+    lemma2_to64();
+    lemma_rd(b, u, 0, 1, img_bits(c) + rest);
+    assert(read_cache_bits(b, u.len() as int) == Some((0nat, (u.len() + 1) as int)));
+    let u1 = u + fld(0, 1);
+    assert(u + (fld(0, 1) + (img_bits(c) + rest)) =~= u1 + (img_bits(c) + rest));
+    lemma_img(b, u1, w, h, c, rest);
+}
+
+/// The main image: no color cache, no meta codes, then `img_bits`.
+proof fn lemma_main(b: Seq<u8>, u: Seq<nat>, w: nat, h: nat, c: ImgCode, rest: Seq<nat>)
+    requires
+        img_ok(w, c),
+        play(w, c.toks).len() == w * h,
+        ext(b, u + (fld(0, 1) + (fld(0, 1) + (img_bits(c) + rest)))),
+    ensures
+        decode_main(b, u.len() as int, w, h) == Some((play(w, c.toks), (u.len() + 2 + img_bits(c).len()) as int)),
+{
+    hide(ext);
+    hide(fld);
+    hide(rd);
+    hide(img_bits);
+    hide(img_ok);
+    hide(decode_with);
+    lemma2_to64();
+    let z = fld(0, 1);
+    lemma_rd(b, u, 0, 1, z + (img_bits(c) + rest));
+    assert(read_cache_bits(b, u.len() as int) == Some((0nat, (u.len() + 1) as int)));
+    let u1 = u + z;
+    assert(u + (z + (z + (img_bits(c) + rest))) =~= u1 + (z + (img_bits(c) + rest)));
+    lemma_rd(b, u1, 0, 1, img_bits(c) + rest);
+    let u2 = u1 + z;
+    assert(u1 + (z + (img_bits(c) + rest)) =~= u2 + (img_bits(c) + rest));
+    lemma_img(b, u2, w, h, c, rest);
+}
+
+proof fn lemma_step_end(b: Seq<u8>, u: Seq<nat>, w: nat, h: nat, ts: Seq<Transform>, rest: Seq<nat>)
+    requires
+        ext(b, u + (fld(0, 1) + rest)),
+    ensures
+        read_transforms(b, u.len() as int, w, h, ts) == Some((ts, w, (u.len() + 1) as int)),
 {
     hide(ext);
     hide(fld);
     hide(rd);
     lemma2_to64();
+    lemma_rd(b, u, 0, 1, rest);
+}
+
+proof fn lemma_step_sg(b: Seq<u8>, u: Seq<nat>, w: nat, h: nat, ts: Seq<Transform>, rest: Seq<nat>)
+    requires
+        ext(b, u + (sg_bits(true) + rest)),
+        ts.len() < 4,
+        forall|j: int| 0 <= j < ts.len() ==> kind(#[trigger] ts[j]) != 2,
+    ensures
+        read_transforms(b, u.len() as int, w, h, ts) == read_transforms(b, (u.len() + 3) as int, w, h, ts.push(Transform::SubtractGreen)),
+        sg_bits(true).len() == 3,
+{
+    hide(ext);
+    hide(fld);
+    hide(rd);
+    hide(decode_sub);
+    hide(subsample);
+    lemma2_to64();
+    let f1 = fld(1, 1);
+    let f2 = fld(2, 2);
+    assert(u + (sg_bits(true) + rest) =~= u + (f1 + (f2 + rest)));
+    lemma_rd(b, u, 1, 1, f2 + rest);
+    assert(u + (f1 + (f2 + rest)) =~= (u + f1) + (f2 + rest));
+    lemma_rd(b, u + f1, 2, 2, rest);
+    assert(!(exists|j: int| 0 <= j < ts.len() && kind(#[trigger] ts[j]) == 2));
+}
+
+proof fn lemma_step_pr(b: Seq<u8>, u: Seq<nat>, w: nat, h: nat, ts: Seq<Transform>, p: PredCode, rest: Seq<nat>)
+    requires
+        ext(b, u + (pr_bits(Some(p)) + rest)),
+        pr_ok(w, h, Some(p)),
+        ts.len() < 4,
+        forall|j: int| 0 <= j < ts.len() ==> kind(#[trigger] ts[j]) != 0,
+    ensures
+        read_transforms(b, u.len() as int, w, h, ts) == read_transforms(
+            b,
+            (u.len() + pr_bits(Some(p)).len()) as int,
+            w,
+            h,
+            ts.push(Transform::Predictor { bits: p.tb, w, data: play(subsample(w, p.tb), p.c.toks) }),
+        ),
+{
+    hide(ext);
+    hide(fld);
+    hide(rd);
+    hide(img_bits);
+    hide(img_ok);
+    hide(decode_sub);
+    lemma2_to64();
+    let f1 = fld(1, 1);
+    let f2 = fld(0, 2);
+    let f3 = fld((p.tb - 2) as nat, 3);
     let z = fld(0, 1);
-    if sg {
-        let f1 = fld(1, 1);
-        let f2 = fld(2, 2);
-        assert(hd + (tr_bits(sg) + rest) =~= hd + (f1 + (f2 + (z + rest))));
-        lemma_rd(b, hd, 1, 1, f2 + (z + rest));
-        assert(hd + (f1 + (f2 + (z + rest))) =~= (hd + f1) + (f2 + (z + rest)));
-        lemma_rd(b, hd + f1, 2, 2, z + rest);
-        assert((hd + f1) + (f2 + (z + rest)) =~= (hd + f1 + f2) + (z + rest));
-        lemma_rd(b, hd + f1 + f2, 0, 1, rest);
-        let ts = Seq::<Transform>::empty().push(Transform::SubtractGreen);
-        assert(ts =~= seq![Transform::SubtractGreen]);
-        assert(read_transforms(b, 43, w, h, ts) == Some((ts, w, 44int)));
-        assert(!(exists|j: int| 0 <= j < 0 && kind(#[trigger] Seq::<Transform>::empty()[j]) == 2));
-        assert(read_transforms(b, 40, w, h, seq![]) == read_transforms(b, 43, w, h, ts));
-    } else {
-        lemma_rd(b, hd, 0, 1, rest);
+    let ib = img_bits(p.c);
+    assert(u + (pr_bits(Some(p)) + rest) =~= u + (f1 + (f2 + (f3 + (z + (ib + rest))))));
+    lemma_rd(b, u, 1, 1, f2 + (f3 + (z + (ib + rest))));
+    let u1 = u + f1;
+    assert(u + (f1 + (f2 + (f3 + (z + (ib + rest))))) =~= u1 + (f2 + (f3 + (z + (ib + rest)))));
+    lemma_rd(b, u1, 0, 2, f3 + (z + (ib + rest)));
+    let u2 = u1 + f2;
+    assert(u1 + (f2 + (f3 + (z + (ib + rest)))) =~= u2 + (f3 + (z + (ib + rest))));
+    lemma_rd(b, u2, (p.tb - 2) as nat, 3, z + (ib + rest));
+    let u3 = u2 + f3;
+    assert(u2 + (f3 + (z + (ib + rest))) =~= u3 + (z + (ib + rest)));
+    lemma_sub(b, u3, subsample(w, p.tb), subsample(h, p.tb), p.c, rest);
+    assert(!(exists|j: int| 0 <= j < ts.len() && kind(#[trigger] ts[j]) == 0));
+    assert(z.len() == 1) by {
+        reveal(fld);
+        lemma_bits_of(0, 1);
     }
+    assert(pr_bits(Some(p)) == f1 + (f2 + (f3 + (z + ib))));
+    assert(pr_bits(Some(p)).len() == 7 + ib.len());
+}
+
+/// `tr_bits` reads back as its transforms.
+proof fn lemma_tr(b: Seq<u8>, hd: Seq<nat>, w: nat, h: nat, sg: bool, pr: Option<PredCode>, rest: Seq<nat>)
+    requires
+        hd.len() == 40,
+        pr_ok(w, h, pr),
+        ext(b, hd + (tr_bits(sg, pr) + rest)),
+    ensures
+        read_transforms(b, 40, w, h, seq![]) == Some((tlist(w, sg, pr), w, (40 + tr_bits(sg, pr).len()) as int)),
+{
+    hide(ext);
+    hide(fld);
+    hide(rd);
+    hide(pr_bits);
+    hide(sg_bits);
+    hide(pr_ok);
+    hide(read_transforms);
+    hide(tlist);
+    hide(play);
+    hide(subsample);
+    hide(img_bits);
+    let z = fld(0, 1);
+    let sb = sg_bits(sg);
+    let pb = pr_bits(pr);
+    let s0 = Seq::<Transform>::empty();
+    let s1 = if sg {
+        seq![Transform::SubtractGreen]
+    } else {
+        s0
+    };
+    assert(hd + (tr_bits(sg, pr) + rest) =~= hd + (sb + (pb + (z + rest))));
+    assert(z.len() == 1) by {
+        reveal(fld);
+        lemma_bits_of(0, 1);
+    }
+    assert(tr_bits(sg, pr).len() == sb.len() + pb.len() + 1);
+    let u1 = hd + sb;
+    assert(hd + (sb + (pb + (z + rest))) =~= u1 + (pb + (z + rest)));
+    if sg {
+        lemma_step_sg(b, hd, w, h, s0, pb + (z + rest));
+        assert(s0.push(Transform::SubtractGreen) =~= s1);
+    } else {
+        assert(sb =~= Seq::<nat>::empty()) by {
+            reveal(sg_bits);
+        }
+        assert(u1 =~= hd);
+    }
+    assert(read_transforms(b, 40, w, h, s0) == read_transforms(b, u1.len() as int, w, h, s1));
+    let u2 = u1 + pb;
+    assert(u1 + (pb + (z + rest)) =~= u2 + (z + rest));
+    match pr {
+        Some(p) => {
+            assert(pb == pr_bits(Some(p)));
+            assert(pr_ok(w, h, Some(p)));
+            lemma_step_pr(b, u1, w, h, s1, p, z + rest);
+            let s2 = s1.push(Transform::Predictor { bits: p.tb, w, data: play(subsample(w, p.tb), p.c.toks) });
+            lemma_step_end(b, u2, w, h, s2, rest);
+            assert(tlist(w, sg, pr) == s2) by {
+                reveal(tlist);
+            }
+        },
+        None => {
+            assert(pb =~= Seq::<nat>::empty()) by {
+                reveal(pr_bits);
+            }
+            assert(u2 =~= u1);
+            lemma_step_end(b, u2, w, h, s1, rest);
+            assert(tlist(w, sg, pr) == s1) by {
+                reveal(tlist);
+            }
+        },
+    }
+}
+
+proof fn lemma_undo(w: nat, h: nat, sg: bool, pr: Option<PredCode>, px: Seq<u32>)
+    ensures
+        undo_all(tlist(w, sg, pr), px, h) == undo_pl(w, sg, pr, px),
+{
+    let s0 = Seq::<Transform>::empty();
+    let s1 = if sg {
+        seq![Transform::SubtractGreen]
+    } else {
+        s0
+    };
+    let q = match pr {
+        None => px,
+        Some(p) => unpredict(px, w, p.tb, play(subsample(w, p.tb), p.c.toks), px.len()),
+    };
+    match pr {
+        None => {},
+        Some(p) => {
+            let t = Transform::Predictor { bits: p.tb, w, data: play(subsample(w, p.tb), p.c.toks) };
+            assert(s1.push(t).drop_last() =~= s1);
+            assert(undo(t, px, h) == q);
+            assert(undo_all(s1.push(t), px, h) == undo_all(s1, q, h));
+        },
+    }
+    if sg {
+        assert(s1.drop_last() =~= s0);
+        assert(undo_all(s1, q, h) == undo_all(s0, undo(Transform::SubtractGreen, q, h), h));
+    }
+    assert(undo_all(s1, q, h) == undo_sg(sg, q));
 }
 
 proof fn lemma_hdr(b: Seq<u8>, w: nat, h: nat, a: nat, rest: Seq<nat>)
@@ -116,81 +441,42 @@ proof fn lemma_hdr(b: Seq<u8>, w: nat, h: nat, a: nat, rest: Seq<nat>)
 
 /// The theorem for the bitstream.
 #[verifier::spinoff_prover]
-pub proof fn lemma_plain(b: Seq<u8>, w: nat, h: nat, a: nat, sg: bool, cls: Seq<Seq<u8>>, g: Seq<Seq<u8>>, toks: Seq<Tok>)
+pub proof fn lemma_plain(b: Seq<u8>, w: nat, h: nat, a: nat, sg: bool, pr: Option<PredCode>, c: ImgCode)
     requires
         1 <= w <= 0x4000,
         1 <= h <= 0x4000,
         a < 2,
         b.len() >= 8,
-        gfits(cls, g),
-        group_ok(g),
-        toks_ok(w, toks),
-        forall|j: int| 0 <= j < toks.len() ==> tok_fits(g, #[trigger] toks[j]),
-        play(w, toks).len() == w * h,
-        ext(b, plain_bits(w, h, a, sg, cls, g, toks)),
+        img_ok(w, c),
+        pr_ok(w, h, pr),
+        play(w, c.toks).len() == w * h,
+        ext(b, plain_bits(w, h, a, sg, pr, c)),
     ensures
-        vp8l_decode(b) == Some(Image { w, h, px: undo_sg(sg, play(w, toks)) }),
+        vp8l_decode(b) == Some(Image { w, h, px: undo_pl(w, sg, pr, play(w, c.toks)) }),
 {
     hide(ext);
     hide(fld);
     hide(rd);
-    hide(gfits);
-    hide(group_ok);
-    hide(decode_pixels);
-    hide(read_group_codes);
-    lemma_pow2_small();
+    hide(img_ok);
+    hide(pr_ok);
+    hide(img_bits);
+    hide(tr_bits);
+    hide(undo_pl);
+    hide(decode_main);
+    hide(read_transforms);
+    hide(undo_all);
     let hd = hdr_bits(w, h, a);
-    let gb = gbits(cls, g, 5);
-    let tb = tbits(g, toks, 0);
+    let tr = tr_bits(sg, pr);
     let z = fld(0, 1);
-    let tr = tr_bits(sg);
+    let ib = img_bits(c);
+    let e = Seq::<nat>::empty();
     assert(pad(b) == b);
-    lemma_hdr(b, w, h, a, tr + (z + (z + (gb + tb))));
-    lemma_tr(b, hd, w, h, sg, z + (z + (gb + tb)));
-    let o: int = tr.len() as int;
-    // No color cache, no meta codes.
+    lemma_hdr(b, w, h, a, tr + (z + (z + ib)));
+    lemma_tr(b, hd, w, h, sg, pr, z + (z + ib));
     let u1 = hd + tr;
-    assert(hd + (tr + (z + (z + (gb + tb)))) =~= u1 + (z + (z + (gb + tb))));
-    lemma_rd(b, u1, 0, 1, z + (gb + tb));
-    assert(read_cache_bits(b, 40 + o) == Some((0nat, 41 + o)));
-    let u2 = u1 + z;
-    assert(u1 + (z + (z + (gb + tb))) =~= u2 + (z + (gb + tb)));
-    lemma_rd(b, u2, 0, 1, gb + tb);
-    let u3 = u2 + z;
-    assert(u2 + (z + (gb + tb)) =~= u3 + (gb + tb));
-    assert(u3.len() == 42 + o);
-    lemma_group(b, u3, cls, g, 5, tb);
-    assert(g.take(5) =~= g) by {
-        reveal(gfits);
-    }
-    let p2 = (u3.len() + gb.len()) as int;
-    assert(read_groups(b, 42 + o, 0, 1) == Some((seq![g], p2))) by {
-        reveal_with_fuel(read_groups, 2);
-        assert(Seq::<Seq<Seq<u8>>>::empty().push(g) =~= seq![g]);
-    }
-    let u4 = u3 + gb;
-    assert(u3 + (gb + tb) =~= u4 + (tb + Seq::<nat>::empty()));
-    assert(toks.take(0) =~= Seq::<Tok>::empty());
-    let cache = Seq::new(cache_size(0), |i: int| 0u32);
-    lemma_toks(b, u4, w, g, toks, 0, cache, Seq::<nat>::empty());
-    assert(img_of(w, play(w, toks).len(), g) == Img {
-        w,
-        npix: w * h,
-        cb: 0,
-        groups: seq![g],
-        hb: 0,
-        hx: 0,
-        meta: seq![],
-    });
-    assert(decode_main(b, 40 + o, w, h) == Some((play(w, toks), (u4.len() + tb.len()) as int)));
-    if sg {
-        let ts = seq![Transform::SubtractGreen];
-        assert(ts.drop_last() =~= Seq::<Transform>::empty());
-        assert(undo_all(ts, play(w, toks), h) == undo_all(Seq::<Transform>::empty(), undo(Transform::SubtractGreen, play(w, toks), h), h));
-        assert(undo_all(ts, play(w, toks), h) == undo_sg(sg, play(w, toks)));
-    } else {
-        assert(undo_all(Seq::<Transform>::empty(), play(w, toks), h) == play(w, toks));
-    }
+    assert(hd + (tr + (z + (z + ib))) =~= u1 + (z + (z + (ib + e))));
+    lemma_main(b, u1, w, h, c, e);
+    lemma_undo(w, h, sg, pr, play(w, c.toks));
 }
 
 // ---------------------------------------------------------------------------
@@ -312,9 +598,8 @@ proof fn lemma_file(
     hn: nat,
     a: nat,
     sg: bool,
-    cls: Seq<Seq<u8>>,
-    g: Seq<Seq<u8>>,
-    toks: Seq<Tok>,
+    pr: Option<PredCode>,
+    c: ImgCode,
     px: Seq<u32>,
 )
     requires
@@ -335,21 +620,19 @@ proof fn lemma_file(
         bytes_hold(d0, all),
         all.len() >= bits.len(),
         all.subrange(0, bits.len() as int) == bits,
-        bits == plain_bits(wn, hn, a, sg, cls, g, toks),
-        gfits(cls, g),
-        group_ok(g),
-        toks_ok(wn, toks),
-        forall|j: int| 0 <= j < toks.len() ==> tok_fits(g, #[trigger] toks[j]),
-        undo_sg(sg, play(wn, toks)) == px,
-        play(wn, toks).len() == wn * hn,
+        bits == plain_bits(wn, hn, a, sg, pr, c),
+        img_ok(wn, c),
+        pr_ok(wn, hn, pr),
+        undo_pl(wn, sg, pr, play(wn, c.toks)) == px,
+        play(wn, c.toks).len() == wn * hn,
+        px.len() == wn * hn,
     ensures
         webp_decode(d) == Some(Image { w: wn, h: hn, px }),
 {
     hide(plain_bits);
-    hide(gfits);
-    hide(group_ok);
-    hide(toks_ok);
-    hide(tok_fits);
+    hide(img_ok);
+    hide(pr_ok);
+    hide(undo_pl);
     hide(play);
     hide(webp_decode);
     hide(vp8l_decode);
@@ -362,7 +645,7 @@ proof fn lemma_file(
     if data != d0 {
         lemma_ext_more(d0, seq![0u8], bits);
     }
-    lemma_plain(data, wn, hn, a, sg, cls, g, toks);
+    lemma_plain(data, wn, hn, a, sg, pr, c);
     assert(px.len() == wn * hn);
     assert(riff_hdr(d, (d.len() - 20) as nat)) by {
         assert(d.subrange(0, 4) =~= hdr.subrange(0, 4));
@@ -383,7 +666,19 @@ pub fn encode_lossless(px: &[u32], w: u32, h: u32) -> (r: Option<Vec<u8>>)
         r matches Some(out) ==> webp_decode(out@) == Some(Image { w: w as nat, h: h as nat, px: px@ }),
 {
     let sg = prefer_sg(px);
-    encode_with(px, w, h, sg)
+    // The predictor wins on photos; LZ77 alone often wins on screenshots
+    // and drawings, so both are tried.
+    let a = encode_with(px, w, h, sg, 4);
+    let b = encode_with(px, w, h, sg, 0);
+    match (a, b) {
+        (Some(x), Some(y)) => if x.len() <= y.len() {
+            Some(x)
+        } else {
+            Some(y)
+        },
+        (Some(x), None) => Some(x),
+        (None, y) => y,
+    }
 }
 
 /// `c` with green subtracted from red and blue (§4.3), undone by
@@ -604,23 +899,268 @@ fn sub_green_all(px: &[u32]) -> (r: Vec<u32>)
     out
 }
 
-/// `encode_lossless`, with the subtract-green transform if `sg`.
-fn encode_with(px: &[u32], w: u32, h: u32, sg: bool) -> (r: Option<Vec<u8>>)
+/// Tokenizes `src`, builds its codes and writes them and the tokens.
+fn write_img(bw: &mut BitWriter, src: &[u32], w: u32) -> (r: (bool, Ghost<ImgCode>))
+    requires
+        old(bw).wf(),
+        1 <= w,
+        src@.len() <= 0x1000_0000,
     ensures
-        r matches Some(out) ==> webp_decode(out@) == Some(Image { w: w as nat, h: h as nat, px: px@ }),
+        final(bw).wf(),
+        final(bw).sent() == old(bw).sent(),
+        r.0 ==> final(bw).bits() == old(bw).bits() + img_bits(r.1@) && img_ok(w as nat, r.1@) && play(
+            w as nat,
+            r.1@.toks,
+        ) == src@,
 {
-    hide(undo_sg);
-    hide(add_green);
     hide(gfits);
     hide(group_ok);
     hide(toks_ok);
     hide(tok_fits);
     hide(play);
-    hide(webp_decode);
-    hide(bytes_hold);
     hide(gbits);
     hide(tbits);
     hide(lens_of);
+    let ghost none = ImgCode { cls: seq![], g: seq![], toks: seq![] };
+    let toks = tokenize(src, w, 32);
+    let hist = histograms(&toks);
+    let mut hs: Vec<HCode> = Vec::new();
+    let mut k: usize = 0;
+    proof {
+        reveal_with_fuel(cache_size, 1);
+    }
+    while k < 5
+        invariant
+            hist@.len() == 5,
+            forall|k: int| 0 <= k < 5 ==> (#[trigger] hist@[k])@.len() == alphabet(k as nat, 0),
+            alphabet(0, 0) == 280,
+            k <= 5,
+            hs@.len() == k,
+            *bw == *old(bw),
+            bw.wf(),
+            bw.sent() == old(bw).sent(),
+            forall|j: int| 0 <= j < k ==> (#[trigger] hs@[j]).ok() && valid_code(hs@[j].lens@) && hs@[j].lens@.len()
+                == alphabet(j as nat, 0),
+        decreases 5 - k,
+    {
+        match code_for(&hist[k]) {
+            Some(c) => hs.push(c),
+            None => return (false, Ghost(none)),
+        }
+        k = k + 1;
+    }
+    let ghost g = lens_of(hs@);
+    let ghost b0 = bw.bits();
+    let (ok, Ghost(cls)) = write_group(bw, &hs);
+    if !ok {
+        return (false, Ghost(none));
+    }
+    if !write_toks(bw, &toks, &hs) {
+        return (false, Ghost(none));
+    }
+    let ghost c = ImgCode { cls, g, toks: toks@ };
+    proof {
+        assert(group_ok(g)) by {
+            reveal(group_ok);
+            reveal(lens_of);
+            assert forall|k: int| 0 <= k < 5 implies #[trigger] g[k].len() == alphabet(k as nat, 0) && lens_ok(g[k]) by {
+                assert(hs@[k].ok());
+            }
+        }
+        assert(bw.bits() =~= b0 + img_bits(c));
+    }
+    (true, Ghost(c))
+}
+
+/// The transform list after the header: subtract green if `sg`, the
+/// predictor with mode image `modes` if `pbits` is not 0.
+#[verifier::spinoff_prover]
+fn write_trs(bw: &mut BitWriter, modes: &[u32], w: u32, h: u32, sg: bool, pbits: u32) -> (r: (bool, Ghost<Option<PredCode>>))
+    requires
+        old(bw).wf(),
+        1 <= w <= 0x4000,
+        1 <= h <= 0x4000,
+        pbits == 0 || 2 <= pbits <= 9,
+        modes@.len() <= 0x1000_0000,
+        pbits != 0 ==> modes_fit(modes@, w as nat, h as nat, pbits as nat),
+    ensures
+        final(bw).wf(),
+        final(bw).sent() == old(bw).sent(),
+        r.0 ==> {
+            &&& final(bw).bits() == old(bw).bits() + sg_bits(sg) + pr_bits(r.1@)
+            &&& pr_ok(w as nat, h as nat, r.1@)
+            &&& match r.1@ {
+                None => pbits == 0,
+                Some(p) => p.tb == pbits && play(subsample(w as nat, p.tb), p.c.toks) == modes@,
+            }
+        },
+{
+    hide(img_ok);
+    hide(img_bits);
+    hide(play);
+    hide(pr_bits);
+    hide(sg_bits);
+    hide(pr_ok);
+    hide(subsample);
+    hide(modes_fit);
+    proof {
+        lemma2_to64();
+    }
+    let wu = w as usize;
+    let pr_on = pbits != 0;
+    let ghost bh = bw.bits();
+    if sg {
+        bw.put(1, 1);
+        bw.put(2, 2);
+    }
+    let ghost bs = bw.bits();
+    proof {
+        reveal(sg_bits);
+        assert(bs =~= bh + sg_bits(sg));
+    }
+    let ghost mut pr: Option<PredCode> = None;
+    if pr_on {
+        let pb = pow2_x(pbits);
+        let sw = (wu + pb - 1) / pb;
+        if sw == 0 {
+            return (false, Ghost(None));
+        }
+        bw.put(1, 1);
+        bw.put(0, 2);
+        bw.put(pbits - 2, 3);
+        bw.put(0, 1);
+        let (ok, Ghost(pc)) = write_img(bw, modes, sw as u32);
+        if !ok {
+            return (false, Ghost(None));
+        }
+        proof {
+            pr = Some(PredCode { tb: pbits as nat, c: pc });
+            assert(sw as nat == subsample(w as nat, pbits as nat)) by {
+                reveal(subsample);
+            }
+            assert(bw.bits() =~= bs + pr_bits(pr)) by {
+                reveal(pr_bits);
+            }
+            assert(pr_ok(w as nat, h as nat, pr)) by {
+                reveal(pr_ok);
+                reveal(modes_fit);
+            }
+        }
+    } else {
+        proof {
+            assert(bw.bits() =~= bs + pr_bits(pr)) by {
+                reveal(pr_bits);
+            }
+            assert(pr_ok(w as nat, h as nat, pr)) by {
+                reveal(pr_ok);
+            }
+        }
+    }
+    proof {
+        assert(bw.bits() =~= bh + sg_bits(sg) + pr_bits(pr));
+    }
+    (true, Ghost(pr))
+}
+
+/// The VP8L bitstream for `main` (and the mode image `modes` if
+/// `pbits` is not 0), still in the bit writer.
+#[verifier::spinoff_prover]
+fn stream(main: &[u32], modes: &[u32], w: u32, h: u32, a: u32, sg: bool, pbits: u32) -> (r: Option<
+    (BitWriter, Ghost<Option<PredCode>>, Ghost<ImgCode>),
+>)
+    requires
+        1 <= w <= 0x4000,
+        1 <= h <= 0x4000,
+        a < 2,
+        pbits == 0 || 2 <= pbits <= 9,
+        main@.len() <= 0x1000_0000,
+        modes@.len() <= 0x1000_0000,
+        pbits != 0 ==> modes_fit(modes@, w as nat, h as nat, pbits as nat),
+    ensures
+        r matches Some((bw, pr, mc)) ==> {
+            &&& bw.wf()
+            &&& bw.sent() == Seq::<u8>::empty()
+            &&& bw.bits() == plain_bits(w as nat, h as nat, a as nat, sg, pr@, mc@)
+            &&& img_ok(w as nat, mc@)
+            &&& play(w as nat, mc@.toks) == main@
+            &&& pr_ok(w as nat, h as nat, pr@)
+            &&& match pr@ {
+                None => pbits == 0,
+                Some(p) => p.tb == pbits && play(subsample(w as nat, p.tb), p.c.toks) == modes@,
+            }
+        },
+{
+    hide(img_ok);
+    hide(img_bits);
+    hide(play);
+    hide(plain_bits);
+    hide(pr_bits);
+    hide(sg_bits);
+    hide(hdr_bits);
+    hide(tr_bits);
+    hide(pr_ok);
+    hide(subsample);
+    hide(modes_fit);
+    let wu = w as usize;
+    let pr_on = pbits != 0;
+    let mut bw = BitWriter::new(main.len() + 1024);
+    proof {
+        lemma2_to64();
+    }
+    bw.put(0x2f, 8);
+    bw.put(w - 1, 14);
+    bw.put(h - 1, 14);
+    bw.put(a, 1);
+    bw.put(0, 3);
+    let ghost bh = bw.bits();
+    proof {
+        reveal(hdr_bits);
+        assert(bh =~= hdr_bits(w as nat, h as nat, a as nat));
+    }
+    let (ok, Ghost(pr)) = write_trs(&mut bw, modes, w, h, sg, pbits);
+    if !ok {
+        return None;
+    }
+    let ghost bp = bw.bits();
+    proof {
+        assert(bp == hdr_bits(w as nat, h as nat, a as nat) + sg_bits(sg) + pr_bits(pr));
+    }
+    bw.put(0, 1);
+    bw.put(0, 1);
+    bw.put(0, 1);
+    let (ok, Ghost(mc)) = write_img(&mut bw, main, w);
+    if !ok {
+        return None;
+    }
+    proof {
+        let z = fld(0, 1);
+        let ib = img_bits(mc);
+        assert(bw.bits() =~= bp + z + z + z + ib);
+        reveal(plain_bits);
+        reveal(tr_bits);
+        assert(bp + z + z + z + ib =~= hdr_bits(w as nat, h as nat, a as nat) + (tr_bits(sg, pr) + (z + (z + ib))));
+    }
+    Some((bw, Ghost(pr), Ghost(mc)))
+}
+
+/// `encode_lossless`, with the subtract-green transform if `sg` and the
+/// predictor transform with `2^pbits` blocks unless `pbits` is 0.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(40)]
+fn encode_with(px: &[u32], w: u32, h: u32, sg: bool, pbits: u32) -> (r: Option<Vec<u8>>)
+    requires
+        pbits == 0 || 2 <= pbits <= 9,
+    ensures
+        r matches Some(out) ==> webp_decode(out@) == Some(Image { w: w as nat, h: h as nat, px: px@ }),
+{
+    hide(undo_sg);
+    hide(add_green);
+    hide(img_ok);
+    hide(img_bits);
+    hide(play);
+    hide(webp_decode);
+    hide(bytes_hold);
+    hide(unpredict);
     if w == 0 || h == 0 || w > 0x4000 || h > 0x4000 {
         return None;
     }
@@ -645,31 +1185,28 @@ fn encode_with(px: &[u32], w: u32, h: u32, sg: bool) -> (r: Option<Vec<u8>>)
     assert(undo_sg(sg, src@) == px@ && src@.len() == px@.len()) by {
         reveal(undo_sg);
     }
-    let toks = tokenize(src, w, 32);
-    let hist = histograms(&toks);
-    let mut hs: Vec<HCode> = Vec::new();
-    let mut k: usize = 0;
-    proof {
-        reveal_with_fuel(cache_size, 1);
+    let wu = w as usize;
+    let hu = h as usize;
+    let pr_on = pbits != 0;
+    let modes: Vec<u32> = if pr_on {
+        choose_modes(src, wu, hu, pbits)
+    } else {
+        Vec::new()
+    };
+    let resv: Vec<u32> = if pr_on {
+        residuals(src, wu, hu, pbits, modes.as_slice())
+    } else {
+        Vec::new()
+    };
+    let main: &[u32] = if pr_on {
+        resv.as_slice()
+    } else {
+        src
+    };
+    assert(main@.len() == src@.len());
+    if modes.len() > 0x1000_0000 {
+        return None;
     }
-    while k < 5
-        invariant
-            hist@.len() == 5,
-            forall|k: int| 0 <= k < 5 ==> (#[trigger] hist@[k])@.len() == alphabet(k as nat, 0),
-            alphabet(0, 0) == 280,
-            k <= 5,
-            hs@.len() == k,
-            forall|j: int| 0 <= j < k ==> (#[trigger] hs@[j]).ok() && valid_code(hs@[j].lens@) && hs@[j].lens@.len()
-                == alphabet(j as nat, 0),
-        decreases 5 - k,
-    {
-        match code_for(&hist[k]) {
-            Some(c) => hs.push(c),
-            None => return None,
-        }
-        k = k + 1;
-    }
-    let ghost g = lens_of(hs@);
     // Alpha hint: whether any pixel is not opaque.
     let mut a: u32 = 0;
     let mut i: usize = 0;
@@ -683,31 +1220,13 @@ fn encode_with(px: &[u32], w: u32, h: u32, sg: bool) -> (r: Option<Vec<u8>>)
         }
         i = i + 1;
     }
-    let mut bw = BitWriter::new(px.len() + 1024);
+    let (mut bw, Ghost(pr), Ghost(mc)) = match stream(main, modes.as_slice(), w, h, a, sg, pbits) {
+        Some(t) => t,
+        None => return None,
+    };
     proof {
-        lemma2_to64();
-    }
-    bw.put(0x2f, 8);
-    bw.put(w - 1, 14);
-    bw.put(h - 1, 14);
-    bw.put(a, 1);
-    bw.put(0, 3);
-    if sg {
-        bw.put(1, 1);
-        bw.put(2, 2);
-        bw.put(0, 1);
-    } else {
-        bw.put(0, 1);
-    }
-    bw.put(0, 1);
-    bw.put(0, 1);
-    let ghost b0 = bw.bits();
-    let (ok, Ghost(cls)) = write_group(&mut bw, &hs);
-    if !ok {
-        return None;
-    }
-    if !write_toks(&mut bw, &toks, &hs) {
-        return None;
+        assert(pr_ok(w as nat, h as nat, pr));
+        assert(undo_pl(w as nat, sg, pr, play(w as nat, mc.toks)) == px@);
     }
     let ghost bits = bw.bits();
     let (mut data, Ghost(all)) = bw.finish();
@@ -738,7 +1257,6 @@ fn encode_with(px: &[u32], w: u32, h: u32, sg: bool) -> (r: Option<Vec<u8>>)
         assert(hdr.subrange(0, 4) =~= riff_tag());
         assert(hdr.subrange(8, 12) =~= webp_tag());
         assert(hdr.subrange(12, 16) =~= vp8l_tag());
-        assert(bits =~= plain_bits(w as nat, h as nat, a as nat, sg, cls, g, toks@));
     }
     let mut j: usize = 0;
     while j < n
@@ -758,14 +1276,7 @@ fn encode_with(px: &[u32], w: u32, h: u32, sg: bool) -> (r: Option<Vec<u8>>)
         assert(data@.subrange(0, n as int) =~= data@);
     }
     proof {
-        assert(group_ok(g)) by {
-            reveal(group_ok);
-            reveal(lens_of);
-            assert forall|k: int| 0 <= k < 5 implies #[trigger] g[k].len() == alphabet(k as nat, 0) && lens_ok(g[k]) by {
-                assert(hs@[k].ok());
-            }
-        }
-        lemma_file(out@, hdr, data@, d0, all, bits, w as nat, h as nat, a as nat, sg, cls, g, toks@, px@);
+        lemma_file(out@, hdr, data@, d0, all, bits, w as nat, h as nat, a as nat, sg, pr, mc, px@);
     }
     Some(out)
 }
