@@ -303,9 +303,9 @@ fn word4(b: &[u8], i: usize) -> (r: u64)
 /// Which class a scan looks for.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Class {
-    /// [`upper`].
+    /// `upper`.
     Upper,
-    /// [`nul_cr_lf`].
+    /// `nul_cr_lf`.
     NulCrLf,
 }
 

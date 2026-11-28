@@ -1,9 +1,9 @@
 //! `Range: bytes=…` for one range (RFC 9110 §14.1.2), verified.
 //!
-//! [`range_of`] is the specification. The theorem ([`lemma_part_ok`]): a
+//! `range_of` is the specification. The theorem (`lemma_part_ok`): a
 //! range that is served is non-empty and lies inside the file, so the
 //! bytes sent are exactly bytes `start .. start + len` of it.
-//! [`parse_range`] computes exactly [`range_of`]. Several ranges, another
+//! [`parse_range`] computes exactly `range_of`. Several ranges, another
 //! unit, an invalid range or a number over 18 digits are ignored (the
 //! whole file is served, as §14.2 allows); a valid range that starts past
 //! the end is a 416.
@@ -197,7 +197,7 @@ fn number(s: &[u8], i: usize, j: usize) -> (r: Option<u64>)
 }
 
 /// The range a Range field value `v` asks of a file of `size` bytes:
-/// exactly [`range_of`].
+/// exactly `range_of`.
 pub fn parse_range(v: &[u8], size: u64) -> (r: Rng)
     ensures rng_view(r) == range_of(v@, size as nat),
 {

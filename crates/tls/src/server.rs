@@ -2298,6 +2298,8 @@ impl<P: Provider> ServerConn<P> {
             Ok(p) => p,
             Err(code) => return Err(self.fail(code, out)),
         };
+        // verus! expands the `Ghost(..)` field, and rustc 1.100 then flags the rest.
+        #[allow(non_shorthand_field_patterns)]
         let Prep { sh, fl, c_hs, s_hs, expect, c_ap, s_ap, res, c_early, tr, hs: Ghost(hsv) } = p;
         let tr_sfin = tr;
         proof {

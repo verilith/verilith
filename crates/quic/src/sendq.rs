@@ -3,7 +3,7 @@
 //! only; the bytes are kept by the caller.
 //!
 //! Proven, after any sequence of calls, of [`SendState`] and the set
-//! [`SendState::done`] of offsets that need nothing more (acknowledged, or
+//! `SendState::done` of offsets that need nothing more (acknowledged, or
 //! given up by [`SendState::clear`]):
 //!
 //! - [`SendState::next`] returns only offsets written and not done: lost

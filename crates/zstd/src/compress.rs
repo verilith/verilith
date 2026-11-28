@@ -511,67 +511,6 @@ fn all_eq(src: &[u8], a: usize, b: usize, x: u8) -> (r: bool)
     true
 }
 
-/// Is `x[a..a + n]` equal to `y[b..b + n]`?
-fn same(x: &[u8], a: usize, y: &[u8], b: usize, n: usize) -> (r: bool)
-    requires
-        a + n <= x@.len(),
-        b + n <= y@.len(),
-    ensures
-        r ==> x@.subrange(a as int, a + n) == y@.subrange(b as int, b + n),
-{
-    let xl = x.len();
-    let yl = y.len();
-    let mut i: usize = 0;
-    while n - i >= 8
-        invariant
-            i <= n,
-            xl == x@.len(),
-            yl == y@.len(),
-            a + n <= x@.len(),
-            b + n <= y@.len(),
-            forall|k: int| 0 <= k < i ==> #[trigger] x@[a + k] == y@[b + k],
-        decreases n - i,
-    {
-        let u = verilith_core::prims::load_u64_le(x, a + i);
-        let v = verilith_core::prims::load_u64_le(y, b + i);
-        if u != v {
-            return false;
-        }
-        proof {
-            assert forall|k: int| 0 <= k < i + 8 implies #[trigger] x@[a + k] == y@[b + k] by {
-                if k >= i {
-                    let q = (k - i) as u64;
-                    verilith_core::lz::lemma_word_byte(x@, (a + i) as int, u, q);
-                    verilith_core::lz::lemma_word_byte(y@, (b + i) as int, v, q);
-                }
-            }
-        }
-        i = i + 8;
-    }
-    while i < n
-        invariant
-            i <= n,
-            xl == x@.len(),
-            yl == y@.len(),
-            a + n <= x@.len(),
-            b + n <= y@.len(),
-            forall|k: int| 0 <= k < i ==> #[trigger] x@[a + k] == y@[b + k],
-        decreases n - i,
-    {
-        if x[a + i] != y[b + i] {
-            return false;
-        }
-        i = i + 1;
-    }
-    proof {
-        assert forall|k: int| 0 <= k < n implies #[trigger] x@.subrange(a as int, a + n)[k] == y@.subrange(b as int, b + n)[k] by {
-            assert(x@[a + k] == y@[b + k]);
-        }
-        assert(x@.subrange(a as int, a + n) =~= y@.subrange(b as int, b + n));
-    }
-    true
-}
-
 // ---------------------------------------------------------------------------
 // Parameters
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# WebAssembly (wasm32): every crate is proven for 32-bit targets as well
+# WebAssembly (wasm32): every crate but server (a Unix network server) is proven for 32-bit targets as well
 # as 64-bit ones, and builds for wasm32-unknown-unknown (browsers,
 # Cloudflare Workers). text, url, regex, json, xxhash, snappy, lz4, zstd,
 # archive, png, font and wasm also pass their tests on wasm32-wasip1,
@@ -28,7 +28,12 @@ narrow=()
 for d in crates/*/Cargo.toml; do
   c=$(basename "$(dirname "$d")")
   # The facade comes below.
-  case "$c" in verilith) continue ;; esac
+  # server is a Unix network server (epoll or kqueue, sendfile, memfd):
+  # nothing of it runs on WebAssembly.
+  case "$c" in verilith|server) continue ;; esac
+  # Crates outside the workspace (tls-aws-lc: aws-lc is C) are not `-p`
+  # targets here; cargo 1.100 panics on them instead of erroring.
+  grep -q '^\[workspace\]' "$d" && continue
   narrow+=("$c")
 done
 

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use verilith_quic_conn::{Config, Datagram, Event, Server, StreamError};
+use verilith_quic_conn::{Config, Datagram, Server, StreamError};
 use verilith_tls_aws_lc::*;
 
 const LEAF: &[u8] = include_bytes!("../../tls-aws-lc/tests/data/leaf.der");

@@ -6,21 +6,6 @@ use vstd::prelude::*;
 
 verus! {
 
-#[inline(always)]
-fn coord_sz(short: bool, same: bool) -> (r: usize)
-    ensures
-        r as int == coord_size(short, same),
-        r <= 2,
-{
-    if short {
-        1
-    } else if same {
-        0
-    } else {
-        2
-    }
-}
-
 /// The coordinate bytes of flag `f`, both coordinates in one word: bits
 /// 1 and 2 say which are short (one byte), bits 4 and 5 which of the
 /// others repeat the last value (no bytes); the rest take two. (Written

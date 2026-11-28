@@ -1,7 +1,7 @@
 //! Frames (§12.4, §19): the verified parser and encoder.
 //!
 //! [`parse`] reads one frame at a position in a decrypted packet payload,
-//! borrowing its byte strings from the payload; [`Frames`] reads them all.
+//! borrowing its byte strings from the payload; `Frames` reads them all.
 //! [`encode`] appends a frame's encoding to a buffer. The proofs: `parse`
 //! is `spec::frame`, `encode` is `spec::frame_enc`, and the encoding of
 //! every valid frame parses back to the same frame
