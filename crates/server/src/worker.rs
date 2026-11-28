@@ -567,7 +567,10 @@ fn read_process_write<H: Handler + ?Sized>(s: &mut Slot, h: &H, ctx: &Ctx) -> bo
             return true;
         }
         match next {
-            Next::Close => return s.conn.pending_len() == 0 || eof,
+            // Output the socket had no room for goes first, even after the
+            // peer's end of stream (a half-close): the next writable event
+            // flushes it, and `flush` closes once it is out.
+            Next::Close => return s.conn.pending_len() == 0,
             Next::Write => {
                 s.read_paused = s.conn.pending_len() > 0;
                 if s.read_paused {
@@ -575,10 +578,13 @@ fn read_process_write<H: Handler + ?Sized>(s: &mut Slot, h: &H, ctx: &Ctx) -> bo
                 }
             }
             Next::Read => {
-                s.read_paused = false;
                 if eof {
-                    return true;
+                    // As for `Next::Close`; the engine is stepped again
+                    // once the output is out.
+                    s.read_paused = s.conn.pending_len() > 0;
+                    return !s.read_paused;
                 }
+                s.read_paused = false;
                 if drained {
                     return false;
                 }
