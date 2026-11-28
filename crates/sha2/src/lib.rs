@@ -30,10 +30,12 @@ pub mod spec512;
 pub mod compress512;
 #[doc(hidden)]
 pub mod cpu;
+/// The SHA instructions' specifications and their verified references,
+/// from verilith-simd.
 #[doc(hidden)]
-pub mod isa;
+pub use verilith_simd::sha as isa;
 #[doc(hidden)]
-pub mod isa_ref;
+pub use verilith_simd::sha_ref as isa_ref;
 #[doc(hidden)]
 pub mod sha_lemmas;
 #[doc(hidden)]

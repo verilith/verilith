@@ -29,6 +29,9 @@ pub struct DecX {
     pub co: Coefs,
     /// The scans decoded so far, for the work bound.
     pub nscan: Ghost<nat>,
+    /// Keep every coefficient, never streaming a sequential file's one
+    /// scan to samples (for decoding at a reduced size).
+    pub keep: bool,
 }
 
 pub open spec fn color_v(c: u8) -> Color {
@@ -78,6 +81,7 @@ impl DecX {
         &&& self.started ==> self.has_f && self.co.wf(self.f@) && self.color <= 2 && (self.color == 0) == (self.f.nc
             == 1)
         &&& !self.started ==> !self.co.stream
+        &&& self.keep ==> !self.co.stream
         // A streamed scan is the file's only one: its samples are final.
         &&& self.started && self.co.stream ==> !self.multi && self.co.row == stotal(self.f@) && self.co.sqv() == seq![
             self.ql[0]@,
@@ -153,6 +157,7 @@ pub fn dec_new() -> (r: DecX)
         ql: [[0; 64]; 3],
         qset: [false; 3],
         nscan: Ghost(0),
+        keep: false,
         co: Coefs {
             a0: Vec::new(),
             a1: Vec::new(),
@@ -1052,6 +1057,7 @@ pub fn do_scan_x(data: &[u8], q: usize, st: &mut DecX, Tracked(mt): Tracked<&mut
         q <= data@.len() + 2,
         old(st).wf(),
     ensures
+        final(st).keep == old(st).keep,
         final(st).has_f == old(st).has_f,
         final(st).f == old(st).f,
         blk(*old(st)) >= 0,
@@ -1122,7 +1128,7 @@ pub fn do_scan_x(data: &[u8], q: usize, st: &mut DecX, Tracked(mt): Tracked<&mut
         st.color = color_x(&f, st.jfif, st.has_adobe, st.adobe);
         // The one scan of a sequential file is streamed; anything else
         // needs the whole coefficient arrays.
-        if !f.prog && s.ns == f.nc {
+        if !st.keep && !f.prog && s.ns == f.nc {
             if !begin_stream(&g, &f, &st.ql, &mut st.co, Tracked(mt)) {
                 return Err(Error::OutOfMemory);
             }
@@ -1246,6 +1252,7 @@ pub fn step_x(data: &[u8], st: &mut DecX, p: usize, Tracked(mt): Tracked<&mut Me
         p <= data@.len() + 0x1_0010,
         old(st).wf(),
     ensures
+        final(st).keep == old(st).keep,
         0 <= blk(*old(st)) <= blk(*final(st)),
         blk(*old(st)) > 0 ==> blk(*final(st)) == blk(*old(st)),
         r is Err ==> blk(*final(st)) == blk(*old(st)),
@@ -1355,6 +1362,7 @@ fn seg_x(data: &[u8], st: &mut DecX, p: usize, m: u8, q: usize, Tracked(mt): Tra
         m != 0xD9,
         m != 0xDA,
     ensures
+        final(st).keep == old(st).keep,
         final(st).nscan == old(st).nscan,
         0 <= blk(*old(st)) <= blk(*final(st)),
         blk(*old(st)) > 0 ==> blk(*final(st)) == blk(*old(st)),
@@ -1502,6 +1510,7 @@ pub fn run_x(data: &[u8], st: &mut DecX, p: usize, Tracked(mt): Tracked<&mut Met
         p <= data@.len() + 0x1_0010,
         old(st).wf(),
     ensures
+        final(st).keep == old(st).keep,
         old(st).nscan@ <= final(st).nscan@,
         final(st).nscan@ - old(st).nscan@ <= data@.len() + 0x1_0010 - p,
         0 <= blk(*final(st)),
@@ -1527,6 +1536,7 @@ pub fn run_x(data: &[u8], st: &mut DecX, p: usize, Tracked(mt): Tracked<&mut Met
             len_ok(data@),
             pp <= data@.len() + 0x1_0010,
             st.wf(),
+            st.keep == old(st).keep,
             run(data@, st@, pp as int) == run(data@, old(st)@, p as int),
             m0 == old(mt).n,
             n0 == old(st).nscan@,

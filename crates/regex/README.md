@@ -225,8 +225,8 @@ speeds up the VM itself:
   that no match starts at such a byte. When only one byte can begin a
   match, the search for it runs 16 bytes at a time with SSE2 or NEON,
   and 64 at a time while the byte stays absent
-  (`src/find.rs`, proven from the instruction specifications listed in
-  TRUST.md). A second table says which bytes can follow the first
+  (verilith-simd's `src/find.rs`, re-exported in `src/find.rs`, proven
+  from the instruction specifications listed in TRUST.md). A second table says which bytes can follow the first
   character of a match, so a start whose next byte is not among them is
   passed over too (`lemma_pair`). When the first byte is one of at most
   two and the second is one of at most two, as in `http` or in

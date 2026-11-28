@@ -791,7 +791,9 @@ pub struct Freqs {
     pub sy: Vec<u16>,
 }
 
-/// The most tokens a block holds.
+/// The most tokens a block holds: zlib's `lit_bufsize` at its default
+/// `memLevel`. On Silesia the best fixed size (10240 to 12288) is only
+/// 0.03% smaller at levels 1, 6 and 9 (`bench/zlib-blocks`, exact sizes).
 pub const MAX_TOKS: usize = 16384;
 
 impl Freqs {

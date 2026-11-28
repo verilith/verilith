@@ -3,7 +3,7 @@
 //! computation of the area average, and the whole pipeline on JPEG and
 //! PNG input made by the `image` crate.
 use verilith_imgproxy::fit::Mode;
-use verilith_imgproxy::proxy::{process, Limits, Options};
+use verilith_imgproxy::proxy::{process, Format, Limits, Options};
 
 fn rng(seed: &mut u64) -> u64 {
     *seed ^= *seed << 13;
@@ -130,4 +130,72 @@ fn pipeline_on_jpeg_and_png() {
     let tiny = Limits { max_src_px: 1000, ..Limits::default() };
     assert!(process(&jpg, &Options::default(), &tiny).is_err());
     assert!(process(b"not an image", &Options::default(), &lim).is_err());
+}
+
+#[test]
+fn jpeg_output() {
+    let (w, h) = (333u32, 250u32);
+    let px = image(w as usize, h as usize, 11);
+    let mut pngb = Vec::new();
+    image::RgbaImage::from_raw(w, h, px.clone())
+        .unwrap()
+        .write_to(&mut std::io::Cursor::new(&mut pngb), image::ImageFormat::Png)
+        .unwrap();
+    let lim = Limits::default();
+    for q in [0, 20, 80, 95] {
+        let o = Options { mode: Mode::Fit, w: 200, h: 200, format: Format::Jpeg, quality: q, ..Default::default() };
+        let jpg = process(&pngb, &o, &lim).unwrap();
+        assert_eq!(&jpg[..2], &[0xFF, 0xD8]);
+        // Read back by an independent decoder and by verilith-jpeg's.
+        let d = image::load_from_memory_with_format(&jpg, image::ImageFormat::Jpeg).unwrap().to_rgb8();
+        assert_eq!(d.dimensions(), (200, 150));
+        let pic = verilith_jpeg::decode::decode(&jpg).unwrap();
+        assert_eq!((pic.w, pic.h, pic.nc), (200, 150, 3));
+        // Close to the flattened PNG output (white background).
+        let o2 = Options { format: Format::Png, background: Some([255, 255, 255]), ..o.clone() };
+        let (_, _, want) = png_read(&process(&pngb, &o2, &lim).unwrap());
+        let err: f64 = want
+            .chunks(4)
+            .zip(pic.px.chunks(3))
+            .map(|(a, b)| (0..3).map(|c| (a[c] as f64 - b[c] as f64).abs()).sum::<f64>())
+            .sum::<f64>()
+            / (200.0 * 150.0 * 3.0);
+        // The test image is noisy: these bounds are loose, and only catch
+        // a broken pipeline (the encoder itself is checked against
+        // libjpeg-turbo byte for byte, crates/jpeg/difftest/encdiff.c).
+        let bound = if q == 20 { 30.0 } else { 20.0 };
+        assert!(err < bound, "quality {q}: mean error {err}");
+        let dd: f64 = d.as_raw().iter().zip(&pic.px).map(|(a, b)| (*a as f64 - *b as f64).abs()).sum::<f64>()
+            / pic.px.len() as f64;
+        assert!(dd < 3.0, "quality {q}: the two decoders differ by {dd} on average");
+    }
+}
+
+#[test]
+fn shrink_on_load_matches_full_decode() {
+    // A smooth image (gradients and a few blobs): the thumbnail made from a
+    // JPEG decoded at 1/8, 1/4 and 1/2 is the one made from the full-size
+    // decode, but for rounding.
+    let (w, h) = (1600u32, 1200u32);
+    let mut rgb = Vec::with_capacity((w * h * 3) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let (fx, fy) = (x as f64 / w as f64, y as f64 / h as f64);
+            let b = ((fx * 9.0).sin() * (fy * 7.0).cos() * 60.0 + 128.0) as u8;
+            rgb.extend_from_slice(&[(fx * 255.0) as u8, (fy * 255.0) as u8, b]);
+        }
+    }
+    let img = image::RgbImage::from_raw(w, h, rgb).unwrap();
+    let mut jpg = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut jpg), image::ImageFormat::Jpeg).unwrap();
+    let full = verilith_imgproxy::proxy::decode(&jpg, 1 << 30).unwrap();
+    let (tw, th) = (100usize, 75usize);
+    let want = verilith_imgproxy::resize::resize_rgba(&full.px, w as usize, h as usize, tw, th);
+    for shrink in [2u32, 4, 8] {
+        let s = verilith_imgproxy::proxy::decode_shrunk(&jpg, 1 << 30, shrink).unwrap();
+        assert_eq!((s.w, s.h), (w.div_ceil(shrink), h.div_ceil(shrink)));
+        let got = verilith_imgproxy::resize::resize_rgba(&s.px, s.w as usize, s.h as usize, tw, th);
+        let diff: f64 = got.iter().zip(&want).map(|(a, b)| (*a as f64 - *b as f64).abs()).sum::<f64>() / got.len() as f64;
+        assert!(diff < 1.5, "shrink {shrink}: mean difference {diff}");
+    }
 }

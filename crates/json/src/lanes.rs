@@ -179,10 +179,19 @@ pub fn append16_spare_neon(v: &mut Vec<u8>, a: verilith_simd::neon::uint8x16_t, 
         spare(*final(v)) == spare(*old(v)) - n,
 {
     #[cfg(target_arch = "aarch64")]
-    unsafe {
+    {
+        // Stored through vsimd's wrapper, then copied whole into the spare
+        // capacity: LLVM makes the two one 16-byte store.
+        let mut t = [0u8; 16];
+        verilith_simd::neon::vst1q_u8_at(&mut t, 0, a);
         let l = v.len();
-        core::arch::aarch64::vst1q_u8(v.as_mut_ptr().add(l), a);
-        v.set_len(l + n);
+        // SAFETY: `spare(v) >= 16` (the precondition), so the 16 bytes
+        // after the length are reserved, and the first `n <= 16` of them
+        // are now initialized.
+        unsafe {
+            core::ptr::copy_nonoverlapping(t.as_ptr(), v.as_mut_ptr().add(l), 16);
+            v.set_len(l + n);
+        }
     }
     #[cfg(not(target_arch = "aarch64"))]
     {

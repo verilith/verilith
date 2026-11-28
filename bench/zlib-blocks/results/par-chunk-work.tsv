@@ -1,0 +1,15 @@
+# Instructions (cachegrind I refs) for one par::compress call, level 6, one
+# thread, on the first 4 MiB of each file, by chunk size in KiB.
+# file	chunk_kib	instructions
+dickens	64	653124040
+dickens	128	626565239
+dickens	256	612849215
+dickens	512	605301846
+dickens	1024	601709759
+dickens	4096	589775537
+samba	64	460564091
+samba	128	428246677
+samba	256	412451674
+samba	512	405464820
+samba	1024	402227124
+samba	4096	394455552

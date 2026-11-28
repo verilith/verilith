@@ -17,16 +17,17 @@
 //! every primitive, its proofs, and why the rest is aws-lc.
 use aws_lc_rs::aead::{self, Aad, LessSafeKey, Nonce, UnboundKey};
 use aws_lc_rs::agreement::{self, EphemeralPrivateKey, UnparsedPublicKey};
-use aws_lc_rs::kem::{EncapsulationKey, ML_KEM_768};
+use aws_lc_rs::kem::{Ciphertext, DecapsulationKey, EncapsulationKey, ML_KEM_768};
 use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use aws_lc_rs::signature::{self, EcdsaKeyPair, Ed25519KeyPair, KeyPair, RsaKeyPair};
 use verilith_tls::antireplay;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use aws_lc_rs::aead::quic::{self as quic_hp, HeaderProtectionKey};
-use verilith_tls::crypto::{AeadKey, HpKey, Provider};
+use verilith_tls::crypto::{AeadKey, ClientCrypto, HpKey, Provider};
 use verilith_x509::{AlgId, Spki, Time};
 
+pub mod client;
 pub mod hpke;
 
 pub const TLS_AES_128_GCM_SHA256: u16 = 0x1301;
@@ -377,16 +378,27 @@ pub struct AwsLc {
     key: Option<Arc<SigningKey>>,
     tickets: Option<Arc<TicketKeys>>,
     ech: Option<Arc<hpke::EchKeys>>,
+    /// A client's key shares: the group, the public share, and the private
+    /// part, used once.
+    shares: Vec<(u16, Vec<u8>, ClientKey)>,
+}
+
+/// The private part of a client key share.
+enum ClientKey {
+    Ecdh(EphemeralPrivateKey),
+    /// ML-KEM-768's decapsulation key and the X25519 key.
+    Hybrid(DecapsulationKey<aws_lc_rs::kem::AlgorithmId>, EphemeralPrivateKey),
+    Used,
 }
 
 impl AwsLc {
     pub fn new(key: Option<SigningKey>) -> AwsLc {
-        AwsLc { rng: SystemRandom::new(), key: key.map(Arc::new), tickets: None, ech: None }
+        AwsLc { rng: SystemRandom::new(), key: key.map(Arc::new), tickets: None, ech: None, shares: Vec::new() }
     }
 
     /// With a key shared by many connections (a server's), parsed once.
     pub fn shared(key: Arc<SigningKey>) -> AwsLc {
-        AwsLc { rng: SystemRandom::new(), key: Some(key), tickets: None, ech: None }
+        AwsLc { rng: SystemRandom::new(), key: Some(key), tickets: None, ech: None, shares: Vec::new() }
     }
 
     /// And session tickets sealed with `keys`, which every connection that
@@ -405,6 +417,86 @@ impl AwsLc {
 
     pub fn signing_key(&self) -> Option<&SigningKey> {
         self.key.as_deref()
+    }
+}
+
+/// The X25519 (or P-256, P-384) shared secret of `ours` and `peer`, into
+/// `shared`.
+fn agree(alg: &'static agreement::Algorithm, ours: EphemeralPrivateKey, peer: &[u8], shared: &mut [u8]) -> Option<usize> {
+    let n = agreement::agree_ephemeral(ours, UnparsedPublicKey::new(alg, peer), (), |s| {
+        if s.len() > shared.len() {
+            return Err(());
+        }
+        shared[..s.len()].copy_from_slice(s);
+        Ok(s.len())
+    })
+    .ok()?;
+    if shared[..n].iter().all(|&b| b == 0) {
+        return None;
+    }
+    Some(n)
+}
+
+fn ecdh_alg(group: u16) -> Option<&'static agreement::Algorithm> {
+    match group {
+        X25519 => Some(&agreement::X25519),
+        SECP256R1 => Some(&agreement::ECDH_P256),
+        SECP384R1 => Some(&agreement::ECDH_P384),
+        _ => None,
+    }
+}
+
+impl ClientCrypto for AwsLc {
+    fn client_share(&mut self, group: u16) -> Option<Vec<u8>> {
+        let (public, key) = if group == X25519MLKEM768 {
+            // draft-ietf-tls-ecdhe-mlkem: the encapsulation key, then the
+            // X25519 share.
+            let dk = DecapsulationKey::generate(&ML_KEM_768).ok()?;
+            let ek = dk.encapsulation_key().ok()?.key_bytes().ok()?;
+            let x = EphemeralPrivateKey::generate(&agreement::X25519, &self.rng).ok()?;
+            let xp = x.compute_public_key().ok()?;
+            let mut p = ek.as_ref().to_vec();
+            p.extend_from_slice(xp.as_ref());
+            (p, ClientKey::Hybrid(dk, x))
+        } else {
+            let alg = ecdh_alg(group)?;
+            let k = EphemeralPrivateKey::generate(alg, &self.rng).ok()?;
+            let p = k.compute_public_key().ok()?.as_ref().to_vec();
+            (p, ClientKey::Ecdh(k))
+        };
+        // A connection makes at most two (and two more after a
+        // HelloRetryRequest); drop the oldest past that.
+        if self.shares.len() >= 4 {
+            self.shares.remove(0);
+        }
+        self.shares.push((group, public.clone(), key));
+        Some(public)
+    }
+
+    fn client_shared(&mut self, group: u16, ours: &[u8], peer: &[u8], shared: &mut [u8; 64]) -> Option<usize> {
+        let i = self.shares.iter().position(|(g, p, k)| *g == group && p == ours && !matches!(k, ClientKey::Used))?;
+        let key = core::mem::replace(&mut self.shares[i].2, ClientKey::Used);
+        match key {
+            ClientKey::Ecdh(k) => agree(ecdh_alg(group)?, k, peer, shared),
+            ClientKey::Hybrid(dk, x) => {
+                // The server's share: the ML-KEM ciphertext, then its
+                // X25519 share; the secret: the ML-KEM one, then X25519's.
+                if peer.len() != 1088 + 32 {
+                    return None;
+                }
+                let ss = dk.decapsulate(Ciphertext::from(&peer[..1088])).ok()?;
+                if ss.as_ref().len() != 32 {
+                    return None;
+                }
+                let n = agree(&agreement::X25519, x, &peer[1088..], &mut shared[32..])?;
+                if n != 32 {
+                    return None;
+                }
+                shared[..32].copy_from_slice(ss.as_ref());
+                Some(64)
+            }
+            ClientKey::Used => None,
+        }
     }
 }
 

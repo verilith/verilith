@@ -1,0 +1,12 @@
+[package]
+name = "webp-root"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Not part of the workspace: built by sweep.sh against an instrumented copy
+# of crates/webp (instrument.py). See README.md.
+[workspace]
+
+[dependencies]
+verilith-webp = { path = "../../crates/webp" }

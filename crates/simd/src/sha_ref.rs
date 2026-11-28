@@ -1,9 +1,10 @@
 //! Verified scalar implementations of the instruction specifications in
-//! [`crate::isa`]: what `tests/isa.rs` compares the CPU with, and the body
+//! [`crate::sha`]: what verilith-sha2's `tests/isa.rs` compares the CPU with, and the body
 //! of the AArch64 instruction wrappers on other targets (so the AArch64
 //! kernels build, verify and run everywhere).
+#![allow(missing_docs)]
 #![allow(clippy::manual_rotate)]
-use crate::isa;
+use crate::sha as isa;
 use vstd::prelude::*;
 
 verus! {
