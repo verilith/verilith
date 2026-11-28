@@ -37,6 +37,20 @@ pub mod render;
 pub mod stream;
 #[doc(hidden)]
 pub mod decode;
+#[doc(hidden)]
+pub mod enc_bits;
+#[doc(hidden)]
+pub mod enc_huff;
+#[doc(hidden)]
+pub mod enc_scan;
+#[doc(hidden)]
+pub mod enc_file;
+#[doc(hidden)]
+pub mod enc_spec;
+#[doc(hidden)]
+pub mod enc_front;
+#[doc(hidden)]
+pub mod encode;
 #[cfg(not(verus_only))]
 #[doc(hidden)]
 pub mod capi;
