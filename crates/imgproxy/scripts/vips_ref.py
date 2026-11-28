@@ -3,7 +3,8 @@
 
 Calls an installed libvips (libvips.so.42) through ctypes, as imgproxy's
 vips.c calls it: vips_apply_filters's premultiply, gaussblur, sharpen,
-pixelate (mirror embed, shrink, zoom, crop) and unpremultiply. Writes each case's
+pixelate (mirror embed, shrink, zoom, crop) and unpremultiply; vips_resize_go;
+smart crop. Writes each case's
 input and libvips's output as raw RGBA to the directory given:
 
     scripts/vips_ref.py /tmp/ref
@@ -137,6 +138,42 @@ def main():
         open(os.path.join(out, f"smart{i:03}.rgba"), "wb").write(px)
         smart.append(f"{i} {w} {h} {int(alpha)} {cw} {ch} {ax.value} {ay.value}")
     open(os.path.join(out, "smart.txt"), "w").write("\n".join(smart) + "\n")
+    # Resizing: vips_resize as imgproxy's vips_resize_go calls it (scales
+    # 1 / (src / dst), premultiplied when there is alpha), every kernel,
+    # sizes from a pixel to several strips and box shrinks.
+    kernels = ["nearest", "linear", "cubic", "mitchell", "lanczos2", "lanczos3"]
+    rs = []
+    for i in range(240):
+        w, h = rnd.randrange(1, 700 if i % 4 == 0 else 120), rnd.randrange(1, 700 if i % 4 == 1 else 120)
+        dw, dh = rnd.randrange(1, w + 1), rnd.randrange(1, h + 1)
+        if (dw, dh) == (w, h):
+            continue
+        k = 5 if i % 2 == 0 else rnd.randrange(6)
+        alpha = i % 3 == 0
+        px = bytearray()
+        for y in range(h):
+            for x in range(w):
+                if i % 5 == 4:
+                    px += bytes([(x * 9) % 256, (y * 4) % 256, (x + y) % 256])
+                else:
+                    px += bytes(rnd.randrange(256) for _ in range(3))
+                px.append(rnd.randrange(256) if alpha else 255)
+        nb = 4 if alpha else 3
+        src = px if alpha else bytes(b for j in range(w * h) for b in px[j * 4:j * 4 + 3])
+        im = C.c_void_p(v.vips_image_new_from_memory_copy(bytes(src), len(src), w, h, nb, UCHAR))
+        im = call("vips_copy", im, b"interpretation", C.c_int(SRGB))
+        if alpha:
+            im = call("vips_premultiply", im)
+            im = call("vips_cast", im, C.c_int(UCHAR))
+        im = call("vips_resize", im, C.c_double(1.0 / (w / dw)), b"vscale", C.c_double(1.0 / (h / dh)), b"kernel", C.c_int(k))
+        if alpha:
+            im = call("vips_unpremultiply", im)
+            im = call("vips_cast", im, C.c_int(UCHAR))
+        ow, oh = v.vips_image_get_width(im), v.vips_image_get_height(im)
+        open(os.path.join(out, f"rz{i:03}.in"), "wb").write(px)
+        open(os.path.join(out, f"rz{i:03}.out"), "wb").write(data(im))
+        rs.append(f"{i} {w} {h} {dw} {dh} {kernels[k]} {int(alpha)} {ow} {oh}")
+    open(os.path.join(out, "resize.txt"), "w").write("\n".join(rs) + "\n")
     # The colour conversions sharpen uses, on their own: sRGB to LabS for
     # every 8-bit colour, and LabS back to sRGB for a spread of values.
     rgb = bytes(c for r in range(0, 256) for g in range(256) for b in range(256) for c in (r, g, b))
@@ -157,4 +194,5 @@ def main():
     print(n, "cases, libvips", ver)
 
 
-main()
+if __name__ == "__main__":
+    main()

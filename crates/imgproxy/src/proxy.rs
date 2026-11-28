@@ -111,6 +111,46 @@ pub fn kernel(f: Filter) -> Option<&'static [i32]> {
     Some(T[i].get_or_init(|| table(a, k)).as_slice())
 }
 
+/// A reduction (both sides at most the source's) as imgproxy's
+/// `vips_resize_go` makes it: `vips_resize` by `1 / (src / dst)` on each
+/// side, premultiplied when the image has alpha (`vips_premultiply`, cast
+/// back to 8 bits, then `vips_unpremultiply` and cast), through the
+/// verified passes of `reduce` with libvips's own masks and positions
+/// (`vresize`). `None` for enlargements and `Area`, and should libvips's
+/// rounding of the size miss the plan's (the other resizers then make it).
+pub fn vips_resize(px: &[u8], w: usize, h: usize, dw: usize, dh: usize, f: Filter, alpha: bool) -> Option<Vec<u8>> {
+    use crate::vresize::{Kernel, CURRENT};
+    let k = match f {
+        Filter::Lanczos3 => Kernel::Lanczos3,
+        Filter::Lanczos2 => Kernel::Lanczos2,
+        Filter::Cubic => Kernel::Cubic,
+        Filter::Linear => Kernel::Linear,
+        Filter::Nearest => Kernel::Nearest,
+        Filter::Area => return None,
+    };
+    if dw > w || dh > h || dw == 0 || dh == 0 {
+        return None;
+    }
+    let pre = if alpha { std::borrow::Cow::Owned(crate::filter::premul_rgba(px)) } else { std::borrow::Cow::Borrowed(px) };
+    let hs = 1.0 / (w as f64 / dw as f64);
+    let vs = 1.0 / (h as f64 / dh as f64);
+    let (out, ow, oh) = crate::vresize::resize_rgba(&pre, w, h, hs, vs, k, CURRENT);
+    if (ow, oh) != (dw, dh) {
+        return None;
+    }
+    if alpha {
+        Some(crate::filter::unpremul_rgba(&out))
+    } else {
+        // libvips resizes an opaque image's three bands; the fourth here
+        // is only carried, and stays opaque.
+        let mut out = out;
+        for p in out.chunks_exact_mut(4) {
+            p[3] = 255;
+        }
+        Some(out)
+    }
+}
+
 impl Default for Options {
     fn default() -> Self {
         crate::url::defaults_x()
@@ -567,6 +607,8 @@ pub fn process_with(data: &[u8], o: &Options, lim: &Limits, wm: Option<&Rgba>) -
     // tables are 256 to 768 entries of at most 32768 in size).
     let px = if (rw, rh) == (cw0, ch0) {
         px
+    } else if let Some(v) = vips_resize(&px, cw0, ch0, rw, rh, o.filter, alpha) {
+        v
     } else {
         match kernel(o.filter) {
             Some(kt) => crate::lanczos::thumb_rgba(kt, &px, cw0, ch0, rw, rh),

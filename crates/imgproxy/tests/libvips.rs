@@ -10,7 +10,9 @@
 //! 8.15 computes some of them in double precision, so there a few
 //! lightness values land one LabS step apart (about 0.6% of colours) and
 //! a few output bytes in 100,000 move by a level or two. The checks below
-//! allow exactly that much for sharpen, and nothing for the rest.
+//! allow exactly that much for sharpen, and nothing for the rest:
+//! reductions (`vips_resize`, every kernel, premultiplied when there is
+//! alpha) and smart gravity's points agree exactly.
 use verilith_imgproxy::filter::{blur_rgba, pixelate_rgba, premul_rgba, unpremul_rgba};
 use verilith_imgproxy::mask;
 
@@ -138,5 +140,44 @@ fn attention_as_libvips() {
         }
     }
     eprintln!("attention: {same} of {all} the same");
+    assert_eq!(same, all);
+}
+
+#[test]
+#[ignore]
+fn resize_as_libvips() {
+    use verilith_imgproxy::vresize::{resize_rgba, Kernel, Vips};
+    let Ok(dir) = std::env::var("VERILITH_VIPS_REF") else { return };
+    let list = std::fs::read_to_string(format!("{dir}/resize.txt")).unwrap();
+    let ver = std::fs::read_to_string(format!("{dir}/version")).unwrap();
+    let ver: Vec<u32> = ver.trim().split('.').map(|v| v.parse().unwrap()).collect();
+    let vips = Vips { old: (ver[0], ver[1]) < (8, 17) };
+    let (mut same, mut all) = (0, 0);
+    for line in list.lines() {
+        let f: Vec<&str> = line.split(' ').collect();
+        let n = |i: usize| f[i].parse::<usize>().unwrap();
+        let (i, w, h, dw, dh, alpha, ow, oh) = (n(0), n(1), n(2), n(3), n(4), f[6] == "1", n(7), n(8));
+        let k = match f[5] {
+            "nearest" => Kernel::Nearest,
+            "linear" => Kernel::Linear,
+            "cubic" => Kernel::Cubic,
+            "mitchell" => Kernel::Mitchell,
+            "lanczos2" => Kernel::Lanczos2,
+            _ => Kernel::Lanczos3,
+        };
+        let src = std::fs::read(format!("{dir}/rz{i:03}.in")).unwrap();
+        let want = std::fs::read(format!("{dir}/rz{i:03}.out")).unwrap();
+        let px = if alpha { premul_rgba(&src) } else { src };
+        let (got, gw, gh) = resize_rgba(&px, w, h, 1.0 / (w as f64 / dw as f64), 1.0 / (h as f64 / dh as f64), k, vips);
+        let got = if alpha { unpremul_rgba(&got) } else { got.chunks(4).flat_map(|p| [p[0], p[1], p[2]]).collect() };
+        all += 1;
+        if (gw, gh) == (ow, oh) && got == want {
+            same += 1;
+        } else {
+            let d = got.iter().zip(&want).filter(|(a, b)| a != b).count();
+            eprintln!("{line}: ours {gw}x{gh}, {d} bytes differ");
+        }
+    }
+    eprintln!("resize: {same} of {all} the same");
     assert_eq!(same, all);
 }

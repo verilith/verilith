@@ -26,6 +26,8 @@ pub mod url;
 pub mod lanczos;
 pub mod spec_filter;
 pub mod filter;
+pub mod spec_reduce;
+pub mod reduce;
 pub mod spec_smart;
 pub mod smart;
 pub mod pngenc;
@@ -37,6 +39,8 @@ pub mod mask;
 pub mod colour;
 #[cfg(not(verus_keep_ghost))]
 pub mod attention;
+#[cfg(not(verus_keep_ghost))]
+pub mod vresize;
 #[cfg(not(verus_keep_ghost))]
 pub mod proxy;
 #[cfg(not(verus_keep_ghost))]

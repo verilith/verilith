@@ -43,8 +43,7 @@ pub enum Filter {
     Cubic,
     /// `linear`: a triangle.
     Linear,
-    /// `nearest`: a box of one sample (an average over each output
-    /// sample's cell when downscaling, not a pick of one source pixel).
+    /// `nearest`: one source pixel for each output pixel, as libvips.
     Nearest,
     /// `area` (not imgproxy's): the exact area average of `spec::resize`.
     Area,
