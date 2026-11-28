@@ -46,6 +46,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | quic |  |  |  |  |  |  | 1 |
 | quic-conn |  |  |  |  |  |  | 3 |
 | regex | 1 |  |  |  |  |  | 3 |
+| resolver | 7 |  |  |  |  |  | 4 |
 | server | 1 |  |  |  | 1 |  | 14 |
 | sha2 | 34 |  |  |  |  |  | 3 |
 | simd | 425 | 11 | 290 | 4 |  |  | 3 |
@@ -64,7 +65,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 |
 | zstd | 6 |  |  |  |  |  | 2 |
-| **total** | **700** | **36** | **290** | **7** | **17** | **12** | **134** |
+| **total** | **707** | **36** | **290** | **7** | **17** | **12** | **138** |
 
 ## Items
 
@@ -212,6 +213,14 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/regex/src/data.rs`: external_body: `cs_range`
 - `crates/regex/src/lanes.rs`: plain Rust
 - `crates/regex/src/tables.rs`: plain Rust
+
+### resolver
+
+- `crates/resolver/src/lib.rs`: plain Rust
+- `crates/resolver/src/net.rs`: plain Rust
+- `crates/resolver/src/resolve.rs`: external_body: `exchange`, `exchange`, `now`, `random`, `lookup`, `lookup`, `insert`
+- `crates/resolver/src/service.rs`: plain Rust
+- `crates/resolver/src/bin/verilith-resolver.rs`: plain Rust
 
 ### server
 
