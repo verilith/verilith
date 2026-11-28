@@ -23,11 +23,17 @@ verus! {
 /// `dx`.
 #[derive(Clone, Copy)]
 pub struct Tok {
+    /// Copy length; 0 for a literal.
     pub len: u32,
+    /// The literal pixel, or the distance code.
     pub v: u32,
+    /// The length's prefix code.
     pub lc: u32,
+    /// The length's extra bits.
     pub lx: u32,
+    /// The distance code's prefix code.
     pub dc: u32,
+    /// The distance code's extra bits.
     pub dx: u32,
 }
 

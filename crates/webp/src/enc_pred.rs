@@ -83,6 +83,7 @@ pub fn sub_px(a: u32, p: u32) -> (r: u32)
     r
 }
 
+/// The VP8L predictors' channel-wise average of two pixels (`spec::avg2`).
 pub fn avg2_x(a: u32, b: u32) -> (r: u32)
     ensures
         r == avg2(a, b),
@@ -108,6 +109,7 @@ fn absd(x: u32, y: u32) -> (r: u32)
     }
 }
 
+/// The VP8L select predictor (`spec::select`).
 pub fn select_x(l: u32, t: u32, tl: u32) -> (r: u32)
     ensures
         r == select(l, t, tl),
@@ -141,6 +143,7 @@ fn clamp_x(v: i32) -> (r: u32)
     }
 }
 
+/// The VP8L clamped gradient predictor (`spec::clamp_add_sub_full`).
 pub fn clamp_full_x(a: u32, b: u32, c: u32) -> (r: u32)
     ensures
         r == clamp_add_sub_full(a, b, c),
@@ -174,6 +177,7 @@ fn half_x(x: u32, y: u32) -> (r: u32)
     clamp_x(x as i32 + hd)
 }
 
+/// The VP8L clamped half gradient predictor (`spec::clamp_add_sub_half`).
 pub fn clamp_half_x(a: u32, b: u32) -> (r: u32)
     ensures
         r == clamp_add_sub_half(a, b),

@@ -201,7 +201,6 @@ fn match_len(px: &[u32], i: usize, j: usize, max: usize) -> (r: usize)
 // ---------------------------------------------------------------------------
 // The match finder
 // ---------------------------------------------------------------------------
-const HASH_BITS: u32 = 16;
 const HASH_SIZE: usize = 0x10000;
 const EMPTY: u32 = 0xffff_ffff;
 const MAX_LEN: usize = 4096;
