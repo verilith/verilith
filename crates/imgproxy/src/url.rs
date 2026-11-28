@@ -1547,8 +1547,10 @@ pub fn format_x(f: Format, s: &[u8]) -> (r: Result<Format, Fail>)
         Ok(Format::Png)
     } else if is_jpg(s) || is_jpeg(s) {
         Ok(Format::Jpeg)
+    } else if is_webp(s) {
+        Ok(Format::Webp)
     } else {
-        Err(Fail::Unprocessable("Only PNG and JPEG output are supported"))
+        Err(Fail::Unprocessable("Only PNG, JPEG and WebP output are supported"))
     }
 }
 

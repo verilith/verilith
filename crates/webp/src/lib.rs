@@ -54,6 +54,47 @@ pub mod vp8frame;
 pub mod vp8yuv;
 #[doc(hidden)]
 pub mod lossy;
+#[doc(hidden)]
+pub mod enc_bw;
+#[doc(hidden)]
+pub mod enc_lem;
+#[doc(hidden)]
+pub mod enc_code;
+#[doc(hidden)]
+pub mod enc_hl;
+pub mod enc_llc;
+pub mod enc_tok;
+pub mod enc_lz;
+pub mod enc_img;
+pub mod enc_pred;
+#[doc(hidden)]
+pub mod enc_bool;
+#[doc(hidden)]
+pub mod enc_vp8hdr;
+#[doc(hidden)]
+pub mod enc_vp8modes;
+#[doc(hidden)]
+pub mod enc_vp8tok;
+#[doc(hidden)]
+pub mod enc_vp8res;
+#[doc(hidden)]
+pub mod enc_vp8frm;
+#[doc(hidden)]
+pub mod enc_vp8tame;
+#[doc(hidden)]
+pub mod enc_vp8w;
+#[doc(hidden)]
+pub mod enc_vp8st;
+#[doc(hidden)]
+pub mod enc_vp8a;
+#[doc(hidden)]
+pub mod enc_vp8mb;
+#[doc(hidden)]
+pub mod enc_vp8;
+#[doc(hidden)]
+pub mod enc_vp8thm;
+#[doc(hidden)]
+pub mod enc_vp8l;
 #[cfg(not(verus_only))]
 #[doc(hidden)]
 pub mod capi;

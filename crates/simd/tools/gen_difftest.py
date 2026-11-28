@@ -132,6 +132,7 @@ for w in (128, 256):
 binop(128, "_mm_adds_epu16", "ref_adds_u16({a}, {b})", "U16", "U16")
 binop(128, "_mm_max_epu16", "ref_max_u16({a}, {b})", "U16", "U16", "sse4.1")
 binop(128, "_mm_mullo_epi32", "ref_mullo32({a}, {b})", "U32", "U32", "sse4.1")
+binop(256, "_mm256_mullo_epi32", "ref_mullo32({a}, {b})", "U32", "U32")
 cases.append(("_mm_abs_epi16", f"""
     #[target_feature(enable = "ssse3")]
     fn go(a: __m128i) -> __m128i {{ _mm_abs_epi16(a) }}
@@ -223,6 +224,29 @@ cases.append(("lanes256", f"""
         assert_eq!(bytes256(s), cat);
         assert_eq!(u32s256(p), ref_permvar32(&u32s256(a), &u32s256(idx)));
         let _ = b;
+    }}
+"""))
+cases.append(("_mm256_cvtepu8_epi32", f"""
+    let mut rng = Rng::new(0x2561);
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m128i) -> __m256i {{ _mm256_cvtepu8_epi32(a) }}
+    for _ in 0..{N} {{
+        let a = rng.v128();
+        let got = u32s256(unsafe {{ go(a) }});
+        let want = ref_zext8_32(&bytes128(a)[..8]);
+        if got != want {{ fail("_mm256_cvtepu8_epi32", &bytes128(a), &[], &format!("{{:?}} vs {{:?}}", got, want)); }}
+    }}
+"""))
+cases.append(("_mm256_mul_epu32", f"""
+    let mut rng = Rng::new(0x2562);
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i, b: __m256i) -> __m256i {{ _mm256_mul_epu32(a, b) }}
+    for _ in 0..{N} {{
+        let (a, b) = (rng.v256(), rng.v256());
+        let got = u64s256(unsafe {{ go(a, b) }});
+        let (x, y) = (u32s256(a), u32s256(b));
+        let want: Vec<u64> = (0..4).map(|i| x[2 * i] as u64 * y[2 * i] as u64).collect();
+        if got != want {{ fail("_mm256_mul_epu32", &bytes256(a), &bytes256(b), &format!("{{:?}} vs {{:?}}", got, want)); }}
     }}
 """))
 for imm in range(256):

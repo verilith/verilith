@@ -165,6 +165,7 @@ impl Format {
         match self {
             Format::Png => Kind::Png,
             Format::Jpeg => Kind::Jpeg,
+            Format::Webp => Kind::Webp,
         }
     }
 }
@@ -664,7 +665,7 @@ pub fn process_with(data: &[u8], o: &Options, lim: &Limits, wm: Option<&Rgba>) -
     // flattened onto the background, white by default, as imgproxy does.
     let bg = match o.format {
         Format::Jpeg => Some(o.background.unwrap_or([255, 255, 255])),
-        Format::Png => o.background,
+        Format::Png | Format::Webp => o.background,
     };
     let px = match bg {
         Some(bg) => crate::pixels::flatten(&px, bg),
@@ -686,6 +687,20 @@ pub fn process_with(data: &[u8], o: &Options, lim: &Limits, wm: Option<&Rgba>) -
             let q = if o.quality == 0 { DEFAULT_QUALITY } else { o.quality };
             verilith_jpeg::encode::encode_rgb(&px, cw as usize, ch as usize, 4, q as u8, q < 90)
                 .ok_or(Fail::Unprocessable("Result image is too big for JPEG"))
+        }
+        // Opaque results are lossy (VP8) at the quality, as imgproxy
+        // writes WebP; results with transparency keep it, losslessly
+        // (VP8L). Both encoders check their sizes themselves.
+        Format::Webp => {
+            let argb = crate::pixels::rgba_to_argb(&px);
+            let opaque = px.chunks_exact(4).all(|c| c[3] == 255);
+            let r = if opaque {
+                let q = if o.quality == 0 { DEFAULT_QUALITY } else { o.quality };
+                verilith_webp::enc_vp8::encode_lossy(&argb, cw as usize, ch as usize, q.min(100))
+            } else {
+                verilith_webp::enc_vp8l::encode_lossless(&argb, cw, ch)
+            };
+            r.ok_or(Fail::Unprocessable("Result image is too big for WebP"))
         }
     }
 }
@@ -1061,6 +1076,7 @@ mod tests {
         assert_eq!(p.opts.w, 10);
         assert_eq!(parse(b"/x/w:10/plain/local:///a.jpg").unwrap().opts.format, Format::Png);
         assert_eq!(parse(b"/x/w:10/plain/local:///a.png@jpg").unwrap().opts.format, Format::Jpeg);
+        assert_eq!(parse(b"/x/w:10/plain/local:///a.png@webp").unwrap().opts.format, Format::Webp);
         assert_eq!(parse(b"/x/f:jpeg/q:55/plain/local:///a.png").unwrap().opts.quality, 55);
         assert_eq!(parse(b"/x/f:jpeg/plain/local:///a.png").unwrap().opts.format, Format::Jpeg);
         assert!(matches!(parse(b"/x/q:101/plain/local:///a.png"), Err(Fail::BadUrl(_))));

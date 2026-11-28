@@ -13,6 +13,11 @@ use crate::huff::*;
 use crate::parse::std_tab;
 use crate::spec::*;
 use crate::types::*;
+use crate::num::zzx;
+#[cfg(verus_only)]
+use crate::quant_avx2::{lemma_quant_qdiv, qv_ok};
+#[cfg(verus_only)]
+use verilith_simd::lanes::s32;
 #[cfg(verus_only)]
 use vstd::arithmetic::div_mod::*;
 #[cfg(verus_only)]
@@ -89,14 +94,67 @@ proof fn lemma_pix(w: int, h: int, bpp: int, y: int, x: int)
     assert((y * w + x + 1) * bpp == (y * w + x) * bpp + bpp) by (nonlinear_arith);
 }
 
+/// Row `sy`'s first `8 * n` pixels, `bpp` bytes each, and 4 bytes more,
+/// fit in the image (`n` as `full_planes` picks it, `m` at most `w`).
+proof fn lemma_row_run(w: int, h: int, bpp: int, sy: int, m: int, n: int)
+    requires
+        0 <= sy < h,
+        1 <= w,
+        m <= w,
+        3 <= bpp <= 4,
+        1 <= n,
+        sy + 1 < h ==> 8 * n <= m,
+        sy + 1 >= h ==> 8 * n + 2 <= m,
+    ensures
+        0 <= sy * w * bpp,
+        sy * w <= sy * w * bpp,
+        sy * w * bpp + bpp * (8 * n) + 4 <= w * h * bpp,
+        8 * n <= w,
+{
+    assert(0 <= sy * w && sy * w <= sy * w * bpp) by (nonlinear_arith)
+        requires
+            0 <= sy,
+            1 <= w,
+            3 <= bpp,
+    ;
+    if sy + 1 < h {
+        assert(sy * w * bpp + bpp * (8 * n) + 4 <= w * h * bpp) by (nonlinear_arith)
+            requires
+                0 <= sy,
+                sy + 2 <= h,
+                1 <= w,
+                3 <= bpp,
+                0 <= 8 * n <= w,
+        ;
+    } else {
+        assert(sy * w * bpp + bpp * (8 * n) + 4 <= w * h * bpp) by (nonlinear_arith)
+            requires
+                sy + 1 == h,
+                1 <= w,
+                3 <= bpp,
+                0 <= 8 * n,
+                8 * n + 2 <= w,
+        ;
+    }
+}
+
+/// Pixel (`sy`, `x`)'s bytes start at `sy * w * bpp + bpp * x`.
+proof fn lemma_row_px(w: int, bpp: int, sy: int, x: int)
+    ensures
+        (sy * w + x) * bpp == sy * w * bpp + bpp * x,
+{
+    assert((sy * w + x) * bpp == sy * w * bpp + bpp * x) by (nonlinear_arith);
+}
+
 /// Y, Cb and Cr at full resolution, `ph` rows of `pw`, the image's edges
 /// repeated.
-fn full_planes(px: &[u8], w: usize, h: usize, bpp: usize, pw: usize, ph: usize) -> (r: (
+fn full_planes(px: &[u8], w: usize, h: usize, bpp: usize, pw: usize, ph: usize, simd: bool) -> (r: (
     Vec<Vec<u8>>,
     Vec<Vec<u8>>,
     Vec<Vec<u8>>,
 ))
     requires
+        simd ==> verilith_simd::cpu::avx2(),
         im_ok(Rgb { w: w as int, h: h as int, bpp: bpp as int, px: px@ }),
     ensures
         plane_full(r.0@, Rgb { w: w as int, h: h as int, bpp: bpp as int, px: px@ }, 0, pw as int, ph as int),
@@ -110,6 +168,7 @@ fn full_planes(px: &[u8], w: usize, h: usize, bpp: usize, pw: usize, ph: usize) 
     let mut y: usize = 0;
     while y < ph
         invariant
+            simd ==> verilith_simd::cpu::avx2(),
             im == (Rgb { w: w as int, h: h as int, bpp: bpp as int, px: px@ }),
             im_ok(im),
             y <= ph,
@@ -131,8 +190,45 @@ fn full_planes(px: &[u8], w: usize, h: usize, bpp: usize, pw: usize, ph: usize) 
         let mut r1: Vec<u8> = Vec::with_capacity(pw);
         let mut r2: Vec<u8> = Vec::with_capacity(pw);
         let mut x: usize = 0;
+        if simd && w >= 16 && pw >= 16 {
+            let m = if w < pw {
+                w
+            } else {
+                pw
+            };
+            // Each group reads 4 bytes past its pixels: past the row's end
+            // into the next row, or on the last row short of its last two.
+            let n = if sy + 1 < h {
+                m / 8
+            } else {
+                (m - 2) / 8
+            };
+            proof {
+                lemma_row_run(w as int, h as int, bpp as int, sy as int, m as int, n as int);
+                assert(px@.len() == px.len());
+            }
+            let i = sy * w * bpp;
+            // `ycc_run` enables AVX2, which makes it unsafe to call, on
+            // x86-64; `simd` says the CPU has it.
+            #[cfg_attr(any(verus_only, not(target_arch = "x86_64")), allow(unused_unsafe))]
+            unsafe {
+                crate::color_avx2::ycc_run(px, i, n, bpp, &mut r0, &mut r1, &mut r2)
+            };
+            x = 8 * n;
+            proof {
+                assert forall|xx: int| #![trigger r0@[xx]] #![trigger r1@[xx]] #![trigger r2@[xx]] 0 <= xx < x implies {
+                    &&& (r0@[xx]) as int == full(im, 0, y as int, xx)
+                    &&& (r1@[xx]) as int == full(im, 1, y as int, xx)
+                    &&& (r2@[xx]) as int == full(im, 2, y as int, xx)
+                } by {
+                    lemma_row_px(w as int, bpp as int, sy as int, xx);
+                    assert(r0@[0 + xx] == r0@[xx]);
+                }
+            }
+        }
         while x < pw
             invariant
+                simd ==> verilith_simd::cpu::avx2(),
                 im == (Rgb { w: w as int, h: h as int, bpp: bpp as int, px: px@ }),
                 im_ok(im),
                 y < ph,
@@ -169,9 +265,10 @@ fn full_planes(px: &[u8], w: usize, h: usize, bpp: usize, pw: usize, ph: usize) 
 }
 
 /// `h2v2_downsample`: chroma at half resolution, `ph2` rows of `pw2`.
-fn down_plane(fp: &Vec<Vec<u8>>, pw2: usize, ph2: usize, hh: usize, Ghost(im): Ghost<Rgb>, Ghost(c): Ghost<int>) -> (r:
+fn down_plane(fp: &Vec<Vec<u8>>, pw2: usize, ph2: usize, hh: usize, simd: bool, Ghost(im): Ghost<Rgb>, Ghost(c): Ghost<int>) -> (r:
     Vec<Vec<u8>>)
     requires
+        simd ==> verilith_simd::cpu::avx2(),
         1 <= c < 3,
         im_ok(im),
         hh as int == (im.h + 1) / 2,
@@ -185,6 +282,7 @@ fn down_plane(fp: &Vec<Vec<u8>>, pw2: usize, ph2: usize, hh: usize, Ghost(im): G
     let mut y: usize = 0;
     while y < ph2
         invariant
+            simd ==> verilith_simd::cpu::avx2(),
             1 <= c < 3,
             im_ok(im),
             hh as int == (im.h + 1) / 2,
@@ -207,6 +305,52 @@ fn down_plane(fp: &Vec<Vec<u8>>, pw2: usize, ph2: usize, hh: usize, Ghost(im): G
         let rb = &fp[2 * sy + 1];
         let mut row: Vec<u8> = Vec::with_capacity(pw2);
         let mut x: usize = 0;
+        while simd && x + 16 <= pw2
+            invariant
+                simd ==> verilith_simd::cpu::avx2(),
+                1 <= c < 3,
+                im_ok(im),
+                hh as int == (im.h + 1) / 2,
+                2 * hh <= fp@.len(),
+                pw2 < 0x4000_0000,
+                plane_full(fp@, im, c, 2 * pw2, fp@.len() as int),
+                y < ph2,
+                sy as int == min(y as int, hh - 1),
+                *ra == fp@[2 * sy],
+                *rb == fp@[2 * sy + 1],
+                x <= pw2,
+                x % 16 == 0,
+                row@.len() == x,
+                forall|xx: int| 0 <= xx < x ==> (#[trigger] row@[xx]) as int == samp(im, true, c, y as int, xx),
+            decreases pw2 - x,
+        {
+            let mut buf = [0u8; 16];
+            // `down16` enables AVX2, which makes it unsafe to call, on x86-64;
+            // `simd` says the CPU has it.
+            #[cfg_attr(any(verus_only, not(target_arch = "x86_64")), allow(unused_unsafe))]
+            unsafe {
+                crate::down_avx2::down16(ra.as_slice(), rb.as_slice(), x, &mut buf)
+            };
+            let ghost r0 = row@;
+            row.extend_from_slice(&buf);
+            proof {
+                assert forall|xx: int| 0 <= xx < x + 16 implies (#[trigger] row@[xx]) as int == samp(im, true, c, y as int, xx) by {
+                    if xx < x {
+                        assert(row@[xx] == r0[xx]);
+                    } else {
+                        let i = xx - x;
+                        assert(row@[xx] == buf[i]);
+                        let yy = sy as int;
+                        assert(ra@[2 * xx] as int == full(im, c, 2 * yy, 2 * xx));
+                        assert(ra@[2 * xx + 1] as int == full(im, c, 2 * yy, 2 * xx + 1));
+                        assert(rb@[2 * xx] as int == full(im, c, 2 * yy + 1, 2 * xx));
+                        assert(rb@[2 * xx + 1] as int == full(im, c, 2 * yy + 1, 2 * xx + 1));
+                        assert(buf[i] as int == crate::down_avx2::down4(ra@, rb@, x + i));
+                    }
+                }
+            }
+            x += 16;
+        }
         while x < pw2
             invariant
                 1 <= c < 3,
@@ -254,17 +398,16 @@ pub open spec fn qblock(s: Seq<int>, q: Seq<u8>) -> Seq<i16> {
     Seq::new(64, |k: int| quant(t[k], q[k] as int, k) as i16)
 }
 
-/// A block's samples transformed and quantized.
-fn real_block_x(pl: &Vec<Vec<u8>>, bx: usize, by: usize, q: &[u8; 64], rq: &[u64; 64]) -> (r: [i16; 64])
+/// The forward DCT of block (`bx`, `by`) of a plane.
+fn fdct_plane(pl: &Vec<Vec<u8>>, bx: usize, by: usize) -> (t: [i64; 64])
     requires
-        forall|i: int| 0 <= i < 64 ==> #[trigger] rq[i] as int == (0x1_0000_0000 + 8 * q[i] - 1) / (8 * q[i] as int) && rq[i] <= 0x2000_0100,
         8 * by + 8 <= pl@.len(),
         forall|y: int| 8 * by <= y < 8 * by + 8 ==> 8 * bx + 8 <= (#[trigger] pl@[y])@.len(),
-        forall|i: int| 0 <= i < 64 ==> #[trigger] q[i] >= 1,
         bx < 0x1000_0000,
         by < 0x1000_0000,
     ensures
-        r@ == qblock(pblock(pl@, bx as int, by as int), q@),
+        forall|i: int| 0 <= i < 64 ==> #[trigger] t[i] as int == fdct(pblock(pl@, bx as int, by as int))[i],
+        forall|i: int| 0 <= i < 64 ==> -(1i64 << 20) <= #[trigger] t[i] <= (1i64 << 20),
 {
     let mut s = [0i64; 64];
     let mut i: usize = 0;
@@ -286,26 +429,188 @@ fn real_block_x(pl: &Vec<Vec<u8>>, bx: usize, by: usize, q: &[u8; 64], rq: &[u64
     proof {
         assert(s64(s) =~= pblock(pl@, bx as int, by as int));
     }
-    let t = fdct_x(&s);
+    fdct_x(&s)
+}
+
+/// A block's samples transformed and quantized.
+fn real_block_x(pl: &Vec<Vec<u8>>, bx: usize, by: usize, q: &[u8; 64], rq: &[u64; 64], qv: &QV, simd: bool) -> (r: ([i16; 64], u64))
+    requires
+        simd ==> verilith_simd::cpu::avx2(),
+        qv_ok(q@, qv.h@, qv.m@),
+        forall|i: int| 0 <= i < 64 ==> #[trigger] rq[i] as int == (0x1_0000_0000 + 8 * q[i] - 1) / (8 * q[i] as int) && rq[i] <= 0x2000_0100,
+        8 * by + 8 <= pl@.len(),
+        forall|y: int| 8 * by <= y < 8 * by + 8 ==> 8 * bx + 8 <= (#[trigger] pl@[y])@.len(),
+        forall|i: int| 0 <= i < 64 ==> #[trigger] q[i] >= 1,
+        bx < 0x1000_0000,
+        by < 0x1000_0000,
+    ensures
+        r.0@ == qblock(pblock(pl@, bx as int, by as int), q@),
+        mask_ok(r.1, r.0@, 1),
+{
+    // `fdct_block32` and `qdiv_block` enable AVX2, which makes them unsafe
+    // to call, on x86-64; `simd` says the CPU has it.
+    if simd {
+        #[cfg_attr(any(verus_only, not(target_arch = "x86_64")), allow(unused_unsafe))]
+        let t = unsafe { crate::fdct_avx2::fdct_block32(pl, bx, by) };
+        #[cfg_attr(any(verus_only, not(target_arch = "x86_64")), allow(unused_unsafe))]
+        let d = unsafe { crate::quant_avx2::qdiv_block(&t, &qv.h, &qv.m, q) };
+        #[cfg_attr(any(verus_only, not(target_arch = "x86_64")), allow(unused_unsafe))]
+        let r = unsafe { crate::quant_avx2::clamp_block_v(&d) };
+        let m = mask_of(&r);
+        proof {
+            assert forall|i: int| 0 <= i < 64 implies #[trigger] r[i] as int == quant(s32(t[i]), q[i] as int, i) by {
+                lemma_quant_qdiv(s32(t[i]), q[i] as int, i);
+            }
+            assert(r@ =~= qblock(pblock(pl@, bx as int, by as int), q@));
+        }
+        return (r, m);
+    }
+    let t = fdct_plane(pl, bx, by);
+    let (r, m) = quant_block(&t, q, rq);
+    proof {
+        assert(r@ =~= qblock(pblock(pl@, bx as int, by as int), q@));
+    }
+    (r, m)
+}
+
+/// The quantizers of a table for `quant_avx2`: half of each divisor, and
+/// its reciprocal.
+pub struct QV {
+    pub h: [u32; 64],
+    pub m: [u32; 64],
+}
+
+fn qvs(q: &[u8; 64], rq: &[u64; 64]) -> (r: QV)
+    requires
+        forall|i: int| 0 <= i < 64 ==> #[trigger] q[i] >= 1,
+        rq_ok(*q, *rq),
+    ensures
+        qv_ok(q@, r.h@, r.m@),
+{
+    let mut h = [0u32; 64];
+    let mut m = [0u32; 64];
+    let mut i: usize = 0;
+    while i < 64
+        invariant
+            i <= 64,
+            forall|j: int| 0 <= j < 64 ==> #[trigger] q[j] >= 1,
+            rq_ok(*q, *rq),
+            forall|j: int|
+                0 <= j < i ==> 1 <= #[trigger] q[j] && h[j] as int == 4 * q[j] && m[j] as int == (0x1_0000_0000 + 8 * q[j] - 1)
+                    / (8 * q[j] as int),
+        decreases 64 - i,
+    {
+        h[i] = 4 * q[i] as u32;
+        m[i] = rq[i] as u32;
+        i += 1;
+    }
+    QV { h, m }
+}
+
+/// The mask of the nonzero AC coefficients in zigzag order (`mask_ok`).
+fn mask_of(r: &[i16; 64]) -> (m: u64)
+    ensures
+        mask_ok(m, r@, 1),
+{
+    let mut m: u64 = 0;
+    let mut j: usize = 1;
+    proof {
+        assert forall|jj: u64| 0 <= jj < 64 implies (#[trigger] ((m >> jj) & 1u64) == 1u64 <==> (1 <= jj < j && r[zz(jj as int)] != 0)) by {
+            assert((0u64 >> jj) & 1u64 == 0u64) by (bit_vector);
+        }
+    }
+    while j < 64
+        invariant
+            1 <= j <= 64,
+            forall|jj: u64| 0 <= jj < 64 ==> (#[trigger] ((m >> jj) & 1u64) == 1u64 <==> (1 <= jj < j && r[zz(jj as int)] != 0)),
+        decreases 64 - j,
+    {
+        let p = zzx(j);
+        let nz: u64 = if r[p] != 0 {
+            1
+        } else {
+            0
+        };
+        let ghost m0 = m;
+        let jb = j as u64;
+        m = m | (nz << jb);
+        proof {
+            assert forall|jj: u64| 0 <= jj < 64 implies (#[trigger] ((m >> jj) & 1u64) == 1u64 <==> (1 <= jj < j + 1 && r[zz(jj as int)] != 0)) by {
+                if nz == 1 {
+                    assert(nz << jb == 1u64 << jb);
+                    lemma_bit_set(m0, jb, jj);
+                } else {
+                    assert(m0 | (0u64 << jb) == m0) by (bit_vector);
+                }
+            }
+        }
+        j += 1;
+    }
+    m
+}
+
+/// The coefficients quantized, and the mask of the nonzero AC ones in
+/// zigzag order (`mask_ok`).
+fn quant_block(t: &[i64; 64], q: &[u8; 64], rq: &[u64; 64]) -> (r: ([i16; 64], u64))
+    requires
+        forall|i: int| 0 <= i < 64 ==> #[trigger] rq[i] as int == (0x1_0000_0000 + 8 * q[i] - 1) / (8 * q[i] as int) && rq[i] <= 0x2000_0100,
+        forall|i: int| 0 <= i < 64 ==> #[trigger] q[i] >= 1,
+        forall|i: int| 0 <= i < 64 ==> -(1i64 << 20) <= #[trigger] t[i] <= (1i64 << 20),
+    ensures
+        forall|i: int| 0 <= i < 64 ==> #[trigger] r.0[i] as int == quant(t[i] as int, q[i] as int, i),
+        mask_ok(r.1, r.0@, 1),
+{
+    proof {
+        lemma_zz_perm();
+    }
     let mut r = [0i16; 64];
+    let mut m: u64 = 0;
     let mut k: usize = 0;
+    proof {
+        assert forall|j: u64| 0 <= j < 64 implies #[trigger] ((m >> j) & 1u64) == 0u64 by {
+            assert((0u64 >> j) & 1u64 == 0u64) by (bit_vector);
+        }
+    }
     while k < 64
         invariant
             k <= 64,
             forall|i: int| 0 <= i < 64 ==> #[trigger] q[i] >= 1,
             forall|i: int| 0 <= i < 64 ==> #[trigger] rq[i] as int == (0x1_0000_0000 + 8 * q[i] - 1) / (8 * q[i] as int) && rq[i] <= 0x2000_0100,
-            forall|i: int| 0 <= i < 64 ==> #[trigger] t[i] as int == fdct(pblock(pl@, bx as int, by as int))[i],
             forall|i: int| 0 <= i < 64 ==> -(1i64 << 20) <= #[trigger] t[i] <= (1i64 << 20),
-            forall|j: int| 0 <= j < k ==> #[trigger] r[j] == qblock(pblock(pl@, bx as int, by as int), q@)[j],
+            forall|j: int| 0 <= j < k ==> #[trigger] r[j] as int == quant(t[j] as int, q[j] as int, j),
+            forall|i: int| 0 <= i < 64 ==> 0 <= zz(i) < 64 && #[trigger] zzi(zz(i)) == i,
+            forall|p: int| 0 <= p < 64 ==> 0 <= zzi(p) < 64 && #[trigger] zz(zzi(p)) == p,
+            forall|j: u64| 0 <= j < 64 ==> (#[trigger] ((m >> j) & 1u64) == 1u64 <==> (j >= 1 && zz(j as int) < k && r[zz(j as int)] != 0)),
         decreases 64 - k,
     {
-        r[k] = quant_r(t[k], q[k], rq[k], k);
+        let v = quant_r(t[k], q[k], rq[k], k);
+        r[k] = v;
+        if v != 0 && k != 0 {
+            let p = ZZI[k] as u64;
+            let ghost m0 = m;
+            m = m | (1u64 << p);
+            proof {
+                assert(zz(p as int) == k);
+                assert forall|j: u64| 0 <= j < 64 implies (#[trigger] ((m >> j) & 1u64) == 1u64 <==> (j >= 1 && zz(j as int) < k + 1 && r[zz(j as int)] != 0)) by {
+                    lemma_bit_set(m0, p, j);
+                    if zz(j as int) == k {
+                        assert(zzi(zz(j as int)) == j);
+                    }
+                }
+            }
+        } else {
+            proof {
+                assert forall|j: u64| 0 <= j < 64 implies (#[trigger] ((m >> j) & 1u64) == 1u64 <==> (j >= 1 && zz(j as int) < k + 1 && r[zz(j as int)] != 0)) by {
+                    if zz(j as int) == k {
+                        assert(zzi(zz(j as int)) == j);
+                        assert(zzi(k as int) == j);
+                    }
+                }
+            }
+        }
         k += 1;
     }
-    proof {
-        assert(r@ =~= qblock(pblock(pl@, bx as int, by as int), q@));
-    }
-    r
+    (r, m)
 }
 
 proof fn lemma_real(pl: Seq<Vec<u8>>, im: Rgb, sub: bool, quality: int, c: int, bx: int, by: int, wd: int, ht: int)
@@ -368,13 +673,17 @@ fn coef_block_x(
     h0: usize,
     q: &[u8; 64],
     rq: &[u64; 64],
+    qv: &QV,
+    simd: bool,
     Ghost(im): Ghost<Rgb>,
     Ghost(sub): Ghost<bool>,
     Ghost(quality): Ghost<int>,
     Ghost(c): Ghost<int>,
-) -> (r: [i16; 64])
+) -> (r: ([i16; 64], u64))
     requires
+        simd ==> verilith_simd::cpu::avx2(),
         forall|i: int| 0 <= i < 64 ==> #[trigger] rq[i] as int == (0x1_0000_0000 + 8 * q[i] - 1) / (8 * q[i] as int) && rq[i] <= 0x2000_0100,
+        qv_ok(q@, qv.h@, qv.m@),
         0 <= c < 3,
         plane_samp(pl@, im, sub, c, 8 * cw(enc_frame_of(im, sub), c), 8 * ch(enc_frame_of(im, sub), c)),
         wbc as int == wb(enc_frame_of(im, sub), c),
@@ -390,14 +699,15 @@ fn coef_block_x(
         wbc < 0x1000_0000,
         hbc < 0x1000_0000,
     ensures
-        r@ == coef_block(im, sub, quality, c, bx as int, by as int),
+        r.0@ == coef_block(im, sub, quality, c, bx as int, by as int),
+        mask_ok(r.1, r.0@, 1),
 {
     let ghost f = enc_frame_of(im, sub);
     if bx < wbc && by < hbc {
         proof {
             lemma_real(pl@, im, sub, quality, c, bx as int, by as int, 8 * cw(f, c), 8 * ch(f, c));
         }
-        real_block_x(pl, bx, by, q, rq)
+        real_block_x(pl, bx, by, q, rq, qv, simd)
     } else {
         let (rx, ry) = if by < hbc {
             (wbc - 1, by)
@@ -415,13 +725,21 @@ fn coef_block_x(
         proof {
             lemma_real(pl@, im, sub, quality, c, rx as int, ry as int, 8 * cw(f, c), 8 * ch(f, c));
         }
-        let rb = real_block_x(pl, rx, ry, q, rq);
+        let (rb, _) = real_block_x(pl, rx, ry, q, rq, qv, simd);
         let mut r = [0i16; 64];
         r[0] = rb[0];
         proof {
             assert(r@ =~= coef_block(im, sub, quality, c, bx as int, by as int));
+            lemma_zz_perm();
+            assert forall|j: u64| 0 <= j < 64 implies (#[trigger] ((0u64 >> j) & 1u64) == 1u64 <==> (j >= 1 && r@[zz(j as int)] != 0)) by {
+                assert((0u64 >> j) & 1u64 == 0u64) by (bit_vector);
+                if j >= 1 && zz(j as int) == 0 {
+                    assert(zzi(zz(j as int)) == j);
+                    assert(zzi(0) == 0);
+                }
+            }
         }
-        r
+        (r, 0)
     }
 }
 
@@ -819,11 +1137,16 @@ pub struct Enc {
     /// Their reciprocals, for `quant_r`.
     pub r0: [u64; 64],
     pub r1: [u64; 64],
+    /// The same for `quant_avx2`.
+    pub v0: QV,
+    pub v1: QV,
     pub wbs: [usize; 3],
     pub hbs: [usize; 3],
     pub h0: usize,
     pub mx: usize,
     pub my: usize,
+    /// The CPU has AVX2.
+    pub simd: bool,
 }
 
 pub open spec fn rq_ok(q: [u8; 64], rq: [u64; 64]) -> bool {
@@ -884,6 +1207,7 @@ impl Enc {
     pub open spec fn ok(&self, im: Rgb, sub: bool, quality: int, ht: Seq<HuffTable>) -> bool {
         let f = enc_frame_of(im, sub);
         &&& im_ok(im)
+        &&& (self.simd ==> verilith_simd::cpu::avx2())
         &&& self.h0 as int == h0_of(sub)
         &&& self.mx as int == mcux(f)
         &&& self.my as int == mcuy(f)
@@ -894,6 +1218,7 @@ impl Enc {
         &&& self.q1@ == qtab(quality, 1)
         &&& forall|i: int| 0 <= i < 64 ==> #[trigger] self.q0[i] >= 1 && self.q1[i] >= 1
         &&& rq_ok(self.q0, self.r0) && rq_ok(self.q1, self.r1)
+        &&& qv_ok(self.q0@, self.v0.h@, self.v0.m@) && qv_ok(self.q1@, self.v1.h@, self.v1.m@)
         &&& ht.len() == 4
         &&& dc_ready(ht[0], self.e[0].co@, self.e[0].si@) && self.e[0].has(ht[0])
         &&& ac_ready(ht[1], self.e[1].co@, self.e[1].si@) && self.e[1].has(ht[1])
@@ -1058,7 +1383,12 @@ fn block_x(
     } else {
         &e.r1
     };
-    let bk = coef_block_x(
+    let qv = if c == 0 {
+        &e.v0
+    } else {
+        &e.v1
+    };
+    let (bk, bm) = coef_block_x(
         pl,
         bx,
         by,
@@ -1067,6 +1397,8 @@ fn block_x(
         h0,
         q,
         rq,
+        qv,
+        e.simd,
         Ghost(im),
         Ghost(sub),
         Ghost(quality),
@@ -1083,9 +1415,9 @@ fn block_x(
     let ghost bits = bw.bits@;
     let pred = preds[c];
     if c == 0 {
-        encode_block(bw, &bk, pred, &e.e[0], &e.e[1], Ghost(ht[0]), Ghost(ht[1]));
+        encode_block_m(bw, &bk, bm, pred, &e.e[0], &e.e[1], Ghost(ht[0]), Ghost(ht[1]));
     } else {
-        encode_block(bw, &bk, pred, &e.e[2], &e.e[3], Ghost(ht[2]), Ghost(ht[3]));
+        encode_block_m(bw, &bk, bm, pred, &e.e[2], &e.e[3], Ghost(ht[2]), Ghost(ht[3]));
     }
     preds[c] = bk[0] as i32;
     proof {
@@ -1370,15 +1702,16 @@ fn build(px: &[u8], w: usize, h: usize, bpp: usize, quality: u8, sub: bool, ht: 
     let my = (h + d - 1) / d;
     let pw = 8 * mx * h0;
     let ph = 8 * my * h0;
-    let (py, fcb, fcr) = full_planes(px, w, h, bpp, pw, ph);
+    let simd = verilith_simd::cpu::has_avx2();
+    let (py, fcb, fcr) = full_planes(px, w, h, bpp, pw, ph, simd);
     let pcb;
     let pcr;
     if sub {
         proof {
             assert(2 * ((h as int + 1) / 2) <= ph);
         }
-        pcb = down_plane(&fcb, 8 * mx, 8 * my, (h + 1) / 2, Ghost(im), Ghost(1));
-        pcr = down_plane(&fcr, 8 * mx, 8 * my, (h + 1) / 2, Ghost(im), Ghost(2));
+        pcb = down_plane(&fcb, 8 * mx, 8 * my, (h + 1) / 2, simd, Ghost(im), Ghost(1));
+        pcr = down_plane(&fcr, 8 * mx, 8 * my, (h + 1) / 2, simd, Ghost(im), Ghost(2));
     } else {
         pcb = fcb;
         pcr = fcr;
@@ -1387,7 +1720,9 @@ fn build(px: &[u8], w: usize, h: usize, bpp: usize, quality: u8, sub: bool, ht: 
     let hb0 = (h * h0 + d - 1) / d;
     let r0 = recips(&q0);
     let r1 = recips(&q1);
-    let e = Enc { py, pcb, pcr, e: et, q0, q1, r0, r1, wbs: [wb0, mx, mx], hbs: [hb0, my, my], h0, mx, my };
+    let v0 = qvs(&q0, &r0);
+    let v1 = qvs(&q1, &r1);
+    let e = Enc { py, pcb, pcr, e: et, q0, q1, r0, r1, v0, v1, wbs: [wb0, mx, mx], hbs: [hb0, my, my], h0, mx, my, simd };
     proof {
         assert(8 * cw(f, 0) == pw && 8 * ch(f, 0) == ph) by (nonlinear_arith)
             requires

@@ -103,8 +103,9 @@ does not decode or is over the limits, 502 for an origin that fails.
 
 ## Departures from imgproxy
 
-- PNG and JPEG output only: `@webp` and `@avif` are answered 422. With no
-  extension the result is PNG, where imgproxy keeps the source's format.
+- PNG, JPEG and WebP output: `@avif` is answered 422. WebP is written
+  lossless (VP8L) for now, whatever the quality. With no extension the
+  result is PNG, where imgproxy keeps the source's format.
 - JPEG is written as libvips writes it by default: baseline, 4:2:0 chroma
   below quality 90 and 4:4:4 from 90, typical (not optimized) Huffman
   tables, alpha flattened onto the background or white. The quantization

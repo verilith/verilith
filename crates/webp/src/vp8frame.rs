@@ -135,7 +135,7 @@ pub const SCAN: [usize; 16] = [
 /// `CheckMode`: the DC mode variant for macroblocks on the top or left
 /// edge.
 #[inline(always)]
-fn check_mode(mb_x: usize, mb_y: usize, mode: u8) -> (r: u8)
+pub(crate) fn check_mode(mb_x: usize, mb_y: usize, mode: u8) -> (r: u8)
     requires
         mode < 4,
     ensures
@@ -163,7 +163,7 @@ fn check_mode(mb_x: usize, mb_y: usize, mode: u8) -> (r: u8)
 
 /// Copies `n` bytes from `src[s..]` to `dst[d..]`.
 #[inline(always)]
-fn copy_n(dst: &mut [u8], d: usize, src: &[u8], s: usize, n: usize)
+pub(crate) fn copy_n(dst: &mut [u8], d: usize, src: &[u8], s: usize, n: usize)
     requires
         s + n <= src@.len(),
         d + n <= old(dst)@.len(),
@@ -367,7 +367,7 @@ proof fn lemma_scan(n: int)
 /// blocks (and of the rows above them) to the left of the blocks.
 #[inline(always)]
 #[verifier::loop_isolation(false)]
-fn rotate_left(ws: &mut [u8])
+pub(crate) fn rotate_left(ws: &mut [u8])
     requires
         old(ws)@.len() == YUV_SIZE,
     ensures
@@ -600,7 +600,7 @@ fn do_luma16(ws: &mut [u8], mode: u8, bits0: u32, coeffs: &[i16], Ghost(co): Gho
 /// inverse transforms of `coeffs`. With selector bits that are sound for
 /// the macroblock's coefficients `co`, the result is the specification's
 /// `mb_recon` of the scratch block as `mb_setup` prepares it.
-fn reconstruct_mb(
+pub(crate) fn reconstruct_mb(
     ws: &mut [u8],
     top_y: &Vec<u8>,
     top_u: &Vec<u8>,
@@ -689,7 +689,7 @@ pub open spec fn recon_of(ws: Seq<u8>, ty: Seq<u8>, tu: Seq<u8>, tv: Seq<u8>, pl
 /// its unfiltered bottom rows for the next row's prediction.
 #[inline(always)]
 #[verifier::loop_isolation(false)]
-fn emit_mb(
+pub(crate) fn emit_mb(
     ws: &[u8],
     top_y: &mut Vec<u8>,
     top_u: &mut Vec<u8>,
@@ -783,7 +783,7 @@ fn emit_mb(
 /// Sets the scratch block's borders for macroblock row `mb_y`.
 #[inline(always)]
 #[verifier::loop_isolation(false)]
-fn init_row(wsl: &mut [u8], mb_y: usize)
+pub(crate) fn init_row(wsl: &mut [u8], mb_y: usize)
     requires
         old(wsl)@.len() == YUV_SIZE,
     ensures

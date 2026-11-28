@@ -56,6 +56,14 @@ pub mod enc_spec;
 #[doc(hidden)]
 pub mod enc_front;
 #[doc(hidden)]
+pub mod fdct_avx2;
+#[doc(hidden)]
+pub mod quant_avx2;
+#[doc(hidden)]
+pub mod down_avx2;
+#[doc(hidden)]
+pub mod color_avx2;
+#[doc(hidden)]
 pub mod encode;
 #[cfg(not(verus_only))]
 #[doc(hidden)]

@@ -1022,14 +1022,75 @@ fn put_coef(w: &mut BitWriter, t: &ETab, run: u32, v: i32, Ghost(ht): Ghost<Huff
     }
 }
 
+/// Bit `j` of `m` is set exactly when the block's zigzag coefficient `j`
+/// is nonzero and `j` is at least `k`.
+pub open spec fn mask_ok(m: u64, b: Seq<i16>, k: int) -> bool {
+    forall|j: u64| 0 <= j < 64 ==> (#[trigger] ((m >> j) & 1u64) == 1u64 <==> (j >= k && b[zz(j as int)] != 0))
+}
+
+/// Setting bit `p` of `m`.
+pub proof fn lemma_bit_set(m: u64, p: u64, j: u64)
+    requires
+        p < 64,
+        j < 64,
+    ensures
+        ((m | (1u64 << p)) >> j) & 1u64 == 1u64 <==> (((m >> j) & 1u64) == 1u64 || j == p),
+{
+    assert(((m | (1u64 << p)) >> j) & 1u64 == 1u64 <==> (((m >> j) & 1u64) == 1u64 || j == p)) by (bit_vector)
+        requires
+            p < 64,
+            j < 64,
+    ;
+}
+
+/// Clearing the lowest set bit, `t`, of `m`.
+proof fn lemma_bit_clear(m: u64, t: u64, j: u64)
+    requires
+        m != 0,
+        t < 64,
+        (m >> t) & 1u64 == 1u64,
+        m << sub(64, t) == 0,
+        j < 64,
+    ensures
+        ((m & sub(m, 1)) >> j) & 1u64 == 1u64 <==> (((m >> j) & 1u64) == 1u64 && j != t),
+{
+    assert(((m & sub(m, 1)) >> j) & 1u64 == 1u64 <==> (((m >> j) & 1u64) == 1u64 && j != t)) by (bit_vector)
+        requires
+            m != 0,
+            t < 64,
+            (m >> t) & 1u64 == 1u64,
+            m << sub(64, t) == 0,
+            j < 64,
+    ;
+}
+
+/// A run of zero coefficients from `k0` to `k1`.
+pub proof fn lemma_ac_zeros(co: Seq<u16>, si: Seq<u8>, b: Seq<i16>, k0: int, k1: int, r: int)
+    requires
+        0 <= k0 <= k1 <= 64,
+        0 <= r,
+        forall|j: int| k0 <= j < k1 ==> b[#[trigger] zz(j)] == 0,
+    ensures
+        ac_bits(co, si, b, k0, r) == ac_bits(co, si, b, k1, r + (k1 - k0)),
+    decreases k1 - k0,
+{
+    if k0 < k1 {
+        lemma_ac_zero_step(co, si, b, k0, r);
+        lemma_ac_zeros(co, si, b, k0 + 1, k1, r + 1);
+    }
+}
+
 /// Codes one block: its DC as a difference from `pred`, then its AC
-/// coefficients in zigzag order (`encode_one_block`).
+/// coefficients in zigzag order (`encode_one_block`). `m` is the mask of
+/// the nonzero AC coefficients (`mask_ok(m, b, 1)`), so only those are
+/// visited, as libjpeg-turbo does with its bit map.
 // The default budget is too small for z3's Arm build here; x86 needs less.
 #[verifier::spinoff_prover]
-#[verifier::rlimit(40)]
-pub fn encode_block(
+#[verifier::rlimit(80)]
+pub fn encode_block_m(
     w: &mut BitWriter,
     b: &[i16; 64],
+    m: u64,
     pred: i32,
     dc: &ETab,
     ac: &ETab,
@@ -1043,6 +1104,7 @@ pub fn encode_block(
         dc.has(dt),
         ac.has(at),
         block_ok(b@),
+        mask_ok(m, b@, 1),
         -2048 < b[0] - pred < 2048,
     ensures
         final(w).wf(),
@@ -1059,84 +1121,113 @@ pub fn encode_block(
         assert(w.bits@ + ac_bits(ac.co@, ac.si@, b@, 1, 0) =~= target);
         lemma_zz_perm();
     }
+    let mut m = m;
     let mut r: u32 = 0;
-    let mut k: usize = 1;
-    while k < 64
+    let mut kn: u32 = 1;
+    while m != 0
         invariant
             w.wf(),
-            1 <= k <= 64,
-            r < k,
+            1 <= kn <= 64,
+            r < kn,
             ac_ready(at, ac.co@, ac.si@),
             ac.has(at),
             block_ok(b@),
-            w.bits@ + ac_bits(ac.co@, ac.si@, b@, k as int, r as int) == target,
+            mask_ok(m, b@, kn as int),
+            w.bits@ + ac_bits(ac.co@, ac.si@, b@, kn as int, r as int) == target,
             forall|i: int| 0 <= i < 64 ==> 0 <= #[trigger] zz(i) < 64,
-        decreases 64 - k,
+        decreases 64 - kn,
     {
+        let t = m.trailing_zeros();
+        proof {
+            vstd::std_specs::bits::axiom_u64_trailing_zeros(m);
+            let t64 = t as u64;
+            assert((m >> t64) & 1u64 == 1u64);
+            assert(t >= kn && b@[zz(t as int)] != 0);
+            assert forall|j: int| kn <= j < t implies b@[#[trigger] zz(j)] == 0 by {
+                let j64 = j as u64;
+                assert((m >> j64) & 1u64 == 0u64);
+            }
+            lemma_ac_zeros(ac.co@, ac.si@, b@, kn as int, t as int, r as int);
+        }
+        r = r + (t - kn);
+        let k = t as usize;
         let v = b[ZZ[k] as usize];
-        if v == 0 {
+        while r > 15
+            invariant
+                w.wf(),
+                1 <= k < 64,
+                r < k,
+                v == b@[zz(k as int)],
+                v != 0,
+                ac_ready(at, ac.co@, ac.si@),
+                ac.has(at),
+                w.bits@ + ac_bits(ac.co@, ac.si@, b@, k as int, r as int) == target,
+            decreases r,
+        {
             proof {
-                lemma_ac_zero_step(ac.co@, ac.si@, b@, k as int, r as int);
-            }
-            r += 1;
-        } else {
-            while r > 15
-                invariant
-                    w.wf(),
-                    1 <= k < 64,
-                    r < k,
-                    v == b@[zz(k as int)],
-                    v != 0,
-                    ac_ready(at, ac.co@, ac.si@),
-                    ac.has(at),
-                    w.bits@ + ac_bits(ac.co@, ac.si@, b@, k as int, r as int) == target,
-                decreases r,
-            {
-                proof {
-                    assert(ac_sym(0xF0));
-                    assert(code_ok(at, ac.co@, ac.si@, 0xF0));
-                    let l = ac.si[0xF0] as int;
-                    assert(hfirst(at, l) + hcount(at, l) < pow2(l as nat));
-                }
-                let ghost b0 = w.bits@;
-                w.put(ac.co[0xF0] as u32, ac.si[0xF0] as u32);
-                r -= 16;
-                proof {
-                    lemma_ac_zrl_step(ac.co@, ac.si@, b@, k as int, r + 16);
-                    assert(w.bits@ + ac_bits(ac.co@, ac.si@, b@, k as int, r as int) =~= b0 + ac_bits(
-                        ac.co@,
-                        ac.si@,
-                        b@,
-                        k as int,
-                        r + 16,
-                    ));
-                }
-            }
-            proof {
-                lemma2_to64();
-                lemma_nb_le(iabs(v as int), 10);
-                lemma_nb(iabs(v as int));
-                let sym = r * 16 + nb(iabs(v as int));
-                assert(sym % 16 == nb(iabs(v as int)));
-                assert(ac_sym(sym as int));
-                assert(code_ok(at, ac.co@, ac.si@, sym as int));
+                assert(ac_sym(0xF0));
+                assert(code_ok(at, ac.co@, ac.si@, 0xF0));
+                let l = ac.si[0xF0] as int;
+                assert(hfirst(at, l) + hcount(at, l) < pow2(l as nat));
             }
             let ghost b0 = w.bits@;
-            put_coef(w, ac, r, v as i32, Ghost(at));
+            w.put(ac.co[0xF0] as u32, ac.si[0xF0] as u32);
+            r -= 16;
             proof {
-                lemma_ac_coef_step(ac.co@, ac.si@, b@, k as int, r as int);
-                assert(w.bits@ + ac_bits(ac.co@, ac.si@, b@, k + 1, 0) =~= b0 + ac_bits(
+                lemma_ac_zrl_step(ac.co@, ac.si@, b@, k as int, r + 16);
+                assert(w.bits@ + ac_bits(ac.co@, ac.si@, b@, k as int, r as int) =~= b0 + ac_bits(
                     ac.co@,
                     ac.si@,
                     b@,
                     k as int,
-                    r as int,
+                    r + 16,
                 ));
             }
-            r = 0;
         }
-        k += 1;
+        proof {
+            lemma2_to64();
+            lemma_nb_le(iabs(v as int), 10);
+            lemma_nb(iabs(v as int));
+            let sym = r * 16 + nb(iabs(v as int));
+            assert(sym % 16 == nb(iabs(v as int)));
+            assert(ac_sym(sym as int));
+            assert(code_ok(at, ac.co@, ac.si@, sym as int));
+        }
+        let ghost b0 = w.bits@;
+        put_coef(w, ac, r, v as i32, Ghost(at));
+        proof {
+            lemma_ac_coef_step(ac.co@, ac.si@, b@, k as int, r as int);
+            assert(w.bits@ + ac_bits(ac.co@, ac.si@, b@, k + 1, 0) =~= b0 + ac_bits(
+                ac.co@,
+                ac.si@,
+                b@,
+                k as int,
+                r as int,
+            ));
+        }
+        let ghost m0 = m;
+        m = m & (m - 1);
+        proof {
+            let t64 = t as u64;
+            assert forall|j: u64| 0 <= j < 64 implies (#[trigger] ((m >> j) & 1u64) == 1u64 <==> (j >= t + 1 && b@[zz(j as int)] != 0)) by {
+                lemma_bit_clear(m0, t64, j);
+                assert(sub(m0, 1) == m0 - 1);
+            }
+        }
+        r = 0;
+        kn = t + 1;
     }
+    proof {
+        assert forall|j: int| kn <= j < 64 implies b@[#[trigger] zz(j)] == 0 by {
+            let j64 = j as u64;
+            assert((m >> j64) & 1u64 == 0u64) by (bit_vector)
+                requires
+                    m == 0,
+            ;
+        }
+        lemma_ac_zeros(ac.co@, ac.si@, b@, kn as int, 64, r as int);
+    }
+    r = r + (64 - kn);
     if r > 0 {
         proof {
             assert(ac_sym(0));

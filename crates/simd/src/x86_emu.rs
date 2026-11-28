@@ -941,6 +941,27 @@ pub assume_specification[ crate::emu::_mm_mullo_epi32 ](a: __m128i, b: __m128i) 
         u32x4(r) == mullo32(u32x4(a), u32x4(b)),
 ;
 
+pub assume_specification[ crate::emu::_mm256_cvtepu8_epi32 ](a: __m128i) -> (r: __m256i)
+    requires
+        avx2(),
+    ensures
+        u32x8(r) == zext8_32(b128(a).subrange(0, 8)),
+;
+
+pub assume_specification[ crate::emu::_mm256_mullo_epi32 ](a: __m256i, b: __m256i) -> (r: __m256i)
+    requires
+        avx2(),
+    ensures
+        u32x8(r) == mullo32(u32x8(a), u32x8(b)),
+;
+
+pub assume_specification[ crate::emu::_mm256_mul_epu32 ](a: __m256i, b: __m256i) -> (r: __m256i)
+    requires
+        avx2(),
+    ensures
+        u64x4(r) == mul_even32(u32x8(a), u32x8(b)),
+;
+
 pub assume_specification[ crate::emu::_mm_sll_epi16 ](a: __m128i, count: __m128i) -> (r: __m128i)
     requires
         u64x2(count)[0] < 16,

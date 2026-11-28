@@ -30,6 +30,8 @@ verus! {
 pub enum Format {
     Png,
     Jpeg,
+    /// Lossless WebP (VP8L).
+    Webp,
 }
 
 /// A resampling filter: imgproxy's `resizing_algorithm` values, plus the
@@ -59,7 +61,7 @@ pub struct Options {
     pub background: Option<[u8; 3]>,
     /// The output format; PNG when the URL names none.
     pub format: Format,
-    /// JPEG quality, 1 to 100 (0: the default, 80).
+    /// JPEG and lossy WebP quality, 1 to 100 (0: the default, 80).
     pub quality: u32,
     /// The resampling filter (`resizing_algorithm`).
     pub filter: Filter,
@@ -371,7 +373,7 @@ pub open spec fn background(a: Seq<Seq<u8>>) -> Option<Option<[u8; 3]>> {
 }
 
 /// The format an extension names: empty keeps `f`; `png` and `best` are
-/// PNG; `jpg` and `jpeg` are JPEG.
+/// PNG; `jpg` and `jpeg` are JPEG; `webp` is WebP.
 pub open spec fn format(f: Format, s: Seq<u8>) -> Option<Format> {
     if s.len() == 0 {
         Some(f)
@@ -379,6 +381,8 @@ pub open spec fn format(f: Format, s: Seq<u8>) -> Option<Format> {
         Some(Format::Png)
     } else if s == seq![b'j', b'p', b'g'] || s == seq![b'j', b'p', b'e', b'g'] {
         Some(Format::Jpeg)
+    } else if s == seq![b'w', b'e', b'b', b'p'] {
+        Some(Format::Webp)
     } else {
         None
     }

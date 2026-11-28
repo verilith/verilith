@@ -3485,6 +3485,7 @@ pub fn simple_filter_ref(b: &mut [u8], p: usize, hstride: usize, vstride: usize,
 
 /// `FilterLoop26_C` (`inner == false`) and `FilterLoop24_C` (`inner`), one
 /// pixel at a time: the reference for `filter_loop`.
+#[verifier::rlimit(30)]
 pub fn filter_loop_ref(
     b: &mut [u8],
     p: usize,
