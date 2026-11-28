@@ -20,52 +20,56 @@ not occur in any crate's `src/` (the script fails if one appears).
 | assume_new | `Ghost::assume_new()` / `Tracked::assume_new()`: a ghost or tracked value made without proof, mostly in unverified glue calling verified code |
 | no termination check | `exec_allows_no_decreases_clause`: a function exempt from Verus's termination check (blocking calls, an interpreter loop) |
 | plain-Rust files | `src/` files with no `verus!` block: compiled into the library, never seen by Verus (C APIs, bindings, wrappers) |
+| plain-Rust lines | the lines of code in those files, not counting comments and blank lines: how much is never verified |
 
 ## Counts
 
-| Crate | external_body | axioms | assume_spec | ext. types | assume_new | no termination check | plain-Rust files |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| aes | 61 | 1 |  | 2 |  |  | 1 |
-| archive |  |  |  |  |  |  | 3 |
-| bind |  |  |  |  |  |  | 2 |
-| brotli | 1 |  |  |  |  |  | 5 |
-| checksum | 12 |  |  |  |  |  |  |
-| core | 26 |  |  |  |  |  | 1 |
-| dns |  |  |  |  |  |  | 6 |
-| font |  |  |  |  |  |  | 1 |
-| gif |  |  |  |  |  |  | 2 |
-| h2 |  |  |  |  |  |  | 1 |
-| h3 |  |  |  |  |  |  | 1 |
-| hpack | 3 |  |  |  |  |  | 3 |
-| http |  |  |  |  |  |  | 8 |
-| jpeg |  |  |  |  |  |  | 3 |
-| json | 17 |  |  |  |  |  | 6 |
-| lz4 |  |  |  |  |  |  | 1 |
-| png |  |  |  |  |  |  | 7 |
-| proxy |  |  |  |  |  |  | 4 |
-| qpack | 8 |  |  |  |  |  | 2 |
-| quic |  |  |  |  |  |  | 1 |
-| quic-conn |  |  |  |  |  |  | 3 |
-| regex | 1 |  |  |  |  |  | 3 |
-| server | 1 |  |  |  | 1 |  | 15 |
-| sha2 | 34 |  |  |  |  |  | 3 |
-| simd | 425 | 11 | 290 | 4 |  |  | 3 |
-| snappy |  |  |  |  |  |  | 1 |
-| sync | 45 | 11 |  | 1 | 16 | 10 | 2 |
-| text | 18 | 13 |  |  |  |  | 9 |
-| tiff |  |  |  |  |  |  | 2 |
-| tls | 1 |  |  |  |  |  | 2 |
-| tls-aws-lc |  |  |  |  |  |  | 2 |
-| url | 1 |  |  |  |  |  | 5 |
-| verilith |  |  |  |  |  |  | 1 |
-| wasm | 20 |  |  |  |  | 2 | 4 |
-| webp | 9 |  |  |  |  |  | 3 |
-| x509 |  |  |  |  |  |  | 6 |
-| xml | 9 |  |  |  |  |  | 12 |
-| xxhash |  |  |  |  |  |  |  |
-| zlib | 2 |  |  |  |  |  | 3 |
-| zstd | 6 |  |  |  |  |  | 2 |
-| **total** | **700** | **36** | **290** | **7** | **17** | **12** | **139** |
+| Crate | external_body | axioms | assume_spec | ext. types | assume_new | no termination check | plain-Rust files | plain-Rust lines |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| aes | 61 | 1 |  | 2 |  |  | 1 | 42 |
+| archive |  |  |  |  |  |  | 3 | 539 |
+| bind |  |  |  |  |  |  | 2 | 300 |
+| brotli | 1 |  |  |  |  |  | 5 | 643 |
+| checksum | 12 |  |  |  |  |  |  |  |
+| core | 26 |  |  |  |  |  | 1 | 21 |
+| dns |  |  |  |  |  |  | 6 | 1438 |
+| font |  |  |  |  |  |  | 1 | 35 |
+| gif |  |  |  |  |  |  | 2 | 953 |
+| h2 |  |  |  |  |  |  | 1 | 7 |
+| h3 |  |  |  |  |  |  | 1 | 33 |
+| hpack | 3 |  |  |  |  |  | 3 | 203 |
+| http |  |  |  |  |  |  | 8 | 2725 |
+| imgproxy |  |  |  |  |  |  | 3 | 703 |
+| jpeg |  |  |  |  |  |  | 3 | 761 |
+| json | 17 |  |  |  |  |  | 6 | 1853 |
+| lz4 |  |  |  |  |  |  | 1 | 584 |
+| png |  |  |  |  |  |  | 7 | 4807 |
+| proxy |  |  |  |  |  |  | 4 | 925 |
+| qpack | 8 |  |  |  |  |  | 2 | 223 |
+| quic |  |  |  |  |  |  | 1 | 30 |
+| quic-conn |  |  |  |  |  |  | 3 | 2091 |
+| regex | 1 |  |  |  |  |  | 3 | 1969 |
+| resolver | 7 |  |  |  |  |  | 4 | 496 |
+| server | 1 |  |  |  | 1 |  | 15 | 5352 |
+| serverless |  |  |  |  |  |  | 2 | 259 |
+| sha2 | 34 |  |  |  |  |  | 3 | 362 |
+| simd | 425 | 11 | 290 | 4 |  |  | 3 | 1016 |
+| snappy |  |  |  |  |  |  | 1 | 85 |
+| sync | 45 | 11 |  | 1 | 16 | 10 | 2 | 321 |
+| text | 18 | 13 |  |  |  |  | 9 | 1576 |
+| tiff |  |  |  |  |  |  | 2 | 1157 |
+| tls | 1 |  |  |  |  |  | 2 | 140 |
+| tls-aws-lc |  |  |  |  |  |  | 2 | 707 |
+| url | 1 |  |  |  |  |  | 5 | 1311 |
+| verilith |  |  |  |  |  |  | 1 | 67 |
+| wasm | 20 |  |  |  |  | 2 | 4 | 2340 |
+| webp | 9 |  |  |  |  |  | 3 | 667 |
+| x509 |  |  |  |  |  |  | 6 | 1754 |
+| xml | 9 |  |  |  |  |  | 12 | 18551 |
+| xxhash |  |  |  |  |  |  |  |  |
+| zlib | 2 |  |  |  |  |  | 3 | 1354 |
+| zstd | 6 |  |  |  |  |  | 2 | 1331 |
+| **total** | **707** | **36** | **290** | **7** | **17** | **12** | **148** | **59731** |
 
 ## Items
 
@@ -73,29 +77,29 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 - `crates/aes/src/aead.rs`: external_body: `expand_tf`, `enc_tf`, `new_tf`, `seal_tf`, `open_tf`
 - `crates/aes/src/ct.rs`: external_body: `declassify`
-- `crates/aes/src/lib.rs`: plain Rust
+- `crates/aes/src/lib.rs`: plain Rust, 42 lines
 - `crates/aes/src/neon.rs`: external_body: `has_arm_aes`, `clone`, `clone`, `n_load`, `n_store`, `n_load16`, `n_store16`, `n_load_u128`, `n_set`, `n_get`, `n_xor`, `n_aese`, `n_aesmc`, `n_clmul`, `n_tbl`, `n_add32`, `n_sll64`, `n_srl64`, `n_bsll8`, `n_bsrl8`
 - `crates/aes/src/x86.rs`: external_body: `has_ni`, `has_vaes`, `xv`, `x_load`, `x_store`, `x_load16`, `x_store16`, `x_load_u128`, `x_set`, `x_get`, `x_xor`, `x_aesenc`, `x_aesenclast`, `x_clmul`, `x_pshufb`, `x_add32`, `x_sll64`, `x_srl64`, `x_bsll8`, `x_bsrl8`, `zl`, `z_load`, `z_store`, `z_load_u128`, `z_bcast`, `z_bcast_x`, `z_from_x`, `z_lane`, `z_xor`, `z_aesenc`, `z_aesenclast`, `z_clmul`, `z_pshufb`, `z_add32`, `z_xor3`; axioms: `axiom_zl_len`; ext. types: `ExM128i`, `ExM512i`
 
 ### archive
 
-- `crates/archive/src/api.rs`: plain Rust
-- `crates/archive/src/capi.rs`: plain Rust
-- `crates/archive/src/extract.rs`: plain Rust
+- `crates/archive/src/api.rs`: plain Rust, 110 lines
+- `crates/archive/src/capi.rs`: plain Rust, 352 lines
+- `crates/archive/src/extract.rs`: plain Rust, 77 lines
 
 ### bind
 
-- `crates/bind/src/json.rs`: plain Rust
-- `crates/bind/src/lib.rs`: plain Rust
+- `crates/bind/src/json.rs`: plain Rust, 264 lines
+- `crates/bind/src/lib.rs`: plain Rust, 36 lines
 
 ### brotli
 
-- `crates/brotli/src/api.rs`: plain Rust
-- `crates/brotli/src/capi.rs`: plain Rust
-- `crates/brotli/src/capi_enc.rs`: plain Rust
+- `crates/brotli/src/api.rs`: plain Rust, 37 lines
+- `crates/brotli/src/capi.rs`: plain Rust, 257 lines
+- `crates/brotli/src/capi_enc.rs`: plain Rust, 280 lines
 - `crates/brotli/src/dict.rs`: external_body: `dict_bytes`
-- `crates/brotli/src/huffman.rs`: plain Rust
-- `crates/brotli/src/lib.rs`: plain Rust
+- `crates/brotli/src/huffman.rs`: plain Rust, 3 lines
+- `crates/brotli/src/lib.rs`: plain Rust, 66 lines
 
 ### checksum
 
@@ -106,148 +110,167 @@ not occur in any crate's `src/` (the script fails if one appears).
 ### core
 
 - `crates/core/src/binary64.rs`: external_body: `mul`, `div`, `from_u64`
-- `crates/core/src/lib.rs`: plain Rust
+- `crates/core/src/lib.rs`: plain Rust, 21 lines
 - `crates/core/src/prims.rs`: external_body: `pick`, `copy16_pick`, `alloc_u32`, `alloc_u8`, `alloc_i16`
 - `crates/core/src/spare.rs`: external_body: `len_spare`, `reserve_spare`, `reserve_spare_plus`, `push_spare`, `append4_spare`, `append_slice_spare`, `append_wild_spare`, `truncate_spare`, `set_spare`, `append8_spare`
 - `crates/core/src/tail.rs`: external_body: `view`, `take`, `put_back`, `len`, `append_from`, `append_from32`, `append_within`, `append_within32`
 
 ### dns
 
-- `crates/dns/src/capi.rs`: plain Rust
-- `crates/dns/src/cares.rs`: plain Rust
-- `crates/dns/src/error.rs`: plain Rust
-- `crates/dns/src/lib.rs`: plain Rust
-- `crates/dns/src/name.rs`: plain Rust
-- `crates/dns/src/native.rs`: plain Rust
+- `crates/dns/src/capi.rs`: plain Rust, 65 lines
+- `crates/dns/src/cares.rs`: plain Rust, 788 lines
+- `crates/dns/src/error.rs`: plain Rust, 138 lines
+- `crates/dns/src/lib.rs`: plain Rust, 77 lines
+- `crates/dns/src/name.rs`: plain Rust, 156 lines
+- `crates/dns/src/native.rs`: plain Rust, 214 lines
 
 ### font
 
-- `crates/font/src/capi.rs`: plain Rust
+- `crates/font/src/capi.rs`: plain Rust, 35 lines
 
 ### gif
 
-- `crates/gif/src/capi.rs`: plain Rust
-- `crates/gif/src/lib.rs`: plain Rust
+- `crates/gif/src/capi.rs`: plain Rust, 944 lines
+- `crates/gif/src/lib.rs`: plain Rust, 9 lines
 
 ### h2
 
-- `crates/h2/src/lib.rs`: plain Rust
+- `crates/h2/src/lib.rs`: plain Rust, 7 lines
 
 ### h3
 
-- `crates/h3/src/lib.rs`: plain Rust
+- `crates/h3/src/lib.rs`: plain Rust, 33 lines
 
 ### hpack
 
-- `crates/hpack/src/capi.rs`: plain Rust
+- `crates/hpack/src/capi.rs`: plain Rust, 111 lines
 - `crates/hpack/src/henc.rs`: external_body: `ptab`
 - `crates/hpack/src/huffman.rs`: external_body: `dtab`
-- `crates/hpack/src/lib.rs`: plain Rust
-- `crates/hpack/src/stable.rs`: plain Rust
+- `crates/hpack/src/lib.rs`: plain Rust, 29 lines
+- `crates/hpack/src/stable.rs`: plain Rust, 63 lines
 - `crates/hpack/src/table.rs`: external_body: `static_entry`
 
 ### http
 
-- `crates/http/src/api.rs`: plain Rust
-- `crates/http/src/capi.rs`: plain Rust
-- `crates/http/src/diagnose.rs`: plain Rust
-- `crates/http/src/httparse.rs`: plain Rust
-- `crates/http/src/lanes.rs`: plain Rust
-- `crates/http/src/lib.rs`: plain Rust
-- `crates/http/src/llhttp.rs`: plain Rust
-- `crates/http/src/native.rs`: plain Rust
+- `crates/http/src/api.rs`: plain Rust, 211 lines
+- `crates/http/src/capi.rs`: plain Rust, 253 lines
+- `crates/http/src/diagnose.rs`: plain Rust, 144 lines
+- `crates/http/src/httparse.rs`: plain Rust, 340 lines
+- `crates/http/src/lanes.rs`: plain Rust, 6 lines
+- `crates/http/src/lib.rs`: plain Rust, 51 lines
+- `crates/http/src/llhttp.rs`: plain Rust, 1481 lines
+- `crates/http/src/native.rs`: plain Rust, 239 lines
+
+### imgproxy
+
+- `crates/imgproxy/src/handler.rs`: plain Rust, 83 lines
+- `crates/imgproxy/src/proxy.rs`: plain Rust, 551 lines
+- `crates/imgproxy/src/bin/verilith-imgproxy.rs`: plain Rust, 69 lines
 
 ### jpeg
 
-- `crates/jpeg/src/capi.rs`: plain Rust
-- `crates/jpeg/src/lib.rs`: plain Rust
-- `crates/jpeg/src/tj.rs`: plain Rust
+- `crates/jpeg/src/capi.rs`: plain Rust, 30 lines
+- `crates/jpeg/src/lib.rs`: plain Rust, 45 lines
+- `crates/jpeg/src/tj.rs`: plain Rust, 686 lines
 
 ### json
 
-- `crates/json/src/error.rs`: plain Rust
+- `crates/json/src/error.rs`: plain Rust, 70 lines
 - `crates/json/src/ffi.rs`: external_body: `input`, `push`, `push_fast`, `eager`, `push_num_fast`, `push_str_fast`, `reserve`, `count`, `close`, `fail`
 - `crates/json/src/index.rs`: external_body: `fill_avx512`, `fill_avx2`
 - `crates/json/src/lanes.rs`: external_body: `opaque64`, `append16_spare_neon`, `append16_spare`
-- `crates/json/src/lib.rs`: plain Rust
-- `crates/json/src/native.rs`: plain Rust
-- `crates/json/src/serde_support.rs`: plain Rust
+- `crates/json/src/lib.rs`: plain Rust, 53 lines
+- `crates/json/src/native.rs`: plain Rust, 351 lines
+- `crates/json/src/serde_support.rs`: plain Rust, 688 lines
 - `crates/json/src/utf8.rs`: external_body: `utf8_avx512`, `utf8_avx2`
-- `crates/json/src/value.rs`: plain Rust
-- `crates/json/src/writer.rs`: plain Rust
+- `crates/json/src/value.rs`: plain Rust, 360 lines
+- `crates/json/src/writer.rs`: plain Rust, 331 lines
 
 ### lz4
 
-- `crates/lz4/src/capi.rs`: plain Rust
+- `crates/lz4/src/capi.rs`: plain Rust, 584 lines
 
 ### png
 
-- `crates/png/src/libpng/err.rs`: plain Rust
-- `crates/png/src/libpng/info.rs`: plain Rust
-- `crates/png/src/libpng/mem.rs`: plain Rust
-- `crates/png/src/libpng/mod.rs`: plain Rust
-- `crates/png/src/libpng/read.rs`: plain Rust
-- `crates/png/src/libpng/stubs.rs`: plain Rust
-- `crates/png/src/libpng/xform.rs`: plain Rust
+- `crates/png/src/libpng/err.rs`: plain Rust, 251 lines
+- `crates/png/src/libpng/info.rs`: plain Rust, 1276 lines
+- `crates/png/src/libpng/mem.rs`: plain Rust, 92 lines
+- `crates/png/src/libpng/mod.rs`: plain Rust, 174 lines
+- `crates/png/src/libpng/read.rs`: plain Rust, 2356 lines
+- `crates/png/src/libpng/stubs.rs`: plain Rust, 54 lines
+- `crates/png/src/libpng/xform.rs`: plain Rust, 604 lines
 
 ### proxy
 
-- `crates/proxy/src/cache.rs`: plain Rust
-- `crates/proxy/src/lib.rs`: plain Rust
-- `crates/proxy/src/proxy.rs`: plain Rust
-- `crates/proxy/src/bin/verilith-proxy.rs`: plain Rust
+- `crates/proxy/src/cache.rs`: plain Rust, 91 lines
+- `crates/proxy/src/lib.rs`: plain Rust, 12 lines
+- `crates/proxy/src/proxy.rs`: plain Rust, 734 lines
+- `crates/proxy/src/bin/verilith-proxy.rs`: plain Rust, 88 lines
 
 ### qpack
 
 - `crates/qpack/src/encoder.rs`: external_body: `static_find`, `field_hash`, `new`, `new`, `find`, `worth`, `add`
-- `crates/qpack/src/hints.rs`: plain Rust
-- `crates/qpack/src/stable.rs`: plain Rust
+- `crates/qpack/src/hints.rs`: plain Rust, 122 lines
+- `crates/qpack/src/stable.rs`: plain Rust, 101 lines
 - `crates/qpack/src/table.rs`: external_body: `static_entry`
 
 ### quic
 
-- `crates/quic/src/lib.rs`: plain Rust
+- `crates/quic/src/lib.rs`: plain Rust, 30 lines
 
 ### quic-conn
 
-- `crates/quic-conn/src/buf.rs`: plain Rust
-- `crates/quic-conn/src/conn.rs`: plain Rust
-- `crates/quic-conn/src/lib.rs`: plain Rust
+- `crates/quic-conn/src/buf.rs`: plain Rust, 162 lines
+- `crates/quic-conn/src/conn.rs`: plain Rust, 1810 lines
+- `crates/quic-conn/src/lib.rs`: plain Rust, 119 lines
 
 ### regex
 
-- `crates/regex/src/capi.rs`: plain Rust
+- `crates/regex/src/capi.rs`: plain Rust, 384 lines
 - `crates/regex/src/data.rs`: external_body: `cs_range`
-- `crates/regex/src/lanes.rs`: plain Rust
-- `crates/regex/src/tables.rs`: plain Rust
+- `crates/regex/src/lanes.rs`: plain Rust, 6 lines
+- `crates/regex/src/tables.rs`: plain Rust, 1579 lines
+
+### resolver
+
+- `crates/resolver/src/lib.rs`: plain Rust, 22 lines
+- `crates/resolver/src/net.rs`: plain Rust, 98 lines
+- `crates/resolver/src/resolve.rs`: external_body: `exchange`, `exchange`, `now`, `random`, `lookup`, `lookup`, `insert`
+- `crates/resolver/src/service.rs`: plain Rust, 297 lines
+- `crates/resolver/src/bin/verilith-resolver.rs`: plain Rust, 79 lines
 
 ### server
 
 - `crates/server/src/conn.rs`: external_body: `decode_in`; 1 assume_new
-- `crates/server/src/date.rs`: plain Rust
-- `crates/server/src/defer.rs`: plain Rust
-- `crates/server/src/files.rs`: plain Rust
-- `crates/server/src/h1.rs`: plain Rust
-- `crates/server/src/h2.rs`: plain Rust
-- `crates/server/src/h3.rs`: plain Rust
-- `crates/server/src/lib.rs`: plain Rust
-- `crates/server/src/tls.rs`: plain Rust
-- `crates/server/src/worker.rs`: plain Rust
-- `crates/server/src/worker_uring.rs`: plain Rust
-- `crates/server/src/bin/verilith-server.rs`: plain Rust
-- `crates/server/src/sys/linux.rs`: plain Rust
-- `crates/server/src/sys/macos.rs`: plain Rust
-- `crates/server/src/sys/mod.rs`: plain Rust
-- `crates/server/src/sys/uring.rs`: plain Rust
+- `crates/server/src/date.rs`: plain Rust, 53 lines
+- `crates/server/src/defer.rs`: plain Rust, 130 lines
+- `crates/server/src/files.rs`: plain Rust, 269 lines
+- `crates/server/src/h1.rs`: plain Rust, 386 lines
+- `crates/server/src/h2.rs`: plain Rust, 443 lines
+- `crates/server/src/h3.rs`: plain Rust, 715 lines
+- `crates/server/src/lib.rs`: plain Rust, 98 lines
+- `crates/server/src/tls.rs`: plain Rust, 717 lines
+- `crates/server/src/worker.rs`: plain Rust, 582 lines
+- `crates/server/src/worker_uring.rs`: plain Rust, 462 lines
+- `crates/server/src/bin/verilith-server.rs`: plain Rust, 108 lines
+- `crates/server/src/sys/linux.rs`: plain Rust, 352 lines
+- `crates/server/src/sys/macos.rs`: plain Rust, 177 lines
+- `crates/server/src/sys/mod.rs`: plain Rust, 445 lines
+- `crates/server/src/sys/uring.rs`: plain Rust, 415 lines
+
+### serverless
+
+- `crates/serverless/src/lib.rs`: plain Rust, 203 lines
+- `crates/serverless/src/bin/verilith-serverless.rs`: plain Rust, 56 lines
 
 ### sha2
 
 - `crates/sha2/src/armv8.rs`: external_body: `has_sha2`, `has_sha512`, `vsha256hq`, `vsha256h2q`, `vsha256su0q`, `vsha256su1q`, `vsha512hq`, `vsha512h2q`, `vsha512su0q`, `vsha512su1q`, `vrev32q_u8`, `vrev64q_u8`, `vaddq_u64`, `vld1q_u64_at`, `vst1q_u64_at`, `compress_blocks`, `compress512_blocks`
 - `crates/sha2/src/avx2.rs`: external_body: `barrier`, `schedule512x2`, `schedule256x2`
-- `crates/sha2/src/capi.rs`: plain Rust
+- `crates/sha2/src/capi.rs`: plain Rust, 191 lines
 - `crates/sha2/src/cpu.rs`: external_body: `bmi2_256`, `bmi2_512`, `avx2_256`, `avx2_512`, `pair256_avx2`, `pair_avx2`
-- `crates/sha2/src/digest_impls.rs`: plain Rust
-- `crates/sha2/src/lib.rs`: plain Rust
+- `crates/sha2/src/digest_impls.rs`: plain Rust, 117 lines
+- `crates/sha2/src/lib.rs`: plain Rust, 54 lines
 - `crates/sha2/src/shani.rs`: external_body: `has_shani`, `sha256rnds2`, `sha256msg1`, `sha256msg2`, `blend_epi16`, `compress_blocks`
 - `crates/sha2/src/store.rs`: external_body: `put_u32_be`, `put_u64_be`
 
@@ -256,10 +279,10 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/simd/src/avx512.rs`: external_body: `b512`, `load512_u8`, `store512_u32`, `_mm512_set1_epi8`, `_mm512_set1_epi32`, `_mm512_broadcast_i32x4`, `_mm512_cvtepu8_epi32`, `_mm512_castsi512_si128`, `_mm512_extracti32x4_epi32`, `_mm512_and_si512`, `_mm512_or_si512`, `_mm512_xor_si512`, `_mm512_add_epi32`, `_mm512_subs_epu8`, `_mm512_shuffle_epi8`, `_mm512_srli_epi16`, `_mm512_cmpeq_epi8_mask`, `_mm512_cmple_epu8_mask`, `_mm512_test_epi8_mask`, `_mm512_maskz_compress_epi8`; axioms: `axiom_b512_len`; ext. types: `ExM512i`
 - `crates/simd/src/clmul.rs`: external_body: `has_pclmul`, `has_vpclmul`, `has_vpclmul256`, `xv`, `xv`, `xv`, `x_load`, `x_set`, `x_get`, `x_xor`, `x_fold`, `x_clmul_lo`, `x_shr64`, `x_shr32`, `x_and`, `x_low64`, `y_load`, `y_reg`, `y_splat`, `y_xor`, `y_fold`, `y_block`, `z_load`, `z_reg`, `z_splat`, `z_xor`, `z_fold`, `z_block`; axioms: `axiom_vpclmul_pclmul`, `axiom_zl_len`, `axiom_yl_len`
 - `crates/simd/src/cpu.rs`: external_body: `has_avx2`, `has_sse41`, `has_ssse3`, `compiled_with_ssse3`, `has_bmi2`, `has_pclmul`, `has_avx512bw`, `has_avx512vbmi2`, `has_popcnt`; axioms: `axiom_feature_implications`, `axiom_avx512_implications`
-- `crates/simd/src/emu.rs`: plain Rust
-- `crates/simd/src/emu_neon.rs`: plain Rust
+- `crates/simd/src/emu.rs`: plain Rust, 588 lines
+- `crates/simd/src/emu_neon.rs`: plain Rust, 374 lines
 - `crates/simd/src/lanes.rs`: external_body: `b128`, `b128`; axioms: `axiom_b128_len`, `axiom_b256_len`; ext. types: `ExM128i`, `ExM256i`
-- `crates/simd/src/lib.rs`: plain Rust
+- `crates/simd/src/lib.rs`: plain Rust, 54 lines
 - `crates/simd/src/mem.rs`: external_body: `load128_u8`, `load256_u8`, `load128_u32`, `load256_u32`, `store128_u8`, `store256_u8`, `store128_u32`, `store256_u32`, `load128_u64`, `store128_u64`, `load256_u16`, `store256_u16`, `load128_i16`, `store128_i16`, `loadl64_u8`, `storel64_u8`, `storel32_u8`
 - `crates/simd/src/neon.rs`: external_body: `n8`, `has_neon`, `has_neon_sse`, `axiom_neon_x86`, `vld1q_u8_at`, `vst1q_u8_at`, `vld1q_u16_at`, `vst1q_u16_at`, `vld1q_u32_at`, `vst1q_u32_at`, `vdupq_n_u8`, `vandq_u8`, `vorrq_u8`, `veorq_u8`, `vaddq_u8`, `vqsubq_u8`, `vceqq_u8`, `vshrq_n_u8`, `vqtbl1q_u8`, `vextq_u8`, `vzip1q_u8`, `vzip2q_u8`, `vuzp1q_u8`, `vmaxvq_u8`, `vmaxvq_u16`, `vpaddq_u8`, `vshrn4_u64`, `vgetq_lane_u64_0`, `vdupq_n_u32`, `vdupq_laneq_u32_3`, `vld1q_s16_at`, `vst1q_s16_at`, `vdupq_n_s16`, `vaddq_s16`, `vsubq_s16`, `vshrq_n_s16`, `vqdmulhq_s16`, `vzip1q_u16`, `vzip2q_u16`, `vzip1q_u32`, `vzip2q_u32`, `vzip1q_u64`, `vzip2q_u64`, `vrhaddq_u8`, `vsubq_u8`, `vqsubq_u16`, `vshll_low_n_u8`, `vshll_high_n_u8`, `vqshrun2_n_s16`, `vqshrn2_n_u16`, `vmaxq_u8`, `vabdq_u8`, `vcleq_u8`, `vqaddq_u8`, `vbicq_u8`, `vqaddq_s8`, `vqsubq_s8`, `vshrq_n_s8`, `vqshrn2_n_s16`, `vld1q_u8_low_at`, `vst1q_u8_low_at`, `vcombine_u64`, `vst1q_lane_u32_at`, `vmulq_u8`, `vmulq_u16`, `vmulq_u32`, `vpaddlq_u8`, `vpaddlq_u16`, `vpaddlq_u32`, `vgetq_lane_u64_1`, `vabsq_s16`, `vmaxq_u16`, `vmull_lo_s16`, `vmull_hi_s16`, `vaddq_u32`, `vsubq_u32`, `vrshrq_n_s32`, `vshlq_n_u32`, `vuzp2q_u16`, `vst3q_u8_at`, `vmull_lo_laneq_s16`, `vmull_hi_laneq_s16`, `vmlal_lo_laneq_s16`, `vmlal_hi_laneq_s16`, `vrshrn2_n_s32`, `vrshrn_lo_n_s32`, `vqaddq_u16`, `vaddlvq_u16`; axioms: `axiom_n8_len`; ext. types: `ExUint8x16`
 - `crates/simd/src/safe.rs`: external_body: `_mm_add_epi8`, `_mm_sub_epi8`, `_mm_adds_epu8`, `_mm_subs_epu8`, `_mm_adds_epi8`, `_mm_subs_epi8`, `_mm_subs_epu16`, `_mm_min_epu8`, `_mm_max_epu8`, `_mm_avg_epu8`, `_mm_cmpeq_epi8`, `_mm_cmpgt_epi8`, `_mm_add_epi16`, `_mm_sub_epi16`, `_mm_mullo_epi16`, `_mm_mulhi_epi16`, `_mm_mulhi_epu16`, `_mm_cmpeq_epi16`, `_mm_madd_epi16`, `_mm_add_epi32`, `_mm_sub_epi32`, `_mm_cmpeq_epi32`, `_mm_cmpgt_epi32`, `_mm_add_epi64`, `_mm_sad_epu8`, `_mm_unpacklo_epi8`, `_mm_unpackhi_epi8`, `_mm_unpacklo_epi16`, `_mm_unpackhi_epi16`, `_mm_unpacklo_epi32`, `_mm_unpackhi_epi32`, `_mm_unpacklo_epi64`, `_mm_unpackhi_epi64`, `_mm_packus_epi16`, `_mm_packs_epi16`, `_mm_packs_epi32`, `_mm_shuffle_epi8`, `_mm_maddubs_epi16`, `_mm_and_si128`, `_mm_or_si128`, `_mm_xor_si128`, `_mm_andnot_si128`, `_mm_blendv_epi8`, `_mm_srli_epi16`, `_mm_slli_epi16`, `_mm_srai_epi16`, `_mm_srli_epi32`, `_mm_slli_epi32`, `_mm_srli_epi64`, `_mm_slli_epi64`, `_mm_shuffle_epi32`, `_mm_slli_si128`, `_mm_srli_si128`, `_mm_alignr_epi8`, `_mm_movemask_epi8`, `_mm_setzero_si128`, `_mm_set1_epi8`, `_mm_set1_epi16`, `_mm_set1_epi32`, `_mm_set1_epi64x`, `_mm_setr_epi32`, `_mm_setr_epi8`, `_mm256_add_epi8`, `_mm256_sub_epi8`, `_mm256_adds_epu8`, `_mm256_subs_epu8`, `_mm256_adds_epi8`, `_mm256_subs_epi8`, `_mm256_subs_epu16`, `_mm256_min_epu8`, `_mm256_max_epu8`, `_mm256_avg_epu8`, `_mm256_cmpeq_epi8`, `_mm256_cmpgt_epi8`, `_mm256_add_epi16`, `_mm256_sub_epi16`, `_mm256_mullo_epi16`, `_mm256_mulhi_epi16`, `_mm256_mulhi_epu16`, `_mm256_cmpeq_epi16`, `_mm256_madd_epi16`, `_mm256_add_epi32`, `_mm256_sub_epi32`, `_mm256_cmpeq_epi32`, `_mm256_cmpgt_epi32`, `_mm256_add_epi64`, `_mm256_sad_epu8`, `_mm256_unpacklo_epi8`, `_mm256_unpackhi_epi8`, `_mm256_unpacklo_epi16`, `_mm256_unpackhi_epi16`, `_mm256_unpacklo_epi32`, `_mm256_unpackhi_epi32`, `_mm256_unpacklo_epi64`, `_mm256_unpackhi_epi64`, `_mm256_packus_epi16`, `_mm256_packs_epi16`, `_mm256_packs_epi32`, `_mm256_shuffle_epi8`, `_mm256_maddubs_epi16`, `_mm256_and_si256`, `_mm256_or_si256`, `_mm256_xor_si256`, `_mm256_andnot_si256`, `_mm256_blendv_epi8`, `_mm256_srli_epi16`, `_mm256_slli_epi16`, `_mm256_srai_epi16`, `_mm256_srli_epi32`, `_mm256_slli_epi32`, `_mm256_srli_epi64`, `_mm256_slli_epi64`, `_mm256_shuffle_epi32`, `_mm256_bslli_epi128`, `_mm256_bsrli_epi128`, `_mm256_alignr_epi8`, `_mm256_movemask_epi8`, `_mm256_setzero_si256`, `_mm256_set1_epi8`, `_mm256_set1_epi16`, `_mm256_set1_epi32`, `_mm256_set1_epi64x`, `_mm256_setr_epi32`, `_mm256_setr_epi8`, `_mm_cvtsi32_si128`, `_mm_cvtsi128_si32`, `_mm_cvtsi64_si128`, `_mm_cvtsi128_si64`, `_mm256_castsi256_si128`, `_mm256_extracti128_si256`, `_mm256_set_m128i`, `_mm256_permutevar8x32_epi32`, `_mm256_permute2x128_si256`, `_mm_setr_epi16`, `_mm256_broadcastsi128_si256`, `_mm256_testz_si256`, `_mm_clmulepi64_si128`, `_mm_abs_epi16`, `_mm_adds_epu16`, `_mm_max_epu16`, `_mm_mullo_epi32`, `_mm_sll_epi16`, `_mm_sra_epi16`, `_mm_sll_epi32`, `_mm_sra_epi32`
@@ -272,13 +295,13 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### snappy
 
-- `crates/snappy/src/capi.rs`: plain Rust
+- `crates/snappy/src/capi.rs`: plain Rust, 85 lines
 
 ### sync
 
 - `crates/sync/src/array_queue.rs`: 4 assume_new; no termination check: `push_atomic`, `pop_atomic`, `len`
 - `crates/sync/src/chan_sync.rs`: no termination check: `slow`, `add_handle`
-- `crates/sync/src/channel.rs`: plain Rust
+- `crates/sync/src/channel.rs`: plain Rust, 314 lines
 - `crates/sync/src/fair.rs`: external_body: `bomb`, `bomb`, `defuse`; no termination check: `lock`
 - `crates/sync/src/lot.rs`: external_body: `key`, `key`, `lock_bucket`, `unlock_bucket`; 2 assume_new
 - `crates/sync/src/model.rs`: axioms: `pool_nonempty`
@@ -287,74 +310,74 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/sync/src/rwlock.rs`: external_body: `key`; 1 assume_new; no termination check: `park`, `read_slow`, `write_slow`
 - `crates/sync/src/spsc.rs`: 4 assume_new
 - `crates/sync/src/util.rs`: external_body: `arc_clone`, `exhausted`, `no_deadline`, `no_deadline`, `leaked_guard`, `spin_hint`, `new`, `new`, `spin`, `snooze`, `is_completed`, `wait_turn`, `current`, `current`, `unpark`, `is_timed`, `time_left`, `time_left`, `park_for`; ext. types: `ExDeadline`
-- `crates/sync/src/progress/mod.rs`: plain Rust
+- `crates/sync/src/progress/mod.rs`: plain Rust, 7 lines
 
 ### text
 
-- `crates/text/src/capi.rs`: plain Rust
-- `crates/text/src/capi_utf.rs`: plain Rust
-- `crates/text/src/lib.rs`: plain Rust
-- `crates/text/src/base64/api.rs`: plain Rust
+- `crates/text/src/capi.rs`: plain Rust, 527 lines
+- `crates/text/src/capi_utf.rs`: plain Rust, 633 lines
+- `crates/text/src/lib.rs`: plain Rust, 17 lines
+- `crates/text/src/base64/api.rs`: plain Rust, 150 lines
 - `crates/text/src/base64/avx2.rs`: external_body: `encode_bulk`, `decode_bulk`
-- `crates/text/src/base64/mod.rs`: plain Rust
+- `crates/text/src/base64/mod.rs`: plain Rust, 13 lines
 - `crates/text/src/hex/avx2.rs`: external_body: `encode_bulk`, `decode_bulk`
-- `crates/text/src/hex/mod.rs`: plain Rust
+- `crates/text/src/hex/mod.rs`: plain Rust, 75 lines
 - `crates/text/src/idna/data.rs`: external_body: `iword`; axioms: `axiom_idna_trie`, `axiom_idna_mapping`, `axiom_idna_ascii`
-- `crates/text/src/idna/mod.rs`: plain Rust
+- `crates/text/src/idna/mod.rs`: plain Rust, 85 lines
 - `crates/text/src/unicode/data.rs`: external_body: `is_scalar`; axioms: `axiom_decomp_scalar`, `axiom_comp`, `axiom_bb`, `axiom_pool`, `axiom_jamo`, `axiom_trie`, `axiom_ascii`, `axiom_fast_below`
-- `crates/text/src/unicode/mod.rs`: plain Rust
+- `crates/text/src/unicode/mod.rs`: plain Rust, 71 lines
 - `crates/text/src/unicode/spec.rs`: axioms: `axiom_fast`, `axiom_decomp_ordered`
 - `crates/text/src/utf/conv.rs`: external_body: `ascii_prefix_avx2`, `latin1_to_utf8_avx2`, `latin1_to_utf8_safe_avx2`, `latin1_to_utf16_avx2`, `utf16_to_latin1_avx2`, `utf8_to_utf16_avx2`, `utf8_to_latin1_avx2`, `utf16_to_utf8_avx2`, `count_latin1_utf8_avx2`, `count_utf8_avx2`, `count_utf16_avx2`
-- `crates/text/src/utf/mod.rs`: plain Rust
+- `crates/text/src/utf/mod.rs`: plain Rust, 5 lines
 - `crates/text/src/utf/valid8.rs`: external_body: `utf8_avx2`
 
 ### tiff
 
-- `crates/tiff/src/capi.rs`: plain Rust
-- `crates/tiff/src/lib.rs`: plain Rust
+- `crates/tiff/src/capi.rs`: plain Rust, 1143 lines
+- `crates/tiff/src/lib.rs`: plain Rust, 14 lines
 
 ### tls
 
 - `crates/tls/src/ct.rs`: external_body: `declassify`
-- `crates/tls/src/lib.rs`: plain Rust
-- `crates/tls/src/stream.rs`: plain Rust
+- `crates/tls/src/lib.rs`: plain Rust, 26 lines
+- `crates/tls/src/stream.rs`: plain Rust, 114 lines
 
 ### tls-aws-lc
 
-- `crates/tls-aws-lc/src/hpke.rs`: plain Rust
-- `crates/tls-aws-lc/src/lib.rs`: plain Rust
+- `crates/tls-aws-lc/src/hpke.rs`: plain Rust, 171 lines
+- `crates/tls-aws-lc/src/lib.rs`: plain Rust, 536 lines
 
 ### url
 
-- `crates/url/src/capi.rs`: plain Rust
-- `crates/url/src/compat.rs`: plain Rust
+- `crates/url/src/capi.rs`: plain Rust, 623 lines
+- `crates/url/src/compat.rs`: plain Rust, 445 lines
 - `crates/url/src/host.rs`: external_body: `capacity`
-- `crates/url/src/lib.rs`: plain Rust
-- `crates/url/src/public.rs`: plain Rust
-- `crates/url/src/setters.rs`: plain Rust
+- `crates/url/src/lib.rs`: plain Rust, 39 lines
+- `crates/url/src/public.rs`: plain Rust, 129 lines
+- `crates/url/src/setters.rs`: plain Rust, 75 lines
 
 ### verilith
 
-- `crates/verilith/src/lib.rs`: plain Rust
+- `crates/verilith/src/lib.rs`: plain Rust, 67 lines
 
 ### wasm
 
-- `crates/wasm/src/api.rs`: plain Rust
-- `crates/wasm/src/capi.rs`: plain Rust
-- `crates/wasm/src/decode.rs`: plain Rust
+- `crates/wasm/src/api.rs`: plain Rust, 385 lines
+- `crates/wasm/src/capi.rs`: plain Rust, 718 lines
+- `crates/wasm/src/decode.rs`: plain Rust, 686 lines
 - `crates/wasm/src/fops.rs`: external_body: `exec_un`, `exec_bin`, `exec_cmp`, `exec_cvt`
 - `crates/wasm/src/instance.rs`: external_body: `memory_mut`
 - `crates/wasm/src/interp.rs`: external_body: `call_host`
 - `crates/wasm/src/prims.rs`: external_body: `load`, `store`, `idx`, `cur_at`, `cur_off`, `cur_next`, `cur_get`
 - `crates/wasm/src/reg.rs`: external_body: `jmp_at`, `sink`, `tr_shape`, `tr_run`, `translate`, `fuse_copies`, `trivial`
 - `crates/wasm/src/run.rs`: no termination check: `execute`, `execute_metered`
-- `crates/wasm/src/validate.rs`: plain Rust
+- `crates/wasm/src/validate.rs`: plain Rust, 551 lines
 
 ### webp
 
-- `crates/webp/src/capi.rs`: plain Rust
-- `crates/webp/src/huffman.rs`: plain Rust
-- `crates/webp/src/lib.rs`: plain Rust
+- `crates/webp/src/capi.rs`: plain Rust, 605 lines
+- `crates/webp/src/huffman.rs`: plain Rust, 1 lines
+- `crates/webp/src/lib.rs`: plain Rust, 61 lines
 - `crates/webp/src/pxops.rs`: external_body: `opaque32`
 - `crates/webp/src/vp8tables.rs`: external_body: `coeffs_proba0`, `coeffs_update_proba`, `bmodes_proba`, `dc_table`, `ac_table`
 - `crates/webp/src/vpred.rs`: external_body: `unpredict_avx2`
@@ -362,42 +385,42 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### x509
 
-- `crates/x509/src/api.rs`: plain Rust
-- `crates/x509/src/error.rs`: plain Rust
-- `crates/x509/src/lib.rs`: plain Rust
-- `crates/x509/src/mbedtls.rs`: plain Rust
-- `crates/x509/src/mbedtls_err.rs`: plain Rust
-- `crates/x509/src/native.rs`: plain Rust
+- `crates/x509/src/api.rs`: plain Rust, 153 lines
+- `crates/x509/src/error.rs`: plain Rust, 152 lines
+- `crates/x509/src/lib.rs`: plain Rust, 52 lines
+- `crates/x509/src/mbedtls.rs`: plain Rust, 430 lines
+- `crates/x509/src/mbedtls_err.rs`: plain Rust, 573 lines
+- `crates/x509/src/native.rs`: plain Rust, 394 lines
 
 ### xml
 
-- `crates/xml/src/api.rs`: plain Rust
-- `crates/xml/src/lib.rs`: plain Rust
+- `crates/xml/src/api.rs`: plain Rust, 664 lines
+- `crates/xml/src/lib.rs`: plain Rust, 80 lines
 - `crates/xml/src/pe.rs`: external_body: `load_model`, `count`, `bytes`, `fetch`, `note_push`, `note_fetch`, `note_pop`
 - `crates/xml/src/tape.rs`: external_body: `slice_len_bound`
 - `crates/xml/src/uniq.rs`: external_body: `seed`
-- `crates/xml/src/api/expat.rs`: plain Rust
-- `crates/xml/src/api/libxml2/codes.rs`: plain Rust
-- `crates/xml/src/api/libxml2/io.rs`: plain Rust
-- `crates/xml/src/api/libxml2/mod.rs`: plain Rust
-- `crates/xml/src/api/libxml2/parser.rs`: plain Rust
-- `crates/xml/src/api/libxml2/recover.rs`: plain Rust
-- `crates/xml/src/api/libxml2/save.rs`: plain Rust
-- `crates/xml/src/api/libxml2/sax2.rs`: plain Rust
-- `crates/xml/src/api/libxml2/scan.rs`: plain Rust
-- `crates/xml/src/api/libxml2/tree.rs`: plain Rust
+- `crates/xml/src/api/expat.rs`: plain Rust, 3366 lines
+- `crates/xml/src/api/libxml2/codes.rs`: plain Rust, 84 lines
+- `crates/xml/src/api/libxml2/io.rs`: plain Rust, 162 lines
+- `crates/xml/src/api/libxml2/mod.rs`: plain Rust, 1993 lines
+- `crates/xml/src/api/libxml2/parser.rs`: plain Rust, 5395 lines
+- `crates/xml/src/api/libxml2/recover.rs`: plain Rust, 975 lines
+- `crates/xml/src/api/libxml2/save.rs`: plain Rust, 1354 lines
+- `crates/xml/src/api/libxml2/sax2.rs`: plain Rust, 851 lines
+- `crates/xml/src/api/libxml2/scan.rs`: plain Rust, 328 lines
+- `crates/xml/src/api/libxml2/tree.rs`: plain Rust, 3299 lines
 
 ### zlib
 
-- `crates/zlib/src/capi.rs`: plain Rust
-- `crates/zlib/src/checksum.rs`: plain Rust
-- `crates/zlib/src/lib.rs`: plain Rust
+- `crates/zlib/src/capi.rs`: plain Rust, 1303 lines
+- `crates/zlib/src/checksum.rs`: plain Rust, 1 lines
+- `crates/zlib/src/lib.rs`: plain Rust, 50 lines
 - `crates/zlib/src/par.rs`: external_body: `run`
 - `crates/zlib/src/simd.rs`: external_body: `run`
 
 ### zstd
 
-- `crates/zstd/src/capi.rs`: plain Rust
-- `crates/zstd/src/ccapi.rs`: plain Rust
+- `crates/zstd/src/capi.rs`: plain Rust, 861 lines
+- `crates/zstd/src/ccapi.rs`: plain Rust, 470 lines
 - `crates/zstd/src/cpu.rs`: external_body: `run_seqs`, `run_check`, `run_huf4`, `run_huf1`
 - `crates/zstd/src/prims.rs`: external_body: `put_pairs4`, `extend_from`

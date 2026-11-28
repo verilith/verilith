@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 verilith-wasm = { path = ".." }
-wasmi = "=2.0.2"
+wasmi = "=2.0.3"
 wasm-smith = "=0.263.0"
 arbitrary = "1"
 

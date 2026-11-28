@@ -6,7 +6,7 @@
 //!   A connection goes on only once its first 24 bytes are exactly the
 //!   preface, and is refused as soon as a byte differs.
 //! - [`request_fields`]: a request's decoded fields (§8.2, §8.3), against
-//!   the fold [`fields_seen`]. They are a request only if every name is
+//!   the fold `fields_seen`. They are a request only if every name is
 //!   non-empty and lowercase, no value holds NUL, CR or LF, the
 //!   pseudo-header fields come first and are exactly one each of
 //!   `:method`, `:scheme` and a non-empty `:path` with at most one
@@ -16,17 +16,17 @@
 //!   the core to count DATA against (§8.1.1). HTTP/3 (`h3.rs`) checks its
 //!   requests with the same function (RFC 9114 §4.3).
 //! - [`write_headers`]: a response's header block as HEADERS then
-//!   CONTINUATION frames ([`header_frames`]). A receiver following
+//!   CONTINUATION frames (`header_frames`). A receiver following
 //!   verilith-h2's specification reads the bytes back as exactly those
-//!   frames ([`lemma_reads_as`]): all on the stream, END_STREAM on HEADERS
+//!   frames (`lemma_reads_as`): all on the stream, END_STREAM on HEADERS
 //!   as asked, END_HEADERS on the last frame only, each fragment at most
 //!   [`CHUNK`] bytes, and the fragments, joined, the block
-//!   ([`lemma_header_frames`]).
+//!   (`lemma_header_frames`).
 //! - [`data_head`]: a DATA frame's header; it and `n` body bytes are
-//!   exactly a DATA frame with those bytes ([`lemma_data_frame`]). Which
+//!   exactly a DATA frame with those bytes (`lemma_data_frame`). Which
 //!   bytes of the body, how many and when END_STREAM is set is
 //!   [`crate::h2core::Core::send_data`]'s.
-//! - [`lemma_response_rt`]: a whole response as the core sends it, its
+//! - `lemma_response_rt`: a whole response as the core sends it, its
 //!   header frames then its DATA frames in the sizes `send_data` chose,
 //!   reads back as exactly those frames: the block, then exactly the body,
 //!   END_STREAM on the last DATA frame (or on HEADERS, for an empty body)
@@ -405,7 +405,7 @@ fn is_trailers(v: &[u8]) -> (r: bool)
     eq(v, &t)
 }
 
-/// [`request_fields_spec`]: None if the fields (spans into `a`) are not
+/// `request_fields_spec`: None if the fields (spans into `a`) are not
 /// a valid request (§8.3); otherwise the Content-Length they declare, if
 /// any, for the core to check the stream's DATA against (§8.1.1).
 pub fn request_fields(a: &[u8], fields: &[Header]) -> (r: Option<Option<u64>>)
@@ -741,7 +741,7 @@ proof fn lemma_ser_cons(f: spec::Frame, t: Seq<spec::Frame>)
 }
 
 /// Appends the header block `block` of stream `id`, as
-/// [`header_frames`] with fragments of [`CHUNK`] bytes, for a peer whose
+/// `header_frames` with fragments of [`CHUNK`] bytes, for a peer whose
 /// SETTINGS_MAX_FRAME_SIZE is `max`.
 pub fn write_headers(id: u32, block: &[u8], end_stream: bool, max: u32, out: &mut Vec<u8>)
     requires

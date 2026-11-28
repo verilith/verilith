@@ -16,6 +16,9 @@
 // * `decode`  - verified line-end and attribute-value normalization.
 // * `scan`, `lanes` - the SSE2 scanners, verified over verilith-simd.
 // * `tape`    - the tokens the parser writes.
+// * `walk`    - the order the C ABIs report content in (`items`), and the
+//   verified cursor that gives it.
+// * `ns`      - namespaces as the expat ABI reports them, verified.
 // * `pe_spec`, `pe` - the DTD read whole: parameter entities, conditional
 //   sections, the external subset (`parse_with`), verified.
 // * `stream_spec`, `stream`, `push`, `reader` - the push parser, verified;
@@ -74,6 +77,10 @@ pub mod stream;
 pub mod push;
 pub mod reader;
 pub mod tape;
+#[doc(hidden)]
+pub mod walk;
+#[doc(hidden)]
+pub mod ns;
 #[doc(hidden)]
 pub mod uniq;
 

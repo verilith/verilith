@@ -810,6 +810,9 @@ pub open spec fn tiff_work(n: nat, px: nat) -> nat {
 /// the strips or tiles, decoded, would take more than `limit` bytes in all,
 /// or would read more bytes of the file than the file has and they decode
 /// to, together; only strips or tiles that share their data can.
+// The default budget is too small for z3's Arm build here; x86 needs less.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(40)]
 pub fn decode_counted(b: &[u8], limit: usize) -> (r: (Result<Tiff, Error>, Ghost<(nat, nat)>))
     ensures
         match r.0 {
