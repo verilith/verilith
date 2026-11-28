@@ -11,7 +11,7 @@
 //! with which framing is still theirs.
 //!
 //! [`register`] lets a handler watch its own sockets on the worker's
-//! poller; events for them come to [`Handler::on_io`]
+//! poller; events for them come to `Handler::on_io`
 //! (crate::Handler::on_io) on the same thread, and
 //! [`Handler::poll_timers`](crate::Handler::poll_timers) runs once per loop
 //! turn.

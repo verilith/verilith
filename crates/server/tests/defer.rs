@@ -64,11 +64,11 @@ impl Handler for H {
                 std::thread::spawn(move || {
                     std::thread::sleep(Duration::from_millis(10));
                     unsafe extern "C" {
-                        fn write(fd: i32, b: *const u8, n: usize) -> isize;
+                        fn write(fd: i32, b: *const std::ffi::c_void, n: usize) -> isize;
                         fn close(fd: i32) -> i32;
                     }
                     unsafe {
-                        write(w, b"x".as_ptr(), 1);
+                        write(w, b"x".as_ptr().cast(), 1);
                         close(w);
                     }
                 });

@@ -140,6 +140,7 @@ fn decode16(s: &[u16], i: usize, Ghost(c): Ghost<u32>) -> (r: (u32, usize))
     decode16_u(s, i, u, Ghost(c))
 }
 
+/// Appends scalar `c` to `out` in UTF-16 (one unit, or a surrogate pair).
 #[inline(always)]
 pub fn push16(out: &mut Vec<u16>, c: u32)
     requires

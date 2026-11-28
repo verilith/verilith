@@ -1,11 +1,11 @@
 //! Verified caching rules (RFC 9111): what the proxy's shared cache may
 //! store, for how long, and when a request bypasses it.
 //!
-//! [`cc_of`] reads a Cache-Control list (RFC 9111 §5.2): comma-separated
+//! `cc_of` reads a Cache-Control list (RFC 9111 §5.2): comma-separated
 //! directives, where a comma inside a quoted string does not separate
 //! (so `private="a, b"` is one directive), names compared ignoring case,
 //! and `max-age` and `s-maxage` taken from their first occurrence, as
-//! delta-seconds capped at 2^31 (§1.2.2). [`storable`] is §3 for a shared
+//! delta-seconds capped at 2^31 (§1.2.2). `storable` is §3 for a shared
 //! cache, narrowed: only GET, only the status codes RFC 9110 §15.1 calls
 //! heuristically cacheable (never 206 or 304), never `no-store` in the
 //! request or response, never `private` or `no-cache` (the proxy does
@@ -13,7 +13,7 @@
 //! says `public`, `must-revalidate` or `s-maxage` (§3.5), never a
 //! response that sets a cookie or varies on anything but
 //! Accept-Encoding, and only with an explicit lifetime (`s-maxage`, else
-//! `max-age`: no heuristic freshness, no Expires). [`fresh`] is §4.2:
+//! `max-age`: no heuristic freshness, no Expires). `fresh` is §4.2:
 //! the lifetime exceeds the age (the backend's `Age` plus the time the
 //! response has been stored). [`decide`] computes all of it exactly.
 use vstd::prelude::*;
@@ -293,7 +293,7 @@ proof fn lemma_eq_at(s: Seq<u8>, i: int)
     }
 }
 
-/// [`delta`], as a u64 (at most 2^31).
+/// `delta`, as a u64 (at most 2^31).
 pub fn delta_exec(s: &[u8]) -> (r: Option<u64>)
     ensures
         match delta(s@) {
@@ -429,7 +429,7 @@ fn cc_step_exec(c: Cc, d: &[u8]) -> (r: Cc)
     }
 }
 
-/// [`cc_of`]: the Cache-Control directives of `v`.
+/// `cc_of`: the Cache-Control directives of `v`.
 pub fn cc_exec(v: &[u8]) -> (r: Cc)
     ensures
         r@ == cc_of(v@),
@@ -528,7 +528,7 @@ proof fn lemma_item_end_past(v: Seq<u8>, i: int, q: bool)
 {
 }
 
-/// [`lifetime`], in seconds.
+/// `lifetime`, in seconds.
 pub fn lifetime_exec(r: &Cc) -> (n: u64)
     requires
         capped(*r),
@@ -554,7 +554,7 @@ fn cacheable_status_exec(s: u16) -> (r: bool)
         || s == 414 || s == 501
 }
 
-/// [`storable`], and if so the lifetime (seconds).
+/// `storable`, and if so the lifetime (seconds).
 pub fn decide(q: &ReqFacts, r: &RespFacts) -> (out: Option<u64>)
     requires
         capped(r.cc),
@@ -569,7 +569,7 @@ pub fn decide(q: &ReqFacts, r: &RespFacts) -> (out: Option<u64>)
     if ok { Some(life) } else { None }
 }
 
-/// [`bypass`].
+/// `bypass`.
 pub fn bypass_exec(q: &Cc, pragma_no_cache: bool) -> (r: bool)
     ensures
         r == bypass(q@, pragma_no_cache),
@@ -577,7 +577,7 @@ pub fn bypass_exec(q: &Cc, pragma_no_cache: bool) -> (r: bool)
     q.no_cache || q.no_store || matches!(q.max_age, Some(Some(0))) || pragma_no_cache
 }
 
-/// [`fresh`].
+/// `fresh`.
 pub fn fresh_exec(lifetime: u64, age: u64, resident: u64) -> (r: bool)
     ensures
         r == fresh(lifetime as nat, age as nat, resident as nat),

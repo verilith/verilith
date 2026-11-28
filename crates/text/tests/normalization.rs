@@ -233,7 +233,7 @@ fn no_sur32_exact() {
             assert_eq!(verilith_text::utf::neon::no_sur32_neon(&s, 3), want, "neon {u:04X} at {p}");
             #[cfg(target_arch = "x86_64")]
             if std::is_x86_feature_detected!("avx2") {
-                assert_eq!(unsafe { verilith_text::utf::avx2::no_sur32(&s, 3) }, want, "avx2 {u:04X} at {p}");
+                assert_eq!(verilith_text::utf::avx2::no_sur32(&s, 3), want, "avx2 {u:04X} at {p}");
             }
         }
     }

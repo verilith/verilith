@@ -83,9 +83,9 @@ impl Func {
     }
 
     /// Serves one request. On anything but [`Outcome::Fault`], the guest
-    /// ran from exactly [`Func::template`] (returned as ghost `start`),
-    /// with at most [`Func::fuel`] fuel and a new reply; on
-    /// [`Outcome::Done`] the reply satisfies [`reply_ok`] for `lim`.
+    /// ran from exactly `Func::template` (returned as ghost `start`),
+    /// with at most `Func::fuel` fuel and a new reply; on
+    /// [`Outcome::Done`] the reply satisfies `reply_ok` for `lim`.
     pub fn serve(self, req: Req, lim: Limits) -> (r: (Func, Outcome, Ghost<verilith_wasm::sem::Store>))
         ensures
             r.0.template() == self.template(),
