@@ -67,11 +67,68 @@ pub struct Options {
     pub format: Format,
     /// JPEG quality, 1 to 100 (0: the default, 80).
     pub quality: u32,
+    /// The resampling filter (`resizing_algorithm`).
+    pub filter: Filter,
+}
+
+/// A resampling filter: imgproxy's `resizing_algorithm` values, plus the
+/// area average this crate had first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Filter {
+    /// `lanczos3`, imgproxy's default.
+    Lanczos3,
+    Lanczos2,
+    /// `cubic`: Catmull-Rom, as libvips's `VIPS_KERNEL_CUBIC`.
+    Cubic,
+    /// `linear`: a triangle.
+    Linear,
+    /// `nearest`: a box of one sample (an average over each output
+    /// sample's cell when downscaling, not a pick of one source pixel).
+    Nearest,
+    /// `area` (not imgproxy's): the exact area average of `spec::resize`.
+    Area,
+}
+
+/// Fixed-point (`KONE` = 16384) samples of `f` every 1/256 over `[0, a)`.
+fn table(a: usize, f: impl Fn(f64) -> f64) -> Vec<i32> {
+    (0..a * 256).map(|j| (f(j as f64 / 256.0) * 16384.0).round().clamp(-32768.0, 32768.0) as i32).collect()
+}
+
+fn sinc(x: f64) -> f64 {
+    if x == 0.0 {
+        1.0
+    } else {
+        let p = std::f64::consts::PI * x;
+        p.sin() / p
+    }
+}
+
+/// The kernel table for a filter (`None` for `Area`). The tables only
+/// decide how the result looks: `lanczos::thumb_rgba` is proven to compute
+/// `spec_lanczos::thumb` for every table.
+pub fn kernel(f: Filter) -> Option<&'static [i32]> {
+    use std::sync::OnceLock;
+    static T: [OnceLock<Vec<i32>>; 5] = [OnceLock::new(), OnceLock::new(), OnceLock::new(), OnceLock::new(), OnceLock::new()];
+    let (i, a, k): (usize, usize, fn(f64) -> f64) = match f {
+        Filter::Lanczos3 => (0, 3, |x| sinc(x) * sinc(x / 3.0)),
+        Filter::Lanczos2 => (1, 2, |x| sinc(x) * sinc(x / 2.0)),
+        Filter::Cubic => (2, 2, |x| {
+            if x < 1.0 {
+                1.5 * x * x * x - 2.5 * x * x + 1.0
+            } else {
+                -0.5 * x * x * x + 2.5 * x * x - 4.0 * x + 2.0
+            }
+        }),
+        Filter::Linear => (3, 1, |x| 1.0 - x),
+        Filter::Nearest => (4, 1, |x| if x < 0.5 { 1.0 } else if x == 0.5 { 0.5 } else { 0.0 }),
+        Filter::Area => return None,
+    };
+    Some(T[i].get_or_init(|| table(a, k)).as_slice())
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { mode: Mode::Fit, w: 0, h: 0, enlarge: false, background: None, format: Format::Png, quality: 0 }
+        Options { mode: Mode::Fit, w: 0, h: 0, enlarge: false, background: None, format: Format::Png, quality: 0, filter: Filter::Lanczos3 }
     }
 }
 
@@ -201,6 +258,17 @@ fn option(o: &mut Options, seg: &[u8]) -> Result<(), Fail> {
         b"width" | b"w" => o.w = num(arg(0))?,
         b"height" | b"h" => o.h = num(arg(0))?,
         b"enlarge" | b"el" => o.enlarge = boolean(arg(0))?,
+        b"resizing_algorithm" | b"ra" => {
+            o.filter = match arg(0) {
+                b"lanczos3" => Filter::Lanczos3,
+                b"lanczos2" => Filter::Lanczos2,
+                b"cubic" => Filter::Cubic,
+                b"linear" => Filter::Linear,
+                b"nearest" => Filter::Nearest,
+                b"area" => Filter::Area,
+                _ => return Err(Fail::BadUrl("Invalid resizing algorithm")),
+            }
+        }
         b"background" | b"bg" => o.background = background(&args)?,
         b"quality" | b"q" => {
             let q = num(arg(0))?;
@@ -522,9 +590,17 @@ pub fn process(data: &[u8], o: &Options, lim: &Limits) -> Result<Vec<u8>, Fail> 
     }
     let (sw, sh) = (img.w as usize, img.h as usize);
     let (rw, rh) = (p.rw as usize, p.rh as usize);
-    // pre: resize_rgba (all sizes in 1..=MAX_DIM, ensured by plan_x; the
-    // products are below 2^34 on a 64-bit target).
-    let px = if (rw, rh) == (sw, sh) { img.px } else { crate::resize::resize_rgba(&img.px, sw, sh, rw, rh) };
+    // pre: resize_rgba and thumb_rgba (all sizes in 1..=MAX_DIM, ensured
+    // by plan_x; the products are below 2^34 on a 64-bit target; kernel's
+    // tables are 256 to 768 entries of at most 32768 in size).
+    let px = if (rw, rh) == (sw, sh) {
+        img.px
+    } else {
+        match kernel(o.filter) {
+            Some(kt) => crate::lanczos::thumb_rgba(kt, &img.px, sw, sh, rw, rh),
+            None => crate::resize::resize_rgba(&img.px, sw, sh, rw, rh),
+        }
+    };
     // pre: crop_rgba (plan_x ensures the rectangle is inside).
     let px = if (p.cx, p.cy, p.cw, p.ch) == (0, 0, p.rw, p.rh) {
         px
@@ -850,6 +926,21 @@ fn read_body<S: Read>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resizing_algorithms() {
+        assert_eq!(parse(b"/x/ra:cubic/plain/local:///a.png").unwrap().opts.filter, Filter::Cubic);
+        assert_eq!(parse(b"/x/plain/local:///a.png").unwrap().opts.filter, Filter::Lanczos3);
+        assert!(parse(b"/x/ra:bogus/plain/local:///a.png").is_err());
+        for f in [Filter::Lanczos3, Filter::Lanczos2, Filter::Cubic, Filter::Linear, Filter::Nearest] {
+            let kt = kernel(f).unwrap();
+            // pre: thumb_rgba's kt_ok.
+            assert!(kt.len() >= 256 && kt.len() <= 1024 && kt.len() % 256 == 0);
+            assert!(kt.iter().all(|&v| (-32768..=32768).contains(&v)));
+            assert_eq!(kt[0], 16384);
+        }
+        assert!(kernel(Filter::Area).is_none());
+    }
 
     #[test]
     fn origins() {
