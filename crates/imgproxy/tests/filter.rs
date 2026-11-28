@@ -1,6 +1,7 @@
 //! The filters against a direct computation of their specification, and
 //! their properties through the whole proxy.
-use verilith_imgproxy::filter::{blur_rgba, pixelate_rgba, premul_rgba, sharpen_rgba, unpremul_rgba};
+use verilith_imgproxy::colour;
+use verilith_imgproxy::filter::{blur_rgba, pixelate_rgba, premul_rgba, sharpen_l_x, unpremul_rgba};
 use verilith_imgproxy::mask;
 use verilith_imgproxy::proxy::{parse, process, Limits};
 
@@ -61,17 +62,53 @@ fn blur_matches_specification() {
         let (g, d) = gauss(sigma);
         let b = blur_rgba(&g, d, &src, w, h);
         assert_eq!(b, reference(&g, d, &src, w, h), "{w}x{h} sigma {sigma}");
-        let s = sharpen_rgba(&g, d, &src, w, h);
-        for k in 0..src.len() {
-            let want = if k % 4 == 3 { src[k] } else { (2 * src[k] as i32 - b[k] as i32).clamp(0, 255) as u8 };
-            assert_eq!(s[k], want);
-        }
     }
     // Any table and divisor, not only libvips's.
     let src = noise(9, 8, 99);
     let g = [3, 0, 65536, 17, 9];
     for d in [1, 7, 65625, 1 << 31] {
         assert_eq!(blur_rgba(&g, d, &src, 9, 8), reference(&g, d, &src, 9, 8));
+    }
+}
+
+/// `vips_sharpen`'s step on the lightness, written out directly.
+fn sharpen_ref(g: &[u32], d: i64, lut: &[i16], l: &[u16], w: usize, h: usize) -> Vec<u16> {
+    let r = (g.len() as i64 - 1) / 2;
+    let at = |i: i64, s: usize| i.clamp(0, s as i64 - 1) as usize;
+    let div = |n: i64| ((n + d / 2) / d).clamp(0, 32767);
+    let mut mid = vec![0i64; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            mid[y * w + x] = div((0..g.len()).map(|t| g[t] as i64 * l[y * w + at(x as i64 + t as i64 - r, w)] as i64).sum());
+        }
+    }
+    let mut out = vec![0u16; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let b = div((0..g.len()).map(|t| g[t] as i64 * mid[at(y as i64 + t as i64 - r, h) * w + x]).sum());
+            let v = l[y * w + x] as i64;
+            out[y * w + x] = (v + lut[(v - b + 32768) as usize] as i64).clamp(0, 32767) as u16;
+        }
+    }
+    out
+}
+
+#[test]
+fn sharpen_matches_specification() {
+    let lut = colour::sharpen_lut(2.0, 10.0, 20.0, 0.0, 3.0);
+    // sharpen.c's curve: flat within 2 L, then 3 times the difference,
+    // capped at 10 up and 20 down (in LabS units, 327.67 to an L).
+    assert_eq!(lut[32768], 0);
+    assert_eq!(lut[32767 + 655], 0);
+    // 1014 units is 3.0945 L: (3.0945 - 2) * 3 L, 1076 units.
+    assert_eq!(lut[32767 + 1014], 1076);
+    assert_eq!(lut[65535], 3277);
+    assert_eq!(lut[0], -6553);
+    for (i, &(w, h, sigma)) in [(1, 1, 0.5), (7, 3, 0.5), (17, 9, 2.0), (40, 31, 6.0)].iter().enumerate() {
+        let mut s = (i as u64 + 21) | 1;
+        let l: Vec<u16> = (0..w * h).map(|_| (rng(&mut s) % 32768) as u16).collect();
+        let (g, d) = mask::gaussmat(sigma, 0.1).unwrap();
+        assert_eq!(sharpen_l_x(&g, d as i64, &lut, &l, w, h), sharpen_ref(&g, d as i64, &lut, &l, w, h));
     }
 }
 
@@ -99,7 +136,12 @@ fn flat_stays_flat() {
     let flat: Vec<u8> = [12u8, 200, 99, 255].repeat(20 * 10);
     let (g, d) = mask::gaussmat(4.0, 0.2).map(|(m, s)| (m, s as i64)).unwrap();
     assert_eq!(blur_rgba(&g, d, &flat, 20, 10), flat);
-    assert_eq!(sharpen_rgba(&g, d, &flat, 20, 10), flat);
+    assert_eq!(colour::sharpen_rgba(&flat, 20, 10, 1.0).unwrap(), {
+        // Flat stays flat, up to the round trip through LabS.
+        let (l, a, b) = colour::srgb_to_labs(12, 200, 99);
+        let (r, g, b) = colour::labs_to_srgb(l, a, b);
+        [r, g, b, 255].repeat(200)
+    });
     // Pixelate's fixed point can lower a flat value by one, as libvips's
     // does: ((3 v + 1) * floor(2^24 / 3)) >> 24, twice.
     let f = |s: u64| (((s + 1) * ((1 << 24) / 3)) >> 24) as u8;
@@ -189,7 +231,9 @@ fn through_the_proxy() {
     let (g, d) = gauss(1.5);
     // Opaque: premultiplying changes nothing.
     assert_eq!(run("blur:1.5"), blur_rgba(&g, d, &src, 24, 16));
-    assert_eq!(run("bl:1.5/sh:1.5"), sharpen_rgba(&g, d, &blur_rgba(&g, d, &src, 24, 16), 24, 16));
+    assert_eq!(run("bl:1.5/sh:1.5"), colour::sharpen_rgba(&blur_rgba(&g, d, &src, 24, 16), 24, 16, 1.5).unwrap());
+    // libvips takes sharpen sigmas up to 10.
+    assert!(process(&data, &parse(b"/x/sh:10.5/plain/local:///a.png").unwrap().opts, &Limits::default()).is_err());
     assert_eq!(run("sharpen:0"), src);
     assert_eq!(run("pix:4"), pixelate_rgba(src.clone(), 24, 16, 4));
     assert_eq!(run("pixelate:1"), src);

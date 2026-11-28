@@ -2,8 +2,8 @@
 """Run libvips on test images, for tests/libvips.rs to compare against.
 
 Calls an installed libvips (libvips.so.42) through ctypes, as imgproxy's
-vips.c calls it: vips_apply_filters's premultiply, gaussblur, pixelate
-(mirror embed, shrink, zoom, crop) and unpremultiply. Writes each case's
+vips.c calls it: vips_apply_filters's premultiply, gaussblur, sharpen,
+pixelate (mirror embed, shrink, zoom, crop) and unpremultiply. Writes each case's
 input and libvips's output as raw RGBA to the directory given:
 
     scripts/vips_ref.py /tmp/ref
@@ -31,6 +31,7 @@ v.vips_image_get_height.argtypes = [C.c_void_p]
 v.vips_error_buffer.restype = C.c_char_p
 UCHAR = 0
 MIRROR = 3
+SRGB = 22
 
 
 def img(px, w, h):
@@ -52,15 +53,16 @@ def data(im):
 
 
 def filters(px, w, h, blur, sharp, pix):
-    """imgproxy's vips_apply_filters, with blur and pixelate (sharpen is
-    left out: it goes through Lab)."""
-    im = img(px, w, h)
+    """imgproxy's vips_apply_filters."""
+    im = call("vips_copy", img(px, w, h), b"interpretation", C.c_int(SRGB))
     pre = blur > 0 or sharp > 0
     if pre:
         im = call("vips_premultiply", im)
         im = call("vips_cast", im, C.c_int(UCHAR))
     if blur > 0:
         im = call("vips_gaussblur", im, C.c_double(blur))
+    if sharp > 0:
+        im = call("vips_sharpen", im, b"sigma", C.c_double(sharp))
     pix = min(pix, max(w, h))
     if pix > 1:
         tw = -(-w // pix) * pix
@@ -82,12 +84,14 @@ def main():
     rnd = random.Random(7)
     cases = []
     for blur in [0, 0.3, 0.5, 1, 1.5, 2.7, 5, 12.5, 40]:
-        cases.append((blur, 0))
+        cases.append((blur, 0, 0))
+    for sharp in [0.3, 0.5, 1, 2.2, 6, 10]:
+        cases.append((0, sharp, 0))
     for pix in [2, 3, 5, 7, 16, 40, 1000]:
-        cases.append((0, pix))
-    cases.append((1.5, 6))
+        cases.append((0, 0, pix))
+    cases.append((1.5, 1, 6))
     n = 0
-    for blur, pix in cases:
+    for blur, sharp, pix in cases:
         for (w, h) in [(1, 1), (5, 3), (33, 17), (64, 48), (13, 90)]:
             for kind in ["noise", "alpha", "smooth"]:
                 px = bytearray()
@@ -98,11 +102,26 @@ def main():
                         else:
                             px += bytes(rnd.randrange(256) for _ in range(3))
                             px.append(255 if kind == "noise" else rnd.randrange(256))
-                res = filters(px, w, h, blur, 0, pix)
-                name = f"{n:04}_{w}x{h}_bl{blur}_pix{pix}"
+                res = filters(px, w, h, blur, sharp, pix)
+                name = f"{n:04}_{w}x{h}_bl{blur}_sh{sharp}_pix{pix}"
                 open(os.path.join(out, name + ".in"), "wb").write(px)
                 open(os.path.join(out, name + ".out"), "wb").write(res)
                 n += 1
+    # The colour conversions sharpen uses, on their own: sRGB to LabS for
+    # every 8-bit colour, and LabS back to sRGB for a spread of values.
+    rgb = bytes(c for r in range(0, 256) for g in range(256) for b in range(256) for c in (r, g, b))
+    im = C.c_void_p(v.vips_image_new_from_memory_copy(rgb, len(rgb), 4096, 4096, 3, UCHAR))
+    im = call("vips_copy", im, b"interpretation", C.c_int(SRGB))
+    open(os.path.join(out, "labs.out"), "wb").write(data(call("vips_colourspace", im, C.c_int(21))))
+    labs = bytearray()
+    for _ in range(1 << 20):
+        labs += rnd.randrange(32768).to_bytes(2, "little")
+        labs += rnd.randrange(-32768, 32768).to_bytes(2, "little", signed=True)
+        labs += rnd.randrange(-32768, 32768).to_bytes(2, "little", signed=True)
+    im = C.c_void_p(v.vips_image_new_from_memory_copy(bytes(labs), len(labs), 1024, 1024, 3, 3))
+    im = call("vips_copy", im, b"interpretation", C.c_int(21))
+    open(os.path.join(out, "srgb.in"), "wb").write(labs)
+    open(os.path.join(out, "srgb.out"), "wb").write(data(call("vips_colourspace", im, C.c_int(SRGB))))
     ver = f"{v.vips_version(0)}.{v.vips_version(1)}.{v.vips_version(2)}"
     open(os.path.join(out, "version"), "w").write(ver)
     print(n, "cases, libvips", ver)

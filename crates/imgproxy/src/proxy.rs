@@ -557,24 +557,21 @@ pub fn process_with(data: &[u8], o: &Options, lim: &Limits, wm: Option<&Rgba>) -
     // `extend` and `padding`: premultiplied alpha (for blur and sharpen
     // only, as imgproxy does it), `blur`, `sharpen`, `pixelate`, then
     // back. On an opaque image premultiplying changes nothing.
-    // pre: blur_rgba, sharpen_rgba, pixelate_rgba (mask::gaussblur's
+    // pre: blur_rgba, pixelate_rgba (mask::gaussblur's
     // tables are 1 to 9999 entries, odd, each at most 127 or 20; divisors
     // 2 to 2^31; sizes in 1..=MAX_DIM).
     let (fw, fh) = (p.cw as usize, p.ch as usize);
     let sigma = |v: u32| v as f64 / 10000.0;
-    let bad = || Fail::Unprocessable("Blur or sharpen sigma too large");
+    let bad = || Fail::Unprocessable("Blur or sharpen sigma out of range");
     let blur = if o.blur > 0 { crate::mask::gaussblur(sigma(o.blur)).map_err(|_| bad())? } else { None };
-    let sharp = if o.sharpen > 0 { crate::mask::gaussblur(sigma(o.sharpen)).map_err(|_| bad())? } else { None };
     let pre = o.blur > 0 || o.sharpen > 0;
     let px = if pre { crate::filter::premul_rgba(&px) } else { px };
     let px = match &blur {
         Some((g, d)) => crate::filter::blur_rgba(g, *d, &px, fw, fh),
         None => px,
     };
-    let px = match &sharp {
-        Some((g, d)) => crate::filter::sharpen_rgba(g, *d, &px, fw, fh),
-        None => px,
-    };
+    // `vips_sharpen`: on the lightness of Lab, as libvips does it.
+    let px = if o.sharpen > 0 { crate::colour::sharpen_rgba(&px, fw, fh, sigma(o.sharpen)).ok_or_else(bad)? } else { px };
     let px = crate::filter::pixelate_rgba(px, fw, fh, o.pixelate as usize);
     let px = if pre { crate::filter::unpremul_rgba(&px) } else { px };
     // pre: embed_rgba (geom_x ensures the image is inside the canvas).
