@@ -2,8 +2,10 @@
 
 The theorem is `decode::decode`: for every byte string, the result is the
 image `spec::jpeg_decode` gives, or `Invalid` exactly when it gives none, or
-`OutOfMemory`. This file lists everything that theorem rests on without
-proving it. If something here is wrong, the proofs still check, and the
+`OutOfMemory`. The encoder's is `encode::encode_rgb`: the file it returns
+decodes, under `spec::jpeg_coded`, to `enc_spec::enc_coded` of its input
+(section 1a). This file lists everything those theorems rest on without
+proving them. If something here is wrong, the proofs still check, and the
 decoder can still be wrong.
 
 ## 1. The specification: `src/spec.rs`
@@ -69,6 +71,25 @@ byte-identical output to `djpeg -scale` at all four scales on 860 pairs of
 file and scale (every sampling factor combination cjpeg writes, sizes from
 1x1 up, baseline, progressive and with restart markers, greyscale and RGB),
 with libjpeg-turbo's SIMD code on x86-64.
+
+## 1a. The encoder's specification: `src/enc_spec.rs`
+
+About 300 lines of definitions: what the encoder codes, after
+libjpeg-turbo 3.2.1 with `jpeg_set_defaults` and `jpeg_set_quality(q,
+TRUE)`: RGB to YCbCr in 16-bit fixed point (`rgb_ycc_convert`), the last
+row and column repeated to whole blocks (`expand_right_edge`,
+`expand_bottom_edge`), `h2v2_downsample` with its alternating rounding
+bias, `jpeg_fdct_islow`, quantization rounding to nearest
+(`quantize`), `jpeg_quality_scaling` and `jpeg_add_quant_table` with the
+Annex K tables, and the dummy blocks `compress_data` codes past the
+image's edge. It is read together with `spec.rs`, whose `jpeg_coded` (the
+decoder's own) says what the written file means; the encoder's theorem
+does not depend on the decoder's code, only on that specification.
+
+The evidence that `enc_spec.rs` matches libjpeg-turbo is empirical:
+`difftest/encdiff` finds the files byte-identical (see the README). The
+coefficients are clamped to baseline's range in the specification; for
+8-bit input they always are in it, so the clamp never changes one.
 
 ## 2. Trusted code inside the verified crate
 
@@ -187,7 +208,8 @@ carry no proof. They are glue between C pointers and the verified decoder,
 and they contain `unsafe` code whose safety depends on the caller keeping
 the documented contract (valid pointers and lengths).
 
-- `src/capi.rs` (about 45 lines): `vjpeg_decode`, `vjpeg_free`.
+- `src/capi.rs` (about 80 lines): `vjpeg_decode`, `vjpeg_encode`,
+  `vjpeg_free`.
 - `src/tj.rs` (about 835 lines): the TurboJPEG decode API. Besides pointer
   handling it does unverified work of its own: it copies the verified RGB or
   grey result into the caller's buffer in the requested pixel order, pitch
