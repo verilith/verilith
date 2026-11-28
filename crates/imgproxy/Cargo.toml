@@ -1,0 +1,36 @@
+[package]
+name = "verilith-imgproxy"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "A formally verified (Verus) image proxy and thumbnailer built from the Verilith decoders and server"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/verilith/verilith"
+keywords = ["image", "thumbnail", "proxy", "verified", "verus"]
+categories = ["multimedia::images", "web-programming::http-server"]
+
+[lib]
+crate-type = ["rlib"]
+
+[[bin]]
+name = "verilith-imgproxy"
+path = "src/bin/verilith-imgproxy.rs"
+
+[dependencies]
+vstd = { workspace = true, features = ["std"] }
+verilith-core = { path = "../core", version = "0.1.0" }
+verilith-checksum = { path = "../checksum", version = "0.1.0" }
+verilith-zlib = { path = "../zlib", version = "0.1.0" }
+verilith-png = { path = "../png", version = "0.1.0" }
+verilith-jpeg = { path = "../jpeg", version = "0.1.0" }
+verilith-webp = { path = "../webp", version = "0.1.0" }
+verilith-gif = { path = "../gif", version = "0.1.0" }
+verilith-sha2 = { path = "../sha2", version = "0.1.0" }
+verilith-http = { path = "../http", version = "0.1.0" }
+verilith-server = { path = "../server", version = "0.1.0" }
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(verus_only)'] }

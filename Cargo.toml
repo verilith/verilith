@@ -14,6 +14,7 @@ members = [
     "crates/h3",
     "crates/hpack",
     "crates/http",
+    "crates/imgproxy",
     "crates/jpeg",
     "crates/json",
     "crates/lz4",
