@@ -17,3 +17,7 @@ pub mod resize;
 pub mod pngenc;
 pub mod fit;
 pub mod pixels;
+#[cfg(not(verus_keep_ghost))]
+pub mod proxy;
+#[cfg(not(verus_keep_ghost))]
+pub mod handler;

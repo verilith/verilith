@@ -1,6 +1,5 @@
 //! Conversions of the decoders' pixel formats to 8-bit RGBA, each proven
 //! to compute its `*_spec` function byte for byte.
-use crate::spec::NC;
 use vstd::prelude::*;
 
 verus! {
