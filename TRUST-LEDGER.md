@@ -38,6 +38,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | h3 |  |  |  |  |  |  | 1 |
 | hpack | 3 |  |  |  |  |  | 3 |
 | http |  |  |  |  |  |  | 8 |
+| imgproxy |  |  |  |  |  |  | 3 |
 | jpeg |  |  |  |  |  |  | 3 |
 | json | 17 |  |  |  |  |  | 6 |
 | lz4 |  |  |  |  |  |  | 1 |
@@ -64,7 +65,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 |
 | zstd | 6 |  |  |  |  |  | 2 |
-| **total** | **700** | **36** | **290** | **7** | **17** | **12** | **134** |
+| **total** | **700** | **36** | **290** | **7** | **17** | **12** | **137** |
 
 ## Items
 
@@ -155,6 +156,12 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/http/src/lib.rs`: plain Rust
 - `crates/http/src/llhttp.rs`: plain Rust
 - `crates/http/src/native.rs`: plain Rust
+
+### imgproxy
+
+- `crates/imgproxy/src/handler.rs`: plain Rust
+- `crates/imgproxy/src/proxy.rs`: plain Rust
+- `crates/imgproxy/src/bin/verilith-imgproxy.rs`: plain Rust
 
 ### jpeg
 

@@ -1,0 +1,21 @@
+# What verilith-imgproxy trusts
+
+Beyond what every Verilith crate trusts (Verus, Z3, rustc, and the
+specifications: this crate's `src/spec.rs`, verilith-png's `spec.rs`, which
+the encoder's round-trip theorem is stated with, and the decoders' own
+specifications), and beyond what the crates it builds on trust
+(verilith-server's [TRUST.md](../server/TRUST.md) for the event loop,
+sockets and TLS):
+
+| File | What it is | What the rest assumes of it |
+|---|---|---|
+| `src/proxy.rs` | URL parsing (imgproxy's format), the signature check's glue, choosing a decoder by the file's first bytes, the pipeline that calls the verified functions, `local://` and `http://` sources | Calls each verified function only when its `requires` holds: each call is preceded by a run-time check of it, marked `pre:` (Verus does not check unverified callers). Reads `local://` files only through verilith-server's verified `path::resolve_exec` and `join_to` and the kernel's `openat2(RESOLVE_BENEATH)` (`sys::open_beneath`). Refuses images over the pixel limit from their headers, before decoding. Safe Rust, no `unsafe`; its URL and signature handling is tested in `src/proxy.rs`'s tests (including imgproxy's documented signature example), and the pipeline in `tests/pipeline.rs` |
+| `src/handler.rs` | The HTTP routes, status codes and response fields | Application code: sends what `proxy.rs` returns, through verilith-server's verified response path |
+| `src/bin/verilith-imgproxy.rs` | Flags and environment variables | Application code |
+| verilith-sha2's `HmacSha256` | URL signatures | Verified (its README): `verify` returns exactly whether the tag is the HMAC of the key and data, in time that depends only on the lengths |
+| verilith-http's `parse_response` and `ChunkedDecoder` | Fetching `http://` sources | Verified (its README): the response head and the body's framing are the specification's |
+| `std::net` | DNS resolution and TCP for `http://` sources | The standard library |
+| verilith-webp's `capi::decode` and `get_features` | WebP decoding | Plain-Rust wrappers in verilith-webp over its verified decoders (that crate's trusted base; lossy VP8 is proven safe, not correct) |
+
+What is not here at all, so not trusted either: an HTTPS client (sources
+are `local://`, `http://` or uploads), and encoders other than PNG.

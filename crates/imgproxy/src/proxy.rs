@@ -352,7 +352,7 @@ pub fn decode(data: &[u8], max_px: u64) -> Result<Rgba, Fail> {
         if (nc != 1 && nc != 3) || pic.px.len() != pic.w as usize * pic.h as usize * nc {
             return Err(Fail::Unsupported);
         }
-        let px = crate::pixels::expand(&pic.px, nc);
+        let px = crate::pixels::expand(&pic.px, nc).ok_or(Fail::Unprocessable("Out of memory"))?;
         Ok(Rgba { w: pic.w, h: pic.h, px })
     } else if data.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
         let (w, h) = (be32(data, 16).ok_or(bad.clone())?, be32(data, 20).ok_or(bad.clone())?);

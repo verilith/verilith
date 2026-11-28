@@ -20,17 +20,21 @@ pub open spec fn expand_spec(px: Seq<u8>, nc: int) -> Seq<u8> {
     )
 }
 
-/// One-byte or three-byte pixels as RGBA (`expand_spec`).
-pub fn expand(px: &[u8], nc: usize) -> (r: Vec<u8>)
+/// One-byte or three-byte pixels as RGBA (`expand_spec`); `None` if the
+/// allocation fails.
+pub fn expand(px: &[u8], nc: usize) -> (r: Option<Vec<u8>>)
     requires
         nc == 1 || nc == 3,
         px@.len() as int % nc as int == 0,
         px@.len() as int / nc as int * 4 <= usize::MAX,
     ensures
-        r@ == expand_spec(px@, nc as int),
+        r matches Some(v) ==> v@ == expand_spec(px@, nc as int),
 {
     let n = px.len() / nc;
-    let mut out: Vec<u8> = Vec::with_capacity(n * 4);
+    let mut out = match verilith_core::prims::alloc_u8(n * 4) {
+        Some(v) => v,
+        None => return None,
+    };
     let mut i: usize = 0;
     while i < n
         invariant
@@ -39,8 +43,8 @@ pub fn expand(px: &[u8], nc: usize) -> (r: Vec<u8>)
             px@.len() as int % nc as int == 0,
             n * 4 <= usize::MAX,
             i <= n,
-            out@.len() == i * 4,
-            forall|k: int| 0 <= k < out@.len() ==> #[trigger] out@[k] == expand_spec(px@, nc as int)[k],
+            out@.len() == n * 4,
+            forall|k: int| 0 <= k < i * 4 ==> #[trigger] out@[k] == expand_spec(px@, nc as int)[k],
         decreases n - i,
     {
         proof {
@@ -52,22 +56,29 @@ pub fn expand(px: &[u8], nc: usize) -> (r: Vec<u8>)
             ;
         }
         let ghost before = out@;
+        let o = i * 4;
         if nc == 1 {
-            let g = px[i];
-            out.push(g);
-            out.push(g);
-            out.push(g);
+            let g = verilith_core::prims::get(px, i);
+            verilith_core::prims::set(out.as_mut_slice(), o, g);
+            verilith_core::prims::set(out.as_mut_slice(), o + 1, g);
+            verilith_core::prims::set(out.as_mut_slice(), o + 2, g);
         } else {
-            out.push(px[i * 3]);
-            out.push(px[i * 3 + 1]);
-            out.push(px[i * 3 + 2]);
+            let j = i * 3;
+            let r = verilith_core::prims::get(px, j);
+            let g = verilith_core::prims::get(px, j + 1);
+            let b = verilith_core::prims::get(px, j + 2);
+            verilith_core::prims::set(out.as_mut_slice(), o, r);
+            verilith_core::prims::set(out.as_mut_slice(), o + 1, g);
+            verilith_core::prims::set(out.as_mut_slice(), o + 2, b);
         }
-        out.push(255);
+        verilith_core::prims::set(out.as_mut_slice(), o + 3, 255);
         proof {
-            assert forall|k: int| 0 <= k < out@.len() implies #[trigger] out@[k] == expand_spec(px@, nc as int)[k] by {
-                if k >= before.len() {
+            assert forall|k: int| 0 <= k < (i + 1) * 4 implies #[trigger] out@[k] == expand_spec(px@, nc as int)[k] by {
+                if k >= i * 4 {
                     let c = k - i * 4;
                     vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(k, 4, i as int, c);
+                } else {
+                    assert(out@[k] == before[k]);
                 }
             }
         }
@@ -76,7 +87,7 @@ pub fn expand(px: &[u8], nc: usize) -> (r: Vec<u8>)
     proof {
         assert(out@ =~= expand_spec(px@, nc as int));
     }
-    out
+    Some(out)
 }
 
 /// Byte `c` of a WebP ARGB pixel (`0xAARRGGBB`) as RGBA.

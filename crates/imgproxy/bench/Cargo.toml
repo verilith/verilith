@@ -1,0 +1,15 @@
+[package]
+name = "imgproxy-bench"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+verilith-imgproxy = { path = ".." }
+verilith-jpeg = { path = "../../jpeg" }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+
+[workspace]

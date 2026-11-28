@@ -467,10 +467,10 @@ pub fn rows(src: &[u8], sw: usize, sh: usize, dw: usize) -> (r: Vec<u16>)
                     assert(w * 255 <= 65535 * 255);
                 }
                 let p = (y * sw + i) * 4;
-                let v0 = src[p] as u64;
-                let v1 = src[p + 1] as u64;
-                let v2 = src[p + 2] as u64;
-                let v3 = src[p + 3] as u64;
+                let v0 = verilith_core::prims::get(src, p) as u64;
+                let v1 = verilith_core::prims::get(src, p + 1) as u64;
+                let v2 = verilith_core::prims::get(src, p + 2) as u64;
+                let v3 = verilith_core::prims::get(src, p + 3) as u64;
                 proof {
                     assert(w * v0 <= 65535 * 255 && w * v1 <= 65535 * 255 && w * v2 <= 65535 * 255 && w * v3
                         <= 65535 * 255) by (nonlinear_arith)
@@ -687,10 +687,10 @@ pub fn cols(mid: &[u16], sw: usize, sh: usize, dw: usize, dh: usize, Ghost(src):
                     assert(mid@[(j * dw + x) * NC + 2] == hpx(src, sw as int, dw as int, j as int, x as int, 2));
                     assert(mid@[(j * dw + x) * NC + 3] == hpx(src, sw as int, dw as int, j as int, x as int, 3));
                 }
-                let v0 = mid[p] as u64;
-                let v1 = mid[p + 1] as u64;
-                let v2 = mid[p + 2] as u64;
-                let v3 = mid[p + 3] as u64;
+                let v0 = verilith_core::prims::get_u16(mid, p) as u64;
+                let v1 = verilith_core::prims::get_u16(mid, p + 1) as u64;
+                let v2 = verilith_core::prims::get_u16(mid, p + 2) as u64;
+                let v3 = verilith_core::prims::get_u16(mid, p + 3) as u64;
                 proof {
                     assert(w * v0 <= 65535 * 65535 && w * v1 <= 65535 * 65535 && w * v2 <= 65535 * 65535 && w
                         * v3 <= 65535 * 65535) by (nonlinear_arith)
