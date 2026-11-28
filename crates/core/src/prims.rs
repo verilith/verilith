@@ -8,7 +8,7 @@
 //! at every call site, so they cannot go out of bounds in verified code.
 //! They are themselves verified, against vstd's specs of `get_unchecked`.
 //! So are the loads and copies (`load_u64_le`, `copy8`, `copy16`, `move8`,
-//! `copy16_in`, `fill8`, `copy_in`, `copy_to_front`, `copy_within`): they
+//! `move16`, `move_lt8`, `copy_apart8`, `copy_apart16_64`, `copy16_in`, `fill8`, `copy_in`, `copy_to_front`, `copy_within`): they
 //! read and write through `get_unchecked`, `get_unchecked_mut`,
 //! `copy_from_slice` and `copy_within`, and with a fixed length LLVM
 //! compiles each to the one load or store the unsafe version was.
@@ -377,6 +377,226 @@ pub fn move8(out: &mut [u8], src: usize, dst: usize)
         } else {
             old(out)@[k]
         } by {}
+    }
+}
+
+/// `out[dst..dst + 16]` becomes what `out[src..src + 16]` was: the 16
+/// bytes are loaded, then stored, so the ranges may overlap. One 16-byte
+/// load and store where two `move8`s are two of each.
+#[inline(always)]
+pub fn move16(out: &mut [u8], src: usize, dst: usize)
+    requires
+        src + 16 <= old(out)@.len(),
+        dst + 16 <= old(out)@.len(),
+    ensures
+        final(out)@.len() == old(out)@.len(),
+        forall|k: int|
+            0 <= k < final(out)@.len() ==> #[trigger] final(out)@[k] == if dst <= k < dst + 16 {
+                old(out)@[k - dst + src]
+            } else {
+                old(out)@[k]
+            },
+{
+    let w = bytes16(out, src);
+    put_at(out, dst, &w);
+    proof {
+        assert forall|k: int| 0 <= k < final(out)@.len() implies #[trigger] final(out)@[k] == if dst <= k < dst + 16 {
+            old(out)@[k - dst + src]
+        } else {
+            old(out)@[k]
+        } by {}
+    }
+}
+
+/// `buf[dst..dst + n] = buf[src..src + n]` for `1 <= n < 8`, as two reads and
+/// two writes of 4, 2 or 1 bytes that overlap in the middle. Every byte
+/// is read before any is written, so the ranges may overlap.
+#[verifier::spinoff_prover]
+#[inline(always)]
+pub fn move_lt8(buf: &mut [u8], src: usize, dst: usize, n: usize)
+    requires
+        1 <= n < 8,
+        src + n <= old(buf)@.len(),
+        dst + n <= old(buf)@.len(),
+    ensures
+        final(buf)@.len() == old(buf)@.len(),
+        forall|j: int|
+            0 <= j < final(buf)@.len() ==> #[trigger] final(buf)@[j] == if dst <= j < dst + n {
+                old(buf)@[j - dst + src]
+            } else {
+                old(buf)@[j]
+            },
+{
+    let len = buf.len();
+    assert(src + n <= len && dst + n <= len);
+    if n >= 4 {
+        let a0 = get(buf, src);
+        let a1 = get(buf, src + 1);
+        let a2 = get(buf, src + 2);
+        let a3 = get(buf, src + 3);
+        let e = src + n - 4;
+        let b0 = get(buf, e);
+        let b1 = get(buf, e + 1);
+        let b2 = get(buf, e + 2);
+        let b3 = get(buf, e + 3);
+        set(buf, dst, a0);
+        set(buf, dst + 1, a1);
+        set(buf, dst + 2, a2);
+        set(buf, dst + 3, a3);
+        let f = dst + n - 4;
+        set(buf, f, b0);
+        set(buf, f + 1, b1);
+        set(buf, f + 2, b2);
+        set(buf, f + 3, b3);
+    } else if n >= 2 {
+        let a0 = get(buf, src);
+        let a1 = get(buf, src + 1);
+        let e = src + n - 2;
+        let b0 = get(buf, e);
+        let b1 = get(buf, e + 1);
+        set(buf, dst, a0);
+        set(buf, dst + 1, a1);
+        let f = dst + n - 2;
+        set(buf, f, b0);
+        set(buf, f + 1, b1);
+    } else {
+        let a0 = get(buf, src);
+        set(buf, dst, a0);
+    }
+}
+
+/// `buf[dst..dst + n] = buf[src..src + n]` in 8-byte words, when the two
+/// do not overlap.
+#[verifier::spinoff_prover]
+#[inline(always)]
+pub fn copy_apart8(buf: &mut [u8], src: usize, dst: usize, n: usize)
+    requires
+        src + n <= old(buf)@.len(),
+        dst + n <= old(buf)@.len(),
+        src + n <= dst || dst + n <= src,
+        n >= 8,
+    ensures
+        final(buf)@.len() == old(buf)@.len(),
+        forall|j: int|
+            0 <= j < final(buf)@.len() ==> #[trigger] final(buf)@[j] == if dst <= j < dst + n {
+                old(buf)@[j - dst + src]
+            } else {
+                old(buf)@[j]
+            },
+{
+    let ghost o = buf@;
+    let len = buf.len();
+    let mut k: usize = 0;
+    while k + 8 <= n
+        invariant
+            k <= n,
+            o.len() == len,
+            src + n <= o.len(),
+            dst + n <= o.len(),
+            src + n <= dst || dst + n <= src,
+            buf@.len() == o.len(),
+            forall|j: int|
+                0 <= j < buf@.len() ==> #[trigger] buf@[j] == if dst <= j < dst + k {
+                    o[j - dst + src]
+                } else {
+                    o[j]
+                },
+        decreases n - k,
+    {
+        move8(buf, src + k, dst + k);
+        k = k + 8;
+    }
+    if k < n {
+        // The last 8 bytes, overlapping some already copied.
+        move8(buf, src + n - 8, dst + n - 8);
+    }
+}
+
+/// `buf[dst..dst + n] = buf[src..src + n]` for 16 to 64 bytes, in 16-byte
+/// pieces, the last of them overlapping the one before when `n` is not a
+/// multiple of 16 (no loop, so no branch on the length within a range),
+/// when the two do not overlap.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(30)]
+#[inline(always)]
+pub fn copy_apart16_64(buf: &mut [u8], src: usize, dst: usize, n: usize)
+    requires
+        src + n <= old(buf)@.len(),
+        dst + n <= old(buf)@.len(),
+        src + n <= dst || dst + n <= src,
+        16 <= n <= 64,
+    ensures
+        final(buf)@.len() == old(buf)@.len(),
+        forall|j: int|
+            0 <= j < final(buf)@.len() ==> #[trigger] final(buf)@[j] == if dst <= j < dst + n {
+                old(buf)@[j - dst + src]
+            } else {
+                old(buf)@[j]
+            },
+{
+    let ghost o = buf@;
+    let len = buf.len();
+    assert(src + n <= len && dst + n <= len);
+    if n <= 32 {
+        move16(buf, src, dst);
+        let ghost m = buf@;
+        move16(buf, src + n - 16, dst + n - 16);
+        proof {
+            assert forall|j: int| 0 <= j < buf@.len() implies #[trigger] buf@[j] == if dst <= j < dst + n {
+                o[j - dst + src]
+            } else {
+                o[j]
+            } by {
+                if dst + n - 16 <= j < dst + n {
+                    assert(buf@[j] == m[j - (dst + n - 16) + (src + n - 16)]);
+                    assert(m[j - dst + src] == o[j - dst + src]);
+                } else {
+                    assert(buf@[j] == m[j]);
+                }
+            }
+        }
+    } else {
+        move16(buf, src, dst);
+        let ghost m1 = buf@;
+        move16(buf, src + 16, dst + 16);
+        let ghost m2 = buf@;
+        move16(buf, src + n - 32, dst + n - 32);
+        let ghost m3 = buf@;
+        move16(buf, src + n - 16, dst + n - 16);
+        proof {
+            assert forall|j: int| 0 <= j < buf@.len() implies #[trigger] buf@[j] == if dst <= j < dst + n {
+                o[j - dst + src]
+            } else {
+                o[j]
+            } by {
+                let k = j - dst + src;
+                if dst <= j < dst + n {
+                    assert(m1[k] == o[k]);
+                    assert(m2[k] == o[k]);
+                    assert(m3[k] == o[k]);
+                }
+                if dst + n - 16 <= j < dst + n {
+                    assert(buf@[j] == m3[j - (dst + n - 16) + (src + n - 16)]);
+                } else if dst + n - 32 <= j < dst + n - 16 {
+                    assert(buf@[j] == m3[j]);
+                    assert(m3[j] == m2[j - (dst + n - 32) + (src + n - 32)]);
+                } else if dst + 16 <= j < dst + 32 {
+                    assert(buf@[j] == m3[j]);
+                    assert(m3[j] == m2[j]);
+                    assert(m2[j] == m1[j - (dst + 16) + (src + 16)]);
+                } else if dst <= j < dst + 16 {
+                    assert(buf@[j] == m3[j]);
+                    assert(m3[j] == m2[j]);
+                    assert(m2[j] == m1[j]);
+                    assert(m1[j] == o[j - dst + src]);
+                } else {
+                    assert(buf@[j] == m3[j]);
+                    assert(m3[j] == m2[j]);
+                    assert(m2[j] == m1[j]);
+                    assert(m1[j] == o[j]);
+                }
+            }
+        }
     }
 }
 

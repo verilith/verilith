@@ -559,6 +559,23 @@ pub fn w_extmul_hi16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     r
 }
 
+/// `i32x4.dot_i16x8_s`: products of signed 16-bit lanes, added in adjacent
+/// pairs.
+#[inline(always)]
+pub fn w_dot16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u32s(n8(r)) == Seq::new(4, |i: int| ((s16(u16s(n8(a))[2 * i]) * s16(u16s(n8(b))[2 * i]) + s16(u16s(n8(a))[2 * i + 1]) * s16(u16s(n8(b))[2 * i + 1])) % 0x1_0000_0000) as u32),
+{
+    proof {
+        crate::neon::axiom_neon_x86();
+    }
+    let r = u(_mm_madd_epi16(m(a), m(b)));
+    assert(u32s(n8(r)) =~= Seq::new(4, |i: int| ((s16(u16s(n8(a))[2 * i]) * s16(u16s(n8(b))[2 * i]) + s16(u16s(n8(a))[2 * i + 1]) * s16(u16s(n8(b))[2 * i + 1])) % 0x1_0000_0000) as u32));
+    r
+}
+
 /// `i32x4.extadd_pairwise_i16x8_u`: sums of adjacent 16-bit pairs.
 #[inline(always)]
 pub fn w_extadd16(a: uint8x16_t) -> (r: uint8x16_t)

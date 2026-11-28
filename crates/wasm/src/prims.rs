@@ -121,6 +121,7 @@ pub fn load(m: &Vec<u8>, i: usize, n: usize) -> (r: u64)
 pub fn store(m: &mut Vec<u8>, i: usize, v: u64, n: usize)
     requires i + n <= old(m)@.len(), n == 1 || n == 2 || n == 4 || n == 8,
     ensures final(m)@ == write_le(old(m)@, i as int, store_value(v, n as nat), n as nat),
+    no_unwind
 {
     debug_assert!(i + n <= m.len());
     // SAFETY: the `n` bytes at `i` are inside `m`.

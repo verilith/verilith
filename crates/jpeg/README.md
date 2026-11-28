@@ -45,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | The coefficients after all scans are the specification's | `decode::decode_coefs` against `spec::jpeg_coded` |
 | Each scan type writes exactly the coefficients T.81 says: baseline, DC first and refinement, AC first and refinement, with end-of-band runs | `block::*` against `spec::base_block`, `dc_first`, `ac_first`, `ac_refine` |
 | The Huffman decoder, with its 10-bit lookahead table and 16-bit window, returns the symbol of T.81's DECODE procedure | `huff::decode` against `spec::huff` |
-| The inverse DCT equals the specification's (libjpeg's `jidctint.c`) on all its paths: on AArch64 (and on x86-64 with SSE4.1, and WebAssembly with SIMD128, through verilith-simd's proven translations), NEON intrinsics in 16-bit lanes for blocks whose magnitudes sum to at most 2120 (nearly every block of a photograph) and in 32-bit lanes for the others whose dequantized values fit in 15 bits; elsewhere 32-bit arithmetic that compilers vectorize; and 64-bit arithmetic for the rest | `idct::idct_into`, `idct16::idct16_neon`, `idct_neon::idct_neon` against `spec::idct` |
+| The inverse DCT equals the specification's (libjpeg's `jidctint.c`) on all its paths: on AArch64 (and on x86-64 with SSE4.1, and WebAssembly with SIMD128, through verilith-simd's proven translations), NEON intrinsics in 16-bit lanes for blocks whose magnitudes sum to at most 2120 (nearly every block of a photograph; on x86-64 with AVX2, AVX2 intrinsics for these instead) and in 32-bit lanes for the others whose dequantized values fit in 15 bits; elsewhere 32-bit arithmetic that compilers vectorize; and 64-bit arithmetic for the rest | `idct::idct_into`, `idct16::idct16_neon`, `idct_avx2::idct_avx2`, `idct_neon::idct_neon` against `spec::idct` |
 | Upsampling and colour conversion equal the specification's, including the branch-free kernels compilers vectorize and, on AArch64 (and on x86-64 without AVX2), colour conversion with NEON intrinsics | `render::up_row`, `render::ycc_row`, `color_neon::ycc16` |
 | Reduced-size decoding: for every byte string and `m` of 1, 2 or 4, `decode_scaled` returns the image `spec_scaled::jpeg_decode_scaled` gives it at `m / 8` of its width and height, and `Invalid` exactly when the full-size specification gives the file no image. Each block goes through libjpeg's 1x1, 2x2 or 4x4 inverse DCT (`jidctred.c`), or the 8x8 one for chroma scaled up to the luma's resolution as `jdmaster.c` chooses, then upsampling (no triangle filters at 1/8, as `jdsample.c`) and colour conversion | `scaled::decode_scaled` against `spec_scaled::jpeg_decode_scaled` |
 | Work: at most `jpeg_work(n, s, b, px) = 4n + (s + 1)(300b + 10) + 66b + 110px + 262,480` steps for an `n`-byte file with `s` scans, whose frame is stored in `b` blocks of 8x8 coefficients and has `px` pixels; `s` is at most `n + 65,552` | `decode::decode_counted` ensures (`decode` is the same code without the count) |
@@ -206,7 +206,9 @@ proofs above hold there unchanged, on the strength of the Intel intrinsic
 specifications. The kernels are compiled with SSE4.1 and SSSE3 enabled.
 When the CPU has AVX2, the colour conversion loop and the upsampling
 kernels are instead compiled a second time with AVX2 enabled and the
-compiler's wider vectors are used; the inverse DCT keeps the SSE path.
+compiler's wider vectors are used, and the inverse DCT takes its own
+AVX2 kernel (`src/idct_avx2.rs`), verified against the same specification,
+which does two blocks' rows at once in 256-bit registers.
 
 ## Tests
 

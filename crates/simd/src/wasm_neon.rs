@@ -1084,6 +1084,21 @@ pub fn vmull_hi_s16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     r
 }
 
+/// The signed products of the 16-bit lanes, added in adjacent pairs as
+/// 32-bit lanes, wrapping (`smull`, `smull2` and `addp`; `pmaddwd` on
+/// x86-64, `i32x4.dot_i16x8_s` on WebAssembly).
+#[inline(always)]
+pub fn vdotq_s16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u32s(n8(r)) == madd16(u16s(n8(a)), u16s(n8(b))),
+{
+    let r = w_dot16(a, b);
+    assert(u32s(n8(r)) =~= madd16(u16s(n8(a)), u16s(n8(b))));
+    r
+}
+
 /// Signed saturating byte addition (`sqadd`).
 #[inline(always)]
 pub fn vqaddq_s8(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)

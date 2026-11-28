@@ -478,6 +478,10 @@ pub fn vmull_s16(a: int16x4_t, b: int16x4_t) -> int32x4_t {
 pub fn vmull_high_s16(a: int16x8_t, b: int16x8_t) -> int32x4_t {
     int32x4_t(core::array::from_fn(|i| a.0[4 + i] as i32 * b.0[4 + i] as i32))
 }
+/// The NEON intrinsic `vpaddq_s32`, emulated.
+pub fn vpaddq_s32(a: int32x4_t, b: int32x4_t) -> int32x4_t {
+    int32x4_t(core::array::from_fn(|i| if i < 2 { a.0[2 * i].wrapping_add(a.0[2 * i + 1]) } else { b.0[2 * i - 4].wrapping_add(b.0[2 * i - 3]) }))
+}
 /// The NEON intrinsic `vaddq_u32`, emulated.
 pub fn vaddq_u32(a: uint32x4_t, b: uint32x4_t) -> uint32x4_t {
     uint32x4_t(core::array::from_fn(|i| a.0[i].wrapping_add(b.0[i])))

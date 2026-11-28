@@ -60,7 +60,8 @@ impl Func {
 
     #[verifier::type_invariant]
     spec fn inv(&self) -> bool {
-        self.snap.view().mem_max <= self.cap
+        &&& self.snap.view().mem_max <= self.cap
+        &&& self.inst.mem_base() == self.snap.view().mem
     }
 
     /// Takes an instance just instantiated (its start function run),
@@ -77,7 +78,7 @@ impl Func {
         if inst.mem_max() > cap {
             return None;
         }
-        let snap = inst.snapshot();
+        let (inst, snap) = inst.snapshot_clean();
         Some(Func { inst, snap, ops, entry, fuel, cap })
     }
 
@@ -95,7 +96,8 @@ impl Func {
     {
         proof { use_type_invariant(&self); }
         let Func { inst, snap, ops, entry, fuel, cap } = self;
-        let (inst, ok) = inst.restore(&snap);
+        // Copies back only the memory the last request wrote.
+        let (inst, ok) = inst.reset(&snap);
         if !ok {
             return (Func { inst, snap, ops, entry, fuel, cap }, Outcome::Fault, Ghost(snap.view()));
         }
