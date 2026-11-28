@@ -54,3 +54,14 @@ two sides differ in work the back end does.
   which is not credible. A wall-clock check on the shared cloud machine was
   too noisy to settle it (±50% between runs). The constant stays as chosen,
   and its comment says so.
+
+## WILD_MAX by timing, with exact counts
+
+Because the model can't settle `WILD_MAX`, two other measurements bound it.
+`lz4hist` counts the literal runs `copy_lits` is given (exact): over all of
+Silesia, only 7,390 of 12.9 million sequences have runs from 193 to 512
+bytes. `wild-sweep.sh` times LZ4 decoding for several values, with the
+builds interleaved (`results/lz4-wild-cloud-x86.txt`). Weighted by file
+size, the values from 192 to 448 are within 0.9% of each other. That is
+less than two builds of the same code can differ by, so 192 stays. The same
+sweep on Apple silicon is still to be run.
