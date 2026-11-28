@@ -61,11 +61,11 @@ not occur in any crate's `src/` (the script fails if one appears).
 | wasm | 20 |  |  |  |  | 2 | 4 | 2328 |
 | webp | 9 |  |  |  |  |  | 3 | 667 |
 | x509 |  |  |  |  |  |  | 6 | 1754 |
-| xml | 9 |  |  |  |  |  | 12 | 18614 |
+| xml | 9 |  |  |  |  |  | 12 | 18584 |
 | xxhash |  |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 | 1354 |
 | zstd | 6 |  |  |  |  |  | 2 | 1331 |
-| **total** | **700** | **36** | **290** | **7** | **17** | **12** | **134** | **56915** |
+| **total** | **700** | **36** | **290** | **7** | **17** | **12** | **134** | **56885** |
 
 ## Items
 
@@ -364,15 +364,15 @@ not occur in any crate's `src/` (the script fails if one appears).
 ### xml
 
 - `crates/xml/src/api.rs`: plain Rust, 664 lines
-- `crates/xml/src/lib.rs`: plain Rust, 76 lines
+- `crates/xml/src/lib.rs`: plain Rust, 78 lines
 - `crates/xml/src/pe.rs`: external_body: `load_model`, `count`, `bytes`, `fetch`, `note_push`, `note_fetch`, `note_pop`
 - `crates/xml/src/tape.rs`: external_body: `slice_len_bound`
 - `crates/xml/src/uniq.rs`: external_body: `seed`
-- `crates/xml/src/api/expat.rs`: plain Rust, 3422 lines
+- `crates/xml/src/api/expat.rs`: plain Rust, 3401 lines
 - `crates/xml/src/api/libxml2/codes.rs`: plain Rust, 84 lines
 - `crates/xml/src/api/libxml2/io.rs`: plain Rust, 162 lines
 - `crates/xml/src/api/libxml2/mod.rs`: plain Rust, 1993 lines
-- `crates/xml/src/api/libxml2/parser.rs`: plain Rust, 5406 lines
+- `crates/xml/src/api/libxml2/parser.rs`: plain Rust, 5395 lines
 - `crates/xml/src/api/libxml2/recover.rs`: plain Rust, 975 lines
 - `crates/xml/src/api/libxml2/save.rs`: plain Rust, 1354 lines
 - `crates/xml/src/api/libxml2/sax2.rs`: plain Rust, 851 lines
