@@ -56,7 +56,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | simd | 509 | 12 | 294 | 4 |  |  | 3 | 1033 |
 | snappy |  |  |  |  |  |  | 1 | 85 |
 | sync | 45 | 11 |  | 1 | 16 | 10 | 2 | 321 |
-| text | 18 | 13 |  |  |  |  | 9 | 1576 |
+| text | 19 | 13 |  |  |  |  | 9 | 1592 |
 | tiff |  |  |  |  |  |  | 2 | 1157 |
 | tls | 1 |  |  |  |  |  | 2 | 254 |
 | tls-aws-lc |  |  |  |  |  |  | 3 | 901 |
@@ -69,7 +69,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 | 1354 |
 | zstd | 6 |  |  |  |  |  | 2 | 1331 |
-| **total** | **711** | **36** | **294** | **5** | **17** | **12** | **149** | **60148** |
+| **total** | **712** | **36** | **294** | **5** | **17** | **12** | **149** | **60164** |
 
 ## Items
 
@@ -317,7 +317,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### text
 
-- `crates/text/src/capi.rs`: plain Rust, 527 lines
+- `crates/text/src/capi.rs`: plain Rust, 497 lines
 - `crates/text/src/capi_utf.rs`: plain Rust, 633 lines
 - `crates/text/src/lib.rs`: plain Rust, 17 lines
 - `crates/text/src/base64/api.rs`: plain Rust, 150 lines
@@ -328,7 +328,8 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/text/src/idna/data.rs`: external_body: `iword`; axioms: `axiom_idna_trie`, `axiom_idna_mapping`, `axiom_idna_ascii`
 - `crates/text/src/idna/mod.rs`: plain Rust, 85 lines
 - `crates/text/src/unicode/data.rs`: external_body: `is_scalar`; axioms: `axiom_decomp_scalar`, `axiom_comp`, `axiom_bb`, `axiom_pool`, `axiom_jamo`, `axiom_trie`, `axiom_ascii`, `axiom_fast_below`
-- `crates/text/src/unicode/mod.rs`: plain Rust, 71 lines
+- `crates/text/src/unicode/mod.rs`: plain Rust, 117 lines
+- `crates/text/src/unicode/norm16.rs`: external_body: `no_sur32_avx2`
 - `crates/text/src/unicode/spec.rs`: axioms: `axiom_fast`, `axiom_decomp_ordered`
 - `crates/text/src/utf/conv.rs`: external_body: `ascii_prefix_avx2`, `latin1_to_utf8_avx2`, `latin1_to_utf8_safe_avx2`, `latin1_to_utf16_avx2`, `utf16_to_latin1_avx2`, `utf8_to_utf16_avx2`, `utf8_to_latin1_avx2`, `utf16_to_utf8_avx2`, `count_latin1_utf8_avx2`, `count_utf8_avx2`, `count_utf16_avx2`
 - `crates/text/src/utf/mod.rs`: plain Rust, 5 lines

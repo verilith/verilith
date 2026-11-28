@@ -8,7 +8,8 @@
 //! UTF-8 and the verified functions' input, and follows ICU's conventions
 //! for lengths (-1 for NUL-terminated input), preflighting, NUL termination
 //! and `UErrorCode`. What it computes is the verified result:
-//! normalization is `unicode::normalize`, and an IDNA call reports no error
+//! normalization is `unicode::normalize_utf16_to` (the verified UTF-16
+//! normalizer in `unicode::norm16`), and an IDNA call reports no error
 //! exactly when the verified UTS #46 processing (with ICU's fixed flags, see
 //! `idna_options`) reports none. Which `UIDNA_ERROR_*` bits are set when there
 //! is an error is worked out here, by rerunning the processing with single
@@ -122,7 +123,12 @@ unsafe fn slice<'a, T: Copy + PartialEq + Default>(p: *const T, len: i32) -> Opt
 /// overflow error if it does not fit, and a warning if it fits without the
 /// NUL.
 unsafe fn write_out<T: Copy + Default>(v: &[T], dest: *mut T, capacity: i32, err: *mut UErrorCode) -> i32 {
-    let n = v.len();
+    write_out2(v, &[], dest, capacity, err)
+}
+
+/// `write_out` of `a` followed by `b`.
+unsafe fn write_out2<T: Copy + Default>(a: &[T], b: &[T], dest: *mut T, capacity: i32, err: *mut UErrorCode) -> i32 {
+    let n = a.len() + b.len();
     if n > i32::MAX as usize {
         *err = U_ILLEGAL_ARGUMENT_ERROR;
         return 0;
@@ -131,7 +137,13 @@ unsafe fn write_out<T: Copy + Default>(v: &[T], dest: *mut T, capacity: i32, err
     if n > cap {
         *err = U_BUFFER_OVERFLOW_ERROR;
     } else {
-        core::ptr::copy_nonoverlapping(v.as_ptr(), dest, n);
+        // `dest` may be null when nothing is written.
+        if !a.is_empty() {
+            core::ptr::copy_nonoverlapping(a.as_ptr(), dest, a.len());
+        }
+        if !b.is_empty() {
+            core::ptr::copy_nonoverlapping(b.as_ptr(), dest.add(a.len()), b.len());
+        }
         if n < cap {
             *dest.add(n) = T::default();
         } else if *err == U_ZERO_ERROR {
@@ -201,26 +213,6 @@ pub fn stable_below(form: Form) -> u16 {
     }
 }
 
-/// UTF-16 to UTF-8, or `None` if there is an unpaired surrogate, by the
-/// verified converter (`utf::conv::utf16_to_utf8`).
-fn utf16_to_string(s: &[u16]) -> Option<String> {
-    // A unit is at most 3 bytes and a pair 4, so `3 * len` bounds `cnt16`.
-    let mut v = vec![0u8; s.len() * 3];
-    let n = crate::utf::conv::utf16_to_utf8(s, &mut v)?;
-    v.truncate(n);
-    // The converter writes well-formed UTF-8 (`u16to8` of valid UTF-16).
-    Some(unsafe { String::from_utf8_unchecked(v) })
-}
-
-/// Appends UTF-8 `s` as UTF-16, by the verified converter.
-fn push_utf16(s: &str, out: &mut Vec<u16>) {
-    let b = s.as_bytes();
-    let at = out.len();
-    out.resize(at + crate::utf::conv::count_utf8(b, false), 0);
-    let n = crate::utf::conv::utf8_to_utf16(b, &mut out[at..]).expect("a str is UTF-8");
-    out.truncate(at + n);
-}
-
 /// Where `s` may first differ from its normal form: just before the first
 /// unit at or above `stable_below`, or `s.len()` if there is none.
 fn stable_prefix(s: &[u16], form: Form) -> usize {
@@ -232,63 +224,45 @@ fn stable_prefix(s: &[u16], form: Form) -> usize {
     }
 }
 
-/// The normal form of UTF-16 `s`, or `None` when it is `s`. An unpaired
-/// surrogate is a starter that nothing decomposes to or composes with, so it
-/// splits the text: each run between them is normalized on its own and the
-/// surrogate kept, as ICU does.
-fn normalize_utf16(s: &[u16], form: Form) -> Option<Vec<u16>> {
+std::thread_local! {
+    static SCRATCH: core::cell::RefCell<Vec<u16>> = const { core::cell::RefCell::new(Vec::new()) };
+}
+
+/// Where `s` may first differ from its normal form: `stable_prefix`, then
+/// `unicode::normalized_prefix_utf16` from there.
+fn normalized_prefix(s: &[u16], form: Form) -> usize {
     let q = stable_prefix(s, form);
-    if q == s.len() {
-        return None;
+    q + unicode::normalized_prefix_utf16(&s[q..], form)
+}
+
+/// Writes the normal form of `s` to `dest`, as `write_out` does. The text
+/// before `normalized_prefix` is its own normal form and is copied as it
+/// is; the rest is normalized by `unicode::normalize_utf16_to` (the verified
+/// UTF-16 normalizer) into a scratch buffer kept per thread.
+unsafe fn normalize_out(s: &[u16], form: Form, dest: *mut UChar, capacity: i32, err: *mut UErrorCode) -> i32 {
+    let p = normalized_prefix(s, form);
+    if p == s.len() {
+        return write_out(s, dest, capacity, err);
     }
-    let rest = &s[q..];
-    let mut out = Vec::with_capacity(s.len() + s.len() / 2);
-    out.extend_from_slice(&s[..q]);
-    if let Some(r) = utf16_to_string(rest) {
-        return match unicode::normalize(&r, form) {
-            Cow::Borrowed(_) => None,
-            Cow::Owned(n) => {
-                push_utf16(&n, &mut out);
-                Some(out)
-            }
+    SCRATCH.with(|cell| {
+        let mut fresh = Vec::new();
+        let mut guard = cell.try_borrow_mut();
+        let out = match guard {
+            Ok(ref mut v) => &mut **v,
+            Err(_) => &mut fresh,
         };
-    }
-    let mut run = String::new();
-    let flush = |run: &mut String, out: &mut Vec<u16>| {
-        out.extend(unicode::normalize(run, form).encode_utf16());
-        run.clear();
-    };
-    for r in char::decode_utf16(rest.iter().copied()) {
-        match r {
-            Ok(c) => run.push(c),
-            Err(e) => {
-                flush(&mut run, &mut out);
-                out.push(e.unpaired_surrogate());
-            }
+        out.clear();
+        unicode::normalize_utf16_to(&s[p..], form, out);
+        let n = write_out2(&s[..p], out, dest, capacity, err);
+        if out.capacity() > 1 << 20 {
+            *out = Vec::new();
         }
-    }
-    flush(&mut run, &mut out);
-    Some(out)
+        n
+    })
 }
 
 fn is_normalized_utf16(s: &[u16], form: Form) -> bool {
-    let rest = &s[stable_prefix(s, form)..];
-    if let Some(r) = utf16_to_string(rest) {
-        return unicode::is_normalized(&r, form);
-    }
-    let mut run = String::new();
-    for r in char::decode_utf16(rest.iter().copied()) {
-        match r {
-            Ok(c) => run.push(c),
-            Err(_) => {
-                if !unicode::is_normalized(&run, form) {
-                    return false;
-                }
-                run.clear();
-            }
-        }
-    }
-    unicode::is_normalized(&run, form)
+    unicode::is_normalized_utf16(&s[normalized_prefix(s, form)..], form)
 }
 
 export!(vtext_unorm2_normalize, "unorm2_normalize", fn(
@@ -310,10 +284,7 @@ export!(vtext_unorm2_normalize, "unorm2_normalize", fn(
         *err = U_ILLEGAL_ARGUMENT_ERROR;
         return 0;
     }
-    match normalize_utf16(s, (*norm2).form) {
-        Some(v) => write_out(&v, dest, capacity, err),
-        None => write_out(s, dest, capacity, err),
-    }
+    normalize_out(s, (*norm2).form, dest, capacity, err)
 });
 
 export!(vtext_unorm2_isNormalized, "unorm2_isNormalized", fn(
