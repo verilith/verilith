@@ -12,16 +12,17 @@ their specifications.
 
 **Status: pre-release.** PNG and JPEG output (no WebP encoder yet),
 `local://`, `http://`, `https://` (with `--features tls`) and uploaded
-sources, and an area-average (box) resampler rather than imgproxy's Lanczos.
+sources. Resampling is Lanczos 3 by default, as in imgproxy.
 
 ## What is proven
 
-`cargo verus focus` checks 154 functions with no errors.
+`cargo verus focus` checks 240 functions with no errors.
 
 | Property | Where it is stated |
 |---|---|
 | The resizer computes exactly `spec::resize`: each output pixel is the area-weighted average of the source pixels its cell covers, rows then columns, rounded to nearest, with 8 bits of fraction kept between the passes. No overflow, no out-of-bounds access, for every size up to 65535 by 65535 | `resize::resize_rgba` (with `resize::rows`, `resize::cols`) against `spec::resize` |
 | The row pass's values stay below 255 × 256 and the column pass's below 256, so the narrowing casts are exact (the weights of each output cell add up to the source length: `lemma_osum`) | `lemma_hpx_bound`, `lemma_opx_bound` |
+| The thumbnailer computes exactly `spec_lanczos::thumb` for every kernel table (Lanczos 3, Lanczos 2, cubic, linear, or any other of up to 4 units' support): a box shrink by half the ratio rounded down, as `vips_resize` does, then the kernel stretched over each output sample, edges repeated, weights normalized by their sum, rows then columns with 8 bits of fraction kept and each pass clamped. No overflow, no out-of-bounds access, for every size up to 65535 by 65535 | `lanczos::thumb_rgba` (with `lanczos::taps`, `krows`, `kcols`) against `spec_lanczos::thumb` |
 | Cropping returns exactly `spec::crop` | `resize::crop_rgba` |
 | **PNG round trip:** for every RGBA image, the file `encode_rgba` writes decodes, under verilith-png's specification of PNG decoding, to exactly that image and header. The proof goes through every layer of the specification: the signature, IHDR, the chunk walk with its CRCs (computed by verilith-checksum, verified), the zlib stream (verilith-zlib's compressor, proven to round-trip), and the five row filters, each row filtered with whichever filter libpng's heuristic picks | `pngenc::encode_rgba` against `verilith_png::spec::decode` |
 | **JPEG output:** the file verilith-jpeg's `encode_rgb` writes decodes, under verilith-jpeg's specification, to the coefficients libjpeg-turbo computes for the image with its default settings (and is byte-identical to libjpeg-turbo's file in its differential tests) | verilith-jpeg's `encode::encode_rgb` (verified there) |
@@ -61,7 +62,9 @@ imgproxy.
 
 Processing options: `resize`/`rs` (`fit`, `fill`, `force`, width, height,
 enlarge), `size`/`s`, `resizing_type`/`rt`, `width`/`w`, `height`/`h`,
-`enlarge`/`el`, `background`/`bg` (flattens alpha), `gravity`/`g` (`ce`
+`enlarge`/`el`, `resizing_algorithm`/`ra` (`lanczos3`, the default,
+`lanczos2`, `cubic`, `linear`, `nearest`, and `area` for the exact area
+average), `background`/`bg` (flattens alpha), `gravity`/`g` (`ce`
 only), `format`/`f` or the URL's extension (`png`, `jpg`/`jpeg`; PNG when
 none is given), `quality`/`q` (JPEG, 1 to 100, default 80);
 `strip_metadata` and `cachebuster` are accepted and ignored. Anything else is answered 400, as
@@ -85,8 +88,11 @@ does not decode or is over the limits, 502 for an origin that fails.
   tables, alpha flattened onto the background or white. The quantization
   tables are libjpeg's for the quality; imgproxy's libvips uses the same
   ones.
-- Box (area-average) resampling instead of Lanczos 3. It is exact for
-  downscaling, has no ringing, and is softer than Lanczos.
+- Resampling follows libvips's design (box pre-shrink, then a
+  normalized kernel, 8-bit clamping between passes) but is not
+  bit-identical to it: the kernel tables are 1/256-step samples in 14-bit
+  fixed point, and `nearest` is a one-sample box (an average over each
+  output pixel's cell when downscaling), not a pick of one pixel.
 - Alpha is resampled straight, not premultiplied.
 - Centre gravity only; no smart crop, watermarks, blur, sharpening,
   rotation or EXIF orientation.
@@ -133,7 +139,8 @@ time.
 ## Tests
 
 `cargo test -p verilith-imgproxy` reads the encoder's output back with
-the `png` crate and with verilith-png at every level, compares the resizer
-with a direct floating-point computation of the area average on random
-sizes, runs the pipeline on JPEG and PNG files the `image` crate writes,
+the `png` crate and with verilith-png at every level, compares the
+area-average resizer with a direct floating-point computation of the area
+average on random sizes and the Lanczos resampler with a floating-point
+Lanczos 3 (`tests/lanczos.rs`: at most 2 levels apart), runs the pipeline on JPEG and PNG files the `image` crate writes,
 and checks URL parsing and imgproxy's documented signature example.
