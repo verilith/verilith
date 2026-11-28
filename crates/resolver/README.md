@@ -10,9 +10,10 @@ over HTTP/1.1 and HTTP/2.
 
 **Status: a working resolver.** It iterates from the root servers,
 follows referrals and CNAMEs, caches answers, negative answers and
-delegations, and passes its tests against a local hierarchy of servers
-that lie in the ways resolvers have been attacked. It does not validate
-DNSSEC yet, and it has not run in production. The API will change.
+delegations, validates DNSSEC from the IANA root trust anchors, and
+passes its tests against local hierarchies of servers that lie in the
+ways resolvers have been attacked and of zones signed correctly and
+wrongly. It has not run in production. The API will change.
 
 ## Quickstart
 
@@ -30,7 +31,9 @@ dig @127.0.0.1 +https example.com      # https://127.0.0.1/dns-query
 
 Other flags: `--threads N` (the pool that waits on servers; default 8 per
 CPU, at least 32), `--root IP` (repeatable; default: the 13 IPv4 root
-server addresses), `--upstream-port P` and `--timeout-ms MS`.
+server addresses), `--upstream-port P`, `--timeout-ms MS`,
+`--trust-anchor "TAG ALG DIGEST-TYPE HEX"` (repeatable; replaces the
+built-in root KSK-2017 and KSK-2024 DS records) and `--no-dnssec`.
 
 From Rust, `service::Resolver::new(&Options)` and `Resolver::answer(query,
 udp)` (a message in, the reply out); `service::udp`, `service::tcp`,
@@ -41,20 +44,21 @@ udp)` (a message in, the reply out); `service::udp`, `service::tcp`,
 | Step | Where | Verified |
 |---|---|---|
 | A client's message: parse, check, decide the reply's size limit | `frontend.rs`, verilith-dns's parser | yes |
-| The cache: answers, negative answers, delegations | `cache.rs` | yes |
+| The cache: answers, negative answers, delegations, and each answer's security status; the locks over its shards | `cache.rs`, `resolve.rs` (`Shared`, vstd's `RwLock`) | yes |
 | Walking down the zones from the closest known one; following CNAMEs; the query budget | `resolve.rs` (`resolve`, `iterate`, `ns_addrs`) | yes |
 | Writing a query to a server | `reply.rs` (`build_query`), verilith-dns's serializer | yes |
 | Taking a response: ID, question, 0x20 case | `accept.rs` | yes |
 | What a response means, and which of its records to believe | `classify.rs` | yes |
+| DNSSEC: the chain of trust from the anchors, RRSIGs, NSEC and NSEC3 denial | `trust.rs`, `check.rs`, `sigcheck.rs`, `nsec.rs`, `canon.rs`, `sha1.rs`, against `dspec.rs` | yes, but for the signature arithmetic (aws-lc, `crypto.rs`) |
 | Writing the client's reply, truncating it for UDP | `reply.rs` (`build_reply`), verilith-dns's compressing serializer | yes |
 | Sockets to servers, the clock, random bits | `net.rs` | no ([TRUST.md](TRUST.md)) |
 | Listeners: UDP, TCP, DoT, DoH | `service.rs`, verilith-tls, verilith-server | the TLS and HTTP engines are; the glue is not |
 
 ## What is proven
 
-`scripts/verify.sh` (Verus): 121 verified, 0 errors. The specification is
-`src/spec.rs`; every theorem below holds for every input, whatever any
-server or client sends.
+`scripts/verify.sh` (Verus): 346 verified, 0 errors. The specification is
+`src/spec.rs` and, for DNSSEC, `src/dspec.rs`; every theorem below holds
+for every input, whatever any server or client sends.
 
 - **Only responses to the query sent are taken** (`accept.rs`,
   `response_matches` computes `spec::response_ok`): QR set, Opcode 0, the
@@ -103,6 +107,32 @@ server or client sends.
   and the answer and authority sections exactly the records decided, or a
   truncated reply (TC, no records) when it would not fit the UDP limit
   (512 bytes without EDNS, else what the client offered, at most 1232).
+- **AD means validated** (`frontend::serve` ensures `served_ok`;
+  `resolve` ensures `answer_ok` and `dspec::sec_ok`). The AD bit is set
+  only on an answer whose status is SECURE, and only when the client set
+  DO or AD. SECURE means: every RRset in the answer and authority
+  sections is covered by an RRSIG that checks (RFC 4035 §5.3: inception
+  and expiration around the current time, the signer is the zone the
+  record is in, the labels count, the RRset in canonical form and order,
+  wildcards expanded only as the RRSIG's label count allows) under a key
+  from a DNSKEY RRset that is itself signed by a key matching a DS that
+  is validated the same way from its parent, up to a DS of the
+  configured root anchors (`dspec::chain_ok`). An NXDOMAIN or NODATA
+  answer is SECURE only with validated NSEC or NSEC3 records proving it
+  (`dspec::proves_nxdomain`, `proves_nodata`: the name covered and the
+  wildcard covered at the closest encloser, or the type absent from the
+  bitmap, NSEC3 with the closest encloser proof of RFC 5155 §8.3), and an
+  answer synthesised from a wildcard only with the proof that the name
+  itself does not exist (`proves_expansion`). INSECURE (no AD, data
+  served) needs a validated proof that a zone cut above the data has no
+  DS (`dspec::unsigned_ok`). Anything else is SERVFAIL, unless the client
+  set CD, which gets the data unchecked and is never cached for validating
+  queries. NSEC3 hashes are computed by a proven SHA-1 (`sha1.rs`), and
+  DS digests by verilith-sha2's proven SHA-256.
+- **Validation is bounded too**: the work to find and check the keys of
+  every zone on the way counts against the same `QUERY_BUDGET`, and the
+  chain of trust followed from a name is at most `VALIDATION_DEPTH` (12)
+  zones long.
 - **No panics, no out-of-bounds access, no overflow** in all of the above.
 
 Where these theorems sit in the code: `classify.rs` is where a response
@@ -118,15 +148,24 @@ toolchain, and the network glue, listed with what is assumed of each in
 [TRUST.md](TRUST.md): the transport (`net.rs`), whose responses the
 verified code treats as arbitrary bytes, and the listeners
 (`service.rs`), which pass messages whole to the verified `frontend::serve`
-and send back exactly its reply. Two small wrappers have `external_body`
-contracts: `Net`, which promises nothing, and `Shared`, the locked shards
-of the verified cache, whose contract is the cache's own.
+and send back exactly its reply. Three small wrappers have `external_body`
+contracts: `Net`, which promises nothing; `crypto::verify_sig`, aws-lc's
+RSA, ECDSA and Ed25519 signature check, which is an uninterpreted
+function to the proofs; and `anchors_x`, which reads the trust anchors set
+once at start-up. The cache shared by all threads (`Shared`) is verified
+code over vstd's verified reader-writer lock.
 
 ## What it does not do (yet)
 
-- **DNSSEC validation.** Nothing is validated; the AD bit is never set.
-  This is the largest gap, and the next piece: verilith-dns already parses
-  RRSIG, DNSKEY, DS and NSEC/NSEC3.
+- **Parts of DNSSEC.** RRSIGs are not returned to DO clients, so a
+  downstream validator cannot check our answers itself. DS records that
+  arrive with a referral are not used; the DS is asked of the parent
+  separately. No aggressive use of NSEC (RFC 8198). Algorithms 5 and 7
+  (RSA/SHA-1) are not supported (RFC 9905: signatures with them are
+  treated like an unknown algorithm), and an NSEC3 opt-out span proves
+  only that a delegation is unsigned, as RFC 5155 allows. A child zone
+  served by its parent's own servers that returns unsigned data without
+  the parent's proof of no DS comes out bogus rather than insecure.
 - **QNAME minimisation** (RFC 9156): servers see the full name.
 - **IPv6 root hints**: the default roots are IPv4 (`--root` takes IPv6).
 - **Serve-stale, prefetch, EDNS Client Subnet, DNS cookies, local zones.**
@@ -168,6 +207,34 @@ absolute numbers. dnsperf's DoH mode stalls against verilith-server when
 two HTTP/2 responses arrive in one TLS record (curl, nghttp and h2load do
 not), so DoH is measured with h2load.
 
+### Validating
+
+`bench/run-dnssec.sh` runs both with DNSSEC validation on, iterating from
+the signed test hierarchy (tests/sec, started by `examples/signed_hierarchy`:
+a root signed with RSA/SHA-256, `.com` with Ed25519, `example.com` with
+ECDSA P-256, and signed,
+unsigned and wrongly signed zones beside them), with the hierarchy's root
+DS as the only trust anchor and Unbound's validator on
+(`bench/unbound-dnssec.conf`, `aggressive-nsec: no` to match). Before
+timing, `dig +dnssec` checks that both give the same RCODE and AD bit for
+secure answers, a wildcard, NSEC and NSEC3 NXDOMAIN, an unsigned zone and
+two bogus ones: they agree on all eight.
+
+Medians of 3 alternating rounds (same container and day; every round in
+[bench/results-dnssec-cloud-x86-2026-11-28.md](bench/results-dnssec-cloud-x86-2026-11-28.md)):
+
+| | verilith-resolver | Unbound | ratio |
+|---|---|---|---|
+| UDP, cached secure answers (q/s) | 426,805 | 356,998 | 1.20x |
+| CPU per cached answer (µs) | 4.34 | 4.75 | 1.09x less |
+| UDP, uncached answers each needing a signature checked, 200 in flight (q/s) | 15,256 | 10,224 | 1.49x |
+| One uncached NXDOMAIN at a time, proof checked (µs latency) | 2,903 | 2,504 | 0.86x (slower) |
+
+Validation costs verilith-resolver nothing on cached answers (the status
+is cached with the answer). The first round's cold run includes fetching
+and checking the root, `.com` and `example.com` keys, which is why it is
+the slowest for both.
+
 ## Tests
 
 `tests/resolve.rs` runs the resolver against `tests/hier`, a hierarchy of
@@ -176,4 +243,11 @@ out-of-bailiwick answers and glue into every response, one that refers
 every query up and sideways, one that refers its zone to itself, CNAME
 loops and chains of 13 links, and a 50-server delegation with no glue.
 `tests/encrypted.rs` runs DoT (pipelined) and DoH (GET and POST) against
-rustls clients. `./ci.sh` runs both.
+rustls clients. `tests/dnssec.rs` runs validation against `tests/sec`, a
+signed hierarchy built at start-up with aws-lc-rs (RSA/SHA-256, ECDSA
+P-256 and P-384, and Ed25519 keys; NSEC and NSEC3 chains): secure answers, CNAMEs
+across zones, wildcards, empty non-terminals, NXDOMAIN and NODATA proofs,
+unsigned delegations, and bogus data (a corrupted signature, an expired
+one, a DS that matches no key, stripped RRSIGs and NSECs), plus CD and the
+DO bit. `tests/vectors.rs` checks the proven SHA-1 and NSEC3 hash against
+FIPS and RFC 5155 vectors and aws-lc-rs. `./ci.sh` runs them all.

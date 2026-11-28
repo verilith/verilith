@@ -39,8 +39,8 @@ not occur in any crate's `src/` (the script fails if one appears).
 | h3 |  |  |  |  |  |  | 1 | 33 |
 | hpack | 3 |  |  |  |  |  | 3 | 203 |
 | http |  |  |  |  |  |  | 8 | 2725 |
-| imgproxy |  |  |  |  |  |  | 3 | 756 |
-| jpeg |  |  |  |  |  |  | 3 | 768 |
+| imgproxy |  |  |  |  |  |  | 3 | 800 |
+| jpeg |  |  |  |  |  |  | 3 | 808 |
 | json | 17 |  |  |  |  |  | 6 | 1853 |
 | lz4 |  |  |  |  |  |  | 1 | 584 |
 | png |  |  |  |  |  |  | 7 | 4807 |
@@ -49,7 +49,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | quic |  |  |  |  |  |  | 1 | 30 |
 | quic-conn |  |  |  |  |  |  | 3 | 2091 |
 | regex | 1 |  |  |  |  |  | 3 | 1969 |
-| resolver | 7 |  |  |  |  |  | 4 | 496 |
+| resolver | 7 |  |  |  |  |  | 4 | 551 |
 | server | 1 |  |  |  | 1 |  | 15 | 5352 |
 | serverless |  |  |  |  |  |  | 2 | 256 |
 | sha2 | 34 |  |  |  |  |  | 3 | 362 |
@@ -69,7 +69,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 | 1354 |
 | zstd | 6 |  |  |  |  |  | 2 | 1331 |
-| **total** | **713** | **36** | **294** | **7** | **17** | **12** | **149** | **60100** |
+| **total** | **713** | **36** | **294** | **7** | **17** | **12** | **149** | **60239** |
 
 ## Items
 
@@ -164,13 +164,13 @@ not occur in any crate's `src/` (the script fails if one appears).
 ### imgproxy
 
 - `crates/imgproxy/src/handler.rs`: plain Rust, 83 lines
-- `crates/imgproxy/src/proxy.rs`: plain Rust, 604 lines
+- `crates/imgproxy/src/proxy.rs`: plain Rust, 648 lines
 - `crates/imgproxy/src/bin/verilith-imgproxy.rs`: plain Rust, 69 lines
 
 ### jpeg
 
-- `crates/jpeg/src/capi.rs`: plain Rust, 30 lines
-- `crates/jpeg/src/lib.rs`: plain Rust, 52 lines
+- `crates/jpeg/src/capi.rs`: plain Rust, 55 lines
+- `crates/jpeg/src/lib.rs`: plain Rust, 67 lines
 - `crates/jpeg/src/tj.rs`: plain Rust, 686 lines
 
 ### json
@@ -233,11 +233,13 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### resolver
 
-- `crates/resolver/src/lib.rs`: plain Rust, 22 lines
+- `crates/resolver/src/crypto.rs`: external_body: `verify_sig`
+- `crates/resolver/src/lib.rs`: plain Rust, 23 lines
 - `crates/resolver/src/net.rs`: plain Rust, 98 lines
-- `crates/resolver/src/resolve.rs`: external_body: `exchange`, `exchange`, `now`, `random`, `lookup`, `lookup`, `insert`
-- `crates/resolver/src/service.rs`: plain Rust, 297 lines
-- `crates/resolver/src/bin/verilith-resolver.rs`: plain Rust, 79 lines
+- `crates/resolver/src/resolve.rs`: external_body: `exchange`, `exchange`, `now`, `random`, `wall`
+- `crates/resolver/src/service.rs`: plain Rust, 338 lines
+- `crates/resolver/src/trust.rs`: external_body: `anchors_x`
+- `crates/resolver/src/bin/verilith-resolver.rs`: plain Rust, 92 lines
 
 ### server
 
