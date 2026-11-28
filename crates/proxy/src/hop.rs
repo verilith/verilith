@@ -14,11 +14,15 @@
 //! verilith-server's persistence proof uses (`persist.rs`).
 use vstd::prelude::*;
 use verilith_http::framing::ci_eq_exec;
+#[cfg(verus_keep_ghost)]
 use verilith_http::spec::{ci_eq, lower, trim_end};
+#[cfg(verus_keep_ghost)]
 use verilith_server::persist::{comma_end, element, lead, name_connection};
 #[cfg(verus_keep_ghost)]
 use verilith_server::persist::{lemma_comma_end, lemma_lead, lemma_trim};
-use verilith_server::respond::{field_view, fields_view, Field, SField};
+use verilith_server::respond::{Field, SField};
+#[cfg(verus_keep_ghost)]
+use verilith_server::respond::{field_view, fields_view};
 use vstd::slice::slice_subrange;
 
 verus! {

@@ -20,8 +20,12 @@ use verilith_http::parse::{response_at, Header, Out};
 #[cfg(verus_keep_ghost)]
 use verilith_http::parse::{hdrs_ok, headers_view};
 use verilith_http::framing::response_body_exec;
-use verilith_http::spec::{parse_response, response_body, Body, Parsed, SpecResponse};
-use verilith_server::persist::{persists_exec, persists_hm};
+use verilith_http::spec::{Body, Parsed, SpecResponse};
+#[cfg(verus_keep_ghost)]
+use verilith_http::spec::{parse_response, response_body};
+use verilith_server::persist::persists_exec;
+#[cfg(verus_keep_ghost)]
+use verilith_server::persist::persists_hm;
 
 verus! {
 

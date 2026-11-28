@@ -398,10 +398,12 @@ impl Worker {
                         let ctx = if matches!(s.conn, Any::Tls(_)) { &self.ctx_tls } else { &self.ctx };
                         #[cfg(not(feature = "tls"))]
                         let ctx = &self.ctx;
-                        s.conn.resume(stream, d.head, d.finish, ctx);
                         crate::defer::set_current(Some((slot, era)));
+                        crate::defer::set_client_fd(s.fd, is_tls(&s.conn));
+                        s.conn.resume(stream, d.head, d.finish, ctx);
                         let close = read_process_write(s, h, ctx);
                         crate::defer::set_current(None);
+                        crate::defer::clear_client();
                         if close {
                             self.close(id);
                         }
@@ -476,8 +478,10 @@ impl Worker {
         }
         if !close && (readable || s.read_paused) {
             crate::defer::set_current(Some((id as u32, s.era)));
+            crate::defer::set_client_fd(s.fd, is_tls(&s.conn));
             close = read_process_write(s, h, ctx);
             crate::defer::set_current(None);
+            crate::defer::clear_client();
         }
         if close {
             self.close(id);
@@ -498,6 +502,15 @@ impl Worker {
             self.free.push(id);
         }
     }
+}
+
+fn is_tls(c: &Any) -> bool {
+    #[cfg(feature = "tls")]
+    if matches!(c, Any::Tls(_)) {
+        return true;
+    }
+    let _ = c;
+    false
 }
 
 /// Reads all that is available, handles it, writes the responses. Returns

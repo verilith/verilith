@@ -26,6 +26,14 @@ verilith-zstd = { path = "../zstd", version = "0.1.0" }
 verilith-zlib = { path = "../zlib", version = "0.1.0" }
 vstd = { workspace = true, features = ["std"] }
 
+[dev-dependencies]
+rcgen = "0.14"
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
+quinn-proto = { version = "0.11.19", default-features = false, features = ["rustls-aws-lc-rs"] }
+bytes = "1.9"
+verilith-qpack = { path = "../qpack", version = "0.1.0" }
+verilith-h3 = { path = "../h3", version = "0.1.0" }
+
 [features]
 # HTTPS (h2 and http/1.1 by ALPN) on verilith-tls, and HTTP/3: the
 # server's features.

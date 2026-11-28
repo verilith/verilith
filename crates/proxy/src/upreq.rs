@@ -17,10 +17,9 @@
 //! [`write_request`] writes nothing unless they hold.
 use vstd::prelude::*;
 use verilith_http::spec as hs;
-use verilith_server::respond::{
-    cl_name, crlf, dec, fields_ok, fields_view, line, lines, name_ok, value_ok, Field, SField,
-    MAX_LENGTH,
-};
+use verilith_server::respond::{Field, SField, MAX_LENGTH};
+#[cfg(verus_keep_ghost)]
+use verilith_server::respond::{cl_name, crlf, dec, fields_ok, fields_view, line, lines, name_ok, value_ok};
 #[cfg(verus_keep_ghost)]
 use verilith_server::respond::{
     lemma_ci_eq_dash, lemma_dec_digits, lemma_lines_concat, lemma_lines_push, lemma_lit_done,

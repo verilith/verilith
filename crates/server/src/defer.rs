@@ -99,6 +99,37 @@ thread_local! {
     static WORKER: RefCell<Option<(Arc<Inbox>, sys::PollHandle)>> = const { RefCell::new(None) };
     /// The TCP connection being processed: its slot and generation.
     static CURRENT: Cell<Option<(u32, u32)>> = const { Cell::new(None) };
+    /// The client of the request being handled: its socket (TCP) or
+    /// address (HTTP/3), and whether the connection is encrypted.
+    static CLIENT: Cell<Option<Client>> = const { Cell::new(None) };
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Client {
+    Fd { fd: i32, tls: bool },
+    Addr(std::net::SocketAddrV4),
+}
+
+pub(crate) fn set_client_fd(fd: i32, tls: bool) {
+    CLIENT.with(|c| c.set(Some(Client::Fd { fd, tls })));
+}
+
+pub(crate) fn set_client_addr(a: std::net::SocketAddrV4) {
+    CLIENT.with(|c| c.set(Some(Client::Addr(a))));
+}
+
+pub(crate) fn clear_client() {
+    CLIENT.with(|c| c.set(None));
+}
+
+/// The address of the client whose request is being handled, and whether
+/// its connection is encrypted (TLS or QUIC): for `X-Forwarded-For` and
+/// `X-Forwarded-Proto`. `None` outside a handler on a worker.
+pub fn client() -> Option<(std::net::SocketAddrV4, bool)> {
+    match CLIENT.with(|c| c.get())? {
+        Client::Fd { fd, tls } => sys::peer_addr(fd).map(|a| (a, tls)),
+        Client::Addr(a) => Some((a, true)),
+    }
 }
 
 pub(crate) fn set_worker(inbox: Arc<Inbox>, poll: sys::PollHandle) {

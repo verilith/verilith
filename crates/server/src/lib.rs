@@ -51,7 +51,7 @@ mod api {
     pub use crate::h2::Limits2;
     pub use crate::respond::{Field, Prepared};
     pub use crate::worker::{serve, Config};
-    pub use crate::defer::{deregister, on_worker, register, Pending};
+    pub use crate::defer::{client, deregister, on_worker, register, Pending};
 
     /// A request, as a handler sees it. Everything borrows the connection's
     /// read buffer: no copies.

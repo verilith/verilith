@@ -17,11 +17,15 @@
 //! the lifetime exceeds the age (the backend's `Age` plus the time the
 //! response has been stored). [`decide`] computes all of it exactly.
 use vstd::prelude::*;
+#[cfg(verus_keep_ghost)]
 use verilith_http::spec::{is_ows, lower, trim_end};
+#[cfg(verus_keep_ghost)]
 use verilith_server::persist::{element, lead};
 #[cfg(verus_keep_ghost)]
 use verilith_server::persist::{lemma_lead, lemma_trim};
-use crate::hop::{same_ci, same_ci_exec};
+use crate::hop::same_ci_exec;
+#[cfg(verus_keep_ghost)]
+use crate::hop::same_ci;
 use vstd::slice::slice_subrange;
 #[cfg(verus_only)]
 use verilith_core::num::is_digit;

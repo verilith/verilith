@@ -42,11 +42,12 @@ not occur in any crate's `src/` (the script fails if one appears).
 | json | 17 |  |  |  |  |  | 6 |
 | lz4 |  |  |  |  |  |  | 1 |
 | png |  |  |  |  |  |  | 7 |
+| proxy |  |  |  |  |  |  | 4 |
 | qpack | 8 |  |  |  |  |  | 2 |
 | quic |  |  |  |  |  |  | 1 |
 | quic-conn |  |  |  |  |  |  | 3 |
 | regex | 1 |  |  |  |  |  | 3 |
-| server | 1 |  |  |  | 1 |  | 14 |
+| server | 1 |  |  |  | 1 |  | 15 |
 | sha2 | 34 |  |  |  |  |  | 3 |
 | simd | 425 | 11 | 290 | 4 |  |  | 3 |
 | snappy |  |  |  |  |  |  | 1 |
@@ -64,7 +65,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 |
 | zstd | 6 |  |  |  |  |  | 2 |
-| **total** | **700** | **36** | **290** | **7** | **17** | **12** | **134** |
+| **total** | **700** | **36** | **290** | **7** | **17** | **12** | **139** |
 
 ## Items
 
@@ -189,6 +190,13 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/png/src/libpng/stubs.rs`: plain Rust
 - `crates/png/src/libpng/xform.rs`: plain Rust
 
+### proxy
+
+- `crates/proxy/src/cache.rs`: plain Rust
+- `crates/proxy/src/lib.rs`: plain Rust
+- `crates/proxy/src/proxy.rs`: plain Rust
+- `crates/proxy/src/bin/verilith-proxy.rs`: plain Rust
+
 ### qpack
 
 - `crates/qpack/src/encoder.rs`: external_body: `static_find`, `field_hash`, `new`, `new`, `find`, `worth`, `add`
@@ -217,6 +225,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 - `crates/server/src/conn.rs`: external_body: `decode_in`; 1 assume_new
 - `crates/server/src/date.rs`: plain Rust
+- `crates/server/src/defer.rs`: plain Rust
 - `crates/server/src/files.rs`: plain Rust
 - `crates/server/src/h1.rs`: plain Rust
 - `crates/server/src/h2.rs`: plain Rust

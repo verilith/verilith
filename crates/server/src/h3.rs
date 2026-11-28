@@ -513,7 +513,10 @@ impl H3 {
             let us = micros(epoch, now);
             let Some((q, c)) = server.get(ch) else { return };
             c.app.tag = Some((ch as u32, c.serial));
-            if let Err(Close(code)) = app_events(q, &mut c.app, h, ctx, &limits) {
+            crate::defer::set_client_addr(c.peer);
+            let r = app_events(q, &mut c.app, h, ctx, &limits);
+            crate::defer::clear_client();
+            if let Err(Close(code)) = r {
                 q.close(us, code);
             }
             // At most BURST bytes now: the rest goes as acknowledgments

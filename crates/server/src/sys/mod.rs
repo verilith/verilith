@@ -95,6 +95,7 @@ unsafe extern "C" {
     fn connect(fd: c_int, addr: *const sockaddr_in, len: socklen_t) -> c_int;
     fn getsockopt(fd: c_int, level: c_int, name: c_int, val: *mut u8, len: *mut socklen_t) -> c_int;
     fn pipe(fds: *mut c_int) -> c_int;
+    fn getpeername(fd: c_int, addr: *mut sockaddr_in, len: *mut socklen_t) -> c_int;
     fn write(fd: c_int, buf: *const u8, n: usize) -> isize;
 }
 
@@ -178,6 +179,16 @@ pub fn take_error(fd: i32) -> Option<i32> {
         return Some(io::Error::last_os_error().raw_os_error().unwrap_or(-1));
     }
     if v == 0 { None } else { Some(v) }
+}
+
+/// The IPv4 address a connected socket's peer has.
+pub fn peer_addr(fd: i32) -> Option<std::net::SocketAddrV4> {
+    let mut sa: sockaddr_in = unsafe { std::mem::zeroed() };
+    let mut len = std::mem::size_of::<sockaddr_in>() as socklen_t;
+    if unsafe { getpeername(fd, &mut sa, &mut len) } < 0 || sa.sin_family as c_int != AF_INET {
+        return None;
+    }
+    Some(std::net::SocketAddrV4::new(std::net::Ipv4Addr::from(sa.sin_addr.to_ne_bytes()), u16::from_be(sa.sin_port)))
 }
 
 /// A pipe whose ends are both nonblocking: a thread wakes a worker by

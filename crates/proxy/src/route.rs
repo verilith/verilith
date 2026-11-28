@@ -10,7 +10,9 @@
 //! [`best`]: among the matching routes, one that names the host before one
 //! that does not, then the longest prefix, then the first listed.
 use vstd::prelude::*;
-use crate::hop::{same_ci, same_ci_exec};
+use crate::hop::same_ci_exec;
+#[cfg(verus_keep_ghost)]
+use crate::hop::same_ci;
 
 verus! {
 
