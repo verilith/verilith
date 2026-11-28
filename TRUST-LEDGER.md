@@ -39,8 +39,8 @@ not occur in any crate's `src/` (the script fails if one appears).
 | h3 |  |  |  |  |  |  | 1 | 33 |
 | hpack | 3 |  |  |  |  |  | 3 | 203 |
 | http |  |  |  |  |  |  | 8 | 2725 |
-| imgproxy |  |  |  |  |  |  | 3 | 1031 |
-| jpeg |  |  |  |  |  |  | 3 | 808 |
+| imgproxy |  |  |  |  |  |  | 3 | 1044 |
+| jpeg |  |  |  |  |  |  | 3 | 816 |
 | json | 17 |  |  |  |  |  | 6 | 1853 |
 | lz4 |  |  |  |  |  |  | 1 | 584 |
 | png |  |  |  |  |  |  | 7 | 4807 |
@@ -53,7 +53,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | server | 1 |  |  |  | 1 |  | 15 | 5352 |
 | serverless |  |  |  |  |  |  | 2 | 256 |
 | sha2 | 14 |  |  |  |  |  | 3 | 362 |
-| simd | 509 | 12 | 294 | 4 |  |  | 3 | 1033 |
+| simd | 513 | 12 | 300 | 4 |  |  | 3 | 1053 |
 | snappy |  |  |  |  |  |  | 1 | 85 |
 | sync | 45 | 11 |  | 1 | 16 | 10 | 2 | 321 |
 | text | 19 | 13 |  |  |  |  | 9 | 1592 |
@@ -63,13 +63,13 @@ not occur in any crate's `src/` (the script fails if one appears).
 | url | 1 |  |  |  |  |  | 5 | 1311 |
 | verilith |  |  |  |  |  |  | 1 | 67 |
 | wasm | 20 |  |  |  |  | 2 | 4 | 2340 |
-| webp | 9 |  |  |  |  |  | 3 | 667 |
+| webp | 9 |  |  |  |  |  | 3 | 708 |
 | x509 |  |  |  |  |  |  | 6 | 1754 |
 | xml | 9 |  |  |  |  |  | 12 | 18460 |
 | xxhash |  |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 | 1354 |
 | zstd | 6 |  |  |  |  |  | 2 | 1331 |
-| **total** | **713** | **36** | **294** | **5** | **17** | **12** | **149** | **60398** |
+| **total** | **717** | **36** | **300** | **5** | **17** | **12** | **149** | **60480** |
 
 ## Items
 
@@ -161,13 +161,13 @@ not occur in any crate's `src/` (the script fails if one appears).
 ### imgproxy
 
 - `crates/imgproxy/src/handler.rs`: plain Rust, 107 lines
-- `crates/imgproxy/src/proxy.rs`: plain Rust, 827 lines
+- `crates/imgproxy/src/proxy.rs`: plain Rust, 840 lines
 - `crates/imgproxy/src/bin/verilith-imgproxy.rs`: plain Rust, 97 lines
 
 ### jpeg
 
 - `crates/jpeg/src/capi.rs`: plain Rust, 55 lines
-- `crates/jpeg/src/lib.rs`: plain Rust, 67 lines
+- `crates/jpeg/src/lib.rs`: plain Rust, 75 lines
 - `crates/jpeg/src/tj.rs`: plain Rust, 686 lines
 
 ### json
@@ -281,21 +281,21 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/simd/src/clmul.rs`: external_body: `has_pclmul`, `has_vpclmul`, `has_vpclmul256`, `xv`, `xv`, `xv`, `x_load`, `x_set`, `x_get`, `x_xor`, `x_fold`, `x_clmul_lo`, `x_shr64`, `x_shr32`, `x_and`, `x_low64`, `y_load`, `y_reg`, `y_splat`, `y_xor`, `y_fold`, `y_block`, `z_load`, `z_reg`, `z_splat`, `z_xor`, `z_fold`, `z_block`; axioms: `axiom_vpclmul_pclmul`, `axiom_zl_len`, `axiom_yl_len`
 - `crates/simd/src/cpu.rs`: external_body: `has_avx2`, `has_sse41`, `has_ssse3`, `compiled_with_ssse3`, `has_bmi2`, `has_pclmul`, `has_avx512bw`, `has_avx512vbmi2`, `has_popcnt`; axioms: `axiom_feature_implications`, `axiom_avx512_implications`
 - `crates/simd/src/crc.rs`: external_body: `has_crc32c`, `has_crc_arm`, `crc32c_u64`, `crc32c_u8`, `crc32_u64`
-- `crates/simd/src/emu.rs`: plain Rust, 589 lines
+- `crates/simd/src/emu.rs`: plain Rust, 609 lines
 - `crates/simd/src/emu_neon.rs`: plain Rust, 377 lines
 - `crates/simd/src/lanes.rs`: external_body: `b128`, `b128`; axioms: `axiom_b128_len`, `axiom_b256_len`; ext. types: `ExM128i`, `ExM256i`
 - `crates/simd/src/lib.rs`: plain Rust, 67 lines
-- `crates/simd/src/mem.rs`: external_body: `load128_u8`, `load256_u8`, `load128_u32`, `load256_u32`, `store128_u8`, `store256_u8`, `store128_u32`, `store256_u32`, `load128_u64`, `store128_u64`, `load256_u16`, `store256_u16`, `load128_i16`, `load256_i16`, `store128_i16`, `loadl64_u8`, `storel64_u8`, `storel32_u8`
+- `crates/simd/src/mem.rs`: external_body: `load128_u8`, `load256_u8`, `load128_u32`, `load256_u32`, `store128_u8`, `store256_u8`, `store128_u32`, `store256_u32`, `load128_u64`, `store128_u64`, `load256_u16`, `store256_u16`, `load128_i16`, `load256_i16`, `store128_i16`, `store256_i16`, `loadl64_u8`, `storel64_u8`, `storel32_u8`
 - `crates/simd/src/neon.rs`: external_body: `n8`, `has_neon`, `neon_emulated`, `has_neon_sse`, `axiom_neon_x86`, `vld1q_u8_at`, `vst1q_u8_at`, `vld1q_u16_at`, `vst1q_u16_at`, `vld1q_u32_at`, `vst1q_u32_at`, `vdupq_n_u8`, `vandq_u8`, `vorrq_u8`, `veorq_u8`, `vaddq_u8`, `vqsubq_u8`, `vceqq_u8`, `vshrq_n_u8`, `vqtbl1q_u8`, `vextq_u8`, `vzip1q_u8`, `vzip2q_u8`, `vuzp1q_u8`, `vmaxvq_u8`, `vmaxvq_u16`, `vpaddq_u8`, `vshrn4_u64`, `vgetq_lane_u64_0`, `vdupq_n_u32`, `vdupq_laneq_u32_3`, `vld1q_s16_at`, `vst1q_s16_at`, `vdupq_n_s16`, `vaddq_s16`, `vsubq_s16`, `vshrq_n_s16`, `vqdmulhq_s16`, `vzip1q_u16`, `vzip2q_u16`, `vzip1q_u32`, `vzip2q_u32`, `vzip1q_u64`, `vzip2q_u64`, `vrhaddq_u8`, `vsubq_u8`, `vqsubq_u16`, `vshll_low_n_u8`, `vshll_high_n_u8`, `vqshrun2_n_s16`, `vqshrn2_n_u16`, `vmaxq_u8`, `vabdq_u8`, `vcleq_u8`, `vqaddq_u8`, `vbicq_u8`, `vqaddq_s8`, `vqsubq_s8`, `vshrq_n_s8`, `vqshrn2_n_s16`, `vld1q_u8_low_at`, `vst1q_u8_low_at`, `vcombine_u64`, `vst1q_lane_u32_at`, `vmulq_u8`, `vmulq_u16`, `vmulq_u32`, `vpaddlq_u8`, `vpaddlq_u16`, `vpaddlq_u32`, `vgetq_lane_u64_1`, `vabsq_s16`, `vmaxq_u16`, `vmull_lo_s16`, `vmull_hi_s16`, `vdotq_s16`, `vaddq_u32`, `vsubq_u32`, `vrshrq_n_s32`, `vshlq_n_u32`, `vuzp2q_u16`, `vst3q_u8_at`, `vmull_lo_laneq_s16`, `vmull_hi_laneq_s16`, `vmlal_lo_laneq_s16`, `vmlal_hi_laneq_s16`, `vrshrn2_n_s32`, `vrshrn_lo_n_s32`, `vqaddq_u16`, `vaddlvq_u16`; axioms: `axiom_n8_len`; ext. types: `ExUint8x16`
-- `crates/simd/src/safe.rs`: external_body: `_mm_add_epi8`, `_mm_sub_epi8`, `_mm_adds_epu8`, `_mm_subs_epu8`, `_mm_adds_epi8`, `_mm_subs_epi8`, `_mm_subs_epu16`, `_mm_min_epu8`, `_mm_max_epu8`, `_mm_avg_epu8`, `_mm_cmpeq_epi8`, `_mm_cmpgt_epi8`, `_mm_add_epi16`, `_mm_sub_epi16`, `_mm_mullo_epi16`, `_mm_mulhi_epi16`, `_mm_mulhi_epu16`, `_mm_cmpeq_epi16`, `_mm_madd_epi16`, `_mm_add_epi32`, `_mm_sub_epi32`, `_mm_cmpeq_epi32`, `_mm_cmpgt_epi32`, `_mm_add_epi64`, `_mm_sad_epu8`, `_mm_unpacklo_epi8`, `_mm_unpackhi_epi8`, `_mm_unpacklo_epi16`, `_mm_unpackhi_epi16`, `_mm_unpacklo_epi32`, `_mm_unpackhi_epi32`, `_mm_unpacklo_epi64`, `_mm_unpackhi_epi64`, `_mm_packus_epi16`, `_mm_packs_epi16`, `_mm_packs_epi32`, `_mm_shuffle_epi8`, `_mm_maddubs_epi16`, `_mm_and_si128`, `_mm_or_si128`, `_mm_xor_si128`, `_mm_andnot_si128`, `_mm_blendv_epi8`, `_mm_srli_epi16`, `_mm_slli_epi16`, `_mm_srai_epi16`, `_mm_srli_epi32`, `_mm_srai_epi32`, `_mm_slli_epi32`, `_mm_srli_epi64`, `_mm_slli_epi64`, `_mm_shuffle_epi32`, `_mm_slli_si128`, `_mm_srli_si128`, `_mm_alignr_epi8`, `_mm_movemask_epi8`, `_mm_setzero_si128`, `_mm_set1_epi8`, `_mm_set1_epi16`, `_mm_set1_epi32`, `_mm_set1_epi64x`, `_mm_setr_epi32`, `_mm_setr_epi8`, `_mm256_add_epi8`, `_mm256_sub_epi8`, `_mm256_adds_epu8`, `_mm256_subs_epu8`, `_mm256_adds_epi8`, `_mm256_subs_epi8`, `_mm256_subs_epu16`, `_mm256_min_epu8`, `_mm256_max_epu8`, `_mm256_avg_epu8`, `_mm256_cmpeq_epi8`, `_mm256_cmpgt_epi8`, `_mm256_add_epi16`, `_mm256_sub_epi16`, `_mm256_mullo_epi16`, `_mm256_mulhi_epi16`, `_mm256_mulhi_epu16`, `_mm256_cmpeq_epi16`, `_mm256_madd_epi16`, `_mm256_add_epi32`, `_mm256_sub_epi32`, `_mm256_cmpeq_epi32`, `_mm256_cmpgt_epi32`, `_mm256_add_epi64`, `_mm256_sad_epu8`, `_mm256_unpacklo_epi8`, `_mm256_unpackhi_epi8`, `_mm256_unpacklo_epi16`, `_mm256_unpackhi_epi16`, `_mm256_unpacklo_epi32`, `_mm256_unpackhi_epi32`, `_mm256_unpacklo_epi64`, `_mm256_unpackhi_epi64`, `_mm256_packus_epi16`, `_mm256_packs_epi16`, `_mm256_packs_epi32`, `_mm256_shuffle_epi8`, `_mm256_maddubs_epi16`, `_mm256_and_si256`, `_mm256_or_si256`, `_mm256_xor_si256`, `_mm256_andnot_si256`, `_mm256_blendv_epi8`, `_mm256_srli_epi16`, `_mm256_slli_epi16`, `_mm256_srai_epi16`, `_mm256_srli_epi32`, `_mm256_srai_epi32`, `_mm256_slli_epi32`, `_mm256_srli_epi64`, `_mm256_slli_epi64`, `_mm256_shuffle_epi32`, `_mm256_bslli_epi128`, `_mm256_bsrli_epi128`, `_mm256_alignr_epi8`, `_mm256_movemask_epi8`, `_mm256_setzero_si256`, `_mm256_set1_epi8`, `_mm256_set1_epi16`, `_mm256_set1_epi32`, `_mm256_set1_epi64x`, `_mm256_setr_epi32`, `_mm256_setr_epi8`, `_mm_cvtsi32_si128`, `_mm_cvtsi128_si32`, `_mm_cvtsi64_si128`, `_mm_cvtsi128_si64`, `_mm256_castsi256_si128`, `_mm256_extracti128_si256`, `_mm256_set_m128i`, `_mm256_permutevar8x32_epi32`, `_mm256_permute2x128_si256`, `_mm_setr_epi16`, `_mm256_broadcastsi128_si256`, `_mm256_testz_si256`, `_mm_clmulepi64_si128`, `_mm_abs_epi16`, `_mm_adds_epu16`, `_mm_max_epu16`, `_mm_mullo_epi32`, `_mm_sll_epi16`, `_mm_sra_epi16`, `_mm_sll_epi32`, `_mm_sra_epi32`
+- `crates/simd/src/safe.rs`: external_body: `_mm_add_epi8`, `_mm_sub_epi8`, `_mm_adds_epu8`, `_mm_subs_epu8`, `_mm_adds_epi8`, `_mm_subs_epi8`, `_mm_subs_epu16`, `_mm_min_epu8`, `_mm_max_epu8`, `_mm_avg_epu8`, `_mm_cmpeq_epi8`, `_mm_cmpgt_epi8`, `_mm_add_epi16`, `_mm_sub_epi16`, `_mm_mullo_epi16`, `_mm_mulhi_epi16`, `_mm_mulhi_epu16`, `_mm_cmpeq_epi16`, `_mm_madd_epi16`, `_mm_add_epi32`, `_mm_sub_epi32`, `_mm_cmpeq_epi32`, `_mm_cmpgt_epi32`, `_mm_add_epi64`, `_mm_sad_epu8`, `_mm_unpacklo_epi8`, `_mm_unpackhi_epi8`, `_mm_unpacklo_epi16`, `_mm_unpackhi_epi16`, `_mm_unpacklo_epi32`, `_mm_unpackhi_epi32`, `_mm_unpacklo_epi64`, `_mm_unpackhi_epi64`, `_mm_packus_epi16`, `_mm_packs_epi16`, `_mm_packs_epi32`, `_mm_shuffle_epi8`, `_mm_maddubs_epi16`, `_mm_and_si128`, `_mm_or_si128`, `_mm_xor_si128`, `_mm_andnot_si128`, `_mm_blendv_epi8`, `_mm_srli_epi16`, `_mm_slli_epi16`, `_mm_srai_epi16`, `_mm_srli_epi32`, `_mm_srai_epi32`, `_mm_slli_epi32`, `_mm_srli_epi64`, `_mm_slli_epi64`, `_mm_shuffle_epi32`, `_mm_slli_si128`, `_mm_srli_si128`, `_mm_alignr_epi8`, `_mm_movemask_epi8`, `_mm_setzero_si128`, `_mm_set1_epi8`, `_mm_set1_epi16`, `_mm_set1_epi32`, `_mm_set1_epi64x`, `_mm_setr_epi32`, `_mm_setr_epi8`, `_mm256_add_epi8`, `_mm256_sub_epi8`, `_mm256_adds_epu8`, `_mm256_subs_epu8`, `_mm256_adds_epi8`, `_mm256_subs_epi8`, `_mm256_subs_epu16`, `_mm256_min_epu8`, `_mm256_max_epu8`, `_mm256_avg_epu8`, `_mm256_cmpeq_epi8`, `_mm256_cmpgt_epi8`, `_mm256_add_epi16`, `_mm256_sub_epi16`, `_mm256_mullo_epi16`, `_mm256_mulhi_epi16`, `_mm256_mulhi_epu16`, `_mm256_cmpeq_epi16`, `_mm256_madd_epi16`, `_mm256_add_epi32`, `_mm256_sub_epi32`, `_mm256_cmpeq_epi32`, `_mm256_cmpgt_epi32`, `_mm256_add_epi64`, `_mm256_sad_epu8`, `_mm256_unpacklo_epi8`, `_mm256_unpackhi_epi8`, `_mm256_unpacklo_epi16`, `_mm256_unpackhi_epi16`, `_mm256_unpacklo_epi32`, `_mm256_unpackhi_epi32`, `_mm256_unpacklo_epi64`, `_mm256_unpackhi_epi64`, `_mm256_packus_epi16`, `_mm256_packs_epi16`, `_mm256_packs_epi32`, `_mm256_shuffle_epi8`, `_mm256_maddubs_epi16`, `_mm256_and_si256`, `_mm256_or_si256`, `_mm256_xor_si256`, `_mm256_andnot_si256`, `_mm256_blendv_epi8`, `_mm256_srli_epi16`, `_mm256_slli_epi16`, `_mm256_srai_epi16`, `_mm256_srli_epi32`, `_mm256_srai_epi32`, `_mm256_slli_epi32`, `_mm256_srli_epi64`, `_mm256_slli_epi64`, `_mm256_shuffle_epi32`, `_mm256_bslli_epi128`, `_mm256_bsrli_epi128`, `_mm256_alignr_epi8`, `_mm256_movemask_epi8`, `_mm256_setzero_si256`, `_mm256_set1_epi8`, `_mm256_set1_epi16`, `_mm256_set1_epi32`, `_mm256_set1_epi64x`, `_mm256_setr_epi32`, `_mm256_setr_epi8`, `_mm_cvtsi32_si128`, `_mm_cvtsi128_si32`, `_mm_cvtsi64_si128`, `_mm_cvtsi128_si64`, `_mm256_castsi256_si128`, `_mm256_extracti128_si256`, `_mm256_set_m128i`, `_mm256_permutevar8x32_epi32`, `_mm256_permute2x128_si256`, `_mm_setr_epi16`, `_mm256_broadcastsi128_si256`, `_mm256_testz_si256`, `_mm_clmulepi64_si128`, `_mm_abs_epi16`, `_mm_adds_epu16`, `_mm_max_epu16`, `_mm_mullo_epi32`, `_mm256_cvtepu8_epi32`, `_mm256_mullo_epi32`, `_mm256_mul_epu32`, `_mm_sll_epi16`, `_mm_sra_epi16`, `_mm_sll_epi32`, `_mm_sra_epi32`
 - `crates/simd/src/sha_neon.rs`: external_body: `has_sha2`, `has_sha512`, `vsha256hq`, `vsha256h2q`, `vsha256su0q`, `vsha256su1q`, `vsha512hq`, `vsha512h2q`, `vsha512su0q`, `vsha512su1q`, `vrev32q_u8`, `vrev64q_u8`, `vaddq_u64`, `vld1q_u64_at`, `vst1q_u64_at`
 - `crates/simd/src/sha_x86.rs`: external_body: `has_shani`, `sha256rnds2`, `sha256msg1`, `sha256msg2`, `blend_epi16`
 - `crates/simd/src/vdot.rs`: external_body: `has_vnni512`, `has_avx2`, `zb`, `zb`, `zb`, `zb`, `zb_load`, `zd_zero`, `zd_add`, `zd_dot`, `zd_store`, `yb_load`, `yd_zero`, `yd_add`, `yd_dot`, `yd_store`; axioms: `axiom_lens`
 - `crates/simd/src/vudot.rs`: external_body: `has_dotprod`, `nb`, `nb`, `nb_load`, `nd_zero`, `nd_add`, `nd_dot`, `nd_store`; axioms: `axiom_nlens`
 - `crates/simd/src/wasm.rs`: external_body: `w_load`, `w_load16`, `w_load32`, `w_store`, `w_store16`, `w_splat8`, `w_and`, `w_or`, `w_xor`, `w_add8`, `w_sub_sat_u8`, `w_eq8`, `w_le_u8`, `w_max_u8`, `w_shr_u8`, `w_swizzle`, `w_extract8_0`, `w_zip_lo8`, `w_zip_hi8`, `w_even8`, `w_odd8`, `w_mix_even8`, `w_rot8`, `w_shr_u16`, `w_max_u16`, `w_rot16`, `w_extract16_0`, `w_mul16`, `w_mul32`, `w_extadd8`, `w_extadd16`, `w_shuf32_0213`, `w_extend_lo32`, `w_extend_hi32`, `w_add64`, `w_extract64`, `w_sub8`, `w_add_sat_u8`, `w_add_sat_s8`, `w_sub_sat_s8`, `w_avgr_u8`, `w_andnot`, `w_shr_s8`, `w_add16`, `w_sub16`, `w_add_sat_u16`, `w_sub_sat_u16`, `w_abs16`, `w_shr_s16`, `w_shl16`, `w_splat16`, `w_extend_lo8`, `w_extend_hi8`, `w_narrow_s16`, `w_narrow_u16`, `w_add32`, `w_sub32`, `w_shl32`, `w_shr_s32`, `w_splat32`, `w_extract32_0`, `w_extmul_lo16`, `w_extmul_hi16`, `w_dot16`, `w_narrow_s32`, `w_make64`, `w_load_s16`, `w_load64_zero`, `w_st3_ab0`, `w_st3_c0`, `w_st3_ab1`, `w_st3_c1`, `w_st3_ab2`, `w_st3_c2`, `w_zip_lo16`, `w_zip_hi16`, `w_even16`, `w_odd16`, `w_zip_lo32`, `w_zip_hi32`, `w_rot32_2`, `w_rot32_1`, `w_dup32_3`, `w_zip_lo64`, `w_zip_hi64`, `w_store32`, `w_store_s16`, `w_store64_lo`, `w_store32_lane`, `w_ext`, `w_dup16`
 - `crates/simd/src/wasm_x86.rs`: external_body: `m`, `u`
-- `crates/simd/src/x86.rs`: 147 assume_specification
-- `crates/simd/src/x86_emu.rs`: 147 assume_specification
+- `crates/simd/src/x86.rs`: 150 assume_specification
+- `crates/simd/src/x86_emu.rs`: 150 assume_specification
 
 ### snappy
 
@@ -383,7 +383,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 - `crates/webp/src/capi.rs`: plain Rust, 605 lines
 - `crates/webp/src/huffman.rs`: plain Rust, 1 lines
-- `crates/webp/src/lib.rs`: plain Rust, 61 lines
+- `crates/webp/src/lib.rs`: plain Rust, 102 lines
 - `crates/webp/src/pxops.rs`: external_body: `opaque32`
 - `crates/webp/src/vp8tables.rs`: external_body: `coeffs_proba0`, `coeffs_update_proba`, `bmodes_proba`, `dc_table`, `ac_table`
 - `crates/webp/src/vpred.rs`: external_body: `unpredict_avx2`
