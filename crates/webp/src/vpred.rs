@@ -408,13 +408,13 @@ fn run_mode(px: &mut Vec<u32>, i0: usize, i1: usize, row: usize, w: usize, m: u3
         assert forall|j: int| i0 <= j < i1 implies #[trigger] pstep(px@, src, w as int, m as nat, j) by {
         }
     } else if m == 5 {
-        run_m5(px, i0, i1, row, w);
+        run_avg_v::<5>(px, i0, i1, row, w);
     } else if m == 6 {
-        run_m6(px, i0, i1, row, w);
+        run_avg_v::<6>(px, i0, i1, row, w);
     } else if m == 7 {
-        run_m7(px, i0, i1, row, w);
+        run_avg_v::<7>(px, i0, i1, row, w);
     } else if m == 10 {
-        run_m10(px, i0, i1, row, w);
+        run_avg_v::<10>(px, i0, i1, row, w);
     } else if m == 11 {
         run_m11(px, i0, i1, row, w);
     } else if m == 12 {
@@ -1409,6 +1409,72 @@ fn run_m11(px: &mut Vec<u32>, i0: usize, i1: usize, row: usize, w: usize)
             assert(before[j as int] == src[j as int]);
             assert(p == predict_mode(11, before[j - 1], before[j - w], before[j - w + 1], before[j - w - 1]));
             assert(pstep(px@, src, w as int, 11, j as int));
+        }
+        l = c;
+        j = j + 1;
+    }
+}
+
+/// A run in mode 5, 6, 7 or 10 (the averages with the left pixel), one pixel
+/// at a time with the left pixel in a vector register, as libwebp's SSE2
+/// predictors do: the chain from one pixel to the next is two or three
+/// vector instructions per average instead of the scalar SWAR sequence.
+#[verifier::rlimit(40)]
+fn run_avg_v<const M: u32>(px: &mut Vec<u32>, i0: usize, i1: usize, row: usize, w: usize)
+    requires
+        M == 5 || M == 6 || M == 7 || M == 10,
+        run_geom(old(px)@.len(), w as int, row as int, i0 as int, i1 as int),
+    ensures
+        final(px)@.len() == old(px)@.len(),
+        forall|j: int| i0 <= j < i1 ==> #[trigger] pstep(final(px)@, old(px)@, w as int, M as nat, j),
+        forall|j: int| 0 <= j < i0 || i1 <= j < old(px)@.len() ==> #[trigger] final(px)@[j] == old(px)@[j],
+{
+    hide(add_px);
+    hide(avg2);
+    let ghost src = px@;
+    if i0 == i1 {
+        return;
+    }
+    let ones = _mm_set1_epi8(1);
+    assert(b128(ones) == splat8(1u8, 16));
+    let mut l = px_v(get32(px.as_slice(), i0 - 1));
+    let mut j = i0;
+    while j < i1
+        invariant
+            M == 5 || M == 6 || M == 7 || M == 10,
+            run_geom(src.len(), w as int, row as int, i0 as int, i1 as int),
+            i0 <= j <= i1,
+            px@.len() == src.len(),
+            b128(ones) == splat8(1u8, 16),
+            u32x4(l)[0] == px@[j - 1],
+            forall|q: int| i0 <= q < j ==> #[trigger] pstep(px@, src, w as int, M as nat, q),
+            forall|q: int| 0 <= q < i0 || j <= q < src.len() ==> #[trigger] px@[q] == src[q],
+        decreases i1 - j,
+    {
+        let s = px.as_slice();
+        let t = px_v(get32(s, j - w));
+        let p = if M == 5 {
+            let tr = px_v(get32(s, j - w + 1));
+            avg2_v(avg2_v(l, tr, ones), t, ones)
+        } else if M == 6 {
+            let tl = px_v(get32(s, j - w - 1));
+            avg2_v(l, tl, ones)
+        } else if M == 7 {
+            avg2_v(l, t, ones)
+        } else {
+            let tl = px_v(get32(s, j - w - 1));
+            let tr = px_v(get32(s, j - w + 1));
+            avg2_v(avg2_v(l, tl, ones), avg2_v(t, tr, ones), ones)
+        };
+        let c = add_v(px_v(get32(s, j)), p);
+        let cv = lane0(c);
+        let ghost before = px@;
+        set32(px.as_mut_slice(), j, cv);
+        proof {
+            lemma_pstep_frame(before, px@, src, w as int, M as nat, i0 as int, j as int);
+            assert(before[j as int] == src[j as int]);
+            assert(u32x4(p)[0] == predict_mode(M as nat, before[j - 1], before[j - w], before[j - w + 1], before[j - w - 1]));
+            assert(pstep(px@, src, w as int, M as nat, j as int));
         }
         l = c;
         j = j + 1;

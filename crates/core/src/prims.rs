@@ -130,6 +130,23 @@ pub fn get16(b: &[i16], i: usize) -> (r: i16)
 /// ensures  r == b@[i as int]
 /// ```
 #[inline(always)]
+pub fn get_u16(b: &[u16], i: usize) -> (r: u16)
+    requires
+        i < b@.len(),
+    ensures
+        r == b@[i as int],
+{
+    // SAFETY: in bounds by the precondition.
+    unsafe { *b.get_unchecked(i) }
+}
+
+/// `b[i]`.
+///
+/// ```text
+/// requires i < b@.len()
+/// ensures  r == b@[i as int]
+/// ```
+#[inline(always)]
 pub fn get32(b: &[u32], i: usize) -> (r: u32)
     requires
         i < b@.len(),

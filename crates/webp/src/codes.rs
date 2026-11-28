@@ -5,6 +5,13 @@ use crate::huffman::*;
 use crate::spec::*;
 #[cfg(verus_only)]
 use vstd::arithmetic::power2::*;
+#[cfg(verus_only)]
+use vstd::bits::*;
+#[cfg(verus_only)]
+use verilith_core::bits::*;
+#[cfg(verus_only)]
+use verilith_core::huffman::*;
+use verilith_core::prims::get_u16;
 use vstd::prelude::*;
 
 verus! {
@@ -424,9 +431,70 @@ pub fn read_prefix_code(br: &mut BitReader, data: &[u8], size: usize) -> (r: Opt
 // ---------------------------------------------------------------------------
 
 /// A group's five codes: green (with length prefixes and color cache),
-/// red, blue, alpha, distance.
+/// red, blue, alpha, distance. The first four tables are also kept in
+/// `tab`, one after the other, with 16-bit entries (`pk`): the pixel loop
+/// reads those, half the cache footprint of the 32-bit tables.
 pub struct Group {
     pub codes: Vec<HCode>,
+    /// The tables of codes 0 to 3, 16-bit entries.
+    pub tab: Vec<u16>,
+    /// Where each of codes 0 to 3 starts in `tab`.
+    pub off: [usize; 4],
+    /// Each of codes 0 to 3's table index mask, `(1 << tbits) - 1`.
+    pub mask: [u64; 4],
+}
+
+/// A 32-bit table entry in 16 bits: the length in bits 12 to 15, the symbol
+/// in bits 0 to 11; `LONG` is `0xffff`.
+pub open spec fn pk(e: u32) -> u16 {
+    if e == LONG {
+        0xffff
+    } else {
+        (((e >> 16u32) << 12u32) | (e & 0xfff)) as u16
+    }
+}
+
+#[inline(always)]
+pub fn pk_exec(e: u32) -> (r: u16)
+    ensures
+        r == pk(e),
+{
+    if e == LONG {
+        0xffff
+    } else {
+        (((e >> 16) << 12) | (e & 0xfff)) as u16
+    }
+}
+
+/// An entry's fields survive packing.
+pub proof fn lemma_pk(s: nat, l: nat)
+    requires
+        s < MAX_ALPHA,
+        l <= 15,
+    ensures
+        pk(ent(s, l)) != 0xffff,
+        (pk(ent(s, l)) as u32) >> 12u32 == l,
+        (pk(ent(s, l)) as u32) & 0xfff == s,
+{
+    let su = s as u32;
+    let lu = l as u32;
+    let e = ent(s, l);
+    assert(e == lu * 0x1_0000 + su);
+    assert(e != 0x8000_0000u32 && (((((e >> 16u32) << 12u32) | (e & 0xfff)) as u16) as u32) >> 12u32 == lu
+        && (((((e >> 16u32) << 12u32) | (e & 0xfff)) as u16) as u32) & 0xfff == su
+        && ((((e >> 16u32) << 12u32) | (e & 0xfff)) as u16) != 0xffffu16) by (bit_vector)
+        requires
+            e == (lu * 0x1_0000u32 + su) as u32,
+            su < 2328,
+            lu <= 15,
+    ;
+}
+
+/// `tab` holds code `h`'s table, packed, from `off` on.
+#[verifier::opaque]
+pub open spec fn fast_ok(tab: Seq<u16>, off: nat, h: HCode) -> bool {
+    &&& off + pow2(h.tbits as nat) <= tab.len()
+    &&& forall|i: int| 0 <= i < pow2(h.tbits as nat) ==> #[trigger] tab[off + i] == pk(h.table@[i])
 }
 
 #[verifier::opaque]
@@ -434,6 +502,210 @@ pub open spec fn group_ok(g: Group, lens: Seq<Seq<u8>>) -> bool {
     &&& g.codes@.len() == 5
     &&& lens.len() == 5
     &&& forall|j: int| 0 <= j < 5 ==> #[trigger] hcode_ok(g.codes@[j], lens[j])
+    &&& forall|j: int| 0 <= j < 4 ==> #[trigger] fast_ok(g.tab@, g.off@[j] as nat, g.codes@[j])
+    &&& forall|j: int| 0 <= j < 4 ==> #[trigger] g.mask@[j] == lowmask(g.codes@[j].tbits as u64)
+    &&& g.tab@.len() <= 4 * 1024
+}
+
+/// `peek` on code `j < 4` of a group, from its packed table: the next
+/// symbol and its length if its code fits in the table (`(len << 12) |
+/// symbol`), `0xffff` if not.
+#[inline(always)]
+pub fn peek16(g: &Group, j: usize, buf: u64, Ghost(b): Ghost<Seq<u8>>, Ghost(pos): Ghost<int>, Ghost(cnt): Ghost<nat>, Ghost(lens): Ghost<Seq<u8>>) -> (x: u32)
+    requires
+        j < 4,
+        g.codes@.len() == 5,
+        hcode_ok(g.codes@[j as int], lens),
+        fast_ok(g.tab@, g.off@[j as int] as nat, g.codes@[j as int]),
+        g.mask@[j as int] == lowmask(g.codes@[j as int].tbits as u64),
+        g.tab@.len() <= 4 * 1024,
+        MAX_ROOT <= cnt <= 64,
+        0 <= pos,
+        pos + cnt <= nbits(b),
+        buf as nat == bits(b, pos, cnt),
+    ensures
+        x != 0xffff ==> {
+            &&& x >> 12u32 <= MAX_ROOT
+            &&& x >> 12u32 <= cnt
+            &&& x & 0xfff < lens.len()
+            &&& read_symbol(lens, b, pos) == Some(((x & 0xfff) as nat, pos + (x >> 12u32)))
+        },
+        x == 0xffff ==> used(lens) != 1 && decode_num(lens, (buf as nat) % pow2(g.codes@[j as int].tbits as nat), g.codes@[j as int].tbits as nat, 1) is None,
+{
+    let ghost h = g.codes@[j as int];
+    let ghost t = h.tbits;
+    proof {
+        reveal(fast_ok);
+        lemma_mask(t as u64);
+        lemma_and_mask(buf, t as u64);
+        lemma_pow2_strictly_increases(t as nat, 11);
+        lemma2_to64();
+        lemma_pow2_pos(t as nat);
+        assert(((buf & lowmask(t as u64)) as nat) < pow2(t as nat));
+    }
+    let idx = (buf & g.mask[j]) as usize;
+    assert(idx < pow2(t as nat));
+    assert(g.off@[j as int] + pow2(t as nat) <= g.tab@.len());
+    let x = get_u16(g.tab.as_slice(), g.off[j] + idx) as u32;
+    proof {
+        let xx = buf as nat;
+        let e = h.table@[idx as int];
+        assert(x == pk(e) as u32);
+        if used(lens) == 1 {
+            assert(pow2(0) == 1);
+            assert(idx == 0);
+            lemma_ent_fields(first_used(lens, 0) as nat, 0);
+            lemma_pk(first_used(lens, 0) as nat, 0);
+        } else {
+            lemma_bits_bound(b, pos, cnt);
+            lemma_decode_num_trunc(lens, xx, cnt, t as nat, 1);
+            lemma_decode_num_sym(lens, xx % pow2(t as nat), t as nat, 1);
+            assert(e == tab_entry(lens, idx as nat, t as nat));
+            if let Some((s, k)) = decode_num(lens, xx % pow2(t as nat), t as nat, 1) {
+                lemma_ent_fields(s, k);
+                lemma_pk(s, k);
+                lemma_decode_num_some(lens, b, pos, cnt, cnt, 1);
+            }
+        }
+    }
+    x
+}
+
+/// `peek16`, with a code longer than the table resolved by `decode_long`:
+/// the next symbol and its length (up to 15 bits) as `(len << 12) |
+/// symbol`, or `0xffff` if no code matches.
+#[inline(always)]
+pub fn peek_full16(g: &Group, j: usize, buf: u64, cnt: u32, Ghost(b): Ghost<Seq<u8>>, Ghost(pos): Ghost<int>, Ghost(lens): Ghost<Seq<u8>>) -> (r: (u32, Ghost<nat>))
+    requires
+        j < 4,
+        g.codes@.len() == 5,
+        hcode_ok(g.codes@[j as int], lens),
+        fast_ok(g.tab@, g.off@[j as int] as nat, g.codes@[j as int]),
+        g.mask@[j as int] == lowmask(g.codes@[j as int].tbits as u64),
+        g.tab@.len() <= 4 * 1024,
+        MAX_ROOT <= cnt <= 64,
+        0 <= pos,
+        pos + cnt <= nbits(b),
+        buf as nat == bits(b, pos, cnt as nat),
+    ensures
+        r.0 != 0xffff ==> {
+            &&& r.0 >> 12u32 <= 15
+            &&& r.0 >> 12u32 <= cnt
+            &&& r.0 & 0xfff < lens.len()
+            &&& read_symbol(lens, b, pos) == Some(((r.0 & 0xfff) as nat, pos + (r.0 >> 12u32)))
+        },
+        r.1@ <= 15,
+{
+    let x = peek16(g, j, buf, Ghost(b), Ghost(pos), Ghost(cnt as nat), Ghost(lens));
+    if x != 0xffff {
+        return (x, Ghost(0));
+    }
+    let (r, Ghost(sw)) = decode_long(&g.codes[j], buf, cnt, Ghost(lens));
+    match r {
+        None => (0xffff, Ghost(sw)),
+        Some(e2) => {
+            let ghost x2 = buf as nat;
+            proof {
+                lemma_bits_bound(b, pos, cnt as nat);
+                lemma_decode_num_sym(lens, x2, cnt as nat, 1);
+                let (s, k) = decode_num(lens, x2, cnt as nat, 1)->Some_0;
+                lemma_ent_fields(s, k);
+                lemma_pk(s, k);
+                lemma_decode_num_some(lens, b, pos, cnt as nat, cnt as nat, 1);
+                assert(e2 == ent(s, k));
+            }
+            (pk_exec(e2) as u32, Ghost(sw))
+        },
+    }
+}
+
+/// The packed tables of a group's first four codes.
+fn pack_tables(codes: &Vec<HCode>, Ghost(gl): Ghost<Seq<Seq<u8>>>) -> (r: (Vec<u16>, [usize; 4], [u64; 4]))
+    requires
+        codes@.len() == 5,
+        gl.len() == 5,
+        forall|j: int| 0 <= j < 5 ==> #[trigger] hcode_ok(codes@[j], gl[j]),
+    ensures
+        forall|j: int| 0 <= j < 4 ==> #[trigger] fast_ok(r.0@, r.1@[j] as nat, codes@[j]),
+        forall|j: int| 0 <= j < 4 ==> #[trigger] r.2@[j] == lowmask(codes@[j].tbits as u64),
+        r.0@.len() <= 4 * 1024,
+{
+    reveal(fast_ok);
+    let mut tab: Vec<u16> = Vec::new();
+    let mut off = [0usize; 4];
+    let mut mask = [0u64; 4];
+    let mut j: usize = 0;
+    proof {
+        lemma2_to64();
+    }
+    while j < 4
+        invariant
+            j <= 4,
+            codes@.len() == 5,
+            gl.len() == 5,
+            forall|q: int| 0 <= q < 5 ==> #[trigger] hcode_ok(codes@[q], gl[q]),
+            tab@.len() <= j * 1024,
+            forall|q: int| 0 <= q < j ==> #[trigger] fast_ok(tab@, off@[q] as nat, codes@[q]),
+            forall|q: int| 0 <= q < j ==> #[trigger] mask@[q] == lowmask(codes@[q].tbits as u64),
+        decreases 4 - j,
+    {
+        let h = &codes[j];
+        assert(hcode_ok(codes@[j as int], gl[j as int]));
+        let t = h.tbits;
+        proof {
+            lemma2_to64();
+            if t < 10 {
+                lemma_pow2_strictly_increases(t as nat, 10);
+            }
+            assert(pow2(t as nat) <= 1024);
+            lemma_usize_shl_is_mul(1, t as usize);
+            lemma_mask(t as u64);
+        }
+        let n = 1usize << (t as usize);
+        assert(n as nat == pow2(t as nat));
+        assert(n <= 1024);
+        let o = tab.len();
+        let ghost t0 = tab@;
+        let mut i: usize = 0;
+        while i < n
+            invariant
+                i <= n,
+                n as nat == pow2(t as nat),
+                n <= 1024,
+                t == h.tbits,
+                h.table@.len() == n,
+                tab@.len() == o + i,
+                o == t0.len(),
+                o <= j * 1024,
+                forall|k: int| 0 <= k < o ==> #[trigger] tab@[k] == t0[k],
+                forall|k: int| 0 <= k < i ==> #[trigger] tab@[o + k] == pk(h.table@[k]),
+            decreases n - i,
+        {
+            let e = h.table[i];
+            tab.push(pk_exec(e));
+            i = i + 1;
+        }
+        proof {
+            reveal(fast_ok);
+            assert forall|q: int| 0 <= q < j implies #[trigger] fast_ok(tab@, off@[q] as nat, codes@[q]) by {
+                let hq = codes@[q];
+                assert(fast_ok(t0, off@[q] as nat, hq));
+                assert forall|k: int| 0 <= k < pow2(hq.tbits as nat) implies #[trigger] tab@[off@[q] + k] == pk(hq.table@[k]) by {
+                    assert(t0[off@[q] + k] == pk(hq.table@[k]));
+                }
+            }
+        }
+        off[j] = o;
+        mask[j] = (1u64 << (t as u64)) - 1;
+        proof {
+            reveal(fast_ok);
+            assert(fast_ok(tab@, o as nat, codes@[j as int])) by {
+                assert forall|k: int| 0 <= k < pow2(t as nat) implies #[trigger] tab@[o + k] == pk(codes@[j as int].table@[k]) by {}
+            }
+        }
+        j = j + 1;
+    }
+    (tab, off, mask)
 }
 
 pub open spec fn groups_ok(gs: Seq<Group>, lens: Seq<Seq<Seq<u8>>>) -> bool {
@@ -443,7 +715,7 @@ pub open spec fn groups_ok(gs: Seq<Group>, lens: Seq<Seq<Seq<u8>>>) -> bool {
 
 /// Work charged for reading one group.
 pub open spec fn group_cost(cb: nat) -> nat {
-    5 * code_cost(MAX_ALPHA as nat)
+    5 * code_cost(MAX_ALPHA as nat) + 4 * 1024
 }
 
 pub proof fn lemma_code_cost_mono(a: nat, b: nat)
@@ -542,7 +814,9 @@ pub fn read_group(br: &mut BitReader, data: &[u8], cb: u32) -> (r: Option<(Group
         }
         j = j + 1;
     }
-    let g = Group { codes };
+    let (tab, off, mask) = pack_tables(&codes, Ghost(gl));
+    br.work = Ghost(br.work@ + 4 * 1024);
+    let g = Group { codes, tab, off, mask };
     proof {
         reveal(group_ok);
     }
