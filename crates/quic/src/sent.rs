@@ -17,14 +17,14 @@
 //! - **loss** (`detect_lost`, §6.1): exactly the outstanding packets sent
 //!   before the largest acknowledged that are `kPacketThreshold` (3) or
 //!   more packets older than it, or were sent `loss_delay` or longer ago,
-//!   are declared lost ([`lost_rule`]), each handed to the caller once;
+//!   are declared lost (`lost_rule`), each handed to the caller once;
 //!   the loss timer it returns is the earliest time another packet would
 //!   meet the time threshold. Persistent congestion (§7.6.2) is reported
 //!   only when two ack-eliciting packets declared lost in the call were
 //!   sent at least the given duration apart with every packet between
 //!   them lost as well;
 //! - **bytes in flight** (§2, §B.2): the count is always the sum of the
-//!   sizes of the outstanding in-flight packets ([`flight`]), so
+//!   sizes of the outstanding in-flight packets (`flight`), so
 //!   congestion control (`cc.rs`) sees exactly what the network holds.
 //!
 //! Times are microseconds on the caller's clock.
@@ -1267,7 +1267,7 @@ impl Sent {
     }
 
     /// Loss detection (§6.1, Appendix A.10) at time `now` with
-    /// `loss_delay` (§6.1.2, from the RTT): every packet [`lost_rule`]
+    /// `loss_delay` (§6.1.2, from the RTT): every packet `lost_rule`
     /// says is lost becomes [`LOST`] and is appended to `done`, in packet
     /// number order; bytes in flight drop by those in flight.
     #[verifier::spinoff_prover]

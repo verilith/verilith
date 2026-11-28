@@ -104,7 +104,7 @@ proof fn lemma_shl1(a: u128)
         as u64) >> 63u64) as u128) << 64u128 | (((a as u64) >> 63u64) as u128)) << 64u128) == a << 1u128) by (bit_vector);
 }
 
-/// [`red`] with the 64-bit lane shifts SSE has.
+/// `red` with the 64-bit lane shifts SSE has.
 #[inline(always)]
 pub fn red_x<A: Isa>(lo: A::R, hi: A::R) -> (r: A::R)
     requires

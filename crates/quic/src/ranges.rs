@@ -2,7 +2,7 @@
 //! sender has had acknowledged, or must send again.
 //!
 //! Proven: [`RangeSet::insert`] and [`RangeSet::remove`] are set union and
-//! difference on [`RangeSet::view`]; ranges stay sorted, non-empty and
+//! difference on `RangeSet::view`; ranges stay sorted, non-empty and
 //! separated by gaps (adjacent ones are merged).
 use vstd::prelude::*;
 

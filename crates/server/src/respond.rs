@@ -2,12 +2,12 @@
 //!
 //! [`write_head`] appends a status line, the handler's field lines and the
 //! framing field line the server chooses, then the empty line. The theorem
-//! [`theorem_head_parses`] says what those bytes mean to a client: parsed by
+//! `theorem_head_parses` says what those bytes mean to a client: parsed by
 //! verilith-http's specification of a response head (`spec::parse_response`,
 //! the same rules its uniqueness theorems are stated over), they give back
 //! exactly the status, reason, and field lines that were written, in order,
 //! and the framing the server chose. Since a field name must be a token and
-//! a value must not contain CR, LF or NUL ([`name_ok`], [`value_ok`]), no
+//! a value must not contain CR, LF or NUL (`name_ok`, `value_ok`), no
 //! handler can add a field line, end the head early, or change the framing
 //! (response splitting): [`check_name`] and [`check_value`] refuse such
 //! input, and only checked input reaches [`write_head`].
@@ -808,7 +808,7 @@ fn eq_dash(n: &[u8], lit: &[u8]) -> (r: bool)
     true
 }
 
-/// Whether a handler may send a field with this name ([`name_ok`]).
+/// Whether a handler may send a field with this name (`name_ok`).
 pub fn check_name(n: &[u8]) -> (r: bool)
     ensures
         r == name_ok(n@),
@@ -859,7 +859,7 @@ fn value_char(c: u8) -> (r: bool)
     c == 0x09 || (c >= 0x20 && c != 0x7F)
 }
 
-/// Whether a handler may send this field value ([`value_ok`]).
+/// Whether a handler may send this field value (`value_ok`).
 pub fn check_value(v: &[u8]) -> (r: bool)
     ensures
         r == value_ok(v@),
@@ -886,7 +886,7 @@ pub fn check_value(v: &[u8]) -> (r: bool)
     true
 }
 
-/// Whether this is a reason phrase ([`reason_ok`]).
+/// Whether this is a reason phrase (`reason_ok`).
 pub fn check_reason(r: &[u8]) -> (ok: bool)
     ensures
         ok == reason_ok(r@),
@@ -1143,7 +1143,7 @@ pub fn check_fields(fields: &[Field]) -> (r: bool)
     true
 }
 
-/// Checks everything [`theorem_head_parses`] needs, then writes the head.
+/// Checks everything `theorem_head_parses` needs, then writes the head.
 /// On `true`, the bytes appended are `head(...)` for inputs that satisfy
 /// the theorem's preconditions, so they parse back exactly; on `false`,
 /// nothing is written.
