@@ -332,6 +332,8 @@ pub open spec fn qv_ok(q: Seq<u8>, h: Seq<u32>, m: Seq<u32>) -> bool {
 
 /// Eight coefficients, row `v` of `t`, divided as `quant` divides them.
 #[inline(always)]
+#[verifier::spinoff_prover]
+#[verifier::rlimit(30)]
 fn qrow(t: &[u32; 64], h: &[u32; 64], m: &[u32; 64], q: &[u8; 64], v: usize) -> (r: __m256i)
     requires
         avx2(),

@@ -1086,7 +1086,7 @@ pub proof fn lemma_ac_zeros(co: Seq<u16>, si: Seq<u8>, b: Seq<i16>, k0: int, k1:
 /// visited, as libjpeg-turbo does with its bit map.
 // The default budget is too small for z3's Arm build here; x86 needs less.
 #[verifier::spinoff_prover]
-#[verifier::rlimit(40)]
+#[verifier::rlimit(80)]
 pub fn encode_block_m(
     w: &mut BitWriter,
     b: &[i16; 64],
