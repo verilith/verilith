@@ -218,6 +218,20 @@ pub fn load128_i16(s: &[i16], i: usize) -> (r: __m128i)
     unsafe { _mm_loadu_si128(s.as_ptr().add(i) as *const __m128i) }
 }
 
+/// The sixteen 16-bit values at `s[i..i + 16]`, as their bits.
+#[verifier::external_body]
+#[inline(always)]
+pub fn load256_i16(s: &[i16], i: usize) -> (r: __m256i)
+    requires
+        avx2(),
+        i + 16 <= s@.len(),
+    ensures
+        u16x16(r) == s@.subrange(i as int, i + 16).map_values(|x: i16| x as u16),
+{
+    debug_assert!(i + 16 <= s.len());
+    unsafe { _mm256_loadu_si256(s.as_ptr().add(i) as *const __m256i) }
+}
+
 /// Stores `v` as eight 16-bit values at `s[i..i + 8]`.
 #[verifier::external_body]
 #[inline(always)]

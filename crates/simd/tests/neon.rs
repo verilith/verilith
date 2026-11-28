@@ -511,6 +511,7 @@ fn transform_ops() {
         assert_eq!(u16s(&bytes(vmaxq_u16(va, vb))), ref_max_u16(&a16, &b16), "umax.8h");
         assert_eq!(u32s(&bytes(vmull_lo_s16(va, vb))), ref_mull_lo_s16(&a16, &b16), "smull");
         assert_eq!(u32s(&bytes(vmull_hi_s16(va, vb))), ref_mull_hi_s16(&a16, &b16), "smull2");
+        assert_eq!(u32s(&bytes(vdotq_s16(va, vb))), ref_madd16(&a16, &b16), "smull/smull2/addp");
         assert_eq!(u32s(&bytes(vaddq_u32(va, vb))), ref_add32(&a32, &b32), "add.4s");
         assert_eq!(u32s(&bytes(vsubq_u32(va, vb))), ref_sub32(&a32, &b32), "sub.4s");
         assert_eq!(u16s(&bytes(vuzp2q_u16(va, vb))), ref_uzp2_16(&a16, &b16), "uzp2.8h");
@@ -524,6 +525,7 @@ fn transform_ops() {
         assert_eq!(u16s(&bytes(vabsq_s16(v(a)))), ref_abs16(&a16), "abs.8h edges");
         assert_eq!(u32s(&bytes(vmull_lo_s16(v(a), v(b)))), ref_mull_lo_s16(&a16, &b16), "smull edges");
         assert_eq!(u32s(&bytes(vmull_hi_s16(v(a), v(b)))), ref_mull_hi_s16(&a16, &b16), "smull2 edges");
+        assert_eq!(u32s(&bytes(vdotq_s16(v(a), v(b)))), ref_madd16(&a16, &b16), "smull/smull2/addp edges");
     }
     rshr32!(r, 1, 2, 7, 11, 16, 18, 30, 31);
     shl32!(r, 0, 1, 4, 13, 31);
