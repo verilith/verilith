@@ -1288,6 +1288,11 @@ pub struct Matcher {
     /// (and is taken at once, without looking ahead).
     chain: usize,
     nice: usize,
+    /// The lazy parser looks ahead only from a match shorter than `lazy`,
+    /// and with a quarter of the chain from one of `good` or more (zlib's
+    /// `max_lazy` and `good_length`).
+    lazy: usize,
+    good: usize,
     /// Take each match found without looking ahead (levels 1 to 4, as
     /// libdeflate's greedy parser).
     greedy: bool,
@@ -1381,6 +1386,18 @@ impl Matcher {
         }
     }
 
+    /// (max_lazy, good_length) by level for the lazy parser: zlib's, but
+    /// 32 rather than 16 at levels 5 and 6, which kept the ratio on HTML.
+    fn lazy_params(level: u32) -> (r: (usize, usize)) {
+        if level <= 7 {
+            (32, 8)
+        } else if level == 8 {
+            (128, 32)
+        } else {
+            (258, 32)
+        }
+    }
+
     /// A matcher for a stream of unknown length. Its hash table has 2^15
     /// entries, as zlib's does: a stream starts with a cleared table, and
     /// for the many short streams (Node makes one per call) clearing 2^16
@@ -1400,6 +1417,7 @@ impl Matcher {
             r.window() == WSIZE,
     {
         let (nice, chain) = Self::params(level);
+        let (lazy, good) = Self::lazy_params(level);
         // Twice as many hash entries as positions, and a chain entry for
         // every position, up to the full sizes.
         let mut hbits: u32 = 8;
@@ -1407,7 +1425,7 @@ impl Matcher {
         proof {
             vstd::arithmetic::power2::lemma2_to64();
         }
-        while hbits < 16 && hsize / 2 < n
+        while hbits < 16 && hsize < n
             invariant
                 8 <= hbits <= 16,
                 hsize == pow2(hbits as nat),
@@ -1424,7 +1442,16 @@ impl Matcher {
             hsize = hsize * 2;
             hbits = hbits + 1;
         }
-        let pmask: usize = if hbits >= 15 { 32767 } else { hsize / 2 - 1 };
+        // A chain entry per position, up to the window: positions of a
+        // short input do not share entries.
+        let mut pmask: usize = 255;
+        while pmask < 16384 && pmask + 1 < n
+            invariant
+                255 <= pmask <= 32767,
+            decreases 32767 - pmask,
+        {
+            pmask = pmask * 2 + 1;
+        }
         proof {
             assert(forall|x: usize| #[trigger] (x & pmask) <= pmask) by (bit_vector);
         }
@@ -1433,6 +1460,8 @@ impl Matcher {
             prev: vec![0xffffu16; pmask + 1],
             chain,
             nice,
+            lazy,
+            good,
             wmax: WSIZE,
             greedy: level <= 4,
             lazy2: level >= 8,
@@ -1502,6 +1531,9 @@ impl Matcher {
         let (nice, chain) = Self::params(level);
         self.chain = chain;
         self.nice = nice;
+        let (lazy, good) = Self::lazy_params(level);
+        self.lazy = lazy;
+        self.good = good;
         self.greedy = level <= 4;
         self.lazy2 = level >= 8;
         if level <= 1 && self.head1.len() != self.head.len() {
@@ -2091,7 +2123,11 @@ impl Matcher {
             // is no room for the literals a better match would add.
             let mut take_at = 1usize;
             if cl < self.nice && p + 1 < n && limit - toks.len() >= 3 {
-                let (nl, nd) = self.search(data, p + 1, cl - 1, self.chain / 2 + 1);
+                // From a match of `lazy` or more, one candidate only: a
+                // longer match there is rare, and full lookahead took a
+                // third of the time on HTML (zlib does none).
+                let effort = if cl >= self.lazy { 1 } else if cl >= self.good { self.chain / 4 + 1 } else { self.chain / 2 + 1 };
+                let (nl, nd) = self.search(data, p + 1, cl - 1, effort);
                 take_at = 2;
                 if nl > 0 && Self::better(cl, cd, nl, nd, 2) {
                     let t = data[p] as u32;

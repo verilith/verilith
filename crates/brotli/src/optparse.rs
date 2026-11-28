@@ -118,6 +118,7 @@ fn set_child(mf: &mut Mf, n: usize, right: bool, v: u32)
         final(mf).wmax == old(mf).wmax,
         final(mf).depth == old(mf).depth,
         final(mf).dict@ == old(mf).dict@,
+        final(mf).hshift == old(mf).hshift,
 {
     if right {
         store_at(&mut mf.right, n, v);

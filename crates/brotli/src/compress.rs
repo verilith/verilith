@@ -42,8 +42,19 @@ pub struct Mf {
     pub bt: bool,
     pub right: Vec<u32>,
     /// Static dictionary words by the hash of their first four bytes
-    /// (`dict_table`), or empty when the dictionary is not searched.
-    pub dict: Vec<u32>,
+    /// (`dict_table`, built once per process), or empty when the
+    /// dictionary is not searched. Every word found is checked against
+    /// the dictionary, so the table only suggests.
+    pub dict: &'static [u32],
+    /// `head` and `num` have `0x10_0000 >> hshift` entries: quick mode
+    /// sizes them to a one-shot input, since clearing 8 MiB of tables
+    /// cost more than compressing a page. Chains use the full size.
+    pub hshift: u32,
+}
+
+/// Entries in `head` and `num` for `hshift`.
+pub open spec fn hsize(hshift: u32) -> usize {
+    (0x10_0000usize >> hshift) as usize
 }
 
 /// Slots per bucket of the dictionary table, and buckets.
@@ -130,6 +141,16 @@ pub fn dict_table() -> (r: Vec<u32>)
     t
 }
 
+/// `dict_table()`, built on first use and kept for the process.
+#[verifier::external_body]
+pub fn shared_dict_table() -> (r: &'static [u32])
+    ensures
+        r@.len() == DSLOTS * DBUCKETS,
+{
+    static T: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    T.get_or_init(dict_table).as_slice()
+}
+
 /// `log2(ways)`.
 #[inline(always)]
 fn ways_shift(ways: usize) -> (r: usize)
@@ -176,21 +197,39 @@ impl Mf {
             r.wf(n as nat),
             r.wmax == wmax,
     {
-        let head = vec![NONE; 0x10_0000];
+        // Quick mode: at least four entries per byte of a one-shot input
+        // (`n == 0` is a stream of unknown length: full size).
+        let mut hshift: u32 = 0;
+        if quick && n > 0 {
+            hshift = 8;
+            while hshift > 0 && (0x10_0000usize >> hshift) / 4 < n
+                invariant
+                    hshift <= 8,
+                decreases hshift,
+            {
+                hshift = hshift - 1;
+            }
+        }
+        let size = 0x10_0000usize >> hshift;
+        assert(0x10_0000usize >> 0u32 == 0x10_0000usize) by (bit_vector);
+        let head = vec![NONE; size];
         let prev = if quick { Vec::new() } else { vec![NONE; n] };
-        let num = vec![0u32; 0x10_0000];
+        let num = vec![0u32; size];
         let bt = bt && !quick;
         let right = if bt { vec![NONE; n] } else { Vec::new() };
-        let dict = if dict && !bt { dict_table() } else { Vec::new() };
-        Mf { head, prev, depth, lazy, wmax, quick, ways, num, hlen, bt, right, dict }
+        let empty: &'static [u32] = &[];
+        let dict = if dict && !bt { shared_dict_table() } else { empty };
+        Mf { head, prev, depth, lazy, wmax, quick, ways, num, hlen, bt, right, dict, hshift }
     }
 
     pub open spec fn wf(&self, n: nat) -> bool {
-        &&& self.head@.len() == 0x10_0000
+        &&& self.hshift <= 8
+        &&& !self.quick ==> self.hshift == 0 && self.head@.len() == 0x10_0000
+        &&& self.head@.len() == hsize(self.hshift)
         &&& !self.quick ==> self.prev@.len() == n
         &&& n < 0xFFFF_FFFF
         &&& (self.ways == 4 || self.ways == 8 || self.ways == 16 || self.ways == 32)
-        &&& self.num@.len() == 0x10_0000
+        &&& self.num@.len() == hsize(self.hshift)
         &&& self.bt ==> !self.quick && self.right@.len() == n
         &&& self.dict@.len() == 0 || self.dict@.len() == DSLOTS * DBUCKETS
     }
@@ -199,16 +238,20 @@ impl Mf {
     fn hash(&self, data: &[u8], i: usize) -> (r: usize)
         requires
             i + 8 <= data@.len(),
+            self.hshift <= 8,
         ensures
-            r < 0x10_0000,
+            r < hsize(self.hshift),
     {
-        if self.hlen == 5 {
+        let h = if self.hlen == 5 {
             hash_n(data, i, 5)
         } else if self.hlen == 7 {
             hash_n(data, i, 7)
         } else {
             hash4(data, i)
-        }
+        };
+        let s = self.hshift;
+        assert(h >> s < 0x10_0000usize >> s) by (bit_vector) requires h < 0x10_0000usize, s <= 8;
+        h >> s
     }
 
     /// Room in the chains for an input of `n` bytes.
@@ -242,17 +285,18 @@ impl Mf {
                 let m = self.ways - 1;
                 let h = self.hash(data, i);
                 let key = h & !m;
-                assert(h & !m < 0x10_0000) by (bit_vector) requires h < 0x10_0000;
+                let s = self.hshift;
                 // The counts of the buckets sit side by side.
                 let sh = ways_shift(self.ways);
                 let nk = h >> sh;
-                assert(h >> sh < 0x10_0000) by (bit_vector) requires h < 0x10_0000;
+                assert(h >> sh < 0x10_0000usize >> s) by (bit_vector) requires h < 0x10_0000usize >> s, s <= 8;
                 let c = get32(self.num.as_slice(), nk);
                 let cu = c as usize;
                 let idx = key | (cu & m);
-                assert((h & !m) | (cu & m) < 0x10_0000) by (bit_vector)
+                assert((h & !m) | (cu & m) < 0x10_0000usize >> s) by (bit_vector)
                     requires
-                        h < 0x10_0000,
+                        h < 0x10_0000usize >> s,
+                        s <= 8,
                         m < 32,
                 ;
                 store_at(&mut self.head, idx, i as u32);
@@ -379,9 +423,9 @@ impl Mf {
             let m = w - 1;
             let h = self.hash(data, i);
             let key = h & !m;
-            assert(h & !m < 0x10_0000) by (bit_vector) requires h < 0x10_0000;
+            let s = self.hshift;
             let sh = ways_shift(w);
-            assert(h >> sh < 0x10_0000) by (bit_vector) requires h < 0x10_0000;
+            assert(h >> sh < 0x10_0000usize >> s) by (bit_vector) requires h < 0x10_0000usize >> s, s <= 8;
             let top = get32(self.num.as_slice(), h >> sh) as usize;
             let x4 = load32(data, i);
             let mut j: usize = 0;
@@ -397,16 +441,18 @@ impl Mf {
                     w <= 32,
                     m == w - 1,
                     key == h & !m,
-                    h < 0x10_0000,
+                    s == self.hshift,
+                    h < 0x10_0000usize >> s,
                     i + 8 <= data@.len(),
                 decreases w - j,
             {
                 let t = top.wrapping_sub(1 + j);
                 let slot = key | (t & m);
-                assert(key | (t & m) < 0x10_0000) by (bit_vector)
+                assert(key | (t & m) < 0x10_0000usize >> s) by (bit_vector)
                     requires
                         key == h & !m,
-                        h < 0x10_0000,
+                        h < 0x10_0000usize >> s,
+                        s <= 8,
                         m < 32,
                 ;
                 let c = get32(self.head.as_slice(), slot);

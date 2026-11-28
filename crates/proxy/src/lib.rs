@@ -4,6 +4,7 @@
 #[cfg(not(verus_keep_ghost))]
 pub mod cache;
 pub mod coding;
+pub mod fields;
 pub mod hop;
 #[cfg(not(verus_keep_ghost))]
 pub mod proxy;
