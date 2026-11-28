@@ -12,6 +12,8 @@
 //! it modulo t^128 + t^7 + t^2 + t + 1 by shifts and XORs.
 #![allow(unused_imports)]
 use crate::spec::*;
+#[cfg(verus_only)]
+pub use verilith_simd::clmul::{clmul, clmul_n, hi64, lo64};
 use vstd::prelude::*;
 
 verus! {
@@ -20,33 +22,8 @@ verus! {
 // The 64 x 64 -> 128-bit carry-less product (PCLMULQDQ, PMULL)
 // ---------------------------------------------------------------------------
 
-/// The XOR of `(b as u128) << i` over the set bits `i < n` of `a`.
-pub open spec fn clmul_n(a: u64, b: u64, n: nat) -> u128
-    decreases n,
-{
-    if n == 0 {
-        0
-    } else {
-        clmul_n(a, b, (n - 1) as nat) ^ (if (a >> (n - 1) as u64) & 1 == 1 {
-            (b as u128) << (n - 1) as u128
-        } else {
-            0
-        })
-    }
-}
-
-/// The carry-less product of two 64-bit words.
-pub open spec fn clmul(a: u64, b: u64) -> u128 {
-    clmul_n(a, b, 64)
-}
-
-pub open spec fn lo64(v: u128) -> u64 {
-    v as u64
-}
-
-pub open spec fn hi64(v: u128) -> u64 {
-    (v >> 64u128) as u64
-}
+// `clmul_n`, `clmul`, `lo64` and `hi64` are verilith-simd's (`clmul`),
+// re-exported above: the instructions' specifications use them.
 
 pub proof fn lemma_clmul_n_xor_l(a: u64, c: u64, b: u64, n: nat)
     ensures

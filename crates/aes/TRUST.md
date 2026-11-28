@@ -18,19 +18,23 @@ scanner finds them.
   `tests/rustcrypto.rs` (RustCrypto's `aes-gcm` and `aes` on every text
   length up to 600 bytes, additional data up to 300, and longer texts,
   through every kernel).
-- `src/isa.rs`: what the instructions compute, from the vendors'
+- verilith-simd's `src/aes.rs` (re-exported here as `isa`, with FIPS
+  197's round transformations and S-box, which `spec.rs` re-exports):
+  what the instructions compute, from the vendors'
   pseudocode: `AESENC`, `AESENCLAST` (and VAES's per-lane forms),
   `PCLMULQDQ` (and `VPCLMULQDQ`), `PSHUFB`, `PADDD`, the lane and byte
   shifts, and AArch64's `AESE`, `AESMC` and `PMULL`/`PMULL2`. The kernels
   are proven against these, and these against nothing: `tests/isa.rs`
   runs every wrapper on random operands (with zero, all-one and one-bit
-  values mixed in) against `src/isa_ref.rs`, verified implementations of
+  values mixed in) against verilith-simd's `src/aes_ref.rs`, verified implementations of
   the same functions, natively on x86-64 (the 512-bit ones where the CPU
   has them) and on AArch64 natively or under qemu (`ci.sh`).
 
 ## The instructions (each an `external_body` around one intrinsic)
 
-- `src/x86.rs`: `x_load`, `x_store`, `x_load16`, `x_store16`,
+They live in verilith-simd, re-exported here as `x86` and `neon`:
+
+- `src/aes_x86.rs`: `x_load`, `x_store`, `x_load16`, `x_store16`,
   `x_load_u128`, `x_set`, `x_get`, `x_xor`, `x_aesenc`, `x_aesenclast`,
   `x_clmul`, `x_pshufb`, `x_add32`, `x_sll64`, `x_srl64`, `x_bsll8`,
   `x_bsrl8`, and for 512-bit registers `z_load`, `z_store`, `z_load_u128`,
@@ -39,7 +43,7 @@ scanner finds them.
   `__m128i` and `__m512i`, seen through the uninterpreted `xv` and `zl`,
   and one axiom, `axiom_zl_len`: a 512-bit register has four 128-bit
   lanes.
-- `src/neon.rs`: `n_load`, `n_store`, `n_load16`, `n_store16`,
+- `src/aes_neon.rs`: `n_load`, `n_store`, `n_load16`, `n_store16`,
   `n_load_u128`, `n_set`, `n_get`, `n_xor`, `n_aese`, `n_aesmc`,
   `n_clmul`, `n_tbl`, `n_add32`, `n_sll64`, `n_srl64`, `n_bsll8`,
   `n_bsrl8`, over the register type `N128`, seen through `nv`. On other

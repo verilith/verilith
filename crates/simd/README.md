@@ -125,6 +125,13 @@ its own trusted base.
   little endian (`crc_bytes`), and their run-time checks `has_crc32c`
   and `has_crc_arm`. `tests/crc.rs` checks each against that definition
   bit by bit on random registers and bytes.
+- `src/aes.rs`, `src/aes_ref.rs`, `src/aes_x86.rs`, `src/aes_neon.rs`:
+  the AES and carry-less multiply instructions verilith-aes's kernels use
+  (AES-NI, VAES, PCLMULQDQ, VPCLMULQDQ, AArch64's AESE, AESMC and PMULL),
+  specified from the vendors' pseudocode with FIPS 197's round
+  transformations, one trusted wrapper each with run-time detection, and
+  verified reference implementations that verilith-aes's `tests/isa.rs`
+  checks every wrapper against.
 - `src/find.rs`: `find_byte`, the next occurrence of a byte, 16 bytes at
   a time and 64 while it stays absent (SSE2 on x86-64, NEON on AArch64,
   the same generic scanner on wasm32's SIMD), verified against the plain
