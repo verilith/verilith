@@ -85,6 +85,9 @@ for lh, k in [("lo", "unpacklo"), ("hi", "unpackhi")]:
         assert(u32s(n8(r)) =~= Seq::new(4, |i: int| ((s16(u16s(n8(a))[{off} + i]) * s16(u16s(n8(b))[{off} + i])) % 0x1_0000_0000) as u32));
     }}
     r"""
+B["w_dot16"] = """    let r = u(_mm_madd_epi16(m(a), m(b)));
+    assert(u32s(n8(r)) =~= Seq::new(4, |i: int| ((s16(u16s(n8(a))[2 * i]) * s16(u16s(n8(b))[2 * i]) + s16(u16s(n8(a))[2 * i + 1]) * s16(u16s(n8(b))[2 * i + 1])) % 0x1_0000_0000) as u32));
+    r"""
 B["w_extadd16"] = """    let x = m(a);
     let lo = _mm_and_si128(x, _mm_setr_epi8(-1, -1, 0, 0, -1, -1, 0, 0, -1, -1, 0, 0, -1, -1, 0, 0));
     let hi = _mm_srli_epi32::<16>(x);
@@ -190,7 +193,7 @@ B["w_odd16"] = """    let r = {
 
 ORDER = ["w_abs16", "w_add16", "w_sub16", "w_add32", "w_sub32", "w_mul16", "w_mul32",
     "w_add_sat_u16", "w_max_u16", "w_xor", "w_splat8", "w_splat16", "w_splat32", "w_dup16",
-    "w_extend_lo8", "w_extend_hi8", "w_extmul_lo16", "w_extmul_hi16", "w_extadd16",
+    "w_extend_lo8", "w_extend_hi8", "w_extmul_lo16", "w_extmul_hi16", "w_dot16", "w_extadd16",
     "w_extract16_0", "w_extract32_0", "w_extract64", "w_narrow_s16", "w_narrow_u16",
     "w_narrow_s32", "w_zip_lo8", "w_zip_hi8", "w_zip_lo16", "w_zip_hi16", "w_zip_lo32",
     "w_zip_hi32", "w_zip_lo64", "w_zip_hi64", "w_even16", "w_odd16", "w_rot32_1", "w_rot32_2",

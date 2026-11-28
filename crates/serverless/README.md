@@ -61,13 +61,15 @@ The start function, if any, runs once at load and may not call the ABI.
 [`examples/hello`](examples/hello) is a `no_std` Rust guest with the
 bindings in 40 lines. Build guests for WebAssembly 2.0 without reference
 types (`-C target-cpu=mvp` plus the 2.0 features; see its
-`.cargo/config.toml`), and give them a small shadow stack: every request
-starts from a copy of linear memory, so its size is the per-request cost
-(see Performance).
+`.cargo/config.toml`). Every request starts from the snapshot's memory,
+but only the 4 KiB chunks the previous request wrote are copied back, so
+the cost is what a request writes, not how large the memory is (see
+Performance); a smaller shadow stack still saves each worker thread
+memory.
 
 ## What is proven
 
-`scripts/verify.sh` (Verus): 33 verified, 0 errors, on top of the
+`scripts/verify.sh` (Verus): 39 verified, 0 errors, on top of the
 proofs of verilith-wasm, verilith-server and verilith-http, whose
 specifications these theorems are stated with.
 
@@ -94,7 +96,10 @@ specifications these theorems are stated with.
 - **Requests are isolated** (`host::Func::serve`). Before each call the
   instance's store (linear memory, its size, globals, tables, which data
   segments were dropped) is put back to the snapshot taken after
-  instantiation (`verilith_wasm::instance::Checked::restore`, verified),
+  instantiation (`verilith_wasm::instance::Checked::reset`, verified: it
+  copies back only the 4 KiB chunks of memory written since, and
+  `Func`'s type invariant keeps the memory clean against exactly this
+  snapshot),
   and the guest gets a new, empty reply. The contract returns the store
   the call started from and proves it equal to the snapshot: nothing a
   request leaves behind (a global, a byte of memory, a grown memory, a
@@ -124,8 +129,9 @@ verilith-wasm and verilith-server trust ([wasm's trusted
 base](../wasm#trusted-base), [server's TRUST.md](../server/TRUST.md)),
 this crate has no `external_body`, axiom or `assume`. Its unverified code
 is the glue in `src/lib.rs` and the binary, listed in
-[TRUST.md](TRUST.md): loading a module (checking its imports and building
-the import table), writing the request's header lines into one buffer,
+[TRUST.md](TRUST.md): loading a module (refusing imports that are not
+the ABI's; which ABI function an import is comes from the verified
+`abi::op_of`), writing the request's header lines into one buffer,
 handing the reply to `Response::send`, and keeping one instance per
 function per worker thread. A bug there can give a guest the wrong
 request bytes or the wrong ABI function for an import, but every call
@@ -146,20 +152,25 @@ break the theorems above.
 
 ## Performance
 
-`wrk -t2 -c64 -d8s` against the server with two worker threads, on a
-4-core cloud x86-64 VM (noisy; one run each, same sitting):
+`wrk -t2 -c64 -d6s` against the server with two worker threads on two
+CPUs, wrk on the other two, on a 4-vCPU cloud x86-64 VM (noisy; two runs
+each, same sitting):
 
 | route | requests/s |
 |---|---:|
-| verilith-server `/plaintext` (native Rust handler) | 203,000 |
-| `/fn/hello?name=x` (examples/hello, 64 KiB shadow stack, 2 pages of memory) | 141,000 |
-| the same guest with Rust's default 1 MiB shadow stack (17 pages) | 18,300 |
+| verilith-server `/plaintext` (native Rust handler) | 274,000-278,000 |
+| `/fn/hello?name=x` (examples/hello, 64 KiB shadow stack, 2 pages of memory) | 216,000-220,000 |
+| the same, before chunked resets | 123,000-130,000 |
+| the same guest with Rust's default 1 MiB shadow stack (17 pages) | 190,000 |
+| that guest before chunked resets | 18,600 |
 
-Most of the per-request cost is copying the snapshot's memory back
-(`Checked::restore`), so it grows with the guest's memory: keep the
-shadow stack small. Restoring only the pages a request wrote would remove
-most of it; that needs a dirty-page record in the interpreter, which is
-not built yet.
+A request now costs about 1.3 times a native one. Memory is put back
+4 KiB at a time: only the chunks the last request wrote are copied from
+the snapshot (`Checked::reset`, against verilith-wasm's `mem::Mem`
+record), so the per-request cost no longer grows with the guest's
+memory, only with how much of it a request writes. A guest that grows
+its memory in a request gets all of it copied back, as before. What is
+left is mostly the interpreter itself and the HTTP path.
 
 ## Prior work
 

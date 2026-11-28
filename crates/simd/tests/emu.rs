@@ -105,6 +105,7 @@ fn sse2_and_ssse3() {
     imm!(r, _mm_slli_epi16, 0, 1, 7, 15, 16, 255);
     imm!(r, _mm_srai_epi16, 0, 1, 7, 15, 16, 255);
     imm!(r, _mm_srli_epi32, 0, 1, 13, 31, 32, 255);
+    imm!(r, _mm_srai_epi32, 0, 1, 11, 18, 31, 32, 255);
     imm!(r, _mm_slli_epi32, 0, 1, 13, 31, 32, 255);
     imm!(r, _mm_shuffle_epi32, 0, 0x1b, 0x4e, 0xb1, 0xff, 0x93);
     imm!(r, _mm_slli_si128, 0, 1, 4, 8, 15, 16, 255);
@@ -257,6 +258,7 @@ fn avx2() {
     imm256!(r, _mm256_slli_epi16, 0, 1, 7, 15, 16, 255);
     imm256!(r, _mm256_srai_epi16, 0, 1, 7, 15, 16, 255);
     imm256!(r, _mm256_srli_epi32, 0, 1, 13, 31, 32, 255);
+    imm256!(r, _mm256_srai_epi32, 0, 1, 11, 18, 31, 32, 255);
     imm256!(r, _mm256_slli_epi32, 0, 1, 13, 31, 32, 255);
     imm256!(r, _mm256_shuffle_epi32, 0, 0x1b, 0x4e, 0xb1, 0xff, 0x93);
     imm256!(r, _mm256_bslli_epi128, 0, 1, 4, 8, 15, 16, 255);

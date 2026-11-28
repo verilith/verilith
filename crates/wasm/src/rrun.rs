@@ -913,7 +913,7 @@ pub fn r_load(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(c
         proof { n2 = lemma_rtrap(m, cs, codes, c0, g, s0, calls, d, rpc, fp, st, Trap::MemoryOutOfBounds); }
         return Err((Trap::MemoryOutOfBounds, Ghost(n2)));
     }
-    let v = load(&st.mem, ea as usize, nb);
+    let v = load(st.mem.vec(), ea as usize, nb);
     proof { lemma_le_bound(st.mem@, ea as int, nb as nat); }
     let v = load_res(v, nb, signed, is64);
     sset(stack, fp + r.d1 as usize, v);
@@ -937,7 +937,9 @@ pub fn r_store_rr(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Gho
         fam(r.op) is StoreRR,
         pre == has_pre(r.op),
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
-    ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+    ensures
+        final(st).mem.base() == old(st).mem.base(),
+        rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
 {
     proof { reveal(rpost); }
     let ua = is_acc_x(r.op);
@@ -969,7 +971,9 @@ pub fn r_store_ri(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Gho
         fam(r.op) is StoreRI,
         pre == has_pre(r.op),
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
-    ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+    ensures
+        final(st).mem.base() == old(st).mem.base(),
+        rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
 {
     proof { reveal(rpost); }
     let ua = is_acc_x(r.op);
@@ -1000,7 +1004,9 @@ fn r_store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(code
         v == if fam(r.op) is StoreRR { stack@[fp + r.b] } else { r.imm },
         ua ==> acc == stack@[fp + r.a],
         !is_acc(codes[d as int].rops@[rpc + 1].op),
-    ensures rpost(m, cs, codes, c0, g, stack@, s0.len(), calls, d, rpc, fp, final(st), res, acc),
+    ensures
+        final(st).mem.base() == old(st).mem.base(),
+        rpost(m, cs, codes, c0, g, stack@, s0.len(), calls, d, rpc, fp, final(st), res, acc),
 {
     proof { reveal(rpost); }
     proof { reveal(acc_ok); }
@@ -1017,7 +1023,7 @@ fn r_store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(code
         return Err((Trap::MemoryOutOfBounds, Ghost(n2)));
     }
     let ghost m1 = st.mem@;
-    store(&mut st.mem, ea as usize, v, nb);
+    st.mem.store(ea as usize, v, nb);
     proof {
         lemma_write_le_len(m1, ea as int, store_value(v, nb as nat), nb as nat);
         let s2 = crate::sem::Store { mem: st.mem@, ..store_view(&st0) };

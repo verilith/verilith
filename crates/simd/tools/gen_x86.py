@@ -68,6 +68,7 @@ IMM = [
  ("slli_epi16", "IMM8", "0 <= IMM8 <= 255", "{U16}(r) == slli16({U16}(a), IMM8 as int)"),
  ("srai_epi16", "IMM8", "0 <= IMM8 <= 255", "{U16}(r) == srai16({U16}(a), IMM8 as int)"),
  ("srli_epi32", "IMM8", "0 <= IMM8 <= 255", "{U32}(r) == srli32({U32}(a), IMM8 as int)"),
+ ("srai_epi32", "IMM8", "0 <= IMM8 <= 255", "{U32}(r) == srai32({U32}(a), IMM8 as int)"),
  ("slli_epi32", "IMM8", "0 <= IMM8 <= 255", "{U32}(r) == slli32({U32}(a), IMM8 as int)"),
  ("srli_epi64", "IMM8", "0 <= IMM8 <= 255", "{U64}(r) == srli64({U64}(a), IMM8 as int)"),
  ("slli_epi64", "IMM8", "0 <= IMM8 <= 255", "{U64}(r) == slli64({U64}(a), IMM8 as int)"),

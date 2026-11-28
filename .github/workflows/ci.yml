@@ -129,6 +129,8 @@ jobs:
         run: python3 scripts/buckify.py --check
       - name: The trust ledger is up to date
         run: python3 scripts/trust-ledger.py --check
+      - name: CPU intrinsics go through verilith-simd
+        run: python3 scripts/arch-check.py
       - id: proofs
         name: Which proofs
         env:
