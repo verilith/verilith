@@ -6,29 +6,14 @@
 //! check of that function's `requires` clause (Verus does not check the
 //! callers that are not verified), marked "pre:" below.
 use crate::fit::{plan_x, Mode};
+pub use crate::spec_url::{Filter, Format, Kind, Options};
+pub use crate::url::{jpeg_shrink_x as jpeg_shrink, Fail, Source};
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 /// The largest width or height anything here handles (`spec::MAX_DIM`).
 pub const MAX_DIM: u32 = 65535;
-
-/// Why a request failed, with the status it is answered with.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Fail {
-    /// 400: the URL is not one we understand.
-    BadUrl(&'static str),
-    /// 403: the signature is wrong.
-    Forbidden,
-    /// 404: no such source.
-    NotFound,
-    /// 415: the source is not JPEG, PNG, WebP or GIF.
-    Unsupported,
-    /// 422: the source does not decode, or is larger than the limits.
-    Unprocessable(&'static str),
-    /// 502: the origin failed.
-    BadGateway(&'static str),
-}
 
 impl Fail {
     pub fn status(&self) -> u16 {
@@ -54,40 +39,6 @@ impl Fail {
 // ---------------------------------------------------------------------------
 // URLs
 // ---------------------------------------------------------------------------
-
-/// What to do to the image.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Options {
-    pub mode: Mode,
-    pub w: u32,
-    pub h: u32,
-    pub enlarge: bool,
-    pub background: Option<[u8; 3]>,
-    /// The output format; PNG when the URL names none.
-    pub format: Format,
-    /// JPEG quality, 1 to 100 (0: the default, 80).
-    pub quality: u32,
-    /// The resampling filter (`resizing_algorithm`).
-    pub filter: Filter,
-}
-
-/// A resampling filter: imgproxy's `resizing_algorithm` values, plus the
-/// area average this crate had first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Filter {
-    /// `lanczos3`, imgproxy's default.
-    Lanczos3,
-    Lanczos2,
-    /// `cubic`: Catmull-Rom, as libvips's `VIPS_KERNEL_CUBIC`.
-    Cubic,
-    /// `linear`: a triangle.
-    Linear,
-    /// `nearest`: a box of one sample (an average over each output
-    /// sample's cell when downscaling, not a pick of one source pixel).
-    Nearest,
-    /// `area` (not imgproxy's): the exact area average of `spec::resize`.
-    Area,
-}
 
 /// Fixed-point (`KONE` = 16384) samples of `f` every 1/256 over `[0, a)`.
 fn table(a: usize, f: impl Fn(f64) -> f64) -> Vec<i32> {
@@ -132,13 +83,6 @@ impl Default for Options {
     }
 }
 
-/// An output format: each made by a verified encoder.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Format {
-    Png,
-    Jpeg,
-}
-
 impl Format {
     pub fn mime(self) -> &'static [u8] {
         match self {
@@ -151,17 +95,6 @@ impl Format {
 /// imgproxy's `IMGPROXY_QUALITY` default.
 pub const DEFAULT_QUALITY: u32 = 80;
 
-/// Where the image comes from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Source {
-    /// `local:///path`, under the configured root.
-    Local(Vec<u8>),
-    /// `http://...` or `https://...`.
-    Http(Vec<u8>),
-    /// The request body (`POST .../upload`).
-    Upload,
-}
-
 /// A parsed request URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Parsed<'a> {
@@ -172,203 +105,13 @@ pub struct Parsed<'a> {
     pub source: Source,
 }
 
-fn num(s: &[u8]) -> Result<u32, Fail> {
-    if s.is_empty() {
-        return Ok(0);
-    }
-    let mut v: u32 = 0;
-    for &c in s {
-        if !c.is_ascii_digit() {
-            return Err(Fail::BadUrl("Invalid number"));
-        }
-        v = v.checked_mul(10).and_then(|v| v.checked_add((c - b'0') as u32)).ok_or(Fail::BadUrl("Number too large"))?;
-    }
-    if v > MAX_DIM {
-        return Err(Fail::BadUrl("Size too large"));
-    }
-    Ok(v)
-}
-
-fn boolean(s: &[u8]) -> Result<bool, Fail> {
-    match s {
-        b"1" | b"t" | b"true" => Ok(true),
-        b"0" | b"f" | b"false" | b"" => Ok(false),
-        _ => Err(Fail::BadUrl("Invalid boolean")),
-    }
-}
-
-fn mode(s: &[u8]) -> Result<Mode, Fail> {
-    match s {
-        b"fit" => Ok(Mode::Fit),
-        b"fill" => Ok(Mode::Fill),
-        b"force" => Ok(Mode::Force),
-        _ => Err(Fail::BadUrl("Unsupported resizing type")),
-    }
-}
-
-fn hexbyte(s: &[u8]) -> Option<u8> {
-    let d = |c: u8| (c as char).to_digit(16);
-    match s {
-        [a, b] => Some((d(*a)? * 16 + d(*b)?) as u8),
-        _ => None,
-    }
-}
-
-fn background(args: &[&[u8]]) -> Result<Option<[u8; 3]>, Fail> {
-    match args {
-        [] | [b""] => Ok(None),
-        [hex] if hex.len() == 6 => {
-            match (hexbyte(&hex[0..2]), hexbyte(&hex[2..4]), hexbyte(&hex[4..6])) {
-                (Some(r), Some(g), Some(b)) => Ok(Some([r, g, b])),
-                _ => Err(Fail::BadUrl("Invalid background")),
-            }
-        }
-        [r, g, b] => {
-            let c = |s: &[u8]| -> Result<u8, Fail> {
-                let v = num(s)?;
-                if v > 255 || s.is_empty() { Err(Fail::BadUrl("Invalid background")) } else { Ok(v as u8) }
-            };
-            Ok(Some([c(r)?, c(g)?, c(b)?]))
-        }
-        _ => Err(Fail::BadUrl("Invalid background")),
-    }
-}
-
-/// Applies one processing option (`name:arg:arg...`).
-fn option(o: &mut Options, seg: &[u8]) -> Result<(), Fail> {
-    let mut parts = seg.split(|&c| c == b':');
-    let name = parts.next().unwrap_or(b"");
-    let args: Vec<&[u8]> = parts.collect();
-    let arg = |i: usize| args.get(i).copied().unwrap_or(b"");
-    match name {
-        b"resize" | b"rs" => {
-            if !arg(0).is_empty() {
-                o.mode = mode(arg(0))?;
-            }
-            o.w = num(arg(1))?;
-            o.h = num(arg(2))?;
-            o.enlarge = boolean(arg(3))?;
-        }
-        b"size" | b"s" => {
-            o.w = num(arg(0))?;
-            o.h = num(arg(1))?;
-            o.enlarge = boolean(arg(2))?;
-        }
-        b"resizing_type" | b"rt" => o.mode = mode(arg(0))?,
-        b"width" | b"w" => o.w = num(arg(0))?,
-        b"height" | b"h" => o.h = num(arg(0))?,
-        b"enlarge" | b"el" => o.enlarge = boolean(arg(0))?,
-        b"resizing_algorithm" | b"ra" => {
-            o.filter = match arg(0) {
-                b"lanczos3" => Filter::Lanczos3,
-                b"lanczos2" => Filter::Lanczos2,
-                b"cubic" => Filter::Cubic,
-                b"linear" => Filter::Linear,
-                b"nearest" => Filter::Nearest,
-                b"area" => Filter::Area,
-                _ => return Err(Fail::BadUrl("Invalid resizing algorithm")),
-            }
-        }
-        b"background" | b"bg" => o.background = background(&args)?,
-        b"quality" | b"q" => {
-            let q = num(arg(0))?;
-            if q > 100 {
-                return Err(Fail::BadUrl("Invalid quality"));
-            }
-            o.quality = q;
-        }
-        // Accepted and ignored: the encoders write no metadata.
-        b"strip_metadata" | b"sm" | b"cachebuster" | b"cb" => {}
-        b"format" | b"f" | b"ext" => format(o, arg(0))?,
-        // Only centred crops (`ce`, the default) are implemented.
-        b"gravity" | b"g" => {
-            if !matches!(arg(0), b"" | b"ce") {
-                return Err(Fail::Unprocessable("Only centre gravity is supported"));
-            }
-        }
-        _ => return Err(Fail::BadUrl("Unknown processing option")),
-    }
-    Ok(())
-}
-
-/// The output format an extension names: PNG or JPEG (the encoders this
-/// workspace verifies). No extension leaves the format as it is.
-fn format(o: &mut Options, ext: &[u8]) -> Result<(), Fail> {
-    match ext {
-        b"" => {}
-        b"png" | b"best" => o.format = Format::Png,
-        b"jpg" | b"jpeg" => o.format = Format::Jpeg,
-        _ => return Err(Fail::Unprocessable("Only PNG and JPEG output are supported")),
-    }
-    Ok(())
-}
-
-fn percent_decode(s: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(s.len());
-    verilith_text::percent::decode_to(s, &mut out);
-    out
-}
-
-fn source(url: Vec<u8>) -> Result<Source, Fail> {
-    if let Some(p) = url.strip_prefix(b"local://") {
-        Ok(Source::Local(p.to_vec()))
-    } else if url.starts_with(b"http://") || url.starts_with(b"https://") {
-        Ok(Source::Http(url))
-    } else {
-        Err(Fail::BadUrl("Unsupported source URL scheme"))
-    }
-}
-
 /// Parses `/%signature/%options/plain/%url[@%ext]`,
 /// `/%signature/%options/%base64_url[.%ext]` or
-/// `/%signature/%options/upload[@%ext]`.
+/// `/%signature/%options/upload[@%ext]`: `url::parse_x`, which is proven
+/// to compute `spec_url::parse`.
 pub fn parse(path: &[u8]) -> Result<Parsed<'_>, Fail> {
-    let rest = path.strip_prefix(b"/").ok_or(Fail::BadUrl("Invalid path"))?;
-    let slash = rest.iter().position(|&c| c == b'/').ok_or(Fail::BadUrl("Invalid path"))?;
-    let signature = &rest[..slash];
-    let signed = &rest[slash..];
-    let mut opts = Options::default();
-    let mut segs = signed[1..].split(|&c| c == b'/').peekable();
-    while let Some(seg) = segs.peek() {
-        if seg.contains(&b':') && !seg.starts_with(b"http") && !seg.starts_with(b"local") {
-            option(&mut opts, seg)?;
-            segs.next();
-        } else {
-            break;
-        }
-    }
-    let first = segs.next().ok_or(Fail::BadUrl("Missing source URL"))?;
-    let source = if first == b"plain" {
-        let joined: Vec<&[u8]> = segs.collect();
-        let mut url = joined.join(&b'/');
-        if let Some(at) = url.iter().rposition(|&c| c == b'@') {
-            format(&mut opts, &url[at + 1..])?;
-            url.truncate(at);
-        }
-        source(percent_decode(&url))?
-    } else if first.starts_with(b"upload") && segs.peek().is_none() {
-        if let Some(ext) = first.strip_prefix(b"upload@") {
-            format(&mut opts, ext)?;
-        } else if first != b"upload" {
-            return Err(Fail::BadUrl("Invalid upload path"));
-        }
-        Source::Upload
-    } else {
-        let mut enc: Vec<u8> = first.to_vec();
-        for s in segs {
-            enc.extend_from_slice(s);
-        }
-        if let Some(dot) = enc.iter().position(|&c| c == b'.') {
-            format(&mut opts, &enc[dot + 1..])?;
-            enc.truncate(dot);
-        }
-        let url = verilith_text::base64::URL_SAFE_NO_PAD
-            .decode(enc.strip_suffix(b"=").unwrap_or(&enc))
-            .or_else(|_| verilith_text::base64::URL_SAFE.decode(&enc))
-            .map_err(|_| Fail::BadUrl("Invalid base64 source URL"))?;
-        source(url)?
-    };
-    Ok(Parsed { signature, signed, opts, source })
+    let u = crate::url::parse_x(path)?;
+    Ok(Parsed { signature: &path[1..u.sig_end], signed: &path[u.sig_end..], opts: u.opts, source: u.source })
 }
 
 // ---------------------------------------------------------------------------
@@ -388,7 +131,8 @@ pub fn unhex(s: &str) -> Option<Vec<u8>> {
     if b.len() % 2 != 0 {
         return None;
     }
-    b.chunks(2).map(hexbyte).collect()
+    let h = |c: u8| crate::url::hexv_x(c);
+    b.chunks(2).map(|p| if h(p[0]) < 0 || h(p[1]) < 0 { None } else { Some((16 * h(p[0]) + h(p[1])) as u8) }).collect()
 }
 
 /// Whether `sig` is base64url(HMAC-SHA256(key, salt || signed)), compared
@@ -439,35 +183,19 @@ fn size_ok(w: u64, h: u64, max_px: u64) -> Result<(), Fail> {
     Ok(())
 }
 
-/// imgproxy's shrink-on-load factor for a JPEG (`calcJpegShink`): the
-/// largest of 8, 4 and 2 that the scale down to `rw` by `rh` allows, or 1.
-/// The decoder then gives the image at 1/8, 1/4 or 1/2 of its size,
-/// straight from the coefficients (verilith-jpeg's `decode_scaled`).
-pub fn jpeg_shrink(sw: u32, sh: u32, rw: u32, rh: u32) -> u32 {
-    let s = (sw / rw.max(1)).min(sh / rh.max(1));
-    if s >= 8 {
-        8
-    } else if s >= 4 {
-        4
-    } else if s >= 2 {
-        2
-    } else {
-        1
-    }
-}
-
 /// The width and height a file's header gives, if it is a JPEG, PNG, WebP
 /// or GIF file whose header can be read.
 pub fn dims(data: &[u8]) -> Option<(u32, u32)> {
-    if data.starts_with(&[0xff, 0xd8, 0xff]) {
+    let k = crate::url::kind_x(data);
+    if k == Some(Kind::Jpeg) {
         let hd = verilith_jpeg::decode::read_header(data).ok()?;
         Some((hd.w as u32, hd.h as u32))
-    } else if data.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
+    } else if k == Some(Kind::Png) {
         Some((be32(data, 16)?, be32(data, 20)?))
-    } else if data.len() >= 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+    } else if k == Some(Kind::Webp) {
         let f = verilith_webp::capi::get_features(data).ok()?;
         Some((f.width as u32, f.height as u32))
-    } else if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
+    } else if k == Some(Kind::Gif) {
         Some((u16::from_le_bytes([*data.get(6)?, *data.get(7)?]) as u32, u16::from_le_bytes([*data.get(8)?, *data.get(9)?]) as u32))
     } else {
         None
@@ -484,7 +212,10 @@ pub fn decode(data: &[u8], max_px: u64) -> Result<Rgba, Fail> {
 /// 2, 4 or 8; other formats ignore it).
 pub fn decode_shrunk(data: &[u8], max_px: u64, shrink: u32) -> Result<Rgba, Fail> {
     let bad = Fail::Unprocessable("Source image is invalid");
-    if data.starts_with(&[0xff, 0xd8, 0xff]) {
+    // The format, from the first bytes: `url::kind_x`, proven to compute
+    // `spec_url::kind`.
+    let k = crate::url::kind_x(data);
+    if k == Some(Kind::Jpeg) {
         let hd = verilith_jpeg::decode::read_header(data).map_err(|_| bad.clone())?;
         size_ok(hd.w as u64, hd.h as u64, max_px)?;
         let pic = match shrink {
@@ -502,7 +233,7 @@ pub fn decode_shrunk(data: &[u8], max_px: u64, shrink: u32) -> Result<Rgba, Fail
         }
         let px = crate::pixels::expand(&pic.px, nc).ok_or(Fail::Unprocessable("Out of memory"))?;
         Ok(Rgba { w: pic.w, h: pic.h, px })
-    } else if data.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
+    } else if k == Some(Kind::Png) {
         let (w, h) = (be32(data, 16).ok_or(bad.clone())?, be32(data, 20).ok_or(bad.clone())?);
         size_ok(w as u64, h as u64, max_px)?;
         let limit = (max_px as usize).saturating_mul(8).saturating_add(1 << 20);
@@ -511,14 +242,14 @@ pub fn decode_shrunk(data: &[u8], max_px: u64, shrink: u32) -> Result<Rgba, Fail
             _ => bad.clone(),
         })?;
         Ok(Rgba { w: hd.width, h: hd.height, px })
-    } else if data.len() >= 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+    } else if k == Some(Kind::Webp) {
         let f = verilith_webp::capi::get_features(data).map_err(|_| bad.clone())?;
         size_ok(f.width as u64, f.height as u64, max_px)?;
         let img = verilith_webp::capi::decode(data).map_err(|_| bad.clone())?;
         // pre: from_argb (a Vec's length times 4 fits in usize: it is a u32 vector)
         let px = crate::pixels::from_argb(&img.argb);
         Ok(Rgba { w: img.width as u32, h: img.height as u32, px })
-    } else if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
+    } else if k == Some(Kind::Gif) {
         let w = u16::from_le_bytes([data.get(6).copied().ok_or(bad.clone())?, data.get(7).copied().ok_or(bad.clone())?]);
         let h = u16::from_le_bytes([data.get(8).copied().ok_or(bad.clone())?, data.get(9).copied().ok_or(bad.clone())?]);
         size_ok(w as u64, h as u64, max_px)?;
@@ -926,6 +657,38 @@ fn read_body<S: Read>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn more_urls() {
+        let p = parse(b"/sig/bg:ff8000/q:90/f:jpg/upload").unwrap();
+        assert_eq!((p.signature, p.signed), (&b"sig"[..], &b"/bg:ff8000/q:90/f:jpg/upload"[..]));
+        assert_eq!((p.opts.background, p.opts.quality, p.opts.format), (Some([255, 128, 0]), 90, Format::Jpeg));
+        assert_eq!(parse(b"/x/bg:1:2:3/upload@png").unwrap().opts.background, Some([1, 2, 3]));
+        assert_eq!(parse(b"/x/upload@jpeg").unwrap().opts.format, Format::Jpeg);
+        let enc = verilith_text::base64::URL_SAFE.encode(b"http://a.b/c.png");
+        let path = format!("/x/rs:fill:10:20:1/{}.png", enc);
+        let p = parse(path.as_bytes()).unwrap();
+        assert_eq!(p.source, Source::Http(b"http://a.b/c.png".to_vec()));
+        assert_eq!((p.opts.mode, p.opts.w, p.opts.h, p.opts.enlarge), (Mode::Fill, 10, 20, true));
+        for bad in [
+            &b"x/plain/local:///a"[..],
+            b"/x",
+            b"/x/w:10",
+            b"/x/w:65536/plain/local:///a",
+            b"/x/w:1a/plain/local:///a",
+            b"/x/bg:zz0000/plain/local:///a",
+            b"/x/bg:256:0:0/plain/local:///a",
+            b"/x/q:101/plain/local:///a",
+            b"/x/g:no/plain/local:///a",
+            b"/x/plain/ftp://a/b",
+            b"/x/plain/local:///a@gif",
+            b"/x/uploadx",
+            b"/x/upload/more",
+            b"/x/!!!",
+        ] {
+            assert!(parse(bad).is_err(), "{}", String::from_utf8_lossy(bad));
+        }
+    }
 
     #[test]
     fn resizing_algorithms() {
