@@ -5,7 +5,7 @@ use crate::lanes::*;
 #[cfg(verus_only)]
 pub use verilith_simd::find::first_at;
 pub use verilith_simd::find::find_byte;
-#[cfg(test)]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128"))))]
 use verilith_simd::find::{find_impl, find_scalar};
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128")))]
 use verilith_simd::find::{mask_first, nib_first};

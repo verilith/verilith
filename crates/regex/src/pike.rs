@@ -948,7 +948,8 @@ fn dfa_skip(prog: &Prog, s: &[u8], p: usize, sc: &mut Scratch, nst: &mut NeedSt)
 
 /// The leftmost match starting at or after `from`, by priority: where it
 /// ends, with its capture slots in `out`.
-#[verifier::rlimit(300)]
+// The 32-bit layout (scripts/verify-narrow.sh) needs more than the 64-bit one.
+#[verifier::rlimit(600)]
 #[verifier::spinoff_prover]
 pub fn run(prog: &Prog, s: &[u8], from: usize, sc: &mut Scratch, out: &mut Vec<usize>) -> (r: (
     Option<usize>,
