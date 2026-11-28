@@ -2218,6 +2218,94 @@ fn copy_words(buf: &mut [u8], src: usize, dst: usize, n: usize)
     }
 }
 
+/// `buf[dst..dst + n] = buf[src..src + n]` for 16 to 64 bytes, in 16-byte
+/// pieces, the last of them overlapping the one before when `n` is not a
+/// multiple of 16 (no loop, so no branch on the length within a range),
+/// when the two do not overlap.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(30)]
+#[inline(always)]
+fn copy_mid(buf: &mut [u8], src: usize, dst: usize, n: usize)
+    requires
+        src + n <= old(buf)@.len(),
+        dst + n <= old(buf)@.len(),
+        src + n <= dst || dst + n <= src,
+        16 <= n <= 64,
+    ensures
+        final(buf)@.len() == old(buf)@.len(),
+        forall|j: int|
+            0 <= j < final(buf)@.len() ==> #[trigger] final(buf)@[j] == if dst <= j < dst + n {
+                old(buf)@[j - dst + src]
+            } else {
+                old(buf)@[j]
+            },
+{
+    let ghost o = buf@;
+    let len = buf.len();
+    assert(src + n <= len && dst + n <= len);
+    if n <= 32 {
+        copy16(buf, src, dst);
+        let ghost m = buf@;
+        copy16(buf, src + n - 16, dst + n - 16);
+        proof {
+            assert forall|j: int| 0 <= j < buf@.len() implies #[trigger] buf@[j] == if dst <= j < dst + n {
+                o[j - dst + src]
+            } else {
+                o[j]
+            } by {
+                if dst + n - 16 <= j < dst + n {
+                    assert(buf@[j] == m[j - (dst + n - 16) + (src + n - 16)]);
+                    assert(m[j - dst + src] == o[j - dst + src]);
+                } else {
+                    assert(buf@[j] == m[j]);
+                }
+            }
+        }
+    } else {
+        copy16(buf, src, dst);
+        let ghost m1 = buf@;
+        copy16(buf, src + 16, dst + 16);
+        let ghost m2 = buf@;
+        copy16(buf, src + n - 32, dst + n - 32);
+        let ghost m3 = buf@;
+        copy16(buf, src + n - 16, dst + n - 16);
+        proof {
+            assert forall|j: int| 0 <= j < buf@.len() implies #[trigger] buf@[j] == if dst <= j < dst + n {
+                o[j - dst + src]
+            } else {
+                o[j]
+            } by {
+                let k = j - dst + src;
+                if dst <= j < dst + n {
+                    assert(m1[k] == o[k]);
+                    assert(m2[k] == o[k]);
+                    assert(m3[k] == o[k]);
+                }
+                if dst + n - 16 <= j < dst + n {
+                    assert(buf@[j] == m3[j - (dst + n - 16) + (src + n - 16)]);
+                } else if dst + n - 32 <= j < dst + n - 16 {
+                    assert(buf@[j] == m3[j]);
+                    assert(m3[j] == m2[j - (dst + n - 32) + (src + n - 32)]);
+                } else if dst + 16 <= j < dst + 32 {
+                    assert(buf@[j] == m3[j]);
+                    assert(m3[j] == m2[j]);
+                    assert(m2[j] == m1[j - (dst + 16) + (src + 16)]);
+                } else if dst <= j < dst + 16 {
+                    assert(buf@[j] == m3[j]);
+                    assert(m3[j] == m2[j]);
+                    assert(m2[j] == m1[j]);
+                    assert(m1[j] == o[j - dst + src]);
+                } else {
+                    assert(buf@[j] == m3[j]);
+                    assert(m3[j] == m2[j]);
+                    assert(m2[j] == m1[j]);
+                    assert(m1[j] == o[j]);
+                }
+            }
+        }
+    }
+}
+
 /// Two ring positions `d` apart: either `d` apart in the ring too, or
 /// wrapped around it.
 #[verifier::spinoff_prover]
@@ -2958,8 +3046,10 @@ impl Decoder {
             copy16(ring.as_mut_slice(), si, ti);
         } else if m < 8 {
             copy_small(ring.as_mut_slice(), si, ti, m as usize);
-        } else if (si + (m as usize) <= ti || ti + (m as usize) <= si) && m < 64 {
+        } else if (si + (m as usize) <= ti || ti + (m as usize) <= si) && m < 16 {
             copy_words(ring.as_mut_slice(), si, ti, m as usize);
+        } else if (si + (m as usize) <= ti || ti + (m as usize) <= si) && m <= 64 {
+            copy_mid(ring.as_mut_slice(), si, ti, m as usize);
         } else {
             verilith_core::prims::copy_within(ring.as_mut_slice(), si, ti, m as usize);
         }
@@ -5527,8 +5617,8 @@ impl Decoder {
         let dmap: &[u8] = self.dmap.as_slice();
         let ring: &mut Vec<u8> = &mut self.ring;
         // Scratch space for transformed dictionary words.
-        let mut sw: Vec<u8> = Vec::with_capacity(64);
-        let mut sm: Vec<u8> = Vec::with_capacity(64);
+        let mut sw: Vec<u8> = Vec::new();
+        let mut sm: Vec<u8> = Vec::new();
         proof {
             assert(g.blen =~= [bl0, bl1, bl2]);
         }
