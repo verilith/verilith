@@ -29,7 +29,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | aes | 61 | 1 |  | 2 |  |  | 1 | 42 |
 | archive |  |  |  |  |  |  | 3 | 539 |
 | bind |  |  |  |  |  |  | 2 | 300 |
-| brotli | 1 |  |  |  |  |  | 5 | 643 |
+| brotli | 2 |  |  |  |  |  | 5 | 643 |
 | checksum | 12 |  |  |  |  |  |  |  |
 | core | 26 |  |  |  |  |  | 1 | 21 |
 | dns |  |  |  |  |  |  | 6 | 1438 |
@@ -44,7 +44,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | json | 17 |  |  |  |  |  | 6 | 1853 |
 | lz4 |  |  |  |  |  |  | 1 | 584 |
 | png |  |  |  |  |  |  | 7 | 4807 |
-| proxy |  |  |  |  |  |  | 4 | 925 |
+| proxy |  |  |  |  |  |  | 4 | 915 |
 | qpack | 8 |  |  |  |  |  | 2 | 223 |
 | quic |  |  |  |  |  |  | 1 | 30 |
 | quic-conn |  |  |  |  |  |  | 3 | 2091 |
@@ -69,7 +69,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 | 1354 |
 | zstd | 6 |  |  |  |  |  | 2 | 1331 |
-| **total** | **713** | **36** | **294** | **7** | **17** | **12** | **148** | **59734** |
+| **total** | **714** | **36** | **294** | **7** | **17** | **12** | **148** | **59724** |
 
 ## Items
 
@@ -97,6 +97,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/brotli/src/api.rs`: plain Rust, 37 lines
 - `crates/brotli/src/capi.rs`: plain Rust, 257 lines
 - `crates/brotli/src/capi_enc.rs`: plain Rust, 280 lines
+- `crates/brotli/src/compress.rs`: external_body: `shared_dict_table`
 - `crates/brotli/src/dict.rs`: external_body: `dict_bytes`
 - `crates/brotli/src/huffman.rs`: plain Rust, 3 lines
 - `crates/brotli/src/lib.rs`: plain Rust, 66 lines
@@ -203,8 +204,8 @@ not occur in any crate's `src/` (the script fails if one appears).
 ### proxy
 
 - `crates/proxy/src/cache.rs`: plain Rust, 91 lines
-- `crates/proxy/src/lib.rs`: plain Rust, 12 lines
-- `crates/proxy/src/proxy.rs`: plain Rust, 734 lines
+- `crates/proxy/src/lib.rs`: plain Rust, 13 lines
+- `crates/proxy/src/proxy.rs`: plain Rust, 723 lines
 - `crates/proxy/src/bin/verilith-proxy.rs`: plain Rust, 88 lines
 
 ### qpack
