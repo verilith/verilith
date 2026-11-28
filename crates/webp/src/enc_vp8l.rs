@@ -25,9 +25,61 @@ pub open spec fn hdr_bits(w: nat, h: nat, a: nat) -> Seq<nat> {
     fld(0x2f, 8) + (fld((w - 1) as nat, 14) + (fld((h - 1) as nat, 14) + (fld(a, 1) + fld(0, 3))))
 }
 
-/// An image without transforms, color cache or meta prefix codes.
-pub open spec fn plain_bits(w: nat, h: nat, a: nat, cls: Seq<Seq<u8>>, g: Seq<Seq<u8>>, toks: Seq<Tok>) -> Seq<nat> {
-    hdr_bits(w, h, a) + (fld(0, 1) + (fld(0, 1) + (fld(0, 1) + (gbits(cls, g, 5) + tbits(g, toks, 0)))))
+/// The transform list: subtract green alone if `sg`, else none.
+pub open spec fn tr_bits(sg: bool) -> Seq<nat> {
+    if sg {
+        fld(1, 1) + (fld(2, 2) + fld(0, 1))
+    } else {
+        fld(0, 1)
+    }
+}
+
+/// The pixels decoded after undoing the transforms `tr_bits(sg)` names.
+pub open spec fn undo_sg(sg: bool, p: Seq<u32>) -> Seq<u32> {
+    if sg {
+        Seq::new(p.len(), |i: int| add_green(p[i]))
+    } else {
+        p
+    }
+}
+
+/// An image with at most the subtract-green transform, and without color
+/// cache or meta prefix codes.
+pub open spec fn plain_bits(w: nat, h: nat, a: nat, sg: bool, cls: Seq<Seq<u8>>, g: Seq<Seq<u8>>, toks: Seq<Tok>) -> Seq<nat> {
+    hdr_bits(w, h, a) + (tr_bits(sg) + (fld(0, 1) + (fld(0, 1) + (gbits(cls, g, 5) + tbits(g, toks, 0)))))
+}
+
+/// `tr_bits` reads back as its transforms.
+proof fn lemma_tr(b: Seq<u8>, hd: Seq<nat>, w: nat, h: nat, sg: bool, rest: Seq<nat>)
+    requires
+        hd.len() == 40,
+        ext(b, hd + (tr_bits(sg) + rest)),
+    ensures
+        read_transforms(b, 40, w, h, seq![]) == Some((if sg { seq![Transform::SubtractGreen] } else { Seq::<Transform>::empty() }, w, (40 + tr_bits(sg).len()) as int)),
+        tr_bits(sg).len() == if sg { 4int } else { 1int },
+{
+    hide(ext);
+    hide(fld);
+    hide(rd);
+    lemma2_to64();
+    let z = fld(0, 1);
+    if sg {
+        let f1 = fld(1, 1);
+        let f2 = fld(2, 2);
+        assert(hd + (tr_bits(sg) + rest) =~= hd + (f1 + (f2 + (z + rest))));
+        lemma_rd(b, hd, 1, 1, f2 + (z + rest));
+        assert(hd + (f1 + (f2 + (z + rest))) =~= (hd + f1) + (f2 + (z + rest)));
+        lemma_rd(b, hd + f1, 2, 2, z + rest);
+        assert((hd + f1) + (f2 + (z + rest)) =~= (hd + f1 + f2) + (z + rest));
+        lemma_rd(b, hd + f1 + f2, 0, 1, rest);
+        let ts = Seq::<Transform>::empty().push(Transform::SubtractGreen);
+        assert(ts =~= seq![Transform::SubtractGreen]);
+        assert(read_transforms(b, 43, w, h, ts) == Some((ts, w, 44int)));
+        assert(!(exists|j: int| 0 <= j < 0 && kind(#[trigger] Seq::<Transform>::empty()[j]) == 2));
+        assert(read_transforms(b, 40, w, h, seq![]) == read_transforms(b, 43, w, h, ts));
+    } else {
+        lemma_rd(b, hd, 0, 1, rest);
+    }
 }
 
 proof fn lemma_hdr(b: Seq<u8>, w: nat, h: nat, a: nat, rest: Seq<nat>)
@@ -64,7 +116,7 @@ proof fn lemma_hdr(b: Seq<u8>, w: nat, h: nat, a: nat, rest: Seq<nat>)
 
 /// The theorem for the bitstream.
 #[verifier::spinoff_prover]
-pub proof fn lemma_plain(b: Seq<u8>, w: nat, h: nat, a: nat, cls: Seq<Seq<u8>>, g: Seq<Seq<u8>>, toks: Seq<Tok>)
+pub proof fn lemma_plain(b: Seq<u8>, w: nat, h: nat, a: nat, sg: bool, cls: Seq<Seq<u8>>, g: Seq<Seq<u8>>, toks: Seq<Tok>)
     requires
         1 <= w <= 0x4000,
         1 <= h <= 0x4000,
@@ -75,9 +127,9 @@ pub proof fn lemma_plain(b: Seq<u8>, w: nat, h: nat, a: nat, cls: Seq<Seq<u8>>, 
         toks_ok(w, toks),
         forall|j: int| 0 <= j < toks.len() ==> tok_fits(g, #[trigger] toks[j]),
         play(w, toks).len() == w * h,
-        ext(b, plain_bits(w, h, a, cls, g, toks)),
+        ext(b, plain_bits(w, h, a, sg, cls, g, toks)),
     ensures
-        vp8l_decode(b) == Some(Image { w, h, px: play(w, toks) }),
+        vp8l_decode(b) == Some(Image { w, h, px: undo_sg(sg, play(w, toks)) }),
 {
     hide(ext);
     hide(fld);
@@ -91,28 +143,28 @@ pub proof fn lemma_plain(b: Seq<u8>, w: nat, h: nat, a: nat, cls: Seq<Seq<u8>>, 
     let gb = gbits(cls, g, 5);
     let tb = tbits(g, toks, 0);
     let z = fld(0, 1);
+    let tr = tr_bits(sg);
     assert(pad(b) == b);
-    lemma_hdr(b, w, h, a, z + (z + (z + (gb + tb))));
-    // No transforms.
-    lemma_rd(b, hd, 0, 1, z + (z + (gb + tb)));
-    assert(read_transforms(b, 40, w, h, seq![]) == Some((Seq::<Transform>::empty(), w, 41int)));
+    lemma_hdr(b, w, h, a, tr + (z + (z + (gb + tb))));
+    lemma_tr(b, hd, w, h, sg, z + (z + (gb + tb)));
+    let o: int = tr.len() as int;
     // No color cache, no meta codes.
-    let u1 = hd + z;
-    assert(hd + (z + (z + (z + (gb + tb)))) =~= u1 + (z + (z + (gb + tb))));
+    let u1 = hd + tr;
+    assert(hd + (tr + (z + (z + (gb + tb)))) =~= u1 + (z + (z + (gb + tb))));
     lemma_rd(b, u1, 0, 1, z + (gb + tb));
-    assert(read_cache_bits(b, 41) == Some((0nat, 42int)));
+    assert(read_cache_bits(b, 40 + o) == Some((0nat, 41 + o)));
     let u2 = u1 + z;
     assert(u1 + (z + (z + (gb + tb))) =~= u2 + (z + (gb + tb)));
     lemma_rd(b, u2, 0, 1, gb + tb);
     let u3 = u2 + z;
     assert(u2 + (z + (gb + tb)) =~= u3 + (gb + tb));
-    assert(u3.len() == 43);
+    assert(u3.len() == 42 + o);
     lemma_group(b, u3, cls, g, 5, tb);
     assert(g.take(5) =~= g) by {
         reveal(gfits);
     }
     let p2 = (u3.len() + gb.len()) as int;
-    assert(read_groups(b, 43, 0, 1) == Some((seq![g], p2))) by {
+    assert(read_groups(b, 42 + o, 0, 1) == Some((seq![g], p2))) by {
         reveal_with_fuel(read_groups, 2);
         assert(Seq::<Seq<Seq<u8>>>::empty().push(g) =~= seq![g]);
     }
@@ -130,8 +182,15 @@ pub proof fn lemma_plain(b: Seq<u8>, w: nat, h: nat, a: nat, cls: Seq<Seq<u8>>, 
         hx: 0,
         meta: seq![],
     });
-    assert(decode_main(b, 41, w, h) == Some((play(w, toks), (u4.len() + tb.len()) as int)));
-    assert(undo_all(Seq::<Transform>::empty(), play(w, toks), h) == play(w, toks));
+    assert(decode_main(b, 40 + o, w, h) == Some((play(w, toks), (u4.len() + tb.len()) as int)));
+    if sg {
+        let ts = seq![Transform::SubtractGreen];
+        assert(ts.drop_last() =~= Seq::<Transform>::empty());
+        assert(undo_all(ts, play(w, toks), h) == undo_all(Seq::<Transform>::empty(), undo(Transform::SubtractGreen, play(w, toks), h), h));
+        assert(undo_all(ts, play(w, toks), h) == undo_sg(sg, play(w, toks)));
+    } else {
+        assert(undo_all(Seq::<Transform>::empty(), play(w, toks), h) == play(w, toks));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -252,6 +311,7 @@ proof fn lemma_file(
     wn: nat,
     hn: nat,
     a: nat,
+    sg: bool,
     cls: Seq<Seq<u8>>,
     g: Seq<Seq<u8>>,
     toks: Seq<Tok>,
@@ -275,13 +335,13 @@ proof fn lemma_file(
         bytes_hold(d0, all),
         all.len() >= bits.len(),
         all.subrange(0, bits.len() as int) == bits,
-        bits == plain_bits(wn, hn, a, cls, g, toks),
+        bits == plain_bits(wn, hn, a, sg, cls, g, toks),
         gfits(cls, g),
         group_ok(g),
         toks_ok(wn, toks),
         forall|j: int| 0 <= j < toks.len() ==> tok_fits(g, #[trigger] toks[j]),
-        play(wn, toks) == px,
-        px.len() == wn * hn,
+        undo_sg(sg, play(wn, toks)) == px,
+        play(wn, toks).len() == wn * hn,
     ensures
         webp_decode(d) == Some(Image { w: wn, h: hn, px }),
 {
@@ -302,7 +362,8 @@ proof fn lemma_file(
     if data != d0 {
         lemma_ext_more(d0, seq![0u8], bits);
     }
-    lemma_plain(data, wn, hn, a, cls, g, toks);
+    lemma_plain(data, wn, hn, a, sg, cls, g, toks);
+    assert(px.len() == wn * hn);
     assert(riff_hdr(d, (d.len() - 20) as nat)) by {
         assert(d.subrange(0, 4) =~= hdr.subrange(0, 4));
         assert(d.subrange(8, 12) =~= hdr.subrange(8, 12));
@@ -321,6 +382,235 @@ pub fn encode_lossless(px: &[u32], w: u32, h: u32) -> (r: Option<Vec<u8>>)
     ensures
         r matches Some(out) ==> webp_decode(out@) == Some(Image { w: w as nat, h: h as nat, px: px@ }),
 {
+    let sg = prefer_sg(px);
+    encode_with(px, w, h, sg)
+}
+
+/// `c` with green subtracted from red and blue (§4.3), undone by
+/// `add_green`.
+pub fn sub_green(c: u32) -> (r: u32)
+    ensures
+        add_green(r) == c,
+{
+    let a = c >> 24;
+    let rr = (c >> 16) & 0xff;
+    let g = (c >> 8) & 0xff;
+    let b = c & 0xff;
+    proof {
+        assert(rr < 256 && g < 256 && b < 256) by (bit_vector)
+            requires
+                rr == (c >> 16) & 0xff,
+                g == (c >> 8) & 0xff,
+                b == c & 0xff,
+        ;
+    }
+    let t1 = rr + 256 - g;
+    let t2 = b + 256 - g;
+    let r2 = t1 & 0xff;
+    let b2 = t2 & 0xff;
+    let r = (a << 24) | (r2 << 16) | (g << 8) | b2;
+    proof {
+        assert(r2 == t1 % 256 && b2 == t2 % 256 && r2 < 256 && b2 < 256) by (bit_vector)
+            requires
+                r2 == t1 & 0xff,
+                b2 == t2 & 0xff,
+        ;
+        assert(alpha(r) == a && red(r) == r2 && green(r) == g && blue(r) == b2) by (bit_vector)
+            requires
+                a == c >> 24,
+                r2 < 256,
+                g < 256,
+                b2 < 256,
+                r == (a << 24) | (r2 << 16) | (g << 8) | b2,
+        ;
+        assert((r2 + g) % 256 == rr && (b2 + g) % 256 == b) by (nonlinear_arith)
+            requires
+                t1 == rr + 256 - g,
+                t2 == b + 256 - g,
+                r2 == t1 % 256,
+                b2 == t2 % 256,
+                rr < 256,
+                g < 256,
+                b < 256,
+        ;
+        assert(c >> 24u32 < 256 && (c >> 16u32) & 0xffu32 < 256 && (c >> 8u32) & 0xffu32 < 256 && c & 0xffu32 < 256)
+            by (bit_vector);
+        lemma_argb_chans(c);
+    }
+    r
+}
+
+/// Whether subtracting green looks like it helps: it does when red and
+/// blue follow green, so that their differences from it take fewer
+/// distinct values (compared on histograms of a sample of the pixels).
+fn prefer_sg(px: &[u32]) -> bool {
+    if px.len() > 0x1000_0000 {
+        return false;
+    }
+    let mut h0: Vec<u32> = Vec::new();
+    let mut h1: Vec<u32> = Vec::new();
+    let mut k: usize = 0;
+    while k < 512
+        invariant
+            k <= 512,
+            h0@.len() == k,
+            h1@.len() == k,
+            forall|j: int| 0 <= j < k ==> #[trigger] h0@[j] == 0,
+            forall|j: int| 0 <= j < k ==> #[trigger] h1@[j] == 0,
+        decreases 512 - k,
+    {
+        h0.push(0);
+        h1.push(0);
+        k = k + 1;
+    }
+    let step: usize = if px.len() > 65536 {
+        px.len() / 65536
+    } else {
+        1
+    };
+    let mut i: usize = 0;
+    while i < px.len()
+        invariant
+            h0@.len() == 512,
+            h1@.len() == 512,
+            step >= 1,
+            px.len() <= 0x1000_0000,
+            i <= px.len(),
+            forall|j: int| 0 <= j < 512 ==> #[trigger] h0@[j] <= i,
+            forall|j: int| 0 <= j < 512 ==> #[trigger] h1@[j] <= i,
+        decreases px.len() - i,
+    {
+        let c = px[i];
+        let r = (c >> 16) & 0xff;
+        let g = (c >> 8) & 0xff;
+        let b = c & 0xff;
+        proof {
+            assert(r < 256 && g < 256 && b < 256) by (bit_vector)
+                requires
+                    r == (c >> 16) & 0xff,
+                    g == (c >> 8) & 0xff,
+                    b == c & 0xff,
+            ;
+        }
+        let t1 = r + 256 - g;
+        let t2 = b + 256 - g;
+        let r2 = t1 & 0xff;
+        let b2 = t2 & 0xff;
+        proof {
+            assert(r2 < 256 && b2 < 256) by (bit_vector)
+                requires
+                    r2 == t1 & 0xff,
+                    b2 == t2 & 0xff,
+            ;
+        }
+        let ir = r as usize;
+        let ib = 256 + b as usize;
+        let jr = r2 as usize;
+        let jb = 256 + b2 as usize;
+        h0.set(ir, h0[ir] + 1);
+        h0.set(ib, h0[ib] + 1);
+        h1.set(jr, h1[jr] + 1);
+        h1.set(jb, h1[jb] + 1);
+        i = if step >= px.len() - i {
+            px.len()
+        } else {
+            i + step
+        };
+    }
+    concentration(&h1) > concentration(&h0)
+}
+
+/// About 16 log2 `c` (0 for 0): the integer part from the top bit, the
+/// next four bits as the fraction.
+fn ilog16(c: u64) -> (r: u64)
+    requires
+        c <= 0x1000_0000,
+    ensures
+        r <= 16 * 28 + 15,
+{
+    let mut n: u64 = 0;
+    let mut x = c;
+    while x >= 2 && n < 28
+        invariant
+            n <= 28,
+        decreases 28 - n,
+    {
+        x = x >> 1;
+        n = n + 1;
+    }
+    let f = ((c << 4) >> n) & 15;
+    assert(f <= 15) by (bit_vector)
+        requires
+            f == ((c << 4) >> n) & 15,
+    ;
+    16 * n + f
+}
+
+/// The sum of `c * log2 c` over a histogram's counts, which is larger the
+/// fewer bits the values it counts take to code (for the same total).
+fn concentration(h: &Vec<u32>) -> u64
+    requires
+        h@.len() == 512,
+        forall|j: int| 0 <= j < 512 ==> #[trigger] h@[j] <= 0x1000_0000,
+{
+    let mut s: u64 = 0;
+    let mut j: usize = 0;
+    while j < 512
+        invariant
+            j <= 512,
+            h@.len() == 512,
+            forall|j: int| 0 <= j < 512 ==> #[trigger] h@[j] <= 0x1000_0000,
+            s <= j * (0x1000_0000 * 463),
+        decreases 512 - j,
+    {
+        let c = h[j] as u64;
+        let l = ilog16(c);
+        proof {
+            assert(c * l <= 0x1000_0000 * 463) by (nonlinear_arith)
+                requires
+                    c <= 0x1000_0000,
+                    l <= 463,
+            ;
+            assert(s + c * l <= (j + 1) * (0x1000_0000 * 463)) by (nonlinear_arith)
+                requires
+                    s <= j * (0x1000_0000 * 463),
+                    c * l <= 0x1000_0000 * 463,
+            ;
+        }
+        s = s + c * l;
+        j = j + 1;
+    }
+    s
+}
+
+/// Every pixel with green subtracted (`sub_green`).
+fn sub_green_all(px: &[u32]) -> (r: Vec<u32>)
+    ensures
+        undo_sg(true, r@) == px@,
+{
+    let mut out: Vec<u32> = Vec::with_capacity(px.len());
+    let mut i: usize = 0;
+    while i < px.len()
+        invariant
+            i <= px.len(),
+            out@.len() == i,
+            forall|k: int| 0 <= k < i ==> add_green(#[trigger] out@[k]) == px@[k],
+        decreases px.len() - i,
+    {
+        out.push(sub_green(px[i]));
+        i = i + 1;
+    }
+    assert(undo_sg(true, out@) =~= px@);
+    out
+}
+
+/// `encode_lossless`, with the subtract-green transform if `sg`.
+fn encode_with(px: &[u32], w: u32, h: u32, sg: bool) -> (r: Option<Vec<u8>>)
+    ensures
+        r matches Some(out) ==> webp_decode(out@) == Some(Image { w: w as nat, h: h as nat, px: px@ }),
+{
+    hide(undo_sg);
+    hide(add_green);
     hide(gfits);
     hide(group_ok);
     hide(toks_ok);
@@ -342,7 +632,20 @@ pub fn encode_lossless(px: &[u32], w: u32, h: u32) -> (r: Option<Vec<u8>>)
     if px.len() as u64 != (w as u64) * (h as u64) {
         return None;
     }
-    let toks = tokenize(px, w, 32);
+    let sgv: Vec<u32> = if sg {
+        sub_green_all(px)
+    } else {
+        Vec::new()
+    };
+    let src: &[u32] = if sg {
+        sgv.as_slice()
+    } else {
+        px
+    };
+    assert(undo_sg(sg, src@) == px@ && src@.len() == px@.len()) by {
+        reveal(undo_sg);
+    }
+    let toks = tokenize(src, w, 32);
     let hist = histograms(&toks);
     let mut hs: Vec<HCode> = Vec::new();
     let mut k: usize = 0;
@@ -389,7 +692,13 @@ pub fn encode_lossless(px: &[u32], w: u32, h: u32) -> (r: Option<Vec<u8>>)
     bw.put(h - 1, 14);
     bw.put(a, 1);
     bw.put(0, 3);
-    bw.put(0, 1);
+    if sg {
+        bw.put(1, 1);
+        bw.put(2, 2);
+        bw.put(0, 1);
+    } else {
+        bw.put(0, 1);
+    }
     bw.put(0, 1);
     bw.put(0, 1);
     let ghost b0 = bw.bits();
@@ -429,7 +738,7 @@ pub fn encode_lossless(px: &[u32], w: u32, h: u32) -> (r: Option<Vec<u8>>)
         assert(hdr.subrange(0, 4) =~= riff_tag());
         assert(hdr.subrange(8, 12) =~= webp_tag());
         assert(hdr.subrange(12, 16) =~= vp8l_tag());
-        assert(bits =~= plain_bits(w as nat, h as nat, a as nat, cls, g, toks@));
+        assert(bits =~= plain_bits(w as nat, h as nat, a as nat, sg, cls, g, toks@));
     }
     let mut j: usize = 0;
     while j < n
@@ -456,7 +765,7 @@ pub fn encode_lossless(px: &[u32], w: u32, h: u32) -> (r: Option<Vec<u8>>)
                 assert(hs@[k].ok());
             }
         }
-        lemma_file(out@, hdr, data@, d0, all, bits, w as nat, h as nat, a as nat, cls, g, toks@, px@);
+        lemma_file(out@, hdr, data@, d0, all, bits, w as nat, h as nat, a as nat, sg, cls, g, toks@, px@);
     }
     Some(out)
 }
