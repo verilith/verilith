@@ -162,7 +162,8 @@ level 6. Requests per second on a 4-vCPU Xeon @ 2.30 GHz VM:
 | h2c, 10 streams per connection | 50,100 | 32,500 |
 
 verilith-zlib's gzip is about 10% behind zlib's here. Brotli per request
-is slow for the reason above; cached responses are compressed once.
+is slow for the reason above; cached responses are compressed once
+(`cargo run --release --example codec_speed` times each compressor).
 
 ## License
 

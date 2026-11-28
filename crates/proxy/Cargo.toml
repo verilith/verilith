@@ -38,7 +38,7 @@ verilith-h3 = { path = "../h3", version = "0.1.0" }
 # HTTPS (h2 and http/1.1 by ALPN) on verilith-tls, and HTTP/3: the
 # server's features.
 tls = ["verilith-server/tls"]
-h3 = ["verilith-server/h3"]
+h3 = ["tls", "verilith-server/h3"]
 
 [package.metadata.verus]
 verify = true

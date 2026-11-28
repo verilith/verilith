@@ -214,7 +214,7 @@ pub fn wake(fd: i32) {
 /// Reads everything waiting on a nonblocking descriptor, discarding it.
 pub fn drain(fd: i32) {
     let mut b = [0u8; 64];
-    while unsafe { read(fd, b.as_mut_ptr(), b.len()) } > 0 {}
+    while unsafe { read(fd, b.as_mut_ptr().cast(), b.len()) } > 0 {}
 }
 
 /// A nonblocking UDP socket bound to `addr:port`, with SO_REUSEPORT if
