@@ -24,6 +24,7 @@ use crate::decode::ex_eol;
 use crate::push::{Stream, R_ERR, R_LIMIT, R_MORE, R_OK, R_WHOLE};
 use crate::reader::Reader;
 use crate::tape::{Kind, Tok};
+use crate::ns::{ex_decl_check, ex_decl_prefix, ex_expand, Bindings, NsErr};
 use crate::walk::{Cursor, Item};
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -211,9 +212,6 @@ const P_PARSING: c_int = 1;
 const P_FINISHED: c_int = 2;
 const P_SUSPENDED: c_int = 3;
 
-const XML_NS_URI: &[u8] = b"http://www.w3.org/XML/1998/namespace";
-const XMLNS_URI: &[u8] = b"http://www.w3.org/2000/xmlns/";
-
 #[derive(Clone, Copy, Default)]
 struct Handlers {
     start: StartElementH,
@@ -356,7 +354,7 @@ pub struct Parser {
     phase: Phase,
     segs: Vec<Seg>,
     opens: Vec<Open>,
-    ns_stack: Vec<(Vec<u8>, Vec<u8>)>,
+    ns_stack: Bindings,
     last_end: usize,
     attlist_elem: (usize, usize),
     dtd_skip: bool,
@@ -457,7 +455,7 @@ impl Parser {
             phase: Phase::Prolog(0),
             segs: Vec::new(),
             opens: Vec::new(),
-            ns_stack: Vec::new(),
+            ns_stack: Bindings::new(),
             last_end: 0,
             attlist_elem: (0, 0),
             dtd_skip: false,
@@ -633,7 +631,7 @@ impl Parser {
             }
         }
         if let Some(Ext::Entity { bindings, .. }) = &self.ext {
-            self.ns_stack = bindings.clone();
+            self.ns_stack = bindings_of(bindings);
         }
         let doc = self.doc.as_ref().unwrap();
         let root = doc.root;
@@ -787,6 +785,28 @@ fn ext_dtd_code(text: &[u8]) -> c_int {
 
 /// The document with parameter entities not expanded (as the stream
 /// reads it): for the error the stream's verdict is.
+/// expat's error code for a namespace error.
+fn ns_code(e: NsErr) -> c_int {
+    match e {
+        NsErr::InvalidToken => E_INVALID_TOKEN,
+        NsErr::UnboundPrefix => E_UNBOUND_PREFIX,
+        NsErr::ReservedPrefixXmlns => E_RESERVED_PREFIX_XMLNS,
+        NsErr::ReservedPrefixXml => E_RESERVED_PREFIX_XML,
+        NsErr::ReservedNamespaceUri => E_RESERVED_NAMESPACE_URI,
+        NsErr::UndeclaringPrefix => E_UNDECLARING_PREFIX,
+        NsErr::Syntax => E_SYNTAX,
+    }
+}
+
+/// The bindings an external entity's parser starts with.
+fn bindings_of(v: &[(Vec<u8>, Vec<u8>)]) -> Bindings {
+    let mut b = Bindings::new();
+    for (p, u) in v {
+        b.push(p.clone(), u.clone());
+    }
+    b
+}
+
 fn plain_parse(t: &[u8]) -> Result<Document<'_>, super::Error> {
     let mut tape = crate::tape::Tape::new();
     match crate::enc::ex_parse(t, &mut tape) {
@@ -2142,7 +2162,8 @@ impl Parser {
         let mut c = Vec::new();
         if self.ns.is_some() {
             let mut seen: HashSet<&[u8]> = HashSet::new();
-            for (p, u) in self.ns_stack.iter().rev() {
+            for k in (0..self.ns_stack.len()).rev() {
+                let (p, u) = self.ns_stack.get(k);
                 if !seen.insert(p) || p == b"xml" {
                     continue;
                 }
@@ -2189,29 +2210,11 @@ impl Parser {
             for a in &attrs {
                 let n = a.name.as_bytes();
                 let v = a.value.as_bytes();
-                let prefix: Option<&[u8]> = if n == b"xmlns" {
-                    Some(b"")
-                } else if let Some(p) = n.strip_prefix(b"xmlns:") {
-                    Some(p)
-                } else {
-                    None
-                };
-                let Some(p) = prefix else { continue };
-                if p == b"xmlns" {
-                    return Err(E_RESERVED_PREFIX_XMLNS);
-                }
-                if p == b"xml" && v != XML_NS_URI {
-                    return Err(E_RESERVED_PREFIX_XML);
-                }
-                if p != b"xml" && (v == XML_NS_URI || v == XMLNS_URI) {
-                    return Err(E_RESERVED_NAMESPACE_URI);
-                }
-                if !p.is_empty() && v.is_empty() {
-                    return Err(E_UNDECLARING_PREFIX);
-                }
-                if sep != 0 && sep != b':' && v.contains(&sep) {
-                    return Err(E_SYNTAX);
-                }
+                // Which prefix it declares, and the constraints on the
+                // declaration: verified (`ns::decl_prefix`, `ns::decl_check`).
+                let Some(at) = ex_decl_prefix(n) else { continue };
+                let p = &n[at..];
+                ex_decl_check(p, v, sep).map_err(ns_code)?;
                 decls.push((p.to_vec(), v.to_vec()));
             }
             for (p, u) in decls {
@@ -2228,7 +2231,7 @@ impl Parser {
                     let up = if u.is_empty() { null() } else { (unsafe { s.as_ptr().add(uo) }) as *const XChar };
                     unsafe { f(arg, pp, up) };
                 }
-                self.ns_stack.push((p, u));
+                self.ns_stack.push(p, u);
                 nb += 1;
             }
             let en = self.expand(qname, true, sep)?;
@@ -2295,44 +2298,9 @@ impl Parser {
 
     /// A name as expat reports it with namespaces: `uri SEP local`, and
     /// `SEP prefix` after it with triplets.
+    /// (Verified: `ns::expand`.)
     fn expand(&self, qname: &[u8], element: bool, sep: u8) -> Result<Vec<u8>, c_int> {
-        let colon = qname.iter().position(|&c| c == b':');
-        if let Some(c) = colon {
-            // A QName has at most one colon, with a name on each side.
-            if c == 0 || c + 1 == qname.len() || qname[c + 1..].contains(&b':') {
-                return Err(E_INVALID_TOKEN);
-            }
-        }
-        let (prefix, local): (&[u8], &[u8]) = match colon {
-            Some(c) => (&qname[..c], &qname[c + 1..]),
-            None => (b"", qname),
-        };
-        if prefix.is_empty() && !element {
-            return Ok(qname.to_vec());
-        }
-        let uri = if prefix == b"xml" {
-            Some(XML_NS_URI)
-        } else {
-            self.ns_stack.iter().rev().find(|(p, _)| p == prefix).map(|(_, u)| u.as_slice())
-        };
-        let uri = match uri {
-            Some(u) if !u.is_empty() => u,
-            _ if prefix.is_empty() => return Ok(qname.to_vec()),
-            _ => return Err(E_UNBOUND_PREFIX),
-        };
-        let mut out = Vec::with_capacity(uri.len() + qname.len() + 2);
-        out.extend_from_slice(uri);
-        if sep != 0 {
-            out.push(sep);
-        }
-        out.extend_from_slice(local);
-        if self.triplets && !prefix.is_empty() {
-            if sep != 0 {
-                out.push(sep);
-            }
-            out.extend_from_slice(prefix);
-        }
-        Ok(out)
+        ex_expand(&self.ns_stack, qname, element, sep, self.triplets).map_err(ns_code)
     }
 
     fn end_element(&mut self, doc: &'static Document<'static>, name_at: usize, nb: usize, stag: usize, empty: bool, span: Option<(usize, usize)>) {
@@ -2364,7 +2332,9 @@ impl Parser {
         }
         self.names.truncate(name_at);
         for _ in 0..nb {
-            if let Some((p, _)) = self.ns_stack.pop() {
+            if let Some(k) = self.ns_stack.len().checked_sub(1) {
+                let p = self.ns_stack.get(k).0.to_vec();
+                self.ns_stack.pop();
                 if let Some(f) = self.h.end_ns {
                     let mut s = p.clone();
                     s.push(0);
@@ -2921,7 +2891,7 @@ impl Parser {
                     self.line_at = prefix.len();
                     self.line = 1;
                     self.col = 0;
-                    self.ns_stack = bindings.clone();
+                    self.ns_stack = bindings_of(bindings);
                     self.pending_text_decl = decl;
                     self.input = t;
                 }
