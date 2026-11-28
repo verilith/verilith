@@ -50,6 +50,14 @@ file with no `verus!` block), run `scripts/trust-ledger.py` and commit the
 why the new item is needed, and add it to the crate's TRUST.md or "Trusted
 base" section.
 
+SIMD and other CPU instructions go through `verilith-simd`, whose
+specifications are tested against the CPU, and shared copies, scans, match
+lengths and checksums through `verilith-core` (or `verilith-checksum`):
+look there before writing a kernel or a helper, and add what is missing
+there rather than in your crate. `scripts/arch-check.py` (run in CI) fails
+when a library file outside `crates/simd` calls `core::arch` intrinsics
+directly, unless `scripts/arch-allow.txt` lists the file with the reason.
+
 CI checks the crates your change touches and every crate that depends on
 them. A pull request is ready to merge when the `CI` check passes.
 
