@@ -132,7 +132,7 @@ pub proof fn lemma_conn_frame(x: Seq<u8>, y: Seq<u8>, hs: Seq<SpecHeader>, e: in
     }
 }
 
-proof fn lemma_comma_end(v: Seq<u8>, i: int)
+pub proof fn lemma_comma_end(v: Seq<u8>, i: int)
     requires 0 <= i <= v.len(),
     ensures
         i <= comma_end(v, i) <= v.len(),
@@ -144,7 +144,7 @@ proof fn lemma_comma_end(v: Seq<u8>, i: int)
     }
 }
 
-proof fn lemma_lead(v: Seq<u8>, i: int, e: int)
+pub proof fn lemma_lead(v: Seq<u8>, i: int, e: int)
     requires 0 <= i <= e <= v.len(),
     ensures i <= lead(v, i, e) <= e,
     decreases e - i,
@@ -154,7 +154,7 @@ proof fn lemma_lead(v: Seq<u8>, i: int, e: int)
     }
 }
 
-proof fn lemma_trim(v: Seq<u8>, s: int, e: int)
+pub proof fn lemma_trim(v: Seq<u8>, s: int, e: int)
     requires s <= e,
     ensures s <= trim_end(v, s, e) <= e,
     decreases e - s,

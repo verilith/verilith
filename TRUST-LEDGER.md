@@ -44,12 +44,13 @@ not occur in any crate's `src/` (the script fails if one appears).
 | json | 17 |  |  |  |  |  | 6 | 1853 |
 | lz4 |  |  |  |  |  |  | 1 | 584 |
 | png |  |  |  |  |  |  | 7 | 4807 |
+| proxy |  |  |  |  |  |  | 4 | 925 |
 | qpack | 8 |  |  |  |  |  | 2 | 223 |
 | quic |  |  |  |  |  |  | 1 | 30 |
 | quic-conn |  |  |  |  |  |  | 3 | 2091 |
 | regex | 1 |  |  |  |  |  | 3 | 1969 |
 | resolver | 7 |  |  |  |  |  | 4 | 496 |
-| server | 1 |  |  |  | 1 |  | 14 | 4868 |
+| server | 1 |  |  |  | 1 |  | 15 | 5352 |
 | serverless |  |  |  |  |  |  | 2 | 259 |
 | sha2 | 34 |  |  |  |  |  | 3 | 362 |
 | simd | 425 | 11 | 290 | 4 |  |  | 3 | 1016 |
@@ -68,7 +69,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 | 1354 |
 | zstd | 6 |  |  |  |  |  | 2 | 1331 |
-| **total** | **707** | **36** | **290** | **7** | **17** | **12** | **143** | **58322** |
+| **total** | **707** | **36** | **290** | **7** | **17** | **12** | **148** | **59731** |
 
 ## Items
 
@@ -199,6 +200,13 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/png/src/libpng/stubs.rs`: plain Rust, 54 lines
 - `crates/png/src/libpng/xform.rs`: plain Rust, 604 lines
 
+### proxy
+
+- `crates/proxy/src/cache.rs`: plain Rust, 91 lines
+- `crates/proxy/src/lib.rs`: plain Rust, 12 lines
+- `crates/proxy/src/proxy.rs`: plain Rust, 734 lines
+- `crates/proxy/src/bin/verilith-proxy.rs`: plain Rust, 88 lines
+
 ### qpack
 
 - `crates/qpack/src/encoder.rs`: external_body: `static_find`, `field_hash`, `new`, `new`, `find`, `worth`, `add`
@@ -235,18 +243,19 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 - `crates/server/src/conn.rs`: external_body: `decode_in`; 1 assume_new
 - `crates/server/src/date.rs`: plain Rust, 53 lines
+- `crates/server/src/defer.rs`: plain Rust, 130 lines
 - `crates/server/src/files.rs`: plain Rust, 269 lines
-- `crates/server/src/h1.rs`: plain Rust, 345 lines
-- `crates/server/src/h2.rs`: plain Rust, 418 lines
-- `crates/server/src/h3.rs`: plain Rust, 654 lines
-- `crates/server/src/lib.rs`: plain Rust, 89 lines
-- `crates/server/src/tls.rs`: plain Rust, 707 lines
-- `crates/server/src/worker.rs`: plain Rust, 487 lines
+- `crates/server/src/h1.rs`: plain Rust, 386 lines
+- `crates/server/src/h2.rs`: plain Rust, 443 lines
+- `crates/server/src/h3.rs`: plain Rust, 715 lines
+- `crates/server/src/lib.rs`: plain Rust, 98 lines
+- `crates/server/src/tls.rs`: plain Rust, 717 lines
+- `crates/server/src/worker.rs`: plain Rust, 582 lines
 - `crates/server/src/worker_uring.rs`: plain Rust, 462 lines
 - `crates/server/src/bin/verilith-server.rs`: plain Rust, 108 lines
-- `crates/server/src/sys/linux.rs`: plain Rust, 329 lines
-- `crates/server/src/sys/macos.rs`: plain Rust, 154 lines
-- `crates/server/src/sys/mod.rs`: plain Rust, 378 lines
+- `crates/server/src/sys/linux.rs`: plain Rust, 352 lines
+- `crates/server/src/sys/macos.rs`: plain Rust, 177 lines
+- `crates/server/src/sys/mod.rs`: plain Rust, 445 lines
 - `crates/server/src/sys/uring.rs`: plain Rust, 415 lines
 
 ### serverless
