@@ -98,16 +98,18 @@ pub open spec fn sym_cost() -> nat {
 pub fn peek(h: &HCode, buf: u64, Ghost(b): Ghost<Seq<u8>>, Ghost(pos): Ghost<int>, Ghost(cnt): Ghost<nat>, Ghost(lens): Ghost<Seq<u8>>) -> (e: u32)
     requires
         hcode_ok(*h, lens),
-        15 <= cnt <= 64,
+        MAX_ROOT <= cnt <= 64,
         0 <= pos,
         pos + cnt <= nbits(b),
         buf as nat == bits(b, pos, cnt),
     ensures
         e != LONG ==> {
             &&& e >> 16u32 <= h.tbits
+            &&& e >> 16u32 <= cnt
             &&& e & 0xffff < lens.len()
             &&& read_symbol(lens, b, pos) == Some(((e & 0xffff) as nat, pos + (e >> 16u32)))
         },
+        e == LONG ==> used(lens) != 1 && decode_num(lens, (buf as nat) % pow2(h.tbits as nat), h.tbits as nat, 1) is None,
 {
     let t = h.tbits;
     proof {
@@ -126,13 +128,12 @@ pub fn peek(h: &HCode, buf: u64, Ghost(b): Ghost<Seq<u8>>, Ghost(pos): Ghost<int
             lemma_ent_fields(first_used(lens, 0) as nat, 0);
         } else {
             lemma_bits_bound(b, pos, cnt);
-            lemma_decode_num(lens, b, pos, cnt, cnt, 1);
             lemma_decode_num_trunc(lens, x, cnt, t as nat, 1);
             lemma_decode_num_sym(lens, x % pow2(t as nat), t as nat, 1);
-            lemma_decode_num_sym(lens, x, cnt, 1);
             assert(e == tab_entry(lens, idx as nat, t as nat));
             if let Some((s, k)) = decode_num(lens, x % pow2(t as nat), t as nat, 1) {
                 lemma_ent_fields(s, k);
+                lemma_decode_num_some(lens, b, pos, cnt, cnt, 1);
             }
         }
     }
@@ -342,7 +343,13 @@ impl BitReader {
             }
         }
         if e == LONG {
-            let (r, Ghost(sw)) = decode_slow(h, self.buf, self.cnt, Ghost(lens));
+            proof {
+                if used(lens) == 1 {
+                    assert(false);
+                }
+                assert(idx as nat == x % pow2(t as nat));
+            }
+            let (r, Ghost(sw)) = decode_long(h, self.buf, self.cnt, Ghost(lens));
             self.work = Ghost(self.work@ + sw);
             match r {
                 None => {
