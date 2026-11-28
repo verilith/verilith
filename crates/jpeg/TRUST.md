@@ -64,7 +64,7 @@ re-exported from `src/parse.rs`, and are trusted there: see
 ## 2a. NEON intrinsics, through verilith-simd (AArch64, and x86-64 through SSE)
 
 `src/idct_neon.rs`, `src/idct16.rs` and `src/color_neon.rs` are verified, but
-they call 46 NEON intrinsics through
+they call 47 NEON intrinsics through
 [verilith-simd](https://github.com/verilith/verilith/tree/main/crates/simd) (a path dependency in
 this repository), and each of those is an `external_body` wrapper there: Verus
 takes on faith that the instruction computes what verilith-simd's specification
@@ -83,7 +83,9 @@ specification on random and edge inputs. The ones verilith-jpeg uses:
   (dequantization), `vmull_lo_laneq_s16`, `vmull_hi_laneq_s16`,
   `vmlal_lo_laneq_s16`, `vmlal_hi_laneq_s16` (`smull`, `smull2`, `smlal`,
   `smlal2` by one lane of a vector of constants), `vrshrn_lo_n_s32`,
-  `vrshrn2_n_s32` (`rshrn`, `rshrn2`), and for its size test `vqaddq_u16`,
+  `vrshrn2_n_s32` (`rshrn`, `rshrn2`), `vdotq_s16` (the pairwise
+  multiply-add of x86's `pmaddwd`, used in place of the `vmull`/`vmlal`
+  pairs when `neon_emulated()` says the NEON runs on SSE), and for its size test `vqaddq_u16`,
   `vaddlvq_u16` (`uaddlv`), `vgetq_lane_u64_0`, `vgetq_lane_u64_1`;
 - the range limit: `vuzp2q_u16`, `vqshrn2_n_s16` (`sqshrn`, `sqshrn2`),
   `veorq_u8`, `vdupq_n_u8`;
@@ -98,7 +100,7 @@ sixteen bytes).
 
 On x86-64 these wrappers are not trusted on their own: each forwards to
 verilith-simd's `src/wasm_neon.rs`, proven on its SIMD128 contracts, and
-the 48 SIMD128 instructions those use forward to `src/wasm_x86.rs`, proven
+the 49 SIMD128 instructions those use forward to `src/wasm_x86.rs`, proven
 from the specifications of the SSE2, SSSE3 and SSE4.1 intrinsics it calls
 (verilith-simd's `src/x86.rs`, the same ones the crates' AVX2 kernels rely
 on). What x86-64 trusts instead is those intrinsic specifications, the
@@ -114,6 +116,31 @@ plain loop of `render::ycc_row`, which use no intrinsics.
 compiled with AVX2 enabled (`#[target_feature]`) when `has_avx2()` says the
 CPU has it. Those copies are verified like the originals, use no
 intrinsics, and are `unsafe` to call only because of the attribute.
+
+## 2b. AVX2 intrinsics (x86-64)
+
+`src/idct_avx2.rs` is verified against `spec::idct` like `idct16.rs`, with
+the same 16-bit size test (magnitudes summing to at most 2120), but it calls
+verilith-simd's AVX2 intrinsics directly (its safe wrappers in `src/safe.rs`),
+whose behaviour Verus takes from the `assume_specification`s in its
+`src/x86.rs`, lane-by-lane functions of `src/ops.rs` written from Intel's
+descriptions and checked against the CPU by its tests. It trusts those
+specifications for
+`_mm256_madd_epi16` (magnitudes and the passes' products),
+`_mm256_mullo_epi16`, `_mm256_mulhi_epi16`, `_mm256_srai_epi16`
+(dequantization and its overflow check), `_mm256_add_epi16`,
+`_mm256_add_epi32`, `_mm256_sub_epi32`, `_mm256_srai_epi32`,
+`_mm256_and_si256`, `_mm256_or_si256`, `_mm256_xor_si256`,
+`_mm256_testz_si256`, `_mm256_unpacklo_epi16`, `_mm256_unpacklo/hi_epi32`,
+`_mm256_unpacklo/hi_epi8`, `_mm256_permute2x128_si256`,
+`_mm256_permutevar8x32_epi32`, `_mm256_packs_epi32`, `_mm256_packs_epi16`,
+`_mm256_shuffle_epi8`, `_mm256_set1_epi8/16/32`, `_mm256_setr_epi8`,
+`_mm256_setr_epi32`, `_mm256_castsi256_si128`, `_mm256_extracti128_si256`
+and `_mm_srli_si128`; the loads `load256_i16` and `load256_u16`, the stores
+`store256_u32` and `storel64_u8`; and `has_avx2()`'s CPU check. The kernel
+is compiled with AVX2 enabled (`#[target_feature]`) and called only when
+`has_avx2()` is true; a block it declines as too large goes to `idct_neon`
+on SSE, or to `idct_fast`.
 
 ## 3. Unchecked indexing, verified against vstd
 

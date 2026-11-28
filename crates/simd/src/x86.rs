@@ -272,6 +272,13 @@ pub assume_specification<const IMM8: i32>[ core::arch::x86_64::_mm_srli_epi32::<
         u32x4(r) == srli32(u32x4(a), IMM8 as int),
 ;
 
+pub assume_specification<const IMM8: i32>[ core::arch::x86_64::_mm_srai_epi32::<IMM8> ](a: __m128i) -> (r: __m128i)
+    requires
+        0 <= IMM8 <= 255,
+    ensures
+        u32x4(r) == srai32(u32x4(a), IMM8 as int),
+;
+
 pub assume_specification<const IMM8: i32>[ core::arch::x86_64::_mm_slli_epi32::<IMM8> ](a: __m128i) -> (r: __m128i)
     requires
         0 <= IMM8 <= 255,
@@ -697,6 +704,14 @@ pub assume_specification<const IMM8: i32>[ core::arch::x86_64::_mm256_srli_epi32
         avx2(),
     ensures
         u32x8(r) == srli32(u32x8(a), IMM8 as int),
+;
+
+pub assume_specification<const IMM8: i32>[ core::arch::x86_64::_mm256_srai_epi32::<IMM8> ](a: __m256i) -> (r: __m256i)
+    requires
+        0 <= IMM8 <= 255,
+        avx2(),
+    ensures
+        u32x8(r) == srai32(u32x8(a), IMM8 as int),
 ;
 
 pub assume_specification<const IMM8: i32>[ core::arch::x86_64::_mm256_slli_epi32::<IMM8> ](a: __m256i) -> (r: __m256i)

@@ -35,7 +35,7 @@ are proven, on SIMD128.
 word for word the wrapper's and that the wrapper forwards to it.
 
 On x86-64 the same NEON kernels can run on SSE. There every NEON wrapper
-forwards to `src/wasm_neon.rs` as on WebAssembly, and the 48 SIMD128
+forwards to `src/wasm_neon.rs` as on WebAssembly, and the 49 SIMD128
 instructions the JPEG kernels need forward in turn to `src/wasm_x86.rs`,
 which proves each one's `src/wasm.rs` contract, word for word, from the
 Intel intrinsic specifications below (SSE2, SSSE3 and SSE4.1: `pshufb`
@@ -173,7 +173,7 @@ its own trusted base.
   loads and stores, and the shuffles behind `zip`, `uzp`, `ext`, `dup` and
   `st3`).
   Its bodies off WebAssembly are plain Rust that only lets the verified
-  code build, except on x86-64, where 48 of them call `src/wasm_x86.rs`
+  code build, except on x86-64, where 49 of them call `src/wasm_x86.rs`
   (verified) and the loads and stores the JPEG kernels use (`load`,
   `load16`, `load_s16`, `store`, `store64_lo`, plain 16- and 8-byte copies)
   are what runs.

@@ -5153,10 +5153,13 @@ impl Decoder {
             }
         }
         let ghost m0 = m.n;
+        // The tree of a trivial context map row, read once.
+        let tree0 = verilith_core::prims::get(cmap, row) as usize;
         let mut k: u64 = 0;
         let mut short = false;
         while k < n && !short
             invariant
+                tree0 as int == cmap@[row as int],
                 at(src@, base, o.pos, b),
                 k <= n,
                 n <= o.ilen,
@@ -5223,7 +5226,7 @@ impl Decoder {
                 lemma_ctx_lt(mode as int, p1, p2);
             }
             let tree = if triv {
-                verilith_core::prims::get(cmap, row) as usize
+                tree0
             } else {
                 verilith_core::prims::get(cmap, row + lit_ctx(mode, p1, p2)) as usize
             };
@@ -6221,11 +6224,7 @@ impl Decoder {
         }
         let blen2 = bl2 - 1;
         if dcode < 16 {
-            let dr = [drb[di], drb[(di + 1) % 4], drb[(di + 2) % 4], drb[(di + 3) % 4]];
-            proof {
-                assert(dr =~= g.dr);
-            }
-            let d = short_dist(dcode, dr);
+            let d = short_dist_r(dcode, drb, di, Ghost(g.dr));
             if d <= 0 {
                 proof {
                     lemma_rejects(b, o.steps@, s0);
@@ -7523,21 +7522,31 @@ fn row_const(cmap: &[u8], row: usize) -> (r: bool)
     true
 }
 
-/// `spec::short_dist`.
+/// `spec::short_dist`, read from the ring `drb` directly, without first putting
+/// the four distances in order.
 #[verifier::spinoff_prover]
-fn short_dist(dcode: u32, dr: [u32; 4]) -> (r: i64)
+#[inline(always)]
+fn short_dist_r(dcode: u32, drb: &[u32; 4], di: usize, Ghost(dr): Ghost<[u32; 4]>) -> (r: i64)
     requires
         dcode < 16,
+        dr_ring(*drb, di, dr),
         forall|i: int| 0 <= i < 4 ==> 1 <= #[trigger] dr[i] <= 0x7fff_fffc,
     ensures
         r == spec::short_dist(dcode as int, seq4(dr)),
 {
     if dcode < 4 {
-        dr[dcode as usize] as i64
+        proof {
+            assert(dr[dcode as int] == drb[(di + dcode) % 4]) by {
+                if dcode == 0 {
+                    assert((di + 0) % 4 == di as int);
+                }
+            }
+        }
+        drb[(di + dcode as usize) % 4] as i64
     } else if dcode < 10 {
-        dr[0] as i64 + short_delta(dcode - 4)
+        drb[di] as i64 + short_delta(dcode - 4)
     } else {
-        dr[1] as i64 + short_delta(dcode - 10)
+        drb[(di + 1) % 4] as i64 + short_delta(dcode - 10)
     }
 }
 

@@ -854,6 +854,19 @@ pub fn w_extmul_hi16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
     x86_or!(crate::wasm_x86::w_extmul_hi16(a, b), imp::w_extmul_hi16(a, b))
 }
 
+/// `i32x4.dot_i16x8_s`: products of signed 16-bit lanes, added in adjacent
+/// pairs.
+#[verifier::external_body]
+#[inline(always)]
+pub fn w_dot16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u32s(n8(r)) == Seq::new(4, |i: int| ((s16(u16s(n8(a))[2 * i]) * s16(u16s(n8(b))[2 * i]) + s16(u16s(n8(a))[2 * i + 1]) * s16(u16s(n8(b))[2 * i + 1])) % 0x1_0000_0000) as u32),
+{
+    x86_or!(crate::wasm_x86::w_dot16(a, b), imp::w_dot16(a, b))
+}
+
 /// `i16x8.narrow_i32x4_s`: `a`'s then `b`'s signed lanes, clamped to 16 bits.
 #[verifier::external_body]
 #[inline(always)]
@@ -1457,6 +1470,10 @@ mod imp {
         u(i32x4_extmul_high_i16x8(v(a), v(b)))
     }
     #[inline(always)]
+    pub fn w_dot16(a: uint8x16_t, b: uint8x16_t) -> uint8x16_t {
+        u(i32x4_dot_i16x8(v(a), v(b)))
+    }
+    #[inline(always)]
     pub fn w_narrow_s32(a: uint8x16_t, b: uint8x16_t) -> uint8x16_t {
         u(i16x8_narrow_i32x4(v(a), v(b)))
     }
@@ -1837,6 +1854,10 @@ mod imp {
     #[inline(always)]
     pub fn w_extmul_hi16(a: uint8x16_t, b: uint8x16_t) -> uint8x16_t {
         { let (x, y) = (h(a), h(b)); wb(core::array::from_fn(|i| (x[4 + i] as i16 as i32 * y[4 + i] as i16 as i32) as u32)) }
+    }
+    #[inline(always)]
+    pub fn w_dot16(a: uint8x16_t, b: uint8x16_t) -> uint8x16_t {
+        { let (x, y) = (h(a), h(b)); wb(core::array::from_fn(|i| (x[2 * i] as i16 as i32 * y[2 * i] as i16 as i32).wrapping_add(x[2 * i + 1] as i16 as i32 * y[2 * i + 1] as i16 as i32) as u32)) }
     }
     #[inline(always)]
     pub fn w_narrow_s32(a: uint8x16_t, b: uint8x16_t) -> uint8x16_t {

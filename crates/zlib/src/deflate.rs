@@ -21,6 +21,7 @@ use crate::ilemmas::*;
 #[cfg(verus_only)]
 use verilith_core::bits::*;
 use verilith_core::sort::order_by;
+use verilith_core::lz::eq_len;
 #[cfg(verus_only)]
 use verilith_core::sort::below;
 #[cfg(verus_only)]
@@ -1312,135 +1313,6 @@ pub open spec fn is_match(data: Seq<u8>, p: int, len: nat, d: nat) -> bool {
     &&& d <= p
     &&& p + len <= data.len()
     &&& forall|k: int| 0 <= k < len ==> #[trigger] data[p + k] == data[p + k - d]
-}
-
-/// Byte `j` of the little-endian number in `n` bytes at `i`.
-proof fn lemma_le_digit(s: Seq<u8>, i: int, n: nat, j: nat)
-    requires
-        j < n,
-        0 <= i,
-        i + n <= s.len(),
-    ensures
-        (verilith_core::prims::le_bytes(s, i, n) / pow2(8 * j)) % 256 == s[i + j],
-    decreases j,
-{
-    let r = verilith_core::prims::le_bytes(s, i + 1, (n - 1) as nat);
-    let v = verilith_core::prims::le_bytes(s, i, n);
-    assert(v == s[i] as nat + 256 * r);
-    if j == 0 {
-        lemma2_to64();
-        assert(v / pow2(0) == v);
-        vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(v as int, 256, r as int, s[i] as int);
-    } else {
-        lemma_le_digit(s, i + 1, (n - 1) as nat, (j - 1) as nat);
-        lemma_pow2_adds(8, (8 * (j - 1)) as nat);
-        lemma2_to64();
-        assert(8 * j == 8 + 8 * (j - 1));
-        lemma_pow2_pos((8 * (j - 1)) as nat);
-        vstd::arithmetic::div_mod::lemma_div_denominator(v as int, 256, pow2((8 * (j - 1)) as nat) as int);
-        vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(v as int, 256, r as int, s[i] as int);
-        assert(i + 1 + (j - 1) == i + j);
-    }
-}
-
-/// Byte `j` of a word loaded from `s` at `i` is `s[i + j]`.
-proof fn lemma_word_byte(s: Seq<u8>, i: int, u: u64, j: u64)
-    requires
-        u as nat == verilith_core::prims::le_word(s, i),
-        j < 8,
-        0 <= i,
-        i + 8 <= s.len(),
-    ensures
-        ((u >> ((8 * j) as u64)) & 0xff) as nat == s[i + j],
-{
-    let sh = (8 * j) as u64;
-    lemma_le_digit(s, i, 8, j as nat);
-    vstd::bits::lemma_u64_shr_is_div(u, sh);
-    crate::ilemmas::lemma_and_mask(u >> sh, 8);
-    crate::ilemmas::lemma_mask(8);
-    lemma2_to64();
-}
-
-/// How many bytes from `a` and from `b` agree, up to `max`, compared
-/// eight at a time.
-#[inline(always)]
-fn eq_len(data: &[u8], a: usize, b: usize, max: usize) -> (k: usize)
-    requires
-        a + max <= data@.len(),
-        b + max <= data@.len(),
-    ensures
-        k <= max,
-        forall|j: int| 0 <= j < k ==> #[trigger] data@[a + j] == data@[b + j],
-{
-    let n = data.len();
-    let mut k: usize = 0;
-    while max - k >= 8
-        invariant
-            k <= max,
-            a + max <= n,
-            b + max <= n,
-            n == data@.len(),
-            forall|j: int| 0 <= j < k ==> #[trigger] data@[a + j] == data@[b + j],
-        decreases max - k,
-    {
-        let u = verilith_core::prims::load_u64_le(data, a + k);
-        let v = verilith_core::prims::load_u64_le(data, b + k);
-        let x = u ^ v;
-        if x == 0 {
-            proof {
-                assert forall|j: int| 0 <= j < k + 8 implies #[trigger] data@[a + j] == data@[b + j] by {
-                    if j >= k {
-                        let q = (j - k) as u64;
-                        lemma_word_byte(data@, (a + k) as int, u, q);
-                        lemma_word_byte(data@, (b + k) as int, v, q);
-                        assert(u == v) by (bit_vector)
-                            requires
-                                x == u ^ v,
-                                x == 0,
-                        ;
-                    }
-                }
-            }
-            k = k + 8;
-        } else {
-            let tz = x.trailing_zeros();
-            let t = (tz / 8) as usize;
-            proof {
-                vstd::std_specs::bits::axiom_u64_trailing_zeros(x);
-                assert forall|j: int| 0 <= j < k + t implies #[trigger] data@[a + j] == data@[b + j] by {
-                    if j >= k {
-                        let q = (j - k) as u64;
-                        let tz64 = tz as u64;
-                        lemma_word_byte(data@, (a + k) as int, u, q);
-                        lemma_word_byte(data@, (b + k) as int, v, q);
-                        assert(8 * q + 8 <= tz64);
-                        let sh = (8 * q) as u64;
-                        assert((u >> sh) & 0xff == (v >> sh) & 0xff) by (bit_vector)
-                            requires
-                                x == u ^ v,
-                                x << sub(64, tz64) == 0,
-                                tz64 <= 64,
-                                sh < 64,
-                                sh + 8 <= tz64,
-                        ;
-                    }
-                }
-            }
-            return k + t;
-        }
-    }
-    while k < max && data[a + k] == data[b + k]
-        invariant
-            k <= max,
-            a + max <= n,
-            b + max <= n,
-            n == data@.len(),
-            forall|j: int| 0 <= j < k ==> #[trigger] data@[a + j] == data@[b + j],
-        decreases max - k,
-    {
-        k = k + 1;
-    }
-    k
 }
 
 /// The token for a match.

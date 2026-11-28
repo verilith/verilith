@@ -30,6 +30,8 @@ pub mod idct16;
 #[doc(hidden)]
 pub mod color_neon;
 #[doc(hidden)]
+pub mod idct_avx2;
+#[doc(hidden)]
 pub mod idct;
 #[doc(hidden)]
 pub mod render;
