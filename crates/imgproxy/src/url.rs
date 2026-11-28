@@ -26,6 +26,8 @@ pub enum Fail {
     Unprocessable(&'static str),
     /// 502: the origin failed.
     BadGateway(&'static str),
+    /// 404: the URL's `expires` has passed.
+    Expired,
 }
 
 /// Where the image comes from.
@@ -53,6 +55,15 @@ pub struct Parts {
     pub sig_end: usize,
     pub opts: Options,
     pub source: Source,
+    /// `filename`, decoded.
+    pub filename: Option<Vec<u8>>,
+}
+
+pub open spec fn opt_view(v: Option<Vec<u8>>) -> Option<Seq<u8>> {
+    match v {
+        Some(v) => Some(v@),
+        None => None,
+    }
 }
 
 pub open spec fn views(v: Seq<Vec<u8>>) -> Seq<Seq<u8>> {
@@ -2090,8 +2101,448 @@ pub fn apply_x(o: Options, seg: &[u8]) -> (r: Result<Options, Fail>)
         let v = boolean_x(arg_x(&p, 1).as_slice())?;
         Ok(Options { flip_h: h, flip_v: v, ..o })
     } else {
+        apply2_x(o, &p)
+    }
+}
+
+/// Whether `s` is `filename`.
+pub fn is_filename(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'f', b'i', b'l', b'e', b'n', b'a', b'm', b'e']),
+{
+    let t: [u8; 8] = [b'f', b'i', b'l', b'e', b'n', b'a', b'm', b'e'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'f', b'i', b'l', b'e', b'n', b'a', b'm', b'e']);
+    }
+    r
+}
+
+/// Whether `s` is `fn`.
+pub fn is_fn(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'f', b'n']),
+{
+    let t: [u8; 2] = [b'f', b'n'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'f', b'n']);
+    }
+    r
+}
+
+/// Whether `s` is `expires`.
+pub fn is_expires(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'e', b'x', b'p', b'i', b'r', b'e', b's']),
+{
+    let t: [u8; 7] = [b'e', b'x', b'p', b'i', b'r', b'e', b's'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'e', b'x', b'p', b'i', b'r', b'e', b's']);
+    }
+    r
+}
+
+/// Whether `s` is `exp`.
+pub fn is_exp(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'e', b'x', b'p']),
+{
+    let t: [u8; 3] = [b'e', b'x', b'p'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'e', b'x', b'p']);
+    }
+    r
+}
+
+/// Whether `s` is `return_attachment`.
+pub fn is_return_attachment(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'r', b'e', b't', b'u', b'r', b'n', b'_', b'a', b't', b't', b'a', b'c', b'h', b'm', b'e', b'n', b't']),
+{
+    let t: [u8; 17] = [b'r', b'e', b't', b'u', b'r', b'n', b'_', b'a', b't', b't', b'a', b'c', b'h', b'm', b'e', b'n', b't'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'r', b'e', b't', b'u', b'r', b'n', b'_', b'a', b't', b't', b'a', b'c', b'h', b'm', b'e', b'n', b't']);
+    }
+    r
+}
+
+/// Whether `s` is `att`.
+pub fn is_att(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'a', b't', b't']),
+{
+    let t: [u8; 3] = [b'a', b't', b't'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'a', b't', b't']);
+    }
+    r
+}
+
+/// Whether `s` is `auto_rotate`.
+pub fn is_auto_rotate(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'a', b'u', b't', b'o', b'_', b'r', b'o', b't', b'a', b't', b'e']),
+{
+    let t: [u8; 11] = [b'a', b'u', b't', b'o', b'_', b'r', b'o', b't', b'a', b't', b'e'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'a', b'u', b't', b'o', b'_', b'r', b'o', b't', b'a', b't', b'e']);
+    }
+    r
+}
+
+/// Whether `s` is `ar`.
+pub fn is_ar(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'a', b'r']),
+{
+    let t: [u8; 2] = [b'a', b'r'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'a', b'r']);
+    }
+    r
+}
+
+/// Whether `s` is `raw`.
+pub fn is_raw(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'r', b'a', b'w']),
+{
+    let t: [u8; 3] = [b'r', b'a', b'w'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'r', b'a', b'w']);
+    }
+    r
+}
+
+/// Whether `s` is `skip_processing`.
+pub fn is_skip_processing(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b's', b'k', b'i', b'p', b'_', b'p', b'r', b'o', b'c', b'e', b's', b's', b'i', b'n', b'g']),
+{
+    let t: [u8; 15] = [b's', b'k', b'i', b'p', b'_', b'p', b'r', b'o', b'c', b'e', b's', b's', b'i', b'n', b'g'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b's', b'k', b'i', b'p', b'_', b'p', b'r', b'o', b'c', b'e', b's', b's', b'i', b'n', b'g']);
+    }
+    r
+}
+
+/// Whether `s` is `skp`.
+pub fn is_skp(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b's', b'k', b'p']),
+{
+    let t: [u8; 3] = [b's', b'k', b'p'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b's', b'k', b'p']);
+    }
+    r
+}
+
+/// Whether `s` is `webp`.
+pub fn is_webp(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'w', b'e', b'b', b'p']),
+{
+    let t: [u8; 4] = [b'w', b'e', b'b', b'p'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'w', b'e', b'b', b'p']);
+    }
+    r
+}
+
+/// Whether `s` is `gif`.
+pub fn is_gif(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'g', b'i', b'f']),
+{
+    let t: [u8; 3] = [b'g', b'i', b'f'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'g', b'i', b'f']);
+    }
+    r
+}
+
+/// `num64`.
+pub fn num64_x(s: &[u8]) -> (r: Result<u64, Fail>)
+    ensures
+        r is Ok <==> num64(s@) is Some,
+        r is Ok ==> num64(s@) == Some(r->Ok_0),
+{
+    if s.len() == 0 {
+        return Err(Fail::BadUrl("Invalid number"));
+    }
+    let mut v: u64 = 0;
+    let mut i = 0;
+    proof {
+        assert(s@.take(0) =~= Seq::<u8>::empty());
+    }
+    while i < s.len()
+        invariant
+            i <= s.len(),
+            v == dec(s@.take(i as int)),
+            v <= 0x7fff_ffff_ffff_ffff,
+            forall|j: int| 0 <= j < i ==> is_digit(#[trigger] s@[j]),
+        decreases s.len() - i,
+    {
+        let c = s[i];
+        if c < b'0' || c > b'9' {
+            proof {
+                assert(!is_digit(s@[i as int]));
+            }
+            return Err(Fail::BadUrl("Invalid number"));
+        }
+        proof {
+            assert(s@.take(i + 1).drop_last() =~= s@.take(i as int));
+            assert(s@.take(i + 1).last() == c);
+        }
+        let nv = v as u128 * 10 + (c - b'0') as u128;
+        if nv > 0x7fff_ffff_ffff_ffff {
+            proof {
+                if all_digits(s@) {
+                    lemma_dec_mono(s@, i + 1);
+                }
+            }
+            return Err(Fail::BadUrl("Number too large"));
+        }
+        v = nv as u64;
+        i += 1;
+    }
+    proof {
+        assert(s@.take(i as int) =~= s@);
+    }
+    Ok(v)
+}
+
+/// `kind_name`.
+pub fn kind_name_x(s: &[u8]) -> (r: Option<Kind>)
+    ensures
+        r == kind_name(s@),
+{
+    if is_jpg(s) || is_jpeg(s) {
+        Some(Kind::Jpeg)
+    } else if is_png(s) {
+        Some(Kind::Png)
+    } else if is_webp(s) {
+        Some(Kind::Webp)
+    } else if is_gif(s) {
+        Some(Kind::Gif)
+    } else {
+        None
+    }
+}
+
+/// `kind_bit`.
+pub fn kind_bit_x(k: Kind) -> (r: u32)
+    ensures
+        r == kind_bit(k),
+{
+    match k {
+        Kind::Jpeg => 1,
+        Kind::Png => 2,
+        Kind::Webp => 4,
+        Kind::Gif => 8,
+    }
+}
+
+/// `kinds` of all the arguments of `p`.
+pub fn kinds_x(p: &Vec<Vec<u8>>) -> (r: Result<u32, Fail>)
+    requires
+        p@.len() >= 1,
+    ensures
+        r is Ok <==> kinds(views(p@).skip(1), p@.len() - 1) is Some,
+        r is Ok ==> kinds(views(p@).skip(1), p@.len() - 1) == Some(r->Ok_0),
+{
+    let ghost a = views(p@).skip(1);
+    let mut m: u32 = 0;
+    let mut j: usize = 1;
+    while j < p.len()
+        invariant
+            1 <= j <= p@.len(),
+            a == views(p@).skip(1),
+            a.len() == p@.len() - 1,
+            kinds(a, j - 1) == Some(m),
+        decreases p.len() - j,
+    {
+        proof {
+            assert(a[j - 1] == p@[j as int]@);
+        }
+        match kind_name_x(p[j].as_slice()) {
+            Some(k) => {
+                m = m | kind_bit_x(k);
+            },
+            None => {
+                proof {
+                    lemma_kinds_none(a, j as int, a.len() as int);
+                }
+                return Err(Fail::BadUrl("Invalid image format in skip processing"));
+            },
+        }
+        j += 1;
+    }
+    Ok(m)
+}
+
+pub proof fn lemma_kinds_none(a: Seq<Seq<u8>>, i: int, n: int)
+    requires
+        1 <= i <= n,
+        kinds(a, i) is None,
+    ensures
+        kinds(a, n) is None,
+    decreases n - i,
+{
+    if i < n {
+        lemma_kinds_none(a, i, n - 1);
+    }
+}
+
+/// `unb64`.
+pub fn unb64_x(body: &[u8]) -> (r: Option<Vec<u8>>)
+    ensures
+        r is Some <==> unb64(body@) is Some,
+        r is Some ==> unb64(body@) == Some(r->Some_0@),
+{
+    let unpadded = if body.len() > 0 && body[body.len() - 1] == b'=' {
+        let x = sub(body, 0, body.len() - 1);
+        proof {
+            assert(x@ =~= body@.drop_last());
+        }
+        x
+    } else {
+        let x = sub(body, 0, body.len());
+        proof {
+            assert(x@ =~= body@);
+        }
+        x
+    };
+    match b64_x(true, false, unpadded.as_slice()) {
+        Some(u) => Some(u),
+        None => b64_x(true, true, body),
+    }
+}
+
+/// `fname_arg` of the arguments of `p`.
+pub fn fname_arg_x(p: &Vec<Vec<u8>>) -> (r: Result<Vec<u8>, Fail>)
+    requires
+        p@.len() >= 1,
+    ensures
+        r is Ok <==> fname_arg(views(p@).skip(1)) is Some,
+        r is Ok ==> fname_arg(views(p@).skip(1)) == Some(r->Ok_0@),
+{
+    let enc = boolean_x(arg_x(p, 1).as_slice())?;
+    let a0 = arg_x(p, 0);
+    if enc {
+        match unb64_x(a0.as_slice()) {
+            Some(v) => Ok(v),
+            None => Err(Fail::BadUrl("Invalid filename encoding")),
+        }
+    } else {
+        let mut d: Vec<u8> = Vec::new();
+        verilith_text::percent::decode_to(a0.as_slice(), &mut d);
+        proof {
+            assert(d@ =~= verilith_text::percent::decode(a0@));
+        }
+        Ok(d)
+    }
+}
+
+/// `apply2`, for a segment split into `p`.
+#[verifier::rlimit(100)]
+pub fn apply2_x(o: Options, p: &Vec<Vec<u8>>) -> (r: Result<Options, Fail>)
+    requires
+        p@.len() >= 1,
+    ensures
+        r is Ok <==> apply2(o, views(p@)[0], views(p@).skip(1)) is Some,
+        r is Ok ==> apply2(o, views(p@)[0], views(p@).skip(1)) == Some(r->Ok_0),
+{
+    let n = p[0].as_slice();
+    proof {
+        assert(views(p@)[0] == n@);
+    }
+    if is_auto_rotate(n) || is_ar(n) {
+        let v = boolean_x(arg_x(p, 0).as_slice())?;
+        Ok(Options { auto_rotate: v, ..o })
+    } else if is_expires(n) || is_exp(n) {
+        let t = num64_x(arg_x(p, 0).as_slice())?;
+        Ok(Options { expires: t, ..o })
+    } else if is_return_attachment(n) || is_att(n) {
+        let v = boolean_x(arg_x(p, 0).as_slice())?;
+        Ok(Options { attachment: v, ..o })
+    } else if is_raw(n) {
+        let v = boolean_x(arg_x(p, 0).as_slice())?;
+        Ok(Options { raw: v, ..o })
+    } else if is_skip_processing(n) || is_skp(n) {
+        let m = kinds_x(p)?;
+        Ok(Options { skip: m, ..o })
+    } else if is_filename(n) || is_fn(n) {
+        let _ = fname_arg_x(p)?;
+        Ok(o)
+    } else {
         Err(Fail::BadUrl("Unknown processing option"))
     }
+}
+
+/// `fname_of`.
+pub fn fname_of_x(seg: &[u8]) -> (r: Option<Vec<u8>>)
+    ensures
+        r is Some <==> fname_of(seg@) is Some,
+        r is Some ==> fname_of(seg@) == Some(r->Some_0@),
+{
+    let p = split_x(seg, b':');
+    let n = p[0].as_slice();
+    proof {
+        assert(views(p@)[0] == n@);
+    }
+    if is_filename(n) || is_fn(n) {
+        match fname_arg_x(&p) {
+            Ok(v) => Some(v),
+            Err(_) => None,
+        }
+    } else {
+        None
+    }
+}
+
+/// `last_fname(segs, n)`.
+pub fn last_fname_x(segs: &Vec<Vec<u8>>, n: usize) -> (r: Option<Vec<u8>>)
+    requires
+        n <= segs@.len(),
+    ensures
+        r is Some <==> last_fname(views(segs@), n as int) is Some,
+        r is Some ==> last_fname(views(segs@), n as int) == Some(r->Some_0@),
+{
+    let ghost sv = views(segs@);
+    let mut i = n;
+    while i > 0
+        invariant
+            i <= n <= segs@.len(),
+            sv == views(segs@),
+            last_fname(sv, n as int) == last_fname(sv, i as int),
+        decreases i,
+    {
+        proof {
+            assert(sv[i - 1] == segs@[i - 1]@);
+        }
+        match fname_of_x(segs[i - 1].as_slice()) {
+            Some(v) => {
+                return Some(v);
+            },
+            None => {},
+        }
+        i -= 1;
+    }
+    None
 }
 
 /// `is_option`.
@@ -2151,6 +2602,11 @@ pub fn defaults_x() -> (r: Options)
         rotate: 0,
         flip_h: false,
         flip_v: false,
+        auto_rotate: true,
+        expires: 0,
+        attachment: false,
+        raw: false,
+        skip: 0,
     }
 }
 
@@ -2298,6 +2754,7 @@ pub fn parse_x(path: &[u8]) -> (r: Result<Parts, Fail>)
             &&& u.sig_end == r->Ok_0.sig_end
             &&& u.opts == r->Ok_0.opts
             &&& u.src == src_view(r->Ok_0.source)
+            &&& u.filename == opt_view(r->Ok_0.filename)
         }),
 {
     if path.len() == 0 || path[0] != b'/' {
@@ -2396,7 +2853,10 @@ pub fn parse_x(path: &[u8]) -> (r: Result<Parts, Fail>)
         encoded_x(o, &segs, i)
     };
     match r {
-        Ok((o, s)) => Ok(Parts { sig_end: k, opts: o, source: s }),
+        Ok((o, s)) => {
+            let f = last_fname_x(&segs, i);
+            Ok(Parts { sig_end: k, opts: o, source: s, filename: f })
+        },
         Err(e) => Err(e),
     }
 }
