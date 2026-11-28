@@ -23,13 +23,13 @@
 //! response splitting; no framing or hop-by-hop field), and at most the
 //! configured body size.
 use vstd::prelude::*;
-use verilith_core::prims::copy_in;
 use verilith_server::respond::{check_name, check_value, SField};
 #[cfg(verus_only)]
 use verilith_server::respond::{name_ok, value_ok};
 #[cfg(verus_only)]
 use verilith_http::spec as hs;
 use verilith_wasm::interp::Host;
+use verilith_wasm::mem::Mem;
 
 verus! {
 
@@ -51,6 +51,93 @@ pub open spec fn arity(op: u8) -> nat {
     } else {
         4
     }
+}
+
+/// The name each ABI function is imported under, from module `vl`.
+pub open spec fn op_name(op: u8) -> Seq<u8> {
+    if op == OP_REQ_SIZE {
+        seq![0x72u8, 0x65, 0x71, 0x5f, 0x73, 0x69, 0x7a, 0x65]  // req_size
+    } else if op == OP_REQ_READ {
+        seq![0x72u8, 0x65, 0x71, 0x5f, 0x72, 0x65, 0x61, 0x64]  // req_read
+    } else if op == OP_STATUS {
+        seq![0x72u8, 0x65, 0x73, 0x70, 0x5f, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73]  // resp_status
+    } else if op == OP_HEADER {
+        seq![0x72u8, 0x65, 0x73, 0x70, 0x5f, 0x68, 0x65, 0x61, 0x64, 0x65, 0x72]  // resp_header
+    } else {
+        seq![0x72u8, 0x65, 0x73, 0x70, 0x5f, 0x77, 0x72, 0x69, 0x74, 0x65]  // resp_write
+    }
+}
+
+fn op_name_vec(op: u8) -> (r: Vec<u8>)
+    ensures r@ == op_name(op),
+{
+    let r = if op == OP_REQ_SIZE {
+        vec![0x72u8, 0x65, 0x71, 0x5f, 0x73, 0x69, 0x7a, 0x65]
+    } else if op == OP_REQ_READ {
+        vec![0x72u8, 0x65, 0x71, 0x5f, 0x72, 0x65, 0x61, 0x64]
+    } else if op == OP_STATUS {
+        vec![0x72u8, 0x65, 0x73, 0x70, 0x5f, 0x73, 0x74, 0x61, 0x74, 0x75, 0x73]
+    } else if op == OP_HEADER {
+        vec![0x72u8, 0x65, 0x73, 0x70, 0x5f, 0x68, 0x65, 0x61, 0x64, 0x65, 0x72]
+    } else {
+        vec![0x72u8, 0x65, 0x73, 0x70, 0x5f, 0x77, 0x72, 0x69, 0x74, 0x65]
+    };
+    proof { assert(r@ =~= op_name(op)); }
+    r
+}
+
+fn bytes_eq(a: &[u8], b: &[u8]) -> (r: bool)
+    ensures r == (a@ == b@),
+{
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len()
+        invariant
+            a@.len() == b@.len(),
+            0 <= i <= a@.len(),
+            forall|j: int| 0 <= j < i ==> a@[j] == b@[j],
+        decreases a@.len() - i,
+    {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    proof { assert(a@ =~= b@); }
+    true
+}
+
+/// The ABI function imported under `name` (from module `vl`), if any.
+/// The loader builds the import table from this, so import `i` is the
+/// ABI function its name says.
+pub fn op_of(name: &[u8]) -> (r: Option<u8>)
+    ensures
+        r matches Some(op) ==> op <= OP_WRITE && name@ == op_name(op),
+        r is None ==> forall|op: u8| op <= OP_WRITE ==> name@ != op_name(op),
+{
+    let mut op: u8 = 0;
+    while op <= OP_WRITE
+        invariant
+            op <= OP_WRITE + 1,
+            forall|o: u8| o < op ==> name@ != op_name(o),
+        decreases OP_WRITE + 1 - op,
+    {
+        let n = op_name_vec(op);
+        if bytes_eq(name, n.as_slice()) {
+            return Some(op);
+        }
+        op += 1;
+    }
+    None
+}
+
+/// The number of `i32` parameters of ABI function `op` ([`arity`]).
+pub fn arity_of(op: u8) -> (r: usize)
+    ensures r == arity(op),
+{
+    if op == OP_REQ_SIZE || op == OP_STATUS { 1 } else if op == OP_WRITE { 2 } else { 4 }
 }
 
 /// An `i32` argument as the unsigned number the guest meant (pointers and
@@ -464,7 +551,7 @@ pub struct Abi<'a> {
 impl<'a> Abi<'a> {
     /// Runs one host call. A malformed call (unknown import, wrong arity)
     /// traps and changes nothing; a well-formed one does exactly [`step`].
-    pub fn dispatch(&mut self, func: u32, args: &[u64], results: &mut [u64], mem: &mut [u8]) -> (ok: bool)
+    pub fn dispatch(&mut self, func: u32, args: &[u64], results: &mut [u64], mem: &mut Mem) -> (ok: bool)
         ensures
             final(self).req == old(self).req,
             final(self).ops == old(self).ops,
@@ -518,7 +605,7 @@ impl<'a> Abi<'a> {
                 let p = self.req.get(k);
                 if off <= p.len() && dst <= mem.len() && n <= mem.len() - dst {
                     let c = if n <= p.len() - off { n } else { p.len() - off };
-                    copy_in(mem, dst, p, off, c);
+                    let _ = mem.write(dst, p, off, c);
                     proof {
                         assert(final(mem)@ =~= put(m0, dst as nat, p@.subrange(off as int, off + c)));
                     }
@@ -549,8 +636,8 @@ impl<'a> Abi<'a> {
             assert(np as nat == lo(args@[0]) && nl as nat == lo(args@[1]) && vp as nat == lo(args@[2])
                 && vl as nat == lo(args@[3]));
             if np <= mem.len() && nl <= mem.len() - np && vp <= mem.len() && vl <= mem.len() - vp {
-                let n = slice_range(mem, np, nl);
-                let v = slice_range(mem, vp, vl);
+                let n = slice_range(mem.as_slice(), np, nl);
+                let v = slice_range(mem.as_slice(), vp, vl);
                 let lim = self.reply.lim;
                 if check_field(n, v) && self.reply.fields.len() < lim.max_fields
                     && self.reply.field_bytes <= lim.max_field_bytes
@@ -591,7 +678,7 @@ impl<'a> Abi<'a> {
             assert(p as nat == lo(args@[0]) && n as nat == lo(args@[1]));
             let lim = self.reply.lim;
             if p <= mem.len() && n <= mem.len() - p && n <= lim.max_body - self.reply.body.len() {
-                let s = slice_range(mem, p, n);
+                let s = slice_range(mem.as_slice(), p, n);
                 let mut old_reply = Reply::new(lim);
                 core::mem::swap(&mut self.reply, &mut old_reply);
                 let Reply { lim: l2, status, fields, field_bytes, mut body } = old_reply;
@@ -612,7 +699,7 @@ impl<'a> Abi<'a> {
 }
 
 impl<'a> Host for Abi<'a> {
-    fn call(&mut self, func: u32, args: &[u64], results: &mut [u64], mem: &mut [u8]) -> bool {
+    fn call(&mut self, func: u32, args: &[u64], results: &mut [u64], mem: &mut Mem) -> bool {
         self.dispatch(func, args, results, mem)
     }
 }

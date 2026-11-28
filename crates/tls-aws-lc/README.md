@@ -33,8 +33,13 @@ times slower.
   one still opens, so a ticket opens for at least `period` seconds. Give
   `AwsLc::with_tickets` the same `Arc<TicketKeys>` on every connection.
 
-`tests/` holds the interop tests with a rustls client and the record
-protection tests; `examples/bench.rs` compares against a rustls server.
+`client.rs` is `TlsStream`, a blocking client over any `Read + Write`
+(the verified `ClientConn` with this crate's `ClientCrypto`: X25519,
+P-256, P-384 and X25519MLKEM768 key shares), and `client::config` a
+configuration with everything this crate has.
+
+`tests/` holds the interop tests with rustls clients and servers and
+`openssl s_server`, and the record protection tests; `examples/bench.rs` compares against a rustls server.
 `tests/data` is a test CA and a leaf certificate for `localhost`, with its
 key; they are for tests only.
 

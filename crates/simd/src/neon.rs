@@ -78,6 +78,16 @@ pub fn has_neon() -> (r: bool)
     cfg!(any(target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128")))
 }
 
+/// Whether the NEON wrappers run as other code: SSE on x86-64, SIMD128 on
+/// WebAssembly. There a pairwise multiply-add (`vdotq_s16`) is one
+/// instruction and a multiply by lane several, so kernels may choose
+/// differently. It promises nothing; either choice is proven.
+#[verifier::external_body]
+#[inline(always)]
+pub fn neon_emulated() -> (r: bool) {
+    cfg!(any(target_arch = "x86_64", target_arch = "wasm32"))
+}
+
 /// Whether the NEON wrappers can run here: `has_neon` on AArch64 and
 /// WebAssembly; on x86-64, whether the CPU has SSE4.1 and SSSE3, which
 /// the wrappers' SSE implementation (`crate::wasm_x86`, through
@@ -1104,6 +1114,20 @@ pub fn vmull_hi_s16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
         u32s(n8(r)) == mull_hi_s16(u16s(n8(a)), u16s(n8(b))),
 {
     wasm_or!(crate::wasm_neon::vmull_hi_s16(a, b), unsafe { a64::vreinterpretq_u8_s32(a64::vmull_high_s16(a64::vreinterpretq_s16_u8(a), a64::vreinterpretq_s16_u8(b))) })
+}
+
+/// The signed products of the 16-bit lanes, added in adjacent pairs as
+/// 32-bit lanes, wrapping (`smull`, `smull2` and `addp`; `pmaddwd` on
+/// x86-64, `i32x4.dot_i16x8_s` on WebAssembly).
+#[verifier::external_body]
+#[inline(always)]
+pub fn vdotq_s16(a: uint8x16_t, b: uint8x16_t) -> (r: uint8x16_t)
+    requires
+        neon(),
+    ensures
+        u32s(n8(r)) == madd16(u16s(n8(a)), u16s(n8(b))),
+{
+    wasm_or!(crate::wasm_neon::vdotq_s16(a, b), unsafe { a64::vreinterpretq_u8_s32(a64::vpaddq_s32(a64::vmull_s16(a64::vget_low_s16(a64::vreinterpretq_s16_u8(a)), a64::vget_low_s16(a64::vreinterpretq_s16_u8(b))), a64::vmull_high_s16(a64::vreinterpretq_s16_u8(a), a64::vreinterpretq_s16_u8(b)))) })
 }
 
 /// Wrapping 32-bit addition.

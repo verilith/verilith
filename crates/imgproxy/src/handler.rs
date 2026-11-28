@@ -19,7 +19,7 @@ pub struct Proxy {
 
 impl Proxy {
     /// The PNG for a request, or why there is none.
-    pub fn answer(&self, method: &[u8], path: &[u8], body: &[u8]) -> Result<Vec<u8>, Fail> {
+    pub fn answer(&self, method: &[u8], path: &[u8], body: &[u8]) -> Result<(Vec<u8>, proxy::Format), Fail> {
         let p = proxy::parse(path)?;
         if !proxy::check(&self.keys, p.signature, p.signed) {
             return Err(Fail::Forbidden);
@@ -61,7 +61,7 @@ impl Proxy {
                 })
             }
         };
-        proxy::process(&data, &p.opts, &self.limits)
+        Ok((proxy::process(&data, &p.opts, &self.limits)?, p.opts.format))
     }
 
     /// Answers one request.
@@ -72,15 +72,15 @@ impl Proxy {
             return;
         }
         match self.answer(req.method, path, req.body) {
-            Ok(png) => {
+            Ok((img, fmt)) => {
                 let cc = format!("max-age={}, public", self.ttl);
                 let _ = res.send(
                     200,
                     &[
-                        Field { name: b"Content-Type", value: b"image/png" },
+                        Field { name: b"Content-Type", value: fmt.mime() },
                         Field { name: b"Cache-Control", value: cc.as_bytes() },
                     ],
-                    &png,
+                    &img,
                 );
             }
             Err(e) => {

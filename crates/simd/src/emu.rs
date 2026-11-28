@@ -350,6 +350,7 @@ imm1!(_mm_srli_epi16, _mm256_srli_epi16, |a, k| each16(a, |x| if !(0..=15).conta
 imm1!(_mm_slli_epi16, _mm256_slli_epi16, |a, k| each16(a, |x| if !(0..=15).contains(&k) { 0 } else { x << k }));
 imm1!(_mm_srai_epi16, _mm256_srai_epi16, |a, k| each16(a, |x| ((x as i16) >> (k as u32).min(15)) as u16));
 imm1!(_mm_srli_epi32, _mm256_srli_epi32, |a, k| each32(a, |x| if !(0..=31).contains(&k) { 0 } else { x >> k }));
+imm1!(_mm_srai_epi32, _mm256_srai_epi32, |a, k| each32(a, |x| ((x as i32) >> (k as u32).min(31)) as u32));
 imm1!(_mm_slli_epi32, _mm256_slli_epi32, |a, k| each32(a, |x| if !(0..=31).contains(&k) { 0 } else { x << k }));
 imm1!(_mm_srli_epi64, _mm256_srli_epi64, |a, k| each64(a, |x| if !(0..=63).contains(&k) { 0 } else { x >> k }));
 imm1!(_mm_slli_epi64, _mm256_slli_epi64, |a, k| each64(a, |x| if !(0..=63).contains(&k) { 0 } else { x << k }));

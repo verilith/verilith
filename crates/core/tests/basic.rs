@@ -344,3 +344,36 @@ fn picks() {
         }
     }
 }
+
+/// `move16`, `move_lt8`, `copy_apart8` and `copy_apart16_64` against
+/// `copy_within`, at every source and destination in a 160-byte buffer
+/// that their preconditions allow.
+#[test]
+fn moves_and_apart_copies() {
+    use verilith_core::prims::{copy_apart16_64, copy_apart8, move16, move_lt8};
+    let base: Vec<u8> = (0..160u32).map(|i| (i * 37 + 11) as u8).collect();
+    let check = |n: usize, apart: bool, f: &dyn Fn(&mut [u8], usize, usize)| {
+        for src in 0..=base.len() - n {
+            for dst in 0..=base.len() - n {
+                if apart && !(src + n <= dst || dst + n <= src) {
+                    continue;
+                }
+                let mut want = base.clone();
+                want.copy_within(src..src + n, dst);
+                let mut got = base.clone();
+                f(&mut got, src, dst);
+                assert_eq!(got, want, "n {n} src {src} dst {dst}");
+            }
+        }
+    };
+    check(16, false, &|b, s, d| move16(b, s, d));
+    for n in 1..8 {
+        check(n, false, &|b, s, d| move_lt8(b, s, d, n));
+    }
+    for n in 8..=70 {
+        check(n, true, &|b, s, d| copy_apart8(b, s, d, n));
+    }
+    for n in 16..=64 {
+        check(n, true, &|b, s, d| copy_apart16_64(b, s, d, n));
+    }
+}

@@ -36,6 +36,7 @@ output matters.
 | Branch resolution: the compiled code's precomputed branch targets, frame sizes and arities are the certificate's | `compile::compile_all` ensures `interp::codes_ok` |
 | Register form: every operation computes, on every value stack, what the run of instructions it stands for computes on the flat machine; runs partition the body and start at every branch target | `rcheck::check_rcode` ensures `rcheck::rcode_ok` (part of `codes_ok`); `mach::lemma_msteps` carries the flat machine over to the semantics |
 | Snapshots: `Checked::snapshot` copies the store, and `Checked::restore` puts it back (memory contents and size, globals, tables, dropped segments), so an embedder can start every call from the same state ([verilith-serverless](../serverless) does, per request) | `instance::Checked::restore` ensures `view() == snap.view()` |
+| Cheap resets: linear memory records the 4 KiB chunks written since it was last made clean (`mem::Mem`, whose type invariant is that every unmarked chunk holds the clean bytes; every store, fill, copy, grow and host write marks first). `Checked::snapshot_clean` takes a snapshot and makes the memory clean against it; `Checked::reset` then copies back only the marked chunks, and the interpreter keeps the clean state it is measured against (`invoke` ensures `mem_base()` is unchanged) | `instance::Checked::reset` ensures `view() == snap.view()` from `mem_base() == snap.view().mem`; the `mem::Mem` type invariant |
 | The boundary holds for any caller: a `Checked` instance can only be built by `Checked::new`, which runs the checker, compiles, and checks the initial store; its type invariant (checked certificates, compiled code, a well-formed store, a fixed-size value stack) is what `execute` requires, so every call from unverified code runs under the theorems above | `instance::Checked` (`#[verifier::type_invariant]`) |
 
 The semantics (`src/sem.rs`) is a small-step machine over the decoded
@@ -83,7 +84,8 @@ What the proofs assume rather than prove:
   every function against an independent evaluation of the spec.
 - `src/prims.rs`: unchecked loads and stores on linear memory (`load`,
   `store`, 1 to 8 bytes little-endian); each `requires` is the bounds
-  check Verus proves at the call site. (The single-element reads and
+  check Verus proves at the call site, and `store` is trusted not to
+  unwind (it is an unchecked write, called only in bounds). (The single-element reads and
   writes are verified against vstd's spec of `get_unchecked`; the copies
   and fills `scopy_down`, `szero`, `fill`, `copy_within` and `copy_in`
   against its specs of `copy_within`, `copy_from_slice` and
@@ -91,10 +93,14 @@ What the proofs assume rather than prove:
   reports that the allocation failed and leaves the memory unchanged,
   against its specs of `try_reserve_exact` and `resize`.)
 - `interp::call_host` (it calls the embedder's host function, catching a
-  panic as a trap, and is trusted to leave the lengths of the result
-  buffer and memory unchanged, which a `&mut [T]` guarantees) and
-  `Checked::memory_mut` (hands out the memory as `&mut [u8]`, which cannot
-  change its length).
+  panic as a trap, and is trusted to leave the length of the result
+  buffer and the length and base of the memory unchanged: the result
+  buffer is a `&mut [u64]`, and the host reaches the memory only through
+  `mem::Mem`'s methods, each verified to keep both, and cannot make a
+  `Mem` to put in its place), and `Mem::all_mut` with
+  `Checked::memory_mut`, which use it (they mark every chunk of the memory
+  written, then hand out its bytes as `&mut [u8]`, which cannot change
+  their length).
 - Verus, Z3 and the Rust compiler.
 
 Not trusted (their output is checked, so a bug costs correctness, not

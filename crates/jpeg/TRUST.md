@@ -2,8 +2,10 @@
 
 The theorem is `decode::decode`: for every byte string, the result is the
 image `spec::jpeg_decode` gives, or `Invalid` exactly when it gives none, or
-`OutOfMemory`. This file lists everything that theorem rests on without
-proving it. If something here is wrong, the proofs still check, and the
+`OutOfMemory`. The encoder's is `encode::encode_rgb`: the file it returns
+decodes, under `spec::jpeg_coded`, to `enc_spec::enc_coded` of its input
+(section 1a). This file lists everything those theorems rest on without
+proving them. If something here is wrong, the proofs still check, and the
 decoder can still be wrong.
 
 ## 1. The specification: `src/spec.rs`
@@ -53,6 +55,42 @@ proven: byte-identical output on 1,368 intact files and 496 damaged ones,
 agreement on which of 900 damaged files to reject, and differential fuzzing
 (see the README).
 
+### And `src/spec_scaled.rs`, for reduced-size decoding
+
+About 230 lines, the theorem of `scaled::decode_scaled`. It reuses
+`spec.rs`'s coefficients, range limit, upsampling filters and colour
+conversion, and adds what libjpeg-turbo 3.2.1 does differently when it
+decodes at 1/2, 1/4 or 1/8: the reduced inverse DCTs (`jidctred.c`:
+`jpeg_idct_4x4`, `jpeg_idct_2x2`, `jpeg_idct_1x1`, with their 32-bit
+workspaces), the inverse DCT size of each component (`jdmaster.c`, which
+scales chroma up through the inverse DCT rather than upsampling where the
+sampling factors allow), the component and output sizes, and the
+upsampler's choice (`jdsample.c`: no triangle filters at 1/8). The evidence
+that it matches libjpeg-turbo is empirical: `difftest/scaled.sh` gives
+byte-identical output to `djpeg -scale` at all four scales on 860 pairs of
+file and scale (every sampling factor combination cjpeg writes, sizes from
+1x1 up, baseline, progressive and with restart markers, greyscale and RGB),
+with libjpeg-turbo's SIMD code on x86-64.
+
+## 1a. The encoder's specification: `src/enc_spec.rs`
+
+About 300 lines of definitions: what the encoder codes, after
+libjpeg-turbo 3.2.1 with `jpeg_set_defaults` and `jpeg_set_quality(q,
+TRUE)`: RGB to YCbCr in 16-bit fixed point (`rgb_ycc_convert`), the last
+row and column repeated to whole blocks (`expand_right_edge`,
+`expand_bottom_edge`), `h2v2_downsample` with its alternating rounding
+bias, `jpeg_fdct_islow`, quantization rounding to nearest
+(`quantize`), `jpeg_quality_scaling` and `jpeg_add_quant_table` with the
+Annex K tables, and the dummy blocks `compress_data` codes past the
+image's edge. It is read together with `spec.rs`, whose `jpeg_coded` (the
+decoder's own) says what the written file means; the encoder's theorem
+does not depend on the decoder's code, only on that specification.
+
+The evidence that `enc_spec.rs` matches libjpeg-turbo is empirical:
+`difftest/encdiff` finds the files byte-identical (see the README). The
+coefficients are clamped to baseline's range in the specification; for
+8-bit input they always are in it, so the clamp never changes one.
+
 ## 2. Trusted code inside the verified crate
 
 Nothing in `src/` uses `external_body`, `assume` or `admit`. The zeroed
@@ -64,7 +102,7 @@ re-exported from `src/parse.rs`, and are trusted there: see
 ## 2a. NEON intrinsics, through verilith-simd (AArch64, and x86-64 through SSE)
 
 `src/idct_neon.rs`, `src/idct16.rs` and `src/color_neon.rs` are verified, but
-they call 46 NEON intrinsics through
+they call 47 NEON intrinsics through
 [verilith-simd](https://github.com/verilith/verilith/tree/main/crates/simd) (a path dependency in
 this repository), and each of those is an `external_body` wrapper there: Verus
 takes on faith that the instruction computes what verilith-simd's specification
@@ -83,7 +121,9 @@ specification on random and edge inputs. The ones verilith-jpeg uses:
   (dequantization), `vmull_lo_laneq_s16`, `vmull_hi_laneq_s16`,
   `vmlal_lo_laneq_s16`, `vmlal_hi_laneq_s16` (`smull`, `smull2`, `smlal`,
   `smlal2` by one lane of a vector of constants), `vrshrn_lo_n_s32`,
-  `vrshrn2_n_s32` (`rshrn`, `rshrn2`), and for its size test `vqaddq_u16`,
+  `vrshrn2_n_s32` (`rshrn`, `rshrn2`), `vdotq_s16` (the pairwise
+  multiply-add of x86's `pmaddwd`, used in place of the `vmull`/`vmlal`
+  pairs when `neon_emulated()` says the NEON runs on SSE), and for its size test `vqaddq_u16`,
   `vaddlvq_u16` (`uaddlv`), `vgetq_lane_u64_0`, `vgetq_lane_u64_1`;
 - the range limit: `vuzp2q_u16`, `vqshrn2_n_s16` (`sqshrn`, `sqshrn2`),
   `veorq_u8`, `vdupq_n_u8`;
@@ -98,7 +138,7 @@ sixteen bytes).
 
 On x86-64 these wrappers are not trusted on their own: each forwards to
 verilith-simd's `src/wasm_neon.rs`, proven on its SIMD128 contracts, and
-the 48 SIMD128 instructions those use forward to `src/wasm_x86.rs`, proven
+the 49 SIMD128 instructions those use forward to `src/wasm_x86.rs`, proven
 from the specifications of the SSE2, SSSE3 and SSE4.1 intrinsics it calls
 (verilith-simd's `src/x86.rs`, the same ones the crates' AVX2 kernels rely
 on). What x86-64 trusts instead is those intrinsic specifications, the
@@ -114,6 +154,31 @@ plain loop of `render::ycc_row`, which use no intrinsics.
 compiled with AVX2 enabled (`#[target_feature]`) when `has_avx2()` says the
 CPU has it. Those copies are verified like the originals, use no
 intrinsics, and are `unsafe` to call only because of the attribute.
+
+## 2b. AVX2 intrinsics (x86-64)
+
+`src/idct_avx2.rs` is verified against `spec::idct` like `idct16.rs`, with
+the same 16-bit size test (magnitudes summing to at most 2120), but it calls
+verilith-simd's AVX2 intrinsics directly (its safe wrappers in `src/safe.rs`),
+whose behaviour Verus takes from the `assume_specification`s in its
+`src/x86.rs`, lane-by-lane functions of `src/ops.rs` written from Intel's
+descriptions and checked against the CPU by its tests. It trusts those
+specifications for
+`_mm256_madd_epi16` (magnitudes and the passes' products),
+`_mm256_mullo_epi16`, `_mm256_mulhi_epi16`, `_mm256_srai_epi16`
+(dequantization and its overflow check), `_mm256_add_epi16`,
+`_mm256_add_epi32`, `_mm256_sub_epi32`, `_mm256_srai_epi32`,
+`_mm256_and_si256`, `_mm256_or_si256`, `_mm256_xor_si256`,
+`_mm256_testz_si256`, `_mm256_unpacklo_epi16`, `_mm256_unpacklo/hi_epi32`,
+`_mm256_unpacklo/hi_epi8`, `_mm256_permute2x128_si256`,
+`_mm256_permutevar8x32_epi32`, `_mm256_packs_epi32`, `_mm256_packs_epi16`,
+`_mm256_shuffle_epi8`, `_mm256_set1_epi8/16/32`, `_mm256_setr_epi8`,
+`_mm256_setr_epi32`, `_mm256_castsi256_si128`, `_mm256_extracti128_si256`
+and `_mm_srli_si128`; the loads `load256_i16` and `load256_u16`, the stores
+`store256_u32` and `storel64_u8`; and `has_avx2()`'s CPU check. The kernel
+is compiled with AVX2 enabled (`#[target_feature]`) and called only when
+`has_avx2()` is true; a block it declines as too large goes to `idct_neon`
+on SSE, or to `idct_fast`.
 
 ## 3. Unchecked indexing, verified against vstd
 
@@ -143,7 +208,8 @@ carry no proof. They are glue between C pointers and the verified decoder,
 and they contain `unsafe` code whose safety depends on the caller keeping
 the documented contract (valid pointers and lengths).
 
-- `src/capi.rs` (about 45 lines): `vjpeg_decode`, `vjpeg_free`.
+- `src/capi.rs` (about 80 lines): `vjpeg_decode`, `vjpeg_encode`,
+  `vjpeg_free`.
 - `src/tj.rs` (about 835 lines): the TurboJPEG decode API. Besides pointer
   handling it does unverified work of its own: it copies the verified RGB or
   grey result into the caller's buffer in the requested pixel order, pitch

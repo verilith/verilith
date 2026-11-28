@@ -1,0 +1,14 @@
+# Library files that call core::arch intrinsics directly instead of going
+# through verilith-simd (scripts/arch-check.py). Each line: path, then why.
+# Add a file only with a reason, and prefer adding the instruction's
+# specification to verilith-simd instead. The list should only shrink.
+crates/aes/src/neon.rs AES/PMULL instructions vsimd does not specify yet; trusted wrappers checked by tests/isa.rs (candidate to move into verilith-simd)
+crates/aes/src/x86.rs AES-NI/VAES/PCLMULQDQ instructions vsimd does not specify yet; trusted wrappers checked by tests/isa.rs (candidate to move into verilith-simd)
+crates/sha2/src/armv8.rs SHA-2 instructions vsimd does not specify yet; trusted wrappers checked by tests/isa.rs (candidate to move into verilith-simd)
+crates/sha2/src/shani.rs SHA-NI instructions vsimd does not specify yet; trusted wrappers checked by tests/isa.rs (candidate to move into verilith-simd)
+crates/checksum/src/crc32c.rs the CRC-32C instruction (SSE4.2 crc32, AArch64 crc32cd), one trusted word step (candidate to move into verilith-simd)
+crates/checksum/src/lanes.rs the AArch64 crc32x instruction, one trusted word step (candidate to move into verilith-simd)
+crates/json/src/lanes.rs one vst1q_u8 store into a Vec's spare capacity (append16_spare_neon), trusted
+crates/json/src/simd.rs register type names only (__m128i, __m256i); no intrinsic calls
+crates/json/src/utf8.rs register type names only (__m256i, __m512i); no intrinsic calls
+crates/xml/src/api/libxml2/scan.rs UNVERIFIED raw SSE2 byte scanners in the libxml2 compatibility layer; should move onto verilith-simd and verilith-core::scan

@@ -351,6 +351,7 @@ def vstep(code, f, op, pre):
     stt = '&mut Store' if f in STORES else '&Store'
     sto = 'old(st)' if f in STORES else 'st'
     stf = 'final(st)' if f in STORES else 'st'
+    bas = '\n        final(st).mem.base() == old(st).mem.base(),' if f in STORES else ''
     S.append(f"""#[inline(always)]
 pub fn s_{code}({GP}    Ghost(rpc): Ghost<usize>, stack: &mut Vec<u64>, fp: usize, st: {stt}, r: &ROp, acc: &mut u64) -> (res: RRes)
     requires
@@ -358,7 +359,7 @@ pub fn s_{code}({GP}    Ghost(rpc): Ghost<usize>, stack: &mut Vec<u64>, fp: usiz
         *r == codes[d as int].rops@[rpc as int],
         r.op == OpCode::{code},
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
-    ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, {stf}, res, *final(acc)),
+    ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, {stf}, res, *final(acc)),{bas}
 {{
     proof {{ lemma_pre_hand(); }}
     {f}({GA}, Ghost(rpc), {op}, stack, fp, st, r, {pre}, acc)
@@ -476,6 +477,7 @@ pub fn {name}<'a>({GP}    rpc: usize, stack: &Vec<u64>, fp: usize, st: &Store, r
         stt = '&mut Store' if kind == 'st' else '&Store'
         sto = 'old(st)' if kind == 'st' else 'st'
         stf = 'final(st)' if kind == 'st' else 'st'
+        bas = '\n        final(st).mem.base() == old(st).mem.base(),' if kind == 'st' else ''
         S.append(f"""/// Runs one of the value codes in `{name}_op`.
 #[verifier::spinoff_prover]
 pub fn {name}({GP}    Ghost(rpc): Ghost<usize>, stack: &mut Vec<u64>, fp: usize, st: {stt}, r: &ROp, acc: &mut u64) -> (res: RRes)
@@ -484,7 +486,7 @@ pub fn {name}({GP}    Ghost(rpc): Ghost<usize>, stack: &mut Vec<u64>, fp: usize,
         *r == codes[d as int].rops@[rpc as int],
         {name}_op(r.op),
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
-    ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, {stf}, res, *final(acc)),
+    ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, {stf}, res, *final(acc)),{bas}
 {{
     match r.op {{
 {body}

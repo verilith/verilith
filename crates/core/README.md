@@ -11,11 +11,11 @@ blocks shared by the Verilith libraries
 live, with its proofs, in one or two of those crates; it now lives here
 once, and the libraries import it.
 
-`cargo verus verify` checks 355 functions with no errors.
+`cargo verus verify` checks 362 functions with no errors.
 
 | module | what it has | used by |
 | --- | --- | --- |
-| `prims` | memory primitives: unchecked `get`/`set` on `u8` and `u32` slices, `store_at`, unaligned little-endian loads, 8-byte copies and fills, slice copies, `extend`, fallible zeroed allocation (`alloc_u8`, `alloc_i16`, `alloc_u32`) | verilith-zlib, verilith-webp, verilith-http, verilith-json, verilith-gif, verilith-tiff, verilith-png, verilith-jpeg |
+| `prims` | memory primitives: unchecked `get`/`set` on `u8` and `u32` slices, `store_at`, unaligned little-endian loads, 8- and 16-byte copies, moves (`move8`, `move16`, `move_lt8`: overlap allowed) and fills, copies of 8 or more and of 16 to 64 bytes between ranges that do not overlap (`copy_apart8`, `copy_apart16_64`), slice copies, `extend`, fallible zeroed allocation (`alloc_u8`, `alloc_i16`, `alloc_u32`) | verilith-zlib, verilith-webp, verilith-http, verilith-json, verilith-gif, verilith-tiff, verilith-png, verilith-jpeg |
 | `lz` | LZ77 over byte slices, for decoders that write into a caller's buffer and for compressors: `lz_copy` (what a match copy means, overlap included), `copy_match` (any offset, 16 bytes at a time where there is room: offsets under 8 are widened by overlapping 8-byte moves), `copy_match24`/`copy_match16` (short matches from at least 8 back, no loop), `copy_match_wild` and `copy_lits_wild` (32 bytes at a time into room the caller has, with no test before the first 32), `copy_lits`, `eq_len` (match length, 8 bytes per compare), `load32`, and the lemmas that tie them to `lz_copy` (`lemma_matched`, `lemma_lz_copy_is`) | verilith-lz4, verilith-snappy |
 | `tail` | `Tail`: a byte vector appended to without capacity tests. Room is reserved once, and each append's precondition, proven by the caller, says the bytes fit. Appends from a slice and from the vector's own earlier bytes, copied 16 bytes at a time | verilith-zstd |
 | `spare` | a `Vec`'s spare capacity (uninterpreted, as vstd does not model it), with `reserve_spare`, `len_spare`, and stores into reserved room without a capacity check: `push_spare`, `append4_spare`, `append8_spare`, `append_slice_spare`, plus `truncate_spare` and `set_spare` | verilith-json, verilith-zlib |
