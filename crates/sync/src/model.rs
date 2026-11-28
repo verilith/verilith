@@ -2,7 +2,7 @@
 //! protocol of `src/progress/`.
 //!
 //! A [`Model`] holds a state of a protocol together with the execution
-//! that led to it. The only way to change it is [`Model::step`], which
+//! that led to it. The only way to change it is `Model::step`, which
 //! demands a proof that the change is a step of the protocol, by the
 //! thread whose token the caller holds. A primitive keeps its `Model`
 //! inside its invariant, next to the permissions for its atomics, and the
@@ -12,10 +12,10 @@
 //! theorems are about them.
 //!
 //! A thread of the model is a call in progress, not an OS thread: a call
-//! takes an idle model thread from a pool when it starts ([`Model::enter`])
-//! and gives it back when it returns ([`Model::leave`]). The model has a
+//! takes an idle model thread from a pool when it starts (`Model::enter`)
+//! and gives it back when it returns (`Model::leave`). The model has a
 //! fixed number of threads, so this is where the one assumption of this
-//! module is: [`Model::pool_nonempty`].
+//! module is: `Model::pool_nonempty`.
 //!
 //! The channel (`src/chan_sync.rs`, through `src/chan_model.rs`), the
 //! mutex, the RwLock and the MPMC queue each keep one.

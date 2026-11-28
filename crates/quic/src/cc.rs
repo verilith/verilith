@@ -1,5 +1,5 @@
 //! Congestion control (RFC 9002 §7, Appendix B): NewReno, proven to
-//! follow the RFC's transitions ([`on_ack_spec`], [`on_congestion_spec`])
+//! follow the RFC's transitions (`on_ack_spec`, `on_congestion_spec`)
 //! with these invariants, after any sequence of calls:
 //!
 //! - the congestion window never falls below kMinimumWindow, two

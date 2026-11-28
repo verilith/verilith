@@ -13,6 +13,8 @@ rather than check, and writes TRUST-LEDGER.md at the repository root:
   Ghost/Tracked::assume_new()       a ghost or tracked value made without proof
   exec_allows_no_decreases_clause   a function exempt from the termination check
   plain-Rust files                  src/ files with no verus! block: compiled, never verified
+  plain-Rust lines                  the lines of code in those files (comments and blank lines
+                                    not counted): the size of what is never verified
 
 `assume(...)` and `admit()` are not allowed anywhere in src/; the script fails
 if it finds one.
@@ -108,6 +110,7 @@ def scan_file(path, rel):
     with open(path, encoding="utf-8") as f:
         text = strip_comments(f.read())
     items = {k: [] for k in KINDS}
+    items["plain-Rust lines"] = 0
     forbidden = []
     for kind, pat in NAMED:
         for m in pat.finditer(text):
@@ -124,6 +127,7 @@ def scan_file(path, rel):
         items["assume_new"].append(m.group(1))
     if "verus!" not in text:
         items["unverified modules"].append(rel)
+        items["plain-Rust lines"] = sum(1 for l in text.splitlines() if l.strip())
     for m in FORBIDDEN.finditer(text):
         forbidden.append(f"{rel}:{line_of(text, m.start())}: {m.group(1)}(")
     return items, forbidden
@@ -147,7 +151,7 @@ def scan():
                 rel = os.path.relpath(path, ROOT)
                 items, bad = scan_file(path, rel)
                 forbidden += bad
-                if any(items.values()):
+                if any(v for k, v in items.items() if k != "plain-Rust lines"):
                     files[os.path.relpath(path, os.path.join(cdir, crate))] = items
         crates[crate] = files
     return crates, forbidden
@@ -189,21 +193,26 @@ def render(crates):
         "| assume_new | `Ghost::assume_new()` / `Tracked::assume_new()`: a ghost or tracked value made without proof, mostly in unverified glue calling verified code |",
         "| no termination check | `exec_allows_no_decreases_clause`: a function exempt from Verus's termination check (blocking calls, an interpreter loop) |",
         "| plain-Rust files | `src/` files with no `verus!` block: compiled into the library, never seen by Verus (C APIs, bindings, wrappers) |",
+        "| plain-Rust lines | the lines of code in those files, not counting comments and blank lines: how much is never verified |",
         "",
         "## Counts",
         "",
-        "| Crate | " + " | ".join(short[k] for k in used) + " |",
-        "|---|" + "---:|" * len(used),
+        "| Crate | " + " | ".join(short[k] for k in used) + " | plain-Rust lines |",
+        "|---|" + "---:|" * (len(used) + 1),
     ]
     totals = {k: 0 for k in used}
+    total_lines = 0
     for crate, files in crates.items():
         row = []
         for k in used:
             n = sum(len(f[k]) for f in files.values())
             totals[k] += n
             row.append(str(n) if n else "")
+        n = sum(f["plain-Rust lines"] for f in files.values())
+        total_lines += n
+        row.append(str(n) if n else "")
         lines.append(f"| {crate} | " + " | ".join(row) + " |")
-    lines.append("| **total** | " + " | ".join(f"**{totals[k]}**" for k in used) + " |")
+    lines.append("| **total** | " + " | ".join(f"**{totals[k]}**" for k in used) + f" | **{total_lines}** |")
     lines += ["", "## Items", ""]
     for crate, files in crates.items():
         if not files:
@@ -218,7 +227,7 @@ def render(crates):
                 if k == "assume_specification":
                     parts.append(f"{len(v)} assume_specification")
                 elif k == "unverified modules":
-                    parts.append("plain Rust")
+                    parts.append(f"plain Rust, {items['plain-Rust lines']} lines")
                 elif k == "assume_new":
                     parts.append(f"{len(v)} assume_new")
                 else:

@@ -44,6 +44,8 @@ pub mod deint;
 #[doc(hidden)]
 pub mod top;
 #[doc(hidden)]
+pub mod accept;
+#[doc(hidden)]
 #[cfg(not(verus_only))]
 pub mod libpng;
 
