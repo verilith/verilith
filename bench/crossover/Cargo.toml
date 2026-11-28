@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 verilith-checksum = { path = "../../crates/checksum" }
 verilith-core = { path = "../../crates/core" }
+verilith-lz4 = { path = "../../crates/lz4" }
 
 [profile.release]
 debug = 1
