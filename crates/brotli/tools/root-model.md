@@ -83,6 +83,31 @@ The model is kept as a patch (`row-model.patch` in the project files).
 To switch, it needs to beat the thresholds. The open question is a stream-derived estimate of
 symbols per code, for example the previous meta-block's literal and command counts.
 
+## Exact counts with cachegrind (third round)
+
+Wall-clock can't separate two rules that are within 1%. So for each of the
+14 vbench streams we counted the cost terms exactly, once with the threshold
+rule and once with the row model (no guessed symbol counts). The slow decodes
+and their bits, and the table entries filled, came from counters in the
+decoder. L1 read misses came from cachegrind with Golden Cove's L1
+(`--D1=49152,12,64`). One more constant was measured directly: a pointer chase on
+this machine takes 1.56 ns in L1 (up to 32 KiB) and 4.75 ns in L2, which is a
+miss cost of about 3.2 ns, or 10 to 11 core cycles, so 11 holds.
+
+| Against the thresholds, the row model has | |
+|---|---|
+| slow decodes | 40% fewer (for example 20,587 against 39,136 on dickens q5) |
+| table entries filled | 15% to 55% more |
+| L1 read misses | 0% to 18% more (sao and x-ray q11 the most) |
+| instructions | 0.8% fewer (geomean) |
+| net cost, 37 + 2/bit per slow decode, 1 per entry, 11 per miss | +0.03% of instructions on average; from -0.4% to +0.7% per stream |
+
+So, counted exactly, the two rules cost the same to within about 0.5% on
+every stream. The model wins on slow decodes and loses on cache misses by almost
+exactly the same amount. That also explains the 1/64 and 1/16 thresholds after
+the fact: they sit at the balance point that the measured costs predict.
+Switching would add proof work for no measurable gain, so the thresholds stay.
+
 ## Reproducing
 
 - Slow path and fill: build with `CARGO_PROFILE_RELEASE_DEBUG=line-tables-only`.
@@ -91,5 +116,8 @@ symbols per code, for example the previous meta-block's literal and command coun
 - Cache behaviour: build for `x86-64-v3` (valgrind can't run AVX-512), then
   run `valgrind --tool=cachegrind --D1=49152,12,64` on a vbench runner.
   The results are exact and repeat from run to run.
+- Exact counts: add counters for `decode_slow` calls and bits and for
+  `1 << root` per table built, then run each stream once under cachegrind
+  with `--cache-sim=yes --D1=49152,12,64` and read the D1 read misses.
 - Speed: run `bench/harness/vbench.py --only brotli-decode --cpu 2` with
   the two runners as the `brotli` and `vbrotli` binaries.
