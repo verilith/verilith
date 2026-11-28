@@ -14,8 +14,7 @@
 //! what the code may do. Checked against libvips itself
 //! (`tests/libvips.rs`).
 
-/// `VIPS_TRANSFORM_SCALE` and `VIPS_INTERPOLATE_SHIFT` (`interpolate.h`).
-const TSCALE: i32 = 64;
+/// `VIPS_INTERPOLATE_SHIFT` (`interpolate.h`).
 const ISHIFT: i32 = 12;
 
 /// One band-interleaved image: 8-bit values (held exactly in `f32`) or
@@ -33,47 +32,6 @@ impl Img {
     fn at(&self, x: usize, y: usize, b: usize) -> f32 {
         self.px[(y * self.w + x) * self.nb + b]
     }
-}
-
-/// `VIPS_ROUND_UINT`.
-fn round_uint(v: f64) -> usize {
-    (v + 0.5) as usize
-}
-
-fn sinc(x: f64) -> f64 {
-    if x == 0.0 {
-        1.0
-    } else {
-        (x * std::f64::consts::PI).sin() / (x * std::f64::consts::PI)
-    }
-}
-
-fn lanczos3(x: f64) -> f64 {
-    if (-3.0..=3.0).contains(&x) {
-        sinc(x) * sinc(x / 3.0)
-    } else {
-        0.0
-    }
-}
-
-/// `vips_reduce_make_mask` for Lanczos 3 (`calculate_coefficients`).
-fn make_mask(n: usize, shrink: f64, x: f64) -> Vec<f64> {
-    let half = x + n as f64 / 2.0 - 1.0;
-    let scale = 1.0 / shrink;
-    let mut c: Vec<f64> = (0..n).map(|i| lanczos3((i as f64 - half) * scale)).collect();
-    let sum: f64 = c.iter().sum();
-    for v in &mut c {
-        *v /= sum;
-    }
-    c
-}
-
-/// The 65 masks for a residual shrink, as doubles and as libvips's
-/// `short`s (`(short) (c * VIPS_INTERPOLATE_SCALE)`, truncated).
-fn masks(n: usize, shrink: f64) -> (Vec<Vec<f64>>, Vec<Vec<i32>>) {
-    let f: Vec<Vec<f64>> = (0..=TSCALE).map(|x| make_mask(n, shrink, (x as f32 / TSCALE as f32) as f64)).collect();
-    let s = f.iter().map(|m| m.iter().map(|&v| (v * (1 << ISHIFT) as f64) as i16 as i32).collect()).collect();
-    (f, s)
 }
 
 /// `vips_shrinkv` (`ceil`: the bottom extended by copying to a whole
@@ -112,47 +70,33 @@ fn shrink(img: &Img, k: usize, vert: bool, exact: bool) -> Img {
     Img { w: ow, h: oh, nb: img.nb, uchar: img.uchar, px }
 }
 
-/// `vips_reducev` (`vert`) or `vips_reduceh` by `factor`, Lanczos 3, gap 2.
+/// `vips_reducev` (`vert`) or `vips_reduceh` by `factor`, Lanczos 3, gap
+/// 2: the masks and positions `vresize::pass` gives, applied in 8 bits or
+/// in floating point as libvips does.
 fn reduce(img: &Img, factor: f64, vert: bool, exact: bool) -> Img {
+    use crate::vresize::{pass, Kernel, Vips};
     let len = if vert { img.h } else { img.w };
-    let out = round_uint(len as f64 / factor).max(1);
-    let mut extra = out as f64 * factor - len as f64;
-    let ishr = ((len as f64 / out as f64 / 2.0).floor() as usize).max(1);
-    let mut resid = factor;
-    let src = if ishr > 1 {
-        resid /= ishr as f64;
-        extra /= ishr as f64;
-        shrink(img, ishr, vert, exact)
-    } else {
-        img.clone()
-    };
-    if resid == 1.0 {
-        return src;
-    }
+    let p = pass(len, factor, Kernel::Lanczos3, Vips { old: exact }, if vert { 16 } else { usize::MAX });
+    let src = if p.shrink > 1 { shrink(img, p.shrink, vert, exact) } else { img.clone() };
+    let Some(r) = p.red else { return src };
     let slen = if vert { src.h } else { src.w };
     let other = if vert { src.w } else { src.h };
-    let n = (2.0 * (3.0 * resid).round_ties_even() + 1.0) as usize;
-    let off = (1.0 + extra) / 2.0 - 1.0;
-    let (mf, ms) = masks(n, resid);
-    let pad = (n as f64 / 2.0).ceil() as i64 - 1;
+    let (n, out) = (r.n, r.out);
     let (ow, oh) = if vert { (src.w, out) } else { (out, src.h) };
     let mut px = vec![0f32; ow * oh * src.nb];
     for o in 0..out {
-        let p = (o as f64 + 0.5) * resid - 0.5 - off;
-        let ip = p as i32 as i64;
-        let sp = (p * TSCALE as f64 * 2.0) as i32;
-        let t = (((sp & (TSCALE * 2 - 1)) + 1) >> 1) as usize;
+        let (st, t) = (r.st[o], r.t[o] as usize);
         for j in 0..other {
             for b in 0..src.nb {
-                let get = |i: i64| {
-                    let i = (ip + i - pad).clamp(0, slen as i64 - 1) as usize;
+                let get = |i: usize| {
+                    let i = (st + i as i64).clamp(0, slen as i64 - 1) as usize;
                     if vert { src.at(j, i, b) } else { src.at(i, j, b) }
                 };
                 let v = if src.uchar {
-                    let s: i32 = (0..n).map(|i| ms[t][i] * get(i as i64) as i32).sum();
+                    let s: i32 = (0..n).map(|i| r.ms[t * n + i] as i32 * get(i) as i32).sum();
                     ((s + (1 << (ISHIFT - 1))) >> ISHIFT).clamp(0, 255) as f32
                 } else {
-                    let s: f64 = (0..n).map(|i| mf[t][i] * get(i as i64) as f64).sum();
+                    let s: f64 = (0..n).map(|i| r.mf[t][i] * get(i) as f64).sum();
                     s as f32
                 };
                 let (x, y) = if vert { (j, o) } else { (o, j) };

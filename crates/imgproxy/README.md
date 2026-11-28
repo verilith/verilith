@@ -16,7 +16,7 @@ sources. Resampling is Lanczos 3 by default, as in imgproxy.
 
 ## What is proven
 
-`cargo verus focus` checks 615 functions with no errors.
+`cargo verus focus` checks 680 functions with no errors.
 
 | Property | Where it is stated |
 |---|---|
@@ -32,6 +32,7 @@ sources. Resampling is Lanczos 3 by default, as in imgproxy.
 | Premultiplied alpha computes exactly `spec_filter::premultiply` and `unpremultiply`: libvips's single-precision arithmetic and truncation, written as integers | `filter::premul_rgba`, `filter::unpremul_rgba` |
 | `pixelate` computes exactly `spec_filter::pixelate`: imgproxy's mirror padding to whole blocks, `vips_shrink` (rows, then columns, with libvips's 8-bit fixed-point average), `vips_zoom` and the crop back | `filter::pixelate_rgba` |
 | Watermarks: `geom::watermark_rgba` computes exactly `spec_geom::watermark` (Porter-Duff "over" with straight alpha at the given opacity, rounded to nearest, once at a gravity or tiled), and `wm_at_x` places it inside the image as `calcPosition` does | `geom::watermark_rgba`, `geom::wm_at_x` |
+| Reductions compute exactly `spec_reduce`'s: `vips_resize`'s passes, rows then columns, each a box shrink by a whole factor (`vips_shrinkv` and `vips_shrinkh` with `ceil`: edges copied out to whole blocks, libvips's 8-bit average) and then a reduction with any 65 masks of up to 1000 signed 16-bit taps, any start for each output sample and any choice of mask, edges repeated, rounded as libvips's fixed point (`(sum + 2048) >> 12`, clipped); and `nearest`'s `vips_subsample`. No overflow, no out-of-bounds access, for every size up to 65535 by 65535 | `reduce::reducev_x`, `reduceh_x`, `shrinkv_x`, `shrinkh_x`, `subsample_x` |
 | Smart gravity's choice computes exactly `spec_smart`'s: the first point of libvips's attention map with the highest value (`vips_max`), and the crop centred on it inside the image (`smartcrop.c`) | `smart::first_max_x`, `smart::centred_x` |
 | Cropping returns exactly `spec::crop` | `resize::crop_rgba` |
 | **PNG round trip:** for every RGBA image, the file `encode_rgba` writes decodes, under verilith-png's specification of PNG decoding, to exactly that image and header. The proof goes through every layer of the specification: the signature, IHDR, the chunk walk with its CRCs (computed by verilith-checksum, verified), the zlib stream (verilith-zlib's compressor, proven to round-trip), and the five row filters, each row filtered with whichever filter libpng's heuristic picks | `pngenc::encode_rgba` against `verilith_png::spec::decode` |
@@ -109,13 +110,10 @@ does not decode or is over the limits, 502 for an origin that fails.
   tables, alpha flattened onto the background or white. The quantization
   tables are libjpeg's for the quality; imgproxy's libvips uses the same
   ones.
-- Resampling follows libvips's design (box pre-shrink, then a
-  normalized kernel, 8-bit clamping between passes) but is not
-  bit-identical to it: the kernel tables are 1/256-step samples in 14-bit
-  fixed point, and `nearest` is a one-sample box (an average over each
-  output pixel's cell when downscaling), not a pick of one pixel.
-- Alpha is resampled straight, not premultiplied. The filters use
-  premultiplied alpha as imgproxy does.
+- Enlarging (either side larger than the source) uses the verified
+  kernel resampler above, where libvips's `vips_resize` uses
+  `vips_affine` with bicubic interpolation. Reductions are libvips's own
+  (see Tests).
 - Smart gravity runs libvips's attention map as imgproxy does (the
   `crop` option's on the source, the result's on the resized image),
   except that an image under 32 pixels on a side is used as it is,
@@ -174,7 +172,7 @@ average on random sizes and the Lanczos resampler with a floating-point
 Lanczos 3 (`tests/lanczos.rs`: at most 2 levels apart), runs the pipeline on JPEG and PNG files the `image` crate writes,
 and checks URL parsing and imgproxy's documented signature example.
 
-The filters and smart gravity are checked against libvips itself:
+The filters, reductions and smart gravity are checked against libvips itself:
 `scripts/vips_ref.py` runs an installed libvips through ctypes as
 imgproxy calls it, and `VERILITH_VIPS_REF=dir cargo test --test libvips
 -- --ignored` compares. Against libvips 8.15.1 (built with Highway):
@@ -189,7 +187,15 @@ imgproxy calls it, and `VERILITH_VIPS_REF=dir cargo test --test libvips
   byte-identical to 8.15 when those are switched to double.
 - Smart gravity picks the same point as `vips_smartcrop` on 120 of 120
   images of 32 to 400 pixels, with and without alpha (`src/attention.rs`).
-- `pixelate`, and the shrink in smart gravity's reduction, round as
+- Reductions are byte-identical to `vips_resize` as imgproxy's
+  `vips_resize_go` calls it (premultiplied when there is alpha) on 240 of
+  240 images of 1 to 700 pixels, every kernel, on both paths. The masks
+  and positions are libvips's (`src/vresize.rs`): its 65 masks of
+  `short`s, the gap's box shrink, `nearest`'s subsample, and positions
+  stepped in floating point from the start of each 16-row strip, as
+  libvips's regions compute them.
+- `pixelate`, and the box shrinks in reductions, round as
   libvips 8.17 and later do (a fixed-point average, `shrinkv.c`); 8.15
-  divides exactly. The test runs smart gravity with 8.15's rounding for
-  8.15, and leaves `pixelate` out there.
+  divides exactly (and 8.15 divides by the shrink where current libvips
+  multiplies by its reciprocal, in the masks). The test runs reductions and
+  smart gravity as 8.15 for 8.15, and leaves `pixelate` out there.
