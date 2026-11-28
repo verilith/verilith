@@ -37,6 +37,10 @@ pub mod render;
 pub mod stream;
 #[doc(hidden)]
 pub mod decode;
+#[doc(hidden)]
+pub mod spec_scaled;
+#[doc(hidden)]
+pub mod scaled;
 #[cfg(not(verus_only))]
 #[doc(hidden)]
 pub mod capi;
@@ -45,6 +49,7 @@ pub mod capi;
 pub mod tj;
 
 pub use decode::{decode, read_header, Header, Picture};
+pub use scaled::decode_scaled;
 pub use types::Error;
 
 

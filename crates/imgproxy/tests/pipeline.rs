@@ -131,3 +131,32 @@ fn pipeline_on_jpeg_and_png() {
     assert!(process(&jpg, &Options::default(), &tiny).is_err());
     assert!(process(b"not an image", &Options::default(), &lim).is_err());
 }
+
+#[test]
+fn shrink_on_load_matches_full_decode() {
+    // A smooth image (gradients and a few blobs): the thumbnail made from a
+    // JPEG decoded at 1/8, 1/4 and 1/2 is the one made from the full-size
+    // decode, but for rounding.
+    let (w, h) = (1600u32, 1200u32);
+    let mut rgb = Vec::with_capacity((w * h * 3) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let (fx, fy) = (x as f64 / w as f64, y as f64 / h as f64);
+            let b = ((fx * 9.0).sin() * (fy * 7.0).cos() * 60.0 + 128.0) as u8;
+            rgb.extend_from_slice(&[(fx * 255.0) as u8, (fy * 255.0) as u8, b]);
+        }
+    }
+    let img = image::RgbImage::from_raw(w, h, rgb).unwrap();
+    let mut jpg = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut jpg), image::ImageFormat::Jpeg).unwrap();
+    let full = verilith_imgproxy::proxy::decode(&jpg, 1 << 30).unwrap();
+    let (tw, th) = (100usize, 75usize);
+    let want = verilith_imgproxy::resize::resize_rgba(&full.px, w as usize, h as usize, tw, th);
+    for shrink in [2u32, 4, 8] {
+        let s = verilith_imgproxy::proxy::decode_shrunk(&jpg, 1 << 30, shrink).unwrap();
+        assert_eq!((s.w, s.h), (w.div_ceil(shrink), h.div_ceil(shrink)));
+        let got = verilith_imgproxy::resize::resize_rgba(&s.px, s.w as usize, s.h as usize, tw, th);
+        let diff: f64 = got.iter().zip(&want).map(|(a, b)| (*a as f64 - *b as f64).abs()).sum::<f64>() / got.len() as f64;
+        assert!(diff < 1.5, "shrink {shrink}: mean difference {diff}");
+    }
+}
