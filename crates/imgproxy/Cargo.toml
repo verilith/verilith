@@ -29,15 +29,19 @@ verilith-sha2 = { path = "../sha2", version = "0.1.0" }
 verilith-http = { path = "../http", version = "0.1.0" }
 verilith-text = { path = "../text", version = "0.1.0" }
 verilith-server = { path = "../server", version = "0.1.0" }
+verilith-tls = { path = "../tls", version = "0.1.0", optional = true }
+verilith-tls-aws-lc = { path = "../tls-aws-lc", version = "0.1.0", optional = true }
 
 [features]
-# HTTPS for clients (verilith-server's TLS: verilith-tls with aws-lc's cryptography).
-tls = ["verilith-server/tls"]
+# HTTPS for clients (verilith-server's TLS) and for `https://` sources
+# (verilith-tls's client), both verilith-tls with aws-lc's cryptography.
+tls = ["verilith-server/tls", "dep:verilith-tls", "dep:verilith-tls-aws-lc"]
 
 [dev-dependencies]
 # Independent decoders and a resizer to compare with.
 png = "0.17"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+rcgen = "0.14"
 
 [package.metadata.verus]
 verify = true

@@ -99,7 +99,7 @@ pub const DEFAULT_QUALITY: u32 = 80;
 pub enum Source {
     /// `local:///path`, under the configured root.
     Local(Vec<u8>),
-    /// `http://...`.
+    /// `http://...` or `https://...`.
     Http(Vec<u8>),
     /// The request body (`POST .../upload`).
     Upload,
@@ -244,10 +244,8 @@ fn percent_decode(s: &[u8]) -> Vec<u8> {
 fn source(url: Vec<u8>) -> Result<Source, Fail> {
     if let Some(p) = url.strip_prefix(b"local://") {
         Ok(Source::Local(p.to_vec()))
-    } else if url.starts_with(b"http://") {
+    } else if url.starts_with(b"http://") || url.starts_with(b"https://") {
         Ok(Source::Http(url))
-    } else if url.starts_with(b"https://") {
-        Err(Fail::BadUrl("https sources are not supported yet"))
     } else {
         Err(Fail::BadUrl("Unsupported source URL scheme"))
     }
@@ -590,10 +588,92 @@ pub fn read_local(root: &std::fs::File, path: &[u8], max: usize) -> Result<Vec<u
     Ok(out)
 }
 
-/// Splits `http://host[:port]/path` into the host, the port and the
-/// request target.
-fn split_http(url: &[u8]) -> Result<(String, u16, Vec<u8>), Fail> {
-    let rest = url.strip_prefix(b"http://").ok_or(Fail::BadUrl("Invalid source URL"))?;
+/// How `https://` sources are fetched: verilith-tls's verified TLS 1.3
+/// client (with aws-lc's cryptography), configured with the trust anchors
+/// from [`load_roots`]. Without the `tls` feature there is none, and
+/// `https://` sources fail.
+#[cfg(feature = "tls")]
+pub type Tls = std::sync::Arc<verilith_tls::client_hs::ClientConfig>;
+#[cfg(not(feature = "tls"))]
+#[derive(Clone, Debug)]
+pub enum Tls {}
+
+/// The client configuration for `https://` sources, trusting `roots`
+/// (DER certificates).
+#[cfg(feature = "tls")]
+pub fn tls_config(roots: Vec<Vec<u8>>) -> Tls {
+    std::sync::Arc::new(verilith_tls_aws_lc::client::config(roots, &[b"http/1.1"]))
+}
+
+/// Where the system's trust anchors usually are (`SSL_CERT_FILE` wins).
+pub const CA_BUNDLES: &[&str] = &[
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+    "/etc/ssl/ca-bundle.pem",
+    "/etc/ssl/cert.pem",
+];
+
+/// The DER certificates in a PEM file.
+pub fn pem_certs(text: &[u8]) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut b64 = Vec::new();
+    let mut inside = false;
+    for line in text.split(|&c| c == b'\n') {
+        let l = line.trim_ascii();
+        if l == b"-----BEGIN CERTIFICATE-----" {
+            inside = true;
+            b64.clear();
+        } else if l == b"-----END CERTIFICATE-----" {
+            if inside {
+                if let Ok(d) = verilith_text::base64::STANDARD.decode(&b64) {
+                    out.push(d);
+                }
+            }
+            inside = false;
+        } else if inside {
+            b64.extend_from_slice(l);
+        }
+    }
+    out
+}
+
+/// The trust anchors for `https://` sources: the certificates in `path`,
+/// or else in `$SSL_CERT_FILE`, or else in the first of [`CA_BUNDLES`]
+/// that exists. Fails if there are none.
+pub fn load_roots(path: Option<&str>) -> std::io::Result<(String, Vec<Vec<u8>>)> {
+    let env = std::env::var("SSL_CERT_FILE").ok().filter(|v| !v.is_empty());
+    let p = match path.map(str::to_string).or(env) {
+        Some(p) => p,
+        None => CA_BUNDLES
+            .iter()
+            .find(|p| std::path::Path::new(p).exists())
+            .map(|p| p.to_string())
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no CA bundle found"))?,
+    };
+    let roots = pem_certs(&std::fs::read(&p)?);
+    if roots.is_empty() {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{p}: no certificates")));
+    }
+    Ok((p, roots))
+}
+
+/// A source URL split up: whether it is `https`, the host, the port and
+/// the request target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Origin {
+    pub https: bool,
+    pub host: String,
+    pub port: u16,
+    pub target: Vec<u8>,
+}
+
+/// Splits `http[s]://host[:port]/path`. An `https` host must be a DNS
+/// name (the TLS client checks the certificate against names only).
+pub fn split_http(url: &[u8]) -> Result<Origin, Fail> {
+    let (https, rest) = match url.strip_prefix(b"https://") {
+        Some(r) => (true, r),
+        None => (false, url.strip_prefix(b"http://").ok_or(Fail::BadUrl("Invalid source URL"))?),
+    };
     let end = rest.iter().position(|&c| c == b'/' || c == b'?' || c == b'#').unwrap_or(rest.len());
     let auth = &rest[..end];
     let mut target = rest[end..].to_vec();
@@ -611,40 +691,61 @@ fn split_http(url: &[u8]) -> Result<(String, u16, Vec<u8>), Fail> {
             let p = std::str::from_utf8(&auth[i + 1..]).ok().and_then(|p| p.parse().ok()).ok_or(Fail::BadUrl("Invalid port"))?;
             (&auth[..i], p)
         }
-        _ => (auth, 80),
+        _ => (auth, if https { 443 } else { 80 }),
     };
     let host = std::str::from_utf8(host).map_err(|_| Fail::BadUrl("Invalid host"))?;
     if host.is_empty() || !host.bytes().all(|c| c.is_ascii_alphanumeric() || b".-[]:".contains(&c)) {
         return Err(Fail::BadUrl("Invalid host"));
     }
-    Ok((host.to_string(), port, target))
+    if https && (host.starts_with('[') || host.parse::<std::net::Ipv4Addr>().is_ok()) {
+        return Err(Fail::BadUrl("https sources need a host name, not an IP address"));
+    }
+    Ok(Origin { https, host: host.to_string(), port, target })
 }
 
-/// Fetches an `http://` URL with one HTTP/1.1 GET. The response head and
-/// its body framing (Content-Length, chunked, or until close) are parsed
-/// by verilith-http's verified parser.
-pub fn fetch(url: &[u8], lim: &Limits) -> Result<Vec<u8>, Fail> {
-    let (host, port, target) = split_http(url)?;
+/// Fetches an `http://` or `https://` URL with one HTTP/1.1 GET. The
+/// response head and its body framing (Content-Length, chunked, or until
+/// close) are parsed by verilith-http's verified parser; `https://` goes
+/// through `tls`, which checks the origin's certificate chain and name.
+pub fn fetch(url: &[u8], lim: &Limits, tls: Option<&Tls>) -> Result<Vec<u8>, Fail> {
+    let o = split_http(url)?;
+    if o.https && tls.is_none() {
+        return Err(Fail::BadUrl("https sources are not enabled"));
+    }
     let t = Duration::from_secs(lim.timeout.max(1));
-    let addr = (host.trim_matches(|c| c == '[' || c == ']'), port)
+    let addr = (o.host.trim_matches(|c| c == '[' || c == ']'), o.port)
         .to_socket_addrs()
         .ok()
         .and_then(|mut a| a.next())
         .ok_or(Fail::BadGateway("Cannot resolve origin"))?;
-    let mut s = TcpStream::connect_timeout(&addr, t).map_err(|_| Fail::BadGateway("Cannot connect to origin"))?;
+    let s = TcpStream::connect_timeout(&addr, t).map_err(|_| Fail::BadGateway("Cannot connect to origin"))?;
     let _ = s.set_read_timeout(Some(t));
     let _ = s.set_write_timeout(Some(t));
     let _ = s.set_nodelay(true);
-    let mut req = Vec::with_capacity(target.len() + host.len() + 96);
+    match tls {
+        #[cfg(feature = "tls")]
+        Some(cfg) if o.https => {
+            let s = verilith_tls_aws_lc::client::TlsStream::connect(cfg.clone(), &o.host, s)
+                .map_err(|_| Fail::BadGateway("TLS handshake with origin failed"))?;
+            get(s, &o, lim)
+        }
+        _ => get(s, &o, lim),
+    }
+}
+
+/// The GET itself, over a connected stream.
+fn get<S: Read + Write>(mut s: S, o: &Origin, lim: &Limits) -> Result<Vec<u8>, Fail> {
+    let mut req = Vec::with_capacity(o.target.len() + o.host.len() + 96);
     req.extend_from_slice(b"GET ");
-    req.extend_from_slice(&target);
+    req.extend_from_slice(&o.target);
     req.extend_from_slice(b" HTTP/1.1\r\nHost: ");
-    req.extend_from_slice(host.as_bytes());
-    if port != 80 {
-        req.extend_from_slice(format!(":{port}").as_bytes());
+    req.extend_from_slice(o.host.as_bytes());
+    if o.port != if o.https { 443 } else { 80 } {
+        req.extend_from_slice(format!(":{}", o.port).as_bytes());
     }
     req.extend_from_slice(b"\r\nUser-Agent: verilith-imgproxy\r\nAccept: image/*\r\nConnection: close\r\n\r\n");
     s.write_all(&req).map_err(|_| Fail::BadGateway("Cannot send to origin"))?;
+    let _ = s.flush();
     let mut buf: Vec<u8> = Vec::with_capacity(64 << 10);
     let mut chunk = vec![0u8; 64 << 10];
     let mut headers = Vec::new();
@@ -674,8 +775,12 @@ pub fn fetch(url: &[u8], lim: &Limits) -> Result<Vec<u8>, Fail> {
     }
 }
 
-fn read_body(
-    s: &mut TcpStream,
+/// Reads the body. A read error ends it as a failure: over TLS, that
+/// includes the connection closing without close_notify, which could be
+/// an attacker cutting the body short (a body read until close is only
+/// complete at a close_notify).
+fn read_body<S: Read>(
+    s: &mut S,
     data: &mut Vec<u8>,
     body: verilith_http::spec::Body,
     chunk: &mut [u8],
@@ -747,6 +852,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn origins() {
+        let o = split_http(b"https://img.example.com/a/b.jpg?x=1#f").unwrap();
+        assert_eq!(o, Origin { https: true, host: "img.example.com".into(), port: 443, target: b"/a/b.jpg?x=1".to_vec() });
+        let o = split_http(b"http://example.com:8080").unwrap();
+        assert_eq!((o.https, o.port, o.target), (false, 8080, b"/".to_vec()));
+        assert!(split_http(b"https://[::1]/a").is_err());
+        assert!(split_http(b"https://10.0.0.1/a").is_err());
+        assert!(split_http(b"https://u@example.com/a").is_err());
+        assert_eq!(parse(b"/x/plain/https://example.com/a.png").unwrap().source, Source::Http(b"https://example.com/a.png".to_vec()));
+    }
+
+    #[test]
     fn urls() {
         let p = parse(b"/insecure/rs:fill:300:200/plain/http://example.com/a%20b.jpg@png").unwrap();
         assert_eq!(p.signature, b"insecure");
@@ -790,8 +907,10 @@ mod tests {
 
     #[test]
     fn http_urls() {
-        assert_eq!(split_http(b"http://a.b:8080/x?y").unwrap(), ("a.b".into(), 8080, b"/x?y".to_vec()));
-        assert_eq!(split_http(b"http://a.b").unwrap(), ("a.b".into(), 80, b"/".to_vec()));
+        let o = split_http(b"http://a.b:8080/x?y").unwrap();
+        assert_eq!((o.host.as_str(), o.port, o.target), ("a.b", 8080, b"/x?y".to_vec()));
+        let o = split_http(b"http://a.b").unwrap();
+        assert_eq!((o.host.as_str(), o.port, o.target), ("a.b", 80, b"/".to_vec()));
         assert!(split_http(b"http://u@a.b/").is_err());
     }
 }
