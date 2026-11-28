@@ -7,11 +7,11 @@ pub mod spec;
 #[doc(hidden)]
 pub mod gf;
 #[doc(hidden)]
-pub mod isa;
+pub use verilith_simd::aes as isa;
 #[doc(hidden)]
 pub mod lemmas;
 #[doc(hidden)]
-pub mod isa_ref;
+pub use verilith_simd::aes_ref as isa_ref;
 #[doc(hidden)]
 pub mod arch;
 #[doc(hidden)]
@@ -20,7 +20,7 @@ pub mod kernels;
 pub mod gcm;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[doc(hidden)]
-pub mod x86;
+pub use verilith_simd::aes_x86 as x86;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[doc(hidden)]
 pub mod ni;
@@ -29,7 +29,7 @@ pub mod ni;
 pub mod vaes;
 #[cfg(any(target_endian = "little", verus_only))]
 #[doc(hidden)]
-pub mod neon;
+pub use verilith_simd::aes_neon as neon;
 #[cfg(any(target_endian = "little", verus_only))]
 #[doc(hidden)]
 pub mod arm;

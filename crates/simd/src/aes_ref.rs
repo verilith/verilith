@@ -1,12 +1,10 @@
-//! Portable implementations of [`crate::isa`]'s instruction
+//! Portable implementations of [`crate::aes`]'s instruction
 //! specifications, proven to compute them. `tests/isa.rs` runs every
 //! instruction wrapper against these on random operands, so that a wrapper
 //! whose intrinsic does not do what its `ensures` says is caught on the
 //! CPU, not only by review.
-#![allow(unused_imports)]
-use crate::gf::*;
-use crate::isa::*;
-use crate::spec::*;
+#![allow(unused_imports, missing_docs)]
+use crate::aes::*;
 use vstd::prelude::*;
 
 verus! {
