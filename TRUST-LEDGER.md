@@ -48,6 +48,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | quic-conn |  |  |  |  |  |  | 3 | 2091 |
 | regex | 1 |  |  |  |  |  | 3 | 1969 |
 | server | 1 |  |  |  | 1 |  | 14 | 4868 |
+| serverless |  |  |  |  |  |  | 2 | 259 |
 | sha2 | 34 |  |  |  |  |  | 3 | 362 |
 | simd | 425 | 11 | 290 | 4 |  |  | 3 | 1016 |
 | snappy |  |  |  |  |  |  | 1 | 85 |
@@ -58,14 +59,14 @@ not occur in any crate's `src/` (the script fails if one appears).
 | tls-aws-lc |  |  |  |  |  |  | 2 | 707 |
 | url | 1 |  |  |  |  |  | 5 | 1311 |
 | verilith |  |  |  |  |  |  | 1 | 67 |
-| wasm | 20 |  |  |  |  | 2 | 4 | 2328 |
+| wasm | 20 |  |  |  |  | 2 | 4 | 2340 |
 | webp | 9 |  |  |  |  |  | 3 | 667 |
 | x509 |  |  |  |  |  |  | 6 | 1754 |
 | xml | 9 |  |  |  |  |  | 12 | 18584 |
 | xxhash |  |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 | 1354 |
 | zstd | 6 |  |  |  |  |  | 2 | 1331 |
-| **total** | **700** | **36** | **290** | **7** | **17** | **12** | **134** | **56885** |
+| **total** | **700** | **36** | **290** | **7** | **17** | **12** | **136** | **57156** |
 
 ## Items
 
@@ -232,6 +233,11 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/server/src/sys/mod.rs`: plain Rust, 378 lines
 - `crates/server/src/sys/uring.rs`: plain Rust, 415 lines
 
+### serverless
+
+- `crates/serverless/src/lib.rs`: plain Rust, 203 lines
+- `crates/serverless/src/bin/verilith-serverless.rs`: plain Rust, 56 lines
+
 ### sha2
 
 - `crates/sha2/src/armv8.rs`: external_body: `has_sha2`, `has_sha512`, `vsha256hq`, `vsha256h2q`, `vsha256su0q`, `vsha256su1q`, `vsha512hq`, `vsha512h2q`, `vsha512su0q`, `vsha512su1q`, `vrev32q_u8`, `vrev64q_u8`, `vaddq_u64`, `vld1q_u64_at`, `vst1q_u64_at`, `compress_blocks`, `compress512_blocks`
@@ -331,7 +337,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### wasm
 
-- `crates/wasm/src/api.rs`: plain Rust, 373 lines
+- `crates/wasm/src/api.rs`: plain Rust, 385 lines
 - `crates/wasm/src/capi.rs`: plain Rust, 718 lines
 - `crates/wasm/src/decode.rs`: plain Rust, 686 lines
 - `crates/wasm/src/fops.rs`: external_body: `exec_un`, `exec_bin`, `exec_cmp`, `exec_cvt`
