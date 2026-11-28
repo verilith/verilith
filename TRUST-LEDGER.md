@@ -58,8 +58,8 @@ not occur in any crate's `src/` (the script fails if one appears).
 | sync | 45 | 11 |  | 1 | 16 | 10 | 2 | 321 |
 | text | 18 | 13 |  |  |  |  | 9 | 1576 |
 | tiff |  |  |  |  |  |  | 2 | 1157 |
-| tls | 1 |  |  |  |  |  | 2 | 140 |
-| tls-aws-lc |  |  |  |  |  |  | 2 | 707 |
+| tls | 1 |  |  |  |  |  | 2 | 254 |
+| tls-aws-lc |  |  |  |  |  |  | 3 | 901 |
 | url | 1 |  |  |  |  |  | 5 | 1311 |
 | verilith |  |  |  |  |  |  | 1 | 67 |
 | wasm | 20 |  |  |  |  | 2 | 4 | 2340 |
@@ -69,7 +69,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 | 1354 |
 | zstd | 6 |  |  |  |  |  | 2 | 1331 |
-| **total** | **713** | **36** | **294** | **7** | **17** | **12** | **148** | **59792** |
+| **total** | **713** | **36** | **294** | **7** | **17** | **12** | **149** | **60100** |
 
 ## Items
 
@@ -339,13 +339,14 @@ not occur in any crate's `src/` (the script fails if one appears).
 ### tls
 
 - `crates/tls/src/ct.rs`: external_body: `declassify`
-- `crates/tls/src/lib.rs`: plain Rust, 26 lines
-- `crates/tls/src/stream.rs`: plain Rust, 114 lines
+- `crates/tls/src/lib.rs`: plain Rust, 31 lines
+- `crates/tls/src/stream.rs`: plain Rust, 223 lines
 
 ### tls-aws-lc
 
+- `crates/tls-aws-lc/src/client.rs`: plain Rust, 119 lines
 - `crates/tls-aws-lc/src/hpke.rs`: plain Rust, 171 lines
-- `crates/tls-aws-lc/src/lib.rs`: plain Rust, 536 lines
+- `crates/tls-aws-lc/src/lib.rs`: plain Rust, 611 lines
 
 ### url
 
