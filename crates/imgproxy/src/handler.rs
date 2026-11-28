@@ -9,8 +9,11 @@ pub struct Proxy {
     pub limits: Limits,
     /// `IMGPROXY_LOCAL_FILESYSTEM_ROOT`: where `local://` sources live.
     pub local_root: Option<std::fs::File>,
-    /// Whether `http://` sources are allowed.
+    /// Whether `http://` and `https://` sources are allowed.
     pub http_sources: bool,
+    /// How `https://` sources are fetched (with the `tls` feature and a
+    /// CA bundle); `None` refuses them.
+    pub tls: Option<proxy::Tls>,
     /// `IMGPROXY_ALLOWED_SOURCES`: if not empty, a source URL must start with one of these.
     pub allowed: Vec<Vec<u8>>,
     /// `IMGPROXY_TTL`: the `Cache-Control` max-age, in seconds.
@@ -55,7 +58,7 @@ impl Proxy {
                         if !self.http_sources {
                             return Err(Fail::NotFound);
                         }
-                        proxy::fetch(u, &self.limits)?
+                        proxy::fetch(u, &self.limits, self.tls.as_ref())?
                     }
                     Source::Upload => unreachable!(),
                 })

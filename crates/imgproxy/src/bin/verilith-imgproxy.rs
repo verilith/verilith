@@ -5,6 +5,11 @@
 //!                     [--no-http-sources] [--allowed-source PREFIX]...
 //!                     [--max-src-resolution MEGAPIXELS] [--level 0-9] [--ttl SECONDS]
 //!                     [--tls PORT --cert PEM --key PEM]   (built with --features tls)
+//!                     [--ca-bundle PEM]                    (built with --features tls)
+//!
+//! Built with `--features tls`, `https://` sources are fetched with the
+//! verified TLS 1.3 client, trusting the certificates in --ca-bundle, or
+//! else $SSL_CERT_FILE, or else the system's bundle.
 //!
 //! The settings imgproxy reads from the environment are read too, under
 //! the same names: IMGPROXY_KEY and IMGPROXY_SALT (hex; with no key, URLs
@@ -73,7 +78,23 @@ fn main() {
     let port = arg("--http")
         .or_else(|| env("IMGPROXY_BIND").and_then(|b| b.rsplit(':').next().map(str::to_string)))
         .map_or(8080, |p| p.parse().unwrap_or_else(|_| die("bad port")));
-    let proxy = Proxy { keys, limits, local_root, http_sources: !args.iter().any(|a| a == "--no-http-sources"), allowed, ttl };
+    let http_sources = !args.iter().any(|a| a == "--no-http-sources");
+    #[cfg(feature = "tls")]
+    let tls = if !http_sources {
+        None
+    } else {
+        match verilith_imgproxy::proxy::load_roots(arg("--ca-bundle").as_deref()) {
+            Ok((_, roots)) => Some(verilith_imgproxy::proxy::tls_config(roots)),
+            Err(e) if arg("--ca-bundle").is_some() => die(&format!("--ca-bundle: {e}")),
+            Err(e) => {
+                eprintln!("verilith-imgproxy: https sources are off: {e}");
+                None
+            }
+        }
+    };
+    #[cfg(not(feature = "tls"))]
+    let tls = None;
+    let proxy = Proxy { keys, limits, local_root, http_sources, tls, allowed, ttl };
 
     let mut srv_limits = verilith_server::Limits::default();
     srv_limits.max_body = proxy.limits.max_src_bytes;

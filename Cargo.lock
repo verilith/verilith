@@ -2203,6 +2203,7 @@ version = "0.1.0"
 dependencies = [
  "image",
  "png 0.17.16",
+ "rcgen",
  "verilith-checksum",
  "verilith-core",
  "verilith-gif",
@@ -2212,6 +2213,8 @@ dependencies = [
  "verilith-server",
  "verilith-sha2",
  "verilith-text",
+ "verilith-tls",
+ "verilith-tls-aws-lc",
  "verilith-webp",
  "verilith-zlib",
  "vstd",

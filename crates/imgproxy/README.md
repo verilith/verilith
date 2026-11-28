@@ -11,8 +11,8 @@ proven free of memory errors, overflows and panics, and proven to compute
 their specifications.
 
 **Status: pre-release.** PNG output only (no verified JPEG or WebP encoder
-yet), `local://`, `http://` and uploaded sources (no HTTPS client yet), and
-an area-average (box) resampler rather than imgproxy's Lanczos.
+yet), `local://`, `http://`, `https://` (with `--features tls`) and uploaded
+sources, and an area-average (box) resampler rather than imgproxy's Lanczos.
 
 ## What is proven
 
@@ -38,7 +38,7 @@ that function's precondition at run time.
 ## Usage
 
 ```sh
-cargo build --release -p verilith-imgproxy            # add --features tls for HTTPS
+cargo build --release -p verilith-imgproxy            # add --features tls for HTTPS (both sides)
 IMGPROXY_KEY=736563726574 IMGPROXY_SALT=68656C6C6F \
   ./target/release/verilith-imgproxy --http 8080 --local-root ./images
 ```
@@ -83,7 +83,10 @@ does not decode or is over the limits, 502 for an origin that fails.
 - Centre gravity only; no smart crop, watermarks, blur, sharpening,
   rotation or EXIF orientation.
 - GIF: the first frame, at its own size.
-- No HTTPS sources, and no redirects from an origin.
+- No redirects from an origin. `https://` sources need `--features tls`;
+  they go through verilith-tls's verified TLS 1.3 client (TLS 1.2-only
+  origins fail), trusting `--ca-bundle`, `$SSL_CERT_FILE` or the system's
+  bundle, and their host must be a name, not an IP address.
 - Requests are handled on the server's worker threads, so a slow origin
   holds a worker until the download timeout.
 
