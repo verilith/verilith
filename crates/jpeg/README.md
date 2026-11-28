@@ -15,7 +15,7 @@ down to the value of every output byte, and so is a bound on the decoder's
 work: linear in the file's size, the image's size, and the frame's blocks
 once per scan. It also decodes at 1/2, 1/4 and 1/8 of the image's size,
 straight from the coefficients, with the same pixels as libjpeg-turbo's
-scaled decoding. `cargo verus verify` checks 758 functions with no errors.
+scaled decoding. `cargo verus verify` checks 822 functions with no errors.
 
 ## Using it from Rust
 
