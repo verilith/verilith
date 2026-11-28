@@ -1,7 +1,7 @@
-//! Smart gravity: the scores against a direct computation of their
-//! specification, and the crop landing on the interesting part.
-use verilith_imgproxy::proxy::{parse, process, Limits};
-use verilith_imgproxy::smart::{scores_rgba, smart_x};
+//! Smart gravity: the verified choice against direct computations, and
+//! crops through the whole proxy.
+use verilith_imgproxy::proxy::{parse, process, smart_crop, Limits};
+use verilith_imgproxy::smart::{centred_x, first_max_x, fkey_x};
 
 fn rng(seed: &mut u64) -> u64 {
     *seed ^= *seed << 13;
@@ -10,32 +10,32 @@ fn rng(seed: &mut u64) -> u64 {
     *seed
 }
 
-fn reference_scores(s: &[u8], w: usize, h: usize) -> Vec<u8> {
-    let lum = |k: usize| (2126 * s[k] as i32 + 7152 * s[k + 1] as i32 + 722 * s[k + 2] as i32 + 5000) / 10000;
-    let at = |x: i64, y: i64| lum(((y.clamp(0, h as i64 - 1) as usize) * w + x.clamp(0, w as i64 - 1) as usize) * 4);
-    let mut out = Vec::new();
-    for y in 0..h as i64 {
-        for x in 0..w as i64 {
-            let l = 4 * at(x, y) - at(x - 1, y) - at(x + 1, y) - at(x, y - 1) - at(x, y + 1);
-            let e = l.abs().min(255);
-            let k = (y as usize * w + x as usize) * 4;
-            let (r, g, b, a) = (s[k] as i32, s[k + 1] as i32, s[k + 2] as i32, s[k + 3] as i32);
-            let skin = r > 95 && g > 40 && b > 20 && r > g && r > b && r - g.min(b) > 15 && r - g > 15;
-            let sat = if lum(k) > 32 { r.max(g).max(b) - r.min(g).min(b) } else { 0 };
-            let v = (e + if skin { 128 } else { 0 } + sat / 2).min(255);
-            out.extend_from_slice(&[(v * a / 255) as u8; 4]);
+#[test]
+fn keys_order_as_floats() {
+    let mut seed = 5u64;
+    let mut vals: Vec<f32> = vec![0.0, -0.0, 1.0, -1.0, f32::MIN, f32::MAX, f32::INFINITY, f32::NEG_INFINITY, 1e-40, -1e-40];
+    for _ in 0..2000 {
+        vals.push(f32::from_bits(rng(&mut seed) as u32));
+    }
+    vals.retain(|v| !v.is_nan());
+    for &a in &vals {
+        for &b in vals.iter().take(200) {
+            assert_eq!(a.partial_cmp(&b).unwrap(), fkey_x(a.to_bits()).cmp(&fkey_x(b.to_bits())), "{a} {b}");
         }
     }
-    out
 }
 
 #[test]
-fn scores_match_specification() {
-    let mut seed = 7u64;
-    for &(w, h) in &[(1, 1), (5, 3), (31, 17)] {
-        let s: Vec<u8> = (0..w * h * 4).map(|_| rng(&mut seed) as u8).collect();
-        assert_eq!(scores_rgba(&s, w, h), reference_scores(&s, w, h));
-    }
+fn first_max_and_centring() {
+    let v: Vec<u32> = [1.0f32, 3.0, -2.0, 3.0, 0.5].iter().map(|v| v.to_bits()).collect();
+    assert_eq!(first_max_x(&v), 1);
+    assert_eq!(first_max_x(&[0.0f32.to_bits(), (-0.0f32).to_bits()]), 0);
+    assert_eq!(first_max_x(&[(-0.0f32).to_bits(), 0.0f32.to_bits()]), 0);
+    // VIPS_CLIP(0, a - c / 2, s - c).
+    assert_eq!(centred_x(50, 100, 30), 35);
+    assert_eq!(centred_x(5, 100, 30), 0);
+    assert_eq!(centred_x(99, 100, 31), 69);
+    assert_eq!(centred_x(7, 10, 10), 0);
 }
 
 /// Flat grey, with a noisy patch at `(px, py)`.
@@ -56,12 +56,14 @@ fn scene(w: usize, h: usize, px: usize, py: usize) -> Vec<u8> {
 }
 
 #[test]
-fn point_is_on_the_patch() {
-    let s = scene(64, 40, 44, 5);
-    let (x, y) = smart_x(&[1], 1, &s, 64, 40);
-    assert!((44..56).contains(&x) && (5..17).contains(&y), "({x}, {y})");
-    // A flat image: the first pixel.
-    assert_eq!(smart_x(&[1, 2, 1], 4, &[9u8; 4 * 6], 3, 2), (0, 0));
+fn crop_is_on_the_patch() {
+    let s = scene(200, 120, 150, 20);
+    let (x, y) = smart_crop(&s, 200, 120, false, 40, 40);
+    assert!(x <= 150 && x + 40 >= 162 && y <= 20 && y + 40 >= 32, "({x}, {y})");
+    // A flat image: the first pixel, as libvips.
+    assert_eq!(smart_crop(&[9u8; 4 * 64 * 48], 64, 48, false, 10, 10), (0, 0));
+    // Nothing to choose.
+    assert_eq!(smart_crop(&s, 200, 120, false, 200, 120), (0, 0));
 }
 
 fn read(b: &[u8]) -> (usize, usize, Vec<u8>) {

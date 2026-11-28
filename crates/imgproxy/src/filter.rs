@@ -1,4 +1,4 @@
-//! `blur`, `sharpen`, premultiplied alpha and pixelate, proven to compute
+//! `blur`, `sharpen`'s step on the lightness, premultiplied alpha and pixelate, proven to compute
 //! `spec_filter`'s for every table of weights up to 10001 entries of at
 //! most 65536, every divisor up to 2^31, and every image up to 65535 by
 //! 65535: no overflow, no out-of-bounds access.
@@ -494,49 +494,484 @@ pub fn blur_rgba(g: &[u32], d: i64, src: &[u8], w: usize, h: usize) -> (r: Vec<u
     gcols(g, d, mid.as_slice(), Ghost(src@), w, h)
 }
 
-/// `sharpen`: an unsharp mask of `src` with the table `g`.
-pub fn sharpen_rgba(g: &[u32], d: i64, src: &[u8], w: usize, h: usize) -> (r: Vec<u8>)
+/// `sdiv`, for a non-negative sum.
+pub fn sdiv_x(n: i64, d: i64) -> (r: u16)
+    requires
+        0 <= n <= 0x10_0000_0000_0000,
+        1 <= d <= 0x8000_0000,
+    ensures
+        r as int == sdiv(n as int, d as int),
+{
+    let q = (n + d / 2) / d;
+    if q > 32767 {
+        32767
+    } else {
+        q as u16
+    }
+}
+
+/// The row pass of the blur of the one-channel `l`.
+#[verifier::rlimit(30)]
+pub fn lrows(g: &[u32], d: i64, l: &[u16], w: usize, h: usize) -> (r: Vec<u16>)
     requires
         gk_ok(g@),
         1 <= d <= 0x8000_0000,
         1 <= w <= MAX_DIM,
         1 <= h <= MAX_DIM,
-        src@.len() == w * h * NC,
+        l@.len() == w * h,
     ensures
-        r@ == sharpen(gseq(g@), d as int, src@, w as int, h as int),
+        r@.len() == w * h,
+        forall|y: int, x: int|
+            0 <= y < h && 0 <= x < w ==> #[trigger] r@[y * w + x] == lhpx(gseq(g@), d as int, l@, w as int, y, x),
 {
-    let b = blur_rgba(g, d, src, w, h);
-    let n = src.len();
-    let mut out: Vec<u8> = Vec::with_capacity(n);
+    let ghost k = gseq(g@);
+    let n = g.len();
+    let rad = ((n - 1) / 2) as i64;
+    proof {
+        assert(w * h <= 65535 * 65535) by (nonlinear_arith)
+            requires
+                1 <= w <= MAX_DIM,
+                1 <= h <= MAX_DIM,
+        ;
+    }
+    let mut out: Vec<u16> = Vec::with_capacity(w * h);
+    let mut y: usize = 0;
+    while y < h
+        invariant
+            gk_ok(g@),
+            k == gseq(g@),
+            n == g@.len(),
+            rad == gr(k),
+            1 <= d <= 0x8000_0000,
+            1 <= w <= MAX_DIM,
+            1 <= h <= MAX_DIM,
+            l@.len() == w * h,
+            w * h <= 65535 * 65535,
+            y <= h,
+            out@.len() == y * w,
+            forall|yy: int, xx: int|
+                0 <= yy < h && 0 <= xx < w && yy * w + xx < out@.len() ==> #[trigger] out@[yy * w + xx] == lhpx(
+                    k,
+                    d as int,
+                    l@,
+                    w as int,
+                    yy,
+                    xx,
+                ),
+        decreases h - y,
+    {
+        let mut x: usize = 0;
+        while x < w
+            invariant
+                gk_ok(g@),
+                k == gseq(g@),
+                n == g@.len(),
+                rad == gr(k),
+                1 <= d <= 0x8000_0000,
+                1 <= w <= MAX_DIM,
+                1 <= h <= MAX_DIM,
+                l@.len() == w * h,
+                w * h <= 65535 * 65535,
+                y < h,
+                x <= w,
+                out@.len() == y * w + x,
+                forall|yy: int, xx: int|
+                    0 <= yy < h && 0 <= xx < w && yy * w + xx < out@.len() ==> #[trigger] out@[yy * w + xx] == lhpx(
+                        k,
+                        d as int,
+                        l@,
+                        w as int,
+                        yy,
+                        xx,
+                    ),
+            decreases w - x,
+        {
+            let mut a: i64 = 0;
+            let mut t: usize = 0;
+            while t < n
+                invariant
+                    gk_ok(g@),
+                    k == gseq(g@),
+                    n == g@.len(),
+                    rad == gr(k),
+                    1 <= w <= MAX_DIM,
+                    1 <= h <= MAX_DIM,
+                    l@.len() == w * h,
+                    w * h <= 65535 * 65535,
+                    y < h,
+                    x < w,
+                    t <= n,
+                    a == gsum(l_line(l@, w as int, y as int), k, x as int, w as int, t as int),
+                    0 <= a <= t * 0xFFFF_0000,
+                decreases n - t,
+            {
+                let i = x as i64 + t as i64 - rad;
+                let ci = kc_x(i, w);
+                let wt = g[t] as i64;
+                proof {
+                    assert(y * w + ci < w * h) by (nonlinear_arith)
+                        requires
+                            y < h,
+                            ci < w,
+                    ;
+                }
+                let v = l[y * w + ci] as i64;
+                proof {
+                    assert(0 <= wt * v <= 0xFFFF_0000) by (nonlinear_arith)
+                        requires
+                            0 <= wt <= 65536,
+                            0 <= v <= 65535,
+                    ;
+                    assert((t + 1) * 0xFFFF_0000 == t * 0xFFFF_0000 + 0xFFFF_0000) by (nonlinear_arith);
+                    assert(l_line(l@, w as int, y as int)(ci as int) == v);
+                    assert(k[t as int] == wt);
+                }
+                a = a + wt * v;
+                t = t + 1;
+            }
+            proof {
+                assert(t * 0xFFFF_0000 <= 10001 * 0xFFFF_0000) by (nonlinear_arith)
+                    requires
+                        t <= 10001,
+                ;
+            }
+            let q = sdiv_x(a, d);
+            let ghost before = out@;
+            out.push(q);
+            proof {
+                assert forall|yy: int, xx: int|
+                    0 <= yy < h && 0 <= xx < w && yy * w + xx < out@.len() implies #[trigger] out@[yy * w + xx] == lhpx(
+                        k,
+                        d as int,
+                        l@,
+                        w as int,
+                        yy,
+                        xx,
+                    ) by {
+                    if yy * w + xx == y * w + x {
+                        lemma_same_pixel(yy, xx, y as int, x as int, w as int);
+                    } else {
+                        assert(out@[yy * w + xx] == before[yy * w + xx]);
+                    }
+                }
+            }
+            x = x + 1;
+        }
+        proof {
+            assert(y * w + w == (y + 1) * w) by (nonlinear_arith);
+        }
+        y = y + 1;
+    }
+    proof {
+        assert(out@.len() == w * h) by (nonlinear_arith)
+            requires
+                out@.len() == h * w,
+        ;
+        assert forall|y: int, x: int| 0 <= y < h && 0 <= x < w implies #[trigger] out@[y * w + x] == lhpx(
+            k,
+            d as int,
+            l@,
+            w as int,
+            y,
+            x,
+        ) by {
+            assert(y * w + x < w * h) by (nonlinear_arith)
+                requires
+                    y < h,
+                    x < w,
+            ;
+        }
+    }
+    out
+}
+
+/// One pixel index names one pixel.
+pub proof fn lemma_same_pixel(y1: int, x1: int, y2: int, x2: int, w: int)
+    requires
+        0 <= x1 < w,
+        0 <= x2 < w,
+        0 <= y1,
+        0 <= y2,
+        y1 * w + x1 == y2 * w + x2,
+    ensures
+        y1 == y2,
+        x1 == x2,
+{
+    assert(y1 == y2 && x1 == x2) by (nonlinear_arith)
+        requires
+            0 <= x1 < w,
+            0 <= x2 < w,
+            0 <= y1,
+            0 <= y2,
+            y1 * w + x1 == y2 * w + x2,
+    ;
+}
+
+/// The column pass over `mid`, `lrows`'s output.
+#[verifier::rlimit(30)]
+pub fn lcols(g: &[u32], d: i64, mid: &[u16], Ghost(l): Ghost<Seq<u16>>, w: usize, h: usize) -> (r: Vec<u16>)
+    requires
+        gk_ok(g@),
+        1 <= d <= 0x8000_0000,
+        1 <= w <= MAX_DIM,
+        1 <= h <= MAX_DIM,
+        l.len() == w * h,
+        mid@.len() == w * h,
+        forall|y: int, x: int|
+            0 <= y < h && 0 <= x < w ==> #[trigger] mid@[y * w + x] == lhpx(gseq(g@), d as int, l, w as int, y, x),
+    ensures
+        r@.len() == w * h,
+        forall|y: int, x: int|
+            0 <= y < h && 0 <= x < w ==> #[trigger] r@[y * w + x] == lopx(gseq(g@), d as int, l, w as int, h as int, y, x),
+{
+    let ghost k = gseq(g@);
+    let n = g.len();
+    let rad = ((n - 1) / 2) as i64;
+    proof {
+        assert(w * h <= 65535 * 65535) by (nonlinear_arith)
+            requires
+                1 <= w <= MAX_DIM,
+                1 <= h <= MAX_DIM,
+        ;
+    }
+    let mut out: Vec<u16> = Vec::with_capacity(w * h);
+    let mut y: usize = 0;
+    while y < h
+        invariant
+            gk_ok(g@),
+            k == gseq(g@),
+            n == g@.len(),
+            rad == gr(k),
+            1 <= d <= 0x8000_0000,
+            1 <= w <= MAX_DIM,
+            1 <= h <= MAX_DIM,
+            l.len() == w * h,
+            mid@.len() == w * h,
+            w * h <= 65535 * 65535,
+            forall|y: int, x: int|
+                0 <= y < h && 0 <= x < w ==> #[trigger] mid@[y * w + x] == lhpx(k, d as int, l, w as int, y, x),
+            y <= h,
+            out@.len() == y * w,
+            forall|yy: int, x: int|
+                0 <= yy < h && 0 <= x < w && yy * w + x < out@.len() ==> #[trigger] out@[yy * w + x] == lopx(
+                    k,
+                    d as int,
+                    l,
+                    w as int,
+                    h as int,
+                    yy,
+                    x,
+                ),
+        decreases h - y,
+    {
+        let mut x: usize = 0;
+        while x < w
+            invariant
+                gk_ok(g@),
+                k == gseq(g@),
+                n == g@.len(),
+                rad == gr(k),
+                1 <= d <= 0x8000_0000,
+                1 <= w <= MAX_DIM,
+                1 <= h <= MAX_DIM,
+                l.len() == w * h,
+                mid@.len() == w * h,
+                w * h <= 65535 * 65535,
+                forall|y: int, x: int|
+                    0 <= y < h && 0 <= x < w ==> #[trigger] mid@[y * w + x] == lhpx(k, d as int, l, w as int, y, x),
+                y < h,
+                x <= w,
+                out@.len() == y * w + x,
+                forall|yy: int, xx: int|
+                    0 <= yy < h && 0 <= xx < w && yy * w + xx < out@.len() ==> #[trigger] out@[yy * w + xx] == lopx(
+                        k,
+                        d as int,
+                        l,
+                        w as int,
+                        h as int,
+                        yy,
+                        xx,
+                    ),
+            decreases w - x,
+        {
+            let mut a: i64 = 0;
+            let mut t: usize = 0;
+            while t < n
+                invariant
+                    gk_ok(g@),
+                    k == gseq(g@),
+                    n == g@.len(),
+                    rad == gr(k),
+                    1 <= w <= MAX_DIM,
+                    1 <= h <= MAX_DIM,
+                    mid@.len() == w * h,
+                    w * h <= 65535 * 65535,
+                    forall|y: int, x: int|
+                        0 <= y < h && 0 <= x < w ==> #[trigger] mid@[y * w + x] == lhpx(k, d as int, l, w as int, y, x),
+                    y < h,
+                    x < w,
+                    t <= n,
+                    a == gsum(lmid_line(k, d as int, l, w as int, x as int), k, y as int, h as int, t as int),
+                    0 <= a <= t * 0xFFFF_0000,
+                decreases n - t,
+            {
+                let i = y as i64 + t as i64 - rad;
+                let cj = kc_x(i, h);
+                let wt = g[t] as i64;
+                proof {
+                    assert(cj * w + x < w * h) by (nonlinear_arith)
+                        requires
+                            cj < h,
+                            x < w,
+                    ;
+                }
+                let v = mid[cj * w + x] as i64;
+                proof {
+                    assert(mid@[cj * w + x] == lhpx(k, d as int, l, w as int, cj as int, x as int));
+                    assert(lmid_line(k, d as int, l, w as int, x as int)(cj as int) == v);
+                    assert(0 <= wt * v <= 0xFFFF_0000) by (nonlinear_arith)
+                        requires
+                            0 <= wt <= 65536,
+                            0 <= v <= 65535,
+                    ;
+                    assert((t + 1) * 0xFFFF_0000 == t * 0xFFFF_0000 + 0xFFFF_0000) by (nonlinear_arith);
+                    assert(k[t as int] == wt);
+                }
+                a = a + wt * v;
+                t = t + 1;
+            }
+            proof {
+                assert(t * 0xFFFF_0000 <= 10001 * 0xFFFF_0000) by (nonlinear_arith)
+                    requires
+                        t <= 10001,
+                ;
+            }
+            let q = sdiv_x(a, d);
+            let ghost before = out@;
+            out.push(q);
+            proof {
+                assert forall|yy: int, xx: int|
+                    0 <= yy < h && 0 <= xx < w && yy * w + xx < out@.len() implies #[trigger] out@[yy * w + xx] == lopx(
+                        k,
+                        d as int,
+                        l,
+                        w as int,
+                        h as int,
+                        yy,
+                        xx,
+                    ) by {
+                    if yy * w + xx == y * w + x {
+                        lemma_same_pixel(yy, xx, y as int, x as int, w as int);
+                    } else {
+                        assert(out@[yy * w + xx] == before[yy * w + xx]);
+                    }
+                }
+            }
+            x = x + 1;
+        }
+        proof {
+            assert(y * w + w == (y + 1) * w) by (nonlinear_arith);
+        }
+        y = y + 1;
+    }
+    proof {
+        assert(out@.len() == w * h) by (nonlinear_arith)
+            requires
+                out@.len() == h * w,
+        ;
+        assert forall|y: int, x: int| 0 <= y < h && 0 <= x < w implies #[trigger] out@[y * w + x] == lopx(
+            k,
+            d as int,
+            l,
+            w as int,
+            h as int,
+            y,
+            x,
+        ) by {
+            assert(y * w + x < w * h) by (nonlinear_arith)
+                requires
+                    y < h,
+                    x < w,
+            ;
+        }
+    }
+    out
+}
+
+/// `sharpen_l`: `vips_sharpen`'s step on the lightness `l`.
+pub fn sharpen_l_x(g: &[u32], d: i64, lut: &[i16], l: &[u16], w: usize, h: usize) -> (r: Vec<u16>)
+    requires
+        gk_ok(g@),
+        1 <= d <= 0x8000_0000,
+        1 <= w <= MAX_DIM,
+        1 <= h <= MAX_DIM,
+        l@.len() == w * h,
+        lut@.len() == 65536,
+        forall|i: int| 0 <= i < l@.len() ==> #[trigger] l@[i] <= 32767,
+    ensures
+        r@ == sharpen_l(gseq(g@), d as int, Seq::new(65536, |i: int| lut@[i] as int), l@, w as int, h as int),
+{
+    let ghost lt = Seq::new(65536, |i: int| lut@[i] as int);
+    let mid = lrows(g, d, l, w, h);
+    let b = lcols(g, d, &mid, Ghost(l@), w, h);
+    proof {
+        assert(w * h <= 65535 * 65535) by (nonlinear_arith)
+            requires
+                1 <= w <= MAX_DIM,
+                1 <= h <= MAX_DIM,
+        ;
+    }
+    let n = w * h;
+    let mut out: Vec<u16> = Vec::with_capacity(n);
     let mut i: usize = 0;
     while i < n
         invariant
-            n == src@.len(),
+            n == w * h,
+            1 <= w <= MAX_DIM,
+            1 <= h <= MAX_DIM,
+            l@.len() == n,
             b@.len() == n,
-            b@ == blur(gseq(g@), d as int, src@, w as int, h as int),
-            n == w * h * NC,
+            lut@.len() == 65536,
+            lt == Seq::new(65536, |i: int| lut@[i] as int),
+            forall|i: int| 0 <= i < l@.len() ==> #[trigger] l@[i] <= 32767,
+            forall|y: int, x: int|
+                0 <= y < h && 0 <= x < w ==> #[trigger] b@[y * w + x] == lopx(gseq(g@), d as int, l@, w as int, h as int, y, x),
             i <= n,
             out@.len() == i,
-            forall|j: int| 0 <= j < i ==> #[trigger] out@[j] == sharpen(gseq(g@), d as int, src@, w as int, h as int)[j],
+            forall|j: int|
+                0 <= j < i ==> #[trigger] out@[j] == sharpen_l(gseq(g@), d as int, lt, l@, w as int, h as int)[j],
         decreases n - i,
     {
-        let v = if i % 4 == 3 {
-            src[i]
+        proof {
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(i as int, w as int);
+            assert((i as int) / (w as int) < h) by (nonlinear_arith)
+                requires
+                    i < w * h,
+                    i == w * (i / w) + i % w,
+                    0 <= i % w,
+                    w >= 1,
+            ;
+            assert((i / w) * w + i % w == i) by (nonlinear_arith)
+                requires
+                    i == w * (i / w) + i % w,
+            ;
+            assert(b@[(i / w) * w + i % w] == lopx(gseq(g@), d as int, l@, w as int, h as int, (i as int) / (w as int), (i as int) % (w as int)));
+        }
+        let v1 = l[i] as i32;
+        let v2 = b[i] as i32;
+        let o = v1 + lut[(v1 - v2 + 32768) as usize] as i32;
+        let v = if o < 0 {
+            0
+        } else if o > 32767 {
+            32767
         } else {
-            let d = 2 * src[i] as i32 - b[i] as i32;
-            if d < 0 {
-                0
-            } else if d > 255 {
-                255
-            } else {
-                d as u8
-            }
+            o as u16
         };
         out.push(v);
         i = i + 1;
     }
     proof {
-        assert(out@ =~= sharpen(gseq(g@), d as int, src@, w as int, h as int));
+        assert(out@ =~= sharpen_l(gseq(g@), d as int, lt, l@, w as int, h as int));
     }
     out
 }

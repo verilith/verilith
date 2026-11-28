@@ -1,5 +1,6 @@
 //! The specification of imgproxy's filters as libvips computes them
-//! (`vips_gaussblur`, `vips_premultiply` and `vips_unpremultiply`, and
+//! (`vips_gaussblur`, `vips_sharpen`'s step on the lightness,
+//! `vips_premultiply` and `vips_unpremultiply`, and
 //! imgproxy's pixelate: `vips_embed` with mirroring, `vips_shrink`,
 //! `vips_zoom`), on 8-bit RGBA. Part of the trusted base with `spec.rs`.
 //!
@@ -58,24 +59,64 @@ pub open spec fn blur(g: Seq<int>, d: int, src: Seq<u8>, w: int, h: int) -> Seq<
     Seq::new((w * h * NC) as nat, |k: int| gopx(g, d, src, w, h, (k / NC) / w, (k / NC) % w, k % NC))
 }
 
-/// An unsharp mask: each colour channel moved away from its blurred value
-/// by as much again (`2 * v - blurred`, clamped); alpha is kept.
-pub open spec fn sharpen(g: Seq<int>, d: int, src: Seq<u8>, w: int, h: int) -> Seq<u8> {
-    let b = blur(g, d, src, w, h);
+// ---------------------------------------------------------------------------
+// sharpen
+// ---------------------------------------------------------------------------
+
+/// Row `y` of the one-channel image `l` (`w` wide), as a function of x.
+pub open spec fn l_line(l: Seq<u16>, w: int, y: int) -> spec_fn(int) -> int {
+    |i: int| l[y * w + i] as int
+}
+
+/// libvips's integer convolution of a 16-bit image (`convi.c`'s C path,
+/// which `vips_sharpen` takes): `(sum + d / 2) / d`, kept within
+/// `0..=32767`. With the mask's own sum as `d` the result never leaves
+/// that range, so this is libvips's clip to a short, and `vips_sharpen`'s
+/// `& 0x7fff` leaves it as it is.
+pub open spec fn sdiv(n: int, d: int) -> int {
+    let q = (n + d / 2) / d;
+    if q < 0 {
+        0
+    } else if q > 32767 {
+        32767
+    } else {
+        q
+    }
+}
+
+/// The row pass of the blur of `l`.
+pub open spec fn lhpx(g: Seq<int>, d: int, l: Seq<u16>, w: int, y: int, x: int) -> int {
+    sdiv(gsum(l_line(l, w, y), g, x, w, g.len() as int), d)
+}
+
+/// Column `x` of the row pass, as a function of y.
+pub open spec fn lmid_line(g: Seq<int>, d: int, l: Seq<u16>, w: int, x: int) -> spec_fn(int) -> int {
+    |j: int| lhpx(g, d, l, w, j, x)
+}
+
+/// Pixel `(x, y)` of `l` blurred.
+pub open spec fn lopx(g: Seq<int>, d: int, l: Seq<u16>, w: int, h: int, y: int, x: int) -> int {
+    sdiv(gsum(lmid_line(g, d, l, w, x), g, y, h, g.len() as int), d)
+}
+
+/// `vips_sharpen`'s step on the lightness `l` (`w` by `h`, LabS: 0 to
+/// 32767): each value moved by `lut` of how far it is from its blurred
+/// value, `v + lut[v - blurred + 32768]`, kept within `0..=32767`. The
+/// table is the caller's (`vips_sharpen` builds it from its curve).
+pub open spec fn sharpen_l(g: Seq<int>, d: int, lut: Seq<int>, l: Seq<u16>, w: int, h: int) -> Seq<u16> {
     Seq::new(
-        (w * h * NC) as nat,
+        (w * h) as nat,
         |k: int|
-            if k % NC == 3 {
-                src[k]
-            } else {
-                let v = 2 * src[k] - b[k];
-                (if v < 0 {
+            {
+                let v1 = l[k] as int;
+                let o = v1 + lut[v1 - lopx(g, d, l, w, h, k / w, k % w) + 32768];
+                (if o < 0 {
                     0
-                } else if v > 255 {
-                    255
+                } else if o > 32767 {
+                    32767
                 } else {
-                    v
-                }) as u8
+                    o
+                }) as u16
             },
     )
 }

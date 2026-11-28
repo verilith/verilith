@@ -34,6 +34,10 @@ pub mod pixels;
 #[cfg(not(verus_keep_ghost))]
 pub mod mask;
 #[cfg(not(verus_keep_ghost))]
+pub mod colour;
+#[cfg(not(verus_keep_ghost))]
+pub mod attention;
+#[cfg(not(verus_keep_ghost))]
 pub mod proxy;
 #[cfg(not(verus_keep_ghost))]
 pub mod handler;
