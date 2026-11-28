@@ -1,7 +1,7 @@
 //! Persistence (RFC 9112 §9.3), verified: whether a connection may carry
 //! another request after this one.
 //!
-//! [`persists`] is the specification: a request persists unless a
+//! `persists` is the specification: a request persists unless a
 //! `Connection` field lists the option `close`; an HTTP/1.0 request
 //! persists only if one lists `keep-alive`. Options are the elements of the
 //! comma-separated values (RFC 9110 §7.6.1, §5.6.1), compared ignoring
@@ -132,7 +132,7 @@ pub proof fn lemma_conn_frame(x: Seq<u8>, y: Seq<u8>, hs: Seq<SpecHeader>, e: in
     }
 }
 
-proof fn lemma_comma_end(v: Seq<u8>, i: int)
+pub proof fn lemma_comma_end(v: Seq<u8>, i: int)
     requires 0 <= i <= v.len(),
     ensures
         i <= comma_end(v, i) <= v.len(),
@@ -144,7 +144,7 @@ proof fn lemma_comma_end(v: Seq<u8>, i: int)
     }
 }
 
-proof fn lemma_lead(v: Seq<u8>, i: int, e: int)
+pub proof fn lemma_lead(v: Seq<u8>, i: int, e: int)
     requires 0 <= i <= e <= v.len(),
     ensures i <= lead(v, i, e) <= e,
     decreases e - i,
@@ -154,7 +154,7 @@ proof fn lemma_lead(v: Seq<u8>, i: int, e: int)
     }
 }
 
-proof fn lemma_trim(v: Seq<u8>, s: int, e: int)
+pub proof fn lemma_trim(v: Seq<u8>, s: int, e: int)
     requires s <= e,
     ensures s <= trim_end(v, s, e) <= e,
     decreases e - s,
@@ -164,7 +164,7 @@ proof fn lemma_trim(v: Seq<u8>, s: int, e: int)
     }
 }
 
-/// The options of `v`, added to `acc`: exactly [`opts`] from 0.
+/// The options of `v`, added to `acc`: exactly `opts` from 0.
 pub fn opts_exec(v: &[u8], acc: (bool, bool)) -> (r: (bool, bool))
     ensures r == opts(v@, 0, acc),
 {
@@ -235,7 +235,7 @@ pub fn opts_exec(v: &[u8], acc: (bool, bool)) -> (r: (bool, bool))
     }
 }
 
-/// [`persists_hm`] for exec field lines over `b`.
+/// `persists_hm` for exec field lines over `b`.
 pub fn persists_exec(b: &[u8], hs: &[Header], minor: u8) -> (r: bool)
     requires hdrs_ok(hs@, b@.len() as int),
     ensures r == persists_hm(b@, headers_view(hs@), minor),
@@ -300,7 +300,7 @@ pub proof fn lemma_fields_close_concat(a: Seq<(Seq<u8>, Seq<u8>)>, b: Seq<(Seq<u
     }
 }
 
-/// [`fields_close`] of response field lines.
+/// `fields_close` of response field lines.
 pub fn fields_close_exec(fs: &[crate::respond::Field]) -> (r: bool)
     ensures
         r == fields_close(crate::respond::fields_view(fs@)),

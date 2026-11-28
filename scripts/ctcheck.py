@@ -40,6 +40,7 @@ CONFIG is JSON:
                   "expect": "pass" | "<kind of failure a control must show>"}]}
 """
 import argparse
+import glob
 import json
 import re
 import subprocess
@@ -314,8 +315,12 @@ class Elf:
         self.f = open(path, "rb")
         self.elf = ELFFile(self.f)
         self.arch = arch
-        nm = "llvm-nm"
-        for cand in ["llvm-nm", "rust-nm"]:
+        # llvm-nm is not on every runner image (ubuntu-24.04 dropped the
+        # unversioned name); the versioned LLVM install and binutils' nm
+        # print the same "-C -S --defined-only" format.
+        nm = "nm"
+        cands = ["llvm-nm", "rust-nm"] + sorted(glob.glob("/usr/lib/llvm-*/bin/llvm-nm"), reverse=True) + ["nm"]
+        for cand in cands:
             try:
                 subprocess.run([cand, "--version"], capture_output=True, check=True)
                 nm = cand
@@ -356,6 +361,29 @@ class Elf:
                         self.got[r["r_offset"]] = name
         dm = demangle_all(set(self.got.values()))
         self.got = {k: dm[v] for k, v in self.got.items()}
+        if arch == "aarch64":
+            self.name_plt_stubs()
+
+    def name_plt_stubs(self):
+        """Names each AArch64 PLT stub (a glibc build calls memcpy and the
+        rest through them) after the GOT slot it jumps through:
+        `adrp x16, page; ldr x17, [x16, #off]; add x16, x16, #off; br x17`."""
+        for sec in self.elf.iter_sections():
+            if sec.name not in (".plt", ".iplt"):
+                continue
+            base, data = sec["sh_addr"], sec.data()
+            for o in range(0, len(data) - 15, 4):
+                w = [int.from_bytes(data[o + 4 * k:o + 4 * k + 4], "little") for k in range(4)]
+                if (w[0] & 0x9F00001F) != 0x90000010 or (w[1] & 0xFFC003FF) != 0xF9400211 or w[3] != 0xD61F0220:
+                    continue
+                imm = ((w[0] >> 29) & 3) | (((w[0] >> 5) & 0x7FFFF) << 2)
+                if imm & (1 << 20):
+                    imm -= 1 << 21
+                pc = base + o
+                slot = (pc & ~0xFFF) + (imm << 12) + ((w[1] >> 10) & 0xFFF) * 8
+                name = self.got.get(slot)
+                if name:
+                    self.by_addr.setdefault(pc, name.split("@")[0])
 
     def demangle(self, name):
         if not (name.startswith("_ZN") or name.startswith("_R")):
@@ -430,7 +458,10 @@ NORETURN = re.compile(
 )
 CALLS = {"memcpy", "memmove", "memset"}
 # A crate's declassification point: its result is public.
-DECLASSIFY = re.compile(r"^verilith_\w+::ct::declassify$")
+# std's CPU feature detection, which rustc 1.100 calls through the GOT from
+# each `is_x86_feature_detected!` site on a cold cache: its result is the
+# CPU's feature bits, which are public, and it takes no arguments.
+DECLASSIFY = re.compile(r"^(verilith_\w+::ct::declassify|std_detect::detect::cache::detect_and_initialize)(::h[0-9a-f]{16})?$")
 DECL = "declassify"
 
 

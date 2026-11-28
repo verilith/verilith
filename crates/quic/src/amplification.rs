@@ -3,7 +3,7 @@
 //! Before it has validated the client's address, a server must not send
 //! more than three times the bytes it has received from that address.
 //! [`Budget`] counts both and is the only way to account for bytes sent,
-//! and the theorem is its invariant ([`Budget::inv`]): unvalidated, the
+//! and the theorem is its invariant (`Budget::inv`): unvalidated, the
 //! bytes sent are at most three times the bytes received, after any
 //! sequence of calls.
 use vstd::prelude::*;

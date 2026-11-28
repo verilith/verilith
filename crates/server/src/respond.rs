@@ -2,12 +2,12 @@
 //!
 //! [`write_head`] appends a status line, the handler's field lines and the
 //! framing field line the server chooses, then the empty line. The theorem
-//! [`theorem_head_parses`] says what those bytes mean to a client: parsed by
+//! `theorem_head_parses` says what those bytes mean to a client: parsed by
 //! verilith-http's specification of a response head (`spec::parse_response`,
 //! the same rules its uniqueness theorems are stated over), they give back
 //! exactly the status, reason, and field lines that were written, in order,
 //! and the framing the server chose. Since a field name must be a token and
-//! a value must not contain CR, LF or NUL ([`name_ok`], [`value_ok`]), no
+//! a value must not contain CR, LF or NUL (`name_ok`, `value_ok`), no
 //! handler can add a field line, end the head early, or change the framing
 //! (response splitting): [`check_name`] and [`check_value`] refuse such
 //! input, and only checked input reaches [`write_head`].
@@ -445,7 +445,7 @@ pub proof fn lemma_lit_done(b: Seq<u8>, i: int, s: Seq<u8>)
 }
 
 /// One field line at `i` parses to its name and value.
-proof fn lemma_parse_line(b: Seq<u8>, i: int, fl: SField, rest: Seq<u8>)
+pub proof fn lemma_parse_line(b: Seq<u8>, i: int, fl: SField, rest: Seq<u8>)
     requires
         0 <= i <= b.len(),
         line_ok(fl),
@@ -514,7 +514,7 @@ proof fn lemma_parse_line(b: Seq<u8>, i: int, fl: SField, rest: Seq<u8>)
 }
 
 /// The field lines, then CRLF, parse to their spans, in order.
-proof fn lemma_parse_lines(b: Seq<u8>, i: int, fs: Seq<SField>, rest: Seq<u8>, max: nat)
+pub proof fn lemma_parse_lines(b: Seq<u8>, i: int, fs: Seq<SField>, rest: Seq<u8>, max: nat)
     requires
         0 <= i <= b.len(),
         forall|k: int| 0 <= k < fs.len() ==> line_ok(#[trigger] fs[k]),
@@ -682,7 +682,7 @@ proof fn lemma_te_chunked()
 }
 
 /// A run of class `k` from `i` to the end of `b`.
-proof fn lemma_run_end_tail(b: Seq<u8>, i: int, k: hs::Cls)
+pub proof fn lemma_run_end_tail(b: Seq<u8>, i: int, k: hs::Cls)
     requires
         0 <= i <= b.len(),
         forall|m: int| i <= m < b.len() ==> hs::in_cls(k, #[trigger] b[m]),
@@ -734,7 +734,7 @@ proof fn lemma_fields_prefix(
     }
 }
 
-proof fn lemma_ci_eq_dash(s: Seq<u8>, lit: Seq<u8>)
+pub proof fn lemma_ci_eq_dash(s: Seq<u8>, lit: Seq<u8>)
     ensures
         hs::ci_eq(s, lit) ==> hs::ci_eq_dash(s, lit),
 {
@@ -808,7 +808,7 @@ fn eq_dash(n: &[u8], lit: &[u8]) -> (r: bool)
     true
 }
 
-/// Whether a handler may send a field with this name ([`name_ok`]).
+/// Whether a handler may send a field with this name (`name_ok`).
 pub fn check_name(n: &[u8]) -> (r: bool)
     ensures
         r == name_ok(n@),
@@ -859,7 +859,7 @@ fn value_char(c: u8) -> (r: bool)
     c == 0x09 || (c >= 0x20 && c != 0x7F)
 }
 
-/// Whether a handler may send this field value ([`value_ok`]).
+/// Whether a handler may send this field value (`value_ok`).
 pub fn check_value(v: &[u8]) -> (r: bool)
     ensures
         r == value_ok(v@),
@@ -886,7 +886,7 @@ pub fn check_value(v: &[u8]) -> (r: bool)
     true
 }
 
-/// Whether this is a reason phrase ([`reason_ok`]).
+/// Whether this is a reason phrase (`reason_ok`).
 pub fn check_reason(r: &[u8]) -> (ok: bool)
     ensures
         ok == reason_ok(r@),
@@ -922,7 +922,7 @@ pub fn push_dec(out: &mut Vec<u8>, n: u64)
     }
 }
 
-fn push_line(out: &mut Vec<u8>, name: &[u8], value: &[u8])
+pub fn push_line(out: &mut Vec<u8>, name: &[u8], value: &[u8])
     ensures
         final(out)@ == old(out)@ + line((name@, value@)),
 {
@@ -935,7 +935,7 @@ fn push_line(out: &mut Vec<u8>, name: &[u8], value: &[u8])
     assert(final(out)@ =~= old(out)@ + line((name@, value@)));
 }
 
-proof fn lemma_lines_push(fs: Seq<SField>, x: SField)
+pub proof fn lemma_lines_push(fs: Seq<SField>, x: SField)
     ensures
         lines(fs.push(x)) == lines(fs) + line(x),
     decreases fs.len(),
@@ -1008,7 +1008,7 @@ fn push_framing(out: &mut Vec<u8>, framing: Framing, Ghost(fv): Ghost<Seq<SField
     }
 }
 
-proof fn lemma_lines_concat(x: Seq<SField>, y: Seq<SField>)
+pub proof fn lemma_lines_concat(x: Seq<SField>, y: Seq<SField>)
     ensures
         lines(x + y) == lines(x) + lines(y),
     decreases y.len(),
@@ -1029,7 +1029,7 @@ proof fn lemma_lines_concat(x: Seq<SField>, y: Seq<SField>)
 }
 
 /// Appends the field lines of `fields`.
-fn push_lines(out: &mut Vec<u8>, fields: &[Field])
+pub fn push_lines(out: &mut Vec<u8>, fields: &[Field])
     ensures
         final(out)@ == old(out)@ + lines(fields_view(fields@)),
 {
@@ -1143,7 +1143,7 @@ pub fn check_fields(fields: &[Field]) -> (r: bool)
     true
 }
 
-/// Checks everything [`theorem_head_parses`] needs, then writes the head.
+/// Checks everything `theorem_head_parses` needs, then writes the head.
 /// On `true`, the bytes appended are `head(...)` for inputs that satisfy
 /// the theorem's preconditions, so they parse back exactly; on `false`,
 /// nothing is written.

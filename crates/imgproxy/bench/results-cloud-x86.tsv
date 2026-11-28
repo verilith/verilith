@@ -1,0 +1,16 @@
+file	engine	median_ms	min_ms	png_bytes
+photo-12mp.jpg	verilith	128.32	123.68	130272
+photo-2mp.jpg	verilith	35.08	29.99	116271
+photo-2mp.webp	verilith	47.50	46.59	112470
+photo-2mp.png	verilith	36.40	36.05	116271
+astronaut-512.png	verilith	16.89	16.80	166973
+photo-12mp.jpg	vips-thumbnail	27.10	19.97	163392
+photo-2mp.jpg	vips-thumbnail	14.54	13.49	157209
+photo-2mp.webp	vips-thumbnail	25.13	23.99	142209
+photo-2mp.png	vips-thumbnail	56.72	48.90	156913
+astronaut-512.png	vips-thumbnail	16.03	12.13	219347
+photo-12mp.jpg	vips-resize	79.00	55.86	162847
+photo-2mp.jpg	vips-resize	27.92	21.84	156913
+photo-2mp.webp	vips-resize	57.96	54.27	155601
+photo-2mp.png	vips-resize	63.89	49.77	156913
+astronaut-512.png	vips-resize	15.96	15.10	219347

@@ -110,7 +110,7 @@ impl BodyLen {
         true
     }
 
-    /// Whether the body is complete as declared ([`Self::complete_s`]).
+    /// Whether the body is complete as declared (`Self::complete_s`).
     #[inline(always)]
     pub fn complete(&self) -> (r: bool)
         ensures

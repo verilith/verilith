@@ -47,11 +47,17 @@ pub enum Next {
     Write,
     /// Write what is pending, then close.
     Close,
+    /// Nothing to read or write until a deferred response is completed
+    /// (the event loop then resumes the connection).
+    Wait,
 }
 
 pub struct Conn {
     /// The request core and the response ledger, verified.
     eng: Engine,
+    /// The ready request's response was deferred: whether it was HEAD.
+    /// Nothing more is read or handled until it is answered.
+    deferred: Option<bool>,
     limits: Limits,
     /// Requests are being read from 0-RTT data (set by the TLS layer).
     pub(crate) early: bool,
@@ -91,12 +97,13 @@ impl Ctx {
 
 impl Conn {
     pub fn new(limits: Limits) -> Conn {
-        Conn { eng: Engine::new(limits.max_head, limits.max_headers, limits.max_body), limits, early: false, peer: None }
+        Conn { eng: Engine::new(limits.max_head, limits.max_headers, limits.max_body), deferred: None, limits, early: false, peer: None }
     }
 
     /// Makes the connection new again, keeping its buffers.
     pub fn reset(&mut self) {
         self.eng.reset(self.limits.max_head);
+        self.deferred = None;
         self.early = false;
         self.peer = None;
     }
@@ -107,7 +114,7 @@ impl Conn {
     /// returns, `rbuf[end..]`, which the core's invariant says nothing
     /// about; [`Conn::filled`] then adds those bytes to the core's stream.
     pub fn read_buf(&mut self) -> &mut [u8] {
-        if matches!(self.eng.core.phase, Phase::Closed) || self.eng.wire.pending_len() > self.limits.write_high {
+        if matches!(self.eng.core.phase, Phase::Closed) || self.eng.wire.pending_len() > self.limits.write_high || self.deferred.is_some() {
             return &mut [];
         }
         let core = &mut self.eng.core;
@@ -170,6 +177,11 @@ impl Conn {
     /// responses, in order, to the write buffer.
     pub fn process<H: Handler + ?Sized>(&mut self, h: &H, ctx: &Ctx) -> Next {
         loop {
+            // A deferred response holds the connection where it is: the
+            // engine is not stepped (stepping would answer it 500).
+            if self.deferred.is_some() {
+                return self.next();
+            }
             match self.eng.step(&ctx.own) {
                 Ev::Ready => self.dispatch(h, ctx),
                 Ev::Need => return self.next(),
@@ -179,8 +191,31 @@ impl Conn {
         }
     }
 
+    /// Whether a deferred response is awaited.
+    pub fn deferred(&self) -> bool {
+        self.deferred.is_some()
+    }
+
+    /// Answers the deferred request with `f`, as its handler would have
+    /// (a 502 if `f` sends nothing). The event loop then calls
+    /// [`Conn::process`] to go on with the requests after it.
+    pub fn resume(&mut self, f: crate::defer::Finish, ctx: &Ctx) {
+        let Some(head) = self.deferred.take() else { return };
+        let mut res = Response { out: &mut self.eng.wire, ctx, sent: false, close: false, head, h2: None, defer: None, deferred: false };
+        f(&mut res);
+        if !res.sent {
+            res.error(502);
+        }
+        let late = res.close;
+        self.eng.finish(&ctx.own, late);
+    }
+
     fn next(&self) -> Next {
-        if matches!(self.eng.core.phase, Phase::Closed) {
+        if self.deferred.is_some() && self.eng.wire.pending_len() == 0 {
+            Next::Wait
+        } else if self.deferred.is_some() {
+            Next::Write
+        } else if matches!(self.eng.core.phase, Phase::Closed) {
             Next::Close
         } else if self.eng.wire.pending_len() > self.limits.write_high {
             Next::Write
@@ -205,11 +240,16 @@ impl Conn {
             early: self.early,
             peer: self.peer.as_deref(),
         };
-        let mut res = Response { out: &mut self.eng.wire, ctx, sent: false, close: false, head: method == b"HEAD", h2: None };
+        let head = method == b"HEAD";
+        let mut res = Response { out: &mut self.eng.wire, ctx, sent: false, close: false, head, h2: None, defer: crate::defer::current_tcp(0), deferred: false };
         if crate::early::too_early(self.early, method) {
             res.too_early();
         } else {
             h.handle(&request, &mut res);
+        }
+        if res.deferred {
+            self.deferred = Some(head);
+            return;
         }
         if !res.sent {
             res.error(500);
@@ -239,7 +279,9 @@ pub fn reason(status: u16) -> &'static [u8] {
         431 => b"Request Header Fields Too Large",
         500 => b"Internal Server Error",
         501 => b"Not Implemented",
+        502 => b"Bad Gateway",
         503 => b"Service Unavailable",
+        504 => b"Gateway Timeout",
         _ => b"",
     }
 }
@@ -454,6 +496,28 @@ impl<'a> Response<'a> {
     pub fn error(&mut self, status: u16) {
         let r = reason(status);
         let _ = self.send(status, &[Field { name: b"Content-Type", value: b"text/plain" }], r);
+    }
+
+    /// Defers the response: the request stays open and is answered when
+    /// the returned [`crate::Pending`] is completed (or 502 if it is
+    /// dropped). `None` where deferral is not supported (an io_uring
+    /// worker, a request already answered, or a connection driven outside
+    /// a worker); then answer now.
+    ///
+    /// The [`Request`] borrows the connection's buffers, so copy out of it
+    /// what the answer needs before returning.
+    pub fn defer(&mut self) -> Option<crate::Pending> {
+        if self.sent || self.deferred {
+            return None;
+        }
+        let p = crate::defer::Pending::new(self.defer?, self.head)?;
+        self.deferred = true;
+        Some(p)
+    }
+
+    /// Whether the request was HEAD (a body given to `send` is not sent).
+    pub fn is_head(&self) -> bool {
+        self.head
     }
 
     /// Closes the connection after this response. Called before sending,

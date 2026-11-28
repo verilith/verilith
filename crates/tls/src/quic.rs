@@ -629,6 +629,8 @@ impl<P: Provider> QuicServer<P> {
             Ok(p) => p,
             Err(code) => return Err(self.fail(code)),
         };
+        // verus! expands the `Ghost(..)` field, and rustc 1.100 then flags the rest.
+        #[allow(non_shorthand_field_patterns)]
         let Prep { sh, fl, c_hs, s_hs, expect, c_ap, s_ap, res, c_early: _, tr: _, hs: Ghost(hsv) } = p;
         proof {
             reveal(prep_ok);

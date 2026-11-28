@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::h1::{Conn, Ctx, Io, Limits, Next};
 use crate::h2::{Conn2, Limits2};
+use crate::defer::{Done, Inbox, Target, EXT, WAKE};
 use crate::sys::{self, IoResult};
 use crate::Handler;
 
@@ -228,10 +229,21 @@ impl Any {
     fn wrote(&mut self, n: usize) {
         each!(self, c => c.wrote(n))
     }
+    fn resume(&mut self, stream: u32, head: bool, f: crate::defer::Finish, ctx: &Ctx) {
+        match self {
+            Any::H1(c) => c.resume(f, ctx),
+            Any::H2(c) => c.resume(stream, head, f, ctx),
+            #[cfg(feature = "tls")]
+            Any::Tls(c) => c.resume(stream, head, f, ctx),
+        }
+    }
 }
 
 struct Slot {
     fd: i32,
+    /// Changes each time the slot is reused: a deferred response for a
+    /// closed connection finds another generation and is dropped.
+    era: u32,
     conn: Any,
     /// Reading stopped because the write buffer was full.
     read_paused: bool,
@@ -253,6 +265,13 @@ struct Worker {
     alt: Option<Vec<u8>>,
     #[cfg(feature = "h3")]
     h3: Option<crate::h3::H3>,
+    /// Deferred responses completed, waiting to be written.
+    inbox: Arc<Inbox>,
+    wake_r: i32,
+    done: Vec<Done>,
+    eras: u32,
+    /// The handler's own timers: how long the worker may sleep.
+    ext_timeout: Option<u64>,
 }
 
 impl Worker {
@@ -261,6 +280,9 @@ impl Worker {
         for (i, (fd, _)) in lfds.iter().enumerate() {
             poll.add(*fd, LISTENER - i as u64, false)?;
         }
+        let (inbox, wake_r) = Inbox::new()?;
+        poll.add(wake_r, WAKE, false)?;
+        crate::defer::set_worker(inbox.clone(), poll.handle());
         let now = sys::unix_time();
         let ctx = Ctx::new(cfg.server, &crate::date::imf_fixdate(now))
             .ok_or_else(|| io::Error::other("the Server value is not a valid field value"))?;
@@ -285,6 +307,11 @@ impl Worker {
             alt,
             #[cfg(feature = "h3")]
             h3: None,
+            inbox,
+            wake_r,
+            done: Vec::new(),
+            eras: 0,
+            ext_timeout: None,
         })
     }
 
@@ -296,6 +323,9 @@ impl Worker {
             evs.clear();
             #[allow(unused_mut)]
             let mut timeout_us: u64 = if idle < spin { 0 } else { 1_000_000 };
+            if let Some(t) = self.ext_timeout {
+                timeout_us = timeout_us.min(t);
+            }
             #[cfg(feature = "h3")]
             if let Some(q) = self.h3.as_mut() {
                 if let Some(t) = q.timeout_us(std::time::Instant::now()) {
@@ -316,6 +346,14 @@ impl Worker {
                 }
             }
             for e in &evs {
+                if e.token == WAKE {
+                    sys::drain(self.wake_r);
+                    continue;
+                }
+                if e.token & EXT != 0 && e.token < LISTENER - 16 {
+                    h.on_io(e.token & !EXT, e.readable, e.writable);
+                    continue;
+                }
                 #[cfg(feature = "h3")]
                 if e.token == UDP {
                     if let Some(q) = self.h3.as_mut() {
@@ -333,6 +371,54 @@ impl Worker {
             if let Some(q) = self.h3.as_mut() {
                 q.on_timers(h, &self.ctx);
             }
+            self.ext_timeout = h.poll_timers();
+            self.completions(h);
+        }
+    }
+
+    /// Writes the deferred responses that were completed. Answering one
+    /// can run handlers for the requests behind it, which may complete
+    /// at once: a few rounds.
+    fn completions<H: Handler + ?Sized>(&mut self, h: &H) {
+        for _ in 0..16 {
+            if self.inbox.is_empty() {
+                return;
+            }
+            let mut done = std::mem::take(&mut self.done);
+            self.inbox.take(&mut done);
+            for d in done.drain(..) {
+                match d.to {
+                    Target::Tcp { slot, era, stream } => {
+                        let id = slot as usize;
+                        let Some(Some(s)) = self.slots.get_mut(id) else { continue };
+                        if s.era != era {
+                            continue;
+                        }
+                        #[cfg(feature = "tls")]
+                        let ctx = if matches!(s.conn, Any::Tls(_)) { &self.ctx_tls } else { &self.ctx };
+                        #[cfg(not(feature = "tls"))]
+                        let ctx = &self.ctx;
+                        crate::defer::set_current(Some((slot, era)));
+                        crate::defer::set_client_fd(s.fd, is_tls(&s.conn));
+                        s.conn.resume(stream, d.head, d.finish, ctx);
+                        let close = read_process_write(s, h, ctx);
+                        crate::defer::set_current(None);
+                        crate::defer::clear_client();
+                        if close {
+                            self.close(id);
+                        }
+                    }
+                    #[cfg(feature = "h3")]
+                    Target::H3 { ch, serial, stream } => {
+                        if let Some(q) = self.h3.as_mut() {
+                            q.resume(ch, serial, stream, d.head, d.finish, h, &self.ctx);
+                        }
+                    }
+                    #[cfg(not(feature = "h3"))]
+                    Target::H3 { .. } => {}
+                }
+            }
+            self.done = done;
         }
     }
 
@@ -369,7 +455,8 @@ impl Worker {
                     self.slots.len() - 1
                 }
             };
-            self.slots[id] = Some(Slot { fd, conn, read_paused: false });
+            self.eras = self.eras.wrapping_add(1);
+            self.slots[id] = Some(Slot { fd, era: self.eras, conn, read_paused: false });
             if self.poll.add(fd, id as u64, true).is_err() {
                 self.close(id);
                 continue;
@@ -390,7 +477,11 @@ impl Worker {
             close = flush(s);
         }
         if !close && (readable || s.read_paused) {
+            crate::defer::set_current(Some((id as u32, s.era)));
+            crate::defer::set_client_fd(s.fd, is_tls(&s.conn));
             close = read_process_write(s, h, ctx);
+            crate::defer::set_current(None);
+            crate::defer::clear_client();
         }
         if close {
             self.close(id);
@@ -411,6 +502,15 @@ impl Worker {
             self.free.push(id);
         }
     }
+}
+
+fn is_tls(c: &Any) -> bool {
+    #[cfg(feature = "tls")]
+    if matches!(c, Any::Tls(_)) {
+        return true;
+    }
+    let _ = c;
+    false
 }
 
 /// Reads all that is available, handles it, writes the responses. Returns
@@ -482,6 +582,12 @@ fn read_process_write<H: Handler + ?Sized>(s: &mut Slot, h: &H, ctx: &Ctx) -> bo
                 if drained {
                     return false;
                 }
+            }
+            // A deferred response: the connection is resumed when it is
+            // completed (`Worker::completions`).
+            Next::Wait => {
+                s.read_paused = false;
+                return false;
             }
         }
     }

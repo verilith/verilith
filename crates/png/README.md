@@ -12,7 +12,7 @@ The chunk parser, the image-data decompression (through
 five row filters, Adam7 deinterlacing and both output formats are proven
 against a specification of the format, and so is a bound on the decoder's
 work that is linear in the file's size and the output's. `cargo verus
-verify` checks 329 functions with no errors.
+verify` checks 362 functions with no errors.
 
 libpng's security history is mostly memory-safety bugs in exactly these
 places: chunk lengths ([CVE-2017-12652](#cves)), palette and transparency
@@ -30,6 +30,7 @@ CVEs). In verilith-png that class of bug is ruled out for every input by the pro
 | The only other results are `TooLarge` (the caller's memory limit) and `OutOfMemory` (a failed allocation) | `top::decode` ensures |
 | No allocation is sized from the header alone: image data larger than the compressed data could ever produce (1032 bytes per input byte) is rejected before allocating | `decode::inflate_exec`, via verilith-zlib's `theorem_output_bound` |
 | The chunk walk follows the specification's rules for CRCs, chunk order, PLTE, tRNS and IDAT | `chunks::walk_exec` against `spec::walk` |
+| The libpng API's decisions about the chunks it hands the decoder (CRC actions, IHDR's checks, whether PLTE and tRNS are used, ignored or an error) follow libpng's rules and, with libpng's default settings, agree with the specification's chunk walk; every chunk it writes for the decoder reads back as that chunk with a correct CRC | `accept::*`: `theorem_plte`, `theorem_trns`, `theorem_crc`, `ihdr_problems`, `put_chunk` |
 | Each row filter reconstructs exactly `spec::recon`, in place | `unfilter::unfilter_row`, `unfilter::unfilter_rows` |
 | Every Adam7 pass is reconstructed at the right place | `passes::reconstruct` against `spec::pass_images` |
 | RGBA and native output equal `spec::rgba8` and `spec::native` pixel for pixel, on the general (sub-byte) path, the direct non-interlaced paths and the row-by-row deinterlacer | `output::to_rgba8`, `output::to_native`, `fast::*`, `deint::*` |
@@ -86,7 +87,8 @@ output is byte-identical; the differential tests and the fuzzer check this.
 | Image data whose zlib stream is damaged after the last byte the image needs (bad Adler-32, truncated end, corrupt trailing blocks) | decodes the image; reads stop once the image is complete | `Invalid`: the whole stream must decompress |
 | Image data longer than the image needs | warning, extra bytes ignored | extra bytes ignored (same) |
 | Ancillary chunks (gAMA, iCCP, sRGB, text, ...) | parsed, applied on request | skipped unparsed; never change the pixels |
-| A PLTE in an RGB image that is a second one, follows tRNS or bKGD, or has a bad CRC or length | ignored | ignored (same); an empty one is an error in both |
+| A PLTE in an RGB image that is a second one, follows tRNS or bKGD, or has a bad length | ignored | ignored (same); an empty one is an error in both |
+| A PLTE before the image data in an RGB image, with a bad CRC | a warning, then used as if the CRC were right (so an empty one is an error, and a later PLTE a duplicate) | same |
 | Chunks after the image data | PLTE and unknown critical chunks ignored | same |
 | A chunk type whose third letter is lowercase (the reserved bit) | error | error (same) |
 | IEND with a bad CRC or with data | CRC checked as for an ancillary chunk, so ignored; data ignored | same |
@@ -102,11 +104,24 @@ exported as `vpng_<name>` (`vpng_read_info`); built with `--features
 libpng-abi`, under libpng's own names, and `libverilith_png.a` is then a
 drop-in libpng for reading: compile against `include/png.h` (libpng's
 headers, with a `pnglibconf.h` that says what is here) and link with
-`libverilith_png.a` instead of `libpng16.a`. The module is not verified: it
-reads the chunks through the caller's I/O functions, does libpng's chunk
-handling, and at the first row hands the signature, IHDR, PLTE, tRNS and the
-image data to `top::decode`. The pixels then go to the caller the way libpng
-gives them.
+`libverilith_png.a` instead of `libpng16.a`. The module reads the chunks
+through the caller's I/O functions, does libpng's chunk handling, and at
+the first row hands the signature, IHDR, PLTE, tRNS and the image data to
+`top::decode`. The pixels then go to the caller the way libpng gives them.
+
+The module itself is not verified (the trust ledger counts its lines), but
+the decisions that choose what the decoder sees are: `src/accept.rs` holds
+libpng's CRC actions (`png_set_crc_action`), IHDR's checks, the rules that
+make a PLTE or tRNS chunk used, ignored or an error, the chunk CRCs, and the
+writing of the file the decoder is given. Each is proven to follow libpng's
+rules, and, with libpng's default settings, to agree with `spec::step`
+before the image data: a chunk is an error exactly when the specification
+rejects the file at it, and the palette and transparency the decoder is
+given are exactly the ones the specification takes. What the module still
+does on trust is report those decisions (the warnings and errors they
+name), keep track of which chunks it has accepted (`accept::Seen`), and
+everything after the decoder: the row transformations, interlace handling,
+the other ancillary chunks and the `png_get_*`/`png_set_*` functions.
 
 What is there:
 
@@ -192,6 +207,8 @@ the spec:
   of libpng's CVEs (oversized tRNS and PLTE, palette indices past the
   palette, huge widths, 16-bit conversion, chunk lengths of 2^31, bad CRCs,
   wrong image-data length), each checked against the spec's answer.
+  `tests/plte_crc.rs` pins down the PLTE-with-a-bad-CRC rules (checked
+  against libpng).
 - `difftest/compare.sh FILES...` decodes each file with verilith-png and with libpng
   (`difftest/refpng.c`, built by `difftest/build.sh`) in both formats and
   compares the bytes. On 649 files (PngSuite, libpng's and libspng's test

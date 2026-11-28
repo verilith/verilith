@@ -361,15 +361,47 @@ impl Conn2 {
         let mut reply = s.reply.take().unwrap_or(Reply { status: 0, fields: HList::default(), body: ReplyBody::None, sent_headers: false, off: 0 });
         reply.sent_headers = false;
         reply.off = 0;
+        reply.status = 0;
         let mut scratch = crate::out::Wire::empty();
-        let mut res = Response { out: &mut scratch, ctx, sent: false, close: false, head: method == b"HEAD", h2: Some(&mut reply) };
+        let head = method == b"HEAD";
+        let mut res = Response { out: &mut scratch, ctx, sent: false, close: false, head, h2: Some(&mut reply), defer: crate::defer::current_tcp(id), deferred: false };
         if crate::early::too_early(early, method) {
             res.too_early();
         } else {
             h.handle(&request, &mut res);
         }
-        if !res.sent {
+        let deferred = res.deferred;
+        if !deferred && !res.sent {
             res.error(500);
+        }
+        s.reply = Some(reply);
+        // A deferred stream is framed once it is answered (`resume`).
+        if !deferred {
+            self.ready.push_back((id, at));
+        }
+    }
+
+    /// Answers stream `id`'s deferred request with `f` (a 502 if `f` sends
+    /// nothing); nothing if the stream is gone (reset by the peer). The
+    /// event loop then calls [`Conn2::process`], which frames it.
+    pub fn resume(&mut self, id: u32, head: bool, f: crate::defer::Finish, ctx: &Ctx) {
+        let Some(at) = self.core.locate(id, 0) else { return };
+        // Only a stream whose response has not started was deferred.
+        if self.core.started(at) != Some(false) {
+            return;
+        }
+        let Some(s) = self.core.val(at) else { return };
+        let Some(mut reply) = s.reply.take() else { return };
+        if reply.status != 0 {
+            // Answered already.
+            s.reply = Some(reply);
+            return;
+        }
+        let mut scratch = crate::out::Wire::empty();
+        let mut res = Response { out: &mut scratch, ctx, sent: false, close: false, head, h2: Some(&mut reply), defer: None, deferred: false };
+        f(&mut res);
+        if !res.sent {
+            res.error(502);
         }
         s.reply = Some(reply);
         self.ready.push_back((id, at));

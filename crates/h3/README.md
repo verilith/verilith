@@ -70,7 +70,7 @@ short:
   RFC 9297's boolean settings (§7.2.4);
 - unidirectional stream types (§6.2, RFC 9204 §4.2);
 - the frame order of control, request, response and push streams (§4.1,
-  §6.2.1, §7.2): SETTINGS first and once, HEADERS DATA* [HEADERS], HTTP/2's
+  §6.2.1, §7.2): SETTINGS first and once, `HEADERS DATA* [HEADERS]`, HTTP/2's
   frame types refused everywhere, unknown types skipped;
 - the ID rules: GOAWAY IDs never increase, and a server's are client
   bidirectional stream IDs; MAX_PUSH_ID never decreases and only goes to a

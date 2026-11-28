@@ -1,12 +1,12 @@
 //! The AArch64 instructions the kernels use, one wrapper each (TRUSTED):
 //! each is one intrinsic (FEAT_AES `AESE`, `AESMC`, FEAT_PMULL `PMULL`,
 //! and Advanced SIMD), with an `ensures` stating what it computes in the
-//! terms of [`crate::isa`] on the register as a 128-bit integer ([`nv`]),
+//! terms of [`crate::isa`] on the register as a 128-bit integer (`nv`),
 //! byte element 0 in bits 7:0. Little-endian AArch64 only: `LD1 {Vt.16B}`
 //! puts the byte at the lowest address in element 0, and a `u128` in
 //! memory has its least significant byte there.
 //!
-//! Each requires [`arm_aes`], which [`has_arm_aes`] ensures after run-time
+//! Each requires `arm_aes`, which [`has_arm_aes`] ensures after run-time
 //! detection. The module is compiled on other targets too, so that Verus
 //! checks the Arm proofs on any host; there each body is the verified
 //! reference implementation of its `ensures` ([`crate::isa_ref`]), and
@@ -45,7 +45,7 @@ verus! {
 /// The CPU has FEAT_AES and FEAT_PMULL (and Advanced SIMD).
 pub uninterp spec fn arm_aes() -> bool;
 
-/// Whether the CPU has what [`arm_aes`] says, detected at run time.
+/// Whether the CPU has what `arm_aes` says, detected at run time.
 #[verifier::external_body]
 #[inline]
 pub fn has_arm_aes() -> (r: bool)
