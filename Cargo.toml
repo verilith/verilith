@@ -7,6 +7,7 @@ members = [
     "crates/checksum",
     "crates/brotli",
     "crates/core",
+    "crates/css",
     "crates/dns",
     "crates/font",
     "crates/gif",

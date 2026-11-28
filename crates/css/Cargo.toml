@@ -1,0 +1,28 @@
+[package]
+name = "verilith-css"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+description = "A formally verified (Verus) CSS tokenizer and parser: CSS Syntax Module Level 3, preprocessing, tokenization and parsing"
+edition = "2024"
+rust-version = "1.89"
+repository = "https://github.com/verilith/verilith"
+keywords = ["verified", "verus", "css", "tokenizer", "parser"]
+categories = ["parser-implementations", "web-programming"]
+
+[dependencies]
+vstd = { workspace = true, features = ["std"] }
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+# Verus erases ghost code during a normal `cargo build`; ghost-only imports
+# are guarded by `verus_only`, which Verus turns on during verification.
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(verus_only)',
+  'cfg(verus_keep_ghost)',
+] }
+
+[dev-dependencies]
+# An independent tokenizer to compare with (Servo's, used by Firefox).
+cssparser = "0.35"

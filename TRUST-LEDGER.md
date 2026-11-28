@@ -32,6 +32,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | brotli | 2 |  |  |  |  |  | 5 | 643 |
 | checksum | 7 |  |  |  |  |  |  |  |
 | core | 26 |  |  |  |  |  | 1 | 21 |
+| css |  |  |  |  |  |  | 1 | 88 |
 | dns |  |  |  |  |  |  | 6 | 1438 |
 | font |  |  |  |  |  |  | 1 | 35 |
 | gif |  |  |  |  |  |  | 2 | 953 |
@@ -39,7 +40,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | h3 |  |  |  |  |  |  | 1 | 33 |
 | hpack | 3 |  |  |  |  |  | 3 | 203 |
 | http |  |  |  |  |  |  | 8 | 2725 |
-| imgproxy |  |  |  |  |  |  | 6 | 1484 |
+| imgproxy |  |  |  |  |  |  | 7 | 1675 |
 | jpeg |  |  |  |  |  |  | 3 | 808 |
 | json | 17 |  |  |  |  |  | 6 | 1853 |
 | lz4 |  |  |  |  |  |  | 1 | 584 |
@@ -61,7 +62,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | tls | 1 |  |  |  |  |  | 2 | 254 |
 | tls-aws-lc |  |  |  |  |  |  | 3 | 901 |
 | url | 1 |  |  |  |  |  | 5 | 1311 |
-| verilith |  |  |  |  |  |  | 1 | 67 |
+| verilith |  |  |  |  |  |  | 1 | 69 |
 | wasm | 20 |  |  |  |  | 2 | 4 | 2340 |
 | webp | 9 |  |  |  |  |  | 3 | 667 |
 | x509 |  |  |  |  |  |  | 6 | 1754 |
@@ -69,7 +70,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 | 1354 |
 | zstd | 6 |  |  |  |  |  | 2 | 1331 |
-| **total** | **713** | **36** | **294** | **5** | **17** | **12** | **152** | **60852** |
+| **total** | **713** | **36** | **294** | **5** | **17** | **12** | **154** | **61133** |
 
 ## Items
 
@@ -111,6 +112,10 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/core/src/prims.rs`: external_body: `pick`, `copy16_pick`, `alloc_u32`, `alloc_u8`, `alloc_i16`
 - `crates/core/src/spare.rs`: external_body: `len_spare`, `reserve_spare`, `reserve_spare_plus`, `push_spare`, `append4_spare`, `append_slice_spare`, `append_wild_spare`, `truncate_spare`, `set_spare`, `append8_spare`
 - `crates/core/src/tail.rs`: external_body: `view`, `take`, `put_back`, `len`, `append_from`, `append_from32`, `append_within`, `append_within32`
+
+### css
+
+- `crates/css/src/api.rs`: plain Rust, 88 lines
 
 ### dns
 
@@ -160,11 +165,12 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### imgproxy
 
-- `crates/imgproxy/src/attention.rs`: plain Rust, 225 lines
+- `crates/imgproxy/src/attention.rs`: plain Rust, 176 lines
 - `crates/imgproxy/src/colour.rs`: plain Rust, 139 lines
 - `crates/imgproxy/src/handler.rs`: plain Rust, 107 lines
 - `crates/imgproxy/src/mask.rs`: plain Rust, 75 lines
-- `crates/imgproxy/src/proxy.rs`: plain Rust, 841 lines
+- `crates/imgproxy/src/proxy.rs`: plain Rust, 873 lines
+- `crates/imgproxy/src/vresize.rs`: plain Rust, 208 lines
 - `crates/imgproxy/src/bin/verilith-imgproxy.rs`: plain Rust, 97 lines
 
 ### jpeg
@@ -367,7 +373,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### verilith
 
-- `crates/verilith/src/lib.rs`: plain Rust, 67 lines
+- `crates/verilith/src/lib.rs`: plain Rust, 69 lines
 
 ### wasm
 
