@@ -250,7 +250,7 @@ pub proof fn lemma_ksum_bound(v: spec_fn(int) -> int, kt: Seq<i32>, x: int, s: i
 // ---------------------------------------------------------------------------
 
 /// `num / q`, rounded down (Verus's `/` on `int`).
-fn floor_div(num: i64, q: i64) -> (r: i64)
+pub fn floor_div(num: i64, q: i64) -> (r: i64)
     requires
         1 <= q <= 0x10_0000,
         -0x100_0000_0000 <= num <= 0x100_0000_0000,

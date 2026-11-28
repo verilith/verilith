@@ -6,7 +6,40 @@
 //! check of that function's `requires` clause (Verus does not check the
 //! callers that are not verified), marked "pre:" below.
 use crate::fit::{plan_x, Mode};
+pub use crate::spec_geom::{GKind, Geo, Gravity};
 pub use crate::spec_url::{Filter, Format, Kind, Options};
+
+/// `spec_url::geo`: the geometry options.
+pub fn geo(o: &Options) -> Geo {
+    Geo {
+        mode: o.mode,
+        w: o.w,
+        h: o.h,
+        enlarge: o.enlarge,
+        gravity: o.gravity,
+        crop_w: o.crop_w,
+        crop_h: o.crop_h,
+        crop_g: o.crop_g,
+        extend: o.extend,
+        extend_g: o.extend_g,
+        pad: o.pad,
+        dpr: o.dpr,
+    }
+}
+
+/// `geom::geo_ok`, checked at run time.
+pub fn geo_ok(g: &Geo) -> bool {
+    let off = |g: &Gravity| (-65535..=65535).contains(&g.x) && (-65535..=65535).contains(&g.y);
+    g.w <= MAX_DIM
+        && g.h <= MAX_DIM
+        && (1..=80000).contains(&g.dpr)
+        && g.crop_w <= 655_359_999
+        && g.crop_h <= 655_359_999
+        && off(&g.gravity)
+        && g.crop_g.as_ref().map_or(true, off)
+        && g.extend_g.as_ref().map_or(true, off)
+        && g.pad.iter().all(|&v| v <= MAX_DIM)
+}
 pub use crate::url::{jpeg_shrink_x as jpeg_shrink, Fail, Source};
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -79,7 +112,7 @@ pub fn kernel(f: Filter) -> Option<&'static [i32]> {
 
 impl Default for Options {
     fn default() -> Self {
-        Options { mode: Mode::Fit, w: 0, h: 0, enlarge: false, background: None, format: Format::Png, quality: 0, filter: Filter::Lanczos3 }
+        crate::url::defaults_x()
     }
 }
 
@@ -295,48 +328,72 @@ impl Default for Limits {
 
 /// Decodes, resizes, crops, flattens and encodes: the image to send.
 pub fn process(data: &[u8], o: &Options, lim: &Limits) -> Result<Vec<u8>, Fail> {
+    let too_big = Fail::Unprocessable("Result image is too big");
     // The plan is made from the size the header gives, so that shrinking a
     // JPEG on load changes only how the pixels are computed, not the
-    // result's size.
+    // result's size. The plan is on the image as rotated (odd quarter
+    // turns swap the sides), as the URL's sizes are.
     let (w0, h0) = dims(data).ok_or(Fail::Unsupported)?;
-    // pre: plan_x (sizes at most MAX_DIM).
-    if w0 == 0 || h0 == 0 || w0 > MAX_DIM || h0 > MAX_DIM || o.w > MAX_DIM || o.h > MAX_DIM {
+    let turned = o.rotate != 0 || o.flip_h || o.flip_v;
+    let odd = o.rotate % 2 == 1;
+    let (ow0, oh0) = if odd { (h0, w0) } else { (w0, h0) };
+    let g = geo(o);
+    // pre: geom_x (sizes at most MAX_DIM; geo_ok holds for whatever
+    // url::parse_x returns, and is checked here for other callers).
+    if w0 == 0 || h0 == 0 || w0 > MAX_DIM || h0 > MAX_DIM || !geo_ok(&g) || o.rotate > 3 {
         return Err(Fail::Unprocessable("Source image size not supported"));
     }
-    let mut p = plan_x(w0, h0, o.w, o.h, o.mode, o.enlarge, lim.max_out_px)
-        .ok_or(Fail::Unprocessable("Result image is too big"))?;
-    let shrink = jpeg_shrink(w0, h0, p.rw, p.rh);
+    let mut p = crate::geom::geom_x(ow0, oh0, g, lim.max_out_px).ok_or(too_big.clone())?;
+    let full = (p.x0, p.y0, p.cw0, p.ch0) == (0, 0, ow0, oh0);
+    let shrink = if full { jpeg_shrink(ow0, oh0, p.rw, p.rh) } else { 1 };
     let img = decode_shrunk(data, lim.max_src_px, shrink)?;
-    // pre: resize_rgba and plan_x (the decoded image's sizes in 1..=MAX_DIM).
-    if img.w == 0 || img.h == 0 || img.w > MAX_DIM || img.h > MAX_DIM {
-        return Err(Fail::Unprocessable("Source image size not supported"));
-    }
-    // A GIF's first frame can be smaller than its screen: plan from the frame.
-    if shrink == 1 && (img.w, img.h) != (w0, h0) {
-        p = plan_x(img.w, img.h, o.w, o.h, o.mode, o.enlarge, lim.max_out_px)
-            .ok_or(Fail::Unprocessable("Result image is too big"))?;
-    }
-    if img.px.len() != img.w as usize * img.h as usize * 4 {
+    // pre: turn_rgba, geom_x and the resizers (sizes in 1..=MAX_DIM, a
+    // whole number of pixels).
+    if img.w == 0 || img.h == 0 || img.w > MAX_DIM || img.h > MAX_DIM || img.px.len() != img.w as usize * img.h as usize * 4 {
         return Err(Fail::Unprocessable("Source image is invalid"));
     }
-    let (sw, sh) = (img.w as usize, img.h as usize);
+    let (iw, ih) = (img.w as usize, img.h as usize);
+    let px = if turned { crate::geom::turn_rgba(&img.px, iw, ih, o.rotate, o.flip_h, o.flip_v) } else { img.px };
+    let (sw, sh) = if odd { (ih, iw) } else { (iw, ih) };
+    // A GIF's first frame can be smaller than its screen: plan from the frame.
+    if shrink == 1 && (sw as u32, sh as u32) != (ow0, oh0) {
+        p = crate::geom::geom_x(sw as u32, sh as u32, g, lim.max_out_px).ok_or(too_big.clone())?;
+    }
+    // Shrunk on load (only when the crop is the whole image): the crop is
+    // the whole of what was decoded.
+    let (x0, y0, cw0, ch0) =
+        if shrink == 1 { (p.x0 as usize, p.y0 as usize, p.cw0 as usize, p.ch0 as usize) } else { (0, 0, sw, sh) };
+    // pre: crop_rgba (geom_x ensures the rectangle is inside).
+    let px = if (x0, y0, cw0, ch0) == (0, 0, sw, sh) { px } else { crate::resize::crop_rgba(&px, sw, sh, x0, y0, cw0, ch0) };
     let (rw, rh) = (p.rw as usize, p.rh as usize);
     // pre: resize_rgba and thumb_rgba (all sizes in 1..=MAX_DIM, ensured
-    // by plan_x; the products are below 2^34 on a 64-bit target; kernel's
+    // by geom_x; the products are below 2^34 on a 64-bit target; kernel's
     // tables are 256 to 768 entries of at most 32768 in size).
-    let px = if (rw, rh) == (sw, sh) {
-        img.px
+    let px = if (rw, rh) == (cw0, ch0) {
+        px
     } else {
         match kernel(o.filter) {
-            Some(kt) => crate::lanczos::thumb_rgba(kt, &img.px, sw, sh, rw, rh),
-            None => crate::resize::resize_rgba(&img.px, sw, sh, rw, rh),
+            Some(kt) => crate::lanczos::thumb_rgba(kt, &px, cw0, ch0, rw, rh),
+            None => crate::resize::resize_rgba(&px, cw0, ch0, rw, rh),
         }
     };
-    // pre: crop_rgba (plan_x ensures the rectangle is inside).
+    // pre: crop_rgba (geom_x ensures the rectangle is inside).
     let px = if (p.cx, p.cy, p.cw, p.ch) == (0, 0, p.rw, p.rh) {
         px
     } else {
         crate::resize::crop_rgba(&px, rw, rh, p.cx as usize, p.cy as usize, p.cw as usize, p.ch as usize)
+    };
+    // pre: embed_rgba (geom_x ensures the image is inside the canvas).
+    // `extend` and `padding` fill with the background, or transparency.
+    let (cw, ch) = (p.canvas_w, p.canvas_h);
+    let px = if (cw, ch) == (p.cw, p.ch) {
+        px
+    } else {
+        let fill = match o.background {
+            Some([r, g, b]) => [r, g, b, 255],
+            None => [0, 0, 0, 0],
+        };
+        crate::geom::embed_rgba(&px, p.cw as usize, p.ch as usize, cw as usize, ch as usize, p.ax as usize, p.ay as usize, fill)
     };
     // pre: flatten (a whole number of pixels). JPEG has no alpha: it is
     // flattened onto the background, white by default, as imgproxy does.
@@ -351,13 +408,13 @@ pub fn process(data: &[u8], o: &Options, lim: &Limits) -> Result<Vec<u8>, Fail> 
     match o.format {
         // pre: encode_rgba (sizes at most MAX_DIM).
         Format::Png => {
-            crate::pngenc::encode_rgba(&px, p.cw, p.ch, lim.level).ok_or(Fail::Unprocessable("Result image is too big"))
+            crate::pngenc::encode_rgba(&px, cw, ch, lim.level).ok_or(Fail::Unprocessable("Result image is too big"))
         }
         // encode_rgb checks its input itself. Chroma is subsampled below
         // quality 90, as libvips (imgproxy's encoder) does by default.
         Format::Jpeg => {
             let q = if o.quality == 0 { DEFAULT_QUALITY } else { o.quality };
-            verilith_jpeg::encode::encode_rgb(&px, p.cw as usize, p.ch as usize, 4, q as u8, q < 90)
+            verilith_jpeg::encode::encode_rgb(&px, cw as usize, ch as usize, 4, q as u8, q < 90)
                 .ok_or(Fail::Unprocessable("Result image is too big for JPEG"))
         }
     }
@@ -679,7 +736,10 @@ mod tests {
             b"/x/bg:zz0000/plain/local:///a",
             b"/x/bg:256:0:0/plain/local:///a",
             b"/x/q:101/plain/local:///a",
-            b"/x/g:no/plain/local:///a",
+            b"/x/g:sm/plain/local:///a",
+            b"/x/g:fp:2:0/plain/local:///a",
+            b"/x/rot:45/plain/local:///a",
+            b"/x/dpr:0/plain/local:///a",
             b"/x/plain/ftp://a/b",
             b"/x/plain/local:///a@gif",
             b"/x/uploadx",

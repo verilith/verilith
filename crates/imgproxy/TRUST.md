@@ -1,7 +1,7 @@
 # What verilith-imgproxy trusts
 
 Beyond what every Verilith crate trusts (Verus, Z3, rustc, and the
-specifications: this crate's `src/spec.rs`, `src/spec_lanczos.rs` and `src/spec_url.rs`, verilith-png's `spec.rs`, which
+specifications: this crate's `src/spec.rs`, `src/spec_lanczos.rs`, `src/spec_geom.rs` and `src/spec_url.rs`, verilith-png's `spec.rs`, which
 the encoder's round-trip theorem is stated with, and the decoders' own
 specifications), and beyond what the crates it builds on trust
 (verilith-server's [TRUST.md](../server/TRUST.md) for the event loop,
@@ -9,7 +9,7 @@ sockets and TLS):
 
 | File | What it is | What the rest assumes of it |
 |---|---|---|
-| `src/proxy.rs` | The signature check's glue, calling the verified URL parser (`url::parse_x`) and format sniffer (`url::kind_x`), the pipeline that calls the verified functions, `local://`, `http://` and `https://` sources, reading the CA bundle (PEM), the kernel tables (`kernel`: sampled in floating point; the proofs hold for any table, so a wrong value changes how the image looks, never what the code may do) | Calls each verified function only when its `requires` holds: each call is preceded by a run-time check of it, marked `pre:` (Verus does not check unverified callers). Reads `local://` files only through verilith-server's verified `path::resolve_exec` and `join_to` and the kernel's `openat2(RESOLVE_BENEATH)` (`sys::open_beneath`). Refuses images over the pixel limit from their headers, before decoding. Safe Rust, no `unsafe`; its URL and signature handling is tested in `src/proxy.rs`'s tests (including imgproxy's documented signature example), and the pipeline in `tests/pipeline.rs` |
+| `src/proxy.rs` | The signature check's glue, calling the verified URL parser (`url::parse_x`) and format sniffer (`url::kind_x`), the pipeline that calls the verified functions, `local://`, `http://` and `https://` sources, reading the CA bundle (PEM), the kernel tables (`kernel`: sampled in floating point; the proofs hold for any table, so a wrong value changes how the image looks, never what the code may do) | Calls each verified function only when its `requires` holds: each call is preceded by a run-time check of it, marked `pre:` (Verus does not check unverified callers). Reads `local://` files only through verilith-server's verified `path::resolve_exec` and `join_to` and the kernel's `openat2(RESOLVE_BENEATH)` (`sys::open_beneath`). Refuses images over the pixel limit from their headers, before decoding. Safe Rust, no `unsafe`; its URL and signature handling is tested in `src/proxy.rs`'s tests (including imgproxy's documented signature example), the pipeline in `tests/pipeline.rs`, and the geometry options in `tests/geometry.rs` |
 | `src/handler.rs` | The HTTP routes, status codes and response fields | Application code: sends what `proxy.rs` returns, through verilith-server's verified response path |
 | `src/bin/verilith-imgproxy.rs` | Flags and environment variables | Application code |
 | verilith-sha2's `HmacSha256` | URL signatures | Verified (its README): `verify` returns exactly whether the tag is the HMAC of the key and data, in time that depends only on the lengths |
