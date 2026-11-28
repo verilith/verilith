@@ -39,8 +39,8 @@ not occur in any crate's `src/` (the script fails if one appears).
 | h3 |  |  |  |  |  |  | 1 | 33 |
 | hpack | 3 |  |  |  |  |  | 3 | 203 |
 | http |  |  |  |  |  |  | 8 | 2725 |
-| imgproxy |  |  |  |  |  |  | 3 | 703 |
-| jpeg |  |  |  |  |  |  | 3 | 763 |
+| imgproxy |  |  |  |  |  |  | 3 | 756 |
+| jpeg |  |  |  |  |  |  | 3 | 768 |
 | json | 17 |  |  |  |  |  | 6 | 1853 |
 | lz4 |  |  |  |  |  |  | 1 | 584 |
 | png |  |  |  |  |  |  | 7 | 4807 |
@@ -69,7 +69,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 | 1354 |
 | zstd | 6 |  |  |  |  |  | 2 | 1331 |
-| **total** | **713** | **36** | **294** | **7** | **17** | **12** | **149** | **60042** |
+| **total** | **713** | **36** | **294** | **7** | **17** | **12** | **149** | **60100** |
 
 ## Items
 
@@ -164,13 +164,13 @@ not occur in any crate's `src/` (the script fails if one appears).
 ### imgproxy
 
 - `crates/imgproxy/src/handler.rs`: plain Rust, 83 lines
-- `crates/imgproxy/src/proxy.rs`: plain Rust, 551 lines
+- `crates/imgproxy/src/proxy.rs`: plain Rust, 604 lines
 - `crates/imgproxy/src/bin/verilith-imgproxy.rs`: plain Rust, 69 lines
 
 ### jpeg
 
 - `crates/jpeg/src/capi.rs`: plain Rust, 30 lines
-- `crates/jpeg/src/lib.rs`: plain Rust, 47 lines
+- `crates/jpeg/src/lib.rs`: plain Rust, 52 lines
 - `crates/jpeg/src/tj.rs`: plain Rust, 686 lines
 
 ### json

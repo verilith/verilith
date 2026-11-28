@@ -13,7 +13,9 @@ type, restart handling, dequantization, the inverse DCT, chroma upsampling
 and colour conversion are proven against a specification of the format,
 down to the value of every output byte, and so is a bound on the decoder's
 work: linear in the file's size, the image's size, and the frame's blocks
-once per scan. `cargo verus verify` checks 651 functions with no errors.
+once per scan. It also decodes at 1/2, 1/4 and 1/8 of the image's size,
+straight from the coefficients, with the same pixels as libjpeg-turbo's
+scaled decoding. `cargo verus verify` checks 822 functions with no errors.
 
 ## Using it from Rust
 
@@ -25,6 +27,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pic = verilith_jpeg::decode(&data)?;
     // pic.nc bytes per pixel (1 gray, 3 RGB), row by row.
     assert_eq!(pic.px.len(), pic.w as usize * pic.h as usize * pic.nc as usize);
+    // At 1/8 of the size (m / 8 for m = 1, 2 or 4), for thumbnails.
+    let small = verilith_jpeg::decode_scaled(&data, 1)?;
+    assert_eq!(small.w, (pic.w + 7) / 8);
     Ok(())
 }
 ```
@@ -42,6 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | The Huffman decoder, with its 10-bit lookahead table and 16-bit window, returns the symbol of T.81's DECODE procedure | `huff::decode` against `spec::huff` |
 | The inverse DCT equals the specification's (libjpeg's `jidctint.c`) on all its paths: on AArch64 (and on x86-64 with SSE4.1, and WebAssembly with SIMD128, through verilith-simd's proven translations), NEON intrinsics in 16-bit lanes for blocks whose magnitudes sum to at most 2120 (nearly every block of a photograph; on x86-64 with AVX2, AVX2 intrinsics for these instead) and in 32-bit lanes for the others whose dequantized values fit in 15 bits; elsewhere 32-bit arithmetic that compilers vectorize; and 64-bit arithmetic for the rest | `idct::idct_into`, `idct16::idct16_neon`, `idct_avx2::idct_avx2`, `idct_neon::idct_neon` against `spec::idct` |
 | Upsampling and colour conversion equal the specification's, including the branch-free kernels compilers vectorize and, on AArch64 (and on x86-64 without AVX2), colour conversion with NEON intrinsics | `render::up_row`, `render::ycc_row`, `color_neon::ycc16` |
+| Reduced-size decoding: for every byte string and `m` of 1, 2 or 4, `decode_scaled` returns the image `spec_scaled::jpeg_decode_scaled` gives it at `m / 8` of its width and height, and `Invalid` exactly when the full-size specification gives the file no image. Each block goes through libjpeg's 1x1, 2x2 or 4x4 inverse DCT (`jidctred.c`), or the 8x8 one for chroma scaled up to the luma's resolution as `jdmaster.c` chooses, then upsampling (no triangle filters at 1/8, as `jdsample.c`) and colour conversion | `scaled::decode_scaled` against `spec_scaled::jpeg_decode_scaled` |
 | Work: at most `jpeg_work(n, s, b, px) = 4n + (s + 1)(300b + 10) + 66b + 110px + 262,480` steps for an `n`-byte file with `s` scans, whose frame is stored in `b` blocks of 8x8 coefficients and has `px` pixels; `s` is at most `n + 65,552` | `decode::decode_counted` ensures (`decode` is the same code without the count) |
 | Work per stage: the marker segments, entropy decoding and restart searches at most `4(n + 65,568) + (s + 1)(300b + 10) + 200` steps; the inverse DCT and upsampling at most 66 steps per block and 110 per pixel | `parse::run_x`, `scan::scan_x`, `decode::render_x` |
 
@@ -87,7 +93,8 @@ approximately.
 - Four-component files (CMYK and YCCK), and two-component files.
 - Sampling factors where some component's factor does not divide the
   largest evenly (libjpeg-turbo rejects these too).
-- Scaled decoding (1/2, 1/4, 1/8), cropping, colour quantization, and output
+- Scaling factors other than 1/2, 1/4 and 1/8 (libjpeg-turbo also has 3/8,
+  5/8 and the factors above 1), cropping, colour quantization, and output
   other than grey or RGB at the image's own size. The TurboJPEG layer derives
   the other RGB pixel orders from the RGB result.
 - Embedded metadata (EXIF, ICC profiles, comments) is skipped, not returned.
