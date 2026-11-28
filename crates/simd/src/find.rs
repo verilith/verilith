@@ -1,6 +1,6 @@
 //! Finding the next occurrence of one byte, 16 bytes at a time: SSE2 on
 //! x86-64, NEON on AArch64 (and wasm32's SIMD through the same generic
-//! scanner), proven against the plain definition, [`first_at`]. Nothing
+//! scanner), proven against the plain definition, `first_at`. Nothing
 //! here is trusted: it is built on this crate's verified `sse2` and
 //! `neon` wrappers.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", all(target_arch = "wasm32", target_feature = "simd128")))]

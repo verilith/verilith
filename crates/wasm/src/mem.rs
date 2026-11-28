@@ -1,10 +1,10 @@
 //! Linear memory that keeps a record of the 4 KiB chunks written since it
 //! was last made clean, so that putting it back to that clean state copies
-//! only those chunks ([`Mem::reset`]).
+//! only those chunks (`Mem::reset`).
 //!
 //! The record is a type invariant: every chunk not marked dirty holds
-//! exactly the bytes of [`Mem::base`], the memory as it was when last made
-//! clean ([`Mem::new`], [`Mem::rebase`], [`Mem::reset`]). Every write
+//! exactly the bytes of `Mem::base`, the memory as it was when last made
+//! clean (`Mem::new`, `Mem::rebase`, `Mem::reset`). Every write
 //! marks the chunks it touches before it changes a byte, so the invariant
 //! holds after every operation, whoever calls it. A host function gets
 //! the memory as `&mut Mem`: it can read it and write it only through the

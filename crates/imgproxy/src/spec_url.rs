@@ -4,9 +4,11 @@
 //! `spec.rs`; it reuses verilith-text's specifications of percent-decoding
 //! and base64.
 //!
-//!   /%signature/%option/.../plain/%source_url[@%extension]
-//!   /%signature/%option/.../%base64url_source_url[.%extension]
-//!   /%signature/%option/.../upload[@%extension]
+//! ```text
+//! /%signature/%option/.../plain/%source_url[@%extension]
+//! /%signature/%option/.../%base64url_source_url[.%extension]
+//! /%signature/%option/.../upload[@%extension]
+//! ```
 //!
 //! An option is a path segment `name:arg:arg...` (one that has a `:` and
 //! does not start with `http` or `local`); options apply left to right,

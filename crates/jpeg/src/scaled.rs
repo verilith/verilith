@@ -1321,6 +1321,9 @@ fn sup_x(s: &SComp, m: u32, y: usize, x: usize, Ghost(k): Ghost<Coded>, Ghost(c)
             requires
                 s.he == 1 && s.ve == 2,
         ;
+        // Stated for the solver (z3's Arm build does not find it).
+        assert(y < 2 * s.sh);
+        assert(y / 2 < s.sh);
         ((csum_x(s, y, x, Ghost(k), Ghost(c), Ghost(mi)) + 1 + (y % 2) as u32) / 4) as u8
     } else if s.hi * 2 == s.ho && s.vi * 2 == s.vo && fancy && w > 2 {
         assert(s.he == 2 && s.ve == 2) by (nonlinear_arith)

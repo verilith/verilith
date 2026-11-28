@@ -3,7 +3,7 @@
 //! canvas (upright, as the EXIF orientation says), Lanczos (or area-average)
 //! resizing, blurring, sharpening, watermarks, smart gravity,
 //! and PNG or JPEG output, served by verilith-server.
-#![cfg_attr(not(verus_only), allow(unused_variables, unused_imports))]
+#![cfg_attr(not(verus_only), allow(unused_variables, unused_imports, unused_braces))]
 #[cfg(not(target_pointer_width = "64"))]
 compile_error!("verilith-imgproxy is verified for 64-bit targets only");
 
