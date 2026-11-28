@@ -1,8 +1,8 @@
 //! Optimal parsing for qualities 10 and 11 (not trusted, like every
-//! parse: `cwrite::check_cmds` checks its commands before they are
-//! written). The matches at every position of a block are found once;
-//! then a shortest path over the block, with bit costs from the symbol
-//! counts of the previous parse, picks literals and copies. Two rounds.
+//! parse: `mbw::put_mb` checks its commands as it writes them). The
+//! matches at every position of a block are found once; then a shortest
+//! path over the block, with bit costs from the symbol counts of the
+//! previous parse, picks literals and copies. Two rounds.
 use crate::compress::*;
 use crate::mblock::*;
 use crate::spec::{INS_EXTRA, CPY_EXTRA};
@@ -117,6 +117,7 @@ fn set_child(mf: &mut Mf, n: usize, right: bool, v: u32)
         final(mf).bt == old(mf).bt,
         final(mf).wmax == old(mf).wmax,
         final(mf).depth == old(mf).depth,
+        final(mf).dict@ == old(mf).dict@,
 {
     if right {
         store_at(&mut mf.right, n, v);
@@ -719,7 +720,7 @@ pub fn parse_opt(mf: &mut Mf, data: &[u8], start: usize, end: usize, dr: [u32; 4
         let mut lf = vec![0u32; 256];
         let mut cf = vec![0u32; 704];
         let mut df = vec![0u32; 64];
-        if symbols(&lz, data, start, dr, &mut lf, &mut cf, &mut df).is_none() {
+        if symbols(&lz, data, start, dr, mf.wmax, &mut lf, &mut cf, &mut df).is_none() {
             break;
         }
         let co = costs_from(&lf, &cf, &df);

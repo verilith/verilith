@@ -430,23 +430,63 @@ pub proof fn lemma_pc_sym(b: Seq<u8>, w: Seq<nat>, pc: Pc, c: int, delta: int, a
     }
 }
 
-/// The phase that reads the code: `Trees(g)` with a code left to read.
+/// The phase that reads a prefix code of kind `g`: 0 to 2, `Trees(g)` with
+/// a code left to read; 3 to 5, the block type code of category `g - 3`;
+/// 6 to 8, the block count code of category `g - 6`; 9 and 10, the code
+/// of context map `g - 9`.
 pub open spec fn tree_phase(s: St, g: int, alpha: int) -> bool {
-    &&& s.phase == Phase::Trees(g)
-    &&& 0 <= g < 3
-    &&& nread(s, g) < ntrees(s, g)
     &&& pc_alpha(s) == alpha
+    &&& if 0 <= g < 3 {
+        &&& s.phase == Phase::Trees(g)
+        &&& nread(s, g) < ntrees(s, g)
+    } else if 3 <= g < 6 {
+        s.phase == Phase::BTypeCode(g - 3)
+    } else if 6 <= g < 9 {
+        s.phase == Phase::BCountCode(g - 6)
+    } else if 9 <= g < 11 {
+        &&& s.phase == Phase::CMap(g - 9)
+        &&& s.cm.stage == 1
+    } else {
+        false
+    }
 }
 
-/// The state once a code has been read in `Trees(g)`.
+/// The state once a code of kind `g` has been read.
 pub open spec fn tree_fin(s: St, g: int, lens: Seq<u8>, p: int) -> St {
     let s1 = St { pos: p, pc: pc_init(), ..s };
     if g == 0 {
         St { lit: s.lit.push(lens), ..s1 }
     } else if g == 1 {
         St { cmd: s.cmd.push(lens), ..s1 }
-    } else {
+    } else if g == 2 {
         St { dst: s.dst.push(lens), ..s1 }
+    } else if g < 6 {
+        St { phase: Phase::BCountCode(g - 3), btc: s.btc.update(g - 3, lens), ..s1 }
+    } else if g < 9 {
+        St { phase: Phase::BCount(g - 6), bcc: s.bcc.update(g - 6, lens), ..s1 }
+    } else {
+        St { cm: Cm { stage: 2, code: lens, map: Seq::empty(), ..s.cm }, ..s1 }
+    }
+}
+
+/// A step in a phase that reads a prefix code is a step of `pc_step`.
+pub proof fn lemma_step_pcph(b: Seq<u8>, s: St, g: int, alpha: int)
+    requires
+        tree_phase(s, g, alpha),
+    ensures
+        step(b, s) == match pc_step(b, s.pos, s.pc, alpha) {
+            PcRes::Bad => Step::Bad,
+            PcRes::Short => Step::Short,
+            PcRes::Cont(pc, p) => Step::Next(St { pos: p, pc, ..s }),
+            PcRes::Fin(lens, p) => Step::Next(tree_fin(s, g, lens, p)),
+        },
+{
+    if g < 3 {
+        crate::decoder::lemma_step_trees(b, s, g);
+    } else if g < 9 {
+        crate::decoder::lemma_step_code(b, s);
+    } else {
+        crate::decoder::lemma_step_cmap(b, s, g - 9);
     }
 }
 
@@ -476,7 +516,7 @@ proof fn lemma_items_step(b: Seq<u8>, w: Seq<nat>, s: St, g: int, its: Seq<(int,
     let d = its[0].1;
     assert(items_coded(s.pc.cl, its) ==> 1 <= s.pc.cl[its[0].0]);
     lemma_pc_sym(b, w, s.pc, c, d, alpha, items_bits(s.pc.cl, its.subrange(1, its.len() as int)));
-    crate::decoder::lemma_step_trees(b, s, g);
+    lemma_step_pcph(b, s, g, alpha);
 }
 
 /// The code length symbols of a complex code.
@@ -522,7 +562,7 @@ pub proof fn lemma_items(w: Seq<nat>, s: St, g: int, its: Seq<(int, int)>, alpha
             assert(items_valid(s.pc, its1, alpha) == false || true);
             lemma_pc_sym(b, w, s.pc, its[0].0, its[0].1, alpha, Seq::empty());
             assert(x + Seq::<nat>::empty() =~= x);
-            crate::decoder::lemma_step_trees(b, s, g);
+            lemma_step_pcph(b, s, g, alpha);
         }
         lemma_moves_step(w, x, s, s1);
         assert forall|i: int| 0 <= i < r.len() implies {
@@ -745,7 +785,7 @@ pub proof fn lemma_cx_head(w: Seq<nat>, s: St, g: int, alpha: int, t: Seq<u8>, h
         lemma_rd(b, w, hskip as nat, 2, y);
         assert(w + u =~= (w + h) + (y + Seq::<nat>::empty()));
         lemma_read_cl(b, w + h, t, hskip, Seq::new(18, |i: int| 0u8), 0, 32, Seq::empty());
-        crate::decoder::lemma_step_trees(b, s, g);
+        lemma_step_pcph(b, s, g, alpha);
     }
     lemma_moves_step(w, u, s, t1);
 }
@@ -863,7 +903,7 @@ pub proof fn lemma_simple(w: Seq<nat>, s: St, g: int, alpha: int, syms: Seq<int>
             assert(w2 + (y + z) =~= w3 + (z + Seq::<nat>::empty()));
             lemma_rd(b, w3, tsel as nat, 1, Seq::empty());
         }
-        crate::decoder::lemma_step_trees(b, s, g);
+        lemma_step_pcph(b, s, g, alpha);
     }
     lemma_moves_step(w, u, s, t);
 }
