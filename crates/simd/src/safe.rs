@@ -2471,6 +2471,42 @@ pub fn _mm_mullo_epi32(a: __m128i, b: __m128i) -> (r: __m128i)
     unsafe { core::arch::x86_64::_mm_mullo_epi32(a, b) }
 }
 
+/// [`_mm256_cvtepu8_epi32`](core::arch::x86_64::_mm256_cvtepu8_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u32x8(r) == zext8_32(b128(a).subrange(0, 8))
+/// ```
+#[verifier::external_body]
+#[inline(always)]
+pub fn _mm256_cvtepu8_epi32(a: __m128i) -> (r: __m256i)
+    requires
+        avx2(),
+    ensures
+        u32x8(r) == zext8_32(b128(a).subrange(0, 8)),
+{
+    unsafe { core::arch::x86_64::_mm256_cvtepu8_epi32(a) }
+}
+
+/// [`_mm256_mullo_epi32`](core::arch::x86_64::_mm256_mullo_epi32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u32x8(r) == mullo32(u32x8(a), u32x8(b))
+/// ```
+#[verifier::external_body]
+#[inline(always)]
+pub fn _mm256_mullo_epi32(a: __m256i, b: __m256i) -> (r: __m256i)
+    requires
+        avx2(),
+    ensures
+        u32x8(r) == mullo32(u32x8(a), u32x8(b)),
+{
+    unsafe { core::arch::x86_64::_mm256_mullo_epi32(a, b) }
+}
+
 /// [`_mm_sll_epi16`](core::arch::x86_64::_mm_sll_epi16) as a safe function, with the
 /// specification Verus checks callers against:
 ///

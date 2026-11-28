@@ -659,7 +659,7 @@ fn nar1(v: __m256i, Ghost(dq): Ghost<Seq<int>>, Ghost(k): Ghost<int>) -> (r: __m
 }
 
 /// The 32-bit lanes of a selection of 128-bit halves.
-proof fn lemma_perm_u32(p: __m256i, q: __m256i, r: __m256i, imm: int)
+pub proof fn lemma_perm_u32(p: __m256i, q: __m256i, r: __m256i, imm: int)
     requires
         imm == 0x20 || imm == 0x31,
         b256(r) == perm2x128(b256(p), b256(q), imm),
@@ -694,7 +694,7 @@ proof fn lemma_perm_u32(p: __m256i, q: __m256i, r: __m256i, imm: int)
 
 /// Transposes four rows of 32-bit lanes within each 128-bit half.
 #[inline(always)]
-fn tr4(a: __m256i, b: __m256i, c: __m256i, d: __m256i) -> (r: (__m256i, __m256i, __m256i, __m256i))
+pub fn tr4(a: __m256i, b: __m256i, c: __m256i, d: __m256i) -> (r: (__m256i, __m256i, __m256i, __m256i))
     requires
         avx2(),
     ensures

@@ -238,6 +238,10 @@ spec("_mm_abs_epi16", None, [("a", "__m128i")], "__m128i", ["ssse3()"], ["u16x8(
 spec("_mm_adds_epu16", None, [("a", "__m128i"), ("b", "__m128i")], "__m128i", [], ["u16x8(r) == adds_u16(u16x8(a), u16x8(b))"])
 spec("_mm_max_epu16", None, [("a", "__m128i"), ("b", "__m128i")], "__m128i", ["sse41()"], ["u16x8(r) == max_u16(u16x8(a), u16x8(b))"])
 spec("_mm_mullo_epi32", None, [("a", "__m128i"), ("b", "__m128i")], "__m128i", ["sse41()"], ["u32x4(r) == mullo32(u32x4(a), u32x4(b))"])
+# The low 32 bits of each 32-bit product (the JPEG encoder's DCT and colour
+# conversion).
+spec("_mm256_cvtepu8_epi32", None, [("a", "__m128i")], "__m256i", ["avx2()"], ["u32x8(r) == zext8_32(b128(a).subrange(0, 8))"])
+spec("_mm256_mullo_epi32", None, [("a", "__m256i"), ("b", "__m256i")], "__m256i", ["avx2()"], ["u32x8(r) == mullo32(u32x8(a), u32x8(b))"])
 # Shifts by the count in the low 64 bits of `count`, stated for counts below
 # the lane width (the only ones these specs allow).
 spec("_mm_sll_epi16", None, [("a", "__m128i"), ("count", "__m128i")], "__m128i", ["u64x2(count)[0] < 16"],

@@ -24407,6 +24407,25 @@ fn mm_mullo_epi32() {
 }
 
 #[test]
+fn mm256_mullo_epi32() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i, b: __m256i) -> __m256i { _mm256_mullo_epi32(a, b) }
+    let mut rng = Rng::new(0x1fc8568006b0e9bc);
+    for it in 0..ITERS {
+        let a = rng.v256();
+        let b = if it % 7 == 0 { a } else if it % 11 == 0 { rng.near256(a) } else { rng.v256() };
+        let got = u32s256(unsafe { go(a, b) });
+        let want: Vec<u32> = ref_mullo32(&u32s256(a), &u32s256(b));
+        if got != want { fail("_mm256_mullo_epi32", &bytes256(a), &bytes256(b), &format!("{:?} vs {:?}", got, want)); }
+    }
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
 fn mm_abs_epi16() {
     if !need_avx2() { return; }
     #[target_feature(enable = "avx2")]
@@ -24578,6 +24597,25 @@ fn lanes256() {
         assert_eq!(bytes256(s), cat);
         assert_eq!(u32s256(p), ref_permvar32(&u32s256(a), &u32s256(idx)));
         let _ = b;
+    }
+
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
+fn mm256_cvtepu8_epi32() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    let mut rng = Rng::new(0x2561);
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m128i) -> __m256i { _mm256_cvtepu8_epi32(a) }
+    for _ in 0..ITERS {
+        let a = rng.v128();
+        let got = u32s256(unsafe { go(a) });
+        let want = ref_zext8_32(&bytes128(a)[..8]);
+        if got != want { fail("_mm256_cvtepu8_epi32", &bytes128(a), &[], &format!("{:?} vs {:?}", got, want)); }
     }
 
     }

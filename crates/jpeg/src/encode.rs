@@ -89,14 +89,67 @@ proof fn lemma_pix(w: int, h: int, bpp: int, y: int, x: int)
     assert((y * w + x + 1) * bpp == (y * w + x) * bpp + bpp) by (nonlinear_arith);
 }
 
+/// Row `sy`'s first `8 * n` pixels, `bpp` bytes each, and 4 bytes more,
+/// fit in the image (`n` as `full_planes` picks it, `m` at most `w`).
+proof fn lemma_row_run(w: int, h: int, bpp: int, sy: int, m: int, n: int)
+    requires
+        0 <= sy < h,
+        1 <= w,
+        m <= w,
+        3 <= bpp <= 4,
+        1 <= n,
+        sy + 1 < h ==> 8 * n <= m,
+        sy + 1 >= h ==> 8 * n + 2 <= m,
+    ensures
+        0 <= sy * w * bpp,
+        sy * w <= sy * w * bpp,
+        sy * w * bpp + bpp * (8 * n) + 4 <= w * h * bpp,
+        8 * n <= w,
+{
+    assert(0 <= sy * w && sy * w <= sy * w * bpp) by (nonlinear_arith)
+        requires
+            0 <= sy,
+            1 <= w,
+            3 <= bpp,
+    ;
+    if sy + 1 < h {
+        assert(sy * w * bpp + bpp * (8 * n) + 4 <= w * h * bpp) by (nonlinear_arith)
+            requires
+                0 <= sy,
+                sy + 2 <= h,
+                1 <= w,
+                3 <= bpp,
+                0 <= 8 * n <= w,
+        ;
+    } else {
+        assert(sy * w * bpp + bpp * (8 * n) + 4 <= w * h * bpp) by (nonlinear_arith)
+            requires
+                sy + 1 == h,
+                1 <= w,
+                3 <= bpp,
+                0 <= 8 * n,
+                8 * n + 2 <= w,
+        ;
+    }
+}
+
+/// Pixel (`sy`, `x`)'s bytes start at `sy * w * bpp + bpp * x`.
+proof fn lemma_row_px(w: int, bpp: int, sy: int, x: int)
+    ensures
+        (sy * w + x) * bpp == sy * w * bpp + bpp * x,
+{
+    assert((sy * w + x) * bpp == sy * w * bpp + bpp * x) by (nonlinear_arith);
+}
+
 /// Y, Cb and Cr at full resolution, `ph` rows of `pw`, the image's edges
 /// repeated.
-fn full_planes(px: &[u8], w: usize, h: usize, bpp: usize, pw: usize, ph: usize) -> (r: (
+fn full_planes(px: &[u8], w: usize, h: usize, bpp: usize, pw: usize, ph: usize, simd: bool) -> (r: (
     Vec<Vec<u8>>,
     Vec<Vec<u8>>,
     Vec<Vec<u8>>,
 ))
     requires
+        simd ==> verilith_simd::cpu::avx2(),
         im_ok(Rgb { w: w as int, h: h as int, bpp: bpp as int, px: px@ }),
     ensures
         plane_full(r.0@, Rgb { w: w as int, h: h as int, bpp: bpp as int, px: px@ }, 0, pw as int, ph as int),
@@ -110,6 +163,7 @@ fn full_planes(px: &[u8], w: usize, h: usize, bpp: usize, pw: usize, ph: usize) 
     let mut y: usize = 0;
     while y < ph
         invariant
+            simd ==> verilith_simd::cpu::avx2(),
             im == (Rgb { w: w as int, h: h as int, bpp: bpp as int, px: px@ }),
             im_ok(im),
             y <= ph,
@@ -131,8 +185,45 @@ fn full_planes(px: &[u8], w: usize, h: usize, bpp: usize, pw: usize, ph: usize) 
         let mut r1: Vec<u8> = Vec::with_capacity(pw);
         let mut r2: Vec<u8> = Vec::with_capacity(pw);
         let mut x: usize = 0;
+        if simd && w >= 16 && pw >= 16 {
+            let m = if w < pw {
+                w
+            } else {
+                pw
+            };
+            // Each group reads 4 bytes past its pixels: past the row's end
+            // into the next row, or on the last row short of its last two.
+            let n = if sy + 1 < h {
+                m / 8
+            } else {
+                (m - 2) / 8
+            };
+            proof {
+                lemma_row_run(w as int, h as int, bpp as int, sy as int, m as int, n as int);
+                assert(px@.len() == px.len());
+            }
+            let i = sy * w * bpp;
+            // `ycc_run` enables AVX2, which makes it unsafe to call, on
+            // x86-64; `simd` says the CPU has it.
+            #[cfg_attr(any(verus_only, not(target_arch = "x86_64")), allow(unused_unsafe))]
+            unsafe {
+                crate::color_avx2::ycc_run(px, i, n, bpp, &mut r0, &mut r1, &mut r2)
+            };
+            x = 8 * n;
+            proof {
+                assert forall|xx: int| #![trigger r0@[xx]] #![trigger r1@[xx]] #![trigger r2@[xx]] 0 <= xx < x implies {
+                    &&& (r0@[xx]) as int == full(im, 0, y as int, xx)
+                    &&& (r1@[xx]) as int == full(im, 1, y as int, xx)
+                    &&& (r2@[xx]) as int == full(im, 2, y as int, xx)
+                } by {
+                    lemma_row_px(w as int, bpp as int, sy as int, xx);
+                    assert(r0@[0 + xx] == r0@[xx]);
+                }
+            }
+        }
         while x < pw
             invariant
+                simd ==> verilith_simd::cpu::avx2(),
                 im == (Rgb { w: w as int, h: h as int, bpp: bpp as int, px: px@ }),
                 im_ok(im),
                 y < ph,
@@ -254,17 +345,16 @@ pub open spec fn qblock(s: Seq<int>, q: Seq<u8>) -> Seq<i16> {
     Seq::new(64, |k: int| quant(t[k], q[k] as int, k) as i16)
 }
 
-/// A block's samples transformed and quantized.
-fn real_block_x(pl: &Vec<Vec<u8>>, bx: usize, by: usize, q: &[u8; 64], rq: &[u64; 64]) -> (r: [i16; 64])
+/// The forward DCT of block (`bx`, `by`) of a plane.
+fn fdct_plane(pl: &Vec<Vec<u8>>, bx: usize, by: usize) -> (t: [i64; 64])
     requires
-        forall|i: int| 0 <= i < 64 ==> #[trigger] rq[i] as int == (0x1_0000_0000 + 8 * q[i] - 1) / (8 * q[i] as int) && rq[i] <= 0x2000_0100,
         8 * by + 8 <= pl@.len(),
         forall|y: int| 8 * by <= y < 8 * by + 8 ==> 8 * bx + 8 <= (#[trigger] pl@[y])@.len(),
-        forall|i: int| 0 <= i < 64 ==> #[trigger] q[i] >= 1,
         bx < 0x1000_0000,
         by < 0x1000_0000,
     ensures
-        r@ == qblock(pblock(pl@, bx as int, by as int), q@),
+        forall|i: int| 0 <= i < 64 ==> #[trigger] t[i] as int == fdct(pblock(pl@, bx as int, by as int))[i],
+        forall|i: int| 0 <= i < 64 ==> -(1i64 << 20) <= #[trigger] t[i] <= (1i64 << 20),
 {
     let mut s = [0i64; 64];
     let mut i: usize = 0;
@@ -286,7 +376,31 @@ fn real_block_x(pl: &Vec<Vec<u8>>, bx: usize, by: usize, q: &[u8; 64], rq: &[u64
     proof {
         assert(s64(s) =~= pblock(pl@, bx as int, by as int));
     }
-    let t = fdct_x(&s);
+    fdct_x(&s)
+}
+
+/// A block's samples transformed and quantized.
+fn real_block_x(pl: &Vec<Vec<u8>>, bx: usize, by: usize, q: &[u8; 64], rq: &[u64; 64], simd: bool) -> (r: [i16; 64])
+    requires
+        simd ==> verilith_simd::cpu::avx2(),
+        forall|i: int| 0 <= i < 64 ==> #[trigger] rq[i] as int == (0x1_0000_0000 + 8 * q[i] - 1) / (8 * q[i] as int) && rq[i] <= 0x2000_0100,
+        8 * by + 8 <= pl@.len(),
+        forall|y: int| 8 * by <= y < 8 * by + 8 ==> 8 * bx + 8 <= (#[trigger] pl@[y])@.len(),
+        forall|i: int| 0 <= i < 64 ==> #[trigger] q[i] >= 1,
+        bx < 0x1000_0000,
+        by < 0x1000_0000,
+    ensures
+        r@ == qblock(pblock(pl@, bx as int, by as int), q@),
+{
+    // `fdct_block` enables AVX2, which makes it unsafe to call, on x86-64;
+    // `simd` says the CPU has it.
+    let t = if simd {
+        #[cfg_attr(any(verus_only, not(target_arch = "x86_64")), allow(unused_unsafe))]
+        let t = unsafe { crate::fdct_avx2::fdct_block(pl, bx, by) };
+        t
+    } else {
+        fdct_plane(pl, bx, by)
+    };
     let mut r = [0i16; 64];
     let mut k: usize = 0;
     while k < 64
@@ -368,12 +482,14 @@ fn coef_block_x(
     h0: usize,
     q: &[u8; 64],
     rq: &[u64; 64],
+    simd: bool,
     Ghost(im): Ghost<Rgb>,
     Ghost(sub): Ghost<bool>,
     Ghost(quality): Ghost<int>,
     Ghost(c): Ghost<int>,
 ) -> (r: [i16; 64])
     requires
+        simd ==> verilith_simd::cpu::avx2(),
         forall|i: int| 0 <= i < 64 ==> #[trigger] rq[i] as int == (0x1_0000_0000 + 8 * q[i] - 1) / (8 * q[i] as int) && rq[i] <= 0x2000_0100,
         0 <= c < 3,
         plane_samp(pl@, im, sub, c, 8 * cw(enc_frame_of(im, sub), c), 8 * ch(enc_frame_of(im, sub), c)),
@@ -397,7 +513,7 @@ fn coef_block_x(
         proof {
             lemma_real(pl@, im, sub, quality, c, bx as int, by as int, 8 * cw(f, c), 8 * ch(f, c));
         }
-        real_block_x(pl, bx, by, q, rq)
+        real_block_x(pl, bx, by, q, rq, simd)
     } else {
         let (rx, ry) = if by < hbc {
             (wbc - 1, by)
@@ -415,7 +531,7 @@ fn coef_block_x(
         proof {
             lemma_real(pl@, im, sub, quality, c, rx as int, ry as int, 8 * cw(f, c), 8 * ch(f, c));
         }
-        let rb = real_block_x(pl, rx, ry, q, rq);
+        let rb = real_block_x(pl, rx, ry, q, rq, simd);
         let mut r = [0i16; 64];
         r[0] = rb[0];
         proof {
@@ -824,6 +940,8 @@ pub struct Enc {
     pub h0: usize,
     pub mx: usize,
     pub my: usize,
+    /// The CPU has AVX2.
+    pub simd: bool,
 }
 
 pub open spec fn rq_ok(q: [u8; 64], rq: [u64; 64]) -> bool {
@@ -884,6 +1002,7 @@ impl Enc {
     pub open spec fn ok(&self, im: Rgb, sub: bool, quality: int, ht: Seq<HuffTable>) -> bool {
         let f = enc_frame_of(im, sub);
         &&& im_ok(im)
+        &&& (self.simd ==> verilith_simd::cpu::avx2())
         &&& self.h0 as int == h0_of(sub)
         &&& self.mx as int == mcux(f)
         &&& self.my as int == mcuy(f)
@@ -1067,6 +1186,7 @@ fn block_x(
         h0,
         q,
         rq,
+        e.simd,
         Ghost(im),
         Ghost(sub),
         Ghost(quality),
@@ -1370,7 +1490,8 @@ fn build(px: &[u8], w: usize, h: usize, bpp: usize, quality: u8, sub: bool, ht: 
     let my = (h + d - 1) / d;
     let pw = 8 * mx * h0;
     let ph = 8 * my * h0;
-    let (py, fcb, fcr) = full_planes(px, w, h, bpp, pw, ph);
+    let simd = verilith_simd::cpu::has_avx2();
+    let (py, fcb, fcr) = full_planes(px, w, h, bpp, pw, ph, simd);
     let pcb;
     let pcr;
     if sub {
@@ -1387,7 +1508,7 @@ fn build(px: &[u8], w: usize, h: usize, bpp: usize, quality: u8, sub: bool, ht: 
     let hb0 = (h * h0 + d - 1) / d;
     let r0 = recips(&q0);
     let r1 = recips(&q1);
-    let e = Enc { py, pcb, pcr, e: et, q0, q1, r0, r1, wbs: [wb0, mx, mx], hbs: [hb0, my, my], h0, mx, my };
+    let e = Enc { py, pcb, pcr, e: et, q0, q1, r0, r1, wbs: [wb0, mx, mx], hbs: [hb0, my, my], h0, mx, my, simd };
     proof {
         assert(8 * cw(f, 0) == pw && 8 * ch(f, 0) == ph) by (nonlinear_arith)
             requires
