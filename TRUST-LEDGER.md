@@ -47,6 +47,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | quic-conn |  |  |  |  |  |  | 3 |
 | regex | 1 |  |  |  |  |  | 3 |
 | server | 1 |  |  |  | 1 |  | 14 |
+| serverless |  |  |  |  |  |  | 2 |
 | sha2 | 34 |  |  |  |  |  | 3 |
 | simd | 425 | 11 | 290 | 4 |  |  | 3 |
 | snappy |  |  |  |  |  |  | 1 |
@@ -64,7 +65,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 |
 | zstd | 6 |  |  |  |  |  | 2 |
-| **total** | **700** | **36** | **290** | **7** | **17** | **12** | **134** |
+| **total** | **700** | **36** | **290** | **7** | **17** | **12** | **136** |
 
 ## Items
 
@@ -230,6 +231,11 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/server/src/sys/macos.rs`: plain Rust
 - `crates/server/src/sys/mod.rs`: plain Rust
 - `crates/server/src/sys/uring.rs`: plain Rust
+
+### serverless
+
+- `crates/serverless/src/lib.rs`: plain Rust
+- `crates/serverless/src/bin/verilith-serverless.rs`: plain Rust
 
 ### sha2
 
