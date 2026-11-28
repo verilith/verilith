@@ -851,6 +851,7 @@ impl BoolWriter {
             self.wf(),
         ensures
             n <= 0x1000_0000,
+            n == self.out@.len(),
     {
         self.out.len()
     }

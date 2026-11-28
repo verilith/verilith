@@ -80,6 +80,8 @@ pub mod enc_vp8res;
 #[doc(hidden)]
 pub mod enc_vp8frm;
 #[doc(hidden)]
+pub mod enc_vp8w;
+#[doc(hidden)]
 pub mod enc_vp8l;
 #[cfg(not(verus_only))]
 #[doc(hidden)]
