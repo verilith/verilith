@@ -5,7 +5,7 @@
 //! these `ensures`; each implementation is proven to meet them from its
 //! instruction wrappers.
 //!
-//! A register is a 128-bit integer ([`Isa::v`]), byte 0 in bits 7:0.
+//! A register is a 128-bit integer (`Isa::v`), byte 0 in bits 7:0.
 //!
 //! The trait is also how the generic code keeps secrets secret. In
 //! `kernels.rs` and `gcm.rs` every secret (the round keys, H and its
@@ -22,7 +22,7 @@
 //! one place the two instruction sets differ in shape is the AES round:
 //! x86's `AESENC` ends a round with the round key, Arm's `AESE` starts one
 //! with it. So the state between rounds is left to each implementation
-//! ([`Isa::st`]), and the kernels only step it.
+//! (`Isa::st`), and the kernels only step it.
 #![allow(unused_imports)]
 use crate::gf::*;
 use crate::isa::*;

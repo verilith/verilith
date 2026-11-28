@@ -1,6 +1,6 @@
 //! RTT estimation (RFC 9002 §5) and the timers it sets: the loss delay
 //! (§6.1.2) and the probe timeout (§6.2.1), proven to compute exactly
-//! [`rtt_next`], [`loss_delay_of`] and [`pto_of`].
+//! `rtt_next`, `loss_delay_of` and `pto_of`.
 //!
 //! The RFC's arithmetic is over reals (`7/8 * smoothed_rtt + 1/8 *
 //! adjusted_rtt`); here it is over whole microseconds, rounding down, as

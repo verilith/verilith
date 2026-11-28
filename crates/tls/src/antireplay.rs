@@ -5,7 +5,7 @@
 //!
 //! - the client's view of its ticket's age (`obfuscated_ticket_age` less
 //!   `ticket_age_add`, ms) is within [`WINDOW_MS`] of the server's (now
-//!   less when the ticket was issued): [`fresh`]; and
+//!   less when the ticket was issued): `fresh`; and
 //! - no ClientHello with the same key (from its PSK binder, which is
 //!   unique to the ClientHello) was taken in the [`SPAN_MS`] before.
 //!
@@ -16,7 +16,7 @@
 //! - a key is never taken twice less than [`SPAN_MS`] apart; and
 //! - the same ClientHello (the same key, and so the same ticket and age)
 //!   is never taken twice at all: the times at which it is fresh lie in
-//!   `2 * WINDOW_MS`, less than [`SPAN_MS`] ([`lemma_fresh_close`]).
+//!   `2 * WINDOW_MS`, less than [`SPAN_MS`] (`lemma_fresh_close`).
 //!
 //! The register is two hash sets of keys, the current generation and the
 //! one before it, each covering [`SPAN_MS`] of server time; a full one

@@ -1,11 +1,11 @@
 //! The x86-64 instructions the kernels use, one wrapper each (TRUSTED):
 //! each is one intrinsic, with an `ensures` stating what it computes in
 //! the terms of [`crate::isa`] on the register as a 128-bit integer
-//! ([`xv`]) or, for the 512-bit registers, on its four 128-bit lanes
-//! ([`zl`]). Verus takes these on trust; `tests/isa.rs` checks each
+//! (`xv`) or, for the 512-bit registers, on its four 128-bit lanes
+//! (`zl`). Verus takes these on trust; `tests/isa.rs` checks each
 //! against a verified reference on random inputs.
 //!
-//! Each requires [`ni`] (AES-NI, PCLMULQDQ, SSSE3, SSE4.1) or [`vaes`]
+//! Each requires `ni` (AES-NI, PCLMULQDQ, SSSE3, SSE4.1) or `vaes`
 //! (also AVX-512F/BW/VL, VAES and VPCLMULQDQ), which [`has_ni`] and
 //! [`has_vaes`] ensure after run-time detection, so verified code reaches
 //! them only on a CPU that has them.
@@ -30,7 +30,7 @@ pub uninterp spec fn ni() -> bool;
 /// The CPU also has AVX-512F, AVX-512BW, AVX-512VL, VAES and VPCLMULQDQ.
 pub uninterp spec fn vaes() -> bool;
 
-/// Whether the CPU has what [`ni`] says, detected at run time.
+/// Whether the CPU has what `ni` says, detected at run time.
 #[verifier::external_body]
 #[inline]
 pub fn has_ni() -> (r: bool)
@@ -40,7 +40,7 @@ pub fn has_ni() -> (r: bool)
     x86_has!("aes") && x86_has!("pclmulqdq") && x86_has!("ssse3") && x86_has!("sse4.1")
 }
 
-/// Whether the CPU has what [`vaes`] and [`ni`] say, detected at run time.
+/// Whether the CPU has what `vaes` and `ni` say, detected at run time.
 #[verifier::external_body]
 #[inline]
 pub fn has_vaes() -> (r: bool)
@@ -56,7 +56,7 @@ pub fn has_vaes() -> (r: bool)
 // ---------------------------------------------------------------------------
 
 /// Tells Verus about `__m128i`, an opaque type here: its contents are
-/// seen through [`xv`].
+/// seen through `xv`.
 #[verifier::external_type_specification]
 #[verifier::external_body]
 #[allow(dead_code)]
@@ -300,7 +300,7 @@ pub fn x_bsrl8(a: X128) -> (r: X128)
 // ---------------------------------------------------------------------------
 
 /// Tells Verus about `__m512i`, an opaque type here: its contents are
-/// seen through [`zl`].
+/// seen through `zl`.
 #[verifier::external_type_specification]
 #[verifier::external_body]
 #[allow(dead_code)]

@@ -591,9 +591,27 @@ pub fn sos_x(data: &[u8], q: usize, f: &FrameX) -> (r: Option<ScanX>)
             j += 1;
         }
         let tt = rd(data, q + 4 + 2 * i);
+        let ghost s0 = s;
         s.ci[i] = c as u8;
         s.td[i] = tt / 16;
         s.ta[i] = tt % 16;
+        proof {
+            // The entries before i are unchanged, and entry i is the
+            // specification's (stated apart for the solver).
+            assert(s.td[i as int] as int == sp.td[i as int]);
+            assert(s.ta[i as int] as int == sp.ta[i as int]);
+            assert forall|j: int|
+                0 <= j < i + 1 implies {
+                    &&& (#[trigger] s.ci[j]) as int == sp.ci[j]
+                    &&& s.ci[j] < fv.nc
+                    &&& s.td[j] as int == sp.td[j]
+                    &&& s.ta[j] as int == sp.ta[j]
+                } by {
+                if j < i {
+                    assert(s.ci[j] == s0.ci[j] && s.td[j] == s0.td[j] && s.ta[j] == s0.ta[j]);
+                }
+            }
+        }
         i += 1;
     }
     let nsz = ns as usize;

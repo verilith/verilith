@@ -1,10 +1,10 @@
 //! The HTTP/1.1 connection core, verified: where each request in a byte
 //! stream starts and ends (DESIGN.md milestone 2, "the connection engine").
 //!
-//! `msgs`-style specification: [`first`] is the request at the front of a
+//! `msgs`-style specification: `first` is the request at the front of a
 //! byte stream, by verilith-http's specification (`spec::parse_request`
 //! for the head, `spec::request_body` for the framing, `chunked::run` for
-//! a chunked body). [`prefix_ok`] says a list of requests is the stream's
+//! a chunked body). `prefix_ok` says a list of requests is the stream's
 //! first requests, back to back. The theorem of this module is the
 //! invariant of [`Core`]: the requests it has handed out are, at every
 //! moment, `prefix_ok` of every byte the connection has received. So the

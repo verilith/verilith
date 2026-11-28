@@ -1,6 +1,6 @@
 //! Request paths to file paths, verified (DESIGN.md, "Targets and paths").
 //!
-//! [`resolve`] is the specification: the path of an origin-form target
+//! `resolve` is the specification: the path of an origin-form target
 //! (`/a/b`, the part before `?`) is split at `/`, each segment is
 //! percent-decoded (verilith-text's verified decoder), and the segments are
 //! applied in order to a stack: an empty segment or `.` does nothing, `..`
@@ -8,12 +8,12 @@
 //! segment is pushed. A decoded segment holding `/`, `\` or NUL is an
 //! error, so `%2f` can never make a separator.
 //!
-//! The theorem ([`lemma_resolve_safe`]): every component of a resolved path
+//! The theorem (`lemma_resolve_safe`): every component of a resolved path
 //! is non-empty, not `.` or `..`, and has no `/`, `\` or NUL. The file
 //! opened is the document root followed by those components, so it is
 //! inside the root by construction; `openat2(RESOLVE_BENEATH)` (trusted)
 //! adds that no symlink leads out. [`resolve_exec`] computes exactly
-//! [`resolve`], and [`join`] the bytes handed to the kernel.
+//! `resolve`, and `join` the bytes handed to the kernel.
 use vstd::prelude::*;
 
 use verilith_text::percent::decode_to;
@@ -182,7 +182,7 @@ fn bad_in(d: &Vec<u8>) -> (r: bool)
     false
 }
 
-/// The components of the file `p` names: exactly [`resolve`]; and
+/// The components of the file `p` names: exactly `resolve`; and
 /// whether `p` names a directory (its last segment is empty, `.` or `..`),
 /// whose index file is then served.
 pub fn resolve_exec(p: &[u8]) -> (r: Option<(Vec<Vec<u8>>, bool)>)

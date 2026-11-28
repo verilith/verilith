@@ -1,9 +1,9 @@
 //! QUIC packet protection (RFC 9001 §5): the AEAD over a packet's payload
 //! with its header as additional data, header protection, and key
-//! updates, proven to compute exactly [`protected`] and its inverse.
+//! updates, proven to compute exactly `protected` and its inverse.
 //!
 //! - [`Aead::seal`] turns a header and payload in a buffer into
-//!   [`protected`]: the payload encrypted with the nonce of §5.3 (the IV
+//!   `protected`: the payload encrypted with the nonce of §5.3 (the IV
 //!   XOR the packet number) and the header as AAD, then the first byte's
 //!   low bits (4 for long headers, 5 for short) and the packet number
 //!   bytes masked with the header protection mask of a 16-byte sample
@@ -11,7 +11,7 @@
 //! - [`unmask`] removes header protection in place and reports the packet
 //!   number's length and truncated value; masking is an involution and
 //!   the sample is untouched, so on a packet `seal` made it restores the
-//!   header ([`lemma_unmask_protected`]).
+//!   header (`lemma_unmask_protected`).
 //! - [`Aead::open`] then decrypts the payload with the full packet number.
 //! - [`keys`] derives a secret's AEAD key, IV and header protection key
 //!   (§5.1), and [`update`] the next generation's (§6.1: "quic ku"; the

@@ -230,6 +230,9 @@ pub fn is_known(ty: u32) -> bool {
     table(ty).is_some()
 }
 
+/// `Png::seen` bit for bKGD.
+pub const SEEN_BKGD: u32 = 64;
+
 /// Bit for `Png::seen`.
 fn seen_bit(ty: u32) -> u32 {
     match &ty.to_be_bytes() {
@@ -239,7 +242,7 @@ fn seen_bit(ty: u32) -> u32 {
         b"sBIT" => 8,
         b"sRGB" => 16,
         b"eXIf" => 32,
-        b"bKGD" => 64,
+        b"bKGD" => SEEN_BKGD,
         b"hIST" => 128,
         b"pHYs" => 256,
         b"tIME" => 512,

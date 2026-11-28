@@ -83,7 +83,7 @@ unsafe extern "C" {
     fn setsockopt(fd: c_int, level: c_int, name: c_int, val: *const u8, len: socklen_t) -> c_int;
     fn bind(fd: c_int, addr: *const sockaddr_in, len: socklen_t) -> c_int;
     fn listen(fd: c_int, backlog: c_int) -> c_int;
-    fn read(fd: c_int, buf: *mut u8, n: usize) -> isize;
+    fn read(fd: c_int, buf: *mut std::ffi::c_void, n: usize) -> isize;
     fn writev(fd: c_int, iov: *const iovec, n: c_int) -> isize;
     fn sendmsg(fd: c_int, msg: *const msghdr, flags: c_int) -> isize;
     fn recvmsg(fd: c_int, msg: *mut msghdr, flags: c_int) -> isize;
@@ -407,7 +407,7 @@ pub enum IoResult {
 /// and `buf[..n]` holds the bytes read.
 #[inline]
 pub fn read_into(fd: i32, buf: &mut [u8]) -> IoResult {
-    let r = unsafe { read(fd, buf.as_mut_ptr(), buf.len()) };
+    let r = unsafe { read(fd, buf.as_mut_ptr().cast(), buf.len()) };
     if r > 0 {
         IoResult::Done(r as usize)
     } else if r == 0 {
