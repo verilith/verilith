@@ -26,6 +26,9 @@ pub use verilith_checksum as checksum;
 /// `verilith-core`: shared verified building blocks (bit readers, Huffman tables, UTF-8).
 #[cfg(feature = "core")]
 pub use verilith_core as core;
+/// `verilith-css`: CSS tokenizer (CSS Syntax Level 3).
+#[cfg(feature = "css")]
+pub use verilith_css as css;
 /// `verilith-dns`: DNS message parser and serializer.
 #[cfg(feature = "dns")]
 pub use verilith_dns as dns;
