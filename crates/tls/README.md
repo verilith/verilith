@@ -18,6 +18,25 @@ or, without records, for a QUIC transport (RFC 9001; no client
 certificates there). The cryptography, ticket keys included, is
 [`verilith-tls-aws-lc`](../tls-aws-lc), a separate crate.
 
+**And a TLS 1.3 client**, also proven: `client_conn::ClientConn` does a
+full handshake (with a HelloRetryRequest if the server asks), checks the
+server's certificate chain against the client's trust anchors and its
+name against the host, and then carries application data, with
+KeyUpdates. It does not resume sessions, send 0-RTT data, offer ECH or
+send a client certificate (to a CertificateRequest it answers with an
+empty Certificate). verilith-tls-aws-lc's `client::TlsStream` wraps it
+in `Read` and `Write` over a socket:
+
+```rust,ignore
+use std::{io::{Read, Write}, net::TcpStream, sync::Arc};
+use verilith_tls_aws_lc::client::{config, TlsStream};
+
+let cfg = Arc::new(config(roots_der, &[b"http/1.1"]));
+let mut t = TlsStream::connect(cfg, "example.com", TcpStream::connect("example.com:443")?)?;
+t.write_all(b"GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n")?;
+t.read_to_end(&mut page)?;
+```
+
 ```rust,ignore
 use std::sync::Arc;
 use verilith_tls::{server::Config, stream::ServerStream};
@@ -283,6 +302,47 @@ definition names its section. The proofs show:
 - No panics, no overflow, no out-of-bounds access, in all of the above. No
   allocation, except the bitmap above, which no real client causes.
 
+### The client
+
+`spec_client_hs.rs` specifies the client's side of a handshake and
+`spec_server_auth.rs` how it authenticates the server. The proofs show:
+
+- **Server authentication** (`server_auth::check_server_chain`) accepts a
+  chain only if `server_chain_ok` holds: the chain, leaf first and as sent,
+  up to `MAX_DEPTH` certificates, leads to a trust anchor; every certificate
+  on the path is in its validity period, has no critical extension the
+  check does not process, and allows serverAuth if it has extendedKeyUsage;
+  intermediates are CAs within their pathLenConstraint, with keyCertSign if
+  they have keyUsage, whose dNSName name constraints allow the host; the
+  leaf is not a CA, has digitalSignature if it has keyUsage, and has a
+  subjectAltName dNSName matching the host (RFC 9525: case-insensitive, a
+  wildcard only as the whole left-most label with two labels after it, no
+  common name fallback, no IP addresses). Every signature on the path is
+  the provider's `x509_signed`.
+- **The messages**: `client_hello_x` writes exactly
+  `spec_client_hs::client_hello` (server_name, supported_versions,
+  supported_groups, signature_algorithms, key_share, ALPN and, after a
+  HelloRetryRequest, the cookie); `read_sh_x`, `read_ee_x` and `read_cr_x`
+  compute `read_sh`, `read_ee` and `read_cr`, which take only what this
+  client offered: one of its suites, a group it offered (with no share
+  for a HelloRetryRequest's), its own session id echoed, TLS 1.3 in
+  supported_versions, no extension it did not ask for, no duplicates.
+- **`ClientConn`** is only ever in one of `CPhase`'s states and moves
+  between them only forward. When `read_record` returns `HandshakeDone`,
+  `lemma_connected` gives `SpecCliHs::valid` for the whole handshake: the
+  ClientHellos are the spec's, the ServerHello (and HelloRetryRequest)
+  ones `read_sh` takes, the server's chain is `server_chain_ok` for the
+  host, its CertificateVerify is the leaf key's `tls_signed` over this
+  transcript's hash, and its Finished is §4.4.4's, compared in constant
+  time; the client's Finished is §4.4.4's over its own transcript, sealed
+  under its handshake keys; and the traffic secrets are §7.1's for this
+  transcript and shared secret (`key_exchange` of the client's share and
+  the server's), after however many KeyUpdates. `read_record` returns
+  `Data` only once connected, for a record that opened under the server's
+  current application traffic keys, and `write` seals only under the
+  client's.
+- No panics, no overflow, no out-of-bounds access in any of it.
+
 `parse` does not decide whether the ClientHello can negotiate TLS 1.3
 (`negotiate` does), or whether its server name is a valid host name
 (`valid_host_name_x` does). A valid TLS 1.2 ClientHello parses.
@@ -336,10 +396,15 @@ is listed below.
 ## Trusted base
 
 - **The spec** (`spec.rs`, `spec_keys.rs`, `spec_record.rs`,
-  `spec_server.rs`, `spec_ech.rs`, `spec_client.rs`). Read them against
+  `spec_server.rs`, `spec_ech.rs`, `spec_client.rs`, `spec_client_hs.rs`,
+  `spec_server_auth.rs`). Read them against
   the RFCs. `spec_client::chain_ok` is a narrower path validation than
   RFC 5280's: no name constraints, policies or revocation, and names are
-  compared as DER bytes.
+  compared as DER bytes. `spec_server_auth::server_chain_ok` is the
+  client's, also narrower: the chain as sent (no reordering or
+  searching for alternative paths), names compared as DER bytes, name
+  constraints only of dNSName applied to the host name, no policies or
+  revocation, and trust anchors taken as they are.
 - **The cryptography** (`crypto.rs`): the AEADs, key exchange, signatures
   and random numbers are uninterpreted functions, and the proofs assume the
   provider's implementation meets the contracts on the `AeadKey`,
@@ -367,12 +432,15 @@ is listed below.
   verification with a certificate's or a CertificateVerify's algorithm
   (verilith-tls-aws-lc: ECDSA P-256/P-384, Ed25519, RSA PKCS #1 v1.5 for
   certificates and RSA-PSS for CertificateVerify), and `now_utc` is the
-  clock. [`verilith-tls-aws-lc`](../tls-aws-lc) implements them
+  clock. The client's own side of the key exchange is
+  `ClientCrypto` (`client_share`, and `client_shared`, which the proofs
+  assume returns `key_exchange` of its share and the server's). [`verilith-tls-aws-lc`](../tls-aws-lc) implements them
   over aws-lc; it is a separate crate, outside the workspace and Buck,
   because aws-lc is C.
-- `stream.rs`, a byte-stream adapter that frames records and buffers
-  bytes for `ServerConn`, is plain Rust and not verified; it decides
-  nothing about what the bytes mean.
+- `stream.rs`, byte-stream adapters that frame records and buffer
+  bytes for `ServerConn` and `ClientConn`, is plain Rust and not
+  verified; it decides nothing about what the bytes mean. Nor is
+  verilith-tls-aws-lc's `client.rs` (`TlsStream`, blocking I/O).
 - Verus, vstd, Z3, rustc; verilith-core's `bytes::be16`, a spec function;
   and verilith-sha2's specifications of SHA-2 and HMAC (and its own
   trusted base: the SHA instructions' specifications and CPU detection).
@@ -401,6 +469,24 @@ both ways, three handshakes in a row), resumption with 0-RTT data under
 ECH, a client with another server's keys getting the current
 retry_configs, GREASE ECH (declined, an ordinary handshake), and an
 inner ECHClientHello in ClientHelloOuter refused.
+`../tls-aws-lc/tests/client.rs` runs the client (`ClientStream`) against
+a rustls 0.23 server in memory: every suite with every group, host names
+in either case and the leaf's second name, HelloRetryRequests to P-384 and
+to X25519MLKEM768, no common group, ALPN chosen and refused, three
+KeyUpdates from the server, a CertificateRequest (answered with an empty
+Certificate), close_notify both ways, a tampered flight
+(`bad_record_mac`), a wrong host name (`bad_certificate`) and an unknown CA
+(`unknown_ca`); and chains made with rcgen: an intermediate (needed, and
+anything after the path ignored), wildcards (one label only, two labels
+after it), name constraints (permitted and excluded dNSName subtrees), an
+expired leaf, a client-only leaf, a CA as the leaf, a name only in the CN,
+an IP address SAN, and a leaf signed by a non-CA. Each connects with 40 kB
+up and 50 kB down. `../tls-aws-lc/tests/client_openssl.rs` runs
+`TlsStream` over TCP against `openssl s_server` (OpenSSL 3.0): each suite,
+X25519 and, through a HelloRetryRequest, P-256 and P-384, a
+CertificateRequest, ALPN, a wrong name and an unknown CA.
+`../tls-aws-lc/examples/https_get.rs` fetches a URL with the system's
+trust anchors.
 `../tls-aws-lc/tests/hpke.rs` checks the HPKE receiver against rustls's
 sender for each AEAD.
 `../tls-aws-lc/tests/quic.rs` runs `QuicServer` against rustls's QUIC
@@ -509,7 +595,10 @@ still does the key exchange (psk_dhe_ke keeps forward secrecy).
 4. The key schedule (§7). *(done, over verilith-sha2's proven HMAC, so
    no HKDF is trusted)*
 5. Record protection (§5.2, §5.3). *(done)*
-6. A drop-in under rustls's server API where the server needs it, and
+6. The client (§4, Appendix A.1). *(done for a full handshake with a
+   server certificate; no resumption, 0-RTT, ECH or client
+   certificates)*
+7. A drop-in under rustls's server API where the server needs it, and
    benchmarks of full handshakes against rustls.
 
 ## Licence

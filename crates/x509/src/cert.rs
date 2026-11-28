@@ -718,7 +718,7 @@ impl<'a> Certificate<'a> {
         requires
             self.tbs.wf(),
         ensures
-            r matches Some(n) ==> spec_name_constraints(self@) == Some(n@),
+            r matches Some(n) ==> spec_name_constraints(self@) == Some(n@) && nc_lists_wf(n),
             r is None ==> spec_name_constraints(self@) is None,
     {
         match self.ce(30) {
