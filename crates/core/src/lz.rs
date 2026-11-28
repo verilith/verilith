@@ -411,7 +411,10 @@ pub fn copy_match16(out: &mut [u8], op: usize, off: usize, n: usize)
 }
 
 /// The longest run `copy_lits` copies 32 bytes at a time; longer ones are
-/// one call of the platform's copy.
+/// one call of the platform's copy. Chosen by hand, not derived: the
+/// trade-off is mostly the cost of the call and of memcpy's branches,
+/// which the instruction-level model in `bench/crossover` cannot see
+/// (its README has the details).
 pub const WILD_MAX: usize = 192;
 
 /// Writes `src[ip..ip + n]` at `op`. May also change bytes after

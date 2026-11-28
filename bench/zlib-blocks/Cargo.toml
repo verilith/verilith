@@ -1,0 +1,12 @@
+[package]
+name = "zlib-blocks"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Not part of the workspace: see README.md. `sweep.sh` points the path
+# below at a copy of the crates with `deflate::MAX_TOKS` changed.
+[workspace]
+
+[dependencies]
+verilith-zlib = { path = "../../crates/zlib" }
