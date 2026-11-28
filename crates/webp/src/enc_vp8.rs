@@ -250,7 +250,7 @@ pub fn choose_mbs(src: &Planes, mb_w: usize, mb_h: usize, qs: Quants, recon: &mu
         old(recon).mb_shape(mb_w as nat, mb_h as nat),
         quants_ok(qs),
     ensures
-        r matches Some(v) ==> v@.len() == mb_w * mb_h && forall|i: int| 0 <= i < v@.len() ==> choice_ok(&#[trigger] v@[i]),
+        r matches Some(v) ==> v@.len() == mb_w * mb_h && forall|i: int| 0 <= i < v@.len() ==> choice_ok(&#[trigger] v@[i], qtuple(qs)),
 {
     let mut ws = match alloc_u8(YUV_SIZE) {
         Some(v) => v,
@@ -281,7 +281,7 @@ pub fn choose_mbs(src: &Planes, mb_w: usize, mb_h: usize, qs: Quants, recon: &mu
             top_u@.len() == 8 * mb_w,
             top_v@.len() == 8 * mb_w,
             out@.len() == mb_y * mb_w,
-            forall|i: int| 0 <= i < out@.len() ==> choice_ok(&#[trigger] out@[i]),
+            forall|i: int| 0 <= i < out@.len() ==> choice_ok(&#[trigger] out@[i], qtuple(qs)),
         decreases mb_h - mb_y,
     {
         init_row(ws.as_mut_slice(), mb_y);
@@ -298,7 +298,7 @@ pub fn choose_mbs(src: &Planes, mb_w: usize, mb_h: usize, qs: Quants, recon: &mu
                 top_u@.len() == 8 * mb_w,
                 top_v@.len() == 8 * mb_w,
                 out@.len() == mb_y * mb_w + mb_x,
-                forall|i: int| 0 <= i < out@.len() ==> choice_ok(&#[trigger] out@[i]),
+                forall|i: int| 0 <= i < out@.len() ==> choice_ok(&#[trigger] out@[i], qtuple(qs)),
             decreases mb_w - mb_x,
         {
             let c = match encode_mb(&mut ws, &top_y, &top_u, &top_v, src, mb_x, mb_y, mb_w, mb_h, qs) {
@@ -326,7 +326,7 @@ fn count_all(mbs: &Vec<MbChoice>, mb_w: usize, mb_h: usize, skip_on: bool) -> (r
         1 <= mb_w <= 1024,
         1 <= mb_h <= 1024,
         mbs@.len() == mb_w * mb_h,
-        forall|i: int| 0 <= i < mbs@.len() ==> choice_ok(&#[trigger] mbs@[i]),
+        forall|i: int| 0 <= i < mbs@.len() ==> choice_shape(&#[trigger] mbs@[i]),
     ensures
         r@.len() == 2112,
 {
@@ -362,7 +362,7 @@ fn count_all(mbs: &Vec<MbChoice>, mb_w: usize, mb_h: usize, skip_on: bool) -> (r
             mb_h <= 1024,
             tops@.len() == 9 * mb_w,
             st@.len() == 2112,
-            forall|i: int| 0 <= i < mbs@.len() ==> choice_ok(&#[trigger] mbs@[i]),
+            forall|i: int| 0 <= i < mbs@.len() ==> choice_shape(&#[trigger] mbs@[i]),
         decreases mb_h - mb_y,
     {
         let mut left: Vec<bool> = vec![false, false, false, false, false, false, false, false, false];
@@ -377,7 +377,7 @@ fn count_all(mbs: &Vec<MbChoice>, mb_w: usize, mb_h: usize, skip_on: bool) -> (r
                 tops@.len() == 9 * mb_w,
                 left@.len() == 9,
                 st@.len() == 2112,
-                forall|i: int| 0 <= i < mbs@.len() ==> choice_ok(&#[trigger] mbs@[i]),
+                forall|i: int| 0 <= i < mbs@.len() ==> choice_shape(&#[trigger] mbs@[i]),
             decreases mb_w - mb_x,
         {
             proof {
@@ -445,13 +445,13 @@ fn count_all(mbs: &Vec<MbChoice>, mb_w: usize, mb_h: usize, skip_on: bool) -> (r
 
 /// Writes the frame: the first partition (header and modes) and the one
 /// token partition.
-pub fn write_parts(mbs: &Vec<MbChoice>, mb_w: usize, mb_h: usize, qi: usize) -> (r: Option<(Vec<u8>, Vec<u8>)>)
+pub fn write_parts(mbs: &Vec<MbChoice>, mb_w: usize, mb_h: usize, qi: usize, qs: Quants) -> (r: Option<(Vec<u8>, Vec<u8>)>)
     requires
         1 <= mb_w <= 1024,
         1 <= mb_h <= 1024,
         qi < 128,
         mbs@.len() == mb_w * mb_h,
-        forall|i: int| 0 <= i < mbs@.len() ==> choice_ok(&#[trigger] mbs@[i]),
+        forall|i: int| 0 <= i < mbs@.len() ==> choice_ok(&#[trigger] mbs@[i], qtuple(qs)),
 {
     let n = mbs.len();
     let mut nskip: usize = 0;
@@ -510,7 +510,7 @@ pub fn write_parts(mbs: &Vec<MbChoice>, mb_w: usize, mb_h: usize, qi: usize) -> 
             pskip < 256,
             fh == fh_of(hparams(0, qi as u32, probs@, skip_on, pskip)),
             psk == (if skip_on { pskip } else { 0 }),
-            forall|i: int| 0 <= i < mbs@.len() ==> choice_ok(&#[trigger] mbs@[i]),
+            forall|i: int| 0 <= i < mbs@.len() ==> choice_ok(&#[trigger] mbs@[i], qtuple(qs)),
         decreases n - i,
     {
         let c = &mbs[i];
@@ -540,7 +540,7 @@ pub fn write_parts(mbs: &Vec<MbChoice>, mb_w: usize, mb_h: usize, qi: usize) -> 
             mb_w <= 1024,
             probs@.len() == 1056,
             w2.inv(),
-            forall|i: int| 0 <= i < mbs@.len() ==> choice_ok(&#[trigger] mbs@[i]),
+            forall|i: int| 0 <= i < mbs@.len() ==> choice_ok(&#[trigger] mbs@[i], qtuple(qs)),
         decreases mb_h - mb_y,
     {
         let mut left: Vec<bool> = vec![false, false, false, false, false, false, false, false, false];
@@ -556,7 +556,7 @@ pub fn write_parts(mbs: &Vec<MbChoice>, mb_w: usize, mb_h: usize, qi: usize) -> 
                 left@.len() == 9,
                 probs@.len() == 1056,
                 w2.inv(),
-                forall|i: int| 0 <= i < mbs@.len() ==> choice_ok(&#[trigger] mbs@[i]),
+                forall|i: int| 0 <= i < mbs@.len() ==> choice_ok(&#[trigger] mbs@[i], qtuple(qs)),
             decreases mb_w - mb_x,
         {
             proof {
@@ -647,7 +647,7 @@ pub fn encode_lossy(px: &[u32], w: usize, h: usize, quality: u32) -> (r: Option<
         Some(v) => v,
         None => return None,
     };
-    let (p1, p2) = match write_parts(&mbs, mb_w, mb_h, qi) {
+    let (p1, p2) = match write_parts(&mbs, mb_w, mb_h, qi, qs) {
         Some(p) => p,
         None => return None,
     };

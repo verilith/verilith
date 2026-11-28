@@ -3,6 +3,16 @@
 //! the decoder's own `reconstruct_mb`), so later predictions see what the
 //! decoder sees.
 use crate::enc_vp8a::*;
+#[cfg(verus_only)]
+use crate::enc_vp8tame::*;
+#[cfg(verus_only)]
+use crate::enc_vp8tok::*;
+#[cfg(verus_only)]
+use crate::enc_vp8w::{blk_lv, mb_lvs};
+#[cfg(verus_only)]
+use crate::vp8spec::*;
+#[cfg(verus_only)]
+use crate::vp8parse::c16;
 use crate::vp8dsp::{pred_block, BPS};
 use crate::vp8frame::*;
 use crate::vp8parse::{transform_wht, MbModes, Residuals};
@@ -102,6 +112,8 @@ fn quant_block(c: &[i32], b: usize, first: usize, zdc: Qz, zac: Qz, lv: &mut Vec
         final(co)@.len() == 384,
         lv_ok16(final(lv)@),
         nz <= 16,
+        lv_dq(blk_lv(final(lv)@, b as int), first as int, zdc.q as int, zac.q as int, 2047),
+        forall|i: int| 0 <= i < 400 && !(16 * b + first <= i < 16 * b + 16) ==> final(lv)@[i] == old(lv)@[i],
 {
     let mut nz = first;
     let mut n = first;
@@ -117,6 +129,8 @@ fn quant_block(c: &[i32], b: usize, first: usize, zdc: Qz, zac: Qz, lv: &mut Vec
             qz_ok(zac, 2047),
             lv_ok16(lv@),
             forall|i: int| 0 <= i < c@.len() ==> -32768 <= #[trigger] c@[i] <= 32768,
+            forall|k: int| first <= k < n ==> -2047 <= #[trigger] blk_lv(lv@, b as int)[k] * dq_at(k, zdc.q as int, zac.q as int) <= 2047,
+            forall|i: int| 0 <= i < 400 && !(16 * b + first <= i < 16 * b + n) ==> lv@[i] == old(lv)@[i],
         decreases 16 - n,
     {
         let j = ZIGZAG[n] as usize;
@@ -126,7 +140,18 @@ fn quant_block(c: &[i32], b: usize, first: usize, zdc: Qz, zac: Qz, lv: &mut Vec
             zac
         };
         let (l, d) = quant(c[16 * b + j], z, Ghost(2047));
+        let ghost l0 = lv@;
         lv.set(16 * b + n, l);
+        proof {
+            assert forall|k: int| first <= k < n + 1 implies -2047 <= #[trigger] blk_lv(lv@, b as int)[k] * dq_at(k, zdc.q as int, zac.q as int) <= 2047 by {
+                if k < n {
+                    assert(blk_lv(lv@, b as int)[k] == blk_lv(l0, b as int)[k]);
+                } else {
+                    assert(blk_lv(lv@, b as int)[k] == l as int);
+                    assert(z.q == (if k > 0 { zac.q } else { zdc.q }));
+                }
+            }
+        }
         co.set(16 * b + j, d);
         if l != 0 {
             nz = n + 1;
@@ -134,6 +159,187 @@ fn quant_block(c: &[i32], b: usize, first: usize, zdc: Qz, zac: Qz, lv: &mut Vec
         n = n + 1;
     }
     nz
+}
+
+/// The inverse of `zigzag`: the stream position of raster place `i`.
+pub open spec fn unzz(i: int) -> int {
+    seq![0int, 1, 5, 6, 2, 4, 7, 12, 3, 8, 11, 13, 9, 10, 14, 15][i]
+}
+
+proof fn lemma_unzz()
+    ensures
+        forall|k: int| 0 <= k < 16 ==> 0 <= #[trigger] zigzag(k) < 16 && unzz(zigzag(k)) == k,
+        forall|i: int| 0 <= i < 16 ==> 0 <= #[trigger] unzz(i) < 16 && zigzag(unzz(i)) == i,
+{
+    let z = seq![0int, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15];
+    let u = seq![0int, 1, 5, 6, 2, 4, 7, 12, 3, 8, 11, 13, 9, 10, 14, 15];
+    assert(z[0] == 0 && z[1] == 1 && z[2] == 4 && z[3] == 8 && z[4] == 5 && z[5] == 2 && z[6] == 3 && z[7] == 6);
+    assert(z[8] == 9 && z[9] == 12 && z[10] == 13 && z[11] == 10 && z[12] == 7 && z[13] == 11 && z[14] == 14 && z[15] == 15);
+    assert(u[0] == 0 && u[1] == 1 && u[2] == 5 && u[3] == 6 && u[4] == 2 && u[5] == 4 && u[6] == 7 && u[7] == 12);
+    assert(u[8] == 3 && u[9] == 8 && u[10] == 11 && u[11] == 13 && u[12] == 9 && u[13] == 10 && u[14] == 14 && u[15] == 15);
+}
+
+/// `tok_out` from position `n` sets each later place to its level times
+/// its factor (a zero level leaves the zero there).
+proof fn lemma_tok_out_form(out: Seq<int>, lv: Seq<int>, n: int, ce: bool, dc: int, ac: int)
+    requires
+        out.len() == 16,
+        0 <= n <= 16,
+        lv.len() == 16,
+        forall|k: int| n <= k < 16 ==> out[#[trigger] zigzag(k)] == 0,
+        lv_dq(lv, n, dc, ac, 0x7fff),
+    ensures
+        forall|k: int| 0 <= k < 16 ==> #[trigger] tok_out(out, lv, n, ce, dc, ac)[zigzag(k)] == if k >= n {
+            lv[k] * dq_at(k, dc, ac)
+        } else {
+            out[zigzag(k)]
+        },
+    decreases 16 - n,
+{
+    lemma_unzz();
+    if n >= 16 {
+    } else if ce && rest_zero(lv, n) {
+        assert forall|k: int| 0 <= k < 16 && k >= n implies lv[k] * dq_at(k, dc, ac) == out[zigzag(k)] by {
+            assert(lv[k] == 0);
+        }
+    } else {
+        let d = dq_at(n, dc, ac);
+        assert(d == (if n > 0 {
+            ac
+        } else {
+            dc
+        }));
+        assert(-0x7fff <= lv[n] * d <= 0x7fff);
+        lemma_wrap_id(lv[n] * d);
+        let o1 = if lv[n] == 0 {
+            out
+        } else {
+            out.update(zigzag(n), wrap16s(lv[n] * d))
+        };
+        assert forall|k: int| n + 1 <= k < 16 implies o1[#[trigger] zigzag(k)] == 0 by {
+            assert(unzz(zigzag(k)) == k);
+            assert(zigzag(k) != zigzag(n));
+        }
+        assert(lv_dq(lv, n + 1, dc, ac, 0x7fff));
+        lemma_tok_out_form(o1, lv, n + 1, lv[n] != 0, dc, ac);
+        assert(tok_out(out, lv, n, ce, dc, ac) == tok_out(o1, lv, n + 1, lv[n] != 0, dc, ac));
+        assert forall|k: int| 0 <= k < 16 implies #[trigger] tok_out(out, lv, n, ce, dc, ac)[zigzag(k)] == if k >= n {
+            lv[k] * dq_at(k, dc, ac)
+        } else {
+            out[zigzag(k)]
+        } by {
+            if k != n {
+                assert(unzz(zigzag(k)) == k);
+                assert(zigzag(k) != zigzag(n));
+                assert(o1[zigzag(k)] == out[zigzag(k)]);
+            } else if lv[n] == 0 {
+                assert(lv[k] * dq_at(k, dc, ac) == 0);
+            }
+        }
+    }
+}
+
+/// Quantizes the Y2 block and computes, as the decoder will, the luma
+/// DCs it gives (into `co`). True if they all stay within 2047.
+fn quant_y2(y2: &[i32; 16], zd: Qz, za: Qz, lv: &mut Vec<i16>, co: &mut Vec<i16>, Ghost(cap): Ghost<int>) -> (ok: bool)
+    requires
+        old(lv)@.len() == 400,
+        old(co)@.len() == 384,
+        lv_ok16(old(lv)@),
+        qz_ok(zd, cap),
+        qz_ok(za, cap),
+        0 <= cap <= 16383,
+        forall|k: int| 0 <= k < 16 ==> -32768 <= #[trigger] y2@[k] <= 32768,
+    ensures
+        final(lv)@.len() == 400,
+        final(co)@.len() == 384,
+        lv_ok16(final(lv)@),
+        forall|i: int| 0 <= i < 384 ==> final(lv)@[i] == old(lv)@[i],
+        ok ==> within(y2_dcs(blk_lv(final(lv)@, 24), zd.q as int, za.q as int), 2047),
+{
+    let mut y2q = [0i16; 16];
+    let ghost l0 = lv@;
+    let mut n: usize = 0;
+    while n < 16
+        invariant
+            n <= 16,
+            lv@.len() == 400,
+            lv_ok16(lv@),
+            qz_ok(zd, cap),
+            qz_ok(za, cap),
+            0 <= cap <= 16383,
+            forall|k: int| 0 <= k < 16 ==> -32768 <= #[trigger] y2@[k] <= 32768,
+            forall|i: int| 0 <= i < 384 ==> lv@[i] == l0[i],
+            forall|k: int| 0 <= k < n ==> #[trigger] y2q@[zigzag(k)] as int == lv@[384 + k] * dq_at(k, zd.q as int, za.q as int),
+            forall|k: int| 0 <= k < n ==> -16383 <= #[trigger] (lv@[384 + k] * dq_at(k, zd.q as int, za.q as int)) <= 16383,
+            forall|k: int| n <= k < 16 ==> #[trigger] y2q@[zigzag(k)] == 0,
+        decreases 16 - n,
+    {
+        proof {
+            lemma_unzz();
+        }
+        let j = ZIGZAG[n] as usize;
+        proof {
+            assert(j as int == zigzag(n as int));
+        }
+        let z = if n == 0 {
+            zd
+        } else {
+            za
+        };
+        let (l, d) = quant(y2[j], z, Ghost(cap));
+        let ghost q0 = y2q@;
+        lv.set(384 + n, l);
+        y2q[j] = d;
+        proof {
+            assert(z.q == (if n > 0 { za.q } else { zd.q }));
+            assert forall|k: int| 0 <= k < 16 && k != n implies #[trigger] y2q@[zigzag(k)] == q0[zigzag(k)] by {
+                assert(unzz(zigzag(k)) == k);
+            }
+        }
+        n = n + 1;
+    }
+    let ghost l = blk_lv(lv@, 24);
+    proof {
+        lemma_unzz();
+        assert(lv_dq(l, 0, zd.q as int, za.q as int, 0x7fff)) by {
+            assert forall|k: int| 0 <= k < 16 implies -0x7fff <= #[trigger] l[k] * dq_at(k, zd.q as int, za.q as int) <= 0x7fff by {
+                assert(l[k] == lv@[384 + k]);
+            }
+        }
+        let zs = Seq::new(16, |i: int| 0int);
+        lemma_tok_out_form(zs, l, 0, true, zd.q as int, za.q as int);
+        let t = tok_out(zs, l, 0, true, zd.q as int, za.q as int);
+        crate::enc_vp8tame::lemma_tok_out_len(zs, l, 0, true, zd.q as int, za.q as int);
+        assert forall|i: int| 0 <= i < 16 implies #[trigger] c16(y2q@)[i] == t[i] by {
+            let k = unzz(i);
+            assert(zigzag(k) == i);
+            assert(t[zigzag(k)] == l[k] * dq_at(k, zd.q as int, za.q as int));
+            assert(l[k] == lv@[384 + k]);
+        }
+        assert(c16(y2q@) =~= t);
+    }
+    transform_wht(&y2q, co.as_mut_slice());
+    let mut ok = true;
+    let mut k: usize = 0;
+    while k < 16
+        invariant
+            k <= 16,
+            co@.len() == 384,
+            forall|i: int| 0 <= i < 16 ==> #[trigger] co@[16 * i] == iwht(c16(y2q@))[i],
+            ok ==> forall|i: int| 0 <= i < k ==> -2047 <= #[trigger] iwht(c16(y2q@))[i] <= 2047,
+        decreases 16 - k,
+    {
+        let x = co[16 * k];
+        if x > 2047 || x < -2047 {
+            ok = false;
+        }
+        k = k + 1;
+    }
+    proof {
+        assert(iwht(c16(y2q@)) == y2_dcs(l, zd.q as int, za.q as int));
+    }
+    ok
 }
 
 /// The selector `nz_code` for a block whose tokens end at `nz`.
@@ -207,11 +413,21 @@ pub struct MbChoice {
     pub lv: Vec<i16>,
 }
 
-pub open spec fn choice_ok(c: &MbChoice) -> bool {
+pub open spec fn choice_shape(c: &MbChoice) -> bool {
     &&& c.ymode < 4
     &&& c.uvmode < 4
     &&& c.lv@.len() == 400
     &&& lv_ok16(c.lv@)
+}
+
+pub open spec fn choice_ok(c: &MbChoice, q: (int, int, int, int, int, int)) -> bool {
+    &&& choice_shape(c)
+    &&& mb_lv_ok(mb_lvs(c.lv@), q)
+}
+
+/// The dequantization factors of `qs`, as `seg_quant` lists them.
+pub open spec fn qtuple(qs: Quants) -> (int, int, int, int, int, int) {
+    (qs.y1dc.q as int, qs.y1ac.q as int, qs.y2dc.q as int, qs.y2ac.q as int, qs.uvdc.q as int, qs.uvac.q as int)
 }
 
 /// The luma or chroma mode with the least squared error, with the block
@@ -283,7 +499,7 @@ pub fn encode_mb(
         quants_ok(qs),
     ensures
         final(ws)@.len() == YUV_SIZE,
-        r matches Some(c) ==> choice_ok(&c),
+        r matches Some(c) ==> choice_ok(&c, qtuple(qs)),
 {
     // The scratch block as `reconstruct_mb` will set it up, to predict from.
     let mut t = ws.clone();
@@ -377,75 +593,20 @@ pub fn encode_mb(
     }
     let y2 = fwht(&dc);
     // The luma DCs the decoder will compute must stay within 2047 (so
-    // that every block's inverse DCT fits in 16 bits); in the rare case
-    // that rounding pushes one past it, Y2 is quantized again within a
-    // bound that guarantees it.
-    let mut pass: usize = 0;
-    while pass < 2
-        invariant
-            pass <= 2,
-            lv@.len() == 400,
-            co@.len() == 384,
-            lv_ok16(lv@),
-            quants_ok(qs),
-            forall|k: int| 0 <= k < 16 ==> -32768 <= #[trigger] y2@[k] <= 32768,
-        decreases 2 - pass,
-    {
-        let (zd, za) = if pass == 0 {
-            (qs.y2dc, qs.y2ac)
-        } else {
-            (qz(qs.y2dc.q, 96, 1023), qz(qs.y2ac.q, 108, 1023))
-        };
-        let ghost cap: int = if pass == 0 {
-            16383
-        } else {
-            1023
-        };
-        let mut y2q = [0i16; 16];
-        let mut n: usize = 0;
-        while n < 16
-            invariant
-                n <= 16,
-                lv@.len() == 400,
-                lv_ok16(lv@),
-                qz_ok(zd, cap),
-                qz_ok(za, cap),
-                cap <= 16383,
-                forall|k: int| 0 <= k < 16 ==> -32768 <= #[trigger] y2@[k] <= 32768,
-            decreases 16 - n,
-        {
-            let j = ZIGZAG[n] as usize;
-            let z = if n == 0 {
-                zd
-            } else {
-                za
-            };
-            let (l, d) = quant(y2[j], z, Ghost(cap));
-            lv.set(384 + n, l);
-            y2q[j] = d;
-            n = n + 1;
-        }
-        transform_wht(&y2q, co.as_mut_slice());
-        let mut big = false;
-        let mut k: usize = 0;
-        while k < 16
-            invariant
-                k <= 16,
-                co@.len() == 384,
-            decreases 16 - k,
-        {
-            let x = co[16 * k];
-            if x > 2047 || x < -2047 {
-                big = true;
-            }
-            k = k + 1;
-        }
-        pass = if big {
-            pass + 1
-        } else {
-            2
-        };
+    // that every block's inverse DCT fits in 16 bits). In the rare case
+    // that rounding pushes one past it, Y2 is quantized again more
+    // coarsely, and failing that, dropped.
+    let mut ok = quant_y2(&y2, qs.y2dc, qs.y2ac, &mut lv, &mut co, Ghost(16383));
+    if !ok {
+        ok = quant_y2(&y2, qz(qs.y2dc.q, 96, 1023), qz(qs.y2ac.q, 108, 1023), &mut lv, &mut co, Ghost(1023));
     }
+    if !ok {
+        ok = quant_y2(&y2, qz(qs.y2dc.q, 96, 0), qz(qs.y2ac.q, 108, 0), &mut lv, &mut co, Ghost(0));
+    }
+    if !ok {
+        return None;
+    }
+    let ghost l24 = blk_lv(lv@, 24);
     // The luma blocks from position 1, then chroma.
     let mut nzy: u32 = 0;
     let mut k: usize = 0;
@@ -458,9 +619,18 @@ pub fn encode_mb(
             lv_ok16(lv@),
             quants_ok(qs),
             forall|i: int| 0 <= i < c@.len() ==> -32768 <= #[trigger] c@[i] <= 32768,
+            blk_lv(lv@, 24) == l24,
+            forall|b: int| 0 <= b < k ==> lv_dq(#[trigger] blk_lv(lv@, b), 1, qs.y1dc.q as int, qs.y1ac.q as int, 2047),
         decreases 16 - k,
     {
+        let ghost l0 = lv@;
         let nz = quant_block(c.as_slice(), k, 1, qs.y1dc, qs.y1ac, &mut lv, &mut co);
+        proof {
+            assert(blk_lv(lv@, 24) =~= blk_lv(l0, 24));
+            assert forall|b: int| 0 <= b < k implies lv_dq(#[trigger] blk_lv(lv@, b), 1, qs.y1dc.q as int, qs.y1ac.q as int, 2047) by {
+                assert(blk_lv(lv@, b) =~= blk_lv(l0, b));
+            }
+        }
         let cd = code(nz, co[16 * k] != 0);
         nzy = (nzy << 2u32) | cd;
         k = k + 1;
@@ -477,9 +647,22 @@ pub fn encode_mb(
             lv_ok16(lv@),
             quants_ok(qs),
             forall|i: int| 0 <= i < c@.len() ==> -32768 <= #[trigger] c@[i] <= 32768,
+            blk_lv(lv@, 24) == l24,
+            forall|b: int| 0 <= b < 16 ==> lv_dq(#[trigger] blk_lv(lv@, b), 1, qs.y1dc.q as int, qs.y1ac.q as int, 2047),
+            forall|b: int| 16 <= b < k ==> lv_dq(#[trigger] blk_lv(lv@, b), 0, qs.uvdc.q as int, qs.uvac.q as int, 2047),
         decreases 24 - k,
     {
+        let ghost l0 = lv@;
         let nz = quant_block(c.as_slice(), k, 0, qs.uvdc, qs.uvac, &mut lv, &mut co);
+        proof {
+            assert(blk_lv(lv@, 24) =~= blk_lv(l0, 24));
+            assert forall|b: int| 0 <= b < 16 implies lv_dq(#[trigger] blk_lv(lv@, b), 1, qs.y1dc.q as int, qs.y1ac.q as int, 2047) by {
+                assert(blk_lv(lv@, b) =~= blk_lv(l0, b));
+            }
+            assert forall|b: int| 16 <= b < k implies lv_dq(#[trigger] blk_lv(lv@, b), 0, qs.uvdc.q as int, qs.uvac.q as int, 2047) by {
+                assert(blk_lv(lv@, b) =~= blk_lv(l0, b));
+            }
+        }
         let cd = code(nz, co[16 * k] != 0);
         if k < 20 {
             nzu = (nzu << 2u32) | cd;
@@ -503,6 +686,11 @@ pub fn encode_mb(
     }
     let skip = !any;
     let m = MbModes { segment: 0, skip, is_i4x4: false, imodes: [ymode, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], uvmode };
+    proof {
+        let ls = mb_lvs(lv@);
+        assert forall|b: int| 0 <= b < 25 implies #[trigger] ls[b] == blk_lv(lv@, b) by {}
+        assert(ls[24] == l24);
+    }
     let res = Residuals { non_zero_y: nzy, non_zero_uv: (nzu & 0xff) | ((nzv & 0xff) << 8u32) };
     reconstruct_mb(
         ws.as_mut_slice(),

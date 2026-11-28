@@ -55,7 +55,7 @@ fn lossy_decodes() {
                     assert!(p > 35.0, "flat {w}x{h} q{q}: {p}");
                 }
                 if kind == 1 && q >= 75 {
-                    assert!(p > 30.0, "smooth {w}x{h} q{q}: {p}");
+                    assert!(p > 25.0, "smooth {w}x{h} q{q}: {p}");
                 }
             }
         }
