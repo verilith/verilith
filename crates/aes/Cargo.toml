@@ -14,10 +14,11 @@ default = ["std"]
 # Without `std` the crate is `no_std`; the kernels are then chosen from
 # the CPU features the target is compiled for instead of detected at run
 # time.
-std = ["vstd/std"]
+std = ["vstd/std", "verilith-simd/std"]
 
 [dependencies]
 vstd = { workspace = true, features = ["alloc"] }
+verilith-simd = { path = "../simd", version = "0.1.0", default-features = false }
 
 [package.metadata.verus]
 verify = true

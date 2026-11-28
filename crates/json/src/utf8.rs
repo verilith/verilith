@@ -25,7 +25,10 @@ use vstd::prelude::*;
 
 #[cfg(target_arch = "x86_64")]
 #[allow(unused_imports)]
-use core::arch::x86_64::{__m256i, __m512i};
+use verilith_simd::arch::__m256i;
+#[cfg(target_arch = "x86_64")]
+#[allow(unused_imports)]
+use verilith_simd::avx512::__m512i;
 
 verus! {
 

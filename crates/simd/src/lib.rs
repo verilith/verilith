@@ -92,6 +92,12 @@ pub mod sse2;
 pub mod scalar;
 pub mod find;
 pub mod crc;
+pub mod aes;
+pub mod aes_ref;
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+pub mod aes_x86;
+#[cfg(any(target_endian = "little", verus_only))]
+pub mod aes_neon;
 pub mod sha;
 pub mod sha_ref;
 pub mod sha_neon;

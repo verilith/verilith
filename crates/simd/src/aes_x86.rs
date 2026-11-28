@@ -1,6 +1,6 @@
 //! The x86-64 instructions the kernels use, one wrapper each (TRUSTED):
 //! each is one intrinsic, with an `ensures` stating what it computes in
-//! the terms of [`crate::isa`] on the register as a 128-bit integer
+//! the terms of [`crate::aes`] on the register as a 128-bit integer
 //! (`xv`) or, for the 512-bit registers, on its four 128-bit lanes
 //! (`zl`). Verus takes these on trust; `tests/isa.rs` checks each
 //! against a verified reference on random inputs.
@@ -9,9 +9,8 @@
 //! (also AVX-512F/BW/VL, VAES and VPCLMULQDQ), which [`has_ni`] and
 //! [`has_vaes`] ensure after run-time detection, so verified code reaches
 //! them only on a CPU that has them.
-#![allow(unused_imports, unused_unsafe, unused_parens)]
-use crate::gf::*;
-use crate::isa::*;
+#![allow(unused_imports, unused_unsafe, unused_parens, missing_docs)]
+use crate::aes::*;
 use core::arch::x86_64::*;
 use vstd::prelude::*;
 
@@ -54,13 +53,6 @@ pub fn has_vaes() -> (r: bool)
 // ---------------------------------------------------------------------------
 // 128 bits
 // ---------------------------------------------------------------------------
-
-/// Tells Verus about `__m128i`, an opaque type here: its contents are
-/// seen through `xv`.
-#[verifier::external_type_specification]
-#[verifier::external_body]
-#[allow(dead_code)]
-pub struct ExM128i(__m128i);
 
 /// A 128-bit register.
 pub type X128 = __m128i;
@@ -298,13 +290,6 @@ pub fn x_bsrl8(a: X128) -> (r: X128)
 // ---------------------------------------------------------------------------
 // 512 bits (AVX-512, VAES, VPCLMULQDQ)
 // ---------------------------------------------------------------------------
-
-/// Tells Verus about `__m512i`, an opaque type here: its contents are
-/// seen through `zl`.
-#[verifier::external_type_specification]
-#[verifier::external_body]
-#[allow(dead_code)]
-pub struct ExM512i(__m512i);
 
 /// A 512-bit register.
 pub type Z512 = __m512i;
