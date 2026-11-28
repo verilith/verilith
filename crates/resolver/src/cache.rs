@@ -2,9 +2,12 @@
 //! fixed number of slots. Its type invariant is that every entry holds a
 //! chain for its own question, so whatever it hands back is a well-formed
 //! answer to the question asked, and never after its TTL.
+use crate::dspec::*;
 use crate::name::*;
 use crate::rr::*;
 use crate::spec::*;
+#[cfg(verus_only)]
+use crate::trust::{cut_ok, keys_ok, lemma_lower_ci};
 use vstd::prelude::*;
 
 verus! {
@@ -15,14 +18,24 @@ pub const WAYS: usize = 4;
 /// The pseudo-type under which delegations are kept, keyed by zone.
 pub const DELEG: u16 = 0;
 
+/// The pseudo-type under which what DNSSEC knows of a zone is kept: its
+/// trusted keys, or that it is unsigned. (65535 is reserved, RFC 6895;
+/// clients cannot ask for it.)
+pub const KEYS: u16 = 65535;
+
 pub enum Data {
-    /// A positive answer: CNAME links, then records of the type.
-    Pos(Vec<Rr>),
+    /// A positive answer: CNAME links, then records of the type; its
+    /// DNSSEC status and the evidence for it.
+    Pos(Vec<Rr>, u8, Ghost<Ev>),
     /// A negative answer: RCODE (NOERROR for no data, NXDOMAIN), the CNAME
-    /// links before it, and the zone's SOA.
-    Neg(u16, Vec<Rr>, Vec<Rr>),
+    /// links before it, and the zone's SOA; status and evidence.
+    Neg(u16, Vec<Rr>, Vec<Rr>, u8, Ghost<Ev>),
     /// The addresses (4 or 16 bytes) of a zone's name servers.
     Deleg(Vec<Vec<u8>>),
+    /// A zone's trusted keys, and the chain of trust that makes them so.
+    Keys(Vec<Rr>, Ghost<Seq<Link>>),
+    /// A zone is at or below this proven unsigned cut.
+    Cut(Vec<u8>, Ghost<Unsigned>),
 }
 
 pub open spec fn addrs_ok(a: Seq<Vec<u8>>) -> bool {
@@ -37,23 +50,30 @@ pub open spec fn soa_only(rs: Seq<RrS>) -> bool {
 /// What an entry for `name`/`qtype` may hold.
 pub open spec fn data_ok(d: Data, name: Seq<u8>, qtype: u16) -> bool {
     match d {
-        Data::Pos(rs) => qtype != DELEG && positive(name, qtype, rrs(rs@)),
-        Data::Neg(code, rs, soa) => {
-            &&& qtype != DELEG
+        Data::Pos(rs, sec, ev) => {
+            &&& qtype != DELEG && qtype != KEYS
+            &&& positive(name, qtype, rrs(rs@))
+            &&& sec_ok(sec, ev@, name, qtype, RCODE_NOERROR, rrs(rs@), Seq::empty())
+        },
+        Data::Neg(code, rs, soa, sec, ev) => {
+            &&& qtype != DELEG && qtype != KEYS
             &&& code == RCODE_NOERROR || code == RCODE_NXDOMAIN
             &&& links_only(name, qtype, rrs(rs@))
             &&& soa_only(rrs(soa@))
+            &&& sec_ok(sec, ev@, name, qtype, code, rrs(rs@), rrs(soa@))
         },
         Data::Deleg(a) => qtype == DELEG && addrs_ok(a@),
+        Data::Keys(k, c) => qtype == KEYS && keys_ok(c@, name, rrs(k@)),
+        Data::Cut(cut, u) => qtype == KEYS && cut_ok(u@, cut@, name),
     }
 }
 
 /// Every TTL in the data is at most `t`.
 pub open spec fn data_ttls(d: Data, t: u32) -> bool {
     match d {
-        Data::Pos(rs) => ttls_at_most(rrs(rs@), t),
-        Data::Neg(_, rs, soa) => ttls_at_most(rrs(rs@), t) && ttls_at_most(rrs(soa@), t),
-        Data::Deleg(_) => true,
+        Data::Pos(rs, _, _) => ttls_at_most(rrs(rs@), t),
+        Data::Neg(_, rs, soa, _, _) => ttls_at_most(rrs(rs@), t) && ttls_at_most(rrs(soa@), t),
+        _ => true,
     }
 }
 
@@ -150,7 +170,29 @@ pub proof fn lemma_same_but_ttl_sym(a: Seq<RrS>, b: Seq<RrS>)
 {
 }
 
+/// A copy of a list of addresses.
+fn copy_addrs(a: &Vec<Vec<u8>>) -> (out: Vec<Vec<u8>>)
+    ensures
+        out@.len() == a@.len(),
+        forall|j: int| 0 <= j < a@.len() ==> (#[trigger] out@[j])@ == a@[j]@,
+{
+    let mut out: Vec<Vec<u8>> = Vec::with_capacity(a.len());
+    let mut i: usize = 0;
+    while i < a.len()
+        invariant
+            i <= a@.len(),
+            out@.len() == i,
+            forall|j: int| 0 <= j < i ==> (#[trigger] out@[j])@ == a@[j]@,
+        decreases a@.len() - i,
+    {
+        out.push(to_vec(&a[i]));
+        i = i + 1;
+    }
+    out
+}
+
 /// The data with TTLs at most `t`, still for the same question.
+#[verifier::rlimit(30)]
 pub fn clamp_data(d: &Data, name: Ghost<Seq<u8>>, qtype: u16, t: u32) -> (r: Data)
     requires
         data_ok(*d, name@, qtype),
@@ -159,14 +201,15 @@ pub fn clamp_data(d: &Data, name: Ghost<Seq<u8>>, qtype: u16, t: u32) -> (r: Dat
         data_ttls(r, t),
 {
     match d {
-        Data::Pos(rs) => {
+        Data::Pos(rs, sec, ev) => {
             let c = clamp_ttls(rs, t);
             proof {
                 lemma_chain_ttl(name@, qtype, rrs(rs@), rrs(c@));
+                lemma_sec_ttl(*sec, ev@, name@, qtype, RCODE_NOERROR, rrs(rs@), rrs(c@), Seq::empty(), Seq::empty());
             }
-            Data::Pos(c)
+            Data::Pos(c, *sec, Ghost(ev@))
         },
-        Data::Neg(code, rs, soa) => {
+        Data::Neg(code, rs, soa, sec, ev) => {
             let c = clamp_ttls(rs, t);
             let s = clamp_ttls(soa, t);
             proof {
@@ -174,22 +217,22 @@ pub fn clamp_data(d: &Data, name: Ghost<Seq<u8>>, qtype: u16, t: u32) -> (r: Dat
                 assert forall|i: int| 0 <= i < rrs(s@).len() implies (#[trigger] rrs(s@)[i]).rtype == TYPE_SOA by {
                     assert(rrs(soa@)[i].rtype == TYPE_SOA);
                 }
+                lemma_sec_ttl(*sec, ev@, name@, qtype, *code, rrs(rs@), rrs(c@), rrs(soa@), rrs(s@));
             }
-            Data::Neg(*code, c, s)
+            Data::Neg(*code, c, s, *sec, Ghost(ev@))
         },
-        Data::Deleg(a) => {
-            let mut out: Vec<Vec<u8>> = Vec::with_capacity(a.len());
-            let mut i: usize = 0;
-            while i < a.len()
-                invariant
-                    i <= a@.len(),
-                    out@.len() == i,
-                    forall|j: int| 0 <= j < i ==> (#[trigger] out@[j])@ == a@[j]@,
-                decreases a@.len() - i,
-            {
-                out.push(to_vec(&a[i]));
-                i = i + 1;
+        Data::Keys(k, ch) => {
+            let c = clamp_ttls(k, t);
+            proof {
+                assert forall|i: int| 0 <= i < rrs(c@).len() implies has_key(ch@.last().keys, #[trigger] rrs(c@)[i].rdata) by {
+                    assert(rrs(c@)[i].rdata == rrs(k@)[i].rdata);
+                }
             }
+            Data::Keys(c, Ghost(ch@))
+        },
+        Data::Cut(cut, u) => Data::Cut(to_vec(cut), Ghost(u@)),
+        Data::Deleg(a) => {
+            let out = copy_addrs(a);
             proof {
                 assert forall|j: int| 0 <= j < out@.len() implies (#[trigger] out@[j])@.len() == 4
                     || out@[j]@.len() == 16 by {
@@ -381,9 +424,82 @@ pub proof fn lemma_data_ci(d: Data, a: Seq<u8>, b: Seq<u8>, qtype: u16)
         data_ok(d, b, qtype),
 {
     match d {
-        Data::Pos(rs) => lemma_chain_ci(a, b, qtype, rrs(rs@)),
-        Data::Neg(_, rs, _) => lemma_chain_ci(a, b, qtype, rrs(rs@)),
+        Data::Pos(rs, sec, ev) => {
+            lemma_chain_ci(a, b, qtype, rrs(rs@));
+            lemma_sec_ci(sec, ev@, a, b, qtype, RCODE_NOERROR, rrs(rs@), Seq::empty());
+        },
+        Data::Neg(code, rs, soa, sec, ev) => {
+            lemma_chain_ci(a, b, qtype, rrs(rs@));
+            lemma_sec_ci(sec, ev@, a, b, qtype, code, rrs(rs@), rrs(soa@));
+        },
         Data::Deleg(_) => {},
+        Data::Keys(k, c) => {
+            lemma_eq_ci_trans(c@.last().zone, a, b);
+        },
+        Data::Cut(cut, u) => {
+            lemma_lower_ci(a, b);
+        },
+    }
+}
+
+/// `recs_ok` does not depend on TTLs.
+pub proof fn lemma_recs_ttl(a: Seq<RrS>, b: Seq<RrS>, sec: u8, e: Ev)
+    requires
+        same_but_ttl(a, b),
+        recs_ok(a, sec, e),
+    ensures
+        recs_ok(b, sec, e),
+{
+    assert forall|i: int| 0 <= i < b.len() implies rec_secure(#[trigger] b[i], e) || (sec == INSECURE
+        && rec_insecure(b[i], e)) by {
+        assert(rec_secure(a[i], e) || (sec == INSECURE && rec_insecure(a[i], e)));
+        if rec_secure(a[i], e) {
+            let (k, j) = choose|k: int, j: int|
+                0 <= k < e.signed.len() && 0 <= j < e.signed[k].rs.len() && same_rr(#[trigger] e.signed[k].rs[j], a[i])
+                    && wild_ok(e.signed[k], e);
+            assert(same_rr(e.signed[k].rs[j], b[i]));
+        }
+    }
+}
+
+pub proof fn lemma_sec_ttl(
+    sec: u8,
+    e: Ev,
+    name: Seq<u8>,
+    qtype: u16,
+    code: u16,
+    a: Seq<RrS>,
+    b: Seq<RrS>,
+    sa: Seq<RrS>,
+    sb: Seq<RrS>,
+)
+    requires
+        same_but_ttl(a, b),
+        same_but_ttl(sa, sb),
+        sec_ok(sec, e, name, qtype, code, a, sa),
+    ensures
+        sec_ok(sec, e, name, qtype, code, b, sb),
+{
+    lemma_chain_ttl(name, qtype, a, b);
+    if sec != UNCHECKED {
+        lemma_recs_ttl(a, b, sec, e);
+        lemma_recs_ttl(sa, sb, sec, e);
+    }
+}
+
+pub proof fn lemma_sec_ci(sec: u8, e: Ev, a: Seq<u8>, b: Seq<u8>, qtype: u16, code: u16, rs: Seq<RrS>, soa: Seq<RrS>)
+    requires
+        eq_ci(a, b),
+        sec_ok(sec, e, a, qtype, code, rs, soa),
+    ensures
+        sec_ok(sec, e, b, qtype, code, rs, soa),
+{
+    lemma_chain_ci(a, b, qtype, rs);
+    lemma_lower_ci(chain_end(a, qtype, rs), chain_end(b, qtype, rs));
+    let (ea, eb) = (chain_end(a, qtype, rs), chain_end(b, qtype, rs));
+    if exists|u: int| 0 <= u < e.unsigned.len() && insecure(#[trigger] e.unsigned[u], anchors(), ea) {
+        let u = choose|u: int| 0 <= u < e.unsigned.len() && insecure(#[trigger] e.unsigned[u], anchors(), ea);
+        assert(insecure(e.unsigned[u], anchors(), eb));
     }
 }
 

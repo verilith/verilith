@@ -1020,14 +1020,28 @@ fn read_simple(src: &[u8], base: u64, pos: u64, alpha: u32, Ghost(b): Ghost<Seq<
     }
 }
 
+/// The most probability, in units of 2^-15, that codes longer than 8 bits
+/// may carry for `pick_root` to choose an 8-bit root (1/64).
+pub const ROOT8_MASS: u64 = 512;
+/// The same for a 9-bit root (1/16).
+pub const ROOT9_MASS: u64 = 2048;
+
 /// The root table width for a code with `cnts[l]` codes of length `l`:
-/// 8 bits if codes longer than that carry at most 1/64 of the probability
-/// (2^-l per code of length l), else 9 bits if longer codes carry at most
-/// 1/16, else 10.
-/// A smaller root makes smaller tables, which matters for the literal
-/// trees of a meta-block with many of them (x86 has a 48 KB L1 data
-/// cache); longer codes are decoded bit by bit, so they must be rare.
-/// Any width from 1 to `MAX_ROOT` gives a correct table.
+/// 8 bits if codes longer than that carry at most `ROOT8_MASS` of the
+/// probability (2^-l per code of length l), else 9 bits if longer codes
+/// carry at most `ROOT9_MASS`, else 10. Any width from 1 to `MAX_ROOT`
+/// gives a correct table; this is a speed choice only.
+///
+/// A symbol longer than the root goes through `decode_slow`, which costs
+/// about 37 cycles plus 2 per bit (two mispredicted branches and a call,
+/// and its bit loop under llvm-mca for Sapphire Rapids). So the thresholds
+/// say that halving a table is worth up to about 1/64 x 55 = 0.9 cycles per
+/// symbol from 9 to 8 bits, and 1/16 x 57 = 3.6 cycles from 10 to 9 bits.
+/// That saving is L1 cache pressure from the meta-block's other tables, and
+/// it cannot be computed when the table is built: it depends on which
+/// trees the data uses close together in time, not on how many there are.
+/// The thresholds were set by measurement; see `tools/root-model.md` for
+/// the models tried in their place and how they did.
 #[inline(never)]
 pub fn pick_root(cnts: &[u16; 16]) -> (r: u32)
     ensures
@@ -1037,9 +1051,9 @@ pub fn pick_root(cnts: &[u16; 16]) -> (r: u32)
     let m10 = cnts[11] as u64 * 16 + cnts[12] as u64 * 8 + cnts[13] as u64 * 4 + cnts[14] as u64 * 2 + cnts[15] as u64;
     let m9 = m10 + cnts[10] as u64 * 32;
     let m8 = m9 + cnts[9] as u64 * 64;
-    if m8 <= 512 {
+    if m8 <= ROOT8_MASS {
         8
-    } else if m9 <= 2048 {
+    } else if m9 <= ROOT9_MASS {
         9
     } else {
         10

@@ -17,14 +17,14 @@
 //!   with PCLMULQDQ otherwise. What that trusts is verilith-simd's `clmul` (the
 //!   instructions' contracts) and the three trampolines below that compile the kernels with those features. On
 //!   AArch64 with the CRC extension (every Apple Silicon CPU) it runs
-//!   `lanes::crc32_update`, verified down to one assumption: that
-//!   the `crc32x` instruction computes this CRC-32 over its eight bytes
-//!   (`lanes::crc_word`). Short inputs and other CPUs get the table code.
+//!   `lanes::crc32_update`, verified from verilith-simd's specification
+//!   of the `crc32x` instruction (`verilith_simd::crc::crc32_u64`).
+//!   Short inputs and other CPUs get the table code.
 //! - `crc32c_update` is verified. With SSE4.2 (x86-64) or the CRC
 //!   extension (AArch64) it runs `crc32c::crc32c_words`, eight
-//!   bytes per instruction, verified down to one assumption: that the
-//!   instruction computes CRC-32C over its eight bytes
-//!   (`crc32c::crc32c_word`). Trusted here is the trampoline that compiles
+//!   bytes per instruction, verified from verilith-simd's specification
+//!   of the instruction (`verilith_simd::crc::crc32c_u64`). Trusted here
+//!   is the trampoline that compiles
 //!   it with the feature enabled. Other CPUs get the table code.
 #![allow(unsafe_op_in_unsafe_fn)]
 #[cfg(verus_only)]
@@ -43,10 +43,6 @@ use vstd::prelude::*;
 // there ("Do not know how to split the result of this operator"), and
 // without `std` the kernels could never be selected anyway, since their
 // features are not in the target. Those targets get the table code.
-#[cfg(all(feature = "std", target_arch = "aarch64"))]
-macro_rules! arm_has { ($f:tt) => { std::arch::is_aarch64_feature_detected!($f) }; }
-#[cfg(all(not(feature = "std"), target_arch = "aarch64"))]
-macro_rules! arm_has { ($f:tt) => { cfg!(target_feature = $f) }; }
 
 verus! {
 
@@ -115,7 +111,7 @@ fn adler32_avx2(a: u32, b: u32, d: &[u8]) -> (r: (u32, u32))
     unsafe { tf::adler32_avx2(a, b, d) }
 }
 
-/// Adds `d` to the CRC-32 register `reg` with the Arm CRC instructions. Call only after `has_arm_crc` returned true.
+/// Adds `d` to the CRC-32 register `reg` with the Arm CRC instructions. Call only after `has_crc_arm` returned true.
 ///
 /// ```text
 /// ensures  r == crc_from(reg, d@)
@@ -138,7 +134,7 @@ pub fn crc32_update(reg: u32, d: &[u8]) -> (r: u32)
     }
     #[cfg(target_arch = "aarch64")]
     {
-        if d.len() >= 16 && has_arm_crc() {
+        if d.len() >= 16 && verilith_simd::crc::has_crc_arm() {
             return crc32_arm(reg, d);
         }
     }
@@ -205,24 +201,17 @@ fn crc32_pclmul(reg: u32, d: &[u8]) -> (r: u32)
     unsafe { tf::crc32_pclmul(reg, d) }
 }
 
-/// The CPU has the CRC32 instructions (`crc32x`); what `lanes::crc_word`
-/// needs.
-#[cfg(target_arch = "aarch64")]
-#[verifier::external_body]
-#[inline]
-fn has_arm_crc() -> bool {
-    arm_has!("crc")
-}
-
 /// Trusted: `lanes::crc32_update` compiled with the CRC extension, so
 /// that `lanes::crc_word` is one `crc32x`. The caller checks the CPU.
 #[cfg(target_arch = "aarch64")]
 #[verifier::external_body]
 fn crc32_arm(reg: u32, d: &[u8]) -> (r: u32)
+    requires
+        verilith_simd::crc::crc_arm(),
     ensures
         r == crc_from(reg, d@),
 {
-    // SAFETY: only called after `has_arm_crc` returned true.
+    // SAFETY: `crc_arm()`: only called after `has_crc_arm` returned true.
     unsafe { arm_crc::crc32_update(reg, d) }
 }
 

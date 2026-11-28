@@ -119,6 +119,24 @@ its own trusted base.
   `avx512vbmi2()`, which `has_avx512bw()` and `has_avx512vbmi2()` ensure,
   with the axiom that VBMI2 implies BW, BW implies F and F implies AVX2.
 - `src/scalar.rs`: `popcnt64`, specified as the number of set bits.
+- `src/crc.rs`: the CRC instructions (SSE4.2's `crc32` with 64- and 8-bit
+  operands, AArch64's `crc32cx`, `crc32cb` and `crc32x`), each specified
+  as the bit-reflected CRC with its polynomial over its operand taken
+  little endian (`crc_bytes`), and their run-time checks `has_crc32c`
+  and `has_crc_arm`. `tests/crc.rs` checks each against that definition
+  bit by bit on random registers and bytes.
+- `src/aes.rs`, `src/aes_ref.rs`, `src/aes_x86.rs`, `src/aes_neon.rs`:
+  the AES and carry-less multiply instructions verilith-aes's kernels use
+  (AES-NI, VAES, PCLMULQDQ, VPCLMULQDQ, AArch64's AESE, AESMC and PMULL),
+  specified from the vendors' pseudocode with FIPS 197's round
+  transformations, one trusted wrapper each with run-time detection, and
+  verified reference implementations that verilith-aes's `tests/isa.rs`
+  checks every wrapper against.
+- `src/find.rs`: `find_byte`, the next occurrence of a byte, 16 bytes at
+  a time and 64 while it stays absent (SSE2 on x86-64, NEON on AArch64,
+  the same generic scanner on wasm32's SIMD), verified against the plain
+  definition `first_at` from the wrappers above; nothing trusted. Used by
+  verilith-regex and verilith-xml.
 - `src/clmul.rs` (wrappers x86-64 only): carry-less multiplication as
   verilith-checksum's CRC-32 folding kernels use it, one safe wrapper each
   with a contract on a vector's 128-bit blocks (`xv`, `yl`, `zl`): 16-,

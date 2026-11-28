@@ -67,13 +67,17 @@ AES-192, 96-bit IVs only, 128-bit tags only.
   known answers. Every length up to 600 bytes of text and 300 of
   additional data, and longer ones, are compared with RustCrypto's
   `aes-gcm` (`tests/rustcrypto.rs`).
-- `src/isa.rs`: what each instruction computes, from the vendors'
-  manuals. `tests/isa.rs` runs every wrapper on random operands against
-  `src/isa_ref.rs`, verified implementations of the same specifications,
-  natively on x86-64 and on AArch64 natively or under qemu.
-- `src/x86.rs`, `src/neon.rs`: one `external_body` wrapper per
+- From [verilith-simd](https://github.com/verilith/verilith/tree/main/crates/simd)
+  (re-exported here as `isa`, `isa_ref`, `x86` and `neon`): `src/aes.rs`,
+  what each instruction computes, from the vendors' manuals, with FIPS
+  197's round transformations and the S-box it is stated with; and
+  `src/aes_x86.rs`, `src/aes_neon.rs`, one `external_body` wrapper per
   intrinsic, whose `ensures` is its `isa` specification and whose
-  `requires` is that the CPU has the extension; run-time detection.
+  `requires` is that the CPU has the extension, and run-time detection.
+  `tests/isa.rs` here runs every wrapper on random operands against
+  verilith-simd's `src/aes_ref.rs`, verified implementations of the same
+  specifications, natively on x86-64 and on AArch64 natively or under
+  qemu.
 - `src/aead.rs`: the trampolines that compile the verified functions with
   `#[target_feature]`, trusted only to be those functions.
 
@@ -168,7 +172,8 @@ What this does not cover, and cannot:
 
 ## Layout
 
-- `spec.rs`, `isa.rs`: the specifications (trusted, above).
+- `spec.rs`: the specification (trusted, above); `isa` is verilith-simd's
+  `aes`.
 - `gf.rs`: GF(2^128) and GHASH algebra.
 - `lemmas.rs`: bytes and registers, rounds, counter blocks, padding.
 - `arch.rs`: the `Isa` and `Wide` traits.
@@ -176,10 +181,9 @@ What this does not cover, and cannot:
   GHASH of up to 16 blocks, over `Isa`.
 - `gcm.rs`: key expansion, H and its powers, GCM-AE and GCM-AD, over
   `Isa`.
-- `x86.rs`, `ni.rs`, `vaes.rs`: x86-64: the wrappers, the `Isa`
-  implementation, and the 16-block kernel.
-- `neon.rs`, `arm.rs`: AArch64: the wrappers and the `Isa` implementation.
-  On other hosts the wrappers are `isa_ref`, so `tests/emulated.rs` runs
+- `ni.rs`, `vaes.rs`: x86-64: the `Isa` implementation over
+  verilith-simd's `aes_x86` wrappers, and the 16-block kernel.
+- `arm.rs`: AArch64: the `Isa` implementation over verilith-simd's
+  `aes_neon` wrappers. On other hosts the wrappers are `isa_ref`, so `tests/emulated.rs` runs
   the Arm kernels everywhere.
-- `isa_ref.rs`: the verified reference implementations of `isa`.
 - `aead.rs`: the public API and the trampolines.

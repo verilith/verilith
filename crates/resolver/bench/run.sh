@@ -27,7 +27,7 @@ doh_q=AAABAAABAAAAAAAAAmg1B2V4YW1wbGUDY29tAAABAAE
 
 start() { # start NAME
   if [ "$1" = verilith ]; then
-    taskset -c $CPUS_RES target/release/verilith-resolver --listen 127.0.0.21 --port 5300 --root 127.0.0.2 \
+    taskset -c $CPUS_RES target/release/verilith-resolver --listen 127.0.0.21 --port 5300 --root 127.0.0.2 --no-dnssec \
       --dot 8530 --doh 4430 --http 8053 --cert $T/cert.pem --key $T/key.pem 2> /dev/null &
     echo $! > $T/v.pid
   else

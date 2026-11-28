@@ -24,6 +24,55 @@ pub struct Options {
     /// entries).
     pub shards: usize,
     pub sets: usize,
+    /// DNSSEC trust anchors: DS RDATA (key tag, algorithm, digest type,
+    /// digest) for the root zone. Empty: no validation. Fixed for the
+    /// process (see `trust::set_anchors`).
+    pub trust_anchors: Vec<Vec<u8>>,
+}
+
+/// The root zone's trust anchors as IANA publishes them
+/// (https://data.iana.org/root-anchors/root-anchors.xml): KSK-2017 and
+/// KSK-2024, as DS RDATA (SHA-256 digests).
+pub fn iana_root_anchors() -> Vec<Vec<u8>> {
+    [
+        (20326u16, "E06D44B80B8F1D39A95C0B0D7C65D08458E880409BBC683457104237C7F8EC8D"),
+        (38696u16, "683D2D0ACB8C9B712A1948B27F741219298D0A450D612C483AF444A4C0FB2B16"),
+    ]
+    .iter()
+    .map(|(tag, hex)| {
+        let mut d = tag.to_be_bytes().to_vec();
+        d.push(8); // RSA/SHA-256
+        d.push(2); // SHA-256
+        d.extend(parse_hex(hex).unwrap());
+        d
+    })
+    .collect()
+}
+
+/// Parses hexadecimal digits (any case; spaces ignored).
+pub fn parse_hex(s: &str) -> Option<Vec<u8>> {
+    let h: Vec<u8> = s.bytes().filter(|c| !c.is_ascii_whitespace()).collect();
+    if h.len() % 2 != 0 {
+        return None;
+    }
+    h.chunks(2)
+        .map(|p| u8::from_str_radix(std::str::from_utf8(p).ok()?, 16).ok())
+        .collect()
+}
+
+/// A DS trust anchor in presentation form, `<tag> <alg> <digest type>
+/// <hex digest>` (as in a DS record's RDATA, RFC 4034 §5.3), as RDATA.
+pub fn parse_ds(s: &str) -> Option<Vec<u8>> {
+    let mut f = s.split_whitespace();
+    let tag: u16 = f.next()?.parse().ok()?;
+    let alg: u8 = f.next()?.parse().ok()?;
+    let dt: u8 = f.next()?.parse().ok()?;
+    let digest = parse_hex(&f.collect::<String>())?;
+    let mut d = tag.to_be_bytes().to_vec();
+    d.push(alg);
+    d.push(dt);
+    d.extend(digest);
+    Some(d)
 }
 
 impl Default for Options {
@@ -34,6 +83,7 @@ impl Default for Options {
             timeout: Duration::from_millis(1500),
             shards: 64,
             sets: 4096,
+            trust_anchors: iana_root_anchors(),
         }
     }
 }
@@ -49,11 +99,14 @@ impl Resolver {
         let roots: Vec<Vec<u8>> = o.roots.iter().filter(|a| a.len() == 4 || a.len() == 16).cloned().collect();
         assert!(!roots.is_empty(), "no root server addresses");
         let sets = o.sets.clamp(1, 0x1000_0000);
-        let shards = (0..o.shards.max(1)).map(|_| Mutex::new(Cache::new(sets))).collect();
+        assert!(
+            crate::trust::set_anchors(o.trust_anchors.clone()),
+            "trust anchors are fixed for the process, and differ from those already in force"
+        );
         Resolver {
             roots,
             net: Net { t: Arc::new(Upstream::new(o.upstream_port, o.timeout)) },
-            cache: Shared { shards },
+            cache: Shared::new(o.shards.max(1), sets),
         }
     }
 

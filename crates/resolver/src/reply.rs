@@ -21,7 +21,9 @@ verus! {
 pub const EDNS_SIZE: u16 = 1232;
 
 /// A query to a server: one question, no recursion desired (the resolver
-/// iterates itself), and an EDNS(0) OPT record offering `EDNS_SIZE`.
+/// iterates itself), and an EDNS(0) OPT record offering `EDNS_SIZE`, with
+/// the DO bit (RFC 3225), so signed zones send their RRSIGs and NSEC
+/// records.
 pub fn build_query(id: u16, name: &[u8], qtype: u16) -> (r: Option<Vec<u8>>)
     ensures
         r matches Some(b) ==> parse_message(b@) matches Some(m) && m.id == id && m.flags == 0
@@ -36,7 +38,7 @@ pub fn build_query(id: u16, name: &[u8], qtype: u16) -> (r: Option<Vec<u8>>)
         return None;
     }
     let root: [u8; 1] = [0];
-    if m.add_record(Section::Additional, root.as_slice(), TYPE_OPT, EDNS_SIZE, 0, &[]).is_err() {
+    if m.add_record(Section::Additional, root.as_slice(), TYPE_OPT, EDNS_SIZE, 0x8000, &[]).is_err() {
         return None;
     }
     Some(m.to_bytes())
@@ -53,13 +55,18 @@ pub open spec fn spec_rec(r: RrS) -> SpecRecord {
     }
 }
 
-pub open spec fn reply_flags(rd: bool, tc: bool, code: u16) -> u16 {
-    (0x8000 + (if tc { 0x0200int } else { 0 }) + (if rd { 0x0100int } else { 0 }) + 0x0080 + code) as u16
+pub open spec fn reply_flags(rd: bool, tc: bool, ad: bool, code: u16) -> u16 {
+    (0x8000 + (if tc { 0x0200int } else { 0 }) + (if rd { 0x0100int } else { 0 }) + 0x0080 + (if ad {
+        0x0020int
+    } else {
+        0
+    }) + code) as u16
 }
 
 /// What a reply to `client` says, when it says `code` with these records.
-pub open spec fn reply_ok(m: SpecMessage, client: SpecMessage, code: u16, answers: Seq<RrS>, authority: Seq<RrS>) -> bool {
+pub open spec fn reply_ok(m: SpecMessage, client: SpecMessage, code: u16, answers: Seq<RrS>, authority: Seq<RrS>, ad_ok: bool) -> bool {
     &&& m.id == client.id
+    &&& crate::spec::ad(m.flags) ==> ad_ok && !tc(m.flags) && rcode(m.flags) == code
     &&& qr(m.flags)
     &&& opcode(m.flags) == 0
     &&& rd(m.flags) == rd(client.flags)
@@ -77,15 +84,16 @@ pub open spec fn reply_ok(m: SpecMessage, client: SpecMessage, code: u16, answer
     }
 }
 
-proof fn lemma_flags(rd: bool, tc: bool, code: u16)
+proof fn lemma_flags(rd: bool, tc: bool, ad: bool, code: u16)
     requires
         code < 16,
     ensures
-        qr(reply_flags(rd, tc, code)),
-        opcode(reply_flags(rd, tc, code)) == 0,
-        crate::spec::rd(reply_flags(rd, tc, code)) == rd,
-        crate::spec::tc(reply_flags(rd, tc, code)) == tc,
-        rcode(reply_flags(rd, tc, code)) == code,
+        qr(reply_flags(rd, tc, ad, code)),
+        opcode(reply_flags(rd, tc, ad, code)) == 0,
+        crate::spec::rd(reply_flags(rd, tc, ad, code)) == rd,
+        crate::spec::tc(reply_flags(rd, tc, ad, code)) == tc,
+        crate::spec::ad(reply_flags(rd, tc, ad, code)) == ad,
+        rcode(reply_flags(rd, tc, ad, code)) == code,
 {
 }
 
@@ -154,19 +162,23 @@ fn add_all(m: &mut Message, s: Section, rs: &Vec<Rr>) -> (ok: bool)
 }
 
 /// The client's question in a reply with no records yet.
-fn start(client: &Message, rd: bool, tc: bool, code: u16) -> (m: Message)
+fn start(client: &Message, rd: bool, tc: bool, ad: bool, code: u16) -> (m: Message)
     requires
         client@.questions.len() == 1,
         code < 16,
     ensures
         m@.id == client@.id,
-        m@.flags == reply_flags(rd, tc, code),
+        m@.flags == reply_flags(rd, tc, ad, code),
         m@.questions == client@.questions,
         m@.answers.len() == 0,
         m@.authorities.len() == 0,
 {
     let q = client.question(0).unwrap();
-    let f: u16 = 0x8000 + (if tc { 0x0200 } else { 0 }) + (if rd { 0x0100 } else { 0 }) + 0x0080 + code;
+    let f: u16 = 0x8000 + (if tc { 0x0200 } else { 0 }) + (if rd { 0x0100 } else { 0 }) + 0x0080 + (if ad {
+        0x0020
+    } else {
+        0
+    }) + code;
     let mut m = Message::new(client.id(), f);
     proof {
         client.lemma_valid();
@@ -208,6 +220,7 @@ pub fn build_reply(
     authority: &Vec<Rr>,
     edns: bool,
     max: usize,
+    ad: bool,
 ) -> (r: (Vec<u8>, Ghost<SpecMessage>))
     requires
         client@.questions.len() == 1,
@@ -215,18 +228,18 @@ pub fn build_reply(
         code == RCODE_SERVFAIL ==> answers@.len() == 0 && authority@.len() == 0,
     ensures
         parse_message(r.0@) == Some(r.1@),
-        reply_ok(r.1@, client@, code, rrs(answers@), rrs(authority@)),
+        reply_ok(r.1@, client@, code, rrs(answers@), rrs(authority@), ad),
 {
     let rd = (client.flags() / 0x0100) % 2 == 1;
     proof {
-        lemma_flags(rd, false, code);
-        lemma_flags(rd, true, code);
-        lemma_flags(rd, false, RCODE_SERVFAIL);
+        lemma_flags(rd, false, ad, code);
+        lemma_flags(rd, true, false, code);
+        lemma_flags(rd, false, false, RCODE_SERVFAIL);
     }
-    let mut m = start(client, rd, false, code);
+    let mut m = start(client, rd, false, ad, code);
     let ok = add_all(&mut m, Section::Answer, answers) && add_all(&mut m, Section::Authority, authority);
     if !ok {
-        let mut f = start(client, rd, false, RCODE_SERVFAIL);
+        let mut f = start(client, rd, false, false, RCODE_SERVFAIL);
         if edns {
             add_opt(&mut f);
         }
@@ -244,7 +257,7 @@ pub fn build_reply(
     if b.len() <= max {
         return (b, Ghost(m@));
     }
-    let mut t = start(client, rd, true, code);
+    let mut t = start(client, rd, true, false, code);
     if edns {
         add_opt(&mut t);
     }
@@ -265,12 +278,13 @@ pub fn error_reply(client: &Message, code: u16, edns: bool) -> (r: (Vec<u8>, Gho
         rcode(r.1@.flags) == code,
         r.1@.questions == client@.questions,
         r.1@.answers.len() == 0,
+        !crate::spec::ad(r.1@.flags),
 {
     let rd = (client.flags() / 0x0100) % 2 == 1;
     proof {
-        lemma_flags(rd, false, code);
+        lemma_flags(rd, false, false, code);
     }
-    let mut m = start(client, rd, false, code);
+    let mut m = start(client, rd, false, false, code);
     if edns {
         add_opt(&mut m);
     }

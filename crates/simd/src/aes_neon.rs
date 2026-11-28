@@ -1,7 +1,7 @@
 //! The AArch64 instructions the kernels use, one wrapper each (TRUSTED):
 //! each is one intrinsic (FEAT_AES `AESE`, `AESMC`, FEAT_PMULL `PMULL`,
 //! and Advanced SIMD), with an `ensures` stating what it computes in the
-//! terms of [`crate::isa`] on the register as a 128-bit integer (`nv`),
+//! terms of [`crate::aes`] on the register as a 128-bit integer (`nv`),
 //! byte element 0 in bits 7:0. Little-endian AArch64 only: `LD1 {Vt.16B}`
 //! puts the byte at the lowest address in element 0, and a `u128` in
 //! memory has its least significant byte there.
@@ -9,12 +9,11 @@
 //! Each requires `arm_aes`, which [`has_arm_aes`] ensures after run-time
 //! detection. The module is compiled on other targets too, so that Verus
 //! checks the Arm proofs on any host; there each body is the verified
-//! reference implementation of its `ensures` ([`crate::isa_ref`]), and
+//! reference implementation of its `ensures` ([`crate::aes_ref`]), and
 //! [`has_arm_aes`] is false.
-#![allow(unused_imports, unused_unsafe, unused_parens, unused_variables, dead_code)]
-use crate::gf::*;
-use crate::isa::*;
-use crate::isa_ref::*;
+#![allow(unused_imports, unused_unsafe, unused_parens, unused_variables, dead_code, missing_docs)]
+use crate::aes::*;
+use crate::aes_ref::*;
 #[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::*;
 use vstd::prelude::*;
