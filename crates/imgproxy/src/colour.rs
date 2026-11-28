@@ -86,21 +86,32 @@ fn cbr(t: &Tables, n: f32) -> f32 {
     t.cbrt[i] + f * (t.cbrt[i + 1] - t.cbrt[i])
 }
 
-/// 8-bit sRGB to LabS (`vips_colourspace`'s route: sRGB2scRGB, scRGB2XYZ,
-/// XYZ2Lab, Lab2LabS).
-pub fn srgb_to_labs(r: u8, g: u8, b: u8) -> (u16, i16, i16) {
+/// 8-bit sRGB to XYZ (sRGB2scRGB, then scRGB2XYZ: `R *= VIPS_D65_Y0`
+/// and the single-precision matrix).
+pub fn srgb_to_xyz(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
     let t = tables();
     let s = |v: u8| (t.v2y[v as usize] as f64 * Y0) as f32;
     let (r, g, b) = (s(r), s(g), s(b));
     let x = 0.4124f32 * r + 0.3576f32 * g + 0.1805f32 * b;
     let y = 0.2126f32 * r + 0.7152f32 * g + 0.0722f32 * b;
     let z = 0.0193f32 * r + 0.1192f32 * g + 0.9505f32 * b;
+    (x, y, z)
+}
+
+/// XYZ to Lab (`XYZ2Lab.c`: D65, the interpolated cube-root table).
+pub fn xyz_to_lab(x: f32, y: f32, z: f32) -> (f32, f32, f32) {
+    let t = tables();
     let cx = cbr(t, (x as f64 / X0) as f32);
     let cy = cbr(t, (y as f64 / Y0) as f32);
     let cz = cbr(t, (z as f64 / Z0) as f32);
-    let l = 116.0f32 * cy - 16.0f32;
-    let a = 500.0f32 * (cx - cy);
-    let bb = 200.0f32 * (cy - cz);
+    (116.0f32 * cy - 16.0f32, 500.0f32 * (cx - cy), 200.0f32 * (cy - cz))
+}
+
+/// 8-bit sRGB to LabS (`vips_colourspace`'s route: sRGB2scRGB, scRGB2XYZ,
+/// XYZ2Lab, Lab2LabS).
+pub fn srgb_to_labs(r: u8, g: u8, b: u8) -> (u16, i16, i16) {
+    let (x, y, z) = srgb_to_xyz(r, g, b);
+    let (l, a, bb) = xyz_to_lab(x, y, z);
     let l = (l as f64 * (32767.0 / 100.0)).clamp(0.0, 32767.0) as u16;
     let a = (a as f64 * (32768.0 / 128.0)).clamp(-32768.0, 32767.0) as i16;
     let bb = (bb as f64 * (32768.0 / 128.0)).clamp(-32768.0, 32767.0) as i16;

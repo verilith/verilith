@@ -35,8 +35,8 @@ pub enum GKind {
     SoWe,
     /// A focus point: `x` and `y` are fractions of the width and height.
     Fp,
-    /// Smart (`spec_smart`): the pipeline finds the point and plans with
-    /// it as a focus point; planned as it is, it is the centre.
+    /// Smart (`spec_smart`): the pipeline chooses where the crop goes, as
+    /// libvips's `vips_smartcrop` does; planned as it is, it is the centre.
     Sm,
 }
 

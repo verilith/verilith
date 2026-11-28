@@ -16,7 +16,7 @@ sources. Resampling is Lanczos 3 by default, as in imgproxy.
 
 ## What is proven
 
-`cargo verus focus` checks 602 functions with no errors.
+`cargo verus focus` checks 615 functions with no errors.
 
 | Property | Where it is stated |
 |---|---|
@@ -28,11 +28,11 @@ sources. Resampling is Lanczos 3 by default, as in imgproxy.
 | Geometry: `geom::geom_x` computes `spec_geom::geom`, imgproxy's `crop` (pixels or fractions, at its own gravity), resize (times `dpr`), the `fill` crop at `gravity` (compass offsets or a focus point, as `calcPosition`), `extend` and `padding`, and proves every rectangle is inside the one it is cut from or placed on, and the canvas within 65535 on a side and the pixel limit | `geom::geom_x` against `spec_geom::geom` |
 | Rotating and flipping return exactly `spec_geom::turn` (clockwise quarter turns, then mirror), and placing on a canvas exactly `spec_geom::embed` | `geom::turn_rgba`, `geom::embed_rgba` |
 | EXIF orientation: `exif::orientation_x` reads exactly `spec_exif::orientation` from any bytes (JPEG's first `Exif` APP1 before the scan, WebP's `EXIF` chunk, PNG's `eXIf` before `IDAT`; the IFD0 entry 0x0112 of type SHORT, 1 to 8, else 1), in bounds and without overflow, with loops (no recursion depth an input controls); `upright_x` gives each orientation's turn | `exif::orientation_x`, `exif::upright_x` |
-| `blur` and `sharpen` compute exactly `spec_filter::blur` (libvips's `vips_convsep` at integer precision: rows then columns, each rounded to 8 bits, edges repeated, with any table of up to 10001 non-negative weights and any divisor up to 2^31) and `spec_filter::sharpen` (an unsharp mask), for every size up to 65535 by 65535 | `filter::blur_rgba`, `filter::sharpen_rgba` |
+| `blur` and `sharpen` compute exactly `spec_filter::blur` (libvips's `vips_convsep` at integer precision: rows then columns, each rounded to 8 bits, edges repeated, with any table of up to 10001 non-negative weights and any divisor up to 2^31), and `sharpen`'s step on the lightness computes exactly `spec_filter::sharpen_l` (`vips_sharpen`: the LabS lightness blurred at 16 bits with libvips's rounding, then moved by its curve's table), for every size up to 65535 by 65535 | `filter::blur_rgba`, `filter::sharpen_l_x` |
 | Premultiplied alpha computes exactly `spec_filter::premultiply` and `unpremultiply`: libvips's single-precision arithmetic and truncation, written as integers | `filter::premul_rgba`, `filter::unpremul_rgba` |
 | `pixelate` computes exactly `spec_filter::pixelate`: imgproxy's mirror padding to whole blocks, `vips_shrink` (rows, then columns, with libvips's 8-bit fixed-point average), `vips_zoom` and the crop back | `filter::pixelate_rgba` |
 | Watermarks: `geom::watermark_rgba` computes exactly `spec_geom::watermark` (Porter-Duff "over" with straight alpha at the given opacity, rounded to nearest, once at a gravity or tiled), and `wm_at_x` places it inside the image as `calcPosition` does | `geom::watermark_rgba`, `geom::wm_at_x` |
-| Smart gravity: `smart::smart_x` computes exactly `spec_smart::smart`: scores for edges (a Laplacian of the luminance), skin and saturation, blurred, and the first pixel with the highest score | `smart::smart_x` |
+| Smart gravity's choice computes exactly `spec_smart`'s: the first point of libvips's attention map with the highest value (`vips_max`), and the crop centred on it inside the image (`smartcrop.c`) | `smart::first_max_x`, `smart::centred_x` |
 | Cropping returns exactly `spec::crop` | `resize::crop_rgba` |
 | **PNG round trip:** for every RGBA image, the file `encode_rgba` writes decodes, under verilith-png's specification of PNG decoding, to exactly that image and header. The proof goes through every layer of the specification: the signature, IHDR, the chunk walk with its CRCs (computed by verilith-checksum, verified), the zlib stream (verilith-zlib's compressor, proven to round-trip), and the five row filters, each row filtered with whichever filter libpng's heuristic picks | `pngenc::encode_rgba` against `verilith_png::spec::decode` |
 | **JPEG output:** the file verilith-jpeg's `encode_rgb` writes decodes, under verilith-jpeg's specification, to the coefficients libjpeg-turbo computes for the image with its default settings (and is byte-identical to libjpeg-turbo's file in its differential tests) | verilith-jpeg's `encode::encode_rgb` (verified there) |
@@ -116,11 +116,14 @@ does not decode or is over the limits, 502 for an origin that fails.
   output pixel's cell when downscaling), not a pick of one pixel.
 - Alpha is resampled straight, not premultiplied. The filters use
   premultiplied alpha as imgproxy does.
-- Smart gravity scores edges, skin and saturation as libvips's
-  "attention" strategy does, with this crate's own weights, so it can
-  pick a different spot. `sharpen` is an unsharp mask on the RGB
-  channels, not libvips's sharpen on the L channel of Lab. Gravity
-  offsets are whole pixels. `skip_processing` knows
+- Smart gravity runs libvips's attention map as imgproxy does (the
+  `crop` option's on the source, the result's on the resized image),
+  except that an image under 32 pixels on a side is used as it is,
+  where libvips first enlarges its copy with bicubic interpolation.
+  libvips premultiplies the map's copy when the image has an alpha
+  band; PNG says so in its header, and for GIF and WebP an alpha band is
+  taken to mean a pixel that is not opaque. Gravity offsets are whole
+  pixels. `skip_processing` knows
   only the four formats decoded here.
 - GIF: the first frame, at its own size.
 - No redirects from an origin. `https://` sources need `--features tls`;
@@ -171,12 +174,22 @@ average on random sizes and the Lanczos resampler with a floating-point
 Lanczos 3 (`tests/lanczos.rs`: at most 2 levels apart), runs the pipeline on JPEG and PNG files the `image` crate writes,
 and checks URL parsing and imgproxy's documented signature example.
 
-`blur`, premultiplied alpha and `pixelate` are checked against libvips
-itself: `scripts/vips_ref.py` runs an installed libvips through ctypes as
+The filters and smart gravity are checked against libvips itself:
+`scripts/vips_ref.py` runs an installed libvips through ctypes as
 imgproxy calls it, and `VERILITH_VIPS_REF=dir cargo test --test libvips
--- --ignored` compares. Against libvips 8.15.1 (built with Highway) the
-blur and alpha are byte-identical on 255 images, on both its vector and
-its C path (`VIPS_NOVECTOR=1`). Its masks are built as `vips_gaussmat`
-and `vips_convi_intize` build them (`src/mask.rs`). `pixelate` rounds as
-libvips 8.17 and later do (a fixed-point average, `shrinkv.c`); 8.15
-divides exactly, and otherwise matches.
+-- --ignored` compares. Against libvips 8.15.1 (built with Highway):
+
+- `blur` and premultiplied alpha are byte-identical on 255 images, on
+  both its vector and its C path (`VIPS_NOVECTOR=1`). The masks are built
+  as `vips_gaussmat` and `vips_convi_intize` build them (`src/mask.rs`).
+- `sharpen` differs in 6 of 347,000 bytes, by at most 2. The colour
+  conversions it goes through follow current libvips's source
+  (`src/colour.rs`), which computes two matrices and a gamma table in
+  single precision where 8.15 uses double; the conversion back to sRGB is
+  byte-identical to 8.15 when those are switched to double.
+- Smart gravity picks the same point as `vips_smartcrop` on 120 of 120
+  images of 32 to 400 pixels, with and without alpha (`src/attention.rs`).
+- `pixelate`, and the shrink in smart gravity's reduction, round as
+  libvips 8.17 and later do (a fixed-point average, `shrinkv.c`); 8.15
+  divides exactly. The test runs smart gravity with 8.15's rounding for
+  8.15, and leaves `pixelate` out there.

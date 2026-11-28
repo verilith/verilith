@@ -107,6 +107,36 @@ def main():
                 open(os.path.join(out, name + ".in"), "wb").write(px)
                 open(os.path.join(out, name + ".out"), "wb").write(res)
                 n += 1
+    # Smart gravity: vips_smartcrop's attention point, for images of
+    # coloured blobs (some skin-toned) on gradients, with and without alpha.
+    smart = []
+    for i in range(120):
+        w, h = rnd.randrange(32, 400), rnd.randrange(32, 400)
+        alpha = i % 3 == 2
+        blobs = [(rnd.randrange(w), rnd.randrange(h), rnd.randrange(4, max(5, min(w, h) // 3)),
+                  rnd.choice([(224, 172, 140), (198, 134, 66), (rnd.randrange(256), rnd.randrange(256), rnd.randrange(256))]))
+                 for _ in range(rnd.randrange(1, 6))]
+        g0 = [rnd.randrange(256) for _ in range(6)]
+        px = bytearray()
+        for y in range(h):
+            for x in range(w):
+                c = [(g0[k] * (w - x) + g0[k + 3] * x) // w for k in range(3)]
+                for (bx, by, r, col) in blobs:
+                    if (x - bx) ** 2 + (y - by) ** 2 <= r * r:
+                        c = list(col)
+                c = [min(255, max(0, v + rnd.randrange(-6, 7))) for v in c]
+                a = (255 - ((x * 7 + y * 3) % 200)) if alpha else 255
+                px += bytes(c + [a])
+        cw, ch = rnd.randrange(1, w + 1), rnd.randrange(1, h + 1)
+        nb = 4 if alpha else 3
+        src = px if alpha else bytes(b for k in range(w * h) for b in px[k * 4:k * 4 + 3])
+        im = C.c_void_p(v.vips_image_new_from_memory_copy(bytes(src), len(src), w, h, nb, UCHAR))
+        im = call("vips_copy", im, b"interpretation", C.c_int(SRGB))
+        ax, ay = C.c_int(), C.c_int()
+        call("vips_smartcrop", im, C.c_int(cw), C.c_int(ch), b"attention_x", C.byref(ax), b"attention_y", C.byref(ay))
+        open(os.path.join(out, f"smart{i:03}.rgba"), "wb").write(px)
+        smart.append(f"{i} {w} {h} {int(alpha)} {cw} {ch} {ax.value} {ay.value}")
+    open(os.path.join(out, "smart.txt"), "w").write("\n".join(smart) + "\n")
     # The colour conversions sharpen uses, on their own: sRGB to LabS for
     # every 8-bit colour, and LabS back to sRGB for a spread of values.
     rgb = bytes(c for r in range(0, 256) for g in range(256) for b in range(256) for c in (r, g, b))

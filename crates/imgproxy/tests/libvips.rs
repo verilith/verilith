@@ -114,3 +114,29 @@ fn colour_conversions_as_libvips() {
     // See the note at the top: libvips 8.15's double-precision matrices.
     assert!(bad * 100 <= 1 << 24 && bad2 * 10000 <= 1 << 20, "sRGB to LabS: {bad} of 2^24 differ; LabS to sRGB: {bad2} of 2^20");
 }
+
+#[test]
+#[ignore]
+fn attention_as_libvips() {
+    let Ok(dir) = std::env::var("VERILITH_VIPS_REF") else { return };
+    let list = std::fs::read_to_string(format!("{dir}/smart.txt")).unwrap();
+    let ver = std::fs::read_to_string(format!("{dir}/version")).unwrap();
+    let ver: Vec<u32> = ver.trim().split('.').map(|v| v.parse().unwrap()).collect();
+    // Before 8.17 vips_shrink divides exactly (see the pixelate note).
+    let exact = (ver[0], ver[1]) < (8, 17);
+    let (mut same, mut all) = (0, 0);
+    for line in list.lines() {
+        let v: Vec<usize> = line.split(' ').map(|t| t.parse().unwrap()).collect();
+        let (i, w, h, alpha, cw, ch, ax, ay) = (v[0], v[1], v[2], v[3] == 1, v[4], v[5], v[6], v[7]);
+        let px = std::fs::read(format!("{dir}/smart{i:03}.rgba")).unwrap();
+        let got = verilith_imgproxy::proxy::attention_point(&px, w, h, alpha, cw, ch, exact);
+        all += 1;
+        if got == (ax, ay) {
+            same += 1;
+        } else {
+            eprintln!("{line}: ours {got:?}");
+        }
+    }
+    eprintln!("attention: {same} of {all} the same");
+    assert_eq!(same, all);
+}

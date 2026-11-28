@@ -245,22 +245,55 @@ fn watermark(px: Vec<u8>, w: u32, h: u32, wm: &Rgba, o: &Options) -> Result<Vec<
     Ok(crate::geom::watermark_rgba(&px, w as usize, h as usize, &img, ww as usize, wh as usize, x, y, o.wm_tile, pw, ph, o.wm_op))
 }
 
-/// The point smart gravity centres on, as fractions (`F1` units) of the
-/// `w` by `h` image: `smart::smart_x` on a copy area-averaged to at most
-/// 256 on its longer side, its scores blurred with a sigma of a sixteenth
-/// of that side.
-fn smart_point(px: &[u8], w: usize, h: usize) -> (i32, i32) {
-    let long = w.max(h);
-    let (aw, ah) = if long > 256 { ((w * 256 / long).max(1), (h * 256 / long).max(1)) } else { (w, h) };
-    // pre: resize_rgba and smart_x (sizes in 1..=MAX_DIM, a whole number
-    // of pixels; gauss's tables are what blur_rgba takes).
-    let small = if (aw, ah) == (w, h) { px.to_vec() } else { crate::resize::resize_rgba(px, w, h, aw, ah) };
-    let (bx, by) = match crate::mask::gaussblur(aw.max(ah) as f64 / 16.0) {
-        Ok(Some((g, d))) => crate::smart::smart_x(&g, d, &small, aw, ah),
-        _ => crate::smart::smart_x(&[1], 1, &small, aw, ah),
-    };
-    let f = |b: usize, n: usize| ((2 * b + 1) * 10000 / (2 * n)) as i32;
-    (f(bx, aw), f(by, ah))
+/// libvips's attention point of `px` (`w` by `h`) for a `cw` by `ch`
+/// crop: the first highest value of `attention::attention`'s map
+/// (`smart::first_max_x`), mapped back to the image (`x_pos / hscale`,
+/// truncated, as `smartcrop.c` does).
+pub fn attention_point(px: &[u8], w: usize, h: usize, alpha: bool, cw: usize, ch: usize, exact_shrink: bool) -> (usize, usize) {
+    let (m, sw, _sh, hs, vs) = crate::attention::attention(px, w, h, alpha, cw, ch, exact_shrink);
+    let bits: Vec<u32> = m.iter().map(|v| v.to_bits()).collect();
+    // pre: first_max_x (the map has a value for each of its 1 or more pixels).
+    let best = crate::smart::first_max_x(&bits);
+    (((best % sw) as f64 / hs) as usize, ((best / sw) as f64 / vs) as usize)
+}
+
+/// imgproxy's `SmartCrop` (`vips_smartcrop`, attention): where a `cw` by
+/// `ch` crop of `px` (`w` by `h`) starts. Nothing to choose when the crop
+/// is the whole image.
+pub fn smart_crop(px: &[u8], w: usize, h: usize, alpha: bool, cw: usize, ch: usize) -> (usize, usize) {
+    if cw >= w && ch >= h {
+        return (0, 0);
+    }
+    let (ax, ay) = attention_point(px, w, h, alpha, cw, ch, false);
+    // pre: centred_x (sizes and the point below 2^32; the crop inside).
+    let c = |a: usize, s: usize, c: usize| crate::smart::centred_x(a.min(1 << 32) as u64, s as u64, c.min(s) as u64) as usize;
+    (c(ax, w, cw), c(ay, h, ch))
+}
+
+/// Whether libvips would see an alpha band in the source: PNG says so
+/// in its header (a colour type with alpha, or a `tRNS` chunk); JPEG has
+/// none; for the other formats, whether any pixel is not opaque.
+fn has_alpha(data: &[u8], px: &[u8]) -> bool {
+    if data.starts_with(b"\x89PNG\r\n\x1a\n") {
+        if data.len() > 25 && (data[25] == 4 || data[25] == 6) {
+            return true;
+        }
+        let mut i = 8;
+        while i + 8 <= data.len() {
+            let n = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]) as usize;
+            match &data[i + 4..i + 8] {
+                b"tRNS" => return true,
+                b"IDAT" => return false,
+                _ => {}
+            }
+            i = i.saturating_add(12).saturating_add(n);
+        }
+        false
+    } else if data.starts_with(&[0xFF, 0xD8]) {
+        false
+    } else {
+        px.chunks_exact(4).any(|p| p[3] != 255)
+    }
 }
 
 /// imgproxy's `IMGPROXY_QUALITY` default.
@@ -512,22 +545,15 @@ pub fn process_with(data: &[u8], o: &Options, lim: &Limits, wm: Option<&Rgba>) -
     if shrink == 1 && (sw as u32, sh as u32) != (ow0, oh0) {
         p = crate::geom::geom_x(sw as u32, sh as u32, g, lim.max_out_px).ok_or(too_big.clone())?;
     }
-    // Smart gravity: find the point on the image as decoded and turned,
-    // then plan again with it as a focus point (the sizes do not depend on
-    // the gravity, so the shrink on load still holds).
+    // Smart gravity, as imgproxy runs it: the `crop` option's on the
+    // source, the result's on the image as resized (below).
     let sm = |g: &Gravity| g.kind == GKind::Sm;
-    if sm(&g.gravity) || g.crop_g.as_ref().is_some_and(sm) {
-        let (fx, fy) = smart_point(&px, sw, sh);
-        let focus = Gravity { kind: GKind::Fp, x: fx, y: fy };
-        let mut g2 = g;
-        if sm(&g.gravity) {
-            g2.gravity = focus;
-        }
-        if g.crop_g.as_ref().is_some_and(sm) {
-            g2.crop_g = Some(focus);
-        }
-        let (pw0, ph0) = if shrink == 1 { (sw as u32, sh as u32) } else { (ow0, oh0) };
-        p = crate::geom::geom_x(pw0, ph0, g2, lim.max_out_px).ok_or(too_big.clone())?;
+    let alpha = has_alpha(data, &px);
+    let crop_sm = g.crop_g.as_ref().map_or(sm(&g.gravity), sm);
+    if crop_sm && shrink == 1 {
+        let (x, y) = smart_crop(&px, sw, sh, alpha, p.cw0 as usize, p.ch0 as usize);
+        p.x0 = x as u32;
+        p.y0 = y as u32;
     }
     // Shrunk on load (only when the crop is the whole image): the crop is
     // the whole of what was decoded.
@@ -547,7 +573,13 @@ pub fn process_with(data: &[u8], o: &Options, lim: &Limits, wm: Option<&Rgba>) -
             None => crate::resize::resize_rgba(&px, cw0, ch0, rw, rh),
         }
     };
-    // pre: crop_rgba (geom_x ensures the rectangle is inside).
+    if sm(&g.gravity) {
+        let (x, y) = smart_crop(&px, rw, rh, alpha, p.cw as usize, p.ch as usize);
+        p.cx = x as u32;
+        p.cy = y as u32;
+    }
+    // pre: crop_rgba (geom_x ensures the rectangle is inside; smart_crop's
+    // centred_x keeps it so).
     let px = if (p.cx, p.cy, p.cw, p.ch) == (0, 0, p.rw, p.rh) {
         px
     } else {
