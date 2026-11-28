@@ -49,15 +49,16 @@ What the proofs here assume rather than prove:
   names the dot-product extension in the assembly. `crc32c_update` is
   verified too; trusted is the trampoline that compiles the verified
   `crc32c::crc32c_words` with SSE4.2 or the CRC extension enabled.
-- `src/crc32c.rs`, the three `external_body` functions `crc32c_word`,
-  `crc32c_byte_hw` and `has_crc32c`: that the CPU's CRC-32C instruction
-  (SSE4.2's `crc32` with a 64- or 8-bit operand on x86-64,
-  `crc32cx`/`crc32cb` on AArch64) computes this CRC over its eight bytes
-  or one byte, as both vendors define it, and the run-time check for it.
-  The loop around the instructions is proven. `tests/crc32c.rs` runs the
-  eight-byte instruction on 1,000,000 random registers and words against
-  the verified table kernel, and the whole kernel against the table
-  kernel at every length up to 300 and at eight alignments (on x86-64,
+- The CRC instructions, through verilith-simd's `crc` module (its trusted
+  base): `crc32c_u64`, `crc32c_u8` and `crc32_u64` (SSE4.2's `crc32` on
+  x86-64, `crc32cx`/`crc32cb`/`crc32x` on AArch64), each specified there
+  as the reflected CRC with its polynomial over its operand, and the CPU
+  checks `has_crc32c` and `has_crc_arm`. `crc32c::crc32c_word`,
+  `crc32c_byte_hw` and `lanes::crc_word` are now verified: they prove this
+  crate's `crc32c_from` and `crc_from` equal to that specification
+  (`lemma_from_simd`). verilith-simd's `tests/crc.rs` checks the
+  instructions against the definition bit by bit; `tests/crc32c.rs` here
+  still runs the whole kernel against the table kernel at every length up to 300 and at eight alignments (on x86-64,
   and on AArch64 under qemu), and the table kernel against a
   bit-at-a-time reference.
 - The vector instructions, from
@@ -96,11 +97,10 @@ What the proofs here assume rather than prove:
     the bodies are plain-Rust stand-ins, so `tests/vudot.rs` here checks
     the verified kernel `adlerv::udot` everywhere and the instructions
     themselves on AArch64.
-- `src/lanes.rs`, the one `external_body` function `crc_word`: on
-  AArch64, that the `crc32x` instruction computes this CRC-32 over its
-  eight bytes. `tests/basic.rs` runs the three-lane kernel against the
-  table kernel at every length around its block boundaries; on other CPUs
-  `crc_word` is the table kernel, so the same test covers the lanes there.
+- `tests/basic.rs` runs the three-lane CRC-32 kernel (`lanes`) against
+  the table kernel at every length around its block boundaries; off
+  AArch64 `crc32_u64` is verilith-simd's bit-by-bit definition, so the
+  same test covers the lanes there.
 - The specs: `src/spec.rs`.
 - Verus, Z3 and the Rust compiler.
 

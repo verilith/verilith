@@ -20,6 +20,7 @@ fn resolver() -> &'static (Arc<Resolver>, Arc<std::sync::atomic::AtomicUsize>) {
             timeout: Duration::from_millis(300),
             shards: 4,
             sets: 256,
+            trust_anchors: Vec::new(),
         };
         (Arc::new(Resolver::new(&o)), c)
     })

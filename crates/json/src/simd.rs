@@ -15,7 +15,7 @@ use verilith_simd::cpu::*;
 use vstd::prelude::*;
 
 #[cfg(target_arch = "x86_64")]
-use core::arch::x86_64::{__m128i, __m256i};
+use verilith_simd::arch::{__m128i, __m256i};
 
 
 verus! {

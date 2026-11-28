@@ -3,6 +3,10 @@
 //!   verilith-resolver [--listen ADDR] [--port 53] [--threads N]
 //!                     [--dot PORT --doh PORT --http PORT --cert PEM --key PEM]   (built with --features tls)
 //!                     [--root IP]... [--upstream-port PORT]
+//!                     [--trust-anchor "TAG ALG DIGEST-TYPE HEX"]... [--no-dnssec]
+//!
+//! DNSSEC validation is on, from the IANA root anchors, unless
+//! `--no-dnssec` or other anchors are given.
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
@@ -20,6 +24,8 @@ fn main() {
     let mut port: u16 = 53;
     let mut threads: usize = 0;
     let mut roots: Vec<Vec<u8>> = Vec::new();
+    let mut anchors: Vec<Vec<u8>> = Vec::new();
+    let mut dnssec = true;
     #[allow(unused_mut)]
     let (mut dot, mut doh, mut http, mut cert, mut key): (Option<u16>, Option<u16>, Option<u16>, Option<String>, Option<String>) =
         (None, None, None, None, None);
@@ -36,6 +42,8 @@ fn main() {
                     IpAddr::V6(x) => x.octets().to_vec(),
                 })
             }
+            "--trust-anchor" => anchors.push(service::parse_ds(&v()).expect("--trust-anchor: TAG ALG DIGEST-TYPE HEX")),
+            "--no-dnssec" => dnssec = false,
             "--upstream-port" => o.upstream_port = v().parse().expect("--upstream-port"),
             "--timeout-ms" => o.timeout = std::time::Duration::from_millis(v().parse().expect("--timeout-ms")),
             "--dot" => dot = Some(v().parse().expect("--dot")),
@@ -49,6 +57,12 @@ fn main() {
     if !roots.is_empty() {
         o.roots = roots;
     }
+    if !anchors.is_empty() {
+        o.trust_anchors = anchors;
+    }
+    if !dnssec {
+        o.trust_anchors = Vec::new();
+    }
     if threads == 0 {
         threads = (std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) * 8).max(32);
     }
@@ -57,7 +71,10 @@ fn main() {
     let sock = service::bind_udp(at).expect("UDP bind");
     let mut hs = service::udp(r.clone(), sock, threads).expect("UDP");
     hs.push(service::tcp(r.clone(), TcpListener::bind(at).expect("TCP bind")));
-    eprintln!("verilith-resolver: UDP and TCP on {at}");
+    eprintln!(
+        "verilith-resolver: UDP and TCP on {at}, DNSSEC validation {}",
+        if o.trust_anchors.is_empty() { "off" } else { "on" }
+    );
     #[cfg(feature = "tls")]
     {
         if let Some(p) = dot {

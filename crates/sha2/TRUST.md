@@ -18,7 +18,8 @@ scanner finds them.
   180-2's examples and against RustCrypto's `sha2` and OpenSSL.
 - `src/spec_hmac.rs`: FIPS 198-1's HMAC. Also checked by running the MACs
   on RFC 4231's examples (`tests/hmac.rs`).
-- `src/isa.rs`: what the SHA instructions compute, transcribed from the
+- verilith-simd's `src/sha.rs` (re-exported here as `isa`): what the SHA
+  instructions compute, transcribed from the
   vendors' pseudocode (not from FIPS 180-4) as functions on lanes: x86's
   `SHA256RNDS2`, `SHA256MSG1`, `SHA256MSG2` and `PBLENDW` from Intel's
   Software Developer's Manual, AArch64's `SHA256H`, `SHA256H2`,
@@ -27,7 +28,7 @@ scanner finds them.
   Architecture Reference Manual. The kernels are proven against these,
   and these against nothing: that they describe the silicon is checked by
   `tests/isa.rs`, which runs every instruction on 200,000 random operands
-  (with zero, all-one and one-bit words mixed in) against `src/isa_ref.rs`,
+  (with zero, all-one and one-bit words mixed in) against verilith-simd's `src/sha_ref.rs` (`isa_ref`),
   verified implementations of the same functions. It runs natively on
   x86-64 with SHA-NI, and on AArch64 natively and under qemu (`ci.sh`).
   Deliberate one-bit errors in the specification fail it.
@@ -39,10 +40,12 @@ for `pclmulqdq` and `crc32`, each instruction is a one-line wrapper whose
 `ensures` is its `isa` specification and whose `requires` is that the CPU
 has the extension:
 
-- `src/shani.rs`: `sha256rnds2`, `sha256msg1`, `sha256msg2`,
+They live in verilith-simd, so other crates can use them:
+
+- `src/sha_x86.rs` (re-exported by `shani`): `sha256rnds2`, `sha256msg1`, `sha256msg2`,
   `blend_epi16`. The other instructions the kernel uses (`pshufd`,
   `palignr`, `pshufb`, `paddd`, loads and stores) are verilith-simd's.
-- `src/armv8.rs`: `vsha256hq`, `vsha256h2q`, `vsha256su0q`, `vsha256su1q`,
+- `src/sha_neon.rs` (re-exported by `armv8`): `vsha256hq`, `vsha256h2q`, `vsha256su0q`, `vsha256su1q`,
   `vsha512hq`, `vsha512h2q`, `vsha512su0q`, `vsha512su1q`, `vrev32q_u8`,
   `vrev64q_u8`, `vaddq_u64`, and the 64-bit lane loads and stores
   `vld1q_u64_at` and `vst1q_u64_at`. On other targets their bodies are the
@@ -57,7 +60,7 @@ instruction specifications.
 
 ## CPU detection and compilation with target features
 
-- `shani::has_shani`, `armv8::has_sha2`, `armv8::has_sha512`: run-time
+- `shani::has_shani`, `armv8::has_sha2`, `armv8::has_sha512` (verilith-simd's, re-exported): run-time
   detection (`is_x86_feature_detected!`, `is_aarch64_feature_detected!`,
   or the compile-time target features without `std`), trusted to say that
   the CPU has the extension. The uninterpreted predicates `shani()`,

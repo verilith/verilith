@@ -216,6 +216,11 @@ pub open spec fn rd(flags: u16) -> bool {
     (flags / 0x0100) % 2 == 1
 }
 
+/// Authentic Data (RFC 4035 §3.2.3).
+pub open spec fn ad(flags: u16) -> bool {
+    (flags / 0x0020) % 2 == 1
+}
+
 pub open spec fn rcode(flags: u16) -> u16 {
     (flags % 16) as u16
 }

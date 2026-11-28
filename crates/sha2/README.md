@@ -100,17 +100,18 @@ let m = hmac::SimpleHmac::<verilith_sha2::Sha256>::new_from_slice(b"key").unwrap
   inner one for `reset`, so the key is processed once.
 - `src/digest_impls.rs`: RustCrypto's `digest` traits over the hashers
   and MACs (an unverified adapter).
-- `src/isa.rs`: what the SHA instructions compute (Intel's `SHA256RNDS2`,
-  `SHA256MSG1`, `SHA256MSG2`; Arm's `SHA256H`, `SHA256H2`, `SHA256SU0`,
-  `SHA256SU1` and the four `SHA512` ones), transcribed from the vendors'
-  pseudocode as functions on lanes (trusted, below). `src/isa_ref.rs`
-  implements them, verified, for the tests that check them against the
-  CPU.
-- `src/shani.rs`: the SHA-NI kernel, over one-line wrappers of the
-  instructions whose `ensures` are their `isa` specifications.
-- `src/armv8.rs`: the ARMv8 SHA2 and SHA512 kernels, the same way. On
-  other targets the wrappers are `isa_ref`, so the kernels run (slowly)
-  everywhere.
+- `isa` and `isa_ref`: verilith-simd's `sha` and `sha_ref`, re-exported:
+  what the SHA instructions compute (Intel's `SHA256RNDS2`, `SHA256MSG1`,
+  `SHA256MSG2`; Arm's `SHA256H`, `SHA256H2`, `SHA256SU0`, `SHA256SU1` and
+  the four `SHA512` ones), transcribed from the vendors' pseudocode as
+  functions on lanes, and verified implementations of them for the tests
+  that check them against the CPU.
+- `src/shani.rs`: the SHA-NI kernel, over verilith-simd's one-line
+  wrappers of the instructions (`sha_x86`), whose `ensures` are their
+  `isa` specifications.
+- `src/armv8.rs`: the ARMv8 SHA2 and SHA512 kernels, the same way
+  (`sha_neon`). On other targets the wrappers are `isa_ref`, so the
+  kernels run (slowly) everywhere.
 - `src/sha_lemmas.rs`: lemmas the kernels share: addition modulo 2^32,
   the rounds and the schedule four steps at a time.
 - `src/cpu.rs`: the kernel dispatch, verified, and the verified kernels
@@ -136,13 +137,13 @@ What the proofs here assume rather than prove:
   H(0) come from the fractional parts of cube and square roots of primes,
   computed with exact integer roots, and the SHA-512/224 and SHA-512/256
   H(0) come from running FIPS 180-4's IV generation function (§5.3.6).
-- `src/isa.rs`: the specifications of the SHA instructions, from the
-  Intel and Arm manuals. `tests/isa.rs` runs every instruction on 200,000
-  random operands against `isa_ref` (natively on x86-64 with SHA-NI, on
-  AArch64 natively and under qemu in CI).
-- `src/shani.rs` and `src/armv8.rs`: one `external_body` wrapper per
-  instruction (as verilith-simd's and verilith-core's are), the run-time
-  detection of the extensions, and `compress_blocks` (and
+- From verilith-simd: the specifications of the SHA instructions
+  (`sha.rs`, from the Intel and Arm manuals), one `external_body` wrapper
+  per instruction and the run-time detection of the extensions
+  (`sha_x86.rs`, `sha_neon.rs`). `tests/isa.rs` here runs every
+  instruction on 200,000 random operands against `isa_ref` (natively on
+  x86-64 with SHA-NI, on AArch64 natively and under qemu in CI).
+- `src/shani.rs` and `src/armv8.rs`: `compress_blocks` (and
   `compress512_blocks`), which call the verified kernel compiled with the
   extension enabled, trusted only to be that function.
 - `src/cpu.rs`: `bmi2_256`, `bmi2_512`, `avx2_256` and `avx2_512`, the
