@@ -53,7 +53,7 @@ impl Fail {
         match self {
             Fail::BadUrl(_) => 400,
             Fail::Forbidden => 403,
-            Fail::NotFound => 404,
+            Fail::NotFound | Fail::Expired => 404,
             Fail::Unsupported => 415,
             Fail::Unprocessable(_) => 422,
             Fail::BadGateway(_) => 502,
@@ -64,6 +64,7 @@ impl Fail {
             Fail::BadUrl(m) | Fail::Unprocessable(m) | Fail::BadGateway(m) => m,
             Fail::Forbidden => "Invalid signature",
             Fail::NotFound => "Source not found",
+            Fail::Expired => "Expired URL",
             Fail::Unsupported => "Source image type not supported",
         }
     }
@@ -118,11 +119,80 @@ impl Default for Options {
 
 impl Format {
     pub fn mime(self) -> &'static [u8] {
+        self.kind().mime()
+    }
+    pub fn kind(self) -> Kind {
         match self {
-            Format::Png => b"image/png",
-            Format::Jpeg => b"image/jpeg",
+            Format::Png => Kind::Png,
+            Format::Jpeg => Kind::Jpeg,
         }
     }
+}
+
+impl Kind {
+    pub fn mime(self) -> &'static [u8] {
+        match self {
+            Kind::Png => b"image/png",
+            Kind::Jpeg => b"image/jpeg",
+            Kind::Webp => b"image/webp",
+            Kind::Gif => b"image/gif",
+        }
+    }
+    pub fn ext(self) -> &'static [u8] {
+        match self {
+            Kind::Png => b"png",
+            Kind::Jpeg => b"jpg",
+            Kind::Webp => b"webp",
+            Kind::Gif => b"gif",
+        }
+    }
+    /// `spec_url::kind_bit`: its bit in `Options::skip`.
+    pub fn bit(self) -> u32 {
+        crate::url::kind_bit_x(self)
+    }
+}
+
+/// The `Content-Disposition` value: `inline` (or `attachment` with
+/// `return_attachment`), and a file name, as imgproxy gives it: the
+/// `filename` option's, else the source's last path segment without its
+/// extension, else `image`; then the result's extension. The name is made
+/// safe for a header: control bytes are dropped, and `"`, `\`, `%` and
+/// non-ASCII bytes are percent-encoded.
+pub fn disposition(filename: Option<&[u8]>, source: &Source, attachment: bool, k: Option<Kind>) -> Vec<u8> {
+    let from_source = |u: &[u8]| -> Vec<u8> {
+        let u = u.split(|&c| c == b'?' || c == b'#').next().unwrap_or(&[]);
+        let last = u.rsplit(|&c| c == b'/').next().unwrap_or(&[]);
+        let stem = match last.iter().rposition(|&c| c == b'.') {
+            Some(i) => &last[..i],
+            None => last,
+        };
+        let mut d = Vec::new();
+        verilith_text::percent::decode_to(stem, &mut d);
+        d
+    };
+    let name = match (filename, source) {
+        (Some(f), _) if !f.is_empty() => f.to_vec(),
+        (_, Source::Local(p)) => from_source(p),
+        (_, Source::Http(u)) => from_source(u.splitn(4, |&c| c == b'/').nth(3).unwrap_or(&[])),
+        (_, Source::Upload) => Vec::new(),
+    };
+    let name = if name.is_empty() { b"image".to_vec() } else { name };
+    let mut v: Vec<u8> = Vec::new();
+    v.extend_from_slice(if attachment { b"attachment" } else { b"inline" });
+    v.extend_from_slice(b"; filename=\"");
+    for &c in &name {
+        match c {
+            0..=0x1f | 0x7f => {}
+            b'"' | b'\\' | b'%' | 0x80..=0xff => v.extend_from_slice(format!("%{c:02X}").as_bytes()),
+            _ => v.push(c),
+        }
+    }
+    if let Some(k) = k {
+        v.push(b'.');
+        v.extend_from_slice(k.ext());
+    }
+    v.push(b'"');
+    v
 }
 
 /// imgproxy's `IMGPROXY_QUALITY` default.
@@ -136,6 +206,8 @@ pub struct Parsed<'a> {
     pub signed: &'a [u8],
     pub opts: Options,
     pub source: Source,
+    /// `filename`, decoded.
+    pub filename: Option<Vec<u8>>,
 }
 
 /// Parses `/%signature/%options/plain/%url[@%ext]`,
@@ -144,7 +216,7 @@ pub struct Parsed<'a> {
 /// to compute `spec_url::parse`.
 pub fn parse(path: &[u8]) -> Result<Parsed<'_>, Fail> {
     let u = crate::url::parse_x(path)?;
-    Ok(Parsed { signature: &path[1..u.sig_end], signed: &path[u.sig_end..], opts: u.opts, source: u.source })
+    Ok(Parsed { signature: &path[1..u.sig_end], signed: &path[u.sig_end..], opts: u.opts, source: u.source, filename: u.filename })
 }
 
 // ---------------------------------------------------------------------------
@@ -333,9 +405,13 @@ pub fn process(data: &[u8], o: &Options, lim: &Limits) -> Result<Vec<u8>, Fail> 
     // JPEG on load changes only how the pixels are computed, not the
     // result's size. The plan is on the image as rotated (odd quarter
     // turns swap the sides), as the URL's sizes are.
+    // `auto_rotate`: the EXIF orientation turns the image upright first,
+    // then `rotate` and `flip` apply.
     let (w0, h0) = dims(data).ok_or(Fail::Unsupported)?;
+    let orient = if o.auto_rotate { crate::exif::orientation_x(data) } else { 1 };
+    let (eq, efh, efv) = crate::exif::upright_x(orient);
     let turned = o.rotate != 0 || o.flip_h || o.flip_v;
-    let odd = o.rotate % 2 == 1;
+    let odd = (eq + o.rotate) % 2 == 1;
     let (ow0, oh0) = if odd { (h0, w0) } else { (w0, h0) };
     let g = geo(o);
     // pre: geom_x (sizes at most MAX_DIM; geo_ok holds for whatever
@@ -353,8 +429,11 @@ pub fn process(data: &[u8], o: &Options, lim: &Limits) -> Result<Vec<u8>, Fail> 
         return Err(Fail::Unprocessable("Source image is invalid"));
     }
     let (iw, ih) = (img.w as usize, img.h as usize);
-    let px = if turned { crate::geom::turn_rgba(&img.px, iw, ih, o.rotate, o.flip_h, o.flip_v) } else { img.px };
-    let (sw, sh) = if odd { (ih, iw) } else { (iw, ih) };
+    // pre: turn_rgba (q at most 3: upright_x and the check above).
+    let px = if orient != 1 { crate::geom::turn_rgba(&img.px, iw, ih, eq, efh, efv) } else { img.px };
+    let (iw, ih) = if eq % 2 == 1 { (ih, iw) } else { (iw, ih) };
+    let px = if turned { crate::geom::turn_rgba(&px, iw, ih, o.rotate, o.flip_h, o.flip_v) } else { px };
+    let (sw, sh) = if o.rotate % 2 == 1 { (ih, iw) } else { (iw, ih) };
     // A GIF's first frame can be smaller than its screen: plan from the frame.
     if shrink == 1 && (sw as u32, sh as u32) != (ow0, oh0) {
         p = crate::geom::geom_x(sw as u32, sh as u32, g, lim.max_out_px).ok_or(too_big.clone())?;

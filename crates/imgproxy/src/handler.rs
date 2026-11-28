@@ -20,12 +20,26 @@ pub struct Proxy {
     pub ttl: u64,
 }
 
+/// A successful answer.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Answer {
+    pub body: Vec<u8>,
+    pub mime: &'static [u8],
+    pub disposition: Vec<u8>,
+}
+
 impl Proxy {
-    /// The PNG for a request, or why there is none.
-    pub fn answer(&self, method: &[u8], path: &[u8], body: &[u8]) -> Result<(Vec<u8>, proxy::Format), Fail> {
+    /// The image for a request, or why there is none.
+    pub fn answer(&self, method: &[u8], path: &[u8], body: &[u8]) -> Result<Answer, Fail> {
         let p = proxy::parse(path)?;
         if !proxy::check(&self.keys, p.signature, p.signed) {
             return Err(Fail::Forbidden);
+        }
+        if p.opts.expires != 0 {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            if now > p.opts.expires {
+                return Err(Fail::Expired);
+            }
         }
         let data = match &p.source {
             Source::Upload => {
@@ -64,7 +78,17 @@ impl Proxy {
                 })
             }
         };
-        Ok((proxy::process(&data, &p.opts, &self.limits)?, p.opts.format))
+        let fname = p.filename.as_deref();
+        // `raw` and `skip_processing`: the source as it is, with its own type.
+        let k = crate::url::kind_x(&data);
+        if p.opts.raw || k.is_some_and(|k| p.opts.skip & k.bit() != 0) {
+            let disposition = proxy::disposition(fname, &p.source, p.opts.attachment, k);
+            let mime = k.map_or(&b"application/octet-stream"[..], |k| k.mime());
+            return Ok(Answer { body: data.into_owned(), mime, disposition });
+        }
+        let out = proxy::process(&data, &p.opts, &self.limits)?;
+        let k = p.opts.format.kind();
+        Ok(Answer { body: out, mime: k.mime(), disposition: proxy::disposition(fname, &p.source, p.opts.attachment, Some(k)) })
     }
 
     /// Answers one request.
@@ -75,15 +99,16 @@ impl Proxy {
             return;
         }
         match self.answer(req.method, path, req.body) {
-            Ok((img, fmt)) => {
+            Ok(a) => {
                 let cc = format!("max-age={}, public", self.ttl);
                 let _ = res.send(
                     200,
                     &[
-                        Field { name: b"Content-Type", value: fmt.mime() },
+                        Field { name: b"Content-Type", value: a.mime },
                         Field { name: b"Cache-Control", value: cc.as_bytes() },
+                        Field { name: b"Content-Disposition", value: &a.disposition },
                     ],
-                    &img,
+                    &a.body,
                 );
             }
             Err(e) => {
