@@ -34,6 +34,7 @@ fn setup(alpn: &[u8]) -> &'static Setup {
             timeout: Duration::from_millis(300),
             shards: 4,
             sets: 256,
+            trust_anchors: Vec::new(),
         };
         let r = Arc::new(Resolver::new(&o));
         let c = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();

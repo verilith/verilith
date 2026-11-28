@@ -5,6 +5,14 @@
 // - [`name`]: names in wire form: case-insensitive comparison, bailiwick.
 #![cfg_attr(not(verus_keep_ghost), allow(unused_variables, unused_imports, dead_code))]
 pub mod spec;
+pub mod sha1;
+pub mod dspec;
+pub mod crypto;
+pub mod canon;
+pub mod sigcheck;
+pub mod nsec;
+pub mod trust;
+pub mod check;
 pub mod name;
 pub mod rr;
 pub mod accept;
