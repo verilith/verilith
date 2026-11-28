@@ -34,6 +34,8 @@ pub mod prims;
 #[doc(hidden)]
 pub mod exec_num;
 #[doc(hidden)]
+pub mod mem;
+#[doc(hidden)]
 pub mod interp;
 #[doc(hidden)]
 pub mod run;

@@ -3610,6 +3610,7 @@ pub fn s_StoreRR_I32Store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCer
         r.op == OpCode::StoreRR_I32Store,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_rr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I32Store(r.d1), stack, fp, st, r, false, acc)
@@ -3625,6 +3626,7 @@ pub fn s_P_StoreRR_I32Store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncC
         r.op == OpCode::P_StoreRR_I32Store,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_rr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I32Store(r.d1), stack, fp, st, r, true, acc)
@@ -3640,6 +3642,7 @@ pub fn s_A_StoreRR_I32Store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncC
         r.op == OpCode::A_StoreRR_I32Store,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_rr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I32Store(r.d1), stack, fp, st, r, false, acc)
@@ -3655,6 +3658,7 @@ pub fn s_StoreRI_I32Store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCer
         r.op == OpCode::StoreRI_I32Store,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I32Store(r.d1), stack, fp, st, r, false, acc)
@@ -3670,6 +3674,7 @@ pub fn s_P_StoreRI_I32Store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncC
         r.op == OpCode::P_StoreRI_I32Store,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I32Store(r.d1), stack, fp, st, r, true, acc)
@@ -3685,6 +3690,7 @@ pub fn s_A_StoreRI_I32Store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncC
         r.op == OpCode::A_StoreRI_I32Store,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I32Store(r.d1), stack, fp, st, r, false, acc)
@@ -3700,6 +3706,7 @@ pub fn s_StoreRR_I64Store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCer
         r.op == OpCode::StoreRR_I64Store,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_rr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I64Store(r.d1), stack, fp, st, r, false, acc)
@@ -3715,6 +3722,7 @@ pub fn s_P_StoreRR_I64Store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncC
         r.op == OpCode::P_StoreRR_I64Store,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_rr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I64Store(r.d1), stack, fp, st, r, true, acc)
@@ -3730,6 +3738,7 @@ pub fn s_StoreRI_I64Store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCer
         r.op == OpCode::StoreRI_I64Store,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I64Store(r.d1), stack, fp, st, r, false, acc)
@@ -3745,6 +3754,7 @@ pub fn s_P_StoreRI_I64Store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncC
         r.op == OpCode::P_StoreRI_I64Store,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I64Store(r.d1), stack, fp, st, r, true, acc)
@@ -3760,6 +3770,7 @@ pub fn s_StoreRR_F32Store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCer
         r.op == OpCode::StoreRR_F32Store,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_rr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::F32Store(r.d1), stack, fp, st, r, false, acc)
@@ -3775,6 +3786,7 @@ pub fn s_P_StoreRR_F32Store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncC
         r.op == OpCode::P_StoreRR_F32Store,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_rr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::F32Store(r.d1), stack, fp, st, r, true, acc)
@@ -3790,6 +3802,7 @@ pub fn s_StoreRI_F32Store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCer
         r.op == OpCode::StoreRI_F32Store,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::F32Store(r.d1), stack, fp, st, r, false, acc)
@@ -3805,6 +3818,7 @@ pub fn s_P_StoreRI_F32Store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncC
         r.op == OpCode::P_StoreRI_F32Store,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::F32Store(r.d1), stack, fp, st, r, true, acc)
@@ -3820,6 +3834,7 @@ pub fn s_StoreRR_F64Store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCer
         r.op == OpCode::StoreRR_F64Store,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_rr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::F64Store(r.d1), stack, fp, st, r, false, acc)
@@ -3835,6 +3850,7 @@ pub fn s_P_StoreRR_F64Store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncC
         r.op == OpCode::P_StoreRR_F64Store,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_rr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::F64Store(r.d1), stack, fp, st, r, true, acc)
@@ -3850,6 +3866,7 @@ pub fn s_A_StoreRR_F64Store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncC
         r.op == OpCode::A_StoreRR_F64Store,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_rr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::F64Store(r.d1), stack, fp, st, r, false, acc)
@@ -3865,6 +3882,7 @@ pub fn s_StoreRI_F64Store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCer
         r.op == OpCode::StoreRI_F64Store,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::F64Store(r.d1), stack, fp, st, r, false, acc)
@@ -3880,6 +3898,7 @@ pub fn s_P_StoreRI_F64Store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncC
         r.op == OpCode::P_StoreRI_F64Store,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::F64Store(r.d1), stack, fp, st, r, true, acc)
@@ -3895,6 +3914,7 @@ pub fn s_StoreRR_I32Store8(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCe
         r.op == OpCode::StoreRR_I32Store8,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_rr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I32Store8(r.d1), stack, fp, st, r, false, acc)
@@ -3910,6 +3930,7 @@ pub fn s_P_StoreRR_I32Store8(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<Func
         r.op == OpCode::P_StoreRR_I32Store8,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_rr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I32Store8(r.d1), stack, fp, st, r, true, acc)
@@ -3925,6 +3946,7 @@ pub fn s_StoreRI_I32Store8(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCe
         r.op == OpCode::StoreRI_I32Store8,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I32Store8(r.d1), stack, fp, st, r, false, acc)
@@ -3940,6 +3962,7 @@ pub fn s_P_StoreRI_I32Store8(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<Func
         r.op == OpCode::P_StoreRI_I32Store8,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I32Store8(r.d1), stack, fp, st, r, true, acc)
@@ -3955,6 +3978,7 @@ pub fn s_A_StoreRI_I32Store8(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<Func
         r.op == OpCode::A_StoreRI_I32Store8,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I32Store8(r.d1), stack, fp, st, r, false, acc)
@@ -3970,6 +3994,7 @@ pub fn s_StoreRR_I32Store16(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncC
         r.op == OpCode::StoreRR_I32Store16,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_rr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I32Store16(r.d1), stack, fp, st, r, false, acc)
@@ -3985,6 +4010,7 @@ pub fn s_P_StoreRR_I32Store16(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<Fun
         r.op == OpCode::P_StoreRR_I32Store16,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_rr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I32Store16(r.d1), stack, fp, st, r, true, acc)
@@ -4000,6 +4026,7 @@ pub fn s_StoreRI_I32Store16(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncC
         r.op == OpCode::StoreRI_I32Store16,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I32Store16(r.d1), stack, fp, st, r, false, acc)
@@ -4015,6 +4042,7 @@ pub fn s_P_StoreRI_I32Store16(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<Fun
         r.op == OpCode::P_StoreRI_I32Store16,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I32Store16(r.d1), stack, fp, st, r, true, acc)
@@ -4030,6 +4058,7 @@ pub fn s_StoreRR_I64Store8(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCe
         r.op == OpCode::StoreRR_I64Store8,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_rr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I64Store8(r.d1), stack, fp, st, r, false, acc)
@@ -4045,6 +4074,7 @@ pub fn s_P_StoreRR_I64Store8(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<Func
         r.op == OpCode::P_StoreRR_I64Store8,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_rr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I64Store8(r.d1), stack, fp, st, r, true, acc)
@@ -4060,6 +4090,7 @@ pub fn s_StoreRI_I64Store8(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCe
         r.op == OpCode::StoreRI_I64Store8,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I64Store8(r.d1), stack, fp, st, r, false, acc)
@@ -4075,6 +4106,7 @@ pub fn s_P_StoreRI_I64Store8(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<Func
         r.op == OpCode::P_StoreRI_I64Store8,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I64Store8(r.d1), stack, fp, st, r, true, acc)
@@ -4090,6 +4122,7 @@ pub fn s_StoreRR_I64Store32(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncC
         r.op == OpCode::StoreRR_I64Store32,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_rr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I64Store32(r.d1), stack, fp, st, r, false, acc)
@@ -4105,6 +4138,7 @@ pub fn s_P_StoreRR_I64Store32(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<Fun
         r.op == OpCode::P_StoreRR_I64Store32,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_rr(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I64Store32(r.d1), stack, fp, st, r, true, acc)
@@ -4120,6 +4154,7 @@ pub fn s_StoreRI_I64Store32(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncC
         r.op == OpCode::StoreRI_I64Store32,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I64Store32(r.d1), stack, fp, st, r, false, acc)
@@ -4135,6 +4170,7 @@ pub fn s_P_StoreRI_I64Store32(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<Fun
         r.op == OpCode::P_StoreRI_I64Store32,
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     proof { lemma_pre_hand(); }
     r_store_ri(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), Instr::I64Store32(r.d1), stack, fp, st, r, true, acc)
@@ -5540,6 +5576,7 @@ pub fn d_st0(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(co
         d_st0_op(r.op),
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     match r.op {
         OpCode::StoreRR_I32Store => s_StoreRR_I32Store(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),
@@ -5596,6 +5633,7 @@ pub fn d_st1(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(co
         d_st1_op(r.op),
         acc_ok(codes, d, rpc, *old(acc), old(stack)@, fp),
     ensures rpost(m, cs, codes, c0, g, final(stack)@, old(stack)@.len(), calls, d, rpc, fp, final(st), res, *final(acc)),
+        final(st).mem.base() == old(st).mem.base(),
 {
     match r.op {
         OpCode::StoreRR_I64Store32 => s_StoreRR_I64Store32(Ghost(m), Ghost(cs), Ghost(codes), Ghost(calls), Ghost(c0), Ghost(g), Ghost(d), Ghost(rpc), stack, fp, st, r, acc),

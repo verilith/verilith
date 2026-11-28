@@ -23,22 +23,13 @@ mod glue {
     use verilith_wasm::ast::{ImportDesc, Trap, ValType};
     use verilith_wasm::{Instance, Linker, Module};
 
-    use crate::abi::{Limits, Req, OP_HEADER, OP_REQ_READ, OP_REQ_SIZE, OP_STATUS, OP_WRITE};
+    use crate::abi::{arity_of, op_of, Limits, Req};
     use crate::host::{route, Func, Outcome};
 
     /// The import module every ABI function lives in.
     pub const ABI_MODULE: &str = "vl";
     /// The export each request calls: `() -> ()`.
     pub const ENTRY: &str = "handle";
-
-    /// The ABI functions by name, with their op and number of `i32` parameters.
-    const ABI: [(&str, u8, usize); 5] = [
-        ("req_size", OP_REQ_SIZE, 1),
-        ("req_read", OP_REQ_READ, 4),
-        ("resp_status", OP_STATUS, 1),
-        ("resp_header", OP_HEADER, 4),
-        ("resp_write", OP_WRITE, 2),
-    ];
 
     /// Per-function limits.
     #[derive(Clone, Copy, Debug)]
@@ -107,13 +98,14 @@ mod glue {
                 return Err(LoadError::Import(what()));
             }
             let ImportDesc::Func(_) = imp.desc else { return Err(LoadError::Import(what())) };
-            let Some(&(name, op, n)) = ABI.iter().find(|(name, _, _)| name.as_bytes() == imp.name.as_slice()) else {
-                return Err(LoadError::Import(what()));
-            };
+            // The verified `op_of` names the ABI function, so import `i` is
+            // the one its name says (`ops[i]`).
+            let Some(op) = op_of(&imp.name) else { return Err(LoadError::Import(what())) };
+            let Ok(name) = std::str::from_utf8(&imp.name) else { return Err(LoadError::Import(what())) };
             ops.push(op);
             // Only the start function can reach these: the ABI is not
             // available while instantiating.
-            linker.func(ABI_MODULE, name, &vec![ValType::I32; n], &[ValType::I32], |_, _, _| Err(Trap::Host));
+            linker.func(ABI_MODULE, name, &vec![ValType::I32; arity_of(op)], &[ValType::I32], |_, _, _| Err(Trap::Host));
         }
         linker.fuel(opts.fuel);
         linker.max_memory(opts.max_memory);
@@ -237,8 +229,8 @@ mod glue {
                     }
                 };
                 let local = &mut l[i];
-                let slot = local.fns.entry(name.to_vec()).or_insert(None);
-                let f = match slot.take() {
+                // The name is copied only the first time this thread serves it.
+                let f = match local.fns.get_mut(name).and_then(Option::take) {
                     Some(f) => f,
                     None => match load(&entry.wasm, &entry.opts) {
                         Ok(f) => f,
@@ -248,7 +240,13 @@ mod glue {
                         }
                     },
                 };
-                *slot = Some(respond(f, req, res, entry.opts.limits(), &mut local.scratch));
+                let f = respond(f, req, res, entry.opts.limits(), &mut local.scratch);
+                match local.fns.get_mut(name) {
+                    Some(slot) => *slot = Some(f),
+                    None => {
+                        local.fns.insert(name.to_vec(), Some(f));
+                    }
+                }
             });
             true
         }
