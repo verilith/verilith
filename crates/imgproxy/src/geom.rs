@@ -478,6 +478,246 @@ pub fn embed_rgba(src: &[u8], w: usize, h: usize, cw: usize, ch: usize, x: usize
     out
 }
 
+/// `over_c`.
+pub fn over_x(dv: u8, da: u8, sv: u8, sa: u8, op: u32, alpha: bool) -> (r: u8)
+    requires
+        op <= 10000,
+    ensures
+        r as int == over_c(dv as int, da as int, sv as int, sa as int, op as int, alpha),
+{
+    proof {
+        assert(sa * op + 5000 <= 255 * 10000 + 5000) by (nonlinear_arith)
+            requires
+                sa <= 255,
+                op <= 10000,
+        ;
+        vstd::arithmetic::div_mod::lemma_div_is_ordered((sa * op + 5000) as int, (255 * 10000 + 5000) as int, 10000);
+    }
+    let a = (sa as u64 * op as u64 + 5000) / 10000;
+    proof {
+        assert(da * (255 - a) <= 255 * (255 - a)) by (nonlinear_arith)
+            requires
+                da <= 255,
+                a <= 255,
+        ;
+    }
+    let oa = a * 255 + da as u64 * (255 - a);
+    if oa == 0 {
+        0
+    } else if alpha {
+        ((oa + 127) / 255) as u8
+    } else {
+        proof {
+            assert(sv * a * 255 <= 255 * (a * 255)) by (nonlinear_arith)
+                requires
+                    sv <= 255,
+                    a <= 255,
+            ;
+            assert(dv * da <= 65025) by (nonlinear_arith)
+                requires
+                    dv <= 255,
+                    da <= 255,
+            ;
+            assert(dv * da * (255 - a) <= 255 * (da * (255 - a))) by (nonlinear_arith)
+                requires
+                    dv <= 255,
+                    da <= 255,
+                    a <= 255,
+            ;
+        }
+        let num = sv as u64 * a * 255 + dv as u64 * da as u64 * (255 - a) + oa / 2;
+        proof {
+            assert(num < 256 * oa);
+            vstd::arithmetic::div_mod::lemma_div_by_multiple_is_strongly_ordered(num as int, (256 * oa) as int, 256, oa as int);
+            vstd::arithmetic::div_mod::lemma_div_by_multiple(256, oa as int);
+        }
+        (num / oa) as u8
+    }
+}
+
+/// `watermark`: `wm` (`ww` by `wh`) laid over `dst` (`w` by `h`) at
+/// opacity `op`, once at `(x, y)` or tiled every `pw` by `ph`.
+#[verifier::rlimit(60)]
+pub fn watermark_rgba(
+    dst: &[u8],
+    w: usize,
+    h: usize,
+    wm: &[u8],
+    ww: usize,
+    wh: usize,
+    x: usize,
+    y: usize,
+    tile: bool,
+    pw: usize,
+    ph: usize,
+    op: u32,
+) -> (r: Vec<u8>)
+    requires
+        1 <= w <= MAX_DIM,
+        1 <= h <= MAX_DIM,
+        1 <= ww <= MAX_DIM,
+        1 <= wh <= MAX_DIM,
+        1 <= pw <= 2 * MAX_DIM,
+        1 <= ph <= 2 * MAX_DIM,
+        x <= MAX_DIM,
+        y <= MAX_DIM,
+        op <= 10000,
+        dst@.len() == w * h * NC,
+        wm@.len() == ww * wh * NC,
+    ensures
+        r@ == watermark(dst@, w as int, h as int, wm@, ww as int, wh as int, x as int, y as int, tile, pw as int, ph as int, op as int),
+{
+    let ghost want = watermark(dst@, w as int, h as int, wm@, ww as int, wh as int, x as int, y as int, tile, pw as int, ph as int, op as int);
+    proof {
+        assert(w * h * NC <= 65535 * 65535 * 4) by (nonlinear_arith)
+            requires
+                w <= 65535,
+                h <= 65535,
+        ;
+        assert(ww * wh * NC <= 65535 * 65535 * 4) by (nonlinear_arith)
+            requires
+                ww <= 65535,
+                wh <= 65535,
+        ;
+    }
+    let mut out: Vec<u8> = Vec::with_capacity(w * h * 4);
+    let mut py: usize = 0;
+    while py < h
+        invariant
+            1 <= w <= MAX_DIM,
+            1 <= h <= MAX_DIM,
+            1 <= ww <= MAX_DIM,
+            1 <= wh <= MAX_DIM,
+            1 <= pw <= 2 * MAX_DIM,
+            1 <= ph <= 2 * MAX_DIM,
+            x <= MAX_DIM,
+            y <= MAX_DIM,
+            op <= 10000,
+            dst@.len() == w * h * NC,
+            wm@.len() == ww * wh * NC,
+            w * h * NC <= 65535 * 65535 * 4,
+            ww * wh * NC <= 65535 * 65535 * 4,
+            want == watermark(dst@, w as int, h as int, wm@, ww as int, wh as int, x as int, y as int, tile, pw as int, ph as int, op as int),
+            py <= h,
+            out@.len() == py * w * NC,
+            forall|j: int| 0 <= j < out@.len() ==> #[trigger] out@[j] == want[j],
+        decreases h - py,
+    {
+        let mut px: usize = 0;
+        while px < w
+            invariant
+                1 <= w <= MAX_DIM,
+                1 <= h <= MAX_DIM,
+                1 <= ww <= MAX_DIM,
+                1 <= wh <= MAX_DIM,
+                1 <= pw <= 2 * MAX_DIM,
+                1 <= ph <= 2 * MAX_DIM,
+                x <= MAX_DIM,
+                y <= MAX_DIM,
+                op <= 10000,
+                dst@.len() == w * h * NC,
+                wm@.len() == ww * wh * NC,
+                w * h * NC <= 65535 * 65535 * 4,
+                ww * wh * NC <= 65535 * 65535 * 4,
+                want == watermark(dst@, w as int, h as int, wm@, ww as int, wh as int, x as int, y as int, tile, pw as int, ph as int, op as int),
+                py < h,
+                px <= w,
+                out@.len() == (py * w + px) * NC,
+                forall|j: int| 0 <= j < out@.len() ==> #[trigger] out@[j] == want[j],
+            decreases w - px,
+        {
+            let ghost before = out@;
+            let ghost b = (py * w + px) * NC;
+            proof {
+                lemma_idx(py as int, px as int, 0, w as int, h as int);
+                lemma_idx(py as int, px as int, 3, w as int, h as int);
+            }
+            let d = (py * w + px) * 4;
+            // Where in the watermark this pixel is, if it is in one.
+            let (inside, sx, sy) = if tile {
+                let sx = px % pw;
+                let sy = py % ph;
+                (sx < ww && sy < wh, sx, sy)
+            } else if x <= px && y <= py {
+                (px - x < ww && py - y < wh, px - x, py - y)
+            } else {
+                (false, 0, 0)
+            };
+            if inside {
+                proof {
+                    lemma_idx(sy as int, sx as int, 3, ww as int, wh as int);
+                }
+                let k = (sy * ww + sx) * 4;
+                let sa = wm[k + 3];
+                let da = dst[d + 3];
+                out.push(over_x(dst[d], da, wm[k], sa, op, false));
+                out.push(over_x(dst[d + 1], da, wm[k + 1], sa, op, false));
+                out.push(over_x(dst[d + 2], da, wm[k + 2], sa, op, false));
+                out.push(over_x(da, da, sa, sa, op, true));
+            } else {
+                out.push(dst[d]);
+                out.push(dst[d + 1]);
+                out.push(dst[d + 2]);
+                out.push(dst[d + 3]);
+            }
+            proof {
+                assert((py * w + px + 1) * NC == b + 4) by (nonlinear_arith)
+                    requires
+                        b == (py * w + px) * NC,
+                ;
+                assert forall|j: int| 0 <= j < out@.len() implies #[trigger] out@[j] == want[j] by {
+                    if j >= before.len() {
+                        lemma_idx(py as int, px as int, j - b, w as int, h as int);
+                        if inside {
+                            lemma_idx(sy as int, sx as int, j - b, ww as int, wh as int);
+                        }
+                    } else {
+                        assert(out@[j] == before[j]);
+                    }
+                }
+            }
+            px += 1;
+        }
+        proof {
+            assert((py * w + w) * NC == (py + 1) * w * NC) by (nonlinear_arith);
+        }
+        py += 1;
+    }
+    proof {
+        assert(out@.len() == w * h * NC) by (nonlinear_arith)
+            requires
+                out@.len() == h * w * NC,
+        ;
+        assert(out@ =~= want);
+    }
+    out
+}
+
+/// `wm_at`: where a `ww` by `wh` watermark goes on a `w` by `h` image
+/// (inside it).
+pub fn wm_at_x(w: u32, h: u32, ww: u32, wh: u32, g: Gravity, dpr: u32) -> (r: (u32, u32))
+    requires
+        1 <= ww <= w <= MAX_DIM,
+        1 <= wh <= h <= MAX_DIM,
+        -65535 <= g.x <= 65535,
+        -65535 <= g.y <= 65535,
+        dpr <= 80000,
+    ensures
+        (r.0 as int, r.1 as int) == wm_at(w as int, h as int, ww as int, wh as int, g, dpr as int),
+        r.0 + ww <= w,
+        r.1 + wh <= h,
+{
+    let hs = hside_x(g.kind);
+    let vs = vside_x(g.kind);
+    let x = place_x(w as i64, ww as i64, hs, g.x as i64, dpr as i64);
+    let y = place_x(h as i64, wh as i64, vs, g.y as i64, dpr as i64);
+    proof {
+        lemma_place(w as int, ww as int, hside(g.kind), g.x as int, dpr as int);
+        lemma_place(h as int, wh as int, vside(g.kind), g.y as int, dpr as int);
+    }
+    (x as u32, y as u32)
+}
+
 /// `turn_src`, in machine integers.
 fn turn_src_x(w: usize, h: usize, q: u32, fh: bool, fv: bool, px: usize, py: usize) -> (r: (usize, usize))
     requires

@@ -6,6 +6,7 @@
 //!                     [--max-src-resolution MEGAPIXELS] [--level 0-9] [--ttl SECONDS]
 //!                     [--tls PORT --cert PEM --key PEM]   (built with --features tls)
 //!                     [--ca-bundle PEM]                    (built with --features tls)
+//!                     [--watermark IMAGE]
 //!
 //! Built with `--features tls`, `https://` sources are fetched with the
 //! verified TLS 1.3 client, trusting the certificates in --ca-bundle, or
@@ -15,7 +16,8 @@
 //! the same names: IMGPROXY_KEY and IMGPROXY_SALT (hex; with no key, URLs
 //! need no signature), IMGPROXY_BIND's port, IMGPROXY_LOCAL_FILESYSTEM_ROOT,
 //! IMGPROXY_ALLOWED_SOURCES (comma-separated), IMGPROXY_MAX_SRC_RESOLUTION,
-//! IMGPROXY_MAX_SRC_FILE_SIZE, IMGPROXY_DOWNLOAD_TIMEOUT and IMGPROXY_TTL.
+//! IMGPROXY_MAX_SRC_FILE_SIZE, IMGPROXY_DOWNLOAD_TIMEOUT, IMGPROXY_TTL,
+//! IMGPROXY_WATERMARK_PATH and IMGPROXY_WATERMARK_DATA (base64).
 //! A flag wins over the environment.
 //!
 //!   GET  /%signature/%options/plain/%url[@png]
@@ -94,7 +96,20 @@ fn main() {
     };
     #[cfg(not(feature = "tls"))]
     let tls = None;
-    let proxy = Proxy { keys, limits, local_root, http_sources, tls, allowed, ttl };
+    // The watermark: a file, or the image itself in base64.
+    let wm_data = match (arg("--watermark").or_else(|| env("IMGPROXY_WATERMARK_PATH")), env("IMGPROXY_WATERMARK_DATA")) {
+        (Some(p), _) => Some(std::fs::read(&p).unwrap_or_else(|e| die(&format!("{p}: {e}")))),
+        (None, Some(d)) => Some(
+            verilith_text::base64::STANDARD
+                .decode(d.trim().as_bytes())
+                .unwrap_or_else(|_| die("IMGPROXY_WATERMARK_DATA is not base64")),
+        ),
+        (None, None) => None,
+    };
+    let watermark = wm_data.map(|d| {
+        verilith_imgproxy::proxy::decode_shrunk(&d, limits.max_src_px, 1).unwrap_or_else(|e| die(&format!("watermark: {}", e.message())))
+    });
+    let proxy = Proxy { keys, limits, local_root, http_sources, tls, allowed, ttl, watermark };
 
     let mut srv_limits = verilith_server::Limits::default();
     srv_limits.max_body = proxy.limits.max_src_bytes;

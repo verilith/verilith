@@ -195,6 +195,94 @@ pub fn disposition(filename: Option<&[u8]>, source: &Source, attachment: bool, k
     v
 }
 
+/// Lays the watermark over the `w` by `h` result: scaled to `wm_scale` of
+/// the result's width if asked, and down to fit inside it if larger
+/// (keeping its shape, with the verified thumbnailer), then placed at
+/// `wm_g` (offsets times `dpr`) or tiled (`wm_g`'s offsets, times `dpr`,
+/// as the spacing), at `wm_op` opacity, by `geom::watermark_rgba`.
+fn watermark(px: Vec<u8>, w: u32, h: u32, wm: &Rgba, o: &Options) -> Result<Vec<u8>, Fail> {
+    let bad = Fail::Unprocessable("Watermark is invalid");
+    // pre: thumb_rgba, wm_at_x and watermark_rgba (sizes in 1..=MAX_DIM,
+    // whole pixels; offsets within 65535 and dpr at most 80000, as geo_ok
+    // checks; opacity at most F1).
+    if wm.w == 0 || wm.h == 0 || wm.w > MAX_DIM || wm.h > MAX_DIM || wm.px.len() != wm.w as usize * wm.h as usize * 4 {
+        return Err(bad);
+    }
+    if !(1..=80000).contains(&o.dpr) || o.wm_g.x.unsigned_abs() > 65535 || o.wm_g.y.unsigned_abs() > 65535 || o.wm_op > 10000 {
+        return Err(bad);
+    }
+    let (mut ww, mut wh) = (wm.w as u64, wm.h as u64);
+    if o.wm_scale > 0 {
+        let tw = ((w as u64 * o.wm_scale as u64 + 5000) / 10000).max(1);
+        wh = ((wh * tw + ww / 2) / ww).max(1);
+        ww = tw;
+    }
+    if ww > w as u64 || wh > h as u64 {
+        // Down to fit, keeping the shape: the smaller of the two ratios.
+        if ww * h as u64 > wh * w as u64 {
+            wh = ((wh * w as u64 + ww / 2) / ww).max(1);
+            ww = w as u64;
+        } else {
+            ww = ((ww * h as u64 + wh / 2) / wh).max(1);
+            wh = h as u64;
+        }
+    }
+    let (ww, wh) = (ww.clamp(1, MAX_DIM as u64) as u32, wh.clamp(1, MAX_DIM as u64) as u32);
+    let img = if (ww, wh) == (wm.w, wm.h) {
+        std::borrow::Cow::Borrowed(&wm.px)
+    } else {
+        let kt = kernel(Filter::Lanczos3).ok_or(bad.clone())?;
+        std::borrow::Cow::Owned(crate::lanczos::thumb_rgba(kt, &wm.px, wm.w as usize, wm.h as usize, ww as usize, wh as usize))
+    };
+    let (ww, wh) = (ww.min(w), wh.min(h));
+    let dmul = |v: i32| ((2 * v.max(0) as i64 * o.dpr as i64 + 10000) / 20000) as usize;
+    let (x, y, pw, ph) = if o.wm_tile {
+        (0, 0, (ww as usize + dmul(o.wm_g.x)).min(2 * MAX_DIM as usize), (wh as usize + dmul(o.wm_g.y)).min(2 * MAX_DIM as usize))
+    } else {
+        let (x, y) = crate::geom::wm_at_x(w, h, ww, wh, o.wm_g, o.dpr);
+        (x as usize, y as usize, 1, 1)
+    };
+    Ok(crate::geom::watermark_rgba(&px, w as usize, h as usize, &img, ww as usize, wh as usize, x, y, o.wm_tile, pw, ph, o.wm_op))
+}
+
+/// The point smart gravity centres on, as fractions (`F1` units) of the
+/// `w` by `h` image: `smart::smart_x` on a copy area-averaged to at most
+/// 256 on its longer side, its scores blurred with a sigma of a sixteenth
+/// of that side.
+fn smart_point(px: &[u8], w: usize, h: usize) -> (i32, i32) {
+    let long = w.max(h);
+    let (aw, ah) = if long > 256 { ((w * 256 / long).max(1), (h * 256 / long).max(1)) } else { (w, h) };
+    // pre: resize_rgba and smart_x (sizes in 1..=MAX_DIM, a whole number
+    // of pixels; gauss's tables are what blur_rgba takes).
+    let small = if (aw, ah) == (w, h) { px.to_vec() } else { crate::resize::resize_rgba(px, w, h, aw, ah) };
+    let (bx, by) = match gauss((aw.max(ah) * 10000 / 16) as u32) {
+        Some(g) => crate::smart::smart_x(&g, &small, aw, ah),
+        None => crate::smart::smart_x(&[1], &small, aw, ah),
+    };
+    let f = |b: usize, n: usize| ((2 * b + 1) * 10000 / (2 * n)) as i32;
+    (f(bx, aw), f(by, ah))
+}
+
+/// A Gaussian's weights for `sigma` (`F1` units), sampled at whole
+/// distances out to three sigma (at most 1024), 65536 at the centre; `None`
+/// for a sigma too small to change anything. Sampled in floating point:
+/// `filter`'s proofs hold for every table, so a wrong value changes how
+/// the image looks, never what the code may do.
+pub fn gauss(sigma: u32) -> Option<Vec<u32>> {
+    let s = sigma as f64 / 10000.0;
+    if s < 0.05 {
+        return None;
+    }
+    let r = ((3.0 * s).ceil() as usize).clamp(1, 1024);
+    let g: Vec<u32> = (0..2 * r + 1)
+        .map(|i| {
+            let d = i as f64 - r as f64;
+            ((-(d * d) / (2.0 * s * s)).exp() * 65536.0).round().clamp(0.0, 65536.0) as u32
+        })
+        .collect();
+    Some(g)
+}
+
 /// imgproxy's `IMGPROXY_QUALITY` default.
 pub const DEFAULT_QUALITY: u32 = 80;
 
@@ -400,6 +488,12 @@ impl Default for Limits {
 
 /// Decodes, resizes, crops, flattens and encodes: the image to send.
 pub fn process(data: &[u8], o: &Options, lim: &Limits) -> Result<Vec<u8>, Fail> {
+    process_with(data, o, lim, None)
+}
+
+/// `process`, with the watermark image (`IMGPROXY_WATERMARK_PATH`) that
+/// the `watermark` option lays over the result.
+pub fn process_with(data: &[u8], o: &Options, lim: &Limits, wm: Option<&Rgba>) -> Result<Vec<u8>, Fail> {
     let too_big = Fail::Unprocessable("Result image is too big");
     // The plan is made from the size the header gives, so that shrinking a
     // JPEG on load changes only how the pixels are computed, not the
@@ -438,6 +532,23 @@ pub fn process(data: &[u8], o: &Options, lim: &Limits) -> Result<Vec<u8>, Fail> 
     if shrink == 1 && (sw as u32, sh as u32) != (ow0, oh0) {
         p = crate::geom::geom_x(sw as u32, sh as u32, g, lim.max_out_px).ok_or(too_big.clone())?;
     }
+    // Smart gravity: find the point on the image as decoded and turned,
+    // then plan again with it as a focus point (the sizes do not depend on
+    // the gravity, so the shrink on load still holds).
+    let sm = |g: &Gravity| g.kind == GKind::Sm;
+    if sm(&g.gravity) || g.crop_g.as_ref().is_some_and(sm) {
+        let (fx, fy) = smart_point(&px, sw, sh);
+        let focus = Gravity { kind: GKind::Fp, x: fx, y: fy };
+        let mut g2 = g;
+        if sm(&g.gravity) {
+            g2.gravity = focus;
+        }
+        if g.crop_g.as_ref().is_some_and(sm) {
+            g2.crop_g = Some(focus);
+        }
+        let (pw0, ph0) = if shrink == 1 { (sw as u32, sh as u32) } else { (ow0, oh0) };
+        p = crate::geom::geom_x(pw0, ph0, g2, lim.max_out_px).ok_or(too_big.clone())?;
+    }
     // Shrunk on load (only when the crop is the whole image): the crop is
     // the whole of what was decoded.
     let (x0, y0, cw0, ch0) =
@@ -462,6 +573,19 @@ pub fn process(data: &[u8], o: &Options, lim: &Limits) -> Result<Vec<u8>, Fail> 
     } else {
         crate::resize::crop_rgba(&px, rw, rh, p.cx as usize, p.cy as usize, p.cw as usize, p.ch as usize)
     };
+    // `blur` and `sharpen`, on the cropped image, before `extend` and
+    // `padding`, as imgproxy applies its filters.
+    // pre: blur_rgba and sharpen_rgba (gauss's tables are 1 to 2049
+    // entries, odd, each at most 65536; sizes in 1..=MAX_DIM).
+    let (fw, fh) = (p.cw as usize, p.ch as usize);
+    let px = match gauss(o.blur) {
+        Some(g) => crate::filter::blur_rgba(&g, &px, fw, fh),
+        None => px,
+    };
+    let px = match gauss(o.sharpen) {
+        Some(g) => crate::filter::sharpen_rgba(&g, &px, fw, fh),
+        None => px,
+    };
     // pre: embed_rgba (geom_x ensures the image is inside the canvas).
     // `extend` and `padding` fill with the background, or transparency.
     let (cw, ch) = (p.canvas_w, p.canvas_h);
@@ -483,6 +607,11 @@ pub fn process(data: &[u8], o: &Options, lim: &Limits) -> Result<Vec<u8>, Fail> 
     let px = match bg {
         Some(bg) => crate::pixels::flatten(&px, bg),
         None => px,
+    };
+    // `watermark`, last, as imgproxy lays it.
+    let px = match wm {
+        Some(wm) if o.wm_op > 0 => watermark(px, cw, ch, wm, o)?,
+        _ => px,
     };
     match o.format {
         // pre: encode_rgba (sizes at most MAX_DIM).
@@ -815,7 +944,7 @@ mod tests {
             b"/x/bg:zz0000/plain/local:///a",
             b"/x/bg:256:0:0/plain/local:///a",
             b"/x/q:101/plain/local:///a",
-            b"/x/g:sm/plain/local:///a",
+            b"/x/g:up/plain/local:///a",
             b"/x/g:fp:2:0/plain/local:///a",
             b"/x/rot:45/plain/local:///a",
             b"/x/dpr:0/plain/local:///a",

@@ -94,6 +94,16 @@ pub struct Options {
     /// `skip_processing`: the source formats sent as they are, one bit
     /// each (`kind_bit`).
     pub skip: u32,
+    /// `blur` and `sharpen`: the Gaussian's sigma, `F1` units (0: none).
+    pub blur: u32,
+    pub sharpen: u32,
+    /// `watermark`: opacity (`F1` units; 0 is none), where (`wm_g`, or
+    /// tiled with `wm_g`'s offsets as the spacing), and the size as a
+    /// fraction of the result's width (`F1` units; 0 keeps its size).
+    pub wm_op: u32,
+    pub wm_g: Gravity,
+    pub wm_tile: bool,
+    pub wm_scale: u32,
 }
 
 /// The geometry options.
@@ -141,6 +151,12 @@ pub open spec fn defaults() -> Options {
         attachment: false,
         raw: false,
         skip: 0,
+        blur: 0,
+        sharpen: 0,
+        wm_op: 0,
+        wm_g: Gravity { kind: GKind::Ce, x: 0, y: 0 },
+        wm_tile: false,
+        wm_scale: 0,
     }
 }
 
@@ -443,7 +459,7 @@ pub open spec fn sint(s: Seq<u8>) -> Option<int> {
     }
 }
 
-/// The gravity types (empty is the centre; `sm`, smart, is not done here).
+/// The gravity types (empty is the centre).
 pub open spec fn gkind(s: Seq<u8>) -> Option<GKind> {
     if s.len() == 0 || s == seq![b'c', b'e'] {
         Some(GKind::Ce)
@@ -465,6 +481,8 @@ pub open spec fn gkind(s: Seq<u8>) -> Option<GKind> {
         Some(GKind::SoWe)
     } else if s == seq![b'f', b'p'] {
         Some(GKind::Fp)
+    } else if s == seq![b's', b'm'] {
+        Some(GKind::Sm)
     } else {
         None
     }
@@ -690,6 +708,21 @@ pub open spec fn apply2(o: Options, n: Seq<u8>, a: Seq<Seq<u8>>) -> Option<Optio
             Some(m) => Some(Options { skip: m, ..o }),
             None => None,
         }
+    } else if named(n, seq![b'w', b'a', b't', b'e', b'r', b'm', b'a', b'r', b'k'], seq![b'w', b'm']) {
+        match watermark_opt(a) {
+            Some((op, g, t, sc)) => Some(Options { wm_op: op, wm_g: g, wm_tile: t, wm_scale: sc, ..o }),
+            None => None,
+        }
+    } else if named(n, seq![b'b', b'l', b'u', b'r'], seq![b'b', b'l']) {
+        match fixed4z(arg(a, 0)) {
+            Some(v) => Some(Options { blur: v as u32, ..o }),
+            None => None,
+        }
+    } else if named(n, seq![b's', b'h', b'a', b'r', b'p', b'e', b'n'], seq![b's', b'h']) {
+        match fixed4z(arg(a, 0)) {
+            Some(v) => Some(Options { sharpen: v as u32, ..o }),
+            None => None,
+        }
     } else if named(n, seq![b'f', b'i', b'l', b'e', b'n', b'a', b'm', b'e'], seq![b'f', b'n']) {
         // Checked here; the name itself is `Url::filename`.
         match fname_arg(a) {
@@ -698,6 +731,24 @@ pub open spec fn apply2(o: Options, n: Seq<u8>, a: Seq<Seq<u8>>) -> Option<Optio
         }
     } else {
         None
+    }
+}
+
+/// `watermark`'s arguments: opacity (0 to 1), position (a gravity, or
+/// `re` to tile), x and y offsets (the spacing when tiled), scale.
+pub open spec fn watermark_opt(a: Seq<Seq<u8>>) -> Option<(u32, Gravity, bool, u32)> {
+    let tile = arg(a, 1) == seq![b'r', b'e'];
+    let g = if tile {
+        match (sint(arg(a, 2)), sint(arg(a, 3))) {
+            (Some(x), Some(y)) => Some(Gravity { kind: GKind::Ce, x: x as i32, y: y as i32 }),
+            _ => None,
+        }
+    } else {
+        gravity(a, 1)
+    };
+    match (fixed4(arg(a, 0)), g, fixed4z(arg(a, 4))) {
+        (Some(op), Some(g), Some(sc)) if op <= F1 => Some((op as u32, g, tile, sc as u32)),
+        _ => None,
     }
 }
 

@@ -18,6 +18,8 @@ pub struct Proxy {
     pub allowed: Vec<Vec<u8>>,
     /// `IMGPROXY_TTL`: the `Cache-Control` max-age, in seconds.
     pub ttl: u64,
+    /// `IMGPROXY_WATERMARK_PATH`: the image the `watermark` option lays.
+    pub watermark: Option<proxy::Rgba>,
 }
 
 /// A successful answer.
@@ -86,7 +88,7 @@ impl Proxy {
             let mime = k.map_or(&b"application/octet-stream"[..], |k| k.mime());
             return Ok(Answer { body: data.into_owned(), mime, disposition });
         }
-        let out = proxy::process(&data, &p.opts, &self.limits)?;
+        let out = proxy::process_with(&data, &p.opts, &self.limits, self.watermark.as_ref())?;
         let k = p.opts.format.kind();
         Ok(Answer { body: out, mime: k.mime(), disposition: proxy::disposition(fname, &p.source, p.opts.attachment, Some(k)) })
     }

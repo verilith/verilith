@@ -194,6 +194,7 @@ fn local_proxy() -> (Proxy, Vec<u8>) {
         tls: None,
         allowed: Vec::new(),
         ttl: 60,
+        watermark: None,
     };
     (p, png)
 }
