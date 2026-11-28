@@ -312,9 +312,14 @@ impl Pcx {
             }
             lemma_kraft_valid(lens);
         }
-        let (h, Ghost(bw)) = build_sparse(Ghost(lens), alpha as usize, self.used.as_slice(), &self.cnts, MAX_ROOT);
+        let root = pick_root(&self.cnts);
+        let (h, Ghost(bw)) = build_sparse(Ghost(lens), alpha as usize, self.used.as_slice(), &self.cnts, root);
         proof {
             lemma2_to64();
+            if root < MAX_ROOT {
+                lemma_pow2_strictly_increases(root as nat, MAX_ROOT as nat);
+            }
+            assert(build_cost(lens.len(), root as nat) <= build_cost(lens.len(), MAX_ROOT as nat));
             m.n = m.n + bw;
         }
         match h {
@@ -1015,4 +1020,31 @@ fn read_simple(src: &[u8], base: u64, pos: u64, alpha: u32, Ghost(b): Ghost<Seq<
     }
 }
 
+/// The root table width for a code with `cnts[l]` codes of length `l`:
+/// 8 bits if codes longer than that carry at most 1/64 of the probability
+/// (2^-l per code of length l), else 9 bits if longer codes carry at most
+/// 1/16, else 10.
+/// A smaller root makes smaller tables, which matters for the literal
+/// trees of a meta-block with many of them (x86 has a 48 KB L1 data
+/// cache); longer codes are decoded bit by bit, so they must be rare.
+/// Any width from 1 to `MAX_ROOT` gives a correct table.
+#[inline(never)]
+pub fn pick_root(cnts: &[u16; 16]) -> (r: u32)
+    ensures
+        8 <= r <= MAX_ROOT,
+{
+    // In units of 2^-15.
+    let m10 = cnts[11] as u64 * 16 + cnts[12] as u64 * 8 + cnts[13] as u64 * 4 + cnts[14] as u64 * 2 + cnts[15] as u64;
+    let m9 = m10 + cnts[10] as u64 * 32;
+    let m8 = m9 + cnts[9] as u64 * 64;
+    if m8 <= 512 {
+        8
+    } else if m9 <= 2048 {
+        9
+    } else {
+        10
+    }
+}
+
 } // verus!
+
