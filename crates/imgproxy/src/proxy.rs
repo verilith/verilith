@@ -626,11 +626,19 @@ pub fn process_with(data: &[u8], o: &Options, lim: &Limits, wm: Option<&Rgba>) -
             verilith_jpeg::encode::encode_rgb(&px, cw as usize, ch as usize, 4, q as u8, q < 90)
                 .ok_or(Fail::Unprocessable("Result image is too big for JPEG"))
         }
-        // encode_lossless checks its sizes itself (1 to 16384 each way).
+        // Opaque results are lossy (VP8) at the quality, as imgproxy
+        // writes WebP; results with transparency keep it, losslessly
+        // (VP8L). Both encoders check their sizes themselves.
         Format::Webp => {
             let argb = crate::pixels::rgba_to_argb(&px);
-            verilith_webp::enc_vp8l::encode_lossless(&argb, p.cw, p.ch)
-                .ok_or(Fail::Unprocessable("Result image is too big for WebP"))
+            let opaque = px.chunks_exact(4).all(|c| c[3] == 255);
+            let r = if opaque {
+                let q = if o.quality == 0 { DEFAULT_QUALITY } else { o.quality };
+                verilith_webp::enc_vp8::encode_lossy(&argb, cw as usize, ch as usize, q.min(100))
+            } else {
+                verilith_webp::enc_vp8l::encode_lossless(&argb, cw, ch)
+            };
+            r.ok_or(Fail::Unprocessable("Result image is too big for WebP"))
         }
     }
 }

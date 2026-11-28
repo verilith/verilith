@@ -171,6 +171,23 @@ fn jpeg_output() {
     }
 }
 
+fn webp_rgba(b: &[u8]) -> (u32, u32, Vec<u8>) {
+    let pic = verilith_webp::capi::decode(b).unwrap();
+    let px = pic.argb.iter().flat_map(|&p| [(p >> 16) as u8, (p >> 8) as u8, p as u8, (p >> 24) as u8]).collect();
+    (pic.width as u32, pic.height as u32, px)
+}
+
+fn psnr(a: &[u8], b: &[u8]) -> f64 {
+    let (mut se, mut n) = (0f64, 0f64);
+    for (x, y) in a.chunks_exact(4).zip(b.chunks_exact(4)) {
+        for c in 0..3 {
+            se += (x[c] as f64 - y[c] as f64).powi(2);
+            n += 1.0;
+        }
+    }
+    10.0 * (255.0f64 * 255.0 / (se / n).max(1e-9)).log10()
+}
+
 #[test]
 fn webp_output() {
     let (w, h) = (333u32, 250u32);
@@ -185,12 +202,49 @@ fn webp_output() {
     let webp = process(&pngb, &o, &lim).unwrap();
     assert_eq!(&webp[..4], b"RIFF");
     assert_eq!(&webp[8..16], b"WEBPVP8L");
-    // Lossless: exactly the PNG output's pixels.
-    let (pw, ph, want) = png_read(&process(&pngb, &Options { format: Format::Png, ..o.clone() }, &lim).unwrap());
-    let pic = verilith_webp::capi::decode(&webp).unwrap();
-    assert_eq!((pic.width as u32, pic.height as u32), (pw, ph));
-    let got: Vec<u8> = pic.argb.iter().flat_map(|&p| [(p >> 16) as u8, (p >> 8) as u8, p as u8, (p >> 24) as u8]).collect();
-    assert_eq!(got, want);
+    // With transparency, lossless: exactly the PNG output's pixels.
+    let want = png_read(&process(&pngb, &Options { format: Format::Png, ..o.clone() }, &lim).unwrap());
+    assert_eq!(webp_rgba(&webp), want);
+    // Extended onto a transparent canvas: still the PNG output's pixels.
+    let ox = Options { extend: true, w: 260, h: 220, ..o.clone() };
+    let webp = process(&pngb, &ox, &lim).unwrap();
+    let want = png_read(&process(&pngb, &Options { format: Format::Png, ..ox.clone() }, &lim).unwrap());
+    assert_eq!((want.0, want.1), (260, 220));
+    assert_eq!(webp_rgba(&webp), want);
+}
+
+#[test]
+fn webp_lossy_output() {
+    // An opaque, smooth source: lossy, close to the PNG output, and
+    // smaller at lower quality.
+    let (w, h) = (320u32, 240u32);
+    let mut rgb = Vec::with_capacity((w * h * 3) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let (fx, fy) = (x as f64 / w as f64, y as f64 / h as f64);
+            let b = ((fx * 9.0).sin() * (fy * 7.0).cos() * 60.0 + 128.0) as u8;
+            rgb.extend_from_slice(&[(fx * 255.0) as u8, (fy * 255.0) as u8, b]);
+        }
+    }
+    let mut pngb = Vec::new();
+    image::RgbImage::from_raw(w, h, rgb)
+        .unwrap()
+        .write_to(&mut std::io::Cursor::new(&mut pngb), image::ImageFormat::Png)
+        .unwrap();
+    let lim = Limits::default();
+    let o = Options { mode: Mode::Fit, w: 200, h: 200, format: Format::Webp, ..Default::default() };
+    let want = png_read(&process(&pngb, &Options { format: Format::Png, ..o.clone() }, &lim).unwrap());
+    let mut last = usize::MAX;
+    for q in [95u32, 80, 40] {
+        let webp = process(&pngb, &Options { quality: q, ..o.clone() }, &lim).unwrap();
+        assert_eq!(&webp[8..16], b"WEBPVP8 ", "quality {q}");
+        let got = webp_rgba(&webp);
+        assert_eq!((got.0, got.1), (want.0, want.1));
+        let p = psnr(&got.2, &want.2);
+        assert!(p > 30.0, "quality {q}: {p} dB");
+        assert!(webp.len() < last, "quality {q}: {} bytes", webp.len());
+        last = webp.len();
+    }
 }
 
 #[test]

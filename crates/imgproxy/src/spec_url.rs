@@ -62,7 +62,7 @@ pub struct Options {
     pub background: Option<[u8; 3]>,
     /// The output format; PNG when the URL names none.
     pub format: Format,
-    /// JPEG quality, 1 to 100 (0: the default, 80).
+    /// JPEG and lossy WebP quality, 1 to 100 (0: the default, 80).
     pub quality: u32,
     /// The resampling filter (`resizing_algorithm`).
     pub filter: Filter,
