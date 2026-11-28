@@ -20,6 +20,10 @@ Two things a crate's Cargo.toml can say about how it is verified:
     verify-parts = 4               # verify it as 4 parts (BUILDING.md)
     verify-features = ["cjson"]    # verify it with these features on top of
                                    # the default ones
+    unverified-deps = ["aws-lc-rs"] # crates.io dependencies the crate uses
+                                   # only in code compiled without Verus
+                                   # (#[cfg(not(verus_keep_ghost))]), left
+                                   # out of its BUCK verification target
 
 Anything this script does not know how to reproduce exactly is an error, not
 a guess. Standard library only; needs cargo.
@@ -114,6 +118,29 @@ def verify_features(pkg):
         die(f"{pkg['name']}: scripts/verify.sh verifies with features {sorted(set(in_script))} but "
             f"[package.metadata.verilith] verify-features is {sorted(set(extra))}")
     return enabled(pkg, (["default"] if "default" in pkg["features"] else []) + extra)
+
+
+def check_unverified_use(name, src_dir, dep):
+    """An unverified-deps entry must be used only under
+    #[cfg(not(verus_keep_ghost))]: each line naming it must follow such an
+    attribute in the same file, inside the item it opens."""
+    ident = dep.replace("-", "_")
+    for base, _, fs in os.walk(src_dir):
+        for f in fs:
+            if not f.endswith(".rs"):
+                continue
+            path = os.path.join(base, f)
+            lines = open(path, encoding="utf-8").read().split("\n")
+            gated = False   # inside an item under cfg(not(verus_keep_ghost))
+            for line in lines:
+                code = line.split("//")[0]
+                if line.startswith("#[cfg(not(verus_keep_ghost))]"):
+                    gated = True
+                elif re.search(r"\b" + ident + r"\b", code) and not gated:
+                    die(f"{name}: {os.path.relpath(path, ROOT)} uses {dep} outside "
+                        "#[cfg(not(verus_keep_ghost))], but it is in unverified-deps")
+                if line.startswith("}") or (line[:1].isalpha() and code.rstrip().endswith(";")):
+                    gated = False   # the end of the item
 
 
 def default_features(pkg):
@@ -212,6 +239,9 @@ def generate():
             if decl["kind"] is not None:
                 continue  # dev and build dependencies play no part in the proofs
             if decl["optional"] and decl["name"] not in deps_on:
+                continue
+            if decl["name"] in verilith_meta(pkg).get("unverified-deps", []):
+                check_unverified_use(name, os.path.join(ROOT, d, "src"), decl["name"])
                 continue
             if decl.get("target"):
                 die(f"{name}: target-specific dependency {decl['name']}")

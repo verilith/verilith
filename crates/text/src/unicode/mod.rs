@@ -8,6 +8,7 @@
 //! which is UTF-8 by their postconditions.
 pub mod data;
 pub mod norm;
+pub mod norm16;
 pub mod spec;
 pub mod strs;
 /// The normalization data (generated; trusted, and checked by `tests/unicode_data.rs`).
@@ -29,7 +30,7 @@ pub enum Form {
 }
 
 impl Form {
-    fn flags(self) -> (bool, bool) {
+    pub(crate) fn flags(self) -> (bool, bool) {
         match self {
             Form::Nfc => (true, false),
             Form::Nfd => (false, false),
@@ -103,6 +104,71 @@ pub fn is_nfkc(s: &str) -> bool {
 /// Whether `s` is in NFKD.
 pub fn is_nfkd(s: &str) -> bool {
     is_normalized(s, Form::Nfkd)
+}
+
+/// How much of UTF-16 `s` is fast characters that stay as they are: `s`
+/// normalizes to `s[..p]` followed by the normal form of `s[p..]`
+/// (`fast_prefix16`, which also proves that `s[p..]` starts with a boundary
+/// or an unpaired surrogate). `s.len()` when `s` is normalized that way.
+pub fn normalized_prefix_utf16(s: &[u16], form: Form) -> usize {
+    let (compose, compat) = form.flags();
+    norm16::fast_prefix16(s, compose, compat).0
+}
+
+/// Appends the normal form of UTF-16 `s` to `out`.
+///
+/// An unpaired surrogate is a starter that nothing decomposes to or
+/// composes with, so it splits the text: each well-formed run between them
+/// is normalized on its own (`lemma_nf_split`) and the surrogate is kept,
+/// as ICU does. Well-formed text is a single run.
+pub fn normalize_utf16_to(s: &[u16], form: Form, out: &mut Vec<u16>) {
+    let p = normalized_prefix_utf16(s, form);
+    out.extend_from_slice(&s[..p]);
+    let (compose, compat) = form.flags();
+    let mut s = &s[p..];
+    while !s.is_empty() {
+        // `valid16_prefix` proves `s[..r]` is `enc16s(cs)` for scalars `cs`,
+        // which is what `normalize16_into` requires.
+        let (r, cs) = norm16::valid16_prefix(s);
+        norm16::normalize16_into(&s[..r], compose, compat, out, cs);
+        if r == s.len() {
+            return;
+        }
+        out.push(s[r]);
+        s = &s[r + 1..];
+    }
+}
+
+/// The normal form of UTF-16 `s`, which may hold unpaired surrogates (see
+/// `normalize_utf16_to`).
+pub fn normalize_utf16(s: &[u16], form: Form) -> Vec<u16> {
+    let mut out = Vec::with_capacity(s.len() + s.len() / 4);
+    normalize_utf16_to(s, form, &mut out);
+    out
+}
+
+/// Whether UTF-16 `s` is in the normal form, unpaired surrogates kept as
+/// they are.
+pub fn is_normalized_utf16(s: &[u16], form: Form) -> bool {
+    let (compose, compat) = form.flags();
+    let mut s = &s[normalized_prefix_utf16(s, form)..];
+    let mut out = Vec::new();
+    while !s.is_empty() {
+        let (r, cs) = norm16::valid16_prefix(s);
+        let run = &s[..r];
+        if !norm16::quick_check16(run, compose, compat, cs) {
+            out.clear();
+            norm16::normalize16_into(run, compose, compat, &mut out, cs);
+            if out != run {
+                return false;
+            }
+        }
+        if r == s.len() {
+            return true;
+        }
+        s = &s[r + 1..];
+    }
+    true
 }
 
 /// The normal form of `s` computed as one segment, without the fast path.

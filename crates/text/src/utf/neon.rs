@@ -327,6 +327,69 @@ proof fn lemma_or16(x: Seq<u8>, y: Seq<u8>, r: Seq<u8>)
     }
 }
 
+/// A unit whose high byte, shifted right by 3, is not 0x1B is not a
+/// surrogate.
+proof fn lemma_sur_hi(b0: u8, b1: u8)
+    requires
+        (b1 as nat / pow2_spec(3)) as u8 != 0x1Bu8,
+    ensures
+        !(0xD800u16 <= le16(b0, b1) && le16(b0, b1) <= 0xDFFFu16),
+{
+    reveal_with_fuel(pow2_spec, 4);
+    assert(pow2_spec(3) == 8);
+    assert((b1 as nat / 8) as u8 == b1 / 8u8);
+    assert(b1 / 8u8 == b1 >> 3u8) by (bit_vector);
+    assert(b1 >> 3u8 != 0x1Bu8 ==> !(0xD800u16 <= ((b0 as u16) | ((b1 as u16) << 8u16)) && ((b0 as u16) | ((b1
+        as u16) << 8u16)) <= 0xDFFFu16)) by (bit_vector);
+}
+
+/// Whether none of the 32 units at `s[i..]` is a surrogate: no unit's high
+/// byte is 0xD8 to 0xDF, which is its top five bits being 0x1B.
+#[inline(always)]
+pub fn no_sur32_neon(s: &[u16], i: usize) -> (r: bool)
+    requires
+        neon(),
+        i + 32 <= s.len(),
+    ensures
+        r ==> forall|k: int| i <= k < i + 32 ==> !(0xD800u16 <= #[trigger] s@[k] && s@[k] <= 0xDFFFu16),
+{
+    let odd_bytes: [u8; 16] = [0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF];
+    let odd = vld1q_u8_at(&odd_bytes, 0);
+    let c = vdupq_n_u8(0x1B);
+    let x0 = vld1q_u16_at(s, i);
+    let x1 = vld1q_u16_at(s, i + 8);
+    let x2 = vld1q_u16_at(s, i + 16);
+    let x3 = vld1q_u16_at(s, i + 24);
+    let e0 = vceqq_u8(vshrq_n_u8::<3>(x0), c);
+    let e1 = vceqq_u8(vshrq_n_u8::<3>(x1), c);
+    let e2 = vceqq_u8(vshrq_n_u8::<3>(x2), c);
+    let e3 = vceqq_u8(vshrq_n_u8::<3>(x3), c);
+    let o = vandq_u8(vorrq_u8(vorrq_u8(e0, e1), vorrq_u8(e2, e3)), odd);
+    let m = vmaxvq_u8(o);
+    proof {
+        assert(odd_bytes@ =~= seq![0u8, 0xFFu8, 0u8, 0xFFu8, 0u8, 0xFFu8, 0u8, 0xFFu8, 0u8, 0xFFu8, 0u8, 0xFFu8, 0u8, 0xFFu8, 0u8, 0xFFu8]);
+        if m == 0 {
+            assert forall|k: int| i <= k < i + 32 implies !(0xD800u16 <= #[trigger] s@[k] && s@[k] <= 0xDFFFu16) by {
+                let q = (k - i) / 8;
+                let l = (k - i) % 8;
+                let x = if q == 0 { x0 } else if q == 1 { x1 } else if q == 2 { x2 } else { x3 };
+                let e = if q == 0 { e0 } else if q == 1 { e1 } else if q == 2 { e2 } else { e3 };
+                assert(u16s(n8(x))[l] == s@[k]);
+                let j = 2 * l + 1;
+                assert(n8(odd)[j] == 0xFFu8);
+                let (a0, a1, a2, a3) = (n8(e0)[j], n8(e1)[j], n8(e2)[j], n8(e3)[j]);
+                assert(n8(o)[j] == ((a0 | a1) | (a2 | a3)) & 0xFFu8);
+                assert(n8(o)[j] <= m);
+                assert(((a0 | a1) | (a2 | a3)) & 0xFFu8 == 0 ==> a0 == 0 && a1 == 0 && a2 == 0 && a3 == 0) by (bit_vector);
+                assert(n8(e)[j] == 0);
+                assert(shr8(n8(x), 3)[j] != 0x1Bu8);
+                lemma_sur_hi(n8(x)[2 * l], n8(x)[j]);
+            }
+        }
+    }
+    m == 0
+}
+
 /// Whether the 32 units at `s[i..]` are all below `lim` (0x80 or 0x100).
 #[inline(always)]
 pub fn below32_neon(s: &[u16], i: usize, ascii_only: bool) -> (r: bool)

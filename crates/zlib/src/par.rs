@@ -31,7 +31,10 @@ verus! {
 /// is then all a match can reach.
 pub const MIN_CHUNK: usize = 32768;
 
-/// The chunk `compress_auto` uses.
+/// The chunk `compress_auto` uses. Its size cost is small (+0.017% on
+/// Silesia at level 6, against one chunk), but a load-balance model favours
+/// 64 to 128 KiB. That model is not yet confirmed by timing, so this has
+/// not been changed (`bench/zlib-blocks/README.md`).
 pub const CHUNK: usize = 262144;
 
 /// Where chunk `i` ends.

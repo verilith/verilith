@@ -290,6 +290,10 @@ most of the gap on short inputs.
 ### Trusted (compressor)
 
 - `src/capi_enc.rs`, the C adapter.
+- `compress::shared_dict_table`, which builds the dictionary word table
+  once per process (a `OnceLock`) and hands out the same slice. Only its
+  length is assumed: every word the table suggests is compared with the
+  dictionary before it is used.
 - The decoder's trusted base (below: the spec, `tables.rs`), and
   `slice_subrange`.
 

@@ -1,0 +1,6 @@
+# root-time.py, 72 Kodak lossless files, fastest of the runs, interleaved builds.
+# Shared cloud VM (Xeon, AVX-512): runs differ by up to about 4% between sittings.
+# Sitting 1 (reps 8):            R=10 642.3  R=11 678.9 (+5.7%)  R=12 746.2 (+16.2%)  R=13 840.1 (+30.8%)
+# Sitting 2 (reps 12):           R=10 639.5  R=7 707.1 (+10.6%)  R=8 651.7 (+1.9%)  R=9 632.9 (-1.0%)  R=11 669.9 (+4.7%)
+# Sitting 3 (BUILD_ONLY, reps 20): R=10 631.4  R=9 627.9 (-0.55%)
+# Every build decoded the same pixels (checksum 5af0c5b75d5873b6).

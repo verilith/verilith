@@ -6,8 +6,8 @@
 //! are then combined: the register after `A ++ B` from `c` is the register
 //! after `A`, stepped past `B`'s length, XOR the register after `B` from 0.
 //!
-//! Everything here is verified, against `crc_from`, except `crc_word`: the
-//! claim that the instruction computes `crc_from` over its eight bytes.
+//! Everything here is verified, against `crc_from`, from verilith-simd's
+//! specification of the instruction (`verilith_simd::crc::crc32_u64`).
 #[cfg(verus_only)]
 use super::{crc_from, lemma_crc_append, lemma_crc_sum, lemma_steps_xor, spec};
 use vstd::prelude::*;
@@ -964,34 +964,48 @@ pub proof fn lemma_crc_split(c: u32, d: Seq<u8>)
     assert(0u32 ^ t == t) by (bit_vector);
 }
 
-/// **The CRC-32 instruction** (trusted): the register after the eight
-/// bytes of `d` at `i`. On AArch64 this is `crc32x`, which the Arm
-/// architecture defines as this CRC (polynomial 0x04C11DB7, bit reflected,
-/// no pre- or post-inversion) over the 64-bit operand taken little endian.
-/// The caller must have checked that the CPU has the CRC extension, which
-/// `cpu::crc32_update` does. Elsewhere it is the verified table code, so
-/// that the lanes around it can be tested on any machine.
-#[verifier::external_body]
+/// `spec::crc_steps` is verilith-simd's `crc_bits` with CRC-32's
+/// polynomial.
+pub proof fn lemma_steps_simd(c: u32, n: nat)
+    ensures
+        spec::crc_steps(c, n) == verilith_simd::crc::crc_bits(verilith_simd::crc::POLY_CRC32, c, n),
+    decreases n,
+{
+    if n > 0 {
+        assert(spec::crc_step(c) == verilith_simd::crc::crc_bit(verilith_simd::crc::POLY_CRC32, c));
+        lemma_steps_simd(spec::crc_step(c), (n - 1) as nat);
+    }
+}
+
+/// `crc_from` is verilith-simd's `crc_bytes` with CRC-32's polynomial.
+pub proof fn lemma_from_simd(c: u32, d: Seq<u8>)
+    ensures
+        crc_from(c, d) == verilith_simd::crc::crc_bytes(verilith_simd::crc::POLY_CRC32, c, d),
+    decreases d.len(),
+{
+    if d.len() > 0 {
+        lemma_from_simd(c, d.drop_last());
+        lemma_steps_simd(crc_from(c, d.drop_last()) ^ (d.last() as u32), 8);
+    }
+}
+
+/// **The CRC-32 instruction**: the register after the eight bytes of `d`
+/// at `i`, with verilith-simd's `crc32_u64` (AArch64's `crc32x`), proven
+/// from its specification. Needs the CPU's CRC extension, which
+/// `cpu::crc32_update` checks.
 #[inline(always)]
 pub fn crc_word(c: u32, d: &[u8], i: usize) -> (r: u32)
     requires
+        verilith_simd::crc::crc_arm(),
         i + 8 <= d@.len(),
     ensures
         r == crc_from(c, d@.subrange(i as int, i + 8)),
 {
-    #[cfg(target_arch = "aarch64")]
-    {
-        // SAFETY: `i + 8 <= d.len()` (the precondition), and the caller has
-        // checked for the CRC extension.
-        unsafe {
-            let w = u64::from_le(core::ptr::read_unaligned(d.as_ptr().add(i) as *const u64));
-            core::arch::aarch64::__crc32d(c, w)
-        }
+    let r = verilith_simd::crc::crc32_u64(c, d, i);
+    proof {
+        lemma_from_simd(c, d@.subrange(i as int, i + 8));
     }
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        super::crc32_update(c, &d[i..i + 8])
-    }
+    r
 }
 
 /// Three lanes of `lane` bytes each, from `i`: the register after all
@@ -999,6 +1013,7 @@ pub fn crc_word(c: u32, d: &[u8], i: usize) -> (r: u32)
 #[inline(always)]
 fn triple(c: u32, d: &[u8], i: usize, lane: usize, cols: &[[u32; 16]; 8]) -> (r: u32)
     requires
+        verilith_simd::crc::crc_arm(),
         lane % 8 == 0,
         0 < lane <= 0x1000_0000,
         i + 3 * lane <= d@.len(),
@@ -1021,6 +1036,7 @@ fn triple(c: u32, d: &[u8], i: usize, lane: usize, cols: &[[u32; 16]; 8]) -> (r:
     }
     while j < lane
         invariant
+            verilith_simd::crc::crc_arm(),
             lane % 8 == 0,
             0 < lane <= 0x1000_0000,
             n == d@.len(),
@@ -1071,6 +1087,8 @@ fn triple(c: u32, d: &[u8], i: usize, lane: usize, cols: &[[u32; 16]; 8]) -> (r:
 /// 256, 128 and 32, then one chain.
 #[inline(always)]
 pub fn crc32_update(reg: u32, d: &[u8]) -> (r: u32)
+    requires
+        verilith_simd::crc::crc_arm(),
     ensures
         r == crc_from(reg, d@),
 {
@@ -1084,6 +1102,8 @@ pub fn crc32_update(reg: u32, d: &[u8]) -> (r: u32)
     if n >= 96 {
         while n - i >= 12288
             invariant
+                verilith_simd::crc::crc_arm(),
+            verilith_simd::crc::crc_arm(),
                 n == d@.len(),
                 i <= n,
                 c == crc_from(reg, d@.subrange(0, i as int)),
@@ -1099,6 +1119,8 @@ pub fn crc32_update(reg: u32, d: &[u8]) -> (r: u32)
         }
         while n - i >= 1536
             invariant
+                verilith_simd::crc::crc_arm(),
+            verilith_simd::crc::crc_arm(),
                 n == d@.len(),
                 i <= n,
                 c == crc_from(reg, d@.subrange(0, i as int)),
@@ -1114,6 +1136,8 @@ pub fn crc32_update(reg: u32, d: &[u8]) -> (r: u32)
         }
         while n - i >= 768
             invariant
+                verilith_simd::crc::crc_arm(),
+            verilith_simd::crc::crc_arm(),
                 n == d@.len(),
                 i <= n,
                 c == crc_from(reg, d@.subrange(0, i as int)),
@@ -1129,6 +1153,8 @@ pub fn crc32_update(reg: u32, d: &[u8]) -> (r: u32)
         }
         while n - i >= 384
             invariant
+                verilith_simd::crc::crc_arm(),
+            verilith_simd::crc::crc_arm(),
                 n == d@.len(),
                 i <= n,
                 c == crc_from(reg, d@.subrange(0, i as int)),
@@ -1144,6 +1170,8 @@ pub fn crc32_update(reg: u32, d: &[u8]) -> (r: u32)
         }
         while n - i >= 96
             invariant
+                verilith_simd::crc::crc_arm(),
+            verilith_simd::crc::crc_arm(),
                 n == d@.len(),
                 i <= n,
                 c == crc_from(reg, d@.subrange(0, i as int)),
@@ -1160,6 +1188,7 @@ pub fn crc32_update(reg: u32, d: &[u8]) -> (r: u32)
     }
     while n - i >= 8
         invariant
+            verilith_simd::crc::crc_arm(),
             n == d@.len(),
             i <= n,
             c == crc_from(reg, d@.subrange(0, i as int)),
