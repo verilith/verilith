@@ -12,6 +12,9 @@ use crate::bits::*;
 use crate::huf::*;
 use crate::prims::row;
 use crate::seq::*;
+use crate::enc::Store;
+#[cfg(verus_only)]
+use crate::enc::{l_at, s_at, seq_ok, store_ok};
 use crate::work::Meter;
 use vstd::arithmetic::power2::*;
 use vstd::bits::*;
@@ -525,6 +528,83 @@ fn chk_exec(
     Some((n1, n2, n3, x + ml as usize))
 }
 
+/// `chk_exec` for a block whose sequences the encoder kept in `sq`, each
+/// of them proven to be the input's (`store_ok`): the decoded sequence
+/// `i` need only be the same numbers as the encoder's, with no bytes read.
+#[inline(always)]
+fn chk_exec_sq(
+    sq: &Store,
+    i: usize,
+    lits: &[u8],
+    li: usize,
+    src: &[u8],
+    q: usize,
+    qlim: usize,
+    window: u64,
+    ov: u64,
+    ml: u64,
+    ll: u64,
+    r1: u64,
+    r2: u64,
+    r3: u64,
+    Ghost(q0): Ghost<int>,
+) -> (r: Option<(u64, u64, u64, usize)>)
+    requires
+        ov < 0x1_0000_0000,
+        ml <= 131074,
+        ll <= 131071,
+        li <= lits@.len(),
+        lits@.len() <= 131072,
+        q <= qlim <= src@.len(),
+        0 <= q0,
+        store_ok(*sq, src@, q0),
+        sq.lits@ == lits@,
+        i <= sq.ll@.len(),
+        q as int == s_at(sq.ll@, sq.ml@, q0, i as int),
+        li as int == l_at(sq.ll@, i as int),
+    ensures
+        r matches Some((n1, n2, n3, q2)) ==> {
+            &&& exec_is(src@, lits@, li as int, q as int, window as nat, ov as nat, ml as nat, ll as nat,
+                Reps { r1: r1 as nat, r2: r2 as nat, r3: r3 as nat }, n1 as nat, n2 as nat, n3 as nat, q2 as int)
+            &&& q2 == q + ll + ml
+            &&& q2 <= qlim
+            &&& i < sq.ll@.len()
+            &&& q2 as int == s_at(sq.ll@, sq.ml@, q0, i + 1)
+            &&& li + ll == l_at(sq.ll@, i + 1)
+        },
+{
+    let (off, n1, n2, n3) = match resolve_offset_exec(ov, ll == 0, r1, r2, r3) {
+        None => {
+            return None;
+        },
+        Some(x) => x,
+    };
+    if i >= sq.ll.len() {
+        return None;
+    }
+    if ll != sq.ll[i] as u64 || ml != sq.ml[i] as u64 || off != sq.off[i] as u64 {
+        return None;
+    }
+    if ll > (qlim - q) as u64 || ml > (qlim - q - ll as usize) as u64 || off > window {
+        return None;
+    }
+    let x = q + ll as usize;
+    proof {
+        assert(seq_ok(*sq, src@, q0, i as int));
+        let l = li as int;
+        let lend = l + ll;
+        let out1 = src@.subrange(0, q as int) + lits@.subrange(l, lend);
+        assert forall|k: int| 0 <= k < x implies #[trigger] out1[k] == src@[k] by {
+            if k >= q {
+                assert(lits@[l + (k - q)] == src@[q + (k - q)]);
+            }
+        }
+        assert(out1 =~= src@.subrange(0, x as int));
+        lemma_match_src(src@, x as int, off as nat, ml as nat);
+    }
+    Some((n1, n2, n3, x + ml as usize))
+}
+
 /// The result of checking a block's sequences: stream position, repeat
 /// offsets, literals used and how far into the input the output reached.
 pub struct ChkOut {
@@ -568,6 +648,8 @@ pub fn check_run(
     src: &[u8],
     q0: usize,
     qlim: usize,
+    sq: &Store,
+    use_sq: bool,
     Ghost(ts): Ghost<SeqTables>,
 ) -> (r: Option<ChkOut>)
     requires
@@ -579,6 +661,7 @@ pub fn check_run(
         (sof0 as int) < t.of.rows@.len(),
         (sml0 as int) < t.ml.rows@.len(),
         q0 <= qlim <= src@.len(),
+        use_sq ==> store_ok(*sq, src@, q0 as int) && sq.lits@ == lits@,
     ensures
         r matches Some(o) ==> run_ok(ts, s@, lits@, window as nat, n as nat, SeqState {
             p: p0 as int,
@@ -610,6 +693,10 @@ pub fn check_run(
     let mut li: usize = 0;
     let mut q = q0;
     let mut i: usize = 0;
+    proof {
+        assert(s_at(sq.ll@, sq.ml@, q0 as int, 0) == q0);
+        assert(l_at(sq.ll@, 0) == 0);
+    }
     let slen = s.len();
     loop
         invariant
@@ -634,6 +721,9 @@ pub fn check_run(
                 out: src@.subrange(0, q0 as int),
             }),
             full == seq_run(ts, s@, lits@, window as nat, n as nat, st0),
+            use_sq ==> store_ok(*sq, src@, q0 as int) && sq.lits@ == lits@,
+            use_sq ==> i <= sq.ll@.len() && q as int == s_at(sq.ll@, sq.ml@, q0 as int, i as int)
+                && li as int == l_at(sq.ll@, i as int),
             seq_run(
                 ts,
                 s@,
@@ -685,7 +775,12 @@ pub fn check_run(
             },
             Some(f) => f,
         };
-        let (n1, n2, n3, q2) = match chk_exec(lits, li, src, q, qlim, window, f.ov, f.ml, f.ll, r1, r2, r3) {
+        let e = if use_sq {
+            chk_exec_sq(sq, i, lits, li, src, q, qlim, window, f.ov, f.ml, f.ll, r1, r2, r3, Ghost(q0 as int))
+        } else {
+            chk_exec(lits, li, src, q, qlim, window, f.ov, f.ml, f.ll, r1, r2, r3)
+        };
+        let (n1, n2, n3, q2) = match e {
             None => {
                 return None;
             },
@@ -745,6 +840,8 @@ pub fn check_body(
     src: &[u8],
     q0: usize,
     qlim: usize,
+    sq: &Store,
+    use_sq: bool,
     Ghost(st): Ghost<FrameState>,
     Ghost(ts): Ghost<SeqTables>,
 ) -> (r: Option<usize>)
@@ -755,6 +852,7 @@ pub fn check_body(
         chk_is(old(d), st, src@, q0 as int),
         old(d).lits@.len() <= 131072,
         q0 <= qlim <= src@.len(),
+        use_sq ==> store_ok(*sq, src@, q0 as int) && sq.lits@ == old(d).lits@,
     ensures
         final(d).lits@ == old(d).lits@,
         r matches Some(q) ==> {
@@ -790,7 +888,7 @@ pub fn check_body(
     proof {
         assert(s@ == b@.subrange(a3 as int, b@.len() as int));
     }
-    let o = match crate::cpu::run_check(&tabs, s, d.lits.as_slice(), window, n, p - l1 - l2 - l3, sll, sof, sml, d.r1, d.r2, d.r3, src, q0, qlim, Ghost(ts)) {
+    let o = match crate::cpu::run_check(&tabs, s, d.lits.as_slice(), window, n, p - l1 - l2 - l3, sll, sof, sml, d.r1, d.r2, d.r3, src, q0, qlim, sq, use_sq, Ghost(ts)) {
         None => {
             return None;
         },
@@ -828,6 +926,8 @@ pub fn check_section(
     src: &[u8],
     q0: usize,
     qlim: usize,
+    sq: &Store,
+    use_sq: bool,
     Ghost(st): Ghost<FrameState>,
     Tracked(m): Tracked<&mut Meter>,
 ) -> (r: Option<usize>)
@@ -836,6 +936,7 @@ pub fn check_section(
         chk_is(old(d), st, src@, q0 as int),
         old(d).lits@.len() <= 131072,
         q0 <= qlim <= src@.len(),
+        use_sq ==> store_ok(*sq, src@, q0 as int) && sq.lits@ == old(d).lits@,
     ensures
         final(d).lits@ == old(d).lits@,
         r matches Some(q) ==> {
@@ -877,7 +978,7 @@ pub fn check_section(
         Some(x) => x,
     };
     let ghost ts = seq_hdr(b@, h as int, st).unwrap().0;
-    check_body(b, window, d, tabs, a3, n, src, q0, qlim, Ghost(st), Ghost(ts))
+    check_body(b, window, d, tabs, a3, n, src, q0, qlim, sq, use_sq, Ghost(st), Ghost(ts))
 }
 
 /// A compressed block's content `b` (`compressed_block`), checked to
@@ -892,6 +993,8 @@ pub fn check_cblock(
     src: &[u8],
     pos: usize,
     end: usize,
+    sq: &Store,
+    use_sq: bool,
     Ghost(st): Ghost<FrameState>,
     Tracked(m): Tracked<&mut Meter>,
 ) -> (r: Option<Ghost<FrameState>>)
@@ -901,6 +1004,7 @@ pub fn check_cblock(
         pos <= end <= src@.len(),
         end - pos <= bmax,
         chk_is(old(d), st, src@, pos as int),
+        use_sq ==> store_ok(*sq, src@, pos as int),
     ensures
         r matches Some(g) ==> {
             &&& compressed_block(b@, window as nat, bmax as nat, st) == Some(g@)
@@ -919,7 +1023,17 @@ pub fn check_cblock(
     };
     let ghost l = lit_section(b@, bmax as nat, hc).unwrap();
     let ghost st1 = FrameState { huf: l.huf, ..st };
-    let q = match check_section(slice_subrange(b, used, b.len()), window, d, src, pos, end, Ghost(st1), Tracked(m)) {
+    // The encoder's sequences stand in for the bytes when its literals
+    // are the ones decoded.
+    let k = d.lits.len();
+    let u = use_sq && k == sq.lits.len() && same(d.lits.as_slice(), 0, sq.lits.as_slice(), 0, k);
+    proof {
+        if u {
+            assert(d.lits@.subrange(0, k as int) =~= d.lits@);
+            assert(sq.lits@.subrange(0, k as int) =~= sq.lits@);
+        }
+    }
+    let q = match check_section(slice_subrange(b, used, b.len()), window, d, src, pos, end, sq, u, Ghost(st1), Tracked(m)) {
         None => {
             return None;
         },

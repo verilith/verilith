@@ -710,6 +710,9 @@ fn comp_block(
     let at = out.len();
     let size = end - pos;
     put_block_header(out, 0, 2, last);
+    // Double-fast's sequences are proven to be the input's, so its blocks
+    // are checked against them instead of against the input's bytes.
+    let use_sq = enc.strat == crate::enc::DFAST;
     let ok = enc.block(src, pos, end, d.r1, d.r2, d.r3, out);
     let blen = out.len() - at;
     if !ok || blen < 4 || blen - 3 >= size {
@@ -739,7 +742,7 @@ fn comp_block(
         131072
     };
     let body = slice_subrange(out.as_slice(), at + 3, out.len());
-    let st2 = match check_cblock(body, window, bmax, d, src, pos, end, Ghost(cur), Tracked(m)) {
+    let st2 = match check_cblock(body, window, bmax, d, src, pos, end, &enc.st, use_sq, Ghost(cur), Tracked(m)) {
         Some(g) => g,
         None => {
             out.truncate(at);

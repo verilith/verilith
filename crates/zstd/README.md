@@ -434,7 +434,7 @@ binaries; geometric means; every frame checked by libzstd's decoder):
 | level | ratio vs libzstd | speed vs libzstd |
 | --- | --- | --- |
 | 1 | 0.96× | 0.46× |
-| 3 | 1.00× | 0.57× |
+| 3 | 1.00× | 0.60× |
 | 5 | 0.99× | 0.64× |
 | 7 | 0.99× | 0.54× |
 | 9 | 0.99× | 0.58× |
@@ -458,6 +458,17 @@ the output so far is always `src[0..q]`. Raw and RLE blocks need no
 work at all. That saves a copy of the input in memory and took level 3
 from 0.53× to 0.57×, level 4 to 0.61× and level 1 from 0.43× to 0.46×
 (levels 16 and 19 were not measured again).
+
+At levels 3 and 4 the check reads no input bytes for the sequences at
+all. The double-fast match finder is proven to emit only sequences that
+are the input's (`enc::store_ok`: each run of literals is the input's
+bytes where it starts, and each match repeats the bytes its offset back,
+from the 4- or 8-byte compares, `eq_len` and the backward extension), so
+the check needs only to see that each decoded sequence has the encoder's
+literal length, match length and offset (`check::chk_exec_sq`) and that
+the decoded literals are the encoder's. That took level 3 to 0.60× and
+level 4 to 0.64×. The other strategies' sequences are not proven, so
+their blocks are still compared byte by byte.
 
 Levels 16 to 22 use an optimal parser (`src/opt.rs`, as libzstd's btopt
 and btultra): matches from a binary tree, then the cheapest path through
