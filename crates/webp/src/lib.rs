@@ -68,6 +68,8 @@ pub mod enc_lz;
 pub mod enc_img;
 pub mod enc_pred;
 #[doc(hidden)]
+pub mod enc_bool;
+#[doc(hidden)]
 pub mod enc_vp8l;
 #[cfg(not(verus_only))]
 #[doc(hidden)]
