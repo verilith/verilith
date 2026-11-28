@@ -90,8 +90,8 @@ pub open spec fn best(v: Seq<u8>, n: int) -> int
 
 /// The point smart gravity centres on, in a `w` by `h` image: the best
 /// pixel of the scores blurred with `g`.
-pub open spec fn smart(g: Seq<int>, s: Seq<u8>, w: int, h: int) -> (int, int) {
-    let b = best(blur(g, scores(s, w, h), w, h), w * h);
+pub open spec fn smart(g: Seq<int>, d: int, s: Seq<u8>, w: int, h: int) -> (int, int) {
+    let b = best(blur(g, d, scores(s, w, h), w, h), w * h);
     (b % w, b / w)
 }
 

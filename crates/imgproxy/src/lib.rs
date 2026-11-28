@@ -1,7 +1,7 @@
 //! A formally verified image proxy and thumbnailer: imgproxy-style URLs (parsed by verified code),
 //! decoding with the Verilith decoders, cropping, rotating and placing on a
 //! canvas (upright, as the EXIF orientation says), Lanczos (or area-average)
-//! resizing, blurring, sharpening, watermarks, smart gravity,
+//! resizing, blurring, sharpening, pixelation, watermarks, smart gravity,
 //! and PNG or JPEG output, served by verilith-server.
 #![cfg_attr(not(verus_only), allow(unused_variables, unused_imports, unused_braces))]
 #[cfg(not(target_pointer_width = "64"))]
@@ -31,6 +31,8 @@ pub mod smart;
 pub mod pngenc;
 pub mod fit;
 pub mod pixels;
+#[cfg(not(verus_keep_ghost))]
+pub mod mask;
 #[cfg(not(verus_keep_ghost))]
 pub mod proxy;
 #[cfg(not(verus_keep_ghost))]

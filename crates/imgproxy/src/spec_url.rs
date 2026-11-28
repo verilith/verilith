@@ -97,6 +97,8 @@ pub struct Options {
     /// `blur` and `sharpen`: the Gaussian's sigma, `F1` units (0: none).
     pub blur: u32,
     pub sharpen: u32,
+    /// `pixelate`: the block size in pixels (0 or 1: none).
+    pub pixelate: u32,
     /// `watermark`: opacity (`F1` units; 0 is none), where (`wm_g`, or
     /// tiled with `wm_g`'s offsets as the spacing), and the size as a
     /// fraction of the result's width (`F1` units; 0 keeps its size).
@@ -153,6 +155,7 @@ pub open spec fn defaults() -> Options {
         skip: 0,
         blur: 0,
         sharpen: 0,
+        pixelate: 0,
         wm_op: 0,
         wm_g: Gravity { kind: GKind::Ce, x: 0, y: 0 },
         wm_tile: false,
@@ -721,6 +724,11 @@ pub open spec fn apply2(o: Options, n: Seq<u8>, a: Seq<Seq<u8>>) -> Option<Optio
     } else if named(n, seq![b's', b'h', b'a', b'r', b'p', b'e', b'n'], seq![b's', b'h']) {
         match fixed4z(arg(a, 0)) {
             Some(v) => Some(Options { sharpen: v as u32, ..o }),
+            None => None,
+        }
+    } else if named(n, seq![b'p', b'i', b'x', b'e', b'l', b'a', b't', b'e'], seq![b'p', b'i', b'x']) {
+        match num(arg(a, 0)) {
+            Some(v) => Some(Options { pixelate: v, ..o }),
             None => None,
         }
     } else if named(n, seq![b'f', b'i', b'l', b'e', b'n', b'a', b'm', b'e'], seq![b'f', b'n']) {
