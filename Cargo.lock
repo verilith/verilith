@@ -2321,10 +2321,12 @@ dependencies = [
 name = "verilith-resolver"
 version = "0.1.0"
 dependencies = [
+ "aws-lc-rs",
  "rcgen",
  "rustls",
  "verilith-dns",
  "verilith-server",
+ "verilith-sha2",
  "verilith-text",
  "verilith-tls",
  "verilith-tls-aws-lc",

@@ -18,12 +18,19 @@
 //!   of the type asked at the chain's end, every TTL at most `MAX_TTL`.
 use crate::accept::response_matches;
 use crate::cache::*;
+use crate::check::*;
 use crate::classify::*;
+use crate::dspec::*;
 use crate::name::*;
 use crate::reply::build_query;
 use crate::rr::*;
 use crate::spec::*;
+use crate::trust::validating_x;
+use verilith_dns::message::Section;
+#[cfg(verus_only)]
+use verilith_dns::message::section_of;
 use verilith_dns::parse::parse;
+use verilith_dns::Message;
 use vstd::prelude::*;
 use vstd::slice::slice_subrange;
 
@@ -37,6 +44,14 @@ pub trait Transport: Send + Sync {
     fn now(&self) -> u64;
     /// Unpredictable bits (query IDs and the 0x20 case).
     fn random(&self) -> u64;
+    /// Wall-clock time, seconds since 1970 modulo 2^32 (RRSIG validity
+    /// periods use serial arithmetic, RFC 4034 §3.1.5).
+    fn wall(&self) -> u32 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as u32)
+            .unwrap_or(0)
+    }
 }
 
 verus! {
@@ -61,33 +76,88 @@ impl Net {
     pub fn random(&self) -> (r: u64) {
         self.t.random()
     }
+
+    #[verifier::external_body]
+    pub fn wall(&self) -> (r: u32) {
+        self.t.wall()
+    }
 }
 
-/// The cache, shared by every thread: `Cache`s behind locks. The contracts
-/// below are the verified `Cache::lookup` and `Cache::insert`'s; the
-/// bodies only pick a shard and lock it.
-#[verifier::external_body]
+/// The cache, shared by every thread: `Cache`s, each behind a reader-writer
+/// lock (vstd's, verified). Lookups take a shard's read lock, so they run
+/// in parallel; inserts take its write lock.
 pub struct Shared {
-    pub(crate) shards: Vec<std::sync::Mutex<Cache>>,
+    pub(crate) shards: Vec<vstd::rwlock::RwLock<Cache, AnyCache>>,
+}
+
+/// The lock invariant: none beyond `Cache`'s own (a type invariant).
+pub struct AnyCache;
+
+impl vstd::rwlock::RwLockPredicate<Cache> for AnyCache {
+    open spec fn inv(self, c: Cache) -> bool {
+        true
+    }
+}
+
+/// The shard of `n` shards a name's entries live in: any function of the
+/// lowercased name would do.
+fn shard_of(n: usize, name: &[u8]) -> (i: usize)
+    requires
+        n > 0,
+    ensures
+        i < n,
+{
+    let l = lowered(name);
+    (hash(&l, 0) % (n as u64)) as usize
 }
 
 impl Shared {
-    #[verifier::external_body]
+    /// `shards` caches of `sets` sets each.
+    pub fn new(shards: usize, sets: usize) -> (s: Shared)
+        requires
+            0 < sets <= 0x1000_0000,
+    {
+        let mut v: Vec<vstd::rwlock::RwLock<Cache, AnyCache>> = Vec::new();
+        let n = if shards == 0 { 1 } else { shards };
+        let mut i: usize = 0;
+        while i < n
+            invariant
+                0 < sets <= 0x1000_0000,
+            decreases n - i,
+        {
+            v.push(vstd::rwlock::RwLock::new(Cache::new(sets), Ghost(AnyCache)));
+            i = i + 1;
+        }
+        Shared { shards: v }
+    }
+
     pub fn lookup(&self, name: &[u8], qtype: u16, now: u64) -> (r: Option<Hit>)
         ensures
             r matches Some(h) ==> hit_ok(h, name@, qtype),
     {
-        let s = &self.shards[crate::shared_shard(self.shards.len(), name)];
-        s.lock().unwrap_or_else(|e| e.into_inner()).lookup(name, qtype, now)
+        let n = self.shards.len();
+        if n == 0 {
+            return None;
+        }
+        let lock = &self.shards[shard_of(n, name)];
+        let h = lock.acquire_read();
+        let r = h.borrow().lookup(name, qtype, now);
+        h.release_read();
+        r
     }
 
-    #[verifier::external_body]
     pub fn insert(&self, name: &[u8], qtype: u16, now: u64, ttl: u32, data: Data)
         requires
             data_ok(data, name@, qtype),
     {
-        let s = &self.shards[crate::shared_shard(self.shards.len(), name)];
-        s.lock().unwrap_or_else(|e| e.into_inner()).insert(name, qtype, now, ttl, data)
+        let n = self.shards.len();
+        if n == 0 {
+            return;
+        }
+        let lock = &self.shards[shard_of(n, name)];
+        let (mut c, w) = lock.acquire_write();
+        c.insert(name, qtype, now, ttl, data);
+        w.release_write(c);
     }
 }
 
@@ -95,25 +165,35 @@ impl Shared {
 /// resolver look up (NXNSAttack: BIND, Unbound and Knot cap this too).
 pub const MAX_NS_LOOKUPS: usize = 2;
 
-/// The resolver's answer to a question.
+/// How deep lookups of name server addresses may nest.
+pub const NS_DEPTH: u32 = 3;
+
+/// The resolver's answer to a question, with its security status
+/// (`dspec::UNCHECKED`, `SECURE`, `INSECURE`) and the evidence for it.
 pub struct Answer {
     pub rcode: u16,
     pub answers: Vec<Rr>,
     pub authority: Vec<Rr>,
+    pub sec: u8,
+    pub ev: Ghost<Ev>,
 }
 
 /// What the answer to `qname`/`qtype` may be: a chain for the question,
 /// ending in records of the type (NOERROR), or in nothing (NOERROR with no
-/// data, NXDOMAIN); or SERVFAIL with no records.
-pub open spec fn answer_ok(a: Answer, qname: Seq<u8>, qtype: u16) -> bool {
+/// data, NXDOMAIN); or SERVFAIL with no records. Its status is backed by
+/// the evidence (`sec_ok`); and when validation was asked for (`valid`)
+/// and anchors are configured, it is never left unchecked.
+pub open spec fn answer_ok(a: Answer, qname: Seq<u8>, qtype: u16, valid: bool) -> bool {
     &&& a.rcode == RCODE_NOERROR || a.rcode == RCODE_NXDOMAIN || a.rcode == RCODE_SERVFAIL
     &&& chain(qname, qtype, rrs(a.answers@))
     &&& chain_links(qname, qtype, rrs(a.answers@)) <= MAX_CNAME
     &&& a.rcode != RCODE_NOERROR ==> links_only(qname, qtype, rrs(a.answers@))
-    &&& a.rcode == RCODE_SERVFAIL ==> a.answers@.len() == 0 && a.authority@.len() == 0
+    &&& a.rcode == RCODE_SERVFAIL ==> a.answers@.len() == 0 && a.authority@.len() == 0 && a.sec == UNCHECKED
     &&& soa_only(rrs(a.authority@))
     &&& ttls_at_most(rrs(a.answers@), MAX_TTL)
     &&& ttls_at_most(rrs(a.authority@), MAX_TTL)
+    &&& sec_ok(a.sec, a.ev@, qname, qtype, a.rcode, rrs(a.answers@), rrs(a.authority@))
+    &&& (valid && validating() && a.rcode != RCODE_SERVFAIL) ==> a.sec != UNCHECKED
 }
 
 pub fn servfail() -> (a: Answer)
@@ -121,23 +201,68 @@ pub fn servfail() -> (a: Answer)
         a.rcode == RCODE_SERVFAIL,
         a.answers@.len() == 0,
         a.authority@.len() == 0,
+        a.sec == UNCHECKED,
 {
-    Answer { rcode: RCODE_SERVFAIL, answers: Vec::new(), authority: Vec::new() }
+    Answer { rcode: RCODE_SERVFAIL, answers: Vec::new(), authority: Vec::new(), sec: UNCHECKED, ev: Ghost(ev_empty()) }
+}
+
+/// The DNSSEC records of a response, for validation: its RRSIGs and its
+/// NSEC and NSEC3 records (answer and authority sections, in the
+/// bailiwick), and the zone the server was asked as.
+pub struct Raw {
+    pub sigs: Vec<Rr>,
+    pub ns: Vec<Rr>,
+    pub zone: Vec<u8>,
+}
+
+fn gather_section(m: &Message, s: Section, zone: &[u8], raw: &mut Raw)
+    ensures
+        final(raw).zone@ == old(raw).zone@,
+{
+    let n = m.record_count(s);
+    let mut i: usize = 0;
+    while i < n
+        invariant
+            n == section_of(m@, s).len(),
+            i <= n,
+            raw.zone@ == old(raw).zone@,
+        decreases n - i,
+    {
+        let r = take_record(m, s, i);
+        if r.rclass == CLASS_IN && is_sub_exec(&r.name, zone) {
+            if r.rtype == TYPE_RRSIG {
+                raw.sigs.push(r);
+            } else if r.rtype == TYPE_NSEC || r.rtype == TYPE_NSEC3 {
+                raw.ns.push(r);
+            }
+        }
+        i = i + 1;
+    }
+}
+
+fn gather(m: &Message, zone: &[u8]) -> (r: Raw)
+    ensures
+        r.zone@ == zone@,
+{
+    let mut raw = Raw { sigs: Vec::new(), ns: Vec::new(), zone: to_vec(zone) };
+    gather_section(m, Section::Answer, zone, &mut raw);
+    gather_section(m, Section::Authority, zone, &mut raw);
+    raw
 }
 
 /// What one walk down the zones for one name ends with.
 pub enum Step {
     /// NOERROR (an answer, or no data) or NXDOMAIN: the records, from the
-    /// name walked for, and the SOA.
-    Done(u16, Vec<Rr>, Vec<Rr>),
+    /// name walked for, and the SOA; and the response's DNSSEC records.
+    Done(u16, Vec<Rr>, Vec<Rr>, Raw),
     /// CNAME links, to be followed from the target.
-    Cname(Vec<Rr>, Vec<u8>),
+    Cname(Vec<Rr>, Vec<u8>, Raw),
     Fail,
 }
 
 pub open spec fn step_ok(s: Step, cur: Seq<u8>, qtype: u16) -> bool {
     match s {
-        Step::Done(code, rs, soa) => {
+        Step::Done(code, rs, soa, _) => {
             &&& code == RCODE_NOERROR || code == RCODE_NXDOMAIN
             &&& chain(cur, qtype, rrs(rs@))
             &&& code == RCODE_NXDOMAIN ==> links_only(cur, qtype, rrs(rs@))
@@ -145,7 +270,7 @@ pub open spec fn step_ok(s: Step, cur: Seq<u8>, qtype: u16) -> bool {
             &&& ttls_at_most(rrs(rs@), MAX_TTL)
             &&& ttls_at_most(rrs(soa@), MAX_TTL)
         },
-        Step::Cname(rs, t) => {
+        Step::Cname(rs, t, _) => {
             &&& links_only(cur, qtype, rrs(rs@))
             &&& rs@.len() > 0
             &&& eq_ci(chain_end(cur, qtype, rrs(rs@)), t@)
@@ -279,14 +404,23 @@ fn copy_addrs(a: &Vec<Vec<u8>>) -> (r: Vec<Vec<u8>>)
 }
 
 /// The deepest zone at or above `cur` whose servers the cache knows, and
-/// their addresses; the root and `roots` if none.
-fn closest(roots: &Vec<Vec<u8>>, cache: &Shared, cur: &[u8], now: u64) -> (r: (Vec<u8>, Vec<Vec<u8>>))
+/// their addresses; the root and `roots` if none. With `above`, only zones
+/// strictly above `cur` (a DS RRset is the parent's).
+fn closest(roots: &Vec<Vec<u8>>, cache: &Shared, cur: &[u8], now: u64, above: bool) -> (r: (Vec<u8>, Vec<Vec<u8>>))
     requires
         addrs_ok(roots@),
     ensures
         addrs_ok(r.1@),
 {
     let mut off: usize = 0;
+    if above && cur.len() > 0 {
+        let c = cur[0] as usize;
+        if c + 1 >= cur.len() {
+            off = cur.len();
+        } else {
+            off = 1 + c;
+        }
+    }
     while off < cur.len()
         invariant
             addrs_ok(roots@),
@@ -320,7 +454,8 @@ fn closest(roots: &Vec<Vec<u8>>, cache: &Shared, cur: &[u8], now: u64) -> (r: (V
 }
 
 /// Walks down from the closest known zone toward `cur` until a server
-/// answers for it. Every query costs one unit of `budget`.
+/// answers for it. Every query costs one unit of `budget`. Nothing it
+/// returns is cached here: the caller validates first.
 pub fn iterate(
     roots: &Vec<Vec<u8>>,
     net: &Net,
@@ -329,6 +464,7 @@ pub fn iterate(
     qtype: u16,
     budget: &mut u32,
     depth: u32,
+    vd: u32,
 ) -> (s: Step)
     requires
         addrs_ok(roots@),
@@ -336,10 +472,11 @@ pub fn iterate(
     ensures
         step_ok(s, cur@, qtype),
         *final(budget) <= *old(budget),
-    decreases depth, 1nat,
+    decreases vd, depth + 1, 2nat,
 {
     let now = net.now();
-    let (mut zone, mut servers) = closest(roots, cache, cur, now);
+    let ds = qtype == TYPE_DS;
+    let (mut zone, mut servers) = closest(roots, cache, cur, now, ds);
     let mut si: usize = 0;
     while *budget > 0
         invariant
@@ -350,7 +487,6 @@ pub fn iterate(
         decreases *budget,
     {
         *budget = *budget - 1;
-        let ghost b0 = *budget;
         if si >= servers.len() {
             return Step::Fail;
         }
@@ -388,8 +524,13 @@ pub fn iterate(
                 let c = clamp_ttls(&rs, MAX_TTL);
                 proof {
                     lemma_chain_ttl(sent@, qtype, rrs(rs@), rrs(c@));
+                    lemma_chain_ci(sent@, cur@, qtype, rrs(c@));
                 }
-                return done_positive(cache, cur, Ghost(sent@), qtype, now, c);
+                let soa: Vec<Rr> = Vec::new();
+                proof {
+                    assert(rrs(soa@).len() == 0);
+                }
+                return Step::Done(RCODE_NOERROR, c, soa, gather(&m, &zone));
             },
             Outcome::Cname(rs, t) => {
                 let c = clamp_ttls(&rs, MAX_TTL);
@@ -398,16 +539,22 @@ pub fn iterate(
                     lemma_chain_ci(sent@, cur@, qtype, rrs(c@));
                     lemma_eq_ci_sym(chain_end(sent@, qtype, rrs(c@)), chain_end(cur@, qtype, rrs(c@)));
                 }
-                return Step::Cname(c, t);
+                return Step::Cname(c, t, gather(&m, &zone));
             },
             Outcome::NxDomain(rs, soa) => {
-                return done_negative(cache, cur, Ghost(sent@), qtype, now, RCODE_NXDOMAIN, &rs, &soa);
+                return done_negative(cur, Ghost(sent@), qtype, RCODE_NXDOMAIN, &rs, &soa, gather(&m, &zone));
             },
             Outcome::NoData(rs, soa) => {
-                return done_negative(cache, cur, Ghost(sent@), qtype, now, RCODE_NOERROR, &rs, &soa);
+                return done_negative(cur, Ghost(sent@), qtype, RCODE_NOERROR, &rs, &soa, gather(&m, &zone));
             },
             Outcome::Referral(z, ns, glue) => {
-                let addrs = ns_addrs(roots, net, cache, &ns, &glue, budget, depth);
+                // A DS query goes to the parent: a referral to the zone
+                // itself is no answer.
+                if ds && eq_ci_exec(&z, cur) {
+                    si = si + 1;
+                    continue ;
+                }
+                let addrs = ns_addrs(roots, net, cache, &ns, &glue, budget, depth, vd);
                 if addrs.len() == 0 {
                     si = si + 1;
                     continue ;
@@ -428,6 +575,8 @@ pub fn iterate(
 
 /// The addresses of a referral's name servers: the glue, or else (if
 /// `depth` allows) those of the first `MAX_NS_LOOKUPS` names, resolved.
+/// The lookups are not validated (an address is only where to ask; what
+/// comes back from there is).
 fn ns_addrs(
     roots: &Vec<Vec<u8>>,
     net: &Net,
@@ -436,13 +585,14 @@ fn ns_addrs(
     glue: &Vec<Rr>,
     budget: &mut u32,
     depth: u32,
+    vd: u32,
 ) -> (addrs: Vec<Vec<u8>>)
     requires
         addrs_ok(roots@),
     ensures
         addrs@.len() > 0 ==> addrs_ok(addrs@),
         *final(budget) <= *old(budget),
-    decreases depth, 0nat,
+    decreases vd, depth + 1, 1nat,
 {
     let mut addrs: Vec<Vec<u8>> = Vec::new();
     addresses(glue, &mut addrs);
@@ -457,7 +607,7 @@ fn ns_addrs(
                 depth > 0,
             decreases ns@.len() - j,
         {
-            let a = resolve(roots, net, cache, &ns[j], TYPE_A, budget, depth - 1);
+            let a = resolve(roots, net, cache, &ns[j], TYPE_A, budget, depth - 1, vd, false);
             addresses(&a.answers, &mut addrs);
             if addrs.len() > 0 {
                 break;
@@ -468,42 +618,19 @@ fn ns_addrs(
     addrs
 }
 
-fn done_positive(cache: &Shared, cur: &[u8], sent: Ghost<Seq<u8>>, qtype: u16, now: u64, rs: Vec<Rr>) -> (s: Step)
-    requires
-        positive(sent@, qtype, rrs(rs@)),
-        eq_ci(sent@, cur@),
-        ttls_at_most(rrs(rs@), MAX_TTL),
-        qtype != DELEG,
-    ensures
-        step_ok(s, cur@, qtype),
-{
-    proof {
-        lemma_chain_ci(sent@, cur@, qtype, rrs(rs@));
-    }
-    let keep = copy_rrs(&rs);
-    cache.insert(cur, qtype, now, min_ttl(&rs), Data::Pos(keep));
-    let soa: Vec<Rr> = Vec::new();
-    proof {
-        assert(rrs(soa@).len() == 0);
-    }
-    Step::Done(RCODE_NOERROR, rs, soa)
-}
-
 fn done_negative(
-    cache: &Shared,
     cur: &[u8],
     sent: Ghost<Seq<u8>>,
     qtype: u16,
-    now: u64,
     code: u16,
     rs: &Vec<Rr>,
     soa: &Vec<Rr>,
+    raw: Raw,
 ) -> (s: Step)
     requires
         links_only(sent@, qtype, rrs(rs@)),
         forall|i: int| 0 <= i < soa@.len() ==> (#[trigger] rrs(soa@)[i]).rtype == TYPE_SOA,
         eq_ci(sent@, cur@),
-        qtype != DELEG,
         code == RCODE_NOERROR || code == RCODE_NXDOMAIN,
     ensures
         step_ok(s, cur@, qtype),
@@ -517,30 +644,308 @@ fn done_negative(
             assert(rrs(soa@)[i].rtype == TYPE_SOA);
         }
     }
-    let ttl = negative_ttl(&s);
-    cache.insert(cur, qtype, now, ttl, Data::Neg(code, copy_rrs(&c), copy_rrs(&s)));
-    Step::Done(code, c, s)
+    Step::Done(code, c, s, raw)
+}
+
+/// Records validated (or proven insecure) by the evidence, unless
+/// unchecked.
+pub open spec fn recs_sec(rs: Seq<RrS>, sec: u8, e: Ev) -> bool {
+    sec == UNCHECKED || {
+        &&& sec == SECURE || sec == INSECURE
+        &&& validating()
+        &&& ev_ok(e)
+        &&& recs_ok(rs, sec, e)
+    }
+}
+
+proof fn lemma_recs_concat(a: Seq<RrS>, b: Seq<RrS>, sec: u8, e: Ev)
+    requires
+        recs_ok(a, sec, e),
+        recs_ok(b, sec, e),
+    ensures
+        recs_ok(a + b, sec, e),
+{
+    assert forall|i: int| 0 <= i < (a + b).len() implies rec_secure(#[trigger] (a + b)[i], e) || (sec == INSECURE
+        && rec_insecure((a + b)[i], e)) by {
+        if i < a.len() {
+            assert((a + b)[i] == a[i]);
+        } else {
+            assert((a + b)[i] == b[i - a.len()]);
+        }
+    }
+}
+
+/// The status of two parts together: unchecked if either is, insecure if
+/// either is, else secure.
+pub open spec fn join_sec(a: u8, b: u8) -> u8 {
+    if a == UNCHECKED || b == UNCHECKED {
+        UNCHECKED
+    } else if a == INSECURE || b == INSECURE {
+        INSECURE
+    } else {
+        SECURE
+    }
+}
+
+fn join_sec_x(a: u8, b: u8) -> (r: u8)
+    ensures
+        r == join_sec(a, b),
+{
+    if a == UNCHECKED || b == UNCHECKED {
+        UNCHECKED
+    } else if a == INSECURE || b == INSECURE {
+        INSECURE
+    } else {
+        SECURE
+    }
+}
+
+/// Moving a step's status into the joined evidence.
+proof fn lemma_sec_sub(s: u8, e: Ev, s2: u8, e2: Ev, cur: Seq<u8>, qtype: u16, code: u16, rs: Seq<RrS>, soa: Seq<RrS>)
+    requires
+        sec_ok(s, e, cur, qtype, code, rs, soa),
+        s != UNCHECKED,
+        s2 == SECURE || s2 == INSECURE,
+        s == INSECURE ==> s2 == INSECURE,
+        ev_sub(e, e2),
+        ev_ok(e2),
+    ensures
+        sec_ok(s2, e2, cur, qtype, code, rs, soa),
+{
+    lemma_recs_sub(rs, s, s2, e, e2);
+    lemma_recs_sub(soa, s, s2, e, e2);
+    let end = chain_end(cur, qtype, rs);
+    if code == RCODE_NXDOMAIN {
+        if nx_proven(end, e) {
+            assert(nx_proven(end, e2));
+        } else {
+            assert(name_insecure(end, e2));
+        }
+    }
+    if code == RCODE_NOERROR && links_only(cur, qtype, rs) {
+        if nodata_proven(end, qtype, e) {
+            assert(nodata_proven(end, qtype, e2));
+        } else {
+            assert(name_insecure(end, e2));
+        }
+    }
+}
+
+/// A step's status, carried over from the name it was asked for to the
+/// whole chain before it.
+proof fn lemma_sec_append(sec: u8, e: Ev, qname: Seq<u8>, qtype: u16, code: u16, a: Seq<RrS>, rs: Seq<RrS>, soa: Seq<RrS>)
+    requires
+        links_only(qname, qtype, a),
+        chain(chain_end(qname, qtype, a), qtype, rs),
+        sec != UNCHECKED ==> recs_ok(a, sec, e),
+        sec_ok(sec, e, chain_end(qname, qtype, a), qtype, code, rs, soa),
+    ensures
+        sec_ok(sec, e, qname, qtype, code, a + rs, soa),
+{
+    lemma_chain_append(qname, qtype, a, rs);
+    if sec != UNCHECKED {
+        lemma_recs_concat(a, rs, sec, e);
+    }
+}
+
+proof fn lemma_unchecked(qname: Seq<u8>, qtype: u16)
+    ensures
+        forall|e: Ev, code: u16, rs: Seq<RrS>, soa: Seq<RrS>| #[trigger] sec_ok(UNCHECKED, e, qname, qtype, code, rs, soa),
+{
+}
+
+proof fn lemma_start(v: bool, e: Ev)
+    requires
+        v ==> validating(),
+        e == ev_empty(),
+    ensures
+        recs_sec(Seq::empty(), if v { SECURE } else { UNCHECKED }, e),
+{
+    assert(ev_ok(ev_empty()));
+}
+
+/// The status of `a` (the chain so far, to `cur`) and of one more step
+/// (`rs`, `soa`), together.
+proof fn lemma_combine(
+    qname: Seq<u8>,
+    qtype: u16,
+    a: Seq<RrS>,
+    cur: Seq<u8>,
+    asec: u8,
+    aev: Ev,
+    code: u16,
+    rs: Seq<RrS>,
+    soa: Seq<RrS>,
+    last: bool,
+    sec: u8,
+    e: Ev,
+)
+    requires
+        links_only(qname, qtype, a),
+        eq_ci(chain_end(qname, qtype, a), cur),
+        chain(cur, qtype, rs),
+        recs_sec(a, asec, aev),
+        last ==> sec_ok(sec, e, cur, qtype, code, rs, soa),
+        !last ==> recs_sec(rs, sec, e),
+    ensures
+        recs_sec(a + rs, join_sec(asec, sec), ev_join(aev, e)),
+        last ==> sec_ok(join_sec(asec, sec), ev_join(aev, e), qname, qtype, code, a + rs, soa),
+{
+    let end = chain_end(qname, qtype, a);
+    let nsec = join_sec(asec, sec);
+    let nev = ev_join(aev, e);
+    lemma_eq_ci_sym(end, cur);
+    lemma_chain_ci(cur, end, qtype, rs);
+    lemma_chain_append(qname, qtype, a, rs);
+    if nsec != UNCHECKED {
+        lemma_join(aev, e);
+        lemma_recs_sub(a, asec, nsec, aev, nev);
+        if last {
+            lemma_sec_sub(sec, e, nsec, nev, cur, qtype, code, rs, soa);
+            lemma_sec_ci(nsec, nev, cur, end, qtype, code, rs, soa);
+            lemma_sec_append(nsec, nev, qname, qtype, code, a, rs, soa);
+        } else {
+            lemma_recs_sub(rs, sec, nsec, e, nev);
+        }
+        lemma_recs_concat(a, rs, nsec, nev);
+    }
 }
 
 /// What the resolver has for `cur` after the cache or a walk: `code` with
-/// records from `cur` and the SOA, or (`more`) links to follow from there.
-pub open spec fn got_ok(code: u16, rs: Seq<RrS>, soa: Seq<RrS>, more: Option<Vec<u8>>, cur: Seq<u8>, qtype: u16) -> bool {
+/// records from `cur` and the SOA, or (`more`) links to follow from there;
+/// with their status.
+pub open spec fn got_ok(
+    code: u16,
+    rs: Seq<RrS>,
+    soa: Seq<RrS>,
+    more: Option<Vec<u8>>,
+    cur: Seq<u8>,
+    qtype: u16,
+    sec: u8,
+    e: Ev,
+    v: bool,
+) -> bool {
     &&& code == RCODE_NOERROR || code == RCODE_NXDOMAIN
     &&& chain(cur, qtype, rs)
     &&& code != RCODE_NOERROR ==> links_only(cur, qtype, rs)
     &&& soa_only(soa)
     &&& ttls_at_most(rs, MAX_TTL)
     &&& ttls_at_most(soa, MAX_TTL)
+    &&& v ==> sec != UNCHECKED
     &&& more matches Some(t) ==> {
         &&& code == RCODE_NOERROR
         &&& links_only(cur, qtype, rs)
         &&& eq_ci(chain_end(cur, qtype, rs), t@)
         &&& soa.len() == 0
+        &&& rs.len() > 0
+        &&& recs_sec(rs, sec, e)
+    }
+    &&& more is None ==> sec_ok(sec, e, cur, qtype, code, rs, soa)
+}
+
+/// One step of `resolve` for `cur`: from the cache, or a walk, validated
+/// if `v`, and then cached.
+fn lookup_step(
+    roots: &Vec<Vec<u8>>,
+    net: &Net,
+    cache: &Shared,
+    cur: &[u8],
+    qtype: u16,
+    budget: &mut u32,
+    depth: u32,
+    vd: u32,
+    v: bool,
+) -> (r: Option<(u16, Vec<Rr>, Vec<Rr>, Option<Vec<u8>>, u8, Ghost<Ev>)>)
+    requires
+        addrs_ok(roots@),
+        qtype != DELEG,
+        qtype != KEYS,
+        v ==> validating(),
+    ensures
+        r matches Some((code, rs, soa, more, sec, e)) ==> got_ok(code, rrs(rs@), rrs(soa@), more, cur@, qtype, sec, e@, v),
+        *final(budget) <= *old(budget),
+    decreases vd, depth + 1, 3nat,
+{
+    let now = net.now();
+    match cache.lookup(cur, qtype, now) {
+        Some(Hit { data: Data::Pos(rs, sec, ev), left }) => {
+            if !(v && sec == UNCHECKED) {
+                let soa: Vec<Rr> = Vec::new();
+                proof {
+                    assert(rrs(soa@) =~= Seq::<RrS>::empty());
+                    assert forall|i: int| 0 <= i < rrs(rs@).len() implies (#[trigger] rrs(rs@)[i]).ttl <= MAX_TTL by {
+                        assert(rrs(rs@)[i].ttl <= left);
+                    }
+                }
+                return Some((RCODE_NOERROR, rs, soa, None, sec, ev));
+            }
+        },
+        Some(Hit { data: Data::Neg(code, rs, soa, sec, ev), left }) => {
+            if !(v && sec == UNCHECKED) {
+                proof {
+                    assert forall|i: int| 0 <= i < rrs(rs@).len() implies (#[trigger] rrs(rs@)[i]).ttl <= MAX_TTL by {
+                        assert(rrs(rs@)[i].ttl <= left);
+                    }
+                    assert forall|i: int| 0 <= i < rrs(soa@).len() implies (#[trigger] rrs(soa@)[i]).ttl <= MAX_TTL by {
+                        assert(rrs(soa@)[i].ttl <= left);
+                    }
+                }
+                return Some((code, rs, soa, None, sec, ev));
+            }
+        },
+        _ => {},
+    }
+    match iterate(roots, net, cache, cur, qtype, budget, depth, vd) {
+        Step::Done(code, rs, soa, raw) => {
+            let (sec, e) = if v {
+                match check_step(roots, net, cache, cur, qtype, code, &rs, &soa, &raw, true, budget, vd) {
+                    Some(x) => x,
+                    None => {
+                        return None;
+                    },
+                }
+            } else {
+                (UNCHECKED, Ghost(ev_empty()))
+            };
+            let n = count_links(cur, qtype, &rs);
+            if code == RCODE_NOERROR && n < rs.len() {
+                cache.insert(cur, qtype, now, min_ttl(&rs), Data::Pos(copy_rrs(&rs), sec, e));
+            } else if code == RCODE_NXDOMAIN || n == rs.len() {
+                cache.insert(
+                    cur,
+                    qtype,
+                    now,
+                    negative_ttl(&soa),
+                    Data::Neg(code, copy_rrs(&rs), copy_rrs(&soa), sec, e),
+                );
+            }
+            Some((code, rs, soa, None, sec, e))
+        },
+        Step::Cname(rs, t, raw) => {
+            let soa: Vec<Rr> = Vec::new();
+            proof {
+                assert(rrs(soa@) =~= Seq::<RrS>::empty());
+            }
+            let (sec, e) = if v {
+                match check_step(roots, net, cache, cur, qtype, RCODE_NOERROR, &rs, &soa, &raw, false, budget, vd) {
+                    Some(x) => x,
+                    None => {
+                        return None;
+                    },
+                }
+            } else {
+                (UNCHECKED, Ghost(ev_empty()))
+            };
+            Some((RCODE_NOERROR, rs, soa, Some(t), sec, e))
+        },
+        Step::Fail => None,
     }
 }
 
 /// Resolves `qname`/`qtype`: from the cache, or by walking the zones,
-/// following CNAMEs. At most `budget` queries are sent in all.
+/// following CNAMEs. At most `budget` queries are sent in all. With
+/// `valid` (and trust anchors configured), every record is validated, or
+/// proven to be in an unsigned zone; bogus data is SERVFAIL.
 pub fn resolve(
     roots: &Vec<Vec<u8>>,
     net: &Net,
@@ -549,81 +954,56 @@ pub fn resolve(
     qtype: u16,
     budget: &mut u32,
     depth: u32,
+    vd: u32,
+    valid: bool,
 ) -> (a: Answer)
     requires
         addrs_ok(roots@),
         qtype != DELEG,
+        qtype != KEYS,
     ensures
-        answer_ok(a, qname@, qtype),
+        answer_ok(a, qname@, qtype, valid),
         *final(budget) <= *old(budget),
-    decreases depth, 2nat,
+    decreases vd, depth + 1, 4nat,
 {
+    hide(sec_ok);
+    hide(recs_sec);
+    let v = valid && validating_x();
     let mut cur: Vec<u8> = to_vec(qname);
     let mut acc: Vec<Rr> = Vec::new();
     let mut links: usize = 0;
+    let mut asec: u8 = if v { SECURE } else { UNCHECKED };
+    let ghost mut aev = ev_empty();
     proof {
         assert(rrs(acc@) =~= Seq::<RrS>::empty());
         lemma_eq_ci_refl(qname@);
+        lemma_start(v, aev);
     }
     loop
         invariant
             addrs_ok(roots@),
             qtype != DELEG,
+            qtype != KEYS,
+            v == (valid && validating()),
             links_only(qname@, qtype, rrs(acc@)),
             eq_ci(chain_end(qname@, qtype, rrs(acc@)), cur@),
             links == acc@.len(),
             links <= MAX_CNAME,
             ttls_at_most(rrs(acc@), MAX_TTL),
+            recs_sec(rrs(acc@), asec, aev),
+            v ==> asec != UNCHECKED,
             *budget <= *old(budget),
         decreases MAX_CNAME - links,
     {
-        let now = net.now();
-        // (code, records from cur, soa), or links to follow.
-        let (code, rs, soa, more) = match cache.lookup(&cur, qtype, now) {
-            Some(Hit { data: Data::Pos(rs), left }) => {
-                let soa: Vec<Rr> = Vec::new();
+        let (code, rs, soa, more, sec, e) = match lookup_step(roots, net, cache, &cur, qtype, budget, depth, vd, v) {
+            Some(x) => x,
+            None => {
                 proof {
-                    assert(rrs(soa@).len() == 0);
-                    assert forall|i: int| 0 <= i < rrs(rs@).len() implies (#[trigger] rrs(rs@)[i]).ttl <= MAX_TTL by {
-                        assert(rrs(rs@)[i].ttl <= left);
-                    }
-                    assert(got_ok(RCODE_NOERROR, rrs(rs@), rrs(soa@), None, cur@, qtype));
+                    lemma_unchecked(qname@, qtype);
                 }
-                (RCODE_NOERROR, rs, soa, None)
-            },
-            Some(Hit { data: Data::Neg(code, rs, soa), left }) => {
-                proof {
-                    assert forall|i: int| 0 <= i < rrs(rs@).len() implies (#[trigger] rrs(rs@)[i]).ttl <= MAX_TTL by {
-                        assert(rrs(rs@)[i].ttl <= left);
-                    }
-                    assert forall|i: int| 0 <= i < rrs(soa@).len() implies (#[trigger] rrs(soa@)[i]).ttl <= MAX_TTL by {
-                        assert(rrs(soa@)[i].ttl <= left);
-                    }
-                    assert(got_ok(code, rrs(rs@), rrs(soa@), None, cur@, qtype));
-                }
-                (code, rs, soa, None)
-            },
-            _ => match iterate(roots, net, cache, &cur, qtype, budget, depth) {
-                Step::Done(code, rs, soa) => {
-                    proof {
-                        assert(got_ok(code, rrs(rs@), rrs(soa@), None, cur@, qtype));
-                    }
-                    (code, rs, soa, None)
-                },
-                Step::Cname(rs, t) => {
-                    let soa: Vec<Rr> = Vec::new();
-                    proof {
-                        assert(rrs(soa@).len() == 0);
-                        assert(got_ok(RCODE_NOERROR, rrs(rs@), rrs(soa@), Some(t), cur@, qtype));
-                    }
-                    (RCODE_NOERROR, rs, soa, Some(t))
-                },
-                Step::Fail => {
-                    return servfail();
-                },
+                return servfail();
             },
         };
-        assert(got_ok(code, rrs(rs@), rrs(soa@), more, cur@, qtype));
         let ghost a = rrs(acc@);
         let ghost end = chain_end(qname@, qtype, a);
         proof {
@@ -633,7 +1013,16 @@ pub fn resolve(
         }
         let n = count_links(&cur, qtype, &rs);
         if n > MAX_CNAME as usize - links {
+            proof {
+                lemma_unchecked(qname@, qtype);
+            }
             return servfail();
+        }
+        // The status and evidence of acc and this step together.
+        let nsec = join_sec_x(asec, sec);
+        let ghost nev = ev_join(aev, e@);
+        proof {
+            lemma_combine(qname@, qtype, a, cur@, asec, aev, code, rrs(rs@), rrs(soa@), more is None, sec, e@);
         }
         extend_rrs(&mut acc, &rs);
         proof {
@@ -647,7 +1036,7 @@ pub fn resolve(
         }
         match more {
             None => {
-                return Answer { rcode: code, answers: acc, authority: soa };
+                return Answer { rcode: code, answers: acc, authority: soa, sec: nsec, ev: Ghost(nev) };
             },
             Some(t) => {
                 proof {
@@ -657,6 +1046,10 @@ pub fn resolve(
                 }
                 links = links + n;
                 cur = t;
+                asec = nsec;
+                proof {
+                    aev = nev;
+                }
             },
         }
     }

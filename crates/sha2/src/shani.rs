@@ -11,10 +11,9 @@
 //! roles swapped. `sha256msg1`, an `alignr` and `sha256msg2` compute the
 //! next four words of the schedule.
 //!
-//! Trusted here: the three instruction wrappers and `pblendw`'s (each one
-//! intrinsic, with the specification of [`crate::isa`]), run-time detection
-//! (`has_shani`), and the trampoline that compiles [`compress_blocks_body`]
-//! with the SHA extensions enabled.
+//! Trusted here: the trampoline that compiles [`compress_blocks_body`]
+//! with the SHA extensions enabled. The instruction wrappers and run-time
+//! detection are verilith-simd's (`verilith_simd::sha_x86`).
 use crate::isa;
 use crate::lanes::*;
 use crate::sha_lemmas::*;
@@ -26,84 +25,13 @@ use verilith_simd::lanes::*;
 use verilith_simd::mem::{load128_u32, load128_u8, store128_u32};
 use verilith_simd::ops::*;
 use vstd::prelude::*;
-
-// Run-time detection needs `std`; a `no_std` build uses only the features
-// the target is compiled for.
-#[cfg(feature = "std")]
-macro_rules! x86_has { ($f:tt) => { std::is_x86_feature_detected!($f) }; }
-#[cfg(not(feature = "std"))]
-macro_rules! x86_has { ($f:tt) => { cfg!(target_feature = $f) }; }
+/// The instructions, their specifications and run-time detection, from
+/// verilith-simd (its trusted base).
+pub use verilith_simd::sha_x86::*;
 
 verus! {
 
 broadcast use {verilith_simd::lanes::group_lanes, verilith_simd::cpu::group_cpu};
-
-/// The CPU running this program has the SHA extensions.
-pub uninterp spec fn shani() -> bool;
-
-/// Whether the CPU has the SHA extensions and SSE4.1 (and so SSSE3),
-/// detected at run time.
-#[verifier::external_body]
-#[inline]
-pub fn has_shani() -> (r: bool)
-    ensures
-        r ==> shani() && sse41() && ssse3(),
-{
-    x86_has!("sha") && x86_has!("sse4.1")
-}
-
-/// [`_mm_sha256rnds2_epu32`](core::arch::x86_64::_mm_sha256rnds2_epu32).
-#[verifier::external_body]
-#[inline(always)]
-pub fn sha256rnds2(a: __m128i, b: __m128i, k: __m128i) -> (r: __m128i)
-    requires
-        shani(),
-    ensures
-        u32x4(r) == isa::sha256rnds2(u32x4(a), u32x4(b), u32x4(k)),
-{
-    // SAFETY: the CPU has the SHA extensions (the precondition).
-    unsafe { core::arch::x86_64::_mm_sha256rnds2_epu32(a, b, k) }
-}
-
-/// [`_mm_sha256msg1_epu32`](core::arch::x86_64::_mm_sha256msg1_epu32).
-#[verifier::external_body]
-#[inline(always)]
-pub fn sha256msg1(a: __m128i, b: __m128i) -> (r: __m128i)
-    requires
-        shani(),
-    ensures
-        u32x4(r) == isa::sha256msg1(u32x4(a), u32x4(b)),
-{
-    // SAFETY: the CPU has the SHA extensions (the precondition).
-    unsafe { core::arch::x86_64::_mm_sha256msg1_epu32(a, b) }
-}
-
-/// [`_mm_sha256msg2_epu32`](core::arch::x86_64::_mm_sha256msg2_epu32).
-#[verifier::external_body]
-#[inline(always)]
-pub fn sha256msg2(a: __m128i, b: __m128i) -> (r: __m128i)
-    requires
-        shani(),
-    ensures
-        u32x4(r) == isa::sha256msg2(u32x4(a), u32x4(b)),
-{
-    // SAFETY: the CPU has the SHA extensions (the precondition).
-    unsafe { core::arch::x86_64::_mm_sha256msg2_epu32(a, b) }
-}
-
-/// [`_mm_blend_epi16`](core::arch::x86_64::_mm_blend_epi16).
-#[verifier::external_body]
-#[inline(always)]
-pub fn blend_epi16<const IMM8: i32>(a: __m128i, b: __m128i) -> (r: __m128i)
-    requires
-        sse41(),
-        0 <= IMM8 <= 255,
-    ensures
-        b128(r) == isa::blend16(b128(a), b128(b), IMM8 as int),
-{
-    // SAFETY: the CPU has SSE4.1 (the precondition).
-    unsafe { core::arch::x86_64::_mm_blend_epi16::<IMM8>(a, b) }
-}
 
 // ---------------------------------------------------------------------------
 // Proof
