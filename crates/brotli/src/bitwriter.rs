@@ -732,7 +732,9 @@ pub proof fn lemma_or_bits(x: u64, y: u64, c: u64, n: nat)
 }
 
 
-/// A position in a `BitWriter` to go back to (`BitWriter::reset`).
+/// A position in a `BitWriter` to go back to (`BitWriter::reset`). The
+/// ghost fields are only read by proofs.
+#[allow(dead_code)]
 pub struct Mark {
     len: usize,
     acc: u64,

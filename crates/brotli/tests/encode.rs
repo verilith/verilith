@@ -29,7 +29,7 @@ fn stored_round_trip() {
 #[test]
 fn compressed_round_trip() {
     for d in inputs() {
-        for q in [1u32, 4, 6, 11] {
+        for q in [1u32, 4, 5, 6, 9, 11] {
             let c = verilith_brotli::compress::compress(&d, q, 22);
             assert_eq!(decompress(&c, 1 << 30).unwrap(), d, "quality {q}, len {}", d.len());
         }

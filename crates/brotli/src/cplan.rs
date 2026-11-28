@@ -624,6 +624,8 @@ pub struct Knobs {
     /// Chunks per category at most, and the shortest chunk.
     pub maxch: usize,
     pub minch: usize,
+    /// Rank the context modes without clustering.
+    pub fastmode: bool,
 }
 
 /// Chunks of `chunk` symbols of `syms` (each below `alpha`), clustered
@@ -683,6 +685,7 @@ pub fn blocks_of(ct: &Vec<u8>, chunk: usize, n: usize, nbt: usize) -> (r: CatPla
     while i < ct.len()
         invariant
             types@.len() == lens@.len(),
+            chunk >= 1,
         decreases ct@.len() - i,
     {
         let t = ct[i];
@@ -695,7 +698,19 @@ pub fn blocks_of(ct: &Vec<u8>, chunk: usize, n: usize, nbt: usize) -> (r: CatPla
             j = j + 1;
         }
         // Symbols in chunks i..j.
-        let want: usize = if j - i <= 0x10_0000 / chunk { (j - i) * chunk } else { 0x10_0000 };
+        let nj = j - i;
+        let want: usize = if nj > 1024 || chunk > 0x10_0000 {
+            0x10_0000
+        } else {
+            proof {
+                assert(nj * chunk <= 0x4000_0000) by (nonlinear_arith)
+                    requires
+                        nj <= 1024,
+                        chunk <= 0x10_0000,
+                ;
+            }
+            nj * chunk
+        };
         let left = if n > done { n - done } else { 0 };
         let len = if want < left { want } else { left };
         if len > 0 {
@@ -746,7 +761,8 @@ fn chunk_len(n: usize, maxch: usize, minch: usize) -> (r: usize)
         r >= 1,
 {
     let m = if maxch == 0 { 1 } else { maxch };
-    let c = n / m + 1;
+    let c = n / m;
+    let c = if c < 0x1000_0000 { c + 1 } else { 0x1000_0000 };
     let c = if c < minch { minch } else { c };
     if c == 0 { 1 } else { c }
 }
@@ -784,20 +800,21 @@ fn rows64(h: &Vec<u32>, t: usize) -> (r: Vec<u32>)
     rows
 }
 
-/// The whole plan of a meta-block: block types per category, a context mode
-/// and context maps, and the trees.
-pub fn plan_full(data: &[u8], start: usize, end: usize, cmds: &Vec<Cmd>, k: &Knobs) -> (r: MbPlan)
+/// The three symbol streams of a block's commands, and where each literal
+/// is.
+pub struct Streams {
+    pub lpos: Vec<usize>,
+    pub lsym: Vec<u16>,
+    pub csym: Vec<u16>,
+    pub dsym: Vec<u16>,
+    pub dcx: Vec<u8>,
+}
+
+fn streams(data: &[u8], start: usize, end: usize, cmds: &Vec<Cmd>) -> (r: Streams)
     requires
         start <= end <= data@.len(),
 {
-    let maxt = if k.maxt < 1 { 1 } else if k.maxt > 256 { 256 } else { k.maxt };
-    let maxb = if k.maxb < 1 { 1 } else if k.maxb > 16 { 16 } else { k.maxb };
-    // The three symbol streams, and where each literal is.
-    let mut lpos: Vec<usize> = Vec::new();
-    let mut lsym: Vec<u16> = Vec::new();
-    let mut csym: Vec<u16> = Vec::new();
-    let mut dsym: Vec<u16> = Vec::new();
-    let mut dcx: Vec<u8> = Vec::new();
+    let mut st = Streams { lpos: Vec::new(), lsym: Vec::new(), csym: Vec::new(), dsym: Vec::new(), dcx: Vec::new() };
     let mut q = start;
     let mut i: usize = 0;
     while i < cmds.len()
@@ -810,7 +827,7 @@ pub fn plan_full(data: &[u8], start: usize, end: usize, cmds: &Vec<Cmd>, k: &Kno
         if ins > end - q {
             break;
         }
-        csym.push(x.sym);
+        st.csym.push(x.sym);
         let mut kk = q;
         while kk < q + ins
             invariant
@@ -818,8 +835,8 @@ pub fn plan_full(data: &[u8], start: usize, end: usize, cmds: &Vec<Cmd>, k: &Kno
                 q + ins <= end <= data@.len(),
             decreases q + ins - kk,
         {
-            lpos.push(kk);
-            lsym.push(data[kk] as u16);
+            st.lpos.push(kk);
+            st.lsym.push(data[kk] as u16);
             kk = kk + 1;
         }
         q = q + ins;
@@ -827,8 +844,8 @@ pub fn plan_full(data: &[u8], start: usize, end: usize, cmds: &Vec<Cmd>, k: &Kno
             break;
         }
         if x.sym >= 128 {
-            dsym.push(x.dcode as u16);
-            dcx.push(dctx_of(x.sym) as u8);
+            st.dsym.push(x.dcode as u16);
+            st.dcx.push(dctx_of(x.sym) as u8);
         }
         let cl = x.clen as usize;
         if cl > end - q {
@@ -837,26 +854,20 @@ pub fn plan_full(data: &[u8], start: usize, end: usize, cmds: &Vec<Cmd>, k: &Kno
         q = q + cl;
         i = i + 1;
     }
-    let single = plan_single(&hist_of(&lsym, 256), &hist_of(&csym, 704), &hist_of(&dsym, 64));
-    // Block types.
-    let lch = chunk_len(lsym.len(), k.maxch, if k.minch < 0x1000_0000 { k.minch * 4 } else { k.minch });
-    let cch = chunk_len(csym.len(), k.maxch, k.minch);
-    let dch = chunk_len(dsym.len(), k.maxch, k.minch);
-    let (lct, nbl) = split(&lsym, 256, lch, maxb);
-    let (cct, nbc) = split(&csym, 704, cch, maxb);
-    let (dct, nbd) = split(&dsym, 64, dch, maxb);
-    let lcat = blocks_of(&lct, lch, lsym.len(), nbl);
-    let ccat = blocks_of(&cct, cch, csym.len(), nbc);
-    let dcat = blocks_of(&dct, dch, dsym.len(), nbd);
-    let nbl = if lcat.nbt >= 2 && lcat.nbt <= 16 { lcat.nbt } else { 1 };
-    let nbc = if ccat.nbt >= 2 && ccat.nbt <= 16 { ccat.nbt } else { 1 };
-    let nbd = if dcat.nbt >= 2 && dcat.nbt <= 16 { dcat.nbt } else { 1 };
-    // The context mode, from all literals as one block.
+    st
+}
+
+/// The literal context mode (one of those `modes` allows) that codes the
+/// literals at `lpos` in the fewest bits.
+fn choose_mode(data: &[u8], lpos: &Vec<usize>, modes: u32, maxt: usize, fastmode: bool) -> (r: (usize, Vec<u32>))
+    requires
+        1 <= maxt <= 256,
+    ensures
+        r.0 < 4,
+{
     let mut lh: Vec<u32> = vec![0u32; 4 * 16384];
     let mut j: usize = 0;
     while j < lpos.len()
-        invariant
-            lh@.len() == 4 * 16384,
         decreases lpos@.len() - j,
     {
         let kk = lpos[j];
@@ -869,10 +880,9 @@ pub fn plan_full(data: &[u8], start: usize, end: usize, cmds: &Vec<Cmd>, k: &Kno
                 invariant
                     m <= 4,
                     b < 256,
-                    lh@.len() == 4 * 16384,
                 decreases 4 - m,
             {
-                if (k.modes >> (m as u32)) & 1 == 1 {
+                if (modes >> (m as u32)) & 1 == 1 {
                     let c = crate::decoder::lit_ctx(m, p1, p2);
                     bump(&mut lh, m * 16384 + c * 256 + b);
                 }
@@ -891,12 +901,19 @@ pub fn plan_full(data: &[u8], start: usize, end: usize, cmds: &Vec<Cmd>, k: &Kno
             1 <= maxt <= 256,
         decreases 4 - m,
     {
-        if (k.modes >> (m as u32)) & 1 == 1 {
-            let mut rows = rows64(&lh, m);
-            let orig = rows.clone();
-            let (map, nc) = cluster(&mut rows, 64, 256, maxt);
-            let g = gather(&orig, 0, 64, 256, &map, nc);
-            let c = rows_cost(&g, nc, 256);
+        if (modes >> (m as u32)) & 1 == 1 {
+            let rows = rows64(&lh, m);
+            let c = if fastmode {
+                // Each context its own tree: cheap, and close enough to
+                // rank the modes.
+                rows_cost(&rows, 64, 256)
+            } else {
+                let mut rows = rows;
+                let orig = rows.clone();
+                let (map, nc) = cluster(&mut rows, 64, 256, maxt);
+                let g = gather(&orig, 0, 64, 256, &map, nc);
+                rows_cost(&g, nc, 256)
+            };
             if c < best {
                 best = c;
                 mode = m;
@@ -904,10 +921,26 @@ pub fn plan_full(data: &[u8], start: usize, end: usize, cmds: &Vec<Cmd>, k: &Kno
         }
         m = m + 1;
     }
-    // Literal counts per block type and context, clustered per block type,
-    // then across.
-    let mut th: Vec<u32> = vec![0u32; mul_small(nbl, 16) * 1024];
-    let mut j: usize = 0;
+    (mode, lh)
+}
+
+/// The literal context map and trees for `nbl` block types (the literals
+/// at `lpos`, typed by `lct` in chunks of `lch`) and context mode `mode`:
+/// each block type's contexts clustered, then the clusters across block
+/// types.
+fn lit_plan(data: &[u8], lpos: &Vec<usize>, lct: &Vec<u8>, lch: usize, nbl: usize, mode: usize, maxt: usize, lh: &Vec<u32>) -> (r: Option<(Vec<u8>, usize, Vec<Vec<u8>>)>)
+    requires
+        1 <= nbl <= 16,
+        lch >= 1,
+        mode < 4,
+        1 <= maxt <= 256,
+    ensures
+        r matches Some((m, n, _t)) ==> m@.len() == nbl * 64 && 1 <= n <= 256 && forall|i: int| 0 <= i < m@.len() ==> (#[trigger] m@[i]) < n,
+{
+    // With one block type, the counts for the mode are those it was
+    // chosen by.
+    let mut th: Vec<u32> = if nbl == 1 { rows64(lh, mode) } else { vec![0u32; mul_small(nbl, 16) * 1024] };
+    let mut j: usize = if nbl == 1 { lpos.len() } else { 0 };
     while j < lpos.len()
         invariant
             1 <= nbl <= 16,
@@ -920,13 +953,46 @@ pub fn plan_full(data: &[u8], start: usize, end: usize, cmds: &Vec<Cmd>, k: &Kno
             let b = data[kk] as usize;
             let p1: u8 = if kk >= 1 { data[kk - 1] } else { 0 };
             let p2: u8 = if kk >= 2 { data[kk - 2] } else { 0 };
-            let t = type_at(&lct, lch, j);
+            let t = type_at(lct, lch, j);
             let t = if t < nbl { t } else { 0 };
             let c = crate::decoder::lit_ctx(mode, p1, p2);
             bump(&mut th, t * 16384 + c * 256 + b);
         }
         j = j + 1;
     }
+    let nrows = nbl * 64;
+    let (map1, g1, n1) = lit_clusters(&th, nbl, maxt);
+    if n1 == 0 || n1 > 256 || map1.len() != nrows {
+        return None;
+    }
+    let (map1, n1) = if nbl == 1 {
+        (map1, n1)
+    } else {
+        // Then across block types.
+        let mut g1 = g1;
+        if g1.len() != mul_small(n1, 256) {
+            return None;
+        }
+        let (mp2, n2) = cluster(&mut g1, n1, 256, maxt);
+        (remap(&map1, &mp2), n2)
+    };
+    if !all_below(&map1, n1) || map1.len() != nrows || n1 < 1 || n1 > 256 {
+        return None;
+    }
+    let lg = gather(&th, 0, nrows, 256, &map1, n1);
+    Some((map1, n1, lens_rows(&lg, n1, 256)))
+}
+
+/// Each block type's 64 contexts of `th` clustered on their own: the map
+/// of every row to a cluster, the clusters' counts and their number.
+fn lit_clusters(th: &Vec<u32>, nbl: usize, maxt: usize) -> (r: (Vec<u8>, Vec<u32>, usize))
+    requires
+        1 <= nbl <= 16,
+        1 <= maxt <= 256,
+    ensures
+        r.0@.len() == nbl * 64,
+        r.2 <= nbl * 256,
+{
     let nrows = nbl * 64;
     let mut map1: Vec<u8> = vec![0u8; nrows];
     let mut g1: Vec<u32> = Vec::new();
@@ -939,9 +1005,10 @@ pub fn plan_full(data: &[u8], start: usize, end: usize, cmds: &Vec<Cmd>, k: &Kno
             map1@.len() == nrows,
             n1 <= t * 256,
             t <= nbl,
+            1 <= maxt <= 256,
         decreases nbl - t,
     {
-        let mut rows = rows64(&th, t);
+        let mut rows = rows64(th, t);
         let ro = rows.clone();
         let cap: usize = if nbl == 1 { 256 } else { 16 };
         let (mp, nc) = cluster(&mut rows, 64, 256, if nbl == 1 { maxt } else { 16 });
@@ -955,9 +1022,11 @@ pub fn plan_full(data: &[u8], start: usize, end: usize, cmds: &Vec<Cmd>, k: &Kno
                 nrows == nbl * 64,
                 t < nbl,
                 n1 <= t * 256,
+                t <= 16,
             decreases 64 - c,
         {
-            let v = n1 + if c < mp.len() { mp[c] as usize } else { 0 };
+            let v: usize = if c < mp.len() { mp[c] as usize } else { 0 };
+            let v = n1 + v;
             let at = t * 64 + c;
             if at < map1.len() {
                 map1.set(at, if v < 256 { v as u8 } else { 0 });
@@ -974,41 +1043,53 @@ pub fn plan_full(data: &[u8], start: usize, end: usize, cmds: &Vec<Cmd>, k: &Kno
         n1 = n1 + nc;
         t = t + 1;
     }
-    if n1 == 0 || n1 > 256 || g1.len() != n1 * 256 {
-        return single;
-    }
-    let (map1, n1) = if nbl == 1 {
-        (map1, n1)
-    } else {
-        // Then across block types.
-        let (mp2, n2) = cluster(&mut g1, n1, 256, maxt);
-        let mut map2 = map1.clone();
-        let mut c: usize = 0;
-        while c < map2.len()
-            decreases map2@.len() - c,
-        {
-            let a = map2[c] as usize;
-            map2.set(c, if a < mp2.len() { mp2[a] } else { 0 });
-            c = c + 1;
-        }
-        (map2, n2)
-    };
-    let mut ok = map1.len() == nrows && n1 >= 1 && n1 <= 256;
+    (map1, g1, n1)
+}
+
+/// `m` through `m2`.
+fn remap(m: &Vec<u8>, m2: &Vec<u8>) -> (r: Vec<u8>)
+    ensures
+        r@.len() == m@.len(),
+{
+    let mut out = m.clone();
     let mut c: usize = 0;
-    while c < map1.len()
-        decreases map1@.len() - c,
+    while c < out.len()
+        invariant
+            out@.len() == m@.len(),
+        decreases out@.len() - c,
     {
-        if map1[c] as usize >= n1 {
-            ok = false;
+        let a = out[c] as usize;
+        out.set(c, if a < m2.len() { m2[a] } else { 0 });
+        c = c + 1;
+    }
+    out
+}
+
+/// Every entry of `m` is below `n`.
+fn all_below(m: &Vec<u8>, n: usize) -> (r: bool)
+    ensures
+        r ==> forall|i: int| 0 <= i < m@.len() ==> (#[trigger] m@[i]) < n,
+{
+    let mut c: usize = 0;
+    while c < m.len()
+        invariant
+            forall|i: int| 0 <= i < c ==> (#[trigger] m@[i]) < n,
+        decreases m@.len() - c,
+    {
+        if m[c] as usize >= n {
+            return false;
         }
         c = c + 1;
     }
-    if !ok || n1 < 1 || n1 > 256 {
-        return single;
-    }
-    let lg = gather(&th, 0, nrows, 256, &map1, n1);
-    let lt = lens_rows(&lg, n1, 256);
-    // Command trees, one per block type.
+    true
+}
+
+/// One tree per command block type.
+fn cmd_trees(csym: &Vec<u16>, cct: &Vec<u8>, cch: usize, nbc: usize) -> (r: Vec<Vec<u8>>)
+    requires
+        1 <= nbc <= 16,
+        cch >= 1,
+{
     let mut ch: Vec<u32> = vec![0u32; mul_small(nbc, 704)];
     let mut j: usize = 0;
     while j < csym.len()
@@ -1017,7 +1098,7 @@ pub fn plan_full(data: &[u8], start: usize, end: usize, cmds: &Vec<Cmd>, k: &Kno
             cch >= 1,
         decreases csym@.len() - j,
     {
-        let t = type_at(&cct, cch, j);
+        let t = type_at(cct, cch, j);
         let t = if t < nbc { t } else { 0 };
         let x = csym[j] as usize;
         if x < 704 {
@@ -1025,8 +1106,16 @@ pub fn plan_full(data: &[u8], start: usize, end: usize, cmds: &Vec<Cmd>, k: &Kno
         }
         j = j + 1;
     }
-    let ct = lens_rows(&ch, nbc, 704);
-    // Distance counts per block type and context, clustered.
+    lens_rows(&ch, nbc, 704)
+}
+
+/// The distance context map and trees for `nbd` block types.
+fn dist_plan(dsym: &Vec<u16>, dcx: &Vec<u8>, dct: &Vec<u8>, dch: usize, nbd: usize, maxt: usize) -> (r: (Vec<u8>, usize, Vec<Vec<u8>>))
+    requires
+        1 <= nbd <= 16,
+        dch >= 1,
+        1 <= maxt <= 256,
+{
     let dn = nbd * 4;
     let mut dh: Vec<u32> = vec![0u32; mul_small(dn, 64)];
     let mut j: usize = 0;
@@ -1036,7 +1125,7 @@ pub fn plan_full(data: &[u8], start: usize, end: usize, cmds: &Vec<Cmd>, k: &Kno
             dch >= 1,
         decreases dsym@.len() - j,
     {
-        let t = type_at(&dct, dch, j);
+        let t = type_at(dct, dch, j);
         let t = if t < nbd { t } else { 0 };
         let x = dsym[j] as usize;
         let c = dcx[j] as usize;
@@ -1048,7 +1137,40 @@ pub fn plan_full(data: &[u8], start: usize, end: usize, cmds: &Vec<Cmd>, k: &Kno
     let dorig = dh.clone();
     let (dmap, nd) = cluster(&mut dh, dn, 64, maxt);
     let dg = gather(&dorig, 0, dn, 64, &dmap, nd);
-    let dt = lens_rows(&dg, nd, 64);
+    (dmap, nd, lens_rows(&dg, nd, 64))
+}
+
+/// The whole plan of a meta-block: block types per category, a context mode
+/// and context maps, and the trees.
+pub fn plan_full(data: &[u8], start: usize, end: usize, cmds: &Vec<Cmd>, k: &Knobs) -> (r: MbPlan)
+    requires
+        start <= end <= data@.len(),
+{
+    let maxt = if k.maxt < 1 { 1 } else if k.maxt > 256 { 256 } else { k.maxt };
+    let maxb = if k.maxb < 1 { 1 } else if k.maxb > 16 { 16 } else { k.maxb };
+    let st = streams(data, start, end, cmds);
+    let single = plan_single(&hist_of(&st.lsym, 256), &hist_of(&st.csym, 704), &hist_of(&st.dsym, 64));
+    // Block types.
+    let lch = chunk_len(st.lsym.len(), k.maxch, if k.minch < 0x1000_0000 { k.minch * 4 } else { k.minch });
+    let cch = chunk_len(st.csym.len(), k.maxch, k.minch);
+    let dch = chunk_len(st.dsym.len(), k.maxch, k.minch);
+    let (lct, nbl) = split(&st.lsym, 256, lch, maxb);
+    let (cct, nbc) = split(&st.csym, 704, cch, maxb);
+    let (dct, nbd) = split(&st.dsym, 64, dch, maxb);
+    let lcat = blocks_of(&lct, lch, st.lsym.len(), nbl);
+    let ccat = blocks_of(&cct, cch, st.csym.len(), nbc);
+    let dcat = blocks_of(&dct, dch, st.dsym.len(), nbd);
+    let nbl = if lcat.nbt >= 2 && lcat.nbt <= 16 { lcat.nbt } else { 1 };
+    let nbc = if ccat.nbt >= 2 && ccat.nbt <= 16 { ccat.nbt } else { 1 };
+    let nbd = if dcat.nbt >= 2 && dcat.nbt <= 16 { dcat.nbt } else { 1 };
+    // Contexts.
+    let (mode, lh) = choose_mode(data, &st.lpos, k.modes, maxt, k.fastmode);
+    let (lmap, ntl, lt) = match lit_plan(data, &st.lpos, &lct, lch, nbl, mode, maxt, &lh) {
+        Some(x) => x,
+        None => return single,
+    };
+    let ct = cmd_trees(&st.csym, &cct, cch, nbc);
+    let (dmap, ntd, dt) = dist_plan(&st.dsym, &st.dcx, &dct, dch, nbd, maxt);
     let mut modes: Vec<u8> = Vec::new();
     let mut t: usize = 0;
     while t < nbl
@@ -1060,10 +1182,10 @@ pub fn plan_full(data: &[u8], start: usize, end: usize, cmds: &Vec<Cmd>, k: &Kno
     MbPlan {
         cats: vec![if nbl >= 2 { lcat } else { cat1() }, if nbc >= 2 { ccat } else { cat1() }, if nbd >= 2 { dcat } else { cat1() }],
         modes,
-        lmap: map1,
-        ntl: n1,
+        lmap,
+        ntl,
         dmap,
-        ntd: nd,
+        ntd,
         lt,
         ct,
         dt,

@@ -12,6 +12,7 @@ fn main() {
     p.k.maxch = env("MAXCH", p.k.maxch);
     p.k.minch = env("MINCH", p.k.minch);
     p.block = env("BLOCK", p.block);
+    p.k.fastmode = env("FASTMODE", p.k.fastmode as usize) != 0;
     let mut tot = 0;
     for f in std::env::args().skip(1) {
         let d = std::fs::read(&f).unwrap();

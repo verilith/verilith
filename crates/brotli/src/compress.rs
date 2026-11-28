@@ -91,7 +91,9 @@ pub fn dict_table() -> (r: Vec<u32>)
                 break;
             }
             let w = crate::words::dict_word(len, idx);
-            let h = hash4(w, 0) >> 5;
+            let h0 = hash4(w, 0);
+            let h = h0 >> 5;
+            assert(h0 >> 5 < 0x8000) by (bit_vector) requires h0 < 0x10_0000;
             let key = h * DSLOTS;
             let e = ((len as u32) << 16) | idx as u32;
             // An empty slot, else the shortest word if this one is longer.
@@ -101,7 +103,7 @@ pub fn dict_table() -> (r: Vec<u32>)
             while j < DSLOTS
                 invariant
                     j <= DSLOTS,
-                    key + DSLOTS <= t@.len(),
+                    key + DSLOTS <= t.len(),
                     best <= DSLOTS,
                 decreases DSLOTS - j,
             {
@@ -126,6 +128,15 @@ pub fn dict_table() -> (r: Vec<u32>)
         len = len + 1;
     }
     t
+}
+
+/// `log2(ways)`.
+#[inline(always)]
+fn ways_shift(ways: usize) -> (r: usize)
+    ensures
+        r <= 5,
+{
+    if ways <= 4 { 2 } else if ways <= 8 { 3 } else if ways <= 16 { 4 } else { 5 }
 }
 
 /// A hash of the `len` (5 or 7) bytes at `i`.
@@ -232,7 +243,11 @@ impl Mf {
                 let h = self.hash(data, i);
                 let key = h & !m;
                 assert(h & !m < 0x10_0000) by (bit_vector) requires h < 0x10_0000;
-                let c = get32(self.num.as_slice(), key);
+                // The counts of the buckets sit side by side.
+                let sh = ways_shift(self.ways);
+                let nk = h >> sh;
+                assert(h >> sh < 0x10_0000) by (bit_vector) requires h < 0x10_0000;
+                let c = get32(self.num.as_slice(), nk);
                 let cu = c as usize;
                 let idx = key | (cu & m);
                 assert((h & !m) | (cu & m) < 0x10_0000) by (bit_vector)
@@ -241,7 +256,7 @@ impl Mf {
                         m < 32,
                 ;
                 store_at(&mut self.head, idx, i as u32);
-                store_at(&mut self.num, key, c.wrapping_add(1));
+                store_at(&mut self.num, nk, c.wrapping_add(1));
             }
         } else if i < data.len() && data.len() - i >= 4 {
             let h = hash4(data, i);
@@ -270,7 +285,9 @@ impl Mf {
         }
         // A static dictionary word, when no long match was found.
         let maxd = if i < self.wmax { i } else { self.wmax };
-        let key = (hash4(data, i) >> 5) * DSLOTS;
+        let h0 = hash4(data, i);
+        assert(h0 >> 5 < 0x8000) by (bit_vector) requires h0 < 0x10_0000;
+        let key = (h0 >> 5) * DSLOTS;
         let mut best = best;
         let mut bd = bd;
         let mut bs = bs;
@@ -290,6 +307,7 @@ impl Mf {
             let e = self.dict[key + j];
             j = j + 1;
             let len = (e >> 16) as usize;
+            assert(e & 0xFFFF <= 0xFFFF) by (bit_vector);
             let idx = (e & 0xFFFF) as usize;
             if e == 0 || len < 4 || len > 24 || len > max || len <= best {
                 continue;
@@ -307,7 +325,7 @@ impl Mf {
                 invariant
                     k <= len,
                     len <= max,
-                    i + max <= data@.len(),
+                    i + max <= data.len(),
                     w@.len() == len,
                 decreases len - k,
             {
@@ -362,7 +380,9 @@ impl Mf {
             let h = self.hash(data, i);
             let key = h & !m;
             assert(h & !m < 0x10_0000) by (bit_vector) requires h < 0x10_0000;
-            let top = get32(self.num.as_slice(), key) as usize;
+            let sh = ways_shift(w);
+            assert(h >> sh < 0x10_0000) by (bit_vector) requires h < 0x10_0000;
+            let top = get32(self.num.as_slice(), h >> sh) as usize;
             let x4 = load32(data, i);
             let mut j: usize = 0;
             while j < w
@@ -378,6 +398,7 @@ impl Mf {
                     m == w - 1,
                     key == h & !m,
                     h < 0x10_0000,
+                    i + 8 <= data@.len(),
                 decreases w - j,
             {
                 let t = top.wrapping_sub(1 + j);
@@ -425,6 +446,7 @@ impl Mf {
                 best > 0 ==> 1 <= bd <= i,
                 bs < 0x1_0000_0000,
                 !self.quick,
+                i + 4 <= data@.len(),
             decreases self.depth - d,
         {
             let cu = c as usize;
@@ -750,15 +772,15 @@ pub fn params(quality: u32) -> (r: Params)
         r.ways == 4 || r.ways == 8 || r.ways == 16 || r.ways == 32,
 {
     if quality <= 2 {
-        Params { depth: 1, lazy: false, quick: true, ways: 4, hlen: 7, block: 0x1_0000, opt: false, dict: true, k: crate::cplan::Knobs { modes: 0, maxt: 1, maxb: 1, maxch: 1, minch: 128 } }
+        Params { depth: 1, lazy: false, quick: true, ways: 4, hlen: 7, block: 0x1_0000, opt: false, dict: true, k: crate::cplan::Knobs { modes: 0, maxt: 1, maxb: 1, maxch: 1, minch: 128, fastmode: false } }
     } else if quality <= 4 {
-        Params { depth: 8, lazy: true, quick: true, ways: 4, hlen: 7, block: 0x20_0000, opt: false, dict: true, k: crate::cplan::Knobs { modes: 0, maxt: 1, maxb: 1, maxch: 1, minch: 128 } }
+        Params { depth: 8, lazy: true, quick: true, ways: 4, hlen: 7, block: 0x20_0000, opt: false, dict: true, k: crate::cplan::Knobs { modes: 12, maxt: 16, maxb: 1, maxch: 1, minch: 128, fastmode: true } }
     } else if quality <= 6 {
-        Params { depth: 32, lazy: true, quick: true, ways: if quality == 5 { 16 } else { 32 }, hlen: 5, block: 0x10_0000, opt: false, dict: true, k: crate::cplan::Knobs { modes: 15, maxt: 64, maxb: 8, maxch: 64, minch: 128 } }
+        Params { depth: 32, lazy: true, quick: true, ways: if quality == 5 { 16 } else { 32 }, hlen: 5, block: 0x10_0000, opt: false, dict: true, k: crate::cplan::Knobs { modes: 15, maxt: 64, maxb: 8, maxch: 32, minch: 128, fastmode: true } }
     } else if quality <= 9 {
-        Params { depth: 64, lazy: true, quick: false, ways: 4, hlen: 7, block: 0x4_0000, opt: false, dict: true, k: crate::cplan::Knobs { modes: 15, maxt: 64, maxb: 8, maxch: 64, minch: 128 } }
+        Params { depth: 64, lazy: true, quick: false, ways: 4, hlen: 7, block: 0x4_0000, opt: false, dict: true, k: crate::cplan::Knobs { modes: 15, maxt: 64, maxb: 8, maxch: 64, minch: 128, fastmode: true } }
     } else {
-        Params { depth: if quality == 10 { 32 } else { 64 }, lazy: true, quick: false, ways: 4, hlen: 7, block: 0x4_0000, opt: true, dict: false, k: crate::cplan::Knobs { modes: 15, maxt: 64, maxb: 16, maxch: 128, minch: 128 } }
+        Params { depth: if quality == 10 { 32 } else { 64 }, lazy: true, quick: false, ways: 4, hlen: 7, block: 0x4_0000, opt: true, dict: false, k: crate::cplan::Knobs { modes: 15, maxt: 64, maxb: 16, maxch: 128, minch: 128, fastmode: false } }
     }
 }
 
@@ -814,6 +836,7 @@ pub fn put_block(e: &mut Enc, dr: &mut [u32; 4], wb: u32, data: &[u8], start: us
     let mut df = vec![0u32; 64];
     proof {
         vstd::arithmetic::power2::lemma_pow2_strictly_increases(4, wb as nat);
+        crate::elemmas::lemma_pow2_small();
     }
     let wmax = (shl1(wb) - 16) as usize;
     if let Some(cmds) = symbols(lz, data, start, *dr, wmax, &mut lf, &mut cf, &mut df) {

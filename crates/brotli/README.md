@@ -184,36 +184,61 @@ that starts with these bits takes the spec from its initial state to this
 one). Each thing written comes with a lemma that it moves the spec from
 one state to the next: the stream header and window, meta-block headers
 (`elemmas.rs`), stored meta-blocks, the empty metadata block a flush
-pads with (`eflush.rs`), block types, distance parameters, context modes
-and maps (`cmeta.rs`), prefix codes in both forms, simple and complex,
-with run-length coded lengths (`pcode.rs`: the header is planned first,
-checked against an exec mirror of how the spec reads code lengths, then
-written), and commands, literals, distances and copies (`cmeta.rs`,
-`cwrite.rs`).
+pads with (`eflush.rs`), the number of block types, the block type and
+block count codes, first block counts and block switch commands, context
+modes, context maps over several trees with run-length coded zeros
+(`mblemmas.rs`), distance parameters (`cmeta.rs`), prefix codes in both
+forms, simple and complex, with run-length coded lengths, for every phase
+that reads one (`pcode.rs`: the header is planned first, checked against
+an exec mirror of how the spec reads code lengths, then written), and
+commands, literals in the tree their block type and context pick,
+distances, copies and static dictionary words (`cmeta.rs`,
+`mblemmas.rs`).
 
-The LZ77 parse (`compress::parse`) is not trusted. Its commands are
-turned into symbols, counted and given prefix codes, and then
-`cwrite::check_cmds` checks every command against the codes and the data
-before a bit is written: the symbol covers the lengths, every symbol has
-a code, the distance is what the spec computes from the last distances,
-within the window, and the copied bytes match. Only then does
-`put_compressed` write the meta-block; if the check fails, or the
-compressed form would be larger, the block is stored instead. So a bug in
-the match finder or the heuristics can cost compression, never
-correctness.
+Nothing the meta-block writer (`mbw::put_mb`) is given is trusted: not
+the LZ77 parse (`compress::parse`, `optparse.rs`), and not the plan
+(`cplan.rs`: block types and counts, context modes and maps, code
+lengths). The writer checks each item just before it writes it, against
+the spec state the bits so far lead to and an exec mirror of it (block
+types and counts left, last distances): the symbol has a code in the
+tree the spec will read it with, the lengths fit the symbol, a block
+switch is written exactly where a count runs out, a distance is what the
+spec computes from the last distances and reaches inside the window (or,
+past it, names a dictionary word under a transform), and the copied bytes
+or the word match the input. If a check fails, the writer takes back
+everything it wrote for the meta-block (`BitWriter::mark`/`reset`,
+proven) and the block is stored instead; it does the same when the
+compressed form would be larger. So a bug in the match finder or the
+heuristics can cost compression, never correctness.
 
 ### What it writes
 
-Each meta-block (up to 2 MiB) has one block type per category, one
-literal context (mode LSB6, one tree), and one prefix code each for
-literals, insert-and-copy lengths and distances (`NPOSTFIX = NDIRECT =
-0`). Commands use the implicit last distance and the four short codes for
-recent distances. Quality picks the parse, scored like google/brotli's
-(bytes covered against distance bits, with its lazy matching and its
-skipping through data that does not match):
+Each meta-block (up to 2 MiB) is planned from its commands (`cplan.rs`):
+
+- Context modeling (q4 and up): the literal context mode (LSB6, MSB6,
+  UTF8 or Signed; q4 tries UTF8 and Signed) whose contexts cost the
+  fewest bits, the 64 contexts of each literal block type clustered into
+  trees (at most 16 at q4, 64 above), and the distance contexts likewise.
+  Clustering is greedy: the pair of histograms whose merge costs least,
+  in bits from their entropy and a tree header estimate, is merged while
+  that saves bits.
+- Block splitting (q5 and up): each category's symbols cut into chunks
+  (at most 32 at q5-6, 64 at q7-9, 128 at q10-11), the chunks clustered
+  the same way into at most 8 block types (16 at q10-11), and runs of
+  chunks of one type made into blocks.
+- The static dictionary (q0-9): where the parse finds no match, a word
+  of the dictionary, untransformed, that the input continues with (found
+  through a hash of its first four bytes); the search stops when fewer
+  than one lookup in 128 finds a word, as google/brotli's does.
+
+Distances use `NPOSTFIX = NDIRECT = 0`, the implicit last distance and
+the four short codes for recent distances, and context maps are written
+without move-to-front. Quality picks the parse, scored like
+google/brotli's (bytes covered against distance bits, with its lazy
+matching and its skipping through data that does not match):
 
 - q 0-4: a hash of seven bytes with four recent positions per bucket.
-- q 5-6: a hash of five bytes with 32.
+- q 5-6: a hash of five bytes with 16 (q5) or 32 (q6).
 - q 7-9: hash chains, 64 candidates.
 - q 10-11: optimal parsing (`optparse.rs`). Binary trees of earlier
   positions (like google/brotli's H10) give every match at each position
@@ -221,8 +246,13 @@ skipping through data that does not match):
   in bits from the symbol counts of the previous pass, picks literals and
   copies, three passes. Matches of 325 bytes or more are taken whole.
 
-Not yet used: context modeling, block splitting and the static
-dictionary, which is most of what google/brotli still gains (below).
+Not yet used, though the writer would take them: dictionary words under
+transforms, and dictionary words at q10-11 (the optimal parse does not
+look for them). Not written at all: `NPOSTFIX` and `NDIRECT` other than
+0, the short codes for distances near the recent ones, and move-to-front
+in context maps. The optimal parse prices literals with one tree, not by
+context, and block splitting does not refine its blocks; these are most
+of what google/brotli still gains at q10-11 (below).
 
 ### Compression and speed
 
