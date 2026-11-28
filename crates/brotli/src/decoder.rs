@@ -2130,13 +2130,15 @@ pub proof fn lemma_ring_gap(i: int, t: int, r: int, ti: int, m: int)
     }
 }
 
-/// `buf[dst..dst + 16] = buf[src..src + 16]`, when the source ends before
-/// the destination starts.
+/// `buf[dst..dst + 16] = buf[src..src + 16]`, when the two do not overlap
+/// (the source may be on either side: in the ring it is after the
+/// destination when it is from the ring's previous lap).
 #[verifier::spinoff_prover]
 #[inline(always)]
 fn copy16(buf: &mut [u8], src: usize, dst: usize)
     requires
-        src + 16 <= dst,
+        src + 16 <= dst || dst + 16 <= src,
+        src + 16 <= old(buf)@.len(),
         dst + 16 <= old(buf)@.len(),
     ensures
         final(buf)@.len() == old(buf)@.len(),
@@ -2149,19 +2151,35 @@ fn copy16(buf: &mut [u8], src: usize, dst: usize)
 {
     let len = buf.len();
     assert(dst + 16 <= len);
-    verilith_core::prims::copy8(buf, src, dst);
-    verilith_core::prims::copy8(buf, src + 8, dst + 8);
+    let ghost o = buf@;
+    verilith_core::prims::move8(buf, src, dst);
+    let ghost m = buf@;
+    verilith_core::prims::move8(buf, src + 8, dst + 8);
+    proof {
+        assert forall|j: int| 0 <= j < buf@.len() implies #[trigger] buf@[j] == if dst <= j < dst + 16 {
+            o[j - dst + src]
+        } else {
+            o[j]
+        } by {
+            if dst + 8 <= j < dst + 16 {
+                assert(buf@[j] == m[j - (dst + 8) + (src + 8)]);
+                assert(m[j - dst + src] == o[j - dst + src]);
+            } else {
+                assert(buf@[j] == m[j]);
+            }
+        }
+    }
 }
 
-/// `buf[dst..dst + n] = buf[src..src + n]` in 8-byte words, when the
-/// source ends before the destination starts.
+/// `buf[dst..dst + n] = buf[src..src + n]` in 8-byte words, when the two
+/// do not overlap.
 #[verifier::spinoff_prover]
 #[inline(always)]
 fn copy_words(buf: &mut [u8], src: usize, dst: usize, n: usize)
     requires
         src + n <= old(buf)@.len(),
         dst + n <= old(buf)@.len(),
-        src + n <= dst,
+        src + n <= dst || dst + n <= src,
         n >= 8,
     ensures
         final(buf)@.len() == old(buf)@.len(),
@@ -2181,7 +2199,7 @@ fn copy_words(buf: &mut [u8], src: usize, dst: usize, n: usize)
             o.len() == len,
             src + n <= o.len(),
             dst + n <= o.len(),
-            src + n <= dst,
+            src + n <= dst || dst + n <= src,
             buf@.len() == o.len(),
             forall|j: int|
                 0 <= j < buf@.len() ==> #[trigger] buf@[j] == if dst <= j < dst + k {
@@ -2191,12 +2209,12 @@ fn copy_words(buf: &mut [u8], src: usize, dst: usize, n: usize)
                 },
         decreases n - k,
     {
-        verilith_core::prims::copy8(buf, src + k, dst + k);
+        verilith_core::prims::move8(buf, src + k, dst + k);
         k = k + 8;
     }
     if k < n {
         // The last 8 bytes, overlapping some already copied.
-        verilith_core::prims::copy8(buf, src + n - 8, dst + n - 8);
+        verilith_core::prims::move8(buf, src + n - 8, dst + n - 8);
     }
 }
 
@@ -2934,12 +2952,13 @@ impl Decoder {
         }
         // What is written: 16 bytes by the wide copy, whatever `m` is. The
         // bytes past `m` land on ones the ring no longer has to hold.
-        let ghost w: int = if wide && m <= 16 && si + 16 <= ti { 16 } else { m as int };
-        if wide && m <= 16 && si + 16 <= ti {
+        let sixteen = wide && m <= 16 && (si + 16 <= ti || (ti + 16 <= si && si + 16 <= ring.len()));
+        let ghost w: int = if sixteen { 16 } else { m as int };
+        if sixteen {
             copy16(ring.as_mut_slice(), si, ti);
         } else if m < 8 {
             copy_small(ring.as_mut_slice(), si, ti, m as usize);
-        } else if si + (m as usize) <= ti && m < 64 {
+        } else if (si + (m as usize) <= ti || ti + (m as usize) <= si) && m < 64 {
             copy_words(ring.as_mut_slice(), si, ti, m as usize);
         } else {
             verilith_core::prims::copy_within(ring.as_mut_slice(), si, ti, m as usize);
@@ -3358,10 +3377,12 @@ impl Decoder {
         let si = ((tot - d) & mask) as usize;
         let ti = (tot & mask) as usize;
         let room = r - (tot - flushed);
-        if n <= 16 && room >= 16 && ti as u64 + 16 <= r && si + 16 <= ti {
+        if n <= 16 && room >= 16 && ti as u64 + 16 <= r && (si + 16 <= ti || (ti + 16 <= si && si as u64 + 16 <= r)) {
             // The common case, a short copy from at least 16 back with
-            // room for 16 bytes whatever its length: these four tests
-            // cover everything the general case checks.
+            // room for 16 bytes whatever its length: these tests cover
+            // everything the general case checks. The source is either
+            // before the destination or, from the ring's previous lap,
+            // after it.
             proof {
                 lemma_ring_order(tot - d, d as int, r as int);
                 assert(d >= 16);
@@ -4952,6 +4973,7 @@ impl Decoder {
         base: u64,
         mode: usize,
         row: usize,
+        triv: bool,
         n: u64,
         wx0: u64,
         c0: u64,
@@ -4977,6 +4999,7 @@ impl Decoder {
             o.bt[0] < o.cmodes@.len(),
             mode == o.cmodes@[o.bt[0] as int],
             row == o.bt[0] * 64,
+            triv ==> row_same(cmap@, row as int),
             pos0 == o.pos,
             tot0 == o.total,
         ensures
@@ -5058,6 +5081,7 @@ impl Decoder {
                 row == t * 64,
                 row + 64 <= o.cmap@.len(),
                 cmap@ == o.cmap@,
+                triv ==> row_same(cmap@, row as int),
                 lit@ == o.lit@,
                 fl ==> flat_ok(litf@, lit@, lt),
                 forall|i: int| 0 <= i < o.cmap@.len() ==> #[trigger] o.cmap@[i] < o.lit@.len(),
@@ -5102,9 +5126,22 @@ impl Decoder {
                     fresh = true;
                 }
             }
-            let ctx = lit_ctx(mode, p1, p2);
-            let tree = verilith_core::prims::get(cmap, row + ctx) as usize;
+            // With every context of this block type on one tree (google/brotli's
+            // `trivial_literal_context`), the context is not needed.
+            let ghost ctx = spec::lit_context(mode as int, p1, p2);
             proof {
+                lemma_ctx_lt(mode as int, p1, p2);
+            }
+            let tree = if triv {
+                verilith_core::prims::get(cmap, row) as usize
+            } else {
+                verilith_core::prims::get(cmap, row + lit_ctx(mode, p1, p2)) as usize
+            };
+            proof {
+                if triv {
+                    reveal(row_same);
+                    assert(cmap@[row + ctx] == cmap@[row as int]);
+                }
                 assert(tree as int == o.cmap@[row + ctx]);
                 assert(tree < o.lit@.len());
                 assert(hcode_ok(o.lit@[tree as int], o.litl@[tree as int]));
@@ -5224,6 +5261,7 @@ impl Decoder {
             base,
             mode,
             row,
+            false,
             n,
             wx0,
             c0,
@@ -5405,7 +5443,7 @@ impl Decoder {
     /// that one. Returns whether it took any step.
     #[verifier::spinoff_prover]
     #[verifier::loop_isolation(false)]
-    #[verifier::rlimit(250)]
+    #[verifier::rlimit(400)]
     // Compiled twice, once for each value of `fl` (see `fast_loop` and
     // `fast_loop_f`), so that the choice of lookup costs nothing per symbol.
     #[inline(always)]
@@ -5454,7 +5492,7 @@ impl Decoder {
         let t1 = self.bt[1] as usize;
         let t2 = self.bt[2] as usize;
         let mode = self.cmodes[t0] as usize;
-        let row = t0 * 64;
+        let (row, triv) = row_triv(self.cmap.as_slice(), t0, Ghost(o));
         let mut pos = self.pos;
         let mut tot = self.total;
         let mut mrem = self.mrem;
@@ -5577,7 +5615,7 @@ impl Decoder {
                     ph = Ph::Insert;
                     break;
                 }
-                let rl2 = Self::lit_p(ring, lit, litf, lt, fl, cmap, src, base, mode, row, ilen as u64, wx, c, pos, tot, Ghost(g), Ghost(b), Tracked(mt));
+                let rl2 = Self::lit_p(ring, lit, litf, lt, fl, cmap, src, base, mode, row, triv, ilen as u64, wx, c, pos, tot, Ghost(g), Ghost(b), Tracked(mt));
                 let k = rl2.0;
                 wx = rl2.1;
                 c = rl2.2;
@@ -7314,6 +7352,85 @@ fn lit_ctx(mode: usize, p1: u8, p2: u8) -> (r: usize)
             a < 64 && c2 < 64,
     ;
     (a | c2) as usize
+}
+
+/// A literal context is below 64.
+pub proof fn lemma_ctx_lt(mode: int, p1: u8, p2: u8)
+    requires
+        0 <= mode < 4,
+    ensures
+        0 <= spec::lit_context(mode, p1, p2) < 64,
+{
+    lemma_lut();
+    let a = CONTEXT_LUT[mode * 512 + p1 as int];
+    let c2 = CONTEXT_LUT[mode * 512 + 256 + p2 as int];
+    assert(a < 64 && c2 < 64);
+    assert(a | c2 < 64) by (bit_vector)
+        requires
+            a < 64 && c2 < 64,
+    ;
+}
+
+/// Every entry of the context map row at `row` is the same tree. Opaque so
+/// the quantifier stays out of the command loop's proof.
+#[verifier::opaque]
+pub open spec fn row_same(cmap: Seq<u8>, row: int) -> bool {
+    forall|i: int| 0 <= i < 64 ==> #[trigger] cmap[row + i] == cmap[row]
+}
+
+/// The current literal block type's context map row, and whether every
+/// entry of it is the same tree (google/brotli's `trivial_literal_context`).
+#[verifier::spinoff_prover]
+fn row_triv(cmap: &[u8], t0: usize, Ghost(o): Ghost<Decoder>) -> (r: (usize, bool))
+    requires
+        o.wf(),
+        stage(o.ph) == 30,
+        t0 == o.bt[0],
+        cmap@ == o.cmap@,
+    ensures
+        r.0 == t0 * 64,
+        r.0 + 64 <= cmap@.len(),
+        r.1 ==> row_same(cmap@, r.0 as int),
+{
+    proof {
+        lemma_cur_tree(o, 0);
+        assert(t0 * 64 + 64 <= o.cmap@.len()) by (nonlinear_arith)
+            requires
+                t0 < o.nbt[0],
+                o.cmap@.len() == 64 * o.nbt[0],
+        ;
+    }
+    let row = t0 * 64;
+    (row, row_const(cmap, row))
+}
+
+/// Whether every entry of the context map row at `row` is the same tree.
+#[verifier::spinoff_prover]
+fn row_const(cmap: &[u8], row: usize) -> (r: bool)
+    requires
+        row + 64 <= cmap@.len(),
+    ensures
+        r ==> row_same(cmap@, row as int),
+{
+    reveal(row_same);
+    let n = cmap.len();
+    let t = verilith_core::prims::get(cmap, row);
+    let mut i: usize = 1;
+    while i < 64
+        invariant
+            1 <= i <= 64,
+            n == cmap@.len(),
+            row + 64 <= n,
+            t == cmap@[row as int],
+            forall|j: int| 0 <= j < i ==> #[trigger] cmap@[row + j] == t,
+        decreases 64 - i,
+    {
+        if verilith_core::prims::get(cmap, row + i) != t {
+            return false;
+        }
+        i = i + 1;
+    }
+    true
 }
 
 /// `spec::short_dist`.
