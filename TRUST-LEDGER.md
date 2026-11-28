@@ -51,7 +51,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | regex | 1 |  |  |  |  |  | 3 | 1969 |
 | resolver | 7 |  |  |  |  |  | 4 | 496 |
 | server | 1 |  |  |  | 1 |  | 15 | 5352 |
-| serverless |  |  |  |  |  |  | 2 | 259 |
+| serverless |  |  |  |  |  |  | 2 | 256 |
 | sha2 | 34 |  |  |  |  |  | 3 | 362 |
 | simd | 431 | 11 | 294 | 4 |  |  | 3 | 1020 |
 | snappy |  |  |  |  |  |  | 1 | 85 |
@@ -69,7 +69,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 | 1354 |
 | zstd | 6 |  |  |  |  |  | 2 | 1331 |
-| **total** | **713** | **36** | **294** | **7** | **17** | **12** | **149** | **60045** |
+| **total** | **713** | **36** | **294** | **7** | **17** | **12** | **149** | **60042** |
 
 ## Items
 
@@ -260,7 +260,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### serverless
 
-- `crates/serverless/src/lib.rs`: plain Rust, 203 lines
+- `crates/serverless/src/lib.rs`: plain Rust, 200 lines
 - `crates/serverless/src/bin/verilith-serverless.rs`: plain Rust, 56 lines
 
 ### sha2

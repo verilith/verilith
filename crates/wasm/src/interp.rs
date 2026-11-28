@@ -71,7 +71,7 @@ pub const MAX_PAGES: u32 = 32767;
 
 /// The mutable state of an instance.
 pub struct Store {
-    pub mem: Vec<u8>,
+    pub mem: crate::mem::Mem,
     /// Page limit for `memory.grow` (at most [`MAX_PAGES`]).
     pub mem_max: u32,
     pub globals: Vec<u64>,
@@ -85,19 +85,23 @@ pub trait Host {
     /// Runs imported function `func` (an index among the module's
     /// functions) on `args`, writing `results`. It may read and write the
     /// guest's linear memory. `false` (or a panic) traps.
-    fn call(&mut self, func: u32, args: &[u64], results: &mut [u64], mem: &mut [u8]) -> bool;
+    fn call(&mut self, func: u32, args: &[u64], results: &mut [u64], mem: &mut crate::mem::Mem) -> bool;
 }
 
 #[verifier::external_body]
-pub fn call_host<H: Host>(h: &mut H, func: u32, args: &[u64], results: &mut Vec<u64>, mem: &mut Vec<u8>) -> (r: bool)
+pub fn call_host<H: Host>(h: &mut H, func: u32, args: &[u64], results: &mut Vec<u64>, mem: &mut crate::mem::Mem) -> (r: bool)
     ensures
         final(results)@.len() == old(results)@.len(),
         final(mem)@.len() == old(mem)@.len(),
+        final(mem).base() == old(mem).base(),
 {
     // A panicking host traps; it can only have changed the contents of
-    // `results` and `mem`, not their lengths.
+    // `results` and `mem`, not their lengths. The host reaches `mem` only
+    // through `Mem`'s methods, all verified to keep its length and base
+    // (none panics partway), and cannot make a `Mem` to swap in for it
+    // (its constructors are private to this crate).
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        h.call(func, args, results.as_mut_slice(), mem.as_mut_slice())
+        h.call(func, args, results.as_mut_slice(), mem)
     }));
     matches!(r, Ok(true))
 }
