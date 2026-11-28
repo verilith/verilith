@@ -258,16 +258,34 @@ of what google/brotli still gains at q10-11 (below).
 
 `tests/c/bench_enc.c`, whole Silesia files in memory, best of 3 runs (1 at
 q11), against google/brotli 1.2.1 linked statically, on one core of a cloud
-x86-64 VM (2026-11-27). Size is vbrotli's output against google/brotli's;
-speed above 1 means vbrotli is faster.
+x86-64 VM (2026-11-28). Size is vbrotli's output against google/brotli's;
+speed above 1 means vbrotli is faster. Before context modeling, block
+splitting and the dictionary (2026-11-27) in brackets.
 
 | File | q4 size | q4 speed | q6 size | q6 speed | q11 size | q11 speed |
 |---|---|---|---|---|---|---|
-| dickens | -2.7% | 0.65x | +0.6% | 0.68x | +1.8% | 1.56x |
-| samba | +1.0% | 0.58x | +3.9% | 0.55x | +5.1% | 2.08x |
-| x-ray | +2.6% | 0.64x | +0.1% | 0.27x | +12.9% | 3.48x |
-| xml | +0.0% | 0.49x | +5.5% | 0.60x | +7.4% | 1.68x |
-| mozilla | -0.5% | 0.57x | +5.0% | 0.39x | | |
+| dickens | -4.8% (-2.7%) | 0.64x | -0.3% (+0.6%) | 0.55x | +0.8% (+1.8%) | 1.60x |
+| samba | -2.0% (+1.0%) | 0.55x | +0.7% (+3.9%) | 0.43x | +3.2% (+5.1%) | 2.10x |
+| x-ray | -15.6% (+2.6%) | 0.59x | -6.5% (+0.1%) | 0.40x | +5.4% (+12.9%) | 3.58x |
+| xml | -4.5% (+0.0%) | 0.49x | +0.7% (+5.5%) | 0.53x | +3.8% (+7.4%) | 1.78x |
+| mozilla | -4.7% (-0.5%) | 0.54x | -0.1% (+5.0%) | 0.33x | | |
+
+Speeds were 0.49x to 0.65x at q4 and 0.27x to 0.68x at q6 before. Of
+vbrotli's instructions (callgrind, 1.5 MB of dickens), planning
+meta-blocks takes about a seventh at q4 and a fifth at q6, writing them
+a fifth and a ninth, and the parse most of the rest.
+
+On short inputs (the first 4 KiB, 16 KiB and 64 KiB of dickens, samba
+and xml, and 16 KiB of `alice29.txt` and `lcet10.txt`), the dictionary
+matters most. Against google/brotli, size:
+
+| | q5 | q9 | q11 |
+|---|---|---|---|
+| before | +0.5% to +10.2% | +3.1% to +7.6% | +10.7% to +33.2% |
+| now | -4.8% to +1.8% | -3.5% to +1.8% | +7.0% to +30.0% |
+
+At q11 the optimal parse does not look for dictionary words; that is
+most of the gap on short inputs.
 
 ### Trusted (compressor)
 
