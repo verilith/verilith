@@ -1024,6 +1024,9 @@ fn put_coef(w: &mut BitWriter, t: &ETab, run: u32, v: i32, Ghost(ht): Ghost<Huff
 
 /// Codes one block: its DC as a difference from `pred`, then its AC
 /// coefficients in zigzag order (`encode_one_block`).
+// The default budget is too small for z3's Arm build here; x86 needs less.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(40)]
 pub fn encode_block(
     w: &mut BitWriter,
     b: &[i16; 64],

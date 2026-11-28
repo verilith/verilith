@@ -6,7 +6,7 @@
 //! `Transfer-Encoding`, `Upgrade`, `Trailer`, and the proxy's own
 //! `Proxy-Authorization` and `Proxy-Authenticate`). It also drops `Host`
 //! and `Content-Length`, which it writes itself for the next hop.
-//! [`forwarded`] is the specification, a filter that keeps the order of
+//! `forwarded` is the specification, a filter that keeps the order of
 //! what it keeps; [`forward`] computes it exactly, in both directions
 //! (requests to the backend, responses to the client). Every name is
 //! compared ignoring ASCII case, and a Connection field's options are the
@@ -147,7 +147,7 @@ fn lower_exec(c: u8) -> (r: u8)
     if c >= 0x41 && c <= 0x5A { c + 0x20 } else { c }
 }
 
-/// [`same_ci`].
+/// `same_ci`.
 pub fn same_ci_exec(a: &[u8], b: &[u8]) -> (r: bool)
     ensures
         r == same_ci(a@, b@),
@@ -171,7 +171,7 @@ pub fn same_ci_exec(a: &[u8], b: &[u8]) -> (r: bool)
     true
 }
 
-/// [`listed`] from 0.
+/// `listed` from 0.
 pub fn listed_exec(v: &[u8], n: &[u8]) -> (r: bool)
     ensures
         r == listed(v@, 0, n@),
@@ -236,7 +236,7 @@ pub fn listed_exec(v: &[u8], n: &[u8]) -> (r: bool)
     }
 }
 
-/// [`conn_listed`].
+/// `conn_listed`.
 pub fn conn_listed_exec(fs: &[Field], n: &[u8]) -> (r: bool)
     ensures
         r == conn_listed(fields_view(fs@), n@),
@@ -268,7 +268,7 @@ pub fn conn_listed_exec(fs: &[Field], n: &[u8]) -> (r: bool)
     acc
 }
 
-/// [`hop_name`].
+/// `hop_name`.
 pub fn hop_name_exec(n: &[u8]) -> (r: bool)
     ensures
         r == hop_name(n@),
@@ -301,7 +301,7 @@ pub fn hop_name_exec(n: &[u8]) -> (r: bool)
 }
 
 /// Appends to `out` the fields of `fs` that are forwarded: exactly
-/// [`forwarded`] of them.
+/// `forwarded` of them.
 pub fn forward<'a>(fs: &[Field<'a>], out: &mut Vec<Field<'a>>)
     ensures
         fields_view(final(out)@) == fields_view(old(out)@) + forwarded(fields_view(fs@), fields_view(fs@)),

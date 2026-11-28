@@ -96,7 +96,7 @@ unsafe extern "C" {
     fn getsockopt(fd: c_int, level: c_int, name: c_int, val: *mut u8, len: *mut socklen_t) -> c_int;
     fn pipe(fds: *mut c_int) -> c_int;
     fn getpeername(fd: c_int, addr: *mut sockaddr_in, len: *mut socklen_t) -> c_int;
-    fn write(fd: c_int, buf: *const u8, n: usize) -> isize;
+    fn write(fd: c_int, buf: *const std::ffi::c_void, n: usize) -> isize;
 }
 
 fn cvt(r: c_int) -> io::Result<c_int> {
@@ -207,7 +207,7 @@ pub fn wake_pipe() -> io::Result<(i32, i32)> {
 pub fn wake(fd: i32) {
     let b = 1u8;
     unsafe {
-        write(fd, &b, 1);
+        write(fd, (&raw const b).cast(), 1);
     }
 }
 

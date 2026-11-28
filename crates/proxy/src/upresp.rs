@@ -3,14 +3,14 @@
 //!
 //! The proxy sends one request at a time on an upstream connection and
 //! reads its response with verilith-http's verified parser and framing
-//! (RFC 9112 §4, §6.3: [`read_head`] computes [`up`] exactly). Interim
+//! (RFC 9112 §4, §6.3: [`read_head`] computes `up` exactly). Interim
 //! responses (1xx, RFC 9110 §15.2) are skipped; 101 (Switching Protocols)
 //! is refused, since the proxy never asks for an upgrade.
 //!
 //! A pooled connection is where response desynchronization happens: if a
 //! connection is reused while bytes of an earlier response, or bytes the
 //! backend sent unasked, are still unread, the next client gets a response
-//! meant for someone else ("response queue poisoning"). [`reusable`] is
+//! meant for someone else ("response queue poisoning"). `reusable` is
 //! the rule, decided exactly by [`reuse_ok`]: the response persists
 //! (RFC 9112 §9.3, the same reading as verilith-server's `persist.rs`),
 //! its length is known from its framing (not read-until-close), and it
@@ -66,7 +66,7 @@ pub open spec fn up(b: Seq<u8>, max: nat, head: bool) -> Up {
 }
 
 /// Reads the response head at the start of `b` (field lines into `hs`):
-/// exactly [`up`].
+/// exactly `up`.
 pub fn read_head(b: &[u8], max: usize, head: bool, hs: &mut Vec<Header>) -> (r: Up)
     ensures
         r != Up::Bad ==> r == up(b@, max as nat, head),
@@ -115,7 +115,7 @@ pub open spec fn reusable(persist: bool, body: Body, consumed: nat, received: na
     persist && !(body is Close) && consumed == received
 }
 
-/// [`reusable`], exactly.
+/// `reusable`, exactly.
 pub fn reuse_ok(persist: bool, body: Body, consumed: usize, received: usize) -> (r: bool)
     ensures
         r == reusable(persist, body, consumed as nat, received as nat),

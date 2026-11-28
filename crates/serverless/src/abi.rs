@@ -1,5 +1,5 @@
 //! The guest ABI: the host functions a function module imports, their
-//! specification ([`step`]), and the verified host that implements them
+//! specification (`step`), and the verified host that implements them
 //! ([`Abi::dispatch`]).
 //!
 //! A guest reaches the request and builds its response only through these
@@ -14,10 +14,10 @@
 //! | `resp_write(ptr, len) -> 0` | appends to the response body, or -1 |
 //!
 //! The theorem is [`Abi::dispatch`]'s contract: every host call does exactly
-//! what [`step`] says, so the host writes guest memory only at
+//! what `step` says, so the host writes guest memory only at
 //! `dst..dst + n` of a `req_read` that fits, and only with request bytes;
 //! it reads guest memory only inside it; and the reply it builds always
-//! satisfies [`reply_ok`] (the [`Reply`] type invariant): a status from 200
+//! satisfies `reply_ok` (the [`Reply`] type invariant): a status from 200
 //! to 599, at most the configured number and bytes of fields, each one a
 //! field the server's verified serializer accepts (no CR, LF or NUL, so no
 //! response splitting; no framing or hop-by-hop field), and at most the
@@ -133,7 +133,7 @@ pub fn op_of(name: &[u8]) -> (r: Option<u8>)
     None
 }
 
-/// The number of `i32` parameters of ABI function `op` ([`arity`]).
+/// The number of `i32` parameters of ABI function `op` (`arity`).
 pub fn arity_of(op: u8) -> (r: usize)
     ensures r == arity(op),
 {
@@ -223,7 +223,7 @@ fn eq_dash(n: &[u8], lit: &[u8]) -> (r: bool)
     true
 }
 
-/// Whether `n` is a hop-by-hop field name ([`hop`]).
+/// Whether `n` is a hop-by-hop field name (`hop`).
 pub fn check_hop(n: &[u8]) -> (r: bool)
     ensures r == hop(n@),
 {
@@ -243,7 +243,7 @@ pub fn check_hop(n: &[u8]) -> (r: bool)
         || eq_dash(n, &f)
 }
 
-/// Whether a guest may send this field ([`field_ok`]).
+/// Whether a guest may send this field (`field_ok`).
 pub fn check_field(n: &[u8], v: &[u8]) -> (r: bool)
     ensures r == field_ok(n@, v@),
 {
@@ -336,7 +336,7 @@ pub open spec fn reply0() -> RView {
 }
 
 /// The reply being built. Its fields are private, so the type invariant
-/// ([`reply_ok`]) holds for every `Reply` there is.
+/// (`reply_ok`) holds for every `Reply` there is.
 pub struct Reply {
     lim: Limits,
     status: u16,
@@ -368,7 +368,7 @@ impl Reply {
         reply_ok(self.lim, self.view())
     }
 
-    /// An empty reply ([`reply0`]).
+    /// An empty reply (`reply0`).
     pub fn new(lim: Limits) -> (r: Reply)
         ensures r.view() == reply0(), r.limits() == lim,
     {
@@ -377,7 +377,7 @@ impl Reply {
         r
     }
 
-    /// Every reply satisfies [`reply_ok`] (the type invariant).
+    /// Every reply satisfies `reply_ok` (the type invariant).
     #[inline(always)]
     pub fn lemma_ok(&self)
         ensures reply_ok(self.limits(), self.view()),
@@ -550,7 +550,7 @@ pub struct Abi<'a> {
 
 impl<'a> Abi<'a> {
     /// Runs one host call. A malformed call (unknown import, wrong arity)
-    /// traps and changes nothing; a well-formed one does exactly [`step`].
+    /// traps and changes nothing; a well-formed one does exactly `step`.
     pub fn dispatch(&mut self, func: u32, args: &[u64], results: &mut [u64], mem: &mut Mem) -> (ok: bool)
         ensures
             final(self).req == old(self).req,

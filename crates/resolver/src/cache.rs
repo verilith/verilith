@@ -358,6 +358,8 @@ impl Cache {
         let ghost old_slots = self.slots@;
         let mut taken = Cache::new(1);
         core::mem::swap(self, &mut taken);
+        // verus! expands the pattern's fields, and rustc 1.100 then flags them.
+        #[allow(non_shorthand_field_patterns)]
         let Cache { mut slots, sets } = taken;
         slots.set(base + pick, Some(e));
         proof {

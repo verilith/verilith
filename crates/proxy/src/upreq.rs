@@ -3,7 +3,7 @@
 //! The proxy forwards a request by writing a fresh HTTP/1.1 request head
 //! to the backend: the method and target it was given, `Host`, the
 //! forwarded field lines, and `Content-Length` when there is a body.
-//! [`theorem_request_parses`] says what the backend makes of those bytes,
+//! `theorem_request_parses` says what the backend makes of those bytes,
 //! read with verilith-http's specification of a request
 //! (`spec::parse_request`, the definition its smuggling theorems use):
 //! exactly that method and target, exactly those field lines in that
@@ -415,7 +415,7 @@ fn tchar(c: u8) -> (r: bool)
     verilith_server::respond::tchar(c)
 }
 
-/// Whether `m` is a method ([`method_ok`]).
+/// Whether `m` is a method (`method_ok`).
 pub fn check_method(m: &[u8]) -> (r: bool)
     ensures
         r == method_ok(m@),
@@ -438,7 +438,7 @@ pub fn check_method(m: &[u8]) -> (r: bool)
     true
 }
 
-/// Whether `t` is a request target ([`target_ok`]).
+/// Whether `t` is a request target (`target_ok`).
 pub fn check_target(t: &[u8]) -> (r: bool)
     ensures
         r == target_ok(t@),
@@ -472,7 +472,7 @@ pub fn is_host(n: &[u8]) -> (r: bool)
     verilith_http::framing::ci_eq_exec(n, &host)
 }
 
-/// Whether the forwarded fields may be written ([`fwd_ok`]).
+/// Whether the forwarded fields may be written (`fwd_ok`).
 pub fn check_forwarded(fields: &[Field]) -> (r: bool)
     ensures
         r == fwd_ok(fields_view(fields@)),
@@ -510,7 +510,7 @@ pub fn check_forwarded(fields: &[Field]) -> (r: bool)
 }
 
 /// Whether [`write_request`] may write this request: every precondition
-/// of [`theorem_request_parses`], decided exactly.
+/// of `theorem_request_parses`, decided exactly.
 pub fn check_request(method: &[u8], target: &[u8], host: &[u8], fields: &[Field], cl: Option<u64>) -> (r: bool)
     ensures
         r == (method_ok(method@) && target_ok(target@) && value_ok(host@) && fwd_ok(
@@ -525,9 +525,9 @@ pub fn check_request(method: &[u8], target: &[u8], host: &[u8], fields: &[Field]
         && check_forwarded(fields)
 }
 
-/// Appends the request head [`req_head`] to `out`, if [`check_request`]
+/// Appends the request head `req_head` to `out`, if [`check_request`]
 /// says it may (returning false, and writing nothing, otherwise). The
-/// backend then reads it as [`theorem_request_parses`] says.
+/// backend then reads it as `theorem_request_parses` says.
 pub fn write_request(
     out: &mut Vec<u8>,
     method: &[u8],
