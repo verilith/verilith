@@ -380,7 +380,7 @@ fn fdct_plane(pl: &Vec<Vec<u8>>, bx: usize, by: usize) -> (t: [i64; 64])
 }
 
 /// A block's samples transformed and quantized.
-fn real_block_x(pl: &Vec<Vec<u8>>, bx: usize, by: usize, q: &[u8; 64], rq: &[u64; 64], simd: bool) -> (r: [i16; 64])
+fn real_block_x(pl: &Vec<Vec<u8>>, bx: usize, by: usize, q: &[u8; 64], rq: &[u64; 64], simd: bool) -> (r: ([i16; 64], u64))
     requires
         simd ==> verilith_simd::cpu::avx2(),
         forall|i: int| 0 <= i < 64 ==> #[trigger] rq[i] as int == (0x1_0000_0000 + 8 * q[i] - 1) / (8 * q[i] as int) && rq[i] <= 0x2000_0100,
@@ -390,7 +390,8 @@ fn real_block_x(pl: &Vec<Vec<u8>>, bx: usize, by: usize, q: &[u8; 64], rq: &[u64
         bx < 0x1000_0000,
         by < 0x1000_0000,
     ensures
-        r@ == qblock(pblock(pl@, bx as int, by as int), q@),
+        r.0@ == qblock(pblock(pl@, bx as int, by as int), q@),
+        mask_ok(r.1, r.0@, 1),
 {
     // `fdct_block` enables AVX2, which makes it unsafe to call, on x86-64;
     // `simd` says the CPU has it.
@@ -401,25 +402,75 @@ fn real_block_x(pl: &Vec<Vec<u8>>, bx: usize, by: usize, q: &[u8; 64], rq: &[u64
     } else {
         fdct_plane(pl, bx, by)
     };
+    let (r, m) = quant_block(&t, q, rq);
+    proof {
+        assert(r@ =~= qblock(pblock(pl@, bx as int, by as int), q@));
+    }
+    (r, m)
+}
+
+/// The coefficients quantized, and the mask of the nonzero AC ones in
+/// zigzag order (`mask_ok`).
+fn quant_block(t: &[i64; 64], q: &[u8; 64], rq: &[u64; 64]) -> (r: ([i16; 64], u64))
+    requires
+        forall|i: int| 0 <= i < 64 ==> #[trigger] rq[i] as int == (0x1_0000_0000 + 8 * q[i] - 1) / (8 * q[i] as int) && rq[i] <= 0x2000_0100,
+        forall|i: int| 0 <= i < 64 ==> #[trigger] q[i] >= 1,
+        forall|i: int| 0 <= i < 64 ==> -(1i64 << 20) <= #[trigger] t[i] <= (1i64 << 20),
+    ensures
+        forall|i: int| 0 <= i < 64 ==> #[trigger] r.0[i] as int == quant(t[i] as int, q[i] as int, i),
+        mask_ok(r.1, r.0@, 1),
+{
+    proof {
+        lemma_zz_perm();
+    }
     let mut r = [0i16; 64];
+    let mut m: u64 = 0;
     let mut k: usize = 0;
+    proof {
+        assert forall|j: u64| 0 <= j < 64 implies #[trigger] ((m >> j) & 1u64) == 0u64 by {
+            assert((0u64 >> j) & 1u64 == 0u64) by (bit_vector);
+        }
+    }
     while k < 64
         invariant
             k <= 64,
             forall|i: int| 0 <= i < 64 ==> #[trigger] q[i] >= 1,
             forall|i: int| 0 <= i < 64 ==> #[trigger] rq[i] as int == (0x1_0000_0000 + 8 * q[i] - 1) / (8 * q[i] as int) && rq[i] <= 0x2000_0100,
-            forall|i: int| 0 <= i < 64 ==> #[trigger] t[i] as int == fdct(pblock(pl@, bx as int, by as int))[i],
             forall|i: int| 0 <= i < 64 ==> -(1i64 << 20) <= #[trigger] t[i] <= (1i64 << 20),
-            forall|j: int| 0 <= j < k ==> #[trigger] r[j] == qblock(pblock(pl@, bx as int, by as int), q@)[j],
+            forall|j: int| 0 <= j < k ==> #[trigger] r[j] as int == quant(t[j] as int, q[j] as int, j),
+            forall|i: int| 0 <= i < 64 ==> 0 <= zz(i) < 64 && #[trigger] zzi(zz(i)) == i,
+            forall|p: int| 0 <= p < 64 ==> 0 <= zzi(p) < 64 && #[trigger] zz(zzi(p)) == p,
+            forall|j: u64| 0 <= j < 64 ==> (#[trigger] ((m >> j) & 1u64) == 1u64 <==> (j >= 1 && zz(j as int) < k && r[zz(j as int)] != 0)),
         decreases 64 - k,
     {
-        r[k] = quant_r(t[k], q[k], rq[k], k);
+        let v = quant_r(t[k], q[k], rq[k], k);
+        r[k] = v;
+        if v != 0 && k != 0 {
+            let p = ZZI[k] as u64;
+            let ghost m0 = m;
+            m = m | (1u64 << p);
+            proof {
+                assert(zz(p as int) == k);
+                assert forall|j: u64| 0 <= j < 64 implies (#[trigger] ((m >> j) & 1u64) == 1u64 <==> (j >= 1 && zz(j as int) < k + 1 && r[zz(j as int)] != 0)) by {
+                    lemma_bit_set(m0, p, j);
+                    if zz(j as int) == k {
+                        assert(zzi(zz(j as int)) == j);
+                    }
+                }
+            }
+        } else {
+            proof {
+                assert forall|j: u64| 0 <= j < 64 implies (#[trigger] ((m >> j) & 1u64) == 1u64 <==> (j >= 1 && zz(j as int) < k + 1 && r[zz(j as int)] != 0)) by {
+                    if zz(j as int) == k {
+                        assert(zzi(zz(j as int)) == j);
+                        assert(zzi(k as int) == j);
+                    }
+                }
+            }
+        }
         k += 1;
     }
-    proof {
-        assert(r@ =~= qblock(pblock(pl@, bx as int, by as int), q@));
-    }
-    r
+    (r, m)
 }
 
 proof fn lemma_real(pl: Seq<Vec<u8>>, im: Rgb, sub: bool, quality: int, c: int, bx: int, by: int, wd: int, ht: int)
@@ -487,7 +538,7 @@ fn coef_block_x(
     Ghost(sub): Ghost<bool>,
     Ghost(quality): Ghost<int>,
     Ghost(c): Ghost<int>,
-) -> (r: [i16; 64])
+) -> (r: ([i16; 64], u64))
     requires
         simd ==> verilith_simd::cpu::avx2(),
         forall|i: int| 0 <= i < 64 ==> #[trigger] rq[i] as int == (0x1_0000_0000 + 8 * q[i] - 1) / (8 * q[i] as int) && rq[i] <= 0x2000_0100,
@@ -506,7 +557,8 @@ fn coef_block_x(
         wbc < 0x1000_0000,
         hbc < 0x1000_0000,
     ensures
-        r@ == coef_block(im, sub, quality, c, bx as int, by as int),
+        r.0@ == coef_block(im, sub, quality, c, bx as int, by as int),
+        mask_ok(r.1, r.0@, 1),
 {
     let ghost f = enc_frame_of(im, sub);
     if bx < wbc && by < hbc {
@@ -531,13 +583,21 @@ fn coef_block_x(
         proof {
             lemma_real(pl@, im, sub, quality, c, rx as int, ry as int, 8 * cw(f, c), 8 * ch(f, c));
         }
-        let rb = real_block_x(pl, rx, ry, q, rq, simd);
+        let (rb, _) = real_block_x(pl, rx, ry, q, rq, simd);
         let mut r = [0i16; 64];
         r[0] = rb[0];
         proof {
             assert(r@ =~= coef_block(im, sub, quality, c, bx as int, by as int));
+            lemma_zz_perm();
+            assert forall|j: u64| 0 <= j < 64 implies (#[trigger] ((0u64 >> j) & 1u64) == 1u64 <==> (j >= 1 && r@[zz(j as int)] != 0)) by {
+                assert((0u64 >> j) & 1u64 == 0u64) by (bit_vector);
+                if j >= 1 && zz(j as int) == 0 {
+                    assert(zzi(zz(j as int)) == j);
+                    assert(zzi(0) == 0);
+                }
+            }
         }
-        r
+        (r, 0)
     }
 }
 
@@ -1177,7 +1237,7 @@ fn block_x(
     } else {
         &e.r1
     };
-    let bk = coef_block_x(
+    let (bk, bm) = coef_block_x(
         pl,
         bx,
         by,
@@ -1203,9 +1263,9 @@ fn block_x(
     let ghost bits = bw.bits@;
     let pred = preds[c];
     if c == 0 {
-        encode_block(bw, &bk, pred, &e.e[0], &e.e[1], Ghost(ht[0]), Ghost(ht[1]));
+        encode_block_m(bw, &bk, bm, pred, &e.e[0], &e.e[1], Ghost(ht[0]), Ghost(ht[1]));
     } else {
-        encode_block(bw, &bk, pred, &e.e[2], &e.e[3], Ghost(ht[2]), Ghost(ht[3]));
+        encode_block_m(bw, &bk, bm, pred, &e.e[2], &e.e[3], Ghost(ht[2]), Ghost(ht[3]));
     }
     preds[c] = bk[0] as i32;
     proof {
