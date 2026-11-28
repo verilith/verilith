@@ -74,6 +74,8 @@ pub mod enc_vp8hdr;
 #[doc(hidden)]
 pub mod enc_vp8modes;
 #[doc(hidden)]
+pub mod enc_vp8tok;
+#[doc(hidden)]
 pub mod enc_vp8l;
 #[cfg(not(verus_only))]
 #[doc(hidden)]

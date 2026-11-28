@@ -518,6 +518,161 @@ pub proof fn lemma_opt_signed(data: Seq<u8>, e: EncState, x: int, n: nat, rest: 
     }
 }
 
+
+/// Write `k` of a piece `w` read back, in the middle of a stream.
+pub proof fn lemma_bits(data: Seq<u8>, e: EncState, w: Seq<(int, bool)>, rest: Seq<(int, bool)>, k: int)
+    requires
+        good(data, e, w + rest),
+        0 <= k < w.len(),
+    ensures
+        bool_bit(dst(data, enc_run(e, w.take(k))), w[k].0) == w[k].1,
+        bool_next(data, dst(data, enc_run(e, w.take(k))), w[k].0) == dst(data, enc_run(e, w.take(k + 1))),
+        good(data, enc_run(e, w), rest),
+        w.take(w.len() as int) == w,
+{
+    lemma_good_split(data, e, w, rest);
+    lemma_read(data, e, w, k);
+    assert(w.take(w.len() as int) =~= w);
+}
+
+/// The same for a whole piece of up to five writes, unrolled.
+pub proof fn lemma_bits_all(data: Seq<u8>, e: EncState, w: Seq<(int, bool)>, rest: Seq<(int, bool)>)
+    requires
+        good(data, e, w + rest),
+        w.len() <= 5,
+    ensures
+        forall|k: int|
+            0 <= k < w.len() ==> bool_bit(dst(data, enc_run(e, #[trigger] w.take(k))), w[k].0) == w[k].1
+                && bool_next(data, dst(data, enc_run(e, w.take(k))), w[k].0) == dst(data, enc_run(e, w.take(k + 1))),
+        good(data, enc_run(e, w), rest),
+        w.take(w.len() as int) == w,
+        w.take(0) == Seq::<(int, bool)>::empty(),
+        enc_run(e, Seq::<(int, bool)>::empty()) == e,
+{
+    assert forall|k: int| 0 <= k < w.len() implies bool_bit(dst(data, enc_run(e, #[trigger] w.take(k))), w[k].0) == w[k].1
+        && bool_next(data, dst(data, enc_run(e, w.take(k))), w[k].0) == dst(data, enc_run(e, w.take(k + 1))) by {
+        lemma_bits(data, e, w, rest, k);
+    }
+    lemma_good_split(data, e, w, rest);
+    assert(w.take(w.len() as int) =~= w);
+    assert(w.take(0) =~= Seq::<(int, bool)>::empty());
+}
+
+
+/// Short pieces of writes read back one by one.
+pub proof fn lemma_chain2(data: Seq<u8>, e: EncState, a: (int, bool), b: (int, bool), rest: Seq<(int, bool)>)
+    requires
+        good(data, e, seq![a, b] + rest),
+    ensures
+        ({
+            let e1 = enc_put(e, a.0, a.1);
+            let e2 = enc_put(e1, b.0, b.1);
+            &&& bool_bit(dst(data, e), a.0) == a.1 && bool_next(data, dst(data, e), a.0) == dst(data, e1)
+            &&& bool_bit(dst(data, e1), b.0) == b.1 && bool_next(data, dst(data, e1), b.0) == dst(data, e2)
+            &&& e2 == enc_run(e, seq![a, b])
+            &&& good(data, e2, rest)
+        }),
+{
+    assert(seq![a, b] + rest =~= seq![a] + (seq![b] + rest));
+    lemma_bit(data, e, a.0, a.1, seq![b] + rest);
+    let e1 = enc_put(e, a.0, a.1);
+    lemma_bit(data, e1, b.0, b.1, rest);
+    lemma_run_concat(e, seq![a], seq![b]);
+    assert(seq![a] + seq![b] =~= seq![a, b]);
+}
+
+pub proof fn lemma_chain3(data: Seq<u8>, e: EncState, a: (int, bool), b: (int, bool), c: (int, bool), rest: Seq<(int, bool)>)
+    requires
+        good(data, e, seq![a, b, c] + rest),
+    ensures
+        ({
+            let e1 = enc_put(e, a.0, a.1);
+            let e2 = enc_put(e1, b.0, b.1);
+            let e3 = enc_put(e2, c.0, c.1);
+            &&& bool_bit(dst(data, e), a.0) == a.1 && bool_next(data, dst(data, e), a.0) == dst(data, e1)
+            &&& bool_bit(dst(data, e1), b.0) == b.1 && bool_next(data, dst(data, e1), b.0) == dst(data, e2)
+            &&& bool_bit(dst(data, e2), c.0) == c.1 && bool_next(data, dst(data, e2), c.0) == dst(data, e3)
+            &&& e3 == enc_run(e, seq![a, b, c])
+            &&& good(data, e3, rest)
+        }),
+{
+    assert(seq![a, b, c] + rest =~= seq![a, b] + (seq![c] + rest));
+    lemma_chain2(data, e, a, b, seq![c] + rest);
+    let e2 = enc_run(e, seq![a, b]);
+    lemma_bit(data, e2, c.0, c.1, rest);
+    lemma_run_concat(e, seq![a, b], seq![c]);
+    assert(seq![a, b] + seq![c] =~= seq![a, b, c]);
+}
+
+pub proof fn lemma_chain4(
+    data: Seq<u8>,
+    e: EncState,
+    a: (int, bool),
+    b: (int, bool),
+    c: (int, bool),
+    d: (int, bool),
+    rest: Seq<(int, bool)>,
+)
+    requires
+        good(data, e, seq![a, b, c, d] + rest),
+    ensures
+        ({
+            let e1 = enc_put(e, a.0, a.1);
+            let e2 = enc_put(e1, b.0, b.1);
+            let e3 = enc_put(e2, c.0, c.1);
+            let e4 = enc_put(e3, d.0, d.1);
+            &&& bool_bit(dst(data, e), a.0) == a.1 && bool_next(data, dst(data, e), a.0) == dst(data, e1)
+            &&& bool_bit(dst(data, e1), b.0) == b.1 && bool_next(data, dst(data, e1), b.0) == dst(data, e2)
+            &&& bool_bit(dst(data, e2), c.0) == c.1 && bool_next(data, dst(data, e2), c.0) == dst(data, e3)
+            &&& bool_bit(dst(data, e3), d.0) == d.1 && bool_next(data, dst(data, e3), d.0) == dst(data, e4)
+            &&& e4 == enc_run(e, seq![a, b, c, d])
+            &&& good(data, e4, rest)
+        }),
+{
+    assert(seq![a, b, c, d] + rest =~= seq![a, b, c] + (seq![d] + rest));
+    lemma_chain3(data, e, a, b, c, seq![d] + rest);
+    let e3 = enc_run(e, seq![a, b, c]);
+    lemma_bit(data, e3, d.0, d.1, rest);
+    lemma_run_concat(e, seq![a, b, c], seq![d]);
+    assert(seq![a, b, c] + seq![d] =~= seq![a, b, c, d]);
+}
+
+pub proof fn lemma_chain5(
+    data: Seq<u8>,
+    e: EncState,
+    a: (int, bool),
+    b: (int, bool),
+    c: (int, bool),
+    d: (int, bool),
+    f: (int, bool),
+    rest: Seq<(int, bool)>,
+)
+    requires
+        good(data, e, seq![a, b, c, d, f] + rest),
+    ensures
+        ({
+            let e1 = enc_put(e, a.0, a.1);
+            let e2 = enc_put(e1, b.0, b.1);
+            let e3 = enc_put(e2, c.0, c.1);
+            let e4 = enc_put(e3, d.0, d.1);
+            let e5 = enc_put(e4, f.0, f.1);
+            &&& bool_bit(dst(data, e), a.0) == a.1 && bool_next(data, dst(data, e), a.0) == dst(data, e1)
+            &&& bool_bit(dst(data, e1), b.0) == b.1 && bool_next(data, dst(data, e1), b.0) == dst(data, e2)
+            &&& bool_bit(dst(data, e2), c.0) == c.1 && bool_next(data, dst(data, e2), c.0) == dst(data, e3)
+            &&& bool_bit(dst(data, e3), d.0) == d.1 && bool_next(data, dst(data, e3), d.0) == dst(data, e4)
+            &&& bool_bit(dst(data, e4), f.0) == f.1 && bool_next(data, dst(data, e4), f.0) == dst(data, e5)
+            &&& e5 == enc_run(e, seq![a, b, c, d, f])
+            &&& good(data, e5, rest)
+        }),
+{
+    assert(seq![a, b, c, d, f] + rest =~= seq![a, b, c, d] + (seq![f] + rest));
+    lemma_chain4(data, e, a, b, c, d, seq![f] + rest);
+    let e4 = enc_run(e, seq![a, b, c, d]);
+    lemma_bit(data, e4, f.0, f.1, rest);
+    lemma_run_concat(e, seq![a, b, c, d], seq![f]);
+    assert(seq![a, b, c, d] + seq![f] =~= seq![a, b, c, d, f]);
+}
+
 // ---------------------------------------------------------------------------
 // Bytes
 // ---------------------------------------------------------------------------
