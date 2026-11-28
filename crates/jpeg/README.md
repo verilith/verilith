@@ -5,15 +5,17 @@ A verified JPEG decoder in Rust, proven with
 sequential and progressive Huffman JPEG files (8 bits per sample, greyscale or
 three components) to 8-bit grey or RGB, and gives the same pixels as
 libjpeg-turbo 3.2.1 does with its default settings. It can be linked in place
-of libjpeg-turbo's decode path through the TurboJPEG C API. It decodes only;
-there is no encoder.
+of libjpeg-turbo's decode path through the TurboJPEG C API. It also encodes:
+baseline JPEG with 4:2:0 or 4:4:4 chroma, proven to code exactly the
+coefficients libjpeg-turbo computes, and byte-identical to libjpeg-turbo's
+files with its default settings.
 
 The marker parser, Huffman decoding, every baseline and progressive scan
 type, restart handling, dequantization, the inverse DCT, chroma upsampling
 and colour conversion are proven against a specification of the format,
 down to the value of every output byte, and so is a bound on the decoder's
 work: linear in the file's size, the image's size, and the frame's blocks
-once per scan. `cargo verus verify` checks 651 functions with no errors.
+once per scan. `cargo verus verify` checks 928 functions, decoder and encoder, with no errors.
 
 ## Using it from Rust
 
@@ -25,6 +27,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pic = verilith_jpeg::decode(&data)?;
     // pic.nc bytes per pixel (1 gray, 3 RGB), row by row.
     assert_eq!(pic.px.len(), pic.w as usize * pic.h as usize * pic.nc as usize);
+    // Encode RGB (3 bytes a pixel; 4 with the fourth ignored) at quality 85,
+    // with 4:2:0 chroma.
+    let jpg = verilith_jpeg::encode_rgb(&pic.px, pic.w as usize, pic.h as usize, 3, 85, true);
     Ok(())
 }
 ```
@@ -76,6 +81,33 @@ specifications of 46 NEON intrinsics in
 the SSE intrinsic specifications those are proven from there), the
 unverified C glue (`src/capi.rs`, `src/tj.rs`), and Verus, vstd, Z3 and the
 Rust compiler.
+
+### The encoder
+
+`encode_rgb` writes a baseline JFIF file: YCbCr, luma sampled 2x2 (4:2:0)
+or 1x1 (4:4:4), the quantization tables of T.81 Annex K scaled by
+libjpeg's `jpeg_set_quality`, the typical Huffman tables of Annex K.3, one
+interleaved scan.
+
+| property | where it is stated |
+| --- | --- |
+| Memory safety and termination, as for the decoder | every function |
+| Correctness: for every image `encode_rgb` accepts (1 to 65,500 pixels each way, 3 or 4 bytes a pixel), the file it returns decodes, under the decoder's own `spec::jpeg_coded`, to the frame, quantization tables and coefficients of `enc_spec::enc_coded`: libjpeg-turbo's colour conversion (`jccolor.c`), edge replication and 2x2 downsampling (`jcprepct.c`, `jcsample.c`), slow integer forward DCT (`jfdctint.c`), rounding quantization (`jcdctmgr.c`) and the dummy blocks past the image's edge (`jccoefct.c`) | `encode::encode_rgb` |
+| The bit writer stuffs a zero after every 0xFF and pads the last byte with ones; what it writes is read back by the specification's entropy decoding | `enc_bits::BitWriter`, `enc_bits::lemma_ecs_stuffed` |
+| Each block's Huffman codes decode, under T.81's DECODE and EXTEND, to the block | `enc_huff::encode_block`, `enc_huff::lemma_block` |
+| The headers (SOI, JFIF APP0, DQT, SOF0, DHT, SOS) parse, under the specification, to the frame and tables written | `enc_file::lemma_file` |
+
+The quantization divides by multiplying with a 32-bit reciprocal; that it
+always equals the division is proven (`enc_front::lemma_recip`). The
+Huffman tables are checked when the encoder runs (`huff::derive`,
+`enc_huff::dc_check`): the encoder returns `None` if they failed, which
+they cannot for the typical tables. `difftest/encdiff` compares the files
+with libjpeg-turbo's (`jpeg_set_defaults`, `jpeg_set_quality`, no optimized
+Huffman tables) byte for byte.
+
+What the encoder does not do: optimized Huffman tables, progressive or
+arithmetic coding, greyscale or CMYK output, restart markers, metadata,
+4:2:2, and the fast DCTs.
 
 ## What is not covered
 
@@ -225,6 +257,13 @@ which does two blocks' rows at once in 256-bit registers.
   (libjpeg-turbo rejects a DAC segment with a bad table index), now in the
   specification; about nine million executions since then found nothing.
 
+- `difftest/encdiff` (`make -C difftest encdiff`) encodes images with
+  verilith-jpeg and with libjpeg-turbo 3.2.1 and compares the files byte
+  for byte: 6,720 encodings of synthetic images (noise, gradients, hard
+  edges; 1x1 to 257x3, 3 and 4 bytes a pixel, qualities 1 to 100, 4:2:0
+  and 4:4:4) and every quality of libjpeg-turbo's `testorig` photo, all
+  identical. `encdiff FILE.ppm...` runs it on other images.
+
 - `scripts/armcheck.sh DIR...` builds verilith-jpeg for AArch64, decodes every file
   under qemu and compares the pixels with the x86-64 build's, which is how
   the NEON path is tested from an x86-64 machine: the same on all 2,295
@@ -270,6 +309,20 @@ Huffman decoding and the bit reader, 29% dequantization and the inverse DCT,
 Progressive and multi-scan files are decoded to whole-image coefficient
 arrays first, as in libjpeg-turbo. Every file still gets whole planes of
 samples before upsampling, where libjpeg-turbo keeps a few rows.
+
+### Encoding
+
+`difftest/encdiff -b W H Q` times both encoders on a W by H photo-like
+image (gradients with noise), on the same 4-core x86-64 VM:
+
+| 1920x1080, quality 80 | verilith-jpeg | libjpeg-turbo 3.2.1 (SIMD) |
+| --- | ---: | ---: |
+| 4:2:0 | 38 ms | 5.8 ms |
+| 4:4:4 | 76 ms | 9.6 ms |
+
+The encoder is plain scalar code for now, about 6.5 to 8 times slower than
+libjpeg-turbo's SIMD: whole planes of samples are made first, and the
+forward DCT, colour conversion and Huffman coding have no vector paths yet.
 
 ### WebAssembly
 

@@ -63,13 +63,36 @@ pub struct Options {
     pub h: u32,
     pub enlarge: bool,
     pub background: Option<[u8; 3]>,
+    /// The output format; PNG when the URL names none.
+    pub format: Format,
+    /// JPEG quality, 1 to 100 (0: the default, 80).
+    pub quality: u32,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { mode: Mode::Fit, w: 0, h: 0, enlarge: false, background: None }
+        Options { mode: Mode::Fit, w: 0, h: 0, enlarge: false, background: None, format: Format::Png, quality: 0 }
     }
 }
+
+/// An output format: each made by a verified encoder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    Png,
+    Jpeg,
+}
+
+impl Format {
+    pub fn mime(self) -> &'static [u8] {
+        match self {
+            Format::Png => b"image/png",
+            Format::Jpeg => b"image/jpeg",
+        }
+    }
+}
+
+/// imgproxy's `IMGPROXY_QUALITY` default.
+pub const DEFAULT_QUALITY: u32 = 80;
 
 /// Where the image comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,9 +202,16 @@ fn option(o: &mut Options, seg: &[u8]) -> Result<(), Fail> {
         b"height" | b"h" => o.h = num(arg(0))?,
         b"enlarge" | b"el" => o.enlarge = boolean(arg(0))?,
         b"background" | b"bg" => o.background = background(&args)?,
-        // Accepted and ignored: they do not change a PNG.
-        b"quality" | b"q" | b"strip_metadata" | b"sm" | b"cachebuster" | b"cb" => {}
-        b"format" | b"f" | b"ext" => format(arg(0))?,
+        b"quality" | b"q" => {
+            let q = num(arg(0))?;
+            if q > 100 {
+                return Err(Fail::BadUrl("Invalid quality"));
+            }
+            o.quality = q;
+        }
+        // Accepted and ignored: the encoders write no metadata.
+        b"strip_metadata" | b"sm" | b"cachebuster" | b"cb" => {}
+        b"format" | b"f" | b"ext" => format(o, arg(0))?,
         // Only centred crops (`ce`, the default) are implemented.
         b"gravity" | b"g" => {
             if !matches!(arg(0), b"" | b"ce") {
@@ -193,12 +223,16 @@ fn option(o: &mut Options, seg: &[u8]) -> Result<(), Fail> {
     Ok(())
 }
 
-/// The output format: PNG only, for now (the encoder this crate verifies).
-fn format(ext: &[u8]) -> Result<(), Fail> {
+/// The output format an extension names: PNG or JPEG (the encoders this
+/// workspace verifies). No extension leaves the format as it is.
+fn format(o: &mut Options, ext: &[u8]) -> Result<(), Fail> {
     match ext {
-        b"" | b"png" | b"best" => Ok(()),
-        _ => Err(Fail::Unprocessable("Only PNG output is supported")),
+        b"" => {}
+        b"png" | b"best" => o.format = Format::Png,
+        b"jpg" | b"jpeg" => o.format = Format::Jpeg,
+        _ => return Err(Fail::Unprocessable("Only PNG and JPEG output are supported")),
     }
+    Ok(())
 }
 
 fn percent_decode(s: &[u8]) -> Vec<u8> {
@@ -242,13 +276,13 @@ pub fn parse(path: &[u8]) -> Result<Parsed<'_>, Fail> {
         let joined: Vec<&[u8]> = segs.collect();
         let mut url = joined.join(&b'/');
         if let Some(at) = url.iter().rposition(|&c| c == b'@') {
-            format(&url[at + 1..])?;
+            format(&mut opts, &url[at + 1..])?;
             url.truncate(at);
         }
         source(percent_decode(&url))?
     } else if first.starts_with(b"upload") && segs.peek().is_none() {
         if let Some(ext) = first.strip_prefix(b"upload@") {
-            format(ext)?;
+            format(&mut opts, ext)?;
         } else if first != b"upload" {
             return Err(Fail::BadUrl("Invalid upload path"));
         }
@@ -259,7 +293,7 @@ pub fn parse(path: &[u8]) -> Result<Parsed<'_>, Fail> {
             enc.extend_from_slice(s);
         }
         if let Some(dot) = enc.iter().position(|&c| c == b'.') {
-            format(&enc[dot + 1..])?;
+            format(&mut opts, &enc[dot + 1..])?;
             enc.truncate(dot);
         }
         let url = verilith_text::base64::URL_SAFE_NO_PAD
@@ -414,7 +448,7 @@ impl Default for Limits {
     }
 }
 
-/// Decodes, resizes, crops, flattens and encodes: the PNG to send.
+/// Decodes, resizes, crops, flattens and encodes: the image to send.
 pub fn process(data: &[u8], o: &Options, lim: &Limits) -> Result<Vec<u8>, Fail> {
     let img = decode(data, lim.max_src_px)?;
     // pre: plan_x (sizes at most MAX_DIM; the decoders' sizes are checked by `size_ok`).
@@ -437,13 +471,29 @@ pub fn process(data: &[u8], o: &Options, lim: &Limits) -> Result<Vec<u8>, Fail> 
     } else {
         crate::resize::crop_rgba(&px, rw, rh, p.cx as usize, p.cy as usize, p.cw as usize, p.ch as usize)
     };
-    // pre: flatten (a whole number of pixels).
-    let px = match o.background {
+    // pre: flatten (a whole number of pixels). JPEG has no alpha: it is
+    // flattened onto the background, white by default, as imgproxy does.
+    let bg = match o.format {
+        Format::Jpeg => Some(o.background.unwrap_or([255, 255, 255])),
+        Format::Png => o.background,
+    };
+    let px = match bg {
         Some(bg) => crate::pixels::flatten(&px, bg),
         None => px,
     };
-    // pre: encode_rgba (sizes at most MAX_DIM).
-    crate::pngenc::encode_rgba(&px, p.cw, p.ch, lim.level).ok_or(Fail::Unprocessable("Result image is too big"))
+    match o.format {
+        // pre: encode_rgba (sizes at most MAX_DIM).
+        Format::Png => {
+            crate::pngenc::encode_rgba(&px, p.cw, p.ch, lim.level).ok_or(Fail::Unprocessable("Result image is too big"))
+        }
+        // encode_rgb checks its input itself. Chroma is subsampled below
+        // quality 90, as libvips (imgproxy's encoder) does by default.
+        Format::Jpeg => {
+            let q = if o.quality == 0 { DEFAULT_QUALITY } else { o.quality };
+            verilith_jpeg::encode::encode_rgb(&px, p.cw as usize, p.ch as usize, 4, q as u8, q < 90)
+                .ok_or(Fail::Unprocessable("Result image is too big for JPEG"))
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -646,7 +696,12 @@ mod tests {
         let p = parse(u.as_bytes()).unwrap();
         assert_eq!(p.source, Source::Local(b"/cat.png".to_vec()));
         assert_eq!(p.opts.w, 10);
-        assert!(matches!(parse(b"/x/w:10/plain/local:///a.jpg@jpg"), Err(Fail::Unprocessable(_))));
+        assert_eq!(parse(b"/x/w:10/plain/local:///a.jpg").unwrap().opts.format, Format::Png);
+        assert_eq!(parse(b"/x/w:10/plain/local:///a.png@jpg").unwrap().opts.format, Format::Jpeg);
+        assert_eq!(parse(b"/x/f:jpeg/q:55/plain/local:///a.png").unwrap().opts.quality, 55);
+        assert_eq!(parse(b"/x/f:jpeg/plain/local:///a.png").unwrap().opts.format, Format::Jpeg);
+        assert!(matches!(parse(b"/x/q:101/plain/local:///a.png"), Err(Fail::BadUrl(_))));
+        assert!(matches!(parse(b"/x/w:10/plain/local:///a.jpg@avif"), Err(Fail::Unprocessable(_))));
         assert!(matches!(parse(b"/x/zz:1/plain/local:///a.jpg"), Err(Fail::BadUrl(_))));
         assert_eq!(parse(b"/x/s:5:6/upload").unwrap().source, Source::Upload);
     }

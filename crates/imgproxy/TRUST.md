@@ -15,7 +15,8 @@ sockets and TLS):
 | verilith-sha2's `HmacSha256` | URL signatures | Verified (its README): `verify` returns exactly whether the tag is the HMAC of the key and data, in time that depends only on the lengths |
 | verilith-http's `parse_response` and `ChunkedDecoder` | Fetching `http://` sources | Verified (its README): the response head and the body's framing are the specification's |
 | `std::net` | DNS resolution and TCP for `http://` sources | The standard library |
+| verilith-jpeg's `encode_rgb` | JPEG output | Verified (its README and TRUST.md): checks its own input; the file decodes, under its specification, to what libjpeg-turbo would code |
 | verilith-webp's `capi::decode` and `get_features` | WebP decoding | Plain-Rust wrappers in verilith-webp over its verified decoders (that crate's trusted base; lossy VP8 is proven safe, not correct) |
 
 What is not here at all, so not trusted either: an HTTPS client (sources
-are `local://`, `http://` or uploads), and encoders other than PNG.
+are `local://`, `http://` or uploads), and encoders other than PNG and JPEG.

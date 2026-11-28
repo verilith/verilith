@@ -61,6 +61,7 @@ pub mod capi;
 pub mod tj;
 
 pub use decode::{decode, read_header, Header, Picture};
+pub use encode::encode_rgb;
 pub use types::Error;
 
 
