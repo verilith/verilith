@@ -16,6 +16,9 @@ Edition):
   sections, the external subset, §5.1).
 - `src/stream_spec.rs`, `src/items_spec.rs`: what the push parser emits.
 - `src/walk.rs`: `items`, the order in which the C ABIs report content.
+- `src/ns.rs`: `expand`, `lookup`, `decl_prefix`, `decl_check`: the names
+  the expat ABI reports with namespaces, and the constraints on a
+  namespace declaration.
 - `src/atts.rs`:
   - `decls`: the attribute-list declarations that apply. They are those
     before the end of the document type declaration and, unless the

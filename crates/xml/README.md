@@ -374,6 +374,17 @@ verified in verilith-simd). The trusted base is listed under
   what they reported about each open element (pushed on a start, popped on
   its end) cannot get out of step. Each entity's replacement text is walked
   with a cursor of its own, inside the reference.
+* **Namespaces in the expat ABI.** `ns::expand` states the name expat
+  reports for an element or attribute with `XML_ParserCreateNS`: the name
+  itself when it is in no namespace, else the URI of the prefix's
+  innermost binding in scope (`ns::lookup`; `xml` is always bound), the
+  separator and the local part, then the separator and the prefix with
+  triplets; an error for a name that is not a QName or whose prefix is
+  unbound. `ns::decl_check` states the constraints on a declaration
+  (Namespaces in XML 1.0: the reserved prefixes and names, no undeclaring
+  a prefix, and expat's rule that a URI may not hold the separator).
+  `ex_expand`, `ex_decl_prefix` and `ex_decl_check` are proven to return
+  what they say, and `Bindings` is the stack of declarations they read.
 * **The spec says what it appears to say.** Termination checking is
   syntactic, so the spec has a few guards of the form
   `if !(i < e <= s.len()) { None }` before it continues; each step moves
@@ -414,7 +425,8 @@ verified in verilith-simd). The trusted base is listed under
   trusts the pointers and lengths the caller passes, as a C library does.
   The order it calls the content handlers in is not its own: it takes each
   item from the verified cursor (`src/walk.rs`, under "What is proven"),
-  and turns the item into calls. It is tested by libexpat's own tests
+  and turns the item into calls. Its namespace processing is verified too
+  (`src/ns.rs`): the names it reports and the errors it gives for them. It is tested by libexpat's own tests
   under ASan and UBSan (see [The expat C ABI](#the-expat-c-abi)).
 * **The libxml2 ABI** (`src/api/libxml2/`, about 16 000 lines, feature
   `libxml2-abi`) is the same kind of code: it builds libxml2's structs and
@@ -1027,6 +1039,7 @@ src/scan.rs      SSE2 scanners
 src/lanes.rs     SSE2 wrappers proven over verilith-simd
 src/tape.rs      the tokens
 src/walk.rs      the order the C ABIs report content in, and the cursor that gives it
+src/ns.rs        namespaces as the expat ABI reports them: expanded names, declarations
 src/api.rs       the Rust API (not verified)
 src/api/expat.rs expat's C ABI, feature expat-abi (not verified)
 src/api/libxml2/ libxml2's C ABI, feature libxml2-abi (not verified): parser, SAX2, tree, save, I/O
