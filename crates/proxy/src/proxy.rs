@@ -35,7 +35,7 @@ use crate::coding::{self, Coding};
 use crate::route::{self, Route};
 use crate::rules::{self, Cc, ReqFacts, RespFacts};
 use crate::upresp::{read_head, reuse_ok, Up};
-use crate::{hop, upreq};
+use crate::{fields, hop, upreq};
 
 /// An upstream server: an IPv4 address and port.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -215,13 +215,6 @@ fn has_token(v: &[u8], t: &[u8]) -> bool {
     v.split(|&c| c == b',').any(|e| e.trim_ascii().eq_ignore_ascii_case(t))
 }
 
-/// Request fields the proxy sets itself.
-fn replaced(n: &[u8]) -> bool {
-    [&b"x-forwarded-for"[..], b"x-forwarded-proto", b"x-forwarded-host", b"forwarded", b"via", b"expect", b"cookie", b"accept-encoding"]
-        .iter()
-        .any(|x| n.eq_ignore_ascii_case(x))
-}
-
 impl Handler for Proxy {
     fn handle(&self, req: &Request, res: &mut Response) {
         let Some(host) = req.header(b"host").or_else(|| req.header(b":authority")) else {
@@ -272,12 +265,11 @@ impl Handler for Proxy {
             }
         }
 
-        // The forwarded fields: the verified hop-by-hop filter, less what
-        // the proxy sets itself.
+        // The forwarded fields (verified, `fields::request_fields`): the
+        // client's through the hop-by-hop filter, less every field the
+        // proxy sets itself, then the proxy's own.
         let fields: Vec<Field> = all().map(|(n, v)| Field { name: n, value: v }).collect();
-        let mut fwd = Vec::with_capacity(fields.len() + 4);
-        hop::forward(&fields, &mut fwd);
-        fwd.retain(|f| !replaced(f.name));
+        let mut own: Vec<Field> = Vec::with_capacity(5);
         let cookie = joined(all(), b"cookie", b"; ");
         let (xff, proto) = match verilith_server::client() {
             Some((a, tls)) => (a.ip().to_string().into_bytes(), if tls { &b"https"[..] } else { b"http" }),
@@ -295,18 +287,19 @@ impl Handler for Proxy {
             None => &self.cfg.via[..],
         };
         if let Some(c) = &cookie {
-            fwd.push(Field { name: b"Cookie", value: c });
+            own.push(Field { name: b"Cookie", value: c });
         }
         if !self.cfg.compress {
             if let Some(a) = &accept {
-                fwd.push(Field { name: b"Accept-Encoding", value: a });
+                own.push(Field { name: b"Accept-Encoding", value: a });
             }
         }
         if !xff.is_empty() {
-            fwd.push(Field { name: b"X-Forwarded-For", value: &xff });
+            own.push(Field { name: b"X-Forwarded-For", value: &xff });
         }
-        fwd.push(Field { name: b"X-Forwarded-Proto", value: proto });
-        fwd.push(Field { name: b"Via", value: via });
+        own.push(Field { name: b"X-Forwarded-Proto", value: proto });
+        own.push(Field { name: b"Via", value: via });
+        let fwd = fields::request_fields(&fields, &own);
         let body = req.body;
         let cl = (!body.is_empty() || matches!(method, b"POST" | b"PUT" | b"PATCH")).then_some(body.len() as u64);
         let mut buf = Vec::with_capacity(512 + body.len());
@@ -745,10 +738,10 @@ fn compress(c: Coding, body: &[u8], cached: bool) -> Option<Vec<u8>> {
 }
 
 /// The coding to send to a client whose Accept-Encoding is `accept`.
-/// Brotli is for bodies compressed once and cached: verilith-brotli
-/// spends about half a millisecond setting up its match finder whatever
-/// the input's length, so a response compressed for one client gets
-/// Zstandard or gzip when the client takes either.
+/// Brotli is for bodies compressed once and cached: at quality 2 it takes
+/// about twice as long as Zstandard level 3 on a 16 KiB page, for larger
+/// output, so a response compressed for one client gets Zstandard or gzip
+/// when the client takes either.
 fn coding_for(accept: Option<&[u8]>, once: bool) -> Option<Coding> {
     let a = accept?;
     if once {
@@ -787,12 +780,7 @@ impl Answer {
 /// Server) and Age (the cache sets its own).
 fn client_fields(fs: &[(Vec<u8>, Vec<u8>)]) -> Vec<(Vec<u8>, Vec<u8>)> {
     let all: Vec<Field> = fs.iter().map(|(n, v)| Field { name: n, value: v }).collect();
-    let mut out = Vec::with_capacity(all.len());
-    hop::forward(&all, &mut out);
-    out.iter()
-        .filter(|f| ![&b"date"[..], b"server", b"age"].iter().any(|x| f.name.eq_ignore_ascii_case(x)))
-        .map(|f| (f.name.to_vec(), f.value.to_vec()))
-        .collect()
+    fields::response_fields(&all).iter().map(|f| (f.name.to_vec(), f.value.to_vec())).collect()
 }
 
 /// Adds Content-Encoding and Vary for a compressed body, and weakens a

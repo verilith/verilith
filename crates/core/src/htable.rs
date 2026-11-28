@@ -42,7 +42,10 @@ pub const MAX_LEN: usize = 15;
 /// Largest alphabet: 256 + 24 + 2048 (11 color cache bits).
 pub const MAX_ALPHA: usize = 2328;
 
-/// Most table bits.
+/// Most table bits. For WebP lossless, which builds every code with this,
+/// 9 and 10 decode Kodak within 1% of each other and 11 or more are slower
+/// (larger tables miss L1): `bench/webp-root`, from exact slow-path, fill
+/// and cachegrind counts.
 pub const MAX_ROOT: u32 = 10;
 
 /// Entry layout: bits 0..12 hold the symbol, bits 16..20 the code length.

@@ -2,7 +2,9 @@
 //! unicode-normalization and icu_normalizer crates.
 use rand::{Rng, RngExt, SeedableRng};
 use std::collections::HashSet;
-use verilith_text::unicode::{nfc, nfd, nfkc, nfkd, normalize, normalize_reference, Form};
+use verilith_text::unicode::{
+    is_normalized, is_normalized_utf16, nfc, nfd, nfkc, nfkd, normalize, normalize_reference, normalize_utf16, Form,
+};
 
 const FORMS: [Form; 4] = [Form::Nfc, Form::Nfd, Form::Nfkc, Form::Nfkd];
 
@@ -58,6 +60,11 @@ fn check(norm: &dyn Fn(&str, Form) -> String) -> usize {
 fn conformance() {
     let n = check(&|s, f| normalize(s, f).into_owned());
     assert!(n > 20000, "{n} lines");
+}
+
+#[test]
+fn conformance_utf16() {
+    check(&|s, f| String::from_utf16(&normalize_utf16(&s.encode_utf16().collect::<Vec<_>>(), f)).unwrap());
 }
 
 #[test]
@@ -133,4 +140,101 @@ fn matches_icu4x() {
         }
     }
     assert!(differ < 500, "{differ} inputs differ");
+}
+
+/// The UTF-16 normalizer against the UTF-8 one, on text with unpaired
+/// surrogates, which split it: each run between them is normalized on its
+/// own and the surrogate kept.
+#[test]
+fn utf16_matches_utf8() {
+    let pool = interesting();
+    let mut rng = rand::rngs::StdRng::seed_from_u64(3);
+    for _ in 0..200_000 {
+        let pieces: Vec<String> = (0..rng.random_range(1..4)).map(|_| random_text(&mut rng, &pool)).collect();
+        let lone: Vec<u16> = (1..pieces.len())
+            .map(|_| if rng.random_bool(0.5) { rng.random_range(0xD800..0xDC00) } else { rng.random_range(0xDC00..0xE000) })
+            .collect();
+        let mut s: Vec<u16> = Vec::new();
+        for (k, p) in pieces.iter().enumerate() {
+            if k > 0 {
+                s.push(lone[k - 1]);
+            }
+            s.extend(p.encode_utf16());
+        }
+        for f in FORMS {
+            let mut want: Vec<u16> = Vec::new();
+            let mut normal = true;
+            let mut runs = Vec::new();
+            // Split where the units are not well-formed, as ICU does.
+            let mut run = String::new();
+            for r in char::decode_utf16(s.iter().copied()) {
+                match r {
+                    Ok(c) => run.push(c),
+                    Err(e) => {
+                        runs.push((std::mem::take(&mut run), Some(e.unpaired_surrogate())));
+                    }
+                }
+            }
+            runs.push((run, None));
+            for (r, u) in &runs {
+                want.extend(normalize(r, f).encode_utf16());
+                normal &= is_normalized(r, f);
+                want.extend(u.iter());
+            }
+            assert_eq!(normalize_utf16(&s, f), want, "{f:?} of {s:04X?}");
+            assert_eq!(is_normalized_utf16(&s, f), normal, "is_normalized {f:?} of {s:04X?}");
+        }
+    }
+}
+
+/// `valid16_prefix` (32 units at a time with AVX2 or NEON) stops at the
+/// first unpaired surrogate, as `char::decode_utf16` does, for every
+/// placement of surrogates around and inside the 32-unit steps.
+#[test]
+fn valid16_prefix_matches_decode() {
+    let mut x: u64 = 0x2545F4914F6CDD1D;
+    let mut rnd = move || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x
+    };
+    let pick = [0x41u16, 0x4E2D, 0xD7FF, 0xE000, 0xFFFF, 0xD83D, 0xDE00, 0xD800, 0xDFFF, 0xDBFF, 0xDC00, 0x00E9];
+    for len in 0..130usize {
+        for _ in 0..60 {
+            let mut s: Vec<u16> = (0..len).map(|_| [0x41u16, 0x4E2D, 0xD7FF, 0xE000][(rnd() % 4) as usize]).collect();
+            for _ in 0..(rnd() % 3) {
+                if len > 0 {
+                    let p = (rnd() as usize) % len;
+                    s[p] = pick[(rnd() as usize) % pick.len()];
+                }
+            }
+            let mut want = 0;
+            for r in char::decode_utf16(s.iter().copied()) {
+                match r {
+                    Ok(c) => want += c.len_utf16(),
+                    Err(_) => break,
+                }
+            }
+            assert_eq!(verilith_text::unicode::norm16::valid16_prefix(&s).0, want, "{s:04X?}");
+        }
+    }
+}
+
+/// Both 32-unit surrogate tests (NEON on vsimd's emulation off AArch64)
+/// are exact: true exactly when none of the 32 units is a surrogate.
+#[test]
+fn no_sur32_exact() {
+    for p in 0..32usize {
+        for u in (0u32..=0xFFFF).step_by(37).chain([0xD7FF, 0xD800, 0xDBFF, 0xDC00, 0xDFFF, 0xE000]) {
+            let mut s = vec![0x4E2Du16; 40];
+            s[3 + p] = u as u16;
+            let want = !(0xD800..=0xDFFF).contains(&u);
+            assert_eq!(verilith_text::utf::neon::no_sur32_neon(&s, 3), want, "neon {u:04X} at {p}");
+            #[cfg(target_arch = "x86_64")]
+            if std::is_x86_feature_detected!("avx2") {
+                assert_eq!(unsafe { verilith_text::utf::avx2::no_sur32(&s, 3) }, want, "avx2 {u:04X} at {p}");
+            }
+        }
+    }
 }
