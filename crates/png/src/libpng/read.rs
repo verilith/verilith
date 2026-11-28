@@ -10,12 +10,18 @@
 //! and IEND, all with correct CRCs (whether a chunk is used despite a bad
 //! CRC is the caller's choice, `png_set_crc_action`, made here). The
 //! decoder's pixels then go through libpng's row logic.
+//!
+//! The decisions about those chunks are verified (`crate::accept`): the
+//! CRC actions, IHDR's checks, whether PLTE and tRNS are used, ignored or
+//! an error, the chunk CRCs and the writing of the decoder's file. The code
+//! here reports what they decide.
 use super::err::*;
 use super::info::{self, alloc_rows, be16, be32, free_rows};
 use super::xform::{self, *};
 use super::*;
 use crate::decode::Tail;
 use crate::top::{decode_tail, PixelFormat};
+use crate::accept::{self, CrcVerdict, Plte, PlteMsg, Seen, TrnsMsg};
 
 /// `mode` bits that are only used here.
 pub const HAVE_CHUNK_AFTER_IDAT: u32 = 0x2000;
@@ -24,10 +30,7 @@ pub const IS_READ_STRUCT: u32 = 0x8000;
 const SEEN_TRNS: u32 = 1 << 12;
 
 // `png_set_crc_action` flags (`Png::crc_flags`).
-const CRC_ANC_USE: u32 = 1;
-const CRC_ANC_NOWARN: u32 = 2;
-const CRC_CRIT_USE: u32 = 4;
-const CRC_CRIT_IGNORE: u32 = 8;
+use crate::accept::{CRC_ANC_NOWARN, CRC_ANC_USE, CRC_CRIT_IGNORE, CRC_CRIT_USE};
 
 const IO_READING: u32 = 0x0001;
 const IO_SIGNATURE: u32 = 0x0010;
@@ -284,18 +287,13 @@ fn crc_update(reg: u32, d: &[u8]) -> u32 {
     verilith_zlib::checksum::cpu::crc32_update(reg, d)
 }
 
-/// Appends a chunk with a correct CRC to the decoder's file.
+/// Appends a chunk with a correct CRC to the decoder's file
+/// (`accept::put_chunk`, verified). The names are libpng's chunk types and
+/// the lengths at most 2^31 - 1 (`read_header`), so it cannot fail; if it
+/// did, the chunk would be missing and the decoder would reject the file.
 fn put_chunk(file: &mut Vec<u8>, name: u32, d: &[u8]) {
-    let c = !crc_update(crc_update(!0, &name.to_be_bytes()), d);
-    put_chunk_crc(file, name, d, c);
-}
-
-/// The same, with the chunk's CRC already computed.
-fn put_chunk_crc(file: &mut Vec<u8>, name: u32, d: &[u8], crc: u32) {
-    file.extend_from_slice(&(d.len() as u32).to_be_bytes());
-    file.extend_from_slice(&name.to_be_bytes());
-    file.extend_from_slice(d);
-    file.extend_from_slice(&crc.to_be_bytes());
+    let ok = accept::put_chunk(file, name, d);
+    debug_assert!(ok);
 }
 
 /// The current chunk's data, as read into `chunk_buf`. The slice is made
@@ -431,19 +429,20 @@ unsafe fn read_body(p: *mut Png, len: u32) -> R<()> {
             crc = crc_update(crc, &(*p).chunk_buf[..n]);
             left -= n;
         }
+        crc = !crc;
     } else {
         (*p).chunk_skipped = false;
         if (*p).chunk_buf.len() < len as usize {
             (*p).chunk_buf.resize(len as usize, 0);
         }
         read_data(p, (*p).chunk_buf.as_mut_ptr(), len as usize)?;
-        crc = crc_update(crc, &(*p).chunk_buf[..len as usize]);
+        crc = accept::chunk_crc(name, &(*p).chunk_buf[..len as usize]);
     }
     let mut c = [0u8; 4];
     (*p).io_state = IO_READING | IO_CHUNK_CRC;
     read_data(p, c.as_mut_ptr(), 4)?;
     (*p).chunk_crc = be32(&c);
-    (*p).chunk_crc_calc = !crc;
+    (*p).chunk_crc_calc = crc;
     Ok(())
 }
 
@@ -451,19 +450,26 @@ unsafe fn read_body(p: *mut Png, len: u32) -> R<()> {
 /// whether it is bad and the data is to be discarded, after the warning
 /// or error the CRC action asks for.
 pub unsafe fn crc_check(p: *mut Png, as_ancillary: bool) -> R<bool> {
-    let f = (*p).crc_flags;
-    let as_anc = as_ancillary && f & CRC_CRIT_IGNORE == 0;
-    let anc = as_anc || !critical((*p).chunk_name);
-    let need = if anc { f & (CRC_ANC_USE | CRC_ANC_NOWARN) != CRC_ANC_USE | CRC_ANC_NOWARN } else { f & CRC_CRIT_IGNORE == 0 };
-    if !need || (*p).chunk_crc == (*p).chunk_crc_calc {
-        return Ok(false);
+    let ok = (*p).chunk_crc == (*p).chunk_crc_calc;
+    match accept::crc_verdict((*p).crc_flags, critical((*p).chunk_name), as_ancillary, ok) {
+        CrcVerdict::Pass => Ok(false),
+        CrcVerdict::Warn => {
+            chunk_warn(p, "CRC error");
+            Ok(true)
+        }
+        CrcVerdict::Fail => Err(chunk_fail(p, "CRC error")),
     }
-    let warn_only = if anc { f & CRC_ANC_NOWARN == 0 } else { f & CRC_CRIT_USE != 0 };
-    if warn_only {
-        chunk_warn(p, "CRC error");
-        Ok(true)
-    } else {
-        Err(chunk_fail(p, "CRC error"))
+}
+
+/// What has been accepted so far, for the verified PLTE and tRNS
+/// decisions.
+unsafe fn seen(p: *mut Png) -> Seen {
+    Seen {
+        plte: (*p).mode & HAVE_PLTE != 0,
+        idat: (*p).mode & HAVE_IDAT != 0,
+        trns: (*p).seen & SEEN_TRNS != 0,
+        bkgd: (*p).seen & info::SEEN_BKGD != 0,
+        num_palette: (*p).num_palette,
     }
 }
 
@@ -594,9 +600,15 @@ unsafe fn handle_known(p: *mut Png, info: *mut Info) -> R<()> {
     // (max length, min length, must be before, must be after, may repeat)
     let t = match name {
         IHDR => (13, 13, HAVE_IHDR, 0, false),
-        PLTE => (u32::MAX, 0, 0, HAVE_IHDR, true),
         IEND => (u32::MAX, 0, 0, AFTER_IDAT, false),
-        TRNS => (256, 0, HAVE_IDAT, HAVE_IHDR, false),
+        PLTE | TRNS => {
+            // libpng's table has no checks for PLTE beyond IHDR; tRNS's
+            // are part of its verified decision.
+            if mode & HAVE_IHDR == 0 {
+                return Err(chunk_fail(p, "missing IHDR"));
+            }
+            return if name == PLTE { handle_plte(p, info) } else { handle_trns(p, info) };
+        }
         _ => {
             if info::is_known(name) {
                 if mode & HAVE_IHDR == 0 {
@@ -617,9 +629,7 @@ unsafe fn handle_known(p: *mut Png, info: *mut Info) -> R<()> {
     let (max, min, before, after, multiple) = t;
     let dup = match name {
         IHDR => mode & HAVE_IHDR != 0,
-        IEND => mode & HAVE_IEND != 0,
-        TRNS => (*p).seen & SEEN_TRNS != 0,
-        _ => false,
+        _ => mode & HAVE_IEND != 0,
     };
     let msg = if mode & before != 0 || mode & after != after {
         Some("out of place")
@@ -639,19 +649,15 @@ unsafe fn handle_known(p: *mut Png, info: *mut Info) -> R<()> {
         crc_check(p, false)?;
         return chunk_benign(p, m);
     }
-    match name {
-        IHDR => handle_ihdr(p, info),
-        PLTE => handle_plte(p, info),
-        IEND => {
-            (*p).mode |= AFTER_IDAT | HAVE_IEND;
-            if len != 0 && !(*p).iend_warned {
-                chunk_benign(p, "invalid")?;
-            }
-            crc_check(p, true)?;
-            Ok(())
-        }
-        _ => handle_trns(p, info),
+    if name == IHDR {
+        return handle_ihdr(p, info);
     }
+    (*p).mode |= AFTER_IDAT | HAVE_IEND;
+    if len != 0 && !(*p).iend_warned {
+        chunk_benign(p, "invalid")?;
+    }
+    crc_check(p, true)?;
+    Ok(())
 }
 
 /// The errors `png_handle_chunk` gives before it reads the chunk's data:
@@ -731,66 +737,59 @@ unsafe fn handle_ihdr(p: *mut Png, info: *mut Info) -> R<()> {
     Ok(())
 }
 
-/// `png_check_IHDR`: a warning for each problem, then an error.
+/// `png_check_IHDR`: a warning for each problem, then an error. Which
+/// problems there are is `accept::ihdr_problems`.
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn check_ihdr(p: *mut Png, w: u32, h: u32, bd: u8, ct: u8, il: u8, comp: u8, filt: u8) -> R<()> {
-    let mut bad = false;
-    let mut warn_if = |c: bool, m: &str| {
-        if c {
-            warn(p, m);
-            bad = true;
-        }
-    };
-    warn_if(w == 0, "Image width is zero in IHDR");
-    warn_if(w > 0x7fff_ffff, "Invalid image width in IHDR");
-    warn_if(w > (*p).user_width_max, "Image width exceeds user limit in IHDR");
-    warn_if(h == 0, "Image height is zero in IHDR");
-    warn_if(h > 0x7fff_ffff, "Invalid image height in IHDR");
-    warn_if(h > (*p).user_height_max, "Image height exceeds user limit in IHDR");
-    warn_if(!matches!(bd, 1 | 2 | 4 | 8 | 16), "Invalid bit depth in IHDR");
-    warn_if(!matches!(ct, 0 | 2 | 3 | 4 | 6), "Invalid color type in IHDR");
-    warn_if(
-        (ct == CT_PALETTE && bd > 8) || (matches!(ct, 2 | 4 | 6) && bd < 8),
+    const MSGS: [&str; 12] = [
+        "Image width is zero in IHDR",
+        "Invalid image width in IHDR",
+        "Image width exceeds user limit in IHDR",
+        "Image height is zero in IHDR",
+        "Invalid image height in IHDR",
+        "Image height exceeds user limit in IHDR",
+        "Invalid bit depth in IHDR",
+        "Invalid color type in IHDR",
         "Invalid color type/bit depth combination in IHDR",
-    );
-    warn_if(il >= 2, "Unknown interlace method in IHDR");
-    warn_if(comp != 0, "Unknown compression method in IHDR");
-    warn_if(filt != 0, "Unknown filter method in IHDR");
-    if bad {
+        "Unknown interlace method in IHDR",
+        "Unknown compression method in IHDR",
+        "Unknown filter method in IHDR",
+    ];
+    let mut d = [0u8; 13];
+    d[..4].copy_from_slice(&w.to_be_bytes());
+    d[4..8].copy_from_slice(&h.to_be_bytes());
+    d[8..].copy_from_slice(&[bd, ct, comp, filt, il]);
+    let bad = accept::ihdr_problems(&d, (*p).user_width_max, (*p).user_height_max);
+    for (b, m) in bad.iter().zip(MSGS) {
+        if *b {
+            warn(p, m);
+        }
+    }
+    if bad.iter().any(|b| *b) {
         return Err(fail(p, "Invalid IHDR data"));
     }
     Ok(())
 }
 
-/// `png_handle_PLTE`.
+/// `png_handle_PLTE`, as `accept::plte_check` decides.
 unsafe fn handle_plte(p: *mut Png, info: *mut Info) -> R<()> {
-    let mode = (*p).mode;
     let ct = (*p).color_type;
-    let len = (*p).chunk_len;
-    let msg = if mode & HAVE_PLTE != 0 {
-        Some("duplicate")
-    } else if mode & HAVE_IDAT != 0 {
-        Some("out of place")
-    } else if ct & COLOR_MASK_COLOR == 0 {
-        Some("ignored in grayscale PNG")
-    } else if len > 768 || len % 3 != 0 {
-        Some("invalid")
-    } else if ct != CT_PALETTE && (*p).seen & (SEEN_TRNS | 64) != 0 {
-        Some("out of place")
-    } else {
-        None
-    };
-    if let Some(m) = msg {
-        if ct == CT_PALETTE {
-            crc_check(p, false)?;
-            return Err(chunk_fail(p, m));
+    let (num, crc_as_anc, forward) = match accept::plte_check(seen(p), ct, (*p).bit_depth, (*p).chunk_len) {
+        Plte::Bad { msg, fatal, crc_as_anc } => {
+            let m = match msg {
+                PlteMsg::Duplicate => "duplicate",
+                PlteMsg::OutOfPlace => "out of place",
+                PlteMsg::Grayscale => "ignored in grayscale PNG",
+                PlteMsg::Invalid => "invalid",
+            };
+            crc_check(p, crc_as_anc)?;
+            return if fatal { Err(chunk_fail(p, m)) } else { chunk_benign(p, m) };
         }
-        crc_check(p, true)?;
-        return chunk_benign(p, m);
-    }
-    let max = if ct == CT_PALETTE { 1u32 << (*p).bit_depth } else { 256 };
-    let num = if len > 3 * max { max } else { len / 3 };
-    crc_check(p, ct != CT_PALETTE)?;
+        Plte::Good { num, crc_as_anc, forward } => (num, crc_as_anc, forward),
+    };
+    // libpng uses the palette whatever the CRC check says, if it is not an
+    // error.
+    crc_check(p, crc_as_anc)?;
     let d = data(p);
     for i in 0..num as usize {
         (*p).palette[i] = png_color { red: d[3 * i], green: d[3 * i + 1], blue: d[3 * i + 2] };
@@ -809,25 +808,25 @@ unsafe fn handle_plte(p: *mut Png, info: *mut Info) -> R<()> {
         (*info).valid |= INFO_PLTE;
         (*info).free_me |= FREE_PLTE;
     }
-    if ct == CT_PALETTE {
+    if forward {
         put_chunk(&mut (*p).file, PLTE, d);
     }
     Ok(())
 }
 
-/// `png_handle_tRNS`.
+/// `png_handle_chunk`'s checks for tRNS and `png_handle_tRNS`, as
+/// `accept::trns_check` decides.
 unsafe fn handle_trns(p: *mut Png, info: *mut Info) -> R<()> {
     let ct = (*p).color_type;
     let len = (*p).chunk_len as usize;
-    let msg = match ct {
-        CT_GRAY if len != 2 => Some("invalid"),
-        CT_RGB if len != 6 => Some("invalid"),
-        CT_PALETTE if (*p).mode & HAVE_PLTE == 0 => Some("out of place"),
-        CT_PALETTE if len > (*p).num_palette as usize || len > 256 || len == 0 => Some("invalid"),
-        CT_GA | CT_RGBA => Some("invalid with alpha channel"),
-        _ => None,
-    };
-    if let Some(m) = msg {
+    if let Some(msg) = accept::trns_check(seen(p), ct, (*p).chunk_len) {
+        let m = match msg {
+            TrnsMsg::OutOfPlace => "out of place",
+            TrnsMsg::Duplicate => "duplicate",
+            TrnsMsg::TooLong => "too long",
+            TrnsMsg::Invalid => "invalid",
+            TrnsMsg::AlphaChannel => "invalid with alpha channel",
+        };
         crc_check(p, false)?;
         return chunk_benign(p, m);
     }
@@ -930,7 +929,7 @@ unsafe fn take_idat(p: *mut Png, len: u32) -> R<()> {
     read_body(p, len)?;
     crc_check(p, false)?;
     let d = data(p);
-    put_chunk_crc(&mut (*p).file, IDAT, d, (*p).chunk_crc_calc);
+    put_chunk(&mut (*p).file, IDAT, d);
     (*p).idat_lens.push(len);
     Ok(())
 }
@@ -1978,7 +1977,7 @@ unsafe fn push_step(p: *mut Png, info: *mut Info) -> R<bool> {
             read_body(p, len)?;
             (*p).push_header = false;
             crc_check(p, false)?;
-            put_chunk_crc(&mut (*p).file, IDAT, data(p), (*p).chunk_crc_calc);
+            put_chunk(&mut (*p).file, IDAT, data(p));
             (*p).idat_lens.push(len);
             Ok(true)
         }
