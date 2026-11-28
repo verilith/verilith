@@ -561,61 +561,6 @@ fn plain_byte(c: u8) -> (r: bool)
     !(c == 0x09 || (0x20 <= c && c < 0x80 && c != 0x3C && c != 0x26 && c != 0x5D))
 }
 
-/// The first `c` in `s`.
-#[inline]
-pub fn find_byte(s: &[u8], c: u8) -> (r: Option<usize>)
-    ensures
-        r is Some ==> r->0 < s@.len() && s@[r->0 as int] == c,
-        forall|q: int| 0 <= q < s@.len() && (r is None || q < r->0) ==> #[trigger] s@[q] != c,
-{
-    let len = buf_len(s);
-    let mut p: usize = 0;
-    while len - p >= 16
-        invariant
-            p <= len == s@.len(),
-            forall|q: int| 0 <= q < p ==> #[trigger] s@[q] != c,
-        decreases len - p,
-    {
-        let m = eq_mask(s, p, c);
-        let t = first_set16(m);
-        proof {
-            assert forall|q: int| 0 <= q < p + t implies #[trigger] s@[q] != c by {
-                if q >= p {
-                    assert(!bit(m, (q - p) as u32));
-                    assert(s@[p + (q - p) as u32] == s@[q]);
-                }
-            }
-        }
-        if t < 16 {
-            proof {
-                assert(bit(m, t as u32));
-            }
-            return Some(p + t);
-        }
-        p = p + 16;
-    }
-    while p < len
-        invariant
-            p <= len == s@.len(),
-            forall|q: int| 0 <= q < p ==> #[trigger] s@[q] != c,
-        decreases len - p,
-    {
-        if s[p] == c {
-            return Some(p);
-        }
-        p = p + 1;
-    }
-    None
-}
-
-#[inline(always)]
-fn buf_len(s: &[u8]) -> (n: usize)
-    ensures
-        n == s@.len(),
-{
-    s.len()
-}
-
 /// No byte of `s` is `att_bad`.
 #[inline]
 pub fn att_plain(s: &[u8]) -> (r: bool)

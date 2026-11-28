@@ -90,6 +90,7 @@ pub mod avx512;
 pub mod mask;
 pub mod sse2;
 pub mod scalar;
+pub mod find;
 pub mod crc;
 pub mod sha;
 pub mod sha_ref;

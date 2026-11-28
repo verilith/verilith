@@ -112,13 +112,11 @@ pub fn colon(s: &[u8]) -> Option<usize> {
 /// The first `&` in `s`.
 #[inline]
 pub fn find_amp(s: &[u8]) -> Option<usize> {
-    #[cfg(target_arch = "x86_64")]
-    {
-        crate::lscan::find_byte(s, b'&')
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        s.iter().position(|&c| c == b'&')
+    let (q, _) = verilith_simd::find::find_byte(s, 0, b'&');
+    if q < s.len() {
+        Some(q)
+    } else {
+        None
     }
 }
 

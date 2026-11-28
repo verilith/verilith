@@ -125,6 +125,11 @@ its own trusted base.
   little endian (`crc_bytes`), and their run-time checks `has_crc32c`
   and `has_crc_arm`. `tests/crc.rs` checks each against that definition
   bit by bit on random registers and bytes.
+- `src/find.rs`: `find_byte`, the next occurrence of a byte, 16 bytes at
+  a time and 64 while it stays absent (SSE2 on x86-64, NEON on AArch64,
+  the same generic scanner on wasm32's SIMD), verified against the plain
+  definition `first_at` from the wrappers above; nothing trusted. Used by
+  verilith-regex and verilith-xml.
 - `src/clmul.rs` (wrappers x86-64 only): carry-less multiplication as
   verilith-checksum's CRC-32 folding kernels use it, one safe wrapper each
   with a contract on a vector's 128-bit blocks (`xv`, `yl`, `zl`): 16-,
