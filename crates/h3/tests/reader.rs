@@ -48,7 +48,7 @@ fn src(r: &Reader, input: &[u8], s: Src) -> Vec<u8> {
 /// Feeds `pieces` in turn (the last with fin), collecting events.
 fn feed(mut r: Reader, pieces: &[&[u8]]) -> Vec<Out> {
     let mut out: Vec<Out> = Vec::new();
-    let mut push = |o: Out, out: &mut Vec<Out>| {
+    let push = |o: Out, out: &mut Vec<Out>| {
         if let (Out::Data(d), Some(Out::Data(prev))) = (&o, out.last_mut()) {
             prev.extend_from_slice(d);
             return;
