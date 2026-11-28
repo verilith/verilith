@@ -1885,7 +1885,7 @@ pub fn gkind_x(s: &[u8]) -> (r: Result<GKind, Fail>)
     } else if is_fp(s) {
         Ok(GKind::Fp)
     } else if is_sm(s) {
-        Err(Fail::Unprocessable("Smart gravity is not supported"))
+        Ok(GKind::Sm)
     } else {
         Err(Fail::BadUrl("Invalid gravity"))
     }
@@ -2274,6 +2274,122 @@ pub fn is_gif(s: &[u8]) -> (r: bool)
     r
 }
 
+/// Whether `s` is `blur`.
+pub fn is_blur(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'b', b'l', b'u', b'r']),
+{
+    let t: [u8; 4] = [b'b', b'l', b'u', b'r'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'b', b'l', b'u', b'r']);
+    }
+    r
+}
+
+/// Whether `s` is `bl`.
+pub fn is_bl(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'b', b'l']),
+{
+    let t: [u8; 2] = [b'b', b'l'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'b', b'l']);
+    }
+    r
+}
+
+/// Whether `s` is `sharpen`.
+pub fn is_sharpen(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b's', b'h', b'a', b'r', b'p', b'e', b'n']),
+{
+    let t: [u8; 7] = [b's', b'h', b'a', b'r', b'p', b'e', b'n'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b's', b'h', b'a', b'r', b'p', b'e', b'n']);
+    }
+    r
+}
+
+/// Whether `s` is `sh`.
+pub fn is_sh(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b's', b'h']),
+{
+    let t: [u8; 2] = [b's', b'h'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b's', b'h']);
+    }
+    r
+}
+
+/// Whether `s` is `watermark`.
+pub fn is_watermark(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'w', b'a', b't', b'e', b'r', b'm', b'a', b'r', b'k']),
+{
+    let t: [u8; 9] = [b'w', b'a', b't', b'e', b'r', b'm', b'a', b'r', b'k'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'w', b'a', b't', b'e', b'r', b'm', b'a', b'r', b'k']);
+    }
+    r
+}
+
+/// Whether `s` is `wm`.
+pub fn is_wm(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'w', b'm']),
+{
+    let t: [u8; 2] = [b'w', b'm'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'w', b'm']);
+    }
+    r
+}
+
+/// Whether `s` is `re`.
+pub fn is_re(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'r', b'e']),
+{
+    let t: [u8; 2] = [b'r', b'e'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'r', b'e']);
+    }
+    r
+}
+
+/// `watermark_opt` of the arguments of `p`.
+pub fn watermark_opt_x(p: &Vec<Vec<u8>>) -> (r: Result<(u32, Gravity, bool, u32), Fail>)
+    requires
+        p@.len() >= 1,
+    ensures
+        r is Ok <==> watermark_opt(views(p@).skip(1)) is Some,
+        r is Ok ==> watermark_opt(views(p@).skip(1)) == Some(r->Ok_0),
+        r is Ok ==> grav_ok(r->Ok_0.1),
+{
+    let tile = is_re(arg_x(p, 1).as_slice());
+    let g = if tile {
+        let x = sint_x(arg_x(p, 2).as_slice())?;
+        let y = sint_x(arg_x(p, 3).as_slice())?;
+        Gravity { kind: GKind::Ce, x, y }
+    } else {
+        gravity_x(p, 1)?
+    };
+    let op = fixed4_x(arg_x(p, 0).as_slice())?;
+    let sc = fixed4z_x(arg_x(p, 4).as_slice())?;
+    if op > 10000 {
+        return Err(Fail::BadUrl("Invalid watermark opacity"));
+    }
+    Ok((op, g, tile, sc))
+}
+
 /// `num64`.
 pub fn num64_x(s: &[u8]) -> (r: Result<u64, Fail>)
     ensures
@@ -2485,6 +2601,15 @@ pub fn apply2_x(o: Options, p: &Vec<Vec<u8>>) -> (r: Result<Options, Fail>)
     } else if is_skip_processing(n) || is_skp(n) {
         let m = kinds_x(p)?;
         Ok(Options { skip: m, ..o })
+    } else if is_watermark(n) || is_wm(n) {
+        let (op, g, t, sc) = watermark_opt_x(p)?;
+        Ok(Options { wm_op: op, wm_g: g, wm_tile: t, wm_scale: sc, ..o })
+    } else if is_blur(n) || is_bl(n) {
+        let v = fixed4z_x(arg_x(p, 0).as_slice())?;
+        Ok(Options { blur: v, ..o })
+    } else if is_sharpen(n) || is_sh(n) {
+        let v = fixed4z_x(arg_x(p, 0).as_slice())?;
+        Ok(Options { sharpen: v, ..o })
     } else if is_filename(n) || is_fn(n) {
         let _ = fname_arg_x(p)?;
         Ok(o)
@@ -2607,6 +2732,12 @@ pub fn defaults_x() -> (r: Options)
         attachment: false,
         raw: false,
         skip: 0,
+        blur: 0,
+        sharpen: 0,
+        wm_op: 0,
+        wm_g: Gravity { kind: GKind::Ce, x: 0, y: 0 },
+        wm_tile: false,
+        wm_scale: 0,
     }
 }
 

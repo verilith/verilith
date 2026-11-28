@@ -187,7 +187,7 @@ fn rotate_before_sizes() {
 #[test]
 fn bad_geometry_options() {
     for bad in [
-        "g:sm",
+        "g:sm:x",
         "g:up",
         "g:fp:1.5:0",
         "g:no:x",

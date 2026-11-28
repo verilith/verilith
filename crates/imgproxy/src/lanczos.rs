@@ -333,7 +333,7 @@ fn kw_x(kt: &[i32], x: usize, i: i64, s: usize, d: usize) -> (r: i32)
 }
 
 /// `kdiv` for the sizes the passes reach.
-fn kdiv_x(n: i64, w: i64, scale: i64) -> (r: i64)
+pub fn kdiv_x(n: i64, w: i64, scale: i64) -> (r: i64)
     requires
         -0x8_0000_0000_0000 <= n <= 0x8_0000_0000_0000,
         -0x8_0000_0000_0000 <= w <= 0x8_0000_0000_0000,
@@ -546,7 +546,7 @@ pub open spec fn khval(kt: Seq<int>, src: Seq<u8>, sw: int, dw: int, k: int) -> 
 
 /// Source sample `i` of a line `s` long, edges repeated.
 #[inline(always)]
-fn kc_x(i: i64, s: usize) -> (r: usize)
+pub fn kc_x(i: i64, s: usize) -> (r: usize)
     requires
         1 <= s <= MAX_DIM,
     ensures

@@ -35,6 +35,9 @@ pub enum GKind {
     SoWe,
     /// A focus point: `x` and `y` are fractions of the width and height.
     Fp,
+    /// Smart (`spec_smart`): the pipeline finds the point and plans with
+    /// it as a focus point; planned as it is, it is the centre.
+    Sm,
 }
 
 /// A gravity: compass offsets in pixels (times `dpr` where the result's
@@ -268,6 +271,68 @@ pub open spec fn turn(src: Seq<u8>, w: int, h: int, q: int, fh: bool, fv: bool) 
             {
                 let s = turn_src(w, h, q, fh, fv, (k / NC) % ow, (k / NC) / ow);
                 src[(s.1 * w + s.0) * NC + k % NC]
+            },
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Watermarks
+// ---------------------------------------------------------------------------
+
+/// Where a `ww` by `wh` watermark goes on a `w` by `h` image, at gravity
+/// `g` (its offsets times `dpr`).
+pub open spec fn wm_at(w: int, h: int, ww: int, wh: int, g: Gravity, dpr: int) -> (int, int) {
+    (place(w, ww, hside(g.kind), g.x as int, dpr), place(h, wh, vside(g.kind), g.y as int, dpr))
+}
+
+/// One channel of a watermark pixel (value `sv`, alpha `sa`) laid over an
+/// image pixel (value `dv`, alpha `da`) at opacity `op` (`F1` units):
+/// Porter-Duff "over" with straight alpha, rounded to nearest. `alpha`
+/// says the channel is the alpha channel.
+pub open spec fn over_c(dv: int, da: int, sv: int, sa: int, op: int, alpha: bool) -> int {
+    let a = (sa * op + F1 / 2) / F1;
+    let oa = a * 255 + da * (255 - a);
+    if oa == 0 {
+        0
+    } else if alpha {
+        (oa + 127) / 255
+    } else {
+        (sv * a * 255 + dv * da * (255 - a) + oa / 2) / oa
+    }
+}
+
+/// `dst` (`w` by `h`) with the watermark `wm` (`ww` by `wh`) laid over it
+/// at opacity `op`: once with its top left at `(x, y)`, or (`tile`) every
+/// `pw` pixels across and `ph` down from the top left.
+pub open spec fn watermark(
+    dst: Seq<u8>,
+    w: int,
+    h: int,
+    wm: Seq<u8>,
+    ww: int,
+    wh: int,
+    x: int,
+    y: int,
+    tile: bool,
+    pw: int,
+    ph: int,
+    op: int,
+) -> Seq<u8> {
+    Seq::new(
+        (w * h * NC) as nat,
+        |k: int|
+            {
+                let px = (k / NC) % w;
+                let py = (k / NC) / w;
+                let c = k % NC;
+                let sx = if tile { px % pw } else { px - x };
+                let sy = if tile { py % ph } else { py - y };
+                if 0 <= sx < ww && 0 <= sy < wh {
+                    let ks = (sy * ww + sx) * NC;
+                    over_c(dst[k] as int, dst[k - c + 3] as int, wm[ks + c] as int, wm[ks + 3] as int, op, c == 3) as u8
+                } else {
+                    dst[k]
+                }
             },
     )
 }

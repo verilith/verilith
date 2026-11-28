@@ -53,6 +53,7 @@ fn proxy_trusting(roots: Vec<Vec<u8>>) -> Proxy {
         tls: Some(proxy::tls_config(roots)),
         allowed: Vec::new(),
         ttl: 60,
+        watermark: None,
     }
 }
 
