@@ -141,8 +141,12 @@ pub fn crc32_update(reg: u32, d: &[u8]) -> (r: u32)
     super::crc32_update(reg, d)
 }
 
-/// The shortest input the 512-bit kernel takes (it needs 256 bytes; below
-/// 512 the 256-bit kernel is as fast).
+/// The shortest input the 512-bit kernel takes. It needs 256 bytes. 512 is
+/// the cutoff that keeps every call within 1.16x of the faster of the two
+/// wide kernels, at each length from 256 to 4096 bytes, on llvm-mca's Ice
+/// Lake, Sapphire Rapids and Zen 4 models of the instructions each one
+/// executes (`bench/crossover`: `cutoff.py lat`). Below 512, the 512-bit
+/// kernel's serial 64-byte tail makes it slower on Intel.
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub const VPCLMUL_MIN: usize = 512;
 
