@@ -731,6 +731,91 @@ pub proof fn lemma_or_bits(x: u64, y: u64, c: u64, n: nat)
     ;
 }
 
+
+/// A position in a `BitWriter` to go back to (`BitWriter::reset`). The
+/// ghost fields are only read by proofs.
+#[allow(dead_code)]
+pub struct Mark {
+    len: usize,
+    acc: u64,
+    nacc: u32,
+    w: Ghost<Seq<nat>>,
+    gone: Ghost<Seq<u8>>,
+}
+
+impl Mark {
+    pub closed spec fn bits(&self) -> Seq<nat> {
+        self.w@
+    }
+
+    pub closed spec fn sent(&self) -> Seq<u8> {
+        self.gone@
+    }
+
+    pub closed spec fn wf(&self) -> bool {
+        &&& self.nacc < 8
+        &&& self.w@.len() == 8 * (self.gone@.len() + self.len) + self.nacc
+        &&& is_bits(self.w@)
+        &&& self.acc as nat == wbits(self.w@, 8 * (self.gone@.len() + self.len), self.nacc as nat)
+    }
+}
+
+impl BitWriter {
+    /// The position now, to come back to with `reset`.
+    pub fn mark(&self) -> (m: Mark)
+        requires
+            self.wf(),
+        ensures
+            m.wf(),
+            m.bits() == self.bits(),
+            m.sent() == self.sent(),
+    {
+        Mark { len: self.out.len(), acc: self.acc, nacc: self.nacc, w: Ghost(self.w@), gone: Ghost(self.gone@) }
+    }
+
+    /// Forgets every bit written since `m`. Nothing may have been taken
+    /// in between.
+    pub fn reset(&mut self, m: &Mark)
+        requires
+            old(self).wf(),
+            m.wf(),
+            m.sent() == old(self).sent(),
+            m.bits().len() <= old(self).bits().len(),
+            m.bits() == old(self).bits().subrange(0, m.bits().len() as int),
+        ensures
+            final(self).wf(),
+            final(self).bits() == m.bits(),
+            final(self).sent() == old(self).sent(),
+    {
+        let ghost w0 = self.w@;
+        let ghost wm = m.w@;
+        let ghost o0 = self.bytes();
+        proof {
+            assert(m.len <= self.out@.len());
+            assert(w0 =~= wm + w0.subrange(wm.len() as int, w0.len() as int));
+        }
+        self.out.truncate(m.len);
+        self.acc = m.acc;
+        self.nacc = m.nacc;
+        self.w = Ghost(wm);
+        proof {
+            assert(self.bytes() =~= o0.subrange(0, self.bytes().len() as int));
+            assert forall|i: int| 0 <= i < self.bytes().len() implies #[trigger] self.bytes()[i] as nat == wbits(self.w@, 8 * i, 8) by {
+                assert(self.bytes()[i] == o0[i]);
+                lemma_wbits_prefix(wm, w0.subrange(wm.len() as int, w0.len() as int), 8 * i, 8);
+            }
+        }
+    }
+
+    /// The number of bits written since `m` (for size decisions only).
+    pub fn bits_since(&self, m: &Mark) -> u64 {
+        let a = if self.out.len() >= m.len { (self.out.len() - m.len) as u64 } else { 0 };
+        let a = if a > 0x1000_0000_0000 { 0x1000_0000_0000 } else { a };
+        let b = 8 * a + self.nacc as u64;
+        if b >= m.nacc as u64 { b - m.nacc as u64 } else { 0 }
+    }
+}
+
 } // verus!
 
 impl BitWriter {

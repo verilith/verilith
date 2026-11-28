@@ -17,6 +17,8 @@
 //! shortest match. That is the spec's definition, so the proof never needs
 //! the (true, but harder) fact that valid codes are prefix-free.
 #[cfg(verus_only)]
+use crate::bits::*;
+#[cfg(verus_only)]
 use crate::huffman::*;
 #[cfg(verus_only)]
 use vstd::arithmetic::div_mod::*;
@@ -1606,6 +1608,87 @@ pub fn decode_slow(code: &HCode, buf: u64, cnt: u32, Ghost(lens): Ghost<Seq<u8>>
     proof {
         lemma2_to64();
     }
+    while l <= MAX_LEN as u32
+        invariant
+            1 <= l <= 16,
+            l - 1 <= cnt,
+            code_ok(*code, lens),
+            lens.len() <= MAX_ALPHA,
+            pow2(15) == 32768,
+            v as nat == rev(buf as nat, (l - 1) as nat),
+            v < pow2((l - 1) as nat),
+            decode_num(lens, buf as nat, cnt as nat, 1) == decode_num(
+                lens,
+                buf as nat,
+                cnt as nat,
+                l as nat,
+            ),
+        decreases 16 - l,
+    {
+        if l > cnt {
+            return (None, Ghost(l as nat));
+        }
+        proof {
+            lemma_rev_unfold(buf as nat, l as nat);
+            lemma_u64_shr_is_div(buf, (l - 1) as u64);
+            let sh = buf >> ((l - 1) as u64);
+            assert((sh & 1u64) == sh % 2) by (bit_vector);
+            lemma_pow2_unfold(l as nat);
+            if l < 15 {
+                lemma_pow2_strictly_increases(l as nat, 15);
+            }
+            assert(len_ok(*code, lens, l as nat));
+        }
+        v = 2 * v + ((buf >> ((l - 1) as u64)) & 1) as u32;
+        let f = code.first[l as usize];
+        let c = code.count[l as usize] as u32;
+        if v >= f && v - f < c {
+            let s = code.sorted[code.offs[l as usize] as usize + (v - f) as usize];
+            assert(s as int == nth_with_len(lens, l as nat, (v - f) as nat, 0));
+            proof {
+                assert(count_below(lens, l as nat, 0) == 0);
+                lemma_nth_bound(lens, l as nat, (v - f) as nat, 0);
+            }
+            return (Some(entry(s as u32, l)), Ghost(l as nat));
+        }
+        l = l + 1;
+    }
+    (None, Ghost(15))
+}
+
+/// `decode_slow` for an entry the table says is `LONG`: no code of at most
+/// `tbits` bits matches, so the walk starts at length `tbits + 1`, with the
+/// first `tbits` bits reversed at once.
+#[inline(never)]
+pub fn decode_long(code: &HCode, buf: u64, cnt: u32, Ghost(lens): Ghost<Seq<u8>>) -> (r:
+    (Option<u32>, Ghost<nat>))
+    requires
+        code_ok(*code, lens),
+        lens.len() <= MAX_ALPHA,
+        1 <= code.tbits <= MAX_ROOT,
+        decode_num(lens, (buf as nat) % pow2(code.tbits as nat), code.tbits as nat, 1) is None,
+    ensures
+        r.0 == slow_result(lens, buf as nat, cnt as nat),
+        r.1@ <= 15,
+{
+    let t = code.tbits;
+    if t > cnt {
+        return decode_slow(code, buf, cnt, Ghost(lens));
+    }
+    proof {
+        lemma2_to64();
+        lemma_mask(t as u64);
+        lemma_and_mask(buf, t as u64);
+        lemma_pow2_strictly_increases(t as nat, 11);
+        lemma_decode_num_skip(lens, buf as nat, cnt as nat, t as nat, 1);
+        lemma_rev_mod(buf as nat, t as nat, t as nat);
+    }
+    let low = (buf & ((1u64 << (t as u64)) - 1)) as u32;
+    let mut v = reverse_fast(low, t);
+    proof {
+        lemma_rev_bound(buf as nat, t as nat);
+    }
+    let mut l: u32 = t + 1;
     while l <= MAX_LEN as u32
         invariant
             1 <= l <= 16,

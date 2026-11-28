@@ -732,12 +732,14 @@ fn backref(
 
 /// Decodes the pixels of one literal, backward reference or cache code.
 #[verifier::rlimit(100)]
-/// Decodes pixel `i` if it is a color cache symbol, or a literal whose four
-/// codes are all in their tables: the common cases, with no per-symbol
-/// input checks. At least 8 input bytes remain, so a refill leaves at least
-/// 56 bits; a table code takes at most `MAX_ROOT` = 10, and `peek` needs 15
-/// bits, so the reader refills once, first, if it has fewer than 45 bits.
-/// Returns `false` with nothing changed otherwise.
+/// Decodes pixel `i` if it is a color cache symbol, or a literal whose red,
+/// blue and alpha codes are in their tables: the common cases, with no
+/// per-symbol input checks. The green code may be longer than its table
+/// (`peek_full16`, up to 15 bits). At least 8 input bytes remain, so a refill
+/// leaves at least 56 bits. The reader refills first if it has fewer than
+/// 40 bits, enough for four table codes (`MAX_ROOT` = 10 bits each), and
+/// again before red only if a long green code left fewer than 30. Returns
+/// `false` with nothing changed otherwise.
 #[inline(always)]
 #[verifier::spinoff_prover]
 #[verifier::rlimit(80)]
@@ -769,7 +771,7 @@ fn try_lit(
         r ==> {
             &&& final(br).ok(data@)
             &&& final(br).pos() >= old(br).pos()
-            &&& final(br).work@ <= old(br).work@ + 2 * refill_cost() + 4
+            &&& final(br).work@ <= old(br).work@ + 2 * refill_cost() + 19
             &&& final(out)@.len() == old(out)@.len()
             &&& final(cache)@.len() == old(cache)@.len()
             &&& decode_pixels(data@, final(br).pos(), img, final(out)@.subrange(0, i + 1), final(cache)@)
@@ -784,29 +786,33 @@ fn try_lit(
         reveal(group_ok);
         assert(hcode_ok(g.codes@[0], gls[0]) && hcode_ok(g.codes@[1], gls[1]) && hcode_ok(g.codes@[2], gls[2])
             && hcode_ok(g.codes@[3], gls[3]));
+        assert(fast_ok(g.tab@, g.off@[0] as nat, g.codes@[0]) && fast_ok(g.tab@, g.off@[1] as nat, g.codes@[1])
+            && fast_ok(g.tab@, g.off@[2] as nat, g.codes@[2]) && fast_ok(g.tab@, g.off@[3] as nat, g.codes@[3]));
+        assert(g.mask@[0] == lowmask(g.codes@[0].tbits as u64) && g.mask@[1] == lowmask(g.codes@[1].tbits as u64)
+            && g.mask@[2] == lowmask(g.codes@[2].tbits as u64) && g.mask@[3] == lowmask(g.codes@[3].tbits as u64));
         lemma_dp_unfold(b, p0, img, pre, old(cache)@);
     }
     let mut t = BitReader { buf: br.buf, cnt: br.cnt, ip: br.ip, work: Ghost(br.work@) };
-    if t.cnt < 45 {
+    if t.cnt < 40 {
         t.refill(data);
     }
     proof {
         // A refill that reached the end of the input took at least 64 bits.
-        assert(t.cnt >= 45);
+        assert(t.cnt >= 40);
         lemma_bits_bound(b, p0, t.cnt as nat);
     }
-    let e0 = peek(&g.codes[0], t.buf, Ghost(b), Ghost(p0), Ghost(t.cnt as nat), Ghost(gls[0]));
-    if e0 == LONG || ((e0 & 0xffff) >= 256 && (e0 & 0xffff) < 280) {
+    let (e0, Ghost(lw0)) = peek_full16(g, 0, t.buf, t.cnt, Ghost(b), Ghost(p0), Ghost(gls[0]));
+    if e0 == 0xffff || ((e0 & 0xfff) >= 256 && (e0 & 0xfff) < 280) {
         return false;
     }
-    let k0 = e0 >> 16;
-    let s = e0 & 0xffff;
+    let k0 = e0 >> 12;
+    let s = e0 & 0xfff;
     proof {
         lemma_shr_bits(b, p0, t.cnt as nat, t.buf, k0 as u64);
     }
     t.buf = t.buf >> (k0 as u64);
     t.cnt = t.cnt - k0;
-    t.work = Ghost(t.work@ + 1);
+    t.work = Ghost(t.work@ + 1 + lw0);
     let ghost p1 = t.pos();
     if s >= 280 {
         // A color cache symbol.
@@ -824,43 +830,50 @@ fn try_lit(
         }
         return true;
     }
+    // Red, blue and alpha take at most 30 bits; fewer are left only after a
+    // green code longer than its table.
+    if t.cnt < 30 {
+        t.refill(data);
+        if t.cnt < 30 {
+            return false;
+        }
+    }
     proof {
-        assert(t.cnt >= 35);
         lemma_bits_bound(b, p1, t.cnt as nat);
         lemma_lit_unfold(b, p1, img, pre, old(cache)@, s as nat);
     }
-    let e1 = peek(&g.codes[1], t.buf, Ghost(b), Ghost(p1), Ghost(t.cnt as nat), Ghost(gls[1]));
-    if e1 == LONG {
+    let e1 = peek16(g, 1, t.buf, Ghost(b), Ghost(p1), Ghost(t.cnt as nat), Ghost(gls[1]));
+    if e1 == 0xffff {
         return false;
     }
-    let k1 = e1 >> 16;
+    let k1 = e1 >> 12;
     proof {
         lemma_shr_bits(b, p1, t.cnt as nat, t.buf, k1 as u64);
     }
     let buf = t.buf >> (k1 as u64);
     let ghost p2 = p1 + k1;
-    let e2 = peek(&g.codes[2], buf, Ghost(b), Ghost(p2), Ghost((t.cnt - k1) as nat), Ghost(gls[2]));
-    if e2 == LONG {
+    let e2 = peek16(g, 2, buf, Ghost(b), Ghost(p2), Ghost((t.cnt - k1) as nat), Ghost(gls[2]));
+    if e2 == 0xffff {
         return false;
     }
-    let k2 = e2 >> 16;
+    let k2 = e2 >> 12;
     proof {
         lemma_shr_bits(b, p2, (t.cnt - k1) as nat, buf, k2 as u64);
     }
     let buf = buf >> (k2 as u64);
     let ghost p3 = p2 + k2;
-    let e3 = peek(&g.codes[3], buf, Ghost(b), Ghost(p3), Ghost((t.cnt - k1 - k2) as nat), Ghost(gls[3]));
-    if e3 == LONG {
+    let e3 = peek16(g, 3, buf, Ghost(b), Ghost(p3), Ghost((t.cnt - k1 - k2) as nat), Ghost(gls[3]));
+    if e3 == 0xffff {
         return false;
     }
-    let k3 = e3 >> 16;
+    let k3 = e3 >> 12;
     proof {
         lemma_shr_bits(b, p3, (t.cnt - k1 - k2) as nat, buf, k3 as u64);
     }
     let buf = buf >> (k3 as u64);
-    let r = e1 & 0xffff;
-    let bl = e2 & 0xffff;
-    let a = e3 & 0xffff;
+    let r = e1 & 0xfff;
+    let bl = e2 & 0xfff;
+    let a = e3 & 0xfff;
     proof {
         lemma_argb(a, r, s, bl);
     }

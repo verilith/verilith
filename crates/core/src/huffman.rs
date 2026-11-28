@@ -411,6 +411,38 @@ pub proof fn lemma_no_match_above(lens: Seq<u8>, x: nat, l: nat)
     }
 }
 
+/// No code of at most `t` bits is a prefix of `x % 2^t`: decoding `x`
+/// from length `l <= t + 1` is decoding it from length `t + 1`.
+pub proof fn lemma_decode_num_skip(lens: Seq<u8>, x: nat, avail: nat, t: nat, l: nat)
+    requires
+        1 <= l <= t + 1,
+        t <= avail,
+        t <= MAX_BITS,
+        decode_num(lens, x % pow2(t), t, l) is None,
+    ensures
+        decode_num(lens, x, avail, l) == decode_num(lens, x, avail, t + 1),
+    decreases t + 1 - l,
+{
+    if l <= t {
+        lemma_rev_mod(x, l, t);
+        lemma_decode_num_step(lens, x % pow2(t), t, l);
+        assert(!matches_at(lens, x % pow2(t), l));
+        lemma_decode_num_skip(lens, x, avail, t, l + 1);
+        assert(!matches_at(lens, x, l));
+    }
+}
+
+/// One step of `decode_num`: a length that does not match is skipped.
+pub proof fn lemma_decode_num_step(lens: Seq<u8>, y: nat, t: nat, l: nat)
+    requires
+        1 <= l <= t,
+        t <= 15,
+    ensures
+        !matches_at(lens, y, l) ==> decode_num(lens, y, t, l) == decode_num(lens, y, t, l + 1),
+        matches_at(lens, y, l) ==> decode_num(lens, y, t, l) is Some,
+{
+}
+
 /// `decode_num` finds the first length that matches.
 pub proof fn lemma_decode_num_first(lens: Seq<u8>, x: nat, avail: nat, l: nat, m: nat)
     requires

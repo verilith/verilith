@@ -63,8 +63,8 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xml | 9 |  |  |  |  |  | 12 |
 | xxhash |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 |
-| zstd | 5 |  |  |  |  |  | 2 |
-| **total** | **699** | **36** | **290** | **7** | **17** | **12** | **134** |
+| zstd | 6 |  |  |  |  |  | 2 |
+| **total** | **700** | **36** | **290** | **7** | **17** | **12** | **134** |
 
 ## Items
 
@@ -390,5 +390,5 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 - `crates/zstd/src/capi.rs`: plain Rust
 - `crates/zstd/src/ccapi.rs`: plain Rust
-- `crates/zstd/src/cpu.rs`: external_body: `run_seqs`, `run_huf4`, `run_huf1`
+- `crates/zstd/src/cpu.rs`: external_body: `run_seqs`, `run_check`, `run_huf4`, `run_huf1`
 - `crates/zstd/src/prims.rs`: external_body: `put_pairs4`, `extend_from`

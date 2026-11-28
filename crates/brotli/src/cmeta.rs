@@ -19,26 +19,6 @@ verus! {
 // The header of a compressed meta-block, with one block type per category
 // ---------------------------------------------------------------------------
 
-/// `NBLTYPES = 1` for category `c`: a single 0 bit.
-#[verifier::spinoff_prover]
-pub proof fn lemma_nbt1(w: Seq<nat>, s: St, c: int)
-    requires
-        s.phase == Phase::NBlockTypes(c),
-        s.pos == w.len(),
-    ensures
-        moves(w, fld(0, 1), s, St { phase: after_cat(c), pos: s.pos + 1, nbt: s.nbt.update(c, 1), ..s }),
-{
-    lemma_pow2_small();
-    lemma_bits_of(0, 1);
-    let t = St { phase: after_cat(c), pos: s.pos + 1, nbt: s.nbt.update(c, 1), ..s };
-    assert forall|b: Seq<u8>| #[trigger] ext(b, w + fld(0, 1)) implies step(b, s) == Step::Next(t) by {
-        assert(w + fld(0, 1) =~= w + (fld(0, 1) + Seq::<nat>::empty()));
-        lemma_rd(b, w, 0, 1, Seq::empty());
-        crate::decoder::lemma_step_nbt(b, s, c);
-    }
-    lemma_moves_step(w, fld(0, 1), s, t);
-}
-
 /// `NPOSTFIX = 0`, `NDIRECT = 0`.
 #[verifier::spinoff_prover]
 pub proof fn lemma_dparams0(w: Seq<nat>, s: St)
@@ -58,39 +38,6 @@ pub proof fn lemma_dparams0(w: Seq<nat>, s: St)
         assert(0 * pow2(0) == 0);
     }
     lemma_moves_step(w, fld(0, 6), s, t);
-}
-
-/// The context mode of the one literal block type, then on to the
-/// literal context map.
-#[verifier::spinoff_prover]
-pub proof fn lemma_cmodes1(w: Seq<nat>, s: St, mode: int)
-    requires
-        s.phase is CModes,
-        s.pos == w.len(),
-        s.cmodes.len() == 0,
-        s.nbt[0] == 1,
-        0 <= mode < 4,
-    ensures
-        moves(w, fld(mode as nat, 2), s, St { phase: Phase::CMap(0), pos: s.pos + 2, cmodes: seq![mode as u8], cm: cm_init(), ..s }),
-{
-    lemma_pow2_small();
-    lemma_bits_of(mode as nat, 2);
-    let s1 = St { pos: s.pos + 2, cmodes: s.cmodes.push(mode as u8), ..s };
-    let t = St { phase: Phase::CMap(0), pos: s.pos + 2, cmodes: seq![mode as u8], cm: cm_init(), ..s };
-    assert(s.cmodes.push(mode as u8) =~= seq![mode as u8]);
-    assert forall|b: Seq<u8>| #[trigger] ext(b, w + fld(mode as nat, 2)) implies step(b, s) == Step::Next(s1) by {
-        assert(w + fld(mode as nat, 2) =~= w + (fld(mode as nat, 2) + Seq::<nat>::empty()));
-        lemma_rd(b, w, mode as nat, 2, Seq::empty());
-        crate::decoder::lemma_step_cmodes(b, s);
-    }
-    lemma_moves_step(w, fld(mode as nat, 2), s, s1);
-    let w1 = w + fld(mode as nat, 2);
-    assert forall|b: Seq<u8>| #[trigger] ext(b, w1 + Seq::empty()) implies step(b, s1) == Step::Next(t) by {
-        crate::decoder::lemma_step_cmodes(b, s1);
-    }
-    lemma_moves_step(w1, Seq::empty(), s1, t);
-    assert(fld(mode as nat, 2) + Seq::<nat>::empty() =~= fld(mode as nat, 2));
-    lemma_moves_trans(w, fld(mode as nat, 2), Seq::empty(), s, s1, t);
 }
 
 /// A context map with one tree: `NTREES - 1 = 0`, a single 0 bit.
@@ -272,46 +219,8 @@ pub open spec fn lit_tree(m: LitM, out: Seq<u8>) -> int {
     m.cmap[m.bt0 * 64 + lit_context(m.mode, p1(out), p2(out))] as int
 }
 
-pub open spec fn lits_bits(m: LitM, out: Seq<u8>, d: Seq<u8>) -> Seq<nat>
-    decreases d.len(),
-{
-    if d.len() == 0 {
-        Seq::empty()
-    } else {
-        code_of(m.lit[lit_tree(m, out)], d[0] as int) + lits_bits(m, out.push(d[0]), d.subrange(1, d.len() as int))
-    }
-}
-
-/// Every literal has a code in its tree.
-pub open spec fn lits_ok(m: LitM, out: Seq<u8>, d: Seq<u8>) -> bool
-    decreases d.len(),
-{
-    if d.len() == 0 {
-        true
-    } else {
-        let t = lit_tree(m, out);
-        &&& 0 <= m.bt0 * 64 + lit_context(m.mode, p1(out), p2(out)) < m.cmap.len()
-        &&& 0 <= t < m.lit.len()
-        &&& coded(m.lit[t], d[0] as int)
-        &&& lits_ok(m, out.push(d[0]), d.subrange(1, d.len() as int))
-    }
-}
-
-pub open spec fn after_lits(s: St, d: Seq<u8>, p: int) -> St {
-    let k = d.len() as int;
-    St {
-        phase: if s.mrem - k == 0 { Phase::MetaDone } else { Phase::Dist },
-        pos: p,
-        out: s.out + d,
-        blen: s.blen.update(0, s.blen[0] - k),
-        ilen: 0,
-        mrem: s.mrem - k,
-        ..s
-    }
-}
-
 #[verifier::spinoff_prover]
-proof fn lemma_lit_at(b: Seq<u8>, w: Seq<nat>, s: St, x: u8, rest: Seq<nat>)
+pub proof fn lemma_lit_at(b: Seq<u8>, w: Seq<nat>, s: St, x: u8, rest: Seq<nat>)
     requires
         s.phase is Insert,
         s.pos == w.len(),
@@ -332,57 +241,6 @@ proof fn lemma_lit_at(b: Seq<u8>, w: Seq<nat>, s: St, x: u8, rest: Seq<nat>)
     let t = lit_tree(lm(s), s.out);
     lemma_sym(b, w, s.lit[t], x as int, rest);
     crate::decoder::lemma_step_data(b, s);
-}
-
-/// The literals of a command.
-#[verifier::spinoff_prover]
-#[verifier::rlimit(30)]
-pub proof fn lemma_lits(w: Seq<nat>, s: St, d: Seq<u8>)
-    requires
-        s.phase is Insert,
-        s.pos == w.len(),
-        s.ilen == d.len(),
-        d.len() >= 1,
-        s.blen.len() == 3,
-        s.blen[0] >= d.len(),
-        s.mrem >= d.len(),
-        lits_ok(lm(s), s.out, d),
-    ensures
-        moves(w, lits_bits(lm(s), s.out, d), s, after_lits(s, d, (w.len() + lits_bits(lm(s), s.out, d).len()) as int)),
-    decreases d.len(),
-{
-    let m = lm(s);
-    let x = d[0];
-    let r = d.subrange(1, d.len() as int);
-    let t = lit_tree(m, s.out);
-    let c = code_of(m.lit[t], x as int);
-    let p = (w.len() + c.len()) as int;
-    let s1 = St { pos: p, out: s.out.push(x), blen: s.blen.update(0, s.blen[0] - 1), ilen: s.ilen - 1, mrem: s.mrem - 1, ..s };
-    let s2 = if s1.ilen > 0 { s1 } else if s1.mrem == 0 { St { phase: Phase::MetaDone, ..s1 } } else { St { phase: Phase::Dist, ..s1 } };
-    assert(lits_bits(m, s.out, d) == c + lits_bits(m, s.out.push(x), r));
-    assert forall|b: Seq<u8>| #[trigger] ext(b, w + c) implies step(b, s) == Step::Next(s2) by {
-        assert(w + c =~= w + (c + Seq::<nat>::empty()));
-        lemma_lit_at(b, w, s, x, Seq::empty());
-    }
-    lemma_moves_step(w, c, s, s2);
-    if d.len() == 1 {
-        assert(r =~= Seq::<u8>::empty());
-        assert(lits_bits(m, s.out.push(x), r) =~= Seq::<nat>::empty());
-        assert(c + Seq::<nat>::empty() =~= c);
-        assert(s.out.push(x) =~= s.out + d);
-        assert(s2 == after_lits(s, d, p));
-    } else {
-        assert(lm(s1) == m);
-        assert(s1.blen[0] == s.blen[0] - 1);
-        assert(s2 == s1);
-        lemma_lits(w + c, s1, r);
-        assert(s.out.push(x) + r =~= s.out + d);
-        let u2 = lits_bits(m, s.out.push(x), r);
-        lemma_moves_trans(w, c, u2, s, s1, after_lits(s1, r, ((w + c).len() + u2.len()) as int));
-        let k = d.len() as int;
-        assert(s1.blen.update(0, s1.blen[0] - r.len()) =~= s.blen.update(0, s.blen[0] - k));
-        assert(after_lits(s1, r, ((w + c).len() + u2.len()) as int) == after_lits(s, d, (w.len() + (c + u2).len()) as int));
-    }
 }
 
 /// Copying `c` bytes from `d` back, each the output byte `d` back.

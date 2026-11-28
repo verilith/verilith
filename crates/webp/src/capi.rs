@@ -281,9 +281,8 @@ impl Decoding {
 pub fn decode_to(data: &[u8], mode: Mode) -> Result<(Vec<u8>, usize, usize), Error> {
     let d = Decoding::new(data)?;
     let (w, h) = d.size();
-    let mut out = Vec::new();
-    out.try_reserve_exact(w * mode.bpp() * h).map_err(|_| Error::OutOfMemory)?;
-    out.resize(w * mode.bpp() * h, 0);
+    // Zeroed by `calloc` (`alloc_u8`), not written with zeros first.
+    let mut out = verilith_core::prims::alloc_u8(w * mode.bpp() * h).ok_or(Error::OutOfMemory)?;
     d.write(mode, &mut out)?;
     Ok((out, w, h))
 }

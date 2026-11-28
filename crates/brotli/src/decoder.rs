@@ -7335,7 +7335,7 @@ pub open spec fn lut_ok(i: int) -> bool {
 
 /// The literal context (§7.1) from the mode and the last two bytes.
 #[verifier::spinoff_prover]
-fn lit_ctx(mode: usize, p1: u8, p2: u8) -> (r: usize)
+pub fn lit_ctx(mode: usize, p1: u8, p2: u8) -> (r: usize)
     requires
         mode < 4,
     ensures

@@ -173,6 +173,65 @@ pub fn i32_of_u32(x: u32) -> (r: i32)
     }
 }
 
+/// The `u32` with the bits of `x`.
+#[inline(always)]
+pub fn u32_of_i32_exec(x: i32) -> (r: u32)
+    ensures
+        r == u32_of_i32(x),
+{
+    if x >= 0 {
+        x as u32
+    } else {
+        ((x + 0x7fff_ffff + 1) as u32) + 0x8000_0000
+    }
+}
+
+/// Pixel `x` in lane 0 of a vector, zeros above.
+#[inline(always)]
+pub fn px_v(x: u32) -> (r: __m128i)
+    ensures
+        u32x4(r) == seq![x, 0u32, 0u32, 0u32],
+{
+    _mm_cvtsi32_si128(i32_of_u32(x))
+}
+
+/// The pixel in lane 0.
+#[inline(always)]
+pub fn lane0(a: __m128i) -> (r: u32)
+    ensures
+        r == u32x4(a)[0],
+{
+    u32_of_i32_exec(_mm_cvtsi128_si32(a))
+}
+
+/// `avg2` on each pixel lane; `ones` is `_mm_set1_epi8(1)`.
+#[inline(always)]
+pub fn avg2_v(a: __m128i, b: __m128i, ones: __m128i) -> (r: __m128i)
+    requires
+        b128(ones) == splat8(1u8, 16),
+    ensures
+        forall|k: int| 0 <= k < 4 ==> #[trigger] u32x4(r)[k] == avg2(u32x4(a)[k], u32x4(b)[k]),
+{
+    let r = _mm_sub_epi8(_mm_avg_epu8(a, b), _mm_and_si128(_mm_xor_si128(a, b), ones));
+    proof {
+        lemma_avgf_px(b128(a), b128(b), b128(ones), b128(r));
+    }
+    r
+}
+
+/// `add_px` on each pixel lane.
+#[inline(always)]
+pub fn add_v(a: __m128i, b: __m128i) -> (r: __m128i)
+    ensures
+        forall|k: int| 0 <= k < 4 ==> #[trigger] u32x4(r)[k] == add_px(u32x4(a)[k], u32x4(b)[k]),
+{
+    let r = _mm_add_epi8(a, b);
+    proof {
+        lemma_add8_px(b128(a), b128(b));
+    }
+    r
+}
+
 /// The `u64` with the bits of `x`.
 #[inline(always)]
 pub fn u64_of(x: i64) -> (r: u64)
