@@ -319,7 +319,7 @@ pub fn do_load(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(
     if ea + n as u64 > st.mem.len() as u64 {
         return Err(Trap::MemoryOutOfBounds);
     }
-    let v = load(&st.mem, ea as usize, n);
+    let v = load(st.mem.vec(), ea as usize, n);
     proof {
         lemma_le_bound(st.mem@, ea as int, n as nat);
     }
@@ -347,6 +347,7 @@ pub fn do_store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost
         c.store == store_view(old(st)),
         store_wf(old(st)),
     ensures
+        final(st).mem.base() == old(st).mem.base(),
         sp >= 2,
         store_wf(final(st)),
         match r {
@@ -373,7 +374,7 @@ pub fn do_store(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost
         return Err(Trap::MemoryOutOfBounds);
     }
     let ghost m1 = st.mem@;
-    store(&mut st.mem, ea as usize, v, n);
+    st.mem.store(ea as usize, v, n);
     proof {
         lemma_write_le_len(m1, ea as int, store_value(v, n as nat), n as nat);
         lemma_pop(stack@, base, sp as int, 2);
@@ -442,6 +443,7 @@ pub fn do_var(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(c
         c.store == store_view(old(st)),
         store_wf(old(st)),
     ensures
+        final(st).mem.base() == old(st).mem.base(),
         final(stack)@.len() == old(stack)@.len(),
         store_wf(final(st)),
         stepped(m, c, final(stack)@, calls, fp as int, sp2 as int, (top(c).pc + 1) as int, store_view(final(st))),
@@ -588,6 +590,7 @@ pub fn do_mem(m: &Module, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<S
         c.store == store_view(old(st)),
         store_wf(old(st)),
     ensures
+        final(st).mem.base() == old(st).mem.base(),
         final(stack)@.len() == old(stack)@.len(),
         store_wf(final(st)),
         match r {
@@ -640,14 +643,14 @@ pub fn do_mem(m: &Module, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<S
                     if d + n > len {
                         return Err(Trap::MemoryOutOfBounds);
                     }
-                    fill(&mut st.mem, d as usize, (a1 % 256) as u8, n as usize);
+                    st.mem.fill(d as usize, (a1 % 256) as u8, n as usize);
                 },
                 Instr::MemoryCopy => {
                     let s = a1 as u64;
                     if s + n > len || d + n > len {
                         return Err(Trap::MemoryOutOfBounds);
                     }
-                    copy_within(&mut st.mem, d as usize, s as usize, n as usize);
+                    st.mem.copy_within(d as usize, s as usize, n as usize);
                 },
                 Instr::MemoryInit(x) => {
                     let s = a1 as u64;
@@ -663,7 +666,7 @@ pub fn do_mem(m: &Module, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<S
                         assert(data@.subrange(s as int, (s + n) as int)
                             =~= data_bytes(m, st1, x as nat).subrange(s as int, (s + n) as int));
                     }
-                    copy_in(&mut st.mem, d as usize, data, s as usize, n as usize);
+                    st.mem.copy_in(d as usize, data, s as usize, n as usize);
                 },
                 _ => {},
             }
@@ -691,6 +694,7 @@ pub fn do_grow(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(
         c.store == store_view(old(st)),
         store_wf(old(st)),
     ensures
+        final(st).mem.base() == old(st).mem.base(),
         final(stack)@.len() == old(stack)@.len(),
         store_wf(final(st)),
         match r@ {
@@ -726,7 +730,7 @@ pub fn do_grow(Ghost(m): Ghost<&Module>, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(
     let ghost mut res: Option<bool> = None;
     let r: u64 = if old + n > st.mem_max as u64 {
         0xffff_ffff
-    } else if try_grow(&mut st.mem, (n * 65536) as usize) {
+    } else if st.mem.try_grow((n * 65536) as usize) {
         proof {
             res = Some(true);
             assert(store_view(st) == crate::sem::Store {
@@ -1322,6 +1326,7 @@ fn do_host<H: Host>(m: &Module, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): G
         c.store == store_view(old(st)),
         store_wf(old(st)),
     ensures
+        final(st).mem.base() == old(st).mem.base(),
         final(stack)@.len() == old(stack)@.len(),
         store_wf(final(st)),
         host_frame(old(st), final(st)),
@@ -1543,6 +1548,7 @@ fn local_step(m: &Module, Ghost(cs): Ghost<Seq<FuncCert>>, Ghost(codes): Ghost<S
         i == code.ops@[pc as int],
         is_local(i),
     ensures
+        final(st).mem.base() == old(st).mem.base(),
         final(stack)@.len() == old(stack)@.len(),
         match r {
             Ok((sp2, pc2, c2)) => loop_inv(m, cs, codes, c0, hs, n + 1, c2@, final(stack)@, calls, d, pc2, fp, sp2, final(st))
@@ -1698,6 +1704,7 @@ fn special_step<H: Host>(m: &Module, Ghost(cs): Ghost<Seq<FuncCert>>, codes: &Ve
         crate::rrun::calls_ret(codes@, old(calls)@),
         pc + 1 < codes@[d as int].ops@.len() ==> crate::rcheck::entry_at(&codes@[d as int], pc + 1),
     ensures
+        final(st).mem.base() == old(st).mem.base(),
         final(stack)@.len() == old(stack)@.len(),
         match r {
             Flow::Go { d: d2, pc: pc2, fp: fp2, sp: sp2, c: c2, hs: hs2, n: n2 } => d2 < codes@.len() &&
@@ -1971,6 +1978,7 @@ pub fn execute<H: Host>(m: &Module, codes: &Vec<Code>, Ghost(cs): Ghost<Seq<Func
         top_ok(m, old(stack)@, top(c0), 0, n_locals(m, d0 as nat) as int),
         codes@[d0 as int].frame <= old(stack)@.len(),
     ensures
+        final(st).mem.base() == old(st).mem.base(),
         store_wf(final(st)),
         store_ok(m, store_view(final(st))),
         final(stack)@.len() == old(stack)@.len(),
@@ -2000,6 +2008,7 @@ pub fn execute<H: Host>(m: &Module, codes: &Vec<Code>, Ghost(cs): Ghost<Seq<Func
     }
     loop
         invariant
+            st.mem.base() == old(st).mem.base(),
             rinv(m, cs, codes@, c0, g, stack@, calls@, d, rpc, fp, st),
             *code == codes@[d as int],
             rops@ == code.rops@,
@@ -2274,6 +2283,7 @@ pub fn execute_metered<H: Host>(m: &Module, codes: &Vec<Code>, Ghost(cs): Ghost<
         top_ok(m, old(stack)@, top(c0), 0, n_locals(m, d0 as nat) as int),
         codes@[d0 as int].frame <= old(stack)@.len(),
     ensures
+        final(st).mem.base() == old(st).mem.base(),
         store_wf(final(st)),
         store_ok(m, store_view(final(st))),
         final(stack)@.len() == old(stack)@.len(),
@@ -2304,6 +2314,7 @@ pub fn execute_metered<H: Host>(m: &Module, codes: &Vec<Code>, Ghost(cs): Ghost<
     }
     loop
         invariant
+            st.mem.base() == old(st).mem.base(),
             rinv(m, cs, codes@, c0, g, stack@, calls@, d, rpc, fp, st),
             *code == codes@[d as int],
             rops@ == code.rops@,

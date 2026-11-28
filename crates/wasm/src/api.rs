@@ -204,14 +204,14 @@ struct Funcs {
 }
 
 impl Host for Funcs {
-    fn call(&mut self, func: u32, args: &[u64], results: &mut [u64], mem: &mut [u8]) -> bool {
+    fn call(&mut self, func: u32, args: &[u64], results: &mut [u64], mem: &mut crate::mem::Mem) -> bool {
         let Some((params, rtys, f)) = self.funcs.get(func as usize) else { return false };
         self.args.clear();
         self.args.extend(params.iter().zip(args).map(|(&t, &s)| Val::from_slot(t, s)));
         self.results.clear();
         self.results.extend(rtys.iter().map(|&t| Val::from_slot(t, 0)));
         let Ok(mut f) = f.try_borrow_mut() else { return false };
-        if f(&self.args, &mut self.results, mem).is_err() {
+        if f(&self.args, &mut self.results, mem.all_mut()).is_err() {
             return false;
         }
         for (i, (r, &t)) in self.results.iter().zip(rtys).enumerate() {
@@ -334,7 +334,7 @@ impl Instance {
             }
             tables.push(vec![NONE; l.min as usize]);
         }
-        let mut st = Store { mem, mem_max, globals, tables, dropped: vec![false; m.datas.len()] };
+        let mut st = Store { mem: crate::mem::Mem::new(mem), mem_max, globals, tables, dropped: vec![false; m.datas.len()] };
         for e in &m.elems {
             if let ElemMode::Active { table, offset } = &e.mode {
                 let off = eval(offset, &st.globals) as usize;
@@ -354,7 +354,7 @@ impl Instance {
                 if off as u64 + d.bytes.len() as u64 > st.mem.len() as u64 {
                     return Err(Error::Instantiate("out of bounds memory access".into()));
                 }
-                st.mem[off..off + d.bytes.len()].copy_from_slice(&d.bytes);
+                st.mem.write(off, &d.bytes, 0, d.bytes.len());
                 st.dropped[i] = true;
             }
         }
