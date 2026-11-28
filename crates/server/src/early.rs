@@ -2,7 +2,7 @@
 //!
 //! Early data can be replayed (RFC 8446 §8), so a request in it is handed
 //! to the handler only if its method is one of the safe methods (RFC 9110
-//! §9.2.1) that browsers send early, GET, HEAD and OPTIONS ([`early_safe`]);
+//! §9.2.1) that browsers send early, GET, HEAD and OPTIONS (`early_safe`);
 //! any other gets 425 Too Early (RFC 8470 §5.2) and the client sends it
 //! again after the handshake. [`too_early`] decides it, exactly.
 use vstd::prelude::*;
@@ -72,7 +72,7 @@ pub fn early_ok(m: &[u8]) -> (r: bool)
 
 /// Whether a request with method `m` is answered 425 Too Early instead of
 /// being handed to the handler: it came in early data and its method is
-/// not one of [`early_safe`]'s.
+/// not one of `early_safe`'s.
 pub fn too_early(early: bool, m: &[u8]) -> (r: bool)
     ensures
         r == (early && !early_safe(m@)),

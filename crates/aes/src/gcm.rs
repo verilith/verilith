@@ -1,5 +1,5 @@
-//! AES-GCM, proven over [`Isa`] to compute [`spec::gcm_seal`]'s
-//! ciphertext and tag and [`spec::gcm_open`]'s decision: the key
+//! AES-GCM, proven over [`Isa`] to compute `spec::gcm_seal`'s
+//! ciphertext and tag and `spec::gcm_open`'s decision: the key
 //! expansion, H and its powers, GHASH of the additional data, CTR and
 //! GHASH of the text sixteen, eight or one block at a time, the last
 //! partial block, the length block and the tag.

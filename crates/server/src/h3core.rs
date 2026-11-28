@@ -11,7 +11,7 @@
 //!   frame with the encoded section, then one DATA frame with the body
 //!   (none when the body is empty), and the client's reader reads it
 //!   back as exactly that: one HEADERS event, the body as content, a
-//!   well-formed end ([`lemma_response_rt`]).
+//!   well-formed end (`lemma_response_rt`).
 //! - [`control_preamble`]: our control stream begins with its type and
 //!   our SETTINGS, and nothing else (§6.2.1).
 //! - [`Uni3`]: a unidirectional stream the peer opened. At most one

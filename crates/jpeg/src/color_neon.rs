@@ -274,14 +274,25 @@ proof fn lemma_red(y: int, cr: int, y1: int, d: int, d2: int, d4: int, t: int, s
     ensures
         sat_u8(s16i(s) / 2) as int == ycc_r(y, cr),
 {
+    // Step by step, each with only the facts it needs: in one piece the
+    // nonlinear terms are past the solver's budget with some z3 builds.
     let dd = cr - 128;
     assert(s16i(d) == dd);
     assert(s16i(d2) == 2 * dd);
     assert(s16i(d4) == 4 * dd);
     let q = (183768 * dd) / 0x10000;
-    assert(2 * (4 * dd) * 22971 == 183768 * dd);
+    assert(2 * s16i(d4) * 22971 == 183768 * dd) by (nonlinear_arith)
+        requires
+            s16i(d4) == 4 * dd;
+    assert(-360 <= q <= 357) by (nonlinear_arith)
+        requires
+            -128 <= dd <= 127,
+            q == (183768 * dd) / 0x10000;
+    assert(t == q % 0x10000);
     assert(s16i(t) == q);
+    assert(y1 == 2 * y + 1);
     assert(s16i(s) == 2 * y + 1 + q);
+    assert(s16i(s) / 2 == y + (q + 1) / 2);
     lemma_round_r(dd);
 }
 

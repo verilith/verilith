@@ -3,8 +3,8 @@
 //!
 //! A sender appends one record per frame to a [`RecLog`] as it builds a
 //! packet, and stores a token ([`pack`]) of the packet's first record and
-//! count with the packet. Proven, of the log [`RecLog::log`] of every
-//! record pushed and the set [`RecLog::taken`] of those already acted on:
+//! count with the packet. Proven, of the log `RecLog::log` of every
+//! record pushed and the set `RecLog::taken` of those already acted on:
 //!
 //! - [`unpack`] of a token gives back exactly the packet's records;
 //! - [`RecLog::take`] returns a record only once, however often its packet

@@ -1,7 +1,7 @@
 //! Which frames each packet type may carry, and which elicit an
 //! acknowledgment (RFC 9000 §12.4, Table 3; §13.2).
 //!
-//! [`allowed_spec`] is Table 3, column by column; [`allowed`] and
+//! `allowed_spec` is Table 3, column by column; [`allowed`] and
 //! [`ack_eliciting`] are proven to compute it. A server also refuses the
 //! frames only a server may send ([`server_receives`]: NEW_TOKEN, §19.7,
 //! and HANDSHAKE_DONE, §19.20).

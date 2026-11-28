@@ -226,6 +226,9 @@ pub fn params_exec(b: &[u8], le: bool, o: u32) -> (r: Option<ParamsX>)
 
 /// `params_exec`, counting its steps: at most 30 walks of the IFD or of
 /// a field's values.
+// The default budget is too small for z3's Arm build here; x86 needs less.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(40)]
 pub fn params_counted(b: &[u8], le: bool, o: u32, Tracked(m): Tracked<&mut Meter>) -> (r: Option<ParamsX>)
     ensures
         match params(b@, le, o as nat) {

@@ -1249,6 +1249,14 @@ pub fn decompress_counted(src: &[u8], limit: usize) -> (res: (Result<Vec<u8>, Er
             if size > n - i - 8 {
                 return (Err(Error::Corrupt), Ghost(work));
             }
+            proof {
+                // The bounds, stated linearly for the solver.
+                let k = i + 8 + size;
+                assert(255 * i <= 255 * k) by (nonlinear_arith)
+                    requires i <= k;
+                assert(1202 * i + 1 <= 1202 * k) by (nonlinear_arith)
+                    requires i < k;
+            }
             i = i + 8 + size;
         } else {
             let ghost before = out@;
@@ -1272,6 +1280,8 @@ pub fn decompress_counted(src: &[u8], limit: usize) -> (res: (Result<Vec<u8>, Er
                 },
                 Ok(j) => {
                     proof {
+                        assert(1202 * i + 1202 * (j - i) == 1202 * j) by (nonlinear_arith);
+                        assert(255 * i + 255 * (j - i) == 255 * j) by (nonlinear_arith);
                         let c = out@.subrange(before.len() as int, out@.len() as int);
                         assert(out@ =~= before + c);
                         if frames(src@, j as int).is_some() {

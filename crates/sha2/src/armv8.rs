@@ -1186,6 +1186,9 @@ proof fn lemma_su512_sum(w16: u64, s0: u64, s1: u64, w7: u64)
 }
 
 /// `sha512su1(sha512su0(cur, nx), prev, ext)` is pair i.
+// The default budget is too small for z3's Arm build here; x86 needs less.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(40)]
 proof fn lemma_su512(cur: Seq<u64>, nx: Seq<u64>, prev: Seq<u64>, a4: Seq<u64>, a5: Seq<u64>, m: Seq<u64>, i: int)
     requires
         8 <= i,
@@ -1206,9 +1209,14 @@ proof fn lemma_su512(cur: Seq<u64>, nx: Seq<u64>, prev: Seq<u64>, a4: Seq<u64>, 
     lemma_funcs512(s(2 * i - 14), 0, 0);
     lemma_funcs512(s(2 * i - 2), 0, 0);
     lemma_funcs512(s(2 * i - 1), 0, 0);
-    let r = isa::sha512su1(isa::sha512su0(cur, nx), prev, seq![a4[1], a5[0]]);
+    let u = isa::sha512su0(cur, nx);
+    let r = isa::sha512su1(u, prev, seq![a4[1], a5[0]]);
     lemma_su512_sum(s(2 * i - 16), spec512::small_sigma0(s(2 * i - 15)), spec512::small_sigma1(s(2 * i - 2)), s(2 * i - 7));
     lemma_su512_sum(s(2 * i - 15), spec512::small_sigma0(s(2 * i - 14)), spec512::small_sigma1(s(2 * i - 1)), s(2 * i - 6));
+    // One lane at a time: the whole sequence at once is past the solver's
+    // budget with some z3 builds (the Arm one).
+    assert(r[0] == pair(m, i)[0]);
+    assert(r[1] == pair(m, i)[1]);
     assert(r =~= pair(m, i));
 }
 

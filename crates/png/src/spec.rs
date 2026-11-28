@@ -270,11 +270,10 @@ pub open spec fn step(b: Seq<u8>, h: Ihdr, p: int, c: Chunk, st: Walk) -> Result
         } else {
             Err(true)
         }
-    } else if !c.crc_ok {
+    } else if !c.crc_ok && !(c.ty == PLTE && h.ct != 3 && st1.phase == 0) {
         // libpng: a CRC error is an error in a critical chunk; an ancillary
-        // chunk with a bad CRC is discarded. Before IDAT, PLTE counts as
-        // ancillary in an image without a palette.
-        if is_critical(c.ty) && !(c.ty == PLTE && h.ct != 3 && st1.phase == 0) {
+        // chunk with a bad CRC is discarded.
+        if is_critical(c.ty) {
             Err(false)
         } else {
             Ok(st1)
@@ -297,6 +296,11 @@ pub open spec fn step(b: Seq<u8>, h: Ihdr, p: int, c: Chunk, st: Walk) -> Result
     } else if c.ty == IHDR {
         Err(false)
     } else if c.ty == PLTE {
+        // libpng: before IDAT, a PLTE in an image without a palette has its
+        // CRC checked as an ancillary chunk's would be, with a warning, and
+        // is then used whatever the result (`png_handle_PLTE` ignores what
+        // `png_crc_finish_critical` returns), so the rules below apply to it
+        // even when its CRC is wrong.
         if st1.phase != 0 {
             // libpng (`png_read_end`): PLTE after the image data is ignored.
             Ok(st1)

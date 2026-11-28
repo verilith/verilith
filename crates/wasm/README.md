@@ -255,7 +255,7 @@ the exporting instance. Implementation limits: 100,000 nested calls,
   went through the label's arity, which for a `loop` is its parameter
   count, so a loop with results lost them. The semantics, the proofs and
   the checker were fixed together.
-- `fuzz/`: differential testing against wasmi 2.0.2. wasm-smith 0.263.0
+- `fuzz/`: differential testing against wasmi 2.0.3. wasm-smith 0.263.0
   generates modules using only the features above (NaNs canonicalized,
   loops fuel-bounded); every exported function is called with three
   argument sets in both engines, comparing results, traps, linear memory

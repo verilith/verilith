@@ -16,6 +16,7 @@ use crate::api::{Document, Src};
 use crate::push::{Stream, R_ERR, R_LIMIT, R_OK, R_WHOLE};
 use crate::reader::Reader;
 use crate::tape::{Kind, Tok};
+use crate::walk::{Cursor, Item};
 use std::borrow::Cow;
 
 // --- the structs (parser.h, valid.h) ---------------------------------------------
@@ -2639,7 +2640,7 @@ impl<'d> Walk<'d> {
     /// The content of `src` from token `i` to `end`, inside the elements
     /// `open` (which it leaves open where the tokens end); the index where
     /// it stopped.
-    unsafe fn content_in(&mut self, open: &mut Vec<(Open, usize)>, src: Src, mut i: usize, end: usize) -> usize {
+    unsafe fn content_in(&mut self, open: &mut Vec<(Open, usize)>, src: Src, i: usize, end: usize) -> usize {
         unsafe {
             let c = self.ctxt;
             let pushed = self.push && src == Src::Doc;
@@ -2648,7 +2649,18 @@ impl<'d> Walk<'d> {
             }
             let toks = self.toks(src);
             let buf = self.buf(src);
-            while i < end && (*c).disableSAX < 2 {
+            // The verified cursor gives the items in order (`walk::items`):
+            // a start tag with its attributes, the end tag that closes the
+            // innermost open element (one is open for each `Start` it gave,
+            // as `open` holds), a processing instruction with its data, and
+            // runs of character data merged unless pushed.
+            let mut cur = Cursor::new(toks, i, end, open.len(), !pushed);
+            while (*c).disableSAX < 2 {
+                let item = cur.next();
+                let i = match item {
+                    Item::Done => break,
+                    Item::Start { at, .. } | Item::End { at } | Item::Leaf { at, .. } => at,
+                };
                 let t = toks[i];
                 if pushed {
                     match t.kind {
@@ -2662,7 +2674,6 @@ impl<'d> Walk<'d> {
                             if self.pend.len() >= 300 {
                                 self.flush_text();
                             }
-                            i += 1;
                             continue;
                         }
                         Kind::CData => {
@@ -2676,47 +2687,34 @@ impl<'d> Walk<'d> {
                                 self.pend_end = t.b() + 3;
                                 self.flush_text();
                             }
-                            i += 1;
                             continue;
                         }
                         _ => self.flush_text(),
                     }
                 }
-                // The common kinds first, tested in turn.
-                if t.kind == Kind::Text {
-                    // Runs of character data up to the next '<' or '&'.
-                    let a = t.a();
-                    let mut b = t.b();
-                    while i + 1 < end && toks[i + 1].kind == Kind::Text && toks[i + 1].a() == b {
-                        i += 1;
-                        b = toks[i].b();
-                    }
-                    self.pos(src, b);
-                    self.text_run(buf, a, b);
-                    i += 1;
-                    continue;
-                }
-                if t.kind == Kind::STag {
-                    if let Some(o) = self.start_tag_plain(src, t) {
-                        open.push((o, t.b() - t.a()));
-                        i += 1;
+                match item {
+                    Item::Leaf { next, .. } if t.kind == Kind::Text => {
+                        // A run of character data up to the next '<' or '&'.
+                        let b = toks[next - 1].b();
+                        self.pos(src, b);
+                        self.text_run(buf, t.a(), b);
                         continue;
                     }
-                    let (o, next) = self.start_tag(src, i);
-                    match o {
-                        Some(o) => {
+                    Item::Start { .. } => {
+                        if let Some(o) = self.start_tag_plain(src, t) {
                             open.push((o, t.b() - t.a()));
-                            i = next;
+                            continue;
                         }
-                        None => {
+                        match self.start_tag(src, i).0 {
+                            Some(o) => open.push((o, t.b() - t.a())),
                             // Too deep: stop.
-                            return end;
+                            None => return end,
                         }
+                        continue;
                     }
-                    continue;
-                }
-                if t.kind == Kind::ETag {
-                    if let Some((o, qlen)) = open.pop() {
+                    Item::End { .. } => {
+                        // The cursor gives an end only with an element open.
+                        let Some((o, qlen)) = open.pop() else { continue };
                         if pushed && t.b() > 0 {
                             // The end tag's span (none for `<a/>`).
                             self.at(t.b());
@@ -2747,11 +2745,11 @@ impl<'d> Walk<'d> {
                         self.end_tag(o);
                         if pushed && open.is_empty() {
                             // The root element has ended.
-                            return i + 1;
+                            return cur.pos();
                         }
+                        continue;
                     }
-                    i += 1;
-                    continue;
+                    _ => {}
                 }
                 match t.kind {
                     Kind::CData => {
@@ -2772,19 +2770,15 @@ impl<'d> Walk<'d> {
                         }
                     }
                     Kind::Comment => self.comment(src, t),
-                    Kind::PI => {
-                        self.pi(src, t, toks[i + 1]);
-                        i += 1;
-                    }
+                    Kind::PI => self.pi(src, t, toks[i + 1]),
                     Kind::EntRef => {
                         self.pos(src, t.b() + 1);
                         self.reference(src, t);
                     }
                     _ => {}
                 }
-                i += 1;
             }
-            i
+            cur.pos()
         }
     }
 

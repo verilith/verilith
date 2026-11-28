@@ -11,7 +11,7 @@
 //! do: feed a header block fragment to the HPACK decoder, append request
 //! body bytes, or run the handler.
 //!
-//! What is proven (the invariant [`Core::wf`] and the `ensures` below):
+//! What is proven (the invariant `Core::wf` and the `ensures` below):
 //!
 //! - **The stream table.** Streams are kept in ID order; every ID is odd
 //!   and at most the highest opened, which never goes down. A stream is
@@ -37,7 +37,7 @@
 //!   against the Content-Length its fields declared (verilith-core's
 //!   `BodyLen`, whose invariant is that they never pass it). A request is
 //!   complete (`Step::Dispatch`, or `Step::Data` with END_STREAM) only if
-//!   a declared length equals its DATA ([`Core::body_ok`]); otherwise it
+//!   a declared length equals its DATA (`Core::body_ok`); otherwise it
 //!   is malformed, and the stream is reset with PROTOCOL_ERROR.
 //! - **Responses** ([`Core::send_headers`], [`Core::send_data`],
 //!   [`Core::sent`]). A stream's response starts at most once: its header
@@ -1691,7 +1691,7 @@ impl<V: Store> Core<V> {
 
     /// Starts the response on the live stream in slot `at`, if it has
     /// none yet: appends the HEADERS and CONTINUATION frames of `block`
-    /// ([`header_frames`], END_STREAM if `body_len` is 0), and then
+    /// (`header_frames`, END_STREAM if `body_len` is 0), and then
     /// expects `body_len` bytes of body. An empty body completes the
     /// response: the stream closes and the budget grows.
     pub fn send_headers(&mut self, at: usize, block: &[u8], body_len: usize, out: &mut Vec<u8>) -> (r: bool)
