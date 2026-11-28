@@ -1,6 +1,6 @@
 //! A formally verified image proxy and thumbnailer: imgproxy-style URLs (parsed by verified code),
 //! decoding with the Verilith decoders, cropping, rotating and placing on a
-//! canvas, Lanczos (or area-average)
+//! canvas (upright, as the EXIF orientation says), Lanczos (or area-average)
 //! resizing and PNG or JPEG output, served by verilith-server.
 #![cfg_attr(not(verus_only), allow(unused_variables, unused_imports, unused_braces))]
 #[cfg(not(target_pointer_width = "64"))]
@@ -18,6 +18,8 @@ pub mod resize;
 pub mod spec_lanczos;
 pub mod spec_geom;
 pub mod geom;
+pub mod spec_exif;
+pub mod exif;
 pub mod spec_url;
 pub mod url;
 pub mod lanczos;

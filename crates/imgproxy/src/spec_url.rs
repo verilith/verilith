@@ -82,6 +82,18 @@ pub struct Options {
     /// `flip`: left-right, top-bottom.
     pub flip_h: bool,
     pub flip_v: bool,
+    /// `auto_rotate`: turn upright as the EXIF orientation says (on by
+    /// default, as imgproxy's `IMGPROXY_AUTO_ROTATE`).
+    pub auto_rotate: bool,
+    /// `expires`: a Unix time after which the URL is refused; 0 is never.
+    pub expires: u64,
+    /// `return_attachment`: `Content-Disposition: attachment`.
+    pub attachment: bool,
+    /// `raw`: send the source as it is, without processing or checks.
+    pub raw: bool,
+    /// `skip_processing`: the source formats sent as they are, one bit
+    /// each (`kind_bit`).
+    pub skip: u32,
 }
 
 /// The geometry options.
@@ -124,6 +136,11 @@ pub open spec fn defaults() -> Options {
         rotate: 0,
         flip_h: false,
         flip_v: false,
+        auto_rotate: true,
+        expires: 0,
+        attachment: false,
+        raw: false,
+        skip: 0,
     }
 }
 
@@ -143,6 +160,8 @@ pub struct Url {
     pub sig_end: int,
     pub opts: Options,
     pub src: Src,
+    /// `filename`: the last one given, decoded.
+    pub filename: Option<Seq<u8>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -632,7 +651,145 @@ pub open spec fn apply(o: Options, seg: Seq<u8>) -> Option<Options> {
             _ => None,
         }
     } else {
+        apply2(o, n, a)
+    }
+}
+
+/// The options about the response, and `auto_rotate`.
+pub open spec fn apply2(o: Options, n: Seq<u8>, a: Seq<Seq<u8>>) -> Option<Options> {
+    if named(n, seq![b'a', b'u', b't', b'o', b'_', b'r', b'o', b't', b'a', b't', b'e'], seq![b'a', b'r']) {
+        match boolean(arg(a, 0)) {
+            Some(v) => Some(Options { auto_rotate: v, ..o }),
+            None => None,
+        }
+    } else if named(n, seq![b'e', b'x', b'p', b'i', b'r', b'e', b's'], seq![b'e', b'x', b'p']) {
+        match num64(arg(a, 0)) {
+            Some(t) => Some(Options { expires: t, ..o }),
+            None => None,
+        }
+    } else if named(
+        n,
+        seq![b'r', b'e', b't', b'u', b'r', b'n', b'_', b'a', b't', b't', b'a', b'c', b'h', b'm', b'e', b'n', b't'],
+        seq![b'a', b't', b't'],
+    ) {
+        match boolean(arg(a, 0)) {
+            Some(v) => Some(Options { attachment: v, ..o }),
+            None => None,
+        }
+    } else if n == seq![b'r', b'a', b'w'] {
+        match boolean(arg(a, 0)) {
+            Some(v) => Some(Options { raw: v, ..o }),
+            None => None,
+        }
+    } else if named(
+        n,
+        seq![b's', b'k', b'i', b'p', b'_', b'p', b'r', b'o', b'c', b'e', b's', b's', b'i', b'n', b'g'],
+        seq![b's', b'k', b'p'],
+    ) {
+        match kinds(a, a.len() as int) {
+            Some(m) => Some(Options { skip: m, ..o }),
+            None => None,
+        }
+    } else if named(n, seq![b'f', b'i', b'l', b'e', b'n', b'a', b'm', b'e'], seq![b'f', b'n']) {
+        // Checked here; the name itself is `Url::filename`.
+        match fname_arg(a) {
+            Some(_) => Some(o),
+            None => None,
+        }
+    } else {
         None
+    }
+}
+
+/// A Unix time: digits (at least one) up to `i64::MAX`.
+pub open spec fn num64(s: Seq<u8>) -> Option<u64> {
+    if s.len() > 0 && all_digits(s) && dec(s) <= 0x7fff_ffff_ffff_ffff {
+        Some(dec(s) as u64)
+    } else {
+        None
+    }
+}
+
+/// The bit `skip_processing` keeps for a format.
+pub open spec fn kind_bit(k: Kind) -> u32 {
+    match k {
+        Kind::Jpeg => 1,
+        Kind::Png => 2,
+        Kind::Webp => 4,
+        Kind::Gif => 8,
+    }
+}
+
+/// A format's name, as `skip_processing` takes it.
+pub open spec fn kind_name(s: Seq<u8>) -> Option<Kind> {
+    if s == seq![b'j', b'p', b'g'] || s == seq![b'j', b'p', b'e', b'g'] {
+        Some(Kind::Jpeg)
+    } else if s == seq![b'p', b'n', b'g'] {
+        Some(Kind::Png)
+    } else if s == seq![b'w', b'e', b'b', b'p'] {
+        Some(Kind::Webp)
+    } else if s == seq![b'g', b'i', b'f'] {
+        Some(Kind::Gif)
+    } else {
+        None
+    }
+}
+
+/// The bits of the first `n` of `a`, each a format's name.
+pub open spec fn kinds(a: Seq<Seq<u8>>, n: int) -> Option<u32>
+    decreases n,
+{
+    if n <= 0 {
+        Some(0)
+    } else {
+        match (kinds(a, n - 1), kind_name(a[n - 1])) {
+            (Some(m), Some(k)) => Some(m | kind_bit(k)),
+            _ => None,
+        }
+    }
+}
+
+/// base64url, unpadded (one trailing `=` ignored), or else padded, as for
+/// sources.
+pub open spec fn unb64(body: Seq<u8>) -> Option<Seq<u8>> {
+    let unpadded = if body.len() > 0 && body.last() == b'=' { body.drop_last() } else { body };
+    match verilith_text::base64::spec::decode(b64(true, false), unpadded) {
+        Some(u) => Some(u),
+        None => verilith_text::base64::spec::decode(b64(true, true), body),
+    }
+}
+
+/// `filename`'s name: base64url when the second argument is true, else
+/// percent-decoded.
+pub open spec fn fname_arg(a: Seq<Seq<u8>>) -> Option<Seq<u8>> {
+    match boolean(arg(a, 1)) {
+        Some(true) => unb64(arg(a, 0)),
+        Some(false) => Some(verilith_text::percent::decode(arg(a, 0))),
+        None => None,
+    }
+}
+
+/// The name a segment gives, if it is a `filename` option.
+pub open spec fn fname_of(seg: Seq<u8>) -> Option<Seq<u8>> {
+    let p = split(seg, b':');
+    if named(p[0], seq![b'f', b'i', b'l', b'e', b'n', b'a', b'm', b'e'], seq![b'f', b'n']) {
+        fname_arg(p.skip(1))
+    } else {
+        None
+    }
+}
+
+/// The name the last `filename` among the first `n` segments gives.
+pub open spec fn last_fname(segs: Seq<Seq<u8>>, n: int) -> Option<Seq<u8>>
+    decreases n,
+{
+    if n <= 0 || n > segs.len() {
+        None
+    } else {
+        match fname_of(segs[n - 1]) {
+            Some(f) => Some(f),
+            None => last_fname(segs, n - 1),
+        }
     }
 }
 
@@ -767,7 +924,7 @@ pub open spec fn parse(path: Seq<u8>) -> Option<Url> {
                         encoded(o, segs.skip(n))
                     };
                     match r {
-                        Some((o, s)) => Some(Url { sig_end: k + 1, opts: o, src: s }),
+                        Some((o, s)) => Some(Url { sig_end: k + 1, opts: o, src: s, filename: last_fname(segs, n) }),
                         None => None,
                     }
                 },
