@@ -1,0 +1,45 @@
+[package]
+name = "verilith-resolver"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "A formally verified (Verus) recursive DNS resolver with DNS over TLS and DNS over HTTPS, built from the Verilith DNS, TLS, HTTP and X.509 crates"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/verilith/verilith"
+readme = "README.md"
+keywords = ["dns", "resolver", "verified", "verus", "doh"]
+categories = ["network-programming"]
+
+[lib]
+crate-type = ["rlib"]
+
+[[bin]]
+name = "verilith-resolver"
+path = "src/bin/verilith-resolver.rs"
+
+[dependencies]
+verilith-dns = { path = "../dns", version = "0.1.0" }
+vstd = { workspace = true, features = ["std"] }
+# DNS over TLS and DNS over HTTPS (`--features tls`, on by default):
+# verilith-tls (verified handshake and records, X.509 chains from
+# verilith-x509) with aws-lc's cryptography, and verilith-server for HTTP/1.1
+# and HTTP/2 (and HTTP/3 with `h3`).
+verilith-tls = { path = "../tls", version = "0.1.0", optional = true }
+verilith-tls-aws-lc = { path = "../tls-aws-lc", version = "0.1.0", optional = true }
+verilith-server = { path = "../server", version = "0.1.0", optional = true }
+verilith-text = { path = "../text", version = "0.1.0", optional = true }
+
+[dev-dependencies]
+rcgen = "0.14"
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
+
+[features]
+default = []
+tls = ["dep:verilith-tls", "dep:verilith-tls-aws-lc", "dep:verilith-server", "verilith-server/tls", "dep:verilith-text"]
+h3 = ["tls", "verilith-server/h3"]
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(verus_only)'] }

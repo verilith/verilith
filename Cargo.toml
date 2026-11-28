@@ -23,6 +23,7 @@ members = [
     "crates/quic",
     "crates/quic-conn",
     "crates/regex",
+    "crates/resolver",
     "crates/server",
     "crates/serverless",
     "crates/sha2",

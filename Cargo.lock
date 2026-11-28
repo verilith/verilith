@@ -2296,6 +2296,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "verilith-resolver"
+version = "0.1.0"
+dependencies = [
+ "rcgen",
+ "rustls",
+ "verilith-dns",
+ "verilith-server",
+ "verilith-text",
+ "verilith-tls",
+ "verilith-tls-aws-lc",
+ "vstd",
+]
+
+[[package]]
 name = "verilith-server"
 version = "0.1.0"
 dependencies = [

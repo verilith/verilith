@@ -48,6 +48,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | quic |  |  |  |  |  |  | 1 | 30 |
 | quic-conn |  |  |  |  |  |  | 3 | 2091 |
 | regex | 1 |  |  |  |  |  | 3 | 1969 |
+| resolver | 7 |  |  |  |  |  | 4 | 496 |
 | server | 1 |  |  |  | 1 |  | 14 | 4868 |
 | serverless |  |  |  |  |  |  | 2 | 259 |
 | sha2 | 34 |  |  |  |  |  | 3 | 362 |
@@ -67,7 +68,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 | 1354 |
 | zstd | 6 |  |  |  |  |  | 2 | 1331 |
-| **total** | **700** | **36** | **290** | **7** | **17** | **12** | **139** | **57826** |
+| **total** | **707** | **36** | **290** | **7** | **17** | **12** | **143** | **58322** |
 
 ## Items
 
@@ -221,6 +222,14 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/regex/src/data.rs`: external_body: `cs_range`
 - `crates/regex/src/lanes.rs`: plain Rust, 6 lines
 - `crates/regex/src/tables.rs`: plain Rust, 1579 lines
+
+### resolver
+
+- `crates/resolver/src/lib.rs`: plain Rust, 22 lines
+- `crates/resolver/src/net.rs`: plain Rust, 98 lines
+- `crates/resolver/src/resolve.rs`: external_body: `exchange`, `exchange`, `now`, `random`, `lookup`, `lookup`, `insert`
+- `crates/resolver/src/service.rs`: plain Rust, 297 lines
+- `crates/resolver/src/bin/verilith-resolver.rs`: plain Rust, 79 lines
 
 ### server
 
