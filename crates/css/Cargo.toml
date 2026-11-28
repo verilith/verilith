@@ -2,7 +2,7 @@
 name = "verilith-css"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
-description = "A formally verified (Verus) CSS tokenizer: CSS Syntax Module Level 3, preprocessing and tokenization"
+description = "A formally verified (Verus) CSS tokenizer and parser: CSS Syntax Module Level 3, preprocessing, tokenization and parsing"
 edition = "2024"
 rust-version = "1.89"
 repository = "https://github.com/verilith/verilith"
@@ -20,6 +20,7 @@ verify = true
 # are guarded by `verus_only`, which Verus turns on during verification.
 unexpected_cfgs = { level = "warn", check-cfg = [
   'cfg(verus_only)',
+  'cfg(verus_keep_ghost)',
 ] }
 
 [dev-dependencies]

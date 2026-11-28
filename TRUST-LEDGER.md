@@ -32,7 +32,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | brotli | 2 |  |  |  |  |  | 5 | 643 |
 | checksum | 7 |  |  |  |  |  |  |  |
 | core | 26 |  |  |  |  |  | 1 | 21 |
-| css |  |  |  |  |  |  | 1 | 42 |
+| css |  |  |  |  |  |  | 1 | 88 |
 | dns |  |  |  |  |  |  | 6 | 1438 |
 | font |  |  |  |  |  |  | 1 | 35 |
 | gif |  |  |  |  |  |  | 2 | 953 |
@@ -70,7 +70,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 | 1354 |
 | zstd | 6 |  |  |  |  |  | 2 | 1331 |
-| **total** | **713** | **36** | **294** | **5** | **17** | **12** | **154** | **61087** |
+| **total** | **713** | **36** | **294** | **5** | **17** | **12** | **154** | **61133** |
 
 ## Items
 
@@ -115,7 +115,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### css
 
-- `crates/css/src/api.rs`: plain Rust, 42 lines
+- `crates/css/src/api.rs`: plain Rust, 88 lines
 
 ### dns
 
