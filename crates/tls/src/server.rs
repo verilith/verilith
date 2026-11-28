@@ -412,7 +412,7 @@ pub(crate) proof fn lemma_be3(m: Seq<u8>)
 }
 
 /// A CertificateVerify message read as its scheme and signature.
-proof fn lemma_cv_msg(m: Seq<u8>, scheme: u16, sig: Seq<u8>)
+pub(crate) proof fn lemma_cv_msg(m: Seq<u8>, scheme: u16, sig: Seq<u8>)
     requires
         is_msg(m, 15),
         m.len() >= 8,
@@ -524,7 +524,7 @@ pub(crate) proof fn lemma_is_msg(t: u8, b: Seq<u8>)
 /// The handshake traffic secrets and keys for PSK `psk`, shared secret
 /// `dhe` and transcript `th_sh` (ClientHello..ServerHello), whose hash is
 /// `th`.
-fn hs_keys(suite: u16, psk: &[u8], dhe: &[u8], th: &Secret, Ghost(th_sh): Ghost<Seq<u8>>) -> (r: (
+pub(crate) fn hs_keys(suite: u16, psk: &[u8], dhe: &[u8], th: &Secret, Ghost(th_sh): Ghost<Seq<u8>>) -> (r: (
     Secret,
     Secret,
     Secret,
@@ -546,7 +546,7 @@ fn hs_keys(suite: u16, psk: &[u8], dhe: &[u8], th: &Secret, Ghost(th_sh): Ghost<
 
 /// Record protection with the traffic key and IV of `sec`, from sequence
 /// number 0.
-fn protect_of<P: Provider>(prov: &P, suite: u16, sec: &Secret) -> (r: Protect<P::Key>)
+pub(crate) fn protect_of<P: Provider>(prov: &P, suite: u16, sec: &Secret) -> (r: Protect<P::Key>)
     requires
         sec.wf(),
     ensures
@@ -1405,7 +1405,7 @@ pub(crate) fn prepare<P: Provider>(
 }
 
 /// The next traffic secret after `sec` (§7.2) and its protection.
-fn rekey<P: Provider>(prov: &P, suite: u16, sec: &Secret) -> (r: (Secret, Protect<P::Key>))
+pub(crate) fn rekey<P: Provider>(prov: &P, suite: u16, sec: &Secret) -> (r: (Secret, Protect<P::Key>))
     requires
         sec.wf(),
     ensures

@@ -411,6 +411,13 @@ pub open spec fn opt_subtrees_view(o: Option<&[u8]>) -> Option<Seq<SpecGeneralNa
     }
 }
 
+/// Both lists, when present, are GeneralSubtrees that parse (so a
+/// `SubtreeIter` can walk them).
+pub open spec fn nc_lists_wf(n: NameConstraints) -> bool {
+    &&& n.permitted matches Some(l) ==> parse_subtrees(l@) is Some
+    &&& n.excluded matches Some(l) ==> parse_subtrees(l@) is Some
+}
+
 impl<'a> View for NameConstraints<'a> {
     type V = SpecNameConstraints;
 
@@ -448,7 +455,7 @@ fn read_nc_excluded<'a>(s: &'a [u8]) -> (out: (Option<Option<&'a [u8]>>, Ghost<n
 
 pub fn read_name_constraints<'a>(v: &'a [u8]) -> (out: Option<NameConstraints<'a>>)
     ensures
-        out matches Some(n) ==> parse_name_constraints(v@) == Some(n@),
+        out matches Some(n) ==> parse_name_constraints(v@) == Some(n@) && nc_lists_wf(n),
         out is None ==> parse_name_constraints(v@) is None,
 {
     read_name_constraints_m(v).0
@@ -457,7 +464,7 @@ pub fn read_name_constraints<'a>(v: &'a [u8]) -> (out: Option<NameConstraints<'a
 /// `read_name_constraints`, with its steps.
 pub fn read_name_constraints_m<'a>(v: &'a [u8]) -> (out: (Option<NameConstraints<'a>>, Ghost<nat>))
     ensures
-        out.0 matches Some(n) ==> parse_name_constraints(v@) == Some(n@),
+        out.0 matches Some(n) ==> parse_name_constraints(v@) == Some(n@) && nc_lists_wf(n),
         out.0 is None ==> parse_name_constraints(v@) is None,
         out.1@ <= 2 * v@.len(),
 {

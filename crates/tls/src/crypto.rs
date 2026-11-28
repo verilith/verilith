@@ -280,4 +280,24 @@ pub trait Provider {
     ;
 }
 
+/// The cryptography a client needs besides `Provider`'s (whose AEADs,
+/// signature checks, random numbers and clock it uses): its side of the
+/// key exchange. `key_exchange` takes the client's share first, so it
+/// states the same fact on both sides of a handshake.
+pub trait ClientCrypto: Provider {
+    /// A fresh key share for `group` (§4.2.8), its private part kept by
+    /// the provider for `client_shared`; `None` if the group is not one
+    /// the provider has.
+    fn client_share(&mut self, group: u16) -> (r: Option<Vec<u8>>);
+
+    /// The shared secret, written to `shared`, of this provider's share
+    /// `ours` for `group` (one `client_share` made) and the server's share
+    /// `peer`; `None` if `peer` is malformed (an `illegal_parameter`
+    /// alert), or `ours` is not one of its shares.
+    fn client_shared(&mut self, group: u16, ours: &[u8], peer: &[u8], shared: &mut [u8; 64]) -> (r: Option<usize>)
+        ensures
+            r matches Some(n) ==> n <= 64 && key_exchange(group, ours@, peer@, final(shared)@.take(n as int)),
+    ;
+}
+
 } // verus!

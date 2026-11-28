@@ -55,6 +55,23 @@ proven: byte-identical output on 1,368 intact files and 496 damaged ones,
 agreement on which of 900 damaged files to reject, and differential fuzzing
 (see the README).
 
+### And `src/spec_scaled.rs`, for reduced-size decoding
+
+About 230 lines, the theorem of `scaled::decode_scaled`. It reuses
+`spec.rs`'s coefficients, range limit, upsampling filters and colour
+conversion, and adds what libjpeg-turbo 3.2.1 does differently when it
+decodes at 1/2, 1/4 or 1/8: the reduced inverse DCTs (`jidctred.c`:
+`jpeg_idct_4x4`, `jpeg_idct_2x2`, `jpeg_idct_1x1`, with their 32-bit
+workspaces), the inverse DCT size of each component (`jdmaster.c`, which
+scales chroma up through the inverse DCT rather than upsampling where the
+sampling factors allow), the component and output sizes, and the
+upsampler's choice (`jdsample.c`: no triangle filters at 1/8). The evidence
+that it matches libjpeg-turbo is empirical: `difftest/scaled.sh` gives
+byte-identical output to `djpeg -scale` at all four scales on 860 pairs of
+file and scale (every sampling factor combination cjpeg writes, sizes from
+1x1 up, baseline, progressive and with restart markers, greyscale and RGB),
+with libjpeg-turbo's SIMD code on x86-64.
+
 ## 1a. The encoder's specification: `src/enc_spec.rs`
 
 About 300 lines of definitions: what the encoder codes, after

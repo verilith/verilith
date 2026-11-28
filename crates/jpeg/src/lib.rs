@@ -40,6 +40,10 @@ pub mod stream;
 #[doc(hidden)]
 pub mod decode;
 #[doc(hidden)]
+pub mod spec_scaled;
+#[doc(hidden)]
+pub mod scaled;
+#[doc(hidden)]
 pub mod enc_bits;
 #[doc(hidden)]
 pub mod enc_huff;
@@ -61,6 +65,7 @@ pub mod capi;
 pub mod tj;
 
 pub use decode::{decode, read_header, Header, Picture};
+pub use scaled::decode_scaled;
 pub use encode::encode_rgb;
 pub use types::Error;
 
