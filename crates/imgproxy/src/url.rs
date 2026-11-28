@@ -3,6 +3,9 @@
 //! imgproxy's messages; the proofs say a request is refused exactly when
 //! the specification gives `None`, and what it parses to otherwise.
 use crate::fit::Mode;
+#[cfg(verus_only)]
+use crate::spec_geom::F1;
+use crate::spec_geom::{GKind, Gravity};
 use crate::spec_url::*;
 use vstd::prelude::*;
 
@@ -1006,6 +1009,266 @@ pub fn is_upload(s: &[u8]) -> (r: bool)
     r
 }
 
+/// Whether `s` is `no`.
+pub fn is_no(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'n', b'o']),
+{
+    let t: [u8; 2] = [b'n', b'o'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'n', b'o']);
+    }
+    r
+}
+
+/// Whether `s` is `so`.
+pub fn is_so(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b's', b'o']),
+{
+    let t: [u8; 2] = [b's', b'o'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b's', b'o']);
+    }
+    r
+}
+
+/// Whether `s` is `ea`.
+pub fn is_ea(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'e', b'a']),
+{
+    let t: [u8; 2] = [b'e', b'a'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'e', b'a']);
+    }
+    r
+}
+
+/// Whether `s` is `we`.
+pub fn is_we(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'w', b'e']),
+{
+    let t: [u8; 2] = [b'w', b'e'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'w', b'e']);
+    }
+    r
+}
+
+/// Whether `s` is `noea`.
+pub fn is_noea(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'n', b'o', b'e', b'a']),
+{
+    let t: [u8; 4] = [b'n', b'o', b'e', b'a'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'n', b'o', b'e', b'a']);
+    }
+    r
+}
+
+/// Whether `s` is `nowe`.
+pub fn is_nowe(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'n', b'o', b'w', b'e']),
+{
+    let t: [u8; 4] = [b'n', b'o', b'w', b'e'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'n', b'o', b'w', b'e']);
+    }
+    r
+}
+
+/// Whether `s` is `soea`.
+pub fn is_soea(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b's', b'o', b'e', b'a']),
+{
+    let t: [u8; 4] = [b's', b'o', b'e', b'a'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b's', b'o', b'e', b'a']);
+    }
+    r
+}
+
+/// Whether `s` is `sowe`.
+pub fn is_sowe(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b's', b'o', b'w', b'e']),
+{
+    let t: [u8; 4] = [b's', b'o', b'w', b'e'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b's', b'o', b'w', b'e']);
+    }
+    r
+}
+
+/// Whether `s` is `fp`.
+pub fn is_fp(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'f', b'p']),
+{
+    let t: [u8; 2] = [b'f', b'p'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'f', b'p']);
+    }
+    r
+}
+
+/// Whether `s` is `crop`.
+pub fn is_crop(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'c', b'r', b'o', b'p']),
+{
+    let t: [u8; 4] = [b'c', b'r', b'o', b'p'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'c', b'r', b'o', b'p']);
+    }
+    r
+}
+
+/// Whether `s` is `c`.
+pub fn is_c(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'c']),
+{
+    let t: [u8; 1] = [b'c'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'c']);
+    }
+    r
+}
+
+/// Whether `s` is `extend`.
+pub fn is_extend(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'e', b'x', b't', b'e', b'n', b'd']),
+{
+    let t: [u8; 6] = [b'e', b'x', b't', b'e', b'n', b'd'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'e', b'x', b't', b'e', b'n', b'd']);
+    }
+    r
+}
+
+/// Whether `s` is `ex`.
+pub fn is_ex(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'e', b'x']),
+{
+    let t: [u8; 2] = [b'e', b'x'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'e', b'x']);
+    }
+    r
+}
+
+/// Whether `s` is `padding`.
+pub fn is_padding(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'p', b'a', b'd', b'd', b'i', b'n', b'g']),
+{
+    let t: [u8; 7] = [b'p', b'a', b'd', b'd', b'i', b'n', b'g'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'p', b'a', b'd', b'd', b'i', b'n', b'g']);
+    }
+    r
+}
+
+/// Whether `s` is `pd`.
+pub fn is_pd(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'p', b'd']),
+{
+    let t: [u8; 2] = [b'p', b'd'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'p', b'd']);
+    }
+    r
+}
+
+/// Whether `s` is `dpr`.
+pub fn is_dpr(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'd', b'p', b'r']),
+{
+    let t: [u8; 3] = [b'd', b'p', b'r'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'd', b'p', b'r']);
+    }
+    r
+}
+
+/// Whether `s` is `rotate`.
+pub fn is_rotate(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'r', b'o', b't', b'a', b't', b'e']),
+{
+    let t: [u8; 6] = [b'r', b'o', b't', b'a', b't', b'e'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'r', b'o', b't', b'a', b't', b'e']);
+    }
+    r
+}
+
+/// Whether `s` is `rot`.
+pub fn is_rot(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'r', b'o', b't']),
+{
+    let t: [u8; 3] = [b'r', b'o', b't'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'r', b'o', b't']);
+    }
+    r
+}
+
+/// Whether `s` is `flip`.
+pub fn is_flip(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'f', b'l', b'i', b'p']),
+{
+    let t: [u8; 4] = [b'f', b'l', b'i', b'p'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'f', b'l', b'i', b'p']);
+    }
+    r
+}
+
+/// Whether `s` is `fl`.
+pub fn is_fl(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'f', b'l']),
+{
+    let t: [u8; 2] = [b'f', b'l'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'f', b'l']);
+    }
+    r
+}
+
 pub fn starts_http(s: &[u8]) -> (r: bool)
     ensures
         r == starts(s@, seq![b'h', b't', b't', b'p']),
@@ -1185,6 +1448,7 @@ pub fn num_x(s: &[u8]) -> (r: Result<u32, Fail>)
     ensures
         r is Ok <==> num(s@) is Some,
         r is Ok ==> num(s@) == Some(r->Ok_0),
+        r is Ok ==> r->Ok_0 <= 65535,
 {
     let mut v: u32 = 0;
     let mut i = 0;
@@ -1410,8 +1674,335 @@ pub fn background_x(p: &Vec<Vec<u8>>) -> (r: Result<Option<[u8; 3]>, Fail>)
 // Options
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Geometry option arguments
+// ---------------------------------------------------------------------------
+
+pub open spec fn pw(n: int) -> int
+    decreases n,
+{
+    if n <= 0 {
+        1
+    } else {
+        10 * pw(n - 1)
+    }
+}
+
+pub proof fn lemma_dec_bound(s: Seq<u8>)
+    requires
+        all_digits(s),
+    ensures
+        0 <= dec(s) < pw(s.len() as int),
+    decreases s.len(),
+{
+    if s.len() > 0 {
+        assert(all_digits(s.drop_last())) by {
+            assert forall|i: int| 0 <= i < s.drop_last().len() implies is_digit(#[trigger] s.drop_last()[i]) by {
+                assert(s.drop_last()[i] == s[i]);
+            }
+        }
+        lemma_dec_bound(s.drop_last());
+        assert(is_digit(s[s.len() - 1]));
+    }
+}
+
+/// `fixed4`, as an `F1`-unit number.
+pub fn fixed4_x(s: &[u8]) -> (r: Result<u32, Fail>)
+    ensures
+        r is Ok <==> fixed4(s@) is Some,
+        r is Ok ==> fixed4(s@) == Some(r->Ok_0 as int),
+        r is Ok ==> r->Ok_0 <= 655359999,
+{
+    let bad = Fail::BadUrl("Invalid number");
+    let d = find_x(s, b'.', 0);
+    let ip = sub(s, 0, d);
+    let fp = if d < s.len() {
+        sub(s, d + 1, s.len())
+    } else {
+        Vec::new()
+    };
+    proof {
+        assert(ip@ =~= s@.take(d as int));
+        if d < s.len() {
+            assert(fp@ =~= s@.skip(d + 1));
+        } else {
+            assert(fp@ =~= Seq::<u8>::empty());
+        }
+    }
+    if s.len() == 0 || (ip.len() == 0 && fp.len() == 0) || fp.len() > 4 {
+        return Err(bad);
+    }
+    let iv = match num_x(ip.as_slice()) {
+        Ok(v) => v,
+        Err(_) => {
+            return Err(bad);
+        },
+    };
+    proof {
+        if all_digits(fp@) {
+            lemma_dec_bound(fp@);
+            assert(pw(fp@.len() as int) <= 10000) by {
+                assert(pw(0) == 1 && pw(1) == 10 && pw(2) == 100 && pw(3) == 1000 && pw(4) == 10000) by {
+                    reveal_with_fuel(pw, 5);
+                }
+            }
+        }
+    }
+    let fv = match num_x(fp.as_slice()) {
+        Ok(v) => v,
+        Err(_) => {
+            return Err(bad);
+        },
+    };
+    let m: u32 = if fp.len() == 0 {
+        10000
+    } else if fp.len() == 1 {
+        1000
+    } else if fp.len() == 2 {
+        100
+    } else if fp.len() == 3 {
+        10
+    } else {
+        1
+    };
+    proof {
+        assert(iv <= 65535);
+        assert(iv * 10000 <= 655350000) by (nonlinear_arith)
+            requires
+                iv <= 65535,
+        ;
+        assert(m == pow10(4 - fp@.len()));
+        assert(pw(fp@.len() as int) * m == 10000) by {
+            reveal_with_fuel(pw, 5);
+            if fp@.len() == 0 {
+            } else if fp@.len() == 1 {
+            } else if fp@.len() == 2 {
+            } else if fp@.len() == 3 {
+            } else {
+                assert(fp@.len() == 4);
+            }
+        }
+        assert(fv * m <= 9999) by (nonlinear_arith)
+            requires
+                fv < pw(fp@.len() as int),
+                fp@.len() <= 4,
+                m == pow10(4 - fp@.len()),
+                pw(fp@.len() as int) * m == 10000,
+                fv >= 0,
+        ;
+        assert(num(ip@) == Some(iv));
+        assert(all_digits(ip@));
+        lemma_dec_nonneg(ip@);
+        assert(dec(ip@) == iv);
+        assert(num(fp@) == Some(fv));
+        lemma_dec_nonneg(fp@);
+        assert(all_digits(fp@) && dec(fp@) == fv);
+        let d = find(s@, b'.', 0);
+        assert(ip@ == s@.take(d));
+        assert(fp@ == (if d < s@.len() { s@.skip(d + 1) } else { Seq::empty() }));
+        assert(fixed4(s@) == Some(dec(ip@) * F1 + dec(fp@) * pow10(4 - fp@.len())));
+    }
+    Ok(iv * 10000 + fv * m)
+}
+
+/// `fixed4z`.
+pub fn fixed4z_x(s: &[u8]) -> (r: Result<u32, Fail>)
+    ensures
+        r is Ok <==> fixed4z(s@) is Some,
+        r is Ok ==> fixed4z(s@) == Some(r->Ok_0 as int),
+        r is Ok ==> r->Ok_0 <= 655359999,
+{
+    if s.len() == 0 {
+        Ok(0)
+    } else {
+        fixed4_x(s)
+    }
+}
+
+/// `sint`.
+pub fn sint_x(s: &[u8]) -> (r: Result<i32, Fail>)
+    ensures
+        r is Ok <==> sint(s@) is Some,
+        r is Ok ==> sint(s@) == Some(r->Ok_0 as int),
+        r is Ok ==> -65535 <= r->Ok_0 <= 65535,
+{
+    if s.len() > 0 && s[0] == b'-' {
+        let t = sub(s, 1, s.len());
+        proof {
+            assert(t@ =~= s@.skip(1));
+        }
+        match num_x(t.as_slice()) {
+            Ok(v) => if s.len() > 1 {
+                Ok(-(v as i32))
+            } else {
+                Err(Fail::BadUrl("Invalid offset"))
+            },
+            Err(e) => Err(e),
+        }
+    } else {
+        match num_x(s) {
+            Ok(v) => Ok(v as i32),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// `gkind`.
+pub fn gkind_x(s: &[u8]) -> (r: Result<GKind, Fail>)
+    ensures
+        r is Ok <==> gkind(s@) is Some,
+        r is Ok ==> gkind(s@) == Some(r->Ok_0),
+{
+    if s.len() == 0 || is_ce(s) {
+        Ok(GKind::Ce)
+    } else if is_no(s) {
+        Ok(GKind::No)
+    } else if is_so(s) {
+        Ok(GKind::So)
+    } else if is_ea(s) {
+        Ok(GKind::Ea)
+    } else if is_we(s) {
+        Ok(GKind::We)
+    } else if is_noea(s) {
+        Ok(GKind::NoEa)
+    } else if is_nowe(s) {
+        Ok(GKind::NoWe)
+    } else if is_soea(s) {
+        Ok(GKind::SoEa)
+    } else if is_sowe(s) {
+        Ok(GKind::SoWe)
+    } else if is_fp(s) {
+        Ok(GKind::Fp)
+    } else if is_sm(s) {
+        Err(Fail::Unprocessable("Smart gravity is not supported"))
+    } else {
+        Err(Fail::BadUrl("Invalid gravity"))
+    }
+}
+
+/// What `geo_ok` needs of a gravity.
+pub open spec fn grav_ok(g: Gravity) -> bool {
+    -65535 <= g.x <= 65535 && -65535 <= g.y <= 65535
+}
+
+/// `gravity` from argument `i` of the option split into `p`.
+pub fn gravity_x(p: &Vec<Vec<u8>>, i: usize) -> (r: Result<Gravity, Fail>)
+    requires
+        p@.len() >= 1,
+        i < 6,
+    ensures
+        r is Ok <==> gravity(views(p@).skip(1), i as int) is Some,
+        r is Ok ==> gravity(views(p@).skip(1), i as int) == Some(r->Ok_0),
+        r is Ok ==> grav_ok(r->Ok_0),
+{
+    let k = gkind_x(arg_x(p, i).as_slice())?;
+    match k {
+        GKind::Fp => {
+            let x = fixed4_x(arg_x(p, i + 1).as_slice())?;
+            let y = fixed4_x(arg_x(p, i + 2).as_slice())?;
+            if x > 10000 || y > 10000 {
+                return Err(Fail::BadUrl("Invalid focus point"));
+            }
+            Ok(Gravity { kind: GKind::Fp, x: x as i32, y: y as i32 })
+        },
+        _ => {
+            let x = sint_x(arg_x(p, i + 1).as_slice())?;
+            let y = sint_x(arg_x(p, i + 2).as_slice())?;
+            Ok(Gravity { kind: k, x, y })
+        },
+    }
+}
+
+/// `ogravity`.
+pub fn ogravity_x(p: &Vec<Vec<u8>>, i: usize) -> (r: Result<Option<Gravity>, Fail>)
+    requires
+        p@.len() >= 1,
+        i < 6,
+    ensures
+        r is Ok <==> ogravity(views(p@).skip(1), i as int) is Some,
+        r is Ok ==> ogravity(views(p@).skip(1), i as int) == Some(r->Ok_0),
+        r matches Ok(Some(g)) ==> grav_ok(g),
+{
+    if arg_x(p, i).len() == 0 {
+        Ok(None)
+    } else {
+        let g = gravity_x(p, i)?;
+        Ok(Some(g))
+    }
+}
+
+/// `ext`: `extend`'s arguments at the end of `resize` and `size`.
+pub fn ext_x(o: Options, p: &Vec<Vec<u8>>, i: usize) -> (r: Result<Options, Fail>)
+    requires
+        p@.len() >= 1,
+        i < 5,
+    ensures
+        r is Ok <==> ext(o, views(p@).skip(1), i as int) is Some,
+        r is Ok ==> ext(o, views(p@).skip(1), i as int) == Some(r->Ok_0),
+        r matches Ok(v) ==> v.extend_g == o.extend_g || v.extend_g is None || grav_ok(v.extend_g->Some_0),
+{
+    let a = arg_x(p, i);
+    if a.len() == 0 {
+        Ok(o)
+    } else {
+        let e = boolean_x(a.as_slice())?;
+        let g = ogravity_x(p, i + 1)?;
+        Ok(Options { extend: e, extend_g: g, ..o })
+    }
+}
+
+/// `padding`.
+pub fn padding_x(p: &Vec<Vec<u8>>) -> (r: Result<[u32; 4], Fail>)
+    requires
+        p@.len() >= 1,
+    ensures
+        r is Ok <==> padding(views(p@).skip(1)) is Some,
+        r is Ok ==> padding(views(p@).skip(1)) == Some(r->Ok_0),
+        r is Ok ==> forall|i: int| 0 <= i < 4 ==> #[trigger] r->Ok_0[i] <= 65535,
+{
+    if p.len() > 5 {
+        return Err(Fail::BadUrl("Invalid padding"));
+    }
+    let t = num_x(arg_x(p, 0).as_slice());
+    let a1 = arg_x(p, 1);
+    let r = if a1.len() == 0 {
+        t.clone()
+    } else {
+        num_x(a1.as_slice())
+    };
+    let a2 = arg_x(p, 2);
+    let b = if a2.len() == 0 {
+        t.clone()
+    } else {
+        num_x(a2.as_slice())
+    };
+    let a3 = arg_x(p, 3);
+    let l = if a3.len() == 0 {
+        r.clone()
+    } else {
+        num_x(a3.as_slice())
+    };
+    match (t, r, b, l) {
+        (Ok(t), Ok(r), Ok(b), Ok(l)) => {
+            let out = [t, r, b, l];
+            proof {
+                assert(out[0] == t && out[1] == r && out[2] == b && out[3] == l);
+                assert forall|i: int| 0 <= i < 4 implies #[trigger] out[i] <= 65535 by {
+                    if i == 0 {
+                    } else if i == 1 {
+                    } else if i == 2 {
+                    } else {
+                    }
+                }
+            }
+            Ok(out)
+        },
+        _ => Err(Fail::BadUrl("Invalid padding")),
+    }
+}
+
 /// `apply`.
-#[verifier::rlimit(40)]
+#[verifier::rlimit(400)]
 pub fn apply_x(o: Options, seg: &[u8]) -> (r: Result<Options, Fail>)
     ensures
         r is Ok <==> apply(o, seg@) is Some,
@@ -1432,12 +2023,12 @@ pub fn apply_x(o: Options, seg: &[u8]) -> (r: Result<Options, Fail>)
         let w = num_x(arg_x(&p, 1).as_slice())?;
         let h = num_x(arg_x(&p, 2).as_slice())?;
         let e = boolean_x(arg_x(&p, 3).as_slice())?;
-        Ok(Options { mode: m, w, h, enlarge: e, ..o })
+        ext_x(Options { mode: m, w, h, enlarge: e, ..o }, &p, 4)
     } else if is_size(n) || is_s(n) {
         let w = num_x(arg_x(&p, 0).as_slice())?;
         let h = num_x(arg_x(&p, 1).as_slice())?;
         let e = boolean_x(arg_x(&p, 2).as_slice())?;
-        Ok(Options { w, h, enlarge: e, ..o })
+        ext_x(Options { w, h, enlarge: e, ..o }, &p, 3)
     } else if is_resizing_type(n) || is_rt(n) {
         let m = mode_x(arg_x(&p, 0).as_slice())?;
         Ok(Options { mode: m, ..o })
@@ -1468,12 +2059,36 @@ pub fn apply_x(o: Options, seg: &[u8]) -> (r: Result<Options, Fail>)
         let f = format_x(o.format, arg_x(&p, 0).as_slice())?;
         Ok(Options { format: f, ..o })
     } else if is_gravity(n) || is_g(n) {
-        let g = arg_x(&p, 0);
-        if g.len() == 0 || is_ce(g.as_slice()) {
-            Ok(o)
-        } else {
-            Err(Fail::Unprocessable("Only centre gravity is supported"))
+        let g = gravity_x(&p, 0)?;
+        Ok(Options { gravity: g, ..o })
+    } else if is_crop(n) || is_c(n) {
+        let w = fixed4z_x(arg_x(&p, 0).as_slice())?;
+        let h = fixed4z_x(arg_x(&p, 1).as_slice())?;
+        let g = ogravity_x(&p, 2)?;
+        Ok(Options { crop_w: w, crop_h: h, crop_g: g, ..o })
+    } else if is_extend(n) || is_ex(n) {
+        let e = boolean_x(arg_x(&p, 0).as_slice())?;
+        let g = ogravity_x(&p, 1)?;
+        Ok(Options { extend: e, extend_g: g, ..o })
+    } else if is_padding(n) || is_pd(n) {
+        let pd = padding_x(&p)?;
+        Ok(Options { pad: pd, ..o })
+    } else if is_dpr(n) {
+        let d = fixed4_x(arg_x(&p, 0).as_slice())?;
+        if d < 1 || d > 80000 {
+            return Err(Fail::BadUrl("Invalid dpr"));
         }
+        Ok(Options { dpr: d, ..o })
+    } else if is_rotate(n) || is_rot(n) {
+        let r = num_x(arg_x(&p, 0).as_slice())?;
+        if r % 90 != 0 {
+            return Err(Fail::BadUrl("Rotation angle must be a multiple of 90"));
+        }
+        Ok(Options { rotate: (r / 90) % 4, ..o })
+    } else if is_flip(n) || is_fl(n) {
+        let h = boolean_x(arg_x(&p, 0).as_slice())?;
+        let v = boolean_x(arg_x(&p, 1).as_slice())?;
+        Ok(Options { flip_h: h, flip_v: v, ..o })
     } else {
         Err(Fail::BadUrl("Unknown processing option"))
     }
@@ -1525,6 +2140,17 @@ pub fn defaults_x() -> (r: Options)
         format: Format::Png,
         quality: 0,
         filter: Filter::Lanczos3,
+        gravity: Gravity { kind: GKind::Ce, x: 0, y: 0 },
+        crop_w: 0,
+        crop_h: 0,
+        crop_g: None,
+        extend: false,
+        extend_g: None,
+        pad: [0, 0, 0, 0],
+        dpr: 10000,
+        rotate: 0,
+        flip_h: false,
+        flip_v: false,
     }
 }
 

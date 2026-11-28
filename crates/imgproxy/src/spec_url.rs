@@ -12,6 +12,9 @@
 //! does not start with `http` or `local`); options apply left to right,
 //! and a later one overrides an earlier one.
 use crate::fit::Mode;
+#[cfg(verus_only)]
+use crate::spec_geom::F1;
+use crate::spec_geom::{GKind, Geo, Gravity};
 use vstd::prelude::*;
 
 verus! {
@@ -59,6 +62,42 @@ pub struct Options {
     pub quality: u32,
     /// The resampling filter (`resizing_algorithm`).
     pub filter: Filter,
+    /// `gravity`.
+    pub gravity: Gravity,
+    /// `crop`: width and height (`F1` units), and its gravity.
+    pub crop_w: u32,
+    pub crop_h: u32,
+    pub crop_g: Option<Gravity>,
+    /// `extend` and its gravity.
+    pub extend: bool,
+    pub extend_g: Option<Gravity>,
+    /// `padding`: top, right, bottom, left.
+    pub pad: [u32; 4],
+    /// `dpr`, `F1` units.
+    pub dpr: u32,
+    /// `rotate`, in clockwise quarter turns (0 to 3).
+    pub rotate: u32,
+    /// `flip`: left-right, top-bottom.
+    pub flip_h: bool,
+    pub flip_v: bool,
+}
+
+/// The geometry options.
+pub open spec fn geo(o: Options) -> Geo {
+    Geo {
+        mode: o.mode,
+        w: o.w,
+        h: o.h,
+        enlarge: o.enlarge,
+        gravity: o.gravity,
+        crop_w: o.crop_w,
+        crop_h: o.crop_h,
+        crop_g: o.crop_g,
+        extend: o.extend,
+        extend_g: o.extend_g,
+        pad: o.pad,
+        dpr: o.dpr,
+    }
 }
 
 /// The options before any are applied.
@@ -72,6 +111,17 @@ pub open spec fn defaults() -> Options {
         format: Format::Png,
         quality: 0,
         filter: Filter::Lanczos3,
+        gravity: Gravity { kind: GKind::Ce, x: 0, y: 0 },
+        crop_w: 0,
+        crop_h: 0,
+        crop_g: None,
+        extend: false,
+        extend_g: None,
+        pad: [0u32, 0u32, 0u32, 0u32],
+        dpr: 10000,
+        rotate: 0,
+        flip_h: false,
+        flip_v: false,
     }
 }
 
@@ -314,6 +364,146 @@ pub open spec fn filter(s: Seq<u8>) -> Option<Filter> {
     }
 }
 
+
+/// `10^n` for `n` from 0 to 4.
+pub open spec fn pow10(n: int) -> int {
+    if n <= 0 {
+        1
+    } else if n == 1 {
+        10
+    } else if n == 2 {
+        100
+    } else if n == 3 {
+        1000
+    } else {
+        10000
+    }
+}
+
+pub open spec fn all_digits(s: Seq<u8>) -> bool {
+    forall|i: int| 0 <= i < s.len() ==> is_digit(#[trigger] s[i])
+}
+
+/// A decimal with up to 4 places, at most 65535.9999, in `F1` units
+/// (`2`, `1.5`, `.25`); `None` for anything else, the empty string too.
+pub open spec fn fixed4(s: Seq<u8>) -> Option<int> {
+    let d = find(s, b'.', 0);
+    let ip = s.take(d);
+    let fp = if d < s.len() { s.skip(d + 1) } else { Seq::empty() };
+    if all_digits(ip) && all_digits(fp) && fp.len() <= 4 && dec(ip) <= 65535 && s.len() > 0 && (ip.len() > 0
+        || fp.len() > 0) {
+        Some(dec(ip) * F1 + dec(fp) * pow10(4 - fp.len()))
+    } else {
+        None
+    }
+}
+
+/// `fixed4`, with the empty string 0.
+pub open spec fn fixed4z(s: Seq<u8>) -> Option<int> {
+    if s.len() == 0 {
+        Some(0)
+    } else {
+        fixed4(s)
+    }
+}
+
+/// An offset: a size, or `-` and a size.
+pub open spec fn sint(s: Seq<u8>) -> Option<int> {
+    if s.len() > 0 && s[0] == b'-' {
+        match num(s.skip(1)) {
+            Some(v) if s.len() > 1 => Some(-(v as int)),
+            _ => None,
+        }
+    } else {
+        match num(s) {
+            Some(v) => Some(v as int),
+            None => None,
+        }
+    }
+}
+
+/// The gravity types (empty is the centre; `sm`, smart, is not done here).
+pub open spec fn gkind(s: Seq<u8>) -> Option<GKind> {
+    if s.len() == 0 || s == seq![b'c', b'e'] {
+        Some(GKind::Ce)
+    } else if s == seq![b'n', b'o'] {
+        Some(GKind::No)
+    } else if s == seq![b's', b'o'] {
+        Some(GKind::So)
+    } else if s == seq![b'e', b'a'] {
+        Some(GKind::Ea)
+    } else if s == seq![b'w', b'e'] {
+        Some(GKind::We)
+    } else if s == seq![b'n', b'o', b'e', b'a'] {
+        Some(GKind::NoEa)
+    } else if s == seq![b'n', b'o', b'w', b'e'] {
+        Some(GKind::NoWe)
+    } else if s == seq![b's', b'o', b'e', b'a'] {
+        Some(GKind::SoEa)
+    } else if s == seq![b's', b'o', b'w', b'e'] {
+        Some(GKind::SoWe)
+    } else if s == seq![b'f', b'p'] {
+        Some(GKind::Fp)
+    } else {
+        None
+    }
+}
+
+/// A gravity from arguments `i` on: the type, then `x` and `y` (pixel
+/// offsets, or for `fp` fractions from 0 to 1).
+pub open spec fn gravity(a: Seq<Seq<u8>>, i: int) -> Option<Gravity> {
+    match gkind(arg(a, i)) {
+        None => None,
+        Some(GKind::Fp) => match (fixed4(arg(a, i + 1)), fixed4(arg(a, i + 2))) {
+            (Some(x), Some(y)) if x <= F1 && y <= F1 => Some(Gravity { kind: GKind::Fp, x: x as i32, y: y as i32 }),
+            _ => None,
+        },
+        Some(k) => match (sint(arg(a, i + 1)), sint(arg(a, i + 2))) {
+            (Some(x), Some(y)) => Some(Gravity { kind: k, x: x as i32, y: y as i32 }),
+            _ => None,
+        },
+    }
+}
+
+/// A gravity from arguments `i` on, or `None` inside if argument `i` is
+/// empty (the default).
+pub open spec fn ogravity(a: Seq<Seq<u8>>, i: int) -> Option<Option<Gravity>> {
+    if arg(a, i).len() == 0 {
+        Some(None)
+    } else {
+        match gravity(a, i) {
+            Some(g) => Some(Some(g)),
+            None => None,
+        }
+    }
+}
+
+/// `padding`'s CSS-style lengths (at most four): top, then right (default top), bottom
+/// (default top), left (default right).
+pub open spec fn padding(a: Seq<Seq<u8>>) -> Option<[u32; 4]> {
+    let t = num(arg(a, 0));
+    let r = if arg(a, 1).len() == 0 { t } else { num(arg(a, 1)) };
+    let b = if arg(a, 2).len() == 0 { t } else { num(arg(a, 2)) };
+    let l = if arg(a, 3).len() == 0 { r } else { num(arg(a, 3)) };
+    match (t, r, b, l) {
+        (Some(t), Some(r), Some(b), Some(l)) if a.len() <= 4 => Some([t, r, b, l]),
+        _ => None,
+    }
+}
+
+/// `resize` and `size` end with `extend`'s arguments, from argument `i`
+/// on; when they are not given, `extend` is left as it was.
+pub open spec fn ext(o: Options, a: Seq<Seq<u8>>, i: int) -> Option<Options> {
+    if arg(a, i).len() == 0 {
+        Some(o)
+    } else {
+        match (boolean(arg(a, i)), ogravity(a, i + 1)) {
+            (Some(e), Some(g)) => Some(Options { extend: e, extend_g: g, ..o }),
+            _ => None,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Options
 // ---------------------------------------------------------------------------
@@ -341,12 +531,12 @@ pub open spec fn apply(o: Options, seg: Seq<u8>) -> Option<Options> {
     if named(n, seq![b'r', b'e', b's', b'i', b'z', b'e'], seq![b'r', b's']) {
         let m = if arg(a, 0).len() == 0 { Some(o.mode) } else { mode(arg(a, 0)) };
         match (m, num(arg(a, 1)), num(arg(a, 2)), boolean(arg(a, 3))) {
-            (Some(m), Some(w), Some(h), Some(e)) => Some(Options { mode: m, w, h, enlarge: e, ..o }),
+            (Some(m), Some(w), Some(h), Some(e)) => ext(Options { mode: m, w, h, enlarge: e, ..o }, a, 4),
             _ => None,
         }
     } else if named(n, seq![b's', b'i', b'z', b'e'], seq![b's']) {
         match (num(arg(a, 0)), num(arg(a, 1)), boolean(arg(a, 2))) {
-            (Some(w), Some(h), Some(e)) => Some(Options { w, h, enlarge: e, ..o }),
+            (Some(w), Some(h), Some(e)) => ext(Options { w, h, enlarge: e, ..o }, a, 3),
             _ => None,
         }
     } else if named(
@@ -405,11 +595,39 @@ pub open spec fn apply(o: Options, seg: Seq<u8>) -> Option<Options> {
             None => None,
         }
     } else if named(n, seq![b'g', b'r', b'a', b'v', b'i', b't', b'y'], seq![b'g']) {
-        // Only centred crops.
-        if arg(a, 0).len() == 0 || arg(a, 0) == seq![b'c', b'e'] {
-            Some(o)
-        } else {
-            None
+        match gravity(a, 0) {
+            Some(g) => Some(Options { gravity: g, ..o }),
+            None => None,
+        }
+    } else if named(n, seq![b'c', b'r', b'o', b'p'], seq![b'c']) {
+        match (fixed4z(arg(a, 0)), fixed4z(arg(a, 1)), ogravity(a, 2)) {
+            (Some(w), Some(h), Some(g)) => Some(Options { crop_w: w as u32, crop_h: h as u32, crop_g: g, ..o }),
+            _ => None,
+        }
+    } else if named(n, seq![b'e', b'x', b't', b'e', b'n', b'd'], seq![b'e', b'x']) {
+        match (boolean(arg(a, 0)), ogravity(a, 1)) {
+            (Some(e), Some(g)) => Some(Options { extend: e, extend_g: g, ..o }),
+            _ => None,
+        }
+    } else if named(n, seq![b'p', b'a', b'd', b'd', b'i', b'n', b'g'], seq![b'p', b'd']) {
+        match padding(a) {
+            Some(p) => Some(Options { pad: p, ..o }),
+            None => None,
+        }
+    } else if n == seq![b'd', b'p', b'r'] {
+        match fixed4(arg(a, 0)) {
+            Some(d) if 1 <= d <= 8 * F1 => Some(Options { dpr: d as u32, ..o }),
+            _ => None,
+        }
+    } else if named(n, seq![b'r', b'o', b't', b'a', b't', b'e'], seq![b'r', b'o', b't']) {
+        match num(arg(a, 0)) {
+            Some(r) if r % 90 == 0 => Some(Options { rotate: ((r / 90) % 4) as u32, ..o }),
+            _ => None,
+        }
+    } else if named(n, seq![b'f', b'l', b'i', b'p'], seq![b'f', b'l']) {
+        match (boolean(arg(a, 0)), boolean(arg(a, 1))) {
+            (Some(h), Some(v)) => Some(Options { flip_h: h, flip_v: v, ..o }),
+            _ => None,
         }
     } else {
         None
