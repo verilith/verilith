@@ -39,7 +39,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | h3 |  |  |  |  |  |  | 1 | 33 |
 | hpack | 3 |  |  |  |  |  | 3 | 203 |
 | http |  |  |  |  |  |  | 8 | 2725 |
-| imgproxy |  |  |  |  |  |  | 3 | 1044 |
+| imgproxy |  |  |  |  |  |  | 7 | 1688 |
 | jpeg |  |  |  |  |  |  | 3 | 816 |
 | json | 17 |  |  |  |  |  | 6 | 1853 |
 | lz4 |  |  |  |  |  |  | 1 | 584 |
@@ -50,7 +50,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | quic-conn |  |  |  |  |  |  | 3 | 2091 |
 | regex | 1 |  |  |  |  |  | 3 | 1969 |
 | resolver | 7 |  |  |  |  |  | 4 | 551 |
-| server | 1 |  |  |  | 1 |  | 15 | 5352 |
+| server | 1 |  |  |  | 1 |  | 15 | 5353 |
 | serverless |  |  |  |  |  |  | 2 | 256 |
 | sha2 | 14 |  |  |  |  |  | 3 | 362 |
 | simd | 513 | 12 | 300 | 4 |  |  | 3 | 1053 |
@@ -69,7 +69,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | xxhash |  |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 | 1354 |
 | zstd | 6 |  |  |  |  |  | 2 | 1331 |
-| **total** | **717** | **36** | **300** | **5** | **17** | **12** | **149** | **60480** |
+| **total** | **717** | **36** | **300** | **5** | **17** | **12** | **153** | **61125** |
 
 ## Items
 
@@ -160,8 +160,12 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### imgproxy
 
+- `crates/imgproxy/src/attention.rs`: plain Rust, 176 lines
+- `crates/imgproxy/src/colour.rs`: plain Rust, 139 lines
 - `crates/imgproxy/src/handler.rs`: plain Rust, 107 lines
-- `crates/imgproxy/src/proxy.rs`: plain Rust, 840 lines
+- `crates/imgproxy/src/mask.rs`: plain Rust, 75 lines
+- `crates/imgproxy/src/proxy.rs`: plain Rust, 886 lines
+- `crates/imgproxy/src/vresize.rs`: plain Rust, 208 lines
 - `crates/imgproxy/src/bin/verilith-imgproxy.rs`: plain Rust, 97 lines
 
 ### jpeg
@@ -249,7 +253,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/server/src/h3.rs`: plain Rust, 715 lines
 - `crates/server/src/lib.rs`: plain Rust, 98 lines
 - `crates/server/src/tls.rs`: plain Rust, 717 lines
-- `crates/server/src/worker.rs`: plain Rust, 582 lines
+- `crates/server/src/worker.rs`: plain Rust, 583 lines
 - `crates/server/src/worker_uring.rs`: plain Rust, 462 lines
 - `crates/server/src/bin/verilith-server.rs`: plain Rust, 108 lines
 - `crates/server/src/sys/linux.rs`: plain Rust, 352 lines

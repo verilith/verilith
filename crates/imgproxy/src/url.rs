@@ -2302,6 +2302,32 @@ pub fn is_bl(s: &[u8]) -> (r: bool)
     r
 }
 
+/// Whether `s` is `pixelate`.
+pub fn is_pixelate(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'p', b'i', b'x', b'e', b'l', b'a', b't', b'e']),
+{
+    let t: [u8; 8] = [b'p', b'i', b'x', b'e', b'l', b'a', b't', b'e'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'p', b'i', b'x', b'e', b'l', b'a', b't', b'e']);
+    }
+    r
+}
+
+/// Whether `s` is `pix`.
+pub fn is_pix(s: &[u8]) -> (r: bool)
+    ensures
+        r == (s@ == seq![b'p', b'i', b'x']),
+{
+    let t: [u8; 3] = [b'p', b'i', b'x'];
+    let r = eq(s, &t);
+    proof {
+        assert(t@ =~= seq![b'p', b'i', b'x']);
+    }
+    r
+}
+
 /// Whether `s` is `sharpen`.
 pub fn is_sharpen(s: &[u8]) -> (r: bool)
     ensures
@@ -2612,6 +2638,9 @@ pub fn apply2_x(o: Options, p: &Vec<Vec<u8>>) -> (r: Result<Options, Fail>)
     } else if is_sharpen(n) || is_sh(n) {
         let v = fixed4z_x(arg_x(p, 0).as_slice())?;
         Ok(Options { sharpen: v, ..o })
+    } else if is_pixelate(n) || is_pix(n) {
+        let v = num_x(arg_x(p, 0).as_slice())?;
+        Ok(Options { pixelate: v, ..o })
     } else if is_filename(n) || is_fn(n) {
         let _ = fname_arg_x(p)?;
         Ok(o)
@@ -2736,6 +2765,7 @@ pub fn defaults_x() -> (r: Options)
         skip: 0,
         blur: 0,
         sharpen: 0,
+        pixelate: 0,
         wm_op: 0,
         wm_g: Gravity { kind: GKind::Ce, x: 0, y: 0 },
         wm_tile: false,
