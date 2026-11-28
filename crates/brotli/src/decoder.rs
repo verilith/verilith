@@ -2130,182 +2130,6 @@ pub proof fn lemma_ring_gap(i: int, t: int, r: int, ti: int, m: int)
     }
 }
 
-/// `buf[dst..dst + 16] = buf[src..src + 16]`, when the two do not overlap
-/// (the source may be on either side: in the ring it is after the
-/// destination when it is from the ring's previous lap).
-#[verifier::spinoff_prover]
-#[inline(always)]
-fn copy16(buf: &mut [u8], src: usize, dst: usize)
-    requires
-        src + 16 <= dst || dst + 16 <= src,
-        src + 16 <= old(buf)@.len(),
-        dst + 16 <= old(buf)@.len(),
-    ensures
-        final(buf)@.len() == old(buf)@.len(),
-        forall|j: int|
-            0 <= j < final(buf)@.len() ==> #[trigger] final(buf)@[j] == if dst <= j < dst + 16 {
-                old(buf)@[j - dst + src]
-            } else {
-                old(buf)@[j]
-            },
-{
-    let len = buf.len();
-    assert(dst + 16 <= len);
-    let ghost o = buf@;
-    verilith_core::prims::move8(buf, src, dst);
-    let ghost m = buf@;
-    verilith_core::prims::move8(buf, src + 8, dst + 8);
-    proof {
-        assert forall|j: int| 0 <= j < buf@.len() implies #[trigger] buf@[j] == if dst <= j < dst + 16 {
-            o[j - dst + src]
-        } else {
-            o[j]
-        } by {
-            if dst + 8 <= j < dst + 16 {
-                assert(buf@[j] == m[j - (dst + 8) + (src + 8)]);
-                assert(m[j - dst + src] == o[j - dst + src]);
-            } else {
-                assert(buf@[j] == m[j]);
-            }
-        }
-    }
-}
-
-/// `buf[dst..dst + n] = buf[src..src + n]` in 8-byte words, when the two
-/// do not overlap.
-#[verifier::spinoff_prover]
-#[inline(always)]
-fn copy_words(buf: &mut [u8], src: usize, dst: usize, n: usize)
-    requires
-        src + n <= old(buf)@.len(),
-        dst + n <= old(buf)@.len(),
-        src + n <= dst || dst + n <= src,
-        n >= 8,
-    ensures
-        final(buf)@.len() == old(buf)@.len(),
-        forall|j: int|
-            0 <= j < final(buf)@.len() ==> #[trigger] final(buf)@[j] == if dst <= j < dst + n {
-                old(buf)@[j - dst + src]
-            } else {
-                old(buf)@[j]
-            },
-{
-    let ghost o = buf@;
-    let len = buf.len();
-    let mut k: usize = 0;
-    while k + 8 <= n
-        invariant
-            k <= n,
-            o.len() == len,
-            src + n <= o.len(),
-            dst + n <= o.len(),
-            src + n <= dst || dst + n <= src,
-            buf@.len() == o.len(),
-            forall|j: int|
-                0 <= j < buf@.len() ==> #[trigger] buf@[j] == if dst <= j < dst + k {
-                    o[j - dst + src]
-                } else {
-                    o[j]
-                },
-        decreases n - k,
-    {
-        verilith_core::prims::move8(buf, src + k, dst + k);
-        k = k + 8;
-    }
-    if k < n {
-        // The last 8 bytes, overlapping some already copied.
-        verilith_core::prims::move8(buf, src + n - 8, dst + n - 8);
-    }
-}
-
-/// `buf[dst..dst + n] = buf[src..src + n]` for 16 to 64 bytes, in 16-byte
-/// pieces, the last of them overlapping the one before when `n` is not a
-/// multiple of 16 (no loop, so no branch on the length within a range),
-/// when the two do not overlap.
-#[verifier::spinoff_prover]
-#[verifier::rlimit(30)]
-#[inline(always)]
-fn copy_mid(buf: &mut [u8], src: usize, dst: usize, n: usize)
-    requires
-        src + n <= old(buf)@.len(),
-        dst + n <= old(buf)@.len(),
-        src + n <= dst || dst + n <= src,
-        16 <= n <= 64,
-    ensures
-        final(buf)@.len() == old(buf)@.len(),
-        forall|j: int|
-            0 <= j < final(buf)@.len() ==> #[trigger] final(buf)@[j] == if dst <= j < dst + n {
-                old(buf)@[j - dst + src]
-            } else {
-                old(buf)@[j]
-            },
-{
-    let ghost o = buf@;
-    let len = buf.len();
-    assert(src + n <= len && dst + n <= len);
-    if n <= 32 {
-        copy16(buf, src, dst);
-        let ghost m = buf@;
-        copy16(buf, src + n - 16, dst + n - 16);
-        proof {
-            assert forall|j: int| 0 <= j < buf@.len() implies #[trigger] buf@[j] == if dst <= j < dst + n {
-                o[j - dst + src]
-            } else {
-                o[j]
-            } by {
-                if dst + n - 16 <= j < dst + n {
-                    assert(buf@[j] == m[j - (dst + n - 16) + (src + n - 16)]);
-                    assert(m[j - dst + src] == o[j - dst + src]);
-                } else {
-                    assert(buf@[j] == m[j]);
-                }
-            }
-        }
-    } else {
-        copy16(buf, src, dst);
-        let ghost m1 = buf@;
-        copy16(buf, src + 16, dst + 16);
-        let ghost m2 = buf@;
-        copy16(buf, src + n - 32, dst + n - 32);
-        let ghost m3 = buf@;
-        copy16(buf, src + n - 16, dst + n - 16);
-        proof {
-            assert forall|j: int| 0 <= j < buf@.len() implies #[trigger] buf@[j] == if dst <= j < dst + n {
-                o[j - dst + src]
-            } else {
-                o[j]
-            } by {
-                let k = j - dst + src;
-                if dst <= j < dst + n {
-                    assert(m1[k] == o[k]);
-                    assert(m2[k] == o[k]);
-                    assert(m3[k] == o[k]);
-                }
-                if dst + n - 16 <= j < dst + n {
-                    assert(buf@[j] == m3[j - (dst + n - 16) + (src + n - 16)]);
-                } else if dst + n - 32 <= j < dst + n - 16 {
-                    assert(buf@[j] == m3[j]);
-                    assert(m3[j] == m2[j - (dst + n - 32) + (src + n - 32)]);
-                } else if dst + 16 <= j < dst + 32 {
-                    assert(buf@[j] == m3[j]);
-                    assert(m3[j] == m2[j]);
-                    assert(m2[j] == m1[j - (dst + 16) + (src + 16)]);
-                } else if dst <= j < dst + 16 {
-                    assert(buf@[j] == m3[j]);
-                    assert(m3[j] == m2[j]);
-                    assert(m2[j] == m1[j]);
-                    assert(m1[j] == o[j - dst + src]);
-                } else {
-                    assert(buf@[j] == m3[j]);
-                    assert(m3[j] == m2[j]);
-                    assert(m2[j] == m1[j]);
-                    assert(m1[j] == o[j]);
-                }
-            }
-        }
-    }
-}
-
 /// Two ring positions `d` apart: either `d` apart in the ring too, or
 /// wrapped around it.
 #[verifier::spinoff_prover]
@@ -2505,63 +2329,6 @@ pub open spec fn copy_next(g: Decoder, ring: Vec<u8>, m: u64) -> Decoder {
         out: Ghost(g.out@ + g.out@.subrange(l, l + m)),
         steps: Ghost(g.steps@ + m as nat),
         ..g
-    }
-}
-
-/// `buf[dst..dst + n] = buf[src..src + n]` for `n < 8`, as two reads and
-/// two writes of 4, 2 or 1 bytes that overlap in the middle. Every byte
-/// is read before any is written, so the ranges may overlap.
-#[verifier::spinoff_prover]
-#[inline(always)]
-fn copy_small(buf: &mut [u8], src: usize, dst: usize, n: usize)
-    requires
-        1 <= n < 8,
-        src + n <= old(buf)@.len(),
-        dst + n <= old(buf)@.len(),
-    ensures
-        final(buf)@.len() == old(buf)@.len(),
-        forall|j: int|
-            0 <= j < final(buf)@.len() ==> #[trigger] final(buf)@[j] == if dst <= j < dst + n {
-                old(buf)@[j - dst + src]
-            } else {
-                old(buf)@[j]
-            },
-{
-    let len = buf.len();
-    assert(src + n <= len && dst + n <= len);
-    if n >= 4 {
-        let a0 = verilith_core::prims::get(buf, src);
-        let a1 = verilith_core::prims::get(buf, src + 1);
-        let a2 = verilith_core::prims::get(buf, src + 2);
-        let a3 = verilith_core::prims::get(buf, src + 3);
-        let e = src + n - 4;
-        let b0 = verilith_core::prims::get(buf, e);
-        let b1 = verilith_core::prims::get(buf, e + 1);
-        let b2 = verilith_core::prims::get(buf, e + 2);
-        let b3 = verilith_core::prims::get(buf, e + 3);
-        verilith_core::prims::set(buf, dst, a0);
-        verilith_core::prims::set(buf, dst + 1, a1);
-        verilith_core::prims::set(buf, dst + 2, a2);
-        verilith_core::prims::set(buf, dst + 3, a3);
-        let f = dst + n - 4;
-        verilith_core::prims::set(buf, f, b0);
-        verilith_core::prims::set(buf, f + 1, b1);
-        verilith_core::prims::set(buf, f + 2, b2);
-        verilith_core::prims::set(buf, f + 3, b3);
-    } else if n >= 2 {
-        let a0 = verilith_core::prims::get(buf, src);
-        let a1 = verilith_core::prims::get(buf, src + 1);
-        let e = src + n - 2;
-        let b0 = verilith_core::prims::get(buf, e);
-        let b1 = verilith_core::prims::get(buf, e + 1);
-        verilith_core::prims::set(buf, dst, a0);
-        verilith_core::prims::set(buf, dst + 1, a1);
-        let f = dst + n - 2;
-        verilith_core::prims::set(buf, f, b0);
-        verilith_core::prims::set(buf, f + 1, b1);
-    } else {
-        let a0 = verilith_core::prims::get(buf, src);
-        verilith_core::prims::set(buf, dst, a0);
     }
 }
 
@@ -3043,13 +2810,13 @@ impl Decoder {
         let sixteen = wide && m <= 16 && (si + 16 <= ti || (ti + 16 <= si && si + 16 <= ring.len()));
         let ghost w: int = if sixteen { 16 } else { m as int };
         if sixteen {
-            copy16(ring.as_mut_slice(), si, ti);
+            verilith_core::prims::move16(ring.as_mut_slice(), si, ti);
         } else if m < 8 {
-            copy_small(ring.as_mut_slice(), si, ti, m as usize);
+            verilith_core::prims::move_lt8(ring.as_mut_slice(), si, ti, m as usize);
         } else if (si + (m as usize) <= ti || ti + (m as usize) <= si) && m < 16 {
-            copy_words(ring.as_mut_slice(), si, ti, m as usize);
+            verilith_core::prims::copy_apart8(ring.as_mut_slice(), si, ti, m as usize);
         } else if (si + (m as usize) <= ti || ti + (m as usize) <= si) && m <= 64 {
-            copy_mid(ring.as_mut_slice(), si, ti, m as usize);
+            verilith_core::prims::copy_apart16_64(ring.as_mut_slice(), si, ti, m as usize);
         } else {
             verilith_core::prims::copy_within(ring.as_mut_slice(), si, ti, m as usize);
         }
