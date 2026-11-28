@@ -92,6 +92,10 @@ unsafe extern "C" {
     fn openat(dir: c_int, path: *const std::ffi::c_char, flags: c_int, ...) -> c_int;
     fn clock_gettime(clk: c_int, ts: *mut timespec) -> c_int;
     fn time(t: *mut i64) -> i64;
+    fn connect(fd: c_int, addr: *const sockaddr_in, len: socklen_t) -> c_int;
+    fn getsockopt(fd: c_int, level: c_int, name: c_int, val: *mut u8, len: *mut socklen_t) -> c_int;
+    fn pipe(fds: *mut c_int) -> c_int;
+    fn write(fd: c_int, buf: *const u8, n: usize) -> isize;
 }
 
 fn cvt(r: c_int) -> io::Result<c_int> {
@@ -131,6 +135,75 @@ pub fn listen_tcp(addr: [u8; 4], port: u16, reuseport: bool, backlog: i32) -> io
         cvt(listen(fd, backlog))?;
         Ok(fd)
     }
+}
+
+/// A nonblocking TCP socket connecting to `addr:port`, with TCP_NODELAY:
+/// the connection completes (or fails) later, when the socket turns
+/// writable; [`take_error`] then says which.
+pub fn connect_nb(addr: [u8; 4], port: u16) -> io::Result<i32> {
+    unsafe {
+        let fd = cvt(socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK_FLAG | SOCK_CLOEXEC_FLAG, 0))?;
+        if let Err(e) = set_nonblocking_cloexec(fd) {
+            close(fd);
+            return Err(e);
+        }
+        let one: c_int = 1;
+        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one as *const c_int as *const u8, 4);
+        let sa = sockaddr_in {
+            #[cfg(target_os = "macos")]
+            sin_len: std::mem::size_of::<sockaddr_in>() as u8,
+            sin_family: AF_INET as _,
+            sin_port: port.to_be(),
+            sin_addr: u32::from_ne_bytes(addr),
+            sin_zero: [0; 8],
+        };
+        if connect(fd, &sa, std::mem::size_of::<sockaddr_in>() as socklen_t) < 0 {
+            let e = io::Error::last_os_error();
+            if e.raw_os_error() != Some(EINPROGRESS) {
+                close(fd);
+                return Err(e);
+            }
+        }
+        Ok(fd)
+    }
+}
+
+/// The socket's pending error (`SO_ERROR`), clearing it: `None` once a
+/// nonblocking connect has succeeded.
+pub fn take_error(fd: i32) -> Option<i32> {
+    let mut v: c_int = 0;
+    let mut len: socklen_t = 4;
+    let r = unsafe { getsockopt(fd, SOL_SOCKET, SO_ERROR, &mut v as *mut c_int as *mut u8, &mut len) };
+    if r < 0 {
+        return Some(io::Error::last_os_error().raw_os_error().unwrap_or(-1));
+    }
+    if v == 0 { None } else { Some(v) }
+}
+
+/// A pipe whose ends are both nonblocking: a thread wakes a worker by
+/// writing a byte to the second, which the worker's poller watches the
+/// first for.
+pub fn wake_pipe() -> io::Result<(i32, i32)> {
+    let mut fds: [c_int; 2] = [0; 2];
+    cvt(unsafe { pipe(fds.as_mut_ptr()) })?;
+    for &fd in &fds {
+        set_nonblocking(fd)?;
+    }
+    Ok((fds[0], fds[1]))
+}
+
+/// Writes one byte (a wakeup). A full pipe already holds one.
+pub fn wake(fd: i32) {
+    let b = 1u8;
+    unsafe {
+        write(fd, &b, 1);
+    }
+}
+
+/// Reads everything waiting on a nonblocking descriptor, discarding it.
+pub fn drain(fd: i32) {
+    let mut b = [0u8; 64];
+    while unsafe { read(fd, b.as_mut_ptr(), b.len()) } > 0 {}
 }
 
 /// A nonblocking UDP socket bound to `addr:port`, with SO_REUSEPORT if

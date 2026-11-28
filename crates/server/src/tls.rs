@@ -814,6 +814,16 @@ impl TlsConn {
         Ok(progress)
     }
 
+    /// Answers a deferred request on the HTTP engine inside (stream 0 on
+    /// HTTP/1.1); the event loop then calls [`TlsConn::process`].
+    pub fn resume(&mut self, stream: u32, head: bool, f: crate::defer::Finish, ctx: &Ctx) {
+        match self.inner.as_mut() {
+            Some(Inner::H1(c)) => c.resume(f, ctx),
+            Some(Inner::H2(c)) => c.resume(stream, head, f, ctx),
+            None => {}
+        }
+    }
+
     pub fn process<H: Handler + ?Sized>(&mut self, h: &H, ctx: &Ctx) -> Next {
         // Each pass moves bytes one stage on; stop once none moved.
         let mut inner_next = Next::Read;
@@ -900,8 +910,13 @@ impl TlsConn {
                 break;
             }
         }
+        let waiting = matches!(&self.inner, Some(Inner::H1(c)) if c.deferred());
         if self.closing {
             Next::Close
+        } else if waiting && self.pending_len() == 0 {
+            // A deferred HTTP/1.1 response: nothing to do until it is
+            // answered (`resume`, then `process` again).
+            Next::Wait
         } else if self.ktls() {
             // The engine's output goes to the socket directly, as on a
             // plaintext connection; once written, `wrote` queues the

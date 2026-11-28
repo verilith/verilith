@@ -1,0 +1,39 @@
+[package]
+name = "verilith-proxy"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "A formally verified (Verus) reverse proxy built on verilith-server"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/verilith/verilith"
+keywords = ["http", "proxy", "reverse-proxy", "verified", "verus"]
+categories = ["network-programming", "web-programming::http-server"]
+
+[lib]
+crate-type = ["rlib"]
+
+[[bin]]
+name = "verilith-proxy"
+path = "src/bin/verilith-proxy.rs"
+
+[dependencies]
+verilith-core = { path = "../core", version = "0.1.0" }
+verilith-http = { path = "../http", version = "0.1.0" }
+verilith-server = { path = "../server", version = "0.1.0" }
+# Response compression (all three verified to decode back to their input).
+verilith-brotli = { path = "../brotli", version = "0.1.0" }
+verilith-zstd = { path = "../zstd", version = "0.1.0" }
+verilith-zlib = { path = "../zlib", version = "0.1.0" }
+vstd = { workspace = true, features = ["std"] }
+
+[features]
+# HTTPS (h2 and http/1.1 by ALPN) on verilith-tls, and HTTP/3: the
+# server's features.
+tls = ["verilith-server/tls"]
+h3 = ["verilith-server/h3"]
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(verus_only)'] }

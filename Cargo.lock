@@ -2101,6 +2101,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "verilith-proxy"
+version = "0.1.0"
+dependencies = [
+ "verilith-brotli",
+ "verilith-core",
+ "verilith-http",
+ "verilith-server",
+ "verilith-zlib",
+ "verilith-zstd",
+ "vstd",
+]
+
+[[package]]
 name = "verilith-qpack"
 version = "0.1.0"
 dependencies = [

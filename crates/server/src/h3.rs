@@ -322,6 +322,9 @@ struct App<Id> {
     input: Vec<u8>,
     /// Requests abandoned against requests completed.
     budget: Budget,
+    /// The connection's place on the endpoint and serial number, for
+    /// deferred responses.
+    tag: Option<(u32, u64)>,
 }
 
 impl<Id> App<Id> {
@@ -338,6 +341,7 @@ impl<Id> App<Id> {
             section: Vec::new(),
             input: Vec::new(),
             budget: Budget::new(2 * u64::from(limits.max_streams), u64::from(limits.abandoned_per_request)),
+            tag: None,
         }
     }
 }
@@ -362,6 +366,7 @@ pub struct H3 {
     sbuf: Vec<u8>,
     dirty: Vec<usize>,
     gso: bool,
+    next_serial: u64,
 }
 
 struct VConn {
@@ -370,6 +375,7 @@ struct VConn {
     /// (no migration).
     peer: SocketAddrV4,
     deadline: Option<Instant>,
+    serial: u64,
 }
 
 /// Datagrams per `sendmsg` with segmentation offload: Linux's limit
@@ -399,6 +405,7 @@ impl H3 {
             sbuf: Vec::with_capacity(BATCH * 1500),
             dirty: Vec::new(),
             gso: sys::UDP_SEGMENT.is_some(),
+            next_serial: 0,
         }
     }
 
@@ -475,7 +482,9 @@ impl H3 {
     fn on_datagram(&mut self, now: Instant, remote: SocketAddrV4, mut data: BytesMut) {
         self.sbuf.clear();
         let limits = &self.limits;
-        let make = || VConn { app: App::new(limits), peer: remote, deadline: None };
+        let serial = self.next_serial;
+        self.next_serial += 1;
+        let make = || VConn { app: App::new(limits), peer: remote, deadline: None, serial };
         match self.server.handle_with(micros(self.epoch, now), &mut data, &mut self.sbuf, make) {
             vq::Datagram::Conn(i) => self.dirty.push(i),
             vq::Datagram::Response(n) => send(self.fd, &self.sbuf[..n], SocketAddr::V4(remote), None, &mut self.gso),
@@ -503,6 +512,7 @@ impl H3 {
             let (server, epoch) = (&mut self.server, self.epoch);
             let us = micros(epoch, now);
             let Some((q, c)) = server.get(ch) else { return };
+            c.app.tag = Some((ch as u32, c.serial));
             if let Err(Close(code)) = app_events(q, &mut c.app, h, ctx, &limits) {
                 q.close(us, code);
             }
@@ -530,6 +540,47 @@ impl H3 {
         if let Some(t) = deadline {
             self.timers.push(Reverse((t, ch)));
         }
+    }
+}
+
+impl H3 {
+    /// Answers a deferred request with `f` (a 502 if `f` sends nothing),
+    /// frames it and sends what QUIC will take; nothing if the connection
+    /// or the stream is gone.
+    pub(crate) fn resume<H: Handler + ?Sized>(&mut self, ch: u32, serial: u64, stream: u64, head: bool, f: crate::defer::Finish, h: &H, ctx: &Ctx) {
+        let limits = self.limits;
+        let ch = ch as usize;
+        {
+            let Some((q, c)) = self.server.get(ch) else { return };
+            if c.serial != serial {
+                return;
+            }
+            let app = &mut c.app;
+            let Some(req) = app.reqs.get_mut(&stream) else { return };
+            if req.answered {
+                return;
+            }
+            let Some(mut reply) = req.reply.take() else { return };
+            if reply.status != 0 {
+                req.reply = Some(reply);
+                return;
+            }
+            let mut scratch = crate::out::Wire::empty();
+            let mut res = Response { out: &mut scratch, ctx, sent: false, close: false, head, h2: Some(&mut reply), defer: None, deferred: false };
+            f(&mut res);
+            if !res.sent {
+                res.error(502);
+            }
+            drop(res);
+            if !frame_reply(app, stream, reply, ctx) {
+                Quic::reset(q, stream, H3_INTERNAL_ERROR);
+                drop_req(app, stream, &limits);
+            } else {
+                write_out(q, app, stream, &limits);
+            }
+        }
+        self.dirty.push(ch);
+        self.drive_dirty(h, ctx, Instant::now());
     }
 }
 
@@ -791,16 +842,33 @@ fn dispatch<Id: Copy + Eq + Hash + Into<u64>, H: Handler + ?Sized>(c: &mut App<I
     reply.sent_headers = false;
     reply.off = 0;
     let mut scratch = crate::out::Wire::empty();
-    let mut res = Response { out: &mut scratch, ctx, sent: false, close: false, head: method == b"HEAD", h2: Some(&mut reply) };
+    let defer = c.tag.map(|(ch, serial)| crate::defer::Target::H3 { ch, serial, stream: id.into() });
+    let mut res = Response { out: &mut scratch, ctx, sent: false, close: false, head: method == b"HEAD", h2: Some(&mut reply), defer, deferred: false };
     if req.core.too_big() {
         res.error(413);
     } else {
         h.handle(&request, &mut res);
     }
-    if !res.sent {
+    let deferred = res.deferred;
+    if !deferred && !res.sent {
         res.error(500);
     }
     drop(res);
+    if deferred {
+        // Framed when it is answered (`H3::resume`); until then
+        // `write_out` sends nothing on the stream.
+        req.reply = Some(reply);
+        return true;
+    }
+    frame_reply(c, id, reply, ctx)
+}
+
+/// Frames an answered reply on its stream: HEADERS (the QPACK-encoded
+/// section), then one DATA frame with the body.
+fn frame_reply<Id: Copy + Eq + Hash + Into<u64>>(c: &mut App<Id>, id: Id, mut reply: Reply, ctx: &Ctx) -> bool {
+    if !c.reqs.contains_key(&id) {
+        return false;
+    }
     let st = [b'0' + (reply.status / 100) as u8, b'0' + (reply.status / 10 % 10) as u8, b'0' + (reply.status % 10) as u8];
     c.lines.clear();
     c.lines.push(b":status", &st, false);
@@ -809,6 +877,7 @@ fn dispatch<Id: Copy + Eq + Hash + Into<u64>, H: Handler + ?Sized>(c: &mut App<I
     }
     c.section.clear();
     c.enc.encode(id.into(), &c.lines, &mut c.section);
+    let Some(req) = c.reqs.get_mut(&id) else { return false };
     let body = match std::mem::replace(&mut reply.body, ReplyBody::None) {
         ReplyBody::None => Bytes::new(),
         ReplyBody::Owned(v) => Bytes::from(v),

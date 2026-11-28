@@ -22,6 +22,8 @@ pub const SO_REUSEADDR: c_int = 2;
 pub const SO_REUSEPORT: c_int = 15;
 pub const SO_SNDBUF: c_int = 7;
 pub const SO_RCVBUF: c_int = 8;
+pub const SO_ERROR: c_int = 4;
+pub const EINPROGRESS: c_int = 115;
 pub const IPPROTO_TCP: c_int = 6;
 pub const IPPROTO_IP: c_int = 0;
 /// IP_MTU_DISCOVER = IP_PMTUDISC_PROBE: every datagram goes with DF set
@@ -112,6 +114,15 @@ pub(super) fn set_nonblocking_cloexec(_fd: i32) -> io::Result<()> {
     Ok(()) // socket() and accept4() take the flags directly
 }
 
+pub(super) fn set_nonblocking(fd: i32) -> io::Result<()> {
+    unsafe {
+        let fl = cvt(fcntl(fd, 3, 0))?; // F_GETFL
+        cvt(fcntl(fd, 4, fl | 0o4000))?; // F_SETFL, O_NONBLOCK
+        cvt(fcntl(fd, 2, 1))?; // F_SETFD, FD_CLOEXEC
+    }
+    Ok(())
+}
+
 /// Writes to a closed socket return EPIPE instead of killing the process.
 pub fn ignore_sigpipe() {
     unsafe {
@@ -162,26 +173,46 @@ pub struct Poller {
     evs: Vec<epoll_event>,
 }
 
+/// A poller's descriptor, to register sockets with it from elsewhere on
+/// its thread (see `crate::reactor`).
+#[derive(Clone, Copy, Debug)]
+pub struct PollHandle(c_int);
+
+impl PollHandle {
+    /// Watches `fd` for readability and writability, edge-triggered.
+    pub fn add(self, fd: i32, token: u64, write_too: bool) -> io::Result<()> {
+        let mut ev = epoll_event {
+            events: EPOLLIN | EPOLLRDHUP | EPOLLET | if write_too { EPOLLOUT } else { 0 },
+            data: token,
+        };
+        cvt(unsafe { epoll_ctl(self.0, EPOLL_CTL_ADD, fd, &mut ev) }).map(|_| ())
+    }
+
+    pub fn remove(self, fd: i32) {
+        let mut ev = epoll_event { events: 0, data: 0 };
+        unsafe {
+            epoll_ctl(self.0, EPOLL_CTL_DEL, fd, &mut ev);
+        }
+    }
+}
+
 impl Poller {
     pub fn new(cap: usize) -> io::Result<Poller> {
         let ep = cvt(unsafe { epoll_create1(EPOLL_CLOEXEC) })?;
         Ok(Poller { ep, evs: vec![epoll_event { events: 0, data: 0 }; cap] })
     }
 
+    pub fn handle(&self) -> PollHandle {
+        PollHandle(self.ep)
+    }
+
     /// Watches `fd` for readability and writability, edge-triggered.
     pub fn add(&self, fd: i32, token: u64, write_too: bool) -> io::Result<()> {
-        let mut ev = epoll_event {
-            events: EPOLLIN | EPOLLRDHUP | EPOLLET | if write_too { EPOLLOUT } else { 0 },
-            data: token,
-        };
-        cvt(unsafe { epoll_ctl(self.ep, EPOLL_CTL_ADD, fd, &mut ev) }).map(|_| ())
+        self.handle().add(fd, token, write_too)
     }
 
     pub fn remove(&self, fd: i32) {
-        let mut ev = epoll_event { events: 0, data: 0 };
-        unsafe {
-            epoll_ctl(self.ep, EPOLL_CTL_DEL, fd, &mut ev);
-        }
+        self.handle().remove(fd)
     }
 
     /// Waits up to `timeout_ms` (-1: forever) and calls `f` for each event.

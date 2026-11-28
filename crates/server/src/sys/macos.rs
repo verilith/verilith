@@ -17,6 +17,8 @@ pub const SO_REUSEADDR: c_int = 0x4;
 pub const SO_REUSEPORT: c_int = 0x200;
 pub const SO_SNDBUF: c_int = 0x1001;
 pub const SO_RCVBUF: c_int = 0x1002;
+pub const SO_ERROR: c_int = 0x1007;
+pub const EINPROGRESS: c_int = 36;
 pub const IPPROTO_TCP: c_int = 6;
 pub const IPPROTO_IP: c_int = 0;
 /// IP_DONTFRAG: datagrams go with DF set, never fragmented, as path MTU
@@ -79,6 +81,15 @@ pub(super) fn set_nonblocking_cloexec(fd: i32) -> io::Result<()> {
     Ok(())
 }
 
+pub(super) fn set_nonblocking(fd: i32) -> io::Result<()> {
+    unsafe {
+        let fl = cvt(fcntl(fd, 3))?; // F_GETFL
+        cvt(fcntl(fd, 4, fl | 4))?; // F_SETFL, O_NONBLOCK
+        cvt(fcntl(fd, 2, 1))?; // F_SETFD, FD_CLOEXEC
+    }
+    Ok(())
+}
+
 pub fn ignore_sigpipe() {
     unsafe {
         signal(13, 1);
@@ -122,20 +133,39 @@ fn kev(fd: i32, filter: i16, flags: u16, token: u64) -> kevent_t {
     kevent_t { ident: fd as usize, filter, flags, fflags: 0, data: 0, udata: token as usize as *mut u8 }
 }
 
+/// A poller's descriptor, to register sockets with it from elsewhere on
+/// its thread (see `crate::reactor`).
+#[derive(Clone, Copy, Debug)]
+pub struct PollHandle(c_int);
+
+impl PollHandle {
+    pub fn add(self, fd: i32, token: u64, write_too: bool) -> io::Result<()> {
+        let ch = [kev(fd, EVFILT_READ, EV_ADD | EV_CLEAR, token), kev(fd, EVFILT_WRITE, EV_ADD | EV_CLEAR, token)];
+        let n = if write_too { 2 } else { 1 };
+        cvt(unsafe { kevent(self.0, ch.as_ptr(), n, std::ptr::null_mut(), 0, std::ptr::null()) }).map(|_| ())
+    }
+
+    pub fn remove(self, _fd: i32) {
+        // Closing the descriptor removes its kevents.
+    }
+}
+
 impl Poller {
     pub fn new(cap: usize) -> io::Result<Poller> {
         let kq = cvt(unsafe { kqueue() })?;
         Ok(Poller { kq, evs: vec![kev(0, 0, 0, 0); cap] })
     }
 
-    pub fn add(&self, fd: i32, token: u64, write_too: bool) -> io::Result<()> {
-        let ch = [kev(fd, EVFILT_READ, EV_ADD | EV_CLEAR, token), kev(fd, EVFILT_WRITE, EV_ADD | EV_CLEAR, token)];
-        let n = if write_too { 2 } else { 1 };
-        cvt(unsafe { kevent(self.kq, ch.as_ptr(), n, std::ptr::null_mut(), 0, std::ptr::null()) }).map(|_| ())
+    pub fn handle(&self) -> PollHandle {
+        PollHandle(self.kq)
     }
 
-    pub fn remove(&self, _fd: i32) {
-        // Closing the descriptor removes its kevents.
+    pub fn add(&self, fd: i32, token: u64, write_too: bool) -> io::Result<()> {
+        self.handle().add(fd, token, write_too)
+    }
+
+    pub fn remove(&self, fd: i32) {
+        self.handle().remove(fd)
     }
 
     /// Waits up to `timeout_us` microseconds, rounded up to a millisecond.

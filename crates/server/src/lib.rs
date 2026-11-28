@@ -24,6 +24,8 @@ pub mod early;
 #[cfg(not(verus_keep_ghost))]
 pub mod date;
 #[cfg(not(verus_keep_ghost))]
+pub mod defer;
+#[cfg(not(verus_keep_ghost))]
 pub mod files;
 #[cfg(not(verus_keep_ghost))]
 pub mod h1;
@@ -49,6 +51,7 @@ mod api {
     pub use crate::h2::Limits2;
     pub use crate::respond::{Field, Prepared};
     pub use crate::worker::{serve, Config};
+    pub use crate::defer::{deregister, on_worker, register, Pending};
 
     /// A request, as a handler sees it. Everything borrows the connection's
     /// read buffer: no copies.
@@ -118,12 +121,28 @@ mod api {
         pub(crate) head: bool,
         /// Set on HTTP/2 streams: the response is encoded here.
         pub(crate) h2: Option<&'a mut crate::h2::Reply>,
+        /// Where a deferred answer goes, if this response may be deferred.
+        pub(crate) defer: Option<crate::defer::Target>,
+        /// [`Response::defer`] was called.
+        pub(crate) deferred: bool,
     }
 
     /// Request handling. Called on the worker thread that owns the
-    /// connection; it should not block.
+    /// connection; it should not block. A handler that must wait for
+    /// something defers its response ([`Response::defer`]).
     pub trait Handler: Send + Sync + 'static {
         fn handle(&self, req: &Request, res: &mut Response);
+
+        /// An event on a socket the handler registered on this worker
+        /// ([`register`]), with the token it gave.
+        fn on_io(&self, _token: u64, _readable: bool, _writable: bool) {}
+
+        /// Called once per turn of the worker's loop, after its events:
+        /// runs what is due, and returns how long the worker may sleep
+        /// before calling again (microseconds), if there is a limit.
+        fn poll_timers(&self) -> Option<u64> {
+            None
+        }
     }
 
     impl<F: Fn(&Request, &mut Response) + Send + Sync + 'static> Handler for F {

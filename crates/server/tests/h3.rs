@@ -22,6 +22,17 @@ fn handler(req: &Request, res: &mut Response) {
             let body: Vec<u8> = (0..3_000_000u32).map(|i| (i % 251) as u8).collect();
             let _ = res.send(200, &[], &body);
         }
+        b"/later" => {
+            // Answered from another thread, after the requests behind it.
+            let p = res.defer().unwrap();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(40));
+                p.complete(|res| {
+                    let _ = res.send(200, &[], b"later");
+                });
+            });
+        }
+        b"/drop" => drop(res.defer()),
         b"/echo" => {
             let _ = res.send(200, &[Field { name: b"X-Len", value: req.body.len().to_string().as_bytes() }], req.body);
         }
@@ -296,6 +307,19 @@ fn get_and_head() {
     let (s, f, b) = ok(c.response(id));
     assert_eq!((s, b.len()), (200, 0));
     assert!(f.iter().any(|(n, v)| n == b"content-length" && v == b"7"));
+}
+
+#[test]
+fn deferred_responses() {
+    let mut c = Client::connect();
+    let b = c.request_bytes("GET", "/later", &[], &[]);
+    let later = c.send_raw(&b);
+    let (s, _, b) = ok(c.get("/now"));
+    assert_eq!((s, &b[..]), (200, &b"GET /now"[..]));
+    let (s, _, b) = ok(c.response(later));
+    assert_eq!((s, &b[..]), (200, &b"later"[..]));
+    let (s, _, b) = ok(c.get("/drop"));
+    assert_eq!((s, &b[..]), (502, &b"Bad Gateway"[..]));
 }
 
 #[test]
