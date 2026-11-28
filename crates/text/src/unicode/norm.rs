@@ -531,7 +531,7 @@ impl Buf {
         Buf { cp: Vec::new(), cc: Vec::new() }
     }
 
-    fn clear(&mut self)
+    pub(crate) fn clear(&mut self)
         ensures
             final(self).wf(),
             final(self)@ == Seq::<u32>::empty(),
@@ -541,7 +541,7 @@ impl Buf {
     }
 
     #[inline(always)]
-    fn push(&mut self, c: u32, k: u8)
+    pub(crate) fn push(&mut self, c: u32, k: u8)
         requires
             old(self).wf(),
             k == ccc(c),
@@ -563,7 +563,7 @@ impl Buf {
 
 /// `buf = insert(buf, c)`; `k` is `ccc(c)`.
 #[inline(always)]
-fn insert_exec(buf: &mut Buf, c: u32, k: u8)
+pub(crate) fn insert_exec(buf: &mut Buf, c: u32, k: u8)
     requires
         old(buf).wf(),
         k == ccc(c),
@@ -608,7 +608,7 @@ fn insert_exec(buf: &mut Buf, c: u32, k: u8)
 
 /// `o = compose_step(o, c)`; `kc` is `ccc(c)`.
 #[inline(always)]
-fn compose_step_exec(o: &mut Buf, c: u32, kc: u8)
+pub(crate) fn compose_step_exec(o: &mut Buf, c: u32, kc: u8)
     requires
         old(o).wf(),
         kc == ccc(c),
@@ -676,7 +676,7 @@ fn compose_step_exec(o: &mut Buf, c: u32, kc: u8)
 
 /// `buf = reorder_from(buf, decomp(c, compat))`; `w` is `tword(c)`.
 #[inline(always)]
-fn insert_decomp(buf: &mut Buf, c: u32, w: u32, compat: bool)
+pub(crate) fn insert_decomp(buf: &mut Buf, c: u32, w: u32, compat: bool)
     requires
         old(buf).wf(),
         is_scalar(c),
@@ -1132,7 +1132,7 @@ proof fn lemma_join(cs: Seq<u32>, a: int, b: int, compose: bool, compat: bool)
     lemma_enc_append(nf(cs.take(a), compose, compat), nf(seg, compose, compat));
 }
 
-proof fn lemma_seg_scalars(cs: Seq<u32>, a: int, b: int)
+pub(crate) proof fn lemma_seg_scalars(cs: Seq<u32>, a: int, b: int)
     requires
         scalars(cs),
         0 <= a <= b <= cs.len(),
