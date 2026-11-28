@@ -6,8 +6,18 @@ use crate::enc_vp8mb::*;
 use crate::enc_vp8st::*;
 use crate::enc_vp8w::*;
 use crate::vp8frame::*;
-#[cfg(verus_only)]
 use crate::enc_vp8hdr::*;
+#[cfg(verus_only)]
+use crate::enc_bool::*;
+#[cfg(verus_only)]
+use vstd::arithmetic::power2::*;
+#[cfg(verus_only)]
+use crate::enc_vp8frm::*;
+#[cfg(verus_only)]
+use crate::enc_vp8modes::*;
+#[cfg(verus_only)]
+use crate::enc_vp8res::*;
+use crate::vp8spec::*;
 use crate::vp8tables::*;
 use verilith_core::prims::*;
 use vstd::prelude::*;
@@ -443,15 +453,370 @@ fn count_all(mbs: &Vec<MbChoice>, mb_w: usize, mb_h: usize, skip_on: bool) -> (r
     st
 }
 
+/// The six quantizers of index `qi`, with no deltas.
+pub open spec fn sq(qi: int) -> (int, int, int, int, int, int) {
+    let ac = spec_ac_table(qi) as int;
+    (
+        spec_dc_table(qi) as int,
+        ac,
+        spec_dc_table(qi) as int * 2,
+        if ac * 101581 / 65536 < 8 {
+            8
+        } else {
+            ac * 101581 / 65536
+        },
+        spec_dc_table(if qi > 117 {
+            117
+        } else {
+            qi
+        }) as int,
+        ac,
+    )
+}
+
+pub proof fn lemma_sq(p: HdrParams)
+    requires
+        p.q < 128,
+    ensures
+        seg_quant(fh_of(p), 0) == sq(p.q as int),
+{
+}
+
+/// The modes the encoder writes for its choices: skips only when the
+/// frame has skip flags.
+pub open spec fn ms_of(mbs: Seq<MbChoice>, skip_on: bool) -> Seq<MbModeSpec> {
+    Seq::new(mbs.len(), |i: int| mbspec(skip_on && mbs[i].skip, mbs[i].ymode, mbs[i].uvmode))
+}
+
+/// The levels of every macroblock.
+pub open spec fn lv_of(mbs: Seq<MbChoice>) -> Seq<Seq<Seq<int>>> {
+    Seq::new(mbs.len(), |i: int| mb_lvs(mbs[i].lv@))
+}
+
+/// Nine context flags per macroblock column, as `row_tokens` holds them.
+pub open spec fn tops_of(t: Seq<bool>, mb_w: nat) -> Seq<Seq<bool>> {
+    Seq::new(mb_w, |j: int| t.subrange(9 * j, 9 * j + 9))
+}
+
+/// The modes of every macroblock, row by row (`modes_ws`).
+fn write_modes(w: &mut EncW, mbs: &Vec<MbChoice>, mb_w: usize, mb_h: usize, skip_on: bool, psk: u8, Ghost(fh): Ghost<FrameHeader>)
+    requires
+        old(w).inv(),
+        1 <= mb_w <= 1024,
+        1 <= mb_h <= 1024,
+        mbs@.len() == mb_w * mb_h,
+        fh.mb_no_coeff_skip == skip_on,
+        fh.prob_skip_false == psk as int,
+    ensures
+        final(w).inv(),
+        final(w).want@ == old(w).want@ + modes_ws(fh, ms_of(mbs@, skip_on), mb_w as nat, mb_h as nat),
+{
+    let ghost ms = ms_of(mbs@, skip_on);
+    let ghost w0 = w.want@;
+    let mut mb_y: usize = 0;
+    while mb_y < mb_h
+        invariant
+            mb_y <= mb_h,
+            1 <= mb_w <= 1024,
+            mb_h <= 1024,
+            mbs@.len() == mb_w * mb_h,
+            ms == ms_of(mbs@, skip_on),
+            fh.mb_no_coeff_skip == skip_on,
+            fh.prob_skip_false == psk as int,
+            w.inv(),
+            w.want@ == w0 + modes_ws(fh, ms, mb_w as nat, mb_y as nat),
+        decreases mb_h - mb_y,
+    {
+        let ghost a = w.want@;
+        let mut mb_x: usize = 0;
+        while mb_x < mb_w
+            invariant
+                mb_x <= mb_w,
+                mb_y < mb_h,
+                1 <= mb_w <= 1024,
+                mb_h <= 1024,
+                mbs@.len() == mb_w * mb_h,
+                ms == ms_of(mbs@, skip_on),
+                fh.mb_no_coeff_skip == skip_on,
+                fh.prob_skip_false == psk as int,
+                w.inv(),
+                w.want@ == a + row_ws(fh, ms, (mb_y * mb_w) as int, mb_x as nat),
+            decreases mb_w - mb_x,
+        {
+            proof {
+                assert(mb_y * mb_w + mb_x < mb_w * mb_h) by (nonlinear_arith)
+                    requires
+                        mb_x < mb_w,
+                        mb_y < mb_h,
+                ;
+                assert(mb_w * mb_h <= 1024 * 1024) by (nonlinear_arith)
+                    requires
+                        mb_w <= 1024,
+                        mb_h <= 1024,
+                ;
+            }
+            let i = mb_y * mb_w + mb_x;
+            let c = &mbs[i];
+            let ghost b = w.want@;
+            put_mbm(w, skip_on, psk, skip_on && c.skip, c.ymode, c.uvmode, Ghost(fh));
+            proof {
+                assert(ms[i as int] == mbspec(skip_on && c.skip, c.ymode, c.uvmode));
+                assert(w.want@ =~= a + row_ws(fh, ms, (mb_y * mb_w) as int, (mb_x + 1) as nat));
+            }
+            mb_x = mb_x + 1;
+        }
+        proof {
+            assert(w.want@ =~= w0 + modes_ws(fh, ms, mb_w as nat, (mb_y + 1) as nat));
+        }
+        mb_y = mb_y + 1;
+    }
+}
+
+/// The tokens of every macroblock (`frame_tok`).
+#[verifier::spinoff_prover]
+fn write_toks(w: &mut EncW, mbs: &Vec<MbChoice>, mb_w: usize, mb_h: usize, skip_on: bool, probs: &Vec<u8>, Ghost(fh): Ghost<FrameHeader>, Ghost(q): Ghost<(int, int, int, int, int, int)>)
+    requires
+        old(w).inv(),
+        1 <= mb_w <= 1024,
+        1 <= mb_h <= 1024,
+        mbs@.len() == mb_w * mb_h,
+        forall|i: int| 0 <= i < mbs@.len() ==> choice_shape(&#[trigger] mbs@[i]),
+        fh.mb_no_coeff_skip == skip_on,
+        fh.probs == pr(probs@),
+        probs@.len() == 1056,
+        seg_quant(fh, 0) == q,
+    ensures
+        final(w).inv(),
+        final(w).want@ == old(w).want@ + frame_tok(fh, ms_of(mbs@, skip_on), lv_of(mbs@), mb_w as nat, mb_h as nat).1,
+{
+    hide(mb_res);
+    let ghost ms = ms_of(mbs@, skip_on);
+    let ghost lv = lv_of(mbs@);
+    let ghost w0 = w.want@;
+    let mut tops: Vec<bool> = Vec::new();
+    let mut k: usize = 0;
+    while k < 9 * mb_w
+        invariant
+            mb_w <= 1024,
+            k <= 9 * mb_w,
+            tops@.len() == k,
+            forall|i: int| 0 <= i < k ==> !#[trigger] tops@[i],
+        decreases 9 * mb_w - k,
+    {
+        tops.push(false);
+        k = k + 1;
+    }
+    proof {
+        assert(tops_of(tops@, mb_w as nat) =~= frame_tok(fh, ms, lv, mb_w as nat, 0).0) by {
+            assert forall|j: int| 0 <= j < mb_w implies #[trigger] tops_of(tops@, mb_w as nat)[j] =~= Seq::new(9, |i: int| false) by {}
+        }
+        assert(w.want@ =~= w0 + frame_tok(fh, ms, lv, mb_w as nat, 0).1);
+    }
+    let mut mb_y: usize = 0;
+    while mb_y < mb_h
+        invariant
+            mb_y <= mb_h,
+            1 <= mb_w <= 1024,
+            mb_h <= 1024,
+            mbs@.len() == mb_w * mb_h,
+            forall|i: int| 0 <= i < mbs@.len() ==> choice_shape(&#[trigger] mbs@[i]),
+            ms == ms_of(mbs@, skip_on),
+            lv == lv_of(mbs@),
+            fh.mb_no_coeff_skip == skip_on,
+            fh.probs == pr(probs@),
+            probs@.len() == 1056,
+            seg_quant(fh, 0) == q,
+            tops@.len() == 9 * mb_w,
+            w.inv(),
+            w.want@ == w0 + frame_tok(fh, ms, lv, mb_w as nat, mb_y as nat).1,
+            tops_of(tops@, mb_w as nat) == frame_tok(fh, ms, lv, mb_w as nat, mb_y as nat).0,
+        decreases mb_h - mb_y,
+    {
+        let ghost f = frame_tok(fh, ms, lv, mb_w as nat, mb_y as nat);
+        let ghost msy = row_of(ms, mb_w as nat, mb_y as int);
+        let ghost lvy = row_of(lv, mb_w as nat, mb_y as int);
+        let mut left: Vec<bool> = vec![false, false, false, false, false, false, false, false, false];
+        proof {
+            assert(left@ =~= row_tok(fh, msy, lvy, f.0, 0).0.left);
+            assert(w.want@ =~= w0 + f.1 + row_tok(fh, msy, lvy, f.0, 0).1);
+        }
+        let mut mb_x: usize = 0;
+        while mb_x < mb_w
+            invariant
+                mb_x <= mb_w,
+                mb_y < mb_h,
+                1 <= mb_w <= 1024,
+                mb_h <= 1024,
+                mbs@.len() == mb_w * mb_h,
+                forall|i: int| 0 <= i < mbs@.len() ==> choice_shape(&#[trigger] mbs@[i]),
+                ms == ms_of(mbs@, skip_on),
+                lv == lv_of(mbs@),
+                fh.mb_no_coeff_skip == skip_on,
+                fh.probs == pr(probs@),
+                probs@.len() == 1056,
+                seg_quant(fh, 0) == q,
+                tops@.len() == 9 * mb_w,
+                left@.len() == 9,
+                f == frame_tok(fh, ms, lv, mb_w as nat, mb_y as nat),
+                msy == row_of(ms, mb_w as nat, mb_y as int),
+                lvy == row_of(lv, mb_w as nat, mb_y as int),
+                w.inv(),
+                w.want@ == w0 + f.1 + row_tok(fh, msy, lvy, f.0, mb_x as nat).1,
+                tops_of(tops@, mb_w as nat) == row_tok(fh, msy, lvy, f.0, mb_x as nat).0.tops,
+                left@ == row_tok(fh, msy, lvy, f.0, mb_x as nat).0.left,
+            decreases mb_w - mb_x,
+        {
+            proof {
+                assert(mb_y * mb_w + mb_x < mb_w * mb_h) by (nonlinear_arith)
+                    requires
+                        mb_x < mb_w,
+                        mb_y < mb_h,
+                ;
+                assert(mb_w * mb_h <= 1024 * 1024) by (nonlinear_arith)
+                    requires
+                        mb_w <= 1024,
+                        mb_h <= 1024,
+                ;
+                assert((mb_y + 1) * mb_w <= mb_w * mb_h) by (nonlinear_arith)
+                    requires
+                        mb_y < mb_h,
+                ;
+                assert((mb_y + 1) * mb_w == mb_y * mb_w + mb_w) by (nonlinear_arith);
+            }
+            let i = mb_y * mb_w + mb_x;
+            let ghost r = row_tok(fh, msy, lvy, f.0, mb_x as nat);
+            let c = &mbs[i];
+            proof {
+                assert(msy[mb_x as int] == ms[i as int]);
+                assert(lvy[mb_x as int] == lv[i as int]);
+                assert(choice_shape(&mbs@[i as int]));
+            }
+            let mut top: Vec<bool> = Vec::new();
+            let mut k: usize = 0;
+            while k < 9
+                invariant
+                    k <= 9,
+                    top@.len() == k,
+                    tops@.len() == 9 * mb_w,
+                    mb_w <= 1024,
+                    left@.len() == 9,
+                    mb_x < mb_w,
+                    forall|j: int| 0 <= j < k ==> #[trigger] top@[j] == tops@[9 * mb_x + j],
+                decreases 9 - k,
+            {
+                top.push(tops[9 * mb_x + k]);
+                k = k + 1;
+            }
+            let ghost m = ms[i as int];
+            let ghost o = mb_tok(fh, m, r.0.tops[mb_x as int], r.0.left, lv[i as int]);
+            proof {
+                assert(top@ =~= tops_of(tops@, mb_w as nat)[mb_x as int]);
+            }
+            let ghost a = w.want@;
+            if skip_on && c.skip {
+                let mut k: usize = 0;
+                while k < 9
+                    invariant
+                        k <= 9,
+                        top@.len() == 9,
+                        left@.len() == 9,
+                        forall|j: int| 0 <= j < k ==> !#[trigger] top@[j],
+                        forall|j: int| 0 <= j < k ==> !#[trigger] left@[j],
+                    decreases 9 - k,
+                {
+                    top.set(k, false);
+                    left.set(k, false);
+                    k = k + 1;
+                }
+                proof {
+                    assert(top@ =~= o.0.top);
+                    assert(left@ =~= o.0.left);
+                    assert(o.1 =~= Seq::<(int, bool)>::empty());
+                    assert(a =~= a + o.1);
+                }
+            } else {
+                proof {
+                    assert(lv_in(c.lv@));
+                }
+                put_mb(w, probs.as_slice(), c.lv.as_slice(), &mut top, &mut left, Ghost(q));
+            }
+            let ghost t0 = tops@;
+            let mut k: usize = 0;
+            while k < 9
+                invariant
+                    k <= 9,
+                    top@.len() == 9,
+                    tops@.len() == 9 * mb_w,
+                    left@.len() == 9,
+                    mb_w <= 1024,
+                    mb_x < mb_w,
+                    t0.len() == 9 * mb_w,
+                    forall|j: int| 0 <= j < 9 * mb_w && !(9 * mb_x + k <= j < 9 * mb_x + 9) ==> #[trigger] tops@[j] == (if 9 * mb_x <= j < 9 * mb_x + 9 { top@[j - 9 * mb_x] } else { t0[j] }),
+                decreases 9 - k,
+            {
+                tops.set(9 * mb_x + k, top[k]);
+                k = k + 1;
+            }
+            proof {
+                let r1 = row_tok(fh, msy, lvy, f.0, (mb_x + 1) as nat);
+                assert(r1.0.tops == r.0.tops.update(mb_x as int, o.0.top));
+                assert(top@ == o.0.top);
+                assert(tops_of(tops@, mb_w as nat) =~= r1.0.tops) by {
+                    assert forall|j: int| 0 <= j < mb_w implies #[trigger] tops_of(tops@, mb_w as nat)[j] =~= r1.0.tops[j] by {
+                        if j != mb_x {
+                            assert(tops_of(t0, mb_w as nat)[j] == r.0.tops[j]);
+                            assert forall|i: int| 0 <= i < 9 implies #[trigger] tops@[9 * j + i] == t0[9 * j + i] by {
+                                assert(9 * j + i < 9 * mb_x || 9 * j + i >= 9 * mb_x + 9) by (nonlinear_arith)
+                                    requires
+                                        j != mb_x,
+                                        0 <= i < 9,
+                                ;
+                                assert(9 * j + i < 9 * mb_w) by (nonlinear_arith)
+                                    requires
+                                        j < mb_w,
+                                        i < 9,
+                                ;
+                            }
+                        }
+                    }
+                }
+                assert(left@ == r1.0.left);
+                assert(w.want@ =~= w0 + f.1 + r1.1);
+            }
+            mb_x = mb_x + 1;
+        }
+        proof {
+            let r = row_tok(fh, msy, lvy, f.0, mb_w as nat);
+            assert(frame_tok(fh, ms, lv, mb_w as nat, (mb_y + 1) as nat) == (r.0.tops, f.1 + r.1));
+            assert(w.want@ =~= w0 + frame_tok(fh, ms, lv, mb_w as nat, (mb_y + 1) as nat).1);
+        }
+        mb_y = mb_y + 1;
+    }
+}
+
+/// What the two partitions are: the header and modes in the first, the
+/// tokens in the second, each covering what its writer wrote.
+pub open spec fn parts_ok(p1: Seq<u8>, p2: Seq<u8>, p: HdrParams, mbs: Seq<MbChoice>, mb_w: nat, mb_h: nat) -> bool {
+    let fh = fh_of(p);
+    let ms = ms_of(mbs, p.skip);
+    &&& good(p1, enc_init(), fh_ws(p) + modes_ws(fh, ms, mb_w, mb_h))
+    &&& good(p2, enc_init(), frame_tok(fh, ms, lv_of(mbs), mb_w, mb_h).1)
+    &&& hdr_ok(p)
+    &&& p.level == 0
+}
+
 /// Writes the frame: the first partition (header and modes) and the one
 /// token partition.
-pub fn write_parts(mbs: &Vec<MbChoice>, mb_w: usize, mb_h: usize, qi: usize, qs: Quants) -> (r: Option<(Vec<u8>, Vec<u8>)>)
+pub fn write_parts(mbs: &Vec<MbChoice>, mb_w: usize, mb_h: usize, qi: usize, qs: Quants) -> (r: Option<(Vec<u8>, Vec<u8>, Ghost<HdrParams>)>)
     requires
         1 <= mb_w <= 1024,
         1 <= mb_h <= 1024,
         qi < 128,
         mbs@.len() == mb_w * mb_h,
         forall|i: int| 0 <= i < mbs@.len() ==> choice_ok(&#[trigger] mbs@[i], qtuple(qs)),
+        qtuple(qs) == sq(qi as int),
+    ensures
+        r matches Some((p1, p2, gp)) ==> parts_ok(p1@, p2@, gp@, mbs@, mb_w as nat, mb_h as nat) && gp@.q == qi,
 {
     let n = mbs.len();
     let mut nskip: usize = 0;
@@ -491,135 +856,48 @@ pub fn write_parts(mbs: &Vec<MbChoice>, mb_w: usize, mb_h: usize, qi: usize, qs:
     } else {
         ps as u32
     };
+    proof {
+        assert forall|i: int| 0 <= i < mbs@.len() implies choice_shape(&#[trigger] mbs@[i]) by {
+            assert(choice_ok(&mbs@[i], qtuple(qs)));
+        }
+    }
     let st = count_all(mbs, mb_w, mb_h, skip_on);
     let probs = best_probs(&st);
+    let ghost p = hparams(0, qi as u32, probs@, skip_on, pskip);
+    let ghost fh = fh_of(p);
     let mut w1 = EncW::new();
     put_hdr(&mut w1, 0, qi as u32, probs.as_slice(), skip_on, pskip);
-    let ghost fh = fh_of(hparams(0, qi as u32, probs@, skip_on, pskip));
     let psk: u8 = if skip_on {
         pskip as u8
     } else {
         0
     };
-    let mut i: usize = 0;
-    while i < n
-        invariant
-            i <= n,
-            n == mbs@.len(),
-            w1.inv(),
-            pskip < 256,
-            fh == fh_of(hparams(0, qi as u32, probs@, skip_on, pskip)),
-            psk == (if skip_on { pskip } else { 0 }),
-            forall|i: int| 0 <= i < mbs@.len() ==> choice_ok(&#[trigger] mbs@[i], qtuple(qs)),
-        decreases n - i,
-    {
-        let c = &mbs[i];
-        put_mbm(&mut w1, skip_on, psk, c.skip, c.ymode, c.uvmode, Ghost(fh));
-        i = i + 1;
-    }
+    let ghost a = w1.want@;
+    write_modes(&mut w1, mbs, mb_w, mb_h, skip_on, psk, Ghost(fh));
     let mut w2 = EncW::new();
-    let mut tops: Vec<bool> = Vec::new();
-    let mut k: usize = 0;
-    while k < 9 * mb_w
-        invariant
-            mb_w <= 1024,
-            k <= 9 * mb_w,
-            tops@.len() == k,
-        decreases 9 * mb_w - k,
-    {
-        tops.push(false);
-        k = k + 1;
-    }
-    let mut mb_y: usize = 0;
-    while mb_y < mb_h
-        invariant
-            mb_y <= mb_h,
-            n == mbs@.len(),
-            n == mb_w * mb_h,
-            tops@.len() == 9 * mb_w,
-            mb_w <= 1024,
-            probs@.len() == 1056,
-            w2.inv(),
-            forall|i: int| 0 <= i < mbs@.len() ==> choice_ok(&#[trigger] mbs@[i], qtuple(qs)),
-        decreases mb_h - mb_y,
-    {
-        let mut left: Vec<bool> = vec![false, false, false, false, false, false, false, false, false];
-        let mut mb_x: usize = 0;
-        while mb_x < mb_w
-            invariant
-                mb_x <= mb_w,
-                mb_y < mb_h,
-                n == mbs@.len(),
-                n == mb_w * mb_h,
-                tops@.len() == 9 * mb_w,
-                mb_w <= 1024,
-                left@.len() == 9,
-                probs@.len() == 1056,
-                w2.inv(),
-                forall|i: int| 0 <= i < mbs@.len() ==> choice_ok(&#[trigger] mbs@[i], qtuple(qs)),
-            decreases mb_w - mb_x,
-        {
-            proof {
-                assert(mb_y * mb_w + mb_x < mb_w * mb_h) by (nonlinear_arith)
-                    requires
-                        mb_x < mb_w,
-                        mb_y < mb_h,
-                ;
-            }
-            let c = &mbs[mb_y * mb_w + mb_x];
-            let mut top: Vec<bool> = Vec::new();
-            let mut k: usize = 0;
-            while k < 9
-                invariant
-                    k <= 9,
-                    top@.len() == k,
-                    tops@.len() == 9 * mb_w,
-                    mb_w <= 1024,
-                    left@.len() == 9,
-                    mb_x < mb_w,
-                decreases 9 - k,
-            {
-                top.push(tops[9 * mb_x + k]);
-                k = k + 1;
-            }
-            if skip_on && c.skip {
-                let mut k: usize = 0;
-                while k < 9
-                    invariant
-                        k <= 9,
-                        top@.len() == 9,
-                        left@.len() == 9,
-                    decreases 9 - k,
-                {
-                    top.set(k, false);
-                    left.set(k, false);
-                    k = k + 1;
-                }
-            } else {
-                put_mb(&mut w2, probs.as_slice(), c.lv.as_slice(), &mut top, &mut left, Ghost(arbitrary()));
-            }
-            let mut k: usize = 0;
-            while k < 9
-                invariant
-                    k <= 9,
-                    top@.len() == 9,
-                    tops@.len() == 9 * mb_w,
-                    left@.len() == 9,
-                    mb_w <= 1024,
-                    mb_x < mb_w,
-                decreases 9 - k,
-            {
-                tops.set(9 * mb_x + k, top[k]);
-                k = k + 1;
-            }
-            mb_x = mb_x + 1;
+    proof {
+        lemma_sq(p);
+        assert forall|i: int| 0 <= i < mbs@.len() implies choice_shape(&#[trigger] mbs@[i]) by {
+            assert(choice_ok(&mbs@[i], qtuple(qs)));
         }
-        mb_y = mb_y + 1;
     }
+    write_toks(&mut w2, mbs, mb_w, mb_h, skip_on, &probs, Ghost(fh), Ghost(sq(qi as int)));
     if !w1.ok || !w2.ok {
         return None;
     }
-    Some((w1.bw.finish(), w2.bw.finish()))
+    let ghost ws1 = w1.want@;
+    let ghost ws2 = w2.want@;
+    let p1 = w1.bw.finish();
+    let p2 = w2.bw.finish();
+    proof {
+        lemma2_to64();
+        assert(enc_wf(enc_init()));
+        assert(ws1 =~= fh_ws(p) + modes_ws(fh, ms_of(mbs@, skip_on), mb_w as nat, mb_h as nat));
+        assert(hdr_ok(p)) by {
+            assert forall|k: int| 0 <= k < 1056 implies 0 <= #[trigger] p.probs[k] < 256 by {}
+        }
+    }
+    Some((p1, p2, Ghost(p)))
 }
 
 /// Encodes `px` (`w` by `h`, ARGB, alpha ignored) as a lossy WebP file at
@@ -647,7 +925,7 @@ pub fn encode_lossy(px: &[u32], w: usize, h: usize, quality: u32) -> (r: Option<
         Some(v) => v,
         None => return None,
     };
-    let (p1, p2) = match write_parts(&mbs, mb_w, mb_h, qi, qs) {
+    let (p1, p2, gp) = match write_parts(&mbs, mb_w, mb_h, qi, qs) {
         Some(p) => p,
         None => return None,
     };
