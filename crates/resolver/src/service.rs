@@ -31,7 +31,7 @@ pub struct Options {
 }
 
 /// The root zone's trust anchors as IANA publishes them
-/// (https://data.iana.org/root-anchors/root-anchors.xml): KSK-2017 and
+/// (<https://data.iana.org/root-anchors/root-anchors.xml>): KSK-2017 and
 /// KSK-2024, as DS RDATA (SHA-256 digests).
 pub fn iana_root_anchors() -> Vec<Vec<u8>> {
     [

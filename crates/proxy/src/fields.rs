@@ -4,13 +4,13 @@
 //!
 //! Both go through the verified hop-by-hop filter ([`crate::hop::forward`]).
 //! A request then loses every field the proxy sets itself
-//! ([`proxy_sets`]: X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host,
+//! (`proxy_sets`: X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host,
 //! Forwarded, Via, Expect, Cookie and Accept-Encoding, by name ignoring
 //! ASCII case), and the proxy's own fields are appended
 //! ([`request_fields`]). So a client cannot make the upstream see an
 //! X-Forwarded-For, X-Forwarded-Proto or Via of its choosing: each field
 //! of the result with such a name is one the proxy passed in `own`
-//! ([`theorem_request_fields`]). A response loses Date and Server, which
+//! (`theorem_request_fields`). A response loses Date and Server, which
 //! the server writes, and Age, which the cache sets ([`response_fields`]).
 use vstd::prelude::*;
 use verilith_http::framing::ci_eq_exec;
@@ -156,7 +156,7 @@ pub proof fn lemma_forwarded_in(fs: Seq<SField>, all: Seq<SField>)
     }
 }
 
-/// [`proxy_sets`].
+/// `proxy_sets`.
 pub fn proxy_sets_exec(n: &[u8]) -> (r: bool)
     ensures r == proxy_sets(n@),
 {
@@ -186,7 +186,7 @@ pub fn proxy_sets_exec(n: &[u8]) -> (r: bool)
         || ci_eq_exec(n, &a7)
 }
 
-/// [`server_sets`].
+/// `server_sets`.
 pub fn server_sets_exec(n: &[u8]) -> (r: bool)
     ensures r == server_sets(n@),
 {
@@ -235,7 +235,7 @@ fn drop_set<'a>(fs: &Vec<Field<'a>>, req: bool, out: &mut Vec<Field<'a>>)
     assert(fv.take(fs@.len() as int) =~= fv);
 }
 
-/// The fields of the request to the upstream: exactly [`request_spec`] of
+/// The fields of the request to the upstream: exactly `request_spec` of
 /// the client's `fs` and the proxy's `own`.
 pub fn request_fields<'a>(fs: &[Field<'a>], own: &[Field<'a>]) -> (r: Vec<Field<'a>>)
     ensures fields_view(r@) == request_spec(fields_view(fs@), fields_view(own@)),
