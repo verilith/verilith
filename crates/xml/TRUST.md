@@ -15,6 +15,7 @@ Edition):
 - `src/pe_spec.rs`: the DTD read whole (parameter entities, conditional
   sections, the external subset, §5.1).
 - `src/stream_spec.rs`, `src/items_spec.rs`: what the push parser emits.
+- `src/walk.rs`: `items`, the order in which the C ABIs report content.
 - `src/atts.rs`:
   - `decls`: the attribute-list declarations that apply. They are those
     before the end of the document type declaration and, unless the
@@ -89,7 +90,13 @@ Besides those calls, the API navigates the tape and converts byte spans to
 `&str` (checked, with `str::from_utf8`). The expat and libxml2 ABIs
 (`src/api/expat.rs`, `src/api/libxml2/`) are unverified too, and so is
 everything they do at the C boundary: they trust every pointer and length
-the caller passes, as a C library does. The README's
+the caller passes, as a C library does. Which item of content they report
+next is not theirs to decide: each takes it from the verified
+`walk::Cursor`, which needs nothing of its caller (out-of-range arguments
+to `Cursor::new` are cut to the tape, and its theorem holds for any tape).
+What the ABIs keep about each open element is pushed on the cursor's
+`Start` and popped on its `End`; that the two stay in step rests on the
+cursor's balance theorem and on the ABIs pushing once per `Start`. The README's
 [What is not proven](README.md#what-is-not-proven) describes how each is
 tested.
 
