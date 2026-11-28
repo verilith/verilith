@@ -92,6 +92,8 @@ pub mod enc_vp8mb;
 #[doc(hidden)]
 pub mod enc_vp8;
 #[doc(hidden)]
+pub mod enc_vp8thm;
+#[doc(hidden)]
 pub mod enc_vp8l;
 #[cfg(not(verus_only))]
 #[doc(hidden)]

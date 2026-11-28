@@ -900,11 +900,141 @@ pub fn write_parts(mbs: &Vec<MbChoice>, mb_w: usize, mb_h: usize, qi: usize, qs:
     Some((p1, p2, Ghost(p)))
 }
 
+/// The file: the RIFF and VP8 chunk headers, the frame tag, the start
+/// code and the size, then the two partitions and a pad byte to an even
+/// length.
+fn frame_file(p1: &Vec<u8>, p2: &Vec<u8>, w: usize, h: usize) -> (out: Vec<u8>)
+    requires
+        1 <= w < 0x4000,
+        1 <= h < 0x4000,
+        p1@.len() < 0x8_0000,
+        p2@.len() < 0x1000_0000,
+    ensures
+        first_part_size(out@, 20) == p1@.len(),
+        30 + p1@.len() <= out@.len(),
+        out@.subrange(30, 30 + p1@.len() as int) == p1@,
+        out@.subrange(30 + p1@.len() as int, out@.len() as int) == p2@ || out@.subrange(30 + p1@.len() as int, out@.len() as int) == p2@.push(0u8),
+        frame_width(out@, 20) == w,
+        frame_height(out@, 20) == h,
+        out@.subrange(0, 4) == seq![b'R', b'I', b'F', b'F'],
+        out@.subrange(8, 16) == seq![b'W', b'E', b'B', b'P', b'V', b'P', b'8', b' '],
+        out@.subrange(23, 26) == seq![0x9du8, 0x01u8, 0x2au8],
+        out@[20] % 2 == 0,
+{
+    let vp8 = 10 + p1.len() + p2.len();
+    let pad = vp8 % 2;
+    let mut out: Vec<u8> = Vec::new();
+    out.push(b'R');
+    out.push(b'I');
+    out.push(b'F');
+    out.push(b'F');
+    push_le32(&mut out, (4 + 8 + vp8 + pad) as u32);
+    out.push(b'W');
+    out.push(b'E');
+    out.push(b'B');
+    out.push(b'P');
+    out.push(b'V');
+    out.push(b'P');
+    out.push(b'8');
+    out.push(b' ');
+    push_le32(&mut out, vp8 as u32);
+    let n1 = p1.len() as u32;
+    let tag = (n1 << 5u32) | 0x10;
+    proof {
+        assert((tag & 0xff) + 256 * ((tag >> 8u32) & 0xff) + 65536 * ((tag >> 16u32) & 0xff) == tag && tag / 32 == n1 && (tag & 0xff) % 2 == 0
+            && (tag & 0xff) < 256 && ((tag >> 8u32) & 0xff) < 256 && ((tag >> 16u32) & 0xff) < 256) by (bit_vector)
+            requires
+                n1 < 0x8_0000,
+                tag == (n1 << 5u32) | 0x10,
+        ;
+    }
+    let t0 = (tag & 0xff) as u8;
+    let t1 = ((tag >> 8u32) & 0xff) as u8;
+    let t2 = ((tag >> 16u32) & 0xff) as u8;
+    proof {
+        assert(t0 as int + 256 * (t1 as int) + 65536 * (t2 as int) == tag as int);
+    }
+    out.push(t0);
+    out.push(t1);
+    out.push(t2);
+    out.push(0x9d);
+    out.push(0x01);
+    out.push(0x2a);
+    proof {
+        assert(((w >> 8) % 64) * 256 + (w & 0xff) == w && (w >> 8) < 64 && (w & 0xff) < 256) by (bit_vector)
+            requires
+                w < 0x4000,
+        ;
+        assert(((h >> 8) % 64) * 256 + (h & 0xff) == h && (h >> 8) < 64 && (h & 0xff) < 256) by (bit_vector)
+            requires
+                h < 0x4000,
+        ;
+    }
+    out.push((w & 0xff) as u8);
+    out.push((w >> 8) as u8);
+    out.push((h & 0xff) as u8);
+    out.push((h >> 8) as u8);
+    let ghost hd = out@;
+    proof {
+        assert(hd.len() == 30);
+    }
+    let mut i: usize = 0;
+    while i < p1.len()
+        invariant
+            i <= p1@.len(),
+            hd.len() == 30,
+            out@ =~= hd + p1@.take(i as int),
+        decreases p1.len() - i,
+    {
+        out.push(p1[i]);
+        i = i + 1;
+    }
+    let ghost h1 = out@;
+    let mut i: usize = 0;
+    while i < p2.len()
+        invariant
+            i <= p2@.len(),
+            out@ =~= h1 + p2@.take(i as int),
+        decreases p2.len() - i,
+    {
+        out.push(p2[i]);
+        i = i + 1;
+    }
+    if pad == 1 {
+        out.push(0);
+    }
+    proof {
+        let f = out@;
+        assert(p1@.take(p1@.len() as int) =~= p1@);
+        assert(p2@.take(p2@.len() as int) =~= p2@);
+        assert(f.subrange(30, 30 + p1@.len() as int) =~= p1@);
+        assert(f.subrange(30 + p1@.len() as int, f.len() as int) =~= p2@ || f.subrange(30 + p1@.len() as int, f.len() as int) =~= p2@.push(0u8));
+        assert(f[20] == t0 && f[21] == t1 && f[22] == t2);
+        assert(first_part_size(f, 20) == p1@.len());
+        assert(frame_width(f, 20) == w);
+        assert(frame_height(f, 20) == h);
+        assert(f.subrange(0, 4) =~= seq![b'R', b'I', b'F', b'F']);
+        assert(f.subrange(8, 16) =~= seq![b'W', b'E', b'B', b'P', b'V', b'P', b'8', b' ']);
+        assert(f.subrange(23, 26) =~= seq![0x9du8, 0x01u8, 0x2au8]);
+    }
+    out
+}
+
 /// Encodes `px` (`w` by `h`, ARGB, alpha ignored) as a lossy WebP file at
 /// `quality` 0 to 100.
 pub fn encode_lossy(px: &[u32], w: usize, h: usize, quality: u32) -> (r: Option<Vec<u8>>)
     requires
         px@.len() == w * h,
+    ensures
+        r matches Some(out) ==> {
+            &&& vp8_plain(out@, 20)
+            &&& frame_width(out@, 20) == w
+            &&& frame_height(out@, 20) == h
+            &&& out@.subrange(0, 4) == seq![b'R', b'I', b'F', b'F']
+            &&& out@.subrange(8, 16) == seq![b'W', b'E', b'B', b'P', b'V', b'P', b'8', b' ']
+            &&& out@.subrange(23, 26) == seq![0x9du8, 0x01u8, 0x2au8]
+            &&& out@[20] % 2 == 0
+        },
 {
     if w < 1 || h < 1 || w >= 0x4000 || h >= 0x4000 {
         return None;
@@ -932,50 +1062,12 @@ pub fn encode_lossy(px: &[u32], w: usize, h: usize, quality: u32) -> (r: Option<
     if p1.len() >= 0x8_0000 || p2.len() >= 0x1000_0000 {
         return None;
     }
-    let vp8 = 10 + p1.len() + p2.len();
-    let pad = vp8 % 2;
-    let mut out: Vec<u8> = Vec::new();
-    out.push(b'R');
-    out.push(b'I');
-    out.push(b'F');
-    out.push(b'F');
-    push_le32(&mut out, (4 + 8 + vp8 + pad) as u32);
-    out.push(b'W');
-    out.push(b'E');
-    out.push(b'B');
-    out.push(b'P');
-    out.push(b'V');
-    out.push(b'P');
-    out.push(b'8');
-    out.push(b' ');
-    push_le32(&mut out, vp8 as u32);
-    let tag = ((p1.len() as u32) << 5u32) | 0x10;
-    out.push((tag & 0xff) as u8);
-    out.push(((tag >> 8u32) & 0xff) as u8);
-    out.push(((tag >> 16u32) & 0xff) as u8);
-    out.push(0x9d);
-    out.push(0x01);
-    out.push(0x2a);
-    out.push((w & 0xff) as u8);
-    out.push((w >> 8) as u8);
-    out.push((h & 0xff) as u8);
-    out.push((h >> 8) as u8);
-    let mut i: usize = 0;
-    while i < p1.len()
-        decreases p1.len() - i,
-    {
-        out.push(p1[i]);
-        i = i + 1;
-    }
-    let mut i: usize = 0;
-    while i < p2.len()
-        decreases p2.len() - i,
-    {
-        out.push(p2[i]);
-        i = i + 1;
-    }
-    if pad == 1 {
-        out.push(0);
+    let out = frame_file(&p1, &p2, w, h);
+    proof {
+        assert((w + 15) / 16 == mb_w);
+        assert((h + 15) / 16 == mb_h);
+        assert(qtuple(qs) == sq(qi as int));
+        crate::enc_vp8thm::lemma_lossy_plain(out@, p1@, p2@, gp@, mbs@, mb_w as nat, mb_h as nat);
     }
     Some(out)
 }
