@@ -58,10 +58,10 @@ fn scene(w: usize, h: usize, px: usize, py: usize) -> Vec<u8> {
 #[test]
 fn point_is_on_the_patch() {
     let s = scene(64, 40, 44, 5);
-    let (x, y) = smart_x(&[1], &s, 64, 40);
+    let (x, y) = smart_x(&[1], 1, &s, 64, 40);
     assert!((44..56).contains(&x) && (5..17).contains(&y), "({x}, {y})");
     // A flat image: the first pixel.
-    assert_eq!(smart_x(&[1, 2, 1], &[9u8; 4 * 6], 3, 2), (0, 0));
+    assert_eq!(smart_x(&[1, 2, 1], 4, &[9u8; 4 * 6], 3, 2), (0, 0));
 }
 
 fn read(b: &[u8]) -> (usize, usize, Vec<u8>) {

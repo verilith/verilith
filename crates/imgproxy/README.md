@@ -16,7 +16,7 @@ sources. Resampling is Lanczos 3 by default, as in imgproxy.
 
 ## What is proven
 
-`cargo verus focus` checks 560 functions with no errors.
+`cargo verus focus` checks 602 functions with no errors.
 
 | Property | Where it is stated |
 |---|---|
@@ -28,7 +28,9 @@ sources. Resampling is Lanczos 3 by default, as in imgproxy.
 | Geometry: `geom::geom_x` computes `spec_geom::geom`, imgproxy's `crop` (pixels or fractions, at its own gravity), resize (times `dpr`), the `fill` crop at `gravity` (compass offsets or a focus point, as `calcPosition`), `extend` and `padding`, and proves every rectangle is inside the one it is cut from or placed on, and the canvas within 65535 on a side and the pixel limit | `geom::geom_x` against `spec_geom::geom` |
 | Rotating and flipping return exactly `spec_geom::turn` (clockwise quarter turns, then mirror), and placing on a canvas exactly `spec_geom::embed` | `geom::turn_rgba`, `geom::embed_rgba` |
 | EXIF orientation: `exif::orientation_x` reads exactly `spec_exif::orientation` from any bytes (JPEG's first `Exif` APP1 before the scan, WebP's `EXIF` chunk, PNG's `eXIf` before `IDAT`; the IFD0 entry 0x0112 of type SHORT, 1 to 8, else 1), in bounds and without overflow, with loops (no recursion depth an input controls); `upright_x` gives each orientation's turn | `exif::orientation_x`, `exif::upright_x` |
-| `blur` and `sharpen` compute exactly `spec_filter::blur` (a separable convolution with any table of up to 2049 non-negative weights, edges repeated, normalized, 8 bits of fraction kept between the passes) and `spec_filter::sharpen` (an unsharp mask), for every size up to 65535 by 65535 | `filter::blur_rgba`, `filter::sharpen_rgba` |
+| `blur` and `sharpen` compute exactly `spec_filter::blur` (libvips's `vips_convsep` at integer precision: rows then columns, each rounded to 8 bits, edges repeated, with any table of up to 10001 non-negative weights and any divisor up to 2^31) and `spec_filter::sharpen` (an unsharp mask), for every size up to 65535 by 65535 | `filter::blur_rgba`, `filter::sharpen_rgba` |
+| Premultiplied alpha computes exactly `spec_filter::premultiply` and `unpremultiply`: libvips's single-precision arithmetic and truncation, written as integers | `filter::premul_rgba`, `filter::unpremul_rgba` |
+| `pixelate` computes exactly `spec_filter::pixelate`: imgproxy's mirror padding to whole blocks, `vips_shrink` (rows, then columns, with libvips's 8-bit fixed-point average), `vips_zoom` and the crop back | `filter::pixelate_rgba` |
 | Watermarks: `geom::watermark_rgba` computes exactly `spec_geom::watermark` (Porter-Duff "over" with straight alpha at the given opacity, rounded to nearest, once at a gravity or tiled), and `wm_at_x` places it inside the image as `calcPosition` does | `geom::watermark_rgba`, `geom::wm_at_x` |
 | Smart gravity: `smart::smart_x` computes exactly `spec_smart::smart`: scores for edges (a Laplacian of the luminance), skin and saturation, blurred, and the first pixel with the highest score | `smart::smart_x` |
 | Cropping returns exactly `spec::crop` | `resize::crop_rgba` |
@@ -77,7 +79,7 @@ average), `background`/`bg` (flattens alpha, and fills `extend` and
 `soea`, `sowe` with offsets, `fp` with a focus point, `sm`), `crop`/`c` (width,
 height, gravity), `extend`/`ex` (with gravity), `padding`/`pd`, `dpr`,
 `rotate`/`rot` (multiples of 90), `flip`/`fl`, `auto_rotate`/`ar` (EXIF
-orientation, on by default), `blur`/`bl`, `sharpen`/`sh`,
+orientation, on by default), `blur`/`bl`, `sharpen`/`sh`, `pixelate`/`pix`,
 `watermark`/`wm` (opacity, position or `re` to tile, offsets, scale; the
 image from `--watermark`, `IMGPROXY_WATERMARK_PATH` or
 `IMGPROXY_WATERMARK_DATA`), `format`/`f` or the URL's extension (`png`, `jpg`/`jpeg`; PNG when
@@ -112,13 +114,13 @@ does not decode or is over the limits, 502 for an origin that fails.
   bit-identical to it: the kernel tables are 1/256-step samples in 14-bit
   fixed point, and `nearest` is a one-sample box (an average over each
   output pixel's cell when downscaling), not a pick of one pixel.
-- Alpha is resampled straight, not premultiplied.
+- Alpha is resampled straight, not premultiplied. The filters use
+  premultiplied alpha as imgproxy does.
 - Smart gravity scores edges, skin and saturation as libvips's
   "attention" strategy does, with this crate's own weights, so it can
   pick a different spot. `sharpen` is an unsharp mask on the RGB
-  channels, not libvips's sharpen on the L channel of Lab. `blur` and
-  `sharpen` sigmas above 341 are cut to a 2049-sample kernel. No
-  `pixelate`. Gravity offsets are whole pixels. `skip_processing` knows
+  channels, not libvips's sharpen on the L channel of Lab. Gravity
+  offsets are whole pixels. `skip_processing` knows
   only the four formats decoded here.
 - GIF: the first frame, at its own size.
 - No redirects from an origin. `https://` sources need `--features tls`;
@@ -168,3 +170,13 @@ area-average resizer with a direct floating-point computation of the area
 average on random sizes and the Lanczos resampler with a floating-point
 Lanczos 3 (`tests/lanczos.rs`: at most 2 levels apart), runs the pipeline on JPEG and PNG files the `image` crate writes,
 and checks URL parsing and imgproxy's documented signature example.
+
+`blur`, premultiplied alpha and `pixelate` are checked against libvips
+itself: `scripts/vips_ref.py` runs an installed libvips through ctypes as
+imgproxy calls it, and `VERILITH_VIPS_REF=dir cargo test --test libvips
+-- --ignored` compares. Against libvips 8.15.1 (built with Highway) the
+blur and alpha are byte-identical on 255 images, on both its vector and
+its C path (`VIPS_NOVECTOR=1`). Its masks are built as `vips_gaussmat`
+and `vips_convi_intize` build them (`src/mask.rs`). `pixelate` rounds as
+libvips 8.17 and later do (a fixed-point average, `shrinkv.c`); 8.15
+divides exactly, and otherwise matches.

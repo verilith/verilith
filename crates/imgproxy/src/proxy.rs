@@ -255,32 +255,12 @@ fn smart_point(px: &[u8], w: usize, h: usize) -> (i32, i32) {
     // pre: resize_rgba and smart_x (sizes in 1..=MAX_DIM, a whole number
     // of pixels; gauss's tables are what blur_rgba takes).
     let small = if (aw, ah) == (w, h) { px.to_vec() } else { crate::resize::resize_rgba(px, w, h, aw, ah) };
-    let (bx, by) = match gauss((aw.max(ah) * 10000 / 16) as u32) {
-        Some(g) => crate::smart::smart_x(&g, &small, aw, ah),
-        None => crate::smart::smart_x(&[1], &small, aw, ah),
+    let (bx, by) = match crate::mask::gaussblur(aw.max(ah) as f64 / 16.0) {
+        Ok(Some((g, d))) => crate::smart::smart_x(&g, d, &small, aw, ah),
+        _ => crate::smart::smart_x(&[1], 1, &small, aw, ah),
     };
     let f = |b: usize, n: usize| ((2 * b + 1) * 10000 / (2 * n)) as i32;
     (f(bx, aw), f(by, ah))
-}
-
-/// A Gaussian's weights for `sigma` (`F1` units), sampled at whole
-/// distances out to three sigma (at most 1024), 65536 at the centre; `None`
-/// for a sigma too small to change anything. Sampled in floating point:
-/// `filter`'s proofs hold for every table, so a wrong value changes how
-/// the image looks, never what the code may do.
-pub fn gauss(sigma: u32) -> Option<Vec<u32>> {
-    let s = sigma as f64 / 10000.0;
-    if s < 0.05 {
-        return None;
-    }
-    let r = ((3.0 * s).ceil() as usize).clamp(1, 1024);
-    let g: Vec<u32> = (0..2 * r + 1)
-        .map(|i| {
-            let d = i as f64 - r as f64;
-            ((-(d * d) / (2.0 * s * s)).exp() * 65536.0).round().clamp(0.0, 65536.0) as u32
-        })
-        .collect();
-    Some(g)
 }
 
 /// imgproxy's `IMGPROXY_QUALITY` default.
@@ -573,19 +553,30 @@ pub fn process_with(data: &[u8], o: &Options, lim: &Limits, wm: Option<&Rgba>) -
     } else {
         crate::resize::crop_rgba(&px, rw, rh, p.cx as usize, p.cy as usize, p.cw as usize, p.ch as usize)
     };
-    // `blur` and `sharpen`, on the cropped image, before `extend` and
-    // `padding`, as imgproxy applies its filters.
-    // pre: blur_rgba and sharpen_rgba (gauss's tables are 1 to 2049
-    // entries, odd, each at most 65536; sizes in 1..=MAX_DIM).
+    // imgproxy's `vips_apply_filters`, on the cropped image, before
+    // `extend` and `padding`: premultiplied alpha (for blur and sharpen
+    // only, as imgproxy does it), `blur`, `sharpen`, `pixelate`, then
+    // back. On an opaque image premultiplying changes nothing.
+    // pre: blur_rgba, sharpen_rgba, pixelate_rgba (mask::gaussblur's
+    // tables are 1 to 9999 entries, odd, each at most 127 or 20; divisors
+    // 2 to 2^31; sizes in 1..=MAX_DIM).
     let (fw, fh) = (p.cw as usize, p.ch as usize);
-    let px = match gauss(o.blur) {
-        Some(g) => crate::filter::blur_rgba(&g, &px, fw, fh),
+    let sigma = |v: u32| v as f64 / 10000.0;
+    let bad = || Fail::Unprocessable("Blur or sharpen sigma too large");
+    let blur = if o.blur > 0 { crate::mask::gaussblur(sigma(o.blur)).map_err(|_| bad())? } else { None };
+    let sharp = if o.sharpen > 0 { crate::mask::gaussblur(sigma(o.sharpen)).map_err(|_| bad())? } else { None };
+    let pre = o.blur > 0 || o.sharpen > 0;
+    let px = if pre { crate::filter::premul_rgba(&px) } else { px };
+    let px = match &blur {
+        Some((g, d)) => crate::filter::blur_rgba(g, *d, &px, fw, fh),
         None => px,
     };
-    let px = match gauss(o.sharpen) {
-        Some(g) => crate::filter::sharpen_rgba(&g, &px, fw, fh),
+    let px = match &sharp {
+        Some((g, d)) => crate::filter::sharpen_rgba(g, *d, &px, fw, fh),
         None => px,
     };
+    let px = crate::filter::pixelate_rgba(px, fw, fh, o.pixelate as usize);
+    let px = if pre { crate::filter::unpremul_rgba(&px) } else { px };
     // pre: embed_rgba (geom_x ensures the image is inside the canvas).
     // `extend` and `padding` fill with the background, or transparency.
     let (cw, ch) = (p.canvas_w, p.canvas_h);

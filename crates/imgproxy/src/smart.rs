@@ -239,19 +239,20 @@ pub proof fn lemma_divmod_lt(b: int, w: int, h: int)
 }
 
 /// `smart`: the point smart gravity centres on.
-pub fn smart_x(g: &[u32], s: &[u8], w: usize, h: usize) -> (r: (usize, usize))
+pub fn smart_x(g: &[u32], d: i64, s: &[u8], w: usize, h: usize) -> (r: (usize, usize))
     requires
         gk_ok(g@),
+        1 <= d <= 0x8000_0000,
         1 <= w <= MAX_DIM,
         1 <= h <= MAX_DIM,
         s@.len() == w * h * NC,
     ensures
-        (r.0 as int, r.1 as int) == smart(gseq(g@), s@, w as int, h as int),
+        (r.0 as int, r.1 as int) == smart(gseq(g@), d as int, s@, w as int, h as int),
         r.0 < w,
         r.1 < h,
 {
     let sc = scores_rgba(s, w, h);
-    let bl = blur_rgba(g, &sc, w, h);
+    let bl = blur_rgba(g, d, &sc, w, h);
     proof {
         assert(w * h * NC <= 65535 * 65535 * 4) by (nonlinear_arith)
             requires
