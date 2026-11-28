@@ -24623,6 +24623,26 @@ fn mm256_cvtepu8_epi32() {
 }
 
 #[test]
+fn mm256_mul_epu32() {
+    if !need_avx2() { return; }
+    #[target_feature(enable = "avx2")]
+    fn body(ITERS: usize) {
+    let mut rng = Rng::new(0x2562);
+    #[target_feature(enable = "avx2")]
+    fn go(a: __m256i, b: __m256i) -> __m256i { _mm256_mul_epu32(a, b) }
+    for _ in 0..ITERS {
+        let (a, b) = (rng.v256(), rng.v256());
+        let got = u64s256(unsafe { go(a, b) });
+        let (x, y) = (u32s256(a), u32s256(b));
+        let want: Vec<u64> = (0..4).map(|i| x[2 * i] as u64 * y[2 * i] as u64).collect();
+        if got != want { fail("_mm256_mul_epu32", &bytes256(a), &bytes256(b), &format!("{:?} vs {:?}", got, want)); }
+    }
+
+    }
+    unsafe { body(iters()) }
+}
+
+#[test]
 fn mm256_permute2x128_si256_0() {
     if !need_avx2() { return; }
     #[target_feature(enable = "avx2")]

@@ -559,6 +559,11 @@ pub open spec fn mullo32(a: Seq<u32>, b: Seq<u32>) -> Seq<u32> {
     Seq::new(a.len(), |i: int| ((a[i] * b[i]) % 0x1_0000_0000) as u32)
 }
 
+/// The 64-bit products of the even 32-bit lanes (`vpmuludq`).
+pub open spec fn mul_even32(a: Seq<u32>, b: Seq<u32>) -> Seq<u64> {
+    Seq::new(a.len() / 2, |i: int| (a[2 * i] * b[2 * i]) as u64)
+}
+
 /// `uaddlp` on bytes (`vpaddlq_u8`): the sum of each adjacent pair, as a
 /// 16-bit lane. Nothing wraps.
 pub open spec fn paddl8(a: Seq<u8>) -> Seq<u16> {

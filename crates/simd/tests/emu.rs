@@ -249,7 +249,7 @@ fn avx2() {
         _mm256_subs_epi8, _mm256_packs_epi16, _mm256_min_epu8,
         _mm256_max_epu8, _mm256_avg_epu8, _mm256_cmpeq_epi8, _mm256_cmpgt_epi8, _mm256_add_epi16,
         _mm256_sub_epi16, _mm256_mullo_epi16, _mm256_mulhi_epi16, _mm256_cmpeq_epi16, _mm256_madd_epi16,
-        _mm256_add_epi32, _mm256_sub_epi32, _mm256_mullo_epi32, _mm256_cmpeq_epi32, _mm256_cmpgt_epi32, _mm256_add_epi64,
+        _mm256_add_epi32, _mm256_sub_epi32, _mm256_mullo_epi32, _mm256_mul_epu32, _mm256_cmpeq_epi32, _mm256_cmpgt_epi32, _mm256_add_epi64,
         _mm256_sad_epu8, _mm256_unpacklo_epi8, _mm256_unpackhi_epi8, _mm256_unpacklo_epi32,
         _mm256_unpackhi_epi32, _mm256_unpacklo_epi64, _mm256_packus_epi16, _mm256_shuffle_epi8,
         _mm256_maddubs_epi16, _mm256_and_si256, _mm256_or_si256, _mm256_xor_si256, _mm256_andnot_si256,

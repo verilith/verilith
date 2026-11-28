@@ -590,6 +590,15 @@ pub fn _mm256_cvtepu8_epi32(a: __m128i) -> __m256i {
 pub fn _mm256_mullo_epi32(a: __m256i, b: __m256i) -> __m256i {
     __m256i(map32(a.0, b.0, u32::wrapping_mul))
 }
+/// `_mm256_mul_epu32`, emulated.
+#[inline]
+pub fn _mm256_mul_epu32(a: __m256i, b: __m256i) -> __m256i {
+    let mut r = [0u8; 32];
+    for i in 0..4 {
+        s64(&mut r, i, g32(&a.0, 2 * i) as u64 * g32(&b.0, 2 * i) as u64);
+    }
+    __m256i(r)
+}
 /// `_mm_sll_epi16`, emulated: by the low 64 bits of `count`.
 #[inline]
 pub fn _mm_sll_epi16(a: __m128i, count: __m128i) -> __m128i {

@@ -2507,6 +2507,24 @@ pub fn _mm256_mullo_epi32(a: __m256i, b: __m256i) -> (r: __m256i)
     unsafe { core::arch::x86_64::_mm256_mullo_epi32(a, b) }
 }
 
+/// [`_mm256_mul_epu32`](core::arch::x86_64::_mm256_mul_epu32) as a safe function, with the
+/// specification Verus checks callers against:
+///
+/// ```text
+/// requires avx2()
+/// ensures  u64x4(r) == mul_even32(u32x8(a), u32x8(b))
+/// ```
+#[verifier::external_body]
+#[inline(always)]
+pub fn _mm256_mul_epu32(a: __m256i, b: __m256i) -> (r: __m256i)
+    requires
+        avx2(),
+    ensures
+        u64x4(r) == mul_even32(u32x8(a), u32x8(b)),
+{
+    unsafe { core::arch::x86_64::_mm256_mul_epu32(a, b) }
+}
+
 /// [`_mm_sll_epi16`](core::arch::x86_64::_mm_sll_epi16) as a safe function, with the
 /// specification Verus checks callers against:
 ///

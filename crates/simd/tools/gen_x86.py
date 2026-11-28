@@ -242,6 +242,9 @@ spec("_mm_mullo_epi32", None, [("a", "__m128i"), ("b", "__m128i")], "__m128i", [
 # conversion).
 spec("_mm256_cvtepu8_epi32", None, [("a", "__m128i")], "__m256i", ["avx2()"], ["u32x8(r) == zext8_32(b128(a).subrange(0, 8))"])
 spec("_mm256_mullo_epi32", None, [("a", "__m256i"), ("b", "__m256i")], "__m256i", ["avx2()"], ["u32x8(r) == mullo32(u32x8(a), u32x8(b))"])
+# The full 64-bit products of the even 32-bit lanes (the JPEG encoder's
+# quantization by reciprocals).
+spec("_mm256_mul_epu32", None, [("a", "__m256i"), ("b", "__m256i")], "__m256i", ["avx2()"], ["u64x4(r) == mul_even32(u32x8(a), u32x8(b))"])
 # Shifts by the count in the low 64 bits of `count`, stated for counts below
 # the lane width (the only ones these specs allow).
 spec("_mm_sll_epi16", None, [("a", "__m128i"), ("count", "__m128i")], "__m128i", ["u64x2(count)[0] < 16"],

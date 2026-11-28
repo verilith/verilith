@@ -246,6 +246,21 @@ pub fn store128_i16(s: &mut [i16], i: usize, v: __m128i)
     unsafe { _mm_storeu_si128(s.as_mut_ptr().add(i) as *mut __m128i, v) }
 }
 
+/// Stores `v` as sixteen 16-bit values at `s[i..i + 16]`.
+#[verifier::external_body]
+#[inline(always)]
+pub fn store256_i16(s: &mut [i16], i: usize, v: __m256i)
+    requires
+        avx2(),
+        i + 16 <= old(s)@.len(),
+    ensures
+        final(s)@ == old(s)@.subrange(0, i as int) + u16x16(v).map_values(|x: u16| x as i16)
+            + old(s)@.subrange(i + 16, old(s)@.len() as int),
+{
+    debug_assert!(i + 16 <= s.len());
+    unsafe { _mm256_storeu_si256(s.as_mut_ptr().add(i) as *mut __m256i, v) }
+}
+
 /// The 8 bytes at `s[i..i + 8]` in the low half of the vector, zeros in the
 /// high half (`_mm_loadl_epi64`). Reads only those 8 bytes.
 #[verifier::external_body]

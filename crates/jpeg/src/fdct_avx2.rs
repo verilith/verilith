@@ -946,6 +946,134 @@ proof fn lemma_final(t: [i64; 64], o0: __m256i, o1: __m256i, o2: __m256i, o3: __
     }
 }
 
+/// The forward DCT of block (`bx`, `by`) of a plane, as `fdct_x` computes
+/// it from the block's samples.
+#[cfg_attr(all(not(verus_only), target_arch = "x86_64"), target_feature(enable = "avx2"))]
+#[verifier::spinoff_prover]
+#[verifier::rlimit(200)]
+pub fn fdct_block32(pl: &Vec<Vec<u8>>, bx: usize, by: usize) -> (t: [u32; 64])
+    requires
+        avx2(),
+        8 * by + 8 <= pl@.len(),
+        forall|y: int| 8 * by <= y < 8 * by + 8 ==> 8 * bx + 8 <= (#[trigger] pl@[y])@.len(),
+        bx < 0x1000_0000,
+        by < 0x1000_0000,
+    ensures
+        forall|i: int| 0 <= i < 64 ==> #[trigger] s32(t[i]) == fdct(pblock(pl@, bx as int, by as int))[i],
+        forall|i: int| 0 <= i < 64 ==> -0x10_0000 <= #[trigger] s32(t[i]) <= 0x10_0000,
+{
+    let ghost s = pblock(pl@, bx as int, by as int);
+    let ghost rows = fdct_rows(s);
+    let l0 = load_row(pl, bx, by, 0);
+    let l1 = load_row(pl, bx, by, 1);
+    let l2 = load_row(pl, bx, by, 2);
+    let l3 = load_row(pl, bx, by, 3);
+    let l4 = load_row(pl, bx, by, 4);
+    let l5 = load_row(pl, bx, by, 5);
+    let l6 = load_row(pl, bx, by, 6);
+    let l7 = load_row(pl, bx, by, 7);
+    let (t0, t1, t2, t3, t4, t5, t6, t7) = tr8x(l0, l1, l2, l3, l4, l5, l6, l7);
+    proof {
+        lemma_tr_rows(l0, l1, l2, l3, l4, l5, l6, l7, t0, t1, t2, t3, t4, t5, t6, t7, s);
+    }
+    let (p0, p1, p2, p3, p4, p5, p6, p7) = vpass(t0, t1, t2, t3, t4, t5, t6, t7, true);
+    proof {
+        lemma_rows_out(t0, t1, t2, t3, t4, t5, t6, t7, p0, p1, p2, p3, p4, p5, p6, p7, s);
+    }
+    let (q0, q1, q2, q3, q4, q5, q6, q7) = tr8x(p0, p1, p2, p3, p4, p5, p6, p7);
+    proof {
+        lemma_tr_cols(p0, p1, p2, p3, p4, p5, p6, p7, q0, q1, q2, q3, q4, q5, q6, q7, rows);
+    }
+    let (o0, o1, o2, o3, o4, o5, o6, o7) = vpass(q0, q1, q2, q3, q4, q5, q6, q7, false);
+    proof {
+        lemma_out(q0, q1, q2, q3, q4, q5, q6, q7, rows, s);
+    }
+    let mut t = [0u32; 64];
+    emit32(&mut t, 0, o0);
+    emit32(&mut t, 1, o1);
+    emit32(&mut t, 2, o2);
+    emit32(&mut t, 3, o3);
+    emit32(&mut t, 4, o4);
+    emit32(&mut t, 5, o5);
+    emit32(&mut t, 6, o6);
+    emit32(&mut t, 7, o7);
+    proof {
+        lemma_final32(t, o0, o1, o2, o3, o4, o5, o6, o7, q0, q1, q2, q3, q4, q5, q6, q7, s);
+    }
+    t
+}
+
+/// The emitted rows are `fdct`'s.
+#[verifier::spinoff_prover]
+#[verifier::rlimit(100)]
+proof fn lemma_final32(t: [u32; 64], o0: __m256i, o1: __m256i, o2: __m256i, o3: __m256i, o4: __m256i, o5: __m256i, o6: __m256i, o7: __m256i, q0: __m256i, q1: __m256i, q2: __m256i, q3: __m256i, q4: __m256i, q5: __m256i, q6: __m256i, q7: __m256i, s: Seq<int>)
+    requires
+        forall|u: int| 0 <= u < 8 ==> #[trigger] s32(t[u]) == lv(o0, u),
+        forall|u: int| 0 <= u < 8 ==> #[trigger] s32(t[8 + u]) == lv(o1, u),
+        forall|u: int| 0 <= u < 8 ==> #[trigger] s32(t[16 + u]) == lv(o2, u),
+        forall|u: int| 0 <= u < 8 ==> #[trigger] s32(t[24 + u]) == lv(o3, u),
+        forall|u: int| 0 <= u < 8 ==> #[trigger] s32(t[32 + u]) == lv(o4, u),
+        forall|u: int| 0 <= u < 8 ==> #[trigger] s32(t[40 + u]) == lv(o5, u),
+        forall|u: int| 0 <= u < 8 ==> #[trigger] s32(t[48 + u]) == lv(o6, u),
+        forall|u: int| 0 <= u < 8 ==> #[trigger] s32(t[56 + u]) == lv(o7, u),
+        pout(o0, q0, q1, q2, q3, q4, q5, q6, q7, false, 0),
+        pout(o1, q0, q1, q2, q3, q4, q5, q6, q7, false, 1),
+        pout(o2, q0, q1, q2, q3, q4, q5, q6, q7, false, 2),
+        pout(o3, q0, q1, q2, q3, q4, q5, q6, q7, false, 3),
+        pout(o4, q0, q1, q2, q3, q4, q5, q6, q7, false, 4),
+        pout(o5, q0, q1, q2, q3, q4, q5, q6, q7, false, 5),
+        pout(o6, q0, q1, q2, q3, q4, q5, q6, q7, false, 6),
+        pout(o7, q0, q1, q2, q3, q4, q5, q6, q7, false, 7),
+        bnd(o0, 0x10_0000) && bnd(o1, 0x10_0000) && bnd(o2, 0x10_0000) && bnd(o3, 0x10_0000),
+        bnd(o4, 0x10_0000) && bnd(o5, 0x10_0000) && bnd(o6, 0x10_0000) && bnd(o7, 0x10_0000),
+        forall|v: int, u: int| 0 <= v < 8 && 0 <= u < 8 ==> #[trigger] fdct_1d(col8(q0, q1, q2, q3, q4, q5, q6, q7, u), false)[v] == fdct(s)[8 * v + u],
+    ensures
+        forall|i: int| 0 <= i < 64 ==> #[trigger] s32(t[i]) == fdct(s)[i],
+        forall|i: int| 0 <= i < 64 ==> -0x10_0000 <= #[trigger] s32(t[i]) <= 0x10_0000,
+{
+    assert forall|i: int| 0 <= i < 64 implies #[trigger] s32(t[i]) == fdct(s)[i] && -0x10_0000 <= s32(t[i]) <= 0x10_0000 by {
+        let v = i / 8;
+        let u = i % 8;
+        assert(i == 8 * v + u);
+        assert(fdct_1d(col8(q0, q1, q2, q3, q4, q5, q6, q7, u), false)[v] == fdct(s)[8 * v + u]);
+        if v == 0 {
+            assert(s32(t[u]) == lv(o0, u));
+        } else if v == 1 {
+            assert(s32(t[8 + u]) == lv(o1, u));
+        } else if v == 2 {
+            assert(s32(t[16 + u]) == lv(o2, u));
+        } else if v == 3 {
+            assert(s32(t[24 + u]) == lv(o3, u));
+        } else if v == 4 {
+            assert(s32(t[32 + u]) == lv(o4, u));
+        } else if v == 5 {
+            assert(s32(t[40 + u]) == lv(o5, u));
+        } else if v == 6 {
+            assert(s32(t[48 + u]) == lv(o6, u));
+        } else {
+            assert(s32(t[56 + u]) == lv(o7, u));
+        }
+    }
+}
+
+/// Lanes `0..8` of `o` as row `v` of `t`, as they are.
+#[inline(always)]
+fn emit32(t: &mut [u32; 64], v: usize, o: __m256i)
+    requires
+        avx2(),
+        v < 8,
+    ensures
+        forall|u: int| 0 <= u < 8 ==> #[trigger] s32(final(t)[8 * v + u]) == lv(o, u),
+        forall|i: int| 0 <= i < 64 && (i < 8 * v || i >= 8 * v + 8) ==> #[trigger] final(t)[i] == old(t)[i],
+{
+    store256_u32(t, 8 * v, o);
+    proof {
+        assert forall|u: int| 0 <= u < 8 implies #[trigger] s32(t[8 * v + u]) == lv(o, u) by {
+            assert(t[8 * v + u] == u32x8(o)[u]);
+        }
+    }
+}
+
 /// Lanes `0..8` of `o` as row `v` of `t`.
 #[inline(always)]
 fn emit(t: &mut [i64; 64], v: usize, o: __m256i)
