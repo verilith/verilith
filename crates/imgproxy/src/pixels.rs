@@ -296,4 +296,42 @@ pub fn flatten(px: &[u8], bg: [u8; 3]) -> (r: Vec<u8>)
     out
 }
 
+/// RGBA bytes as WebP's ARGB pixels (`0xAARRGGBB`), one per 4 bytes.
+pub fn rgba_to_argb(px: &[u8]) -> (r: Vec<u32>)
+    requires
+        px@.len() % 4 == 0,
+    ensures
+        r@.len() == px@.len() / 4,
+        forall|i: int| 0 <= i < r@.len() ==> #[trigger] r@[i] == verilith_webp::spec::argb(
+            px@[4 * i + 3] as nat,
+            px@[4 * i] as nat,
+            px@[4 * i + 1] as nat,
+            px@[4 * i + 2] as nat,
+        ),
+{
+    let n = px.len() / 4;
+    let mut out: Vec<u32> = Vec::with_capacity(n);
+    let mut i: usize = 0;
+    while i < n
+        invariant
+            n == px@.len() / 4,
+            px@.len() % 4 == 0,
+            i <= n,
+            out@.len() == i,
+            forall|k: int| 0 <= k < i ==> #[trigger] out@[k] == verilith_webp::spec::argb(
+                px@[4 * k + 3] as nat,
+                px@[4 * k] as nat,
+                px@[4 * k + 1] as nat,
+                px@[4 * k + 2] as nat,
+            ),
+        decreases n - i,
+    {
+        let (r, g, b, a) = (px[4 * i] as u32, px[4 * i + 1] as u32, px[4 * i + 2] as u32, px[4 * i + 3] as u32);
+        let v = a * 0x100_0000 + r * 0x1_0000 + g * 0x100 + b;
+        out.push(v);
+        i += 1;
+    }
+    out
+}
+
 } // verus!

@@ -80,6 +80,8 @@ impl Default for Options {
 pub enum Format {
     Png,
     Jpeg,
+    /// Lossless WebP (VP8L).
+    Webp,
 }
 
 impl Format {
@@ -87,6 +89,7 @@ impl Format {
         match self {
             Format::Png => b"image/png",
             Format::Jpeg => b"image/jpeg",
+            Format::Webp => b"image/webp",
         }
     }
 }
@@ -223,14 +226,15 @@ fn option(o: &mut Options, seg: &[u8]) -> Result<(), Fail> {
     Ok(())
 }
 
-/// The output format an extension names: PNG or JPEG (the encoders this
-/// workspace verifies). No extension leaves the format as it is.
+/// The output format an extension names: PNG, JPEG or WebP (the encoders
+/// this workspace verifies). No extension leaves the format as it is.
 fn format(o: &mut Options, ext: &[u8]) -> Result<(), Fail> {
     match ext {
         b"" => {}
         b"png" | b"best" => o.format = Format::Png,
         b"jpg" | b"jpeg" => o.format = Format::Jpeg,
-        _ => return Err(Fail::Unprocessable("Only PNG and JPEG output are supported")),
+        b"webp" => o.format = Format::Webp,
+        _ => return Err(Fail::Unprocessable("Only PNG, JPEG and WebP output are supported")),
     }
     Ok(())
 }
@@ -535,7 +539,7 @@ pub fn process(data: &[u8], o: &Options, lim: &Limits) -> Result<Vec<u8>, Fail> 
     // flattened onto the background, white by default, as imgproxy does.
     let bg = match o.format {
         Format::Jpeg => Some(o.background.unwrap_or([255, 255, 255])),
-        Format::Png => o.background,
+        Format::Png | Format::Webp => o.background,
     };
     let px = match bg {
         Some(bg) => crate::pixels::flatten(&px, bg),
@@ -552,6 +556,12 @@ pub fn process(data: &[u8], o: &Options, lim: &Limits) -> Result<Vec<u8>, Fail> 
             let q = if o.quality == 0 { DEFAULT_QUALITY } else { o.quality };
             verilith_jpeg::encode::encode_rgb(&px, p.cw as usize, p.ch as usize, 4, q as u8, q < 90)
                 .ok_or(Fail::Unprocessable("Result image is too big for JPEG"))
+        }
+        // encode_lossless checks its sizes itself (1 to 16384 each way).
+        Format::Webp => {
+            let argb = crate::pixels::rgba_to_argb(&px);
+            verilith_webp::enc_vp8l::encode_lossless(&argb, p.cw, p.ch)
+                .ok_or(Fail::Unprocessable("Result image is too big for WebP"))
         }
     }
 }
@@ -877,6 +887,7 @@ mod tests {
         assert_eq!(p.opts.w, 10);
         assert_eq!(parse(b"/x/w:10/plain/local:///a.jpg").unwrap().opts.format, Format::Png);
         assert_eq!(parse(b"/x/w:10/plain/local:///a.png@jpg").unwrap().opts.format, Format::Jpeg);
+        assert_eq!(parse(b"/x/w:10/plain/local:///a.png@webp").unwrap().opts.format, Format::Webp);
         assert_eq!(parse(b"/x/f:jpeg/q:55/plain/local:///a.png").unwrap().opts.quality, 55);
         assert_eq!(parse(b"/x/f:jpeg/plain/local:///a.png").unwrap().opts.format, Format::Jpeg);
         assert!(matches!(parse(b"/x/q:101/plain/local:///a.png"), Err(Fail::BadUrl(_))));

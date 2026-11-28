@@ -172,6 +172,28 @@ fn jpeg_output() {
 }
 
 #[test]
+fn webp_output() {
+    let (w, h) = (333u32, 250u32);
+    let px = image(w as usize, h as usize, 12);
+    let mut pngb = Vec::new();
+    image::RgbaImage::from_raw(w, h, px.clone())
+        .unwrap()
+        .write_to(&mut std::io::Cursor::new(&mut pngb), image::ImageFormat::Png)
+        .unwrap();
+    let lim = Limits::default();
+    let o = Options { mode: Mode::Fit, w: 200, h: 200, format: Format::Webp, ..Default::default() };
+    let webp = process(&pngb, &o, &lim).unwrap();
+    assert_eq!(&webp[..4], b"RIFF");
+    assert_eq!(&webp[8..16], b"WEBPVP8L");
+    // Lossless: exactly the PNG output's pixels.
+    let (pw, ph, want) = png_read(&process(&pngb, &Options { format: Format::Png, ..o.clone() }, &lim).unwrap());
+    let pic = verilith_webp::capi::decode(&webp).unwrap();
+    assert_eq!((pic.width as u32, pic.height as u32), (pw, ph));
+    let got: Vec<u8> = pic.argb.iter().flat_map(|&p| [(p >> 16) as u8, (p >> 8) as u8, p as u8, (p >> 24) as u8]).collect();
+    assert_eq!(got, want);
+}
+
+#[test]
 fn shrink_on_load_matches_full_decode() {
     // A smooth image (gradients and a few blobs): the thumbnail made from a
     // JPEG decoded at 1/8, 1/4 and 1/2 is the one made from the full-size
