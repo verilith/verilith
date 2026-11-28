@@ -39,6 +39,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | h3 |  |  |  |  |  |  | 1 | 33 |
 | hpack | 3 |  |  |  |  |  | 3 | 203 |
 | http |  |  |  |  |  |  | 8 | 2725 |
+| imgproxy |  |  |  |  |  |  | 3 | 703 |
 | jpeg |  |  |  |  |  |  | 3 | 761 |
 | json | 17 |  |  |  |  |  | 6 | 1853 |
 | lz4 |  |  |  |  |  |  | 1 | 584 |
@@ -48,6 +49,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 | quic-conn |  |  |  |  |  |  | 3 | 2091 |
 | regex | 1 |  |  |  |  |  | 3 | 1969 |
 | server | 1 |  |  |  | 1 |  | 14 | 4868 |
+| serverless |  |  |  |  |  |  | 2 | 259 |
 | sha2 | 34 |  |  |  |  |  | 3 | 362 |
 | simd | 425 | 11 | 290 | 4 |  |  | 3 | 1016 |
 | snappy |  |  |  |  |  |  | 1 | 85 |
@@ -58,14 +60,14 @@ not occur in any crate's `src/` (the script fails if one appears).
 | tls-aws-lc |  |  |  |  |  |  | 2 | 707 |
 | url | 1 |  |  |  |  |  | 5 | 1311 |
 | verilith |  |  |  |  |  |  | 1 | 67 |
-| wasm | 20 |  |  |  |  | 2 | 4 | 2328 |
+| wasm | 20 |  |  |  |  | 2 | 4 | 2340 |
 | webp | 9 |  |  |  |  |  | 3 | 667 |
 | x509 |  |  |  |  |  |  | 6 | 1754 |
 | xml | 9 |  |  |  |  |  | 12 | 18551 |
 | xxhash |  |  |  |  |  |  |  |  |
 | zlib | 2 |  |  |  |  |  | 3 | 1354 |
 | zstd | 6 |  |  |  |  |  | 2 | 1331 |
-| **total** | **700** | **36** | **290** | **7** | **17** | **12** | **134** | **56852** |
+| **total** | **700** | **36** | **290** | **7** | **17** | **12** | **139** | **57826** |
 
 ## Items
 
@@ -157,6 +159,12 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/http/src/llhttp.rs`: plain Rust, 1481 lines
 - `crates/http/src/native.rs`: plain Rust, 239 lines
 
+### imgproxy
+
+- `crates/imgproxy/src/handler.rs`: plain Rust, 83 lines
+- `crates/imgproxy/src/proxy.rs`: plain Rust, 551 lines
+- `crates/imgproxy/src/bin/verilith-imgproxy.rs`: plain Rust, 69 lines
+
 ### jpeg
 
 - `crates/jpeg/src/capi.rs`: plain Rust, 30 lines
@@ -231,6 +239,11 @@ not occur in any crate's `src/` (the script fails if one appears).
 - `crates/server/src/sys/macos.rs`: plain Rust, 154 lines
 - `crates/server/src/sys/mod.rs`: plain Rust, 378 lines
 - `crates/server/src/sys/uring.rs`: plain Rust, 415 lines
+
+### serverless
+
+- `crates/serverless/src/lib.rs`: plain Rust, 203 lines
+- `crates/serverless/src/bin/verilith-serverless.rs`: plain Rust, 56 lines
 
 ### sha2
 
@@ -331,7 +344,7 @@ not occur in any crate's `src/` (the script fails if one appears).
 
 ### wasm
 
-- `crates/wasm/src/api.rs`: plain Rust, 373 lines
+- `crates/wasm/src/api.rs`: plain Rust, 385 lines
 - `crates/wasm/src/capi.rs`: plain Rust, 718 lines
 - `crates/wasm/src/decode.rs`: plain Rust, 686 lines
 - `crates/wasm/src/fops.rs`: external_body: `exec_un`, `exec_bin`, `exec_cmp`, `exec_cvt`
