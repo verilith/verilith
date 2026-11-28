@@ -54,6 +54,19 @@ pub mod vp8frame;
 pub mod vp8yuv;
 #[doc(hidden)]
 pub mod lossy;
+#[doc(hidden)]
+pub mod enc_bw;
+#[doc(hidden)]
+pub mod enc_lem;
+#[doc(hidden)]
+pub mod enc_code;
+#[doc(hidden)]
+pub mod enc_hl;
+pub mod enc_llc;
+pub mod enc_tok;
+pub mod enc_lz;
+pub mod enc_img;
+pub mod enc_vp8l;
 #[cfg(not(verus_only))]
 #[doc(hidden)]
 pub mod capi;
