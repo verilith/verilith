@@ -13,7 +13,16 @@ Two passes come out, each for the low and the high half: `vp16_lo` and
 `vp16_hi` for eight inputs, `vp16s_lo` and `vp16s_hi` for inputs 4 to 7
 zero. With them, the bound `lemma_pass_wbound` on a pass's results from
 the sum of its inputs' magnitudes, and `lemma_pass_shift16`: 16 more in
-input 0 is 2^17 more in every result."""
+input 0 is 2^17 more in every result.
+
+Where the NEON wrappers run as other code (SSE on x86-64, SIMD128 on
+WebAssembly; `neon_emulated`), a multiply by lane is several instructions
+and a pairwise multiply-add (`vdotq_s16`: `pmaddwd`, `i32x4.dot_i16x8_s`)
+is one. So each pass also comes out a second way, `vd16_lo` and friends,
+as libjpeg-turbo's SSE2 and AVX2 code has it: two inputs are interleaved
+(`zip1`, `zip2`) and each multiply-add takes the pair with a pair of
+constants. `vp16_lo` and the others choose between the two at run time;
+the multiply-by-lane passes are `vp16m_lo` and so on."""
 import random
 import sys
 
@@ -158,12 +167,56 @@ def sparse():
     return p
 
 
+class DPass(Pass):
+    """A pass of pairwise multiply-adds: each product pair is one `dot`
+    of two 16-bit operands with two constants."""
+
+    def dot(self, a, ca, b, cb):
+        return self.emit("dot", a, ca, b, cb)
+
+    def eval(self, x):
+        v = {}
+        for n, s in enumerate(self.st, 1):
+            if s[0] == "dot":
+                v[n] = s[1][2](x) * s[2] + s[3][2](x) * s[4]
+            elif s[0] == "add":
+                v[n] = v[s[1]] + v[s[2]]
+            else:
+                v[n] = v[s[1]] - v[s[2]]
+        return [v[o] for o in self.outs]
+
+
+def dfull():
+    p = DPass()
+    t3, t2 = p.dot(X(2), 10703, X(6), 4433), p.dot(X(2), 4433, X(6), -10704)
+    t0, t1 = p.dot(X(0), 8192, X(4), 8192), p.dot(X(0), 8192, X(4), -8192)
+    t10, t13, t11, t12 = p.add(t0, t3), p.sub(t0, t3), p.add(t1, t2), p.sub(t1, t2)
+    y3, y4 = p.dot(PZ3, -6436, PZ4, 9633), p.dot(PZ3, 9633, PZ4, 6437)
+    w0, w3 = p.dot(X(7), -4927, X(1), -7373), p.dot(X(7), -7373, X(1), 4926)
+    w1, w2 = p.dot(X(5), -4176, X(3), -20995), p.dot(X(5), -20995, X(3), 4177)
+    u0, u1, u2, u3 = p.add(w0, y3), p.add(w1, y4), p.add(w2, y3), p.add(w3, y4)
+    p.finish(t10, t11, t12, t13, u0, u1, u2, u3)
+    return p
+
+
+def dsparse():
+    p = DPass()
+    t10, t13 = p.dot(X(0), 8192, X(2), 10703), p.dot(X(0), 8192, X(2), -10703)
+    t11, t12 = p.dot(X(0), 8192, X(2), 4433), p.dot(X(0), 8192, X(2), -4433)
+    u3, u2 = p.dot(X(1), 11363, X(3), 9633), p.dot(X(1), 9633, X(3), -2259)
+    u1, u0 = p.dot(X(1), 6437, X(3), -11362), p.dot(X(1), 2260, X(3), -6436)
+    p.finish(t10, t11, t12, t13, u0, u1, u2, u3)
+    return p
+
+
 rnd = random.Random(1)
 for _ in range(200):
     x = [rnd.randint(-40000, 40000) for _ in range(8)]
     assert full().eval(x) == ceval(x)
+    assert dfull().eval(x) == ceval(x)
     x[4:] = [0, 0, 0, 0]
     assert sparse().eval(x) == ceval(x)
+    assert dsparse().eval(x) == ceval(x)
 
 # The weight of each input in each result, and the largest.
 W = [[ceval([1 if j == m else 0 for j in range(8)])[k] for m in range(8)] for k in range(8)]
@@ -171,22 +224,24 @@ WMAX = max(abs(w) for r in W for w in r)
 assert WMAX == 11363
 
 
-def lane(o, name, p, zero):
+def lane(o, name, p, zero, vname=None):
     N = len(p.st)
     ins = range(4) if zero else range(8)
     tv = lambda i: "t%d" % i if i in ins else "0int"
-    o.append("/// One lane of `%s_lo` and `%s_hi`: the lane values `s1`..`s%d`, each made" % (name, name, N))
+    o.append("/// One lane of `%s_lo` and `%s_hi`: the lane values `s1`..`s%d`, each made" % (vname or name, vname or name, N))
     o.append("/// from earlier ones modulo 2^32, end congruent to `idct_1d` of the exact")
     o.append("/// inputs%s." % (", inputs 4 to 7 being zero" if zero else ""))
     o.append("#[verifier::rlimit(60)]")
     o.append("#[verifier::spinoff_prover]")
-    o.append("proof fn lemma_%s_lane(" % name + ", ".join("t%d: int" % i for i in ins) + ", " + ", ".join("s%d: int" % i for i in range(1, N + 1)) + ")")
+    o.append(("pub(crate) " if isinstance(p, DPass) else "") + "proof fn lemma_%s_lane(" % name + ", ".join("t%d: int" % i for i in ins) + ", " + ", ".join("s%d: int" % i for i in range(1, N + 1)) + ")")
     o.append("    requires")
     for n, s in enumerate(p.st, 1):
         if s[0] == "mul":
             o.append("        rmul(s%d, %s, %d)," % (n, s[1][1], s[2]))
         elif s[0] == "mla":
             o.append("        rmla(s%d, s%d, %s, %d)," % (n, s[1], s[2][1], s[3]))
+        elif s[0] == "dot":
+            o.append("        rdot(s%d, %s, %d, %s, %d)," % (n, s[1][1], s[2], s[3][1], s[4]))
         elif s[0] == "add":
             o.append("        radd(s%d, s%d, s%d)," % (n, s[1], s[2]))
         else:
@@ -196,12 +251,15 @@ def lane(o, name, p, zero):
         o.append("        cong(s%d, idct_1d(seq![%s])[%d])," % (p.outs[k], ", ".join(tv(i) for i in range(8)), k))
     o.append("{")
     o.append("    hide(idct_1d);")
-    for r in ("radd", "rsub", "rmul", "rmla"):
+    for r in ("radd", "rsub") + (("rdot",) if isinstance(p, DPass) else ("rmul", "rmla")):
         o.append("    reveal(%s);" % r)
     for n, s in enumerate(p.st, 1):
         if s[0] == "mul":
             o.append("    let g%d = %s * (%d);" % (n, s[1][1], s[2]))
             o.append("    let e%d = -((%s * (%d)) / %s);" % (n, s[1][1], s[2], M))
+        elif s[0] == "dot":
+            o.append("    let g%d = %s * (%d) + %s * (%d);" % (n, s[1][1], s[2], s[3][1], s[4]))
+            o.append("    let e%d = -((%s * (%d) + %s * (%d)) / %s);" % (n, s[1][1], s[2], s[3][1], s[4], M))
         elif s[0] == "mla":
             o.append("    let g%d = g%d + %s * (%d);" % (n, s[1], s[2][1], s[3]))
             o.append("    let e%d = e%d - (s%d + %s * (%d)) / %s;" % (n, s[1], s[1], s[2][1], s[3], M))
@@ -220,13 +278,83 @@ def lane(o, name, p, zero):
     o.append("")
 
 
-def vec(o, name, p, zero, half):
+def vec(o, name, p, zero, half, lname=None):
     N = len(p.st)
+    lname = lname or name
+    dot = isinstance(p, DPass)
+    off = 0 if half == "lo" else 4
+    ins = range(4) if zero else range(8)
+    pre = [] if zero else ([PZ3, PZ4] if dot else [PE, PD, PZ3, PZ4])
+    o.append("/// One pass over the %s four columns of 16-bit rows%s: each" % ("low" if off == 0 else "high", ", rows 4 to 7 being zero" if zero else ""))
+    o.append("/// result is right modulo 2^32, lane by lane.")
+    o.append("#[inline(always)]")
+    args = ["x%d: %s" % (i, V) for i in ins] + ["%s: %s" % (q[0], V) for q in pre] + ([] if dot else ["k0: %s" % V, "k1: %s" % V, "k2: %s" % V])
+    args += ["Ghost(t%d): Ghost<Seq<int>>" % i for i in range(8)]
+    o.append("fn %s_%s(" % (name, half) + ", ".join(args) + ") -> (r: (" + ", ".join([V] * 8) + "))")
+    o.append("    requires")
+    o.append("        neon(),")
+    for i in ins:
+        o.append("        x16(x%d, t%d)," % (i, i))
+    if zero:
+        for i in range(4, 8):
+            o.append("        zero8(t%d)," % i)
+    else:
+        if not dot:
+            o.append("        x16(pe, vsum(t0, t4)),")
+            o.append("        x16(pd, vdif(t0, t4)),")
+        o.append("        x16(pz3, vsum(t7, t3)),")
+        o.append("        x16(pz4, vsum(t5, t1)),")
+    if not dot:
+        o.append("        kok(k0, k1, k2),")
+    o.append("    ensures")
+    for k in range(8):
+        o.append("        pc16(r.%d, %s, %d, %d)," % (k, T, off, k))
+    o.append("{")
+    o.append("    hide(idct_1d);")
+    o.append("    hide(cong);")
+    o.append("    hide(l32);")
+    ml, al = ("mlo", "alo") if off == 0 else ("mhi", "ahi")
+    dl = "dlo" if off == 0 else "dhi"
+    for n, s in enumerate(p.st, 1):
+        if s[0] == "dot":
+            o.append("    let v%d = %s(%s, %s, kpair(%d, %d), Ghost(%d), Ghost(%d));" % (n, dl, s[1][0], s[3][0], s[2], s[4], s[2], s[4]))
+        elif s[0] == "mul":
+            b, l = divmod(K.index(s[2]), 8)
+            o.append("    let v%d = %s::<%d>(%s, k%d);" % (n, ml, l, s[1][0], b))
+        elif s[0] == "mla":
+            b, l = divmod(K.index(s[3]), 8)
+            o.append("    let v%d = %s::<%d>(v%d, %s, k%d);" % (n, al, l, s[1], s[2][0], b))
+        elif s[0] == "add":
+            o.append("    let v%d = vadd(v%d, v%d);" % (n, s[1], s[2]))
+        else:
+            o.append("    let v%d = vsub(v%d, v%d);" % (n, s[1], s[2]))
+    o.append("    proof {")
+    for k in range(8):
+        o.append("        assert forall|i: int| 0 <= i < 4 implies cong(#[trigger] l32(v%d, i), idct_1d(col(%s, %d + i))[%d]) by {" % (p.outs[k], T, off, k))
+        if not zero:
+            if not dot:
+                o.append("            assert(vsum(t0, t4)[%d + i] == t0[%d + i] + t4[%d + i] && vdif(t0, t4)[%d + i] == t0[%d + i] - t4[%d + i]);" % ((off,) * 6))
+            o.append("            assert(vsum(t7, t3)[%d + i] == t7[%d + i] + t3[%d + i] && vsum(t5, t1)[%d + i] == t5[%d + i] + t1[%d + i]);" % ((off,) * 6))
+        o.append("            lemma_%s_lane(" % lname + ", ".join("t%d[%d + i]" % (j, off) for j in ins) + ", " + ", ".join("l32(v%d, i)" % n for n in range(1, N + 1)) + ");")
+        if zero:
+            o.append("            assert(col(%s, %d + i) =~= seq![t0[%d + i], t1[%d + i], t2[%d + i], t3[%d + i], 0int, 0int, 0int, 0int]);" % ((T,) + (off,) * 5))
+        o.append("        }")
+    o.append("    }")
+    o.append("    (" + ", ".join("v%d" % p.outs[k] for k in range(8)) + ")")
+    o.append("}")
+    o.append("")
+
+
+def choose(o, name, zero, half):
+    """`name_half`: the pass by pairwise multiply-adds where the NEON
+    wrappers are emulated, by multiplies by lane elsewhere."""
     off = 0 if half == "lo" else 4
     ins = range(4) if zero else range(8)
     pre = [] if zero else [PE, PD, PZ3, PZ4]
-    o.append("/// One pass over the %s four columns of 16-bit rows%s: each" % ("low" if off == 0 else "high", ", rows 4 to 7 being zero" if zero else ""))
-    o.append("/// result is right modulo 2^32, lane by lane.")
+    dpre = [] if zero else [PZ3, PZ4]
+    o.append("/// One pass over the %s four columns of 16-bit rows%s, by pairwise" % ("low" if off == 0 else "high", ", rows 4 to 7 being zero" if zero else ""))
+    o.append("/// multiply-adds where the NEON wrappers are emulated (`%s`), by" % (name.replace("vp", "vd") + "_" + half))
+    o.append("/// multiplies by lane elsewhere (`%s`)." % (name.replace("vp16", "vp16m") + "_" + half))
     o.append("#[inline(always)]")
     args = ["x%d: %s" % (i, V) for i in ins] + ["%s: %s" % (q[0], V) for q in pre] + ["k0: %s" % V, "k1: %s" % V, "k2: %s" % V]
     args += ["Ghost(t%d): Ghost<Seq<int>>" % i for i in range(8)]
@@ -248,43 +376,31 @@ def vec(o, name, p, zero, half):
     for k in range(8):
         o.append("        pc16(r.%d, %s, %d, %d)," % (k, T, off, k))
     o.append("{")
-    o.append("    hide(idct_1d);")
-    o.append("    hide(cong);")
-    o.append("    hide(l32);")
-    ml, al = ("mlo", "alo") if off == 0 else ("mhi", "ahi")
-    for n, s in enumerate(p.st, 1):
-        if s[0] == "mul":
-            b, l = divmod(K.index(s[2]), 8)
-            o.append("    let v%d = %s::<%d>(%s, k%d);" % (n, ml, l, s[1][0], b))
-        elif s[0] == "mla":
-            b, l = divmod(K.index(s[3]), 8)
-            o.append("    let v%d = %s::<%d>(v%d, %s, k%d);" % (n, al, l, s[1], s[2][0], b))
-        elif s[0] == "add":
-            o.append("    let v%d = vadd(v%d, v%d);" % (n, s[1], s[2]))
-        else:
-            o.append("    let v%d = vsub(v%d, v%d);" % (n, s[1], s[2]))
-    o.append("    proof {")
-    for k in range(8):
-        o.append("        assert forall|i: int| 0 <= i < 4 implies cong(#[trigger] l32(v%d, i), idct_1d(col(%s, %d + i))[%d]) by {" % (p.outs[k], T, off, k))
-        if not zero:
-            o.append("            assert(vsum(t0, t4)[%d + i] == t0[%d + i] + t4[%d + i] && vdif(t0, t4)[%d + i] == t0[%d + i] - t4[%d + i]);" % ((off,) * 6))
-            o.append("            assert(vsum(t7, t3)[%d + i] == t7[%d + i] + t3[%d + i] && vsum(t5, t1)[%d + i] == t5[%d + i] + t1[%d + i]);" % ((off,) * 6))
-        o.append("            lemma_%s_lane(" % name + ", ".join("t%d[%d + i]" % (j, off) for j in ins) + ", " + ", ".join("l32(v%d, i)" % n for n in range(1, N + 1)) + ");")
-        if zero:
-            o.append("            assert(col(%s, %d + i) =~= seq![t0[%d + i], t1[%d + i], t2[%d + i], t3[%d + i], 0int, 0int, 0int, 0int]);" % ((T,) + (off,) * 5))
-        o.append("        }")
+    gs = ", ".join("Ghost(t%d)" % i for i in range(8))
+    o.append("    if neon_emulated() {")
+    o.append("        %s_%s(" % (name.replace("vp", "vd"), half) + ", ".join(["x%d" % i for i in ins] + [q[0] for q in dpre]) + ", " + gs + ")")
+    o.append("    } else {")
+    o.append("        %s_%s(" % (name.replace("vp16", "vp16m"), half) + ", ".join(["x%d" % i for i in ins] + [q[0] for q in pre] + ["k0", "k1", "k2"]) + ", " + gs + ")")
     o.append("    }")
-    o.append("    (" + ", ".join("v%d" % p.outs[k] for k in range(8)) + ")")
     o.append("}")
     o.append("")
 
 
 o = []
 for name, p, zero in (("vp16", full(), False), ("vp16s", sparse(), True)):
+    vn = name.replace("vp16", "vp16m")
+    lane(o, name, p, zero, vn)
+    vec(o, vn, p, zero, "lo", name)
+    vec(o, vn, p, zero, "hi", name)
+    print("%s: %d steps a half" % (name, len(p.st)), file=sys.stderr)
+for name, p, zero in (("vd16", dfull(), False), ("vd16s", dsparse(), True)):
     lane(o, name, p, zero)
     vec(o, name, p, zero, "lo")
     vec(o, name, p, zero, "hi")
     print("%s: %d steps a half" % (name, len(p.st)), file=sys.stderr)
+for name, zero in (("vp16", False), ("vp16s", True)):
+    choose(o, name, zero, "lo")
+    choose(o, name, zero, "hi")
 
 o.append("/// A result of a pass is at most %d times the sum of its inputs'" % WMAX)
 o.append("/// magnitudes.")
