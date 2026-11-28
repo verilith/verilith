@@ -47,6 +47,12 @@ pub mod mblock;
 #[doc(hidden)]
 pub mod cwrite;
 #[doc(hidden)]
+pub mod mblemmas;
+#[doc(hidden)]
+pub mod mbw;
+#[doc(hidden)]
+pub mod cplan;
+#[doc(hidden)]
 pub mod compress;
 #[doc(hidden)]
 pub mod optparse;

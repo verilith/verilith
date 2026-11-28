@@ -311,7 +311,7 @@ pub open spec fn after_lits(s: St, d: Seq<u8>, p: int) -> St {
 }
 
 #[verifier::spinoff_prover]
-proof fn lemma_lit_at(b: Seq<u8>, w: Seq<nat>, s: St, x: u8, rest: Seq<nat>)
+pub proof fn lemma_lit_at(b: Seq<u8>, w: Seq<nat>, s: St, x: u8, rest: Seq<nat>)
     requires
         s.phase is Insert,
         s.pos == w.len(),

@@ -1,10 +1,8 @@
 //! The compressor proper: an LZ77 parse (not trusted: every command it
-//! makes is checked before it is written, `cwrite::check_cmds`), prefix
-//! codes from the symbol counts, and the proven meta-block writers.
-use crate::cwrite::put_compressed;
+//! makes is checked as it is written, `mbw::put_mb`), a plan for the
+//! meta-block (`cplan`, not trusted either), and the proven writers.
 use crate::encoder::Enc;
 use crate::mblock::*;
-use crate::pcode::{make_code, make_plan};
 #[cfg(verus_only)]
 use crate::spec::*;
 use verilith_core::lz::{eq_len, load32};
@@ -43,6 +41,91 @@ pub struct Mf {
     /// `right` the right ones), for optimal parsing.
     pub bt: bool,
     pub right: Vec<u32>,
+    /// Static dictionary words by the hash of their first four bytes
+    /// (`dict_table`), or empty when the dictionary is not searched.
+    pub dict: Vec<u32>,
+}
+
+/// Slots per bucket of the dictionary table, and buckets.
+pub const DSLOTS: usize = 4;
+pub const DBUCKETS: usize = 0x8000;
+
+/// The static dictionary's words, untransformed, by the hash of their first
+/// four bytes: `DSLOTS` entries per bucket, each `len << 16 | index` (0 for
+/// none), the longest words kept.
+pub fn dict_table() -> (r: Vec<u32>)
+    ensures
+        r@.len() == DSLOTS * DBUCKETS,
+{
+    let mut t: Vec<u32> = vec![0u32; DSLOTS * DBUCKETS];
+    let mut len: usize = 4;
+    while len <= 24
+        invariant
+            4 <= len <= 25,
+            t@.len() == DSLOTS * DBUCKETS,
+        decreases 25 - len,
+    {
+        let nb = crate::spec::NDBITS[len] as u32;
+        proof {
+            assert(forall|k: int| 0 <= k < 25 ==> #[trigger] crate::spec::NDBITS[k] <= 24) by (compute);
+            assert(forall|k: int| 0 <= k < 25 ==> #[trigger] crate::spec::DOFFSET[k] <= 122784) by (compute);
+            crate::mblock::lemma_shl1_24();
+        }
+        let n = shl1(nb) as usize;
+        let mut idx: usize = 0;
+        while idx < n
+            invariant
+                4 <= len <= 24,
+                n <= 0x100_0000,
+                t@.len() == DSLOTS * DBUCKETS,
+                forall|k: int| 0 <= k < 25 ==> #[trigger] crate::spec::DOFFSET[k] <= 122784,
+            decreases n - idx,
+        {
+            if idx > 0xFFFF {
+                break;
+            }
+            proof {
+                assert((idx + 1) * len <= 0x10000 * 24) by (nonlinear_arith) requires idx <= 0xFFFF, len <= 24;
+            }
+            if (crate::spec::DOFFSET[len] as usize) + (idx + 1) * len > 122784 {
+                break;
+            }
+            let w = crate::words::dict_word(len, idx);
+            let h = hash4(w, 0) >> 5;
+            let key = h * DSLOTS;
+            let e = ((len as u32) << 16) | idx as u32;
+            // An empty slot, else the shortest word if this one is longer.
+            let mut best: usize = DSLOTS;
+            let mut bl: u32 = 0xFFFF_FFFF;
+            let mut j: usize = 0;
+            while j < DSLOTS
+                invariant
+                    j <= DSLOTS,
+                    key + DSLOTS <= t@.len(),
+                    best <= DSLOTS,
+                decreases DSLOTS - j,
+            {
+                let v = t[key + j];
+                let vl = v >> 16;
+                if v == 0 {
+                    if bl != 0 {
+                        best = j;
+                        bl = 0;
+                    }
+                } else if vl < bl {
+                    best = j;
+                    bl = vl;
+                }
+                j = j + 1;
+            }
+            if best < DSLOTS && bl < len as u32 {
+                t.set(key + best, e);
+            }
+            idx = idx + 1;
+        }
+        len = len + 1;
+    }
+    t
 }
 
 /// A hash of the `len` (5 or 7) bytes at `i`.
@@ -74,7 +157,7 @@ pub fn hash4(data: &[u8], i: usize) -> (r: usize)
 }
 
 impl Mf {
-    pub fn new(n: usize, depth: u32, lazy: bool, quick: bool, ways: usize, hlen: u32, wmax: usize, bt: bool) -> (r: Mf)
+    pub fn new(n: usize, depth: u32, lazy: bool, quick: bool, ways: usize, hlen: u32, wmax: usize, bt: bool, dict: bool) -> (r: Mf)
         requires
             n < 0xFFFF_FFFF,
             ways == 4 || ways == 8 || ways == 16 || ways == 32,
@@ -87,7 +170,8 @@ impl Mf {
         let num = vec![0u32; 0x10_0000];
         let bt = bt && !quick;
         let right = if bt { vec![NONE; n] } else { Vec::new() };
-        Mf { head, prev, depth, lazy, wmax, quick, ways, num, hlen, bt, right }
+        let dict = if dict && !bt { dict_table() } else { Vec::new() };
+        Mf { head, prev, depth, lazy, wmax, quick, ways, num, hlen, bt, right, dict }
     }
 
     pub open spec fn wf(&self, n: nat) -> bool {
@@ -97,6 +181,7 @@ impl Mf {
         &&& (self.ways == 4 || self.ways == 8 || self.ways == 16 || self.ways == 32)
         &&& self.num@.len() == 0x10_0000
         &&& self.bt ==> !self.quick && self.right@.len() == n
+        &&& self.dict@.len() == 0 || self.dict@.len() == DSLOTS * DBUCKETS
     }
 
     #[inline(always)]
@@ -169,7 +254,81 @@ impl Mf {
     /// The best match for `i`, at most `max` long, as (length, distance,
     /// score). The score is google/brotli's: bytes covered against the
     /// bits of the distance.
-    fn find(&self, data: &[u8], i: usize, max: usize, last: usize) -> (r: (usize, usize, u64))
+    fn find(&self, data: &[u8], i: usize, max: usize, last: usize, usedict: bool) -> (r: (usize, usize, u64))
+        requires
+            self.wf(data@.len()),
+            i + max <= data@.len(),
+            max <= 0xFFFF,
+        ensures
+            r.0 <= max,
+            r.0 > 0 ==> 1 <= r.1,
+            r.2 < 0x1_0000_0000,
+    {
+        let (best, bd, bs) = self.find_lz(data, i, max, last);
+        if best > 0 || !usedict || self.dict.len() == 0 || max < 4 || data.len() - i < 4 {
+            return (best, bd, bs);
+        }
+        // A static dictionary word, when no long match was found.
+        let maxd = if i < self.wmax { i } else { self.wmax };
+        let key = (hash4(data, i) >> 5) * DSLOTS;
+        let mut best = best;
+        let mut bd = bd;
+        let mut bs = bs;
+        let mut j: usize = 0;
+        while j < DSLOTS
+            invariant
+                self.wf(data@.len()),
+                self.dict@.len() == DSLOTS * DBUCKETS,
+                key + DSLOTS <= self.dict@.len(),
+                i + max <= data@.len(),
+                max <= 0xFFFF,
+                best <= max,
+                best > 0 ==> 1 <= bd,
+                bs < 0x1_0000_0000,
+            decreases DSLOTS - j,
+        {
+            let e = self.dict[key + j];
+            j = j + 1;
+            let len = (e >> 16) as usize;
+            let idx = (e & 0xFFFF) as usize;
+            if e == 0 || len < 4 || len > 24 || len > max || len <= best {
+                continue;
+            }
+            proof {
+                assert(forall|k: int| 0 <= k < 25 ==> #[trigger] crate::spec::DOFFSET[k] <= 122784) by (compute);
+                assert((idx + 1) * len <= 0x10000 * 24) by (nonlinear_arith) requires idx <= 0xFFFF, len <= 24;
+            }
+            if (crate::spec::DOFFSET[len] as usize) + (idx + 1) * len > 122784 {
+                continue;
+            }
+            let w = crate::words::dict_word(len, idx);
+            let mut k: usize = 0;
+            while k < len && get(data, i + k) == get(w, k)
+                invariant
+                    k <= len,
+                    len <= max,
+                    i + max <= data@.len(),
+                    w@.len() == len,
+                decreases len - k,
+            {
+                k = k + 1;
+            }
+            if k < len || maxd >= 0x100_0000 - 0x10000 {
+                continue;
+            }
+            let d = maxd + 1 + idx;
+            let sc = 1920 + 135 * len as u64 - 30 * log2_floor(d as u32) as u64;
+            if sc > bs {
+                best = len;
+                bd = d;
+                bs = sc;
+            }
+        }
+        (best, bd, bs)
+    }
+
+    /// The best backward match, as `find`.
+    fn find_lz(&self, data: &[u8], i: usize, max: usize, last: usize) -> (r: (usize, usize, u64))
         requires
             self.wf(data@.len()),
             i + max <= data@.len(),
@@ -204,6 +363,7 @@ impl Mf {
             let key = h & !m;
             assert(h & !m < 0x10_0000) by (bit_vector) requires h < 0x10_0000;
             let top = get32(self.num.as_slice(), key) as usize;
+            let x4 = load32(data, i);
             let mut j: usize = 0;
             while j < w
                 invariant
@@ -235,7 +395,9 @@ impl Mf {
                 }
                 let cu = c as usize;
                 let dist = i - cu;
-                if dist > self.wmax || best >= max || get(data, cu + best) != get(data, i + best) {
+                // Matches shorter than four bytes are not taken: four
+                // bytes at once rule out most candidates.
+                if dist > self.wmax || best >= max || load32(data, cu) != x4 || get(data, cu + best) != get(data, i + best) {
                     continue;
                 }
                 let k = eq_len(data, cu, i, max);
@@ -251,6 +413,7 @@ impl Mf {
             return (best, bd, bs);
         }
         let h = hash4(data, i);
+        let x4 = load32(data, i);
         let mut c = get32(self.head.as_slice(), h);
         let mut d: u32 = 0;
         while d < self.depth && c != NONE && (c as usize) < i
@@ -269,7 +432,7 @@ impl Mf {
             if dist > self.wmax {
                 break;
             }
-            if best < max && get(data, cu + best) == get(data, i + best) {
+            if best < max && load32(data, cu) == x4 && get(data, cu + best) == get(data, i + best) {
                 let k = eq_len(data, cu, i, max);
                 if k >= 4 {
                     let sc = 1920 + 135 * k as u64 - 30 * log2_floor(dist as u32) as u64;
@@ -317,6 +480,8 @@ pub fn parse(mf: &mut Mf, data: &[u8], start: usize, end: usize, last0: usize) -
     // Past `rh` with no match, look less often (google/brotli's "random
     // heuristics": that data is probably not compressible).
     let mut rh = if start < usize::MAX - 64 { start + 64 } else { start };
+    let mut looks: u32 = 0;
+    let mut hits: u32 = 0;
     while i < end
         invariant
             mf.wf(data@.len()),
@@ -325,7 +490,19 @@ pub fn parse(mf: &mut Mf, data: &[u8], start: usize, end: usize, last0: usize) -
         decreases end - i,
     {
         let max = if end - i > 0xFFFF { 0xFFFF } else { end - i };
-        let (mut len, mut dist, mut sc) = mf.find(data, i, max, last);
+        // The dictionary is searched while it finds words (google/brotli
+        // stops below one hit in 128 lookups, after the first 1024).
+        let usedict = looks < 1024 || hits >= looks / 128;
+        let (mut len, mut dist, mut sc) = mf.find(data, i, max, last, usedict);
+        if usedict && mf.dict.len() > 0 {
+            if looks < 0xFFFF_FFFF {
+                looks = looks + 1;
+            }
+            let maxd = if i < mf.wmax { i } else { mf.wmax };
+            if len > 0 && dist > maxd && hits < 0xFFFF_FFFF {
+                hits = hits + 1;
+            }
+        }
         if len >= 3 && sc > MIN_SCORE {
             // Lazy matching: a later start that scores clearly better wins.
             let mut tries: u32 = 0;
@@ -337,13 +514,13 @@ pub fn parse(mf: &mut Mf, data: &[u8], start: usize, end: usize, last0: usize) -
                     start <= lit <= i < end <= data@.len(),
                     len <= end - i,
                     len >= 3,
-                    1 <= dist <= i,
+                    1 <= dist,
                     i >= i0,
                     sc < 0x1_0000_0000,
                 decreases 4 - tries,
             {
                 let max1 = if end - i - 1 > 0xFFFF { 0xFFFF } else { end - i - 1 };
-                let (l1, d1, s1) = mf.find(data, i + 1, max1, last);
+                let (l1, d1, s1) = mf.find(data, i + 1, max1, last, usedict);
                 if l1 >= 3 && s1 >= sc + 175 {
                     mf.insert(data, i);
                     i = i + 1;
@@ -375,9 +552,13 @@ pub fn parse(mf: &mut Mf, data: &[u8], start: usize, end: usize, last0: usize) -
                 mf.insert(data, k);
                 k = k + 1;
             }
+            // A dictionary word leaves the last distance as it was.
+            let maxd = if i < mf.wmax { i } else { mf.wmax };
             i = stop;
             lit = i;
-            last = dist;
+            if dist <= maxd {
+                last = dist;
+            }
         } else {
             mf.insert(data, i);
             i = i + 1;
@@ -422,7 +603,7 @@ fn bump(f: &mut Vec<u32>, i: usize)
 
 /// Symbols and counts for the parse `lz` of `data[start..]`, with last
 /// distances `dr`. `None` if a length or distance has no code.
-pub fn symbols(lz: &[Lz], data: &[u8], start: usize, dr0: [u32; 4], lf: &mut Vec<u32>, cf: &mut Vec<u32>, df: &mut Vec<u32>) -> (r: Option<Vec<Cmd>>)
+pub fn symbols(lz: &[Lz], data: &[u8], start: usize, dr0: [u32; 4], wmax: usize, lf: &mut Vec<u32>, cf: &mut Vec<u32>, df: &mut Vec<u32>) -> (r: Option<Vec<Cmd>>)
     requires
         old(lf)@.len() == 256,
         old(cf)@.len() == 704,
@@ -478,7 +659,14 @@ pub fn symbols(lz: &[Lz], data: &[u8], start: usize, dr0: [u32; 4], lf: &mut Vec
             if d >= 0x100_0000 {
                 return None;
             }
-            let (sym, dcode, extra) = if d == dr[0] && ic < 8 && cc < 16 {
+            // Past the window: a dictionary word, with an explicit code.
+            let p = q;
+            let maxd = if p < wmax { p } else { wmax };
+            let dict = d as usize > maxd;
+            let (sym, dcode, extra) = if dict {
+                let (dc, ex, _nb) = dist_code(d);
+                (cmd_sym(ic, cc, false), dc, ex)
+            } else if d == dr[0] && ic < 8 && cc < 16 {
                 (cmd_sym(ic, cc, true), 0u8, 0u32)
             } else {
                 let s = cmd_sym(ic, cc, false);
@@ -498,7 +686,7 @@ pub fn symbols(lz: &[Lz], data: &[u8], start: usize, dr0: [u32; 4], lf: &mut Vec
             bump(cf, sym as usize);
             if sym >= 128 {
                 bump(df, dcode as usize);
-                if dcode != 0 {
+                if dcode != 0 && !dict {
                     dr = [d, dr[0], dr[1], dr[2]];
                 }
             }
@@ -539,6 +727,7 @@ fn cost(f: &[u32], l: &[u8]) -> (r: u64)
 }
 
 /// Settings per quality level.
+#[derive(Clone)]
 pub struct Params {
     pub depth: u32,
     pub lazy: bool,
@@ -548,6 +737,11 @@ pub struct Params {
     pub block: usize,
     /// Optimal parsing (`optparse`).
     pub opt: bool,
+    /// Search the static dictionary.
+    pub dict: bool,
+    /// The meta-block planner's settings (`cplan`); no context modes to
+    /// try means one block type and one tree per category.
+    pub k: crate::cplan::Knobs,
 }
 
 pub fn params(quality: u32) -> (r: Params)
@@ -556,15 +750,15 @@ pub fn params(quality: u32) -> (r: Params)
         r.ways == 4 || r.ways == 8 || r.ways == 16 || r.ways == 32,
 {
     if quality <= 2 {
-        Params { depth: 1, lazy: false, quick: true, ways: 4, hlen: 7, block: 0x1_0000, opt: false }
+        Params { depth: 1, lazy: false, quick: true, ways: 4, hlen: 7, block: 0x1_0000, opt: false, dict: true, k: crate::cplan::Knobs { modes: 0, maxt: 1, maxb: 1, maxch: 1, minch: 128 } }
     } else if quality <= 4 {
-        Params { depth: 8, lazy: true, quick: true, ways: 4, hlen: 7, block: 0x20_0000, opt: false }
+        Params { depth: 8, lazy: true, quick: true, ways: 4, hlen: 7, block: 0x20_0000, opt: false, dict: true, k: crate::cplan::Knobs { modes: 0, maxt: 1, maxb: 1, maxch: 1, minch: 128 } }
     } else if quality <= 6 {
-        Params { depth: 32, lazy: true, quick: true, ways: 32, hlen: 5, block: 0x10_0000, opt: false }
+        Params { depth: 32, lazy: true, quick: true, ways: if quality == 5 { 16 } else { 32 }, hlen: 5, block: 0x10_0000, opt: false, dict: true, k: crate::cplan::Knobs { modes: 15, maxt: 64, maxb: 8, maxch: 64, minch: 128 } }
     } else if quality <= 9 {
-        Params { depth: 64, lazy: true, quick: false, ways: 4, hlen: 7, block: 0x4_0000, opt: false }
+        Params { depth: 64, lazy: true, quick: false, ways: 4, hlen: 7, block: 0x4_0000, opt: false, dict: true, k: crate::cplan::Knobs { modes: 15, maxt: 64, maxb: 8, maxch: 64, minch: 128 } }
     } else {
-        Params { depth: if quality == 10 { 32 } else { 64 }, lazy: true, quick: false, ways: 4, hlen: 7, block: 0x4_0000, opt: true }
+        Params { depth: if quality == 10 { 32 } else { 64 }, lazy: true, quick: false, ways: 4, hlen: 7, block: 0x4_0000, opt: true, dict: false, k: crate::cplan::Knobs { modes: 15, maxt: 64, maxb: 16, maxch: 128, minch: 128 } }
     }
 }
 
@@ -597,7 +791,7 @@ pub fn window_bits(n: usize, lgwin: u32) -> (r: u32)
 
 /// One meta-block, compressed if the commands check out and it is smaller,
 /// stored otherwise.
-pub fn put_block(e: &mut Enc, dr: &mut [u32; 4], wb: u32, data: &[u8], start: usize, end: usize, lz: &[Lz])
+pub fn put_block(e: &mut Enc, dr: &mut [u32; 4], wb: u32, data: &[u8], start: usize, end: usize, lz: &[Lz], kn: &crate::cplan::Knobs)
     requires
         old(e).ok(),
         old(e).st@.phase is MetaHeader,
@@ -618,7 +812,11 @@ pub fn put_block(e: &mut Enc, dr: &mut [u32; 4], wb: u32, data: &[u8], start: us
     let mut lf = vec![0u32; 256];
     let mut cf = vec![0u32; 704];
     let mut df = vec![0u32; 64];
-    if let Some(cmds) = symbols(lz, data, start, *dr, &mut lf, &mut cf, &mut df) {
+    proof {
+        vstd::arithmetic::power2::lemma_pow2_strictly_increases(4, wb as nat);
+    }
+    let wmax = (shl1(wb) - 16) as usize;
+    if let Some(cmds) = symbols(lz, data, start, *dr, wmax, &mut lf, &mut cf, &mut df) {
         // Every tree needs a symbol.
         if lf[0] == 0 { lf.set(0, 1); }
         if df[0] == 0 { df.set(0, 1); }
@@ -641,16 +839,13 @@ pub fn put_block(e: &mut Enc, dr: &mut [u32; 4], wb: u32, data: &[u8], start: us
             k = k + 1;
         }
         if bits / 8 < (end - start) as u64 {
-            let lh = make_code(ll.clone());
-            let ch = make_code(cl.clone());
-            let dh = make_code(dl.clone());
-            let lp = make_plan(&ll);
-            let cp = make_plan(&cl);
-            let dp = make_plan(&dl);
-            if let (Some(lh), Some(ch), Some(dh), Some(lp), Some(cp), Some(dp)) = (lh, ch, dh, lp, cp, dp) {
-                if put_compressed(e, dr, wb, data, start, end, &cmds, &lh, &lp, &ch, &cp, &dh, &dp) {
-                    return;
-                }
+            let plan = if kn.modes != 0 {
+                crate::cplan::plan_full(data, start, end, &cmds, kn)
+            } else {
+                crate::cplan::plan_single(&lf, &cf, &df)
+            };
+            if crate::mbw::put_mb(e, dr, wb, data, start, end, &cmds, &plan) {
+                return;
             }
         }
     }
@@ -666,6 +861,18 @@ pub fn compress(data: &[u8], quality: u32, lgwin: u32) -> (r: Vec<u8>)
     ensures
         decodes(r@, data@, r@.len() as int),
 {
+    let p = params(quality);
+    compress_with(data, p, lgwin)
+}
+
+/// `data` compressed with the settings `p`.
+pub fn compress_with(data: &[u8], p: Params, lgwin: u32) -> (r: Vec<u8>)
+    requires
+        1 <= p.block <= 0x100_0000,
+        p.ways == 4 || p.ways == 8 || p.ways == 16 || p.ways == 32,
+    ensures
+        decodes(r@, data@, r@.len() as int),
+{
     let n = data.len();
     if n >= 0xFFFF_FFFF {
         return crate::encoder::compress_stored(data);
@@ -674,13 +881,12 @@ pub fn compress(data: &[u8], quality: u32, lgwin: u32) -> (r: Vec<u8>)
     let cap = if n <= 0x4000_0000 { n + n / 8 + 1024 } else { n };
     let mut e = Enc::new(wb, cap);
     let mut dr: [u32; 4] = [4, 11, 15, 16];
-    let p = params(quality);
     proof {
         vstd::arithmetic::power2::lemma_pow2_strictly_increases(4, wb as nat);
         crate::elemmas::lemma_pow2_small();
     }
     let wmax = (shl1(wb) - 16) as usize;
-    let mut mf = Mf::new(n, p.depth, p.lazy, p.quick, p.ways, p.hlen, wmax, p.opt);
+    let mut mf = Mf::new(n, p.depth, p.lazy, p.quick, p.ways, p.hlen, wmax, p.opt, p.dict);
     let mut i: usize = 0;
     let mut last: usize = 4;
     proof {
@@ -703,7 +909,7 @@ pub fn compress(data: &[u8], quality: u32, lgwin: u32) -> (r: Vec<u8>)
     {
         let k = if n - i > p.block { p.block } else { n - i };
         let lz = if p.opt { crate::optparse::parse_opt(&mut mf, data, i, i + k, dr) } else { parse(&mut mf, data, i, i + k, last) };
-        put_block(&mut e, &mut dr, wb, data, i, i + k, &lz);
+        put_block(&mut e, &mut dr, wb, data, i, i + k, &lz, &p.k);
         last = dr[0] as usize;
         i = i + k;
     }

@@ -719,7 +719,7 @@ pub fn parse_opt(mf: &mut Mf, data: &[u8], start: usize, end: usize, dr: [u32; 4
         let mut lf = vec![0u32; 256];
         let mut cf = vec![0u32; 704];
         let mut df = vec![0u32; 64];
-        if symbols(&lz, data, start, dr, &mut lf, &mut cf, &mut df).is_none() {
+        if symbols(&lz, data, start, dr, mf.wmax, &mut lf, &mut cf, &mut df).is_none() {
             break;
         }
         let co = costs_from(&lf, &cf, &df);
