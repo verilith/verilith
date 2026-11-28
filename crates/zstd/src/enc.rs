@@ -1,6 +1,8 @@
-//! The block encoder: match finding, then entropy coding (`ent`). Only
-//! memory safety is proven here; `compress` keeps a block only after the
-//! verified decoder has decoded it back to its input.
+//! The block encoder: match finding, then entropy coding (`ent`). Memory
+//! safety is proven here, and for the double-fast strategy that its
+//! sequences are the input's (`store_ok`); `compress` keeps a block only
+//! after the check has shown that the spec decoder turns it back into
+//! its input.
 use crate::ent::*;
 use crate::opt::OptState;
 use verilith_core::lz::{eq_len, load32};
@@ -113,6 +115,139 @@ impl Store {
     }
 }
 
+/// Where the literals of sequence `i` start in the input, for sequences
+/// starting at `pos`.
+pub open spec fn s_at(ll: Seq<u32>, ml: Seq<u32>, pos: int, i: int) -> int
+    decreases i,
+{
+    if i <= 0 {
+        pos
+    } else {
+        s_at(ll, ml, pos, i - 1) + ll[i - 1] + ml[i - 1]
+    }
+}
+
+/// Where the literals of sequence `i` start in `lits`.
+pub open spec fn l_at(ll: Seq<u32>, i: int) -> int
+    decreases i,
+{
+    if i <= 0 {
+        0
+    } else {
+        l_at(ll, i - 1) + ll[i - 1]
+    }
+}
+
+/// Sequence `i` of `st` is the input's: its literals are the input's
+/// bytes where it starts, and its match repeats the bytes `off` back.
+pub open spec fn seq_ok(st: Store, src: Seq<u8>, pos: int, i: int) -> bool {
+    let a = s_at(st.ll@, st.ml@, pos, i);
+    let l = l_at(st.ll@, i);
+    let ll = st.ll@[i] as int;
+    let ml = st.ml@[i] as int;
+    let off = st.off@[i] as int;
+    let x = a + ll;
+    &&& 1 <= off <= x
+    &&& x + ml <= src.len()
+    &&& 0 <= l
+    &&& l + ll <= st.lits@.len()
+    &&& forall|j: int| 0 <= j < ll ==> #[trigger] st.lits@[l + j] == src[a + j]
+    &&& forall|j: int| 0 <= j < ml ==> #[trigger] src[x + j] == src[x - off + j]
+}
+
+/// Every sequence of `st` is the input's, from `pos` (what the block check
+/// may rely on instead of comparing bytes).
+pub open spec fn store_ok(st: Store, src: Seq<u8>, pos: int) -> bool {
+    &&& st.wf()
+    &&& forall|i: int| 0 <= i < st.ll@.len() ==> #[trigger] seq_ok(st, src, pos, i)
+}
+
+/// `s_at` and `l_at` look only at the sequences before `i`.
+pub proof fn lemma_at_prefix(ll: Seq<u32>, ml: Seq<u32>, ll2: Seq<u32>, ml2: Seq<u32>, pos: int, i: int)
+    requires
+        0 <= i <= ll.len(),
+        i <= ml.len(),
+        ll.len() <= ll2.len(),
+        ml.len() <= ml2.len(),
+        forall|k: int| 0 <= k < ll.len() ==> ll2[k] == ll[k],
+        forall|k: int| 0 <= k < ml.len() ==> ml2[k] == ml[k],
+    ensures
+        s_at(ll2, ml2, pos, i) == s_at(ll, ml, pos, i),
+        l_at(ll2, i) == l_at(ll, i),
+    decreases i,
+{
+    if i > 0 {
+        lemma_at_prefix(ll, ml, ll2, ml2, pos, i - 1);
+    }
+}
+
+/// `l_at` is at least zero and the sequences' end is past `pos`.
+pub proof fn lemma_at_nonneg(ll: Seq<u32>, ml: Seq<u32>, pos: int, i: int)
+    requires
+        0 <= i <= ll.len(),
+        i <= ml.len(),
+    ensures
+        l_at(ll, i) >= 0,
+        s_at(ll, ml, pos, i) >= pos,
+    decreases i,
+{
+    if i > 0 {
+        lemma_at_nonneg(ll, ml, pos, i - 1);
+    }
+}
+
+/// `store_ok` after one more sequence that is the input's.
+pub proof fn lemma_store_push(st: Store, st2: Store, src: Seq<u8>, pos: int)
+    requires
+        store_ok(st, src, pos),
+        st2.wf(),
+        st2.ll@ == st.ll@.push(st2.ll@.last()),
+        st2.ml@ == st.ml@.push(st2.ml@.last()),
+        st2.off@ == st.off@.push(st2.off@.last()),
+        st.lits@.len() <= st2.lits@.len(),
+        forall|k: int| 0 <= k < st.lits@.len() ==> st2.lits@[k] == st.lits@[k],
+        seq_ok(st2, src, pos, st.ll@.len() as int),
+    ensures
+        store_ok(st2, src, pos),
+{
+    assert forall|i: int| 0 <= i < st2.ll@.len() implies #[trigger] seq_ok(st2, src, pos, i) by {
+        if i < st.ll@.len() {
+            assert(seq_ok(st, src, pos, i));
+            lemma_at_prefix(st.ll@, st.ml@, st2.ll@, st2.ml@, pos, i);
+            let a = s_at(st.ll@, st.ml@, pos, i);
+            let l = l_at(st.ll@, i);
+            assert(st2.ll@[i] == st.ll@[i]);
+            assert(st2.ml@[i] == st.ml@[i]);
+            assert(st2.off@[i] == st.off@[i]);
+            assert forall|j: int| 0 <= j < st2.ll@[i] as int implies #[trigger] st2.lits@[l + j] == src[a + j] by {
+                assert(st.lits@[l + j] == src[a + j]);
+            }
+        }
+    }
+}
+
+/// `store_ok` keeps when literals are appended.
+pub proof fn lemma_store_lits(st: Store, st2: Store, src: Seq<u8>, pos: int)
+    requires
+        store_ok(st, src, pos),
+        st2.ll@ == st.ll@,
+        st2.ml@ == st.ml@,
+        st2.off@ == st.off@,
+        st.lits@.len() <= st2.lits@.len(),
+        forall|k: int| 0 <= k < st.lits@.len() ==> st2.lits@[k] == st.lits@[k],
+    ensures
+        store_ok(st2, src, pos),
+{
+    assert forall|i: int| 0 <= i < st2.ll@.len() implies #[trigger] seq_ok(st2, src, pos, i) by {
+        assert(seq_ok(st, src, pos, i));
+        let a = s_at(st.ll@, st.ml@, pos, i);
+        let l = l_at(st.ll@, i);
+        assert forall|j: int| 0 <= j < st2.ll@[i] as int implies #[trigger] st2.lits@[l + j] == src[a + j] by {
+            assert(st.lits@[l + j] == src[a + j]);
+        }
+    }
+}
+
 pub struct Enc {
     pub window: usize,
     pub strat: u8,
@@ -163,17 +298,67 @@ pub fn hash(src: &[u8], ip: usize, mls: u32, hlog: u32) -> (h: usize)
     h as usize
 }
 
+/// Bytes below `n` of two words that agree once shifted left by
+/// `64 - 8 * n` are equal.
+proof fn lemma_shl_bytes(u: u64, v: u64, n: u64, k: u64)
+    requires
+        1 <= n <= 8,
+        k < n,
+        ((u ^ v) << ((64 - 8 * n) as u64)) == 0,
+    ensures
+        ((u >> ((8 * k) as u64)) & 0xff) == ((v >> ((8 * k) as u64)) & 0xff),
+{
+    assert(((u >> ((8 * k) as u64)) & 0xff) == ((v >> ((8 * k) as u64)) & 0xff)) by (bit_vector)
+        requires
+            1 <= n <= 8,
+            k < n,
+            ((u ^ v) << ((64 - 8 * n) as u64)) == 0,
+    ;
+}
+
+/// Equal `load32`s are equal bytes.
+pub proof fn lemma_eq4(s: Seq<u8>, a: int, b: int)
+    requires
+        0 <= a,
+        0 <= b,
+        a + 4 <= s.len(),
+        b + 4 <= s.len(),
+        verilith_core::prims::le_bytes(s, a, 4) == verilith_core::prims::le_bytes(s, b, 4),
+    ensures
+        forall|j: int| 0 <= j < 4 ==> #[trigger] s[a + j] == s[b + j],
+{
+    assert forall|j: int| 0 <= j < 4 implies #[trigger] s[a + j] == s[b + j] by {
+        verilith_core::lz::lemma_le_digit(s, a, 4, j as nat);
+        verilith_core::lz::lemma_le_digit(s, b, 4, j as nat);
+    }
+}
+
 /// Do the first `mls` bytes at `a` and `b` agree?
 #[inline(always)]
-fn eq_mls(src: &[u8], a: usize, b: usize, mls: u32) -> bool
+fn eq_mls(src: &[u8], a: usize, b: usize, mls: u32) -> (r: bool)
     requires
         a + 8 <= src@.len(),
         b + 8 <= src@.len(),
         4 <= mls <= 8,
+    ensures
+        r ==> forall|j: int| 0 <= j < mls ==> #[trigger] src@[a + j] == src@[b + j],
 {
-    let x = load_u64_le(src, a) ^ load_u64_le(src, b);
+    let u = load_u64_le(src, a);
+    let v = load_u64_le(src, b);
+    let x = u ^ v;
     let ms: u64 = 64 - 8 * mls as u64;
-    (x << ms) == 0
+    let r = (x << ms) == 0;
+    proof {
+        if r {
+            assert forall|j: int| 0 <= j < mls implies #[trigger] src@[a + j] == src@[b + j] by {
+                let k = j as u64;
+                lemma_shl_bytes(u, v, mls as u64, k);
+                verilith_core::lz::lemma_word_byte(src@, a as int, u, k);
+                verilith_core::lz::lemma_word_byte(src@, b as int, v, k);
+            }
+        }
+    }
+    r
 }
 
 /// Adds a sequence: the literals `src[anchor..ip]`, then a match of `m`
@@ -210,6 +395,9 @@ pub fn reserve_room(st: &mut Store, pos: usize, end: usize)
     ensures
         final(st).wf(),
         final(st).lits@ == old(st).lits@,
+        final(st).ll@ == old(st).ll@,
+        final(st).ml@ == old(st).ml@,
+        final(st).off@ == old(st).off@,
         room(final(st), pos, end),
 {
     let n = (end - pos) / 4 + 2;
@@ -221,6 +409,49 @@ pub fn reserve_room(st: &mut Store, pos: usize, end: usize)
     verilith_core::spare::reserve_spare(&mut st.ll, n);
     verilith_core::spare::reserve_spare(&mut st.ml, n);
     verilith_core::spare::reserve_spare(&mut st.off, n);
+}
+
+/// The store after `emit_s` of a match that is the input's: still
+/// `store_ok`, ending where the match ends.
+pub proof fn lemma_emit_ok(st: Store, st2: Store, src: Seq<u8>, pos: int, anchor: int, ip: int, off: int, m: int)
+    requires
+        store_ok(st, src, pos),
+        s_at(st.ll@, st.ml@, pos, st.ll@.len() as int) == anchor,
+        l_at(st.ll@, st.ll@.len() as int) == st.lits@.len(),
+        0 <= pos <= anchor <= ip,
+        ip - anchor < 0x1_0000_0000,
+        0 <= m < 0x1_0000_0000,
+        1 <= off <= ip,
+        off < 0x1_0000_0000,
+        ip + m <= src.len(),
+        forall|j: int| 0 <= j < m ==> #[trigger] src[ip + j] == src[ip - off + j],
+        st2.lits@ == st.lits@ + src.subrange(anchor, ip),
+        st2.ll@ == st.ll@.push((ip - anchor) as u32),
+        st2.ml@ == st.ml@.push(m as u32),
+        st2.off@ == st.off@.push(off as u32),
+    ensures
+        store_ok(st2, src, pos),
+        s_at(st2.ll@, st2.ml@, pos, st2.ll@.len() as int) == ip + m,
+        l_at(st2.ll@, st2.ll@.len() as int) == st2.lits@.len(),
+{
+    let n = st.ll@.len() as int;
+    lemma_at_prefix(st.ll@, st.ml@, st2.ll@, st2.ml@, pos, n);
+    assert(st2.ll@[n] as int == ip - anchor);
+    assert(st2.ml@[n] as int == m);
+    assert(st2.off@[n] as int == off);
+    assert(s_at(st2.ll@, st2.ml@, pos, n + 1) == anchor + (ip - anchor) + m);
+    assert(l_at(st2.ll@, n + 1) == st.lits@.len() + (ip - anchor));
+    assert forall|j: int| 0 <= j < ip - anchor implies #[trigger] st2.lits@[st.lits@.len() + j] == src[anchor + j] by {
+        let sub = src.subrange(anchor, ip);
+        assert(sub[j] == src[anchor + j]);
+        assert((st.lits@ + sub)[st.lits@.len() + j] == sub[j]);
+    }
+    assert forall|j: int| 0 <= j < m implies #[trigger] src[(anchor + (ip - anchor)) + j] == src[(anchor + (ip - anchor)) - off + j] by {
+        assert(src[ip + j] == src[ip - off + j]);
+    }
+    assert(seq_ok(st2, src, pos, n));
+    assert forall|k: int| 0 <= k < st.lits@.len() implies #[trigger] st2.lits@[k] == st.lits@[k] by {}
+    lemma_store_push(st, st2, src, pos);
 }
 
 /// `emit` into reserved room: a sequence ending at `ip + m`, at least 4
@@ -238,6 +469,10 @@ pub fn emit_s(st: &mut Store, src: &[u8], anchor: usize, ip: usize, off: usize, 
     ensures
         final(st).wf(),
         room(final(st), (ip + m) as usize, end),
+        final(st).lits@ == old(st).lits@ + src@.subrange(anchor as int, ip as int),
+        final(st).ll@ == old(st).ll@.push((ip - anchor) as u32),
+        final(st).ml@ == old(st).ml@.push(m as u32),
+        final(st).off@ == old(st).off@.push(off as u32),
 {
     verilith_core::spare::append_wild_spare(&mut st.lits, src, anchor, ip);
     verilith_core::spare::push_spare(&mut st.ll, (ip - anchor) as u32);
@@ -408,6 +643,10 @@ fn dfast_search(
         ip0 <= r.1 < r.2 <= ilimit,
         r.0 == 1 ==> r1 != 0,
         r.0 >= 2 ==> r.5 < r.1 && r.5 >= low && r.3 < (1usize << hlog),
+        r.0 <= 3,
+        r.0 == 1 ==> forall|j: int| 0 <= j < 4 ==> #[trigger] src@[r.1 + 1 + j] == src@[r.1 + 1 - r1 + j],
+        r.0 == 2 ==> forall|j: int| 0 <= j < 8 ==> #[trigger] src@[r.1 + j] == src@[r.5 + j],
+        r.0 == 3 ==> forall|j: int| 0 <= j < 4 ==> #[trigger] src@[r.1 + j] == src@[r.5 + j],
 {
     let mut ip = ip0;
     let mut ip1 = ip0 + 1;
@@ -435,6 +674,9 @@ fn dfast_search(
         store_at(t1, hl0, (ip - base) as u32);
         store_at(t2, hs0, (ip - base) as u32);
         if r1 != 0 && load32(src, ip + 1) == load32(src, ip + 1 - r1) {
+            proof {
+                lemma_eq4(src@, ip + 1, ip + 1 - r1);
+            }
             return (1, ip, ip1, 0, 0, 0);
         }
         let hl1 = hash(src, ip1, 8, hlog);
@@ -443,6 +685,9 @@ fn dfast_search(
         }
         let cl1 = base.wrapping_add(get32(t1.as_slice(), hl1) as usize);
         if cs < ip && cs >= low && load32(src, cs) == load32(src, ip) {
+            proof {
+                lemma_eq4(src@, ip as int, cs as int);
+            }
             return (3, ip, ip1, hl1, cl1, cs);
         }
         // One more byte of step per 256 without a match.
@@ -461,6 +706,7 @@ fn dfast_search(
 /// repeat offsets.
 #[inline(always)]
 #[verifier::loop_isolation(false)]
+#[verifier::rlimit(60)]
 fn dfast_run(
     t1: Vec<u32>,
     t2: Vec<u32>,
@@ -489,11 +735,17 @@ fn dfast_run(
         4 <= mls <= 8,
         old(st).wf(),
         room(old(st), pos, end),
+        end - pos <= 0x20000,
+        old(st).ll@.len() == 0,
+        old(st).lits@.len() == 0,
     ensures
         r.0@.len() == t1@.len(),
         r.1@.len() == t2@.len(),
         pos <= r.2 <= end,
         final(st).wf(),
+        store_ok(*final(st), src@, pos as int),
+        s_at(final(st).ll@, final(st).ml@, pos as int, final(st).ll@.len() as int) == r.2,
+        l_at(final(st).ll@, final(st).ll@.len() as int) == final(st).lits@.len(),
 {
     let mut t1 = t1;
     let mut t2 = t2;
@@ -504,8 +756,17 @@ fn dfast_run(
     let mut r1 = if ip >= low && rep1 <= ip - low { rep1 } else { 0 };
     let mut r2 = if ip >= low && rep2 <= ip - low { rep2 } else { 0 };
     let ilimit = end - 8;
+    proof {
+        assert(s_at(st.ll@, st.ml@, pos as int, 0) == pos);
+        assert(l_at(st.ll@, 0) == 0);
+    }
     while ip < ilimit
         invariant
+            store_ok(*st, src@, pos as int),
+            s_at(st.ll@, st.ml@, pos as int, st.ll@.len() as int) == anchor,
+            l_at(st.ll@, st.ll@.len() as int) == st.lits@.len(),
+            end - pos <= 0x20000,
+            end <= src@.len(),
             anchor <= ip,
             ip <= end,
             pos <= anchor,
@@ -527,7 +788,18 @@ fn dfast_run(
         if kind == 1 {
             let s = curr + 1;
             let m = 4 + eq_len(src, s + 4, s + 4 - r1, end - (s + 4));
+            proof {
+                assert forall|j: int| 0 <= j < m implies #[trigger] src@[s + j] == src@[s - r1 + j] by {
+                    if j >= 4 {
+                        assert(src@[(s + 4) + (j - 4)] == src@[(s + 4 - r1) + (j - 4)]);
+                    }
+                }
+            }
+            let ghost sb = *st;
             emit_s(st, src, anchor, s, r1, m, end);
+            proof {
+                lemma_emit_ok(sb, *st, src@, pos as int, anchor as int, s as int, r1 as int, m as int);
+            }
             ip = s + m;
         } else {
             let mut start = curr;
@@ -535,13 +807,34 @@ fn dfast_run(
             let mut m: usize;
             if kind == 2 {
                 m = 8 + eq_len(src, curr + 8, c + 8, end - (curr + 8));
+                proof {
+                    assert forall|j: int| 0 <= j < m implies #[trigger] src@[start + j] == src@[cand + j] by {
+                        if j >= 8 {
+                            assert(src@[(curr + 8) + (j - 8)] == src@[(c + 8) + (j - 8)]);
+                        }
+                    }
+                }
             } else if cl1 < ip1 && cl1 >= low && eq_mls(src, ip1, cl1, 8) {
                 // A long match one position on.
                 start = ip1;
                 cand = cl1;
                 m = 8 + eq_len(src, ip1 + 8, cl1 + 8, end - (ip1 + 8));
+                proof {
+                    assert forall|j: int| 0 <= j < m implies #[trigger] src@[start + j] == src@[cand + j] by {
+                        if j >= 8 {
+                            assert(src@[(ip1 + 8) + (j - 8)] == src@[(cl1 + 8) + (j - 8)]);
+                        }
+                    }
+                }
             } else {
                 m = 4 + eq_len(src, curr + 4, c + 4, end - (curr + 4));
+                proof {
+                    assert forall|j: int| 0 <= j < m implies #[trigger] src@[start + j] == src@[cand + j] by {
+                        if j >= 4 {
+                            assert(src@[(curr + 4) + (j - 4)] == src@[(c + 4) + (j - 4)]);
+                        }
+                    }
+                }
             }
             let off = start - cand;
             let ghost m0 = m;
@@ -555,8 +848,16 @@ fn dfast_run(
                     q + m == cand + m0,
                     m <= end - s,
                     s + m >= start + 4,
+                    forall|j: int| 0 <= j < m ==> #[trigger] src@[s + j] == src@[q + j],
                 decreases s,
             {
+                proof {
+                    assert forall|j: int| 0 <= j < m + 1 implies #[trigger] src@[(s - 1) + j] == src@[(q - 1) + j] by {
+                        if j >= 1 {
+                            assert(src@[s + (j - 1)] == src@[q + (j - 1)]);
+                        }
+                    }
+                }
                 s = s - 1;
                 q = q - 1;
                 m = m + 1;
@@ -565,7 +866,16 @@ fn dfast_run(
             if ip1 - curr < 4 {
                 store_at(&mut t1, hl1, (ip1 - base) as u32);
             }
+            proof {
+                assert forall|j: int| 0 <= j < m implies #[trigger] src@[s + j] == src@[s - off + j] by {
+                    assert(src@[s + j] == src@[q + j]);
+                }
+            }
+            let ghost sb = *st;
             emit_s(st, src, anchor, s, off, m, end);
+            proof {
+                lemma_emit_ok(sb, *st, src@, pos as int, anchor as int, s as int, off as int, m as int);
+            }
             r2 = r1;
             r1 = off;
             ip = s + m;
@@ -596,13 +906,30 @@ fn dfast_run(
                     r1 == 0 || (ip >= low && r1 <= ip - low),
                     r2 == 0 || (ip >= low && r2 <= ip - low),
                     ip > ip0,
+                    store_ok(*st, src@, pos as int),
+                    s_at(st.ll@, st.ml@, pos as int, st.ll@.len() as int) == anchor,
+                    l_at(st.ll@, st.ll@.len() as int) == st.lits@.len(),
+                    end - pos <= 0x20000,
+                    end <= src@.len(),
                 decreases end - ip,
             {
                 let q = r2;
                 let m2 = 4 + eq_len(src, ip + 4, ip + 4 - q, end - (ip + 4));
+                proof {
+                    lemma_eq4(src@, ip as int, ip - q);
+                    assert forall|j: int| 0 <= j < m2 implies #[trigger] src@[ip + j] == src@[ip - q + j] by {
+                        if j >= 4 {
+                            assert(src@[(ip + 4) + (j - 4)] == src@[(ip + 4 - q) + (j - 4)]);
+                        }
+                    }
+                }
                 r2 = r1;
                 r1 = q;
+                let ghost sb = *st;
                 emit_s(st, src, ip, ip, q, m2, end);
+                proof {
+                    lemma_emit_ok(sb, *st, src@, pos as int, ip as int, ip as int, q as int, m2 as int);
+                }
                 let h6 = hash(src, ip, 8, hlog);
                 store_at(&mut t1, h6, (ip - base) as u32);
                 let h7 = hash(src, ip, mls, clog);
@@ -1019,14 +1346,17 @@ impl Enc {
             final(self).wf(),
             pos - final(self).base < 0xC000_0000,
             final(self).base <= pos,
+            final(self).strat == old(self).strat,
     {
         if pos >= self.base && pos - self.base < 0xC000_0000 {
             return;
         }
+        let ghost sg = self.strat;
         let mut i: usize = 0;
         while i < self.t1.len()
             invariant
                 self.wf(),
+                self.strat == sg,
             decreases self.t1@.len() - i,
         {
             self.t1.set(i, 0);
@@ -1036,6 +1366,7 @@ impl Enc {
         while i < self.t2.len()
             invariant
                 self.wf(),
+                self.strat == sg,
             decreases self.t2@.len() - i,
         {
             self.t2.set(i, 0);
@@ -1099,10 +1430,18 @@ impl Enc {
             pos >= old(self).base,
             pos - old(self).base < 0xC000_0000,
             end - pos <= 0x20000,
+            old(self).st.ll@.len() == 0,
+            old(self).st.lits@.len() == 0,
         ensures
             final(self).wf(),
+            final(self).strat == old(self).strat,
+            store_ok(final(self).st, src@, pos as int),
     {
         let mut anchor = pos;
+        proof {
+            assert(store_ok(self.st, src@, pos as int));
+            assert(s_at(self.st.ll@, self.st.ml@, pos as int, 0) == pos);
+        }
         if end - pos >= 16 {
             reserve_room(&mut self.st, anchor, end);
             let base = self.base;
@@ -1128,7 +1467,12 @@ impl Enc {
             self.rep2 = q2;
             anchor = a;
         }
+        let ghost sb = self.st;
         self.st.lits.extend_from_slice(slice_subrange(src, anchor, end));
+        proof {
+            assert forall|k: int| 0 <= k < sb.lits@.len() implies #[trigger] self.st.lits@[k] == sb.lits@[k] by {}
+            lemma_store_lits(sb, self.st, src@, pos as int);
+        }
     }
 
     /// Greedy and lazy matching on hash chains (libzstd's
@@ -1179,8 +1523,10 @@ impl Enc {
         ensures
             final(self).wf(),
             grew(old(out)@, final(out)@),
+            old(self).strat == DFAST ==> store_ok(final(self).st, src@, pos as int),
     {
         let ghost o0 = out@;
+        let ghost dfa = self.strat == DFAST;
         proof {
             lemma_grew_refl(out@);
         }
@@ -1204,6 +1550,8 @@ impl Enc {
         } else {
             self.opt(src, pos, end, r1, r2, r3);
         }
+        let ghost sq = self.st;
+        assert(dfa ==> store_ok(sq, src@, pos as int));
         // Offsets to offset values, with the repeat offsets as the
         // decoder keeps them.
         let n = self.st.ll.len();
@@ -1218,6 +1566,7 @@ impl Enc {
                 n == self.st.ll@.len(),
                 self.ob@.len() == i,
                 i <= n,
+                self.st == sq,
             decreases n - i,
         {
             let o = self.st.off[i] as u64;

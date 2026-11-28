@@ -17,6 +17,9 @@ use crate::check::{check_run, ChkOut};
 #[cfg(verus_only)]
 use crate::check::run_ok;
 #[cfg(verus_only)]
+use crate::enc::store_ok;
+use crate::enc::Store;
+#[cfg(verus_only)]
 use crate::spec::SeqState;
 use crate::seq::{seq_run_exec, SeqOut, SeqTabs, MAX_LIMIT};
 #[cfg(verus_only)]
@@ -115,6 +118,8 @@ pub fn run_check(
     src: &[u8],
     q0: usize,
     qlim: usize,
+    sq: &Store,
+    use_sq: bool,
     Ghost(ts): Ghost<SeqTables>,
 ) -> (r: Option<ChkOut>)
     requires
@@ -126,6 +131,7 @@ pub fn run_check(
         (sof0 as int) < t.of.rows@.len(),
         (sml0 as int) < t.ml.rows@.len(),
         q0 <= qlim <= src@.len(),
+        use_sq ==> store_ok(*sq, src@, q0 as int) && sq.lits@ == lits@,
     ensures
         r matches Some(o) ==> run_ok(ts, s@, lits@, window as nat, n as nat, SeqState {
             p: p0 as int,
@@ -141,10 +147,10 @@ pub fn run_check(
     {
         if std::is_x86_feature_detected!("bmi2") {
             // SAFETY: the CPU supports BMI2.
-            return unsafe { bmi2::check(t, s, lits, window, n, p0, sll0, sof0, sml0, r10, r20, r30, src, q0, qlim, Ghost(ts)) };
+            return unsafe { bmi2::check(t, s, lits, window, n, p0, sll0, sof0, sml0, r10, r20, r30, src, q0, qlim, sq, use_sq, Ghost(ts)) };
         }
     }
-    check_run(t, s, lits, window, n, p0, sll0, sof0, sml0, r10, r20, r30, src, q0, qlim, Ghost(ts))
+    check_run(t, s, lits, window, n, p0, sll0, sof0, sml0, r10, r20, r30, src, q0, qlim, sq, use_sq, Ghost(ts))
 }
 
 /// `huf_4streams_exec`, with BMI2 when the CPU has it.
@@ -241,9 +247,11 @@ mod bmi2 {
         src: &[u8],
         q0: usize,
         qlim: usize,
+        sq: &Store,
+        use_sq: bool,
         ts: Ghost<SeqTables>,
     ) -> Option<ChkOut> {
-        check_run(t, s, lits, window, n, p0, sll0, sof0, sml0, r10, r20, r30, src, q0, qlim, ts)
+        check_run(t, s, lits, window, n, p0, sll0, sof0, sml0, r10, r20, r30, src, q0, qlim, sq, use_sq, ts)
     }
 
     #[target_feature(enable = "bmi2")]
