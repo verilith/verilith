@@ -3,6 +3,7 @@
 //! writers of `enc_vp8w`, whose read-back is proven in `enc_vp8frm`.
 use crate::enc_vp8l::push_le32;
 use crate::enc_vp8mb::*;
+use crate::enc_vp8st::*;
 use crate::enc_vp8w::*;
 use crate::vp8frame::*;
 #[cfg(verus_only)]
@@ -319,6 +320,129 @@ pub fn choose_mbs(src: &Planes, mb_w: usize, mb_h: usize, qs: Quants, recon: &mu
     Some(out)
 }
 
+/// The bits each token probability codes, over the frame.
+fn count_all(mbs: &Vec<MbChoice>, mb_w: usize, mb_h: usize, skip_on: bool) -> (r: Vec<u32>)
+    requires
+        1 <= mb_w <= 1024,
+        1 <= mb_h <= 1024,
+        mbs@.len() == mb_w * mb_h,
+        forall|i: int| 0 <= i < mbs@.len() ==> choice_ok(&#[trigger] mbs@[i]),
+    ensures
+        r@.len() == 2112,
+{
+    let mut st: Vec<u32> = Vec::new();
+    let mut k: usize = 0;
+    while k < 2112
+        invariant
+            k <= 2112,
+            st@.len() == k,
+        decreases 2112 - k,
+    {
+        st.push(0);
+        k = k + 1;
+    }
+    let mut tops: Vec<bool> = Vec::new();
+    let mut k: usize = 0;
+    while k < 9 * mb_w
+        invariant
+            mb_w <= 1024,
+            k <= 9 * mb_w,
+            tops@.len() == k,
+        decreases 9 * mb_w - k,
+    {
+        tops.push(false);
+        k = k + 1;
+    }
+    let mut mb_y: usize = 0;
+    while mb_y < mb_h
+        invariant
+            mb_y <= mb_h,
+            mbs@.len() == mb_w * mb_h,
+            mb_w <= 1024,
+            mb_h <= 1024,
+            tops@.len() == 9 * mb_w,
+            st@.len() == 2112,
+            forall|i: int| 0 <= i < mbs@.len() ==> choice_ok(&#[trigger] mbs@[i]),
+        decreases mb_h - mb_y,
+    {
+        let mut left: Vec<bool> = vec![false, false, false, false, false, false, false, false, false];
+        let mut mb_x: usize = 0;
+        while mb_x < mb_w
+            invariant
+                mb_x <= mb_w,
+                mb_y < mb_h,
+                mbs@.len() == mb_w * mb_h,
+                mb_w <= 1024,
+                mb_h <= 1024,
+                tops@.len() == 9 * mb_w,
+                left@.len() == 9,
+                st@.len() == 2112,
+                forall|i: int| 0 <= i < mbs@.len() ==> choice_ok(&#[trigger] mbs@[i]),
+            decreases mb_w - mb_x,
+        {
+            proof {
+                assert(mb_y * mb_w + mb_x < mb_w * mb_h) by (nonlinear_arith)
+                    requires
+                        mb_x < mb_w,
+                        mb_y < mb_h,
+                ;
+                assert(mb_w * mb_h <= 1024 * 1024) by (nonlinear_arith)
+                    requires
+                        mb_w <= 1024,
+                        mb_h <= 1024,
+                ;
+            }
+            let c = &mbs[mb_y * mb_w + mb_x];
+            let mut top: Vec<bool> = Vec::new();
+            let mut k: usize = 0;
+            while k < 9
+                invariant
+                    k <= 9,
+                    top@.len() == k,
+                    tops@.len() == 9 * mb_w,
+                    mb_w <= 1024,
+                    mb_x < mb_w,
+                decreases 9 - k,
+            {
+                top.push(tops[9 * mb_x + k]);
+                k = k + 1;
+            }
+            if skip_on && c.skip {
+                let mut k: usize = 0;
+                while k < 9
+                    invariant
+                        k <= 9,
+                        top@.len() == 9,
+                        left@.len() == 9,
+                    decreases 9 - k,
+                {
+                    top.set(k, false);
+                    left.set(k, false);
+                    k = k + 1;
+                }
+            } else {
+                count_mb(&mut st, c.lv.as_slice(), &mut top, &mut left);
+            }
+            let mut k: usize = 0;
+            while k < 9
+                invariant
+                    k <= 9,
+                    top@.len() == 9,
+                    tops@.len() == 9 * mb_w,
+                    mb_w <= 1024,
+                    mb_x < mb_w,
+                decreases 9 - k,
+            {
+                tops.set(9 * mb_x + k, top[k]);
+                k = k + 1;
+            }
+            mb_x = mb_x + 1;
+        }
+        mb_y = mb_y + 1;
+    }
+    st
+}
+
 /// Writes the frame: the first partition (header and modes) and the one
 /// token partition.
 pub fn write_parts(mbs: &Vec<MbChoice>, mb_w: usize, mb_h: usize, qi: usize) -> (r: Option<(Vec<u8>, Vec<u8>)>)
@@ -367,17 +491,8 @@ pub fn write_parts(mbs: &Vec<MbChoice>, mb_w: usize, mb_h: usize, qi: usize) -> 
     } else {
         ps as u32
     };
-    let mut probs: Vec<u8> = Vec::new();
-    let mut k: usize = 0;
-    while k < 1056
-        invariant
-            k <= 1056,
-            probs@.len() == k,
-        decreases 1056 - k,
-    {
-        probs.push(coeffs_proba0(k));
-        k = k + 1;
-    }
+    let st = count_all(mbs, mb_w, mb_h, skip_on);
+    let probs = best_probs(&st);
     let mut w1 = EncW::new();
     put_hdr(&mut w1, 0, qi as u32, probs.as_slice(), skip_on, pskip);
     let ghost fh = fh_of(hparams(0, qi as u32, probs@, skip_on, pskip));

@@ -82,6 +82,8 @@ pub mod enc_vp8frm;
 #[doc(hidden)]
 pub mod enc_vp8w;
 #[doc(hidden)]
+pub mod enc_vp8st;
+#[doc(hidden)]
 pub mod enc_vp8a;
 #[doc(hidden)]
 pub mod enc_vp8mb;
