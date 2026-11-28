@@ -90,6 +90,12 @@ pub mod avx512;
 pub mod mask;
 pub mod sse2;
 pub mod scalar;
+pub mod crc;
+pub mod sha;
+pub mod sha_ref;
+pub mod sha_neon;
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+pub mod sha_x86;
 #[cfg(feature = "alloc")]
 pub mod refs;
 #[cfg(feature = "alloc")]

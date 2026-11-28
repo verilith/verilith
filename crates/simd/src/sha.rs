@@ -1,6 +1,6 @@
 //! What the SHA instructions compute (TRUSTED): the specification the
-//! instruction kernels in [`crate::shani`] and [`crate::armv8`] are proven
-//! against, transcribed from the vendors' pseudocode rather than from FIPS
+//! instruction kernels in verilith-sha2 (`shani`, `armv8`) are proven
+//! against, and the wrappers in [`crate::sha_x86`] and [`crate::sha_neon`] state, transcribed from the vendors' pseudocode rather than from FIPS
 //! 180-4, as functions on the 32- or 64-bit lanes of a vector, lane 0
 //! first (bits 31:0 of an x86 register, element 0 of an Arm one).
 //!
@@ -18,12 +18,13 @@
 //!   specify: SSE4.1's `pblendw`, and on AArch64 `rev32`, `rev64` and
 //!   64-bit `add`.
 //!
-//! Each is also checked against the CPU: `tests/isa.rs` runs every
+//! Each is also checked against the CPU: verilith-sha2's `tests/isa.rs` runs every
 //! instruction on random operands (natively on x86-64 with SHA-NI, on
-//! AArch64 natively or under qemu) against [`crate::isa_ref`], verified
+//! AArch64 natively or under qemu) against [`crate::sha_ref`], verified
 //! implementations of these functions. Operand order follows the
 //! intrinsics (`core::arch`), which is the instruction's operand order
 //! except where noted.
+#![allow(missing_docs)]
 use vstd::prelude::*;
 
 verus! {
