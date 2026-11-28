@@ -154,3 +154,137 @@ impl<P: Provider> ServerStream<P> {
         &self.conn
     }
 }
+
+/// A client connection over a byte stream, like [`ServerStream`]: framing
+/// and buffering only, every decision `ClientConn::read_record`'s.
+pub struct ClientStream<P: crate::crypto::ClientCrypto> {
+    conn: crate::client_conn::ClientConn<P>,
+    inbuf: Vec<u8>,
+    start: usize,
+    out: Vec<u8>,
+    plain: Vec<u8>,
+    plain_start: usize,
+    handshake_done: bool,
+    peer_closed: bool,
+}
+
+impl<P: crate::crypto::ClientCrypto> ClientStream<P> {
+    /// A connection to `host` (a DNS name); its ClientHello is in
+    /// `pending`. `None` if the configuration is not well formed, the host
+    /// name is not a DNS name, or the provider could not make a key share.
+    pub fn new(cfg: Arc<crate::client_hs::ClientConfig>, host: &[u8], prov: P) -> Option<Self> {
+        if !cfg.check() {
+            return None;
+        }
+        let mut out = Vec::new();
+        let conn = crate::client_conn::ClientConn::new(cfg, host, prov, &mut out)?;
+        Some(ClientStream {
+            conn,
+            inbuf: Vec::new(),
+            start: 0,
+            out,
+            plain: Vec::new(),
+            plain_start: 0,
+            handshake_done: false,
+            peer_closed: false,
+        })
+    }
+
+    /// Ciphertext from the server.
+    pub fn read_tls(&mut self, data: &[u8]) {
+        if self.start > 0 && self.start == self.inbuf.len() {
+            self.inbuf.clear();
+            self.start = 0;
+        }
+        self.inbuf.extend_from_slice(data);
+    }
+
+    /// Processes every whole record received so far.
+    pub fn process(&mut self) -> Result<(), Error> {
+        loop {
+            let avail = self.inbuf.len() - self.start;
+            if avail < 5 {
+                break;
+            }
+            let s = self.start;
+            let hdr: [u8; 5] = self.inbuf[s..s + 5].try_into().unwrap();
+            let len = (hdr[3] as usize) << 8 | hdr[4] as usize;
+            if avail < 5 + len {
+                break;
+            }
+            let body = &mut self.inbuf[s + 5..s + 5 + len];
+            let ev = self.conn.read_record(&hdr, body, &mut self.out);
+            self.start = s + 5 + len;
+            match ev? {
+                Event::Nothing => {}
+                Event::HandshakeDone => self.handshake_done = true,
+                Event::Data(n) | Event::EarlyData(n) => {
+                    if self.plain_start == self.plain.len() {
+                        self.plain.clear();
+                        self.plain_start = 0;
+                    }
+                    self.plain.extend_from_slice(&self.inbuf[s + 5..s + 5 + n]);
+                }
+                Event::Closed => {
+                    self.peer_closed = true;
+                    break;
+                }
+            }
+        }
+        if self.start > 0 && self.start >= self.inbuf.len() / 2 {
+            self.inbuf.drain(..self.start);
+            self.start = 0;
+        }
+        Ok(())
+    }
+
+    pub fn plaintext(&self) -> &[u8] {
+        &self.plain[self.plain_start..]
+    }
+
+    pub fn consume_plaintext(&mut self, n: usize) {
+        self.plain_start = (self.plain_start + n).min(self.plain.len());
+    }
+
+    /// Protects `data` for sending; only once the handshake is done.
+    pub fn write(&mut self, data: &[u8]) -> Result<(), Error> {
+        self.conn.write(data, &mut self.out)
+    }
+
+    pub fn pending(&self) -> &[u8] {
+        &self.out
+    }
+
+    pub fn consume_pending(&mut self, n: usize) {
+        self.out.drain(..n.min(self.out.len()));
+    }
+
+    pub fn take_pending(&mut self) -> Vec<u8> {
+        core::mem::take(&mut self.out)
+    }
+
+    pub fn is_handshaking(&self) -> bool {
+        !self.handshake_done
+    }
+
+    pub fn peer_closed(&self) -> bool {
+        self.peer_closed
+    }
+
+    pub fn alpn(&self) -> Option<&[u8]> {
+        self.conn.alpn()
+    }
+
+    /// The server's certificates, leaf first, as checked.
+    pub fn peer_certificates(&self) -> &[Vec<u8>] {
+        self.conn.peer_certificates()
+    }
+
+    pub fn close(&mut self) {
+        self.conn.close(&mut self.out)
+    }
+
+    pub fn conn(&self) -> &crate::client_conn::ClientConn<P> {
+        &self.conn
+    }
+}

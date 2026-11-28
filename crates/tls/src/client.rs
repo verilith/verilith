@@ -21,7 +21,7 @@ use vstd::prelude::*;
 
 verus! {
 
-proof fn lemma_scheme_list_push(s: Seq<u16>, x: u16)
+pub(crate) proof fn lemma_scheme_list_push(s: Seq<u16>, x: u16)
     ensures
         scheme_list(s.push(x)) == scheme_list(s) + be2(x as nat),
 {
@@ -73,7 +73,7 @@ pub fn certificate_request_x(out: &mut Vec<u8>, sigs: &[u16])
     }
 }
 
-proof fn lemma_scheme_list_len(s: Seq<u16>)
+pub(crate) proof fn lemma_scheme_list_len(s: Seq<u16>)
     ensures
         scheme_list(s).len() == 2 * s.len(),
     decreases s.len(),
@@ -218,7 +218,7 @@ pub fn parse_client_certificate_x(body: &[u8]) -> (r: Result<Vec<Vec<u8>>, u8>)
 }
 
 /// `a` is no later than `b`.
-fn time_le_x(a: &Time, b: &Time) -> (r: bool)
+pub(crate) fn time_le_x(a: &Time, b: &Time) -> (r: bool)
     ensures
         r == time_le(a@, b@),
 {
@@ -237,7 +237,7 @@ fn time_le_x(a: &Time, b: &Time) -> (r: bool)
     }
 }
 
-fn eq_bytes(a: &[u8], b: &[u8]) -> (r: bool)
+pub(crate) fn eq_bytes(a: &[u8], b: &[u8]) -> (r: bool)
     ensures
         r == (a@ == b@),
 {
@@ -265,7 +265,7 @@ fn eq_bytes(a: &[u8], b: &[u8]) -> (r: bool)
 
 /// Whether OID contents `oid` is one of the critical extensions the path
 /// check processes.
-fn known_critical_x(oid: &[u8]) -> (r: bool)
+pub(crate) fn known_critical_x(oid: &[u8]) -> (r: bool)
     ensures
         r == known_critical(oid@),
 {
@@ -495,7 +495,7 @@ pub fn ca_ok_x(c: &Certificate, now: &Time, below: usize) -> (r: bool)
 
 /// `issued(child, parent)`, the names compared as DER bytes (equal bytes
 /// are equal names).
-fn issued_x<P: Provider>(prov: &P, child: &Certificate, parent: &Certificate) -> (r: bool)
+pub(crate) fn issued_x<P: Provider>(prov: &P, child: &Certificate, parent: &Certificate) -> (r: bool)
     requires
         child.tbs.wf(),
         parent.tbs.wf(),
@@ -510,7 +510,7 @@ fn issued_x<P: Provider>(prov: &P, child: &Certificate, parent: &Certificate) ->
 }
 
 /// The trust anchor in `roots` that issued `c`, if any.
-fn find_root<P: Provider>(prov: &P, c: &Certificate, roots: &Vec<Vec<u8>>) -> (r: Option<usize>)
+pub(crate) fn find_root<P: Provider>(prov: &P, c: &Certificate, roots: &Vec<Vec<u8>>) -> (r: Option<usize>)
     requires
         c.tbs.wf(),
     ensures
