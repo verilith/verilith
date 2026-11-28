@@ -43,6 +43,20 @@ pub mod decode;
 pub mod spec_scaled;
 #[doc(hidden)]
 pub mod scaled;
+#[doc(hidden)]
+pub mod enc_bits;
+#[doc(hidden)]
+pub mod enc_huff;
+#[doc(hidden)]
+pub mod enc_scan;
+#[doc(hidden)]
+pub mod enc_file;
+#[doc(hidden)]
+pub mod enc_spec;
+#[doc(hidden)]
+pub mod enc_front;
+#[doc(hidden)]
+pub mod encode;
 #[cfg(not(verus_only))]
 #[doc(hidden)]
 pub mod capi;
@@ -52,6 +66,7 @@ pub mod tj;
 
 pub use decode::{decode, read_header, Header, Picture};
 pub use scaled::decode_scaled;
+pub use encode::encode_rgb;
 pub use types::Error;
 
 

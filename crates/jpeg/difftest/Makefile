@@ -9,13 +9,17 @@ VJPEG := $(TARGET)/release/libverilith_jpeg.a
 INC := -I$(LIBJPEG_SRC)/src -I$(LIBJPEG_BUILD)
 LIBS := $(LIBJPEG_BUILD)/libjpeg.a -lpthread -lm -ldl
 
-all: diff
+all: diff encdiff
 
 $(VJPEG):
 	cd .. && cargo build --release
 
 diff: diff.c $(VJPEG)
 	$(CC) -O2 -g $(INC) -o $@ diff.c $(VJPEG) $(LIBS)
+
+# The encoder: the same images through libjpeg's compressor, byte for byte.
+encdiff: encdiff.c $(VJPEG)
+	$(CC) -O2 -g $(INC) -o $@ encdiff.c $(VJPEG) $(LIBS)
 
 # libFuzzer: build libjpeg-turbo and vjpeg with coverage too (see
 # ../scripts/fuzz.sh).
@@ -37,4 +41,4 @@ tjcheck: tjdiff_ref tjdiff_ours
 	cmp tj_ref.txt tj_ours.txt && echo "TurboJPEG API: same on $$(wc -l < tj_ref.txt) files"
 
 clean:
-	rm -f diff fuzz_diff tjdiff_ref tjdiff_ours tj_ref.txt tj_ours.txt
+	rm -f diff encdiff fuzz_diff tjdiff_ref tjdiff_ours tj_ref.txt tj_ours.txt

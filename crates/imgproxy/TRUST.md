@@ -16,6 +16,7 @@ sockets and TLS):
 | verilith-http's `parse_response` and `ChunkedDecoder` | Fetching `http://` sources | Verified (its README): the response head and the body's framing are the specification's |
 | `std::net` | DNS resolution and TCP for `http://` and `https://` sources | The standard library |
 | verilith-tls's client and verilith-tls-aws-lc's `client::TlsStream` (`--features tls`) | `https://` sources: the TLS 1.3 handshake, certificate chain and host name checks, and the record layer | verilith-tls's handshake, record layer and verilith-x509's chain and name checks are verified (their READMEs); the cryptography is aws-lc's, trusted (verilith-tls-aws-lc's CRYPTO.md). The trust anchors are whatever the CA bundle holds. A connection that ends without close_notify is a read error, so a body read until close is never taken short |
+| verilith-jpeg's `encode_rgb` | JPEG output | Verified (its README and TRUST.md): checks its own input; the file decodes, under its specification, to what libjpeg-turbo would code |
 | verilith-webp's `capi::decode` and `get_features` | WebP decoding | Plain-Rust wrappers in verilith-webp over its verified decoders (that crate's trusted base; lossy VP8 is proven safe, not correct) |
 
-What is not here at all, so not trusted either: encoders other than PNG.
+What is not here at all, so not trusted either: encoders other than PNG and JPEG.
